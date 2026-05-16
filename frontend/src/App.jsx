@@ -60,6 +60,7 @@ export default function App() {
     const doAutoLogout = async () => {
       clearInterval(countdownInterval.current)
       await api.logout()
+      localStorage.removeItem('cert-monitor-remembered-user')
       setUser(null)
       setInactivityWarning(false)
     }
@@ -133,6 +134,7 @@ export default function App() {
     clearInterval(countdownInterval.current)
     clearInterval(refreshPollRef.current)
     await api.logout()
+    localStorage.removeItem('cert-monitor-remembered-user')
     setUser(null)
     setInactivityWarning(false)
     setRefreshing(false)

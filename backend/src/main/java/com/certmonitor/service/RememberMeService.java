@@ -1,53 +1,55 @@
 package com.certmonitor.service;
 
+import com.certmonitor.model.RememberMeToken;
+import com.certmonitor.repository.RememberMeTokenRepository;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
-import java.time.Duration;
 import java.time.Instant;
-import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
-import java.util.concurrent.ConcurrentHashMap;
 
 @Slf4j
 @Service
+@RequiredArgsConstructor
 public class RememberMeService {
 
     public static final String COOKIE_NAME = "cert-monitor-remember";
-    private static final Duration TTL = Duration.ofDays(7);
+    private static final long TTL_SECONDS = 7L * 24 * 3600; // 7 gün
 
-    private record Entry(String username, Instant expiry) {}
-
-    private final Map<String, Entry> store = new ConcurrentHashMap<>();
+    private final RememberMeTokenRepository repo;
 
     public String generateToken(String username) {
         String token = UUID.randomUUID().toString();
-        store.put(token, new Entry(username, Instant.now().plus(TTL)));
-        log.debug("Remember-me token created for user: {}", username);
+        RememberMeToken entity = new RememberMeToken();
+        entity.setToken(token);
+        entity.setUsername(username);
+        entity.setExpiresAt(Instant.now().getEpochSecond() + TTL_SECONDS);
+        repo.save(entity);
+        log.debug("Remember-me token oluşturuldu: user={}", username);
         return token;
     }
 
     public Optional<String> validate(String token) {
         if (token == null || token.isBlank()) return Optional.empty();
-        Entry entry = store.get(token);
-        if (entry == null || Instant.now().isAfter(entry.expiry())) {
-            store.remove(token);
-            return Optional.empty();
-        }
-        return Optional.of(entry.username());
+        return repo.findByToken(token)
+                .filter(t -> Instant.now().getEpochSecond() < t.getExpiresAt())
+                .map(RememberMeToken::getUsername);
     }
 
     public void invalidate(String token) {
-        if (token != null) store.remove(token);
+        if (token != null && !token.isBlank()) {
+            repo.deleteByToken(token);
+        }
     }
 
+    // Her saat başı süresi dolmuş token'ları temizle
     @Scheduled(fixedDelay = 3_600_000)
     public void cleanExpired() {
-        int before = store.size();
-        store.entrySet().removeIf(e -> Instant.now().isAfter(e.getValue().expiry()));
-        int removed = before - store.size();
-        if (removed > 0) log.debug("Cleaned {} expired remember-me tokens", removed);
+        long now = Instant.now().getEpochSecond();
+        repo.deleteExpired(now);
+        log.debug("Süresi dolmuş remember-me token'ları temizlendi");
     }
 }
