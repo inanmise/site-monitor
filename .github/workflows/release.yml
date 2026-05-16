@@ -1,0 +1,85 @@
+name: Release — Tag & Promote to Master
+
+on:
+  push:
+    branches:
+      - "release/**"
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: "Type 'release' to confirm promotion to master"
+        required: true
+
+jobs:
+  # ──────────────────────────────────────────────
+  # Gate: manual runs must type 'release'
+  # ──────────────────────────────────────────────
+  gate:
+    name: Confirm release
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch'
+    steps:
+      - name: Check confirmation
+        run: |
+          if [ "${{ github.event.inputs.confirm }}" != "release" ]; then
+            echo "::error::Type 'release' in the confirm field to proceed."
+            exit 1
+          fi
+
+  # ──────────────────────────────────────────────
+  # Promote: merge release/* → master, tag version
+  # ──────────────────────────────────────────────
+  promote:
+    name: Merge to master & tag
+    runs-on: ubuntu-latest
+    needs: []   # no gate on push trigger; gate only on dispatch
+    if: |
+      github.event_name == 'push' ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.confirm == 'release')
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Read VERSION
+        id: version
+        run: echo "value=$(cat VERSION | tr -d '[:space:]')" >> "$GITHUB_OUTPUT"
+
+      - name: Configure git
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Merge release branch into master
+        run: |
+          git fetch origin master
+          git checkout master
+          git merge --no-ff origin/${{ github.ref_name }} \
+            -m "chore(release): merge ${{ github.ref_name }} into master [skip ci]"
+          git push origin master
+
+      - name: Create version tag
+        run: |
+          VERSION="v${{ steps.version.outputs.value }}"
+          git tag -a "$VERSION" -m "Release $VERSION"
+          git push origin "$VERSION"
+
+      - name: Merge master back into develop
+        run: |
+          git fetch origin develop
+          git checkout develop
+          git merge --no-ff origin/master \
+            -m "chore(release): back-merge master into develop after ${{ steps.version.outputs.value }} [skip ci]"
+          git push origin develop
+
+      - name: Release summary
+        run: |
+          echo "## Release ${{ steps.version.outputs.value }} promoted" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Branch \`${{ github.ref_name }}\` merged into \`master\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Tag \`v${{ steps.version.outputs.value }}\` created" >> "$GITHUB_STEP_SUMMARY"
+          echo "- \`master\` back-merged into \`develop\`" >> "$GITHUB_STEP_SUMMARY"
