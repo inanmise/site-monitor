@@ -1,116 +1,266 @@
 # SSL/TLS Sertifika İzleme Sistemi
 
-Kurumunuzdaki SSL/TLS sertifikalarını merkezi olarak kontrol eden, sonuçları raporlayan ve 30 gün içinde bitecek sertifikaları uyaran tam otomatize sistem.
+Kurumunuzdaki SSL/TLS sertifikalarını merkezi olarak izleyen, uyarı veren ve yöneten tam kapsamlı sistem.
 
 ## Özellikler
 
-✅ **Otomatik Günlük Kontrol** - Belirtilen saatte (varsayılan: 02:00) otomatik kontrol  
-✅ **Web Dashboard** - Tüm sertifikaları görüntülemek ve analiz etmek için modern arayüz  
-✅ **30 Gün Uyarısı** - Sertifikalar 30 gün kala otomatik uyarı  
-✅ **Detaylı Raporlama** - Her sertifika için kapsamlı bilgi ve geçmiş  
-✅ **Veritabanı Depolama** - SQLite ile tüm kontrol geçmişi kaydı  
-✅ **Hızlı Kontrol** - İsteğe bağlı olarak belirli domain'leri hemen kontrol et  
-✅ **REST API** - Harici sistemlerle entegrasyon için tam API desteği
+- **Otomatik Günlük Kontrol** — Ayarlanabilir saatte (varsayılan 02:00) tüm envanteri kontrol eder
+- **Çok Seviyeli Uyarı** — WARNING (30g) / HIGH (15g) / CRITICAL (7g) eşikleri, ayarlanabilir
+- **Zincir Doğrulama** — Eksik veya geçersiz sertifika zinciri tespiti (BouncyCastle)
+- **İptal Kontrolü** — OCSP öncelikli, CRL yedekli iptal doğrulaması
+- **Parmak İzi & Konu Sabitleme** — Sertifika değişimini otomatik tespit eder
+- **Eskalasyon Kişileri** — Rol bazlı kişiler (PO, TECH, MANAGER, CLEVEL) e-posta + Teams/Slack webhook
+- **Uyarı Yaşam Döngüsü** — Onayla, yeniden bildir, çöz; tam denetim kaydı
+- **Web Dashboard** — React SPA, koyu/açık mod, Türkçe/İngilizce
+- **Admin Paneli** — Envanter, eşikler, kişiler, uyarı geçmişi
+- **REST API** — Harici sistemlerle entegrasyon
+- **Prometheus Metrikleri** — `/metrics` endpoint
+- **Docker & Helm** — Üretim ortamına hazır konteyner ve Kubernetes desteği
+
+## Teknoloji Yığını
+
+| Katman | Teknoloji |
+|--------|-----------|
+| Backend | Java 21, Spring Boot 3.3.6, Spring Data JPA |
+| Veritabanı | SQLite (geliştirme) / PostgreSQL (üretim) |
+| Sertifika | BouncyCastle (OCSP, CRL, zincir doğrulama) |
+| Frontend | React 18.3.1, Vite 5, lucide-react |
+| Konteyner | Docker (çok aşamalı), Docker Compose |
+| K8s | Helm chart v0.1.0 |
+| CI/CD | GitHub Actions |
 
 ## Proje Yapısı
 
 ```
 cert-monitor/
 ├── backend/
-│   ├── app.py                 # Flask web sunucusu
-│   ├── certificate_checker.py # SSL/TLS kontrol motoru
-│   ├── database.py            # Veritabanı yönetimi
-│   ├── scheduler.py           # Günlük zamanlayıcı
-│   └── requirements.txt        # Python bağımlılıkları
+│   └── src/main/java/com/certmonitor/
+│       ├── controller/          # REST API (Certificate, Admin, Auth)
+│       ├── service/             # İş mantığı (Checker, Escalation, Scheduler…)
+│       ├── model/               # JPA entity'leri
+│       ├── repository/          # Spring Data repository'leri
+│       └── config/              # WebConfig, GlobalExceptionHandler, AuthInterceptor
 ├── frontend/
-│   ├── index.html             # Web arayüzü
-│   ├── style.css              # Tasarım
-│   └── script.js              # İstemci tarafı mantığı
-├── data/                      # Veritabanı ve veriler
-├── sertifikaListesi.txt       # Kontrol edilecek domain'ler
-└── README.md                  # Bu dosya
+│   └── src/
+│       ├── components/          # React bileşenleri (Nav, StatsPanel, CertificatesTable…)
+│       ├── components/admin/    # Admin paneli (Inventory, Thresholds, Contacts, AlertHistory)
+│       ├── pages/               # Login
+│       ├── api/client.js        # API istemcisi
+│       └── i18n/                # Çok dil & tema yönetimi
+├── helm/cert-monitor/           # Helm chart + ortam değerleri
+│   └── environments/            # master.yaml, develop.yaml, release.yaml
+├── scripts/                     # build-image.sh / build-image.ps1
+├── .github/workflows/           # ci.yml, docker-build.yml, release.yml
+├── Dockerfile                   # Çok aşamalı build (Node → Maven → JRE 21)
+├── docker-compose.yml
+└── sertifikaListesi.txt         # Dosya tabanlı domain listesi (isteğe bağlı)
 ```
 
 ## Kurulum
 
 ### Gereksinimler
 
-- Python 3.8+
-- pip (Python paket yöneticisi)
-- Modern web tarayıcısı
+- Java 21 (Azul Zulu / Eclipse Temurin)
+- Maven 3.9+
+- Node.js 20+
 
-### Adım 1: Bağımlılıkları Yükleyin
+### Yerel Geliştirme
+
+**1. Backend**
 
 ```bash
 cd backend
-pip install -r requirements.txt
+mvn spring-boot:run
 ```
 
-### Adım 2: Domain Listesini Düzenleyin
+Backend `http://localhost:8080` adresinde çalışır.
 
-`sertifikaListesi.txt` dosyasını açarak kontrol edilecek domain'leri ekleyin:
+**2. Frontend**
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+Frontend `http://localhost:5173` adresinde çalışır.
+
+**3. Giriş**
+
+| Ayar | Varsayılan |
+|------|-----------|
+| Kullanıcı adı | `user` |
+| Parola | `changeme-local-dev` |
+
+> Ortam değişkenlerini özelleştirmek için `.env.example` dosyasını `.env` olarak kopyalayın.
+
+### Docker Compose ile Başlatma
+
+```bash
+cp .env.example .env
+# .env içindeki parolaları düzenleyin
+docker-compose up -d
+```
+
+Uygulama `http://localhost:8080` adresinde çalışır.
+
+### Docker İmajı Oluşturma
+
+```bash
+# Linux/Mac
+./scripts/build-image.sh
+
+# Windows
+.\scripts\build-image.ps1
+
+# Registry'ye push ile
+./scripts/build-image.sh --registry ghcr.io/your-org --push
+```
+
+İmaj etiketleri branch'e göre otomatik belirlenir:
+
+| Branch | Etiket |
+|--------|--------|
+| `master` | `{VERSION}`, `latest` |
+| `release/*` | `{VERSION}-rc`, `staging` |
+| `develop` | `develop-{sha}`, `develop` |
+| diğer | `{branch-adı}-{sha}` |
+
+## Yapılandırma
+
+Tüm ayarlar ortam değişkeni ile yönetilir. Varsayılanlar `application.properties` içindedir.
+
+| Değişken | Varsayılan | Açıklama |
+|----------|-----------|----------|
+| `CERT_MONITOR_USERNAME` | `user` | Dashboard kullanıcı adı |
+| `CERT_MONITOR_PASSWORD` | `changeme-local-dev` | Dashboard parolası |
+| `CORS_ALLOWED_ORIGINS` | `http://localhost:5173,...` | İzin verilen CORS adresleri |
+| `CERT_MONITOR_EMAIL_ENABLED` | `false` | E-posta bildirimlerini etkinleştir |
+| `SPRING_MAIL_HOST` | `smtp.gmail.com` | SMTP sunucusu |
+| `SPRING_MAIL_PORT` | `587` | SMTP portu |
+| `SPRING_MAIL_USERNAME` | — | SMTP kullanıcı adı |
+| `SPRING_MAIL_PASSWORD` | — | SMTP parolası |
+
+Üretim ortamı için ek ayarlar `application-prod.properties` dosyasında (`spring.profiles.active=prod`).
+
+### Günlük Kontrol Saati
+
+`application.properties` içinde:
+
+```properties
+cert.monitor.check.hour=2
+cert.monitor.check.minute=0
+```
+
+### Uyarı Eşikleri
+
+Admin Paneli → Eşikler sekmesinden arayüz üzerinden ya da doğrudan API ile değiştirilebilir.
+
+Varsayılanlar:
+
+| Seviye | Gün |
+|--------|-----|
+| WARNING | 30 |
+| HIGH | 15 |
+| CRITICAL | 7 |
+
+### Domain Listesi
+
+`sertifikaListesi.txt` dosyasına her satıra bir domain yazılır:
 
 ```
-# Örnek format
+# Yorum satırı
 google.com
 github.com:443
-api.example.com
-web.domain.com:8443
+api.example.com:8443
+internal.app.com:8000
 ```
 
-**Format:**
-- Her satırda bir domain
-- Port isteğe bağlı (varsayılan: 443)
-- `#` ile başlayan satırlar yorum olarak değerlendirilir
-
-### Adım 3: Uygulamayı Başlatın
-
-```bash
-cd backend
-python app.py
-```
-
-Uygulama başarıyla başladıktan sonra:
-- **Web Dashboard:** http://localhost:5000
-- **API Base:** http://localhost:5000/api
+Admin Paneli → Envanter üzerinden de domain eklenebilir.
 
 ## Kullanım
 
 ### Web Dashboard
 
-Ana sayfada aşağıdaki sekmeleri göreceksiniz:
+Giriş yaptıktan sonra:
 
-1. **Dashboard** - En önemli sertifikalar ve özet bilgi
-2. **⚠️ Uyarılar** - Dikkat gerektiren sertifikalar
-3. **Tüm Sertifikalar** - Tüm kontrollü domain'ler tablosu
+1. **Dashboard** — Özet istatistikler ve kritik sertifikalar
+2. **Uyarılar** — Dikkat gerektiren sertifikalar
+3. **Tüm Sertifikalar** — Sayfalanmış, filtrelenebilir tablo
+4. **Admin** — Envanter, eşikler, eskalasyon kişileri, uyarı geçmişi
 
-### İşlevler
+Herhangi bir sertifikaya tıklayarak detay, kontrol geçmişi ve uyarı olaylarını görüntüleyebilirsiniz.
 
-- **🔄 Şimdi Kontrol Et** - Tüm domain'leri hemen kontrol et
-- **📊 İstatistikler** - Genel istatistikler ve özet bilgi
-- **Arama Kutusu** - Domain, veren, konu ile arama yap
-- **Kart Tıklama** - Sertifika detayları ve geçmişini görüntüle
+### Manuel Kontrol
 
-### Bilgiler
+Dashboard'da "Şimdi Kontrol Et" düğmesine basın ya da:
 
-Her sertifika için aşağıdaki bilgiler gösterilir:
+```bash
+curl -u user:changeme-local-dev -X POST http://localhost:8080/api/scheduler/run
+```
 
-- **Domain** - Kontrol edilen domain adı
-- **Veren (Issuer)** - Sertifikaları veren kurum
-- **Konu (Subject)** - Sertifikanın sahibi
-- **Başlama Tarihi** - Sertifika başlama tarihi
-- **Bitiş Tarihi** - Sertifika bitiş tarihi
-- **Kalan Gün** - Sertifikanın kalan geçerlilik süresi
-- **Alternative Names (SAN)** - Alternatif domain adları
-- **Son Kontrol** - En son kontrol zamanı
-- **Durum** - Geçerli/Uyarı/Hata
+Belirli bir domain'i hemen kontrol etmek için:
+
+```bash
+curl -u user:changeme-local-dev http://localhost:8080/api/check/example.com
+```
 
 ## API Endpoints
 
-### GET /api/certificates
-Tüm sertifikaların son kontrol sonuçlarını al.
+Tüm istekler HTTP Basic Auth veya oturum çerezi gerektirir.
 
-**Yanıt:**
+### Sertifikalar
+
+| Metot | Endpoint | Açıklama |
+|-------|----------|----------|
+| GET | `/api/certificates` | Tüm son kontrol sonuçları |
+| GET | `/api/certificates/list` | Sayfalanmış + filtrelenmiş liste |
+| GET | `/api/warnings` | Uyarı gerektiren sertifikalar |
+| GET | `/api/history/{domain}` | Domain kontrol geçmişi (son 30) |
+| GET | `/api/history/{domain}/alerts` | Domain uyarı olayları |
+| GET | `/api/check/{domain}` | Domain'i hemen kontrol et |
+| GET | `/api/activity` | Aktivite logu (varsayılan son 24 saat) |
+| GET | `/api/stats` | İstatistikler |
+| GET | `/api/renewal-advice` | Yenileme önerileri |
+| POST | `/api/scheduler/run` | Zamanlayıcıyı hemen çalıştır |
+| GET | `/api/scheduler/status` | Zamanlayıcı durumu |
+
+### Admin
+
+| Metot | Endpoint | Açıklama |
+|-------|----------|----------|
+| GET | `/api/admin/inventory` | Envanter listesi |
+| POST | `/api/admin/inventory` | Domain ekle |
+| PUT | `/api/admin/inventory/{id}` | Domain güncelle |
+| DELETE | `/api/admin/inventory/{id}` | Domain sil |
+| GET | `/api/admin/thresholds` | Uyarı eşikleri |
+| POST | `/api/admin/thresholds` | Yeni eşik oluştur |
+| PUT | `/api/admin/thresholds/{id}` | Eşik güncelle |
+| GET | `/api/admin/contacts` | Aktif eskalasyon kişileri |
+| GET | `/api/admin/contacts/all` | Tüm eskalasyon kişileri |
+| POST | `/api/admin/contacts` | Kişi ekle |
+| PUT | `/api/admin/contacts/{id}` | Kişi güncelle |
+| DELETE | `/api/admin/contacts/{id}` | Kişi sil |
+| GET | `/api/admin/alerts` | Uyarı olayları |
+| POST | `/api/admin/alerts/{id}/acknowledge` | Uyarıyı onayla |
+| POST | `/api/admin/alerts/{id}/resolve` | Uyarıyı çöz |
+| POST | `/api/admin/alerts/{id}/re-notify` | Yeniden bildir |
+| GET | `/api/admin/alerts/{id}/notifications` | Bildirim geçmişi |
+
+### Auth
+
+| Metot | Endpoint | Açıklama |
+|-------|----------|----------|
+| POST | `/api/login` | Giriş yap |
+| POST | `/api/logout` | Çıkış yap |
+| GET | `/api/me` | Mevcut oturum bilgisi |
+
+### Örnek API Yanıtı
+
+```bash
+curl -u user:changeme-local-dev http://localhost:8080/api/certificates
+```
+
 ```json
 {
   "success": true,
@@ -118,173 +268,103 @@ Tüm sertifikaların son kontrol sonuçlarını al.
     {
       "domain": "google.com",
       "subject": "google.com",
-      "issuer_cn": "Google Internet Authority G3",
-      "not_before": "2024-01-01T00:00:00",
-      "not_after": "2025-01-01T00:00:00",
-      "days_remaining": 245,
-      "warning": false,
-      "status": "valid",
-      "checked_at": "2026-05-13T10:30:00"
+      "issuerCn": "WR2",
+      "notBefore": "2026-03-17T08:22:36",
+      "notAfter": "2026-06-09T08:22:35",
+      "daysRemaining": 24,
+      "warning": true,
+      "status": "warning",
+      "checkedAt": "2026-05-16T02:00:00"
     }
   ],
-  "timestamp": "2026-05-13T10:35:00"
+  "timestamp": "2026-05-16T10:00:00"
 }
 ```
 
-### GET /api/warnings
-Uyarı gerektiren sertifikaları al.
-
-### GET /api/history/<domain>
-Belirtilen domain'in kontrol geçmişini al (son 30 kontrol).
-
-### GET /api/check/<domain>
-Belirtilen domain'i hemen kontrol et.
-
-### POST /api/scheduler/run
-Zamanlayıcıyı hemen çalıştır.
-
-### GET /api/stats
-İstatistikleri al.
-
-### GET /api/scheduler/status
-Zamanlayıcı durumunu al.
-
-## Yapılandırma
-
-### Günlük Kontrol Saati Değiştirme
-
-`backend/app.py` dosyasında:
-
-```python
-# Günlük kontrol saati (varsayılan: 02:00)
-scheduler.start(hour=2, minute=0)
-```
-
-Örneğin, her gün saat 03:30'da kontrol etmek için:
-```python
-scheduler.start(hour=3, minute=30)
-```
-
-### Timeout Ayarı
-
-`backend/certificate_checker.py` dosyasında:
-
-```python
-# Varsayılan: 10 saniye
-checker = CertificateChecker(timeout=10)
-```
-
-## Uyarı Sistemi
-
-### 30 Gün Uyarısı
-
-Sertifika bitiş tarihine 30 gün kaldığında otomatik olarak uyarı durumu aktif olur. Dashboard'da:
-
-- Uyarılı sertifikalar sarı renkte gösterilir
-- **⚠️ Uyarılar** sekmesinde listelenir
-- Kalan gün sayısı gösterilir
-
-### Süresi Geçmiş Sertifikalar
-
-Sertifika tarihinden sonra:
-
-- Kırmızı renkte gösterilir
-- Kritik olarak işaretlenir
-- Derhal güncellenmesi gerekir
-
-### Hata Durumu
-
-Sertifika kontrol edilemezse:
-
-- Hata mesajı gösterilir
-- İndis verilir
-- Bağlantı sorunları kontrol edilmeli
-
 ## Veritabanı
 
-Sistem SQLite veritabanı kullanır (`data/certificates.db`).
+Geliştirmede SQLite (`data/certificates.db`) otomatik oluşturulur.
 
 **Tablolar:**
 
-1. **certificate_checks** - Tüm kontrol geçmişi
-2. **latest_checks** - En son kontrol sonuçları (hızlı erişim)
+| Tablo | Açıklama |
+|-------|----------|
+| `certificate_checks` | Tüm kontrol geçmişi |
+| `latest_checks` | Domain başına en son sonuç |
+| `certificate_inventory` | Yönetilen domain envanteri |
+| `alert_thresholds` | Uyarı eşik tanımları |
+| `alert_events` | Uyarı olayları ve durumları |
+| `escalation_contacts` | Bildirim alıcıları |
+| `notification_logs` | E-posta / webhook gönderim geçmişi |
 
-Veritabanı otomatik olarak oluşturulur. Elle müdahale gerekmez.
+## Kubernetes Dağıtımı
 
-## Günlükleme
-
-Tüm işlemler günlüğe kaydedilir:
-
+```bash
+helm upgrade --install cert-monitor ./helm/cert-monitor \
+  -f helm/cert-monitor/values.yaml \
+  -f helm/cert-monitor/environments/master.yaml \
+  --set image.tag=1.0.0 \
+  --set secret.adminPassword=$ADMIN_PASSWORD \
+  --set secret.dbPassword=$DB_PASSWORD \
+  -n cert-monitor --create-namespace
 ```
-2026-05-13 10:30:00 - INFO - Sertifika kontrolü başlandı
-2026-05-13 10:30:01 - INFO - Yüklenen domain sayısı: 5
-2026-05-13 10:30:05 - INFO - Kontrol tamamlandı - Başarılı: 5, Uyarı: 1, Hata: 0
-```
+
+Ortam bazlı değer dosyaları:
+
+| Dosya | Ortam | Özellikler |
+|-------|-------|-----------|
+| `environments/master.yaml` | Üretim | 3 replica, HPA min:3/max:10, PDB |
+| `environments/release.yaml` | Staging | 2 replica, HPA min:2/max:5 |
+| `environments/develop.yaml` | Geliştirme | 1 replica, HPA kapalı, e-posta kapalı |
+
+## Güvenlik
+
+- Tüm kimlik bilgileri ortam değişkenlerinden okunur — kod içinde hardcoded değer yok
+- HTTP güvenlik başlıkları: `X-Content-Type-Options`, `X-Frame-Options`, `X-XSS-Protection`, `Referrer-Policy`, `Content-Security-Policy`, `Permissions-Policy`
+- CORS yalnızca yapılandırılmış kaynaklara izin verir
+- Konteyner root olmayan kullanıcı (UID 1000) ile çalışır
+- Konteyner kök dosya sistemi salt okunur
+- K8s pod güvenlik bağlamında tüm yetenekler düşürülür
+- TLS Ingress üzerinden zorunlu (`ssl-redirect: true`)
 
 ## Sorun Giderme
 
-### "Dosya bulunamadı: sertifikaListesi.txt"
+### "Port 8080 zaten kullanımda"
 
-`backend/app.py` başlatırken:
-1. `sertifikaListesi.txt` dosyasının proje kök dizininde olduğundan emin olun
-2. Dosya boş ise bile oluşturulması gerekir
+`application.properties` içinde:
 
-### "Port 5000 zaten kullanımda"
-
-Başka bir uygulamanın port 5000'i kullanıyor. Çözümler:
-1. Diğer uygulamayı kapatın
-2. Veya `app.py`'de port numarasını değiştirin:
-```python
-app.run(debug=True, host='0.0.0.0', port=5001)
+```properties
+server.port=8081
 ```
 
-### "SSL: CERTIFICATE_VERIFY_FAILED"
+### "Sertifika kontrol edilemiyor"
 
-Bazı ağlarda sertifika doğrulaması sorun yaratabilir. `certificate_checker.py` dosyasında:
+1. Ağ bağlantısını ve güvenlik duvarı kurallarını kontrol edin
+2. `curl -v https://domain.com` ile doğrudan test edin
+3. Backend günlüklerini inceleyin: `docker logs cert-monitor`
 
-```python
-context = ssl.create_default_context()
-# Doğrulamayı devre dışı bırakmak için (güvenli değildir):
-context.check_hostname = False
-context.verify_mode = ssl.CERT_NONE
-```
-
-### Dashboard Boş Görünüyor
+### "Dashboard boş görünüyor"
 
 1. Tarayıcı konsolunda hata olup olmadığını kontrol edin (F12)
-2. `sertifikaListesi.txt`'de domain'ler olup olmadığını kontrol edin
-3. Backend sunucusunun çalıştığını kontrol edin
+2. `sertifikaListesi.txt` dosyasında veya envanterinde domain olduğunu doğrulayın
+3. "Şimdi Kontrol Et" düğmesine basarak ilk kontrolü tetikleyin
 
-## Güvenlik Notları
+### E-posta gönderilmiyor
 
-- Sistem local network'te çalıştırılabilir
-- Production ortamında HTTPS kullanın
-- API endpoint'leri authentication ile korunmalı
-- Veritabanı dosyasını yedekleyin
+1. `CERT_MONITOR_EMAIL_ENABLED=true` olduğunu doğrulayın
+2. SMTP kimlik bilgilerini kontrol edin
+3. Admin Paneli → Uyarı Geçmişi → ilgili uyarı → Bildirim geçmişinde hata mesajını inceleyin
 
 ## Performans
 
-- Yüzlerce domain aynı anda kontrol edilebilir
-- Kontrol süresi domain sayısına ve ağ hızına bağlıdır
-- Tipik olarak: 100 domain ≈ 30-60 saniye
-
-## Geliştirilecek Özellikler
-
-- [ ] Email/SMS uyarıları
-- [ ] Active Directory entegrasyonu
-- [ ] Sertifika yenileme önerileri
-- [ ] Multithreaded kontrol (paralel)
-- [ ] Docker desteği
-- [ ] Prometheus metrikleri
-
-## Destek
-
-Sorunlar veya öneriler için proje sahibine başvurun.
+- Varsayılan olarak 20 paralel iş parçacığı ile kontrol yapılır
+- `cert.monitor.workers=N` ile artırılabilir
+- Tipik süreler: 50 domain ≈ 5-10s, 200 domain ≈ 15-30s
 
 ## Lisans
 
-Bu proje dahili kullanım için tasarlanmıştır.
+Dahili kullanım için tasarlanmıştır.
 
 ---
 
-**Son Güncelleme:** 13 Mayıs 2026
+**Sürüm:** 1.0.0 — Son Güncelleme: 16 Mayıs 2026
