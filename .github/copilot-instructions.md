@@ -1,125 +1,121 @@
-# SSL/TLS Sertifika İzleme Sistemi Projesi
+# SSL/TLS Sertifika İzleme Sistemi — Geliştirici Rehberi
 
 ## Proje Açıklaması
 
-Bu proje, kurumunuzun SSL/TLS sertifikalarını otomatik olarak izleyen, günlük kontrol yapan ve 30 gün kala uyarı veren kapsamlı bir sistemdir.
+Kurumsal SSL/TLS sertifikalarını otomatik izleyen, çok seviyeli uyarı veren ve yöneten tam yığın bir web uygulamasıdır.
 
-**Ana Bileşenler:**
-- Python backend: SSL/TLS sertifika kontrol motoru
-- Flask web sunucusu: REST API ve web arayüzü
-- SQLite veritabanı: Tüm kontrol geçmişi
-- APScheduler: Günlük otomatik kontrol
-- Modern Web Dashboard: Grafiksel arayüz
+## Teknoloji Yığını
+
+- **Backend:** Java 21, Spring Boot 3.3.6, Spring Data JPA, BouncyCastle
+- **Veritabanı:** SQLite (geliştirme) / PostgreSQL (üretim)
+- **Frontend:** React 18.3.1, Vite 5, lucide-react
+- **Konteyner:** Docker (çok aşamalı build), Docker Compose
+- **K8s:** Helm chart v0.1.0
+- **CI/CD:** GitHub Actions
 
 ## Proje Yapısı
 
 ```
 cert-monitor/
-├── backend/              # Python backend
-│   ├── app.py           # Ana Flask uygulaması
-│   ├── certificate_checker.py
-│   ├── database.py
-│   ├── scheduler.py
-│   └── requirements.txt
-├── frontend/            # Web dashboard
-│   ├── index.html
-│   ├── style.css
-│   └── script.js
-├── data/                # Veritabanı dizini
-└── sertifikaListesi.txt # Kontrol edilecek domain'ler
+├── backend/src/main/java/com/certmonitor/
+│   ├── controller/        # CertificateController, AdminController, AuthController
+│   ├── service/           # CertificateService, CertificateCheckerService,
+│   │                      # ChainValidationService, SchedulerService,
+│   │                      # EscalationService, EmailNotificationService,
+│   │                      # WebhookService, RememberMeService
+│   ├── model/             # CertificateCheck, LatestCheck, CertificateInventory,
+│   │                      # AlertThreshold, AlertEvent, EscalationContact,
+│   │                      # NotificationLog
+│   ├── repository/        # Spring Data JPA repository arayüzleri
+│   └── config/            # WebConfig (CORS + güvenlik başlıkları),
+│                          # GlobalExceptionHandler, AuthInterceptor
+├── frontend/src/
+│   ├── components/        # Nav, StatsPanel, CertificatesTable, CertificateCard,
+│   │                      # CertificateModal, ActivityLog, RenewalAdvice
+│   ├── components/admin/  # AdminPanel, InventoryManager, AlertThresholds,
+│   │                      # EscalationContacts, AlertHistory
+│   ├── components/ui/     # Dialog
+│   ├── pages/             # Login
+│   ├── api/client.js      # Fetch tabanlı API istemcisi
+│   └── i18n/              # index.jsx (useT hook), theme.jsx (koyu/açık mod)
+├── helm/cert-monitor/     # Helm chart
+│   └── environments/      # master.yaml, develop.yaml, release.yaml
+├── scripts/               # build-image.sh, build-image.ps1
+└── .github/workflows/     # ci.yml, docker-build.yml, release.yml
 ```
 
-## Teknoloji Stack
+## API Endpoints
 
-- **Backend:** Python 3.8+, Flask
-- **Veritabanı:** SQLite
-- **Zamanlama:** APScheduler
-- **Frontend:** HTML5, CSS3, Vanilla JavaScript
-- **API:** RESTful
+**Temel — `/api`**
 
-## Özellikler
+- `GET /certificates` — Tüm son kontrol sonuçları
+- `GET /certificates/list` — Sayfalanmış, filtrelenmiş liste
+- `GET /warnings` — Uyarı gerektiren sertifikalar
+- `GET /history/{domain}` — Domain kontrol geçmişi (son 30)
+- `GET /history/{domain}/alerts` — Domain uyarı olayları
+- `GET /check/{domain}` — Domain'i hemen kontrol et
+- `GET /activity` — Aktivite logu
+- `GET /stats` — İstatistikler
+- `GET /renewal-advice` — Yenileme önerileri
+- `POST /scheduler/run` — Zamanlayıcıyı tetikle
+- `GET /scheduler/status` — Zamanlayıcı durumu
 
-1. **Otomatik Günlük Kontrol** - Belirtilen saatte (varsayılan 02:00)
-2. **30 Gün Uyarısı** - Sertifikalar bitecekken otomatik uyarı
-3. **Web Dashboard** - Modern ve responsive arayüz
-4. **REST API** - Harici sistemlerle entegrasyon
-5. **Veritabanı** - Tüm kontrol geçmişi kaydı
-6. **İstatistikler** - Özet bilgi ve analytics
+**Admin — `/api/admin`**
 
-## Kurulum Adımları
+- `GET/POST /inventory` — Domain envanteri
+- `PUT/DELETE /inventory/{id}` — Envanter güncelle/sil
+- `GET/POST /thresholds` — Uyarı eşikleri
+- `PUT /thresholds/{id}` — Eşik güncelle
+- `GET/POST /contacts` — Eskalasyon kişileri
+- `PUT/DELETE /contacts/{id}` — Kişi güncelle/sil
+- `GET /alerts` — Uyarı olayları
+- `POST /alerts/{id}/acknowledge` — Uyarıyı onayla
+- `POST /alerts/{id}/resolve` — Uyarıyı çöz
+- `POST /alerts/{id}/re-notify` — Yeniden bildir
+- `GET /alerts/{id}/notifications` — Bildirim geçmişi
 
-1. Backend bağımlılıklarını yükle: `pip install -r backend/requirements.txt`
-2. `sertifikaListesi.txt`'e domain'leri ekle
-3. `backend/app.py` başlat: `python app.py`
-4. Web tarayıcıda http://localhost:5000 aç
+**Auth — `/api`**
 
-## Ana API Endpoints
+- `POST /login`, `POST /logout`, `GET /me`
 
-- GET `/api/certificates` - Tüm sertifikalar
-- GET `/api/warnings` - Uyarılı sertifikalar
-- GET `/api/history/<domain>` - Domain geçmişi
-- GET `/api/check/<domain>` - Belirli domain'i kontrol et
-- POST `/api/scheduler/run` - Hemen kontrol et
-- GET `/api/stats` - İstatistikler
+## Veri Modelleri
 
-## Yapılandırma
+**CertificateCheck / LatestCheck:** domain, subject, issuer, issuerCn, notBefore, notAfter,
+daysRemaining, warning (boolean), status (valid/warning/high/critical/error),
+error, san, runId, checkedAt, chainValid, ocspStatus, crlStatus, fingerprint
 
-- Kontrol saati: `backend/app.py` 'de `scheduler.start(hour=2, minute=0)`
-- Timeout: `backend/certificate_checker.py` 'de `CertificateChecker(timeout=10)`
-- Domain listesi: `sertifikaListesi.txt`
+**CertificateInventory:** domain, port (443), description, owner, tags, active,
+expectedFingerprint, expectedSubject, createdAt, updatedAt
 
-## Kullanım
+**AlertThreshold:** name, warningDays (30), highDays (15), criticalDays (7),
+reAlertIntervalHours (24), active
 
-1. Dashboard'da tüm sertifikaları görüntüle
-2. Uyarılar sekmesinde kritik sertifikaları kontrol et
-3. İsteğe bağlı olarak "Şimdi Kontrol Et" ile hemen çalıştır
-4. Sertifika detaylarını tıklayarak görüntüle
+**AlertEvent:** domain, severity (WARNING/HIGH/CRITICAL), status (OPEN/ACKNOWLEDGED/RESOLVED),
+message, acknowledgedBy, acknowledgedAt, resolvedBy, resolvedAt, createdAt
 
-## Veritabanı
+**EscalationContact:** name, email, role (PO/TECH/MANAGER/CLEVEL),
+minAlertLevel (WARNING/HIGH/CRITICAL), webhookUrl, webhookType (TEAMS/SLACK), active
 
-SQLite veritabanı (`data/certificates.db`) şu tabloları içerir:
-- `certificate_checks` - Tüm kontrol geçmişi
-- `latest_checks` - En son sonuçlar
+**NotificationLog:** alertEvent (FK), contact (FK), type (EMAIL/WEBHOOK),
+status (SENT/FAILED), error, sentAt
 
-## Günlükleme
+## Frontend Notları
 
-Tüm işlemler backend'de kaydedilir (stdout ve log dosyaları).
+- Tüm ikonlar `lucide-react`'tan — emoji kullanılmaz
+- Tema `[data-theme="dark"]` CSS özelliği ile yönetilir; `useTheme()` hook'u ile erişilir
+- Çok dil `useT(key)` hook'u ile çalışır; dil localStorage'da saklanır
+- API base URL `/api`'dir; geliştirmede Vite proxy 5173 → 8080 yönlendirir
+- 401 yanıtı otomatik `null` döndürür; `App.jsx` oturumu sonlandırır
 
-## Sorun Giderme
+## Güvenlik Kuralları
 
-- Port 5000 kullanımda: `app.py`'de port değiştir
-- Domain liste boş: `sertifikaListesi.txt`'e domain ekle
-- Kontrol çalışmıyor: Ağ bağlantısını ve firewall kurallarını kontrol et
+- Kod içinde hardcoded kimlik bilgisi ekleme — ortam değişkeni kullan
+- CORS `WebConfig.java` içinde `${CORS_ALLOWED_ORIGINS}` ile yapılandırılır
+- Güvenlik başlıkları `OncePerRequestFilter` ile eklenir (WebConfig içinde)
+- `k8s/secret.yaml` `.gitignore` içindedir; template olarak `secret.example.yaml` kullanılır
 
-## Güvenlik
+## Geliştirme Ortamı
 
-- Local network'te kullanılmalı
-- Production'da HTTPS gerekli
-- API endpoint'leri authentication ile korunmalı
-
-## Performans
-
-- 100 domain kontrol: ~30-60 saniye
-- Veritabanı: Yüzlerce domain'in geçmişi saklar
-- Sunucu: Çok sayıda eşzamanlı bağlantı destekler
-
-## Geliştirme
-
-- Email uyarıları eklenebilir
-- Prometheus metrikleri entegre edilebilir
-- Docker containerization yapılabilir
-- Multithreading ile hız artırılabilir
-
-## Bakım
-
-- Veritabanı düzenli olarak yedeklenmelidir
-- Eski veritabanı kayıtları periyodik olarak temizlenebilir
-- Log dosyaları kontrol edilmelidir
-
-## Lisans
-
-Dahili kullanım için tasarlanmıştır.
-
----
-
-**Başlama Tarihi:** 13 Mayıs 2026
+Backend: `http://localhost:8080`  
+Frontend (dev): `http://localhost:5173`  
+Varsayılan kimlik: `user` / `changeme-local-dev`
