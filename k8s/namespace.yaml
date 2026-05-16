@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: cert-monitor
+  labels:
+    app.kubernetes.io/name: cert-monitor
+    app.kubernetes.io/part-of: cert-monitor

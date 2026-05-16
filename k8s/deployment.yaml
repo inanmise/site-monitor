@@ -1,0 +1,163 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cert-monitor
+  namespace: cert-monitor
+  labels:
+    app: cert-monitor
+    version: "1.0.0"
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: cert-monitor
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0    # Zero-downtime deployments
+  template:
+    metadata:
+      labels:
+        app: cert-monitor
+        version: "1.0.0"
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: cert-monitor
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+      containers:
+        - name: cert-monitor
+          image: cert-monitor:1.0.0  # Replace with your registry image
+          imagePullPolicy: Always
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          env:
+            - name: SPRING_PROFILES_ACTIVE
+              valueFrom:
+                configMapKeyRef:
+                  name: cert-monitor-config
+                  key: SPRING_PROFILES_ACTIVE
+            - name: DB_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: cert-monitor-config
+                  key: DB_HOST
+            - name: DB_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: cert-monitor-config
+                  key: DB_PORT
+            - name: DB_NAME
+              valueFrom:
+                configMapKeyRef:
+                  name: cert-monitor-config
+                  key: DB_NAME
+            - name: DB_USER
+              valueFrom:
+                configMapKeyRef:
+                  name: cert-monitor-config
+                  key: DB_USER
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: cert-monitor-secret
+                  key: DB_PASSWORD
+            - name: ADMIN_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: cert-monitor-secret
+                  key: ADMIN_USERNAME
+            - name: ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: cert-monitor-secret
+                  key: ADMIN_PASSWORD
+            - name: EMAIL_ENABLED
+              valueFrom:
+                configMapKeyRef:
+                  name: cert-monitor-config
+                  key: EMAIL_ENABLED
+            - name: SMTP_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: cert-monitor-config
+                  key: SMTP_HOST
+            - name: SMTP_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: cert-monitor-config
+                  key: SMTP_PORT
+            - name: SMTP_USER
+              valueFrom:
+                secretKeyRef:
+                  name: cert-monitor-secret
+                  key: SMTP_USER
+            - name: SMTP_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: cert-monitor-secret
+                  key: SMTP_PASSWORD
+            - name: EMAIL_TO
+              valueFrom:
+                secretKeyRef:
+                  name: cert-monitor-secret
+                  key: EMAIL_TO
+            - name: EMAIL_FROM
+              valueFrom:
+                secretKeyRef:
+                  name: cert-monitor-secret
+                  key: EMAIL_FROM
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "250m"
+            limits:
+              memory: "1Gi"
+              cpu: "1000m"
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            failureThreshold: 3
+          startupProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            failureThreshold: 12
+            periodSeconds: 10
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
+      terminationGracePeriodSeconds: 60
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: DoNotSchedule
+          labelSelector:
+            matchLabels:
+              app: cert-monitor

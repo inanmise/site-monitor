@@ -1,0 +1,114 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# CertMonitor Helm Values
+# Override with: helm install cert-monitor ./helm/cert-monitor -f my-values.yaml
+# ─────────────────────────────────────────────────────────────────────────────
+
+replicaCount: 3
+
+image:
+  repository: cert-monitor
+  tag: "1.0.0"
+  pullPolicy: Always
+
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+service:
+  type: ClusterIP
+  port: 80
+  targetPort: 8080
+
+ingress:
+  enabled: true
+  className: nginx
+  host: cert-monitor.example.com
+  tls:
+    enabled: true
+    secretName: cert-monitor-tls
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "60"
+    nginx.ingress.kubernetes.io/proxy-body-size: "1m"
+
+# Application configuration (non-sensitive)
+config:
+  springProfile: prod
+  dbHost: postgres
+  dbPort: "5432"
+  dbName: certmonitor
+  dbUser: certmonitor
+  emailEnabled: "false"
+  smtpHost: smtp.gmail.com
+  smtpPort: "587"
+  corsAllowedOrigins: ""
+  certCheckTimeout: "10"
+  certWarningDays: "30"
+  certParallelWorkers: "20"
+  certCheckHour: "2"
+  certCheckMinute: "0"
+
+# Sensitive values — provide via --set or external secret manager
+# Do NOT commit real values here
+secret:
+  # If existingSecret is set, an existing K8s Secret is used instead of creating one
+  existingSecret: ""
+  adminUsername: "admin"
+  adminPassword: "REPLACE_ME"
+  dbPassword: "REPLACE_ME"
+  smtpUser: ""
+  smtpPassword: ""
+  emailTo: ""
+  emailFrom: "noreply@certmonitor"
+
+resources:
+  requests:
+    memory: "512Mi"
+    cpu: "250m"
+  limits:
+    memory: "1Gi"
+    cpu: "1000m"
+
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 70
+  targetMemoryUtilizationPercentage: 80
+
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+
+podAnnotations:
+  prometheus.io/scrape: "true"
+  prometheus.io/port: "8080"
+  prometheus.io/path: "/metrics"
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  fsGroup: 1000
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: ["ALL"]
+
+# Node affinity / spread
+topologySpreadConstraints:
+  enabled: true
+  maxSkew: 1
+  topologyKey: kubernetes.io/hostname
+
+# PostgreSQL — enable to deploy a bundled Postgres instance (dev/staging)
+postgresql:
+  enabled: false
+  image: postgres:16-alpine
+  storage: 10Gi
+  storageClass: ""

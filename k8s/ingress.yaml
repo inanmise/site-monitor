@@ -1,0 +1,27 @@
+# Standard Kubernetes Ingress (nginx / Traefik)
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: cert-monitor
+  namespace: cert-monitor
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "60"
+    nginx.ingress.kubernetes.io/proxy-body-size: "1m"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - cert-monitor.example.com   # Replace with your domain
+      secretName: cert-monitor-tls
+  rules:
+    - host: cert-monitor.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: cert-monitor
+                port:
+                  name: http

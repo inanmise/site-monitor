@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cert-monitor-config
+  namespace: cert-monitor
+data:
+  SPRING_PROFILES_ACTIVE: "prod"
+  DB_HOST: "postgres"
+  DB_PORT: "5432"
+  DB_NAME: "certmonitor"
+  DB_USER: "certmonitor"
+  SMTP_HOST: "smtp.gmail.com"
+  SMTP_PORT: "587"
+  EMAIL_ENABLED: "false"
+  CERT_CHECK_TIMEOUT: "10"
+  CERT_WARNING_DAYS: "30"
+  CERT_PARALLEL_WORKERS: "20"
+  CERT_CHECK_HOUR: "2"
+  CERT_CHECK_MINUTE: "0"

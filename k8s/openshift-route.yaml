@@ -1,0 +1,20 @@
+# OpenShift Route (alternative to Ingress)
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: cert-monitor
+  namespace: cert-monitor
+  labels:
+    app: cert-monitor
+spec:
+  host: cert-monitor.apps.your-cluster.example.com   # Replace with your route
+  to:
+    kind: Service
+    name: cert-monitor
+    weight: 100
+  port:
+    targetPort: http
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
+  wildcardPolicy: None

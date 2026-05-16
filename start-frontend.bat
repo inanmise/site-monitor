@@ -1,0 +1,6 @@
+@echo off
+set "PATH=C:\Program Files\nodejs;%PATH%"
+cd /d D:\cert-monitor\frontend
+echo Starting React frontend...
+npm run dev
+pause

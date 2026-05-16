@@ -1,0 +1,79 @@
+import { useEffect, useState } from 'react'
+import { api, formatDateOnly } from '../api/client'
+import { useT } from '../i18n/index.jsx'
+
+const PRIORITY_COLOR = { critical: '#dc3545', warning: '#fd7e14', info: '#0d6efd' }
+
+export default function RenewalAdvice() {
+  const t = useT()
+  const [advice, setAdvice] = useState([])
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    api.getRenewalAdvice().then((res) => {
+      if (res?.success) setAdvice(res.data)
+      setLoading(false)
+    })
+  }, [])
+
+  const PRIORITY_LABEL = {
+    critical: t('renewal.critical'),
+    warning:  t('renewal.warning'),
+    info:     t('renewal.info'),
+  }
+
+  if (loading) return <div className="loading">{t('renewal.loading')}</div>
+  if (advice.length === 0)
+    return <div className="loading">{t('renewal.allGood')}</div>
+
+  return (
+    <div className="renewal-container">
+      {advice.map((item, i) => {
+        const color = PRIORITY_COLOR[item.priority] || '#6c757d'
+        const label = PRIORITY_LABEL[item.priority] || item.priority
+        const days = item.days_remaining
+        const daysAbs = days !== null && days !== undefined ? Math.abs(days) : null
+        const daysLabel = days === null || days === undefined
+          ? t('renewal.unknown')
+          : days < 0 ? t('renewal.daysAgo') : t('renewal.daysLeft')
+
+        return (
+          <div key={i} className="renewal-card" style={{ borderLeftColor: color }}>
+
+            <div className="renewal-card-body">
+              <div className="renewal-card-header">
+                <span className="renewal-badge" style={{ background: color }}>{label}</span>
+                <strong className="renewal-domain">{item.domain}</strong>
+              </div>
+              <div className="renewal-message">{item.message}</div>
+              <div className="renewal-action">
+                <strong>{t('renewal.action')}</strong> <code>{item.action}</code>
+              </div>
+            </div>
+
+            <div
+              className="renewal-expiry-stamp"
+              style={{
+                background: `linear-gradient(150deg, ${color}18 0%, ${color}38 100%)`,
+                borderLeftColor: `${color}50`,
+              }}
+            >
+              <span className="expiry-days-num" style={{ color }}>
+                {daysAbs !== null ? daysAbs : '?'}
+              </span>
+              <span className="expiry-days-lbl" style={{ color }}>
+                {daysLabel}
+              </span>
+              <div className="expiry-divider" style={{ background: `${color}40` }} />
+              <span className="expiry-date-caption">{t('renewal.expiry')}</span>
+              <span className="expiry-date-val">
+                {formatDateOnly(item.not_after)}
+              </span>
+            </div>
+
+          </div>
+        )
+      })}
+    </div>
+  )
+}

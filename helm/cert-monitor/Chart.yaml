@@ -1,0 +1,19 @@
+apiVersion: v2
+name: cert-monitor
+description: SSL/TLS Certificate Monitoring System with alerting, escalation, and Kubernetes-native HA support.
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
+keywords:
+  - certificate
+  - ssl
+  - tls
+  - monitoring
+  - alerting
+home: https://github.com/your-org/cert-monitor
+sources:
+  - https://github.com/your-org/cert-monitor
+maintainers:
+  - name: your-name
+    email: your@email.com
+dependencies: []

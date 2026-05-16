@@ -1,0 +1,41 @@
+# ── Java / Maven ─────────────────────────────────────
+backend/target/
+*.class
+*.jar
+*.war
+
+# ── Node / Frontend ───────────────────────────────────
+frontend/node_modules/
+frontend/dist/
+
+# ── SQLite ────────────────────────────────────────────
+data/*.db
+
+# ── Environment / Secrets ─────────────────────────────
+.env
+.env.local
+.env.*.local
+# Keep the example file
+!.env.example
+
+# ── Kubernetes Secrets ────────────────────────────────
+# Do NOT commit real secret values — use secret.example.yaml as template
+k8s/secret.yaml
+# Keep example
+!k8s/secret.example.yaml
+
+# ── Logs ──────────────────────────────────────────────
+*.log
+logs/
+
+# ── IDE ───────────────────────────────────────────────
+.idea/
+.vscode/
+*.iml
+*.swp
+*.swo
+
+# ── OS ────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini

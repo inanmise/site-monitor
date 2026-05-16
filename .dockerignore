@@ -1,0 +1,39 @@
+# Version control
+.git
+.github
+.gitignore
+
+# Node
+frontend/node_modules
+frontend/dist
+
+# Maven build output
+backend/target
+
+# Local data
+data/
+*.db
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# IDE
+.idea
+.vscode
+*.iml
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docs / CI only
+*.md
+helm/
+k8s/
+*.bat
+*.sh
+
+# Logs
+*.log

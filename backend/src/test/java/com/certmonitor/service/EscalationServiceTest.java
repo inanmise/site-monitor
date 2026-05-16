@@ -1,0 +1,426 @@
+package com.certmonitor.service;
+
+import com.certmonitor.model.*;
+import com.certmonitor.repository.*;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.*;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.junit.jupiter.MockitoSettings;
+import org.mockito.quality.Strictness;
+
+import java.time.Instant;
+import java.time.ZoneOffset;
+import java.time.format.DateTimeFormatter;
+import java.time.temporal.ChronoUnit;
+import java.util.*;
+
+import static org.assertj.core.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.*;
+import static org.mockito.Mockito.*;
+import static org.mockito.Mockito.atLeast;
+
+@ExtendWith(MockitoExtension.class)
+@MockitoSettings(strictness = Strictness.LENIENT)
+class EscalationServiceTest {
+
+    @Mock AlertEventRepository alertEventRepo;
+    @Mock AlertThresholdRepository thresholdRepo;
+    @Mock EscalationContactRepository contactRepo;
+    @Mock EmailNotificationService emailService;
+    @Mock WebhookService webhookService;
+    @Mock NotificationLogRepository notificationLogRepo;
+    @Mock com.certmonitor.repository.LatestCheckRepository latestCheckRepo;
+
+    private EscalationService service;
+    private static final DateTimeFormatter ISO =
+            DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
+
+    @BeforeEach
+    void setUp() {
+        service = new EscalationService(alertEventRepo, thresholdRepo, contactRepo,
+                emailService, webhookService, new ObjectMapper(), notificationLogRepo, latestCheckRepo);
+
+        // Default active threshold
+        AlertThreshold t = defaultThreshold();
+        when(thresholdRepo.findFirstByActiveTrue()).thenReturn(Optional.of(t));
+    }
+
+    // ── processResults: new alert ─────────────────────────────────────────────
+
+    @Test
+    @DisplayName("New EXPIRY WARNING alert creates event and sends email")
+    void processResults_newExpiryWarning_createsEventAndSends() {
+        String domain = "expiring.example.com";
+        when(contactRepo.findByMinAlertLevelAndActiveTrue("WARNING")).thenReturn(List.of(contact("po@test.com", "PO", "WARNING")));
+        when(alertEventRepo.findOpenAlert(domain, "EXPIRY")).thenReturn(Optional.empty());
+        when(alertEventRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        service.processResults(List.of(expiryResult(domain, 25, true)));
+
+        ArgumentCaptor<AlertEvent> captor = ArgumentCaptor.forClass(AlertEvent.class);
+        verify(alertEventRepo, atLeast(1)).save(captor.capture());
+        AlertEvent saved = captor.getAllValues().get(0);
+        assertThat(saved.getDomain()).isEqualTo(domain);
+        assertThat(saved.getAlertLevel()).isEqualTo("WARNING");
+        assertThat(saved.getAlertType()).isEqualTo("EXPIRY");
+        assertThat(saved.getAcknowledged()).isFalse();
+        assertThat(saved.getResolved()).isFalse();
+        verify(emailService).sendAlert(eq("po@test.com"), contains("UYARI"), anyString(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("New CRITICAL alert (7 days) notifies all contacts")
+    void processResults_criticalExpiry_notifiesAllContacts() {
+        String domain = "urgent.example.com";
+        List<EscalationContact> allContacts = List.of(
+                contact("po@test.com", "PO", "WARNING"),
+                contact("manager@test.com", "MANAGER", "HIGH"),
+                contact("ceo@test.com", "CLEVEL", "CRITICAL")
+        );
+        when(contactRepo.findByActiveTrueOrderByRoleAsc()).thenReturn(allContacts);
+        when(alertEventRepo.findOpenAlert(domain, "EXPIRY")).thenReturn(Optional.empty());
+        when(alertEventRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        service.processResults(List.of(expiryResult(domain, 5, true)));
+
+        // 3 contacts notified
+        verify(emailService, times(3)).sendAlert(anyString(), contains("KRİTİK"), anyString(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("REVOKED cert always fires CRITICAL alert")
+    void processResults_revokedCert_criticalAlert() {
+        String domain = "revoked.example.com";
+        when(contactRepo.findByActiveTrueOrderByRoleAsc()).thenReturn(List.of(contact("sec@test.com", "TECH", "WARNING")));
+        when(alertEventRepo.findOpenAlert(domain, "REVOKED")).thenReturn(Optional.empty());
+        when(alertEventRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        Map<String, Object> result = Map.of(
+                "domain", domain, "status", "valid", "warning", false,
+                "days_remaining", 60,
+                "revocation_status", "REVOKED",
+                "chain_status", "VALID",
+                "deployment_status", "OK"
+        );
+        service.processResults(List.of(result));
+
+        ArgumentCaptor<AlertEvent> captor = ArgumentCaptor.forClass(AlertEvent.class);
+        verify(alertEventRepo, atLeast(1)).save(captor.capture());
+        assertThat(captor.getAllValues().get(0).getAlertLevel()).isEqualTo("CRITICAL");
+        assertThat(captor.getAllValues().get(0).getAlertType()).isEqualTo("REVOKED");
+    }
+
+    @Test
+    @DisplayName("DEPLOYMENT_INCOMPLETE fires CRITICAL MISMATCH alert")
+    void processResults_deploymentMismatch_criticalMismatchAlert() {
+        String domain = "mismatch.example.com";
+        when(contactRepo.findByActiveTrueOrderByRoleAsc()).thenReturn(List.of(contact("dev@test.com", "TECH", "WARNING")));
+        when(alertEventRepo.findOpenAlert(domain, "MISMATCH")).thenReturn(Optional.empty());
+        when(alertEventRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        Map<String, Object> result = Map.of(
+                "domain", domain, "status", "valid", "warning", false,
+                "days_remaining", 90, "revocation_status", "VALID",
+                "chain_status", "VALID", "deployment_status", "INCOMPLETE"
+        );
+        service.processResults(List.of(result));
+
+        ArgumentCaptor<AlertEvent> captor = ArgumentCaptor.forClass(AlertEvent.class);
+        verify(alertEventRepo, atLeast(1)).save(captor.capture());
+        assertThat(captor.getAllValues().get(0).getAlertType()).isEqualTo("MISMATCH");
+        assertThat(captor.getAllValues().get(0).getAlertLevel()).isEqualTo("CRITICAL");
+    }
+
+    @Test
+    @DisplayName("CHAIN_BROKEN fires CRITICAL alert")
+    void processResults_chainBroken_criticalAlert() {
+        String domain = "chain-broken.example.com";
+        when(contactRepo.findByActiveTrueOrderByRoleAsc()).thenReturn(List.of());
+        when(alertEventRepo.findOpenAlert(domain, "CHAIN_BROKEN")).thenReturn(Optional.empty());
+        when(alertEventRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        Map<String, Object> result = Map.of(
+                "domain", domain, "status", "valid", "warning", false,
+                "days_remaining", 90, "revocation_status", "VALID",
+                "chain_status", "BROKEN", "deployment_status", "OK"
+        );
+        service.processResults(List.of(result));
+
+        ArgumentCaptor<AlertEvent> captor = ArgumentCaptor.forClass(AlertEvent.class);
+        verify(alertEventRepo, atLeast(1)).save(captor.capture());
+        assertThat(captor.getAllValues().get(0).getAlertType()).isEqualTo("CHAIN_BROKEN");
+    }
+
+    // ── processResults: escalation ────────────────────────────────────────────
+
+    @Test
+    @DisplayName("Level escalation from WARNING to HIGH resets ACK and re-notifies")
+    void processResults_levelEscalation_resetsAckAndNotifies() {
+        String domain = "escalate.example.com";
+        AlertEvent existing = existingOpenAlert(domain, "EXPIRY", "WARNING", false);
+        when(alertEventRepo.findOpenAlert(domain, "EXPIRY")).thenReturn(Optional.of(existing));
+        when(alertEventRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(contactRepo.findByMinAlertLevelInAndActiveTrue(List.of("WARNING", "HIGH")))
+                .thenReturn(List.of(contact("mgr@test.com", "MANAGER", "HIGH")));
+
+        // Now only 10 days left → HIGH
+        service.processResults(List.of(expiryResult(domain, 10, true)));
+
+        ArgumentCaptor<AlertEvent> captor = ArgumentCaptor.forClass(AlertEvent.class);
+        verify(alertEventRepo).save(captor.capture());
+        AlertEvent saved = captor.getValue();
+        assertThat(saved.getAlertLevel()).isEqualTo("HIGH");
+        assertThat(saved.getAcknowledged()).isFalse();
+        verify(emailService).sendAlert(anyString(), contains("YÜKSEK"), anyString(), any(), any(), any(), any(), any());
+    }
+
+    // ── processResults: re-alert ──────────────────────────────────────────────
+
+    @Test
+    @DisplayName("Unacknowledged alert past re-alert interval fires re-alert")
+    void processResults_unacknowledgedPastInterval_reAlerts() {
+        String domain = "renotify.example.com";
+        // Last re-alert was 30 hours ago, interval is 24h → should re-alert
+        String thirtyHoursAgo = ISO.format(Instant.now().minus(30, ChronoUnit.HOURS));
+        AlertEvent existing = existingOpenAlert(domain, "EXPIRY", "WARNING", false);
+        existing.setLastReAlertAt(thirtyHoursAgo);
+        when(alertEventRepo.findOpenAlert(domain, "EXPIRY")).thenReturn(Optional.of(existing));
+        when(alertEventRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(contactRepo.findByMinAlertLevelAndActiveTrue("WARNING"))
+                .thenReturn(List.of(contact("po@test.com", "PO", "WARNING")));
+
+        service.processResults(List.of(expiryResult(domain, 25, true)));
+
+        verify(emailService).sendAlert(eq("po@test.com"), contains("[RE-ALERT]"), anyString(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("Unacknowledged alert within re-alert interval is not re-sent")
+    void processResults_unacknowledgedWithinInterval_noReAlert() {
+        String domain = "quiet.example.com";
+        // Last re-alert was 1 hour ago, interval is 24h → should NOT re-alert
+        String oneHourAgo = ISO.format(Instant.now().minus(1, ChronoUnit.HOURS));
+        AlertEvent existing = existingOpenAlert(domain, "EXPIRY", "WARNING", false);
+        existing.setLastReAlertAt(oneHourAgo);
+        when(alertEventRepo.findOpenAlert(domain, "EXPIRY")).thenReturn(Optional.of(existing));
+
+        service.processResults(List.of(expiryResult(domain, 25, true)));
+
+        verify(alertEventRepo, never()).save(any());
+        verify(emailService, never()).sendAlert(anyString(), anyString(), anyString(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("Acknowledged alert is not re-sent even after interval")
+    void processResults_acknowledgedAlert_noReAlert() {
+        String domain = "acked.example.com";
+        AlertEvent existing = existingOpenAlert(domain, "EXPIRY", "WARNING", true); // acked
+        when(alertEventRepo.findOpenAlert(domain, "EXPIRY")).thenReturn(Optional.of(existing));
+
+        service.processResults(List.of(expiryResult(domain, 25, true)));
+
+        verify(emailService, never()).sendAlert(anyString(), anyString(), anyString(), any(), any(), any(), any(), any());
+    }
+
+    // ── processResults: resolution ────────────────────────────────────────────
+
+    @Test
+    @DisplayName("Cert returning to OK resolves open EXPIRY alert")
+    void processResults_certOk_resolvesOpenAlert() {
+        String domain = "recovered.example.com";
+        AlertEvent existing = existingOpenAlert(domain, "EXPIRY", "WARNING", false);
+        when(alertEventRepo.findOpenAlert(domain, "EXPIRY")).thenReturn(Optional.of(existing));
+        when(alertEventRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        // Now cert is fine
+        service.processResults(List.of(okResult(domain)));
+
+        ArgumentCaptor<AlertEvent> captor = ArgumentCaptor.forClass(AlertEvent.class);
+        verify(alertEventRepo).save(captor.capture());
+        assertThat(captor.getValue().getResolved()).isTrue();
+        assertThat(captor.getValue().getResolvedAt()).isNotNull();
+    }
+
+    @Test
+    @DisplayName("Cert with no alert type does not fire any notification")
+    void processResults_certOkNoExistingAlert_noAction() {
+        String domain = "healthy.example.com";
+        when(alertEventRepo.findOpenAlert(domain, "EXPIRY")).thenReturn(Optional.empty());
+
+        service.processResults(List.of(okResult(domain)));
+
+        verify(emailService, never()).sendAlert(anyString(), anyString(), anyString(), any(), any(), any(), any(), any());
+        verify(alertEventRepo, never()).save(any());
+    }
+
+    // ── acknowledge / resolve ─────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("acknowledge sets acknowledged flag and acknowledgedBy")
+    void acknowledge_setsFields() {
+        AlertEvent event = existingOpenAlert("d.example.com", "EXPIRY", "WARNING", false);
+        event.setId(1L);
+        when(alertEventRepo.findById(1L)).thenReturn(Optional.of(event));
+        when(alertEventRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        AlertEvent result = service.acknowledge(1L, "john.doe");
+
+        assertThat(result.getAcknowledged()).isTrue();
+        assertThat(result.getAcknowledgedBy()).isEqualTo("john.doe");
+        assertThat(result.getAcknowledgedAt()).isNotNull();
+    }
+
+    @Test
+    @DisplayName("resolve sets resolved flag and resolvedAt timestamp")
+    void resolve_setsFields() {
+        AlertEvent event = existingOpenAlert("d.example.com", "EXPIRY", "WARNING", false);
+        event.setId(2L);
+        when(alertEventRepo.findById(2L)).thenReturn(Optional.of(event));
+        when(alertEventRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        AlertEvent result = service.resolve(2L, "test-user");
+
+        assertThat(result.getResolved()).isTrue();
+        assertThat(result.getResolvedAt()).isNotNull();
+    }
+
+    @Test
+    @DisplayName("acknowledge with unknown ID throws NoSuchElementException")
+    void acknowledge_unknownId_throws() {
+        when(alertEventRepo.findById(999L)).thenReturn(Optional.empty());
+        assertThatThrownBy(() -> service.acknowledge(999L, "anyone"))
+                .isInstanceOf(NoSuchElementException.class);
+    }
+
+    @Test
+    @DisplayName("resolve sends resolution notification email to contacts")
+    void resolve_sendsResolutionNotification() {
+        AlertEvent event = existingOpenAlert("notify.example.com", "EXPIRY", "WARNING", false);
+        event.setId(3L);
+        when(alertEventRepo.findById(3L)).thenReturn(Optional.of(event));
+        when(alertEventRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(contactRepo.findByMinAlertLevelAndActiveTrue("WARNING"))
+                .thenReturn(List.of(contact("po@test.com", "PO", "WARNING")));
+        when(latestCheckRepo.findById("notify.example.com")).thenReturn(Optional.empty());
+
+        service.resolve(3L, "test-user");
+
+        verify(emailService).sendResolutionAlert(
+                eq("po@test.com"), contains("ÇÖZÜLDÜ"),
+                eq("notify.example.com"), eq("EXPIRY"), eq("WARNING"),
+                any(), eq("test-user"), any(), any(), isNull());
+    }
+
+    @Test
+    @DisplayName("resolve with blank resolvedBy defaults to 'admin'")
+    void resolve_blankResolvedBy_defaultsToAdmin() {
+        AlertEvent event = existingOpenAlert("d.example.com", "EXPIRY", "WARNING", false);
+        event.setId(4L);
+        when(alertEventRepo.findById(4L)).thenReturn(Optional.of(event));
+        when(alertEventRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        AlertEvent result = service.resolve(4L, "   "); // blank
+
+        assertThat(result.getResolvedBy()).isEqualTo("admin");
+    }
+
+    @Test
+    @DisplayName("processResults: cert returning to OK sends auto-resolution email")
+    void processResults_autoResolve_sendsResolutionEmail() {
+        String domain = "recovered2.example.com";
+        AlertEvent existing = existingOpenAlert(domain, "EXPIRY", "WARNING", false);
+        when(alertEventRepo.findOpenAlert(domain, "EXPIRY")).thenReturn(Optional.of(existing));
+        when(alertEventRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(contactRepo.findByMinAlertLevelAndActiveTrue("WARNING"))
+                .thenReturn(List.of(contact("po@test.com", "PO", "WARNING")));
+        when(latestCheckRepo.findById(domain)).thenReturn(Optional.empty());
+
+        service.processResults(List.of(okResult(domain)));
+
+        verify(emailService).sendResolutionAlert(
+                eq("po@test.com"), contains("ÇÖZÜLDÜ"),
+                eq(domain), any(), any(), any(), eq("Sistem (otomatik)"), any(), any(), isNull());
+    }
+
+    // ── Webhook ───────────────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("Contact with webhookUrl triggers webhook send")
+    void processResults_contactWithWebhook_triggersWebhook() {
+        String domain = "webhook.example.com";
+        EscalationContact c = contact("dev@test.com", "TECH", "WARNING");
+        c.setWebhookUrl("https://teams.example.com/webhook");
+        c.setWebhookType("TEAMS");
+        when(contactRepo.findByMinAlertLevelAndActiveTrue("WARNING")).thenReturn(List.of(c));
+        when(alertEventRepo.findOpenAlert(domain, "EXPIRY")).thenReturn(Optional.empty());
+        when(alertEventRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        service.processResults(List.of(expiryResult(domain, 25, true)));
+
+        verify(webhookService).send(eq("TEAMS"), eq("https://teams.example.com/webhook"),
+                anyString(), anyString(), eq("WARNING"));
+    }
+
+    // ── Helpers ───────────────────────────────────────────────────────────────
+
+    private AlertThreshold defaultThreshold() {
+        AlertThreshold t = new AlertThreshold();
+        t.setId(1L);
+        t.setWarningDays(30);
+        t.setHighDays(15);
+        t.setCriticalDays(7);
+        t.setReAlertIntervalHours(24);
+        t.setActive(true);
+        return t;
+    }
+
+    private EscalationContact contact(String email, String role, String minLevel) {
+        EscalationContact c = new EscalationContact();
+        c.setName("Test " + role);
+        c.setEmail(email);
+        c.setRole(role);
+        c.setMinAlertLevel(minLevel);
+        c.setActive(true);
+        return c;
+    }
+
+    private Map<String, Object> expiryResult(String domain, int days, boolean warning) {
+        return new java.util.LinkedHashMap<>(Map.of(
+                "domain", domain,
+                "status", warning ? "warning" : "valid",
+                "warning", warning,
+                "days_remaining", days,
+                "revocation_status", "VALID",
+                "chain_status", "VALID",
+                "deployment_status", "OK"
+        ));
+    }
+
+    private Map<String, Object> okResult(String domain) {
+        return new java.util.LinkedHashMap<>(Map.of(
+                "domain", domain,
+                "status", "valid",
+                "warning", false,
+                "days_remaining", 120,
+                "revocation_status", "VALID",
+                "chain_status", "VALID",
+                "deployment_status", "OK"
+        ));
+    }
+
+    private AlertEvent existingOpenAlert(String domain, String type, String level, boolean acked) {
+        AlertEvent e = new AlertEvent();
+        e.setDomain(domain);
+        e.setAlertType(type);
+        e.setAlertLevel(level);
+        e.setAcknowledged(acked);
+        e.setResolved(false);
+        e.setCreatedAt(ISO.format(Instant.now().minus(2, ChronoUnit.DAYS)));
+        e.setLastReAlertAt(ISO.format(Instant.now().minus(2, ChronoUnit.DAYS)));
+        return e;
+    }
+}

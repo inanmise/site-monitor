@@ -1,0 +1,259 @@
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { api, formatDate } from '../api/client.js'
+
+// ── fetch mock helpers ────────────────────────────────────────────────────────
+
+function mockFetch(body, status = 200) {
+  global.fetch = vi.fn().mockResolvedValue({
+    status,
+    json: () => Promise.resolve(body),
+  })
+}
+
+beforeEach(() => {
+  vi.clearAllMocks()
+})
+
+afterEach(() => {
+  vi.restoreAllMocks()
+})
+
+// ── api.login ─────────────────────────────────────────────────────────────────
+
+describe('api.login', () => {
+  it('POSTs to /api/login with credentials (rememberMe=false by default)', async () => {
+    mockFetch({ success: true, username: 'testuser' })
+    const result = await api.login('testuser', 'pass')
+    expect(global.fetch).toHaveBeenCalledWith(
+      '/api/login',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ username: 'testuser', password: 'pass', remember_me: 'false' }),
+      })
+    )
+    expect(result.success).toBe(true)
+  })
+
+  it('passes remember_me=true when requested', async () => {
+    mockFetch({ success: true, username: 'testuser' })
+    await api.login('testuser', 'pass', true)
+    expect(global.fetch).toHaveBeenCalledWith(
+      '/api/login',
+      expect.objectContaining({
+        body: JSON.stringify({ username: 'testuser', password: 'pass', remember_me: 'true' }),
+      })
+    )
+  })
+})
+
+// ── api.getMe ─────────────────────────────────────────────────────────────────
+
+describe('api.getMe', () => {
+  it('GETs /api/me', async () => {
+    mockFetch({ success: true, username: 'alice' })
+    const result = await api.getMe()
+    expect(global.fetch).toHaveBeenCalledWith('/api/me', expect.any(Object))
+    expect(result.username).toBe('alice')
+  })
+})
+
+// ── api.logout ────────────────────────────────────────────────────────────────
+
+describe('api.logout', () => {
+  it('POSTs to /api/logout', async () => {
+    mockFetch({ success: true })
+    await api.logout()
+    expect(global.fetch).toHaveBeenCalledWith(
+      '/api/logout',
+      expect.objectContaining({ method: 'POST' })
+    )
+  })
+})
+
+// ── api.getCertificates ───────────────────────────────────────────────────────
+
+describe('api.getCertificates', () => {
+  it('GETs /api/certificates', async () => {
+    mockFetch({ success: true, data: [] })
+    const result = await api.getCertificates()
+    expect(global.fetch).toHaveBeenCalledWith(
+      '/api/certificates',
+      expect.any(Object)
+    )
+    expect(result.success).toBe(true)
+  })
+
+  it('returns null on 401', async () => {
+    mockFetch({}, 401)
+    const result = await api.getCertificates()
+    expect(result).toBeNull()
+  })
+})
+
+// ── api.getCertificatesPaginated ──────────────────────────────────────────────
+
+describe('api.getCertificatesPaginated', () => {
+  it('builds query string from params', async () => {
+    mockFetch({ success: true, data: [] })
+    await api.getCertificatesPaginated({ page: 2, per_page: 10 })
+    expect(global.fetch).toHaveBeenCalledWith(
+      expect.stringContaining('/api/certificates/list?'),
+      expect.any(Object)
+    )
+    const url = global.fetch.mock.calls[0][0]
+    expect(url).toContain('page=2')
+    expect(url).toContain('per_page=10')
+  })
+})
+
+// ── api.getStats ──────────────────────────────────────────────────────────────
+
+describe('api.getStats', () => {
+  it('GETs /api/stats', async () => {
+    mockFetch({ success: true, data: { total_certificates: 5 } })
+    const result = await api.getStats()
+    expect(global.fetch).toHaveBeenCalledWith('/api/stats', expect.any(Object))
+    expect(result.data.total_certificates).toBe(5)
+  })
+})
+
+// ── api.runScheduler ──────────────────────────────────────────────────────────
+
+describe('api.runScheduler', () => {
+  it('POSTs to /api/scheduler/run', async () => {
+    mockFetch({ success: true })
+    await api.runScheduler()
+    expect(global.fetch).toHaveBeenCalledWith(
+      '/api/scheduler/run',
+      expect.objectContaining({ method: 'POST' })
+    )
+  })
+})
+
+// ── api.checkDomain ───────────────────────────────────────────────────────────
+
+describe('api.checkDomain', () => {
+  it('GETs /api/check/:domain with URL encoding', async () => {
+    mockFetch({ success: true, data: {} })
+    await api.checkDomain('my domain.com')
+    const url = global.fetch.mock.calls[0][0]
+    expect(url).toContain('/api/check/')
+    expect(url).toContain('my%20domain.com')
+  })
+})
+
+// ── api.getHistory ────────────────────────────────────────────────────────────
+
+describe('api.getHistory', () => {
+  it('GETs /api/history/:domain', async () => {
+    mockFetch({ success: true, data: [] })
+    await api.getHistory('example.com')
+    expect(global.fetch).toHaveBeenCalledWith(
+      '/api/history/example.com',
+      expect.any(Object)
+    )
+  })
+})
+
+// ── api.admin ─────────────────────────────────────────────────────────────────
+
+describe('api.admin.getInventory', () => {
+  it('GETs /api/admin/inventory', async () => {
+    mockFetch({ success: true, data: [] })
+    await api.admin.getInventory()
+    expect(global.fetch).toHaveBeenCalledWith(
+      '/api/admin/inventory',
+      expect.any(Object)
+    )
+  })
+})
+
+describe('api.admin.addInventory', () => {
+  it('POSTs to /api/admin/inventory with body', async () => {
+    mockFetch({ success: true, data: {} })
+    await api.admin.addInventory({ domain: 'new.com', port: 443 })
+    expect(global.fetch).toHaveBeenCalledWith(
+      '/api/admin/inventory',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ domain: 'new.com', port: 443 }),
+      })
+    )
+  })
+})
+
+describe('api.admin.deleteInventory', () => {
+  it('DELETEs /api/admin/inventory/:id', async () => {
+    mockFetch({ success: true })
+    await api.admin.deleteInventory(42)
+    expect(global.fetch).toHaveBeenCalledWith(
+      '/api/admin/inventory/42',
+      expect.objectContaining({ method: 'DELETE' })
+    )
+  })
+})
+
+describe('api.admin.getAlerts', () => {
+  it('GETs /api/admin/alerts?onlyOpen=false by default', async () => {
+    mockFetch({ success: true, data: [] })
+    await api.admin.getAlerts()
+    const url = global.fetch.mock.calls[0][0]
+    expect(url).toContain('/api/admin/alerts?onlyOpen=false')
+  })
+
+  it('GETs /api/admin/alerts?onlyOpen=true when requested', async () => {
+    mockFetch({ success: true, data: [] })
+    await api.admin.getAlerts(true)
+    const url = global.fetch.mock.calls[0][0]
+    expect(url).toContain('onlyOpen=true')
+  })
+})
+
+describe('api.admin.acknowledgeAlert', () => {
+  it('POSTs to /api/admin/alerts/:id/acknowledge', async () => {
+    mockFetch({ success: true })
+    await api.admin.acknowledgeAlert(5, 'alice')
+    expect(global.fetch).toHaveBeenCalledWith(
+      '/api/admin/alerts/5/acknowledge',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ acknowledged_by: 'alice' }),
+      })
+    )
+  })
+})
+
+describe('api.admin.resolveAlert', () => {
+  it('POSTs to /api/admin/alerts/:id/resolve', async () => {
+    mockFetch({ success: true })
+    await api.admin.resolveAlert(7)
+    expect(global.fetch).toHaveBeenCalledWith(
+      '/api/admin/alerts/7/resolve',
+      expect.objectContaining({ method: 'POST' })
+    )
+  })
+})
+
+// ── formatDate ────────────────────────────────────────────────────────────────
+
+describe('formatDate', () => {
+  it('returns N/A for null', () => {
+    expect(formatDate(null)).toBe('N/A')
+  })
+
+  it('returns N/A for undefined', () => {
+    expect(formatDate(undefined)).toBe('N/A')
+  })
+
+  it('returns N/A for empty string', () => {
+    expect(formatDate('')).toBe('N/A')
+  })
+
+  it('formats a valid ISO date string', () => {
+    const result = formatDate('2025-01-15T12:00:00')
+    // Just check it returns a non-empty non-N/A string
+    expect(result).not.toBe('N/A')
+    expect(typeof result).toBe('string')
+    expect(result.length).toBeGreaterThan(0)
+  })
+})
