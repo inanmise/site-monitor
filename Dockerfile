@@ -2,7 +2,7 @@
 FROM node:20-alpine AS frontend-build
 WORKDIR /app/frontend
 COPY frontend/package.json frontend/package-lock.json* ./
-RUN npm ci --omit=dev
+RUN npm ci
 COPY frontend/ .
 RUN npm run build
 
@@ -27,7 +27,7 @@ LABEL org.opencontainers.image.title="CertMonitor" \
       org.opencontainers.image.version="${VERSION}" \
       org.opencontainers.image.created="${BUILD_DATE}" \
       org.opencontainers.image.revision="${GIT_COMMIT}" \
-      org.opencontainers.image.source="https://github.com/your-org/cert-monitor" \
+      org.opencontainers.image.source="https://github.com/inanmise/certmonitor" \
       org.opencontainers.image.vendor="CertMonitor" \
       org.opencontainers.image.licenses="MIT"
 
