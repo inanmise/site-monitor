@@ -1,8 +1,8 @@
 apiVersion: v2
-name: cert-monitor
+name: certmonitor-chart
 description: SSL/TLS Certificate Monitoring System with alerting, escalation, and Kubernetes-native HA support.
 type: application
-version: 0.1.0
+version: 1.0.0
 appVersion: "1.0.0"
 keywords:
   - certificate
@@ -10,10 +10,10 @@ keywords:
   - tls
   - monitoring
   - alerting
-home: https://github.com/your-org/cert-monitor
+home: https://github.com/inanmise/certmonitor
 sources:
-  - https://github.com/your-org/cert-monitor
+  - https://github.com/inanmise/certmonitor
 maintainers:
-  - name: your-name
-    email: your@email.com
+  - name: inanmise
+    email: erdi.inanmis@gmail.com
 dependencies: []
