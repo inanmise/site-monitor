@@ -50,7 +50,42 @@ public class CertificateDto {
     @JsonProperty("revocation_status")
     private String revocationStatus;
 
-    public static CertificateDto from(LatestCheck c, List<String> sanList) {
+    // Extended certificate metadata
+    @JsonProperty("serial_number")
+    private String serialNumber;
+
+    @JsonProperty("signature_algorithm")
+    private String signatureAlgorithm;
+
+    @JsonProperty("public_key_algorithm")
+    private String publicKeyAlgorithm;
+
+    @JsonProperty("public_key_size")
+    private Integer publicKeySize;
+
+    @JsonProperty("subject_dn")
+    private String subjectDn;
+
+    @JsonProperty("issuer_dn")
+    private String issuerDn;
+
+    @JsonProperty("key_usage")
+    private List<String> keyUsage;
+
+    @JsonProperty("ext_key_usage")
+    private List<String> extKeyUsage;
+
+    @JsonProperty("is_ca")
+    private Boolean isCa;
+
+    @JsonProperty("ocsp_url")
+    private String ocspUrl;
+
+    @JsonProperty("crl_url")
+    private String crlUrl;
+
+    public static CertificateDto from(LatestCheck c, List<String> sanList,
+                                      List<String> keyUsageList, List<String> extKeyUsageList) {
         CertificateDto dto = new CertificateDto();
         dto.domain = c.getDomain();
         dto.subject = c.getSubject();
@@ -70,6 +105,17 @@ public class CertificateDto {
         dto.intermediateExpiry = c.getIntermediateExpiry();
         dto.intermediateDaysRemaining = c.getIntermediateDaysRemaining();
         dto.revocationStatus = c.getRevocationStatus();
+        dto.serialNumber = c.getSerialNumber();
+        dto.signatureAlgorithm = c.getSignatureAlgorithm();
+        dto.publicKeyAlgorithm = c.getPublicKeyAlgorithm();
+        dto.publicKeySize = c.getPublicKeySize();
+        dto.subjectDn = c.getSubjectDn();
+        dto.issuerDn = c.getIssuerDn();
+        dto.keyUsage = keyUsageList;
+        dto.extKeyUsage = extKeyUsageList;
+        dto.isCa = c.getIsCa();
+        dto.ocspUrl = c.getOcspUrl();
+        dto.crlUrl = c.getCrlUrl();
         return dto;
     }
 }

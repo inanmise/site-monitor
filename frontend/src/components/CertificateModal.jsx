@@ -141,6 +141,8 @@ export default function CertificateModal({ domain, onClose }) {
 
   if (!domain) return null
 
+  const d = certData
+
   return (
     <div className="modal show" onClick={(e) => e.target.classList.contains('modal') && onClose()}>
       <div className="modal-content modal-wide">
@@ -168,27 +170,100 @@ export default function CertificateModal({ domain, onClose }) {
         </div>
 
         {activeTab === 'details' && (
-          !certData ? (
+          !d ? (
             <div className="loading">{t('modal.loading')}</div>
           ) : (
             <div className="modal-body">
-              <Row label={t('modal.domain')}     value={certData.domain}                label2={t('modal.status')}    value2={statusText(certData, t)} />
-              <Row label={t('modal.subject')}    value={certData.subject}               label2={t('modal.issuer')}    value2={certData.issuer_cn || certData.issuer} />
-              <Row label={t('modal.notBefore')}  value={formatDate(certData.not_before)} label2={t('modal.notAfter')} value2={formatDate(certData.not_after)} />
-              <Row label={t('modal.daysRemain')} value={certData.days_remaining ?? 'N/A'} label2={t('modal.lastCheck')} value2={formatDate(certData.checked_at)} />
-              {certData.san?.length > 0 && (
-                <div className="modal-row full">
-                  <div className="modal-field">
-                    <div className="modal-field-label">{t('modal.san')}</div>
-                    <div className="modal-field-value">{certData.san.join(', ')}</div>
-                  </div>
-                </div>
+
+              {/* ── Identity ── */}
+              <SectionTitle>{t('modal.secIdentity')}</SectionTitle>
+              <Row label={t('modal.domain')}   value={d.domain}
+                   label2={t('modal.status')}  value2={statusText(d, t)} />
+              <Row label={t('modal.subject')}  value={d.subject}
+                   label2={t('modal.issuer')}  value2={d.issuer_cn || d.issuer} />
+              {d.subject_dn && <FullRow label={t('modal.subjectDn')} value={d.subject_dn} mono />}
+              {d.issuer_dn  && <FullRow label={t('modal.issuerDn')}  value={d.issuer_dn}  mono />}
+
+              {/* ── Validity ── */}
+              <SectionTitle>{t('modal.secValidity')}</SectionTitle>
+              <Row label={t('modal.notBefore')}  value={formatDate(d.not_before)}
+                   label2={t('modal.notAfter')}  value2={formatDate(d.not_after)} />
+              <Row label={t('modal.daysRemain')} value={d.days_remaining ?? 'N/A'}
+                   label2={t('modal.lastCheck')} value2={formatDate(d.checked_at)} />
+              {d.serial_number && (
+                <FullRow label={t('modal.serialNumber')} value={d.serial_number} mono />
               )}
-              {certData.error && (
+
+              {/* ── Key Information ── */}
+              <SectionTitle>{t('modal.secKey')}</SectionTitle>
+              <Row
+                label={t('modal.pubKeyAlgo')}
+                value={d.public_key_algorithm
+                  ? `${d.public_key_algorithm}${d.public_key_size ? ' / ' + d.public_key_size + ' bit' : ''}`
+                  : 'N/A'}
+                label2={t('modal.sigAlgo')}
+                value2={d.signature_algorithm || 'N/A'}
+              />
+              <Row
+                label={t('modal.isCA')}
+                value={d.is_ca == null ? 'N/A' : d.is_ca ? t('modal.yes') : t('modal.no')}
+                label2=""
+                value2=""
+              />
+              {d.key_usage?.length > 0 && (
+                <FullRow label={t('modal.keyUsage')} value={d.key_usage.join(' · ')} />
+              )}
+              {d.ext_key_usage?.length > 0 && (
+                <FullRow label={t('modal.extKeyUsage')} value={d.ext_key_usage.join(' · ')} />
+              )}
+
+              {/* ── Security ── */}
+              <SectionTitle>{t('modal.secSecurity')}</SectionTitle>
+              {d.fingerprint && (
+                <FullRow label={t('modal.fingerprint')} value={d.fingerprint} mono />
+              )}
+              {(d.chain_status || d.revocation_status || d.deployment_status) && (
+                <Row
+                  label={t('modal.chainStatus')}      value={d.chain_status || 'N/A'}
+                  label2={t('modal.revocationStatus')} value2={d.revocation_status || 'N/A'}
+                />
+              )}
+              {d.deployment_status && (
+                <Row
+                  label={t('modal.deploymentStatus')} value={d.deployment_status || 'N/A'}
+                  label2="" value2=""
+                />
+              )}
+
+              {/* ── Infrastructure ── */}
+              {(d.ocsp_url || d.crl_url) && (
+                <>
+                  <SectionTitle>{t('modal.secInfra')}</SectionTitle>
+                  {d.ocsp_url && <FullRow label={t('modal.ocspUrl')} value={d.ocsp_url} />}
+                  {d.crl_url  && <FullRow label={t('modal.crlUrl')}  value={d.crl_url}  />}
+                </>
+              )}
+
+              {/* ── SAN ── */}
+              {d.san?.length > 0 && (
+                <>
+                  <SectionTitle>{t('modal.san')}</SectionTitle>
+                  <div className="modal-row full">
+                    <div className="modal-field">
+                      <div className="modal-field-value modal-san-list">
+                        {d.san.map((s, i) => <span key={i} className="modal-san-chip">{s}</span>)}
+                      </div>
+                    </div>
+                  </div>
+                </>
+              )}
+
+              {/* ── Error ── */}
+              {d.error && (
                 <div className="modal-row full">
                   <div className="modal-field" style={{ background: '#ffe8e8', borderLeft: '4px solid var(--danger-color)' }}>
                     <div className="modal-field-label" style={{ color: 'var(--danger-color)' }}>{t('modal.errorMsg')}</div>
-                    <div className="modal-field-value">{certData.error}</div>
+                    <div className="modal-field-value">{d.error}</div>
                   </div>
                 </div>
               )}
@@ -214,16 +289,35 @@ export default function CertificateModal({ domain, onClose }) {
   )
 }
 
+function SectionTitle({ children }) {
+  return (
+    <div className="modal-section-title">{children}</div>
+  )
+}
+
 function Row({ label, value, label2, value2 }) {
   return (
     <div className="modal-row">
       <div className="modal-field">
         <div className="modal-field-label">{label}</div>
-        <div className="modal-field-value">{value || 'N/A'}</div>
+        <div className="modal-field-value">{value || (value === 0 ? 0 : 'N/A')}</div>
       </div>
+      {label2 ? (
+        <div className="modal-field">
+          <div className="modal-field-label">{label2}</div>
+          <div className="modal-field-value">{value2 || (value2 === 0 ? 0 : 'N/A')}</div>
+        </div>
+      ) : <div className="modal-field" />}
+    </div>
+  )
+}
+
+function FullRow({ label, value, mono = false }) {
+  return (
+    <div className="modal-row full">
       <div className="modal-field">
-        <div className="modal-field-label">{label2}</div>
-        <div className="modal-field-value">{value2 || 'N/A'}</div>
+        <div className="modal-field-label">{label}</div>
+        <div className={`modal-field-value${mono ? ' modal-mono' : ''}`}>{value || 'N/A'}</div>
       </div>
     </div>
   )
