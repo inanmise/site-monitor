@@ -39,89 +39,11 @@ spec:
             - name: http
               containerPort: 8080
               protocol: TCP
-          env:
-            - name: SPRING_PROFILES_ACTIVE
-              valueFrom:
-                configMapKeyRef:
-                  name: cert-monitor-config
-                  key: SPRING_PROFILES_ACTIVE
-            - name: DB_HOST
-              valueFrom:
-                configMapKeyRef:
-                  name: cert-monitor-config
-                  key: DB_HOST
-            - name: DB_PORT
-              valueFrom:
-                configMapKeyRef:
-                  name: cert-monitor-config
-                  key: DB_PORT
-            - name: DB_NAME
-              valueFrom:
-                configMapKeyRef:
-                  name: cert-monitor-config
-                  key: DB_NAME
-            - name: DB_USER
-              valueFrom:
-                configMapKeyRef:
-                  name: cert-monitor-config
-                  key: DB_USER
-            - name: DB_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: cert-monitor-secret
-                  key: DB_PASSWORD
-            - name: ADMIN_USERNAME
-              valueFrom:
-                secretKeyRef:
-                  name: cert-monitor-secret
-                  key: ADMIN_USERNAME
-            - name: ADMIN_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: cert-monitor-secret
-                  key: ADMIN_PASSWORD
-            - name: CERT_MONITOR_EMAIL_ENABLED
-              valueFrom:
-                configMapKeyRef:
-                  name: cert-monitor-config
-                  key: EMAIL_ENABLED
-            - name: SPRING_MAIL_HOST
-              valueFrom:
-                configMapKeyRef:
-                  name: cert-monitor-config
-                  key: SMTP_HOST
-            - name: SPRING_MAIL_PORT
-              valueFrom:
-                configMapKeyRef:
-                  name: cert-monitor-config
-                  key: SMTP_PORT
-            - name: SPRING_MAIL_USERNAME
-              valueFrom:
-                secretKeyRef:
-                  name: cert-monitor-secret
-                  key: SMTP_USER
-            - name: SPRING_MAIL_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: cert-monitor-secret
-                  key: SMTP_PASSWORD
-            - name: CERT_MONITOR_EMAIL_TO
-              valueFrom:
-                secretKeyRef:
-                  name: cert-monitor-secret
-                  key: EMAIL_TO
-            - name: CERT_MONITOR_EMAIL_FROM
-              valueFrom:
-                secretKeyRef:
-                  name: cert-monitor-secret
-                  key: EMAIL_FROM
-            # JVM flags (heap %, stack size, OOM behaviour).
-            # Edit JAVA_OPTS in configmap.yaml to tune without rebuilding the image.
-            - name: JAVA_OPTS
-              valueFrom:
-                configMapKeyRef:
-                  name: cert-monitor-config
-                  key: JAVA_OPTS
+          envFrom:
+            - configMapRef:
+                name: cert-monitor-config
+            - secretRef:
+                name: cert-monitor-secret
           # Resource limits — keep in sync with JAVA_OPTS MaxRAMPercentage.
           # limit.memory=8Gi → JVM heap ≈ 6Gi (75 %). limit.cpu=5000m → 5 cores.
           # To change limits: edit the values below AND update configmap JAVA_OPTS if needed.

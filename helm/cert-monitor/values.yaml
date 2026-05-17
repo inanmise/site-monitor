@@ -42,7 +42,7 @@ config:
   dbPort: "5432"
   dbName: certmonitor
   dbUser: certmonitor
-  emailEnabled: "false"
+  emailEnabled: "true"
   smtpHost: smtp.gmail.com
   smtpPort: "587"
   corsAllowedOrigins: ""
@@ -51,6 +51,7 @@ config:
   certParallelWorkers: "20"
   certCheckHour: "2"
   certCheckMinute: "0"
+  javaOpts: "-XX:MaxRAMPercentage=75.0 -XX:MinRAMPercentage=50.0 -Xss512k -XX:+ExitOnOutOfMemoryError"
 
 # Sensitive values — provide via --set or external secret manager
 # Do NOT commit real values here
@@ -60,10 +61,10 @@ secret:
   adminUsername: "admin"
   adminPassword: "REPLACE_ME"
   dbPassword: "REPLACE_ME"
-  smtpUser: ""
-  smtpPassword: ""
+  smtpUser: "certmonitor01@gmail.com"
+  smtpPassword: "REPLACE_WITH_GMAIL_APP_PASSWORD"
   emailTo: ""
-  emailFrom: "noreply@certmonitor"
+  emailFrom: "certmonitor01@gmail.com"
 
 resources:
   requests:

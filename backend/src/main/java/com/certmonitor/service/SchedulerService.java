@@ -18,8 +18,6 @@ import org.springframework.transaction.annotation.Transactional;
 import com.zaxxer.hikari.HikariDataSource;
 
 import javax.sql.DataSource;
-import java.io.BufferedReader;
-import java.io.FileReader;
 import java.net.InetAddress;
 import java.time.Instant;
 import java.time.LocalDateTime;
@@ -47,9 +45,6 @@ public class SchedulerService {
     private final JdbcTemplate jdbcTemplate;
     private final UserService userService;
     private final DataSource dataSource;
-
-    @Value("${cert.monitor.cert-list-file:../sertifikaListesi.txt}")
-    private String certListFile;
 
     @Value("${cert.monitor.username:user}")
     private String adminUsername;
@@ -85,7 +80,6 @@ public class SchedulerService {
         userService.ensureBootstrapped(adminUsername, adminPassword);
         ensureDefaultThreshold();
         assignOrphanedCertsToDefaultTeam();
-        importTxtFileIfInventoryEmpty();
         clearStaleLocksForThisHost();
         new Thread(this::runCheck, "startup-check").start();
     }
@@ -325,7 +319,6 @@ public class SchedulerService {
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("last_run",       lastRun.get() != null ? lastRun.get().toString() : "Not yet run");
         m.put("active_domains", inventoryRepo.countByActiveTrue());
-        m.put("cert_list_file", certListFile);
         m.put("schedule",       "Hourly (top of every hour) + stale sweep every 5 minutes");
         m.put("running",        running.get());
         m.put("current_run_id", currentRunId.get());
@@ -419,40 +412,6 @@ public class SchedulerService {
         }
         log.info("Loaded {} active domains from inventory", result.size());
         return result;
-    }
-
-    private void importTxtFileIfInventoryEmpty() {
-        if (inventoryRepo.count() > 0) return;
-        log.info("Inventory empty — importing from {}", certListFile);
-        String now = ISO.format(Instant.now());
-        try (BufferedReader reader = new BufferedReader(new FileReader(certListFile))) {
-            String line;
-            while ((line = reader.readLine()) != null) {
-                line = line.trim();
-                if (line.isEmpty() || line.startsWith("#")) continue;
-                int port = 443;
-                String domain = line;
-                int colonIdx = line.lastIndexOf(':');
-                if (colonIdx > 0) {
-                    try {
-                        port = Integer.parseInt(line.substring(colonIdx + 1));
-                        domain = line.substring(0, colonIdx);
-                    } catch (NumberFormatException ignored) {}
-                }
-                if (!inventoryRepo.existsByDomain(domain)) {
-                    CertificateInventory inv = new CertificateInventory();
-                    inv.setDomain(domain);
-                    inv.setPort(port);
-                    inv.setActive(true);
-                    inv.setCreatedAt(now);
-                    inv.setUpdatedAt(now);
-                    inventoryRepo.save(inv);
-                }
-            }
-            log.info("Imported {} domains into inventory", inventoryRepo.count());
-        } catch (Exception e) {
-            log.warn("Could not import {}: {}", certListFile, e.getMessage());
-        }
     }
 
     private void ensureDefaultThreshold() {
