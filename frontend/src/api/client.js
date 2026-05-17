@@ -103,6 +103,15 @@ export const api = {
       method: 'POST', body: JSON.stringify({ team_id: teamId }),
     }),
 
+    // Certificate notes
+    getNotes: (domain) => request(`/admin/notes/${encodeURIComponent(domain)}`),
+    addNote: (domain, note) => request(`/admin/notes/${encodeURIComponent(domain)}`, {
+      method: 'POST', body: JSON.stringify({ note }),
+    }),
+    deleteNote: (domain, noteId) => request(`/admin/notes/${encodeURIComponent(domain)}/${noteId}`, {
+      method: 'DELETE',
+    }),
+
     // System health
     getSystemHealth: () => request('/admin/system'),
     forceReleaseLock: () => request('/admin/system/scheduler-lock', { method: 'DELETE' }),

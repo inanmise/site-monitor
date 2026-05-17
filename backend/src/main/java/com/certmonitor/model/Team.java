@@ -22,6 +22,10 @@ public class Team {
     @Column(nullable = false)
     private Boolean active = true;
 
+    /** ID of the user who leads / owns this team (PO or team lead). Required. */
+    @Column(name = "leader_id")
+    private Long leaderId;
+
     private String createdAt;
     private String updatedAt;
 }

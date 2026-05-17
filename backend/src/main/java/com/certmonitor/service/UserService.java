@@ -77,7 +77,11 @@ public class UserService {
         admin.setActive(true);
         admin.setCreatedAt(now);
         admin.setUpdatedAt(now);
-        userRepo.save(admin);
+        AppUser savedAdmin = userRepo.save(admin);
+
+        // Set admin as the leader of the General team
+        team.setLeaderId(savedAdmin.getId());
+        teamRepo.save(team);
 
         log.info("Bootstrap: created team '{}' (id={}) and admin user '{}'",
                 team.getName(), team.getId(), adminUsername);
@@ -92,13 +96,16 @@ public class UserService {
     }
 
     @Transactional
-    public Team createTeam(String name, String description) {
+    public Team createTeam(String name, String description, Long leaderId) {
         if (name == null || name.isBlank()) throw new IllegalArgumentException("Team name cannot be blank");
         if (teamRepo.existsByName(name.trim())) throw new IllegalArgumentException("Team already exists: " + name);
+        if (leaderId == null) throw new IllegalArgumentException("Team leader is required");
+        if (!userRepo.existsById(leaderId)) throw new IllegalArgumentException("Leader user not found: " + leaderId);
         String now = now();
         Team team = new Team();
         team.setName(name.trim());
         team.setDescription(description);
+        team.setLeaderId(leaderId);
         team.setActive(true);
         team.setCreatedAt(now);
         team.setUpdatedAt(now);
@@ -106,11 +113,17 @@ public class UserService {
     }
 
     @Transactional
-    public Team updateTeam(Long id, String name, String description, Boolean active) {
+    public Team updateTeam(Long id, String name, String description, Boolean active, Long leaderId) {
         Team team = teamRepo.findById(id).orElseThrow(() -> new NoSuchElementException("Team not found: " + id));
         if (name != null && !name.isBlank()) team.setName(name.trim());
         if (description != null) team.setDescription(description);
         if (active != null) team.setActive(active);
+        if (leaderId != null) {
+            if (!userRepo.existsById(leaderId)) throw new IllegalArgumentException("Leader user not found: " + leaderId);
+            team.setLeaderId(leaderId);
+        } else if (team.getLeaderId() == null) {
+            throw new IllegalArgumentException("Team leader is required");
+        }
         team.setUpdatedAt(now());
         return teamRepo.save(team);
     }

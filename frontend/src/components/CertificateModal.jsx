@@ -1,7 +1,7 @@
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useRef } from 'react'
 import { api, formatDate, formatDateOnly } from '../api/client'
 import { useT } from '../i18n/index.jsx'
-import { ChevronUp, ChevronDown } from 'lucide-react'
+import { ChevronUp, ChevronDown, Trash2 } from 'lucide-react'
 
 const LEVEL_CLS = { WARNING: 'badge-warn', HIGH: 'badge-high', CRITICAL: 'badge-crit' }
 
@@ -109,6 +109,75 @@ function AlertCard({ alert }) {
   )
 }
 
+function NotesTab({ domain, t }) {
+  const [notes, setNotes]       = useState(null)
+  const [loading, setLoading]   = useState(false)
+  const [newNote, setNewNote]   = useState('')
+  const [saving, setSaving]     = useState(false)
+  const textRef = useRef(null)
+
+  useEffect(() => { loadNotes() }, [domain])
+
+  async function loadNotes() {
+    setLoading(true)
+    const res = await api.admin.getNotes(domain)
+    setNotes(res?.data ?? [])
+    setLoading(false)
+  }
+
+  async function addNote() {
+    if (!newNote.trim()) return
+    setSaving(true)
+    const res = await api.admin.addNote(domain, newNote.trim())
+    setSaving(false)
+    if (res?.success) { setNewNote(''); loadNotes() }
+  }
+
+  async function deleteNote(noteId) {
+    await api.admin.deleteNote(domain, noteId)
+    loadNotes()
+  }
+
+  if (loading) return <div className="loading">{t('modal.loading')}</div>
+
+  return (
+    <div className="modal-body">
+      <div className="note-add-row">
+        <textarea
+          ref={textRef}
+          className="note-textarea"
+          rows={3}
+          value={newNote}
+          onChange={(e) => setNewNote(e.target.value)}
+          placeholder={t('note.placeholder')}
+          onKeyDown={(e) => { if (e.ctrlKey && e.key === 'Enter') addNote() }}
+        />
+        <button className="btn btn-primary note-add-btn" onClick={addNote} disabled={saving || !newNote.trim()}>
+          {saving ? t('note.saving') : t('note.add')}
+        </button>
+      </div>
+      {notes && notes.length === 0 ? (
+        <div className="alh-notif-empty">{t('note.empty')}</div>
+      ) : (
+        <div className="note-list">
+          {(notes ?? []).map((n) => (
+            <div key={n.id} className="note-card">
+              <div className="note-header">
+                <span className="note-author">{n.authorName || n.authorUsername || '—'}</span>
+                <span className="note-date">{formatDate(n.createdAt)}</span>
+                <button className="note-del-btn" onClick={() => deleteNote(n.id)} title={t('note.delete')}>
+                  <Trash2 size={13} />
+                </button>
+              </div>
+              <div className="note-body">{n.note}</div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 export default function CertificateModal({ domain, onClose }) {
   const t = useT()
   const [certData, setCertData]   = useState(null)
@@ -166,6 +235,12 @@ export default function CertificateModal({ domain, onClose }) {
             {alerts && alerts.length > 0 && (
               <span className="modal-tab-badge">{alerts.length}</span>
             )}
+          </button>
+          <button
+            className={`modal-tab${activeTab === 'notes' ? ' active' : ''}`}
+            onClick={() => switchTab('notes')}
+          >
+            {t('modal.notesTab')}
           </button>
         </div>
 
@@ -283,6 +358,10 @@ export default function CertificateModal({ domain, onClose }) {
               </div>
             ) : null}
           </div>
+        )}
+
+        {activeTab === 'notes' && (
+          <NotesTab domain={domain} t={t} />
         )}
       </div>
     </div>

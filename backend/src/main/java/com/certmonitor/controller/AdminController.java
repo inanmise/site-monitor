@@ -29,6 +29,7 @@ public class AdminController {
     private final NotificationLogRepository notificationLogRepo;
     private final EscalationService escalationService;
     private final LatestCheckRepository latestCheckRepo;
+    private final CertificateNoteRepository noteRepo;
     private final UserService userService;
 
     private static final DateTimeFormatter ISO =
@@ -49,10 +50,11 @@ public class AdminController {
     public ResponseEntity<Map<String, Object>> addInventory(
             @RequestBody CertificateInventory item, HttpSession session) {
         validateDomain(item.getDomain());
-        if (!isAdmin(session)) item.setTeamId(teamId(session));
+        if (!isAdmin(session)) {
+            item.setTeamId(teamId(session));
+        }
         if (item.getTeamId() == null) {
-            // Assign to the first available team as default
-            userService.listTeams().stream().findFirst().ifPresent(t -> item.setTeamId(t.getId()));
+            throw new IllegalArgumentException("A team must be selected for the certificate");
         }
         String now = now();
         item.setId(null);
@@ -252,9 +254,12 @@ public class AdminController {
 
     @PostMapping("/teams")
     public ResponseEntity<Map<String, Object>> createTeam(
-            @RequestBody Map<String, String> body, HttpSession session) {
+            @RequestBody Map<String, Object> body, HttpSession session) {
         requireAdmin(session);
-        Team team = userService.createTeam(body.get("name"), body.get("description"));
+        Team team = userService.createTeam(
+                (String) body.get("name"),
+                (String) body.get("description"),
+                toLong(body.get("leader_id")));
         return ok(Map.of("data", team, "message", "Team created"));
     }
 
@@ -265,8 +270,17 @@ public class AdminController {
         Team team = userService.updateTeam(id,
                 (String) body.get("name"),
                 (String) body.get("description"),
-                body.get("active") instanceof Boolean ? (Boolean) body.get("active") : null);
+                body.get("active") instanceof Boolean ? (Boolean) body.get("active") : null,
+                toLong(body.get("leader_id")));
         return ok(Map.of("data", team));
+    }
+
+    @GetMapping("/teams/{id}/users")
+    public ResponseEntity<Map<String, Object>> listTeamUsers(
+            @PathVariable Long id, HttpSession session) {
+        requireAdmin(session);
+        return ok(Map.of("data", userService.listUsers().stream()
+                .filter(u -> id.equals(u.getTeamId())).toList()));
     }
 
     @DeleteMapping("/teams/{id}")
@@ -326,6 +340,46 @@ public class AdminController {
         requireAdmin(session);
         userService.deleteUser(id);
         return ok(Map.of("message", "User deleted"));
+    }
+
+    // ── Certificate Notes ──────────────────────────────────────────────────────
+
+    @GetMapping("/notes/{domain}")
+    public ResponseEntity<Map<String, Object>> getNotes(
+            @PathVariable String domain, HttpSession session) {
+        List<CertificateNote> notes = isAdmin(session)
+                ? noteRepo.findByDomainOrderByCreatedAtDesc(domain)
+                : noteRepo.findByDomainAndTeamIdOrderByCreatedAtDesc(domain, teamId(session));
+        return ok(Map.of("data", notes));
+    }
+
+    @PostMapping("/notes/{domain}")
+    public ResponseEntity<Map<String, Object>> addNote(
+            @PathVariable String domain,
+            @RequestBody Map<String, String> body, HttpSession session) {
+        String text = body.get("note");
+        if (text == null || text.isBlank())
+            throw new IllegalArgumentException("Note text cannot be blank");
+        CertificateNote note = new CertificateNote();
+        note.setDomain(domain);
+        note.setTeamId(isAdmin(session) ? null : teamId(session));
+        note.setAuthorUsername((String) session.getAttribute("username"));
+        note.setAuthorName((String) session.getAttribute("displayName"));
+        note.setNote(text.trim());
+        note.setCreatedAt(now());
+        return ok(Map.of("data", noteRepo.save(note), "message", "Note added"));
+    }
+
+    @DeleteMapping("/notes/{domain}/{noteId}")
+    public ResponseEntity<Map<String, Object>> deleteNote(
+            @PathVariable String domain, @PathVariable Long noteId, HttpSession session) {
+        CertificateNote note = noteRepo.findById(noteId)
+                .orElseThrow(() -> new NoSuchElementException("Note not found: " + noteId));
+        if (!domain.equals(note.getDomain()))
+            throw new IllegalArgumentException("Note does not belong to domain: " + domain);
+        if (!isAdmin(session)) checkOwnership(note.getTeamId(), session);
+        noteRepo.deleteById(noteId);
+        return ok(Map.of("message", "Note deleted"));
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
