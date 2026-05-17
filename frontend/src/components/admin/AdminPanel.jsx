@@ -15,11 +15,16 @@ export default function AdminPanel({ onInventoryChange, systemRole }) {
   const [activeTab, setActiveTab] = useState('inventory')
   const [teams, setTeams] = useState([])
 
-  useEffect(() => {
-    if (isAdmin) {
-      api.admin.getTeams().then((res) => { if (res?.success) setTeams(res.data) })
-    }
-  }, [isAdmin])
+  function loadTeams() {
+    api.admin.getTeams().then((res) => { if (res?.success) setTeams(res.data) })
+  }
+
+  useEffect(() => { if (isAdmin) loadTeams() }, [isAdmin])
+
+  function handleTabChange(id) {
+    setActiveTab(id)
+    if (id === 'inventory' && isAdmin) loadTeams()
+  }
 
   const tabs = [
     { id: 'inventory',  labelKey: 'admin.tabInventory',  adminOnly: false },
@@ -38,7 +43,7 @@ export default function AdminPanel({ onInventoryChange, systemRole }) {
           <button
             key={tab.id}
             className={`admin-tab-btn${activeTab === tab.id ? ' active' : ''}`}
-            onClick={() => setActiveTab(tab.id)}
+            onClick={() => handleTabChange(tab.id)}
           >
             {t(tab.labelKey)}
           </button>
@@ -49,7 +54,7 @@ export default function AdminPanel({ onInventoryChange, systemRole }) {
         {activeTab === 'contacts'   && <EscalationContacts teams={teams} isAdmin={isAdmin} />}
         {activeTab === 'alerts'     && isAdmin && <AlertHistory />}
         {activeTab === 'thresholds' && isAdmin && <AlertThresholds />}
-        {activeTab === 'teams'      && isAdmin && <TeamManager />}
+        {activeTab === 'teams'      && isAdmin && <TeamManager onTeamsChange={loadTeams} />}
         {activeTab === 'users'      && isAdmin && <UserManager teams={teams} />}
         {activeTab === 'system'     && isAdmin && <SystemHealth />}
       </div>

@@ -5,7 +5,7 @@ import { useT } from '../../i18n/index.jsx'
 
 const emptyTeam = { name: '', description: '', active: true }
 
-export default function TeamManager() {
+export default function TeamManager({ onTeamsChange }) {
   const t = useT()
   const { showConfirm } = useDialog()
   const [teams, setTeams] = useState([])
@@ -31,7 +31,7 @@ export default function TeamManager() {
       ? await api.admin.createTeam(payload)
       : await api.admin.updateTeam(modal.id, payload)
     setSaving(false)
-    if (res?.success) { setModal(null); setMsg(t('team.saved')); load() }
+    if (res?.success) { setModal(null); setMsg(t('team.saved')); load(); onTeamsChange?.() }
     else setMsg(res?.error || 'Error')
   }
 
@@ -47,6 +47,7 @@ export default function TeamManager() {
     if (!ok) return
     await api.admin.deleteTeam(id)
     load()
+    onTeamsChange?.()
   }
 
   return (
