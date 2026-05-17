@@ -1,42 +1,27 @@
-# ─────────────────────────────────────────────────────────────────────────────
-# start-local.ps1 — Starts the CertMonitor backend for local development.
-#
-# Usage:
-#   .\start-local.ps1
-#
-# Reads credentials from .env and passes them as JVM -D properties so they
-# are guaranteed to reach the Spring application regardless of how PowerShell
-# handles environment variable inheritance in child processes.
-# ─────────────────────────────────────────────────────────────────────────────
-
 $ErrorActionPreference = "Stop"
 $ScriptDir  = Split-Path -Parent $MyInvocation.MyCommand.Path
 $EnvFile    = Join-Path $ScriptDir ".env"
 $JarPattern = Join-Path $ScriptDir "backend\target\*.jar"
 $Java       = "C:\Program Files\Zulu\zulu-21\bin\java.exe"
 
-# ── Read .env ──────────────────────────────────────────────────────────────
 if (-not (Test-Path $EnvFile)) {
-    Write-Error ".env not found at $EnvFile — copy .env.example and fill in values."
+    Write-Error ".env not found at $EnvFile"
     exit 1
 }
 
 $cfg = @{}
 Get-Content $EnvFile | Where-Object { $_ -match '^\s*[^#]\S+=.*' } | ForEach-Object {
-    $parts      = $_ -split '=', 2
+    $parts = $_ -split '=', 2
     $cfg[$parts[0].Trim()] = $parts[1].Trim()
 }
 
-# ── Resolve JAR ───────────────────────────────────────────────────────────
 $jar = Get-ChildItem $JarPattern -Exclude "*-original*" -ErrorAction SilentlyContinue |
        Sort-Object LastWriteTime -Descending | Select-Object -First 1
 if (-not $jar) {
-    Write-Error "No JAR found at $JarPattern — run: mvn -f backend/pom.xml package -DskipTests"
+    Write-Error "No JAR found - run: mvn -f backend/pom.xml package -DskipTests"
     exit 1
 }
 
-# ── Build -D args from .env keys ─────────────────────────────────────────
-# Map env var name → Spring property name
 $propMap = @{
     CERT_MONITOR_EMAIL_ENABLED = "cert.monitor.email.enabled"
     SPRING_MAIL_HOST           = "spring.mail.host"
@@ -57,7 +42,6 @@ foreach ($envKey in $propMap.Keys) {
     }
 }
 
-# ── Stop any existing backend ─────────────────────────────────────────────
 $existing = Get-Process java -ErrorAction SilentlyContinue
 if ($existing) {
     Write-Host "Stopping existing Java process (PID $($existing.Id))..."
@@ -65,7 +49,6 @@ if ($existing) {
     Start-Sleep -Seconds 2
 }
 
-# ── Launch ────────────────────────────────────────────────────────────────
 $allArgs = $dProps + @("-jar", $jar.FullName)
 Write-Host "Starting $($jar.Name) with Zulu 21..."
 Write-Host "  Mail enabled : $($cfg['CERT_MONITOR_EMAIL_ENABLED'])"
@@ -79,18 +62,15 @@ Start-Process -FilePath $Java `
     -RedirectStandardError  (Join-Path $ScriptDir "backend\app-err.log") `
     -NoNewWindow
 
-Write-Host "Backend started. Logs:"
-Write-Host "  Stdout: backend\app.log"
-Write-Host "  Stderr: backend\app-err.log"
-Write-Host ""
+Write-Host "Backend started. Logs: backend\app.log"
 Write-Host "Waiting for startup..."
-$deadline = (Get-Date).AddSeconds(30)
+$deadline = (Get-Date).AddSeconds(40)
 while ((Get-Date) -lt $deadline) {
     Start-Sleep -Seconds 2
     try {
         $h = Invoke-RestMethod -Uri "http://localhost:8080/health" -TimeoutSec 2
         if ($h.status -eq "UP") {
-            Write-Host "Backend is UP — http://localhost:8080"
+            Write-Host "Backend is UP - http://localhost:8080"
             break
         }
     } catch { }
