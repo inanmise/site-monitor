@@ -50,6 +50,8 @@ export const api = {
 
   getActivityLog: (hours = 24) => request(`/activity?hours=${hours}`),
 
+  getSilentAlertDomains: () => request('/alerts/silent-domains'),
+
   // ── Admin ────────────────────────────────────────────────────────────────
 
   admin: {

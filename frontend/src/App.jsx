@@ -43,6 +43,7 @@ export default function App() {
   const [dashPage, setDashPage] = useState(1)
   const [pageSize, setPageSize] = useState(12)
   const [activityRefreshKey, setActivityRefreshKey] = useState(0)
+  const [silentAlertDomains, setSilentAlertDomains] = useState(new Set())
 
   const logoutTimer = useRef(null)
   const warnTimer = useRef(null)
@@ -111,9 +112,12 @@ export default function App() {
   }, [user])
 
   const loadData = useCallback(async () => {
-    const [certsRes, statsRes] = await Promise.all([api.getCertificates(), api.getStats()])
+    const [certsRes, statsRes, silentRes] = await Promise.all([
+      api.getCertificates(), api.getStats(), api.getSilentAlertDomains(),
+    ])
     if (certsRes?.success) { setCerts(certsRes.data); setLastUpdate(certsRes.timestamp) }
     if (statsRes?.success) setStats(statsRes.data)
+    if (silentRes?.success) setSilentAlertDomains(new Set(silentRes.data))
   }, [])
 
   useEffect(() => {
@@ -189,8 +193,9 @@ export default function App() {
 
       if (done || timedOut) {
         clearInterval(refreshPollRef.current)
-        const statsRes = await api.getStats()
+        const [statsRes, silentRes] = await Promise.all([api.getStats(), api.getSilentAlertDomains()])
         if (statsRes?.success) setStats(statsRes.data)
+        if (silentRes?.success) setSilentAlertDomains(new Set(silentRes.data))
         setRefreshing(false)
         setRefreshProgress(null)
       }
@@ -384,7 +389,8 @@ export default function App() {
                   <>
                     <div className="cards-container">
                       {pageCerts.map((cert) => (
-                        <CertificateCard key={cert.domain} cert={cert} onClick={setModalDomain} />
+                        <CertificateCard key={cert.domain} cert={cert} onClick={setModalDomain}
+                          hasSilentAlert={silentAlertDomains.has(cert.domain)} />
                       ))}
                     </div>
                     {(pageSize === 0 || sorted.length > pageSize) && <div className="dash-pagination">
@@ -446,7 +452,8 @@ export default function App() {
                 ) : (
                   <div className="cards-container">
                     {warnings.map((cert) => (
-                      <CertificateCard key={cert.domain} cert={cert} onClick={setModalDomain} />
+                      <CertificateCard key={cert.domain} cert={cert} onClick={setModalDomain}
+                        hasSilentAlert={silentAlertDomains.has(cert.domain)} />
                     ))}
                   </div>
                 )}

@@ -106,6 +106,12 @@ public class CertificateController {
         return ok(Map.of("success", true, "data", schedulerService.getStatus(), "timestamp", now()));
     }
 
+    @GetMapping("/alerts/silent-domains")
+    public ResponseEntity<Map<String, Object>> getSilentAlertDomains() {
+        List<String> domains = alertEventRepository.findDomainsWithUnnotifiedOpenAlerts();
+        return ok(Map.of("success", true, "data", domains, "timestamp", now()));
+    }
+
     @GetMapping("/renewal-advice")
     public ResponseEntity<Map<String, Object>> getRenewalAdvice(HttpSession session) {
         List<Map<String, Object>> advice = certService.getRenewalAdviceForTeam(teamId(session));

@@ -20,4 +20,7 @@ public interface AlertEventRepository extends JpaRepository<AlertEvent, Long> {
     List<AlertEvent> findAllOpenOrderBySeverity();
 
     List<AlertEvent> findByDomainOrderByCreatedAtDesc(String domain);
+
+    @Query("SELECT DISTINCT e.domain FROM AlertEvent e WHERE e.resolved = false AND (e.notifiedContacts IS NULL OR e.notifiedContacts = '' OR e.notifiedContacts = '[]')")
+    List<String> findDomainsWithUnnotifiedOpenAlerts();
 }
