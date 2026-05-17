@@ -25,13 +25,13 @@ export default function InventoryManager({ onInventoryChange, teams = [], isAdmi
     if (res?.success) setItems(res.data)
   }
 
-  function openAdd() { setForm({ ...emptyItem, team_id: teams[0]?.id ?? '' }); setModal('add') }
+  function openAdd() { setForm({ ...emptyItem, team_id: String(teams[0]?.id ?? '') }); setModal('add') }
   function openEdit(item) {
     setForm({
       ...item,
       expectedFingerprint: item.expected_fingerprint || '',
       expectedSubject: item.expected_subject || '',
-      team_id: item.team_id ?? '',
+      team_id: String(item.team_id ?? ''),
     })
     setModal(item)
   }
@@ -46,7 +46,7 @@ export default function InventoryManager({ onInventoryChange, teams = [], isAdmi
       active: form.active,
       expectedFingerprint: form.expectedFingerprint || null,
       expectedSubject: form.expectedSubject || null,
-      teamId: form.team_id ? Number(form.team_id) : null,
+      team_id: form.team_id ? Number(form.team_id) : null,
     }
     const res = modal === 'add'
       ? await api.admin.addInventory(payload)
