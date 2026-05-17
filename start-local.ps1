@@ -33,12 +33,25 @@ $propMap = @{
     CERT_MONITOR_USERNAME      = "cert.monitor.username"
     CERT_MONITOR_PASSWORD      = "cert.monitor.password"
     CORS_ALLOWED_ORIGINS       = "cert.monitor.cors.allowed-origins"
+    SPRING_PROFILES_ACTIVE     = "spring.profiles.active"
+    DB_HOST                    = "DB_HOST"
+    DB_PORT                    = "DB_PORT"
+    DB_NAME                    = "DB_NAME"
+    DB_USER                    = "DB_USER"
+    DB_PASSWORD                = "DB_PASSWORD"
 }
 
 $dProps = @()
 foreach ($envKey in $propMap.Keys) {
     if ($cfg.ContainsKey($envKey) -and $cfg[$envKey] -ne "") {
-        $dProps += "-D$($propMap[$envKey])=$($cfg[$envKey])"
+        $propName = $propMap[$envKey]
+        if ($propName -eq "DB_HOST" -or $propName -eq "DB_PORT" -or
+            $propName -eq "DB_NAME" -or $propName -eq "DB_USER" -or
+            $propName -eq "DB_PASSWORD") {
+            $dProps += "-D$($envKey)=$($cfg[$envKey])"
+        } else {
+            $dProps += "-D$($propName)=$($cfg[$envKey])"
+        }
     }
 }
 
@@ -51,8 +64,9 @@ if ($existing) {
 
 $allArgs = $dProps + @("-jar", $jar.FullName)
 Write-Host "Starting $($jar.Name) with Zulu 21..."
+Write-Host "  Profile      : $($cfg['SPRING_PROFILES_ACTIVE'])"
+Write-Host "  DB host      : $($cfg['DB_HOST']):$($cfg['DB_PORT'])/$($cfg['DB_NAME'])"
 Write-Host "  Mail enabled : $($cfg['CERT_MONITOR_EMAIL_ENABLED'])"
-Write-Host "  SMTP user    : $($cfg['SPRING_MAIL_USERNAME'])"
 Write-Host ""
 
 Start-Process -FilePath $Java `
