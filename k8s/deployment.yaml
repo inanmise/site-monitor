@@ -80,37 +80,37 @@ spec:
                 secretKeyRef:
                   name: cert-monitor-secret
                   key: ADMIN_PASSWORD
-            - name: EMAIL_ENABLED
+            - name: CERT_MONITOR_EMAIL_ENABLED
               valueFrom:
                 configMapKeyRef:
                   name: cert-monitor-config
                   key: EMAIL_ENABLED
-            - name: SMTP_HOST
+            - name: SPRING_MAIL_HOST
               valueFrom:
                 configMapKeyRef:
                   name: cert-monitor-config
                   key: SMTP_HOST
-            - name: SMTP_PORT
+            - name: SPRING_MAIL_PORT
               valueFrom:
                 configMapKeyRef:
                   name: cert-monitor-config
                   key: SMTP_PORT
-            - name: SMTP_USER
+            - name: SPRING_MAIL_USERNAME
               valueFrom:
                 secretKeyRef:
                   name: cert-monitor-secret
                   key: SMTP_USER
-            - name: SMTP_PASSWORD
+            - name: SPRING_MAIL_PASSWORD
               valueFrom:
                 secretKeyRef:
                   name: cert-monitor-secret
                   key: SMTP_PASSWORD
-            - name: EMAIL_TO
+            - name: CERT_MONITOR_EMAIL_TO
               valueFrom:
                 secretKeyRef:
                   name: cert-monitor-secret
                   key: EMAIL_TO
-            - name: EMAIL_FROM
+            - name: CERT_MONITOR_EMAIL_FROM
               valueFrom:
                 secretKeyRef:
                   name: cert-monitor-secret

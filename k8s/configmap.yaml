@@ -11,7 +11,7 @@ data:
   DB_USER: "certmonitor"
   SMTP_HOST: "smtp.gmail.com"
   SMTP_PORT: "587"
-  EMAIL_ENABLED: "false"
+  EMAIL_ENABLED: "true"
   CERT_CHECK_TIMEOUT: "10"
   CERT_WARNING_DAYS: "30"
   CERT_PARALLEL_WORKERS: "20"
