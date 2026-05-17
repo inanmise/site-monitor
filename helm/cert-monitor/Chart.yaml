@@ -2,8 +2,8 @@ apiVersion: v2
 name: certmonitor-chart
 description: SSL/TLS Certificate Monitoring System with alerting, escalation, and Kubernetes-native HA support.
 type: application
-version: 5.1.1
-appVersion: "5.1.1"
+version: 5.1.2
+appVersion: "5.1.2"
 keywords:
   - certificate
   - ssl
