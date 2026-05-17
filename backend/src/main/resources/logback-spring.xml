@@ -1,0 +1,191 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Cert-Monitor Logging Configuration
+  ────────────────────────────────────────────────────────────────────────────
+  Runtime control via environment variable or application property:
+    LOG_LEVEL = ERROR | WARN | INFO | DEBUG | TRACE   (default: see per-profile)
+    LOG_DIR   = /path/to/logs                          (default: logs/)
+
+  Profiles:
+    default / local / local-pg  →  DEBUG, console + file
+    prod                        →  INFO,  async file only (no console)
+
+  Log files produced (under LOG_DIR):
+    cert-monitor.log        — all levels, daily rotation, 30-day retention
+    cert-monitor-error.log  — ERROR only, 90-day retention
+    cert-monitor-audit.log  — security / admin audit trail, 365-day retention
+-->
+<configuration scan="true" scanPeriod="60 seconds">
+
+  <!-- ── Bind Spring properties ──────────────────────────────────────────── -->
+  <springProperty scope="context" name="LOG_DIR"
+                  source="logging.file.path" defaultValue="logs"/>
+  <springProperty scope="context" name="LOG_LEVEL"
+                  source="logging.level.com.certmonitor" defaultValue="INFO"/>
+
+  <!-- ── Log patterns ────────────────────────────────────────────────────── -->
+  <!--  Console: compact with highlight (works in IntelliJ / most terminals)  -->
+  <property name="PAT_CONSOLE"
+            value="%d{HH:mm:ss.SSS} %highlight(%-5level) [%15.15thread] %cyan(%-36.36logger{35}) : %msg%n%rootException"/>
+  <!--  File: full timestamp, no ANSI codes  -->
+  <property name="PAT_FILE"
+            value="%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [%thread] %logger{50} : %msg%n%rootException"/>
+  <!--  Audit: explicit label, no stack traces (audit events are always clean)  -->
+  <property name="PAT_AUDIT"
+            value="%d{yyyy-MM-dd HH:mm:ss.SSS} AUDIT [%thread] %logger : %msg%n"/>
+
+  <!-- ═══════════════════════  APPENDERS  ════════════════════════════════ -->
+
+  <!-- Console (stdout) -->
+  <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+    <encoder class="ch.qos.logback.classic.encoder.PatternLayoutEncoder">
+      <pattern>${PAT_CONSOLE}</pattern>
+      <charset>UTF-8</charset>
+    </encoder>
+  </appender>
+
+  <!-- Main rotating file — daily + 10 MB, 30 days, max 500 MB total -->
+  <appender name="FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+    <file>${LOG_DIR}/cert-monitor.log</file>
+    <encoder class="ch.qos.logback.classic.encoder.PatternLayoutEncoder">
+      <pattern>${PAT_FILE}</pattern>
+      <charset>UTF-8</charset>
+    </encoder>
+    <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+      <fileNamePattern>${LOG_DIR}/cert-monitor-%d{yyyy-MM-dd}.%i.log.gz</fileNamePattern>
+      <maxFileSize>10MB</maxFileSize>
+      <maxHistory>30</maxHistory>
+      <totalSizeCap>500MB</totalSizeCap>
+    </rollingPolicy>
+  </appender>
+
+  <!-- Error-only file — 90-day retention for post-mortem analysis -->
+  <appender name="ERROR_FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+    <file>${LOG_DIR}/cert-monitor-error.log</file>
+    <filter class="ch.qos.logback.classic.filter.ThresholdFilter">
+      <level>ERROR</level>
+    </filter>
+    <encoder class="ch.qos.logback.classic.encoder.PatternLayoutEncoder">
+      <pattern>${PAT_FILE}</pattern>
+      <charset>UTF-8</charset>
+    </encoder>
+    <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+      <fileNamePattern>${LOG_DIR}/cert-monitor-error-%d{yyyy-MM-dd}.%i.log.gz</fileNamePattern>
+      <maxFileSize>10MB</maxFileSize>
+      <maxHistory>90</maxHistory>
+      <totalSizeCap>200MB</totalSizeCap>
+    </rollingPolicy>
+  </appender>
+
+  <!-- Audit file — 1-year retention for compliance / security review -->
+  <appender name="AUDIT_FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+    <file>${LOG_DIR}/cert-monitor-audit.log</file>
+    <encoder class="ch.qos.logback.classic.encoder.PatternLayoutEncoder">
+      <pattern>${PAT_AUDIT}</pattern>
+      <charset>UTF-8</charset>
+    </encoder>
+    <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+      <fileNamePattern>${LOG_DIR}/cert-monitor-audit-%d{yyyy-MM-dd}.%i.log.gz</fileNamePattern>
+      <maxFileSize>10MB</maxFileSize>
+      <maxHistory>365</maxHistory>
+      <totalSizeCap>500MB</totalSizeCap>
+    </rollingPolicy>
+  </appender>
+
+  <!-- Async wrappers — non-blocking I/O for production throughput -->
+  <appender name="ASYNC_FILE" class="ch.qos.logback.classic.AsyncAppender">
+    <queueSize>512</queueSize>
+    <discardingThreshold>0</discardingThreshold>  <!-- never discard even at 80% full -->
+    <includeCallerData>false</includeCallerData>
+    <neverBlock>false</neverBlock>
+    <appender-ref ref="FILE"/>
+  </appender>
+
+  <appender name="ASYNC_ERROR" class="ch.qos.logback.classic.AsyncAppender">
+    <queueSize>256</queueSize>
+    <discardingThreshold>0</discardingThreshold>
+    <neverBlock>false</neverBlock>
+    <appender-ref ref="ERROR_FILE"/>
+  </appender>
+
+  <appender name="ASYNC_AUDIT" class="ch.qos.logback.classic.AsyncAppender">
+    <queueSize>128</queueSize>
+    <discardingThreshold>0</discardingThreshold>
+    <neverBlock>false</neverBlock>
+    <appender-ref ref="AUDIT_FILE"/>
+  </appender>
+
+  <!-- ═══════════════════════  SUPPRESS NOISE  ═══════════════════════════ -->
+  <logger name="org.hibernate.SQL"                           level="WARN"/>
+  <logger name="org.hibernate.orm"                           level="WARN"/>
+  <logger name="org.hibernate.type"                          level="WARN"/>
+  <logger name="org.springframework.web"                     level="WARN"/>
+  <logger name="org.springframework.security"                level="WARN"/>
+  <logger name="org.springframework.session"                 level="WARN"/>
+  <logger name="org.springframework.boot.autoconfigure"      level="WARN"/>
+  <logger name="com.zaxxer.hikari"                           level="WARN"/>
+  <logger name="org.apache.http"                             level="WARN"/>
+  <logger name="io.micrometer"                               level="WARN"/>
+
+  <!-- ═══════════════════════  AUDIT LOGGER  ════════════════════════════ -->
+  <!--
+    Usage in code:
+      private static final Logger AUDIT = LoggerFactory.getLogger("AUDIT");
+      AUDIT.info("LOGIN user={} IP={}", username, ip);
+
+    Routed to audit.log in all profiles. Also echoed to console in dev.
+  -->
+
+  <springProfile name="!prod">
+    <logger name="AUDIT" level="INFO" additivity="false">
+      <appender-ref ref="AUDIT_FILE"/>
+      <appender-ref ref="CONSOLE"/>
+    </logger>
+  </springProfile>
+
+  <springProfile name="prod">
+    <logger name="AUDIT" level="INFO" additivity="false">
+      <appender-ref ref="ASYNC_AUDIT"/>
+    </logger>
+  </springProfile>
+
+  <!-- ═══════════════════════  DEVELOPMENT PROFILE  ══════════════════════
+    Profiles: local | local-pg | (no active profile)
+    - com.certmonitor : LOG_LEVEL (default DEBUG)
+    - Root            : INFO
+    - Outputs         : console + file + error file (synchronous)
+  ════════════════════════════════════════════════════════════════════════ -->
+  <springProfile name="!prod">
+    <logger name="com.certmonitor" level="${LOG_LEVEL}" additivity="false">
+      <appender-ref ref="CONSOLE"/>
+      <appender-ref ref="FILE"/>
+      <appender-ref ref="ERROR_FILE"/>
+    </logger>
+
+    <root level="INFO">
+      <appender-ref ref="CONSOLE"/>
+      <appender-ref ref="FILE"/>
+      <appender-ref ref="ERROR_FILE"/>
+    </root>
+  </springProfile>
+
+  <!-- ═══════════════════════  PRODUCTION PROFILE  ═══════════════════════
+    Profile: prod
+    - com.certmonitor : LOG_LEVEL (default INFO); set to ERROR for minimal output
+    - Root            : WARN
+    - Outputs         : async file + async error file (no console — use kubectl logs)
+    - Override at runtime: LOG_LEVEL=ERROR kubectl set env deployment/cert-monitor LOG_LEVEL=ERROR
+  ════════════════════════════════════════════════════════════════════════ -->
+  <springProfile name="prod">
+    <logger name="com.certmonitor" level="${LOG_LEVEL}" additivity="false">
+      <appender-ref ref="ASYNC_FILE"/>
+      <appender-ref ref="ASYNC_ERROR"/>
+    </logger>
+
+    <root level="WARN">
+      <appender-ref ref="ASYNC_FILE"/>
+      <appender-ref ref="ASYNC_ERROR"/>
+    </root>
+  </springProfile>
+
+</configuration>

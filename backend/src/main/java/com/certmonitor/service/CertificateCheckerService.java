@@ -57,6 +57,8 @@ public class CertificateCheckerService {
     }
 
     public Map<String, Object> check(String domain, int port) {
+        long startMs = System.currentTimeMillis();
+        log.debug("Certificate check start: domain={}:{}", domain, port);
         try {
             SSLSocketFactory factory = (SSLSocketFactory) SSLSocketFactory.getDefault();
             try (SSLSocket socket = (SSLSocket) factory.createSocket()) {
@@ -100,15 +102,44 @@ public class CertificateCheckerService {
                 // deployment_status is determined by CertificateService (needs inventory lookup)
                 result.put("deployment_status", "UNKNOWN");
 
+                long elapsed = System.currentTimeMillis() - startMs;
+                int days = (Integer) result.getOrDefault("days_remaining", -1);
+                boolean warning = Boolean.TRUE.equals(result.get("warning"));
+                String issuerCn = (String) result.getOrDefault("issuer_cn", "?");
+                String chainStatus = (String) result.getOrDefault("chain_status", "?");
+
+                if (warning) {
+                    log.warn("Certificate expiring soon: domain={} days={} issuer={} chain={} elapsed={}ms",
+                            domain, days, issuerCn, chainStatus, elapsed);
+                } else {
+                    log.debug("Certificate OK: domain={} days={} issuer={} chain={} elapsed={}ms",
+                            domain, days, issuerCn, chainStatus, elapsed);
+                }
+
+                if ("REVOKED".equals(revocation)) {
+                    log.warn("Certificate REVOKED: domain={}", domain);
+                }
+                if ("BROKEN".equals(chainStatus)) {
+                    log.warn("Certificate chain BROKEN: domain={}", domain);
+                }
+
                 return result;
             }
         } catch (java.net.SocketTimeoutException e) {
+            log.warn("Certificate check timeout: domain={}:{} elapsed={}ms",
+                    domain, port, System.currentTimeMillis() - startMs);
             return error(domain, "Connection timeout");
         } catch (java.net.UnknownHostException e) {
+            log.warn("Certificate check DNS failure: domain={} elapsed={}ms",
+                    domain, System.currentTimeMillis() - startMs);
             return error(domain, "Domain resolution failed");
         } catch (javax.net.ssl.SSLException e) {
+            log.warn("Certificate check SSL error: domain={} error={} elapsed={}ms",
+                    domain, e.getMessage(), System.currentTimeMillis() - startMs);
             return error(domain, "SSL Error: " + e.getMessage());
         } catch (Exception e) {
+            log.error("Certificate check unexpected error: domain={}:{} elapsed={}ms",
+                    domain, port, System.currentTimeMillis() - startMs, e);
             return error(domain, "Error: " + e.getMessage());
         }
     }
