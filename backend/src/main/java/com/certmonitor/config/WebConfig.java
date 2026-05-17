@@ -23,6 +23,9 @@ public class WebConfig implements WebMvcConfigurer {
     @Autowired
     private AuthInterceptor authInterceptor;
 
+    @Autowired
+    private HttpMetricsInterceptor httpMetricsInterceptor;
+
     @Value("${cert.monitor.cors.allowed-origins:http://localhost:5173,http://localhost:3000}")
     private String allowedOrigins;
 
@@ -45,6 +48,7 @@ public class WebConfig implements WebMvcConfigurer {
     @Override
     public void addInterceptors(InterceptorRegistry registry) {
         registry.addInterceptor(authInterceptor).addPathPatterns("/api/**");
+        registry.addInterceptor(httpMetricsInterceptor).addPathPatterns("/api/**");
     }
 
     @Bean
@@ -56,14 +60,22 @@ public class WebConfig implements WebMvcConfigurer {
                                             FilterChain chain) throws ServletException, IOException {
                 res.setHeader("X-Content-Type-Options", "nosniff");
                 res.setHeader("X-Frame-Options", "DENY");
-                res.setHeader("X-XSS-Protection", "1; mode=block");
+                res.setHeader("X-XSS-Protection", "0"); // disabled — CSP is the modern defence
                 res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
-                res.setHeader("Permissions-Policy", "geolocation=(), camera=(), microphone=()");
+                res.setHeader("Permissions-Policy", "geolocation=(), camera=(), microphone=(), payment=()");
+                // HSTS — 1 year, includes subdomains, preload-ready
+                res.setHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
                 // CSP — React SPA + same-origin API
                 res.setHeader("Content-Security-Policy",
                         "default-src 'self'; script-src 'self' 'unsafe-inline'; " +
                         "style-src 'self' 'unsafe-inline'; img-src 'self' data:; " +
-                        "connect-src 'self'; font-src 'self'; frame-ancestors 'none'");
+                        "connect-src 'self'; font-src 'self'; frame-ancestors 'none'; " +
+                        "base-uri 'self'; form-action 'self'");
+                // No caching for API responses
+                if (req.getRequestURI().startsWith("/api/")) {
+                    res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
+                    res.setHeader("Pragma", "no-cache");
+                }
                 chain.doFilter(req, res);
             }
         };

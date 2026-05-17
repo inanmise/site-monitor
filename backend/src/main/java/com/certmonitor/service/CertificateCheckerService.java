@@ -118,7 +118,7 @@ public class CertificateCheckerService {
             result.put("issuer_cn", issuerCn);
             result.put("not_before", ISO.format(notBefore));
             result.put("not_after", ISO.format(notAfter));
-            result.put("days_remaining", (int) Math.max(daysRemaining, 0));
+            result.put("days_remaining", (int) daysRemaining);
             result.put("warning", warning);
             result.put("status", warning ? "warning" : "valid");
             result.put("san", san);

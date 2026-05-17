@@ -17,3 +17,14 @@ data:
   CERT_PARALLEL_WORKERS: "20"
   CERT_CHECK_HOUR: "2"
   CERT_CHECK_MINUTE: "0"
+  # JVM tuning — adjust these to match the pod's memory/cpu limits.
+  # MaxRAMPercentage: heap = this % of container memory limit (cgroup).
+  # MinRAMPercentage: fallback for containers with < 200 MB limit.
+  # Xss:             thread stack size (reduce for high-thread-count pods).
+  # ActiveProcessorCount: override CPU thread count (0 = auto from cgroup quota).
+  # ExitOnOutOfMemoryError: crash-fast so K8s can restart the pod cleanly.
+  JAVA_OPTS: >-
+    -XX:MaxRAMPercentage=75.0
+    -XX:MinRAMPercentage=50.0
+    -Xss512k
+    -XX:+ExitOnOutOfMemoryError

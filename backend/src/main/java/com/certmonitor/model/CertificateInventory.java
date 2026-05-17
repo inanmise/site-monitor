@@ -29,6 +29,10 @@ public class CertificateInventory {
     @Column(nullable = false)
     private Boolean active = true;
 
+    /** Team responsible for this certificate */
+    @Column(name = "team_id")
+    private Long teamId;
+
     /** SHA-256 hex of the expected (newly renewed) cert — used for DEPLOYMENT_INCOMPLETE detection */
     private String expectedFingerprint;
     private String expectedSubject;

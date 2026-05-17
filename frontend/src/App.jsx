@@ -12,19 +12,22 @@ import RenewalAdvice from './components/RenewalAdvice'
 import AdminPanel from './components/admin/AdminPanel'
 import ActivityLog from './components/ActivityLog'
 
-const INACTIVITY_MS = 10 * 60 * 1000
+const INACTIVITY_MS = 5 * 60 * 1000
 const WARN_BEFORE_MS = 60 * 1000
 
 export default function App() {
   const { showConfirm } = useDialog()
   const t = useT()
   const [user, setUser] = useState(null)
+  const [systemRole, setSystemRole] = useState('USER')
+  const [teamId, setTeamId] = useState(null)
+  const [teamName, setTeamName] = useState(null)
   const [authChecked, setAuthChecked] = useState(false)
   const [tab, setTab] = useState('dashboard')
   const [certs, setCerts] = useState([])
   const [warnings, setWarnings] = useState([])
   const [stats, setStats] = useState(null)
-  const [statsVisible, setStatsVisible] = useState(false)
+  const [statsVisible, setStatsVisible] = useState(true)
   const [search, setSearch] = useState('')
   const [sortOrder, setSortOrder] = useState('default')
   const [modalDomain, setModalDomain] = useState(null)
@@ -38,9 +41,8 @@ export default function App() {
   const [statusFilter, setStatusFilter] = useState('all')
   const [expiryFilter, setExpiryFilter] = useState('all')
   const [dashPage, setDashPage] = useState(1)
+  const [pageSize, setPageSize] = useState(12)
   const [activityRefreshKey, setActivityRefreshKey] = useState(0)
-
-  const PAGE_SIZE = 12
 
   const logoutTimer = useRef(null)
   const warnTimer = useRef(null)
@@ -49,7 +51,12 @@ export default function App() {
 
   useEffect(() => {
     api.getMe().then((res) => {
-      if (res?.success) setUser(res.username)
+      if (res?.success) {
+        setUser(res.username)
+        setSystemRole(res.system_role || 'USER')
+        setTeamId(res.team_id ?? null)
+        setTeamName(res.team_name ?? null)
+      }
       setAuthChecked(true)
     }).catch(() => setAuthChecked(true))
   }, [])
@@ -62,6 +69,9 @@ export default function App() {
       await api.logout()
       localStorage.removeItem('cert-monitor-remembered-user')
       setUser(null)
+      setSystemRole('USER')
+      setTeamId(null)
+      setTeamName(null)
       setInactivityWarning(false)
     }
 
@@ -136,6 +146,9 @@ export default function App() {
     await api.logout()
     localStorage.removeItem('cert-monitor-remembered-user')
     setUser(null)
+    setSystemRole('USER')
+    setTeamId(null)
+    setTeamName(null)
     setInactivityWarning(false)
     setRefreshing(false)
   }
@@ -196,8 +209,15 @@ export default function App() {
     setTimeout(loadData, 1000)
   }
 
+  function handleLogin(userData) {
+    setUser(userData.username)
+    setSystemRole(userData.system_role || 'USER')
+    setTeamId(userData.team_id ?? null)
+    setTeamName(userData.team_name ?? null)
+  }
+
   if (!authChecked) return <div className="loading" style={{ marginTop: 80, textAlign: 'center' }}>{t('app.loading')}</div>
-  if (!user) return <Login onLogin={setUser} />
+  if (!user) return <Login onLogin={handleLogin} />
 
   const STAT_FILTER_FN = {
     total:      () => true,
@@ -246,15 +266,35 @@ export default function App() {
     return c.domain?.toLowerCase().includes(s) || c.issuer?.toLowerCase().includes(s) || c.subject?.toLowerCase().includes(s)
   })
 
+  function defaultPriority(c) {
+    if (c.status === 'error') return 0
+    if (c.warning) return 1
+    return 2
+  }
+
   const sorted = [...filtered].sort((a, b) => {
-    if (sortOrder === 'asc') return (a.days_remaining ?? 999999) - (b.days_remaining ?? 999999)
+    if (sortOrder === 'asc')  return (a.days_remaining ?? 999999) - (b.days_remaining ?? 999999)
     if (sortOrder === 'desc') return (b.days_remaining ?? -1) - (a.days_remaining ?? -1)
-    return (a.warning ? 0 : 1) - (b.warning ? 0 : 1)
+    const pd = defaultPriority(a) - defaultPriority(b)
+    if (pd !== 0) return pd
+    return (a.days_remaining ?? 999999) - (b.days_remaining ?? 999999)
   })
 
-  const totalPages = Math.max(1, Math.ceil(sorted.length / PAGE_SIZE))
+  const totalPages = pageSize === 0 ? 1 : Math.max(1, Math.ceil(sorted.length / pageSize))
   const safePage   = Math.min(dashPage, totalPages)
-  const pageCerts  = sorted.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE)
+  const pageCerts  = pageSize === 0 ? sorted : sorted.slice((safePage - 1) * pageSize, safePage * pageSize)
+
+  function getPageNumbers() {
+    if (totalPages <= 7) return Array.from({ length: totalPages }, (_, i) => i + 1)
+    const pages = new Set([1, totalPages, safePage, safePage - 1, safePage + 1].filter(p => p >= 1 && p <= totalPages))
+    const sorted_ = [...pages].sort((a, b) => a - b)
+    const result = []
+    for (let i = 0; i < sorted_.length; i++) {
+      if (i > 0 && sorted_[i] - sorted_[i - 1] > 1) result.push('...')
+      result.push(sorted_[i])
+    }
+    return result
+  }
 
   return (
     <div className="app-layout">
@@ -266,7 +306,7 @@ export default function App() {
         </div>
       )}
 
-      <Nav activeTab={tab} onTabChange={setTab} username={user} onLogout={handleLogout} />
+      <Nav activeTab={tab} onTabChange={(t) => { setTab(t); if (t === 'dashboard') setStatsVisible(true) }} username={user} teamName={teamName} systemRole={systemRole} onLogout={handleLogout} />
 
       <main className="app-main">
         <div className="app-body">
@@ -347,23 +387,52 @@ export default function App() {
                         <CertificateCard key={cert.domain} cert={cert} onClick={setModalDomain} />
                       ))}
                     </div>
-                    {totalPages > 1 && (
-                      <div className="pagination">
+                    {(pageSize === 0 || sorted.length > pageSize) && <div className="dash-pagination">
+                      <div className="dash-page-sizer">
+                        <span className="dash-page-sizer-label">{t('app.perPage')}</span>
+                        {[10, 25, 50].map(n => (
+                          <button
+                            key={n}
+                            className={`dash-size-btn${pageSize === n ? ' active' : ''}`}
+                            onClick={() => { setPageSize(n); setDashPage(1) }}
+                          >{n}</button>
+                        ))}
                         <button
-                          className="page-btn"
-                          disabled={safePage <= 1}
-                          onClick={() => setDashPage(safePage - 1)}
-                        >{t('app.prevPage')}</button>
-                        <span className="page-info">
-                          {t('app.pageInfo', (safePage - 1) * PAGE_SIZE + 1, Math.min(safePage * PAGE_SIZE, sorted.length), sorted.length)}
-                        </span>
-                        <button
-                          className="page-btn"
-                          disabled={safePage >= totalPages}
-                          onClick={() => setDashPage(safePage + 1)}
-                        >{t('app.nextPage')}</button>
+                          className={`dash-size-btn${pageSize === 0 ? ' active' : ''}`}
+                          onClick={() => { setPageSize(0); setDashPage(1) }}
+                        >{t('app.all')}</button>
                       </div>
-                    )}
+
+                      {totalPages > 1 && (
+                        <div className="dash-page-nav">
+                          <button className="page-btn" disabled={safePage <= 1}
+                            onClick={() => setDashPage(1)}>«</button>
+                          <button className="page-btn" disabled={safePage <= 1}
+                            onClick={() => setDashPage(safePage - 1)}>{t('app.prevPage')}</button>
+
+                          {getPageNumbers().map((p, i) =>
+                            p === '...'
+                              ? <span key={`dot-${i}`} className="dash-page-dots">…</span>
+                              : <button
+                                  key={p}
+                                  className={`page-btn${safePage === p ? ' page-btn-active' : ''}`}
+                                  onClick={() => setDashPage(p)}
+                                >{p}</button>
+                          )}
+
+                          <button className="page-btn" disabled={safePage >= totalPages}
+                            onClick={() => setDashPage(safePage + 1)}>{t('app.nextPage')}</button>
+                          <button className="page-btn" disabled={safePage >= totalPages}
+                            onClick={() => setDashPage(totalPages)}>»</button>
+                        </div>
+                      )}
+
+                      <span className="dash-page-info">
+                        {pageSize === 0
+                          ? t('app.pageInfo', 1, sorted.length, sorted.length)
+                          : t('app.pageInfo', (safePage - 1) * pageSize + 1, Math.min(safePage * pageSize, sorted.length), sorted.length)}
+                      </span>
+                    </div>}
                   </>
                 )}
               </div>
@@ -408,7 +477,7 @@ export default function App() {
             {tab === 'admin' && (
               <div className="tab-content active">
                 <h2>{t('app.adminTitle')}</h2>
-                <AdminPanel onInventoryChange={loadData} />
+                <AdminPanel onInventoryChange={loadData} systemRole={systemRole} />
               </div>
             )}
           </div>

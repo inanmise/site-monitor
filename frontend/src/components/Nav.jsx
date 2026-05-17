@@ -7,7 +7,7 @@ import {
   Sun, Moon, ChevronLeft, ChevronRight,
 } from 'lucide-react'
 
-export default function Nav({ activeTab, onTabChange, username, onLogout }) {
+export default function Nav({ activeTab, onTabChange, username, teamName, systemRole, onLogout }) {
   const t = useT()
   const { toggle } = useLanguage()
   const { theme, toggle: toggleTheme } = useTheme()
@@ -70,7 +70,11 @@ export default function Nav({ activeTab, onTabChange, username, onLogout }) {
         {open && (
           <div className="sb-user">
             <User size={14} />
-            <span className="sb-user-name">{username}</span>
+            <div className="sb-user-info">
+              <span className="sb-user-name">{username}</span>
+              {teamName && <span className="sb-team-name">{teamName}</span>}
+              {systemRole === 'ADMIN' && <span className="sb-role-badge">ADMIN</span>}
+            </div>
           </div>
         )}
         <button

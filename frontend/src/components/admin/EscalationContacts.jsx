@@ -6,9 +6,9 @@ import { useT } from '../../i18n/index.jsx'
 const ROLES  = ['PO', 'TECH', 'MANAGER', 'CLEVEL']
 const LEVELS = ['WARNING', 'HIGH', 'CRITICAL']
 const levelColor = { WARNING: '#f0a500', HIGH: '#e07b00', CRITICAL: '#c0392b' }
-const emptyContact = { name: '', email: '', role: 'TECH', minAlertLevel: 'WARNING', webhookUrl: '', webhookType: 'TEAMS', active: true }
+const emptyContact = { name: '', email: '', role: 'TECH', minAlertLevel: 'WARNING', webhookUrl: '', webhookType: 'TEAMS', active: true, team_id: '' }
 
-export default function EscalationContacts() {
+export default function EscalationContacts({ teams = [], isAdmin = false }) {
   const t = useT()
   const { showConfirm } = useDialog()
   const [contacts, setContacts] = useState([])
@@ -17,7 +17,9 @@ export default function EscalationContacts() {
   const [saving, setSaving] = useState(false)
   const [msg, setMsg] = useState(null)
 
-  const roleLabelMap  = {
+  const teamMap = Object.fromEntries(teams.map(t => [t.id, t.name]))
+
+  const roleLabelMap = {
     PO: t('ec.role.po'), TECH: t('ec.role.tech'), MANAGER: t('ec.role.manager'), CLEVEL: t('ec.role.clevel'),
   }
   const levelLabelMap = {
@@ -31,9 +33,15 @@ export default function EscalationContacts() {
     if (res?.success) setContacts(res.data)
   }
 
-  function openAdd() { setForm(emptyContact); setModal('add') }
+  function openAdd() { setForm({ ...emptyContact, team_id: teams[0]?.id ?? '' }); setModal('add') }
   function openEdit(c) {
-    setForm({ ...c, minAlertLevel: c.min_alert_level || 'WARNING', webhookUrl: c.webhook_url || '', webhookType: c.webhook_type || 'TEAMS' })
+    setForm({
+      ...c,
+      minAlertLevel: c.min_alert_level || 'WARNING',
+      webhookUrl: c.webhook_url || '',
+      webhookType: c.webhook_type || 'TEAMS',
+      team_id: c.team_id ?? '',
+    })
     setModal(c)
   }
 
@@ -47,12 +55,14 @@ export default function EscalationContacts() {
       webhookUrl: form.webhookUrl || null,
       webhookType: form.webhookType || null,
       active: form.active,
+      teamId: form.team_id ? Number(form.team_id) : null,
     }
     const res = modal === 'add'
       ? await api.admin.addContact(payload)
       : await api.admin.updateContact(modal.id, payload)
     setSaving(false)
     if (res?.success) { setModal(null); setMsg(t('ec.saved')); load() }
+    else setMsg(res?.error || 'Error')
   }
 
   async function del(id) {
@@ -90,6 +100,7 @@ export default function EscalationContacts() {
             <tr>
               <th>{t('ec.colName')}</th>
               <th>{t('ec.colEmail')}</th>
+              <th>{t('ec.colTeam')}</th>
               <th>{t('ec.colRole')}</th>
               <th>{t('ec.colLevel')}</th>
               <th>{t('ec.colWebhook')}</th>
@@ -102,6 +113,7 @@ export default function EscalationContacts() {
               <tr key={c.id}>
                 <td>{c.name}</td>
                 <td>{c.email}</td>
+                <td>{teamMap[c.team_id] || '—'}</td>
                 <td><span className="role-badge">{roleLabelMap[c.role] || c.role}</span></td>
                 <td><span className="level-badge" style={{ background: levelColor[c.min_alert_level] || '#999' }}>{levelLabelMap[c.min_alert_level] || c.min_alert_level}</span></td>
                 <td>{c.webhook_url ? <span className="badge badge-ok">{c.webhook_type}</span> : '—'}</td>
@@ -123,6 +135,13 @@ export default function EscalationContacts() {
             <div className="form-grid">
               <label>{t('ec.formName')}<input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></label>
               <label>{t('ec.formEmail')}<input type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></label>
+              {isAdmin && teams.length > 0 && (
+                <label>{t('ec.formTeam')}
+                  <select value={form.team_id} onChange={(e) => setForm({ ...form, team_id: e.target.value })}>
+                    {teams.map(team => <option key={team.id} value={team.id}>{team.name}</option>)}
+                  </select>
+                </label>
+              )}
               <label>{t('ec.formRole')}
                 <select value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })}>
                   {ROLES.map((r) => <option key={r} value={r}>{roleLabelMap[r]}</option>)}

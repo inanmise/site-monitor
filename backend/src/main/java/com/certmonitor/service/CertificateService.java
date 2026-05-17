@@ -11,6 +11,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.cache.annotation.CacheEvict;
+import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -38,6 +40,7 @@ public class CertificateService {
     @Value("${cert.monitor.warning-days:30}")
     private int warningDays;
 
+    @CacheEvict(value = {"cert-stats", "cert-latest", "cert-warnings", "renewal-advice"}, allEntries = true)
     public void saveResult(Map<String, Object> result) {
         String domain = (String) result.get("domain");
         String now = ISO.format(Instant.now());
@@ -118,17 +121,33 @@ public class CertificateService {
                 .orElse("OK");
     }
 
+    @Cacheable("cert-latest")
     public List<CertificateDto> getAllLatest() {
         return latestRepo.findAllByOrderByDomainAsc().stream()
                 .map(this::toDto)
                 .collect(Collectors.toList());
     }
 
+    /** Returns certs visible to the given team (null = ADMIN, sees all). */
+    public List<CertificateDto> getAllLatestForTeam(Long teamId) {
+        if (teamId == null) return getAllLatest();
+        Set<String> domains = getTeamDomains(teamId);
+        return getAllLatest().stream()
+                .filter(c -> domains.contains(c.getDomain()))
+                .collect(Collectors.toList());
+    }
+
+    private Set<String> getTeamDomains(Long teamId) {
+        return inventoryRepo.findByTeamIdAndActiveTrueOrderByDomainAsc(teamId)
+                .stream().map(com.certmonitor.model.CertificateInventory::getDomain)
+                .collect(Collectors.toSet());
+    }
+
     public Map<String, Object> getPaginated(int page, int perPage,
                                              String sortBy, String sortDir,
                                              String filterDomain, String filterIssuer,
-                                             String filterStatus) {
-        List<CertificateDto> all = getAllLatest();
+                                             String filterStatus, Long teamId) {
+        List<CertificateDto> all = getAllLatestForTeam(teamId);
 
         List<CertificateDto> filtered = all.stream()
                 .filter(c -> filterDomain.isBlank() || c.getDomain().toLowerCase().contains(filterDomain.toLowerCase()))
@@ -176,6 +195,7 @@ public class CertificateService {
         );
     }
 
+    @Cacheable("cert-warnings")
     public List<CertificateDto> getWarnings() {
         return latestRepo.findByWarningTrueOrStatus("error").stream()
                 .sorted(Comparator.comparingInt(c -> c.getDaysRemaining() == null ? 0 : c.getDaysRemaining()))
@@ -183,23 +203,31 @@ public class CertificateService {
                 .collect(Collectors.toList());
     }
 
+    public List<CertificateDto> getWarningsForTeam(Long teamId) {
+        if (teamId == null) return getWarnings();
+        Set<String> domains = getTeamDomains(teamId);
+        return getWarnings().stream()
+                .filter(c -> domains.contains(c.getDomain()))
+                .collect(Collectors.toList());
+    }
+
     /**
-     * Adds the domain to certificate_inventory if not already present.
-     * Called whenever a domain is checked via the UI so that subsequent
-     * scheduler runs include it automatically.
+     * Adds the domain to certificate_inventory if not already present,
+     * assigning it to the given team. Called when a user checks a domain via the UI.
      */
     @Transactional
-    public void ensureInInventory(String domain, int port) {
+    public void ensureInInventory(String domain, int port, Long teamId) {
         if (inventoryRepo.existsByDomain(domain)) return;
         String now = ISO.format(Instant.now());
         com.certmonitor.model.CertificateInventory inv = new com.certmonitor.model.CertificateInventory();
         inv.setDomain(domain);
         inv.setPort(port);
+        inv.setTeamId(teamId);
         inv.setActive(true);
         inv.setCreatedAt(now);
         inv.setUpdatedAt(now);
         inventoryRepo.save(inv);
-        log.info("Auto-added {} to inventory (port {})", domain, port);
+        log.info("Auto-added {} to inventory (port {}, teamId={})", domain, port, teamId);
     }
 
     public List<CertificateDto> getHistory(String domain, int limit) {
@@ -208,10 +236,19 @@ public class CertificateService {
                 .collect(Collectors.toList());
     }
 
-    public Map<String, Object> getStats() {
-        List<CertificateDto> all = getAllLatest();
-        List<CertificateDto> warnings = getWarnings();
+    public Map<String, Object> getStatsForTeam(Long teamId) {
+        if (teamId == null) return getStats();
+        List<CertificateDto> all = getAllLatestForTeam(teamId);
+        List<CertificateDto> warnings = getWarningsForTeam(teamId);
+        return computeStats(all, warnings);
+    }
 
+    @Cacheable("cert-stats")
+    public Map<String, Object> getStats() {
+        return computeStats(getAllLatest(), getWarnings());
+    }
+
+    private Map<String, Object> computeStats(List<CertificateDto> all, List<CertificateDto> warnings) {
         long errors = warnings.stream().filter(c -> "error".equals(c.getStatus())).count();
         long warningOnly = warnings.size() - errors;
         long valid = all.size() - warnings.size();
@@ -246,11 +283,16 @@ public class CertificateService {
 
     /**
      * Returns check runs from the last {@code hours} hours, newest first.
-     * Each run groups all certificate checks that share the same runId.
+     * When teamId is non-null only runs containing that team's domains are included.
      */
-    public List<Map<String, Object>> getActivityLog(int hours) {
+    public List<Map<String, Object>> getActivityLog(int hours, Long teamId) {
         String cutoff = ISO.format(Instant.now().minus(hours, ChronoUnit.HOURS));
         List<CertificateCheck> checks = checkRepo.findByCheckedAtAfter(cutoff);
+
+        if (teamId != null) {
+            Set<String> teamDomains = getTeamDomains(teamId);
+            checks = checks.stream().filter(c -> teamDomains.contains(c.getDomain())).collect(Collectors.toList());
+        }
 
         // Group by runId preserving DESC order (newest run first)
         LinkedHashMap<String, List<CertificateCheck>> grouped = new LinkedHashMap<>();
@@ -302,8 +344,17 @@ public class CertificateService {
         return runs;
     }
 
+    public List<Map<String, Object>> getRenewalAdviceForTeam(Long teamId) {
+        if (teamId == null) return getRenewalAdvice();
+        return computeRenewalAdvice(getAllLatestForTeam(teamId));
+    }
+
+    @Cacheable("renewal-advice")
     public List<Map<String, Object>> getRenewalAdvice() {
-        List<CertificateDto> all = getAllLatest();
+        return computeRenewalAdvice(getAllLatest());
+    }
+
+    private List<Map<String, Object>> computeRenewalAdvice(List<CertificateDto> all) {
         List<Map<String, Object>> advice = new ArrayList<>();
 
         for (CertificateDto cert : all) {

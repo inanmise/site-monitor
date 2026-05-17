@@ -21,7 +21,9 @@ import java.time.Instant;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
-import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.TimeUnit;
+import com.github.benmanes.caffeine.cache.Cache;
+import com.github.benmanes.caffeine.cache.Caffeine;
 
 @Slf4j
 @Service
@@ -33,7 +35,12 @@ public class ChainValidationService {
     private static final String OID_AIA = "1.3.6.1.5.5.7.1.1";
     private static final String OID_CRL_DP = "2.5.29.31";
 
-    private final Map<String, X509CRL> crlCache = new ConcurrentHashMap<>();
+    // Bounded, TTL-based cache: prevents unbounded growth and avoids holding a
+    // ConcurrentHashMap bucket lock during slow CRL downloads (computeIfAbsent blocks on I/O).
+    private final Cache<String, X509CRL> crlCache = Caffeine.newBuilder()
+            .maximumSize(200)
+            .expireAfterWrite(1, TimeUnit.HOURS)
+            .build();
 
     public String calculateFingerprint(X509Certificate cert) {
         try {
@@ -166,7 +173,12 @@ public class ChainValidationService {
         try {
             List<String> urls = getCrlUrls(cert);
             for (String url : urls) {
-                X509CRL crl = crlCache.computeIfAbsent(url, this::downloadCrl);
+                // Check without holding any cache lock, download separately to avoid blocking
+                X509CRL crl = crlCache.getIfPresent(url);
+                if (crl == null) {
+                    crl = downloadCrl(url);
+                    if (crl != null) crlCache.put(url, crl);
+                }
                 if (crl != null && crl.isRevoked(cert)) return "REVOKED";
             }
             return urls.isEmpty() ? "UNKNOWN" : "VALID";

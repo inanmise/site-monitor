@@ -1,52 +1,32 @@
 import { useState, useEffect } from 'react'
 import { api } from '../api/client'
-import { useT } from '../i18n/index.jsx'
+import { useT, useLanguage } from '../i18n/index.jsx'
 import { ShieldCheck, Lock, Globe, Bell, BarChart3, RefreshCw } from 'lucide-react'
 
 const STORAGE_KEY = 'cert-monitor-remembered-user'
 
-const FEATURES = [
-  { Icon: ShieldCheck, text: 'Zincir & İptal Doğrulaması (OCSP/CRL)' },
-  { Icon: Bell,        text: 'Çok Seviyeli Uyarı: WARNING · HIGH · CRITICAL' },
-  { Icon: Globe,       text: 'Tüm domain\'lerinizi tek panelden izleyin' },
-  { Icon: RefreshCw,   text: 'Her gece otomatik kontrol, anlık override' },
-  { Icon: BarChart3,   text: 'Geçmiş, aktivite logu ve yenileme önerileri' },
-]
-
 function CertMonitorLogo() {
   return (
     <svg viewBox="0 0 160 160" fill="none" xmlns="http://www.w3.org/2000/svg" className="lp-logo-svg">
-      {/* Outer glow ring */}
       <circle cx="80" cy="80" r="72" stroke="rgba(99,179,237,0.18)" strokeWidth="2" />
       <circle cx="80" cy="80" r="58" stroke="rgba(99,179,237,0.12)" strokeWidth="1.5" />
-
-      {/* Shield body */}
       <path
         d="M80 18 L122 36 L122 82 C122 112 104 130 80 142 C56 130 38 112 38 82 L38 36 Z"
         fill="url(#shieldGrad)"
         stroke="rgba(147,210,255,0.35)"
         strokeWidth="1.5"
       />
-
-      {/* Circuit lines inside shield */}
       <line x1="56" y1="72" x2="62" y2="72" stroke="rgba(147,210,255,0.5)" strokeWidth="1.5" strokeLinecap="round"/>
       <line x1="62" y1="72" x2="62" y2="64" stroke="rgba(147,210,255,0.5)" strokeWidth="1.5" strokeLinecap="round"/>
       <line x1="62" y1="64" x2="70" y2="64" stroke="rgba(147,210,255,0.5)" strokeWidth="1.5" strokeLinecap="round"/>
-
       <line x1="98" y1="72" x2="94" y2="72" stroke="rgba(147,210,255,0.5)" strokeWidth="1.5" strokeLinecap="round"/>
       <line x1="94" y1="72" x2="94" y2="64" stroke="rgba(147,210,255,0.5)" strokeWidth="1.5" strokeLinecap="round"/>
       <line x1="94" y1="64" x2="90" y2="64" stroke="rgba(147,210,255,0.5)" strokeWidth="1.5" strokeLinecap="round"/>
-
       <line x1="56" y1="96" x2="60" y2="96" stroke="rgba(147,210,255,0.5)" strokeWidth="1.5" strokeLinecap="round"/>
       <line x1="60" y1="96" x2="60" y2="104" stroke="rgba(147,210,255,0.5)" strokeWidth="1.5" strokeLinecap="round"/>
-
       <line x1="98" y1="96" x2="96" y2="96" stroke="rgba(147,210,255,0.5)" strokeWidth="1.5" strokeLinecap="round"/>
       <line x1="96" y1="96" x2="96" y2="104" stroke="rgba(147,210,255,0.5)" strokeWidth="1.5" strokeLinecap="round"/>
-
-      {/* Lock body */}
       <rect x="62" y="80" width="36" height="28" rx="5" fill="white" fillOpacity="0.15" stroke="white" strokeOpacity="0.6" strokeWidth="1.5"/>
-
-      {/* Lock shackle */}
       <path
         d="M69 80 L69 72 C69 63 91 63 91 72 L91 80"
         stroke="white"
@@ -56,22 +36,15 @@ function CertMonitorLogo() {
         fill="none"
         strokeOpacity="0.85"
       />
-
-      {/* Keyhole */}
       <circle cx="80" cy="91" r="4.5" fill="white" fillOpacity="0.9"/>
       <rect x="78" y="91" width="4" height="7" rx="1.5" fill="white" fillOpacity="0.9"/>
-
-      {/* Certificate tick (top-right badge) */}
       <circle cx="110" cy="48" r="12" fill="#10b981" stroke="#0f172a" strokeWidth="2"/>
       <path d="M104.5 48 L108 52 L115.5 44" stroke="white" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" fill="none"/>
-
-      {/* Dots at circuit ends */}
       <circle cx="56" cy="72" r="2" fill="#63b3ed" fillOpacity="0.7"/>
       <circle cx="70" cy="64" r="2" fill="#63b3ed" fillOpacity="0.7"/>
       <circle cx="90" cy="64" r="2" fill="#63b3ed" fillOpacity="0.7"/>
       <circle cx="60" cy="104" r="2" fill="#63b3ed" fillOpacity="0.7"/>
       <circle cx="96" cy="104" r="2" fill="#63b3ed" fillOpacity="0.7"/>
-
       <defs>
         <linearGradient id="shieldGrad" x1="38" y1="18" x2="122" y2="142" gradientUnits="userSpaceOnUse">
           <stop offset="0%" stopColor="#2563eb"/>
@@ -84,6 +57,7 @@ function CertMonitorLogo() {
 
 export default function Login({ onLogin }) {
   const t = useT()
+  const { lang, toggle: toggleLang } = useLanguage()
   const saved = localStorage.getItem(STORAGE_KEY)
   const [username, setUsername] = useState(saved || '')
   const [password, setPassword] = useState('')
@@ -92,7 +66,14 @@ export default function Login({ onLogin }) {
   const [loading, setLoading] = useState(false)
   const [showPass, setShowPass] = useState(false)
 
-  // Kaydedilmiş kullanıcı adı varsa şifre alanına odaklan
+  const FEATURES = [
+    { Icon: ShieldCheck, key: 'login.feat1' },
+    { Icon: Bell,        key: 'login.feat2' },
+    { Icon: Globe,       key: 'login.feat3' },
+    { Icon: RefreshCw,   key: 'login.feat4' },
+    { Icon: BarChart3,   key: 'login.feat5' },
+  ]
+
   useEffect(() => {
     if (saved) {
       document.getElementById('lp-pass')?.focus()
@@ -111,7 +92,7 @@ export default function Login({ onLogin }) {
         } else {
           localStorage.removeItem(STORAGE_KEY)
         }
-        onLogin(data.username)
+        onLogin(data)
       } else {
         setError(data.error || t('login.failed'))
       }
@@ -131,24 +112,27 @@ export default function Login({ onLogin }) {
           <div className="lp-brand">
             <CertMonitorLogo />
             <h1 className="lp-brand-name">CertMonitor</h1>
-            <p className="lp-brand-tagline">SSL/TLS Sertifika İzleme Sistemi</p>
+            <p className="lp-brand-tagline">{t('login.tagline')}</p>
           </div>
 
           <ul className="lp-features">
-            {FEATURES.map(({ Icon, text }) => (
-              <li key={text} className="lp-feature-item">
+            {FEATURES.map(({ Icon, key }) => (
+              <li key={key} className="lp-feature-item">
                 <span className="lp-feature-icon"><Icon size={16} /></span>
-                <span>{text}</span>
+                <span>{t(key)}</span>
               </li>
             ))}
           </ul>
 
           <div className="lp-left-footer">
-            v{__APP_VERSION__} &nbsp;·&nbsp; &copy; {new Date().getFullYear()} CertMonitor
+            <span>v{__APP_VERSION__} &nbsp;·&nbsp; &copy; {new Date().getFullYear()} CertMonitor</span>
+            <button type="button" className="lp-lang-btn" onClick={toggleLang}>
+              <Globe size={13} />
+              {lang === 'tr' ? 'English' : 'Türkçe'}
+            </button>
           </div>
         </div>
 
-        {/* Dekoratif arka plan daireleri */}
         <div className="lp-deco lp-deco-1" />
         <div className="lp-deco lp-deco-2" />
         <div className="lp-deco lp-deco-3" />
@@ -162,27 +146,23 @@ export default function Login({ onLogin }) {
           <div className="lp-intro">
             <div className="lp-intro-badge">
               <Lock size={13} />
-              <span>Güvenli Giriş</span>
+              <span>{t('login.secureBadge')}</span>
             </div>
-            <h2 className="lp-intro-title">Hesabınıza Giriş Yapın</h2>
-            <p className="lp-intro-desc">
-              Kurumunuzun SSL/TLS sertifikalarını merkezi olarak izlemek,
-              sona erme uyarılarını yönetmek ve eskalasyon süreçlerini
-              takip etmek için oturum açın.
-            </p>
+            <h2 className="lp-intro-title">{t('login.heading')}</h2>
+            <p className="lp-intro-desc">{t('login.desc')}</p>
           </div>
 
           {/* Form */}
           <form onSubmit={handleSubmit} className="lp-form">
             <div className="lp-field">
-              <label className="lp-label" htmlFor="lp-user">Kullanıcı Adı</label>
+              <label className="lp-label" htmlFor="lp-user">{t('login.username')}</label>
               <input
                 id="lp-user"
                 className="lp-input"
                 type="text"
                 value={username}
                 onChange={e => setUsername(e.target.value)}
-                placeholder="Kullanıcı adınızı girin"
+                placeholder={t('login.userPlaceholder')}
                 required
                 autoFocus
                 autoComplete="username"
@@ -190,7 +170,7 @@ export default function Login({ onLogin }) {
             </div>
 
             <div className="lp-field">
-              <label className="lp-label" htmlFor="lp-pass">Şifre</label>
+              <label className="lp-label" htmlFor="lp-pass">{t('login.password')}</label>
               <div className="lp-pass-wrap">
                 <input
                   id="lp-pass"
@@ -198,7 +178,7 @@ export default function Login({ onLogin }) {
                   type={showPass ? 'text' : 'password'}
                   value={password}
                   onChange={e => setPassword(e.target.value)}
-                  placeholder="Şifrenizi girin"
+                  placeholder={t('login.passPlaceholder')}
                   required
                   autoComplete="current-password"
                 />
@@ -207,7 +187,7 @@ export default function Login({ onLogin }) {
                   className="lp-eye"
                   onClick={() => setShowPass(p => !p)}
                   tabIndex={-1}
-                  aria-label={showPass ? 'Şifreyi gizle' : 'Şifreyi göster'}
+                  aria-label={showPass ? t('login.hidePass') : t('login.showPass')}
                 >
                   {showPass
                     ? <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="18" height="18"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
@@ -223,7 +203,7 @@ export default function Login({ onLogin }) {
                 checked={rememberMe}
                 onChange={e => setRememberMe(e.target.checked)}
               />
-              <span>Beni Hatırla <em>(7 gün boyunca tekrar giriş yapma)</em></span>
+              <span>{t('login.rememberMe')}</span>
             </label>
 
             {error && (
@@ -235,15 +215,13 @@ export default function Login({ onLogin }) {
 
             <button type="submit" className="lp-btn" disabled={loading}>
               {loading
-                ? <><span className="lp-spinner" /> Giriş yapılıyor...</>
-                : <><Lock size={16} /> Giriş Yap</>
+                ? <><span className="lp-spinner" /> {t('login.loading')}</>
+                : <><Lock size={16} /> {t('login.submit')}</>
               }
             </button>
           </form>
 
-          <p className="lp-help">
-            Giriş sorunu yaşıyorsanız sistem yöneticinizle iletişime geçin.
-          </p>
+          <p className="lp-help">{t('login.help')}</p>
         </div>
       </div>
     </div>
