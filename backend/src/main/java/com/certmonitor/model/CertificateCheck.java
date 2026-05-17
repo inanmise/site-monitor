@@ -4,10 +4,16 @@ import jakarta.persistence.*;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
-import java.time.LocalDateTime;
-
 @Entity
-@Table(name = "certificate_checks")
+@Table(
+    name = "certificate_checks",
+    indexes = {
+        @Index(name = "idx_cc_domain",      columnList = "domain"),
+        @Index(name = "idx_cc_checked_at",  columnList = "checkedAt"),
+        @Index(name = "idx_cc_run_id",      columnList = "runId"),
+        @Index(name = "idx_cc_domain_ts",   columnList = "domain,checkedAt")
+    }
+)
 @Data
 @NoArgsConstructor
 public class CertificateCheck {
@@ -32,9 +38,7 @@ public class CertificateCheck {
     @Column(columnDefinition = "TEXT")
     private String san;
 
-    /** UUID prefix that groups all checks belonging to one scheduler run (or "manual" for on-demand checks) */
     private String runId;
-
     private String checkedAt;
     private String createdAt;
 }

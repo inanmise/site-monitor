@@ -115,13 +115,23 @@ spec:
                 secretKeyRef:
                   name: cert-monitor-secret
                   key: EMAIL_FROM
+            # JVM flags (heap %, stack size, OOM behaviour).
+            # Edit JAVA_OPTS in configmap.yaml to tune without rebuilding the image.
+            - name: JAVA_OPTS
+              valueFrom:
+                configMapKeyRef:
+                  name: cert-monitor-config
+                  key: JAVA_OPTS
+          # Resource limits — keep in sync with JAVA_OPTS MaxRAMPercentage.
+          # limit.memory=8Gi → JVM heap ≈ 6Gi (75 %). limit.cpu=5000m → 5 cores.
+          # To change limits: edit the values below AND update configmap JAVA_OPTS if needed.
           resources:
             requests:
               memory: "512Mi"
-              cpu: "250m"
+              cpu: "500m"
             limits:
-              memory: "1Gi"
-              cpu: "1000m"
+              memory: "8Gi"
+              cpu: "5000m"
           readinessProbe:
             httpGet:
               path: /health

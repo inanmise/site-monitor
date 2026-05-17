@@ -3,7 +3,8 @@ package com.certmonitor.controller;
 import com.certmonitor.model.*;
 import com.certmonitor.repository.*;
 import com.certmonitor.service.EscalationService;
-import com.certmonitor.model.NotificationLog;
+import com.certmonitor.service.UserService;
+import jakarta.servlet.http.HttpSession;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -14,6 +15,7 @@ import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.Map;
 import java.util.NoSuchElementException;
+import java.util.Objects;
 
 @RestController
 @RequestMapping("/api/admin")
@@ -26,7 +28,8 @@ public class AdminController {
     private final AlertEventRepository alertEventRepo;
     private final NotificationLogRepository notificationLogRepo;
     private final EscalationService escalationService;
-    private final com.certmonitor.repository.LatestCheckRepository latestCheckRepo;
+    private final LatestCheckRepository latestCheckRepo;
+    private final UserService userService;
 
     private static final DateTimeFormatter ISO =
             DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
@@ -34,29 +37,40 @@ public class AdminController {
     // ── Inventory ─────────────────────────────────────────────────────────────
 
     @GetMapping("/inventory")
-    public ResponseEntity<Map<String, Object>> listInventory() {
-        return ok(Map.of("data", inventoryRepo.findAll().stream()
-                .sorted((a, b) -> a.getDomain().compareToIgnoreCase(b.getDomain()))
-                .toList()));
+    public ResponseEntity<Map<String, Object>> listInventory(HttpSession session) {
+        List<CertificateInventory> items = isAdmin(session)
+                ? inventoryRepo.findAll().stream()
+                        .sorted((a, b) -> a.getDomain().compareToIgnoreCase(b.getDomain())).toList()
+                : inventoryRepo.findByTeamIdOrderByDomainAsc(teamId(session));
+        return ok(Map.of("data", items));
     }
 
     @PostMapping("/inventory")
-    public ResponseEntity<Map<String, Object>> addInventory(@RequestBody CertificateInventory item) {
+    public ResponseEntity<Map<String, Object>> addInventory(
+            @RequestBody CertificateInventory item, HttpSession session) {
+        validateDomain(item.getDomain());
+        if (!isAdmin(session)) item.setTeamId(teamId(session));
+        if (item.getTeamId() == null) {
+            // Assign to the first available team as default
+            userService.listTeams().stream().findFirst().ifPresent(t -> item.setTeamId(t.getId()));
+        }
         String now = now();
         item.setId(null);
         item.setCreatedAt(now);
         item.setUpdatedAt(now);
         if (item.getPort() == null) item.setPort(443);
+        if (item.getPort() < 1 || item.getPort() > 65535)
+            throw new IllegalArgumentException("Port must be between 1 and 65535");
         if (item.getActive() == null) item.setActive(true);
-        CertificateInventory saved = inventoryRepo.save(item);
-        return ok(Map.of("data", saved, "message", "Domain added to inventory"));
+        return ok(Map.of("data", inventoryRepo.save(item), "message", "Domain added to inventory"));
     }
 
     @PutMapping("/inventory/{id}")
-    public ResponseEntity<Map<String, Object>> updateInventory(@PathVariable Long id,
-                                                                @RequestBody CertificateInventory item) {
+    public ResponseEntity<Map<String, Object>> updateInventory(
+            @PathVariable Long id, @RequestBody CertificateInventory item, HttpSession session) {
         CertificateInventory existing = inventoryRepo.findById(id)
                 .orElseThrow(() -> new NoSuchElementException("Inventory item not found: " + id));
+        if (!isAdmin(session)) checkOwnership(existing.getTeamId(), session);
         existing.setDomain(item.getDomain());
         existing.setPort(item.getPort() != null ? item.getPort() : 443);
         existing.setDescription(item.getDescription());
@@ -65,36 +79,54 @@ public class AdminController {
         existing.setActive(item.getActive() != null ? item.getActive() : true);
         existing.setExpectedFingerprint(item.getExpectedFingerprint());
         existing.setExpectedSubject(item.getExpectedSubject());
+        if (isAdmin(session) && item.getTeamId() != null) existing.setTeamId(item.getTeamId());
         existing.setUpdatedAt(now());
         return ok(Map.of("data", inventoryRepo.save(existing)));
     }
 
     @DeleteMapping("/inventory/{id}")
-    public ResponseEntity<Map<String, Object>> deleteInventory(@PathVariable Long id) {
+    public ResponseEntity<Map<String, Object>> deleteInventory(
+            @PathVariable Long id, HttpSession session) {
         inventoryRepo.findById(id).ifPresent(inv -> {
+            if (!isAdmin(session)) checkOwnership(inv.getTeamId(), session);
             inventoryRepo.deleteById(id);
-            // Remove from dashboard (latest_checks) while keeping full history in certificate_checks
             latestCheckRepo.deleteById(inv.getDomain());
         });
         return ok(Map.of("message", "Deleted"));
     }
 
-    // ── Alert Thresholds ──────────────────────────────────────────────────────
+    @PostMapping("/inventory/{id}/transfer")
+    public ResponseEntity<Map<String, Object>> transferInventory(
+            @PathVariable Long id, @RequestBody Map<String, Object> body, HttpSession session) {
+        requireAdmin(session);
+        Long newTeamId = toLong(body.get("team_id"));
+        CertificateInventory inv = inventoryRepo.findById(id)
+                .orElseThrow(() -> new NoSuchElementException("Inventory item not found: " + id));
+        inv.setTeamId(newTeamId);
+        inv.setUpdatedAt(now());
+        return ok(Map.of("data", inventoryRepo.save(inv), "message", "Transferred"));
+    }
+
+    // ── Alert Thresholds (ADMIN only) ─────────────────────────────────────────
 
     @GetMapping("/thresholds")
-    public ResponseEntity<Map<String, Object>> getThresholds() {
+    public ResponseEntity<Map<String, Object>> getThresholds(HttpSession session) {
+        requireAdmin(session);
         return ok(Map.of("data", thresholdRepo.findAll()));
     }
 
     @PostMapping("/thresholds")
-    public ResponseEntity<Map<String, Object>> createThreshold(@RequestBody AlertThreshold t) {
+    public ResponseEntity<Map<String, Object>> createThreshold(
+            @RequestBody AlertThreshold t, HttpSession session) {
+        requireAdmin(session);
         t.setId(null);
         return ok(Map.of("data", thresholdRepo.save(t)));
     }
 
     @PutMapping("/thresholds/{id}")
-    public ResponseEntity<Map<String, Object>> updateThreshold(@PathVariable Long id,
-                                                                @RequestBody AlertThreshold t) {
+    public ResponseEntity<Map<String, Object>> updateThreshold(
+            @PathVariable Long id, @RequestBody AlertThreshold t, HttpSession session) {
+        requireAdmin(session);
         AlertThreshold existing = thresholdRepo.findById(id)
                 .orElseThrow(() -> new NoSuchElementException("Threshold not found: " + id));
         existing.setName(t.getName() != null ? t.getName() : existing.getName());
@@ -110,17 +142,28 @@ public class AdminController {
     // ── Escalation Contacts ───────────────────────────────────────────────────
 
     @GetMapping("/contacts")
-    public ResponseEntity<Map<String, Object>> listContacts() {
-        return ok(Map.of("data", contactRepo.findByActiveTrueOrderByRoleAsc()));
+    public ResponseEntity<Map<String, Object>> listContacts(HttpSession session) {
+        List<EscalationContact> contacts = isAdmin(session)
+                ? contactRepo.findByActiveTrueOrderByRoleAsc()
+                : contactRepo.findByTeamIdAndActiveTrueOrderByRoleAsc(teamId(session));
+        return ok(Map.of("data", contacts));
     }
 
     @GetMapping("/contacts/all")
-    public ResponseEntity<Map<String, Object>> listAllContacts() {
-        return ok(Map.of("data", contactRepo.findAll()));
+    public ResponseEntity<Map<String, Object>> listAllContacts(HttpSession session) {
+        List<EscalationContact> contacts = isAdmin(session)
+                ? contactRepo.findAll()
+                : contactRepo.findByTeamIdOrderByRoleAsc(teamId(session));
+        return ok(Map.of("data", contacts));
     }
 
     @PostMapping("/contacts")
-    public ResponseEntity<Map<String, Object>> addContact(@RequestBody EscalationContact contact) {
+    public ResponseEntity<Map<String, Object>> addContact(
+            @RequestBody EscalationContact contact, HttpSession session) {
+        if (!isAdmin(session)) contact.setTeamId(teamId(session));
+        if (contact.getTeamId() == null) {
+            userService.listTeams().stream().findFirst().ifPresent(t -> contact.setTeamId(t.getId()));
+        }
         contact.setId(null);
         contact.setCreatedAt(now());
         if (contact.getActive() == null) contact.setActive(true);
@@ -129,10 +172,11 @@ public class AdminController {
     }
 
     @PutMapping("/contacts/{id}")
-    public ResponseEntity<Map<String, Object>> updateContact(@PathVariable Long id,
-                                                              @RequestBody EscalationContact contact) {
+    public ResponseEntity<Map<String, Object>> updateContact(
+            @PathVariable Long id, @RequestBody EscalationContact contact, HttpSession session) {
         EscalationContact existing = contactRepo.findById(id)
                 .orElseThrow(() -> new NoSuchElementException("Contact not found: " + id));
+        if (!isAdmin(session)) checkOwnership(existing.getTeamId(), session);
         existing.setName(contact.getName());
         existing.setEmail(contact.getEmail());
         existing.setRole(contact.getRole());
@@ -140,20 +184,26 @@ public class AdminController {
         existing.setWebhookUrl(contact.getWebhookUrl());
         existing.setWebhookType(contact.getWebhookType());
         existing.setActive(contact.getActive() != null ? contact.getActive() : true);
+        if (isAdmin(session) && contact.getTeamId() != null) existing.setTeamId(contact.getTeamId());
         return ok(Map.of("data", contactRepo.save(existing)));
     }
 
     @DeleteMapping("/contacts/{id}")
-    public ResponseEntity<Map<String, Object>> deleteContact(@PathVariable Long id) {
+    public ResponseEntity<Map<String, Object>> deleteContact(
+            @PathVariable Long id, HttpSession session) {
+        EscalationContact existing = contactRepo.findById(id)
+                .orElseThrow(() -> new NoSuchElementException("Contact not found: " + id));
+        if (!isAdmin(session)) checkOwnership(existing.getTeamId(), session);
         contactRepo.deleteById(id);
         return ok(Map.of("message", "Deleted"));
     }
 
-    // ── Alert Events ──────────────────────────────────────────────────────────
+    // ── Alert Events (ADMIN only) ─────────────────────────────────────────────
 
     @GetMapping("/alerts")
     public ResponseEntity<Map<String, Object>> listAlerts(
-            @RequestParam(defaultValue = "false") boolean onlyOpen) {
+            @RequestParam(defaultValue = "false") boolean onlyOpen, HttpSession session) {
+        requireAdmin(session);
         List<AlertEvent> events = onlyOpen
                 ? alertEventRepo.findAllOpenOrderBySeverity()
                 : alertEventRepo.findAllByOrderByCreatedAtDesc();
@@ -162,35 +212,144 @@ public class AdminController {
 
     @PostMapping("/alerts/{id}/acknowledge")
     public ResponseEntity<Map<String, Object>> acknowledgeAlert(
-            @PathVariable Long id,
-            @RequestBody(required = false) Map<String, String> body) {
+            @PathVariable Long id, @RequestBody(required = false) Map<String, String> body,
+            HttpSession session) {
+        requireAdmin(session);
         String by = body != null ? body.getOrDefault("acknowledged_by", "admin") : "admin";
-        AlertEvent event = escalationService.acknowledge(id, by);
-        return ok(Map.of("data", event, "message", "Alert acknowledged"));
+        return ok(Map.of("data", escalationService.acknowledge(id, by), "message", "Alert acknowledged"));
     }
 
     @PostMapping("/alerts/{id}/resolve")
     public ResponseEntity<Map<String, Object>> resolveAlert(
-            @PathVariable Long id,
-            @RequestBody(required = false) Map<String, String> body) {
+            @PathVariable Long id, @RequestBody(required = false) Map<String, String> body,
+            HttpSession session) {
+        requireAdmin(session);
         String resolvedBy = body != null ? body.getOrDefault("resolved_by", "admin") : "admin";
-        AlertEvent event = escalationService.resolve(id, resolvedBy);
-        return ok(Map.of("data", event, "message", "Alert resolved"));
+        return ok(Map.of("data", escalationService.resolve(id, resolvedBy), "message", "Alert resolved"));
     }
 
     @PostMapping("/alerts/{id}/re-notify")
-    public ResponseEntity<Map<String, Object>> reNotifyAlert(@PathVariable Long id) {
-        Map<String, Object> result = escalationService.reNotify(id);
-        return ok(Map.of("data", result, "message", "Bildirim tetiklendi"));
+    public ResponseEntity<Map<String, Object>> reNotifyAlert(
+            @PathVariable Long id, HttpSession session) {
+        requireAdmin(session);
+        return ok(Map.of("data", escalationService.reNotify(id), "message", "Notification triggered"));
     }
 
     @GetMapping("/alerts/{id}/notifications")
-    public ResponseEntity<Map<String, Object>> getAlertNotifications(@PathVariable Long id) {
-        List<NotificationLog> logs = notificationLogRepo.findByAlertEventIdOrderBySentAtDesc(id);
-        return ok(Map.of("data", logs));
+    public ResponseEntity<Map<String, Object>> getAlertNotifications(
+            @PathVariable Long id, HttpSession session) {
+        requireAdmin(session);
+        return ok(Map.of("data", notificationLogRepo.findByAlertEventIdOrderBySentAtDesc(id)));
+    }
+
+    // ── Teams (ADMIN only) ────────────────────────────────────────────────────
+
+    @GetMapping("/teams")
+    public ResponseEntity<Map<String, Object>> listTeams(HttpSession session) {
+        requireAdmin(session);
+        return ok(Map.of("data", userService.listTeams()));
+    }
+
+    @PostMapping("/teams")
+    public ResponseEntity<Map<String, Object>> createTeam(
+            @RequestBody Map<String, String> body, HttpSession session) {
+        requireAdmin(session);
+        Team team = userService.createTeam(body.get("name"), body.get("description"));
+        return ok(Map.of("data", team, "message", "Team created"));
+    }
+
+    @PutMapping("/teams/{id}")
+    public ResponseEntity<Map<String, Object>> updateTeam(
+            @PathVariable Long id, @RequestBody Map<String, Object> body, HttpSession session) {
+        requireAdmin(session);
+        Team team = userService.updateTeam(id,
+                (String) body.get("name"),
+                (String) body.get("description"),
+                body.get("active") instanceof Boolean ? (Boolean) body.get("active") : null);
+        return ok(Map.of("data", team));
+    }
+
+    @DeleteMapping("/teams/{id}")
+    public ResponseEntity<Map<String, Object>> deleteTeam(
+            @PathVariable Long id, HttpSession session) {
+        requireAdmin(session);
+        userService.deleteTeam(id);
+        return ok(Map.of("message", "Team deleted"));
+    }
+
+    // ── Users (ADMIN only) ────────────────────────────────────────────────────
+
+    @GetMapping("/users")
+    public ResponseEntity<Map<String, Object>> listUsers(HttpSession session) {
+        requireAdmin(session);
+        return ok(Map.of("data", userService.listUsers()));
+    }
+
+    @PostMapping("/users")
+    public ResponseEntity<Map<String, Object>> createUser(
+            @RequestBody Map<String, Object> body, HttpSession session) {
+        requireAdmin(session);
+        AppUser user = userService.createUser(
+                (String) body.get("username"),
+                (String) body.get("password"),
+                (String) body.get("display_name"),
+                (String) body.get("email"),
+                (String) body.get("system_role"),
+                toLong(body.get("team_id")));
+        return ok(Map.of("data", user, "message", "User created"));
+    }
+
+    @PutMapping("/users/{id}")
+    public ResponseEntity<Map<String, Object>> updateUser(
+            @PathVariable Long id, @RequestBody Map<String, Object> body, HttpSession session) {
+        requireAdmin(session);
+        AppUser user = userService.updateUser(id,
+                (String) body.get("display_name"),
+                (String) body.get("email"),
+                (String) body.get("system_role"),
+                toLong(body.get("team_id")),
+                body.get("active") instanceof Boolean ? (Boolean) body.get("active") : null);
+        return ok(Map.of("data", user));
+    }
+
+    @PostMapping("/users/{id}/reset-password")
+    public ResponseEntity<Map<String, Object>> resetPassword(
+            @PathVariable Long id, @RequestBody Map<String, String> body, HttpSession session) {
+        requireAdmin(session);
+        userService.changePassword(id, body.get("password"));
+        return ok(Map.of("message", "Password updated"));
+    }
+
+    @DeleteMapping("/users/{id}")
+    public ResponseEntity<Map<String, Object>> deleteUser(
+            @PathVariable Long id, HttpSession session) {
+        requireAdmin(session);
+        userService.deleteUser(id);
+        return ok(Map.of("message", "User deleted"));
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
+
+    private boolean isAdmin(HttpSession session) {
+        return "ADMIN".equals(session.getAttribute("systemRole"));
+    }
+
+    private void requireAdmin(HttpSession session) {
+        if (!isAdmin(session)) throw new SecurityException("Admin access required");
+    }
+
+    private Long teamId(HttpSession session) {
+        Object raw = session.getAttribute("teamId");
+        if (raw == null) return null;
+        return raw instanceof Long ? (Long) raw : Long.valueOf(raw.toString());
+    }
+
+    private void checkOwnership(Long resourceTeamId, HttpSession session) {
+        Long userTeamId = teamId(session);
+        if (!Objects.equals(resourceTeamId, userTeamId)) {
+            throw new SecurityException("Access denied: resource belongs to a different team");
+        }
+    }
 
     private ResponseEntity<Map<String, Object>> ok(Map<String, Object> body) {
         Map<String, Object> response = new java.util.LinkedHashMap<>(body);
@@ -201,5 +360,24 @@ public class AdminController {
 
     private String now() {
         return ISO.format(Instant.now());
+    }
+
+    private void validateDomain(String domain) {
+        if (domain == null || domain.isBlank())
+            throw new IllegalArgumentException("Domain cannot be blank");
+        if (domain.length() > 253)
+            throw new IllegalArgumentException("Domain name too long");
+        if (!domain.matches("^(?:[a-zA-Z0-9](?:[a-zA-Z0-9\\-]{0,61}[a-zA-Z0-9])?\\.)+[a-zA-Z]{2,}$")
+                && !domain.matches("^[a-zA-Z0-9\\-]{1,63}$")) {
+            throw new IllegalArgumentException("Invalid domain format: " + domain);
+        }
+    }
+
+    private Long toLong(Object v) {
+        if (v == null) return null;
+        if (v instanceof Long l) return l;
+        if (v instanceof Integer i) return i.longValue();
+        if (v instanceof Number n) return n.longValue();
+        try { return Long.parseLong(v.toString()); } catch (Exception e) { return null; }
     }
 }

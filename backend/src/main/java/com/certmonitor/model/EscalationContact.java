@@ -41,6 +41,10 @@ public class EscalationContact {
     /** TEAMS or SLACK */
     private String webhookType;
 
+    /** Team this contact belongs to — alerts only fire for certs in the same team */
+    @Column(name = "team_id")
+    private Long teamId;
+
     @Column(nullable = false)
     private Boolean active = true;
 

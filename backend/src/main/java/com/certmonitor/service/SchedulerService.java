@@ -13,9 +13,14 @@ import org.springframework.context.event.EventListener;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
+import com.zaxxer.hikari.HikariDataSource;
+
+import javax.sql.DataSource;
 import java.io.BufferedReader;
 import java.io.FileReader;
+import java.net.InetAddress;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
@@ -26,7 +31,6 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
-import java.util.UUID;
 
 @Slf4j
 @Service
@@ -41,27 +45,68 @@ public class SchedulerService {
     private final LatestCheckRepository latestCheckRepo;
     private final AlertThresholdRepository thresholdRepo;
     private final JdbcTemplate jdbcTemplate;
+    private final UserService userService;
+    private final DataSource dataSource;
 
     @Value("${cert.monitor.cert-list-file:../sertifikaListesi.txt}")
     private String certListFile;
 
-    /** Stale threshold: a domain not checked within this many minutes is considered stale */
+    @Value("${cert.monitor.username:user}")
+    private String adminUsername;
+
+    @Value("${cert.monitor.password:password}")
+    private String adminPassword;
+
+    /** Stale threshold: domain not checked within this many minutes is considered stale. */
     private static final int STALE_MINUTES = 65;
+
+    /** Lock TTL: must be > the longest possible check run but short enough that a crashed
+     *  instance doesn't block the cluster for too long. 10 minutes covers even large inventories. */
+    private static final int LOCK_TTL_MINUTES = 10;
 
     private static final DateTimeFormatter ISO =
             DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
 
-    private final AtomicReference<LocalDateTime> lastRun    = new AtomicReference<>();
-    private final AtomicBoolean                  running    = new AtomicBoolean(false);
-    private final AtomicReference<String>        currentRunId = new AtomicReference<>("");
+    /** Hostname portion of the instance ID — used to clear stale locks left by previous
+     *  instances on the same machine (crash/kill without running the finally block). */
+    private static final String HOSTNAME   = resolveHostname();
+    private static final String INSTANCE_ID = HOSTNAME + "-"
+            + UUID.randomUUID().toString().replace("-", "").substring(0, 8);
+
+    // In-process guard — prevents same JVM from running two checks concurrently
+    private final AtomicBoolean running = new AtomicBoolean(false);
+    private final AtomicReference<LocalDateTime> lastRun = new AtomicReference<>();
+    private final AtomicReference<String> currentRunId = new AtomicReference<>("");
 
     @EventListener(ApplicationReadyEvent.class)
     public void runOnStartup() {
-        log.info("Application started — bootstrapping inventory and running initial check...");
+        log.info("Application started [instance={}] — bootstrapping...", INSTANCE_ID);
         applySchemaPatches();
+        userService.ensureBootstrapped(adminUsername, adminPassword);
         ensureDefaultThreshold();
+        assignOrphanedCertsToDefaultTeam();
         importTxtFileIfInventoryEmpty();
-        runCheck();  // syncLatestChecksToInventory() is called inside runCheck()
+        clearStaleLocksForThisHost();
+        new Thread(this::runCheck, "startup-check").start();
+    }
+
+    /**
+     * Removes any scheduler lock left by a previous instance on THIS machine that
+     * crashed or was killed before the finally block ran.
+     * Locks from other hosts (different hostname prefix) are intentionally preserved
+     * so rolling restarts in HA clusters don't cancel a running check on another node.
+     */
+    private void clearStaleLocksForThisHost() {
+        try {
+            int deleted = jdbcTemplate.update(
+                "DELETE FROM scheduler_lock WHERE name = ? AND locked_by LIKE ?",
+                "cert-check", HOSTNAME + "-%");
+            if (deleted > 0) {
+                log.info("Cleared {} stale scheduler lock(s) from previous instance(s) on this host", deleted);
+            }
+        } catch (Exception e) {
+            log.warn("Could not clear stale scheduler lock: {}", e.getMessage());
+        }
     }
 
     /** Idempotent DDL patches for columns that ddl-auto=update may miss on existing SQLite tables. */
@@ -69,36 +114,62 @@ public class SchedulerService {
         patch("ALTER TABLE certificate_checks ADD COLUMN run_id TEXT");
         patch("ALTER TABLE alert_events ADD COLUMN resolved_by TEXT");
         patch("ALTER TABLE notification_logs ADD COLUMN message TEXT");
+        patch("ALTER TABLE certificate_inventory ADD COLUMN team_id INTEGER");
+        patch("ALTER TABLE escalation_contacts ADD COLUMN team_id INTEGER");
+        // Distributed scheduler lock table (HA: prevents duplicate runs across instances)
+        patch("""
+            CREATE TABLE IF NOT EXISTS scheduler_lock(
+                name TEXT NOT NULL PRIMARY KEY,
+                locked_by TEXT NOT NULL,
+                locked_until TEXT NOT NULL
+            )
+            """);
+    }
+
+    /** Assigns any certs/contacts without a team to the first (default) team. */
+    private void assignOrphanedCertsToDefaultTeam() {
+        try {
+            userService.listTeams().stream().findFirst().ifPresent(defaultTeam -> {
+                Long tid = defaultTeam.getId();
+                try {
+                    jdbcTemplate.update(
+                        "UPDATE certificate_inventory SET team_id = ? WHERE team_id IS NULL", tid);
+                    jdbcTemplate.update(
+                        "UPDATE escalation_contacts SET team_id = ? WHERE team_id IS NULL", tid);
+                    log.info("Assigned orphaned certs/contacts to default team '{}' (id={})",
+                            defaultTeam.getName(), tid);
+                } catch (Exception e) {
+                    log.warn("Could not assign orphaned records to default team: {}", e.getMessage());
+                }
+            });
+        } catch (Exception e) {
+            log.warn("assignOrphanedCertsToDefaultTeam failed: {}", e.getMessage());
+        }
     }
 
     private void patch(String ddl) {
         try {
             jdbcTemplate.execute(ddl);
-            log.info("Schema patch applied: {}", ddl);
+            log.info("Schema patch applied: {}", ddl.length() > 60 ? ddl.substring(0, 60) + "…" : ddl);
         } catch (Exception e) {
-            log.debug("Schema patch skipped ({}): {}", ddl, e.getMessage());
+            log.debug("Schema patch skipped: {}", e.getMessage());
         }
     }
 
-    /** Full sweep: runs at the top of every hour (e.g. 10:00, 11:00, 12:00 ...) */
+    /** Full sweep: runs at the top of every hour. */
     @Scheduled(cron = "0 0 * * * *")
     public void scheduledHourlyCheck() {
-        log.info("Hourly scheduled check triggered");
+        log.info("Hourly scheduled check triggered [instance={}]", INSTANCE_ID);
         runCheck();
     }
 
     /**
-     * Stale sweep: runs every 5 minutes (starting 5 min after startup).
+     * Stale sweep: runs every 5 minutes.
      * Checks only domains that have not been checked in the last {@value #STALE_MINUTES} minutes.
-     * Acts as a safety net for gaps caused by errors, new inventory entries, or missed hourly runs.
      */
     @Scheduled(fixedDelay = 300_000, initialDelay = 300_000)
     public void checkStaleInventory() {
-        // Keep inventory in sync before evaluating staleness
-        syncLatestChecksToInventory();
-
         String cutoff = ISO.format(Instant.now().minus(STALE_MINUTES, ChronoUnit.MINUTES));
-
         Set<String> freshDomains = latestCheckRepo.findByCheckedAtGreaterThanEqual(cutoff).stream()
                 .map(lc -> lc.getDomain())
                 .collect(Collectors.toSet());
@@ -109,11 +180,10 @@ public class SchedulerService {
                 .toList();
 
         if (staleDomains.isEmpty()) {
-            log.debug("Stale sweep: all active domains are fresh (checked within {} min)", STALE_MINUTES);
+            log.debug("Stale sweep: all active domains are fresh");
             return;
         }
-
-        log.info("Stale sweep: {} domain(s) not checked in {} min — checking now", staleDomains.size(), STALE_MINUTES);
+        log.info("Stale sweep: {} domain(s) not checked in {} min", staleDomains.size(), STALE_MINUTES);
         runCheckForDomains(staleDomains);
     }
 
@@ -121,26 +191,25 @@ public class SchedulerService {
         return running.get();
     }
 
-    public void runCheck() {
-        if (running.get()) {
-            log.warn("Check already in progress (runId={}) — skipping duplicate trigger", currentRunId.get());
-            return;
-        }
-        // Ensure every domain visible on the dashboard is represented in inventory
-        syncLatestChecksToInventory();
+    /** DB-free snapshot — safe to call during JVM shutdown when JPA may be unavailable. */
+    public Map<String, Object> getShutdownSnapshot() {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("instance",  INSTANCE_ID);
+        m.put("running",   running.get());
+        m.put("run_id",    currentRunId.get());
+        m.put("last_run",  lastRun.get() != null ? lastRun.get().toString() : "never");
+        return m;
+    }
 
+    public void runCheck() {
         List<Map<String, Object>> domains = loadDomainsFromInventory();
         if (domains.isEmpty()) {
-            log.warn("No active domains in inventory!");
+            log.warn("No active domains in inventory — skipping check");
             return;
         }
         runCheckForDomains(domains);
     }
 
-    /**
-     * Adds any domain present in latest_checks (dashboard) but missing from inventory.
-     * Called before every check run so no restart is needed to pick up manually-added domains.
-     */
     private void syncLatestChecksToInventory() {
         String now = ISO.format(Instant.now());
         latestCheckRepo.findAll().forEach(lc -> {
@@ -152,32 +221,49 @@ public class SchedulerService {
                 inv.setCreatedAt(now);
                 inv.setUpdatedAt(now);
                 inventoryRepo.save(inv);
-                log.info("Synced {} → inventory (was in latest_checks but missing from inventory)", lc.getDomain());
+                log.info("Synced {} → inventory", lc.getDomain());
             }
         });
     }
 
     private void runCheckForDomains(List<Map<String, Object>> domains) {
+        // 1. In-process guard (fast fail for same JVM)
+        if (!running.compareAndSet(false, true)) {
+            log.warn("Check already in progress (runId={}) — skipping duplicate trigger", currentRunId.get());
+            return;
+        }
+
+        // 2. Distributed DB lock (HA: prevents duplicate across multiple instances)
+        if (!tryAcquireSchedulerLock("cert-check", LOCK_TTL_MINUTES)) {
+            running.set(false);
+            log.info("Scheduler lock held by another instance [{}], skipping", INSTANCE_ID);
+            return;
+        }
+
+        // Sync inside both locks so inventory writes never race with saveResult()
+        syncLatestChecksToInventory();
+
         String runId = UUID.randomUUID().toString().replace("-", "").substring(0, 12);
-        running.set(true);
         currentRunId.set(runId);
-        log.info("Certificate check started — runId={}, {} domain(s) — {}", runId, domains.size(), LocalDateTime.now());
-
-        List<CompletableFuture<Map<String, Object>>> futures = domains.stream()
-                .map(d -> checkerService.checkAsync((String) d.get("domain"), (int) d.get("port")))
-                .toList();
-
-        List<Map<String, Object>> results = futures.stream()
-                .map(CompletableFuture::join)
-                .map(r -> { Map<String, Object> m = new LinkedHashMap<>(r); m.put("run_id", runId); return m; })
-                .toList();
+        log.info("Certificate check started — runId={}, {} domain(s) [instance={}]",
+                runId, domains.size(), INSTANCE_ID);
 
         try {
+            List<CompletableFuture<Map<String, Object>>> futures = domains.stream()
+                    .map(d -> checkerService.checkAsync((String) d.get("domain"), (int) d.get("port")))
+                    .toList();
+
+            List<Map<String, Object>> results = futures.stream()
+                    .map(CompletableFuture::join)
+                    .map(r -> { Map<String, Object> m = new LinkedHashMap<>(r); m.put("run_id", runId); return m; })
+                    .toList();
+
             results.forEach(certService::saveResult);
 
             long errors   = results.stream().filter(r -> "error".equals(r.get("status"))).count();
             long warnings = results.stream().filter(r -> Boolean.TRUE.equals(r.get("warning"))).count();
-            log.info("Check complete — runId={}, Total: {}, Warning: {}, Error: {}", runId, results.size(), warnings, errors);
+            log.info("Check complete — runId={}, Total={}, Warning={}, Error={} [instance={}]",
+                    runId, results.size(), warnings, errors, INSTANCE_ID);
 
             lastRun.set(LocalDateTime.now());
 
@@ -185,21 +271,144 @@ public class SchedulerService {
                 emailService.sendWarningEmailIfEnabled(certService.getWarnings());
             }
             escalationService.processResults(results);
+
         } finally {
             running.set(false);
             currentRunId.set("");
+            releaseSchedulerLock("cert-check");
         }
     }
+
+    // ── Distributed lock helpers ──────────────────────────────────────────────
+
+    /**
+     * Tries to acquire a named DB lock with a TTL.
+     * Returns {@code true} if the lock was acquired by this instance,
+     * {@code false} if another instance holds an unexpired lock.
+     * Gracefully degrades to {@code true} (allow) if the lock table is unavailable.
+     */
+    private boolean tryAcquireSchedulerLock(String lockName, int ttlMinutes) {
+        try {
+            String now   = ISO.format(Instant.now());
+            String until = ISO.format(Instant.now().plusSeconds(ttlMinutes * 60L));
+            // Remove expired lock (safe even if already gone)
+            jdbcTemplate.update(
+                "DELETE FROM scheduler_lock WHERE name = ? AND locked_until < ?", lockName, now);
+            // Try to insert — fails with unique-constraint violation if lock already held
+            jdbcTemplate.update(
+                "INSERT INTO scheduler_lock(name, locked_by, locked_until) VALUES(?, ?, ?)",
+                lockName, INSTANCE_ID, until);
+            return true;
+        } catch (Exception e) {
+            // Unique constraint violation → another instance holds the lock
+            if (e.getMessage() != null && (e.getMessage().contains("UNIQUE") || e.getMessage().contains("unique"))) {
+                return false;
+            }
+            // Lock table unavailable — allow single-instance fallback
+            log.warn("Distributed lock table unavailable (HA degraded): {}", e.getMessage());
+            return true;
+        }
+    }
+
+    private void releaseSchedulerLock(String lockName) {
+        try {
+            jdbcTemplate.update(
+                "DELETE FROM scheduler_lock WHERE name = ? AND locked_by = ?", lockName, INSTANCE_ID);
+        } catch (Exception e) {
+            log.warn("Failed to release scheduler lock '{}': {}", lockName, e.getMessage());
+        }
+    }
+
+    // ── Status & helpers ──────────────────────────────────────────────────────
 
     public Map<String, Object> getStatus() {
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("last_run",       lastRun.get() != null ? lastRun.get().toString() : "Not yet run");
-        m.put("active_domains", inventoryRepo.findByActiveTrueOrderByDomainAsc().size());
+        m.put("active_domains", inventoryRepo.countByActiveTrue());
         m.put("cert_list_file", certListFile);
         m.put("schedule",       "Hourly (top of every hour) + stale sweep every 5 minutes");
         m.put("running",        running.get());
         m.put("current_run_id", currentRunId.get());
+        m.put("instance_id",    INSTANCE_ID);
         return m;
+    }
+
+    @Transactional(readOnly = true)
+    public Map<String, Object> getSystemHealth() {
+        Map<String, Object> h = new LinkedHashMap<>();
+
+        // Scheduler state
+        Map<String, Object> schedulerMap = new LinkedHashMap<>();
+        schedulerMap.put("running",        running.get());
+        schedulerMap.put("current_run_id", currentRunId.get());
+        schedulerMap.put("last_run",       lastRun.get() != null ? lastRun.get().toString() : null);
+        schedulerMap.put("instance_id",    INSTANCE_ID);
+        schedulerMap.put("active_domains", inventoryRepo.countByActiveTrue());
+        h.put("scheduler", schedulerMap);
+
+        // Distributed lock state
+        try {
+            List<Map<String, Object>> rows = jdbcTemplate.queryForList(
+                "SELECT locked_by, locked_until FROM scheduler_lock WHERE name = ?", "cert-check");
+            if (!rows.isEmpty()) {
+                Map<String, Object> row = rows.get(0);
+                Map<String, Object> lockMap = new LinkedHashMap<>();
+                lockMap.put("held",        true);
+                lockMap.put("locked_by",   row.get("locked_by"));
+                lockMap.put("locked_until",row.get("locked_until"));
+                lockMap.put("held_by_me",  INSTANCE_ID.equals(row.get("locked_by")));
+                h.put("lock", lockMap);
+            } else {
+                h.put("lock", Map.of("held", false));
+            }
+        } catch (Exception e) {
+            h.put("lock", Map.of("held", false, "error", e.getMessage()));
+        }
+
+        // HikariCP pool stats
+        try {
+            if (dataSource instanceof HikariDataSource hds) {
+                var pool = hds.getHikariPoolMXBean();
+                Map<String, Object> poolMap = new LinkedHashMap<>();
+                poolMap.put("active",   pool.getActiveConnections());
+                poolMap.put("idle",     pool.getIdleConnections());
+                poolMap.put("total",    pool.getTotalConnections());
+                poolMap.put("waiting",  pool.getThreadsAwaitingConnection());
+                poolMap.put("max_size", hds.getMaximumPoolSize());
+                h.put("pool", poolMap);
+            }
+        } catch (Exception e) {
+            h.put("pool", Map.of("error", e.getMessage()));
+        }
+
+        // JVM memory
+        Runtime rt = Runtime.getRuntime();
+        long maxMem   = rt.maxMemory();
+        long totalMem = rt.totalMemory();
+        long freeMem  = rt.freeMemory();
+        long usedMem  = totalMem - freeMem;
+        Map<String, Object> memMap = new LinkedHashMap<>();
+        memMap.put("used_mb",  usedMem  / (1024 * 1024));
+        memMap.put("free_mb",  freeMem  / (1024 * 1024));
+        memMap.put("total_mb", totalMem / (1024 * 1024));
+        memMap.put("max_mb",   maxMem   / (1024 * 1024));
+        memMap.put("used_pct", maxMem > 0 ? (int)(usedMem * 100L / maxMem) : 0);
+        h.put("memory", memMap);
+
+        h.put("timestamp", ISO.format(Instant.now()));
+        return h;
+    }
+
+    /** Force-releases the scheduler lock and resets the in-process guard. ADMIN only. */
+    public void forceReleaseLock() {
+        try {
+            jdbcTemplate.update("DELETE FROM scheduler_lock WHERE name = ?", "cert-check");
+        } catch (Exception e) {
+            log.warn("forceReleaseLock: could not delete lock row: {}", e.getMessage());
+        }
+        running.set(false);
+        currentRunId.set("");
+        log.warn("Scheduler lock force-released by admin [instance={}]", INSTANCE_ID);
     }
 
     private List<Map<String, Object>> loadDomainsFromInventory() {
@@ -221,7 +430,6 @@ public class SchedulerService {
             while ((line = reader.readLine()) != null) {
                 line = line.trim();
                 if (line.isEmpty() || line.startsWith("#")) continue;
-
                 int port = 443;
                 String domain = line;
                 int colonIdx = line.lastIndexOf(':');
@@ -231,7 +439,6 @@ public class SchedulerService {
                         domain = line.substring(0, colonIdx);
                     } catch (NumberFormatException ignored) {}
                 }
-
                 if (!inventoryRepo.existsByDomain(domain)) {
                     CertificateInventory inv = new CertificateInventory();
                     inv.setDomain(domain);
@@ -260,5 +467,10 @@ public class SchedulerService {
             thresholdRepo.save(t);
             log.info("Default alert threshold created");
         }
+    }
+
+    private static String resolveHostname() {
+        try { return InetAddress.getLocalHost().getHostName(); }
+        catch (Exception e) { return "node"; }
     }
 }

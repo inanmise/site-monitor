@@ -7,6 +7,7 @@ import com.certmonitor.model.LatestCheck;
 import com.certmonitor.model.NotificationLog;
 import com.certmonitor.repository.AlertEventRepository;
 import com.certmonitor.repository.AlertThresholdRepository;
+import com.certmonitor.repository.CertificateInventoryRepository;
 import com.certmonitor.repository.EscalationContactRepository;
 import com.certmonitor.repository.LatestCheckRepository;
 import com.certmonitor.repository.NotificationLogRepository;
@@ -31,6 +32,7 @@ public class EscalationService {
     private final AlertEventRepository alertEventRepo;
     private final AlertThresholdRepository thresholdRepo;
     private final EscalationContactRepository contactRepo;
+    private final CertificateInventoryRepository inventoryRepo;
     private final EmailNotificationService emailService;
     private final WebhookService webhookService;
     private final ObjectMapper objectMapper;
@@ -43,7 +45,6 @@ public class EscalationService {
     private static final Map<String, Integer> LEVEL_ORDER = Map.of(
             "WARNING", 1, "HIGH", 2, "CRITICAL", 3);
 
-    @Transactional
     public void processResults(List<Map<String, Object>> results) {
         AlertThreshold threshold = thresholdRepo.findFirstByActiveTrue()
                 .orElseGet(this::defaultThreshold);
@@ -59,17 +60,21 @@ public class EscalationService {
             String alertLevel = determineAlertLevel(result, alertType, threshold);
             if (alertLevel == null) continue;
 
+            // Route alert to the team that owns this cert
+            Long domainTeamId = inventoryRepo.findByDomain(domain)
+                    .map(com.certmonitor.model.CertificateInventory::getTeamId)
+                    .orElse(null);
+
             Integer daysRemaining = toInt(result.get("days_remaining"));
             String message = buildMessage(domain, alertType, alertLevel, daysRemaining);
 
             Optional<AlertEvent> existing = alertEventRepo.findOpenAlert(domain, alertType);
 
             if (existing.isEmpty()) {
-                // New alert — save first to get ID, then send notifications
                 AlertEvent event = newEvent(domain, alertLevel, alertType, message, daysRemaining);
                 event = alertEventRepo.save(event);
 
-                List<EscalationContact> contacts = getContactsForLevel(alertLevel);
+                List<EscalationContact> contacts = getContactsForLevel(alertLevel, domainTeamId);
                 sendAllWithDetails(contacts, domain, alertLevel, alertType, message,
                         "", event.getId(), "INITIAL", daysRemaining, result);
 
@@ -85,9 +90,9 @@ public class EscalationService {
                     event.setAlertLevel(alertLevel);
                     event.setMessage(message);
                     event.setDaysRemaining(daysRemaining);
-                    event.setAcknowledged(false); // escalation resets ACK
+                    event.setAcknowledged(false);
 
-                    List<EscalationContact> contacts = getContactsForLevel(alertLevel);
+                    List<EscalationContact> contacts = getContactsForLevel(alertLevel, domainTeamId);
                     sendAllWithDetails(contacts, domain, alertLevel, alertType, message,
                             "", event.getId(), "ESCALATION", daysRemaining, result);
 
@@ -96,11 +101,10 @@ public class EscalationService {
                     alertEventRepo.save(event);
 
                 } else if (!event.getAcknowledged()) {
-                    // Gün bazlı dedup: aynı takvim günü (UTC) içinde sadece 1 bildirim
                     String lastAlertTime = event.getLastReAlertAt() != null
                             ? event.getLastReAlertAt() : event.getCreatedAt();
                     if (!isSameUtcDay(lastAlertTime, now())) {
-                        List<EscalationContact> contacts = getContactsForLevel(alertLevel);
+                        List<EscalationContact> contacts = getContactsForLevel(alertLevel, domainTeamId);
                         sendAllWithDetails(contacts, domain, alertLevel, alertType,
                                 "[RE-ALERT] " + message, "[RE-ALERT] ",
                                 event.getId(), "DAILY_REALERT", daysRemaining, result);
@@ -108,10 +112,10 @@ public class EscalationService {
                         event.setLastReAlertAt(now());
                         event.setDaysRemaining(daysRemaining);
                         alertEventRepo.save(event);
-                        log.info("Yeniden bildirim gönderildi: {} [{}] — önceki gün: {}",
+                        log.info("Re-alert sent: {} [{}] — previous day: {}",
                                 domain, alertLevel, lastAlertTime.substring(0, 10));
                     } else {
-                        log.debug("Bugün zaten bildirim gitti, atlanıyor: {} [{}] — son: {}",
+                        log.debug("Alert already sent today, skipping: {} [{}] — last: {}",
                                 domain, alertLevel, lastAlertTime.substring(0, 10));
                     }
                 }
@@ -133,7 +137,7 @@ public class EscalationService {
      * Immediately re-sends notifications for an open alert to all currently
      * eligible contacts, regardless of the re-alert interval.
      */
-    @Transactional
+    // No @Transactional: DB auto-commits per save(), I/O runs without holding the connection
     public Map<String, Object> reNotify(Long alertId) {
         AlertEvent event = alertEventRepo.findById(alertId)
                 .orElseThrow(() -> new NoSuchElementException("Alert not found: " + alertId));
@@ -141,18 +145,23 @@ public class EscalationService {
             throw new IllegalStateException("Alert is already resolved");
         }
 
-        List<EscalationContact> contacts = getContactsForLevel(event.getAlertLevel());
+        Long domainTeamId = inventoryRepo.findByDomain(event.getDomain())
+                .map(com.certmonitor.model.CertificateInventory::getTeamId).orElse(null);
+        List<EscalationContact> contacts = getContactsForLevel(event.getAlertLevel(), domainTeamId);
         Map<String, Object> certContext = latestCheckRepo.findById(event.getDomain())
                 .map(this::latestToCertContext)
                 .orElse(null);
+
+        // DB write commits before I/O starts
+        event.setNotifiedContacts(serializeContacts(contacts));
+        event.setLastReAlertAt(now());
+        alertEventRepo.save(event);
+
+        // I/O after DB connection is released
         List<Map<String, String>> notificationDetails = sendAllWithDetails(
                 contacts, event.getDomain(), event.getAlertLevel(), event.getAlertType(),
                 event.getMessage(), "[RE-ALERT] ", event.getId(), "MANUAL",
                 event.getDaysRemaining(), certContext);
-
-        event.setNotifiedContacts(serializeContacts(contacts));
-        event.setLastReAlertAt(now());
-        alertEventRepo.save(event);
 
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("alert", event);
@@ -161,7 +170,7 @@ public class EscalationService {
         return result;
     }
 
-    @Transactional
+    // No @Transactional: DB save auto-commits, then resolution notification runs without holding connection
     public AlertEvent resolve(Long eventId, String resolvedBy) {
         AlertEvent event = alertEventRepo.findById(eventId)
                 .orElseThrow(() -> new NoSuchElementException("Alert not found: " + eventId));
@@ -169,8 +178,8 @@ public class EscalationService {
         event.setResolved(true);
         event.setResolvedAt(now());
         event.setResolvedBy(by);
-        AlertEvent saved = alertEventRepo.save(event);
-        sendResolutionNotification(saved, by, "MANUAL_RESOLVE");
+        AlertEvent saved = alertEventRepo.save(event);  // auto-commits, releases connection
+        sendResolutionNotification(saved, by, "MANUAL_RESOLVE");  // I/O without holding DB
         return saved;
     }
 
@@ -187,7 +196,9 @@ public class EscalationService {
 
     private void sendResolutionNotification(AlertEvent event, String resolvedBy, String trigger) {
         try {
-            List<EscalationContact> contacts = getContactsForLevel(event.getAlertLevel());
+            Long domainTeamId = inventoryRepo.findByDomain(event.getDomain())
+                    .map(com.certmonitor.model.CertificateInventory::getTeamId).orElse(null);
+            List<EscalationContact> contacts = getContactsForLevel(event.getAlertLevel(), domainTeamId);
             String typeTr = switch (event.getAlertType() != null ? event.getAlertType() : "") {
                 case "REVOKED"      -> "İptal";
                 case "MISMATCH"     -> "Dağıtım Eksik";
@@ -241,11 +252,21 @@ public class EscalationService {
         return null;
     }
 
-    private List<EscalationContact> getContactsForLevel(String level) {
+    private List<EscalationContact> getContactsForLevel(String level, Long teamId) {
+        if (teamId != null) {
+            List<EscalationContact> teamContacts = switch (level) {
+                case "CRITICAL" -> contactRepo.findByTeamIdAndActiveTrueOrderByRoleAsc(teamId);
+                case "HIGH"     -> contactRepo.findByTeamIdAndMinAlertLevelInAndActiveTrue(teamId, List.of("WARNING", "HIGH"));
+                default         -> contactRepo.findByTeamIdAndMinAlertLevelAndActiveTrue(teamId, "WARNING");
+            };
+            if (!teamContacts.isEmpty()) return teamContacts;
+            // Fall back to global contacts (no team assigned) if team has none
+            log.warn("No contacts for teamId={} at level={} — falling back to global contacts", teamId, level);
+        }
         return switch (level) {
             case "CRITICAL" -> contactRepo.findByActiveTrueOrderByRoleAsc();
-            case "HIGH" -> contactRepo.findByMinAlertLevelInAndActiveTrue(List.of("WARNING", "HIGH"));
-            default -> contactRepo.findByMinAlertLevelAndActiveTrue("WARNING");
+            case "HIGH"     -> contactRepo.findByMinAlertLevelInAndActiveTrue(List.of("WARNING", "HIGH"));
+            default         -> contactRepo.findByMinAlertLevelAndActiveTrue("WARNING");
         };
     }
 

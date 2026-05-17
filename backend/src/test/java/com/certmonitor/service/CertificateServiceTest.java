@@ -263,7 +263,7 @@ class CertificateServiceTest {
 
         @SuppressWarnings("unchecked")
         List<CertificateDto> data =
-                (List<CertificateDto>) service.getPaginated(1, 20, "domain", "asc", "", "", "valid").get("data");
+                (List<CertificateDto>) service.getPaginated(1, 20, "domain", "asc", "", "", "valid", null).get("data");
 
         assertThat(data).hasSize(1);
         assertThat(data.get(0).getDomain()).isEqualTo("valid.com");
@@ -283,7 +283,7 @@ class CertificateServiceTest {
 
         @SuppressWarnings("unchecked")
         List<CertificateDto> data =
-                (List<CertificateDto>) service.getPaginated(1, 20, "domain", "asc", "", "", "warning").get("data");
+                (List<CertificateDto>) service.getPaginated(1, 20, "domain", "asc", "", "", "warning", null).get("data");
 
         assertThat(data).hasSize(1);
         assertThat(data.get(0).getDomain()).isEqualTo("warning.com");
@@ -302,7 +302,7 @@ class CertificateServiceTest {
 
         @SuppressWarnings("unchecked")
         List<CertificateDto> data =
-                (List<CertificateDto>) service.getPaginated(1, 20, "domain", "asc", "", "", "critical").get("data");
+                (List<CertificateDto>) service.getPaginated(1, 20, "domain", "asc", "", "", "critical", null).get("data");
 
         assertThat(data).hasSize(2);
         List<String> domains = data.stream().map(CertificateDto::getDomain).toList();
@@ -322,7 +322,7 @@ class CertificateServiceTest {
 
         @SuppressWarnings("unchecked")
         List<CertificateDto> data =
-                (List<CertificateDto>) service.getPaginated(1, 20, "domain", "asc", "", "", "error").get("data");
+                (List<CertificateDto>) service.getPaginated(1, 20, "domain", "asc", "", "", "error", null).get("data");
 
         assertThat(data).hasSize(2);
         data.forEach(d -> assertThat(d.getStatus()).isEqualTo("error"));
@@ -341,7 +341,7 @@ class CertificateServiceTest {
 
         @SuppressWarnings("unchecked")
         List<CertificateDto> data =
-                (List<CertificateDto>) service.getPaginated(1, 20, "priority", "asc", "", "", "").get("data");
+                (List<CertificateDto>) service.getPaginated(1, 20, "priority", "asc", "", "", "", null).get("data");
 
         assertThat(data).hasSize(4);
         assertThat(data.get(0).getDomain()).isEqualTo("error.com");    // error first

@@ -8,6 +8,9 @@ import java.util.Optional;
 
 public interface CertificateInventoryRepository extends JpaRepository<CertificateInventory, Long> {
     List<CertificateInventory> findByActiveTrueOrderByDomainAsc();
+    List<CertificateInventory> findByTeamIdAndActiveTrueOrderByDomainAsc(Long teamId);
+    List<CertificateInventory> findByTeamIdOrderByDomainAsc(Long teamId);
     Optional<CertificateInventory> findByDomain(String domain);
     boolean existsByDomain(String domain);
+    long countByActiveTrue();
 }

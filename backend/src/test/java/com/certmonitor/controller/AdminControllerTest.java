@@ -4,7 +4,8 @@ import com.certmonitor.model.*;
 import com.certmonitor.repository.*;
 import com.certmonitor.service.EscalationService;
 import com.certmonitor.service.RememberMeService;
-import java.util.List;
+import com.certmonitor.service.UserService;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -36,6 +37,15 @@ class AdminControllerTest {
     RememberMeService rememberMeService;
 
     @MockBean
+    UserService userService;
+
+    @MockBean
+    AuthController authController;
+
+    @MockBean
+    com.certmonitor.service.HttpMetricsService httpMetricsService;
+
+    @MockBean
     CertificateInventoryRepository inventoryRepo;
 
     @MockBean
@@ -55,6 +65,11 @@ class AdminControllerTest {
 
     @MockBean
     com.certmonitor.repository.LatestCheckRepository latestCheckRepo;
+
+    @BeforeEach
+    void setup() {
+        when(userService.listTeams()).thenReturn(java.util.Collections.emptyList());
+    }
 
     // ── Auth guard ────────────────────────────────────────────────────────────
 
@@ -240,6 +255,10 @@ class AdminControllerTest {
     @Test
     @DisplayName("DELETE /api/admin/contacts/{id} returns 200")
     void deleteContact_authenticated_returns200() throws Exception {
+        EscalationContact c = contact("del@test.com", "PO");
+        c.setId(1L);
+        when(contactRepo.findById(1L)).thenReturn(Optional.of(c));
+
         mvc.perform(delete("/api/admin/contacts/1").session(authSession()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success").value(true));
@@ -338,6 +357,7 @@ class AdminControllerTest {
         MockHttpSession s = new MockHttpSession();
         s.setAttribute("authenticated", Boolean.TRUE);
         s.setAttribute("username", "testuser");
+        s.setAttribute("systemRole", "ADMIN");
         return s;
     }
 

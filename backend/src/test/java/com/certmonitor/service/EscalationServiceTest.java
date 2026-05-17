@@ -30,6 +30,7 @@ class EscalationServiceTest {
     @Mock AlertEventRepository alertEventRepo;
     @Mock AlertThresholdRepository thresholdRepo;
     @Mock EscalationContactRepository contactRepo;
+    @Mock com.certmonitor.repository.CertificateInventoryRepository inventoryRepo;
     @Mock EmailNotificationService emailService;
     @Mock WebhookService webhookService;
     @Mock NotificationLogRepository notificationLogRepo;
@@ -42,7 +43,7 @@ class EscalationServiceTest {
     @BeforeEach
     void setUp() {
         service = new EscalationService(alertEventRepo, thresholdRepo, contactRepo,
-                emailService, webhookService, new ObjectMapper(), notificationLogRepo, latestCheckRepo);
+                inventoryRepo, emailService, webhookService, new ObjectMapper(), notificationLogRepo, latestCheckRepo);
 
         // Default active threshold
         AlertThreshold t = defaultThreshold();
@@ -184,10 +185,11 @@ class EscalationServiceTest {
     @DisplayName("Unacknowledged alert past re-alert interval fires re-alert")
     void processResults_unacknowledgedPastInterval_reAlerts() {
         String domain = "renotify.example.com";
-        // Last re-alert was 30 hours ago, interval is 24h → should re-alert
-        String thirtyHoursAgo = ISO.format(Instant.now().minus(30, ChronoUnit.HOURS));
+        // Use yesterday's noon UTC — always a different calendar day regardless of when the test runs
+        String yesterdayNoon = ISO.format(Instant.now().minus(1, ChronoUnit.DAYS)
+                .truncatedTo(ChronoUnit.DAYS).plus(12, ChronoUnit.HOURS));
         AlertEvent existing = existingOpenAlert(domain, "EXPIRY", "WARNING", false);
-        existing.setLastReAlertAt(thirtyHoursAgo);
+        existing.setLastReAlertAt(yesterdayNoon);
         when(alertEventRepo.findOpenAlert(domain, "EXPIRY")).thenReturn(Optional.of(existing));
         when(alertEventRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
         when(contactRepo.findByMinAlertLevelAndActiveTrue("WARNING"))
@@ -202,10 +204,10 @@ class EscalationServiceTest {
     @DisplayName("Unacknowledged alert within re-alert interval is not re-sent")
     void processResults_unacknowledgedWithinInterval_noReAlert() {
         String domain = "quiet.example.com";
-        // Last re-alert was 1 hour ago, interval is 24h → should NOT re-alert
-        String oneHourAgo = ISO.format(Instant.now().minus(1, ChronoUnit.HOURS));
+        // Use today's noon UTC — always on the same calendar day regardless of when the test runs
+        String todayNoon = ISO.format(Instant.now().truncatedTo(ChronoUnit.DAYS).plus(12, ChronoUnit.HOURS));
         AlertEvent existing = existingOpenAlert(domain, "EXPIRY", "WARNING", false);
-        existing.setLastReAlertAt(oneHourAgo);
+        existing.setLastReAlertAt(todayNoon);
         when(alertEventRepo.findOpenAlert(domain, "EXPIRY")).thenReturn(Optional.of(existing));
 
         service.processResults(List.of(expiryResult(domain, 25, true)));

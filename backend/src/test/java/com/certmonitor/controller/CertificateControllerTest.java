@@ -7,6 +7,7 @@ import com.certmonitor.service.CertificateCheckerService;
 import com.certmonitor.service.CertificateService;
 import com.certmonitor.service.RememberMeService;
 import com.certmonitor.service.SchedulerService;
+import com.certmonitor.service.UserService;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -33,6 +34,15 @@ class CertificateControllerTest {
 
     @MockBean
     RememberMeService rememberMeService;
+
+    @MockBean
+    UserService userService;
+
+    @MockBean
+    AuthController authController;
+
+    @MockBean
+    com.certmonitor.service.HttpMetricsService httpMetricsService;
 
     @MockBean
     CertificateService certService;
@@ -74,7 +84,7 @@ class CertificateControllerTest {
     @Test
     @DisplayName("GET /api/certificates with auth returns 200 and success:true")
     void getCertificates_authenticated_returns200() throws Exception {
-        when(certService.getAllLatest()).thenReturn(List.of());
+        when(certService.getAllLatestForTeam(null)).thenReturn(List.of());
 
         mvc.perform(get("/api/certificates").session(authSession()))
                 .andExpect(status().isOk())
@@ -87,7 +97,7 @@ class CertificateControllerTest {
     void getCertificates_returnsCertList() throws Exception {
         CertificateDto dto = new CertificateDto();
         dto.setDomain("example.com");
-        when(certService.getAllLatest()).thenReturn(List.of(dto));
+        when(certService.getAllLatestForTeam(null)).thenReturn(List.of(dto));
 
         mvc.perform(get("/api/certificates").session(authSession()))
                 .andExpect(status().isOk())
@@ -97,7 +107,7 @@ class CertificateControllerTest {
     @Test
     @DisplayName("GET /api/warnings returns 200 with warning list")
     void getWarnings_authenticated_returns200() throws Exception {
-        when(certService.getWarnings()).thenReturn(Collections.emptyList());
+        when(certService.getWarningsForTeam(null)).thenReturn(Collections.emptyList());
 
         mvc.perform(get("/api/warnings").session(authSession()))
                 .andExpect(status().isOk())
@@ -108,7 +118,7 @@ class CertificateControllerTest {
     @Test
     @DisplayName("GET /api/stats returns 200 with stats map")
     void getStats_authenticated_returns200() throws Exception {
-        when(certService.getStats()).thenReturn(Map.of("total_certificates", 5));
+        when(certService.getStatsForTeam(null)).thenReturn(Map.of("total_certificates", 5));
 
         mvc.perform(get("/api/stats").session(authSession()))
                 .andExpect(status().isOk())
@@ -137,7 +147,7 @@ class CertificateControllerTest {
     @Test
     @DisplayName("GET /api/renewal-advice returns 200 with advice list")
     void getRenewalAdvice_authenticated_returns200() throws Exception {
-        when(certService.getRenewalAdvice()).thenReturn(Collections.emptyList());
+        when(certService.getRenewalAdviceForTeam(null)).thenReturn(Collections.emptyList());
 
         mvc.perform(get("/api/renewal-advice").session(authSession()))
                 .andExpect(status().isOk())
@@ -161,7 +171,7 @@ class CertificateControllerTest {
                 .andExpect(jsonPath("$.data.domain").value("example.com"));
 
         // ensureInInventory is called — certService is a mock so the call succeeds silently
-        org.mockito.Mockito.verify(certService).ensureInInventory("example.com", 443);
+        org.mockito.Mockito.verify(certService).ensureInInventory("example.com", 443, null);
     }
 
     @Test
@@ -179,7 +189,7 @@ class CertificateControllerTest {
     @Test
     @DisplayName("GET /api/activity returns 200 with run list (default 24h)")
     void getActivityLog_authenticated_returns200() throws Exception {
-        when(certService.getActivityLog(24)).thenReturn(Collections.emptyList());
+        when(certService.getActivityLog(24, null)).thenReturn(Collections.emptyList());
 
         mvc.perform(get("/api/activity").session(authSession()))
                 .andExpect(status().isOk())
@@ -190,7 +200,7 @@ class CertificateControllerTest {
     @Test
     @DisplayName("GET /api/activity?hours=6 passes correct hours param")
     void getActivityLog_customHours() throws Exception {
-        when(certService.getActivityLog(6)).thenReturn(List.of(
+        when(certService.getActivityLog(6, null)).thenReturn(List.of(
                 Map.of("run_id", "abc123", "run_time", "2026-05-16T10:00:00",
                         "total", 5, "ok", 4, "warning", 1, "error", 0, "entries", List.of())
         ));
@@ -212,7 +222,7 @@ class CertificateControllerTest {
     @DisplayName("GET /api/certificates/list returns 200 with paginated data")
     void getCertificatesList_authenticated_returns200() throws Exception {
         when(certService.getPaginated(anyInt(), anyInt(), anyString(), anyString(),
-                anyString(), anyString(), anyString()))
+                anyString(), anyString(), anyString(), any()))
                 .thenReturn(Map.of(
                         "data", Collections.emptyList(),
                         "pagination", Map.of("total", 0, "page", 1)

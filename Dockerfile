@@ -45,8 +45,7 @@ EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
   CMD wget -qO- http://localhost:8080/health || exit 1
 
-ENTRYPOINT ["java", \
-  "-XX:+UseContainerSupport", \
-  "-XX:MaxRAMPercentage=75.0", \
-  "-Djava.security.egd=file:/dev/./urandom", \
-  "-jar", "app.jar"]
+# JAVA_OPTS is injected at runtime (ConfigMap / env var).
+# -XX:+UseContainerSupport is always on so the JVM reads cgroup limits.
+# Shell-form ENTRYPOINT is required to expand $JAVA_OPTS.
+ENTRYPOINT ["sh", "-c", "exec java -XX:+UseContainerSupport $JAVA_OPTS -Djava.security.egd=file:/dev/./urandom -jar app.jar"]

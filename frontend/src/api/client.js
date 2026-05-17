@@ -80,6 +80,32 @@ export const api = {
     }),
     reNotifyAlert: (id) => request(`/admin/alerts/${id}/re-notify`, { method: 'POST' }),
     getAlertNotifications: (id) => request(`/admin/alerts/${id}/notifications`),
+
+    // Teams
+    getTeams: () => request('/admin/teams'),
+    createTeam: (data) => request('/admin/teams', { method: 'POST', body: JSON.stringify(data) }),
+    updateTeam: (id, data) => request(`/admin/teams/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+    deleteTeam: (id) => request(`/admin/teams/${id}`, { method: 'DELETE' }),
+
+    // Users
+    getUsers: () => request('/admin/users'),
+    createUser: (data) => request('/admin/users', { method: 'POST', body: JSON.stringify(data) }),
+    updateUser: (id, data) => request(`/admin/users/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+    deleteUser: (id) => request(`/admin/users/${id}`, { method: 'DELETE' }),
+    resetPassword: (id, password) => request(`/admin/users/${id}/reset-password`, {
+      method: 'POST', body: JSON.stringify({ password }),
+    }),
+
+    // Cert transfer
+    transferCert: (id, teamId) => request(`/admin/inventory/${id}/transfer`, {
+      method: 'POST', body: JSON.stringify({ team_id: teamId }),
+    }),
+
+    // System health
+    getSystemHealth: () => request('/admin/system'),
+    forceReleaseLock: () => request('/admin/system/scheduler-lock', { method: 'DELETE' }),
+    getMetrics: () => request('/admin/system/metrics'),
+    getHttpMetrics: () => request('/admin/system/http-metrics'),
   },
 }
 
