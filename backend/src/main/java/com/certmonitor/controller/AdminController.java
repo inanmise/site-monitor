@@ -6,6 +6,9 @@ import com.certmonitor.service.EscalationService;
 import com.certmonitor.service.UserService;
 import jakarta.servlet.http.HttpSession;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -17,10 +20,14 @@ import java.util.Map;
 import java.util.NoSuchElementException;
 import java.util.Objects;
 
+@Slf4j
 @RestController
 @RequestMapping("/api/admin")
 @RequiredArgsConstructor
 public class AdminController {
+
+    /** Dedicated audit logger → cert-monitor-audit.log (separate from the main log). */
+    private static final Logger AUDIT = LoggerFactory.getLogger("AUDIT");
 
     private final CertificateInventoryRepository inventoryRepo;
     private final AlertThresholdRepository thresholdRepo;
@@ -64,7 +71,10 @@ public class AdminController {
         if (item.getPort() < 1 || item.getPort() > 65535)
             throw new IllegalArgumentException("Port must be between 1 and 65535");
         if (item.getActive() == null) item.setActive(true);
-        return ok(Map.of("data", inventoryRepo.save(item), "message", "Domain added to inventory"));
+        CertificateInventory saved = inventoryRepo.save(item);
+        AUDIT.info("DOMAIN_ADD actor={} domain={} port={} teamId={}",
+                actor(session), saved.getDomain(), saved.getPort(), saved.getTeamId());
+        return ok(Map.of("data", saved, "message", "Domain added to inventory"));
     }
 
     @PutMapping("/inventory/{id}")
@@ -93,6 +103,8 @@ public class AdminController {
             if (!isAdmin(session)) checkOwnership(inv.getTeamId(), session);
             inventoryRepo.deleteById(id);
             latestCheckRepo.deleteById(inv.getDomain());
+            AUDIT.info("DOMAIN_DELETE actor={} domain={} teamId={}",
+                    actor(session), inv.getDomain(), inv.getTeamId());
         });
         return ok(Map.of("message", "Deleted"));
     }
@@ -260,6 +272,7 @@ public class AdminController {
                 (String) body.get("name"),
                 (String) body.get("description"),
                 toLong(body.get("leader_id")));
+        AUDIT.info("TEAM_CREATE actor={} name={} leaderId={}", actor(session), team.getName(), team.getLeaderId());
         return ok(Map.of("data", team, "message", "Team created"));
     }
 
@@ -288,6 +301,7 @@ public class AdminController {
             @PathVariable Long id, HttpSession session) {
         requireAdmin(session);
         userService.deleteTeam(id);
+        AUDIT.info("TEAM_DELETE actor={} teamId={}", actor(session), id);
         return ok(Map.of("message", "Team deleted"));
     }
 
@@ -310,6 +324,8 @@ public class AdminController {
                 (String) body.get("email"),
                 (String) body.get("system_role"),
                 toLong(body.get("team_id")));
+        AUDIT.info("USER_CREATE actor={} username={} role={} teamId={}",
+                actor(session), user.getUsername(), user.getSystemRole(), user.getTeamId());
         return ok(Map.of("data", user, "message", "User created"));
     }
 
@@ -339,6 +355,7 @@ public class AdminController {
             @PathVariable Long id, HttpSession session) {
         requireAdmin(session);
         userService.deleteUser(id);
+        AUDIT.info("USER_DELETE actor={} userId={}", actor(session), id);
         return ok(Map.of("message", "User deleted"));
     }
 
@@ -389,7 +406,16 @@ public class AdminController {
     }
 
     private void requireAdmin(HttpSession session) {
-        if (!isAdmin(session)) throw new SecurityException("Admin access required");
+        if (!isAdmin(session)) {
+            log.warn("Unauthorized admin access attempt by user={}", actor(session));
+            throw new SecurityException("Admin access required");
+        }
+    }
+
+    /** Username extracted from session — used in audit log entries. */
+    private String actor(HttpSession session) {
+        Object u = session.getAttribute("username");
+        return u != null ? u.toString() : "anonymous";
     }
 
     private Long teamId(HttpSession session) {

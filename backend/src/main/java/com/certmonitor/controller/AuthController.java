@@ -10,6 +10,8 @@ import jakarta.servlet.http.HttpServletResponse;
 import jakarta.servlet.http.HttpSession;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -32,6 +34,8 @@ public class AuthController {
 
     @Value("${cert.monitor.login.max-attempts:10}")
     private int maxLoginAttempts;
+
+    private static final Logger AUDIT = LoggerFactory.getLogger("AUDIT");
 
     private final RememberMeService rememberMeService;
     private final UserService userService;
@@ -73,6 +77,8 @@ public class AuthController {
 
             log.info("User logged in: {} (role={}, teamId={}, rememberMe={}, IP={})",
                     username, user.getSystemRole(), user.getTeamId(), rememberMe, clientIp);
+            AUDIT.info("LOGIN user={} role={} teamId={} rememberMe={} IP={}",
+                    username, user.getSystemRole(), user.getTeamId(), rememberMe, clientIp);
 
             if (rememberMe) {
                 String token = rememberMeService.generateToken(username);
@@ -89,6 +95,7 @@ public class AuthController {
 
         recordFailedAttempt(clientIp);
         log.warn("Failed login attempt: IP={}, username={}", clientIp, username);
+        AUDIT.warn("LOGIN_FAILED username={} IP={}", username, clientIp);
         return ResponseEntity.status(401)
                 .body(Map.of("success", false, "error", "Invalid username or password"));
     }
@@ -114,7 +121,13 @@ public class AuthController {
         }
 
         HttpSession session = request.getSession(false);
-        if (session != null) session.invalidate();
+        if (session != null) {
+            String username = (String) session.getAttribute("username");
+            session.invalidate();
+            if (username != null) {
+                AUDIT.info("LOGOUT user={} IP={}", username, resolveClientIp(request));
+            }
+        }
         return ResponseEntity.ok(Map.of("success", true, "message", "Logged out"));
     }
 
@@ -140,6 +153,7 @@ public class AuthController {
     public void populateSession(HttpSession session, AppUser user) {
         session.setAttribute("authenticated", true);
         session.setAttribute("username", user.getUsername());
+        session.setAttribute("displayName", user.getDisplayName() != null ? user.getDisplayName() : user.getUsername());
         session.setAttribute("userId", user.getId());
         session.setAttribute("teamId", user.getTeamId());
         session.setAttribute("systemRole", user.getSystemRole());
