@@ -10,6 +10,8 @@ frontend/dist/
 
 # ── SQLite ────────────────────────────────────────────
 data/*.db
+data/*.db-shm
+data/*.db-wal
 
 # ── Environment / Secrets ─────────────────────────────
 .env
