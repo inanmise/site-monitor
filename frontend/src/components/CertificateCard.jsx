@@ -1,7 +1,7 @@
 import { formatDate } from '../api/client'
 import { useT } from '../i18n/index.jsx'
 
-export default function CertificateCard({ cert, onClick }) {
+export default function CertificateCard({ cert, onClick, hasSilentAlert = false }) {
   const t = useT()
   const days = cert.days_remaining
   const isError = cert.status === 'error'
@@ -49,6 +49,12 @@ export default function CertificateCard({ cert, onClick }) {
       <div className="card-info"><span className="card-info-label">{t('card.expires')}</span> {formatDate(cert.not_after)}</div>
       {cert.error && <div className="card-info" style={{ color: 'var(--danger-color)' }}><strong>{t('card.errorLbl')}</strong> {cert.error}</div>}
       <div className="card-footer">{t('card.lastCheck')} {formatDate(cert.checked_at)}</div>
+      {hasSilentAlert && (
+        <div className="card-silent-alert">
+          <span className="card-silent-alert-icon">🔕</span>
+          {t('card.silentAlert')}
+        </div>
+      )}
     </div>
   )
 }

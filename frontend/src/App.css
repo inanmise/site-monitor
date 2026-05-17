@@ -408,6 +408,9 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .card-info { font-size: .85em; margin-bottom: 4px; color: var(--text-light); }
 .card-info-label { font-weight: 600; color: var(--text); }
 .card-footer { font-size: .78em; color: var(--text-light); margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border); }
+.card-silent-alert { display: flex; align-items: center; gap: 6px; margin-top: 8px; padding: 6px 10px; background: #fff3cd; border: 1px solid #f0c040; border-radius: 5px; font-size: .78em; font-weight: 600; color: #7a4f00; }
+.card-silent-alert-icon { font-size: 1em; flex-shrink: 0; }
+[data-theme="dark"] .card-silent-alert { background: #3a2a00; border-color: #8a6800; color: #fbbf24; }
 
 /* ── Table ──────────────────────────────────────────── */
 .certificates-table { width: 100%; border-collapse: collapse; margin-bottom: 16px; }

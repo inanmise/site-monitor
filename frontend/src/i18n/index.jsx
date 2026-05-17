@@ -113,6 +113,7 @@ const TR = {
   'card.expires':  'Bitişi:',
   'card.errorLbl': 'Hata:',
   'card.lastCheck':'Son kontrol:',
+  'card.silentAlert': 'Alarm oluştu — bildirim gönderilemedi',
 
   'tbl.domainSearch':  'Domain Ara:',
   'tbl.domainPh':      'domain.com...',
@@ -630,6 +631,7 @@ const EN = {
   'card.expires':  'Expires:',
   'card.errorLbl': 'Error:',
   'card.lastCheck':'Last check:',
+  'card.silentAlert': 'Alert fired — no notification sent',
 
   'tbl.domainSearch':  'Search Domain:',
   'tbl.domainPh':      'domain.com...',
