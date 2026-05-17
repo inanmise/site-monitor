@@ -49,6 +49,13 @@ public class CertificateService {
         List<String> sanList = (List<String>) result.getOrDefault("san", Collections.emptyList());
         String sanJson = checkerService.serializeSan(sanList);
 
+        @SuppressWarnings("unchecked")
+        List<String> keyUsageList = (List<String>) result.getOrDefault("key_usage", Collections.emptyList());
+        @SuppressWarnings("unchecked")
+        List<String> extKeyUsageList = (List<String>) result.getOrDefault("ext_key_usage", Collections.emptyList());
+        String keyUsageJson   = checkerService.serializeSan(keyUsageList);
+        String extKeyUsageJson = checkerService.serializeSan(extKeyUsageList);
+
         // Determine deployment status by comparing fingerprints
         String servedFingerprint = (String) result.get("fingerprint");
         String deploymentStatus = determineDeploymentStatus(domain, servedFingerprint);
@@ -71,6 +78,23 @@ public class CertificateService {
             check.setStatus((String) result.get("status"));
             check.setError((String) result.get("error"));
             check.setSan(sanJson);
+            check.setFingerprint(servedFingerprint);
+            check.setChainStatus((String) result.get("chain_status"));
+            check.setRevocationStatus((String) result.get("revocation_status"));
+            check.setDeploymentStatus(deploymentStatus);
+            check.setIntermediateExpiry((String) result.get("intermediate_expiry"));
+            check.setIntermediateDaysRemaining(toInt(result.get("intermediate_days_remaining")));
+            check.setSerialNumber((String) result.get("serial_number"));
+            check.setSignatureAlgorithm((String) result.get("signature_algorithm"));
+            check.setPublicKeyAlgorithm((String) result.get("public_key_algorithm"));
+            check.setPublicKeySize(toInt(result.get("public_key_size")));
+            check.setSubjectDn((String) result.get("subject_dn"));
+            check.setIssuerDn((String) result.get("issuer_dn"));
+            check.setKeyUsage(keyUsageJson);
+            check.setExtKeyUsage(extKeyUsageJson);
+            check.setIsCa(toBool(result.get("is_ca")));
+            check.setOcspUrl((String) result.get("ocsp_url"));
+            check.setCrlUrl((String) result.get("crl_url"));
             check.setRunId((String) result.get("run_id"));
             check.setCheckedAt((String) result.get("checked_at"));
             check.setCreatedAt(now);
@@ -100,6 +124,17 @@ public class CertificateService {
             latest.setIntermediateDaysRemaining(toInt(result.get("intermediate_days_remaining")));
             latest.setRevocationStatus((String) result.get("revocation_status"));
             latest.setChainDetails(chainDetailsJson);
+            latest.setSerialNumber((String) result.get("serial_number"));
+            latest.setSignatureAlgorithm((String) result.get("signature_algorithm"));
+            latest.setPublicKeyAlgorithm((String) result.get("public_key_algorithm"));
+            latest.setPublicKeySize(toInt(result.get("public_key_size")));
+            latest.setSubjectDn((String) result.get("subject_dn"));
+            latest.setIssuerDn((String) result.get("issuer_dn"));
+            latest.setKeyUsage(keyUsageJson);
+            latest.setExtKeyUsage(extKeyUsageJson);
+            latest.setIsCa(toBool(result.get("is_ca")));
+            latest.setOcspUrl((String) result.get("ocsp_url"));
+            latest.setCrlUrl((String) result.get("crl_url"));
             latest.setCheckedAt((String) result.get("checked_at"));
             latest.setUpdatedAt(now);
             latestRepo.save(latest);
@@ -423,7 +458,10 @@ public class CertificateService {
     }
 
     private CertificateDto toDto(LatestCheck c) {
-        return CertificateDto.from(c, checkerService.deserializeSan(c.getSan()));
+        return CertificateDto.from(c,
+                checkerService.deserializeSan(c.getSan()),
+                checkerService.deserializeSan(c.getKeyUsage()),
+                checkerService.deserializeSan(c.getExtKeyUsage()));
     }
 
     private CertificateDto toDtoFromCheck(CertificateCheck c) {
@@ -439,8 +477,28 @@ public class CertificateService {
         l.setStatus(c.getStatus());
         l.setError(c.getError());
         l.setSan(c.getSan());
+        l.setFingerprint(c.getFingerprint());
+        l.setChainStatus(c.getChainStatus());
+        l.setRevocationStatus(c.getRevocationStatus());
+        l.setDeploymentStatus(c.getDeploymentStatus());
+        l.setIntermediateExpiry(c.getIntermediateExpiry());
+        l.setIntermediateDaysRemaining(c.getIntermediateDaysRemaining());
+        l.setSerialNumber(c.getSerialNumber());
+        l.setSignatureAlgorithm(c.getSignatureAlgorithm());
+        l.setPublicKeyAlgorithm(c.getPublicKeyAlgorithm());
+        l.setPublicKeySize(c.getPublicKeySize());
+        l.setSubjectDn(c.getSubjectDn());
+        l.setIssuerDn(c.getIssuerDn());
+        l.setKeyUsage(c.getKeyUsage());
+        l.setExtKeyUsage(c.getExtKeyUsage());
+        l.setIsCa(c.getIsCa());
+        l.setOcspUrl(c.getOcspUrl());
+        l.setCrlUrl(c.getCrlUrl());
         l.setCheckedAt(c.getCheckedAt());
-        return CertificateDto.from(l, checkerService.deserializeSan(c.getSan()));
+        return CertificateDto.from(l,
+                checkerService.deserializeSan(c.getSan()),
+                checkerService.deserializeSan(c.getKeyUsage()),
+                checkerService.deserializeSan(c.getExtKeyUsage()));
     }
 
     private String issuerStr(CertificateDto c) {

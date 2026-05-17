@@ -188,6 +188,13 @@ public class ChainValidationService {
         }
     }
 
+    public String extractOcspUrl(X509Certificate cert) { return getOcspUrl(cert); }
+
+    public String extractCrlUrl(X509Certificate cert) {
+        List<String> urls = getCrlUrls(cert);
+        return urls.isEmpty() ? null : urls.get(0);
+    }
+
     private String getOcspUrl(X509Certificate cert) {
         try {
             byte[] rawExt = cert.getExtensionValue(OID_AIA);

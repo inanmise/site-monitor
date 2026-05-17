@@ -452,6 +452,10 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .modal-field { background: var(--bg); border-radius: 6px; padding: 12px 14px; }
 .modal-field-label { font-size: .8em; color: var(--text-light); font-weight: 600; text-transform: uppercase; letter-spacing: .5px; margin-bottom: 4px; }
 .modal-field-value { font-size: .95em; font-weight: 500; word-break: break-all; }
+.modal-mono { font-family: 'Consolas', 'Courier New', monospace; font-size: .85em; letter-spacing: .3px; }
+.modal-section-title { font-size: .72em; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; color: var(--text-light); padding: 4px 0 8px; border-bottom: 1px solid var(--border); margin-bottom: 12px; margin-top: 8px; }
+.modal-san-list { display: flex; flex-wrap: wrap; gap: 6px; }
+.modal-san-chip { background: var(--bg-surface); border: 1px solid var(--border); border-radius: 4px; padding: 2px 8px; font-size: .82em; font-family: monospace; }
 
 /* ── Renewal Advice ─────────────────────────────────── */
 .renewal-container { display: flex; flex-direction: column; gap: 16px; margin-top: 8px; }
@@ -1730,6 +1734,8 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 [data-theme="dark"] .modal-content { background: var(--bg-card); }
 [data-theme="dark"] .modal-box { background: var(--bg-card); }
 [data-theme="dark"] .modal-field { background: var(--bg-surface); }
+[data-theme="dark"] .modal-section-title { color: var(--text-light); border-bottom-color: var(--border); }
+[data-theme="dark"] .modal-san-chip { background: var(--bg-surface); border-color: var(--border); color: var(--text); }
 [data-theme="dark"] .modal-tabs { border-bottom-color: var(--border); }
 [data-theme="dark"] .modal-tab { color: var(--text-light); }
 [data-theme="dark"] .modal-tab:hover { color: var(--primary); }

@@ -43,6 +43,28 @@ public class LatestCheck {
     @Column(columnDefinition = "TEXT")
     private String chainDetails;
 
+    // Extended certificate metadata
+    private String serialNumber;
+    private String signatureAlgorithm;
+    private String publicKeyAlgorithm;
+    private Integer publicKeySize;
+
+    @Column(columnDefinition = "TEXT")
+    private String subjectDn;
+
+    @Column(columnDefinition = "TEXT")
+    private String issuerDn;
+
+    @Column(columnDefinition = "TEXT")
+    private String keyUsage;
+
+    @Column(columnDefinition = "TEXT")
+    private String extKeyUsage;
+
+    private Boolean isCa;
+    private String ocspUrl;
+    private String crlUrl;
+
     private String checkedAt;
     private String updatedAt;
 }

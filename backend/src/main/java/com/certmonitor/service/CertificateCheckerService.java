@@ -12,6 +12,9 @@ import javax.net.ssl.*;
 import java.net.InetSocketAddress;
 import java.security.cert.Certificate;
 import java.security.cert.X509Certificate;
+import java.security.interfaces.DSAKey;
+import java.security.interfaces.ECKey;
+import java.security.interfaces.RSAKey;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
@@ -34,6 +37,19 @@ public class CertificateCheckerService {
 
     private static final DateTimeFormatter ISO =
             DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
+
+    private static final String[] KEY_USAGE_NAMES = {
+        "Digital Signature", "Non-Repudiation", "Key Encipherment", "Data Encipherment",
+        "Key Agreement", "Certificate Signing", "CRL Signing", "Encipher Only", "Decipher Only"
+    };
+
+    private static final Map<String, String> EKU_NAMES = Map.of(
+        "1.3.6.1.5.5.7.3.1", "TLS Web Server",
+        "1.3.6.1.5.5.7.3.2", "TLS Web Client",
+        "1.3.6.1.5.5.7.3.3", "Code Signing",
+        "1.3.6.1.5.5.7.3.4", "Email Protection",
+        "1.3.6.1.5.5.7.3.8", "Timestamping"
+    );
 
     @Async("certCheckExecutor")
     public CompletableFuture<Map<String, Object>> checkAsync(String domain, int port) {
@@ -123,10 +139,46 @@ public class CertificateCheckerService {
             result.put("status", warning ? "warning" : "valid");
             result.put("san", san);
             result.put("checked_at", ISO.format(now));
+            // Extended certificate metadata
+            result.put("serial_number", cert.getSerialNumber().toString(16).toUpperCase());
+            result.put("signature_algorithm", cert.getSigAlgName());
+            result.put("public_key_algorithm", cert.getPublicKey().getAlgorithm());
+            result.put("public_key_size", getPublicKeySize(cert.getPublicKey()));
+            result.put("subject_dn", cert.getSubjectX500Principal().getName());
+            result.put("issuer_dn", cert.getIssuerX500Principal().getName());
+            result.put("key_usage", buildKeyUsageList(cert.getKeyUsage()));
+            result.put("ext_key_usage", buildExtKeyUsageList(cert));
+            result.put("is_ca", cert.getBasicConstraints() >= 0);
+            result.put("ocsp_url", chainValidator.extractOcspUrl(cert));
+            result.put("crl_url", chainValidator.extractCrlUrl(cert));
             return result;
         } catch (Exception e) {
             return error(domain, "Parse error: " + e.getMessage());
         }
+    }
+
+    private int getPublicKeySize(java.security.PublicKey key) {
+        if (key instanceof RSAKey rsa) return rsa.getModulus().bitLength();
+        if (key instanceof ECKey ec) return ec.getParams().getOrder().bitLength();
+        if (key instanceof DSAKey dsa) return dsa.getParams().getP().bitLength();
+        return -1;
+    }
+
+    private List<String> buildKeyUsageList(boolean[] ku) {
+        if (ku == null) return Collections.emptyList();
+        List<String> usages = new ArrayList<>();
+        for (int i = 0; i < Math.min(ku.length, KEY_USAGE_NAMES.length); i++) {
+            if (ku[i]) usages.add(KEY_USAGE_NAMES[i]);
+        }
+        return usages;
+    }
+
+    private List<String> buildExtKeyUsageList(X509Certificate cert) {
+        try {
+            List<String> eku = cert.getExtendedKeyUsage();
+            if (eku == null) return Collections.emptyList();
+            return eku.stream().map(oid -> EKU_NAMES.getOrDefault(oid, oid)).toList();
+        } catch (Exception e) { return Collections.emptyList(); }
     }
 
     private String extractCn(String dn) {
@@ -195,6 +247,17 @@ public class CertificateCheckerService {
         result.put("intermediate_expiry", null);
         result.put("intermediate_days_remaining", null);
         result.put("chain", Collections.emptyList());
+        result.put("serial_number", null);
+        result.put("signature_algorithm", null);
+        result.put("public_key_algorithm", null);
+        result.put("public_key_size", null);
+        result.put("subject_dn", null);
+        result.put("issuer_dn", null);
+        result.put("key_usage", Collections.emptyList());
+        result.put("ext_key_usage", Collections.emptyList());
+        result.put("is_ca", null);
+        result.put("ocsp_url", null);
+        result.put("crl_url", null);
         return result;
     }
 }
