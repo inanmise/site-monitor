@@ -25,7 +25,7 @@ export default function InventoryManager({ onInventoryChange, teams = [], isAdmi
     if (res?.success) setItems(res.data)
   }
 
-  function openAdd() { setForm({ ...emptyItem, team_id: String(teams[0]?.id ?? '') }); setModal('add') }
+  function openAdd() { setForm({ ...emptyItem, team_id: '' }); setModal('add') }
   function openEdit(item) {
     setForm({
       ...item,
@@ -37,6 +37,7 @@ export default function InventoryManager({ onInventoryChange, teams = [], isAdmi
   }
 
   async function save() {
+    if (isAdmin && !form.team_id) { setMsg(t('inv.teamRequired')); return }
     setSaving(true)
     const payload = {
       domain: form.domain.trim(),
@@ -133,8 +134,10 @@ export default function InventoryManager({ onInventoryChange, teams = [], isAdmi
               <label>{t('inv.formDomain')}<input value={form.domain} onChange={(e) => setForm({ ...form, domain: e.target.value })} placeholder={t('inv.formDomainPh')} /></label>
               <label>{t('inv.formPort')}<input type="number" value={form.port} onChange={(e) => setForm({ ...form, port: e.target.value })} /></label>
               {isAdmin && teams.length > 0 && (
-                <label>{t('inv.formTeam')}
+                <label>
+                  {t('inv.formTeam')} <span style={{ color: 'var(--danger)' }}>*</span>
                   <select value={form.team_id} onChange={(e) => setForm({ ...form, team_id: e.target.value })}>
+                    <option value="">{t('inv.selectTeam')}</option>
                     {teams.map(team => <option key={team.id} value={team.id}>{team.name}</option>)}
                   </select>
                 </label>
@@ -154,7 +157,7 @@ export default function InventoryManager({ onInventoryChange, teams = [], isAdmi
             </div>
             <div className="modal-actions">
               <button className="btn btn-secondary" onClick={() => setModal(null)}>{t('inv.cancel')}</button>
-              <button className="btn btn-primary" onClick={save} disabled={saving || !form.domain.trim()}>
+              <button className="btn btn-primary" onClick={save} disabled={saving || !form.domain.trim() || (isAdmin && !form.team_id)}>
                 {saving ? t('inv.saving') : t('inv.save')}
               </button>
             </div>

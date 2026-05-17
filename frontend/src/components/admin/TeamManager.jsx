@@ -3,30 +3,47 @@ import { api } from '../../api/client'
 import { useDialog } from '../ui/Dialog.jsx'
 import { useT } from '../../i18n/index.jsx'
 
-const emptyTeam = { name: '', description: '', active: true }
+const emptyTeam = { name: '', description: '', active: true, leader_id: '' }
 
 export default function TeamManager({ onTeamsChange }) {
   const t = useT()
   const { showConfirm } = useDialog()
-  const [teams, setTeams] = useState([])
-  const [modal, setModal] = useState(null)
-  const [form, setForm] = useState(emptyTeam)
+  const [teams, setTeams]   = useState([])
+  const [users, setUsers]   = useState([])
+  const [modal, setModal]   = useState(null)
+  const [form, setForm]     = useState(emptyTeam)
   const [saving, setSaving] = useState(false)
-  const [msg, setMsg] = useState(null)
+  const [msg, setMsg]       = useState(null)
 
-  useEffect(() => { load() }, [])
+  useEffect(() => { load(); loadUsers() }, [])
 
   async function load() {
     const res = await api.admin.getTeams()
     if (res?.success) setTeams(res.data)
   }
 
+  async function loadUsers() {
+    const res = await api.admin.getUsers()
+    if (res?.success) setUsers(res.data.filter(u => u.active))
+  }
+
+  const userMap = Object.fromEntries(users.map(u => [u.id, u.displayName || u.username]))
+
   function openAdd() { setForm(emptyTeam); setModal('add') }
-  function openEdit(team) { setForm({ ...team }); setModal(team) }
+  function openEdit(team) {
+    setForm({ ...team, leader_id: String(team.leaderId ?? team.leader_id ?? '') })
+    setModal(team)
+  }
 
   async function save() {
+    if (!form.leader_id) { setMsg(t('team.leaderRequired')); return }
     setSaving(true)
-    const payload = { name: form.name.trim(), description: form.description, active: form.active }
+    const payload = {
+      name: form.name.trim(),
+      description: form.description,
+      active: form.active,
+      leader_id: Number(form.leader_id),
+    }
     const res = modal === 'add'
       ? await api.admin.createTeam(payload)
       : await api.admin.updateTeam(modal.id, payload)
@@ -50,6 +67,8 @@ export default function TeamManager({ onTeamsChange }) {
     onTeamsChange?.()
   }
 
+  const canSave = form.name.trim() && form.leader_id
+
   return (
     <div className="admin-section">
       <div className="admin-section-header">
@@ -62,6 +81,7 @@ export default function TeamManager({ onTeamsChange }) {
           <thead>
             <tr>
               <th>{t('team.colName')}</th>
+              <th>{t('team.colLeader')}</th>
               <th>{t('team.colDesc')}</th>
               <th>{t('team.colActive')}</th>
               <th>{t('team.colActions')}</th>
@@ -71,6 +91,7 @@ export default function TeamManager({ onTeamsChange }) {
             {teams.map((team) => (
               <tr key={team.id}>
                 <td><strong>{team.name}</strong></td>
+                <td>{userMap[team.leaderId] ?? <span style={{ color: 'var(--danger)' }}>{t('team.noLeader')}</span>}</td>
                 <td>{team.description || '—'}</td>
                 <td><span className={team.active ? 'badge badge-ok' : 'badge badge-err'}>{team.active ? t('team.active') : t('team.inactive')}</span></td>
                 <td>
@@ -91,6 +112,15 @@ export default function TeamManager({ onTeamsChange }) {
               <label>{t('team.formName')}
                 <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder={t('team.formNamePh')} />
               </label>
+              <label>
+                {t('team.formLeader')} <span style={{ color: 'var(--danger)' }}>*</span>
+                <select value={form.leader_id} onChange={(e) => setForm({ ...form, leader_id: e.target.value })}>
+                  <option value="">{t('team.selectLeader')}</option>
+                  {users.map(u => (
+                    <option key={u.id} value={u.id}>{u.displayName || u.username} ({u.username})</option>
+                  ))}
+                </select>
+              </label>
               <label className="full-width">{t('team.formDesc')}
                 <input value={form.description || ''} onChange={(e) => setForm({ ...form, description: e.target.value })} />
               </label>
@@ -101,7 +131,7 @@ export default function TeamManager({ onTeamsChange }) {
             </div>
             <div className="modal-actions">
               <button className="btn btn-secondary" onClick={() => setModal(null)}>{t('team.cancel')}</button>
-              <button className="btn btn-primary" onClick={save} disabled={saving || !form.name.trim()}>
+              <button className="btn btn-primary" onClick={save} disabled={saving || !canSave}>
                 {saving ? t('team.saving') : t('team.save')}
               </button>
             </div>
