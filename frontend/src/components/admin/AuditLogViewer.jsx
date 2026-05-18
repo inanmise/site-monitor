@@ -19,6 +19,25 @@ const ANOMALY_COLORS = {
   RATE_LIMITED:'#64748b',
 }
 
+function parseBrowser(ua) {
+  if (!ua) return null
+  let browser = 'Unknown'
+  if (ua.includes('Edg/') || ua.includes('EdgA/'))      browser = 'Edge'
+  else if (ua.includes('OPR/') || ua.includes('Opera/')) browser = 'Opera'
+  else if (ua.includes('Chrome/'))                       browser = 'Chrome'
+  else if (ua.includes('Firefox/'))                      browser = 'Firefox'
+  else if (ua.includes('Safari/'))                       browser = 'Safari'
+
+  let os = ''
+  if (ua.includes('Windows NT'))      os = 'Windows'
+  else if (ua.includes('Android'))    os = 'Android'
+  else if (ua.includes('iPhone') || ua.includes('iPad')) os = 'iOS'
+  else if (ua.includes('Mac OS'))     os = 'macOS'
+  else if (ua.includes('Linux'))      os = 'Linux'
+
+  return os ? `${browser} · ${os}` : browser
+}
+
 function AnomalyChips({ flags }) {
   if (!flags) return null
   return (
@@ -174,7 +193,14 @@ export default function AuditLogViewer() {
                   <div>{row.actor || '—'}</div>
                   {row.actor_role && <div className="audit-sub">{row.actor_role}</div>}
                 </td>
-                <td className="audit-mono">{row.ip_address || '—'}</td>
+                <td>
+                  <div className="audit-mono">{row.ip_address || '—'}</div>
+                  {row.user_agent && (
+                    <div className="audit-sub" title={row.user_agent}>
+                      {parseBrowser(row.user_agent)}
+                    </div>
+                  )}
+                </td>
                 <td>
                   {row.ip_country && (
                     <div>{row.ip_country}{row.ip_city ? `, ${row.ip_city}` : ''}</div>
