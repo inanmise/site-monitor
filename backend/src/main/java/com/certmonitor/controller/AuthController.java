@@ -50,14 +50,16 @@ public class AuthController {
             HttpServletResponse response) {
 
         String clientIp = resolveClientIp(request);
+        String username = body.getOrDefault("username", "").strip();
+
         if (isRateLimited(clientIp)) {
             log.warn("Login rate limit exceeded: IP={}", clientIp);
+            auditService.recordRateLimited(
+                username.isBlank() ? null : username, clientIp, request.getHeader("User-Agent"));
             return ResponseEntity.status(429)
                     .body(Map.of("success", false, "error", "Too many login attempts. Please wait."));
         }
-
-        String username = body.getOrDefault("username", "").strip();
-        String password = body.getOrDefault("password", "").strip();
+        String password  = body.getOrDefault("password", "").strip();
         boolean rememberMe = Boolean.parseBoolean(body.getOrDefault("remember_me", "false"));
 
         Optional<AppUser> userOpt = userService.authenticate(username, password);

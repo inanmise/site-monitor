@@ -49,35 +49,66 @@ public class AuditService {
         if (isOffHours()) anomalies.add("OFF_HOURS");
 
         if (success && actor != null) {
-            if (!geoIpService.isPrivateIp(ipAddress) && !auditLogRepo.existsSuccessfulLoginFromIp(actor, ipAddress)) {
+            if (!geoIpService.isPrivateIp(ipAddress) && !auditLogRepo.existsSuccessfulLoginFromIp(actor, ipAddress))
                 anomalies.add("UNUSUAL_IP");
-            }
+
             String oneHourAgo = ISO.format(Instant.now().minusSeconds(3600));
             List<AuditLog> recent = auditLogRepo.findRecentSuccessfulLogins(actor, oneHourAgo);
             if (!recent.isEmpty()) {
                 AuditLog prev = recent.get(0);
-                if (prev.getIpCountry() != null
-                        && !ipAddress.equals(prev.getIpAddress())
-                        && prev.getIpCountry().equals("Private") == false) {
+                if (prev.getIpCountry() != null && !ipAddress.equals(prev.getIpAddress())
+                        && !"Private".equals(prev.getIpCountry()))
                     anomalies.add("GEO_VELOCITY");
-                }
             }
+
+            // Successful login after a brute-force pattern — flag it
+            String tenMinAgo = ISO.format(Instant.now().minusSeconds(600));
+            long prevFails = auditLogRepo.countRecentFailedLogins(actor, tenMinAgo);
+            if (prevFails >= 5) anomalies.add("BRUTE_FORCE");
         }
 
-        if (actor != null) {
+        if (!success && actor != null && !actor.isBlank()) {
             String tenMinAgo = ISO.format(Instant.now().minusSeconds(600));
-            long fails = auditLogRepo.countRecentFailedLogins(actor, tenMinAgo);
-            if (fails >= 5) anomalies.add("BRUTE_FORCE");
+            long prevFails = auditLogRepo.countRecentFailedLogins(actor, tenMinAgo);
+            int attemptNum = (int) prevFails + 1;
+            if (prevFails >= 4) {
+                anomalies.add("BRUTE_FORCE");
+                entry.setFailureReason(
+                    "Brute force: attempt #" + attemptNum + " for '" + actor + "' in last 10 min");
+                log.warn("Brute force detected: user='{}' attempt={} IP={}", actor, attemptNum, ipAddress);
+            } else {
+                entry.setFailureReason(
+                    "Invalid credentials — attempt #" + attemptNum + " for '" + actor + "'");
+            }
+        } else {
+            entry.setFailureReason(failureReason);
         }
 
         if (!anomalies.isEmpty()) {
             entry.setAnomalyFlags(String.join(",", anomalies));
-            log.warn("Security anomaly detected: user={} flags={} IP={}", actor, anomalies, ipAddress);
+            if (success) log.warn("Security anomaly on login: user={} flags={} IP={}", actor, anomalies, ipAddress);
         }
 
         AuditLog saved = auditLogRepo.save(entry);
         enrichGeoAsync(saved.getId(), ipAddress);
         return saved;
+    }
+
+    /** Logs a BLOCKED login when the IP is rate-limited before authentication even runs. */
+    public void recordRateLimited(String actor, String ipAddress, String userAgent) {
+        AuditLog entry = new AuditLog();
+        entry.setEventType("LOGIN_FAILED");
+        entry.setEventTime(now());
+        entry.setActor(actor);
+        entry.setIpAddress(ipAddress);
+        entry.setUserAgent(userAgent);
+        entry.setOutcome("BLOCKED");
+        entry.setFailureReason("Rate limited: too many login attempts from " + ipAddress
+                + (actor != null && !actor.isBlank() ? " (targeting '" + actor + "')" : ""));
+        entry.setAnomalyFlags("RATE_LIMITED");
+        AuditLog saved = auditLogRepo.save(entry);
+        enrichGeoAsync(saved.getId(), ipAddress);
+        log.warn("Rate-limited login blocked: IP={} actor={}", ipAddress, actor);
     }
 
     public void recordLogout(String actor, Long actorId, String ipAddress, String sessionId) {
