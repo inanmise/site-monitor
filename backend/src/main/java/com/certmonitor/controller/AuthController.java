@@ -58,6 +58,7 @@ public class AuthController {
         String clientIp = resolveClientIp(request);
         String username = body.getOrDefault("username", "").strip();
 
+        // 1. IP-based rate limit
         long waitSecs = blockedSecondsRemaining(clientIp);
         if (waitSecs > 0) {
             log.warn("Login rate limit exceeded: IP={} wait={}s", clientIp, waitSecs);
@@ -68,6 +69,23 @@ public class AuthController {
                 "error", "Too many login attempts. Please wait.",
                 "wait_seconds", waitSecs));
         }
+
+        // 2. Per-user progressive lockout (DB-persisted)
+        if (!username.isBlank()) {
+            UserService.LockoutStatus ls = userService.checkLockout(username);
+            if (ls.isBlocked()) {
+                auditService.recordRateLimited(username, clientIp, request.getHeader("User-Agent"));
+                if (ls.permanent()) {
+                    return ResponseEntity.status(423).body(Map.of(
+                        "success", false, "locked", true,
+                        "error", "Account permanently locked. Contact administrator."));
+                }
+                return ResponseEntity.status(423).body(Map.of(
+                    "success", false, "wait_seconds", ls.secondsRemaining(),
+                    "error", "Account temporarily locked."));
+            }
+        }
+
         String password  = body.getOrDefault("password", "").strip();
         boolean rememberMe = Boolean.parseBoolean(body.getOrDefault("remember_me", "false"));
 
@@ -78,11 +96,10 @@ public class AuthController {
             loginAttempts.remove(clientIp);
             windowStart.remove(clientIp);
             blockedUntil.remove(clientIp);
+            userService.clearLockoutOnSuccess(username);
 
-            // Session fixation prevention
             HttpSession oldSession = request.getSession(false);
             if (oldSession != null) oldSession.invalidate();
-
             HttpSession newSession = request.getSession(true);
             populateSession(newSession, user);
 
@@ -90,8 +107,7 @@ public class AuthController {
                     username, user.getSystemRole(), user.getTeamId(), rememberMe, clientIp);
             auditService.recordLogin(username, user.getId(), user.getTeamId(),
                     user.getSystemRole(), clientIp,
-                    request.getHeader("User-Agent"), newSession.getId(),
-                    true, null);
+                    request.getHeader("User-Agent"), newSession.getId(), true, null);
 
             if (rememberMe) {
                 String token = rememberMeService.generateToken(username);
@@ -102,15 +118,28 @@ public class AuthController {
                 cookie.setPath("/");
                 response.addCookie(cookie);
             }
-
             return ResponseEntity.ok(buildMeResponse(user));
         }
 
+        // 3. Failed — record attempt, check for BRUTE_FORCE, apply progressive lockout
         recordFailedAttempt(clientIp);
         log.warn("Failed login attempt: IP={}, username={}", clientIp, username);
-        auditService.recordLogin(username, null, null, null, clientIp,
-                request.getHeader("User-Agent"), null,
-                false, "Invalid credentials");
+        com.certmonitor.model.AuditLog logged = auditService.recordLogin(
+                username, null, null, null, clientIp,
+                request.getHeader("User-Agent"), null, false, "Invalid credentials");
+
+        if (!username.isBlank() && logged.getAnomalyFlags() != null
+                && logged.getAnomalyFlags().contains("BRUTE_FORCE")) {
+            UserService.LockoutStatus ls = userService.applyProgressiveLockout(username);
+            if (ls.permanent()) {
+                return ResponseEntity.status(423).body(Map.of(
+                    "success", false, "locked", true,
+                    "error", "Account permanently locked. Contact administrator."));
+            }
+            return ResponseEntity.status(423).body(Map.of(
+                "success", false, "wait_seconds", ls.secondsRemaining(),
+                "error", "Account temporarily locked."));
+        }
         return ResponseEntity.status(401)
                 .body(Map.of("success", false, "error", "Invalid username or password"));
     }

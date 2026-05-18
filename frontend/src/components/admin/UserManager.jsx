@@ -71,6 +71,12 @@ export default function UserManager({ teams }) {
     else setMsg(res?.error || 'Error')
   }
 
+  async function unlock(id) {
+    const res = await api.admin.unlockUser(id)
+    if (res?.success) { setMsg(t('usr.unlocked')); load() }
+    else setMsg(res?.error || 'Error')
+  }
+
   async function del(id) {
     const user = users.find(u => u.id === id)
     const ok = await showConfirm({
@@ -115,10 +121,16 @@ export default function UserManager({ teams }) {
                 <td>{user.email || '—'}</td>
                 <td><span className={`role-badge${user.system_role === 'ADMIN' ? ' role-admin' : user.system_role === 'AUDIT' ? ' role-audit' : ''}`}>{user.system_role}</span></td>
                 <td>{teamMap[user.team_id] || '—'}</td>
-                <td><span className={user.active ? 'badge badge-ok' : 'badge badge-err'}>{user.active ? t('usr.active') : t('usr.inactive')}</span></td>
+                <td>
+                  <span className={user.active ? 'badge badge-ok' : 'badge badge-err'}>{user.active ? t('usr.active') : t('usr.inactive')}</span>
+                  {user.permanent_lock && <span className="badge badge-err" style={{ marginLeft: 4 }} title={t('usr.permLocked')}>🔒</span>}
+                </td>
                 <td>
                   <button className="btn-sm btn-edit" onClick={() => openEdit(user)}>{t('usr.edit')}</button>
                   <button className="btn-sm" style={{ background: '#6366f1', color: '#fff', marginRight: 4 }} onClick={() => { setPwdModal(user); setNewPwd('') }}>{t('usr.pwd')}</button>
+                  {user.permanent_lock && (
+                    <button className="btn-sm" style={{ background: '#f59e0b', color: '#fff', marginRight: 4 }} onClick={() => unlock(user.id)}>{t('usr.unlock')}</button>
+                  )}
                   <button className="btn-sm btn-del" onClick={() => del(user.id)}>{t('usr.delete')}</button>
                 </td>
               </tr>

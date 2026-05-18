@@ -42,6 +42,18 @@ public class AppUser {
     @Column(nullable = false)
     private Boolean active = true;
 
+    /** ISO-UTC timestamp until which this account is temporarily locked. */
+    @Column(name = "lockout_until", length = 30)
+    private String lockoutUntil;
+
+    /** How many times progressive lockout has been applied (drives escalation). */
+    @Column(name = "failed_block_count")
+    private Integer failedBlockCount = 0;
+
+    /** Permanent lock set after max escalation — only admin can clear. */
+    @Column(name = "permanent_lock")
+    private Boolean permanentLock = false;
+
     private String createdAt;
     private String updatedAt;
 }

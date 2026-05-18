@@ -357,6 +357,15 @@ public class AdminController {
         return ok(Map.of("message", "Password updated"));
     }
 
+    @PostMapping("/users/{id}/unlock")
+    public ResponseEntity<Map<String, Object>> unlockUser(
+            @PathVariable Long id, HttpSession session, HttpServletRequest request) {
+        requireAdmin(session);
+        userService.unlockUser(id);
+        auditService.recordAction("USER_UNLOCK", session, request, "USER", id.toString(), null);
+        return ok(Map.of("message", "User unlocked"));
+    }
+
     @DeleteMapping("/users/{id}")
     public ResponseEntity<Map<String, Object>> deleteUser(
             @PathVariable Long id, HttpSession session, HttpServletRequest request) {

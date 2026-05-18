@@ -857,6 +857,17 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
   width: 100%;
 }
 
+/* Permanent lock variant */
+.lp-blocked--permanent .lp-blocked-icon { background: linear-gradient(135deg,#fff1f2,#ffe4e6); border-color: #fecdd3; color: #dc2626; }
+.lp-blocked--permanent .lp-blocked-title { color: #991b1b; }
+.lp-blocked-perm-badge {
+  display: flex; align-items: center; gap: 8px;
+  background: #fef2f2; border: 1.5px solid #fecaca;
+  color: #b91c1c; border-radius: 8px;
+  padding: 10px 20px; font-size: .85rem; font-weight: 600;
+  margin-bottom: 18px;
+}
+
 /* Submit button */
 .lp-btn {
   display: flex;
@@ -1835,6 +1846,9 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 [data-theme="dark"] .lp-blocked-unit { color: #fdba74; }
 [data-theme="dark"] .lp-blocked-hint { color: #78716c; }
 [data-theme="dark"] .lp-blocked-help { color: #475569; border-top-color: #1e293b; }
+[data-theme="dark"] .lp-blocked--permanent .lp-blocked-icon { background: linear-gradient(135deg,#200a0a,#2d0808); border-color: #7f1d1d; color: #f87171; }
+[data-theme="dark"] .lp-blocked--permanent .lp-blocked-title { color: #f87171; }
+[data-theme="dark"] .lp-blocked-perm-badge { background: #1c0a0a; border-color: #7f1d1d; color: #fca5a5; }
 [data-theme="dark"] .lp-eye { color: #475569; }
 [data-theme="dark"] .lp-eye:hover { color: #94a3b8; }
 [data-theme="dark"] .lp-help { color: #475569; }
