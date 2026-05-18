@@ -146,12 +146,12 @@ public class AuditService {
 
     // ── Helpers ────────────────────────────────────────────────────────────────
 
-    /** Returns true if current UTC time is outside Mon–Fri 08:00–18:00. */
+    /** Returns true if current UTC time is outside Mon–Fri 08:00–23:00. */
     private boolean isOffHours() {
         ZonedDateTime now = ZonedDateTime.now(ZoneOffset.UTC);
         int dow = now.getDayOfWeek().getValue(); // 1=Mon 7=Sun
         int hour = now.getHour();
-        return dow >= 6 || hour < 8 || hour >= 18;
+        return dow >= 6 || hour < 8 || hour >= 23;
     }
 
     public String resolveIp(HttpServletRequest request) {
