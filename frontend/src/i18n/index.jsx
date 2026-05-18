@@ -577,7 +577,9 @@ const TR = {
   'audit.colGeo':         'Konum',
   'audit.colResource':    'Kaynak',
   'audit.colOutcome':     'Sonuç',
+  'audit.colBrowser':     'Tarayıcı',
   'audit.colAnomalies':   'Anomaliler',
+  'audit.anomalyOnly':    'Sadece anomaliler',
   'audit.empty':          'Kayıt bulunamadı.',
   'audit.pageInfo':       'Sayfa {0} / {1} — Toplam {2} kayıt',
 }
@@ -1155,7 +1157,9 @@ const EN = {
   'audit.colGeo':         'Location',
   'audit.colResource':    'Resource',
   'audit.colOutcome':     'Outcome',
+  'audit.colBrowser':     'Browser',
   'audit.colAnomalies':   'Anomalies',
+  'audit.anomalyOnly':    'Anomalies only',
   'audit.empty':          'No records found.',
   'audit.pageInfo':       'Page {0} of {1} — {2} total records',
 }

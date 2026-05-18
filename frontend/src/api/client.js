@@ -115,7 +115,9 @@ export const api = {
     // Audit log
     getAuditLogs: (params) => {
       const q = new URLSearchParams(
-        Object.fromEntries(Object.entries(params).filter(([, v]) => v !== '' && v != null))
+        Object.fromEntries(
+          Object.entries(params).filter(([, v]) => v !== '' && v != null && v !== false)
+        )
       ).toString()
       return request(`/admin/audit?${q}`)
     },

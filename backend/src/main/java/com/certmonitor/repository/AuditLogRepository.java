@@ -34,7 +34,8 @@ public interface AuditLogRepository extends JpaRepository<AuditLog, Long> {
            "(:eventType IS NULL OR a.eventType = :eventType) AND " +
            "(:outcome IS NULL OR a.outcome = :outcome) AND " +
            "(:since IS NULL OR a.eventTime >= :since) AND " +
-           "(:until IS NULL OR a.eventTime <= :until) " +
+           "(:until IS NULL OR a.eventTime <= :until) AND " +
+           "(:anomalyOnly = false OR (a.anomalyFlags IS NOT NULL AND a.anomalyFlags <> '')) " +
            "ORDER BY a.eventTime DESC")
     Page<AuditLog> findFiltered(
         @Param("actor") String actor,
@@ -42,5 +43,6 @@ public interface AuditLogRepository extends JpaRepository<AuditLog, Long> {
         @Param("outcome") String outcome,
         @Param("since") String since,
         @Param("until") String until,
+        @Param("anomalyOnly") boolean anomalyOnly,
         Pageable pageable);
 }
