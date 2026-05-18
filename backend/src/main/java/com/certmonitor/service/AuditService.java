@@ -157,8 +157,18 @@ public class AuditService {
     public String resolveIp(HttpServletRequest request) {
         if (request == null) return "unknown";
         String fwd = request.getHeader("X-Forwarded-For");
-        if (fwd != null && !fwd.isBlank()) return fwd.split(",")[0].trim();
-        return request.getRemoteAddr();
+        String ip = (fwd != null && !fwd.isBlank()) ? fwd.split(",")[0].trim() : request.getRemoteAddr();
+        return normalizeIp(ip);
+    }
+
+    public static String normalizeIp(String ip) {
+        if (ip == null) return "unknown";
+        // IPv6 loopback → canonical IPv4 loopback
+        if ("::1".equals(ip) || "0:0:0:0:0:0:0:1".equals(ip) || "0000:0000:0000:0000:0000:0000:0000:0001".equals(ip))
+            return "127.0.0.1";
+        // IPv4-mapped IPv6 ::ffff:x.x.x.x
+        if (ip.startsWith("::ffff:") && ip.length() > 7) return ip.substring(7);
+        return ip;
     }
 
     public String resolveUa(HttpServletRequest request) {
