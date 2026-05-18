@@ -29,6 +29,9 @@ public class AppUser {
     private String displayName;
     private String email;
 
+    @Column(name = "employee_id", length = 50)
+    private String employeeId;
+
     /** ADMIN — full access to all teams; USER — restricted to own team */
     @Column(nullable = false)
     private String systemRole = "USER";

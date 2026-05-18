@@ -270,6 +270,7 @@ public class AdminController {
         requireAdmin(session);
         Team team = userService.createTeam(
                 (String) body.get("name"),
+                (String) body.get("email"),
                 (String) body.get("description"),
                 toLong(body.get("leader_id")));
         auditService.recordAction("TEAM_CREATE", session, request,
@@ -284,6 +285,7 @@ public class AdminController {
         requireAdmin(session);
         Team team = userService.updateTeam(id,
                 (String) body.get("name"),
+                (String) body.get("email"),
                 (String) body.get("description"),
                 body.get("active") instanceof Boolean ? (Boolean) body.get("active") : null,
                 toLong(body.get("leader_id")));
@@ -324,6 +326,7 @@ public class AdminController {
                 (String) body.get("password"),
                 (String) body.get("display_name"),
                 (String) body.get("email"),
+                (String) body.get("employee_id"),
                 (String) body.get("system_role"),
                 toLong(body.get("team_id")));
         auditService.recordAction("USER_CREATE", session, request,
@@ -339,6 +342,7 @@ public class AdminController {
         AppUser user = userService.updateUser(id,
                 (String) body.get("display_name"),
                 (String) body.get("email"),
+                (String) body.get("employee_id"),
                 (String) body.get("system_role"),
                 toLong(body.get("team_id")),
                 body.get("active") instanceof Boolean ? (Boolean) body.get("active") : null);
