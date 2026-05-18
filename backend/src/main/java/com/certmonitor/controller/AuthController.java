@@ -2,6 +2,7 @@ package com.certmonitor.controller;
 
 import com.certmonitor.model.AppUser;
 import com.certmonitor.model.Team;
+import com.certmonitor.service.AuditService;
 import com.certmonitor.service.RememberMeService;
 import com.certmonitor.service.UserService;
 import jakarta.servlet.http.Cookie;
@@ -10,8 +11,6 @@ import jakarta.servlet.http.HttpServletResponse;
 import jakarta.servlet.http.HttpSession;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -35,8 +34,7 @@ public class AuthController {
     @Value("${cert.monitor.login.max-attempts:10}")
     private int maxLoginAttempts;
 
-    private static final Logger AUDIT = LoggerFactory.getLogger("AUDIT");
-
+    private final AuditService auditService;
     private final RememberMeService rememberMeService;
     private final UserService userService;
 
@@ -77,8 +75,10 @@ public class AuthController {
 
             log.info("User logged in: {} (role={}, teamId={}, rememberMe={}, IP={})",
                     username, user.getSystemRole(), user.getTeamId(), rememberMe, clientIp);
-            AUDIT.info("LOGIN user={} role={} teamId={} rememberMe={} IP={}",
-                    username, user.getSystemRole(), user.getTeamId(), rememberMe, clientIp);
+            auditService.recordLogin(username, user.getId(), user.getTeamId(),
+                    user.getSystemRole(), clientIp,
+                    request.getHeader("User-Agent"), newSession.getId(),
+                    true, null);
 
             if (rememberMe) {
                 String token = rememberMeService.generateToken(username);
@@ -95,7 +95,9 @@ public class AuthController {
 
         recordFailedAttempt(clientIp);
         log.warn("Failed login attempt: IP={}, username={}", clientIp, username);
-        AUDIT.warn("LOGIN_FAILED username={} IP={}", username, clientIp);
+        auditService.recordLogin(username, null, null, null, clientIp,
+                request.getHeader("User-Agent"), null,
+                false, "Invalid credentials");
         return ResponseEntity.status(401)
                 .body(Map.of("success", false, "error", "Invalid username or password"));
     }
@@ -123,9 +125,12 @@ public class AuthController {
         HttpSession session = request.getSession(false);
         if (session != null) {
             String username = (String) session.getAttribute("username");
+            Object userId   = session.getAttribute("userId");
+            String sid      = session.getId();
             session.invalidate();
             if (username != null) {
-                AUDIT.info("LOGOUT user={} IP={}", username, resolveClientIp(request));
+                Long uid = userId instanceof Long l ? l : userId != null ? Long.parseLong(userId.toString()) : null;
+                auditService.recordLogout(username, uid, resolveClientIp(request), sid);
             }
         }
         return ResponseEntity.ok(Map.of("success", true, "message", "Logged out"));

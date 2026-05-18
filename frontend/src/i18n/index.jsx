@@ -556,6 +556,30 @@ const TR = {
   'chart.statAvg':     'Ort',
   'chart.statMax':     'Maks',
   'chart.statPoints':  'Veri',
+
+  'admin.tabAudit':       'Denetim Kaydı',
+
+  'audit.total24h':       'Toplam Olay (24s)',
+  'audit.anomalies24h':   'Anomali (24s)',
+  'audit.failLogins24h':  'Başarısız Giriş (24s)',
+  'audit.total7d':        'Toplam Olay (7g)',
+  'audit.anomalies7d':    'Anomali (7g)',
+  'audit.failLogins7d':   'Başarısız Giriş (7g)',
+  'audit.filterActor':    'Kullanıcı filtrele...',
+  'audit.allEvents':      '— Tüm Olaylar —',
+  'audit.allOutcomes':    '— Tüm Sonuçlar —',
+  'audit.apply':          'Filtrele',
+  'audit.clear':          'Temizle',
+  'audit.colTime':        'Zaman',
+  'audit.colEvent':       'Olay',
+  'audit.colActor':       'Kullanıcı',
+  'audit.colIp':          'IP Adresi',
+  'audit.colGeo':         'Konum',
+  'audit.colResource':    'Kaynak',
+  'audit.colOutcome':     'Sonuç',
+  'audit.colAnomalies':   'Anomaliler',
+  'audit.empty':          'Kayıt bulunamadı.',
+  'audit.pageInfo':       'Sayfa {0} / {1} — Toplam {2} kayıt',
 }
 
 const EN = {
@@ -1110,6 +1134,30 @@ const EN = {
   'chart.statAvg':     'Avg',
   'chart.statMax':     'Max',
   'chart.statPoints':  'Points',
+
+  'admin.tabAudit':       'Audit Log',
+
+  'audit.total24h':       'Total Events (24h)',
+  'audit.anomalies24h':   'Anomalies (24h)',
+  'audit.failLogins24h':  'Failed Logins (24h)',
+  'audit.total7d':        'Total Events (7d)',
+  'audit.anomalies7d':    'Anomalies (7d)',
+  'audit.failLogins7d':   'Failed Logins (7d)',
+  'audit.filterActor':    'Filter by user...',
+  'audit.allEvents':      '— All Events —',
+  'audit.allOutcomes':    '— All Outcomes —',
+  'audit.apply':          'Apply',
+  'audit.clear':          'Clear',
+  'audit.colTime':        'Time',
+  'audit.colEvent':       'Event',
+  'audit.colActor':       'User',
+  'audit.colIp':          'IP Address',
+  'audit.colGeo':         'Location',
+  'audit.colResource':    'Resource',
+  'audit.colOutcome':     'Outcome',
+  'audit.colAnomalies':   'Anomalies',
+  'audit.empty':          'No records found.',
+  'audit.pageInfo':       'Page {0} of {1} — {2} total records',
 }
 
 // ── Context ───────────────────────────────────────────────────────────────────

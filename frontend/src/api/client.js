@@ -112,6 +112,15 @@ export const api = {
       method: 'DELETE',
     }),
 
+    // Audit log
+    getAuditLogs: (params) => {
+      const q = new URLSearchParams(
+        Object.fromEntries(Object.entries(params).filter(([, v]) => v !== '' && v != null))
+      ).toString()
+      return request(`/admin/audit?${q}`)
+    },
+    getAuditStats: () => request('/admin/audit/stats'),
+
     // System health
     getSystemHealth: () => request('/admin/system'),
     forceReleaseLock: () => request('/admin/system/scheduler-lock', { method: 'DELETE' }),

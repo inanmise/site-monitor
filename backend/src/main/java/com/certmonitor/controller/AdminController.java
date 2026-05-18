@@ -2,13 +2,13 @@ package com.certmonitor.controller;
 
 import com.certmonitor.model.*;
 import com.certmonitor.repository.*;
+import com.certmonitor.service.AuditService;
 import com.certmonitor.service.EscalationService;
 import com.certmonitor.service.UserService;
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpSession;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -26,9 +26,7 @@ import java.util.Objects;
 @RequiredArgsConstructor
 public class AdminController {
 
-    /** Dedicated audit logger → cert-monitor-audit.log (separate from the main log). */
-    private static final Logger AUDIT = LoggerFactory.getLogger("AUDIT");
-
+    private final AuditService auditService;
     private final CertificateInventoryRepository inventoryRepo;
     private final AlertThresholdRepository thresholdRepo;
     private final EscalationContactRepository contactRepo;
@@ -55,7 +53,7 @@ public class AdminController {
 
     @PostMapping("/inventory")
     public ResponseEntity<Map<String, Object>> addInventory(
-            @RequestBody CertificateInventory item, HttpSession session) {
+            @RequestBody CertificateInventory item, HttpSession session, HttpServletRequest request) {
         validateDomain(item.getDomain());
         if (!isAdmin(session)) {
             item.setTeamId(teamId(session));
@@ -72,8 +70,9 @@ public class AdminController {
             throw new IllegalArgumentException("Port must be between 1 and 65535");
         if (item.getActive() == null) item.setActive(true);
         CertificateInventory saved = inventoryRepo.save(item);
-        AUDIT.info("DOMAIN_ADD actor={} domain={} port={} teamId={}",
-                actor(session), saved.getDomain(), saved.getPort(), saved.getTeamId());
+        auditService.recordAction("DOMAIN_ADD", session, request,
+                "CERTIFICATE", saved.getDomain(),
+                "{\"port\":" + saved.getPort() + ",\"teamId\":" + saved.getTeamId() + "}");
         return ok(Map.of("data", saved, "message", "Domain added to inventory"));
     }
 
@@ -98,13 +97,14 @@ public class AdminController {
 
     @DeleteMapping("/inventory/{id}")
     public ResponseEntity<Map<String, Object>> deleteInventory(
-            @PathVariable Long id, HttpSession session) {
+            @PathVariable Long id, HttpSession session, HttpServletRequest request) {
         inventoryRepo.findById(id).ifPresent(inv -> {
             if (!isAdmin(session)) checkOwnership(inv.getTeamId(), session);
             inventoryRepo.deleteById(id);
             latestCheckRepo.deleteById(inv.getDomain());
-            AUDIT.info("DOMAIN_DELETE actor={} domain={} teamId={}",
-                    actor(session), inv.getDomain(), inv.getTeamId());
+            auditService.recordAction("DOMAIN_DELETE", session, request,
+                    "CERTIFICATE", inv.getDomain(),
+                    "{\"teamId\":" + inv.getTeamId() + "}");
         });
         return ok(Map.of("message", "Deleted"));
     }
@@ -266,13 +266,15 @@ public class AdminController {
 
     @PostMapping("/teams")
     public ResponseEntity<Map<String, Object>> createTeam(
-            @RequestBody Map<String, Object> body, HttpSession session) {
+            @RequestBody Map<String, Object> body, HttpSession session, HttpServletRequest request) {
         requireAdmin(session);
         Team team = userService.createTeam(
                 (String) body.get("name"),
                 (String) body.get("description"),
                 toLong(body.get("leader_id")));
-        AUDIT.info("TEAM_CREATE actor={} name={} leaderId={}", actor(session), team.getName(), team.getLeaderId());
+        auditService.recordAction("TEAM_CREATE", session, request,
+                "TEAM", team.getId().toString(),
+                "{\"name\":\"" + team.getName() + "\",\"leaderId\":" + team.getLeaderId() + "}");
         return ok(Map.of("data", team, "message", "Team created"));
     }
 
@@ -298,10 +300,10 @@ public class AdminController {
 
     @DeleteMapping("/teams/{id}")
     public ResponseEntity<Map<String, Object>> deleteTeam(
-            @PathVariable Long id, HttpSession session) {
+            @PathVariable Long id, HttpSession session, HttpServletRequest request) {
         requireAdmin(session);
         userService.deleteTeam(id);
-        AUDIT.info("TEAM_DELETE actor={} teamId={}", actor(session), id);
+        auditService.recordAction("TEAM_DELETE", session, request, "TEAM", id.toString(), null);
         return ok(Map.of("message", "Team deleted"));
     }
 
@@ -315,7 +317,7 @@ public class AdminController {
 
     @PostMapping("/users")
     public ResponseEntity<Map<String, Object>> createUser(
-            @RequestBody Map<String, Object> body, HttpSession session) {
+            @RequestBody Map<String, Object> body, HttpSession session, HttpServletRequest request) {
         requireAdmin(session);
         AppUser user = userService.createUser(
                 (String) body.get("username"),
@@ -324,8 +326,9 @@ public class AdminController {
                 (String) body.get("email"),
                 (String) body.get("system_role"),
                 toLong(body.get("team_id")));
-        AUDIT.info("USER_CREATE actor={} username={} role={} teamId={}",
-                actor(session), user.getUsername(), user.getSystemRole(), user.getTeamId());
+        auditService.recordAction("USER_CREATE", session, request,
+                "USER", user.getUsername(),
+                "{\"role\":\"" + user.getSystemRole() + "\",\"teamId\":" + user.getTeamId() + "}");
         return ok(Map.of("data", user, "message", "User created"));
     }
 
@@ -352,10 +355,10 @@ public class AdminController {
 
     @DeleteMapping("/users/{id}")
     public ResponseEntity<Map<String, Object>> deleteUser(
-            @PathVariable Long id, HttpSession session) {
+            @PathVariable Long id, HttpSession session, HttpServletRequest request) {
         requireAdmin(session);
         userService.deleteUser(id);
-        AUDIT.info("USER_DELETE actor={} userId={}", actor(session), id);
+        auditService.recordAction("USER_DELETE", session, request, "USER", id.toString(), null);
         return ok(Map.of("message", "User deleted"));
     }
 
