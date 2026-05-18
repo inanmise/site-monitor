@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { api } from '../api/client'
 import { useT, useLanguage } from '../i18n/index.jsx'
-import { ShieldCheck, Lock, Globe, Bell, BarChart3, RefreshCw } from 'lucide-react'
+import { ShieldCheck, ShieldAlert, Lock, Globe, Bell, BarChart3, RefreshCw } from 'lucide-react'
 
 const STORAGE_KEY = 'cert-monitor-remembered-user'
 
@@ -163,83 +163,96 @@ export default function Login({ onLogin }) {
             <p className="lp-intro-desc">{t('login.desc')}</p>
           </div>
 
-          {/* Form */}
-          <form onSubmit={handleSubmit} className="lp-form">
-            <div className="lp-field">
-              <label className="lp-label" htmlFor="lp-user">{t('login.username')}</label>
-              <input
-                id="lp-user"
-                className="lp-input"
-                type="text"
-                value={username}
-                onChange={e => setUsername(e.target.value)}
-                placeholder={t('login.userPlaceholder')}
-                required
-                autoFocus
-                autoComplete="username"
-              />
+          {/* Güvenlik engeli ekranı */}
+          {lockout > 0 ? (
+            <div className="lp-blocked" role="alert" aria-live="polite">
+              <div className="lp-blocked-icon">
+                <ShieldAlert size={36} />
+              </div>
+              <h3 className="lp-blocked-title">{t('login.blockedTitle')}</h3>
+              <p className="lp-blocked-desc">{t('login.blockedDesc')}</p>
+              <ul className="lp-blocked-reasons">
+                <li>{t('login.blockedReason1')}</li>
+                <li>{t('login.blockedReason2')}</li>
+                <li>{t('login.blockedReason3')}</li>
+              </ul>
+              <div className="lp-blocked-timer">
+                <div className="lp-blocked-count">{lockout}</div>
+                <div className="lp-blocked-unit">{t('login.blockedUnit')}</div>
+              </div>
+              <p className="lp-blocked-hint">{t('login.blockedHint')}</p>
+              <p className="lp-blocked-help">{t('login.help')}</p>
             </div>
-
-            <div className="lp-field">
-              <label className="lp-label" htmlFor="lp-pass">{t('login.password')}</label>
-              <div className="lp-pass-wrap">
+          ) : (
+            /* Normal giriş formu */
+            <form onSubmit={handleSubmit} className="lp-form">
+              <div className="lp-field">
+                <label className="lp-label" htmlFor="lp-user">{t('login.username')}</label>
                 <input
-                  id="lp-pass"
+                  id="lp-user"
                   className="lp-input"
-                  type={showPass ? 'text' : 'password'}
-                  value={password}
-                  onChange={e => setPassword(e.target.value)}
-                  placeholder={t('login.passPlaceholder')}
+                  type="text"
+                  value={username}
+                  onChange={e => setUsername(e.target.value)}
+                  placeholder={t('login.userPlaceholder')}
                   required
-                  autoComplete="current-password"
+                  autoFocus
+                  autoComplete="username"
                 />
-                <button
-                  type="button"
-                  className="lp-eye"
-                  onClick={() => setShowPass(p => !p)}
-                  tabIndex={-1}
-                  aria-label={showPass ? t('login.hidePass') : t('login.showPass')}
-                >
-                  {showPass
-                    ? <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="18" height="18"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
-                    : <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="18" height="18"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
-                  }
-                </button>
               </div>
-            </div>
 
-            <label className="lp-remember">
-              <input
-                type="checkbox"
-                checked={rememberMe}
-                onChange={e => setRememberMe(e.target.checked)}
-              />
-              <span>{t('login.rememberMe')}</span>
-            </label>
-
-            {lockout > 0 && (
-              <div className="lp-lockout" role="alert">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="16" height="16"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-                {t('login.rateLimited', lockout)}
+              <div className="lp-field">
+                <label className="lp-label" htmlFor="lp-pass">{t('login.password')}</label>
+                <div className="lp-pass-wrap">
+                  <input
+                    id="lp-pass"
+                    className="lp-input"
+                    type={showPass ? 'text' : 'password'}
+                    value={password}
+                    onChange={e => setPassword(e.target.value)}
+                    placeholder={t('login.passPlaceholder')}
+                    required
+                    autoComplete="current-password"
+                  />
+                  <button
+                    type="button"
+                    className="lp-eye"
+                    onClick={() => setShowPass(p => !p)}
+                    tabIndex={-1}
+                    aria-label={showPass ? t('login.hidePass') : t('login.showPass')}
+                  >
+                    {showPass
+                      ? <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="18" height="18"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
+                      : <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="18" height="18"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                    }
+                  </button>
+                </div>
               </div>
-            )}
 
-            {error && lockout === 0 && (
-              <div className="lp-error" role="alert">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="16" height="16"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-                {error}
-              </div>
-            )}
+              <label className="lp-remember">
+                <input
+                  type="checkbox"
+                  checked={rememberMe}
+                  onChange={e => setRememberMe(e.target.checked)}
+                />
+                <span>{t('login.rememberMe')}</span>
+              </label>
 
-            <button type="submit" className="lp-btn" disabled={loading || lockout > 0}>
-              {loading
-                ? <><span className="lp-spinner" /> {t('login.loading')}</>
-                : lockout > 0
-                  ? <><span className="lp-spinner lp-spinner--wait" /> {t('login.waitBtn', lockout)}</>
+              {error && (
+                <div className="lp-error" role="alert">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="16" height="16"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+                  {error}
+                </div>
+              )}
+
+              <button type="submit" className="lp-btn" disabled={loading}>
+                {loading
+                  ? <><span className="lp-spinner" /> {t('login.loading')}</>
                   : <><Lock size={16} /> {t('login.submit')}</>
-              }
-            </button>
-          </form>
+                }
+              </button>
+            </form>
+          )}
 
           <p className="lp-help">{t('login.help')}</p>
         </div>
