@@ -8,6 +8,7 @@ import AlertHistory from './AlertHistory'
 import TeamManager from './TeamManager'
 import UserManager from './UserManager'
 import SystemHealth from './SystemHealth'
+import AuditLogViewer from './AuditLogViewer'
 
 export default function AdminPanel({ onInventoryChange, systemRole }) {
   const t = useT()
@@ -34,6 +35,7 @@ export default function AdminPanel({ onInventoryChange, systemRole }) {
     { id: 'teams',      labelKey: 'admin.tabTeams',      adminOnly: true  },
     { id: 'users',      labelKey: 'admin.tabUsers',      adminOnly: true  },
     { id: 'system',     labelKey: 'admin.tabSystem',     adminOnly: true  },
+    { id: 'audit',      labelKey: 'admin.tabAudit',      adminOnly: true  },
   ].filter(tab => !tab.adminOnly || isAdmin)
 
   return (
@@ -57,6 +59,7 @@ export default function AdminPanel({ onInventoryChange, systemRole }) {
         {activeTab === 'teams'      && isAdmin && <TeamManager onTeamsChange={loadTeams} />}
         {activeTab === 'users'      && isAdmin && <UserManager teams={teams} />}
         {activeTab === 'system'     && isAdmin && <SystemHealth />}
+        {activeTab === 'audit'      && isAdmin && <AuditLogViewer />}
       </div>
     </div>
   )
