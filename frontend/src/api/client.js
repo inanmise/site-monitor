@@ -97,6 +97,7 @@ export const api = {
     resetPassword: (id, password) => request(`/admin/users/${id}/reset-password`, {
       method: 'POST', body: JSON.stringify({ password }),
     }),
+    unlockUser: (id) => request(`/admin/users/${id}/unlock`, { method: 'POST' }),
 
     // Cert transfer
     transferCert: (id, teamId) => request(`/admin/inventory/${id}/transfer`, {

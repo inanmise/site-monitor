@@ -65,7 +65,8 @@ export default function Login({ onLogin }) {
   const [error, setError]     = useState('')
   const [loading, setLoading] = useState(false)
   const [showPass, setShowPass] = useState(false)
-  const [lockout, setLockout] = useState(0)   // seconds remaining in rate-limit block
+  const [lockout, setLockout]           = useState(0)    // seconds remaining
+  const [permanentLock, setPermanentLock] = useState(false) // admin must unlock
 
   useEffect(() => {
     if (lockout <= 0) return
@@ -101,6 +102,10 @@ export default function Login({ onLogin }) {
           localStorage.removeItem(STORAGE_KEY)
         }
         onLogin(data)
+      } else if (data.locked) {
+        setPermanentLock(true)
+        setLockout(0)
+        setError('')
       } else if (data.wait_seconds) {
         setLockout(data.wait_seconds)
         setError('')
@@ -163,8 +168,26 @@ export default function Login({ onLogin }) {
             <p className="lp-intro-desc">{t('login.desc')}</p>
           </div>
 
-          {/* Güvenlik engeli ekranı */}
-          {lockout > 0 ? (
+          {/* Kalıcı kilit ekranı */}
+          {permanentLock ? (
+            <div className="lp-blocked lp-blocked--permanent" role="alert">
+              <div className="lp-blocked-icon lp-blocked-icon--permanent">
+                <ShieldAlert size={36} />
+              </div>
+              <h3 className="lp-blocked-title lp-blocked-title--permanent">{t('login.permLockedTitle')}</h3>
+              <p className="lp-blocked-desc">{t('login.permLockedDesc')}</p>
+              <ul className="lp-blocked-reasons">
+                <li>{t('login.permLockedReason1')}</li>
+                <li>{t('login.permLockedReason2')}</li>
+              </ul>
+              <div className="lp-blocked-perm-badge">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="18" height="18"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                {t('login.permLockedBadge')}
+              </div>
+              <p className="lp-blocked-help">{t('login.permLockedHelp')}</p>
+            </div>
+
+          ) : lockout > 0 ? (
             <div className="lp-blocked" role="alert" aria-live="polite">
               <div className="lp-blocked-icon">
                 <ShieldAlert size={36} />

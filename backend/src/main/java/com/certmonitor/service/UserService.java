@@ -11,6 +11,7 @@ import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
@@ -30,6 +31,13 @@ public class UserService {
     private static final BCryptPasswordEncoder PASSWORD_ENCODER = new BCryptPasswordEncoder();
     private static final DateTimeFormatter ISO =
             DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
+
+    /** Lockout durations per offense level (0-indexed): 30s, 2min, 10min, 30min, then permanent. */
+    private static final long[] LOCKOUT_SECS = {30, 120, 600, 1800};
+
+    public record LockoutStatus(boolean permanent, long secondsRemaining) {
+        public boolean isBlocked() { return permanent || secondsRemaining > 0; }
+    }
 
     // ── Authentication ────────────────────────────────────────────────────────
 
@@ -198,6 +206,77 @@ public class UserService {
     @Transactional
     public void deleteUser(Long id) {
         userRepo.deleteById(id);
+    }
+
+    // ── Progressive lockout ───────────────────────────────────────────────────
+
+    /** Returns current lockout state without modifying anything. */
+    public LockoutStatus checkLockout(String username) {
+        return userRepo.findByUsername(username).map(u -> {
+            if (Boolean.TRUE.equals(u.getPermanentLock()))
+                return new LockoutStatus(true, 0);
+            if (u.getLockoutUntil() != null) {
+                try {
+                    long remaining = Duration.between(
+                        Instant.now(), Instant.parse(u.getLockoutUntil() + "Z")).getSeconds();
+                    if (remaining > 0) return new LockoutStatus(false, remaining);
+                } catch (Exception ignored) {}
+                // Lockout expired — clear it
+                u.setLockoutUntil(null);
+                userRepo.save(u);
+            }
+            return new LockoutStatus(false, 0);
+        }).orElse(new LockoutStatus(false, 0));
+    }
+
+    /**
+     * Called when BRUTE_FORCE is detected for this username.
+     * Escalates the lockout level and persists it.
+     * Level 1→30s, 2→2min, 3→10min, 4→30min, 5+→permanent.
+     */
+    @Transactional
+    public LockoutStatus applyProgressiveLockout(String username) {
+        return userRepo.findByUsername(username).map(u -> {
+            int offense = (u.getFailedBlockCount() == null ? 0 : u.getFailedBlockCount()) + 1;
+            u.setFailedBlockCount(offense);
+            u.setUpdatedAt(now());
+            if (offense >= 5) {
+                u.setPermanentLock(true);
+                u.setLockoutUntil(null);
+                userRepo.save(u);
+                log.warn("Account PERMANENTLY locked: user='{}'", username);
+                return new LockoutStatus(true, 0);
+            }
+            long secs = LOCKOUT_SECS[offense - 1];
+            u.setLockoutUntil(ISO.format(Instant.now().plusSeconds(secs)));
+            userRepo.save(u);
+            log.warn("Account locked offense={}/{} for {}s: user='{}'", offense, LOCKOUT_SECS.length, secs, username);
+            return new LockoutStatus(false, secs);
+        }).orElse(new LockoutStatus(false, 0));
+    }
+
+    /** Admin action: remove all locks and reset escalation counter. */
+    @Transactional
+    public void unlockUser(Long id) {
+        AppUser u = userRepo.findById(id).orElseThrow(() -> new NoSuchElementException("User not found: " + id));
+        u.setPermanentLock(false);
+        u.setLockoutUntil(null);
+        u.setFailedBlockCount(0);
+        u.setUpdatedAt(now());
+        userRepo.save(u);
+        log.info("Account unlocked by admin: user='{}'", u.getUsername());
+    }
+
+    /** Called on successful login to reset the escalation state. */
+    @Transactional
+    public void clearLockoutOnSuccess(String username) {
+        userRepo.findByUsername(username).ifPresent(u -> {
+            boolean changed = u.getLockoutUntil() != null
+                    || (u.getFailedBlockCount() != null && u.getFailedBlockCount() > 0);
+            u.setLockoutUntil(null);
+            u.setFailedBlockCount(0);
+            if (changed) { u.setUpdatedAt(now()); userRepo.save(u); }
+        });
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
