@@ -27,19 +27,20 @@ public class AuditController {
 
     @GetMapping("/audit")
     public ResponseEntity<Map<String, Object>> listAudit(
-            @RequestParam(defaultValue = "0")   int    page,
-            @RequestParam(defaultValue = "50")  int    size,
-            @RequestParam(required = false)     String actor,
-            @RequestParam(required = false)     String eventType,
-            @RequestParam(required = false)     String outcome,
-            @RequestParam(required = false)     String since,
-            @RequestParam(required = false)     String until,
+            @RequestParam(defaultValue = "0")     int     page,
+            @RequestParam(defaultValue = "50")    int     size,
+            @RequestParam(required = false)       String  actor,
+            @RequestParam(required = false)       String  eventType,
+            @RequestParam(required = false)       String  outcome,
+            @RequestParam(required = false)       String  since,
+            @RequestParam(required = false)       String  until,
+            @RequestParam(defaultValue = "false") boolean anomalyOnly,
             HttpSession session) {
         requireAdmin(session);
 
         size = Math.min(size, 200);
         Page<AuditLog> result = auditLogRepo.findFiltered(
-                nil(actor), nil(eventType), nil(outcome), nil(since), nil(until),
+                nil(actor), nil(eventType), nil(outcome), nil(since), nil(until), anomalyOnly,
                 PageRequest.of(page, size));
 
         Map<String, Object> resp = new LinkedHashMap<>();

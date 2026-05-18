@@ -26,6 +26,9 @@ public class Team {
     @Column(name = "leader_id")
     private Long leaderId;
 
+    @Column(length = 200)
+    private String email;
+
     private String createdAt;
     private String updatedAt;
 }

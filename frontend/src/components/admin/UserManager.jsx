@@ -3,7 +3,7 @@ import { api } from '../../api/client'
 import { useDialog } from '../ui/Dialog.jsx'
 import { useT } from '../../i18n/index.jsx'
 
-const emptyUser = { username: '', password: '', display_name: '', email: '', system_role: 'USER', team_id: '', active: true }
+const emptyUser = { username: '', password: '', display_name: '', email: '', employee_id: '', system_role: 'USER', team_id: '', active: true }
 
 export default function UserManager({ teams }) {
   const t = useT()
@@ -32,6 +32,7 @@ export default function UserManager({ teams }) {
       password: '',
       display_name: user.display_name || '',
       email: user.email || '',
+      employee_id: user.employee_id || '',
       system_role: user.system_role || 'USER',
       team_id: user.team_id ?? '',
       active: user.active,
@@ -45,6 +46,7 @@ export default function UserManager({ teams }) {
       username: form.username.trim(),
       display_name: form.display_name,
       email: form.email,
+      employee_id: form.employee_id,
       system_role: form.system_role,
       team_id: form.team_id || null,
       active: form.active,
@@ -95,6 +97,7 @@ export default function UserManager({ teams }) {
           <thead>
             <tr>
               <th>{t('usr.colUsername')}</th>
+              <th>{t('usr.colEmployeeId')}</th>
               <th>{t('usr.colDisplay')}</th>
               <th>{t('usr.colEmail')}</th>
               <th>{t('usr.colRole')}</th>
@@ -107,9 +110,10 @@ export default function UserManager({ teams }) {
             {users.map((user) => (
               <tr key={user.id}>
                 <td><strong>{user.username}</strong></td>
+                <td>{user.employee_id || '—'}</td>
                 <td>{user.display_name || '—'}</td>
                 <td>{user.email || '—'}</td>
-                <td><span className={`role-badge${user.system_role === 'ADMIN' ? ' role-admin' : ''}`}>{user.system_role}</span></td>
+                <td><span className={`role-badge${user.system_role === 'ADMIN' ? ' role-admin' : user.system_role === 'AUDIT' ? ' role-audit' : ''}`}>{user.system_role}</span></td>
                 <td>{teamMap[user.team_id] || '—'}</td>
                 <td><span className={user.active ? 'badge badge-ok' : 'badge badge-err'}>{user.active ? t('usr.active') : t('usr.inactive')}</span></td>
                 <td>
@@ -140,16 +144,22 @@ export default function UserManager({ teams }) {
               <label>{t('usr.formDisplay')}
                 <input value={form.display_name} onChange={(e) => setForm({ ...form, display_name: e.target.value })} />
               </label>
-              <label>{t('usr.formEmail')}
+              <label>
+                {t('usr.formEmail')} <span style={{ color: 'var(--danger)' }}>*</span>
                 <input type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />
+              </label>
+              <label>{t('usr.formEmployeeId')}
+                <input value={form.employee_id} onChange={(e) => setForm({ ...form, employee_id: e.target.value })} />
               </label>
               <label>{t('usr.formRole')}
                 <select value={form.system_role} onChange={(e) => setForm({ ...form, system_role: e.target.value })}>
                   <option value="USER">USER</option>
+                  <option value="AUDIT">AUDIT</option>
                   <option value="ADMIN">ADMIN</option>
                 </select>
               </label>
-              <label>{t('usr.formTeam')}
+              <label>
+                {t('usr.formTeam')} <span style={{ color: 'var(--danger)' }}>*</span>
                 <select value={form.team_id} onChange={(e) => setForm({ ...form, team_id: e.target.value ? Number(e.target.value) : '' })}>
                   <option value="">{t('usr.noTeam')}</option>
                   {(teams || []).map(team => <option key={team.id} value={team.id}>{team.name}</option>)}
@@ -163,7 +173,7 @@ export default function UserManager({ teams }) {
             <div className="modal-actions">
               <button className="btn btn-secondary" onClick={() => setModal(null)}>{t('usr.cancel')}</button>
               <button className="btn btn-primary" onClick={save}
-                disabled={saving || !form.username.trim() || (modal === 'add' && form.password.length < 4)}>
+                disabled={saving || !form.username.trim() || !form.email.trim() || !form.team_id || (modal === 'add' && form.password.length < 4)}>
                 {saving ? t('usr.saving') : t('usr.save')}
               </button>
             </div>

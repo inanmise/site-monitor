@@ -251,6 +251,10 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
   background: #3b82f6;
   color: #fff;
 }
+.role-audit {
+  background: #8b5cf6;
+  color: #fff;
+}
 
 .sb-logout {
   display: flex;
@@ -2231,9 +2235,26 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
   display: flex;
   flex-direction: column;
   gap: 4px;
-  transition: border-color .15s;
+  cursor: pointer;
+  text-align: left;
+  transition: border-color .15s, box-shadow .15s, transform .1s;
+}
+.audit-stat-card:hover {
+  border-color: var(--primary, #2563eb);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--primary, #2563eb) 20%, transparent);
+  transform: translateY(-1px);
+}
+.audit-stat-card.active {
+  border-color: var(--primary, #2563eb);
+  background: color-mix(in srgb, var(--primary, #2563eb) 8%, var(--bg-card, #fff));
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--primary, #2563eb) 30%, transparent);
 }
 .audit-stat-card.warn { border-color: #f59e0b; }
+.audit-stat-card.warn.active {
+  border-color: #d97706;
+  background: color-mix(in srgb, #f59e0b 10%, var(--bg-card, #fff));
+  box-shadow: 0 0 0 2px rgba(245,158,11,.3);
+}
 .audit-stat-value {
   font-size: 1.5em;
   font-weight: 700;
@@ -2281,6 +2302,16 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
   color: #fff;
 }
 .audit-filter-btn:hover { opacity: .85; }
+.audit-filter-check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: .85em;
+  color: var(--text);
+  cursor: pointer;
+  white-space: nowrap;
+  user-select: none;
+}
 
 /* Table */
 .audit-table-wrap {

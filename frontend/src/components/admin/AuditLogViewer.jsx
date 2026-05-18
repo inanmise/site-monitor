@@ -12,28 +12,41 @@ const EVENT_TYPES = [
 const OUTCOMES = ['SUCCESS', 'FAILURE', 'BLOCKED']
 
 const ANOMALY_COLORS = {
-  OFF_HOURS:   '#f59e0b',
-  UNUSUAL_IP:  '#8b5cf6',
-  GEO_VELOCITY:'#ef4444',
-  BRUTE_FORCE: '#dc2626',
-  RATE_LIMITED:'#64748b',
+  OFF_HOURS:    '#f59e0b',
+  UNUSUAL_IP:   '#8b5cf6',
+  GEO_VELOCITY: '#ef4444',
+  BRUTE_FORCE:  '#dc2626',
+  RATE_LIMITED: '#64748b',
 }
 
+function isoMinus(seconds) {
+  return new Date(Date.now() - seconds * 1000).toISOString().slice(0, 19)
+}
+
+const CARD_DEFS = [
+  { key: 'total_24h',        statKey: 'total_24h',         warn: false, filter: () => ({ since: isoMinus(86400),       anomalyOnly: false, eventType: '' }) },
+  { key: 'anomalies_24h',    statKey: 'anomalies_24h',     warn: true,  filter: () => ({ since: isoMinus(86400),       anomalyOnly: true,  eventType: '' }) },
+  { key: 'failed_logins_24h',statKey: 'failed_logins_24h', warn: true,  filter: () => ({ since: isoMinus(86400),       anomalyOnly: false, eventType: 'LOGIN_FAILED' }) },
+  { key: 'total_7d',         statKey: 'total_7d',          warn: false, filter: () => ({ since: isoMinus(7*86400),     anomalyOnly: false, eventType: '' }) },
+  { key: 'anomalies_7d',     statKey: 'anomalies_7d',      warn: true,  filter: () => ({ since: isoMinus(7*86400),     anomalyOnly: true,  eventType: '' }) },
+  { key: 'failed_logins_7d', statKey: 'failed_logins_7d',  warn: true,  filter: () => ({ since: isoMinus(7*86400),     anomalyOnly: false, eventType: 'LOGIN_FAILED' }) },
+]
+
 function parseBrowser(ua) {
-  if (!ua) return null
+  if (!ua) return '—'
   let browser = 'Unknown'
-  if (ua.includes('Edg/') || ua.includes('EdgA/'))      browser = 'Edge'
+  if (ua.includes('Edg/') || ua.includes('EdgA/'))       browser = 'Edge'
   else if (ua.includes('OPR/') || ua.includes('Opera/')) browser = 'Opera'
-  else if (ua.includes('Chrome/'))                       browser = 'Chrome'
-  else if (ua.includes('Firefox/'))                      browser = 'Firefox'
-  else if (ua.includes('Safari/'))                       browser = 'Safari'
+  else if (ua.includes('Chrome/'))                        browser = 'Chrome'
+  else if (ua.includes('Firefox/'))                       browser = 'Firefox'
+  else if (ua.includes('Safari/'))                        browser = 'Safari'
 
   let os = ''
-  if (ua.includes('Windows NT'))      os = 'Windows'
-  else if (ua.includes('Android'))    os = 'Android'
-  else if (ua.includes('iPhone') || ua.includes('iPad')) os = 'iOS'
-  else if (ua.includes('Mac OS'))     os = 'macOS'
-  else if (ua.includes('Linux'))      os = 'Linux'
+  if (ua.includes('Windows NT'))                            os = 'Windows'
+  else if (ua.includes('Android'))                          os = 'Android'
+  else if (ua.includes('iPhone') || ua.includes('iPad'))    os = 'iOS'
+  else if (ua.includes('Mac OS'))                           os = 'macOS'
+  else if (ua.includes('Linux'))                            os = 'Linux'
 
   return os ? `${browser} · ${os}` : browser
 }
@@ -45,33 +58,38 @@ function AnomalyChips({ flags }) {
       {flags.split(',').map(f => (
         <span key={f} className="audit-anomaly-chip"
           style={{ background: ANOMALY_COLORS[f] || '#64748b' }}>
-          {f.replace('_', ' ')}
+          {f.replace(/_/g, ' ')}
         </span>
       ))}
     </span>
   )
 }
 
-function StatCard({ label, value, warn }) {
+function StatCard({ label, value, warn, active, onClick }) {
+  const hasWarn = warn && value > 0
   return (
-    <div className={`audit-stat-card${warn && value > 0 ? ' warn' : ''}`}>
+    <button
+      className={`audit-stat-card${hasWarn ? ' warn' : ''}${active ? ' active' : ''}`}
+      onClick={onClick}
+      title={label}
+    >
       <div className="audit-stat-value">{value ?? '—'}</div>
       <div className="audit-stat-label">{label}</div>
-    </div>
+    </button>
   )
 }
 
+const EMPTY_FILTERS = { actor: '', eventType: '', outcome: '', since: '', until: '', anomalyOnly: false }
+
 export default function AuditLogViewer() {
   const t = useT()
-  const [stats, setStats]   = useState(null)
-  const [rows, setRows]     = useState([])
-  const [total, setTotal]   = useState(0)
-  const [page, setPage]     = useState(0)
-  const [loading, setLoading] = useState(false)
-
-  const [filters, setFilters] = useState({
-    actor: '', eventType: '', outcome: '', since: '', until: '',
-  })
+  const [stats, setStats]         = useState(null)
+  const [rows, setRows]           = useState([])
+  const [total, setTotal]         = useState(0)
+  const [page, setPage]           = useState(0)
+  const [loading, setLoading]     = useState(false)
+  const [activeCard, setActiveCard] = useState(null)
+  const [filters, setFilters]     = useState(EMPTY_FILTERS)
 
   const loadStats = useCallback(() => {
     api.admin.getAuditStats().then(r => { if (r?.success) setStats(r.data) })
@@ -80,28 +98,38 @@ export default function AuditLogViewer() {
   const loadLogs = useCallback((p = 0, f = filters) => {
     setLoading(true)
     api.admin.getAuditLogs({ page: p, size: 50, ...f }).then(r => {
-      if (r?.success) {
-        setRows(r.data)
-        setTotal(r.total)
-        setPage(r.page)
-      }
+      if (r?.success) { setRows(r.data); setTotal(r.total); setPage(r.page) }
     }).finally(() => setLoading(false))
   }, [filters])
 
-  useEffect(() => {
-    loadStats()
-    loadLogs(0)
-  }, [])
+  useEffect(() => { loadStats(); loadLogs(0) }, [])
+
+  function handleCardClick(card) {
+    if (activeCard === card.key) {
+      // second click → deselect, reset to empty
+      setActiveCard(null)
+      const next = EMPTY_FILTERS
+      setFilters(next)
+      loadLogs(0, next)
+    } else {
+      setActiveCard(card.key)
+      const extra = card.filter()
+      const next = { ...EMPTY_FILTERS, ...extra }
+      setFilters(next)
+      loadLogs(0, next)
+    }
+  }
 
   function applyFilters() {
+    setActiveCard(null)
     loadStats()
     loadLogs(0, filters)
   }
 
   function clearFilters() {
-    const empty = { actor: '', eventType: '', outcome: '', since: '', until: '' }
-    setFilters(empty)
-    loadLogs(0, empty)
+    setActiveCard(null)
+    setFilters(EMPTY_FILTERS)
+    loadLogs(0, EMPTY_FILTERS)
     loadStats()
   }
 
@@ -109,15 +137,19 @@ export default function AuditLogViewer() {
 
   return (
     <div className="audit-viewer">
-      {/* Stats row */}
+      {/* Stats cards */}
       {stats && (
         <div className="audit-stats-row">
-          <StatCard label={t('audit.total24h')}       value={stats.total_24h} />
-          <StatCard label={t('audit.anomalies24h')}   value={stats.anomalies_24h}    warn />
-          <StatCard label={t('audit.failLogins24h')}  value={stats.failed_logins_24h} warn />
-          <StatCard label={t('audit.total7d')}        value={stats.total_7d} />
-          <StatCard label={t('audit.anomalies7d')}    value={stats.anomalies_7d}     warn />
-          <StatCard label={t('audit.failLogins7d')}   value={stats.failed_logins_7d}  warn />
+          {CARD_DEFS.map(card => (
+            <StatCard
+              key={card.key}
+              label={t(`audit.${card.key}`)}
+              value={stats[card.statKey]}
+              warn={card.warn}
+              active={activeCard === card.key}
+              onClick={() => handleCardClick(card)}
+            />
+          ))}
         </div>
       )}
 
@@ -148,15 +180,23 @@ export default function AuditLogViewer() {
         <input
           type="datetime-local"
           className="audit-filter-input"
-          value={filters.since}
-          onChange={e => setFilters(f => ({ ...f, since: e.target.value ? e.target.value.replace('T', ' ').substring(0, 19) : '' }))}
+          value={filters.since ? filters.since.replace(' ', 'T') : ''}
+          onChange={e => setFilters(f => ({ ...f, since: e.target.value ? e.target.value.slice(0, 19) : '' }))}
         />
         <input
           type="datetime-local"
           className="audit-filter-input"
-          value={filters.until}
-          onChange={e => setFilters(f => ({ ...f, until: e.target.value ? e.target.value.replace('T', ' ').substring(0, 19) : '' }))}
+          value={filters.until ? filters.until.replace(' ', 'T') : ''}
+          onChange={e => setFilters(f => ({ ...f, until: e.target.value ? e.target.value.slice(0, 19) : '' }))}
         />
+        <label className="audit-filter-check">
+          <input
+            type="checkbox"
+            checked={!!filters.anomalyOnly}
+            onChange={e => setFilters(f => ({ ...f, anomalyOnly: e.target.checked }))}
+          />
+          {t('audit.anomalyOnly')}
+        </label>
         <button className="audit-filter-btn primary" onClick={applyFilters}>{t('audit.apply')}</button>
         <button className="audit-filter-btn" onClick={clearFilters}>{t('audit.clear')}</button>
       </div>
@@ -171,6 +211,7 @@ export default function AuditLogViewer() {
               <th>{t('audit.colEvent')}</th>
               <th>{t('audit.colActor')}</th>
               <th>{t('audit.colIp')}</th>
+              <th>{t('audit.colBrowser')}</th>
               <th>{t('audit.colGeo')}</th>
               <th>{t('audit.colResource')}</th>
               <th>{t('audit.colOutcome')}</th>
@@ -179,7 +220,7 @@ export default function AuditLogViewer() {
           </thead>
           <tbody>
             {rows.length === 0 && !loading && (
-              <tr><td colSpan={8} className="audit-empty">{t('audit.empty')}</td></tr>
+              <tr><td colSpan={9} className="audit-empty">{t('audit.empty')}</td></tr>
             )}
             {rows.map(row => (
               <tr key={row.id} className={row.anomaly_flags ? 'audit-row-anomaly' : ''}>
@@ -193,13 +234,11 @@ export default function AuditLogViewer() {
                   <div>{row.actor || '—'}</div>
                   {row.actor_role && <div className="audit-sub">{row.actor_role}</div>}
                 </td>
+                <td className="audit-mono">{row.ip_address || '—'}</td>
                 <td>
-                  <div className="audit-mono">{row.ip_address || '—'}</div>
-                  {row.user_agent && (
-                    <div className="audit-sub" title={row.user_agent}>
-                      {parseBrowser(row.user_agent)}
-                    </div>
-                  )}
+                  {row.user_agent
+                    ? <span title={row.user_agent}>{parseBrowser(row.user_agent)}</span>
+                    : '—'}
                 </td>
                 <td>
                   {row.ip_country && (
@@ -240,10 +279,10 @@ export default function AuditLogViewer() {
 
 function eventClass(et) {
   if (!et) return ''
-  if (et === 'LOGIN') return 'ev-login'
-  if (et === 'LOGIN_FAILED') return 'ev-failed'
-  if (et === 'LOGOUT') return 'ev-logout'
-  if (et.endsWith('_DELETE')) return 'ev-delete'
+  if (et === 'LOGIN')          return 'ev-login'
+  if (et === 'LOGIN_FAILED')   return 'ev-failed'
+  if (et === 'LOGOUT')         return 'ev-logout'
+  if (et.endsWith('_DELETE'))  return 'ev-delete'
   if (et.endsWith('_CREATE') || et.endsWith('_ADD')) return 'ev-create'
   return 'ev-other'
 }

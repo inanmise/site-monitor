@@ -3,6 +3,7 @@ package com.certmonitor.service;
 import com.certmonitor.model.AppUser;
 import com.certmonitor.model.Team;
 import com.certmonitor.repository.AppUserRepository;
+import com.certmonitor.repository.CertificateInventoryRepository;
 import com.certmonitor.repository.TeamRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -24,6 +25,7 @@ public class UserService {
 
     private final AppUserRepository userRepo;
     private final TeamRepository teamRepo;
+    private final CertificateInventoryRepository inventoryRepo;
 
     private static final BCryptPasswordEncoder PASSWORD_ENCODER = new BCryptPasswordEncoder();
     private static final DateTimeFormatter ISO =
@@ -96,14 +98,16 @@ public class UserService {
     }
 
     @Transactional
-    public Team createTeam(String name, String description, Long leaderId) {
+    public Team createTeam(String name, String email, String description, Long leaderId) {
         if (name == null || name.isBlank()) throw new IllegalArgumentException("Team name cannot be blank");
-        if (teamRepo.existsByName(name.trim())) throw new IllegalArgumentException("Team already exists: " + name);
+        if (email == null || email.isBlank()) throw new IllegalArgumentException("Team email is required");
         if (leaderId == null) throw new IllegalArgumentException("Team leader is required");
+        if (teamRepo.existsByName(name.trim())) throw new IllegalArgumentException("Team already exists: " + name);
         if (!userRepo.existsById(leaderId)) throw new IllegalArgumentException("Leader user not found: " + leaderId);
         String now = now();
         Team team = new Team();
         team.setName(name.trim());
+        team.setEmail(email.trim());
         team.setDescription(description);
         team.setLeaderId(leaderId);
         team.setActive(true);
@@ -113,9 +117,12 @@ public class UserService {
     }
 
     @Transactional
-    public Team updateTeam(Long id, String name, String description, Boolean active, Long leaderId) {
+    public Team updateTeam(Long id, String name, String email, String description, Boolean active, Long leaderId) {
         Team team = teamRepo.findById(id).orElseThrow(() -> new NoSuchElementException("Team not found: " + id));
         if (name != null && !name.isBlank()) team.setName(name.trim());
+        if (email != null && !email.isBlank()) team.setEmail(email.trim());
+        else if (team.getEmail() == null || team.getEmail().isBlank())
+            throw new IllegalArgumentException("Team email is required");
         if (description != null) team.setDescription(description);
         if (active != null) team.setActive(active);
         if (leaderId != null) {
@@ -130,6 +137,8 @@ public class UserService {
 
     @Transactional
     public void deleteTeam(Long id) {
+        if (inventoryRepo.existsByTeamIdAndActiveTrue(id))
+            throw new IllegalStateException("Cannot delete team: it has active certificates assigned to it");
         teamRepo.deleteById(id);
     }
 
@@ -141,9 +150,11 @@ public class UserService {
 
     @Transactional
     public AppUser createUser(String username, String rawPassword, String displayName,
-                               String email, String systemRole, Long teamId) {
+                               String email, String employeeId, String systemRole, Long teamId) {
         if (username == null || username.isBlank()) throw new IllegalArgumentException("Username cannot be blank");
         if (rawPassword == null || rawPassword.length() < 4) throw new IllegalArgumentException("Password too short");
+        if (email == null || email.isBlank()) throw new IllegalArgumentException("Email is required");
+        if (teamId == null) throw new IllegalArgumentException("Team is required");
         if (userRepo.existsByUsername(username.trim())) throw new IllegalArgumentException("Username already exists: " + username);
 
         String now = now();
@@ -151,7 +162,8 @@ public class UserService {
         user.setUsername(username.trim());
         user.setPasswordHash(PASSWORD_ENCODER.encode(rawPassword));
         user.setDisplayName(displayName);
-        user.setEmail(email);
+        user.setEmail(email.trim());
+        user.setEmployeeId(employeeId);
         user.setSystemRole(systemRole != null ? systemRole : "USER");
         user.setTeamId(teamId);
         user.setActive(true);
@@ -161,11 +173,12 @@ public class UserService {
     }
 
     @Transactional
-    public AppUser updateUser(Long id, String displayName, String email,
+    public AppUser updateUser(Long id, String displayName, String email, String employeeId,
                                String systemRole, Long teamId, Boolean active) {
         AppUser user = userRepo.findById(id).orElseThrow(() -> new NoSuchElementException("User not found: " + id));
         if (displayName != null) user.setDisplayName(displayName);
-        if (email != null) user.setEmail(email);
+        if (email != null && !email.isBlank()) user.setEmail(email.trim());
+        if (employeeId != null) user.setEmployeeId(employeeId);
         if (systemRole != null) user.setSystemRole(systemRole);
         if (teamId != null) user.setTeamId(teamId);
         if (active != null) user.setActive(active);

@@ -3,7 +3,7 @@ import { api } from '../../api/client'
 import { useDialog } from '../ui/Dialog.jsx'
 import { useT } from '../../i18n/index.jsx'
 
-const emptyTeam = { name: '', description: '', active: true, leader_id: '' }
+const emptyTeam = { name: '', email: '', description: '', active: true, leader_id: '' }
 
 export default function TeamManager({ onTeamsChange }) {
   const t = useT()
@@ -31,7 +31,7 @@ export default function TeamManager({ onTeamsChange }) {
 
   function openAdd() { setForm(emptyTeam); setModal('add') }
   function openEdit(team) {
-    setForm({ ...team, leader_id: String(team.leaderId ?? team.leader_id ?? '') })
+    setForm({ ...team, email: team.email || '', leader_id: String(team.leaderId ?? team.leader_id ?? '') })
     setModal(team)
   }
 
@@ -40,6 +40,7 @@ export default function TeamManager({ onTeamsChange }) {
     setSaving(true)
     const payload = {
       name: form.name.trim(),
+      email: form.email.trim(),
       description: form.description,
       active: form.active,
       leader_id: Number(form.leader_id),
@@ -67,7 +68,7 @@ export default function TeamManager({ onTeamsChange }) {
     onTeamsChange?.()
   }
 
-  const canSave = form.name.trim() && form.leader_id
+  const canSave = form.name.trim() && form.email.trim() && form.leader_id
 
   return (
     <div className="admin-section">
@@ -81,6 +82,7 @@ export default function TeamManager({ onTeamsChange }) {
           <thead>
             <tr>
               <th>{t('team.colName')}</th>
+              <th>{t('team.colEmail')}</th>
               <th>{t('team.colLeader')}</th>
               <th>{t('team.colDesc')}</th>
               <th>{t('team.colActive')}</th>
@@ -91,6 +93,7 @@ export default function TeamManager({ onTeamsChange }) {
             {teams.map((team) => (
               <tr key={team.id}>
                 <td><strong>{team.name}</strong></td>
+                <td>{team.email || '—'}</td>
                 <td>{userMap[team.leaderId] ?? <span style={{ color: 'var(--danger)' }}>{t('team.noLeader')}</span>}</td>
                 <td>{team.description || '—'}</td>
                 <td><span className={team.active ? 'badge badge-ok' : 'badge badge-err'}>{team.active ? t('team.active') : t('team.inactive')}</span></td>
@@ -109,8 +112,13 @@ export default function TeamManager({ onTeamsChange }) {
           <div className="modal-box" onClick={(e) => e.stopPropagation()}>
             <h3>{modal === 'add' ? t('team.addTitle') : t('team.editTitle')}</h3>
             <div className="form-grid">
-              <label>{t('team.formName')}
+              <label>
+                {t('team.formName')} <span style={{ color: 'var(--danger)' }}>*</span>
                 <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder={t('team.formNamePh')} />
+              </label>
+              <label>
+                {t('team.formEmail')} <span style={{ color: 'var(--danger)' }}>*</span>
+                <input type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} placeholder="team@example.com" />
               </label>
               <label>
                 {t('team.formLeader')} <span style={{ color: 'var(--danger)' }}>*</span>
