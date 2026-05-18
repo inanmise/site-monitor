@@ -769,6 +769,25 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
   font-size: .875rem;
 }
 
+/* Rate-limit lockout banner */
+.lp-lockout {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: #fff7ed;
+  color: #c2410c;
+  border: 1px solid #fed7aa;
+  border-radius: 8px;
+  padding: 10px 14px;
+  font-size: .875rem;
+  font-weight: 500;
+}
+.lp-spinner--wait {
+  border-color: rgba(255,255,255,0.35);
+  border-top-color: #fff;
+  animation: lp-spin 1s linear infinite;
+}
+
 /* Submit button */
 .lp-btn {
   display: flex;
@@ -1737,6 +1756,7 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 [data-theme="dark"] .lp-remember span { color: #94a3b8; }
 [data-theme="dark"] .lp-remember em { color: #475569; }
 [data-theme="dark"] .lp-error { background: #1c0a0a; border-color: #7f1d1d; color: #fca5a5; }
+[data-theme="dark"] .lp-lockout { background: #1c1008; border-color: #92400e; color: #fdba74; }
 [data-theme="dark"] .lp-eye { color: #475569; }
 [data-theme="dark"] .lp-eye:hover { color: #94a3b8; }
 [data-theme="dark"] .lp-help { color: #475569; }

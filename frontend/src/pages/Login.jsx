@@ -65,6 +65,13 @@ export default function Login({ onLogin }) {
   const [error, setError]     = useState('')
   const [loading, setLoading] = useState(false)
   const [showPass, setShowPass] = useState(false)
+  const [lockout, setLockout] = useState(0)   // seconds remaining in rate-limit block
+
+  useEffect(() => {
+    if (lockout <= 0) return
+    const id = setTimeout(() => setLockout(s => Math.max(0, s - 1)), 1000)
+    return () => clearTimeout(id)
+  }, [lockout])
 
   const FEATURES = [
     { Icon: ShieldCheck, key: 'login.feat1' },
@@ -82,6 +89,7 @@ export default function Login({ onLogin }) {
 
   async function handleSubmit(e) {
     e.preventDefault()
+    if (lockout > 0) return
     setError('')
     setLoading(true)
     try {
@@ -93,6 +101,9 @@ export default function Login({ onLogin }) {
           localStorage.removeItem(STORAGE_KEY)
         }
         onLogin(data)
+      } else if (data.wait_seconds) {
+        setLockout(data.wait_seconds)
+        setError('')
       } else {
         setError(data.error || t('login.failed'))
       }
@@ -206,17 +217,26 @@ export default function Login({ onLogin }) {
               <span>{t('login.rememberMe')}</span>
             </label>
 
-            {error && (
+            {lockout > 0 && (
+              <div className="lp-lockout" role="alert">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="16" height="16"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                {t('login.rateLimited', lockout)}
+              </div>
+            )}
+
+            {error && lockout === 0 && (
               <div className="lp-error" role="alert">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="16" height="16"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
                 {error}
               </div>
             )}
 
-            <button type="submit" className="lp-btn" disabled={loading}>
+            <button type="submit" className="lp-btn" disabled={loading || lockout > 0}>
               {loading
                 ? <><span className="lp-spinner" /> {t('login.loading')}</>
-                : <><Lock size={16} /> {t('login.submit')}</>
+                : lockout > 0
+                  ? <><span className="lp-spinner lp-spinner--wait" /> {t('login.waitBtn', lockout)}</>
+                  : <><Lock size={16} /> {t('login.submit')}</>
               }
             </button>
           </form>

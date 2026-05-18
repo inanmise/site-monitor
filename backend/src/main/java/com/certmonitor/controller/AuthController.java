@@ -34,14 +34,20 @@ public class AuthController {
     @Value("${cert.monitor.login.max-attempts:10}")
     private int maxLoginAttempts;
 
+    /** How long (seconds) an IP stays blocked after hitting max-attempts. */
+    @Value("${cert.monitor.login.block-seconds:30}")
+    private int blockSeconds;
+
     private final AuditService auditService;
     private final RememberMeService rememberMeService;
     private final UserService userService;
 
-    // Brute-force protection: IP → failed-attempt count (reset every minute)
+    // Per-IP attempt counter within a sliding 60-second window
     private final ConcurrentHashMap<String, AtomicInteger> loginAttempts = new ConcurrentHashMap<>();
-    private final java.util.concurrent.atomic.AtomicLong lastAttemptReset =
-            new java.util.concurrent.atomic.AtomicLong(System.currentTimeMillis());
+    // Per-IP: timestamp when the current counting window started
+    private final ConcurrentHashMap<String, Long> windowStart = new ConcurrentHashMap<>();
+    // Per-IP: absolute timestamp (ms) when the block expires
+    private final ConcurrentHashMap<String, Long> blockedUntil = new ConcurrentHashMap<>();
 
     @PostMapping("/login")
     public ResponseEntity<Map<String, Object>> login(
@@ -52,12 +58,15 @@ public class AuthController {
         String clientIp = resolveClientIp(request);
         String username = body.getOrDefault("username", "").strip();
 
-        if (isRateLimited(clientIp)) {
-            log.warn("Login rate limit exceeded: IP={}", clientIp);
+        long waitSecs = blockedSecondsRemaining(clientIp);
+        if (waitSecs > 0) {
+            log.warn("Login rate limit exceeded: IP={} wait={}s", clientIp, waitSecs);
             auditService.recordRateLimited(
                 username.isBlank() ? null : username, clientIp, request.getHeader("User-Agent"));
-            return ResponseEntity.status(429)
-                    .body(Map.of("success", false, "error", "Too many login attempts. Please wait."));
+            return ResponseEntity.status(429).body(Map.of(
+                "success", false,
+                "error", "Too many login attempts. Please wait.",
+                "wait_seconds", waitSecs));
         }
         String password  = body.getOrDefault("password", "").strip();
         boolean rememberMe = Boolean.parseBoolean(body.getOrDefault("remember_me", "false"));
@@ -67,6 +76,8 @@ public class AuthController {
         if (userOpt.isPresent()) {
             AppUser user = userOpt.get();
             loginAttempts.remove(clientIp);
+            windowStart.remove(clientIp);
+            blockedUntil.remove(clientIp);
 
             // Session fixation prevention
             HttpSession oldSession = request.getSession(false);
@@ -192,21 +203,31 @@ public class AuthController {
         return AuditService.normalizeIp(ip);
     }
 
-    private boolean isRateLimited(String ip) {
-        resetIfNeeded();
-        return loginAttempts.computeIfAbsent(ip, k -> new AtomicInteger(0)).get() >= maxLoginAttempts;
+    /** Returns seconds remaining in the block, or 0 if not blocked. */
+    private long blockedSecondsRemaining(String ip) {
+        Long until = blockedUntil.get(ip);
+        if (until == null) return 0;
+        long remaining = (until - System.currentTimeMillis() + 999) / 1000; // ceil
+        if (remaining <= 0) {
+            blockedUntil.remove(ip);
+            loginAttempts.remove(ip);
+            windowStart.remove(ip);
+            return 0;
+        }
+        return remaining;
     }
 
     private void recordFailedAttempt(String ip) {
-        resetIfNeeded();
-        loginAttempts.computeIfAbsent(ip, k -> new AtomicInteger(0)).incrementAndGet();
-    }
-
-    private void resetIfNeeded() {
         long now = System.currentTimeMillis();
-        long prev = lastAttemptReset.get();
-        if (now - prev > 60_000L && lastAttemptReset.compareAndSet(prev, now)) {
-            loginAttempts.clear();
+        // Reset counter if the 60-second window has expired for this IP
+        long ws = windowStart.computeIfAbsent(ip, k -> now);
+        if (now - ws > 60_000L) {
+            loginAttempts.put(ip, new AtomicInteger(0));
+            windowStart.put(ip, now);
+        }
+        int count = loginAttempts.computeIfAbsent(ip, k -> new AtomicInteger(0)).incrementAndGet();
+        if (count >= maxLoginAttempts) {
+            blockedUntil.put(ip, now + (long) blockSeconds * 1000);
         }
     }
 }
