@@ -10,6 +10,7 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
 import java.util.LinkedHashMap;
@@ -28,11 +29,11 @@ public class ExtendedHealthService {
 
     // ── Heartbeat ─────────────────────────────────────────────────────────────
 
-    @Scheduled(fixedDelay = 600_000, initialDelay = 5_000)
+    @Scheduled(fixedDelay = 60_000, initialDelay = 5_000)
     public void recordHeartbeat() {
         try {
             SystemHeartbeat hb = new SystemHeartbeat();
-            hb.setRecordedAt(LocalDateTime.now());
+            hb.setRecordedAt(LocalDateTime.now(ZoneOffset.UTC));
             heartbeatRepo.save(hb);
             log.debug("Heartbeat recorded at {}", hb.getRecordedAt());
         } catch (Exception e) {
@@ -42,19 +43,25 @@ public class ExtendedHealthService {
 
     public Map<String, Object> getHeartbeatStatus() {
         try {
-            Optional<SystemHeartbeat> last = heartbeatRepo.findTopByOrderByRecordedAtDesc();
-            if (last.isEmpty()) {
+            List<SystemHeartbeat> recent5 = heartbeatRepo.findTop5ByOrderByRecordedAtDesc();
+            if (recent5.isEmpty()) {
                 Map<String, Object> m = new LinkedHashMap<>();
                 m.put("last_heartbeat", null);
                 m.put("minutes_since", -1);
                 m.put("alarm", true);
+                m.put("recent", List.of());
                 return m;
             }
-            long minutes = ChronoUnit.MINUTES.between(last.get().getRecordedAt(), LocalDateTime.now());
+            LocalDateTime lastTs = recent5.get(0).getRecordedAt();
+            long minutes = ChronoUnit.MINUTES.between(lastTs, LocalDateTime.now(ZoneOffset.UTC));
+            List<String> recentList = recent5.stream()
+                    .map(hb -> hb.getRecordedAt().toString())
+                    .collect(java.util.stream.Collectors.toList());
             Map<String, Object> m = new LinkedHashMap<>();
-            m.put("last_heartbeat", last.get().getRecordedAt().toString());
+            m.put("last_heartbeat", lastTs.toString());
             m.put("minutes_since", minutes);
-            m.put("alarm", minutes > 15);
+            m.put("alarm", minutes > 3);
+            m.put("recent", recentList);
             return m;
         } catch (Exception e) {
             log.warn("getHeartbeatStatus failed: {}", e.getMessage());
@@ -62,6 +69,7 @@ public class ExtendedHealthService {
             m.put("last_heartbeat", null);
             m.put("minutes_since", -1);
             m.put("alarm", true);
+            m.put("recent", List.of());
             m.put("error", e.getMessage());
             return m;
         }
@@ -70,12 +78,13 @@ public class ExtendedHealthService {
     // ── SMTP stats ────────────────────────────────────────────────────────────
 
     public List<Map<String, Object>> getSmtpFailures() {
-        String cutoff = LocalDateTime.now().minusDays(30)
+        String cutoff = LocalDateTime.now(ZoneOffset.UTC).minusDays(30)
                 .format(DateTimeFormatter.ISO_LOCAL_DATE_TIME);
-        return notificationLogRepo.findNonSentSince(cutoff).stream()
+        return notificationLogRepo.findAllSince(cutoff).stream()
                 .map(n -> {
                     String status = n.getEmailStatus() != null ? n.getEmailStatus() : "";
-                    String kind   = status.startsWith("FAILED") ? "FAILED"
+                    String kind   = status.equals("SENT") ? "SENT"
+                                  : status.startsWith("FAILED") ? "FAILED"
                                   : status.startsWith("SKIPPED") ? "SKIPPED" : status;
                     String error  = status.replaceFirst("^(FAILED|SKIPPED)[_:]?\\s*", "");
                     Map<String, Object> m = new LinkedHashMap<>();
@@ -95,7 +104,7 @@ public class ExtendedHealthService {
 
     public Map<String, Object> getSmtpStats() {
         try {
-            String cutoff = LocalDateTime.now().minusDays(30)
+            String cutoff = LocalDateTime.now(ZoneOffset.UTC).minusDays(30)
                     .format(DateTimeFormatter.ISO_LOCAL_DATE_TIME);
             // attempted = SENT + FAILED (excludes intentional SKIPPED_DISABLED)
             long attempted = notificationLogRepo.countAttemptedSince(cutoff);

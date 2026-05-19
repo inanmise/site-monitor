@@ -65,6 +65,13 @@ public class SystemController {
         return ResponseEntity.ok(Map.of("success", true, "data", data, "timestamp", now()));
     }
 
+    @PostMapping("/heartbeat")
+    public ResponseEntity<Map<String, Object>> triggerHeartbeat(HttpSession session) {
+        requireAdmin(session);
+        extendedHealthService.recordHeartbeat();
+        return ResponseEntity.ok(Map.of("success", true, "data", extendedHealthService.getHeartbeatStatus(), "timestamp", now()));
+    }
+
     @DeleteMapping("/scheduler-lock")
     public ResponseEntity<Map<String, Object>> forceReleaseLock(HttpSession session) {
         requireAdmin(session);

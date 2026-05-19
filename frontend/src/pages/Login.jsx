@@ -204,7 +204,6 @@ export default function Login({ onLogin }) {
                 <div className="lp-blocked-unit">{t('login.blockedUnit')}</div>
               </div>
               <p className="lp-blocked-hint">{t('login.blockedHint')}</p>
-              <p className="lp-blocked-help">{t('login.help')}</p>
             </div>
           ) : (
             /* Normal giriş formu */

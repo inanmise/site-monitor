@@ -90,7 +90,7 @@ export default function TierDistributionChart({ certs, visible, onTierClick, act
 
         {/* ── SVG Donut ── */}
         <div className="tier-pie-wrap">
-          <svg width="180" height="180" viewBox="0 0 180 180" role="img">
+          <svg width="90" height="90" viewBox="0 0 180 180" role="img">
             {segments.map(seg => {
               const isActive  = activeTier === seg.filterKey
               const isHovered = hovered   === seg.filterKey

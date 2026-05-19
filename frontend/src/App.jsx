@@ -6,8 +6,7 @@ import { useT } from './i18n/index.jsx'
 import Login from './pages/Login'
 import Nav from './components/Nav'
 import StatsPanel from './components/StatsPanel'
-import TeamStatsSection from './components/TeamStatsSection'
-import TierDistributionChart from './components/TierDistributionChart'
+import StatsView from './components/StatsView'
 import CertificateCard from './components/CertificateCard'
 import CertificatesTable from './components/CertificatesTable'
 import CertificateModal from './components/CertificateModal'
@@ -21,7 +20,6 @@ import ActivityLog from './components/ActivityLog'
 const INACTIVITY_MS   = Number(import.meta.env.VITE_INACTIVITY_MS   ?? 300_000)
 const WARN_BEFORE_MS  = Number(import.meta.env.VITE_WARN_BEFORE_MS  ?? 60_000)
 
-const TIER_DESC_KEYS = { 1: 'tier.desc1', 2: 'tier.desc2', 3: 'tier.desc3', 4: 'tier.desc4', 0: 'tier.descNone' }
 
 export default function App() {
   const { showConfirm } = useDialog()
@@ -47,8 +45,6 @@ export default function App() {
   const [inactivityWarning, setInactivityWarning] = useState(false)
   const [countdown, setCountdown] = useState(60)
   const [statsFilter, setStatsFilter] = useState(null)
-  const [teamFilter, setTeamFilter] = useState(null)
-  const [tierFilter, setTierFilter] = useState(null)
   const [statusFilter, setStatusFilter] = useState('all')
   const [expiryFilter, setExpiryFilter] = useState('all')
   const [dashPage, setDashPage] = useState(1)
@@ -148,7 +144,6 @@ export default function App() {
 
   useEffect(() => {
     if (tab === 'dashboard') setStatsVisible(true)
-    else setTeamFilter(null)
   }, [tab])
 
   async function handleLogout() {
@@ -280,8 +275,6 @@ export default function App() {
   const expiryFn = EXPIRY_FILTER_FN[expiryFilter] ?? (() => true)
 
   const filtered = certs.filter((c) => {
-    if (teamFilter && !teamFilter.domains.has(c.domain)) return false
-    if (tierFilter !== null && (c.tier ?? null) !== (tierFilter === 0 ? null : tierFilter)) return false
     if (statFn   && !statFn(c))   return false
     if (!statusFn(c))              return false
     if (!expiryFn(c))              return false
@@ -369,19 +362,6 @@ export default function App() {
               </div>
               <StatsPanel stats={stats} visible={statsVisible}
                 onStatClick={handleStatClick} activeFilter={statsFilter} />
-              <TeamStatsSection data={teamStats} visible={statsVisible}
-                onStatClick={(domains, label) => {
-                  setTeamFilter({ domains, label })
-                  setStatsFilter(null)
-                  setDashPage(1)
-                  setTab('dashboard')
-                }} />
-              <TierDistributionChart
-                certs={certs}
-                visible={statsVisible}
-                onTierClick={(key) => { setTierFilter(key); setDashPage(1) }}
-                activeTier={tierFilter}
-              />
             </div>
           )}
 
@@ -420,32 +400,6 @@ export default function App() {
                         {t('app.filterCerts', filtered.length)}
                       </span>
                       <button className="stats-filter-clear" onClick={() => setStatsFilter(null)}>
-                        {t('app.clearFilter')}
-                      </button>
-                    </div>
-                  )}
-                  {teamFilter && (
-                    <div className="stats-filter-bar">
-                      <span>
-                        {t('app.filterPrefix')} <strong>{teamFilter.label}</strong>
-                        {t('app.filterCerts', filtered.length)}
-                      </span>
-                      <button className="stats-filter-clear" onClick={() => setTeamFilter(null)}>
-                        {t('app.clearFilter')}
-                      </button>
-                    </div>
-                  )}
-                  {tierFilter !== null && (
-                    <div className="stats-filter-bar">
-                      <span>
-                        {t('tier.filterLabel')}: <strong>
-                          {tierFilter === 0
-                            ? t('tier.descNone')
-                            : `T${tierFilter} — ${t(TIER_DESC_KEYS[tierFilter])}`}
-                        </strong>
-                        {t('app.filterCerts', filtered.length)}
-                      </span>
-                      <button className="stats-filter-clear" onClick={() => { setTierFilter(null); setDashPage(1) }}>
                         {t('app.clearFilter')}
                       </button>
                     </div>
@@ -511,6 +465,13 @@ export default function App() {
                     </div>}
                   </>
                 )}
+              </div>
+            )}
+
+            {tab === 'stats' && (
+              <div className="tab-content active">
+                <h2>{t('app.statsTitle')}</h2>
+                <StatsView certs={certs} teamStats={teamStats} onRowClick={setModalDomain} />
               </div>
             )}
 

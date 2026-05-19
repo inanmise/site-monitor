@@ -4,7 +4,7 @@ import { useTheme } from '../i18n/theme.jsx'
 import {
   ShieldCheck, LayoutDashboard, AlertTriangle, FileText,
   RefreshCw, ClipboardList, Settings, User, Globe, LogOut,
-  Sun, Moon, ChevronLeft, ChevronRight, Server, Activity, ShieldAlert,
+  Sun, Moon, ChevronLeft, ChevronRight, Server, Activity, ShieldAlert, BarChart3,
 } from 'lucide-react'
 
 export default function Nav({ activeTab, onTabChange, username, teamName, systemRole, onLogout }) {
@@ -19,6 +19,7 @@ export default function Nav({ activeTab, onTabChange, username, teamName, system
       labelKey: null,
       tabs: [
         { id: 'dashboard', Icon: LayoutDashboard, labelKey: 'nav.dashboard', show: true },
+        { id: 'stats',     Icon: BarChart3,       labelKey: 'nav.stats',     show: true },
         { id: 'warnings',  Icon: AlertTriangle,   labelKey: 'nav.warnings',  show: true },
         { id: 'all',       Icon: FileText,        labelKey: 'nav.all',       show: true },
         { id: 'renewal',   Icon: RefreshCw,       labelKey: 'nav.renewal',   show: true },

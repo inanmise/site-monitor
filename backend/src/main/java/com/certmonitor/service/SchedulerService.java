@@ -280,7 +280,7 @@ public class SchedulerService {
             log.info("Check complete — runId={}, Total={}, Warning={}, Error={} [instance={}]",
                     runId, results.size(), warnings, errors, INSTANCE_ID);
 
-            lastRun.set(LocalDateTime.now());
+            lastRun.set(LocalDateTime.now(ZoneOffset.UTC));
             lastRunDurationMs.set(System.currentTimeMillis() - startMs);
             lastRunTotal.set(results.size());
             lastRunErrors.set((int) errors);
@@ -360,6 +360,10 @@ public class SchedulerService {
         schedulerMap.put("running",        running.get());
         schedulerMap.put("current_run_id", currentRunId.get());
         schedulerMap.put("last_run",       lastRun.get() != null ? lastRun.get().toString() : null);
+        schedulerMap.put("next_run",       LocalDateTime.now(ZoneOffset.UTC)
+                                               .truncatedTo(ChronoUnit.HOURS)
+                                               .plusHours(1)
+                                               .toString());
         schedulerMap.put("instance_id",    INSTANCE_ID);
         schedulerMap.put("active_domains", inventoryRepo.countByActiveTrue());
         h.put("scheduler", schedulerMap);
@@ -416,7 +420,7 @@ public class SchedulerService {
         // Scan statistics
         LocalDateTime lr = lastRun.get();
         boolean scanAlarm = !running.get() && lr != null
-                && ChronoUnit.HOURS.between(lr, LocalDateTime.now()) >= 2;
+                && ChronoUnit.HOURS.between(lr, LocalDateTime.now(ZoneOffset.UTC)) >= 2;
         Map<String, Object> scanMap = new LinkedHashMap<>();
         scanMap.put("last_run",    lr != null ? lr.toString() : null);
         scanMap.put("duration_ms", lastRunDurationMs.get());

@@ -19,6 +19,12 @@ public interface NotificationLogRepository extends JpaRepository<NotificationLog
     @Query("SELECT COUNT(n) FROM NotificationLog n WHERE n.sentAt >= :cutoff")
     long countAllSince(@Param("cutoff") String cutoff);
 
+    @Query("SELECT n FROM NotificationLog n WHERE n.emailStatus LIKE 'FAILED%' AND n.sentAt >= :cutoff ORDER BY n.sentAt DESC")
+    List<NotificationLog> findFailedSince(@Param("cutoff") String cutoff);
+
     @Query("SELECT n FROM NotificationLog n WHERE n.emailStatus <> 'SENT' AND n.sentAt >= :cutoff ORDER BY n.sentAt DESC")
     List<NotificationLog> findNonSentSince(@Param("cutoff") String cutoff);
+
+    @Query("SELECT n FROM NotificationLog n WHERE n.sentAt >= :cutoff ORDER BY n.sentAt DESC")
+    List<NotificationLog> findAllSince(@Param("cutoff") String cutoff);
 }

@@ -136,6 +136,7 @@ export const api = {
     getHttpMetrics: () => request('/admin/system/http-metrics'),
     getDbStats: () => request('/admin/system/db-stats'),
     getSmtpLogs: () => request('/admin/system/smtp-logs'),
+    triggerHeartbeat: () => request('/admin/system/heartbeat', { method: 'POST' }),
   },
 }
 

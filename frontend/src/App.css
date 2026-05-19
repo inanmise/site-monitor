@@ -316,6 +316,13 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 
 /* ── Stats section ─────────────────────────────────── */
 .stats-section { margin-bottom: 4px; }
+.stats-bottom-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+.stats-bottom-row > .ts-root { flex: 1; min-width: 0; margin-bottom: 0; }
+.stats-bottom-row > .tier-chart { flex: 0 0 auto; margin-top: 0; }
 .stats-collapse-bar {
   display: flex;
   align-items: center;
@@ -2121,6 +2128,164 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 }
 [data-theme="dark"] .health-card-alarm-msg { background: #450a0a; color: #fca5a5; }
 
+/* Heartbeat heart icon + ECG strip */
+.hb-title-row { display: flex; align-items: center; gap: 7px; }
+
+.hb-heart {
+  flex-shrink: 0;
+  transform-origin: center;
+  animation: hb-lub-dub 1.5s ease-in-out infinite;
+}
+.hb-heart-ok    { fill: #22c55e; filter: drop-shadow(0 0 3px rgba(34,197,94,.55)); }
+.hb-heart-alarm { fill: #ef4444; filter: drop-shadow(0 0 5px rgba(239,68,68,.75)); animation-duration: .75s; }
+
+@keyframes hb-lub-dub {
+  0%   { transform: scale(1); }
+  8%   { transform: scale(1.45); }
+  18%  { transform: scale(1); }
+  28%  { transform: scale(1.25); }
+  38%  { transform: scale(1); }
+  100% { transform: scale(1); }
+}
+
+.hb-ecg-wrap {
+  width: 100%; overflow: hidden;
+  height: 44px; margin: 10px 0 4px;
+  border-radius: 6px;
+  background: rgba(0,0,0,.035);
+}
+[data-theme="dark"] .hb-ecg-wrap { background: rgba(255,255,255,.04); }
+
+.hb-ecg-svg {
+  width: 200%; height: 44px;
+  animation: hb-ecg-scroll 2s linear infinite;
+}
+.hb-ecg-ok    polyline { stroke: #22c55e; }
+.hb-ecg-alarm polyline { stroke: #ef4444; }
+
+@keyframes hb-ecg-scroll {
+  from { transform: translateX(0); }
+  to   { transform: translateX(-50%); }
+}
+
+/* Heartbeat recent signals */
+.hb-recent { margin-top: 12px; border-top: 1px solid var(--border); padding-top: 10px; }
+.hb-recent-title { font-size: .72em; font-weight: 600; text-transform: uppercase;
+  letter-spacing: .05em; color: var(--text-muted); margin-bottom: 6px; }
+.hb-recent-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.hb-recent-item { display: flex; align-items: center; gap: 7px; font-size: .8em; }
+.hb-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.hb-dot-ok   { background: #10b981; box-shadow: 0 0 0 2px rgba(16,185,129,.25); }
+.hb-dot-prev { background: #94a3b8; }
+.hb-recent-ts { color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+
+/* ── Scheduler clock icon ─────────────────────────────────────────────────── */
+.sched-icon { flex-shrink: 0; transform-origin: center; animation: sched-rotate 10s linear infinite; }
+.sched-icon-idle    { stroke: #3b82f6; filter: drop-shadow(0 0 3px rgba(59,130,246,.45)); }
+.sched-icon-running { stroke: #8b5cf6; filter: drop-shadow(0 0 4px rgba(139,92,246,.65)); animation-duration: 2s; }
+
+@keyframes sched-rotate {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
+/* ── Lock icon ────────────────────────────────────────────────────────────── */
+.lock-icon { flex-shrink: 0; transform-origin: center; }
+.lock-icon-free { stroke: #22c55e; filter: drop-shadow(0 0 3px rgba(34,197,94,.5));
+  animation: lock-float 3s ease-in-out infinite; }
+.lock-icon-held { stroke: #ef4444; filter: drop-shadow(0 0 4px rgba(239,68,68,.7));
+  animation: lock-jiggle 2.5s ease-in-out infinite; }
+
+@keyframes lock-float {
+  0%, 100% { transform: translateY(0); }
+  50%       { transform: translateY(-3px); }
+}
+@keyframes lock-jiggle {
+  0%, 100% { transform: rotate(0deg); }
+  8%        { transform: rotate(-8deg); }
+  16%       { transform: rotate(8deg); }
+  24%       { transform: rotate(-5deg); }
+  32%       { transform: rotate(5deg); }
+  40%       { transform: rotate(0deg); }
+}
+
+/* ── Pool / Database icon ─────────────────────────────────────────────────── */
+.pool-icon { flex-shrink: 0; transform-origin: center; animation: pool-breathe 2.5s ease-in-out infinite; }
+.pool-icon-ok    { stroke: #22c55e; filter: drop-shadow(0 0 3px rgba(34,197,94,.45)); }
+.pool-icon-warn  { stroke: #f59e0b; filter: drop-shadow(0 0 3px rgba(245,158,11,.5)); }
+.pool-icon-alarm { stroke: #ef4444; filter: drop-shadow(0 0 4px rgba(239,68,68,.7)); animation-duration: 1s; }
+
+@keyframes pool-breathe {
+  0%, 100% { transform: scaleY(1); }
+  50%       { transform: scaleY(1.1); }
+}
+
+/* ── Memory / CPU chip icon ───────────────────────────────────────────────── */
+.mem-icon { flex-shrink: 0; transform-origin: center; animation: mem-pulse 2s ease-in-out infinite; }
+.mem-icon-ok    { stroke: #22c55e; filter: drop-shadow(0 0 3px rgba(34,197,94,.45)); }
+.mem-icon-warn  { stroke: #f59e0b; filter: drop-shadow(0 0 3px rgba(245,158,11,.5)); }
+.mem-icon-alarm { stroke: #ef4444; filter: drop-shadow(0 0 4px rgba(239,68,68,.7)); animation-duration: .8s; }
+
+@keyframes mem-pulse {
+  0%, 100% { transform: scale(1);    opacity: 1; }
+  50%       { transform: scale(1.1); opacity: .8; }
+}
+
+/* ── Scan / Radar icon ────────────────────────────────────────────────────── */
+.scan-icon { flex-shrink: 0; transform-origin: center; animation: scan-sweep 3s linear infinite; }
+.scan-icon-ok    { stroke: #22c55e; filter: drop-shadow(0 0 3px rgba(34,197,94,.45)); }
+.scan-icon-alarm { stroke: #ef4444; filter: drop-shadow(0 0 5px rgba(239,68,68,.75)); animation-duration: 1.2s; }
+
+@keyframes scan-sweep {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
+/* SMTP envelope icon + stream strip */
+.smtp-envelope {
+  flex-shrink: 0;
+  transform-origin: center;
+  animation: smtp-send-anim 2.2s ease-in-out infinite;
+}
+.smtp-envelope-ok    { stroke: #22c55e; filter: drop-shadow(0 0 3px rgba(34,197,94,.5)); }
+.smtp-envelope-alarm { stroke: #ef4444; filter: drop-shadow(0 0 5px rgba(239,68,68,.75)); animation-duration: 1s; }
+
+@keyframes smtp-send-anim {
+  0%   { transform: translateX(0) translateY(0) rotate(0deg); }
+  12%  { transform: translateX(4px) translateY(-4px) rotate(-12deg); }
+  24%  { transform: translateX(0) translateY(0) rotate(0deg); }
+  100% { transform: translateX(0) translateY(0) rotate(0deg); }
+}
+
+.smtp-stream-wrap {
+  position: relative; width: 100%; height: 36px;
+  margin: 10px 0 4px; border-radius: 6px;
+  background: rgba(0,0,0,.035); overflow: hidden;
+}
+[data-theme="dark"] .smtp-stream-wrap { background: rgba(255,255,255,.04); }
+
+.smtp-stream-line {
+  position: absolute; top: 50%; left: 12px; right: 12px;
+  height: 1px; transform: translateY(-50%);
+}
+.smtp-stream-ok.smtp-stream-line    { background: rgba(34,197,94,.3); }
+.smtp-stream-alarm.smtp-stream-line { background: rgba(239,68,68,.3); }
+
+.smtp-stream-dot {
+  position: absolute; width: 8px; height: 8px;
+  border-radius: 50%; top: 50%; transform: translateY(-50%);
+  animation: smtp-dot-fly 2.2s linear infinite;
+}
+.smtp-stream-ok.smtp-stream-dot    { background: #22c55e; box-shadow: 0 0 7px rgba(34,197,94,.75); }
+.smtp-stream-alarm.smtp-stream-dot { background: #ef4444; box-shadow: 0 0 7px rgba(239,68,68,.75); animation-duration: 1s; }
+
+@keyframes smtp-dot-fly {
+  0%   { left: -10px; opacity: 0; }
+  6%   { opacity: 1; }
+  94%  { opacity: 1; }
+  100% { left: calc(100% + 10px); opacity: 0; }
+}
+
 /* DB section */
 .health-db-section-header {
   display: flex; align-items: center; justify-content: space-between;
@@ -2136,6 +2301,24 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .health-db-refresh-btn:disabled { opacity: .55; cursor: not-allowed; }
 .spin { display: inline-block; animation: spin .7s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
+
+/* Pool card inline refresh button */
+.sys-card-refresh-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 26px; height: 26px; border-radius: 6px;
+  border: 1px solid var(--border); background: transparent;
+  color: var(--text-muted); font-size: 1em; cursor: pointer;
+  transition: color .14s, border-color .14s, background .14s;
+  flex-shrink: 0;
+}
+.sys-card-refresh-btn:hover:not(:disabled) {
+  color: var(--primary); border-color: var(--primary); background: rgba(79,156,249,.07);
+}
+.sys-card-refresh-btn:disabled { opacity: .45; cursor: not-allowed; }
+.pool-updated-at {
+  font-size: .72em; color: var(--text-muted); margin-bottom: 8px;
+  text-align: right; letter-spacing: .01em;
+}
 
 .health-db-header {
   display: flex; align-items: center; gap: 10px; margin-bottom: 12px;
@@ -2238,8 +2421,10 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
   display: inline-block; padding: 1px 7px; border-radius: 4px;
   font-size: .72em; font-weight: 700; letter-spacing: .04em; text-transform: uppercase;
 }
+.smtp-kind-sent    { background: #f0fdf4; color: #166534; }
 .smtp-kind-failed  { background: #fef2f2; color: #991b1b; }
 .smtp-kind-skipped { background: #f1f5f9; color: #475569; }
+[data-theme="dark"] .smtp-kind-sent    { background: #052e16; color: #86efac; }
 [data-theme="dark"] .smtp-kind-failed  { background: #450a0a; color: #fca5a5; }
 [data-theme="dark"] .smtp-kind-skipped { background: #1e293b; color: #94a3b8; }
 
@@ -2930,7 +3115,7 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 [data-theme="dark"] .wa-row-high td    { border-left-color: #f97316; }
 
 /* ═══════════════════════  TEAM STATS SECTION  ════════════════════════ */
-.ts-root { margin: 0 0 12px; }
+.ts-root { margin: 0 0 8px; }
 .ts-title { font-size: .78em; font-weight: 700; letter-spacing: .07em; text-transform: uppercase;
             color: var(--text-light); margin-bottom: 8px; }
 
@@ -3025,10 +3210,213 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .tier-badge-4 { background: #6b7280; color: #fff; }
 .tier-badge-none { font-size: .78em; color: var(--text-light); font-weight: 700; padding: 0 4px; }
 
+/* ══════════════════════════  STATS VIEW  ════════════════════════════ */
+.sv-root { display: flex; flex-direction: column; gap: 16px; }
+
+/* Widgets column */
+.sv-widgets {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.sv-widgets > .ts-root { margin-bottom: 0; }
+.sv-widgets > .tier-chart { margin-top: 0; align-self: flex-start; }
+
+/* Active filter chips */
+.sv-filter-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 8px 12px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.sv-filter-label {
+  font-size: .75em;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  margin-right: 2px;
+}
+.sv-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px 3px 10px;
+  border-radius: 20px;
+  font-size: .78em;
+  font-weight: 600;
+}
+.sv-chip-tier { background: rgba(79,70,229,.12); color: #4f46e5; border: 1px solid rgba(79,70,229,.25); }
+.sv-chip-team { background: rgba(2,132,199,.12); color: #0284c7; border: 1px solid rgba(2,132,199,.25); }
+[data-theme="dark"] .sv-chip-tier { background: rgba(99,102,241,.15); color: #818cf8; border-color: rgba(99,102,241,.3); }
+[data-theme="dark"] .sv-chip-team { background: rgba(14,165,233,.15); color: #38bdf8; border-color: rgba(14,165,233,.3); }
+.sv-chip-x {
+  background: none; border: none; cursor: pointer;
+  color: inherit; opacity: .6; padding: 0 2px; font-size: .9em; line-height: 1;
+}
+.sv-chip-x:hover { opacity: 1; }
+.sv-clear-all {
+  margin-left: auto;
+  background: none; border: 1px solid var(--border);
+  border-radius: 5px; padding: 3px 10px;
+  font-size: .76em; color: var(--text-muted); cursor: pointer;
+  transition: color .12s, border-color .12s;
+}
+.sv-clear-all:hover { color: var(--danger); border-color: var(--danger); }
+
+/* Table filters spacing */
+.sv-table-filters { margin-bottom: 0; }
+
+/* Team / Role cells */
+.sv-team-cell { font-size: .82em; }
+.sv-cell-muted { color: var(--text-muted); }
+.sv-role-badge {
+  display: inline-block;
+  font-size: .68em;
+  font-weight: 800;
+  padding: 2px 6px;
+  border-radius: 4px;
+  letter-spacing: .04em;
+}
+.sv-role-sy { background: rgba(79,70,229,.12); color: #4f46e5; border: 1px solid rgba(79,70,229,.2); }
+.sv-role-ug { background: rgba(2,132,199,.12); color: #0284c7; border: 1px solid rgba(2,132,199,.2); }
+[data-theme="dark"] .sv-role-sy { background: rgba(99,102,241,.18); color: #818cf8; border-color: rgba(99,102,241,.3); }
+[data-theme="dark"] .sv-role-ug { background: rgba(14,165,233,.18); color: #38bdf8; border-color: rgba(14,165,233,.3); }
+
+/* ══════════════════  TEAM × TIER GRID  ══════════════════════════════ */
+.ttg-root {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 12px;
+}
+
+/* Card */
+.ttg-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+  transition: border-color .15s;
+}
+.ttg-card-active {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px rgba(79,156,249,.1);
+}
+
+/* Card header */
+.ttg-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 9px 14px;
+  background: var(--bg-hover);
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+  user-select: none;
+  transition: background .12s;
+}
+.ttg-header:hover { background: var(--bg-active, var(--bg-hover)); filter: brightness(.95); }
+.ttg-team-name { font-weight: 700; font-size: .86em; }
+.ttg-team-total { font-size: .72em; color: var(--text-muted); font-weight: 600; }
+
+/* Rows area */
+.ttg-rows { padding: 6px 10px 8px; display: flex; flex-direction: column; gap: 3px; }
+.ttg-empty { padding: 12px 14px; font-size: .8em; color: var(--text-muted); text-align: center; }
+
+/* Column header row */
+.ttg-row-head {
+  padding: 0 4px 4px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 2px;
+  cursor: default !important;
+}
+.ttg-row-head:hover { background: transparent !important; }
+.ttg-chip-head {
+  font-size: .65em;
+  font-weight: 800;
+  width: 20px;
+  text-align: center;
+}
+
+/* Data rows */
+.ttg-row {
+  display: grid;
+  grid-template-columns: 28px 1fr 28px 68px;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 4px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background .1s;
+}
+.ttg-row:hover { background: var(--bg-hover); }
+.ttg-row-active {
+  background: var(--bg-hover);
+  outline: 2px solid var(--primary);
+  outline-offset: -2px;
+}
+
+/* Tier badge */
+.ttg-col-badge { display: flex; align-items: center; }
+.ttg-badge {
+  display: inline-block;
+  font-size: .67em;
+  font-weight: 800;
+  color: #fff;
+  padding: 2px 4px;
+  border-radius: 4px;
+  min-width: 22px;
+  text-align: center;
+  letter-spacing: .02em;
+}
+
+/* Progress bar */
+.ttg-col-bar { min-width: 0; }
+.ttg-bar-track {
+  width: 100%;
+  height: 6px;
+  background: var(--border);
+  border-radius: 3px;
+  overflow: hidden;
+}
+.ttg-bar-fill {
+  height: 100%;
+  border-radius: 3px;
+  transition: width .25s ease;
+  opacity: .75;
+}
+
+/* Count */
+.ttg-col-count {
+  font-size: .78em;
+  font-weight: 700;
+  text-align: right;
+  color: var(--text);
+}
+
+/* Status chips */
+.ttg-col-chips { display: flex; gap: 3px; justify-content: flex-end; }
+.ttg-chip {
+  font-size: .67em;
+  font-weight: 700;
+  width: 20px;
+  text-align: center;
+  padding: 1px 0;
+  border-radius: 4px;
+}
+.ttg-chip-zero { opacity: .2; }
+.ttg-ok   { background: rgba(16,185,129,.15); color: #10b981; }
+.ttg-warn { background: rgba(245,158,11,.15);  color: #f59e0b; }
+.ttg-err  { background: rgba(239,68,68,.15);   color: #ef4444; }
+
 /* ── Tier Distribution Chart — Donut Pie ─────────── */
 .tier-chart {
-  margin-top: 12px;
-  padding: 12px 16px 12px;
+  margin-top: 0;
+  padding: 8px 12px 8px;
   background: var(--bg-card);
   border: 1px solid var(--border);
   border-radius: 10px;
@@ -3039,12 +3427,12 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
   text-transform: uppercase;
   letter-spacing: .08em;
   color: var(--text-light);
-  margin-bottom: 10px;
+  margin-bottom: 6px;
 }
 .tier-pie-layout {
   display: flex;
   align-items: center;
-  gap: 14px;
+  gap: 10px;
 }
 .tier-pie-wrap { flex-shrink: 0; }
 .tier-pie-wrap svg { display: block; }
@@ -3052,14 +3440,14 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
   flex: 1;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 1px;
   min-width: 0;
 }
 .tier-legend-row {
   display: flex;
   align-items: center;
-  gap: 7px;
-  padding: 4px 6px;
+  gap: 6px;
+  padding: 3px 5px;
   border-radius: 6px;
   cursor: pointer;
   transition: background .12s;
