@@ -54,6 +54,10 @@ public class AppUser {
     @Column(name = "permanent_lock")
     private Boolean permanentLock = false;
 
+    /** ISO-UTC timestamp when the last progressive lockout was applied (used to reset the failure-count window). */
+    @Column(name = "last_lockout_at", length = 30)
+    private String lastLockoutAt;
+
     private String createdAt;
     private String updatedAt;
 }

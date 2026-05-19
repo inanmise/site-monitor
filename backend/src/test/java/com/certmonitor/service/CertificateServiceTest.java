@@ -6,6 +6,7 @@ import com.certmonitor.model.LatestCheck;
 import com.certmonitor.repository.CertificateCheckRepository;
 import com.certmonitor.repository.CertificateInventoryRepository;
 import com.certmonitor.repository.LatestCheckRepository;
+import com.certmonitor.repository.TeamRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -16,6 +17,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 
+import com.certmonitor.model.CertificateCheck;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -31,13 +33,14 @@ class CertificateServiceTest {
     @Mock LatestCheckRepository latestRepo;
     @Mock CertificateCheckerService checkerService;
     @Mock CertificateInventoryRepository inventoryRepo;
+    @Mock TeamRepository teamRepo;
 
     private CertificateService service;
 
     @BeforeEach
     void setUp() {
         service = new CertificateService(checkRepo, latestRepo, checkerService,
-                inventoryRepo, new ObjectMapper());
+                inventoryRepo, new ObjectMapper(), teamRepo);
         when(checkerService.serializeSan(any())).thenReturn("[]");
         when(checkerService.deserializeSan(any())).thenReturn(Collections.emptyList());
     }
@@ -350,7 +353,88 @@ class CertificateServiceTest {
         assertThat(data.get(3).getDomain()).isEqualTo("valid.com");    // 90 days
     }
 
+    // ── getAllLatest ───────────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("getAllLatest returns all records from repo")
+    void getAllLatest_returnsAllFromRepo() {
+        when(latestRepo.findAllByOrderByDomainAsc()).thenReturn(List.of(
+                latestCheck("a.com", "valid", false, 90, "VALID", "OK"),
+                latestCheck("b.com", "valid", false, 60, "VALID", "OK")
+        ));
+        when(inventoryRepo.findAll()).thenReturn(Collections.emptyList());
+
+        List<CertificateDto> result = service.getAllLatest();
+        assertThat(result).hasSize(2);
+    }
+
+    // ── getHistory ────────────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("getHistory delegates to checkRepo.findTopByDomainOrderByCheckedAtDesc")
+    void getHistory_delegatesToRepo() {
+        when(checkRepo.findTopByDomainOrderByCheckedAtDesc("example.com", 30))
+                .thenReturn(Collections.emptyList());
+
+        service.getHistory("example.com", 30);
+
+        verify(checkRepo).findTopByDomainOrderByCheckedAtDesc("example.com", 30);
+    }
+
+    // ── getActivityLog ────────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("getActivityLog groups checks by runId")
+    void getActivityLog_groupsByRunId() {
+        CertificateCheck c1 = check("run-1", "a.com", "valid");
+        CertificateCheck c2 = check("run-1", "b.com", "valid");
+        CertificateCheck c3 = check("run-2", "c.com", "error");
+        CertificateCheck c4 = check("run-2", "d.com", "valid");
+        when(checkRepo.findByCheckedAtAfter(any())).thenReturn(List.of(c1, c2, c3, c4));
+
+        List<Map<String, Object>> runs = service.getActivityLog(24, null);
+
+        assertThat(runs).hasSize(2);
+        // Each run group has its runId
+        List<String> runIds = runs.stream().map(r -> (String) r.get("run_id")).toList();
+        assertThat(runIds).containsExactlyInAnyOrder("run-1", "run-2");
+    }
+
+    // ── getRenewalAdviceForTeam ───────────────────────────────────────────────
+
+    @Test
+    @DisplayName("getRenewalAdviceForTeam filters to team domains only")
+    void getRenewalAdviceForTeam_filtersToTeam() {
+        // Team 5 only has "team.domain.com"
+        CertificateInventory teamInv = new CertificateInventory();
+        teamInv.setDomain("team.domain.com");
+        teamInv.setActive(true);
+        teamInv.setTeamId(5L);
+
+        when(inventoryRepo.findByTeamIdAndActiveTrueOrderByDomainAsc(5L)).thenReturn(List.of(teamInv));
+        when(latestRepo.findAllByOrderByDomainAsc()).thenReturn(List.of(
+                latestCheck("team.domain.com", "warning", true, 10, "VALID", "OK"),
+                latestCheck("other.domain.com", "warning", true, 5, "VALID", "OK")
+        ));
+        when(inventoryRepo.findAll()).thenReturn(Collections.emptyList());
+
+        List<Map<String, Object>> advice = service.getRenewalAdviceForTeam(5L);
+
+        List<String> domains = advice.stream().map(a -> (String) a.get("domain")).toList();
+        assertThat(domains).containsOnly("team.domain.com");
+    }
+
     // ── Helpers ───────────────────────────────────────────────────────────────
+
+    private CertificateCheck check(String runId, String domain, String status) {
+        CertificateCheck c = new CertificateCheck();
+        c.setRunId(runId);
+        c.setDomain(domain);
+        c.setStatus(status);
+        c.setWarning("error".equals(status) || "warning".equals(status));
+        c.setCheckedAt("2026-01-01T00:00:00");
+        return c;
+    }
 
     private CertificateInventory inventory(String domain, String expectedFingerprint) {
         CertificateInventory inv = new CertificateInventory();

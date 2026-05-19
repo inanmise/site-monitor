@@ -95,6 +95,18 @@ public class CertificateController {
         return ok(Map.of("success", true, "data", certService.getStatsForTeam(teamId(session)), "timestamp", now()));
     }
 
+    @GetMapping("/stats/teams")
+    public ResponseEntity<Map<String, Object>> getTeamStats(HttpSession session) {
+        String role = (String) session.getAttribute("systemRole");
+        if ("ADMIN".equals(role)) {
+            return ok(Map.of("success", true, "data", certService.getAllTeamsBreakdownStats(), "timestamp", now()));
+        }
+        Long teamId = teamId(session);
+        if (teamId == null) return ok(Map.of("success", true, "data", Map.of(), "timestamp", now()));
+        String teamName = (String) session.getAttribute("teamName");
+        return ok(Map.of("success", true, "data", certService.getTeamBreakdownStats(teamId, teamName), "timestamp", now()));
+    }
+
     @PostMapping("/scheduler/run")
     public ResponseEntity<Map<String, Object>> runScheduler() {
         new Thread(schedulerService::runCheck).start();

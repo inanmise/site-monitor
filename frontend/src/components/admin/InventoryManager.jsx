@@ -3,20 +3,53 @@ import { api } from '../../api/client'
 import { useDialog } from '../ui/Dialog.jsx'
 import { useT } from '../../i18n/index.jsx'
 
-const emptyItem = { domain: '', port: 443, description: '', owner: '', active: true, expectedFingerprint: '', expectedSubject: '', team_id: '' }
+const DEFAULT_CHANGE_TEMPLATE =
+`- IISAdmins ekibi sertifika alım sürecini yürütür.
+- IISAdmins, PFX halindeki sertifikayı ADCAdmins ve Güvenlik ekibi ile paylaşır.
+- Değişiklik planlaması Servis Yönetimi tarafından ilgili ekiplerle koordineli yapılır.
+- Sertifika Netscaler ve WAF'ta güncellenir.
+- Ankara ve Gebze tarafında iki ayrı WAF cihazı vardır; WAF ekibine hatırlatılmalıdır.`
+
+const EMPTY = {
+  domain: '', port: 443, owner: '', description: '', active: true,
+  team_id: '', ug_team_id: '', tier: null,
+  external_vendor: false, action_required: false, openshift: false,
+  ssl_pinning: false, internal_cert: false, jks_keystore: false,
+  server_update: false, netscaler: false, waf_enabled: false,
+  in_use: false, ev_certificate: false, transferred_to_sy: false,
+  purchased_by: '',
+  change_description: DEFAULT_CHANGE_TEMPLATE,
+  expected_fingerprint: '', expected_subject: '',
+}
+
+function YesNo({ value, onChange }) {
+  const isYes = value === true
+  return (
+    <div className="yn-group">
+      <button type="button" className={`yn-btn${isYes ? ' yn-active' : ''}`}
+        onClick={() => onChange(true)}>Evet</button>
+      <button type="button" className={`yn-btn${!isYes ? ' yn-active' : ''}`}
+        onClick={() => onChange(false)}>Hayır</button>
+    </div>
+  )
+}
+
+function SectionHeader({ label }) {
+  return <div className="form-section-header">{label}</div>
+}
 
 export default function InventoryManager({ onInventoryChange, teams = [], isAdmin = false }) {
   const t = useT()
   const { showConfirm } = useDialog()
-  const [items, setItems] = useState([])
-  const [modal, setModal] = useState(null)
+  const [items, setItems]             = useState([])
+  const [modal, setModal]             = useState(null)
   const [transferModal, setTransferModal] = useState(null)
   const [transferTeamId, setTransferTeamId] = useState('')
-  const [form, setForm] = useState(emptyItem)
-  const [saving, setSaving] = useState(false)
-  const [msg, setMsg] = useState(null)
+  const [form, setForm]               = useState(EMPTY)
+  const [saving, setSaving]           = useState(false)
+  const [msg, setMsg]                 = useState(null)
 
-  const teamMap = Object.fromEntries(teams.map(t => [t.id, t.name]))
+  const teamMap = Object.fromEntries(teams.map(t => [String(t.id), t.name]))
 
   useEffect(() => { load() }, [])
 
@@ -25,35 +58,83 @@ export default function InventoryManager({ onInventoryChange, teams = [], isAdmi
     if (res?.success) setItems(res.data)
   }
 
-  function openAdd() { setForm({ ...emptyItem, team_id: '' }); setModal('add') }
+  function f(field, val) { setForm(prev => ({ ...prev, [field]: val })) }
+
+  function openAdd() {
+    setForm({ ...EMPTY, change_description: DEFAULT_CHANGE_TEMPLATE })
+    setModal('add')
+  }
+
   function openEdit(item) {
     setForm({
+      ...EMPTY,
       ...item,
-      expectedFingerprint: item.expected_fingerprint || '',
-      expectedSubject: item.expected_subject || '',
-      team_id: String(item.team_id ?? ''),
+      team_id:            String(item.team_id ?? ''),
+      ug_team_id:         String(item.ug_team_id ?? ''),
+      external_vendor:    item.external_vendor  ?? false,
+      action_required:    item.action_required  ?? false,
+      openshift:          item.openshift        ?? false,
+      ssl_pinning:        item.ssl_pinning      ?? false,
+      internal_cert:      item.internal_cert    ?? false,
+      jks_keystore:       item.jks_keystore     ?? false,
+      server_update:      item.server_update    ?? false,
+      netscaler:          item.netscaler        ?? false,
+      waf_enabled:        item.waf_enabled      ?? false,
+      in_use:             item.in_use           ?? false,
+      ev_certificate:     item.ev_certificate   ?? false,
+      transferred_to_sy:  item.transferred_to_sy ?? false,
+      purchased_by:       item.purchased_by     ?? '',
+      change_description: item.change_description ?? '',
+      expected_fingerprint: item.expected_fingerprint ?? '',
+      expected_subject:   item.expected_subject ?? '',
+      tier:               item.tier ?? null,
     })
     setModal(item)
   }
 
+  function validate() {
+    if (!form.domain.trim()) return t('inv.formDomain') + ' zorunlu'
+    if (isAdmin && !form.team_id) return t('inv.teamRequired')
+    if (!form.ug_team_id) return t('inv.ugTeamRequired')
+    return null
+  }
+
   async function save() {
-    if (isAdmin && !form.team_id) { setMsg(t('inv.teamRequired')); return }
+    const err = validate()
+    if (err) { setMsg(err); return }
     setSaving(true)
+    setMsg(null)
     const payload = {
-      domain: form.domain.trim(),
-      port: parseInt(form.port) || 443,
-      description: form.description,
-      owner: form.owner,
-      active: form.active,
-      expectedFingerprint: form.expectedFingerprint || null,
-      expectedSubject: form.expectedSubject || null,
-      team_id: form.team_id ? Number(form.team_id) : null,
+      domain:             form.domain.trim(),
+      port:               parseInt(form.port) || 443,
+      owner:              form.owner,
+      description:        form.description,
+      active:             form.active,
+      team_id:            form.team_id ? Number(form.team_id) : null,
+      ug_team_id:         form.ug_team_id ? Number(form.ug_team_id) : null,
+      external_vendor:    form.external_vendor,
+      action_required:    form.action_required,
+      openshift:          form.openshift,
+      ssl_pinning:        form.ssl_pinning,
+      internal_cert:      form.internal_cert,
+      jks_keystore:       form.jks_keystore,
+      server_update:      form.server_update,
+      netscaler:          form.netscaler,
+      waf_enabled:        form.waf_enabled,
+      in_use:             form.in_use,
+      ev_certificate:     form.ev_certificate,
+      transferred_to_sy:  form.transferred_to_sy,
+      purchased_by:       form.purchased_by || null,
+      change_description: form.change_description || null,
+      expectedFingerprint: form.expected_fingerprint || null,
+      expectedSubject:    form.expected_subject || null,
+      tier:               form.tier ? Number(form.tier) : null,
     }
     const res = modal === 'add'
       ? await api.admin.addInventory(payload)
       : await api.admin.updateInventory(modal.id, payload)
     setSaving(false)
-    if (res?.success) { setModal(null); setMsg(t('inv.saved')); load() }
+    if (res?.success) { setModal(null); setMsg(t('inv.saved')); load(); onInventoryChange?.() }
     else setMsg(res?.error || 'Error')
   }
 
@@ -81,6 +162,8 @@ export default function InventoryManager({ onInventoryChange, teams = [], isAdmi
     else setMsg(res?.error || 'Error')
   }
 
+  const ugTeamName = (id) => teamMap[String(id)] || '—'
+
   return (
     <div className="admin-section">
       <div className="admin-section-header">
@@ -88,13 +171,16 @@ export default function InventoryManager({ onInventoryChange, teams = [], isAdmi
         <button className="btn btn-success" onClick={openAdd}>{t('inv.addBtn')}</button>
       </div>
       {msg && <div className="alert-msg">{msg}</div>}
+
       <div className="admin-table-wrap">
         <table className="admin-table">
           <thead>
             <tr>
               <th>{t('inv.colDomain')}</th>
               <th>{t('inv.colPort')}</th>
-              <th>{t('inv.colTeam')}</th>
+              <th>{t('inv.colTier')}</th>
+              <th>{t('inv.colSyTeam')}</th>
+              <th>{t('inv.colUgTeam')}</th>
               <th>{t('inv.colOwner')}</th>
               <th>{t('inv.colDesc')}</th>
               <th>{t('inv.colActive')}</th>
@@ -106,15 +192,25 @@ export default function InventoryManager({ onInventoryChange, teams = [], isAdmi
               <tr key={item.id}>
                 <td><strong>{item.domain}</strong></td>
                 <td>{item.port}</td>
-                <td>{teamMap[item.team_id] || '—'}</td>
+                <td>
+                  {item.tier
+                    ? <span className={`tier-badge tier-badge-${item.tier}`}>T{item.tier}</span>
+                    : <span style={{ color: 'var(--text-light)', fontSize: '.8em' }}>—</span>}
+                </td>
+                <td>{teamMap[String(item.team_id)] || '—'}</td>
+                <td>{ugTeamName(item.ug_team_id)}</td>
                 <td>{item.owner || '—'}</td>
                 <td>{item.description || '—'}</td>
-                <td><span className={item.active ? 'badge badge-ok' : 'badge badge-err'}>{item.active ? t('inv.active') : t('inv.inactive')}</span></td>
+                <td>
+                  <span className={item.active ? 'badge badge-ok' : 'badge badge-err'}>
+                    {item.active ? t('inv.active') : t('inv.inactive')}
+                  </span>
+                </td>
                 <td>
                   <button className="btn-sm btn-edit" onClick={() => openEdit(item)}>{t('inv.edit')}</button>
                   {isAdmin && teams.length > 1 && (
                     <button className="btn-sm" style={{ background: '#6366f1', color: '#fff', marginRight: 4 }}
-                      onClick={() => { setTransferModal(item); setTransferTeamId(item.team_id ?? '') }}>
+                      onClick={() => { setTransferModal(item); setTransferTeamId(String(item.team_id ?? '')) }}>
                       {t('inv.transfer')}
                     </button>
                   )}
@@ -126,38 +222,141 @@ export default function InventoryManager({ onInventoryChange, teams = [], isAdmi
         </table>
       </div>
 
+      {/* ── Ana Form Modalı ── */}
       {modal !== null && (
         <div className="modal-overlay" onClick={() => setModal(null)}>
-          <div className="modal-box" onClick={(e) => e.stopPropagation()}>
+          <div className="modal-box modal-wide" onClick={(e) => e.stopPropagation()}>
             <h3>{modal === 'add' ? t('inv.addTitle') : t('inv.editTitle')}</h3>
+
             <div className="form-grid">
-              <label>{t('inv.formDomain')}<input value={form.domain} onChange={(e) => setForm({ ...form, domain: e.target.value })} placeholder={t('inv.formDomainPh')} /></label>
-              <label>{t('inv.formPort')}<input type="number" value={form.port} onChange={(e) => setForm({ ...form, port: e.target.value })} /></label>
-              {isAdmin && teams.length > 0 && (
-                <label>
-                  {t('inv.formTeam')} <span style={{ color: 'var(--danger)' }}>*</span>
-                  <select value={form.team_id} onChange={(e) => setForm({ ...form, team_id: e.target.value })}>
-                    <option value="">{t('inv.selectTeam')}</option>
-                    {teams.map(team => <option key={team.id} value={team.id}>{team.name}</option>)}
-                  </select>
-                </label>
-              )}
-              <label>{t('inv.formOwner')}<input value={form.owner} onChange={(e) => setForm({ ...form, owner: e.target.value })} /></label>
-              <label>{t('inv.formDesc')}<input value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} /></label>
+
+              {/* ── Temel Bilgiler ── */}
+              <SectionHeader label={t('inv.sectionBasic')} />
+
+              <label>
+                {t('inv.formDomain')} <span style={{ color: 'var(--danger)' }}>*</span>
+                <input value={form.domain} onChange={e => f('domain', e.target.value)} placeholder={t('inv.formDomainPh')} />
+              </label>
+              <label>
+                {t('inv.formPort')}
+                <input type="number" value={form.port} onChange={e => f('port', e.target.value)} />
+              </label>
+
+              <label>
+                {t('inv.formTeam')} <span style={{ color: 'var(--danger)' }}>*</span>
+                <select value={form.team_id} onChange={e => f('team_id', e.target.value)}
+                  disabled={!isAdmin}>
+                  <option value="">{t('inv.selectTeam')}</option>
+                  {teams.map(team => <option key={team.id} value={team.id}>{team.name}</option>)}
+                </select>
+              </label>
+
+              <label>
+                {t('inv.formUgTeam')} <span style={{ color: 'var(--danger)' }}>*</span>
+                <select value={form.ug_team_id} onChange={e => f('ug_team_id', e.target.value)}>
+                  <option value="">{t('inv.selectTeam')}</option>
+                  {teams.map(team => <option key={team.id} value={team.id}>{team.name}</option>)}
+                </select>
+              </label>
+
+              <label>
+                {t('inv.formTier')}
+                <select value={form.tier ?? ''} onChange={e => f('tier', e.target.value ? Number(e.target.value) : null)}>
+                  <option value="">{t('inv.tierNone')}</option>
+                  <option value="1">{t('inv.tier1')}</option>
+                  <option value="2">{t('inv.tier2')}</option>
+                  <option value="3">{t('inv.tier3')}</option>
+                  <option value="4">{t('inv.tier4')}</option>
+                </select>
+              </label>
+
+              <label>
+                {t('inv.formOwner')}
+                <input value={form.owner} onChange={e => f('owner', e.target.value)} />
+              </label>
+
               <label className="checkbox-label">
-                <input type="checkbox" checked={form.active} onChange={(e) => setForm({ ...form, active: e.target.checked })} />
+                <input type="checkbox" checked={form.active} onChange={e => f('active', e.target.checked)} />
                 {t('inv.formActive')}
               </label>
-              <label className="full-width">{t('inv.formFP')}
-                <input value={form.expectedFingerprint} onChange={(e) => setForm({ ...form, expectedFingerprint: e.target.value })} placeholder={t('inv.formFPPh')} />
+
+              {/* ── Operasyonel Bilgiler ── */}
+              <SectionHeader label={t('inv.sectionOps')} />
+
+              <div className="yn-grid">
+                {[
+                  ['external_vendor',  'inv.formExternalVendor'],
+                  ['action_required',  'inv.formActionRequired'],
+                  ['openshift',        'inv.formOpenshift'],
+                  ['ssl_pinning',      'inv.formSslPinning'],
+                  ['internal_cert',    'inv.formInternal'],
+                  ['jks_keystore',     'inv.formJksKeystore'],
+                  ['server_update',    'inv.formServerUpdate'],
+                  ['netscaler',        'inv.formNetscaler'],
+                  ['waf_enabled',      'inv.formWafEnabled'],
+                  ['in_use',           'inv.formInUse'],
+                  ['ev_certificate',   'inv.formEvCert'],
+                ].map(([field, key]) => (
+                  <div key={field} className="yn-field-row">
+                    <span className="yn-field-label">{t(key)}</span>
+                    <YesNo value={form[field]} onChange={v => f(field, v)} />
+                  </div>
+                ))}
+              </div>
+
+              {/* ── Süreç Bilgileri ── */}
+              <SectionHeader label={t('inv.sectionProcess')} />
+
+              <label className="full-width">
+                {t('inv.formPurchasedBy')}
+                <input value={form.purchased_by} onChange={e => f('purchased_by', e.target.value)} />
               </label>
-              <label className="full-width">{t('inv.formSubject')}
-                <input value={form.expectedSubject} onChange={(e) => setForm({ ...form, expectedSubject: e.target.value })} />
+
+              <div className="yn-field-row" style={{ gridColumn: '1 / -1' }}>
+                <span className="yn-field-label">{t('inv.formTransferredToSy')}</span>
+                <YesNo value={form.transferred_to_sy} onChange={v => f('transferred_to_sy', v)} />
+              </div>
+
+              {/* ── Açıklamalar ── */}
+              <SectionHeader label={t('inv.sectionDesc')} />
+
+              <label className="full-width">
+                {t('inv.formDescription')}
+                <textarea rows={4} value={form.description}
+                  onChange={e => f('description', e.target.value)}
+                  style={{ resize: 'vertical', fontFamily: 'inherit' }} />
               </label>
+
+              <label className="full-width">
+                {t('inv.formChangeDesc')}
+                <textarea rows={7} value={form.change_description}
+                  onChange={e => f('change_description', e.target.value)}
+                  style={{ resize: 'vertical', fontFamily: 'monospace', fontSize: '.82em' }} />
+              </label>
+
+              {/* ── Gelişmiş ── */}
+              <SectionHeader label={t('inv.sectionAdv')} />
+
+              <label className="full-width">
+                {t('inv.formFP')}
+                <input value={form.expected_fingerprint}
+                  onChange={e => f('expected_fingerprint', e.target.value)}
+                  placeholder={t('inv.formFPPh')} />
+              </label>
+              <label className="full-width">
+                {t('inv.formSubject')}
+                <input value={form.expected_subject}
+                  onChange={e => f('expected_subject', e.target.value)} />
+              </label>
+
             </div>
+
+            {msg && <div className="alert-msg" style={{ marginTop: 10 }}>{msg}</div>}
+
             <div className="modal-actions">
               <button className="btn btn-secondary" onClick={() => setModal(null)}>{t('inv.cancel')}</button>
-              <button className="btn btn-primary" onClick={save} disabled={saving || !form.domain.trim() || (isAdmin && !form.team_id)}>
+              <button className="btn btn-primary" onClick={save}
+                disabled={saving || !form.domain.trim() || (isAdmin && !form.team_id) || !form.ug_team_id}>
                 {saving ? t('inv.saving') : t('inv.save')}
               </button>
             </div>
@@ -165,13 +364,15 @@ export default function InventoryManager({ onInventoryChange, teams = [], isAdmi
         </div>
       )}
 
+      {/* ── Transfer Modalı ── */}
       {transferModal && (
         <div className="modal-overlay" onClick={() => setTransferModal(null)}>
           <div className="modal-box" onClick={(e) => e.stopPropagation()}>
             <h3>{t('inv.transferTitle', transferModal.domain)}</h3>
             <div className="form-grid">
-              <label className="full-width">{t('inv.transferTeam')}
-                <select value={transferTeamId} onChange={(e) => setTransferTeamId(e.target.value)}>
+              <label className="full-width">
+                {t('inv.transferTeam')}
+                <select value={transferTeamId} onChange={e => setTransferTeamId(e.target.value)}>
                   {teams.map(team => <option key={team.id} value={team.id}>{team.name}</option>)}
                 </select>
               </label>

@@ -6,6 +6,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpSession;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 
@@ -27,11 +28,29 @@ public class AuditService {
     private static final DateTimeFormatter ISO =
             DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
 
+    @Value("${cert.monitor.audit.brute-force-window-seconds:600}")
+    private int bruteForceWindowSeconds;
+
+    @Value("${cert.monitor.audit.geo-velocity-window-seconds:3600}")
+    private int geoVelocityWindowSeconds;
+
+    @Value("${cert.monitor.audit.office-start-hour:8}")
+    private int officeStartHour;
+
+    @Value("${cert.monitor.audit.office-end-hour:23}")
+    private int officeEndHour;
+
     // ── Login / Logout ─────────────────────────────────────────────────────────
 
+    /**
+     * @param countSince     ISO timestamp; when non-null, failure counting starts from
+     *                       max(tenMinAgo, countSince) so prior-lockout failures don't carry over.
+     * @param failuresNeeded how many failures in the window trigger BRUTE_FORCE (default 5).
+     */
     public AuditLog recordLogin(String actor, Long actorId, Long actorTeamId, String actorRole,
                                 String ipAddress, String userAgent, String sessionId,
-                                boolean success, String failureReason) {
+                                boolean success, String failureReason, String countSince,
+                                int failuresNeeded) {
         AuditLog entry = new AuditLog();
         entry.setEventType(success ? "LOGIN" : "LOGIN_FAILED");
         entry.setEventTime(now());
@@ -52,7 +71,7 @@ public class AuditService {
             if (!geoIpService.isPrivateIp(ipAddress) && !auditLogRepo.existsSuccessfulLoginFromIp(actor, ipAddress))
                 anomalies.add("UNUSUAL_IP");
 
-            String oneHourAgo = ISO.format(Instant.now().minusSeconds(3600));
+            String oneHourAgo = ISO.format(Instant.now().minusSeconds(geoVelocityWindowSeconds));
             List<AuditLog> recent = auditLogRepo.findRecentSuccessfulLogins(actor, oneHourAgo);
             if (!recent.isEmpty()) {
                 AuditLog prev = recent.get(0);
@@ -62,23 +81,24 @@ public class AuditService {
             }
 
             // Successful login after a brute-force pattern — flag it
-            String tenMinAgo = ISO.format(Instant.now().minusSeconds(600));
+            String tenMinAgo = ISO.format(Instant.now().minusSeconds(bruteForceWindowSeconds));
             long prevFails = auditLogRepo.countRecentFailedLogins(actor, tenMinAgo);
             if (prevFails >= 5) anomalies.add("BRUTE_FORCE");
         }
 
         if (!success && actor != null && !actor.isBlank()) {
-            String tenMinAgo = ISO.format(Instant.now().minusSeconds(600));
-            long prevFails = auditLogRepo.countRecentFailedLogins(actor, tenMinAgo);
+            String tenMinAgo = ISO.format(Instant.now().minusSeconds(bruteForceWindowSeconds));
+            String since = (countSince != null && countSince.compareTo(tenMinAgo) > 0) ? countSince : tenMinAgo;
+            long prevFails = auditLogRepo.countRecentFailedLogins(actor, since);
             int attemptNum = (int) prevFails + 1;
-            if (prevFails >= 4) {
+            if (prevFails >= failuresNeeded - 1) {
                 anomalies.add("BRUTE_FORCE");
                 entry.setFailureReason(
-                    "Brute force: attempt #" + attemptNum + " for '" + actor + "' in last 10 min");
-                log.warn("Brute force detected: user='{}' attempt={} IP={}", actor, attemptNum, ipAddress);
+                    "Brute force: attempt #" + attemptNum + "/" + failuresNeeded + " for '" + actor + "'");
+                log.warn("Brute force detected: user='{}' attempt={}/{} IP={}", actor, attemptNum, failuresNeeded, ipAddress);
             } else {
                 entry.setFailureReason(
-                    "Invalid credentials — attempt #" + attemptNum + " for '" + actor + "'");
+                    "Invalid credentials — attempt #" + attemptNum + "/" + failuresNeeded + " for '" + actor + "'");
             }
         } else {
             entry.setFailureReason(failureReason);
@@ -177,12 +197,12 @@ public class AuditService {
 
     // ── Helpers ────────────────────────────────────────────────────────────────
 
-    /** Returns true if current UTC time is outside Mon–Fri 08:00–23:00. */
+    /** Returns true if current UTC time is outside Mon–Fri officeStartHour–officeEndHour. */
     private boolean isOffHours() {
         ZonedDateTime now = ZonedDateTime.now(ZoneOffset.UTC);
         int dow = now.getDayOfWeek().getValue(); // 1=Mon 7=Sun
         int hour = now.getHour();
-        return dow >= 6 || hour < 8 || hour >= 23;
+        return dow >= 6 || hour < officeStartHour || hour >= officeEndHour;
     }
 
     public String resolveIp(HttpServletRequest request) {

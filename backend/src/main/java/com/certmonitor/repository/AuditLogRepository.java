@@ -30,7 +30,7 @@ public interface AuditLogRepository extends JpaRepository<AuditLog, Long> {
     long countFailedLoginsSince(@Param("since") String since);
 
     @Query("SELECT a FROM AuditLog a WHERE " +
-           "(:actor IS NULL OR LOWER(a.actor) LIKE LOWER(CONCAT('%', :actor, '%'))) AND " +
+           "(:actor IS NULL OR LOWER(a.actor) LIKE :actor) AND " +
            "(:eventType IS NULL OR a.eventType = :eventType) AND " +
            "(:outcome IS NULL OR a.outcome = :outcome) AND " +
            "(:since IS NULL OR a.eventTime >= :since) AND " +

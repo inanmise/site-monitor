@@ -14,4 +14,5 @@ public interface CertificateInventoryRepository extends JpaRepository<Certificat
     boolean existsByDomain(String domain);
     boolean existsByTeamIdAndActiveTrue(Long teamId);
     long countByActiveTrue();
+    List<CertificateInventory> findByUgTeamIdAndActiveTrueOrderByDomainAsc(Long ugTeamId);
 }

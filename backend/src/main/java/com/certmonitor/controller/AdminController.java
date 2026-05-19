@@ -9,6 +9,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpSession;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -51,6 +52,7 @@ public class AdminController {
         return ok(Map.of("data", items));
     }
 
+    @CacheEvict(value = "cert-latest", allEntries = true)
     @PostMapping("/inventory")
     public ResponseEntity<Map<String, Object>> addInventory(
             @RequestBody CertificateInventory item, HttpSession session, HttpServletRequest request) {
@@ -76,12 +78,18 @@ public class AdminController {
         return ok(Map.of("data", saved, "message", "Domain added to inventory"));
     }
 
+    @CacheEvict(value = "cert-latest", allEntries = true)
     @PutMapping("/inventory/{id}")
     public ResponseEntity<Map<String, Object>> updateInventory(
-            @PathVariable Long id, @RequestBody CertificateInventory item, HttpSession session) {
+            @PathVariable Long id, @RequestBody CertificateInventory item,
+            HttpSession session, HttpServletRequest request) {
         CertificateInventory existing = inventoryRepo.findById(id)
                 .orElseThrow(() -> new NoSuchElementException("Inventory item not found: " + id));
         if (!isAdmin(session)) checkOwnership(existing.getTeamId(), session);
+
+        // Build diff BEFORE applying changes
+        String diffJson = buildInventoryDiff(existing, item, isAdmin(session));
+
         existing.setDomain(item.getDomain());
         existing.setPort(item.getPort() != null ? item.getPort() : 443);
         existing.setDescription(item.getDescription());
@@ -91,10 +99,81 @@ public class AdminController {
         existing.setExpectedFingerprint(item.getExpectedFingerprint());
         existing.setExpectedSubject(item.getExpectedSubject());
         if (isAdmin(session) && item.getTeamId() != null) existing.setTeamId(item.getTeamId());
+        existing.setUgTeamId(item.getUgTeamId());
+        existing.setExternalVendor(item.getExternalVendor());
+        existing.setActionRequired(item.getActionRequired());
+        existing.setOpenshift(item.getOpenshift());
+        existing.setSslPinning(item.getSslPinning());
+        existing.setInternalCert(item.getInternalCert());
+        existing.setJksKeystore(item.getJksKeystore());
+        existing.setServerUpdate(item.getServerUpdate());
+        existing.setNetscaler(item.getNetscaler());
+        existing.setWafEnabled(item.getWafEnabled());
+        existing.setInUse(item.getInUse());
+        existing.setEvCertificate(item.getEvCertificate());
+        existing.setTransferredToSy(item.getTransferredToSy());
+        existing.setPurchasedBy(item.getPurchasedBy());
+        existing.setChangeDescription(item.getChangeDescription());
+        existing.setTier(item.getTier());
         existing.setUpdatedAt(now());
-        return ok(Map.of("data", inventoryRepo.save(existing)));
+        CertificateInventory saved = inventoryRepo.save(existing);
+
+        if (!diffJson.equals("{}")) {
+            auditService.recordAction("DOMAIN_EDIT", session, request,
+                    "CERTIFICATE", saved.getDomain(), diffJson);
+        }
+        return ok(Map.of("data", saved));
     }
 
+    private String buildInventoryDiff(CertificateInventory o, CertificateInventory n, boolean isAdmin) {
+        StringBuilder sb = new StringBuilder("{");
+        fieldDiff(sb, "domain",             o.getDomain(),               n.getDomain());
+        fieldDiff(sb, "port",               o.getPort(),                 n.getPort() != null ? n.getPort() : 443);
+        fieldDiff(sb, "active",             o.getActive(),               n.getActive() != null ? n.getActive() : true);
+        fieldDiff(sb, "tier",               o.getTier(),                 n.getTier());
+        fieldDiff(sb, "description",        o.getDescription(),          n.getDescription());
+        fieldDiff(sb, "owner",              o.getOwner(),                n.getOwner());
+        fieldDiff(sb, "tags",               o.getTags(),                 n.getTags());
+        fieldDiff(sb, "externalVendor",     o.getExternalVendor(),       n.getExternalVendor());
+        fieldDiff(sb, "actionRequired",     o.getActionRequired(),       n.getActionRequired());
+        fieldDiff(sb, "openshift",          o.getOpenshift(),            n.getOpenshift());
+        fieldDiff(sb, "sslPinning",         o.getSslPinning(),           n.getSslPinning());
+        fieldDiff(sb, "internalCert",       o.getInternalCert(),         n.getInternalCert());
+        fieldDiff(sb, "jksKeystore",        o.getJksKeystore(),          n.getJksKeystore());
+        fieldDiff(sb, "serverUpdate",       o.getServerUpdate(),         n.getServerUpdate());
+        fieldDiff(sb, "netscaler",          o.getNetscaler(),            n.getNetscaler());
+        fieldDiff(sb, "wafEnabled",         o.getWafEnabled(),           n.getWafEnabled());
+        fieldDiff(sb, "inUse",              o.getInUse(),                n.getInUse());
+        fieldDiff(sb, "evCertificate",      o.getEvCertificate(),        n.getEvCertificate());
+        fieldDiff(sb, "transferredToSy",    o.getTransferredToSy(),      n.getTransferredToSy());
+        fieldDiff(sb, "purchasedBy",        o.getPurchasedBy(),          n.getPurchasedBy());
+        fieldDiff(sb, "changeDescription",  o.getChangeDescription(),    n.getChangeDescription());
+        fieldDiff(sb, "expectedFingerprint",o.getExpectedFingerprint(),  n.getExpectedFingerprint());
+        fieldDiff(sb, "expectedSubject",    o.getExpectedSubject(),      n.getExpectedSubject());
+        if (isAdmin && n.getTeamId() != null)
+            fieldDiff(sb, "teamId",         o.getTeamId(),               n.getTeamId());
+        if (sb.length() > 1 && sb.charAt(sb.length() - 1) == ',') sb.deleteCharAt(sb.length() - 1);
+        sb.append('}');
+        return sb.toString();
+    }
+
+    private void fieldDiff(StringBuilder sb, String field, Object oldVal, Object newVal) {
+        if (!Objects.equals(oldVal, newVal)) {
+            sb.append('"').append(field).append("\":{\"from\":")
+              .append(toJsonVal(oldVal)).append(",\"to\":")
+              .append(toJsonVal(newVal)).append("},");
+        }
+    }
+
+    private String toJsonVal(Object v) {
+        if (v == null) return "null";
+        if (v instanceof Boolean || v instanceof Number) return v.toString();
+        String s = v.toString().replace("\\", "\\\\").replace("\"", "\\\"")
+                               .replace("\n", "\\n").replace("\r", "");
+        return '"' + s + '"';
+    }
+
+    @CacheEvict(value = "cert-latest", allEntries = true)
     @DeleteMapping("/inventory/{id}")
     public ResponseEntity<Map<String, Object>> deleteInventory(
             @PathVariable Long id, HttpSession session, HttpServletRequest request) {

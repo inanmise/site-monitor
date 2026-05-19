@@ -28,10 +28,6 @@ vi.mock('../components/admin/TeamManager.jsx', () => ({
 vi.mock('../components/admin/UserManager.jsx', () => ({
   default: () => <div data-testid="user-manager">UserManager</div>,
 }))
-vi.mock('../components/admin/SystemHealth.jsx', () => ({
-  default: () => <div data-testid="system-health">SystemHealth</div>,
-}))
-
 describe('AdminPanel', () => {
   it('renders only non-admin tabs without admin role', () => {
     render(<AdminPanel />)
@@ -41,7 +37,7 @@ describe('AdminPanel', () => {
     expect(screen.queryByText('Thresholds')).not.toBeInTheDocument()
   })
 
-  it('renders all 7 tabs with admin role', () => {
+  it('renders all 6 tabs with admin role', () => {
     render(<AdminPanel systemRole="ADMIN" />)
     expect(screen.getByText('Domain Inventory')).toBeInTheDocument()
     expect(screen.getByText('Escalation Contacts')).toBeInTheDocument()
@@ -49,7 +45,6 @@ describe('AdminPanel', () => {
     expect(screen.getByText('Thresholds')).toBeInTheDocument()
     expect(screen.getByText('Teams')).toBeInTheDocument()
     expect(screen.getByText('Users')).toBeInTheDocument()
-    expect(screen.getByText('System Health')).toBeInTheDocument()
   })
 
   it('shows InventoryManager by default (first tab)', () => {

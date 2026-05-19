@@ -4,6 +4,7 @@ import com.certmonitor.model.RememberMeToken;
 import com.certmonitor.repository.RememberMeTokenRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
@@ -17,7 +18,9 @@ import java.util.UUID;
 public class RememberMeService {
 
     public static final String COOKIE_NAME = "cert-monitor-remember";
-    private static final long TTL_SECONDS = 7L * 24 * 3600; // 7 gün
+
+    @Value("${cert.monitor.remember.ttl-seconds:604800}")
+    private long ttlSeconds;
 
     private final RememberMeTokenRepository repo;
 
@@ -26,7 +29,7 @@ public class RememberMeService {
         RememberMeToken entity = new RememberMeToken();
         entity.setToken(token);
         entity.setUsername(username);
-        entity.setExpiresAt(Instant.now().getEpochSecond() + TTL_SECONDS);
+        entity.setExpiresAt(Instant.now().getEpochSecond() + ttlSeconds);
         repo.save(entity);
         log.debug("Remember-me token oluşturuldu: user={}", username);
         return token;
@@ -45,8 +48,7 @@ public class RememberMeService {
         }
     }
 
-    // Her saat başı süresi dolmuş token'ları temizle
-    @Scheduled(fixedDelay = 3_600_000)
+    @Scheduled(fixedDelayString = "${cert.monitor.remember.cleanup-interval-ms:3600000}")
     public void cleanExpired() {
         long now = Instant.now().getEpochSecond();
         repo.deleteExpired(now);

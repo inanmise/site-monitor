@@ -1,19 +1,25 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
+import { ChevronUp, ChevronDown } from 'lucide-react'
 import { api, formatDate } from './api/client'
 import { useDialog } from './components/ui/Dialog.jsx'
 import { useT } from './i18n/index.jsx'
 import Login from './pages/Login'
 import Nav from './components/Nav'
 import StatsPanel from './components/StatsPanel'
+import StatsView from './components/StatsView'
 import CertificateCard from './components/CertificateCard'
 import CertificatesTable from './components/CertificatesTable'
 import CertificateModal from './components/CertificateModal'
 import RenewalAdvice from './components/RenewalAdvice'
 import AdminPanel from './components/admin/AdminPanel'
+import AuditLogViewer from './components/admin/AuditLogViewer'
+import WeakAlgorithmReport from './components/admin/WeakAlgorithmReport'
+import SystemHealth from './components/admin/SystemHealth'
 import ActivityLog from './components/ActivityLog'
 
-const INACTIVITY_MS = 5 * 60 * 1000
-const WARN_BEFORE_MS = 60 * 1000
+const INACTIVITY_MS   = Number(import.meta.env.VITE_INACTIVITY_MS   ?? 300_000)
+const WARN_BEFORE_MS  = Number(import.meta.env.VITE_WARN_BEFORE_MS  ?? 60_000)
+
 
 export default function App() {
   const { showConfirm } = useDialog()
@@ -27,6 +33,7 @@ export default function App() {
   const [certs, setCerts] = useState([])
   const [warnings, setWarnings] = useState([])
   const [stats, setStats] = useState(null)
+  const [teamStats, setTeamStats] = useState(null)
   const [statsVisible, setStatsVisible] = useState(true)
   const [search, setSearch] = useState('')
   const [sortOrder, setSortOrder] = useState('default')
@@ -112,18 +119,19 @@ export default function App() {
   }, [user])
 
   const loadData = useCallback(async () => {
-    const [certsRes, statsRes, silentRes] = await Promise.all([
-      api.getCertificates(), api.getStats(), api.getSilentAlertDomains(),
+    const [certsRes, statsRes, silentRes, teamStatsRes] = await Promise.all([
+      api.getCertificates(), api.getStats(), api.getSilentAlertDomains(), api.getTeamStats(),
     ])
     if (certsRes?.success) { setCerts(certsRes.data); setLastUpdate(certsRes.timestamp) }
     if (statsRes?.success) setStats(statsRes.data)
     if (silentRes?.success) setSilentAlertDomains(new Set(silentRes.data))
+    if (teamStatsRes?.success) setTeamStats(teamStatsRes.data)
   }, [])
 
   useEffect(() => {
     if (user) {
       loadData()
-      const interval = setInterval(loadData, 5 * 60 * 1000)
+      const interval = setInterval(loadData, Number(import.meta.env.VITE_DATA_REFRESH_MS ?? 300_000))
       return () => clearInterval(interval)
     }
   }, [user, loadData])
@@ -133,6 +141,10 @@ export default function App() {
       api.getWarnings().then((res) => { if (res?.success) setWarnings(res.data) })
     }
   }, [user, tab])
+
+  useEffect(() => {
+    if (tab === 'dashboard') setStatsVisible(true)
+  }, [tab])
 
   async function handleLogout() {
     const ok = await showConfirm({
@@ -272,9 +284,11 @@ export default function App() {
   })
 
   function defaultPriority(c) {
-    if (c.status === 'error') return 0
-    if (c.warning) return 1
-    return 2
+    const tier = c.tier ?? 99
+    const isProblematic = c.status === 'error' || c.warning
+    const statusPri = c.status === 'error' ? 0 : 1
+    if (isProblematic) return tier * 10 + statusPri
+    return 1000 + tier
   }
 
   const sorted = [...filtered].sort((a, b) => {
@@ -311,7 +325,7 @@ export default function App() {
         </div>
       )}
 
-      <Nav activeTab={tab} onTabChange={(t) => { setTab(t); if (t === 'dashboard') setStatsVisible(true) }} username={user} teamName={teamName} systemRole={systemRole} onLogout={handleLogout} />
+      <Nav activeTab={tab} onTabChange={setTab} username={user} teamName={teamName} systemRole={systemRole} onLogout={handleLogout} />
 
       <main className="app-main">
         <div className="app-body">
@@ -324,7 +338,6 @@ export default function App() {
                   : t('app.starting')
                 : t('app.checkNow')}
             </button>
-            <button className="btn btn-secondary" onClick={() => setStatsVisible((v) => !v)}>{t('app.statistics')}</button>
             <input className="search-box" type="text" placeholder={t('app.searchPlaceholder')} value={search}
               onChange={(e) => { setSearch(e.target.value); setDashPage(1) }} />
             <div className="add-domain-section">
@@ -336,37 +349,48 @@ export default function App() {
           </div>
 
           {tab === 'dashboard' && (
-            <div className="sort-controls">
-              <label>{t('app.sortLabel')}</label>
-              <select className="sort-select" value={sortOrder} onChange={(e) => setSortOrder(e.target.value)}>
-                <option value="default">{t('app.sortDefault')}</option>
-                <option value="asc">{t('app.sortAsc')}</option>
-                <option value="desc">{t('app.sortDesc')}</option>
-              </select>
-              <label>{t('app.statusLabel')}</label>
-              <select className="sort-select" value={statusFilter} onChange={(e) => { setStatusFilter(e.target.value); setDashPage(1) }}>
-                <option value="all">{t('app.all')}</option>
-                <option value="valid">{t('app.valid')}</option>
-                <option value="warning">{t('app.warning')}</option>
-                <option value="error">{t('app.error')}</option>
-              </select>
-              <label>{t('app.expiryLabel')}</label>
-              <select className="sort-select" value={expiryFilter} onChange={(e) => { setExpiryFilter(e.target.value); setDashPage(1) }}>
-                <option value="all">{t('app.all')}</option>
-                <option value="days7">{t('app.days7')}</option>
-                <option value="days30">{t('app.days30')}</option>
-                <option value="days90">{t('app.days90')}</option>
-                <option value="expired">{t('app.expired')}</option>
-              </select>
+            <div className="stats-section">
+              <div className="stats-collapse-bar">
+                <span className="stats-collapse-label">{t('app.statistics')}</span>
+                <button
+                  className="stats-collapse-btn"
+                  onClick={() => setStatsVisible((v) => !v)}
+                  title={statsVisible ? t('app.collapseStats') : t('app.expandStats')}
+                >
+                  {statsVisible ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
+                </button>
+              </div>
+              <StatsPanel stats={stats} visible={statsVisible}
+                onStatClick={handleStatClick} activeFilter={statsFilter} />
             </div>
           )}
-
-          <StatsPanel stats={stats} visible={statsVisible}
-            onStatClick={handleStatClick} activeFilter={statsFilter} />
 
           <div className="content">
             {tab === 'dashboard' && (
               <div className="tab-content active">
+                <div className="sort-controls">
+                  <label>{t('app.sortLabel')}</label>
+                  <select className="sort-select" value={sortOrder} onChange={(e) => { setSortOrder(e.target.value); setDashPage(1) }}>
+                    <option value="default">{t('app.sortDefault')}</option>
+                    <option value="asc">{t('app.sortAsc')}</option>
+                    <option value="desc">{t('app.sortDesc')}</option>
+                  </select>
+                  <label>{t('app.statusLabel')}</label>
+                  <select className="sort-select" value={statusFilter} onChange={(e) => { setStatusFilter(e.target.value); setDashPage(1) }}>
+                    <option value="all">{t('app.all')}</option>
+                    <option value="valid">{t('app.valid')}</option>
+                    <option value="warning">{t('app.warning')}</option>
+                    <option value="error">{t('app.error')}</option>
+                  </select>
+                  <label>{t('app.expiryLabel')}</label>
+                  <select className="sort-select" value={expiryFilter} onChange={(e) => { setExpiryFilter(e.target.value); setDashPage(1) }}>
+                    <option value="all">{t('app.all')}</option>
+                    <option value="expired">{t('app.expired')}</option>
+                    <option value="days7">{t('app.days7')}</option>
+                    <option value="days30">{t('app.days30')}</option>
+                    <option value="days90">{t('app.days90')}</option>
+                  </select>
+                </div>
                 <div className="dashboard-header">
                   <h2>{t('app.dashTitle')}</h2>
                   {statsFilter && (
@@ -444,6 +468,13 @@ export default function App() {
               </div>
             )}
 
+            {tab === 'stats' && (
+              <div className="tab-content active">
+                <h2>{t('app.statsTitle')}</h2>
+                <StatsView certs={certs} teamStats={teamStats} onRowClick={setModalDomain} />
+              </div>
+            )}
+
             {tab === 'warnings' && (
               <div className="tab-content active">
                 <h2>{t('app.warningsTitle')}</h2>
@@ -485,6 +516,27 @@ export default function App() {
               <div className="tab-content active">
                 <h2>{t('app.adminTitle')}</h2>
                 <AdminPanel onInventoryChange={loadData} systemRole={systemRole} />
+              </div>
+            )}
+
+            {tab === 'system' && (systemRole === 'ADMIN' || systemRole === 'AUDIT') && (
+              <div className="tab-content active">
+                <h2>{t('app.systemTitle')}</h2>
+                <AuditLogViewer />
+              </div>
+            )}
+
+            {tab === 'weakalgo' && (systemRole === 'ADMIN' || systemRole === 'AUDIT') && (
+              <div className="tab-content active">
+                <h2>{t('app.weakAlgoTitle')}</h2>
+                <WeakAlgorithmReport />
+              </div>
+            )}
+
+            {tab === 'health' && systemRole === 'ADMIN' && (
+              <div className="tab-content active">
+                <h2>{t('app.healthTitle')}</h2>
+                <SystemHealth />
               </div>
             )}
           </div>

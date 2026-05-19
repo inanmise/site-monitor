@@ -1,6 +1,8 @@
 package com.certmonitor.service;
 
+import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.net.URI;
@@ -14,15 +16,24 @@ import java.util.concurrent.ConcurrentHashMap;
 @Service
 public class GeoIpService {
 
-    private static final String API_URL = "http://ip-api.com/json/%s?fields=status,country,city,org";
-    private static final Duration TIMEOUT = Duration.ofMillis(500);
+    @Value("${cert.monitor.geoip.api-url:http://ip-api.com/json/%s?fields=status,country,city,org}")
+    private String apiUrl;
 
-    private final HttpClient httpClient = HttpClient.newBuilder()
-            .connectTimeout(TIMEOUT)
-            .build();
+    @Value("${cert.monitor.geoip.timeout-millis:500}")
+    private long timeoutMillis;
 
+    @Value("${cert.monitor.geoip.cache-ttl-ms:3600000}")
+    private long cacheTtlMs;
+
+    private HttpClient httpClient;
     private final ConcurrentHashMap<String, CachedGeo> cache = new ConcurrentHashMap<>();
-    private static final long CACHE_TTL_MS = 3_600_000L;
+
+    @PostConstruct
+    public void init() {
+        httpClient = HttpClient.newBuilder()
+                .connectTimeout(Duration.ofMillis(timeoutMillis))
+                .build();
+    }
 
     public record GeoInfo(String country, String city, String org) {}
 
@@ -32,14 +43,14 @@ public class GeoIpService {
         if (isPrivateIp(ip)) return new GeoInfo("Private", "LAN", "Internal");
 
         CachedGeo cached = cache.get(ip);
-        if (cached != null && (System.currentTimeMillis() - cached.fetchedAt()) < CACHE_TTL_MS) {
+        if (cached != null && (System.currentTimeMillis() - cached.fetchedAt()) < cacheTtlMs) {
             return cached.info();
         }
 
         try {
             HttpRequest req = HttpRequest.newBuilder()
-                    .uri(URI.create(String.format(API_URL, ip)))
-                    .timeout(TIMEOUT)
+                    .uri(URI.create(String.format(apiUrl, ip)))
+                    .timeout(Duration.ofMillis(timeoutMillis))
                     .GET()
                     .build();
             HttpResponse<String> resp = httpClient.send(req, HttpResponse.BodyHandlers.ofString());

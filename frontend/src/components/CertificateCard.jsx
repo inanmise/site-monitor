@@ -40,7 +40,10 @@ export default function CertificateCard({ cert, onClick, hasSilentAlert = false 
   return (
     <div className={cardClass} data-domain={cert.domain} onClick={() => onClick(cert.domain)}>
       <div className="card-header">
-        <div className="card-title">{cert.domain || t('card.unknown')}</div>
+        <div className="card-title">
+          {cert.tier && <span className={`tier-badge tier-badge-${cert.tier}`} style={{ marginRight: 5 }}>T{cert.tier}</span>}
+          {cert.domain || t('card.unknown')}
+        </div>
         <span className={`card-badge ${badgeClass}`}>{badgeText}</span>
       </div>
       {daysNode}
