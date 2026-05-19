@@ -4,9 +4,11 @@ import com.certmonitor.dto.CertificateDto;
 import com.certmonitor.model.CertificateCheck;
 import com.certmonitor.model.CertificateInventory;
 import com.certmonitor.model.LatestCheck;
+import com.certmonitor.model.Team;
 import com.certmonitor.repository.CertificateCheckRepository;
 import com.certmonitor.repository.CertificateInventoryRepository;
 import com.certmonitor.repository.LatestCheckRepository;
+import com.certmonitor.repository.TeamRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -33,6 +35,7 @@ public class CertificateService {
     private final CertificateCheckerService checkerService;
     private final CertificateInventoryRepository inventoryRepo;
     private final ObjectMapper objectMapper;
+    private final TeamRepository teamRepo;
 
     private static final DateTimeFormatter ISO =
             DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
@@ -158,9 +161,23 @@ public class CertificateService {
 
     @Cacheable("cert-latest")
     public List<CertificateDto> getAllLatest() {
+        Map<String, Integer> tierMap = buildTierMap();
         return latestRepo.findAllByOrderByDomainAsc().stream()
-                .map(this::toDto)
+                .map(c -> {
+                    CertificateDto dto = toDto(c);
+                    dto.setTier(tierMap.get(c.getDomain()));
+                    return dto;
+                })
                 .collect(Collectors.toList());
+    }
+
+    private Map<String, Integer> buildTierMap() {
+        return inventoryRepo.findAll().stream()
+                .filter(i -> i.getTier() != null && i.getDomain() != null)
+                .collect(Collectors.toMap(
+                        CertificateInventory::getDomain,
+                        CertificateInventory::getTier,
+                        (a, b) -> a));
     }
 
     /** Returns certs visible to the given team (null = ADMIN, sees all). */
@@ -278,42 +295,109 @@ public class CertificateService {
         return computeStats(all, warnings);
     }
 
+    private Set<String> getUgTeamDomains(Long ugTeamId) {
+        return inventoryRepo.findByUgTeamIdAndActiveTrueOrderByDomainAsc(ugTeamId)
+                .stream().map(CertificateInventory::getDomain)
+                .collect(Collectors.toSet());
+    }
+
+    public Map<String, Object> getTeamBreakdownStats(Long teamId, String teamName) {
+        List<CertificateDto> syAll  = getAllLatestForTeam(teamId);
+        List<CertificateDto> syWarn = getWarningsForTeam(teamId);
+
+        Set<String> ugDomains = getUgTeamDomains(teamId);
+        List<CertificateDto> ugAll  = getAllLatest().stream()
+                .filter(c -> ugDomains.contains(c.getDomain())).toList();
+        List<CertificateDto> ugWarn = getWarnings().stream()
+                .filter(c -> ugDomains.contains(c.getDomain())).toList();
+
+        return Map.of(
+            "mode",      "personal",
+            "team_id",   teamId,
+            "team_name", teamName != null ? teamName : "",
+            "sy_stats",  computeStats(syAll, syWarn),
+            "ug_stats",  computeStats(ugAll, ugWarn)
+        );
+    }
+
+    public Map<String, Object> getAllTeamsBreakdownStats() {
+        List<CertificateInventory> allInv     = inventoryRepo.findByActiveTrueOrderByDomainAsc();
+        List<CertificateDto>       allLatest  = getAllLatest();
+        List<CertificateDto>       allWarnings = getWarnings();
+
+        Map<Long, Set<String>> syMap = new HashMap<>();
+        Map<Long, Set<String>> ugMap = new HashMap<>();
+        for (CertificateInventory inv : allInv) {
+            if (inv.getTeamId()   != null) syMap.computeIfAbsent(inv.getTeamId(),   k -> new HashSet<>()).add(inv.getDomain());
+            if (inv.getUgTeamId() != null) ugMap.computeIfAbsent(inv.getUgTeamId(), k -> new HashSet<>()).add(inv.getDomain());
+        }
+
+        List<Map<String, Object>> result = new ArrayList<>();
+        for (Team team : teamRepo.findAll()) {
+            if (!Boolean.TRUE.equals(team.getActive())) continue;
+            Long tid = team.getId();
+            Set<String> sy = syMap.getOrDefault(tid, Set.of());
+            Set<String> ug = ugMap.getOrDefault(tid, Set.of());
+
+            Map<String, Object> entry = new HashMap<>();
+            entry.put("team_id",   tid);
+            entry.put("team_name", team.getName());
+            entry.put("sy_stats",  computeStats(
+                allLatest.stream().filter(c -> sy.contains(c.getDomain())).toList(),
+                allWarnings.stream().filter(c -> sy.contains(c.getDomain())).toList()
+            ));
+            entry.put("ug_stats",  computeStats(
+                allLatest.stream().filter(c -> ug.contains(c.getDomain())).toList(),
+                allWarnings.stream().filter(c -> ug.contains(c.getDomain())).toList()
+            ));
+            result.add(entry);
+        }
+        return Map.of("mode", "all_teams", "teams", result);
+    }
+
     @Cacheable("cert-stats")
     public Map<String, Object> getStats() {
         return computeStats(getAllLatest(), getWarnings());
     }
 
     private Map<String, Object> computeStats(List<CertificateDto> all, List<CertificateDto> warnings) {
-        long errors = warnings.stream().filter(c -> "error".equals(c.getStatus())).count();
+        Set<String> warnDomainSet = warnings.stream()
+                .map(CertificateDto::getDomain).collect(Collectors.toSet());
+
+        long errors      = warnings.stream().filter(c -> "error".equals(c.getStatus())).count();
         long warningOnly = warnings.size() - errors;
-        long valid = all.size() - warnings.size();
-        long expiring30 = warnings.stream()
+        long valid       = all.size() - warnings.size();
+        long expiring30  = warnings.stream()
                 .filter(c -> c.getDaysRemaining() != null && c.getDaysRemaining() > 0 && c.getDaysRemaining() <= 30)
                 .count();
-        long expired = warnings.stream()
+        long expired     = warnings.stream()
                 .filter(c -> c.getDaysRemaining() != null && c.getDaysRemaining() < 0)
                 .count();
-        long revoked = all.stream()
-                .filter(c -> "REVOKED".equals(c.getRevocationStatus()))
-                .count();
-        long mismatch = all.stream()
-                .filter(c -> "INCOMPLETE".equals(c.getDeploymentStatus()))
-                .count();
-        long chainBroken = all.stream()
-                .filter(c -> "BROKEN".equals(c.getChainStatus()))
-                .count();
+        long revoked     = all.stream().filter(c -> "REVOKED".equals(c.getRevocationStatus())).count();
+        long mismatch    = all.stream().filter(c -> "INCOMPLETE".equals(c.getDeploymentStatus())).count();
+        long chainBroken = all.stream().filter(c -> "BROKEN".equals(c.getChainStatus())).count();
 
-        return Map.of(
-                "total_certificates", all.size(),
-                "valid_count", valid,
-                "warning_count", warningOnly,
-                "error_count", errors,
-                "expiring_in_30_days", expiring30,
-                "expired", expired,
-                "revoked", revoked,
-                "deployment_mismatch", mismatch,
-                "chain_broken", chainBroken
-        );
+        List<String> validDomains   = all.stream()
+                .filter(c -> !warnDomainSet.contains(c.getDomain())).map(CertificateDto::getDomain).toList();
+        List<String> warningDomains = warnings.stream()
+                .filter(c -> !"error".equals(c.getStatus())).map(CertificateDto::getDomain).toList();
+        List<String> errorDomains   = warnings.stream()
+                .filter(c -> "error".equals(c.getStatus())).map(CertificateDto::getDomain).toList();
+
+        Map<String, Object> result = new HashMap<>();
+        result.put("total_certificates",  all.size());
+        result.put("valid_count",          valid);
+        result.put("warning_count",        warningOnly);
+        result.put("error_count",          errors);
+        result.put("expiring_in_30_days",  expiring30);
+        result.put("expired",              expired);
+        result.put("revoked",              revoked);
+        result.put("deployment_mismatch",  mismatch);
+        result.put("chain_broken",         chainBroken);
+        result.put("valid_domains",        validDomains);
+        result.put("warning_domains",      warningDomains);
+        result.put("error_domains",        errorDomains);
+        return result;
     }
 
     /**

@@ -4,7 +4,7 @@ import { useT } from '../../i18n/index.jsx'
 
 const EVENT_TYPES = [
   'LOGIN', 'LOGIN_FAILED', 'LOGOUT',
-  'DOMAIN_ADD', 'DOMAIN_DELETE',
+  'DOMAIN_ADD', 'DOMAIN_DELETE', 'DOMAIN_EDIT',
   'TEAM_CREATE', 'TEAM_DELETE',
   'USER_CREATE', 'USER_DELETE', 'USER_UNLOCK',
 ]
@@ -81,6 +81,16 @@ function StatCard({ label, value, warn, active, onClick }) {
 
 const EMPTY_FILTERS = { actor: '', eventType: '', outcome: '', since: '', until: '', anomalyOnly: false }
 
+function parseDiff(detail) {
+  if (!detail) return null
+  try {
+    const obj = JSON.parse(detail)
+    const entries = Object.entries(obj)
+    if (entries.length === 0) return null
+    return entries
+  } catch { return null }
+}
+
 export default function AuditLogViewer() {
   const t = useT()
   const [stats, setStats]         = useState(null)
@@ -90,6 +100,7 @@ export default function AuditLogViewer() {
   const [loading, setLoading]     = useState(false)
   const [activeCard, setActiveCard] = useState(null)
   const [filters, setFilters]     = useState(EMPTY_FILTERS)
+  const [expandedId, setExpandedId] = useState(null)
 
   const loadStats = useCallback(() => {
     api.admin.getAuditStats().then(r => { if (r?.success) setStats(r.data) })
@@ -216,49 +227,90 @@ export default function AuditLogViewer() {
               <th>{t('audit.colResource')}</th>
               <th>{t('audit.colOutcome')}</th>
               <th>{t('audit.colAnomalies')}</th>
+              <th>{t('audit.colDetail')}</th>
             </tr>
           </thead>
           <tbody>
             {rows.length === 0 && !loading && (
-              <tr><td colSpan={9} className="audit-empty">{t('audit.empty')}</td></tr>
+              <tr><td colSpan={10} className="audit-empty">{t('audit.empty')}</td></tr>
             )}
-            {rows.map(row => (
-              <tr key={row.id} className={row.anomaly_flags ? 'audit-row-anomaly' : ''}>
-                <td className="audit-cell-time">{formatDate(row.event_time)}</td>
-                <td>
-                  <span className={`audit-event-badge ${eventClass(row.event_type)}`}>
-                    {row.event_type}
-                  </span>
-                </td>
-                <td>
-                  <div>{row.actor || '—'}</div>
-                  {row.actor_role && <div className="audit-sub">{row.actor_role}</div>}
-                </td>
-                <td className="audit-mono">{row.ip_address || '—'}</td>
-                <td>
-                  {row.user_agent
-                    ? <span title={row.user_agent}>{parseBrowser(row.user_agent)}</span>
-                    : '—'}
-                </td>
-                <td>
-                  {row.ip_country && (
-                    <div>{row.ip_country}{row.ip_city ? `, ${row.ip_city}` : ''}</div>
-                  )}
-                  {row.ip_org && <div className="audit-sub">{row.ip_org}</div>}
-                </td>
-                <td>
-                  {row.resource_type && <span className="audit-sub">{row.resource_type}: </span>}
-                  {row.resource_id || '—'}
-                </td>
-                <td>
-                  <span className={`audit-outcome-badge ${row.outcome?.toLowerCase()}`}>
-                    {row.outcome || '—'}
-                  </span>
-                  {row.failure_reason && <div className="audit-sub">{row.failure_reason}</div>}
-                </td>
-                <td><AnomalyChips flags={row.anomaly_flags} /></td>
-              </tr>
-            ))}
+            {rows.map(row => {
+              const diff = parseDiff(row.detail)
+              const isExpanded = expandedId === row.id
+              return [
+                <tr key={row.id} className={row.anomaly_flags ? 'audit-row-anomaly' : ''}>
+                  <td className="audit-cell-time">{formatDate(row.event_time)}</td>
+                  <td>
+                    <span className={`audit-event-badge ${eventClass(row.event_type)}`}>
+                      {row.event_type}
+                    </span>
+                  </td>
+                  <td>
+                    <div>{row.actor || '—'}</div>
+                    {row.actor_role && <div className="audit-sub">{row.actor_role}</div>}
+                  </td>
+                  <td className="audit-mono">{row.ip_address || '—'}</td>
+                  <td>
+                    {row.user_agent
+                      ? <span title={row.user_agent}>{parseBrowser(row.user_agent)}</span>
+                      : '—'}
+                  </td>
+                  <td>
+                    {row.ip_country && (
+                      <div>{row.ip_country}{row.ip_city ? `, ${row.ip_city}` : ''}</div>
+                    )}
+                    {row.ip_org && <div className="audit-sub">{row.ip_org}</div>}
+                  </td>
+                  <td>
+                    {row.resource_type && <span className="audit-sub">{row.resource_type}: </span>}
+                    {row.resource_id || '—'}
+                  </td>
+                  <td>
+                    <span className={`audit-outcome-badge ${row.outcome?.toLowerCase()}`}>
+                      {row.outcome || '—'}
+                    </span>
+                    {row.failure_reason && <div className="audit-sub">{row.failure_reason}</div>}
+                  </td>
+                  <td><AnomalyChips flags={row.anomaly_flags} /></td>
+                  <td>
+                    {diff ? (
+                      <button
+                        className={`audit-detail-toggle${isExpanded ? ' active' : ''}`}
+                        onClick={() => setExpandedId(isExpanded ? null : row.id)}
+                        title={t('audit.showChanges')}
+                      >
+                        {diff.length} {t('audit.changesCount')}
+                        <span className="audit-detail-arrow">{isExpanded ? '▲' : '▼'}</span>
+                      </button>
+                    ) : '—'}
+                  </td>
+                </tr>,
+                isExpanded && diff && (
+                  <tr key={`${row.id}-detail`} className="audit-detail-tr">
+                    <td colSpan={10}>
+                      <table className="audit-diff-table">
+                        <thead>
+                          <tr>
+                            <th>{t('audit.diffField')}</th>
+                            <th>{t('audit.diffFrom')}</th>
+                            <th>{t('audit.diffTo')}</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {diff.map(([field, change]) => (
+                            <tr key={field}>
+                              <td className="audit-diff-field">{field}</td>
+                              <td className="audit-diff-from">{String(change.from ?? '—')}</td>
+                              <td className="audit-diff-to">{String(change.to ?? '—')}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </td>
+                  </tr>
+                )
+              ]
+            })}
           </tbody>
         </table>
       </div>
@@ -284,5 +336,6 @@ function eventClass(et) {
   if (et === 'LOGOUT')         return 'ev-logout'
   if (et.endsWith('_DELETE'))  return 'ev-delete'
   if (et.endsWith('_CREATE') || et.endsWith('_ADD')) return 'ev-create'
+  if (et.endsWith('_EDIT') || et.endsWith('_UPDATE')) return 'ev-edit'
   return 'ev-other'
 }

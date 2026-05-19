@@ -27,6 +27,8 @@ import java.time.temporal.ChronoUnit;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
 
@@ -53,11 +55,25 @@ public class SchedulerService {
     private String adminPassword;
 
     /** Stale threshold: domain not checked within this many minutes is considered stale. */
-    private static final int STALE_MINUTES = 65;
+    @Value("${cert.monitor.scheduler.stale-minutes:65}")
+    private int staleMinutes;
 
     /** Lock TTL: must be > the longest possible check run but short enough that a crashed
-     *  instance doesn't block the cluster for too long. 10 minutes covers even large inventories. */
-    private static final int LOCK_TTL_MINUTES = 10;
+     *  instance doesn't block the cluster for too long. */
+    @Value("${cert.monitor.scheduler.lock-ttl-minutes:10}")
+    private int lockTtlMinutes;
+
+    @Value("${cert.monitor.alert.default-warning-days:30}")
+    private int defaultWarningDays;
+
+    @Value("${cert.monitor.alert.default-high-days:15}")
+    private int defaultHighDays;
+
+    @Value("${cert.monitor.alert.default-critical-days:7}")
+    private int defaultCriticalDays;
+
+    @Value("${cert.monitor.alert.default-realert-hours:24}")
+    private int defaultReAlertHours;
 
     private static final DateTimeFormatter ISO =
             DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
@@ -72,6 +88,12 @@ public class SchedulerService {
     private final AtomicBoolean running = new AtomicBoolean(false);
     private final AtomicReference<LocalDateTime> lastRun = new AtomicReference<>();
     private final AtomicReference<String> currentRunId = new AtomicReference<>("");
+
+    // Scan statistics — updated at end of each successful scan
+    private final AtomicLong    lastRunDurationMs = new AtomicLong(0);
+    private final AtomicInteger lastRunTotal      = new AtomicInteger(0);
+    private final AtomicInteger lastRunWarnings   = new AtomicInteger(0);
+    private final AtomicInteger lastRunErrors     = new AtomicInteger(0);
 
     @EventListener(ApplicationReadyEvent.class)
     public void runOnStartup() {
@@ -103,7 +125,7 @@ public class SchedulerService {
         }
     }
 
-    /** Idempotent DDL patches for columns that ddl-auto=update may miss on existing SQLite tables. */
+    /** Idempotent DDL patches for columns that ddl-auto=update may miss on existing tables. */
     private void applySchemaPatches() {
         patch("ALTER TABLE certificate_checks ADD COLUMN run_id TEXT");
         patch("ALTER TABLE alert_events ADD COLUMN resolved_by TEXT");
@@ -150,20 +172,18 @@ public class SchedulerService {
         }
     }
 
-    /** Full sweep: runs at the top of every hour. */
-    @Scheduled(cron = "0 0 * * * *")
+    /** Full sweep: runs at the top of every hour (configurable via cert.monitor.scheduler.cron). */
+    @Scheduled(cron = "${cert.monitor.scheduler.cron:0 0 * * * *}")
     public void scheduledHourlyCheck() {
         log.info("Hourly scheduled check triggered [instance={}]", INSTANCE_ID);
         runCheck();
     }
 
-    /**
-     * Stale sweep: runs every 5 minutes.
-     * Checks only domains that have not been checked in the last {@value #STALE_MINUTES} minutes.
-     */
-    @Scheduled(fixedDelay = 300_000, initialDelay = 300_000)
+    /** Stale sweep: checks domains not checked within stale-minutes (configurable). */
+    @Scheduled(fixedDelayString = "${cert.monitor.scheduler.stale-check-interval-ms:300000}",
+               initialDelayString = "${cert.monitor.scheduler.stale-check-interval-ms:300000}")
     public void checkStaleInventory() {
-        String cutoff = ISO.format(Instant.now().minus(STALE_MINUTES, ChronoUnit.MINUTES));
+        String cutoff = ISO.format(Instant.now().minus(staleMinutes, ChronoUnit.MINUTES));
         Set<String> freshDomains = latestCheckRepo.findByCheckedAtGreaterThanEqual(cutoff).stream()
                 .map(lc -> lc.getDomain())
                 .collect(Collectors.toSet());
@@ -177,7 +197,7 @@ public class SchedulerService {
             log.debug("Stale sweep: all active domains are fresh");
             return;
         }
-        log.info("Stale sweep: {} domain(s) not checked in {} min", staleDomains.size(), STALE_MINUTES);
+        log.info("Stale sweep: {} domain(s) not checked in {} min", staleDomains.size(), staleMinutes);
         runCheckForDomains(staleDomains);
     }
 
@@ -228,7 +248,7 @@ public class SchedulerService {
         }
 
         // 2. Distributed DB lock (HA: prevents duplicate across multiple instances)
-        if (!tryAcquireSchedulerLock("cert-check", LOCK_TTL_MINUTES)) {
+        if (!tryAcquireSchedulerLock("cert-check", lockTtlMinutes)) {
             running.set(false);
             log.info("Scheduler lock held by another instance [{}], skipping", INSTANCE_ID);
             return;
@@ -239,6 +259,7 @@ public class SchedulerService {
 
         String runId = UUID.randomUUID().toString().replace("-", "").substring(0, 12);
         currentRunId.set(runId);
+        long startMs = System.currentTimeMillis();
         log.info("Certificate check started — runId={}, {} domain(s) [instance={}]",
                 runId, domains.size(), INSTANCE_ID);
 
@@ -260,6 +281,10 @@ public class SchedulerService {
                     runId, results.size(), warnings, errors, INSTANCE_ID);
 
             lastRun.set(LocalDateTime.now());
+            lastRunDurationMs.set(System.currentTimeMillis() - startMs);
+            lastRunTotal.set(results.size());
+            lastRunErrors.set((int) errors);
+            lastRunWarnings.set((int) warnings);
 
             if (warnings > 0) {
                 emailService.sendWarningEmailIfEnabled(certService.getWarnings());
@@ -388,6 +413,19 @@ public class SchedulerService {
         memMap.put("used_pct", maxMem > 0 ? (int)(usedMem * 100L / maxMem) : 0);
         h.put("memory", memMap);
 
+        // Scan statistics
+        LocalDateTime lr = lastRun.get();
+        boolean scanAlarm = !running.get() && lr != null
+                && ChronoUnit.HOURS.between(lr, LocalDateTime.now()) >= 2;
+        Map<String, Object> scanMap = new LinkedHashMap<>();
+        scanMap.put("last_run",    lr != null ? lr.toString() : null);
+        scanMap.put("duration_ms", lastRunDurationMs.get());
+        scanMap.put("total",       lastRunTotal.get());
+        scanMap.put("warnings",    lastRunWarnings.get());
+        scanMap.put("errors",      lastRunErrors.get());
+        h.put("scan",       scanMap);
+        h.put("scan_alarm", scanAlarm);
+
         h.put("timestamp", ISO.format(Instant.now()));
         return h;
     }
@@ -418,13 +456,14 @@ public class SchedulerService {
         if (thresholdRepo.count() == 0) {
             AlertThreshold t = new AlertThreshold();
             t.setName("default");
-            t.setWarningDays(30);
-            t.setHighDays(15);
-            t.setCriticalDays(7);
-            t.setReAlertIntervalHours(24);
+            t.setWarningDays(defaultWarningDays);
+            t.setHighDays(defaultHighDays);
+            t.setCriticalDays(defaultCriticalDays);
+            t.setReAlertIntervalHours(defaultReAlertHours);
             t.setActive(true);
             thresholdRepo.save(t);
-            log.info("Default alert threshold created");
+            log.info("Default alert threshold created (warning={}d, high={}d, critical={}d, reAlert={}h)",
+                    defaultWarningDays, defaultHighDays, defaultCriticalDays, defaultReAlertHours);
         }
     }
 

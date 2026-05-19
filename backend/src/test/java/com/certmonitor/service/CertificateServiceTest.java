@@ -6,6 +6,7 @@ import com.certmonitor.model.LatestCheck;
 import com.certmonitor.repository.CertificateCheckRepository;
 import com.certmonitor.repository.CertificateInventoryRepository;
 import com.certmonitor.repository.LatestCheckRepository;
+import com.certmonitor.repository.TeamRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -31,13 +32,14 @@ class CertificateServiceTest {
     @Mock LatestCheckRepository latestRepo;
     @Mock CertificateCheckerService checkerService;
     @Mock CertificateInventoryRepository inventoryRepo;
+    @Mock TeamRepository teamRepo;
 
     private CertificateService service;
 
     @BeforeEach
     void setUp() {
         service = new CertificateService(checkRepo, latestRepo, checkerService,
-                inventoryRepo, new ObjectMapper());
+                inventoryRepo, new ObjectMapper(), teamRepo);
         when(checkerService.serializeSan(any())).thenReturn("[]");
         when(checkerService.deserializeSan(any())).thenReturn(Collections.emptyList());
     }

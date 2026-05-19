@@ -84,6 +84,9 @@ public class CertificateDto {
     @JsonProperty("crl_url")
     private String crlUrl;
 
+    /** Criticality tier from inventory (1–4, null = unclassified) */
+    private Integer tier;
+
     public static CertificateDto from(LatestCheck c, List<String> sanList,
                                       List<String> keyUsageList, List<String> extKeyUsageList) {
         CertificateDto dto = new CertificateDto();

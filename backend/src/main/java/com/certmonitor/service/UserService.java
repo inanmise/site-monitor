@@ -7,6 +7,7 @@ import com.certmonitor.repository.CertificateInventoryRepository;
 import com.certmonitor.repository.TeamRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -32,8 +33,22 @@ public class UserService {
     private static final DateTimeFormatter ISO =
             DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
 
-    /** Lockout durations per offense level (0-indexed): 30s, 2min, 10min, 30min, then permanent. */
-    private static final long[] LOCKOUT_SECS = {30, 120, 600, 1800};
+    /** Lockout durations (seconds) per offense level — injected from config. */
+    @Value("${cert.monitor.lockout.durations-seconds:30,120,600,1800}")
+    private List<Long> lockoutDurationsSecs;
+
+    /** Fresh failures required to trigger each lockout level — injected from config. */
+    @Value("${cert.monitor.lockout.failures-needed:5,3,2,1}")
+    private List<Integer> lockoutFailuresNeeded;
+
+    @Value("${cert.monitor.password.min-length:4}")
+    private int passwordMinLength;
+
+    /** Returns how many failures are needed to trigger the next lockout for this account. */
+    public int failuresNeededForLevel(Integer failedBlockCount) {
+        int level = (failedBlockCount == null ? 0 : failedBlockCount);
+        return level < lockoutFailuresNeeded.size() ? lockoutFailuresNeeded.get(level) : 1;
+    }
 
     public record LockoutStatus(boolean permanent, long secondsRemaining) {
         public boolean isBlocked() { return permanent || secondsRemaining > 0; }
@@ -160,7 +175,7 @@ public class UserService {
     public AppUser createUser(String username, String rawPassword, String displayName,
                                String email, String employeeId, String systemRole, Long teamId) {
         if (username == null || username.isBlank()) throw new IllegalArgumentException("Username cannot be blank");
-        if (rawPassword == null || rawPassword.length() < 4) throw new IllegalArgumentException("Password too short");
+        if (rawPassword == null || rawPassword.length() < passwordMinLength) throw new IllegalArgumentException("Password too short (min " + passwordMinLength + " chars)");
         if (email == null || email.isBlank()) throw new IllegalArgumentException("Email is required");
         if (teamId == null) throw new IllegalArgumentException("Team is required");
         if (userRepo.existsByUsername(username.trim())) throw new IllegalArgumentException("Username already exists: " + username);
@@ -196,7 +211,7 @@ public class UserService {
 
     @Transactional
     public void changePassword(Long id, String rawPassword) {
-        if (rawPassword == null || rawPassword.length() < 4) throw new IllegalArgumentException("Password too short");
+        if (rawPassword == null || rawPassword.length() < passwordMinLength) throw new IllegalArgumentException("Password too short (min " + passwordMinLength + " chars)");
         AppUser user = userRepo.findById(id).orElseThrow(() -> new NoSuchElementException("User not found: " + id));
         user.setPasswordHash(PASSWORD_ENCODER.encode(rawPassword));
         user.setUpdatedAt(now());
@@ -240,17 +255,20 @@ public class UserService {
             int offense = (u.getFailedBlockCount() == null ? 0 : u.getFailedBlockCount()) + 1;
             u.setFailedBlockCount(offense);
             u.setUpdatedAt(now());
-            if (offense >= 5) {
+            if (offense > lockoutDurationsSecs.size()) {
                 u.setPermanentLock(true);
                 u.setLockoutUntil(null);
+                u.setLastLockoutAt(now());
                 userRepo.save(u);
                 log.warn("Account PERMANENTLY locked: user='{}'", username);
                 return new LockoutStatus(true, 0);
             }
-            long secs = LOCKOUT_SECS[offense - 1];
+            long secs = lockoutDurationsSecs.get(offense - 1);
+            String lockedAt = ISO.format(Instant.now());
+            u.setLastLockoutAt(lockedAt);
             u.setLockoutUntil(ISO.format(Instant.now().plusSeconds(secs)));
             userRepo.save(u);
-            log.warn("Account locked offense={}/{} for {}s: user='{}'", offense, LOCKOUT_SECS.length, secs, username);
+            log.warn("Account locked level={}/{} for {}s: user='{}'", offense, lockoutDurationsSecs.size(), secs, username);
             return new LockoutStatus(false, secs);
         }).orElse(new LockoutStatus(false, 0));
     }
@@ -262,6 +280,7 @@ public class UserService {
         u.setPermanentLock(false);
         u.setLockoutUntil(null);
         u.setFailedBlockCount(0);
+        u.setLastLockoutAt(null);
         u.setUpdatedAt(now());
         userRepo.save(u);
         log.info("Account unlocked by admin: user='{}'", u.getUsername());
@@ -272,9 +291,11 @@ public class UserService {
     public void clearLockoutOnSuccess(String username) {
         userRepo.findByUsername(username).ifPresent(u -> {
             boolean changed = u.getLockoutUntil() != null
-                    || (u.getFailedBlockCount() != null && u.getFailedBlockCount() > 0);
+                    || (u.getFailedBlockCount() != null && u.getFailedBlockCount() > 0)
+                    || u.getLastLockoutAt() != null;
             u.setLockoutUntil(null);
             u.setFailedBlockCount(0);
+            u.setLastLockoutAt(null);
             if (changed) { u.setUpdatedAt(now()); userRepo.save(u); }
         });
     }

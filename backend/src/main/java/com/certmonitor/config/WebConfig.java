@@ -29,6 +29,18 @@ public class WebConfig implements WebMvcConfigurer {
     @Value("${cert.monitor.cors.allowed-origins:http://localhost:5173,http://localhost:3000}")
     private String allowedOrigins;
 
+    @Value("${cert.monitor.cors.max-age-seconds:3600}")
+    private long corsMaxAge;
+
+    @Value("${cert.monitor.executor.core-size:20}")
+    private int executorCoreSize;
+
+    @Value("${cert.monitor.executor.max-size:50}")
+    private int executorMaxSize;
+
+    @Value("${cert.monitor.executor.queue-capacity:100}")
+    private int executorQueueCapacity;
+
     @Override
     public void addCorsMappings(CorsRegistry registry) {
         String[] origins = allowedOrigins.isBlank()
@@ -41,7 +53,7 @@ public class WebConfig implements WebMvcConfigurer {
                     .allowedMethods("GET", "POST", "PUT", "DELETE", "OPTIONS")
                     .allowedHeaders("Content-Type", "X-Requested-With")
                     .allowCredentials(true)
-                    .maxAge(3600);
+                    .maxAge(corsMaxAge);
         }
     }
 
@@ -84,9 +96,9 @@ public class WebConfig implements WebMvcConfigurer {
     @Bean(name = "certCheckExecutor")
     public Executor certCheckExecutor() {
         ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
-        executor.setCorePoolSize(20);
-        executor.setMaxPoolSize(50);
-        executor.setQueueCapacity(100);
+        executor.setCorePoolSize(executorCoreSize);
+        executor.setMaxPoolSize(executorMaxSize);
+        executor.setQueueCapacity(executorQueueCapacity);
         executor.setThreadNamePrefix("cert-check-");
         executor.initialize();
         return executor;

@@ -4,21 +4,41 @@ import { useTheme } from '../i18n/theme.jsx'
 import {
   ShieldCheck, LayoutDashboard, AlertTriangle, FileText,
   RefreshCw, ClipboardList, Settings, User, Globe, LogOut,
-  Sun, Moon, ChevronLeft, ChevronRight,
+  Sun, Moon, ChevronLeft, ChevronRight, Server, Activity, ShieldAlert,
 } from 'lucide-react'
 
 export default function Nav({ activeTab, onTabChange, username, teamName, systemRole, onLogout }) {
   const t = useT()
   const { toggle } = useLanguage()
   const { theme, toggle: toggleTheme } = useTheme()
+  const isAdmin    = systemRole === 'ADMIN'
+  const isAudit    = systemRole === 'AUDIT'
 
-  const TABS = [
-    { id: 'dashboard', Icon: LayoutDashboard, labelKey: 'nav.dashboard' },
-    { id: 'warnings',  Icon: AlertTriangle,   labelKey: 'nav.warnings' },
-    { id: 'all',       Icon: FileText,        labelKey: 'nav.all' },
-    { id: 'renewal',   Icon: RefreshCw,       labelKey: 'nav.renewal' },
-    { id: 'activity',  Icon: ClipboardList,   labelKey: 'nav.activity' },
-    { id: 'admin',     Icon: Settings,        labelKey: 'nav.admin' },
+  const GROUPS = [
+    {
+      labelKey: null,
+      tabs: [
+        { id: 'dashboard', Icon: LayoutDashboard, labelKey: 'nav.dashboard', show: true },
+        { id: 'warnings',  Icon: AlertTriangle,   labelKey: 'nav.warnings',  show: true },
+        { id: 'all',       Icon: FileText,        labelKey: 'nav.all',       show: true },
+        { id: 'renewal',   Icon: RefreshCw,       labelKey: 'nav.renewal',   show: true },
+      ],
+    },
+    {
+      labelKey: 'nav.groupLogs',
+      tabs: [
+        { id: 'activity', Icon: ClipboardList, labelKey: 'nav.activity', show: true },
+      ],
+    },
+    {
+      labelKey: 'nav.groupAdmin',
+      tabs: [
+        { id: 'admin',   Icon: Settings,    labelKey: 'nav.admin',   show: true               },
+        { id: 'system',  Icon: Server,      labelKey: 'nav.system',  show: isAdmin || isAudit },
+        { id: 'weakalgo',Icon: ShieldAlert, labelKey: 'nav.weakAlgo',show: isAdmin || isAudit },
+        { id: 'health',  Icon: Activity,    labelKey: 'nav.health',  show: isAdmin            },
+      ],
+    },
   ]
 
   const [open, setOpen] = useState(() =>
@@ -52,17 +72,31 @@ export default function Nav({ activeTab, onTabChange, username, teamName, system
 
       {/* ── Nav items ── */}
       <nav className="sb-nav">
-        {TABS.map(({ id, Icon, labelKey }) => (
-          <button
-            key={id}
-            className={`sb-item${activeTab === id ? ' sb-active' : ''}`}
-            onClick={() => onTabChange(id)}
-            title={!open ? t(labelKey) : undefined}
-          >
-            <span className="sb-icon"><Icon size={18} /></span>
-            {open && <span className="sb-label">{t(labelKey)}</span>}
-          </button>
-        ))}
+        {GROUPS.map((group, gi) => {
+          const visibleTabs = group.tabs.filter((tab) => tab.show)
+          if (visibleTabs.length === 0) return null
+          return (
+            <div key={gi} className="sb-group">
+              {group.labelKey && open && (
+                <div className="sb-group-label">{t(group.labelKey)}</div>
+              )}
+              {group.labelKey && !open && gi > 0 && (
+                <div className="sb-group-rule" />
+              )}
+              {visibleTabs.map(({ id, Icon, labelKey }) => (
+                <button
+                  key={id}
+                  className={`sb-item${activeTab === id ? ' sb-active' : ''}`}
+                  onClick={() => onTabChange(id)}
+                  title={!open ? t(labelKey) : undefined}
+                >
+                  <span className="sb-icon"><Icon size={18} /></span>
+                  {open && <span className="sb-label">{t(labelKey)}</span>}
+                </button>
+              ))}
+            </div>
+          )
+        })}
       </nav>
 
       {/* ── Footer: user, theme toggle, lang toggle, logout ── */}

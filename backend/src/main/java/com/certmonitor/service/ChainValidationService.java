@@ -1,5 +1,6 @@
 package com.certmonitor.service;
 
+import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
 import org.bouncycastle.asn1.ASN1OctetString;
 import org.bouncycastle.asn1.ASN1Primitive;
@@ -8,6 +9,7 @@ import org.bouncycastle.cert.jcajce.JcaX509CertificateHolder;
 import org.bouncycastle.cert.ocsp.*;
 import org.bouncycastle.operator.DigestCalculatorProvider;
 import org.bouncycastle.operator.jcajce.JcaDigestCalculatorProviderBuilder;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.io.InputStream;
@@ -35,12 +37,21 @@ public class ChainValidationService {
     private static final String OID_AIA = "1.3.6.1.5.5.7.1.1";
     private static final String OID_CRL_DP = "2.5.29.31";
 
-    // Bounded, TTL-based cache: prevents unbounded growth and avoids holding a
-    // ConcurrentHashMap bucket lock during slow CRL downloads (computeIfAbsent blocks on I/O).
-    private final Cache<String, X509CRL> crlCache = Caffeine.newBuilder()
-            .maximumSize(200)
-            .expireAfterWrite(1, TimeUnit.HOURS)
-            .build();
+    @Value("${cert.monitor.cache.crl-max-size:200}")
+    private int crlCacheMaxSize;
+
+    @Value("${cert.monitor.cache.crl-ttl-hours:1}")
+    private int crlCacheTtlHours;
+
+    private Cache<String, X509CRL> crlCache;
+
+    @PostConstruct
+    public void init() {
+        crlCache = Caffeine.newBuilder()
+                .maximumSize(crlCacheMaxSize)
+                .expireAfterWrite(crlCacheTtlHours, TimeUnit.HOURS)
+                .build();
+    }
 
     public String calculateFingerprint(X509Certificate cert) {
         try {

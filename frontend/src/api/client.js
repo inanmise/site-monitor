@@ -1,4 +1,4 @@
-const BASE = '/api'
+const BASE = import.meta.env.VITE_API_BASE ?? '/api'
 
 async function request(path, options = {}) {
   const res = await fetch(`${BASE}${path}`, {
@@ -41,6 +41,8 @@ export const api = {
   checkDomain: (domain) => request(`/check/${encodeURIComponent(domain)}`),
 
   getStats: () => request('/stats'),
+
+  getTeamStats: () => request('/stats/teams'),
 
   runScheduler: () => request('/scheduler/run', { method: 'POST' }),
 
@@ -113,6 +115,9 @@ export const api = {
       method: 'DELETE',
     }),
 
+    // Weak algorithm report
+    getWeakAlgorithms: () => request('/admin/audit/weak-algorithms'),
+
     // Audit log
     getAuditLogs: (params) => {
       const q = new URLSearchParams(
@@ -129,6 +134,8 @@ export const api = {
     forceReleaseLock: () => request('/admin/system/scheduler-lock', { method: 'DELETE' }),
     getMetrics: () => request('/admin/system/metrics'),
     getHttpMetrics: () => request('/admin/system/http-metrics'),
+    getDbStats: () => request('/admin/system/db-stats'),
+    getSmtpLogs: () => request('/admin/system/smtp-logs'),
   },
 }
 

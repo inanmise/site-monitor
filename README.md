@@ -22,7 +22,7 @@ Kurumunuzdaki SSL/TLS sertifikalarını merkezi olarak izleyen, uyarı veren ve 
 | Katman | Teknoloji |
 |--------|-----------|
 | Backend | Java 21, Spring Boot 3.3.6, Spring Data JPA |
-| Veritabanı | SQLite (geliştirme) / PostgreSQL (üretim) |
+| Veritabanı | PostgreSQL |
 | Sertifika | BouncyCastle (OCSP, CRL, zincir doğrulama) |
 | Frontend | React 18.3.1, Vite 5, lucide-react |
 | Konteyner | Docker (çok aşamalı), Docker Compose |
@@ -283,7 +283,7 @@ curl -u user:changeme-local-dev http://localhost:8080/api/certificates
 
 ## Veritabanı
 
-Geliştirmede SQLite (`data/certificates.db`) otomatik oluşturulur.
+PostgreSQL kullanılır. Bağlantı `DB_URL` ortam değişkeniyle yapılandırılır (varsayılan: `jdbc:postgresql://localhost:5432/certmonitor`).
 
 **Tablolar:**
 

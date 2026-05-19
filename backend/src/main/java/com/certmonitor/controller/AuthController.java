@@ -38,6 +38,9 @@ public class AuthController {
     @Value("${cert.monitor.login.block-seconds:30}")
     private int blockSeconds;
 
+    @Value("${cert.monitor.remember.ttl-seconds:604800}")
+    private int rememberTtlSeconds;
+
     private final AuditService auditService;
     private final RememberMeService rememberMeService;
     private final UserService userService;
@@ -107,12 +110,12 @@ public class AuthController {
                     username, user.getSystemRole(), user.getTeamId(), rememberMe, clientIp);
             auditService.recordLogin(username, user.getId(), user.getTeamId(),
                     user.getSystemRole(), clientIp,
-                    request.getHeader("User-Agent"), newSession.getId(), true, null);
+                    request.getHeader("User-Agent"), newSession.getId(), true, null, null, 5);
 
             if (rememberMe) {
                 String token = rememberMeService.generateToken(username);
                 Cookie cookie = new Cookie(RememberMeService.COOKIE_NAME, token);
-                cookie.setMaxAge(7 * 24 * 3600);
+                cookie.setMaxAge(rememberTtlSeconds);
                 cookie.setHttpOnly(true);
                 cookie.setSecure(cookieSecure);
                 cookie.setPath("/");
@@ -124,9 +127,21 @@ public class AuthController {
         // 3. Failed — record attempt, check for BRUTE_FORCE, apply progressive lockout
         recordFailedAttempt(clientIp);
         log.warn("Failed login attempt: IP={}, username={}", clientIp, username);
+        // Look up user's lockout context: window start (countSince) and required failures for this level
+        String lastLockoutAt = null;
+        int failuresNeeded = 5;
+        if (!username.isBlank()) {
+            var failedUser = userService.findByUsername(username);
+            if (failedUser.isPresent()) {
+                var u = failedUser.get();
+                lastLockoutAt = u.getLastLockoutAt();
+                failuresNeeded = userService.failuresNeededForLevel(u.getFailedBlockCount());
+            }
+        }
         com.certmonitor.model.AuditLog logged = auditService.recordLogin(
                 username, null, null, null, clientIp,
-                request.getHeader("User-Agent"), null, false, "Invalid credentials");
+                request.getHeader("User-Agent"), null, false, "Invalid credentials",
+                lastLockoutAt, failuresNeeded);
 
         if (!username.isBlank() && logged.getAnomalyFlags() != null
                 && logged.getAnomalyFlags().contains("BRUTE_FORCE")) {
