@@ -23,6 +23,7 @@ export default function Nav({ activeTab, onTabChange, username, teamName, system
         { id: 'warnings',  Icon: AlertTriangle,   labelKey: 'nav.warnings',  show: true },
         { id: 'all',       Icon: FileText,        labelKey: 'nav.all',       show: true },
         { id: 'renewal',   Icon: RefreshCw,       labelKey: 'nav.renewal',   show: true },
+        { id: 'domains',   Icon: Globe,           labelKey: 'nav.domains',   show: true },
       ],
     },
     {

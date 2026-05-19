@@ -88,6 +88,7 @@ public class SchedulerService {
     private final AtomicBoolean running = new AtomicBoolean(false);
     private final AtomicReference<LocalDateTime> lastRun = new AtomicReference<>();
     private final AtomicReference<String> currentRunId = new AtomicReference<>("");
+    private final AtomicReference<String> lastRunId    = new AtomicReference<>("");
 
     // Scan statistics — updated at end of each successful scan
     private final AtomicLong    lastRunDurationMs = new AtomicLong(0);
@@ -293,6 +294,7 @@ public class SchedulerService {
 
         } finally {
             running.set(false);
+            lastRunId.set(currentRunId.get());
             currentRunId.set("");
             releaseSchedulerLock("cert-check");
         }
@@ -347,6 +349,7 @@ public class SchedulerService {
         m.put("schedule",       "Hourly (top of every hour) + stale sweep every 5 minutes");
         m.put("running",        running.get());
         m.put("current_run_id", currentRunId.get());
+        m.put("last_run_id",    lastRunId.get());
         m.put("instance_id",    INSTANCE_ID);
         return m;
     }
@@ -359,6 +362,7 @@ public class SchedulerService {
         Map<String, Object> schedulerMap = new LinkedHashMap<>();
         schedulerMap.put("running",        running.get());
         schedulerMap.put("current_run_id", currentRunId.get());
+        schedulerMap.put("last_run_id",    lastRunId.get());
         schedulerMap.put("last_run",       lastRun.get() != null ? lastRun.get().toString() : null);
         schedulerMap.put("next_run",       LocalDateTime.now(ZoneOffset.UTC)
                                                .truncatedTo(ChronoUnit.HOURS)
