@@ -12,6 +12,7 @@ import CertificatesTable from './components/CertificatesTable'
 import CertificateModal from './components/CertificateModal'
 import RenewalAdvice from './components/RenewalAdvice'
 import AdminPanel from './components/admin/AdminPanel'
+import InventoryManager from './components/admin/InventoryManager'
 import AuditLogViewer from './components/admin/AuditLogViewer'
 import WeakAlgorithmReport from './components/admin/WeakAlgorithmReport'
 import SystemHealth from './components/admin/SystemHealth'
@@ -512,10 +513,17 @@ export default function App() {
               </div>
             )}
 
+            {tab === 'domains' && (
+              <div className="tab-content active">
+                <h2>{t('app.domainsTitle')}</h2>
+                <InventoryManager onInventoryChange={loadData} systemRole={systemRole} />
+              </div>
+            )}
+
             {tab === 'admin' && (
               <div className="tab-content active">
                 <h2>{t('app.adminTitle')}</h2>
-                <AdminPanel onInventoryChange={loadData} systemRole={systemRole} />
+                <AdminPanel systemRole={systemRole} />
               </div>
             )}
 

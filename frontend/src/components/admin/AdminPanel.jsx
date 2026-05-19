@@ -1,7 +1,6 @@
 import { useState, useEffect } from 'react'
 import { api } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
-import InventoryManager from './InventoryManager'
 import AlertThresholds from './AlertThresholds'
 import EscalationContacts from './EscalationContacts'
 import AlertHistory from './AlertHistory'
@@ -12,8 +11,7 @@ const TAB_GROUPS = [
   {
     groupKey: 'admin.groupCert',
     tabs: [
-      { id: 'inventory',  labelKey: 'admin.tabInventory',  adminOnly: false },
-      { id: 'thresholds', labelKey: 'admin.tabThresholds', adminOnly: true  },
+      { id: 'thresholds', labelKey: 'admin.tabThresholds', adminOnly: true },
     ],
   },
   {
@@ -32,10 +30,10 @@ const TAB_GROUPS = [
   },
 ]
 
-export default function AdminPanel({ onInventoryChange, systemRole }) {
+export default function AdminPanel({ systemRole }) {
   const t = useT()
   const isAdmin = systemRole === 'ADMIN'
-  const [activeTab, setActiveTab] = useState('inventory')
+  const [activeTab, setActiveTab] = useState('thresholds')
   const [teams, setTeams] = useState([])
 
   function loadTeams() {
@@ -46,7 +44,6 @@ export default function AdminPanel({ onInventoryChange, systemRole }) {
 
   function handleTabChange(id) {
     setActiveTab(id)
-    if (id === 'inventory' && isAdmin) loadTeams()
   }
 
   return (
@@ -75,7 +72,6 @@ export default function AdminPanel({ onInventoryChange, systemRole }) {
       </div>
 
       <div className="admin-content">
-        {activeTab === 'inventory'  && <InventoryManager onInventoryChange={onInventoryChange} teams={teams} isAdmin={isAdmin} />}
         {activeTab === 'thresholds' && isAdmin && <AlertThresholds />}
         {activeTab === 'contacts'   && <EscalationContacts teams={teams} isAdmin={isAdmin} />}
         {activeTab === 'alerts'     && isAdmin && <AlertHistory />}

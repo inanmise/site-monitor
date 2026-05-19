@@ -195,8 +195,12 @@ export default function SystemHealth() {
             <dd>{scheduler?.last_run ? formatDate(scheduler.last_run) : t('sys.never')}</dd>
             <dt>{t('sys.nextRun')}</dt>
             <dd>{scheduler?.next_run ? formatDate(scheduler.next_run) : '—'}</dd>
-            <dt>{t('sys.currentRunId')}</dt>
-            <dd className="sys-mono">{scheduler?.current_run_id || '—'}</dd>
+            <dt>{isRunning ? t('sys.currentRunId') : t('sys.lastRunId')}</dt>
+            <dd className="sys-mono">
+              {isRunning
+                ? (scheduler?.current_run_id || '—')
+                : (scheduler?.last_run_id || '—')}
+            </dd>
             <dt>{t('sys.instanceId')}</dt>
             <dd className="sys-mono sys-small">{scheduler?.instance_id}</dd>
             <dt>{t('sys.activeDomains')}</dt>

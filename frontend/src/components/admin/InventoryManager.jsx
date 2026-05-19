@@ -38,10 +38,12 @@ function SectionHeader({ label }) {
   return <div className="form-section-header">{label}</div>
 }
 
-export default function InventoryManager({ onInventoryChange, teams = [], isAdmin = false }) {
+export default function InventoryManager({ onInventoryChange, systemRole, teams: teamsProp = [], isAdmin: isAdminProp = false }) {
   const t = useT()
   const { showConfirm } = useDialog()
+  const isAdmin = systemRole ? systemRole === 'ADMIN' : isAdminProp
   const [items, setItems]             = useState([])
+  const [teams, setTeams]             = useState(teamsProp)
   const [modal, setModal]             = useState(null)
   const [transferModal, setTransferModal] = useState(null)
   const [transferTeamId, setTransferTeamId] = useState('')
@@ -51,7 +53,10 @@ export default function InventoryManager({ onInventoryChange, teams = [], isAdmi
 
   const teamMap = Object.fromEntries(teams.map(t => [String(t.id), t.name]))
 
-  useEffect(() => { load() }, [])
+  useEffect(() => {
+    load()
+    if (isAdmin) api.admin.getTeams().then(res => { if (res?.success) setTeams(res.data) })
+  }, [])
 
   async function load() {
     const res = await api.admin.getInventory()
