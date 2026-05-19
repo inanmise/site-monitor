@@ -13,7 +13,7 @@
 
     <groupId>com.certmonitor</groupId>
     <artifactId>cert-monitor</artifactId>
-    <version>6.8.0</version>
+    <version>6.9.0</version>
     <name>cert-monitor</name>
 
     <properties>
