@@ -85,8 +85,9 @@ public class ExtendedHealthService {
                     String status = n.getEmailStatus() != null ? n.getEmailStatus() : "";
                     String kind   = status.equals("SENT") ? "SENT"
                                   : status.startsWith("FAILED") ? "FAILED"
-                                  : status.startsWith("SKIPPED") ? "SKIPPED" : status;
-                    String error  = status.replaceFirst("^(FAILED|SKIPPED)[_:]?\\s*", "");
+                                  : status.startsWith("SKIPPED") ? "SKIPPED" : "UNKNOWN";
+                    String error  = (status.startsWith("FAILED") || status.startsWith("SKIPPED"))
+                                  ? status.replaceFirst("^(FAILED|SKIPPED)[_:]?\\s*", "").trim() : "";
                     Map<String, Object> m = new LinkedHashMap<>();
                     m.put("id",              n.getId());
                     m.put("alert_event_id",  n.getAlertEventId());
@@ -94,6 +95,7 @@ public class ExtendedHealthService {
                     m.put("recipient_name",  n.getRecipientName());
                     m.put("recipient_email", n.getRecipientEmail());
                     m.put("subject",         n.getSubject());
+                    m.put("message",         n.getMessage());
                     m.put("kind",            kind);
                     m.put("error",           error);
                     m.put("trigger",         n.getTrigger());
