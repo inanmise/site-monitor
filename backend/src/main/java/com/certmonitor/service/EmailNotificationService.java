@@ -112,6 +112,24 @@ public class EmailNotificationService {
         }
     }
 
+    // ── Public HTML accessors (used to store sent HTML in notification log) ──
+
+    public String buildAlertEmailHtml(String subject, String message,
+                                       String domain, String level, String alertType,
+                                       Integer daysRemaining, Map<String, Object> certContext) {
+        return (domain != null)
+                ? buildRichAlertHtml(subject, message, domain, level, alertType, daysRemaining, certContext)
+                : buildSimpleAlertHtml(subject, message);
+    }
+
+    public String buildResolutionEmailHtml(String domain, String alertType, String alertLevel,
+                                            Integer daysRemaining, String resolvedBy,
+                                            String resolvedAt, String createdAt,
+                                            Map<String, Object> certContext) {
+        return buildRichResolvedHtml(domain, alertType, alertLevel,
+                daysRemaining, resolvedBy, resolvedAt, createdAt, certContext);
+    }
+
     // ── HTML builders ────────────────────────────────────────────────────────
 
     private String buildRichAlertHtml(String subject, String message,
