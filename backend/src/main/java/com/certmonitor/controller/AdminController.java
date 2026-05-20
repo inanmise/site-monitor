@@ -305,20 +305,28 @@ public class AdminController {
 
     @PostMapping("/alerts/{id}/acknowledge")
     public ResponseEntity<Map<String, Object>> acknowledgeAlert(
-            @PathVariable Long id, @RequestBody(required = false) Map<String, String> body,
-            HttpSession session) {
+            @PathVariable Long id,
+            HttpSession session, HttpServletRequest request) {
         requireAdmin(session);
-        String by = body != null ? body.getOrDefault("acknowledged_by", "admin") : "admin";
-        return ok(Map.of("data", escalationService.acknowledge(id, by), "message", "Alert acknowledged"));
+        String by = resolveDisplayName(session);
+        AlertEvent event = escalationService.acknowledge(id, by);
+        auditService.recordAction("ALERT_ACKNOWLEDGE", session, request,
+                "ALERT_EVENT", id.toString(),
+                "{\"domain\":\"" + event.getDomain() + "\"}");
+        return ok(Map.of("data", event, "message", "Alert acknowledged"));
     }
 
     @PostMapping("/alerts/{id}/resolve")
     public ResponseEntity<Map<String, Object>> resolveAlert(
-            @PathVariable Long id, @RequestBody(required = false) Map<String, String> body,
-            HttpSession session) {
+            @PathVariable Long id,
+            HttpSession session, HttpServletRequest request) {
         requireAdmin(session);
-        String resolvedBy = body != null ? body.getOrDefault("resolved_by", "admin") : "admin";
-        return ok(Map.of("data", escalationService.resolve(id, resolvedBy), "message", "Alert resolved"));
+        String by = resolveDisplayName(session);
+        AlertEvent event = escalationService.resolve(id, by);
+        auditService.recordAction("ALERT_RESOLVE", session, request,
+                "ALERT_EVENT", id.toString(),
+                "{\"domain\":\"" + event.getDomain() + "\"}");
+        return ok(Map.of("data", event, "message", "Alert resolved"));
     }
 
     @PostMapping("/alerts/{id}/re-notify")
@@ -505,6 +513,11 @@ public class AdminController {
             log.warn("Unauthorized admin access attempt by user={}", actor(session));
             throw new SecurityException("Admin access required");
         }
+    }
+
+    private String resolveDisplayName(HttpSession session) {
+        String dn = (String) session.getAttribute("displayName");
+        return (dn != null && !dn.isBlank()) ? dn : (String) session.getAttribute("username");
     }
 
     /** Username extracted from session — used in audit log entries. */

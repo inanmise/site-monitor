@@ -75,13 +75,8 @@ export const api = {
 
     // Alert Events
     getAlerts: (onlyOpen = false) => request(`/admin/alerts?onlyOpen=${onlyOpen}`),
-    acknowledgeAlert: (id, by) => request(`/admin/alerts/${id}/acknowledge`, {
-      method: 'POST', body: JSON.stringify({ acknowledged_by: by }),
-    }),
-    resolveAlert: (id, resolvedBy) => request(`/admin/alerts/${id}/resolve`, {
-      method: 'POST',
-      body: JSON.stringify({ resolved_by: resolvedBy ?? 'admin' }),
-    }),
+    acknowledgeAlert: (id) => request(`/admin/alerts/${id}/acknowledge`, { method: 'POST' }),
+    resolveAlert:     (id) => request(`/admin/alerts/${id}/resolve`,     { method: 'POST' }),
     reNotifyAlert: (id) => request(`/admin/alerts/${id}/re-notify`, { method: 'POST' }),
     getAlertNotifications: (id) => request(`/admin/alerts/${id}/notifications`),
 

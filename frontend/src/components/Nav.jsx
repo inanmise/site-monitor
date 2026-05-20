@@ -4,7 +4,7 @@ import { useTheme } from '../i18n/theme.jsx'
 import {
   ShieldCheck, LayoutDashboard, AlertTriangle, FileText,
   RefreshCw, ClipboardList, Settings, User, Globe, LogOut,
-  Sun, Moon, ChevronLeft, ChevronRight, Server, Activity, ShieldAlert, BarChart3,
+  Sun, Moon, ChevronLeft, ChevronRight, Server, Activity, ShieldAlert, BarChart3, Bell,
 } from 'lucide-react'
 
 export default function Nav({ activeTab, onTabChange, username, teamName, systemRole, onLogout }) {
@@ -29,7 +29,8 @@ export default function Nav({ activeTab, onTabChange, username, teamName, system
     {
       labelKey: 'nav.groupLogs',
       tabs: [
-        { id: 'activity', Icon: ClipboardList, labelKey: 'nav.activity', show: true },
+        { id: 'activity',     Icon: ClipboardList, labelKey: 'nav.activity',     show: true    },
+        { id: 'alerthistory', Icon: Bell,          labelKey: 'nav.alertHistory', show: isAdmin },
       ],
     },
     {
