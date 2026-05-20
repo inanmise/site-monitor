@@ -1503,6 +1503,11 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
   line-height: 1.5;
   white-space: pre-wrap;
 }
+.nl-detail-row--body { align-items: flex-start; }
+.nl-message-iframe {
+  flex: 1; border: 1px solid #e2e8f0; border-radius: 8px;
+  background: #fff; min-height: 420px; width: 100%;
+}
 .nl-error-detail {
   display: block;
   color: #b91c1c;
@@ -1990,6 +1995,7 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 [data-theme="dark"] .nl-detail-val { color: var(--text); }
 [data-theme="dark"] .nl-subject { color: var(--text); }
 [data-theme="dark"] .nl-message { background: var(--bg-surface); border-color: var(--border); color: var(--text-light); }
+[data-theme="dark"] .nl-message-iframe { background: #fff; border-color: var(--border); }
 [data-theme="dark"] .nl-section-title { color: #64748b; }
 [data-theme="dark"] .nl-count { background: #263144; color: var(--text-light); }
 [data-theme="dark"] .nl-empty { color: #64748b; }
