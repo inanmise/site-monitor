@@ -241,6 +241,7 @@ export default function AlertHistory() {
     const confirmed = await showConfirm({
       title: t('alh.ackDialog.title'),
       message: t('alh.ackDialog.msg', alert?.domain ?? ''),
+      variant: 'warning',
       confirmText: t('alh.ackDialog.confirm'),
       cancelText: t('alh.ackDialog.cancel'),
     })
@@ -254,9 +255,9 @@ export default function AlertHistory() {
     const confirmed = await showConfirm({
       title: t('alh.resolveDialog.title'),
       message: t('alh.resolveDialog.msg', alert?.domain ?? ''),
+      variant: 'success',
       confirmText: t('alh.resolveDialog.confirm'),
       cancelText: t('alh.resolveDialog.cancel'),
-      variant: 'info',
     })
     if (!confirmed) return
     await api.admin.resolveAlert(id)
