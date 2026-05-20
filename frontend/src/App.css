@@ -2417,9 +2417,13 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .smtp-log-error   { max-width: 260px; word-break: break-all; font-size: .8em; }
 .smtp-log-recipient { font-weight: 600; }
 
+.smtp-log-row { cursor: pointer; }
+.smtp-log-row:hover { background: rgba(59,130,246,.06) !important; }
+
 .smtp-kind-badge {
-  display: inline-block; padding: 1px 7px; border-radius: 4px;
-  font-size: .72em; font-weight: 700; letter-spacing: .04em; text-transform: uppercase;
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 3px 9px; border-radius: 5px;
+  font-size: .75em; font-weight: 700; letter-spacing: .03em;
 }
 .smtp-kind-sent    { background: #f0fdf4; color: #166534; }
 .smtp-kind-failed  { background: #fef2f2; color: #991b1b; }
@@ -2428,8 +2432,69 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 [data-theme="dark"] .smtp-kind-failed  { background: #450a0a; color: #fca5a5; }
 [data-theme="dark"] .smtp-kind-skipped { background: #1e293b; color: #94a3b8; }
 
-[data-theme="dark"] .smtp-modal { background: var(--bg-card); }
+/* Trigger badges */
+.smtp-trigger-badge {
+  display: inline-block; padding: 2px 8px; border-radius: 4px;
+  font-size: .72em; font-weight: 700; letter-spacing: .04em; text-transform: uppercase;
+  background: #f1f5f9; color: #475569;
+}
+.smtp-trigger-initial      { background: #eff6ff; color: #1d4ed8; }
+.smtp-trigger-escalation   { background: #fff7ed; color: #c2410c; }
+.smtp-trigger-daily_realert{ background: #f5f3ff; color: #6d28d9; }
+.smtp-trigger-manual       { background: #f1f5f9; color: #374151; }
+.smtp-trigger-resolution   { background: #f0fdf4; color: #166534; }
+
+/* Email detail modal */
+.smtp-detail-overlay {
+  position: fixed; inset: 0; z-index: 10001;
+  background: rgba(15,23,42,.55); backdrop-filter: blur(4px);
+  display: flex; align-items: center; justify-content: center; padding: 20px;
+}
+.smtp-detail-panel {
+  background: #fff; border-radius: 16px;
+  width: 100%; max-width: 700px; max-height: 88vh;
+  display: flex; flex-direction: column;
+  box-shadow: 0 24px 64px rgba(0,0,0,.22);
+  overflow: hidden;
+}
+.smtp-detail-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 16px 20px; border-bottom: 1px solid var(--border);
+  font-size: .95em; font-weight: 700; color: var(--text);
+  background: #f8fafc; flex-shrink: 0;
+}
+.smtp-detail-header-left { display: flex; align-items: center; gap: 8px; }
+.smtp-detail-mail-icon   { color: #3b82f6; }
+.smtp-detail-meta {
+  padding: 16px 20px; border-bottom: 1px solid var(--border);
+  display: flex; flex-direction: column; gap: 8px; flex-shrink: 0;
+  background: var(--bg-card);
+}
+.smtp-detail-meta-row {
+  display: flex; align-items: baseline; gap: 10px; font-size: .875em;
+  flex-wrap: wrap;
+}
+.smtp-detail-label {
+  font-size: .72em; font-weight: 700; letter-spacing: .06em; text-transform: uppercase;
+  color: var(--text-light); min-width: 80px; flex-shrink: 0;
+}
+.smtp-detail-subject { font-weight: 600; color: var(--text); }
+.smtp-detail-body-label {
+  padding: 10px 20px 4px; font-size: .72em; font-weight: 700;
+  letter-spacing: .06em; text-transform: uppercase; color: var(--text-light);
+  flex-shrink: 0;
+}
+.smtp-detail-iframe {
+  flex: 1; border: none; margin: 0 12px 12px;
+  border-radius: 8px; border: 1px solid var(--border);
+  min-height: 300px; background: #fff;
+}
+
+[data-theme="dark"] .smtp-modal        { background: var(--bg-card); }
 [data-theme="dark"] .smtp-log-table th { background: var(--bg-card); }
+[data-theme="dark"] .smtp-detail-panel { background: var(--bg-card); }
+[data-theme="dark"] .smtp-detail-header{ background: var(--bg); }
+[data-theme="dark"] .smtp-detail-iframe{ background: #fff; }
 
 .sys-bar-wrap {
   height: 8px; background: #e5e7eb; border-radius: 4px;

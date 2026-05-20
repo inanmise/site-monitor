@@ -1,8 +1,40 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { api, formatDate } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
+import { CheckCircle, XCircle, MinusCircle, HelpCircle, Mail } from 'lucide-react'
 import MiniChart from './MiniChart'
 import ChartModal from './ChartModal'
+
+function SmtpStatusCell({ row, t }) {
+  const cfg = {
+    SENT:    { Icon: CheckCircle,  cls: 'smtp-kind-sent',    key: 'health.statusSent' },
+    FAILED:  { Icon: XCircle,      cls: 'smtp-kind-failed',  key: 'health.statusFailed' },
+    SKIPPED: { Icon: MinusCircle,  cls: 'smtp-kind-skipped', key: 'health.statusSkipped' },
+    UNKNOWN: { Icon: HelpCircle,   cls: 'smtp-kind-skipped', key: 'health.statusUnknown' },
+  }
+  const c = cfg[row.kind] ?? cfg.UNKNOWN
+  return (
+    <div>
+      <span className={`smtp-kind-badge ${c.cls}`}>
+        <c.Icon size={11} />{t(c.key)}
+      </span>
+      {row.error && (
+        <div className="smtp-log-error sys-err-text sys-small">{row.error}</div>
+      )}
+    </div>
+  )
+}
+
+function triggerLabel(trigger, t) {
+  const map = {
+    INITIAL:       t('health.triggerInitial'),
+    ESCALATION:    t('health.triggerEscalation'),
+    DAILY_REALERT: t('health.triggerDailyRealert'),
+    MANUAL:        t('health.triggerManual'),
+    RESOLUTION:    t('health.triggerResolution'),
+  }
+  return map[trigger] ?? trigger
+}
 
 function fmsDuration(ms) {
   if (!ms || ms <= 0) return '—'
@@ -40,6 +72,7 @@ export default function SystemHealth() {
   const [smtpModal, setSmtpModal]     = useState(false)
   const [smtpLogs, setSmtpLogs]       = useState(null)
   const [smtpLoading, setSmtpLoading] = useState(false)
+  const [selectedLog, setSelectedLog] = useState(null)
 
   const load = useCallback(async () => {
     const [healthRes, metricsRes, httpRes, dbRes] = await Promise.all([
@@ -675,6 +708,53 @@ export default function SystemHealth() {
 
       <ChartModal chart={modalChart} onClose={() => setModalChart(null)} />
 
+      {selectedLog && (
+        <div className="smtp-detail-overlay" onClick={() => setSelectedLog(null)}>
+          <div className="smtp-detail-panel" onClick={e => e.stopPropagation()}>
+            <div className="smtp-detail-header">
+              <div className="smtp-detail-header-left">
+                <Mail size={17} className="smtp-detail-mail-icon" />
+                <span>{t('health.emailDetail')}</span>
+              </div>
+              <button className="smtp-modal-close" onClick={() => setSelectedLog(null)}>✕</button>
+            </div>
+            <div className="smtp-detail-meta">
+              <div className="smtp-detail-meta-row">
+                <span className="smtp-detail-label">{t('health.emailDetailTo')}</span>
+                <span>
+                  <strong>{selectedLog.recipient_name}</strong>
+                  {selectedLog.recipient_email && (
+                    <span className="sys-muted"> &lt;{selectedLog.recipient_email}&gt;</span>
+                  )}
+                </span>
+              </div>
+              <div className="smtp-detail-meta-row">
+                <span className="smtp-detail-label">{t('health.smtpLogSubject')}</span>
+                <span className="smtp-detail-subject">{selectedLog.subject}</span>
+              </div>
+              <div className="smtp-detail-meta-row">
+                <span className="smtp-detail-label">{t('health.smtpLogDate')}</span>
+                <span className="sys-mono">{formatDate(selectedLog.sent_at)}</span>
+              </div>
+              <div className="smtp-detail-meta-row">
+                <span className="smtp-detail-label">{t('health.emailDetailTrigger')}</span>
+                <span className={`smtp-trigger-badge smtp-trigger-${selectedLog.trigger?.toLowerCase()}`}>
+                  {triggerLabel(selectedLog.trigger, t)}
+                </span>
+                <SmtpStatusCell row={selectedLog} t={t} />
+              </div>
+            </div>
+            <div className="smtp-detail-body-label">{t('health.emailDetailBody')}</div>
+            <iframe
+              className="smtp-detail-iframe"
+              srcDoc={selectedLog.message ?? `<p style="color:#9ca3af;font-family:sans-serif">${t('health.emailDetailNoBody')}</p>`}
+              sandbox=""
+              title={selectedLog.subject}
+            />
+          </div>
+        </div>
+      )}
+
       {smtpModal && (
         <div className="smtp-modal-overlay" onClick={() => setSmtpModal(false)}>
           <div className="smtp-modal" onClick={e => e.stopPropagation()}>
@@ -701,19 +781,14 @@ export default function SystemHealth() {
                   </thead>
                   <tbody>
                     {smtpLogs.map(row => (
-                      <tr key={row.id}>
+                      <tr key={row.id} className="smtp-log-row" onClick={() => setSelectedLog(row)}>
                         <td className="smtp-log-date sys-mono">{formatDate(row.sent_at)}</td>
                         <td>
                           <div className="smtp-log-recipient">{row.recipient_name}</div>
                           <div className="smtp-log-email sys-muted sys-small">{row.recipient_email}</div>
                         </td>
                         <td className="smtp-log-subject">{row.subject}</td>
-                        <td>
-                          <span className={`smtp-kind-badge smtp-kind-${row.kind?.toLowerCase()}`}>
-                            {row.kind}
-                          </span>
-                          {row.error && <div className="smtp-log-error sys-err-text sys-small">{row.error}</div>}
-                        </td>
+                        <td><SmtpStatusCell row={row} t={t} /></td>
                       </tr>
                     ))}
                   </tbody>
