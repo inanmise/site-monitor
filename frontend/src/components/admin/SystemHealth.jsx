@@ -720,6 +720,10 @@ export default function SystemHealth() {
             </div>
             <div className="smtp-detail-meta">
               <div className="smtp-detail-meta-row">
+                <span className="smtp-detail-label">{t('health.emailDetailFrom')}</span>
+                <span className="sys-muted">{selectedLog.sender_email}</span>
+              </div>
+              <div className="smtp-detail-meta-row">
                 <span className="smtp-detail-label">{t('health.emailDetailTo')}</span>
                 <span>
                   <strong>{selectedLog.recipient_name}</strong>

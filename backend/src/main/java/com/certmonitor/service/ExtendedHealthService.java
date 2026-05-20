@@ -5,6 +5,7 @@ import com.certmonitor.repository.NotificationLogRepository;
 import com.certmonitor.repository.SystemHeartbeatRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
@@ -26,6 +27,9 @@ public class ExtendedHealthService {
     private final NotificationLogRepository notificationLogRepo;
     private final SystemHeartbeatRepository heartbeatRepo;
     private final JdbcTemplate jdbcTemplate;
+
+    @Value("${cert.monitor.email.from:noreply@certmonitor}")
+    private String emailFrom;
 
     // ── Heartbeat ─────────────────────────────────────────────────────────────
 
@@ -92,6 +96,7 @@ public class ExtendedHealthService {
                     m.put("id",              n.getId());
                     m.put("alert_event_id",  n.getAlertEventId());
                     m.put("sent_at",         n.getSentAt());
+                    m.put("sender_email",    emailFrom);
                     m.put("recipient_name",  n.getRecipientName());
                     m.put("recipient_email", n.getRecipientEmail());
                     m.put("subject",         n.getSubject());
