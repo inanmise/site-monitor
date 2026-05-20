@@ -105,9 +105,18 @@ function NotifLogCard({ log: l }) {
             <span className="nl-detail-label">{t('alh.notif.subject')}</span>
             <span className="nl-detail-val nl-subject">{l.subject || '—'}</span>
           </div>
-          <div className="nl-detail-row">
+          <div className="nl-detail-row nl-detail-row--body">
             <span className="nl-detail-label">{t('alh.notif.content')}</span>
-            <span className="nl-detail-val nl-message">{l.message || '—'}</span>
+            {l.message && l.message.trimStart().startsWith('<') ? (
+              <iframe
+                className="nl-message-iframe"
+                srcDoc={l.message}
+                sandbox=""
+                title={l.subject}
+              />
+            ) : (
+              <span className="nl-detail-val nl-message">{l.message || '—'}</span>
+            )}
           </div>
           <div className="nl-detail-row">
             <span className="nl-detail-label">{t('alh.notif.emailStatus')}</span>
