@@ -212,7 +212,7 @@ function NotifyResultModal({ alertId, alertInfo, currentResult, onClose }) {
 
 export default function AlertHistory() {
   const t = useT()
-  const { showPrompt } = useDialog()
+  const { showConfirm } = useDialog()
   const [alerts,       setAlerts]       = useState([])
   const [onlyOpen,     setOnlyOpen]     = useState(true)
   const [loading,      setLoading]      = useState(false)
@@ -238,32 +238,28 @@ export default function AlertHistory() {
 
   async function ack(id) {
     const alert = alerts.find(a => a.id === id)
-    const by = await showPrompt({
+    const confirmed = await showConfirm({
       title: t('alh.ackDialog.title'),
       message: t('alh.ackDialog.msg', alert?.domain ?? ''),
-      defaultValue: 'admin',
-      placeholder: t('ec.formName'),
       confirmText: t('alh.ackDialog.confirm'),
       cancelText: t('alh.ackDialog.cancel'),
     })
-    if (!by) return
-    await api.admin.acknowledgeAlert(id, by)
+    if (!confirmed) return
+    await api.admin.acknowledgeAlert(id)
     load()
   }
 
   async function resolve(id) {
     const alert = alerts.find(a => a.id === id)
-    const by = await showPrompt({
+    const confirmed = await showConfirm({
       title: t('alh.resolveDialog.title'),
       message: t('alh.resolveDialog.msg', alert?.domain ?? ''),
-      defaultValue: 'admin',
-      placeholder: t('ec.formName'),
       confirmText: t('alh.resolveDialog.confirm'),
       cancelText: t('alh.resolveDialog.cancel'),
       variant: 'info',
     })
-    if (!by) return
-    await api.admin.resolveAlert(id, by)
+    if (!confirmed) return
+    await api.admin.resolveAlert(id)
     load()
   }
 

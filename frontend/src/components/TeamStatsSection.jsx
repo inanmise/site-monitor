@@ -1,4 +1,4 @@
-import { BarChart3, CheckCircle, AlertTriangle, XCircle } from 'lucide-react'
+import { BarChart3, CheckCircle, AlertTriangle, XCircle, Users } from 'lucide-react'
 import { useT } from '../i18n/index.jsx'
 
 function StatCard({ title, stats, teamName, role, onStatClick }) {
@@ -92,29 +92,40 @@ function AdminView({ teams, onStatClick }) {
   const t = useT()
   return (
     <div className="ts-root">
-      <div className="ts-title">{t('ts.allTeams')}</div>
-      <div className="ts-admin-grid">
-        {teams.map((team) => {
-          const syTotal = team.sy_stats?.total_certificates ?? 0
-          const ugTotal = team.ug_stats?.total_certificates ?? 0
-          const isEmpty = syTotal === 0 && ugTotal === 0
-          return (
-            <div key={team.team_id} className={`ts-team-card${isEmpty ? ' ts-zero' : ''}`}>
-              <div className="ts-team-card-header">{team.team_name}</div>
-              <div className="ts-role-section">
-                <div className="ts-role-label">{t('ts.syRole')}</div>
-                <RoleChips stats={team.sy_stats} teamName={team.team_name}
-                  role={t('ts.syRole')} onStatClick={onStatClick} />
+      <div className="ts-section-frame">
+        <div className="ts-section-header">
+          <Users size={15} className="ts-section-icon" />
+          <span>{t('ts.teamSectionTitle')}</span>
+          <span className="ts-section-badge">{teams.length}</span>
+        </div>
+        <div className="ts-admin-grid">
+          {teams.map((team) => {
+            const syTotal = team.sy_stats?.total_certificates ?? 0
+            const ugTotal = team.ug_stats?.total_certificates ?? 0
+            const grandTotal = syTotal + ugTotal
+            const isEmpty = syTotal === 0 && ugTotal === 0
+            return (
+              <div key={team.team_id} className={`ts-team-card${isEmpty ? ' ts-zero' : ''}`}>
+                <div className="ts-team-card-header">
+                  <Users size={13} className="ts-team-icon" />
+                  <span className="ts-team-name">{team.team_name}</span>
+                  <span className="ts-team-grand-total">{grandTotal}</span>
+                </div>
+                <div className="ts-role-section">
+                  <div className="ts-role-label">{t('ts.syRole')}</div>
+                  <RoleChips stats={team.sy_stats} teamName={team.team_name}
+                    role={t('ts.syRole')} onStatClick={onStatClick} />
+                </div>
+                <div className="ts-role-divider" />
+                <div className="ts-role-section">
+                  <div className="ts-role-label">{t('ts.ugRole')}</div>
+                  <RoleChips stats={team.ug_stats} teamName={team.team_name}
+                    role={t('ts.ugRole')} onStatClick={onStatClick} />
+                </div>
               </div>
-              <div className="ts-role-divider" />
-              <div className="ts-role-section">
-                <div className="ts-role-label">{t('ts.ugRole')}</div>
-                <RoleChips stats={team.ug_stats} teamName={team.team_name}
-                  role={t('ts.ugRole')} onStatClick={onStatClick} />
-              </div>
-            </div>
-          )
-        })}
+            )
+          })}
+        </div>
       </div>
     </div>
   )

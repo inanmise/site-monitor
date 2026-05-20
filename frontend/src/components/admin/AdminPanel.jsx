@@ -3,7 +3,6 @@ import { api } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
 import AlertThresholds from './AlertThresholds'
 import EscalationContacts from './EscalationContacts'
-import AlertHistory from './AlertHistory'
 import TeamManager from './TeamManager'
 import UserManager from './UserManager'
 
@@ -18,7 +17,6 @@ const TAB_GROUPS = [
     groupKey: 'admin.groupNotify',
     tabs: [
       { id: 'contacts', labelKey: 'admin.tabContacts', adminOnly: false },
-      { id: 'alerts',   labelKey: 'admin.tabAlerts',   adminOnly: true  },
     ],
   },
   {
@@ -74,7 +72,6 @@ export default function AdminPanel({ systemRole }) {
       <div className="admin-content">
         {activeTab === 'thresholds' && isAdmin && <AlertThresholds />}
         {activeTab === 'contacts'   && <EscalationContacts teams={teams} isAdmin={isAdmin} />}
-        {activeTab === 'alerts'     && isAdmin && <AlertHistory />}
         {activeTab === 'teams'      && isAdmin && <TeamManager onTeamsChange={loadTeams} />}
         {activeTab === 'users'      && isAdmin && <UserManager teams={teams} />}
       </div>

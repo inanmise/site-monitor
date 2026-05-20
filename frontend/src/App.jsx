@@ -12,6 +12,7 @@ import CertificatesTable from './components/CertificatesTable'
 import CertificateModal from './components/CertificateModal'
 import RenewalAdvice from './components/RenewalAdvice'
 import AdminPanel from './components/admin/AdminPanel'
+import AlertHistory from './components/admin/AlertHistory'
 import InventoryManager from './components/admin/InventoryManager'
 import AuditLogViewer from './components/admin/AuditLogViewer'
 import WeakAlgorithmReport from './components/admin/WeakAlgorithmReport'
@@ -510,6 +511,13 @@ export default function App() {
               <div className="tab-content active">
                 <h2>{t('app.activityTitle')}</h2>
                 <ActivityLog refreshTrigger={activityRefreshKey} />
+              </div>
+            )}
+
+            {tab === 'alerthistory' && systemRole === 'ADMIN' && (
+              <div className="tab-content active">
+                <h2>{t('app.alertHistoryTitle')}</h2>
+                <AlertHistory />
               </div>
             )}
 
