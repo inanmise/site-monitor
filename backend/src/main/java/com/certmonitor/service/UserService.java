@@ -96,7 +96,7 @@ public class UserService {
         AppUser admin = new AppUser();
         admin.setUsername(adminUsername);
         admin.setPasswordHash(PASSWORD_ENCODER.encode(rawPassword));
-        admin.setDisplayName("Administrator");
+        admin.setDisplayName(adminUsername);
         admin.setSystemRole("ADMIN");
         admin.setTeamId(team.getId());
         admin.setActive(true);
