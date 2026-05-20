@@ -217,12 +217,16 @@ public class EscalationService {
                     .map(this::latestToCertContext)
                     .orElse(null);
             for (EscalationContact c : contacts) {
+                String htmlBody = emailService.buildResolutionEmailHtml(
+                        event.getDomain(), event.getAlertType(), event.getAlertLevel(),
+                        event.getDaysRemaining(), resolvedBy, event.getResolvedAt(),
+                        event.getCreatedAt(), certContext);
                 String status = emailService.sendResolutionAlert(
                         c.getEmail(), subject,
                         event.getDomain(), event.getAlertType(), event.getAlertLevel(),
                         event.getDaysRemaining(), resolvedBy, event.getResolvedAt(),
                         event.getCreatedAt(), certContext);
-                saveLog(event.getId(), c, subject, event.getMessage(), status, "SKIPPED", trigger);
+                saveLog(event.getId(), c, subject, htmlBody, status, "SKIPPED", trigger);
                 log.info("Çözüm bildirimi → {} <{}> status={}", c.getName(), c.getEmail(), status);
             }
         } catch (Exception e) {
@@ -298,6 +302,8 @@ public class EscalationService {
         List<Map<String, String>> details = new ArrayList<>();
 
         for (EscalationContact c : contacts) {
+            String htmlBody = emailService.buildAlertEmailHtml(
+                    subject, message, domain, level, alertType, daysRemaining, certContext);
             String emailStatus = emailService.sendAlert(
                     c.getEmail(), subject, message, domain, level, alertType, daysRemaining, certContext);
             String webhookStatus = "SKIPPED";
@@ -309,7 +315,7 @@ public class EscalationService {
                     webhookStatus = "FAILED: " + e.getMessage();
                 }
             }
-            saveLog(alertEventId, c, subject, message, emailStatus, webhookStatus, trigger);
+            saveLog(alertEventId, c, subject, htmlBody, emailStatus, webhookStatus, trigger);
 
             Map<String, String> d = new LinkedHashMap<>();
             d.put("name", c.getName());
