@@ -10,7 +10,7 @@ const VARIANTS = {
   info:    { Icon: Info,          color: '#1d6fbf', bg: '#eff6ff', border: '#bfdbfe' },
   success: { Icon: CheckCircle,   color: '#15803d', bg: '#f0fdf4', border: '#bbf7d0' },
   error:   { Icon: XCircle,       color: '#b91c1c', bg: '#fef2f2', border: '#fecaca' },
-  logout:  { Icon: LogOut,        color: '#6b7280', bg: '#f9fafb', border: '#e5e7eb' },
+  logout:  { Icon: LogOut,        color: '#dc2626', bg: '#fef2f2', border: '#fecaca' },
   prompt:  { Icon: Pencil,        color: '#1d6fbf', bg: '#eff6ff', border: '#bfdbfe' },
 }
 
