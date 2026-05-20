@@ -111,6 +111,7 @@ public class EscalationService {
 
                         event.setLastReAlertAt(now());
                         event.setDaysRemaining(daysRemaining);
+                        event.setMessage(message);
                         alertEventRepo.save(event);
                         log.info("Re-alert sent: {} [{}] — previous day: {}",
                                 domain, alertLevel, lastAlertTime.substring(0, 10));
@@ -158,10 +159,15 @@ public class EscalationService {
         alertEventRepo.save(event);
 
         // I/O after DB connection is released
+        // Use fresh days from LatestCheck so subject and alarm detail always match
+        Integer freshDays     = certContext != null ? toInt(certContext.get("days_remaining")) : null;
+        Integer effectiveDays = freshDays != null ? freshDays : event.getDaysRemaining();
+        String  freshMessage  = buildMessage(event.getDomain(), event.getAlertType(),
+                                             event.getAlertLevel(), effectiveDays);
         List<Map<String, String>> notificationDetails = sendAllWithDetails(
                 contacts, event.getDomain(), event.getAlertLevel(), event.getAlertType(),
-                event.getMessage(), "[RE-ALERT] ", event.getId(), "MANUAL",
-                event.getDaysRemaining(), certContext);
+                freshMessage, "[RE-ALERT] ", event.getId(), "MANUAL",
+                effectiveDays, certContext);
 
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("alert", event);
