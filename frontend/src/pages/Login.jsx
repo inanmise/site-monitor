@@ -1,59 +1,10 @@
 import { useState, useEffect } from 'react'
 import { api } from '../api/client'
 import { useT, useLanguage } from '../i18n/index.jsx'
-import { ShieldCheck, ShieldAlert, Lock, Globe, Bell, BarChart3, RefreshCw } from 'lucide-react'
+import { ShieldAlert, Lock, Globe, Bell, BarChart3, RefreshCw } from 'lucide-react'
+import CertMonitorLogo from '../components/ui/CertMonitorLogo.jsx'
 
 const STORAGE_KEY = 'cert-monitor-remembered-user'
-
-function CertMonitorLogo() {
-  return (
-    <svg viewBox="0 0 160 160" fill="none" xmlns="http://www.w3.org/2000/svg" className="lp-logo-svg">
-      <circle cx="80" cy="80" r="72" stroke="rgba(99,179,237,0.18)" strokeWidth="2" />
-      <circle cx="80" cy="80" r="58" stroke="rgba(99,179,237,0.12)" strokeWidth="1.5" />
-      <path
-        d="M80 18 L122 36 L122 82 C122 112 104 130 80 142 C56 130 38 112 38 82 L38 36 Z"
-        fill="url(#shieldGrad)"
-        stroke="rgba(147,210,255,0.35)"
-        strokeWidth="1.5"
-      />
-      <line x1="56" y1="72" x2="62" y2="72" stroke="rgba(147,210,255,0.5)" strokeWidth="1.5" strokeLinecap="round"/>
-      <line x1="62" y1="72" x2="62" y2="64" stroke="rgba(147,210,255,0.5)" strokeWidth="1.5" strokeLinecap="round"/>
-      <line x1="62" y1="64" x2="70" y2="64" stroke="rgba(147,210,255,0.5)" strokeWidth="1.5" strokeLinecap="round"/>
-      <line x1="98" y1="72" x2="94" y2="72" stroke="rgba(147,210,255,0.5)" strokeWidth="1.5" strokeLinecap="round"/>
-      <line x1="94" y1="72" x2="94" y2="64" stroke="rgba(147,210,255,0.5)" strokeWidth="1.5" strokeLinecap="round"/>
-      <line x1="94" y1="64" x2="90" y2="64" stroke="rgba(147,210,255,0.5)" strokeWidth="1.5" strokeLinecap="round"/>
-      <line x1="56" y1="96" x2="60" y2="96" stroke="rgba(147,210,255,0.5)" strokeWidth="1.5" strokeLinecap="round"/>
-      <line x1="60" y1="96" x2="60" y2="104" stroke="rgba(147,210,255,0.5)" strokeWidth="1.5" strokeLinecap="round"/>
-      <line x1="98" y1="96" x2="96" y2="96" stroke="rgba(147,210,255,0.5)" strokeWidth="1.5" strokeLinecap="round"/>
-      <line x1="96" y1="96" x2="96" y2="104" stroke="rgba(147,210,255,0.5)" strokeWidth="1.5" strokeLinecap="round"/>
-      <rect x="62" y="80" width="36" height="28" rx="5" fill="white" fillOpacity="0.15" stroke="white" strokeOpacity="0.6" strokeWidth="1.5"/>
-      <path
-        d="M69 80 L69 72 C69 63 91 63 91 72 L91 80"
-        stroke="white"
-        strokeWidth="3.5"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        fill="none"
-        strokeOpacity="0.85"
-      />
-      <circle cx="80" cy="91" r="4.5" fill="white" fillOpacity="0.9"/>
-      <rect x="78" y="91" width="4" height="7" rx="1.5" fill="white" fillOpacity="0.9"/>
-      <circle cx="110" cy="48" r="12" fill="#10b981" stroke="#0f172a" strokeWidth="2"/>
-      <path d="M104.5 48 L108 52 L115.5 44" stroke="white" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" fill="none"/>
-      <circle cx="56" cy="72" r="2" fill="#63b3ed" fillOpacity="0.7"/>
-      <circle cx="70" cy="64" r="2" fill="#63b3ed" fillOpacity="0.7"/>
-      <circle cx="90" cy="64" r="2" fill="#63b3ed" fillOpacity="0.7"/>
-      <circle cx="60" cy="104" r="2" fill="#63b3ed" fillOpacity="0.7"/>
-      <circle cx="96" cy="104" r="2" fill="#63b3ed" fillOpacity="0.7"/>
-      <defs>
-        <linearGradient id="shieldGrad" x1="38" y1="18" x2="122" y2="142" gradientUnits="userSpaceOnUse">
-          <stop offset="0%" stopColor="#2563eb"/>
-          <stop offset="100%" stopColor="#1e40af"/>
-        </linearGradient>
-      </defs>
-    </svg>
-  )
-}
 
 export default function Login({ onLogin }) {
   const t = useT()
@@ -126,7 +77,7 @@ export default function Login({ onLogin }) {
       <div className="lp-left">
         <div className="lp-left-inner">
           <div className="lp-brand">
-            <CertMonitorLogo />
+            <CertMonitorLogo variant="login" className="lp-logo-svg" />
             <h1 className="lp-brand-name">CertMonitor</h1>
             <p className="lp-brand-tagline">{t('login.tagline')}</p>
           </div>

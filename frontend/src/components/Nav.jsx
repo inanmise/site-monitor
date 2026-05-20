@@ -2,10 +2,11 @@ import { useState } from 'react'
 import { useT, useLanguage } from '../i18n/index.jsx'
 import { useTheme } from '../i18n/theme.jsx'
 import {
-  ShieldCheck, LayoutDashboard, AlertTriangle, FileText,
+  LayoutDashboard, AlertTriangle, FileText,
   RefreshCw, ClipboardList, Settings, User, Globe, LogOut,
   Sun, Moon, ChevronLeft, ChevronRight, Server, Activity, ShieldAlert, BarChart3, Bell,
 } from 'lucide-react'
+import CertMonitorLogo from './ui/CertMonitorLogo.jsx'
 
 export default function Nav({ activeTab, onTabChange, username, teamName, systemRole, onLogout }) {
   const t = useT()
@@ -60,7 +61,7 @@ export default function Nav({ activeTab, onTabChange, username, teamName, system
       {/* ── Logo area ── */}
       <div className="sb-head">
         <div className="sb-brand">
-          <span className="sb-logo"><ShieldCheck size={22} color="#3b82f6" /></span>
+          <span className="sb-logo"><CertMonitorLogo variant="icon" size={26} /></span>
           {open && (
             <div className="sb-brand-text">
               <span className="sb-brand-name">CertMonitor</span>
