@@ -41,7 +41,7 @@ class ExtendedHealthServiceTest {
     @Test
     @DisplayName("no heartbeat records → alarm=true, minutes_since=-1")
     void getHeartbeatStatus_noRecords_alarm() {
-        when(heartbeatRepo.findTopByOrderByRecordedAtDesc()).thenReturn(Optional.empty());
+        when(heartbeatRepo.findTop5ByOrderByRecordedAtDesc()).thenReturn(List.of());
 
         Map<String, Object> result = service.getHeartbeatStatus();
 
@@ -51,22 +51,22 @@ class ExtendedHealthServiceTest {
     }
 
     @Test
-    @DisplayName("recent heartbeat (5 min ago) → alarm=false")
+    @DisplayName("recent heartbeat (2 min ago) → alarm=false")
     void getHeartbeatStatus_recentHeartbeat_noAlarm() {
-        SystemHeartbeat hb = new SystemHeartbeat(null, LocalDateTime.now().minusMinutes(5));
-        when(heartbeatRepo.findTopByOrderByRecordedAtDesc()).thenReturn(Optional.of(hb));
+        SystemHeartbeat hb = new SystemHeartbeat(null, LocalDateTime.now(java.time.ZoneOffset.UTC).minusMinutes(2));
+        when(heartbeatRepo.findTop5ByOrderByRecordedAtDesc()).thenReturn(List.of(hb));
 
         Map<String, Object> result = service.getHeartbeatStatus();
 
         assertThat(result.get("alarm")).isEqualTo(false);
-        assertThat((Long) result.get("minutes_since")).isBetween(4L, 6L);
+        assertThat((Long) result.get("minutes_since")).isBetween(1L, 3L);
     }
 
     @Test
     @DisplayName("old heartbeat (20 min ago) → alarm=true, minutes_since>=15")
     void getHeartbeatStatus_oldHeartbeat_alarm() {
-        SystemHeartbeat hb = new SystemHeartbeat(null, LocalDateTime.now().minusMinutes(20));
-        when(heartbeatRepo.findTopByOrderByRecordedAtDesc()).thenReturn(Optional.of(hb));
+        SystemHeartbeat hb = new SystemHeartbeat(null, LocalDateTime.now(java.time.ZoneOffset.UTC).minusMinutes(20));
+        when(heartbeatRepo.findTop5ByOrderByRecordedAtDesc()).thenReturn(List.of(hb));
 
         Map<String, Object> result = service.getHeartbeatStatus();
 
@@ -162,7 +162,7 @@ class ExtendedHealthServiceTest {
         log.setId(1L);
         log.setAlertEventId(10L);
         log.setEmailStatus("FAILED: conn refused");
-        when(notificationLogRepo.findNonSentSince(any())).thenReturn(List.of(log));
+        when(notificationLogRepo.findAllSince(any())).thenReturn(List.of(log));
 
         List<Map<String, Object>> result = service.getSmtpFailures();
 
@@ -178,7 +178,7 @@ class ExtendedHealthServiceTest {
         log.setId(2L);
         log.setAlertEventId(11L);
         log.setEmailStatus("SKIPPED_DISABLED");
-        when(notificationLogRepo.findNonSentSince(any())).thenReturn(List.of(log));
+        when(notificationLogRepo.findAllSince(any())).thenReturn(List.of(log));
 
         List<Map<String, Object>> result = service.getSmtpFailures();
 

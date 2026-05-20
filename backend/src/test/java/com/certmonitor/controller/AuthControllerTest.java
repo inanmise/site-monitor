@@ -1,6 +1,8 @@
 package com.certmonitor.controller;
 
 import com.certmonitor.model.AppUser;
+import com.certmonitor.model.AuditLog;
+import com.certmonitor.service.AuditService;
 import com.certmonitor.service.RememberMeService;
 import com.certmonitor.service.UserService;
 import org.junit.jupiter.api.BeforeEach;
@@ -15,6 +17,7 @@ import org.springframework.test.web.servlet.MockMvc;
 
 import java.util.Optional;
 
+import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
@@ -34,6 +37,9 @@ class AuthControllerTest {
     @MockBean
     com.certmonitor.service.HttpMetricsService httpMetricsService;
 
+    @MockBean
+    AuditService auditService;
+
     private AppUser testUser;
 
     @BeforeEach
@@ -50,6 +56,10 @@ class AuthControllerTest {
         when(userService.authenticate("nobody", "testpass")).thenReturn(Optional.empty());
         when(userService.authenticate("", "")).thenReturn(Optional.empty());
         when(userService.findByUsername("testuser")).thenReturn(Optional.of(testUser));
+        when(userService.checkLockout(anyString())).thenReturn(new UserService.LockoutStatus(false, 0));
+        when(userService.failuresNeededForLevel(anyInt())).thenReturn(5);
+        when(auditService.recordLogin(any(), any(), any(), any(), any(), any(), any(),
+                anyBoolean(), any(), any(), anyInt())).thenReturn(new AuditLog());
     }
 
     // ── Login ─────────────────────────────────────────────────────────────────

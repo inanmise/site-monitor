@@ -2,6 +2,7 @@ package com.certmonitor.controller;
 
 import com.certmonitor.model.*;
 import com.certmonitor.repository.*;
+import com.certmonitor.service.AuditService;
 import com.certmonitor.service.EscalationService;
 import com.certmonitor.service.RememberMeService;
 import com.certmonitor.service.UserService;
@@ -66,6 +67,12 @@ class AdminControllerTest {
     @MockBean
     com.certmonitor.repository.LatestCheckRepository latestCheckRepo;
 
+    @MockBean
+    AuditService auditService;
+
+    @MockBean
+    CertificateNoteRepository noteRepo;
+
     @BeforeEach
     void setup() {
         when(userService.listTeams()).thenReturn(java.util.Collections.emptyList());
@@ -119,7 +126,7 @@ class AdminControllerTest {
         mvc.perform(post("/api/admin/inventory")
                         .session(authSession())
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"domain\":\"newdomain.com\",\"port\":443}"))
+                        .content("{\"domain\":\"newdomain.com\",\"port\":443,\"team_id\":1}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success").value(true))
                 .andExpect(jsonPath("$.data.domain").value("newdomain.com"));
