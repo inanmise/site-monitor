@@ -395,7 +395,7 @@ class UserServiceTest {
         when(userRepo.existsByUsername("alice")).thenReturn(false);
         String raw = "pass1234";
 
-        AppUser result = service.createUser("alice", raw, "Alice", "alice@example.com", null, "USER", 1L);
+        AppUser result = service.createUser("alice", raw, "Alice", "alice@example.com", null, "USER", 1L, null);
 
         assertThat(result.getPasswordHash()).isNotEqualTo(raw);
         assertThat(ENCODER.matches(raw, result.getPasswordHash())).isTrue();
@@ -404,7 +404,7 @@ class UserServiceTest {
     @Test
     @DisplayName("createUser: blank username → IllegalArgumentException")
     void createUser_blankUsername_throwsIllegalArgument() {
-        assertThatThrownBy(() -> service.createUser("  ", "pass1234", "D", "e@e.com", null, "USER", 1L))
+        assertThatThrownBy(() -> service.createUser("  ", "pass1234", "D", "e@e.com", null, "USER", 1L, null))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("Username");
     }
@@ -412,7 +412,7 @@ class UserServiceTest {
     @Test
     @DisplayName("createUser: password shorter than minLength → IllegalArgumentException")
     void createUser_shortPassword_throwsIllegalArgument() {
-        assertThatThrownBy(() -> service.createUser("alice", "ab", "D", "e@e.com", null, "USER", 1L))
+        assertThatThrownBy(() -> service.createUser("alice", "ab", "D", "e@e.com", null, "USER", 1L, null))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("too short");
     }
@@ -421,9 +421,74 @@ class UserServiceTest {
     @DisplayName("createUser: duplicate username → IllegalArgumentException")
     void createUser_duplicateUsername_throwsIllegalArgument() {
         when(userRepo.existsByUsername("alice")).thenReturn(true);
-        assertThatThrownBy(() -> service.createUser("alice", "pass1234", "D", "e@e.com", null, "USER", 1L))
+        assertThatThrownBy(() -> service.createUser("alice", "pass1234", "D", "e@e.com", null, "USER", 1L, null))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("already exists");
+    }
+
+    @Test
+    @DisplayName("createUser: valid orgRole → field set on saved user")
+    void createUser_withValidOrgRole_setsField() {
+        when(userRepo.existsByUsername("bob")).thenReturn(false);
+        AppUser result = service.createUser("bob", "pass1234", "Bob", "bob@example.com", null, "USER", 1L, "PO");
+        assertThat(result.getOrgRole()).isEqualTo("PO");
+    }
+
+    @Test
+    @DisplayName("createUser: blank orgRole → stored as null")
+    void createUser_blankOrgRole_storesNull() {
+        when(userRepo.existsByUsername("carol")).thenReturn(false);
+        AppUser result = service.createUser("carol", "pass1234", "Carol", "carol@example.com", null, "USER", 1L, "  ");
+        assertThat(result.getOrgRole()).isNull();
+    }
+
+    @Test
+    @DisplayName("updateUser: changes displayName → saves updated user")
+    void updateUser_changesDisplayName_savesUpdated() {
+        AppUser u = user("alice", "hash");
+        u.setId(1L);
+        when(userRepo.findById(1L)).thenReturn(Optional.of(u));
+
+        service.updateUser(1L, "Alice Smith", null, null, null, null, null, null);
+
+        assertThat(u.getDisplayName()).isEqualTo("Alice Smith");
+        verify(userRepo).save(u);
+    }
+
+    @Test
+    @DisplayName("updateUser: not found → NoSuchElementException")
+    void updateUser_notFound_throwsNoSuchElement() {
+        when(userRepo.findById(999L)).thenReturn(Optional.empty());
+        assertThatThrownBy(() -> service.updateUser(999L, "X", null, null, null, null, null, null))
+                .isInstanceOf(NoSuchElementException.class);
+    }
+
+    @Test
+    @DisplayName("updateUser: valid orgRole → field updated")
+    void updateUser_changesOrgRole_savesUpdated() {
+        AppUser u = user("alice", "hash");
+        u.setId(1L);
+        u.setOrgRole("TECH");
+        when(userRepo.findById(1L)).thenReturn(Optional.of(u));
+
+        service.updateUser(1L, null, null, null, null, null, null, "MANAGER");
+
+        assertThat(u.getOrgRole()).isEqualTo("MANAGER");
+        verify(userRepo).save(u);
+    }
+
+    @Test
+    @DisplayName("updateUser: null orgRole → clears field")
+    void updateUser_nullOrgRole_clearsField() {
+        AppUser u = user("alice", "hash");
+        u.setId(1L);
+        u.setOrgRole("CLEVEL");
+        when(userRepo.findById(1L)).thenReturn(Optional.of(u));
+
+        service.updateUser(1L, null, null, null, null, null, null, null);
+
+        assertThat(u.getOrgRole()).isNull();
+        verify(userRepo).save(u);
     }
 
     @Test

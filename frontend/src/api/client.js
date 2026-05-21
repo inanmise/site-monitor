@@ -75,7 +75,10 @@ export const api = {
 
     // Alert Events
     getAlerts: (onlyOpen = false) => request(`/admin/alerts?onlyOpen=${onlyOpen}`),
-    acknowledgeAlert: (id) => request(`/admin/alerts/${id}/acknowledge`, { method: 'POST' }),
+    acknowledgeAlert: (id, acknowledgedBy) => request(`/admin/alerts/${id}/acknowledge`, {
+      method: 'POST',
+      body: JSON.stringify({ acknowledged_by: acknowledgedBy }),
+    }),
     resolveAlert:     (id) => request(`/admin/alerts/${id}/resolve`,     { method: 'POST' }),
     reNotifyAlert: (id) => request(`/admin/alerts/${id}/re-notify`, { method: 'POST' }),
     getAlertNotifications: (id) => request(`/admin/alerts/${id}/notifications`),
@@ -85,6 +88,7 @@ export const api = {
     createTeam: (data) => request('/admin/teams', { method: 'POST', body: JSON.stringify(data) }),
     updateTeam: (id, data) => request(`/admin/teams/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
     deleteTeam: (id) => request(`/admin/teams/${id}`, { method: 'DELETE' }),
+    getTeamUsers: (id) => request(`/admin/teams/${id}/users`),
 
     // Users
     getUsers: () => request('/admin/users'),

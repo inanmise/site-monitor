@@ -2,22 +2,25 @@ import { useState, useEffect } from 'react'
 import { api } from '../../api/client'
 import { useDialog } from '../ui/Dialog.jsx'
 import { useT } from '../../i18n/index.jsx'
+import SearchableSelect from '../ui/SearchableSelect.jsx'
 
 const ROLES  = ['PO', 'TECH', 'MANAGER', 'CLEVEL']
 const LEVELS = ['WARNING', 'HIGH', 'CRITICAL']
 const levelColor = { WARNING: '#f0a500', HIGH: '#e07b00', CRITICAL: '#c0392b' }
-const emptyContact = { name: '', email: '', role: 'TECH', minAlertLevel: 'WARNING', webhookUrl: '', webhookType: 'TEAMS', active: true, team_id: '' }
+const emptyContact = { user_id: '', role: 'TECH', min_alert_level: 'WARNING', webhook_url: '', webhook_type: 'TEAMS', active: true, team_id: '' }
 
 export default function EscalationContacts({ teams = [], isAdmin = false }) {
   const t = useT()
   const { showConfirm } = useDialog()
   const [contacts, setContacts] = useState([])
-  const [modal, setModal] = useState(null)
-  const [form, setForm] = useState(emptyContact)
+  const [users, setUsers]       = useState([])
+  const [modal, setModal]   = useState(null)
+  const [form, setForm]     = useState(emptyContact)
   const [saving, setSaving] = useState(false)
-  const [msg, setMsg] = useState(null)
+  const [msg, setMsg]       = useState(null)
 
   const teamMap = Object.fromEntries(teams.map(t => [t.id, t.name]))
+  const userMap = Object.fromEntries(users.map(u => [String(u.id), u]))
 
   const roleLabelMap = {
     PO: t('ec.role.po'), TECH: t('ec.role.tech'), MANAGER: t('ec.role.manager'), CLEVEL: t('ec.role.clevel'),
@@ -26,20 +29,30 @@ export default function EscalationContacts({ teams = [], isAdmin = false }) {
     WARNING: t('ec.level.warning'), HIGH: t('ec.level.high'), CRITICAL: t('ec.level.critical'),
   }
 
-  useEffect(() => { load() }, [])
+  useEffect(() => { load(); loadUsers() }, [])
 
   async function load() {
     const res = await api.admin.getContacts()
     if (res?.success) setContacts(res.data)
   }
 
-  function openAdd() { setForm({ ...emptyContact, team_id: teams[0]?.id ?? '' }); setModal('add') }
+  async function loadUsers() {
+    const res = await api.admin.getUsers()
+    if (res?.success) setUsers(res.data.filter(u => u.active))
+  }
+
+  function openAdd() {
+    setForm({ ...emptyContact, team_id: teams[0]?.id ?? '' })
+    setModal('add')
+  }
   function openEdit(c) {
     setForm({
-      ...c,
-      minAlertLevel: c.min_alert_level || 'WARNING',
-      webhookUrl: c.webhook_url || '',
-      webhookType: c.webhook_type || 'TEAMS',
+      user_id: c.user_id ? String(c.user_id) : '',
+      role: c.role || 'TECH',
+      min_alert_level: c.min_alert_level || 'WARNING',
+      webhook_url: c.webhook_url || '',
+      webhook_type: c.webhook_type || 'TEAMS',
+      active: c.active !== false,
       team_id: c.team_id ?? '',
     })
     setModal(c)
@@ -48,14 +61,13 @@ export default function EscalationContacts({ teams = [], isAdmin = false }) {
   async function save() {
     setSaving(true)
     const payload = {
-      name: form.name.trim(),
-      email: form.email.trim(),
+      user_id: form.user_id ? Number(form.user_id) : null,
       role: form.role,
-      minAlertLevel: form.minAlertLevel,
-      webhookUrl: form.webhookUrl || null,
-      webhookType: form.webhookType || null,
+      min_alert_level: form.min_alert_level,
+      webhook_url: form.webhook_url || null,
+      webhook_type: form.webhook_type || null,
       active: form.active,
-      teamId: form.team_id ? Number(form.team_id) : null,
+      team_id: form.team_id ? Number(form.team_id) : null,
     }
     const res = modal === 'add'
       ? await api.admin.addContact(payload)
@@ -78,6 +90,9 @@ export default function EscalationContacts({ teams = [], isAdmin = false }) {
     await api.admin.deleteContact(id)
     load()
   }
+
+  const selectedUser = form.user_id ? userMap[form.user_id] : null
+  const canSave = !!form.user_id
 
   return (
     <div className="admin-section">
@@ -133,33 +148,66 @@ export default function EscalationContacts({ teams = [], isAdmin = false }) {
           <div className="modal-box" onClick={(e) => e.stopPropagation()}>
             <h3>{modal === 'add' ? t('ec.addTitle') : t('ec.editTitle')}</h3>
             <div className="form-grid">
-              <label>{t('ec.formName')}<input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></label>
-              <label>{t('ec.formEmail')}<input type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></label>
+              <label>
+                {t('contact.user')} <span style={{ color: 'var(--danger)' }}>*</span>
+                <SearchableSelect
+                  value={form.user_id}
+                  onChange={v => setForm({ ...form, user_id: v })}
+                  placeholder={t('contact.selectUser')}
+                  options={[
+                    { value: '', label: t('contact.selectUser') },
+                    ...users.map(u => ({
+                      value: String(u.id),
+                      label: `${u.display_name || u.username} (${u.email || u.username})`,
+                    })),
+                  ]}
+                />
+                {selectedUser && (
+                  <span className="field-hint">
+                    {selectedUser.display_name || selectedUser.username} — {selectedUser.email}
+                  </span>
+                )}
+                {users.length === 0 && (
+                  <span className="field-hint field-hint--warn">{t('team.noUsersHint')}</span>
+                )}
+              </label>
               {isAdmin && teams.length > 0 && (
                 <label>{t('ec.formTeam')}
-                  <select value={form.team_id} onChange={(e) => setForm({ ...form, team_id: e.target.value })}>
-                    {teams.map(team => <option key={team.id} value={team.id}>{team.name}</option>)}
-                  </select>
+                  <SearchableSelect
+                    value={form.team_id}
+                    onChange={v => setForm({ ...form, team_id: v })}
+                    options={teams.map(team => ({ value: team.id, label: team.name }))}
+                  />
                 </label>
               )}
               <label>{t('ec.formRole')}
-                <select value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })}>
-                  {ROLES.map((r) => <option key={r} value={r}>{roleLabelMap[r]}</option>)}
-                </select>
+                <SearchableSelect
+                  value={form.role}
+                  onChange={v => setForm({ ...form, role: v })}
+                  options={ROLES.map(r => ({ value: r, label: roleLabelMap[r] }))}
+                />
               </label>
               <label>{t('ec.formLevel')}
-                <select value={form.minAlertLevel} onChange={(e) => setForm({ ...form, minAlertLevel: e.target.value })}>
-                  <option value="WARNING">{t('ec.levelWarn')}</option>
-                  <option value="HIGH">{t('ec.levelHigh')}</option>
-                  <option value="CRITICAL">{t('ec.levelCrit')}</option>
-                </select>
+                <SearchableSelect
+                  value={form.min_alert_level}
+                  onChange={v => setForm({ ...form, min_alert_level: v })}
+                  options={[
+                    { value: 'WARNING',  label: t('ec.levelWarn') },
+                    { value: 'HIGH',     label: t('ec.levelHigh') },
+                    { value: 'CRITICAL', label: t('ec.levelCrit') },
+                  ]}
+                />
               </label>
-              <label>{t('ec.formWebhook')}<input value={form.webhookUrl} onChange={(e) => setForm({ ...form, webhookUrl: e.target.value })} placeholder="https://..." /></label>
+              <label>{t('ec.formWebhook')}<input value={form.webhook_url} onChange={(e) => setForm({ ...form, webhook_url: e.target.value })} placeholder="https://..." /></label>
               <label>{t('ec.formWebhookType')}
-                <select value={form.webhookType} onChange={(e) => setForm({ ...form, webhookType: e.target.value })}>
-                  <option value="TEAMS">Microsoft Teams</option>
-                  <option value="SLACK">Slack</option>
-                </select>
+                <SearchableSelect
+                  value={form.webhook_type}
+                  onChange={v => setForm({ ...form, webhook_type: v })}
+                  options={[
+                    { value: 'TEAMS', label: 'Microsoft Teams' },
+                    { value: 'SLACK', label: 'Slack' },
+                  ]}
+                />
               </label>
               <label className="checkbox-label">
                 <input type="checkbox" checked={form.active} onChange={(e) => setForm({ ...form, active: e.target.checked })} />
@@ -168,7 +216,7 @@ export default function EscalationContacts({ teams = [], isAdmin = false }) {
             </div>
             <div className="modal-actions">
               <button className="btn btn-secondary" onClick={() => setModal(null)}>{t('ec.cancel')}</button>
-              <button className="btn btn-primary" onClick={save} disabled={saving || !form.name || !form.email}>
+              <button className="btn btn-primary" onClick={save} disabled={saving || !canSave}>
                 {saving ? t('ec.saving') : t('ec.save')}
               </button>
             </div>

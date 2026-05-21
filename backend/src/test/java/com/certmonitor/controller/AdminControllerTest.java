@@ -73,6 +73,9 @@ class AdminControllerTest {
     @MockBean
     CertificateNoteRepository noteRepo;
 
+    @MockBean
+    AppUserRepository userRepo;
+
     @BeforeEach
     void setup() {
         when(userService.listTeams()).thenReturn(java.util.Collections.emptyList());
@@ -354,6 +357,107 @@ class AdminControllerTest {
         when(escalationService.reNotify(1L)).thenReturn(notifyResult);
 
         mvc.perform(post("/api/admin/alerts/1/re-notify").session(authSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true));
+    }
+
+    // ── Users ─────────────────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("GET /api/admin/users returns 200 with user list")
+    void listUsers_authenticated_returns200() throws Exception {
+        when(userService.listUsers()).thenReturn(Collections.emptyList());
+
+        mvc.perform(get("/api/admin/users").session(authSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data").isArray());
+    }
+
+    @Test
+    @DisplayName("POST /api/admin/users with org_role returns 200")
+    void addUser_withOrgRole_returns200() throws Exception {
+        AppUser saved = new AppUser();
+        saved.setId(5L);
+        saved.setUsername("carol");
+        saved.setSystemRole("USER");
+        saved.setOrgRole("PO");
+        saved.setTeamId(1L);
+        when(userService.createUser(any(), any(), any(), any(), any(), any(), any(), eq("PO")))
+                .thenReturn(saved);
+
+        mvc.perform(post("/api/admin/users")
+                        .session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"username\":\"carol\",\"password\":\"pass1234\",\"email\":\"c@test.com\",\"org_role\":\"PO\",\"team_id\":1}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true));
+    }
+
+    @Test
+    @DisplayName("PUT /api/admin/users/{id} with org_role returns 200")
+    void updateUser_withOrgRole_returns200() throws Exception {
+        AppUser updated = new AppUser();
+        updated.setId(1L);
+        updated.setUsername("alice");
+        updated.setSystemRole("USER");
+        updated.setOrgRole("MANAGER");
+        updated.setTeamId(1L);
+        when(userService.updateUser(eq(1L), any(), any(), any(), any(), any(), any(), eq("MANAGER")))
+                .thenReturn(updated);
+
+        mvc.perform(put("/api/admin/users/1")
+                        .session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"display_name\":\"Alice\",\"org_role\":\"MANAGER\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true));
+    }
+
+    @Test
+    @DisplayName("POST /api/admin/contacts with user_id populates name/email from user")
+    void addContact_withUserId_populatesNameEmailFromUser() throws Exception {
+        AppUser linkedUser = new AppUser();
+        linkedUser.setId(10L);
+        linkedUser.setUsername("dana");
+        linkedUser.setDisplayName("Dana Smith");
+        linkedUser.setEmail("dana@test.com");
+        when(userRepo.findById(10L)).thenReturn(Optional.of(linkedUser));
+
+        EscalationContact saved = new EscalationContact();
+        saved.setId(1L);
+        saved.setName("Dana Smith");
+        saved.setEmail("dana@test.com");
+        saved.setRole("TECH");
+        saved.setMinAlertLevel("WARNING");
+        saved.setActive(true);
+        when(contactRepo.save(any())).thenReturn(saved);
+
+        mvc.perform(post("/api/admin/contacts")
+                        .session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"user_id\":10,\"role\":\"TECH\",\"min_alert_level\":\"WARNING\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true));
+
+        org.mockito.Mockito.verify(userRepo).findById(10L);
+    }
+
+    @Test
+    @DisplayName("POST /api/admin/contacts with unknown user_id still saves contact")
+    void addContact_withUnknownUserId_stillSaves() throws Exception {
+        when(userRepo.findById(999L)).thenReturn(Optional.empty());
+
+        EscalationContact saved = new EscalationContact();
+        saved.setId(2L);
+        saved.setRole("PO");
+        saved.setMinAlertLevel("HIGH");
+        saved.setActive(true);
+        when(contactRepo.save(any())).thenReturn(saved);
+
+        mvc.perform(post("/api/admin/contacts")
+                        .session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"user_id\":999,\"role\":\"PO\",\"min_alert_level\":\"HIGH\"}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success").value(true));
     }

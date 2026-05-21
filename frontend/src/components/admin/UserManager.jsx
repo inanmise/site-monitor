@@ -2,8 +2,9 @@ import { useState, useEffect } from 'react'
 import { api } from '../../api/client'
 import { useDialog } from '../ui/Dialog.jsx'
 import { useT } from '../../i18n/index.jsx'
+import SearchableSelect from '../ui/SearchableSelect.jsx'
 
-const emptyUser = { username: '', password: '', display_name: '', email: '', employee_id: '', system_role: 'USER', team_id: '', active: true }
+const emptyUser = { username: '', password: '', display_name: '', email: '', employee_id: '', system_role: 'USER', team_id: '', org_role: '', active: true }
 
 export default function UserManager({ teams }) {
   const t = useT()
@@ -25,7 +26,7 @@ export default function UserManager({ teams }) {
     if (res?.success) setUsers(res.data)
   }
 
-  function openAdd() { setForm({ ...emptyUser, team_id: teams?.[0]?.id ?? '' }); setModal('add') }
+  function openAdd() { setForm(emptyUser); setModal('add') }
   function openEdit(user) {
     setForm({
       username: user.username,
@@ -35,6 +36,7 @@ export default function UserManager({ teams }) {
       employee_id: user.employee_id || '',
       system_role: user.system_role || 'USER',
       team_id: user.team_id ?? '',
+      org_role: user.org_role || '',
       active: user.active,
     })
     setModal(user)
@@ -49,6 +51,7 @@ export default function UserManager({ teams }) {
       employee_id: form.employee_id,
       system_role: form.system_role,
       team_id: form.team_id || null,
+      org_role: form.org_role || null,
       active: form.active,
     }
     let res
@@ -107,6 +110,7 @@ export default function UserManager({ teams }) {
               <th>{t('usr.colDisplay')}</th>
               <th>{t('usr.colEmail')}</th>
               <th>{t('usr.colRole')}</th>
+              <th>{t('usr.colOrgRole')}</th>
               <th>{t('usr.colTeam')}</th>
               <th>{t('usr.colActive')}</th>
               <th>{t('usr.colActions')}</th>
@@ -120,6 +124,7 @@ export default function UserManager({ teams }) {
                 <td>{user.display_name || '—'}</td>
                 <td>{user.email || '—'}</td>
                 <td><span className={`role-badge${user.system_role === 'ADMIN' ? ' role-admin' : user.system_role === 'AUDIT' ? ' role-audit' : ''}`}>{user.system_role}</span></td>
+                <td>{user.org_role ? <span className={`badge-role badge-role-${user.org_role}`}>{user.org_role}</span> : '—'}</td>
                 <td>{teamMap[user.team_id] || '—'}</td>
                 <td>
                   <span className={user.active ? 'badge badge-ok' : 'badge badge-err'}>{user.active ? t('usr.active') : t('usr.inactive')}</span>
@@ -164,18 +169,43 @@ export default function UserManager({ teams }) {
                 <input value={form.employee_id} onChange={(e) => setForm({ ...form, employee_id: e.target.value })} />
               </label>
               <label>{t('usr.formRole')}
-                <select value={form.system_role} onChange={(e) => setForm({ ...form, system_role: e.target.value })}>
-                  <option value="USER">USER</option>
-                  <option value="AUDIT">AUDIT</option>
-                  <option value="ADMIN">ADMIN</option>
-                </select>
+                <SearchableSelect
+                  value={form.system_role}
+                  onChange={v => setForm({ ...form, system_role: v })}
+                  options={[
+                    { value: 'USER',  label: 'USER' },
+                    { value: 'AUDIT', label: 'AUDIT' },
+                    { value: 'ADMIN', label: 'ADMIN' },
+                  ]}
+                />
+              </label>
+              <label>{t('usr.orgRole')}
+                <SearchableSelect
+                  value={form.org_role}
+                  onChange={v => setForm({ ...form, org_role: v })}
+                  options={[
+                    { value: '',        label: t('usr.orgRoleNone') },
+                    { value: 'TECH',    label: 'Tech' },
+                    { value: 'PO',      label: 'Product Owner (PO)' },
+                    { value: 'MANAGER', label: 'Manager' },
+                    { value: 'CLEVEL',  label: 'C-Level' },
+                  ]}
+                />
               </label>
               <label>
                 {t('usr.formTeam')} <span style={{ color: 'var(--danger)' }}>*</span>
-                <select value={form.team_id} onChange={(e) => setForm({ ...form, team_id: e.target.value ? Number(e.target.value) : '' })}>
-                  <option value="">{t('usr.noTeam')}</option>
-                  {(teams || []).map(team => <option key={team.id} value={team.id}>{team.name}</option>)}
-                </select>
+                <SearchableSelect
+                  value={form.team_id}
+                  onChange={v => setForm({ ...form, team_id: v ? Number(v) : '' })}
+                  placeholder={t('usr.noTeam')}
+                  options={[
+                    { value: '', label: t('usr.noTeam') },
+                    ...(teams || []).map(team => ({ value: team.id, label: team.name })),
+                  ]}
+                />
+                {!form.team_id && (
+                  <span className="field-hint field-hint--warn">{t('usr.teamRequired')}</span>
+                )}
               </label>
               <label className="checkbox-label">
                 <input type="checkbox" checked={form.active} onChange={(e) => setForm({ ...form, active: e.target.checked })} />

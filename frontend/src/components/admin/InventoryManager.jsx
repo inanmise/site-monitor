@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { api } from '../../api/client'
 import { useDialog } from '../ui/Dialog.jsx'
 import { useT } from '../../i18n/index.jsx'
+import SearchableSelect from '../ui/SearchableSelect.jsx'
 
 const DEFAULT_CHANGE_TEMPLATE =
 `- IISAdmins ekibi sertifika alım sürecini yürütür.
@@ -249,30 +250,44 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
 
               <label>
                 {t('inv.formTeam')} <span style={{ color: 'var(--danger)' }}>*</span>
-                <select value={form.team_id} onChange={e => f('team_id', e.target.value)}
-                  disabled={!isAdmin}>
-                  <option value="">{t('inv.selectTeam')}</option>
-                  {teams.map(team => <option key={team.id} value={team.id}>{team.name}</option>)}
-                </select>
+                <SearchableSelect
+                  value={form.team_id}
+                  onChange={v => f('team_id', v)}
+                  placeholder={t('inv.selectTeam')}
+                  disabled={!isAdmin}
+                  options={[
+                    { value: '', label: t('inv.selectTeam') },
+                    ...teams.map(team => ({ value: team.id, label: team.name })),
+                  ]}
+                />
               </label>
 
               <label>
                 {t('inv.formUgTeam')} <span style={{ color: 'var(--danger)' }}>*</span>
-                <select value={form.ug_team_id} onChange={e => f('ug_team_id', e.target.value)}>
-                  <option value="">{t('inv.selectTeam')}</option>
-                  {teams.map(team => <option key={team.id} value={team.id}>{team.name}</option>)}
-                </select>
+                <SearchableSelect
+                  value={form.ug_team_id}
+                  onChange={v => f('ug_team_id', v)}
+                  placeholder={t('inv.selectTeam')}
+                  options={[
+                    { value: '', label: t('inv.selectTeam') },
+                    ...teams.map(team => ({ value: team.id, label: team.name })),
+                  ]}
+                />
               </label>
 
               <label>
                 {t('inv.formTier')}
-                <select value={form.tier ?? ''} onChange={e => f('tier', e.target.value ? Number(e.target.value) : null)}>
-                  <option value="">{t('inv.tierNone')}</option>
-                  <option value="1">{t('inv.tier1')}</option>
-                  <option value="2">{t('inv.tier2')}</option>
-                  <option value="3">{t('inv.tier3')}</option>
-                  <option value="4">{t('inv.tier4')}</option>
-                </select>
+                <SearchableSelect
+                  value={form.tier ?? ''}
+                  onChange={v => f('tier', v ? Number(v) : null)}
+                  options={[
+                    { value: '', label: t('inv.tierNone') },
+                    { value: '1', label: t('inv.tier1') },
+                    { value: '2', label: t('inv.tier2') },
+                    { value: '3', label: t('inv.tier3') },
+                    { value: '4', label: t('inv.tier4') },
+                  ]}
+                />
               </label>
 
               <label>
@@ -377,9 +392,11 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
             <div className="form-grid">
               <label className="full-width">
                 {t('inv.transferTeam')}
-                <select value={transferTeamId} onChange={e => setTransferTeamId(e.target.value)}>
-                  {teams.map(team => <option key={team.id} value={team.id}>{team.name}</option>)}
-                </select>
+                <SearchableSelect
+                  value={transferTeamId}
+                  onChange={v => setTransferTeamId(v)}
+                  options={teams.map(team => ({ value: team.id, label: team.name }))}
+                />
               </label>
             </div>
             <div className="modal-actions">

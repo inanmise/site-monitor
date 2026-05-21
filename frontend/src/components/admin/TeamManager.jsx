@@ -2,8 +2,11 @@ import { useState, useEffect } from 'react'
 import { api } from '../../api/client'
 import { useDialog } from '../ui/Dialog.jsx'
 import { useT } from '../../i18n/index.jsx'
+import SearchableSelect from '../ui/SearchableSelect.jsx'
 
 const emptyTeam = { name: '', email: '', description: '', active: true, leader_id: '' }
+
+const ORG_ROLE_COLORS = { PO: '#2563eb', MANAGER: '#d97706', CLEVEL: '#dc2626', TECH: '#16a34a' }
 
 export default function TeamManager({ onTeamsChange }) {
   const t = useT()
@@ -14,6 +17,9 @@ export default function TeamManager({ onTeamsChange }) {
   const [form, setForm]     = useState(emptyTeam)
   const [saving, setSaving] = useState(false)
   const [msg, setMsg]       = useState(null)
+  const [expandedId, setExpandedId]     = useState(null)
+  const [membersCache, setMembersCache] = useState({})
+  const [membersLoading, setMembersLoading] = useState(false)
 
   useEffect(() => { load(); loadUsers() }, [])
 
@@ -27,7 +33,18 @@ export default function TeamManager({ onTeamsChange }) {
     if (res?.success) setUsers(res.data.filter(u => u.active))
   }
 
-  const userMap = Object.fromEntries(users.map(u => [u.id, u.displayName || u.username]))
+  async function toggleExpand(teamId) {
+    if (expandedId === teamId) { setExpandedId(null); return }
+    setExpandedId(teamId)
+    if (!membersCache[teamId]) {
+      setMembersLoading(true)
+      const res = await api.admin.getTeamUsers(teamId)
+      if (res?.success) setMembersCache(prev => ({ ...prev, [teamId]: res.data }))
+      setMembersLoading(false)
+    }
+  }
+
+  const userMap = Object.fromEntries(users.map(u => [u.id, u.display_name || u.username]))
 
   function openAdd() { setForm(emptyTeam); setModal('add') }
   function openEdit(team) {
@@ -49,8 +66,11 @@ export default function TeamManager({ onTeamsChange }) {
       ? await api.admin.createTeam(payload)
       : await api.admin.updateTeam(modal.id, payload)
     setSaving(false)
-    if (res?.success) { setModal(null); setMsg(t('team.saved')); load(); onTeamsChange?.() }
-    else setMsg(res?.error || 'Error')
+    if (res?.success) {
+      setModal(null); setMsg(t('team.saved')); load(); onTeamsChange?.()
+      // Invalidate cached members for edited team
+      if (modal !== 'add') setMembersCache(prev => { const n = { ...prev }; delete n[modal.id]; return n })
+    } else setMsg(res?.error || 'Error')
   }
 
   async function del(id) {
@@ -64,6 +84,8 @@ export default function TeamManager({ onTeamsChange }) {
     })
     if (!ok) return
     await api.admin.deleteTeam(id)
+    setMembersCache(prev => { const n = { ...prev }; delete n[id]; return n })
+    if (expandedId === id) setExpandedId(null)
     load()
     onTeamsChange?.()
   }
@@ -91,17 +113,59 @@ export default function TeamManager({ onTeamsChange }) {
           </thead>
           <tbody>
             {teams.map((team) => (
-              <tr key={team.id}>
-                <td><strong>{team.name}</strong></td>
-                <td>{team.email || '—'}</td>
-                <td>{userMap[team.leaderId] ?? <span style={{ color: 'var(--danger)' }}>{t('team.noLeader')}</span>}</td>
-                <td>{team.description || '—'}</td>
-                <td><span className={team.active ? 'badge badge-ok' : 'badge badge-err'}>{team.active ? t('team.active') : t('team.inactive')}</span></td>
-                <td>
-                  <button className="btn-sm btn-edit" onClick={() => openEdit(team)}>{t('team.edit')}</button>
-                  <button className="btn-sm btn-del" onClick={() => del(team.id)}>{t('team.delete')}</button>
-                </td>
-              </tr>
+              <>
+                <tr key={team.id}>
+                  <td>
+                    <button
+                      className="team-expand-btn"
+                      onClick={() => toggleExpand(team.id)}
+                      title={expandedId === team.id ? t('team.collapseMembers') : t('team.expandMembers')}
+                    >
+                      {expandedId === team.id ? '▼' : '▶'}
+                    </button>
+                    <strong>{team.name}</strong>
+                  </td>
+                  <td>{team.email || '—'}</td>
+                  <td>{userMap[team.leader_id] ?? <span style={{ color: 'var(--danger)' }}>{t('team.noLeader')}</span>}</td>
+                  <td>{team.description || '—'}</td>
+                  <td><span className={team.active ? 'badge badge-ok' : 'badge badge-err'}>{team.active ? t('team.active') : t('team.inactive')}</span></td>
+                  <td>
+                    <button className="btn-sm btn-edit" onClick={() => openEdit(team)}>{t('team.edit')}</button>
+                    <button className="btn-sm btn-del" onClick={() => del(team.id)}>{t('team.delete')}</button>
+                  </td>
+                </tr>
+                {expandedId === team.id && (
+                  <tr key={`${team.id}-members`} className="team-members-row">
+                    <td colSpan={6}>
+                      {membersLoading && !membersCache[team.id]
+                        ? <span className="field-hint">{t('team.loadingMembers')}</span>
+                        : (() => {
+                            const members = membersCache[team.id] || []
+                            return members.length === 0
+                              ? <span className="field-hint">{t('team.noMembers')}</span>
+                              : (
+                                <div className="team-members-list">
+                                  {members.map(m => (
+                                    <span key={m.id} className="team-member-chip">
+                                      {m.display_name || m.username}
+                                      {m.org_role && (
+                                        <span
+                                          className={`badge-role badge-role-${m.org_role}`}
+                                          style={{ marginLeft: 6 }}
+                                        >
+                                          {m.org_role}
+                                        </span>
+                                      )}
+                                    </span>
+                                  ))}
+                                </div>
+                              )
+                          })()
+                      }
+                    </td>
+                  </tr>
+                )}
+              </>
             ))}
           </tbody>
         </table>
@@ -122,12 +186,18 @@ export default function TeamManager({ onTeamsChange }) {
               </label>
               <label>
                 {t('team.formLeader')} <span style={{ color: 'var(--danger)' }}>*</span>
-                <select value={form.leader_id} onChange={(e) => setForm({ ...form, leader_id: e.target.value })}>
-                  <option value="">{t('team.selectLeader')}</option>
-                  {users.map(u => (
-                    <option key={u.id} value={u.id}>{u.displayName || u.username} ({u.username})</option>
-                  ))}
-                </select>
+                <SearchableSelect
+                  value={form.leader_id}
+                  onChange={v => setForm({ ...form, leader_id: v })}
+                  placeholder={t('team.selectLeader')}
+                  options={[
+                    { value: '', label: t('team.selectLeader') },
+                    ...users.map(u => ({ value: u.id, label: `${u.display_name || u.username} (${u.username})` })),
+                  ]}
+                />
+                {users.length === 0 && (
+                  <span className="field-hint field-hint--warn">{t('team.noUsersHint')}</span>
+                )}
               </label>
               <label className="full-width">{t('team.formDesc')}
                 <input value={form.description || ''} onChange={(e) => setForm({ ...form, description: e.target.value })} />
