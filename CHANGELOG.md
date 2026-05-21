@@ -6,6 +6,23 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [10.5.0] — 2026-05-21
+
+### Added
+- **Org Role** — `AppUser` carries an organizational role (`PO`, `TECH`, `MANAGER`, `CLEVEL`); colour-coded badge in Users table and Team member chips
+- **User-linked Escalation Contacts** — EscalationContact gains `user_id` FK; Add/Edit Contact form replaces manual name/email entry with a user picker; backend auto-populates name/email from linked user
+- **Team Member List** — TeamManager rows expandable (▶/▼ toggle); shows all team members with org role badges
+- **SearchableSelect label fix** — trigger button uses `onMouseDown`; fixes dropdown reopen bug when wrapped inside HTML `<label>`
+- **AdminPanel default tab** — non-admin users land on Escalation Contacts tab by default
+- **Test coverage** — `updateUser` (6 scenarios), `orgRole` edge cases, User CRUD endpoint tests, Contact+userId endpoint tests
+
+### Changed
+- `EscalationContacts.jsx` — form uses user dropdown instead of standalone name/email fields
+- `AdminController.addContact/updateContact` — `applyContactFields` resolves `userId` → name/email via `AppUserRepository`
+- `api.admin.acknowledgeAlert` — accepts `(id, acknowledgedBy)` and sends `{ acknowledged_by }` in POST body
+
+---
+
 ## [6.8.0] — 2026-05-19
 
 ### Added
