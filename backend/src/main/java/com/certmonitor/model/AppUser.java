@@ -36,6 +36,10 @@ public class AppUser {
     @Column(nullable = false)
     private String systemRole = "USER";
 
+    /** Organizational role: PO | TECH | MANAGER | CLEVEL | null (regular member) */
+    @Column(name = "org_role")
+    private String orgRole;
+
     @Column(name = "team_id")
     private Long teamId;
 

@@ -21,10 +21,12 @@ public class EscalationContact {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @Column(nullable = false)
+    /** Link to an AppUser — when set, name/email are derived from the user on save */
+    @Column(name = "user_id")
+    private Long userId;
+
     private String name;
 
-    @Column(nullable = false)
     private String email;
 
     /** Organizational role: PO, TECH, MANAGER, CLEVEL */

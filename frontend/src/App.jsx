@@ -3,6 +3,7 @@ import { ChevronUp, ChevronDown } from 'lucide-react'
 import { api, formatDate } from './api/client'
 import { useDialog } from './components/ui/Dialog.jsx'
 import { useT } from './i18n/index.jsx'
+import SearchableSelect from './components/ui/SearchableSelect.jsx'
 import Login from './pages/Login'
 import Nav from './components/Nav'
 import StatsPanel from './components/StatsPanel'
@@ -370,28 +371,40 @@ export default function App() {
           <div className="content">
             {tab === 'dashboard' && (
               <div className="tab-content active">
-                <div className="sort-controls">
+                <div className="sort-controls sort-bar">
                   <label>{t('app.sortLabel')}</label>
-                  <select className="sort-select" value={sortOrder} onChange={(e) => { setSortOrder(e.target.value); setDashPage(1) }}>
-                    <option value="default">{t('app.sortDefault')}</option>
-                    <option value="asc">{t('app.sortAsc')}</option>
-                    <option value="desc">{t('app.sortDesc')}</option>
-                  </select>
+                  <SearchableSelect
+                    value={sortOrder}
+                    onChange={v => { setSortOrder(v); setDashPage(1) }}
+                    options={[
+                      { value: 'default', label: t('app.sortDefault') },
+                      { value: 'asc',     label: t('app.sortAsc') },
+                      { value: 'desc',    label: t('app.sortDesc') },
+                    ]}
+                  />
                   <label>{t('app.statusLabel')}</label>
-                  <select className="sort-select" value={statusFilter} onChange={(e) => { setStatusFilter(e.target.value); setDashPage(1) }}>
-                    <option value="all">{t('app.all')}</option>
-                    <option value="valid">{t('app.valid')}</option>
-                    <option value="warning">{t('app.warning')}</option>
-                    <option value="error">{t('app.error')}</option>
-                  </select>
+                  <SearchableSelect
+                    value={statusFilter}
+                    onChange={v => { setStatusFilter(v); setDashPage(1) }}
+                    options={[
+                      { value: 'all',     label: t('app.all') },
+                      { value: 'valid',   label: t('app.valid') },
+                      { value: 'warning', label: t('app.warning') },
+                      { value: 'error',   label: t('app.error') },
+                    ]}
+                  />
                   <label>{t('app.expiryLabel')}</label>
-                  <select className="sort-select" value={expiryFilter} onChange={(e) => { setExpiryFilter(e.target.value); setDashPage(1) }}>
-                    <option value="all">{t('app.all')}</option>
-                    <option value="expired">{t('app.expired')}</option>
-                    <option value="days7">{t('app.days7')}</option>
-                    <option value="days30">{t('app.days30')}</option>
-                    <option value="days90">{t('app.days90')}</option>
-                  </select>
+                  <SearchableSelect
+                    value={expiryFilter}
+                    onChange={v => { setExpiryFilter(v); setDashPage(1) }}
+                    options={[
+                      { value: 'all',     label: t('app.all') },
+                      { value: 'expired', label: t('app.expired') },
+                      { value: 'days7',   label: t('app.days7') },
+                      { value: 'days30',  label: t('app.days30') },
+                      { value: 'days90',  label: t('app.days90') },
+                    ]}
+                  />
                 </div>
                 <div className="dashboard-header">
                   <h2>{t('app.dashTitle')}</h2>

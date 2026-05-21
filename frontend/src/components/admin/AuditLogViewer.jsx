@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { api, formatDate } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
+import SearchableSelect from '../ui/SearchableSelect.jsx'
 
 const EVENT_TYPES = [
   'LOGIN', 'LOGIN_FAILED', 'LOGOUT',
@@ -172,22 +173,24 @@ export default function AuditLogViewer() {
           value={filters.actor}
           onChange={e => setFilters(f => ({ ...f, actor: e.target.value }))}
         />
-        <select
-          className="audit-filter-input"
+        <SearchableSelect
           value={filters.eventType}
-          onChange={e => setFilters(f => ({ ...f, eventType: e.target.value }))}
-        >
-          <option value="">{t('audit.allEvents')}</option>
-          {EVENT_TYPES.map(et => <option key={et} value={et}>{et}</option>)}
-        </select>
-        <select
-          className="audit-filter-input"
+          onChange={v => setFilters(f => ({ ...f, eventType: v }))}
+          placeholder={t('audit.allEvents')}
+          options={[
+            { value: '', label: t('audit.allEvents') },
+            ...EVENT_TYPES.map(et => ({ value: et, label: et })),
+          ]}
+        />
+        <SearchableSelect
           value={filters.outcome}
-          onChange={e => setFilters(f => ({ ...f, outcome: e.target.value }))}
-        >
-          <option value="">{t('audit.allOutcomes')}</option>
-          {OUTCOMES.map(o => <option key={o} value={o}>{o}</option>)}
-        </select>
+          onChange={v => setFilters(f => ({ ...f, outcome: v }))}
+          placeholder={t('audit.allOutcomes')}
+          options={[
+            { value: '', label: t('audit.allOutcomes') },
+            ...OUTCOMES.map(o => ({ value: o, label: o })),
+          ]}
+        />
         <input
           type="datetime-local"
           className="audit-filter-input"

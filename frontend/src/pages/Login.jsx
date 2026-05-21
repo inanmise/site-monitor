@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { api } from '../api/client'
 import { useT, useLanguage } from '../i18n/index.jsx'
-import { ShieldAlert, Lock, Globe, Bell, BarChart3, RefreshCw } from 'lucide-react'
+import { ShieldAlert, ShieldCheck, Lock, Globe, Bell, BarChart3, RefreshCw } from 'lucide-react'
 import CertMonitorLogo from '../components/ui/CertMonitorLogo.jsx'
 
 const STORAGE_KEY = 'cert-monitor-remembered-user'

@@ -31,7 +31,7 @@ const TAB_GROUPS = [
 export default function AdminPanel({ systemRole }) {
   const t = useT()
   const isAdmin = systemRole === 'ADMIN'
-  const [activeTab, setActiveTab] = useState('thresholds')
+  const [activeTab, setActiveTab] = useState(isAdmin ? 'thresholds' : 'contacts')
   const [teams, setTeams] = useState([])
 
   function loadTeams() {

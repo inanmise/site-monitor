@@ -37,6 +37,7 @@ public class AdminController {
     private final LatestCheckRepository latestCheckRepo;
     private final CertificateNoteRepository noteRepo;
     private final UserService userService;
+    private final AppUserRepository userRepo;
 
     private static final DateTimeFormatter ISO =
             DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
@@ -252,33 +253,58 @@ public class AdminController {
 
     @PostMapping("/contacts")
     public ResponseEntity<Map<String, Object>> addContact(
-            @RequestBody EscalationContact contact, HttpSession session) {
-        if (!isAdmin(session)) contact.setTeamId(teamId(session));
-        if (contact.getTeamId() == null) {
-            userService.listTeams().stream().findFirst().ifPresent(t -> contact.setTeamId(t.getId()));
-        }
+            @RequestBody Map<String, Object> body, HttpSession session) {
+        EscalationContact contact = new EscalationContact();
+        applyContactFields(contact, body, session);
         contact.setId(null);
         contact.setCreatedAt(now());
         if (contact.getActive() == null) contact.setActive(true);
         if (contact.getMinAlertLevel() == null) contact.setMinAlertLevel("WARNING");
+        if (!isAdmin(session)) contact.setTeamId(teamId(session));
+        if (contact.getTeamId() == null) {
+            userService.listTeams().stream().findFirst().ifPresent(t -> contact.setTeamId(t.getId()));
+        }
         return ok(Map.of("data", contactRepo.save(contact)));
     }
 
     @PutMapping("/contacts/{id}")
     public ResponseEntity<Map<String, Object>> updateContact(
-            @PathVariable Long id, @RequestBody EscalationContact contact, HttpSession session) {
+            @PathVariable Long id, @RequestBody Map<String, Object> body, HttpSession session) {
         EscalationContact existing = contactRepo.findById(id)
                 .orElseThrow(() -> new NoSuchElementException("Contact not found: " + id));
         if (!isAdmin(session)) checkOwnership(existing.getTeamId(), session);
-        existing.setName(contact.getName());
-        existing.setEmail(contact.getEmail());
-        existing.setRole(contact.getRole());
-        existing.setMinAlertLevel(contact.getMinAlertLevel() != null ? contact.getMinAlertLevel() : "WARNING");
-        existing.setWebhookUrl(contact.getWebhookUrl());
-        existing.setWebhookType(contact.getWebhookType());
-        existing.setActive(contact.getActive() != null ? contact.getActive() : true);
-        if (isAdmin(session) && contact.getTeamId() != null) existing.setTeamId(contact.getTeamId());
+        applyContactFields(existing, body, session);
         return ok(Map.of("data", contactRepo.save(existing)));
+    }
+
+    private void applyContactFields(EscalationContact c, Map<String, Object> body, HttpSession session) {
+        Long userId = toLong(body.get("user_id"));
+        if (userId != null) {
+            userRepo.findById(userId).ifPresent(u -> {
+                c.setUserId(userId);
+                c.setName(u.getDisplayName() != null && !u.getDisplayName().isBlank()
+                        ? u.getDisplayName() : u.getUsername());
+                c.setEmail(u.getEmail());
+            });
+        } else {
+            String name = (String) body.get("name");
+            String email = (String) body.get("email");
+            if (name != null) c.setName(name);
+            if (email != null) c.setEmail(email);
+            c.setUserId(null);
+        }
+        String role = (String) body.get("role");
+        if (role != null) c.setRole(role);
+        String minAlertLevel = (String) body.get("min_alert_level");
+        c.setMinAlertLevel(minAlertLevel != null ? minAlertLevel : (c.getMinAlertLevel() != null ? c.getMinAlertLevel() : "WARNING"));
+        c.setWebhookUrl((String) body.get("webhook_url"));
+        c.setWebhookType((String) body.get("webhook_type"));
+        Object active = body.get("active");
+        c.setActive(active instanceof Boolean ? (Boolean) active : (c.getActive() != null ? c.getActive() : true));
+        if (isAdmin(session)) {
+            Long teamId = toLong(body.get("team_id"));
+            if (teamId != null) c.setTeamId(teamId);
+        }
     }
 
     @DeleteMapping("/contacts/{id}")
@@ -415,7 +441,8 @@ public class AdminController {
                 (String) body.get("email"),
                 (String) body.get("employee_id"),
                 (String) body.get("system_role"),
-                toLong(body.get("team_id")));
+                toLong(body.get("team_id")),
+                (String) body.get("org_role"));
         auditService.recordAction("USER_CREATE", session, request,
                 "USER", user.getUsername(),
                 "{\"role\":\"" + user.getSystemRole() + "\",\"teamId\":" + user.getTeamId() + "}");
@@ -432,7 +459,8 @@ public class AdminController {
                 (String) body.get("employee_id"),
                 (String) body.get("system_role"),
                 toLong(body.get("team_id")),
-                body.get("active") instanceof Boolean ? (Boolean) body.get("active") : null);
+                body.get("active") instanceof Boolean ? (Boolean) body.get("active") : null,
+                (String) body.get("org_role"));
         return ok(Map.of("data", user));
     }
 

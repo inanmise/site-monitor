@@ -173,7 +173,7 @@ public class UserService {
 
     @Transactional
     public AppUser createUser(String username, String rawPassword, String displayName,
-                               String email, String employeeId, String systemRole, Long teamId) {
+                               String email, String employeeId, String systemRole, Long teamId, String orgRole) {
         if (username == null || username.isBlank()) throw new IllegalArgumentException("Username cannot be blank");
         if (rawPassword == null || rawPassword.length() < passwordMinLength) throw new IllegalArgumentException("Password too short (min " + passwordMinLength + " chars)");
         if (email == null || email.isBlank()) throw new IllegalArgumentException("Email is required");
@@ -188,6 +188,7 @@ public class UserService {
         user.setEmail(email.trim());
         user.setEmployeeId(employeeId);
         user.setSystemRole(systemRole != null ? systemRole : "USER");
+        user.setOrgRole(orgRole != null && !orgRole.isBlank() ? orgRole : null);
         user.setTeamId(teamId);
         user.setActive(true);
         user.setCreatedAt(now);
@@ -197,7 +198,7 @@ public class UserService {
 
     @Transactional
     public AppUser updateUser(Long id, String displayName, String email, String employeeId,
-                               String systemRole, Long teamId, Boolean active) {
+                               String systemRole, Long teamId, Boolean active, String orgRole) {
         AppUser user = userRepo.findById(id).orElseThrow(() -> new NoSuchElementException("User not found: " + id));
         if (displayName != null) user.setDisplayName(displayName);
         if (email != null && !email.isBlank()) user.setEmail(email.trim());
@@ -205,6 +206,7 @@ public class UserService {
         if (systemRole != null) user.setSystemRole(systemRole);
         if (teamId != null) user.setTeamId(teamId);
         if (active != null) user.setActive(active);
+        user.setOrgRole(orgRole != null && !orgRole.isBlank() ? orgRole : null);
         user.setUpdatedAt(now());
         return userRepo.save(user);
     }
