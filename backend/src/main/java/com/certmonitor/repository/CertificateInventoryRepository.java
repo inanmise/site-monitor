@@ -15,4 +15,11 @@ public interface CertificateInventoryRepository extends JpaRepository<Certificat
     boolean existsByTeamIdAndActiveTrue(Long teamId);
     long countByActiveTrue();
     List<CertificateInventory> findByUgTeamIdAndActiveTrueOrderByDomainAsc(Long ugTeamId);
+
+    // Soft-delete aware
+    List<CertificateInventory> findByDeletedAtIsNullOrderByDomainAsc();
+    List<CertificateInventory> findByDeletedAtIsNotNullOrderByDomainAsc();
+    List<CertificateInventory> findByTeamIdAndDeletedAtIsNullOrderByDomainAsc(Long teamId);
+    List<CertificateInventory> findByUgTeamIdAndDeletedAtIsNullOrderByDomainAsc(Long ugTeamId);
+    boolean existsByTeamIdAndActiveTrueAndDeletedAtIsNull(Long teamId);
 }

@@ -373,7 +373,7 @@ class UserServiceTest {
     @Test
     @DisplayName("deleteTeam: no certs → deletes successfully")
     void deleteTeam_noCerts_deletesSuccessfully() {
-        when(inventoryRepo.existsByTeamIdAndActiveTrue(3L)).thenReturn(false);
+        when(inventoryRepo.existsByTeamIdAndActiveTrueAndDeletedAtIsNull(3L)).thenReturn(false);
         service.deleteTeam(3L);
         verify(teamRepo).deleteById(3L);
     }
@@ -381,7 +381,7 @@ class UserServiceTest {
     @Test
     @DisplayName("deleteTeam: has active certs → IllegalStateException")
     void deleteTeam_hasCerts_throwsIllegalState() {
-        when(inventoryRepo.existsByTeamIdAndActiveTrue(3L)).thenReturn(true);
+        when(inventoryRepo.existsByTeamIdAndActiveTrueAndDeletedAtIsNull(3L)).thenReturn(true);
         assertThatThrownBy(() -> service.deleteTeam(3L))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("active certificates");

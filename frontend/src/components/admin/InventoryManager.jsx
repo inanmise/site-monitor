@@ -47,10 +47,13 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
   const [teams, setTeams]             = useState(teamsProp)
   const [modal, setModal]             = useState(null)
   const [transferModal, setTransferModal] = useState(null)
-  const [transferTeamId, setTransferTeamId] = useState('')
+  const [transferType, setTransferType]   = useState('SY')
+  const [transferTeamId, setTransferTeamId]     = useState('')
+  const [transferUgTeamId, setTransferUgTeamId] = useState('')
   const [form, setForm]               = useState(EMPTY)
   const [saving, setSaving]           = useState(false)
   const [msg, setMsg]                 = useState(null)
+  const [showDeleted, setShowDeleted] = useState(false)
 
   const teamMap = Object.fromEntries(teams.map(t => [String(t.id), t.name]))
 
@@ -59,8 +62,10 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
     if (isAdmin) api.admin.getTeams().then(res => { if (res?.success) setTeams(res.data) })
   }, [])
 
+  useEffect(() => { load() }, [showDeleted])
+
   async function load() {
-    const res = await api.admin.getInventory()
+    const res = await api.admin.getInventory(showDeleted)
     if (res?.success) setItems(res.data)
   }
 
@@ -96,6 +101,13 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
       tier:               item.tier ?? null,
     })
     setModal(item)
+  }
+
+  function openTransfer(item, type) {
+    setTransferType(type)
+    setTransferModal(item)
+    setTransferTeamId(type === 'SY' ? String(item.team_id ?? '') : '')
+    setTransferUgTeamId(type === 'UG' ? String(item.ug_team_id ?? '') : '')
   }
 
   function validate() {
@@ -159,13 +171,34 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
     onInventoryChange?.()
   }
 
-  async function doTransfer() {
-    if (!transferTeamId) return
-    setSaving(true)
-    const res = await api.admin.transferCert(transferModal.id, Number(transferTeamId))
-    setSaving(false)
-    if (res?.success) { setTransferModal(null); setMsg(t('inv.transferred')); load() }
+  async function restore(id) {
+    const item = items.find(i => i.id === id)
+    const ok = await showConfirm({
+      title: t('inv.restoreTitle'),
+      message: t('inv.restoreMsg', item?.domain ?? id),
+      variant: 'warning',
+      confirmText: t('inv.restoreConfirm'),
+      cancelText: t('inv.deleteCancel'),
+    })
+    if (!ok) return
+    const res = await api.admin.restoreInventory(id)
+    if (res?.success) { setMsg(t('inv.restored')); load(); onInventoryChange?.() }
     else setMsg(res?.error || 'Error')
+  }
+
+  async function doTransfer() {
+    const selectedId = transferType === 'SY' ? transferTeamId : transferUgTeamId
+    if (!selectedId) return
+    setSaving(true)
+    const res = transferType === 'SY'
+      ? await api.admin.transferCertSy(transferModal.id, Number(selectedId))
+      : await api.admin.transferCertUg(transferModal.id, Number(selectedId))
+    setSaving(false)
+    if (res?.success) {
+      setTransferModal(null)
+      setMsg(transferType === 'SY' ? t('inv.transferredSy') : t('inv.transferredUg'))
+      load()
+    } else setMsg(res?.error || 'Error')
   }
 
   const ugTeamName = (id) => teamMap[String(id)] || '—'
@@ -177,6 +210,16 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
         <button className="btn btn-success" onClick={openAdd}>{t('inv.addBtn')}</button>
       </div>
       {msg && <div className="alert-msg">{msg}</div>}
+
+      {isAdmin && (
+        <div className="inv-filter-bar">
+          <label className="inv-deleted-toggle">
+            <input type="checkbox" checked={showDeleted}
+              onChange={e => setShowDeleted(e.target.checked)} />
+            {t('inv.showDeleted')}
+          </label>
+        </div>
+      )}
 
       <div className="admin-table-wrap">
         <table className="admin-table">
@@ -195,7 +238,7 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
           </thead>
           <tbody>
             {items.map((item) => (
-              <tr key={item.id}>
+              <tr key={item.id} className={item.deleted_at ? 'inv-row-deleted' : ''}>
                 <td><strong>{item.domain}</strong></td>
                 <td>{item.port}</td>
                 <td>
@@ -208,19 +251,38 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
                 <td>{item.owner || '—'}</td>
                 <td>{item.description || '—'}</td>
                 <td>
-                  <span className={item.active ? 'badge badge-ok' : 'badge badge-err'}>
-                    {item.active ? t('inv.active') : t('inv.inactive')}
-                  </span>
+                  {item.deleted_at
+                    ? <span className="badge badge-deleted">{t('inv.deletedBadge')}</span>
+                    : <span className={item.active ? 'badge badge-ok' : 'badge badge-err'}>
+                        {item.active ? t('inv.active') : t('inv.inactive')}
+                      </span>
+                  }
                 </td>
                 <td>
-                  <button className="btn-sm btn-edit" onClick={() => openEdit(item)}>{t('inv.edit')}</button>
-                  {isAdmin && teams.length > 1 && (
-                    <button className="btn-sm" style={{ background: '#6366f1', color: '#fff', marginRight: 4 }}
-                      onClick={() => { setTransferModal(item); setTransferTeamId(String(item.team_id ?? '')) }}>
-                      {t('inv.transfer')}
-                    </button>
+                  {item.deleted_at ? (
+                    isAdmin && (
+                      <button className="btn-sm btn-success" onClick={() => restore(item.id)}>
+                        {t('inv.restore')}
+                      </button>
+                    )
+                  ) : (
+                    <>
+                      <button className="btn-sm btn-edit" onClick={() => openEdit(item)}>{t('inv.edit')}</button>
+                      {isAdmin && teams.length > 1 && (
+                        <>
+                          <button className="btn-sm btn-transfer-sy"
+                            onClick={() => openTransfer(item, 'SY')}>
+                            {t('inv.transferSy')}
+                          </button>
+                          <button className="btn-sm btn-transfer-ug"
+                            onClick={() => openTransfer(item, 'UG')}>
+                            {t('inv.transferUg')}
+                          </button>
+                        </>
+                      )}
+                      <button className="btn-sm btn-del" onClick={() => del(item.id)}>{t('inv.delete')}</button>
+                    </>
                   )}
-                  <button className="btn-sm btn-del" onClick={() => del(item.id)}>{t('inv.delete')}</button>
                 </td>
               </tr>
             ))}
@@ -388,20 +450,36 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
       {transferModal && (
         <div className="modal-overlay" onClick={() => setTransferModal(null)}>
           <div className="modal-box" onClick={(e) => e.stopPropagation()}>
-            <h3>{t('inv.transferTitle', transferModal.domain)}</h3>
+            <h3>
+              {transferType === 'SY'
+                ? t('inv.transferSyTitle', transferModal.domain)
+                : t('inv.transferUgTitle', transferModal.domain)}
+            </h3>
             <div className="form-grid">
-              <label className="full-width">
-                {t('inv.transferTeam')}
-                <SearchableSelect
-                  value={transferTeamId}
-                  onChange={v => setTransferTeamId(v)}
-                  options={teams.map(team => ({ value: team.id, label: team.name }))}
-                />
-              </label>
+              {transferType === 'SY' ? (
+                <label className="full-width">
+                  {t('inv.newSyTeam')}
+                  <SearchableSelect
+                    value={transferTeamId}
+                    onChange={v => setTransferTeamId(v)}
+                    options={teams.map(team => ({ value: team.id, label: team.name }))}
+                  />
+                </label>
+              ) : (
+                <label className="full-width">
+                  {t('inv.newUgTeam')}
+                  <SearchableSelect
+                    value={transferUgTeamId}
+                    onChange={v => setTransferUgTeamId(v)}
+                    options={teams.map(team => ({ value: team.id, label: team.name }))}
+                  />
+                </label>
+              )}
             </div>
             <div className="modal-actions">
               <button className="btn btn-secondary" onClick={() => setTransferModal(null)}>{t('inv.cancel')}</button>
-              <button className="btn btn-primary" onClick={doTransfer} disabled={saving || !transferTeamId}>
+              <button className="btn btn-primary" onClick={doTransfer}
+                disabled={saving || (transferType === 'SY' ? !transferTeamId : !transferUgTeamId)}>
                 {saving ? t('inv.saving') : t('inv.transferConfirm')}
               </button>
             </div>

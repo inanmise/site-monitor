@@ -160,7 +160,7 @@ public class UserService {
 
     @Transactional
     public void deleteTeam(Long id) {
-        if (inventoryRepo.existsByTeamIdAndActiveTrue(id))
+        if (inventoryRepo.existsByTeamIdAndActiveTrueAndDeletedAtIsNull(id))
             throw new IllegalStateException("Cannot delete team: it has active certificates assigned to it");
         teamRepo.deleteById(id);
     }

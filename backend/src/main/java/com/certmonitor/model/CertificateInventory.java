@@ -29,6 +29,9 @@ public class CertificateInventory {
     @Column(nullable = false)
     private Boolean active = true;
 
+    @Column(name = "deleted_at")
+    private String deletedAt;
+
     /** Team responsible for this certificate */
     @Column(name = "team_id")
     private Long teamId;
