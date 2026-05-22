@@ -54,7 +54,9 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
   const [msg, setMsg]                 = useState(null)
   const [showDeleted, setShowDeleted] = useState(false)
 
-  const teamMap = Object.fromEntries(teams.map(t => [String(t.id), t.name]))
+  const teamMap  = Object.fromEntries(teams.map(t => [String(t.id), t.name]))
+  const syTeams  = teams.filter(t => !t.team_type || t.team_type === 'SY')
+  const ugTeams  = teams.filter(t => !t.team_type || t.team_type === 'UG')
 
   useEffect(() => {
     load()
@@ -311,7 +313,7 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
                   disabled={!isAdmin}
                   options={[
                     { value: '', label: t('inv.selectTeam') },
-                    ...teams.map(team => ({ value: team.id, label: team.name })),
+                    ...syTeams.map(team => ({ value: team.id, label: team.name })),
                   ]}
                 />
               </label>
@@ -324,7 +326,7 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
                   placeholder={t('inv.selectTeam')}
                   options={[
                     { value: '', label: t('inv.selectTeam') },
-                    ...teams.map(team => ({ value: team.id, label: team.name })),
+                    ...ugTeams.map(team => ({ value: team.id, label: team.name })),
                   ]}
                 />
               </label>
@@ -449,7 +451,7 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
                 <SearchableSelect
                   value={transferTeamId}
                   onChange={v => setTransferTeamId(v)}
-                  options={teams
+                  options={syTeams
                     .filter(team => String(team.id) !== transferUgTeamId)
                     .map(team => ({ value: team.id, label: team.name }))}
                 />
@@ -459,7 +461,7 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
                 <SearchableSelect
                   value={transferUgTeamId}
                   onChange={v => setTransferUgTeamId(v)}
-                  options={teams
+                  options={ugTeams
                     .filter(team => String(team.id) !== transferTeamId)
                     .map(team => ({ value: team.id, label: team.name }))}
                 />

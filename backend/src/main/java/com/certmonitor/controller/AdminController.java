@@ -432,10 +432,12 @@ public class AdminController {
                 (String) body.get("name"),
                 (String) body.get("email"),
                 (String) body.get("description"),
-                toLong(body.get("leader_id")));
+                toLong(body.get("leader_id")),
+                (String) body.get("team_type"));
         auditService.recordAction("TEAM_CREATE", session, request,
                 "TEAM", team.getId().toString(),
-                "{\"name\":\"" + team.getName() + "\",\"leaderId\":" + team.getLeaderId() + "}");
+                "{\"name\":\"" + team.getName() + "\",\"leaderId\":" + team.getLeaderId()
+                + ",\"teamType\":\"" + team.getTeamType() + "\"}");
         return ok(Map.of("data", team, "message", "Team created"));
     }
 
@@ -448,7 +450,8 @@ public class AdminController {
                 (String) body.get("email"),
                 (String) body.get("description"),
                 body.get("active") instanceof Boolean ? (Boolean) body.get("active") : null,
-                toLong(body.get("leader_id")));
+                toLong(body.get("leader_id")),
+                (String) body.get("team_type"));
         return ok(Map.of("data", team));
     }
 

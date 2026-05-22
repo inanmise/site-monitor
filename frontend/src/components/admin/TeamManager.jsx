@@ -4,7 +4,7 @@ import { useDialog } from '../ui/Dialog.jsx'
 import { useT } from '../../i18n/index.jsx'
 import SearchableSelect from '../ui/SearchableSelect.jsx'
 
-const emptyTeam = { name: '', email: '', description: '', active: true, leader_id: '' }
+const emptyTeam = { name: '', email: '', description: '', active: true, leader_id: '', team_type: '' }
 
 const ORG_ROLE_COLORS = { PO: '#2563eb', MANAGER: '#d97706', CLEVEL: '#dc2626', TECH: '#16a34a' }
 
@@ -48,12 +48,13 @@ export default function TeamManager({ onTeamsChange }) {
 
   function openAdd() { setForm(emptyTeam); setModal('add') }
   function openEdit(team) {
-    setForm({ ...team, email: team.email || '', leader_id: String(team.leaderId ?? team.leader_id ?? '') })
+    setForm({ ...team, email: team.email || '', leader_id: String(team.leaderId ?? team.leader_id ?? ''), team_type: team.team_type ?? '' })
     setModal(team)
   }
 
   async function save() {
     if (!form.leader_id) { setMsg(t('team.leaderRequired')); return }
+    if (!form.team_type) { setMsg(t('team.typeRequired')); return }
     setSaving(true)
     const payload = {
       name: form.name.trim(),
@@ -61,6 +62,7 @@ export default function TeamManager({ onTeamsChange }) {
       description: form.description,
       active: form.active,
       leader_id: Number(form.leader_id),
+      team_type: form.team_type,
     }
     const res = modal === 'add'
       ? await api.admin.createTeam(payload)
@@ -90,7 +92,7 @@ export default function TeamManager({ onTeamsChange }) {
     onTeamsChange?.()
   }
 
-  const canSave = form.name.trim() && form.email.trim() && form.leader_id
+  const canSave = form.name.trim() && form.email.trim() && form.leader_id && form.team_type
 
   return (
     <div className="admin-section">
@@ -104,6 +106,7 @@ export default function TeamManager({ onTeamsChange }) {
           <thead>
             <tr>
               <th>{t('team.colName')}</th>
+              <th>{t('team.colType')}</th>
               <th>{t('team.colEmail')}</th>
               <th>{t('team.colLeader')}</th>
               <th>{t('team.colDesc')}</th>
@@ -125,6 +128,11 @@ export default function TeamManager({ onTeamsChange }) {
                     </button>
                     <strong>{team.name}</strong>
                   </td>
+                  <td>
+                    {team.team_type
+                      ? <span className={`badge badge-team-type badge-team-type-${team.team_type.toLowerCase()}`}>{team.team_type}</span>
+                      : <span style={{ color: 'var(--text-light)', fontSize: '.8em' }}>—</span>}
+                  </td>
                   <td>{team.email || '—'}</td>
                   <td>{userMap[team.leader_id] ?? <span style={{ color: 'var(--danger)' }}>{t('team.noLeader')}</span>}</td>
                   <td>{team.description || '—'}</td>
@@ -136,7 +144,7 @@ export default function TeamManager({ onTeamsChange }) {
                 </tr>
                 {expandedId === team.id && (
                   <tr key={`${team.id}-members`} className="team-members-row">
-                    <td colSpan={6}>
+                    <td colSpan={7}>
                       {membersLoading && !membersCache[team.id]
                         ? <span className="field-hint">{t('team.loadingMembers')}</span>
                         : (() => {
@@ -198,6 +206,18 @@ export default function TeamManager({ onTeamsChange }) {
                 {users.length === 0 && (
                   <span className="field-hint field-hint--warn">{t('team.noUsersHint')}</span>
                 )}
+              </label>
+              <label>
+                {t('team.formType')} <span style={{ color: 'var(--danger)' }}>*</span>
+                <SearchableSelect
+                  value={form.team_type}
+                  onChange={v => setForm({ ...form, team_type: v })}
+                  options={[
+                    { value: '', label: t('team.selectType') },
+                    { value: 'SY', label: t('team.typeSy') },
+                    { value: 'UG', label: t('team.typeUg') },
+                  ]}
+                />
               </label>
               <label className="full-width">{t('team.formDesc')}
                 <input value={form.description || ''} onChange={(e) => setForm({ ...form, description: e.target.value })} />

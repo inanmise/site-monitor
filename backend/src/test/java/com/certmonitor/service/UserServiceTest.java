@@ -284,7 +284,7 @@ class UserServiceTest {
         when(teamRepo.existsByName("Alpha")).thenReturn(false);
         when(userRepo.existsById(1L)).thenReturn(true);
 
-        Team result = service.createTeam("Alpha", "alpha@example.com", "Desc", 1L);
+        Team result = service.createTeam("Alpha", "alpha@example.com", "Desc", 1L, "SY");
 
         assertThat(result.getName()).isEqualTo("Alpha");
         assertThat(result.getEmail()).isEqualTo("alpha@example.com");
@@ -294,7 +294,7 @@ class UserServiceTest {
     @Test
     @DisplayName("createTeam: blank name → IllegalArgumentException")
     void createTeam_blankName_throwsIllegalArgument() {
-        assertThatThrownBy(() -> service.createTeam("  ", "a@b.com", null, 1L))
+        assertThatThrownBy(() -> service.createTeam("  ", "a@b.com", null, 1L, null))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("name");
     }
@@ -302,7 +302,7 @@ class UserServiceTest {
     @Test
     @DisplayName("createTeam: blank email → IllegalArgumentException")
     void createTeam_blankEmail_throwsIllegalArgument() {
-        assertThatThrownBy(() -> service.createTeam("Alpha", "", null, 1L))
+        assertThatThrownBy(() -> service.createTeam("Alpha", "", null, 1L, null))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("email");
     }
@@ -311,7 +311,7 @@ class UserServiceTest {
     @DisplayName("createTeam: null leaderId → IllegalArgumentException")
     void createTeam_nullLeader_throwsIllegalArgument() {
         when(teamRepo.existsByName("Alpha")).thenReturn(false);
-        assertThatThrownBy(() -> service.createTeam("Alpha", "a@b.com", null, null))
+        assertThatThrownBy(() -> service.createTeam("Alpha", "a@b.com", null, null, null))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("leader");
     }
@@ -320,7 +320,7 @@ class UserServiceTest {
     @DisplayName("createTeam: duplicate name → IllegalArgumentException")
     void createTeam_duplicateName_throwsIllegalArgument() {
         when(teamRepo.existsByName("Alpha")).thenReturn(true);
-        assertThatThrownBy(() -> service.createTeam("Alpha", "a@b.com", null, 1L))
+        assertThatThrownBy(() -> service.createTeam("Alpha", "a@b.com", null, 1L, null))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("already exists");
     }
@@ -330,7 +330,7 @@ class UserServiceTest {
     void createTeam_leaderNotFound_throwsIllegalArgument() {
         when(teamRepo.existsByName("Alpha")).thenReturn(false);
         when(userRepo.existsById(99L)).thenReturn(false);
-        assertThatThrownBy(() -> service.createTeam("Alpha", "a@b.com", null, 99L))
+        assertThatThrownBy(() -> service.createTeam("Alpha", "a@b.com", null, 99L, null))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("Leader user not found");
     }
@@ -343,7 +343,7 @@ class UserServiceTest {
         t.setLeaderId(5L);
         when(teamRepo.findById(2L)).thenReturn(Optional.of(t));
 
-        service.updateTeam(2L, "NewName", null, null, null, null);
+        service.updateTeam(2L, "NewName", null, null, null, null, null);
 
         assertThat(t.getName()).isEqualTo("NewName");
         verify(teamRepo).save(t);
@@ -357,7 +357,7 @@ class UserServiceTest {
         t.setLeaderId(5L);
         when(teamRepo.findById(2L)).thenReturn(Optional.of(t));
 
-        service.updateTeam(2L, null, null, null, null, null);
+        service.updateTeam(2L, null, null, null, null, null, null);
 
         assertThat(t.getLeaderId()).isEqualTo(5L);
     }
@@ -366,7 +366,7 @@ class UserServiceTest {
     @DisplayName("updateTeam: not found → NoSuchElementException")
     void updateTeam_notFound_throwsNoSuchElement() {
         when(teamRepo.findById(999L)).thenReturn(Optional.empty());
-        assertThatThrownBy(() -> service.updateTeam(999L, "X", "x@x.com", null, null, null))
+        assertThatThrownBy(() -> service.updateTeam(999L, "X", "x@x.com", null, null, null, null))
                 .isInstanceOf(NoSuchElementException.class);
     }
 

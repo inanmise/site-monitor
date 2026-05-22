@@ -3686,6 +3686,13 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 [data-theme="dark"] .ts-chip-warning { background: #422006; color: #fcd34d; }
 [data-theme="dark"] .ts-chip-error   { background: #450a0a; color: #fca5a5; }
 
+/* ── Team Type Badges ─────────────────────────────────────────────────────── */
+.badge-team-type { font-size: .75em; font-weight: 700; padding: 2px 7px; border-radius: 10px; }
+.badge-team-type-sy { background: #ede9fe; color: #5b21b6; }
+.badge-team-type-ug { background: #e0f2fe; color: #0369a1; }
+[data-theme="dark"] .badge-team-type-sy { background: #2e1065; color: #a78bfa; }
+[data-theme="dark"] .badge-team-type-ug { background: #082f49; color: #38bdf8; }
+
 /* ── Domain Inventory — Soft Delete ──────────────────────────────────────── */
 .inv-row-deleted td { opacity: 0.55; }
 .inv-row-deleted td:first-child strong { text-decoration: line-through; color: var(--text-light, #94a3b8); }

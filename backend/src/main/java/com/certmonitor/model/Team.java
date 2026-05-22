@@ -29,6 +29,10 @@ public class Team {
     @Column(length = 200)
     private String email;
 
+    /** "SY" = Servis Yönetimi, "UG" = Uygulama Geliştirici, null = legacy (her iki listede görünür) */
+    @Column(name = "team_type", length = 10)
+    private String teamType;
+
     private String createdAt;
     private String updatedAt;
 }

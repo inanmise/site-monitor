@@ -121,7 +121,7 @@ public class UserService {
     }
 
     @Transactional
-    public Team createTeam(String name, String email, String description, Long leaderId) {
+    public Team createTeam(String name, String email, String description, Long leaderId, String teamType) {
         if (name == null || name.isBlank()) throw new IllegalArgumentException("Team name cannot be blank");
         if (email == null || email.isBlank()) throw new IllegalArgumentException("Team email is required");
         if (leaderId == null) throw new IllegalArgumentException("Team leader is required");
@@ -133,6 +133,7 @@ public class UserService {
         team.setEmail(email.trim());
         team.setDescription(description);
         team.setLeaderId(leaderId);
+        team.setTeamType(teamType);
         team.setActive(true);
         team.setCreatedAt(now);
         team.setUpdatedAt(now);
@@ -140,7 +141,7 @@ public class UserService {
     }
 
     @Transactional
-    public Team updateTeam(Long id, String name, String email, String description, Boolean active, Long leaderId) {
+    public Team updateTeam(Long id, String name, String email, String description, Boolean active, Long leaderId, String teamType) {
         Team team = teamRepo.findById(id).orElseThrow(() -> new NoSuchElementException("Team not found: " + id));
         if (name != null && !name.isBlank()) team.setName(name.trim());
         if (email != null && !email.isBlank()) team.setEmail(email.trim());
@@ -154,6 +155,7 @@ public class UserService {
         } else if (team.getLeaderId() == null) {
             throw new IllegalArgumentException("Team leader is required");
         }
+        if (teamType != null) team.setTeamType(teamType);
         team.setUpdatedAt(now());
         return teamRepo.save(team);
     }
