@@ -4,7 +4,7 @@ import { useTheme } from '../i18n/theme.jsx'
 import {
   LayoutDashboard, AlertTriangle, FileText,
   RefreshCw, ClipboardList, Settings, User, Globe, LogOut,
-  Sun, Moon, ChevronLeft, ChevronRight, Server, Activity, ShieldAlert, BarChart3, Bell,
+  Sun, Moon, ChevronLeft, ChevronRight, Server, Activity, ShieldAlert, BarChart3, Bell, BookOpen,
 } from 'lucide-react'
 import CertMonitorLogo from './ui/CertMonitorLogo.jsx'
 
@@ -41,6 +41,12 @@ export default function Nav({ activeTab, onTabChange, username, teamName, system
         { id: 'system',  Icon: Server,      labelKey: 'nav.system',  show: isAdmin || isAudit },
         { id: 'weakalgo',Icon: ShieldAlert, labelKey: 'nav.weakAlgo',show: isAdmin || isAudit },
         { id: 'health',  Icon: Activity,    labelKey: 'nav.health',  show: isAdmin            },
+      ],
+    },
+    {
+      labelKey: null,
+      tabs: [
+        { id: 'help', Icon: BookOpen, labelKey: 'nav.help', show: true },
       ],
     },
   ]

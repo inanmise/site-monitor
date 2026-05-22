@@ -26,6 +26,9 @@ k8s/secret.yaml
 # Keep example
 !k8s/secret.example.yaml
 
+# ── Generated artifacts ───────────────────────────────
+/WHITEPAPER.pdf
+
 # ── Logs ──────────────────────────────────────────────
 *.log
 logs/
