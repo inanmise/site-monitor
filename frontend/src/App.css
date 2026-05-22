@@ -3386,6 +3386,56 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .ts-row-clickable:hover { background: rgba(59,130,246,.08); }
 .ts-role-divider { height: 1px; background: var(--border); }
 
+/* ── Inventory Show Modal ────────────────────────── */
+.btn-show { background: #e8f5e9; color: #2e7d32; border: 1px solid #a5d6a7; }
+.btn-show:hover { background: #c8e6c9; }
+[data-theme="dark"] .btn-show { background: #1b2e1c; color: #81c784; border-color: #2e7d32; }
+
+.modal-show { max-width: 760px; max-height: 90vh; display: flex; flex-direction: column; padding: 0; overflow: hidden; }
+
+.show-header { display: flex; align-items: center; justify-content: space-between; padding: 18px 24px 14px; border-bottom: 1px solid var(--border); flex-shrink: 0; gap: 12px; }
+.show-header-title { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-width: 0; }
+.show-domain { font-family: Consolas, monospace; font-size: 15px; font-weight: 700; color: var(--text); word-break: break-all; }
+.show-badge { padding: 2px 8px; border-radius: 12px; font-size: 11px; font-weight: 700; white-space: nowrap; }
+.show-badge-port { background: var(--bg-surface); color: var(--text-muted); border: 1px solid var(--border); }
+.show-badge-active   { background: #e8f5e9; color: #2e7d32; }
+.show-badge-inactive { background: #fff3e0; color: #e65100; }
+.show-badge-deleted  { background: #ffebee; color: #c62828; }
+[data-theme="dark"] .show-badge-active   { background: #1b2e1c; color: #81c784; }
+[data-theme="dark"] .show-badge-inactive { background: #2e1f0a; color: #ffb74d; }
+[data-theme="dark"] .show-badge-deleted  { background: #2d1519; color: #f87171; }
+.show-close { background: none; border: none; font-size: 18px; cursor: pointer; color: var(--text-muted); padding: 4px 8px; border-radius: 4px; line-height: 1; flex-shrink: 0; }
+.show-close:hover { background: var(--hover); color: var(--text); }
+
+.show-body { flex: 1; overflow-y: auto; padding: 16px 24px 20px; display: flex; flex-direction: column; gap: 10px; }
+.show-section-header { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; color: var(--text-muted); padding: 6px 0 4px; border-bottom: 1px solid var(--border); margin-top: 6px; }
+
+.show-grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 20px; }
+.show-grid-1 { display: flex; flex-direction: column; gap: 8px; }
+.show-field { display: flex; flex-direction: column; gap: 3px; }
+.show-field-full { grid-column: 1 / -1; }
+.show-field-label { font-size: 10px; font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: .06em; }
+.show-field-value { font-size: 13px; color: var(--text); word-break: break-word; line-height: 1.5; }
+.show-field-mono { font-family: Consolas, monospace; font-size: 12px; }
+
+.show-yn-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+.show-yn-cell { display: flex; flex-direction: column; gap: 5px; background: var(--bg-surface); border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; }
+.show-yn-label { font-size: 11px; font-weight: 600; color: var(--text-muted); line-height: 1.3; }
+.show-yn-badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 700; align-self: flex-start; margin-top: 2px; }
+.show-yn-yes { background: #e8f5e9; color: #2e7d32; }
+.show-yn-no  { background: var(--bg-surface); color: var(--text-muted); border: 1px solid var(--border); }
+[data-theme="dark"] .show-yn-yes { background: #1b2e1c; color: #81c784; }
+[data-theme="dark"] .show-yn-no  { border-color: var(--border); }
+
+.show-pre { background: var(--bg-surface); border: 1px solid var(--border); border-radius: 4px; padding: 10px 12px; font-family: Consolas, monospace; font-size: 11.5px; line-height: 1.65; white-space: pre-wrap; overflow-x: auto; max-height: 180px; overflow-y: auto; color: var(--text); margin: 4px 0 0; }
+
+.show-footer { display: flex; gap: 20px; flex-wrap: wrap; padding: 10px 24px; border-top: 1px solid var(--border); flex-shrink: 0; font-size: 11px; color: var(--text-muted); }
+
+@media (max-width: 600px) {
+  .show-grid-2  { grid-template-columns: 1fr; }
+  .show-yn-grid { grid-template-columns: repeat(2, 1fr); }
+}
+
 /* ── Help Page ───────────────────────────────────── */
 .help-page { display: flex; flex-direction: column; height: calc(100vh - 60px); overflow: hidden; }
 .help-header { display: flex; align-items: center; justify-content: space-between; padding: 14px 24px; border-bottom: 1px solid var(--border); flex-shrink: 0; }

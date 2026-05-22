@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { api } from '../../api/client'
+import { api, formatDate } from '../../api/client'
 import { useDialog } from '../ui/Dialog.jsx'
 import { useT } from '../../i18n/index.jsx'
 import SearchableSelect from '../ui/SearchableSelect.jsx'
@@ -39,6 +39,15 @@ function SectionHeader({ label }) {
   return <div className="form-section-header">{label}</div>
 }
 
+function ShowField({ label, value, mono, full }) {
+  return (
+    <div className={`show-field${full ? ' show-field-full' : ''}`}>
+      <span className="show-field-label">{label}</span>
+      <span className={`show-field-value${mono ? ' show-field-mono' : ''}`}>{value ?? '—'}</span>
+    </div>
+  )
+}
+
 export default function InventoryManager({ onInventoryChange, systemRole, teams: teamsProp = [], isAdmin: isAdminProp = false }) {
   const t = useT()
   const { showConfirm } = useDialog()
@@ -53,6 +62,7 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
   const [saving, setSaving]           = useState(false)
   const [msg, setMsg]                 = useState(null)
   const [showDeleted, setShowDeleted] = useState(false)
+  const [showItem,    setShowItem]    = useState(null)
 
   const teamMap  = Object.fromEntries(teams.map(t => [String(t.id), t.name]))
   const syTeams  = teams.filter(t => !t.team_type || t.team_type === 'SY')
@@ -259,6 +269,9 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
                   }
                 </td>
                 <td>
+                  <button className="btn-sm btn-show" onClick={() => setShowItem(item)}>
+                    {t('inv.show')}
+                  </button>
                   {item.deleted_at ? (
                     isAdmin && (
                       <button className="btn-sm btn-success" onClick={() => restore(item.id)}>
@@ -436,6 +449,133 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
                 {saving ? t('inv.saving') : t('inv.save')}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Show (Read-Only Detail) Modalı ── */}
+      {showItem && (
+        <div className="modal-overlay" onClick={() => setShowItem(null)}>
+          <div className="modal-box modal-show" onClick={e => e.stopPropagation()}>
+
+            {/* Header */}
+            <div className="show-header">
+              <div className="show-header-title">
+                <span className="show-domain">{showItem.domain}</span>
+                <span className="show-badge show-badge-port">:{showItem.port || 443}</span>
+                {showItem.tier && (
+                  <span className={`tier-badge tier-badge-${showItem.tier}`}>T{showItem.tier}</span>
+                )}
+                <span className={`show-badge ${
+                  showItem.deleted_at ? 'show-badge-deleted'
+                  : showItem.active   ? 'show-badge-active'
+                  :                     'show-badge-inactive'
+                }`}>
+                  {showItem.deleted_at
+                    ? t('inv.deletedBadge')
+                    : showItem.active ? t('inv.active') : t('inv.inactive')}
+                </span>
+              </div>
+              <button className="show-close" onClick={() => setShowItem(null)}>✕</button>
+            </div>
+
+            <div className="show-body">
+
+              {/* Temel Bilgiler */}
+              <div className="show-section-header">{t('inv.sectionBasic')}</div>
+              <div className="show-grid-2">
+                <ShowField label={t('inv.formDomain')}  value={showItem.domain} mono />
+                <ShowField label={t('inv.formPort')}    value={showItem.port || 443} />
+                <ShowField label={t('inv.formTeam')}    value={teamMap[String(showItem.team_id)]    || '—'} />
+                <ShowField label={t('inv.formUgTeam')}  value={teamMap[String(showItem.ug_team_id)] || '—'} />
+                <ShowField label={t('inv.formTier')}    value={
+                  showItem.tier
+                    ? `T${showItem.tier} — ${t(`inv.tier${showItem.tier}`)}`
+                    : t('inv.tierNone')
+                } />
+                <ShowField label={t('inv.formOwner')}   value={showItem.owner || '—'} />
+              </div>
+
+              {/* Operasyonel Bilgiler */}
+              <div className="show-section-header">{t('inv.sectionOps')}</div>
+              <div className="show-yn-grid">
+                {[
+                  ['inv.formExternalVendor', showItem.external_vendor],
+                  ['inv.formActionRequired', showItem.action_required],
+                  ['inv.formOpenshift',      showItem.openshift],
+                  ['inv.formSslPinning',     showItem.ssl_pinning],
+                  ['inv.formInternal',       showItem.internal_cert],
+                  ['inv.formJksKeystore',    showItem.jks_keystore],
+                  ['inv.formServerUpdate',   showItem.server_update],
+                  ['inv.formNetscaler',      showItem.netscaler],
+                  ['inv.formWafEnabled',     showItem.waf_enabled],
+                  ['inv.formInUse',          showItem.in_use],
+                  ['inv.formEvCert',         showItem.ev_certificate],
+                ].map(([key, val]) => (
+                  <div key={key} className="show-yn-cell">
+                    <span className="show-yn-label">{t(key)}</span>
+                    <span className={`show-yn-badge ${val ? 'show-yn-yes' : 'show-yn-no'}`}>
+                      {val ? t('inv.yes') : t('inv.no')}
+                    </span>
+                  </div>
+                ))}
+              </div>
+
+              {/* Süreç Bilgileri */}
+              <div className="show-section-header">{t('inv.sectionProcess')}</div>
+              <div className="show-grid-2">
+                <ShowField label={t('inv.formPurchasedBy')} value={showItem.purchased_by || '—'} />
+                <div className="show-field">
+                  <span className="show-field-label">{t('inv.formTransferredToSy')}</span>
+                  <span className={`show-yn-badge ${showItem.transferred_to_sy ? 'show-yn-yes' : 'show-yn-no'}`}>
+                    {showItem.transferred_to_sy ? t('inv.yes') : t('inv.no')}
+                  </span>
+                </div>
+              </div>
+
+              {/* Açıklamalar */}
+              {(showItem.description || showItem.change_description) && (
+                <>
+                  <div className="show-section-header">{t('inv.sectionDesc')}</div>
+                  {showItem.description && (
+                    <ShowField label={t('inv.formDescription')} value={showItem.description} full />
+                  )}
+                  {showItem.change_description && (
+                    <div className="show-field show-field-full">
+                      <span className="show-field-label">{t('inv.formChangeDesc')}</span>
+                      <pre className="show-pre">{showItem.change_description}</pre>
+                    </div>
+                  )}
+                </>
+              )}
+
+              {/* Gelişmiş */}
+              {(showItem.expected_fingerprint || showItem.expected_subject) && (
+                <>
+                  <div className="show-section-header">{t('inv.sectionAdv')}</div>
+                  <div className="show-grid-1">
+                    {showItem.expected_fingerprint && (
+                      <ShowField label={t('inv.formFP')} value={showItem.expected_fingerprint} mono full />
+                    )}
+                    {showItem.expected_subject && (
+                      <ShowField label={t('inv.formSubject')} value={showItem.expected_subject} mono full />
+                    )}
+                  </div>
+                </>
+              )}
+
+            </div>
+
+            {/* Footer — metadata */}
+            <div className="show-footer">
+              {showItem.created_at && (
+                <span>{t('inv.metaCreated')}: {formatDate(showItem.created_at)}</span>
+              )}
+              {showItem.updated_at && (
+                <span>{t('inv.metaUpdated')}: {formatDate(showItem.updated_at)}</span>
+              )}
+            </div>
+
           </div>
         </div>
       )}
