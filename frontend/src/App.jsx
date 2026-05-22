@@ -231,6 +231,7 @@ export default function App() {
   }
 
   function handleLogin(userData) {
+    setTab('dashboard')
     setUser(userData.username)
     setSystemRole(userData.system_role || 'USER')
     setTeamId(userData.team_id ?? null)
