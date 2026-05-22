@@ -104,6 +104,7 @@ public class SchedulerService {
         ensureDefaultThreshold();
         assignOrphanedCertsToDefaultTeam();
         clearStaleLocksForThisHost();
+        escalationService.catchUpMissedDailyAlerts();
         new Thread(this::runCheck, "startup-check").start();
     }
 

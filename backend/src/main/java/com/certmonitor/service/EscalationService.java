@@ -176,6 +176,40 @@ public class EscalationService {
         return result;
     }
 
+    public void catchUpMissedDailyAlerts() {
+        String todayUtc = now().substring(0, 10);
+        List<AlertEvent> openAlerts = alertEventRepo
+                .findByResolvedFalseAndAcknowledgedFalseOrderByCreatedAtDesc();
+        int sent = 0;
+        for (AlertEvent event : openAlerts) {
+            String lastAlertTime = event.getLastReAlertAt() != null
+                    ? event.getLastReAlertAt() : event.getCreatedAt();
+            if (isSameUtcDay(lastAlertTime, todayUtc)) {
+                log.debug("Catch-up: {} already notified today, skipping", event.getDomain());
+                continue;
+            }
+            Long domainTeamId = inventoryRepo.findByDomain(event.getDomain())
+                    .map(com.certmonitor.model.CertificateInventory::getTeamId).orElse(null);
+            List<EscalationContact> contacts = getContactsForLevel(event.getAlertLevel(), domainTeamId);
+            Map<String, Object> certContext = latestCheckRepo.findById(event.getDomain())
+                    .map(this::latestToCertContext).orElse(null);
+            Integer freshDays     = certContext != null ? toInt(certContext.get("days_remaining")) : null;
+            Integer effectiveDays = freshDays != null ? freshDays : event.getDaysRemaining();
+            String  freshMessage  = buildMessage(event.getDomain(), event.getAlertType(),
+                                                 event.getAlertLevel(), effectiveDays);
+            sendAllWithDetails(contacts, event.getDomain(), event.getAlertLevel(), event.getAlertType(),
+                    "[RE-ALERT] " + freshMessage, "[RE-ALERT] ",
+                    event.getId(), "DAILY_REALERT", effectiveDays, certContext);
+            event.setLastReAlertAt(now());
+            event.setDaysRemaining(effectiveDays);
+            alertEventRepo.save(event);
+            sent++;
+            log.info("Startup catch-up: alert sent for {} [{}] — last was: {}",
+                    event.getDomain(), event.getAlertLevel(), lastAlertTime.substring(0, 10));
+        }
+        log.info("Startup catch-up complete — {} missed notification(s) sent", sent);
+    }
+
     // No @Transactional: DB save auto-commits, then resolution notification runs without holding connection
     public AlertEvent resolve(Long eventId, String resolvedBy) {
         AlertEvent event = alertEventRepo.findById(eventId)
