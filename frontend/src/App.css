@@ -1061,6 +1061,7 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .checkbox-label { flex-direction: row !important; align-items: center; gap: 8px !important; cursor: pointer; }
 .modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--border); }
 .alert-msg { background: #d4edda; color: #155724; padding: 10px 14px; border-radius: 5px; margin-bottom: 12px; font-size: .9em; }
+.alert-msg--err { background: #f8d7da; color: #721c24; }
 
 /* Thresholds */
 .threshold-card { background: var(--bg); border-radius: 8px; padding: 20px; border: 1px solid var(--border); }
@@ -1960,6 +1961,7 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 [data-theme="dark"] .admin-tabs { border-bottom-color: var(--border); }
 [data-theme="dark"] .threshold-card { background: var(--bg-surface); }
 [data-theme="dark"] .alert-msg { background: #0c2318; color: #4ade80; }
+[data-theme="dark"] .alert-msg--err { background: #2d1519; color: #f87171; }
 [data-theme="dark"] .section-desc { color: var(--text-light); }
 
 /* Alert cards */

@@ -46,13 +46,16 @@ export default function TeamManager({ onTeamsChange }) {
 
   const userMap = Object.fromEntries(users.map(u => [u.id, u.display_name || u.username]))
 
-  function openAdd() { setForm(emptyTeam); setModal('add') }
+  function openAdd() { setForm(emptyTeam); setModal('add'); setMsg(null) }
   function openEdit(team) {
     setForm({ ...team, email: team.email || '', leader_id: String(team.leaderId ?? team.leader_id ?? ''), team_type: team.team_type ?? '' })
     setModal(team)
+    setMsg(null)
   }
+  function closeModal() { setModal(null); setMsg(null) }
 
   async function save() {
+    setMsg(null)
     if (!form.leader_id) { setMsg(t('team.leaderRequired')); return }
     if (!form.team_type) { setMsg(t('team.typeRequired')); return }
     setSaving(true)
@@ -64,15 +67,20 @@ export default function TeamManager({ onTeamsChange }) {
       leader_id: Number(form.leader_id),
       team_type: form.team_type,
     }
-    const res = modal === 'add'
+    const isAdd = modal === 'add'
+    const editedId = isAdd ? null : modal.id
+    const res = isAdd
       ? await api.admin.createTeam(payload)
-      : await api.admin.updateTeam(modal.id, payload)
+      : await api.admin.updateTeam(editedId, payload)
     setSaving(false)
     if (res?.success) {
-      setModal(null); setMsg(t('team.saved')); load(); onTeamsChange?.()
-      // Invalidate cached members for edited team
-      if (modal !== 'add') setMembersCache(prev => { const n = { ...prev }; delete n[modal.id]; return n })
-    } else setMsg(res?.error || 'Error')
+      setMsg('✓ ' + t('team.saved'))
+      load(); onTeamsChange?.()
+      if (!isAdd) setMembersCache(prev => { const n = { ...prev }; delete n[editedId]; return n })
+      setTimeout(() => closeModal(), 1800)
+    } else {
+      setMsg(res?.error || 'Error')
+    }
   }
 
   async function del(id) {
@@ -100,7 +108,7 @@ export default function TeamManager({ onTeamsChange }) {
         <h3>{t('team.title')}</h3>
         <button className="btn btn-success" onClick={openAdd}>{t('team.addBtn')}</button>
       </div>
-      {msg && <div className="alert-msg">{msg}</div>}
+      {msg && !modal && <div className="alert-msg">{msg}</div>}
       <div className="admin-table-wrap">
         <table className="admin-table">
           <thead>
@@ -180,7 +188,7 @@ export default function TeamManager({ onTeamsChange }) {
       </div>
 
       {modal !== null && (
-        <div className="modal-overlay" onClick={() => setModal(null)}>
+        <div className="modal-overlay" onClick={closeModal}>
           <div className="modal-box" onClick={(e) => e.stopPropagation()}>
             <h3>{modal === 'add' ? t('team.addTitle') : t('team.editTitle')}</h3>
             <div className="form-grid">
@@ -227,8 +235,13 @@ export default function TeamManager({ onTeamsChange }) {
                 {t('team.formActive')}
               </label>
             </div>
+            {msg && (
+              <div className={`alert-msg${msg.startsWith('✓') ? '' : ' alert-msg--err'}`} style={{ marginTop: 8 }}>
+                {msg}
+              </div>
+            )}
             <div className="modal-actions">
-              <button className="btn btn-secondary" onClick={() => setModal(null)}>{t('team.cancel')}</button>
+              <button className="btn btn-secondary" onClick={closeModal}>{t('team.cancel')}</button>
               <button className="btn btn-primary" onClick={save} disabled={saving || !canSave}>
                 {saving ? t('team.saving') : t('team.save')}
               </button>
