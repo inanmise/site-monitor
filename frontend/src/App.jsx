@@ -19,6 +19,7 @@ import AuditLogViewer from './components/admin/AuditLogViewer'
 import WeakAlgorithmReport from './components/admin/WeakAlgorithmReport'
 import SystemHealth from './components/admin/SystemHealth'
 import ActivityLog from './components/ActivityLog'
+import HelpPage from './components/HelpPage'
 
 const INACTIVITY_MS   = Number(import.meta.env.VITE_INACTIVITY_MS   ?? 300_000)
 const WARN_BEFORE_MS  = Number(import.meta.env.VITE_WARN_BEFORE_MS  ?? 60_000)
@@ -567,6 +568,10 @@ export default function App() {
                 <h2>{t('app.healthTitle')}</h2>
                 <SystemHealth />
               </div>
+            )}
+
+            {tab === 'help' && (
+              <HelpPage />
             )}
           </div>
 

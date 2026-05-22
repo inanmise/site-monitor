@@ -780,6 +780,10 @@ const TR = {
 
   'nav.groupLogs':      'Kayıtlar',
   'nav.groupAdmin':     'Yönetim',
+  'nav.help':           'Yardım',
+  'help.title':         'CertMonitor — Kullanım Kılavuzu',
+  'help.download':      'PDF İndir',
+  'help.toc':           'İçindekiler',
   'app.collapseStats':  'İstatistikleri gizle',
   'app.expandStats':    'İstatistikleri göster',
 
@@ -1582,6 +1586,10 @@ const EN = {
 
   'nav.groupLogs':      'Logs',
   'nav.groupAdmin':     'Management',
+  'nav.help':           'Help',
+  'help.title':         'CertMonitor — User Guide',
+  'help.download':      'Download PDF',
+  'help.toc':           'Table of Contents',
   'app.collapseStats':  'Hide statistics',
   'app.expandStats':    'Show statistics',
 
