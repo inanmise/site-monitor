@@ -110,7 +110,7 @@ class AdminControllerTest {
     @DisplayName("GET /api/admin/inventory returns 200 with sorted domain list")
     void listInventory_authenticated_returns200() throws Exception {
         CertificateInventory inv = inventory("example.com");
-        when(inventoryRepo.findAll()).thenReturn(List.of(inv));
+        when(inventoryRepo.findByDeletedAtIsNullOrderByDomainAsc()).thenReturn(List.of(inv));
 
         mvc.perform(get("/api/admin/inventory").session(authSession()))
                 .andExpect(status().isOk())
@@ -165,18 +165,18 @@ class AdminControllerTest {
     }
 
     @Test
-    @DisplayName("DELETE /api/admin/inventory/{id} removes from inventory and latest_checks")
+    @DisplayName("DELETE /api/admin/inventory/{id} soft-deletes the inventory item")
     void deleteInventory_authenticated_returns200() throws Exception {
         CertificateInventory inv = inventory("example.com");
         inv.setId(1L);
         when(inventoryRepo.findById(1L)).thenReturn(Optional.of(inv));
+        when(inventoryRepo.save(any())).thenAnswer(i -> i.getArgument(0));
 
         mvc.perform(delete("/api/admin/inventory/1").session(authSession()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success").value(true));
 
-        org.mockito.Mockito.verify(inventoryRepo).deleteById(1L);
-        org.mockito.Mockito.verify(latestCheckRepo).deleteById("example.com");
+        org.mockito.Mockito.verify(inventoryRepo).save(any());
     }
 
     // ── Thresholds ────────────────────────────────────────────────────────────

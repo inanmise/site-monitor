@@ -45,11 +45,17 @@ public class AdminController {
     // ── Inventory ─────────────────────────────────────────────────────────────
 
     @GetMapping("/inventory")
-    public ResponseEntity<Map<String, Object>> listInventory(HttpSession session) {
-        List<CertificateInventory> items = isAdmin(session)
-                ? inventoryRepo.findAll().stream()
-                        .sorted((a, b) -> a.getDomain().compareToIgnoreCase(b.getDomain())).toList()
-                : inventoryRepo.findByTeamIdOrderByDomainAsc(teamId(session));
+    public ResponseEntity<Map<String, Object>> listInventory(
+            @RequestParam(defaultValue = "false") boolean showDeleted,
+            HttpSession session) {
+        List<CertificateInventory> items;
+        if (isAdmin(session)) {
+            items = showDeleted
+                    ? inventoryRepo.findByDeletedAtIsNotNullOrderByDomainAsc()
+                    : inventoryRepo.findByDeletedAtIsNullOrderByDomainAsc();
+        } else {
+            items = inventoryRepo.findByTeamIdAndDeletedAtIsNullOrderByDomainAsc(teamId(session));
+        }
         return ok(Map.of("data", items));
     }
 
@@ -178,27 +184,68 @@ public class AdminController {
     @DeleteMapping("/inventory/{id}")
     public ResponseEntity<Map<String, Object>> deleteInventory(
             @PathVariable Long id, HttpSession session, HttpServletRequest request) {
-        inventoryRepo.findById(id).ifPresent(inv -> {
+        return inventoryRepo.findById(id).map(inv -> {
             if (!isAdmin(session)) checkOwnership(inv.getTeamId(), session);
-            inventoryRepo.deleteById(id);
-            latestCheckRepo.deleteById(inv.getDomain());
-            auditService.recordAction("DOMAIN_DELETE", session, request,
+            inv.setDeletedAt(now());
+            inv.setActive(false);
+            inventoryRepo.save(inv);
+            auditService.recordAction("DOMAIN_SOFT_DELETE", session, request,
                     "CERTIFICATE", inv.getDomain(),
                     "{\"teamId\":" + inv.getTeamId() + "}");
-        });
-        return ok(Map.of("message", "Deleted"));
+            return ok(Map.of("message", "Deleted"));
+        }).orElse(ResponseEntity.notFound().build());
+    }
+
+    @PostMapping("/inventory/{id}/restore")
+    public ResponseEntity<Map<String, Object>> restoreInventory(
+            @PathVariable Long id, HttpSession session, HttpServletRequest request) {
+        requireAdmin(session);
+        return inventoryRepo.findById(id).map(inv -> {
+            inv.setDeletedAt(null);
+            inv.setActive(true);
+            inv.setUpdatedAt(now());
+            inventoryRepo.save(inv);
+            auditService.recordAction("DOMAIN_RESTORE", session, request,
+                    "CERTIFICATE", inv.getDomain(),
+                    "{\"teamId\":" + inv.getTeamId() + "}");
+            return ok(Map.of("data", inv, "message", "Restored"));
+        }).orElse(ResponseEntity.notFound().build());
     }
 
     @PostMapping("/inventory/{id}/transfer")
     public ResponseEntity<Map<String, Object>> transferInventory(
-            @PathVariable Long id, @RequestBody Map<String, Object> body, HttpSession session) {
+            @PathVariable Long id, @RequestBody Map<String, Object> body,
+            HttpSession session, HttpServletRequest request) {
         requireAdmin(session);
         Long newTeamId = toLong(body.get("team_id"));
         CertificateInventory inv = inventoryRepo.findById(id)
                 .orElseThrow(() -> new NoSuchElementException("Inventory item not found: " + id));
+        Long oldTeamId = inv.getTeamId();
         inv.setTeamId(newTeamId);
         inv.setUpdatedAt(now());
-        return ok(Map.of("data", inventoryRepo.save(inv), "message", "Transferred"));
+        inventoryRepo.save(inv);
+        auditService.recordAction("DOMAIN_TRANSFER_SY", session, request,
+                "CERTIFICATE", inv.getDomain(),
+                "{\"from\":" + oldTeamId + ",\"to\":" + newTeamId + "}");
+        return ok(Map.of("data", inv, "message", "Transferred"));
+    }
+
+    @PostMapping("/inventory/{id}/transfer-ug")
+    public ResponseEntity<Map<String, Object>> transferInventoryUg(
+            @PathVariable Long id, @RequestBody Map<String, Object> body,
+            HttpSession session, HttpServletRequest request) {
+        requireAdmin(session);
+        Long newUgTeamId = toLong(body.get("ug_team_id"));
+        CertificateInventory inv = inventoryRepo.findById(id)
+                .orElseThrow(() -> new NoSuchElementException("Inventory item not found: " + id));
+        Long oldUgTeamId = inv.getUgTeamId();
+        inv.setUgTeamId(newUgTeamId);
+        inv.setUpdatedAt(now());
+        inventoryRepo.save(inv);
+        auditService.recordAction("DOMAIN_TRANSFER_UG", session, request,
+                "CERTIFICATE", inv.getDomain(),
+                "{\"from\":" + oldUgTeamId + ",\"to\":" + newUgTeamId + "}");
+        return ok(Map.of("data", inv, "message", "UG team transferred"));
     }
 
     // ── Alert Thresholds (ADMIN only) ─────────────────────────────────────────

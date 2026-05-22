@@ -3685,3 +3685,14 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 [data-theme="dark"] .ts-chip-valid   { background: #052e16; color: #86efac; }
 [data-theme="dark"] .ts-chip-warning { background: #422006; color: #fcd34d; }
 [data-theme="dark"] .ts-chip-error   { background: #450a0a; color: #fca5a5; }
+
+/* ── Domain Inventory — Soft Delete ──────────────────────────────────────── */
+.inv-row-deleted td { opacity: 0.55; }
+.inv-row-deleted td:first-child strong { text-decoration: line-through; color: var(--text-light, #94a3b8); }
+.badge-deleted { background: #6b7280; color: #fff; }
+.inv-filter-bar { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; flex-wrap: wrap; }
+.inv-deleted-toggle { display: inline-flex; align-items: center; gap: 6px; font-size: .85em; cursor: pointer; color: var(--text-secondary, #64748b); user-select: none; }
+.inv-deleted-toggle input { cursor: pointer; }
+.btn-transfer-sy { background: #6366f1; color: #fff; margin-right: 3px; }
+.btn-transfer-ug { background: #0891b2; color: #fff; margin-right: 3px; }
+[data-theme="dark"] .badge-deleted { background: #374151; color: #d1d5db; }

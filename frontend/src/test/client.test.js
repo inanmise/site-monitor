@@ -158,11 +158,19 @@ describe('api.getHistory', () => {
 // ── api.admin ─────────────────────────────────────────────────────────────────
 
 describe('api.admin.getInventory', () => {
-  it('GETs /api/admin/inventory', async () => {
+  it('GETs /api/admin/inventory with showDeleted=false by default', async () => {
     mockFetch({ success: true, data: [] })
     await api.admin.getInventory()
     expect(global.fetch).toHaveBeenCalledWith(
-      '/api/admin/inventory',
+      '/api/admin/inventory?showDeleted=false',
+      expect.any(Object)
+    )
+  })
+  it('GETs /api/admin/inventory with showDeleted=true when passed', async () => {
+    mockFetch({ success: true, data: [] })
+    await api.admin.getInventory(true)
+    expect(global.fetch).toHaveBeenCalledWith(
+      '/api/admin/inventory?showDeleted=true',
       expect.any(Object)
     )
   })

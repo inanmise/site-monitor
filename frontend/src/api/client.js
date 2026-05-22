@@ -58,10 +58,17 @@ export const api = {
 
   admin: {
     // Inventory
-    getInventory: () => request('/admin/inventory'),
+    getInventory: (showDeleted = false) => request(`/admin/inventory?showDeleted=${showDeleted}`),
     addInventory: (item) => request('/admin/inventory', { method: 'POST', body: JSON.stringify(item) }),
     updateInventory: (id, item) => request(`/admin/inventory/${id}`, { method: 'PUT', body: JSON.stringify(item) }),
     deleteInventory: (id) => request(`/admin/inventory/${id}`, { method: 'DELETE' }),
+    restoreInventory: (id) => request(`/admin/inventory/${id}/restore`, { method: 'POST' }),
+    transferCertSy: (id, teamId) => request(`/admin/inventory/${id}/transfer`, {
+      method: 'POST', body: JSON.stringify({ team_id: teamId }),
+    }),
+    transferCertUg: (id, ugTeamId) => request(`/admin/inventory/${id}/transfer-ug`, {
+      method: 'POST', body: JSON.stringify({ ug_team_id: ugTeamId }),
+    }),
 
     // Thresholds
     getThresholds: () => request('/admin/thresholds'),
