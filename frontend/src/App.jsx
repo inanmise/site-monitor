@@ -538,7 +538,6 @@ export default function App() {
 
             {tab === 'domains' && (
               <div className="tab-content active">
-                <h2>{t('app.domainsTitle')}</h2>
                 <InventoryManager onInventoryChange={loadData} systemRole={systemRole} />
               </div>
             )}

@@ -3408,13 +3408,13 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .show-close:hover { background: var(--hover); color: var(--text); }
 
 .show-body { flex: 1; overflow-y: auto; padding: 16px 24px 20px; display: flex; flex-direction: column; gap: 10px; }
-.show-section-header { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; color: var(--text-muted); padding: 6px 0 4px; border-bottom: 1px solid var(--border); margin-top: 6px; }
+.show-section-header { font-size: 10px; font-weight: 700; letter-spacing: .08em; color: var(--text-muted); padding: 6px 0 4px; border-bottom: 1px solid var(--border); margin-top: 6px; }
 
 .show-grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 20px; }
 .show-grid-1 { display: flex; flex-direction: column; gap: 8px; }
 .show-field { display: flex; flex-direction: column; gap: 3px; }
 .show-field-full { grid-column: 1 / -1; }
-.show-field-label { font-size: 10px; font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: .06em; }
+.show-field-label { font-size: 10px; font-weight: 700; color: var(--text-muted); letter-spacing: .06em; }
 .show-field-value { font-size: 13px; color: var(--text); word-break: break-word; line-height: 1.5; }
 .show-field-mono { font-family: Consolas, monospace; font-size: 12px; }
 
