@@ -47,7 +47,6 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
   const [teams, setTeams]             = useState(teamsProp)
   const [modal, setModal]             = useState(null)
   const [transferModal, setTransferModal] = useState(null)
-  const [transferType, setTransferType]   = useState('SY')
   const [transferTeamId, setTransferTeamId]     = useState('')
   const [transferUgTeamId, setTransferUgTeamId] = useState('')
   const [form, setForm]               = useState(EMPTY)
@@ -103,11 +102,10 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
     setModal(item)
   }
 
-  function openTransfer(item, type) {
-    setTransferType(type)
+  function openTransfer(item) {
     setTransferModal(item)
-    setTransferTeamId(type === 'SY' ? String(item.team_id ?? '') : '')
-    setTransferUgTeamId(type === 'UG' ? String(item.ug_team_id ?? '') : '')
+    setTransferTeamId(String(item.team_id ?? ''))
+    setTransferUgTeamId(String(item.ug_team_id ?? ''))
   }
 
   function validate() {
@@ -187,18 +185,18 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
   }
 
   async function doTransfer() {
-    const selectedId = transferType === 'SY' ? transferTeamId : transferUgTeamId
-    if (!selectedId) return
+    const syChanged = transferTeamId   !== String(transferModal.team_id   ?? '')
+    const ugChanged = transferUgTeamId !== String(transferModal.ug_team_id ?? '')
+    if (!syChanged && !ugChanged) { setTransferModal(null); return }
     setSaving(true)
-    const res = transferType === 'SY'
-      ? await api.admin.transferCertSy(transferModal.id, Number(selectedId))
-      : await api.admin.transferCertUg(transferModal.id, Number(selectedId))
+    const results = await Promise.all([
+      syChanged ? api.admin.transferCertSy(transferModal.id, Number(transferTeamId))   : Promise.resolve({ success: true }),
+      ugChanged ? api.admin.transferCertUg(transferModal.id, Number(transferUgTeamId)) : Promise.resolve({ success: true }),
+    ])
     setSaving(false)
-    if (res?.success) {
-      setTransferModal(null)
-      setMsg(transferType === 'SY' ? t('inv.transferredSy') : t('inv.transferredUg'))
-      load()
-    } else setMsg(res?.error || 'Error')
+    const errResult = results.find(r => !r?.success)
+    if (!errResult) { setTransferModal(null); setMsg(t('inv.transferred')); load() }
+    else setMsg(errResult.error || 'Error')
   }
 
   const ugTeamName = (id) => teamMap[String(id)] || '—'
@@ -269,16 +267,10 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
                     <>
                       <button className="btn-sm btn-edit" onClick={() => openEdit(item)}>{t('inv.edit')}</button>
                       {isAdmin && teams.length > 1 && (
-                        <>
-                          <button className="btn-sm btn-transfer-sy"
-                            onClick={() => openTransfer(item, 'SY')}>
-                            {t('inv.transferSy')}
-                          </button>
-                          <button className="btn-sm btn-transfer-ug"
-                            onClick={() => openTransfer(item, 'UG')}>
-                            {t('inv.transferUg')}
-                          </button>
-                        </>
+                        <button className="btn-sm btn-transfer-sy"
+                          onClick={() => openTransfer(item)}>
+                          {t('inv.transfer')}
+                        </button>
                       )}
                       <button className="btn-sm btn-del" onClick={() => del(item.id)}>{t('inv.delete')}</button>
                     </>
@@ -450,36 +442,32 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
       {transferModal && (
         <div className="modal-overlay" onClick={() => setTransferModal(null)}>
           <div className="modal-box" onClick={(e) => e.stopPropagation()}>
-            <h3>
-              {transferType === 'SY'
-                ? t('inv.transferSyTitle', transferModal.domain)
-                : t('inv.transferUgTitle', transferModal.domain)}
-            </h3>
+            <h3>{t('inv.transferTitle', transferModal.domain)}</h3>
             <div className="form-grid">
-              {transferType === 'SY' ? (
-                <label className="full-width">
-                  {t('inv.newSyTeam')}
-                  <SearchableSelect
-                    value={transferTeamId}
-                    onChange={v => setTransferTeamId(v)}
-                    options={teams.map(team => ({ value: team.id, label: team.name }))}
-                  />
-                </label>
-              ) : (
-                <label className="full-width">
-                  {t('inv.newUgTeam')}
-                  <SearchableSelect
-                    value={transferUgTeamId}
-                    onChange={v => setTransferUgTeamId(v)}
-                    options={teams.map(team => ({ value: team.id, label: team.name }))}
-                  />
-                </label>
-              )}
+              <label className="full-width">
+                {t('inv.newSyTeam')}
+                <SearchableSelect
+                  value={transferTeamId}
+                  onChange={v => setTransferTeamId(v)}
+                  options={teams
+                    .filter(team => String(team.id) !== transferUgTeamId)
+                    .map(team => ({ value: team.id, label: team.name }))}
+                />
+              </label>
+              <label className="full-width">
+                {t('inv.newUgTeam')}
+                <SearchableSelect
+                  value={transferUgTeamId}
+                  onChange={v => setTransferUgTeamId(v)}
+                  options={teams
+                    .filter(team => String(team.id) !== transferTeamId)
+                    .map(team => ({ value: team.id, label: team.name }))}
+                />
+              </label>
             </div>
             <div className="modal-actions">
               <button className="btn btn-secondary" onClick={() => setTransferModal(null)}>{t('inv.cancel')}</button>
-              <button className="btn btn-primary" onClick={doTransfer}
-                disabled={saving || (transferType === 'SY' ? !transferTeamId : !transferUgTeamId)}>
+              <button className="btn btn-primary" onClick={doTransfer} disabled={saving}>
                 {saving ? t('inv.saving') : t('inv.transferConfirm')}
               </button>
             </div>
