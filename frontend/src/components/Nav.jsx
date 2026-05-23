@@ -1,10 +1,10 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useT, useLanguage } from '../i18n/index.jsx'
 import { useTheme } from '../i18n/theme.jsx'
 import {
   LayoutDashboard, AlertTriangle, FileText,
   RefreshCw, ClipboardList, Settings, User, Globe, LogOut,
-  Sun, Moon, ChevronLeft, ChevronRight, Server, Activity, ShieldAlert, BarChart3, Bell, BookOpen,
+  Sun, Moon, ChevronLeft, ChevronRight, ChevronDown, Server, Activity, ShieldAlert, BarChart3, Bell, BookOpen,
   Wifi, Radio, Network, Search,
 } from 'lucide-react'
 import CertMonitorLogo from './ui/CertMonitorLogo.jsx'
@@ -65,6 +65,35 @@ export default function Nav({ activeTab, onTabChange, username, teamName, system
     localStorage.getItem('sidebar-open') !== 'false'
   )
 
+  const [openGroups, setOpenGroups] = useState(() => {
+    try {
+      const saved = localStorage.getItem('nav-groups-open')
+      if (saved) return JSON.parse(saved)
+    } catch {}
+    return [0, 1, 2, 3, 4]
+  })
+
+  useEffect(() => {
+    GROUPS.forEach((group, gi) => {
+      if (group.labelKey && group.tabs.some(tab => tab.id === activeTab)) {
+        setOpenGroups(prev => {
+          if (prev.includes(gi)) return prev
+          const next = [...prev, gi]
+          try { localStorage.setItem('nav-groups-open', JSON.stringify(next)) } catch {}
+          return next
+        })
+      }
+    })
+  }, [activeTab])
+
+  function toggleGroup(gi) {
+    setOpenGroups(prev => {
+      const next = prev.includes(gi) ? prev.filter(i => i !== gi) : [...prev, gi]
+      try { localStorage.setItem('nav-groups-open', JSON.stringify(next)) } catch {}
+      return next
+    })
+  }
+
   function toggleSidebar() {
     const next = !open
     setOpen(next)
@@ -95,25 +124,33 @@ export default function Nav({ activeTab, onTabChange, username, teamName, system
         {GROUPS.map((group, gi) => {
           const visibleTabs = group.tabs.filter((tab) => tab.show)
           if (visibleTabs.length === 0) return null
+          const hasLabel    = !!group.labelKey
+          const isGroupOpen = openGroups.includes(gi)
+          const collapsed   = hasLabel && open && !isGroupOpen
           return (
             <div key={gi} className="sb-group">
-              {group.labelKey && open && (
-                <div className="sb-group-label">{t(group.labelKey)}</div>
+              {hasLabel && open && (
+                <button className="sb-group-header" onClick={() => toggleGroup(gi)}>
+                  <span className="sb-group-header-text">{t(group.labelKey)}</span>
+                  <ChevronDown size={11} className={`sb-group-chevron${isGroupOpen ? '' : ' sb-group-chevron-closed'}`} />
+                </button>
               )}
-              {group.labelKey && !open && gi > 0 && (
+              {hasLabel && !open && gi > 0 && (
                 <div className="sb-group-rule" />
               )}
-              {visibleTabs.map(({ id, Icon, labelKey }) => (
-                <button
-                  key={id}
-                  className={`sb-item${activeTab === id ? ' sb-active' : ''}`}
-                  onClick={() => onTabChange(id)}
-                  title={!open ? t(labelKey) : undefined}
-                >
-                  <span className="sb-icon"><Icon size={18} /></span>
-                  {open && <span className="sb-label">{t(labelKey)}</span>}
-                </button>
-              ))}
+              <div className={`sb-group-items${collapsed ? ' sb-group-items-collapsed' : ''}`}>
+                {visibleTabs.map(({ id, Icon, labelKey }) => (
+                  <button
+                    key={id}
+                    className={`sb-item${activeTab === id ? ' sb-active' : ''}`}
+                    onClick={() => onTabChange(id)}
+                    title={!open ? t(labelKey) : undefined}
+                  >
+                    <span className="sb-icon"><Icon size={18} /></span>
+                    {open && <span className="sb-label">{t(labelKey)}</span>}
+                  </button>
+                ))}
+              </div>
             </div>
           )
         })}

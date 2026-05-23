@@ -192,6 +192,32 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
   white-space: nowrap;
   overflow: hidden;
 }
+.sb-group-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 10px 12px 3px;
+  font-size: .65em;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .08em;
+  color: rgba(255,255,255,.35);
+  white-space: nowrap;
+  overflow: hidden;
+  transition: color .15s;
+}
+.sb-group-header:hover { color: rgba(255,255,255,.6); }
+.sb-group-header-text { overflow: hidden; text-overflow: ellipsis; }
+.sb-group-chevron { flex-shrink: 0; transition: transform .22s ease; }
+.sb-group-chevron-closed { transform: rotate(-90deg); }
+
+.sb-group-items { overflow: hidden; max-height: 600px; transition: max-height .25s ease; display: flex; flex-direction: column; gap: 2px; }
+.sb-group-items-collapsed { max-height: 0; }
+
 .sb-group-rule {
   height: 1px;
   background: rgba(255,255,255,.1);
