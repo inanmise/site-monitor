@@ -47,6 +47,10 @@ config:
   emailEnabled: "true"
   smtpHost: smtp.gmail.com
   smtpPort: "587"
+  smtpAuth: "true"
+  smtpStarttlsEnable: "true"
+  smtpStarttlsRequired: "true"
+  smtpSslTrust: "smtp.gmail.com"
   corsAllowedOrigins: ""
   checkTimeoutSeconds: "10"
   warningDays: "30"
