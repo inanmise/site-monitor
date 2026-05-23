@@ -74,8 +74,12 @@ spec:
           volumeMounts:
             - name: tmp
               mountPath: /tmp
+            - name: varlog
+              mountPath: /var/log
       volumes:
         - name: tmp
+          emptyDir: {}
+        - name: varlog
           emptyDir: {}
       terminationGracePeriodSeconds: 60
       {{- if .Values.topologySpreadConstraints.enabled }}
