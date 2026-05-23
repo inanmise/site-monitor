@@ -3585,6 +3585,8 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 [data-theme="dark"] .mon-btn-del   { background: #2d1519; color: #f87171; border-color: #7f1d1d; }
 
 .mon-detail { background: var(--bg-surface); border: 1px solid var(--border); border-radius: 8px; padding: 18px 20px; margin-top: 4px; }
+
+.mon-readonly-field { opacity: 0.65; cursor: default; pointer-events: none; font-family: var(--font-mono, monospace); font-size: 13px; }
 .mon-detail-title { font-size: 14px; font-weight: 700; color: var(--text); margin-bottom: 14px; }
 
 /* DNS-specific */
