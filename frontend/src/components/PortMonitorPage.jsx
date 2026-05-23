@@ -1,7 +1,8 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
+import { createPortal } from 'react-dom'
 import { api, formatDate } from '../api/client'
 import { useT } from '../i18n/index.jsx'
-import { Play, Pencil } from 'lucide-react'
+import { Play, Pencil, X, RefreshCw } from 'lucide-react'
 
 const INTERVALS = [
   { value: 30,  labelKey: 'ping.interval30s' },
@@ -9,6 +10,8 @@ const INTERVALS = [
   { value: 300, labelKey: 'ping.interval5m'  },
   { value: 900, labelKey: 'ping.interval15m' },
 ]
+
+const REFRESH_INTERVAL = 60
 
 export default function PortMonitorPage() {
   const t = useT()
@@ -21,14 +24,27 @@ export default function PortMonitorPage() {
   const [form, setForm] = useState({})
   const [saving, setSaving] = useState(false)
   const [checking, setChecking] = useState(null)
+  const [search, setSearch] = useState('')
+  const [secondsSince, setSecondsSince] = useState(0)
+  const countdownRef = useRef(null)
 
   const load = useCallback(async () => {
     const res = await api.monitoring.getPortMonitors()
     if (res?.success) setMonitors(res.data)
     setLoading(false)
+    setSecondsSince(0)
   }, [])
 
-  useEffect(() => { load() }, [load])
+  useEffect(() => {
+    load()
+    const interval = setInterval(load, REFRESH_INTERVAL * 1000)
+    return () => clearInterval(interval)
+  }, [load])
+
+  useEffect(() => {
+    countdownRef.current = setInterval(() => setSecondsSince(s => s + 1), 1000)
+    return () => clearInterval(countdownRef.current)
+  }, [])
 
   async function loadHistory(id) {
     setHistoryLoading(true)
@@ -37,18 +53,26 @@ export default function PortMonitorPage() {
     setHistoryLoading(false)
   }
 
+  async function openModal(m) {
+    setSelected(m)
+    setHistory([])
+    loadHistory(m.id)
+  }
+
+  function closeModal() { setSelected(null); setHistory([]) }
+
   function openEdit(m) {
     setForm({ intervalSeconds: m.interval_seconds, timeoutMs: m.timeout_ms })
     setModal(m)
   }
-  function closeModal() { setModal(null) }
+  function closeEdit() { setModal(null) }
 
   async function save() {
     setSaving(true)
     await api.monitoring.updatePortMonitor(modal.id, form)
     await load()
     setSaving(false)
-    closeModal()
+    closeEdit()
   }
 
   async function checkNow(m) {
@@ -61,30 +85,45 @@ export default function PortMonitorPage() {
     setChecking(null)
   }
 
-  function selectMonitor(m) {
-    if (selected?.id === m.id) { setSelected(null); setHistory([]); return }
-    setSelected(m)
-    loadHistory(m.id)
-  }
+  const displayMonitors = search.trim()
+    ? monitors.filter(m => m.host.toLowerCase().includes(search.trim().toLowerCase()))
+    : monitors
 
   function statusBadge(status) {
-    const cls   = status === 'open'   ? 'mon-badge-up'
-                : status === 'closed' ? 'mon-badge-down'
-                : 'mon-badge-unknown'
-    const label = status === 'open'   ? t('port.statusOpen')
-                : status === 'closed' ? t('port.statusClosed')
-                : t('port.statusUnknown')
-    return <span className={`mon-badge ${cls}`}>{label}</span>
+    const cls = status === 'open' ? 'upt-badge--up' : status === 'closed' ? 'upt-badge--down' : 'upt-badge--unknown'
+    const label = status === 'open' ? t('port.statusOpen') : status === 'closed' ? t('port.statusClosed') : t('port.statusUnknown')
+    return (
+      <span className={`upt-badge ${cls}`}>
+        <span className="upt-badge-dot" />
+        {label}
+      </span>
+    )
   }
 
   return (
     <div className="mon-page">
-      <div className="mon-header">
+      <div className="upt-header">
         <div>
-          <h2 className="mon-title">{t('port.title')}</h2>
-          <p className="mon-subtitle">{t('port.subtitle')}</p>
+          <h2 className="upt-title">{t('port.title')}</h2>
+          <p className="upt-subtitle">{t('port.subtitle')}</p>
+        </div>
+        <div className="upt-header-right">
+          <span className="upt-last-check">
+            {t('port.autoRefresh').replace('{0}', Math.max(0, REFRESH_INTERVAL - secondsSince))}
+          </span>
+          <button className="btn btn-sm upt-refresh-btn" onClick={load}>
+            <RefreshCw size={14} />{t('port.refresh')}
+          </button>
         </div>
       </div>
+
+      {!loading && monitors.length > 0 && (
+        <div className="upt-toolbar" style={{ justifyContent: 'flex-end', marginBottom: '14px' }}>
+          <input className="upt-search" type="text"
+            placeholder={t('port.searchPlaceholder')}
+            value={search} onChange={e => setSearch(e.target.value)} />
+        </div>
+      )}
 
       {loading ? <div className="loading">...</div> : monitors.length === 0 ? (
         <div className="mon-empty">{t('port.noMonitors')}</div>
@@ -102,11 +141,11 @@ export default function PortMonitorPage() {
               </tr>
             </thead>
             <tbody>
-              {monitors.map(m => (
+              {displayMonitors.map(m => (
                 <tr
                   key={m.id}
-                  className={`mon-row${selected?.id === m.id ? ' mon-row-selected' : ''}${!m.active ? ' mon-row-inactive' : ''}`}
-                  onClick={() => selectMonitor(m)}
+                  className={`mon-row${!m.active ? ' mon-row-inactive' : ''}`}
+                  onClick={() => openModal(m)}
                 >
                   <td className="mon-cell-mono">{m.host}</td>
                   <td className="mon-cell-num">{m.port}</td>
@@ -128,39 +167,68 @@ export default function PortMonitorPage() {
         </div>
       )}
 
-      {selected && (
-        <div className="mon-detail">
-          <div className="mon-detail-title">{t('port.history')} — {selected.host}:{selected.port}</div>
-          {historyLoading ? <div className="loading">...</div> : history.length === 0 ? (
-            <div className="mon-empty">{t('uptime.noData')}</div>
-          ) : (
-            <table className="mon-table">
-              <thead>
-                <tr><th>{t('port.lastCheck')}</th><th>{t('port.status')}</th><th>{t('port.responseMs')}</th></tr>
-              </thead>
-              <tbody>
-                {history.map((c, i) => (
-                  <tr key={i}>
-                    <td className="mon-cell-time">{formatDate(c.checkedAt || c.checked_at)}</td>
-                    <td>
-                      <span className={`mon-badge ${c.open ? 'mon-badge-up' : 'mon-badge-down'}`}>
-                        {c.open ? t('port.statusOpen') : t('port.statusClosed')}
-                      </span>
-                    </td>
-                    <td className="mon-cell-num">{c.responseMs != null ? `${c.responseMs}ms` : c.response_ms != null ? `${c.response_ms}ms` : '—'}</td>
-                  </tr>
+      {/* ── Detail Modal ── */}
+      {selected && createPortal(
+        <div className="upt-modal-overlay" onClick={closeModal}>
+          <div className={`upt-modal upt-modal--${selected.status === 'open' ? 'up' : selected.status === 'closed' ? 'down' : 'unknown'}`} onClick={e => e.stopPropagation()}>
+            <div className="upt-modal-header">
+              <div className="upt-modal-header-left">
+                {statusBadge(selected.status)}
+                <span className="upt-modal-domain">{selected.host}</span>
+                <span className="upt-port-tag">:{selected.port}</span>
+              </div>
+              <button className="upt-modal-close" onClick={closeModal}><X size={18} /></button>
+            </div>
+            <div className="upt-modal-divider" />
+            <div className="upt-modal-summary">
+              {selected.response_ms != null && (
+                <div className="upt-modal-metric">
+                  <span className="upt-modal-metric-val">{selected.response_ms}ms</span>
+                  <span className="upt-modal-metric-lbl">{t('port.responseMs')}</span>
+                </div>
+              )}
+              {selected.checked_at && (
+                <div className="upt-modal-metric">
+                  <span className="upt-modal-metric-val upt-modal-metric-time">{formatDate(selected.checked_at)}</span>
+                  <span className="upt-modal-metric-lbl">{t('port.lastCheck')}</span>
+                </div>
+              )}
+            </div>
+            <div className="upt-modal-divider" />
+            <div className="upt-modal-section-title">{t('port.history')}</div>
+            {historyLoading ? (
+              <div className="upt-modal-loading">...</div>
+            ) : history.length === 0 ? (
+              <div className="upt-modal-loading">{t('uptime.noData')}</div>
+            ) : (
+              <div className="upt-rt-list">
+                {history.slice(0, 30).map((c, i) => (
+                  <div key={i} className="upt-rt-row">
+                    <span className="upt-rt-time">{formatDate(c.checkedAt || c.checked_at)}</span>
+                    <span className={c.open ? 'upt-rt-up' : 'upt-rt-down'}>
+                      {c.open ? t('port.statusOpen') : t('port.statusClosed')}
+                    </span>
+                    {(c.responseMs ?? c.response_ms) != null && (
+                      <span className="upt-rt-time">{c.responseMs ?? c.response_ms}ms</span>
+                    )}
+                  </div>
                 ))}
-              </tbody>
-            </table>
-          )}
-        </div>
+              </div>
+            )}
+          </div>
+        </div>,
+        document.body
       )}
 
-      {modal && (
-        <div className="modal-overlay" onClick={closeModal}>
-          <div className="modal-box" onClick={e => e.stopPropagation()}>
-            <h3 className="modal-title">{t('port.modalEdit')}</h3>
-
+      {/* ── Edit Modal ── */}
+      {modal && createPortal(
+        <div className="upt-modal-overlay" onClick={closeEdit}>
+          <div className="upt-modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 420 }}>
+            <div className="upt-modal-header">
+              <span className="upt-modal-domain">{t('port.modalEdit')}</span>
+              <button className="upt-modal-close" onClick={closeEdit}><X size={18} /></button>
+            </div>
+            <div className="upt-modal-divider" />
             <div className="modal-field">
               <label>{t('port.host')}</label>
               <div className="modal-input mon-readonly-field">{modal.host}:{modal.port}</div>
@@ -179,15 +247,15 @@ export default function PortMonitorPage() {
               <input className="modal-input" type="number" value={form.timeoutMs}
                 onChange={e => setForm(f => ({ ...f, timeoutMs: Number(e.target.value) }))} />
             </div>
-
             <div className="modal-actions">
-              <button className="btn btn-secondary" onClick={closeModal}>{t('port.cancel')}</button>
+              <button className="btn btn-secondary" onClick={closeEdit}>{t('port.cancel')}</button>
               <button className="btn btn-primary" onClick={save} disabled={saving}>
                 {saving ? '...' : t('port.save')}
               </button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   )

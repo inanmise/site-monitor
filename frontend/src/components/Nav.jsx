@@ -5,7 +5,7 @@ import {
   LayoutDashboard, AlertTriangle, FileText,
   RefreshCw, ClipboardList, Settings, User, Globe, LogOut,
   Sun, Moon, ChevronLeft, ChevronRight, ChevronDown, Server, Activity, ShieldAlert, BarChart3, Bell, BookOpen,
-  Wifi, Radio, Network, Search,
+  Wifi, Network, Search,
 } from 'lucide-react'
 import CertMonitorLogo from './ui/CertMonitorLogo.jsx'
 
@@ -32,7 +32,6 @@ export default function Nav({ activeTab, onTabChange, username, teamName, system
       labelKey: 'nav.groupMonitoring',
       tabs: [
         { id: 'uptime', Icon: Wifi,    labelKey: 'nav.uptime', show: true },
-        { id: 'ping',   Icon: Radio,   labelKey: 'nav.ping',   show: true },
         { id: 'port',   Icon: Network, labelKey: 'nav.port',   show: true },
         { id: 'dns',    Icon: Search,  labelKey: 'nav.dns',    show: true },
       ],

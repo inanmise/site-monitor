@@ -4,19 +4,17 @@ import com.certmonitor.model.AlertThreshold;
 import com.certmonitor.model.CertificateInventory;
 import com.certmonitor.model.DnsMonitor;
 import com.certmonitor.model.DnsRecord;
-import com.certmonitor.model.PingCheck;
-import com.certmonitor.model.PingMonitor;
 import com.certmonitor.model.PortCheck;
 import com.certmonitor.model.PortMonitor;
+import com.certmonitor.model.UptimeCheck;
 import com.certmonitor.repository.AlertThresholdRepository;
 import com.certmonitor.repository.CertificateInventoryRepository;
 import com.certmonitor.repository.DnsMonitorRepository;
 import com.certmonitor.repository.DnsRecordRepository;
 import com.certmonitor.repository.LatestCheckRepository;
-import com.certmonitor.repository.PingCheckRepository;
-import com.certmonitor.repository.PingMonitorRepository;
 import com.certmonitor.repository.PortCheckRepository;
 import com.certmonitor.repository.PortMonitorRepository;
+import com.certmonitor.repository.UptimeCheckRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -60,10 +58,6 @@ public class SchedulerService {
     private final UserService userService;
     private final DataSource dataSource;
 
-    private final PingCheckerService pingCheckerService;
-    private final PingMonitorRepository pingMonitorRepo;
-    private final PingCheckRepository pingCheckRepo;
-
     private final PortCheckerService portCheckerService;
     private final PortMonitorRepository portMonitorRepo;
     private final PortCheckRepository portCheckRepo;
@@ -71,6 +65,9 @@ public class SchedulerService {
     private final DnsCheckerService dnsCheckerService;
     private final DnsMonitorRepository dnsMonitorRepo;
     private final DnsRecordRepository dnsRecordRepo;
+
+    private final UptimeHttpCheckerService uptimeHttpCheckerService;
+    private final UptimeCheckRepository uptimeCheckRepo;
 
     @Value("${cert.monitor.username:user}")
     private String adminUsername;
@@ -166,9 +163,6 @@ public class SchedulerService {
                 locked_until TEXT NOT NULL
             )
             """);
-        // Ping monitoring tables
-        patch("CREATE TABLE IF NOT EXISTS ping_monitors (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, host TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1, interval_seconds INTEGER NOT NULL DEFAULT 60, timeout_ms INTEGER NOT NULL DEFAULT 5000, created_at TEXT, updated_at TEXT)");
-        patch("CREATE TABLE IF NOT EXISTS ping_checks (id INTEGER PRIMARY KEY AUTOINCREMENT, monitor_id INTEGER NOT NULL, reachable INTEGER NOT NULL DEFAULT 0, response_ms INTEGER, checked_at TEXT, error TEXT)");
         // Port monitoring tables
         patch("CREATE TABLE IF NOT EXISTS port_monitors (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, host TEXT NOT NULL, port INTEGER NOT NULL, protocol TEXT NOT NULL DEFAULT 'TCP', active INTEGER NOT NULL DEFAULT 1, interval_seconds INTEGER NOT NULL DEFAULT 60, timeout_ms INTEGER NOT NULL DEFAULT 5000, created_at TEXT, updated_at TEXT)");
         patch("CREATE TABLE IF NOT EXISTS port_checks (id INTEGER PRIMARY KEY AUTOINCREMENT, monitor_id INTEGER NOT NULL, open INTEGER NOT NULL DEFAULT 0, response_ms INTEGER, checked_at TEXT, error TEXT)");
@@ -509,28 +503,31 @@ public class SchedulerService {
         }
     }
 
-    // ── Ping / Port / DNS periodic checks ────────────────────────────────────
+    // ── Port / DNS / Uptime periodic checks ──────────────────────────────────
 
-    @Scheduled(fixedDelayString = "${cert.monitor.ping.interval-ms:60000}", initialDelayString = "30000")
-    public void runPingChecks() {
-        List<PingMonitor> monitors = pingMonitorRepo.findByActiveTrue();
-        if (monitors.isEmpty()) return;
+    @Scheduled(fixedDelayString = "${cert.monitor.uptime.interval-ms:300000}", initialDelayString = "60000")
+    public void runUptimeChecks() {
+        List<CertificateInventory> active = inventoryRepo.findByActiveTrueOrderByDomainAsc();
+        if (active.isEmpty()) return;
         String now = ISO.format(Instant.now());
-        for (PingMonitor m : monitors) {
+        for (CertificateInventory inv : active) {
+            int port = inv.getPort() != null ? inv.getPort() : 443;
             try {
-                Map<String, Object> r = pingCheckerService.check(m.getHost(), m.getTimeoutMs());
-                PingCheck check = new PingCheck();
-                check.setMonitorId(m.getId());
-                check.setReachable((Boolean) r.getOrDefault("reachable", false));
-                check.setResponseMs(r.get("response_ms") != null ? ((Number) r.get("response_ms")).longValue() : null);
+                Map<String, Object> r = uptimeHttpCheckerService.check(inv.getDomain(), port, 10000);
+                UptimeCheck check = new UptimeCheck();
+                check.setDomain(inv.getDomain());
+                check.setPort(port);
+                check.setStatus((String) r.getOrDefault("status", "down"));
+                check.setResponseMs(r.get("response_ms") != null
+                        ? ((Number) r.get("response_ms")).longValue() : null);
                 check.setError((String) r.get("error"));
                 check.setCheckedAt(now);
-                pingCheckRepo.save(check);
+                uptimeCheckRepo.save(check);
             } catch (Exception e) {
-                log.warn("Ping check failed for {}: {}", m.getHost(), e.getMessage());
+                log.warn("Uptime check failed for {}:{}: {}", inv.getDomain(), port, e.getMessage());
             }
         }
-        log.debug("Ping checks complete: {} monitors", monitors.size());
+        log.debug("Uptime HTTP checks complete: {} domains", active.size());
     }
 
     @Scheduled(fixedDelayString = "${cert.monitor.port.interval-ms:60000}", initialDelayString = "45000")

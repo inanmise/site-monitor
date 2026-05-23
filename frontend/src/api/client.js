@@ -152,14 +152,6 @@ export const api = {
     getUptimeOverview: () => request('/monitoring/uptime/overview'),
     getUptimeHistory:  (domain, hours = 24) => request(`/monitoring/uptime/${encodeURIComponent(domain)}/history?hours=${hours}`),
 
-    // Ping
-    getPingMonitors:   () => request('/monitoring/ping'),
-    createPingMonitor: (data) => request('/monitoring/ping', { method: 'POST', body: JSON.stringify(data) }),
-    updatePingMonitor: (id, data) => request(`/monitoring/ping/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
-    deletePingMonitor: (id) => request(`/monitoring/ping/${id}`, { method: 'DELETE' }),
-    triggerPingCheck:  (id) => request(`/monitoring/ping/${id}/check`, { method: 'POST' }),
-    getPingHistory:    (id, limit = 100) => request(`/monitoring/ping/${id}/history?limit=${limit}`),
-
     // Port
     getPortMonitors:   () => request('/monitoring/port'),
     createPortMonitor: (data) => request('/monitoring/port', { method: 'POST', body: JSON.stringify(data) }),
