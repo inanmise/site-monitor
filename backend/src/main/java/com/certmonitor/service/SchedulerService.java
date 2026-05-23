@@ -2,9 +2,21 @@ package com.certmonitor.service;
 
 import com.certmonitor.model.AlertThreshold;
 import com.certmonitor.model.CertificateInventory;
+import com.certmonitor.model.DnsMonitor;
+import com.certmonitor.model.DnsRecord;
+import com.certmonitor.model.PingCheck;
+import com.certmonitor.model.PingMonitor;
+import com.certmonitor.model.PortCheck;
+import com.certmonitor.model.PortMonitor;
 import com.certmonitor.repository.AlertThresholdRepository;
 import com.certmonitor.repository.CertificateInventoryRepository;
+import com.certmonitor.repository.DnsMonitorRepository;
+import com.certmonitor.repository.DnsRecordRepository;
 import com.certmonitor.repository.LatestCheckRepository;
+import com.certmonitor.repository.PingCheckRepository;
+import com.certmonitor.repository.PingMonitorRepository;
+import com.certmonitor.repository.PortCheckRepository;
+import com.certmonitor.repository.PortMonitorRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -47,6 +59,18 @@ public class SchedulerService {
     private final JdbcTemplate jdbcTemplate;
     private final UserService userService;
     private final DataSource dataSource;
+
+    private final PingCheckerService pingCheckerService;
+    private final PingMonitorRepository pingMonitorRepo;
+    private final PingCheckRepository pingCheckRepo;
+
+    private final PortCheckerService portCheckerService;
+    private final PortMonitorRepository portMonitorRepo;
+    private final PortCheckRepository portCheckRepo;
+
+    private final DnsCheckerService dnsCheckerService;
+    private final DnsMonitorRepository dnsMonitorRepo;
+    private final DnsRecordRepository dnsRecordRepo;
 
     @Value("${cert.monitor.username:user}")
     private String adminUsername;
@@ -142,6 +166,15 @@ public class SchedulerService {
                 locked_until TEXT NOT NULL
             )
             """);
+        // Ping monitoring tables
+        patch("CREATE TABLE IF NOT EXISTS ping_monitors (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, host TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1, interval_seconds INTEGER NOT NULL DEFAULT 60, timeout_ms INTEGER NOT NULL DEFAULT 5000, created_at TEXT, updated_at TEXT)");
+        patch("CREATE TABLE IF NOT EXISTS ping_checks (id INTEGER PRIMARY KEY AUTOINCREMENT, monitor_id INTEGER NOT NULL, reachable INTEGER NOT NULL DEFAULT 0, response_ms INTEGER, checked_at TEXT, error TEXT)");
+        // Port monitoring tables
+        patch("CREATE TABLE IF NOT EXISTS port_monitors (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, host TEXT NOT NULL, port INTEGER NOT NULL, protocol TEXT NOT NULL DEFAULT 'TCP', active INTEGER NOT NULL DEFAULT 1, interval_seconds INTEGER NOT NULL DEFAULT 60, timeout_ms INTEGER NOT NULL DEFAULT 5000, created_at TEXT, updated_at TEXT)");
+        patch("CREATE TABLE IF NOT EXISTS port_checks (id INTEGER PRIMARY KEY AUTOINCREMENT, monitor_id INTEGER NOT NULL, open INTEGER NOT NULL DEFAULT 0, response_ms INTEGER, checked_at TEXT, error TEXT)");
+        // DNS monitoring tables
+        patch("CREATE TABLE IF NOT EXISTS dns_monitors (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, domain TEXT NOT NULL, record_type TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1, interval_seconds INTEGER NOT NULL DEFAULT 300, created_at TEXT, updated_at TEXT)");
+        patch("CREATE TABLE IF NOT EXISTS dns_records (id INTEGER PRIMARY KEY AUTOINCREMENT, monitor_id INTEGER NOT NULL, record_type TEXT, value TEXT, changed INTEGER NOT NULL DEFAULT 0, previous_value TEXT, checked_at TEXT)");
     }
 
     /** Assigns any certs/contacts without a team to the first (default) team. */
@@ -474,6 +507,88 @@ public class SchedulerService {
             log.info("Default alert threshold created (warning={}d, high={}d, critical={}d, reAlert={}h)",
                     defaultWarningDays, defaultHighDays, defaultCriticalDays, defaultReAlertHours);
         }
+    }
+
+    // ── Ping / Port / DNS periodic checks ────────────────────────────────────
+
+    @Scheduled(fixedDelayString = "${cert.monitor.ping.interval-ms:60000}", initialDelayString = "30000")
+    public void runPingChecks() {
+        List<PingMonitor> monitors = pingMonitorRepo.findByActiveTrue();
+        if (monitors.isEmpty()) return;
+        String now = ISO.format(Instant.now());
+        for (PingMonitor m : monitors) {
+            try {
+                Map<String, Object> r = pingCheckerService.check(m.getHost(), m.getTimeoutMs());
+                PingCheck check = new PingCheck();
+                check.setMonitorId(m.getId());
+                check.setReachable((Boolean) r.getOrDefault("reachable", false));
+                check.setResponseMs(r.get("response_ms") != null ? ((Number) r.get("response_ms")).longValue() : null);
+                check.setError((String) r.get("error"));
+                check.setCheckedAt(now);
+                pingCheckRepo.save(check);
+            } catch (Exception e) {
+                log.warn("Ping check failed for {}: {}", m.getHost(), e.getMessage());
+            }
+        }
+        log.debug("Ping checks complete: {} monitors", monitors.size());
+    }
+
+    @Scheduled(fixedDelayString = "${cert.monitor.port.interval-ms:60000}", initialDelayString = "45000")
+    public void runPortChecks() {
+        List<PortMonitor> monitors = portMonitorRepo.findByActiveTrue();
+        if (monitors.isEmpty()) return;
+        String now = ISO.format(Instant.now());
+        for (PortMonitor m : monitors) {
+            try {
+                Map<String, Object> r = portCheckerService.check(m.getHost(), m.getPort(), m.getTimeoutMs());
+                PortCheck check = new PortCheck();
+                check.setMonitorId(m.getId());
+                check.setOpen((Boolean) r.getOrDefault("open", false));
+                check.setResponseMs(r.get("response_ms") != null ? ((Number) r.get("response_ms")).longValue() : null);
+                check.setError((String) r.get("error"));
+                check.setCheckedAt(now);
+                portCheckRepo.save(check);
+            } catch (Exception e) {
+                log.warn("Port check failed for {}:{}: {}", m.getHost(), m.getPort(), e.getMessage());
+            }
+        }
+        log.debug("Port checks complete: {} monitors", monitors.size());
+    }
+
+    @Scheduled(fixedDelayString = "${cert.monitor.dns.interval-ms:300000}", initialDelayString = "60000")
+    public void runDnsChecks() {
+        List<DnsMonitor> monitors = dnsMonitorRepo.findByActiveTrue();
+        if (monitors.isEmpty()) return;
+        String now = ISO.format(Instant.now());
+        for (DnsMonitor m : monitors) {
+            try {
+                Map<String, Object> r = dnsCheckerService.check(m.getDomain(), m.getRecordType());
+                @SuppressWarnings("unchecked")
+                List<String> values = (List<String>) r.getOrDefault("values", List.of());
+                String valueStr = String.join("\n", values);
+
+                DnsRecord prev = dnsRecordRepo.findTopByMonitorIdOrderByCheckedAtDesc(m.getId()).orElse(null);
+                String prevValue = prev != null ? prev.getValue() : null;
+                boolean changed = prevValue != null && !prevValue.equals(valueStr);
+
+                DnsRecord record = new DnsRecord();
+                record.setMonitorId(m.getId());
+                record.setRecordType(m.getRecordType());
+                record.setValue(valueStr);
+                record.setChanged(changed);
+                record.setPreviousValue(prevValue);
+                record.setCheckedAt(now);
+                dnsRecordRepo.save(record);
+
+                if (changed) {
+                    log.warn("DNS change detected for {} {}: was='{}' now='{}'",
+                            m.getRecordType(), m.getDomain(), prevValue, valueStr);
+                }
+            } catch (Exception e) {
+                log.warn("DNS check failed for {} {}: {}", m.getRecordType(), m.getDomain(), e.getMessage());
+            }
+        }
+        log.debug("DNS checks complete: {} monitors", monitors.size());
     }
 
     private static String resolveHostname() {

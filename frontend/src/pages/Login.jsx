@@ -77,9 +77,15 @@ export default function Login({ onLogin }) {
       <div className="lp-left">
         <div className="lp-left-inner">
           <div className="lp-brand">
-            <CertMonitorLogo variant="login" className="lp-logo-svg" />
-            <h1 className="lp-brand-name">CertMonitor</h1>
-            <p className="lp-brand-tagline">{t('login.tagline')}</p>
+            <div className="lp-brand-logo-row">
+              <CertMonitorLogo variant="login" className="lp-logo-svg" />
+              <span className="lp-blink-dot" title="System operational" />
+            </div>
+            <div className="lp-brand-headline">
+              <span className="lp-meet">{t('login.meet')}</span>
+              <h1 className="lp-brand-name">CertMonitor</h1>
+            </div>
+            <p className="lp-brand-tagline">{t('login.leftTagline')}</p>
           </div>
 
           <ul className="lp-features">
@@ -91,12 +97,28 @@ export default function Login({ onLogin }) {
             ))}
           </ul>
 
+          <div className="lp-social-proof">
+            <span className="lp-social-stat"><strong>500+</strong> {t('login.domainsMonitored')}</span>
+            <span className="lp-social-divider">·</span>
+            <span className="lp-social-stat"><strong>99.9%</strong> {t('login.uptime')}</span>
+          </div>
+
           <div className="lp-left-footer">
             <span>v{__APP_VERSION__} &nbsp;·&nbsp; &copy; {new Date().getFullYear()} CertMonitor</span>
             <button type="button" className="lp-lang-btn" onClick={toggleLang}>
               <Globe size={13} />
               {lang === 'tr' ? 'English' : 'Türkçe'}
             </button>
+          </div>
+        </div>
+
+        <div className="lp-left-bottom">
+          <p className="lp-left-bottom-text">{t('login.footerTagline')}</p>
+          <div className="lp-left-bottom-features">
+            <span>🔒 {t('login.ftSSL')}</span>
+            <span>🌐 {t('login.ftPorts')}</span>
+            <span>⚡ {t('login.ftAlerts')}</span>
+            <span>🔄 {t('login.ftCron')}</span>
           </div>
         </div>
 

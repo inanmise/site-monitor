@@ -144,6 +144,38 @@ export const api = {
     getSmtpLogs: () => request('/admin/system/smtp-logs'),
     triggerHeartbeat: () => request('/admin/system/heartbeat', { method: 'POST' }),
   },
+
+  // ── Monitoring ───────────────────────────────────────────────────────────
+
+  monitoring: {
+    // Uptime
+    getUptimeOverview: () => request('/monitoring/uptime/overview'),
+    getUptimeHistory:  (domain, hours = 24) => request(`/monitoring/uptime/${encodeURIComponent(domain)}/history?hours=${hours}`),
+
+    // Ping
+    getPingMonitors:   () => request('/monitoring/ping'),
+    createPingMonitor: (data) => request('/monitoring/ping', { method: 'POST', body: JSON.stringify(data) }),
+    updatePingMonitor: (id, data) => request(`/monitoring/ping/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+    deletePingMonitor: (id) => request(`/monitoring/ping/${id}`, { method: 'DELETE' }),
+    triggerPingCheck:  (id) => request(`/monitoring/ping/${id}/check`, { method: 'POST' }),
+    getPingHistory:    (id, limit = 100) => request(`/monitoring/ping/${id}/history?limit=${limit}`),
+
+    // Port
+    getPortMonitors:   () => request('/monitoring/port'),
+    createPortMonitor: (data) => request('/monitoring/port', { method: 'POST', body: JSON.stringify(data) }),
+    updatePortMonitor: (id, data) => request(`/monitoring/port/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+    deletePortMonitor: (id) => request(`/monitoring/port/${id}`, { method: 'DELETE' }),
+    triggerPortCheck:  (id) => request(`/monitoring/port/${id}/check`, { method: 'POST' }),
+    getPortHistory:    (id, limit = 100) => request(`/monitoring/port/${id}/history?limit=${limit}`),
+
+    // DNS
+    getDnsMonitors:    () => request('/monitoring/dns'),
+    createDnsMonitor:  (data) => request('/monitoring/dns', { method: 'POST', body: JSON.stringify(data) }),
+    updateDnsMonitor:  (id, data) => request(`/monitoring/dns/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+    deleteDnsMonitor:  (id) => request(`/monitoring/dns/${id}`, { method: 'DELETE' }),
+    triggerDnsCheck:   (id) => request(`/monitoring/dns/${id}/check`, { method: 'POST' }),
+    getDnsHistory:     (id, limit = 100) => request(`/monitoring/dns/${id}/history?limit=${limit}`),
+  },
 }
 
 function toUtc(iso) {
