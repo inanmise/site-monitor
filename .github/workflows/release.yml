@@ -184,6 +184,9 @@ jobs:
         with:
           version: v3.14.0
 
+      - name: Update Helm dependencies
+        run: helm dep update helm/cert-monitor
+
       - name: Package and push Helm chart
         run: |
           helm package helm/cert-monitor
