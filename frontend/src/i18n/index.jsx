@@ -843,6 +843,11 @@ const TR = {
   'uptime.noHttpHistory':      'Bu tarih aralığında HTTP kontrol kaydı yok',
   'uptime.noSslHistory':       'Bu tarih aralığında SSL kontrol kaydı yok',
 
+  'dp.today':     'Bugün',
+  'dp.last7':     'Son 7 Gün',
+  'dp.last30':    'Son 30 Gün',
+  'dp.thisMonth': 'Bu Ay',
+
   'port.title':           'Port İzleme',
   'port.subtitle':        'SMTP, POP3, FTP ve diğer TCP servislerinizi sürekli izleyin.',
   'port.addMonitor':      '+ Yeni Monitor',
@@ -1761,6 +1766,11 @@ const EN = {
   'uptime.apply':              'Apply',
   'uptime.noHttpHistory':      'No HTTP check records for this date range',
   'uptime.noSslHistory':       'No SSL check records for this date range',
+
+  'dp.today':     'Today',
+  'dp.last7':     'Last 7 Days',
+  'dp.last30':    'Last 30 Days',
+  'dp.thisMonth': 'This Month',
 
   'port.title':           'Port Monitoring',
   'port.subtitle':        'Useful for SMTP, POP3, FTP and other services running on specific TCP ports.',

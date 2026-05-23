@@ -3,12 +3,13 @@ import { createPortal } from 'react-dom'
 import { api, formatDate } from '../api/client'
 import { useT } from '../i18n/index.jsx'
 import { RefreshCw, X } from 'lucide-react'
+import DateTimeRangePicker from './ui/DateTimeRangePicker.jsx'
 
 const REFRESH_INTERVAL = 60
 const PAGE_SIZE = 12
 
-function todayStartDT() { return new Date().toISOString().slice(0, 10) + 'T00:00' }
-function nowDT()        { return new Date().toISOString().slice(0, 16) }
+function todayStartDate() { const d = new Date(); d.setHours(0, 0, 0, 0); return d }
+function toApiStr(date)   { return date.toISOString().slice(0, 16) }
 
 export default function UptimePage() {
   const t = useT()
@@ -23,8 +24,8 @@ export default function UptimePage() {
   const [httpLoading, setHttpLoading]   = useState(false)
   const [sslHistory, setSslHistory]     = useState([])
   const [sslLoading, setSslLoading]     = useState(false)
-  const [dateFrom, setDateFrom]         = useState(todayStartDT)
-  const [dateTo, setDateTo]             = useState(nowDT)
+  const [dateFrom, setDateFrom]         = useState(todayStartDate)
+  const [dateTo, setDateTo]             = useState(() => new Date())
   const [secondsSince, setSecondsSince] = useState(0)
   const lastFetched = useRef(null)
   const countdownRef = useRef(null)
@@ -67,15 +68,15 @@ export default function UptimePage() {
   }
 
   function openModal(item) {
-    const from = todayStartDT()
-    const to   = nowDT()
+    const from = todayStartDate()
+    const to   = new Date()
     setSelected(item)
     setHttpHistory([])
     setSslHistory([])
     setDateFrom(from)
     setDateTo(to)
-    loadHttpHistory(item, from, to)
-    loadSslHistory(item, from, to)
+    loadHttpHistory(item, toApiStr(from), toApiStr(to))
+    loadSslHistory(item, toApiStr(from), toApiStr(to))
   }
 
   function closeModal() {
@@ -84,10 +85,11 @@ export default function UptimePage() {
     setSslHistory([])
   }
 
-  function applyDateRange() {
-    if (!selected) return
-    loadHttpHistory(selected, dateFrom, dateTo)
-    loadSslHistory(selected, dateFrom, dateTo)
+  function applyDateRange(from, to) {
+    setDateFrom(from)
+    setDateTo(to)
+    loadHttpHistory(selected, toApiStr(from), toApiStr(to))
+    loadSslHistory(selected, toApiStr(from), toApiStr(to))
   }
 
   const STATUS_ORDER = { down: 0, unknown: 1, up: 2 }
@@ -368,24 +370,11 @@ export default function UptimePage() {
             <div className="upt-modal-divider" />
 
             {/* Date range picker */}
-            <div className="upt-date-range">
-              <div className="upt-date-field">
-                <label>{t('uptime.dateFrom')}</label>
-                <input className="upt-date-input" type="datetime-local"
-                  value={dateFrom}
-                  max={dateTo}
-                  onChange={e => setDateFrom(e.target.value)} />
-              </div>
-              <div className="upt-date-field">
-                <label>{t('uptime.dateTo')}</label>
-                <input className="upt-date-input" type="datetime-local"
-                  value={dateTo}
-                  min={dateFrom}
-                  max={nowDT()}
-                  onChange={e => setDateTo(e.target.value)} />
-              </div>
-              <button className="upt-apply-btn" onClick={applyDateRange}>{t('uptime.apply')}</button>
-            </div>
+            <DateTimeRangePicker
+              from={dateFrom}
+              to={dateTo}
+              onApply={applyDateRange}
+            />
 
             <div className="upt-modal-divider" />
 
