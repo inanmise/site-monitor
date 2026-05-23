@@ -3698,8 +3698,8 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
   border: 1px solid var(--border);
   border-left: 5px solid #94a3b8;
   border-radius: 0 14px 14px 0;
-  width: 100%; max-width: 680px;
-  max-height: 85vh; overflow-y: auto;
+  width: 100%; max-width: 960px;
+  max-height: 90vh; overflow-y: auto;
   box-shadow: 0 24px 60px rgba(0,0,0,.28);
   padding: 24px 28px 24px 28px;
 }
@@ -3754,7 +3754,11 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .upt-bar { flex: 1; border-radius: 2px; min-width: 4px; }
 .upt-bar-labels { display: flex; justify-content: space-between; font-size: 10px; color: var(--text-muted); margin-top: 4px; }
 .upt-rt-section { margin-top: 12px; }
-.upt-rt-list { display: flex; flex-direction: column; gap: 4px; max-height: 320px; overflow-y: auto; padding-right: 4px; }
+.upt-history-cols { display: flex; gap: 0; align-items: flex-start; }
+.upt-history-col  { flex: 1; min-width: 0; }
+.upt-history-col-divider { width: 1px; background: var(--border); align-self: stretch; margin: 0 20px; flex-shrink: 0; }
+
+.upt-rt-list { display: flex; flex-direction: column; gap: 0; max-height: 420px; overflow-y: auto; padding-right: 4px; }
 .upt-rt-row { display: flex; align-items: flex-start; gap: 10px; font-size: 12px; padding: 3px 0; border-bottom: 1px solid var(--border); }
 .upt-rt-row:last-child { border-bottom: none; }
 .upt-rt-time { color: var(--text-muted); font-family: Consolas, monospace; white-space: nowrap; }
