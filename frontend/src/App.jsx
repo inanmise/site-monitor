@@ -20,6 +20,10 @@ import WeakAlgorithmReport from './components/admin/WeakAlgorithmReport'
 import SystemHealth from './components/admin/SystemHealth'
 import ActivityLog from './components/ActivityLog'
 import HelpPage from './components/HelpPage'
+import UptimePage from './components/UptimePage'
+import PingMonitorPage from './components/PingMonitorPage'
+import PortMonitorPage from './components/PortMonitorPage'
+import DnsMonitorPage from './components/DnsMonitorPage'
 
 const INACTIVITY_MS   = Number(import.meta.env.VITE_INACTIVITY_MS   ?? 300_000)
 const WARN_BEFORE_MS  = Number(import.meta.env.VITE_WARN_BEFORE_MS  ?? 60_000)
@@ -570,9 +574,11 @@ export default function App() {
               </div>
             )}
 
-            {tab === 'help' && (
-              <HelpPage />
-            )}
+            {tab === 'help'   && <HelpPage />}
+            {tab === 'uptime' && <UptimePage />}
+            {tab === 'ping'   && <PingMonitorPage />}
+            {tab === 'port'   && <PortMonitorPage />}
+            {tab === 'dns'    && <DnsMonitorPage />}
           </div>
 
           <footer className="footer">
