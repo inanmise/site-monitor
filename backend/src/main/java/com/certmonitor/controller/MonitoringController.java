@@ -184,10 +184,24 @@ public class MonitoringController {
 
     @GetMapping("/ping")
     public ResponseEntity<Map<String, Object>> listPing() {
-        List<PingMonitor> monitors = pingMonitorRepo.findAllByOrderByNameAsc();
-        List<Map<String, Object>> result = monitors.stream()
-                .map(m -> enrichPing(m, pingCheckRepo.findTopByMonitorIdOrderByCheckedAtDesc(m.getId()).orElse(null)))
-                .toList();
+        List<CertificateInventory> inventory = inventoryRepo.findByActiveTrueOrderByDomainAsc();
+        String now = ISO.format(Instant.now());
+        List<Map<String, Object>> result = new ArrayList<>();
+        for (CertificateInventory inv : inventory) {
+            PingMonitor monitor = pingMonitorRepo.findFirstByHostOrderByIdAsc(inv.getDomain())
+                    .orElseGet(() -> {
+                        PingMonitor m = new PingMonitor();
+                        m.setName(inv.getDomain());
+                        m.setHost(inv.getDomain());
+                        m.setActive(true);
+                        m.setIntervalSeconds(60);
+                        m.setTimeoutMs(5000);
+                        m.setCreatedAt(now);
+                        m.setUpdatedAt(now);
+                        return pingMonitorRepo.save(m);
+                    });
+            result.add(enrichPing(monitor, pingCheckRepo.findTopByMonitorIdOrderByCheckedAtDesc(monitor.getId()).orElse(null)));
+        }
         return ok(result);
     }
 
@@ -282,10 +296,27 @@ public class MonitoringController {
 
     @GetMapping("/port")
     public ResponseEntity<Map<String, Object>> listPort() {
-        List<PortMonitor> monitors = portMonitorRepo.findAllByOrderByNameAsc();
-        List<Map<String, Object>> result = monitors.stream()
-                .map(m -> enrichPort(m, portCheckRepo.findTopByMonitorIdOrderByCheckedAtDesc(m.getId()).orElse(null)))
-                .toList();
+        List<CertificateInventory> inventory = inventoryRepo.findByActiveTrueOrderByDomainAsc();
+        String now = ISO.format(Instant.now());
+        List<Map<String, Object>> result = new ArrayList<>();
+        for (CertificateInventory inv : inventory) {
+            int invPort = inv.getPort() != null ? inv.getPort() : 443;
+            PortMonitor monitor = portMonitorRepo.findFirstByHostAndPortOrderByIdAsc(inv.getDomain(), invPort)
+                    .orElseGet(() -> {
+                        PortMonitor m = new PortMonitor();
+                        m.setName(inv.getDomain());
+                        m.setHost(inv.getDomain());
+                        m.setPort(invPort);
+                        m.setProtocol("TCP");
+                        m.setActive(true);
+                        m.setIntervalSeconds(60);
+                        m.setTimeoutMs(5000);
+                        m.setCreatedAt(now);
+                        m.setUpdatedAt(now);
+                        return portMonitorRepo.save(m);
+                    });
+            result.add(enrichPort(monitor, portCheckRepo.findTopByMonitorIdOrderByCheckedAtDesc(monitor.getId()).orElse(null)));
+        }
         return ok(result);
     }
 
@@ -386,10 +417,24 @@ public class MonitoringController {
 
     @GetMapping("/dns")
     public ResponseEntity<Map<String, Object>> listDns() {
-        List<DnsMonitor> monitors = dnsMonitorRepo.findAllByOrderByNameAsc();
-        List<Map<String, Object>> result = monitors.stream()
-                .map(m -> enrichDns(m, dnsRecordRepo.findTopByMonitorIdOrderByCheckedAtDesc(m.getId()).orElse(null)))
-                .toList();
+        List<CertificateInventory> inventory = inventoryRepo.findByActiveTrueOrderByDomainAsc();
+        String now = ISO.format(Instant.now());
+        List<Map<String, Object>> result = new ArrayList<>();
+        for (CertificateInventory inv : inventory) {
+            DnsMonitor monitor = dnsMonitorRepo.findFirstByDomainOrderByIdAsc(inv.getDomain())
+                    .orElseGet(() -> {
+                        DnsMonitor m = new DnsMonitor();
+                        m.setName(inv.getDomain());
+                        m.setDomain(inv.getDomain());
+                        m.setRecordType("A");
+                        m.setActive(true);
+                        m.setIntervalSeconds(300);
+                        m.setCreatedAt(now);
+                        m.setUpdatedAt(now);
+                        return dnsMonitorRepo.save(m);
+                    });
+            result.add(enrichDns(monitor, dnsRecordRepo.findTopByMonitorIdOrderByCheckedAtDesc(monitor.getId()).orElse(null)));
+        }
         return ok(result);
     }
 

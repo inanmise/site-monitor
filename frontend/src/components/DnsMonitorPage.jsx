@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { api, formatDate } from '../api/client'
 import { useT } from '../i18n/index.jsx'
-import { Plus, Play, Pencil, Trash2 } from 'lucide-react'
+import { Play, Pencil } from 'lucide-react'
 
 const RECORD_TYPES = ['A', 'AAAA', 'CNAME', 'MX', 'TXT', 'NS']
 
@@ -11,8 +11,6 @@ const INTERVALS = [
   { value: 3600, labelKey: 'dns.interval1h'  },
 ]
 
-const EMPTY_FORM = { name: '', domain: '', recordType: 'A', intervalSeconds: 300 }
-
 export default function DnsMonitorPage() {
   const t = useT()
   const [monitors, setMonitors] = useState([])
@@ -21,7 +19,7 @@ export default function DnsMonitorPage() {
   const [history, setHistory] = useState([])
   const [historyLoading, setHistoryLoading] = useState(false)
   const [modal, setModal] = useState(null)
-  const [form, setForm] = useState(EMPTY_FORM)
+  const [form, setForm] = useState({})
   const [saving, setSaving] = useState(false)
   const [checking, setChecking] = useState(null)
 
@@ -40,29 +38,18 @@ export default function DnsMonitorPage() {
     setHistoryLoading(false)
   }
 
-  function openAdd() { setForm(EMPTY_FORM); setModal('add') }
   function openEdit(m) {
-    setForm({ name: m.name, domain: m.domain, recordType: m.record_type, intervalSeconds: m.interval_seconds })
+    setForm({ recordType: m.record_type, intervalSeconds: m.interval_seconds })
     setModal(m)
   }
   function closeModal() { setModal(null) }
 
   async function save() {
     setSaving(true)
-    if (modal === 'add') {
-      await api.monitoring.createDnsMonitor(form)
-    } else {
-      await api.monitoring.updateDnsMonitor(modal.id, form)
-    }
+    await api.monitoring.updateDnsMonitor(modal.id, form)
     await load()
     setSaving(false)
     closeModal()
-  }
-
-  async function deleteMonitor(m) {
-    await api.monitoring.deleteDnsMonitor(m.id)
-    if (selected?.id === m.id) { setSelected(null); setHistory([]) }
-    await load()
   }
 
   async function checkNow(m) {
@@ -93,9 +80,6 @@ export default function DnsMonitorPage() {
           <h2 className="mon-title">{t('dns.title')}</h2>
           <p className="mon-subtitle">{t('dns.subtitle')}</p>
         </div>
-        <button className="btn btn-primary" onClick={openAdd}>
-          <Plus size={14} /> {t('dns.addMonitor')}
-        </button>
       </div>
 
       {loading ? <div className="loading">...</div> : monitors.length === 0 ? (
@@ -105,7 +89,6 @@ export default function DnsMonitorPage() {
           <table className="mon-table">
             <thead>
               <tr>
-                <th>{t('dns.name')}</th>
                 <th>{t('dns.domain')}</th>
                 <th>{t('dns.recordType')}</th>
                 <th>{t('dns.currentValue')}</th>
@@ -120,7 +103,6 @@ export default function DnsMonitorPage() {
                   className={`mon-row${selected?.id === m.id ? ' mon-row-selected' : ''}${!m.active ? ' mon-row-inactive' : ''}`}
                   onClick={() => selectMonitor(m)}
                 >
-                  <td className="mon-cell-name">{m.name}</td>
                   <td className="mon-cell-mono">{m.domain}</td>
                   <td>
                     <span className="dns-type-badge">{m.record_type}</span>
@@ -137,9 +119,6 @@ export default function DnsMonitorPage() {
                     <button className="btn btn-sm mon-btn-edit" onClick={() => openEdit(m)} title={t('dns.edit')}>
                       <Pencil size={12} />
                     </button>
-                    <button className="btn btn-sm mon-btn-del" onClick={() => deleteMonitor(m)} title={t('dns.delete')}>
-                      <Trash2 size={12} />
-                    </button>
                   </td>
                 </tr>
               ))}
@@ -150,7 +129,7 @@ export default function DnsMonitorPage() {
 
       {selected && (
         <div className="mon-detail">
-          <div className="mon-detail-title">{t('dns.history')} — {selected.name}</div>
+          <div className="mon-detail-title">{t('dns.history')} — {selected.domain}</div>
           {historyLoading ? <div className="loading">...</div> : history.length === 0 ? (
             <div className="mon-empty">{t('uptime.noData')}</div>
           ) : (
@@ -191,19 +170,11 @@ export default function DnsMonitorPage() {
       {modal && (
         <div className="modal-overlay" onClick={closeModal}>
           <div className="modal-box" onClick={e => e.stopPropagation()}>
-            <h3 className="modal-title">{modal === 'add' ? t('dns.modalAdd') : t('dns.modalEdit')}</h3>
+            <h3 className="modal-title">{t('dns.modalEdit')}</h3>
 
             <div className="modal-field">
-              <label>{t('dns.name')}</label>
-              <input className="modal-input" value={form.name}
-                onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
-                placeholder="Google A Record" />
-            </div>
-            <div className="modal-field">
               <label>{t('dns.domain')}</label>
-              <input className="modal-input" value={form.domain}
-                onChange={e => setForm(f => ({ ...f, domain: e.target.value }))}
-                placeholder="example.com" />
+              <div className="modal-input mon-readonly-field">{modal.domain}</div>
             </div>
             <div className="modal-field">
               <label>{t('dns.recordType')}</label>
@@ -226,7 +197,7 @@ export default function DnsMonitorPage() {
 
             <div className="modal-actions">
               <button className="btn btn-secondary" onClick={closeModal}>{t('dns.cancel')}</button>
-              <button className="btn btn-primary" onClick={save} disabled={saving || !form.name || !form.domain}>
+              <button className="btn btn-primary" onClick={save} disabled={saving}>
                 {saving ? '...' : t('dns.save')}
               </button>
             </div>

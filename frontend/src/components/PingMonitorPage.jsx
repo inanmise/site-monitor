@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { api, formatDate } from '../api/client'
 import { useT } from '../i18n/index.jsx'
-import { Plus, Play, Pencil, Trash2 } from 'lucide-react'
+import { Play, Pencil } from 'lucide-react'
 
 const INTERVALS = [
   { value: 30,  labelKey: 'ping.interval30s' },
@@ -10,8 +10,6 @@ const INTERVALS = [
   { value: 900, labelKey: 'ping.interval15m' },
 ]
 
-const EMPTY_FORM = { name: '', host: '', intervalSeconds: 60, timeoutMs: 5000 }
-
 export default function PingMonitorPage() {
   const t = useT()
   const [monitors, setMonitors] = useState([])
@@ -19,8 +17,8 @@ export default function PingMonitorPage() {
   const [selected, setSelected] = useState(null)
   const [history, setHistory] = useState([])
   const [historyLoading, setHistoryLoading] = useState(false)
-  const [modal, setModal] = useState(null) // null | 'add' | item
-  const [form, setForm] = useState(EMPTY_FORM)
+  const [modal, setModal] = useState(null)
+  const [form, setForm] = useState({})
   const [saving, setSaving] = useState(false)
   const [checking, setChecking] = useState(null)
 
@@ -39,27 +37,18 @@ export default function PingMonitorPage() {
     setHistoryLoading(false)
   }
 
-  function openAdd() { setForm(EMPTY_FORM); setModal('add') }
-  function openEdit(m) { setForm({ name: m.name, host: m.host, intervalSeconds: m.interval_seconds, timeoutMs: m.timeout_ms }); setModal(m) }
+  function openEdit(m) {
+    setForm({ name: m.name, intervalSeconds: m.interval_seconds, timeoutMs: m.timeout_ms })
+    setModal(m)
+  }
   function closeModal() { setModal(null) }
 
   async function save() {
     setSaving(true)
-    const data = { ...form }
-    if (modal === 'add') {
-      await api.monitoring.createPingMonitor(data)
-    } else {
-      await api.monitoring.updatePingMonitor(modal.id, data)
-    }
+    await api.monitoring.updatePingMonitor(modal.id, form)
     await load()
     setSaving(false)
     closeModal()
-  }
-
-  async function deleteMonitor(m) {
-    await api.monitoring.deletePingMonitor(m.id)
-    if (selected?.id === m.id) { setSelected(null); setHistory([]) }
-    await load()
   }
 
   async function checkNow(m) {
@@ -91,19 +80,15 @@ export default function PingMonitorPage() {
           <h2 className="mon-title">{t('ping.title')}</h2>
           <p className="mon-subtitle">{t('ping.subtitle')}</p>
         </div>
-        <button className="btn btn-primary" onClick={openAdd}>
-          <Plus size={14} /> {t('ping.addMonitor')}
-        </button>
       </div>
 
-      {loading ? <div className="loading">{t('ping.statusUnknown')}</div> : monitors.length === 0 ? (
+      {loading ? <div className="loading">...</div> : monitors.length === 0 ? (
         <div className="mon-empty">{t('ping.noMonitors')}</div>
       ) : (
         <div className="mon-table-wrap">
           <table className="mon-table">
             <thead>
               <tr>
-                <th>{t('ping.name')}</th>
                 <th>{t('ping.host')}</th>
                 <th>{t('ping.status')}</th>
                 <th>{t('ping.responseMs')}</th>
@@ -118,7 +103,6 @@ export default function PingMonitorPage() {
                   className={`mon-row${selected?.id === m.id ? ' mon-row-selected' : ''}${!m.active ? ' mon-row-inactive' : ''}`}
                   onClick={() => selectMonitor(m)}
                 >
-                  <td className="mon-cell-name">{m.name}</td>
                   <td className="mon-cell-mono">{m.host}</td>
                   <td>{statusBadge(m.status)}</td>
                   <td className="mon-cell-num">{m.response_ms != null ? `${m.response_ms}ms` : '—'}</td>
@@ -130,9 +114,6 @@ export default function PingMonitorPage() {
                     <button className="btn btn-sm mon-btn-edit" onClick={() => openEdit(m)} title={t('ping.edit')}>
                       <Pencil size={12} />
                     </button>
-                    <button className="btn btn-sm mon-btn-del" onClick={() => deleteMonitor(m)} title={t('ping.delete')}>
-                      <Trash2 size={12} />
-                    </button>
                   </td>
                 </tr>
               ))}
@@ -143,7 +124,7 @@ export default function PingMonitorPage() {
 
       {selected && (
         <div className="mon-detail">
-          <div className="mon-detail-title">{t('ping.history')} — {selected.name}</div>
+          <div className="mon-detail-title">{t('ping.history')} — {selected.host}</div>
           {historyLoading ? <div className="loading">...</div> : history.length === 0 ? (
             <div className="mon-empty">{t('uptime.noData')}</div>
           ) : (
@@ -172,19 +153,11 @@ export default function PingMonitorPage() {
       {modal && (
         <div className="modal-overlay" onClick={closeModal}>
           <div className="modal-box" onClick={e => e.stopPropagation()}>
-            <h3 className="modal-title">{modal === 'add' ? t('ping.modalAdd') : t('ping.modalEdit')}</h3>
+            <h3 className="modal-title">{t('ping.modalEdit')}</h3>
 
             <div className="modal-field">
-              <label>{t('ping.name')}</label>
-              <input className="modal-input" value={form.name}
-                onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
-                placeholder="db-server-01" />
-            </div>
-            <div className="modal-field">
               <label>{t('ping.host')}</label>
-              <input className="modal-input" value={form.host}
-                onChange={e => setForm(f => ({ ...f, host: e.target.value }))}
-                placeholder="192.168.1.10" />
+              <div className="modal-input mon-readonly-field">{modal.host}</div>
             </div>
             <div className="modal-field">
               <label>{t('ping.interval')}</label>
@@ -203,7 +176,7 @@ export default function PingMonitorPage() {
 
             <div className="modal-actions">
               <button className="btn btn-secondary" onClick={closeModal}>{t('ping.cancel')}</button>
-              <button className="btn btn-primary" onClick={save} disabled={saving || !form.name || !form.host}>
+              <button className="btn btn-primary" onClick={save} disabled={saving}>
                 {saving ? '...' : t('ping.save')}
               </button>
             </div>
