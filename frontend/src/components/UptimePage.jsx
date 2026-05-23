@@ -53,14 +53,14 @@ export default function UptimePage() {
   }
 
   function statusColor(status) {
-    if (status === 'up')      return '#22c55e'
-    if (status === 'down')    return '#ef4444'
+    if (status === 'up')   return '#22c55e'
+    if (status === 'down') return '#ef4444'
     return '#94a3b8'
   }
 
   function statusLabel(status) {
-    if (status === 'up')      return t('uptime.statusUp')
-    if (status === 'down')    return t('uptime.statusDown')
+    if (status === 'up')   return t('uptime.statusUp')
+    if (status === 'down') return t('uptime.statusDown')
     return t('uptime.statusUnknown')
   }
 
@@ -73,8 +73,9 @@ export default function UptimePage() {
   function sslColor(item) {
     if (item.ssl_valid_days == null) return 'var(--text-muted)'
     if (item.ssl_valid_days < 0)     return '#ef4444'
+    if (item.ssl_valid_days <= 14)   return '#ef4444'
     if (item.ssl_valid_days <= 30)   return '#f59e0b'
-    return 'var(--text-muted)'
+    return '#22c55e'
   }
 
   return (
@@ -105,30 +106,53 @@ export default function UptimePage() {
             {items.map(item => (
               <div
                 key={item.domain}
-                className={`upt-card${selected?.domain === item.domain ? ' upt-card-selected' : ''}`}
+                className={`upt-card upt-card--${item.status}${selected?.domain === item.domain ? ' upt-card-selected' : ''}`}
                 onClick={() => selectDomain(item)}
               >
-                <div className="upt-card-header">
-                  <span className="upt-status-dot" style={{ background: statusColor(item.status) }} />
-                  <span className="upt-domain">{item.domain}</span>
-                  <span className="upt-port">:{item.port}</span>
+                {/* Status badge + port */}
+                <div className="upt-card-top">
+                  <div className={`upt-badge upt-badge--${item.status}`}>
+                    <span className="upt-badge-dot" />
+                    {statusLabel(item.status)}
+                  </div>
+                  <span className="upt-port-tag">:{item.port}</span>
                 </div>
-                <div className="upt-card-status" style={{ color: statusColor(item.status) }}>
-                  {statusLabel(item.status)}
-                </div>
-                <div className="upt-card-ssl" style={{ color: sslColor(item) }}>
-                  {sslLabel(item)}
-                </div>
-                <div className="upt-card-stats">
+
+                {/* Domain name — primary focal point */}
+                <div className="upt-card-domain">{item.domain}</div>
+
+                {/* Divider */}
+                <div className="upt-card-divider" />
+
+                {/* Metrics row */}
+                <div className="upt-card-metrics">
+                  <div className="upt-metric">
+                    <span className="upt-metric-val" style={{ color: sslColor(item) }}>{sslLabel(item)}</span>
+                    <span className="upt-metric-lbl">SSL</span>
+                  </div>
                   {item.uptime_7d != null && (
-                    <span className="upt-stat">{item.uptime_7d}% <small>{t('uptime.uptime7d')}</small></span>
+                    <div className="upt-metric">
+                      <span className="upt-metric-val">{item.uptime_7d}%</span>
+                      <span className="upt-metric-lbl">{t('uptime.uptime7d')}</span>
+                    </div>
                   )}
                   {item.uptime_30d != null && (
-                    <span className="upt-stat">{item.uptime_30d}% <small>{t('uptime.uptime30d')}</small></span>
+                    <div className="upt-metric">
+                      <span className="upt-metric-val">{item.uptime_30d}%</span>
+                      <span className="upt-metric-lbl">{t('uptime.uptime30d')}</span>
+                    </div>
+                  )}
+                  {item.incidents_30d > 0 && (
+                    <div className="upt-metric">
+                      <span className="upt-metric-val upt-metric-incident">{item.incidents_30d}</span>
+                      <span className="upt-metric-lbl">{t('uptime.incidents').replace('{0}', '').trim()}</span>
+                    </div>
                   )}
                 </div>
+
+                {/* Footer: last check time */}
                 {item.checked_at && (
-                  <div className="upt-card-time">{formatDate(item.checked_at)}</div>
+                  <div className="upt-card-foot">{formatDate(item.checked_at)}</div>
                 )}
               </div>
             ))}
