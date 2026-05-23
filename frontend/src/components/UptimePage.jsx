@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
+import { createPortal } from 'react-dom'
 import { api, formatDate } from '../api/client'
 import { useT } from '../i18n/index.jsx'
 import { RefreshCw, X } from 'lucide-react'
@@ -154,8 +155,8 @@ export default function UptimePage() {
         </div>
       )}
 
-      {/* ── Detail Modal ── */}
-      {selected && (
+      {/* ── Detail Modal (portal → document.body, bypasses overflow stacking context) ── */}
+      {selected && createPortal(
         <div className="upt-modal-overlay" onClick={closeModal}>
           <div
             className={`upt-modal upt-modal--${selected.status}`}
@@ -256,7 +257,8 @@ export default function UptimePage() {
               </>
             ) : null}
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   )
