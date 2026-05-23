@@ -149,8 +149,12 @@ export const api = {
 
   monitoring: {
     // Uptime
-    getUptimeOverview: () => request('/monitoring/uptime/overview'),
-    getUptimeHistory:  (domain, hours = 24) => request(`/monitoring/uptime/${encodeURIComponent(domain)}/history?hours=${hours}`),
+    getUptimeOverview:    () => request('/monitoring/uptime/overview'),
+    getUptimeHistory:     (domain, hours = 24) => request(`/monitoring/uptime/${encodeURIComponent(domain)}/history?hours=${hours}`),
+    getUptimeHttpHistory: (domain, port, from, to, limit = 500) =>
+      request(`/monitoring/uptime/${encodeURIComponent(domain)}/http-history?port=${port}&from=${from}&to=${to}&limit=${limit}`),
+    getUptimeSslHistory:  (domain, from, to, limit = 500) =>
+      request(`/monitoring/uptime/${encodeURIComponent(domain)}/ssl-history?from=${from}&to=${to}&limit=${limit}`),
 
     // Port
     getPortMonitors:   () => request('/monitoring/port'),
