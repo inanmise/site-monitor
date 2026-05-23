@@ -82,7 +82,7 @@ autoscaling:
   targetMemoryUtilizationPercentage: 80
 
 podDisruptionBudget:
-  enabled: true
+  enabled: false
   minAvailable: 1
 
 podAnnotations:
@@ -106,3 +106,20 @@ topologySpreadConstraints:
   enabled: false
   maxSkew: 1
   topologyKey: kubernetes.io/hostname
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PostgreSQL subchart (Bitnami) — disabled by default
+# When enabled=true, the chart deploys a bundled PostgreSQL instance.
+# DB_HOST, DB_NAME, DB_USER are auto-resolved; set auth.password below.
+# When enabled=false (default), configure external DB via config.dbHost etc.
+# ─────────────────────────────────────────────────────────────────────────────
+postgresql:
+  enabled: false
+  auth:
+    database: certmonitor
+    username: certmonitor
+    password: ""  # required when postgresql.enabled=true
+  primary:
+    persistence:
+      enabled: true
+      size: 8Gi

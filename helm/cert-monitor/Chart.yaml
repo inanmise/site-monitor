@@ -16,4 +16,8 @@ sources:
 maintainers:
   - name: inanmise
     email: erdi.inanmis@gmail.com
-dependencies: []
+dependencies:
+  - name: postgresql
+    version: "18.x.x"
+    repository: https://charts.bitnami.com/bitnami
+    condition: postgresql.enabled
