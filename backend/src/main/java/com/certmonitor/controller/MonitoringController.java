@@ -181,6 +181,59 @@ public class MonitoringController {
         return ok(data);
     }
 
+    // ── HTTP Uptime History ───────────────────────────────────────────────────
+
+    @GetMapping("/uptime/{domain}/http-history")
+    public ResponseEntity<Map<String, Object>> uptimeHttpHistory(
+            @PathVariable String domain,
+            @RequestParam(defaultValue = "443") int port,
+            @RequestParam(required = false) String from,
+            @RequestParam(required = false) String to,
+            @RequestParam(defaultValue = "500") int limit) {
+
+        String fromStr = from != null ? from : ISO.format(Instant.now().minus(1, ChronoUnit.DAYS));
+        String toStr   = to   != null ? to   : ISO.format(Instant.now());
+        if (fromStr.length() == 10) fromStr = fromStr + "T00:00:00";
+        if (toStr.length()   == 10) toStr   = toStr   + "T23:59:59";
+
+        List<UptimeCheck> checks = uptimeCheckRepo.findByDomainAndPortAndDateRange(domain, port, fromStr, toStr, limit);
+        List<Map<String, Object>> result = checks.stream().map(c -> {
+            Map<String, Object> item = new LinkedHashMap<>();
+            item.put("checked_at",  c.getCheckedAt());
+            item.put("status",      c.getStatus());
+            item.put("response_ms", c.getResponseMs());
+            item.put("error",       c.getError());
+            return item;
+        }).toList();
+        return ok(result);
+    }
+
+    // ── SSL Certificate History ───────────────────────────────────────────────
+
+    @GetMapping("/uptime/{domain}/ssl-history")
+    public ResponseEntity<Map<String, Object>> uptimeSslHistory(
+            @PathVariable String domain,
+            @RequestParam(required = false) String from,
+            @RequestParam(required = false) String to,
+            @RequestParam(defaultValue = "500") int limit) {
+
+        String fromStr = from != null ? from : ISO.format(Instant.now().minus(1, ChronoUnit.DAYS));
+        String toStr   = to   != null ? to   : ISO.format(Instant.now());
+        if (fromStr.length() == 10) fromStr = fromStr + "T00:00:00";
+        if (toStr.length()   == 10) toStr   = toStr   + "T23:59:59";
+
+        List<CertificateCheck> checks = certCheckRepo.findByDomainAndDateRange(domain, fromStr, toStr, limit);
+        List<Map<String, Object>> result = checks.stream().map(c -> {
+            Map<String, Object> item = new LinkedHashMap<>();
+            item.put("checked_at",     c.getCheckedAt());
+            item.put("status",         c.getStatus());
+            item.put("days_remaining", c.getDaysRemaining());
+            item.put("error",          c.getError());
+            return item;
+        }).toList();
+        return ok(result);
+    }
+
     // ── Port Monitors ─────────────────────────────────────────────────────────
 
     @GetMapping("/port")
