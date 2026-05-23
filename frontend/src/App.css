@@ -3802,6 +3802,9 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 }
 .upt-apply-btn:hover { opacity: .88; }
 
+/* react-datepicker z-index fix — calendar must appear above modal overlay (z-index:2000) */
+.react-datepicker-popper { z-index: 9100 !important; }
+
 /* react-datepicker theme overrides — scoped to .dp-calendar */
 .dp-calendar.react-datepicker {
   font-family: inherit;

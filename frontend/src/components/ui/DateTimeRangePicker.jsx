@@ -1,4 +1,4 @@
-import { useState, useEffect, forwardRef, createRef } from 'react'
+import { useState, useEffect, forwardRef } from 'react'
 import { createPortal } from 'react-dom'
 import DatePicker, { registerLocale } from 'react-datepicker'
 import 'react-datepicker/dist/react-datepicker.css'
@@ -9,55 +9,37 @@ import { useT, useLanguage } from '../../i18n/index.jsx'
 registerLocale('tr', tr)
 registerLocale('en', enUS)
 
-// Renders the calendar popup into document.body to escape modal overflow clipping
+// Module-level — never recreated between renders, react-datepicker stays stable
+const CustomDateInput = forwardRef(function CustomDateInput({ value, onClick, fieldLabel }, ref) {
+  return (
+    <button className="dp-trigger" onClick={onClick} ref={ref} type="button">
+      <Calendar size={13} className="dp-trigger-icon" />
+      <span className="dp-trigger-label">{fieldLabel}</span>
+      <span className="dp-trigger-value">{value || '—'}</span>
+      <ChevronDown size={12} className="dp-trigger-chevron" />
+    </button>
+  )
+})
+
+// Portals calendar to document.body, escaping modal overflow + z-index stacking
 const BodyPortal = ({ children }) => createPortal(children, document.body)
-
-const CustomInput = forwardRef(({ value, onClick, label }, ref) => (
-  <button className="dp-trigger" onClick={onClick} ref={ref} type="button">
-    <Calendar size={13} className="dp-trigger-icon" />
-    <span className="dp-trigger-label">{label}</span>
-    <span className="dp-trigger-value">{value}</span>
-    <ChevronDown size={12} className="dp-trigger-chevron" />
-  </button>
-))
-CustomInput.displayName = 'CustomInput'
-
-function makeFromInput(label) {
-  return forwardRef((props, ref) => <CustomInput {...props} ref={ref} label={label} />)
-}
 
 const SHORTCUTS = (t) => [
   {
     label: t('dp.today'),
-    get() {
-      const s = new Date(); s.setHours(0, 0, 0, 0)
-      const e = new Date()
-      return [s, e]
-    },
+    get() { const s = new Date(); s.setHours(0, 0, 0, 0); return [s, new Date()] },
   },
   {
     label: t('dp.last7'),
-    get() {
-      const s = new Date(); s.setDate(s.getDate() - 6); s.setHours(0, 0, 0, 0)
-      const e = new Date()
-      return [s, e]
-    },
+    get() { const s = new Date(); s.setDate(s.getDate() - 6); s.setHours(0, 0, 0, 0); return [s, new Date()] },
   },
   {
     label: t('dp.last30'),
-    get() {
-      const s = new Date(); s.setDate(s.getDate() - 29); s.setHours(0, 0, 0, 0)
-      const e = new Date()
-      return [s, e]
-    },
+    get() { const s = new Date(); s.setDate(s.getDate() - 29); s.setHours(0, 0, 0, 0); return [s, new Date()] },
   },
   {
     label: t('dp.thisMonth'),
-    get() {
-      const s = new Date(); s.setDate(1); s.setHours(0, 0, 0, 0)
-      const e = new Date()
-      return [s, e]
-    },
+    get() { const s = new Date(); s.setDate(1); s.setHours(0, 0, 0, 0); return [s, new Date()] },
   },
 ]
 
@@ -74,14 +56,12 @@ export default function DateTimeRangePicker({ from, to, onApply }) {
 
   function handleFrom(date) {
     if (!date) return
-    const next = date > localTo ? localTo : date
-    setLocalFrom(next)
+    setLocalFrom(date > localTo ? localTo : date)
   }
 
   function handleTo(date) {
     if (!date) return
-    const next = date < localFrom ? localFrom : date
-    setLocalTo(next)
+    setLocalTo(date < localFrom ? localFrom : date)
   }
 
   function applyShortcut(sc) {
@@ -91,28 +71,19 @@ export default function DateTimeRangePicker({ from, to, onApply }) {
     onApply(s, e)
   }
 
-  const FromInput = forwardRef((props, ref) =>
-    <CustomInput {...props} ref={ref} label={t('uptime.dateFrom')} />
-  )
-  FromInput.displayName = 'FromInput'
-
-  const ToInput = forwardRef((props, ref) =>
-    <CustomInput {...props} ref={ref} label={t('uptime.dateTo')} />
-  )
-  ToInput.displayName = 'ToInput'
-
   return (
     <div className="dp-wrap">
-      {/* Shortcut chips */}
+      {/* Quick shortcut chips */}
       <div className="dp-shortcuts">
         {SHORTCUTS(t).map(sc => (
-          <button key={sc.label} className="dp-shortcut" onClick={() => applyShortcut(sc)}>
+          <button key={sc.label} className="dp-shortcut" type="button"
+            onClick={() => applyShortcut(sc)}>
             {sc.label}
           </button>
         ))}
       </div>
 
-      {/* Range inputs */}
+      {/* From → To inputs + Apply */}
       <div className="dp-range-row">
         <DatePicker
           selected={localFrom}
@@ -127,7 +98,7 @@ export default function DateTimeRangePicker({ from, to, onApply }) {
           locale={locale}
           maxDate={localTo}
           popperContainer={BodyPortal}
-          customInput={<FromInput />}
+          customInput={<CustomDateInput fieldLabel={t('uptime.dateFrom')} />}
           showPopperArrow={false}
           popperPlacement="bottom-start"
           calendarClassName="dp-calendar"
@@ -149,13 +120,14 @@ export default function DateTimeRangePicker({ from, to, onApply }) {
           minDate={localFrom}
           maxDate={new Date()}
           popperContainer={BodyPortal}
-          customInput={<ToInput />}
+          customInput={<CustomDateInput fieldLabel={t('uptime.dateTo')} />}
           showPopperArrow={false}
           popperPlacement="bottom-start"
           calendarClassName="dp-calendar"
         />
 
-        <button className="upt-apply-btn" onClick={() => onApply(localFrom, localTo)}>
+        <button className="upt-apply-btn" type="button"
+          onClick={() => onApply(localFrom, localTo)}>
           {t('uptime.apply')}
         </button>
       </div>
