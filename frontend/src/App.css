@@ -3629,9 +3629,80 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 [data-theme="dark"] .upt-badge--down    { background: #450a0a; color: #f87171; }
 [data-theme="dark"] .upt-badge--unknown { background: var(--bg); color: var(--text-muted); }
 
-.upt-detail { background: var(--bg-surface); border: 1px solid var(--border); border-radius: 8px; padding: 18px 20px; margin-top: 4px; }
-.upt-detail-title { font-size: 14px; font-weight: 700; color: var(--text); margin-bottom: 16px; display: flex; align-items: center; gap: 8px; }
-.upt-detail-loading { color: var(--text-muted); font-size: 12px; }
+/* ── Uptime detail modal ── */
+.upt-modal-overlay {
+  position: fixed; inset: 0;
+  background: rgba(0,0,0,.55);
+  z-index: 2000;
+  display: flex; align-items: center; justify-content: center;
+  padding: 20px;
+}
+.upt-modal {
+  position: relative;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  width: 100%; max-width: 680px;
+  max-height: 85vh; overflow-y: auto;
+  box-shadow: 0 24px 60px rgba(0,0,0,.28);
+  padding: 24px 28px 24px 32px;
+  overflow: hidden;
+}
+/* Scrollable inner — let ::before stay fixed */
+.upt-modal::before {
+  content: '';
+  position: absolute; left: 0; top: 0; bottom: 0;
+  width: 5px;
+  border-radius: 14px 0 0 14px;
+  background: #94a3b8;
+}
+.upt-modal--up::before   { background: #22c55e; }
+.upt-modal--down::before { background: #ef4444; }
+/* Make content scrollable while ::before stays */
+.upt-modal > * { position: relative; }
+
+.upt-modal-header {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; margin-bottom: 0; flex-wrap: wrap;
+}
+.upt-modal-header-left {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap; flex: 1; min-width: 0;
+}
+.upt-modal-domain {
+  font-size: 18px; font-weight: 700; color: var(--text);
+  letter-spacing: -.02em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.upt-modal-close {
+  background: none; border: none; cursor: pointer;
+  color: var(--text-muted); padding: 4px; border-radius: 6px;
+  display: flex; align-items: center; justify-content: center;
+  transition: background .15s, color .15s; flex-shrink: 0;
+}
+.upt-modal-close:hover { background: var(--hover); color: var(--text); }
+
+.upt-modal-divider { height: 1px; background: var(--border); margin: 18px 0; }
+
+.upt-modal-summary {
+  display: flex; gap: 28px; flex-wrap: wrap;
+}
+.upt-modal-metric { display: flex; flex-direction: column; gap: 3px; }
+.upt-modal-metric-val {
+  font-size: 15px; font-weight: 700; color: var(--text); line-height: 1.2;
+}
+.upt-modal-metric-time { font-size: 12px; font-weight: 600; }
+.upt-modal-metric-lbl {
+  font-size: 10px; font-weight: 600; color: var(--text-muted);
+  text-transform: uppercase; letter-spacing: .05em;
+}
+
+.upt-modal-section-title {
+  font-size: 11px; font-weight: 700; color: var(--text-muted);
+  text-transform: uppercase; letter-spacing: .07em; margin-bottom: 10px;
+}
+.upt-bars--modal { height: 40px; }
+.upt-modal-loading { color: var(--text-muted); font-size: 13px; padding: 12px 0; }
+
+[data-theme="dark"] .upt-modal { background: var(--bg-card); }
 .upt-bar-section { margin-bottom: 16px; }
 .upt-bar-label { font-size: 11px; font-weight: 600; color: var(--text-muted); margin-bottom: 6px; }
 .upt-bars { display: flex; gap: 2px; height: 28px; align-items: stretch; }
