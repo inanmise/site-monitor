@@ -22,6 +22,10 @@ data:
   CERT_MONITOR_EMAIL_ENABLED: {{ .Values.config.emailEnabled | quote }}
   SPRING_MAIL_HOST: {{ .Values.config.smtpHost | quote }}
   SPRING_MAIL_PORT: {{ .Values.config.smtpPort | quote }}
+  SPRING_MAIL_SMTP_AUTH: {{ .Values.config.smtpAuth | quote }}
+  SPRING_MAIL_SMTP_STARTTLS_ENABLE: {{ .Values.config.smtpStarttlsEnable | quote }}
+  SPRING_MAIL_SMTP_STARTTLS_REQUIRED: {{ .Values.config.smtpStarttlsRequired | quote }}
+  SPRING_MAIL_SMTP_SSL_TRUST: {{ .Values.config.smtpSslTrust | quote }}
   CORS_ALLOWED_ORIGINS: {{ .Values.config.corsAllowedOrigins | quote }}
   CHECK_TIMEOUT_SECONDS: {{ .Values.config.checkTimeoutSeconds | quote }}
   WARNING_DAYS: {{ .Values.config.warningDays | quote }}
