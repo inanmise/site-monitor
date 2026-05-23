@@ -7,10 +7,17 @@ metadata:
     {{- include "cert-monitor.labels" . | nindent 4 }}
 data:
   SPRING_PROFILES_ACTIVE: {{ .Values.config.springProfile | quote }}
+  {{- if .Values.postgresql.enabled }}
+  DB_HOST: {{ printf "%s-postgresql" .Release.Name | quote }}
+  DB_PORT: "5432"
+  DB_NAME: {{ .Values.postgresql.auth.database | quote }}
+  DB_USER: {{ .Values.postgresql.auth.username | quote }}
+  {{- else }}
   DB_HOST: {{ .Values.config.dbHost | quote }}
   DB_PORT: {{ .Values.config.dbPort | quote }}
   DB_NAME: {{ .Values.config.dbName | quote }}
   DB_USER: {{ .Values.config.dbUser | quote }}
+  {{- end }}
   DB_POOL_MAX: {{ .Values.config.dbPoolMax | quote }}
   CERT_MONITOR_EMAIL_ENABLED: {{ .Values.config.emailEnabled | quote }}
   SPRING_MAIL_HOST: {{ .Values.config.smtpHost | quote }}
