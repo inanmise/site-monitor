@@ -70,7 +70,7 @@ export default function Nav({ activeTab, onTabChange, username, teamName, system
       const saved = localStorage.getItem('nav-groups-open')
       if (saved) return JSON.parse(saved)
     } catch {}
-    return [0, 1, 2, 3, 4]
+    return []
   })
 
   useEffect(() => {
