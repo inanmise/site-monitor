@@ -21,7 +21,6 @@ import SystemHealth from './components/admin/SystemHealth'
 import ActivityLog from './components/ActivityLog'
 import HelpPage from './components/HelpPage'
 import UptimePage from './components/UptimePage'
-import PingMonitorPage from './components/PingMonitorPage'
 import PortMonitorPage from './components/PortMonitorPage'
 import DnsMonitorPage from './components/DnsMonitorPage'
 
@@ -576,7 +575,6 @@ export default function App() {
 
             {tab === 'help'   && <HelpPage />}
             {tab === 'uptime' && <UptimePage />}
-            {tab === 'ping'   && <PingMonitorPage />}
             {tab === 'port'   && <PortMonitorPage />}
             {tab === 'dns'    && <DnsMonitorPage />}
           </div>

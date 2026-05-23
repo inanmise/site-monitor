@@ -3,9 +3,7 @@ package com.certmonitor.controller;
 import com.certmonitor.model.*;
 import com.certmonitor.repository.*;
 import com.certmonitor.service.DnsCheckerService;
-import com.certmonitor.service.PingCheckerService;
 import com.certmonitor.service.PortCheckerService;
-import jakarta.servlet.http.HttpSession;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
@@ -18,6 +16,7 @@ import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
 import java.util.*;
 import java.util.stream.Collectors;
+import java.util.Optional;
 
 @Slf4j
 @RestController
@@ -28,10 +27,7 @@ public class MonitoringController {
     private final LatestCheckRepository latestCheckRepo;
     private final CertificateInventoryRepository inventoryRepo;
     private final CertificateCheckRepository certCheckRepo;
-
-    private final PingMonitorRepository pingMonitorRepo;
-    private final PingCheckRepository pingCheckRepo;
-    private final PingCheckerService pingChecker;
+    private final UptimeCheckRepository uptimeCheckRepo;
 
     private final PortMonitorRepository portMonitorRepo;
     private final PortCheckRepository portCheckRepo;
@@ -76,25 +72,30 @@ public class MonitoringController {
             item.put("domain", domain);
             item.put("port",   inv.getPort());
 
+            int port = inv.getPort() != null ? inv.getPort() : 443;
+            Optional<UptimeCheck> uc = uptimeCheckRepo.findTopByDomainAndPortOrderByIdDesc(domain, port);
+
             if (lc == null) {
-                item.put("status",      "unknown");
-                item.put("response_ms", null);
-                item.put("checked_at",  null);
-                item.put("ssl_valid_days", null);
-                item.put("ssl_not_after",  null);
-                item.put("uptime_7d",   null);
-                item.put("uptime_30d",  null);
-                item.put("incidents_30d", 0);
+                item.put("status",           uc.map(UptimeCheck::getStatus).orElse("unknown"));
+                item.put("response_ms",      uc.map(UptimeCheck::getResponseMs).orElse(null));
+                item.put("uptime_checked_at",uc.map(UptimeCheck::getCheckedAt).orElse(null));
+                item.put("ssl_checked_at",   null);
+                item.put("ssl_valid_days",   null);
+                item.put("ssl_not_after",    null);
+                item.put("uptime_7d",        null);
+                item.put("uptime_30d",       null);
+                item.put("incidents_30d",    0);
                 result.add(item);
                 continue;
             }
 
-            String status = "error".equals(lc.getStatus()) ? "down" : "up";
-            item.put("status",      status);
-            item.put("response_ms", null);
-            item.put("checked_at",  lc.getCheckedAt());
-            item.put("ssl_valid_days", lc.getDaysRemaining());
-            item.put("ssl_not_after",  lc.getNotAfter());
+            String sslStatus = "error".equals(lc.getStatus()) ? "down" : "up";
+            item.put("status",           uc.map(UptimeCheck::getStatus).orElse(sslStatus));
+            item.put("response_ms",      uc.map(UptimeCheck::getResponseMs).orElse(null));
+            item.put("uptime_checked_at",uc.map(UptimeCheck::getCheckedAt).orElse(null));
+            item.put("ssl_checked_at",   lc.getCheckedAt());
+            item.put("ssl_valid_days",   lc.getDaysRemaining());
+            item.put("ssl_not_after",    lc.getNotAfter());
 
             // Uptime % from certificate_checks history
             List<CertificateCheck> history30d = certCheckRepo.findByCheckedAtAfter(cutoff30d).stream()
@@ -178,118 +179,6 @@ public class MonitoringController {
         data.put("response_times", responseTimes);
 
         return ok(data);
-    }
-
-    // ── Ping Monitors ─────────────────────────────────────────────────────────
-
-    @GetMapping("/ping")
-    public ResponseEntity<Map<String, Object>> listPing() {
-        List<CertificateInventory> inventory = inventoryRepo.findByActiveTrueOrderByDomainAsc();
-        String now = ISO.format(Instant.now());
-        List<Map<String, Object>> result = new ArrayList<>();
-        for (CertificateInventory inv : inventory) {
-            PingMonitor monitor = pingMonitorRepo.findFirstByHostOrderByIdAsc(inv.getDomain())
-                    .orElseGet(() -> {
-                        PingMonitor m = new PingMonitor();
-                        m.setName(inv.getDomain());
-                        m.setHost(inv.getDomain());
-                        m.setActive(true);
-                        m.setIntervalSeconds(60);
-                        m.setTimeoutMs(5000);
-                        m.setCreatedAt(now);
-                        m.setUpdatedAt(now);
-                        return pingMonitorRepo.save(m);
-                    });
-            result.add(enrichPing(monitor, pingCheckRepo.findTopByMonitorIdOrderByCheckedAtDesc(monitor.getId()).orElse(null)));
-        }
-        return ok(result);
-    }
-
-    @PostMapping("/ping")
-    public ResponseEntity<Map<String, Object>> createPing(@RequestBody Map<String, Object> body, HttpSession session) {
-        String now = ISO.format(Instant.now());
-        PingMonitor m = new PingMonitor();
-        m.setName((String) body.get("name"));
-        m.setHost((String) body.get("host"));
-        m.setActive(true);
-        if (body.get("intervalSeconds") != null) m.setIntervalSeconds(((Number) body.get("intervalSeconds")).intValue());
-        if (body.get("timeoutMs")       != null) m.setTimeoutMs(((Number) body.get("timeoutMs")).intValue());
-        m.setCreatedAt(now);
-        m.setUpdatedAt(now);
-        PingMonitor saved = pingMonitorRepo.save(m);
-        return ok(enrichPing(saved, null));
-    }
-
-    @PutMapping("/ping/{id}")
-    public ResponseEntity<Map<String, Object>> updatePing(@PathVariable Long id, @RequestBody Map<String, Object> body) {
-        return pingMonitorRepo.findById(id).map(m -> {
-            if (body.get("name")            != null) m.setName((String) body.get("name"));
-            if (body.get("host")            != null) m.setHost((String) body.get("host"));
-            if (body.get("active")          != null) m.setActive((Boolean) body.get("active"));
-            if (body.get("intervalSeconds") != null) m.setIntervalSeconds(((Number) body.get("intervalSeconds")).intValue());
-            if (body.get("timeoutMs")       != null) m.setTimeoutMs(((Number) body.get("timeoutMs")).intValue());
-            m.setUpdatedAt(ISO.format(Instant.now()));
-            PingMonitor saved = pingMonitorRepo.save(m);
-            return ok(enrichPing(saved, pingCheckRepo.findTopByMonitorIdOrderByCheckedAtDesc(id).orElse(null)));
-        }).orElse(notFound("Ping monitor not found"));
-    }
-
-    @DeleteMapping("/ping/{id}")
-    public ResponseEntity<Map<String, Object>> deletePing(@PathVariable Long id) {
-        return pingMonitorRepo.findById(id).map(m -> {
-            m.setActive(false);
-            m.setUpdatedAt(ISO.format(Instant.now()));
-            pingMonitorRepo.save(m);
-            return ok(Map.of("deleted", true));
-        }).orElse(notFound("Ping monitor not found"));
-    }
-
-    @GetMapping("/ping/{id}/history")
-    public ResponseEntity<Map<String, Object>> pingHistory(@PathVariable Long id,
-            @RequestParam(defaultValue = "100") int limit) {
-        List<PingCheck> checks = pingCheckRepo.findByMonitorIdOrderByCheckedAtDesc(id)
-                .stream().limit(limit).toList();
-        return ok(checks);
-    }
-
-    @PostMapping("/ping/{id}/check")
-    public ResponseEntity<Map<String, Object>> triggerPing(@PathVariable Long id) {
-        return pingMonitorRepo.findById(id).map(m -> {
-            Map<String, Object> r = pingChecker.check(m.getHost(), m.getTimeoutMs());
-            String now = ISO.format(Instant.now());
-            PingCheck check = new PingCheck();
-            check.setMonitorId(m.getId());
-            check.setReachable((Boolean) r.getOrDefault("reachable", false));
-            check.setResponseMs(r.get("response_ms") != null ? ((Number) r.get("response_ms")).longValue() : null);
-            check.setError((String) r.get("error"));
-            check.setCheckedAt(now);
-            pingCheckRepo.save(check);
-            return ok(enrichPing(m, check));
-        }).orElse(notFound("Ping monitor not found"));
-    }
-
-    private Map<String, Object> enrichPing(PingMonitor m, PingCheck latest) {
-        Map<String, Object> item = new LinkedHashMap<>();
-        item.put("id",              m.getId());
-        item.put("name",            m.getName());
-        item.put("host",            m.getHost());
-        item.put("active",          m.getActive());
-        item.put("interval_seconds",m.getIntervalSeconds());
-        item.put("timeout_ms",      m.getTimeoutMs());
-        item.put("created_at",      m.getCreatedAt());
-        item.put("updated_at",      m.getUpdatedAt());
-        if (latest != null) {
-            item.put("status",      latest.getReachable() ? "up" : "down");
-            item.put("response_ms", latest.getResponseMs());
-            item.put("checked_at",  latest.getCheckedAt());
-            item.put("error",       latest.getError());
-        } else {
-            item.put("status",      "unknown");
-            item.put("response_ms", null);
-            item.put("checked_at",  null);
-            item.put("error",       null);
-        }
-        return item;
     }
 
     // ── Port Monitors ─────────────────────────────────────────────────────────
