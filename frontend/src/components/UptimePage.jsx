@@ -7,7 +7,8 @@ import { RefreshCw, X } from 'lucide-react'
 const REFRESH_INTERVAL = 60
 const PAGE_SIZE = 12
 
-function todayISO() { return new Date().toISOString().slice(0, 10) }
+function todayStartDT() { return new Date().toISOString().slice(0, 10) + 'T00:00' }
+function nowDT()        { return new Date().toISOString().slice(0, 16) }
 
 export default function UptimePage() {
   const t = useT()
@@ -22,8 +23,8 @@ export default function UptimePage() {
   const [httpLoading, setHttpLoading]   = useState(false)
   const [sslHistory, setSslHistory]     = useState([])
   const [sslLoading, setSslLoading]     = useState(false)
-  const [dateFrom, setDateFrom]         = useState(todayISO)
-  const [dateTo, setDateTo]             = useState(todayISO)
+  const [dateFrom, setDateFrom]         = useState(todayStartDT)
+  const [dateTo, setDateTo]             = useState(nowDT)
   const [secondsSince, setSecondsSince] = useState(0)
   const lastFetched = useRef(null)
   const countdownRef = useRef(null)
@@ -66,14 +67,15 @@ export default function UptimePage() {
   }
 
   function openModal(item) {
-    const today = todayISO()
+    const from = todayStartDT()
+    const to   = nowDT()
     setSelected(item)
     setHttpHistory([])
     setSslHistory([])
-    setDateFrom(today)
-    setDateTo(today)
-    loadHttpHistory(item, today, today)
-    loadSslHistory(item, today, today)
+    setDateFrom(from)
+    setDateTo(to)
+    loadHttpHistory(item, from, to)
+    loadSslHistory(item, from, to)
   }
 
   function closeModal() {
@@ -369,17 +371,17 @@ export default function UptimePage() {
             <div className="upt-date-range">
               <div className="upt-date-field">
                 <label>{t('uptime.dateFrom')}</label>
-                <input className="upt-date-input" type="date"
+                <input className="upt-date-input" type="datetime-local"
                   value={dateFrom}
                   max={dateTo}
                   onChange={e => setDateFrom(e.target.value)} />
               </div>
               <div className="upt-date-field">
                 <label>{t('uptime.dateTo')}</label>
-                <input className="upt-date-input" type="date"
+                <input className="upt-date-input" type="datetime-local"
                   value={dateTo}
                   min={dateFrom}
-                  max={todayISO()}
+                  max={nowDT()}
                   onChange={e => setDateTo(e.target.value)} />
               </div>
               <button className="upt-apply-btn" onClick={applyDateRange}>{t('uptime.apply')}</button>
@@ -387,57 +389,56 @@ export default function UptimePage() {
 
             <div className="upt-modal-divider" />
 
-            {/* HTTP Kontrol Geçmişi */}
-            <div className="upt-modal-section-title">{t('uptime.httpHistory')}</div>
-            {httpLoading ? (
-              <div className="upt-modal-loading">...</div>
-            ) : httpHistory.length === 0 ? (
-              <div className="upt-modal-loading">{t('uptime.noHttpHistory')}</div>
-            ) : (
-              <div className="upt-rt-list">
-                {httpHistory.map((c, i) => (
-                  <div key={i} className="upt-rt-row">
-                    <span className="upt-rt-time">{formatDate(c.checked_at)}</span>
-                    <span className={c.status === 'up' ? 'upt-rt-up' : 'upt-rt-down'}>
-                      {c.status === 'up' ? t('uptime.statusUp') : t('uptime.statusDown')}
-                    </span>
-                    {c.response_ms != null && (
-                      <span className="upt-rt-ms">{c.response_ms}ms</span>
-                    )}
-                    {c.error && (
-                      <span className="upt-rt-error" title={c.error}>{c.error}</span>
-                    )}
+            {/* Two-column history */}
+            <div className="upt-history-cols">
+              <div className="upt-history-col">
+                <div className="upt-modal-section-title">{t('uptime.httpHistory')}</div>
+                {httpLoading ? (
+                  <div className="upt-modal-loading">...</div>
+                ) : httpHistory.length === 0 ? (
+                  <div className="upt-modal-loading">{t('uptime.noHttpHistory')}</div>
+                ) : (
+                  <div className="upt-rt-list">
+                    {httpHistory.map((c, i) => (
+                      <div key={i} className="upt-rt-row">
+                        <span className="upt-rt-time">{formatDate(c.checked_at)}</span>
+                        <span className={c.status === 'up' ? 'upt-rt-up' : 'upt-rt-down'}>
+                          {c.status === 'up' ? t('uptime.statusUp') : t('uptime.statusDown')}
+                        </span>
+                        {c.response_ms != null && <span className="upt-rt-ms">{c.response_ms}ms</span>}
+                        {c.error && <span className="upt-rt-error" title={c.error}>{c.error}</span>}
+                      </div>
+                    ))}
                   </div>
-                ))}
+                )}
               </div>
-            )}
 
-            <div className="upt-modal-divider" />
+              <div className="upt-history-col-divider" />
 
-            {/* SSL Kontrol Geçmişi */}
-            <div className="upt-modal-section-title">{t('uptime.sslHistory')}</div>
-            {sslLoading ? (
-              <div className="upt-modal-loading">...</div>
-            ) : sslHistory.length === 0 ? (
-              <div className="upt-modal-loading">{t('uptime.noSslHistory')}</div>
-            ) : (
-              <div className="upt-rt-list">
-                {sslHistory.map((c, i) => (
-                  <div key={i} className="upt-rt-row">
-                    <span className="upt-rt-time">{formatDate(c.checked_at)}</span>
-                    <span className={c.status !== 'error' ? 'upt-rt-up' : 'upt-rt-down'}>
-                      {c.status !== 'error' ? t('uptime.statusUp') : t('uptime.statusDown')}
-                    </span>
-                    {c.days_remaining != null && (
-                      <span className="upt-rt-ms">{t('uptime.sslDays').replace('{0}', c.days_remaining)}</span>
-                    )}
-                    {c.error && (
-                      <span className="upt-rt-error" title={c.error}>{c.error}</span>
-                    )}
+              <div className="upt-history-col">
+                <div className="upt-modal-section-title">{t('uptime.sslHistory')}</div>
+                {sslLoading ? (
+                  <div className="upt-modal-loading">...</div>
+                ) : sslHistory.length === 0 ? (
+                  <div className="upt-modal-loading">{t('uptime.noSslHistory')}</div>
+                ) : (
+                  <div className="upt-rt-list">
+                    {sslHistory.map((c, i) => (
+                      <div key={i} className="upt-rt-row">
+                        <span className="upt-rt-time">{formatDate(c.checked_at)}</span>
+                        <span className={c.status !== 'error' ? 'upt-rt-up' : 'upt-rt-down'}>
+                          {c.status !== 'error' ? t('uptime.statusUp') : t('uptime.statusDown')}
+                        </span>
+                        {c.days_remaining != null && (
+                          <span className="upt-rt-ms">{t('uptime.sslDays').replace('{0}', c.days_remaining)}</span>
+                        )}
+                        {c.error && <span className="upt-rt-error" title={c.error}>{c.error}</span>}
+                      </div>
+                    ))}
                   </div>
-                ))}
+                )}
               </div>
-            )}
+            </div>
           </div>
         </div>,
         document.body

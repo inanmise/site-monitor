@@ -116,6 +116,22 @@ public class MonitoringController {
         return ok(result);
     }
 
+    /** Normalize date/datetime strings to full ISO-8601 (19 chars) for "from" range end. */
+    private static String normalizeFrom(String s) {
+        if (s == null) return s;
+        if (s.length() == 10) return s + "T00:00:00";   // date only  → start of day
+        if (s.length() == 16) return s + ":00";          // HH:MM      → :00 seconds
+        return s;
+    }
+
+    /** Normalize date/datetime strings to full ISO-8601 (19 chars) for "to" range end. */
+    private static String normalizeTo(String s) {
+        if (s == null) return s;
+        if (s.length() == 10) return s + "T23:59:59";   // date only  → end of day
+        if (s.length() == 16) return s + ":59";          // HH:MM      → :59 seconds
+        return s;
+    }
+
     private double calcUptime(List<CertificateCheck> checks) {
         if (checks.isEmpty()) return 100.0;
         long total = checks.size();
@@ -191,10 +207,8 @@ public class MonitoringController {
             @RequestParam(required = false) String to,
             @RequestParam(defaultValue = "500") int limit) {
 
-        String fromStr = from != null ? from : ISO.format(Instant.now().minus(1, ChronoUnit.DAYS));
-        String toStr   = to   != null ? to   : ISO.format(Instant.now());
-        if (fromStr.length() == 10) fromStr = fromStr + "T00:00:00";
-        if (toStr.length()   == 10) toStr   = toStr   + "T23:59:59";
+        String fromStr = normalizeFrom(from != null ? from : ISO.format(Instant.now().minus(1, ChronoUnit.DAYS)));
+        String toStr   = normalizeTo  (to   != null ? to   : ISO.format(Instant.now()));
 
         List<UptimeCheck> checks = uptimeCheckRepo.findByDomainAndPortAndDateRange(domain, port, fromStr, toStr, limit);
         List<Map<String, Object>> result = checks.stream().map(c -> {
@@ -217,10 +231,8 @@ public class MonitoringController {
             @RequestParam(required = false) String to,
             @RequestParam(defaultValue = "500") int limit) {
 
-        String fromStr = from != null ? from : ISO.format(Instant.now().minus(1, ChronoUnit.DAYS));
-        String toStr   = to   != null ? to   : ISO.format(Instant.now());
-        if (fromStr.length() == 10) fromStr = fromStr + "T00:00:00";
-        if (toStr.length()   == 10) toStr   = toStr   + "T23:59:59";
+        String fromStr = normalizeFrom(from != null ? from : ISO.format(Instant.now().minus(1, ChronoUnit.DAYS)));
+        String toStr   = normalizeTo  (to   != null ? to   : ISO.format(Instant.now()));
 
         List<CertificateCheck> checks = certCheckRepo.findByDomainAndDateRange(domain, fromStr, toStr, limit);
         List<Map<String, Object>> result = checks.stream().map(c -> {
