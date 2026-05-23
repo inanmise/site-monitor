@@ -178,11 +178,13 @@
   ════════════════════════════════════════════════════════════════════════ -->
   <springProfile name="prod">
     <logger name="com.certmonitor" level="${LOG_LEVEL}" additivity="false">
+      <appender-ref ref="CONSOLE"/>
       <appender-ref ref="ASYNC_FILE"/>
       <appender-ref ref="ASYNC_ERROR"/>
     </logger>
 
     <root level="WARN">
+      <appender-ref ref="CONSOLE"/>
       <appender-ref ref="ASYNC_FILE"/>
       <appender-ref ref="ASYNC_ERROR"/>
     </root>
