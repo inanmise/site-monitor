@@ -110,7 +110,7 @@ export default function Nav({ activeTab, onTabChange, username, teamName, system
           {open && (
             <div className="sb-brand-text">
               <span className="sb-brand-name">CertMonitor</span>
-              <span className="sb-brand-sub">Enterprise</span>
+              <span className="sb-brand-sub">ENTERPRISE</span>
             </div>
           )}
         </div>
@@ -131,7 +131,7 @@ export default function Nav({ activeTab, onTabChange, username, teamName, system
             <div key={gi} className="sb-group">
               {hasLabel && open && (
                 <button className="sb-group-header" onClick={() => toggleGroup(gi)}>
-                  <span className="sb-group-header-text">{t(group.labelKey)}</span>
+                  <span className="sb-group-header-text">{t(group.labelKey).toLocaleUpperCase('en-US')}</span>
                   <ChevronDown size={11} className={`sb-group-chevron${isGroupOpen ? '' : ' sb-group-chevron-closed'}`} />
                 </button>
               )}
