@@ -149,7 +149,7 @@ export default function EscalationContacts({ teams = [], isAdmin = false }) {
             <h3>{modal === 'add' ? t('ec.addTitle') : t('ec.editTitle')}</h3>
             <div className="form-grid">
               <label>
-                {t('contact.user')} <span style={{ color: 'var(--danger)' }}>*</span>
+                <span>{t('contact.user')} <span className="req-star">*</span></span>
                 <SearchableSelect
                   value={form.user_id}
                   onChange={v => setForm({ ...form, user_id: v })}
