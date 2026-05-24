@@ -1,10 +1,10 @@
 import { useT } from '../i18n/index.jsx'
 import {
   LayoutDashboard, ShieldCheck, TriangleAlert, OctagonAlert, Siren,
-  ServerCrash, AlarmClock, CalendarClock, CalendarX
+  ServerCrash, AlarmClock, CalendarClock, CalendarX, ShieldAlert, Building2
 } from 'lucide-react'
 
-export default function StatsPanel({ stats, visible, onStatClick, activeFilter }) {
+export default function StatsPanel({ stats, visible, onStatClick, activeFilter, weakStats, issuerStats, onCaClick }) {
   const t = useT()
   if (!visible || !stats) return null
 
@@ -39,6 +39,42 @@ export default function StatsPanel({ stats, visible, onStatClick, activeFilter }
           </div>
         )
       })}
+      {issuerStats != null && (() => {
+        const clsMap = { 1: 'critical', 2: 'warning' }
+        const cls = clsMap[issuerStats.uniqueCount] ?? 'valid'
+        const sub = `${issuerStats.dominantIssuer} (${issuerStats.dominantCount}, %${issuerStats.dominantPct})`
+        return (
+          <div className={`stat-item stat-item-${cls} stat-clickable`} title={sub} onClick={onCaClick}>
+            <span className="stat-icon"><Building2 size={32} /></span>
+            <span className={`stat-value stat-value-${cls}`}>{issuerStats.uniqueCount}</span>
+            <span className="stat-label">{t('stat.caDiv')}</span>
+            <span className="stat-issuer-sub">{sub}</span>
+          </div>
+        )
+      })()}
+      {weakStats != null && (() => {
+        const isActive = activeFilter === 'weak'
+        const label = t('stat.weak')
+        return (
+          <div
+            className={`stat-item stat-item-weak stat-clickable${isActive ? ' stat-active' : ''}`}
+            onClick={() => onStatClick('weak')}
+            title={isActive ? t('stat.clearTip') : t('stat.filterTip', label)}
+          >
+            <span className="stat-icon"><ShieldAlert size={32} /></span>
+            <span className="stat-value stat-value-weak">{weakStats.total ?? 0}</span>
+            <span className="stat-label">{label}</span>
+            {(weakStats.critical > 0 || weakStats.high > 0) && (
+              <span className="stat-weak-sub">
+                {weakStats.critical > 0 ? `${weakStats.critical} CRITICAL` : ''}
+                {weakStats.critical > 0 && weakStats.high > 0 ? ' · ' : ''}
+                {weakStats.high > 0 ? `${weakStats.high} HIGH` : ''}
+              </span>
+            )}
+            {isActive && <span className="stat-active-dot" />}
+          </div>
+        )
+      })()}
     </div>
   )
 }
