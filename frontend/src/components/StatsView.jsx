@@ -14,11 +14,13 @@ const TIER_META = {
 const TIER_ORDER = [1, 2, 3, 4, 0]
 
 const STATUS_OPTIONS = [
-  { value: '',         labelKey: 'tbl.filterAll'      },
-  { value: 'valid',    labelKey: 'tbl.filterValid'    },
-  { value: 'warning',  labelKey: 'tbl.filterWarning'  },
-  { value: 'critical', labelKey: 'tbl.filterCritical' },
-  { value: 'error',    labelKey: 'tbl.filterError'    },
+  { value: '',          labelKey: 'tbl.filterAll'       },
+  { value: 'valid',     labelKey: 'tbl.filterValid'     },
+  { value: 'critical',  labelKey: 'tbl.filterCritical'  },
+  { value: 'high',      labelKey: 'tbl.filterHigh'      },
+  { value: 'warning',   labelKey: 'tbl.filterWarning'   },
+  { value: 'error',     labelKey: 'tbl.filterError'     },
+  { value: 'expiring7', labelKey: 'tbl.filterExpiring7' },
 ]
 
 // ── Helpers ──────────────────────────────────────────────────────────────────

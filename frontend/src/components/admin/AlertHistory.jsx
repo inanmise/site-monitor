@@ -101,6 +101,18 @@ function NotifLogCard({ log: l }) {
 
       {open && (
         <div className="nl-card-body">
+          {l.email_from && (
+            <div className="nl-detail-row">
+              <span className="nl-detail-label">{t('alh.notif.from')}</span>
+              <span className="nl-detail-val">{l.email_from}</span>
+            </div>
+          )}
+          {l.cc && (
+            <div className="nl-detail-row">
+              <span className="nl-detail-label">{t('alh.notif.cc')}</span>
+              <span className="nl-detail-val">{l.cc}</span>
+            </div>
+          )}
           <div className="nl-detail-row">
             <span className="nl-detail-label">{t('alh.notif.subject')}</span>
             <span className="nl-detail-val nl-subject">{l.subject || '—'}</span>
@@ -219,11 +231,11 @@ function NotifyResultModal({ alertId, alertInfo, currentResult, onClose }) {
   )
 }
 
-export default function AlertHistory() {
+export default function AlertHistory({ domain = null }) {
   const t = useT()
   const { showConfirm } = useDialog()
   const [alerts,       setAlerts]       = useState([])
-  const [onlyOpen,     setOnlyOpen]     = useState(true)
+  const [onlyOpen,     setOnlyOpen]     = useState(domain == null)
   const [loading,      setLoading]      = useState(false)
   const [notifyModal,  setNotifyModal]  = useState(null)
   const [notifying,    setNotifying]    = useState(null)
@@ -293,13 +305,14 @@ export default function AlertHistory() {
     try { return JSON.parse(json) } catch { return [] }
   }
 
-  const open   = alerts.filter(a => !a.resolved)
-  const closed = alerts.filter(a =>  a.resolved)
+  const displayed = domain ? alerts.filter(a => a.domain === domain) : alerts
+  const open   = displayed.filter(a => !a.resolved)
+  const closed = displayed.filter(a =>  a.resolved)
 
   return (
     <div className="admin-section">
       <div className="admin-section-header">
-        <h3>{t('alh.title')}</h3>
+        {domain == null && <h3>{t('alh.title')}</h3>}
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
           <label className="checkbox-label">
             <input type="checkbox" checked={onlyOpen} onChange={e => setOnlyOpen(e.target.checked)} />

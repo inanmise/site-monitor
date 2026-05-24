@@ -315,9 +315,6 @@ public class SchedulerService {
             lastRunErrors.set((int) errors);
             lastRunWarnings.set((int) warnings);
 
-            if (warnings > 0) {
-                emailService.sendWarningEmailIfEnabled(certService.getWarnings());
-            }
             escalationService.processResults(results);
 
         } finally {

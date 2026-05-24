@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { api, formatDate } from '../api/client'
 import { useT } from '../i18n/index.jsx'
-import { Play, Pencil, X, RefreshCw } from 'lucide-react'
+import { Play, Pencil, X, RefreshCw, Plug } from 'lucide-react'
 
 const INTERVALS = [
   { value: 30,  labelKey: 'ping.interval30s' },
@@ -222,30 +222,31 @@ export default function PortMonitorPage() {
 
       {/* ── Edit Modal ── */}
       {modal && createPortal(
-        <div className="upt-modal-overlay" onClick={closeEdit}>
-          <div className="upt-modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 420 }}>
-            <div className="upt-modal-header">
-              <span className="upt-modal-domain">{t('port.modalEdit')}</span>
-              <button className="upt-modal-close" onClick={closeEdit}><X size={18} /></button>
+        <div className="modal-overlay" onClick={closeEdit}>
+          <div className="modal-box" onClick={e => e.stopPropagation()} style={{ maxWidth: 420 }}>
+            <div className="modal-icon-hdr modal-icon-hdr--port">
+              <div className="modal-icon-hdr-badge"><Plug size={20} /></div>
+              <h3>{t('port.modalEdit')}</h3>
             </div>
-            <div className="upt-modal-divider" />
-            <div className="modal-field">
-              <label>{t('port.host')}</label>
-              <div className="modal-input mon-readonly-field">{modal.host}:{modal.port}</div>
-            </div>
-            <div className="modal-field">
-              <label>{t('port.interval')}</label>
-              <select className="modal-input" value={form.intervalSeconds}
-                onChange={e => setForm(f => ({ ...f, intervalSeconds: Number(e.target.value) }))}>
-                {INTERVALS.map(opt => (
-                  <option key={opt.value} value={opt.value}>{t(opt.labelKey)}</option>
-                ))}
-              </select>
-            </div>
-            <div className="modal-field">
-              <label>{t('port.timeout')}</label>
-              <input className="modal-input" type="number" value={form.timeoutMs}
-                onChange={e => setForm(f => ({ ...f, timeoutMs: Number(e.target.value) }))} />
+            <div className="form-grid">
+              <label className="full-width">
+                {t('port.host')}
+                <input value={`${modal.host}:${modal.port}`} readOnly disabled className="mon-readonly-field" />
+              </label>
+              <label className="full-width">
+                {t('port.interval')}
+                <select value={form.intervalSeconds}
+                  onChange={e => setForm(f => ({ ...f, intervalSeconds: Number(e.target.value) }))}>
+                  {INTERVALS.map(opt => (
+                    <option key={opt.value} value={opt.value}>{t(opt.labelKey)}</option>
+                  ))}
+                </select>
+              </label>
+              <label className="full-width">
+                {t('port.timeout')}
+                <input type="number" value={form.timeoutMs}
+                  onChange={e => setForm(f => ({ ...f, timeoutMs: Number(e.target.value) }))} />
+              </label>
             </div>
             <div className="modal-actions">
               <button className="btn btn-secondary" onClick={closeEdit}>{t('port.cancel')}</button>

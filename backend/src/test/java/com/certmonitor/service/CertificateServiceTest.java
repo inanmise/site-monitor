@@ -3,6 +3,7 @@ package com.certmonitor.service;
 import com.certmonitor.dto.CertificateDto;
 import com.certmonitor.model.CertificateInventory;
 import com.certmonitor.model.LatestCheck;
+import com.certmonitor.repository.AlertThresholdRepository;
 import com.certmonitor.repository.CertificateCheckRepository;
 import com.certmonitor.repository.CertificateInventoryRepository;
 import com.certmonitor.repository.LatestCheckRepository;
@@ -34,15 +35,17 @@ class CertificateServiceTest {
     @Mock CertificateCheckerService checkerService;
     @Mock CertificateInventoryRepository inventoryRepo;
     @Mock TeamRepository teamRepo;
+    @Mock AlertThresholdRepository alertThresholdRepo;
 
     private CertificateService service;
 
     @BeforeEach
     void setUp() {
         service = new CertificateService(checkRepo, latestRepo, checkerService,
-                inventoryRepo, new ObjectMapper(), teamRepo);
+                inventoryRepo, new ObjectMapper(), teamRepo, alertThresholdRepo);
         when(checkerService.serializeSan(any())).thenReturn("[]");
         when(checkerService.deserializeSan(any())).thenReturn(Collections.emptyList());
+        when(alertThresholdRepo.findFirstByActiveTrue()).thenReturn(Optional.empty());
     }
 
     // ── Deployment Status ─────────────────────────────────────────────────────
@@ -168,12 +171,13 @@ class CertificateServiceTest {
     @DisplayName("getStats returns correct totals for mixed certificate states")
     void getStats_mixedStates_correctCounts() {
         List<LatestCheck> allChecks = List.of(
-                latestCheck("valid1.com", "valid", false, 90, "VALID", "OK"),
-                latestCheck("warning1.com", "warning", true, 25, "VALID", "OK"),
-                latestCheck("critical1.com", "warning", true, 5, "VALID", "OK"),
-                latestCheck("error1.com", "error", true, null, "UNKNOWN", "UNKNOWN"),
-                latestCheck("revoked1.com", "valid", false, 90, "REVOKED", "OK"),
-                latestCheck("mismatch1.com", "valid", false, 90, "VALID", "INCOMPLETE")
+                latestCheck("valid1.com",    "valid",   false, 90,   "VALID",   "OK"),
+                latestCheck("warning1.com",  "warning", true,  25,   "VALID",   "OK"), // 25 > highDays(15) → warning
+                latestCheck("high1.com",     "warning", true,  12,   "VALID",   "OK"), // critDays(7) < 12 ≤ highDays(15) → high
+                latestCheck("critical1.com", "warning", true,  5,    "VALID",   "OK"), // 5 ≤ critDays(7) → critical
+                latestCheck("error1.com",    "error",   true,  null, "UNKNOWN", "UNKNOWN"),
+                latestCheck("revoked1.com",  "valid",   false, 90,   "REVOKED", "OK"),
+                latestCheck("mismatch1.com", "valid",   false, 90,   "VALID",   "INCOMPLETE")
         );
         when(latestRepo.findAllByOrderByDomainAsc()).thenReturn(allChecks);
         when(latestRepo.findByWarningTrueOrStatus("error")).thenReturn(
@@ -182,8 +186,12 @@ class CertificateServiceTest {
 
         Map<String, Object> stats = service.getStats();
 
-        assertThat(stats.get("total_certificates")).isEqualTo(6);
-        assertThat(stats.get("valid_count")).isEqualTo(3L); // valid1, revoked1, mismatch1 (no warning flag)
+        assertThat(stats.get("total_certificates")).isEqualTo(7);
+        assertThat(stats.get("valid_count")).isEqualTo(3L);       // valid1, revoked1, mismatch1
+        assertThat(stats.get("critical_count")).isEqualTo(1L);    // critical1.com (5 ≤ 7)
+        assertThat(stats.get("high_count")).isEqualTo(1L);        // high1.com (7 < 12 ≤ 15)
+        assertThat(stats.get("warning_count")).isEqualTo(1L);     // warning1.com (25 > 15)
+        assertThat(stats.get("error_count")).isEqualTo(1L);       // error1.com
         assertThat(stats.get("revoked")).isEqualTo(1L);
         assertThat(stats.get("deployment_mismatch")).isEqualTo(1L);
     }
@@ -198,6 +206,8 @@ class CertificateServiceTest {
 
         assertThat(stats.get("total_certificates")).isEqualTo(0);
         assertThat(stats.get("valid_count")).isEqualTo(0L);
+        assertThat(stats.get("critical_count")).isEqualTo(0L);
+        assertThat(stats.get("high_count")).isEqualTo(0L);
         assertThat(stats.get("warning_count")).isEqualTo(0L);
     }
 
@@ -273,13 +283,13 @@ class CertificateServiceTest {
     }
 
     @Test
-    @DisplayName("getPaginated filterStatus=warning returns only non-critical warnings")
+    @DisplayName("getPaginated filterStatus=warning returns only pure-warning (>highDays) certs")
     void getPaginated_filterWarning_returnsOnlyWarnings() {
-        // "warning" filter = warning=true AND days>30; "critical" filter = warning=true AND days≤30
+        // "warning" filter = warning=true AND days>highDays(15); "high" = critDays<days≤highDays; "critical" = days≤critDays(7)
         when(latestRepo.findAllByOrderByDomainAsc()).thenReturn(List.of(
                 latestCheck("valid.com",    "valid",   false, 90,   "VALID", "OK"),
-                latestCheck("warning.com",  "warning", true,  35,   "VALID", "OK"), // 35 days > 30 → warning
-                latestCheck("critical.com", "warning", true,  5,    "VALID", "OK"), // 5 days ≤ 30 → critical
+                latestCheck("warning.com",  "warning", true,  35,   "VALID", "OK"), // 35 days > 15 → warning
+                latestCheck("critical.com", "warning", true,  5,    "VALID", "OK"), // 5 days ≤ 7 → critical
                 latestCheck("error.com",    "error",   true,  null, "VALID", "OK")
         ));
         when(latestRepo.findByWarningTrueOrStatus("error")).thenReturn(List.of());
@@ -293,12 +303,12 @@ class CertificateServiceTest {
     }
 
     @Test
-    @DisplayName("getPaginated filterStatus=critical returns warnings with ≤30 days remaining")
-    void getPaginated_filterCritical_returnsWarningsWithDays30OrLess() {
+    @DisplayName("getPaginated filterStatus=critical returns warnings with ≤7 days remaining (default critDays)")
+    void getPaginated_filterCritical_returnsWarningsWithDays7OrLess() {
         when(latestRepo.findAllByOrderByDomainAsc()).thenReturn(List.of(
                 latestCheck("valid.com",    "valid",   false, 90, "VALID", "OK"),
-                latestCheck("warning.com",  "warning", true,  31, "VALID", "OK"), // 31 days → warning only
-                latestCheck("critical.com", "warning", true,  30, "VALID", "OK"), // 30 days → critical
+                latestCheck("warning.com",  "warning", true,  8,  "VALID", "OK"), // 8 days → warning only
+                latestCheck("critical.com", "warning", true,  7,  "VALID", "OK"), // 7 days → critical (boundary)
                 latestCheck("urgent.com",   "warning", true,  3,  "VALID", "OK")  // 3 days → critical
         ));
         when(latestRepo.findByWarningTrueOrStatus("error")).thenReturn(List.of());

@@ -3,6 +3,7 @@ import { api } from '../../api/client'
 import { useDialog } from '../ui/Dialog.jsx'
 import { useT } from '../../i18n/index.jsx'
 import SearchableSelect from '../ui/SearchableSelect.jsx'
+import { UserPlus, UserCog } from 'lucide-react'
 
 const emptyUser = { username: '', password: '', display_name: '', email: '', employee_id: '', system_role: 'USER', team_id: '', org_role: '', active: true }
 
@@ -147,7 +148,12 @@ export default function UserManager({ teams }) {
       {modal !== null && (
         <div className="modal-overlay" onClick={() => setModal(null)}>
           <div className="modal-box" onClick={(e) => e.stopPropagation()}>
-            <h3>{modal === 'add' ? t('usr.addTitle') : t('usr.editTitle')}</h3>
+            <div className="modal-icon-hdr modal-icon-hdr--user">
+              <div className="modal-icon-hdr-badge">
+                {modal === 'add' ? <UserPlus size={20} /> : <UserCog size={20} />}
+              </div>
+              <h3>{modal === 'add' ? t('usr.addTitle') : t('usr.editTitle')}</h3>
+            </div>
             <div className="form-grid">
               <label>{t('usr.formUsername')}
                 <input value={form.username} disabled={modal !== 'add'}
@@ -162,7 +168,7 @@ export default function UserManager({ teams }) {
                 <input value={form.display_name} onChange={(e) => setForm({ ...form, display_name: e.target.value })} />
               </label>
               <label>
-                {t('usr.formEmail')} <span style={{ color: 'var(--danger)' }}>*</span>
+                <span>{t('usr.formEmail')} <span className="req-star">*</span></span>
                 <input type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />
               </label>
               <label>{t('usr.formEmployeeId')}
@@ -193,7 +199,7 @@ export default function UserManager({ teams }) {
                 />
               </label>
               <label>
-                {t('usr.formTeam')} <span style={{ color: 'var(--danger)' }}>*</span>
+                <span>{t('usr.formTeam')} <span className="req-star">*</span></span>
                 <SearchableSelect
                   value={form.team_id}
                   onChange={v => setForm({ ...form, team_id: v ? Number(v) : '' })}

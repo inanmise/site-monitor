@@ -67,7 +67,6 @@ secret:
   dbPassword: "REPLACE_ME"
   smtpUser: "certmonitor01@gmail.com"
   smtpPassword: "REPLACE_WITH_GMAIL_APP_PASSWORD"
-  emailTo: ""
   emailFrom: "certmonitor01@gmail.com"
 
 resources:
