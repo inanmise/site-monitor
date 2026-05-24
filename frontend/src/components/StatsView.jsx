@@ -18,6 +18,7 @@ const CELL_STATUSES = [
   { key: 'high',     labelKey: 'ts.high'     },
   { key: 'critical', labelKey: 'ts.critical' },
   { key: 'expired',  labelKey: 'ts.expired'  },
+  { key: 'error',    labelKey: 'ts.error'    },
 ]
 
 const STATUS_OPTIONS = [
@@ -117,10 +118,9 @@ function TeamTierSection({ certs, teamStats, tierFilter, setTierFilter, teamFilt
     for (const c of teamCerts) {
       const k = c.tier ?? 0
       if (k !== 1 && k !== 2) continue
-      if (!tierMap[k]) tierMap[k] = { total: 0, valid: 0, warning: 0, high: 0, critical: 0, expired: 0 }
+      if (!tierMap[k]) tierMap[k] = { total: 0, valid: 0, warning: 0, high: 0, critical: 0, expired: 0, error: 0 }
       tierMap[k].total++
-      const s = certCellStatus(c)
-      if (s !== 'error') tierMap[k][s] = (tierMap[k][s] ?? 0) + 1
+      tierMap[k][certCellStatus(c)]++
     }
     const tierRows = [1, 2].filter(k => tierMap[k]).map(k => ({ tier: k, ...tierMap[k] }))
     return { ...team, tierRows, total: teamCerts.length }
