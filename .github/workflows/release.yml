@@ -60,8 +60,8 @@ jobs:
           echo "$COMMITS"
           echo "---"
 
-          # Release bot commit'lerini ve boş satırları filtrele
-          MEANINGFUL=$(echo "$COMMITS" | grep -vE '^\s*$|^chore\(release\)|^\[skip ci\]' || true)
+          # Release bot commit'lerini, CI-only ve boş satırları filtrele
+          MEANINGFUL=$(echo "$COMMITS" | grep -vE '^\s*$|^chore\(release\)|^\[skip ci\]|^ci(\([^)]*\))?:' || true)
           if [ -z "$MEANINGFUL" ]; then
             echo "No meaningful commits — skipping release."
             echo "should_release=false" >> "$GITHUB_OUTPUT"
