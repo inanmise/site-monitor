@@ -420,23 +420,9 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
                 {t('inv.formChangeDesc')}
                 <textarea rows={7} value={form.change_description}
                   onChange={e => f('change_description', e.target.value)}
-                  style={{ resize: 'vertical', fontFamily: 'monospace', fontSize: '.82em' }} />
+                  style={{ resize: 'vertical', fontFamily: 'inherit', fontSize: '.9em' }} />
               </label>
 
-              {/* ── Gelişmiş ── */}
-              <SectionHeader label={t('inv.sectionAdv')} />
-
-              <label className="full-width">
-                {t('inv.formFP')}
-                <input value={form.expected_fingerprint}
-                  onChange={e => f('expected_fingerprint', e.target.value)}
-                  placeholder={t('inv.formFPPh')} />
-              </label>
-              <label className="full-width">
-                {t('inv.formSubject')}
-                <input value={form.expected_subject}
-                  onChange={e => f('expected_subject', e.target.value)} />
-              </label>
 
             </div>
 
