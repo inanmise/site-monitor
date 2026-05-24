@@ -27,6 +27,7 @@ export default defineConfig({
           proxy.on('proxyReq', (proxyReq, req) => {
             const ip = req.socket?.remoteAddress?.replace(/^::ffff:/, '') || '127.0.0.1'
             proxyReq.setHeader('X-Forwarded-For', ip)
+            proxyReq.setHeader('Origin', 'http://localhost:5173')
           })
         },
       },
@@ -37,6 +38,7 @@ export default defineConfig({
           proxy.on('proxyReq', (proxyReq, req) => {
             const ip = req.socket?.remoteAddress?.replace(/^::ffff:/, '') || '127.0.0.1'
             proxyReq.setHeader('X-Forwarded-For', ip)
+            proxyReq.setHeader('Origin', 'http://localhost:5173')
           })
         },
       },
