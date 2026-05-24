@@ -39,6 +39,7 @@ export const api = {
   getDomainAlerts: (domain) => request(`/history/${encodeURIComponent(domain)}/alerts`),
 
   checkDomain: (domain) => request(`/check/${encodeURIComponent(domain)}`),
+  checkDomainPreview: (domain) => request(`/check-preview/${encodeURIComponent(domain)}`),
 
   getStats: () => request('/stats'),
 

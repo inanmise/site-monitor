@@ -84,6 +84,12 @@ public class CertificateController {
         return ok(Map.of("success", true, "data", result, "timestamp", now()));
     }
 
+    @GetMapping("/check-preview/{domain}")
+    public ResponseEntity<Map<String, Object>> previewDomain(@PathVariable String domain) {
+        Map<String, Object> result = new java.util.LinkedHashMap<>(checkerService.check(domain, 443));
+        return ok(Map.of("success", true, "data", result, "timestamp", now()));
+    }
+
     @GetMapping("/activity")
     public ResponseEntity<Map<String, Object>> getActivityLog(
             @RequestParam(defaultValue = "24") int hours, HttpSession session) {

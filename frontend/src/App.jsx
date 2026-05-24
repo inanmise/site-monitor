@@ -232,12 +232,11 @@ export default function App() {
     if (!domain) return
     setCheckLoading(true)
     try {
-      const res = await api.checkDomain(domain)
+      const res = await api.checkDomainPreview(domain)
       setNewDomain('')
       if (res?.data) {
         setModalCert({ ...res.data, domain: res.data.domain || domain })
       }
-      setTimeout(loadData, 500)
     } finally {
       setCheckLoading(false)
     }

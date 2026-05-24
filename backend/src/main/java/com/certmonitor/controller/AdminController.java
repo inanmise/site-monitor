@@ -196,6 +196,16 @@ public class AdminController {
         }).orElse(ResponseEntity.notFound().build());
     }
 
+    @CacheEvict(value = "cert-latest", allEntries = true)
+    @DeleteMapping("/certificates/{domain}")
+    public ResponseEntity<Map<String, Object>> deleteCertificateCheck(
+            @PathVariable String domain, HttpSession session, HttpServletRequest request) {
+        requireAdmin(session);
+        latestCheckRepo.deleteById(domain);
+        auditService.recordAction("DOMAIN_DELETE_CHECK", session, request, "CERTIFICATE", domain, null);
+        return ok(Map.of("message", "Deleted"));
+    }
+
     @PostMapping("/inventory/{id}/restore")
     public ResponseEntity<Map<String, Object>> restoreInventory(
             @PathVariable Long id, HttpSession session, HttpServletRequest request) {
