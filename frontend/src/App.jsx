@@ -235,7 +235,7 @@ export default function App() {
       const res = await api.checkDomainPreview(domain)
       setNewDomain('')
       if (res?.data) {
-        setModalCert({ ...res.data, domain: res.data.domain || domain })
+        setModalCert({ ...res.data, domain: res.data.domain || domain, _preview: true })
       }
     } finally {
       setCheckLoading(false)
@@ -601,7 +601,7 @@ export default function App() {
         </div>
       </main>
 
-      <CertificateModal domain={modalCert?.domain} alertLevel={modalCert?.alert_level} onClose={() => setModalCert(null)} />
+      <CertificateModal domain={modalCert?.domain} alertLevel={modalCert?.alert_level} initialData={modalCert?._preview ? modalCert : undefined} onClose={() => setModalCert(null)} />
     </div>
   )
 }
