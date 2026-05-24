@@ -46,6 +46,13 @@ class CertificateServiceTest {
         when(checkerService.serializeSan(any())).thenReturn("[]");
         when(checkerService.deserializeSan(any())).thenReturn(Collections.emptyList());
         when(alertThresholdRepo.findFirstByActiveTrue()).thenReturn(Optional.empty());
+        // Default: active inventory mirrors whatever latestRepo returns in each test,
+        // so the getAllLatest() active-domain filter doesn't discard test data.
+        when(inventoryRepo.findByActiveTrueOrderByDomainAsc()).thenAnswer(inv ->
+                latestRepo.findAllByOrderByDomainAsc().stream()
+                        .map(lc -> { CertificateInventory ci = new CertificateInventory();
+                                     ci.setDomain(lc.getDomain()); ci.setActive(true); return ci; })
+                        .collect(Collectors.toList()));
     }
 
     // ── Deployment Status ─────────────────────────────────────────────────────
