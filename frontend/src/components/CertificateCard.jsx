@@ -4,9 +4,12 @@ import { useT } from '../i18n/index.jsx'
 export default function CertificateCard({ cert, onClick, hasSilentAlert = false }) {
   const t = useT()
   const days = cert.days_remaining
-  const isError = cert.status === 'error'
-  const isCritical = !isError && days !== null && days !== undefined && days >= 0 && days <= 30
-  const isExpired = days !== null && days !== undefined && days < 0
+  const al = cert.alert_level
+  const isError    = al ? al === 'error'    : cert.status === 'error'
+  const isExpired  = al ? al === 'expired'  : (days !== null && days !== undefined && days < 0)
+  const isCritical = al ? al === 'critical' : (!isError && days !== null && days !== undefined && days >= 0 && days <= 7)
+  const isHigh     = al ? al === 'high'     : (!isError && !isExpired && !isCritical && days !== null && days !== undefined && days <= 15)
+  const isWarning  = al ? al === 'warning'  : (!isError && !isExpired && !isCritical && !isHigh && cert.warning === true)
 
   let cardClass = 'certificate-card'
   let badgeClass = 'badge-valid'
@@ -20,7 +23,11 @@ export default function CertificateCard({ cert, onClick, hasSilentAlert = false 
     cardClass += ' critical'
     badgeClass = 'badge-critical'
     badgeText = t('card.critical')
-  } else if (cert.warning) {
+  } else if (isHigh) {
+    cardClass += ' high'
+    badgeClass = 'badge-high'
+    badgeText = t('card.high')
+  } else if (isWarning) {
     cardClass += ' warning'
     badgeClass = 'badge-warning'
     badgeText = t('card.warning')

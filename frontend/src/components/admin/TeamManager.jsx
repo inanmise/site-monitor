@@ -3,6 +3,7 @@ import { api } from '../../api/client'
 import { useDialog } from '../ui/Dialog.jsx'
 import { useT } from '../../i18n/index.jsx'
 import SearchableSelect from '../ui/SearchableSelect.jsx'
+import { UsersRound, PenLine } from 'lucide-react'
 
 const emptyTeam = { name: '', email: '', description: '', active: true, leader_id: '', team_type: '' }
 
@@ -190,18 +191,23 @@ export default function TeamManager({ onTeamsChange }) {
       {modal !== null && (
         <div className="modal-overlay" onClick={closeModal}>
           <div className="modal-box" onClick={(e) => e.stopPropagation()}>
-            <h3>{modal === 'add' ? t('team.addTitle') : t('team.editTitle')}</h3>
+            <div className="modal-icon-hdr modal-icon-hdr--team">
+              <div className="modal-icon-hdr-badge">
+                {modal === 'add' ? <UsersRound size={20} /> : <PenLine size={20} />}
+              </div>
+              <h3>{modal === 'add' ? t('team.addTitle') : t('team.editTitle')}</h3>
+            </div>
             <div className="form-grid">
               <label>
-                {t('team.formName')} <span style={{ color: 'var(--danger)' }}>*</span>
+                <span>{t('team.formName')} <span className="req-star">*</span></span>
                 <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder={t('team.formNamePh')} />
               </label>
               <label>
-                {t('team.formEmail')} <span style={{ color: 'var(--danger)' }}>*</span>
+                <span>{t('team.formEmail')} <span className="req-star">*</span></span>
                 <input type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} placeholder="team@example.com" />
               </label>
               <label>
-                {t('team.formLeader')} <span style={{ color: 'var(--danger)' }}>*</span>
+                <span>{t('team.formLeader')} <span className="req-star">*</span></span>
                 <SearchableSelect
                   value={form.leader_id}
                   onChange={v => setForm({ ...form, leader_id: v })}
@@ -216,7 +222,7 @@ export default function TeamManager({ onTeamsChange }) {
                 )}
               </label>
               <label>
-                {t('team.formType')} <span style={{ color: 'var(--danger)' }}>*</span>
+                <span>{t('team.formType')} <span className="req-star">*</span></span>
                 <SearchableSelect
                   value={form.team_type}
                   onChange={v => setForm({ ...form, team_type: v })}

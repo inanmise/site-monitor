@@ -28,6 +28,9 @@ public class CertificateDto {
     private Boolean warning;
     private String status;
     private String error;
+
+    @JsonProperty("alert_level")
+    private String alertLevel;
     private List<String> san;
 
     @JsonProperty("checked_at")

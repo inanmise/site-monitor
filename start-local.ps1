@@ -28,7 +28,6 @@ $propMap = @{
     SPRING_MAIL_PORT           = "spring.mail.port"
     SPRING_MAIL_USERNAME       = "spring.mail.username"
     SPRING_MAIL_PASSWORD       = "spring.mail.password"
-    CERT_MONITOR_EMAIL_TO      = "cert.monitor.email.to"
     CERT_MONITOR_EMAIL_FROM    = "cert.monitor.email.from"
     CERT_MONITOR_USERNAME      = "cert.monitor.username"
     CERT_MONITOR_PASSWORD      = "cert.monitor.password"

@@ -23,6 +23,7 @@ import HelpPage from './components/HelpPage'
 import UptimePage from './components/UptimePage'
 import PortMonitorPage from './components/PortMonitorPage'
 import DnsMonitorPage from './components/DnsMonitorPage'
+import ExpiryForecastPage from './pages/ExpiryForecastPage'
 
 const INACTIVITY_MS   = Number(import.meta.env.VITE_INACTIVITY_MS   ?? 300_000)
 const WARN_BEFORE_MS  = Number(import.meta.env.VITE_WARN_BEFORE_MS  ?? 60_000)
@@ -44,7 +45,7 @@ export default function App() {
   const [statsVisible, setStatsVisible] = useState(true)
   const [search, setSearch] = useState('')
   const [sortOrder, setSortOrder] = useState('default')
-  const [modalDomain, setModalDomain] = useState(null)
+  const [modalCert, setModalCert] = useState(null)
   const [newDomain, setNewDomain] = useState('')
   const [refreshing, setRefreshing] = useState(false)
   const [refreshProgress, setRefreshProgress] = useState(null)
@@ -247,14 +248,17 @@ export default function App() {
   const STAT_FILTER_FN = {
     total:      () => true,
     valid:      (c) => !c.warning && c.status !== 'error',
-    warning:    (c) => c.warning === true && c.status !== 'error',
+    critical:   (c) => c.alert_level ? c.alert_level === 'critical' : (c.warning === true && c.days_remaining != null && c.days_remaining <= 7),
+    high:       (c) => c.alert_level ? c.alert_level === 'high'     : (c.warning === true && c.days_remaining != null && c.days_remaining > 7 && c.days_remaining <= 15),
+    warning:    (c) => c.alert_level ? c.alert_level === 'warning' : (c.warning === true && c.status !== 'error'),
     error:      (c) => c.status === 'error',
+    expiring7:  (c) => c.days_remaining != null && c.days_remaining >= 0 && c.days_remaining <= 7,
     expiring30: (c) => c.days_remaining != null && c.days_remaining >= 0 && c.days_remaining <= 30,
     expired:    (c) => c.days_remaining != null && c.days_remaining < 0,
   }
   const STAT_FILTER_LABEL = {
-    total: t('stat.total'), valid: t('stat.valid'), warning: t('stat.warning'),
-    error: t('stat.error'), expiring30: t('stat.expiring30'), expired: t('stat.expired'),
+    total: t('stat.total'), valid: t('stat.valid'), critical: t('stat.critical'), high: t('stat.high'),
+    warning: t('stat.warning'), error: t('stat.error'), expiring7: t('stat.expiring7'), expiring30: t('stat.expiring30'), expired: t('stat.expired'),
   }
 
   function handleStatClick(key) {
@@ -433,7 +437,7 @@ export default function App() {
                   <>
                     <div className="cards-container">
                       {pageCerts.map((cert) => (
-                        <CertificateCard key={cert.domain} cert={cert} onClick={setModalDomain}
+                        <CertificateCard key={cert.domain} cert={cert} onClick={(d) => setModalCert(certs.find(c => c.domain === d) ?? null)}
                           hasSilentAlert={silentAlertDomains.has(cert.domain)} />
                       ))}
                     </div>
@@ -491,7 +495,7 @@ export default function App() {
             {tab === 'stats' && (
               <div className="tab-content active">
                 <h2>{t('app.statsTitle')}</h2>
-                <StatsView certs={certs} teamStats={teamStats} onRowClick={setModalDomain} />
+                <StatsView certs={certs} teamStats={teamStats} onRowClick={(d) => setModalCert(certs.find(c => c.domain === d) ?? null)} />
               </div>
             )}
 
@@ -503,7 +507,7 @@ export default function App() {
                 ) : (
                   <div className="cards-container">
                     {warnings.map((cert) => (
-                      <CertificateCard key={cert.domain} cert={cert} onClick={setModalDomain}
+                      <CertificateCard key={cert.domain} cert={cert} onClick={(d) => setModalCert(certs.find(c => c.domain === d) ?? null)}
                         hasSilentAlert={silentAlertDomains.has(cert.domain)} />
                     ))}
                   </div>
@@ -514,7 +518,7 @@ export default function App() {
             {tab === 'all' && (
               <div className="tab-content active">
                 <h2>{t('app.allTitle')}</h2>
-                <CertificatesTable onRowClick={setModalDomain} />
+                <CertificatesTable onRowClick={(d) => setModalCert(certs.find(c => c.domain === d) ?? null)} />
               </div>
             )}
 
@@ -573,10 +577,11 @@ export default function App() {
               </div>
             )}
 
-            {tab === 'help'   && <HelpPage />}
-            {tab === 'uptime' && <UptimePage />}
-            {tab === 'port'   && <PortMonitorPage />}
-            {tab === 'dns'    && <DnsMonitorPage />}
+            {tab === 'help'     && <HelpPage />}
+            {tab === 'uptime'   && <UptimePage />}
+            {tab === 'port'     && <PortMonitorPage />}
+            {tab === 'dns'      && <DnsMonitorPage />}
+            {tab === 'forecast' && <ExpiryForecastPage />}
           </div>
 
           <footer className="footer">
@@ -586,7 +591,7 @@ export default function App() {
         </div>
       </main>
 
-      <CertificateModal domain={modalDomain} onClose={() => setModalDomain(null)} />
+      <CertificateModal domain={modalCert?.domain} alertLevel={modalCert?.alert_level} onClose={() => setModalCert(null)} />
     </div>
   )
 }

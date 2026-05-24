@@ -5,7 +5,7 @@ import {
   LayoutDashboard, AlertTriangle, FileText,
   RefreshCw, ClipboardList, Settings, User, Globe, LogOut,
   Sun, Moon, ChevronLeft, ChevronRight, ChevronDown, Server, Activity, ShieldAlert, BarChart3, Bell, BookOpen,
-  Wifi, Network, Search,
+  Wifi, Network, Search, TrendingDown,
 } from 'lucide-react'
 import CertMonitorLogo from './ui/CertMonitorLogo.jsx'
 
@@ -22,6 +22,7 @@ export default function Nav({ activeTab, onTabChange, username, teamName, system
       tabs: [
         { id: 'dashboard', Icon: LayoutDashboard, labelKey: 'nav.dashboard', show: true },
         { id: 'stats',     Icon: BarChart3,       labelKey: 'nav.stats',     show: true },
+        { id: 'forecast',  Icon: TrendingDown,    labelKey: 'nav.forecast',  show: true },
         { id: 'warnings',  Icon: AlertTriangle,   labelKey: 'nav.warnings',  show: true },
         { id: 'all',       Icon: FileText,        labelKey: 'nav.all',       show: true },
         { id: 'renewal',   Icon: RefreshCw,       labelKey: 'nav.renewal',   show: true },
@@ -186,7 +187,10 @@ export default function Nav({ activeTab, onTabChange, username, teamName, system
         </button>
         <button
           className="sb-logout"
-          onClick={onLogout}
+          onClick={() => {
+            try { localStorage.removeItem('nav-groups-open') } catch {}
+            onLogout()
+          }}
           title={!open ? t('nav.logout') : undefined}
         >
           <LogOut size={15} />

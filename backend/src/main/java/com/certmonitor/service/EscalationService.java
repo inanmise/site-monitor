@@ -14,6 +14,7 @@ import com.certmonitor.repository.NotificationLogRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -38,6 +39,14 @@ public class EscalationService {
     private final ObjectMapper objectMapper;
     private final NotificationLogRepository notificationLogRepo;
     private final LatestCheckRepository latestCheckRepo;
+
+    // Delay between each domain's email batch during startup catch-up (default 3 s)
+    @Value("${mail.catch-up.inter-domain-delay-ms:3000}")
+    private long catchUpInterDomainDelayMs;
+
+    // Delay between emails to successive contacts within the same alert (default 5 s)
+    @Value("${mail.send.inter-contact-delay-ms:5000}")
+    private long interContactDelayMs;
 
     private static final DateTimeFormatter ISO =
             DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
@@ -206,6 +215,11 @@ public class EscalationService {
             sent++;
             log.info("Startup catch-up: alert sent for {} [{}] — last was: {}",
                     event.getDomain(), event.getAlertLevel(), lastAlertTime.substring(0, 10));
+            // Pace between domain batches to avoid flooding the SMTP gateway
+            try { Thread.sleep(catchUpInterDomainDelayMs); } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+                break;
+            }
         }
         log.info("Startup catch-up complete — {} missed notification(s) sent", sent);
     }
@@ -335,7 +349,8 @@ public class EscalationService {
         String subject = subjectPrefix + "[CertMonitor " + levelTr + "] " + domain + " — " + typeTr;
         List<Map<String, String>> details = new ArrayList<>();
 
-        for (EscalationContact c : contacts) {
+        for (int i = 0; i < contacts.size(); i++) {
+            EscalationContact c = contacts.get(i);
             String htmlBody = emailService.buildAlertEmailHtml(
                     subject, message, domain, level, alertType, daysRemaining, certContext);
             String emailStatus = emailService.sendAlert(
@@ -359,6 +374,11 @@ public class EscalationService {
             d.put("email_status", emailStatus);
             d.put("webhook_status", webhookStatus);
             details.add(d);
+
+            if (i < contacts.size() - 1 && interContactDelayMs > 0) {
+                try { Thread.sleep(interContactDelayMs); }
+                catch (InterruptedException ie) { Thread.currentThread().interrupt(); break; }
+            }
         }
         log.info("Notifications for {} [{}] → {} contacts | trigger={}", domain, level, contacts.size(), trigger);
         return details;
@@ -379,6 +399,7 @@ public class EscalationService {
             entry.setEmailStatus(emailStatus);
             entry.setWebhookStatus(webhookStatus);
             entry.setTrigger(trigger);
+            entry.setEmailFrom(emailService.getEmailFrom());
             notificationLogRepo.save(entry);
         } catch (Exception e) {
             log.warn("Bildirim logu kaydedilemedi: {}", e.getMessage());

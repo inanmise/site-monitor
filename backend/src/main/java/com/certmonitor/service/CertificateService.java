@@ -1,10 +1,12 @@
 package com.certmonitor.service;
 
 import com.certmonitor.dto.CertificateDto;
+import com.certmonitor.model.AlertThreshold;
 import com.certmonitor.model.CertificateCheck;
 import com.certmonitor.model.CertificateInventory;
 import com.certmonitor.model.LatestCheck;
 import com.certmonitor.model.Team;
+import com.certmonitor.repository.AlertThresholdRepository;
 import com.certmonitor.repository.CertificateCheckRepository;
 import com.certmonitor.repository.CertificateInventoryRepository;
 import com.certmonitor.repository.LatestCheckRepository;
@@ -36,6 +38,7 @@ public class CertificateService {
     private final CertificateInventoryRepository inventoryRepo;
     private final ObjectMapper objectMapper;
     private final TeamRepository teamRepo;
+    private final AlertThresholdRepository alertThresholdRepo;
 
     private static final DateTimeFormatter ISO =
             DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
@@ -162,13 +165,28 @@ public class CertificateService {
     @Cacheable("cert-latest")
     public List<CertificateDto> getAllLatest() {
         Map<String, Integer> tierMap = buildTierMap();
+        var thrOpt   = alertThresholdRepo.findFirstByActiveTrue();
+        int critDays = thrOpt.map(AlertThreshold::getCriticalDays).orElse(7);
+        int highDays  = thrOpt.map(AlertThreshold::getHighDays).orElse(15);
         return latestRepo.findAllByOrderByDomainAsc().stream()
                 .map(c -> {
                     CertificateDto dto = toDto(c);
                     dto.setTier(tierMap.get(c.getDomain()));
+                    dto.setAlertLevel(computeAlertLevel(dto, critDays, highDays));
                     return dto;
                 })
                 .collect(Collectors.toList());
+    }
+
+    private String computeAlertLevel(CertificateDto dto, int critDays, int highDays) {
+        if ("error".equals(dto.getStatus())) return "error";
+        Integer days = dto.getDaysRemaining();
+        if (days == null) return "valid";
+        if (days < 0)         return "expired";
+        if (days <= critDays) return "critical";
+        if (days <= highDays) return "high";
+        if (Boolean.TRUE.equals(dto.getWarning())) return "warning";
+        return "valid";
     }
 
     private Map<String, Integer> buildTierMap() {
@@ -201,6 +219,10 @@ public class CertificateService {
                                              String filterStatus, Long teamId) {
         List<CertificateDto> all = getAllLatestForTeam(teamId);
 
+        var thrOpt   = alertThresholdRepo.findFirstByActiveTrue();
+        int critDays = thrOpt.map(AlertThreshold::getCriticalDays).orElse(7);
+        int highDays  = thrOpt.map(AlertThreshold::getHighDays).orElse(15);
+
         List<CertificateDto> filtered = all.stream()
                 .filter(c -> filterDomain.isBlank() || c.getDomain().toLowerCase().contains(filterDomain.toLowerCase()))
                 .filter(c -> filterIssuer.isBlank() || issuerStr(c).contains(filterIssuer.toLowerCase()))
@@ -208,13 +230,16 @@ public class CertificateService {
                     if (filterStatus.isBlank()) return true;
                     boolean isError   = "error".equals(c.getStatus());
                     boolean isWarning = Boolean.TRUE.equals(c.getWarning()) && !isError;
-                    boolean isCrit    = isWarning && c.getDaysRemaining() != null && c.getDaysRemaining() <= 30;
+                    boolean isCrit    = isWarning && c.getDaysRemaining() != null && c.getDaysRemaining() <= critDays;
+                    boolean isHigh    = isWarning && !isCrit && c.getDaysRemaining() != null && c.getDaysRemaining() <= highDays;
                     return switch (filterStatus) {
-                        case "error"    -> isError;
-                        case "critical" -> isCrit;
-                        case "warning"  -> isWarning && !isCrit;
-                        case "valid"    -> !isWarning && !isError;
-                        default         -> filterStatus.equals(c.getStatus());
+                        case "error"     -> isError;
+                        case "critical"  -> isCrit;
+                        case "high"      -> isHigh;
+                        case "warning"   -> isWarning && !isCrit && !isHigh;
+                        case "valid"     -> !isWarning && !isError;
+                        case "expiring7" -> c.getDaysRemaining() != null && c.getDaysRemaining() >= 0 && c.getDaysRemaining() <= 7;
+                        default          -> filterStatus.equals(c.getStatus());
                     };
                 })
                 .collect(Collectors.toList());
@@ -361,16 +386,33 @@ public class CertificateService {
     }
 
     private Map<String, Object> computeStats(List<CertificateDto> all, List<CertificateDto> warnings) {
+        var thrOpt2   = alertThresholdRepo.findFirstByActiveTrue();
+        int critDays  = thrOpt2.map(AlertThreshold::getCriticalDays).orElse(7);
+        int highDays   = thrOpt2.map(AlertThreshold::getHighDays).orElse(15);
+
         Set<String> warnDomainSet = warnings.stream()
                 .map(CertificateDto::getDomain).collect(Collectors.toSet());
 
-        long errors      = warnings.stream().filter(c -> "error".equals(c.getStatus())).count();
-        long warningOnly = warnings.size() - errors;
-        long valid       = all.size() - warnings.size();
-        long expiring30  = warnings.stream()
+        long errors        = warnings.stream().filter(c -> "error".equals(c.getStatus())).count();
+        long criticalCount = warnings.stream()
+                .filter(c -> !"error".equals(c.getStatus()))
+                .filter(c -> c.getDaysRemaining() != null && c.getDaysRemaining() <= critDays)
+                .count();
+        long highCount     = warnings.stream()
+                .filter(c -> !"error".equals(c.getStatus()))
+                .filter(c -> c.getDaysRemaining() != null
+                          && c.getDaysRemaining() > critDays
+                          && c.getDaysRemaining() <= highDays)
+                .count();
+        long warningOnly   = warnings.size() - errors - criticalCount - highCount;
+        long valid         = all.size() - warnings.size();
+        long expiring30    = warnings.stream()
                 .filter(c -> c.getDaysRemaining() != null && c.getDaysRemaining() > 0 && c.getDaysRemaining() <= 30)
                 .count();
-        long expired     = warnings.stream()
+        long expiring7     = warnings.stream()
+                .filter(c -> c.getDaysRemaining() != null && c.getDaysRemaining() >= 0 && c.getDaysRemaining() <= 7)
+                .count();
+        long expired       = warnings.stream()
                 .filter(c -> c.getDaysRemaining() != null && c.getDaysRemaining() < 0)
                 .count();
         long revoked     = all.stream().filter(c -> "REVOKED".equals(c.getRevocationStatus())).count();
@@ -387,8 +429,11 @@ public class CertificateService {
         Map<String, Object> result = new HashMap<>();
         result.put("total_certificates",  all.size());
         result.put("valid_count",          valid);
+        result.put("critical_count",       criticalCount);
+        result.put("high_count",           highCount);
         result.put("warning_count",        warningOnly);
         result.put("error_count",          errors);
+        result.put("expiring_in_7_days",   expiring7);
         result.put("expiring_in_30_days",  expiring30);
         result.put("expired",              expired);
         result.put("revoked",              revoked);

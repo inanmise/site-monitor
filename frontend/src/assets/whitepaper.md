@@ -169,6 +169,37 @@ Her sertifika iki takıma atanabilir:
 
 Alarmlar ve bildirimler sertifikanın atandığı takıma yönlendirilir.
 
+### 3.5 İzleme Modülleri
+
+**Vade Takvimi**
+
+Önümüzdeki 30 günde sona erecek sertifikaların analitik görünümü:
+- KPI kartları: Kritik (≤7 gün), Yüksek (8–14 gün), Orta (15–30 gün), Aktif Toplam
+- Günlük yoğunluk grafiği ile kümülatif sona erme trendi
+- Takvim ısı haritası ile görsel yoğunluk takibi
+- Yaklaşan süre sonları listesi (domain, tarih, kalan gün, önem seviyesi)
+- SY ekip bazlı yük dağılımı pasta grafiği
+
+**Durum İzleme (Uptime)**
+
+Envanterdeki domainlerin HTTP/HTTPS ve SSL erişilebilirliğini sürekli izler:
+- 7 günlük ve 30 günlük uptime yüzdesi; olay (incident) sayısı
+- 24 saatlik saatlik erişilebilirlik geçmişi grafiği
+- 60 saniyede bir otomatik yenileme
+
+**Port İzleme**
+
+TCP servis kontrolü; SMTP, POP3, FTP ve özel portlar için:
+- Yanıt süresi (ms) takibi
+- 30 saniye – 15 dakika arası yapılandırılabilir kontrol aralığı
+
+**DNS Kayıt İzleme**
+
+Yetkisiz DNS değişikliklerini erken tespit eder:
+- A, AAAA, CNAME, MX, TXT, NS kayıt tipi desteği
+- 5 dakika – 1 saat arasında yapılandırılabilir kontrol aralığı
+- Değer değişikliği geçmişi
+
 ---
 
 ## 4. Mimari ve Teknoloji Yığını
@@ -216,14 +247,18 @@ AuditService              — Denetim kaydı yazma
 **Ana Bileşenler:**
 
 ```
-Dashboard          — Ana izleme ekranı, sertifika kartları
-CertificateModal   — 5 sekme: Detay, Alarmlar, Bildirimler, Güvenlik, Notlar
-AdminPanel         — 8 yönetim sekmesi
-InventoryManager   — Domain envanteri, 50+ alan
-AlertHistory       — Alarm geçmişi, onay/çözüm aksiyonları
-SystemHealth       — JVM, DB havuzu, scheduler metrikleri
-AuditLogViewer     — Güvenlik denetim kayıtları
-WeakAlgorithmReport— Zayıf algoritma tespiti
+Dashboard           — Ana izleme ekranı, sertifika kartları
+CertificateModal    — 5 sekme: Detay, Alarmlar, Bildirimler, Güvenlik, Notlar
+AdminPanel          — 8 yönetim sekmesi
+InventoryManager    — Domain envanteri, 50+ alan
+AlertHistory        — Alarm geçmişi, onay/çözüm aksiyonları
+SystemHealth        — JVM, DB havuzu, scheduler metrikleri
+AuditLogViewer      — Güvenlik denetim kayıtları
+WeakAlgorithmReport — Zayıf algoritma tespiti
+ExpiryForecastPage  — 30 günlük sona erme analitik paneli
+UptimePage          — HTTP/HTTPS + SSL erişilebilirlik izleme
+PortMonitorPage     — TCP port servis izleme
+DnsMonitorPage      — DNS kayıt değişiklik tespiti
 ```
 
 ### 4.3 Eşzamanlılık ve Performans
@@ -710,6 +745,21 @@ Her sertifika bir SY ve bir UG takımına atanabilir. Alarmlar her iki takıma d
 
 ## 12. Kullanıcı Ekranları ve Aksiyonlar
 
+### Gezinme Yapısı
+
+Sol kenar çubuğu (sidebar) sekmeler gruplar halinde düzenlenmiştir:
+
+| Grup | Sekmeler |
+|---|---|
+| *(başlıksız)* | Genel Bakış, İstatistikler, Vade Takvimi, Uyarılar, Tüm Sertifikalar, Yenileme Önerileri, Sertifika Envanteri |
+| İzleme | Durum İzleme, Port İzleme, DNS İzleme |
+| Kayıtlar | Aktivite Günlüğü, Alarm Geçmişi (Admin) |
+| Yönetim | Yönetim Paneli, Denetim Günlüğü, Zayıf Algoritma Raporu, Sistem Sağlığı |
+
+Gruplar daraltılıp genişletilebilir; tercih tarayıcıya kaydedilir.
+
+---
+
 ### 12.1 Giriş Ekranı
 
 **Ekran:** `http://cert-monitor.example.com`
@@ -827,7 +877,7 @@ Her sertifika bir SY ve bir UG takımına atanabilir. Alarmlar her iki takıma d
 
 ### 12.4 İstatistikler Ekranı
 
-**Erişim:** Üst menü → İstatistikler sekmesi
+**Erişim:** Sol menü → İstatistikler sekmesi
 
 | Görüntülenen Bilgi |
 |---|
@@ -847,7 +897,7 @@ Her sertifika bir SY ve bir UG takımına atanabilir. Alarmlar her iki takıma d
 
 ### 12.5 Uyarılar Ekranı
 
-**Erişim:** Üst menü → Uyarılar sekmesi
+**Erişim:** Sol menü → Uyarılar sekmesi
 
 - Sadece `warning` veya `error` durumundaki sertifikalar gösterilir
 - Aynı filtreleme ve sıralama özellikleri geçerlidir
@@ -856,7 +906,7 @@ Her sertifika bir SY ve bir UG takımına atanabilir. Alarmlar her iki takıma d
 
 ### 12.6 Tüm Sertifikalar (Tablo Görünümü)
 
-**Erişim:** Üst menü → Tüm Sertifikalar sekmesi
+**Erişim:** Sol menü → Tüm Sertifikalar sekmesi
 
 **Kolon Başlıkları ve Sıralama:**
 
@@ -874,7 +924,7 @@ Her sertifika bir SY ve bir UG takımına atanabilir. Alarmlar her iki takıma d
 
 ### 12.7 Yenileme Tavsiyesi Ekranı
 
-**Erişim:** Üst menü → Yenileme Tavsiyesi sekmesi
+**Erişim:** Sol menü → Yenileme Tavsiyesi sekmesi
 
 Her sertifika için öncelik sıralamalı Türkçe aksiyon önerileri:
 - **Kritik**: Derhal müdahale gerekiyor
@@ -981,7 +1031,7 @@ Modal 5 bölümden oluşur:
 
 ### 12.9 Aktivite Günlüğü Ekranı
 
-**Erişim:** Üst menü → Aktivite Günlüğü sekmesi
+**Erişim:** Sol menü → Aktivite Günlüğü sekmesi
 
 Her tarama çalışmasının özeti gösterilir:
 
@@ -1000,7 +1050,7 @@ Her tarama çalışmasının özeti gösterilir:
 
 ### 12.10 Alarm Geçmişi Ekranı (Admin)
 
-**Erişim:** Admin Panel → Alarm Geçmişi sekmesi veya Üst menü
+**Erişim:** Admin Panel → Alarm Geçmişi sekmesi veya Sol menü
 
 **Filtreler:**
 
@@ -1167,7 +1217,7 @@ CRITICAL→ PO + Technical Team + Manager + C-Level
 
 ### 12.15 Denetim Günlüğü Ekranı (Admin / Audit)
 
-**Erişim:** Üst menü → Denetim Günlüğü sekmesi
+**Erişim:** Sol menü → Denetim Günlüğü sekmesi
 
 **Özet Panel:**
 
@@ -1207,7 +1257,7 @@ CRITICAL→ PO + Technical Team + Manager + C-Level
 
 ### 12.16 Sistem Sağlığı Ekranı (Admin)
 
-**Erişim:** Üst menü → Sistem Sağlığı sekmesi
+**Erişim:** Sol menü → Sistem Sağlığı sekmesi
 
 **Otomatik yenileme:** 30 saniyede bir
 
@@ -1283,7 +1333,7 @@ CRITICAL→ PO + Technical Team + Manager + C-Level
 
 ### 12.17 Zayıf Algoritma Raporu (Admin)
 
-**Erişim:** Üst menü → Zayıf Algoritma Raporu sekmesi
+**Erişim:** Sol menü → Zayıf Algoritma Raporu sekmesi
 
 SHA-1 imzalı, RSA-1024, RC4 gibi güvensiz algoritma kullanan sertifikaları listeler.
 
@@ -1301,6 +1351,137 @@ SHA-1 imzalı, RSA-1024, RC4 gibi güvensiz algoritma kullanan sertifikaları li
 | Durum |
 
 **Sıralama:** Domain / Sahip / Takım / Algoritma / Zayıflık / Bitiş / Durum
+
+---
+
+### 12.18 Vade Takvimi Ekranı
+
+**Erişim:** Sol menü → Vade Takvimi sekmesi
+
+Önümüzdeki 30 günde sona erecek sertifikaların analitik görünümünü sunar.
+
+**KPI Kartları (2×2):**
+
+| Kart | Renk | Açıklama |
+|---|---|---|
+| ≤ 7 GÜN | Kırmızı | Kritik — acil müdahale gerekiyor |
+| 8–14 GÜN | Turuncu | Yüksek — yenileme planlanmalı |
+| 15–30 GÜN | Sarı | Orta — izleme |
+| AKTİF TOPLAM | Yeşil-Mavi | Toplam aktif sertifika sayısı |
+
+Sayılar sayfa yüklendiğinde cubic easing animasyonuyla gösterilir.
+
+**Bölüm 01 — Günlük Yoğunluk:**
+- 30 günlük istifleme (stacked) bar chart; her çubuk kritik / yüksek / orta renklerine göre bölünmüş
+- Çift Y ekseni: sol = günlük sayı, sağ = kümülatif
+- Hover tooltip: o güne ait domain listesi, toplam ve kümülatif sayılar
+
+**Bölüm 02 — Takvim:**
+- 5×7 hücre takvim ısı haritası; hücre arka plan rengi sona erme yoğunluğunu gösterir
+- Her hücre: gün numarası sol üstte, sona erme sayısı sağ altta büyük ve renkli
+- Bugünkü hücre mavi çerçeve ile vurgulanır
+
+**Bölüm 03 — Yaklaşan Süre Sonları:**
+- Domain, tarih, önem seviyesi ve kalan gün sütunları
+- Kalan güne göre sıralı; en kritik en üstte
+- Varsayılan 15 satır; "Daha fazla göster" ile tamamı listelenir
+
+**Bölüm 04 — Yük Dağılımı:**
+- SY ekip bazlı pasta grafik; her takımın sertifika yükü oranı gösterilir
+
+---
+
+### 12.19 Durum İzleme Ekranı
+
+**Erişim:** Sol menü → İzleme → Durum İzleme
+
+Sertifika envanterindeki domainlerin HTTP/HTTPS ve SSL erişilebilirliğini sürekli izler.
+
+| Görüntülenen Bilgi |
+|---|
+| Domain erişilebilirlik durumu (Erişilebilir / Erişilemiyor / Bilinmiyor) |
+| SSL kalan gün sayısı |
+| 7 günlük uptime yüzdesi |
+| 30 günlük uptime yüzdesi |
+| Olay (incident) sayısı |
+| Son kontrol zamanı |
+
+**24 Saatlik Grafik:** Seçilen domain için saatlik erişilebilirlik / erişilemezlik çubuklarını gösterir.
+
+**Filtreler:**
+- Durum: Tümü / Sorunlar / Erişilebilir
+- Alan adı araması ve sıralama
+
+**Aksiyonlar:**
+
+| Aksiyon | Açıklama |
+|---|---|
+| Domain satırına tıkla | Geçmiş modal: HTTP ve SSL kontrol geçmişi |
+| Tarih aralığı seç | Geçmiş modalde belirtilen dönem için kontrol kayıtları |
+
+**Otomatik yenileme:** 60 saniyede bir
+
+---
+
+### 12.20 Port İzleme Ekranı
+
+**Erişim:** Sol menü → İzleme → Port İzleme
+
+SMTP, POP3, FTP ve benzeri TCP servislerinin açık/kapalı durumunu ve yanıt süresini izler.
+
+| Görüntülenen Bilgi |
+|---|
+| Host adresi |
+| Port numarası |
+| Protokol / servis adı |
+| Kontrol aralığı |
+| Bağlantı durumu (Açık / Kapalı / Bilinmiyor) |
+| Yanıt süresi (ms) |
+| Son kontrol zamanı |
+
+**Aksiyonlar:**
+
+| Aksiyon | Açıklama |
+|---|---|
+| Yeni Monitor Ekle | Host, port, açıklama ve kontrol aralığı tanımla |
+| Düzenle | Monitor ayarlarını güncelle |
+| Sil | Monitor kaydını kaldır |
+| Manuel Kontrol | Anlık kontrol tetikle |
+| Satıra tıkla | Geçmiş modal: o monitöre ait kontrol kayıtları |
+
+**Kontrol aralığı seçenekleri:** 30 saniye · 1 dakika · 5 dakika · 15 dakika  
+**Otomatik yenileme:** 60 saniyede bir
+
+---
+
+### 12.21 DNS Kayıt İzleme Ekranı
+
+**Erişim:** Sol menü → İzleme → DNS İzleme
+
+Yetkisiz DNS değişikliklerini erken tespit eder; kayıt değerlerini belirli aralıklarla sorgulayarak değişiklik olduğunda geçmişe kaydeder.
+
+**Desteklenen Kayıt Tipleri:** A · AAAA · CNAME · MX · TXT · NS
+
+| Görüntülenen Bilgi |
+|---|
+| Domain adı |
+| Kayıt tipi |
+| Kontrol aralığı |
+| Mevcut değer |
+| Değişiklik durumu (Değişmedi / Değişti / Bilinmiyor) |
+| Son kontrol zamanı |
+
+**Aksiyonlar:**
+
+| Aksiyon | Açıklama |
+|---|---|
+| Yeni Monitor Ekle | Domain, kayıt tipi ve kontrol aralığı tanımla |
+| Düzenle | Monitor ayarlarını güncelle |
+| Sil | Monitor kaydını kaldır |
+| Manuel Kontrol | Anlık DNS sorgusu tetikle |
+| Değişiklik Geçmişi | Kayıt değerlerinin zaman içindeki değişimini görüntüle |
+
+**Kontrol aralığı seçenekleri:** 5 dakika · 15 dakika · 30 dakika · 1 saat
 
 ---
 

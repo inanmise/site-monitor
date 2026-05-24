@@ -7,11 +7,13 @@ export default function CertificatesTable({ onRowClick }) {
   const t = useT()
 
   const STATUS_OPTIONS = [
-    { value: '',         labelKey: 'tbl.filterAll',      icon: null },
-    { value: 'valid',    labelKey: 'tbl.filterValid',    icon: '✓', cls: 'cf-opt-valid'  },
-    { value: 'warning',  labelKey: 'tbl.filterWarning',  icon: '⚠', cls: 'cf-opt-warn'   },
-    { value: 'critical', labelKey: 'tbl.filterCritical', icon: '🔴', cls: 'cf-opt-crit'  },
-    { value: 'error',    labelKey: 'tbl.filterError',    icon: '✗', cls: 'cf-opt-err'   },
+    { value: '',          labelKey: 'tbl.filterAll',      icon: null  },
+    { value: 'valid',     labelKey: 'tbl.filterValid',    icon: '✓',  cls: 'cf-opt-valid' },
+    { value: 'critical',  labelKey: 'tbl.filterCritical', icon: '🔴', cls: 'cf-opt-crit'  },
+    { value: 'high',      labelKey: 'tbl.filterHigh',     icon: '🟠', cls: 'cf-opt-high'  },
+    { value: 'warning',   labelKey: 'tbl.filterWarning',  icon: '⚠',  cls: 'cf-opt-warn'  },
+    { value: 'error',     labelKey: 'tbl.filterError',    icon: '✗',  cls: 'cf-opt-err'   },
+    { value: 'expiring7', labelKey: 'tbl.filterExpiring7',icon: '⏱',  cls: 'cf-opt-crit'  },
   ]
 
   const [certs, setCerts]           = useState([])
