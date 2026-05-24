@@ -39,7 +39,27 @@ jobs:
           distribution: temurin
           cache: maven
 
+      - name: Configure Maven mirror & retry
+        run: |
+          mkdir -p $HOME/.m2
+          cat > $HOME/.m2/settings.xml << 'SETTINGS'
+          <settings>
+            <mirrors>
+              <mirror>
+                <id>central</id>
+                <mirrorOf>central</mirrorOf>
+                <url>https://repo1.maven.org/maven2</url>
+              </mirror>
+            </mirrors>
+          </settings>
+          SETTINGS
+
       - name: Build & test
+        env:
+          MAVEN_OPTS: >-
+            -Dmaven.wagon.http.retryHandler.count=3
+            -Dmaven.wagon.http.connectionTimeout=60000
+            -Dmaven.wagon.http.readTimeout=180000
         run: mvn -B clean verify
 
       - name: Upload test report
