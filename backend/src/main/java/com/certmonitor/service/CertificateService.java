@@ -164,11 +164,14 @@ public class CertificateService {
 
     @Cacheable("cert-latest")
     public List<CertificateDto> getAllLatest() {
+        Set<String> activeDomains = inventoryRepo.findByActiveTrueOrderByDomainAsc()
+                .stream().map(CertificateInventory::getDomain).collect(Collectors.toSet());
         Map<String, Integer> tierMap = buildTierMap();
         var thrOpt   = alertThresholdRepo.findFirstByActiveTrue();
         int critDays = thrOpt.map(AlertThreshold::getCriticalDays).orElse(7);
         int highDays  = thrOpt.map(AlertThreshold::getHighDays).orElse(15);
         return latestRepo.findAllByOrderByDomainAsc().stream()
+                .filter(c -> activeDomains.contains(c.getDomain()))
                 .map(c -> {
                     CertificateDto dto = toDto(c);
                     dto.setTier(tierMap.get(c.getDomain()));
