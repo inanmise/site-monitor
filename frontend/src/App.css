@@ -113,16 +113,25 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 }
 
 .sb-brand-sub {
-  color: rgba(255,255,255,.4);
-  font-size: .68em;
-  letter-spacing: .06em;
+  display: inline-flex;
+  align-items: center;
+  align-self: flex-start;
+  background: rgba(59,130,246,.20);
+  border: 1px solid rgba(59,130,246,.35);
+  border-radius: 4px;
+  color: #93c5fd;
+  font-size: .55em;
+  font-weight: 700;
+  letter-spacing: .08em;
+  padding: 1px 6px;
+  margin-top: 3px;
 }
 .sb-brand-version {
-  color: rgba(255,255,255,.22);
+  color: rgba(255,255,255,.48);
   font-size: .60em;
   letter-spacing: .04em;
   font-weight: 500;
-  margin-top: 1px;
+  margin-top: 2px;
 }
 
 .sb-toggle {
