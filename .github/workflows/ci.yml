@@ -11,6 +11,9 @@ on:
       - develop
       - master
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
@@ -51,7 +54,7 @@ jobs:
   # 2. Frontend — Node build + lint
   # ──────────────────────────────────────────────
   frontend:
-    name: Frontend (Node 20 / Vite)
+    name: Frontend (Node 24 / Vite)
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -60,10 +63,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Node 20
+      - name: Set up Node 24
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "24"
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
