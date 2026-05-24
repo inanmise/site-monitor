@@ -44,6 +44,10 @@ export default function UserManager({ teams }) {
   }
 
   async function save() {
+    if (form.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim())) {
+      setMsg(t('usr.emailInvalid'))
+      return
+    }
     setSaving(true)
     const payload = {
       username: form.username.trim(),
