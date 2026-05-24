@@ -16,16 +16,29 @@ export default defineConfig({
     setupFiles: './src/test/setup.js',
   },
   server: {
+    host: true,
     port: 5173,
     proxy: {
       '/api': {
         target: 'http://localhost:8080',
         changeOrigin: true,
         credentials: true,
+        configure: (proxy) => {
+          proxy.on('proxyReq', (proxyReq, req) => {
+            const ip = req.socket?.remoteAddress?.replace(/^::ffff:/, '') || '127.0.0.1'
+            proxyReq.setHeader('X-Forwarded-For', ip)
+          })
+        },
       },
       '/metrics': {
         target: 'http://localhost:8080',
         changeOrigin: true,
+        configure: (proxy) => {
+          proxy.on('proxyReq', (proxyReq, req) => {
+            const ip = req.socket?.remoteAddress?.replace(/^::ffff:/, '') || '127.0.0.1'
+            proxyReq.setHeader('X-Forwarded-For', ip)
+          })
+        },
       },
     },
   },
