@@ -4,6 +4,7 @@ import com.certmonitor.model.AppUser;
 import com.certmonitor.model.Team;
 import com.certmonitor.repository.AppUserRepository;
 import com.certmonitor.repository.CertificateInventoryRepository;
+import com.certmonitor.repository.EscalationContactRepository;
 import com.certmonitor.repository.TeamRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -28,6 +29,7 @@ public class UserService {
     private final AppUserRepository userRepo;
     private final TeamRepository teamRepo;
     private final CertificateInventoryRepository inventoryRepo;
+    private final EscalationContactRepository contactRepo;
 
     private static final BCryptPasswordEncoder PASSWORD_ENCODER = new BCryptPasswordEncoder();
     private static final DateTimeFormatter ISO =
@@ -210,7 +212,15 @@ public class UserService {
         if (active != null) user.setActive(active);
         user.setOrgRole(orgRole != null && !orgRole.isBlank() ? orgRole : null);
         user.setUpdatedAt(now());
-        return userRepo.save(user);
+        AppUser saved = userRepo.save(user);
+        String syncName = saved.getDisplayName() != null && !saved.getDisplayName().isBlank()
+                ? saved.getDisplayName() : saved.getUsername();
+        contactRepo.findByUserId(id).forEach(c -> {
+            c.setName(syncName);
+            c.setEmail(saved.getEmail());
+            contactRepo.save(c);
+        });
+        return saved;
     }
 
     @Transactional
