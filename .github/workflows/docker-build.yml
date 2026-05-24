@@ -3,7 +3,7 @@ name: Docker — Build & Push
 on:
   push:
     branches:
-      - master
+      - main
       - develop
       - "release/**"
 
@@ -42,7 +42,7 @@ jobs:
           BRANCH="${{ github.ref_name }}"
 
           case "$BRANCH" in
-            master)
+            main)
               TAGS="${REGISTRY}/${IMAGE}:${VERSION},${REGISTRY}/${IMAGE}:latest"
               PRIMARY="${VERSION}"
               ENV_VALUES="helm/cert-monitor/environments/master.yaml"
