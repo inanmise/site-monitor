@@ -309,7 +309,7 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
               <SectionHeader label={t('inv.sectionBasic')} />
 
               <label>
-                {t('inv.formDomain')} <span style={{ color: 'var(--danger)' }}>*</span>
+                <span>{t('inv.formDomain')} <span className="req-star">*</span></span>
                 <input value={form.domain} onChange={e => f('domain', e.target.value)} placeholder={t('inv.formDomainPh')} />
               </label>
               <label>
@@ -318,7 +318,7 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
               </label>
 
               <label>
-                {t('inv.formTeam')} <span style={{ color: 'var(--danger)' }}>*</span>
+                <span>{t('inv.formTeam')} <span className="req-star">*</span></span>
                 <SearchableSelect
                   value={form.team_id}
                   onChange={v => f('team_id', v)}
@@ -332,7 +332,7 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
               </label>
 
               <label>
-                {t('inv.formUgTeam')} <span style={{ color: 'var(--danger)' }}>*</span>
+                <span>{t('inv.formUgTeam')} <span className="req-star">*</span></span>
                 <SearchableSelect
                   value={form.ug_team_id}
                   onChange={v => f('ug_team_id', v)}
