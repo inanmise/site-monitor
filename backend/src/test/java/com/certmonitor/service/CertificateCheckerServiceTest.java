@@ -20,11 +20,14 @@ class CertificateCheckerServiceTest {
     @Mock
     private ChainValidationService chainValidationService;
 
+    @Mock
+    private DnsCheckerService dnsCheckerService;
+
     private CertificateCheckerService service;
 
     @BeforeEach
     void setUp() {
-        service = new CertificateCheckerService(chainValidationService, new ObjectMapper());
+        service = new CertificateCheckerService(chainValidationService, dnsCheckerService, new ObjectMapper());
     }
 
     // ── SAN serialization ──────────────────────────────────────────────────────
