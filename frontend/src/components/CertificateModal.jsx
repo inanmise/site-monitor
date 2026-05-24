@@ -73,7 +73,7 @@ function NotesTab({ domain, t }) {
   )
 }
 
-export default function CertificateModal({ domain, alertLevel, onClose }) {
+export default function CertificateModal({ domain, alertLevel, onClose, initialData }) {
   const t = useT()
   const [certData, setCertData]   = useState(null)
   const [activeTab, setActiveTab] = useState('details')
@@ -82,6 +82,10 @@ export default function CertificateModal({ domain, alertLevel, onClose }) {
     if (!domain) return
     setCertData(null)
     setActiveTab('details')
+    if (initialData) {
+      setCertData(initialData)
+      return
+    }
     api.getHistory(domain).then((res) => {
       if (res?.success && res.data.length > 0) setCertData(res.data[0])
     })
