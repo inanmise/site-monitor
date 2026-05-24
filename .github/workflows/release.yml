@@ -198,6 +198,11 @@ jobs:
       # ── 6. Tag & push to main ────────────────────────────────────────────
       - name: Create and push git tag
         run: |
+          if git rev-parse "${{ steps.ver.outputs.tag }}" >/dev/null 2>&1; then
+            echo "Tag ${{ steps.ver.outputs.tag }} already exists — deleting and recreating"
+            git tag -d "${{ steps.ver.outputs.tag }}" || true
+            git push origin --delete "${{ steps.ver.outputs.tag }}" || true
+          fi
           git tag -a "${{ steps.ver.outputs.tag }}" \
             -m "Release ${{ steps.ver.outputs.tag }}"
           git push origin main --follow-tags
