@@ -1,5 +1,5 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
-import { ChevronUp, ChevronDown } from 'lucide-react'
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
+import { ChevronDown } from 'lucide-react'
 import { api, formatDate } from './api/client'
 import { useDialog } from './components/ui/Dialog.jsx'
 import { useT } from './i18n/index.jsx'
@@ -11,6 +11,7 @@ import StatsView from './components/StatsView'
 import CertificateCard from './components/CertificateCard'
 import CertificatesTable from './components/CertificatesTable'
 import CertificateModal from './components/CertificateModal'
+import CaDiversityModal from './components/CaDiversityModal'
 import RenewalAdvice from './components/RenewalAdvice'
 import AdminPanel from './components/admin/AdminPanel'
 import AlertHistory from './components/admin/AlertHistory'
@@ -42,10 +43,12 @@ export default function App() {
   const [warnings, setWarnings] = useState([])
   const [stats, setStats] = useState(null)
   const [teamStats, setTeamStats] = useState(null)
-  const [statsVisible, setStatsVisible] = useState(true)
+  const [weakAlgStats, setWeakAlgStats] = useState(null)
+  const [statsVisible, setStatsVisible] = useState(false)
   const [search, setSearch] = useState('')
   const [sortOrder, setSortOrder] = useState('default')
   const [modalCert, setModalCert] = useState(null)
+  const [caModal, setCaModal]     = useState(false)
   const [newDomain,    setNewDomain]    = useState('')
   const [checkLoading, setCheckLoading] = useState(false)
   const [refreshing, setRefreshing] = useState(false)
@@ -128,13 +131,15 @@ export default function App() {
   }, [user])
 
   const loadData = useCallback(async () => {
-    const [certsRes, statsRes, silentRes, teamStatsRes] = await Promise.all([
+    const [certsRes, statsRes, silentRes, teamStatsRes, weakRes] = await Promise.all([
       api.getCertificates(), api.getStats(), api.getSilentAlertDomains(), api.getTeamStats(),
+      api.admin.getWeakAlgorithms(),
     ])
     if (certsRes?.success) { setCerts(certsRes.data); setLastUpdate(certsRes.timestamp) }
     if (statsRes?.success) setStats(statsRes.data)
     if (silentRes?.success) setSilentAlertDomains(new Set(silentRes.data))
     if (teamStatsRes?.success) setTeamStats(teamStatsRes.data)
+    if (weakRes?.success) setWeakAlgStats(weakRes)
   }, [])
 
   useEffect(() => {
@@ -151,9 +156,6 @@ export default function App() {
     }
   }, [user, tab])
 
-  useEffect(() => {
-    if (tab === 'dashboard') setStatsVisible(true)
-  }, [tab])
 
   async function handleLogout() {
     const ok = await showConfirm({
@@ -250,6 +252,25 @@ export default function App() {
     setTeamName(userData.team_name ?? null)
   }
 
+  const weakDomainSet = useMemo(
+    () => new Set((weakAlgStats?.data ?? []).map(d => d.domain)),
+    [weakAlgStats]
+  )
+
+  const issuerStats = useMemo(() => {
+    const reachable = certs.filter(c => c.status !== 'error')
+    if (reachable.length === 0) return null
+    const counts = {}
+    for (const c of reachable) {
+      const key = c.issuer || c.issuer_cn || 'Unknown'
+      counts[key] = (counts[key] ?? 0) + 1
+    }
+    const entries = Object.entries(counts).sort((a, b) => b[1] - a[1])
+    const [dominantIssuer, dominantCount] = entries[0]
+    const dominantPct = Math.round((dominantCount / reachable.length) * 100)
+    return { uniqueCount: entries.length, dominantIssuer, dominantCount, dominantPct }
+  }, [certs])
+
   if (!authChecked) return <div className="loading" style={{ marginTop: 80, textAlign: 'center' }}>{t('app.loading')}</div>
   if (!user) return <Login onLogin={handleLogin} />
 
@@ -263,10 +284,12 @@ export default function App() {
     expiring7:  (c) => c.days_remaining != null && c.days_remaining >= 0 && c.days_remaining <= 7,
     expiring30: (c) => c.days_remaining != null && c.days_remaining >= 0 && c.days_remaining <= 30,
     expired:    (c) => c.days_remaining != null && c.days_remaining < 0,
+    weak:       (c) => weakDomainSet.has(c.domain),
   }
   const STAT_FILTER_LABEL = {
     total: t('stat.total'), valid: t('stat.valid'), critical: t('stat.critical'), high: t('stat.high'),
     warning: t('stat.warning'), error: t('stat.error'), expiring7: t('stat.expiring7'), expiring30: t('stat.expiring30'), expired: t('stat.expired'),
+    weak: t('stat.weak'),
   }
 
   function handleStatClick(key) {
@@ -304,11 +327,18 @@ export default function App() {
   })
 
   function defaultPriority(c) {
-    const tier = c.tier ?? 99
-    const isProblematic = c.status === 'error' || c.warning
-    const statusPri = c.status === 'error' ? 0 : 1
-    if (isProblematic) return tier * 10 + statusPri
-    return 1000 + tier
+    const al = c.alert_level
+    const days = c.days_remaining
+    const isError    = al ? al === 'error'    : c.status === 'error'
+    const isExpired  = !isError && (al ? al === 'expired'  : (days != null && days < 0))
+    const isCritical = !isError && !isExpired && (al ? al === 'critical' : (days != null && days <= 7))
+    const isHigh     = !isError && !isExpired && !isCritical && (al ? al === 'high'     : (days != null && days <= 15))
+    const isWarning  = !isError && !isExpired && !isCritical && !isHigh && (al ? al === 'warning'  : c.warning === true)
+    if (isError)             return 0
+    if (isExpired || isCritical) return 1
+    if (isHigh)              return 2
+    if (isWarning)           return 3
+    return 4
   }
 
   const sorted = [...filtered].sort((a, b) => {
@@ -372,18 +402,20 @@ export default function App() {
 
           {tab === 'dashboard' && (
             <div className="stats-section">
-              <div className="stats-collapse-bar">
+              <div
+                className="stats-collapse-bar"
+                onClick={() => setStatsVisible((v) => !v)}
+                title={statsVisible ? t('app.collapseStats') : t('app.expandStats')}
+              >
                 <span className="stats-collapse-label">{t('app.statistics')}</span>
-                <button
-                  className="stats-collapse-btn"
-                  onClick={() => setStatsVisible((v) => !v)}
-                  title={statsVisible ? t('app.collapseStats') : t('app.expandStats')}
-                >
-                  {statsVisible ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
-                </button>
+                <span className={`stats-collapse-chevron${statsVisible ? ' open' : ''}`}>
+                  <ChevronDown size={14} />
+                </span>
               </div>
               <StatsPanel stats={stats} visible={statsVisible}
-                onStatClick={handleStatClick} activeFilter={statsFilter} />
+                onStatClick={handleStatClick} activeFilter={statsFilter}
+                weakStats={weakAlgStats} issuerStats={issuerStats}
+                onCaClick={() => setCaModal(true)} />
             </div>
           )}
 
@@ -448,7 +480,8 @@ export default function App() {
                     <div className="cards-container">
                       {pageCerts.map((cert) => (
                         <CertificateCard key={cert.domain} cert={cert} onClick={(d) => setModalCert(certs.find(c => c.domain === d) ?? null)}
-                          hasSilentAlert={silentAlertDomains.has(cert.domain)} />
+                          hasSilentAlert={silentAlertDomains.has(cert.domain)}
+                          isWeak={weakAlgStats != null ? weakDomainSet.has(cert.domain) : undefined} />
                       ))}
                     </div>
                     {(pageSize === 0 || sorted.length > pageSize) && <div className="dash-pagination">
@@ -602,6 +635,7 @@ export default function App() {
       </main>
 
       <CertificateModal domain={modalCert?.domain} alertLevel={modalCert?.alert_level} initialData={modalCert?._preview ? modalCert : undefined} previewMode={!!modalCert?._preview} onClose={() => setModalCert(null)} />
+      {caModal && <CaDiversityModal certs={certs} onClose={() => setCaModal(false)} />}
     </div>
   )
 }
