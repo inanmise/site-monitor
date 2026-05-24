@@ -15,4 +15,5 @@ public interface EscalationContactRepository extends JpaRepository<EscalationCon
     List<EscalationContact> findByTeamIdAndMinAlertLevelInAndActiveTrue(Long teamId, List<String> levels);
     List<EscalationContact> findByTeamIdAndMinAlertLevelAndActiveTrue(Long teamId, String level);
     List<EscalationContact> findByTeamIdOrderByRoleAsc(Long teamId);
+    List<EscalationContact> findByUserId(Long userId);
 }

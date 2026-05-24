@@ -4,6 +4,7 @@ import com.certmonitor.model.AppUser;
 import com.certmonitor.model.Team;
 import com.certmonitor.repository.AppUserRepository;
 import com.certmonitor.repository.CertificateInventoryRepository;
+import com.certmonitor.repository.EscalationContactRepository;
 import com.certmonitor.repository.TeamRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -32,6 +33,7 @@ class UserServiceTest {
     @Mock AppUserRepository userRepo;
     @Mock TeamRepository teamRepo;
     @Mock CertificateInventoryRepository inventoryRepo;
+    @Mock EscalationContactRepository contactRepo;
 
     private UserService service;
 
@@ -41,7 +43,8 @@ class UserServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new UserService(userRepo, teamRepo, inventoryRepo);
+        service = new UserService(userRepo, teamRepo, inventoryRepo, contactRepo);
+        when(contactRepo.findByUserId(anyLong())).thenReturn(List.of());
         ReflectionTestUtils.setField(service, "lockoutDurationsSecs", List.of(30L, 120L, 600L, 1800L));
         ReflectionTestUtils.setField(service, "lockoutFailuresNeeded", List.of(5, 3, 2, 1));
         ReflectionTestUtils.setField(service, "passwordMinLength", 4);
