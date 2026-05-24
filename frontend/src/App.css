@@ -3543,6 +3543,7 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .ts-hdr-high,     .ts-cell-high.ts-cell-active     { color: #f97316; }
 .ts-hdr-critical, .ts-cell-critical.ts-cell-active { color: #ef4444; }
 .ts-hdr-expired,  .ts-cell-expired.ts-cell-active  { color: #9ca3af; }
+.ts-hdr-error,    .ts-cell-error.ts-cell-active    { color: #ef4444; }
 .ts-cell-selected { outline: 2px solid currentColor; outline-offset: -2px; border-radius: 4px; }
 
 /* ── Inventory Show Modal ────────────────────────── */
@@ -4184,7 +4185,7 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 /* ══════════════════  TEAM × TIER GRID  ══════════════════════════════ */
 .ttg-root {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(420px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(500px, 1fr));
   gap: 14px;
 }
 
@@ -4391,6 +4392,7 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 [data-theme="dark"] .ts-hdr-high,     [data-theme="dark"] .ts-cell-high.ts-cell-active     { color: #fdba74; }
 [data-theme="dark"] .ts-hdr-critical, [data-theme="dark"] .ts-cell-critical.ts-cell-active { color: #fca5a5; }
 [data-theme="dark"] .ts-hdr-expired,  [data-theme="dark"] .ts-cell-expired.ts-cell-active  { color: #94a3b8; }
+[data-theme="dark"] .ts-hdr-error,    [data-theme="dark"] .ts-cell-error.ts-cell-active    { color: #fca5a5; }
 
 /* ── Team Type Badges ─────────────────────────────────────────────────────── */
 .badge-team-type { font-size: .75em; font-weight: 700; padding: 2px 7px; border-radius: 10px; }
