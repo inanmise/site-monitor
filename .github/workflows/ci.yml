@@ -4,12 +4,12 @@ on:
   push:
     branches:
       - develop
-      - master
+      - main
       - "release/**"
   pull_request:
     branches:
       - develop
-      - master
+      - main
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true

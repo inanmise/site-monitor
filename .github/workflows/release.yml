@@ -3,7 +3,7 @@ name: Release
 on:
   push:
     branches:
-      - master
+      - main
   workflow_dispatch:
     inputs:
       bump:
@@ -34,7 +34,7 @@ jobs:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
-          ref: master
+          ref: main
 
       - name: Detect bump type from commits
         id: detect
@@ -98,7 +98,7 @@ jobs:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
-          ref: master
+          ref: main
           token: ${{ secrets.GITHUB_TOKEN }}
 
       # ── 1. Compute next version ───────────────────────────────────────────
@@ -195,20 +195,20 @@ jobs:
           helm package helm/cert-monitor
           helm push certmonitor-chart-${{ steps.ver.outputs.next }}.tgz oci://ghcr.io/inanmise
 
-      # ── 6. Tag & push to master ──────────────────────────────────────────
+      # ── 6. Tag & push to main ────────────────────────────────────────────
       - name: Create and push git tag
         run: |
           git tag -a "${{ steps.ver.outputs.tag }}" \
             -m "Release ${{ steps.ver.outputs.tag }}"
-          git push origin master --follow-tags
+          git push origin main --follow-tags
 
-      # ── 7. Back-merge master → develop ───────────────────────────────────
+      # ── 7. Back-merge main → develop ─────────────────────────────────────
       - name: Back-merge into develop
         run: |
           git fetch origin develop
           git checkout develop
-          git merge --no-ff origin/master \
-            -m "chore(release): back-merge master after ${{ steps.ver.outputs.next }} [skip ci]"
+          git merge --no-ff origin/main \
+            -m "chore(release): back-merge main after ${{ steps.ver.outputs.next }} [skip ci]"
           git push origin develop
 
       # ── 8. GitHub Release ────────────────────────────────────────────────
