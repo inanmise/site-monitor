@@ -1,29 +1,98 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useT, useLanguage } from '../i18n/index.jsx'
 import { useTheme } from '../i18n/theme.jsx'
 import {
-  ShieldCheck, LayoutDashboard, AlertTriangle, FileText,
+  LayoutDashboard, AlertTriangle, FileText,
   RefreshCw, ClipboardList, Settings, User, Globe, LogOut,
-  Sun, Moon, ChevronLeft, ChevronRight,
+  Sun, Moon, ChevronLeft, ChevronRight, ChevronDown, Server, Activity, ShieldAlert, BarChart3, Bell, BookOpen,
+  Wifi, Network, Search, TrendingDown,
 } from 'lucide-react'
+import CertMonitorLogo from './ui/CertMonitorLogo.jsx'
 
-export default function Nav({ activeTab, onTabChange, username, onLogout }) {
+export default function Nav({ activeTab, onTabChange, username, teamName, systemRole, onLogout }) {
   const t = useT()
   const { toggle } = useLanguage()
   const { theme, toggle: toggleTheme } = useTheme()
+  const isAdmin    = systemRole === 'ADMIN'
+  const isAudit    = systemRole === 'AUDIT'
 
-  const TABS = [
-    { id: 'dashboard', Icon: LayoutDashboard, labelKey: 'nav.dashboard' },
-    { id: 'warnings',  Icon: AlertTriangle,   labelKey: 'nav.warnings' },
-    { id: 'all',       Icon: FileText,        labelKey: 'nav.all' },
-    { id: 'renewal',   Icon: RefreshCw,       labelKey: 'nav.renewal' },
-    { id: 'activity',  Icon: ClipboardList,   labelKey: 'nav.activity' },
-    { id: 'admin',     Icon: Settings,        labelKey: 'nav.admin' },
+  const GROUPS = [
+    {
+      labelKey: null,
+      tabs: [
+        { id: 'dashboard', Icon: LayoutDashboard, labelKey: 'nav.dashboard', show: true },
+        { id: 'stats',     Icon: BarChart3,       labelKey: 'nav.stats',     show: true },
+        { id: 'forecast',  Icon: TrendingDown,    labelKey: 'nav.forecast',  show: true },
+        { id: 'warnings',  Icon: AlertTriangle,   labelKey: 'nav.warnings',  show: true },
+        { id: 'all',       Icon: FileText,        labelKey: 'nav.all',       show: true },
+        { id: 'renewal',   Icon: RefreshCw,       labelKey: 'nav.renewal',   show: true },
+        { id: 'domains',   Icon: Globe,           labelKey: 'nav.domains',   show: true },
+      ],
+    },
+    {
+      labelKey: 'nav.groupMonitoring',
+      tabs: [
+        { id: 'uptime', Icon: Wifi,    labelKey: 'nav.uptime', show: true },
+        { id: 'port',   Icon: Network, labelKey: 'nav.port',   show: true },
+        { id: 'dns',    Icon: Search,  labelKey: 'nav.dns',    show: true },
+      ],
+    },
+    {
+      labelKey: 'nav.groupLogs',
+      tabs: [
+        { id: 'activity',     Icon: ClipboardList, labelKey: 'nav.activity',     show: true    },
+        { id: 'alerthistory', Icon: Bell,          labelKey: 'nav.alertHistory', show: isAdmin },
+      ],
+    },
+    {
+      labelKey: 'nav.groupAdmin',
+      tabs: [
+        { id: 'admin',   Icon: Settings,    labelKey: 'nav.admin',   show: true               },
+        { id: 'system',  Icon: Server,      labelKey: 'nav.system',  show: isAdmin || isAudit },
+        { id: 'weakalgo',Icon: ShieldAlert, labelKey: 'nav.weakAlgo',show: isAdmin || isAudit },
+        { id: 'health',  Icon: Activity,    labelKey: 'nav.health',  show: isAdmin            },
+      ],
+    },
+    {
+      labelKey: null,
+      tabs: [
+        { id: 'help', Icon: BookOpen, labelKey: 'nav.help', show: true },
+      ],
+    },
   ]
 
   const [open, setOpen] = useState(() =>
     localStorage.getItem('sidebar-open') !== 'false'
   )
+
+  const [openGroups, setOpenGroups] = useState(() => {
+    try {
+      const saved = localStorage.getItem('nav-groups-open')
+      if (saved) return JSON.parse(saved)
+    } catch {}
+    return []
+  })
+
+  useEffect(() => {
+    GROUPS.forEach((group, gi) => {
+      if (group.labelKey && group.tabs.some(tab => tab.id === activeTab)) {
+        setOpenGroups(prev => {
+          if (prev.includes(gi)) return prev
+          const next = [...prev, gi]
+          try { localStorage.setItem('nav-groups-open', JSON.stringify(next)) } catch {}
+          return next
+        })
+      }
+    })
+  }, [activeTab])
+
+  function toggleGroup(gi) {
+    setOpenGroups(prev => {
+      const next = prev.includes(gi) ? prev.filter(i => i !== gi) : [...prev, gi]
+      try { localStorage.setItem('nav-groups-open', JSON.stringify(next)) } catch {}
+      return next
+    })
+  }
 
   function toggleSidebar() {
     const next = !open
@@ -37,11 +106,12 @@ export default function Nav({ activeTab, onTabChange, username, onLogout }) {
       {/* ── Logo area ── */}
       <div className="sb-head">
         <div className="sb-brand">
-          <span className="sb-logo"><ShieldCheck size={22} color="#3b82f6" /></span>
+          <span className="sb-logo"><CertMonitorLogo variant="icon" size={26} /></span>
           {open && (
             <div className="sb-brand-text">
               <span className="sb-brand-name">CertMonitor</span>
-              <span className="sb-brand-sub">Enterprise</span>
+              <span className="sb-brand-sub">ENTERPRISE</span>
+              <span className="sb-brand-version">v{__APP_VERSION__}</span>
             </div>
           )}
         </div>
@@ -52,17 +122,39 @@ export default function Nav({ activeTab, onTabChange, username, onLogout }) {
 
       {/* ── Nav items ── */}
       <nav className="sb-nav">
-        {TABS.map(({ id, Icon, labelKey }) => (
-          <button
-            key={id}
-            className={`sb-item${activeTab === id ? ' sb-active' : ''}`}
-            onClick={() => onTabChange(id)}
-            title={!open ? t(labelKey) : undefined}
-          >
-            <span className="sb-icon"><Icon size={18} /></span>
-            {open && <span className="sb-label">{t(labelKey)}</span>}
-          </button>
-        ))}
+        {GROUPS.map((group, gi) => {
+          const visibleTabs = group.tabs.filter((tab) => tab.show)
+          if (visibleTabs.length === 0) return null
+          const hasLabel    = !!group.labelKey
+          const isGroupOpen = openGroups.includes(gi)
+          const collapsed   = hasLabel && open && !isGroupOpen
+          return (
+            <div key={gi} className="sb-group">
+              {hasLabel && open && (
+                <button className="sb-group-header" onClick={() => toggleGroup(gi)}>
+                  <span className="sb-group-header-text">{t(group.labelKey).toLocaleUpperCase('en-US')}</span>
+                  <ChevronDown size={11} className={`sb-group-chevron${isGroupOpen ? '' : ' sb-group-chevron-closed'}`} />
+                </button>
+              )}
+              {hasLabel && !open && gi > 0 && (
+                <div className="sb-group-rule" />
+              )}
+              <div className={`sb-group-items${collapsed ? ' sb-group-items-collapsed' : ''}`}>
+                {visibleTabs.map(({ id, Icon, labelKey }) => (
+                  <button
+                    key={id}
+                    className={`sb-item${activeTab === id ? ' sb-active' : ''}`}
+                    onClick={() => onTabChange(id)}
+                    title={!open ? t(labelKey) : undefined}
+                  >
+                    <span className="sb-icon"><Icon size={18} /></span>
+                    {open && <span className="sb-label">{t(labelKey)}</span>}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )
+        })}
       </nav>
 
       {/* ── Footer: user, theme toggle, lang toggle, logout ── */}
@@ -70,7 +162,11 @@ export default function Nav({ activeTab, onTabChange, username, onLogout }) {
         {open && (
           <div className="sb-user">
             <User size={14} />
-            <span className="sb-user-name">{username}</span>
+            <div className="sb-user-info">
+              <span className="sb-user-name">{username}</span>
+              {teamName && <span className="sb-team-name">{teamName}</span>}
+              {systemRole === 'ADMIN' && <span className="sb-role-badge">ADMIN</span>}
+            </div>
           </div>
         )}
         <button
@@ -92,7 +188,10 @@ export default function Nav({ activeTab, onTabChange, username, onLogout }) {
         </button>
         <button
           className="sb-logout"
-          onClick={onLogout}
+          onClick={() => {
+            try { localStorage.removeItem('nav-groups-open') } catch {}
+            onLogout()
+          }}
           title={!open ? t('nav.logout') : undefined}
         >
           <LogOut size={15} />

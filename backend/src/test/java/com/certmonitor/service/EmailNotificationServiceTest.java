@@ -29,7 +29,6 @@ class EmailNotificationServiceTest {
     void setUp() {
         service = new EmailNotificationService(mailSender);
         ReflectionTestUtils.setField(service, "enabled", false);
-        ReflectionTestUtils.setField(service, "emailTo", "");
         ReflectionTestUtils.setField(service, "emailFrom", "noreply@certmonitor");
     }
 
@@ -65,13 +64,6 @@ class EmailNotificationServiceTest {
                 25, "john.doe", "2026-05-16T10:00:00", "2026-05-01T08:00:00", null);
 
         assertThat(result).isEqualTo("SKIPPED_DISABLED");
-        verify(mailSender, never()).send(any(jakarta.mail.internet.MimeMessage.class));
-    }
-
-    @Test
-    @DisplayName("sendWarningEmailIfEnabled does nothing when email is disabled")
-    void sendWarningEmailIfEnabled_disabled_doesNothing() {
-        service.sendWarningEmailIfEnabled(java.util.List.of());
         verify(mailSender, never()).send(any(jakarta.mail.internet.MimeMessage.class));
     }
 

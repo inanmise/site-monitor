@@ -2,9 +2,14 @@ package com.certmonitor.controller;
 
 import com.certmonitor.model.*;
 import com.certmonitor.repository.*;
+import com.certmonitor.service.AuditService;
 import com.certmonitor.service.EscalationService;
-import com.certmonitor.model.NotificationLog;
+import com.certmonitor.service.UserService;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpSession;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -14,19 +19,25 @@ import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.Map;
 import java.util.NoSuchElementException;
+import java.util.Objects;
 
+@Slf4j
 @RestController
 @RequestMapping("/api/admin")
 @RequiredArgsConstructor
 public class AdminController {
 
+    private final AuditService auditService;
     private final CertificateInventoryRepository inventoryRepo;
     private final AlertThresholdRepository thresholdRepo;
     private final EscalationContactRepository contactRepo;
     private final AlertEventRepository alertEventRepo;
     private final NotificationLogRepository notificationLogRepo;
     private final EscalationService escalationService;
-    private final com.certmonitor.repository.LatestCheckRepository latestCheckRepo;
+    private final LatestCheckRepository latestCheckRepo;
+    private final CertificateNoteRepository noteRepo;
+    private final UserService userService;
+    private final AppUserRepository userRepo;
 
     private static final DateTimeFormatter ISO =
             DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
@@ -34,29 +45,58 @@ public class AdminController {
     // ── Inventory ─────────────────────────────────────────────────────────────
 
     @GetMapping("/inventory")
-    public ResponseEntity<Map<String, Object>> listInventory() {
-        return ok(Map.of("data", inventoryRepo.findAll().stream()
-                .sorted((a, b) -> a.getDomain().compareToIgnoreCase(b.getDomain()))
-                .toList()));
+    public ResponseEntity<Map<String, Object>> listInventory(
+            @RequestParam(defaultValue = "false") boolean showDeleted,
+            HttpSession session) {
+        List<CertificateInventory> items;
+        if (isAdmin(session)) {
+            items = showDeleted
+                    ? inventoryRepo.findByDeletedAtIsNotNullOrderByDomainAsc()
+                    : inventoryRepo.findByDeletedAtIsNullOrderByDomainAsc();
+        } else {
+            items = inventoryRepo.findByTeamIdAndDeletedAtIsNullOrderByDomainAsc(teamId(session));
+        }
+        return ok(Map.of("data", items));
     }
 
+    @CacheEvict(value = "cert-latest", allEntries = true)
     @PostMapping("/inventory")
-    public ResponseEntity<Map<String, Object>> addInventory(@RequestBody CertificateInventory item) {
+    public ResponseEntity<Map<String, Object>> addInventory(
+            @RequestBody CertificateInventory item, HttpSession session, HttpServletRequest request) {
+        validateDomain(item.getDomain());
+        if (!isAdmin(session)) {
+            item.setTeamId(teamId(session));
+        }
+        if (item.getTeamId() == null) {
+            throw new IllegalArgumentException("A team must be selected for the certificate");
+        }
         String now = now();
         item.setId(null);
         item.setCreatedAt(now);
         item.setUpdatedAt(now);
         if (item.getPort() == null) item.setPort(443);
+        if (item.getPort() < 1 || item.getPort() > 65535)
+            throw new IllegalArgumentException("Port must be between 1 and 65535");
         if (item.getActive() == null) item.setActive(true);
         CertificateInventory saved = inventoryRepo.save(item);
+        auditService.recordAction("DOMAIN_ADD", session, request,
+                "CERTIFICATE", saved.getDomain(),
+                "{\"port\":" + saved.getPort() + ",\"teamId\":" + saved.getTeamId() + "}");
         return ok(Map.of("data", saved, "message", "Domain added to inventory"));
     }
 
+    @CacheEvict(value = "cert-latest", allEntries = true)
     @PutMapping("/inventory/{id}")
-    public ResponseEntity<Map<String, Object>> updateInventory(@PathVariable Long id,
-                                                                @RequestBody CertificateInventory item) {
+    public ResponseEntity<Map<String, Object>> updateInventory(
+            @PathVariable Long id, @RequestBody CertificateInventory item,
+            HttpSession session, HttpServletRequest request) {
         CertificateInventory existing = inventoryRepo.findById(id)
                 .orElseThrow(() -> new NoSuchElementException("Inventory item not found: " + id));
+        if (!isAdmin(session)) checkOwnership(existing.getTeamId(), session);
+
+        // Build diff BEFORE applying changes
+        String diffJson = buildInventoryDiff(existing, item, isAdmin(session));
+
         existing.setDomain(item.getDomain());
         existing.setPort(item.getPort() != null ? item.getPort() : 443);
         existing.setDescription(item.getDescription());
@@ -65,36 +105,179 @@ public class AdminController {
         existing.setActive(item.getActive() != null ? item.getActive() : true);
         existing.setExpectedFingerprint(item.getExpectedFingerprint());
         existing.setExpectedSubject(item.getExpectedSubject());
+        if (isAdmin(session) && item.getTeamId() != null) existing.setTeamId(item.getTeamId());
+        existing.setUgTeamId(item.getUgTeamId());
+        existing.setExternalVendor(item.getExternalVendor());
+        existing.setActionRequired(item.getActionRequired());
+        existing.setOpenshift(item.getOpenshift());
+        existing.setSslPinning(item.getSslPinning());
+        existing.setInternalCert(item.getInternalCert());
+        existing.setJksKeystore(item.getJksKeystore());
+        existing.setServerUpdate(item.getServerUpdate());
+        existing.setNetscaler(item.getNetscaler());
+        existing.setWafEnabled(item.getWafEnabled());
+        existing.setInUse(item.getInUse());
+        existing.setEvCertificate(item.getEvCertificate());
+        existing.setTransferredToSy(item.getTransferredToSy());
+        existing.setPurchasedBy(item.getPurchasedBy());
+        existing.setChangeDescription(item.getChangeDescription());
+        existing.setTier(item.getTier());
         existing.setUpdatedAt(now());
-        return ok(Map.of("data", inventoryRepo.save(existing)));
+        CertificateInventory saved = inventoryRepo.save(existing);
+
+        if (!diffJson.equals("{}")) {
+            auditService.recordAction("DOMAIN_EDIT", session, request,
+                    "CERTIFICATE", saved.getDomain(), diffJson);
+        }
+        return ok(Map.of("data", saved));
     }
 
+    private String buildInventoryDiff(CertificateInventory o, CertificateInventory n, boolean isAdmin) {
+        StringBuilder sb = new StringBuilder("{");
+        fieldDiff(sb, "domain",             o.getDomain(),               n.getDomain());
+        fieldDiff(sb, "port",               o.getPort(),                 n.getPort() != null ? n.getPort() : 443);
+        fieldDiff(sb, "active",             o.getActive(),               n.getActive() != null ? n.getActive() : true);
+        fieldDiff(sb, "tier",               o.getTier(),                 n.getTier());
+        fieldDiff(sb, "description",        o.getDescription(),          n.getDescription());
+        fieldDiff(sb, "owner",              o.getOwner(),                n.getOwner());
+        fieldDiff(sb, "tags",               o.getTags(),                 n.getTags());
+        fieldDiff(sb, "externalVendor",     o.getExternalVendor(),       n.getExternalVendor());
+        fieldDiff(sb, "actionRequired",     o.getActionRequired(),       n.getActionRequired());
+        fieldDiff(sb, "openshift",          o.getOpenshift(),            n.getOpenshift());
+        fieldDiff(sb, "sslPinning",         o.getSslPinning(),           n.getSslPinning());
+        fieldDiff(sb, "internalCert",       o.getInternalCert(),         n.getInternalCert());
+        fieldDiff(sb, "jksKeystore",        o.getJksKeystore(),          n.getJksKeystore());
+        fieldDiff(sb, "serverUpdate",       o.getServerUpdate(),         n.getServerUpdate());
+        fieldDiff(sb, "netscaler",          o.getNetscaler(),            n.getNetscaler());
+        fieldDiff(sb, "wafEnabled",         o.getWafEnabled(),           n.getWafEnabled());
+        fieldDiff(sb, "inUse",              o.getInUse(),                n.getInUse());
+        fieldDiff(sb, "evCertificate",      o.getEvCertificate(),        n.getEvCertificate());
+        fieldDiff(sb, "transferredToSy",    o.getTransferredToSy(),      n.getTransferredToSy());
+        fieldDiff(sb, "purchasedBy",        o.getPurchasedBy(),          n.getPurchasedBy());
+        fieldDiff(sb, "changeDescription",  o.getChangeDescription(),    n.getChangeDescription());
+        fieldDiff(sb, "expectedFingerprint",o.getExpectedFingerprint(),  n.getExpectedFingerprint());
+        fieldDiff(sb, "expectedSubject",    o.getExpectedSubject(),      n.getExpectedSubject());
+        if (isAdmin && n.getTeamId() != null)
+            fieldDiff(sb, "teamId",         o.getTeamId(),               n.getTeamId());
+        if (sb.length() > 1 && sb.charAt(sb.length() - 1) == ',') sb.deleteCharAt(sb.length() - 1);
+        sb.append('}');
+        return sb.toString();
+    }
+
+    private void fieldDiff(StringBuilder sb, String field, Object oldVal, Object newVal) {
+        if (!Objects.equals(oldVal, newVal)) {
+            sb.append('"').append(field).append("\":{\"from\":")
+              .append(toJsonVal(oldVal)).append(",\"to\":")
+              .append(toJsonVal(newVal)).append("},");
+        }
+    }
+
+    private String toJsonVal(Object v) {
+        if (v == null) return "null";
+        if (v instanceof Boolean || v instanceof Number) return v.toString();
+        String s = v.toString().replace("\\", "\\\\").replace("\"", "\\\"")
+                               .replace("\n", "\\n").replace("\r", "");
+        return '"' + s + '"';
+    }
+
+    @CacheEvict(value = "cert-latest", allEntries = true)
     @DeleteMapping("/inventory/{id}")
-    public ResponseEntity<Map<String, Object>> deleteInventory(@PathVariable Long id) {
-        inventoryRepo.findById(id).ifPresent(inv -> {
-            inventoryRepo.deleteById(id);
-            // Remove from dashboard (latest_checks) while keeping full history in certificate_checks
-            latestCheckRepo.deleteById(inv.getDomain());
-        });
+    public ResponseEntity<Map<String, Object>> deleteInventory(
+            @PathVariable Long id, HttpSession session, HttpServletRequest request) {
+        return inventoryRepo.findById(id).map(inv -> {
+            if (!isAdmin(session)) checkOwnership(inv.getTeamId(), session);
+            inv.setDeletedAt(now());
+            inv.setActive(false);
+            inventoryRepo.save(inv);
+            auditService.recordAction("DOMAIN_SOFT_DELETE", session, request,
+                    "CERTIFICATE", inv.getDomain(),
+                    "{\"teamId\":" + inv.getTeamId() + "}");
+            return ok(Map.of("message", "Deleted"));
+        }).orElse(ResponseEntity.notFound().build());
+    }
+
+    @CacheEvict(value = "cert-latest", allEntries = true)
+    @DeleteMapping("/certificates/{domain}")
+    public ResponseEntity<Map<String, Object>> deleteCertificateCheck(
+            @PathVariable String domain, HttpSession session, HttpServletRequest request) {
+        requireAdmin(session);
+        latestCheckRepo.deleteById(domain);
+        auditService.recordAction("DOMAIN_DELETE_CHECK", session, request, "CERTIFICATE", domain, null);
         return ok(Map.of("message", "Deleted"));
     }
 
-    // ── Alert Thresholds ──────────────────────────────────────────────────────
+    @PostMapping("/inventory/{id}/restore")
+    public ResponseEntity<Map<String, Object>> restoreInventory(
+            @PathVariable Long id, HttpSession session, HttpServletRequest request) {
+        requireAdmin(session);
+        return inventoryRepo.findById(id).map(inv -> {
+            inv.setDeletedAt(null);
+            inv.setActive(true);
+            inv.setUpdatedAt(now());
+            inventoryRepo.save(inv);
+            auditService.recordAction("DOMAIN_RESTORE", session, request,
+                    "CERTIFICATE", inv.getDomain(),
+                    "{\"teamId\":" + inv.getTeamId() + "}");
+            return ok(Map.of("data", inv, "message", "Restored"));
+        }).orElse(ResponseEntity.notFound().build());
+    }
+
+    @PostMapping("/inventory/{id}/transfer")
+    public ResponseEntity<Map<String, Object>> transferInventory(
+            @PathVariable Long id, @RequestBody Map<String, Object> body,
+            HttpSession session, HttpServletRequest request) {
+        requireAdmin(session);
+        Long newTeamId = toLong(body.get("team_id"));
+        CertificateInventory inv = inventoryRepo.findById(id)
+                .orElseThrow(() -> new NoSuchElementException("Inventory item not found: " + id));
+        Long oldTeamId = inv.getTeamId();
+        inv.setTeamId(newTeamId);
+        inv.setUpdatedAt(now());
+        inventoryRepo.save(inv);
+        auditService.recordAction("DOMAIN_TRANSFER_SY", session, request,
+                "CERTIFICATE", inv.getDomain(),
+                "{\"from\":" + oldTeamId + ",\"to\":" + newTeamId + "}");
+        return ok(Map.of("data", inv, "message", "Transferred"));
+    }
+
+    @PostMapping("/inventory/{id}/transfer-ug")
+    public ResponseEntity<Map<String, Object>> transferInventoryUg(
+            @PathVariable Long id, @RequestBody Map<String, Object> body,
+            HttpSession session, HttpServletRequest request) {
+        requireAdmin(session);
+        Long newUgTeamId = toLong(body.get("ug_team_id"));
+        CertificateInventory inv = inventoryRepo.findById(id)
+                .orElseThrow(() -> new NoSuchElementException("Inventory item not found: " + id));
+        Long oldUgTeamId = inv.getUgTeamId();
+        inv.setUgTeamId(newUgTeamId);
+        inv.setUpdatedAt(now());
+        inventoryRepo.save(inv);
+        auditService.recordAction("DOMAIN_TRANSFER_UG", session, request,
+                "CERTIFICATE", inv.getDomain(),
+                "{\"from\":" + oldUgTeamId + ",\"to\":" + newUgTeamId + "}");
+        return ok(Map.of("data", inv, "message", "UG team transferred"));
+    }
+
+    // ── Alert Thresholds (ADMIN only) ─────────────────────────────────────────
 
     @GetMapping("/thresholds")
-    public ResponseEntity<Map<String, Object>> getThresholds() {
+    public ResponseEntity<Map<String, Object>> getThresholds(HttpSession session) {
+        requireAdmin(session);
         return ok(Map.of("data", thresholdRepo.findAll()));
     }
 
     @PostMapping("/thresholds")
-    public ResponseEntity<Map<String, Object>> createThreshold(@RequestBody AlertThreshold t) {
+    public ResponseEntity<Map<String, Object>> createThreshold(
+            @RequestBody AlertThreshold t, HttpSession session) {
+        requireAdmin(session);
         t.setId(null);
         return ok(Map.of("data", thresholdRepo.save(t)));
     }
 
     @PutMapping("/thresholds/{id}")
-    public ResponseEntity<Map<String, Object>> updateThreshold(@PathVariable Long id,
-                                                                @RequestBody AlertThreshold t) {
+    public ResponseEntity<Map<String, Object>> updateThreshold(
+            @PathVariable Long id, @RequestBody AlertThreshold t, HttpSession session) {
+        requireAdmin(session);
         AlertThreshold existing = thresholdRepo.findById(id)
                 .orElseThrow(() -> new NoSuchElementException("Threshold not found: " + id));
         existing.setName(t.getName() != null ? t.getName() : existing.getName());
@@ -110,50 +293,93 @@ public class AdminController {
     // ── Escalation Contacts ───────────────────────────────────────────────────
 
     @GetMapping("/contacts")
-    public ResponseEntity<Map<String, Object>> listContacts() {
-        return ok(Map.of("data", contactRepo.findByActiveTrueOrderByRoleAsc()));
+    public ResponseEntity<Map<String, Object>> listContacts(HttpSession session) {
+        List<EscalationContact> contacts = isAdmin(session)
+                ? contactRepo.findByActiveTrueOrderByRoleAsc()
+                : contactRepo.findByTeamIdAndActiveTrueOrderByRoleAsc(teamId(session));
+        return ok(Map.of("data", contacts));
     }
 
     @GetMapping("/contacts/all")
-    public ResponseEntity<Map<String, Object>> listAllContacts() {
-        return ok(Map.of("data", contactRepo.findAll()));
+    public ResponseEntity<Map<String, Object>> listAllContacts(HttpSession session) {
+        List<EscalationContact> contacts = isAdmin(session)
+                ? contactRepo.findAll()
+                : contactRepo.findByTeamIdOrderByRoleAsc(teamId(session));
+        return ok(Map.of("data", contacts));
     }
 
     @PostMapping("/contacts")
-    public ResponseEntity<Map<String, Object>> addContact(@RequestBody EscalationContact contact) {
+    public ResponseEntity<Map<String, Object>> addContact(
+            @RequestBody Map<String, Object> body, HttpSession session) {
+        EscalationContact contact = new EscalationContact();
+        applyContactFields(contact, body, session);
         contact.setId(null);
         contact.setCreatedAt(now());
         if (contact.getActive() == null) contact.setActive(true);
         if (contact.getMinAlertLevel() == null) contact.setMinAlertLevel("WARNING");
+        if (!isAdmin(session)) contact.setTeamId(teamId(session));
+        if (contact.getTeamId() == null) {
+            userService.listTeams().stream().findFirst().ifPresent(t -> contact.setTeamId(t.getId()));
+        }
         return ok(Map.of("data", contactRepo.save(contact)));
     }
 
     @PutMapping("/contacts/{id}")
-    public ResponseEntity<Map<String, Object>> updateContact(@PathVariable Long id,
-                                                              @RequestBody EscalationContact contact) {
+    public ResponseEntity<Map<String, Object>> updateContact(
+            @PathVariable Long id, @RequestBody Map<String, Object> body, HttpSession session) {
         EscalationContact existing = contactRepo.findById(id)
                 .orElseThrow(() -> new NoSuchElementException("Contact not found: " + id));
-        existing.setName(contact.getName());
-        existing.setEmail(contact.getEmail());
-        existing.setRole(contact.getRole());
-        existing.setMinAlertLevel(contact.getMinAlertLevel() != null ? contact.getMinAlertLevel() : "WARNING");
-        existing.setWebhookUrl(contact.getWebhookUrl());
-        existing.setWebhookType(contact.getWebhookType());
-        existing.setActive(contact.getActive() != null ? contact.getActive() : true);
+        if (!isAdmin(session)) checkOwnership(existing.getTeamId(), session);
+        applyContactFields(existing, body, session);
         return ok(Map.of("data", contactRepo.save(existing)));
     }
 
+    private void applyContactFields(EscalationContact c, Map<String, Object> body, HttpSession session) {
+        Long userId = toLong(body.get("user_id"));
+        if (userId != null) {
+            userRepo.findById(userId).ifPresent(u -> {
+                c.setUserId(userId);
+                c.setName(u.getDisplayName() != null && !u.getDisplayName().isBlank()
+                        ? u.getDisplayName() : u.getUsername());
+                c.setEmail(u.getEmail());
+            });
+        } else {
+            String name = (String) body.get("name");
+            String email = (String) body.get("email");
+            if (name != null) c.setName(name);
+            if (email != null) c.setEmail(email);
+            c.setUserId(null);
+        }
+        String role = (String) body.get("role");
+        if (role != null) c.setRole(role);
+        String minAlertLevel = (String) body.get("min_alert_level");
+        c.setMinAlertLevel(minAlertLevel != null ? minAlertLevel : (c.getMinAlertLevel() != null ? c.getMinAlertLevel() : "WARNING"));
+        c.setWebhookUrl((String) body.get("webhook_url"));
+        c.setWebhookType((String) body.get("webhook_type"));
+        Object active = body.get("active");
+        c.setActive(active instanceof Boolean ? (Boolean) active : (c.getActive() != null ? c.getActive() : true));
+        if (isAdmin(session)) {
+            Long teamId = toLong(body.get("team_id"));
+            if (teamId != null) c.setTeamId(teamId);
+        }
+    }
+
     @DeleteMapping("/contacts/{id}")
-    public ResponseEntity<Map<String, Object>> deleteContact(@PathVariable Long id) {
+    public ResponseEntity<Map<String, Object>> deleteContact(
+            @PathVariable Long id, HttpSession session) {
+        EscalationContact existing = contactRepo.findById(id)
+                .orElseThrow(() -> new NoSuchElementException("Contact not found: " + id));
+        if (!isAdmin(session)) checkOwnership(existing.getTeamId(), session);
         contactRepo.deleteById(id);
         return ok(Map.of("message", "Deleted"));
     }
 
-    // ── Alert Events ──────────────────────────────────────────────────────────
+    // ── Alert Events (ADMIN only) ─────────────────────────────────────────────
 
     @GetMapping("/alerts")
     public ResponseEntity<Map<String, Object>> listAlerts(
-            @RequestParam(defaultValue = "false") boolean onlyOpen) {
+            @RequestParam(defaultValue = "false") boolean onlyOpen, HttpSession session) {
+        requireAdmin(session);
         List<AlertEvent> events = onlyOpen
                 ? alertEventRepo.findAllOpenOrderBySeverity()
                 : alertEventRepo.findAllByOrderByCreatedAtDesc();
@@ -163,34 +389,243 @@ public class AdminController {
     @PostMapping("/alerts/{id}/acknowledge")
     public ResponseEntity<Map<String, Object>> acknowledgeAlert(
             @PathVariable Long id,
-            @RequestBody(required = false) Map<String, String> body) {
-        String by = body != null ? body.getOrDefault("acknowledged_by", "admin") : "admin";
+            HttpSession session, HttpServletRequest request) {
+        requireAdmin(session);
+        String by = resolveDisplayName(session);
         AlertEvent event = escalationService.acknowledge(id, by);
+        auditService.recordAction("ALERT_ACKNOWLEDGE", session, request,
+                "ALERT_EVENT", id.toString(),
+                "{\"domain\":\"" + event.getDomain() + "\"}");
         return ok(Map.of("data", event, "message", "Alert acknowledged"));
     }
 
     @PostMapping("/alerts/{id}/resolve")
     public ResponseEntity<Map<String, Object>> resolveAlert(
             @PathVariable Long id,
-            @RequestBody(required = false) Map<String, String> body) {
-        String resolvedBy = body != null ? body.getOrDefault("resolved_by", "admin") : "admin";
-        AlertEvent event = escalationService.resolve(id, resolvedBy);
+            HttpSession session, HttpServletRequest request) {
+        requireAdmin(session);
+        String by = resolveDisplayName(session);
+        AlertEvent event = escalationService.resolve(id, by);
+        auditService.recordAction("ALERT_RESOLVE", session, request,
+                "ALERT_EVENT", id.toString(),
+                "{\"domain\":\"" + event.getDomain() + "\"}");
         return ok(Map.of("data", event, "message", "Alert resolved"));
     }
 
     @PostMapping("/alerts/{id}/re-notify")
-    public ResponseEntity<Map<String, Object>> reNotifyAlert(@PathVariable Long id) {
-        Map<String, Object> result = escalationService.reNotify(id);
-        return ok(Map.of("data", result, "message", "Bildirim tetiklendi"));
+    public ResponseEntity<Map<String, Object>> reNotifyAlert(
+            @PathVariable Long id, HttpSession session) {
+        requireAdmin(session);
+        return ok(Map.of("data", escalationService.reNotify(id), "message", "Notification triggered"));
     }
 
     @GetMapping("/alerts/{id}/notifications")
-    public ResponseEntity<Map<String, Object>> getAlertNotifications(@PathVariable Long id) {
-        List<NotificationLog> logs = notificationLogRepo.findByAlertEventIdOrderBySentAtDesc(id);
-        return ok(Map.of("data", logs));
+    public ResponseEntity<Map<String, Object>> getAlertNotifications(
+            @PathVariable Long id, HttpSession session) {
+        requireAdmin(session);
+        return ok(Map.of("data", notificationLogRepo.findByAlertEventIdOrderBySentAtDesc(id)));
+    }
+
+    // ── Teams (ADMIN only) ────────────────────────────────────────────────────
+
+    @GetMapping("/teams")
+    public ResponseEntity<Map<String, Object>> listTeams(HttpSession session) {
+        requireAdmin(session);
+        return ok(Map.of("data", userService.listTeams()));
+    }
+
+    @PostMapping("/teams")
+    public ResponseEntity<Map<String, Object>> createTeam(
+            @RequestBody Map<String, Object> body, HttpSession session, HttpServletRequest request) {
+        requireAdmin(session);
+        Team team = userService.createTeam(
+                (String) body.get("name"),
+                (String) body.get("email"),
+                (String) body.get("description"),
+                toLong(body.get("leader_id")),
+                (String) body.get("team_type"));
+        auditService.recordAction("TEAM_CREATE", session, request,
+                "TEAM", team.getId().toString(),
+                "{\"name\":\"" + team.getName() + "\",\"leaderId\":" + team.getLeaderId()
+                + ",\"teamType\":\"" + team.getTeamType() + "\"}");
+        return ok(Map.of("data", team, "message", "Team created"));
+    }
+
+    @PutMapping("/teams/{id}")
+    public ResponseEntity<Map<String, Object>> updateTeam(
+            @PathVariable Long id, @RequestBody Map<String, Object> body, HttpSession session) {
+        requireAdmin(session);
+        Team team = userService.updateTeam(id,
+                (String) body.get("name"),
+                (String) body.get("email"),
+                (String) body.get("description"),
+                body.get("active") instanceof Boolean ? (Boolean) body.get("active") : null,
+                toLong(body.get("leader_id")),
+                (String) body.get("team_type"));
+        return ok(Map.of("data", team));
+    }
+
+    @GetMapping("/teams/{id}/users")
+    public ResponseEntity<Map<String, Object>> listTeamUsers(
+            @PathVariable Long id, HttpSession session) {
+        requireAdmin(session);
+        return ok(Map.of("data", userService.listUsers().stream()
+                .filter(u -> id.equals(u.getTeamId())).toList()));
+    }
+
+    @DeleteMapping("/teams/{id}")
+    public ResponseEntity<Map<String, Object>> deleteTeam(
+            @PathVariable Long id, HttpSession session, HttpServletRequest request) {
+        requireAdmin(session);
+        userService.deleteTeam(id);
+        auditService.recordAction("TEAM_DELETE", session, request, "TEAM", id.toString(), null);
+        return ok(Map.of("message", "Team deleted"));
+    }
+
+    // ── Users (ADMIN only) ────────────────────────────────────────────────────
+
+    @GetMapping("/users")
+    public ResponseEntity<Map<String, Object>> listUsers(HttpSession session) {
+        requireAdmin(session);
+        return ok(Map.of("data", userService.listUsers()));
+    }
+
+    @PostMapping("/users")
+    public ResponseEntity<Map<String, Object>> createUser(
+            @RequestBody Map<String, Object> body, HttpSession session, HttpServletRequest request) {
+        requireAdmin(session);
+        AppUser user = userService.createUser(
+                (String) body.get("username"),
+                (String) body.get("password"),
+                (String) body.get("display_name"),
+                (String) body.get("email"),
+                (String) body.get("employee_id"),
+                (String) body.get("system_role"),
+                toLong(body.get("team_id")),
+                (String) body.get("org_role"));
+        auditService.recordAction("USER_CREATE", session, request,
+                "USER", user.getUsername(),
+                "{\"role\":\"" + user.getSystemRole() + "\",\"teamId\":" + user.getTeamId() + "}");
+        return ok(Map.of("data", user, "message", "User created"));
+    }
+
+    @PutMapping("/users/{id}")
+    public ResponseEntity<Map<String, Object>> updateUser(
+            @PathVariable Long id, @RequestBody Map<String, Object> body, HttpSession session) {
+        requireAdmin(session);
+        AppUser user = userService.updateUser(id,
+                (String) body.get("display_name"),
+                (String) body.get("email"),
+                (String) body.get("employee_id"),
+                (String) body.get("system_role"),
+                toLong(body.get("team_id")),
+                body.get("active") instanceof Boolean ? (Boolean) body.get("active") : null,
+                (String) body.get("org_role"));
+        return ok(Map.of("data", user));
+    }
+
+    @PostMapping("/users/{id}/reset-password")
+    public ResponseEntity<Map<String, Object>> resetPassword(
+            @PathVariable Long id, @RequestBody Map<String, String> body, HttpSession session) {
+        requireAdmin(session);
+        userService.changePassword(id, body.get("password"));
+        return ok(Map.of("message", "Password updated"));
+    }
+
+    @PostMapping("/users/{id}/unlock")
+    public ResponseEntity<Map<String, Object>> unlockUser(
+            @PathVariable Long id, HttpSession session, HttpServletRequest request) {
+        requireAdmin(session);
+        userService.unlockUser(id);
+        auditService.recordAction("USER_UNLOCK", session, request, "USER", id.toString(), null);
+        return ok(Map.of("message", "User unlocked"));
+    }
+
+    @DeleteMapping("/users/{id}")
+    public ResponseEntity<Map<String, Object>> deleteUser(
+            @PathVariable Long id, HttpSession session, HttpServletRequest request) {
+        requireAdmin(session);
+        userService.deleteUser(id);
+        auditService.recordAction("USER_DELETE", session, request, "USER", id.toString(), null);
+        return ok(Map.of("message", "User deleted"));
+    }
+
+    // ── Certificate Notes ──────────────────────────────────────────────────────
+
+    @GetMapping("/notes/{domain}")
+    public ResponseEntity<Map<String, Object>> getNotes(
+            @PathVariable String domain, HttpSession session) {
+        List<CertificateNote> notes = isAdmin(session)
+                ? noteRepo.findByDomainOrderByCreatedAtDesc(domain)
+                : noteRepo.findByDomainAndTeamIdOrderByCreatedAtDesc(domain, teamId(session));
+        return ok(Map.of("data", notes));
+    }
+
+    @PostMapping("/notes/{domain}")
+    public ResponseEntity<Map<String, Object>> addNote(
+            @PathVariable String domain,
+            @RequestBody Map<String, String> body, HttpSession session) {
+        String text = body.get("note");
+        if (text == null || text.isBlank())
+            throw new IllegalArgumentException("Note text cannot be blank");
+        CertificateNote note = new CertificateNote();
+        note.setDomain(domain);
+        note.setTeamId(isAdmin(session) ? null : teamId(session));
+        note.setAuthorUsername((String) session.getAttribute("username"));
+        note.setAuthorName((String) session.getAttribute("displayName"));
+        note.setNote(text.trim());
+        note.setCreatedAt(now());
+        return ok(Map.of("data", noteRepo.save(note), "message", "Note added"));
+    }
+
+    @DeleteMapping("/notes/{domain}/{noteId}")
+    public ResponseEntity<Map<String, Object>> deleteNote(
+            @PathVariable String domain, @PathVariable Long noteId, HttpSession session) {
+        CertificateNote note = noteRepo.findById(noteId)
+                .orElseThrow(() -> new NoSuchElementException("Note not found: " + noteId));
+        if (!domain.equals(note.getDomain()))
+            throw new IllegalArgumentException("Note does not belong to domain: " + domain);
+        if (!isAdmin(session)) checkOwnership(note.getTeamId(), session);
+        noteRepo.deleteById(noteId);
+        return ok(Map.of("message", "Note deleted"));
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
+
+    private boolean isAdmin(HttpSession session) {
+        return "ADMIN".equals(session.getAttribute("systemRole"));
+    }
+
+    private void requireAdmin(HttpSession session) {
+        if (!isAdmin(session)) {
+            log.warn("Unauthorized admin access attempt by user={}", actor(session));
+            throw new SecurityException("Admin access required");
+        }
+    }
+
+    private String resolveDisplayName(HttpSession session) {
+        String dn = (String) session.getAttribute("displayName");
+        return (dn != null && !dn.isBlank()) ? dn : (String) session.getAttribute("username");
+    }
+
+    /** Username extracted from session — used in audit log entries. */
+    private String actor(HttpSession session) {
+        Object u = session.getAttribute("username");
+        return u != null ? u.toString() : "anonymous";
+    }
+
+    private Long teamId(HttpSession session) {
+        Object raw = session.getAttribute("teamId");
+        if (raw == null) return null;
+        return raw instanceof Long ? (Long) raw : Long.valueOf(raw.toString());
+    }
+
+    private void checkOwnership(Long resourceTeamId, HttpSession session) {
+        Long userTeamId = teamId(session);
+        if (!Objects.equals(resourceTeamId, userTeamId)) {
+            throw new SecurityException("Access denied: resource belongs to a different team");
+        }
+    }
 
     private ResponseEntity<Map<String, Object>> ok(Map<String, Object> body) {
         Map<String, Object> response = new java.util.LinkedHashMap<>(body);
@@ -201,5 +636,24 @@ public class AdminController {
 
     private String now() {
         return ISO.format(Instant.now());
+    }
+
+    private void validateDomain(String domain) {
+        if (domain == null || domain.isBlank())
+            throw new IllegalArgumentException("Domain cannot be blank");
+        if (domain.length() > 253)
+            throw new IllegalArgumentException("Domain name too long");
+        if (!domain.matches("^(?:[a-zA-Z0-9](?:[a-zA-Z0-9\\-]{0,61}[a-zA-Z0-9])?\\.)+[a-zA-Z]{2,}$")
+                && !domain.matches("^[a-zA-Z0-9\\-]{1,63}$")) {
+            throw new IllegalArgumentException("Invalid domain format: " + domain);
+        }
+    }
+
+    private Long toLong(Object v) {
+        if (v == null) return null;
+        if (v instanceof Long l) return l;
+        if (v instanceof Integer i) return i.longValue();
+        if (v instanceof Number n) return n.longValue();
+        try { return Long.parseLong(v.toString()); } catch (Exception e) { return null; }
     }
 }

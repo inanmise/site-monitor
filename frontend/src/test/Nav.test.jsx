@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { render, screen, fireEvent } from '@testing-library/react'
+import { render, screen, fireEvent } from './test-utils.jsx'
 import Nav from '../components/Nav.jsx'
 
 const DEFAULT_PROPS = {
@@ -10,34 +10,35 @@ const DEFAULT_PROPS = {
 }
 
 describe('Nav', () => {
-  it('renders all 5 tabs', () => {
+  it('renders all 6 tabs', () => {
     render(<Nav {...DEFAULT_PROPS} />)
     expect(screen.getByText('Dashboard')).toBeInTheDocument()
-    expect(screen.getByText(/Uyarılar/)).toBeInTheDocument()
-    expect(screen.getByText(/Tüm Sertifikalar/)).toBeInTheDocument()
-    expect(screen.getByText(/Yenileme/)).toBeInTheDocument()
-    expect(screen.getByText(/Yönetim/)).toBeInTheDocument()
+    expect(screen.getByText('Warnings')).toBeInTheDocument()
+    expect(screen.getByText('All Certificates')).toBeInTheDocument()
+    expect(screen.getByText('Renewal Advice')).toBeInTheDocument()
+    expect(screen.getByText('Activity Log')).toBeInTheDocument()
+    expect(screen.getByText('Admin Panel')).toBeInTheDocument()
   })
 
-  it('marks the active tab with the active class', () => {
+  it('marks the active tab with the sb-active class', () => {
     render(<Nav {...DEFAULT_PROPS} activeTab="warnings" />)
-    const warningsBtn = screen.getByText(/Uyarılar/)
-    expect(warningsBtn).toHaveClass('active')
-    const dashboardBtn = screen.getByText('Dashboard')
-    expect(dashboardBtn).not.toHaveClass('active')
+    const warningsBtn = screen.getByRole('button', { name: /Warnings/ })
+    expect(warningsBtn).toHaveClass('sb-active')
+    const dashboardBtn = screen.getByRole('button', { name: /Dashboard/ })
+    expect(dashboardBtn).not.toHaveClass('sb-active')
   })
 
   it('calls onTabChange with tab id when a tab is clicked', () => {
     const onTabChange = vi.fn()
     render(<Nav {...DEFAULT_PROPS} onTabChange={onTabChange} />)
-    fireEvent.click(screen.getByText('Dashboard'))
+    fireEvent.click(screen.getByRole('button', { name: /Dashboard/ }))
     expect(onTabChange).toHaveBeenCalledWith('dashboard')
   })
 
-  it('calls onTabChange with "admin" when Yönetim is clicked', () => {
+  it('calls onTabChange with "admin" when Admin Panel is clicked', () => {
     const onTabChange = vi.fn()
     render(<Nav {...DEFAULT_PROPS} onTabChange={onTabChange} />)
-    fireEvent.click(screen.getByText(/Yönetim/))
+    fireEvent.click(screen.getByRole('button', { name: /Admin Panel/ }))
     expect(onTabChange).toHaveBeenCalledWith('admin')
   })
 
@@ -49,7 +50,7 @@ describe('Nav', () => {
   it('calls onLogout when logout button is clicked', () => {
     const onLogout = vi.fn()
     render(<Nav {...DEFAULT_PROPS} onLogout={onLogout} />)
-    fireEvent.click(screen.getByText(/Çıkış/))
+    fireEvent.click(screen.getByRole('button', { name: /Logout/ }))
     expect(onLogout).toHaveBeenCalledTimes(1)
   })
 })

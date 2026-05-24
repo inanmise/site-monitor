@@ -101,13 +101,34 @@ function NotifLogCard({ log: l }) {
 
       {open && (
         <div className="nl-card-body">
+          {l.email_from && (
+            <div className="nl-detail-row">
+              <span className="nl-detail-label">{t('alh.notif.from')}</span>
+              <span className="nl-detail-val">{l.email_from}</span>
+            </div>
+          )}
+          {l.cc && (
+            <div className="nl-detail-row">
+              <span className="nl-detail-label">{t('alh.notif.cc')}</span>
+              <span className="nl-detail-val">{l.cc}</span>
+            </div>
+          )}
           <div className="nl-detail-row">
             <span className="nl-detail-label">{t('alh.notif.subject')}</span>
             <span className="nl-detail-val nl-subject">{l.subject || '—'}</span>
           </div>
-          <div className="nl-detail-row">
+          <div className="nl-detail-row nl-detail-row--body">
             <span className="nl-detail-label">{t('alh.notif.content')}</span>
-            <span className="nl-detail-val nl-message">{l.message || '—'}</span>
+            {l.message && l.message.trimStart().startsWith('<') ? (
+              <iframe
+                className="nl-message-iframe"
+                srcDoc={l.message}
+                sandbox=""
+                title={l.subject}
+              />
+            ) : (
+              <span className="nl-detail-val nl-message">{l.message || '—'}</span>
+            )}
           </div>
           <div className="nl-detail-row">
             <span className="nl-detail-label">{t('alh.notif.emailStatus')}</span>
@@ -210,11 +231,11 @@ function NotifyResultModal({ alertId, alertInfo, currentResult, onClose }) {
   )
 }
 
-export default function AlertHistory() {
+export default function AlertHistory({ domain = null }) {
   const t = useT()
-  const { showPrompt } = useDialog()
+  const { showConfirm } = useDialog()
   const [alerts,       setAlerts]       = useState([])
-  const [onlyOpen,     setOnlyOpen]     = useState(true)
+  const [onlyOpen,     setOnlyOpen]     = useState(domain == null)
   const [loading,      setLoading]      = useState(false)
   const [notifyModal,  setNotifyModal]  = useState(null)
   const [notifying,    setNotifying]    = useState(null)
@@ -238,32 +259,29 @@ export default function AlertHistory() {
 
   async function ack(id) {
     const alert = alerts.find(a => a.id === id)
-    const by = await showPrompt({
+    const confirmed = await showConfirm({
       title: t('alh.ackDialog.title'),
       message: t('alh.ackDialog.msg', alert?.domain ?? ''),
-      defaultValue: 'admin',
-      placeholder: t('ec.formName'),
+      variant: 'warning',
       confirmText: t('alh.ackDialog.confirm'),
       cancelText: t('alh.ackDialog.cancel'),
     })
-    if (!by) return
-    await api.admin.acknowledgeAlert(id, by)
+    if (!confirmed) return
+    await api.admin.acknowledgeAlert(id)
     load()
   }
 
   async function resolve(id) {
     const alert = alerts.find(a => a.id === id)
-    const by = await showPrompt({
+    const confirmed = await showConfirm({
       title: t('alh.resolveDialog.title'),
       message: t('alh.resolveDialog.msg', alert?.domain ?? ''),
-      defaultValue: 'admin',
-      placeholder: t('ec.formName'),
+      variant: 'success',
       confirmText: t('alh.resolveDialog.confirm'),
       cancelText: t('alh.resolveDialog.cancel'),
-      variant: 'info',
     })
-    if (!by) return
-    await api.admin.resolveAlert(id, by)
+    if (!confirmed) return
+    await api.admin.resolveAlert(id)
     load()
   }
 
@@ -287,13 +305,14 @@ export default function AlertHistory() {
     try { return JSON.parse(json) } catch { return [] }
   }
 
-  const open   = alerts.filter(a => !a.resolved)
-  const closed = alerts.filter(a =>  a.resolved)
+  const displayed = domain ? alerts.filter(a => a.domain === domain) : alerts
+  const open   = displayed.filter(a => !a.resolved)
+  const closed = displayed.filter(a =>  a.resolved)
 
   return (
     <div className="admin-section">
       <div className="admin-section-header">
-        <h3>{t('alh.title')}</h3>
+        {domain == null && <h3>{t('alh.title')}</h3>}
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
           <label className="checkbox-label">
             <input type="checkbox" checked={onlyOpen} onChange={e => setOnlyOpen(e.target.checked)} />

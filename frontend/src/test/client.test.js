@@ -158,11 +158,19 @@ describe('api.getHistory', () => {
 // ── api.admin ─────────────────────────────────────────────────────────────────
 
 describe('api.admin.getInventory', () => {
-  it('GETs /api/admin/inventory', async () => {
+  it('GETs /api/admin/inventory with showDeleted=false by default', async () => {
     mockFetch({ success: true, data: [] })
     await api.admin.getInventory()
     expect(global.fetch).toHaveBeenCalledWith(
-      '/api/admin/inventory',
+      '/api/admin/inventory?showDeleted=false',
+      expect.any(Object)
+    )
+  })
+  it('GETs /api/admin/inventory with showDeleted=true when passed', async () => {
+    mockFetch({ success: true, data: [] })
+    await api.admin.getInventory(true)
+    expect(global.fetch).toHaveBeenCalledWith(
+      '/api/admin/inventory?showDeleted=true',
       expect.any(Object)
     )
   })
@@ -229,6 +237,161 @@ describe('api.admin.resolveAlert', () => {
     await api.admin.resolveAlert(7)
     expect(global.fetch).toHaveBeenCalledWith(
       '/api/admin/alerts/7/resolve',
+      expect.objectContaining({ method: 'POST' })
+    )
+  })
+})
+
+// ── api.admin — system health & audit ────────────────────────────────────────
+
+describe('api.admin.getDbStats', () => {
+  it('GETs /api/admin/system/db-stats', async () => {
+    mockFetch([])
+    await api.admin.getDbStats()
+    expect(global.fetch).toHaveBeenCalledWith(
+      '/api/admin/system/db-stats',
+      expect.any(Object)
+    )
+  })
+})
+
+describe('api.admin.getSmtpLogs', () => {
+  it('GETs /api/admin/system/smtp-logs', async () => {
+    mockFetch([])
+    await api.admin.getSmtpLogs()
+    expect(global.fetch).toHaveBeenCalledWith(
+      '/api/admin/system/smtp-logs',
+      expect.any(Object)
+    )
+  })
+})
+
+describe('api.admin.getSystemHealth', () => {
+  it('GETs /api/admin/system', async () => {
+    mockFetch({ success: true })
+    await api.admin.getSystemHealth()
+    expect(global.fetch).toHaveBeenCalledWith(
+      '/api/admin/system',
+      expect.any(Object)
+    )
+  })
+})
+
+describe('api.admin.getAuditLogs', () => {
+  it('filters out blank string and null params from query', async () => {
+    mockFetch({ success: true, data: [] })
+    await api.admin.getAuditLogs({ actor: 'alice', eventType: '', outcome: null, anomalyOnly: false })
+    const url = global.fetch.mock.calls[0][0]
+    expect(url).toContain('actor=alice')
+    expect(url).not.toContain('eventType')
+    expect(url).not.toContain('outcome')
+    expect(url).not.toContain('anomalyOnly')
+  })
+})
+
+describe('api.admin.getAuditStats', () => {
+  it('GETs /api/admin/audit/stats', async () => {
+    mockFetch({ success: true })
+    await api.admin.getAuditStats()
+    expect(global.fetch).toHaveBeenCalledWith(
+      '/api/admin/audit/stats',
+      expect.any(Object)
+    )
+  })
+})
+
+// ── api.admin — team CRUD ─────────────────────────────────────────────────────
+
+describe('api.admin.createTeam', () => {
+  it('POSTs to /api/admin/teams with body', async () => {
+    mockFetch({ success: true })
+    const data = { name: 'Team A', email: 'a@example.com' }
+    await api.admin.createTeam(data)
+    expect(global.fetch).toHaveBeenCalledWith(
+      '/api/admin/teams',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify(data),
+      })
+    )
+  })
+})
+
+describe('api.admin.updateTeam', () => {
+  it('PUTs to /api/admin/teams/3', async () => {
+    mockFetch({ success: true })
+    const data = { name: 'Updated' }
+    await api.admin.updateTeam(3, data)
+    expect(global.fetch).toHaveBeenCalledWith(
+      '/api/admin/teams/3',
+      expect.objectContaining({
+        method: 'PUT',
+        body: JSON.stringify(data),
+      })
+    )
+  })
+})
+
+describe('api.admin.deleteTeam', () => {
+  it('DELETEs /api/admin/teams/5', async () => {
+    mockFetch({ success: true })
+    await api.admin.deleteTeam(5)
+    expect(global.fetch).toHaveBeenCalledWith(
+      '/api/admin/teams/5',
+      expect.objectContaining({ method: 'DELETE' })
+    )
+  })
+})
+
+// ── api.admin — user CRUD ─────────────────────────────────────────────────────
+
+describe('api.admin.createUser', () => {
+  it('POSTs to /api/admin/users with body', async () => {
+    mockFetch({ success: true })
+    const data = { username: 'bob', password: 'secret' }
+    await api.admin.createUser(data)
+    expect(global.fetch).toHaveBeenCalledWith(
+      '/api/admin/users',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify(data),
+      })
+    )
+  })
+})
+
+describe('api.admin.updateUser', () => {
+  it('PUTs to /api/admin/users/7', async () => {
+    mockFetch({ success: true })
+    const data = { displayName: 'Bob Smith' }
+    await api.admin.updateUser(7, data)
+    expect(global.fetch).toHaveBeenCalledWith(
+      '/api/admin/users/7',
+      expect.objectContaining({
+        method: 'PUT',
+        body: JSON.stringify(data),
+      })
+    )
+  })
+})
+
+describe('api.admin.deleteUser', () => {
+  it('DELETEs /api/admin/users/9', async () => {
+    mockFetch({ success: true })
+    await api.admin.deleteUser(9)
+    expect(global.fetch).toHaveBeenCalledWith(
+      '/api/admin/users/9',
+      expect.objectContaining({ method: 'DELETE' })
+    )
+  })
+})
+
+describe('api.admin.unlockUser', () => {
+  it('POSTs to /api/admin/users/4/unlock', async () => {
+    mockFetch({ success: true })
+    await api.admin.unlockUser(4)
+    expect(global.fetch).toHaveBeenCalledWith(
+      '/api/admin/users/4/unlock',
       expect.objectContaining({ method: 'POST' })
     )
   })

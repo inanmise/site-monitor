@@ -1,6 +1,9 @@
 package com.certmonitor.config;
 
+import com.certmonitor.controller.AuthController;
+import com.certmonitor.model.AppUser;
 import com.certmonitor.service.RememberMeService;
+import com.certmonitor.service.UserService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.servlet.http.Cookie;
 import jakarta.servlet.http.HttpServletRequest;
@@ -24,33 +27,36 @@ public class AuthInterceptor implements HandlerInterceptor {
     @Autowired
     private RememberMeService rememberMeService;
 
+    @Autowired
+    private UserService userService;
+
+    @Autowired
+    private AuthController authController;
+
     @Override
     public boolean preHandle(HttpServletRequest req, HttpServletResponse res, Object handler) throws Exception {
         String path = req.getRequestURI();
-        if (!path.startsWith("/api/") || PUBLIC.contains(path)) {
-            return true;
-        }
+        if (!path.startsWith("/api/") || PUBLIC.contains(path)) return true;
 
-        // 1. Geçerli oturum kontrolü
+        // 1. Valid session check
         HttpSession session = req.getSession(false);
-        if (session != null && Boolean.TRUE.equals(session.getAttribute("authenticated"))) {
-            return true;
-        }
+        if (session != null && Boolean.TRUE.equals(session.getAttribute("authenticated"))) return true;
 
-        // 2. Remember-me cookie kontrolü — geçerliyse otomatik oturum aç
-        Optional<String> usernameOpt = findRememberMeCookie(req)
-                .flatMap(rememberMeService::validate);
+        // 2. Remember-me cookie — if valid, restore full user session
+        Optional<String> usernameOpt = findRememberMeCookie(req).flatMap(rememberMeService::validate);
 
         if (usernameOpt.isPresent()) {
-            HttpSession newSession = req.getSession(true);
-            newSession.setAttribute("authenticated", true);
-            newSession.setAttribute("username", usernameOpt.get());
-            return true;
+            Optional<AppUser> userOpt = userService.findByUsername(usernameOpt.get());
+            if (userOpt.isPresent() && Boolean.TRUE.equals(userOpt.get().getActive())) {
+                HttpSession newSession = req.getSession(true);
+                authController.populateSession(newSession, userOpt.get());
+                return true;
+            }
         }
 
         res.setStatus(401);
         res.setContentType("application/json;charset=UTF-8");
-        mapper.writeValue(res.getWriter(), Map.of("success", false, "error", "Yetkisiz erişim"));
+        mapper.writeValue(res.getWriter(), Map.of("success", false, "error", "Unauthorized"));
         return false;
     }
 

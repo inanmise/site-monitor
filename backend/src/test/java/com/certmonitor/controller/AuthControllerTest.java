@@ -1,6 +1,11 @@
 package com.certmonitor.controller;
 
+import com.certmonitor.model.AppUser;
+import com.certmonitor.model.AuditLog;
+import com.certmonitor.service.AuditService;
 import com.certmonitor.service.RememberMeService;
+import com.certmonitor.service.UserService;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -10,7 +15,11 @@ import org.springframework.http.MediaType;
 import org.springframework.mock.web.MockHttpSession;
 import org.springframework.test.web.servlet.MockMvc;
 
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import java.util.Optional;
+
+import static org.mockito.ArgumentMatchers.*;
+import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 @WebMvcTest(AuthController.class)
@@ -21,6 +30,37 @@ class AuthControllerTest {
 
     @MockBean
     RememberMeService rememberMeService;
+
+    @MockBean
+    UserService userService;
+
+    @MockBean
+    com.certmonitor.service.HttpMetricsService httpMetricsService;
+
+    @MockBean
+    AuditService auditService;
+
+    private AppUser testUser;
+
+    @BeforeEach
+    void setup() {
+        testUser = new AppUser();
+        testUser.setId(1L);
+        testUser.setUsername("testuser");
+        testUser.setSystemRole("USER");
+        testUser.setActive(true);
+        // teamId null → no team name lookup
+
+        when(userService.authenticate("testuser", "testpass")).thenReturn(Optional.of(testUser));
+        when(userService.authenticate("testuser", "wrongpass")).thenReturn(Optional.empty());
+        when(userService.authenticate("nobody", "testpass")).thenReturn(Optional.empty());
+        when(userService.authenticate("", "")).thenReturn(Optional.empty());
+        when(userService.findByUsername("testuser")).thenReturn(Optional.of(testUser));
+        when(userService.checkLockout(anyString())).thenReturn(new UserService.LockoutStatus(false, 0));
+        when(userService.failuresNeededForLevel(anyInt())).thenReturn(5);
+        when(auditService.recordLogin(any(), any(), any(), any(), any(), any(), any(),
+                anyBoolean(), any(), any(), anyInt())).thenReturn(new AuditLog());
+    }
 
     // ── Login ─────────────────────────────────────────────────────────────────
 
@@ -64,18 +104,19 @@ class AuthControllerTest {
     }
 
     @Test
-    @DisplayName("POST /api/login sets authenticated session attribute")
+    @DisplayName("POST /api/login sets authenticated attribute on new session (session fixation prevention)")
     void login_validCredentials_setsSession() throws Exception {
-        MockHttpSession session = new MockHttpSession();
-        mvc.perform(post("/api/login")
-                        .session(session)
+        org.springframework.test.web.servlet.MvcResult result =
+                mvc.perform(post("/api/login")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"username\":\"testuser\",\"password\":\"testpass\"}"))
-                .andExpect(status().isOk());
+                .andExpect(status().isOk())
+                .andReturn();
 
-        // Session should have authenticated=true after login
-        Object authenticated = session.getAttribute("authenticated");
-        assert Boolean.TRUE.equals(authenticated);
+        jakarta.servlet.http.HttpSession newSession = result.getRequest().getSession(false);
+        org.assertj.core.api.Assertions.assertThat(newSession).isNotNull();
+        org.assertj.core.api.Assertions.assertThat(newSession.getAttribute("authenticated"))
+                .isEqualTo(Boolean.TRUE);
     }
 
     // ── Logout ────────────────────────────────────────────────────────────────
@@ -107,8 +148,7 @@ class AuthControllerTest {
         session.setAttribute("authenticated", Boolean.TRUE);
         session.setAttribute("username", "testuser");
 
-        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
-                        .get("/api/me").session(session))
+        mvc.perform(get("/api/me").session(session))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success").value(true))
                 .andExpect(jsonPath("$.username").value("testuser"));
@@ -117,8 +157,7 @@ class AuthControllerTest {
     @Test
     @DisplayName("GET /api/me without session returns 401")
     void me_unauthenticated_returns401() throws Exception {
-        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
-                        .get("/api/me"))
+        mvc.perform(get("/api/me"))
                 .andExpect(status().isUnauthorized());
     }
 }

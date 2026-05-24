@@ -21,10 +21,12 @@ public class EscalationContact {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @Column(nullable = false)
+    /** Link to an AppUser — when set, name/email are derived from the user on save */
+    @Column(name = "user_id")
+    private Long userId;
+
     private String name;
 
-    @Column(nullable = false)
     private String email;
 
     /** Organizational role: PO, TECH, MANAGER, CLEVEL */
@@ -40,6 +42,10 @@ public class EscalationContact {
 
     /** TEAMS or SLACK */
     private String webhookType;
+
+    /** Team this contact belongs to — alerts only fire for certs in the same team */
+    @Column(name = "team_id")
+    private Long teamId;
 
     @Column(nullable = false)
     private Boolean active = true;

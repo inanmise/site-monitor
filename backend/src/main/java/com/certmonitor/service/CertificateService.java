@@ -1,16 +1,22 @@
 package com.certmonitor.service;
 
 import com.certmonitor.dto.CertificateDto;
+import com.certmonitor.model.AlertThreshold;
 import com.certmonitor.model.CertificateCheck;
 import com.certmonitor.model.CertificateInventory;
 import com.certmonitor.model.LatestCheck;
+import com.certmonitor.model.Team;
+import com.certmonitor.repository.AlertThresholdRepository;
 import com.certmonitor.repository.CertificateCheckRepository;
 import com.certmonitor.repository.CertificateInventoryRepository;
 import com.certmonitor.repository.LatestCheckRepository;
+import com.certmonitor.repository.TeamRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.cache.annotation.CacheEvict;
+import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -31,6 +37,8 @@ public class CertificateService {
     private final CertificateCheckerService checkerService;
     private final CertificateInventoryRepository inventoryRepo;
     private final ObjectMapper objectMapper;
+    private final TeamRepository teamRepo;
+    private final AlertThresholdRepository alertThresholdRepo;
 
     private static final DateTimeFormatter ISO =
             DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
@@ -38,6 +46,7 @@ public class CertificateService {
     @Value("${cert.monitor.warning-days:30}")
     private int warningDays;
 
+    @CacheEvict(value = {"cert-stats", "cert-latest", "cert-warnings", "renewal-advice"}, allEntries = true)
     public void saveResult(Map<String, Object> result) {
         String domain = (String) result.get("domain");
         String now = ISO.format(Instant.now());
@@ -45,6 +54,13 @@ public class CertificateService {
         @SuppressWarnings("unchecked")
         List<String> sanList = (List<String>) result.getOrDefault("san", Collections.emptyList());
         String sanJson = checkerService.serializeSan(sanList);
+
+        @SuppressWarnings("unchecked")
+        List<String> keyUsageList = (List<String>) result.getOrDefault("key_usage", Collections.emptyList());
+        @SuppressWarnings("unchecked")
+        List<String> extKeyUsageList = (List<String>) result.getOrDefault("ext_key_usage", Collections.emptyList());
+        String keyUsageJson   = checkerService.serializeSan(keyUsageList);
+        String extKeyUsageJson = checkerService.serializeSan(extKeyUsageList);
 
         // Determine deployment status by comparing fingerprints
         String servedFingerprint = (String) result.get("fingerprint");
@@ -68,6 +84,23 @@ public class CertificateService {
             check.setStatus((String) result.get("status"));
             check.setError((String) result.get("error"));
             check.setSan(sanJson);
+            check.setFingerprint(servedFingerprint);
+            check.setChainStatus((String) result.get("chain_status"));
+            check.setRevocationStatus((String) result.get("revocation_status"));
+            check.setDeploymentStatus(deploymentStatus);
+            check.setIntermediateExpiry((String) result.get("intermediate_expiry"));
+            check.setIntermediateDaysRemaining(toInt(result.get("intermediate_days_remaining")));
+            check.setSerialNumber((String) result.get("serial_number"));
+            check.setSignatureAlgorithm((String) result.get("signature_algorithm"));
+            check.setPublicKeyAlgorithm((String) result.get("public_key_algorithm"));
+            check.setPublicKeySize(toInt(result.get("public_key_size")));
+            check.setSubjectDn((String) result.get("subject_dn"));
+            check.setIssuerDn((String) result.get("issuer_dn"));
+            check.setKeyUsage(keyUsageJson);
+            check.setExtKeyUsage(extKeyUsageJson);
+            check.setIsCa(toBool(result.get("is_ca")));
+            check.setOcspUrl((String) result.get("ocsp_url"));
+            check.setCrlUrl((String) result.get("crl_url"));
             check.setRunId((String) result.get("run_id"));
             check.setCheckedAt((String) result.get("checked_at"));
             check.setCreatedAt(now);
@@ -97,6 +130,17 @@ public class CertificateService {
             latest.setIntermediateDaysRemaining(toInt(result.get("intermediate_days_remaining")));
             latest.setRevocationStatus((String) result.get("revocation_status"));
             latest.setChainDetails(chainDetailsJson);
+            latest.setSerialNumber((String) result.get("serial_number"));
+            latest.setSignatureAlgorithm((String) result.get("signature_algorithm"));
+            latest.setPublicKeyAlgorithm((String) result.get("public_key_algorithm"));
+            latest.setPublicKeySize(toInt(result.get("public_key_size")));
+            latest.setSubjectDn((String) result.get("subject_dn"));
+            latest.setIssuerDn((String) result.get("issuer_dn"));
+            latest.setKeyUsage(keyUsageJson);
+            latest.setExtKeyUsage(extKeyUsageJson);
+            latest.setIsCa(toBool(result.get("is_ca")));
+            latest.setOcspUrl((String) result.get("ocsp_url"));
+            latest.setCrlUrl((String) result.get("crl_url"));
             latest.setCheckedAt((String) result.get("checked_at"));
             latest.setUpdatedAt(now);
             latestRepo.save(latest);
@@ -118,17 +162,69 @@ public class CertificateService {
                 .orElse("OK");
     }
 
+    @Cacheable("cert-latest")
     public List<CertificateDto> getAllLatest() {
+        Set<String> activeDomains = inventoryRepo.findByActiveTrueOrderByDomainAsc()
+                .stream().map(CertificateInventory::getDomain).collect(Collectors.toSet());
+        Map<String, Integer> tierMap = buildTierMap();
+        var thrOpt   = alertThresholdRepo.findFirstByActiveTrue();
+        int critDays = thrOpt.map(AlertThreshold::getCriticalDays).orElse(7);
+        int highDays  = thrOpt.map(AlertThreshold::getHighDays).orElse(15);
         return latestRepo.findAllByOrderByDomainAsc().stream()
-                .map(this::toDto)
+                .filter(c -> activeDomains.contains(c.getDomain()))
+                .map(c -> {
+                    CertificateDto dto = toDto(c);
+                    dto.setTier(tierMap.get(c.getDomain()));
+                    dto.setAlertLevel(computeAlertLevel(dto, critDays, highDays));
+                    return dto;
+                })
                 .collect(Collectors.toList());
+    }
+
+    private String computeAlertLevel(CertificateDto dto, int critDays, int highDays) {
+        if ("error".equals(dto.getStatus())) return "error";
+        Integer days = dto.getDaysRemaining();
+        if (days == null) return "valid";
+        if (days < 0)         return "expired";
+        if (days <= critDays) return "critical";
+        if (days <= highDays) return "high";
+        if (Boolean.TRUE.equals(dto.getWarning())) return "warning";
+        return "valid";
+    }
+
+    private Map<String, Integer> buildTierMap() {
+        return inventoryRepo.findAll().stream()
+                .filter(i -> i.getTier() != null && i.getDomain() != null)
+                .collect(Collectors.toMap(
+                        CertificateInventory::getDomain,
+                        CertificateInventory::getTier,
+                        (a, b) -> a));
+    }
+
+    /** Returns certs visible to the given team (null = ADMIN, sees all). */
+    public List<CertificateDto> getAllLatestForTeam(Long teamId) {
+        if (teamId == null) return getAllLatest();
+        Set<String> domains = getTeamDomains(teamId);
+        return getAllLatest().stream()
+                .filter(c -> domains.contains(c.getDomain()))
+                .collect(Collectors.toList());
+    }
+
+    private Set<String> getTeamDomains(Long teamId) {
+        return inventoryRepo.findByTeamIdAndActiveTrueOrderByDomainAsc(teamId)
+                .stream().map(com.certmonitor.model.CertificateInventory::getDomain)
+                .collect(Collectors.toSet());
     }
 
     public Map<String, Object> getPaginated(int page, int perPage,
                                              String sortBy, String sortDir,
                                              String filterDomain, String filterIssuer,
-                                             String filterStatus) {
-        List<CertificateDto> all = getAllLatest();
+                                             String filterStatus, Long teamId) {
+        List<CertificateDto> all = getAllLatestForTeam(teamId);
+
+        var thrOpt   = alertThresholdRepo.findFirstByActiveTrue();
+        int critDays = thrOpt.map(AlertThreshold::getCriticalDays).orElse(7);
+        int highDays  = thrOpt.map(AlertThreshold::getHighDays).orElse(15);
 
         List<CertificateDto> filtered = all.stream()
                 .filter(c -> filterDomain.isBlank() || c.getDomain().toLowerCase().contains(filterDomain.toLowerCase()))
@@ -137,13 +233,16 @@ public class CertificateService {
                     if (filterStatus.isBlank()) return true;
                     boolean isError   = "error".equals(c.getStatus());
                     boolean isWarning = Boolean.TRUE.equals(c.getWarning()) && !isError;
-                    boolean isCrit    = isWarning && c.getDaysRemaining() != null && c.getDaysRemaining() <= 30;
+                    boolean isCrit    = isWarning && c.getDaysRemaining() != null && c.getDaysRemaining() <= critDays;
+                    boolean isHigh    = isWarning && !isCrit && c.getDaysRemaining() != null && c.getDaysRemaining() <= highDays;
                     return switch (filterStatus) {
-                        case "error"    -> isError;
-                        case "critical" -> isCrit;
-                        case "warning"  -> isWarning && !isCrit;
-                        case "valid"    -> !isWarning && !isError;
-                        default         -> filterStatus.equals(c.getStatus());
+                        case "error"     -> isError;
+                        case "critical"  -> isCrit;
+                        case "high"      -> isHigh;
+                        case "warning"   -> isWarning && !isCrit && !isHigh;
+                        case "valid"     -> !isWarning && !isError;
+                        case "expiring7" -> c.getDaysRemaining() != null && c.getDaysRemaining() >= 0 && c.getDaysRemaining() <= 7;
+                        default          -> filterStatus.equals(c.getStatus());
                     };
                 })
                 .collect(Collectors.toList());
@@ -176,6 +275,7 @@ public class CertificateService {
         );
     }
 
+    @Cacheable("cert-warnings")
     public List<CertificateDto> getWarnings() {
         return latestRepo.findByWarningTrueOrStatus("error").stream()
                 .sorted(Comparator.comparingInt(c -> c.getDaysRemaining() == null ? 0 : c.getDaysRemaining()))
@@ -183,23 +283,31 @@ public class CertificateService {
                 .collect(Collectors.toList());
     }
 
+    public List<CertificateDto> getWarningsForTeam(Long teamId) {
+        if (teamId == null) return getWarnings();
+        Set<String> domains = getTeamDomains(teamId);
+        return getWarnings().stream()
+                .filter(c -> domains.contains(c.getDomain()))
+                .collect(Collectors.toList());
+    }
+
     /**
-     * Adds the domain to certificate_inventory if not already present.
-     * Called whenever a domain is checked via the UI so that subsequent
-     * scheduler runs include it automatically.
+     * Adds the domain to certificate_inventory if not already present,
+     * assigning it to the given team. Called when a user checks a domain via the UI.
      */
     @Transactional
-    public void ensureInInventory(String domain, int port) {
+    public void ensureInInventory(String domain, int port, Long teamId) {
         if (inventoryRepo.existsByDomain(domain)) return;
         String now = ISO.format(Instant.now());
         com.certmonitor.model.CertificateInventory inv = new com.certmonitor.model.CertificateInventory();
         inv.setDomain(domain);
         inv.setPort(port);
+        inv.setTeamId(teamId);
         inv.setActive(true);
         inv.setCreatedAt(now);
         inv.setUpdatedAt(now);
         inventoryRepo.save(inv);
-        log.info("Auto-added {} to inventory (port {})", domain, port);
+        log.info("Auto-added {} to inventory (port {}, teamId={})", domain, port, teamId);
     }
 
     public List<CertificateDto> getHistory(String domain, int limit) {
@@ -208,49 +316,184 @@ public class CertificateService {
                 .collect(Collectors.toList());
     }
 
-    public Map<String, Object> getStats() {
-        List<CertificateDto> all = getAllLatest();
-        List<CertificateDto> warnings = getWarnings();
+    public Map<String, Object> getStatsForTeam(Long teamId) {
+        if (teamId == null) return getStats();
+        List<CertificateDto> all = getAllLatestForTeam(teamId);
+        List<CertificateDto> warnings = getWarningsForTeam(teamId);
+        return computeStats(all, warnings);
+    }
 
-        long errors = warnings.stream().filter(c -> "error".equals(c.getStatus())).count();
-        long warningOnly = warnings.size() - errors;
-        long valid = all.size() - warnings.size();
-        long expiring30 = warnings.stream()
+    private Set<String> getUgTeamDomains(Long ugTeamId) {
+        return inventoryRepo.findByUgTeamIdAndActiveTrueOrderByDomainAsc(ugTeamId)
+                .stream().map(CertificateInventory::getDomain)
+                .collect(Collectors.toSet());
+    }
+
+    public Map<String, Object> getTeamBreakdownStats(Long teamId, String teamName) {
+        List<CertificateDto> syAll  = getAllLatestForTeam(teamId);
+        List<CertificateDto> syWarn = getWarningsForTeam(teamId);
+
+        Set<String> ugDomains = getUgTeamDomains(teamId);
+        List<CertificateDto> ugAll  = getAllLatest().stream()
+                .filter(c -> ugDomains.contains(c.getDomain())).toList();
+        List<CertificateDto> ugWarn = getWarnings().stream()
+                .filter(c -> ugDomains.contains(c.getDomain())).toList();
+
+        Map<String, Integer> tierMap = buildTierMap();
+        List<CertificateDto> syT1All  = syAll.stream().filter(c -> Integer.valueOf(1).equals(tierMap.get(c.getDomain()))).toList();
+        List<CertificateDto> syT1Warn = syWarn.stream().filter(c -> Integer.valueOf(1).equals(tierMap.get(c.getDomain()))).toList();
+        List<CertificateDto> syT2All  = syAll.stream().filter(c -> Integer.valueOf(2).equals(tierMap.get(c.getDomain()))).toList();
+        List<CertificateDto> syT2Warn = syWarn.stream().filter(c -> Integer.valueOf(2).equals(tierMap.get(c.getDomain()))).toList();
+
+        Map<String, Object> res = new LinkedHashMap<>();
+        res.put("mode",        "personal");
+        res.put("team_id",     teamId);
+        res.put("team_name",   teamName != null ? teamName : "");
+        res.put("sy_stats",    computeStats(syAll, syWarn));
+        res.put("ug_stats",    computeStats(ugAll, ugWarn));
+        res.put("sy_t1_stats", computeStats(syT1All, syT1Warn));
+        res.put("sy_t2_stats", computeStats(syT2All, syT2Warn));
+        return res;
+    }
+
+    public Map<String, Object> getAllTeamsBreakdownStats() {
+        List<CertificateInventory> allInv     = inventoryRepo.findByActiveTrueOrderByDomainAsc();
+        List<CertificateDto>       allLatest  = getAllLatest();
+        List<CertificateDto>       allWarnings = getWarnings();
+
+        Map<Long, Set<String>> syMap = new HashMap<>();
+        Map<Long, Set<String>> ugMap = new HashMap<>();
+        for (CertificateInventory inv : allInv) {
+            if (inv.getTeamId()   != null) syMap.computeIfAbsent(inv.getTeamId(),   k -> new HashSet<>()).add(inv.getDomain());
+            if (inv.getUgTeamId() != null) ugMap.computeIfAbsent(inv.getUgTeamId(), k -> new HashSet<>()).add(inv.getDomain());
+        }
+
+        Map<String, Integer> tierMap = buildTierMap();
+        List<Map<String, Object>> result = new ArrayList<>();
+        for (Team team : teamRepo.findAll()) {
+            if (!Boolean.TRUE.equals(team.getActive())) continue;
+            Long tid = team.getId();
+            Set<String> sy = syMap.getOrDefault(tid, Set.of());
+            Set<String> ug = ugMap.getOrDefault(tid, Set.of());
+
+            List<CertificateDto> syT1All  = allLatest.stream().filter(c -> sy.contains(c.getDomain()) && Integer.valueOf(1).equals(tierMap.get(c.getDomain()))).toList();
+            List<CertificateDto> syT1Warn = allWarnings.stream().filter(c -> sy.contains(c.getDomain()) && Integer.valueOf(1).equals(tierMap.get(c.getDomain()))).toList();
+            List<CertificateDto> syT2All  = allLatest.stream().filter(c -> sy.contains(c.getDomain()) && Integer.valueOf(2).equals(tierMap.get(c.getDomain()))).toList();
+            List<CertificateDto> syT2Warn = allWarnings.stream().filter(c -> sy.contains(c.getDomain()) && Integer.valueOf(2).equals(tierMap.get(c.getDomain()))).toList();
+
+            Map<String, Object> entry = new HashMap<>();
+            entry.put("team_id",   tid);
+            entry.put("team_name", team.getName());
+            entry.put("sy_stats",  computeStats(
+                allLatest.stream().filter(c -> sy.contains(c.getDomain())).toList(),
+                allWarnings.stream().filter(c -> sy.contains(c.getDomain())).toList()
+            ));
+            entry.put("ug_stats",  computeStats(
+                allLatest.stream().filter(c -> ug.contains(c.getDomain())).toList(),
+                allWarnings.stream().filter(c -> ug.contains(c.getDomain())).toList()
+            ));
+            entry.put("sy_t1_stats", computeStats(syT1All, syT1Warn));
+            entry.put("sy_t2_stats", computeStats(syT2All, syT2Warn));
+            result.add(entry);
+        }
+        return Map.of("mode", "all_teams", "teams", result);
+    }
+
+    @Cacheable("cert-stats")
+    public Map<String, Object> getStats() {
+        return computeStats(getAllLatest(), getWarnings());
+    }
+
+    private Map<String, Object> computeStats(List<CertificateDto> all, List<CertificateDto> warnings) {
+        var thrOpt2   = alertThresholdRepo.findFirstByActiveTrue();
+        int critDays  = thrOpt2.map(AlertThreshold::getCriticalDays).orElse(7);
+        int highDays   = thrOpt2.map(AlertThreshold::getHighDays).orElse(15);
+
+        Set<String> warnDomainSet = warnings.stream()
+                .map(CertificateDto::getDomain).collect(Collectors.toSet());
+
+        long errors        = warnings.stream().filter(c -> "error".equals(c.getStatus())).count();
+        long criticalCount = warnings.stream()
+                .filter(c -> !"error".equals(c.getStatus()))
+                .filter(c -> c.getDaysRemaining() != null && c.getDaysRemaining() <= critDays)
+                .count();
+        long highCount     = warnings.stream()
+                .filter(c -> !"error".equals(c.getStatus()))
+                .filter(c -> c.getDaysRemaining() != null
+                          && c.getDaysRemaining() > critDays
+                          && c.getDaysRemaining() <= highDays)
+                .count();
+        long warningOnly   = warnings.size() - errors - criticalCount - highCount;
+        long valid         = all.size() - warnings.size();
+        long expiring30    = warnings.stream()
                 .filter(c -> c.getDaysRemaining() != null && c.getDaysRemaining() > 0 && c.getDaysRemaining() <= 30)
                 .count();
-        long expired = warnings.stream()
+        long expiring7     = warnings.stream()
+                .filter(c -> c.getDaysRemaining() != null && c.getDaysRemaining() >= 0 && c.getDaysRemaining() <= 7)
+                .count();
+        long expired       = warnings.stream()
                 .filter(c -> c.getDaysRemaining() != null && c.getDaysRemaining() < 0)
                 .count();
-        long revoked = all.stream()
-                .filter(c -> "REVOKED".equals(c.getRevocationStatus()))
-                .count();
-        long mismatch = all.stream()
-                .filter(c -> "INCOMPLETE".equals(c.getDeploymentStatus()))
-                .count();
-        long chainBroken = all.stream()
-                .filter(c -> "BROKEN".equals(c.getChainStatus()))
-                .count();
+        long revoked     = all.stream().filter(c -> "REVOKED".equals(c.getRevocationStatus())).count();
+        long mismatch    = all.stream().filter(c -> "INCOMPLETE".equals(c.getDeploymentStatus())).count();
+        long chainBroken = all.stream().filter(c -> "BROKEN".equals(c.getChainStatus())).count();
 
-        return Map.of(
-                "total_certificates", all.size(),
-                "valid_count", valid,
-                "warning_count", warningOnly,
-                "error_count", errors,
-                "expiring_in_30_days", expiring30,
-                "expired", expired,
-                "revoked", revoked,
-                "deployment_mismatch", mismatch,
-                "chain_broken", chainBroken
-        );
+        List<String> validDomains    = all.stream()
+                .filter(c -> !warnDomainSet.contains(c.getDomain())).map(CertificateDto::getDomain).toList();
+        List<String> warningDomains  = warnings.stream()
+                .filter(c -> !"error".equals(c.getStatus()))
+                .filter(c -> c.getDaysRemaining() != null && c.getDaysRemaining() > highDays)
+                .map(CertificateDto::getDomain).toList();
+        List<String> highDomains     = warnings.stream()
+                .filter(c -> !"error".equals(c.getStatus()))
+                .filter(c -> c.getDaysRemaining() != null
+                          && c.getDaysRemaining() > critDays && c.getDaysRemaining() <= highDays)
+                .map(CertificateDto::getDomain).toList();
+        List<String> criticalDomains = warnings.stream()
+                .filter(c -> !"error".equals(c.getStatus()))
+                .filter(c -> c.getDaysRemaining() != null
+                          && c.getDaysRemaining() >= 0 && c.getDaysRemaining() <= critDays)
+                .map(CertificateDto::getDomain).toList();
+        List<String> expiredDomains  = warnings.stream()
+                .filter(c -> c.getDaysRemaining() != null && c.getDaysRemaining() < 0)
+                .map(CertificateDto::getDomain).toList();
+        List<String> errorDomains    = warnings.stream()
+                .filter(c -> "error".equals(c.getStatus())).map(CertificateDto::getDomain).toList();
+
+        Map<String, Object> result = new HashMap<>();
+        result.put("total_certificates",  all.size());
+        result.put("valid_count",          valid);
+        result.put("critical_count",       criticalCount);
+        result.put("high_count",           highCount);
+        result.put("warning_count",        warningOnly);
+        result.put("error_count",          errors);
+        result.put("expiring_in_7_days",   expiring7);
+        result.put("expiring_in_30_days",  expiring30);
+        result.put("expired",              expired);
+        result.put("revoked",              revoked);
+        result.put("deployment_mismatch",  mismatch);
+        result.put("chain_broken",         chainBroken);
+        result.put("valid_domains",        validDomains);
+        result.put("warning_domains",      warningDomains);
+        result.put("high_domains",         highDomains);
+        result.put("critical_domains",     criticalDomains);
+        result.put("expired_domains",      expiredDomains);
+        result.put("error_domains",        errorDomains);
+        return result;
     }
 
     /**
      * Returns check runs from the last {@code hours} hours, newest first.
-     * Each run groups all certificate checks that share the same runId.
+     * When teamId is non-null only runs containing that team's domains are included.
      */
-    public List<Map<String, Object>> getActivityLog(int hours) {
+    public List<Map<String, Object>> getActivityLog(int hours, Long teamId) {
         String cutoff = ISO.format(Instant.now().minus(hours, ChronoUnit.HOURS));
         List<CertificateCheck> checks = checkRepo.findByCheckedAtAfter(cutoff);
+
+        if (teamId != null) {
+            Set<String> teamDomains = getTeamDomains(teamId);
+            checks = checks.stream().filter(c -> teamDomains.contains(c.getDomain())).collect(Collectors.toList());
+        }
 
         // Group by runId preserving DESC order (newest run first)
         LinkedHashMap<String, List<CertificateCheck>> grouped = new LinkedHashMap<>();
@@ -302,8 +545,17 @@ public class CertificateService {
         return runs;
     }
 
+    public List<Map<String, Object>> getRenewalAdviceForTeam(Long teamId) {
+        if (teamId == null) return getRenewalAdvice();
+        return computeRenewalAdvice(getAllLatestForTeam(teamId));
+    }
+
+    @Cacheable("renewal-advice")
     public List<Map<String, Object>> getRenewalAdvice() {
-        List<CertificateDto> all = getAllLatest();
+        return computeRenewalAdvice(getAllLatest());
+    }
+
+    private List<Map<String, Object>> computeRenewalAdvice(List<CertificateDto> all) {
         List<Map<String, Object>> advice = new ArrayList<>();
 
         for (CertificateDto cert : all) {
@@ -372,7 +624,10 @@ public class CertificateService {
     }
 
     private CertificateDto toDto(LatestCheck c) {
-        return CertificateDto.from(c, checkerService.deserializeSan(c.getSan()));
+        return CertificateDto.from(c,
+                checkerService.deserializeSan(c.getSan()),
+                checkerService.deserializeSan(c.getKeyUsage()),
+                checkerService.deserializeSan(c.getExtKeyUsage()));
     }
 
     private CertificateDto toDtoFromCheck(CertificateCheck c) {
@@ -388,8 +643,28 @@ public class CertificateService {
         l.setStatus(c.getStatus());
         l.setError(c.getError());
         l.setSan(c.getSan());
+        l.setFingerprint(c.getFingerprint());
+        l.setChainStatus(c.getChainStatus());
+        l.setRevocationStatus(c.getRevocationStatus());
+        l.setDeploymentStatus(c.getDeploymentStatus());
+        l.setIntermediateExpiry(c.getIntermediateExpiry());
+        l.setIntermediateDaysRemaining(c.getIntermediateDaysRemaining());
+        l.setSerialNumber(c.getSerialNumber());
+        l.setSignatureAlgorithm(c.getSignatureAlgorithm());
+        l.setPublicKeyAlgorithm(c.getPublicKeyAlgorithm());
+        l.setPublicKeySize(c.getPublicKeySize());
+        l.setSubjectDn(c.getSubjectDn());
+        l.setIssuerDn(c.getIssuerDn());
+        l.setKeyUsage(c.getKeyUsage());
+        l.setExtKeyUsage(c.getExtKeyUsage());
+        l.setIsCa(c.getIsCa());
+        l.setOcspUrl(c.getOcspUrl());
+        l.setCrlUrl(c.getCrlUrl());
         l.setCheckedAt(c.getCheckedAt());
-        return CertificateDto.from(l, checkerService.deserializeSan(c.getSan()));
+        return CertificateDto.from(l,
+                checkerService.deserializeSan(c.getSan()),
+                checkerService.deserializeSan(c.getKeyUsage()),
+                checkerService.deserializeSan(c.getExtKeyUsage()));
     }
 
     private String issuerStr(CertificateDto c) {

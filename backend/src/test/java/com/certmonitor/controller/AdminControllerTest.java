@@ -2,9 +2,11 @@ package com.certmonitor.controller;
 
 import com.certmonitor.model.*;
 import com.certmonitor.repository.*;
+import com.certmonitor.service.AuditService;
 import com.certmonitor.service.EscalationService;
 import com.certmonitor.service.RememberMeService;
-import java.util.List;
+import com.certmonitor.service.UserService;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -36,6 +38,15 @@ class AdminControllerTest {
     RememberMeService rememberMeService;
 
     @MockBean
+    UserService userService;
+
+    @MockBean
+    AuthController authController;
+
+    @MockBean
+    com.certmonitor.service.HttpMetricsService httpMetricsService;
+
+    @MockBean
     CertificateInventoryRepository inventoryRepo;
 
     @MockBean
@@ -55,6 +66,20 @@ class AdminControllerTest {
 
     @MockBean
     com.certmonitor.repository.LatestCheckRepository latestCheckRepo;
+
+    @MockBean
+    AuditService auditService;
+
+    @MockBean
+    CertificateNoteRepository noteRepo;
+
+    @MockBean
+    AppUserRepository userRepo;
+
+    @BeforeEach
+    void setup() {
+        when(userService.listTeams()).thenReturn(java.util.Collections.emptyList());
+    }
 
     // ── Auth guard ────────────────────────────────────────────────────────────
 
@@ -85,7 +110,7 @@ class AdminControllerTest {
     @DisplayName("GET /api/admin/inventory returns 200 with sorted domain list")
     void listInventory_authenticated_returns200() throws Exception {
         CertificateInventory inv = inventory("example.com");
-        when(inventoryRepo.findAll()).thenReturn(List.of(inv));
+        when(inventoryRepo.findByDeletedAtIsNullOrderByDomainAsc()).thenReturn(List.of(inv));
 
         mvc.perform(get("/api/admin/inventory").session(authSession()))
                 .andExpect(status().isOk())
@@ -104,7 +129,7 @@ class AdminControllerTest {
         mvc.perform(post("/api/admin/inventory")
                         .session(authSession())
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"domain\":\"newdomain.com\",\"port\":443}"))
+                        .content("{\"domain\":\"newdomain.com\",\"port\":443,\"team_id\":1}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success").value(true))
                 .andExpect(jsonPath("$.data.domain").value("newdomain.com"));
@@ -140,18 +165,18 @@ class AdminControllerTest {
     }
 
     @Test
-    @DisplayName("DELETE /api/admin/inventory/{id} removes from inventory and latest_checks")
+    @DisplayName("DELETE /api/admin/inventory/{id} soft-deletes the inventory item")
     void deleteInventory_authenticated_returns200() throws Exception {
         CertificateInventory inv = inventory("example.com");
         inv.setId(1L);
         when(inventoryRepo.findById(1L)).thenReturn(Optional.of(inv));
+        when(inventoryRepo.save(any())).thenAnswer(i -> i.getArgument(0));
 
         mvc.perform(delete("/api/admin/inventory/1").session(authSession()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success").value(true));
 
-        org.mockito.Mockito.verify(inventoryRepo).deleteById(1L);
-        org.mockito.Mockito.verify(latestCheckRepo).deleteById("example.com");
+        org.mockito.Mockito.verify(inventoryRepo).save(any());
     }
 
     // ── Thresholds ────────────────────────────────────────────────────────────
@@ -240,6 +265,10 @@ class AdminControllerTest {
     @Test
     @DisplayName("DELETE /api/admin/contacts/{id} returns 200")
     void deleteContact_authenticated_returns200() throws Exception {
+        EscalationContact c = contact("del@test.com", "PO");
+        c.setId(1L);
+        when(contactRepo.findById(1L)).thenReturn(Optional.of(c));
+
         mvc.perform(delete("/api/admin/contacts/1").session(authSession()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success").value(true));
@@ -332,12 +361,114 @@ class AdminControllerTest {
                 .andExpect(jsonPath("$.success").value(true));
     }
 
+    // ── Users ─────────────────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("GET /api/admin/users returns 200 with user list")
+    void listUsers_authenticated_returns200() throws Exception {
+        when(userService.listUsers()).thenReturn(Collections.emptyList());
+
+        mvc.perform(get("/api/admin/users").session(authSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data").isArray());
+    }
+
+    @Test
+    @DisplayName("POST /api/admin/users with org_role returns 200")
+    void addUser_withOrgRole_returns200() throws Exception {
+        AppUser saved = new AppUser();
+        saved.setId(5L);
+        saved.setUsername("carol");
+        saved.setSystemRole("USER");
+        saved.setOrgRole("PO");
+        saved.setTeamId(1L);
+        when(userService.createUser(any(), any(), any(), any(), any(), any(), any(), eq("PO")))
+                .thenReturn(saved);
+
+        mvc.perform(post("/api/admin/users")
+                        .session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"username\":\"carol\",\"password\":\"pass1234\",\"email\":\"c@test.com\",\"org_role\":\"PO\",\"team_id\":1}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true));
+    }
+
+    @Test
+    @DisplayName("PUT /api/admin/users/{id} with org_role returns 200")
+    void updateUser_withOrgRole_returns200() throws Exception {
+        AppUser updated = new AppUser();
+        updated.setId(1L);
+        updated.setUsername("alice");
+        updated.setSystemRole("USER");
+        updated.setOrgRole("MANAGER");
+        updated.setTeamId(1L);
+        when(userService.updateUser(eq(1L), any(), any(), any(), any(), any(), any(), eq("MANAGER")))
+                .thenReturn(updated);
+
+        mvc.perform(put("/api/admin/users/1")
+                        .session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"display_name\":\"Alice\",\"org_role\":\"MANAGER\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true));
+    }
+
+    @Test
+    @DisplayName("POST /api/admin/contacts with user_id populates name/email from user")
+    void addContact_withUserId_populatesNameEmailFromUser() throws Exception {
+        AppUser linkedUser = new AppUser();
+        linkedUser.setId(10L);
+        linkedUser.setUsername("dana");
+        linkedUser.setDisplayName("Dana Smith");
+        linkedUser.setEmail("dana@test.com");
+        when(userRepo.findById(10L)).thenReturn(Optional.of(linkedUser));
+
+        EscalationContact saved = new EscalationContact();
+        saved.setId(1L);
+        saved.setName("Dana Smith");
+        saved.setEmail("dana@test.com");
+        saved.setRole("TECH");
+        saved.setMinAlertLevel("WARNING");
+        saved.setActive(true);
+        when(contactRepo.save(any())).thenReturn(saved);
+
+        mvc.perform(post("/api/admin/contacts")
+                        .session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"user_id\":10,\"role\":\"TECH\",\"min_alert_level\":\"WARNING\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true));
+
+        org.mockito.Mockito.verify(userRepo).findById(10L);
+    }
+
+    @Test
+    @DisplayName("POST /api/admin/contacts with unknown user_id still saves contact")
+    void addContact_withUnknownUserId_stillSaves() throws Exception {
+        when(userRepo.findById(999L)).thenReturn(Optional.empty());
+
+        EscalationContact saved = new EscalationContact();
+        saved.setId(2L);
+        saved.setRole("PO");
+        saved.setMinAlertLevel("HIGH");
+        saved.setActive(true);
+        when(contactRepo.save(any())).thenReturn(saved);
+
+        mvc.perform(post("/api/admin/contacts")
+                        .session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"user_id\":999,\"role\":\"PO\",\"min_alert_level\":\"HIGH\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true));
+    }
+
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     private MockHttpSession authSession() {
         MockHttpSession s = new MockHttpSession();
         s.setAttribute("authenticated", Boolean.TRUE);
         s.setAttribute("username", "testuser");
+        s.setAttribute("systemRole", "ADMIN");
         return s;
     }
 

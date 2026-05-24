@@ -7,16 +7,27 @@ metadata:
     {{- include "cert-monitor.labels" . | nindent 4 }}
 data:
   SPRING_PROFILES_ACTIVE: {{ .Values.config.springProfile | quote }}
+  {{- if .Values.postgresql.enabled }}
+  DB_HOST: {{ printf "%s-postgresql" .Release.Name | quote }}
+  DB_PORT: "5432"
+  DB_NAME: {{ .Values.postgresql.auth.database | quote }}
+  DB_USER: {{ .Values.postgresql.auth.username | quote }}
+  {{- else }}
   DB_HOST: {{ .Values.config.dbHost | quote }}
   DB_PORT: {{ .Values.config.dbPort | quote }}
   DB_NAME: {{ .Values.config.dbName | quote }}
   DB_USER: {{ .Values.config.dbUser | quote }}
-  EMAIL_ENABLED: {{ .Values.config.emailEnabled | quote }}
-  SMTP_HOST: {{ .Values.config.smtpHost | quote }}
-  SMTP_PORT: {{ .Values.config.smtpPort | quote }}
+  {{- end }}
+  DB_POOL_MAX: {{ .Values.config.dbPoolMax | quote }}
+  CERT_MONITOR_EMAIL_ENABLED: {{ .Values.config.emailEnabled | quote }}
+  SPRING_MAIL_HOST: {{ .Values.config.smtpHost | quote }}
+  SPRING_MAIL_PORT: {{ .Values.config.smtpPort | quote }}
+  SPRING_MAIL_SMTP_AUTH: {{ .Values.config.smtpAuth | quote }}
+  SPRING_MAIL_SMTP_STARTTLS_ENABLE: {{ .Values.config.smtpStarttlsEnable | quote }}
+  SPRING_MAIL_SMTP_STARTTLS_REQUIRED: {{ .Values.config.smtpStarttlsRequired | quote }}
+  SPRING_MAIL_SMTP_SSL_TRUST: {{ .Values.config.smtpSslTrust | quote }}
   CORS_ALLOWED_ORIGINS: {{ .Values.config.corsAllowedOrigins | quote }}
-  CERT_CHECK_TIMEOUT: {{ .Values.config.certCheckTimeout | quote }}
-  CERT_WARNING_DAYS: {{ .Values.config.certWarningDays | quote }}
-  CERT_PARALLEL_WORKERS: {{ .Values.config.certParallelWorkers | quote }}
-  CERT_CHECK_HOUR: {{ .Values.config.certCheckHour | quote }}
-  CERT_CHECK_MINUTE: {{ .Values.config.certCheckMinute | quote }}
+  CHECK_TIMEOUT_SECONDS: {{ .Values.config.checkTimeoutSeconds | quote }}
+  WARNING_DAYS: {{ .Values.config.warningDays | quote }}
+  PARALLEL_WORKERS: {{ .Values.config.parallelWorkers | quote }}
+  JAVA_OPTS: {{ .Values.config.javaOpts | quote }}

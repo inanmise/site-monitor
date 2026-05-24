@@ -5,7 +5,14 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 @Entity
-@Table(name = "latest_checks")
+@Table(
+    name = "latest_checks",
+    indexes = {
+        @Index(name = "idx_lc_warning",    columnList = "warning"),
+        @Index(name = "idx_lc_status",     columnList = "status"),
+        @Index(name = "idx_lc_checked_at", columnList = "checkedAt")
+    }
+)
 @Data
 @NoArgsConstructor
 public class LatestCheck {
@@ -26,25 +33,37 @@ public class LatestCheck {
     @Column(columnDefinition = "TEXT")
     private String san;
 
-    /** SHA-256 hex fingerprint of the leaf (endpoint-served) certificate */
     private String fingerprint;
-
-    /** VALID / BROKEN / REVOKED / UNKNOWN — full chain health */
     private String chainStatus;
-
-    /** OK / INCOMPLETE / UNKNOWN — served cert vs inventory expected fingerprint */
     private String deploymentStatus;
-
-    /** ISO date of the soonest-expiring non-leaf cert (intermediate or root) */
     private String intermediateExpiry;
     private Integer intermediateDaysRemaining;
-
-    /** VALID / REVOKED / UNKNOWN — OCSP/CRL result for leaf cert */
     private String revocationStatus;
 
-    /** JSON array — full chain details [{position, subject, not_after, days_remaining, is_root}] */
     @Column(columnDefinition = "TEXT")
     private String chainDetails;
+
+    // Extended certificate metadata
+    private String serialNumber;
+    private String signatureAlgorithm;
+    private String publicKeyAlgorithm;
+    private Integer publicKeySize;
+
+    @Column(columnDefinition = "TEXT")
+    private String subjectDn;
+
+    @Column(columnDefinition = "TEXT")
+    private String issuerDn;
+
+    @Column(columnDefinition = "TEXT")
+    private String keyUsage;
+
+    @Column(columnDefinition = "TEXT")
+    private String extKeyUsage;
+
+    private Boolean isCa;
+    private String ocspUrl;
+    private String crlUrl;
 
     private String checkedAt;
     private String updatedAt;

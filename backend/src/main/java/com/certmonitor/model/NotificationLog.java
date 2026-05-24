@@ -36,4 +36,10 @@ public class NotificationLog {
 
     /** INITIAL / ESCALATION / DAILY_REALERT / MANUAL / RESOLUTION */
     private String trigger;
+
+    /** Configured from-address used when sending this email */
+    private String emailFrom;
+
+    /** Comma-separated CC addresses, null if none */
+    private String cc;
 }

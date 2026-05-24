@@ -58,7 +58,12 @@ function RunCard({ run }) {
               </tr>
             </thead>
             <tbody>
-              {run.entries.map((e, i) => {
+              {[...run.entries].sort((a, b) => {
+                const pa = a.status === 'error' ? 0 : a.warning ? 1 : 2
+                const pb = b.status === 'error' ? 0 : b.warning ? 1 : 2
+                if (pa !== pb) return pa - pb
+                return (a.days_remaining ?? 999999) - (b.days_remaining ?? 999999)
+              }).map((e, i) => {
                 const { Icon, cls } = statusIcon(e)
                 return (
                   <tr key={i} className={cls}>

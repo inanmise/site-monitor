@@ -8,10 +8,20 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 
+import org.bouncycastle.asn1.ASN1OctetString;
+import org.bouncycastle.asn1.ASN1Primitive;
+import org.bouncycastle.asn1.x509.CertificatePolicies;
+import org.bouncycastle.asn1.x509.PolicyInformation;
+
 import javax.net.ssl.*;
+import java.net.HttpURLConnection;
 import java.net.InetSocketAddress;
+import java.net.URL;
 import java.security.cert.Certificate;
 import java.security.cert.X509Certificate;
+import java.security.interfaces.DSAKey;
+import java.security.interfaces.ECKey;
+import java.security.interfaces.RSAKey;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
@@ -24,6 +34,7 @@ import java.util.concurrent.CompletableFuture;
 public class CertificateCheckerService {
 
     private final ChainValidationService chainValidator;
+    private final DnsCheckerService dnsCheckerService;
     private final ObjectMapper objectMapper;
 
     @Value("${cert.monitor.check-timeout-seconds:10}")
@@ -35,12 +46,30 @@ public class CertificateCheckerService {
     private static final DateTimeFormatter ISO =
             DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
 
+    private static final String OID_CERT_POLICIES = "2.5.29.32";
+    private static final String EV_OID            = "2.23.140.1.1";
+
+    private static final String[] KEY_USAGE_NAMES = {
+        "Digital Signature", "Non-Repudiation", "Key Encipherment", "Data Encipherment",
+        "Key Agreement", "Certificate Signing", "CRL Signing", "Encipher Only", "Decipher Only"
+    };
+
+    private static final Map<String, String> EKU_NAMES = Map.of(
+        "1.3.6.1.5.5.7.3.1", "TLS Web Server",
+        "1.3.6.1.5.5.7.3.2", "TLS Web Client",
+        "1.3.6.1.5.5.7.3.3", "Code Signing",
+        "1.3.6.1.5.5.7.3.4", "Email Protection",
+        "1.3.6.1.5.5.7.3.8", "Timestamping"
+    );
+
     @Async("certCheckExecutor")
     public CompletableFuture<Map<String, Object>> checkAsync(String domain, int port) {
         return CompletableFuture.completedFuture(check(domain, port));
     }
 
     public Map<String, Object> check(String domain, int port) {
+        long startMs = System.currentTimeMillis();
+        log.debug("Certificate check start: domain={}:{}", domain, port);
         try {
             SSLSocketFactory factory = (SSLSocketFactory) SSLSocketFactory.getDefault();
             try (SSLSocket socket = (SSLSocket) factory.createSocket()) {
@@ -52,12 +81,14 @@ public class CertificateCheckerService {
                 socket.setSSLParameters(params);
 
                 socket.startHandshake();
+                String tlsVersion = socket.getSession().getProtocol();
 
                 Certificate[] peerCerts = socket.getSession().getPeerCertificates();
                 if (peerCerts.length == 0) return error(domain, "No certificates in chain");
 
                 X509Certificate leaf = (X509Certificate) peerCerts[0];
                 Map<String, Object> result = parseLeafCert(leaf, domain);
+                result.put("tls_version", tlsVersion);
 
                 // Full chain analysis
                 Map<String, Object> chainInfo = chainValidator.analyzeChain(peerCerts);
@@ -84,15 +115,73 @@ public class CertificateCheckerService {
                 // deployment_status is determined by CertificateService (needs inventory lookup)
                 result.put("deployment_status", "UNKNOWN");
 
+                // DNS resolution IP — use JNDI-based resolver (same as DNS Record Monitoring)
+                try {
+                    Map<String, Object> dnsResult = dnsCheckerService.check(domain, "A");
+                    List<?> addrs = (List<?>) dnsResult.get("values");
+                    result.put("resolved_ip",
+                        (addrs != null && !addrs.isEmpty()) ? String.valueOf(addrs.get(0)) : null);
+                } catch (Exception ignored) {
+                    result.put("resolved_ip", null);
+                }
+
+                // HSTS check via HTTP HEAD — reuse the SSLSocketFactory that already succeeded
+                try {
+                    HttpURLConnection hc = (HttpURLConnection)
+                        new URL("https://" + domain + "/").openConnection();
+                    if (hc instanceof HttpsURLConnection https) {
+                        https.setSSLSocketFactory(factory);
+                    }
+                    hc.setRequestMethod("HEAD");
+                    hc.setConnectTimeout(4000);
+                    hc.setReadTimeout(4000);
+                    hc.setInstanceFollowRedirects(true);
+                    hc.connect();
+                    result.put("hsts", hc.getHeaderField("Strict-Transport-Security") != null);
+                    hc.disconnect();
+                } catch (Exception e) {
+                    log.debug("HSTS check failed for {}: {}", domain, e.getMessage());
+                    result.put("hsts", null);
+                }
+
+                long elapsed = System.currentTimeMillis() - startMs;
+                int days = (Integer) result.getOrDefault("days_remaining", -1);
+                boolean warning = Boolean.TRUE.equals(result.get("warning"));
+                String issuerCn = (String) result.getOrDefault("issuer_cn", "?");
+                String chainStatus = (String) result.getOrDefault("chain_status", "?");
+
+                if (warning) {
+                    log.warn("Certificate expiring soon: domain={} days={} issuer={} chain={} elapsed={}ms",
+                            domain, days, issuerCn, chainStatus, elapsed);
+                } else {
+                    log.debug("Certificate OK: domain={} days={} issuer={} chain={} elapsed={}ms",
+                            domain, days, issuerCn, chainStatus, elapsed);
+                }
+
+                if ("REVOKED".equals(revocation)) {
+                    log.warn("Certificate REVOKED: domain={}", domain);
+                }
+                if ("BROKEN".equals(chainStatus)) {
+                    log.warn("Certificate chain BROKEN: domain={}", domain);
+                }
+
                 return result;
             }
         } catch (java.net.SocketTimeoutException e) {
+            log.warn("Certificate check timeout: domain={}:{} elapsed={}ms",
+                    domain, port, System.currentTimeMillis() - startMs);
             return error(domain, "Connection timeout");
         } catch (java.net.UnknownHostException e) {
+            log.warn("Certificate check DNS failure: domain={} elapsed={}ms",
+                    domain, System.currentTimeMillis() - startMs);
             return error(domain, "Domain resolution failed");
         } catch (javax.net.ssl.SSLException e) {
+            log.warn("Certificate check SSL error: domain={} error={} elapsed={}ms",
+                    domain, e.getMessage(), System.currentTimeMillis() - startMs);
             return error(domain, "SSL Error: " + e.getMessage());
         } catch (Exception e) {
+            log.error("Certificate check unexpected error: domain={}:{} elapsed={}ms",
+                    domain, port, System.currentTimeMillis() - startMs, e);
             return error(domain, "Error: " + e.getMessage());
         }
     }
@@ -118,15 +207,52 @@ public class CertificateCheckerService {
             result.put("issuer_cn", issuerCn);
             result.put("not_before", ISO.format(notBefore));
             result.put("not_after", ISO.format(notAfter));
-            result.put("days_remaining", (int) Math.max(daysRemaining, 0));
+            result.put("days_remaining", (int) daysRemaining);
             result.put("warning", warning);
             result.put("status", warning ? "warning" : "valid");
             result.put("san", san);
             result.put("checked_at", ISO.format(now));
+            // Extended certificate metadata
+            result.put("serial_number", cert.getSerialNumber().toString(16).toUpperCase());
+            result.put("signature_algorithm", cert.getSigAlgName());
+            result.put("public_key_algorithm", cert.getPublicKey().getAlgorithm());
+            result.put("public_key_size", getPublicKeySize(cert.getPublicKey()));
+            result.put("subject_dn", cert.getSubjectX500Principal().getName());
+            result.put("issuer_dn", cert.getIssuerX500Principal().getName());
+            result.put("key_usage", buildKeyUsageList(cert.getKeyUsage()));
+            result.put("ext_key_usage", buildExtKeyUsageList(cert));
+            result.put("is_ca", cert.getBasicConstraints() >= 0);
+            result.put("ocsp_url", chainValidator.extractOcspUrl(cert));
+            result.put("crl_url", chainValidator.extractCrlUrl(cert));
+            result.put("cert_type", determineCertType(cert, san));
             return result;
         } catch (Exception e) {
             return error(domain, "Parse error: " + e.getMessage());
         }
+    }
+
+    private int getPublicKeySize(java.security.PublicKey key) {
+        if (key instanceof RSAKey rsa) return rsa.getModulus().bitLength();
+        if (key instanceof ECKey ec) return ec.getParams().getOrder().bitLength();
+        if (key instanceof DSAKey dsa) return dsa.getParams().getP().bitLength();
+        return -1;
+    }
+
+    private List<String> buildKeyUsageList(boolean[] ku) {
+        if (ku == null) return Collections.emptyList();
+        List<String> usages = new ArrayList<>();
+        for (int i = 0; i < Math.min(ku.length, KEY_USAGE_NAMES.length); i++) {
+            if (ku[i]) usages.add(KEY_USAGE_NAMES[i]);
+        }
+        return usages;
+    }
+
+    private List<String> buildExtKeyUsageList(X509Certificate cert) {
+        try {
+            List<String> eku = cert.getExtendedKeyUsage();
+            if (eku == null) return Collections.emptyList();
+            return eku.stream().map(oid -> EKU_NAMES.getOrDefault(oid, oid)).toList();
+        } catch (Exception e) { return Collections.emptyList(); }
     }
 
     private String extractCn(String dn) {
@@ -146,6 +272,33 @@ public class CertificateCheckerService {
                 .map(s -> s.substring(prefix.length()))
                 .findFirst()
                 .orElse("Unknown");
+    }
+
+    private String determineCertType(X509Certificate cert, List<String> san) {
+        String org = extractField(cert.getSubjectX500Principal().getName(), "O");
+        boolean hasOrg = !"Unknown".equals(org);
+        boolean isEv = false;
+        try {
+            byte[] rawExt = cert.getExtensionValue(OID_CERT_POLICIES);
+            if (rawExt != null) {
+                byte[] extBytes = ASN1OctetString.getInstance(
+                    ASN1Primitive.fromByteArray(rawExt)).getOctets();
+                CertificatePolicies policies = CertificatePolicies.getInstance(
+                    ASN1Primitive.fromByteArray(extBytes));
+                for (PolicyInformation pi : policies.getPolicyInformation()) {
+                    if (EV_OID.equals(pi.getPolicyIdentifier().getId())) {
+                        isEv = true; break;
+                    }
+                }
+            }
+        } catch (Exception ignored) {}
+        String validation = isEv && hasOrg ? "Extended Validation (EV)"
+                          : hasOrg         ? "Organization Validated (OV)"
+                          :                  "Domain Validated (DV)";
+        String scope = san.stream().anyMatch(s -> s.startsWith("*.")) ? "Wildcard"
+                     : san.size() > 1                                  ? "Multi-Domain (SAN)"
+                     :                                                    "Single Domain";
+        return validation + " — " + scope;
     }
 
     private List<String> extractSan(X509Certificate cert) {
@@ -195,6 +348,20 @@ public class CertificateCheckerService {
         result.put("intermediate_expiry", null);
         result.put("intermediate_days_remaining", null);
         result.put("chain", Collections.emptyList());
+        result.put("serial_number", null);
+        result.put("signature_algorithm", null);
+        result.put("public_key_algorithm", null);
+        result.put("public_key_size", null);
+        result.put("subject_dn", null);
+        result.put("issuer_dn", null);
+        result.put("key_usage", Collections.emptyList());
+        result.put("ext_key_usage", Collections.emptyList());
+        result.put("is_ca", null);
+        result.put("ocsp_url", null);
+        result.put("crl_url", null);
+        result.put("cert_type", null);
+        result.put("tls_version", null);
+        result.put("hsts", null);
         return result;
     }
 }

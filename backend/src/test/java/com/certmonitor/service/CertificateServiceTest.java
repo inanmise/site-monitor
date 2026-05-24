@@ -3,9 +3,11 @@ package com.certmonitor.service;
 import com.certmonitor.dto.CertificateDto;
 import com.certmonitor.model.CertificateInventory;
 import com.certmonitor.model.LatestCheck;
+import com.certmonitor.repository.AlertThresholdRepository;
 import com.certmonitor.repository.CertificateCheckRepository;
 import com.certmonitor.repository.CertificateInventoryRepository;
 import com.certmonitor.repository.LatestCheckRepository;
+import com.certmonitor.repository.TeamRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -16,6 +18,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 
+import com.certmonitor.model.CertificateCheck;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -31,15 +34,25 @@ class CertificateServiceTest {
     @Mock LatestCheckRepository latestRepo;
     @Mock CertificateCheckerService checkerService;
     @Mock CertificateInventoryRepository inventoryRepo;
+    @Mock TeamRepository teamRepo;
+    @Mock AlertThresholdRepository alertThresholdRepo;
 
     private CertificateService service;
 
     @BeforeEach
     void setUp() {
         service = new CertificateService(checkRepo, latestRepo, checkerService,
-                inventoryRepo, new ObjectMapper());
+                inventoryRepo, new ObjectMapper(), teamRepo, alertThresholdRepo);
         when(checkerService.serializeSan(any())).thenReturn("[]");
         when(checkerService.deserializeSan(any())).thenReturn(Collections.emptyList());
+        when(alertThresholdRepo.findFirstByActiveTrue()).thenReturn(Optional.empty());
+        // Default: active inventory mirrors whatever latestRepo returns in each test,
+        // so the getAllLatest() active-domain filter doesn't discard test data.
+        when(inventoryRepo.findByActiveTrueOrderByDomainAsc()).thenAnswer(inv ->
+                latestRepo.findAllByOrderByDomainAsc().stream()
+                        .map(lc -> { CertificateInventory ci = new CertificateInventory();
+                                     ci.setDomain(lc.getDomain()); ci.setActive(true); return ci; })
+                        .collect(Collectors.toList()));
     }
 
     // ── Deployment Status ─────────────────────────────────────────────────────
@@ -165,12 +178,13 @@ class CertificateServiceTest {
     @DisplayName("getStats returns correct totals for mixed certificate states")
     void getStats_mixedStates_correctCounts() {
         List<LatestCheck> allChecks = List.of(
-                latestCheck("valid1.com", "valid", false, 90, "VALID", "OK"),
-                latestCheck("warning1.com", "warning", true, 25, "VALID", "OK"),
-                latestCheck("critical1.com", "warning", true, 5, "VALID", "OK"),
-                latestCheck("error1.com", "error", true, null, "UNKNOWN", "UNKNOWN"),
-                latestCheck("revoked1.com", "valid", false, 90, "REVOKED", "OK"),
-                latestCheck("mismatch1.com", "valid", false, 90, "VALID", "INCOMPLETE")
+                latestCheck("valid1.com",    "valid",   false, 90,   "VALID",   "OK"),
+                latestCheck("warning1.com",  "warning", true,  25,   "VALID",   "OK"), // 25 > highDays(15) → warning
+                latestCheck("high1.com",     "warning", true,  12,   "VALID",   "OK"), // critDays(7) < 12 ≤ highDays(15) → high
+                latestCheck("critical1.com", "warning", true,  5,    "VALID",   "OK"), // 5 ≤ critDays(7) → critical
+                latestCheck("error1.com",    "error",   true,  null, "UNKNOWN", "UNKNOWN"),
+                latestCheck("revoked1.com",  "valid",   false, 90,   "REVOKED", "OK"),
+                latestCheck("mismatch1.com", "valid",   false, 90,   "VALID",   "INCOMPLETE")
         );
         when(latestRepo.findAllByOrderByDomainAsc()).thenReturn(allChecks);
         when(latestRepo.findByWarningTrueOrStatus("error")).thenReturn(
@@ -179,8 +193,12 @@ class CertificateServiceTest {
 
         Map<String, Object> stats = service.getStats();
 
-        assertThat(stats.get("total_certificates")).isEqualTo(6);
-        assertThat(stats.get("valid_count")).isEqualTo(3L); // valid1, revoked1, mismatch1 (no warning flag)
+        assertThat(stats.get("total_certificates")).isEqualTo(7);
+        assertThat(stats.get("valid_count")).isEqualTo(3L);       // valid1, revoked1, mismatch1
+        assertThat(stats.get("critical_count")).isEqualTo(1L);    // critical1.com (5 ≤ 7)
+        assertThat(stats.get("high_count")).isEqualTo(1L);        // high1.com (7 < 12 ≤ 15)
+        assertThat(stats.get("warning_count")).isEqualTo(1L);     // warning1.com (25 > 15)
+        assertThat(stats.get("error_count")).isEqualTo(1L);       // error1.com
         assertThat(stats.get("revoked")).isEqualTo(1L);
         assertThat(stats.get("deployment_mismatch")).isEqualTo(1L);
     }
@@ -195,6 +213,8 @@ class CertificateServiceTest {
 
         assertThat(stats.get("total_certificates")).isEqualTo(0);
         assertThat(stats.get("valid_count")).isEqualTo(0L);
+        assertThat(stats.get("critical_count")).isEqualTo(0L);
+        assertThat(stats.get("high_count")).isEqualTo(0L);
         assertThat(stats.get("warning_count")).isEqualTo(0L);
     }
 
@@ -263,46 +283,46 @@ class CertificateServiceTest {
 
         @SuppressWarnings("unchecked")
         List<CertificateDto> data =
-                (List<CertificateDto>) service.getPaginated(1, 20, "domain", "asc", "", "", "valid").get("data");
+                (List<CertificateDto>) service.getPaginated(1, 20, "domain", "asc", "", "", "valid", null).get("data");
 
         assertThat(data).hasSize(1);
         assertThat(data.get(0).getDomain()).isEqualTo("valid.com");
     }
 
     @Test
-    @DisplayName("getPaginated filterStatus=warning returns only non-critical warnings")
+    @DisplayName("getPaginated filterStatus=warning returns only pure-warning (>highDays) certs")
     void getPaginated_filterWarning_returnsOnlyWarnings() {
-        // "warning" filter = warning=true AND days>30; "critical" filter = warning=true AND days≤30
+        // "warning" filter = warning=true AND days>highDays(15); "high" = critDays<days≤highDays; "critical" = days≤critDays(7)
         when(latestRepo.findAllByOrderByDomainAsc()).thenReturn(List.of(
                 latestCheck("valid.com",    "valid",   false, 90,   "VALID", "OK"),
-                latestCheck("warning.com",  "warning", true,  35,   "VALID", "OK"), // 35 days > 30 → warning
-                latestCheck("critical.com", "warning", true,  5,    "VALID", "OK"), // 5 days ≤ 30 → critical
+                latestCheck("warning.com",  "warning", true,  35,   "VALID", "OK"), // 35 days > 15 → warning
+                latestCheck("critical.com", "warning", true,  5,    "VALID", "OK"), // 5 days ≤ 7 → critical
                 latestCheck("error.com",    "error",   true,  null, "VALID", "OK")
         ));
         when(latestRepo.findByWarningTrueOrStatus("error")).thenReturn(List.of());
 
         @SuppressWarnings("unchecked")
         List<CertificateDto> data =
-                (List<CertificateDto>) service.getPaginated(1, 20, "domain", "asc", "", "", "warning").get("data");
+                (List<CertificateDto>) service.getPaginated(1, 20, "domain", "asc", "", "", "warning", null).get("data");
 
         assertThat(data).hasSize(1);
         assertThat(data.get(0).getDomain()).isEqualTo("warning.com");
     }
 
     @Test
-    @DisplayName("getPaginated filterStatus=critical returns warnings with ≤30 days remaining")
-    void getPaginated_filterCritical_returnsWarningsWithDays30OrLess() {
+    @DisplayName("getPaginated filterStatus=critical returns warnings with ≤7 days remaining (default critDays)")
+    void getPaginated_filterCritical_returnsWarningsWithDays7OrLess() {
         when(latestRepo.findAllByOrderByDomainAsc()).thenReturn(List.of(
                 latestCheck("valid.com",    "valid",   false, 90, "VALID", "OK"),
-                latestCheck("warning.com",  "warning", true,  31, "VALID", "OK"), // 31 days → warning only
-                latestCheck("critical.com", "warning", true,  30, "VALID", "OK"), // 30 days → critical
+                latestCheck("warning.com",  "warning", true,  8,  "VALID", "OK"), // 8 days → warning only
+                latestCheck("critical.com", "warning", true,  7,  "VALID", "OK"), // 7 days → critical (boundary)
                 latestCheck("urgent.com",   "warning", true,  3,  "VALID", "OK")  // 3 days → critical
         ));
         when(latestRepo.findByWarningTrueOrStatus("error")).thenReturn(List.of());
 
         @SuppressWarnings("unchecked")
         List<CertificateDto> data =
-                (List<CertificateDto>) service.getPaginated(1, 20, "domain", "asc", "", "", "critical").get("data");
+                (List<CertificateDto>) service.getPaginated(1, 20, "domain", "asc", "", "", "critical", null).get("data");
 
         assertThat(data).hasSize(2);
         List<String> domains = data.stream().map(CertificateDto::getDomain).toList();
@@ -322,7 +342,7 @@ class CertificateServiceTest {
 
         @SuppressWarnings("unchecked")
         List<CertificateDto> data =
-                (List<CertificateDto>) service.getPaginated(1, 20, "domain", "asc", "", "", "error").get("data");
+                (List<CertificateDto>) service.getPaginated(1, 20, "domain", "asc", "", "", "error", null).get("data");
 
         assertThat(data).hasSize(2);
         data.forEach(d -> assertThat(d.getStatus()).isEqualTo("error"));
@@ -341,7 +361,7 @@ class CertificateServiceTest {
 
         @SuppressWarnings("unchecked")
         List<CertificateDto> data =
-                (List<CertificateDto>) service.getPaginated(1, 20, "priority", "asc", "", "", "").get("data");
+                (List<CertificateDto>) service.getPaginated(1, 20, "priority", "asc", "", "", "", null).get("data");
 
         assertThat(data).hasSize(4);
         assertThat(data.get(0).getDomain()).isEqualTo("error.com");    // error first
@@ -350,7 +370,88 @@ class CertificateServiceTest {
         assertThat(data.get(3).getDomain()).isEqualTo("valid.com");    // 90 days
     }
 
+    // ── getAllLatest ───────────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("getAllLatest returns all records from repo")
+    void getAllLatest_returnsAllFromRepo() {
+        when(latestRepo.findAllByOrderByDomainAsc()).thenReturn(List.of(
+                latestCheck("a.com", "valid", false, 90, "VALID", "OK"),
+                latestCheck("b.com", "valid", false, 60, "VALID", "OK")
+        ));
+        when(inventoryRepo.findAll()).thenReturn(Collections.emptyList());
+
+        List<CertificateDto> result = service.getAllLatest();
+        assertThat(result).hasSize(2);
+    }
+
+    // ── getHistory ────────────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("getHistory delegates to checkRepo.findTopByDomainOrderByCheckedAtDesc")
+    void getHistory_delegatesToRepo() {
+        when(checkRepo.findTopByDomainOrderByCheckedAtDesc("example.com", 30))
+                .thenReturn(Collections.emptyList());
+
+        service.getHistory("example.com", 30);
+
+        verify(checkRepo).findTopByDomainOrderByCheckedAtDesc("example.com", 30);
+    }
+
+    // ── getActivityLog ────────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("getActivityLog groups checks by runId")
+    void getActivityLog_groupsByRunId() {
+        CertificateCheck c1 = check("run-1", "a.com", "valid");
+        CertificateCheck c2 = check("run-1", "b.com", "valid");
+        CertificateCheck c3 = check("run-2", "c.com", "error");
+        CertificateCheck c4 = check("run-2", "d.com", "valid");
+        when(checkRepo.findByCheckedAtAfter(any())).thenReturn(List.of(c1, c2, c3, c4));
+
+        List<Map<String, Object>> runs = service.getActivityLog(24, null);
+
+        assertThat(runs).hasSize(2);
+        // Each run group has its runId
+        List<String> runIds = runs.stream().map(r -> (String) r.get("run_id")).toList();
+        assertThat(runIds).containsExactlyInAnyOrder("run-1", "run-2");
+    }
+
+    // ── getRenewalAdviceForTeam ───────────────────────────────────────────────
+
+    @Test
+    @DisplayName("getRenewalAdviceForTeam filters to team domains only")
+    void getRenewalAdviceForTeam_filtersToTeam() {
+        // Team 5 only has "team.domain.com"
+        CertificateInventory teamInv = new CertificateInventory();
+        teamInv.setDomain("team.domain.com");
+        teamInv.setActive(true);
+        teamInv.setTeamId(5L);
+
+        when(inventoryRepo.findByTeamIdAndActiveTrueOrderByDomainAsc(5L)).thenReturn(List.of(teamInv));
+        when(latestRepo.findAllByOrderByDomainAsc()).thenReturn(List.of(
+                latestCheck("team.domain.com", "warning", true, 10, "VALID", "OK"),
+                latestCheck("other.domain.com", "warning", true, 5, "VALID", "OK")
+        ));
+        when(inventoryRepo.findAll()).thenReturn(Collections.emptyList());
+
+        List<Map<String, Object>> advice = service.getRenewalAdviceForTeam(5L);
+
+        List<String> domains = advice.stream().map(a -> (String) a.get("domain")).toList();
+        assertThat(domains).containsOnly("team.domain.com");
+    }
+
     // ── Helpers ───────────────────────────────────────────────────────────────
+
+    private CertificateCheck check(String runId, String domain, String status) {
+        CertificateCheck c = new CertificateCheck();
+        c.setRunId(runId);
+        c.setDomain(domain);
+        c.setStatus(status);
+        c.setWarning("error".equals(status) || "warning".equals(status));
+        c.setCheckedAt("2026-01-01T00:00:00");
+        return c;
+    }
 
     private CertificateInventory inventory(String domain, String expectedFingerprint) {
         CertificateInventory inv = new CertificateInventory();

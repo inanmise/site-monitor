@@ -5,7 +5,15 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 @Entity
-@Table(name = "alert_events")
+@Table(
+    name = "alert_events",
+    indexes = {
+        @Index(name = "idx_ae_domain",           columnList = "domain"),
+        @Index(name = "idx_ae_resolved",         columnList = "resolved"),
+        @Index(name = "idx_ae_alert_level",      columnList = "alertLevel"),
+        @Index(name = "idx_ae_domain_type_open", columnList = "domain,alertType,resolved")
+    }
+)
 @Data
 @NoArgsConstructor
 public class AlertEvent {
@@ -30,7 +38,6 @@ public class AlertEvent {
 
     private Integer daysRemaining;
 
-    /** JSON array of notified contact names/emails */
     @Column(columnDefinition = "TEXT")
     private String notifiedContacts;
 

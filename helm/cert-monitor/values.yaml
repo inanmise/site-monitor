@@ -3,11 +3,11 @@
 # Override with: helm install cert-monitor ./helm/cert-monitor -f my-values.yaml
 # ─────────────────────────────────────────────────────────────────────────────
 
-replicaCount: 3
+replicaCount: 1
 
 image:
-  repository: cert-monitor
-  tag: "1.0.0"
+  repository: ghcr.io/inanmise/certmonitor
+  tag: "latest"
   pullPolicy: Always
 
 nameOverride: ""
@@ -38,19 +38,24 @@ ingress:
 # Application configuration (non-sensitive)
 config:
   springProfile: prod
-  dbHost: postgres
+  # External PostgreSQL connection — fill these in with real values
+  dbHost: "REPLACE_DB_HOST"
   dbPort: "5432"
   dbName: certmonitor
   dbUser: certmonitor
-  emailEnabled: "false"
+  dbPoolMax: "10"
+  emailEnabled: "true"
   smtpHost: smtp.gmail.com
   smtpPort: "587"
+  smtpAuth: "true"
+  smtpStarttlsEnable: "true"
+  smtpStarttlsRequired: "true"
+  smtpSslTrust: "smtp.gmail.com"
   corsAllowedOrigins: ""
-  certCheckTimeout: "10"
-  certWarningDays: "30"
-  certParallelWorkers: "20"
-  certCheckHour: "2"
-  certCheckMinute: "0"
+  checkTimeoutSeconds: "10"
+  warningDays: "30"
+  parallelWorkers: "20"
+  javaOpts: "-XX:MaxRAMPercentage=75.0 -XX:MinRAMPercentage=50.0 -Xss512k -XX:+ExitOnOutOfMemoryError"
 
 # Sensitive values — provide via --set or external secret manager
 # Do NOT commit real values here
@@ -60,10 +65,9 @@ secret:
   adminUsername: "admin"
   adminPassword: "REPLACE_ME"
   dbPassword: "REPLACE_ME"
-  smtpUser: ""
-  smtpPassword: ""
-  emailTo: ""
-  emailFrom: "noreply@certmonitor"
+  smtpUser: "certmonitor01@gmail.com"
+  smtpPassword: "REPLACE_WITH_GMAIL_APP_PASSWORD"
+  emailFrom: "certmonitor01@gmail.com"
 
 resources:
   requests:
@@ -74,14 +78,14 @@ resources:
     cpu: "1000m"
 
 autoscaling:
-  enabled: true
-  minReplicas: 2
-  maxReplicas: 10
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 5
   targetCPUUtilizationPercentage: 70
   targetMemoryUtilizationPercentage: 80
 
 podDisruptionBudget:
-  enabled: true
+  enabled: false
   minAvailable: 1
 
 podAnnotations:
@@ -102,13 +106,23 @@ securityContext:
 
 # Node affinity / spread
 topologySpreadConstraints:
-  enabled: true
+  enabled: false
   maxSkew: 1
   topologyKey: kubernetes.io/hostname
 
-# PostgreSQL — enable to deploy a bundled Postgres instance (dev/staging)
+# ─────────────────────────────────────────────────────────────────────────────
+# PostgreSQL subchart (Bitnami) — disabled by default
+# When enabled=true, the chart deploys a bundled PostgreSQL instance.
+# DB_HOST, DB_NAME, DB_USER are auto-resolved; set auth.password below.
+# When enabled=false (default), configure external DB via config.dbHost etc.
+# ─────────────────────────────────────────────────────────────────────────────
 postgresql:
   enabled: false
-  image: postgres:16-alpine
-  storage: 10Gi
-  storageClass: ""
+  auth:
+    database: certmonitor
+    username: certmonitor
+    password: ""  # required when postgresql.enabled=true
+  primary:
+    persistence:
+      enabled: true
+      size: 8Gi

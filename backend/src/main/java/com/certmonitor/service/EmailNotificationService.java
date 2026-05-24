@@ -1,6 +1,5 @@
 package com.certmonitor.service;
 
-import com.certmonitor.dto.CertificateDto;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -12,9 +11,6 @@ import jakarta.mail.internet.MimeMessage;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
-import java.time.format.TextStyle;
-import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 
 @Slf4j
@@ -27,23 +23,19 @@ public class EmailNotificationService {
     @Value("${cert.monitor.email.enabled:false}")
     private boolean enabled;
 
-    @Value("${cert.monitor.email.to:}")
-    private String emailTo;
-
     @Value("${cert.monitor.email.from:noreply@certmonitor}")
     private String emailFrom;
 
-    /**
-     * Sends a plain alert email (used when no cert context is available, e.g. re-notify).
-     */
+    // How long to wait before retrying a transient 421 rate-limit rejection (default 90 s)
+    @Value("${mail.send.retry-delay-ms:90000}")
+    private long retryDelayMs;
+
+    public String getEmailFrom() { return emailFrom; }
+
     public String sendAlert(String to, String subject, String message) {
         return sendAlert(to, subject, message, null, null, null, null, null);
     }
 
-    /**
-     * Sends a rich alert email with certificate context (days remaining, status fields).
-     * certContext keys: revocation_status, chain_status, deployment_status, days_remaining
-     */
     public String sendAlert(String to, String subject, String message,
                             String domain, String level, String alertType,
                             Integer daysRemaining, Map<String, Object> certContext) {
@@ -61,12 +53,35 @@ public class EmailNotificationService {
                     ? buildRichAlertHtml(subject, message, domain, level, alertType, daysRemaining, certContext)
                     : buildSimpleAlertHtml(subject, message);
             helper.setText(html, true);
+            return doSend(to, msg, 1);
+        } catch (Exception e) {
+            log.error("✗ E-posta hazırlanamadı: TO={} | HATA={}", to, e.getMessage());
+            return "FAILED: " + e.getMessage();
+        }
+    }
+
+    private String doSend(String to, MimeMessage msg, int attempt) {
+        try {
             mailSender.send(msg);
-            log.info("✓ E-posta gönderildi: TO={} | KONU={}", to, subject);
+            log.info("✓ E-posta gönderildi: TO={}", to);
             return "SENT";
         } catch (Exception e) {
-            log.error("✗ E-posta gönderilemedi: TO={} | HATA={}", to, e.getMessage());
-            return "FAILED: " + e.getMessage();
+            String err = e.getMessage() != null ? e.getMessage() : "";
+            // 421 = transient rate-limit from SMTP gateway — wait and retry once
+            // Check both getMessage() and toString() because MailSendException may wrap the inner cause
+            String errFull = err + " " + e.toString();
+            if (attempt == 1 && errFull.contains("421")) {
+                log.warn("⏳ SMTP 421 rate limit — {}ms sonra tekrar deneniyor: TO={}", retryDelayMs, to);
+                try {
+                    Thread.sleep(retryDelayMs);
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                    return "FAILED (interrupted): " + err;
+                }
+                return doSend(to, msg, 2);
+            }
+            log.error("✗ E-posta gönderilemedi: TO={} | HATA={}", to, err);
+            return "FAILED: " + err;
         }
     }
 
@@ -87,29 +102,29 @@ public class EmailNotificationService {
             helper.setSubject(subject);
             helper.setText(buildRichResolvedHtml(domain, alertType, alertLevel,
                     daysRemaining, resolvedBy, resolvedAt, createdAt, certContext), true);
-            mailSender.send(msg);
-            log.info("✓ Çözüm e-postası gönderildi: TO={}", to);
-            return "SENT";
+            return doSend(to, msg, 1);
         } catch (Exception e) {
-            log.error("✗ Çözüm e-postası gönderilemedi: TO={} | HATA={}", to, e.getMessage());
+            log.error("✗ Çözüm e-postası hazırlanamadı: TO={} | HATA={}", to, e.getMessage());
             return "FAILED: " + e.getMessage();
         }
     }
 
-    public void sendWarningEmailIfEnabled(List<CertificateDto> warnings) {
-        if (!enabled || emailTo.isBlank() || warnings.isEmpty()) return;
-        try {
-            MimeMessage msg = mailSender.createMimeMessage();
-            MimeMessageHelper helper = new MimeMessageHelper(msg, true, "UTF-8");
-            helper.setTo(emailTo.split(","));
-            helper.setFrom(emailFrom);
-            helper.setSubject("[Sertifika Uyarısı] " + warnings.size() + " sertifika dikkat gerektiriyor");
-            helper.setText(buildBulkHtml(warnings), true);
-            mailSender.send(msg);
-            log.info("Uyarı emaili gönderildi: {}", emailTo);
-        } catch (Exception e) {
-            log.error("Email gönderilemedi: {}", e.getMessage());
-        }
+    // ── Public HTML accessors (used to store sent HTML in notification log) ──
+
+    public String buildAlertEmailHtml(String subject, String message,
+                                       String domain, String level, String alertType,
+                                       Integer daysRemaining, Map<String, Object> certContext) {
+        return (domain != null)
+                ? buildRichAlertHtml(subject, message, domain, level, alertType, daysRemaining, certContext)
+                : buildSimpleAlertHtml(subject, message);
+    }
+
+    public String buildResolutionEmailHtml(String domain, String alertType, String alertLevel,
+                                            Integer daysRemaining, String resolvedBy,
+                                            String resolvedAt, String createdAt,
+                                            Map<String, Object> certContext) {
+        return buildRichResolvedHtml(domain, alertType, alertLevel,
+                daysRemaining, resolvedBy, resolvedAt, createdAt, certContext);
     }
 
     // ── HTML builders ────────────────────────────────────────────────────────
@@ -603,42 +618,6 @@ public class EmailNotificationService {
             + "</td></tr></table>"   // em-card
             + "</td></tr></table>"   // em-wrap
             + "</body></html>";
-    }
-
-    private String buildBulkHtml(List<CertificateDto> warnings) {
-        String now = LocalDateTime.now().format(DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm"));
-        StringBuilder rows = new StringBuilder();
-        for (CertificateDto c : warnings) {
-            String bg = "error".equals(c.getStatus()) || (c.getDaysRemaining() != null && c.getDaysRemaining() <= 7)
-                    ? "#fee2e2" : "#fff7ed";
-            String days = c.getDaysRemaining() != null ? c.getDaysRemaining() + " gün" : "-";
-            String notAfter = c.getNotAfter() != null ? c.getNotAfter().substring(0, 10) : "-";
-            rows.append("<tr style='background:").append(bg).append("'>")
-                .append("<td style='padding:10px 14px;border-bottom:1px solid #e2e8f0;font-weight:600'>").append(escHtml(c.getDomain())).append("</td>")
-                .append("<td style='padding:10px 14px;border-bottom:1px solid #e2e8f0;font-weight:700;color:#dc2626'>").append(days).append("</td>")
-                .append("<td style='padding:10px 14px;border-bottom:1px solid #e2e8f0'>").append(notAfter).append("</td>")
-                .append("<td style='padding:10px 14px;border-bottom:1px solid #e2e8f0;color:#b91c1c'>").append(c.getError() != null ? escHtml(c.getError()) : "-").append("</td>")
-                .append("</tr>");
-        }
-        return "<!DOCTYPE html><html><body style='font-family:\"Segoe UI\",Arial,sans-serif;background:#f3f4f6'>"
-            + "<div style='max-width:700px;margin:32px auto;background:#fff;border-radius:12px;"
-            +     "overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,.12)'>"
-            + "<div style='background:#dc2626;padding:20px 28px;color:#fff'>"
-            + "<div style='font-size:11px;font-weight:700;letter-spacing:.1em;opacity:.8'>CertMonitor — Sertifika İzleme</div>"
-            + "<div style='font-size:20px;font-weight:800;margin-top:4px'>⚠ SSL/TLS Sertifika Uyarısı</div>"
-            + "</div>"
-            + "<div style='padding:24px'>"
-            + "<p style='color:#64748b;margin:0 0 16px'>" + warnings.size() + " sertifika dikkat gerektiriyor. (" + now + ")</p>"
-            + "<table style='width:100%;border-collapse:collapse;border-radius:8px;overflow:hidden;border:1px solid #e2e8f0'>"
-            + "<thead><tr style='background:#1e293b;color:#fff'>"
-            + "<th style='padding:10px 14px;text-align:left'>Alan Adı</th>"
-            + "<th style='padding:10px 14px;text-align:left'>Kalan</th>"
-            + "<th style='padding:10px 14px;text-align:left'>Bitiş</th>"
-            + "<th style='padding:10px 14px;text-align:left'>Hata</th>"
-            + "</tr></thead><tbody>" + rows + "</tbody></table>"
-            + "<div style='text-align:center;color:#94a3b8;font-size:11px;margin-top:20px;"
-            +     "padding-top:16px;border-top:1px solid #f1f5f9'>CertMonitor Enterprise &nbsp;·&nbsp; " + now + "</div>"
-            + "</div></div></body></html>";
     }
 
     private static String escHtml(String s) {

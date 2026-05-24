@@ -1,16 +1,19 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { api, formatDate } from '../api/client'
 import { useT } from '../i18n/index.jsx'
+import SearchableSelect from './ui/SearchableSelect.jsx'
 
 export default function CertificatesTable({ onRowClick }) {
   const t = useT()
 
   const STATUS_OPTIONS = [
-    { value: '',         labelKey: 'tbl.filterAll',      icon: null },
-    { value: 'valid',    labelKey: 'tbl.filterValid',    icon: '✓', cls: 'cf-opt-valid'  },
-    { value: 'warning',  labelKey: 'tbl.filterWarning',  icon: '⚠', cls: 'cf-opt-warn'   },
-    { value: 'critical', labelKey: 'tbl.filterCritical', icon: '🔴', cls: 'cf-opt-crit'  },
-    { value: 'error',    labelKey: 'tbl.filterError',    icon: '✗', cls: 'cf-opt-err'   },
+    { value: '',          labelKey: 'tbl.filterAll',      icon: null  },
+    { value: 'valid',     labelKey: 'tbl.filterValid',    icon: '✓',  cls: 'cf-opt-valid' },
+    { value: 'critical',  labelKey: 'tbl.filterCritical', icon: '🔴', cls: 'cf-opt-crit'  },
+    { value: 'high',      labelKey: 'tbl.filterHigh',     icon: '🟠', cls: 'cf-opt-high'  },
+    { value: 'warning',   labelKey: 'tbl.filterWarning',  icon: '⚠',  cls: 'cf-opt-warn'  },
+    { value: 'error',     labelKey: 'tbl.filterError',    icon: '✗',  cls: 'cf-opt-err'   },
+    { value: 'expiring7', labelKey: 'tbl.filterExpiring7',icon: '⏱',  cls: 'cf-opt-crit'  },
   ]
 
   const [certs, setCerts]           = useState([])
@@ -82,27 +85,33 @@ export default function CertificatesTable({ onRowClick }) {
         </div>
         <div className="filter-group">
           <label>{t('tbl.sort')}</label>
-          <select className="filter-select" value={sortBy}
-            onChange={(e) => { setSortBy(e.target.value); setPage(1) }}>
-            <option value="priority|asc">{t('tbl.sortPriority')}</option>
-            <option value="domain|asc">{t('tbl.sortDomainAsc')}</option>
-            <option value="domain|desc">{t('tbl.sortDomainDesc')}</option>
-            <option value="issuer|asc">{t('tbl.sortIssuerAsc')}</option>
-            <option value="issuer|desc">{t('tbl.sortIssuerDesc')}</option>
-            <option value="days_remaining|asc">{t('tbl.sortDaysAsc')}</option>
-            <option value="days_remaining|desc">{t('tbl.sortDaysDesc')}</option>
-            <option value="checked_at|desc">{t('tbl.sortChecked')}</option>
-          </select>
+          <SearchableSelect
+            value={sortBy}
+            onChange={v => { setSortBy(v); setPage(1) }}
+            options={[
+              { value: 'priority|asc',        label: t('tbl.sortPriority') },
+              { value: 'domain|asc',          label: t('tbl.sortDomainAsc') },
+              { value: 'domain|desc',         label: t('tbl.sortDomainDesc') },
+              { value: 'issuer|asc',          label: t('tbl.sortIssuerAsc') },
+              { value: 'issuer|desc',         label: t('tbl.sortIssuerDesc') },
+              { value: 'days_remaining|asc',  label: t('tbl.sortDaysAsc') },
+              { value: 'days_remaining|desc', label: t('tbl.sortDaysDesc') },
+              { value: 'checked_at|desc',     label: t('tbl.sortChecked') },
+            ]}
+          />
         </div>
         <div className="filter-group">
           <label>{t('tbl.perPage')}</label>
-          <select className="filter-select" value={perPage}
-            onChange={(e) => { setPerPage(Number(e.target.value)); setPage(1) }}>
-            <option value={10}>10</option>
-            <option value={20}>20</option>
-            <option value={50}>50</option>
-            <option value={100}>100</option>
-          </select>
+          <SearchableSelect
+            value={perPage}
+            onChange={v => { setPerPage(Number(v)); setPage(1) }}
+            options={[
+              { value: 10,  label: '10' },
+              { value: 20,  label: '20' },
+              { value: 50,  label: '50' },
+              { value: 100, label: '100' },
+            ]}
+          />
         </div>
         <button className="btn btn-secondary" style={{ marginTop: 24 }} onClick={reset}>
           {t('tbl.reset')}

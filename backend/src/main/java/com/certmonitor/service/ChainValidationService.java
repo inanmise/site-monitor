@@ -1,5 +1,6 @@
 package com.certmonitor.service;
 
+import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
 import org.bouncycastle.asn1.ASN1OctetString;
 import org.bouncycastle.asn1.ASN1Primitive;
@@ -8,6 +9,7 @@ import org.bouncycastle.cert.jcajce.JcaX509CertificateHolder;
 import org.bouncycastle.cert.ocsp.*;
 import org.bouncycastle.operator.DigestCalculatorProvider;
 import org.bouncycastle.operator.jcajce.JcaDigestCalculatorProviderBuilder;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.io.InputStream;
@@ -21,7 +23,9 @@ import java.time.Instant;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
-import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.TimeUnit;
+import com.github.benmanes.caffeine.cache.Cache;
+import com.github.benmanes.caffeine.cache.Caffeine;
 
 @Slf4j
 @Service
@@ -33,7 +37,21 @@ public class ChainValidationService {
     private static final String OID_AIA = "1.3.6.1.5.5.7.1.1";
     private static final String OID_CRL_DP = "2.5.29.31";
 
-    private final Map<String, X509CRL> crlCache = new ConcurrentHashMap<>();
+    @Value("${cert.monitor.cache.crl-max-size:200}")
+    private int crlCacheMaxSize;
+
+    @Value("${cert.monitor.cache.crl-ttl-hours:1}")
+    private int crlCacheTtlHours;
+
+    private Cache<String, X509CRL> crlCache;
+
+    @PostConstruct
+    public void init() {
+        crlCache = Caffeine.newBuilder()
+                .maximumSize(crlCacheMaxSize)
+                .expireAfterWrite(crlCacheTtlHours, TimeUnit.HOURS)
+                .build();
+    }
 
     public String calculateFingerprint(X509Certificate cert) {
         try {
@@ -76,6 +94,9 @@ public class ChainValidationService {
             certInfo.put("days_remaining", (int) Math.max(daysRemaining, 0));
             certInfo.put("is_root", isRoot);
             certInfo.put("is_leaf", isLeaf);
+            certInfo.put("not_before",          ISO.format(x509.getNotBefore().toInstant()));
+            certInfo.put("serial_number",       x509.getSerialNumber().toString(16).toUpperCase());
+            certInfo.put("signature_algorithm", x509.getSigAlgName());
 
             if (daysRemaining < 0) {
                 certInfo.put("expired", true);
@@ -166,7 +187,12 @@ public class ChainValidationService {
         try {
             List<String> urls = getCrlUrls(cert);
             for (String url : urls) {
-                X509CRL crl = crlCache.computeIfAbsent(url, this::downloadCrl);
+                // Check without holding any cache lock, download separately to avoid blocking
+                X509CRL crl = crlCache.getIfPresent(url);
+                if (crl == null) {
+                    crl = downloadCrl(url);
+                    if (crl != null) crlCache.put(url, crl);
+                }
                 if (crl != null && crl.isRevoked(cert)) return "REVOKED";
             }
             return urls.isEmpty() ? "UNKNOWN" : "VALID";
@@ -174,6 +200,13 @@ public class ChainValidationService {
             log.debug("CRL check failed: {}", e.getMessage());
             return "UNKNOWN";
         }
+    }
+
+    public String extractOcspUrl(X509Certificate cert) { return getOcspUrl(cert); }
+
+    public String extractCrlUrl(X509Certificate cert) {
+        List<String> urls = getCrlUrls(cert);
+        return urls.isEmpty() ? null : urls.get(0);
     }
 
     private String getOcspUrl(X509Certificate cert) {

@@ -1,67 +1,83 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import { describe, it, expect, vi } from 'vitest'
+import { render, screen, fireEvent, act } from './test-utils.jsx'
 import AdminPanel from '../components/admin/AdminPanel.jsx'
 
-// Mock all child components that make API calls
-vi.mock('../components/admin/InventoryManager.jsx', () => ({
-  default: () => <div data-testid="inventory-manager">InventoryManager</div>,
+vi.mock('../api/client', () => ({
+  api: {
+    admin: {
+      getTeams: vi.fn().mockResolvedValue({ success: true, data: [] }),
+    },
+  },
 }))
-vi.mock('../components/admin/AlertHistory.jsx', () => ({
-  default: () => <div data-testid="alert-history">AlertHistory</div>,
-}))
+
 vi.mock('../components/admin/EscalationContacts.jsx', () => ({
   default: () => <div data-testid="escalation-contacts">EscalationContacts</div>,
 }))
 vi.mock('../components/admin/AlertThresholds.jsx', () => ({
   default: () => <div data-testid="alert-thresholds">AlertThresholds</div>,
 }))
+vi.mock('../components/admin/TeamManager.jsx', () => ({
+  default: () => <div data-testid="team-manager">TeamManager</div>,
+}))
+vi.mock('../components/admin/UserManager.jsx', () => ({
+  default: () => <div data-testid="user-manager">UserManager</div>,
+}))
 
 describe('AdminPanel', () => {
-  it('renders all 4 sub-tab buttons', () => {
-    render(<AdminPanel />)
-    expect(screen.getByText(/Domain Envanteri/)).toBeInTheDocument()
-    expect(screen.getByText(/Alarm Geçmişi/)).toBeInTheDocument()
-    expect(screen.getByText(/Eskalasyon Kişileri/)).toBeInTheDocument()
-    expect(screen.getByText(/Eşik Değerleri/)).toBeInTheDocument()
+  it('renders only contacts tab without admin role', async () => {
+    await act(async () => { render(<AdminPanel />) })
+    expect(screen.getByText('Escalation Contacts')).toBeInTheDocument()
+    expect(screen.queryByText('Thresholds')).not.toBeInTheDocument()
+    expect(screen.queryByText('Teams')).not.toBeInTheDocument()
+    expect(screen.queryByText('Users')).not.toBeInTheDocument()
   })
 
-  it('shows InventoryManager by default (first tab)', () => {
-    render(<AdminPanel />)
-    expect(screen.getByTestId('inventory-manager')).toBeInTheDocument()
-    expect(screen.queryByTestId('alert-history')).not.toBeInTheDocument()
+  it('renders all 4 tabs with admin role', async () => {
+    await act(async () => { render(<AdminPanel systemRole="ADMIN" />) })
+    expect(screen.getByText('Thresholds')).toBeInTheDocument()
+    expect(screen.getByText('Escalation Contacts')).toBeInTheDocument()
+    expect(screen.getByText('Teams')).toBeInTheDocument()
+    expect(screen.getByText('Users')).toBeInTheDocument()
   })
 
-  it('inventory tab button has active class by default', () => {
-    render(<AdminPanel />)
-    const inventoryBtn = screen.getByText(/Domain Envanteri/)
-    expect(inventoryBtn).toHaveClass('active')
-  })
-
-  it('switches to AlertHistory when Alarm Geçmişi is clicked', () => {
-    render(<AdminPanel />)
-    fireEvent.click(screen.getByText(/Alarm Geçmişi/))
-    expect(screen.getByTestId('alert-history')).toBeInTheDocument()
-    expect(screen.queryByTestId('inventory-manager')).not.toBeInTheDocument()
-  })
-
-  it('switches to EscalationContacts when the contacts tab is clicked', () => {
-    render(<AdminPanel />)
-    fireEvent.click(screen.getByText(/Eskalasyon Kişileri/))
+  it('shows EscalationContacts by default for non-admin', async () => {
+    await act(async () => { render(<AdminPanel />) })
     expect(screen.getByTestId('escalation-contacts')).toBeInTheDocument()
+    expect(screen.queryByTestId('alert-thresholds')).not.toBeInTheDocument()
   })
 
-  it('switches to AlertThresholds when the thresholds tab is clicked', () => {
-    render(<AdminPanel />)
-    fireEvent.click(screen.getByText(/Eşik Değerleri/))
+  it('shows AlertThresholds by default for admin', async () => {
+    await act(async () => { render(<AdminPanel systemRole="ADMIN" />) })
+    expect(screen.getByTestId('alert-thresholds')).toBeInTheDocument()
+    expect(screen.queryByTestId('escalation-contacts')).not.toBeInTheDocument()
+  })
+
+  it('contacts tab button has active class by default for non-admin', async () => {
+    await act(async () => { render(<AdminPanel />) })
+    const contactsBtn = screen.getByRole('button', { name: 'Escalation Contacts' })
+    expect(contactsBtn).toHaveClass('active')
+  })
+
+  it('switches to EscalationContacts when contacts tab is clicked (admin)', async () => {
+    await act(async () => { render(<AdminPanel systemRole="ADMIN" />) })
+    fireEvent.click(screen.getByRole('button', { name: 'Escalation Contacts' }))
+    expect(screen.getByTestId('escalation-contacts')).toBeInTheDocument()
+    expect(screen.queryByTestId('alert-thresholds')).not.toBeInTheDocument()
+  })
+
+  it('switches to AlertThresholds when thresholds tab is clicked (admin)', async () => {
+    await act(async () => { render(<AdminPanel systemRole="ADMIN" />) })
+    fireEvent.click(screen.getByRole('button', { name: 'Escalation Contacts' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Thresholds' }))
     expect(screen.getByTestId('alert-thresholds')).toBeInTheDocument()
   })
 
-  it('active tab button updates when switching tabs', () => {
-    render(<AdminPanel />)
-    const alertsBtn = screen.getByText(/Alarm Geçmişi/)
-    fireEvent.click(alertsBtn)
-    expect(alertsBtn).toHaveClass('active')
-    const inventoryBtn = screen.getByText(/Domain Envanteri/)
-    expect(inventoryBtn).not.toHaveClass('active')
+  it('active tab button updates when switching tabs', async () => {
+    await act(async () => { render(<AdminPanel systemRole="ADMIN" />) })
+    const contactsBtn = screen.getByRole('button', { name: 'Escalation Contacts' })
+    fireEvent.click(contactsBtn)
+    expect(contactsBtn).toHaveClass('active')
+    const thresholdsBtn = screen.getByRole('button', { name: 'Thresholds' })
+    expect(thresholdsBtn).not.toHaveClass('active')
   })
 })

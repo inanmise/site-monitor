@@ -8,6 +8,18 @@ import java.util.Optional;
 
 public interface CertificateInventoryRepository extends JpaRepository<CertificateInventory, Long> {
     List<CertificateInventory> findByActiveTrueOrderByDomainAsc();
+    List<CertificateInventory> findByTeamIdAndActiveTrueOrderByDomainAsc(Long teamId);
+    List<CertificateInventory> findByTeamIdOrderByDomainAsc(Long teamId);
     Optional<CertificateInventory> findByDomain(String domain);
     boolean existsByDomain(String domain);
+    boolean existsByTeamIdAndActiveTrue(Long teamId);
+    long countByActiveTrue();
+    List<CertificateInventory> findByUgTeamIdAndActiveTrueOrderByDomainAsc(Long ugTeamId);
+
+    // Soft-delete aware
+    List<CertificateInventory> findByDeletedAtIsNullOrderByDomainAsc();
+    List<CertificateInventory> findByDeletedAtIsNotNullOrderByDomainAsc();
+    List<CertificateInventory> findByTeamIdAndDeletedAtIsNullOrderByDomainAsc(Long teamId);
+    List<CertificateInventory> findByUgTeamIdAndDeletedAtIsNullOrderByDomainAsc(Long ugTeamId);
+    boolean existsByTeamIdAndActiveTrueAndDeletedAtIsNull(Long teamId);
 }
