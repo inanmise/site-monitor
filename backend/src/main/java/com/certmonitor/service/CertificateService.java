@@ -336,13 +336,21 @@ public class CertificateService {
         List<CertificateDto> ugWarn = getWarnings().stream()
                 .filter(c -> ugDomains.contains(c.getDomain())).toList();
 
-        return Map.of(
-            "mode",      "personal",
-            "team_id",   teamId,
-            "team_name", teamName != null ? teamName : "",
-            "sy_stats",  computeStats(syAll, syWarn),
-            "ug_stats",  computeStats(ugAll, ugWarn)
-        );
+        Map<String, Integer> tierMap = buildTierMap();
+        List<CertificateDto> syT1All  = syAll.stream().filter(c -> Integer.valueOf(1).equals(tierMap.get(c.getDomain()))).toList();
+        List<CertificateDto> syT1Warn = syWarn.stream().filter(c -> Integer.valueOf(1).equals(tierMap.get(c.getDomain()))).toList();
+        List<CertificateDto> syT2All  = syAll.stream().filter(c -> Integer.valueOf(2).equals(tierMap.get(c.getDomain()))).toList();
+        List<CertificateDto> syT2Warn = syWarn.stream().filter(c -> Integer.valueOf(2).equals(tierMap.get(c.getDomain()))).toList();
+
+        Map<String, Object> res = new LinkedHashMap<>();
+        res.put("mode",        "personal");
+        res.put("team_id",     teamId);
+        res.put("team_name",   teamName != null ? teamName : "");
+        res.put("sy_stats",    computeStats(syAll, syWarn));
+        res.put("ug_stats",    computeStats(ugAll, ugWarn));
+        res.put("sy_t1_stats", computeStats(syT1All, syT1Warn));
+        res.put("sy_t2_stats", computeStats(syT2All, syT2Warn));
+        return res;
     }
 
     public Map<String, Object> getAllTeamsBreakdownStats() {
@@ -357,12 +365,18 @@ public class CertificateService {
             if (inv.getUgTeamId() != null) ugMap.computeIfAbsent(inv.getUgTeamId(), k -> new HashSet<>()).add(inv.getDomain());
         }
 
+        Map<String, Integer> tierMap = buildTierMap();
         List<Map<String, Object>> result = new ArrayList<>();
         for (Team team : teamRepo.findAll()) {
             if (!Boolean.TRUE.equals(team.getActive())) continue;
             Long tid = team.getId();
             Set<String> sy = syMap.getOrDefault(tid, Set.of());
             Set<String> ug = ugMap.getOrDefault(tid, Set.of());
+
+            List<CertificateDto> syT1All  = allLatest.stream().filter(c -> sy.contains(c.getDomain()) && Integer.valueOf(1).equals(tierMap.get(c.getDomain()))).toList();
+            List<CertificateDto> syT1Warn = allWarnings.stream().filter(c -> sy.contains(c.getDomain()) && Integer.valueOf(1).equals(tierMap.get(c.getDomain()))).toList();
+            List<CertificateDto> syT2All  = allLatest.stream().filter(c -> sy.contains(c.getDomain()) && Integer.valueOf(2).equals(tierMap.get(c.getDomain()))).toList();
+            List<CertificateDto> syT2Warn = allWarnings.stream().filter(c -> sy.contains(c.getDomain()) && Integer.valueOf(2).equals(tierMap.get(c.getDomain()))).toList();
 
             Map<String, Object> entry = new HashMap<>();
             entry.put("team_id",   tid);
@@ -375,6 +389,8 @@ public class CertificateService {
                 allLatest.stream().filter(c -> ug.contains(c.getDomain())).toList(),
                 allWarnings.stream().filter(c -> ug.contains(c.getDomain())).toList()
             ));
+            entry.put("sy_t1_stats", computeStats(syT1All, syT1Warn));
+            entry.put("sy_t2_stats", computeStats(syT2All, syT2Warn));
             result.add(entry);
         }
         return Map.of("mode", "all_teams", "teams", result);
@@ -419,11 +435,26 @@ public class CertificateService {
         long mismatch    = all.stream().filter(c -> "INCOMPLETE".equals(c.getDeploymentStatus())).count();
         long chainBroken = all.stream().filter(c -> "BROKEN".equals(c.getChainStatus())).count();
 
-        List<String> validDomains   = all.stream()
+        List<String> validDomains    = all.stream()
                 .filter(c -> !warnDomainSet.contains(c.getDomain())).map(CertificateDto::getDomain).toList();
-        List<String> warningDomains = warnings.stream()
-                .filter(c -> !"error".equals(c.getStatus())).map(CertificateDto::getDomain).toList();
-        List<String> errorDomains   = warnings.stream()
+        List<String> warningDomains  = warnings.stream()
+                .filter(c -> !"error".equals(c.getStatus()))
+                .filter(c -> c.getDaysRemaining() != null && c.getDaysRemaining() > highDays)
+                .map(CertificateDto::getDomain).toList();
+        List<String> highDomains     = warnings.stream()
+                .filter(c -> !"error".equals(c.getStatus()))
+                .filter(c -> c.getDaysRemaining() != null
+                          && c.getDaysRemaining() > critDays && c.getDaysRemaining() <= highDays)
+                .map(CertificateDto::getDomain).toList();
+        List<String> criticalDomains = warnings.stream()
+                .filter(c -> !"error".equals(c.getStatus()))
+                .filter(c -> c.getDaysRemaining() != null
+                          && c.getDaysRemaining() >= 0 && c.getDaysRemaining() <= critDays)
+                .map(CertificateDto::getDomain).toList();
+        List<String> expiredDomains  = warnings.stream()
+                .filter(c -> c.getDaysRemaining() != null && c.getDaysRemaining() < 0)
+                .map(CertificateDto::getDomain).toList();
+        List<String> errorDomains    = warnings.stream()
                 .filter(c -> "error".equals(c.getStatus())).map(CertificateDto::getDomain).toList();
 
         Map<String, Object> result = new HashMap<>();
@@ -441,6 +472,9 @@ public class CertificateService {
         result.put("chain_broken",         chainBroken);
         result.put("valid_domains",        validDomains);
         result.put("warning_domains",      warningDomains);
+        result.put("high_domains",         highDomains);
+        result.put("critical_domains",     criticalDomains);
+        result.put("expired_domains",      expiredDomains);
         result.put("error_domains",        errorDomains);
         return result;
     }

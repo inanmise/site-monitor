@@ -1,89 +1,61 @@
-import { BarChart3, CheckCircle, AlertTriangle, XCircle, Users } from 'lucide-react'
+import { Users } from 'lucide-react'
 import { useT } from '../i18n/index.jsx'
 
-function StatCard({ title, stats, teamName, role, onStatClick }) {
-  const t = useT()
-  const total   = stats?.total_certificates ?? 0
-  const valid   = stats?.valid_count        ?? 0
-  const warning = stats?.warning_count      ?? 0
-  const error   = stats?.error_count        ?? 0
+const STATUSES = [
+  { key: 'valid',    countKey: 'valid_count',    domainsKey: 'valid_domains'    },
+  { key: 'warning',  countKey: 'warning_count',  domainsKey: 'warning_domains'  },
+  { key: 'high',     countKey: 'high_count',     domainsKey: 'high_domains'     },
+  { key: 'critical', countKey: 'critical_count', domainsKey: 'critical_domains' },
+  { key: 'expired',  countKey: 'expired',        domainsKey: 'expired_domains'  },
+]
 
-  function handleClick(status) {
-    if (!onStatClick) return
-    const domains = stats?.[`${status}_domains`] ?? []
-    if (domains.length === 0) return
-    onStatClick(new Set(domains), `${teamName} — ${role} — ${t(`ts.${status}`)}`)
+function TierRow({ label, stats, teamName, onStatClick, t }) {
+  function click(domainsKey, statusLabel) {
+    const domains = stats?.[domainsKey] ?? []
+    if (!onStatClick || !domains.length) return
+    onStatClick(new Set(domains), `${teamName} — ${label} — ${statusLabel}`)
   }
-
   return (
-    <div className="ts-card">
-      <div className="ts-card-title">{title}</div>
-      <div className="ts-row">
-        <span className="ts-row-label">{t('ts.total')}</span>
-        <span className="ts-row-val ts-val-total">{total}</span>
-      </div>
-      <div className="ts-row ts-row-clickable" onClick={() => handleClick('valid')}>
-        <span className="ts-row-label">{t('ts.valid')}</span>
-        <span className="ts-row-val ts-val-valid">{valid}</span>
-      </div>
-      <div className="ts-row ts-row-clickable" onClick={() => handleClick('warning')}>
-        <span className="ts-row-label">{t('ts.warning')}</span>
-        <span className="ts-row-val ts-val-warning">{warning}</span>
-      </div>
-      <div className="ts-row ts-row-clickable" onClick={() => handleClick('error')}>
-        <span className="ts-row-label">{t('ts.error')}</span>
-        <span className="ts-row-val ts-val-error">{error}</span>
-      </div>
-    </div>
+    <tr className="ts-grid-row">
+      <td className="ts-grid-tier-cell">{label}</td>
+      {STATUSES.map(({ key, countKey, domainsKey }) => {
+        const count = stats?.[countKey] ?? 0
+        return (
+          <td
+            key={key}
+            className={`ts-grid-val-cell ts-cell-${key}${count > 0 ? ' ts-cell-active' : ' ts-cell-zero'}`}
+            onClick={() => count > 0 && click(domainsKey, t(`ts.${key}`))}
+          >{count}</td>
+        )
+      })}
+    </tr>
   )
 }
 
-function PersonalView({ data, onStatClick }) {
+function TeamCard({ team, onStatClick }) {
   const t = useT()
+  const total = (team.sy_t1_stats?.total_certificates ?? 0) + (team.sy_t2_stats?.total_certificates ?? 0)
   return (
-    <div className="ts-root">
-      <div className="ts-title">{t('ts.title')}{data.team_name ? ` — ${data.team_name}` : ''}</div>
-      <div className="ts-cards">
-        <StatCard title={t('ts.syRole')} stats={data.sy_stats}
-          teamName={data.team_name} role={t('ts.syRole')} onStatClick={onStatClick} />
-        <StatCard title={t('ts.ugRole')} stats={data.ug_stats}
-          teamName={data.team_name} role={t('ts.ugRole')} onStatClick={onStatClick} />
+    <div className={`ts-team-card${total === 0 ? ' ts-zero' : ''}`}>
+      <div className="ts-team-card-header">
+        <Users size={13} className="ts-team-icon" />
+        <span className="ts-team-name">{team.team_name}</span>
+        <span className="ts-team-grand-total">{total}</span>
       </div>
-    </div>
-  )
-}
-
-function RoleChips({ stats, teamName, role, onStatClick }) {
-  const t = useT()
-  const total   = stats?.total_certificates ?? 0
-  const valid   = stats?.valid_count        ?? 0
-  const warning = stats?.warning_count      ?? 0
-  const error   = stats?.error_count        ?? 0
-
-  function handleClick(status) {
-    if (!onStatClick) return
-    const domains = stats?.[`${status}_domains`] ?? []
-    if (domains.length === 0) return
-    onStatClick(new Set(domains), `${teamName} — ${role} — ${t(`ts.${status}`)}`)
-  }
-
-  return (
-    <div className="ts-stat-chips">
-      <span className="ts-chip ts-chip-total">
-        <BarChart3 size={11} />{total} {t('ts.total')}
-      </span>
-      <button className="ts-chip ts-chip-valid ts-chip-btn" onClick={() => handleClick('valid')}
-        disabled={valid === 0}>
-        <CheckCircle size={11} />{valid}
-      </button>
-      <button className="ts-chip ts-chip-warning ts-chip-btn" onClick={() => handleClick('warning')}
-        disabled={warning === 0}>
-        <AlertTriangle size={11} />{warning}
-      </button>
-      <button className="ts-chip ts-chip-error ts-chip-btn" onClick={() => handleClick('error')}
-        disabled={error === 0}>
-        <XCircle size={11} />{error}
-      </button>
+      <table className="ts-grid-table">
+        <thead>
+          <tr>
+            <th className="ts-grid-tier-hdr"></th>
+            {STATUSES.map(({ key }) => (
+              <th key={key} className={`ts-grid-hdr ts-hdr-${key}`}>{t(`ts.${key}`)}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          <TierRow label="T1" stats={team.sy_t1_stats} teamName={team.team_name} onStatClick={onStatClick} t={t} />
+          <TierRow label="T2" stats={team.sy_t2_stats} teamName={team.team_name} onStatClick={onStatClick} t={t} />
+        </tbody>
+      </table>
     </div>
   )
 }
@@ -99,34 +71,27 @@ function AdminView({ teams, onStatClick }) {
           <span className="ts-section-badge">{teams.length}</span>
         </div>
         <div className="ts-admin-grid">
-          {teams.map((team) => {
-            const syTotal = team.sy_stats?.total_certificates ?? 0
-            const ugTotal = team.ug_stats?.total_certificates ?? 0
-            const grandTotal = syTotal + ugTotal
-            const isEmpty = syTotal === 0 && ugTotal === 0
-            return (
-              <div key={team.team_id} className={`ts-team-card${isEmpty ? ' ts-zero' : ''}`}>
-                <div className="ts-team-card-header">
-                  <Users size={13} className="ts-team-icon" />
-                  <span className="ts-team-name">{team.team_name}</span>
-                  <span className="ts-team-grand-total">{grandTotal}</span>
-                </div>
-                <div className="ts-role-section">
-                  <div className="ts-role-label">{t('ts.syRole')}</div>
-                  <RoleChips stats={team.sy_stats} teamName={team.team_name}
-                    role={t('ts.syRole')} onStatClick={onStatClick} />
-                </div>
-                <div className="ts-role-divider" />
-                <div className="ts-role-section">
-                  <div className="ts-role-label">{t('ts.ugRole')}</div>
-                  <RoleChips stats={team.ug_stats} teamName={team.team_name}
-                    role={t('ts.ugRole')} onStatClick={onStatClick} />
-                </div>
-              </div>
-            )
-          })}
+          {teams.map((team) => (
+            <TeamCard key={team.team_id} team={team} onStatClick={onStatClick} />
+          ))}
         </div>
       </div>
+    </div>
+  )
+}
+
+function PersonalView({ data, onStatClick }) {
+  const t = useT()
+  const team = {
+    team_id:     data.team_id,
+    team_name:   data.team_name,
+    sy_t1_stats: data.sy_t1_stats,
+    sy_t2_stats: data.sy_t2_stats,
+  }
+  return (
+    <div className="ts-root">
+      <div className="ts-title">{t('ts.title')}{data.team_name ? ` — ${data.team_name}` : ''}</div>
+      <TeamCard team={team} onStatClick={onStatClick} />
     </div>
   )
 }
