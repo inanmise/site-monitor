@@ -104,7 +104,10 @@ export default function Login({ onLogin }) {
           </div>
 
           <div className="lp-left-footer">
-            <span>v{__APP_VERSION__} &nbsp;·&nbsp; &copy; {new Date().getFullYear()} CertMonitor</span>
+            <div className="lp-footer-info">
+              <span className="lp-enterprise-badge">ENTERPRISE</span>
+              <span>v{__APP_VERSION__} &nbsp;·&nbsp; &copy; {new Date().getFullYear()} CertMonitor</span>
+            </div>
             <button type="button" className="lp-lang-btn" onClick={toggleLang}>
               <Globe size={13} />
               {lang === 'tr' ? 'English' : 'Türkçe'}
