@@ -111,6 +111,7 @@ export default function Nav({ activeTab, onTabChange, username, teamName, system
             <div className="sb-brand-text">
               <span className="sb-brand-name">CertMonitor</span>
               <span className="sb-brand-sub">ENTERPRISE</span>
+              <span className="sb-brand-version">v{__APP_VERSION__}</span>
             </div>
           )}
         </div>
