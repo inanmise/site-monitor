@@ -756,6 +756,23 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
   text-align: center;
   letter-spacing: 0.3px;
 }
+.lp-footer-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.lp-enterprise-badge {
+  display: inline-flex;
+  align-items: center;
+  background: rgba(59,130,246,.20);
+  border: 1px solid rgba(59,130,246,.35);
+  border-radius: 4px;
+  color: #93c5fd;
+  font-size: .62em;
+  font-weight: 700;
+  letter-spacing: .08em;
+  padding: 1px 6px;
+}
 
 /* Decorative circles */
 .lp-deco {
