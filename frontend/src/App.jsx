@@ -46,7 +46,8 @@ export default function App() {
   const [search, setSearch] = useState('')
   const [sortOrder, setSortOrder] = useState('default')
   const [modalCert, setModalCert] = useState(null)
-  const [newDomain, setNewDomain] = useState('')
+  const [newDomain,    setNewDomain]    = useState('')
+  const [checkLoading, setCheckLoading] = useState(false)
   const [refreshing, setRefreshing] = useState(false)
   const [refreshProgress, setRefreshProgress] = useState(null)
   const [lastUpdate, setLastUpdate] = useState(null)
@@ -223,15 +224,23 @@ export default function App() {
   }
 
   async function handleAddDomain() {
-    if (!newDomain.trim()) return
+    if (!newDomain.trim() || checkLoading) return
     let domain = newDomain.trim()
     domain = domain.replace(/^https?:\/\//i, '')
     domain = domain.split('/')[0]
     if (domain.includes(':')) domain = domain.split(':')[0]
     if (!domain) return
-    await api.checkDomain(domain)
-    setNewDomain('')
-    setTimeout(loadData, 1000)
+    setCheckLoading(true)
+    try {
+      const res = await api.checkDomain(domain)
+      setNewDomain('')
+      if (res?.data) {
+        setModalCert({ ...res.data, domain: res.data.domain || domain })
+      }
+      setTimeout(loadData, 500)
+    } finally {
+      setCheckLoading(false)
+    }
   }
 
   function handleLogin(userData) {
@@ -356,7 +365,9 @@ export default function App() {
               <input className="domain-input" type="text" placeholder={t('app.newDomainPlaceholder')}
                 value={newDomain} onChange={(e) => setNewDomain(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && handleAddDomain()} />
-              <button className="btn btn-success" onClick={handleAddDomain}>{t('app.checkBtn')}</button>
+              <button className="btn btn-success" onClick={handleAddDomain} disabled={checkLoading}>
+                {checkLoading ? t('app.checkingDomain') : t('app.checkBtn')}
+              </button>
             </div>
           </div>
 
