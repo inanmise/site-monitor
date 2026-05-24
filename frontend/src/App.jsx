@@ -601,7 +601,7 @@ export default function App() {
         </div>
       </main>
 
-      <CertificateModal domain={modalCert?.domain} alertLevel={modalCert?.alert_level} initialData={modalCert?._preview ? modalCert : undefined} onClose={() => setModalCert(null)} />
+      <CertificateModal domain={modalCert?.domain} alertLevel={modalCert?.alert_level} initialData={modalCert?._preview ? modalCert : undefined} previewMode={!!modalCert?._preview} onClose={() => setModalCert(null)} />
     </div>
   )
 }

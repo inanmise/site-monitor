@@ -73,7 +73,7 @@ function NotesTab({ domain, t }) {
   )
 }
 
-export default function CertificateModal({ domain, alertLevel, onClose, initialData }) {
+export default function CertificateModal({ domain, alertLevel, onClose, initialData, previewMode }) {
   const t = useT()
   const [certData, setCertData]   = useState(null)
   const [activeTab, setActiveTab] = useState('details')
@@ -118,18 +118,22 @@ export default function CertificateModal({ domain, alertLevel, onClose, initialD
           >
             {t('modal.detailsTab')}
           </button>
-          <button
-            className={`modal-tab${activeTab === 'alerts' ? ' active' : ''}`}
-            onClick={() => switchTab('alerts')}
-          >
-            {t('modal.alertsTab')}
-          </button>
-          <button
-            className={`modal-tab${activeTab === 'notes' ? ' active' : ''}`}
-            onClick={() => switchTab('notes')}
-          >
-            {t('modal.notesTab')}
-          </button>
+          {!previewMode && (
+            <button
+              className={`modal-tab${activeTab === 'alerts' ? ' active' : ''}`}
+              onClick={() => switchTab('alerts')}
+            >
+              {t('modal.alertsTab')}
+            </button>
+          )}
+          {!previewMode && (
+            <button
+              className={`modal-tab${activeTab === 'notes' ? ' active' : ''}`}
+              onClick={() => switchTab('notes')}
+            >
+              {t('modal.notesTab')}
+            </button>
+          )}
         </div>
 
         {activeTab === 'details' && (
@@ -234,11 +238,11 @@ export default function CertificateModal({ domain, alertLevel, onClose, initialD
           )
         )}
 
-        {activeTab === 'alerts' && (
+        {!previewMode && activeTab === 'alerts' && (
           <AlertHistory domain={domain} />
         )}
 
-        {activeTab === 'notes' && (
+        {!previewMode && activeTab === 'notes' && (
           <NotesTab domain={domain} t={t} />
         )}
       </div>
