@@ -3,6 +3,7 @@ import { api, formatDate } from '../api/client'
 import { useT } from '../i18n/index.jsx'
 import { Trash2, Globe, X } from 'lucide-react'
 import AlertHistory from './admin/AlertHistory'
+import SslCheckerPanel from './SslCheckerPanel.jsx'
 
 function NotesTab({ domain, t }) {
   const [notes, setNotes]       = useState(null)
@@ -75,19 +76,33 @@ function NotesTab({ domain, t }) {
 
 export default function CertificateModal({ domain, alertLevel, onClose, initialData, previewMode }) {
   const t = useT()
-  const [certData, setCertData]   = useState(null)
-  const [activeTab, setActiveTab] = useState('details')
+  const [certData, setCertData]       = useState(null)
+  const [sslData, setSslData]         = useState(null)
+  const [sslLoading, setSslLoading]   = useState(false)
+  const [activeTab, setActiveTab]     = useState('ssl')
 
   useEffect(() => {
     if (!domain) return
     setCertData(null)
-    setActiveTab('details')
+    setSslData(null)
+    setActiveTab('ssl')
+
     if (initialData) {
       setCertData(initialData)
+      setSslData(initialData)
       return
     }
+
+    // Details / Alerts / Notes için geçmiş veri
     api.getHistory(domain).then((res) => {
       if (res?.success && res.data.length > 0) setCertData(res.data[0])
+    })
+
+    // SSL tabı için canlı check (SSL Checker ile aynı endpoint)
+    setSslLoading(true)
+    api.checkDomainPreview(domain).then((res) => {
+      setSslData(res?.data ?? null)
+      setSslLoading(false)
     })
   }, [domain])
 
@@ -113,6 +128,12 @@ export default function CertificateModal({ domain, alertLevel, onClose, initialD
 
         <div className="modal-tabs">
           <button
+            className={`modal-tab${activeTab === 'ssl' ? ' active' : ''}`}
+            onClick={() => switchTab('ssl')}
+          >
+            {t('ssl.tab')}
+          </button>
+          <button
             className={`modal-tab${activeTab === 'details' ? ' active' : ''}`}
             onClick={() => switchTab('details')}
           >
@@ -135,6 +156,16 @@ export default function CertificateModal({ domain, alertLevel, onClose, initialD
             </button>
           )}
         </div>
+
+        {activeTab === 'ssl' && (
+          (sslLoading || !sslData) ? (
+            <div className="loading">{t('modal.loading')}</div>
+          ) : (
+            <div className="modal-body ssl-tab-body">
+              <SslCheckerPanel data={sslData} />
+            </div>
+          )
+        )}
 
         {activeTab === 'details' && (
           !d ? (
