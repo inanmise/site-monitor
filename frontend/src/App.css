@@ -3543,6 +3543,7 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .ts-hdr-high,     .ts-cell-high.ts-cell-active     { color: #f97316; }
 .ts-hdr-critical, .ts-cell-critical.ts-cell-active { color: #ef4444; }
 .ts-hdr-expired,  .ts-cell-expired.ts-cell-active  { color: #9ca3af; }
+.ts-cell-selected { outline: 2px solid currentColor; outline-offset: -2px; border-radius: 4px; }
 
 /* ── Inventory Show Modal ────────────────────────── */
 .btn-show { background: #e8f5e9; color: #2e7d32; border: 1px solid #a5d6a7; }
@@ -4141,10 +4142,12 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
   font-size: .78em;
   font-weight: 600;
 }
-.sv-chip-tier { background: rgba(79,70,229,.12); color: #4f46e5; border: 1px solid rgba(79,70,229,.25); }
-.sv-chip-team { background: rgba(2,132,199,.12); color: #0284c7; border: 1px solid rgba(2,132,199,.25); }
-[data-theme="dark"] .sv-chip-tier { background: rgba(99,102,241,.15); color: #818cf8; border-color: rgba(99,102,241,.3); }
-[data-theme="dark"] .sv-chip-team { background: rgba(14,165,233,.15); color: #38bdf8; border-color: rgba(14,165,233,.3); }
+.sv-chip-tier   { background: rgba(79,70,229,.12);  color: #4f46e5; border: 1px solid rgba(79,70,229,.25); }
+.sv-chip-team   { background: rgba(2,132,199,.12);  color: #0284c7; border: 1px solid rgba(2,132,199,.25); }
+.sv-chip-status { background: rgba(249,115,22,.12); color: #ea580c; border: 1px solid rgba(249,115,22,.25); }
+[data-theme="dark"] .sv-chip-tier   { background: rgba(99,102,241,.15);  color: #818cf8; border-color: rgba(99,102,241,.3); }
+[data-theme="dark"] .sv-chip-team   { background: rgba(14,165,233,.15);  color: #38bdf8; border-color: rgba(14,165,233,.3); }
+[data-theme="dark"] .sv-chip-status { background: rgba(251,146,60,.15);  color: #fb923c; border-color: rgba(251,146,60,.3); }
 .sv-chip-x {
   background: none; border: none; cursor: pointer;
   color: inherit; opacity: .6; padding: 0 2px; font-size: .9em; line-height: 1;
@@ -4181,8 +4184,8 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 /* ══════════════════  TEAM × TIER GRID  ══════════════════════════════ */
 .ttg-root {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-  gap: 12px;
+  grid-template-columns: repeat(auto-fill, minmax(420px, 1fr));
+  gap: 14px;
 }
 
 /* Card */

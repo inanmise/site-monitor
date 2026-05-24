@@ -11,7 +11,14 @@ const TIER_META = {
   4: { color: '#6b7280', label: 'T4', descKey: 'tier.desc4' },
   0: { color: '#94a3b8', label: '?',  descKey: 'tier.descNone' },
 }
-const TIER_ORDER = [1, 2, 3, 4, 0]
+
+const CELL_STATUSES = [
+  { key: 'valid',    labelKey: 'ts.valid'    },
+  { key: 'warning',  labelKey: 'ts.warning'  },
+  { key: 'high',     labelKey: 'ts.high'     },
+  { key: 'critical', labelKey: 'ts.critical' },
+  { key: 'expired',  labelKey: 'ts.expired'  },
+]
 
 const STATUS_OPTIONS = [
   { value: '',          labelKey: 'tbl.filterAll'       },
@@ -24,10 +31,12 @@ const STATUS_OPTIONS = [
 ]
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
+const ALL_DOMAIN_KEYS = ['valid_domains', 'warning_domains', 'high_domains', 'critical_domains', 'expired_domains', 'error_domains']
+
 function extractDomains(teamOrStats) {
   const domains = new Set()
   for (const role of ['sy_stats', 'ug_stats']) {
-    for (const key of ['valid_domains', 'warning_domains', 'error_domains']) {
+    for (const key of ALL_DOMAIN_KEYS) {
       for (const d of (teamOrStats[role]?.[key] ?? [])) domains.add(d)
     }
   }
@@ -49,7 +58,6 @@ function buildTeams(teamStats) {
   return []
 }
 
-// domain → { teamName, role: 'SY'|'UG' }
 function buildDomainMap(teamStats) {
   const map = {}
   if (!teamStats) return map
@@ -61,7 +69,7 @@ function buildDomainMap(teamStats) {
   }
 
   const processMember = (member, teamName) => {
-    for (const domKey of ['valid_domains', 'warning_domains', 'error_domains']) {
+    for (const domKey of ALL_DOMAIN_KEYS) {
       addDomains(member?.sy_stats?.[domKey], teamName, 'SY')
       addDomains(member?.ug_stats?.[domKey], teamName, 'UG')
     }
@@ -73,6 +81,16 @@ function buildDomainMap(teamStats) {
     processMember(teamStats, teamStats.team_name ?? '—')
   }
   return map
+}
+
+function certCellStatus(c) {
+  const d = c.days_remaining
+  if (c.status === 'error') return 'error'
+  if (d != null && d < 0) return 'expired'
+  if (d != null && d <= 7) return 'critical'
+  if (d != null && d <= 15) return 'high'
+  if (c.warning) return 'warning'
+  return 'valid'
 }
 
 function buildPageRange(current, total, max = 5) {
@@ -89,7 +107,7 @@ function defaultPriority(c) {
 }
 
 // ── TeamTierSection ───────────────────────────────────────────────────────────
-function TeamTierSection({ certs, teamStats, tierFilter, setTierFilter, teamFilter, setTeamFilter, setPage }) {
+function TeamTierSection({ certs, teamStats, tierFilter, setTierFilter, teamFilter, setTeamFilter, statusFilter, setStatusFilter, setPage }) {
   const t     = useT()
   const teams = useMemo(() => buildTeams(teamStats), [teamStats])
 
@@ -98,37 +116,37 @@ function TeamTierSection({ certs, teamStats, tierFilter, setTierFilter, teamFilt
     const tierMap   = {}
     for (const c of teamCerts) {
       const k = c.tier ?? 0
-      if (!tierMap[k]) tierMap[k] = { total: 0, valid: 0, warning: 0, error: 0 }
+      if (k !== 1 && k !== 2) continue
+      if (!tierMap[k]) tierMap[k] = { total: 0, valid: 0, warning: 0, high: 0, critical: 0, expired: 0 }
       tierMap[k].total++
-      if (c.status === 'error') tierMap[k].error++
-      else if (c.warning)       tierMap[k].warning++
-      else                      tierMap[k].valid++
+      const s = certCellStatus(c)
+      if (s !== 'error') tierMap[k][s] = (tierMap[k][s] ?? 0) + 1
     }
-    const tierRows     = TIER_ORDER.filter(k => tierMap[k]).map(k => ({ tier: k, ...tierMap[k] }))
-    const maxTierCount = Math.max(1, ...tierRows.map(r => r.total))
-    return { ...team, tierRows, total: teamCerts.length, maxTierCount }
+    const tierRows = [1, 2].filter(k => tierMap[k]).map(k => ({ tier: k, ...tierMap[k] }))
+    return { ...team, tierRows, total: teamCerts.length }
   }), [teams, certs])
 
   if (teams.length === 0) return null
 
-  function handleTierRowClick(team, tierKey) {
-    const sameTeam = teamFilter?.label === team.name
-    const sameTier = tierFilter === tierKey
-    if (sameTeam && sameTier) {
-      setTeamFilter(null); setTierFilter(null)
+  function handleCellClick(team, tierKey, statusKey) {
+    const same = teamFilter?.label === team.name && tierFilter === tierKey && statusFilter === statusKey
+    if (same) {
+      setTeamFilter(null); setTierFilter(null); setStatusFilter(null)
     } else {
       setTeamFilter({ domains: team.domains, label: team.name })
       setTierFilter(tierKey)
+      setStatusFilter(statusKey)
     }
     setPage(1)
   }
 
   function handleTeamHeaderClick(team) {
-    if (teamFilter?.label === team.name && tierFilter === null) {
+    if (teamFilter?.label === team.name && tierFilter === null && statusFilter === null) {
       setTeamFilter(null)
     } else {
       setTeamFilter({ domains: team.domains, label: team.name })
       setTierFilter(null)
+      setStatusFilter(null)
     }
     setPage(1)
   }
@@ -139,58 +157,46 @@ function TeamTierSection({ certs, teamStats, tierFilter, setTierFilter, teamFilt
         const cardActive = teamFilter?.label === team.name
         return (
           <div key={team.id} className={`ttg-card${cardActive ? ' ttg-card-active' : ''}`}>
-
-            {/* Card header — click = filter by whole team */}
             <div className="ttg-header" onClick={() => handleTeamHeaderClick(team)}>
               <span className="ttg-team-name">{team.name}</span>
               <span className="ttg-team-total">{team.total} {t('ts.total')}</span>
             </div>
 
-            {team.total === 0 ? (
+            {team.tierRows.length === 0 ? (
               <div className="ttg-empty">{t('sv.noData')}</div>
             ) : (
-              <div className="ttg-rows">
-                {/* Column headers */}
-                <div className="ttg-row ttg-row-head">
-                  <span className="ttg-col-badge" />
-                  <span className="ttg-col-bar" />
-                  <span className="ttg-col-count">#</span>
-                  <span className="ttg-col-chips">
-                    <span className="ttg-chip-head ttg-ok">✓</span>
-                    <span className="ttg-chip-head ttg-warn">⚠</span>
-                    <span className="ttg-chip-head ttg-err">✗</span>
-                  </span>
-                </div>
-
-                {team.tierRows.map(row => {
-                  const meta     = TIER_META[row.tier]
-                  const barPct   = Math.round((row.total / team.maxTierCount) * 100)
-                  const isActive = cardActive && tierFilter === row.tier
-                  return (
-                    <div
-                      key={row.tier}
-                      className={`ttg-row${isActive ? ' ttg-row-active' : ''}`}
-                      onClick={() => handleTierRowClick(team, row.tier)}
-                      title={t(meta.descKey)}
-                    >
-                      <span className="ttg-col-badge">
-                        <span className="ttg-badge" style={{ background: meta.color }}>{meta.label}</span>
-                      </span>
-                      <span className="ttg-col-bar">
-                        <span className="ttg-bar-track">
-                          <span className="ttg-bar-fill" style={{ width: `${barPct}%`, background: meta.color }} />
+              <table className="ts-grid-table">
+                <thead>
+                  <tr>
+                    <th className="ts-grid-tier-hdr"></th>
+                    {CELL_STATUSES.map(({ key, labelKey }) => (
+                      <th key={key} className={`ts-grid-hdr ts-hdr-${key}`}>{t(labelKey)}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {team.tierRows.map(row => (
+                    <tr key={row.tier} className="ts-grid-row">
+                      <td className="ts-grid-tier-cell">
+                        <span className="ttg-badge" style={{ background: TIER_META[row.tier].color }}>
+                          {TIER_META[row.tier].label}
                         </span>
-                      </span>
-                      <span className="ttg-col-count">{row.total}</span>
-                      <span className="ttg-col-chips">
-                        <span className={`ttg-chip ttg-ok${row.valid === 0 ? ' ttg-chip-zero' : ''}`}>{row.valid}</span>
-                        <span className={`ttg-chip ttg-warn${row.warning === 0 ? ' ttg-chip-zero' : ''}`}>{row.warning}</span>
-                        <span className={`ttg-chip ttg-err${row.error === 0 ? ' ttg-chip-zero' : ''}`}>{row.error}</span>
-                      </span>
-                    </div>
-                  )
-                })}
-              </div>
+                      </td>
+                      {CELL_STATUSES.map(({ key }) => {
+                        const count    = row[key] ?? 0
+                        const selected = cardActive && tierFilter === row.tier && statusFilter === key
+                        return (
+                          <td
+                            key={key}
+                            className={`ts-grid-val-cell ts-cell-${key}${count > 0 ? ' ts-cell-active' : ' ts-cell-zero'}${selected ? ' ts-cell-selected' : ''}`}
+                            onClick={() => count > 0 && handleCellClick(team, row.tier, key)}
+                          >{count}</td>
+                        )
+                      })}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             )}
           </div>
         )
@@ -207,6 +213,7 @@ export default function StatsView({ certs = [], teamStats, onRowClick }) {
 
   const [tierFilter, setTierFilter]     = useState(null)
   const [teamFilter, setTeamFilter]     = useState(null)
+  const [statusFilter, setStatusFilter] = useState(null)
   const [filterDomain, setFilterDomain] = useState('')
   const [filterIssuer, setFilterIssuer] = useState('')
   const [filterStatus, setFilterStatus] = useState('')
@@ -221,6 +228,8 @@ export default function StatsView({ certs = [], teamStats, onRowClick }) {
       result = result.filter(c => (c.tier ?? null) === (tierFilter === 0 ? null : tierFilter))
     if (teamFilter)
       result = result.filter(c => teamFilter.domains.has(c.domain))
+    if (statusFilter)
+      result = result.filter(c => certCellStatus(c) === statusFilter)
     if (filterDomain) {
       const s = filterDomain.toLowerCase()
       result = result.filter(c => c.domain?.toLowerCase().includes(s))
@@ -250,22 +259,23 @@ export default function StatsView({ certs = [], teamStats, onRowClick }) {
       const cmp = typeof av === 'number' ? av - bv : String(av).localeCompare(String(bv))
       return sd === 'desc' ? -cmp : cmp
     })
-  }, [certs, tierFilter, teamFilter, filterDomain, filterIssuer, filterStatus, sortBy])
+  }, [certs, tierFilter, teamFilter, statusFilter, filterDomain, filterIssuer, filterStatus, sortBy])
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / perPage))
   const safePage   = Math.min(page, totalPages)
   const pageItems  = filtered.slice((safePage - 1) * perPage, safePage * perPage)
 
   function clearWidgetFilters() {
-    setTierFilter(null); setTeamFilter(null); setPage(1)
+    setTierFilter(null); setTeamFilter(null); setStatusFilter(null); setPage(1)
   }
   function resetAll() {
-    setTierFilter(null); setTeamFilter(null)
+    setTierFilter(null); setTeamFilter(null); setStatusFilter(null)
     setFilterDomain(''); setFilterIssuer(''); setFilterStatus('')
     setSortBy('priority|asc'); setPerPage(20); setPage(1)
   }
 
-  const hasTableFilter = filterDomain || filterIssuer || filterStatus
+  const hasTableFilter  = filterDomain || filterIssuer || filterStatus
+  const hasWidgetFilter = tierFilter !== null || teamFilter || statusFilter
 
   return (
     <div className="sv-root">
@@ -278,11 +288,13 @@ export default function StatsView({ certs = [], teamStats, onRowClick }) {
         setTierFilter={setTierFilter}
         teamFilter={teamFilter}
         setTeamFilter={setTeamFilter}
+        statusFilter={statusFilter}
+        setStatusFilter={setStatusFilter}
         setPage={setPage}
       />
 
       {/* ── Active widget filter chips ── */}
-      {(tierFilter !== null || teamFilter) && (
+      {hasWidgetFilter && (
         <div className="sv-filter-bar">
           <span className="sv-filter-label">{t('sv.activeFilter')}</span>
           {teamFilter && (
@@ -297,6 +309,12 @@ export default function StatsView({ certs = [], teamStats, onRowClick }) {
                 ? t('tier.descNone')
                 : `${TIER_META[tierFilter]?.label} — ${t(TIER_META[tierFilter]?.descKey)}`}
               <button className="sv-chip-x" onClick={() => { setTierFilter(null); setPage(1) }}>✕</button>
+            </span>
+          )}
+          {statusFilter && (
+            <span className="sv-chip sv-chip-status">
+              {t(`ts.${statusFilter}`)}
+              <button className="sv-chip-x" onClick={() => { setStatusFilter(null); setPage(1) }}>✕</button>
             </span>
           )}
           <button className="sv-clear-all" onClick={clearWidgetFilters}>{t('app.clearFilter')}</button>
