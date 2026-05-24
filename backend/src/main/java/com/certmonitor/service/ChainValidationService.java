@@ -94,6 +94,9 @@ public class ChainValidationService {
             certInfo.put("days_remaining", (int) Math.max(daysRemaining, 0));
             certInfo.put("is_root", isRoot);
             certInfo.put("is_leaf", isLeaf);
+            certInfo.put("not_before",          ISO.format(x509.getNotBefore().toInstant()));
+            certInfo.put("serial_number",       x509.getSerialNumber().toString(16).toUpperCase());
+            certInfo.put("signature_algorithm", x509.getSigAlgName());
 
             if (daysRemaining < 0) {
                 certInfo.put("expired", true);

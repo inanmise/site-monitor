@@ -8,8 +8,15 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 
+import org.bouncycastle.asn1.ASN1OctetString;
+import org.bouncycastle.asn1.ASN1Primitive;
+import org.bouncycastle.asn1.x509.CertificatePolicies;
+import org.bouncycastle.asn1.x509.PolicyInformation;
+
 import javax.net.ssl.*;
+import java.net.HttpURLConnection;
 import java.net.InetSocketAddress;
+import java.net.URL;
 import java.security.cert.Certificate;
 import java.security.cert.X509Certificate;
 import java.security.interfaces.DSAKey;
@@ -27,6 +34,7 @@ import java.util.concurrent.CompletableFuture;
 public class CertificateCheckerService {
 
     private final ChainValidationService chainValidator;
+    private final DnsCheckerService dnsCheckerService;
     private final ObjectMapper objectMapper;
 
     @Value("${cert.monitor.check-timeout-seconds:10}")
@@ -37,6 +45,9 @@ public class CertificateCheckerService {
 
     private static final DateTimeFormatter ISO =
             DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
+
+    private static final String OID_CERT_POLICIES = "2.5.29.32";
+    private static final String EV_OID            = "2.23.140.1.1";
 
     private static final String[] KEY_USAGE_NAMES = {
         "Digital Signature", "Non-Repudiation", "Key Encipherment", "Data Encipherment",
@@ -70,12 +81,14 @@ public class CertificateCheckerService {
                 socket.setSSLParameters(params);
 
                 socket.startHandshake();
+                String tlsVersion = socket.getSession().getProtocol();
 
                 Certificate[] peerCerts = socket.getSession().getPeerCertificates();
                 if (peerCerts.length == 0) return error(domain, "No certificates in chain");
 
                 X509Certificate leaf = (X509Certificate) peerCerts[0];
                 Map<String, Object> result = parseLeafCert(leaf, domain);
+                result.put("tls_version", tlsVersion);
 
                 // Full chain analysis
                 Map<String, Object> chainInfo = chainValidator.analyzeChain(peerCerts);
@@ -101,6 +114,35 @@ public class CertificateCheckerService {
 
                 // deployment_status is determined by CertificateService (needs inventory lookup)
                 result.put("deployment_status", "UNKNOWN");
+
+                // DNS resolution IP — use JNDI-based resolver (same as DNS Record Monitoring)
+                try {
+                    Map<String, Object> dnsResult = dnsCheckerService.check(domain, "A");
+                    List<?> addrs = (List<?>) dnsResult.get("values");
+                    result.put("resolved_ip",
+                        (addrs != null && !addrs.isEmpty()) ? String.valueOf(addrs.get(0)) : null);
+                } catch (Exception ignored) {
+                    result.put("resolved_ip", null);
+                }
+
+                // HSTS check via HTTP HEAD — reuse the SSLSocketFactory that already succeeded
+                try {
+                    HttpURLConnection hc = (HttpURLConnection)
+                        new URL("https://" + domain + "/").openConnection();
+                    if (hc instanceof HttpsURLConnection https) {
+                        https.setSSLSocketFactory(factory);
+                    }
+                    hc.setRequestMethod("HEAD");
+                    hc.setConnectTimeout(4000);
+                    hc.setReadTimeout(4000);
+                    hc.setInstanceFollowRedirects(true);
+                    hc.connect();
+                    result.put("hsts", hc.getHeaderField("Strict-Transport-Security") != null);
+                    hc.disconnect();
+                } catch (Exception e) {
+                    log.debug("HSTS check failed for {}: {}", domain, e.getMessage());
+                    result.put("hsts", null);
+                }
 
                 long elapsed = System.currentTimeMillis() - startMs;
                 int days = (Integer) result.getOrDefault("days_remaining", -1);
@@ -182,6 +224,7 @@ public class CertificateCheckerService {
             result.put("is_ca", cert.getBasicConstraints() >= 0);
             result.put("ocsp_url", chainValidator.extractOcspUrl(cert));
             result.put("crl_url", chainValidator.extractCrlUrl(cert));
+            result.put("cert_type", determineCertType(cert, san));
             return result;
         } catch (Exception e) {
             return error(domain, "Parse error: " + e.getMessage());
@@ -229,6 +272,33 @@ public class CertificateCheckerService {
                 .map(s -> s.substring(prefix.length()))
                 .findFirst()
                 .orElse("Unknown");
+    }
+
+    private String determineCertType(X509Certificate cert, List<String> san) {
+        String org = extractField(cert.getSubjectX500Principal().getName(), "O");
+        boolean hasOrg = !"Unknown".equals(org);
+        boolean isEv = false;
+        try {
+            byte[] rawExt = cert.getExtensionValue(OID_CERT_POLICIES);
+            if (rawExt != null) {
+                byte[] extBytes = ASN1OctetString.getInstance(
+                    ASN1Primitive.fromByteArray(rawExt)).getOctets();
+                CertificatePolicies policies = CertificatePolicies.getInstance(
+                    ASN1Primitive.fromByteArray(extBytes));
+                for (PolicyInformation pi : policies.getPolicyInformation()) {
+                    if (EV_OID.equals(pi.getPolicyIdentifier().getId())) {
+                        isEv = true; break;
+                    }
+                }
+            }
+        } catch (Exception ignored) {}
+        String validation = isEv && hasOrg ? "Extended Validation (EV)"
+                          : hasOrg         ? "Organization Validated (OV)"
+                          :                  "Domain Validated (DV)";
+        String scope = san.stream().anyMatch(s -> s.startsWith("*.")) ? "Wildcard"
+                     : san.size() > 1                                  ? "Multi-Domain (SAN)"
+                     :                                                    "Single Domain";
+        return validation + " — " + scope;
     }
 
     private List<String> extractSan(X509Certificate cert) {
@@ -289,6 +359,9 @@ public class CertificateCheckerService {
         result.put("is_ca", null);
         result.put("ocsp_url", null);
         result.put("crl_url", null);
+        result.put("cert_type", null);
+        result.put("tls_version", null);
+        result.put("hsts", null);
         return result;
     }
 }
