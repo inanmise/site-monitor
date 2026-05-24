@@ -3530,11 +3530,11 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .ts-role-divider { height: 1px; background: var(--border); }
 
 /* T1/T2 × status grid table */
-.ts-grid-table      { width: 100%; border-collapse: collapse; font-size: .83em; }
-.ts-grid-hdr        { padding: 5px 4px; text-align: center; font-weight: 700; font-size: .74em; letter-spacing: .04em; text-transform: uppercase; border-bottom: 1px solid var(--border); }
-.ts-grid-tier-hdr   { width: 34px; }
-.ts-grid-tier-cell  { padding: 7px 6px; font-size: .78em; color: var(--text-muted); font-weight: 700; }
-.ts-grid-val-cell   { padding: 7px 4px; text-align: center; font-weight: 700; font-size: .95em; border-radius: 4px; }
+.ts-grid-table      { width: 100%; border-collapse: collapse; font-size: .92em; }
+.ts-grid-hdr        { padding: 11px 6px; text-align: center; font-weight: 700; font-size: .76em; letter-spacing: .04em; text-transform: uppercase; border-bottom: 1px solid var(--border); }
+.ts-grid-tier-hdr   { width: 44px; }
+.ts-grid-tier-cell  { padding: 14px 10px; font-size: .82em; color: var(--text-muted); font-weight: 700; }
+.ts-grid-val-cell   { padding: 14px 6px; text-align: center; font-weight: 700; font-size: 1.05em; border-radius: 4px; }
 .ts-cell-active     { cursor: pointer; }
 .ts-cell-active:hover { opacity: .72; }
 .ts-cell-zero       { color: var(--text-muted); font-weight: 400; opacity: .45; }
@@ -4185,7 +4185,7 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 /* ══════════════════  TEAM × TIER GRID  ══════════════════════════════ */
 .ttg-root {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(500px, 1fr));
+  grid-template-columns: repeat(2, 1fr);
   gap: 14px;
 }
 
@@ -4207,7 +4207,7 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 9px 14px;
+  padding: 13px 18px;
   background: var(--bg-hover);
   border-bottom: 1px solid var(--border);
   cursor: pointer;
@@ -4215,8 +4215,8 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
   transition: background .12s;
 }
 .ttg-header:hover { background: var(--bg-active, var(--bg-hover)); filter: brightness(.95); }
-.ttg-team-name { font-weight: 700; font-size: .86em; }
-.ttg-team-total { font-size: .72em; color: var(--text-muted); font-weight: 600; }
+.ttg-team-name { font-weight: 700; font-size: .95em; }
+.ttg-team-total { font-size: .78em; color: var(--text-muted); font-weight: 600; }
 
 /* Rows area */
 .ttg-rows { padding: 6px 10px 8px; display: flex; flex-direction: column; gap: 3px; }
