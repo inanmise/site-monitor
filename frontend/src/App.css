@@ -3406,8 +3406,8 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 /* Admin view — card grid */
 .ts-admin-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(290px, 1fr));
-  gap: 10px;
+  grid-template-columns: repeat(auto-fill, minmax(440px, 1fr));
+  gap: 14px;
 }
 .ts-team-card {
   background: var(--bg-card);
@@ -3528,6 +3528,21 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .ts-row-clickable { cursor: pointer; border-radius: 4px; transition: background .12s; }
 .ts-row-clickable:hover { background: rgba(59,130,246,.08); }
 .ts-role-divider { height: 1px; background: var(--border); }
+
+/* T1/T2 × status grid table */
+.ts-grid-table      { width: 100%; border-collapse: collapse; font-size: .83em; }
+.ts-grid-hdr        { padding: 5px 4px; text-align: center; font-weight: 700; font-size: .74em; letter-spacing: .04em; text-transform: uppercase; border-bottom: 1px solid var(--border); }
+.ts-grid-tier-hdr   { width: 34px; }
+.ts-grid-tier-cell  { padding: 7px 6px; font-size: .78em; color: var(--text-muted); font-weight: 700; }
+.ts-grid-val-cell   { padding: 7px 4px; text-align: center; font-weight: 700; font-size: .95em; border-radius: 4px; }
+.ts-cell-active     { cursor: pointer; }
+.ts-cell-active:hover { opacity: .72; }
+.ts-cell-zero       { color: var(--text-muted); font-weight: 400; opacity: .45; }
+.ts-hdr-valid,    .ts-cell-valid.ts-cell-active    { color: #22c55e; }
+.ts-hdr-warning,  .ts-cell-warning.ts-cell-active  { color: #f59e0b; }
+.ts-hdr-high,     .ts-cell-high.ts-cell-active     { color: #f97316; }
+.ts-hdr-critical, .ts-cell-critical.ts-cell-active { color: #ef4444; }
+.ts-hdr-expired,  .ts-cell-expired.ts-cell-active  { color: #9ca3af; }
 
 /* ── Inventory Show Modal ────────────────────────── */
 .btn-show { background: #e8f5e9; color: #2e7d32; border: 1px solid #a5d6a7; }
@@ -4368,6 +4383,11 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 [data-theme="dark"] .ts-chip-valid   { background: #052e16; color: #86efac; }
 [data-theme="dark"] .ts-chip-warning { background: #422006; color: #fcd34d; }
 [data-theme="dark"] .ts-chip-error   { background: #450a0a; color: #fca5a5; }
+[data-theme="dark"] .ts-hdr-valid,    [data-theme="dark"] .ts-cell-valid.ts-cell-active    { color: #86efac; }
+[data-theme="dark"] .ts-hdr-warning,  [data-theme="dark"] .ts-cell-warning.ts-cell-active  { color: #fcd34d; }
+[data-theme="dark"] .ts-hdr-high,     [data-theme="dark"] .ts-cell-high.ts-cell-active     { color: #fdba74; }
+[data-theme="dark"] .ts-hdr-critical, [data-theme="dark"] .ts-cell-critical.ts-cell-active { color: #fca5a5; }
+[data-theme="dark"] .ts-hdr-expired,  [data-theme="dark"] .ts-cell-expired.ts-cell-active  { color: #94a3b8; }
 
 /* ── Team Type Badges ─────────────────────────────────────────────────────── */
 .badge-team-type { font-size: .75em; font-weight: 700; padding: 2px 7px; border-radius: 10px; }
