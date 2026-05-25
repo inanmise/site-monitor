@@ -59,6 +59,10 @@ export default function TeamManager({ onTeamsChange }) {
     setMsg(null)
     if (!form.leader_id) { setMsg(t('team.leaderRequired')); return }
     if (!form.team_type) { setMsg(t('team.typeRequired')); return }
+    if (form.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim())) {
+      setMsg(t('team.emailInvalid'))
+      return
+    }
     setSaving(true)
     const payload = {
       name: form.name.trim(),
