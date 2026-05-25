@@ -23,8 +23,9 @@ export default function Nav({ activeTab, onTabChange, username, teamName, system
         { id: 'dashboard', Icon: LayoutDashboard, labelKey: 'nav.dashboard', show: true },
         { id: 'stats',     Icon: BarChart3,       labelKey: 'nav.stats',     show: true },
         { id: 'forecast',  Icon: TrendingDown,    labelKey: 'nav.forecast',  show: true },
-        { id: 'warnings',  Icon: AlertTriangle,   labelKey: 'nav.warnings',  show: true },
-        { id: 'all',       Icon: FileText,        labelKey: 'nav.all',       show: true },
+        { id: 'warnings',     Icon: AlertTriangle,   labelKey: 'nav.warnings',     show: true },
+        { id: 'alerthistory', Icon: Bell,            labelKey: 'nav.alertHistory', show: isAdmin },
+        { id: 'all',          Icon: FileText,        labelKey: 'nav.all',          show: true },
         { id: 'renewal',   Icon: RefreshCw,       labelKey: 'nav.renewal',   show: true },
         { id: 'domains',   Icon: Globe,           labelKey: 'nav.domains',   show: true },
       ],
@@ -40,15 +41,14 @@ export default function Nav({ activeTab, onTabChange, username, teamName, system
     {
       labelKey: 'nav.groupLogs',
       tabs: [
-        { id: 'activity',     Icon: ClipboardList, labelKey: 'nav.activity',     show: true    },
-        { id: 'alerthistory', Icon: Bell,          labelKey: 'nav.alertHistory', show: isAdmin },
+        { id: 'activity', Icon: ClipboardList, labelKey: 'nav.activity', show: true              },
+        { id: 'system',   Icon: Server,        labelKey: 'nav.system',   show: isAdmin || isAudit },
       ],
     },
     {
       labelKey: 'nav.groupAdmin',
       tabs: [
         { id: 'admin',   Icon: Settings,    labelKey: 'nav.admin',   show: true               },
-        { id: 'system',  Icon: Server,      labelKey: 'nav.system',  show: isAdmin || isAudit },
         { id: 'weakalgo',Icon: ShieldAlert, labelKey: 'nav.weakAlgo',show: isAdmin || isAudit },
         { id: 'health',  Icon: Activity,    labelKey: 'nav.health',  show: isAdmin            },
       ],
