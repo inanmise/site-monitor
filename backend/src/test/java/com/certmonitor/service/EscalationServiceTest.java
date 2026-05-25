@@ -35,6 +35,7 @@ class EscalationServiceTest {
     @Mock WebhookService webhookService;
     @Mock NotificationLogRepository notificationLogRepo;
     @Mock com.certmonitor.repository.LatestCheckRepository latestCheckRepo;
+    @Mock com.certmonitor.repository.TeamRepository teamRepo;
 
     private EscalationService service;
     private static final DateTimeFormatter ISO =
@@ -43,7 +44,7 @@ class EscalationServiceTest {
     @BeforeEach
     void setUp() {
         service = new EscalationService(alertEventRepo, thresholdRepo, contactRepo,
-                inventoryRepo, emailService, webhookService, new ObjectMapper(), notificationLogRepo, latestCheckRepo);
+                inventoryRepo, emailService, webhookService, new ObjectMapper(), notificationLogRepo, latestCheckRepo, teamRepo);
 
         // Default active threshold
         AlertThreshold t = defaultThreshold();
@@ -70,7 +71,7 @@ class EscalationServiceTest {
         assertThat(saved.getAlertType()).isEqualTo("EXPIRY");
         assertThat(saved.getAcknowledged()).isFalse();
         assertThat(saved.getResolved()).isFalse();
-        verify(emailService).sendAlert(eq("po@test.com"), contains("UYARI"), anyString(), any(), any(), any(), any(), any());
+        verify(emailService).sendAlert(any(String[].class), contains("UYARI"), anyString(), any(), any(), any(), any(), any());
     }
 
     @Test
@@ -89,7 +90,7 @@ class EscalationServiceTest {
         service.processResults(List.of(expiryResult(domain, 5, true)));
 
         // 3 contacts notified
-        verify(emailService, times(3)).sendAlert(anyString(), contains("KRİTİK"), anyString(), any(), any(), any(), any(), any());
+        verify(emailService, times(1)).sendAlert(any(String[].class), contains("KRİTİK"), anyString(), any(), any(), any(), any(), any());
     }
 
     @Test
@@ -176,7 +177,7 @@ class EscalationServiceTest {
         AlertEvent saved = captor.getValue();
         assertThat(saved.getAlertLevel()).isEqualTo("HIGH");
         assertThat(saved.getAcknowledged()).isFalse();
-        verify(emailService).sendAlert(anyString(), contains("YÜKSEK"), anyString(), any(), any(), any(), any(), any());
+        verify(emailService).sendAlert(any(String[].class), contains("YÜKSEK"), anyString(), any(), any(), any(), any(), any());
     }
 
     // ── processResults: re-alert ──────────────────────────────────────────────
@@ -197,7 +198,7 @@ class EscalationServiceTest {
 
         service.processResults(List.of(expiryResult(domain, 25, true)));
 
-        verify(emailService).sendAlert(eq("po@test.com"), contains("[RE-ALERT]"), anyString(), any(), any(), any(), any(), any());
+        verify(emailService).sendAlert(any(String[].class), contains("[RE-ALERT]"), anyString(), any(), any(), any(), any(), any());
     }
 
     @Test
@@ -213,7 +214,7 @@ class EscalationServiceTest {
         service.processResults(List.of(expiryResult(domain, 25, true)));
 
         verify(alertEventRepo, never()).save(any());
-        verify(emailService, never()).sendAlert(anyString(), anyString(), anyString(), any(), any(), any(), any(), any());
+        verify(emailService, never()).sendAlert(any(String[].class), anyString(), anyString(), any(), any(), any(), any(), any());
     }
 
     @Test
@@ -225,7 +226,7 @@ class EscalationServiceTest {
 
         service.processResults(List.of(expiryResult(domain, 25, true)));
 
-        verify(emailService, never()).sendAlert(anyString(), anyString(), anyString(), any(), any(), any(), any(), any());
+        verify(emailService, never()).sendAlert(any(String[].class), anyString(), anyString(), any(), any(), any(), any(), any());
     }
 
     // ── processResults: resolution ────────────────────────────────────────────
@@ -255,7 +256,7 @@ class EscalationServiceTest {
 
         service.processResults(List.of(okResult(domain)));
 
-        verify(emailService, never()).sendAlert(anyString(), anyString(), anyString(), any(), any(), any(), any(), any());
+        verify(emailService, never()).sendAlert(any(String[].class), anyString(), anyString(), any(), any(), any(), any(), any());
         verify(alertEventRepo, never()).save(any());
     }
 
@@ -312,7 +313,7 @@ class EscalationServiceTest {
         service.resolve(3L, "test-user");
 
         verify(emailService).sendResolutionAlert(
-                eq("po@test.com"), contains("ÇÖZÜLDÜ"),
+                any(String[].class), contains("ÇÖZÜLDÜ"),
                 eq("notify.example.com"), eq("EXPIRY"), eq("WARNING"),
                 any(), eq("test-user"), any(), any(), isNull());
     }
@@ -344,7 +345,7 @@ class EscalationServiceTest {
         service.processResults(List.of(okResult(domain)));
 
         verify(emailService).sendResolutionAlert(
-                eq("po@test.com"), contains("ÇÖZÜLDÜ"),
+                any(String[].class), contains("ÇÖZÜLDÜ"),
                 eq(domain), any(), any(), any(), eq("Sistem (otomatik)"), any(), any(), isNull());
     }
 

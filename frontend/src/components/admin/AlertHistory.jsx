@@ -89,7 +89,9 @@ function NotifLogCard({ log: l }) {
         </span>
         <div className="nl-recipient">
           <strong>{l.recipient_name}</strong>
-          <span className="role-badge" style={{ marginLeft: 6, fontSize: '.75em' }}>{l.recipient_role}</span>
+          {l.recipient_role && l.recipient_role !== 'COMBINED' && (
+            <span className="role-badge" style={{ marginLeft: 6, fontSize: '.75em' }}>{l.recipient_role}</span>
+          )}
           <span className="nl-email">{l.recipient_email}</span>
         </div>
         <div className="nl-right">
@@ -105,6 +107,12 @@ function NotifLogCard({ log: l }) {
             <div className="nl-detail-row">
               <span className="nl-detail-label">{t('alh.notif.from')}</span>
               <span className="nl-detail-val">{l.email_from}</span>
+            </div>
+          )}
+          {l.recipient_email && (
+            <div className="nl-detail-row">
+              <span className="nl-detail-label">{t('alh.notif.to')}</span>
+              <span className="nl-detail-val">{l.recipient_email}</span>
             </div>
           )}
           {l.cc && (

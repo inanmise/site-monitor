@@ -384,6 +384,7 @@ const TR = {
   'alh.notif.webhook':   'Webhook',
   'alh.notif.sentAt':    'Gönderim zamanı',
   'alh.notif.from':      'Gönderen',
+  'alh.notif.to':        'Alıcılar',
   'alh.notif.cc':        'Kopya (CC)',
   'alh.days':            '{0} gün',
 
@@ -1382,6 +1383,7 @@ const EN = {
   'alh.notif.webhook':   'Webhook',
   'alh.notif.sentAt':    'Sent at',
   'alh.notif.from':      'From',
+  'alh.notif.to':        'To',
   'alh.notif.cc':        'CC',
   'alh.days':            '{0} days',
 
