@@ -27,7 +27,7 @@ export default function UserManager({ teams }) {
     if (res?.success) setUsers(res.data)
   }
 
-  function openAdd() { setForm(emptyUser); setModal('add') }
+  function openAdd() { setForm(emptyUser); setMsg(null); setModal('add') }
   function openEdit(user) {
     setForm({
       username: user.username,
@@ -40,6 +40,7 @@ export default function UserManager({ teams }) {
       org_role: user.org_role || '',
       active: user.active,
     })
+    setMsg(null)
     setModal(user)
   }
 
@@ -105,7 +106,7 @@ export default function UserManager({ teams }) {
         <h3>{t('usr.title')}</h3>
         <button className="btn btn-success" onClick={openAdd}>{t('usr.addBtn')}</button>
       </div>
-      {msg && <div className="alert-msg">{msg}</div>}
+      {msg && !modal && !pwdModal && <div className="alert-msg">{msg}</div>}
       <div className="admin-table-wrap">
         <table className="admin-table">
           <thead>
@@ -222,6 +223,7 @@ export default function UserManager({ teams }) {
                 {t('usr.formActive')}
               </label>
             </div>
+            {msg && <div className="alert-msg alert-msg--err" style={{ marginTop: 8 }}>{msg}</div>}
             <div className="modal-actions">
               <button className="btn btn-secondary" onClick={() => setModal(null)}>{t('usr.cancel')}</button>
               <button className="btn btn-primary" onClick={save}
