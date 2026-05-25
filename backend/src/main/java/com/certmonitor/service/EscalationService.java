@@ -296,7 +296,8 @@ public class EscalationService {
                     event.getDomain(), event.getAlertType(), event.getAlertLevel(),
                     event.getDaysRemaining(), resolvedBy, event.getResolvedAt(),
                     event.getCreatedAt(), certContext);
-            saveLog(event.getId(), String.join(", ", allEmails), subject, htmlBody, status, "SKIPPED", trigger);
+            String teamNames = collectTeamNames(domainTeamId, ugTeamId);
+            saveLog(event.getId(), teamNames, String.join(", ", allEmails), subject, htmlBody, status, "SKIPPED", trigger);
             log.info("Çözüm bildirimi → [{}] status={}", String.join(", ", allEmails), status);
         } catch (Exception e) {
             log.warn("Çözüm bildirimi gönderilemedi: {} — {}", event.getDomain(), e.getMessage());
@@ -397,7 +398,8 @@ public class EscalationService {
                 toArr, subject, message, domain, level, alertType, daysRemaining, certContext);
 
         // 4. Email log — tek kayıt
-        saveLog(alertEventId, String.join(", ", allEmails), subject, htmlBody, emailStatus, "SKIPPED", trigger);
+        String teamNames = collectTeamNames(syTeamId, ugTeamId);
+        saveLog(alertEventId, teamNames, String.join(", ", allEmails), subject, htmlBody, emailStatus, "SKIPPED", trigger);
 
         // 5. Webhook — kontaklara ayrı ayrı
         List<Map<String, String>> details = new ArrayList<>();
@@ -410,7 +412,7 @@ public class EscalationService {
                 } catch (Exception e) {
                     webhookStatus = "FAILED: " + e.getMessage();
                 }
-                saveLog(alertEventId, c.getEmail(), subject, htmlBody, "SKIPPED", webhookStatus, trigger);
+                saveLog(alertEventId, c, subject, htmlBody, "SKIPPED", webhookStatus, trigger);
             }
             Map<String, String> d = new LinkedHashMap<>();
             d.put("name",           c.getName());
@@ -449,14 +451,14 @@ public class EscalationService {
         }
     }
 
-    private void saveLog(Long alertEventId, String recipientEmail,
+    private void saveLog(Long alertEventId, String recipientName, String recipientEmail,
                          String subject, String message,
                          String emailStatus, String webhookStatus, String trigger) {
         try {
             NotificationLog entry = new NotificationLog();
             entry.setAlertEventId(alertEventId);
             entry.setSentAt(now());
-            entry.setRecipientName("Combined");
+            entry.setRecipientName(recipientName);
             entry.setRecipientEmail(recipientEmail);
             entry.setRecipientRole("COMBINED");
             entry.setSubject(subject);
@@ -469,6 +471,24 @@ public class EscalationService {
         } catch (Exception e) {
             log.warn("Bildirim logu kaydedilemedi: {}", e.getMessage());
         }
+    }
+
+    private String collectTeamNames(Long syTeamId, Long ugTeamId) {
+        List<String> names = new ArrayList<>();
+        Set<String> seenEmails = new HashSet<>();
+        for (Long teamId : List.of(
+                syTeamId != null ? syTeamId : -1L,
+                ugTeamId != null ? ugTeamId : -1L)) {
+            if (teamId < 0) continue;
+            teamRepo.findById(teamId).ifPresent(team -> {
+                String email = team.getEmail() != null ? team.getEmail().trim() : "";
+                if (!email.isBlank() && seenEmails.add(email.toLowerCase())) {
+                    String name = team.getName() != null ? team.getName().trim() : "";
+                    if (!name.isBlank()) names.add(name);
+                }
+            });
+        }
+        return String.join(", ", names);
     }
 
     private List<String> collectTeamEmails(Long syTeamId, Long ugTeamId) {
