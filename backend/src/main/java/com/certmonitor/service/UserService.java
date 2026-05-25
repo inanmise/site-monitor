@@ -165,7 +165,13 @@ public class UserService {
     @Transactional
     public void deleteTeam(Long id) {
         if (inventoryRepo.existsByTeamIdAndActiveTrueAndDeletedAtIsNull(id))
-            throw new IllegalStateException("Cannot delete team: it has active certificates assigned to it");
+            throw new IllegalStateException("Bu takım aktif sertifikalara (SY) atanmış — önce sertifikaları başka bir takıma taşıyın.");
+        if (inventoryRepo.existsByUgTeamIdAndActiveTrueAndDeletedAtIsNull(id))
+            throw new IllegalStateException("Bu takım aktif sertifikalara (UG) atanmış — önce sertifikaları başka bir takıma taşıyın.");
+        if (userRepo.existsByTeamId(id))
+            throw new IllegalStateException("Bu takımda hâlâ kullanıcılar var — önce kullanıcıları başka bir takıma taşıyın.");
+        if (contactRepo.existsByTeamIdAndActiveTrue(id))
+            throw new IllegalStateException("Bu takıma atanmış aktif escalation contact'lar var — önce onları kaldırın veya devre dışı bırakın.");
         teamRepo.deleteById(id);
     }
 

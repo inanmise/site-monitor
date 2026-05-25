@@ -45,6 +45,9 @@ class UserServiceTest {
     void setUp() {
         service = new UserService(userRepo, teamRepo, inventoryRepo, contactRepo);
         when(contactRepo.findByUserId(anyLong())).thenReturn(List.of());
+        when(inventoryRepo.existsByUgTeamIdAndActiveTrueAndDeletedAtIsNull(anyLong())).thenReturn(false);
+        when(userRepo.existsByTeamId(anyLong())).thenReturn(false);
+        when(contactRepo.existsByTeamIdAndActiveTrue(anyLong())).thenReturn(false);
         ReflectionTestUtils.setField(service, "lockoutDurationsSecs", List.of(30L, 120L, 600L, 1800L));
         ReflectionTestUtils.setField(service, "lockoutFailuresNeeded", List.of(5, 3, 2, 1));
         ReflectionTestUtils.setField(service, "passwordMinLength", 4);
@@ -387,7 +390,7 @@ class UserServiceTest {
         when(inventoryRepo.existsByTeamIdAndActiveTrueAndDeletedAtIsNull(3L)).thenReturn(true);
         assertThatThrownBy(() -> service.deleteTeam(3L))
                 .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("active certificates");
+                .hasMessageContaining("SY");
     }
 
     // ── User CRUD ─────────────────────────────────────────────────────────────
