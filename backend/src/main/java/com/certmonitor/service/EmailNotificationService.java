@@ -11,6 +11,7 @@ import jakarta.mail.internet.MimeMessage;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
+import java.util.Arrays;
 import java.util.Map;
 
 @Slf4j
@@ -56,6 +57,51 @@ public class EmailNotificationService {
             return doSend(to, msg, 1);
         } catch (Exception e) {
             log.error("✗ E-posta hazırlanamadı: TO={} | HATA={}", to, e.getMessage());
+            return "FAILED: " + e.getMessage();
+        }
+    }
+
+    public String sendAlert(String[] toAddresses, String subject, String message,
+                            String domain, String level, String alertType,
+                            Integer daysRemaining, Map<String, Object> certContext) {
+        if (!enabled) {
+            log.info("⚠ Email devre dışı — TO={} | KONU={}", Arrays.toString(toAddresses), subject);
+            return "SKIPPED_DISABLED";
+        }
+        try {
+            MimeMessage msg = mailSender.createMimeMessage();
+            MimeMessageHelper helper = new MimeMessageHelper(msg, true, "UTF-8");
+            helper.setTo(toAddresses);
+            helper.setFrom(emailFrom);
+            helper.setSubject(subject);
+            helper.setText(buildRichAlertHtml(subject, message, domain, level,
+                    alertType, daysRemaining, certContext), true);
+            return doSend(Arrays.toString(toAddresses), msg, 1);
+        } catch (Exception e) {
+            log.error("✗ E-posta hazırlanamadı: TO={} | HATA={}", Arrays.toString(toAddresses), e.getMessage());
+            return "FAILED: " + e.getMessage();
+        }
+    }
+
+    public String sendResolutionAlert(String[] toAddresses, String subject,
+                                      String domain, String alertType, String alertLevel,
+                                      Integer daysRemaining, String resolvedBy, String resolvedAt,
+                                      String createdAt, Map<String, Object> certContext) {
+        if (!enabled) {
+            log.info("⚠ Email devre dışı — çözüm bildirimi: TO={}", Arrays.toString(toAddresses));
+            return "SKIPPED_DISABLED";
+        }
+        try {
+            MimeMessage msg = mailSender.createMimeMessage();
+            MimeMessageHelper helper = new MimeMessageHelper(msg, true, "UTF-8");
+            helper.setTo(toAddresses);
+            helper.setFrom(emailFrom);
+            helper.setSubject(subject);
+            helper.setText(buildRichResolvedHtml(domain, alertType, alertLevel,
+                    daysRemaining, resolvedBy, resolvedAt, createdAt, certContext), true);
+            return doSend(Arrays.toString(toAddresses), msg, 1);
+        } catch (Exception e) {
+            log.error("✗ Çözüm e-postası hazırlanamadı: TO={} | HATA={}", Arrays.toString(toAddresses), e.getMessage());
             return "FAILED: " + e.getMessage();
         }
     }
