@@ -98,7 +98,11 @@ export default function TeamManager({ onTeamsChange }) {
       cancelText: t('team.deleteCancel'),
     })
     if (!ok) return
-    await api.admin.deleteTeam(id)
+    const res = await api.admin.deleteTeam(id)
+    if (!res?.success) {
+      setMsg(res?.error || t('team.deleteError'))
+      return
+    }
     setMembersCache(prev => { const n = { ...prev }; delete n[id]; return n })
     if (expandedId === id) setExpandedId(null)
     load()
@@ -113,7 +117,7 @@ export default function TeamManager({ onTeamsChange }) {
         <h3>{t('team.title')}</h3>
         <button className="btn btn-success" onClick={openAdd}>{t('team.addBtn')}</button>
       </div>
-      {msg && !modal && <div className="alert-msg">{msg}</div>}
+      {msg && !modal && <div className={`alert-msg${msg.startsWith('✓') ? '' : ' alert-msg--err'}`}>{msg}</div>}
       <div className="admin-table-wrap">
         <table className="admin-table">
           <thead>
