@@ -291,8 +291,18 @@ export default function AlertHistory({ domain = null }) {
       cancelText: t('alh.resolveDialog.cancel'),
     })
     if (!confirmed) return
-    await api.admin.resolveAlert(id)
-    load()
+    try {
+      const res = await api.admin.resolveAlert(id)
+      if (res?.success === false) {
+        toast.error(res?.error || t('alh.resolveError'))
+      } else {
+        toast.success(t('alh.resolveSuccess'))
+      }
+    } catch (err) {
+      toast.error(t('alh.resolveError'))
+    } finally {
+      load()
+    }
   }
 
   async function reNotify(id) {

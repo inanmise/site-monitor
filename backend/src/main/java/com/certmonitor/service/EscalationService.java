@@ -261,7 +261,8 @@ public class EscalationService {
         log.info("Startup catch-up complete — {} missed notification(s) sent", sent);
     }
 
-    // No @Transactional: DB save auto-commits, then resolution notification runs without holding connection
+    // DB save is sync (atomic + fast), mail notification is dispatched async on certCheckExecutor.
+    // HTTP response returns in <1s even if SMTP times out.
     public AlertEvent resolve(Long eventId, String resolvedBy) {
         AlertEvent event = alertEventRepo.findById(eventId)
                 .orElseThrow(() -> new NoSuchElementException("Alert not found: " + eventId));
@@ -269,8 +270,8 @@ public class EscalationService {
         event.setResolved(true);
         event.setResolvedAt(now());
         event.setResolvedBy(by);
-        AlertEvent saved = alertEventRepo.save(event);  // auto-commits, releases connection
-        sendResolutionNotification(saved, by, "MANUAL_RESOLVE");  // I/O without holding DB
+        AlertEvent saved = alertEventRepo.save(event);
+        self.sendResolutionNotificationAsync(saved, by, "MANUAL_RESOLVE");
         return saved;
     }
 
@@ -280,9 +281,19 @@ public class EscalationService {
             event.setResolvedAt(now());
             event.setResolvedBy("system");
             AlertEvent saved = alertEventRepo.save(event);
-            sendResolutionNotification(saved, "Sistem (otomatik)", "RESOLUTION");
-            log.info("✅ Alarm çözüldü ve bildirim gönderildi: {} [{}]", domain, alertType);
+            self.sendResolutionNotificationAsync(saved, "Sistem (otomatik)", "RESOLUTION");
+            log.info("✅ Alarm çözüldü: {} [{}] — çözüm bildirimi kuyruğa alındı", domain, alertType);
         });
+    }
+
+    @Async("certCheckExecutor")
+    public void sendResolutionNotificationAsync(AlertEvent event, String resolvedBy, String trigger) {
+        try {
+            sendResolutionNotification(event, resolvedBy, trigger);
+        } catch (Exception e) {
+            log.error("Async resolution notification failed for alertEventId={}: {}",
+                    event != null ? event.getId() : null, e.getMessage(), e);
+        }
     }
 
     private void sendResolutionNotification(AlertEvent event, String resolvedBy, String trigger) {
