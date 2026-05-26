@@ -2572,6 +2572,36 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 }
 [data-theme="dark"] .smtp-stream-wrap { background: rgba(255,255,255,.04); }
 
+.smtp-period-pills {
+  display: flex;
+  gap: 4px;
+  margin: 8px 0 4px;
+  flex-wrap: wrap;
+}
+.smtp-period-pill {
+  flex: 1;
+  min-width: 44px;
+  padding: 4px 8px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: .75em;
+  font-weight: 600;
+  color: var(--text-light);
+  cursor: pointer;
+  transition: background .15s, color .15s, border-color .15s;
+  font-family: inherit;
+}
+.smtp-period-pill:hover {
+  background: var(--bg-secondary);
+  color: var(--text);
+}
+.smtp-period-pill.is-selected {
+  background: var(--primary);
+  color: #fff;
+  border-color: var(--primary);
+}
+
 .smtp-stream-line {
   position: absolute; top: 50%; left: 12px; right: 12px;
   height: 1px; transform: translateY(-50%);
