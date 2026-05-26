@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { api, formatDate } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
-import { CheckCircle, XCircle, MinusCircle, HelpCircle, Mail, Check, Loader2 } from 'lucide-react'
+import { CheckCircle, XCircle, MinusCircle, HelpCircle, Mail, ChevronRight, Check, Loader2 } from 'lucide-react'
 import MiniChart from './MiniChart'
 import ChartModal from './ChartModal'
 
@@ -124,7 +124,8 @@ export default function SystemHealth() {
     setSmtpModal(true)
     setSmtpLogs(null)
     setSmtpLoading(true)
-    const res = await api.admin.getSmtpLogs()
+    const days = parseInt(smtpPeriod) || 30
+    const res = await api.admin.getSmtpLogs(days)
     setSmtpLogs(res?.success ? res.data : [])
     setSmtpLoading(false)
   }
@@ -473,7 +474,16 @@ export default function SystemHealth() {
             <dt></dt>
             <dd className="sys-small sys-muted">{t('health.smtpPeriodActive', t(`health.smtpPeriod${smtpPeriod}`))}</dd>
           </dl>
-          <div className="health-card-link">{t('health.smtpClickHint')} →</div>
+          <button
+            type="button"
+            className="smtp-log-cta"
+            onClick={(e) => { e.stopPropagation(); openSmtpModal() }}
+          >
+            <Mail size={14} />
+            <span>{t('health.smtpClickHint')}</span>
+            <span className="smtp-log-cta-period">{t(`health.smtpPeriod${smtpPeriod}`)}</span>
+            <ChevronRight size={14} className="smtp-log-cta-arrow" />
+          </button>
         </div>
 
         {/* Heartbeat card */}
