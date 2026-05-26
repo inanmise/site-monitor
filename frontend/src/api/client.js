@@ -1,5 +1,19 @@
 const BASE = import.meta.env.VITE_API_BASE ?? '/api'
 
+function nonJsonErrorPayload(status) {
+  return {
+    success: false,
+    status,
+    error:
+      status === 504 ? 'Gateway timeout — sunucu yanıt vermedi'
+    : status === 502 ? 'Bad gateway — sunucu erişilemiyor'
+    : status === 503 ? 'Servis kullanılamıyor'
+    : status >= 500  ? `Sunucu hatası (HTTP ${status})`
+    : status >= 400  ? `Hata (HTTP ${status})`
+    :                  'Geçersiz yanıt',
+  }
+}
+
 async function request(path, options = {}) {
   const res = await fetch(`${BASE}${path}`, {
     credentials: 'include',
@@ -9,17 +23,24 @@ async function request(path, options = {}) {
   if (res.status === 401) {
     return null
   }
-  return res.json()
+  try {
+    return await res.json()
+  } catch {
+    // Non-JSON response (HTML error page from proxy / empty body) — graceful fallback
+    return nonJsonErrorPayload(res.status)
+  }
 }
 
 export const api = {
-  login: (username, password, rememberMe = false) =>
-    fetch(`${BASE}/login`, {
+  login: async (username, password, rememberMe = false) => {
+    const r = await fetch(`${BASE}/login`, {
       method: 'POST',
       credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ username, password, remember_me: String(rememberMe) }),
-    }).then((r) => r.json()),
+    })
+    try { return await r.json() } catch { return nonJsonErrorPayload(r.status) }
+  },
 
   logout: () => request('/logout', { method: 'POST' }),
 
