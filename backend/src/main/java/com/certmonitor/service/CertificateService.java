@@ -427,7 +427,9 @@ public class CertificateService {
                           && c.getDaysRemaining() <= highDays)
                 .count();
         long warningOnly   = warnings.size() - errors - criticalCount - highCount;
-        long valid         = all.size() - warnings.size();
+        long valid         = all.stream()
+                .filter(c -> !warnDomainSet.contains(c.getDomain()))
+                .count();
         long expiring30    = warnings.stream()
                 .filter(c -> c.getDaysRemaining() != null && c.getDaysRemaining() > 0 && c.getDaysRemaining() <= 30)
                 .count();

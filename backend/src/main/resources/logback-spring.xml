@@ -17,6 +17,10 @@
 -->
 <configuration scan="true" scanPeriod="60 seconds">
 
+  <!-- Register Spring Boot's %clr() colour macro so it's available even before
+       SpringApplication.run() completes (e.g. during @SpringBootTest context init). -->
+  <conversionRule conversionWord="clr" converterClass="org.springframework.boot.logging.logback.ColorConverter"/>
+
   <!-- ── Bind Spring properties ──────────────────────────────────────────── -->
   <springProperty scope="context" name="LOG_DIR"
                   source="logging.file.path" defaultValue="logs"/>
@@ -26,9 +30,13 @@
                   source="cert.monitor.log.timezone" defaultValue="Europe/Istanbul"/>
 
   <!-- ── Log patterns ────────────────────────────────────────────────────── -->
-  <!--  Console: compact with highlight (works in IntelliJ / most terminals)  -->
+  <!--  Console: compact with highlight (works in IntelliJ / most terminals).
+        Uses Spring Boot's %clr() macro instead of Logback's %highlight/%cyan so that
+        ANSI escapes are emitted only when a TTY is present (controlled by
+        spring.output.ansi.enabled = DETECT by default). In containers/pods or when
+        stdout is redirected to a file, output is plain text (no ESC[...] gibberish). -->
   <property name="PAT_CONSOLE"
-            value="%d{HH:mm:ss.SSS, ${LOG_TZ}} %highlight(%-5level) [%15.15thread] %cyan(%-36.36logger{35}) : %msg%n%rootException"/>
+            value="%d{HH:mm:ss.SSS, ${LOG_TZ}} %clr(%-5level){highlight} [%15.15thread] %clr(%-36.36logger{35}){cyan} : %msg%n%rootException"/>
   <!--  File: full timestamp, no ANSI codes  -->
   <property name="PAT_FILE"
             value="%d{yyyy-MM-dd HH:mm:ss.SSS, ${LOG_TZ}} %-5level [%thread] %logger{50} : %msg%n%rootException"/>

@@ -33,8 +33,8 @@ describe('CertificateCard', () => {
     expect(screen.getByText('Warning')).toBeDefined()
   })
 
-  it('shows CRITICAL badge when days=20 (0-30 range)', () => {
-    render(<CertificateCard cert={makeCert({ days_remaining: 20, status: 'valid' })} onClick={() => {}} />)
+  it('shows CRITICAL badge when days=5 (≤ critDays threshold)', () => {
+    render(<CertificateCard cert={makeCert({ days_remaining: 5, status: 'valid' })} onClick={() => {}} />)
     expect(screen.getByText('CRITICAL')).toBeDefined()
   })
 

@@ -62,16 +62,27 @@ function TeamCard({ team, onStatClick }) {
 
 function AdminView({ teams, onStatClick }) {
   const t = useT()
+
+  const visibleTeams = teams
+    .map(team => ({
+      team,
+      total: (team.sy_t1_stats?.total_certificates ?? 0)
+           + (team.sy_t2_stats?.total_certificates ?? 0),
+    }))
+    .filter(entry => entry.total > 0)
+    .sort((a, b) => b.total - a.total)
+    .map(entry => entry.team)
+
   return (
     <div className="ts-root">
       <div className="ts-section-frame">
         <div className="ts-section-header">
           <Users size={15} className="ts-section-icon" />
           <span>{t('ts.teamSectionTitle')}</span>
-          <span className="ts-section-badge">{teams.length}</span>
+          <span className="ts-section-badge">{visibleTeams.length}</span>
         </div>
         <div className="ts-admin-grid">
-          {teams.map((team) => (
+          {visibleTeams.map((team) => (
             <TeamCard key={team.team_id} team={team} onStatClick={onStatClick} />
           ))}
         </div>
