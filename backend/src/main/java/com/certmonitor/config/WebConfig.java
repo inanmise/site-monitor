@@ -94,7 +94,7 @@ public class WebConfig implements WebMvcConfigurer {
     }
 
     @Bean(name = "certCheckExecutor")
-    public Executor certCheckExecutor() {
+    public ThreadPoolTaskExecutor certCheckExecutor() {
         ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
         executor.setCorePoolSize(executorCoreSize);
         executor.setMaxPoolSize(executorMaxSize);

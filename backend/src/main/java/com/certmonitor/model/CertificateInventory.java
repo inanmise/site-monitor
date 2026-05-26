@@ -20,7 +20,10 @@ public class CertificateInventory {
     @Column(nullable = false)
     private Integer port = 443;
 
+    @Column(columnDefinition = "TEXT")
     private String description;
+
+    @Column(columnDefinition = "TEXT")
     private String owner;
 
     @Column(columnDefinition = "TEXT")
@@ -38,6 +41,8 @@ public class CertificateInventory {
 
     /** SHA-256 hex of the expected (newly renewed) cert — used for DEPLOYMENT_INCOMPLETE detection */
     private String expectedFingerprint;
+
+    @Column(columnDefinition = "TEXT")
     private String expectedSubject;
 
     // ── İkinci takım (Uygulama Geliştirici / UG) ──────────────────────────────

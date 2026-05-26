@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useCallback } from 'react'
+import { createContext, useContext, useState, useCallback, useEffect } from 'react'
 
 const STORAGE_KEY = 'cert-monitor-lang'
 
@@ -356,6 +356,7 @@ const TR = {
   'alh.level.warning':  'UYARI',
   'alh.level.high':     'YÜKSEK',
   'alh.level.critical': 'KRİTİK',
+  'alh.notifyQueued':   'Bildirim {0} alıcıya gönderiliyor',
   'alh.type.expiry':    'Son Kullanma Tarihi',
   'alh.type.chain':     'Zincir Sorunu',
   'alh.type.revoked':   'İptal Edildi',
@@ -436,6 +437,10 @@ const TR = {
   'inv.title':        'Domain Envanteri',
   'inv.addBtn':       'Domain Ekle',
   'inv.saved':        'Kaydedildi',
+  'inv.statActive':   'Aktif',
+  'inv.statInactive': 'Pasif',
+  'inv.statDeleted':  'Silinmiş',
+  'inv.filterTooltip':'Filtrele',
   'inv.colDomain':    'Domain',
   'inv.colPort':      'Port',
   'inv.colOwner':     'Sahip',
@@ -468,7 +473,8 @@ const TR = {
   'inv.selectTeam':    '— Takım Seçin —',
   'inv.teamRequired':  'Sertifika için takım seçimi zorunludur.',
   'inv.deleteTitle':  'Domain Sil',
-  'inv.deleteMsg':    '"{0}" envanterden kalıcı olarak kaldırılacak. Bu işlem geri alınamaz.',
+  'inv.deleteMsg':    '"{0}" envanterden kaldırılacak. Daha sonra "Silinmişleri göster" seçeneğinden geri yükleyebilirsiniz.',
+  'inv.scrollForMore':'Devamı için kaydırın',
   'inv.deleteConfirm':'Sil',
   'inv.deleteCancel': 'Vazgeç',
 
@@ -746,6 +752,13 @@ const TR = {
   'health.hbMinutes':      '{n} dakika önce',
   'health.hbAlarm':        'Sinyal alınamıyor!',
   'health.hbRecent':       'Son Sinyaller',
+  'health.queueTitle':     'Görev Kuyruğu',
+  'health.queuePending':   'Kuyrukta Birikmiş',
+  'health.queueTooltip':   'Bu sayı yalnızca 20 aktif thread’in tamamı dolduğunda artar. 0 ise pool yetiyor demektir.',
+  'health.queueActive':    'Çalışan / Havuz',
+  'health.queueThreads':   'Thread Sayısı',
+  'health.queueMinMax':    'min: {min} · max: {max}',
+  'health.queueCompleted': 'Tamamlanan',
   'health.hbSignal':       'Sinyal',
   'health.alarmBanner':    'Aktif Alarmlar',
 
@@ -1355,6 +1368,7 @@ const EN = {
   'alh.level.warning':  'WARNING',
   'alh.level.high':     'HIGH',
   'alh.level.critical': 'CRITICAL',
+  'alh.notifyQueued':   'Notification sent to {0} recipients',
   'alh.type.expiry':    'Expiry Date',
   'alh.type.chain':     'Chain Issue',
   'alh.type.revoked':   'Revoked',
@@ -1435,6 +1449,10 @@ const EN = {
   'inv.title':        'Domain Inventory',
   'inv.addBtn':       'Add Domain',
   'inv.saved':        'Saved',
+  'inv.statActive':   'Active',
+  'inv.statInactive': 'Inactive',
+  'inv.statDeleted':  'Deleted',
+  'inv.filterTooltip':'Filter',
   'inv.colDomain':    'Domain',
   'inv.colPort':      'Port',
   'inv.colOwner':     'Owner',
@@ -1467,7 +1485,8 @@ const EN = {
   'inv.selectTeam':    '— Select Team —',
   'inv.teamRequired':  'A team is required for the certificate.',
   'inv.deleteTitle':  'Delete Domain',
-  'inv.deleteMsg':    '"{0}" will be permanently removed from inventory. This cannot be undone.',
+  'inv.deleteMsg':    '"{0}" will be removed from inventory. You can restore it later via "Show deleted".',
+  'inv.scrollForMore':'Scroll for more',
   'inv.deleteConfirm':'Delete',
   'inv.deleteCancel': 'Cancel',
 
@@ -1745,6 +1764,13 @@ const EN = {
   'health.hbMinutes':      '{n} min ago',
   'health.hbAlarm':        'No signal received!',
   'health.hbRecent':       'Recent Signals',
+  'health.queueTitle':     'Task Queue',
+  'health.queuePending':   'Backlog in queue',
+  'health.queueTooltip':   'This counter rises only when all 20 active threads are busy. 0 means pool capacity is sufficient.',
+  'health.queueActive':    'Active / Pool',
+  'health.queueThreads':   'Threads',
+  'health.queueMinMax':    'min: {min} · max: {max}',
+  'health.queueCompleted': 'Completed',
   'health.hbSignal':       'Signal',
   'health.alarmBanner':    'Active Alarms',
 
@@ -2008,6 +2034,10 @@ const LangCtx = createContext(null)
 
 export function LangProvider({ children }) {
   const [lang, setLang] = useState(() => localStorage.getItem(STORAGE_KEY) || 'en')
+
+  useEffect(() => {
+    document.documentElement.lang = lang
+  }, [lang])
 
   const toggle = useCallback(() => {
     setLang((l) => {

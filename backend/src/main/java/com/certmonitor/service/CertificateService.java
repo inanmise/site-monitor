@@ -277,7 +277,10 @@ public class CertificateService {
 
     @Cacheable("cert-warnings")
     public List<CertificateDto> getWarnings() {
+        Set<String> activeDomains = inventoryRepo.findByActiveTrueOrderByDomainAsc()
+                .stream().map(CertificateInventory::getDomain).collect(Collectors.toSet());
         return latestRepo.findByWarningTrueOrStatus("error").stream()
+                .filter(c -> activeDomains.contains(c.getDomain()))
                 .sorted(Comparator.comparingInt(c -> c.getDaysRemaining() == null ? 0 : c.getDaysRemaining()))
                 .map(this::toDto)
                 .collect(Collectors.toList());

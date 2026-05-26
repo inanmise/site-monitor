@@ -69,6 +69,10 @@ public class SchedulerService {
     private final UptimeHttpCheckerService uptimeHttpCheckerService;
     private final UptimeCheckRepository uptimeCheckRepo;
 
+    @org.springframework.beans.factory.annotation.Autowired
+    @org.springframework.beans.factory.annotation.Qualifier("certCheckExecutor")
+    private org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor certCheckExecutor;
+
     @Value("${cert.monitor.username:user}")
     private String adminUsername;
 
@@ -155,6 +159,11 @@ public class SchedulerService {
         patch("ALTER TABLE notification_logs ADD COLUMN message TEXT");
         patch("ALTER TABLE certificate_inventory ADD COLUMN team_id INTEGER");
         patch("ALTER TABLE escalation_contacts ADD COLUMN team_id INTEGER");
+        // Widen varchar(255) columns to TEXT — markdown editor / long descriptions can overflow
+        patch("ALTER TABLE certificate_inventory ALTER COLUMN change_description TYPE TEXT");
+        patch("ALTER TABLE certificate_inventory ALTER COLUMN description TYPE TEXT");
+        patch("ALTER TABLE certificate_inventory ALTER COLUMN owner TYPE TEXT");
+        patch("ALTER TABLE certificate_inventory ALTER COLUMN expected_subject TYPE TEXT");
         // Distributed scheduler lock table (HA: prevents duplicate runs across instances)
         patch("""
             CREATE TABLE IF NOT EXISTS scheduler_lock(
@@ -430,6 +439,21 @@ public class SchedulerService {
             }
         } catch (Exception e) {
             h.put("pool", Map.of("error", e.getMessage()));
+        }
+
+        // certCheckExecutor task queue stats
+        try {
+            Map<String, Object> ex = new LinkedHashMap<>();
+            ex.put("queue_size",      certCheckExecutor.getQueueSize());
+            ex.put("queue_capacity",  certCheckExecutor.getQueueCapacity());
+            ex.put("active_count",    certCheckExecutor.getActiveCount());
+            ex.put("pool_size",       certCheckExecutor.getPoolSize());
+            ex.put("core_pool_size",  certCheckExecutor.getCorePoolSize());
+            ex.put("max_pool_size",   certCheckExecutor.getMaxPoolSize());
+            ex.put("completed_tasks", certCheckExecutor.getThreadPoolExecutor().getCompletedTaskCount());
+            h.put("executor_pool", ex);
+        } catch (Exception e) {
+            h.put("executor_pool", Map.of("error", e.getMessage()));
         }
 
         // JVM memory

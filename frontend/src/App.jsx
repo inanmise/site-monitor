@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
-import { ChevronDown } from 'lucide-react'
+import { ChevronDown, BarChart3 } from 'lucide-react'
 import { api, formatDate } from './api/client'
 import { useDialog } from './components/ui/Dialog.jsx'
 import { useT } from './i18n/index.jsx'
@@ -407,9 +407,13 @@ export default function App() {
                 onClick={() => setStatsVisible((v) => !v)}
                 title={statsVisible ? t('app.collapseStats') : t('app.expandStats')}
               >
+                <span className="stats-collapse-icon"><BarChart3 size={18} /></span>
                 <span className="stats-collapse-label">{t('app.statistics')}</span>
+                {!statsVisible && (
+                  <span className="stats-collapse-hint">{t('app.expandStats')}</span>
+                )}
                 <span className={`stats-collapse-chevron${statsVisible ? ' open' : ''}`}>
-                  <ChevronDown size={14} />
+                  <ChevronDown size={18} />
                 </span>
               </div>
               <StatsPanel stats={stats} visible={statsVisible}

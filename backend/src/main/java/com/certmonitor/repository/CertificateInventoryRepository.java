@@ -17,6 +17,7 @@ public interface CertificateInventoryRepository extends JpaRepository<Certificat
     List<CertificateInventory> findByUgTeamIdAndActiveTrueOrderByDomainAsc(Long ugTeamId);
 
     // Soft-delete aware
+    List<CertificateInventory> findAllByOrderByDomainAsc();
     List<CertificateInventory> findByDeletedAtIsNullOrderByDomainAsc();
     List<CertificateInventory> findByDeletedAtIsNotNullOrderByDomainAsc();
     List<CertificateInventory> findByTeamIdAndDeletedAtIsNullOrderByDomainAsc(Long teamId);

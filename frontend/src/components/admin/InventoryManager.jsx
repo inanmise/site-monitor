@@ -1,15 +1,14 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef, useMemo } from 'react'
+import { ChevronDown } from 'lucide-react'
+import MDEditor from '@uiw/react-md-editor'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import { api, formatDate } from '../../api/client'
 import { useDialog } from '../ui/Dialog.jsx'
+import { useToast } from '../ui/Toast.jsx'
 import { useT } from '../../i18n/index.jsx'
+import { useTheme } from '../../i18n/theme.jsx'
 import SearchableSelect from '../ui/SearchableSelect.jsx'
-
-const DEFAULT_CHANGE_TEMPLATE =
-`- IISAdmins ekibi sertifika alım sürecini yürütür.
-- IISAdmins, PFX halindeki sertifikayı ADCAdmins ve Güvenlik ekibi ile paylaşır.
-- Değişiklik planlaması Servis Yönetimi tarafından ilgili ekiplerle koordineli yapılır.
-- Sertifika Netscaler ve WAF'ta güncellenir.
-- Ankara ve Gebze tarafında iki ayrı WAF cihazı vardır; WAF ekibine hatırlatılmalıdır.`
 
 const EMPTY = {
   domain: '', port: 443, owner: '', description: '', active: true,
@@ -19,7 +18,7 @@ const EMPTY = {
   server_update: false, netscaler: false, waf_enabled: false,
   in_use: false, ev_certificate: false, transferred_to_sy: false,
   purchased_by: '',
-  change_description: DEFAULT_CHANGE_TEMPLATE,
+  change_description: '',
   expected_fingerprint: '', expected_subject: '',
 }
 
@@ -50,18 +49,22 @@ function ShowField({ label, value, mono, full }) {
 
 export default function InventoryManager({ onInventoryChange, systemRole, teams: teamsProp = [], isAdmin: isAdminProp = false }) {
   const t = useT()
+  const { theme } = useTheme()
+  const toast = useToast()
   const { showConfirm } = useDialog()
   const isAdmin = systemRole ? systemRole === 'ADMIN' : isAdminProp
   const [items, setItems]             = useState([])
   const [teams, setTeams]             = useState(teamsProp)
   const [modal, setModal]             = useState(null)
   const [transferModal, setTransferModal] = useState(null)
+  const formGridRef                   = useRef(null)
+  const [showScrollHint, setShowScrollHint] = useState(false)
   const [transferTeamId, setTransferTeamId]     = useState('')
   const [transferUgTeamId, setTransferUgTeamId] = useState('')
   const [form, setForm]               = useState(EMPTY)
   const [saving, setSaving]           = useState(false)
   const [msg, setMsg]                 = useState(null)
-  const [showDeleted, setShowDeleted] = useState(false)
+  const [statusFilter, setStatusFilter] = useState('default')
   const [showItem,    setShowItem]    = useState(null)
 
   const teamMap  = Object.fromEntries(teams.map(t => [String(t.id), t.name]))
@@ -73,17 +76,50 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
     if (isAdmin) api.admin.getTeams().then(res => { if (res?.success) setTeams(res.data) })
   }, [])
 
-  useEffect(() => { load() }, [showDeleted])
+  useEffect(() => {
+    if (modal === null) { setShowScrollHint(false); return }
+    const el = formGridRef.current
+    if (!el) return
+    const check = () => {
+      const hasOverflow = el.scrollHeight > el.clientHeight + 2
+      const atBottom    = el.scrollTop + el.clientHeight >= el.scrollHeight - 6
+      setShowScrollHint(hasOverflow && !atBottom)
+    }
+    check()
+    el.addEventListener('scroll', check, { passive: true })
+    const ro = new ResizeObserver(check)
+    ro.observe(el)
+    return () => { el.removeEventListener('scroll', check); ro.disconnect() }
+  }, [modal])
 
   async function load() {
-    const res = await api.admin.getInventory(showDeleted)
+    const res = await api.admin.getInventory(true)
     if (res?.success) setItems(res.data)
+  }
+
+  const stats = useMemo(() => ({
+    active:   items.filter(i => i.active   && !i.deleted_at).length,
+    inactive: items.filter(i => !i.active  && !i.deleted_at).length,
+    deleted:  items.filter(i => !!i.deleted_at).length,
+  }), [items])
+
+  const visibleItems = useMemo(() => {
+    switch (statusFilter) {
+      case 'active':   return items.filter(i => i.active   && !i.deleted_at)
+      case 'inactive': return items.filter(i => !i.active  && !i.deleted_at)
+      case 'deleted':  return items.filter(i => !!i.deleted_at)
+      default:         return items.filter(i => !i.deleted_at)
+    }
+  }, [items, statusFilter])
+
+  function togglePill(kind) {
+    setStatusFilter(prev => prev === kind ? 'default' : kind)
   }
 
   function f(field, val) { setForm(prev => ({ ...prev, [field]: val })) }
 
   function openAdd() {
-    setForm({ ...EMPTY, change_description: DEFAULT_CHANGE_TEMPLATE })
+    setForm(EMPTY)
     setModal('add')
   }
 
@@ -162,8 +198,16 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
       ? await api.admin.addInventory(payload)
       : await api.admin.updateInventory(modal.id, payload)
     setSaving(false)
-    if (res?.success) { setModal(null); setMsg(t('inv.saved')); load(); onInventoryChange?.() }
-    else setMsg(res?.error || 'Error')
+    if (res?.success) {
+      setModal(null)
+      toast.success(t('inv.saved'))
+      load()
+      onInventoryChange?.()
+    } else {
+      const errTxt = res?.error || 'Error'
+      setMsg(errTxt)
+      toast.error(errTxt)
+    }
   }
 
   async function del(id) {
@@ -192,8 +236,13 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
     })
     if (!ok) return
     const res = await api.admin.restoreInventory(id)
-    if (res?.success) { setMsg(t('inv.restored')); load(); onInventoryChange?.() }
-    else setMsg(res?.error || 'Error')
+    if (res?.success) {
+      toast.success(t('inv.restored'))
+      load()
+      onInventoryChange?.()
+    } else {
+      toast.error(res?.error || 'Error')
+    }
   }
 
   async function doTransfer() {
@@ -207,8 +256,15 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
     ])
     setSaving(false)
     const errResult = results.find(r => !r?.success)
-    if (!errResult) { setTransferModal(null); setMsg(t('inv.transferred')); load() }
-    else setMsg(errResult.error || 'Error')
+    if (!errResult) {
+      setTransferModal(null)
+      toast.success(t('inv.transferred'))
+      load()
+    } else {
+      const errTxt = errResult.error || 'Error'
+      setMsg(errTxt)
+      toast.error(errTxt)
+    }
   }
 
   const ugTeamName = (id) => teamMap[String(id)] || '—'
@@ -216,20 +272,34 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
   return (
     <div className="admin-section">
       <div className="admin-section-header">
-        <h3>{t('inv.title')}</h3>
+        <div className="inv-title-row">
+          <h3>{t('inv.title')}</h3>
+          <div className="inv-stats-pills">
+            <button type="button"
+              className={`inv-stat-pill inv-stat-active${statusFilter === 'active' ? ' is-selected' : ''}`}
+              onClick={() => togglePill('active')}
+              title={t('inv.filterTooltip')}>
+              <span className="inv-stat-dot"></span>
+              {t('inv.statActive')}: <strong>{stats.active}</strong>
+            </button>
+            <button type="button"
+              className={`inv-stat-pill inv-stat-inactive${statusFilter === 'inactive' ? ' is-selected' : ''}`}
+              onClick={() => togglePill('inactive')}
+              title={t('inv.filterTooltip')}>
+              <span className="inv-stat-dot"></span>
+              {t('inv.statInactive')}: <strong>{stats.inactive}</strong>
+            </button>
+            <button type="button"
+              className={`inv-stat-pill inv-stat-deleted${statusFilter === 'deleted' ? ' is-selected' : ''}`}
+              onClick={() => togglePill('deleted')}
+              title={t('inv.filterTooltip')}>
+              <span className="inv-stat-dot"></span>
+              {t('inv.statDeleted')}: <strong>{stats.deleted}</strong>
+            </button>
+          </div>
+        </div>
         <button className="btn btn-success" onClick={openAdd}>{t('inv.addBtn')}</button>
       </div>
-      {msg && <div className="alert-msg">{msg}</div>}
-
-      {isAdmin && (
-        <div className="inv-filter-bar">
-          <label className="inv-deleted-toggle">
-            <input type="checkbox" checked={showDeleted}
-              onChange={e => setShowDeleted(e.target.checked)} />
-            {t('inv.showDeleted')}
-          </label>
-        </div>
-      )}
 
       <div className="admin-table-wrap">
         <table className="admin-table">
@@ -240,14 +310,13 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
               <th>{t('inv.colTier')}</th>
               <th>{t('inv.colSyTeam')}</th>
               <th>{t('inv.colUgTeam')}</th>
-              <th>{t('inv.colOwner')}</th>
               <th>{t('inv.colDesc')}</th>
               <th>{t('inv.colActive')}</th>
               <th>{t('inv.colActions')}</th>
             </tr>
           </thead>
           <tbody>
-            {items.map((item) => (
+            {visibleItems.map((item) => (
               <tr key={item.id} className={item.deleted_at ? 'inv-row-deleted' : ''}>
                 <td><strong>{item.domain}</strong></td>
                 <td>{item.port}</td>
@@ -258,7 +327,6 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
                 </td>
                 <td>{teamMap[String(item.team_id)] || '—'}</td>
                 <td>{ugTeamName(item.ug_team_id)}</td>
-                <td>{item.owner || '—'}</td>
                 <td>{item.description || '—'}</td>
                 <td>
                   {item.deleted_at
@@ -303,10 +371,15 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
           <div className="modal-box modal-wide" onClick={(e) => e.stopPropagation()}>
             <h3>{modal === 'add' ? t('inv.addTitle') : t('inv.editTitle')}</h3>
 
-            <div className="form-grid">
+            <div className="form-grid" ref={formGridRef}>
 
               {/* ── Temel Bilgiler ── */}
               <SectionHeader label={t('inv.sectionBasic')} />
+
+              <label className="checkbox-label full-width">
+                <input type="checkbox" checked={form.active} onChange={e => f('active', e.target.checked)} />
+                {t('inv.formActive')}
+              </label>
 
               <label>
                 <span>{t('inv.formDomain')} <span className="req-star">*</span></span>
@@ -360,13 +433,8 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
               </label>
 
               <label>
-                {t('inv.formOwner')}
-                <input value={form.owner} onChange={e => f('owner', e.target.value)} />
-              </label>
-
-              <label className="checkbox-label">
-                <input type="checkbox" checked={form.active} onChange={e => f('active', e.target.checked)} />
-                {t('inv.formActive')}
+                {t('inv.formPurchasedBy')}
+                <input value={form.purchased_by} onChange={e => f('purchased_by', e.target.value)} />
               </label>
 
               {/* ── Operasyonel Bilgiler ── */}
@@ -385,6 +453,7 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
                   ['waf_enabled',      'inv.formWafEnabled'],
                   ['in_use',           'inv.formInUse'],
                   ['ev_certificate',   'inv.formEvCert'],
+                  ['transferred_to_sy','inv.formTransferredToSy'],
                 ].map(([field, key]) => (
                   <div key={field} className="yn-field-row">
                     <span className="yn-field-label">{t(key)}</span>
@@ -393,40 +462,34 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
                 ))}
               </div>
 
-              {/* ── Süreç Bilgileri ── */}
-              <SectionHeader label={t('inv.sectionProcess')} />
-
-              <label className="full-width">
-                {t('inv.formPurchasedBy')}
-                <input value={form.purchased_by} onChange={e => f('purchased_by', e.target.value)} />
-              </label>
-
-              <div className="yn-field-row" style={{ gridColumn: '1 / -1' }}>
-                <span className="yn-field-label">{t('inv.formTransferredToSy')}</span>
-                <YesNo value={form.transferred_to_sy} onChange={v => f('transferred_to_sy', v)} />
-              </div>
-
-              {/* ── Açıklamalar ── */}
-              <SectionHeader label={t('inv.sectionDesc')} />
-
-              <label className="full-width">
-                {t('inv.formDescription')}
-                <textarea rows={4} value={form.description}
-                  onChange={e => f('description', e.target.value)}
-                  style={{ resize: 'vertical', fontFamily: 'inherit' }} />
-              </label>
-
               <label className="full-width">
                 {t('inv.formChangeDesc')}
-                <textarea rows={7} value={form.change_description}
-                  onChange={e => f('change_description', e.target.value)}
-                  style={{ resize: 'vertical', fontFamily: 'inherit', fontSize: '.9em' }} />
+                <div data-color-mode={theme === 'dark' ? 'dark' : 'light'}>
+                  <MDEditor
+                    value={form.change_description}
+                    onChange={(v) => f('change_description', v ?? '')}
+                    preview="edit"
+                    height={260}
+                    visibleDragbar={false}
+                  />
+                </div>
               </label>
 
 
             </div>
 
             {msg && <div className="alert-msg" style={{ marginTop: 10 }}>{msg}</div>}
+
+            {showScrollHint && (
+              <button
+                type="button"
+                className="modal-scroll-hint"
+                onClick={() => formGridRef.current?.scrollBy({ top: 200, behavior: 'smooth' })}
+              >
+                <ChevronDown size={14} />
+                <span>{t('inv.scrollForMore')}</span>
+              </button>
+            )}
 
             <div className="modal-actions">
               <button className="btn btn-secondary" onClick={() => setModal(null)}>{t('inv.cancel')}</button>
@@ -479,7 +542,7 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
                     ? `T${showItem.tier} — ${t(`inv.tier${showItem.tier}`)}`
                     : t('inv.tierNone')
                 } />
-                <ShowField label={t('inv.formOwner')}   value={showItem.owner || '—'} />
+                <ShowField label={t('inv.formPurchasedBy')} value={showItem.purchased_by || '—'} />
               </div>
 
               {/* Operasyonel Bilgiler */}
@@ -497,6 +560,7 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
                   ['inv.formWafEnabled',     showItem.waf_enabled],
                   ['inv.formInUse',          showItem.in_use],
                   ['inv.formEvCert',         showItem.ev_certificate],
+                  ['inv.formTransferredToSy',showItem.transferred_to_sy],
                 ].map(([key, val]) => (
                   <div key={key} className="show-yn-cell">
                     <span className="show-yn-label">{t(key)}</span>
@@ -507,32 +571,14 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
                 ))}
               </div>
 
-              {/* Süreç Bilgileri */}
-              <div className="show-section-header">{t('inv.sectionProcess')}</div>
-              <div className="show-grid-2">
-                <ShowField label={t('inv.formPurchasedBy')} value={showItem.purchased_by || '—'} />
-                <div className="show-field">
-                  <span className="show-field-label">{t('inv.formTransferredToSy')}</span>
-                  <span className={`show-yn-badge ${showItem.transferred_to_sy ? 'show-yn-yes' : 'show-yn-no'}`}>
-                    {showItem.transferred_to_sy ? t('inv.yes') : t('inv.no')}
-                  </span>
-                </div>
-              </div>
 
-              {/* Açıklamalar */}
-              {(showItem.description || showItem.change_description) && (
-                <>
-                  <div className="show-section-header">{t('inv.sectionDesc')}</div>
-                  {showItem.description && (
-                    <ShowField label={t('inv.formDescription')} value={showItem.description} full />
-                  )}
-                  {showItem.change_description && (
-                    <div className="show-field show-field-full">
-                      <span className="show-field-label">{t('inv.formChangeDesc')}</span>
-                      <pre className="show-pre">{showItem.change_description}</pre>
-                    </div>
-                  )}
-                </>
+              {showItem.change_description && (
+                <div className="show-field show-field-full">
+                  <span className="show-field-label">{t('inv.formChangeDesc')}</span>
+                  <div className="show-markdown" data-color-mode={theme === 'dark' ? 'dark' : 'light'}>
+                    <ReactMarkdown remarkPlugins={[remarkGfm]}>{showItem.change_description}</ReactMarkdown>
+                  </div>
+                </div>
               )}
 
               {/* Gelişmiş */}

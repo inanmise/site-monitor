@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { api, formatDate } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
-import { CheckCircle, XCircle, MinusCircle, HelpCircle, Mail } from 'lucide-react'
+import { CheckCircle, XCircle, MinusCircle, HelpCircle, Mail, Check, Loader2 } from 'lucide-react'
 import MiniChart from './MiniChart'
 import ChartModal from './ChartModal'
 
@@ -173,7 +173,7 @@ export default function SystemHealth() {
     return <div className="sys-loading">{t('sys.loading')}</div>
   }
 
-  const { scheduler, lock, pool, memory, scan, scan_alarm, smtp, db_ms, heartbeat } = health || {}
+  const { scheduler, lock, pool, executor_pool, memory, scan, scan_alarm, smtp, db_ms, heartbeat } = health || {}
   const isRunning = scheduler?.running
 
   // Compute active alarms for banner
@@ -518,6 +518,70 @@ export default function SystemHealth() {
             </div>
           )}
         </div>
+
+        {/* Task Queue card — certCheckExecutor metrics */}
+        {executor_pool && (
+          <div className={`sys-card${(executor_pool.queue_size ?? 0) > (executor_pool.queue_capacity ?? 1) * 0.8 ? ' sys-card-alarm' : ''}`}>
+            <div className="sys-card-header">
+              <div className="hb-title-row">
+                <span className="hb-heart hb-heart-ok" style={{ fontSize: 18 }}>⚡</span>
+                <h3>{t('health.queueTitle')}</h3>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <button
+                  className="sys-card-refresh-btn"
+                  onClick={refreshPool}
+                  disabled={poolCardRefreshing}
+                  title={t('sys.poolRefresh')}
+                  aria-label={t('sys.poolRefresh')}
+                >
+                  <span className={poolCardRefreshing ? 'spin' : ''}>↻</span>
+                </button>
+                <span className={`sys-badge ${(executor_pool.queue_size ?? 0) === 0 ? 'sys-badge-free' : 'sys-badge-locked'}`}>
+                  {executor_pool.queue_size ?? 0}
+                </span>
+              </div>
+            </div>
+            <dl className="sys-dl">
+              <dt title={t('health.queueTooltip')}>
+                {t('health.queuePending')}
+                <span className="queue-info-ind" aria-hidden="true">ⓘ</span>
+              </dt>
+              <dd>
+                <strong>{executor_pool.queue_size ?? 0}</strong> / {executor_pool.queue_capacity ?? 0}
+                <span className="queue-status-ind">
+                  {(executor_pool.queue_size ?? 0) === 0
+                    ? <Check size={14} className="queue-status-ok" strokeWidth={3} />
+                    : <Loader2 size={14} className="queue-status-busy spin" />}
+                </span>
+              </dd>
+
+              <dt>{t('health.queueActive')}</dt>
+              <dd>
+                {executor_pool.active_count ?? 0} / {executor_pool.pool_size ?? 0}
+                <span className="queue-status-ind">
+                  {(executor_pool.active_count ?? 0) === 0
+                    ? <Check size={14} className="queue-status-ok" strokeWidth={3} />
+                    : <Loader2 size={14} className="queue-status-busy spin" />}
+                </span>
+              </dd>
+
+              <dt>{t('health.queueThreads')}</dt>
+              <dd>{t('health.queueMinMax')
+                    .replace('{min}', executor_pool.core_pool_size ?? 0)
+                    .replace('{max}', executor_pool.max_pool_size ?? 0)}</dd>
+
+              <dt>{t('health.queueCompleted')}</dt>
+              <dd>{executor_pool.completed_tasks ?? 0}</dd>
+            </dl>
+            <div className="queue-bar-wrap" aria-hidden="true">
+              <div
+                className="queue-bar-fill"
+                style={{ width: `${Math.min(100, ((executor_pool.queue_size ?? 0) / Math.max(1, executor_pool.queue_capacity ?? 1)) * 100)}%` }}
+              />
+            </div>
+          </div>
+        )}
 
       </div>
 
