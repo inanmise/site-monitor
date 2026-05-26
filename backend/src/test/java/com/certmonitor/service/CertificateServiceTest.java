@@ -218,6 +218,36 @@ class CertificateServiceTest {
         assertThat(stats.get("warning_count")).isEqualTo(0L);
     }
 
+    @Test
+    @DisplayName("getStats: warnings query returns stale domains absent from inventory — valid_count stays non-negative")
+    void getStats_warningsDriftPastAll_validNonNegative() {
+        // Active inventory has only 2 domains
+        List<LatestCheck> activeChecks = List.of(
+                latestCheck("active-warning.com", "warning", true,  5,    "VALID",   "OK"),
+                latestCheck("active-valid.com",   "valid",   false, 90,   "VALID",   "OK")
+        );
+        // But the warnings query returns 4 entries (3 stale domains no longer in active inventory)
+        // — simulates cache drift / soft-delete latency edge case
+        List<LatestCheck> warningsRaw = List.of(
+                latestCheck("active-warning.com", "warning", true,  5,    "VALID",   "OK"),
+                latestCheck("stale1.com",         "error",   true,  null, "UNKNOWN", "UNKNOWN"),
+                latestCheck("stale2.com",         "warning", true,  10,   "VALID",   "OK"),
+                latestCheck("stale3.com",         "warning", true,  20,   "VALID",   "OK")
+        );
+        when(latestRepo.findAllByOrderByDomainAsc()).thenReturn(activeChecks);
+        when(latestRepo.findByWarningTrueOrStatus("error")).thenReturn(warningsRaw);
+
+        Map<String, Object> stats = service.getStats();
+
+        // Defense layer 1: getWarnings filters by active domains → only active-warning.com survives
+        // Defense layer 2: valid_count counted directly via warnDomainSet exclusion, never via subtraction
+        assertThat((Long) stats.get("valid_count")).isGreaterThanOrEqualTo(0L);
+        assertThat(stats.get("valid_count")).isEqualTo(1L);   // only active-valid.com is valid
+        assertThat(stats.get("total_certificates")).isEqualTo(2);
+        assertThat(stats.get("error_count")).isEqualTo(0L);   // stale1.com filtered out
+        assertThat(stats.get("critical_count")).isEqualTo(1L); // active-warning.com (5 ≤ 7)
+    }
+
     // ── getRenewalAdvice ──────────────────────────────────────────────────────
 
     @Test

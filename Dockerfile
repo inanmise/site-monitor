@@ -19,6 +19,10 @@ RUN mvn package -DskipTests -q
 FROM eclipse-temurin:21-jre-alpine
 WORKDIR /app
 
+# Debug/troubleshoot tools — pod içinden: curl (HTTP), bash (shell),
+# dig/nslookup (DNS), telnet (port), less (log gezintisi)
+RUN apk add --no-cache curl bash bind-tools busybox-extras less
+
 ARG VERSION=1.0.0
 ARG BUILD_DATE
 ARG GIT_COMMIT
