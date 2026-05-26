@@ -82,7 +82,11 @@ public class ExtendedHealthService {
     // ── SMTP stats ────────────────────────────────────────────────────────────
 
     public List<Map<String, Object>> getSmtpFailures() {
-        String cutoff = LocalDateTime.now(ZoneOffset.UTC).minusDays(30)
+        return getSmtpFailures(30);
+    }
+
+    public List<Map<String, Object>> getSmtpFailures(int days) {
+        String cutoff = LocalDateTime.now(ZoneOffset.UTC).minusDays(days)
                 .format(DateTimeFormatter.ISO_LOCAL_DATE_TIME);
         return notificationLogRepo.findAllSince(cutoff).stream()
                 .map(n -> {

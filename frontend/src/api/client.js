@@ -142,7 +142,8 @@ export const api = {
     getMetrics: () => request('/admin/system/metrics'),
     getHttpMetrics: () => request('/admin/system/http-metrics'),
     getDbStats: () => request('/admin/system/db-stats'),
-    getSmtpLogs: () => request('/admin/system/smtp-logs'),
+    getSmtpLogs: (days) =>
+      request(`/admin/system/smtp-logs${days ? `?days=${days}` : ''}`),
     triggerHeartbeat: () => request('/admin/system/heartbeat', { method: 'POST' }),
   },
 

@@ -2602,6 +2602,45 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
   border-color: var(--primary);
 }
 
+.smtp-log-cta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  margin-top: 12px;
+  padding: 9px 12px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: .85em;
+  font-weight: 600;
+  color: var(--text);
+  cursor: pointer;
+  transition: background .15s, border-color .15s, transform .1s;
+  font-family: inherit;
+}
+.smtp-log-cta:hover {
+  background: var(--bg-secondary);
+  border-color: var(--primary);
+  transform: translateY(-1px);
+}
+.smtp-log-cta:active { transform: translateY(0); }
+.smtp-log-cta > svg:first-child { color: var(--primary); flex-shrink: 0; }
+.smtp-log-cta > span:first-of-type { flex: 1; text-align: left; }
+.smtp-log-cta-period {
+  font-size: .78em;
+  font-weight: 700;
+  color: var(--primary);
+  background: rgba(37, 99, 235, .12);
+  padding: 2px 8px;
+  border-radius: 999px;
+}
+.smtp-log-cta-arrow {
+  color: var(--text-light);
+  transition: transform .15s;
+}
+.smtp-log-cta:hover .smtp-log-cta-arrow { transform: translateX(2px); color: var(--primary); }
+
 .smtp-stream-line {
   position: absolute; top: 50%; left: 12px; right: 12px;
   height: 1px; transform: translateY(-50%);

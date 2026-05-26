@@ -39,9 +39,16 @@ public class SystemController {
     }
 
     @GetMapping("/smtp-logs")
-    public ResponseEntity<Map<String, Object>> getSmtpLogs(HttpSession session) {
+    public ResponseEntity<Map<String, Object>> getSmtpLogs(
+            @RequestParam(defaultValue = "30") int days,
+            HttpSession session) {
         requireAdmin(session);
-        return ResponseEntity.ok(Map.of("success", true, "data", extendedHealthService.getSmtpFailures(), "timestamp", now()));
+        int d = Math.max(1, Math.min(days, 365));
+        return ResponseEntity.ok(Map.of(
+                "success",   true,
+                "data",      extendedHealthService.getSmtpFailures(d),
+                "days",      d,
+                "timestamp", now()));
     }
 
     @GetMapping("/db-stats")
