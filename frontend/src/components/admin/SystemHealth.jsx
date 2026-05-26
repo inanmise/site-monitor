@@ -62,7 +62,7 @@ export default function SystemHealth() {
   const [poolCardRefreshing, setPoolCardRefreshing] = useState(false)
   const [poolLastRefreshed, setPoolLastRefreshed]   = useState(null)
   const [hbRefreshing, setHbRefreshing] = useState(false)
-  const [smtpPeriod, setSmtpPeriod]   = useState('30d')
+  const [smtpPeriod, setSmtpPeriod]   = useState('7d')
   const [loading, setLoading]         = useState(true)
   const [releasing, setReleasing]     = useState(false)
   const [triggering, setTriggering]   = useState(false)
