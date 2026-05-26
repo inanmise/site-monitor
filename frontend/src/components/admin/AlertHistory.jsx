@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { api, formatDate } from '../../api/client'
 import { useDialog } from '../ui/Dialog.jsx'
+import { useToast } from '../ui/Toast.jsx'
 import { useT, useDateLocale } from '../../i18n/index.jsx'
 import {
   Check, ShieldAlert, TrendingUp, RefreshCcw, Bell, CheckCircle,
@@ -242,6 +243,7 @@ function NotifyResultModal({ alertId, alertInfo, currentResult, onClose }) {
 export default function AlertHistory({ domain = null }) {
   const t = useT()
   const { showConfirm } = useDialog()
+  const toast = useToast()
   const [alerts,       setAlerts]       = useState([])
   const [onlyOpen,     setOnlyOpen]     = useState(domain == null)
   const [loading,      setLoading]      = useState(false)
@@ -298,9 +300,11 @@ export default function AlertHistory({ domain = null }) {
     const res = await api.admin.reNotifyAlert(id)
     setNotifying(null)
     if (res?.success) {
-      const alert = alerts.find(a => a.id === id)
-      setNotifyModal({ alertId: id, alertInfo: alert, result: res })
+      const count = res.data?.recipients_queued ?? res.data?.contacts_queued ?? 0
+      toast.success(t('alh.notifyQueued', count))
       load()
+    } else {
+      toast.error(res?.error || 'Error')
     }
   }
 

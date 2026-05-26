@@ -15,7 +15,10 @@ import com.certmonitor.repository.TeamRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.annotation.Lazy;
+import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -41,6 +44,10 @@ public class EscalationService {
     private final NotificationLogRepository notificationLogRepo;
     private final LatestCheckRepository latestCheckRepo;
     private final TeamRepository teamRepo;
+
+    // Self-injection (@Lazy avoids circular dep) — needed to invoke @Async methods via proxy
+    @Autowired @Lazy
+    private EscalationService self;
 
     // Delay between each domain's email batch during startup catch-up (default 3 s)
     @Value("${mail.catch-up.inter-domain-delay-ms:3000}")
@@ -146,10 +153,10 @@ public class EscalationService {
     }
 
     /**
-     * Immediately re-sends notifications for an open alert to all currently
-     * eligible contacts, regardless of the re-alert interval.
+     * Trigger immediate re-notification.
+     * Quick: validates, reads contacts, persists last-realert timestamp, queues async send.
+     * Returns immediately so HTTP request does not hold DB connection during SMTP I/O.
      */
-    // No @Transactional: DB auto-commits per save(), I/O runs without holding the connection
     public Map<String, Object> reNotify(Long alertId) {
         AlertEvent event = alertEventRepo.findById(alertId)
                 .orElseThrow(() -> new NoSuchElementException("Alert not found: " + alertId));
@@ -161,31 +168,57 @@ public class EscalationService {
         Long domainTeamId = inventoryOpt.map(com.certmonitor.model.CertificateInventory::getTeamId).orElse(null);
         Long ugTeamId     = inventoryOpt.map(com.certmonitor.model.CertificateInventory::getUgTeamId).orElse(null);
         List<EscalationContact> contacts = getContactsForLevel(event.getAlertLevel(), domainTeamId);
-        Map<String, Object> certContext = latestCheckRepo.findById(event.getDomain())
-                .map(this::latestToCertContext)
-                .orElse(null);
 
-        // DB write commits before I/O starts
+        // Quick DB write — commits before async dispatch
         event.setNotifiedContacts(serializeContacts(contacts));
         event.setLastReAlertAt(now());
         alertEventRepo.save(event);
 
-        // I/O after DB connection is released
-        // Use fresh days from LatestCheck so subject and alarm detail always match
-        Integer freshDays     = certContext != null ? toInt(certContext.get("days_remaining")) : null;
-        Integer effectiveDays = freshDays != null ? freshDays : event.getDaysRemaining();
-        String  freshMessage  = buildMessage(event.getDomain(), event.getAlertType(),
-                                             event.getAlertLevel(), effectiveDays);
-        List<Map<String, String>> notificationDetails = sendCombinedAlert(
-                domainTeamId, ugTeamId, contacts, event.getDomain(), event.getAlertLevel(), event.getAlertType(),
-                freshMessage, "[RE-ALERT] ", event.getId(), "MANUAL",
-                effectiveDays, certContext);
+        // Count actual recipients (team emails + contacts, deduped) — same logic as sendCombinedAlert
+        List<String> teamEmails = collectTeamEmails(domainTeamId, ugTeamId);
+        Set<String> seen = new HashSet<>();
+        int recipientCount = 0;
+        for (String e : teamEmails) {
+            if (e != null && !e.isBlank() && seen.add(e.toLowerCase())) recipientCount++;
+        }
+        for (EscalationContact c : contacts) {
+            if (c.getEmail() != null && !c.getEmail().isBlank()
+                    && seen.add(c.getEmail().trim().toLowerCase())) recipientCount++;
+        }
+
+        // Fire-and-forget async (self-proxy needed for @Async to engage)
+        self.reNotifyAsync(event.getId(), domainTeamId, ugTeamId, contacts,
+                           event.getDomain(), event.getAlertLevel(), event.getAlertType(),
+                           event.getDaysRemaining());
 
         Map<String, Object> result = new LinkedHashMap<>();
-        result.put("alert", event);
-        result.put("contacts_attempted", contacts.size());
-        result.put("notifications", notificationDetails);
+        result.put("alert_id",          event.getId());
+        result.put("recipients_queued", recipientCount);
+        result.put("contacts_queued",   contacts.size());
+        result.put("status",            "queued");
         return result;
+    }
+
+    /**
+     * Background SMTP + webhook dispatch. Runs on certCheckExecutor pool.
+     * Does not hold DB connection from the originating HTTP request.
+     */
+    @Async("certCheckExecutor")
+    public void reNotifyAsync(Long alertEventId, Long domainTeamId, Long ugTeamId,
+                              List<EscalationContact> contacts, String domain,
+                              String alertLevel, String alertType, Integer daysRemainingFallback) {
+        try {
+            Map<String, Object> certContext = latestCheckRepo.findById(domain)
+                    .map(this::latestToCertContext).orElse(null);
+            Integer freshDays     = certContext != null ? toInt(certContext.get("days_remaining")) : null;
+            Integer effectiveDays = freshDays != null ? freshDays : daysRemainingFallback;
+            String  freshMessage  = buildMessage(domain, alertType, alertLevel, effectiveDays);
+            sendCombinedAlert(domainTeamId, ugTeamId, contacts, domain, alertLevel, alertType,
+                    freshMessage, "[RE-ALERT] ", alertEventId, "MANUAL",
+                    effectiveDays, certContext);
+        } catch (Exception e) {
+            log.error("Async reNotify failed for alertEventId={}: {}", alertEventId, e.getMessage(), e);
+        }
     }
 
     public void catchUpMissedDailyAlerts() {

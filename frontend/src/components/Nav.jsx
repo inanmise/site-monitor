@@ -33,9 +33,10 @@ export default function Nav({ activeTab, onTabChange, username, teamName, system
     {
       labelKey: 'nav.groupMonitoring',
       tabs: [
-        { id: 'uptime', Icon: Wifi,    labelKey: 'nav.uptime', show: true },
-        { id: 'port',   Icon: Network, labelKey: 'nav.port',   show: true },
-        { id: 'dns',    Icon: Search,  labelKey: 'nav.dns',    show: true },
+        { id: 'health', Icon: Activity, labelKey: 'nav.health', show: isAdmin },
+        { id: 'uptime', Icon: Wifi,     labelKey: 'nav.uptime', show: true },
+        { id: 'port',   Icon: Network,  labelKey: 'nav.port',   show: true },
+        { id: 'dns',    Icon: Search,   labelKey: 'nav.dns',    show: true },
       ],
     },
     {
@@ -50,7 +51,6 @@ export default function Nav({ activeTab, onTabChange, username, teamName, system
       tabs: [
         { id: 'admin',   Icon: Settings,    labelKey: 'nav.admin',   show: true               },
         { id: 'weakalgo',Icon: ShieldAlert, labelKey: 'nav.weakAlgo',show: isAdmin || isAudit },
-        { id: 'health',  Icon: Activity,    labelKey: 'nav.health',  show: isAdmin            },
       ],
     },
     {

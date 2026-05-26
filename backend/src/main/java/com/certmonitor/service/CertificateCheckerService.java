@@ -14,8 +14,10 @@ import org.bouncycastle.asn1.x509.CertificatePolicies;
 import org.bouncycastle.asn1.x509.PolicyInformation;
 
 import javax.net.ssl.*;
+import java.io.IOException;
 import java.net.HttpURLConnection;
 import java.net.InetSocketAddress;
+import java.net.Socket;
 import java.net.URL;
 import java.security.cert.Certificate;
 import java.security.cert.X509Certificate;
@@ -42,6 +44,12 @@ public class CertificateCheckerService {
 
     @Value("${cert.monitor.warning-days:30}")
     private int warningDays;
+
+    @Value("${cert.monitor.proxy.host:}")     private String proxyHost;
+    @Value("${cert.monitor.proxy.port:0}")    private int    proxyPort;
+    @Value("${cert.monitor.proxy.user:}")     private String proxyUser;
+    @Value("${cert.monitor.proxy.pass:}")     private String proxyPass;
+    @Value("${cert.monitor.proxy.no-proxy:}") private String noProxyList;
 
     private static final DateTimeFormatter ISO =
             DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
@@ -72,8 +80,14 @@ public class CertificateCheckerService {
         log.debug("Certificate check start: domain={}:{}", domain, port);
         try {
             SSLSocketFactory factory = (SSLSocketFactory) SSLSocketFactory.getDefault();
-            try (SSLSocket socket = (SSLSocket) factory.createSocket()) {
-                socket.connect(new InetSocketAddress(domain, port), timeoutSeconds * 1000);
+            boolean useProxy = proxyEnabled() && !shouldBypassProxy(domain);
+            SSLSocket socket = useProxy
+                    ? openViaProxy(factory, domain, port)
+                    : (SSLSocket) factory.createSocket();
+            try (socket) {
+                if (!useProxy) {
+                    socket.connect(new InetSocketAddress(domain, port), timeoutSeconds * 1000);
+                }
                 socket.setSoTimeout(timeoutSeconds * 1000);
 
                 SSLParameters params = socket.getSSLParameters();
@@ -127,8 +141,20 @@ public class CertificateCheckerService {
 
                 // HSTS check via HTTP HEAD — reuse the SSLSocketFactory that already succeeded
                 try {
-                    HttpURLConnection hc = (HttpURLConnection)
-                        new URL("https://" + domain + "/").openConnection();
+                    URL url = new URL("https://" + domain + "/");
+                    HttpURLConnection hc;
+                    if (useProxy) {
+                        java.net.Proxy p = new java.net.Proxy(java.net.Proxy.Type.HTTP,
+                                new InetSocketAddress(proxyHost, proxyPort));
+                        hc = (HttpURLConnection) url.openConnection(p);
+                        if (proxyUser != null && !proxyUser.isBlank()) {
+                            String creds = java.util.Base64.getEncoder().encodeToString(
+                                (proxyUser + ":" + proxyPass).getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                            hc.setRequestProperty("Proxy-Authorization", "Basic " + creds);
+                        }
+                    } else {
+                        hc = (HttpURLConnection) url.openConnection();
+                    }
                     if (hc instanceof HttpsURLConnection https) {
                         https.setSSLSocketFactory(factory);
                     }
@@ -184,6 +210,56 @@ public class CertificateCheckerService {
                     domain, port, System.currentTimeMillis() - startMs, e);
             return error(domain, "Error: " + e.getMessage());
         }
+    }
+
+    private boolean proxyEnabled() {
+        return proxyHost != null && !proxyHost.isBlank() && proxyPort > 0;
+    }
+
+    private boolean shouldBypassProxy(String domain) {
+        if (noProxyList == null || noProxyList.isBlank()) return false;
+        String d = domain.toLowerCase();
+        for (String entry : noProxyList.split(",")) {
+            String e = entry.trim().toLowerCase();
+            if (e.isEmpty()) continue;
+            if (e.startsWith(".")) {
+                if (d.endsWith(e) || d.equals(e.substring(1))) return true;
+            } else {
+                if (d.equals(e) || d.endsWith("." + e)) return true;
+            }
+        }
+        return false;
+    }
+
+    /** Open raw TCP to proxy, send HTTP CONNECT, then wrap with SSL. */
+    private SSLSocket openViaProxy(SSLSocketFactory factory, String domain, int port) throws IOException {
+        Socket raw = new Socket();
+        raw.connect(new InetSocketAddress(proxyHost, proxyPort), timeoutSeconds * 1000);
+        raw.setSoTimeout(timeoutSeconds * 1000);
+
+        StringBuilder req = new StringBuilder()
+            .append("CONNECT ").append(domain).append(":").append(port).append(" HTTP/1.1\r\n")
+            .append("Host: ").append(domain).append(":").append(port).append("\r\n");
+        if (proxyUser != null && !proxyUser.isBlank()) {
+            String creds = java.util.Base64.getEncoder().encodeToString(
+                (proxyUser + ":" + proxyPass).getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            req.append("Proxy-Authorization: Basic ").append(creds).append("\r\n");
+        }
+        req.append("\r\n");
+        raw.getOutputStream().write(req.toString().getBytes(java.nio.charset.StandardCharsets.US_ASCII));
+        raw.getOutputStream().flush();
+
+        java.io.BufferedReader in = new java.io.BufferedReader(
+            new java.io.InputStreamReader(raw.getInputStream(), java.nio.charset.StandardCharsets.US_ASCII));
+        String status = in.readLine();
+        if (status == null || !(status.startsWith("HTTP/1.1 200") || status.startsWith("HTTP/1.0 200"))) {
+            try { raw.close(); } catch (Exception ignored) {}
+            throw new IOException("Proxy CONNECT failed: " + status);
+        }
+        String line;
+        while ((line = in.readLine()) != null && !line.isEmpty()) { /* drain headers */ }
+
+        return (SSLSocket) factory.createSocket(raw, domain, port, true);
     }
 
     private Map<String, Object> parseLeafCert(X509Certificate cert, String domain) {

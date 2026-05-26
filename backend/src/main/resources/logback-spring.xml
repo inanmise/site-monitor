@@ -22,17 +22,19 @@
                   source="logging.file.path" defaultValue="logs"/>
   <springProperty scope="context" name="LOG_LEVEL"
                   source="logging.level.com.certmonitor" defaultValue="INFO"/>
+  <springProperty scope="context" name="LOG_TZ"
+                  source="cert.monitor.log.timezone" defaultValue="Europe/Istanbul"/>
 
   <!-- ── Log patterns ────────────────────────────────────────────────────── -->
   <!--  Console: compact with highlight (works in IntelliJ / most terminals)  -->
   <property name="PAT_CONSOLE"
-            value="%d{HH:mm:ss.SSS} %highlight(%-5level) [%15.15thread] %cyan(%-36.36logger{35}) : %msg%n%rootException"/>
+            value="%d{HH:mm:ss.SSS, ${LOG_TZ}} %highlight(%-5level) [%15.15thread] %cyan(%-36.36logger{35}) : %msg%n%rootException"/>
   <!--  File: full timestamp, no ANSI codes  -->
   <property name="PAT_FILE"
-            value="%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [%thread] %logger{50} : %msg%n%rootException"/>
+            value="%d{yyyy-MM-dd HH:mm:ss.SSS, ${LOG_TZ}} %-5level [%thread] %logger{50} : %msg%n%rootException"/>
   <!--  Audit: explicit label, no stack traces (audit events are always clean)  -->
   <property name="PAT_AUDIT"
-            value="%d{yyyy-MM-dd HH:mm:ss.SSS} AUDIT [%thread] %logger : %msg%n"/>
+            value="%d{yyyy-MM-dd HH:mm:ss.SSS, ${LOG_TZ}} AUDIT [%thread] %logger : %msg%n"/>
 
   <!-- ═══════════════════════  APPENDERS  ════════════════════════════════ -->
 

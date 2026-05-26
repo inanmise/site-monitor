@@ -51,7 +51,7 @@ public class AdminController {
         List<CertificateInventory> items;
         if (isAdmin(session)) {
             items = showDeleted
-                    ? inventoryRepo.findByDeletedAtIsNotNullOrderByDomainAsc()
+                    ? inventoryRepo.findAllByOrderByDomainAsc()
                     : inventoryRepo.findByDeletedAtIsNullOrderByDomainAsc();
         } else {
             items = inventoryRepo.findByTeamIdAndDeletedAtIsNullOrderByDomainAsc(teamId(session));
@@ -59,7 +59,7 @@ public class AdminController {
         return ok(Map.of("data", items));
     }
 
-    @CacheEvict(value = "cert-latest", allEntries = true)
+    @CacheEvict(value = {"cert-latest", "cert-warnings", "cert-stats", "renewal-advice"}, allEntries = true)
     @PostMapping("/inventory")
     public ResponseEntity<Map<String, Object>> addInventory(
             @RequestBody CertificateInventory item, HttpSession session, HttpServletRequest request) {
@@ -85,7 +85,7 @@ public class AdminController {
         return ok(Map.of("data", saved, "message", "Domain added to inventory"));
     }
 
-    @CacheEvict(value = "cert-latest", allEntries = true)
+    @CacheEvict(value = {"cert-latest", "cert-warnings", "cert-stats", "renewal-advice"}, allEntries = true)
     @PutMapping("/inventory/{id}")
     public ResponseEntity<Map<String, Object>> updateInventory(
             @PathVariable Long id, @RequestBody CertificateInventory item,
@@ -180,7 +180,7 @@ public class AdminController {
         return '"' + s + '"';
     }
 
-    @CacheEvict(value = "cert-latest", allEntries = true)
+    @CacheEvict(value = {"cert-latest", "cert-warnings", "cert-stats", "renewal-advice"}, allEntries = true)
     @DeleteMapping("/inventory/{id}")
     public ResponseEntity<Map<String, Object>> deleteInventory(
             @PathVariable Long id, HttpSession session, HttpServletRequest request) {
@@ -196,7 +196,7 @@ public class AdminController {
         }).orElse(ResponseEntity.notFound().build());
     }
 
-    @CacheEvict(value = "cert-latest", allEntries = true)
+    @CacheEvict(value = {"cert-latest", "cert-warnings", "cert-stats", "renewal-advice"}, allEntries = true)
     @DeleteMapping("/certificates/{domain}")
     public ResponseEntity<Map<String, Object>> deleteCertificateCheck(
             @PathVariable String domain, HttpSession session, HttpServletRequest request) {

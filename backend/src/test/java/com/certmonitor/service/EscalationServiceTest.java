@@ -18,6 +18,8 @@ import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
 import java.util.*;
 
+import org.springframework.test.util.ReflectionTestUtils;
+
 import static org.assertj.core.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
@@ -45,6 +47,9 @@ class EscalationServiceTest {
     void setUp() {
         service = new EscalationService(alertEventRepo, thresholdRepo, contactRepo,
                 inventoryRepo, emailService, webhookService, new ObjectMapper(), notificationLogRepo, latestCheckRepo, teamRepo);
+
+        // Self-injection bypass for @Async dispatch in tests (runs synchronously)
+        ReflectionTestUtils.setField(service, "self", service);
 
         // Default active threshold
         AlertThreshold t = defaultThreshold();
@@ -366,6 +371,139 @@ class EscalationServiceTest {
 
         verify(webhookService).send(eq("TEAMS"), eq("https://teams.example.com/webhook"),
                 anyString(), anyString(), eq("WARNING"));
+    }
+
+    // ── reNotify (async) ─────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("reNotify: open alert returns queued status + dispatches async email")
+    void reNotify_openAlert_returnsQueuedAndDispatches() {
+        AlertEvent event = existingOpenAlert("queued.example.com", "EXPIRY", "WARNING", false);
+        event.setId(101L);
+        when(alertEventRepo.findById(101L)).thenReturn(Optional.of(event));
+        when(alertEventRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(contactRepo.findByMinAlertLevelAndActiveTrue("WARNING"))
+                .thenReturn(List.of(contact("po@test.com", "PO", "WARNING")));
+        when(latestCheckRepo.findById("queued.example.com")).thenReturn(Optional.empty());
+
+        Map<String, Object> result = service.reNotify(101L);
+
+        // Returns immediately with queued status
+        assertThat(result.get("alert_id")).isEqualTo(101L);
+        assertThat(result.get("status")).isEqualTo("queued");
+        assertThat(result.get("contacts_queued")).isEqualTo(1);
+        assertThat(result.get("recipients_queued")).isEqualTo(1);
+        // No "notifications" or "alert" entity in response (lightweight payload)
+        assertThat(result).doesNotContainKey("notifications");
+        assertThat(result).doesNotContainKey("alert");
+
+        // DB write committed before dispatch (notifiedContacts + lastReAlertAt persisted)
+        ArgumentCaptor<AlertEvent> captor = ArgumentCaptor.forClass(AlertEvent.class);
+        verify(alertEventRepo, atLeast(1)).save(captor.capture());
+        AlertEvent saved = captor.getValue();
+        assertThat(saved.getLastReAlertAt()).isNotNull();
+        assertThat(saved.getNotifiedContacts()).contains("po@test.com");
+
+        // Async path executed sync (self-injection bypass) — email was sent with [RE-ALERT] subject
+        verify(emailService).sendAlert(any(String[].class), contains("[RE-ALERT]"),
+                anyString(), eq("queued.example.com"), any(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("reNotify: resolved alert throws IllegalStateException, no email sent")
+    void reNotify_resolvedAlert_throws() {
+        AlertEvent event = existingOpenAlert("resolved.example.com", "EXPIRY", "WARNING", false);
+        event.setId(102L);
+        event.setResolved(true);
+        when(alertEventRepo.findById(102L)).thenReturn(Optional.of(event));
+
+        assertThatThrownBy(() -> service.reNotify(102L))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("already resolved");
+
+        verify(alertEventRepo, never()).save(any());
+        verify(emailService, never()).sendAlert(any(String[].class), anyString(), anyString(),
+                any(), any(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("reNotify: unknown alert ID throws NoSuchElementException")
+    void reNotify_unknownAlert_throws() {
+        when(alertEventRepo.findById(999L)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.reNotify(999L))
+                .isInstanceOf(NoSuchElementException.class);
+
+        verify(emailService, never()).sendAlert(any(String[].class), anyString(), anyString(),
+                any(), any(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("reNotify: HIGH alert sends [RE-ALERT] [CertMonitor YÜKSEK] subject")
+    void reNotify_highAlert_subjectFormat() {
+        AlertEvent event = existingOpenAlert("high.example.com", "EXPIRY", "HIGH", false);
+        event.setId(103L);
+        event.setDaysRemaining(10);
+        when(alertEventRepo.findById(103L)).thenReturn(Optional.of(event));
+        when(alertEventRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(contactRepo.findByMinAlertLevelInAndActiveTrue(List.of("WARNING", "HIGH")))
+                .thenReturn(List.of(contact("mgr@test.com", "MANAGER", "HIGH")));
+
+        Map<String, Object> result = service.reNotify(103L);
+
+        assertThat(result.get("status")).isEqualTo("queued");
+        verify(emailService).sendAlert(any(String[].class),
+                contains("[RE-ALERT] [CertMonitor YÜKSEK] high.example.com"),
+                anyString(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("reNotify: no contacts available — still updates DB, no email")
+    void reNotify_noContacts_dbStillUpdatedNoEmail() {
+        AlertEvent event = existingOpenAlert("orphan.example.com", "EXPIRY", "WARNING", false);
+        event.setId(104L);
+        when(alertEventRepo.findById(104L)).thenReturn(Optional.of(event));
+        when(alertEventRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(contactRepo.findByMinAlertLevelAndActiveTrue("WARNING")).thenReturn(List.of());
+
+        Map<String, Object> result = service.reNotify(104L);
+
+        assertThat(result.get("contacts_queued")).isEqualTo(0);
+        assertThat(result.get("recipients_queued")).isEqualTo(0);
+        assertThat(result.get("status")).isEqualTo("queued");
+        verify(alertEventRepo, atLeast(1)).save(any());
+        // No contacts AND no team emails — sendCombinedAlert returns empty without calling emailService
+        verify(emailService, never()).sendAlert(any(String[].class), anyString(), anyString(),
+                any(), any(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("reNotify: no contacts but team email present — recipients_queued reflects team emails")
+    void reNotify_noContactsButTeamEmail_countsRecipients() {
+        AlertEvent event = existingOpenAlert("teamonly.example.com", "EXPIRY", "WARNING", false);
+        event.setId(105L);
+        when(alertEventRepo.findById(105L)).thenReturn(Optional.of(event));
+        when(alertEventRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(contactRepo.findByMinAlertLevelAndActiveTrue("WARNING")).thenReturn(List.of());
+
+        com.certmonitor.model.CertificateInventory inv = new com.certmonitor.model.CertificateInventory();
+        inv.setTeamId(7L);
+        when(inventoryRepo.findByDomain("teamonly.example.com")).thenReturn(Optional.of(inv));
+
+        com.certmonitor.model.Team team = new com.certmonitor.model.Team();
+        team.setId(7L);
+        team.setName("Platform");
+        team.setEmail("team@example.com");
+        when(teamRepo.findById(7L)).thenReturn(Optional.of(team));
+
+        Map<String, Object> result = service.reNotify(105L);
+
+        assertThat(result.get("recipients_queued")).isEqualTo(1);
+        assertThat(result.get("contacts_queued")).isEqualTo(0);
+        assertThat(result.get("status")).isEqualTo("queued");
+        // Mail actually sent (combined alert with team email as TO)
+        verify(emailService).sendAlert(any(String[].class), anyString(), anyString(),
+                eq("teamonly.example.com"), any(), any(), any(), any());
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
