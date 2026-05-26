@@ -111,21 +111,14 @@ public class ExtendedHealthService {
 
     public Map<String, Object> getSmtpStats() {
         try {
-            String cutoff = LocalDateTime.now(ZoneOffset.UTC).minusDays(30)
-                    .format(DateTimeFormatter.ISO_LOCAL_DATE_TIME);
-            // attempted = SENT + FAILED (excludes intentional SKIPPED_DISABLED)
-            long attempted = notificationLogRepo.countAttemptedSince(cutoff);
-            long sent      = notificationLogRepo.countSentSince(cutoff);
-            long total     = notificationLogRepo.countAllSince(cutoff);
-            double rate    = attempted == 0 ? 100.0 : (sent * 100.0 / attempted);
-            long rateRounded = Math.round(rate * 10) / 10L;
-            boolean alarm  = attempted > 0 && rate < 99.0;
-            Map<String, Object> m = new LinkedHashMap<>();
-            m.put("total",     total);
-            m.put("attempted", attempted);
-            m.put("sent",      sent);
-            m.put("rate",      rateRounded);
-            m.put("alarm",     alarm);
+            int[] days = { 1, 7, 15, 30 };
+            Map<String, Map<String, Object>> periods = new LinkedHashMap<>();
+            for (int d : days) {
+                periods.put(d + "d", computeSmtpPeriod(d));
+            }
+            // Top-level fields mirror 30d defaults for backward compatibility (existing clients/tests).
+            Map<String, Object> m = new LinkedHashMap<>(periods.get("30d"));
+            m.put("periods", periods);
             return m;
         } catch (Exception e) {
             log.warn("getSmtpStats failed: {}", e.getMessage());
@@ -138,6 +131,25 @@ public class ExtendedHealthService {
             m.put("error", e.getMessage());
             return m;
         }
+    }
+
+    private Map<String, Object> computeSmtpPeriod(int days) {
+        String cutoff = LocalDateTime.now(ZoneOffset.UTC).minusDays(days)
+                .format(DateTimeFormatter.ISO_LOCAL_DATE_TIME);
+        // attempted = SENT + FAILED (excludes intentional SKIPPED_DISABLED)
+        long attempted = notificationLogRepo.countAttemptedSince(cutoff);
+        long sent      = notificationLogRepo.countSentSince(cutoff);
+        long total     = notificationLogRepo.countAllSince(cutoff);
+        double rate    = attempted == 0 ? 100.0 : (sent * 100.0 / attempted);
+        long rateRounded = Math.round(rate * 10) / 10L;
+        boolean alarm  = attempted > 0 && rate < 99.0;
+        Map<String, Object> p = new LinkedHashMap<>();
+        p.put("total",     total);
+        p.put("attempted", attempted);
+        p.put("sent",      sent);
+        p.put("rate",      rateRounded);
+        p.put("alarm",     alarm);
+        return p;
     }
 
     // ── Database ──────────────────────────────────────────────────────────────

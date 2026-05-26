@@ -62,6 +62,7 @@ export default function SystemHealth() {
   const [poolCardRefreshing, setPoolCardRefreshing] = useState(false)
   const [poolLastRefreshed, setPoolLastRefreshed]   = useState(null)
   const [hbRefreshing, setHbRefreshing] = useState(false)
+  const [smtpPeriod, setSmtpPeriod]   = useState('30d')
   const [loading, setLoading]         = useState(true)
   const [releasing, setReleasing]     = useState(false)
   const [triggering, setTriggering]   = useState(false)
@@ -182,7 +183,8 @@ export default function SystemHealth() {
   if (smtp?.alarm) alarms.push(t('health.smtpAlarm'))
   if (heartbeat?.alarm) alarms.push(t('health.hbAlarm'))
 
-  const smtpRate = smtp?.rate ?? 100
+  const smtpData = smtp?.periods?.[smtpPeriod] ?? smtp ?? {}
+  const smtpRate = smtpData.rate ?? 100
   const smtpRateClass = smtpRate >= 99 ? 'sys-ok-text' : smtpRate >= 95 ? 'sys-warn-text' : 'sys-err-text'
 
   const hbMinutes = heartbeat?.minutes_since ?? -1
@@ -451,13 +453,25 @@ export default function SystemHealth() {
               />
             ))}
           </div>
+          <div className="smtp-period-pills" onClick={e => e.stopPropagation()}>
+            {['1d', '7d', '15d', '30d'].map(p => (
+              <button
+                key={p}
+                type="button"
+                className={`smtp-period-pill${smtpPeriod === p ? ' is-selected' : ''}`}
+                onClick={() => setSmtpPeriod(p)}
+              >
+                {t(`health.smtpPeriod${p}`)}
+              </button>
+            ))}
+          </div>
           <dl className="sys-dl">
             <dt>{t('health.smtpSent')}</dt>
-            <dd>{smtp?.sent ?? 0} / {smtp?.attempted ?? smtp?.total ?? 0}</dd>
+            <dd>{smtpData.sent ?? 0} / {smtpData.attempted ?? smtpData.total ?? 0}</dd>
             <dt>{t('health.smtpRate')}</dt>
             <dd className={smtpRateClass}>%{smtpRate}</dd>
             <dt></dt>
-            <dd className="sys-small sys-muted">{t('health.smtpPeriod')}</dd>
+            <dd className="sys-small sys-muted">{t('health.smtpPeriodActive', t(`health.smtpPeriod${smtpPeriod}`))}</dd>
           </dl>
           <div className="health-card-link">{t('health.smtpClickHint')} →</div>
         </div>
