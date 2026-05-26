@@ -124,7 +124,10 @@ function TeamTierSection({ certs, teamStats, tierFilter, setTierFilter, teamFilt
     }
     const tierRows = [1, 2].filter(k => tierMap[k]).map(k => ({ tier: k, ...tierMap[k] }))
     return { ...team, tierRows, total: teamCerts.length }
-  }), [teams, certs])
+  })
+    .filter(team => team.total > 0)
+    .sort((a, b) => b.total - a.total),
+  [teams, certs])
 
   if (teams.length === 0) return null
 
