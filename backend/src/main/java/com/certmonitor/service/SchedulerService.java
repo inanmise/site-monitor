@@ -555,8 +555,13 @@ public class SchedulerService {
     public void runPortChecks() {
         List<PortMonitor> monitors = portMonitorRepo.findByActiveTrue();
         if (monitors.isEmpty()) return;
+        // Skip monitors whose host is no longer in active inventory (soft-deleted / inactive)
+        Set<String> activeDomains = inventoryRepo.findByActiveTrueOrderByDomainAsc().stream()
+                .map(CertificateInventory::getDomain).collect(Collectors.toSet());
         String now = ISO.format(Instant.now());
+        int checked = 0, skipped = 0;
         for (PortMonitor m : monitors) {
+            if (!activeDomains.contains(m.getHost())) { skipped++; continue; }
             try {
                 Map<String, Object> r = portCheckerService.check(m.getHost(), m.getPort(), m.getTimeoutMs());
                 PortCheck check = new PortCheck();
@@ -566,19 +571,25 @@ public class SchedulerService {
                 check.setError((String) r.get("error"));
                 check.setCheckedAt(now);
                 portCheckRepo.save(check);
+                checked++;
             } catch (Exception e) {
                 log.warn("Port check failed for {}:{}: {}", m.getHost(), m.getPort(), e.getMessage());
             }
         }
-        log.debug("Port checks complete: {} monitors", monitors.size());
+        log.debug("Port checks complete: {} monitors ({} skipped — not in active inventory)", checked, skipped);
     }
 
     @Scheduled(fixedDelayString = "${cert.monitor.dns.interval-ms:300000}", initialDelayString = "60000")
     public void runDnsChecks() {
         List<DnsMonitor> monitors = dnsMonitorRepo.findByActiveTrue();
         if (monitors.isEmpty()) return;
+        // Skip monitors whose domain is no longer in active inventory (soft-deleted / inactive)
+        Set<String> activeDomains = inventoryRepo.findByActiveTrueOrderByDomainAsc().stream()
+                .map(CertificateInventory::getDomain).collect(Collectors.toSet());
         String now = ISO.format(Instant.now());
+        int checked = 0, skipped = 0;
         for (DnsMonitor m : monitors) {
+            if (!activeDomains.contains(m.getDomain())) { skipped++; continue; }
             try {
                 Map<String, Object> r = dnsCheckerService.check(m.getDomain(), m.getRecordType());
                 @SuppressWarnings("unchecked")
@@ -602,11 +613,12 @@ public class SchedulerService {
                     log.warn("DNS change detected for {} {}: was='{}' now='{}'",
                             m.getRecordType(), m.getDomain(), prevValue, valueStr);
                 }
+                checked++;
             } catch (Exception e) {
                 log.warn("DNS check failed for {} {}: {}", m.getRecordType(), m.getDomain(), e.getMessage());
             }
         }
-        log.debug("DNS checks complete: {} monitors", monitors.size());
+        log.debug("DNS checks complete: {} monitors ({} skipped — not in active inventory)", checked, skipped);
     }
 
     private static String resolveHostname() {

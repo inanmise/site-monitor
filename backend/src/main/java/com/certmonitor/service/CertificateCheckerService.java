@@ -39,7 +39,7 @@ public class CertificateCheckerService {
     private final DnsCheckerService dnsCheckerService;
     private final ObjectMapper objectMapper;
 
-    @Value("${cert.monitor.check-timeout-seconds:10}")
+    @Value("${cert.monitor.check-timeout-seconds:3}")
     private int timeoutSeconds;
 
     @Value("${cert.monitor.warning-days:30}")
@@ -196,7 +196,7 @@ public class CertificateCheckerService {
         } catch (java.net.SocketTimeoutException e) {
             log.warn("Certificate check timeout: domain={}:{} elapsed={}ms",
                     domain, port, System.currentTimeMillis() - startMs);
-            return error(domain, "Connection timeout");
+            return error(domain, "Connection timeout after " + timeoutSeconds + "s");
         } catch (java.net.UnknownHostException e) {
             log.warn("Certificate check DNS failure: domain={} elapsed={}ms",
                     domain, System.currentTimeMillis() - startMs);
