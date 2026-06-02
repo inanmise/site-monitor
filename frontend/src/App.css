@@ -4886,6 +4886,21 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 }
 .tier-legend-counts { display: flex; align-items: center; gap: 5px; flex-shrink: 0; font-size: .71em; font-weight: 700; }
 
+/* Inventory header — export dropdown next to Add Domain */
+.inv-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.inv-export-menu { min-width: 280px; }
+.inv-export-menu .sqlpg-item-label { font-size: .9em; }
+.inv-export-menu .sqlpg-item-preview {
+  font-family: inherit;
+  font-style: italic;
+  opacity: .8;
+}
+
 /* ── SQL Playground ─────────────────────────────────────────── */
 .sqlpg {
   display: grid;
