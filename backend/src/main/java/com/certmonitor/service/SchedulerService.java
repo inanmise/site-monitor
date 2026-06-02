@@ -130,6 +130,7 @@ public class SchedulerService {
         assignOrphanedCertsToDefaultTeam();
         clearStaleLocksForThisHost();
         escalationService.catchUpMissedDailyAlerts();
+        escalationService.catchUpAlertsOnDeletedDomains();
         new Thread(this::runCheck, "startup-check").start();
     }
 

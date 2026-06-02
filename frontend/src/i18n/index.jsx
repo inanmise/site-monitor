@@ -526,6 +526,7 @@ const TR = {
   'admin.tabSQL':        'SQL Playground',
 
   'sql.schema':          'Şema',
+  'sql.refreshTables':   'Tabloları yenile',
   'sql.toggleCols':      'Kolonları aç/kapat',
   'sql.run':             'Çalıştır',
   'sql.clear':           'Temizle',
@@ -1592,6 +1593,7 @@ const EN = {
   'admin.tabSQL':        'SQL Playground',
 
   'sql.schema':          'Schema',
+  'sql.refreshTables':   'Refresh tables',
   'sql.toggleCols':      'Toggle columns',
   'sql.run':             'Run',
   'sql.clear':           'Clear',

@@ -26,6 +26,17 @@ public interface AlertEventRepository extends JpaRepository<AlertEvent, Long> {
 
     List<AlertEvent> findByDomainAndResolvedFalse(String domain);
 
+    @Query("""
+            SELECT a FROM AlertEvent a
+             WHERE a.resolved = false
+               AND EXISTS (
+                   SELECT 1 FROM CertificateInventory i
+                    WHERE i.domain = a.domain
+                      AND i.deletedAt IS NOT NULL
+               )
+            """)
+    List<AlertEvent> findOpenAlertsOnSoftDeletedDomains();
+
     @Query("SELECT DISTINCT e.domain FROM AlertEvent e WHERE e.resolved = false AND NOT EXISTS (SELECT n FROM NotificationLog n WHERE n.alertEventId = e.id AND n.emailStatus = 'SENT')")
     List<String> findDomainsWithUnnotifiedOpenAlerts();
 
