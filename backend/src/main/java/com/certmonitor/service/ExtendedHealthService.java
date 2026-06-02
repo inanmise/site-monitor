@@ -146,7 +146,7 @@ public class ExtendedHealthService {
         long total     = notificationLogRepo.countAllSince(cutoff);
         double rate    = attempted == 0 ? 100.0 : (sent * 100.0 / attempted);
         long rateRounded = Math.round(rate * 10) / 10L;
-        boolean alarm  = attempted > 0 && rate < 99.0;
+        boolean alarm  = attempted > 0 && rate < 95.0;
         Map<String, Object> p = new LinkedHashMap<>();
         p.put("total",     total);
         p.put("attempted", attempted);

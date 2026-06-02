@@ -103,7 +103,7 @@ class ExtendedHealthServiceTest {
     }
 
     @Test
-    @DisplayName("90% sent (1 failed) → alarm=true (rate < 99%)")
+    @DisplayName("90% sent (1 of 10 failed) → alarm=true (rate < 95%)")
     void getSmtpStats_someFailed_alarm() {
         when(notificationLogRepo.countAttemptedSince(any())).thenReturn(10L);
         when(notificationLogRepo.countSentSince(any())).thenReturn(9L);
@@ -112,6 +112,32 @@ class ExtendedHealthServiceTest {
         Map<String, Object> result = service.getSmtpStats();
 
         assertThat(result.get("alarm")).isEqualTo(true);
+    }
+
+    @Test
+    @DisplayName("96% sent → alarm=false (within ≥95% tolerance)")
+    void getSmtpStats_rate96_noAlarm() {
+        when(notificationLogRepo.countAttemptedSince(any())).thenReturn(100L);
+        when(notificationLogRepo.countSentSince(any())).thenReturn(96L);
+        when(notificationLogRepo.countAllSince(any())).thenReturn(100L);
+
+        Map<String, Object> result = service.getSmtpStats();
+
+        assertThat(result.get("alarm")).isEqualTo(false);
+        assertThat((Long) result.get("rate")).isEqualTo(96L);
+    }
+
+    @Test
+    @DisplayName("94% sent → alarm=true (below 95% threshold)")
+    void getSmtpStats_rate94_alarm() {
+        when(notificationLogRepo.countAttemptedSince(any())).thenReturn(100L);
+        when(notificationLogRepo.countSentSince(any())).thenReturn(94L);
+        when(notificationLogRepo.countAllSince(any())).thenReturn(100L);
+
+        Map<String, Object> result = service.getSmtpStats();
+
+        assertThat(result.get("alarm")).isEqualTo(true);
+        assertThat((Long) result.get("rate")).isEqualTo(94L);
     }
 
     @Test
