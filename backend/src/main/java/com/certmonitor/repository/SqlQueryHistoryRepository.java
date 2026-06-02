@@ -8,4 +8,6 @@ import java.util.List;
 public interface SqlQueryHistoryRepository extends JpaRepository<SqlQueryHistory, Long> {
 
     List<SqlQueryHistory> findTop50ByOrderByExecutedAtDesc();
+
+    List<SqlQueryHistory> findTop50ByExecutedByOrderByExecutedAtDesc(String executedBy);
 }

@@ -97,8 +97,8 @@ public class SqlPlaygroundService {
         return result;
     }
 
-    public List<SqlQueryHistory> recentHistory() {
-        return historyRepo.findTop50ByOrderByExecutedAtDesc();
+    public List<SqlQueryHistory> recentHistory(String executedBy) {
+        return historyRepo.findTop50ByExecutedByOrderByExecutedAtDesc(executedBy);
     }
 
     private String sanitize(String sql) {

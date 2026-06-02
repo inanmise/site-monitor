@@ -58,7 +58,8 @@ public class SqlPlaygroundController {
     @GetMapping("/history")
     public ResponseEntity<Map<String, Object>> history(HttpSession session) {
         requireAdmin(session);
-        return ok(Map.of("data", service.recentHistory()));
+        String actor = (String) session.getAttribute("username");
+        return ok(Map.of("data", service.recentHistory(actor != null ? actor : "anonymous")));
     }
 
     @GetMapping("/samples")
