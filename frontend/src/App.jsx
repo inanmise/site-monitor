@@ -19,6 +19,7 @@ import InventoryManager from './components/admin/InventoryManager'
 import AuditLogViewer from './components/admin/AuditLogViewer'
 import WeakAlgorithmReport from './components/admin/WeakAlgorithmReport'
 import SystemHealth from './components/admin/SystemHealth'
+import SqlPlayground from './components/admin/SqlPlayground'
 import ActivityLog from './components/ActivityLog'
 import HelpPage from './components/HelpPage'
 import UptimePage from './components/UptimePage'
@@ -614,6 +615,13 @@ export default function App() {
               <div className="tab-content active">
                 <h2>{t('app.weakAlgoTitle')}</h2>
                 <WeakAlgorithmReport />
+              </div>
+            )}
+
+            {tab === 'sqlplayground' && systemRole === 'ADMIN' && (
+              <div className="tab-content active">
+                <h2>{t('app.sqlPlaygroundTitle')}</h2>
+                <SqlPlayground />
               </div>
             )}
 
