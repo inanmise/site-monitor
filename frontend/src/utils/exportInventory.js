@@ -89,7 +89,7 @@ export function exportInventoryCsv(items, teams, t) {
 /* ── PDF helpers ──────────────────────────────────────────── */
 
 function sectionHeader(doc, txt, x, y) {
-  doc.setFont('helvetica', 'bold').setFontSize(8.5).setTextColor(37, 99, 235)
+  doc.setFont('Roboto', 'bold').setFontSize(8.5).setTextColor(37, 99, 235)
   doc.text(String(txt).toUpperCase(), x, y)
   doc.setTextColor(40)
 }
@@ -101,10 +101,10 @@ function renderTwoColGrid(doc, x, y, rows) {
   for (let i = 0; i < rows.length; i += 2) {
     const left  = rows[i]
     const right = rows[i + 1]
-    doc.setFont('helvetica', 'normal').setFontSize(7.5).setTextColor(110)
+    doc.setFont('Roboto', 'normal').setFontSize(7.5).setTextColor(110)
     doc.text(left[0], x, cy)
     if (right) doc.text(right[0], x + COL_W, cy)
-    doc.setFont('helvetica', 'bold').setFontSize(9).setTextColor(40)
+    doc.setFont('Roboto', 'bold').setFontSize(9).setTextColor(40)
     doc.text(String(left[1] ?? '—'), x, cy + 11)
     if (right) doc.text(String(right[1] ?? '—'), x + COL_W, cy + 11)
     cy += 24
@@ -130,21 +130,50 @@ function estimateDomainBlockHeight(it) {
   return h
 }
 
+async function fetchAsBase64(url) {
+  const res = await fetch(url)
+  if (!res.ok) throw new Error(`Failed to load ${url}`)
+  const buf = await res.arrayBuffer()
+  // Chunked conversion to avoid call-stack overflow for large files
+  const bytes = new Uint8Array(buf)
+  let s = ''
+  const CHUNK = 0x8000
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    s += String.fromCharCode.apply(null, bytes.subarray(i, i + CHUNK))
+  }
+  return btoa(s)
+}
+
+async function registerRobotoFont(doc) {
+  const [regular, bold] = await Promise.all([
+    fetchAsBase64('/fonts/Roboto-Regular.ttf'),
+    fetchAsBase64('/fonts/Roboto-Bold.ttf'),
+  ])
+  doc.addFileToVFS('Roboto-Regular.ttf', regular)
+  doc.addFont('Roboto-Regular.ttf', 'Roboto', 'normal')
+  doc.addFileToVFS('Roboto-Bold.ttf', bold)
+  doc.addFont('Roboto-Bold.ttf', 'Roboto', 'bold')
+  doc.setFont('Roboto', 'normal')
+}
+
 /* ── PDF — per-domain detail (mirrors show modal) ─────────── */
 export async function exportInventoryPdf(items, teams, t) {
   const { jsPDF } = await import('jspdf')
   await import('jspdf-autotable')
 
   const doc = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'a4' })
+  // Embed Roboto with Latin Extended (covers Turkish glyphs ş ğ ç ö ü ı İ)
+  await registerRobotoFont(doc)
+
   const PAGE_W = doc.internal.pageSize.getWidth()
   const PAGE_H = doc.internal.pageSize.getHeight()
   const MARGIN = 40
   let y = MARGIN
 
   // Document title (first page)
-  doc.setFont('helvetica', 'bold').setFontSize(13)
+  doc.setFont('Roboto', 'bold').setFontSize(13)
   doc.text(t('inv.exportTitle'), MARGIN, y); y += 16
-  doc.setFont('helvetica', 'normal').setFontSize(9).setTextColor(120)
+  doc.setFont('Roboto', 'normal').setFontSize(9).setTextColor(120)
   doc.text(
     `${formatDate(new Date().toISOString())}  •  ${t('inv.exportRowCount', items.length)}`,
     MARGIN, y
@@ -161,10 +190,10 @@ export async function exportInventoryPdf(items, teams, t) {
     }
 
     // Domain header
-    doc.setFont('helvetica', 'bold').setFontSize(13).setTextColor(40)
+    doc.setFont('Roboto', 'bold').setFontSize(13).setTextColor(40)
     doc.text(it.domain, MARGIN, y)
     const domainW = doc.getTextWidth(it.domain)
-    doc.setFont('helvetica', 'normal').setFontSize(10).setTextColor(100)
+    doc.setFont('Roboto', 'normal').setFontSize(10).setTextColor(100)
     doc.text(`:${it.port || 443}`, MARGIN + domainW + 6, y)
     const portW = doc.getTextWidth(`:${it.port || 443}`)
     // Chips (tier + status)
@@ -216,7 +245,7 @@ export async function exportInventoryPdf(items, teams, t) {
       startY: y,
       body: opsRows,
       theme: 'grid',
-      styles: { font: 'helvetica', fontSize: 8, cellPadding: 4 },
+      styles: { font: 'Roboto', fontSize: 8, cellPadding: 4 },
       columnStyles: {
         0: { fontStyle: 'bold', textColor: [75,85,99],  cellWidth: 80 },
         1: { cellWidth: 'auto' },
@@ -241,7 +270,7 @@ export async function exportInventoryPdf(items, teams, t) {
     // Change Description (conditional)
     if (it.change_description && it.change_description.trim()) {
       sectionHeader(doc, t('inv.formChangeDesc'), MARGIN, y); y += 12
-      doc.setFont('helvetica', 'normal').setFontSize(9).setTextColor(60)
+      doc.setFont('Roboto', 'normal').setFontSize(9).setTextColor(60)
       const plain = it.change_description
         .replace(/[#*_`>]+/g, '')
         .replace(/\s+/g, ' ')
@@ -266,7 +295,7 @@ export async function exportInventoryPdf(items, teams, t) {
         const sub = doc.splitTextToSize(it.expected_subject, PAGE_W - 2 * MARGIN)
         doc.text(sub, MARGIN, y); y += sub.length * 9 + 6
       }
-      doc.setFont('helvetica', 'normal').setTextColor(40)
+      doc.setFont('Roboto', 'normal').setTextColor(40)
     }
 
     // Footer metadata
