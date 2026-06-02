@@ -24,7 +24,10 @@ const teamName = (id, teams) =>
   (teams ?? []).find(tt => tt.id === id)?.name ?? ''
 
 const statusOf = (item, t) =>
-  item.active ? t('inv.status.active') : t('inv.status.inactive')
+  item.active ? t('inv.active') : t('inv.inactive')
+
+const tierLabel = (item, t) =>
+  item.tier ? `T${item.tier} — ${t(`inv.tier${item.tier}`)}` : t('inv.tierNone')
 
 const triggerDownload = (blob, filename) => {
   const url = URL.createObjectURL(blob)
@@ -41,28 +44,38 @@ const dateStamp = () => {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
 }
 
-/* ── CSV — full dump, 25 fields ────────────────────────────── */
+/* ── CSV — 24 columns matching show modal ─────────────────── */
 export function exportInventoryCsv(items, teams, t) {
   const yn = (b) => (b ? t('inv.yes') : t('inv.no'))
   const cols = [
-    t('inv.colDomain'),       t('inv.colPort'),         t('inv.colTier'),
-    t('inv.colSyTeam'),       t('inv.colUgTeam'),       t('inv.formPurchasedBy'),
-    t('inv.colDesc'),         t('inv.formExpectedSubject'), t('inv.formExpectedFingerprint'),
+    t('inv.formDomain'),
+    t('inv.formPort'),
+    t('inv.formTeam'),
+    t('inv.formUgTeam'),
+    t('inv.formTier'),
+    t('inv.formPurchasedBy'),
     t('inv.colActive'),
-    t('inv.formCreatedAt'),   t('inv.formUpdatedAt'),
     ...FLAG_FIELDS.map(([, k]) => t(k)),
-    t('inv.formChangeDescription'),
+    t('inv.formChangeDesc'),
+    t('inv.formFP'),
+    t('inv.formSubject'),
+    t('inv.metaCreated'),
+    t('inv.metaUpdated'),
   ]
   const rows = items.map((it) => [
-    it.domain, it.port, it.tier ?? '',
-    teamName(it.team_id, teams), teamName(it.ug_team_id, teams),
+    it.domain,
+    it.port || 443,
+    teamName(it.team_id, teams) || '',
+    teamName(it.ug_team_id, teams) || '',
+    tierLabel(it, t),
     it.purchased_by ?? '',
-    it.description ?? '', it.expected_subject ?? '', it.expected_fingerprint ?? '',
     statusOf(it, t),
-    it.created_at ? formatDate(it.created_at) : '',
-    it.updated_at ? formatDate(it.updated_at) : '',
     ...FLAG_FIELDS.map(([f]) => yn(!!it[f])),
     (it.change_description ?? '').replace(/\s+/g, ' ').trim(),
+    it.expected_fingerprint ?? '',
+    it.expected_subject ?? '',
+    it.created_at ? formatDate(it.created_at) : '',
+    it.updated_at ? formatDate(it.updated_at) : '',
   ])
   const bom = '﻿' // UTF-8 BOM for Excel TR character support
   const csv = bom + [cols, ...rows]
@@ -73,61 +86,217 @@ export function exportInventoryCsv(items, teams, t) {
   return rows.length
 }
 
-/* ── PDF — landscape A4, summary table ─────────────────────── */
+/* ── PDF helpers ──────────────────────────────────────────── */
+
+function sectionHeader(doc, txt, x, y) {
+  doc.setFont('helvetica', 'bold').setFontSize(8.5).setTextColor(37, 99, 235)
+  doc.text(String(txt).toUpperCase(), x, y)
+  doc.setTextColor(40)
+}
+
+function renderTwoColGrid(doc, x, y, rows) {
+  const pageW = doc.internal.pageSize.getWidth()
+  const COL_W = (pageW - 2 * x) / 2
+  let cy = y
+  for (let i = 0; i < rows.length; i += 2) {
+    const left  = rows[i]
+    const right = rows[i + 1]
+    doc.setFont('helvetica', 'normal').setFontSize(7.5).setTextColor(110)
+    doc.text(left[0], x, cy)
+    if (right) doc.text(right[0], x + COL_W, cy)
+    doc.setFont('helvetica', 'bold').setFontSize(9).setTextColor(40)
+    doc.text(String(left[1] ?? '—'), x, cy + 11)
+    if (right) doc.text(String(right[1] ?? '—'), x + COL_W, cy + 11)
+    cy += 24
+  }
+  return cy
+}
+
+function drawChip(doc, x, y, txt, bg, fg) {
+  doc.setFontSize(8)
+  const w = doc.getTextWidth(txt) + 6
+  doc.setFillColor(bg[0], bg[1], bg[2])
+  doc.roundedRect(x, y, w, 13, 3, 3, 'F')
+  doc.setTextColor(fg[0], fg[1], fg[2])
+  doc.text(txt, x + 3, y + 9.5)
+  doc.setTextColor(40)
+  return x + w
+}
+
+function estimateDomainBlockHeight(it) {
+  let h = 22 + 16 + 24 * 3 + 8 + 24 * 4 + 16
+  if (it.change_description?.trim()) h += 80
+  if (it.expected_fingerprint || it.expected_subject) h += 60
+  return h
+}
+
+/* ── PDF — per-domain detail (mirrors show modal) ─────────── */
 export async function exportInventoryPdf(items, teams, t) {
   const { jsPDF } = await import('jspdf')
   await import('jspdf-autotable')
 
-  const doc = new jsPDF({ orientation: 'landscape', unit: 'pt', format: 'a4' })
+  const doc = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'a4' })
+  const PAGE_W = doc.internal.pageSize.getWidth()
+  const PAGE_H = doc.internal.pageSize.getHeight()
+  const MARGIN = 40
+  let y = MARGIN
 
-  doc.setFont('helvetica', 'bold').setFontSize(14)
-  doc.text(t('inv.exportTitle'), 40, 36)
+  // Document title (first page)
+  doc.setFont('helvetica', 'bold').setFontSize(13)
+  doc.text(t('inv.exportTitle'), MARGIN, y); y += 16
   doc.setFont('helvetica', 'normal').setFontSize(9).setTextColor(120)
   doc.text(
     `${formatDate(new Date().toISOString())}  •  ${t('inv.exportRowCount', items.length)}`,
-    40, 52
+    MARGIN, y
   )
+  doc.setTextColor(40)
+  y += 22
 
-  const head = [[
-    '#', t('inv.colDomain'), t('inv.colPort'), t('inv.colTier'),
-    t('inv.colSyTeam'), t('inv.colUgTeam'),
-    t('inv.formPurchasedBy'), t('inv.colActive'),
-    t('inv.formCreatedAt'), t('inv.formUpdatedAt'),
-  ]]
-  const body = items.map((it, i) => [
-    i + 1, it.domain, it.port, it.tier ?? '',
-    teamName(it.team_id, teams), teamName(it.ug_team_id, teams),
-    it.purchased_by ?? '', statusOf(it, t),
-    it.created_at ? formatDate(it.created_at) : '',
-    it.updated_at ? formatDate(it.updated_at) : '',
-  ])
+  for (let idx = 0; idx < items.length; idx++) {
+    const it = items[idx]
+    const blockH = estimateDomainBlockHeight(it)
+    if (y + blockH > PAGE_H - MARGIN) {
+      doc.addPage()
+      y = MARGIN
+    }
 
-  doc.autoTable({
-    startY: 64,
-    head,
-    body,
-    theme: 'striped',
-    styles: { font: 'helvetica', fontSize: 8, cellPadding: 4 },
-    headStyles: { fillColor: [37, 99, 235], textColor: 255, fontStyle: 'bold' },
-    alternateRowStyles: { fillColor: [248, 250, 252] },
-    columnStyles: {
-      0: { cellWidth: 28, halign: 'right' },
-      1: { cellWidth: 'auto' },
-      2: { cellWidth: 40, halign: 'right' },
-      7: { cellWidth: 55, halign: 'center' },
-    },
-    didDrawPage: (data) => {
-      const pageCount = doc.internal.getNumberOfPages()
-      const pageSize = doc.internal.pageSize
-      const pageWidth = pageSize.getWidth()
-      const pageHeight = pageSize.getHeight()
+    // Domain header
+    doc.setFont('helvetica', 'bold').setFontSize(13).setTextColor(40)
+    doc.text(it.domain, MARGIN, y)
+    const domainW = doc.getTextWidth(it.domain)
+    doc.setFont('helvetica', 'normal').setFontSize(10).setTextColor(100)
+    doc.text(`:${it.port || 443}`, MARGIN + domainW + 6, y)
+    const portW = doc.getTextWidth(`:${it.port || 443}`)
+    // Chips (tier + status)
+    let chipX = MARGIN + domainW + 6 + portW + 12
+    if (it.tier) {
+      chipX = drawChip(doc, chipX, y - 10, `T${it.tier}`, [199, 210, 254], [55, 48, 163]) + 6
+    }
+    drawChip(
+      doc, chipX, y - 10,
+      statusOf(it, t),
+      it.active ? [209, 250, 229] : [243, 244, 246],
+      it.active ? [6, 95, 70]    : [75, 85, 99]
+    )
+    doc.setTextColor(40)
+    y += 18
+
+    // TEMEL BİLGİLER
+    sectionHeader(doc, t('inv.sectionBasic'), MARGIN, y); y += 14
+    y = renderTwoColGrid(doc, MARGIN, y, [
+      [t('inv.formDomain'),      it.domain],
+      [t('inv.formPort'),        String(it.port || 443)],
+      [t('inv.formTeam'),        teamName(it.team_id, teams) || '—'],
+      [t('inv.formUgTeam'),      teamName(it.ug_team_id, teams) || '—'],
+      [t('inv.formTier'),        tierLabel(it, t)],
+      [t('inv.formPurchasedBy'), it.purchased_by || '—'],
+    ])
+    y += 6
+
+    // OPERASYONEL BİLGİLER — 3-col autoTable
+    sectionHeader(doc, t('inv.sectionOps'), MARGIN, y); y += 8
+    const opsRows = []
+    for (let i = 0; i < FLAG_FIELDS.length; i += 3) {
+      const slice = FLAG_FIELDS.slice(i, i + 3)
+      const row = []
+      for (let j = 0; j < 3; j++) {
+        const pair = slice[j]
+        if (pair) {
+          const [f, k] = pair
+          row.push(t(k))
+          row.push(it[f] ? `✓ ${t('inv.yes')}` : `— ${t('inv.no')}`)
+        } else {
+          row.push('')
+          row.push('')
+        }
+      }
+      opsRows.push(row)
+    }
+    doc.autoTable({
+      startY: y,
+      body: opsRows,
+      theme: 'grid',
+      styles: { font: 'helvetica', fontSize: 8, cellPadding: 4 },
+      columnStyles: {
+        0: { fontStyle: 'bold', textColor: [75,85,99],  cellWidth: 80 },
+        1: { cellWidth: 'auto' },
+        2: { fontStyle: 'bold', textColor: [75,85,99],  cellWidth: 80 },
+        3: { cellWidth: 'auto' },
+        4: { fontStyle: 'bold', textColor: [75,85,99],  cellWidth: 80 },
+        5: { cellWidth: 'auto' },
+      },
+      didParseCell: (data) => {
+        if (data.column.index % 2 === 1) {
+          const text = (data.cell.text || []).join(' ')
+          if (text.startsWith('✓')) {
+            data.cell.styles.textColor = [6, 95, 70]
+            data.cell.styles.fontStyle = 'bold'
+          }
+        }
+      },
+      margin: { left: MARGIN, right: MARGIN },
+    })
+    y = doc.lastAutoTable.finalY + 10
+
+    // Change Description (conditional)
+    if (it.change_description && it.change_description.trim()) {
+      sectionHeader(doc, t('inv.formChangeDesc'), MARGIN, y); y += 12
+      doc.setFont('helvetica', 'normal').setFontSize(9).setTextColor(60)
+      const plain = it.change_description
+        .replace(/[#*_`>]+/g, '')
+        .replace(/\s+/g, ' ')
+        .trim()
+      const lines = doc.splitTextToSize(plain, PAGE_W - 2 * MARGIN)
+      doc.text(lines, MARGIN, y + 4)
+      y += lines.length * 11 + 10
+      doc.setTextColor(40)
+    }
+
+    // Advanced (conditional)
+    if (it.expected_fingerprint || it.expected_subject) {
+      sectionHeader(doc, t('inv.sectionAdv'), MARGIN, y); y += 12
+      doc.setFont('courier', 'normal').setFontSize(8).setTextColor(60)
+      if (it.expected_fingerprint) {
+        doc.text(`${t('inv.formFP')}:`, MARGIN, y + 4); y += 12
+        const fp = doc.splitTextToSize(it.expected_fingerprint, PAGE_W - 2 * MARGIN)
+        doc.text(fp, MARGIN, y); y += fp.length * 9 + 6
+      }
+      if (it.expected_subject) {
+        doc.text(`${t('inv.formSubject')}:`, MARGIN, y + 4); y += 12
+        const sub = doc.splitTextToSize(it.expected_subject, PAGE_W - 2 * MARGIN)
+        doc.text(sub, MARGIN, y); y += sub.length * 9 + 6
+      }
+      doc.setFont('helvetica', 'normal').setTextColor(40)
+    }
+
+    // Footer metadata
+    const meta = []
+    if (it.created_at) meta.push(`${t('inv.metaCreated')}: ${formatDate(it.created_at)}`)
+    if (it.updated_at) meta.push(`${t('inv.metaUpdated')}: ${formatDate(it.updated_at)}`)
+    if (meta.length > 0) {
       doc.setFontSize(8).setTextColor(120)
-      doc.text(
-        `${t('inv.exportPage')} ${data.pageNumber} / ${pageCount}`,
-        pageWidth - 60, pageHeight - 16
-      )
-    },
-  })
+      doc.text(meta.join('  •  '), MARGIN, y + 4)
+      y += 14
+      doc.setTextColor(40)
+    }
+
+    // Inter-domain separator
+    if (idx < items.length - 1) {
+      y += 4
+      doc.setDrawColor(220)
+      doc.line(MARGIN, y, PAGE_W - MARGIN, y)
+      y += 12
+    }
+  }
+
+  // Page numbers footer
+  const totalPages = doc.internal.getNumberOfPages()
+  for (let p = 1; p <= totalPages; p++) {
+    doc.setPage(p)
+    doc.setFontSize(8).setTextColor(150)
+    doc.text(`${t('inv.exportPage')} ${p} / ${totalPages}`, PAGE_W - 80, PAGE_H - 16)
+    doc.setTextColor(40)
+  }
 
   doc.save(`cert-monitor-inventory-${dateStamp()}.pdf`)
   return items.length
