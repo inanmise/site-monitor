@@ -103,7 +103,15 @@ export const api = {
     deleteContact: (id) => request(`/admin/contacts/${id}`, { method: 'DELETE' }),
 
     // Alert Events
-    getAlerts: (onlyOpen = false) => request(`/admin/alerts?onlyOpen=${onlyOpen}`),
+    getAlerts: (params = {}) => {
+      const opts = typeof params === 'object' && params !== null ? params : { onlyOpen: params }
+      const qs = new URLSearchParams()
+      Object.entries(opts).forEach(([k, v]) => {
+        if (v !== undefined && v !== null && v !== '') qs.append(k, v)
+      })
+      const s = qs.toString()
+      return request(`/admin/alerts${s ? `?${s}` : ''}`)
+    },
     acknowledgeAlert: (id, acknowledgedBy) => request(`/admin/alerts/${id}/acknowledge`, {
       method: 'POST',
       body: JSON.stringify({ acknowledged_by: acknowledgedBy }),

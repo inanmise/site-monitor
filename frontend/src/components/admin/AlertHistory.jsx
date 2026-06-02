@@ -1,11 +1,11 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { api, formatDate } from '../../api/client'
 import { useDialog } from '../ui/Dialog.jsx'
 import { useToast } from '../ui/Toast.jsx'
 import { useT, useDateLocale } from '../../i18n/index.jsx'
 import {
-  Check, ShieldAlert, TrendingUp, RefreshCcw, Bell, CheckCircle,
-  ChevronUp, ChevronDown, Mail,
+  Check, ShieldAlert, TrendingUp, RefreshCcw, Bell, CheckCircle, AlertCircle,
+  ChevronUp, ChevronDown, ChevronLeft, ChevronRight, Mail,
 } from 'lucide-react'
 
 const levelColor = { WARNING: '#f0a500', HIGH: '#e07b00', CRITICAL: '#c0392b' }
@@ -245,7 +245,12 @@ export default function AlertHistory({ domain = null }) {
   const { showConfirm } = useDialog()
   const toast = useToast()
   const [alerts,       setAlerts]       = useState([])
-  const [onlyOpen,     setOnlyOpen]     = useState(domain == null)
+  const [tab,          setTab]          = useState('open')
+  const [page,         setPage]         = useState(0)
+  const [pageSize,     setPageSize]     = useState(20)
+  const [total,        setTotal]        = useState(0)
+  const [closedFrom,   setClosedFrom]   = useState(null)
+  const [closedTo,     setClosedTo]     = useState(null)
   const [loading,      setLoading]      = useState(false)
   const [notifyModal,  setNotifyModal]  = useState(null)
   const [notifying,    setNotifying]    = useState(null)
@@ -258,13 +263,36 @@ export default function AlertHistory({ domain = null }) {
     REVOKED: t('alh.type.revoked'), MISMATCH: t('alh.type.mismatch'),
   }
 
-  useEffect(() => { load() }, [onlyOpen])
-
-  async function load() {
+  const load = useCallback(async () => {
     setLoading(true)
-    const res = await api.admin.getAlerts(onlyOpen)
+    const params = {
+      resolved: tab === 'closed' ? 'true' : 'false',
+      page,
+      size: pageSize,
+    }
+    if (tab === 'closed') {
+      if (closedFrom) params.resolvedSince = closedFrom
+      if (closedTo)   params.resolvedUntil = closedTo
+    }
+    if (domain) params.domain = domain
+    const res = await api.admin.getAlerts(params)
     setLoading(false)
-    if (res?.success) setAlerts(res.data)
+    if (res?.success) {
+      setAlerts(res.data ?? [])
+      setTotal(res.total ?? 0)
+    } else if (res != null) {
+      toast.error(res?.error || t('alh.loadError'))
+    }
+  }, [tab, page, pageSize, closedFrom, closedTo, domain, t, toast])
+
+  useEffect(() => { load() }, [load])
+  useEffect(() => { setPage(0) }, [tab, pageSize, closedFrom, closedTo])
+
+  function applyQuickRange(days) {
+    const now = new Date()
+    const from = new Date(now.getTime() - days * 86400000)
+    setClosedFrom(from.toISOString().slice(0, 19))
+    setClosedTo(now.toISOString().slice(0, 19))
   }
 
   async function ack(id) {
@@ -324,35 +352,100 @@ export default function AlertHistory({ domain = null }) {
   }
 
   function parseContacts(json) {
-    try { return JSON.parse(json) } catch { return [] }
+    if (!json) return []
+    try {
+      const v = JSON.parse(json)
+      return Array.isArray(v) ? v : []
+    } catch { return [] }
   }
 
-  const displayed = domain ? alerts.filter(a => a.domain === domain) : alerts
-  const open   = displayed.filter(a => !a.resolved)
-  const closed = displayed.filter(a =>  a.resolved)
+  const isOpen   = tab === 'open'
+  const isClosed = tab === 'closed'
+  const totalPages = Math.max(1, Math.ceil(total / pageSize))
 
   return (
     <div className="admin-section">
-      <div className="admin-section-header">
-        {domain == null && <h3>{t('alh.title')}</h3>}
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-          <label className="checkbox-label">
-            <input type="checkbox" checked={onlyOpen} onChange={e => setOnlyOpen(e.target.checked)} />
-            {t('alh.onlyOpen')}
-          </label>
-          <button className="btn btn-secondary" onClick={load}>{t('alh.refresh')}</button>
+      <div className="alh-header">
+        {domain == null && (
+          <div className="alh-title-row">
+            <Bell size={18} className="alh-title-icon" />
+            <h3 style={{ margin: 0 }}>{t('alh.title')}</h3>
+          </div>
+        )}
+        <div className="alh-tabs">
+          <button
+            type="button"
+            className={`alh-tab alh-tab-open${isOpen ? ' is-active' : ''}`}
+            onClick={() => setTab('open')}
+          >
+            <AlertCircle size={13} />
+            {t('alh.tabOpen')}
+          </button>
+          <button
+            type="button"
+            className={`alh-tab alh-tab-closed${isClosed ? ' is-active' : ''}`}
+            onClick={() => setTab('closed')}
+          >
+            <CheckCircle size={13} />
+            {t('alh.tabClosed')}
+          </button>
         </div>
+        <button className="btn btn-secondary btn-sm-p" onClick={load} disabled={loading}>
+          <RefreshCcw size={13} /> {t('alh.refresh')}
+        </button>
       </div>
+
+      {isClosed && (
+        <div className="alh-filter-bar">
+          <div className="alh-quick-pills">
+            {[
+              { key: '24h', days: 1 },
+              { key: '7d',  days: 7 },
+              { key: '30d', days: 30 },
+              { key: '90d', days: 90 },
+            ].map(({ key, days }) => (
+              <button
+                key={key}
+                type="button"
+                className="alh-quick-pill"
+                onClick={() => applyQuickRange(days)}
+              >
+                {t(`alh.quick.${key}`)}
+              </button>
+            ))}
+            {(closedFrom || closedTo) && (
+              <button
+                type="button"
+                className="alh-quick-pill alh-quick-clear"
+                onClick={() => { setClosedFrom(null); setClosedTo(null) }}
+              >
+                {t('alh.quick.clear')}
+              </button>
+            )}
+          </div>
+          {(closedFrom || closedTo) && (
+            <span className="alh-filter-summary">
+              {closedFrom && <>{formatDate(closedFrom)}</>}
+              {closedFrom && closedTo && ' → '}
+              {closedTo && <>{formatDate(closedTo)}</>}
+            </span>
+          )}
+        </div>
+      )}
 
       {loading && <div className="loading">{t('alh.loading')}</div>}
 
-      {!loading && open.length === 0 && onlyOpen && (
+      {!loading && alerts.length === 0 && isOpen && (
         <div className="empty-state">{t('alh.noOpen')}</div>
       )}
 
-      {open.length > 0 && (
+      {!loading && alerts.length === 0 && isClosed && (
+        <div className="empty-state">{t('alh.noClosed')}</div>
+      )}
+
+      {isOpen && alerts.length > 0 && (
         <div className="alert-list">
-          {open.map(a => {
+          {alerts.map(a => {
             const notifiedList = parseContacts(a.notified_contacts)
             return (
               <div key={a.id} className={`alert-card alert-${a.alert_level?.toLowerCase()}`}>
@@ -430,13 +523,10 @@ export default function AlertHistory({ domain = null }) {
         </div>
       )}
 
-      {!onlyOpen && closed.length > 0 && (
-        <div style={{ marginTop: 28 }}>
-          <h4 style={{ marginBottom: 12, color: '#374151' }}>
-            {t('alh.closedTitle')} <span style={{ color: '#9ca3af', fontWeight: 400 }}>({closed.length})</span>
-          </h4>
+      {isClosed && alerts.length > 0 && (
+        <div className="alert-history-wrap">
           <div className="alert-history-cards">
-            {closed.map(a => (
+            {alerts.map(a => (
               <div key={a.id} className="alert-history-card">
                 <div className="ahc-stripe" style={{ background: levelColor[a.alert_level] ?? '#ccc' }} />
 
@@ -505,6 +595,44 @@ export default function AlertHistory({ domain = null }) {
                 </div>
               </div>
             ))}
+          </div>
+        </div>
+      )}
+
+      {!loading && total > 0 && (
+        <div className="alh-pagination">
+          <div className="alh-page-size">
+            <span>{t('alh.perPage')}</span>
+            {[10, 20, 50].map(n => (
+              <button
+                key={n}
+                type="button"
+                className={`alh-size-btn${pageSize === n ? ' is-active' : ''}`}
+                onClick={() => setPageSize(n)}
+              >
+                {n}
+              </button>
+            ))}
+          </div>
+          <div className="alh-page-info">
+            {t('alh.pageOf', page + 1, totalPages)}
+            <span className="alh-page-total"> · {total} {t('alh.alertCount')}</span>
+          </div>
+          <div className="alh-page-nav">
+            <button
+              type="button"
+              disabled={page === 0}
+              onClick={() => setPage(p => Math.max(0, p - 1))}
+            >
+              <ChevronLeft size={13} /> {t('alh.prev')}
+            </button>
+            <button
+              type="button"
+              disabled={(page + 1) >= totalPages}
+              onClick={() => setPage(p => p + 1)}
+            >
+              {t('alh.next')} <ChevronRight size={13} />
+            </button>
           </div>
         </div>
       )}

@@ -71,7 +71,7 @@ public class EscalationService {
             String domain = (String) result.get("domain");
             String alertType = determineAlertType(result);
             if (alertType == null) {
-                resolveOpenAlerts(domain, "EXPIRY");
+                resolveAllOpenAlertsForDomain(domain);
                 continue;
             }
 
@@ -275,15 +275,35 @@ public class EscalationService {
         return saved;
     }
 
-    private void resolveOpenAlerts(String domain, String alertType) {
-        alertEventRepo.findOpenAlert(domain, alertType).ifPresent(event -> {
+    private void resolveAllOpenAlertsForDomain(String domain) {
+        List<AlertEvent> openAlerts = alertEventRepo.findByDomainAndResolvedFalse(domain);
+        for (AlertEvent event : openAlerts) {
             event.setResolved(true);
             event.setResolvedAt(now());
             event.setResolvedBy("system");
             AlertEvent saved = alertEventRepo.save(event);
             self.sendResolutionNotificationAsync(saved, "Sistem (otomatik)", "RESOLUTION");
-            log.info("✅ Alarm çözüldü: {} [{}] — çözüm bildirimi kuyruğa alındı", domain, alertType);
-        });
+            log.info("✅ Alarm çözüldü: {} [{}] — sertifika sağlıklı, otomatik kapatıldı",
+                    domain, event.getAlertType());
+        }
+    }
+
+    /**
+     * Silent close for inventory delete path — does NOT trigger resolution email.
+     * Admin is intentionally decommissioning the domain; monitoring stops, so
+     * spamming contacts with a "resolved" email would be noise.
+     */
+    public int closeAlertsOnInventoryDelete(String domain) {
+        List<AlertEvent> openAlerts = alertEventRepo.findByDomainAndResolvedFalse(domain);
+        for (AlertEvent event : openAlerts) {
+            event.setResolved(true);
+            event.setResolvedAt(now());
+            event.setResolvedBy("inventory_delete");
+            alertEventRepo.save(event);
+            log.info("Alarm kapatıldı (envanter silindi): {} [{}]",
+                    domain, event.getAlertType());
+        }
+        return openAlerts.size();
     }
 
     @Async("certCheckExecutor")

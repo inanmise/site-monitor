@@ -12,6 +12,9 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.Pageable;
 import org.springframework.http.MediaType;
 import org.springframework.mock.web.MockHttpSession;
 import org.springframework.test.web.servlet.MockMvc;
@@ -174,9 +177,27 @@ class AdminControllerTest {
 
         mvc.perform(delete("/api/admin/inventory/1").session(authSession()))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.success").value(true));
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.alertsClosed").value(0));
 
         org.mockito.Mockito.verify(inventoryRepo).save(any());
+    }
+
+    @Test
+    @DisplayName("DELETE /api/admin/inventory/{id} closes open alerts and returns count")
+    void deleteInventory_withOpenAlerts_closesAndReturnsCount() throws Exception {
+        CertificateInventory inv = inventory("stuck.example.com");
+        inv.setId(7L);
+        when(inventoryRepo.findById(7L)).thenReturn(Optional.of(inv));
+        when(inventoryRepo.save(any())).thenAnswer(i -> i.getArgument(0));
+        when(escalationService.closeAlertsOnInventoryDelete("stuck.example.com")).thenReturn(3);
+
+        mvc.perform(delete("/api/admin/inventory/7").session(authSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.alertsClosed").value(3));
+
+        org.mockito.Mockito.verify(escalationService).closeAlertsOnInventoryDelete("stuck.example.com");
     }
 
     // ── Thresholds ────────────────────────────────────────────────────────────
@@ -277,19 +298,25 @@ class AdminControllerTest {
     // ── Alert Events ──────────────────────────────────────────────────────────
 
     @Test
-    @DisplayName("GET /api/admin/alerts returns all alerts by default")
+    @DisplayName("GET /api/admin/alerts returns paginated alerts by default")
     void listAlerts_allAlerts_returns200() throws Exception {
-        when(alertEventRepo.findAllByOrderByCreatedAtDesc()).thenReturn(Collections.emptyList());
+        Page<AlertEvent> empty = new PageImpl<>(Collections.emptyList());
+        when(alertEventRepo.findFiltered(any(), any(), any(), any(), any(), any(), any(Pageable.class)))
+                .thenReturn(empty);
 
         mvc.perform(get("/api/admin/alerts").session(authSession()))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data").isArray());
+                .andExpect(jsonPath("$.data").isArray())
+                .andExpect(jsonPath("$.total").value(0))
+                .andExpect(jsonPath("$.page").value(0));
     }
 
     @Test
     @DisplayName("GET /api/admin/alerts?onlyOpen=true returns only open alerts")
     void listAlerts_onlyOpen_returnsOpenAlerts() throws Exception {
-        when(alertEventRepo.findAllOpenOrderBySeverity()).thenReturn(Collections.emptyList());
+        Page<AlertEvent> empty = new PageImpl<>(Collections.emptyList());
+        when(alertEventRepo.findFiltered(eq(Boolean.FALSE), any(), any(), any(), any(), any(), any(Pageable.class)))
+                .thenReturn(empty);
 
         mvc.perform(get("/api/admin/alerts?onlyOpen=true").session(authSession()))
                 .andExpect(status().isOk())
