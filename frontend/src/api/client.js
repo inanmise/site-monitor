@@ -165,6 +165,13 @@ export const api = {
     },
     getAuditStats: () => request('/admin/audit/stats'),
 
+    // SQL Playground
+    sqlListTables:  () => request('/admin/sql/tables'),
+    sqlListColumns: (table) => request(`/admin/sql/tables/${encodeURIComponent(table)}/columns`),
+    sqlExecute:     (sql) => request('/admin/sql/execute', { method: 'POST', body: JSON.stringify({ sql }) }),
+    sqlHistory:     () => request('/admin/sql/history'),
+    sqlSamples:     () => request('/admin/sql/samples'),
+
     // System health
     getSystemHealth: () => request('/admin/system'),
     forceReleaseLock: () => request('/admin/system/scheduler-lock', { method: 'DELETE' }),

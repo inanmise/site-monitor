@@ -5,7 +5,7 @@ import {
   LayoutDashboard, AlertTriangle, FileText,
   RefreshCw, ClipboardList, Settings, User, Globe, LogOut,
   Sun, Moon, ChevronLeft, ChevronRight, ChevronDown, Server, Activity, ShieldAlert, BarChart3, Bell, BookOpen,
-  Wifi, Network, Search, TrendingDown,
+  Wifi, Network, Search, TrendingDown, Database,
 } from 'lucide-react'
 import CertMonitorLogo from './ui/CertMonitorLogo.jsx'
 
@@ -49,8 +49,9 @@ export default function Nav({ activeTab, onTabChange, username, teamName, system
     {
       labelKey: 'nav.groupAdmin',
       tabs: [
-        { id: 'admin',   Icon: Settings,    labelKey: 'nav.admin',   show: true               },
-        { id: 'weakalgo',Icon: ShieldAlert, labelKey: 'nav.weakAlgo',show: isAdmin || isAudit },
+        { id: 'admin',         Icon: Settings,    labelKey: 'nav.admin',         show: true               },
+        { id: 'weakalgo',      Icon: ShieldAlert, labelKey: 'nav.weakAlgo',      show: isAdmin || isAudit },
+        { id: 'sqlplayground', Icon: Database,    labelKey: 'nav.sqlPlayground', show: isAdmin            },
       ],
     },
     {
