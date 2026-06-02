@@ -19,10 +19,28 @@ export default function SqlPlayground() {
   const [sql, setSql]               = useState(DEFAULT_QUERY)
   const [running, setRunning]       = useState(false)
   const [result, setResult]         = useState(null)
-  const [rightTab, setRightTab]     = useState('samples')
   const [samples, setSamples]       = useState([])
   const [history, setHistory]       = useState([])
+  const [openMenu, setOpenMenu]     = useState(null)   // 'samples' | 'history' | null
   const editorRef = useRef(null)
+  const samplesBtnRef = useRef(null)
+  const historyBtnRef = useRef(null)
+
+  useEffect(() => {
+    if (!openMenu) return
+    function onDocClick(e) {
+      if (samplesBtnRef.current?.contains(e.target)) return
+      if (historyBtnRef.current?.contains(e.target)) return
+      setOpenMenu(null)
+    }
+    function onKey(e) { if (e.key === 'Escape') setOpenMenu(null) }
+    document.addEventListener('mousedown', onDocClick)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onDocClick)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [openMenu])
 
   useEffect(() => {
     api.admin.sqlListTables().then(r => r?.success && setTables(r.data ?? []))
@@ -162,6 +180,73 @@ export default function SqlPlayground() {
           >
             <X size={14} /> {t('sql.clear')}
           </button>
+
+          <div className="sqlpg-menu-wrap" ref={samplesBtnRef}>
+            <button
+              type="button"
+              className={`btn btn-secondary sqlpg-menu-trigger${openMenu === 'samples' ? ' is-open' : ''}`}
+              onClick={() => setOpenMenu(m => m === 'samples' ? null : 'samples')}
+            >
+              <BookOpen size={14} /> {t('sql.samples')}
+              <ChevronDown size={12} className="sqlpg-menu-chev" />
+            </button>
+            {openMenu === 'samples' && (
+              <div className="sqlpg-menu sqlpg-menu-samples">
+                {samples.length === 0 && (
+                  <div className="sqlpg-menu-empty">{t('sql.noSamples')}</div>
+                )}
+                {samples.map((s, i) => (
+                  <button
+                    key={i}
+                    className="sqlpg-item"
+                    onClick={() => { setSql(s.sql); setOpenMenu(null) }}
+                    title={s.sql}
+                  >
+                    <div className="sqlpg-item-label">{s.label}</div>
+                    <div className="sqlpg-item-preview">{s.sql.substring(0, 80)}…</div>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="sqlpg-menu-wrap" ref={historyBtnRef}>
+            <button
+              type="button"
+              className={`btn btn-secondary sqlpg-menu-trigger${openMenu === 'history' ? ' is-open' : ''}`}
+              onClick={() => setOpenMenu(m => m === 'history' ? null : 'history')}
+            >
+              <History size={14} /> {t('sql.history')}
+              <ChevronDown size={12} className="sqlpg-menu-chev" />
+            </button>
+            {openMenu === 'history' && (
+              <div className="sqlpg-menu sqlpg-menu-history">
+                {history.length === 0 && (
+                  <div className="sqlpg-menu-empty">{t('sql.noHistory')}</div>
+                )}
+                {history.map(h => (
+                  <button
+                    key={h.id}
+                    className={`sqlpg-item${!h.success ? ' is-error' : ''}`}
+                    onClick={() => { setSql(h.sqlText); setOpenMenu(null) }}
+                    title={h.sqlText}
+                  >
+                    <div className="sqlpg-item-label">
+                      <strong>{h.executedBy}</strong>
+                      <span className="sqlpg-item-meta">
+                        {h.rowCount ?? '—'} · {h.durationMs ?? 0} ms
+                      </span>
+                    </div>
+                    <div className="sqlpg-item-preview">
+                      {(h.sqlText ?? '').substring(0, 80)}…
+                    </div>
+                    <div className="sqlpg-item-date">{formatDate(h.executedAt)}</div>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
           <span className="sqlpg-limit-hint">{t('sql.limitHint')}</span>
         </div>
 
@@ -225,61 +310,6 @@ export default function SqlPlayground() {
         )}
       </div>
 
-      <div className="sqlpg-pane sqlpg-side">
-        <div className="sqlpg-side-tabs">
-          <button
-            className={`sqlpg-side-tab${rightTab === 'samples' ? ' is-active' : ''}`}
-            onClick={() => setRightTab('samples')}
-          >
-            <BookOpen size={13} /> {t('sql.samples')}
-          </button>
-          <button
-            className={`sqlpg-side-tab${rightTab === 'history' ? ' is-active' : ''}`}
-            onClick={() => setRightTab('history')}
-          >
-            <History size={13} /> {t('sql.history')}
-          </button>
-        </div>
-        <div className="sqlpg-side-list">
-          {rightTab === 'samples' && samples.map((s, i) => (
-            <button
-              key={i}
-              className="sqlpg-item"
-              onClick={() => setSql(s.sql)}
-              title={s.sql}
-            >
-              <div className="sqlpg-item-label">{s.label}</div>
-              <div className="sqlpg-item-preview">{s.sql.substring(0, 80)}…</div>
-            </button>
-          ))}
-          {rightTab === 'samples' && samples.length === 0 && (
-            <div className="sqlpg-side-empty">{t('sql.noSamples')}</div>
-          )}
-
-          {rightTab === 'history' && history.map(h => (
-            <button
-              key={h.id}
-              className={`sqlpg-item${!h.success ? ' is-error' : ''}`}
-              onClick={() => setSql(h.sqlText)}
-              title={h.sqlText}
-            >
-              <div className="sqlpg-item-label">
-                <strong>{h.executedBy}</strong>
-                <span className="sqlpg-item-meta">
-                  {h.rowCount ?? '—'} · {h.durationMs ?? 0} ms
-                </span>
-              </div>
-              <div className="sqlpg-item-preview">
-                {(h.sqlText ?? '').substring(0, 80)}…
-              </div>
-              <div className="sqlpg-item-date">{formatDate(h.executedAt)}</div>
-            </button>
-          ))}
-          {rightTab === 'history' && history.length === 0 && (
-            <div className="sqlpg-side-empty">{t('sql.noHistory')}</div>
-          )}
-        </div>
-      </div>
     </div>
   )
 }
