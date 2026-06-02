@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useMemo } from 'react'
-import { ChevronDown, Check } from 'lucide-react'
+import { ChevronDown, Check, Download, Loader2 } from 'lucide-react'
 import MDEditor from '@uiw/react-md-editor'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -9,6 +9,7 @@ import { useToast } from '../ui/Toast.jsx'
 import { useT } from '../../i18n/index.jsx'
 import { useTheme } from '../../i18n/theme.jsx'
 import SearchableSelect from '../ui/SearchableSelect.jsx'
+import { exportInventoryCsv, exportInventoryPdf } from '../../utils/exportInventory'
 
 const EMPTY = {
   domain: '', port: 443, owner: '', description: '', active: true,
@@ -66,6 +67,9 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
   const [msg, setMsg]                 = useState(null)
   const [statusFilter, setStatusFilter] = useState('default')
   const [showItem,    setShowItem]    = useState(null)
+  const [exportOpen,  setExportOpen]  = useState(false)
+  const [exporting,   setExporting]   = useState(false)
+  const exportRef = useRef(null)
 
   const teamMap  = Object.fromEntries(teams.map(t => [String(t.id), t.name]))
   const syTeams  = teams.filter(t => !t.team_type || t.team_type === 'SY')
@@ -75,6 +79,43 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
     load()
     if (isAdmin) api.admin.getTeams().then(res => { if (res?.success) setTeams(res.data) })
   }, [])
+
+  useEffect(() => {
+    if (!exportOpen) return
+    const onClick = (e) => { if (!exportRef.current?.contains(e.target)) setExportOpen(false) }
+    const onKey   = (e) => { if (e.key === 'Escape') setExportOpen(false) }
+    document.addEventListener('mousedown', onClick)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onClick)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [exportOpen])
+
+  async function doExport(kind) {
+    setExporting(true)
+    setExportOpen(false)
+    try {
+      const res = await api.admin.getInventory(false)
+      if (!res?.success) {
+        toast.error(t('inv.exportError'))
+        return
+      }
+      const all = res.data ?? []
+      if (all.length === 0) {
+        toast.error(t('inv.exportNoData'))
+        return
+      }
+      const n = kind === 'csv'
+        ? exportInventoryCsv(all, teams, t)
+        : await exportInventoryPdf(all, teams, t)
+      toast.success(t('inv.exportSuccess', n))
+    } catch (e) {
+      toast.error(t('inv.exportError'))
+    } finally {
+      setExporting(false)
+    }
+  }
 
   useEffect(() => {
     if (modal === null) { setShowScrollHint(false); return }
@@ -316,7 +357,43 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
             </button>
           </div>
         </div>
-        <button className="btn btn-success" onClick={openAdd}>{t('inv.addBtn')}</button>
+        <div className="inv-header-actions">
+          <div className="sqlpg-menu-wrap" ref={exportRef}>
+            <button
+              type="button"
+              className={`btn btn-secondary sqlpg-menu-trigger${exportOpen ? ' is-open' : ''}`}
+              onClick={() => setExportOpen(o => !o)}
+              disabled={exporting}
+            >
+              {exporting
+                ? <Loader2 size={14} className="spin" />
+                : <Download size={14} />}
+              {t('inv.export')}
+              <ChevronDown size={12} className="sqlpg-menu-chev" />
+            </button>
+            {exportOpen && (
+              <div className="sqlpg-menu inv-export-menu">
+                <button
+                  type="button"
+                  className="sqlpg-item"
+                  onClick={() => doExport('csv')}
+                >
+                  <div className="sqlpg-item-label">{t('inv.exportCsv')}</div>
+                  <div className="sqlpg-item-preview">{t('inv.exportCsvHint')}</div>
+                </button>
+                <button
+                  type="button"
+                  className="sqlpg-item"
+                  onClick={() => doExport('pdf')}
+                >
+                  <div className="sqlpg-item-label">{t('inv.exportPdf')}</div>
+                  <div className="sqlpg-item-preview">{t('inv.exportPdfHint')}</div>
+                </button>
+              </div>
+            )}
+          </div>
+          <button className="btn btn-success" onClick={openAdd}>{t('inv.addBtn')}</button>
+        </div>
       </div>
 
       <div className="admin-table-wrap">
