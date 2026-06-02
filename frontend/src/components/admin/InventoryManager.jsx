@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useMemo } from 'react'
-import { ChevronDown } from 'lucide-react'
+import { ChevronDown, Check } from 'lucide-react'
 import MDEditor from '@uiw/react-md-editor'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -580,9 +580,10 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
                   ['inv.formEvCert',         showItem.ev_certificate],
                   ['inv.formTransferredToSy',showItem.transferred_to_sy],
                 ].map(([key, val]) => (
-                  <div key={key} className="show-yn-cell">
+                  <div key={key} className={`show-yn-cell${val ? ' is-yes' : ''}`}>
                     <span className="show-yn-label">{t(key)}</span>
                     <span className={`show-yn-badge ${val ? 'show-yn-yes' : 'show-yn-no'}`}>
+                      {val && <Check size={13} strokeWidth={3} />}
                       {val ? t('inv.yes') : t('inv.no')}
                     </span>
                   </div>
