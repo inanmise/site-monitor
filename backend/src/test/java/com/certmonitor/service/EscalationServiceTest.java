@@ -241,7 +241,7 @@ class EscalationServiceTest {
     void processResults_certOk_resolvesOpenAlert() {
         String domain = "recovered.example.com";
         AlertEvent existing = existingOpenAlert(domain, "EXPIRY", "WARNING", false);
-        when(alertEventRepo.findOpenAlert(domain, "EXPIRY")).thenReturn(Optional.of(existing));
+        when(alertEventRepo.findByDomainAndResolvedFalse(domain)).thenReturn(List.of(existing));
         when(alertEventRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
         // Now cert is fine
@@ -257,12 +257,48 @@ class EscalationServiceTest {
     @DisplayName("Cert with no alert type does not fire any notification")
     void processResults_certOkNoExistingAlert_noAction() {
         String domain = "healthy.example.com";
-        when(alertEventRepo.findOpenAlert(domain, "EXPIRY")).thenReturn(Optional.empty());
+        when(alertEventRepo.findByDomainAndResolvedFalse(domain)).thenReturn(List.of());
 
         service.processResults(List.of(okResult(domain)));
 
         verify(emailService, never()).sendAlert(any(String[].class), anyString(), anyString(), any(), any(), any(), any(), any());
         verify(alertEventRepo, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("Cert returning to OK resolves open CHAIN_BROKEN alert (not just EXPIRY)")
+    void processResults_chainBrokenResolved_whenCertHealthy() {
+        String domain = "renewed-chain.example.com";
+        AlertEvent existing = existingOpenAlert(domain, "CHAIN_BROKEN", "CRITICAL", false);
+        when(alertEventRepo.findByDomainAndResolvedFalse(domain)).thenReturn(List.of(existing));
+        when(alertEventRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(latestCheckRepo.findById(domain)).thenReturn(Optional.empty());
+
+        service.processResults(List.of(okResult(domain)));
+
+        ArgumentCaptor<AlertEvent> captor = ArgumentCaptor.forClass(AlertEvent.class);
+        verify(alertEventRepo).save(captor.capture());
+        assertThat(captor.getValue().getResolved()).isTrue();
+        assertThat(captor.getValue().getAlertType()).isEqualTo("CHAIN_BROKEN");
+        assertThat(captor.getValue().getResolvedBy()).isEqualTo("system");
+    }
+
+    @Test
+    @DisplayName("Cert returning to OK resolves open REVOKED alert (not just EXPIRY)")
+    void processResults_revokedAlertResolved_whenCertHealthy() {
+        String domain = "renewed-revoked.example.com";
+        AlertEvent existing = existingOpenAlert(domain, "REVOKED", "CRITICAL", false);
+        when(alertEventRepo.findByDomainAndResolvedFalse(domain)).thenReturn(List.of(existing));
+        when(alertEventRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(latestCheckRepo.findById(domain)).thenReturn(Optional.empty());
+
+        service.processResults(List.of(okResult(domain)));
+
+        ArgumentCaptor<AlertEvent> captor = ArgumentCaptor.forClass(AlertEvent.class);
+        verify(alertEventRepo).save(captor.capture());
+        assertThat(captor.getValue().getResolved()).isTrue();
+        assertThat(captor.getValue().getAlertType()).isEqualTo("REVOKED");
+        assertThat(captor.getValue().getResolvedBy()).isEqualTo("system");
     }
 
     // ── acknowledge / resolve ─────────────────────────────────────────────────
@@ -337,11 +373,47 @@ class EscalationServiceTest {
     }
 
     @Test
+    @DisplayName("closeAlertsOnInventoryDelete: silently resolves open alerts without sending email")
+    void closeAlertsOnInventoryDelete_silentClose_noEmail() {
+        String domain = "decommissioned.example.com";
+        AlertEvent chainAlert  = existingOpenAlert(domain, "CHAIN_BROKEN", "CRITICAL", false);
+        AlertEvent expiryAlert = existingOpenAlert(domain, "EXPIRY", "WARNING", false);
+        when(alertEventRepo.findByDomainAndResolvedFalse(domain))
+                .thenReturn(List.of(chainAlert, expiryAlert));
+        when(alertEventRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        int closed = service.closeAlertsOnInventoryDelete(domain);
+
+        assertThat(closed).isEqualTo(2);
+        ArgumentCaptor<AlertEvent> captor = ArgumentCaptor.forClass(AlertEvent.class);
+        verify(alertEventRepo, times(2)).save(captor.capture());
+        for (AlertEvent saved : captor.getAllValues()) {
+            assertThat(saved.getResolved()).isTrue();
+            assertThat(saved.getResolvedBy()).isEqualTo("inventory_delete");
+            assertThat(saved.getResolvedAt()).isNotNull();
+        }
+        verifyNoInteractions(emailService);
+    }
+
+    @Test
+    @DisplayName("closeAlertsOnInventoryDelete: returns 0 when no open alerts")
+    void closeAlertsOnInventoryDelete_noOpenAlerts_returnsZero() {
+        when(alertEventRepo.findByDomainAndResolvedFalse("clean.example.com"))
+                .thenReturn(List.of());
+
+        int closed = service.closeAlertsOnInventoryDelete("clean.example.com");
+
+        assertThat(closed).isZero();
+        verify(alertEventRepo, never()).save(any());
+        verifyNoInteractions(emailService);
+    }
+
+    @Test
     @DisplayName("processResults: cert returning to OK sends auto-resolution email")
     void processResults_autoResolve_sendsResolutionEmail() {
         String domain = "recovered2.example.com";
         AlertEvent existing = existingOpenAlert(domain, "EXPIRY", "WARNING", false);
-        when(alertEventRepo.findOpenAlert(domain, "EXPIRY")).thenReturn(Optional.of(existing));
+        when(alertEventRepo.findByDomainAndResolvedFalse(domain)).thenReturn(List.of(existing));
         when(alertEventRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
         when(contactRepo.findByMinAlertLevelAndActiveTrue("WARNING"))
                 .thenReturn(List.of(contact("po@test.com", "PO", "WARNING")));

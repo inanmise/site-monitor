@@ -10,6 +10,9 @@ import jakarta.servlet.http.HttpSession;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.cache.annotation.CacheEvict;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Sort;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -189,10 +192,11 @@ public class AdminController {
             inv.setDeletedAt(now());
             inv.setActive(false);
             inventoryRepo.save(inv);
+            int alertsClosed = escalationService.closeAlertsOnInventoryDelete(inv.getDomain());
             auditService.recordAction("DOMAIN_SOFT_DELETE", session, request,
                     "CERTIFICATE", inv.getDomain(),
-                    "{\"teamId\":" + inv.getTeamId() + "}");
-            return ok(Map.of("message", "Deleted"));
+                    "{\"teamId\":" + inv.getTeamId() + ",\"alertsClosed\":" + alertsClosed + "}");
+            return ok(Map.of("message", "Deleted", "alertsClosed", alertsClosed));
         }).orElse(ResponseEntity.notFound().build());
     }
 
@@ -378,12 +382,31 @@ public class AdminController {
 
     @GetMapping("/alerts")
     public ResponseEntity<Map<String, Object>> listAlerts(
-            @RequestParam(defaultValue = "false") boolean onlyOpen, HttpSession session) {
+            @RequestParam(defaultValue = "false") boolean onlyOpen,
+            @RequestParam(required = false) Boolean resolved,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size,
+            @RequestParam(required = false) String since,
+            @RequestParam(required = false) String until,
+            @RequestParam(required = false) String resolvedSince,
+            @RequestParam(required = false) String resolvedUntil,
+            @RequestParam(required = false) String domain,
+            HttpSession session) {
         requireAdmin(session);
-        List<AlertEvent> events = onlyOpen
-                ? alertEventRepo.findAllOpenOrderBySeverity()
-                : alertEventRepo.findAllByOrderByCreatedAtDesc();
-        return ok(Map.of("data", events));
+        int sz = Math.max(1, Math.min(size, 200));
+        Boolean resolvedEffective = resolved != null ? resolved : (onlyOpen ? Boolean.FALSE : null);
+        // Default sort: en yeniden en eskiye (newest → oldest) — hem açık hem kapalı için.
+        Sort sort = Boolean.TRUE.equals(resolvedEffective)
+                ? Sort.by(Sort.Direction.DESC, "resolvedAt").and(Sort.by(Sort.Direction.DESC, "createdAt"))
+                : Sort.by(Sort.Direction.DESC, "createdAt");
+        Page<AlertEvent> result = alertEventRepo.findFiltered(
+                resolvedEffective, since, until, resolvedSince, resolvedUntil, domain,
+                PageRequest.of(Math.max(0, page), sz, sort));
+        return ok(Map.of(
+                "data",  result.getContent(),
+                "total", result.getTotalElements(),
+                "page",  result.getNumber(),
+                "size",  result.getSize()));
     }
 
     @PostMapping("/alerts/{id}/acknowledge")

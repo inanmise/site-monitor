@@ -212,15 +212,33 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
 
   async function del(id) {
     const item = items.find(i => i.id === id)
+    const domain = item?.domain
+    if (!domain) return
+
+    let openAlertCount = 0
+    try {
+      const r = await api.admin.getAlerts({ domain, resolved: 'false', size: 1 })
+      if (r?.success) openAlertCount = r.total ?? 0
+    } catch { /* sayım hatasını yut, varsayılan mesajla devam */ }
+
+    const baseMessage = t('inv.deleteMsg', domain)
+    const message = openAlertCount > 0
+      ? `${baseMessage}\n\n⚠ ${t('inv.deleteHasAlerts', openAlertCount)}\n${t('inv.deleteAlertWarning')}`
+      : baseMessage
+
     const ok = await showConfirm({
       title: t('inv.deleteTitle'),
-      message: t('inv.deleteMsg', item?.domain ?? id),
-      variant: 'danger',
+      message,
+      variant: openAlertCount > 0 ? 'warning' : 'danger',
       confirmText: t('inv.deleteConfirm'),
       cancelText: t('inv.deleteCancel'),
     })
     if (!ok) return
-    await api.admin.deleteInventory(id)
+
+    const res = await api.admin.deleteInventory(id)
+    if (res?.success && (res.alertsClosed ?? 0) > 0) {
+      toast.success(t('inv.deleteWithAlerts', domain, res.alertsClosed))
+    }
     load()
     onInventoryChange?.()
   }

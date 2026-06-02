@@ -202,18 +202,28 @@ describe('api.admin.deleteInventory', () => {
 })
 
 describe('api.admin.getAlerts', () => {
-  it('GETs /api/admin/alerts?onlyOpen=false by default', async () => {
-    mockFetch({ success: true, data: [] })
+  it('GETs /api/admin/alerts with no query params by default', async () => {
+    mockFetch({ success: true, data: [], total: 0 })
     await api.admin.getAlerts()
     const url = global.fetch.mock.calls[0][0]
-    expect(url).toContain('/api/admin/alerts?onlyOpen=false')
+    expect(url).toBe('/api/admin/alerts')
   })
 
-  it('GETs /api/admin/alerts?onlyOpen=true when requested', async () => {
+  it('GETs /api/admin/alerts?onlyOpen=true when legacy boolean arg passed', async () => {
     mockFetch({ success: true, data: [] })
     await api.admin.getAlerts(true)
     const url = global.fetch.mock.calls[0][0]
     expect(url).toContain('onlyOpen=true')
+  })
+
+  it('GETs /api/admin/alerts with paging + filter params', async () => {
+    mockFetch({ success: true, data: [], total: 0 })
+    await api.admin.getAlerts({ resolved: 'true', page: 2, size: 50, resolvedSince: '2026-05-01T00:00:00' })
+    const url = global.fetch.mock.calls[0][0]
+    expect(url).toContain('resolved=true')
+    expect(url).toContain('page=2')
+    expect(url).toContain('size=50')
+    expect(url).toContain('resolvedSince=2026-05-01T00%3A00%3A00')
   })
 })
 
