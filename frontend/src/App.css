@@ -4859,6 +4859,22 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
   background: rgba(59,130,246,.1);
   border-radius: 999px;
 }
+.sqlpg-refresh-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 24px; height: 24px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: var(--text-light);
+  cursor: pointer;
+  transition: background .12s, border-color .12s, color .12s;
+}
+.sqlpg-refresh-btn:hover:not(:disabled) {
+  background: var(--bg-hover, rgba(59,130,246,.08));
+  border-color: var(--border);
+  color: var(--primary);
+}
+.sqlpg-refresh-btn:disabled { opacity: .5; cursor: not-allowed; }
 
 /* Schema tree (left pane) */
 .sqlpg-schema { min-width: 0; }

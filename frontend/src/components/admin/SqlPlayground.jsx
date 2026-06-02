@@ -4,7 +4,7 @@ import { useT } from '../../i18n/index.jsx'
 import { useToast } from '../ui/Toast.jsx'
 import {
   Play, Download, History, BookOpen, ChevronRight, ChevronDown,
-  Database, Loader2, AlertCircle, X,
+  Database, Loader2, AlertCircle, X, RefreshCw,
 } from 'lucide-react'
 
 const DEFAULT_QUERY = ''
@@ -14,6 +14,7 @@ export default function SqlPlayground() {
   const toast = useToast()
 
   const [tables, setTables]         = useState([])
+  const [tablesLoading, setTablesLoading] = useState(false)
   const [expandedTable, setExpanded] = useState(null)
   const [columnsMap, setColumnsMap] = useState({})
   const [sql, setSql]               = useState(DEFAULT_QUERY)
@@ -43,10 +44,24 @@ export default function SqlPlayground() {
   }, [openMenu])
 
   useEffect(() => {
-    api.admin.sqlListTables().then(r => r?.success && setTables(r.data ?? []))
+    refreshTables()
     api.admin.sqlSamples().then(r => r?.success && setSamples(r.data ?? []))
     loadHistory()
   }, [])
+
+  const refreshTables = async () => {
+    setTablesLoading(true)
+    try {
+      const r = await api.admin.sqlListTables()
+      if (r?.success) {
+        setTables(r.data ?? [])
+        // Drop cached columns so an expand re-fetches against the fresh schema
+        setColumnsMap({})
+      }
+    } finally {
+      setTablesLoading(false)
+    }
+  }
 
   const loadHistory = () =>
     api.admin.sqlHistory().then(r => r?.success && setHistory(r.data ?? []))
@@ -72,7 +87,7 @@ export default function SqlPlayground() {
   }
 
   const run = useCallback(async () => {
-    if (!sql.trim() || running) return
+    if (!sql?.trim() || running) return
     setRunning(true)
     setResult(null)
     const r = await api.admin.sqlExecute(sql)
@@ -119,6 +134,17 @@ export default function SqlPlayground() {
         <div className="sqlpg-pane-header">
           <Database size={14} /> {t('sql.schema')}
           <span className="sqlpg-tables-count">{tables.length}</span>
+          <button
+            type="button"
+            className="sqlpg-refresh-btn"
+            onClick={refreshTables}
+            disabled={tablesLoading}
+            title={t('sql.refreshTables')}
+          >
+            {tablesLoading
+              ? <Loader2 size={12} className="spin" />
+              : <RefreshCw size={12} />}
+          </button>
         </div>
         <div className="sqlpg-tree">
           {tables.map(tbl => (
@@ -159,7 +185,7 @@ export default function SqlPlayground() {
           <button
             className="btn btn-primary sqlpg-run"
             onClick={run}
-            disabled={running || !sql.trim()}
+            disabled={running || !sql?.trim()}
           >
             {running ? <Loader2 size={14} className="spin" /> : <Play size={14} />}
             {t('sql.run')}
@@ -224,25 +250,32 @@ export default function SqlPlayground() {
                 {history.length === 0 && (
                   <div className="sqlpg-menu-empty">{t('sql.noHistory')}</div>
                 )}
-                {history.map(h => (
-                  <button
-                    key={h.id}
-                    className={`sqlpg-item${!h.success ? ' is-error' : ''}`}
-                    onClick={() => { setSql(h.sqlText); setOpenMenu(null) }}
-                    title={h.sqlText}
-                  >
-                    <div className="sqlpg-item-label">
-                      <strong>{h.executedBy}</strong>
-                      <span className="sqlpg-item-meta">
-                        {h.rowCount ?? '—'} · {h.durationMs ?? 0} ms
-                      </span>
-                    </div>
-                    <div className="sqlpg-item-preview">
-                      {(h.sqlText ?? '').substring(0, 80)}…
-                    </div>
-                    <div className="sqlpg-item-date">{formatDate(h.executedAt)}</div>
-                  </button>
-                ))}
+                {history.map(h => {
+                  const sqlText    = h.sql_text     ?? h.sqlText     ?? ''
+                  const executedBy = h.executed_by  ?? h.executedBy  ?? '—'
+                  const rowCount   = h.row_count    ?? h.rowCount
+                  const durationMs = h.duration_ms  ?? h.durationMs  ?? 0
+                  const executedAt = h.executed_at  ?? h.executedAt
+                  return (
+                    <button
+                      key={h.id}
+                      className={`sqlpg-item${!h.success ? ' is-error' : ''}`}
+                      onClick={() => { setSql(sqlText); setOpenMenu(null) }}
+                      title={sqlText}
+                    >
+                      <div className="sqlpg-item-label">
+                        <strong>{executedBy}</strong>
+                        <span className="sqlpg-item-meta">
+                          {rowCount ?? '—'} · {durationMs} ms
+                        </span>
+                      </div>
+                      <div className="sqlpg-item-preview">
+                        {sqlText.substring(0, 80)}…
+                      </div>
+                      <div className="sqlpg-item-date">{formatDate(executedAt)}</div>
+                    </button>
+                  )
+                })}
               </div>
             )}
           </div>

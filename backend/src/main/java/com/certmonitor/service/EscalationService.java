@@ -306,6 +306,29 @@ public class EscalationService {
         return openAlerts.size();
     }
 
+    /**
+     * Startup safety net — closes any alarms that are still open on domains
+     * already soft-deleted from inventory. Legacy state from before the live
+     * inventory-delete close hook shipped (v18.9.0) is cleaned up automatically
+     * on next application start. Silent (no resolution email), idempotent.
+     */
+    public int catchUpAlertsOnDeletedDomains() {
+        List<AlertEvent> stuck = alertEventRepo.findOpenAlertsOnSoftDeletedDomains();
+        for (AlertEvent event : stuck) {
+            event.setResolved(true);
+            event.setResolvedAt(now());
+            event.setResolvedBy("inventory_delete");
+            alertEventRepo.save(event);
+            log.info("Startup catch-up: closed stale alarm {} [{}] for soft-deleted domain {}",
+                    event.getId(), event.getAlertType(), event.getDomain());
+        }
+        if (!stuck.isEmpty()) {
+            log.info("Startup catch-up complete — closed {} stale alarm(s) on soft-deleted domains",
+                    stuck.size());
+        }
+        return stuck.size();
+    }
+
     @Async("certCheckExecutor")
     public void sendResolutionNotificationAsync(AlertEvent event, String resolvedBy, String trigger) {
         try {
