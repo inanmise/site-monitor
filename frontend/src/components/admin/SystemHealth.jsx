@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { api, formatDate } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
 import { CheckCircle, XCircle, MinusCircle, HelpCircle, Mail, ChevronRight, Check, Loader2 } from 'lucide-react'
@@ -74,6 +74,7 @@ export default function SystemHealth() {
   const [smtpLogs, setSmtpLogs]       = useState(null)
   const [smtpLoading, setSmtpLoading] = useState(false)
   const [selectedLog, setSelectedLog] = useState(null)
+  const [smtpFilters, setSmtpFilters] = useState({ from: '', to: '', subject: '', status: '' })
 
   const load = useCallback(async () => {
     const [healthRes, metricsRes, httpRes, dbRes] = await Promise.all([
@@ -123,12 +124,31 @@ export default function SystemHealth() {
   const openSmtpModal = async () => {
     setSmtpModal(true)
     setSmtpLogs(null)
+    setSmtpFilters({ from: '', to: '', subject: '', status: '' })
     setSmtpLoading(true)
     const days = parseInt(smtpPeriod) || 30
     const res = await api.admin.getSmtpLogs(days)
     setSmtpLogs(res?.success ? res.data : [])
     setSmtpLoading(false)
   }
+
+  const closeSmtpModal = () => {
+    setSmtpModal(false)
+    setSmtpFilters({ from: '', to: '', subject: '', status: '' })
+  }
+
+  const filteredSmtpLogs = useMemo(() => {
+    if (!smtpLogs) return null
+    const f = smtpFilters
+    const ci = s => (s ?? '').toString().toLowerCase()
+    return smtpLogs.filter(l => {
+      if (f.from    && !ci(l.sender_email).includes(ci(f.from))) return false
+      if (f.to      && !(ci(l.recipient_email) + ' ' + ci(l.recipient_name)).includes(ci(f.to))) return false
+      if (f.subject && !ci(l.subject).includes(ci(f.subject))) return false
+      if (f.status  && l.kind !== f.status) return false
+      return true
+    })
+  }, [smtpLogs, smtpFilters])
 
   const handleForceRelease = async () => {
     if (!window.confirm(t('sys.lockReleaseConfirm'))) return
@@ -178,15 +198,16 @@ export default function SystemHealth() {
   const { scheduler, lock, pool, executor_pool, memory, scan, scan_alarm, smtp, db_ms, heartbeat } = health || {}
   const isRunning = scheduler?.running
 
-  // Compute active alarms for banner
-  const alarms = []
-  if (scan_alarm) alarms.push(t('health.scanAlarm'))
-  if (smtp?.alarm) alarms.push(t('health.smtpAlarm'))
-  if (heartbeat?.alarm) alarms.push(t('health.hbAlarm'))
-
   const smtpData = smtp?.periods?.[smtpPeriod] ?? smtp ?? {}
   const smtpRate = smtpData.rate ?? 100
   const smtpRateClass = smtpRate >= 99 ? 'sys-ok-text' : smtpRate >= 95 ? 'sys-warn-text' : 'sys-err-text'
+  const smtpHasAlarm = !!smtpData.alarm
+
+  // Compute active alarms for banner — SMTP alarm reflects the currently selected period
+  const alarms = []
+  if (scan_alarm) alarms.push(t('health.scanAlarm'))
+  if (smtpHasAlarm) alarms.push(t('health.smtpAlarmFor', t(`health.smtpPeriod${smtpPeriod}`)))
+  if (heartbeat?.alarm) alarms.push(t('health.hbAlarm'))
 
   const hbMinutes = heartbeat?.minutes_since ?? -1
   const hbOk = hbMinutes >= 0 && hbMinutes <= 15
@@ -441,11 +462,13 @@ export default function SystemHealth() {
               <span className={smtpRateClass}>%{smtpRate}</span>
             </span>
           </div>
-          {smtp?.alarm && (
-            <div className="health-card-alarm-msg">{t('health.smtpAlarm')}</div>
+          {smtpHasAlarm && (
+            <div className="health-card-alarm-msg">
+              {t('health.smtpAlarmFor', t(`health.smtpPeriod${smtpPeriod}`))}
+            </div>
           )}
           <div className="smtp-stream-wrap">
-            <div className={`smtp-stream-line ${smtp?.alarm ? 'smtp-stream-alarm' : 'smtp-stream-ok'}`} />
+            <div className={`smtp-stream-line ${smtpHasAlarm ? 'smtp-stream-alarm' : 'smtp-stream-ok'}`} />
             {[0, 1, 2, 3].map(i => (
               <div
                 key={i}
@@ -848,12 +871,12 @@ export default function SystemHealth() {
       )}
 
       {smtpModal && (
-        <div className="smtp-modal-overlay" onClick={() => setSmtpModal(false)}>
+        <div className="smtp-modal-overlay" onClick={closeSmtpModal}>
           <div className="smtp-modal" onClick={e => e.stopPropagation()}>
             <div className="smtp-modal-header">
               <h3>{t('health.smtpLogsTitle')}</h3>
-              <span className="smtp-modal-period">{t('health.smtpPeriod')}</span>
-              <button className="smtp-modal-close" onClick={() => setSmtpModal(false)}>✕</button>
+              <span className="smtp-modal-period">{t(`health.smtpPeriod${smtpPeriod}`)}</span>
+              <button className="smtp-modal-close" onClick={closeSmtpModal}>✕</button>
             </div>
 
             {smtpLoading ? (
@@ -866,23 +889,69 @@ export default function SystemHealth() {
                   <thead>
                     <tr>
                       <th>{t('health.smtpLogDate')}</th>
-                      <th>{t('health.smtpLogRecipient')}</th>
+                      <th>{t('health.smtpLogFrom')}</th>
+                      <th>{t('health.smtpLogTo')}</th>
                       <th>{t('health.smtpLogSubject')}</th>
                       <th>{t('health.smtpLogStatus')}</th>
                     </tr>
+                    <tr className="smtp-log-filter-row">
+                      <th />
+                      <th>
+                        <input
+                          type="text"
+                          placeholder={t('health.smtpFilterFrom')}
+                          value={smtpFilters.from}
+                          onChange={e => setSmtpFilters(s => ({ ...s, from: e.target.value }))}
+                        />
+                      </th>
+                      <th>
+                        <input
+                          type="text"
+                          placeholder={t('health.smtpFilterTo')}
+                          value={smtpFilters.to}
+                          onChange={e => setSmtpFilters(s => ({ ...s, to: e.target.value }))}
+                        />
+                      </th>
+                      <th>
+                        <input
+                          type="text"
+                          placeholder={t('health.smtpFilterSubject')}
+                          value={smtpFilters.subject}
+                          onChange={e => setSmtpFilters(s => ({ ...s, subject: e.target.value }))}
+                        />
+                      </th>
+                      <th>
+                        <select
+                          value={smtpFilters.status}
+                          onChange={e => setSmtpFilters(s => ({ ...s, status: e.target.value }))}
+                        >
+                          <option value="">{t('health.smtpFilterStatusAll')}</option>
+                          <option value="SENT">{t('health.smtpFilterStatusSent')}</option>
+                          <option value="FAILED">{t('health.smtpFilterStatusFailed')}</option>
+                          <option value="SKIPPED">{t('health.smtpFilterStatusSkipped')}</option>
+                        </select>
+                      </th>
+                    </tr>
                   </thead>
                   <tbody>
-                    {smtpLogs.map(row => (
-                      <tr key={row.id} className="smtp-log-row" onClick={() => setSelectedLog(row)}>
-                        <td className="smtp-log-date sys-mono">{formatDate(row.sent_at)}</td>
-                        <td>
-                          <div className="smtp-log-recipient">{row.recipient_name}</div>
-                          <div className="smtp-log-email sys-muted sys-small">{row.recipient_email}</div>
-                        </td>
-                        <td className="smtp-log-subject">{row.subject}</td>
-                        <td><SmtpStatusCell row={row} t={t} /></td>
+                    {filteredSmtpLogs?.length === 0 ? (
+                      <tr className="smtp-log-empty-row">
+                        <td colSpan={5}>{t('health.smtpLogNoMatch')}</td>
                       </tr>
-                    ))}
+                    ) : (
+                      filteredSmtpLogs?.map(row => (
+                        <tr key={row.id} className="smtp-log-row" onClick={() => setSelectedLog(row)}>
+                          <td className="smtp-log-date sys-mono">{formatDate(row.sent_at)}</td>
+                          <td className="smtp-log-from sys-mono sys-small">{row.sender_email || '—'}</td>
+                          <td>
+                            <div className="smtp-log-recipient">{row.recipient_name || '—'}</div>
+                            <div className="smtp-log-email sys-muted sys-small">{row.recipient_email}</div>
+                          </td>
+                          <td className="smtp-log-subject">{row.subject}</td>
+                          <td><SmtpStatusCell row={row} t={t} /></td>
+                        </tr>
+                      ))
+                    )}
                   </tbody>
                 </table>
               </div>
