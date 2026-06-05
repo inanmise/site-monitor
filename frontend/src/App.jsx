@@ -528,6 +528,23 @@ export default function App() {
                       { value: 'days90',  label: t('app.days90') },
                     ]}
                   />
+                  <input
+                    className="sort-bar-search"
+                    type="text"
+                    placeholder={t('app.searchPlaceholder')}
+                    value={search}
+                    onChange={(e) => { setSearch(e.target.value); setDashPage(1) }}
+                  />
+                  {search && (
+                    <button
+                      type="button"
+                      className="sort-bar-search-clear"
+                      onClick={() => { setSearch(''); setDashPage(1) }}
+                      title={t('app.clearFilter')}
+                    >
+                      ✕
+                    </button>
+                  )}
                 </div>
                 <div className="dashboard-header">
                   <h2>{t('app.dashTitle')}</h2>
