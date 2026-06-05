@@ -35,6 +35,7 @@ public class SystemController {
         data.put("smtp",      extendedHealthService.getSmtpStats());
         data.put("db_ms",     extendedHealthService.measureDbResponseMs());
         data.put("heartbeat", extendedHealthService.getHeartbeatStatus());
+        data.put("network",   extendedHealthService.getNetworkStatus());
         return ResponseEntity.ok(Map.of("success", true, "data", data, "timestamp", now()));
     }
 

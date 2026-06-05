@@ -104,6 +104,7 @@ public class CertificateService {
             check.setRunId((String) result.get("run_id"));
             check.setCheckedAt((String) result.get("checked_at"));
             check.setCreatedAt(now);
+            check.setErrorClass((String) result.get("error_class"));
             checkRepo.save(check);
         } catch (Exception e) {
             log.warn("Could not save check history for {} (run_id={}): {}", domain, result.get("run_id"), e.getMessage());

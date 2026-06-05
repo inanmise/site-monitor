@@ -155,6 +155,126 @@ public class EmailNotificationService {
         }
     }
 
+    // ── System admin — network outage notifications ──────────────────────────
+
+    public String sendSystemAdminNetworkAlert(String to, String detectedAt,
+                                              int networkErrors, int total,
+                                              double errorRate, double threshold) {
+        if (!enabled) {
+            log.info("⚠ Email devre dışı — admin network alert: TO={}", to);
+            return "SKIPPED_DISABLED";
+        }
+        try {
+            MimeMessage msg = mailSender.createMimeMessage();
+            MimeMessageHelper helper = new MimeMessageHelper(msg, true, "UTF-8");
+            helper.setTo(to);
+            helper.setFrom(emailFrom);
+            helper.setSubject("[CertMonitor] ⚠ Ağ Erişim Sorunu Tespit Edildi");
+            helper.setText(buildAdminNetworkAlertHtml(detectedAt, networkErrors, total,
+                    errorRate, threshold), true);
+            return doSend(to, msg, 1);
+        } catch (Exception e) {
+            log.error("✗ Admin network alert hazırlanamadı: TO={} | HATA={}", to, e.getMessage());
+            return "FAILED: " + e.getMessage();
+        }
+    }
+
+    public String sendSystemAdminNetworkResolved(String to, String detectedAt, String resolvedAt,
+                                                 long durationMs, int networkErrors, int total,
+                                                 double errorRate) {
+        if (!enabled) {
+            log.info("⚠ Email devre dışı — admin network resolved: TO={}", to);
+            return "SKIPPED_DISABLED";
+        }
+        try {
+            MimeMessage msg = mailSender.createMimeMessage();
+            MimeMessageHelper helper = new MimeMessageHelper(msg, true, "UTF-8");
+            helper.setTo(to);
+            helper.setFrom(emailFrom);
+            helper.setSubject("[CertMonitor] ✅ Ağ Erişim Sorunu Çözüldü");
+            helper.setText(buildAdminNetworkResolvedHtml(detectedAt, resolvedAt, durationMs,
+                    networkErrors, total, errorRate), true);
+            return doSend(to, msg, 1);
+        } catch (Exception e) {
+            log.error("✗ Admin network resolved hazırlanamadı: TO={} | HATA={}", to, e.getMessage());
+            return "FAILED: " + e.getMessage();
+        }
+    }
+
+    private String buildAdminNetworkAlertHtml(String detectedAt, int networkErrors, int total,
+                                              double errorRate, double threshold) {
+        String ratePct = String.format("%.0f%%", errorRate * 100);
+        String threshPct = String.format("%.0f%%", threshold * 100);
+        return "<!DOCTYPE html><html><head><meta charset='UTF-8'></head><body style='font-family:Segoe UI,Arial,sans-serif;color:#1f2937;'>" +
+                "<div style='max-width:640px;margin:0 auto;padding:24px;background:#fff;'>" +
+                "<h2 style='color:#b91c1c;margin:0 0 12px;'>⚠ CertMonitor — Ağ Erişim Sorunu Tespit Edildi</h2>" +
+                "<p style='font-size:.95em;line-height:1.55;'>CertMonitor host'unun bir veya daha fazla sertifika kontrolünü tamamlayamadığı tespit edildi. " +
+                "Tarama turunda <strong>" + networkErrors + " / " + total + "</strong> domain ağ-class hatasıyla düştü " +
+                "(oran: <strong>" + ratePct + "</strong>, eşik: " + threshPct + "). " +
+                "Bu, host'un outbound bağlantısında bir problem olabileceğini gösteriyor.</p>" +
+                "<table style='width:100%;border-collapse:collapse;margin:16px 0;font-size:.92em;'>" +
+                "<tr><th style='text-align:left;padding:6px 10px;background:#f3f4f6;border:1px solid #e5e7eb;'>Tespit Zamanı</th>" +
+                "<td style='padding:6px 10px;border:1px solid #e5e7eb;'>" + detectedAt + "</td></tr>" +
+                "<tr><th style='text-align:left;padding:6px 10px;background:#f3f4f6;border:1px solid #e5e7eb;'>Etkilenen Domain</th>" +
+                "<td style='padding:6px 10px;border:1px solid #e5e7eb;'>" + networkErrors + " / " + total + "</td></tr>" +
+                "<tr><th style='text-align:left;padding:6px 10px;background:#f3f4f6;border:1px solid #e5e7eb;'>Hata Oranı</th>" +
+                "<td style='padding:6px 10px;border:1px solid #e5e7eb;'>" + ratePct + "</td></tr>" +
+                "<tr><th style='text-align:left;padding:6px 10px;background:#f3f4f6;border:1px solid #e5e7eb;'>Eşik</th>" +
+                "<td style='padding:6px 10px;border:1px solid #e5e7eb;'>" + threshPct + "</td></tr>" +
+                "</table>" +
+                "<h3 style='color:#374151;font-size:1em;margin:20px 0 8px;'>Sistemin Aksiyonu</h3>" +
+                "<ul style='font-size:.9em;line-height:1.6;'>" +
+                "<li>Yeni alarm üretimi <strong>geçici olarak duraklatıldı</strong></li>" +
+                "<li>Auto-resolve işlemi <strong>askıya alındı</strong> (sahte resolved e-posta yağmuru engellenir)</li>" +
+                "<li>Dashboard'da operatörlere uyarı banner'ı gösterildi</li>" +
+                "</ul>" +
+                "<h3 style='color:#374151;font-size:1em;margin:20px 0 8px;'>Önerilen Kontroller</h3>" +
+                "<ul style='font-size:.9em;line-height:1.6;'>" +
+                "<li>Host'un internet bağlantısı (modem/router)</li>" +
+                "<li>Outbound proxy ayarları</li>" +
+                "<li>Kurumsal firewall/NAT politikaları</li>" +
+                "<li>DNS sunucu erişilebilirliği</li>" +
+                "</ul>" +
+                "<p style='font-size:.88em;color:#6b7280;margin-top:24px;'>Ağ erişimi normale döner dönmez ayrıca bir <strong>\"Çözüldü\"</strong> e-postası alacaksınız.</p>" +
+                "<hr style='border:none;border-top:1px solid #e5e7eb;margin:24px 0 12px;' />" +
+                "<p style='font-size:.78em;color:#9ca3af;'>CertMonitor — System Admin Notification</p>" +
+                "</div></body></html>";
+    }
+
+    private String buildAdminNetworkResolvedHtml(String detectedAt, String resolvedAt, long durationMs,
+                                                 int networkErrors, int total, double errorRate) {
+        long durationMin = durationMs / 60000;
+        long durationSec = (durationMs / 1000) % 60;
+        String durationStr = durationMin + " dk " + durationSec + " sn";
+        String ratePct = String.format("%.0f%%", errorRate * 100);
+        return "<!DOCTYPE html><html><head><meta charset='UTF-8'></head><body style='font-family:Segoe UI,Arial,sans-serif;color:#1f2937;'>" +
+                "<div style='max-width:640px;margin:0 auto;padding:24px;background:#fff;'>" +
+                "<h2 style='color:#15803d;margin:0 0 12px;'>✅ CertMonitor — Ağ Erişim Sorunu Çözüldü</h2>" +
+                "<p style='font-size:.95em;line-height:1.55;'>CertMonitor host'unun outbound bağlantı sorunu çözüldü. " +
+                "Sertifika kontrolleri normal işleyişe döndü.</p>" +
+                "<table style='width:100%;border-collapse:collapse;margin:16px 0;font-size:.92em;'>" +
+                "<tr><th style='text-align:left;padding:6px 10px;background:#f3f4f6;border:1px solid #e5e7eb;'>Tespit Zamanı</th>" +
+                "<td style='padding:6px 10px;border:1px solid #e5e7eb;'>" + detectedAt + "</td></tr>" +
+                "<tr><th style='text-align:left;padding:6px 10px;background:#f3f4f6;border:1px solid #e5e7eb;'>Çözüm Zamanı</th>" +
+                "<td style='padding:6px 10px;border:1px solid #e5e7eb;'>" + resolvedAt + "</td></tr>" +
+                "<tr><th style='text-align:left;padding:6px 10px;background:#f3f4f6;border:1px solid #e5e7eb;'>Toplam Süre</th>" +
+                "<td style='padding:6px 10px;border:1px solid #e5e7eb;'>" + durationStr + "</td></tr>" +
+                "<tr><th style='text-align:left;padding:6px 10px;background:#f3f4f6;border:1px solid #e5e7eb;'>Tespit Anında Etkilenen</th>" +
+                "<td style='padding:6px 10px;border:1px solid #e5e7eb;'>" + networkErrors + " / " + total + " (" + ratePct + ")</td></tr>" +
+                "</table>" +
+                "<h3 style='color:#374151;font-size:1em;margin:20px 0 8px;'>Sistemin Aksiyonu</h3>" +
+                "<ul style='font-size:.9em;line-height:1.6;'>" +
+                "<li>Yeni alarm üretimi <strong>yeniden aktif</strong></li>" +
+                "<li>Auto-resolve işlemi <strong>yeniden aktif</strong></li>" +
+                "<li>Dashboard uyarı banner'ı kaldırıldı</li>" +
+                "</ul>" +
+                "<p style='font-size:.88em;color:#15803d;background:#f0fdf4;border:1px solid #bbf7d0;padding:10px 14px;border-radius:6px;'>" +
+                "<em>Not: Outage süresince üretilebilecek sahte alarmlar bastırıldığı için ekibinize ÇÖZÜLDÜ e-posta yağmuru gönderilmedi.</em></p>" +
+                "<hr style='border:none;border-top:1px solid #e5e7eb;margin:24px 0 12px;' />" +
+                "<p style='font-size:.78em;color:#9ca3af;'>CertMonitor — System Admin Notification</p>" +
+                "</div></body></html>";
+    }
+
     // ── Public HTML accessors (used to store sent HTML in notification log) ──
 
     public String buildAlertEmailHtml(String subject, String message,

@@ -71,4 +71,8 @@ public class CertificateCheck {
     private String runId;
     private String checkedAt;
     private String createdAt;
+
+    /** Error classification tag: DNS, NETWORK, SSL, CERT, UNKNOWN — null for non-error checks. */
+    @Column(length = 32)
+    private String errorClass;
 }

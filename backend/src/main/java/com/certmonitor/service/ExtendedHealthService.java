@@ -27,6 +27,28 @@ public class ExtendedHealthService {
     private final NotificationLogRepository notificationLogRepo;
     private final SystemHeartbeatRepository heartbeatRepo;
     private final JdbcTemplate jdbcTemplate;
+    @org.springframework.context.annotation.Lazy
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private SchedulerService schedulerService;
+
+    public Map<String, Object> getNetworkStatus() {
+        Map<String, Object> m = new LinkedHashMap<>();
+        if (schedulerService == null) {
+            m.put("alarm", false);
+            return m;
+        }
+        m.put("alarm",               schedulerService.isNetworkOutageActive());
+        m.put("detected_at",         schedulerService.getNetworkOutageDetectedAt());
+        m.put("resolved_at",         schedulerService.getNetworkOutageResolvedAt());
+        m.put("last_error_rate",     schedulerService.getNetworkLastErrorRate());
+        m.put("last_network_errors", schedulerService.getNetworkLastNetworkErrors());
+        m.put("last_total",          schedulerService.getNetworkLastTotal());
+        m.put("threshold",           schedulerService.getErrorRateThreshold());
+        m.put("min_errors",          schedulerService.getMinNetworkErrors());
+        m.put("pending_alert_email", schedulerService.isPendingAdminAlertEmail());
+        m.put("pending_resolved_email", schedulerService.isPendingAdminResolvedEmail());
+        return m;
+    }
 
     @Value("${cert.monitor.email.from:noreply@certmonitor}")
     private String emailFrom;

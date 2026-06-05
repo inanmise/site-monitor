@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
-import { ChevronDown, BarChart3 } from 'lucide-react'
+import { ChevronDown, BarChart3, AlertOctagon } from 'lucide-react'
 import { api, formatDate } from './api/client'
 import { useDialog } from './components/ui/Dialog.jsx'
 import { useT } from './i18n/index.jsx'
@@ -43,6 +43,7 @@ export default function App() {
   const [certs, setCerts] = useState([])
   const [warnings, setWarnings] = useState([])
   const [stats, setStats] = useState(null)
+  const [networkStatus, setNetworkStatus] = useState(null)
   const [teamStats, setTeamStats] = useState(null)
   const [weakAlgStats, setWeakAlgStats] = useState(null)
   const [statsVisible, setStatsVisible] = useState(false)
@@ -132,15 +133,17 @@ export default function App() {
   }, [user])
 
   const loadData = useCallback(async () => {
-    const [certsRes, statsRes, silentRes, teamStatsRes, weakRes] = await Promise.all([
+    const [certsRes, statsRes, silentRes, teamStatsRes, weakRes, netRes] = await Promise.all([
       api.getCertificates(), api.getStats(), api.getSilentAlertDomains(), api.getTeamStats(),
       api.admin.getWeakAlgorithms(),
+      api.getNetworkStatus(),
     ])
     if (certsRes?.success) { setCerts(certsRes.data); setLastUpdate(certsRes.timestamp) }
     if (statsRes?.success) setStats(statsRes.data)
     if (silentRes?.success) setSilentAlertDomains(new Set(silentRes.data))
     if (teamStatsRes?.success) setTeamStats(teamStatsRes.data)
     if (weakRes?.success) setWeakAlgStats(weakRes)
+    if (netRes?.success) setNetworkStatus(netRes.data)
   }, [])
 
   useEffect(() => {
@@ -400,6 +403,17 @@ export default function App() {
               </button>
             </div>
           </div>
+
+          {networkStatus?.alarm && (
+            <div className="network-outage-banner" role="alert">
+              <AlertOctagon size={20} />
+              <div className="network-outage-text">
+                <strong>{t('app.networkOutageTitle')}</strong>
+                <span>{t('app.networkOutageDesc',
+                  networkStatus.detected_at ? formatDate(networkStatus.detected_at) : '—')}</span>
+              </div>
+            </div>
+          )}
 
           {tab === 'dashboard' && (
             <div className="stats-section">
