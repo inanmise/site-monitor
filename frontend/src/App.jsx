@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
-import { ChevronDown, BarChart3, AlertOctagon } from 'lucide-react'
+import { ChevronDown, BarChart3, AlertOctagon, X } from 'lucide-react'
 import { api, formatDate } from './api/client'
 import { useDialog } from './components/ui/Dialog.jsx'
 import { useT } from './i18n/index.jsx'
@@ -44,6 +44,7 @@ export default function App() {
   const [warnings, setWarnings] = useState([])
   const [stats, setStats] = useState(null)
   const [networkStatus, setNetworkStatus] = useState(null)
+  const [networkBannerDismissed, setNetworkBannerDismissed] = useState(false)
   const [teamStats, setTeamStats] = useState(null)
   const [weakAlgStats, setWeakAlgStats] = useState(null)
   const [statsVisible, setStatsVisible] = useState(false)
@@ -143,7 +144,13 @@ export default function App() {
     if (silentRes?.success) setSilentAlertDomains(new Set(silentRes.data))
     if (teamStatsRes?.success) setTeamStats(teamStatsRes.data)
     if (weakRes?.success) setWeakAlgStats(weakRes)
-    if (netRes?.success) setNetworkStatus(netRes.data)
+    if (netRes?.success) {
+      setNetworkStatus(prev => {
+        // Reset dismissal flag when a new outage starts (alarm transitions false -> true)
+        if (netRes.data?.alarm && !prev?.alarm) setNetworkBannerDismissed(false)
+        return netRes.data
+      })
+    }
   }, [])
 
   useEffect(() => {
@@ -153,6 +160,23 @@ export default function App() {
       return () => clearInterval(interval)
     }
   }, [user, loadData])
+
+  // Lightweight 60s poll just for network outage status — keeps banner in sync
+  // without waiting for the 5-minute full data refresh
+  useEffect(() => {
+    if (!user) return
+    const tick = async () => {
+      const res = await api.getNetworkStatus()
+      if (res?.success) {
+        setNetworkStatus(prev => {
+          if (res.data?.alarm && !prev?.alarm) setNetworkBannerDismissed(false)
+          return res.data
+        })
+      }
+    }
+    const id = setInterval(tick, 60_000)
+    return () => clearInterval(id)
+  }, [user])
 
   useEffect(() => {
     if (user && tab === 'warnings') {
@@ -404,7 +428,7 @@ export default function App() {
             </div>
           </div>
 
-          {networkStatus?.alarm && (
+          {networkStatus?.alarm && !networkBannerDismissed && (
             <div className="network-outage-banner" role="alert">
               <AlertOctagon size={20} />
               <div className="network-outage-text">
@@ -412,6 +436,15 @@ export default function App() {
                 <span>{t('app.networkOutageDesc',
                   networkStatus.detected_at ? formatDate(networkStatus.detected_at) : '—')}</span>
               </div>
+              <button
+                type="button"
+                className="network-outage-close"
+                onClick={() => setNetworkBannerDismissed(true)}
+                title={t('app.dismiss')}
+                aria-label={t('app.dismiss')}
+              >
+                <X size={16} />
+              </button>
             </div>
           )}
 

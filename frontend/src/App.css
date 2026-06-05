@@ -2591,12 +2591,29 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .network-outage-text { display: flex; flex-direction: column; gap: 3px; flex: 1; min-width: 0; }
 .network-outage-text strong { font-size: 1em; font-weight: 700; }
 .network-outage-text span { font-size: .85em; color: #991b1b; opacity: .88; }
+.network-outage-close {
+  flex-shrink: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 28px; height: 28px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: #b91c1c;
+  cursor: pointer;
+  transition: background .12s, border-color .12s;
+}
+.network-outage-close:hover {
+  background: rgba(185,28,28,.10);
+  border-color: rgba(185,28,28,.30);
+}
 [data-theme="dark"] .network-outage-banner {
   background: linear-gradient(to right, rgba(127,29,29,.32) 0%, rgba(127,29,29,.18) 60%);
   border-color: #b91c1c; color: #fecaca;
 }
 [data-theme="dark"] .network-outage-banner svg { color: #fca5a5; }
 [data-theme="dark"] .network-outage-text span { color: #fecaca; opacity: .8; }
+[data-theme="dark"] .network-outage-close { color: #fca5a5; }
+[data-theme="dark"] .network-outage-close:hover { background: rgba(252,165,165,.15); border-color: rgba(252,165,165,.30); }
 
 /* ── SearchableSelect ────────────────────────────────── */
 .ss-wrap { position: relative; display: block; width: 100%; }
