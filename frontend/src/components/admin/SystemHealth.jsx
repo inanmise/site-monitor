@@ -208,6 +208,7 @@ export default function SystemHealth() {
   if (scan_alarm) alarms.push(t('health.scanAlarm'))
   if (smtpHasAlarm) alarms.push(t('health.smtpAlarmFor', t(`health.smtpPeriod${smtpPeriod}`)))
   if (heartbeat?.alarm) alarms.push(t('health.hbAlarm'))
+  if (health?.network?.alarm) alarms.push(t('health.networkAlarm'))
 
   const hbMinutes = heartbeat?.minutes_since ?? -1
   const hbOk = hbMinutes >= 0 && hbMinutes <= 15

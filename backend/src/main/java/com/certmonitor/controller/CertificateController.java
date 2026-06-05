@@ -124,6 +124,16 @@ public class CertificateController {
         return ok(Map.of("success", true, "data", schedulerService.getStatus(), "timestamp", now()));
     }
 
+    /** Public (authenticated) network status — minimal alarm flag + detected timestamp.
+     *  Used by Dashboard banner so all logged-in users see an outage notice. */
+    @GetMapping("/system/network-status")
+    public ResponseEntity<Map<String, Object>> publicNetworkStatus() {
+        Map<String, Object> data = new java.util.LinkedHashMap<>();
+        data.put("alarm",       schedulerService.isNetworkOutageActive());
+        data.put("detected_at", schedulerService.getNetworkOutageDetectedAt());
+        return ok(Map.of("success", true, "data", data, "timestamp", now()));
+    }
+
     @GetMapping("/alerts/silent-domains")
     public ResponseEntity<Map<String, Object>> getSilentAlertDomains() {
         List<String> domains = alertEventRepository.findDomainsWithUnnotifiedOpenAlerts();

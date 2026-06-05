@@ -2575,6 +2575,29 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .health-alarm-icon { font-size: 1.1em; }
 [data-theme="dark"] .health-alarm-banner { background: #450a0a; border-color: #7f1d1d; color: #fca5a5; }
 
+/* Network outage banner — page-level (App.jsx Dashboard üstü) */
+.network-outage-banner {
+  display: flex; align-items: center; gap: 14px;
+  padding: 14px 18px;
+  margin: 0 0 16px 0;
+  background: linear-gradient(to right, #fee2e2 0%, #fef2f2 60%);
+  border: 1px solid #fca5a5;
+  border-left: 5px solid #b91c1c;
+  border-radius: 10px;
+  color: #7f1d1d;
+  box-shadow: 0 2px 8px rgba(185,28,28,.08);
+}
+.network-outage-banner svg { flex-shrink: 0; color: #b91c1c; }
+.network-outage-text { display: flex; flex-direction: column; gap: 3px; flex: 1; min-width: 0; }
+.network-outage-text strong { font-size: 1em; font-weight: 700; }
+.network-outage-text span { font-size: .85em; color: #991b1b; opacity: .88; }
+[data-theme="dark"] .network-outage-banner {
+  background: linear-gradient(to right, rgba(127,29,29,.32) 0%, rgba(127,29,29,.18) 60%);
+  border-color: #b91c1c; color: #fecaca;
+}
+[data-theme="dark"] .network-outage-banner svg { color: #fca5a5; }
+[data-theme="dark"] .network-outage-text span { color: #fecaca; opacity: .8; }
+
 /* ── SearchableSelect ────────────────────────────────── */
 .ss-wrap { position: relative; display: block; width: 100%; }
 .ss-trigger {

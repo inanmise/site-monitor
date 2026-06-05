@@ -100,6 +100,18 @@ public class SchedulerService {
     @Value("${cert.monitor.alert.default-realert-hours:24}")
     private int defaultReAlertHours;
 
+    /** Bulk network failure threshold — when the network-class error rate in a single
+     *  run reaches or exceeds this value (AND minNetworkErrors), the run is treated as
+     *  a suspected outage and downstream alarm processing is suppressed. */
+    @Value("${cert.monitor.network.error-rate-threshold:0.50}")
+    private double networkErrorRateThreshold;
+
+    @Value("${cert.monitor.network.min-errors:3}")
+    private int networkMinErrors;
+
+    @Value("${cert.monitor.system-admin.email:erdi.inanmis@gmail.com}")
+    private String systemAdminEmail;
+
     private static final DateTimeFormatter ISO =
             DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
 
@@ -120,6 +132,19 @@ public class SchedulerService {
     private final AtomicInteger lastRunTotal      = new AtomicInteger(0);
     private final AtomicInteger lastRunWarnings   = new AtomicInteger(0);
     private final AtomicInteger lastRunErrors     = new AtomicInteger(0);
+
+    // Network bulk-failure state (in-memory; resets on restart)
+    private final AtomicBoolean   networkOutageActive       = new AtomicBoolean(false);
+    private final AtomicReference<String> networkOutageDetectedAt = new AtomicReference<>(null);
+    private final AtomicReference<String> networkOutageResolvedAt = new AtomicReference<>(null);
+    private final AtomicReference<Double> networkLastErrorRate    = new AtomicReference<>(0.0);
+    private final AtomicInteger   networkLastNetworkErrors  = new AtomicInteger(0);
+    private final AtomicInteger   networkLastTotal          = new AtomicInteger(0);
+    /** Set when admin alert email could not be sent (likely because the same outage blocked SMTP).
+     *  Retried on every scheduler tick until cleared by a successful alert OR resolved email. */
+    private final AtomicBoolean   pendingAdminAlertEmail    = new AtomicBoolean(false);
+    /** Set when admin resolved email could not be sent. */
+    private final AtomicBoolean   pendingAdminResolvedEmail = new AtomicBoolean(false);
 
     @EventListener(ApplicationReadyEvent.class)
     public void runOnStartup() {
@@ -316,8 +341,15 @@ public class SchedulerService {
 
             long errors   = results.stream().filter(r -> "error".equals(r.get("status"))).count();
             long warnings = results.stream().filter(r -> Boolean.TRUE.equals(r.get("warning"))).count();
-            log.info("Check complete — runId={}, Total={}, Warning={}, Error={} [instance={}]",
-                    runId, results.size(), warnings, errors, INSTANCE_ID);
+            long networkErrors = results.stream()
+                    .filter(r -> "error".equals(r.get("status")))
+                    .map(r -> (String) r.get("error_class"))
+                    .filter(c -> "DNS".equals(c) || "NETWORK".equals(c))
+                    .count();
+            double networkErrorRate = results.isEmpty() ? 0.0 : (double) networkErrors / results.size();
+            log.info("Check complete — runId={}, Total={}, Warning={}, Error={}, NetworkErrors={} (rate={}) [instance={}]",
+                    runId, results.size(), warnings, errors, networkErrors,
+                    String.format("%.2f", networkErrorRate), INSTANCE_ID);
 
             lastRun.set(LocalDateTime.now(ZoneOffset.UTC));
             lastRunDurationMs.set(System.currentTimeMillis() - startMs);
@@ -325,7 +357,38 @@ public class SchedulerService {
             lastRunErrors.set((int) errors);
             lastRunWarnings.set((int) warnings);
 
-            escalationService.processResults(results);
+            boolean suspectedOutage = networkErrors >= networkMinErrors
+                                   && networkErrorRate >= networkErrorRateThreshold;
+
+            if (suspectedOutage) {
+                networkLastErrorRate.set(networkErrorRate);
+                networkLastNetworkErrors.set((int) networkErrors);
+                networkLastTotal.set(results.size());
+                if (networkOutageActive.compareAndSet(false, true)) {
+                    String detectedAt = ISO.format(Instant.now());
+                    networkOutageDetectedAt.set(detectedAt);
+                    networkOutageResolvedAt.set(null);
+                    log.warn("⚠ Suspected network outage detected: {}/{} domains failed with network-class errors " +
+                             "(rate={}, threshold={}) — alarm processing SKIPPED for this run",
+                            networkErrors, results.size(),
+                            String.format("%.2f", networkErrorRate), networkErrorRateThreshold);
+                    trySendAdminAlert();
+                } else {
+                    log.warn("⚠ Suspected network outage still ongoing: {}/{} domains failed with network-class errors " +
+                             "(rate={}) — alarm processing remains SKIPPED",
+                            networkErrors, results.size(), String.format("%.2f", networkErrorRate));
+                    if (pendingAdminAlertEmail.get()) trySendAdminAlert();
+                }
+            } else {
+                if (networkOutageActive.compareAndSet(true, false)) {
+                    String resolvedAt = ISO.format(Instant.now());
+                    networkOutageResolvedAt.set(resolvedAt);
+                    log.info("✓ Network outage cleared — alarm processing resumed");
+                    trySendAdminResolved();
+                }
+                if (pendingAdminResolvedEmail.get()) trySendAdminResolved();
+                escalationService.processResults(results);
+            }
 
         } finally {
             running.set(false);
@@ -625,5 +688,82 @@ public class SchedulerService {
     private static String resolveHostname() {
         try { return InetAddress.getLocalHost().getHostName(); }
         catch (Exception e) { return "node"; }
+    }
+
+    // ── Network outage state — getters used by ExtendedHealthService ──────────
+
+    public boolean isNetworkOutageActive() { return networkOutageActive.get(); }
+    public String  getNetworkOutageDetectedAt() { return networkOutageDetectedAt.get(); }
+    public String  getNetworkOutageResolvedAt() { return networkOutageResolvedAt.get(); }
+    public double  getNetworkLastErrorRate() { return networkLastErrorRate.get(); }
+    public int     getNetworkLastNetworkErrors() { return networkLastNetworkErrors.get(); }
+    public int     getNetworkLastTotal() { return networkLastTotal.get(); }
+    public double  getErrorRateThreshold() { return networkErrorRateThreshold; }
+    public int     getMinNetworkErrors() { return networkMinErrors; }
+    public boolean isPendingAdminAlertEmail() { return pendingAdminAlertEmail.get(); }
+    public boolean isPendingAdminResolvedEmail() { return pendingAdminResolvedEmail.get(); }
+
+    // ── Admin email — outage notification + resilient retry ───────────────────
+
+    private void trySendAdminAlert() {
+        String status;
+        try {
+            status = emailService.sendSystemAdminNetworkAlert(
+                    systemAdminEmail,
+                    networkOutageDetectedAt.get(),
+                    networkLastNetworkErrors.get(),
+                    networkLastTotal.get(),
+                    networkLastErrorRate.get(),
+                    networkErrorRateThreshold);
+        } catch (Exception e) {
+            status = "FAILED: " + e.getMessage();
+        }
+        if ("SENT".equals(status) || "SKIPPED_DISABLED".equals(status)) {
+            pendingAdminAlertEmail.set(false);
+            log.info("System admin notified about network outage ({}) status={}", systemAdminEmail, status);
+        } else {
+            pendingAdminAlertEmail.set(true);
+            log.warn("Failed to send admin network alert (likely same outage blocking SMTP): {}", status);
+        }
+    }
+
+    private void trySendAdminResolved() {
+        long durationMs = computeOutageDurationMs();
+        String status;
+        try {
+            status = emailService.sendSystemAdminNetworkResolved(
+                    systemAdminEmail,
+                    networkOutageDetectedAt.get(),
+                    networkOutageResolvedAt.get(),
+                    durationMs,
+                    networkLastNetworkErrors.get(),
+                    networkLastTotal.get(),
+                    networkLastErrorRate.get());
+        } catch (Exception e) {
+            status = "FAILED: " + e.getMessage();
+        }
+        if ("SENT".equals(status) || "SKIPPED_DISABLED".equals(status)) {
+            pendingAdminResolvedEmail.set(false);
+            // Resolved email contains full timeline → no need to send the detection-only one separately
+            pendingAdminAlertEmail.set(false);
+            log.info("System admin notified about network outage resolution ({}) status={}",
+                    systemAdminEmail, status);
+        } else {
+            pendingAdminResolvedEmail.set(true);
+            log.warn("Failed to send admin network resolved notification: {}", status);
+        }
+    }
+
+    private long computeOutageDurationMs() {
+        String d = networkOutageDetectedAt.get();
+        String r = networkOutageResolvedAt.get();
+        if (d == null || r == null) return 0L;
+        try {
+            Instant det = Instant.from(ISO.parse(d));
+            Instant res = Instant.from(ISO.parse(r));
+            return res.toEpochMilli() - det.toEpochMilli();
+        } catch (Exception e) {
+            return 0L;
+        }
     }
 }

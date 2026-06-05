@@ -76,6 +76,8 @@ export const api = {
 
   getSilentAlertDomains: () => request('/alerts/silent-domains'),
 
+  getNetworkStatus: () => request('/system/network-status'),
+
   // ── Admin ────────────────────────────────────────────────────────────────
 
   admin: {

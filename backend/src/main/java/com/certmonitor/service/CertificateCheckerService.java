@@ -196,19 +196,32 @@ public class CertificateCheckerService {
         } catch (java.net.SocketTimeoutException e) {
             log.warn("Certificate check timeout: domain={}:{} elapsed={}ms",
                     domain, port, System.currentTimeMillis() - startMs);
-            return error(domain, "Connection timeout after " + timeoutSeconds + "s");
+            return errorWithClass(domain, "Connection timeout after " + timeoutSeconds + "s", "NETWORK");
         } catch (java.net.UnknownHostException e) {
             log.warn("Certificate check DNS failure: domain={} elapsed={}ms",
                     domain, System.currentTimeMillis() - startMs);
-            return error(domain, "Domain resolution failed");
+            return errorWithClass(domain, "Domain resolution failed", "DNS");
+        } catch (java.net.ConnectException e) {
+            log.warn("Certificate check connect refused: domain={}:{} elapsed={}ms",
+                    domain, port, System.currentTimeMillis() - startMs);
+            return errorWithClass(domain, "Connection refused/unreachable: " + e.getMessage(), "NETWORK");
+        } catch (java.net.NoRouteToHostException e) {
+            log.warn("Certificate check no route to host: domain={}:{}", domain, port);
+            return errorWithClass(domain, "No route to host", "NETWORK");
+        } catch (java.net.SocketException e) {
+            log.warn("Certificate check socket error: domain={}:{} err={}", domain, port, e.getMessage());
+            return errorWithClass(domain, "Socket error: " + e.getMessage(), "NETWORK");
+        } catch (javax.net.ssl.SSLHandshakeException e) {
+            log.warn("Certificate check SSL handshake: domain={} error={}", domain, e.getMessage());
+            return errorWithClass(domain, "SSL handshake: " + e.getMessage(), "SSL");
         } catch (javax.net.ssl.SSLException e) {
             log.warn("Certificate check SSL error: domain={} error={} elapsed={}ms",
                     domain, e.getMessage(), System.currentTimeMillis() - startMs);
-            return error(domain, "SSL Error: " + e.getMessage());
+            return errorWithClass(domain, "SSL Error: " + e.getMessage(), "SSL");
         } catch (Exception e) {
             log.error("Certificate check unexpected error: domain={}:{} elapsed={}ms",
                     domain, port, System.currentTimeMillis() - startMs, e);
-            return error(domain, "Error: " + e.getMessage());
+            return errorWithClass(domain, "Error: " + e.getMessage(), "UNKNOWN");
         }
     }
 
@@ -407,6 +420,12 @@ public class CertificateCheckerService {
         } catch (Exception e) {
             return Collections.emptyList();
         }
+    }
+
+    private Map<String, Object> errorWithClass(String domain, String msg, String errorClass) {
+        Map<String, Object> r = error(domain, msg);
+        r.put("error_class", errorClass);
+        return r;
     }
 
     private Map<String, Object> error(String domain, String msg) {
