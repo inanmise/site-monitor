@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
-import { ChevronDown, BarChart3, AlertOctagon, X } from 'lucide-react'
+import { ChevronDown, BarChart3, AlertOctagon, X, Wifi, CheckCircle, Clock } from 'lucide-react'
 import { api, formatDate } from './api/client'
 import { useDialog } from './components/ui/Dialog.jsx'
 import { useT } from './i18n/index.jsx'
@@ -30,6 +30,16 @@ import ExpiryForecastPage from './pages/ExpiryForecastPage'
 const INACTIVITY_MS   = Number(import.meta.env.VITE_INACTIVITY_MS   ?? 300_000)
 const WARN_BEFORE_MS  = Number(import.meta.env.VITE_WARN_BEFORE_MS  ?? 60_000)
 
+function formatDurationShort(ms) {
+  if (ms == null || ms < 0) return '—'
+  const s = Math.floor(ms / 1000)
+  if (s < 60)   return `${s}s`
+  const m = Math.floor(s / 60)
+  if (m < 60)   return `${m} dk ${s % 60} sn`
+  const h = Math.floor(m / 60)
+  return `${h} sa ${m % 60} dk`
+}
+
 
 export default function App() {
   const { showConfirm } = useDialog()
@@ -45,6 +55,7 @@ export default function App() {
   const [stats, setStats] = useState(null)
   const [networkStatus, setNetworkStatus] = useState(null)
   const [networkBannerDismissed, setNetworkBannerDismissed] = useState(false)
+  const [outageHistory, setOutageHistory] = useState([])
   const [teamStats, setTeamStats] = useState(null)
   const [weakAlgStats, setWeakAlgStats] = useState(null)
   const [statsVisible, setStatsVisible] = useState(false)
@@ -66,6 +77,10 @@ export default function App() {
   const [pageSize, setPageSize] = useState(12)
   const [activityRefreshKey, setActivityRefreshKey] = useState(0)
   const [silentAlertDomains, setSilentAlertDomains] = useState(new Set())
+  const [mailFailureDomains, setMailFailureDomains] = useState(new Set())
+  const [adminInitialTab, setAdminInitialTab] = useState(null)
+  const [smtpPreFilterDomain, setSmtpPreFilterDomain] = useState(null)
+  const [openSmtpModalOnLoad, setOpenSmtpModalOnLoad] = useState(false)
 
   const logoutTimer = useRef(null)
   const warnTimer = useRef(null)
@@ -134,14 +149,16 @@ export default function App() {
   }, [user])
 
   const loadData = useCallback(async () => {
-    const [certsRes, statsRes, silentRes, teamStatsRes, weakRes, netRes] = await Promise.all([
+    const [certsRes, statsRes, silentRes, teamStatsRes, weakRes, netRes, mailFailRes] = await Promise.all([
       api.getCertificates(), api.getStats(), api.getSilentAlertDomains(), api.getTeamStats(),
       api.admin.getWeakAlgorithms(),
       api.getNetworkStatus(),
+      api.getMailFailureDomains(),
     ])
     if (certsRes?.success) { setCerts(certsRes.data); setLastUpdate(certsRes.timestamp) }
     if (statsRes?.success) setStats(statsRes.data)
     if (silentRes?.success) setSilentAlertDomains(new Set(silentRes.data))
+    if (mailFailRes?.success) setMailFailureDomains(new Set(mailFailRes.data ?? []))
     if (teamStatsRes?.success) setTeamStats(teamStatsRes.data)
     if (weakRes?.success) setWeakAlgStats(weakRes)
     if (netRes?.success) {
@@ -181,6 +198,9 @@ export default function App() {
   useEffect(() => {
     if (user && tab === 'warnings') {
       api.getWarnings().then((res) => { if (res?.success) setWarnings(res.data) })
+      api.getNetworkOutageHistory(50).then((res) => {
+        if (res?.success && Array.isArray(res.events)) setOutageHistory(res.events)
+      })
     }
   }, [user, tab])
 
@@ -533,6 +553,12 @@ export default function App() {
                       {pageCerts.map((cert) => (
                         <CertificateCard key={cert.domain} cert={cert} onClick={(d) => setModalCert(certs.find(c => c.domain === d) ?? null)}
                           hasSilentAlert={silentAlertDomains.has(cert.domain)}
+                          hasMailFailure={mailFailureDomains.has(cert.domain)}
+                          onMailFailureClick={() => {
+                            setTab('health')
+                            setSmtpPreFilterDomain(cert.domain)
+                            setOpenSmtpModalOnLoad(true)
+                          }}
                           isWeak={weakAlgStats != null ? weakDomainSet.has(cert.domain) : undefined} />
                       ))}
                     </div>
@@ -603,10 +629,109 @@ export default function App() {
                   <div className="cards-container">
                     {warnings.map((cert) => (
                       <CertificateCard key={cert.domain} cert={cert} onClick={(d) => setModalCert(certs.find(c => c.domain === d) ?? null)}
-                        hasSilentAlert={silentAlertDomains.has(cert.domain)} />
+                        hasSilentAlert={silentAlertDomains.has(cert.domain)}
+                        hasMailFailure={mailFailureDomains.has(cert.domain)}
+                        onMailFailureClick={() => {
+                          setTab('admin')
+                          setAdminInitialTab('health')
+                          setSmtpPreFilterDomain(cert.domain)
+                          setOpenSmtpModalOnLoad(true)
+                        }} />
                     ))}
                   </div>
                 )}
+
+                <div className="network-outage-history-section">
+                  <h3 className="section-subtitle">
+                    <Wifi size={18} /> {t('app.networkOutageHistoryTitle')}
+                  </h3>
+                  {outageHistory.length === 0 ? (
+                    <div className="loading muted">{t('app.networkOutageHistoryEmpty')}</div>
+                  ) : (
+                    <div className="alert-history-cards">
+                      {outageHistory.map(ev => {
+                        const ratePct = ev.error_rate != null ? Math.round(ev.error_rate * 100) : null
+                        const thresholdPct = ev.threshold != null ? Math.round(ev.threshold * 100) : null
+                        const healthy = (ev.total_checks ?? 0) - (ev.network_errors ?? 0)
+                        return (
+                          <div key={ev.id} className="alert-history-card">
+                            <div className="ahc-stripe" style={{ background: ev.status === 'ONGOING' ? '#dc2626' : '#10b981' }} />
+                            <div className="ahc-body">
+                              <div className="ahc-top">
+                                <strong className="ahc-domain">
+                                  {ev.status === 'ONGOING' ? t('app.outageOngoing') : t('app.outageResolved')}
+                                </strong>
+                                {ratePct != null && (
+                                  <span className="ahc-days" style={{ background:'#fee2e2', color:'#991b1b' }}>
+                                    {ratePct}% {t('app.outageErrorRate')}
+                                  </span>
+                                )}
+                              </div>
+
+                              <div className="ahc-timeline">
+                                <div className="ahc-tl-item">
+                                  <span className="ahc-tl-icon"><AlertOctagon size={13} /></span>
+                                  <div>
+                                    <div className="ahc-tl-label">{t('app.outageDetected')}</div>
+                                    <div className="ahc-tl-val">{formatDate(ev.detected_at)}</div>
+                                  </div>
+                                </div>
+                                <div className="ahc-tl-item ahc-tl-resolve">
+                                  <span className="ahc-tl-icon"><CheckCircle size={13} /></span>
+                                  <div>
+                                    <div className="ahc-tl-label">{t('app.outageResolvedAt')}</div>
+                                    <div className="ahc-tl-val">
+                                      {ev.resolved_at
+                                        ? formatDate(ev.resolved_at)
+                                        : <em style={{ color: '#dc2626' }}>{t('app.outageStillActive')}</em>}
+                                    </div>
+                                  </div>
+                                </div>
+                                <div className="ahc-tl-item">
+                                  <span className="ahc-tl-icon"><Clock size={13} /></span>
+                                  <div>
+                                    <div className="ahc-tl-label">{t('app.outageDuration')}</div>
+                                    <div className="ahc-tl-val">
+                                      {ev.duration_ms ? formatDurationShort(ev.duration_ms) : '—'}
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
+
+                              <div className="outage-stats-grid">
+                                <div className="outage-stat">
+                                  <div className="outage-stat-label">{t('app.outageStatTotal')}</div>
+                                  <div className="outage-stat-val">{ev.total_checks ?? '—'}</div>
+                                </div>
+                                <div className="outage-stat outage-stat-error">
+                                  <div className="outage-stat-label">{t('app.outageStatErrors')}</div>
+                                  <div className="outage-stat-val">{ev.network_errors ?? '—'}</div>
+                                </div>
+                                <div className="outage-stat outage-stat-ok">
+                                  <div className="outage-stat-label">{t('app.outageStatHealthy')}</div>
+                                  <div className="outage-stat-val">{healthy}</div>
+                                </div>
+                                <div className="outage-stat">
+                                  <div className="outage-stat-label">{t('app.outageStatRate')}</div>
+                                  <div className="outage-stat-val">{ratePct != null ? `${ratePct}%` : '—'}</div>
+                                </div>
+                                <div className="outage-stat">
+                                  <div className="outage-stat-label">{t('app.outageStatThreshold')}</div>
+                                  <div className="outage-stat-val">{thresholdPct != null ? `${thresholdPct}%` : '—'}</div>
+                                </div>
+                              </div>
+
+                              <div className="outage-cause">
+                                {t('app.outageCauseDesc', ev.network_errors ?? 0, ev.total_checks ?? 0,
+                                   ratePct ?? 0, thresholdPct ?? 0)}
+                              </div>
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )}
+                </div>
               </div>
             )}
 
@@ -675,7 +800,14 @@ export default function App() {
             {tab === 'health' && systemRole === 'ADMIN' && (
               <div className="tab-content active">
                 <h2>{t('app.healthTitle')}</h2>
-                <SystemHealth />
+                <SystemHealth
+                  preFilterDomain={smtpPreFilterDomain}
+                  openSmtpModalOnLoad={openSmtpModalOnLoad}
+                  onSmtpPreFilterConsumed={() => {
+                    setSmtpPreFilterDomain(null)
+                    setOpenSmtpModalOnLoad(false)
+                  }}
+                />
               </div>
             )}
 
@@ -693,7 +825,7 @@ export default function App() {
         </div>
       </main>
 
-      <CertificateModal domain={modalCert?.domain} alertLevel={modalCert?.alert_level} initialData={modalCert?._preview ? modalCert : undefined} previewMode={!!modalCert?._preview} onClose={() => setModalCert(null)} />
+      <CertificateModal domain={modalCert?.domain} alertLevel={modalCert?.alert_level} initialData={modalCert?._preview ? modalCert : undefined} previewMode={!!modalCert?._preview} currentUser={user} currentUserRole={systemRole} onClose={() => setModalCert(null)} />
       {caModal && <CaDiversityModal certs={certs} onClose={() => setCaModal(false)} />}
     </div>
   )

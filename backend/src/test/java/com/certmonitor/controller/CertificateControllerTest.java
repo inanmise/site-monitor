@@ -3,6 +3,7 @@ package com.certmonitor.controller;
 import com.certmonitor.dto.CertificateDto;
 import com.certmonitor.model.AlertEvent;
 import com.certmonitor.repository.AlertEventRepository;
+import com.certmonitor.repository.NetworkOutageEventRepository;
 import com.certmonitor.service.CertificateCheckerService;
 import com.certmonitor.service.CertificateService;
 import com.certmonitor.service.RememberMeService;
@@ -55,6 +56,12 @@ class CertificateControllerTest {
 
     @MockBean
     AlertEventRepository alertEventRepo;
+
+    @MockBean
+    NetworkOutageEventRepository networkOutageRepo;
+
+    @MockBean
+    com.certmonitor.service.ExtendedHealthService extendedHealthService;
 
     // ── Auth guard ────────────────────────────────────────────────────────────
 

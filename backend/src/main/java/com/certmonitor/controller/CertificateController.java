@@ -2,7 +2,10 @@ package com.certmonitor.controller;
 
 import com.certmonitor.dto.CertificateDto;
 import com.certmonitor.model.AlertEvent;
+import com.certmonitor.model.NetworkOutageEvent;
 import com.certmonitor.repository.AlertEventRepository;
+import com.certmonitor.repository.NetworkOutageEventRepository;
+import org.springframework.data.domain.PageRequest;
 import com.certmonitor.service.CertificateCheckerService;
 import com.certmonitor.service.CertificateService;
 import com.certmonitor.service.SchedulerService;
@@ -28,6 +31,8 @@ public class CertificateController {
     private final CertificateCheckerService checkerService;
     private final SchedulerService schedulerService;
     private final AlertEventRepository alertEventRepository;
+    private final NetworkOutageEventRepository networkOutageRepo;
+    private final com.certmonitor.service.ExtendedHealthService extendedHealthService;
 
     private static final DateTimeFormatter ISO =
             DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
@@ -134,10 +139,46 @@ public class CertificateController {
         return ok(Map.of("success", true, "data", data, "timestamp", now()));
     }
 
+    /** Past network outage events (most recent first). Used by Warnings page history section. */
+    @GetMapping("/system/network-outage-history")
+    public ResponseEntity<Map<String, Object>> networkOutageHistory(
+            @RequestParam(defaultValue = "50") int limit) {
+        int n = Math.min(Math.max(limit, 1), 200);
+        List<Map<String, Object>> events = networkOutageRepo.findRecent(PageRequest.of(0, n))
+                .stream().map(this::outageEventToMap).toList();
+        return ok(Map.of("success", true, "events", events, "count", events.size(), "timestamp", now()));
+    }
+
+    private Map<String, Object> outageEventToMap(NetworkOutageEvent e) {
+        Map<String, Object> m = new java.util.LinkedHashMap<>();
+        m.put("id", e.getId());
+        m.put("detected_at", e.getDetectedAt());
+        m.put("resolved_at", e.getResolvedAt());
+        m.put("duration_ms", e.getDurationMs());
+        m.put("network_errors", e.getNetworkErrors());
+        m.put("total_checks", e.getTotalChecks());
+        m.put("error_rate", e.getErrorRate());
+        m.put("threshold", e.getThreshold());
+        m.put("status", e.getStatus());
+        return m;
+    }
+
     @GetMapping("/alerts/silent-domains")
     public ResponseEntity<Map<String, Object>> getSilentAlertDomains() {
         List<String> domains = alertEventRepository.findDomainsWithUnnotifiedOpenAlerts();
         return ok(Map.of("success", true, "data", domains, "timestamp", now()));
+    }
+
+    /** Domains whose last N consecutive mail delivery attempts (within {days}d) have all failed.
+     *  Surfaced as a warning badge on the certificate card. */
+    @GetMapping("/notifications/failure-domains")
+    public ResponseEntity<Map<String, Object>> getMailFailureDomains(
+            @RequestParam(defaultValue = "3") int consecutive,
+            @RequestParam(defaultValue = "7") int days) {
+        int c = Math.max(2, Math.min(consecutive, 10));
+        int d = Math.max(1, Math.min(days, 90));
+        List<String> domains = extendedHealthService.findDomainsWithConsecutiveMailFailures(c, d);
+        return ok(Map.of("success", true, "data", domains, "count", domains.size(), "timestamp", now()));
     }
 
     @GetMapping("/renewal-advice")

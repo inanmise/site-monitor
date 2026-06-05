@@ -1,6 +1,9 @@
 package com.certmonitor.service;
 
+import com.certmonitor.model.AlertEvent;
+import com.certmonitor.model.NotificationLog;
 import com.certmonitor.model.SystemHeartbeat;
+import com.certmonitor.repository.AlertEventRepository;
 import com.certmonitor.repository.NotificationLogRepository;
 import com.certmonitor.repository.SystemHeartbeatRepository;
 import lombok.RequiredArgsConstructor;
@@ -26,6 +29,7 @@ public class ExtendedHealthService {
 
     private final NotificationLogRepository notificationLogRepo;
     private final SystemHeartbeatRepository heartbeatRepo;
+    private final AlertEventRepository alertEventRepo;
     private final JdbcTemplate jdbcTemplate;
     @org.springframework.context.annotation.Lazy
     @org.springframework.beans.factory.annotation.Autowired(required = false)
@@ -110,7 +114,9 @@ public class ExtendedHealthService {
     public List<Map<String, Object>> getSmtpFailures(int days) {
         String cutoff = LocalDateTime.now(ZoneOffset.UTC).minusDays(days)
                 .format(DateTimeFormatter.ISO_LOCAL_DATE_TIME);
-        return notificationLogRepo.findAllSince(cutoff).stream()
+        List<NotificationLog> logs = notificationLogRepo.findAllSince(cutoff);
+        Map<Long, String> aeToDomain = aeIdToDomainMap(logs);
+        return logs.stream()
                 .map(n -> {
                     String status = n.getEmailStatus() != null ? n.getEmailStatus() : "";
                     String kind   = status.equals("SENT") ? "SENT"
@@ -121,6 +127,7 @@ public class ExtendedHealthService {
                     Map<String, Object> m = new LinkedHashMap<>();
                     m.put("id",              n.getId());
                     m.put("alert_event_id",  n.getAlertEventId());
+                    m.put("domain",          aeToDomain.get(n.getAlertEventId()));
                     m.put("sent_at",         n.getSentAt());
                     m.put("sender_email",    emailFrom);
                     m.put("recipient_name",  n.getRecipientName());
@@ -133,6 +140,59 @@ public class ExtendedHealthService {
                     return m;
                 })
                 .collect(java.util.stream.Collectors.toList());
+    }
+
+    private Map<Long, String> aeIdToDomainMap(List<NotificationLog> logs) {
+        java.util.Set<Long> ids = logs.stream()
+                .map(NotificationLog::getAlertEventId)
+                .filter(java.util.Objects::nonNull)
+                .collect(java.util.stream.Collectors.toSet());
+        if (ids.isEmpty()) return java.util.Collections.emptyMap();
+        return alertEventRepo.findAllById(ids).stream()
+                .collect(java.util.stream.Collectors.toMap(AlertEvent::getId, AlertEvent::getDomain));
+    }
+
+    /** Domains whose last N consecutive non-SKIPPED mail attempts (within the last
+     *  {@code days} days) are all FAILED. SKIPPED_DISABLED is excluded from the
+     *  "last N" window — it represents an admin choice, not a delivery failure. */
+    public List<String> findDomainsWithConsecutiveMailFailures(int consecutive, int days) {
+        if (consecutive < 1) return List.of();
+        String cutoff = LocalDateTime.now(ZoneOffset.UTC).minusDays(days)
+                .format(DateTimeFormatter.ISO_LOCAL_DATE_TIME);
+        List<NotificationLog> recent = notificationLogRepo.findAllSince(cutoff).stream()
+                .filter(n -> n.getEmailStatus() != null && !n.getEmailStatus().startsWith("SKIPPED"))
+                .filter(n -> n.getAlertEventId() != null)
+                .collect(java.util.stream.Collectors.toList());
+        if (recent.isEmpty()) return List.of();
+
+        Map<Long, String> aeToDomain = aeIdToDomainMap(recent);
+        Map<String, List<NotificationLog>> byDomain = recent.stream()
+                .filter(n -> aeToDomain.containsKey(n.getAlertEventId()))
+                .collect(java.util.stream.Collectors.groupingBy(
+                        n -> aeToDomain.get(n.getAlertEventId())));
+
+        java.util.Comparator<NotificationLog> bySentAtDesc = (a, b) -> {
+            String sa = a.getSentAt();
+            String sb = b.getSentAt();
+            if (sa == null && sb == null) return 0;
+            if (sa == null) return 1;   // nulls last
+            if (sb == null) return -1;
+            return sb.compareTo(sa);    // DESC
+        };
+
+        List<String> failing = new java.util.ArrayList<>();
+        for (Map.Entry<String, List<NotificationLog>> e : byDomain.entrySet()) {
+            List<NotificationLog> top = e.getValue().stream()
+                    .sorted(bySentAtDesc)
+                    .limit(consecutive)
+                    .collect(java.util.stream.Collectors.toList());
+            if (top.size() < consecutive) continue;
+            boolean allFailed = top.stream()
+                    .allMatch(n -> n.getEmailStatus() != null && n.getEmailStatus().startsWith("FAILED"));
+            if (allFailed) failing.add(e.getKey());
+        }
+        java.util.Collections.sort(failing);
+        return failing;
     }
 
     public Map<String, Object> getSmtpStats() {

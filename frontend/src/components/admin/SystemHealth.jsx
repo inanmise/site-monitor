@@ -51,7 +51,7 @@ function DbColor(ms) {
   return 'sys-err-text'
 }
 
-export default function SystemHealth() {
+export default function SystemHealth({ preFilterDomain, openSmtpModalOnLoad, onSmtpPreFilterConsumed }) {
   const t = useT()
   const [health, setHealth]           = useState(null)
   const [metrics, setMetrics]         = useState([])
@@ -74,7 +74,7 @@ export default function SystemHealth() {
   const [smtpLogs, setSmtpLogs]       = useState(null)
   const [smtpLoading, setSmtpLoading] = useState(false)
   const [selectedLog, setSelectedLog] = useState(null)
-  const [smtpFilters, setSmtpFilters] = useState({ from: '', to: '', subject: '', status: '' })
+  const [smtpFilters, setSmtpFilters] = useState({ from: '', to: '', subject: '', status: '', domain: '' })
 
   const load = useCallback(async () => {
     const [healthRes, metricsRes, httpRes, dbRes] = await Promise.all([
@@ -121,20 +121,28 @@ export default function SystemHealth() {
     return () => clearInterval(id)
   }, [refreshPool])
 
-  const openSmtpModal = async () => {
+  const openSmtpModal = useCallback(async (overrides) => {
     setSmtpModal(true)
     setSmtpLogs(null)
-    setSmtpFilters({ from: '', to: '', subject: '', status: '' })
+    setSmtpFilters({ from: '', to: '', subject: '', status: '', domain: '', ...(overrides ?? {}) })
     setSmtpLoading(true)
     const days = parseInt(smtpPeriod) || 30
     const res = await api.admin.getSmtpLogs(days)
     setSmtpLogs(res?.success ? res.data : [])
     setSmtpLoading(false)
-  }
+  }, [smtpPeriod])
+
+  useEffect(() => {
+    if (openSmtpModalOnLoad) {
+      openSmtpModal(preFilterDomain ? { domain: preFilterDomain } : undefined)
+      onSmtpPreFilterConsumed?.()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openSmtpModalOnLoad, preFilterDomain])
 
   const closeSmtpModal = () => {
     setSmtpModal(false)
-    setSmtpFilters({ from: '', to: '', subject: '', status: '' })
+    setSmtpFilters({ from: '', to: '', subject: '', status: '', domain: '' })
   }
 
   const filteredSmtpLogs = useMemo(() => {
@@ -146,6 +154,7 @@ export default function SystemHealth() {
       if (f.to      && !(ci(l.recipient_email) + ' ' + ci(l.recipient_name)).includes(ci(f.to))) return false
       if (f.subject && !ci(l.subject).includes(ci(f.subject))) return false
       if (f.status  && l.kind !== f.status) return false
+      if (f.domain  && !ci(l.domain).includes(ci(f.domain))) return false
       return true
     })
   }, [smtpLogs, smtpFilters])
@@ -890,6 +899,7 @@ export default function SystemHealth() {
                   <thead>
                     <tr>
                       <th>{t('health.smtpLogDate')}</th>
+                      <th>{t('health.smtpLogDomain')}</th>
                       <th>{t('health.smtpLogFrom')}</th>
                       <th>{t('health.smtpLogTo')}</th>
                       <th>{t('health.smtpLogSubject')}</th>
@@ -897,6 +907,14 @@ export default function SystemHealth() {
                     </tr>
                     <tr className="smtp-log-filter-row">
                       <th />
+                      <th>
+                        <input
+                          type="text"
+                          placeholder={t('health.smtpFilterDomain')}
+                          value={smtpFilters.domain}
+                          onChange={e => setSmtpFilters(s => ({ ...s, domain: e.target.value }))}
+                        />
+                      </th>
                       <th>
                         <input
                           type="text"
@@ -937,12 +955,13 @@ export default function SystemHealth() {
                   <tbody>
                     {filteredSmtpLogs?.length === 0 ? (
                       <tr className="smtp-log-empty-row">
-                        <td colSpan={5}>{t('health.smtpLogNoMatch')}</td>
+                        <td colSpan={6}>{t('health.smtpLogNoMatch')}</td>
                       </tr>
                     ) : (
                       filteredSmtpLogs?.map(row => (
                         <tr key={row.id} className="smtp-log-row" onClick={() => setSelectedLog(row)}>
                           <td className="smtp-log-date sys-mono">{formatDate(row.sent_at)}</td>
+                          <td className="smtp-log-domain sys-mono sys-small">{row.domain || '—'}</td>
                           <td className="smtp-log-from sys-mono sys-small">{row.sender_email || '—'}</td>
                           <td>
                             <div className="smtp-log-recipient">{row.recipient_name || '—'}</div>

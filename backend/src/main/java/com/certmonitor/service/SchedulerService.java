@@ -7,11 +7,13 @@ import com.certmonitor.model.DnsRecord;
 import com.certmonitor.model.PortCheck;
 import com.certmonitor.model.PortMonitor;
 import com.certmonitor.model.UptimeCheck;
+import com.certmonitor.model.NetworkOutageEvent;
 import com.certmonitor.repository.AlertThresholdRepository;
 import com.certmonitor.repository.CertificateInventoryRepository;
 import com.certmonitor.repository.DnsMonitorRepository;
 import com.certmonitor.repository.DnsRecordRepository;
 import com.certmonitor.repository.LatestCheckRepository;
+import com.certmonitor.repository.NetworkOutageEventRepository;
 import com.certmonitor.repository.PortCheckRepository;
 import com.certmonitor.repository.PortMonitorRepository;
 import com.certmonitor.repository.UptimeCheckRepository;
@@ -68,6 +70,8 @@ public class SchedulerService {
 
     private final UptimeHttpCheckerService uptimeHttpCheckerService;
     private final UptimeCheckRepository uptimeCheckRepo;
+
+    private final NetworkOutageEventRepository networkOutageRepo;
 
     @org.springframework.beans.factory.annotation.Autowired
     @org.springframework.beans.factory.annotation.Qualifier("certCheckExecutor")
@@ -154,6 +158,7 @@ public class SchedulerService {
         ensureDefaultThreshold();
         assignOrphanedCertsToDefaultTeam();
         clearStaleLocksForThisHost();
+        restoreOutageStateFromDb();
         escalationService.catchUpMissedDailyAlerts();
         escalationService.catchUpAlertsOnDeletedDomains();
         new Thread(this::runCheck, "startup-check").start();
@@ -372,6 +377,7 @@ public class SchedulerService {
                              "(rate={}, threshold={}) — alarm processing SKIPPED for this run",
                             networkErrors, results.size(),
                             String.format("%.2f", networkErrorRate), networkErrorRateThreshold);
+                    persistOutageDetected(detectedAt, (int) networkErrors, results.size(), networkErrorRate);
                     trySendAdminAlert();
                 } else {
                     log.warn("⚠ Suspected network outage still ongoing: {}/{} domains failed with network-class errors " +
@@ -384,6 +390,7 @@ public class SchedulerService {
                     String resolvedAt = ISO.format(Instant.now());
                     networkOutageResolvedAt.set(resolvedAt);
                     log.info("✓ Network outage cleared — alarm processing resumed");
+                    persistOutageResolved(resolvedAt);
                     trySendAdminResolved();
                 }
                 if (pendingAdminResolvedEmail.get()) trySendAdminResolved();
@@ -751,6 +758,59 @@ public class SchedulerService {
         } else {
             pendingAdminResolvedEmail.set(true);
             log.warn("Failed to send admin network resolved notification: {}", status);
+        }
+    }
+
+    // ── Outage event persistence ──────────────────────────────────────────────
+
+    private void persistOutageDetected(String detectedAt, int networkErrors, int totalChecks, double rate) {
+        try {
+            NetworkOutageEvent ev = new NetworkOutageEvent();
+            ev.setDetectedAt(detectedAt);
+            ev.setNetworkErrors(networkErrors);
+            ev.setTotalChecks(totalChecks);
+            ev.setErrorRate(rate);
+            ev.setThreshold(networkErrorRateThreshold);
+            ev.setStatus("ONGOING");
+            networkOutageRepo.save(ev);
+        } catch (Exception e) {
+            log.warn("Failed to persist outage detection event: {}", e.getMessage());
+        }
+    }
+
+    private void persistOutageResolved(String resolvedAt) {
+        try {
+            networkOutageRepo.findFirstByStatusOrderByIdDesc("ONGOING").ifPresent(ev -> {
+                ev.setResolvedAt(resolvedAt);
+                ev.setStatus("RESOLVED");
+                try {
+                    Instant det = Instant.from(ISO.parse(ev.getDetectedAt()));
+                    Instant res = Instant.from(ISO.parse(resolvedAt));
+                    ev.setDurationMs(res.toEpochMilli() - det.toEpochMilli());
+                } catch (Exception ignored) { /* duration stays null */ }
+                networkOutageRepo.save(ev);
+            });
+        } catch (Exception e) {
+            log.warn("Failed to persist outage resolution event: {}", e.getMessage());
+        }
+    }
+
+    /** Called from startup — if an ONGOING outage row exists in DB (previous run
+     *  crashed/exited mid-outage), restore the in-memory active state so the dashboard
+     *  banner persists across restarts. The next healthy scan run will resolve it. */
+    private void restoreOutageStateFromDb() {
+        try {
+            networkOutageRepo.findFirstByStatusOrderByIdDesc("ONGOING").ifPresent(ev -> {
+                networkOutageActive.set(true);
+                networkOutageDetectedAt.set(ev.getDetectedAt());
+                networkOutageResolvedAt.set(null);
+                if (ev.getNetworkErrors() != null)  networkLastNetworkErrors.set(ev.getNetworkErrors());
+                if (ev.getTotalChecks()  != null)  networkLastTotal.set(ev.getTotalChecks());
+                if (ev.getErrorRate()    != null)  networkLastErrorRate.set(ev.getErrorRate());
+                log.info("Restored ONGOING network outage state from DB (detected_at={})", ev.getDetectedAt());
+            });
+        } catch (Exception e) {
+            log.warn("Failed to restore outage state from DB: {}", e.getMessage());
         }
     }
 

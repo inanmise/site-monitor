@@ -76,7 +76,11 @@ export const api = {
 
   getSilentAlertDomains: () => request('/alerts/silent-domains'),
 
+  getMailFailureDomains: () => request('/notifications/failure-domains'),
+
   getNetworkStatus: () => request('/system/network-status'),
+
+  getNetworkOutageHistory: (limit = 50) => request(`/system/network-outage-history?limit=${limit}`),
 
   // ── Admin ────────────────────────────────────────────────────────────────
 
@@ -146,12 +150,19 @@ export const api = {
 
     // Certificate notes
     getNotes: (domain) => request(`/admin/notes/${encodeURIComponent(domain)}`),
-    addNote: (domain, note) => request(`/admin/notes/${encodeURIComponent(domain)}`, {
-      method: 'POST', body: JSON.stringify({ note }),
+    addNote: (domain, note, category = 'NOTE') => request(`/admin/notes/${encodeURIComponent(domain)}`, {
+      method: 'POST', body: JSON.stringify({ note, category }),
+    }),
+    updateNote: (domain, noteId, note) => request(`/admin/notes/${encodeURIComponent(domain)}/${noteId}`, {
+      method: 'PUT', body: JSON.stringify({ note }),
     }),
     deleteNote: (domain, noteId) => request(`/admin/notes/${encodeURIComponent(domain)}/${noteId}`, {
       method: 'DELETE',
     }),
+    getNoteRevisions: (domain, noteId) =>
+      request(`/admin/notes/${encodeURIComponent(domain)}/${noteId}/revisions`),
+    restoreNote: (domain, noteId) =>
+      request(`/admin/notes/${encodeURIComponent(domain)}/${noteId}/restore`, { method: 'POST' }),
 
     // Weak algorithm report
     getWeakAlgorithms: () => request('/admin/audit/weak-algorithms'),

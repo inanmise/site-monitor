@@ -8,8 +8,10 @@ import lombok.NoArgsConstructor;
 @Table(
     name = "certificate_notes",
     indexes = {
-        @Index(name = "idx_note_domain", columnList = "domain"),
-        @Index(name = "idx_note_team",   columnList = "teamId")
+        @Index(name = "idx_note_domain",   columnList = "domain"),
+        @Index(name = "idx_note_team",     columnList = "teamId"),
+        @Index(name = "idx_note_category", columnList = "category"),
+        @Index(name = "idx_note_deleted",  columnList = "deletedAt")
     }
 )
 @Data
@@ -33,4 +35,14 @@ public class CertificateNote {
     private String note;
 
     private String createdAt;
+
+    /** NOTE (default) / DEPLOYMENT / INCIDENT / RENEWAL. */
+    @Column(length = 16)
+    private String category;
+
+    private String updatedAt;
+    private String updatedBy;
+
+    private String deletedAt;
+    private String deletedBy;
 }

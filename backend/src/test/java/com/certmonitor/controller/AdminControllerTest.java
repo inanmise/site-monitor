@@ -77,6 +77,9 @@ class AdminControllerTest {
     CertificateNoteRepository noteRepo;
 
     @MockBean
+    com.certmonitor.repository.CertificateNoteRevisionRepository noteRevisionRepo;
+
+    @MockBean
     AppUserRepository userRepo;
 
     @BeforeEach

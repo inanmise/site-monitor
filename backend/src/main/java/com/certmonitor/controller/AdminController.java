@@ -39,6 +39,7 @@ public class AdminController {
     private final EscalationService escalationService;
     private final LatestCheckRepository latestCheckRepo;
     private final CertificateNoteRepository noteRepo;
+    private final CertificateNoteRevisionRepository noteRevisionRepo;
     private final UserService userService;
     private final AppUserRepository userRepo;
 
@@ -575,6 +576,11 @@ public class AdminController {
 
     // ── Certificate Notes ──────────────────────────────────────────────────────
 
+    private static final java.util.Set<String> NOTE_CATEGORIES =
+            java.util.Set.of("NOTE", "DEPLOYMENT", "INCIDENT", "RENEWAL");
+    private static final int NOTE_MAX_LENGTH = 5000;
+    private static final long NOTE_EDIT_WINDOW_HOURS = 24L;
+
     @GetMapping("/notes/{domain}")
     public ResponseEntity<Map<String, Object>> getNotes(
             @PathVariable String domain, HttpSession session) {
@@ -587,30 +593,179 @@ public class AdminController {
     @PostMapping("/notes/{domain}")
     public ResponseEntity<Map<String, Object>> addNote(
             @PathVariable String domain,
-            @RequestBody Map<String, String> body, HttpSession session) {
+            @RequestBody Map<String, String> body,
+            HttpSession session, HttpServletRequest request) {
         String text = body.get("note");
         if (text == null || text.isBlank())
             throw new IllegalArgumentException("Note text cannot be blank");
+        if (text.length() > NOTE_MAX_LENGTH)
+            throw new IllegalArgumentException("Note exceeds " + NOTE_MAX_LENGTH + " characters");
+
+        String category = body.getOrDefault("category", "NOTE");
+        if (!NOTE_CATEGORIES.contains(category))
+            throw new IllegalArgumentException("Invalid category: " + category);
+
+        String currentUser = (String) session.getAttribute("username");
+        String currentName = (String) session.getAttribute("displayName");
+        if (currentName == null || currentName.isBlank()) currentName = currentUser;
+        String createdAt = now();
+
         CertificateNote note = new CertificateNote();
         note.setDomain(domain);
         note.setTeamId(isAdmin(session) ? null : teamId(session));
-        note.setAuthorUsername((String) session.getAttribute("username"));
-        note.setAuthorName((String) session.getAttribute("displayName"));
+        note.setAuthorUsername(currentUser);
+        note.setAuthorName(currentName);
         note.setNote(text.trim());
-        note.setCreatedAt(now());
-        return ok(Map.of("data", noteRepo.save(note), "message", "Note added"));
+        note.setCategory(category);
+        note.setCreatedAt(createdAt);
+        CertificateNote saved = noteRepo.save(note);
+
+        writeRevision(saved.getId(), 0, "CREATE", text.trim(), category,
+                createdAt, currentUser, currentName, null);
+        auditService.recordAction("CERT_NOTE_ADD", session, request,
+                "CERT_NOTE", String.valueOf(saved.getId()),
+                "{\"domain\":\"" + domain + "\",\"category\":\"" + category + "\"}");
+        return ok(Map.of("data", saved, "message", "Note added"));
+    }
+
+    @PutMapping("/notes/{domain}/{noteId}")
+    public ResponseEntity<Map<String, Object>> updateNote(
+            @PathVariable String domain, @PathVariable Long noteId,
+            @RequestBody Map<String, String> body,
+            HttpSession session, HttpServletRequest request) {
+        CertificateNote note = noteRepo.findById(noteId)
+                .orElseThrow(() -> new NoSuchElementException("Note not found: " + noteId));
+        if (note.getDeletedAt() != null)
+            throw new NoSuchElementException("Note has been deleted");
+        if (!domain.equals(note.getDomain()))
+            throw new IllegalArgumentException("Note does not belong to domain: " + domain);
+        if (!isAdmin(session)) checkOwnership(note.getTeamId(), session);
+
+        String currentUser = (String) session.getAttribute("username");
+        if (!java.util.Objects.equals(currentUser, note.getAuthorUsername()))
+            throw new SecurityException("NOT_AUTHOR");
+
+        try {
+            Instant created = Instant.from(ISO.parse(note.getCreatedAt()));
+            if (Instant.now().minusSeconds(NOTE_EDIT_WINDOW_HOURS * 3600L).isAfter(created))
+                throw new IllegalStateException("EDIT_WINDOW_EXPIRED");
+        } catch (java.time.format.DateTimeParseException ignored) { /* fallback: allow */ }
+
+        String text = body.get("note");
+        if (text == null || text.isBlank())
+            throw new IllegalArgumentException("Note text cannot be blank");
+        if (text.length() > NOTE_MAX_LENGTH)
+            throw new IllegalArgumentException("Note exceeds " + NOTE_MAX_LENGTH + " characters");
+
+        // Snapshot the PRIOR body+category into a revision before mutating the note.
+        String editedAt = now();
+        String currentName = (String) session.getAttribute("displayName");
+        if (currentName == null || currentName.isBlank()) currentName = currentUser;
+        Integer maxSeq = noteRevisionRepo.findMaxSequenceNo(noteId);
+        int nextSeq = (maxSeq == null ? 0 : maxSeq) + 1;
+        writeRevision(noteId, nextSeq, "EDIT", note.getNote(), note.getCategory(),
+                editedAt, currentUser, currentName, null);
+
+        note.setNote(text.trim());
+        note.setUpdatedAt(editedAt);
+        note.setUpdatedBy(currentUser);
+        CertificateNote saved = noteRepo.save(note);
+        auditService.recordAction("CERT_NOTE_EDIT", session, request,
+                "CERT_NOTE", String.valueOf(saved.getId()),
+                "{\"domain\":\"" + domain + "\"}");
+        return ok(Map.of("data", saved, "message", "Note updated"));
     }
 
     @DeleteMapping("/notes/{domain}/{noteId}")
     public ResponseEntity<Map<String, Object>> deleteNote(
+            @PathVariable String domain, @PathVariable Long noteId,
+            HttpSession session, HttpServletRequest request) {
+        CertificateNote note = noteRepo.findById(noteId)
+                .orElseThrow(() -> new NoSuchElementException("Note not found: " + noteId));
+        if (note.getDeletedAt() != null)
+            return ok(Map.of("message", "Note already deleted"));
+        if (!domain.equals(note.getDomain()))
+            throw new IllegalArgumentException("Note does not belong to domain: " + domain);
+        if (!isAdmin(session)) checkOwnership(note.getTeamId(), session);
+
+        String currentUser = (String) session.getAttribute("username");
+        if (!isAdmin(session) && !java.util.Objects.equals(currentUser, note.getAuthorUsername()))
+            throw new SecurityException("Only the author or an admin can delete a note");
+
+        String deletedAt = now();
+        String currentName = (String) session.getAttribute("displayName");
+        if (currentName == null || currentName.isBlank()) currentName = currentUser;
+        Integer maxSeqDel = noteRevisionRepo.findMaxSequenceNo(noteId);
+        int nextSeqDel = (maxSeqDel == null ? 0 : maxSeqDel) + 1;
+        writeRevision(noteId, nextSeqDel, "DELETE", null, note.getCategory(),
+                deletedAt, currentUser, currentName, null);
+
+        note.setDeletedAt(deletedAt);
+        note.setDeletedBy(currentUser);
+        noteRepo.save(note);
+        auditService.recordAction("CERT_NOTE_DELETE", session, request,
+                "CERT_NOTE", String.valueOf(noteId),
+                "{\"domain\":\"" + domain + "\"}");
+        return ok(Map.of("message", "Note deleted"));
+    }
+
+    @GetMapping("/notes/{domain}/{noteId}/revisions")
+    public ResponseEntity<Map<String, Object>> getNoteRevisions(
             @PathVariable String domain, @PathVariable Long noteId, HttpSession session) {
         CertificateNote note = noteRepo.findById(noteId)
                 .orElseThrow(() -> new NoSuchElementException("Note not found: " + noteId));
         if (!domain.equals(note.getDomain()))
             throw new IllegalArgumentException("Note does not belong to domain: " + domain);
         if (!isAdmin(session)) checkOwnership(note.getTeamId(), session);
-        noteRepo.deleteById(noteId);
-        return ok(Map.of("message", "Note deleted"));
+        return ok(Map.of("data", noteRevisionRepo.findByNoteIdOrderBySequenceNoAsc(noteId)));
+    }
+
+    @PostMapping("/notes/{domain}/{noteId}/restore")
+    public ResponseEntity<Map<String, Object>> restoreNote(
+            @PathVariable String domain, @PathVariable Long noteId,
+            HttpSession session, HttpServletRequest request) {
+        requireAdmin(session);
+        CertificateNote note = noteRepo.findById(noteId)
+                .orElseThrow(() -> new NoSuchElementException("Note not found: " + noteId));
+        if (!domain.equals(note.getDomain()))
+            throw new IllegalArgumentException("Note does not belong to domain: " + domain);
+        if (note.getDeletedAt() == null)
+            return ok(Map.of("data", note, "message", "Note was not deleted"));
+
+        String restoredAt = now();
+        String currentUser = (String) session.getAttribute("username");
+        String currentName = (String) session.getAttribute("displayName");
+        if (currentName == null || currentName.isBlank()) currentName = currentUser;
+        Integer maxSeqRest = noteRevisionRepo.findMaxSequenceNo(noteId);
+        int nextSeqRest = (maxSeqRest == null ? 0 : maxSeqRest) + 1;
+        writeRevision(noteId, nextSeqRest, "RESTORE", null, note.getCategory(),
+                restoredAt, currentUser, currentName, null);
+
+        note.setDeletedAt(null);
+        note.setDeletedBy(null);
+        CertificateNote saved = noteRepo.save(note);
+        auditService.recordAction("CERT_NOTE_RESTORE", session, request,
+                "CERT_NOTE", String.valueOf(noteId),
+                "{\"domain\":\"" + domain + "\"}");
+        return ok(Map.of("data", saved, "message", "Note restored"));
+    }
+
+    private void writeRevision(Long noteId, int sequenceNo, String eventType,
+                               String body, String category,
+                               String editedAt, String editedBy, String editedByName,
+                               String reason) {
+        CertificateNoteRevision rev = new CertificateNoteRevision();
+        rev.setNoteId(noteId);
+        rev.setSequenceNo(sequenceNo);
+        rev.setEventType(eventType);
+        rev.setBody(body);
+        rev.setCategory(category);
+        rev.setEditedAt(editedAt);
+        rev.setEditedBy(editedBy);
+        rev.setEditedByName(editedByName);
+        rev.setReason(reason);
+        try { noteRevisionRepo.save(rev); }
+        catch (Exception e) { log.warn("Failed to persist note revision: {}", e.getMessage()); }
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
