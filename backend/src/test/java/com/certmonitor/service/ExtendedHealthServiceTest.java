@@ -27,13 +27,14 @@ class ExtendedHealthServiceTest {
 
     @Mock NotificationLogRepository notificationLogRepo;
     @Mock SystemHeartbeatRepository heartbeatRepo;
+    @Mock com.certmonitor.repository.AlertEventRepository alertEventRepo;
     @Mock JdbcTemplate jdbcTemplate;
 
     private ExtendedHealthService service;
 
     @BeforeEach
     void setUp() {
-        service = new ExtendedHealthService(notificationLogRepo, heartbeatRepo, jdbcTemplate);
+        service = new ExtendedHealthService(notificationLogRepo, heartbeatRepo, alertEventRepo, jdbcTemplate);
     }
 
     // ── getHeartbeatStatus ────────────────────────────────────────────────────

@@ -562,6 +562,22 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .card-silent-alert-icon { font-size: 1em; flex-shrink: 0; }
 [data-theme="dark"] .card-silent-alert { background: #3a2a00; border-color: #8a6800; color: #fbbf24; }
 
+.cert-card-mail-failure {
+  display: flex; align-items: center; gap: 6px; margin-top: 6px;
+  padding: 6px 10px;
+  background: #fef2f2; color: #991b1b;
+  border: 1px solid #fecaca; border-radius: 5px;
+  font-size: .78em; font-weight: 600;
+  cursor: pointer; transition: all .12s;
+}
+.cert-card-mail-failure:hover { background: #fee2e2; border-color: #fca5a5; }
+.cert-card-mail-failure svg { color: #b91c1c; flex-shrink: 0; }
+[data-theme="dark"] .cert-card-mail-failure {
+  background: rgba(127,29,29,.28); color: #fecaca; border-color: #b91c1c;
+}
+[data-theme="dark"] .cert-card-mail-failure:hover { background: rgba(127,29,29,.45); }
+[data-theme="dark"] .cert-card-mail-failure svg { color: #fca5a5; }
+
 /* ── Certificate Notes ──────────────────────────────── */
 .note-add-row { display: flex; gap: 10px; margin-bottom: 16px; align-items: flex-start; }
 .note-textarea { flex: 1; resize: vertical; min-height: 72px; border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; font-family: inherit; font-size: .9em; background: var(--input-bg); color: var(--input-text); }
@@ -1423,6 +1439,249 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .ahc-tl-label { font-size: .74em; color: #9ca3af; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; margin-bottom: 2px; }
 .ahc-tl-val   { font-size: .84em; color: #374151; line-height: 1.4; }
 .ahc-footer   { margin-top: 12px; padding-top: 10px; border-top: 1px solid #f1f5f9; display: flex; justify-content: flex-end; }
+
+/* ── Network Outage History (Warnings page) ─────────── */
+.network-outage-history-section { margin-top: 28px; }
+.network-outage-history-section .section-subtitle {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 1.02em; font-weight: 700; color: #374151;
+  margin: 0 0 12px 0;
+}
+.network-outage-history-section .section-subtitle svg { color: #6366f1; }
+.network-outage-history-section .loading.muted {
+  font-size: .9em; color: #9ca3af; padding: 12px 0;
+}
+[data-theme="dark"] .network-outage-history-section .section-subtitle { color: #e5e7eb; }
+[data-theme="dark"] .network-outage-history-section .section-subtitle svg { color: #818cf8; }
+
+.outage-stats-grid {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 8px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px dashed #e5e7eb;
+}
+.outage-stat {
+  background: #f8fafc;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 8px 10px;
+  text-align: center;
+}
+.outage-stat-label {
+  font-size: .72em;
+  color: #6b7280;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  margin-bottom: 4px;
+}
+.outage-stat-val {
+  font-size: 1.15em;
+  font-weight: 700;
+  color: #111827;
+}
+.outage-stat-error { background: #fef2f2; border-color: #fecaca; }
+.outage-stat-error .outage-stat-val { color: #b91c1c; }
+.outage-stat-ok    { background: #ecfdf5; border-color: #bbf7d0; }
+.outage-stat-ok    .outage-stat-val { color: #047857; }
+
+.outage-cause {
+  margin-top: 10px;
+  padding: 10px 12px;
+  background: #fef9c3;
+  border-left: 3px solid #ca8a04;
+  border-radius: 6px;
+  font-size: .87em;
+  color: #713f12;
+  line-height: 1.5;
+}
+
+[data-theme="dark"] .outage-stats-grid { border-top-color: #374151; }
+[data-theme="dark"] .outage-stat        { background: #1f2937; border-color: #374151; }
+[data-theme="dark"] .outage-stat-label  { color: #9ca3af; }
+[data-theme="dark"] .outage-stat-val    { color: #e5e7eb; }
+[data-theme="dark"] .outage-stat-error  { background: rgba(127,29,29,.22); border-color: #b91c1c; }
+[data-theme="dark"] .outage-stat-error .outage-stat-val { color: #fecaca; }
+[data-theme="dark"] .outage-stat-ok     { background: rgba(6,78,59,.25); border-color: #047857; }
+[data-theme="dark"] .outage-stat-ok    .outage-stat-val { color: #6ee7b7; }
+[data-theme="dark"] .outage-cause       { background: rgba(133,77,14,.25); color: #fef3c7; border-left-color: #ca8a04; }
+
+@media (max-width: 768px) {
+  .outage-stats-grid { grid-template-columns: repeat(2, 1fr); }
+}
+
+/* ── Certificate Notes (modal "Notlar" tab) ─────────── */
+.cert-note-form {
+  display: flex; flex-direction: column; gap: 8px;
+  padding: 12px; margin-bottom: 14px;
+  background: #fff; border: 1px solid #e5e7eb; border-radius: 8px;
+}
+.cert-note-form-row { display: flex; align-items: center; gap: 10px; }
+.cert-note-cat-label {
+  font-size: .76em; color: #6b7280; font-weight: 600;
+  text-transform: uppercase; letter-spacing: .04em;
+}
+.cert-note-cat-select {
+  padding: 5px 10px; border: 1px solid #d1d5db; border-radius: 6px;
+  background: #fff; font-size: .88em; color: #374151;
+}
+.cert-note-form-footer {
+  display: flex; align-items: center; justify-content: flex-end; gap: 10px;
+}
+.cert-note-charcount { font-size: .76em; color: #9ca3af; margin-right: auto; }
+.cert-note-error {
+  background: #fee2e2; color: #991b1b; border: 1px solid #fecaca;
+  border-radius: 6px; padding: 6px 10px; font-size: .84em;
+}
+
+.cert-note-filter-row {
+  display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 12px;
+}
+.cert-note-filter-btn {
+  padding: 5px 12px; border-radius: 16px;
+  border: 1px solid #e5e7eb; background: #fff; color: #4b5563;
+  cursor: pointer; font-size: .82em; transition: all .15s;
+}
+.cert-note-filter-btn:hover { border-color: #6366f1; color: #6366f1; }
+.cert-note-filter-btn.active {
+  background: #6366f1; color: #fff; border-color: #6366f1; font-weight: 600;
+}
+
+.cert-note-card .ahc-top { gap: 8px; }
+.cert-note-category-badge {
+  padding: 2px 8px; border-radius: 10px;
+  font-size: .72em; font-weight: 700;
+  text-transform: uppercase; letter-spacing: .04em;
+}
+.cn-cat-NOTE       { background: #f1f5f9; color: #475569; }
+.cn-cat-DEPLOYMENT { background: #dbeafe; color: #1e40af; }
+.cn-cat-INCIDENT   { background: #fee2e2; color: #991b1b; }
+.cn-cat-RENEWAL    { background: #dcfce7; color: #166534; }
+
+.cert-note-edited-label { font-size: .76em; color: #9ca3af; font-style: italic; }
+.cert-note-body { color: #1f2937; font-size: .92em; line-height: 1.5; margin-top: 6px; }
+.cert-note-edit-form { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
+
+.cert-note-icon-btn {
+  background: transparent; border: 1px solid transparent; border-radius: 6px;
+  padding: 4px 6px; cursor: pointer; color: #6b7280;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.cert-note-icon-btn:hover { background: #f3f4f6; color: #374151; }
+.cert-note-del-btn:hover  { background: #fee2e2; color: #b91c1c; }
+
+[data-theme="dark"] .cert-note-form        { background: #111827; border-color: #374151; }
+[data-theme="dark"] .cert-note-cat-select  { background: #111827; border-color: #374151; color: #e5e7eb; }
+[data-theme="dark"] .cert-note-error       { background: rgba(127,29,29,.25); color: #fecaca; border-color: #b91c1c; }
+[data-theme="dark"] .cert-note-filter-btn  { background: #1f2937; border-color: #374151; color: #cbd5e1; }
+[data-theme="dark"] .cert-note-filter-btn.active { background: #6366f1; color: #fff; }
+[data-theme="dark"] .cn-cat-NOTE           { background: #374151; color: #cbd5e1; }
+[data-theme="dark"] .cn-cat-DEPLOYMENT     { background: rgba(30,64,175,.3); color: #bfdbfe; }
+[data-theme="dark"] .cn-cat-INCIDENT       { background: rgba(127,29,29,.3); color: #fecaca; }
+[data-theme="dark"] .cn-cat-RENEWAL        { background: rgba(22,101,52,.3); color: #bbf7d0; }
+[data-theme="dark"] .cert-note-body        { color: #e5e7eb; }
+[data-theme="dark"] .cert-note-icon-btn    { color: #9ca3af; }
+[data-theme="dark"] .cert-note-icon-btn:hover { background: #374151; color: #e5e7eb; }
+
+/* Note card header (badge + actions row) */
+.cert-note-card .cert-note-header {
+  display: flex; align-items: center; gap: 10px;
+  margin-bottom: 6px;
+}
+.cert-note-card .cert-note-actions {
+  margin-left: auto; display: flex; gap: 4px;
+}
+
+/* Meta row: author + timestamp + edited + history button */
+.cert-note-meta {
+  display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+  font-size: .82em; color: #6b7280; margin-bottom: 8px;
+  padding-bottom: 8px; border-bottom: 1px dashed #e5e7eb;
+}
+.cert-note-meta-item { display: inline-flex; align-items: center; gap: 4px; }
+.cert-note-meta-item svg { color: #9ca3af; flex-shrink: 0; }
+.cert-note-author-strong { color: #111827; font-weight: 700; }
+.cert-note-author-username { color: #9ca3af; font-size: .92em; }
+
+/* Deleted note state */
+.cert-note-card.cert-note-deleted { opacity: .82; background: #f9fafb; }
+.cert-note-card.cert-note-deleted .cert-note-body {
+  font-style: italic; color: #6b7280;
+  text-decoration: line-through; text-decoration-color: rgba(0,0,0,.2);
+}
+.cert-note-deleted-banner {
+  background: #fee2e2; border: 1px solid #fecaca; color: #991b1b;
+  border-radius: 6px; padding: 6px 10px; margin-bottom: 10px;
+  font-size: .84em; font-weight: 600;
+  display: flex; align-items: center; gap: 6px;
+}
+.cert-note-deleted-banner svg { flex-shrink: 0; }
+
+.cert-note-restore-btn { color: #4338ca; }
+.cert-note-restore-btn:hover { background: #ede9fe; color: #3730a3; }
+
+/* History accordion */
+.cert-note-history-btn {
+  background: transparent; border: 1px solid #e5e7eb; border-radius: 14px;
+  padding: 2px 10px; cursor: pointer; color: #4b5563; font-size: .76em;
+  display: inline-flex; align-items: center; gap: 4px;
+  margin-left: auto;
+}
+.cert-note-history-btn:hover { border-color: #6366f1; color: #6366f1; }
+.cert-note-history-btn svg { flex-shrink: 0; }
+
+.cert-note-history-panel {
+  margin-top: 10px; padding: 10px 14px;
+  background: #f9fafb; border-left: 3px solid #6366f1; border-radius: 6px;
+}
+.cert-note-history-title {
+  display: flex; align-items: center; gap: 6px;
+  font-size: .82em; font-weight: 700;
+  color: #374151; margin-bottom: 8px;
+}
+.cert-note-history-title svg { color: #6366f1; }
+.cert-note-history-empty { font-size: .82em; color: #9ca3af; font-style: italic; }
+
+.cert-note-history-item {
+  display: flex; gap: 10px; padding: 8px 0;
+  border-top: 1px dashed #e5e7eb; font-size: .85em; color: #4b5563;
+}
+.cert-note-history-item:first-child { border-top: none; padding-top: 0; }
+.cert-note-history-bullet { color: #6366f1; flex-shrink: 0; font-size: 1.1em; line-height: 1; }
+.cert-note-history-event { font-weight: 700; }
+.cert-note-history-body {
+  color: #1f2937; margin-top: 6px; padding: 6px 10px;
+  background: #fff; border: 1px solid #e5e7eb; border-radius: 4px;
+  white-space: pre-wrap; font-size: .9em;
+}
+.cert-note-history-eventCREATE  { color: #166534; }
+.cert-note-history-eventEDIT    { color: #1e40af; }
+.cert-note-history-eventDELETE  { color: #991b1b; }
+.cert-note-history-eventRESTORE { color: #4338ca; }
+
+/* dark mode */
+[data-theme="dark"] .cert-note-meta { color: #9ca3af; border-bottom-color: #374151; }
+[data-theme="dark"] .cert-note-meta-item svg { color: #6b7280; }
+[data-theme="dark"] .cert-note-author-strong { color: #e5e7eb; }
+[data-theme="dark"] .cert-note-author-username { color: #6b7280; }
+[data-theme="dark"] .cert-note-card.cert-note-deleted { background: rgba(75,85,99,.15); }
+[data-theme="dark"] .cert-note-card.cert-note-deleted .cert-note-body { color: #9ca3af; }
+[data-theme="dark"] .cert-note-deleted-banner { background: rgba(127,29,29,.25); color: #fecaca; border-color: #b91c1c; }
+[data-theme="dark"] .cert-note-restore-btn { color: #a5b4fc; }
+[data-theme="dark"] .cert-note-restore-btn:hover { background: rgba(67,56,202,.25); color: #c7d2fe; }
+[data-theme="dark"] .cert-note-history-btn { background: #1f2937; border-color: #374151; color: #cbd5e1; }
+[data-theme="dark"] .cert-note-history-btn:hover { border-color: #818cf8; color: #818cf8; }
+[data-theme="dark"] .cert-note-history-panel { background: #1f2937; border-left-color: #818cf8; }
+[data-theme="dark"] .cert-note-history-title { color: #e5e7eb; }
+[data-theme="dark"] .cert-note-history-title svg { color: #818cf8; }
+[data-theme="dark"] .cert-note-history-item { border-top-color: #374151; color: #d1d5db; }
+[data-theme="dark"] .cert-note-history-body  { color: #e5e7eb; background: #0f172a; border-color: #374151; }
+[data-theme="dark"] .cert-note-history-eventCREATE  { color: #86efac; }
+[data-theme="dark"] .cert-note-history-eventEDIT    { color: #93c5fd; }
+[data-theme="dark"] .cert-note-history-eventDELETE  { color: #fca5a5; }
+[data-theme="dark"] .cert-note-history-eventRESTORE { color: #c4b5fd; }
 
 /* ── Activity Log ───────────────────────────────────── */
 .activity-log { display: flex; flex-direction: column; gap: 12px; }

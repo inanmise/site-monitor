@@ -1,15 +1,52 @@
 import { useEffect, useState, useRef } from 'react'
 import { api, formatDate } from '../api/client'
 import { useT } from '../i18n/index.jsx'
-import { Trash2, Globe, X } from 'lucide-react'
+import { useDialog } from './ui/Dialog.jsx'
+import { Trash2, Globe, X, Pencil, Clock, User, History, Undo2 } from 'lucide-react'
 import AlertHistory from './admin/AlertHistory'
 import SslCheckerPanel from './SslCheckerPanel.jsx'
 
-function NotesTab({ domain, t }) {
+const NOTE_CATEGORIES   = ['NOTE', 'DEPLOYMENT', 'INCIDENT', 'RENEWAL']
+const NOTE_EDIT_WINDOW_MS = 24 * 60 * 60 * 1000
+const NOTE_MAX_LENGTH   = 5000
+
+function categoryStripe(cat) {
+  switch (cat) {
+    case 'DEPLOYMENT': return '#2563eb'
+    case 'INCIDENT':   return '#dc2626'
+    case 'RENEWAL':    return '#10b981'
+    default:           return '#94a3b8'
+  }
+}
+
+function isWithinEditWindow(createdAt) {
+  if (!createdAt) return false
+  const ts = Date.parse(createdAt.endsWith('Z') ? createdAt : createdAt + 'Z')
+  if (Number.isNaN(ts)) return false
+  return Date.now() - ts < NOTE_EDIT_WINDOW_MS
+}
+
+function fmtTs(ts, fallback) {
+  if (!ts) return fallback
+  const out = formatDate(ts)
+  return (!out || out === 'N/A') ? fallback : out
+}
+
+function NotesTab({ domain, t, currentUser, isAdmin }) {
   const [notes, setNotes]       = useState(null)
   const [loading, setLoading]   = useState(false)
   const [newNote, setNewNote]   = useState('')
+  const [newCategory, setNewCategory] = useState('NOTE')
+  const [filter, setFilter]     = useState('ALL')
   const [saving, setSaving]     = useState(false)
+  const [editingId, setEditingId] = useState(null)
+  const [editBody, setEditBody] = useState('')
+  const [editSaving, setEditSaving] = useState(false)
+  const [error, setError]       = useState(null)
+  const [historyOpen, setHistoryOpen] = useState({})
+  const [revisions, setRevisions] = useState({})
+  const [historyLoading, setHistoryLoading] = useState({})
+  const { showConfirm } = useDialog()
   const textRef = useRef(null)
 
   useEffect(() => { loadNotes() }, [domain])
@@ -22,59 +59,301 @@ function NotesTab({ domain, t }) {
   }
 
   async function addNote() {
+    setError(null)
     if (!newNote.trim()) return
+    if (newNote.length > NOTE_MAX_LENGTH) {
+      setError(t('notes.tooLong', NOTE_MAX_LENGTH))
+      return
+    }
     setSaving(true)
-    const res = await api.admin.addNote(domain, newNote.trim())
+    const res = await api.admin.addNote(domain, newNote.trim(), newCategory)
     setSaving(false)
-    if (res?.success) { setNewNote(''); loadNotes() }
+    if (res?.success) {
+      setNewNote('')
+      setNewCategory('NOTE')
+      loadNotes()
+    } else {
+      setError(res?.error || t('notes.saveFailed'))
+    }
   }
 
-  async function deleteNote(noteId) {
-    await api.admin.deleteNote(domain, noteId)
-    loadNotes()
+  function startEdit(n) {
+    setEditingId(n.id)
+    setEditBody(n.note)
+    setError(null)
+  }
+  function cancelEdit() {
+    setEditingId(null)
+    setEditBody('')
+  }
+  async function saveEdit() {
+    setError(null)
+    if (!editBody.trim()) return
+    if (editBody.length > NOTE_MAX_LENGTH) {
+      setError(t('notes.tooLong', NOTE_MAX_LENGTH))
+      return
+    }
+    setEditSaving(true)
+    const res = await api.admin.updateNote(domain, editingId, editBody.trim())
+    setEditSaving(false)
+    if (res?.success) {
+      // Invalidate cached revisions so accordion reloads with new EDIT entry
+      setRevisions(prev => { const c = { ...prev }; delete c[editingId]; return c })
+      cancelEdit()
+      loadNotes()
+    } else {
+      setError(res?.error || t('notes.saveFailed'))
+    }
+  }
+
+  async function deleteNote(n) {
+    const ok = await showConfirm({
+      title: t('notes.deleteTitle'),
+      message: t('notes.deleteConfirm'),
+      variant: 'danger',
+      confirmText: t('notes.delete'),
+      cancelText: t('notes.cancel'),
+    })
+    if (!ok) return
+    const res = await api.admin.deleteNote(domain, n.id)
+    if (res?.success) {
+      setRevisions(prev => { const c = { ...prev }; delete c[n.id]; return c })
+      if (editingId === n.id) cancelEdit()
+      loadNotes()
+    }
+  }
+
+  async function restoreNote(n) {
+    const ok = await showConfirm({
+      title: t('notes.restoreTitle'),
+      message: t('notes.restoreConfirm'),
+      variant: 'default',
+      confirmText: t('notes.restoreBtn'),
+      cancelText: t('notes.cancel'),
+    })
+    if (!ok) return
+    const res = await api.admin.restoreNote(domain, n.id)
+    if (res?.success) {
+      setRevisions(prev => { const c = { ...prev }; delete c[n.id]; return c })
+      loadNotes()
+    }
+  }
+
+  async function toggleHistory(noteId) {
+    const willOpen = !historyOpen[noteId]
+    setHistoryOpen(prev => ({ ...prev, [noteId]: willOpen }))
+    if (willOpen && !revisions[noteId]) {
+      setHistoryLoading(prev => ({ ...prev, [noteId]: true }))
+      const res = await api.admin.getNoteRevisions(domain, noteId)
+      setRevisions(prev => ({ ...prev, [noteId]: res?.data ?? [] }))
+      setHistoryLoading(prev => ({ ...prev, [noteId]: false }))
+    }
   }
 
   if (loading) return <div className="loading">{t('modal.loading')}</div>
 
+  const visibleNotes = (notes ?? []).filter(n =>
+    filter === 'ALL' ? true : (n.category || 'NOTE') === filter
+  )
+
+  function renderAuthorLine(authorName, authorUsername) {
+    const name = authorName || authorUsername || t('notes.authorUnknown')
+    return (
+      <span className="cert-note-meta-item">
+        <User size={12} />
+        <span className="cert-note-author-strong">{name}</span>
+        {authorUsername && authorUsername !== name && (
+          <span className="cert-note-author-username">({authorUsername})</span>
+        )}
+      </span>
+    )
+  }
+
   return (
     <div className="modal-body">
-      <div className="note-add-row">
+      <div className="cert-note-form">
+        <div className="cert-note-form-row">
+          <label className="cert-note-cat-label">{t('notes.categoryLabel')}</label>
+          <select className="cert-note-cat-select" value={newCategory} onChange={(e) => setNewCategory(e.target.value)}>
+            {NOTE_CATEGORIES.map(c => (
+              <option key={c} value={c}>{t(`notes.cat.${c}`)}</option>
+            ))}
+          </select>
+        </div>
         <textarea
           ref={textRef}
           className="note-textarea"
           rows={3}
           value={newNote}
+          maxLength={NOTE_MAX_LENGTH}
           onChange={(e) => setNewNote(e.target.value)}
-          placeholder={t('note.placeholder')}
+          placeholder={t('notes.bodyPlaceholder')}
           onKeyDown={(e) => { if (e.ctrlKey && e.key === 'Enter') addNote() }}
         />
-        <button className="btn btn-primary note-add-btn" onClick={addNote} disabled={saving || !newNote.trim()}>
-          {saving ? t('note.saving') : t('note.add')}
-        </button>
+        <div className="cert-note-form-footer">
+          <span className="cert-note-charcount">{newNote.length} / {NOTE_MAX_LENGTH}</span>
+          <button className="btn btn-primary" onClick={addNote} disabled={saving || !newNote.trim()}>
+            {saving ? t('notes.saving') : t('notes.add')}
+          </button>
+        </div>
+        {error && <div className="cert-note-error">{error}</div>}
       </div>
-      {notes && notes.length === 0 ? (
-        <div className="alh-notif-empty">{t('note.empty')}</div>
-      ) : (
-        <div className="note-list">
-          {(notes ?? []).map((n) => (
-            <div key={n.id} className="note-card">
-              <div className="note-header">
-                <span className="note-author">{n.authorName || n.authorUsername || '—'}</span>
-                <span className="note-date">{formatDate(n.createdAt)}</span>
-                <button className="note-del-btn" onClick={() => deleteNote(n.id)} title={t('note.delete')}>
-                  <Trash2 size={13} />
-                </button>
-              </div>
-              <div className="note-body">{n.note}</div>
-            </div>
+
+      {notes && notes.length > 0 && (
+        <div className="cert-note-filter-row">
+          {['ALL', ...NOTE_CATEGORIES].map(f => (
+            <button
+              key={f}
+              className={`cert-note-filter-btn${filter === f ? ' active' : ''}`}
+              onClick={() => setFilter(f)}>
+              {f === 'ALL' ? t('notes.filterAll') : t(`notes.cat.${f}`)}
+            </button>
           ))}
+        </div>
+      )}
+
+      {notes && notes.length === 0 ? (
+        <div className="alh-notif-empty">{t('notes.empty')}</div>
+      ) : visibleNotes.length === 0 ? (
+        <div className="alh-notif-empty">{t('notes.emptyForFilter')}</div>
+      ) : (
+        <div className="alert-history-cards">
+          {visibleNotes.map((n) => {
+            const cat        = n.category || 'NOTE'
+            const createdAt  = n.created_at
+            const updatedAt  = n.updated_at
+            const updatedBy  = n.updated_by
+            const deletedAt  = n.deleted_at
+            const deletedBy  = n.deleted_by
+            const authorName = n.author_name
+            const authorUser = n.author_username
+            const isDeleted  = !!deletedAt
+            const isAuthor   = currentUser && authorUser === currentUser
+            const canEdit    = !isDeleted && isAuthor && isWithinEditWindow(createdAt)
+            const canDelete  = !isDeleted && (isAuthor || isAdmin)
+            const canRestore = isDeleted && isAdmin
+            const isEditing  = editingId === n.id
+            const revs       = revisions[n.id] ?? []
+            const editEvents = revs.filter(r => r.event_type === 'EDIT').length
+            return (
+              <div key={n.id} className={`alert-history-card cert-note-card${isDeleted ? ' cert-note-deleted' : ''}`}>
+                <div className="ahc-stripe" style={{ background: isDeleted ? '#9ca3af' : categoryStripe(cat) }} />
+                <div className="ahc-body">
+                  {isDeleted && (
+                    <div className="cert-note-deleted-banner">
+                      <Trash2 size={13} />
+                      <span>
+                        {t('notes.deletedBanner', fmtTs(deletedAt, t('notes.dateUnknown')), deletedBy || t('notes.authorUnknown'))}
+                      </span>
+                    </div>
+                  )}
+
+                  <div className="cert-note-header">
+                    <span className={`cert-note-category-badge cn-cat-${cat}`}>
+                      {t(`notes.cat.${cat}`)}
+                    </span>
+                    <div className="cert-note-actions">
+                      {canEdit && !isEditing && (
+                        <button className="cert-note-icon-btn" title={t('notes.edit')} onClick={() => startEdit(n)}>
+                          <Pencil size={13} />
+                        </button>
+                      )}
+                      {canDelete && !isEditing && (
+                        <button className="cert-note-icon-btn cert-note-del-btn" title={t('notes.delete')} onClick={() => deleteNote(n)}>
+                          <Trash2 size={13} />
+                        </button>
+                      )}
+                      {canRestore && (
+                        <button className="cert-note-icon-btn cert-note-restore-btn" title={t('notes.restoreBtn')} onClick={() => restoreNote(n)}>
+                          <Undo2 size={13} />
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="cert-note-meta">
+                    {renderAuthorLine(authorName, authorUser)}
+                    <span className="cert-note-meta-item">
+                      <Clock size={12} />
+                      {fmtTs(createdAt, t('notes.dateUnknown'))}
+                    </span>
+                    {updatedAt && (
+                      <span className="cert-note-meta-item cert-note-edited-label" title={`${t('notes.editedLabel')}: ${fmtTs(updatedAt, t('notes.dateUnknown'))}${updatedBy ? ' · ' + updatedBy : ''}`}>
+                        <Pencil size={11} />
+                        {t('notes.editedLabel')}
+                      </span>
+                    )}
+                    <button className="cert-note-history-btn" onClick={() => toggleHistory(n.id)}>
+                      <History size={12} />
+                      {historyOpen[n.id] ? t('notes.hideHistory') : t('notes.showHistory')}
+                    </button>
+                  </div>
+
+                  {isEditing ? (
+                    <div className="cert-note-edit-form">
+                      <textarea
+                        className="note-textarea"
+                        rows={3}
+                        value={editBody}
+                        maxLength={NOTE_MAX_LENGTH}
+                        onChange={(e) => setEditBody(e.target.value)}
+                      />
+                      <div className="cert-note-form-footer">
+                        <span className="cert-note-charcount">{editBody.length} / {NOTE_MAX_LENGTH}</span>
+                        <button className="btn btn-secondary btn-sm-p" onClick={cancelEdit} disabled={editSaving}>
+                          {t('notes.cancel')}
+                        </button>
+                        <button className="btn btn-primary btn-sm-p" onClick={saveEdit} disabled={editSaving || !editBody.trim()}>
+                          {editSaving ? t('notes.saving') : t('notes.save')}
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="cert-note-body">{n.note}</div>
+                  )}
+
+                  {historyOpen[n.id] && (
+                    <div className="cert-note-history-panel">
+                      <div className="cert-note-history-title">
+                        <History size={13} /> {t('notes.historyTitle')}
+                      </div>
+                      {historyLoading[n.id] ? (
+                        <div className="loading">{t('notes.historyLoading')}</div>
+                      ) : revs.length === 0 ? (
+                        <div className="cert-note-history-empty">{t('notes.historyEmpty')}</div>
+                      ) : (
+                        [...revs].reverse().map(r => (
+                          <div key={r.id} className="cert-note-history-item">
+                            <span className="cert-note-history-bullet">●</span>
+                            <div style={{ flex: 1 }}>
+                              <div>
+                                <span className={`cert-note-history-event cert-note-history-event${r.event_type}`}>
+                                  {t(`notes.event${r.event_type}`)}
+                                </span>
+                                <span> · {fmtTs(r.edited_at, t('notes.dateUnknown'))}</span>
+                                <span> · <strong>{r.edited_by_name || r.edited_by || t('notes.authorUnknown')}</strong></span>
+                                {r.edited_by && r.edited_by_name && r.edited_by_name !== r.edited_by && (
+                                  <span className="cert-note-author-username"> ({r.edited_by})</span>
+                                )}
+                              </div>
+                              {r.body && <div className="cert-note-history-body">{r.body}</div>}
+                            </div>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )
+          })}
         </div>
       )}
     </div>
   )
 }
 
-export default function CertificateModal({ domain, alertLevel, onClose, initialData, previewMode }) {
+export default function CertificateModal({ domain, alertLevel, onClose, initialData, previewMode, currentUser, currentUserRole }) {
   const t = useT()
   const [certData, setCertData]       = useState(null)
   const [sslData, setSslData]         = useState(null)
@@ -274,7 +553,7 @@ export default function CertificateModal({ domain, alertLevel, onClose, initialD
         )}
 
         {!previewMode && activeTab === 'notes' && (
-          <NotesTab domain={domain} t={t} />
+          <NotesTab domain={domain} t={t} currentUser={currentUser} isAdmin={currentUserRole === 'ADMIN'} />
         )}
       </div>
     </div>

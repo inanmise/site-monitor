@@ -1,8 +1,8 @@
-import { ShieldAlert, ShieldCheck } from 'lucide-react'
+import { ShieldAlert, ShieldCheck, MailWarning } from 'lucide-react'
 import { formatDate } from '../api/client'
 import { useT } from '../i18n/index.jsx'
 
-export default function CertificateCard({ cert, onClick, hasSilentAlert = false, isWeak }) {
+export default function CertificateCard({ cert, onClick, hasSilentAlert = false, hasMailFailure = false, onMailFailureClick, isWeak }) {
   const t = useT()
   const days = cert.days_remaining
   const al = cert.alert_level
@@ -89,6 +89,16 @@ export default function CertificateCard({ cert, onClick, hasSilentAlert = false,
         <div className="card-silent-alert">
           <span className="card-silent-alert-icon">🔕</span>
           {t('card.silentAlert')}
+        </div>
+      )}
+      {hasMailFailure && (
+        <div
+          className="cert-card-mail-failure"
+          title={t('card.mailFailureTooltip')}
+          onClick={(e) => { e.stopPropagation(); onMailFailureClick?.() }}
+        >
+          <MailWarning size={13} />
+          <span>{t('card.mailFailure')}</span>
         </div>
       )}
     </div>
