@@ -70,6 +70,14 @@ jobs:
           path: backend/target/surefire-reports/
           retention-days: 7
 
+      - name: Upload coverage report (Jacoco)
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: backend-coverage-report
+          path: backend/target/site/jacoco/
+          retention-days: 7
+
   # ──────────────────────────────────────────────
   # 2. Frontend — Node build + lint
   # ──────────────────────────────────────────────
@@ -96,8 +104,15 @@ jobs:
       - name: Lint
         run: npm run lint --if-present
 
+      - name: Test
+        run: npm run test --silent -- --run
+
       - name: Build
         run: npm run build
+
+      # ── Security: dependency vulnerability scan (non-blocking until baseline is clean) ──
+      - name: npm audit (high+ severity, prod deps only)
+        run: npm audit --audit-level=high --omit=dev || true
 
   # ──────────────────────────────────────────────
   # 3. Helm lint

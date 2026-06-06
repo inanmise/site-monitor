@@ -4,7 +4,7 @@ const STORAGE_KEY = 'cert-monitor-lang'
 
 // ── Dictionaries ──────────────────────────────────────────────────────────────
 
-const TR = {
+export const TR = {
   'nav.dashboard':    'Genel Bakış',
   'nav.stats':        'İstatistikler',
   'nav.warnings':     'Uyarılar',
@@ -1173,7 +1173,7 @@ const TR = {
   'tier.centerTotal':   'toplam',
 }
 
-const EN = {
+export const EN = {
   'nav.dashboard':    'Dashboard',
   'nav.stats':        'Statistics',
   'nav.warnings':     'Warnings',

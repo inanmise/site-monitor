@@ -93,6 +93,18 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      # ── Security: container image vulnerability scan ──
+      # Non-blocking until baseline is clean; switch exit-code to '1' once
+      # current HIGH/CRITICAL CVEs are triaged.
+      - name: Trivy image scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.tags.outputs.primary }}
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: '0'
+          format: table
+
       - name: Image summary
         run: |
           echo "## Docker image built" >> "$GITHUB_STEP_SUMMARY"
