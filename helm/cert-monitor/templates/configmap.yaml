@@ -31,3 +31,6 @@ data:
   WARNING_DAYS: {{ .Values.config.warningDays | quote }}
   PARALLEL_WORKERS: {{ .Values.config.parallelWorkers | quote }}
   JAVA_OPTS: {{ .Values.config.javaOpts | quote }}
+  HTTP_PROXY_HOST: {{ .Values.config.httpProxyHost | quote }}
+  HTTP_PROXY_PORT: {{ .Values.config.httpProxyPort | quote }}
+  NO_PROXY:        {{ .Values.config.noProxy | quote }}
