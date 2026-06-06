@@ -34,3 +34,4 @@ data:
   HTTP_PROXY_HOST: {{ .Values.config.httpProxyHost | quote }}
   HTTP_PROXY_PORT: {{ .Values.config.httpProxyPort | quote }}
   NO_PROXY:        {{ .Values.config.noProxy | quote }}
+  SPRING_SESSION_STORE_TYPE: {{ .Values.config.sessionStoreType | quote }}

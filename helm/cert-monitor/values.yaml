@@ -57,6 +57,11 @@ config:
   parallelWorkers: "20"
   javaOpts: "-XX:MaxRAMPercentage=75.0 -XX:MinRAMPercentage=50.0 -Xss512k -XX:+ExitOnOutOfMemoryError"
 
+  # Spring Session storage. Default "jdbc" persists sessions to spring_session /
+  # spring_session_attributes tables so users stay logged in across pod restarts.
+  # Set to "none" to use the previous in-memory store (loses sessions on restart).
+  sessionStoreType: "jdbc"
+
   # ── Egress proxy (corporate forward proxy) ────────────────────────────────
   # Empty defaults preserve direct-connection behavior. Fill these in on
   # environments where outbound TLS handshakes (and OCSP/CRL) must traverse a
