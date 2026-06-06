@@ -1,4 +1,4 @@
-import { ShieldAlert, MailWarning, BellOff } from 'lucide-react'
+import { ShieldAlert, ShieldCheck, MailWarning, BellOff, Clock, Calendar } from 'lucide-react'
 import { formatDate } from '../api/client'
 import { useT } from '../i18n/index.jsx'
 
@@ -40,7 +40,9 @@ export default function CertificateCard({ cert, onClick, hasSilentAlert = false,
     : null
 
   const issuerName = cert.issuer_cn || cert.issuer || 'N/A'
-  const hasFooter  = hasSilentAlert || hasMailFailure || (isWeak === true)
+  const showAlgo   = !!algoLabel && isWeak !== undefined && !isError
+  const hasDetail  = !!cert.not_after || showAlgo
+  const hasFooter  = hasSilentAlert || hasMailFailure
 
   return (
     <div className={`cc-card cc-${state}`} data-domain={cert.domain} onClick={() => onClick(cert.domain)}>
@@ -54,7 +56,10 @@ export default function CertificateCard({ cert, onClick, hasSilentAlert = false,
           {pillLabel}
         </span>
         {cert.checked_at && (
-          <span className="cc-meta">{formatDate(cert.checked_at)}</span>
+          <span className="cc-meta" title={t('card.lastCheck')}>
+            <Clock size={11} />
+            {formatDate(cert.checked_at)}
+          </span>
         )}
       </div>
 
@@ -64,17 +69,35 @@ export default function CertificateCard({ cert, onClick, hasSilentAlert = false,
         <div className="cc-hero-label">{heroLabel}</div>
       </div>
 
-      {/* ── Identity — domain + issuer/algo + error message ── */}
+      {/* ── Identity — domain + issuer + error message ── */}
       <div className="cc-identity">
         <div className="cc-domain">{cert.domain || t('card.unknown')}</div>
-        <div className="cc-meta-line">
-          {issuerName}
-          {algoLabel && <> &nbsp;·&nbsp; {algoLabel}</>}
-        </div>
+        <div className="cc-meta-line">{issuerName}</div>
         {cert.error && <div className="cc-error-line">{cert.error}</div>}
       </div>
 
-      {/* ── Footer (only when any alert/issue active) ── */}
+      {/* ── Detail row — expiry date + algo chip ── */}
+      {hasDetail && (
+        <div className="cc-detail-row">
+          {cert.not_after ? (
+            <span className="cc-expires" title={t('card.expires')}>
+              <Calendar size={12} />
+              <span>{t('card.expiresShort')} {formatDate(cert.not_after)}</span>
+            </span>
+          ) : <span />}
+          {showAlgo && (
+            <span
+              className={`cc-algo-chip cc-algo-${isWeak ? 'weak' : 'strong'}`}
+              title={isWeak ? 'Weak Algorithm' : 'Strong Algorithm'}
+            >
+              {isWeak ? <ShieldAlert size={13} /> : <ShieldCheck size={13} />}
+              <span>{algoLabel}</span>
+            </span>
+          )}
+        </div>
+      )}
+
+      {/* ── Footer (only when an alert is active) ── */}
       {hasFooter && (
         <div className="cc-footer">
           {hasSilentAlert && (
@@ -93,12 +116,6 @@ export default function CertificateCard({ cert, onClick, hasSilentAlert = false,
               <MailWarning size={12} />
               <span>{t('card.mailFailure')}</span>
             </button>
-          )}
-          {isWeak === true && (
-            <span className="cc-chip cc-chip-danger" title="Weak Algorithm">
-              <ShieldAlert size={12} />
-              <span>{algoLabel || 'Weak algorithm'}</span>
-            </span>
           )}
         </div>
       )}
