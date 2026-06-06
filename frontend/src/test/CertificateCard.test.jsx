@@ -57,10 +57,10 @@ describe('CertificateCard', () => {
     expect(onClick).not.toHaveBeenCalledWith(expect.objectContaining({ domain: expect.anything() }))
   })
 
-  it('renders issuer and subject', () => {
+  it('renders issuer in the meta line (subject moved to detail modal)', () => {
     render(<CertificateCard cert={makeCert()} onClick={() => {}} />)
-    expect(screen.getByText('Test CA')).toBeDefined()
-    expect(screen.getByText('CN=test.example.com')).toBeDefined()
+    // Issuer remains visible on the card; subject is rendered in the modal only.
+    expect(screen.getByText(/Test CA/)).toBeDefined()
   })
 
   it('renders silent alert badge when hasSilentAlert=true', () => {

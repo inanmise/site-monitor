@@ -1,4 +1,4 @@
-import { ShieldAlert, ShieldCheck, MailWarning } from 'lucide-react'
+import { ShieldAlert, MailWarning, BellOff } from 'lucide-react'
 import { formatDate } from '../api/client'
 import { useT } from '../i18n/index.jsx'
 
@@ -12,93 +12,94 @@ export default function CertificateCard({ cert, onClick, hasSilentAlert = false,
   const isHigh     = al ? al === 'high'     : (!isError && !isExpired && !isCritical && days !== null && days !== undefined && days <= 15)
   const isWarning  = al ? al === 'warning'  : (!isError && !isExpired && !isCritical && !isHigh && cert.warning === true)
 
-  let cardClass = 'certificate-card'
-  let badgeClass = 'badge-valid'
-  let badgeText = t('card.valid')
+  const state = isError ? 'error'
+              : isExpired ? 'error'
+              : isCritical ? 'critical'
+              : isHigh ? 'high'
+              : isWarning ? 'warning'
+              : 'valid'
 
-  if (isError) {
-    cardClass += ' error'
-    badgeClass = 'badge-error'
-    badgeText = t('card.error')
-  } else if (isCritical || isExpired) {
-    cardClass += ' critical'
-    badgeClass = 'badge-critical'
-    badgeText = t('card.critical')
-  } else if (isHigh) {
-    cardClass += ' high'
-    badgeClass = 'badge-high'
-    badgeText = t('card.high')
-  } else if (isWarning) {
-    cardClass += ' warning'
-    badgeClass = 'badge-warning'
-    badgeText = t('card.warning')
-  } else {
-    cardClass += ' valid'
-  }
+  const pillLabel = isError ? t('card.error')
+                  : isExpired ? t('card.critical')
+                  : isCritical ? t('card.critical')
+                  : isHigh ? t('card.high')
+                  : isWarning ? t('card.warning')
+                  : t('card.valid')
+
+  const daysDisplay = isError ? '—'
+                    : isExpired ? Math.abs(days)
+                    : (days !== null && days !== undefined) ? days
+                    : '—'
+
+  const heroLabel = isError ? t('card.notChecked')
+                  : isExpired ? t('card.expiredAgo')
+                  : t('card.daysLeft')
 
   const algoLabel = cert.public_key_algorithm
     ? `${cert.public_key_algorithm}${cert.public_key_size ? ' ' + cert.public_key_size : ''}`
     : null
 
-  let daysNode = null
-  if (isExpired) {
-    daysNode = <div className="days-remaining error">{t('card.expired', Math.abs(days))}</div>
-  } else if (isCritical) {
-    daysNode = <div className="days-remaining critical">{t('card.critical_days', days)}</div>
-  } else if (isHigh && days !== null && days !== undefined) {
-    daysNode = <div className="days-remaining high">{t('card.days', days)}</div>
-  } else if (isWarning && days !== null && days !== undefined) {
-    daysNode = <div className="days-remaining warning">{t('card.days', days)}</div>
-  } else if (days !== null && days !== undefined) {
-    daysNode = <div className="days-remaining valid">{t('card.days', days)}</div>
-  }
+  const issuerName = cert.issuer_cn || cert.issuer || 'N/A'
+  const hasFooter  = hasSilentAlert || hasMailFailure || (isWeak === true)
 
   return (
-    <div className={cardClass} data-domain={cert.domain} onClick={() => onClick(cert.domain)}>
-      <div className="card-header">
-        <div className="card-title">
-          {cert.tier && <span className={`tier-badge tier-badge-${cert.tier}`} style={{ marginRight: 5 }}>T{cert.tier}</span>}
-          {cert.domain || t('card.unknown')}
-        </div>
-        <span className={`card-badge ${badgeClass}`}>{badgeText}</span>
-      </div>
-      {daysNode}
-      <div className="card-info"><span className="card-info-label">{t('card.issuer')}</span> {cert.issuer_cn || cert.issuer || 'N/A'}</div>
-      <div className="card-info"><span className="card-info-label">{t('card.subject')}</span> {cert.subject || 'N/A'}</div>
-      <div className="card-info"><span className="card-info-label">{t('card.expires')}</span> {formatDate(cert.not_after)}</div>
-      {cert.error && <div className="card-info" style={{ color: 'var(--danger-color)' }}><strong>{t('card.errorLbl')}</strong> {cert.error}</div>}
-      <div className="card-footer">
-        <span>{t('card.lastCheck')} {formatDate(cert.checked_at)}</span>
-        {isWeak !== undefined && !isError && (
-          isWeak
-            ? (
-              <span className="algo-chip algo-chip-weak" title="Weak Algorithm">
-                {algoLabel && <span className="algo-chip-label">{algoLabel}</span>}
-                <ShieldAlert size={16} />
-              </span>
-            )
-            : (
-              <span className="algo-chip algo-chip-strong" title="Strong Algorithm">
-                {algoLabel && <span className="algo-chip-label">{algoLabel}</span>}
-                <ShieldCheck size={16} />
-              </span>
-            )
+    <div className={`cc-card cc-${state}`} data-domain={cert.domain} onClick={() => onClick(cert.domain)}>
+      {/* ── Top bar — tier + pill + last check ── */}
+      <div className="cc-top">
+        {cert.tier && (
+          <span className={`cc-tier cc-tier-${cert.tier}`}>T{cert.tier}</span>
+        )}
+        <span className={`cc-pill cc-pill-${state}`}>
+          <span className="cc-pill-dot" />
+          {pillLabel}
+        </span>
+        {cert.checked_at && (
+          <span className="cc-meta">{formatDate(cert.checked_at)}</span>
         )}
       </div>
-      {hasSilentAlert && (
-        <div className="card-silent-alert">
-          <span className="card-silent-alert-icon">🔕</span>
-          {t('card.silentAlert')}
+
+      {/* ── Hero — days remaining ── */}
+      <div className="cc-hero">
+        <div className="cc-hero-number">{daysDisplay}</div>
+        <div className="cc-hero-label">{heroLabel}</div>
+      </div>
+
+      {/* ── Identity — domain + issuer/algo + error message ── */}
+      <div className="cc-identity">
+        <div className="cc-domain">{cert.domain || t('card.unknown')}</div>
+        <div className="cc-meta-line">
+          {issuerName}
+          {algoLabel && <> &nbsp;·&nbsp; {algoLabel}</>}
         </div>
-      )}
-      {hasMailFailure && (
-        <div
-          className="cert-card-mail-failure"
-          title={t('card.mailFailureTooltip')}
-          onClick={(e) => { e.stopPropagation(); onMailFailureClick?.() }}
-        >
-          <MailWarning size={13} />
-          <span>{t('card.mailFailure')}</span>
+        {cert.error && <div className="cc-error-line">{cert.error}</div>}
+      </div>
+
+      {/* ── Footer (only when any alert/issue active) ── */}
+      {hasFooter && (
+        <div className="cc-footer">
+          {hasSilentAlert && (
+            <span className="cc-chip cc-chip-warn" title={t('card.silentAlert')}>
+              <BellOff size={12} />
+              <span>{t('card.silentAlert')}</span>
+            </span>
+          )}
+          {hasMailFailure && (
+            <button
+              type="button"
+              className="cc-chip cc-chip-danger"
+              title={t('card.mailFailureTooltip')}
+              onClick={(e) => { e.stopPropagation(); onMailFailureClick?.() }}
+            >
+              <MailWarning size={12} />
+              <span>{t('card.mailFailure')}</span>
+            </button>
+          )}
+          {isWeak === true && (
+            <span className="cc-chip cc-chip-danger" title="Weak Algorithm">
+              <ShieldAlert size={12} />
+              <span>{algoLabel || 'Weak algorithm'}</span>
+            </span>
+          )}
         </div>
       )}
     </div>
