@@ -21,13 +21,28 @@ export default function Nav({ activeTab, onTabChange, username, teamName, system
       labelKey: null,
       tabs: [
         { id: 'dashboard', Icon: LayoutDashboard, labelKey: 'nav.dashboard', show: true },
-        { id: 'stats',     Icon: BarChart3,       labelKey: 'nav.stats',     show: true },
-        { id: 'forecast',  Icon: TrendingDown,    labelKey: 'nav.forecast',  show: true },
-        { id: 'warnings',     Icon: AlertTriangle,   labelKey: 'nav.warnings',     show: true },
-        { id: 'alerthistory', Icon: Bell,            labelKey: 'nav.alertHistory', show: isAdmin },
-        { id: 'all',          Icon: FileText,        labelKey: 'nav.all',          show: true },
-        { id: 'renewal',   Icon: RefreshCw,       labelKey: 'nav.renewal',   show: true },
-        { id: 'domains',   Icon: Globe,           labelKey: 'nav.domains',   show: true },
+      ],
+    },
+    {
+      labelKey: 'nav.groupCertificates',
+      tabs: [
+        { id: 'all',      Icon: FileText,     labelKey: 'nav.all',      show: true },
+        { id: 'domains',  Icon: Globe,        labelKey: 'nav.domains',  show: true },
+        { id: 'forecast', Icon: TrendingDown, labelKey: 'nav.forecast', show: true },
+        { id: 'renewal',  Icon: RefreshCw,    labelKey: 'nav.renewal',  show: true },
+      ],
+    },
+    {
+      labelKey: 'nav.groupAlerts',
+      tabs: [
+        { id: 'warnings',     Icon: AlertTriangle, labelKey: 'nav.warnings',     show: true },
+        { id: 'alerthistory', Icon: Bell,          labelKey: 'nav.alertHistory', show: isAdmin },
+      ],
+    },
+    {
+      labelKey: 'nav.groupReports',
+      tabs: [
+        { id: 'stats', Icon: BarChart3, labelKey: 'nav.stats', show: true },
       ],
     },
     {

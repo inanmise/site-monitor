@@ -1030,9 +1030,12 @@ const TR = {
   'ts.team':             'Takım',
   'ts.teamSectionTitle': 'Takım Bazlı Sertifika Adetleri',
 
-  'nav.groupLogs':      'Kayıtlar',
-  'nav.groupAdmin':     'Yönetim',
-  'nav.help':           'Yardım',
+  'nav.groupCertificates': 'Sertifikalar',
+  'nav.groupAlerts':       'Uyarılar',
+  'nav.groupReports':      'Raporlar',
+  'nav.groupLogs':         'Kayıtlar',
+  'nav.groupAdmin':        'Yönetim',
+  'nav.help':              'Yardım',
   'help.title':         'CertMonitor — Kullanım Kılavuzu',
   'help.download':      'PDF İndir',
 
@@ -2192,9 +2195,12 @@ const EN = {
   'ts.team':             'Team',
   'ts.teamSectionTitle': 'Certificate Count by Team',
 
-  'nav.groupLogs':      'Logs',
-  'nav.groupAdmin':     'Management',
-  'nav.help':           'Help',
+  'nav.groupCertificates': 'Certificates',
+  'nav.groupAlerts':       'Alerts',
+  'nav.groupReports':      'Reports',
+  'nav.groupLogs':         'Logs',
+  'nav.groupAdmin':        'Management',
+  'nav.help':              'Help',
   'help.title':         'CertMonitor — User Guide',
   'help.download':      'Download PDF',
 
