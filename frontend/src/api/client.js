@@ -21,6 +21,16 @@ async function request(path, options = {}) {
     ...options,
   })
   if (res.status === 401) {
+    // Session expired or invalidated (typically: pod restart wiped in-memory
+    // sessions). Don't redirect during the initial auth bootstrap or from the
+    // login endpoint itself — App.jsx already handles user=null by rendering
+    // the login form. Only force a hard reload when we previously had an
+    // authenticated session (flag set by api.login on success).
+    if (typeof window !== 'undefined' &&
+        sessionStorage.getItem('cm.session.active') === '1') {
+      try { sessionStorage.removeItem('cm.session.active') } catch {}
+      window.location.assign('/?session=expired')
+    }
     return null
   }
   try {
@@ -39,10 +49,23 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ username, password, remember_me: String(rememberMe) }),
     })
-    try { return await r.json() } catch { return nonJsonErrorPayload(r.status) }
+    let body
+    try { body = await r.json() } catch { body = nonJsonErrorPayload(r.status) }
+    // Flag a successful login so the 401 handler in request() knows that any
+    // subsequent 401 is a *lost* session (worth a hard reload to /?session=
+    // expired), not the initial unauthenticated bootstrap.
+    if (r.ok && body?.success && typeof window !== 'undefined') {
+      try { sessionStorage.setItem('cm.session.active', '1') } catch {}
+    }
+    return body
   },
 
-  logout: () => request('/logout', { method: 'POST' }),
+  logout: async () => {
+    if (typeof window !== 'undefined') {
+      try { sessionStorage.removeItem('cm.session.active') } catch {}
+    }
+    return request('/logout', { method: 'POST' })
+  },
 
   getMe: () => request('/me'),
 
