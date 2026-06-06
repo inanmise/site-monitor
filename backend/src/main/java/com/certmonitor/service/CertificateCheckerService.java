@@ -39,11 +39,24 @@ public class CertificateCheckerService {
     private final DnsCheckerService dnsCheckerService;
     private final ObjectMapper objectMapper;
 
-    @Value("${cert.monitor.check-timeout-seconds:3}")
+    @Value("${cert.monitor.check-timeout-seconds:6}")
     private int timeoutSeconds;
 
     @Value("${cert.monitor.warning-days:30}")
     private int warningDays;
+
+    /** Retry transient (NETWORK class) failures once before declaring the cert
+     *  unreachable. Eliminates false-positive CRITICAL alarms from WAF resets
+     *  and rate-limit hiccups. SSL/DNS/CERT errors are never retried — they
+     *  represent real issues that don't self-heal in 1s. */
+    @Value("${cert.monitor.check.retry-on-transient:true}")
+    private boolean retryOnTransient;
+
+    @Value("${cert.monitor.check.retry-delay-ms:1000}")
+    private long retryDelayMs;
+
+    @Value("${cert.monitor.check.max-attempts:2}")
+    private int maxAttempts;
 
     @Value("${cert.monitor.proxy.host:}")     private String proxyHost;
     @Value("${cert.monitor.proxy.port:0}")    private int    proxyPort;
@@ -76,6 +89,54 @@ public class CertificateCheckerService {
     }
 
     public Map<String, Object> check(String domain, int port) {
+        Map<String, Object> result = tryCheckOnce(domain, port);
+
+        if (!retryOnTransient || maxAttempts < 2) return result;
+        if (!isTransientError(result)) return result;
+
+        log.info("Certificate check retry: domain={} attempt=2 prev_class={} prev_error={}",
+                domain, result.get("error_class"),
+                truncate((String) result.get("error"), 100));
+
+        try { Thread.sleep(retryDelayMs); }
+        catch (InterruptedException ie) {
+            Thread.currentThread().interrupt();
+            return result;
+        }
+
+        Map<String, Object> retry = tryCheckOnce(domain, port);
+        if ("error".equals(retry.get("status"))) {
+            retry.put("retry_attempted", true);
+            log.warn("Certificate check failed after retry: domain={} final_error={}",
+                    domain, truncate((String) retry.get("error"), 200));
+        } else {
+            retry.put("retry_recovered", true);
+            log.info("Certificate check recovered on retry: domain={} prev_error={}",
+                    domain, truncate((String) result.get("error"), 80));
+        }
+        return retry;
+    }
+
+    /** Returns true iff this failure is a transient NETWORK-class symptom worth
+     *  retrying. SSL handshake, DNS, and cert errors are NOT retried. */
+    boolean isTransientError(Map<String, Object> result) {
+        if (!"error".equals(result.get("status"))) return false;
+        if (!"NETWORK".equals(result.get("error_class"))) return false;
+        String msg = ((String) result.getOrDefault("error", "")).toLowerCase();
+        return msg.contains("connection reset")
+            || msg.contains("connection refused")
+            || msg.contains("timeout")
+            || msg.contains("no route to host")
+            || msg.contains("socket closed")
+            || msg.contains("broken pipe");
+    }
+
+    private static String truncate(String s, int max) {
+        if (s == null) return "";
+        return s.length() <= max ? s : s.substring(0, max) + "...";
+    }
+
+    Map<String, Object> tryCheckOnce(String domain, int port) {
         long startMs = System.currentTimeMillis();
         log.debug("Certificate check start: domain={}:{}", domain, port);
         try {
