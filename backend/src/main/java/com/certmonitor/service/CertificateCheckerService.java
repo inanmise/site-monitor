@@ -58,6 +58,21 @@ public class CertificateCheckerService {
     @Value("${cert.monitor.check.max-attempts:2}")
     private int maxAttempts;
 
+    /** TLS handshake fingerprint mode.
+     *  - "browser" (default): force TLS 1.2 + ALPN [h2, http/1.1] so the
+     *    ClientHello looks like Chrome/Firefox. Many WAFs (Akamai/F5/Imperva)
+     *    fingerprint and RST connections that look like raw Java SSL.
+     *    Observed in akbank prod where 2 WAF-fronted domains kept resetting
+     *    despite the same servers accepting browsers + dev-PC handshakes.
+     *  - "default": no overrides; whatever Java 21 negotiates (TLS 1.3 by
+     *    default). Use this if you suspect the browser-style override is
+     *    causing handshake incompatibility with very old peers. */
+    @Value("${cert.monitor.check.tls-mode:browser}")
+    private String tlsMode;
+
+    private static final String[] BROWSER_TLS_PROTOCOLS = { "TLSv1.2" };
+    private static final String[] BROWSER_ALPN          = { "h2", "http/1.1" };
+
     @Value("${cert.monitor.proxy.host:}")     private String proxyHost;
     @Value("${cert.monitor.proxy.port:0}")    private int    proxyPort;
     @Value("${cert.monitor.proxy.user:}")     private String proxyUser;
@@ -153,6 +168,10 @@ public class CertificateCheckerService {
 
                 SSLParameters params = socket.getSSLParameters();
                 params.setServerNames(Collections.singletonList(new SNIHostName(domain)));
+                if ("browser".equalsIgnoreCase(tlsMode)) {
+                    params.setApplicationProtocols(BROWSER_ALPN);
+                    socket.setEnabledProtocols(BROWSER_TLS_PROTOCOLS);
+                }
                 socket.setSSLParameters(params);
 
                 socket.startHandshake();
