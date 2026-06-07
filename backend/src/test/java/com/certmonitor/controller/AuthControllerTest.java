@@ -72,7 +72,27 @@ class AuthControllerTest {
                         .content("{\"username\":\"testuser\",\"password\":\"testpass\"}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success").value(true))
-                .andExpect(jsonPath("$.username").value("testuser"));
+                .andExpect(jsonPath("$.username").value("testuser"))
+                .andExpect(jsonPath("$.must_change_password").value(false));
+    }
+
+    @Test
+    @DisplayName("POST /api/login with a user flagged for forced change exposes must_change_password=true")
+    void login_userWithForcedChange_exposesFlag() throws Exception {
+        AppUser forced = new AppUser();
+        forced.setId(2L);
+        forced.setUsername("forceduser");
+        forced.setSystemRole("USER");
+        forced.setActive(true);
+        forced.setMustChangePassword(true);
+        when(userService.authenticate("forceduser", "tmpPass99")).thenReturn(Optional.of(forced));
+        when(userService.findByUsername("forceduser")).thenReturn(Optional.of(forced));
+
+        mvc.perform(post("/api/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"username\":\"forceduser\",\"password\":\"tmpPass99\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.must_change_password").value(true));
     }
 
     @Test

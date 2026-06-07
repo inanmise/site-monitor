@@ -62,6 +62,7 @@ export default function App() {
   const [weakAlgStats, setWeakAlgStats] = useState(null)
   const [statsVisible, setStatsVisible] = useState(false)
   const [selfPwdModalOpen, setSelfPwdModalOpen] = useState(false)
+  const [mustChangePwd, setMustChangePwd] = useState(false)
   const [search, setSearch] = useState('')
   const [sortOrder, setSortOrder] = useState('default')
   const [modalCert, setModalCert] = useState(null)
@@ -97,6 +98,7 @@ export default function App() {
         setSystemRole(res.system_role || 'USER')
         setTeamId(res.team_id ?? null)
         setTeamName(res.team_name ?? null)
+        setMustChangePwd(!!res.must_change_password)
       }
       setAuthChecked(true)
     }).catch(() => setAuthChecked(true))
@@ -301,6 +303,7 @@ export default function App() {
     setSystemRole(userData.system_role || 'USER')
     setTeamId(userData.team_id ?? null)
     setTeamName(userData.team_name ?? null)
+    setMustChangePwd(!!userData.must_change_password)
   }
 
   const weakDomainSet = useMemo(
@@ -324,6 +327,19 @@ export default function App() {
 
   if (!authChecked) return <div className="loading" style={{ marginTop: 80, textAlign: 'center' }}>{t('app.loading')}</div>
   if (!user) return <Login onLogin={handleLogin} />
+  if (mustChangePwd) {
+    // User was auto-reset by an admin — block all of the app until they
+    // pick a new password. PasswordChangeModal in forced-change mode hides
+    // the cancel button and ignores overlay clicks.
+    return (
+      <PasswordChangeModal
+        mode="forced-change"
+        targetUser={{ id: null, username: user }}
+        onClose={() => {}}
+        onSuccess={() => setMustChangePwd(false)}
+      />
+    )
+  }
 
   const STAT_FILTER_FN = {
     total:      () => true,

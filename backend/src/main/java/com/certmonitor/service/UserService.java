@@ -275,6 +275,9 @@ public class UserService {
 
         user.setPasswordHash(PASSWORD_ENCODER.encode(rawPassword));
         user.setUpdatedAt(now());
+        if (Boolean.TRUE.equals(user.getMustChangePassword())) {
+            user.setMustChangePassword(false);   // any successful change clears the forced flag
+        }
         userRepo.save(user);
 
         // Prune anything older than (historyCount - 1) since the current
@@ -305,6 +308,54 @@ public class UserService {
             throw new SecurityException("Invalid admin password");
         }
         changePassword(targetUserId, newPassword);
+    }
+
+    /**
+     * Admin auto-reset: verifies the admin's own password, generates a
+     * temporary password for the target user, sets mustChangePassword=true,
+     * and returns the plaintext temp password so the controller can email
+     * it. The plaintext is NEVER persisted or logged here.
+     */
+    @Transactional
+    public String adminAutoResetPassword(Long targetUserId, String adminUsername, String adminCurrentPassword) {
+        if (adminUsername == null || adminCurrentPassword == null || adminCurrentPassword.isBlank()) {
+            throw new SecurityException("Invalid admin password");
+        }
+        boolean adminVerified = userRepo.findByUsernameAndActiveTrue(adminUsername)
+                .filter(u -> PASSWORD_ENCODER.matches(adminCurrentPassword, u.getPasswordHash()))
+                .isPresent();
+        if (!adminVerified) {
+            throw new SecurityException("Invalid admin password");
+        }
+
+        AppUser target = userRepo.findById(targetUserId)
+                .orElseThrow(() -> new NoSuchElementException("User not found: " + targetUserId));
+        if (target.getEmail() == null || target.getEmail().isBlank()) {
+            throw new IllegalArgumentException("User has no email address");
+        }
+
+        // Archive the outgoing hash so the user cannot pick it again later.
+        if (target.getPasswordHash() != null) {
+            PasswordHistory hist = new PasswordHistory();
+            hist.setUserId(targetUserId);
+            hist.setPasswordHash(target.getPasswordHash());
+            passwordHistoryRepo.save(hist);
+        }
+
+        String tempPwd = com.certmonitor.util.PasswordGenerator.generate();
+        target.setPasswordHash(PASSWORD_ENCODER.encode(tempPwd));
+        target.setMustChangePassword(true);
+        target.setUpdatedAt(now());
+        userRepo.save(target);
+
+        // Prune archived hashes beyond the policy keep window.
+        int keep = Math.max(0, passwordHistoryCount - 1);
+        List<PasswordHistory> all = passwordHistoryRepo.findByUserIdOrderByCreatedAtDesc(targetUserId);
+        if (all.size() > keep) {
+            passwordHistoryRepo.deleteAll(all.subList(keep, all.size()));
+        }
+
+        return tempPwd;
     }
 
     @Transactional

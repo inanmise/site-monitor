@@ -206,6 +206,8 @@ public class AuthController {
         resp.put("team_id", session.getAttribute("teamId"));
         resp.put("team_name", session.getAttribute("teamName"));
         resp.put("system_role", session.getAttribute("systemRole"));
+        resp.put("must_change_password",
+                Boolean.TRUE.equals(session.getAttribute("mustChangePassword")));
         return ResponseEntity.ok(resp);
     }
 
@@ -232,6 +234,9 @@ public class AuthController {
         }
 
         userService.changePassword(userId, newPwd, username, currentPwd);
+        // Successful self-change clears the forced-change session flag too —
+        // AuthInterceptor uses it to gate other endpoints.
+        session.setAttribute("mustChangePassword", false);
         auditService.recordAction("SELF_PASSWORD_CHANGE", session, request,
                 "USER", userId.toString(), null);
 
@@ -251,6 +256,8 @@ public class AuthController {
         session.setAttribute("userId", user.getId());
         session.setAttribute("teamId", user.getTeamId());
         session.setAttribute("systemRole", user.getSystemRole());
+        session.setAttribute("mustChangePassword",
+                Boolean.TRUE.equals(user.getMustChangePassword()));
         // Resolve team name
         String teamName = user.getTeamId() != null
                 ? userService.findTeamById(user.getTeamId()).map(Team::getName).orElse(null)
@@ -268,6 +275,7 @@ public class AuthController {
         resp.put("team_name", user.getTeamId() != null
                 ? userService.findTeamById(user.getTeamId()).map(Team::getName).orElse(null) : null);
         resp.put("system_role", user.getSystemRole());
+        resp.put("must_change_password", Boolean.TRUE.equals(user.getMustChangePassword()));
         return resp;
     }
 

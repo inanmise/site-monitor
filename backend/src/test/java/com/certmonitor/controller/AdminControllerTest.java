@@ -85,6 +85,9 @@ class AdminControllerTest {
     @MockBean
     com.certmonitor.repository.TeamRepository teamRepo;
 
+    @MockBean
+    com.certmonitor.service.EmailNotificationService emailNotificationService;
+
     @BeforeEach
     void setup() {
         when(userService.listTeams()).thenReturn(java.util.Collections.emptyList());
@@ -433,6 +436,51 @@ class AdminControllerTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"password\":\"abc\",\"admin_password\":\"rightpass\"}"))
                 .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    @DisplayName("POST /api/admin/users/{id}/auto-reset-password without admin_password returns 400")
+    void autoResetPassword_missingAdminPassword_returns400() throws Exception {
+        mvc.perform(post("/api/admin/users/7/auto-reset-password")
+                        .session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{}"))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    @DisplayName("POST /api/admin/users/{id}/auto-reset-password with valid admin_password returns 200 + email_status")
+    void autoResetPassword_validAdmin_returns200WithEmailStatus() throws Exception {
+        when(userService.adminAutoResetPassword(eq(7L), any(), any())).thenReturn("TempPwd12X");
+        AppUser target = new AppUser();
+        target.setId(7L);
+        target.setUsername("bob");
+        target.setEmail("bob@example.com");
+        target.setDisplayName("Bob");
+        when(userRepo.findById(7L)).thenReturn(Optional.of(target));
+        when(emailNotificationService.sendPasswordResetEmail(any(), any(), any(), any()))
+                .thenReturn("SENT");
+
+        mvc.perform(post("/api/admin/users/7/auto-reset-password")
+                        .session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"admin_password\":\"rightpass\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.email_status").value("SENT"));
+    }
+
+    @Test
+    @DisplayName("POST /api/admin/users/{id}/auto-reset-password with wrong admin_password returns 403")
+    void autoResetPassword_wrongAdmin_returns403() throws Exception {
+        org.mockito.Mockito.doThrow(new SecurityException("Invalid admin password"))
+                .when(userService).adminAutoResetPassword(eq(7L), any(), any());
+
+        mvc.perform(post("/api/admin/users/7/auto-reset-password")
+                        .session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"admin_password\":\"wrong\"}"))
+                .andExpect(status().isForbidden());
     }
 
     @Test

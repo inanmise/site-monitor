@@ -43,6 +43,7 @@ public class AdminController {
     private final UserService userService;
     private final AppUserRepository userRepo;
     private final TeamRepository teamRepo;
+    private final com.certmonitor.service.EmailNotificationService emailNotificationService;
 
     private static final DateTimeFormatter ISO =
             DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
@@ -619,6 +620,33 @@ public class AdminController {
         auditService.recordAction("USER_PASSWORD_RESET", session, request,
                 "USER", id.toString(), null);
         return ok(Map.of("message", "Password updated"));
+    }
+
+    @PostMapping("/users/{id}/auto-reset-password")
+    public ResponseEntity<Map<String, Object>> autoResetPassword(
+            @PathVariable Long id, @RequestBody Map<String, String> body,
+            HttpSession session, HttpServletRequest request) {
+        requireAdmin(session);
+        String adminPwd = body.get("admin_password");
+        if (adminPwd == null || adminPwd.isBlank()) {
+            throw new IllegalArgumentException("Admin password required");
+        }
+        String adminUsername = actor(session);
+
+        String tempPwd = userService.adminAutoResetPassword(id, adminUsername, adminPwd);
+
+        AppUser target = userRepo.findById(id)
+                .orElseThrow(() -> new NoSuchElementException("User not found: " + id));
+        String emailStatus = emailNotificationService.sendPasswordResetEmail(
+                target.getEmail(), target.getUsername(), target.getDisplayName(), tempPwd);
+
+        auditService.recordAction("USER_PASSWORD_AUTO_RESET", session, request,
+                "USER", id.toString(),
+                "{\"email_status\":\"" + emailStatus.replace("\"", "\\\"") + "\"}");
+
+        return ok(Map.of(
+                "message", "Temporary password generated and emailed",
+                "email_status", emailStatus));
     }
 
     @PostMapping("/users/{id}/unlock")

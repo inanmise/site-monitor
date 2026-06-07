@@ -155,6 +155,47 @@ public class EmailNotificationService {
         }
     }
 
+    // ── Password reset — admin auto-reset flow ──────────────────────────────
+
+    /**
+     * Sends a one-time temporary password to a user whose account was
+     * auto-reset by an admin. The plaintext temp password is ONLY ever
+     * present in this email body — it is never logged.
+     */
+    public String sendPasswordResetEmail(String toAddress, String username,
+                                          String displayName, String tempPassword) {
+        if (!enabled) {
+            log.info("⚠ Email devre dışı — şifre sıfırlama: TO={}", toAddress);
+            return "SKIPPED_DISABLED";
+        }
+        try {
+            MimeMessage msg = mailSender.createMimeMessage();
+            MimeMessageHelper helper = new MimeMessageHelper(msg, true, "UTF-8");
+            helper.setTo(toAddress);
+            helper.setFrom(emailFrom);
+            helper.setSubject("[CertMonitor] Şifreniz sıfırlandı — lütfen güncelleyin");
+            helper.setText(buildPasswordResetHtml(username, displayName, tempPassword), true);
+            return doSend(toAddress, msg, 1);
+        } catch (Exception e) {
+            log.error("✗ Şifre sıfırlama e-postası hazırlanamadı: TO={} | HATA={}", toAddress, e.getMessage());
+            return "FAILED: " + e.getMessage();
+        }
+    }
+
+    private String buildPasswordResetHtml(String username, String displayName, String tempPwd) {
+        String name = (displayName != null && !displayName.isBlank()) ? displayName : username;
+        return """
+            <div style="font-family:Arial,sans-serif;max-width:560px;margin:0 auto;padding:20px;color:#1e293b">
+              <h2 style="color:#4f46e5;margin-top:0">Şifreniz sıfırlandı</h2>
+              <p>Sayın <strong>%s</strong>,</p>
+              <p>CertMonitor hesabınızın şifresi bir yönetici tarafından sıfırlandı. Geçici şifreniz aşağıdadır:</p>
+              <pre style="background:#f1f5f9;border:1px solid #cbd5e1;padding:14px;border-radius:6px;font-size:1.2em;letter-spacing:.05em;font-weight:700;text-align:center">%s</pre>
+              <p><strong>Bu şifre tek kullanımlıktır.</strong> İlk girişinizde sistem sizden yeni bir şifre belirlemenizi isteyecektir.</p>
+              <p style="font-size:.9em;color:#64748b">Bu işlemi siz başlatmadıysanız lütfen sistem yöneticinizle iletişime geçin.</p>
+            </div>
+            """.formatted(name, tempPwd);
+    }
+
     // ── System admin — network outage notifications ──────────────────────────
 
     public String sendSystemAdminNetworkAlert(String to, String detectedAt,
