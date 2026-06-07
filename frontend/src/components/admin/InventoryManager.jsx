@@ -392,7 +392,7 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
               </div>
             )}
           </div>
-          <button className="btn btn-success" onClick={openAdd}>{t('inv.addBtn')}</button>
+          {isAdmin && <button className="btn btn-success" onClick={openAdd}>{t('inv.addBtn')}</button>}
         </div>
       </div>
 
@@ -443,14 +443,14 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
                     )
                   ) : (
                     <>
-                      <button className="btn-sm btn-edit" onClick={() => openEdit(item)}>{t('inv.edit')}</button>
+                      {isAdmin && <button className="btn-sm btn-edit" onClick={() => openEdit(item)}>{t('inv.edit')}</button>}
                       {isAdmin && teams.length > 1 && (
                         <button className="btn-sm btn-transfer-sy"
                           onClick={() => openTransfer(item)}>
                           {t('inv.transfer')}
                         </button>
                       )}
-                      <button className="btn-sm btn-del" onClick={() => del(item.id)}>{t('inv.delete')}</button>
+                      {isAdmin && <button className="btn-sm btn-del" onClick={() => del(item.id)}>{t('inv.delete')}</button>}
                     </>
                   )}
                 </td>

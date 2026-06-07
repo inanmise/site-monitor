@@ -106,7 +106,7 @@ export default function EscalationContacts({ teams = [], isAdmin = false }) {
             <span>{t('ec.legendCrit')}</span>
           </div>
         </div>
-        <button className="btn btn-success" onClick={openAdd}>{t('ec.addBtn')}</button>
+        {isAdmin && <button className="btn btn-success" onClick={openAdd}>{t('ec.addBtn')}</button>}
       </div>
       {msg && <div className="alert-msg">{msg}</div>}
       <div className="admin-table-wrap">
@@ -134,8 +134,8 @@ export default function EscalationContacts({ teams = [], isAdmin = false }) {
                 <td>{c.webhook_url ? <span className="badge badge-ok">{c.webhook_type}</span> : '—'}</td>
                 <td><span className={c.active ? 'badge badge-ok' : 'badge badge-err'}>{c.active ? t('ec.active') : t('ec.inactive')}</span></td>
                 <td>
-                  <button className="btn-sm btn-edit" onClick={() => openEdit(c)}>{t('ec.edit')}</button>
-                  <button className="btn-sm btn-del" onClick={() => del(c.id)}>{t('ec.delete')}</button>
+                  {isAdmin && <button className="btn-sm btn-edit" onClick={() => openEdit(c)}>{t('ec.edit')}</button>}
+                  {isAdmin && <button className="btn-sm btn-del" onClick={() => del(c.id)}>{t('ec.delete')}</button>}
                 </td>
               </tr>
             ))}

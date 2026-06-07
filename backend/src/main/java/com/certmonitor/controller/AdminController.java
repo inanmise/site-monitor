@@ -69,10 +69,8 @@ public class AdminController {
     @PostMapping("/inventory")
     public ResponseEntity<Map<String, Object>> addInventory(
             @RequestBody CertificateInventory item, HttpSession session, HttpServletRequest request) {
+        requireAdmin(session);
         validateDomain(item.getDomain());
-        if (!isAdmin(session)) {
-            item.setTeamId(teamId(session));
-        }
         if (item.getTeamId() == null) {
             throw new IllegalArgumentException("A team must be selected for the certificate");
         }
@@ -96,12 +94,12 @@ public class AdminController {
     public ResponseEntity<Map<String, Object>> updateInventory(
             @PathVariable Long id, @RequestBody CertificateInventory item,
             HttpSession session, HttpServletRequest request) {
+        requireAdmin(session);
         CertificateInventory existing = inventoryRepo.findById(id)
                 .orElseThrow(() -> new NoSuchElementException("Inventory item not found: " + id));
-        if (!isAdmin(session)) checkOwnership(existing.getTeamId(), session);
 
         // Build diff BEFORE applying changes
-        String diffJson = buildInventoryDiff(existing, item, isAdmin(session));
+        String diffJson = buildInventoryDiff(existing, item, true);
 
         existing.setDomain(item.getDomain());
         existing.setPort(item.getPort() != null ? item.getPort() : 443);
@@ -111,7 +109,7 @@ public class AdminController {
         existing.setActive(item.getActive() != null ? item.getActive() : true);
         existing.setExpectedFingerprint(item.getExpectedFingerprint());
         existing.setExpectedSubject(item.getExpectedSubject());
-        if (isAdmin(session) && item.getTeamId() != null) existing.setTeamId(item.getTeamId());
+        if (item.getTeamId() != null) existing.setTeamId(item.getTeamId());
         existing.setUgTeamId(item.getUgTeamId());
         existing.setExternalVendor(item.getExternalVendor());
         existing.setActionRequired(item.getActionRequired());
@@ -190,8 +188,8 @@ public class AdminController {
     @DeleteMapping("/inventory/{id}")
     public ResponseEntity<Map<String, Object>> deleteInventory(
             @PathVariable Long id, HttpSession session, HttpServletRequest request) {
+        requireAdmin(session);
         return inventoryRepo.findById(id).map(inv -> {
-            if (!isAdmin(session)) checkOwnership(inv.getTeamId(), session);
             inv.setDeletedAt(now());
             inv.setActive(false);
             inventoryRepo.save(inv);
@@ -318,13 +316,13 @@ public class AdminController {
     @PostMapping("/contacts")
     public ResponseEntity<Map<String, Object>> addContact(
             @RequestBody Map<String, Object> body, HttpSession session) {
+        requireAdmin(session);
         EscalationContact contact = new EscalationContact();
         applyContactFields(contact, body, session);
         contact.setId(null);
         contact.setCreatedAt(now());
         if (contact.getActive() == null) contact.setActive(true);
         if (contact.getMinAlertLevel() == null) contact.setMinAlertLevel("WARNING");
-        if (!isAdmin(session)) contact.setTeamId(teamId(session));
         if (contact.getTeamId() == null) {
             userService.listTeams().stream().findFirst().ifPresent(t -> contact.setTeamId(t.getId()));
         }
@@ -334,9 +332,9 @@ public class AdminController {
     @PutMapping("/contacts/{id}")
     public ResponseEntity<Map<String, Object>> updateContact(
             @PathVariable Long id, @RequestBody Map<String, Object> body, HttpSession session) {
+        requireAdmin(session);
         EscalationContact existing = contactRepo.findById(id)
                 .orElseThrow(() -> new NoSuchElementException("Contact not found: " + id));
-        if (!isAdmin(session)) checkOwnership(existing.getTeamId(), session);
         applyContactFields(existing, body, session);
         return ok(Map.of("data", contactRepo.save(existing)));
     }
@@ -374,9 +372,9 @@ public class AdminController {
     @DeleteMapping("/contacts/{id}")
     public ResponseEntity<Map<String, Object>> deleteContact(
             @PathVariable Long id, HttpSession session) {
+        requireAdmin(session);
         EscalationContact existing = contactRepo.findById(id)
                 .orElseThrow(() -> new NoSuchElementException("Contact not found: " + id));
-        if (!isAdmin(session)) checkOwnership(existing.getTeamId(), session);
         contactRepo.deleteById(id);
         return ok(Map.of("message", "Deleted"));
     }
@@ -672,6 +670,7 @@ public class AdminController {
             @PathVariable String domain,
             @RequestBody Map<String, String> body,
             HttpSession session, HttpServletRequest request) {
+        requireAdmin(session);
         String text = body.get("note");
         if (text == null || text.isBlank())
             throw new IllegalArgumentException("Note text cannot be blank");
@@ -710,6 +709,7 @@ public class AdminController {
             @PathVariable String domain, @PathVariable Long noteId,
             @RequestBody Map<String, String> body,
             HttpSession session, HttpServletRequest request) {
+        requireAdmin(session);
         CertificateNote note = noteRepo.findById(noteId)
                 .orElseThrow(() -> new NoSuchElementException("Note not found: " + noteId));
         if (note.getDeletedAt() != null)
@@ -757,6 +757,7 @@ public class AdminController {
     public ResponseEntity<Map<String, Object>> deleteNote(
             @PathVariable String domain, @PathVariable Long noteId,
             HttpSession session, HttpServletRequest request) {
+        requireAdmin(session);
         CertificateNote note = noteRepo.findById(noteId)
                 .orElseThrow(() -> new NoSuchElementException("Note not found: " + noteId));
         if (note.getDeletedAt() != null)

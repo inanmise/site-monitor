@@ -171,33 +171,35 @@ function NotesTab({ domain, t, currentUser, isAdmin }) {
 
   return (
     <div className="modal-body">
-      <div className="cert-note-form">
-        <div className="cert-note-form-row">
-          <label className="cert-note-cat-label">{t('notes.categoryLabel')}</label>
-          <select className="cert-note-cat-select" value={newCategory} onChange={(e) => setNewCategory(e.target.value)}>
-            {NOTE_CATEGORIES.map(c => (
-              <option key={c} value={c}>{t(`notes.cat.${c}`)}</option>
-            ))}
-          </select>
+      {isAdmin && (
+        <div className="cert-note-form">
+          <div className="cert-note-form-row">
+            <label className="cert-note-cat-label">{t('notes.categoryLabel')}</label>
+            <select className="cert-note-cat-select" value={newCategory} onChange={(e) => setNewCategory(e.target.value)}>
+              {NOTE_CATEGORIES.map(c => (
+                <option key={c} value={c}>{t(`notes.cat.${c}`)}</option>
+              ))}
+            </select>
+          </div>
+          <textarea
+            ref={textRef}
+            className="note-textarea"
+            rows={3}
+            value={newNote}
+            maxLength={NOTE_MAX_LENGTH}
+            onChange={(e) => setNewNote(e.target.value)}
+            placeholder={t('notes.bodyPlaceholder')}
+            onKeyDown={(e) => { if (e.ctrlKey && e.key === 'Enter') addNote() }}
+          />
+          <div className="cert-note-form-footer">
+            <span className="cert-note-charcount">{newNote.length} / {NOTE_MAX_LENGTH}</span>
+            <button className="btn btn-primary" onClick={addNote} disabled={saving || !newNote.trim()}>
+              {saving ? t('notes.saving') : t('notes.add')}
+            </button>
+          </div>
+          {error && <div className="cert-note-error">{error}</div>}
         </div>
-        <textarea
-          ref={textRef}
-          className="note-textarea"
-          rows={3}
-          value={newNote}
-          maxLength={NOTE_MAX_LENGTH}
-          onChange={(e) => setNewNote(e.target.value)}
-          placeholder={t('notes.bodyPlaceholder')}
-          onKeyDown={(e) => { if (e.ctrlKey && e.key === 'Enter') addNote() }}
-        />
-        <div className="cert-note-form-footer">
-          <span className="cert-note-charcount">{newNote.length} / {NOTE_MAX_LENGTH}</span>
-          <button className="btn btn-primary" onClick={addNote} disabled={saving || !newNote.trim()}>
-            {saving ? t('notes.saving') : t('notes.add')}
-          </button>
-        </div>
-        {error && <div className="cert-note-error">{error}</div>}
-      </div>
+      )}
 
       {notes && notes.length > 0 && (
         <div className="cert-note-filter-row">

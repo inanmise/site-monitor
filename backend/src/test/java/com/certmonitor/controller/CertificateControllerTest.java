@@ -272,6 +272,7 @@ class CertificateControllerTest {
         MockHttpSession s = new MockHttpSession();
         s.setAttribute("authenticated", Boolean.TRUE);
         s.setAttribute("username", "testuser");
+        s.setAttribute("systemRole", "ADMIN");
         return s;
     }
 }
