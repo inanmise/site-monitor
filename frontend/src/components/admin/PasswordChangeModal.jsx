@@ -54,18 +54,20 @@ export default function PasswordChangeModal({ mode, targetUser, onClose, onSucce
   const [saving, setSaving]         = useState(false)
   const [msg, setMsg]               = useState(null)
 
-  const isSelf = mode === 'self-change'
-  const titleKey       = isSelf ? 'usr.selfPwdTitle'       : 'usr.pwdTitle'
-  const verifyLabelKey = isSelf ? 'usr.pwdSelfVerify'      : 'usr.pwdAdminConfirm'
-  const verifyHintKey  = isSelf ? 'usr.pwdSelfVerifyHint'  : 'usr.pwdAdminConfirmHint'
-  const wrongVerifyKey = isSelf ? 'usr.pwdSelfVerifyWrong' : 'usr.pwdWrongAdmin'
+  const isSelf       = mode === 'self-change'
+  const isForced     = mode === 'forced-change'
+  const usesSelfApi  = isSelf || isForced
+  const titleKey       = isForced ? 'usr.forcedPwdTitle'     : (isSelf ? 'usr.selfPwdTitle'       : 'usr.pwdTitle')
+  const verifyLabelKey = isForced ? 'usr.forcedPwdVerify'    : (isSelf ? 'usr.pwdSelfVerify'      : 'usr.pwdAdminConfirm')
+  const verifyHintKey  = isForced ? 'usr.forcedPwdHint'      : (isSelf ? 'usr.pwdSelfVerifyHint'  : 'usr.pwdAdminConfirmHint')
+  const wrongVerifyKey = isForced ? 'usr.pwdSelfVerifyWrong' : (isSelf ? 'usr.pwdSelfVerifyWrong' : 'usr.pwdWrongAdmin')
 
   async function submit() {
     if (!verifyPwd) { setMsg(t('usr.pwdAdminConfirmRequired')); return }
     if (newPwd.length < 6 || newPwd.length > 10) { setMsg(t('usr.pwdLengthRule')); return }
     if (newPwd !== confirmPwd) { setMsg(t('usr.pwdMismatch')); return }
     setSaving(true)
-    const res = isSelf
+    const res = usesSelfApi
       ? await api.me.changePassword(verifyPwd, newPwd)
       : await api.admin.resetPassword(targetUser.id, newPwd, verifyPwd)
     setSaving(false)
@@ -87,7 +89,7 @@ export default function PasswordChangeModal({ mode, targetUser, onClose, onSucce
   }
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
+    <div className="modal-overlay" onClick={isForced ? undefined : onClose}>
       <div className="modal-box" onClick={(e) => e.stopPropagation()}>
         <h3>{t(titleKey, targetUser.username)}</h3>
         <p className="field-hint" style={{ marginTop: -6 }}>{t(verifyHintKey)}</p>
@@ -115,7 +117,9 @@ export default function PasswordChangeModal({ mode, targetUser, onClose, onSucce
         </div>
         {msg && <div className="alert-msg alert-msg--err" style={{ marginTop: 8 }}>{msg}</div>}
         <div className="modal-actions">
-          <button className="btn btn-secondary" onClick={onClose}>{t('usr.cancel')}</button>
+          {!isForced && (
+            <button className="btn btn-secondary" onClick={onClose}>{t('usr.cancel')}</button>
+          )}
           <button className="btn btn-primary" onClick={submit}
             disabled={saving || !verifyPwd || newPwd.length < 6 || newPwd.length > 10 || newPwd !== confirmPwd}>
             {saving ? t('usr.saving') : t('usr.pwdSave')}

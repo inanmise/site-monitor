@@ -180,6 +180,9 @@ export const api = {
     resetPassword: (id, password, adminPassword) => request(`/admin/users/${id}/reset-password`, {
       method: 'POST', body: JSON.stringify({ password, admin_password: adminPassword }),
     }),
+    autoResetPassword: (id, adminPassword) => request(`/admin/users/${id}/auto-reset-password`, {
+      method: 'POST', body: JSON.stringify({ admin_password: adminPassword }),
+    }),
     unlockUser: (id) => request(`/admin/users/${id}/unlock`, { method: 'POST' }),
 
     // Cert transfer

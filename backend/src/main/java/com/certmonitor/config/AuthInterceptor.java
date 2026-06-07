@@ -22,6 +22,15 @@ import java.util.Set;
 public class AuthInterceptor implements HandlerInterceptor {
 
     private static final Set<String> PUBLIC = Set.of("/api/login", "/api/logout");
+
+    /** Endpoints a user with mustChangePassword=true is still allowed to call. */
+    private static final Set<String> FORCED_CHANGE_WHITELIST = Set.of(
+            "/api/me",
+            "/api/me/change-password",
+            "/api/logout",
+            "/api/login"
+    );
+
     private final ObjectMapper mapper = new ObjectMapper();
 
     @Autowired
@@ -40,7 +49,20 @@ public class AuthInterceptor implements HandlerInterceptor {
 
         // 1. Valid session check
         HttpSession session = req.getSession(false);
-        if (session != null && Boolean.TRUE.equals(session.getAttribute("authenticated"))) return true;
+        if (session != null && Boolean.TRUE.equals(session.getAttribute("authenticated"))) {
+            // Forced password change: while the flag is set, only the
+            // whitelisted endpoints are reachable so the user cannot
+            // sidestep the modal by hitting another API directly.
+            if (Boolean.TRUE.equals(session.getAttribute("mustChangePassword"))
+                    && !FORCED_CHANGE_WHITELIST.contains(path)) {
+                res.setStatus(403);
+                res.setContentType("application/json;charset=UTF-8");
+                mapper.writeValue(res.getWriter(),
+                        Map.of("success", false, "error", "Password change required"));
+                return false;
+            }
+            return true;
+        }
 
         // 2. Remember-me cookie — if valid, restore full user session
         Optional<String> usernameOpt = findRememberMeCookie(req).flatMap(rememberMeService::validate);

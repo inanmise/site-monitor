@@ -62,6 +62,11 @@ public class AppUser {
     @Column(name = "last_lockout_at", length = 30)
     private String lastLockoutAt;
 
+    /** Set to true by admin auto-reset; cleared on the next successful changePassword.
+     *  Frontend renders a non-dismissible password-change modal while this is true. */
+    @Column(name = "must_change_password")
+    private Boolean mustChangePassword = false;
+
     private String createdAt;
     private String updatedAt;
 }

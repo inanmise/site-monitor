@@ -619,6 +619,72 @@ class UserServiceTest {
     // ── Bootstrap ─────────────────────────────────────────────────────────────
 
     @Test
+    @DisplayName("adminAutoResetPassword: wrong admin password → SecurityException")
+    void adminAutoResetPassword_wrongAdminPass_throwsSecurity() {
+        org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder enc =
+                new org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder();
+        AppUser admin = user("admin", enc.encode("rightpass"));
+        admin.setId(1L);
+        when(userRepo.findByUsernameAndActiveTrue("admin")).thenReturn(Optional.of(admin));
+
+        assertThatThrownBy(() -> service.adminAutoResetPassword(7L, "admin", "wrongpass"))
+                .isInstanceOf(SecurityException.class);
+        verify(userRepo, never()).findById(7L);
+    }
+
+    @Test
+    @DisplayName("adminAutoResetPassword: target without email → IllegalArgumentException")
+    void adminAutoResetPassword_targetWithoutEmail_throwsIllegalArgument() {
+        org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder enc =
+                new org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder();
+        AppUser admin = user("admin", enc.encode("rightpass"));
+        when(userRepo.findByUsernameAndActiveTrue("admin")).thenReturn(Optional.of(admin));
+        AppUser target = user("bob", "old-hash");
+        target.setId(7L);
+        target.setEmail(null);
+        when(userRepo.findById(7L)).thenReturn(Optional.of(target));
+
+        assertThatThrownBy(() -> service.adminAutoResetPassword(7L, "admin", "rightpass"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("email");
+    }
+
+    @Test
+    @DisplayName("adminAutoResetPassword: success rewrites hash + sets mustChangePassword + returns 10-char temp pwd")
+    void adminAutoResetPassword_success_setsForcedChange() {
+        org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder enc =
+                new org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder();
+        AppUser admin = user("admin", enc.encode("rightpass"));
+        when(userRepo.findByUsernameAndActiveTrue("admin")).thenReturn(Optional.of(admin));
+        AppUser target = user("bob", "old-hash");
+        target.setId(7L);
+        target.setEmail("bob@example.com");
+        when(userRepo.findById(7L)).thenReturn(Optional.of(target));
+
+        String temp = service.adminAutoResetPassword(7L, "admin", "rightpass");
+
+        assertThat(temp).hasSize(10);
+        assertThat(target.getPasswordHash()).isNotEqualTo("old-hash");
+        assertThat(target.getMustChangePassword()).isTrue();
+        verify(passwordHistoryRepo).save(any(com.certmonitor.model.PasswordHistory.class));
+    }
+
+    @Test
+    @DisplayName("changePassword: clears mustChangePassword flag on success")
+    void changePassword_clearsMustChangeFlag() {
+        org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder enc =
+                new org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder();
+        AppUser u = user("alice", enc.encode("oldPwd"));
+        u.setId(1L);
+        u.setMustChangePassword(true);
+        when(userRepo.findById(1L)).thenReturn(Optional.of(u));
+
+        service.changePassword(1L, "newPwd1");
+
+        assertThat(u.getMustChangePassword()).isFalse();
+    }
+
+    @Test
     @DisplayName("ensureBootstrapped: no users → creates team and admin")
     void ensureBootstrapped_noUsers_createsTeamAndAdmin() {
         when(userRepo.count()).thenReturn(0L);

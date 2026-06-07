@@ -5,6 +5,7 @@ import { useT } from '../../i18n/index.jsx'
 import SearchableSelect from '../ui/SearchableSelect.jsx'
 import { UserPlus, UserCog } from 'lucide-react'
 import PasswordChangeModal from './PasswordChangeModal.jsx'
+import AdminAutoResetModal from './AdminAutoResetModal.jsx'
 
 const emptyUser = { username: '', password: '', display_name: '', email: '', employee_id: '', system_role: 'USER', team_id: '', org_role: '', active: true }
 
@@ -14,6 +15,7 @@ export default function UserManager({ teams }) {
   const [users, setUsers] = useState([])
   const [modal, setModal] = useState(null)
   const [pwdModal, setPwdModal] = useState(null)
+  const [autoResetModal, setAutoResetModal] = useState(null)
   const [form, setForm] = useState(emptyUser)
   const [saving, setSaving] = useState(false)
   const [msg, setMsg] = useState(null)
@@ -130,6 +132,7 @@ export default function UserManager({ teams }) {
                 <td>
                   <button className="btn-sm btn-edit" onClick={() => openEdit(user)}>{t('usr.edit')}</button>
                   <button className="btn-sm" style={{ background: '#6366f1', color: '#fff', marginRight: 4 }} onClick={() => setPwdModal(user)}>{t('usr.pwd')}</button>
+                  <button className="btn-sm" style={{ background: '#0ea5e9', color: '#fff', marginRight: 4 }} onClick={() => setAutoResetModal(user)}>{t('usr.autoResetBtn')}</button>
                   {user.permanent_lock && (
                     <button className="btn-sm" style={{ background: '#f59e0b', color: '#fff', marginRight: 4 }} onClick={() => unlock(user.id)}>{t('usr.unlock')}</button>
                   )}
@@ -234,6 +237,16 @@ export default function UserManager({ teams }) {
           targetUser={pwdModal}
           onClose={() => setPwdModal(null)}
           onSuccess={() => setMsg(t('usr.pwdChanged'))}
+        />
+      )}
+
+      {autoResetModal && (
+        <AdminAutoResetModal
+          targetUser={autoResetModal}
+          onClose={() => setAutoResetModal(null)}
+          onSuccess={(emailStatus) => setMsg(
+            emailStatus?.startsWith('SENT') ? t('usr.autoResetSent') : t('usr.autoResetFailed')
+          )}
         />
       )}
     </div>
