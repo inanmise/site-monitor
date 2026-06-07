@@ -1,4 +1,5 @@
 import { useState, useMemo } from 'react'
+import { BarChart3, ChevronDown } from 'lucide-react'
 import { useT } from '../i18n/index.jsx'
 import { formatDate } from '../api/client'
 import SearchableSelect from './ui/SearchableSelect.jsx'
@@ -63,16 +64,17 @@ function buildDomainMap(teamStats) {
   const map = {}
   if (!teamStats) return map
 
-  function addDomains(domains, teamName, role) {
+  function addDomains(domains, teamName, kind) {
     for (const d of domains ?? []) {
-      if (!map[d]) map[d] = { teamName, role }
+      if (!map[d]) map[d] = { syTeams: new Set(), ugTeams: new Set() }
+      map[d][kind].add(teamName)
     }
   }
 
   const processMember = (member, teamName) => {
     for (const domKey of ALL_DOMAIN_KEYS) {
-      addDomains(member?.sy_stats?.[domKey], teamName, 'SY')
-      addDomains(member?.ug_stats?.[domKey], teamName, 'UG')
+      addDomains(member?.sy_stats?.[domKey], teamName, 'syTeams')
+      addDomains(member?.ug_stats?.[domKey], teamName, 'ugTeams')
     }
   }
 
@@ -80,6 +82,11 @@ function buildDomainMap(teamStats) {
     for (const team of teamStats.teams ?? []) processMember(team, team.team_name)
   } else if (teamStats.mode === 'personal') {
     processMember(teamStats, teamStats.team_name ?? '—')
+  }
+
+  for (const d of Object.keys(map)) {
+    map[d].syTeams = [...map[d].syTeams].sort()
+    map[d].ugTeams = [...map[d].ugTeams].sort()
   }
   return map
 }
@@ -214,6 +221,7 @@ export default function StatsView({ certs = [], teamStats, onRowClick }) {
 
   const domainMap = useMemo(() => buildDomainMap(teamStats), [teamStats])
 
+  const [showTeamStats, setShowTeamStats] = useState(false)
   const [tierFilter, setTierFilter]     = useState(null)
   const [teamFilter, setTeamFilter]     = useState(null)
   const [statusFilter, setStatusFilter] = useState(null)
@@ -283,18 +291,34 @@ export default function StatsView({ certs = [], teamStats, onRowClick }) {
   return (
     <div className="sv-root">
 
-      {/* ── Team × Tier cards ── */}
-      <TeamTierSection
-        certs={certs}
-        teamStats={teamStats}
-        tierFilter={tierFilter}
-        setTierFilter={setTierFilter}
-        teamFilter={teamFilter}
-        setTeamFilter={setTeamFilter}
-        statusFilter={statusFilter}
-        setStatusFilter={setStatusFilter}
-        setPage={setPage}
-      />
+      {/* ── Team × Tier cards (collapsible — matches Dashboard stats toggle) ── */}
+      <div
+        className="stats-collapse-bar"
+        onClick={() => setShowTeamStats((v) => !v)}
+        title={showTeamStats ? t('sv.hideTeamStats') : t('sv.showTeamStats')}
+      >
+        <span className="stats-collapse-icon"><BarChart3 size={18} /></span>
+        <span className="stats-collapse-label">{t('sv.teamStats')}</span>
+        {!showTeamStats && (
+          <span className="stats-collapse-hint">{t('sv.showTeamStats')}</span>
+        )}
+        <span className={`stats-collapse-chevron${showTeamStats ? ' open' : ''}`}>
+          <ChevronDown size={18} />
+        </span>
+      </div>
+      {showTeamStats && (
+        <TeamTierSection
+          certs={certs}
+          teamStats={teamStats}
+          tierFilter={tierFilter}
+          setTierFilter={setTierFilter}
+          teamFilter={teamFilter}
+          setTeamFilter={setTeamFilter}
+          statusFilter={statusFilter}
+          setStatusFilter={setStatusFilter}
+          setPage={setPage}
+        />
+      )}
 
       {/* ── Active widget filter chips ── */}
       {hasWidgetFilter && (
@@ -386,8 +410,9 @@ export default function StatsView({ certs = [], teamStats, onRowClick }) {
         <thead>
           <tr>
             <th>{t('tbl.colDomain')}</th>
-            <th>{t('sv.colTeam')}</th>
-            <th>{t('sv.colRole')}</th>
+            <th>{t('sv.colSyTeam')}</th>
+            <th>{t('sv.colUgTeam')}</th>
+            <th>{t('sv.colTier')}</th>
             <th>{t('tbl.colIssuer')}</th>
             <th>{t('tbl.colExpiry')}</th>
             <th>{t('tbl.colDays')}</th>
@@ -397,7 +422,7 @@ export default function StatsView({ certs = [], teamStats, onRowClick }) {
         </thead>
         <tbody>
           {pageItems.length === 0 ? (
-            <tr><td colSpan={8} className="loading">{t('tbl.noCerts')}</td></tr>
+            <tr><td colSpan={9} className="loading">{t('tbl.noCerts')}</td></tr>
           ) : pageItems.map(cert => {
             const days = cert.days_remaining
             const isCritical  = cert.status !== 'error' && days !== null && days >= 0 && days <= 30
@@ -411,10 +436,21 @@ export default function StatsView({ certs = [], teamStats, onRowClick }) {
             return (
               <tr key={cert.domain} onClick={() => onRowClick?.(cert.domain)} style={{ cursor: 'pointer' }}>
                 <td><strong>{cert.domain}</strong></td>
-                <td className="sv-team-cell">{teamInfo?.teamName ?? <span className="sv-cell-muted">—</span>}</td>
+                <td className="sv-team-cell">
+                  {teamInfo?.syTeams?.length
+                    ? teamInfo.syTeams.join(', ')
+                    : <span className="sv-cell-muted">—</span>}
+                </td>
+                <td className="sv-team-cell">
+                  {teamInfo?.ugTeams?.length
+                    ? teamInfo.ugTeams.join(', ')
+                    : <span className="sv-cell-muted">—</span>}
+                </td>
                 <td>
-                  {teamInfo?.role
-                    ? <span className={`sv-role-badge sv-role-${teamInfo.role.toLowerCase()}`}>{teamInfo.role}</span>
+                  {cert.tier != null
+                    ? <span className="ttg-badge" style={{ background: (TIER_META[cert.tier] || TIER_META[0]).color, color: '#fff' }}>
+                        {(TIER_META[cert.tier] || TIER_META[0]).label}
+                      </span>
                     : <span className="sv-cell-muted">—</span>}
                 </td>
                 <td>{cert.issuer_cn || cert.issuer || 'N/A'}</td>

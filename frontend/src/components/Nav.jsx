@@ -26,10 +26,11 @@ export default function Nav({ activeTab, onTabChange, username, teamName, system
     {
       labelKey: 'nav.groupCertificates',
       tabs: [
-        { id: 'all',      Icon: FileText,     labelKey: 'nav.all',      show: true },
-        { id: 'domains',  Icon: Globe,        labelKey: 'nav.domains',  show: true },
-        { id: 'forecast', Icon: TrendingDown, labelKey: 'nav.forecast', show: true },
-        { id: 'renewal',  Icon: RefreshCw,    labelKey: 'nav.renewal',  show: true },
+        { id: 'all',           Icon: FileText,     labelKey: 'nav.all',           show: true },
+        { id: 'domains',       Icon: Globe,        labelKey: 'nav.domains',       show: true },
+        { id: 'forecast',      Icon: TrendingDown, labelKey: 'nav.forecast',      show: true },
+        { id: 'renewal',       Icon: RefreshCw,    labelKey: 'nav.renewal',       show: true },
+        { id: 'renewal-guide', Icon: BookOpen,     labelKey: 'nav.renewalGuide',  show: true },
       ],
     },
     {

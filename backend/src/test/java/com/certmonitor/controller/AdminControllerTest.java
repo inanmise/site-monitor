@@ -82,6 +82,9 @@ class AdminControllerTest {
     @MockBean
     AppUserRepository userRepo;
 
+    @MockBean
+    com.certmonitor.repository.TeamRepository teamRepo;
+
     @BeforeEach
     void setup() {
         when(userService.listTeams()).thenReturn(java.util.Collections.emptyList());

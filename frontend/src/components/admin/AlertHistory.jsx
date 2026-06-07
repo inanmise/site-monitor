@@ -5,10 +5,34 @@ import { useToast } from '../ui/Toast.jsx'
 import { useT, useDateLocale } from '../../i18n/index.jsx'
 import {
   Check, ShieldAlert, TrendingUp, RefreshCcw, Bell, CheckCircle, AlertCircle,
-  ChevronUp, ChevronDown, ChevronLeft, ChevronRight, Mail,
+  ChevronUp, ChevronDown, ChevronLeft, ChevronRight, Mail, MailX, Clock, Users, Calendar,
 } from 'lucide-react'
 
 const levelColor = { WARNING: '#f0a500', HIGH: '#e07b00', CRITICAL: '#c0392b' }
+const TIER_COLOR = { 1: '#4f46e5', 2: '#0284c7', 3: '#0891b2', 4: '#6b7280' }
+
+function tierColor(t) { return TIER_COLOR[t] ?? '#94a3b8' }
+
+function formatDuration(end, start) {
+  const ms = new Date(end) - new Date(start)
+  if (isNaN(ms) || ms < 0) return '—'
+  const totalMin = Math.floor(ms / 60000)
+  const days  = Math.floor(totalMin / 1440)
+  const hours = Math.floor((totalMin % 1440) / 60)
+  const mins  = totalMin % 60
+  if (days  > 0) return `${days}g ${hours}s ${mins}d`
+  if (hours > 0) return `${hours}s ${mins}d`
+  return `${mins}d`
+}
+
+// Snapshot expiry date at alarm-creation time: created_at + days_remaining × 1 day.
+// Reflects the cert's not_after as it was when the alert fired, not the current value.
+function alertExpiryDate(a) {
+  if (!a?.created_at || a.days_remaining == null) return null
+  const created = new Date(a.created_at)
+  if (isNaN(created)) return null
+  return new Date(created.getTime() + a.days_remaining * 86_400_000)
+}
 
 function AuditRow({ label, by, at, variant }) {
   const colors = {
@@ -366,12 +390,6 @@ export default function AlertHistory({ domain = null }) {
   return (
     <div className="admin-section">
       <div className="alh-header">
-        {domain == null && (
-          <div className="alh-title-row">
-            <Bell size={18} className="alh-title-icon" />
-            <h3 style={{ margin: 0 }}>{t('alh.title')}</h3>
-          </div>
-        )}
         <div className="alh-tabs">
           <button
             type="button"
@@ -542,6 +560,36 @@ export default function AlertHistory({ domain = null }) {
                     )}
                   </div>
 
+                  {(() => {
+                    const expDate = a.alert_type === 'EXPIRY' ? alertExpiryDate(a) : null
+                    const hasMeta = a.sy_team_name || a.ug_team_name || a.cert_tier != null || expDate
+                    if (!hasMeta) return null
+                    return (
+                      <div className="ahc-meta">
+                        {expDate && (
+                          <span className="ahc-chip ahc-chip-expiry">
+                            <Calendar size={11}/> {t('alh.expiryWas')}: <strong>{formatDate(expDate.toISOString())}</strong>
+                          </span>
+                        )}
+                        {a.sy_team_name && (
+                          <span className="ahc-chip ahc-chip-team">
+                            <Users size={11}/> {t('alh.syTeam')}: <strong>{a.sy_team_name}</strong>
+                          </span>
+                        )}
+                        {a.ug_team_name && (
+                          <span className="ahc-chip ahc-chip-team">
+                            <Users size={11}/> {t('alh.ugTeam')}: <strong>{a.ug_team_name}</strong>
+                          </span>
+                        )}
+                        {a.cert_tier != null && (
+                          <span className="ahc-chip ahc-chip-tier" style={{ background: tierColor(a.cert_tier) }}>
+                            T{a.cert_tier}
+                          </span>
+                        )}
+                      </div>
+                    )
+                  })()}
+
                   <div className="ahc-timeline">
                     <div className="ahc-tl-item">
                       <span className="ahc-tl-icon"><ShieldAlert size={13} /></span>
@@ -582,6 +630,20 @@ export default function AlertHistory({ domain = null }) {
                         </div>
                       </div>
                     </div>
+                  </div>
+
+                  <div className="ahc-stats">
+                    <span className="ahc-stat">
+                      <Mail size={12}/> {t('alh.mailsSent', a.email_sent_count ?? 0)}
+                    </span>
+                    <span className={`ahc-stat${(a.email_failed_count ?? 0) > 0 ? ' ahc-stat-failed' : ''}`}>
+                      <MailX size={12}/> {t('alh.mailsFailed', a.email_failed_count ?? 0)}
+                    </span>
+                    {a.resolved_at && a.created_at && (
+                      <span className="ahc-stat ahc-stat-duration">
+                        <Clock size={12}/> {t('alh.openDuration')}: <strong>{formatDuration(a.resolved_at, a.created_at)}</strong>
+                      </span>
+                    )}
                   </div>
 
                   <div className="ahc-footer">

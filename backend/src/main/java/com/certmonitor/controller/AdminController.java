@@ -42,6 +42,7 @@ public class AdminController {
     private final CertificateNoteRevisionRepository noteRevisionRepo;
     private final UserService userService;
     private final AppUserRepository userRepo;
+    private final TeamRepository teamRepo;
 
     private static final DateTimeFormatter ISO =
             DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
@@ -403,11 +404,67 @@ public class AdminController {
         Page<AlertEvent> result = alertEventRepo.findFiltered(
                 resolvedEffective, since, until, resolvedSince, resolvedUntil, domain,
                 PageRequest.of(Math.max(0, page), sz, sort));
+        enrichAlerts(result.getContent());
         return ok(Map.of(
                 "data",  result.getContent(),
                 "total", result.getTotalElements(),
                 "page",  result.getNumber(),
                 "size",  result.getSize()));
+    }
+
+    /**
+     * Bulk-populates @Transient fields on AlertEvent: SY/UG team names, tier,
+     * and per-event email sent/failed counts. Single round-trip per related
+     * table — no N+1.
+     */
+    private void enrichAlerts(List<AlertEvent> events) {
+        if (events.isEmpty()) return;
+
+        java.util.Set<String> domains = new java.util.HashSet<>();
+        java.util.Set<Long> alertIds  = new java.util.HashSet<>();
+        for (AlertEvent ev : events) {
+            if (ev.getDomain() != null) domains.add(ev.getDomain());
+            if (ev.getId() != null)     alertIds.add(ev.getId());
+        }
+
+        Map<String, CertificateInventory> invByDomain = new java.util.HashMap<>();
+        java.util.Set<Long> teamIds = new java.util.HashSet<>();
+        if (!domains.isEmpty()) {
+            for (CertificateInventory inv : inventoryRepo.findByDomainIn(domains)) {
+                invByDomain.putIfAbsent(inv.getDomain(), inv);
+                if (inv.getTeamId()   != null) teamIds.add(inv.getTeamId());
+                if (inv.getUgTeamId() != null) teamIds.add(inv.getUgTeamId());
+            }
+        }
+
+        Map<Long, String> teamNames = new java.util.HashMap<>();
+        if (!teamIds.isEmpty()) {
+            for (Team t : teamRepo.findAllById(teamIds)) {
+                teamNames.put(t.getId(), t.getName());
+            }
+        }
+
+        Map<Long, long[]> mailCounts = new java.util.HashMap<>();
+        if (!alertIds.isEmpty()) {
+            for (Object[] row : notificationLogRepo.countByAlertIds(alertIds)) {
+                Long alertId = ((Number) row[0]).longValue();
+                long sent    = row[1] == null ? 0 : ((Number) row[1]).longValue();
+                long failed  = row[2] == null ? 0 : ((Number) row[2]).longValue();
+                mailCounts.put(alertId, new long[]{ sent, failed });
+            }
+        }
+
+        for (AlertEvent ev : events) {
+            CertificateInventory inv = invByDomain.get(ev.getDomain());
+            if (inv != null) {
+                ev.setSyTeamName(inv.getTeamId()   != null ? teamNames.get(inv.getTeamId())   : null);
+                ev.setUgTeamName(inv.getUgTeamId() != null ? teamNames.get(inv.getUgTeamId()) : null);
+                ev.setCertTier(inv.getTier());
+            }
+            long[] counts = mailCounts.getOrDefault(ev.getId(), new long[]{0, 0});
+            ev.setEmailSentCount(counts[0]);
+            ev.setEmailFailedCount(counts[1]);
+        }
     }
 
     @PostMapping("/alerts/{id}/acknowledge")

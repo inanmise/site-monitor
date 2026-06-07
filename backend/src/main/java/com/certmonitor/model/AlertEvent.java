@@ -55,4 +55,11 @@ public class AlertEvent {
 
     private String createdAt;
     private String lastReAlertAt;
+
+    // ── Transient enrichment (populated by AdminController, not persisted) ──
+    @Transient private String  syTeamName;
+    @Transient private String  ugTeamName;
+    @Transient private Integer certTier;
+    @Transient private Long    emailSentCount;
+    @Transient private Long    emailFailedCount;
 }
