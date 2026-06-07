@@ -209,6 +209,38 @@ public class AuthController {
         return ResponseEntity.ok(resp);
     }
 
+    /**
+     * Self-service password change. Any authenticated user can rotate their own
+     * password by re-proving knowledge of the current one — no admin role
+     * required. Same UserService rules apply (length, history, archive).
+     */
+    @PostMapping("/me/change-password")
+    public ResponseEntity<Map<String, Object>> changeOwnPassword(
+            @RequestBody Map<String, String> body,
+            HttpSession session, HttpServletRequest request) {
+        String username = (String) session.getAttribute("username");
+        Object userIdObj = session.getAttribute("userId");
+        if (username == null || userIdObj == null) {
+            throw new SecurityException("Not authenticated");
+        }
+        Long userId = userIdObj instanceof Long ? (Long) userIdObj : Long.valueOf(userIdObj.toString());
+
+        String currentPwd = body.get("current_password");
+        String newPwd     = body.get("new_password");
+        if (currentPwd == null || currentPwd.isBlank()) {
+            throw new IllegalArgumentException("Current password required");
+        }
+
+        userService.changePassword(userId, newPwd, username, currentPwd);
+        auditService.recordAction("SELF_PASSWORD_CHANGE", session, request,
+                "USER", userId.toString(), null);
+
+        Map<String, Object> resp = new LinkedHashMap<>();
+        resp.put("success", true);
+        resp.put("message", "Password changed");
+        return ResponseEntity.ok(resp);
+    }
+
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     /** Write all user context into the session. */

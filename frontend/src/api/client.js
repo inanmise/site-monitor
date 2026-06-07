@@ -42,6 +42,13 @@ async function request(path, options = {}) {
 }
 
 export const api = {
+  me: {
+    changePassword: (currentPwd, newPwd) => request('/me/change-password', {
+      method: 'POST',
+      body: JSON.stringify({ current_password: currentPwd, new_password: newPwd }),
+    }),
+  },
+
   login: async (username, password, rememberMe = false) => {
     const r = await fetch(`${BASE}/login`, {
       method: 'POST',

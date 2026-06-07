@@ -1,10 +1,12 @@
 package com.certmonitor.service;
 
 import com.certmonitor.model.AppUser;
+import com.certmonitor.model.PasswordHistory;
 import com.certmonitor.model.Team;
 import com.certmonitor.repository.AppUserRepository;
 import com.certmonitor.repository.CertificateInventoryRepository;
 import com.certmonitor.repository.EscalationContactRepository;
+import com.certmonitor.repository.PasswordHistoryRepository;
 import com.certmonitor.repository.TeamRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -17,6 +19,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.NoSuchElementException;
 import java.util.Optional;
@@ -30,6 +33,7 @@ public class UserService {
     private final TeamRepository teamRepo;
     private final CertificateInventoryRepository inventoryRepo;
     private final EscalationContactRepository contactRepo;
+    private final PasswordHistoryRepository passwordHistoryRepo;
 
     private static final BCryptPasswordEncoder PASSWORD_ENCODER = new BCryptPasswordEncoder();
     private static final DateTimeFormatter ISO =
@@ -43,8 +47,14 @@ public class UserService {
     @Value("${cert.monitor.lockout.failures-needed:5,3,2,1}")
     private List<Integer> lockoutFailuresNeeded;
 
-    @Value("${cert.monitor.password.min-length:4}")
+    @Value("${cert.monitor.password.min-length:6}")
     private int passwordMinLength;
+
+    @Value("${cert.monitor.password.max-length:10}")
+    private int passwordMaxLength;
+
+    @Value("${cert.monitor.password.history-count:3}")
+    private int passwordHistoryCount;
 
     /** Returns how many failures are needed to trigger the next lockout for this account. */
     public int failuresNeededForLevel(Integer failedBlockCount) {
@@ -231,11 +241,49 @@ public class UserService {
 
     @Transactional
     public void changePassword(Long id, String rawPassword) {
-        if (rawPassword == null || rawPassword.length() < passwordMinLength) throw new IllegalArgumentException("Password too short (min " + passwordMinLength + " chars)");
-        AppUser user = userRepo.findById(id).orElseThrow(() -> new NoSuchElementException("User not found: " + id));
+        if (rawPassword == null || rawPassword.length() < passwordMinLength) {
+            throw new IllegalArgumentException("Password too short (min " + passwordMinLength + " chars)");
+        }
+        if (rawPassword.length() > passwordMaxLength) {
+            throw new IllegalArgumentException("Password too long (max " + passwordMaxLength + " chars)");
+        }
+        AppUser user = userRepo.findById(id)
+                .orElseThrow(() -> new NoSuchElementException("User not found: " + id));
+
+        // History check: the new raw password must not collide with the current
+        // hash or any of the most recent (historyCount - 1) archived hashes.
+        List<String> recentHashes = new ArrayList<>();
+        if (user.getPasswordHash() != null) recentHashes.add(user.getPasswordHash());
+        passwordHistoryRepo.findByUserIdOrderByCreatedAtDesc(id).stream()
+                .limit(Math.max(0, passwordHistoryCount - 1))
+                .map(PasswordHistory::getPasswordHash)
+                .forEach(recentHashes::add);
+        for (String oldHash : recentHashes) {
+            if (oldHash != null && PASSWORD_ENCODER.matches(rawPassword, oldHash)) {
+                throw new IllegalArgumentException("Password recently used");
+            }
+        }
+
+        // Archive the outgoing hash before overwriting it so the next change
+        // can compare against it.
+        if (user.getPasswordHash() != null) {
+            PasswordHistory hist = new PasswordHistory();
+            hist.setUserId(id);
+            hist.setPasswordHash(user.getPasswordHash());
+            passwordHistoryRepo.save(hist);
+        }
+
         user.setPasswordHash(PASSWORD_ENCODER.encode(rawPassword));
         user.setUpdatedAt(now());
         userRepo.save(user);
+
+        // Prune anything older than (historyCount - 1) since the current
+        // password on the AppUser row already counts as the Nth entry.
+        int keep = Math.max(0, passwordHistoryCount - 1);
+        List<PasswordHistory> all = passwordHistoryRepo.findByUserIdOrderByCreatedAtDesc(id);
+        if (all.size() > keep) {
+            passwordHistoryRepo.deleteAll(all.subList(keep, all.size()));
+        }
     }
 
     /**

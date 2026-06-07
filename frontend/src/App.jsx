@@ -14,6 +14,7 @@ import CertificateModal from './components/CertificateModal'
 import CaDiversityModal from './components/CaDiversityModal'
 import RenewalAdvice from './components/RenewalAdvice'
 import CertRenewalGuide from './components/CertRenewalGuide.jsx'
+import PasswordChangeModal from './components/admin/PasswordChangeModal.jsx'
 import AdminPanel from './components/admin/AdminPanel'
 import AlertHistory from './components/admin/AlertHistory'
 import InventoryManager from './components/admin/InventoryManager'
@@ -60,6 +61,7 @@ export default function App() {
   const [teamStats, setTeamStats] = useState(null)
   const [weakAlgStats, setWeakAlgStats] = useState(null)
   const [statsVisible, setStatsVisible] = useState(false)
+  const [selfPwdModalOpen, setSelfPwdModalOpen] = useState(false)
   const [search, setSearch] = useState('')
   const [sortOrder, setSortOrder] = useState('default')
   const [modalCert, setModalCert] = useState(null)
@@ -424,7 +426,16 @@ export default function App() {
         </div>
       )}
 
-      <Nav activeTab={tab} onTabChange={setTab} username={user} teamName={teamName} systemRole={systemRole} onLogout={handleLogout} />
+      <Nav activeTab={tab} onTabChange={setTab} username={user} teamName={teamName} systemRole={systemRole}
+        onLogout={handleLogout} onChangePassword={() => setSelfPwdModalOpen(true)} />
+
+      {selfPwdModalOpen && user && (
+        <PasswordChangeModal
+          mode="self-change"
+          targetUser={{ id: null, username: user }}
+          onClose={() => setSelfPwdModalOpen(false)}
+        />
+      )}
 
       <main className="app-main">
         <div className="app-body">

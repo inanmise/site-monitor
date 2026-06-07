@@ -4,6 +4,7 @@ import { useDialog } from '../ui/Dialog.jsx'
 import { useT } from '../../i18n/index.jsx'
 import SearchableSelect from '../ui/SearchableSelect.jsx'
 import { UserPlus, UserCog } from 'lucide-react'
+import PasswordChangeModal from './PasswordChangeModal.jsx'
 
 const emptyUser = { username: '', password: '', display_name: '', email: '', employee_id: '', system_role: 'USER', team_id: '', org_role: '', active: true }
 
@@ -14,8 +15,6 @@ export default function UserManager({ teams }) {
   const [modal, setModal] = useState(null)
   const [pwdModal, setPwdModal] = useState(null)
   const [form, setForm] = useState(emptyUser)
-  const [newPwd, setNewPwd] = useState('')
-  const [adminPwd, setAdminPwd] = useState('')
   const [saving, setSaving] = useState(false)
   const [msg, setMsg] = useState(null)
 
@@ -70,26 +69,6 @@ export default function UserManager({ teams }) {
     setSaving(false)
     if (res?.success) { setModal(null); setMsg(t('usr.saved')); load() }
     else setMsg(res?.error || 'Error')
-  }
-
-  async function savePwd() {
-    if (!newPwd || newPwd.length < 4) return
-    if (!adminPwd) { setMsg(t('usr.pwdAdminConfirmRequired')); return }
-    setSaving(true)
-    const res = await api.admin.resetPassword(pwdModal.id, newPwd, adminPwd)
-    setSaving(false)
-    if (res?.success) {
-      setPwdModal(null); setNewPwd(''); setAdminPwd(''); setMsg(t('usr.pwdChanged'))
-    } else {
-      const isWrongAdmin = /Invalid admin password|FORBIDDEN/i.test(res?.error || '') || res?.status === 403
-      setMsg(isWrongAdmin ? t('usr.pwdWrongAdmin') : (res?.error || 'Error'))
-    }
-  }
-
-  function closePwdModal() {
-    setPwdModal(null)
-    setNewPwd('')
-    setAdminPwd('')
   }
 
   async function unlock(id) {
@@ -150,7 +129,7 @@ export default function UserManager({ teams }) {
                 </td>
                 <td>
                   <button className="btn-sm btn-edit" onClick={() => openEdit(user)}>{t('usr.edit')}</button>
-                  <button className="btn-sm" style={{ background: '#6366f1', color: '#fff', marginRight: 4 }} onClick={() => { setPwdModal(user); setNewPwd('') }}>{t('usr.pwd')}</button>
+                  <button className="btn-sm" style={{ background: '#6366f1', color: '#fff', marginRight: 4 }} onClick={() => setPwdModal(user)}>{t('usr.pwd')}</button>
                   {user.permanent_lock && (
                     <button className="btn-sm" style={{ background: '#f59e0b', color: '#fff', marginRight: 4 }} onClick={() => unlock(user.id)}>{t('usr.unlock')}</button>
                   )}
@@ -248,34 +227,12 @@ export default function UserManager({ teams }) {
       )}
 
       {pwdModal && (
-        <div className="modal-overlay" onClick={closePwdModal}>
-          <div className="modal-box" onClick={(e) => e.stopPropagation()}>
-            <h3>{t('usr.pwdTitle', pwdModal.username)}</h3>
-            <p className="field-hint" style={{ marginTop: -6 }}>{t('usr.pwdAdminConfirmHint')}</p>
-            <div className="form-grid">
-              <label className="full-width">
-                <span>{t('usr.pwdAdminConfirm')} <span className="req-star">*</span></span>
-                <input type="password" value={adminPwd}
-                  onChange={(e) => setAdminPwd(e.target.value)}
-                  autoFocus autoComplete="current-password" />
-              </label>
-              <label className="full-width">
-                <span>{t('usr.formNewPwd')} <span className="req-star">*</span></span>
-                <input type="password" value={newPwd}
-                  onChange={(e) => setNewPwd(e.target.value)}
-                  autoComplete="new-password" />
-              </label>
-            </div>
-            {msg && <div className="alert-msg alert-msg--err" style={{ marginTop: 8 }}>{msg}</div>}
-            <div className="modal-actions">
-              <button className="btn btn-secondary" onClick={closePwdModal}>{t('usr.cancel')}</button>
-              <button className="btn btn-primary" onClick={savePwd}
-                disabled={saving || newPwd.length < 4 || !adminPwd}>
-                {saving ? t('usr.saving') : t('usr.pwdSave')}
-              </button>
-            </div>
-          </div>
-        </div>
+        <PasswordChangeModal
+          mode="admin-reset"
+          targetUser={pwdModal}
+          onClose={() => setPwdModal(null)}
+          onSuccess={() => setMsg(t('usr.pwdChanged'))}
+        />
       )}
     </div>
   )

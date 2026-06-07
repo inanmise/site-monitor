@@ -34,6 +34,7 @@ class UserServiceTest {
     @Mock TeamRepository teamRepo;
     @Mock CertificateInventoryRepository inventoryRepo;
     @Mock EscalationContactRepository contactRepo;
+    @Mock com.certmonitor.repository.PasswordHistoryRepository passwordHistoryRepo;
 
     private UserService service;
 
@@ -43,14 +44,18 @@ class UserServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new UserService(userRepo, teamRepo, inventoryRepo, contactRepo);
+        service = new UserService(userRepo, teamRepo, inventoryRepo, contactRepo, passwordHistoryRepo);
         when(contactRepo.findByUserId(anyLong())).thenReturn(List.of());
         when(inventoryRepo.existsByUgTeamIdAndActiveTrueAndDeletedAtIsNull(anyLong())).thenReturn(false);
         when(userRepo.existsByTeamId(anyLong())).thenReturn(false);
         when(contactRepo.existsByTeamIdAndActiveTrue(anyLong())).thenReturn(false);
+        org.mockito.Mockito.lenient().when(passwordHistoryRepo.findByUserIdOrderByCreatedAtDesc(anyLong()))
+                .thenReturn(java.util.Collections.emptyList());
         ReflectionTestUtils.setField(service, "lockoutDurationsSecs", List.of(30L, 120L, 600L, 1800L));
         ReflectionTestUtils.setField(service, "lockoutFailuresNeeded", List.of(5, 3, 2, 1));
-        ReflectionTestUtils.setField(service, "passwordMinLength", 4);
+        ReflectionTestUtils.setField(service, "passwordMinLength", 6);
+        ReflectionTestUtils.setField(service, "passwordMaxLength", 10);
+        ReflectionTestUtils.setField(service, "passwordHistoryCount", 3);
 
         when(userRepo.save(any())).thenAnswer(inv -> {
             AppUser u = inv.getArgument(0);
@@ -550,6 +555,65 @@ class UserServiceTest {
         assertThatThrownBy(() -> service.changePassword(7L, "newSecret", "admin", null))
                 .isInstanceOf(SecurityException.class);
         verify(userRepo, never()).findById(any());
+    }
+
+    @Test
+    @DisplayName("changePassword: too long (>10) → IllegalArgumentException")
+    void changePassword_tooLong_throwsIllegalArgument() {
+        AppUser u = user("alice", "hash");
+        u.setId(1L);
+        when(userRepo.findById(1L)).thenReturn(Optional.of(u));
+
+        assertThatThrownBy(() -> service.changePassword(1L, "12345678901"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("too long");
+    }
+
+    @Test
+    @DisplayName("changePassword: matches current hash → 'recently used'")
+    void changePassword_matchesCurrentHash_throwsReused() {
+        BCryptPasswordEncoder enc = new BCryptPasswordEncoder();
+        AppUser u = user("alice", enc.encode("secret1"));
+        u.setId(1L);
+        when(userRepo.findById(1L)).thenReturn(Optional.of(u));
+
+        assertThatThrownBy(() -> service.changePassword(1L, "secret1"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("recently used");
+    }
+
+    @Test
+    @DisplayName("changePassword: matches an archived hash → 'recently used'")
+    void changePassword_matchesArchivedHash_throwsReused() {
+        BCryptPasswordEncoder enc = new BCryptPasswordEncoder();
+        AppUser u = user("alice", enc.encode("currentPwd"));
+        u.setId(1L);
+        when(userRepo.findById(1L)).thenReturn(Optional.of(u));
+
+        com.certmonitor.model.PasswordHistory hist = new com.certmonitor.model.PasswordHistory();
+        hist.setUserId(1L);
+        hist.setPasswordHash(enc.encode("oldPwd1"));
+        when(passwordHistoryRepo.findByUserIdOrderByCreatedAtDesc(1L))
+                .thenReturn(List.of(hist));
+
+        assertThatThrownBy(() -> service.changePassword(1L, "oldPwd1"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("recently used");
+    }
+
+    @Test
+    @DisplayName("changePassword: success archives outgoing hash + rotates current")
+    void changePassword_success_archivesAndRotates() {
+        BCryptPasswordEncoder enc = new BCryptPasswordEncoder();
+        AppUser u = user("alice", enc.encode("oldPwd"));
+        u.setId(1L);
+        when(userRepo.findById(1L)).thenReturn(Optional.of(u));
+
+        service.changePassword(1L, "newPwd1");
+
+        verify(passwordHistoryRepo).save(any(com.certmonitor.model.PasswordHistory.class));
+        assertThat(u.getPasswordHash()).isNotEqualTo(enc.encode("oldPwd"));
+        assertThat(enc.matches("newPwd1", u.getPasswordHash())).isTrue();
     }
 
     // ── Bootstrap ─────────────────────────────────────────────────────────────

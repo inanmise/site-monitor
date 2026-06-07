@@ -3,13 +3,13 @@ import { useT, useLanguage } from '../i18n/index.jsx'
 import { useTheme } from '../i18n/theme.jsx'
 import {
   LayoutDashboard, AlertTriangle, FileText,
-  RefreshCw, ClipboardList, Settings, User, Globe, LogOut,
+  RefreshCw, ClipboardList, Settings, User, Globe, LogOut, Lock,
   Sun, Moon, ChevronLeft, ChevronRight, ChevronDown, Server, Activity, ShieldAlert, BarChart3, Bell, BookOpen,
   Wifi, Network, Search, TrendingDown, Database,
 } from 'lucide-react'
 import CertMonitorLogo from './ui/CertMonitorLogo.jsx'
 
-export default function Nav({ activeTab, onTabChange, username, teamName, systemRole, onLogout }) {
+export default function Nav({ activeTab, onTabChange, username, teamName, systemRole, onLogout, onChangePassword }) {
   const t = useT()
   const { toggle } = useLanguage()
   const { theme, toggle: toggleTheme } = useTheme()
@@ -202,6 +202,14 @@ export default function Nav({ activeTab, onTabChange, username, teamName, system
         >
           <Globe size={15} />
           {open && <span>{t('nav.langSwitch')}</span>}
+        </button>
+        <button
+          className="sb-logout"
+          onClick={onChangePassword}
+          title={!open ? t('nav.changePassword') : undefined}
+        >
+          <Lock size={15} />
+          {open && <span>{t('nav.changePassword')}</span>}
         </button>
         <button
           className="sb-logout"
