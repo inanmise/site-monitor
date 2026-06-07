@@ -6,6 +6,7 @@ import {
   Play, Download, History, BookOpen, ChevronRight, ChevronDown,
   Database, Loader2, AlertCircle, X, RefreshCw,
 } from 'lucide-react'
+import SqlRowDetailModal from './SqlRowDetailModal.jsx'
 
 const DEFAULT_QUERY = ''
 
@@ -23,6 +24,7 @@ export default function SqlPlayground() {
   const [samples, setSamples]       = useState([])
   const [history, setHistory]       = useState([])
   const [openMenu, setOpenMenu]     = useState(null)   // 'samples' | 'history' | null
+  const [rowDetail, setRowDetail]   = useState(null)   // { row, index, cols } | null
   const editorRef = useRef(null)
   const samplesBtnRef = useRef(null)
   const historyBtnRef = useRef(null)
@@ -322,7 +324,12 @@ export default function SqlPlayground() {
                   </thead>
                   <tbody>
                     {result.rows.map((row, i) => (
-                      <tr key={i}>
+                      <tr
+                        key={i}
+                        className="sqlpg-row-clickable"
+                        onDoubleClick={() => setRowDetail({ row, index: i, cols })}
+                        title={t('sql.dblClickHint')}
+                      >
                         {cols.map(c => (
                           <td key={c} title={row[c] == null ? 'NULL' : String(row[c])}>
                             {row[c] == null
@@ -343,6 +350,15 @@ export default function SqlPlayground() {
         )}
       </div>
 
+      {rowDetail && (
+        <SqlRowDetailModal
+          row={rowDetail.row}
+          cols={rowDetail.cols}
+          index={rowDetail.index}
+          onClose={() => setRowDetail(null)}
+          t={t}
+        />
+      )}
     </div>
   )
 }

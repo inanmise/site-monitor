@@ -673,6 +673,10 @@ export const TR = {
   'sql.colCopied':       '"{0}" kopyalandı',
   'sql.noSamples':       'Henüz örnek yok',
   'sql.noHistory':       'Henüz sorgu çalıştırılmadı',
+  'sql.dblClickHint':    'Detayları görmek için çift tıklayın',
+  'sql.rowDetails':      'Satır #{0} Detayları',
+  'sql.closeRowDetails': 'Kapat',
+  'sql.copyValue':       'Değeri kopyala',
 
   'team.title':        'Takım Yönetimi',
   'team.addBtn':       'Takım Ekle',
@@ -1904,6 +1908,10 @@ export const EN = {
   'sql.history':         'History',
   'sql.colCopied':       '"{0}" copied',
   'sql.noSamples':       'No samples yet',
+  'sql.dblClickHint':    'Double-click to see details',
+  'sql.rowDetails':      'Row #{0} Details',
+  'sql.closeRowDetails': 'Close',
+  'sql.copyValue':       'Copy value',
   'sql.noHistory':       'No queries executed yet',
 
   'team.title':        'Team Management',

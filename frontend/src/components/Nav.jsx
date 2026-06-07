@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
+import { createPortal } from 'react-dom'
 import { useT, useLanguage } from '../i18n/index.jsx'
 import { useTheme } from '../i18n/theme.jsx'
 import {
@@ -91,14 +92,24 @@ export default function Nav({ activeTab, onTabChange, username, teamName, system
   })
 
   const [userMenuOpen, setUserMenuOpen] = useState(false)
-  const userMenuRef = useRef(null)
+  const [userMenuPos, setUserMenuPos] = useState(null)
+  const userTriggerRef = useRef(null)
+  const userPopoverRef = useRef(null)
 
   useEffect(() => {
-    if (!userMenuOpen) return
+    if (!userMenuOpen) { setUserMenuPos(null); return }
+    if (userTriggerRef.current) {
+      const r = userTriggerRef.current.getBoundingClientRect()
+      setUserMenuPos({
+        left: Math.round(r.right + 6),
+        bottom: Math.round(window.innerHeight - r.bottom),
+      })
+    }
     function onDocClick(e) {
-      if (userMenuRef.current && !userMenuRef.current.contains(e.target)) {
-        setUserMenuOpen(false)
-      }
+      const t = e.target
+      const insideTrigger = userTriggerRef.current && userTriggerRef.current.contains(t)
+      const insidePopover = userPopoverRef.current && userPopoverRef.current.contains(t)
+      if (!insideTrigger && !insidePopover) setUserMenuOpen(false)
     }
     document.addEventListener('mousedown', onDocClick)
     return () => document.removeEventListener('mousedown', onDocClick)
@@ -190,20 +201,9 @@ export default function Nav({ activeTab, onTabChange, username, teamName, system
 
       {/* ── Footer: user settings, theme toggle, lang toggle, logout ── */}
       <div className="sb-foot">
-        <div className="sb-user-wrap" ref={userMenuRef}>
-          {userMenuOpen && (
-            <div className="sb-user-popover">
-              <div className="sb-user-popover-hdr">{t('nav.userSettings')}</div>
-              <button
-                className="sb-user-popover-item"
-                onClick={() => { setUserMenuOpen(false); onChangePassword?.() }}
-              >
-                <Lock size={14} />
-                <span>{t('nav.changePassword')}</span>
-              </button>
-            </div>
-          )}
+        <div className="sb-user-wrap">
           <button
+            ref={userTriggerRef}
             className={`sb-user-trigger${userMenuOpen ? ' is-open' : ''}`}
             onClick={() => setUserMenuOpen(v => !v)}
             title={!open ? t('nav.userSettings') : undefined}
@@ -219,6 +219,23 @@ export default function Nav({ activeTab, onTabChange, username, teamName, system
             {open && <ChevronUp size={12} className="sb-user-chevron" />}
           </button>
         </div>
+        {userMenuOpen && userMenuPos && createPortal(
+          <div
+            ref={userPopoverRef}
+            className="sb-user-popover"
+            style={{ left: userMenuPos.left, bottom: userMenuPos.bottom }}
+          >
+            <div className="sb-user-popover-hdr">{t('nav.userSettings')}</div>
+            <button
+              className="sb-user-popover-item"
+              onClick={() => { setUserMenuOpen(false); onChangePassword?.() }}
+            >
+              <Lock size={14} />
+              <span>{t('nav.changePassword')}</span>
+            </button>
+          </div>,
+          document.body
+        )}
         <button
           className="sb-logout"
           onClick={toggleTheme}

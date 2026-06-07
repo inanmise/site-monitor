@@ -1,0 +1,63 @@
+import { useState } from 'react'
+import { Table, Copy, Check } from 'lucide-react'
+
+/**
+ * Vertical, label/value presentation of a single SQL Playground result row.
+ * Opened by double-clicking a row in the result table — purely a read-only
+ * detail view; each value carries a one-click copy-to-clipboard button.
+ */
+export default function SqlRowDetailModal({ row, cols, index, onClose, t }) {
+  const [copiedKey, setCopiedKey] = useState(null)
+
+  function copyValue(key, val) {
+    const text = val == null ? '' : String(val)
+    if (!text) return
+    try {
+      navigator.clipboard.writeText(text).then(() => {
+        setCopiedKey(key)
+        setTimeout(() => setCopiedKey(null), 1200)
+      }).catch(() => {})
+    } catch { /* clipboard unavailable */ }
+  }
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal-box modal-wide" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-icon-hdr modal-icon-hdr--user">
+          <div className="modal-icon-hdr-badge"><Table size={20} /></div>
+          <h3>{t('sql.rowDetails', String(index + 1))}</h3>
+        </div>
+        <div className="sqlpg-row-detail">
+          {cols.map(col => {
+            const val = row[col]
+            const isNull = val == null
+            return (
+              <div key={col} className="sqlpg-row-detail-item">
+                <div className="sqlpg-row-detail-label">{col}</div>
+                <div className="sqlpg-row-detail-value">
+                  {isNull
+                    ? <em className="sqlpg-null">NULL</em>
+                    : <span>{String(val)}</span>}
+                  <button
+                    type="button"
+                    className="sqlpg-row-detail-copy"
+                    onClick={() => copyValue(col, val)}
+                    title={t('sql.copyValue')}
+                    disabled={isNull}
+                  >
+                    {copiedKey === col ? <Check size={13}/> : <Copy size={13}/>}
+                  </button>
+                </div>
+              </div>
+            )
+          })}
+        </div>
+        <div className="modal-actions">
+          <button className="btn btn-secondary" onClick={onClose}>
+            {t('sql.closeRowDetails')}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
