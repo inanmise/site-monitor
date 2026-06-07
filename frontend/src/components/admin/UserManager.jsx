@@ -151,12 +151,14 @@ export default function UserManager({ teams }) {
               <h3>{modal === 'add' ? t('usr.addTitle') : t('usr.editTitle')}</h3>
             </div>
             <div className="form-grid">
-              <label>{t('usr.formUsername')}
+              <label>
+                <span>{t('usr.formUsername')} <span className="req-star">*</span></span>
                 <input value={form.username} disabled={modal !== 'add'}
                   onChange={(e) => setForm({ ...form, username: e.target.value })} />
               </label>
               {modal === 'add' && (
-                <label>{t('usr.formPassword')}
+                <label>
+                  <span>{t('usr.formPassword')} <span className="req-star">*</span></span>
                   <input type="password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} />
                 </label>
               )}
