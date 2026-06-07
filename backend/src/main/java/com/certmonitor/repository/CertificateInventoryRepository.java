@@ -3,10 +3,13 @@ package com.certmonitor.repository;
 import com.certmonitor.model.CertificateInventory;
 import org.springframework.data.jpa.repository.JpaRepository;
 
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 
 public interface CertificateInventoryRepository extends JpaRepository<CertificateInventory, Long> {
+    List<CertificateInventory> findByDomainIn(Collection<String> domains);
+
     List<CertificateInventory> findByActiveTrueOrderByDomainAsc();
     List<CertificateInventory> findByTeamIdAndActiveTrueOrderByDomainAsc(Long teamId);
     List<CertificateInventory> findByTeamIdOrderByDomainAsc(Long teamId);

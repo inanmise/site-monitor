@@ -13,6 +13,7 @@ import CertificatesTable from './components/CertificatesTable'
 import CertificateModal from './components/CertificateModal'
 import CaDiversityModal from './components/CaDiversityModal'
 import RenewalAdvice from './components/RenewalAdvice'
+import CertRenewalGuide from './components/CertRenewalGuide.jsx'
 import AdminPanel from './components/admin/AdminPanel'
 import AlertHistory from './components/admin/AlertHistory'
 import InventoryManager from './components/admin/InventoryManager'
@@ -436,8 +437,6 @@ export default function App() {
                   : t('app.starting')
                 : t('app.checkNow')}
             </button>
-            <input className="search-box" type="text" placeholder={t('app.searchPlaceholder')} value={search}
-              onChange={(e) => { setSearch(e.target.value); setDashPage(1) }} />
             <div className="add-domain-section">
               <input className="domain-input" type="text" placeholder={t('app.newDomainPlaceholder')}
                 value={newDomain} onChange={(e) => setNewDomain(e.target.value)}
@@ -763,6 +762,12 @@ export default function App() {
               <div className="tab-content active">
                 <h2>{t('app.renewalTitle')}</h2>
                 <RenewalAdvice />
+              </div>
+            )}
+
+            {tab === 'renewal-guide' && (
+              <div className="tab-content active">
+                <CertRenewalGuide isAdmin={systemRole === 'ADMIN'} />
               </div>
             )}
 

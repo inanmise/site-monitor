@@ -456,19 +456,19 @@ export default function SystemHealth({ preFilterDomain, openSmtpModalOnLoad, onS
 
         {/* SMTP card */}
         <div
-          className={`sys-card sys-card-clickable${smtp?.alarm ? ' sys-card-alarm' : ''}`}
+          className={`sys-card sys-card-clickable${smtpHasAlarm ? ' sys-card-alarm' : ''}`}
           onClick={openSmtpModal}
           title={t('health.smtpClickHint')}
         >
           <div className="sys-card-header">
             <div className="hb-title-row">
-              <svg className={`smtp-envelope ${smtp?.alarm ? 'smtp-envelope-alarm' : 'smtp-envelope-ok'}`} viewBox="0 0 24 24" width="20" height="20" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <svg className={`smtp-envelope ${smtpHasAlarm ? 'smtp-envelope-alarm' : 'smtp-envelope-ok'}`} viewBox="0 0 24 24" width="20" height="20" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                 <rect x="2" y="4" width="20" height="16" rx="2"/>
                 <polyline points="2,4 12,13 22,4"/>
               </svg>
               <h3>{t('health.smtpTitle')}</h3>
             </div>
-            <span className={`sys-badge ${smtp?.alarm ? 'sys-badge-locked' : 'sys-badge-free'}`}>
+            <span className={`sys-badge ${smtpHasAlarm ? 'sys-badge-locked' : 'sys-badge-free'}`}>
               <span className={smtpRateClass}>%{smtpRate}</span>
             </span>
           </div>
@@ -482,7 +482,7 @@ export default function SystemHealth({ preFilterDomain, openSmtpModalOnLoad, onS
             {[0, 1, 2, 3].map(i => (
               <div
                 key={i}
-                className={`smtp-stream-dot ${smtp?.alarm ? 'smtp-stream-alarm' : 'smtp-stream-ok'}`}
+                className={`smtp-stream-dot ${smtpHasAlarm ? 'smtp-stream-alarm' : 'smtp-stream-ok'}`}
                 style={{ animationDelay: `${i * 0.55}s` }}
               />
             ))}

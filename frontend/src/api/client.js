@@ -105,6 +105,15 @@ export const api = {
 
   getNetworkOutageHistory: (limit = 50) => request(`/system/network-outage-history?limit=${limit}`),
 
+  // ── Guide links (Sertifika Değişim Rehberi) ──────────────────────────────
+
+  guideLinks: {
+    list:   () => request('/guide-links'),
+    create: (data) => request('/guide-links', { method: 'POST', body: JSON.stringify(data) }),
+    update: (id, data) => request(`/guide-links/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+    delete: (id) => request(`/guide-links/${id}`, { method: 'DELETE' }),
+  },
+
   // ── Admin ────────────────────────────────────────────────────────────────
 
   admin: {

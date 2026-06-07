@@ -36,7 +36,7 @@
         spring.output.ansi.enabled = DETECT by default). In containers/pods or when
         stdout is redirected to a file, output is plain text (no ESC[...] gibberish). -->
   <property name="PAT_CONSOLE"
-            value="%d{HH:mm:ss.SSS, ${LOG_TZ}} %clr(%-5level){highlight} [%15.15thread] %clr(%-36.36logger{35}){cyan} : %msg%n%rootException"/>
+            value="%d{yyyy-MM-dd HH:mm:ss.SSS, ${LOG_TZ}} %clr(%-5level){highlight} [%15.15thread] %clr(%-36.36logger{35}){cyan} : %msg%n%rootException"/>
   <!--  File: full timestamp, no ANSI codes  -->
   <property name="PAT_FILE"
             value="%d{yyyy-MM-dd HH:mm:ss.SSS, ${LOG_TZ}} %-5level [%thread] %logger{50} : %msg%n%rootException"/>
