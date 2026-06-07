@@ -160,4 +160,61 @@ class AuthControllerTest {
         mvc.perform(get("/api/me"))
                 .andExpect(status().isUnauthorized());
     }
+
+    // ── Self-service password change ──────────────────────────────────────────
+
+    @Test
+    @DisplayName("POST /api/me/change-password without session returns 401")
+    void changeOwnPassword_unauthenticated_returns401() throws Exception {
+        mvc.perform(post("/api/me/change-password")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"current_password\":\"oldpass\",\"new_password\":\"newpass1\"}"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    @DisplayName("POST /api/me/change-password missing current_password returns 400")
+    void changeOwnPassword_missingCurrent_returns400() throws Exception {
+        mvc.perform(post("/api/me/change-password")
+                        .session(selfSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"new_password\":\"newpass1\"}"))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    @DisplayName("POST /api/me/change-password as USER role with correct current returns 200")
+    void changeOwnPassword_asUser_correctCurrent_returns200() throws Exception {
+        // userService.changePassword(4-arg) is a mock — no exception means success
+        mvc.perform(post("/api/me/change-password")
+                        .session(selfSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"current_password\":\"oldpass\",\"new_password\":\"newpass1\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.message").value("Password changed"));
+    }
+
+    @Test
+    @DisplayName("POST /api/me/change-password with wrong current_password returns 403")
+    void changeOwnPassword_wrongCurrent_returns403() throws Exception {
+        org.mockito.Mockito.doThrow(new SecurityException("Invalid admin password"))
+                .when(userService).changePassword(eq(1L), any(), eq("testuser"), any());
+
+        mvc.perform(post("/api/me/change-password")
+                        .session(selfSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"current_password\":\"wrong\",\"new_password\":\"newpass1\"}"))
+                .andExpect(status().isForbidden());
+    }
+
+    /** Builds a session that mimics a logged-in USER (not admin). */
+    private MockHttpSession selfSession() {
+        MockHttpSession s = new MockHttpSession();
+        s.setAttribute("authenticated", Boolean.TRUE);
+        s.setAttribute("username", "testuser");
+        s.setAttribute("userId", 1L);
+        s.setAttribute("systemRole", "USER");
+        return s;
+    }
 }

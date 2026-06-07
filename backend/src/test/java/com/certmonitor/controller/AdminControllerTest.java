@@ -423,6 +423,32 @@ class AdminControllerTest {
     }
 
     @Test
+    @DisplayName("POST /api/admin/users/{id}/reset-password with too-short new password returns 400")
+    void resetPassword_tooShortNewPassword_returns400() throws Exception {
+        org.mockito.Mockito.doThrow(new IllegalArgumentException("Password too short (min 6 chars)"))
+                .when(userService).changePassword(eq(7L), any(), any(), any());
+
+        mvc.perform(post("/api/admin/users/7/reset-password")
+                        .session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"password\":\"abc\",\"admin_password\":\"rightpass\"}"))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    @DisplayName("POST /api/admin/users/{id}/reset-password when new password recently used returns 400")
+    void resetPassword_recentlyUsed_returns400() throws Exception {
+        org.mockito.Mockito.doThrow(new IllegalArgumentException("Password recently used"))
+                .when(userService).changePassword(eq(7L), any(), any(), any());
+
+        mvc.perform(post("/api/admin/users/7/reset-password")
+                        .session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"password\":\"oldSecret\",\"admin_password\":\"rightpass\"}"))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
     @DisplayName("POST /api/admin/alerts/{id}/acknowledge returns 200")
     void acknowledgeAlert_authenticated_returns200() throws Exception {
         AlertEvent event = new AlertEvent();

@@ -4534,6 +4534,12 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 }
 [data-theme="dark"] .team-member-chip { background: #243044; border-color: #374151; }
 
+/* ── Password strength meter ─────────────────────────── */
+.pwd-strength { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
+.pwd-strength-bars { display: flex; gap: 3px; flex: 1; }
+.pwd-strength-bar { flex: 1; height: 4px; border-radius: 2px; transition: background .15s; background: #e2e8f0; }
+.pwd-strength-label { font-size: .78em; font-weight: 500; min-width: 50px; text-align: right; }
+
 /* ── Team Management — member business cards ─────────────── */
 .tm-member-cards {
   display: grid;
