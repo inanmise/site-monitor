@@ -606,22 +606,6 @@ public class AdminController {
         return ok(Map.of("data", user));
     }
 
-    @PostMapping("/users/{id}/reset-password")
-    public ResponseEntity<Map<String, Object>> resetPassword(
-            @PathVariable Long id, @RequestBody Map<String, String> body,
-            HttpSession session, HttpServletRequest request) {
-        requireAdmin(session);
-        String adminPassword = body.get("admin_password");
-        if (adminPassword == null || adminPassword.isBlank()) {
-            throw new IllegalArgumentException("Admin password required");
-        }
-        String adminUsername = actor(session);
-        userService.changePassword(id, body.get("password"), adminUsername, adminPassword);
-        auditService.recordAction("USER_PASSWORD_RESET", session, request,
-                "USER", id.toString(), null);
-        return ok(Map.of("message", "Password updated"));
-    }
-
     @PostMapping("/users/{id}/auto-reset-password")
     public ResponseEntity<Map<String, Object>> autoResetPassword(
             @PathVariable Long id, @RequestBody Map<String, String> body,

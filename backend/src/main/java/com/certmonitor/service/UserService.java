@@ -17,6 +17,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
@@ -71,6 +72,20 @@ public class UserService {
     public Optional<AppUser> authenticate(String username, String rawPassword) {
         return userRepo.findByUsernameAndActiveTrue(username)
                 .filter(u -> PASSWORD_ENCODER.matches(rawPassword, u.getPasswordHash()));
+    }
+
+    /** True when an admin-issued temp password's 24-hour window has elapsed.
+     *  Returns false (= still valid / no temp) when the field is null. */
+    public boolean isTempPasswordExpired(AppUser user) {
+        String exp = user.getTempPasswordExpiresAt();
+        if (exp == null) return false;
+        try {
+            Instant expiresAt = LocalDateTime.parse(exp).toInstant(ZoneOffset.UTC);
+            return expiresAt.isBefore(Instant.now());
+        } catch (Exception e) {
+            log.warn("Could not parse temp_password_expires_at '{}' for user {}", exp, user.getUsername());
+            return false;  // fail-open: don't lock the user out on a parse bug
+        }
     }
 
     public Optional<AppUser> findByUsername(String username) {
@@ -278,6 +293,9 @@ public class UserService {
         if (Boolean.TRUE.equals(user.getMustChangePassword())) {
             user.setMustChangePassword(false);   // any successful change clears the forced flag
         }
+        if (user.getTempPasswordExpiresAt() != null) {
+            user.setTempPasswordExpiresAt(null); // the new password is permanent
+        }
         userRepo.save(user);
 
         // Prune anything older than (historyCount - 1) since the current
@@ -345,6 +363,7 @@ public class UserService {
         String tempPwd = com.certmonitor.util.PasswordGenerator.generate();
         target.setPasswordHash(PASSWORD_ENCODER.encode(tempPwd));
         target.setMustChangePassword(true);
+        target.setTempPasswordExpiresAt(ISO.format(Instant.now().plus(Duration.ofHours(24))));
         target.setUpdatedAt(now());
         userRepo.save(target);
 

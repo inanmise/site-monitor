@@ -670,6 +670,67 @@ class UserServiceTest {
     }
 
     @Test
+    @DisplayName("adminAutoResetPassword: sets temp_password_expires_at to roughly now+24h")
+    void adminAutoResetPassword_setsTempPasswordExpiry() {
+        org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder enc =
+                new org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder();
+        AppUser admin = user("admin", enc.encode("rightpass"));
+        when(userRepo.findByUsernameAndActiveTrue("admin")).thenReturn(Optional.of(admin));
+        AppUser target = user("bob", "old-hash");
+        target.setId(7L);
+        target.setEmail("bob@example.com");
+        when(userRepo.findById(7L)).thenReturn(Optional.of(target));
+
+        java.time.Instant before = java.time.Instant.now();
+        service.adminAutoResetPassword(7L, "admin", "rightpass");
+        java.time.Instant after = java.time.Instant.now();
+
+        assertThat(target.getTempPasswordExpiresAt()).isNotNull();
+        java.time.Instant exp = java.time.LocalDateTime.parse(target.getTempPasswordExpiresAt())
+                .toInstant(java.time.ZoneOffset.UTC);
+        assertThat(exp).isAfterOrEqualTo(before.plus(java.time.Duration.ofHours(24)).minusSeconds(2));
+        assertThat(exp).isBeforeOrEqualTo(after.plus(java.time.Duration.ofHours(24)).plusSeconds(2));
+    }
+
+    @Test
+    @DisplayName("changePassword: clears temp_password_expires_at on success")
+    void changePassword_clearsTempPasswordExpiry() {
+        org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder enc =
+                new org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder();
+        AppUser u = user("alice", enc.encode("oldPwd"));
+        u.setId(1L);
+        u.setTempPasswordExpiresAt(java.time.LocalDateTime.now(java.time.ZoneOffset.UTC)
+                .plusHours(12).format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss")));
+        when(userRepo.findById(1L)).thenReturn(Optional.of(u));
+
+        service.changePassword(1L, "newPwd1");
+
+        assertThat(u.getTempPasswordExpiresAt()).isNull();
+    }
+
+    @Test
+    @DisplayName("isTempPasswordExpired: true when stored timestamp is in the past")
+    void isTempPasswordExpired_pastTimestamp_returnsTrue() {
+        AppUser u = user("alice", "h");
+        u.setTempPasswordExpiresAt(java.time.LocalDateTime.now(java.time.ZoneOffset.UTC)
+                .minusHours(1).format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss")));
+        assertThat(service.isTempPasswordExpired(u)).isTrue();
+    }
+
+    @Test
+    @DisplayName("isTempPasswordExpired: false when stored timestamp is null or in the future")
+    void isTempPasswordExpired_nullOrFuture_returnsFalse() {
+        AppUser noTemp = user("alice", "h");
+        noTemp.setTempPasswordExpiresAt(null);
+        assertThat(service.isTempPasswordExpired(noTemp)).isFalse();
+
+        AppUser futureTemp = user("bob", "h");
+        futureTemp.setTempPasswordExpiresAt(java.time.LocalDateTime.now(java.time.ZoneOffset.UTC)
+                .plusHours(1).format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss")));
+        assertThat(service.isTempPasswordExpired(futureTemp)).isFalse();
+    }
+
+    @Test
     @DisplayName("changePassword: clears mustChangePassword flag on success")
     void changePassword_clearsMustChangeFlag() {
         org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder enc =
