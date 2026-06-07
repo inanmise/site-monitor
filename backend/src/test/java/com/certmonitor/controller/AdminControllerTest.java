@@ -387,6 +387,42 @@ class AdminControllerTest {
     }
 
     @Test
+    @DisplayName("POST /api/admin/users/{id}/reset-password without admin_password returns 400")
+    void resetPassword_missingAdminPassword_returns400() throws Exception {
+        mvc.perform(post("/api/admin/users/7/reset-password")
+                        .session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"password\":\"newSecret\"}"))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    @DisplayName("POST /api/admin/users/{id}/reset-password with valid admin_password returns 200")
+    void resetPassword_validAdminPassword_returns200() throws Exception {
+        // userService.changePassword is a mock — no exception means success path
+        mvc.perform(post("/api/admin/users/7/reset-password")
+                        .session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"password\":\"newSecret\",\"admin_password\":\"rightpass\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.message").value("Password updated"));
+    }
+
+    @Test
+    @DisplayName("POST /api/admin/users/{id}/reset-password with wrong admin_password returns 403")
+    void resetPassword_wrongAdminPassword_returns403() throws Exception {
+        org.mockito.Mockito.doThrow(new SecurityException("Invalid admin password"))
+                .when(userService).changePassword(eq(7L), any(), any(), any());
+
+        mvc.perform(post("/api/admin/users/7/reset-password")
+                        .session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"password\":\"newSecret\",\"admin_password\":\"wrong\"}"))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
     @DisplayName("POST /api/admin/alerts/{id}/acknowledge returns 200")
     void acknowledgeAlert_authenticated_returns200() throws Exception {
         AlertEvent event = new AlertEvent();

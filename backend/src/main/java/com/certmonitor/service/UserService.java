@@ -238,6 +238,27 @@ public class UserService {
         userRepo.save(user);
     }
 
+    /**
+     * Step-up password change: requires the calling admin to re-prove they know
+     * their own password before the target user's password is rewritten.
+     * Prevents a stolen admin session from being weaponised into account
+     * takeover of other accounts.
+     */
+    @Transactional
+    public void changePassword(Long targetUserId, String newPassword,
+                               String adminUsername, String adminCurrentPassword) {
+        if (adminUsername == null || adminCurrentPassword == null || adminCurrentPassword.isBlank()) {
+            throw new SecurityException("Invalid admin password");
+        }
+        boolean adminVerified = userRepo.findByUsernameAndActiveTrue(adminUsername)
+                .filter(u -> PASSWORD_ENCODER.matches(adminCurrentPassword, u.getPasswordHash()))
+                .isPresent();
+        if (!adminVerified) {
+            throw new SecurityException("Invalid admin password");
+        }
+        changePassword(targetUserId, newPassword);
+    }
+
     @Transactional
     public void deleteUser(Long id) {
         userRepo.deleteById(id);
