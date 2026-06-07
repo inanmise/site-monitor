@@ -47,6 +47,14 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ current_password: currentPwd, new_password: newPwd }),
     }),
+    getMyAudit: (params = {}) => {
+      const qs = new URLSearchParams()
+      Object.entries(params).forEach(([k, v]) => {
+        if (v !== undefined && v !== null && v !== '') qs.append(k, v)
+      })
+      const s = qs.toString()
+      return request(`/me/audit${s ? `?${s}` : ''}`)
+    },
   },
 
   login: async (username, password, rememberMe = false) => {

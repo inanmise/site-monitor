@@ -44,6 +44,7 @@ public class AuthController {
     private final AuditService auditService;
     private final RememberMeService rememberMeService;
     private final UserService userService;
+    private final com.certmonitor.repository.AuditLogRepository auditLogRepo;
 
     // Per-IP attempt counter within a sliding 60-second window
     private final ConcurrentHashMap<String, AtomicInteger> loginAttempts = new ConcurrentHashMap<>();
@@ -259,6 +260,45 @@ public class AuthController {
         Map<String, Object> resp = new LinkedHashMap<>();
         resp.put("success", true);
         resp.put("message", "Password changed");
+        return ResponseEntity.ok(resp);
+    }
+
+    /**
+     * Self-service audit log. Returns only entries where actor equals the
+     * caller's session username (exact, case-insensitive). The actor cannot
+     * be overridden via query string — a USER cannot see anyone else's log.
+     * /api/admin/audit (admin/audit-only) remains the system-wide view.
+     */
+    @GetMapping("/me/audit")
+    public ResponseEntity<Map<String, Object>> myAudit(
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "50") int size,
+            @RequestParam(required = false) String eventType,
+            @RequestParam(required = false) String outcome,
+            @RequestParam(required = false) String since,
+            @RequestParam(required = false) String until,
+            @RequestParam(defaultValue = "false") boolean anomalyOnly,
+            HttpSession session) {
+        Object usernameAttr = session.getAttribute("username");
+        if (usernameAttr == null) throw new SecurityException("Not authenticated");
+        String username = usernameAttr.toString().toLowerCase();
+
+        int sz = Math.max(1, Math.min(size, 200));
+        var result = auditLogRepo.findOwnFiltered(
+                username,
+                (eventType == null || eventType.isBlank()) ? null : eventType,
+                (outcome   == null || outcome.isBlank())   ? null : outcome,
+                (since     == null || since.isBlank())     ? null : since,
+                (until     == null || until.isBlank())     ? null : until,
+                anomalyOnly,
+                org.springframework.data.domain.PageRequest.of(Math.max(0, page), sz));
+
+        Map<String, Object> resp = new LinkedHashMap<>();
+        resp.put("success", true);
+        resp.put("data", result.getContent());
+        resp.put("total", result.getTotalElements());
+        resp.put("page", result.getNumber());
+        resp.put("total_pages", result.getTotalPages());
         return ResponseEntity.ok(resp);
     }
 

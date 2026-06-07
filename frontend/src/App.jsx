@@ -23,6 +23,7 @@ import WeakAlgorithmReport from './components/admin/WeakAlgorithmReport'
 import SystemHealth from './components/admin/SystemHealth'
 import SqlPlayground from './components/admin/SqlPlayground'
 import ActivityLog from './components/ActivityLog'
+import MyAuditLog from './components/MyAuditLog'
 import HelpPage from './components/HelpPage'
 import UptimePage from './components/UptimePage'
 import PortMonitorPage from './components/PortMonitorPage'
@@ -802,6 +803,13 @@ export default function App() {
               <div className="tab-content active">
                 <h2>{t('app.activityTitle')}</h2>
                 <ActivityLog refreshTrigger={activityRefreshKey} />
+              </div>
+            )}
+
+            {tab === 'myactivity' && (
+              <div className="tab-content active">
+                <h2>{t('app.myAuditTitle')}</h2>
+                <MyAuditLog />
               </div>
             )}
 

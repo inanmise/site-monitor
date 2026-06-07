@@ -97,7 +97,7 @@ export default function UserManager({ teams }) {
         <h3>{t('usr.title')}</h3>
         <button className="btn btn-success" onClick={openAdd}>{t('usr.addBtn')}</button>
       </div>
-      {msg && !modal && !pwdModal && <div className="alert-msg">{msg}</div>}
+      {msg && !modal && !autoResetModal && <div className="alert-msg">{msg}</div>}
       <div className="admin-table-wrap">
         <table className="admin-table">
           <thead>

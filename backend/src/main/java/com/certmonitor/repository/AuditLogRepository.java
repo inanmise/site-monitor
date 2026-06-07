@@ -45,4 +45,26 @@ public interface AuditLogRepository extends JpaRepository<AuditLog, Long> {
         @Param("until") String until,
         @Param("anomalyOnly") boolean anomalyOnly,
         Pageable pageable);
+
+    /**
+     * Same shape as findFiltered, but actor is an exact (case-insensitive)
+     * match so a user cannot incidentally see another user whose name is a
+     * substring of theirs. Powers /api/me/audit.
+     */
+    @Query("SELECT a FROM AuditLog a WHERE " +
+           "LOWER(a.actor) = :actor AND " +
+           "(:eventType IS NULL OR a.eventType = :eventType) AND " +
+           "(:outcome IS NULL OR a.outcome = :outcome) AND " +
+           "(:since IS NULL OR a.eventTime >= :since) AND " +
+           "(:until IS NULL OR a.eventTime <= :until) AND " +
+           "(:anomalyOnly = false OR (a.anomalyFlags IS NOT NULL AND a.anomalyFlags <> '')) " +
+           "ORDER BY a.eventTime DESC")
+    Page<AuditLog> findOwnFiltered(
+        @Param("actor") String actor,
+        @Param("eventType") String eventType,
+        @Param("outcome") String outcome,
+        @Param("since") String since,
+        @Param("until") String until,
+        @Param("anomalyOnly") boolean anomalyOnly,
+        Pageable pageable);
 }
