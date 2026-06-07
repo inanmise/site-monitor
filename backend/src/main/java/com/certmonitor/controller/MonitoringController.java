@@ -4,6 +4,7 @@ import com.certmonitor.model.*;
 import com.certmonitor.repository.*;
 import com.certmonitor.service.DnsCheckerService;
 import com.certmonitor.service.PortCheckerService;
+import jakarta.servlet.http.HttpSession;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
@@ -44,6 +45,13 @@ public class MonitoringController {
 
     private ResponseEntity<Map<String, Object>> ok(Object data) {
         return ResponseEntity.ok(Map.of("success", true, "data", data, "timestamp", ISO.format(Instant.now())));
+    }
+
+    /** Write endpoints are admin-only — USER role gets a 403 via GlobalExceptionHandler. */
+    private void requireAdmin(HttpSession session) {
+        if (!"ADMIN".equals(session.getAttribute("systemRole"))) {
+            throw new SecurityException("Admin access required");
+        }
     }
 
     private ResponseEntity<Map<String, Object>> notFound(String msg) {
@@ -275,7 +283,8 @@ public class MonitoringController {
     }
 
     @PostMapping("/port")
-    public ResponseEntity<Map<String, Object>> createPort(@RequestBody Map<String, Object> body) {
+    public ResponseEntity<Map<String, Object>> createPort(@RequestBody Map<String, Object> body, HttpSession session) {
+        requireAdmin(session);
         String now = ISO.format(Instant.now());
         PortMonitor m = new PortMonitor();
         m.setName((String) body.get("name"));
@@ -292,7 +301,8 @@ public class MonitoringController {
     }
 
     @PutMapping("/port/{id}")
-    public ResponseEntity<Map<String, Object>> updatePort(@PathVariable Long id, @RequestBody Map<String, Object> body) {
+    public ResponseEntity<Map<String, Object>> updatePort(@PathVariable Long id, @RequestBody Map<String, Object> body, HttpSession session) {
+        requireAdmin(session);
         return portMonitorRepo.findById(id).map(m -> {
             if (body.get("name")            != null) m.setName((String) body.get("name"));
             if (body.get("host")            != null) m.setHost((String) body.get("host"));
@@ -308,7 +318,8 @@ public class MonitoringController {
     }
 
     @DeleteMapping("/port/{id}")
-    public ResponseEntity<Map<String, Object>> deletePort(@PathVariable Long id) {
+    public ResponseEntity<Map<String, Object>> deletePort(@PathVariable Long id, HttpSession session) {
+        requireAdmin(session);
         return portMonitorRepo.findById(id).map(m -> {
             m.setActive(false);
             m.setUpdatedAt(ISO.format(Instant.now()));
@@ -326,7 +337,8 @@ public class MonitoringController {
     }
 
     @PostMapping("/port/{id}/check")
-    public ResponseEntity<Map<String, Object>> triggerPort(@PathVariable Long id) {
+    public ResponseEntity<Map<String, Object>> triggerPort(@PathVariable Long id, HttpSession session) {
+        requireAdmin(session);
         return portMonitorRepo.findById(id).map(m -> {
             Map<String, Object> r = portChecker.check(m.getHost(), m.getPort(), m.getTimeoutMs());
             String now = ISO.format(Instant.now());
@@ -393,7 +405,8 @@ public class MonitoringController {
     }
 
     @PostMapping("/dns")
-    public ResponseEntity<Map<String, Object>> createDns(@RequestBody Map<String, Object> body) {
+    public ResponseEntity<Map<String, Object>> createDns(@RequestBody Map<String, Object> body, HttpSession session) {
+        requireAdmin(session);
         String now = ISO.format(Instant.now());
         DnsMonitor m = new DnsMonitor();
         m.setName((String) body.get("name"));
@@ -408,7 +421,8 @@ public class MonitoringController {
     }
 
     @PutMapping("/dns/{id}")
-    public ResponseEntity<Map<String, Object>> updateDns(@PathVariable Long id, @RequestBody Map<String, Object> body) {
+    public ResponseEntity<Map<String, Object>> updateDns(@PathVariable Long id, @RequestBody Map<String, Object> body, HttpSession session) {
+        requireAdmin(session);
         return dnsMonitorRepo.findById(id).map(m -> {
             if (body.get("name")            != null) m.setName((String) body.get("name"));
             if (body.get("domain")          != null) m.setDomain((String) body.get("domain"));
@@ -422,7 +436,8 @@ public class MonitoringController {
     }
 
     @DeleteMapping("/dns/{id}")
-    public ResponseEntity<Map<String, Object>> deleteDns(@PathVariable Long id) {
+    public ResponseEntity<Map<String, Object>> deleteDns(@PathVariable Long id, HttpSession session) {
+        requireAdmin(session);
         return dnsMonitorRepo.findById(id).map(m -> {
             m.setActive(false);
             m.setUpdatedAt(ISO.format(Instant.now()));
@@ -440,7 +455,8 @@ public class MonitoringController {
     }
 
     @PostMapping("/dns/{id}/check")
-    public ResponseEntity<Map<String, Object>> triggerDns(@PathVariable Long id) {
+    public ResponseEntity<Map<String, Object>> triggerDns(@PathVariable Long id, HttpSession session) {
+        requireAdmin(session);
         return dnsMonitorRepo.findById(id).map(m -> {
             Map<String, Object> r = dnsChecker.check(m.getDomain(), m.getRecordType());
             String now = ISO.format(Instant.now());

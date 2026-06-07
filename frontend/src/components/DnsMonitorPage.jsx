@@ -11,8 +11,9 @@ const INTERVALS = [
   { value: 3600, labelKey: 'dns.interval1h'  },
 ]
 
-export default function DnsMonitorPage() {
+export default function DnsMonitorPage({ systemRole }) {
   const t = useT()
+  const isAdmin = systemRole === 'ADMIN'
   const [monitors, setMonitors] = useState([])
   const [loading, setLoading] = useState(true)
   const [selected, setSelected] = useState(null)
@@ -113,12 +114,16 @@ export default function DnsMonitorPage() {
                   </td>
                   <td className="mon-cell-time">{m.checked_at ? formatDate(m.checked_at) : '—'}</td>
                   <td className="mon-cell-actions" onClick={e => e.stopPropagation()}>
-                    <button className="btn btn-sm mon-btn-check" disabled={checking === m.id} onClick={() => checkNow(m)} title={t('dns.check')}>
-                      <Play size={12} />
-                    </button>
-                    <button className="btn btn-sm mon-btn-edit" onClick={() => openEdit(m)} title={t('dns.edit')}>
-                      <Pencil size={12} />
-                    </button>
+                    {isAdmin && (
+                      <button className="btn btn-sm mon-btn-check" disabled={checking === m.id} onClick={() => checkNow(m)} title={t('dns.check')}>
+                        <Play size={12} />
+                      </button>
+                    )}
+                    {isAdmin && (
+                      <button className="btn btn-sm mon-btn-edit" onClick={() => openEdit(m)} title={t('dns.edit')}>
+                        <Pencil size={12} />
+                      </button>
+                    )}
                   </td>
                 </tr>
               ))}

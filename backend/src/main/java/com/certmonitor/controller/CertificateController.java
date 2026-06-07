@@ -119,7 +119,8 @@ public class CertificateController {
     }
 
     @PostMapping("/scheduler/run")
-    public ResponseEntity<Map<String, Object>> runScheduler() {
+    public ResponseEntity<Map<String, Object>> runScheduler(HttpSession session) {
+        requireAdmin(session);
         new Thread(schedulerService::runCheck).start();
         return ok(Map.of("success", true, "message", "Check started", "timestamp", now()));
     }
@@ -195,6 +196,12 @@ public class CertificateController {
         Object raw = session.getAttribute("teamId");
         if (raw == null) return null;
         return raw instanceof Long ? (Long) raw : Long.valueOf(raw.toString());
+    }
+
+    private void requireAdmin(HttpSession session) {
+        if (!"ADMIN".equals(session.getAttribute("systemRole"))) {
+            throw new SecurityException("Admin access required");
+        }
     }
 
     private ResponseEntity<Map<String, Object>> ok(Map<String, Object> body) {

@@ -13,8 +13,9 @@ const INTERVALS = [
 
 const REFRESH_INTERVAL = 60
 
-export default function PortMonitorPage() {
+export default function PortMonitorPage({ systemRole }) {
   const t = useT()
+  const isAdmin = systemRole === 'ADMIN'
   const [monitors, setMonitors] = useState([])
   const [loading, setLoading] = useState(true)
   const [selected, setSelected] = useState(null)
@@ -153,12 +154,16 @@ export default function PortMonitorPage() {
                   <td className="mon-cell-num">{m.response_ms != null ? `${m.response_ms}ms` : '—'}</td>
                   <td className="mon-cell-time">{m.checked_at ? formatDate(m.checked_at) : '—'}</td>
                   <td className="mon-cell-actions" onClick={e => e.stopPropagation()}>
-                    <button className="btn btn-sm mon-btn-check" disabled={checking === m.id} onClick={() => checkNow(m)} title={t('port.check')}>
-                      <Play size={12} />
-                    </button>
-                    <button className="btn btn-sm mon-btn-edit" onClick={() => openEdit(m)} title={t('port.edit')}>
-                      <Pencil size={12} />
-                    </button>
+                    {isAdmin && (
+                      <button className="btn btn-sm mon-btn-check" disabled={checking === m.id} onClick={() => checkNow(m)} title={t('port.check')}>
+                        <Play size={12} />
+                      </button>
+                    )}
+                    {isAdmin && (
+                      <button className="btn btn-sm mon-btn-edit" onClick={() => openEdit(m)} title={t('port.edit')}>
+                        <Pencil size={12} />
+                      </button>
+                    )}
                   </td>
                 </tr>
               ))}

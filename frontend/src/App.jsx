@@ -861,9 +861,9 @@ export default function App() {
             )}
 
             {tab === 'help'     && <HelpPage />}
-            {tab === 'uptime'   && <UptimePage />}
-            {tab === 'port'     && <PortMonitorPage />}
-            {tab === 'dns'      && <DnsMonitorPage />}
+            {tab === 'uptime'   && <UptimePage   systemRole={systemRole} />}
+            {tab === 'port'     && <PortMonitorPage systemRole={systemRole} />}
+            {tab === 'dns'      && <DnsMonitorPage  systemRole={systemRole} />}
             {tab === 'forecast' && <ExpiryForecastPage />}
           </div>
 
