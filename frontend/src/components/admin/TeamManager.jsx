@@ -4,10 +4,33 @@ import { useDialog } from '../ui/Dialog.jsx'
 import { useT } from '../../i18n/index.jsx'
 import SearchableSelect from '../ui/SearchableSelect.jsx'
 import { UsersRound, PenLine } from 'lucide-react'
+import UserEditModal from './UserEditModal.jsx'
 
 const emptyTeam = { name: '', email: '', description: '', active: true, leader_id: '', team_type: '' }
 
 const ORG_ROLE_COLORS = { PO: '#2563eb', MANAGER: '#d97706', CLEVEL: '#dc2626', TECH: '#16a34a' }
+
+function computeInitials(name) {
+  if (!name) return '?'
+  const parts = String(name).trim().split(/\s+/).filter(Boolean)
+  if (parts.length === 0) return '?'
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase()
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase()
+}
+
+const AVATAR_PALETTE = [
+  'linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)',
+  'linear-gradient(135deg, #0ea5e9 0%, #06b6d4 100%)',
+  'linear-gradient(135deg, #10b981 0%, #14b8a6 100%)',
+  'linear-gradient(135deg, #f59e0b 0%, #ef4444 100%)',
+  'linear-gradient(135deg, #ec4899 0%, #a855f7 100%)',
+]
+function avatarStyleFor(seed) {
+  const s = String(seed || '')
+  let hash = 0
+  for (let i = 0; i < s.length; i++) hash = ((hash << 5) - hash + s.charCodeAt(i)) | 0
+  return { background: AVATAR_PALETTE[Math.abs(hash) % AVATAR_PALETTE.length], color: '#fff' }
+}
 
 export default function TeamManager({ onTeamsChange }) {
   const t = useT()
@@ -21,6 +44,7 @@ export default function TeamManager({ onTeamsChange }) {
   const [expandedId, setExpandedId]     = useState(null)
   const [membersCache, setMembersCache] = useState({})
   const [membersLoading, setMembersLoading] = useState(false)
+  const [editingUser, setEditingUser]   = useState(null)
 
   useEffect(() => { load(); loadUsers() }, [])
 
@@ -43,6 +67,12 @@ export default function TeamManager({ onTeamsChange }) {
       if (res?.success) setMembersCache(prev => ({ ...prev, [teamId]: res.data }))
       setMembersLoading(false)
     }
+  }
+
+  async function reloadMembers(teamId) {
+    if (!teamId) return
+    const res = await api.admin.getTeamUsers(teamId)
+    if (res?.success) setMembersCache(prev => ({ ...prev, [teamId]: res.data }))
   }
 
   const userMap = Object.fromEntries(users.map(u => [u.id, u.display_name || u.username]))
@@ -169,20 +199,51 @@ export default function TeamManager({ onTeamsChange }) {
                             return members.length === 0
                               ? <span className="field-hint">{t('team.noMembers')}</span>
                               : (
-                                <div className="team-members-list">
-                                  {members.map(m => (
-                                    <span key={m.id} className="team-member-chip">
-                                      {m.display_name || m.username}
-                                      {m.org_role && (
-                                        <span
-                                          className={`badge-role badge-role-${m.org_role}`}
-                                          style={{ marginLeft: 6 }}
-                                        >
-                                          {m.org_role}
-                                        </span>
-                                      )}
-                                    </span>
-                                  ))}
+                                <div className="tm-member-cards">
+                                  {members.map(m => {
+                                    const initials = computeInitials(m.display_name || m.username)
+                                    const avatarStyle = avatarStyleFor(m.username || m.display_name || String(m.id))
+                                    return (
+                                      <div
+                                        key={m.id}
+                                        className="tm-member-card tm-member-card-clickable"
+                                        role="button"
+                                        tabIndex={0}
+                                        onClick={() => setEditingUser(m)}
+                                        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setEditingUser(m) } }}
+                                        title={t('usr.editTitle')}
+                                      >
+                                        <div className="tm-mc-avatar" style={avatarStyle}>{initials}</div>
+                                        <div className="tm-mc-body">
+                                          <strong className="tm-mc-name">{m.display_name || m.username}</strong>
+                                          <dl className="tm-mc-fields">
+                                            <dt>{t('usr.colUsername')}:</dt>
+                                            <dd>{m.username}</dd>
+                                            {m.employee_id && (<>
+                                              <dt>{t('usr.colEmployeeId')}:</dt>
+                                              <dd>{m.employee_id}</dd>
+                                            </>)}
+                                            {m.email && (<>
+                                              <dt>{t('usr.colEmail')}:</dt>
+                                              <dd title={m.email}>{m.email}</dd>
+                                            </>)}
+                                            {m.system_role && (<>
+                                              <dt>{t('usr.colRole')}:</dt>
+                                              <dd>
+                                                <span className={`role-badge role-${m.system_role.toLowerCase()}`}>{m.system_role}</span>
+                                              </dd>
+                                            </>)}
+                                            {m.org_role && (<>
+                                              <dt>{t('usr.colOrgRole')}:</dt>
+                                              <dd>
+                                                <span className={`badge-role badge-role-${m.org_role}`}>{m.org_role}</span>
+                                              </dd>
+                                            </>)}
+                                          </dl>
+                                        </div>
+                                      </div>
+                                    )
+                                  })}
                                 </div>
                               )
                           })()
@@ -263,6 +324,16 @@ export default function TeamManager({ onTeamsChange }) {
           </div>
         </div>
       )}
+
+      <UserEditModal
+        user={editingUser}
+        teams={teams}
+        onClose={() => setEditingUser(null)}
+        onSaved={() => {
+          loadUsers()
+          if (expandedId) reloadMembers(expandedId)
+        }}
+      />
     </div>
   )
 }

@@ -4533,6 +4533,101 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
   border-radius: 20px; padding: 3px 10px; font-size: .82em;
 }
 [data-theme="dark"] .team-member-chip { background: #243044; border-color: #374151; }
+
+/* ── Team Management — member business cards ─────────────── */
+.tm-member-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 10px;
+  padding: 4px 0;
+}
+.tm-member-card {
+  display: flex;
+  gap: 12px;
+  padding: 12px 14px;
+  background: var(--bg-card, #fff);
+  border: 1px solid var(--border, #e2e8f0);
+  border-radius: 10px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, .04);
+  transition: box-shadow .15s, transform .15s, border-color .15s;
+}
+.tm-member-card:hover {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, .08);
+  border-color: var(--primary, #4f46e5);
+  transform: translateY(-1px);
+}
+.tm-member-card-clickable { cursor: pointer; }
+.tm-member-card-clickable:focus-visible {
+  outline: 2px solid var(--primary, #4f46e5);
+  outline-offset: 2px;
+}
+.tm-mc-avatar {
+  flex-shrink: 0;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 1.05em;
+  letter-spacing: .02em;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, .12);
+}
+.tm-mc-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.tm-mc-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 8px;
+}
+.tm-mc-name {
+  font-size: 1em;
+  font-weight: 600;
+  color: var(--text, #1e293b);
+  line-height: 1.25;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tm-mc-badges {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+.tm-mc-fields {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 2px 8px;
+  margin: 4px 0 0;
+  font-size: .82em;
+  align-items: baseline;
+}
+.tm-mc-fields dt {
+  color: var(--text-light, #64748b);
+  font-weight: 500;
+  white-space: nowrap;
+}
+.tm-mc-fields dd {
+  margin: 0;
+  color: var(--text, #1e293b);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+[data-theme="dark"] .tm-member-card     { background: #243044; border-color: #374151; }
+[data-theme="dark"] .tm-mc-name         { color: var(--text, #e5e7eb); }
+[data-theme="dark"] .tm-mc-fields dd    { color: var(--text, #e5e7eb); }
+
 .ts-chip-btn:hover:not(:disabled) { opacity: .8; transform: translateY(-1px); }
 .ts-chip-btn:active:not(:disabled) { transform: translateY(0); }
 .ts-chip-btn:disabled { cursor: default; opacity: .45; }
