@@ -330,6 +330,63 @@ class AdminControllerTest {
     }
 
     @Test
+    @DisplayName("GET /api/admin/alerts populates SY/UG team, tier and mail counts")
+    void listAlerts_enrichmentPopulatesTransientFields() throws Exception {
+        AlertEvent ev = new AlertEvent();
+        ev.setId(101L);
+        ev.setDomain("foo.example.com");
+        ev.setAlertType("EXPIRY");
+        ev.setAlertLevel("CRITICAL");
+        ev.setCreatedAt("2026-06-01T00:00:00");
+
+        CertificateInventory inv = new CertificateInventory();
+        inv.setDomain("foo.example.com");
+        inv.setTeamId(7L);
+        inv.setUgTeamId(8L);
+        inv.setTier(1);
+
+        Team sy = new Team(); sy.setId(7L); sy.setName("SY-Team-A");
+        Team ug = new Team(); ug.setId(8L); ug.setName("UG-Team-B");
+
+        when(alertEventRepo.findFiltered(any(), any(), any(), any(), any(), any(), any(Pageable.class)))
+                .thenReturn(new PageImpl<>(List.of(ev)));
+        when(inventoryRepo.findByDomainIn(any())).thenReturn(List.of(inv));
+        when(teamRepo.findAllById(any())).thenReturn(List.of(sy, ug));
+        when(notificationLogRepo.countByAlertIds(any()))
+                .thenReturn(List.<Object[]>of(new Object[]{ 101L, 3L, 1L }));
+
+        mvc.perform(get("/api/admin/alerts").session(authSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].sy_team_name").value("SY-Team-A"))
+                .andExpect(jsonPath("$.data[0].ug_team_name").value("UG-Team-B"))
+                .andExpect(jsonPath("$.data[0].cert_tier").value(1))
+                .andExpect(jsonPath("$.data[0].email_sent_count").value(3))
+                .andExpect(jsonPath("$.data[0].email_failed_count").value(1));
+    }
+
+    @Test
+    @DisplayName("GET /api/admin/alerts leaves enrichment fields null when no inventory match")
+    void listAlerts_noInventoryMatch_returnsZeroCounts() throws Exception {
+        AlertEvent ev = new AlertEvent();
+        ev.setId(202L);
+        ev.setDomain("orphan.example.com");
+        ev.setAlertType("EXPIRY");
+        ev.setAlertLevel("WARNING");
+
+        when(alertEventRepo.findFiltered(any(), any(), any(), any(), any(), any(), any(Pageable.class)))
+                .thenReturn(new PageImpl<>(List.of(ev)));
+        when(inventoryRepo.findByDomainIn(any())).thenReturn(Collections.emptyList());
+        when(notificationLogRepo.countByAlertIds(any())).thenReturn(Collections.emptyList());
+
+        mvc.perform(get("/api/admin/alerts").session(authSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].sy_team_name").doesNotExist())
+                .andExpect(jsonPath("$.data[0].cert_tier").doesNotExist())
+                .andExpect(jsonPath("$.data[0].email_sent_count").value(0))
+                .andExpect(jsonPath("$.data[0].email_failed_count").value(0));
+    }
+
+    @Test
     @DisplayName("POST /api/admin/alerts/{id}/acknowledge returns 200")
     void acknowledgeAlert_authenticated_returns200() throws Exception {
         AlertEvent event = new AlertEvent();
