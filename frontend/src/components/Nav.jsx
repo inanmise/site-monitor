@@ -1,10 +1,10 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useT, useLanguage } from '../i18n/index.jsx'
 import { useTheme } from '../i18n/theme.jsx'
 import {
   LayoutDashboard, AlertTriangle, FileText,
   RefreshCw, ClipboardList, Settings, User, Globe, LogOut, Lock,
-  Sun, Moon, ChevronLeft, ChevronRight, ChevronDown, Server, Activity, ShieldAlert, BarChart3, Bell, BookOpen,
+  Sun, Moon, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Server, Activity, ShieldAlert, BarChart3, Bell, BookOpen,
   Wifi, Network, Search, TrendingDown, Database,
 } from 'lucide-react'
 import CertMonitorLogo from './ui/CertMonitorLogo.jsx'
@@ -90,6 +90,20 @@ export default function Nav({ activeTab, onTabChange, username, teamName, system
     return []
   })
 
+  const [userMenuOpen, setUserMenuOpen] = useState(false)
+  const userMenuRef = useRef(null)
+
+  useEffect(() => {
+    if (!userMenuOpen) return
+    function onDocClick(e) {
+      if (userMenuRef.current && !userMenuRef.current.contains(e.target)) {
+        setUserMenuOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', onDocClick)
+    return () => document.removeEventListener('mousedown', onDocClick)
+  }, [userMenuOpen])
+
   useEffect(() => {
     GROUPS.forEach((group, gi) => {
       if (group.labelKey && group.tabs.some(tab => tab.id === activeTab)) {
@@ -174,18 +188,37 @@ export default function Nav({ activeTab, onTabChange, username, teamName, system
         })}
       </nav>
 
-      {/* ── Footer: user, theme toggle, lang toggle, logout ── */}
+      {/* ── Footer: user settings, theme toggle, lang toggle, logout ── */}
       <div className="sb-foot">
-        {open && (
-          <div className="sb-user">
-            <User size={14} />
-            <div className="sb-user-info">
-              <span className="sb-user-name">{username}</span>
-              {teamName && <span className="sb-team-name">{teamName}</span>}
-              {systemRole === 'ADMIN' && <span className="sb-role-badge">ADMIN</span>}
+        <div className="sb-user-wrap" ref={userMenuRef}>
+          {userMenuOpen && (
+            <div className="sb-user-popover">
+              <div className="sb-user-popover-hdr">{t('nav.userSettings')}</div>
+              <button
+                className="sb-user-popover-item"
+                onClick={() => { setUserMenuOpen(false); onChangePassword?.() }}
+              >
+                <Lock size={14} />
+                <span>{t('nav.changePassword')}</span>
+              </button>
             </div>
-          </div>
-        )}
+          )}
+          <button
+            className={`sb-user-trigger${userMenuOpen ? ' is-open' : ''}`}
+            onClick={() => setUserMenuOpen(v => !v)}
+            title={!open ? t('nav.userSettings') : undefined}
+          >
+            <User size={14} />
+            {open && (
+              <div className="sb-user-info">
+                <span className="sb-user-name">{username}</span>
+                {teamName && <span className="sb-team-name">{teamName}</span>}
+                {systemRole === 'ADMIN' && <span className="sb-role-badge">ADMIN</span>}
+              </div>
+            )}
+            {open && <ChevronUp size={12} className="sb-user-chevron" />}
+          </button>
+        </div>
         <button
           className="sb-logout"
           onClick={toggleTheme}
@@ -202,14 +235,6 @@ export default function Nav({ activeTab, onTabChange, username, teamName, system
         >
           <Globe size={15} />
           {open && <span>{t('nav.langSwitch')}</span>}
-        </button>
-        <button
-          className="sb-logout"
-          onClick={onChangePassword}
-          title={!open ? t('nav.changePassword') : undefined}
-        >
-          <Lock size={15} />
-          {open && <span>{t('nav.changePassword')}</span>}
         </button>
         <button
           className="sb-logout"

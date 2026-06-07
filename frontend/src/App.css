@@ -309,6 +309,94 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
   color: rgba(255,255,255,.3);
 }
 
+/* User-settings popover trigger + menu (footer top) */
+.sb-user-wrap { position: relative; }
+
+.sb-user-trigger {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 10px;
+  border: none;
+  background: transparent;
+  color: rgba(255,255,255,.55);
+  cursor: pointer;
+  border-radius: 6px;
+  text-align: left;
+  transition: background .15s, color .15s;
+}
+.sb-user-trigger:hover,
+.sb-user-trigger.is-open {
+  background: rgba(255,255,255,.06);
+  color: rgba(255,255,255,.85);
+}
+.sb-user-chevron {
+  margin-left: auto;
+  opacity: .6;
+  transition: transform .15s;
+}
+.sb-user-trigger.is-open .sb-user-chevron { transform: rotate(180deg); }
+
+.sb-user-popover {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 6px;
+  right: 6px;
+  background: #1e293b;
+  border: 1px solid rgba(255,255,255,.12);
+  border-radius: 8px;
+  padding: 4px;
+  box-shadow: 0 8px 24px rgba(0,0,0,.32);
+  z-index: 50;
+}
+.sb-user-popover-hdr {
+  font-size: .68em;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  color: rgba(255,255,255,.4);
+  padding: 8px 10px 6px;
+}
+.sb-user-popover-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 10px;
+  border: none;
+  background: transparent;
+  color: rgba(255,255,255,.85);
+  font-size: .88em;
+  cursor: pointer;
+  border-radius: 4px;
+  text-align: left;
+}
+.sb-user-popover-item:hover { background: rgba(255,255,255,.08); }
+
+/* When the sidebar is collapsed the popover slides out to the right */
+.sb-closed .sb-user-popover {
+  bottom: 0;
+  left: calc(100% + 6px);
+  right: auto;
+  width: 200px;
+}
+
+[data-theme="light"] .sb-user-trigger { color: var(--text-light, #64748b); }
+[data-theme="light"] .sb-user-trigger:hover,
+[data-theme="light"] .sb-user-trigger.is-open {
+  background: var(--surface, #f1f5f9);
+  color: var(--text, #1e293b);
+}
+[data-theme="light"] .sb-user-popover {
+  background: #ffffff;
+  border-color: var(--border, #e2e8f0);
+  box-shadow: 0 8px 24px rgba(0,0,0,.12);
+}
+[data-theme="light"] .sb-user-popover-hdr { color: var(--text-light, #64748b); }
+[data-theme="light"] .sb-user-popover-item { color: var(--text, #1e293b); }
+[data-theme="light"] .sb-user-popover-item:hover { background: var(--surface, #f1f5f9); }
+
 .sb-role-badge {
   display: inline-block;
   font-size: .62em;

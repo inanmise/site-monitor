@@ -22,6 +22,7 @@ export const TR = {
   'nav.logout':       'Çıkış Yap',
   'nav.langSwitch':   'Switch to English',
   'nav.changePassword': 'Şifremi Değiştir',
+  'nav.userSettings':   'Kullanıcı Ayarları',
   'nav.darkMode':     'Koyu Mod',
   'nav.lightMode':    'Açık Mod',
 
@@ -1253,6 +1254,7 @@ export const EN = {
   'nav.logout':       'Logout',
   'nav.langSwitch':   'Türkçeye Geç',
   'nav.changePassword': 'Change Password',
+  'nav.userSettings':   'User Settings',
   'nav.darkMode':     'Dark Mode',
   'nav.lightMode':    'Light Mode',
 
