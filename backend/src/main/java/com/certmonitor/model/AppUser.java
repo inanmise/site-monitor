@@ -67,6 +67,12 @@ public class AppUser {
     @Column(name = "must_change_password")
     private Boolean mustChangePassword = false;
 
+    /** ISO-8601 UTC instant when the admin-issued temporary password expires.
+     *  null whenever the current password is permanent. Set to now+24h by
+     *  adminAutoResetPassword and cleared on the next successful changePassword. */
+    @Column(name = "temp_password_expires_at", length = 30)
+    private String tempPasswordExpiresAt;
+
     private String createdAt;
     private String updatedAt;
 }

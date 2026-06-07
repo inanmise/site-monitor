@@ -96,6 +96,22 @@ public class AuthController {
 
         if (userOpt.isPresent()) {
             AppUser user = userOpt.get();
+
+            // Admin-issued temp passwords expire after 24 hours. Treat an
+            // expired temp pwd as a separate failure with its own error_code
+            // so the UI can show a precise message instead of "wrong password".
+            if (userService.isTempPasswordExpired(user)) {
+                log.info("Login rejected — temp password expired: user={} IP={}", username, clientIp);
+                auditService.recordLogin(username, user.getId(), user.getTeamId(),
+                        user.getSystemRole(), clientIp,
+                        request.getHeader("User-Agent"), null, false,
+                        "TEMP_PASSWORD_EXPIRED", null, 5);
+                return ResponseEntity.status(401).body(Map.of(
+                        "success", false,
+                        "error", "Temporary password expired. Ask your admin to reset again.",
+                        "error_code", "TEMP_PASSWORD_EXPIRED"));
+            }
+
             loginAttempts.remove(clientIp);
             windowStart.remove(clientIp);
             blockedUntil.remove(clientIp);

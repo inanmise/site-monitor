@@ -77,6 +77,27 @@ class AuthControllerTest {
     }
 
     @Test
+    @DisplayName("POST /api/login with an expired temp password returns 401 + error_code=TEMP_PASSWORD_EXPIRED")
+    void login_expiredTempPassword_returns401WithErrorCode() throws Exception {
+        AppUser expired = new AppUser();
+        expired.setId(3L);
+        expired.setUsername("expireduser");
+        expired.setSystemRole("USER");
+        expired.setActive(true);
+        expired.setMustChangePassword(true);
+        when(userService.authenticate("expireduser", "tmpPass99")).thenReturn(Optional.of(expired));
+        when(userService.findByUsername("expireduser")).thenReturn(Optional.of(expired));
+        when(userService.isTempPasswordExpired(expired)).thenReturn(true);
+
+        mvc.perform(post("/api/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"username\":\"expireduser\",\"password\":\"tmpPass99\"}"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.success").value(false))
+                .andExpect(jsonPath("$.error_code").value("TEMP_PASSWORD_EXPIRED"));
+    }
+
+    @Test
     @DisplayName("POST /api/login with a user flagged for forced change exposes must_change_password=true")
     void login_userWithForcedChange_exposesFlag() throws Exception {
         AppUser forced = new AppUser();

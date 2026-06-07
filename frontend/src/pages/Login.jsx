@@ -60,6 +60,8 @@ export default function Login({ onLogin }) {
       } else if (data.wait_seconds) {
         setLockout(data.wait_seconds)
         setError('')
+      } else if (data.error_code === 'TEMP_PASSWORD_EXPIRED') {
+        setError(t('auth.tempPasswordExpired'))
       } else {
         setError(data.error || t('login.failed'))
       }

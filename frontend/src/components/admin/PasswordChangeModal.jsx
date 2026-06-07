@@ -54,29 +54,25 @@ export default function PasswordChangeModal({ mode, targetUser, onClose, onSucce
   const [saving, setSaving]         = useState(false)
   const [msg, setMsg]               = useState(null)
 
-  const isSelf       = mode === 'self-change'
-  const isForced     = mode === 'forced-change'
-  const usesSelfApi  = isSelf || isForced
-  const titleKey       = isForced ? 'usr.forcedPwdTitle'     : (isSelf ? 'usr.selfPwdTitle'       : 'usr.pwdTitle')
-  const verifyLabelKey = isForced ? 'usr.forcedPwdVerify'    : (isSelf ? 'usr.pwdSelfVerify'      : 'usr.pwdAdminConfirm')
-  const verifyHintKey  = isForced ? 'usr.forcedPwdHint'      : (isSelf ? 'usr.pwdSelfVerifyHint'  : 'usr.pwdAdminConfirmHint')
-  const wrongVerifyKey = isForced ? 'usr.pwdSelfVerifyWrong' : (isSelf ? 'usr.pwdSelfVerifyWrong' : 'usr.pwdWrongAdmin')
+  const isForced       = mode === 'forced-change'
+  const titleKey       = isForced ? 'usr.forcedPwdTitle'     : 'usr.selfPwdTitle'
+  const verifyLabelKey = isForced ? 'usr.forcedPwdVerify'    : 'usr.pwdSelfVerify'
+  const verifyHintKey  = isForced ? 'usr.forcedPwdHint'      : 'usr.pwdSelfVerifyHint'
+  const wrongVerifyKey = 'usr.pwdSelfVerifyWrong'
 
   async function submit() {
     if (!verifyPwd) { setMsg(t('usr.pwdAdminConfirmRequired')); return }
     if (newPwd.length < 6 || newPwd.length > 10) { setMsg(t('usr.pwdLengthRule')); return }
     if (newPwd !== confirmPwd) { setMsg(t('usr.pwdMismatch')); return }
     setSaving(true)
-    const res = usesSelfApi
-      ? await api.me.changePassword(verifyPwd, newPwd)
-      : await api.admin.resetPassword(targetUser.id, newPwd, verifyPwd)
+    const res = await api.me.changePassword(verifyPwd, newPwd)
     setSaving(false)
     if (res?.success) {
       onSuccess?.()
       onClose()
     } else {
       const err = res?.error || ''
-      if (/Invalid admin password|FORBIDDEN|Current password/i.test(err) || res?.status === 403) {
+      if (/FORBIDDEN|Current password|Invalid admin/i.test(err) || res?.status === 403) {
         setMsg(t(wrongVerifyKey))
       } else if (/recently used/i.test(err)) {
         setMsg(t('usr.pwdReused'))

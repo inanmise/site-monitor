@@ -188,12 +188,22 @@ public class EmailNotificationService {
             <div style="font-family:Arial,sans-serif;max-width:560px;margin:0 auto;padding:20px;color:#1e293b">
               <h2 style="color:#4f46e5;margin-top:0">Şifreniz sıfırlandı</h2>
               <p>Sayın <strong>%s</strong>,</p>
-              <p>CertMonitor hesabınızın şifresi bir yönetici tarafından sıfırlandı. Geçici şifreniz aşağıdadır:</p>
-              <pre style="background:#f1f5f9;border:1px solid #cbd5e1;padding:14px;border-radius:6px;font-size:1.2em;letter-spacing:.05em;font-weight:700;text-align:center">%s</pre>
-              <p><strong>Bu şifre tek kullanımlıktır.</strong> İlk girişinizde sistem sizden yeni bir şifre belirlemenizi isteyecektir.</p>
+              <p>CertMonitor hesabınızın şifresi bir yönetici tarafından sıfırlandı.</p>
+              <table style="border-collapse:collapse;margin:14px 0;font-size:.95em">
+                <tr>
+                  <td style="padding:4px 12px 4px 0;color:#64748b">Kullanıcı adı:</td>
+                  <td style="padding:4px 0;font-family:ui-monospace,Consolas,monospace;font-weight:600">%s</td>
+                </tr>
+                <tr>
+                  <td style="padding:4px 12px 4px 0;color:#64748b;vertical-align:top">Geçici şifre:</td>
+                  <td style="padding:4px 0;font-family:ui-monospace,Consolas,monospace;font-weight:700;letter-spacing:.04em;font-size:1.1em">%s</td>
+                </tr>
+              </table>
+              <p><strong>Bu şifre 24 saat geçerlidir.</strong> Bu süre içinde giriş yapmazsanız geçici şifreniz devre dışı kalır ve yeni bir sıfırlama talep etmeniz gerekir.</p>
+              <p>İlk girişinizde sistem sizden kalıcı bir şifre belirlemenizi isteyecektir.</p>
               <p style="font-size:.9em;color:#64748b">Bu işlemi siz başlatmadıysanız lütfen sistem yöneticinizle iletişime geçin.</p>
             </div>
-            """.formatted(name, tempPwd);
+            """.formatted(name, username, tempPwd);
     }
 
     // ── System admin — network outage notifications ──────────────────────────
