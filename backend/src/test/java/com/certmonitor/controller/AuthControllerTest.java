@@ -40,6 +40,9 @@ class AuthControllerTest {
     @MockBean
     AuditService auditService;
 
+    @MockBean
+    com.certmonitor.repository.AuditLogRepository auditLogRepo;
+
     private AppUser testUser;
 
     @BeforeEach
