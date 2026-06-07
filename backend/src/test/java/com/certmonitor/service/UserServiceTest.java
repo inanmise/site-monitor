@@ -509,6 +509,49 @@ class UserServiceTest {
                 .hasMessageContaining("too short");
     }
 
+    @Test
+    @DisplayName("changePassword (step-up): wrong admin password → SecurityException, target not modified")
+    void changePassword_stepUp_wrongAdminPass_throwsSecurity() {
+        org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder enc =
+                new org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder();
+        AppUser admin = user("admin", enc.encode("rightpass"));
+        admin.setId(1L);
+        when(userRepo.findByUsernameAndActiveTrue("admin")).thenReturn(Optional.of(admin));
+
+        assertThatThrownBy(() -> service.changePassword(7L, "newSecret", "admin", "wrongpass"))
+                .isInstanceOf(SecurityException.class)
+                .hasMessageContaining("Invalid admin password");
+        verify(userRepo, never()).findById(7L);
+    }
+
+    @Test
+    @DisplayName("changePassword (step-up): correct admin password → target password updated")
+    void changePassword_stepUp_correctAdminPass_updatesTarget() {
+        org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder enc =
+                new org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder();
+        AppUser admin = user("admin", enc.encode("rightpass"));
+        admin.setId(1L);
+        AppUser target = user("bob", "old-hash");
+        target.setId(7L);
+        when(userRepo.findByUsernameAndActiveTrue("admin")).thenReturn(Optional.of(admin));
+        when(userRepo.findById(7L)).thenReturn(Optional.of(target));
+
+        service.changePassword(7L, "newSecret", "admin", "rightpass");
+
+        verify(userRepo).save(target);
+        assertThat(target.getPasswordHash()).isNotEqualTo("old-hash");
+    }
+
+    @Test
+    @DisplayName("changePassword (step-up): missing admin password → SecurityException")
+    void changePassword_stepUp_missingAdminPass_throwsSecurity() {
+        assertThatThrownBy(() -> service.changePassword(7L, "newSecret", "admin", ""))
+                .isInstanceOf(SecurityException.class);
+        assertThatThrownBy(() -> service.changePassword(7L, "newSecret", "admin", null))
+                .isInstanceOf(SecurityException.class);
+        verify(userRepo, never()).findById(any());
+    }
+
     // ── Bootstrap ─────────────────────────────────────────────────────────────
 
     @Test

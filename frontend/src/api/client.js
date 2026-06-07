@@ -170,8 +170,8 @@ export const api = {
     createUser: (data) => request('/admin/users', { method: 'POST', body: JSON.stringify(data) }),
     updateUser: (id, data) => request(`/admin/users/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
     deleteUser: (id) => request(`/admin/users/${id}`, { method: 'DELETE' }),
-    resetPassword: (id, password) => request(`/admin/users/${id}/reset-password`, {
-      method: 'POST', body: JSON.stringify({ password }),
+    resetPassword: (id, password, adminPassword) => request(`/admin/users/${id}/reset-password`, {
+      method: 'POST', body: JSON.stringify({ password, admin_password: adminPassword }),
     }),
     unlockUser: (id) => request(`/admin/users/${id}/unlock`, { method: 'POST' }),
 
