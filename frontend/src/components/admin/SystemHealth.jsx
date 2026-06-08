@@ -4,6 +4,7 @@ import { useT } from '../../i18n/index.jsx'
 import { CheckCircle, XCircle, MinusCircle, HelpCircle, Mail, ChevronRight, Check, Loader2 } from 'lucide-react'
 import MiniChart from './MiniChart'
 import ChartModal from './ChartModal'
+import HeartbeatHistoryModal from './HeartbeatHistoryModal'
 
 function SmtpStatusCell({ row, t }) {
   const cfg = {
@@ -63,6 +64,7 @@ export default function SystemHealth({ systemRole, preFilterDomain, openSmtpModa
   const [poolCardRefreshing, setPoolCardRefreshing] = useState(false)
   const [poolLastRefreshed, setPoolLastRefreshed]   = useState(null)
   const [hbRefreshing, setHbRefreshing] = useState(false)
+  const [hbModalOpen, setHbModalOpen] = useState(false)
   const [smtpPeriod, setSmtpPeriod]   = useState('7d')
   const [loading, setLoading]         = useState(true)
   const [releasing, setReleasing]     = useState(false)
@@ -523,7 +525,14 @@ export default function SystemHealth({ systemRole, preFilterDomain, openSmtpModa
         </div>
 
         {/* Heartbeat card */}
-        <div className={`sys-card${heartbeat?.alarm ? ' sys-card-alarm' : ''}`}>
+        <div
+          className={`sys-card hb-card-clickable${heartbeat?.alarm ? ' sys-card-alarm' : ''}`}
+          onClick={() => setHbModalOpen(true)}
+          role="button"
+          tabIndex={0}
+          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setHbModalOpen(true) } }}
+          title={t('health.hbHistoryHint')}
+        >
           <div className="sys-card-header">
             <div className="hb-title-row">
               <svg className={`hb-heart ${hbOk ? 'hb-heart-ok' : 'hb-heart-alarm'}`} viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
@@ -531,7 +540,7 @@ export default function SystemHealth({ systemRole, preFilterDomain, openSmtpModa
               </svg>
               <h3>{t('health.hbTitle')}</h3>
             </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }} onClick={(e) => e.stopPropagation()}>
               {isAdmin && (
                 <button
                   className="sys-card-refresh-btn"
@@ -553,7 +562,18 @@ export default function SystemHealth({ systemRole, preFilterDomain, openSmtpModa
           )}
           <div className="hb-ecg-wrap">
             <svg className={`hb-ecg-svg ${hbOk ? 'hb-ecg-ok' : 'hb-ecg-alarm'}`} viewBox="0 0 400 44" preserveAspectRatio="none" aria-hidden="true">
-              <polyline points="0,22 50,22 57,19 63,22 78,22 84,4 90,40 96,4 102,22 116,14 131,22 200,22 250,22 257,19 263,22 278,22 284,4 290,40 296,4 302,22 316,14 331,22 400,22" fill="none" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"/>
+              <polyline points="0,22 50,22 57,19 63,22 78,22 84,4 90,40 96,4 102,22 116,14 131,22 200,22 250,22 257,19 263,22 278,22 284,4 290,40 296,4 302,22 316,14 331,22 380,22" fill="none" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"/>
+              {hbOk ? (
+                <g transform="translate(388, 22)">
+                  <circle r="10" className="hb-terminal-bg-ok" />
+                  <path d="M -4 0 L -1 3 L 5 -4" className="hb-terminal-tick" />
+                </g>
+              ) : (
+                <g transform="translate(388, 22)">
+                  <circle r="10" className="hb-terminal-bg-err" />
+                  <path d="M -4 -4 L 4 4 M 4 -4 L -4 4" className="hb-terminal-cross" />
+                </g>
+              )}
             </svg>
           </div>
           <dl className="sys-dl">
@@ -890,6 +910,10 @@ export default function SystemHealth({ systemRole, preFilterDomain, openSmtpModa
             />
           </div>
         </div>
+      )}
+
+      {hbModalOpen && (
+        <HeartbeatHistoryModal onClose={() => setHbModalOpen(false)} />
       )}
 
       {smtpModal && (

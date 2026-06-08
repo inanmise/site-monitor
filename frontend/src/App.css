@@ -3343,6 +3343,74 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .hb-dot-prev { background: #94a3b8; }
 .hb-recent-ts { color: var(--text-secondary); font-variant-numeric: tabular-nums; }
 
+/* ── Heartbeat terminal status (end of ECG wave) ─────────────────────────── */
+.hb-terminal-bg-ok  { fill: #10b981; }
+.hb-terminal-bg-err { fill: #dc2626; }
+.hb-terminal-tick   { stroke: #fff; stroke-width: 2.2; fill: none; stroke-linecap: round; stroke-linejoin: round; }
+.hb-terminal-cross  { stroke: #fff; stroke-width: 2.2; fill: none; stroke-linecap: round; }
+
+/* Clickable heartbeat card */
+.hb-card-clickable { cursor: pointer; transition: box-shadow .12s, transform .12s; }
+.hb-card-clickable:hover { box-shadow: 0 4px 16px rgba(0,0,0,.12); transform: translateY(-1px); }
+
+/* ── Heartbeat history modal ─────────────────────────────────────────────── */
+.hb-modal-overlay {
+  position: fixed; inset: 0;
+  background: rgba(0,0,0,.5);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 1000;
+}
+.hb-modal-box {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  width: min(900px, 95vw);
+  max-height: 90vh; overflow-y: auto;
+  padding: 18px;
+}
+.hb-modal-header {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 14px;
+}
+.hb-modal-title { display: flex; align-items: center; gap: 8px; font-size: 1.05em; color: var(--text); }
+.hb-modal-close { background: none; border: none; cursor: pointer; color: var(--text-light); padding: 4px; }
+.hb-modal-controls {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; flex-wrap: wrap; margin-bottom: 12px;
+}
+.hb-modal-legend { display: flex; align-items: center; gap: 14px; font-size: .82em; color: var(--text-light); }
+.hb-modal-legend > span { display: inline-flex; align-items: center; }
+.hb-leg-cell { display: inline-block; width: 14px; height: 14px; border-radius: 3px; vertical-align: middle; margin-right: 5px; }
+.hb-modal-loading { padding: 40px 0; text-align: center; color: var(--text-light); }
+.hb-timeline-grid {
+  display: grid;
+  grid-template-columns: repeat(24, 1fr);
+  gap: 2px;
+  border: 1px solid var(--border);
+  padding: 6px;
+  border-radius: 6px;
+  background: var(--bg-surface);
+}
+.hb-tl-cell {
+  aspect-ratio: 1;
+  border-radius: 2px;
+  position: relative;
+  cursor: pointer;
+  transition: transform .12s;
+}
+.hb-tl-cell:hover { transform: scale(1.4); z-index: 5; }
+.hb-tl-ok      { background: #10b981; }
+.hb-tl-partial { background: #f59e0b; }
+.hb-tl-low     { background: #f97316; }
+.hb-tl-missing { background: #dc2626; }
+.hb-tl-x {
+  position: absolute; inset: 0;
+  display: flex; align-items: center; justify-content: center;
+  color: #fff; font-weight: 700; font-size: 11px; line-height: 1;
+}
+.hb-tl-info { margin-top: 10px; font-size: .85em; color: var(--text); }
+.hb-tl-summary { margin-top: 8px; font-size: .82em; color: var(--text-light); text-align: right; }
+
 /* ── Scheduler clock icon ─────────────────────────────────────────────────── */
 .sched-icon { flex-shrink: 0; transform-origin: center; animation: sched-rotate 10s linear infinite; }
 .sched-icon-idle    { stroke: #3b82f6; filter: drop-shadow(0 0 3px rgba(59,130,246,.45)); }
