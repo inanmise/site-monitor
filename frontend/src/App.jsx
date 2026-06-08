@@ -842,7 +842,7 @@ export default function App() {
             {tab === 'admin' && (
               <div className="tab-content active">
                 <h2>{t('app.adminTitle')}</h2>
-                <AdminPanel systemRole={systemRole} ownTeamId={teamId} />
+                <AdminPanel systemRole={systemRole} ownTeamId={teamId} currentUsername={user} />
               </div>
             )}
 

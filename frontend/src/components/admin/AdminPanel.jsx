@@ -28,7 +28,7 @@ const TAB_GROUPS = [
   },
 ]
 
-export default function AdminPanel({ systemRole, ownTeamId }) {
+export default function AdminPanel({ systemRole, ownTeamId, currentUsername }) {
   const t = useT()
   const isAdmin = systemRole === 'ADMIN'
   const [activeTab, setActiveTab] = useState(isAdmin ? 'thresholds' : 'contacts')
@@ -73,7 +73,7 @@ export default function AdminPanel({ systemRole, ownTeamId }) {
         {activeTab === 'thresholds' && isAdmin && <AlertThresholds />}
         {activeTab === 'contacts'   && <EscalationContacts teams={teams} systemRole={systemRole} />}
         {activeTab === 'teams'      && <TeamManager systemRole={systemRole} ownTeamId={ownTeamId} onTeamsChange={loadTeams} />}
-        {activeTab === 'users'      && <UserManager systemRole={systemRole} ownTeamId={ownTeamId} teams={teams} />}
+        {activeTab === 'users'      && <UserManager systemRole={systemRole} ownTeamId={ownTeamId} currentUsername={currentUsername} teams={teams} />}
       </div>
     </div>
   )

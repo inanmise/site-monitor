@@ -787,6 +787,58 @@ class AdminControllerTest {
     }
 
     @Test
+    @DisplayName("PUT /api/admin/users/{id} as ADMIN changing own role returns 403")
+    void updateUser_asAdmin_changingOwnRole_returns403() throws Exception {
+        AppUser self = new AppUser();
+        self.setId(50L);
+        self.setUsername("testuser");
+        self.setTeamId(1L);
+        self.setSystemRole("ADMIN");
+        self.setActive(true);
+        when(userRepo.findById(50L)).thenReturn(Optional.of(self));
+
+        MockHttpSession s = authSession();
+        s.setAttribute("userId", 50L);
+
+        mvc.perform(put("/api/admin/users/50")
+                        .session(s)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"system_role\":\"USER\"}"))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    @DisplayName("PUT /api/admin/users/{id} as ADMIN deactivating self returns 403")
+    void updateUser_asAdmin_deactivatingSelf_returns403() throws Exception {
+        AppUser self = new AppUser();
+        self.setId(50L);
+        self.setUsername("testuser");
+        self.setTeamId(1L);
+        self.setSystemRole("ADMIN");
+        self.setActive(true);
+        when(userRepo.findById(50L)).thenReturn(Optional.of(self));
+
+        MockHttpSession s = authSession();
+        s.setAttribute("userId", 50L);
+
+        mvc.perform(put("/api/admin/users/50")
+                        .session(s)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"active\":false}"))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    @DisplayName("DELETE /api/admin/users/{id} as ADMIN deleting self returns 403")
+    void deleteUser_asAdmin_deletingSelf_returns403() throws Exception {
+        MockHttpSession s = authSession();
+        s.setAttribute("userId", 50L);
+
+        mvc.perform(delete("/api/admin/users/50").session(s))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
     @DisplayName("PUT /api/admin/users/{id} as ADMIN can promote target to ADMIN role")
     void updateUser_asAdmin_promotesToAdmin_returns200() throws Exception {
         AppUser target = new AppUser();

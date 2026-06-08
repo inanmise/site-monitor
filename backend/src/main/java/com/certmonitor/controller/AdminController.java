@@ -641,6 +641,17 @@ public class AdminController {
         requireTeamScopedAdmin(session, target.getTeamId());
         String requestedRole = (String) body.get("system_role");
         Long requestedTeamId = toLong(body.get("team_id"));
+        Long selfId = userIdFromSession(session);
+        if (selfId != null && selfId.equals(id)) {
+            if (requestedRole != null && !requestedRole.equals(target.getSystemRole())) {
+                throw new SecurityException("You cannot change your own role");
+            }
+            Object activePayload = body.get("active");
+            if (activePayload instanceof Boolean && !((Boolean) activePayload)
+                    && Boolean.TRUE.equals(target.getActive())) {
+                throw new SecurityException("You cannot deactivate yourself");
+            }
+        }
         if (isTeamAdmin(session)) {
             if (requestedRole != null && !TEAM_ADMIN_ASSIGNABLE_ROLES.contains(requestedRole)) {
                 throw new SecurityException("Team admin cannot assign role: " + requestedRole);
@@ -705,6 +716,10 @@ public class AdminController {
     @DeleteMapping("/users/{id}")
     public ResponseEntity<Map<String, Object>> deleteUser(
             @PathVariable Long id, HttpSession session, HttpServletRequest request) {
+        Long selfId = userIdFromSession(session);
+        if (selfId != null && selfId.equals(id)) {
+            throw new SecurityException("You cannot delete your own account");
+        }
         AppUser target = userRepo.findById(id)
                 .orElseThrow(() -> new NoSuchElementException("User not found: " + id));
         requireTeamScopedAdmin(session, target.getTeamId());
@@ -983,6 +998,12 @@ public class AdminController {
 
     private Long teamId(HttpSession session) {
         Object raw = session.getAttribute("teamId");
+        if (raw == null) return null;
+        return raw instanceof Long ? (Long) raw : Long.valueOf(raw.toString());
+    }
+
+    private Long userIdFromSession(HttpSession session) {
+        Object raw = session.getAttribute("userId");
         if (raw == null) return null;
         return raw instanceof Long ? (Long) raw : Long.valueOf(raw.toString());
     }
