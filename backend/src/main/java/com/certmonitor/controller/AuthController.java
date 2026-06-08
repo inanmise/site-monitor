@@ -46,6 +46,9 @@ public class AuthController {
     private final UserService userService;
     private final com.certmonitor.repository.AuditLogRepository auditLogRepo;
 
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.certmonitor.service.PermissionService permissionService;
+
     // Per-IP attempt counter within a sliding 60-second window
     private final ConcurrentHashMap<String, AtomicInteger> loginAttempts = new ConcurrentHashMap<>();
     // Per-IP: timestamp when the current counting window started
@@ -269,6 +272,18 @@ public class AuthController {
      * be overridden via query string — a USER cannot see anyone else's log.
      * /api/admin/audit (admin/audit-only) remains the system-wide view.
      */
+    @GetMapping("/me/permissions")
+    public ResponseEntity<Map<String, Object>> myPermissions(HttpSession session) {
+        if (!Boolean.TRUE.equals(session.getAttribute("authenticated"))) {
+            return ResponseEntity.status(401).body(Map.of("success", false, "error", "Not authenticated"));
+        }
+        String role = (String) session.getAttribute("systemRole");
+        Map<String, Map<String, Boolean>> snapshot = permissionService != null
+            ? permissionService.snapshotForRole(role)
+            : com.certmonitor.service.PermissionCatalog.defaultsFor(role);
+        return ResponseEntity.ok(Map.of("success", true, "data", snapshot));
+    }
+
     @GetMapping("/me/audit")
     public ResponseEntity<Map<String, Object>> myAudit(
             @RequestParam(defaultValue = "0") int page,

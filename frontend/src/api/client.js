@@ -55,6 +55,7 @@ export const api = {
       const s = qs.toString()
       return request(`/me/audit${s ? `?${s}` : ''}`)
     },
+    getPermissions: () => request('/me/permissions'),
   },
 
   login: async (username, password, rememberMe = false) => {
@@ -224,6 +225,15 @@ export const api = {
       return request(`/admin/audit?${q}`)
     },
     getAuditStats: () => request('/admin/audit/stats'),
+
+    // Permission matrix
+    getPermissionMatrix: () => request('/admin/permissions'),
+    updatePermissionGrant: (body) => request('/admin/permissions', {
+      method: 'PUT', body: JSON.stringify(body),
+    }),
+    resetPermissionsToDefaults: () => request('/admin/permissions/reset-to-defaults', {
+      method: 'POST',
+    }),
 
     // SQL Playground
     sqlListTables:  () => request('/admin/sql/tables'),
