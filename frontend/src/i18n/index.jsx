@@ -1063,6 +1063,8 @@ export const TR = {
   'health.queueThreads':   'Thread Sayısı',
   'health.queueMinMax':    'min: {min} · max: {max}',
   'health.queueCompleted': 'Tamamlanan',
+  'health.queueSinceStart':        'sistem başlangıcı:',
+  'health.queueSinceStartTooltip': 'Uygulama başlatıldığından beri tamamlanan görev sayısı (JVM yeniden başlatılınca sıfırlanır).',
   'health.hbSignal':       'Sinyal',
   'health.alarmBanner':    'Aktif Alarmlar',
 
@@ -2433,6 +2435,8 @@ export const EN = {
   'health.queueThreads':   'Threads',
   'health.queueMinMax':    'min: {min} · max: {max}',
   'health.queueCompleted': 'Completed',
+  'health.queueSinceStart':        'since start:',
+  'health.queueSinceStartTooltip': 'Tasks completed since application start (resets on JVM restart).',
   'health.hbSignal':       'Signal',
   'health.alarmBanner':    'Active Alarms',
 

@@ -634,7 +634,14 @@ export default function SystemHealth({ systemRole, preFilterDomain, openSmtpModa
                     .replace('{max}', executor_pool.max_pool_size ?? 0)}</dd>
 
               <dt>{t('health.queueCompleted')}</dt>
-              <dd>{executor_pool.completed_tasks ?? 0}</dd>
+              <dd>
+                <strong>{executor_pool.completed_tasks ?? 0}</strong>
+                {executor_pool.jvm_start_time && (
+                  <span className="queue-since-meta" title={t('health.queueSinceStartTooltip')}>
+                    {' · '}{t('health.queueSinceStart')} {formatDate(executor_pool.jvm_start_time)}
+                  </span>
+                )}
+              </dd>
             </dl>
             <div className="queue-bar-wrap" aria-hidden="true">
               <div

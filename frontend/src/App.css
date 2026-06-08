@@ -3090,6 +3090,12 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
   margin-left: 8px;
   vertical-align: middle;
 }
+.queue-since-meta {
+  font-size: .82em;
+  color: var(--text-light);
+  font-weight: 400;
+  margin-left: 2px;
+}
 .queue-status-ok   { color: #16a34a; }
 .queue-status-busy { color: var(--primary); }
 .queue-info-ind {
