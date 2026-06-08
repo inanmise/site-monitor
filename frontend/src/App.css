@@ -747,14 +747,14 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .cc-life-bar {
   width: 70%;
   max-width: 180px;
-  height: 4px;
+  height: 7px;
   background: var(--border);
-  border-radius: 3px;
+  border-radius: 4px;
   overflow: hidden;
 }
 .cc-life-fill {
   height: 100%;
-  border-radius: 3px;
+  border-radius: 4px;
   transition: width .3s ease;
   background: var(--text-light);
 }
