@@ -7133,6 +7133,32 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
   margin-right: 3px;
   flex-shrink: 0;
 }
+.fc-range-filter {
+  display: inline-flex;
+  gap: 3px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 2px;
+}
+.fc-range-btn {
+  background: none;
+  border: none;
+  padding: 4px 10px;
+  border-radius: 5px;
+  font-size: .76em;
+  font-weight: 500;
+  color: var(--text-light);
+  cursor: pointer;
+  transition: background .12s, color .12s;
+  font-variant-numeric: tabular-nums;
+}
+.fc-range-btn:hover { background: var(--bg-hover); color: var(--text); }
+.fc-range-btn.active {
+  background: var(--primary);
+  color: #fff;
+  font-weight: 600;
+}
 
 /* ── Two-column row (bar + pie) ── */
 .fc-row-2col {

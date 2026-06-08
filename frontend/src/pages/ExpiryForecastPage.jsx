@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useMemo } from 'react'
 import {
   ComposedChart, Bar, Line, XAxis, YAxis, CartesianGrid,
   Tooltip as RTooltip, ResponsiveContainer,
@@ -98,6 +98,51 @@ function computeForecast(certs) {
   const warningCount  = dailyData.reduce((s, d) => s + d.warning, 0)
 
   return { dailyData, byDate, counts: { critical: criticalCount, high: highCount, warning: warningCount }, upcomingList }
+}
+
+const CHART_RANGE_OPTIONS = [30, 45, 60, 90]
+
+function computeChartData(certs, days) {
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+  const inEnd = new Date(today)
+  inEnd.setDate(inEnd.getDate() + days)
+
+  const byDate = {}
+  certs.forEach(cert => {
+    if (!cert.not_after) return
+    const d = new Date(cert.not_after)
+    if (isNaN(d.getTime())) return
+    if (d < today || d > inEnd) return
+    if ((cert.days_remaining ?? -1) < 0) return
+    const key = localDateStr(d)
+    const remDays = cert.days_remaining ?? 999
+    const sev = remDays <= 7 ? 'critical' : remDays <= 14 ? 'high' : 'warning'
+    if (!byDate[key]) byDate[key] = { critical: [], high: [], warning: [] }
+    byDate[key][sev].push(cert.domain)
+  })
+
+  let cumulative = 0
+  const out = []
+  for (let i = 0; i < days; i++) {
+    const d = new Date(today)
+    d.setDate(d.getDate() + i)
+    const key = localDateStr(d)
+    const slot = byDate[key] || { critical: [], high: [], warning: [] }
+    const total = slot.critical.length + slot.high.length + slot.warning.length
+    cumulative += total
+    out.push({
+      date: key,
+      label: d.toLocaleDateString('tr-TR', { day: '2-digit', month: 'short' }),
+      critical: slot.critical.length,
+      high: slot.high.length,
+      warning: slot.warning.length,
+      total,
+      cumulative,
+      domains: slot,
+    })
+  }
+  return out
 }
 
 const PIE_COLORS = ['#3b82f6','#8b5cf6','#ec4899','#14b8a6','#f59e0b','#10b981','#ef4444','#6366f1','#f97316','#06b6d4']
@@ -353,6 +398,7 @@ export default function ExpiryForecastPage() {
   const time = useClock()
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
+  const [chartRangeDays, setChartRangeDays] = useState(30)
 
   useEffect(() => {
     Promise.allSettled([api.getCertificates(), api.getStats(), api.getTeamStats()])
@@ -365,11 +411,17 @@ export default function ExpiryForecastPage() {
         const { dailyData, byDate, counts, upcomingList } = computeForecast(certs)
         const pieData = computePie(teamStats, stats)
 
-        setData({ dailyData, byDate, counts, kpi: stats, pieData, upcomingList })
+        setData({ dailyData, byDate, counts, kpi: stats, pieData, upcomingList, certs })
       })
       .catch(console.error)
       .finally(() => setLoading(false))
   }, [])
+
+  const chartData = useMemo(() => {
+    if (!data) return []
+    if (chartRangeDays === 30) return data.dailyData
+    return data.certs ? computeChartData(data.certs, chartRangeDays) : data.dailyData
+  }, [data, chartRangeDays])
 
   const timeStr = time.toLocaleTimeString('tr-TR', { hour12: false })
   const dateStr = time.toLocaleDateString('tr-TR', { day: '2-digit', month: 'short', year: 'numeric' })
@@ -414,7 +466,16 @@ export default function ExpiryForecastPage() {
               <div className="fc-sec-header">
                 <span className="fc-sec-num">01</span>
                 <span className="fc-sec-title">{t('forecast.secChart')}</span>
-                <span className="fc-sec-meta">· 30 gün</span>
+                <div className="fc-range-filter">
+                  {CHART_RANGE_OPTIONS.map(d => (
+                    <button
+                      key={d}
+                      type="button"
+                      className={`fc-range-btn${chartRangeDays === d ? ' active' : ''}`}
+                      onClick={() => setChartRangeDays(d)}
+                    >{t('forecast.chartDays', d)}</button>
+                  ))}
+                </div>
                 <span className="fc-sec-legend">
                   <span className="fc-leg-dot" style={{ background: '#dc2626' }} />{t('forecast.legCritical')}
                   <span className="fc-leg-dot" style={{ background: '#ea580c' }} />{t('forecast.legHigh')}
@@ -422,9 +483,9 @@ export default function ExpiryForecastPage() {
                 </span>
               </div>
               <ResponsiveContainer width="100%" height={280}>
-                <ComposedChart data={data.dailyData} margin={{ top: 4, right: 20, bottom: 0, left: 0 }}>
+                <ComposedChart data={chartData} margin={{ top: 4, right: 20, bottom: 0, left: 0 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#1e3a5f" />
-                  <XAxis dataKey="label" tick={{ fill: '#64748b', fontSize: 10 }} interval={4} />
+                  <XAxis dataKey="label" tick={{ fill: '#64748b', fontSize: 10 }} interval={Math.max(0, Math.floor(chartRangeDays / 6))} />
                   <YAxis yAxisId="left"  tick={{ fill: '#94a3b8', fontSize: 10 }} width={26} />
                   <YAxis yAxisId="right" orientation="right" tick={{ fill: '#3b82f6', fontSize: 10 }} width={36} />
                   <RTooltip content={<BarTooltip />} cursor={{ fill: 'rgba(255,255,255,.04)' }} />
