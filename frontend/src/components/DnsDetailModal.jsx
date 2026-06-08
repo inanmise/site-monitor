@@ -50,7 +50,9 @@ export default function DnsDetailModal({ monitor, onClose }) {
   const [history, setHistory] = useState([])
   const [loading, setLoading] = useState(true)
   const [activeTab, setActiveTab] = useState('A')
-  const [rangeDays, setRangeDays] = useState(7)
+  const [rangeDays, setRangeDays] = useState(1)
+  const [historyPage, setHistoryPage] = useState(0)
+  const [historyPageSize, setHistoryPageSize] = useState(50)
 
   // Details — bir kez yüklenir, monitor değişene kadar tutulur
   useEffect(() => {
@@ -70,7 +72,17 @@ export default function DnsDetailModal({ monitor, onClose }) {
     })
   }, [monitor, rangeDays])
 
-  const activeRangeOption = RANGE_OPTIONS.find(r => r.days === rangeDays) || RANGE_OPTIONS[1]
+  // Paging: aralık veya sayfa boyutu değişince başa dön
+  useEffect(() => {
+    setHistoryPage(0)
+  }, [rangeDays, historyPageSize, monitor])
+
+  const activeRangeOption = RANGE_OPTIONS.find(r => r.days === rangeDays) || RANGE_OPTIONS[0]
+  const totalPages = Math.max(1, Math.ceil(history.length / historyPageSize))
+  const safePage = Math.min(historyPage, totalPages - 1)
+  const pageStart = safePage * historyPageSize
+  const pageEnd = Math.min(pageStart + historyPageSize, history.length)
+  const pagedHistory = history.slice(pageStart, pageEnd)
 
   if (!monitor) return null
 
@@ -277,7 +289,7 @@ export default function DnsDetailModal({ monitor, onClose }) {
                     </tr>
                   </thead>
                   <tbody>
-                    {history.map((h, i) => {
+                    {pagedHistory.map((h, i) => {
                       const isChanged = h.changed
                       const isRotated = !isChanged && h.rotated
                       const prevVal = h.previous_value ?? h.previousValue
@@ -337,7 +349,35 @@ export default function DnsDetailModal({ monitor, onClose }) {
               </div>
               )}
               {history.length > 0 && (
-                <div className="dns-history-meta">{t('dns.recordCount', history.length)}</div>
+                <div className="dns-history-pagination">
+                  <div className="dash-page-sizer">
+                    <span className="dash-page-sizer-label">{t('app.perPage')}</span>
+                    {[50, 100, 200].map(n => (
+                      <button
+                        key={n}
+                        type="button"
+                        className={`dash-size-btn${historyPageSize === n ? ' active' : ''}`}
+                        onClick={() => setHistoryPageSize(n)}
+                      >{n}</button>
+                    ))}
+                  </div>
+                  {totalPages > 1 && (
+                    <div className="dash-page-nav">
+                      <button type="button" className="page-btn" disabled={safePage <= 0}
+                        onClick={() => setHistoryPage(0)}>«</button>
+                      <button type="button" className="page-btn" disabled={safePage <= 0}
+                        onClick={() => setHistoryPage(safePage - 1)}>{t('app.prevPage')}</button>
+                      <span className="dash-page-info-mini">{safePage + 1} / {totalPages}</span>
+                      <button type="button" className="page-btn" disabled={safePage >= totalPages - 1}
+                        onClick={() => setHistoryPage(safePage + 1)}>{t('app.nextPage')}</button>
+                      <button type="button" className="page-btn" disabled={safePage >= totalPages - 1}
+                        onClick={() => setHistoryPage(totalPages - 1)}>»</button>
+                    </div>
+                  )}
+                  <span className="dash-page-info">
+                    {t('dns.pageInfo', pageStart + 1, pageEnd, history.length)}
+                  </span>
+                </div>
               )}
             </div>
           </div>

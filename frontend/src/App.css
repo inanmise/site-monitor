@@ -6710,6 +6710,28 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
   margin-top: 6px;
   text-align: right;
 }
+.dns-history-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+.dns-history-pagination .dash-page-info {
+  font-size: .82em;
+  color: var(--text-light);
+  margin-left: auto;
+}
+.dns-history-pagination .dash-page-info-mini {
+  font-size: .82em;
+  color: var(--text-light);
+  padding: 0 8px;
+  min-width: 56px;
+  text-align: center;
+}
 .dns-history-empty {
   padding: 28px 16px;
   text-align: center;
