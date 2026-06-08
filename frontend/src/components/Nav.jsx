@@ -38,19 +38,20 @@ export default function Nav({ activeTab, onTabChange, username, teamName, system
       labelKey: 'nav.groupAlerts',
       tabs: [
         { id: 'warnings',     Icon: AlertTriangle, labelKey: 'nav.warnings',     show: true },
-        { id: 'alerthistory', Icon: Bell,          labelKey: 'nav.alertHistory', show: isAdmin },
+        { id: 'alerthistory', Icon: Bell,          labelKey: 'nav.alertHistory', show: true },
       ],
     },
     {
       labelKey: 'nav.groupReports',
       tabs: [
-        { id: 'stats', Icon: BarChart3, labelKey: 'nav.stats', show: true },
+        { id: 'stats',    Icon: BarChart3,   labelKey: 'nav.stats',    show: true },
+        { id: 'weakalgo', Icon: ShieldAlert, labelKey: 'nav.weakAlgo', show: true },
       ],
     },
     {
       labelKey: 'nav.groupMonitoring',
       tabs: [
-        { id: 'health', Icon: Activity, labelKey: 'nav.health', show: isAdmin },
+        { id: 'health', Icon: Activity, labelKey: 'nav.health', show: true },
         { id: 'uptime', Icon: Wifi,     labelKey: 'nav.uptime', show: true },
         { id: 'port',   Icon: Network,  labelKey: 'nav.port',   show: true },
         { id: 'dns',    Icon: Search,   labelKey: 'nav.dns',    show: true },
@@ -67,9 +68,8 @@ export default function Nav({ activeTab, onTabChange, username, teamName, system
     {
       labelKey: 'nav.groupAdmin',
       tabs: [
-        { id: 'admin',         Icon: Settings,    labelKey: 'nav.admin',         show: true               },
-        { id: 'weakalgo',      Icon: ShieldAlert, labelKey: 'nav.weakAlgo',      show: isAdmin || isAudit },
-        { id: 'sqlplayground', Icon: Database,    labelKey: 'nav.sqlPlayground', show: isAdmin            },
+        { id: 'admin',         Icon: Settings,    labelKey: 'nav.admin',         show: true    },
+        { id: 'sqlplayground', Icon: Database,    labelKey: 'nav.sqlPlayground', show: isAdmin },
       ],
     },
     {

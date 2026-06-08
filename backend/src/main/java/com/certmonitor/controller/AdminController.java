@@ -379,7 +379,7 @@ public class AdminController {
         return ok(Map.of("message", "Deleted"));
     }
 
-    // ── Alert Events (ADMIN only) ─────────────────────────────────────────────
+    // ── Alert Events (any authenticated user) ─────────────────────────────────
 
     @GetMapping("/alerts")
     public ResponseEntity<Map<String, Object>> listAlerts(
@@ -393,7 +393,6 @@ public class AdminController {
             @RequestParam(required = false) String resolvedUntil,
             @RequestParam(required = false) String domain,
             HttpSession session) {
-        requireAdmin(session);
         int sz = Math.max(1, Math.min(size, 200));
         Boolean resolvedEffective = resolved != null ? resolved : (onlyOpen ? Boolean.FALSE : null);
         // Default sort: en yeniden en eskiye (newest → oldest) — hem açık hem kapalı için.
@@ -470,7 +469,6 @@ public class AdminController {
     public ResponseEntity<Map<String, Object>> acknowledgeAlert(
             @PathVariable Long id,
             HttpSession session, HttpServletRequest request) {
-        requireAdmin(session);
         String by = resolveDisplayName(session);
         AlertEvent event = escalationService.acknowledge(id, by);
         auditService.recordAction("ALERT_ACKNOWLEDGE", session, request,
@@ -483,7 +481,6 @@ public class AdminController {
     public ResponseEntity<Map<String, Object>> resolveAlert(
             @PathVariable Long id,
             HttpSession session, HttpServletRequest request) {
-        requireAdmin(session);
         String by = resolveDisplayName(session);
         AlertEvent event = escalationService.resolve(id, by);
         auditService.recordAction("ALERT_RESOLVE", session, request,
@@ -495,14 +492,12 @@ public class AdminController {
     @PostMapping("/alerts/{id}/re-notify")
     public ResponseEntity<Map<String, Object>> reNotifyAlert(
             @PathVariable Long id, HttpSession session) {
-        requireAdmin(session);
         return ok(Map.of("data", escalationService.reNotify(id), "message", "Notification triggered"));
     }
 
     @GetMapping("/alerts/{id}/notifications")
     public ResponseEntity<Map<String, Object>> getAlertNotifications(
             @PathVariable Long id, HttpSession session) {
-        requireAdmin(session);
         return ok(Map.of("data", notificationLogRepo.findByAlertEventIdOrderBySentAtDesc(id)));
     }
 
@@ -510,8 +505,15 @@ public class AdminController {
 
     @GetMapping("/teams")
     public ResponseEntity<Map<String, Object>> listTeams(HttpSession session) {
-        requireAdmin(session);
-        return ok(Map.of("data", userService.listTeams()));
+        var all = userService.listTeams();
+        if (isAdminOrAudit(session)) {
+            return ok(Map.of("data", all));
+        }
+        Long tid = teamId(session);
+        var filtered = (tid == null)
+                ? java.util.List.<com.certmonitor.model.Team>of()
+                : all.stream().filter(t -> Objects.equals(t.getId(), tid)).toList();
+        return ok(Map.of("data", filtered));
     }
 
     @PostMapping("/teams")
@@ -566,8 +568,15 @@ public class AdminController {
 
     @GetMapping("/users")
     public ResponseEntity<Map<String, Object>> listUsers(HttpSession session) {
-        requireAdmin(session);
-        return ok(Map.of("data", userService.listUsers()));
+        var all = userService.listUsers();
+        if (isAdminOrAudit(session)) {
+            return ok(Map.of("data", all));
+        }
+        Long tid = teamId(session);
+        var filtered = (tid == null)
+                ? java.util.List.<AppUser>of()
+                : all.stream().filter(u -> Objects.equals(u.getTeamId(), tid)).toList();
+        return ok(Map.of("data", filtered));
     }
 
     @PostMapping("/users")
@@ -850,6 +859,11 @@ public class AdminController {
 
     private boolean isAdmin(HttpSession session) {
         return "ADMIN".equals(session.getAttribute("systemRole"));
+    }
+
+    private boolean isAdminOrAudit(HttpSession session) {
+        Object role = session.getAttribute("systemRole");
+        return "ADMIN".equals(role) || "AUDIT".equals(role);
     }
 
     private void requireAdmin(HttpSession session) {

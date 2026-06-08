@@ -600,6 +600,63 @@ class AdminControllerTest {
                 .andExpect(jsonPath("$.success").value(true));
     }
 
+    // ── USER role gating (alert endpoints + team-scoped listings) ─────────────
+
+    @Test
+    @DisplayName("POST /api/admin/alerts/{id}/acknowledge as USER returns 200")
+    void acknowledgeAlert_asUser_returns200() throws Exception {
+        AlertEvent ev = new AlertEvent();
+        ev.setId(1L);
+        ev.setDomain("example.com");
+        when(escalationService.acknowledge(eq(1L), any())).thenReturn(ev);
+
+        mvc.perform(post("/api/admin/alerts/1/acknowledge").session(userSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true));
+    }
+
+    @Test
+    @DisplayName("GET /api/admin/teams as USER returns only own team")
+    void listTeams_asUser_returnsOnlyOwnTeam() throws Exception {
+        Team t1 = new Team(); t1.setId(1L); t1.setName("Alpha");
+        Team t2 = new Team(); t2.setId(2L); t2.setName("Beta");
+        Team t3 = new Team(); t3.setId(3L); t3.setName("Gamma");
+        when(userService.listTeams()).thenReturn(List.of(t1, t2, t3));
+
+        mvc.perform(get("/api/admin/teams").session(userSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.length()").value(1))
+                .andExpect(jsonPath("$.data[0].id").value(2));
+    }
+
+    @Test
+    @DisplayName("GET /api/admin/users as USER returns only team members")
+    void listUsers_asUser_returnsOnlyTeamMembers() throws Exception {
+        AppUser u1 = new AppUser(); u1.setUsername("a"); u1.setTeamId(1L);
+        AppUser u2 = new AppUser(); u2.setUsername("b"); u2.setTeamId(2L);
+        AppUser u3 = new AppUser(); u3.setUsername("c"); u3.setTeamId(2L);
+        AppUser u4 = new AppUser(); u4.setUsername("d"); u4.setTeamId(null);
+        when(userService.listUsers()).thenReturn(List.of(u1, u2, u3, u4));
+
+        mvc.perform(get("/api/admin/users").session(userSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.length()").value(2))
+                .andExpect(jsonPath("$.data[0].username").value("b"))
+                .andExpect(jsonPath("$.data[1].username").value("c"));
+    }
+
+    @Test
+    @DisplayName("GET /api/admin/teams as ADMIN returns all teams (regression)")
+    void listTeams_asAdmin_returnsAll() throws Exception {
+        Team t1 = new Team(); t1.setId(1L); t1.setName("Alpha");
+        Team t2 = new Team(); t2.setId(2L); t2.setName("Beta");
+        when(userService.listTeams()).thenReturn(List.of(t1, t2));
+
+        mvc.perform(get("/api/admin/teams").session(authSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.length()").value(2));
+    }
+
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     private MockHttpSession authSession() {
@@ -607,6 +664,16 @@ class AdminControllerTest {
         s.setAttribute("authenticated", Boolean.TRUE);
         s.setAttribute("username", "testuser");
         s.setAttribute("systemRole", "ADMIN");
+        return s;
+    }
+
+    private MockHttpSession userSession() {
+        MockHttpSession s = new MockHttpSession();
+        s.setAttribute("authenticated", Boolean.TRUE);
+        s.setAttribute("username", "regularuser");
+        s.setAttribute("userId", 42L);
+        s.setAttribute("teamId", 2L);
+        s.setAttribute("systemRole", "USER");
         return s;
     }
 

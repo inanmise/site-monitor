@@ -22,8 +22,8 @@ const TAB_GROUPS = [
   {
     groupKey: 'admin.groupOrg',
     tabs: [
-      { id: 'teams', labelKey: 'admin.tabTeams', adminOnly: true },
-      { id: 'users', labelKey: 'admin.tabUsers', adminOnly: true },
+      { id: 'teams', labelKey: 'admin.tabTeams', adminOnly: false },
+      { id: 'users', labelKey: 'admin.tabUsers', adminOnly: false },
     ],
   },
 ]
@@ -38,7 +38,7 @@ export default function AdminPanel({ systemRole }) {
     api.admin.getTeams().then((res) => { if (res?.success) setTeams(res.data) })
   }
 
-  useEffect(() => { if (isAdmin) loadTeams() }, [isAdmin])
+  useEffect(() => { loadTeams() }, [])
 
   function handleTabChange(id) {
     setActiveTab(id)
@@ -72,8 +72,8 @@ export default function AdminPanel({ systemRole }) {
       <div className="admin-content">
         {activeTab === 'thresholds' && isAdmin && <AlertThresholds />}
         {activeTab === 'contacts'   && <EscalationContacts teams={teams} isAdmin={isAdmin} />}
-        {activeTab === 'teams'      && isAdmin && <TeamManager onTeamsChange={loadTeams} />}
-        {activeTab === 'users'      && isAdmin && <UserManager teams={teams} />}
+        {activeTab === 'teams'      && <TeamManager systemRole={systemRole} onTeamsChange={loadTeams} />}
+        {activeTab === 'users'      && <UserManager systemRole={systemRole} teams={teams} />}
       </div>
     </div>
   )

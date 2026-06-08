@@ -823,7 +823,7 @@ export default function App() {
               </div>
             )}
 
-            {tab === 'alerthistory' && systemRole === 'ADMIN' && (
+            {tab === 'alerthistory' && (
               <div className="tab-content active">
                 <h2>{t('app.alertHistoryTitle')}</h2>
                 <AlertHistory />
@@ -850,7 +850,7 @@ export default function App() {
               </div>
             )}
 
-            {tab === 'weakalgo' && (systemRole === 'ADMIN' || systemRole === 'AUDIT') && (
+            {tab === 'weakalgo' && (
               <div className="tab-content active">
                 <h2>{t('app.weakAlgoTitle')}</h2>
                 <WeakAlgorithmReport />
@@ -864,10 +864,11 @@ export default function App() {
               </div>
             )}
 
-            {tab === 'health' && systemRole === 'ADMIN' && (
+            {tab === 'health' && (
               <div className="tab-content active">
                 <h2>{t('app.healthTitle')}</h2>
                 <SystemHealth
+                  systemRole={systemRole}
                   preFilterDomain={smtpPreFilterDomain}
                   openSmtpModalOnLoad={openSmtpModalOnLoad}
                   onSmtpPreFilterConsumed={() => {
