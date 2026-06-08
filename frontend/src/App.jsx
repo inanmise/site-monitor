@@ -24,6 +24,7 @@ import SystemHealth from './components/admin/SystemHealth'
 import SqlPlayground from './components/admin/SqlPlayground'
 import ActivityLog from './components/ActivityLog'
 import MyAuditLog from './components/MyAuditLog'
+import { PermissionsProvider } from './contexts/PermissionsProvider.jsx'
 import HelpPage from './components/HelpPage'
 import UptimePage from './components/UptimePage'
 import PortMonitorPage from './components/PortMonitorPage'
@@ -434,6 +435,7 @@ export default function App() {
   }
 
   return (
+    <PermissionsProvider user={user}>
     <div className="app-layout">
 
       {inactivityWarning && (
@@ -896,5 +898,6 @@ export default function App() {
       <CertificateModal domain={modalCert?.domain} alertLevel={modalCert?.alert_level} initialData={modalCert?._preview ? modalCert : undefined} previewMode={!!modalCert?._preview} currentUser={user} currentUserRole={systemRole} onClose={() => setModalCert(null)} />
       {caModal && <CaDiversityModal certs={certs} onClose={() => setCaModal(false)} />}
     </div>
+    </PermissionsProvider>
   )
 }

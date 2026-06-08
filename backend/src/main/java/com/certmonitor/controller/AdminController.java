@@ -45,6 +45,9 @@ public class AdminController {
     private final TeamRepository teamRepo;
     private final com.certmonitor.service.EmailNotificationService emailNotificationService;
 
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.certmonitor.service.PermissionService permissionService;
+
     private static final DateTimeFormatter ISO =
             DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
 
@@ -910,15 +913,25 @@ public class AdminController {
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     private boolean isAdmin(HttpSession session) {
+        if (permissionService != null) {
+            return permissionService.allows(session, "system.global_admin", "execute");
+        }
         return "ADMIN".equals(session.getAttribute("systemRole"));
     }
 
     private boolean isAdminOrAudit(HttpSession session) {
         Object role = session.getAttribute("systemRole");
+        if (permissionService != null) {
+            return permissionService.allows(session, "system.global_admin", "execute")
+                || "AUDIT".equals(role);
+        }
         return "ADMIN".equals(role) || "AUDIT".equals(role);
     }
 
     private boolean isTeamAdmin(HttpSession session) {
+        if (permissionService != null) {
+            return permissionService.allows(session, "system.team_admin", "execute");
+        }
         return "TEAM_ADMIN".equals(session.getAttribute("systemRole"));
     }
 

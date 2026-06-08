@@ -58,6 +58,7 @@ public class SchedulerService {
     private final AlertThresholdRepository thresholdRepo;
     private final JdbcTemplate jdbcTemplate;
     private final UserService userService;
+    private final PermissionService permissionService;
     private final DataSource dataSource;
 
     private final PortCheckerService portCheckerService;
@@ -155,6 +156,7 @@ public class SchedulerService {
         log.info("Application started [instance={}] — bootstrapping...", INSTANCE_ID);
         applySchemaPatches();
         userService.ensureBootstrapped(adminUsername, adminPassword);
+        permissionService.seedDefaultsIfEmpty();
         ensureDefaultThreshold();
         assignOrphanedCertsToDefaultTeam();
         clearStaleLocksForThisHost();
