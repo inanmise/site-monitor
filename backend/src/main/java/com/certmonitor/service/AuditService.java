@@ -63,6 +63,10 @@ public class AuditService {
         entry.setSessionId(sessionId);
         entry.setOutcome(success ? "SUCCESS" : "FAILURE");
         entry.setFailureReason(failureReason);
+        if (actor != null && !actor.isBlank()) {
+            entry.setResourceType("USER");
+            entry.setResourceId(actor);
+        }
 
         List<String> anomalies = new ArrayList<>();
         if (isOffHours()) anomalies.add("OFF_HOURS");
@@ -123,6 +127,10 @@ public class AuditService {
         entry.setIpAddress(ipAddress);
         entry.setUserAgent(userAgent);
         entry.setOutcome("BLOCKED");
+        if (actor != null && !actor.isBlank()) {
+            entry.setResourceType("USER");
+            entry.setResourceId(actor);
+        }
         entry.setFailureReason("Rate limited: too many login attempts from " + ipAddress
                 + (actor != null && !actor.isBlank() ? " (targeting '" + actor + "')" : ""));
         entry.setAnomalyFlags("RATE_LIMITED");
@@ -140,6 +148,10 @@ public class AuditService {
         entry.setIpAddress(ipAddress);
         entry.setSessionId(sessionId);
         entry.setOutcome("SUCCESS");
+        if (actor != null && !actor.isBlank()) {
+            entry.setResourceType("USER");
+            entry.setResourceId(actor);
+        }
         auditLogRepo.save(entry);
     }
 
