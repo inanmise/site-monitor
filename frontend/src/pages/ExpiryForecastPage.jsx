@@ -101,6 +101,7 @@ function computeForecast(certs) {
 }
 
 const CHART_RANGE_OPTIONS = [30, 45, 60, 90]
+const CALENDAR_RANGE_OPTIONS = [30, 45, 60, 90]
 
 function computeChartData(certs, days) {
   const today = new Date()
@@ -232,23 +233,47 @@ function countColor(slot) {
   return '#fbbf24'
 }
 
-function CalendarHeatmap({ byDate, t }) {
+function CalendarHeatmap({ certs, t }) {
   const [hovered, setHovered] = useState(null)
+  const [rangeDays, setRangeDays] = useState(30)
+
+  const byDate = useMemo(() => {
+    const today = new Date(); today.setHours(0, 0, 0, 0)
+    const inEnd = new Date(today); inEnd.setDate(inEnd.getDate() + rangeDays)
+    const map = {}
+    certs.forEach(cert => {
+      if (!cert.not_after) return
+      const d = new Date(cert.not_after)
+      if (isNaN(d.getTime())) return
+      if (d < today || d > inEnd) return
+      if ((cert.days_remaining ?? -1) < 0) return
+      const key = localDateStr(d)
+      const remDays = cert.days_remaining ?? 999
+      const sev = remDays <= 7 ? 'critical' : remDays <= 14 ? 'high' : 'warning'
+      if (!map[key]) map[key] = { critical: [], high: [], warning: [] }
+      map[key][sev].push(cert.domain)
+    })
+    return map
+  }, [certs, rangeDays])
+
   const today = new Date()
   today.setHours(0, 0, 0, 0)
   const todayStr = localDateStr(today)
-  const in30 = new Date(today); in30.setDate(in30.getDate() + 30)
+  const inEnd = new Date(today); inEnd.setDate(inEnd.getDate() + rangeDays)
 
   const dow = (today.getDay() + 6) % 7
   const weekStart = new Date(today)
   weekStart.setDate(weekStart.getDate() - dow)
 
+  const weekCount = Math.ceil((dow + rangeDays) / 7)
+  const cellCount = weekCount * 7
+
   const cells = []
-  for (let i = 0; i < 35; i++) {
+  for (let i = 0; i < cellCount; i++) {
     const d = new Date(weekStart)
     d.setDate(d.getDate() + i)
     const key = localDateStr(d)
-    const inRange = d >= today && d <= in30
+    const inRange = d >= today && d <= inEnd
     const slot = byDate[key] || { critical: [], high: [], warning: [] }
     const count = slot.critical.length + slot.high.length + slot.warning.length
     const allDoms = [...slot.critical, ...slot.high, ...slot.warning]
@@ -262,7 +287,16 @@ function CalendarHeatmap({ byDate, t }) {
       <div className="fc-sec-header">
         <span className="fc-sec-num">02</span>
         <span className="fc-sec-title">{t('forecast.secCalendar')}</span>
-        <span className="fc-sec-meta">· 30 gün</span>
+        <div className="fc-range-filter">
+          {CALENDAR_RANGE_OPTIONS.map(d => (
+            <button
+              key={d}
+              type="button"
+              className={`fc-range-btn${rangeDays === d ? ' active' : ''}`}
+              onClick={() => setRangeDays(d)}
+            >{t('forecast.chartDays', d)}</button>
+          ))}
+        </div>
       </div>
       <div className="fc-heatmap-days">
         {DAYS.map(d => <div key={d} className="fc-hm-day-label">{d}</div>)}
@@ -408,10 +442,10 @@ export default function ExpiryForecastPage() {
         const teamStats = teamResult.status   === 'fulfilled' ? (teamResult.value?.data   ?? null) : null
 
         const certs = Array.isArray(rawCerts) ? rawCerts : (rawCerts?.data ?? [])
-        const { dailyData, byDate, counts, upcomingList } = computeForecast(certs)
+        const { dailyData, counts, upcomingList } = computeForecast(certs)
         const pieData = computePie(teamStats, stats)
 
-        setData({ dailyData, byDate, counts, kpi: stats, pieData, upcomingList, certs })
+        setData({ dailyData, counts, kpi: stats, pieData, upcomingList, certs })
       })
       .catch(console.error)
       .finally(() => setLoading(false))
@@ -501,7 +535,7 @@ export default function ExpiryForecastPage() {
           </div>
 
           {/* ── Section 02: Calendar ── */}
-          <CalendarHeatmap byDate={data.byDate} t={t} />
+          <CalendarHeatmap certs={data.certs} t={t} />
 
           {/* ── Section 03: Expiry List ── */}
           <ExpiryList upcomingList={data.upcomingList} t={t} />
