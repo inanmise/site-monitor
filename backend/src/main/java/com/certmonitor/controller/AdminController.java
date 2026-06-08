@@ -652,6 +652,13 @@ public class AdminController {
                 throw new SecurityException("You cannot deactivate yourself");
             }
         }
+        {
+            String nextRole = requestedRole != null ? requestedRole : target.getSystemRole();
+            boolean currentActive = Boolean.TRUE.equals(target.getActive());
+            boolean nextActive = body.get("active") instanceof Boolean
+                    ? (Boolean) body.get("active") : currentActive;
+            guardLastActiveAdmin(target, "ADMIN".equals(nextRole) && nextActive);
+        }
         if (isTeamAdmin(session)) {
             if (requestedRole != null && !TEAM_ADMIN_ASSIGNABLE_ROLES.contains(requestedRole)) {
                 throw new SecurityException("Team admin cannot assign role: " + requestedRole);
@@ -723,6 +730,7 @@ public class AdminController {
         AppUser target = userRepo.findById(id)
                 .orElseThrow(() -> new NoSuchElementException("User not found: " + id));
         requireTeamScopedAdmin(session, target.getTeamId());
+        guardLastActiveAdmin(target, false);
         userService.deleteUser(id);
         auditService.recordAction("USER_DELETE", session, request, "USER", id.toString(), null);
         return ok(Map.of("message", "User deleted"));
@@ -1006,6 +1014,22 @@ public class AdminController {
         Object raw = session.getAttribute("userId");
         if (raw == null) return null;
         return raw instanceof Long ? (Long) raw : Long.valueOf(raw.toString());
+    }
+
+    /**
+     * Refuses to push the system below 1 active ADMIN. Caller passes the post-mutation
+     * status of {@code target}; if it's no longer an active admin and there are not
+     * enough other active admins to cover, a SecurityException is thrown.
+     */
+    private void guardLastActiveAdmin(AppUser target, boolean willRemainAdminAndActive) {
+        if (willRemainAdminAndActive) return;
+        if (!"ADMIN".equals(target.getSystemRole())) return;
+        if (!Boolean.TRUE.equals(target.getActive())) return;
+        long activeAdmins = userRepo.countBySystemRoleAndActiveTrue("ADMIN");
+        if (activeAdmins <= 1) {
+            log.warn("Refused to remove last active ADMIN (target user id={})", target.getId());
+            throw new SecurityException("Cannot remove the last active ADMIN from the system");
+        }
     }
 
     private void checkOwnership(Long resourceTeamId, HttpSession session) {

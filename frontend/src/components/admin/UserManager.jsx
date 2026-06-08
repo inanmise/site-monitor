@@ -15,6 +15,9 @@ export default function UserManager({ systemRole, ownTeamId, currentUsername, te
   const canManage = isAdmin || isTeamAdmin
   const isSelf = (u) => u?.username === currentUsername
   const { showConfirm } = useDialog()
+  const activeAdminCount = users.filter(u => u.system_role === 'ADMIN' && u.active).length
+  const isLastActiveAdmin = (u) =>
+    u?.system_role === 'ADMIN' && u?.active && activeAdminCount === 1
   const [users, setUsers] = useState([])
   const [modal, setModal] = useState(null)
   const [autoResetModal, setAutoResetModal] = useState(null)
@@ -124,7 +127,14 @@ export default function UserManager({ systemRole, ownTeamId, currentUsername, te
                 <td>{user.employee_id || '—'}</td>
                 <td>{user.display_name || '—'}</td>
                 <td>{user.email || '—'}</td>
-                <td><span className={`role-badge${user.system_role === 'ADMIN' ? ' role-admin' : user.system_role === 'AUDIT' ? ' role-audit' : ''}`}>{user.system_role}</span></td>
+                <td>
+                  <span className={`role-badge${user.system_role === 'ADMIN' ? ' role-admin' : user.system_role === 'AUDIT' ? ' role-audit' : ''}`}>{user.system_role}</span>
+                  {isLastActiveAdmin(user) && (
+                    <span className="badge badge-err" style={{ marginLeft: 6 }} title={t('usr.lastAdminTitle')}>
+                      {t('usr.lastAdminBadge')}
+                    </span>
+                  )}
+                </td>
                 <td>{user.org_role ? <span className={`badge-role badge-role-${user.org_role}`}>{user.org_role}</span> : '—'}</td>
                 <td>{teamMap[user.team_id] || '—'}</td>
                 <td>
@@ -139,7 +149,7 @@ export default function UserManager({ systemRole, ownTeamId, currentUsername, te
                       {user.permanent_lock && (
                         <button className="btn-sm" style={{ background: '#f59e0b', color: '#fff', marginRight: 4 }} onClick={() => unlock(user.id)}>{t('usr.unlock')}</button>
                       )}
-                      {!isSelf(user) && (
+                      {!isSelf(user) && !isLastActiveAdmin(user) && (
                         <button className="btn-sm btn-del" onClick={() => del(user.id)}>{t('usr.delete')}</button>
                       )}
                     </>
@@ -186,7 +196,7 @@ export default function UserManager({ systemRole, ownTeamId, currentUsername, te
                 <SearchableSelect
                   value={form.system_role}
                   onChange={v => setForm({ ...form, system_role: v })}
-                  disabled={modal !== 'add' && isSelf(modal)}
+                  disabled={modal !== 'add' && (isSelf(modal) || isLastActiveAdmin(modal))}
                   options={isAdmin ? [
                     { value: 'USER',       label: 'USER' },
                     { value: 'TEAM_ADMIN', label: 'TEAM_ADMIN' },
@@ -199,6 +209,9 @@ export default function UserManager({ systemRole, ownTeamId, currentUsername, te
                 />
                 {modal !== 'add' && isSelf(modal) && (
                   <span className="field-hint field-hint--warn">{t('usr.selfRoleLocked')}</span>
+                )}
+                {modal !== 'add' && !isSelf(modal) && isLastActiveAdmin(modal) && (
+                  <span className="field-hint field-hint--warn">{t('usr.lastAdminRoleLocked')}</span>
                 )}
               </label>
               <label>{t('usr.orgRole')}
@@ -242,11 +255,14 @@ export default function UserManager({ systemRole, ownTeamId, currentUsername, te
               </label>
               <label className="checkbox-label">
                 <input type="checkbox" checked={form.active}
-                  disabled={modal !== 'add' && isSelf(modal)}
+                  disabled={modal !== 'add' && (isSelf(modal) || isLastActiveAdmin(modal))}
                   onChange={(e) => setForm({ ...form, active: e.target.checked })} />
                 {t('usr.formActive')}
                 {modal !== 'add' && isSelf(modal) && (
                   <span className="field-hint field-hint--warn" style={{ marginLeft: 8 }}>{t('usr.selfActiveLocked')}</span>
+                )}
+                {modal !== 'add' && !isSelf(modal) && isLastActiveAdmin(modal) && (
+                  <span className="field-hint field-hint--warn" style={{ marginLeft: 8 }}>{t('usr.lastAdminActiveLocked')}</span>
                 )}
               </label>
             </div>

@@ -839,6 +839,84 @@ class AdminControllerTest {
     }
 
     @Test
+    @DisplayName("PUT /api/admin/users/{id} demoting last active ADMIN returns 403")
+    void updateUser_demotingLastActiveAdmin_returns403() throws Exception {
+        AppUser target = new AppUser();
+        target.setId(10L); target.setUsername("admin"); target.setTeamId(1L);
+        target.setSystemRole("ADMIN"); target.setActive(true);
+        when(userRepo.findById(10L)).thenReturn(Optional.of(target));
+        when(userRepo.countBySystemRoleAndActiveTrue("ADMIN")).thenReturn(1L);
+
+        mvc.perform(put("/api/admin/users/10")
+                        .session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"system_role\":\"USER\"}"))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    @DisplayName("PUT /api/admin/users/{id} demoting one of two ADMINs returns 200")
+    void updateUser_demotingOneOfTwoAdmins_returns200() throws Exception {
+        AppUser target = new AppUser();
+        target.setId(11L); target.setUsername("admin2"); target.setTeamId(1L);
+        target.setSystemRole("ADMIN"); target.setActive(true);
+        when(userRepo.findById(11L)).thenReturn(Optional.of(target));
+        when(userRepo.countBySystemRoleAndActiveTrue("ADMIN")).thenReturn(2L);
+
+        AppUser updated = new AppUser();
+        updated.setId(11L); updated.setUsername("admin2"); updated.setSystemRole("USER");
+        when(userService.updateUser(eq(11L), any(), any(), any(), eq("USER"), any(), any(), any()))
+                .thenReturn(updated);
+
+        mvc.perform(put("/api/admin/users/11")
+                        .session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"system_role\":\"USER\"}"))
+                .andExpect(status().isOk());
+    }
+
+    @Test
+    @DisplayName("PUT /api/admin/users/{id} deactivating last active ADMIN returns 403")
+    void updateUser_deactivatingLastActiveAdmin_returns403() throws Exception {
+        AppUser target = new AppUser();
+        target.setId(10L); target.setUsername("admin"); target.setTeamId(1L);
+        target.setSystemRole("ADMIN"); target.setActive(true);
+        when(userRepo.findById(10L)).thenReturn(Optional.of(target));
+        when(userRepo.countBySystemRoleAndActiveTrue("ADMIN")).thenReturn(1L);
+
+        mvc.perform(put("/api/admin/users/10")
+                        .session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"active\":false}"))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    @DisplayName("DELETE /api/admin/users/{id} deleting last active ADMIN returns 403")
+    void deleteUser_lastActiveAdmin_returns403() throws Exception {
+        AppUser target = new AppUser();
+        target.setId(10L); target.setUsername("admin"); target.setTeamId(1L);
+        target.setSystemRole("ADMIN"); target.setActive(true);
+        when(userRepo.findById(10L)).thenReturn(Optional.of(target));
+        when(userRepo.countBySystemRoleAndActiveTrue("ADMIN")).thenReturn(1L);
+
+        mvc.perform(delete("/api/admin/users/10").session(authSession()))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    @DisplayName("DELETE /api/admin/users/{id} non-admin user still works")
+    void deleteUser_nonAdmin_returns200() throws Exception {
+        AppUser target = new AppUser();
+        target.setId(20L); target.setUsername("normal"); target.setTeamId(1L);
+        target.setSystemRole("USER"); target.setActive(true);
+        when(userRepo.findById(20L)).thenReturn(Optional.of(target));
+
+        mvc.perform(delete("/api/admin/users/20").session(authSession()))
+                .andExpect(status().isOk());
+    }
+
+    @Test
     @DisplayName("PUT /api/admin/users/{id} as ADMIN can promote target to ADMIN role")
     void updateUser_asAdmin_promotesToAdmin_returns200() throws Exception {
         AppUser target = new AppUser();
