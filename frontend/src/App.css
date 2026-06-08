@@ -736,6 +736,39 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .cc-card.cc-critical .cc-hero-number { color: #dc2626; }
 .cc-card.cc-error    .cc-hero-number { color: #dc2626; }
 
+.cc-life {
+  margin-top: 6px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  width: 100%;
+}
+.cc-life-bar {
+  width: 70%;
+  max-width: 180px;
+  height: 4px;
+  background: var(--border);
+  border-radius: 3px;
+  overflow: hidden;
+}
+.cc-life-fill {
+  height: 100%;
+  border-radius: 3px;
+  transition: width .3s ease;
+  background: var(--text-light);
+}
+.cc-life-caption {
+  font-size: .68em;
+  color: var(--text-light);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+.cc-card.cc-valid    .cc-life-fill { background: #10b981; }
+.cc-card.cc-warning  .cc-life-fill { background: #f59e0b; }
+.cc-card.cc-high     .cc-life-fill { background: #f97316; }
+.cc-card.cc-critical .cc-life-fill { background: #dc2626; }
+
 .cc-identity { display: flex; flex-direction: column; gap: 4px; }
 .cc-domain {
   font-size: 1.02em; font-weight: 700;
