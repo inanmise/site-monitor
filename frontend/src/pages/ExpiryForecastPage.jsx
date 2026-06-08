@@ -301,7 +301,7 @@ function CalendarHeatmap({ certs, t }) {
       <div className="fc-heatmap-days">
         {DAYS.map(d => <div key={d} className="fc-hm-day-label">{d}</div>)}
       </div>
-      <div className="fc-heatmap-grid">
+      <div className={`fc-heatmap-grid${weekCount > 7 ? ' fc-heatmap-grid--compact' : ''}`}>
         {cells.map(({ key, inRange, count, allDoms, slot, isToday, dayNum }) => (
           inRange ? (
             <div
