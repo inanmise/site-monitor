@@ -8,9 +8,11 @@ import AdminAutoResetModal from './AdminAutoResetModal.jsx'
 
 const emptyUser = { username: '', password: '', display_name: '', email: '', employee_id: '', system_role: 'USER', team_id: '', org_role: '', active: true }
 
-export default function UserManager({ systemRole, teams }) {
+export default function UserManager({ systemRole, ownTeamId, teams }) {
   const t = useT()
   const isAdmin = systemRole === 'ADMIN'
+  const isTeamAdmin = systemRole === 'TEAM_ADMIN'
+  const canManage = isAdmin || isTeamAdmin
   const { showConfirm } = useDialog()
   const [users, setUsers] = useState([])
   const [modal, setModal] = useState(null)
@@ -57,7 +59,7 @@ export default function UserManager({ systemRole, teams }) {
       email: form.email,
       employee_id: form.employee_id,
       system_role: form.system_role,
-      team_id: form.team_id || null,
+      team_id: isTeamAdmin ? ownTeamId : (form.team_id || null),
       org_role: form.org_role || null,
       active: form.active,
     }
@@ -96,7 +98,7 @@ export default function UserManager({ systemRole, teams }) {
     <div className="admin-section">
       <div className="admin-section-header">
         <h3>{t('usr.title')}</h3>
-        {isAdmin && <button className="btn btn-success" onClick={openAdd}>{t('usr.addBtn')}</button>}
+        {canManage && <button className="btn btn-success" onClick={openAdd}>{t('usr.addBtn')}</button>}
       </div>
       {msg && !modal && !autoResetModal && <div className="alert-msg">{msg}</div>}
       <div className="admin-table-wrap">
@@ -129,7 +131,7 @@ export default function UserManager({ systemRole, teams }) {
                   {user.permanent_lock && <span className="badge badge-err" style={{ marginLeft: 4 }} title={t('usr.permLocked')}>🔒</span>}
                 </td>
                 <td>
-                  {isAdmin && (
+                  {canManage && (
                     <>
                       <button className="btn-sm btn-edit" onClick={() => openEdit(user)}>{t('usr.edit')}</button>
                       <button className="btn-sm" style={{ background: '#0ea5e9', color: '#fff', marginRight: 4 }} onClick={() => setAutoResetModal(user)}>{t('usr.autoResetBtn')}</button>
@@ -181,10 +183,14 @@ export default function UserManager({ systemRole, teams }) {
                 <SearchableSelect
                   value={form.system_role}
                   onChange={v => setForm({ ...form, system_role: v })}
-                  options={[
-                    { value: 'USER',  label: 'USER' },
-                    { value: 'AUDIT', label: 'AUDIT' },
-                    { value: 'ADMIN', label: 'ADMIN' },
+                  options={isAdmin ? [
+                    { value: 'USER',       label: 'USER' },
+                    { value: 'TEAM_ADMIN', label: 'TEAM_ADMIN' },
+                    { value: 'AUDIT',      label: 'AUDIT' },
+                    { value: 'ADMIN',      label: 'ADMIN' },
+                  ] : [
+                    { value: 'USER',       label: 'USER' },
+                    { value: 'TEAM_ADMIN', label: 'TEAM_ADMIN' },
                   ]}
                 />
               </label>
@@ -203,16 +209,27 @@ export default function UserManager({ systemRole, teams }) {
               </label>
               <label>
                 <span>{t('usr.formTeam')} <span className="req-star">*</span></span>
-                <SearchableSelect
-                  value={form.team_id}
-                  onChange={v => setForm({ ...form, team_id: v ? Number(v) : '' })}
-                  placeholder={t('usr.noTeam')}
-                  options={[
-                    { value: '', label: t('usr.noTeam') },
-                    ...(teams || []).map(team => ({ value: team.id, label: team.name })),
-                  ]}
-                />
-                {!form.team_id && (
+                {isTeamAdmin ? (
+                  <SearchableSelect
+                    value={ownTeamId ?? ''}
+                    onChange={() => {}}
+                    disabled
+                    options={[
+                      { value: ownTeamId ?? '', label: (teams || []).find(team => team.id === ownTeamId)?.name ?? t('usr.noTeam') },
+                    ]}
+                  />
+                ) : (
+                  <SearchableSelect
+                    value={form.team_id}
+                    onChange={v => setForm({ ...form, team_id: v ? Number(v) : '' })}
+                    placeholder={t('usr.noTeam')}
+                    options={[
+                      { value: '', label: t('usr.noTeam') },
+                      ...(teams || []).map(team => ({ value: team.id, label: team.name })),
+                    ]}
+                  />
+                )}
+                {!isTeamAdmin && !form.team_id && (
                   <span className="field-hint field-hint--warn">{t('usr.teamRequired')}</span>
                 )}
               </label>
@@ -225,7 +242,7 @@ export default function UserManager({ systemRole, teams }) {
             <div className="modal-actions">
               <button className="btn btn-secondary" onClick={() => setModal(null)}>{t('usr.cancel')}</button>
               <button className="btn btn-primary" onClick={save}
-                disabled={saving || !form.username.trim() || !form.email.trim() || !form.team_id || (modal === 'add' && form.password.length < 4)}>
+                disabled={saving || !form.username.trim() || !form.email.trim() || !(isTeamAdmin ? ownTeamId : form.team_id) || (modal === 'add' && form.password.length < 4)}>
                 {saving ? t('usr.saving') : t('usr.save')}
               </button>
             </div>

@@ -91,6 +91,16 @@ class AdminControllerTest {
     @BeforeEach
     void setup() {
         when(userService.listTeams()).thenReturn(java.util.Collections.emptyList());
+        // Default stub: any user lookup returns a generic AppUser with id=arg and team=1.
+        // ADMIN session bypasses team scoping; individual tests can override as needed.
+        when(userRepo.findById(anyLong())).thenAnswer(inv -> {
+            Long id = inv.getArgument(0);
+            AppUser u = new AppUser();
+            u.setId(id);
+            u.setUsername("stub" + id);
+            u.setTeamId(1L);
+            return Optional.of(u);
+        });
     }
 
     // ── Auth guard ────────────────────────────────────────────────────────────
@@ -657,6 +667,125 @@ class AdminControllerTest {
                 .andExpect(jsonPath("$.data.length()").value(2));
     }
 
+    // ── TEAM_ADMIN role gating ────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("POST /api/admin/inventory as TEAM_ADMIN forces team_id to caller's team")
+    void addInventory_asTeamAdmin_forcesOwnTeam() throws Exception {
+        when(inventoryRepo.save(any())).thenAnswer(inv -> {
+            CertificateInventory i = inv.getArgument(0);
+            i.setId(99L);
+            return i;
+        });
+
+        mvc.perform(post("/api/admin/inventory")
+                        .session(teamAdminSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        // payload tries to plant the item on team 999 — must be overridden
+                        .content("{\"domain\":\"x.com\",\"port\":443,\"team_id\":999}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.data.team_id").value(2));
+    }
+
+    @Test
+    @DisplayName("PUT /api/admin/inventory/{id} as TEAM_ADMIN on other-team resource returns 403")
+    void updateInventory_asTeamAdmin_otherTeam_returns403() throws Exception {
+        CertificateInventory existing = inventory("x.com");
+        existing.setId(1L);
+        existing.setTeamId(7L);  // belongs to team 7, not the team-admin's team 2
+        when(inventoryRepo.findById(1L)).thenReturn(Optional.of(existing));
+
+        mvc.perform(put("/api/admin/inventory/1")
+                        .session(teamAdminSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"domain\":\"x.com\",\"port\":443}"))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    @DisplayName("PUT /api/admin/inventory/{id} as TEAM_ADMIN on own-team resource returns 200")
+    void updateInventory_asTeamAdmin_ownTeam_returns200() throws Exception {
+        CertificateInventory existing = inventory("x.com");
+        existing.setId(1L);
+        existing.setTeamId(2L);
+        when(inventoryRepo.findById(1L)).thenReturn(Optional.of(existing));
+        when(inventoryRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        mvc.perform(put("/api/admin/inventory/1")
+                        .session(teamAdminSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"domain\":\"x.com\",\"port\":443}"))
+                .andExpect(status().isOk());
+    }
+
+    @Test
+    @DisplayName("POST /api/admin/users as TEAM_ADMIN with ADMIN role payload returns 403")
+    void createUser_asTeamAdmin_withAdminRole_returns403() throws Exception {
+        mvc.perform(post("/api/admin/users")
+                        .session(teamAdminSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"username\":\"x\",\"password\":\"pw\",\"system_role\":\"ADMIN\"}"))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    @DisplayName("POST /api/admin/users as TEAM_ADMIN with USER role creates in own team")
+    void createUser_asTeamAdmin_withUserRole_returns200() throws Exception {
+        AppUser created = new AppUser();
+        created.setId(7L);
+        created.setUsername("newbie");
+        created.setTeamId(2L);
+        created.setSystemRole("USER");
+        when(userService.createUser(any(), any(), any(), any(), any(), eq("USER"), eq(2L), any()))
+                .thenReturn(created);
+
+        mvc.perform(post("/api/admin/users")
+                        .session(teamAdminSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        // payload team_id=99 must be overridden to 2
+                        .content("{\"username\":\"newbie\",\"password\":\"pw\",\"system_role\":\"USER\",\"team_id\":99}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.team_id").value(2));
+    }
+
+    @Test
+    @DisplayName("PUT /api/admin/teams/{id} as TEAM_ADMIN on other team returns 403")
+    void updateTeam_asTeamAdmin_otherTeam_returns403() throws Exception {
+        mvc.perform(put("/api/admin/teams/99")
+                        .session(teamAdminSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"Hacked\"}"))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    @DisplayName("PUT /api/admin/teams/{id} as TEAM_ADMIN on own team returns 200")
+    void updateTeam_asTeamAdmin_ownTeam_returns200() throws Exception {
+        Team updated = new Team();
+        updated.setId(2L);
+        updated.setName("Renamed");
+        when(userService.updateTeam(eq(2L), any(), any(), any(), any(), any(), any()))
+                .thenReturn(updated);
+
+        mvc.perform(put("/api/admin/teams/2")
+                        .session(teamAdminSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"Renamed\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.id").value(2));
+    }
+
+    @Test
+    @DisplayName("POST /api/admin/teams as TEAM_ADMIN returns 403 (create stays admin-only)")
+    void createTeam_asTeamAdmin_returns403() throws Exception {
+        mvc.perform(post("/api/admin/teams")
+                        .session(teamAdminSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"NewTeam\"}"))
+                .andExpect(status().isForbidden());
+    }
+
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     private MockHttpSession authSession() {
@@ -674,6 +803,16 @@ class AdminControllerTest {
         s.setAttribute("userId", 42L);
         s.setAttribute("teamId", 2L);
         s.setAttribute("systemRole", "USER");
+        return s;
+    }
+
+    private MockHttpSession teamAdminSession() {
+        MockHttpSession s = new MockHttpSession();
+        s.setAttribute("authenticated", Boolean.TRUE);
+        s.setAttribute("username", "teamadmin");
+        s.setAttribute("userId", 99L);
+        s.setAttribute("teamId", 2L);
+        s.setAttribute("systemRole", "TEAM_ADMIN");
         return s;
     }
 

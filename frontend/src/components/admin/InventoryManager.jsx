@@ -54,6 +54,8 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
   const toast = useToast()
   const { showConfirm } = useDialog()
   const isAdmin = systemRole ? systemRole === 'ADMIN' : isAdminProp
+  const isTeamAdmin = systemRole === 'TEAM_ADMIN'
+  const canManage = isAdmin || isTeamAdmin
   const [items, setItems]             = useState([])
   const [teams, setTeams]             = useState(teamsProp)
   const [modal, setModal]             = useState(null)
@@ -392,7 +394,7 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
               </div>
             )}
           </div>
-          {isAdmin && <button className="btn btn-success" onClick={openAdd}>{t('inv.addBtn')}</button>}
+          {canManage && <button className="btn btn-success" onClick={openAdd}>{t('inv.addBtn')}</button>}
         </div>
       </div>
 
@@ -436,21 +438,21 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
                     {t('inv.show')}
                   </button>
                   {item.deleted_at ? (
-                    isAdmin && (
+                    canManage && (
                       <button className="btn-sm btn-success" onClick={() => restore(item.id)}>
                         {t('inv.restore')}
                       </button>
                     )
                   ) : (
                     <>
-                      {isAdmin && <button className="btn-sm btn-edit" onClick={() => openEdit(item)}>{t('inv.edit')}</button>}
+                      {canManage && <button className="btn-sm btn-edit" onClick={() => openEdit(item)}>{t('inv.edit')}</button>}
                       {isAdmin && teams.length > 1 && (
                         <button className="btn-sm btn-transfer-sy"
                           onClick={() => openTransfer(item)}>
                           {t('inv.transfer')}
                         </button>
                       )}
-                      {isAdmin && <button className="btn-sm btn-del" onClick={() => del(item.id)}>{t('inv.delete')}</button>}
+                      {canManage && <button className="btn-sm btn-del" onClick={() => del(item.id)}>{t('inv.delete')}</button>}
                     </>
                   )}
                 </td>
