@@ -736,14 +736,13 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .cc-card.cc-critical .cc-hero-number { color: #dc2626; }
 .cc-card.cc-error    .cc-hero-number { color: #dc2626; }
 
-.cc-hero-meta {
-  margin-top: 4px;
+.cc-hero-row {
   display: flex;
   align-items: center;
-  justify-content: center;
-  gap: 10px;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 0 4px;
 }
-.cc-hero-meta .cc-hero-label { margin-top: 0; }
 .cc-life-bar {
   flex: 0 0 auto;
   width: 110px;
