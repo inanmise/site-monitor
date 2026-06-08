@@ -30,6 +30,7 @@ import org.springframework.transaction.annotation.Transactional;
 import com.zaxxer.hikari.HikariDataSource;
 
 import javax.sql.DataSource;
+import java.lang.management.ManagementFactory;
 import java.net.InetAddress;
 import java.time.Instant;
 import java.time.LocalDateTime;
@@ -524,6 +525,8 @@ public class SchedulerService {
             ex.put("core_pool_size",  certCheckExecutor.getCorePoolSize());
             ex.put("max_pool_size",   certCheckExecutor.getMaxPoolSize());
             ex.put("completed_tasks", certCheckExecutor.getThreadPoolExecutor().getCompletedTaskCount());
+            ex.put("jvm_start_time", ISO.format(Instant.ofEpochMilli(
+                    ManagementFactory.getRuntimeMXBean().getStartTime())));
             h.put("executor_pool", ex);
         } catch (Exception e) {
             h.put("executor_pool", Map.of("error", e.getMessage()));
