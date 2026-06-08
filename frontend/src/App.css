@@ -739,8 +739,9 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .cc-hero-row {
   display: flex;
   align-items: center;
-  justify-content: center;
-  gap: 12px;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 0 4px;
 }
 .cc-life-bar {
   flex: 0 0 auto;
