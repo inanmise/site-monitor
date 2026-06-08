@@ -217,7 +217,7 @@ function BarTooltip({ active, payload }) {
 
 // ── Calendar Heatmap ──────────────────────────────────────────────────────────
 
-const HEAT_COLORS = ['transparent', '#7c2d12', '#b91c1c', '#ef4444', '#fca5a5']
+const HEAT_COLORS = ['transparent', '#fca5a5', '#ef4444', '#b91c1c', '#7c2d12']
 
 function heatColor(count) {
   if (count === 0) return 'transparent'
