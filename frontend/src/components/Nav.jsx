@@ -86,12 +86,16 @@ export default function Nav({ activeTab, onTabChange, username, teamName, system
     localStorage.getItem('sidebar-open') !== 'false'
   )
 
-  const [openGroups, setOpenGroups] = useState(() => {
+  const [openGroup, setOpenGroup] = useState(() => {
     try {
-      const saved = localStorage.getItem('nav-groups-open')
-      if (saved) return JSON.parse(saved)
+      const saved = localStorage.getItem('nav-group-open')
+      if (saved !== null && saved !== '') {
+        const n = Number(saved)
+        if (Number.isInteger(n)) return n
+      }
+      localStorage.removeItem('nav-groups-open')
     } catch {}
-    return []
+    return null
   })
 
   const [userMenuOpen, setUserMenuOpen] = useState(false)
@@ -119,22 +123,23 @@ export default function Nav({ activeTab, onTabChange, username, teamName, system
   }, [userMenuOpen])
 
   useEffect(() => {
-    GROUPS.forEach((group, gi) => {
-      if (group.labelKey && group.tabs.some(tab => tab.id === activeTab)) {
-        setOpenGroups(prev => {
-          if (prev.includes(gi)) return prev
-          const next = [...prev, gi]
-          try { localStorage.setItem('nav-groups-open', JSON.stringify(next)) } catch {}
-          return next
-        })
+    for (let gi = 0; gi < GROUPS.length; gi++) {
+      const g = GROUPS[gi]
+      if (g.labelKey && g.tabs.some(tab => tab.id === activeTab)) {
+        setOpenGroup(gi)
+        try { localStorage.setItem('nav-group-open', String(gi)) } catch {}
+        return
       }
-    })
+    }
   }, [activeTab])
 
   function toggleGroup(gi) {
-    setOpenGroups(prev => {
-      const next = prev.includes(gi) ? prev.filter(i => i !== gi) : [...prev, gi]
-      try { localStorage.setItem('nav-groups-open', JSON.stringify(next)) } catch {}
+    setOpenGroup(prev => {
+      const next = prev === gi ? null : gi
+      try {
+        if (next === null) localStorage.removeItem('nav-group-open')
+        else localStorage.setItem('nav-group-open', String(next))
+      } catch {}
       return next
     })
   }
@@ -171,7 +176,7 @@ export default function Nav({ activeTab, onTabChange, username, teamName, system
           const visibleTabs = group.tabs.filter((tab) => tab.show)
           if (visibleTabs.length === 0) return null
           const hasLabel    = !!group.labelKey
-          const isGroupOpen = openGroups.includes(gi)
+          const isGroupOpen = openGroup === gi
           const collapsed   = hasLabel && open && !isGroupOpen
           return (
             <div key={gi} className="sb-group">
@@ -260,7 +265,7 @@ export default function Nav({ activeTab, onTabChange, username, teamName, system
         <button
           className="sb-logout"
           onClick={() => {
-            try { localStorage.removeItem('nav-groups-open') } catch {}
+            try { localStorage.removeItem('nav-group-open') } catch {}
             onLogout()
           }}
           title={!open ? t('nav.logout') : undefined}
