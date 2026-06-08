@@ -786,6 +786,32 @@ class AdminControllerTest {
                 .andExpect(status().isForbidden());
     }
 
+    @Test
+    @DisplayName("PUT /api/admin/users/{id} as ADMIN can promote target to ADMIN role")
+    void updateUser_asAdmin_promotesToAdmin_returns200() throws Exception {
+        AppUser target = new AppUser();
+        target.setId(7L);
+        target.setUsername("safiye");
+        target.setTeamId(1L);
+        when(userRepo.findById(7L)).thenReturn(Optional.of(target));
+
+        AppUser promoted = new AppUser();
+        promoted.setId(7L);
+        promoted.setUsername("safiye");
+        promoted.setSystemRole("ADMIN");
+        promoted.setTeamId(1L);
+        when(userService.updateUser(eq(7L), any(), any(), any(), eq("ADMIN"), any(), any(), any()))
+                .thenReturn(promoted);
+
+        mvc.perform(put("/api/admin/users/7")
+                        .session(authSession())   // ADMIN session
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"system_role\":\"ADMIN\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.data.system_role").value("ADMIN"));
+    }
+
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     private MockHttpSession authSession() {
