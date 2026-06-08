@@ -1,10 +1,21 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, Fragment } from 'react'
 import { createPortal } from 'react-dom'
 import { api, formatDate } from '../api/client'
 import { useT } from '../i18n/index.jsx'
 import { X, Activity, Clock, Server, FileText, Globe } from 'lucide-react'
 
 const RECORD_TYPES = ['A', 'AAAA', 'CNAME', 'MX', 'TXT', 'NS']
+
+function computeDiff(prev, next) {
+  const prevLines = (prev || '').split('\n').filter(Boolean)
+  const nextLines = (next || '').split('\n').filter(Boolean)
+  const prevSet = new Set(prevLines)
+  const nextSet = new Set(nextLines)
+  return {
+    removed: prevLines.filter(x => !nextSet.has(x)),
+    added:   nextLines.filter(x => !prevSet.has(x)),
+  }
+}
 
 export default function DnsDetailModal({ monitor, onClose }) {
   const t = useT()
@@ -165,18 +176,56 @@ export default function DnsDetailModal({ monitor, onClose }) {
                     </tr>
                   </thead>
                   <tbody>
-                    {history.slice(0, 15).map((h, i) => (
-                      <tr key={i} className={h.changed ? 'dns-history-changed' : ''}>
-                        <td className="dns-cell-time">{formatDate(h.checked_at || h.checkedAt)}</td>
-                        <td className="dns-cell-num">{h.ttl != null ? `${h.ttl}s` : '—'}</td>
-                        <td className="dns-cell-num">{h.response_ms != null ? `${h.response_ms}ms` : '—'}</td>
-                        <td>
-                          {h.changed
-                            ? <span className="dns-changed-badge">{t('dns.changed')}</span>
-                            : <span className="dns-nochange-badge">{t('dns.noChange')}</span>}
-                        </td>
-                      </tr>
-                    ))}
+                    {history.slice(0, 15).map((h, i) => {
+                      const isChanged = h.changed
+                      const prevVal = h.previous_value ?? h.previousValue
+                      const diff = isChanged ? computeDiff(prevVal, h.value) : null
+                      return (
+                        <Fragment key={i}>
+                          <tr className={isChanged ? 'dns-history-changed' : ''}>
+                            <td className="dns-cell-time">{formatDate(h.checked_at || h.checkedAt)}</td>
+                            <td className="dns-cell-num">{h.ttl != null ? `${h.ttl}s` : '—'}</td>
+                            <td className="dns-cell-num">{h.response_ms != null ? `${h.response_ms}ms` : '—'}</td>
+                            <td>
+                              {isChanged
+                                ? <span className="dns-changed-badge">{t('dns.changed')}</span>
+                                : <span className="dns-nochange-badge">{t('dns.noChange')}</span>}
+                            </td>
+                          </tr>
+                          {isChanged && diff && (
+                            <tr className="dns-diff-row">
+                              <td colSpan={4}>
+                                <div className="dns-diff-grid">
+                                  <div className="dns-diff-col">
+                                    <div className="dns-diff-col-title">{t('dns.previousValue')}</div>
+                                    <pre className="dns-diff-pre">{prevVal || '—'}</pre>
+                                  </div>
+                                  <div className="dns-diff-col">
+                                    <div className="dns-diff-col-title">{t('dns.newValue')}</div>
+                                    <pre className="dns-diff-pre">{h.value || '—'}</pre>
+                                  </div>
+                                </div>
+                                {(diff.added.length > 0 || diff.removed.length > 0) && (
+                                  <div className="dns-diff-summary">
+                                    <span className="dns-diff-label">{t('dns.lineDiff')}</span>
+                                    {diff.removed.map((line, idx) => (
+                                      <div key={'rm'+idx} className="dns-diff-line dns-diff-removed">
+                                        <span className="dns-diff-sign">−</span><code>{line}</code>
+                                      </div>
+                                    ))}
+                                    {diff.added.map((line, idx) => (
+                                      <div key={'ad'+idx} className="dns-diff-line dns-diff-added">
+                                        <span className="dns-diff-sign">+</span><code>{line}</code>
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+                              </td>
+                            </tr>
+                          )}
+                        </Fragment>
+                      )
+                    })}
                   </tbody>
                 </table>
               </div>
