@@ -465,16 +465,17 @@ public class MonitoringController {
             List<String> values = (List<String>) r.getOrDefault("values", List.of());
             String valueStr = String.join("\n", values);
 
-            // Change detection
+            // Smart change detection: distinguishes rotation (round-robin) from real changes.
             DnsRecord prev = dnsRecordRepo.findTopByMonitorIdOrderByCheckedAtDesc(m.getId()).orElse(null);
             String prevValue = prev != null ? prev.getValue() : null;
-            boolean changed = prevValue != null && !prevValue.equals(valueStr);
+            DnsCheckerService.ChangeKind kind = DnsCheckerService.detectChange(prevValue, valueStr);
 
             DnsRecord record = new DnsRecord();
             record.setMonitorId(m.getId());
             record.setRecordType(m.getRecordType());
             record.setValue(valueStr);
-            record.setChanged(changed);
+            record.setChanged(kind == DnsCheckerService.ChangeKind.CHANGED);
+            record.setRotated(kind == DnsCheckerService.ChangeKind.ROTATED);
             record.setPreviousValue(prevValue);
             record.setCheckedAt(now);
             record.setTtl(r.get("ttl") instanceof Number n ? n.longValue() : null);
@@ -508,12 +509,14 @@ public class MonitoringController {
         if (latest != null) {
             item.put("value",        latest.getValue());
             item.put("changed",      latest.getChanged());
+            item.put("rotated",      Boolean.TRUE.equals(latest.getRotated()));
             item.put("checked_at",   latest.getCheckedAt());
             item.put("ttl",          latest.getTtl());
             item.put("response_ms",  latest.getResponseMs());
         } else {
             item.put("value",        null);
             item.put("changed",      false);
+            item.put("rotated",      false);
             item.put("checked_at",   null);
             item.put("ttl",          null);
             item.put("response_ms",  null);

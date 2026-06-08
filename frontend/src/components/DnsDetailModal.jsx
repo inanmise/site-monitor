@@ -179,11 +179,13 @@ export default function DnsDetailModal({ monitor, onClose }) {
                   <tbody>
                     {history.slice(0, 15).map((h, i) => {
                       const isChanged = h.changed
+                      const isRotated = !isChanged && h.rotated
                       const prevVal = h.previous_value ?? h.previousValue
-                      const diff = isChanged ? computeDiff(prevVal, h.value) : null
+                      const showDiff = (isChanged || isRotated) && prevVal && prevVal !== h.value
+                      const diff = showDiff ? computeDiff(prevVal, h.value) : null
                       return (
                         <Fragment key={i}>
-                          <tr className={isChanged ? 'dns-history-changed' : ''}>
+                          <tr className={isChanged ? 'dns-history-changed' : (isRotated ? 'dns-history-rotated' : '')}>
                             <td className="dns-cell-time">{formatDate(h.checked_at || h.checkedAt)}</td>
                             <td className="dns-history-value" title={h.value || '—'}>
                               <code>{h.value || '—'}</code>
@@ -191,13 +193,13 @@ export default function DnsDetailModal({ monitor, onClose }) {
                             <td className="dns-cell-num">{h.ttl != null ? `${h.ttl}s` : '—'}</td>
                             <td className="dns-cell-num">{h.response_ms != null ? `${h.response_ms}ms` : '—'}</td>
                             <td>
-                              {isChanged
-                                ? <span className="dns-changed-badge">{t('dns.changed')}</span>
-                                : <span className="dns-nochange-badge">{t('dns.noChange')}</span>}
+                              {isChanged && <span className="dns-changed-badge">{t('dns.changed')}</span>}
+                              {isRotated && <span className="dns-rotated-badge" title={t('dns.rotationTitle')}>{t('dns.rotated')}</span>}
+                              {!isChanged && !isRotated && <span className="dns-nochange-badge">{t('dns.noChange')}</span>}
                             </td>
                           </tr>
-                          {isChanged && diff && (
-                            <tr className="dns-diff-row">
+                          {showDiff && diff && (
+                            <tr className={isRotated ? 'dns-diff-row dns-diff-row-rotated' : 'dns-diff-row'}>
                               <td colSpan={5}>
                                 <div className="dns-diff-grid">
                                   <div className="dns-diff-col">
