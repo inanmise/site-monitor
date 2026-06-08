@@ -930,7 +930,8 @@ public class AdminController {
 
     private boolean isTeamAdmin(HttpSession session) {
         if (permissionService != null) {
-            return permissionService.allows(session, "system.team_admin", "execute");
+            return permissionService.allows(session, "system.team_admin", "execute")
+                && !permissionService.allows(session, "system.global_admin", "execute");
         }
         return "TEAM_ADMIN".equals(session.getAttribute("systemRole"));
     }
