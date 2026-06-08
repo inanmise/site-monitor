@@ -3,6 +3,7 @@ package com.certmonitor.service;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
+import org.xbill.DNS.Cache;
 import org.xbill.DNS.Lookup;
 import org.xbill.DNS.Record;
 import org.xbill.DNS.SOARecord;
@@ -40,6 +41,9 @@ public class DnsCheckerService {
         try {
             int type = typeOf(recordType);
             Lookup lookup = new Lookup(domain, type);
+            // Bypass dnsjava's shared cache so response_ms reflects a real
+            // network round-trip, not a millisecond memory hit.
+            lookup.setCache(new Cache());
             Record[] records = lookup.run();
             long responseMs = (System.nanoTime() - start) / 1_000_000L;
 
@@ -99,6 +103,7 @@ public class DnsCheckerService {
         long start = System.nanoTime();
         try {
             Lookup lookup = new Lookup(domain, Type.SOA);
+            lookup.setCache(new Cache());
             Record[] records = lookup.run();
             long responseMs = (System.nanoTime() - start) / 1_000_000L;
             soa.put("response_ms", responseMs);

@@ -3,6 +3,27 @@ import { createPortal } from 'react-dom'
 import { api, formatDate } from '../api/client'
 import { useT } from '../i18n/index.jsx'
 import { X, Activity, Clock, Server, FileText, Globe } from 'lucide-react'
+import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts'
+
+function ChartTooltip({ active, payload, t }) {
+  if (!active || !payload || !payload.length) return null
+  const d = payload[0].payload
+  return (
+    <div className="dns-chart-tooltip">
+      <div className="dns-chart-tt-time">{d.ts}</div>
+      <div className="dns-chart-tt-row">
+        <span>{t('dns.responseMs')}:</span> <strong>{d.ms}ms</strong>
+      </div>
+      {d.ttl != null && (
+        <div className="dns-chart-tt-row">
+          <span>{t('dns.ttl')}:</span> <strong>{d.ttl}s</strong>
+        </div>
+      )}
+      {d.changed && <div className="dns-chart-tt-badge changed">{t('dns.changed')}</div>}
+      {d.rotated && <div className="dns-chart-tt-badge rotated">{t('dns.rotated')}</div>}
+    </div>
+  )
+}
 
 const RECORD_TYPES = ['A', 'AAAA', 'CNAME', 'MX', 'TXT', 'NS']
 
@@ -159,6 +180,53 @@ export default function DnsDetailModal({ monitor, onClose }) {
                 </dl>
               </div>
             )}
+
+            {/* Response time trend chart */}
+            {(() => {
+              const chartData = history.slice().reverse().map(h => ({
+                ts: new Date(h.checked_at || h.checkedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+                ms: h.response_ms,
+                ttl: h.ttl,
+                changed: h.changed,
+                rotated: h.rotated,
+              })).filter(p => p.ms != null)
+              if (chartData.length < 2) return null
+              return (
+                <div className="dns-section">
+                  <h4 className="dns-section-title">
+                    <Activity size={14} /> {t('dns.responseTrend')}
+                  </h4>
+                  <div className="dns-chart-wrap">
+                    <ResponsiveContainer width="100%" height={200}>
+                      <LineChart data={chartData} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+                        <XAxis
+                          dataKey="ts"
+                          tick={{ fontSize: 11, fill: 'var(--text-light)' }}
+                          stroke="var(--border)"
+                        />
+                        <YAxis
+                          tick={{ fontSize: 11, fill: 'var(--text-light)' }}
+                          stroke="var(--border)"
+                          width={48}
+                          tickFormatter={(v) => `${v}ms`}
+                        />
+                        <Tooltip content={<ChartTooltip t={t} />} />
+                        <Line
+                          type="monotone"
+                          dataKey="ms"
+                          stroke="#2563eb"
+                          strokeWidth={2}
+                          dot={{ r: 3, fill: '#2563eb' }}
+                          activeDot={{ r: 5 }}
+                          isAnimationActive={false}
+                        />
+                      </LineChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
+              )
+            })()}
 
             {/* Recent history */}
             {history.length > 0 && (

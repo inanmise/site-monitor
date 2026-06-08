@@ -6662,6 +6662,49 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 [data-theme="dark"] .dns-history-rotated { background: rgba(245,158,11,.12); }
 .dns-diff-row-rotated td { background: var(--bg-card); }
 
+/* Response time trend chart */
+.dns-chart-wrap {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px 8px 6px 4px;
+}
+.dns-chart-tooltip {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 10px;
+  font-size: .82em;
+  box-shadow: 0 4px 12px rgba(0,0,0,.12);
+}
+.dns-chart-tt-time {
+  font-weight: 700;
+  color: var(--text);
+  margin-bottom: 4px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.dns-chart-tt-row {
+  color: var(--text-light);
+  margin: 2px 0;
+}
+.dns-chart-tt-row strong {
+  color: var(--text);
+  margin-left: 6px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.dns-chart-tt-badge {
+  display: inline-block;
+  margin-top: 6px;
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-size: .9em;
+  font-weight: 600;
+}
+.dns-chart-tt-badge.changed { background: rgba(220,38,38,.12); color: #b91c1c; }
+.dns-chart-tt-badge.rotated { background: rgba(245,158,11,.14); color: #92400e; }
+[data-theme="dark"] .dns-chart-tt-badge.changed { color: #fca5a5; background: rgba(220,38,38,.22); }
+[data-theme="dark"] .dns-chart-tt-badge.rotated { color: #fbbf24; background: rgba(245,158,11,.24); }
+
 .dns-history-value {
   max-width: 280px;
   vertical-align: top;
