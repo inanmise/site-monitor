@@ -6288,6 +6288,368 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
   color: var(--text-light);
   display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
 }
+
+/* ── DNS Monitor Page (project-styled redesign) ──────────────────────── */
+.dns-page { padding: 4px 0; }
+
+.dns-header { margin-bottom: 12px; }
+.dns-title-row { display: flex; align-items: flex-start; gap: 10px; }
+.dns-title-row > svg { color: var(--primary); margin-top: 4px; flex-shrink: 0; }
+.dns-title { font-size: 1.3em; margin: 0; color: var(--text); }
+.dns-subtitle { color: var(--text-light); font-size: .9em; margin: 2px 0 0 0; }
+
+/* Info / educational panel */
+.dns-info-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--primary);
+  border-radius: 8px;
+  margin-bottom: 14px;
+  overflow: hidden;
+}
+.dns-info-toggle {
+  display: flex; align-items: center; gap: 10px;
+  width: 100%;
+  padding: 12px 16px;
+  background: none; border: none;
+  cursor: pointer; color: var(--text);
+  font-size: .95em;
+  text-align: left;
+}
+.dns-info-toggle:hover { background: var(--bg-hover); }
+.dns-info-toggle > svg:first-child { color: var(--primary); flex-shrink: 0; }
+.dns-info-title { flex: 1; font-weight: 600; }
+.dns-info-chevron { transition: transform .2s ease; }
+.dns-info-chevron.open { transform: rotate(180deg); }
+.dns-info-body {
+  padding: 0 16px 14px 16px;
+  border-top: 1px solid var(--border);
+  background: var(--bg-surface);
+}
+.dns-info-intro {
+  font-size: .9em;
+  color: var(--text);
+  margin: 12px 0 14px 0;
+  line-height: 1.55;
+}
+.dns-info-grid {
+  display: grid;
+  grid-template-columns: 70px 1fr;
+  gap: 8px 16px;
+  font-size: .88em;
+}
+.dns-info-row { display: contents; }
+.dns-info-key {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 2px 6px;
+  text-align: center;
+  font-weight: 700;
+  color: var(--primary);
+  font-size: .9em;
+}
+.dns-info-desc { color: var(--text); line-height: 1.5; }
+
+/* Toolbar */
+.dns-toolbar {
+  display: flex; align-items: center; gap: 10px;
+  margin-bottom: 12px;
+}
+.dns-search-input {
+  flex: 1; max-width: 360px;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--input-bg);
+  color: var(--input-text);
+  font-size: .9em;
+}
+.dns-search-input:focus {
+  outline: none; border-color: var(--primary);
+  box-shadow: 0 0 0 3px rgba(0,123,255,.12);
+}
+.dns-search-clear {
+  background: none; border: none;
+  color: var(--text-light); cursor: pointer;
+  font-size: .9em; padding: 4px 8px;
+}
+.dns-search-clear:hover { color: var(--text); }
+.dns-counter { color: var(--text-light); font-size: .85em; margin-left: auto; }
+
+/* Table */
+.dns-table-wrap { border: 1px solid var(--border); border-radius: 8px; overflow: auto; }
+.dns-table { width: 100%; border-collapse: separate; border-spacing: 0; }
+.dns-table thead th {
+  background: var(--bg-surface);
+  font-size: .82em; text-transform: uppercase; letter-spacing: .04em;
+  color: var(--text-light); font-weight: 700;
+  padding: 10px 12px;
+  border-bottom: 2px solid var(--border);
+  text-align: left;
+}
+.dns-table tbody td {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  font-size: .9em;
+}
+.dns-row { cursor: pointer; transition: background .12s; }
+.dns-row:hover { background: var(--bg-hover); }
+.dns-row-inactive { opacity: .55; }
+.dns-cell-mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.dns-cell-value { max-width: 360px; overflow: hidden; }
+.dns-cell-num { font-variant-numeric: tabular-nums; color: var(--text-light); }
+.dns-cell-time { color: var(--text-light); font-size: .85em; }
+.dns-cell-actions { white-space: nowrap; }
+.dns-cell-actions .btn { margin-left: 4px; padding: 4px 8px; }
+
+.dns-type-badge {
+  display: inline-block;
+  background: var(--primary);
+  color: #fff;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: .75em;
+  font-weight: 700;
+  letter-spacing: .04em;
+}
+.dns-changed-badge {
+  display: inline-block;
+  background: #fef3c7; color: #92400e;
+  padding: 2px 6px; border-radius: 3px;
+  font-size: .72em; font-weight: 600;
+  margin-right: 6px;
+}
+.dns-nochange-badge {
+  display: inline-block;
+  background: #dcfce7; color: #15803d;
+  padding: 2px 6px; border-radius: 3px;
+  font-size: .72em; font-weight: 600;
+}
+[data-theme="dark"] .dns-changed-badge { background: rgba(245,158,11,.18); color: #fbbf24; }
+[data-theme="dark"] .dns-nochange-badge { background: rgba(34,197,94,.18); color: #4ade80; }
+
+.dns-btn-check { background: var(--success, #28a745); color: #fff; border: none; }
+.dns-btn-edit  { background: var(--primary);             color: #fff; border: none; }
+
+/* DNS Detail Modal */
+.dns-modal-overlay {
+  position: fixed; inset: 0;
+  background: rgba(0,0,0,.5);
+  display: flex; align-items: flex-start; justify-content: center;
+  padding: 40px 20px;
+  z-index: 1000;
+  overflow-y: auto;
+}
+.dns-modal-box {
+  background: var(--bg-card);
+  border-radius: 12px;
+  width: 100%;
+  max-width: 780px;
+  box-shadow: 0 10px 40px rgba(0,0,0,.25);
+  display: flex; flex-direction: column;
+  max-height: calc(100vh - 80px);
+}
+.dns-modal-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border);
+}
+.dns-modal-title {
+  display: flex; align-items: center; gap: 10px;
+  font-size: 1.05em;
+  color: var(--text);
+}
+.dns-modal-title > svg { color: var(--primary); }
+.dns-modal-subtitle { color: var(--text-light); font-weight: 400; font-size: .9em; }
+.dns-modal-close {
+  background: none; border: none; cursor: pointer;
+  color: var(--text-light);
+  padding: 4px 8px; border-radius: 4px;
+}
+.dns-modal-close:hover { color: var(--text); background: var(--bg-hover); }
+.dns-modal-body {
+  padding: 16px 20px 20px 20px;
+  overflow-y: auto;
+}
+.dns-modal-loading { padding: 40px; text-align: center; color: var(--text-light); }
+
+/* Metric bar */
+.dns-metric-bar {
+  display: flex; align-items: center; gap: 18px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 16px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+.dns-metric-item {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: .88em;
+}
+.dns-metric-item > svg { color: var(--text-light); }
+.dns-metric-label { color: var(--text-light); }
+.dns-metric-value {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-weight: 700; color: var(--text);
+}
+.dns-status-ok  { color: #15803d; font-weight: 700; font-size: .9em; margin-left: auto; }
+.dns-status-err { color: #b91c1c; font-weight: 700; font-size: .9em; margin-left: auto; }
+[data-theme="dark"] .dns-status-ok  { color: #4ade80; }
+[data-theme="dark"] .dns-status-err { color: #fca5a5; }
+
+/* Sections */
+.dns-section { margin-bottom: 20px; }
+.dns-section:last-child { margin-bottom: 0; }
+.dns-section-title {
+  display: flex; align-items: center; gap: 8px;
+  font-size: .85em;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  color: var(--text-light);
+  margin: 0 0 10px 0;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border);
+}
+.dns-section-title > svg { color: var(--primary); }
+
+/* Record tabs */
+.dns-record-tabs {
+  display: flex; gap: 6px; flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+.dns-record-tab {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 6px 12px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: .85em; font-weight: 600;
+  color: var(--text);
+  cursor: pointer;
+  transition: background .12s, border-color .12s;
+}
+.dns-record-tab:hover { background: var(--bg-hover); }
+.dns-record-tab.active {
+  background: var(--primary);
+  color: #fff;
+  border-color: var(--primary);
+}
+.dns-record-tab.empty { opacity: .5; }
+.dns-tab-count {
+  background: rgba(0,0,0,.15);
+  border-radius: 999px;
+  padding: 1px 7px;
+  font-size: .85em;
+  font-weight: 700;
+}
+.dns-record-tab.active .dns-tab-count { background: rgba(255,255,255,.25); }
+
+.dns-record-list {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 14px;
+}
+.dns-record-meta {
+  color: var(--text-light);
+  font-size: .82em;
+  margin-bottom: 8px;
+  display: flex; gap: 8px;
+}
+.dns-record-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 5px 0;
+  font-size: .9em;
+}
+.dns-record-row + .dns-record-row { border-top: 1px dashed var(--border); }
+.dns-record-type-mini {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  background: var(--primary); color: #fff;
+  padding: 1px 6px; border-radius: 3px;
+  font-size: .72em; font-weight: 700;
+  min-width: 48px; text-align: center;
+}
+.dns-record-value {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 2px 8px;
+  font-size: .88em;
+  color: var(--text);
+  word-break: break-all;
+}
+.dns-record-empty { color: var(--text-light); font-style: italic; padding: 4px 0; }
+
+/* Authoritative NS list */
+.dns-ns-list {
+  list-style: none; padding: 0; margin: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 6px;
+}
+.dns-ns-list code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 4px 10px;
+  font-size: .85em;
+  color: var(--text);
+  display: inline-block;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+/* SOA grid */
+.dns-soa-grid {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 5px 16px;
+  font-size: .88em;
+  margin: 0;
+}
+.dns-soa-grid dt {
+  font-weight: 600;
+  color: var(--text-light);
+}
+.dns-soa-grid dd { margin: 0; color: var(--text); font-variant-numeric: tabular-nums; }
+.dns-soa-grid code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--text);
+  background: none;
+  padding: 0;
+}
+
+/* History table */
+.dns-history-table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: .85em;
+}
+.dns-history-table thead th {
+  background: var(--bg-surface);
+  text-align: left;
+  padding: 6px 10px;
+  font-size: .78em;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  color: var(--text-light);
+  border-bottom: 1px solid var(--border);
+}
+.dns-history-table tbody td {
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+}
+.dns-history-changed { background: rgba(245,158,11,.08); }
+[data-theme="dark"] .dns-history-changed { background: rgba(245,158,11,.14); }
+
 .perm-last-update code {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   background: rgba(0,0,0,.05);

@@ -34,4 +34,20 @@ public class DnsRecord {
 
     @Column(name = "checked_at")
     private String checkedAt;
+
+    /** TTL of the record in seconds (smallest among returned RRs). */
+    @Column
+    private Long ttl;
+
+    /** Wall-clock time spent on the DNS lookup, in milliseconds. */
+    @Column(name = "response_ms")
+    private Long responseMs;
+
+    /** JSON array of authoritative NS hostnames; populated on manual /check or /details. */
+    @Column(name = "authoritative_servers", columnDefinition = "TEXT")
+    private String authoritativeServers;
+
+    /** JSON object with SOA fields (primary_ns, admin_email, serial, refresh, retry, expire, minimum_ttl). */
+    @Column(name = "soa_info", columnDefinition = "TEXT")
+    private String soaInfo;
 }

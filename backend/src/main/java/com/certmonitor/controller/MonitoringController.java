@@ -477,9 +477,21 @@ public class MonitoringController {
             record.setChanged(changed);
             record.setPreviousValue(prevValue);
             record.setCheckedAt(now);
+            record.setTtl(r.get("ttl") instanceof Number n ? n.longValue() : null);
+            record.setResponseMs(r.get("response_ms") instanceof Number rn ? rn.longValue() : null);
             dnsRecordRepo.save(record);
 
             return ok(enrichDns(m, record));
+        }).orElse(notFound("DNS monitor not found"));
+    }
+
+    /** Domain için tüm temel kayıt tipleri + SOA + authoritative NS — detail modal'da kullanılır. */
+    @GetMapping("/dns/{id}/details")
+    public ResponseEntity<Map<String, Object>> dnsDetails(@PathVariable Long id) {
+        return dnsMonitorRepo.findById(id).map(m -> {
+            Map<String, Object> data = new LinkedHashMap<>(dnsChecker.enrichedQuery(m.getDomain()));
+            data.put("monitor", enrichDns(m, dnsRecordRepo.findTopByMonitorIdOrderByCheckedAtDesc(m.getId()).orElse(null)));
+            return ResponseEntity.ok(Map.of("success", true, "data", data));
         }).orElse(notFound("DNS monitor not found"));
     }
 
@@ -497,10 +509,14 @@ public class MonitoringController {
             item.put("value",        latest.getValue());
             item.put("changed",      latest.getChanged());
             item.put("checked_at",   latest.getCheckedAt());
+            item.put("ttl",          latest.getTtl());
+            item.put("response_ms",  latest.getResponseMs());
         } else {
             item.put("value",        null);
             item.put("changed",      false);
             item.put("checked_at",   null);
+            item.put("ttl",          null);
+            item.put("response_ms",  null);
         }
         return item;
     }

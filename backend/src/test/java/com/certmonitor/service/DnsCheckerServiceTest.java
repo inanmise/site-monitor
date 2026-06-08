@@ -67,4 +67,35 @@ class DnsCheckerServiceTest {
         service.check("example.com", null);
         service.check("\t\t  \n", "A");
     }
+
+    @Test
+    @DisplayName("check captures response_ms regardless of success")
+    void check_responseMsIsCaptured() {
+        Map<String, Object> ok = service.check("example.com", "A");
+        Map<String, Object> bad = service.check("totally-bogus-host-cert-monitor-test.zzz", "A");
+        assertThat(ok).containsKey("response_ms");
+        assertThat(bad).containsKey("response_ms");
+        assertThat(ok.get("response_ms")).isInstanceOf(Long.class);
+        assertThat((Long) ok.get("response_ms")).isGreaterThanOrEqualTo(0L);
+    }
+
+    @Test
+    @DisplayName("check carries ttl key (Long or null)")
+    void check_ttlKeyAlwaysPresent() {
+        Map<String, Object> r = service.check("example.com", "A");
+        assertThat(r).containsKey("ttl");
+        Object ttl = r.get("ttl");
+        // ttl is either a Long (success path) or null (failure path) — never a String/Integer
+        assertThat(ttl == null || ttl instanceof Long).isTrue();
+    }
+
+    @Test
+    @DisplayName("enrichedQuery returns all standard record types and soa key")
+    void enrichedQuery_shape() {
+        Map<String, Object> data = service.enrichedQuery("example.com");
+        assertThat(data).containsKeys("records", "soa", "authoritative_servers");
+        @SuppressWarnings("unchecked")
+        Map<String, Object> records = (Map<String, Object>) data.get("records");
+        assertThat(records).containsKeys("A", "AAAA", "CNAME", "MX", "TXT", "NS");
+    }
 }

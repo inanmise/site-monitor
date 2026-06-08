@@ -279,6 +279,7 @@ export const api = {
     deleteDnsMonitor:  (id) => request(`/monitoring/dns/${id}`, { method: 'DELETE' }),
     triggerDnsCheck:   (id) => request(`/monitoring/dns/${id}/check`, { method: 'POST' }),
     getDnsHistory:     (id, limit = 100) => request(`/monitoring/dns/${id}/history?limit=${limit}`),
+    getDnsDetails:     (id) => request(`/monitoring/dns/${id}/details`),
   },
 }
 
