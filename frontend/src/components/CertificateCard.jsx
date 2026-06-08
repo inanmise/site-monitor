@@ -81,15 +81,17 @@ export default function CertificateCard({ cert, onClick, hasSilentAlert = false,
       {/* ── Hero — days remaining ── */}
       <div className="cc-hero">
         <div className="cc-hero-number">{daysDisplay}</div>
-        <div className="cc-hero-label">{heroLabel}</div>
-        {showLife && (
-          <div className="cc-life" title={t('card.lifetimeTooltip', elapsedDays, totalDays)}>
+        <div className="cc-hero-meta" title={showLife ? t('card.lifetimeTooltip', elapsedDays, totalDays) : undefined}>
+          <div className="cc-hero-label">{heroLabel}</div>
+          {showLife && (
             <div className="cc-life-bar">
               <div className="cc-life-fill" style={{ width: `${percentUsed}%` }} />
             </div>
-            <div className="cc-life-caption">
-              {elapsedDays} / {totalDays} {t('card.daysUnit')}
-            </div>
+          )}
+        </div>
+        {showLife && (
+          <div className="cc-life-caption">
+            {elapsedDays} / {totalDays} {t('card.daysUnit')}
           </div>
         )}
       </div>
