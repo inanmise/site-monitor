@@ -83,17 +83,17 @@ export default function CertificateCard({ cert, onClick, hasSilentAlert = false,
         <div className="cc-hero-row" title={showLife ? t('card.lifetimeTooltip', elapsedDays, totalDays) : undefined}>
           <div className="cc-hero-number">{daysDisplay}</div>
           {showLife && (
-            <div className="cc-life-bar">
-              <div className="cc-life-fill" style={{ width: `${percentUsed}%` }} />
+            <div className="cc-life-block">
+              <div className="cc-life-bar">
+                <div className="cc-life-fill" style={{ width: `${percentUsed}%` }} />
+              </div>
+              <div className="cc-life-caption">
+                {elapsedDays} / {totalDays} {t('card.daysUnit')}
+              </div>
             </div>
           )}
         </div>
         <div className="cc-hero-label">{heroLabel}</div>
-        {showLife && (
-          <div className="cc-life-caption">
-            {elapsedDays} / {totalDays} {t('card.daysUnit')}
-          </div>
-        )}
       </div>
 
       {/* ── Identity — domain + issuer + error message ── */}
