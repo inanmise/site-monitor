@@ -3,12 +3,18 @@ package com.certmonitor.service;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
-import org.xbill.DNS.Cache;
-import org.xbill.DNS.Lookup;
+import org.xbill.DNS.DClass;
+import org.xbill.DNS.Message;
+import org.xbill.DNS.Name;
+import org.xbill.DNS.Rcode;
 import org.xbill.DNS.Record;
+import org.xbill.DNS.Resolver;
 import org.xbill.DNS.SOARecord;
+import org.xbill.DNS.Section;
+import org.xbill.DNS.SimpleResolver;
 import org.xbill.DNS.Type;
 
+import java.time.Duration;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
 
@@ -40,36 +46,37 @@ public class DnsCheckerService {
         long start = System.nanoTime();
         try {
             int type = typeOf(recordType);
-            Lookup lookup = new Lookup(domain, type);
-            // Bypass dnsjava's shared cache so response_ms reflects a real
-            // network round-trip, not a millisecond memory hit.
-            lookup.setCache(new Cache());
-            Record[] records = lookup.run();
+            Message response = sendQuery(domain, type);
             long responseMs = (System.nanoTime() - start) / 1_000_000L;
 
+            List<Record> answers = response.getSection(Section.ANSWER);
             List<String> values = new ArrayList<>();
             Long minTtl = null;
-            if (records != null) {
-                for (Record r : records) {
-                    values.add(rdataAsString(r));
-                    long t = r.getTTL();
-                    if (minTtl == null || t < minTtl) minTtl = t;
-                }
-                Collections.sort(values);
+            for (Record r : answers) {
+                // Skip CNAME chain hops when the question was for A / AAAA etc.;
+                // keep only records that match the type we actually asked for.
+                if (type != Type.CNAME && r.getType() == Type.CNAME) continue;
+                if (r.getType() != type) continue;
+                values.add(rdataAsString(r));
+                long t = r.getTTL();
+                if (minTtl == null || t < minTtl) minTtl = t;
             }
+            Collections.sort(values);
 
-            boolean ok = lookup.getResult() == Lookup.SUCCESSFUL && records != null;
+            int rcode = response.getRcode();
+            boolean ok = rcode == Rcode.NOERROR && !values.isEmpty();
             result.put("success", ok);
             result.put("values", values);
             result.put("ttl", minTtl);
             result.put("response_ms", responseMs);
             if (!ok) {
-                result.put("error", lookup.getErrorString());
+                result.put("error", rcode == Rcode.NOERROR ? "no answer" : Rcode.string(rcode));
             }
         } catch (Exception e) {
             result.put("success", false);
             result.put("values", List.of());
             result.put("response_ms", (System.nanoTime() - start) / 1_000_000L);
+            result.put("ttl", null);
             result.put("error", e.getMessage());
             log.debug("DNS check failed for {} {}: {}", recordType, domain, e.getMessage());
         }
@@ -102,30 +109,58 @@ public class DnsCheckerService {
         Map<String, Object> soa = new LinkedHashMap<>();
         long start = System.nanoTime();
         try {
-            Lookup lookup = new Lookup(domain, Type.SOA);
-            lookup.setCache(new Cache());
-            Record[] records = lookup.run();
+            Message response = sendQuery(domain, Type.SOA);
             long responseMs = (System.nanoTime() - start) / 1_000_000L;
             soa.put("response_ms", responseMs);
-            if (records != null && records.length > 0 && records[0] instanceof SOARecord r) {
-                soa.put("primary_ns",  r.getHost().toString());
-                soa.put("admin_email", r.getAdmin().toString());
-                soa.put("serial",      r.getSerial());
-                soa.put("refresh",     r.getRefresh());
-                soa.put("retry",       r.getRetry());
-                soa.put("expire",      r.getExpire());
-                soa.put("minimum_ttl", r.getMinimum());
-                soa.put("ttl",         r.getTTL());
+
+            // SOA may come back in ANSWER (for the apex domain) or AUTHORITY
+            // (for any subdomain that doesn't have its own zone).
+            SOARecord soaRecord = findSoa(response.getSection(Section.ANSWER));
+            if (soaRecord == null) {
+                soaRecord = findSoa(response.getSection(Section.AUTHORITY));
+            }
+            if (soaRecord != null) {
+                soa.put("primary_ns",  soaRecord.getHost().toString());
+                soa.put("admin_email", soaRecord.getAdmin().toString());
+                soa.put("serial",      soaRecord.getSerial());
+                soa.put("refresh",     soaRecord.getRefresh());
+                soa.put("retry",       soaRecord.getRetry());
+                soa.put("expire",      soaRecord.getExpire());
+                soa.put("minimum_ttl", soaRecord.getMinimum());
+                soa.put("ttl",         soaRecord.getTTL());
                 soa.put("success",     true);
             } else {
                 soa.put("success", false);
-                soa.put("error", lookup.getErrorString());
+                soa.put("error", Rcode.string(response.getRcode()));
             }
         } catch (Exception e) {
             soa.put("success", false);
+            soa.put("response_ms", (System.nanoTime() - start) / 1_000_000L);
             soa.put("error", e.getMessage());
         }
         return soa;
+    }
+
+    private static SOARecord findSoa(List<Record> records) {
+        if (records == null) return null;
+        for (Record r : records) {
+            if (r instanceof SOARecord s) return s;
+        }
+        return null;
+    }
+
+    /**
+     * Low-level DNS query that bypasses every dnsjava cache layer. The
+     * resolver is created fresh per call and the Message is sent directly,
+     * so {@code response_ms} measures the actual network round-trip.
+     */
+    private static Message sendQuery(String domain, int type) throws Exception {
+        Name name = Name.fromString(domain.endsWith(".") ? domain : domain + ".");
+        Record question = Record.newRecord(name, type, DClass.IN);
+        Message query = Message.newQuery(question);
+        Resolver resolver = new SimpleResolver();
+        resolver.setTimeout(Duration.ofSeconds(5));
+        return resolver.send(query);
     }
 
     private static int typeOf(String recordType) {
