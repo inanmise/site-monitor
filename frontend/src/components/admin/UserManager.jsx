@@ -8,8 +8,9 @@ import AdminAutoResetModal from './AdminAutoResetModal.jsx'
 
 const emptyUser = { username: '', password: '', display_name: '', email: '', employee_id: '', system_role: 'USER', team_id: '', org_role: '', active: true }
 
-export default function UserManager({ teams }) {
+export default function UserManager({ systemRole, teams }) {
   const t = useT()
+  const isAdmin = systemRole === 'ADMIN'
   const { showConfirm } = useDialog()
   const [users, setUsers] = useState([])
   const [modal, setModal] = useState(null)
@@ -95,7 +96,7 @@ export default function UserManager({ teams }) {
     <div className="admin-section">
       <div className="admin-section-header">
         <h3>{t('usr.title')}</h3>
-        <button className="btn btn-success" onClick={openAdd}>{t('usr.addBtn')}</button>
+        {isAdmin && <button className="btn btn-success" onClick={openAdd}>{t('usr.addBtn')}</button>}
       </div>
       {msg && !modal && !autoResetModal && <div className="alert-msg">{msg}</div>}
       <div className="admin-table-wrap">
@@ -128,12 +129,16 @@ export default function UserManager({ teams }) {
                   {user.permanent_lock && <span className="badge badge-err" style={{ marginLeft: 4 }} title={t('usr.permLocked')}>🔒</span>}
                 </td>
                 <td>
-                  <button className="btn-sm btn-edit" onClick={() => openEdit(user)}>{t('usr.edit')}</button>
-                  <button className="btn-sm" style={{ background: '#0ea5e9', color: '#fff', marginRight: 4 }} onClick={() => setAutoResetModal(user)}>{t('usr.autoResetBtn')}</button>
-                  {user.permanent_lock && (
-                    <button className="btn-sm" style={{ background: '#f59e0b', color: '#fff', marginRight: 4 }} onClick={() => unlock(user.id)}>{t('usr.unlock')}</button>
+                  {isAdmin && (
+                    <>
+                      <button className="btn-sm btn-edit" onClick={() => openEdit(user)}>{t('usr.edit')}</button>
+                      <button className="btn-sm" style={{ background: '#0ea5e9', color: '#fff', marginRight: 4 }} onClick={() => setAutoResetModal(user)}>{t('usr.autoResetBtn')}</button>
+                      {user.permanent_lock && (
+                        <button className="btn-sm" style={{ background: '#f59e0b', color: '#fff', marginRight: 4 }} onClick={() => unlock(user.id)}>{t('usr.unlock')}</button>
+                      )}
+                      <button className="btn-sm btn-del" onClick={() => del(user.id)}>{t('usr.delete')}</button>
+                    </>
                   )}
-                  <button className="btn-sm btn-del" onClick={() => del(user.id)}>{t('usr.delete')}</button>
                 </td>
               </tr>
             ))}

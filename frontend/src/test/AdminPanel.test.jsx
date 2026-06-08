@@ -24,12 +24,12 @@ vi.mock('../components/admin/UserManager.jsx', () => ({
 }))
 
 describe('AdminPanel', () => {
-  it('renders only contacts tab without admin role', async () => {
+  it('non-admin sees contacts, teams, users (read-only) but not thresholds', async () => {
     await act(async () => { render(<AdminPanel />) })
     expect(screen.getByText('Escalation Contacts')).toBeInTheDocument()
+    expect(screen.getByText('Teams')).toBeInTheDocument()
+    expect(screen.getByText('Users')).toBeInTheDocument()
     expect(screen.queryByText('Thresholds')).not.toBeInTheDocument()
-    expect(screen.queryByText('Teams')).not.toBeInTheDocument()
-    expect(screen.queryByText('Users')).not.toBeInTheDocument()
   })
 
   it('renders all 4 tabs with admin role', async () => {

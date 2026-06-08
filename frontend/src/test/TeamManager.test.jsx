@@ -59,8 +59,8 @@ describe('TeamManager — business-card members', () => {
     expect(card.textContent).toContain('erdi@example.com')
   })
 
-  it('opens the user edit modal when a member card is clicked', async () => {
-    render(<TeamManager onTeamsChange={() => {}} />)
+  it('opens the user edit modal when a member card is clicked (admin only)', async () => {
+    render(<TeamManager systemRole="ADMIN" onTeamsChange={() => {}} />)
     await waitFor(() => expect(screen.getByText('Payments')).toBeDefined())
     fireEvent.click(document.querySelector('.team-expand-btn'))
     await waitFor(() => expect(document.querySelector('.tm-member-card-clickable')).not.toBeNull())
@@ -71,5 +71,14 @@ describe('TeamManager — business-card members', () => {
 
     // The shared UserEditModal renders an editable email input with the user's email
     await waitFor(() => expect(screen.getByDisplayValue('erdi@example.com')).toBeDefined())
+  })
+
+  it('member card is non-clickable for non-admin (read-only view)', async () => {
+    render(<TeamManager onTeamsChange={() => {}} />)
+    await waitFor(() => expect(screen.getByText('Payments')).toBeDefined())
+    fireEvent.click(document.querySelector('.team-expand-btn'))
+    await waitFor(() => expect(document.querySelector('.tm-member-card')).not.toBeNull())
+
+    expect(document.querySelector('.tm-member-card-clickable')).toBeNull()
   })
 })

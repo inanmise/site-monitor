@@ -32,8 +32,9 @@ function avatarStyleFor(seed) {
   return { background: AVATAR_PALETTE[Math.abs(hash) % AVATAR_PALETTE.length], color: '#fff' }
 }
 
-export default function TeamManager({ onTeamsChange }) {
+export default function TeamManager({ systemRole, onTeamsChange }) {
   const t = useT()
+  const isAdmin = systemRole === 'ADMIN'
   const { showConfirm } = useDialog()
   const [teams, setTeams]   = useState([])
   const [users, setUsers]   = useState([])
@@ -145,7 +146,7 @@ export default function TeamManager({ onTeamsChange }) {
     <div className="admin-section">
       <div className="admin-section-header">
         <h3>{t('team.title')}</h3>
-        <button className="btn btn-success" onClick={openAdd}>{t('team.addBtn')}</button>
+        {isAdmin && <button className="btn btn-success" onClick={openAdd}>{t('team.addBtn')}</button>}
       </div>
       {msg && !modal && <div className={`alert-msg${msg.startsWith('✓') ? '' : ' alert-msg--err'}`}>{msg}</div>}
       <div className="admin-table-wrap">
@@ -185,8 +186,12 @@ export default function TeamManager({ onTeamsChange }) {
                   <td>{team.description || '—'}</td>
                   <td><span className={team.active ? 'badge badge-ok' : 'badge badge-err'}>{team.active ? t('team.active') : t('team.inactive')}</span></td>
                   <td>
-                    <button className="btn-sm btn-edit" onClick={() => openEdit(team)}>{t('team.edit')}</button>
-                    <button className="btn-sm btn-del" onClick={() => del(team.id)}>{t('team.delete')}</button>
+                    {isAdmin && (
+                      <>
+                        <button className="btn-sm btn-edit" onClick={() => openEdit(team)}>{t('team.edit')}</button>
+                        <button className="btn-sm btn-del" onClick={() => del(team.id)}>{t('team.delete')}</button>
+                      </>
+                    )}
                   </td>
                 </tr>
                 {expandedId === team.id && (
@@ -206,12 +211,12 @@ export default function TeamManager({ onTeamsChange }) {
                                     return (
                                       <div
                                         key={m.id}
-                                        className="tm-member-card tm-member-card-clickable"
-                                        role="button"
-                                        tabIndex={0}
-                                        onClick={() => setEditingUser(m)}
-                                        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setEditingUser(m) } }}
-                                        title={t('usr.editTitle')}
+                                        className={`tm-member-card${isAdmin ? ' tm-member-card-clickable' : ''}`}
+                                        role={isAdmin ? 'button' : undefined}
+                                        tabIndex={isAdmin ? 0 : undefined}
+                                        onClick={isAdmin ? () => setEditingUser(m) : undefined}
+                                        onKeyDown={isAdmin ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setEditingUser(m) } } : undefined}
+                                        title={isAdmin ? t('usr.editTitle') : undefined}
                                       >
                                         <div className="tm-mc-avatar" style={avatarStyle}>{initials}</div>
                                         <div className="tm-mc-body">

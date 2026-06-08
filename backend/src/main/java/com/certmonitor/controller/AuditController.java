@@ -87,8 +87,6 @@ public class AuditController {
 
     @GetMapping("/audit/weak-algorithms")
     public ResponseEntity<Map<String, Object>> weakAlgorithmReport(HttpSession session) {
-        requireAuditAccess(session);
-
         Map<String, CertificateInventory> invMap = inventoryRepo.findAll().stream()
                 .collect(Collectors.toMap(CertificateInventory::getDomain, i -> i, (a, b) -> a));
 

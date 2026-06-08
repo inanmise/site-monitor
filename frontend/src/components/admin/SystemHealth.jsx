@@ -51,7 +51,8 @@ function DbColor(ms) {
   return 'sys-err-text'
 }
 
-export default function SystemHealth({ preFilterDomain, openSmtpModalOnLoad, onSmtpPreFilterConsumed }) {
+export default function SystemHealth({ systemRole, preFilterDomain, openSmtpModalOnLoad, onSmtpPreFilterConsumed }) {
+  const isAdmin = systemRole === 'ADMIN'
   const t = useT()
   const [health, setHealth]           = useState(null)
   const [metrics, setMetrics]         = useState([])
@@ -273,13 +274,15 @@ export default function SystemHealth({ preFilterDomain, openSmtpModalOnLoad, onS
             <dt>{t('sys.activeDomains')}</dt>
             <dd>{scheduler?.active_domains}</dd>
           </dl>
-          <button
-            className="btn-primary sys-action-btn"
-            disabled={isRunning || triggering}
-            onClick={handleForceRun}
-          >
-            {triggering ? t('sys.triggering') : t('sys.forceRun')}
-          </button>
+          {isAdmin && (
+            <button
+              className="btn-primary sys-action-btn"
+              disabled={isRunning || triggering}
+              onClick={handleForceRun}
+            >
+              {triggering ? t('sys.triggering') : t('sys.forceRun')}
+            </button>
+          )}
         </div>
 
         {/* Lock card */}
@@ -306,7 +309,7 @@ export default function SystemHealth({ preFilterDomain, openSmtpModalOnLoad, onS
                 <dt>{t('sys.heldByMe')}</dt>
                 <dd>{lock.held_by_me ? t('sys.yes') : t('sys.no')}</dd>
               </dl>
-              {!lock.held_by_me && (
+              {!lock.held_by_me && isAdmin && (
                 <button
                   className="btn-danger sys-action-btn"
                   disabled={releasing}
@@ -529,15 +532,17 @@ export default function SystemHealth({ preFilterDomain, openSmtpModalOnLoad, onS
               <h3>{t('health.hbTitle')}</h3>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-              <button
-                className="sys-card-refresh-btn"
-                onClick={refreshHeartbeat}
-                disabled={hbRefreshing}
-                title={t('sys.poolRefresh')}
-                aria-label={t('sys.poolRefresh')}
-              >
-                <span className={hbRefreshing ? 'spin' : ''}>↻</span>
-              </button>
+              {isAdmin && (
+                <button
+                  className="sys-card-refresh-btn"
+                  onClick={refreshHeartbeat}
+                  disabled={hbRefreshing}
+                  title={t('sys.poolRefresh')}
+                  aria-label={t('sys.poolRefresh')}
+                >
+                  <span className={hbRefreshing ? 'spin' : ''}>↻</span>
+                </button>
+              )}
               <span className={`sys-badge ${hbOk ? 'sys-badge-free' : 'sys-badge-locked'}`}>
                 {hbOk ? '✓' : '⚠'}
               </span>

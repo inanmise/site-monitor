@@ -30,7 +30,6 @@ public class SystemController {
 
     @GetMapping
     public ResponseEntity<Map<String, Object>> getHealth(HttpSession session) {
-        requireAdmin(session);
         Map<String, Object> data = new LinkedHashMap<>(schedulerService.getSystemHealth());
         data.put("smtp",      extendedHealthService.getSmtpStats());
         data.put("db_ms",     extendedHealthService.measureDbResponseMs());
@@ -43,7 +42,6 @@ public class SystemController {
     public ResponseEntity<Map<String, Object>> getSmtpLogs(
             @RequestParam(defaultValue = "30") int days,
             HttpSession session) {
-        requireAdmin(session);
         int d = Math.max(1, Math.min(days, 365));
         return ResponseEntity.ok(Map.of(
                 "success",   true,
@@ -54,19 +52,16 @@ public class SystemController {
 
     @GetMapping("/db-stats")
     public ResponseEntity<Map<String, Object>> getDbStats(HttpSession session) {
-        requireAdmin(session);
         return ResponseEntity.ok(Map.of("success", true, "data", extendedHealthService.getTableStats(), "timestamp", now()));
     }
 
     @GetMapping("/metrics")
     public ResponseEntity<Map<String, Object>> getMetrics(HttpSession session) {
-        requireAdmin(session);
         return ResponseEntity.ok(Map.of("success", true, "data", metricsService.getHistory(), "timestamp", now()));
     }
 
     @GetMapping("/http-metrics")
     public ResponseEntity<Map<String, Object>> getHttpMetrics(HttpSession session) {
-        requireAdmin(session);
         Map<String, Object> data = new java.util.LinkedHashMap<>();
         data.put("summary", httpMetricsService.getSummary());
         data.put("history", httpMetricsService.getHistory());
