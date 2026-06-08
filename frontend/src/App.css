@@ -1433,6 +1433,7 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .modal-icon-hdr--user .modal-icon-hdr-badge { background: linear-gradient(135deg, #3b82f6, #1d4ed8); color: #fff; }
 .modal-icon-hdr--team .modal-icon-hdr-badge { background: linear-gradient(135deg, #10b981, #059669); color: #fff; }
 .modal-icon-hdr--port .modal-icon-hdr-badge { background: linear-gradient(135deg, #f59e0b, #d97706); color: #fff; }
+.modal-icon-hdr--dns  .modal-icon-hdr-badge { background: linear-gradient(135deg, #8b5cf6, #6d28d9); color: #fff; }
 .req-star { color: var(--danger); }
 .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; align-items: end; }
 .form-grid label { display: flex; flex-direction: column; gap: 5px; font-size: .88em; font-weight: 600; }
