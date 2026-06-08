@@ -26,6 +26,12 @@ function ChartTooltip({ active, payload, t }) {
 }
 
 const RECORD_TYPES = ['A', 'AAAA', 'CNAME', 'MX', 'TXT', 'NS']
+const RANGE_OPTIONS = [
+  { days: 1,  labelKey: 'dns.last1d'  },
+  { days: 7,  labelKey: 'dns.last7d'  },
+  { days: 10, labelKey: 'dns.last10d' },
+  { days: 30, labelKey: 'dns.last30d' },
+]
 
 function computeDiff(prev, next) {
   const prevLines = (prev || '').split('\n').filter(Boolean)
@@ -44,19 +50,27 @@ export default function DnsDetailModal({ monitor, onClose }) {
   const [history, setHistory] = useState([])
   const [loading, setLoading] = useState(true)
   const [activeTab, setActiveTab] = useState('A')
+  const [rangeDays, setRangeDays] = useState(7)
 
+  // Details — bir kez yüklenir, monitor değişene kadar tutulur
   useEffect(() => {
     if (!monitor) return
     setLoading(true)
-    Promise.all([
-      api.monitoring.getDnsDetails(monitor.id),
-      api.monitoring.getDnsHistory(monitor.id, 50),
-    ]).then(([d, h]) => {
+    api.monitoring.getDnsDetails(monitor.id).then(d => {
       if (d?.success) setDetails(d.data)
-      if (h?.success) setHistory(h.data || [])
       setLoading(false)
     })
   }, [monitor])
+
+  // History — monitor veya rangeDays değişince yeniden yüklenir
+  useEffect(() => {
+    if (!monitor) return
+    api.monitoring.getDnsHistory(monitor.id, rangeDays).then(h => {
+      if (h?.success) setHistory(h.data || [])
+    })
+  }, [monitor, rangeDays])
+
+  const activeRangeOption = RANGE_OPTIONS.find(r => r.days === rangeDays) || RANGE_OPTIONS[1]
 
   if (!monitor) return null
 
@@ -195,6 +209,7 @@ export default function DnsDetailModal({ monitor, onClose }) {
                 <div className="dns-section">
                   <h4 className="dns-section-title">
                     <Activity size={14} /> {t('dns.responseTrend')}
+                    <span className="dns-range-hint">· {t(activeRangeOption.labelKey)}</span>
                   </h4>
                   <div className="dns-chart-wrap">
                     <ResponsiveContainer width="100%" height={200}>
@@ -229,11 +244,28 @@ export default function DnsDetailModal({ monitor, onClose }) {
             })()}
 
             {/* Recent history */}
-            {history.length > 0 && (
-              <div className="dns-section">
+            <div className="dns-section">
+              <div className="dns-section-header-with-filter">
                 <h4 className="dns-section-title">
                   <Clock size={14} /> {t('dns.recentChecks')}
                 </h4>
+                <div className="dns-range-filter">
+                  {RANGE_OPTIONS.map(opt => (
+                    <button
+                      key={opt.days}
+                      type="button"
+                      className={`dns-range-btn${rangeDays === opt.days ? ' active' : ''}`}
+                      onClick={() => setRangeDays(opt.days)}
+                    >
+                      {t(opt.labelKey)}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              {history.length === 0 ? (
+                <div className="dns-history-empty">{t('dns.noHistoryInRange')}</div>
+              ) : (
+              <div className="dns-history-scroll">
                 <table className="dns-history-table">
                   <thead>
                     <tr>
@@ -245,7 +277,7 @@ export default function DnsDetailModal({ monitor, onClose }) {
                     </tr>
                   </thead>
                   <tbody>
-                    {history.slice(0, 15).map((h, i) => {
+                    {history.map((h, i) => {
                       const isChanged = h.changed
                       const isRotated = !isChanged && h.rotated
                       const prevVal = h.previous_value ?? h.previousValue
@@ -303,7 +335,11 @@ export default function DnsDetailModal({ monitor, onClose }) {
                   </tbody>
                 </table>
               </div>
-            )}
+              )}
+              {history.length > 0 && (
+                <div className="dns-history-meta">{t('dns.recordCount', history.length)}</div>
+              )}
+            </div>
           </div>
         )}
       </div>

@@ -6657,6 +6657,69 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
   padding: 6px 10px;
   border-bottom: 1px solid var(--border);
 }
+/* Range filter (Son Sorgular + grafik için ortak) */
+.dns-section-header-with-filter {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; flex-wrap: wrap;
+  margin: 0 0 10px 0;
+}
+.dns-section-header-with-filter .dns-section-title {
+  margin: 0; padding: 0; border: none;
+}
+.dns-range-filter {
+  display: inline-flex; gap: 4px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 3px;
+}
+.dns-range-btn {
+  background: none; border: none;
+  padding: 5px 12px;
+  border-radius: 6px;
+  font-size: .82em;
+  color: var(--text-light);
+  cursor: pointer;
+  transition: background .12s, color .12s;
+  white-space: nowrap;
+}
+.dns-range-btn:hover { background: var(--bg-hover); color: var(--text); }
+.dns-range-btn.active {
+  background: var(--primary);
+  color: #fff;
+  font-weight: 600;
+}
+.dns-range-hint {
+  color: var(--text-light);
+  font-weight: 400;
+  font-size: .85em;
+  text-transform: none;
+  letter-spacing: 0;
+  margin-left: 8px;
+}
+.dns-history-scroll {
+  max-height: 360px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.dns-history-scroll .dns-history-table { border: none; }
+.dns-history-meta {
+  font-size: .78em;
+  color: var(--text-light);
+  margin-top: 6px;
+  text-align: right;
+}
+.dns-history-empty {
+  padding: 28px 16px;
+  text-align: center;
+  color: var(--text-light);
+  background: var(--bg-surface);
+  border: 1px dashed var(--border);
+  border-radius: 6px;
+  font-size: .9em;
+}
+
 .dns-history-changed { background: rgba(220,38,38,.07); }
 [data-theme="dark"] .dns-history-changed { background: rgba(220,38,38,.14); }
 .dns-history-rotated { background: rgba(245,158,11,.06); }

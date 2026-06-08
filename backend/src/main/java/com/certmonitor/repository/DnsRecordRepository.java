@@ -10,4 +10,5 @@ public interface DnsRecordRepository extends JpaRepository<DnsRecord, Long> {
     List<DnsRecord> findByMonitorIdOrderByCheckedAtDesc(Long monitorId);
     Optional<DnsRecord> findTopByMonitorIdOrderByCheckedAtDesc(Long monitorId);
     List<DnsRecord> findByMonitorIdAndCheckedAtGreaterThanEqualOrderByCheckedAtAsc(Long monitorId, String since);
+    List<DnsRecord> findByMonitorIdAndCheckedAtGreaterThanEqualOrderByCheckedAtDesc(Long monitorId, String since);
 }
