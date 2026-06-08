@@ -821,6 +821,7 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .cc-expires {
   display: inline-flex; align-items: center; gap: 5px;
   color: #6b7280;
+  font-weight: 700;
 }
 .cc-expires svg { color: #9ca3af; flex-shrink: 0; }
 
