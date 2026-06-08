@@ -75,6 +75,16 @@ public class SystemController {
         return ResponseEntity.ok(Map.of("success", true, "data", extendedHealthService.getHeartbeatStatus(), "timestamp", now()));
     }
 
+    @GetMapping("/heartbeat-timeline")
+    public ResponseEntity<Map<String, Object>> heartbeatTimeline(
+            @RequestParam(defaultValue = "1") int days,
+            HttpSession session) {
+        return ResponseEntity.ok(Map.of(
+            "success",   true,
+            "data",      extendedHealthService.getHeartbeatTimeline(days),
+            "timestamp", now()));
+    }
+
     @DeleteMapping("/scheduler-lock")
     public ResponseEntity<Map<String, Object>> forceReleaseLock(HttpSession session) {
         requireAdmin(session);

@@ -17,6 +17,7 @@ import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -103,6 +104,43 @@ public class ExtendedHealthService {
             m.put("error", e.getMessage());
             return m;
         }
+    }
+
+    public Map<String, Object> getHeartbeatTimeline(int days) {
+        int d = Math.max(1, Math.min(days, 30));
+        int bucketMinutes = (d == 1) ? 10 : 60;
+        LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC).withSecond(0).withNano(0);
+        LocalDateTime cutoff = now.minusDays(d);
+        int alignMin = cutoff.getMinute() % bucketMinutes;
+        cutoff = cutoff.minusMinutes(alignMin);
+
+        long totalMinutes = ChronoUnit.MINUTES.between(cutoff, now);
+        int totalBuckets = (int)(totalMinutes / bucketMinutes);
+        if (totalBuckets <= 0) totalBuckets = 1;
+        long[] counts = new long[totalBuckets];
+
+        List<SystemHeartbeat> rows = heartbeatRepo.findByRecordedAtAfterOrderByRecordedAtAsc(cutoff);
+        for (SystemHeartbeat hb : rows) {
+            long minutesFromCutoff = ChronoUnit.MINUTES.between(cutoff, hb.getRecordedAt());
+            int idx = (int)(minutesFromCutoff / bucketMinutes);
+            if (idx >= 0 && idx < totalBuckets) counts[idx]++;
+        }
+
+        List<Map<String, Object>> buckets = new ArrayList<>(totalBuckets);
+        int expected = bucketMinutes;
+        for (int i = 0; i < totalBuckets; i++) {
+            Map<String, Object> b = new LinkedHashMap<>();
+            b.put("start",    cutoff.plusMinutes((long)i * bucketMinutes).toString());
+            b.put("expected", expected);
+            b.put("received", (int) counts[i]);
+            buckets.add(b);
+        }
+
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("days",           d);
+        out.put("bucket_minutes", bucketMinutes);
+        out.put("buckets",        buckets);
+        return out;
     }
 
     // ── SMTP stats ────────────────────────────────────────────────────────────

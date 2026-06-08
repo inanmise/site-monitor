@@ -251,6 +251,7 @@ export const api = {
     getSmtpLogs: (days) =>
       request(`/admin/system/smtp-logs${days ? `?days=${days}` : ''}`),
     triggerHeartbeat: () => request('/admin/system/heartbeat', { method: 'POST' }),
+    getHeartbeatTimeline: (days = 1) => request(`/admin/system/heartbeat-timeline?days=${days}`),
   },
 
   // ── Monitoring ───────────────────────────────────────────────────────────
