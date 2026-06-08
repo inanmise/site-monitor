@@ -736,17 +736,17 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .cc-card.cc-critical .cc-hero-number { color: #dc2626; }
 .cc-card.cc-error    .cc-hero-number { color: #dc2626; }
 
-.cc-life {
-  margin-top: 6px;
+.cc-hero-meta {
+  margin-top: 4px;
   display: flex;
-  flex-direction: column;
   align-items: center;
-  gap: 3px;
-  width: 100%;
+  justify-content: center;
+  gap: 10px;
 }
+.cc-hero-meta .cc-hero-label { margin-top: 0; }
 .cc-life-bar {
-  width: 70%;
-  max-width: 180px;
+  flex: 0 0 auto;
+  width: 110px;
   height: 7px;
   background: var(--border);
   border-radius: 4px;
@@ -759,10 +759,12 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
   background: var(--text-light);
 }
 .cc-life-caption {
+  margin-top: 3px;
   font-size: .68em;
   color: var(--text-light);
   font-variant-numeric: tabular-nums;
   line-height: 1;
+  text-align: center;
 }
 .cc-card.cc-valid    .cc-life-fill { background: #10b981; }
 .cc-card.cc-warning  .cc-life-fill { background: #f59e0b; }
