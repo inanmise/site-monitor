@@ -170,6 +170,7 @@ export default function DnsDetailModal({ monitor, onClose }) {
                   <thead>
                     <tr>
                       <th>{t('dns.lastCheck')}</th>
+                      <th>{t('dns.currentValue')}</th>
                       <th>{t('dns.ttl')}</th>
                       <th>{t('dns.responseMs')}</th>
                       <th>{t('dns.status')}</th>
@@ -184,6 +185,9 @@ export default function DnsDetailModal({ monitor, onClose }) {
                         <Fragment key={i}>
                           <tr className={isChanged ? 'dns-history-changed' : ''}>
                             <td className="dns-cell-time">{formatDate(h.checked_at || h.checkedAt)}</td>
+                            <td className="dns-history-value" title={h.value || '—'}>
+                              <code>{h.value || '—'}</code>
+                            </td>
                             <td className="dns-cell-num">{h.ttl != null ? `${h.ttl}s` : '—'}</td>
                             <td className="dns-cell-num">{h.response_ms != null ? `${h.response_ms}ms` : '—'}</td>
                             <td>
@@ -194,7 +198,7 @@ export default function DnsDetailModal({ monitor, onClose }) {
                           </tr>
                           {isChanged && diff && (
                             <tr className="dns-diff-row">
-                              <td colSpan={4}>
+                              <td colSpan={5}>
                                 <div className="dns-diff-grid">
                                   <div className="dns-diff-col">
                                     <div className="dns-diff-col-title">{t('dns.previousValue')}</div>
