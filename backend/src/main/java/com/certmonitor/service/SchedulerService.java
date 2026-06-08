@@ -680,6 +680,8 @@ public class SchedulerService {
                 record.setChanged(changed);
                 record.setPreviousValue(prevValue);
                 record.setCheckedAt(now);
+                record.setTtl(r.get("ttl") instanceof Number tn ? tn.longValue() : null);
+                record.setResponseMs(r.get("response_ms") instanceof Number rn ? rn.longValue() : null);
                 dnsRecordRepo.save(record);
 
                 if (changed) {
