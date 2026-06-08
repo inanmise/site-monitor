@@ -671,13 +671,16 @@ public class SchedulerService {
 
                 DnsRecord prev = dnsRecordRepo.findTopByMonitorIdOrderByCheckedAtDesc(m.getId()).orElse(null);
                 String prevValue = prev != null ? prev.getValue() : null;
-                boolean changed = prevValue != null && !prevValue.equals(valueStr);
+                DnsCheckerService.ChangeKind kind = DnsCheckerService.detectChange(prevValue, valueStr);
+                boolean changed = kind == DnsCheckerService.ChangeKind.CHANGED;
+                boolean rotated = kind == DnsCheckerService.ChangeKind.ROTATED;
 
                 DnsRecord record = new DnsRecord();
                 record.setMonitorId(m.getId());
                 record.setRecordType(m.getRecordType());
                 record.setValue(valueStr);
                 record.setChanged(changed);
+                record.setRotated(rotated);
                 record.setPreviousValue(prevValue);
                 record.setCheckedAt(now);
                 record.setTtl(r.get("ttl") instanceof Number tn ? tn.longValue() : null);

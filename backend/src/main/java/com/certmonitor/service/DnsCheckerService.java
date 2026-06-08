@@ -143,4 +143,34 @@ public class DnsCheckerService {
     private static String rdataAsString(Record r) {
         return r.rdataToString();
     }
+
+    /**
+     * Distinguishes a real DNS change from a round-robin / GeoDNS rotation.
+     *
+     * <ul>
+     *   <li>{@code prev == null} → first ever check, neither changed nor rotated.</li>
+     *   <li>identical strings → neither.</li>
+     *   <li>same line-set (different order) → neither (identical content).</li>
+     *   <li>sets share at least one line → rotation (e.g. CDN returning a
+     *       subset of edge IPs).</li>
+     *   <li>sets disjoint → real change.</li>
+     * </ul>
+     */
+    public static ChangeKind detectChange(String prev, String current) {
+        if (prev == null) return ChangeKind.NONE;
+        if (prev.equals(current)) return ChangeKind.NONE;
+
+        Set<String> prevSet = new HashSet<>(Arrays.asList((prev == null ? "" : prev).split("\n")));
+        Set<String> nextSet = new HashSet<>(Arrays.asList((current == null ? "" : current).split("\n")));
+        prevSet.remove("");
+        nextSet.remove("");
+
+        if (prevSet.equals(nextSet)) return ChangeKind.NONE;
+
+        Set<String> intersect = new HashSet<>(prevSet);
+        intersect.retainAll(nextSet);
+        return intersect.isEmpty() ? ChangeKind.CHANGED : ChangeKind.ROTATED;
+    }
+
+    public enum ChangeKind { NONE, ROTATED, CHANGED }
 }

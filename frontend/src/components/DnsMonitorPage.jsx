@@ -156,6 +156,9 @@ export default function DnsMonitorPage({ systemRole }) {
                   </td>
                   <td className="dns-cell-value">
                     {m.changed && <span className="dns-changed-badge">{t('dns.changed')}</span>}
+                    {!m.changed && m.rotated && (
+                      <span className="dns-rotated-badge" title={t('dns.rotationTitle')}>{t('dns.rotated')}</span>
+                    )}
                     <span className="dns-cell-mono">{truncateValue(m.value)}</span>
                   </td>
                   <td className="dns-cell-num">{m.ttl != null ? `${m.ttl}s` : '—'}</td>

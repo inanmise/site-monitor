@@ -29,6 +29,15 @@ public class DnsRecord {
     @Column(nullable = false)
     private Boolean changed = false;
 
+    /**
+     * True when the new value differs from the previous one only because of
+     * DNS round-robin / GeoDNS rotation — i.e. the two sets of records still
+     * intersect but the order or subset changed. Distinct from {@code changed},
+     * which is reserved for actual end-to-end value changes (no intersection).
+     */
+    @Column(nullable = false)
+    private Boolean rotated = false;
+
     @Column(name = "previous_value", columnDefinition = "TEXT")
     private String previousValue;
 

@@ -98,4 +98,57 @@ class DnsCheckerServiceTest {
         Map<String, Object> records = (Map<String, Object>) data.get("records");
         assertThat(records).containsKeys("A", "AAAA", "CNAME", "MX", "TXT", "NS");
     }
+
+    // ── detectChange — round-robin vs real change ────────────────────────────
+
+    @Test
+    @DisplayName("detectChange: prev == null is NONE (first ever check)")
+    void detectChange_firstCheck_isNone() {
+        assertThat(DnsCheckerService.detectChange(null, "1.2.3.4"))
+            .isEqualTo(DnsCheckerService.ChangeKind.NONE);
+    }
+
+    @Test
+    @DisplayName("detectChange: identical strings is NONE")
+    void detectChange_identical_isNone() {
+        assertThat(DnsCheckerService.detectChange("1.2.3.4\n5.6.7.8", "1.2.3.4\n5.6.7.8"))
+            .isEqualTo(DnsCheckerService.ChangeKind.NONE);
+    }
+
+    @Test
+    @DisplayName("detectChange: same set in different order is NONE")
+    void detectChange_sameSetReordered_isNone() {
+        assertThat(DnsCheckerService.detectChange("1.2.3.4\n5.6.7.8", "5.6.7.8\n1.2.3.4"))
+            .isEqualTo(DnsCheckerService.ChangeKind.NONE);
+    }
+
+    @Test
+    @DisplayName("detectChange: subset overlap is ROTATED (CDN edge rotation)")
+    void detectChange_subsetOverlap_isRotated() {
+        // Akbank example: prev had two edge IPs, now returns one of them
+        assertThat(DnsCheckerService.detectChange(
+                "217.169.192.73\n217.169.204.113",
+                "217.169.204.113"))
+            .isEqualTo(DnsCheckerService.ChangeKind.ROTATED);
+    }
+
+    @Test
+    @DisplayName("detectChange: new IP added with one shared is ROTATED")
+    void detectChange_partialOverlap_isRotated() {
+        assertThat(DnsCheckerService.detectChange(
+                "1.2.3.4",
+                "1.2.3.4\n9.9.9.9"))
+            .isEqualTo(DnsCheckerService.ChangeKind.ROTATED);
+    }
+
+    @Test
+    @DisplayName("detectChange: disjoint sets is CHANGED (real change)")
+    void detectChange_disjoint_isChanged() {
+        assertThat(DnsCheckerService.detectChange("1.2.3.4", "9.9.9.9"))
+            .isEqualTo(DnsCheckerService.ChangeKind.CHANGED);
+        assertThat(DnsCheckerService.detectChange(
+                "217.169.192.73\n217.169.204.113",
+                "5.5.5.5\n6.6.6.6"))
+            .isEqualTo(DnsCheckerService.ChangeKind.CHANGED);
+    }
 }
