@@ -6650,6 +6650,26 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .dns-history-changed { background: rgba(245,158,11,.08); }
 [data-theme="dark"] .dns-history-changed { background: rgba(245,158,11,.14); }
 
+.dns-history-value {
+  max-width: 280px;
+  vertical-align: top;
+}
+.dns-history-value code {
+  display: block;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: .82em;
+  color: var(--text);
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 3px 8px;
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 90px;
+  overflow-y: auto;
+  line-height: 1.4;
+}
+
 /* History diff row — auto-expanded under a "Değişti!" row */
 .dns-diff-row td {
   padding: 12px 14px 16px 14px;
