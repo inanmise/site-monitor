@@ -15,15 +15,16 @@ export default function UserManager({ systemRole, ownTeamId, currentUsername, te
   const canManage = isAdmin || isTeamAdmin
   const isSelf = (u) => u?.username === currentUsername
   const { showConfirm } = useDialog()
-  const activeAdminCount = users.filter(u => u.system_role === 'ADMIN' && u.active).length
-  const isLastActiveAdmin = (u) =>
-    u?.system_role === 'ADMIN' && u?.active && activeAdminCount === 1
   const [users, setUsers] = useState([])
   const [modal, setModal] = useState(null)
   const [autoResetModal, setAutoResetModal] = useState(null)
   const [form, setForm] = useState(emptyUser)
   const [saving, setSaving] = useState(false)
   const [msg, setMsg] = useState(null)
+
+  const activeAdminCount = users.filter(u => u.system_role === 'ADMIN' && u.active).length
+  const isLastActiveAdmin = (u) =>
+    u?.system_role === 'ADMIN' && u?.active && activeAdminCount === 1
 
   const teamMap = Object.fromEntries((teams || []).map(t => [t.id, t.name]))
 
