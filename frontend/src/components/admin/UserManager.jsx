@@ -8,11 +8,12 @@ import AdminAutoResetModal from './AdminAutoResetModal.jsx'
 
 const emptyUser = { username: '', password: '', display_name: '', email: '', employee_id: '', system_role: 'USER', team_id: '', org_role: '', active: true }
 
-export default function UserManager({ systemRole, ownTeamId, teams }) {
+export default function UserManager({ systemRole, ownTeamId, currentUsername, teams }) {
   const t = useT()
   const isAdmin = systemRole === 'ADMIN'
   const isTeamAdmin = systemRole === 'TEAM_ADMIN'
   const canManage = isAdmin || isTeamAdmin
+  const isSelf = (u) => u?.username === currentUsername
   const { showConfirm } = useDialog()
   const [users, setUsers] = useState([])
   const [modal, setModal] = useState(null)
@@ -138,7 +139,9 @@ export default function UserManager({ systemRole, ownTeamId, teams }) {
                       {user.permanent_lock && (
                         <button className="btn-sm" style={{ background: '#f59e0b', color: '#fff', marginRight: 4 }} onClick={() => unlock(user.id)}>{t('usr.unlock')}</button>
                       )}
-                      <button className="btn-sm btn-del" onClick={() => del(user.id)}>{t('usr.delete')}</button>
+                      {!isSelf(user) && (
+                        <button className="btn-sm btn-del" onClick={() => del(user.id)}>{t('usr.delete')}</button>
+                      )}
                     </>
                   )}
                 </td>
@@ -183,6 +186,7 @@ export default function UserManager({ systemRole, ownTeamId, teams }) {
                 <SearchableSelect
                   value={form.system_role}
                   onChange={v => setForm({ ...form, system_role: v })}
+                  disabled={modal !== 'add' && isSelf(modal)}
                   options={isAdmin ? [
                     { value: 'USER',       label: 'USER' },
                     { value: 'TEAM_ADMIN', label: 'TEAM_ADMIN' },
@@ -193,6 +197,9 @@ export default function UserManager({ systemRole, ownTeamId, teams }) {
                     { value: 'TEAM_ADMIN', label: 'TEAM_ADMIN' },
                   ]}
                 />
+                {modal !== 'add' && isSelf(modal) && (
+                  <span className="field-hint field-hint--warn">{t('usr.selfRoleLocked')}</span>
+                )}
               </label>
               <label>{t('usr.orgRole')}
                 <SearchableSelect
@@ -234,8 +241,13 @@ export default function UserManager({ systemRole, ownTeamId, teams }) {
                 )}
               </label>
               <label className="checkbox-label">
-                <input type="checkbox" checked={form.active} onChange={(e) => setForm({ ...form, active: e.target.checked })} />
+                <input type="checkbox" checked={form.active}
+                  disabled={modal !== 'add' && isSelf(modal)}
+                  onChange={(e) => setForm({ ...form, active: e.target.checked })} />
                 {t('usr.formActive')}
+                {modal !== 'add' && isSelf(modal) && (
+                  <span className="field-hint field-hint--warn" style={{ marginLeft: 8 }}>{t('usr.selfActiveLocked')}</span>
+                )}
               </label>
             </div>
             {msg && <div className="alert-msg alert-msg--err" style={{ marginTop: 8 }}>{msg}</div>}
