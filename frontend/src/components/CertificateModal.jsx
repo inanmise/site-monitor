@@ -555,7 +555,7 @@ export default function CertificateModal({ domain, alertLevel, onClose, initialD
         )}
 
         {!previewMode && activeTab === 'notes' && (
-          <NotesTab domain={domain} t={t} currentUser={currentUser} isAdmin={currentUserRole === 'ADMIN'} />
+          <NotesTab domain={domain} t={t} currentUser={currentUser} isAdmin={currentUserRole === 'ADMIN' || currentUserRole === 'TEAM_ADMIN'} />
         )}
       </div>
     </div>

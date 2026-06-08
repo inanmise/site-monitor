@@ -69,8 +69,13 @@ public class AdminController {
     @PostMapping("/inventory")
     public ResponseEntity<Map<String, Object>> addInventory(
             @RequestBody CertificateInventory item, HttpSession session, HttpServletRequest request) {
-        requireAdmin(session);
+        requireAdminOrTeamAdmin(session);
         validateDomain(item.getDomain());
+        // TEAM_ADMIN: force the new item into the caller's team — payload cannot place
+        // it on another team's books.
+        if (isTeamAdmin(session)) {
+            item.setTeamId(teamId(session));
+        }
         if (item.getTeamId() == null) {
             throw new IllegalArgumentException("A team must be selected for the certificate");
         }
@@ -94,9 +99,14 @@ public class AdminController {
     public ResponseEntity<Map<String, Object>> updateInventory(
             @PathVariable Long id, @RequestBody CertificateInventory item,
             HttpSession session, HttpServletRequest request) {
-        requireAdmin(session);
         CertificateInventory existing = inventoryRepo.findById(id)
                 .orElseThrow(() -> new NoSuchElementException("Inventory item not found: " + id));
+        requireTeamScopedAdmin(session, existing.getTeamId());
+        // TEAM_ADMIN cannot transfer an item to another team via this endpoint —
+        // freeze teamId to its current value.
+        if (isTeamAdmin(session)) {
+            item.setTeamId(existing.getTeamId());
+        }
 
         // Build diff BEFORE applying changes
         String diffJson = buildInventoryDiff(existing, item, true);
@@ -188,8 +198,8 @@ public class AdminController {
     @DeleteMapping("/inventory/{id}")
     public ResponseEntity<Map<String, Object>> deleteInventory(
             @PathVariable Long id, HttpSession session, HttpServletRequest request) {
-        requireAdmin(session);
         return inventoryRepo.findById(id).map(inv -> {
+            requireTeamScopedAdmin(session, inv.getTeamId());
             inv.setDeletedAt(now());
             inv.setActive(false);
             inventoryRepo.save(inv);
@@ -205,7 +215,13 @@ public class AdminController {
     @DeleteMapping("/certificates/{domain}")
     public ResponseEntity<Map<String, Object>> deleteCertificateCheck(
             @PathVariable String domain, HttpSession session, HttpServletRequest request) {
-        requireAdmin(session);
+        if (isTeamAdmin(session)) {
+            inventoryRepo.findByDomain(domain).ifPresentOrElse(
+                    inv -> requireTeamScopedAdmin(session, inv.getTeamId()),
+                    () -> { throw new SecurityException("Domain not found in your team's inventory"); });
+        } else {
+            requireAdmin(session);
+        }
         latestCheckRepo.deleteById(domain);
         auditService.recordAction("DOMAIN_DELETE_CHECK", session, request, "CERTIFICATE", domain, null);
         return ok(Map.of("message", "Deleted"));
@@ -214,8 +230,8 @@ public class AdminController {
     @PostMapping("/inventory/{id}/restore")
     public ResponseEntity<Map<String, Object>> restoreInventory(
             @PathVariable Long id, HttpSession session, HttpServletRequest request) {
-        requireAdmin(session);
         return inventoryRepo.findById(id).map(inv -> {
+            requireTeamScopedAdmin(session, inv.getTeamId());
             inv.setDeletedAt(null);
             inv.setActive(true);
             inv.setUpdatedAt(now());
@@ -316,13 +332,16 @@ public class AdminController {
     @PostMapping("/contacts")
     public ResponseEntity<Map<String, Object>> addContact(
             @RequestBody Map<String, Object> body, HttpSession session) {
-        requireAdmin(session);
+        requireAdminOrTeamAdmin(session);
         EscalationContact contact = new EscalationContact();
         applyContactFields(contact, body, session);
         contact.setId(null);
         contact.setCreatedAt(now());
         if (contact.getActive() == null) contact.setActive(true);
         if (contact.getMinAlertLevel() == null) contact.setMinAlertLevel("WARNING");
+        if (isTeamAdmin(session)) {
+            contact.setTeamId(teamId(session));
+        }
         if (contact.getTeamId() == null) {
             userService.listTeams().stream().findFirst().ifPresent(t -> contact.setTeamId(t.getId()));
         }
@@ -332,9 +351,9 @@ public class AdminController {
     @PutMapping("/contacts/{id}")
     public ResponseEntity<Map<String, Object>> updateContact(
             @PathVariable Long id, @RequestBody Map<String, Object> body, HttpSession session) {
-        requireAdmin(session);
         EscalationContact existing = contactRepo.findById(id)
                 .orElseThrow(() -> new NoSuchElementException("Contact not found: " + id));
+        requireTeamScopedAdmin(session, existing.getTeamId());
         applyContactFields(existing, body, session);
         return ok(Map.of("data", contactRepo.save(existing)));
     }
@@ -372,9 +391,9 @@ public class AdminController {
     @DeleteMapping("/contacts/{id}")
     public ResponseEntity<Map<String, Object>> deleteContact(
             @PathVariable Long id, HttpSession session) {
-        requireAdmin(session);
         EscalationContact existing = contactRepo.findById(id)
                 .orElseThrow(() -> new NoSuchElementException("Contact not found: " + id));
+        requireTeamScopedAdmin(session, existing.getTeamId());
         contactRepo.deleteById(id);
         return ok(Map.of("message", "Deleted"));
     }
@@ -536,7 +555,7 @@ public class AdminController {
     @PutMapping("/teams/{id}")
     public ResponseEntity<Map<String, Object>> updateTeam(
             @PathVariable Long id, @RequestBody Map<String, Object> body, HttpSession session) {
-        requireAdmin(session);
+        requireTeamScopedAdmin(session, id);
         Team team = userService.updateTeam(id,
                 (String) body.get("name"),
                 (String) body.get("email"),
@@ -550,7 +569,10 @@ public class AdminController {
     @GetMapping("/teams/{id}/users")
     public ResponseEntity<Map<String, Object>> listTeamUsers(
             @PathVariable Long id, HttpSession session) {
-        requireAdmin(session);
+        // Read-only visibility: admin/audit see any team; everyone else only their own.
+        if (!isAdminOrAudit(session) && !id.equals(teamId(session))) {
+            throw new SecurityException("Cannot view another team's members");
+        }
         return ok(Map.of("data", userService.listUsers().stream()
                 .filter(u -> id.equals(u.getTeamId())).toList()));
     }
@@ -582,15 +604,25 @@ public class AdminController {
     @PostMapping("/users")
     public ResponseEntity<Map<String, Object>> createUser(
             @RequestBody Map<String, Object> body, HttpSession session, HttpServletRequest request) {
-        requireAdmin(session);
+        requireAdminOrTeamAdmin(session);
+        String requestedRole = (String) body.get("system_role");
+        Long requestedTeamId = toLong(body.get("team_id"));
+        if (isTeamAdmin(session)) {
+            // TEAM_ADMIN can only seed USER or TEAM_ADMIN; never ADMIN/AUDIT.
+            if (requestedRole != null && !TEAM_ADMIN_ASSIGNABLE_ROLES.contains(requestedRole)) {
+                throw new SecurityException("Team admin cannot assign role: " + requestedRole);
+            }
+            // And the new user lands in the team admin's team — payload can't override.
+            requestedTeamId = teamId(session);
+        }
         AppUser user = userService.createUser(
                 (String) body.get("username"),
                 (String) body.get("password"),
                 (String) body.get("display_name"),
                 (String) body.get("email"),
                 (String) body.get("employee_id"),
-                (String) body.get("system_role"),
-                toLong(body.get("team_id")),
+                requestedRole,
+                requestedTeamId,
                 (String) body.get("org_role"));
         auditService.recordAction("USER_CREATE", session, request,
                 "USER", user.getUsername(),
@@ -601,13 +633,27 @@ public class AdminController {
     @PutMapping("/users/{id}")
     public ResponseEntity<Map<String, Object>> updateUser(
             @PathVariable Long id, @RequestBody Map<String, Object> body, HttpSession session) {
-        requireAdmin(session);
+        AppUser target = userRepo.findById(id)
+                .orElseThrow(() -> new NoSuchElementException("User not found: " + id));
+        requireTeamScopedAdmin(session, target.getTeamId());
+        String requestedRole = (String) body.get("system_role");
+        Long requestedTeamId = toLong(body.get("team_id"));
+        if (isTeamAdmin(session)) {
+            if (requestedRole != null && !TEAM_ADMIN_ASSIGNABLE_ROLES.contains(requestedRole)) {
+                throw new SecurityException("Team admin cannot assign role: " + requestedRole);
+            }
+            // Cannot transfer the user out of the team admin's team.
+            if (requestedTeamId != null && !requestedTeamId.equals(target.getTeamId())) {
+                throw new SecurityException("Team admin cannot transfer users to another team");
+            }
+            requestedTeamId = target.getTeamId();
+        }
         AppUser user = userService.updateUser(id,
                 (String) body.get("display_name"),
                 (String) body.get("email"),
                 (String) body.get("employee_id"),
-                (String) body.get("system_role"),
-                toLong(body.get("team_id")),
+                requestedRole,
+                requestedTeamId,
                 body.get("active") instanceof Boolean ? (Boolean) body.get("active") : null,
                 (String) body.get("org_role"));
         return ok(Map.of("data", user));
@@ -617,7 +663,9 @@ public class AdminController {
     public ResponseEntity<Map<String, Object>> autoResetPassword(
             @PathVariable Long id, @RequestBody Map<String, String> body,
             HttpSession session, HttpServletRequest request) {
-        requireAdmin(session);
+        AppUser target = userRepo.findById(id)
+                .orElseThrow(() -> new NoSuchElementException("User not found: " + id));
+        requireTeamScopedAdmin(session, target.getTeamId());
         String adminPwd = body.get("admin_password");
         if (adminPwd == null || adminPwd.isBlank()) {
             throw new IllegalArgumentException("Admin password required");
@@ -626,8 +674,8 @@ public class AdminController {
 
         String tempPwd = userService.adminAutoResetPassword(id, adminUsername, adminPwd);
 
-        AppUser target = userRepo.findById(id)
-                .orElseThrow(() -> new NoSuchElementException("User not found: " + id));
+        // refresh: the auto-reset call may have updated must_change_password etc.
+        target = userRepo.findById(id).orElse(target);
         String emailStatus = emailNotificationService.sendPasswordResetEmail(
                 target.getEmail(), target.getUsername(), target.getDisplayName(), tempPwd);
 
@@ -643,7 +691,9 @@ public class AdminController {
     @PostMapping("/users/{id}/unlock")
     public ResponseEntity<Map<String, Object>> unlockUser(
             @PathVariable Long id, HttpSession session, HttpServletRequest request) {
-        requireAdmin(session);
+        AppUser target = userRepo.findById(id)
+                .orElseThrow(() -> new NoSuchElementException("User not found: " + id));
+        requireTeamScopedAdmin(session, target.getTeamId());
         userService.unlockUser(id);
         auditService.recordAction("USER_UNLOCK", session, request, "USER", id.toString(), null);
         return ok(Map.of("message", "User unlocked"));
@@ -652,7 +702,9 @@ public class AdminController {
     @DeleteMapping("/users/{id}")
     public ResponseEntity<Map<String, Object>> deleteUser(
             @PathVariable Long id, HttpSession session, HttpServletRequest request) {
-        requireAdmin(session);
+        AppUser target = userRepo.findById(id)
+                .orElseThrow(() -> new NoSuchElementException("User not found: " + id));
+        requireTeamScopedAdmin(session, target.getTeamId());
         userService.deleteUser(id);
         auditService.recordAction("USER_DELETE", session, request, "USER", id.toString(), null);
         return ok(Map.of("message", "User deleted"));
@@ -679,7 +731,7 @@ public class AdminController {
             @PathVariable String domain,
             @RequestBody Map<String, String> body,
             HttpSession session, HttpServletRequest request) {
-        requireAdmin(session);
+        requireAdminOrTeamAdmin(session);
         String text = body.get("note");
         if (text == null || text.isBlank())
             throw new IllegalArgumentException("Note text cannot be blank");
@@ -718,7 +770,7 @@ public class AdminController {
             @PathVariable String domain, @PathVariable Long noteId,
             @RequestBody Map<String, String> body,
             HttpSession session, HttpServletRequest request) {
-        requireAdmin(session);
+        requireAdminOrTeamAdmin(session);
         CertificateNote note = noteRepo.findById(noteId)
                 .orElseThrow(() -> new NoSuchElementException("Note not found: " + noteId));
         if (note.getDeletedAt() != null)
@@ -766,7 +818,7 @@ public class AdminController {
     public ResponseEntity<Map<String, Object>> deleteNote(
             @PathVariable String domain, @PathVariable Long noteId,
             HttpSession session, HttpServletRequest request) {
-        requireAdmin(session);
+        requireAdminOrTeamAdmin(session);
         CertificateNote note = noteRepo.findById(noteId)
                 .orElseThrow(() -> new NoSuchElementException("Note not found: " + noteId));
         if (note.getDeletedAt() != null)
@@ -865,6 +917,37 @@ public class AdminController {
         Object role = session.getAttribute("systemRole");
         return "ADMIN".equals(role) || "AUDIT".equals(role);
     }
+
+    private boolean isTeamAdmin(HttpSession session) {
+        return "TEAM_ADMIN".equals(session.getAttribute("systemRole"));
+    }
+
+    /** Either system admin or a team admin acting on a resource that belongs to their team. */
+    private boolean canManageTeamResource(HttpSession session, Long resourceTeamId) {
+        if (isAdmin(session)) return true;
+        if (isTeamAdmin(session)) {
+            return resourceTeamId != null && resourceTeamId.equals(teamId(session));
+        }
+        return false;
+    }
+
+    private void requireTeamScopedAdmin(HttpSession session, Long resourceTeamId) {
+        if (!canManageTeamResource(session, resourceTeamId)) {
+            log.warn("Cross-team or non-admin write attempt by user={} resourceTeam={}",
+                    actor(session), resourceTeamId);
+            throw new SecurityException("Access denied: not allowed to modify this team's resource");
+        }
+    }
+
+    private void requireAdminOrTeamAdmin(HttpSession session) {
+        if (!isAdmin(session) && !isTeamAdmin(session)) {
+            log.warn("Non-admin/team-admin write attempt by user={}", actor(session));
+            throw new SecurityException("Admin or team-admin required");
+        }
+    }
+
+    private static final java.util.Set<String> TEAM_ADMIN_ASSIGNABLE_ROLES =
+            java.util.Set.of("USER", "TEAM_ADMIN");
 
     private void requireAdmin(HttpSession session) {
         if (!isAdmin(session)) {

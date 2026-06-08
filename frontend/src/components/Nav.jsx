@@ -14,8 +14,9 @@ export default function Nav({ activeTab, onTabChange, username, teamName, system
   const t = useT()
   const { toggle } = useLanguage()
   const { theme, toggle: toggleTheme } = useTheme()
-  const isAdmin    = systemRole === 'ADMIN'
-  const isAudit    = systemRole === 'AUDIT'
+  const isAdmin     = systemRole === 'ADMIN'
+  const isTeamAdmin = systemRole === 'TEAM_ADMIN'
+  const isAudit     = systemRole === 'AUDIT'
 
   const GROUPS = [
     {
@@ -214,7 +215,8 @@ export default function Nav({ activeTab, onTabChange, username, teamName, system
               <div className="sb-user-info">
                 <span className="sb-user-name">{username}</span>
                 {teamName && <span className="sb-team-name">{teamName}</span>}
-                {systemRole === 'ADMIN' && <span className="sb-role-badge">ADMIN</span>}
+                {isAdmin && <span className="sb-role-badge">ADMIN</span>}
+                {isTeamAdmin && <span className="sb-role-badge">TEAM ADMIN</span>}
               </div>
             )}
             {open && <ChevronUp size={12} className="sb-user-chevron" />}

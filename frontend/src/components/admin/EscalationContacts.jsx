@@ -9,8 +9,11 @@ const LEVELS = ['WARNING', 'HIGH', 'CRITICAL']
 const levelColor = { WARNING: '#f0a500', HIGH: '#e07b00', CRITICAL: '#c0392b' }
 const emptyContact = { user_id: '', role: 'TECH', min_alert_level: 'WARNING', webhook_url: '', webhook_type: 'TEAMS', active: true, team_id: '' }
 
-export default function EscalationContacts({ teams = [], isAdmin = false }) {
+export default function EscalationContacts({ teams = [], systemRole, isAdmin: isAdminProp = false }) {
   const t = useT()
+  const isAdmin = systemRole ? systemRole === 'ADMIN' : isAdminProp
+  const isTeamAdmin = systemRole === 'TEAM_ADMIN'
+  const canManage = isAdmin || isTeamAdmin
   const { showConfirm } = useDialog()
   const [contacts, setContacts] = useState([])
   const [users, setUsers]       = useState([])
@@ -106,7 +109,7 @@ export default function EscalationContacts({ teams = [], isAdmin = false }) {
             <span>{t('ec.legendCrit')}</span>
           </div>
         </div>
-        {isAdmin && <button className="btn btn-success" onClick={openAdd}>{t('ec.addBtn')}</button>}
+        {canManage && <button className="btn btn-success" onClick={openAdd}>{t('ec.addBtn')}</button>}
       </div>
       {msg && <div className="alert-msg">{msg}</div>}
       <div className="admin-table-wrap">
@@ -134,8 +137,8 @@ export default function EscalationContacts({ teams = [], isAdmin = false }) {
                 <td>{c.webhook_url ? <span className="badge badge-ok">{c.webhook_type}</span> : '—'}</td>
                 <td><span className={c.active ? 'badge badge-ok' : 'badge badge-err'}>{c.active ? t('ec.active') : t('ec.inactive')}</span></td>
                 <td>
-                  {isAdmin && <button className="btn-sm btn-edit" onClick={() => openEdit(c)}>{t('ec.edit')}</button>}
-                  {isAdmin && <button className="btn-sm btn-del" onClick={() => del(c.id)}>{t('ec.delete')}</button>}
+                  {canManage && <button className="btn-sm btn-edit" onClick={() => openEdit(c)}>{t('ec.edit')}</button>}
+                  {canManage && <button className="btn-sm btn-del" onClick={() => del(c.id)}>{t('ec.delete')}</button>}
                 </td>
               </tr>
             ))}

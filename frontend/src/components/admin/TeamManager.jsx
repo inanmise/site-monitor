@@ -32,9 +32,12 @@ function avatarStyleFor(seed) {
   return { background: AVATAR_PALETTE[Math.abs(hash) % AVATAR_PALETTE.length], color: '#fff' }
 }
 
-export default function TeamManager({ systemRole, onTeamsChange }) {
+export default function TeamManager({ systemRole, ownTeamId, onTeamsChange }) {
   const t = useT()
   const isAdmin = systemRole === 'ADMIN'
+  const isTeamAdmin = systemRole === 'TEAM_ADMIN'
+  const canManage = isAdmin || isTeamAdmin
+  const canEditRow = (rowTeamId) => isAdmin || (isTeamAdmin && rowTeamId === ownTeamId)
   const { showConfirm } = useDialog()
   const [teams, setTeams]   = useState([])
   const [users, setUsers]   = useState([])
@@ -186,11 +189,11 @@ export default function TeamManager({ systemRole, onTeamsChange }) {
                   <td>{team.description || '—'}</td>
                   <td><span className={team.active ? 'badge badge-ok' : 'badge badge-err'}>{team.active ? t('team.active') : t('team.inactive')}</span></td>
                   <td>
+                    {canEditRow(team.id) && (
+                      <button className="btn-sm btn-edit" onClick={() => openEdit(team)}>{t('team.edit')}</button>
+                    )}
                     {isAdmin && (
-                      <>
-                        <button className="btn-sm btn-edit" onClick={() => openEdit(team)}>{t('team.edit')}</button>
-                        <button className="btn-sm btn-del" onClick={() => del(team.id)}>{t('team.delete')}</button>
-                      </>
+                      <button className="btn-sm btn-del" onClick={() => del(team.id)}>{t('team.delete')}</button>
                     )}
                   </td>
                 </tr>
@@ -211,12 +214,12 @@ export default function TeamManager({ systemRole, onTeamsChange }) {
                                     return (
                                       <div
                                         key={m.id}
-                                        className={`tm-member-card${isAdmin ? ' tm-member-card-clickable' : ''}`}
-                                        role={isAdmin ? 'button' : undefined}
-                                        tabIndex={isAdmin ? 0 : undefined}
-                                        onClick={isAdmin ? () => setEditingUser(m) : undefined}
-                                        onKeyDown={isAdmin ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setEditingUser(m) } } : undefined}
-                                        title={isAdmin ? t('usr.editTitle') : undefined}
+                                        className={`tm-member-card${canManage ? ' tm-member-card-clickable' : ''}`}
+                                        role={canManage ? 'button' : undefined}
+                                        tabIndex={canManage ? 0 : undefined}
+                                        onClick={canManage ? () => setEditingUser(m) : undefined}
+                                        onKeyDown={canManage ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setEditingUser(m) } } : undefined}
+                                        title={canManage ? t('usr.editTitle') : undefined}
                                       >
                                         <div className="tm-mc-avatar" style={avatarStyle}>{initials}</div>
                                         <div className="tm-mc-body">
