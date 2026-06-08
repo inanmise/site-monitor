@@ -278,7 +278,7 @@ export const api = {
     updateDnsMonitor:  (id, data) => request(`/monitoring/dns/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
     deleteDnsMonitor:  (id) => request(`/monitoring/dns/${id}`, { method: 'DELETE' }),
     triggerDnsCheck:   (id) => request(`/monitoring/dns/${id}/check`, { method: 'POST' }),
-    getDnsHistory:     (id, limit = 100) => request(`/monitoring/dns/${id}/history?limit=${limit}`),
+    getDnsHistory:     (id, days = 7) => request(`/monitoring/dns/${id}/history?days=${days}`),
     getDnsDetails:     (id) => request(`/monitoring/dns/${id}/details`),
   },
 }

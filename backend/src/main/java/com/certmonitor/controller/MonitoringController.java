@@ -448,10 +448,18 @@ public class MonitoringController {
 
     @GetMapping("/dns/{id}/history")
     public ResponseEntity<Map<String, Object>> dnsHistory(@PathVariable Long id,
-            @RequestParam(defaultValue = "100") int limit) {
-        List<DnsRecord> records = dnsRecordRepo.findByMonitorIdOrderByCheckedAtDesc(id)
-                .stream().limit(limit).toList();
-        return ok(records);
+            @RequestParam(required = false) Integer days,
+            @RequestParam(defaultValue = "5000") int limit) {
+        List<DnsRecord> records;
+        if (days != null && days > 0) {
+            int d = Math.min(days, 90);
+            String cutoff = ISO.format(Instant.now().minus(d, ChronoUnit.DAYS));
+            records = dnsRecordRepo.findByMonitorIdAndCheckedAtGreaterThanEqualOrderByCheckedAtDesc(id, cutoff);
+        } else {
+            records = dnsRecordRepo.findByMonitorIdOrderByCheckedAtDesc(id);
+        }
+        int cap = Math.max(1, Math.min(limit, 10_000));
+        return ok(records.stream().limit(cap).toList());
     }
 
     @PostMapping("/dns/{id}/check")
