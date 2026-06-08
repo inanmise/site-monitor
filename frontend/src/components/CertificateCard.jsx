@@ -44,6 +44,21 @@ export default function CertificateCard({ cert, onClick, hasSilentAlert = false,
   const hasDetail  = !!cert.not_after || showAlgo
   const hasFooter  = hasSilentAlert || hasMailFailure
 
+  const beforeMs = cert.not_before ? Date.parse(cert.not_before) : NaN
+  const afterMs  = cert.not_after  ? Date.parse(cert.not_after)  : NaN
+  const totalDays = Number.isFinite(beforeMs) && Number.isFinite(afterMs)
+    ? Math.round((afterMs - beforeMs) / 86400000)
+    : 0
+  const elapsedDays = totalDays > 0 && days != null
+    ? Math.max(0, Math.min(totalDays, totalDays - days))
+    : 0
+  const percentUsed = totalDays > 0
+    ? Math.max(0, Math.min(100, (elapsedDays / totalDays) * 100))
+    : 0
+  const showLife = totalDays > 0
+    && days != null && days >= 0
+    && state !== 'error'
+
   return (
     <div className={`cc-card cc-${state}`} data-domain={cert.domain} onClick={() => onClick(cert.domain)}>
       {/* ── Top bar — tier + pill + last check ── */}
@@ -67,6 +82,16 @@ export default function CertificateCard({ cert, onClick, hasSilentAlert = false,
       <div className="cc-hero">
         <div className="cc-hero-number">{daysDisplay}</div>
         <div className="cc-hero-label">{heroLabel}</div>
+        {showLife && (
+          <div className="cc-life" title={t('card.lifetimeTooltip', elapsedDays, totalDays)}>
+            <div className="cc-life-bar">
+              <div className="cc-life-fill" style={{ width: `${percentUsed}%` }} />
+            </div>
+            <div className="cc-life-caption">
+              {elapsedDays} / {totalDays} {t('card.daysUnit')}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* ── Identity — domain + issuer + error message ── */}
