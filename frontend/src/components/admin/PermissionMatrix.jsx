@@ -13,9 +13,9 @@ const ROLES = [
   { key: 'AUDIT',      colorClass: 'perm-role-audit' },
 ]
 const ACTIONS = [
-  { key: 'view',    Icon: Eye,    labelKey: 'perm.view' },
-  { key: 'edit',    Icon: Pencil, labelKey: 'perm.edit' },
-  { key: 'execute', Icon: Zap,    labelKey: 'perm.execute' },
+  { key: 'view',    Icon: Eye,    labelKey: 'perm.view',    shortKey: 'perm.viewShort' },
+  { key: 'edit',    Icon: Pencil, labelKey: 'perm.edit',    shortKey: 'perm.editShort' },
+  { key: 'execute', Icon: Zap,    labelKey: 'perm.execute', shortKey: 'perm.executeShort' },
 ]
 const GROUP_ORDER = ['certificates', 'communication', 'management', 'alerts', 'monitoring', 'logs', 'tools']
 
@@ -141,11 +141,14 @@ export default function PermissionMatrix() {
             </tr>
             <tr>
               {ROLES.flatMap(r =>
-                ACTIONS.map(({ key, Icon, labelKey }) => (
+                ACTIONS.map(({ key, Icon, labelKey, shortKey }) => (
                   <th key={r.key + '-' + key}
                       className="perm-action-col"
                       title={t(labelKey)}>
-                    <Icon size={13} />
+                    <span className="perm-action-head">
+                      <Icon size={12} />
+                      <span>{t(shortKey)}</span>
+                    </span>
                   </th>
                 ))
               )}
@@ -167,7 +170,7 @@ export default function PermissionMatrix() {
                 {items.map(item => (
                   <tr key={item.resource_key}>
                     <td className="perm-feature-cell">
-                      <strong>{t(`perm.res.${item.resource_key}.name`) || item.resource_key}</strong>
+                      <strong>{item.resource_key}</strong>
                       <div className="perm-feature-desc">
                         {t(`perm.res.${item.resource_key}`)}
                       </div>

@@ -6042,48 +6042,53 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .perm-table-wrap {
   border: 1px solid var(--border);
   border-radius: 8px;
-  overflow: auto;
-  max-height: 70vh;
+  overflow-x: auto;
 }
 
-.perm-matrix { width: 100%; border-collapse: separate; border-spacing: 0; }
-.perm-matrix thead th {
-  position: sticky; top: 0; z-index: 2;
+.perm-matrix { width: 100%; border-collapse: separate; border-spacing: 0; table-layout: auto; }
+
+.perm-matrix thead tr:first-child th.perm-feature-col {
   background: var(--bg-surface);
   border-bottom: 2px solid var(--border);
-  padding: 10px 8px;
+  padding: 12px;
+  text-align: left;
   font-size: .82em;
   text-transform: uppercase; letter-spacing: .04em;
-}
-.perm-matrix thead tr:nth-child(2) th {
-  top: 41px; /* stack under role row */
-  background: var(--bg-card);
-  border-bottom: 1px solid var(--border);
+  min-width: 260px;
+  color: var(--text);
 }
 
-.perm-feature-col {
-  text-align: left !important;
-  min-width: 220px;
-  background: var(--bg-surface);
-}
-
-.perm-role-col {
-  text-align: center !important;
+.perm-matrix thead tr:first-child th.perm-role-col {
+  text-align: center;
   color: #fff;
-  font-weight: 700;
-  letter-spacing: .06em;
+  font-weight: 800;
+  letter-spacing: .08em;
+  font-size: .85em;
+  padding: 12px 8px;
+  border-bottom: 2px solid rgba(0,0,0,.15);
 }
-.perm-role-admin      { background: linear-gradient(135deg, #dc2626, #991b1b); }
-.perm-role-team-admin { background: linear-gradient(135deg, #f59e0b, #b45309); }
-.perm-role-user       { background: linear-gradient(135deg, #2563eb, #1e40af); }
-.perm-role-audit      { background: linear-gradient(135deg, #8b5cf6, #6d28d9); }
+.perm-matrix thead tr:first-child th.perm-role-col.perm-role-admin      { background: linear-gradient(135deg, #dc2626, #991b1b); }
+.perm-matrix thead tr:first-child th.perm-role-col.perm-role-team-admin { background: linear-gradient(135deg, #f59e0b, #b45309); }
+.perm-matrix thead tr:first-child th.perm-role-col.perm-role-user       { background: linear-gradient(135deg, #2563eb, #1e40af); }
+.perm-matrix thead tr:first-child th.perm-role-col.perm-role-audit      { background: linear-gradient(135deg, #8b5cf6, #6d28d9); }
 
-.perm-action-col {
-  width: 44px; min-width: 44px;
-  text-align: center !important;
+.perm-matrix thead tr:nth-child(2) th.perm-action-col {
+  background: var(--bg-card);
+  color: var(--text);
+  font-weight: 600;
+  font-size: .72em;
+  padding: 8px 4px;
+  border-bottom: 1px solid var(--border);
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  min-width: 64px;
+}
+.perm-action-head {
+  display: inline-flex; align-items: center; justify-content: center;
+  gap: 4px;
   color: var(--text-light);
 }
-.perm-action-col svg { vertical-align: middle; }
+.perm-action-head svg { flex-shrink: 0; }
 
 .perm-matrix tbody td {
   padding: 10px 8px;
