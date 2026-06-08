@@ -1043,6 +1043,8 @@ export const TR = {
   'health.emailDetailBody':     'Mail İçeriği',
   'health.emailDetailNoBody':   'İçerik bulunamadı.',
   'health.dbTitle':        'Veritabanı',
+  'health.sectionSystem':  'Sistem',
+  'health.sectionCpu':     'JVM ve CPU',
   'health.dbRefresh':      'Yenile',
   'health.dbRefreshing':   'Yenileniyor...',
   'health.dbResponseMs':   'Yanıt Süresi',
@@ -1076,6 +1078,7 @@ export const TR = {
   'health.alarmBanner':    'Aktif Alarmlar',
 
   'http.title':           'HTTP İstekleri — Son 24 Saat',
+  'http.shortTitle':      'HTTP İstekleri',
   'http.totalReqs':       'Toplam İstek',
   'http.errorRate':       'Hata Oranı',
   'http.avgMs':           'Ortalama Süre',
@@ -2422,6 +2425,8 @@ export const EN = {
   'health.emailDetailBody':     'Email Content',
   'health.emailDetailNoBody':   'No content available.',
   'health.dbTitle':        'Database',
+  'health.sectionSystem':  'System',
+  'health.sectionCpu':     'JVM & CPU',
   'health.dbRefresh':      'Refresh',
   'health.dbRefreshing':   'Refreshing...',
   'health.dbResponseMs':   'Response Time',
@@ -2455,6 +2460,7 @@ export const EN = {
   'health.alarmBanner':    'Active Alarms',
 
   'http.title':           'HTTP Requests — Last 24 Hours',
+  'http.shortTitle':      'HTTP Requests',
   'http.totalReqs':       'Total Requests',
   'http.errorRate':       'Error Rate',
   'http.avgMs':           'Avg Duration',
