@@ -218,7 +218,8 @@ public class MonitoringController {
         String fromStr = normalizeFrom(from != null ? from : ISO.format(Instant.now().minus(1, ChronoUnit.DAYS)));
         String toStr   = normalizeTo  (to   != null ? to   : ISO.format(Instant.now()));
 
-        List<UptimeCheck> checks = uptimeCheckRepo.findByDomainAndPortAndDateRange(domain, port, fromStr, toStr, limit);
+        int cap = Math.max(1, Math.min(limit, 10_000));
+        List<UptimeCheck> checks = uptimeCheckRepo.findByDomainAndPortAndDateRange(domain, port, fromStr, toStr, cap);
         List<Map<String, Object>> result = checks.stream().map(c -> {
             Map<String, Object> item = new LinkedHashMap<>();
             item.put("checked_at",  c.getCheckedAt());
@@ -242,7 +243,8 @@ public class MonitoringController {
         String fromStr = normalizeFrom(from != null ? from : ISO.format(Instant.now().minus(1, ChronoUnit.DAYS)));
         String toStr   = normalizeTo  (to   != null ? to   : ISO.format(Instant.now()));
 
-        List<CertificateCheck> checks = certCheckRepo.findByDomainAndDateRange(domain, fromStr, toStr, limit);
+        int cap = Math.max(1, Math.min(limit, 10_000));
+        List<CertificateCheck> checks = certCheckRepo.findByDomainAndDateRange(domain, fromStr, toStr, cap);
         List<Map<String, Object>> result = checks.stream().map(c -> {
             Map<String, Object> item = new LinkedHashMap<>();
             item.put("checked_at",     c.getCheckedAt());
@@ -331,8 +333,9 @@ public class MonitoringController {
     @GetMapping("/port/{id}/history")
     public ResponseEntity<Map<String, Object>> portHistory(@PathVariable Long id,
             @RequestParam(defaultValue = "100") int limit) {
+        int cap = Math.max(1, Math.min(limit, 10_000));
         List<PortCheck> checks = portCheckRepo.findByMonitorIdOrderByCheckedAtDesc(id)
-                .stream().limit(limit).toList();
+                .stream().limit(cap).toList();
         return ok(checks);
     }
 

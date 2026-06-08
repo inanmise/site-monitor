@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, Fragment } from 'react'
 import { api } from '../../api/client'
 import { useDialog } from '../ui/Dialog.jsx'
 import { useT } from '../../i18n/index.jsx'
@@ -167,8 +167,8 @@ export default function TeamManager({ systemRole, ownTeamId, onTeamsChange }) {
           </thead>
           <tbody>
             {teams.map((team) => (
-              <>
-                <tr key={team.id}>
+              <Fragment key={team.id}>
+                <tr>
                   <td>
                     <button
                       className="team-expand-btn"
@@ -259,7 +259,7 @@ export default function TeamManager({ systemRole, ownTeamId, onTeamsChange }) {
                     </td>
                   </tr>
                 )}
-              </>
+              </Fragment>
             ))}
           </tbody>
         </table>

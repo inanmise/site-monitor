@@ -49,7 +49,9 @@ export default function DnsDetailModal({ monitor, onClose }) {
   const [details, setDetails] = useState(null)
   const [history, setHistory] = useState([])
   const [loading, setLoading] = useState(true)
-  const [activeTab, setActiveTab] = useState('A')
+  const [activeTab, setActiveTab] = useState(
+    monitor?.record_type && RECORD_TYPES.includes(monitor.record_type) ? monitor.record_type : 'A'
+  )
   const [rangeDays, setRangeDays] = useState(1)
   const [historyPage, setHistoryPage] = useState(0)
   const [historyPageSize, setHistoryPageSize] = useState(50)
@@ -58,6 +60,9 @@ export default function DnsDetailModal({ monitor, onClose }) {
   useEffect(() => {
     if (!monitor) return
     setLoading(true)
+    if (monitor.record_type && RECORD_TYPES.includes(monitor.record_type)) {
+      setActiveTab(monitor.record_type)
+    }
     api.monitoring.getDnsDetails(monitor.id).then(d => {
       if (d?.success) setDetails(d.data)
       setLoading(false)
