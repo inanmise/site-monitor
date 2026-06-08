@@ -34,9 +34,13 @@ public class DnsRecord {
      * DNS round-robin / GeoDNS rotation — i.e. the two sets of records still
      * intersect but the order or subset changed. Distinct from {@code changed},
      * which is reserved for actual end-to-end value changes (no intersection).
+     *
+     * Stored nullable so Hibernate ddl-auto=update can add the column to an
+     * existing table without conflict. Pre-existing rows stay null; the
+     * controller-side serializer normalizes null → false.
      */
-    @Column(nullable = false)
-    private Boolean rotated = false;
+    @Column
+    private Boolean rotated;
 
     @Column(name = "previous_value", columnDefinition = "TEXT")
     private String previousValue;
