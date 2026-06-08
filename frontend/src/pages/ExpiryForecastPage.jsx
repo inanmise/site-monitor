@@ -266,6 +266,7 @@ function CalendarHeatmap({ certs, t }) {
   weekStart.setDate(weekStart.getDate() - dow)
 
   const weekCount = Math.ceil((dow + rangeDays) / 7)
+  const baselineWeekCount = Math.ceil((dow + 30) / 7)
   const cellCount = weekCount * 7
 
   const cells = []
@@ -301,7 +302,10 @@ function CalendarHeatmap({ certs, t }) {
       <div className="fc-heatmap-days">
         {DAYS.map(d => <div key={d} className="fc-hm-day-label">{d}</div>)}
       </div>
-      <div className={`fc-heatmap-grid${weekCount > 7 ? ' fc-heatmap-grid--compact' : ''}`}>
+      <div
+        className={`fc-heatmap-grid${weekCount > 10 ? ' fc-heatmap-grid--compact' : ''}`}
+        style={{ '--cal-aspect': `7 / ${baselineWeekCount}` }}
+      >
         {cells.map(({ key, inRange, count, allDoms, slot, isToday, dayNum }) => (
           inRange ? (
             <div

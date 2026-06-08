@@ -7200,7 +7200,7 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
   grid-template-columns: repeat(7, 1fr);
   grid-auto-rows: 1fr;
   gap: 6px;
-  height: 460px;
+  aspect-ratio: var(--cal-aspect, 7 / 5);
 }
 .fc-heatmap-grid .fc-hm-cell {
   aspect-ratio: auto;
