@@ -23,14 +23,9 @@ const TAB_GROUPS = [
   {
     groupKey: 'admin.groupOrg',
     tabs: [
-      { id: 'teams', labelKey: 'admin.tabTeams', adminOnly: false },
-      { id: 'users', labelKey: 'admin.tabUsers', adminOnly: false },
-    ],
-  },
-  {
-    groupKey: 'admin.groupSecurity',
-    tabs: [
-      { id: 'permissions', labelKey: 'admin.tabPermissions', adminOnly: true },
+      { id: 'teams',       labelKey: 'admin.tabTeams',       adminOnly: false },
+      { id: 'users',       labelKey: 'admin.tabUsers',       adminOnly: false },
+      { id: 'permissions', labelKey: 'admin.tabPermissions', adminOnly: true  },
     ],
   },
 ]

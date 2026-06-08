@@ -47,6 +47,7 @@ class SchedulerServiceTest {
     @Mock AlertThresholdRepository thresholdRepo;
     @Mock JdbcTemplate jdbcTemplate;
     @Mock UserService userService;
+    @Mock PermissionService permissionService;
     @Mock DataSource dataSource;
     @Mock PortCheckerService portCheckerService;
     @Mock PortMonitorRepository portMonitorRepo;
@@ -66,7 +67,7 @@ class SchedulerServiceTest {
         scheduler = new SchedulerService(
                 checkerService, certService, emailService, escalationService,
                 inventoryRepo, latestCheckRepo, thresholdRepo, jdbcTemplate,
-                userService, dataSource,
+                userService, permissionService, dataSource,
                 portCheckerService, portMonitorRepo, portCheckRepo,
                 dnsCheckerService, dnsMonitorRepo, dnsRecordRepo,
                 uptimeHttpCheckerService, uptimeCheckRepo, networkOutageRepo);

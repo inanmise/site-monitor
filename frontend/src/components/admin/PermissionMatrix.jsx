@@ -3,9 +3,8 @@ import { api, formatDate } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
 import { useDialog } from '../ui/Dialog.jsx'
 import { useToast } from '../ui/Toast.jsx'
-import SearchableSelect from '../ui/SearchableSelect.jsx'
 import { usePermissions } from '../../contexts/PermissionsProvider.jsx'
-import { ShieldCheck, Lock, Eye, Pencil, Zap, RotateCcw, Search } from 'lucide-react'
+import { ShieldCheck, Lock, Eye, Pencil, Zap, RotateCcw } from 'lucide-react'
 
 const ROLES = [
   { key: 'ADMIN',      colorClass: 'perm-role-admin' },
@@ -28,8 +27,6 @@ export default function PermissionMatrix() {
 
   const [catalog, setCatalog] = useState([])
   const [grants, setGrants]   = useState([])
-  const [search, setSearch]   = useState('')
-  const [group, setGroup]     = useState('')
   const [loading, setLoading] = useState(true)
   const [lastUpdate, setLastUpdate] = useState(null)
 
@@ -99,37 +96,17 @@ export default function PermissionMatrix() {
     else toast.error(res?.error || t('perm.errorGeneric'))
   }
 
-  const filtered = useMemo(() => {
-    const s = search.trim().toLowerCase()
-    return catalog.filter(item =>
-      (!group || item.group === group) &&
-      (!s ||
-        item.resource_key.toLowerCase().includes(s) ||
-        (t(`perm.res.${item.resource_key}`) || '').toLowerCase().includes(s))
-    )
-  }, [catalog, search, group, t])
-
   const grouped = useMemo(() => {
     const map = new Map()
-    for (const item of filtered) {
+    for (const item of catalog) {
       if (!map.has(item.group)) map.set(item.group, [])
       map.get(item.group).push(item)
     }
-    // Sort by GROUP_ORDER
     return [...map.entries()].sort((a, b) => {
       const ai = GROUP_ORDER.indexOf(a[0]); const bi = GROUP_ORDER.indexOf(b[0])
       return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi)
     })
-  }, [filtered])
-
-  const groupOptions = useMemo(() => {
-    const present = [...new Set(catalog.map(c => c.group))]
-      .sort((a, b) => GROUP_ORDER.indexOf(a) - GROUP_ORDER.indexOf(b))
-    return [
-      { value: '', label: t('perm.groupAll') },
-      ...present.map(g => ({ value: g, label: t(`perm.group.${g}`) })),
-    ]
-  }, [catalog, t])
+  }, [catalog])
 
   return (
     <div className="admin-section perm-section">
@@ -149,29 +126,6 @@ export default function PermissionMatrix() {
       <div className="perm-notice">
         <Lock size={14} />
         <span>{t('perm.adminLockedNote')}</span>
-      </div>
-
-      <div className="perm-toolbar">
-        <div className="perm-search-wrap">
-          <Search size={14} className="perm-search-icon" />
-          <input
-            className="perm-search-input"
-            type="text"
-            placeholder={t('perm.searchPlaceholder')}
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-          />
-          {search && (
-            <button type="button" className="perm-search-clear" onClick={() => setSearch('')}>✕</button>
-          )}
-        </div>
-        <div className="perm-group-filter">
-          <SearchableSelect
-            value={group}
-            onChange={setGroup}
-            options={groupOptions}
-          />
-        </div>
       </div>
 
       <div className="admin-table-wrap perm-table-wrap">
@@ -201,11 +155,6 @@ export default function PermissionMatrix() {
             {loading && (
               <tr><td colSpan={1 + ROLES.length * ACTIONS.length} className="loading">
                 {t('perm.loading')}
-              </td></tr>
-            )}
-            {!loading && grouped.length === 0 && (
-              <tr><td colSpan={1 + ROLES.length * ACTIONS.length} className="loading">
-                {t('perm.noResults')}
               </td></tr>
             )}
             {!loading && grouped.map(([groupName, items]) => (

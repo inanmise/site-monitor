@@ -6039,40 +6039,6 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 }
 .perm-notice svg { flex-shrink: 0; }
 
-.perm-toolbar {
-  display: flex; gap: 12px; flex-wrap: wrap;
-  margin-bottom: 14px; align-items: center;
-}
-.perm-search-wrap {
-  position: relative; flex: 1; min-width: 240px; max-width: 360px;
-}
-.perm-search-icon {
-  position: absolute; left: 10px; top: 50%; transform: translateY(-50%);
-  color: var(--text-light); pointer-events: none;
-}
-.perm-search-input {
-  width: 100%;
-  padding: 8px 32px 8px 32px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: var(--input-bg);
-  color: var(--input-text);
-  font-size: .9em;
-  transition: border-color .15s, box-shadow .15s;
-}
-.perm-search-input:focus {
-  outline: none; border-color: var(--primary);
-  box-shadow: 0 0 0 3px rgba(0,123,255,.12);
-}
-.perm-search-clear {
-  position: absolute; right: 8px; top: 50%; transform: translateY(-50%);
-  background: none; border: none; color: var(--text-light);
-  cursor: pointer; padding: 2px 6px; font-size: .9em; line-height: 1;
-}
-.perm-search-clear:hover { color: var(--text); }
-
-.perm-group-filter { min-width: 220px; }
-
 .perm-table-wrap {
   border: 1px solid var(--border);
   border-radius: 8px;

@@ -659,7 +659,6 @@ export const TR = {
   'admin.tabTeams':      'Takımlar',
   'admin.tabUsers':      'Kullanıcılar',
   'admin.tabSQL':        'SQL Playground',
-  'admin.groupSecurity': 'Güvenlik',
   'admin.tabPermissions':'Yetkiler',
 
   'perm.title':          'Yetki Yönetimi',
@@ -1963,7 +1962,6 @@ export const EN = {
   'admin.tabTeams':      'Teams',
   'admin.tabUsers':      'Users',
   'admin.tabSQL':        'SQL Playground',
-  'admin.groupSecurity': 'Security',
   'admin.tabPermissions':'Permissions',
 
   'perm.title':          'Permission Management',
