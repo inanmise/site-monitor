@@ -16,6 +16,7 @@ import RenewalAdvice from './components/RenewalAdvice'
 import CertRenewalGuide from './components/CertRenewalGuide.jsx'
 import PasswordChangeModal from './components/admin/PasswordChangeModal.jsx'
 import AdminPanel from './components/admin/AdminPanel'
+import PermissionMatrix from './components/admin/PermissionMatrix'
 import AlertHistory from './components/admin/AlertHistory'
 import InventoryManager from './components/admin/InventoryManager'
 import AuditLogViewer from './components/admin/AuditLogViewer'
@@ -842,6 +843,13 @@ export default function App() {
               <div className="tab-content active">
                 <h2>{t('app.adminTitle')}</h2>
                 <AdminPanel systemRole={systemRole} ownTeamId={teamId} />
+              </div>
+            )}
+
+            {tab === 'permissions' && systemRole === 'ADMIN' && (
+              <div className="tab-content active">
+                <h2>{t('app.permissionsTitle')}</h2>
+                <PermissionMatrix />
               </div>
             )}
 

@@ -128,6 +128,28 @@ export default function PermissionMatrix() {
         <span>{t('perm.adminLockedNote')}</span>
       </div>
 
+      <div className="perm-legend">
+        <div className="perm-legend-title">{t('perm.legendTitle')}</div>
+        <div className="perm-legend-items">
+          <div className="perm-legend-item">
+            <span className="perm-pill perm-pill-on" aria-hidden="true"><span className="perm-pill-knob" /></span>
+            <span>{t('perm.legendOn')}</span>
+          </div>
+          <div className="perm-legend-item">
+            <span className="perm-pill perm-pill-off" aria-hidden="true"><span className="perm-pill-knob" /></span>
+            <span>{t('perm.legendOff')}</span>
+          </div>
+          <div className="perm-legend-item">
+            <span className="perm-locked-badge" aria-hidden="true"><Lock size={11} /></span>
+            <span>{t('perm.legendLocked')}</span>
+          </div>
+          <div className="perm-legend-item">
+            <span className="perm-legend-dash">—</span>
+            <span>{t('perm.legendNa')}</span>
+          </div>
+        </div>
+      </div>
+
       <div className="admin-table-wrap perm-table-wrap">
         <table className="admin-table perm-matrix">
           <thead>
@@ -179,7 +201,7 @@ export default function PermissionMatrix() {
                       ACTIONS.map(({ key }) => {
                         const supported = item.actions?.includes(key)
                         if (!supported) {
-                          return <td key={r.key + '-' + key} className="perm-na">—</td>
+                          return <td key={r.key + '-' + key} className="perm-na" title={t('perm.legendNa')}>—</td>
                         }
                         if (r.key === 'ADMIN') {
                           return (

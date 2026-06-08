@@ -6039,6 +6039,41 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 }
 .perm-notice svg { flex-shrink: 0; }
 
+/* Legend — kullanıcıya görsel sembolleri açıklar */
+.perm-legend {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px 16px;
+  margin-bottom: 14px;
+}
+.perm-legend-title {
+  font-size: .78em;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  color: var(--text-light);
+  margin-bottom: 8px;
+}
+.perm-legend-items {
+  display: flex; flex-wrap: wrap; gap: 18px;
+  align-items: center;
+}
+.perm-legend-item {
+  display: inline-flex; align-items: center; gap: 8px;
+  font-size: .9em;
+  color: var(--text);
+}
+.perm-legend-item .perm-pill {
+  cursor: default; pointer-events: none;
+}
+.perm-legend-item .perm-pill:hover { transform: none; box-shadow: none; }
+.perm-legend-dash {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 28px; height: 22px;
+  color: var(--text-light); font-size: 1.2em;
+}
+
 .perm-table-wrap {
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -6090,6 +6125,54 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 }
 .perm-action-head svg { flex-shrink: 0; }
 
+/* Rol grubu görsel ayrımı — her rolün 3 sütunu için ince fon + ayraç */
+.perm-matrix tbody td:nth-child(n+2):nth-child(-n+4),
+.perm-matrix thead tr:nth-child(2) th:nth-child(n+1):nth-child(-n+3) {
+  background: rgba(220, 38, 38, .04);
+}
+.perm-matrix tbody td:nth-child(n+5):nth-child(-n+7),
+.perm-matrix thead tr:nth-child(2) th:nth-child(n+4):nth-child(-n+6) {
+  background: rgba(245, 158, 11, .04);
+}
+.perm-matrix tbody td:nth-child(n+8):nth-child(-n+10),
+.perm-matrix thead tr:nth-child(2) th:nth-child(n+7):nth-child(-n+9) {
+  background: rgba(37, 99, 235, .04);
+}
+.perm-matrix tbody td:nth-child(n+11):nth-child(-n+13),
+.perm-matrix thead tr:nth-child(2) th:nth-child(n+10):nth-child(-n+12) {
+  background: rgba(139, 92, 246, .04);
+}
+[data-theme="dark"] .perm-matrix tbody td:nth-child(n+2):nth-child(-n+4),
+[data-theme="dark"] .perm-matrix thead tr:nth-child(2) th:nth-child(n+1):nth-child(-n+3) {
+  background: rgba(220, 38, 38, .08);
+}
+[data-theme="dark"] .perm-matrix tbody td:nth-child(n+5):nth-child(-n+7),
+[data-theme="dark"] .perm-matrix thead tr:nth-child(2) th:nth-child(n+4):nth-child(-n+6) {
+  background: rgba(245, 158, 11, .08);
+}
+[data-theme="dark"] .perm-matrix tbody td:nth-child(n+8):nth-child(-n+10),
+[data-theme="dark"] .perm-matrix thead tr:nth-child(2) th:nth-child(n+7):nth-child(-n+9) {
+  background: rgba(37, 99, 235, .08);
+}
+[data-theme="dark"] .perm-matrix tbody td:nth-child(n+11):nth-child(-n+13),
+[data-theme="dark"] .perm-matrix thead tr:nth-child(2) th:nth-child(n+10):nth-child(-n+12) {
+  background: rgba(139, 92, 246, .08);
+}
+
+/* Dikey ayraç — her rol grubunun son sütunundan sonra (4., 7., 10.) belirgin sınır */
+.perm-matrix thead tr:first-child th.perm-role-col,
+.perm-matrix thead tr:nth-child(2) th:nth-child(3n+3),
+.perm-matrix tbody td:nth-child(3n+1) {
+  border-right: 2px solid var(--border);
+}
+.perm-matrix thead tr:first-child th.perm-role-col:last-child,
+.perm-matrix thead tr:nth-child(2) th:last-child,
+.perm-matrix tbody td:last-child {
+  border-right: none;
+}
+/* Grup ayraç satırı (colspan'lı) ayraçları görmesin */
+.perm-matrix tbody .perm-group-row td { border-right: none; }
+
 .perm-matrix tbody td {
   padding: 10px 8px;
   border-bottom: 1px solid var(--border);
@@ -6130,9 +6213,10 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 
 .perm-na {
   color: var(--text-light);
-  opacity: .5;
+  opacity: .4;
   font-size: 1.1em;
   font-weight: 300;
+  cursor: not-allowed;
 }
 
 .perm-locked-cell {
@@ -6152,36 +6236,40 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
   color: #fca5a5;
 }
 
-/* Toggle pill — friendly, modern switch */
-.perm-toggle-cell { padding: 6px !important; }
+/* Toggle pill — friendly, modern switch (large click target) */
+.perm-toggle-cell { padding: 4px !important; }
 .perm-pill {
   position: relative;
   display: inline-block;
-  width: 38px; height: 22px;
+  width: 50px; height: 28px;
   border-radius: 999px;
   border: none;
   cursor: pointer;
   background: #d1d5db;
-  transition: background .2s ease, box-shadow .2s ease;
+  transition: background .2s ease, box-shadow .2s ease, transform .15s ease;
   padding: 0;
   vertical-align: middle;
 }
-.perm-pill:hover { box-shadow: 0 0 0 4px rgba(0,0,0,.05); }
+.perm-pill:hover {
+  box-shadow: 0 0 0 4px rgba(16, 185, 129, .15);
+  transform: scale(1.05);
+}
 .perm-pill:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+.perm-pill:active { transform: scale(0.95); }
 .perm-pill-knob {
   position: absolute;
-  top: 2px; left: 2px;
-  width: 18px; height: 18px;
+  top: 3px; left: 3px;
+  width: 22px; height: 22px;
   background: #fff;
   border-radius: 50%;
-  box-shadow: 0 1px 3px rgba(0,0,0,.2);
+  box-shadow: 0 1px 3px rgba(0,0,0,.25);
   transition: transform .2s cubic-bezier(.4, 0, .2, 1);
 }
 .perm-pill-on {
   background: linear-gradient(135deg, #10b981, #059669);
 }
 .perm-pill-on .perm-pill-knob {
-  transform: translateX(16px);
+  transform: translateX(22px);
 }
 .perm-pill-off {
   background: #d1d5db;

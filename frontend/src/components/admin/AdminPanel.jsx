@@ -5,7 +5,6 @@ import AlertThresholds from './AlertThresholds'
 import EscalationContacts from './EscalationContacts'
 import TeamManager from './TeamManager'
 import UserManager from './UserManager'
-import PermissionMatrix from './PermissionMatrix'
 
 const TAB_GROUPS = [
   {
@@ -23,9 +22,8 @@ const TAB_GROUPS = [
   {
     groupKey: 'admin.groupOrg',
     tabs: [
-      { id: 'teams',       labelKey: 'admin.tabTeams',       adminOnly: false },
-      { id: 'users',       labelKey: 'admin.tabUsers',       adminOnly: false },
-      { id: 'permissions', labelKey: 'admin.tabPermissions', adminOnly: true  },
+      { id: 'teams', labelKey: 'admin.tabTeams', adminOnly: false },
+      { id: 'users', labelKey: 'admin.tabUsers', adminOnly: false },
     ],
   },
 ]
@@ -76,7 +74,6 @@ export default function AdminPanel({ systemRole, ownTeamId }) {
         {activeTab === 'contacts'   && <EscalationContacts teams={teams} systemRole={systemRole} />}
         {activeTab === 'teams'      && <TeamManager systemRole={systemRole} ownTeamId={ownTeamId} onTeamsChange={loadTeams} />}
         {activeTab === 'users'      && <UserManager systemRole={systemRole} ownTeamId={ownTeamId} teams={teams} />}
-        {activeTab === 'permissions' && isAdmin && <PermissionMatrix />}
       </div>
     </div>
   )
