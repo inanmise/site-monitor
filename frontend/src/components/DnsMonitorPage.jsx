@@ -1,8 +1,9 @@
 import { useState, useEffect, useCallback } from 'react'
 import { api, formatDate } from '../api/client'
 import { useT } from '../i18n/index.jsx'
-import { Play, Pencil, ChevronDown, Globe, Info } from 'lucide-react'
+import { Play, Pencil, ChevronDown, Globe, Info, Network } from 'lucide-react'
 import DnsDetailModal from './DnsDetailModal.jsx'
+import SearchableSelect from './ui/SearchableSelect.jsx'
 
 const RECORD_TYPES = ['A', 'AAAA', 'CNAME', 'MX', 'TXT', 'NS']
 
@@ -50,14 +51,24 @@ export default function DnsMonitorPage({ systemRole }) {
   useEffect(() => { load() }, [load])
 
   function openEdit(m) {
-    setForm({ recordType: m.record_type, intervalSeconds: m.interval_seconds })
+    setForm({
+      name: m.name || '',
+      recordType: m.record_type,
+      intervalSeconds: m.interval_seconds,
+      active: m.active !== false,
+    })
     setModal(m)
   }
   function closeEditModal() { setModal(null) }
 
   async function save() {
     setSaving(true)
-    await api.monitoring.updateDnsMonitor(modal.id, form)
+    await api.monitoring.updateDnsMonitor(modal.id, {
+      name: (form.name || '').trim(),
+      recordType: form.recordType,
+      intervalSeconds: form.intervalSeconds,
+      active: form.active,
+    })
     await load()
     setSaving(false)
     closeEditModal()
@@ -191,35 +202,55 @@ export default function DnsMonitorPage({ systemRole }) {
       {modal && (
         <div className="modal-overlay" onClick={closeEditModal}>
           <div className="modal-box" onClick={e => e.stopPropagation()}>
-            <h3 className="modal-title">{t('dns.modalEdit')}</h3>
-
-            <div className="modal-field">
-              <label>{t('dns.domain')}</label>
-              <div className="modal-input mon-readonly-field">{modal.domain}</div>
+            <div className="modal-icon-hdr modal-icon-hdr--dns">
+              <div className="modal-icon-hdr-badge">
+                <Network size={20} />
+              </div>
+              <h3>{t('dns.modalEdit')}</h3>
             </div>
-            <div className="modal-field">
-              <label>{t('dns.recordType')}</label>
-              <select className="modal-input" value={form.recordType}
-                onChange={e => setForm(f => ({ ...f, recordType: e.target.value }))}>
-                {RECORD_TYPES.map(rt => (
-                  <option key={rt} value={rt}>{rt}</option>
-                ))}
-              </select>
+            <div className="form-grid">
+              <label>
+                <span>{t('dns.domain')}</span>
+                <input value={modal.domain} disabled readOnly />
+                <span className="field-hint">{t('dns.domainReadonly')}</span>
+              </label>
+              <label>
+                <span>{t('dns.name')}</span>
+                <input
+                  value={form.name}
+                  onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
+                  placeholder={modal.domain}
+                />
+              </label>
+              <label>
+                <span>{t('dns.recordType')} <span className="req-star">*</span></span>
+                <SearchableSelect
+                  value={form.recordType}
+                  onChange={v => setForm(f => ({ ...f, recordType: v }))}
+                  options={RECORD_TYPES.map(rt => ({ value: rt, label: rt }))}
+                />
+              </label>
+              <label>
+                <span>{t('dns.interval')} <span className="req-star">*</span></span>
+                <SearchableSelect
+                  value={form.intervalSeconds}
+                  onChange={v => setForm(f => ({ ...f, intervalSeconds: Number(v) }))}
+                  options={INTERVALS.map(opt => ({ value: opt.value, label: t(opt.labelKey) }))}
+                />
+              </label>
+              <label className="checkbox-label">
+                <input
+                  type="checkbox"
+                  checked={form.active}
+                  onChange={e => setForm(f => ({ ...f, active: e.target.checked }))}
+                />
+                {t('dns.formActive')}
+              </label>
             </div>
-            <div className="modal-field">
-              <label>{t('dns.interval')}</label>
-              <select className="modal-input" value={form.intervalSeconds}
-                onChange={e => setForm(f => ({ ...f, intervalSeconds: Number(e.target.value) }))}>
-                {INTERVALS.map(opt => (
-                  <option key={opt.value} value={opt.value}>{t(opt.labelKey)}</option>
-                ))}
-              </select>
-            </div>
-
             <div className="modal-actions">
               <button className="btn btn-secondary" onClick={closeEditModal}>{t('dns.cancel')}</button>
-              <button className="btn btn-primary" onClick={save} disabled={saving}>
-                {saving ? '...' : t('dns.save')}
+              <button className="btn btn-primary" onClick={save} disabled={saving || !form.recordType}>
+                {saving ? t('dns.saving') : t('dns.save')}
               </button>
             </div>
           </div>
