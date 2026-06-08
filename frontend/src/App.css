@@ -6650,6 +6650,77 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .dns-history-changed { background: rgba(245,158,11,.08); }
 [data-theme="dark"] .dns-history-changed { background: rgba(245,158,11,.14); }
 
+/* History diff row — auto-expanded under a "Değişti!" row */
+.dns-diff-row td {
+  padding: 12px 14px 16px 14px;
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border);
+}
+.dns-diff-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+.dns-diff-col-title {
+  font-size: .72em;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  color: var(--text-light);
+  margin-bottom: 4px;
+}
+.dns-diff-pre {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 10px;
+  margin: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: .82em;
+  color: var(--text);
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 160px;
+  overflow-y: auto;
+}
+.dns-diff-summary {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 10px;
+}
+.dns-diff-label {
+  display: block;
+  font-size: .72em; font-weight: 700;
+  text-transform: uppercase; letter-spacing: .05em;
+  color: var(--text-light);
+  margin-bottom: 6px;
+}
+.dns-diff-line {
+  display: flex; align-items: flex-start; gap: 8px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: .82em;
+  padding: 3px 8px;
+  border-radius: 3px;
+  margin: 2px 0;
+}
+.dns-diff-removed { background: rgba(220,38,38,.08); color: #b91c1c; }
+.dns-diff-added   { background: rgba(34,197,94,.10); color: #15803d; }
+[data-theme="dark"] .dns-diff-removed { background: rgba(220,38,38,.18); color: #fca5a5; }
+[data-theme="dark"] .dns-diff-added   { background: rgba(34,197,94,.18); color: #4ade80; }
+.dns-diff-sign {
+  font-weight: 700;
+  min-width: 12px;
+  text-align: center;
+  flex-shrink: 0;
+}
+.dns-diff-line code {
+  flex: 1;
+  background: none; padding: 0;
+  word-break: break-all;
+}
+
 .perm-last-update code {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   background: rgba(0,0,0,.05);
