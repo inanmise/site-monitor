@@ -743,6 +743,12 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
   gap: 16px;
   padding: 0 4px;
 }
+.cc-life-block {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
 .cc-life-bar {
   flex: 0 0 auto;
   width: 110px;
@@ -758,9 +764,9 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
   background: var(--text-light);
 }
 .cc-life-caption {
-  margin-top: 3px;
-  font-size: .68em;
-  color: var(--text-light);
+  font-size: .72em;
+  font-weight: 700;
+  color: var(--text);
   font-variant-numeric: tabular-nums;
   line-height: 1;
   text-align: center;
