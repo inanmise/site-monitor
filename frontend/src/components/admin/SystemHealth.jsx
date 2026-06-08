@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { api, formatDate } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
-import { CheckCircle, XCircle, MinusCircle, HelpCircle, Mail, ChevronRight, Check, Loader2 } from 'lucide-react'
+import { CheckCircle, XCircle, MinusCircle, HelpCircle, Mail, ChevronRight, Check, Loader2, Server, Database, Globe, Cpu, ChevronDown } from 'lucide-react'
 import MiniChart from './MiniChart'
 import ChartModal from './ChartModal'
 import HeartbeatHistoryModal from './HeartbeatHistoryModal'
@@ -65,6 +65,10 @@ export default function SystemHealth({ systemRole, preFilterDomain, openSmtpModa
   const [poolLastRefreshed, setPoolLastRefreshed]   = useState(null)
   const [hbRefreshing, setHbRefreshing] = useState(false)
   const [hbModalOpen, setHbModalOpen] = useState(false)
+  const [sysVisible, setSysVisible]   = useState(true)
+  const [dbVisible, setDbVisible]     = useState(true)
+  const [httpVisible, setHttpVisible] = useState(true)
+  const [cpuVisible, setCpuVisible]   = useState(true)
   const [smtpPeriod, setSmtpPeriod]   = useState('7d')
   const [loading, setLoading]         = useState(true)
   const [releasing, setReleasing]     = useState(false)
@@ -244,6 +248,19 @@ export default function SystemHealth({ systemRole, preFilterDomain, openSmtpModa
         </div>
       )}
 
+      <div className="stats-section">
+        <div
+          className="stats-collapse-bar"
+          onClick={() => setSysVisible(v => !v)}
+          title={sysVisible ? t('app.collapseStats') : t('app.expandStats')}
+        >
+          <span className="stats-collapse-icon"><Server size={18} /></span>
+          <span className="stats-collapse-label">{t('health.sectionSystem')}</span>
+          <span className={`stats-collapse-chevron${sysVisible ? ' open' : ''}`}>
+            <ChevronDown size={18} />
+          </span>
+        </div>
+        {sysVisible && (
       <div className="sys-grid">
 
         {/* Scheduler card */}
@@ -673,8 +690,23 @@ export default function SystemHealth({ systemRole, preFilterDomain, openSmtpModa
         )}
 
       </div>
+        )}
+      </div>
 
       {/* DB section — response time + table stats */}
+      <div className="stats-section">
+        <div
+          className="stats-collapse-bar"
+          onClick={() => setDbVisible(v => !v)}
+          title={dbVisible ? t('app.collapseStats') : t('app.expandStats')}
+        >
+          <span className="stats-collapse-icon"><Database size={18} /></span>
+          <span className="stats-collapse-label">{t('health.dbTitle')}</span>
+          <span className={`stats-collapse-chevron${dbVisible ? ' open' : ''}`}>
+            <ChevronDown size={18} />
+          </span>
+        </div>
+        {dbVisible && (
       <div className="metrics-section">
         <div className="health-db-section-header">
           <h3 className="metrics-title" style={{ margin: 0 }}>{t('health.dbTitle')}</h3>
@@ -756,9 +788,24 @@ export default function SystemHealth({ systemRole, preFilterDomain, openSmtpModa
           )
         })()}
       </div>
+        )}
+      </div>
 
       {/* HTTP request metrics */}
       {httpMetrics && (
+        <div className="stats-section">
+          <div
+            className="stats-collapse-bar"
+            onClick={() => setHttpVisible(v => !v)}
+            title={httpVisible ? t('app.collapseStats') : t('app.expandStats')}
+          >
+            <span className="stats-collapse-icon"><Globe size={18} /></span>
+            <span className="stats-collapse-label">{t('http.shortTitle')}</span>
+            <span className={`stats-collapse-chevron${httpVisible ? ' open' : ''}`}>
+              <ChevronDown size={18} />
+            </span>
+          </div>
+          {httpVisible && (
         <div className="metrics-section">
           <h3 className="metrics-title">{t('http.title')}</h3>
 
@@ -816,9 +863,24 @@ export default function SystemHealth({ systemRole, preFilterDomain, openSmtpModa
             />
           </div>
         </div>
+          )}
+        </div>
       )}
 
       {/* JVM / CPU metrics */}
+      <div className="stats-section">
+        <div
+          className="stats-collapse-bar"
+          onClick={() => setCpuVisible(v => !v)}
+          title={cpuVisible ? t('app.collapseStats') : t('app.expandStats')}
+        >
+          <span className="stats-collapse-icon"><Cpu size={18} /></span>
+          <span className="stats-collapse-label">{t('health.sectionCpu')}</span>
+          <span className={`stats-collapse-chevron${cpuVisible ? ' open' : ''}`}>
+            <ChevronDown size={18} />
+          </span>
+        </div>
+        {cpuVisible && (
       <div className="metrics-section">
         <h3 className="metrics-title">{t('sys.metricsTitle')}</h3>
         <div className="metrics-grid">
@@ -855,6 +917,8 @@ export default function SystemHealth({ systemRole, preFilterDomain, openSmtpModa
             })}
           />
         </div>
+      </div>
+        )}
       </div>
 
       <p className="sys-refresh-note">↻ {t('sys.autoRefresh')}</p>
