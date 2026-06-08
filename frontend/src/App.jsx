@@ -581,7 +581,17 @@ export default function App() {
                         {t('app.filterPrefix')} <strong>{STAT_FILTER_LABEL[statsFilter]}</strong>
                         {t('app.filterCerts', filtered.length)}
                       </span>
-                      <button className="stats-filter-clear" onClick={() => setStatsFilter(null)}>
+                      <button
+                        className="stats-filter-clear"
+                        onClick={() => {
+                          setStatsFilter(null)
+                          setStatusFilter('all')
+                          setExpiryFilter('all')
+                          setSearch('')
+                          setSortOrder('default')
+                          setDashPage(1)
+                        }}
+                      >
                         {t('app.clearFilter')}
                       </button>
                     </div>
