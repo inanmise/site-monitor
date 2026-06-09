@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { X, Activity } from 'lucide-react'
 import { api, formatDate } from '../../api/client'
@@ -13,6 +13,7 @@ export default function HeartbeatHistoryModal({ onClose }) {
   const [loading, setLoading] = useState(true)
   const [hovered, setHovered] = useState(null)
   const [selected, setSelected] = useState(null)
+  const detailRef = useRef(null)
 
   useEffect(() => {
     setLoading(true)
@@ -100,7 +101,10 @@ export default function HeartbeatHistoryModal({ onClose }) {
                     className={`hb-tl-cell hb-tl-${s}${isSelected ? ' hb-tl-selected' : ''}`}
                     onMouseEnter={() => setHovered(b)}
                     onMouseLeave={() => setHovered(null)}
-                    onClick={() => setSelected(prev => prev?.i === i ? null : { i, b, s })}
+                    onClick={(e) => {
+                      setSelected(prev => prev?.i === i ? null : { i, b, s })
+                      setTimeout(() => detailRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' }), 0)
+                    }}
                   >
                     {s === 'missing' && <span className="hb-tl-x">×</span>}
                   </div>
@@ -112,7 +116,7 @@ export default function HeartbeatHistoryModal({ onClose }) {
               const missed = Math.max(0, b.expected - b.received)
               const lossPct = b.expected > 0 ? Math.round((missed / b.expected) * 100) : 0
               return (
-                <div className={`hb-tl-detail hb-tl-detail-${selected.s}`}>
+                <div ref={detailRef} className={`hb-tl-detail hb-tl-detail-${selected.s}`}>
                   <div className="hb-tl-detail-head">
                     <strong>{t('health.hbSelectedRange')}:</strong>
                     {' '}
