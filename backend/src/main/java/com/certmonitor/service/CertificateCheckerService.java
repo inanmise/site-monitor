@@ -2,6 +2,7 @@ package com.certmonitor.service;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -78,6 +79,35 @@ public class CertificateCheckerService {
     @Value("${cert.monitor.proxy.user:}")     private String proxyUser;
     @Value("${cert.monitor.proxy.pass:}")     private String proxyPass;
     @Value("${cert.monitor.proxy.no-proxy:}") private String noProxyList;
+
+    @PostConstruct
+    public void resolveProxyFromEnv() {
+        if (proxyHost != null && !proxyHost.isBlank()) return;
+        String url = System.getenv("HTTPS_PROXY");
+        if (url == null || url.isBlank()) url = System.getenv("HTTP_PROXY");
+        if (url == null || url.isBlank()) {
+            url = System.getenv("https_proxy");
+            if (url == null || url.isBlank()) url = System.getenv("http_proxy");
+        }
+        if (url == null || url.isBlank()) return;
+        try {
+            java.net.URI uri = new java.net.URI(url);
+            String host = uri.getHost();
+            int port = uri.getPort();
+            if (host == null || host.isBlank()) return;
+            proxyHost = host;
+            proxyPort = port > 0 ? port : ("https".equalsIgnoreCase(uri.getScheme()) ? 443 : 80);
+            String info = uri.getUserInfo();
+            if (info != null && info.contains(":")) {
+                String[] parts = info.split(":", 2);
+                if (proxyUser == null || proxyUser.isBlank()) proxyUser = parts[0];
+                if (proxyPass == null || proxyPass.isBlank()) proxyPass = parts[1];
+            }
+            log.info("Resolved proxy from env URL: {}:{}", proxyHost, proxyPort);
+        } catch (Exception e) {
+            log.warn("Failed to parse proxy URL '{}': {}", url, e.getMessage());
+        }
+    }
 
     private static final DateTimeFormatter ISO =
             DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);

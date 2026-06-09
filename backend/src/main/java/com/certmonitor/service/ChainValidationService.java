@@ -67,6 +67,39 @@ public class ChainValidationService {
                 .maximumSize(crlCacheMaxSize)
                 .expireAfterWrite(crlCacheTtlHours, TimeUnit.HOURS)
                 .build();
+        resolveProxyFromEnv();
+    }
+
+    /**
+     * If cert.monitor.proxy.host wasn't set (HTTP_PROXY_HOST env), fall back to
+     * parsing the standard HTTPS_PROXY / HTTP_PROXY URL env vars (Linux convention).
+     */
+    private void resolveProxyFromEnv() {
+        if (proxyHost != null && !proxyHost.isBlank()) return;
+        String url = System.getenv("HTTPS_PROXY");
+        if (url == null || url.isBlank()) url = System.getenv("HTTP_PROXY");
+        if (url == null || url.isBlank()) {
+            url = System.getenv("https_proxy");
+            if (url == null || url.isBlank()) url = System.getenv("http_proxy");
+        }
+        if (url == null || url.isBlank()) return;
+        try {
+            java.net.URI uri = new java.net.URI(url);
+            String host = uri.getHost();
+            int port = uri.getPort();
+            if (host == null || host.isBlank()) return;
+            proxyHost = host;
+            proxyPort = port > 0 ? port : ("https".equalsIgnoreCase(uri.getScheme()) ? 443 : 80);
+            String info = uri.getUserInfo();
+            if (info != null && info.contains(":")) {
+                String[] parts = info.split(":", 2);
+                if (proxyUser == null || proxyUser.isBlank()) proxyUser = parts[0];
+                if (proxyPass == null || proxyPass.isBlank()) proxyPass = parts[1];
+            }
+            log.info("Resolved proxy from env URL: {}:{}", proxyHost, proxyPort);
+        } catch (Exception e) {
+            log.warn("Failed to parse proxy URL '{}': {}", url, e.getMessage());
+        }
     }
 
     public String calculateFingerprint(X509Certificate cert) {
