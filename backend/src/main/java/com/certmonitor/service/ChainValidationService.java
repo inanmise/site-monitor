@@ -12,9 +12,13 @@ import org.bouncycastle.operator.jcajce.JcaDigestCalculatorProviderBuilder;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
+import java.io.IOException;
 import java.io.InputStream;
 import java.net.HttpURLConnection;
+import java.net.InetSocketAddress;
+import java.net.Proxy;
 import java.net.URL;
+import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.cert.CertificateFactory;
 import java.security.cert.X509CRL;
@@ -42,6 +46,18 @@ public class ChainValidationService {
 
     @Value("${cert.monitor.cache.crl-ttl-hours:1}")
     private int crlCacheTtlHours;
+
+    @Value("${cert.monitor.proxy.host:}")
+    private String proxyHost;
+
+    @Value("${cert.monitor.proxy.port:0}")
+    private int proxyPort;
+
+    @Value("${cert.monitor.proxy.user:}")
+    private String proxyUser;
+
+    @Value("${cert.monitor.proxy.pass:}")
+    private String proxyPass;
 
     private Cache<String, X509CRL> crlCache;
 
@@ -158,7 +174,7 @@ public class ChainValidationService {
             reqBuilder.addRequest(certId);
             OCSPReq request = reqBuilder.build();
 
-            HttpURLConnection conn = (HttpURLConnection) new URL(ocspUrl).openConnection();
+            HttpURLConnection conn = openWithProxy(ocspUrl);
             conn.setRequestMethod("POST");
             conn.setDoOutput(true);
             conn.setRequestProperty("Content-Type", "application/ocsp-request");
@@ -254,7 +270,7 @@ public class ChainValidationService {
 
     private X509CRL downloadCrl(String url) {
         try {
-            HttpURLConnection conn = (HttpURLConnection) new URL(url).openConnection();
+            HttpURLConnection conn = openWithProxy(url);
             conn.setConnectTimeout(10000);
             conn.setReadTimeout(10000);
             try (InputStream is = conn.getInputStream()) {
@@ -269,5 +285,27 @@ public class ChainValidationService {
 
     private boolean isRootCa(X509Certificate cert) {
         return cert.getSubjectX500Principal().equals(cert.getIssuerX500Principal());
+    }
+
+    /**
+     * Opens HTTP connection through the configured proxy if set, otherwise direct.
+     * Mirrors CertificateCheckerService proxy pattern so OCSP/CRL traffic also
+     * traverses the corporate egress proxy (OpenShift / restricted networks).
+     */
+    private HttpURLConnection openWithProxy(String url) throws IOException {
+        HttpURLConnection conn;
+        if (proxyHost != null && !proxyHost.isBlank() && proxyPort > 0) {
+            Proxy proxy = new Proxy(Proxy.Type.HTTP,
+                    new InetSocketAddress(proxyHost, proxyPort));
+            conn = (HttpURLConnection) new URL(url).openConnection(proxy);
+            if (proxyUser != null && !proxyUser.isBlank()) {
+                String auth = Base64.getEncoder().encodeToString(
+                        (proxyUser + ":" + proxyPass).getBytes(StandardCharsets.UTF_8));
+                conn.setRequestProperty("Proxy-Authorization", "Basic " + auth);
+            }
+        } else {
+            conn = (HttpURLConnection) new URL(url).openConnection();
+        }
+        return conn;
     }
 }
