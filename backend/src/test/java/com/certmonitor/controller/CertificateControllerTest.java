@@ -61,6 +61,9 @@ class CertificateControllerTest {
     NetworkOutageEventRepository networkOutageRepo;
 
     @MockBean
+    com.certmonitor.repository.CertificateInventoryRepository inventoryRepo;
+
+    @MockBean
     com.certmonitor.service.ExtendedHealthService extendedHealthService;
 
     // ── Auth guard ────────────────────────────────────────────────────────────
@@ -170,7 +173,8 @@ class CertificateControllerTest {
                 "status", "valid",
                 "days_remaining", 90
         );
-        when(checkerService.check("example.com", 443)).thenReturn(new java.util.LinkedHashMap<>(checkResult));
+        when(checkerService.check("example.com", 443, false)).thenReturn(new java.util.LinkedHashMap<>(checkResult));
+        when(inventoryRepo.findByDomain("example.com")).thenReturn(java.util.Optional.empty());
 
         mvc.perform(get("/api/check/example.com").session(authSession()))
                 .andExpect(status().isOk())

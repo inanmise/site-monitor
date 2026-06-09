@@ -62,6 +62,7 @@ public class CertificateInventory {
     @Column(name = "in_use")             private Boolean inUse;
     @Column(name = "ev_certificate")     private Boolean evCertificate;
     @Column(name = "transferred_to_sy")  private Boolean transferredToSy;
+    @Column(name = "use_proxy")          private Boolean useProxy;
 
     // ── Süreç ve açıklama alanları ────────────────────────────────────────────
     @Column(name = "purchased_by", length = 200)

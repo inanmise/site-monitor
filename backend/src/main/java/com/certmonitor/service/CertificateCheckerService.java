@@ -100,11 +100,20 @@ public class CertificateCheckerService {
 
     @Async("certCheckExecutor")
     public CompletableFuture<Map<String, Object>> checkAsync(String domain, int port) {
-        return CompletableFuture.completedFuture(check(domain, port));
+        return checkAsync(domain, port, false);
+    }
+
+    @Async("certCheckExecutor")
+    public CompletableFuture<Map<String, Object>> checkAsync(String domain, int port, boolean forceProxy) {
+        return CompletableFuture.completedFuture(check(domain, port, forceProxy));
     }
 
     public Map<String, Object> check(String domain, int port) {
-        Map<String, Object> result = tryCheckOnce(domain, port);
+        return check(domain, port, false);
+    }
+
+    public Map<String, Object> check(String domain, int port, boolean forceProxy) {
+        Map<String, Object> result = tryCheckOnce(domain, port, forceProxy);
 
         if (!retryOnTransient || maxAttempts < 2) return result;
         if (!isTransientError(result)) return result;
@@ -119,7 +128,7 @@ public class CertificateCheckerService {
             return result;
         }
 
-        Map<String, Object> retry = tryCheckOnce(domain, port);
+        Map<String, Object> retry = tryCheckOnce(domain, port, forceProxy);
         if ("error".equals(retry.get("status"))) {
             retry.put("retry_attempted", true);
             log.warn("Certificate check failed after retry: domain={} final_error={}",
@@ -151,12 +160,12 @@ public class CertificateCheckerService {
         return s.length() <= max ? s : s.substring(0, max) + "...";
     }
 
-    Map<String, Object> tryCheckOnce(String domain, int port) {
+    Map<String, Object> tryCheckOnce(String domain, int port, boolean forceProxy) {
         long startMs = System.currentTimeMillis();
         log.debug("Certificate check start: domain={}:{}", domain, port);
         try {
             SSLSocketFactory factory = (SSLSocketFactory) SSLSocketFactory.getDefault();
-            boolean useProxy = proxyEnabled() && !shouldBypassProxy(domain);
+            boolean useProxy = forceProxy && proxyEnabled() && !shouldBypassProxy(domain);
             SSLSocket socket = useProxy
                     ? openViaProxy(factory, domain, port)
                     : (SSLSocket) factory.createSocket();
