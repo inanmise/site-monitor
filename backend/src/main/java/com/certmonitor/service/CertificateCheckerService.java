@@ -162,10 +162,12 @@ public class CertificateCheckerService {
 
     Map<String, Object> tryCheckOnce(String domain, int port, boolean forceProxy) {
         long startMs = System.currentTimeMillis();
-        log.debug("Certificate check start: domain={}:{}", domain, port);
         try {
             SSLSocketFactory factory = (SSLSocketFactory) SSLSocketFactory.getDefault();
             boolean useProxy = forceProxy && proxyEnabled() && !shouldBypassProxy(domain);
+            log.debug("Certificate check start: domain={}:{} via={}",
+                    domain, port,
+                    useProxy ? "proxy(" + proxyHost + ":" + proxyPort + ")" : "direct");
             SSLSocket socket = useProxy
                     ? openViaProxy(factory, domain, port)
                     : (SSLSocket) factory.createSocket();
