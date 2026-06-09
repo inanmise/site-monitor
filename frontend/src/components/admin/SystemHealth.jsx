@@ -258,6 +258,9 @@ export default function SystemHealth({ systemRole, preFilterDomain, openSmtpModa
         >
           <span className="stats-collapse-icon"><Server size={18} /></span>
           <span className="stats-collapse-label">{t('health.sectionSystem')}</span>
+          {!sysVisible && (
+            <span className="stats-collapse-hint">{t('health.sectionShow', t('health.sectionSystem'))}</span>
+          )}
           <span className={`stats-collapse-chevron${sysVisible ? ' open' : ''}`}>
             <ChevronDown size={18} />
           </span>
@@ -705,6 +708,9 @@ export default function SystemHealth({ systemRole, preFilterDomain, openSmtpModa
           >
             <span className="stats-collapse-icon"><Globe size={18} /></span>
             <span className="stats-collapse-label">{t('http.shortTitle')}</span>
+            {!httpVisible && (
+              <span className="stats-collapse-hint">{t('health.sectionShow', t('http.shortTitle'))}</span>
+            )}
             <span className={`stats-collapse-chevron${httpVisible ? ' open' : ''}`}>
               <ChevronDown size={18} />
             </span>
@@ -780,6 +786,9 @@ export default function SystemHealth({ systemRole, preFilterDomain, openSmtpModa
         >
           <span className="stats-collapse-icon"><Cpu size={18} /></span>
           <span className="stats-collapse-label">{t('health.sectionCpu')}</span>
+          {!cpuVisible && (
+            <span className="stats-collapse-hint">{t('health.sectionShow', t('health.sectionCpu'))}</span>
+          )}
           <span className={`stats-collapse-chevron${cpuVisible ? ' open' : ''}`}>
             <ChevronDown size={18} />
           </span>
@@ -834,6 +843,9 @@ export default function SystemHealth({ systemRole, preFilterDomain, openSmtpModa
         >
           <span className="stats-collapse-icon"><Database size={18} /></span>
           <span className="stats-collapse-label">{t('health.dbTitle')}</span>
+          {!dbVisible && (
+            <span className="stats-collapse-hint">{t('health.sectionShow', t('health.dbTitle'))}</span>
+          )}
           <span className={`stats-collapse-chevron${dbVisible ? ' open' : ''}`}>
             <ChevronDown size={18} />
           </span>
