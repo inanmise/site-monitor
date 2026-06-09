@@ -136,6 +136,7 @@ public class AdminController {
         existing.setInUse(item.getInUse());
         existing.setEvCertificate(item.getEvCertificate());
         existing.setTransferredToSy(item.getTransferredToSy());
+        existing.setUseProxy(item.getUseProxy());
         existing.setPurchasedBy(item.getPurchasedBy());
         existing.setChangeDescription(item.getChangeDescription());
         existing.setTier(item.getTier());
@@ -170,6 +171,7 @@ public class AdminController {
         fieldDiff(sb, "inUse",              o.getInUse(),                n.getInUse());
         fieldDiff(sb, "evCertificate",      o.getEvCertificate(),        n.getEvCertificate());
         fieldDiff(sb, "transferredToSy",    o.getTransferredToSy(),      n.getTransferredToSy());
+        fieldDiff(sb, "useProxy",           o.getUseProxy(),             n.getUseProxy());
         fieldDiff(sb, "purchasedBy",        o.getPurchasedBy(),          n.getPurchasedBy());
         fieldDiff(sb, "changeDescription",  o.getChangeDescription(),    n.getChangeDescription());
         fieldDiff(sb, "expectedFingerprint",o.getExpectedFingerprint(),  n.getExpectedFingerprint());
