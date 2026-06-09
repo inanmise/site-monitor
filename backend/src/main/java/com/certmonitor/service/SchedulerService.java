@@ -263,7 +263,10 @@ public class SchedulerService {
 
         List<Map<String, Object>> staleDomains = inventoryRepo.findByActiveTrueOrderByDomainAsc().stream()
                 .filter(item -> !freshDomains.contains(item.getDomain()))
-                .map(item -> Map.<String, Object>of("domain", item.getDomain(), "port", item.getPort()))
+                .map(item -> Map.<String, Object>of(
+                        "domain",    item.getDomain(),
+                        "port",      item.getPort(),
+                        "use_proxy", Boolean.TRUE.equals(item.getUseProxy())))
                 .toList();
 
         if (staleDomains.isEmpty()) {
