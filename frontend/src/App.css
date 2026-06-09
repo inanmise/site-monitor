@@ -3417,13 +3417,17 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
   z-index: 6;
 }
 .hb-tl-detail {
+  position: sticky;
+  bottom: -18px;
   margin-top: 12px;
   padding: 12px 14px;
   border-radius: 8px;
   border: 1px solid var(--border);
-  background: var(--bg-surface);
+  background: var(--bg-card);
   font-size: .88em;
   color: var(--text);
+  box-shadow: 0 -4px 12px rgba(0,0,0,0.08);
+  z-index: 2;
 }
 .hb-tl-detail-head { margin-bottom: 8px; font-size: .92em; }
 .hb-tl-detail-grid {
