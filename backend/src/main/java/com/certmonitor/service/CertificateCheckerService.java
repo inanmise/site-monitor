@@ -181,14 +181,18 @@ public class CertificateCheckerService {
                 params.setServerNames(Collections.singletonList(new SNIHostName(domain)));
                 if ("browser".equalsIgnoreCase(tlsMode)) {
                     params.setApplicationProtocols(BROWSER_ALPN);
-                    socket.setEnabledProtocols(BROWSER_TLS_PROTOCOLS);
+                    // Protokol kısıtı params üzerinden verilir; aksi halde
+                    // socket.setSSLParameters çağrısı default {TLSv1.3, TLSv1.2}
+                    // ile geri eziyor (önceki bug). Bkz. fix(cert): TLS protokol kısıtı.
+                    params.setProtocols(BROWSER_TLS_PROTOCOLS);
                 }
                 socket.setSSLParameters(params);
 
                 if (useProxy) {
-                    log.info("[cert-proxy] step=tls-handshake-start domain={} sni={} tlsMode={} alpn={} enabledProtocols={} timeoutSec={}",
+                    log.info("[cert-proxy] step=tls-handshake-start domain={} sni={} tlsMode={} alpn={} paramsProtocols={} enabledProtocols={} timeoutSec={}",
                             domain, domain, tlsMode,
                             Arrays.toString(params.getApplicationProtocols()),
+                            Arrays.toString(params.getProtocols()),
                             Arrays.toString(socket.getEnabledProtocols()),
                             timeoutSeconds);
                 }
