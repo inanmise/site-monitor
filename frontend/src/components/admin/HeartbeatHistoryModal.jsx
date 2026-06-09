@@ -12,9 +12,11 @@ export default function HeartbeatHistoryModal({ onClose }) {
   const [timeline, setTimeline] = useState(null)
   const [loading, setLoading] = useState(true)
   const [hovered, setHovered] = useState(null)
+  const [selected, setSelected] = useState(null)
 
   useEffect(() => {
     setLoading(true)
+    setSelected(null)
     api.admin.getHeartbeatTimeline(rangeDays).then(res => {
       if (res?.success) setTimeline(res.data)
       setLoading(false)
@@ -39,6 +41,20 @@ export default function HeartbeatHistoryModal({ onClose }) {
 
   const totalReceived = buckets.reduce((s, b) => s + b.received, 0)
   const totalExpected = buckets.reduce((s, b) => s + b.expected, 0)
+  const bucketMin = timeline?.bucket_minutes || 1
+
+  function endOf(b) {
+    const d = new Date(b.start)
+    d.setMinutes(d.getMinutes() + bucketMin)
+    return d.toISOString().slice(0, 19)
+  }
+
+  function statusLabel(s) {
+    if (s === 'ok')      return t('health.hbLegOk')
+    if (s === 'partial') return t('health.hbLegPartial')
+    if (s === 'low')     return t('health.hbLegPartial')
+    return t('health.hbLegMissing')
+  }
 
   return createPortal(
     <div className="hb-modal-overlay" onClick={onClose}>
@@ -76,19 +92,41 @@ export default function HeartbeatHistoryModal({ onClose }) {
             <div className="hb-timeline-grid">
               {buckets.map((b, i) => {
                 const s = statusOf(b)
+                const isSelected = selected?.i === i
                 return (
                   <div
                     key={i}
-                    className={`hb-tl-cell hb-tl-${s}`}
+                    className={`hb-tl-cell hb-tl-${s}${isSelected ? ' hb-tl-selected' : ''}`}
                     onMouseEnter={() => setHovered(b)}
                     onMouseLeave={() => setHovered(null)}
+                    onClick={() => setSelected(prev => prev?.i === i ? null : { i, b, s })}
                   >
                     {s === 'missing' && <span className="hb-tl-x">×</span>}
                   </div>
                 )
               })}
             </div>
-            {hovered && (
+            {selected && (() => {
+              const b = selected.b
+              const missed = Math.max(0, b.expected - b.received)
+              const lossPct = b.expected > 0 ? Math.round((missed / b.expected) * 100) : 0
+              return (
+                <div className={`hb-tl-detail hb-tl-detail-${selected.s}`}>
+                  <div className="hb-tl-detail-head">
+                    <strong>{t('health.hbSelectedRange')}:</strong>
+                    {' '}
+                    {formatDate(b.start)} — {formatDate(endOf(b))}
+                  </div>
+                  <div className="hb-tl-detail-grid">
+                    <div><span>{t('health.hbDetailExpected')}</span><b>{b.expected}</b></div>
+                    <div><span>{t('health.hbDetailReceived')}</span><b>{b.received}</b></div>
+                    <div><span>{t('health.hbDetailMissed')}</span><b>{missed} (%{lossPct})</b></div>
+                    <div><span>{t('health.hbDetailStatus')}</span><b className={`hb-detail-status hb-detail-status-${selected.s}`}>{statusLabel(selected.s)}</b></div>
+                  </div>
+                </div>
+              )
+            })()}
+            {!selected && hovered && (
               <div className="hb-tl-info">
                 <strong>{formatDate(hovered.start)}</strong>
                 {' · '}

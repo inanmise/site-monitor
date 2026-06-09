@@ -60,7 +60,7 @@ public class ExtendedHealthService {
 
     // ── Heartbeat ─────────────────────────────────────────────────────────────
 
-    @Scheduled(fixedDelay = 60_000, initialDelay = 5_000)
+    @Scheduled(fixedRate = 60_000, initialDelay = 5_000)
     public void recordHeartbeat() {
         try {
             SystemHeartbeat hb = new SystemHeartbeat();
