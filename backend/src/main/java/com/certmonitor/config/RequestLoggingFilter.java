@@ -96,7 +96,7 @@ public class RequestLoggingFilter extends OncePerRequestFilter {
     protected void doFilterInternal(HttpServletRequest req, HttpServletResponse resp, FilterChain chain)
             throws ServletException, IOException {
 
-        if (!log.isDebugEnabled() || shouldSkip(req)) {
+        if (!log.isTraceEnabled() || shouldSkip(req)) {
             chain.doFilter(req, resp);
             return;
         }
@@ -107,7 +107,7 @@ public class RequestLoggingFilter extends OncePerRequestFilter {
         String query = req.getQueryString();
         String fullUri = req.getRequestURI() + (query != null ? "?" + sanitizeQuery(query) : "");
 
-        log.debug(">>> {} {} from {} | headers={}",
+        log.trace(">>> {} {} from {} | headers={}",
                 req.getMethod(), fullUri, clientIp(req), sanitizedHeaders(req));
 
         try {
@@ -116,7 +116,7 @@ public class RequestLoggingFilter extends OncePerRequestFilter {
             long durationMs = System.currentTimeMillis() - start;
             String reqBody  = redact(bodyOf(wReq.getContentAsByteArray()));
             String respBody = redact(bodyOf(wResp.getContentAsByteArray()));
-            log.debug("<<< {} {} -> {} ({} ms) | reqBody={} | respBody={}",
+            log.trace("<<< {} {} -> {} ({} ms) | reqBody={} | respBody={}",
                     req.getMethod(), fullUri, wResp.getStatus(), durationMs,
                     truncate(reqBody), truncate(respBody));
             wResp.copyBodyToResponse();
