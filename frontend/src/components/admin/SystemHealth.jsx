@@ -65,10 +65,12 @@ export default function SystemHealth({ systemRole, preFilterDomain, openSmtpModa
   const [poolLastRefreshed, setPoolLastRefreshed]   = useState(null)
   const [hbRefreshing, setHbRefreshing] = useState(false)
   const [hbModalOpen, setHbModalOpen] = useState(false)
-  const [sysVisible, setSysVisible]   = useState(true)
-  const [dbVisible, setDbVisible]     = useState(true)
-  const [httpVisible, setHttpVisible] = useState(true)
-  const [cpuVisible, setCpuVisible]   = useState(true)
+  const [openSection, setOpenSection] = useState('sys')
+  const toggleSection = (key) => setOpenSection(prev => prev === key ? null : key)
+  const sysVisible  = openSection === 'sys'
+  const dbVisible   = openSection === 'db'
+  const httpVisible = openSection === 'http'
+  const cpuVisible  = openSection === 'cpu'
   const [smtpPeriod, setSmtpPeriod]   = useState('7d')
   const [loading, setLoading]         = useState(true)
   const [releasing, setReleasing]     = useState(false)
@@ -251,7 +253,7 @@ export default function SystemHealth({ systemRole, preFilterDomain, openSmtpModa
       <div className="stats-section">
         <div
           className="stats-collapse-bar"
-          onClick={() => setSysVisible(v => !v)}
+          onClick={() => toggleSection('sys')}
           title={sysVisible ? t('app.collapseStats') : t('app.expandStats')}
         >
           <span className="stats-collapse-icon"><Server size={18} /></span>
@@ -693,11 +695,141 @@ export default function SystemHealth({ systemRole, preFilterDomain, openSmtpModa
         )}
       </div>
 
+      {/* HTTP request metrics */}
+      {httpMetrics && (
+        <div className="stats-section">
+          <div
+            className="stats-collapse-bar"
+            onClick={() => toggleSection('http')}
+            title={httpVisible ? t('app.collapseStats') : t('app.expandStats')}
+          >
+            <span className="stats-collapse-icon"><Globe size={18} /></span>
+            <span className="stats-collapse-label">{t('http.shortTitle')}</span>
+            <span className={`stats-collapse-chevron${httpVisible ? ' open' : ''}`}>
+              <ChevronDown size={18} />
+            </span>
+          </div>
+          {httpVisible && (
+        <div className="metrics-section">
+          <h3 className="metrics-title">{t('http.title')}</h3>
+
+          <div className="http-stats-row">
+            <div className="http-stat">
+              <span className="http-stat-val">{httpMetrics.summary?.total_requests ?? 0}</span>
+              <span className="http-stat-lbl">{t('http.totalReqs')}</span>
+            </div>
+            <div className="http-stat">
+              <span className={`http-stat-val ${(httpMetrics.summary?.error_rate_pct ?? 0) > 5 ? 'http-stat-err' : ''}`}>
+                {httpMetrics.summary?.error_rate_pct ?? 0}%
+              </span>
+              <span className="http-stat-lbl">{t('http.errorRate')}</span>
+            </div>
+            <div className="http-stat">
+              <span className="http-stat-val">{httpMetrics.summary?.avg_ms ?? 0} ms</span>
+              <span className="http-stat-lbl">{t('http.avgMs')}</span>
+            </div>
+            <div className="http-stat">
+              <span className="http-stat-val">{httpMetrics.summary?.max_ms ?? 0} ms</span>
+              <span className="http-stat-lbl">{t('http.maxMs')}</span>
+            </div>
+          </div>
+
+          <div className="metrics-grid">
+            <MiniChart
+              label={t('http.reqPerMin')}
+              unit=""
+              color="#4f9cf9"
+              data={(httpMetrics.history ?? []).map(b => ({ ts: b.ts, value: b.count }))}
+              onClick={() => setModalChart({
+                label: t('http.reqPerMin'), unit: '', color: '#4f9cf9',
+                data: (httpMetrics.history ?? []).map(b => ({ ts: b.ts, value: b.count })),
+              })}
+            />
+            <MiniChart
+              label={t('http.avgDuration')}
+              unit=" ms"
+              color="#f59e0b"
+              data={(httpMetrics.history ?? []).map(b => ({ ts: b.ts, value: b.avg_ms }))}
+              onClick={() => setModalChart({
+                label: t('http.avgDuration'), unit: ' ms', color: '#f59e0b',
+                data: (httpMetrics.history ?? []).map(b => ({ ts: b.ts, value: b.avg_ms })),
+              })}
+            />
+            <MiniChart
+              label={t('http.errorsPerMin')}
+              unit=""
+              color="#ef4444"
+              data={(httpMetrics.history ?? []).map(b => ({ ts: b.ts, value: b.errors }))}
+              onClick={() => setModalChart({
+                label: t('http.errorsPerMin'), unit: '', color: '#ef4444',
+                data: (httpMetrics.history ?? []).map(b => ({ ts: b.ts, value: b.errors })),
+              })}
+            />
+          </div>
+        </div>
+          )}
+        </div>
+      )}
+
+      {/* JVM / CPU metrics */}
+      <div className="stats-section">
+        <div
+          className="stats-collapse-bar"
+          onClick={() => toggleSection('cpu')}
+          title={cpuVisible ? t('app.collapseStats') : t('app.expandStats')}
+        >
+          <span className="stats-collapse-icon"><Cpu size={18} /></span>
+          <span className="stats-collapse-label">{t('health.sectionCpu')}</span>
+          <span className={`stats-collapse-chevron${cpuVisible ? ' open' : ''}`}>
+            <ChevronDown size={18} />
+          </span>
+        </div>
+        {cpuVisible && (
+      <div className="metrics-section">
+        <h3 className="metrics-title">{t('sys.metricsTitle')}</h3>
+        <div className="metrics-grid">
+          <MiniChart
+            label={t('sys.cpuProcess')}
+            unit="%"
+            maxY={100}
+            color="#4f9cf9"
+            data={metrics.map(p => ({ ts: p.ts, value: p.cpu_process }))}
+            onClick={() => setModalChart({
+              label: t('sys.cpuProcess'), unit: '%', color: '#4f9cf9', maxY: 100,
+              data: metrics.map(p => ({ ts: p.ts, value: p.cpu_process })),
+            })}
+          />
+          <MiniChart
+            label={t('sys.heapPct')}
+            unit="%"
+            maxY={100}
+            color="#10b981"
+            data={metrics.map(p => ({ ts: p.ts, value: p.heap_pct }))}
+            onClick={() => setModalChart({
+              label: t('sys.heapPct'), unit: '%', color: '#10b981', maxY: 100,
+              data: metrics.map(p => ({ ts: p.ts, value: p.heap_pct })),
+            })}
+          />
+          <MiniChart
+            label={t('sys.threads')}
+            unit=""
+            color="#a78bfa"
+            data={metrics.map(p => ({ ts: p.ts, value: p.threads }))}
+            onClick={() => setModalChart({
+              label: t('sys.threads'), unit: '', color: '#a78bfa',
+              data: metrics.map(p => ({ ts: p.ts, value: p.threads })),
+            })}
+          />
+        </div>
+      </div>
+        )}
+      </div>
+
       {/* DB section — response time + table stats */}
       <div className="stats-section">
         <div
           className="stats-collapse-bar"
-          onClick={() => setDbVisible(v => !v)}
+          onClick={() => toggleSection('db')}
           title={dbVisible ? t('app.collapseStats') : t('app.expandStats')}
         >
           <span className="stats-collapse-icon"><Database size={18} /></span>
@@ -787,136 +919,6 @@ export default function SystemHealth({ systemRole, preFilterDomain, openSmtpModa
             </div>
           )
         })()}
-      </div>
-        )}
-      </div>
-
-      {/* HTTP request metrics */}
-      {httpMetrics && (
-        <div className="stats-section">
-          <div
-            className="stats-collapse-bar"
-            onClick={() => setHttpVisible(v => !v)}
-            title={httpVisible ? t('app.collapseStats') : t('app.expandStats')}
-          >
-            <span className="stats-collapse-icon"><Globe size={18} /></span>
-            <span className="stats-collapse-label">{t('http.shortTitle')}</span>
-            <span className={`stats-collapse-chevron${httpVisible ? ' open' : ''}`}>
-              <ChevronDown size={18} />
-            </span>
-          </div>
-          {httpVisible && (
-        <div className="metrics-section">
-          <h3 className="metrics-title">{t('http.title')}</h3>
-
-          <div className="http-stats-row">
-            <div className="http-stat">
-              <span className="http-stat-val">{httpMetrics.summary?.total_requests ?? 0}</span>
-              <span className="http-stat-lbl">{t('http.totalReqs')}</span>
-            </div>
-            <div className="http-stat">
-              <span className={`http-stat-val ${(httpMetrics.summary?.error_rate_pct ?? 0) > 5 ? 'http-stat-err' : ''}`}>
-                {httpMetrics.summary?.error_rate_pct ?? 0}%
-              </span>
-              <span className="http-stat-lbl">{t('http.errorRate')}</span>
-            </div>
-            <div className="http-stat">
-              <span className="http-stat-val">{httpMetrics.summary?.avg_ms ?? 0} ms</span>
-              <span className="http-stat-lbl">{t('http.avgMs')}</span>
-            </div>
-            <div className="http-stat">
-              <span className="http-stat-val">{httpMetrics.summary?.max_ms ?? 0} ms</span>
-              <span className="http-stat-lbl">{t('http.maxMs')}</span>
-            </div>
-          </div>
-
-          <div className="metrics-grid">
-            <MiniChart
-              label={t('http.reqPerMin')}
-              unit=""
-              color="#4f9cf9"
-              data={(httpMetrics.history ?? []).map(b => ({ ts: b.ts, value: b.count }))}
-              onClick={() => setModalChart({
-                label: t('http.reqPerMin'), unit: '', color: '#4f9cf9',
-                data: (httpMetrics.history ?? []).map(b => ({ ts: b.ts, value: b.count })),
-              })}
-            />
-            <MiniChart
-              label={t('http.avgDuration')}
-              unit=" ms"
-              color="#f59e0b"
-              data={(httpMetrics.history ?? []).map(b => ({ ts: b.ts, value: b.avg_ms }))}
-              onClick={() => setModalChart({
-                label: t('http.avgDuration'), unit: ' ms', color: '#f59e0b',
-                data: (httpMetrics.history ?? []).map(b => ({ ts: b.ts, value: b.avg_ms })),
-              })}
-            />
-            <MiniChart
-              label={t('http.errorsPerMin')}
-              unit=""
-              color="#ef4444"
-              data={(httpMetrics.history ?? []).map(b => ({ ts: b.ts, value: b.errors }))}
-              onClick={() => setModalChart({
-                label: t('http.errorsPerMin'), unit: '', color: '#ef4444',
-                data: (httpMetrics.history ?? []).map(b => ({ ts: b.ts, value: b.errors })),
-              })}
-            />
-          </div>
-        </div>
-          )}
-        </div>
-      )}
-
-      {/* JVM / CPU metrics */}
-      <div className="stats-section">
-        <div
-          className="stats-collapse-bar"
-          onClick={() => setCpuVisible(v => !v)}
-          title={cpuVisible ? t('app.collapseStats') : t('app.expandStats')}
-        >
-          <span className="stats-collapse-icon"><Cpu size={18} /></span>
-          <span className="stats-collapse-label">{t('health.sectionCpu')}</span>
-          <span className={`stats-collapse-chevron${cpuVisible ? ' open' : ''}`}>
-            <ChevronDown size={18} />
-          </span>
-        </div>
-        {cpuVisible && (
-      <div className="metrics-section">
-        <h3 className="metrics-title">{t('sys.metricsTitle')}</h3>
-        <div className="metrics-grid">
-          <MiniChart
-            label={t('sys.cpuProcess')}
-            unit="%"
-            maxY={100}
-            color="#4f9cf9"
-            data={metrics.map(p => ({ ts: p.ts, value: p.cpu_process }))}
-            onClick={() => setModalChart({
-              label: t('sys.cpuProcess'), unit: '%', color: '#4f9cf9', maxY: 100,
-              data: metrics.map(p => ({ ts: p.ts, value: p.cpu_process })),
-            })}
-          />
-          <MiniChart
-            label={t('sys.heapPct')}
-            unit="%"
-            maxY={100}
-            color="#10b981"
-            data={metrics.map(p => ({ ts: p.ts, value: p.heap_pct }))}
-            onClick={() => setModalChart({
-              label: t('sys.heapPct'), unit: '%', color: '#10b981', maxY: 100,
-              data: metrics.map(p => ({ ts: p.ts, value: p.heap_pct })),
-            })}
-          />
-          <MiniChart
-            label={t('sys.threads')}
-            unit=""
-            color="#a78bfa"
-            data={metrics.map(p => ({ ts: p.ts, value: p.threads }))}
-            onClick={() => setModalChart({
-              label: t('sys.threads'), unit: '', color: '#a78bfa',
-              data: metrics.map(p => ({ ts: p.ts, value: p.threads })),
-            })}
-          />
-        </div>
       </div>
         )}
       </div>
