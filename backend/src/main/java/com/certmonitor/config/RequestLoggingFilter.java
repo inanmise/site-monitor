@@ -36,12 +36,58 @@ public class RequestLoggingFilter extends OncePerRequestFilter {
 
     private static final Set<String> SENSITIVE_HEADERS = Set.of(
             "authorization", "cookie", "set-cookie",
-            "x-csrf-token", "x-auth-token", "x-api-key", "proxy-authorization"
+            "x-csrf-token", "x-auth-token", "x-api-key",
+            "x-access-token", "x-refresh-token",
+            "proxy-authorization"
     );
 
-    private static final Pattern SENSITIVE_BODY_FIELDS = Pattern.compile(
-            "(?i)(\"(?:password|old_password|new_password|current_password|" +
-                    "smtp_pass|smtpPass|token|apiKey|secret)\"\\s*:\\s*)\"[^\"]*\""
+    /**
+     * Sensitive field-name token. Used inside three regex patterns:
+     * - JSON body:  "<field>" : "value"        → value masked
+     * - Form body:  <field>=value              → value masked
+     * - URL query:  ?<field>=value             → value masked
+     *
+     * Covers EN + TR variations of password, secrets, tokens, keys,
+     * service passwords (SMTP/DB/mail/proxy), PIN/OTP, session IDs,
+     * private keys, client secrets.
+     */
+    private static final String SENSITIVE_FIELD_NAMES =
+            // Generic passwords (EN + TR)
+            "password|passwd|pwd|pass|parola|sifre|" +
+            // Password variations
+            "old_password|new_password|current_password|confirm_password|password_confirmation|" +
+            "oldPassword|newPassword|currentPassword|confirmPassword|passwordConfirmation|" +
+            "old_pass|new_pass|currentPass|oldPass|newPass|" +
+            // Service passwords
+            "smtp_pass|smtpPass|smtp_password|smtpPassword|" +
+            "db_password|dbPassword|db_pass|dbPass|" +
+            "mail_password|mailPassword|mail_pass|mailPass|" +
+            "proxy_password|proxyPassword|proxy_pass|proxyPass|" +
+            "ldap_password|ldapPassword|" +
+            // Tokens, bearer
+            "token|access_token|accessToken|refresh_token|refreshToken|" +
+            "auth_token|authToken|bearer|bearer_token|bearerToken|" +
+            "csrf|csrf_token|csrfToken|xsrf_token|xsrfToken|" +
+            // Secrets, API keys
+            "secret|secret_key|secretKey|api_key|apiKey|api_secret|apiSecret|" +
+            "client_secret|clientSecret|client_id|clientId|" +
+            "private_key|privateKey|encryption_key|encryptionKey|" +
+            // Session / cookies (in body)
+            "session_id|sessionId|jsessionid|sid|" +
+            // PINs / OTPs / verification codes
+            "pin|pin_code|pinCode|otp|otp_code|otpCode|verification_code|verificationCode|" +
+            "mfa_code|mfaCode|two_factor|twoFactor";
+
+    private static final Pattern SENSITIVE_JSON_FIELDS = Pattern.compile(
+            "(?i)(\"(?:" + SENSITIVE_FIELD_NAMES + ")\"\\s*:\\s*)\"[^\"]*\""
+    );
+
+    private static final Pattern SENSITIVE_FORM_FIELDS = Pattern.compile(
+            "(?i)((?:^|&)(?:" + SENSITIVE_FIELD_NAMES + ")=)[^&]*"
+    );
+
+    private static final Pattern SENSITIVE_QUERY_FIELDS = Pattern.compile(
+            "(?i)([?&](?:" + SENSITIVE_FIELD_NAMES + ")=)[^&]*"
     );
 
     private static final int MAX_BODY_LOG = 2000;
@@ -59,7 +105,7 @@ public class RequestLoggingFilter extends OncePerRequestFilter {
         ContentCachingResponseWrapper wResp = new ContentCachingResponseWrapper(resp);
         long start = System.currentTimeMillis();
         String query = req.getQueryString();
-        String fullUri = req.getRequestURI() + (query != null ? "?" + query : "");
+        String fullUri = req.getRequestURI() + (query != null ? "?" + sanitizeQuery(query) : "");
 
         log.debug(">>> {} {} from {} | headers={}",
                 req.getMethod(), fullUri, clientIp(req), sanitizedHeaders(req));
@@ -87,6 +133,8 @@ public class RequestLoggingFilter extends OncePerRequestFilter {
                 || uri.endsWith(".ico");
     }
 
+    private static final String MASK = "*******";
+
     private String sanitizedHeaders(HttpServletRequest req) {
         Map<String, String> map = new LinkedHashMap<>();
         Enumeration<String> names = req.getHeaderNames();
@@ -94,7 +142,7 @@ public class RequestLoggingFilter extends OncePerRequestFilter {
         while (names.hasMoreElements()) {
             String name = names.nextElement();
             String value = SENSITIVE_HEADERS.contains(name.toLowerCase())
-                    ? "***REDACTED***"
+                    ? MASK
                     : req.getHeader(name);
             map.put(name, value);
         }
@@ -108,7 +156,16 @@ public class RequestLoggingFilter extends OncePerRequestFilter {
 
     private String redact(String body) {
         if (body == null || body.isEmpty()) return body;
-        return SENSITIVE_BODY_FIELDS.matcher(body).replaceAll("$1\"***\"");
+        // JSON: "field":"value"
+        String redacted = SENSITIVE_JSON_FIELDS.matcher(body).replaceAll("$1\"" + MASK + "\"");
+        // Form: field=value&...
+        redacted = SENSITIVE_FORM_FIELDS.matcher(redacted).replaceAll("$1" + MASK);
+        return redacted;
+    }
+
+    private String sanitizeQuery(String query) {
+        if (query == null || query.isEmpty()) return query;
+        return SENSITIVE_QUERY_FIELDS.matcher("?" + query).replaceAll("$1" + MASK).substring(1);
     }
 
     private String truncate(String s) {
