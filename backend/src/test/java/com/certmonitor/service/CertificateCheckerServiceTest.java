@@ -145,11 +145,11 @@ class CertificateCheckerServiceTest {
         CertificateCheckerService spy = spyWithRetry(true);
         doReturn(err("NETWORK", "Socket error: Connection reset"))
                 .doReturn(ok())
-                .when(spy).tryCheckOnce("test.example.com", 443);
+                .when(spy).tryCheckOnce("test.example.com", 443, false);
 
         Map<String, Object> result = spy.check("test.example.com", 443);
 
-        verify(spy, times(2)).tryCheckOnce("test.example.com", 443);
+        verify(spy, times(2)).tryCheckOnce("test.example.com", 443, false);
         assertThat(result.get("status")).isEqualTo("ok");
         assertThat(result.get("retry_recovered")).isEqualTo(true);
     }
@@ -159,11 +159,11 @@ class CertificateCheckerServiceTest {
     void check_persistentNetworkError_retriesThenFails() {
         CertificateCheckerService spy = spyWithRetry(true);
         doReturn(err("NETWORK", "Socket error: Connection reset"))
-                .when(spy).tryCheckOnce("test.example.com", 443);
+                .when(spy).tryCheckOnce("test.example.com", 443, false);
 
         Map<String, Object> result = spy.check("test.example.com", 443);
 
-        verify(spy, times(2)).tryCheckOnce("test.example.com", 443);
+        verify(spy, times(2)).tryCheckOnce("test.example.com", 443, false);
         assertThat(result.get("status")).isEqualTo("error");
         assertThat(result.get("retry_attempted")).isEqualTo(true);
     }
@@ -173,11 +173,11 @@ class CertificateCheckerServiceTest {
     void check_sslHandshakeError_noRetry() {
         CertificateCheckerService spy = spyWithRetry(true);
         doReturn(err("SSL", "SSL handshake: unable to find valid certification path"))
-                .when(spy).tryCheckOnce("test.example.com", 443);
+                .when(spy).tryCheckOnce("test.example.com", 443, false);
 
         Map<String, Object> result = spy.check("test.example.com", 443);
 
-        verify(spy, times(1)).tryCheckOnce("test.example.com", 443);
+        verify(spy, times(1)).tryCheckOnce("test.example.com", 443, false);
         assertThat(result.get("status")).isEqualTo("error");
         assertThat(result).doesNotContainKey("retry_attempted");
         assertThat(result).doesNotContainKey("retry_recovered");
@@ -188,11 +188,11 @@ class CertificateCheckerServiceTest {
     void check_dnsError_noRetry() {
         CertificateCheckerService spy = spyWithRetry(true);
         doReturn(err("DNS", "Domain resolution failed"))
-                .when(spy).tryCheckOnce("test.example.com", 443);
+                .when(spy).tryCheckOnce("test.example.com", 443, false);
 
         Map<String, Object> result = spy.check("test.example.com", 443);
 
-        verify(spy, times(1)).tryCheckOnce("test.example.com", 443);
+        verify(spy, times(1)).tryCheckOnce("test.example.com", 443, false);
         assertThat(result.get("status")).isEqualTo("error");
     }
 
@@ -201,11 +201,11 @@ class CertificateCheckerServiceTest {
     void check_retryDisabled_singleAttempt() {
         CertificateCheckerService spy = spyWithRetry(false);
         doReturn(err("NETWORK", "Socket error: Connection reset"))
-                .when(spy).tryCheckOnce("test.example.com", 443);
+                .when(spy).tryCheckOnce("test.example.com", 443, false);
 
         Map<String, Object> result = spy.check("test.example.com", 443);
 
-        verify(spy, times(1)).tryCheckOnce("test.example.com", 443);
+        verify(spy, times(1)).tryCheckOnce("test.example.com", 443, false);
         assertThat(result.get("status")).isEqualTo("error");
         assertThat(result).doesNotContainKey("retry_attempted");
     }

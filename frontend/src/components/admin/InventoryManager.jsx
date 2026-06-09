@@ -17,7 +17,7 @@ const EMPTY = {
   external_vendor: false, action_required: false, openshift: false,
   ssl_pinning: false, internal_cert: false, jks_keystore: false,
   server_update: false, netscaler: false, waf_enabled: false,
-  in_use: false, ev_certificate: false, transferred_to_sy: false,
+  in_use: false, ev_certificate: false, transferred_to_sy: false, use_proxy: false,
   purchased_by: '',
   change_description: '',
   expected_fingerprint: '', expected_subject: '',
@@ -184,6 +184,7 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
       in_use:             item.in_use           ?? false,
       ev_certificate:     item.ev_certificate   ?? false,
       transferred_to_sy:  item.transferred_to_sy ?? false,
+      use_proxy:          item.use_proxy        ?? false,
       purchased_by:       item.purchased_by     ?? '',
       change_description: item.change_description ?? '',
       expected_fingerprint: item.expected_fingerprint ?? '',
@@ -231,6 +232,7 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
       in_use:             form.in_use,
       ev_certificate:     form.ev_certificate,
       transferred_to_sy:  form.transferred_to_sy,
+      use_proxy:          form.use_proxy,
       purchased_by:       form.purchased_by || null,
       change_description: form.change_description || null,
       expectedFingerprint: form.expected_fingerprint || null,
@@ -551,6 +553,7 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
                   ['in_use',           'inv.formInUse'],
                   ['ev_certificate',   'inv.formEvCert'],
                   ['transferred_to_sy','inv.formTransferredToSy'],
+                  ['use_proxy',        'inv.formUseProxy'],
                 ].map(([field, key]) => (
                   <div key={field} className="yn-field-row">
                     <span className="yn-field-label">{t(key)}</span>
@@ -658,6 +661,7 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
                   ['inv.formInUse',          showItem.in_use],
                   ['inv.formEvCert',         showItem.ev_certificate],
                   ['inv.formTransferredToSy',showItem.transferred_to_sy],
+                  ['inv.formUseProxy',       showItem.use_proxy],
                 ].map(([key, val]) => (
                   <div key={key} className={`show-yn-cell${val ? ' is-yes' : ''}`}>
                     <span className="show-yn-label">{t(key)}</span>

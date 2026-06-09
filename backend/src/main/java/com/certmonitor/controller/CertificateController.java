@@ -4,6 +4,7 @@ import com.certmonitor.dto.CertificateDto;
 import com.certmonitor.model.AlertEvent;
 import com.certmonitor.model.NetworkOutageEvent;
 import com.certmonitor.repository.AlertEventRepository;
+import com.certmonitor.repository.CertificateInventoryRepository;
 import com.certmonitor.repository.NetworkOutageEventRepository;
 import org.springframework.data.domain.PageRequest;
 import com.certmonitor.service.CertificateCheckerService;
@@ -31,6 +32,7 @@ public class CertificateController {
     private final CertificateCheckerService checkerService;
     private final SchedulerService schedulerService;
     private final AlertEventRepository alertEventRepository;
+    private final CertificateInventoryRepository inventoryRepo;
     private final NetworkOutageEventRepository networkOutageRepo;
     private final com.certmonitor.service.ExtendedHealthService extendedHealthService;
 
@@ -82,7 +84,10 @@ public class CertificateController {
 
     @GetMapping("/check/{domain}")
     public ResponseEntity<Map<String, Object>> checkDomain(@PathVariable String domain, HttpSession session) {
-        Map<String, Object> result = new java.util.LinkedHashMap<>(checkerService.check(domain, 443));
+        boolean forceProxy = inventoryRepo.findByDomain(domain)
+                .map(ci -> Boolean.TRUE.equals(ci.getUseProxy()))
+                .orElse(false);
+        Map<String, Object> result = new java.util.LinkedHashMap<>(checkerService.check(domain, 443, forceProxy));
         result.put("run_id", "manual");
         certService.saveResult(result);
         certService.ensureInInventory(domain, 443, teamId(session));
@@ -91,7 +96,10 @@ public class CertificateController {
 
     @GetMapping("/check-preview/{domain}")
     public ResponseEntity<Map<String, Object>> previewDomain(@PathVariable String domain) {
-        Map<String, Object> result = new java.util.LinkedHashMap<>(checkerService.check(domain, 443));
+        boolean forceProxy = inventoryRepo.findByDomain(domain)
+                .map(ci -> Boolean.TRUE.equals(ci.getUseProxy()))
+                .orElse(false);
+        Map<String, Object> result = new java.util.LinkedHashMap<>(checkerService.check(domain, 443, forceProxy));
         return ok(Map.of("success", true, "data", result, "timestamp", now()));
     }
 
