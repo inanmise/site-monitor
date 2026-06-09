@@ -3771,7 +3771,13 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .smtp-log-table td { padding: 10px 14px; border-bottom: 1px solid var(--border); vertical-align: top; color: var(--text); }
 .smtp-log-table tbody tr:hover { background: var(--bg-hover, rgba(59,130,246,.06)); }
 .smtp-log-date    { white-space: nowrap; width: 140px; color: var(--text-light); font-size: .85em; }
-.smtp-log-subject { max-width: 280px; word-break: break-word; color: var(--text); }
+.smtp-log-subject {
+  max-width: 460px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text);
+}
 .smtp-log-error   { max-width: 260px; word-break: break-all; font-size: .8em; }
 .smtp-log-recipient { font-weight: 600; color: var(--text); }
 .smtp-log-email { font-size: .82em; color: var(--text-light); margin-top: 1px; }
@@ -3780,9 +3786,15 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .smtp-log-row:hover { background: var(--bg-hover, rgba(59,130,246,.06)) !important; }
 
 .smtp-log-from {
-  font-family: inherit; font-size: .88em;
+  font-family: inherit; font-size: .82em;
   color: var(--text); white-space: nowrap;
-  max-width: 220px; overflow: hidden; text-overflow: ellipsis;
+  max-width: 140px; overflow: hidden; text-overflow: ellipsis;
+}
+.smtp-log-domain {
+  white-space: nowrap;
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .smtp-log-filter-row th {

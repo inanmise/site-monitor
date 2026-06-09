@@ -1063,13 +1063,13 @@ export default function SystemHealth({ systemRole, preFilterDomain, openSmtpModa
                       filteredSmtpLogs?.map(row => (
                         <tr key={row.id} className="smtp-log-row" onClick={() => setSelectedLog(row)}>
                           <td className="smtp-log-date sys-mono">{formatDate(row.sent_at)}</td>
-                          <td className="smtp-log-domain sys-mono sys-small">{row.domain || '—'}</td>
-                          <td className="smtp-log-from sys-mono sys-small">{row.sender_email || '—'}</td>
+                          <td className="smtp-log-domain sys-mono sys-small" title={row.domain || ''}>{row.domain || '—'}</td>
+                          <td className="smtp-log-from sys-mono sys-small" title={row.sender_email || ''}>{row.sender_email || '—'}</td>
                           <td>
                             <div className="smtp-log-recipient">{row.recipient_name || '—'}</div>
-                            <div className="smtp-log-email sys-muted sys-small">{row.recipient_email}</div>
+                            <div className="smtp-log-email sys-muted sys-small" title={row.recipient_email || ''}>{row.recipient_email}</div>
                           </td>
-                          <td className="smtp-log-subject">{row.subject}</td>
+                          <td className="smtp-log-subject" title={row.subject || ''}>{row.subject}</td>
                           <td><SmtpStatusCell row={row} t={t} /></td>
                         </tr>
                       ))
