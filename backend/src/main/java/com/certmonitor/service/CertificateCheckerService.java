@@ -162,9 +162,9 @@ public class CertificateCheckerService {
 
     Map<String, Object> tryCheckOnce(String domain, int port, boolean forceProxy) {
         long startMs = System.currentTimeMillis();
+        final boolean useProxy = forceProxy && proxyEnabled() && !shouldBypassProxy(domain);
         try {
             SSLSocketFactory factory = (SSLSocketFactory) SSLSocketFactory.getDefault();
-            boolean useProxy = forceProxy && proxyEnabled() && !shouldBypassProxy(domain);
             log.debug("Certificate check start: domain={}:{} via={}",
                     domain, port,
                     useProxy ? "proxy(" + proxyHost + ":" + proxyPort + ")" : "direct");
@@ -185,8 +185,23 @@ public class CertificateCheckerService {
                 }
                 socket.setSSLParameters(params);
 
+                if (useProxy) {
+                    log.info("[cert-proxy] step=tls-handshake-start domain={} sni={} tlsMode={} alpn={} enabledProtocols={} timeoutSec={}",
+                            domain, domain, tlsMode,
+                            Arrays.toString(params.getApplicationProtocols()),
+                            Arrays.toString(socket.getEnabledProtocols()),
+                            timeoutSeconds);
+                }
+                long handshakeStart = System.currentTimeMillis();
                 socket.startHandshake();
                 String tlsVersion = socket.getSession().getProtocol();
+                if (useProxy) {
+                    log.info("[cert-proxy] step=tls-handshake-done domain={} tlsVersion={} cipher={} peerHost={} peerCerts={} elapsed={}ms",
+                            domain, tlsVersion, socket.getSession().getCipherSuite(),
+                            socket.getSession().getPeerHost(),
+                            socket.getSession().getPeerCertificates().length,
+                            System.currentTimeMillis() - handshakeStart);
+                }
 
                 Certificate[] peerCerts = socket.getSession().getPeerCertificates();
                 if (peerCerts.length == 0) return error(domain, "No certificates in chain");
@@ -285,34 +300,48 @@ public class CertificateCheckerService {
                 return result;
             }
         } catch (java.net.SocketTimeoutException e) {
-            log.warn("Certificate check timeout: domain={}:{} elapsed={}ms",
-                    domain, port, System.currentTimeMillis() - startMs);
+            logCheckFailure(useProxy, "timeout", domain, port, startMs, e);
             return errorWithClass(domain, "Connection timeout after " + timeoutSeconds + "s", "NETWORK");
         } catch (java.net.UnknownHostException e) {
-            log.warn("Certificate check DNS failure: domain={} elapsed={}ms",
-                    domain, System.currentTimeMillis() - startMs);
+            logCheckFailure(useProxy, "dns-failure", domain, port, startMs, e);
             return errorWithClass(domain, "Domain resolution failed", "DNS");
         } catch (java.net.ConnectException e) {
-            log.warn("Certificate check connect refused: domain={}:{} elapsed={}ms",
-                    domain, port, System.currentTimeMillis() - startMs);
+            logCheckFailure(useProxy, "connect-refused", domain, port, startMs, e);
             return errorWithClass(domain, "Connection refused/unreachable: " + e.getMessage(), "NETWORK");
         } catch (java.net.NoRouteToHostException e) {
-            log.warn("Certificate check no route to host: domain={}:{}", domain, port);
+            logCheckFailure(useProxy, "no-route", domain, port, startMs, e);
             return errorWithClass(domain, "No route to host", "NETWORK");
         } catch (java.net.SocketException e) {
-            log.warn("Certificate check socket error: domain={}:{} err={}", domain, port, e.getMessage());
+            logCheckFailure(useProxy, "socket-error", domain, port, startMs, e);
             return errorWithClass(domain, "Socket error: " + e.getMessage(), "NETWORK");
         } catch (javax.net.ssl.SSLHandshakeException e) {
-            log.warn("Certificate check SSL handshake: domain={} error={}", domain, e.getMessage());
+            logCheckFailure(useProxy, "ssl-handshake", domain, port, startMs, e);
             return errorWithClass(domain, "SSL handshake: " + e.getMessage(), "SSL");
         } catch (javax.net.ssl.SSLException e) {
-            log.warn("Certificate check SSL error: domain={} error={} elapsed={}ms",
-                    domain, e.getMessage(), System.currentTimeMillis() - startMs);
+            logCheckFailure(useProxy, "ssl-error", domain, port, startMs, e);
             return errorWithClass(domain, "SSL Error: " + e.getMessage(), "SSL");
         } catch (Exception e) {
-            log.error("Certificate check unexpected error: domain={}:{} elapsed={}ms",
-                    domain, port, System.currentTimeMillis() - startMs, e);
+            // Always log unexpected errors with stack trace, regardless of mode.
+            log.error("Certificate check unexpected error: domain={}:{} via={} elapsed={}ms",
+                    domain, port,
+                    useProxy ? "proxy(" + proxyHost + ":" + proxyPort + ")" : "direct",
+                    System.currentTimeMillis() - startMs, e);
             return errorWithClass(domain, "Error: " + e.getMessage(), "UNKNOWN");
+        }
+    }
+
+    /** Failure logger that opts into full stack trace + proxy diagnostics when
+     *  the check went through a proxy tunnel (per-domain use_proxy flag).
+     *  Direct checks keep the original terse one-liner. */
+    private void logCheckFailure(boolean useProxy, String stage, String domain, int port, long startMs, Exception e) {
+        long elapsed = System.currentTimeMillis() - startMs;
+        if (useProxy) {
+            log.warn("[cert-proxy] step={} FAILED domain={}:{} proxy={}:{} elapsed={}ms errType={} errMsg={}",
+                    stage, domain, port, proxyHost, proxyPort, elapsed,
+                    e.getClass().getSimpleName(), e.getMessage(), e);
+        } else {
+            log.warn("Certificate check {}: domain={}:{} elapsed={}ms err={}",
+                    stage, domain, port, elapsed, e.getMessage());
         }
     }
 
@@ -335,35 +364,111 @@ public class CertificateCheckerService {
         return false;
     }
 
-    /** Open raw TCP to proxy, send HTTP CONNECT, then wrap with SSL. */
+    /** Open raw TCP to proxy, send HTTP CONNECT, then wrap with SSL.
+     *
+     *  Emits step-by-step INFO logs under the "[cert-proxy]" prefix so a
+     *  failed proxy-tunneled cert check (e.g. www.akbankpos.com) can be
+     *  diagnosed end-to-end without re-running with a packet capture.
+     *  Errors are wrapped with the failing step name and the raw proxy
+     *  response (status line + headers) so the caller's WARN/error log
+     *  carries enough context. */
     private SSLSocket openViaProxy(SSLSocketFactory factory, String domain, int port) throws IOException {
+        boolean authOn = proxyUser != null && !proxyUser.isBlank();
+        log.info("[cert-proxy] step=open-tunnel domain={} port={} proxy={}:{} auth={} noProxy='{}' timeoutSec={}",
+                domain, port, proxyHost, proxyPort,
+                authOn ? "basic(user=" + proxyUser + ")" : "off",
+                noProxyList == null ? "" : noProxyList,
+                timeoutSeconds);
+
         Socket raw = new Socket();
-        raw.connect(new InetSocketAddress(proxyHost, proxyPort), timeoutSeconds * 1000);
+        long tcpStart = System.currentTimeMillis();
+        try {
+            raw.connect(new InetSocketAddress(proxyHost, proxyPort), timeoutSeconds * 1000);
+        } catch (IOException e) {
+            log.warn("[cert-proxy] step=tcp-connect FAILED domain={} proxy={}:{} elapsed={}ms err={}",
+                    domain, proxyHost, proxyPort,
+                    System.currentTimeMillis() - tcpStart, e.toString());
+            try { raw.close(); } catch (Exception ignored) {}
+            throw new IOException("Proxy TCP connect failed: " + proxyHost + ":" + proxyPort
+                    + " — " + e.getMessage(), e);
+        }
         raw.setSoTimeout(timeoutSeconds * 1000);
+        log.info("[cert-proxy] step=tcp-connected domain={} proxy={}:{} localPort={} elapsed={}ms",
+                domain, proxyHost, proxyPort, raw.getLocalPort(),
+                System.currentTimeMillis() - tcpStart);
 
         StringBuilder req = new StringBuilder()
             .append("CONNECT ").append(domain).append(":").append(port).append(" HTTP/1.1\r\n")
             .append("Host: ").append(domain).append(":").append(port).append("\r\n");
-        if (proxyUser != null && !proxyUser.isBlank()) {
+        if (authOn) {
             String creds = java.util.Base64.getEncoder().encodeToString(
                 (proxyUser + ":" + proxyPass).getBytes(java.nio.charset.StandardCharsets.UTF_8));
             req.append("Proxy-Authorization: Basic ").append(creds).append("\r\n");
         }
         req.append("\r\n");
-        raw.getOutputStream().write(req.toString().getBytes(java.nio.charset.StandardCharsets.US_ASCII));
-        raw.getOutputStream().flush();
+        log.info("[cert-proxy] step=connect-request domain={} requestLine='CONNECT {}:{} HTTP/1.1' hostHdr='{}:{}' authHdr={}",
+                domain, domain, port, domain, port,
+                authOn ? "'Proxy-Authorization: Basic *******'" : "absent");
+
+        long connectStart = System.currentTimeMillis();
+        try {
+            raw.getOutputStream().write(req.toString().getBytes(java.nio.charset.StandardCharsets.US_ASCII));
+            raw.getOutputStream().flush();
+        } catch (IOException e) {
+            log.warn("[cert-proxy] step=connect-write FAILED domain={} proxy={}:{} err={}",
+                    domain, proxyHost, proxyPort, e.toString());
+            try { raw.close(); } catch (Exception ignored) {}
+            throw new IOException("Proxy CONNECT write failed: " + e.getMessage(), e);
+        }
 
         java.io.BufferedReader in = new java.io.BufferedReader(
             new java.io.InputStreamReader(raw.getInputStream(), java.nio.charset.StandardCharsets.US_ASCII));
-        String status = in.readLine();
-        if (status == null || !(status.startsWith("HTTP/1.1 200") || status.startsWith("HTTP/1.0 200"))) {
+        String status;
+        try {
+            status = in.readLine();
+        } catch (IOException e) {
+            log.warn("[cert-proxy] step=connect-read FAILED domain={} proxy={}:{} elapsed={}ms err={}",
+                    domain, proxyHost, proxyPort,
+                    System.currentTimeMillis() - connectStart, e.toString());
             try { raw.close(); } catch (Exception ignored) {}
-            throw new IOException("Proxy CONNECT failed: " + status);
+            throw new IOException("Proxy CONNECT read failed: " + e.getMessage(), e);
         }
-        String line;
-        while ((line = in.readLine()) != null && !line.isEmpty()) { /* drain headers */ }
+        long connectElapsed = System.currentTimeMillis() - connectStart;
 
-        return (SSLSocket) factory.createSocket(raw, domain, port, true);
+        // Drain + collect response headers for diagnostics
+        List<String> respHeaders = new ArrayList<>();
+        String line;
+        while ((line = in.readLine()) != null && !line.isEmpty()) {
+            if (respHeaders.size() < 32) respHeaders.add(line);
+        }
+
+        if (status == null || !(status.startsWith("HTTP/1.1 200") || status.startsWith("HTTP/1.0 200"))) {
+            log.warn("[cert-proxy] step=connect-response FAILED domain={} proxy={}:{} status='{}' headers={} elapsed={}ms",
+                    domain, proxyHost, proxyPort,
+                    status == null ? "<null>" : status,
+                    respHeaders, connectElapsed);
+            try { raw.close(); } catch (Exception ignored) {}
+            throw new IOException("Proxy CONNECT failed: " + status
+                    + (respHeaders.isEmpty() ? "" : " headers=" + respHeaders));
+        }
+        log.info("[cert-proxy] step=connect-response domain={} status='{}' headers={} elapsed={}ms",
+                domain, status, respHeaders, connectElapsed);
+
+        log.info("[cert-proxy] step=tunnel-established domain={} proxy={}:{} totalElapsed={}ms",
+                domain, proxyHost, proxyPort,
+                System.currentTimeMillis() - tcpStart);
+
+        try {
+            SSLSocket sslSocket = (SSLSocket) factory.createSocket(raw, domain, port, true);
+            log.info("[cert-proxy] step=ssl-wrap domain={} cipherSuitesEnabled={} protocolsEnabled={}",
+                    domain, sslSocket.getEnabledCipherSuites().length,
+                    Arrays.toString(sslSocket.getEnabledProtocols()));
+            return sslSocket;
+        } catch (IOException e) {
+            log.warn("[cert-proxy] step=ssl-wrap FAILED domain={} err={}", domain, e.toString());
+            try { raw.close(); } catch (Exception ignored) {}
+            throw e;
+        }
     }
 
     private Map<String, Object> parseLeafCert(X509Certificate cert, String domain) {
