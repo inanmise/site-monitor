@@ -44,8 +44,9 @@ export default function HeartbeatHistoryModal({ onClose }) {
   const bucketMin = timeline?.bucket_minutes || 1
 
   function endOf(b) {
-    const d = new Date(b.start)
-    d.setMinutes(d.getMinutes() + bucketMin)
+    const utcIso = b.start.endsWith('Z') || b.start.includes('+') ? b.start : b.start + 'Z'
+    const d = new Date(utcIso)
+    d.setUTCMinutes(d.getUTCMinutes() + bucketMin)
     return d.toISOString().slice(0, 19)
   }
 
