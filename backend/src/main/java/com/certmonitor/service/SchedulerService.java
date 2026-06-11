@@ -193,6 +193,7 @@ public class SchedulerService {
         patch("ALTER TABLE notification_logs ADD COLUMN message TEXT");
         patch("ALTER TABLE certificate_inventory ADD COLUMN team_id INTEGER");
         patch("ALTER TABLE certificate_inventory ADD COLUMN use_proxy BOOLEAN DEFAULT false");
+        patch("ALTER TABLE certificate_inventory ADD COLUMN tls_mode TEXT");
         patch("ALTER TABLE escalation_contacts ADD COLUMN team_id INTEGER");
         // Widen varchar(255) columns to TEXT — markdown editor / long descriptions can overflow
         patch("ALTER TABLE certificate_inventory ALTER COLUMN change_description TYPE TEXT");
@@ -266,7 +267,8 @@ public class SchedulerService {
                 .map(item -> Map.<String, Object>of(
                         "domain",    item.getDomain(),
                         "port",      item.getPort(),
-                        "use_proxy", Boolean.TRUE.equals(item.getUseProxy())))
+                        "use_proxy", Boolean.TRUE.equals(item.getUseProxy()),
+                        "tls_mode",  item.getTlsMode() == null ? "" : item.getTlsMode()))
                 .toList();
 
         if (staleDomains.isEmpty()) {
@@ -387,7 +389,8 @@ public class SchedulerService {
                     .map(d -> checkerService.checkAsync(
                             (String) d.get("domain"),
                             (int) d.get("port"),
-                            Boolean.TRUE.equals(d.get("use_proxy"))))
+                            Boolean.TRUE.equals(d.get("use_proxy")),
+                            blankToNull((String) d.get("tls_mode"))))
                     .toList();
 
             List<Map<String, Object>> results = futures.stream()
@@ -635,11 +638,17 @@ public class SchedulerService {
             result.add(Map.of(
                 "domain",    item.getDomain(),
                 "port",      item.getPort(),
-                "use_proxy", Boolean.TRUE.equals(item.getUseProxy())
+                "use_proxy", Boolean.TRUE.equals(item.getUseProxy()),
+                "tls_mode",  item.getTlsMode() == null ? "" : item.getTlsMode()
             ));
         }
         log.info("Loaded {} active domains from inventory", result.size());
         return result;
+    }
+
+    /** Map.of rejects nulls, so inventory maps carry "" for unset tls_mode. */
+    private static String blankToNull(String s) {
+        return (s == null || s.isBlank()) ? null : s;
     }
 
     private void ensureDefaultThreshold() {

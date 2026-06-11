@@ -5,6 +5,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
@@ -119,7 +120,12 @@ class CertificateCheckerServiceTest {
         ReflectionTestUtils.setField(spy, "retryOnTransient", enabled);
         ReflectionTestUtils.setField(spy, "maxAttempts", 2);
         ReflectionTestUtils.setField(spy, "retryDelayMs", 5L);
+        ReflectionTestUtils.setField(spy, "tlsMode", "browser");
         return spy;
+    }
+
+    private static CertificateCheckerService.CheckOptions anyOpts() {
+        return any(CertificateCheckerService.CheckOptions.class);
     }
 
     private static Map<String, Object> err(String cls, String msg) {
@@ -145,11 +151,11 @@ class CertificateCheckerServiceTest {
         CertificateCheckerService spy = spyWithRetry(true);
         doReturn(err("NETWORK", "Socket error: Connection reset"))
                 .doReturn(ok())
-                .when(spy).tryCheckOnce("test.example.com", 443, false);
+                .when(spy).tryCheckOnce(eq("test.example.com"), eq(443), anyOpts());
 
         Map<String, Object> result = spy.check("test.example.com", 443);
 
-        verify(spy, times(2)).tryCheckOnce("test.example.com", 443, false);
+        verify(spy, times(2)).tryCheckOnce(eq("test.example.com"), eq(443), anyOpts());
         assertThat(result.get("status")).isEqualTo("ok");
         assertThat(result.get("retry_recovered")).isEqualTo(true);
     }
@@ -159,11 +165,11 @@ class CertificateCheckerServiceTest {
     void check_persistentNetworkError_retriesThenFails() {
         CertificateCheckerService spy = spyWithRetry(true);
         doReturn(err("NETWORK", "Socket error: Connection reset"))
-                .when(spy).tryCheckOnce("test.example.com", 443, false);
+                .when(spy).tryCheckOnce(eq("test.example.com"), eq(443), anyOpts());
 
         Map<String, Object> result = spy.check("test.example.com", 443);
 
-        verify(spy, times(2)).tryCheckOnce("test.example.com", 443, false);
+        verify(spy, times(2)).tryCheckOnce(eq("test.example.com"), eq(443), anyOpts());
         assertThat(result.get("status")).isEqualTo("error");
         assertThat(result.get("retry_attempted")).isEqualTo(true);
     }
@@ -173,11 +179,11 @@ class CertificateCheckerServiceTest {
     void check_sslHandshakeError_noRetry() {
         CertificateCheckerService spy = spyWithRetry(true);
         doReturn(err("SSL", "SSL handshake: unable to find valid certification path"))
-                .when(spy).tryCheckOnce("test.example.com", 443, false);
+                .when(spy).tryCheckOnce(eq("test.example.com"), eq(443), anyOpts());
 
         Map<String, Object> result = spy.check("test.example.com", 443);
 
-        verify(spy, times(1)).tryCheckOnce("test.example.com", 443, false);
+        verify(spy, times(1)).tryCheckOnce(eq("test.example.com"), eq(443), anyOpts());
         assertThat(result.get("status")).isEqualTo("error");
         assertThat(result).doesNotContainKey("retry_attempted");
         assertThat(result).doesNotContainKey("retry_recovered");
@@ -188,11 +194,11 @@ class CertificateCheckerServiceTest {
     void check_dnsError_noRetry() {
         CertificateCheckerService spy = spyWithRetry(true);
         doReturn(err("DNS", "Domain resolution failed"))
-                .when(spy).tryCheckOnce("test.example.com", 443, false);
+                .when(spy).tryCheckOnce(eq("test.example.com"), eq(443), anyOpts());
 
         Map<String, Object> result = spy.check("test.example.com", 443);
 
-        verify(spy, times(1)).tryCheckOnce("test.example.com", 443, false);
+        verify(spy, times(1)).tryCheckOnce(eq("test.example.com"), eq(443), anyOpts());
         assertThat(result.get("status")).isEqualTo("error");
     }
 
@@ -201,13 +207,164 @@ class CertificateCheckerServiceTest {
     void check_retryDisabled_singleAttempt() {
         CertificateCheckerService spy = spyWithRetry(false);
         doReturn(err("NETWORK", "Socket error: Connection reset"))
-                .when(spy).tryCheckOnce("test.example.com", 443, false);
+                .when(spy).tryCheckOnce(eq("test.example.com"), eq(443), anyOpts());
 
         Map<String, Object> result = spy.check("test.example.com", 443);
 
-        verify(spy, times(1)).tryCheckOnce("test.example.com", 443, false);
+        verify(spy, times(1)).tryCheckOnce(eq("test.example.com"), eq(443), anyOpts());
         assertThat(result.get("status")).isEqualTo("error");
         assertThat(result).doesNotContainKey("retry_attempted");
+    }
+
+    // ── Fallback retry (alternate combo) ───────────────────────────────────────
+
+    private static Map<String, Object> errAtStage(String cls, String msg, String stage) {
+        Map<String, Object> m = err(cls, msg);
+        m.put("error_stage", stage);
+        return m;
+    }
+
+    @Test
+    @DisplayName("fallback: tls-handshake stall flips TLS mode on retry, same path")
+    void fallback_handshakeStall_flipsTlsMode() {
+        CertificateCheckerService spy = spyWithRetry(true);
+        ReflectionTestUtils.setField(spy, "retryFallback", true);
+        doReturn(errAtStage("NETWORK", "Connection timeout after 6s", "tls-handshake"))
+                .when(spy).tryCheckOnce(eq("test.example.com"), eq(443), anyOpts());
+
+        Map<String, Object> result = spy.check("test.example.com", 443);
+
+        ArgumentCaptor<CertificateCheckerService.CheckOptions> captor =
+                ArgumentCaptor.forClass(CertificateCheckerService.CheckOptions.class);
+        verify(spy, times(2)).tryCheckOnce(eq("test.example.com"), eq(443), captor.capture());
+        assertThat(captor.getAllValues().get(0).tlsMode()).isEqualTo("browser");
+        assertThat(captor.getAllValues().get(1).tlsMode()).isEqualTo("default");
+        assertThat(captor.getAllValues().get(1).viaProxy()).isFalse();
+        assertThat(result.get("retry_fallback")).isEqualTo("direct/browser→direct/default");
+    }
+
+    @Test
+    @DisplayName("fallback: direct TCP reset switches to proxy when proxy is configured")
+    void fallback_directTcpReset_switchesToProxy() {
+        CertificateCheckerService spy = spyWithRetry(true);
+        ReflectionTestUtils.setField(spy, "retryFallback", true);
+        ReflectionTestUtils.setField(spy, "proxyHost", "proxy.local");
+        ReflectionTestUtils.setField(spy, "proxyPort", 8080);
+        doReturn(errAtStage("NETWORK", "Socket error: Connection reset", "tcp-connect"))
+                .doReturn(ok())
+                .when(spy).tryCheckOnce(eq("test.example.com"), eq(443), anyOpts());
+
+        Map<String, Object> result = spy.check("test.example.com", 443);
+
+        ArgumentCaptor<CertificateCheckerService.CheckOptions> captor =
+                ArgumentCaptor.forClass(CertificateCheckerService.CheckOptions.class);
+        verify(spy, times(2)).tryCheckOnce(eq("test.example.com"), eq(443), captor.capture());
+        assertThat(captor.getAllValues().get(0).viaProxy()).isFalse();
+        assertThat(captor.getAllValues().get(1).viaProxy()).isTrue();
+        assertThat(captor.getAllValues().get(1).tlsMode()).isEqualTo("browser");
+        assertThat(result.get("retry_recovered")).isEqualTo(true);
+        assertThat(result.get("retry_fallback")).isEqualTo("direct/browser→proxy/browser");
+    }
+
+    @Test
+    @DisplayName("fallback: proxy tunnel failure switches to direct")
+    void fallback_proxyTunnelFailure_switchesToDirect() {
+        CertificateCheckerService spy = spyWithRetry(true);
+        ReflectionTestUtils.setField(spy, "retryFallback", true);
+        ReflectionTestUtils.setField(spy, "proxyHost", "proxy.local");
+        ReflectionTestUtils.setField(spy, "proxyPort", 8080);
+        doReturn(errAtStage("NETWORK",
+                        "I/O error: Proxy TCP connect failed: proxy.local:8080 — Connection refused",
+                        "proxy-connect"))
+                .doReturn(ok())
+                .when(spy).tryCheckOnce(eq("test.example.com"), eq(443), anyOpts());
+
+        Map<String, Object> result = spy.check("test.example.com", 443, true);
+
+        ArgumentCaptor<CertificateCheckerService.CheckOptions> captor =
+                ArgumentCaptor.forClass(CertificateCheckerService.CheckOptions.class);
+        verify(spy, times(2)).tryCheckOnce(eq("test.example.com"), eq(443), captor.capture());
+        assertThat(captor.getAllValues().get(0).viaProxy()).isTrue();
+        assertThat(captor.getAllValues().get(1).viaProxy()).isFalse();
+        assertThat(result.get("retry_recovered")).isEqualTo(true);
+    }
+
+    @Test
+    @DisplayName("fallback disabled: retry repeats identical parameters")
+    void fallback_disabled_identicalRetry() {
+        CertificateCheckerService spy = spyWithRetry(true);
+        ReflectionTestUtils.setField(spy, "retryFallback", false);
+        doReturn(errAtStage("NETWORK", "Connection timeout after 6s", "tls-handshake"))
+                .when(spy).tryCheckOnce(eq("test.example.com"), eq(443), anyOpts());
+
+        Map<String, Object> result = spy.check("test.example.com", 443);
+
+        ArgumentCaptor<CertificateCheckerService.CheckOptions> captor =
+                ArgumentCaptor.forClass(CertificateCheckerService.CheckOptions.class);
+        verify(spy, times(2)).tryCheckOnce(eq("test.example.com"), eq(443), captor.capture());
+        assertThat(captor.getAllValues().get(0)).isEqualTo(captor.getAllValues().get(1));
+        assertThat(result).doesNotContainKey("retry_fallback");
+    }
+
+    @Test
+    @DisplayName("per-domain tlsModeOverride reaches the attempt options")
+    void check_tlsModeOverride_appliesToOptions() {
+        CertificateCheckerService spy = spyWithRetry(true);
+        doReturn(ok()).when(spy).tryCheckOnce(eq("test.example.com"), eq(443), anyOpts());
+
+        spy.check("test.example.com", 443, false, "default");
+
+        ArgumentCaptor<CertificateCheckerService.CheckOptions> captor =
+                ArgumentCaptor.forClass(CertificateCheckerService.CheckOptions.class);
+        verify(spy).tryCheckOnce(eq("test.example.com"), eq(443), captor.capture());
+        assertThat(captor.getValue().tlsMode()).isEqualTo("default");
+    }
+
+    @Test
+    @DisplayName("real error result carries via, tls_mode_used, error_stage and resolved_ips")
+    void tryCheckOnce_errorResult_carriesDiagnosticKeys() {
+        ReflectionTestUtils.setField(service, "tlsMode", "browser");
+        ReflectionTestUtils.setField(service, "timeoutSeconds", 2);
+
+        Map<String, Object> result = service.check("localhost", 1);
+
+        assertThat(result.get("status")).isEqualTo("error");
+        assertThat(result.get("via")).isEqualTo("direct");
+        assertThat(result.get("tls_mode_used")).isEqualTo("browser");
+        assertThat(result.get("error_stage")).isEqualTo("tcp-connect");
+        assertThat(result).containsKeys("resolved_ips", "elapsed_ms");
+    }
+
+    @Test
+    @DisplayName("chooseFallback decision table covers all rules")
+    void chooseFallback_decisionTable() {
+        ReflectionTestUtils.setField(service, "proxyHost", "proxy.local");
+        ReflectionTestUtils.setField(service, "proxyPort", 8080);
+        var direct = new CertificateCheckerService.CheckOptions(false, "browser", 6, false);
+        var viaProxy = new CertificateCheckerService.CheckOptions(true, "default", 6, false);
+
+        // Rule 1: handshake stall → flip TLS mode
+        assertThat(service.chooseFallback(direct,
+                errAtStage("NETWORK", "Connection timeout after 6s", "tls-handshake"), "x.com"))
+                .isEqualTo(direct.withTlsMode("default"));
+        assertThat(service.chooseFallback(viaProxy,
+                errAtStage("NETWORK", "Socket error: Connection reset", "tls-handshake"), "x.com"))
+                .isEqualTo(viaProxy.withTlsMode("browser"));
+
+        // Rule 2: direct TCP block + proxy configured → via proxy
+        assertThat(service.chooseFallback(direct,
+                errAtStage("NETWORK", "Connection refused/unreachable: connect", "tcp-connect"), "x.com"))
+                .isEqualTo(direct.withViaProxy(true));
+
+        // Rule 3: proxy tunnel failure → direct
+        assertThat(service.chooseFallback(viaProxy,
+                errAtStage("NETWORK", "I/O error: Proxy CONNECT read failed: Read timed out", "proxy-connect"), "x.com"))
+                .isEqualTo(viaProxy.withViaProxy(false));
+
+        // Rule 4: anything else → unchanged
+        assertThat(service.chooseFallback(direct,
+                err("NETWORK", "Socket error: Connection reset"), "x.com"))
+                .isEqualTo(direct);
     }
 
     @Test

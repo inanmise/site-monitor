@@ -91,6 +91,9 @@ class AdminControllerTest {
     @MockBean
     com.certmonitor.service.EmailNotificationService emailNotificationService;
 
+    @MockBean
+    com.certmonitor.service.ConnectionDiagnosticsService diagnosticsService;
+
     @BeforeEach
     void setup() {
         when(userService.listTeams()).thenReturn(java.util.Collections.emptyList());
@@ -186,6 +189,91 @@ class AdminControllerTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"domain\":\"x.com\",\"port\":443}"))
                 .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.success").value(false));
+    }
+
+    @Test
+    @DisplayName("PUT /api/admin/inventory/{id} persists tls_mode override")
+    void updateInventory_tlsMode_persisted() throws Exception {
+        CertificateInventory existing = inventory("old.com");
+        existing.setId(1L);
+        when(inventoryRepo.findById(1L)).thenReturn(Optional.of(existing));
+        when(inventoryRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        mvc.perform(put("/api/admin/inventory/1")
+                        .session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"domain\":\"old.com\",\"port\":443,\"active\":true,\"tls_mode\":\"default\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.data.tls_mode").value("default"));
+    }
+
+    @Test
+    @DisplayName("PUT /api/admin/inventory/{id} with invalid tls_mode returns 400")
+    void updateInventory_invalidTlsMode_returns400() throws Exception {
+        CertificateInventory existing = inventory("old.com");
+        existing.setId(1L);
+        when(inventoryRepo.findById(1L)).thenReturn(Optional.of(existing));
+
+        mvc.perform(put("/api/admin/inventory/1")
+                        .session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"domain\":\"old.com\",\"port\":443,\"tls_mode\":\"bogus\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.success").value(false));
+    }
+
+    // ── Connection diagnostics ────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("POST /api/admin/diagnostics without auth returns 401")
+    void runDiagnostics_unauthenticated_returns401() throws Exception {
+        mvc.perform(post("/api/admin/diagnostics")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"domain\":\"example.com\",\"port\":443}"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    @DisplayName("POST /api/admin/diagnostics as USER returns 403")
+    void runDiagnostics_asUser_returns403() throws Exception {
+        mvc.perform(post("/api/admin/diagnostics")
+                        .session(userSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"domain\":\"example.com\",\"port\":443}"))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    @DisplayName("POST /api/admin/diagnostics as ADMIN returns combo matrix")
+    void runDiagnostics_asAdmin_returns200() throws Exception {
+        when(diagnosticsService.diagnose("example.com", 443)).thenReturn(Map.of(
+                "domain", "example.com",
+                "port", 443,
+                "proxy_configured", false,
+                "dns", Map.of("ips", List.of("93.184.216.34"), "elapsed_ms", 5),
+                "combos", List.of(Map.of("id", "direct+browser", "status", "ok"))
+        ));
+
+        mvc.perform(post("/api/admin/diagnostics")
+                        .session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"domain\":\"example.com\",\"port\":443}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.data.combos").isArray())
+                .andExpect(jsonPath("$.data.combos[0].id").value("direct+browser"));
+    }
+
+    @Test
+    @DisplayName("POST /api/admin/diagnostics with invalid domain returns 400")
+    void runDiagnostics_invalidDomain_returns400() throws Exception {
+        mvc.perform(post("/api/admin/diagnostics")
+                        .session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"domain\":\"not a domain!\",\"port\":443}"))
+                .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.success").value(false));
     }
 

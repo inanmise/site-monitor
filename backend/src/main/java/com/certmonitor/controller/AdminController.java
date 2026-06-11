@@ -46,6 +46,7 @@ public class AdminController {
     private final AppUserRepository userRepo;
     private final TeamRepository teamRepo;
     private final com.certmonitor.service.EmailNotificationService emailNotificationService;
+    private final com.certmonitor.service.ConnectionDiagnosticsService diagnosticsService;
 
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private com.certmonitor.service.PermissionService permissionService;
@@ -92,6 +93,7 @@ public class AdminController {
         if (item.getPort() < 1 || item.getPort() > 65535)
             throw new IllegalArgumentException("Port must be between 1 and 65535");
         if (item.getActive() == null) item.setActive(true);
+        item.setTlsMode(normalizeTlsMode(item.getTlsMode()));
         CertificateInventory saved = inventoryRepo.save(item);
         auditService.recordAction("DOMAIN_ADD", session, request,
                 "CERTIFICATE", saved.getDomain(),
@@ -113,6 +115,7 @@ public class AdminController {
         if (isTeamAdmin(session)) {
             item.setTeamId(existing.getTeamId());
         }
+        item.setTlsMode(normalizeTlsMode(item.getTlsMode()));
 
         // Build diff BEFORE applying changes
         String diffJson = buildInventoryDiff(existing, item, true);
@@ -163,6 +166,7 @@ public class AdminController {
         existing.setEvCertificate(item.getEvCertificate());
         existing.setTransferredToSy(item.getTransferredToSy());
         existing.setUseProxy(item.getUseProxy());
+        existing.setTlsMode(item.getTlsMode());
         existing.setPurchasedBy(item.getPurchasedBy());
         existing.setChangeDescription(item.getChangeDescription());
         existing.setTier(item.getTier());
@@ -198,6 +202,7 @@ public class AdminController {
         fieldDiff(sb, "evCertificate",      o.getEvCertificate(),        n.getEvCertificate());
         fieldDiff(sb, "transferredToSy",    o.getTransferredToSy(),      n.getTransferredToSy());
         fieldDiff(sb, "useProxy",           o.getUseProxy(),             n.getUseProxy());
+        fieldDiff(sb, "tlsMode",            o.getTlsMode(),              n.getTlsMode());
         fieldDiff(sb, "purchasedBy",        o.getPurchasedBy(),          n.getPurchasedBy());
         fieldDiff(sb, "changeDescription",  o.getChangeDescription(),    n.getChangeDescription());
         fieldDiff(sb, "expectedFingerprint",o.getExpectedFingerprint(),  n.getExpectedFingerprint());
@@ -223,6 +228,34 @@ public class AdminController {
         String s = v.toString().replace("\\", "\\\\").replace("\"", "\\\"")
                                .replace("\n", "\\n").replace("\r", "");
         return '"' + s + '"';
+    }
+
+    /** tls_mode: null/blank → null (inherit global); only "browser"/"default" allowed. */
+    private String normalizeTlsMode(String v) {
+        if (v == null || v.isBlank()) return null;
+        String m = v.trim().toLowerCase();
+        if (!m.equals("browser") && !m.equals("default")) {
+            throw new IllegalArgumentException("tls_mode must be 'browser' or 'default'");
+        }
+        return m;
+    }
+
+    // ── Connection diagnostics ────────────────────────────────────────────────
+
+    @PostMapping("/diagnostics")
+    public ResponseEntity<Map<String, Object>> runDiagnostics(
+            @RequestBody Map<String, Object> body, HttpSession session, HttpServletRequest request) {
+        requireAdmin(session);
+        String domain = body.get("domain") != null ? body.get("domain").toString().trim() : null;
+        validateDomain(domain);
+        Long portRaw = toLong(body.get("port"));
+        int port = portRaw != null ? portRaw.intValue() : 443;
+        if (port < 1 || port > 65535)
+            throw new IllegalArgumentException("Port must be between 1 and 65535");
+        Map<String, Object> data = diagnosticsService.diagnose(domain, port);
+        auditService.recordAction("DIAGNOSTICS_RUN", session, request,
+                "CERTIFICATE", domain, "{\"port\":" + port + "}");
+        return ok(Map.of("data", data));
     }
 
     @CacheEvict(value = {"cert-latest", "cert-warnings", "cert-stats", "renewal-advice"}, allEntries = true)

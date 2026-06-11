@@ -18,6 +18,7 @@ const EMPTY = {
   ssl_pinning: false, internal_cert: false, jks_keystore: false,
   server_update: false, netscaler: false, waf_enabled: false,
   in_use: false, ev_certificate: false, transferred_to_sy: false, use_proxy: false,
+  tls_mode: '',
   purchased_by: '',
   change_description: '',
   expected_fingerprint: '', expected_subject: '',
@@ -69,6 +70,7 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
   const [msg, setMsg]                 = useState(null)
   const [statusFilter, setStatusFilter] = useState('default')
   const [showItem,    setShowItem]    = useState(null)
+  const [diag,        setDiag]        = useState(null)   // { item, loading?, data?, error? }
   const [exportOpen,  setExportOpen]  = useState(false)
   const [exporting,   setExporting]   = useState(false)
   const exportRef = useRef(null)
@@ -193,6 +195,7 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
       ev_certificate:     item.ev_certificate   ?? false,
       transferred_to_sy:  item.transferred_to_sy ?? false,
       use_proxy:          item.use_proxy        ?? false,
+      tls_mode:           item.tls_mode         ?? '',
       purchased_by:       item.purchased_by     ?? '',
       change_description: item.change_description ?? '',
       expected_fingerprint: item.expected_fingerprint ?? '',
@@ -258,6 +261,7 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
       ev_certificate:     form.ev_certificate,
       transferred_to_sy:  form.transferred_to_sy,
       use_proxy:          form.use_proxy,
+      tls_mode:           form.tls_mode || null,
       purchased_by:       form.purchased_by || null,
       change_description: form.change_description || null,
       expectedFingerprint: form.expected_fingerprint || null,
@@ -357,6 +361,27 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
   }
 
   const ugTeamName = (id) => teamMap[String(id)] || '—'
+
+  async function runDiag(item) {
+    setDiag({ item, loading: true })
+    try {
+      const res = await api.admin.runDiagnostics(item.domain, item.port || 443)
+      setDiag(res?.success
+        ? { item, data: res.data }
+        : { item, error: res?.error || t('inv.diagError') })
+    } catch {
+      setDiag({ item, error: t('inv.diagError') })
+    }
+  }
+
+  const DIAG_STEP_KEYS = {
+    'dns':           'inv.diagStepDns',
+    'tcp-connect':   'inv.diagStepTcp',
+    'proxy-connect': 'inv.diagStepProxyConnect',
+    'tls-handshake': 'inv.diagStepTls',
+    'cert-ok':       'inv.diagStepCertOk',
+  }
+  const diagStepLabel = (step) => DIAG_STEP_KEYS[step] ? t(DIAG_STEP_KEYS[step]) : (step || '—')
 
   return (
     <div className="admin-section">
@@ -473,6 +498,11 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
                     )
                   ) : (
                     <>
+                      {isAdmin && (
+                        <button className="btn-sm btn-show" onClick={() => runDiag(item)}>
+                          {t('inv.diagnose')}
+                        </button>
+                      )}
                       {canManage && <button className="btn-sm btn-edit" onClick={() => openEdit(item)}>{t('inv.edit')}</button>}
                       {isAdmin && teams.length > 1 && (
                         <button className="btn-sm btn-transfer-sy"
@@ -553,6 +583,19 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
                     { value: '2', label: t('inv.tier2') },
                     { value: '3', label: t('inv.tier3') },
                     { value: '4', label: t('inv.tier4') },
+                  ]}
+                />
+              </label>
+
+              <label>
+                {t('inv.formTlsMode')}
+                <SearchableSelect
+                  value={form.tls_mode}
+                  onChange={v => f('tls_mode', v)}
+                  options={[
+                    { value: '',        label: t('inv.tlsModeInherit') },
+                    { value: 'browser', label: t('inv.tlsModeBrowser') },
+                    { value: 'default', label: t('inv.tlsModeDefault') },
                   ]}
                 />
               </label>
@@ -669,6 +712,11 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
                     : t('inv.tierNone')
                 } />
                 <ShowField label={t('inv.formPurchasedBy')} value={showItem.purchased_by || '—'} />
+                <ShowField label={t('inv.formTlsMode')} value={
+                  showItem.tls_mode === 'browser' ? t('inv.tlsModeBrowser')
+                  : showItem.tls_mode === 'default' ? t('inv.tlsModeDefault')
+                  : t('inv.tlsModeInherit')
+                } />
               </div>
 
               {/* Operasyonel Bilgiler */}
@@ -772,6 +820,93 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
               <button className="btn btn-primary" onClick={doTransfer} disabled={saving}>
                 {saving ? t('inv.saving') : t('inv.transferConfirm')}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Bağlantı Tanılama Modalı ── */}
+      {diag && (
+        <div className="modal-overlay" onClick={() => setDiag(null)}>
+          <div className="modal-box modal-show" onClick={(e) => e.stopPropagation()}>
+
+            <div className="show-header">
+              <div className="show-header-title">
+                <span className="show-domain">{t('inv.diagTitle', diag.item.domain)}</span>
+                <span className="show-badge show-badge-port">:{diag.item.port || 443}</span>
+              </div>
+              <button type="button" className="show-close" aria-label={t('app.dismiss')} onClick={() => setDiag(null)}>✕</button>
+            </div>
+
+            <div className="show-body">
+
+              {diag.loading && (
+                <div className="show-field show-field-full">
+                  <span className="show-field-value">
+                    <Loader2 size={14} className="spin" /> {t('inv.diagRunning')}
+                  </span>
+                </div>
+              )}
+
+              {diag.error && (
+                <div className="alert-msg">{diag.error}</div>
+              )}
+
+              {diag.data && (
+                <>
+                  <div className="show-section-header">{t('inv.diagDns')}</div>
+                  <div className="show-grid-2">
+                    <ShowField label={t('inv.diagDnsIps')} mono value={
+                      diag.data.dns?.error
+                        ? <span className="badge badge-err">{diag.data.dns.error}</span>
+                        : (diag.data.dns?.ips?.length ? diag.data.dns.ips.join(', ') : '—')
+                    } />
+                    <ShowField label={t('inv.diagColElapsed')} value={diag.data.dns?.elapsed_ms ?? '—'} />
+                  </div>
+
+                  <div className="show-section-header">{t('inv.diagMatrix')}</div>
+                  <div className="health-table-wrap">
+                    <table className="health-table">
+                      <thead>
+                        <tr>
+                          <th>{t('inv.diagColCombo')}</th>
+                          <th>{t('inv.diagColStep')}</th>
+                          <th>{t('inv.diagColElapsed')}</th>
+                          <th>{t('inv.diagColResult')}</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {(diag.data.combos ?? []).map((c) => (
+                          <tr key={c.id}>
+                            <td>
+                              <strong>{c.via === 'proxy' ? t('inv.diagViaProxy') : t('inv.diagViaDirect')}</strong>
+                              {' + '}{c.tls_mode}
+                            </td>
+                            <td>{diagStepLabel(c.step_reached)}</td>
+                            <td>{c.elapsed_ms ?? '—'}</td>
+                            <td>
+                              <span className={c.status === 'ok' ? 'badge badge-ok' : 'badge badge-err'}>
+                                {c.status === 'ok' ? t('inv.diagOk') : (c.error_class || 'ERROR')}
+                              </span>
+                              {c.status === 'ok'
+                                ? <span style={{ marginLeft: 8 }}>{c.subject} · {c.days_remaining}d · {c.tls_version}</span>
+                                : <span style={{ marginLeft: 8 }}>{(c.error || '').slice(0, 120)}</span>}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </>
+              )}
+
+              <div className="modal-actions">
+                <button className="btn btn-secondary" onClick={() => setDiag(null)}>{t('app.dismiss')}</button>
+                <button className="btn btn-primary" onClick={() => runDiag(diag.item)} disabled={!!diag.loading}>
+                  {t('inv.diagRerun')}
+                </button>
+              </div>
+
             </div>
           </div>
         </div>
