@@ -87,6 +87,12 @@ public class CertificateDto {
     @JsonProperty("crl_url")
     private String crlUrl;
 
+    /** Check transport path the final attempt used: "proxy" | "direct" (null on pre-v18.53 rows) */
+    private String via;
+
+    @JsonProperty("tls_mode_used")
+    private String tlsModeUsed;
+
     /** Criticality tier from inventory (1–4, null = unclassified) */
     private Integer tier;
 
@@ -122,6 +128,8 @@ public class CertificateDto {
         dto.isCa = c.getIsCa();
         dto.ocspUrl = c.getOcspUrl();
         dto.crlUrl = c.getCrlUrl();
+        dto.via = c.getVia();
+        dto.tlsModeUsed = c.getTlsModeUsed();
         return dto;
     }
 }

@@ -146,6 +146,8 @@ public class CertificateService {
             latest.setIsCa(toBool(result.get("is_ca")));
             latest.setOcspUrl((String) result.get("ocsp_url"));
             latest.setCrlUrl((String) result.get("crl_url"));
+            latest.setVia((String) result.get("via"));
+            latest.setTlsModeUsed((String) result.get("tls_mode_used"));
             latest.setCheckedAt((String) result.get("checked_at"));
             latest.setUpdatedAt(now);
             latestRepo.save(latest);

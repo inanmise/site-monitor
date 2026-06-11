@@ -854,6 +854,14 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
 
               {diag.data && (
                 <>
+                  <div className="show-section-header">{t('inv.diagSource')}</div>
+                  <div className="show-grid-2">
+                    <ShowField label={t('inv.diagSourceHost')} mono
+                      value={diag.data.source?.hostname || '—'} />
+                    <ShowField label={t('inv.diagSourceIps')} mono
+                      value={diag.data.source?.ips?.length ? diag.data.source.ips.join(', ') : '—'} />
+                  </div>
+
                   <div className="show-section-header">{t('inv.diagDns')}</div>
                   <div className="show-grid-2">
                     <ShowField label={t('inv.diagDnsIps')} mono value={
@@ -881,6 +889,12 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
                             <td>
                               <strong>{c.via === 'proxy' ? t('inv.diagViaProxy') : t('inv.diagViaDirect')}</strong>
                               {' + '}{c.tls_mode}
+                              {c.source_ip && (
+                                <div className="show-field-mono" style={{ color: 'var(--text-muted)', marginTop: 2 }}>
+                                  {c.source_ip}:{c.source_port} → {c.peer_ip}:{c.peer_port}
+                                  {c.via === 'proxy' && ` (${t('inv.diagViaProxy')}) → ${diag.item.domain}:${diag.item.port || 443}`}
+                                </div>
+                              )}
                             </td>
                             <td>{diagStepLabel(c.step_reached)}</td>
                             <td>{c.elapsed_ms ?? '—'}</td>

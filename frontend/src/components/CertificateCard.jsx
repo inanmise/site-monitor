@@ -1,4 +1,4 @@
-import { ShieldAlert, ShieldCheck, MailWarning, BellOff, Clock, Calendar } from 'lucide-react'
+import { ShieldAlert, ShieldCheck, MailWarning, BellOff, Clock, Calendar, Network, Globe } from 'lucide-react'
 import { formatDate } from '../api/client'
 import { useT } from '../i18n/index.jsx'
 
@@ -43,6 +43,11 @@ export default function CertificateCard({ cert, onClick, hasSilentAlert = false,
   const showAlgo   = !!algoLabel && isWeak !== undefined && !isError
   const hasDetail  = !!cert.not_after || showAlgo
   const hasFooter  = hasSilentAlert || hasMailFailure
+
+  // Kontrol yolu rozeti: hata kartlarında her zaman, sağlıklı kartlarda
+  // sadece proxy ile kontrol edilenlerde (direct varsayılan — gürültü yapma)
+  const showVia  = !!cert.via && (isError || cert.via === 'proxy')
+  const viaLabel = cert.via === 'proxy' ? t('card.viaProxy') : t('card.viaDirect')
 
   const beforeMs = cert.not_before ? Date.parse(cert.not_before) : NaN
   const afterMs  = cert.not_after  ? Date.parse(cert.not_after)  : NaN
@@ -144,6 +149,17 @@ export default function CertificateCard({ cert, onClick, hasSilentAlert = false,
               <span>{t('card.mailFailure')}</span>
             </button>
           )}
+        </div>
+      )}
+
+      {/* ── Kontrol yolu — kartın sağ alt köşesi ── */}
+      {showVia && (
+        <div className="cc-detail-row">
+          <span />
+          <span className="cc-meta" title={t('card.viaTooltip', viaLabel, cert.tls_mode_used || '—')}>
+            {cert.via === 'proxy' ? <Network size={11} /> : <Globe size={11} />}
+            {viaLabel}
+          </span>
         </div>
       )}
     </div>

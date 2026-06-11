@@ -134,6 +134,40 @@ class ConnectionDiagnosticsServiceTest {
     }
 
     @Test
+    @DisplayName("diagnose includes source (pod) info and passes route fields through combos")
+    void diagnose_includesSourceAndRoute() {
+        ConnectionDiagnosticsService spy = spy(service);
+        Map<String, Object> src = new HashMap<>();
+        src.put("hostname", "cert-monitor-pod-abc");
+        src.put("ips", List.of("10.128.2.34"));
+        doReturn(src).when(spy).resolveSource();
+
+        Map<String, Object> raw = okResult();
+        raw.put("source_ip", "10.128.2.34");
+        raw.put("source_port", 48512);
+        raw.put("peer_ip", "217.169.196.216");
+        raw.put("peer_port", 443);
+        when(checker.tryCheckOnce(eq("localhost"), eq(443), any(CertificateCheckerService.CheckOptions.class)))
+                .thenReturn(raw);
+
+        Map<String, Object> out = spy.diagnose("localhost", 443);
+
+        @SuppressWarnings("unchecked")
+        Map<String, Object> source = (Map<String, Object>) out.get("source");
+        assertThat(source.get("hostname")).isEqualTo("cert-monitor-pod-abc");
+        assertThat(source.get("ips")).isEqualTo(List.of("10.128.2.34"));
+
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> combos = (List<Map<String, Object>>) out.get("combos");
+        assertThat(combos).allSatisfy(c -> {
+            assertThat(c.get("source_ip")).isEqualTo("10.128.2.34");
+            assertThat(c.get("source_port")).isEqualTo(48512);
+            assertThat(c.get("peer_ip")).isEqualTo("217.169.196.216");
+            assertThat(c.get("peer_port")).isEqualTo(443);
+        });
+    }
+
+    @Test
     @DisplayName("a throwing probe yields a synthetic error combo instead of failing the response")
     void diagnose_throwingProbe_syntheticError() {
         when(checker.tryCheckOnce(eq("localhost"), eq(443), any(CertificateCheckerService.CheckOptions.class)))

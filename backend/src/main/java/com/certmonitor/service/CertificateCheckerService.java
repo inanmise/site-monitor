@@ -254,6 +254,13 @@ public class CertificateCheckerService {
         final int timeoutSec = opts.timeoutSeconds();
         List<String> resolvedIps = resolveAllIps(domain);
         String stage = "tcp-connect";
+        // Actual network route of this attempt (filled once TCP is established,
+        // so handshake-stage failures still carry source/peer endpoints).
+        Map<String, Object> route = new LinkedHashMap<>();
+        route.put("source_ip", null);
+        route.put("source_port", null);
+        route.put("peer_ip", null);
+        route.put("peer_port", null);
         try {
             SSLSocketFactory factory = (SSLSocketFactory) SSLSocketFactory.getDefault();
             log.debug("Certificate check start: domain={}:{} via={} tlsMode={} resolvedIps={}",
@@ -268,6 +275,7 @@ public class CertificateCheckerService {
                 if (!useProxy) {
                     socket.connect(new InetSocketAddress(domain, port), timeoutSec * 1000);
                 }
+                captureRoute(route, socket);
                 socket.setSoTimeout(timeoutSec * 1000);
 
                 SSLParameters params = socket.getSSLParameters();
@@ -303,10 +311,11 @@ public class CertificateCheckerService {
                 }
 
                 Certificate[] peerCerts = socket.getSession().getPeerCertificates();
-                if (peerCerts.length == 0) return error(domain, "No certificates in chain");
+                if (peerCerts.length == 0) return withRoute(error(domain, "No certificates in chain"), route);
 
                 X509Certificate leaf = (X509Certificate) peerCerts[0];
                 Map<String, Object> result = parseLeafCert(leaf, domain);
+                result.putAll(route);
                 result.put("tls_version", tlsVersion);
 
                 String revocation = "UNKNOWN";
@@ -419,39 +428,61 @@ public class CertificateCheckerService {
             }
         } catch (java.net.SocketTimeoutException e) {
             logCheckFailure(useProxy, "timeout", domain, port, startMs, resolvedIps, e);
-            return errorWithClass(domain, "Connection timeout after " + timeoutSec + "s", "NETWORK", stage, resolvedIps);
+            return withRoute(errorWithClass(domain,"Connection timeout after " + timeoutSec + "s", "NETWORK", stage, resolvedIps), route);
         } catch (java.net.UnknownHostException e) {
             logCheckFailure(useProxy, "dns-failure", domain, port, startMs, resolvedIps, e);
-            return errorWithClass(domain, "Domain resolution failed", "DNS", "dns", resolvedIps);
+            return withRoute(errorWithClass(domain,"Domain resolution failed", "DNS", "dns", resolvedIps), route);
         } catch (java.net.ConnectException e) {
             logCheckFailure(useProxy, "connect-refused", domain, port, startMs, resolvedIps, e);
-            return errorWithClass(domain, "Connection refused/unreachable: " + e.getMessage(), "NETWORK", stage, resolvedIps);
+            return withRoute(errorWithClass(domain,"Connection refused/unreachable: " + e.getMessage(), "NETWORK", stage, resolvedIps), route);
         } catch (java.net.NoRouteToHostException e) {
             logCheckFailure(useProxy, "no-route", domain, port, startMs, resolvedIps, e);
-            return errorWithClass(domain, "No route to host", "NETWORK", stage, resolvedIps);
+            return withRoute(errorWithClass(domain,"No route to host", "NETWORK", stage, resolvedIps), route);
         } catch (java.net.SocketException e) {
             logCheckFailure(useProxy, "socket-error", domain, port, startMs, resolvedIps, e);
-            return errorWithClass(domain, "Socket error: " + e.getMessage(), "NETWORK", stage, resolvedIps);
+            return withRoute(errorWithClass(domain,"Socket error: " + e.getMessage(), "NETWORK", stage, resolvedIps), route);
         } catch (javax.net.ssl.SSLHandshakeException e) {
             logCheckFailure(useProxy, "ssl-handshake", domain, port, startMs, resolvedIps, e);
-            return errorWithClass(domain, "SSL handshake: " + e.getMessage(), "SSL", stage, resolvedIps);
+            return withRoute(errorWithClass(domain,"SSL handshake: " + e.getMessage(), "SSL", stage, resolvedIps), route);
         } catch (javax.net.ssl.SSLException e) {
             logCheckFailure(useProxy, "ssl-error", domain, port, startMs, resolvedIps, e);
-            return errorWithClass(domain, "SSL Error: " + e.getMessage(), "SSL", stage, resolvedIps);
+            return withRoute(errorWithClass(domain,"SSL Error: " + e.getMessage(), "SSL", stage, resolvedIps), route);
         } catch (IOException e) {
             // openViaProxy wraps tunnel failures (proxy TCP connect / CONNECT
             // response) in plain IOException — NETWORK class so the
             // transient-retry gate and the proxy→direct fallback can apply.
             logCheckFailure(useProxy, "io-error", domain, port, startMs, resolvedIps, e);
-            return errorWithClass(domain, "I/O error: " + e.getMessage(), "NETWORK", stage, resolvedIps);
+            return withRoute(errorWithClass(domain,"I/O error: " + e.getMessage(), "NETWORK", stage, resolvedIps), route);
         } catch (Exception e) {
             // Always log unexpected errors with stack trace, regardless of mode.
             log.error("Certificate check unexpected error: domain={}:{} via={} resolvedIps={} elapsed={}ms",
                     domain, port,
                     useProxy ? "proxy(" + proxyHost + ":" + proxyPort + ")" : "direct",
                     resolvedIps, System.currentTimeMillis() - startMs, e);
-            return errorWithClass(domain, "Error: " + e.getMessage(), "UNKNOWN", stage, resolvedIps);
+            return withRoute(errorWithClass(domain,"Error: " + e.getMessage(), "UNKNOWN", stage, resolvedIps), route);
         }
+    }
+
+    /** Records the actual local/peer endpoints of an established socket.
+     *  Direct: peer = chosen target IP; proxy: peer = proxy IP (layered
+     *  SSLSocket delegates to the underlying raw socket). Network admins use
+     *  this to trace "from source_ip:port to peer_ip:port" through firewalls. */
+    private void captureRoute(Map<String, Object> route, Socket socket) {
+        try {
+            if (socket.getLocalAddress() != null && !socket.getLocalAddress().isAnyLocalAddress()) {
+                route.put("source_ip", socket.getLocalAddress().getHostAddress());
+                route.put("source_port", socket.getLocalPort());
+            }
+            if (socket.getInetAddress() != null) {
+                route.put("peer_ip", socket.getInetAddress().getHostAddress());
+                route.put("peer_port", socket.getPort());
+            }
+        } catch (Exception ignored) { }
+    }
+
+    private static Map<String, Object> withRoute(Map<String, Object> r, Map<String, Object> route) {
+        r.putAll(route);
+        return r;
     }
 
     /** Resolve all A/AAAA records via the system resolver — the same path the
@@ -532,8 +563,10 @@ public class CertificateCheckerService {
                     + " — " + e.getMessage(), e);
         }
         raw.setSoTimeout(timeoutSec * 1000);
-        log.info("[cert-proxy] step=tcp-connected domain={} proxy={}:{} localPort={} elapsed={}ms",
-                domain, proxyHost, proxyPort, raw.getLocalPort(),
+        log.info("[cert-proxy] step=tcp-connected domain={} proxy={}:{} localIp={} localPort={} elapsed={}ms",
+                domain, proxyHost, proxyPort,
+                raw.getLocalAddress() != null ? raw.getLocalAddress().getHostAddress() : "?",
+                raw.getLocalPort(),
                 System.currentTimeMillis() - tcpStart);
 
         StringBuilder req = new StringBuilder()
