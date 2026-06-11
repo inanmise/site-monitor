@@ -1,6 +1,11 @@
 package com.certmonitor.model;
 
 import jakarta.persistence.*;
+import jakarta.validation.constraints.Max;
+import jakarta.validation.constraints.Min;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Pattern;
+import jakarta.validation.constraints.Size;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
@@ -14,9 +19,17 @@ public class CertificateInventory {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
+    @NotBlank(message = "Domain boş olamaz")
+    @Size(max = 253, message = "Domain en fazla 253 karakter olabilir")
+    @Pattern(
+        regexp = "^(?!-)(?!.*--)(?:\\*\\.)?[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$",
+        message = "Geçersiz domain formatı"
+    )
     @Column(nullable = false, unique = true)
     private String domain;
 
+    @Min(value = 1,     message = "Port 1 ile 65535 arasında olmalı")
+    @Max(value = 65535, message = "Port 1 ile 65535 arasında olmalı")
     @Column(nullable = false)
     private Integer port = 443;
 
@@ -72,6 +85,8 @@ public class CertificateInventory {
     private String changeDescription;
 
     /** Criticality tier: 1=Customer-Facing Prod, 2=Internal Prod, 3=UAT/Pre-Prod, 4=Dev/Sandbox, null=unclassified */
+    @Min(value = 1, message = "Tier 1 ile 4 arasında olmalı")
+    @Max(value = 4, message = "Tier 1 ile 4 arasında olmalı")
     @Column(name = "tier")
     private Integer tier;
 

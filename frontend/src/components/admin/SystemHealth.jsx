@@ -84,18 +84,31 @@ export default function SystemHealth({ systemRole, preFilterDomain, openSmtpModa
   const [smtpLoading, setSmtpLoading] = useState(false)
   const [selectedLog, setSelectedLog] = useState(null)
   const [smtpFilters, setSmtpFilters] = useState({ from: '', to: '', subject: '', status: '', domain: '' })
+  const [loadErrors, setLoadErrors]   = useState({ health: false, metrics: false, http: false, db: false })
 
   const load = useCallback(async () => {
-    const [healthRes, metricsRes, httpRes, dbRes] = await Promise.all([
+    // allSettled: bir endpoint çökse de diğerleri yüklensin; her bölüm
+    // kendi hata durumunu loadErrors üzerinden gösterir.
+    const [healthRes, metricsRes, httpRes, dbRes] = await Promise.allSettled([
       api.admin.getSystemHealth(),
       api.admin.getMetrics(),
       api.admin.getHttpMetrics(),
       api.admin.getDbStats(),
     ])
-    if (healthRes?.success)  { setHealth(healthRes.data); setPoolLastRefreshed(new Date()) }
-    if (metricsRes?.success) setMetrics(metricsRes.data)
-    if (httpRes?.success)    setHttpMetrics(httpRes.data)
-    if (dbRes?.success)      setDbStats(dbRes.data ?? [])
+    const errs = { health: false, metrics: false, http: false, db: false }
+    if (healthRes.status === 'fulfilled' && healthRes.value?.success) {
+      setHealth(healthRes.value.data); setPoolLastRefreshed(new Date())
+    } else { errs.health = true }
+    if (metricsRes.status === 'fulfilled' && metricsRes.value?.success) {
+      setMetrics(metricsRes.value.data)
+    } else { errs.metrics = true }
+    if (httpRes.status === 'fulfilled' && httpRes.value?.success) {
+      setHttpMetrics(httpRes.value.data)
+    } else { errs.http = true }
+    if (dbRes.status === 'fulfilled' && dbRes.value?.success) {
+      setDbStats(dbRes.value.data ?? [])
+    } else { errs.db = true }
+    setLoadErrors(errs)
     setLoading(false)
   }, [])
 
@@ -235,12 +248,26 @@ export default function SystemHealth({ systemRole, preFilterDomain, openSmtpModa
   const poolIconClass = pool?.waiting > 0 ? 'pool-icon-alarm' : poolUsePct > 80 ? 'pool-icon-warn' : 'pool-icon-ok'
   const memIconClass = !memory ? 'mem-icon-ok' : memory.used_pct > 85 ? 'mem-icon-alarm' : memory.used_pct > 65 ? 'mem-icon-warn' : 'mem-icon-ok'
 
+  const failedSections = Object.entries(loadErrors)
+    .filter(([, v]) => v)
+    .map(([k]) => t(`health.part${k.charAt(0).toUpperCase() + k.slice(1)}`))
+
   return (
     <div className="sys-health">
       {alarms.length > 0 && (
         <div className="health-alarm-banner">
           <span className="health-alarm-icon">⚠</span>
           <strong>{t('health.alarmBanner')}:</strong> {alarms.join(' • ')}
+        </div>
+      )}
+
+      {failedSections.length > 0 && !loading && (
+        <div className="health-alarm-banner" role="alert" style={{ background: '#fff5f5', borderLeft: '4px solid var(--danger)' }}>
+          <span className="health-alarm-icon">✕</span>
+          <strong>{t('health.loadErrorTitle')}:</strong> {failedSections.join(', ')}.&nbsp;
+          <button type="button" className="btn btn-secondary" style={{ marginLeft: 8 }} onClick={load}>
+            {t('err.reload')}
+          </button>
         </div>
       )}
 
@@ -947,7 +974,7 @@ export default function SystemHealth({ systemRole, preFilterDomain, openSmtpModa
                 <Mail size={17} className="smtp-detail-mail-icon" />
                 <span>{t('health.emailDetail')}</span>
               </div>
-              <button className="smtp-modal-close" onClick={() => setSelectedLog(null)}>✕</button>
+              <button type="button" className="smtp-modal-close" aria-label={t('app.dismiss')} onClick={() => setSelectedLog(null)}>✕</button>
             </div>
             <div className="smtp-detail-meta">
               <div className="smtp-detail-meta-row">
@@ -1000,7 +1027,7 @@ export default function SystemHealth({ systemRole, preFilterDomain, openSmtpModa
             <div className="smtp-modal-header">
               <h3>{t('health.smtpLogsTitle')}</h3>
               <span className="smtp-modal-period">{t(`health.smtpPeriod${smtpPeriod}`)}</span>
-              <button className="smtp-modal-close" onClick={closeSmtpModal}>✕</button>
+              <button type="button" className="smtp-modal-close" aria-label={t('app.dismiss')} onClick={closeSmtpModal}>✕</button>
             </div>
 
             {smtpLoading ? (

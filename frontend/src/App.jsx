@@ -31,6 +31,7 @@ import UptimePage from './components/UptimePage'
 import PortMonitorPage from './components/PortMonitorPage'
 import DnsMonitorPage from './components/DnsMonitorPage'
 import ExpiryForecastPage from './pages/ExpiryForecastPage'
+import ErrorBoundary from './components/ErrorBoundary.jsx'
 
 const INACTIVITY_MS   = Number(import.meta.env.VITE_INACTIVITY_MS   ?? 300_000)
 const WARN_BEFORE_MS  = Number(import.meta.env.VITE_WARN_BEFORE_MS  ?? 60_000)
@@ -156,30 +157,41 @@ export default function App() {
     }
   }, [user])
 
+  // Logout / unmount sonrası gelen geç response'lar setState etmesin → ref ile guard.
+  const loadAliveRef = useRef(true)
+  useEffect(() => () => { loadAliveRef.current = false }, [])
+
   const loadData = useCallback(async () => {
-    const [certsRes, statsRes, silentRes, teamStatsRes, weakRes, netRes, mailFailRes] = await Promise.all([
+    // allSettled: bir endpoint çökse de diğerleri yansısın
+    const [certsRes, statsRes, silentRes, teamStatsRes, weakRes, netRes, mailFailRes] = await Promise.allSettled([
       api.getCertificates(), api.getStats(), api.getSilentAlertDomains(), api.getTeamStats(),
       api.admin.getWeakAlgorithms(),
       api.getNetworkStatus(),
       api.getMailFailureDomains(),
     ])
-    if (certsRes?.success) { setCerts(certsRes.data); setLastUpdate(certsRes.timestamp) }
-    if (statsRes?.success) setStats(statsRes.data)
-    if (silentRes?.success) setSilentAlertDomains(new Set(silentRes.data))
-    if (mailFailRes?.success) setMailFailureDomains(new Set(mailFailRes.data ?? []))
-    if (teamStatsRes?.success) setTeamStats(teamStatsRes.data)
-    if (weakRes?.success) setWeakAlgStats(weakRes)
-    if (netRes?.success) {
+    if (!loadAliveRef.current) return // unmount/logout'ta state'i kirletme
+    const v = (s) => s.status === 'fulfilled' ? s.value : null
+    const certs = v(certsRes), stats = v(statsRes), silent = v(silentRes),
+          teamStats = v(teamStatsRes), weak = v(weakRes), net = v(netRes),
+          mailFail = v(mailFailRes)
+    if (certs?.success) { setCerts(certs.data); setLastUpdate(certs.timestamp) }
+    if (stats?.success) setStats(stats.data)
+    if (silent?.success) setSilentAlertDomains(new Set(silent.data))
+    if (mailFail?.success) setMailFailureDomains(new Set(mailFail.data ?? []))
+    if (teamStats?.success) setTeamStats(teamStats.data)
+    if (weak?.success) setWeakAlgStats(weak)
+    if (net?.success) {
       setNetworkStatus(prev => {
         // Reset dismissal flag when a new outage starts (alarm transitions false -> true)
-        if (netRes.data?.alarm && !prev?.alarm) setNetworkBannerDismissed(false)
-        return netRes.data
+        if (net.data?.alarm && !prev?.alarm) setNetworkBannerDismissed(false)
+        return net.data
       })
     }
   }, [])
 
   useEffect(() => {
     if (user) {
+      loadAliveRef.current = true
       loadData()
       const interval = setInterval(loadData, Number(import.meta.env.VITE_DATA_REFRESH_MS ?? 300_000))
       return () => clearInterval(interval)
@@ -522,6 +534,7 @@ export default function App() {
           )}
 
           <div className="content">
+           <ErrorBoundary key={tab} onReload={() => setTab(tab)}>
             {tab === 'dashboard' && (
               <div className="tab-content active">
                 <div className="sort-controls sort-bar">
@@ -894,6 +907,7 @@ export default function App() {
             {tab === 'port'     && <PortMonitorPage systemRole={systemRole} />}
             {tab === 'dns'      && <DnsMonitorPage  systemRole={systemRole} />}
             {tab === 'forecast' && <ExpiryForecastPage />}
+           </ErrorBoundary>
           </div>
 
           <footer className="footer">

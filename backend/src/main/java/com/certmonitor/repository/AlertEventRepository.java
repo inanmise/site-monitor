@@ -4,9 +4,11 @@ import com.certmonitor.model.AlertEvent;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 
@@ -14,6 +16,10 @@ public interface AlertEventRepository extends JpaRepository<AlertEvent, Long> {
 
     @Query("SELECT e FROM AlertEvent e WHERE e.domain = :domain AND e.alertType = :alertType AND e.resolved = false ORDER BY e.createdAt DESC")
     Optional<AlertEvent> findOpenAlert(String domain, String alertType);
+
+    /** Batch lookup — sweep'te N domain için N query yerine tek sorgu. */
+    @Query("SELECT e FROM AlertEvent e WHERE e.resolved = false AND e.domain IN :domains")
+    List<AlertEvent> findOpenByDomainIn(@Param("domains") Collection<String> domains);
 
     List<AlertEvent> findByResolvedFalseAndAcknowledgedFalseOrderByCreatedAtDesc();
 
@@ -57,4 +63,10 @@ public interface AlertEventRepository extends JpaRepository<AlertEvent, Long> {
             @Param("resolvedUntil") String resolvedUntil,
             @Param("domain") String domain,
             Pageable pageable);
+
+    /** Domain rename: alarm geçmişini yeni domain'e taşı.
+     *  Caller'da @Transactional zorunlu. */
+    @Modifying
+    @Query("UPDATE AlertEvent e SET e.domain = :newDomain WHERE e.domain = :oldDomain")
+    int renameDomain(@Param("oldDomain") String oldDomain, @Param("newDomain") String newDomain);
 }

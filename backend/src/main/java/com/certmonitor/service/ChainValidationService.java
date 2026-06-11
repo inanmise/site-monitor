@@ -208,24 +208,28 @@ public class ChainValidationService {
             OCSPReq request = reqBuilder.build();
 
             HttpURLConnection conn = openWithProxy(ocspUrl);
-            conn.setRequestMethod("POST");
-            conn.setDoOutput(true);
-            conn.setRequestProperty("Content-Type", "application/ocsp-request");
-            conn.setConnectTimeout(5000);
-            conn.setReadTimeout(5000);
-            conn.getOutputStream().write(request.getEncoded());
+            try {
+                conn.setRequestMethod("POST");
+                conn.setDoOutput(true);
+                conn.setRequestProperty("Content-Type", "application/ocsp-request");
+                conn.setConnectTimeout(5000);
+                conn.setReadTimeout(5000);
+                conn.getOutputStream().write(request.getEncoded());
 
-            try (InputStream is = conn.getInputStream()) {
-                OCSPResp response = new OCSPResp(is);
-                if (response.getStatus() != OCSPRespBuilder.SUCCESSFUL) return "UNKNOWN";
-                BasicOCSPResp basicResp = (BasicOCSPResp) response.getResponseObject();
-                SingleResp[] singleResps = basicResp.getResponses();
-                if (singleResps.length == 0) return "UNKNOWN";
-                CertificateStatus status = singleResps[0].getCertStatus();
-                if (status == CertificateStatus.GOOD) return "VALID";
-                if (status instanceof RevokedStatus) return "REVOKED";
+                try (InputStream is = conn.getInputStream()) {
+                    OCSPResp response = new OCSPResp(is);
+                    if (response.getStatus() != OCSPRespBuilder.SUCCESSFUL) return "UNKNOWN";
+                    BasicOCSPResp basicResp = (BasicOCSPResp) response.getResponseObject();
+                    SingleResp[] singleResps = basicResp.getResponses();
+                    if (singleResps.length == 0) return "UNKNOWN";
+                    CertificateStatus status = singleResps[0].getCertStatus();
+                    if (status == CertificateStatus.GOOD) return "VALID";
+                    if (status instanceof RevokedStatus) return "REVOKED";
+                }
+                return "UNKNOWN";
+            } finally {
+                conn.disconnect();
             }
-            return "UNKNOWN";
         } catch (Exception e) {
             log.debug("OCSP check failed: {}", e.getMessage());
             return "UNKNOWN";
@@ -304,11 +308,15 @@ public class ChainValidationService {
     private X509CRL downloadCrl(String url) {
         try {
             HttpURLConnection conn = openWithProxy(url);
-            conn.setConnectTimeout(10000);
-            conn.setReadTimeout(10000);
-            try (InputStream is = conn.getInputStream()) {
-                CertificateFactory cf = CertificateFactory.getInstance("X.509");
-                return (X509CRL) cf.generateCRL(is);
+            try {
+                conn.setConnectTimeout(10000);
+                conn.setReadTimeout(10000);
+                try (InputStream is = conn.getInputStream()) {
+                    CertificateFactory cf = CertificateFactory.getInstance("X.509");
+                    return (X509CRL) cf.generateCRL(is);
+                }
+            } finally {
+                conn.disconnect();
             }
         } catch (Exception e) {
             log.warn("CRL download failed {}: {}", url, e.getMessage());

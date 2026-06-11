@@ -1,6 +1,7 @@
 import React from 'react'
 import ReactDOM from 'react-dom/client'
 import App from './App.jsx'
+import ErrorBoundary from './components/ErrorBoundary.jsx'
 import { DialogProvider } from './components/ui/Dialog.jsx'
 import { ToastProvider } from './components/ui/Toast.jsx'
 import { LangProvider } from './i18n/index.jsx'
@@ -13,7 +14,9 @@ ReactDOM.createRoot(document.getElementById('root')).render(
       <LangProvider>
         <ToastProvider>
           <DialogProvider>
-            <App />
+            <ErrorBoundary>
+              <App />
+            </ErrorBoundary>
           </DialogProvider>
         </ToastProvider>
       </LangProvider>
