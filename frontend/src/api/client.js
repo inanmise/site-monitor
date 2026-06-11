@@ -139,6 +139,9 @@ export const api = {
     updateInventory: (id, item) => request(`/admin/inventory/${id}`, { method: 'PUT', body: JSON.stringify(item) }),
     deleteInventory: (id) => request(`/admin/inventory/${id}`, { method: 'DELETE' }),
     restoreInventory: (id) => request(`/admin/inventory/${id}/restore`, { method: 'POST' }),
+    runDiagnostics: (domain, port = 443) => request('/admin/diagnostics', {
+      method: 'POST', body: JSON.stringify({ domain, port }),
+    }),
     transferCertSy: (id, teamId) => request(`/admin/inventory/${id}/transfer`, {
       method: 'POST', body: JSON.stringify({ team_id: teamId }),
     }),

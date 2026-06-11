@@ -84,10 +84,10 @@ public class CertificateController {
 
     @GetMapping("/check/{domain}")
     public ResponseEntity<Map<String, Object>> checkDomain(@PathVariable String domain, HttpSession session) {
-        boolean forceProxy = inventoryRepo.findByDomain(domain)
-                .map(ci -> Boolean.TRUE.equals(ci.getUseProxy()))
-                .orElse(false);
-        Map<String, Object> result = new java.util.LinkedHashMap<>(checkerService.check(domain, 443, forceProxy));
+        var inv = inventoryRepo.findByDomain(domain);
+        boolean forceProxy = inv.map(ci -> Boolean.TRUE.equals(ci.getUseProxy())).orElse(false);
+        String tlsOverride = inv.map(ci -> ci.getTlsMode()).orElse(null);
+        Map<String, Object> result = new java.util.LinkedHashMap<>(checkerService.check(domain, 443, forceProxy, tlsOverride));
         result.put("run_id", "manual");
         certService.saveResult(result);
         certService.ensureInInventory(domain, 443, teamId(session));
@@ -98,10 +98,10 @@ public class CertificateController {
 
     @GetMapping("/check-preview/{domain}")
     public ResponseEntity<Map<String, Object>> previewDomain(@PathVariable String domain) {
-        boolean forceProxy = inventoryRepo.findByDomain(domain)
-                .map(ci -> Boolean.TRUE.equals(ci.getUseProxy()))
-                .orElse(false);
-        Map<String, Object> result = new java.util.LinkedHashMap<>(checkerService.check(domain, 443, forceProxy));
+        var inv = inventoryRepo.findByDomain(domain);
+        boolean forceProxy = inv.map(ci -> Boolean.TRUE.equals(ci.getUseProxy())).orElse(false);
+        String tlsOverride = inv.map(ci -> ci.getTlsMode()).orElse(null);
+        Map<String, Object> result = new java.util.LinkedHashMap<>(checkerService.check(domain, 443, forceProxy, tlsOverride));
         return ok(Map.of("success", true, "data", result, "timestamp", now()));
     }
 

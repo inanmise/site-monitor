@@ -77,6 +77,11 @@ public class CertificateInventory {
     @Column(name = "transferred_to_sy")  private Boolean transferredToSy;
     @Column(name = "use_proxy")          private Boolean useProxy;
 
+    /** Per-domain TLS handshake mode override: null=inherit global setting,
+     *  "browser" (TLS 1.2 + ALPN) or "default" (JDK defaults, TLS 1.3). */
+    @Column(name = "tls_mode", length = 16)
+    private String tlsMode;
+
     // ── Süreç ve açıklama alanları ────────────────────────────────────────────
     @Column(name = "purchased_by", length = 200)
     private String purchasedBy;

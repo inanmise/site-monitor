@@ -173,7 +173,7 @@ class CertificateControllerTest {
                 "status", "valid",
                 "days_remaining", 90
         );
-        when(checkerService.check("example.com", 443, false)).thenReturn(new java.util.LinkedHashMap<>(checkResult));
+        when(checkerService.check("example.com", 443, false, null)).thenReturn(new java.util.LinkedHashMap<>(checkResult));
         when(inventoryRepo.findByDomain("example.com")).thenReturn(java.util.Optional.empty());
 
         mvc.perform(get("/api/check/example.com").session(authSession()))
@@ -183,6 +183,24 @@ class CertificateControllerTest {
 
         // ensureInInventory is called — certService is a mock so the call succeeds silently
         org.mockito.Mockito.verify(certService).ensureInInventory("example.com", 443, null);
+    }
+
+    @Test
+    @DisplayName("GET /api/check/{domain} forwards inventory tls_mode override to checker")
+    void checkDomain_inventoryTlsMode_forwardedToChecker() throws Exception {
+        com.certmonitor.model.CertificateInventory inv = new com.certmonitor.model.CertificateInventory();
+        inv.setDomain("example.com");
+        inv.setTlsMode("default");
+        when(inventoryRepo.findByDomain("example.com")).thenReturn(java.util.Optional.of(inv));
+        when(checkerService.check("example.com", 443, false, "default"))
+                .thenReturn(new java.util.LinkedHashMap<>(Map.of(
+                        "domain", "example.com", "status", "valid", "days_remaining", 90)));
+
+        mvc.perform(get("/api/check/example.com").session(authSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true));
+
+        org.mockito.Mockito.verify(checkerService).check("example.com", 443, false, "default");
     }
 
     @Test

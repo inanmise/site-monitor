@@ -58,6 +58,13 @@ public class CertificateCheckerService {
     @Value("${cert.monitor.check.max-attempts:2}")
     private int maxAttempts;
 
+    /** Retry with an ALTERNATE combo (flipped TLS mode and/or direct↔proxy
+     *  path) instead of repeating identical parameters. Deterministic blocks
+     *  (WAF JA3 drop, egress firewall RST) never self-heal on an identical
+     *  retry; varying the combo gives the second attempt a real chance. */
+    @Value("${cert.monitor.check.retry-fallback:true}")
+    private boolean retryFallback;
+
     /** TLS handshake fingerprint mode.
      *  - "browser" (default): force TLS 1.2 + ALPN [h2, http/1.1] so the
      *    ClientHello looks like Chrome/Firefox. Many WAFs (Akamai/F5/Imperva)
@@ -108,19 +115,37 @@ public class CertificateCheckerService {
         return CompletableFuture.completedFuture(check(domain, port, forceProxy));
     }
 
+    @Async("certCheckExecutor")
+    public CompletableFuture<Map<String, Object>> checkAsync(String domain, int port, boolean forceProxy, String tlsModeOverride) {
+        return CompletableFuture.completedFuture(check(domain, port, forceProxy, tlsModeOverride));
+    }
+
     public Map<String, Object> check(String domain, int port) {
         return check(domain, port, false);
     }
 
     public Map<String, Object> check(String domain, int port, boolean forceProxy) {
-        Map<String, Object> result = tryCheckOnce(domain, port, forceProxy);
+        return check(domain, port, forceProxy, null);
+    }
+
+    public Map<String, Object> check(String domain, int port, boolean forceProxy, String tlsModeOverride) {
+        CheckOptions opts = resolveOptions(forceProxy, tlsModeOverride, domain);
+        Map<String, Object> result = tryCheckOnce(domain, port, opts);
 
         if (!retryOnTransient || maxAttempts < 2) return result;
         if (!isTransientError(result)) return result;
 
-        log.info("Certificate check retry: domain={} attempt=2 prev_class={} prev_error={}",
-                domain, result.get("error_class"),
-                truncate((String) result.get("error"), 100));
+        CheckOptions retryOpts = retryFallback ? chooseFallback(opts, result, domain) : opts;
+        if (!retryOpts.equals(opts)) {
+            log.info("Certificate check fallback retry: domain={} from={} to={} prev_stage={} prev_error={}",
+                    domain, opts.describe(), retryOpts.describe(),
+                    result.get("error_stage"),
+                    truncate((String) result.get("error"), 100));
+        } else {
+            log.info("Certificate check retry: domain={} attempt=2 prev_class={} prev_error={}",
+                    domain, result.get("error_class"),
+                    truncate((String) result.get("error"), 100));
+        }
 
         try { Thread.sleep(retryDelayMs); }
         catch (InterruptedException ie) {
@@ -128,17 +153,49 @@ public class CertificateCheckerService {
             return result;
         }
 
-        Map<String, Object> retry = tryCheckOnce(domain, port, forceProxy);
+        Map<String, Object> retry = tryCheckOnce(domain, port, retryOpts);
+        if (!retryOpts.equals(opts)) {
+            retry.put("retry_fallback", opts.describe() + "→" + retryOpts.describe());
+        }
         if ("error".equals(retry.get("status"))) {
             retry.put("retry_attempted", true);
-            log.warn("Certificate check failed after retry: domain={} final_error={}",
-                    domain, truncate((String) retry.get("error"), 200));
+            log.warn("Certificate check failed after retry: domain={} via={} tlsMode={} final_error={}",
+                    domain, retryOpts.viaProxy() ? "proxy" : "direct", retryOpts.tlsMode(),
+                    truncate((String) retry.get("error"), 200));
         } else {
             retry.put("retry_recovered", true);
-            log.info("Certificate check recovered on retry: domain={} prev_error={}",
-                    domain, truncate((String) result.get("error"), 80));
+            log.info("Certificate check recovered on retry: domain={} via={} tlsMode={} prev_error={}",
+                    domain, retryOpts.viaProxy() ? "proxy" : "direct", retryOpts.tlsMode(),
+                    truncate((String) result.get("error"), 80));
         }
         return retry;
+    }
+
+    /** Decision table for the alternate-combo retry, evaluated top-down:
+     *  1. TLS handshake stalls (no ServerHello: timeout/reset) → flip TLS mode,
+     *     same path — JA3 fingerprint suspicion; a different ClientHello shape
+     *     may pass the WAF.
+     *  2. direct TCP-level block + proxy available → go via proxy.
+     *  3. proxy itself unreachable / tunnel failed → go direct.
+     *  4. otherwise → identical parameters (legacy behavior). */
+    CheckOptions chooseFallback(CheckOptions prev, Map<String, Object> result, String domain) {
+        String stage = String.valueOf(result.getOrDefault("error_stage", ""));
+        String msg = ((String) result.getOrDefault("error", "")).toLowerCase();
+
+        if ("tls-handshake".equals(stage)) {
+            return prev.withTlsMode(
+                "browser".equalsIgnoreCase(prev.tlsMode()) ? "default" : "browser");
+        }
+        if (!prev.viaProxy() && "tcp-connect".equals(stage)
+                && (msg.contains("reset") || msg.contains("refused")
+                    || msg.contains("no route") || msg.contains("timeout"))
+                && proxyEnabled() && !shouldBypassProxy(domain)) {
+            return prev.withViaProxy(true);
+        }
+        if (prev.viaProxy() && ("proxy-connect".equals(stage) || "tcp-connect".equals(stage))) {
+            return prev.withViaProxy(false);
+        }
+        return prev;
     }
 
     /** Returns true iff this failure is a transient NETWORK-class symptom worth
@@ -160,26 +217,62 @@ public class CertificateCheckerService {
         return s.length() <= max ? s : s.substring(0, max) + "...";
     }
 
+    /** Fully-resolved parameters for one connection attempt. {@code viaProxy}
+     *  is the FINAL decision (global proxy config + no-proxy bypass already
+     *  applied). {@code lightweight} skips chain/revocation/HSTS/DNS
+     *  enrichment — used by connection diagnostics so probe combos don't pay
+     *  OCSP/CRL/HEAD round-trips. */
+    record CheckOptions(boolean viaProxy, String tlsMode, int timeoutSeconds, boolean lightweight) {
+
+        CheckOptions withViaProxy(boolean v) { return new CheckOptions(v, tlsMode, timeoutSeconds, lightweight); }
+        CheckOptions withTlsMode(String m)   { return new CheckOptions(viaProxy, m, timeoutSeconds, lightweight); }
+
+        String describe() { return (viaProxy ? "proxy" : "direct") + "/" + tlsMode; }
+    }
+
+    CheckOptions resolveOptions(boolean forceProxy, String tlsModeOverride, String domain) {
+        boolean viaProxy = forceProxy && proxyEnabled() && !shouldBypassProxy(domain);
+        String mode = (tlsModeOverride != null && !tlsModeOverride.isBlank()) ? tlsModeOverride : tlsMode;
+        return new CheckOptions(viaProxy, mode, timeoutSeconds, false);
+    }
+
     Map<String, Object> tryCheckOnce(String domain, int port, boolean forceProxy) {
+        return tryCheckOnce(domain, port, resolveOptions(forceProxy, null, domain));
+    }
+
+    Map<String, Object> tryCheckOnce(String domain, int port, CheckOptions opts) {
         long startMs = System.currentTimeMillis();
-        final boolean useProxy = forceProxy && proxyEnabled() && !shouldBypassProxy(domain);
+        Map<String, Object> result = doTryCheckOnce(domain, port, opts, startMs);
+        result.put("via", opts.viaProxy() ? "proxy" : "direct");
+        result.put("tls_mode_used", opts.tlsMode());
+        result.put("elapsed_ms", System.currentTimeMillis() - startMs);
+        return result;
+    }
+
+    private Map<String, Object> doTryCheckOnce(String domain, int port, CheckOptions opts, long startMs) {
+        final boolean useProxy = opts.viaProxy();
+        final int timeoutSec = opts.timeoutSeconds();
+        List<String> resolvedIps = resolveAllIps(domain);
+        String stage = "tcp-connect";
         try {
             SSLSocketFactory factory = (SSLSocketFactory) SSLSocketFactory.getDefault();
-            log.debug("Certificate check start: domain={}:{} via={}",
+            log.debug("Certificate check start: domain={}:{} via={} tlsMode={} resolvedIps={}",
                     domain, port,
-                    useProxy ? "proxy(" + proxyHost + ":" + proxyPort + ")" : "direct");
+                    useProxy ? "proxy(" + proxyHost + ":" + proxyPort + ")" : "direct",
+                    opts.tlsMode(), resolvedIps);
+            if (useProxy) stage = "proxy-connect";
             SSLSocket socket = useProxy
-                    ? openViaProxy(factory, domain, port)
+                    ? openViaProxy(factory, domain, port, timeoutSec)
                     : (SSLSocket) factory.createSocket();
             try (socket) {
                 if (!useProxy) {
-                    socket.connect(new InetSocketAddress(domain, port), timeoutSeconds * 1000);
+                    socket.connect(new InetSocketAddress(domain, port), timeoutSec * 1000);
                 }
-                socket.setSoTimeout(timeoutSeconds * 1000);
+                socket.setSoTimeout(timeoutSec * 1000);
 
                 SSLParameters params = socket.getSSLParameters();
                 params.setServerNames(Collections.singletonList(new SNIHostName(domain)));
-                if ("browser".equalsIgnoreCase(tlsMode)) {
+                if ("browser".equalsIgnoreCase(opts.tlsMode())) {
                     params.setApplicationProtocols(BROWSER_ALPN);
                     // Protokol kısıtı params üzerinden verilir; aksi halde
                     // socket.setSSLParameters çağrısı default {TLSv1.3, TLSv1.2}
@@ -189,15 +282,17 @@ public class CertificateCheckerService {
                 socket.setSSLParameters(params);
 
                 if (useProxy) {
-                    log.info("[cert-proxy] step=tls-handshake-start domain={} sni={} tlsMode={} alpn={} paramsProtocols={} enabledProtocols={} timeoutSec={}",
-                            domain, domain, tlsMode,
+                    log.info("[cert-proxy] step=tls-handshake-start domain={} sni={} tlsMode={} alpn={} paramsProtocols={} enabledProtocols={} resolvedIps={} timeoutSec={}",
+                            domain, domain, opts.tlsMode(),
                             Arrays.toString(params.getApplicationProtocols()),
                             Arrays.toString(params.getProtocols()),
                             Arrays.toString(socket.getEnabledProtocols()),
-                            timeoutSeconds);
+                            resolvedIps, timeoutSec);
                 }
+                stage = "tls-handshake";
                 long handshakeStart = System.currentTimeMillis();
                 socket.startHandshake();
+                stage = "cert-ok";
                 String tlsVersion = socket.getSession().getProtocol();
                 if (useProxy) {
                     log.info("[cert-proxy] step=tls-handshake-done domain={} tlsVersion={} cipher={} peerHost={} peerCerts={} elapsed={}ms",
@@ -214,30 +309,46 @@ public class CertificateCheckerService {
                 Map<String, Object> result = parseLeafCert(leaf, domain);
                 result.put("tls_version", tlsVersion);
 
-                // Full chain analysis
-                Map<String, Object> chainInfo = chainValidator.analyzeChain(peerCerts);
-                result.put("chain_status", chainInfo.get("chain_status"));
-                result.put("intermediate_expiry", chainInfo.get("intermediate_expiry"));
-                result.put("intermediate_days_remaining", chainInfo.get("intermediate_days_remaining"));
-                result.put("chain", chainInfo.get("chain"));
+                String revocation = "UNKNOWN";
+                if (opts.lightweight()) {
+                    result.put("chain_status", "UNKNOWN");
+                    result.put("intermediate_expiry", null);
+                    result.put("intermediate_days_remaining", null);
+                    result.put("chain", Collections.emptyList());
+                    result.put("fingerprint", null);
+                    result.put("revocation_status", "UNKNOWN");
+                } else {
+                    // Full chain analysis
+                    Map<String, Object> chainInfo = chainValidator.analyzeChain(peerCerts);
+                    result.put("chain_status", chainInfo.get("chain_status"));
+                    result.put("intermediate_expiry", chainInfo.get("intermediate_expiry"));
+                    result.put("intermediate_days_remaining", chainInfo.get("intermediate_days_remaining"));
+                    result.put("chain", chainInfo.get("chain"));
 
-                // Fingerprint
-                String fingerprint = chainValidator.calculateFingerprint(leaf);
-                result.put("fingerprint", fingerprint);
+                    // Fingerprint
+                    String fingerprint = chainValidator.calculateFingerprint(leaf);
+                    result.put("fingerprint", fingerprint);
 
-                // Revocation (OCSP then CRL)
-                String revocation = chainValidator.checkRevocation(peerCerts);
-                result.put("revocation_status", revocation);
+                    // Revocation (OCSP then CRL)
+                    revocation = chainValidator.checkRevocation(peerCerts);
+                    result.put("revocation_status", revocation);
 
-                // If chain is broken due to intermediate expiry, override chain_status
-                if ("BROKEN".equals(chainInfo.get("chain_status")) && !"REVOKED".equals(revocation)) {
-                    result.put("chain_status", "BROKEN");
-                } else if ("REVOKED".equals(revocation)) {
-                    result.put("chain_status", "REVOKED");
+                    // If chain is broken due to intermediate expiry, override chain_status
+                    if ("BROKEN".equals(chainInfo.get("chain_status")) && !"REVOKED".equals(revocation)) {
+                        result.put("chain_status", "BROKEN");
+                    } else if ("REVOKED".equals(revocation)) {
+                        result.put("chain_status", "REVOKED");
+                    }
                 }
 
                 // deployment_status is determined by CertificateService (needs inventory lookup)
                 result.put("deployment_status", "UNKNOWN");
+
+                if (opts.lightweight()) {
+                    result.put("resolved_ip", resolvedIps.isEmpty() ? null : resolvedIps.get(0));
+                    result.put("hsts", null);
+                    return result;
+                }
 
                 // DNS resolution IP — use JNDI-based resolver (same as DNS Record Monitoring)
                 try {
@@ -307,48 +418,69 @@ public class CertificateCheckerService {
                 return result;
             }
         } catch (java.net.SocketTimeoutException e) {
-            logCheckFailure(useProxy, "timeout", domain, port, startMs, e);
-            return errorWithClass(domain, "Connection timeout after " + timeoutSeconds + "s", "NETWORK");
+            logCheckFailure(useProxy, "timeout", domain, port, startMs, resolvedIps, e);
+            return errorWithClass(domain, "Connection timeout after " + timeoutSec + "s", "NETWORK", stage, resolvedIps);
         } catch (java.net.UnknownHostException e) {
-            logCheckFailure(useProxy, "dns-failure", domain, port, startMs, e);
-            return errorWithClass(domain, "Domain resolution failed", "DNS");
+            logCheckFailure(useProxy, "dns-failure", domain, port, startMs, resolvedIps, e);
+            return errorWithClass(domain, "Domain resolution failed", "DNS", "dns", resolvedIps);
         } catch (java.net.ConnectException e) {
-            logCheckFailure(useProxy, "connect-refused", domain, port, startMs, e);
-            return errorWithClass(domain, "Connection refused/unreachable: " + e.getMessage(), "NETWORK");
+            logCheckFailure(useProxy, "connect-refused", domain, port, startMs, resolvedIps, e);
+            return errorWithClass(domain, "Connection refused/unreachable: " + e.getMessage(), "NETWORK", stage, resolvedIps);
         } catch (java.net.NoRouteToHostException e) {
-            logCheckFailure(useProxy, "no-route", domain, port, startMs, e);
-            return errorWithClass(domain, "No route to host", "NETWORK");
+            logCheckFailure(useProxy, "no-route", domain, port, startMs, resolvedIps, e);
+            return errorWithClass(domain, "No route to host", "NETWORK", stage, resolvedIps);
         } catch (java.net.SocketException e) {
-            logCheckFailure(useProxy, "socket-error", domain, port, startMs, e);
-            return errorWithClass(domain, "Socket error: " + e.getMessage(), "NETWORK");
+            logCheckFailure(useProxy, "socket-error", domain, port, startMs, resolvedIps, e);
+            return errorWithClass(domain, "Socket error: " + e.getMessage(), "NETWORK", stage, resolvedIps);
         } catch (javax.net.ssl.SSLHandshakeException e) {
-            logCheckFailure(useProxy, "ssl-handshake", domain, port, startMs, e);
-            return errorWithClass(domain, "SSL handshake: " + e.getMessage(), "SSL");
+            logCheckFailure(useProxy, "ssl-handshake", domain, port, startMs, resolvedIps, e);
+            return errorWithClass(domain, "SSL handshake: " + e.getMessage(), "SSL", stage, resolvedIps);
         } catch (javax.net.ssl.SSLException e) {
-            logCheckFailure(useProxy, "ssl-error", domain, port, startMs, e);
-            return errorWithClass(domain, "SSL Error: " + e.getMessage(), "SSL");
+            logCheckFailure(useProxy, "ssl-error", domain, port, startMs, resolvedIps, e);
+            return errorWithClass(domain, "SSL Error: " + e.getMessage(), "SSL", stage, resolvedIps);
+        } catch (IOException e) {
+            // openViaProxy wraps tunnel failures (proxy TCP connect / CONNECT
+            // response) in plain IOException — NETWORK class so the
+            // transient-retry gate and the proxy→direct fallback can apply.
+            logCheckFailure(useProxy, "io-error", domain, port, startMs, resolvedIps, e);
+            return errorWithClass(domain, "I/O error: " + e.getMessage(), "NETWORK", stage, resolvedIps);
         } catch (Exception e) {
             // Always log unexpected errors with stack trace, regardless of mode.
-            log.error("Certificate check unexpected error: domain={}:{} via={} elapsed={}ms",
+            log.error("Certificate check unexpected error: domain={}:{} via={} resolvedIps={} elapsed={}ms",
                     domain, port,
                     useProxy ? "proxy(" + proxyHost + ":" + proxyPort + ")" : "direct",
-                    System.currentTimeMillis() - startMs, e);
-            return errorWithClass(domain, "Error: " + e.getMessage(), "UNKNOWN");
+                    resolvedIps, System.currentTimeMillis() - startMs, e);
+            return errorWithClass(domain, "Error: " + e.getMessage(), "UNKNOWN", stage, resolvedIps);
         }
+    }
+
+    /** Resolve all A/AAAA records via the system resolver — the same path the
+     *  socket uses. Non-fatal: empty list on failure. For proxy-tunneled
+     *  domains this is still the POD's view of the name, which is exactly the
+     *  split-DNS signal we want visible in logs and diagnostics. */
+    private List<String> resolveAllIps(String domain) {
+        List<String> ips = new ArrayList<>();
+        try {
+            for (java.net.InetAddress a : java.net.InetAddress.getAllByName(domain)) {
+                ips.add(a.getHostAddress());
+            }
+        } catch (Exception ignored) { }
+        return ips;
     }
 
     /** Failure logger that opts into full stack trace + proxy diagnostics when
      *  the check went through a proxy tunnel (per-domain use_proxy flag).
      *  Direct checks keep the original terse one-liner. */
-    private void logCheckFailure(boolean useProxy, String stage, String domain, int port, long startMs, Exception e) {
+    private void logCheckFailure(boolean useProxy, String stage, String domain, int port, long startMs,
+                                 List<String> resolvedIps, Exception e) {
         long elapsed = System.currentTimeMillis() - startMs;
         if (useProxy) {
-            log.warn("[cert-proxy] step={} FAILED domain={}:{} proxy={}:{} elapsed={}ms errType={} errMsg={}",
-                    stage, domain, port, proxyHost, proxyPort, elapsed,
+            log.warn("[cert-proxy] step={} FAILED domain={}:{} proxy={}:{} resolvedIps={} elapsed={}ms errType={} errMsg={}",
+                    stage, domain, port, proxyHost, proxyPort, resolvedIps, elapsed,
                     e.getClass().getSimpleName(), e.getMessage(), e);
         } else {
-            log.warn("Certificate check {}: domain={}:{} elapsed={}ms err={}",
-                    stage, domain, port, elapsed, e.getMessage());
+            log.warn("Certificate check {}: domain={}:{} resolvedIps={} elapsed={}ms err={}",
+                    stage, domain, port, resolvedIps, elapsed, e.getMessage());
         }
     }
 
@@ -379,18 +511,18 @@ public class CertificateCheckerService {
      *  Errors are wrapped with the failing step name and the raw proxy
      *  response (status line + headers) so the caller's WARN/error log
      *  carries enough context. */
-    private SSLSocket openViaProxy(SSLSocketFactory factory, String domain, int port) throws IOException {
+    private SSLSocket openViaProxy(SSLSocketFactory factory, String domain, int port, int timeoutSec) throws IOException {
         boolean authOn = proxyUser != null && !proxyUser.isBlank();
         log.info("[cert-proxy] step=open-tunnel domain={} port={} proxy={}:{} auth={} noProxy='{}' timeoutSec={}",
                 domain, port, proxyHost, proxyPort,
                 authOn ? "basic(user=" + proxyUser + ")" : "off",
                 noProxyList == null ? "" : noProxyList,
-                timeoutSeconds);
+                timeoutSec);
 
         Socket raw = new Socket();
         long tcpStart = System.currentTimeMillis();
         try {
-            raw.connect(new InetSocketAddress(proxyHost, proxyPort), timeoutSeconds * 1000);
+            raw.connect(new InetSocketAddress(proxyHost, proxyPort), timeoutSec * 1000);
         } catch (IOException e) {
             log.warn("[cert-proxy] step=tcp-connect FAILED domain={} proxy={}:{} elapsed={}ms err={}",
                     domain, proxyHost, proxyPort,
@@ -399,7 +531,7 @@ public class CertificateCheckerService {
             throw new IOException("Proxy TCP connect failed: " + proxyHost + ":" + proxyPort
                     + " — " + e.getMessage(), e);
         }
-        raw.setSoTimeout(timeoutSeconds * 1000);
+        raw.setSoTimeout(timeoutSec * 1000);
         log.info("[cert-proxy] step=tcp-connected domain={} proxy={}:{} localPort={} elapsed={}ms",
                 domain, proxyHost, proxyPort, raw.getLocalPort(),
                 System.currentTimeMillis() - tcpStart);
@@ -628,6 +760,14 @@ public class CertificateCheckerService {
     private Map<String, Object> errorWithClass(String domain, String msg, String errorClass) {
         Map<String, Object> r = error(domain, msg);
         r.put("error_class", errorClass);
+        return r;
+    }
+
+    private Map<String, Object> errorWithClass(String domain, String msg, String errorClass,
+                                               String stage, List<String> resolvedIps) {
+        Map<String, Object> r = errorWithClass(domain, msg, errorClass);
+        r.put("error_stage", stage);
+        r.put("resolved_ips", resolvedIps);
         return r;
     }
 
