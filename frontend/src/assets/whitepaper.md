@@ -1,5 +1,5 @@
 # CertMonitor — Kurumsal SSL/TLS Sertifika İzleme Platformu
-## White Paper | Versiyon 10.8.x | Mayıs 2026
+## White Paper | Versiyon 18.50.x | Haziran 2026
 
 ---
 
@@ -135,6 +135,27 @@ Her taramada şu bilgiler elde edilip kaydedilir:
 - Envantere kaydedilen beklenen parmak izi ile sunucudaki parmak izini karşılaştırır
 - Yeni sertifika temin edilmiş ama sunucuya dağıtılmamışsa `MISMATCH` alarmı üretir
 
+**Domain Bazlı Proxy Yönlendirmesi (`use_proxy`)**
+- Çoğu kontrol DİREKT outbound bağlantı ile yapılır
+- Envanterde "Proxy Üzerinden Kontrol Et" işareti olan domain'ler için kontrol kurumsal HTTP CONNECT proxy üzerinden gönderilir
+- WAF/firewall'un pod IP'sini reddettiği özel domain'ler için tasarlanmıştır
+- OCSP / CRL fetch'leri de aynı proxy ayarını kullanır (`ChainValidationService`)
+
+**Kritiklik Katmanı (Tier 1–4)**
+- Her domain bir tier'a atanır: 1=Müşteri-Yüzlü Prod, 2=Dahili Prod, 3=UAT/Pre-Prod, 4=Dev/Sandbox
+- Sıralama, kriticilik rozetleri ve eskalasyon kişi seçiminde rol oynar
+- Tier=1 alarmları daha yüksek öncelikle takım yöneticilerine eskalasyon yapılır
+
+**Sertifika Dışı İzleme**
+- DNS kaydı izleme (A/AAAA/CNAME/MX/TXT) — değişim algılama (`CHANGED` / `ROTATED` event)
+- Port izleme (TCP/UDP açık-kapalı + bağlantı süresi)
+- Uptime HTTP izleme (statü kodu + yanıt süresi)
+- Sertifika sweep'inden bağımsız scheduler entry'leri
+
+**Domain Yeniden Adlandırma**
+- Admin envanterde domain değiştirdiğinde geçmiş tüm kontrol verisi, alarm geçmişi ve notlar yeni domain'e atomik olarak taşınır (`@Transactional`)
+- Aynı isimde kayıt varsa 409 ile uyarı verilir (bilgi sızıntısı yok)
+
 ### 3.2 Alarm Yönetimi
 
 Sistem üç seviyede alarm üretir:
@@ -169,37 +190,6 @@ Her sertifika iki takıma atanabilir:
 
 Alarmlar ve bildirimler sertifikanın atandığı takıma yönlendirilir.
 
-### 3.5 İzleme Modülleri
-
-**Vade Takvimi**
-
-Önümüzdeki 30 günde sona erecek sertifikaların analitik görünümü:
-- KPI kartları: Kritik (≤7 gün), Yüksek (8–14 gün), Orta (15–30 gün), Aktif Toplam
-- Günlük yoğunluk grafiği ile kümülatif sona erme trendi
-- Takvim ısı haritası ile görsel yoğunluk takibi
-- Yaklaşan süre sonları listesi (domain, tarih, kalan gün, önem seviyesi)
-- SY ekip bazlı yük dağılımı pasta grafiği
-
-**Durum İzleme (Uptime)**
-
-Envanterdeki domainlerin HTTP/HTTPS ve SSL erişilebilirliğini sürekli izler:
-- 7 günlük ve 30 günlük uptime yüzdesi; olay (incident) sayısı
-- 24 saatlik saatlik erişilebilirlik geçmişi grafiği
-- 60 saniyede bir otomatik yenileme
-
-**Port İzleme**
-
-TCP servis kontrolü; SMTP, POP3, FTP ve özel portlar için:
-- Yanıt süresi (ms) takibi
-- 30 saniye – 15 dakika arası yapılandırılabilir kontrol aralığı
-
-**DNS Kayıt İzleme**
-
-Yetkisiz DNS değişikliklerini erken tespit eder:
-- A, AAAA, CNAME, MX, TXT, NS kayıt tipi desteği
-- 5 dakika – 1 saat arasında yapılandırılabilir kontrol aralığı
-- Değer değişikliği geçmişi
-
 ---
 
 ## 4. Mimari ve Teknoloji Yığını
@@ -210,67 +200,101 @@ Yetkisiz DNS değişikliklerini erken tespit eder:
 |---|---|---|
 | Uygulama çerçevesi | Spring Boot | 3.3.6 |
 | Dil | Java | 21 (LTS) |
-| ORM | Hibernate / JPA | Spring Data JPA |
+| ORM | Hibernate / JPA | Spring Data JPA (`ddl-auto=update`) |
 | Veritabanı sürücüsü | PostgreSQL JDBC | 16 |
-| Şifreleme / ASN.1 | BouncyCastle | BC LTS |
+| Şifreleme / ASN.1 | BouncyCastle | 1.78.1 |
+| Validation | Hibernate Validator | jakarta-validation 3.x |
 | E-posta | JavaMail (Spring Mail) | SMTP/STARTTLS |
 | JSON | Jackson (SNAKE_CASE) | 2.x |
 | HTTP güvenliği | Spring Session JDBC | Distributed sessions |
-| Test | JUnit 5 + Mockito | 241 test |
+| Metrikler | Micrometer + Prometheus | `/actuator/prometheus` |
+| Test | JUnit 5 + Mockito | 539 test |
 | Build | Maven | 3.9.9 |
 
 **Temel Servisler:**
 
 ```
-SchedulerService          — Zamanlayıcı, HA dağıtık kilit, startup catch-up
-CertificateCheckerService — SSL/TLS soket bağlantısı, sertifika çekme
-ChainValidationService    — Zincir analizi, OCSP/CRL iptal kontrolü
-CertificateService        — Sonuç kaydetme, raporlama, filtreleme
-EscalationService         — Alarm işleme, eskalasyon, bildirim yönlendirme
-EmailNotificationService  — HTML e-posta oluşturma ve gönderme
+SchedulerService          — Zamanlayıcı, HA dağıtık kilit, startup catch-up,
+                            nightly cleanup (audit/notif/sql_query_history)
+CertificateCheckerService — SSL/TLS soket bağlantısı, sertifika çekme, proxy tunnel
+ChainValidationService    — Zincir analizi, OCSP/CRL iptal kontrolü, proxy-aware
+CertificateService        — Sonuç kaydetme, raporlama, filtreleme, cache batch evict
+EscalationService         — Alarm işleme, eskalasyon, bildirim yönlendirme,
+                            sweep'te batch open-alert + inventory ön yükleme
+EmailNotificationService  — HTML e-posta oluşturma, async 421 retry executor
 WebhookService            — Slack/Teams webhook entegrasyonu
 UserService               — Kimlik doğrulama, takım/kullanıcı CRUD, kilitleme
-AuditService              — Denetim kaydı yazma
+AuditService              — Denetim kaydı yazma + GeoIP zenginleştirme
+GeoIpService              — IP → ülke/şehir (ip-api.com, 1h cache)
+HttpMetricsService        — Per-endpoint p50/p95/p99 latency
+ExtendedHealthService     — System Health tab arkası: heartbeat, SMTP, DB stats
+ShutdownLogger            — JVM kapanış nedenini log'a yazar
+PortCheckerService        — TCP/UDP port izleme
+DnsCheckerService         — DNS record izleme, CHANGED/ROTATED algılama
+UptimeHttpCheckerService  — HTTP uptime izleme
+SqlPlaygroundService      — Admin-only read-mostly SQL runner (audited)
+```
+
+**Cross-Cutting Bileşenler:**
+
+```
+GlobalExceptionHandler    — 9 exception handler + catch-all (stack trace UI'ye sızmaz)
+RequestLoggingFilter      — TRACE seviyede full request/response (60+ alan masked)
+AuthInterceptor           — Custom session+token tabanlı auth (Spring Security YOK)
+PermissionCatalog         — Tüm kaynak-aksiyon matrisi tek kaynağında
 ```
 
 ### 4.2 Frontend
 
 | Bileşen | Teknoloji |
 |---|---|
-| Framework | React 18 |
-| Build aracı | Vite 5 |
-| Dil desteği | Türkçe / İngilizce (800+ çeviri) |
-| Tema | Açık / Koyu mod |
-| Test | Vitest (72 test) |
+| Framework | React 18.3 |
+| Build aracı | Vite 5.4 |
+| Routing | Tab state (React Router YOK) |
+| Dil desteği | Türkçe / İngilizce (1500+ çeviri, parity test'i ile zorunlu) |
+| Tema | Açık / Koyu mod (localStorage persist) |
+| İkonlar | `lucide-react` (emoji KULLANILMAZ) |
+| Test | Vitest (121 test, 18 dosya) |
+| Hata sınırı | ErrorBoundary root + tab seviyesinde |
 | Responsive | Tam mobil uyumlu |
 
 **Ana Bileşenler:**
 
 ```
-Dashboard           — Ana izleme ekranı, sertifika kartları
-CertificateModal    — 5 sekme: Detay, Alarmlar, Bildirimler, Güvenlik, Notlar
-AdminPanel          — 8 yönetim sekmesi
-InventoryManager    — Domain envanteri, 50+ alan
-AlertHistory        — Alarm geçmişi, onay/çözüm aksiyonları
-SystemHealth        — JVM, DB havuzu, scheduler metrikleri
-AuditLogViewer      — Güvenlik denetim kayıtları
-WeakAlgorithmReport — Zayıf algoritma tespiti
-ExpiryForecastPage  — 30 günlük sona erme analitik paneli
-UptimePage          — HTTP/HTTPS + SSL erişilebilirlik izleme
-PortMonitorPage     — TCP port servis izleme
-DnsMonitorPage      — DNS kayıt değişiklik tespiti
+App.jsx            — Root, 17 tab, ErrorBoundary ile sarılı, loadData allSettled
+Dashboard          — Ana izleme ekranı, sertifika kartları
+CertificateModal   — 5 sekme: Detay, Alarmlar, Bildirimler, Güvenlik, Notlar
+AdminPanel         — Yönetim merkezi (Inventory/Users/Teams/Permissions...)
+InventoryManager   — Domain envanteri, 50+ alan + domain rename onayı
+AlertHistory       — Alarm geçmişi, onay/çözüm aksiyonları, batch notify
+SystemHealth       — JVM, DB havuzu, scheduler metrikleri (allSettled load)
+AuditLogViewer     — Güvenlik denetim kayıtları + GeoIP zenginleştirme
+WeakAlgorithmReport— Zayıf algoritma tespiti
+UptimePage / PortMonitorPage / DnsMonitorPage — Sertifika dışı izleme
+ErrorBoundary      — Render hatalarında "Yenile" fallback UI
 ```
 
 ### 4.3 Eşzamanlılık ve Performans
 
 ```
-Paralel worker sayısı : 20 (cert.monitor.parallel-workers)
+certCheckExecutor     : core 20, max 50, queue 1000 (EXECUTOR_* env ile tunable)
 Kontrol timeout       : 10 saniye (cert.monitor.check-timeout-seconds)
 CRL önbellek TTL      : 1 saat
-CRL önbellek boyutu   : 200 giriş
-DB bağlantı havuzu    : 2-10 bağlantı (HikariCP)
+CRL önbellek boyutu   : 200 giriş (Caffeine maximumSize+expireAfterWrite)
+OCSP/CRL HTTP timeout : 5s OCSP, 10s CRL (connect+read explicit)
+DB bağlantı havuzu    : 2-10 bağlantı (HikariCP), leak threshold 60s
 JVM heap              : RAM'in %75'i (K8s: 6 GB / 8 GB limitte)
+SMTP 421 retry        : Async (ScheduledExecutorService daemon, caller bloke etmez)
+Cache eviction        : Sweep BAŞINA tek seferlik batch (saveResult her satırda DEĞİL)
+N+1 yöntemi           : Sweep başında inventoryRepo.findByDomainIn +
+                        alertEventRepo.findOpenByDomainIn — loop'ta in-memory map
 ```
+
+**Performans Hedefleri (k6 smoke):**
+- p95 < 500 ms
+- Hata oranı < %1
+- Checks pass oranı > %99
+- 50 VU × 30 saniye yükte SLA korunur
 
 ---
 
@@ -421,23 +445,29 @@ Tetikleyiciler:
          ▼
   SchedulerService.runCheck()
   │  ├─ DB dağıtık kilidi al (tek pod çalışır)
-  │  ├─ Envanterdeki aktif domainleri yükle
-  │  └─ Her domain için checkAsync() başlat (paralel, 20 worker)
+  │  ├─ Envanterdeki aktif domainleri yükle (+ her domain'in use_proxy bayrağı)
+  │  └─ Her domain için checkAsync(domain, port, forceProxy) başlat (paralel)
          │
          ▼
-  CertificateCheckerService.check(domain, port)
+  CertificateCheckerService.check(domain, port, forceProxy)
+  │  ├─ Yönlendirme kararı:
+  │  │     forceProxy AND proxy yapılandırıldı AND domain noProxy listesinde DEĞİL
+  │  │     → HTTP CONNECT tunnel kur (Authorization header opsiyonel)
+  │  │     aksi halde → direkt outbound TCP
   │  ├─ TCP soket bağlantısı (timeout: 10s)
+  │  ├─ TLS_MODE=browser: TLS 1.2 + ALPN [h2, http/1.1] zorla (WAF/Akamai uyumu)
   │  ├─ SSL handshake → sertifika zincirini al
   │  ├─ Yaprak sertifikayı ayrıştır (subject, issuer, tarihler, SAN, vb.)
+  │  ├─ HSTS check (HTTP HEAD, try-finally ile leak-proof)
   │  ├─ Kalan gün hesapla
   │  └─ ChainValidationService.analyze() çağır
          │
          ▼
-  ChainValidationService
+  ChainValidationService (proxy-aware: OCSP/CRL fetch'leri proxy üzerinden)
   │  ├─ Zincirdeki tüm sertifikaları incele
   │  ├─ Ara CA sürelerini kontrol et → chain_status: VALID / BROKEN
   │  ├─ SHA-256 parmak izi hesapla
-  │  └─ Revocation: OCSP → CRL (fallback)
+  │  └─ Revocation: OCSP (5s timeout) → CRL (10s timeout, Caffeine cached)
   │       └─ revocation_status: VALID / REVOKED / UNDETERMINED
          │
          ▼
@@ -450,7 +480,10 @@ Tetikleyiciler:
          │
          ▼
   EscalationService.processResults()
-  │  ├─ Her domain için alert tipi belirle:
+  │  ├─ Başta TEK SEFER batch ön yükleme (N+1 önleme):
+  │  │   ├─ inventoryRepo.findByDomainIn(allDomains)  → tek query
+  │  │   └─ alertEventRepo.findOpenByDomainIn(allDomains)  → tek query
+  │  ├─ Her domain için alert tipi belirle (loop'ta DB değil, map lookup):
   │  │   ├─ revocation_status = REVOKED → REVOKED
   │  │   ├─ deployment_status = INCOMPLETE → MISMATCH
   │  │   ├─ chain_status = BROKEN → CHAIN_BROKEN
@@ -465,11 +498,17 @@ Tetikleyiciler:
          ▼
   EmailNotificationService + WebhookService
   │  ├─ HTML e-posta oluştur (domain, seviye, kalan gün, sertifika bilgileri)
-  │  ├─ SMTP ile gönder → email_status: SENT / FAILED / SKIPPED_DISABLED
+  │  ├─ SMTP ile gönder → email_status:
+  │  │       SENT / FAILED / SKIPPED_DISABLED / QUEUED_RETRY (421 rate-limit)
+  │  ├─ 421 ise async retry executor'da 90s sonra tekrar dene (caller bloke olmaz)
   │  └─ Webhook varsa Slack/Teams'e gönder
          │
          ▼
   notification_logs tablosuna kayıt
+         │
+         ▼
+  CertificateService.evictAllCaches()  — Sweep sonu TEK sefer
+  (Her saveResult'ta DEĞİL; 1000 domain'lik sweep'te 4000 evict → 4 evict)
 ```
 
 ### 7.2 Startup Catch-Up Mekanizması
@@ -687,7 +726,67 @@ Her admin aksiyonu şu bilgilerle kaydedilir:
 | Sonuç | SUCCESS / FAILURE |
 | Değişiklikler | Eski değer → Yeni değer |
 
-Audit log **değiştirilemez** — yalnızca ekleme yapılır.
+Audit log **değiştirilemez** — yalnızca ekleme yapılır. Gece 03:30 cron'u 180 günden eski kayıtları temizler.
+
+### 10.6 Hata Yönetimi ve Bilgi Sızıntısı Önleme
+
+**GlobalExceptionHandler** (Spring `@RestControllerAdvice`) tüm uncaught exception'ları yakalar ve TR mesajla kullanıcı-dostu yanıt döner:
+
+| Exception | HTTP Status | UI Mesaj |
+|---|---|---|
+| `NoSuchElementException` | 404 | exception mesajı |
+| `IllegalStateException` | 409 | exception mesajı |
+| `IllegalArgumentException` | 400 | exception mesajı |
+| `SecurityException` | 403 | exception mesajı |
+| `DataIntegrityViolationException` | 409 | "Bu domain envanterde zaten var" vb. |
+| `MethodArgumentNotValidException` | 400 | "Geçersiz alan(lar): X, Y" + alan listesi |
+| `HttpMessageNotReadableException` | 400 | "Geçersiz istek formatı" |
+| `MissingServletRequestParameterException` | 400 | "Eksik parametre: X" |
+| `ResponseStatusException` | passthrough | exception mesajı |
+| **Diğer her şey (catch-all)** | 500 | "Sunucu hatası" — **stack trace UI'ye SIZMAZ** |
+
+Stack trace ve iç hata mesajı sadece log dosyasına yazılır.
+
+### 10.7 Hassas Alan Maskeleme (Request Logging)
+
+**RequestLoggingFilter** TRACE seviyede HTTP request/response gövdesi log'lar — default `com.certmonitor=DEBUG` seviyede SESSİZ kalır. Açmak için:
+
+```properties
+logging.level.com.certmonitor.config.RequestLoggingFilter=TRACE
+```
+
+Açıldığında JSON body / form body / URL query üzerinden ~60 hassas alan otomatik `*******` ile maskelenir:
+
+```
+password / passwd / pwd / pass / parola / sifre /
+old_password / new_password / smtp_pass / db_password /
+token / access_token / refresh_token / bearer / csrf /
+secret / api_key / client_secret / private_key /
+session_id / jsessionid / sid /
+pin / otp / mfa_code / verification_code  (EN + TR varyantları)
+```
+
+Sensitive HTTP headers (`Authorization`, `Cookie`, `Set-Cookie`, `X-Api-Key`, `X-Auth-Token` vb.) da maskelenir. Skip path'ler: `/health`, `/favicon.ico`, `/assets/*`, `/static/*`, static asset uzantıları.
+
+### 10.8 Frontend Hata Sınırı (ErrorBoundary)
+
+Tüm uygulama `ErrorBoundary` ile sarılıdır:
+- **Root seviye** (main.jsx) — komple white-screen önler
+- **Tab seviyesi** (App.jsx, `key={tab}` ile) — bir tab'ın render hatası diğerlerini öldürmez
+
+Hata durumunda kullanıcıya "Bir şey ters gitti / Something went wrong" + "Yenile / Reload" butonu gösterilir, console'a tam hata düşer.
+
+### 10.9 Input Validation
+
+Modelde `jakarta-validation` annotation'ları + controller'da `@Valid`:
+
+```java
+@NotBlank @Pattern(...) String domain  // RFC 1123 + wildcard izinli
+@Min(1) @Max(65535)     Integer port
+@Min(1) @Max(4)         Integer tier   // 1=Müşteri-Yüzlü Prod ... 4=Dev
+```
+
+Geçersiz body → 400 + alan listesi (stack trace yok).
 
 ---
 
@@ -744,21 +843,6 @@ Her sertifika bir SY ve bir UG takımına atanabilir. Alarmlar her iki takıma d
 ---
 
 ## 12. Kullanıcı Ekranları ve Aksiyonlar
-
-### Gezinme Yapısı
-
-Sol kenar çubuğu (sidebar) sekmeler gruplar halinde düzenlenmiştir:
-
-| Grup | Sekmeler |
-|---|---|
-| *(başlıksız)* | Genel Bakış, İstatistikler, Vade Takvimi, Uyarılar, Tüm Sertifikalar, Yenileme Önerileri, Sertifika Envanteri |
-| İzleme | Durum İzleme, Port İzleme, DNS İzleme |
-| Kayıtlar | Aktivite Günlüğü, Alarm Geçmişi (Admin) |
-| Yönetim | Yönetim Paneli, Denetim Günlüğü, Zayıf Algoritma Raporu, Sistem Sağlığı |
-
-Gruplar daraltılıp genişletilebilir; tercih tarayıcıya kaydedilir.
-
----
 
 ### 12.1 Giriş Ekranı
 
@@ -877,7 +961,7 @@ Gruplar daraltılıp genişletilebilir; tercih tarayıcıya kaydedilir.
 
 ### 12.4 İstatistikler Ekranı
 
-**Erişim:** Sol menü → İstatistikler sekmesi
+**Erişim:** Üst menü → İstatistikler sekmesi
 
 | Görüntülenen Bilgi |
 |---|
@@ -897,7 +981,7 @@ Gruplar daraltılıp genişletilebilir; tercih tarayıcıya kaydedilir.
 
 ### 12.5 Uyarılar Ekranı
 
-**Erişim:** Sol menü → Uyarılar sekmesi
+**Erişim:** Üst menü → Uyarılar sekmesi
 
 - Sadece `warning` veya `error` durumundaki sertifikalar gösterilir
 - Aynı filtreleme ve sıralama özellikleri geçerlidir
@@ -906,7 +990,7 @@ Gruplar daraltılıp genişletilebilir; tercih tarayıcıya kaydedilir.
 
 ### 12.6 Tüm Sertifikalar (Tablo Görünümü)
 
-**Erişim:** Sol menü → Tüm Sertifikalar sekmesi
+**Erişim:** Üst menü → Tüm Sertifikalar sekmesi
 
 **Kolon Başlıkları ve Sıralama:**
 
@@ -924,7 +1008,7 @@ Gruplar daraltılıp genişletilebilir; tercih tarayıcıya kaydedilir.
 
 ### 12.7 Yenileme Tavsiyesi Ekranı
 
-**Erişim:** Sol menü → Yenileme Tavsiyesi sekmesi
+**Erişim:** Üst menü → Yenileme Tavsiyesi sekmesi
 
 Her sertifika için öncelik sıralamalı Türkçe aksiyon önerileri:
 - **Kritik**: Derhal müdahale gerekiyor
@@ -1031,7 +1115,7 @@ Modal 5 bölümden oluşur:
 
 ### 12.9 Aktivite Günlüğü Ekranı
 
-**Erişim:** Sol menü → Aktivite Günlüğü sekmesi
+**Erişim:** Üst menü → Aktivite Günlüğü sekmesi
 
 Her tarama çalışmasının özeti gösterilir:
 
@@ -1050,7 +1134,7 @@ Her tarama çalışmasının özeti gösterilir:
 
 ### 12.10 Alarm Geçmişi Ekranı (Admin)
 
-**Erişim:** Admin Panel → Alarm Geçmişi sekmesi veya Sol menü
+**Erişim:** Admin Panel → Alarm Geçmişi sekmesi veya Üst menü
 
 **Filtreler:**
 
@@ -1217,7 +1301,7 @@ CRITICAL→ PO + Technical Team + Manager + C-Level
 
 ### 12.15 Denetim Günlüğü Ekranı (Admin / Audit)
 
-**Erişim:** Sol menü → Denetim Günlüğü sekmesi
+**Erişim:** Üst menü → Denetim Günlüğü sekmesi
 
 **Özet Panel:**
 
@@ -1257,7 +1341,7 @@ CRITICAL→ PO + Technical Team + Manager + C-Level
 
 ### 12.16 Sistem Sağlığı Ekranı (Admin)
 
-**Erişim:** Sol menü → Sistem Sağlığı sekmesi
+**Erişim:** Üst menü → Sistem Sağlığı sekmesi
 
 **Otomatik yenileme:** 30 saniyede bir
 
@@ -1333,7 +1417,7 @@ CRITICAL→ PO + Technical Team + Manager + C-Level
 
 ### 12.17 Zayıf Algoritma Raporu (Admin)
 
-**Erişim:** Sol menü → Zayıf Algoritma Raporu sekmesi
+**Erişim:** Üst menü → Zayıf Algoritma Raporu sekmesi
 
 SHA-1 imzalı, RSA-1024, RC4 gibi güvensiz algoritma kullanan sertifikaları listeler.
 
@@ -1351,137 +1435,6 @@ SHA-1 imzalı, RSA-1024, RC4 gibi güvensiz algoritma kullanan sertifikaları li
 | Durum |
 
 **Sıralama:** Domain / Sahip / Takım / Algoritma / Zayıflık / Bitiş / Durum
-
----
-
-### 12.18 Vade Takvimi Ekranı
-
-**Erişim:** Sol menü → Vade Takvimi sekmesi
-
-Önümüzdeki 30 günde sona erecek sertifikaların analitik görünümünü sunar.
-
-**KPI Kartları (2×2):**
-
-| Kart | Renk | Açıklama |
-|---|---|---|
-| ≤ 7 GÜN | Kırmızı | Kritik — acil müdahale gerekiyor |
-| 8–14 GÜN | Turuncu | Yüksek — yenileme planlanmalı |
-| 15–30 GÜN | Sarı | Orta — izleme |
-| AKTİF TOPLAM | Yeşil-Mavi | Toplam aktif sertifika sayısı |
-
-Sayılar sayfa yüklendiğinde cubic easing animasyonuyla gösterilir.
-
-**Bölüm 01 — Günlük Yoğunluk:**
-- 30 günlük istifleme (stacked) bar chart; her çubuk kritik / yüksek / orta renklerine göre bölünmüş
-- Çift Y ekseni: sol = günlük sayı, sağ = kümülatif
-- Hover tooltip: o güne ait domain listesi, toplam ve kümülatif sayılar
-
-**Bölüm 02 — Takvim:**
-- 5×7 hücre takvim ısı haritası; hücre arka plan rengi sona erme yoğunluğunu gösterir
-- Her hücre: gün numarası sol üstte, sona erme sayısı sağ altta büyük ve renkli
-- Bugünkü hücre mavi çerçeve ile vurgulanır
-
-**Bölüm 03 — Yaklaşan Süre Sonları:**
-- Domain, tarih, önem seviyesi ve kalan gün sütunları
-- Kalan güne göre sıralı; en kritik en üstte
-- Varsayılan 15 satır; "Daha fazla göster" ile tamamı listelenir
-
-**Bölüm 04 — Yük Dağılımı:**
-- SY ekip bazlı pasta grafik; her takımın sertifika yükü oranı gösterilir
-
----
-
-### 12.19 Durum İzleme Ekranı
-
-**Erişim:** Sol menü → İzleme → Durum İzleme
-
-Sertifika envanterindeki domainlerin HTTP/HTTPS ve SSL erişilebilirliğini sürekli izler.
-
-| Görüntülenen Bilgi |
-|---|
-| Domain erişilebilirlik durumu (Erişilebilir / Erişilemiyor / Bilinmiyor) |
-| SSL kalan gün sayısı |
-| 7 günlük uptime yüzdesi |
-| 30 günlük uptime yüzdesi |
-| Olay (incident) sayısı |
-| Son kontrol zamanı |
-
-**24 Saatlik Grafik:** Seçilen domain için saatlik erişilebilirlik / erişilemezlik çubuklarını gösterir.
-
-**Filtreler:**
-- Durum: Tümü / Sorunlar / Erişilebilir
-- Alan adı araması ve sıralama
-
-**Aksiyonlar:**
-
-| Aksiyon | Açıklama |
-|---|---|
-| Domain satırına tıkla | Geçmiş modal: HTTP ve SSL kontrol geçmişi |
-| Tarih aralığı seç | Geçmiş modalde belirtilen dönem için kontrol kayıtları |
-
-**Otomatik yenileme:** 60 saniyede bir
-
----
-
-### 12.20 Port İzleme Ekranı
-
-**Erişim:** Sol menü → İzleme → Port İzleme
-
-SMTP, POP3, FTP ve benzeri TCP servislerinin açık/kapalı durumunu ve yanıt süresini izler.
-
-| Görüntülenen Bilgi |
-|---|
-| Host adresi |
-| Port numarası |
-| Protokol / servis adı |
-| Kontrol aralığı |
-| Bağlantı durumu (Açık / Kapalı / Bilinmiyor) |
-| Yanıt süresi (ms) |
-| Son kontrol zamanı |
-
-**Aksiyonlar:**
-
-| Aksiyon | Açıklama |
-|---|---|
-| Yeni Monitor Ekle | Host, port, açıklama ve kontrol aralığı tanımla |
-| Düzenle | Monitor ayarlarını güncelle |
-| Sil | Monitor kaydını kaldır |
-| Manuel Kontrol | Anlık kontrol tetikle |
-| Satıra tıkla | Geçmiş modal: o monitöre ait kontrol kayıtları |
-
-**Kontrol aralığı seçenekleri:** 30 saniye · 1 dakika · 5 dakika · 15 dakika  
-**Otomatik yenileme:** 60 saniyede bir
-
----
-
-### 12.21 DNS Kayıt İzleme Ekranı
-
-**Erişim:** Sol menü → İzleme → DNS İzleme
-
-Yetkisiz DNS değişikliklerini erken tespit eder; kayıt değerlerini belirli aralıklarla sorgulayarak değişiklik olduğunda geçmişe kaydeder.
-
-**Desteklenen Kayıt Tipleri:** A · AAAA · CNAME · MX · TXT · NS
-
-| Görüntülenen Bilgi |
-|---|
-| Domain adı |
-| Kayıt tipi |
-| Kontrol aralığı |
-| Mevcut değer |
-| Değişiklik durumu (Değişmedi / Değişti / Bilinmiyor) |
-| Son kontrol zamanı |
-
-**Aksiyonlar:**
-
-| Aksiyon | Açıklama |
-|---|---|
-| Yeni Monitor Ekle | Domain, kayıt tipi ve kontrol aralığı tanımla |
-| Düzenle | Monitor ayarlarını güncelle |
-| Sil | Monitor kaydını kaldır |
-| Manuel Kontrol | Anlık DNS sorgusu tetikle |
-| Değişiklik Geçmişi | Kayıt değerlerinin zaman içindeki değişimini görüntüle |
-
-**Kontrol aralığı seçenekleri:** 5 dakika · 15 dakika · 30 dakika · 1 saat
 
 ---
 
@@ -1596,6 +1549,36 @@ CertMonitor, backend kapalıyken aşağıdaki davranışları gösterir:
 4. Güncel sertifika verileri `latest_checks` tablosuna yazılır
 
 > Sonuç: Backend kapalı kalsa bile **o günün bildirimleri kesinlikle gönderilir** — geç bile olsa açılışta telafi edilir.
+
+---
+
+### 13.7 Eski Log Kayıtlarının Otomatik Temizliği
+
+Her gece **03:30** (`cert.monitor.scheduler.cleanup-cron` ile özelleştirilebilir) `SchedulerService.cleanupOldLogs()` çalışır ve tabloları sınırlı tutar:
+
+| Tablo | Saklama Süresi | Açıklama |
+|---|---|---|
+| `audit_log` | 180 gün | Admin/güvenlik aksiyonları |
+| `notification_logs` | 90 gün | E-posta + webhook gönderim kayıtları |
+| `sql_query_history` | 30 gün | SQL Playground geçmişi |
+
+- Native bulk `DELETE` ile kısa transaction süresi.
+- Cleanup başarısız olursa job DEVAM ETMEZ ama uygulama çökmez — bir sonraki gece tekrar denenir.
+- Manuel tetikleme yok; pod restart'ta tek seferlik çalıştırma istenirse cron'u geçici olarak değiştir.
+
+---
+
+### 13.8 Production'da Proxy Üzerinden Kontrol
+
+Kurumsal ağ politikaları nedeniyle bazı domain'lerin firewall/WAF'i pod IP'sini reddeder. Bu domain'ler için:
+
+1. OpenShift Deployment YAML'ına `HTTP_PROXY_HOST=dmzproxy.aknet.akb` ve `HTTP_PROXY_PORT=8080` env vars'larını ekle.
+2. Pod yeniden başlat (`oc rollout restart deployment/cert-monitor`).
+3. Admin → Envanter → ilgili domain'i düzenle → **"Proxy Üzerinden Kontrol Et"** toggle'ını aç.
+4. Bir sonraki sweep'te o domain'in kontrolü proxy üzerinden gider; geri kalanlar direkt outbound olarak çalışır.
+5. Loglarda `[cert-proxy]` etiketiyle tunnel kurma adımları takip edilebilir.
+
+> Tüm pod outbound'unu proxy'ye yönlendirmek diğer 11/13 domain'i kırar (v18.45.1 deneyimi). Sadece sorun yaşayan domain'leri işaretle.
 
 ---
 
@@ -1714,6 +1697,29 @@ Birden fazla pod aynı anda tarama yapmaz. DB tabanlı kilit (TTL: 10 dk) yalnı
 | `cert.monitor.alert.default-high-days` | 15 | Yüksek gün eşiği |
 | `cert.monitor.alert.default-critical-days` | 7 | Kritik gün eşiği |
 | `cert.monitor.alert.default-realert-hours` | 24 | Tekrar bildirim aralığı |
+| `cert.monitor.scheduler.cleanup-cron` | `0 30 3 * * *` | Gece log temizleme cron'u |
+| `EXECUTOR_CORE_SIZE` | 20 | certCheckExecutor core thread |
+| `EXECUTOR_MAX_SIZE` | 50 | certCheckExecutor max thread |
+| `EXECUTOR_QUEUE_CAPACITY` | 1000 | certCheckExecutor queue boyutu |
+| `mail.send.retry-delay-ms` | 90000 | SMTP 421 retry gecikmesi (async) |
+
+**Proxy / Outbound:**
+
+| Parametre / Env | Açıklama |
+|---|---|
+| `HTTP_PROXY_HOST` / `HTTP_PROXY_PORT` | Kurumsal HTTP CONNECT proxy (OCSP/CRL/use_proxy domain'ler için) |
+| `HTTP_PROXY` (URL formatı) | Alternatif: `http://user:pass@host:port` — `ChainValidationService` URL parse fallback'i |
+| `NO_PROXY` | Proxy bypass suffix listesi (virgülle ayrılmış) |
+| `TLS_MODE` | `browser` (default, ALPN+TLS1.2 zorla) veya `default` (debug) |
+
+**Log Seviyeleri (Opsiyonel):**
+
+| Parametre | Açıklama |
+|---|---|
+| `logging.level.com.certmonitor` | Default `DEBUG` |
+| `logging.level.com.certmonitor.config.RequestLoggingFilter` | `TRACE` ile full HTTP req/resp logging açılır (masked) |
+| `logging.level.root` | Default `INFO` |
+| `LOG_TIMEZONE` | `Europe/Istanbul` (default) |
 
 ### 16.2 Kilitleme Konfigürasyonu
 
@@ -1742,17 +1748,32 @@ Birden fazla pod aynı anda tarama yapmaz. DB tabanlı kilit (TTL: 10 dk) yalnı
 
 | Bilgi | Değer |
 |---|---|
-| Güncel Versiyon | 10.8.x |
+| Güncel Versiyon | 18.50.x |
 | Java Versiyonu | 21 (LTS) |
 | Spring Boot | 3.3.6 |
+| BouncyCastle | 1.78.1 |
+| React / Vite | 18.3 / 5.4 |
 | PostgreSQL | 16-alpine |
 | Docker Image | `ghcr.io/inanmise/certmonitor` |
 | Helm Chart | `ghcr.io/inanmise/certmonitor-chart` |
-| Backend Test Sayısı | 241 |
-| Frontend Test Sayısı | 72 |
+| Backend Test Sayısı | 539 |
+| Frontend Test Sayısı | 121 |
 | Desteklenen Diller | Türkçe / İngilizce |
 | Lisans | Kurumsal kullanım |
 | Geliştirici | inanmise (erdi.inanmis@gmail.com) |
+
+### 18.50.x Sürüm Vurguları (Haziran 2026)
+
+- **Dayanıklılık:** `CertificateCheckerService` HSTS check'inde `HttpURLConnection` leak'i try-finally ile kapatıldı; `ChainValidationService` OCSP/CRL bağlantıları her durumda `disconnect()` çağırıyor.
+- **Hata yönetimi:** `GlobalExceptionHandler`'a 5 yeni handler + catch-all eklendi; stack trace artık UI'ye sızmıyor (500 → "Sunucu hatası").
+- **Frontend:** `ErrorBoundary` root + tab seviyesinde; `SystemHealth` + `InventoryManager` `Promise.allSettled` ile bir endpoint çökse de diğerleri yüklenir; "Yüklenemedi" banner'ı.
+- **Performans:** `EscalationService.processResults` N+1 sorunu çözüldü (sweep başında batch `findByDomainIn` + `findOpenByDomainIn`); `saveResult` cache evict'leri sweep sonuna toplandı (4000 evict → 4 evict).
+- **SMTP:** 421 rate-limit retry'ı asenkron oldu — caller thread artık 90s bloke etmiyor (`ScheduledExecutorService` daemon).
+- **Validation:** `CertificateInventory` model'inde `@NotBlank/@Pattern/@Min/@Max`; controller'da `@Valid`; geçersiz body → 400 + alan listesi.
+- **Operasyonel:** Gece 03:30 cron'u `audit_log` (180g), `notification_logs` (90g), `sql_query_history` (30g) temizler.
+- **Observability:** `RequestLoggingFilter` TRACE seviyede full HTTP log + 60+ alan masking (`*******`); opt-in env var ile aktif.
+- **Envanter:** Domain bazlı `use_proxy` bayrağı (problemli WAF/firewall domain'leri için proxy yönlendirmesi); Domain rename (`latest_checks`, `certificate_checks`, `alert_events`, `notes` atomik taşıma).
+- **Test:** Backend 530 → 539 (+9 handler test), Frontend 114 → 121 (+4 ErrorBoundary, +3 SystemHealth load-error).
 
 ### Sürüm Numaralandırma
 
