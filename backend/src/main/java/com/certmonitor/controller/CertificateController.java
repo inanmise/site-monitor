@@ -91,6 +91,8 @@ public class CertificateController {
         result.put("run_id", "manual");
         certService.saveResult(result);
         certService.ensureInInventory(domain, 443, teamId(session));
+        // Manuel tetiklemede de cache evict gerekiyor (saveResult'tan kaldırıldı)
+        certService.evictAllCaches();
         return ok(Map.of("success", true, "data", result, "timestamp", now()));
     }
 

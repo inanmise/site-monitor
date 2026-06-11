@@ -53,6 +53,11 @@ class CertificateServiceTest {
                         .map(lc -> { CertificateInventory ci = new CertificateInventory();
                                      ci.setDomain(lc.getDomain()); ci.setActive(true); return ci; })
                         .collect(Collectors.toList()));
+        // getAllLatest() artık findByDomainIn(activeDomains) çağırıyor;
+        // eski testlerde findAllByOrderByDomainAsc mock'u veri verir,
+        // burada findByDomainIn de aynı veriyi yansıtsın.
+        when(latestRepo.findByDomainIn(anyCollection())).thenAnswer(inv ->
+                latestRepo.findAllByOrderByDomainAsc());
     }
 
     // ── Deployment Status ─────────────────────────────────────────────────────

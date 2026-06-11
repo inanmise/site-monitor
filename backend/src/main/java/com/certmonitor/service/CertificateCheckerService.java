@@ -250,9 +250,9 @@ public class CertificateCheckerService {
                 }
 
                 // HSTS check via HTTP HEAD — reuse the SSLSocketFactory that already succeeded
+                HttpURLConnection hc = null;
                 try {
                     URL url = new URL("https://" + domain + "/");
-                    HttpURLConnection hc;
                     if (useProxy) {
                         java.net.Proxy p = new java.net.Proxy(java.net.Proxy.Type.HTTP,
                                 new InetSocketAddress(proxyHost, proxyPort));
@@ -274,10 +274,13 @@ public class CertificateCheckerService {
                     hc.setInstanceFollowRedirects(true);
                     hc.connect();
                     result.put("hsts", hc.getHeaderField("Strict-Transport-Security") != null);
-                    hc.disconnect();
                 } catch (Exception e) {
                     log.debug("HSTS check failed for {}: {}", domain, e.getMessage());
                     result.put("hsts", null);
+                } finally {
+                    if (hc != null) {
+                        try { hc.disconnect(); } catch (Exception ignored) { }
+                    }
                 }
 
                 long elapsed = System.currentTimeMillis() - startMs;

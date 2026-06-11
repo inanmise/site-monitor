@@ -7,12 +7,16 @@ import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.mail.javamail.MimeMessageHelper;
 import org.springframework.stereotype.Service;
 
+import jakarta.annotation.PreDestroy;
 import jakarta.mail.internet.MimeMessage;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.util.Arrays;
 import java.util.Map;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 
 @Slf4j
 @Service
@@ -30,6 +34,22 @@ public class EmailNotificationService {
     // How long to wait before retrying a transient 421 rate-limit rejection (default 90 s)
     @Value("${mail.send.retry-delay-ms:90000}")
     private long retryDelayMs;
+
+    /**
+     * Tek thread'lik scheduler — SMTP 421 retry'ları için. Caller thread
+     * (sweep executor ya da HTTP request) 90 saniye block etmesin.
+     */
+    private final ScheduledExecutorService mailRetryExecutor =
+            Executors.newSingleThreadScheduledExecutor(r -> {
+                Thread t = new Thread(r, "mail-retry");
+                t.setDaemon(true);
+                return t;
+            });
+
+    @PreDestroy
+    void shutdownRetryExecutor() {
+        mailRetryExecutor.shutdown();
+    }
 
     public String getEmailFrom() { return emailFrom; }
 
@@ -109,22 +129,31 @@ public class EmailNotificationService {
     private String doSend(String to, MimeMessage msg, int attempt) {
         try {
             mailSender.send(msg);
-            log.info("✓ E-posta gönderildi: TO={}", to);
+            if (attempt == 1) {
+                log.info("✓ E-posta gönderildi: TO={}", to);
+            } else {
+                log.info("✓ E-posta gönderildi (retry #{}): TO={}", attempt - 1, to);
+            }
             return "SENT";
         } catch (Exception e) {
             String err = e.getMessage() != null ? e.getMessage() : "";
-            // 421 = transient rate-limit from SMTP gateway — wait and retry once
+            // 421 = transient rate-limit from SMTP gateway — schedule retry async
             // Check both getMessage() and toString() because MailSendException may wrap the inner cause
             String errFull = err + " " + e.toString();
             if (attempt == 1 && errFull.contains("421")) {
-                log.warn("⏳ SMTP 421 rate limit — {}ms sonra tekrar deneniyor: TO={}", retryDelayMs, to);
-                try {
-                    Thread.sleep(retryDelayMs);
-                } catch (InterruptedException ie) {
-                    Thread.currentThread().interrupt();
-                    return "FAILED (interrupted): " + err;
-                }
-                return doSend(to, msg, 2);
+                log.warn("⏳ SMTP 421 rate limit — {}ms sonra async retry zamanlandı: TO={}",
+                        retryDelayMs, to);
+                // Caller'ı bloke etme; retry'ı ayrı thread'de tetikle.
+                mailRetryExecutor.schedule(
+                    () -> {
+                        try { doSend(to, msg, 2); }
+                        catch (Exception ex) {
+                            log.error("✗ Async retry başarısız: TO={} | HATA={}", to, ex.getMessage());
+                        }
+                    },
+                    retryDelayMs, TimeUnit.MILLISECONDS);
+                // İlk denemenin sonucu: 421 ama retry zamanlandı.
+                return "QUEUED_RETRY: " + err;
             }
             log.error("✗ E-posta gönderilemedi: TO={} | HATA={}", to, err);
             return "FAILED: " + err;

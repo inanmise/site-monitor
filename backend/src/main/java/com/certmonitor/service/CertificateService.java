@@ -46,7 +46,11 @@ public class CertificateService {
     @Value("${cert.monitor.warning-days:30}")
     private int warningDays;
 
-    @CacheEvict(value = {"cert-stats", "cert-latest", "cert-warnings", "renewal-advice"}, allEntries = true)
+    /**
+     * Cache eviction'lar buradan çıkarıldı — sweep boyunca saveResult N kez
+     * çağrılıp 4 cache'i N×4 kez boşaltıyordu. Caller (SchedulerService veya
+     * manuel /check endpoint'i) iş bitince {@link #evictAllCaches()} çağırır.
+     */
     public void saveResult(Map<String, Object> result) {
         String domain = (String) result.get("domain");
         String now = ISO.format(Instant.now());
@@ -163,16 +167,40 @@ public class CertificateService {
                 .orElse("OK");
     }
 
+    /**
+     * Sweep ya da manuel check sonrası 4 listede cache'i tek seferde temizler.
+     * Önceden her saveResult bunu yapardı — 1000 domain'lik sweep'te 4000 evict
+     * tetikleniyordu. Şimdi caller batch sonunda tek çağırır.
+     */
+    @org.springframework.cache.annotation.Caching(evict = {
+        @CacheEvict(value = "cert-stats",     allEntries = true),
+        @CacheEvict(value = "cert-latest",    allEntries = true),
+        @CacheEvict(value = "cert-warnings",  allEntries = true),
+        @CacheEvict(value = "renewal-advice", allEntries = true)
+    })
+    public void evictAllCaches() {
+        // metod gövdesi boş — annotation'lar Spring AOP'a iş yaptırır
+    }
+
     @Cacheable("cert-latest")
     public List<CertificateDto> getAllLatest() {
-        Set<String> activeDomains = inventoryRepo.findByActiveTrueOrderByDomainAsc()
-                .stream().map(CertificateInventory::getDomain).collect(Collectors.toSet());
-        Map<String, Integer> tierMap = buildTierMap();
+        // Active inventory'yi TEK SEFER yükle — hem domain set'i hem tier map'i bundan üret
+        List<CertificateInventory> activeInventory = inventoryRepo.findByActiveTrueOrderByDomainAsc();
+        Set<String> activeDomains = new HashSet<>(activeInventory.size());
+        Map<String, Integer> tierMap = new HashMap<>(activeInventory.size());
+        for (CertificateInventory inv : activeInventory) {
+            String d = inv.getDomain();
+            if (d == null) continue;
+            activeDomains.add(d);
+            if (inv.getTier() != null) tierMap.put(d, inv.getTier());
+        }
         var thrOpt   = alertThresholdRepo.findFirstByActiveTrue();
         int critDays = thrOpt.map(AlertThreshold::getCriticalDays).orElse(7);
         int highDays  = thrOpt.map(AlertThreshold::getHighDays).orElse(15);
-        return latestRepo.findAllByOrderByDomainAsc().stream()
-                .filter(c -> activeDomains.contains(c.getDomain()))
+        // findByDomainIn → tüm latest_checks yerine sadece aktif domain'lerin satırlarını çek
+        return latestRepo.findByDomainIn(activeDomains).stream()
+                .sorted(Comparator.comparing(LatestCheck::getDomain,
+                        Comparator.nullsLast(String::compareTo)))
                 .map(c -> {
                     CertificateDto dto = toDto(c);
                     dto.setTier(tierMap.get(c.getDomain()));
@@ -194,7 +222,9 @@ public class CertificateService {
     }
 
     private Map<String, Integer> buildTierMap() {
-        return inventoryRepo.findAll().stream()
+        // Yalnız aktif envanteri çek + tier set olanları seç. findAll() ile
+        // tüm tabloyu yüklemek yerine WHERE active=true filtresi DB tarafına iner.
+        return inventoryRepo.findByActiveTrueOrderByDomainAsc().stream()
                 .filter(i -> i.getTier() != null && i.getDomain() != null)
                 .collect(Collectors.toMap(
                         CertificateInventory::getDomain,
@@ -374,8 +404,8 @@ public class CertificateService {
 
         Map<String, Integer> tierMap = buildTierMap();
         List<Map<String, Object>> result = new ArrayList<>();
-        for (Team team : teamRepo.findAll()) {
-            if (!Boolean.TRUE.equals(team.getActive())) continue;
+        // findAll() yerine sadece aktif team'leri çek — DB tarafında WHERE active=true
+        for (Team team : teamRepo.findByActiveTrueOrderByNameAsc()) {
             Long tid = team.getId();
             Set<String> sy = syMap.getOrDefault(tid, Set.of());
             Set<String> ug = ugMap.getOrDefault(tid, Set.of());

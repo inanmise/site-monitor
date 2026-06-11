@@ -6,6 +6,10 @@
   --warning: #ffc107;
   --danger: #dc3545;
   --info: #17a2b8;
+  /* Severity scale — alert/badge accents (light theme) */
+  --severity-warn:     #f0a500;
+  --severity-high:     #e07b00;
+  --severity-critical: #c0392b;
   --bg: #f8f9fa;
   --text: #333;
   --text-light: #666;
@@ -1572,9 +1576,9 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
   transition: transform .12s ease, box-shadow .15s ease;
 }
 .alert-card:hover { transform: translateY(-1px); box-shadow: 0 4px 14px rgba(0,0,0,.09); }
-.alert-card.alert-warning  { border-left-color: #f0a500; background: linear-gradient(to right, #fefce8 0%, #fff 35%); }
-.alert-card.alert-high     { border-left-color: #e07b00; background: linear-gradient(to right, #fff7ed 0%, #fff 35%); }
-.alert-card.alert-critical { border-left-color: #c0392b; background: linear-gradient(to right, #fef2f2 0%, #fff 35%); }
+.alert-card.alert-warning  { border-left-color: var(--severity-warn);     background: linear-gradient(to right, #fefce8 0%, #fff 35%); }
+.alert-card.alert-high     { border-left-color: var(--severity-high);     background: linear-gradient(to right, #fff7ed 0%, #fff 35%); }
+.alert-card.alert-critical { border-left-color: var(--severity-critical); background: linear-gradient(to right, #fef2f2 0%, #fff 35%); }
 
 /* Alert History — modern header + tabs */
 .alh-header {

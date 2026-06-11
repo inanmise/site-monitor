@@ -136,8 +136,16 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
   }, [modal])
 
   async function load() {
-    const res = await api.admin.getInventory(true)
-    if (res?.success) setItems(res.data)
+    try {
+      const res = await api.admin.getInventory(true)
+      if (res?.success) {
+        setItems(res.data)
+      } else {
+        toast.error(res?.error || t('inv.loadError'))
+      }
+    } catch (e) {
+      toast.error(t('inv.loadError'))
+    }
   }
 
   const stats = useMemo(() => ({
@@ -209,7 +217,24 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
 
   async function save() {
     const err = validate()
-    if (err) { setMsg(err); return }
+    if (err) {
+      setMsg(err)
+      // Inline hata mesajı modal'ın üstünde — kullanıcı uzun form'da kaçırmasın
+      formGridRef.current?.scrollTo?.({ top: 0, behavior: 'smooth' })
+      return
+    }
+
+    // Domain rename uyarısı — geçmiş veri taşıma onay isteği
+    if (modal !== 'add' && modal?.domain && form.domain.trim() !== modal.domain) {
+      const confirmed = await showConfirm({
+        title: t('inv.renameTitle'),
+        message: t('inv.renameMessage', modal.domain, form.domain.trim()),
+        confirmText: t('inv.renameConfirm'),
+        cancelText: t('inv.cancel'),
+      })
+      if (!confirmed) return
+    }
+
     setSaving(true)
     setMsg(null)
     const payload = {
@@ -249,9 +274,8 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
       load()
       onInventoryChange?.()
     } else {
-      const errTxt = res?.error || 'Error'
-      setMsg(errTxt)
-      toast.error(errTxt)
+      // Sunucu hatası → tek bildirim (toast). Inline setMsg yalnız form validation için.
+      toast.error(res?.error || t('inv.saveError'))
     }
   }
 
@@ -313,20 +337,22 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
     const ugChanged = transferUgTeamId !== String(transferModal.ug_team_id ?? '')
     if (!syChanged && !ugChanged) { setTransferModal(null); return }
     setSaving(true)
-    const results = await Promise.all([
+    const settled = await Promise.allSettled([
       syChanged ? api.admin.transferCertSy(transferModal.id, Number(transferTeamId))   : Promise.resolve({ success: true }),
       ugChanged ? api.admin.transferCertUg(transferModal.id, Number(transferUgTeamId)) : Promise.resolve({ success: true }),
     ])
     setSaving(false)
-    const errResult = results.find(r => !r?.success)
-    if (!errResult) {
+    const rejected = settled.find(r => r.status === 'rejected')
+    const failed   = settled.find(r => r.status === 'fulfilled' && !r.value?.success)
+    if (rejected || failed) {
+      const errTxt = rejected
+        ? (rejected.reason?.message || t('inv.transferError'))
+        : (failed.value?.error || t('inv.transferError'))
+      toast.error(errTxt)
+    } else {
       setTransferModal(null)
       toast.success(t('inv.transferred'))
       load()
-    } else {
-      const errTxt = errResult.error || 'Error'
-      setMsg(errTxt)
-      toast.error(errTxt)
     }
   }
 
@@ -625,7 +651,7 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
                     : showItem.active ? t('inv.active') : t('inv.inactive')}
                 </span>
               </div>
-              <button className="show-close" onClick={() => setShowItem(null)}>✕</button>
+              <button type="button" className="show-close" aria-label={t('app.dismiss')} onClick={() => setShowItem(null)}>✕</button>
             </div>
 
             <div className="show-body">

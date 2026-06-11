@@ -54,6 +54,14 @@ class EscalationServiceTest {
         // Default active threshold
         AlertThreshold t = defaultThreshold();
         when(thresholdRepo.findFirstByActiveTrue()).thenReturn(Optional.of(t));
+
+        // processResults() artık batch ön yükleme yapıyor — default mock'lar
+        // boş döner ki test bazlı override'lar (findOpenAlert.thenReturn) hâlâ
+        // çalışsın. Bu testlerin "yok" senaryosu = boş list bekleniyor.
+        when(alertEventRepo.findOpenByDomainIn(anyCollection()))
+                .thenReturn(java.util.List.of());
+        when(inventoryRepo.findByDomainIn(anyCollection()))
+                .thenReturn(java.util.List.of());
     }
 
     // ── processResults: new alert ─────────────────────────────────────────────
@@ -169,7 +177,7 @@ class EscalationServiceTest {
     void processResults_levelEscalation_resetsAckAndNotifies() {
         String domain = "escalate.example.com";
         AlertEvent existing = existingOpenAlert(domain, "EXPIRY", "WARNING", false);
-        when(alertEventRepo.findOpenAlert(domain, "EXPIRY")).thenReturn(Optional.of(existing));
+        when(alertEventRepo.findOpenByDomainIn(anyCollection())).thenReturn(List.of(existing));
         when(alertEventRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
         when(contactRepo.findByMinAlertLevelInAndActiveTrue(List.of("WARNING", "HIGH")))
                 .thenReturn(List.of(contact("mgr@test.com", "MANAGER", "HIGH")));
@@ -196,7 +204,7 @@ class EscalationServiceTest {
                 .truncatedTo(ChronoUnit.DAYS).plus(12, ChronoUnit.HOURS));
         AlertEvent existing = existingOpenAlert(domain, "EXPIRY", "WARNING", false);
         existing.setLastReAlertAt(yesterdayNoon);
-        when(alertEventRepo.findOpenAlert(domain, "EXPIRY")).thenReturn(Optional.of(existing));
+        when(alertEventRepo.findOpenByDomainIn(anyCollection())).thenReturn(List.of(existing));
         when(alertEventRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
         when(contactRepo.findByMinAlertLevelAndActiveTrue("WARNING"))
                 .thenReturn(List.of(contact("po@test.com", "PO", "WARNING")));
@@ -214,7 +222,7 @@ class EscalationServiceTest {
         String todayNoon = ISO.format(Instant.now().truncatedTo(ChronoUnit.DAYS).plus(12, ChronoUnit.HOURS));
         AlertEvent existing = existingOpenAlert(domain, "EXPIRY", "WARNING", false);
         existing.setLastReAlertAt(todayNoon);
-        when(alertEventRepo.findOpenAlert(domain, "EXPIRY")).thenReturn(Optional.of(existing));
+        when(alertEventRepo.findOpenByDomainIn(anyCollection())).thenReturn(List.of(existing));
 
         service.processResults(List.of(expiryResult(domain, 25, true)));
 
@@ -227,7 +235,7 @@ class EscalationServiceTest {
     void processResults_acknowledgedAlert_noReAlert() {
         String domain = "acked.example.com";
         AlertEvent existing = existingOpenAlert(domain, "EXPIRY", "WARNING", true); // acked
-        when(alertEventRepo.findOpenAlert(domain, "EXPIRY")).thenReturn(Optional.of(existing));
+        when(alertEventRepo.findOpenByDomainIn(anyCollection())).thenReturn(List.of(existing));
 
         service.processResults(List.of(expiryResult(domain, 25, true)));
 

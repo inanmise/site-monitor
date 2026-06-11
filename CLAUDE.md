@@ -78,6 +78,24 @@ Per-resource permission model layered on top of `systemRole` (`USER` / `AUDIT` /
 - Outbound proxy: `HTTP_PROXY_HOST`/`PORT` + `NO_PROXY` (suffix match) — applies to OCSP/CRL fetches too.
 - `ChainValidationService` does chain + OCSP (primary) + CRL (fallback) via BouncyCastle. CRL responses are Caffeine-cached (`CRL_CACHE_TTL_HOURS`).
 - **Bulk network outage detection**: if `NETWORK_ERROR_THRESHOLD` (default 0.50) of a run fails with network errors and at least `NETWORK_MIN_ERRORS` (3) failed, individual cert alarms for that run are suppressed and a single `NetworkOutageEvent` + admin email is raised instead. This is intentional — don't "fix" it by always alerting.
+- **Per-domain proxy override (`use_proxy`)**: `CertificateInventory.useProxy` (column `use_proxy`, default false) flips a single domain to go through `HTTP_PROXY_HOST/PORT`. `SchedulerService.runCheckForDomains` builds a `domain→forceProxy` map and calls `checkAsync(domain, port, forceProxy)`. Decision: `forceProxy && proxyEnabled() && !shouldBypassProxy(domain)`. Direct outbound stays the default — added so production can route a couple of WAF-quirky domains through the corporate proxy without dragging the rest along.
+
+### Inventory metadata that drives behavior
+`CertificateInventory` carries a wide operational schema beyond the cert URL. The fields the rest of the system actually branches on:
+- **`tier` (1-4)** — 1: Customer-Facing Prod, 2: Internal Prod, 3: UAT/Pre-Prod, 4: Dev/Sandbox. Drives sort order, criticality badges, and escalation contact selection.
+- **`useProxy`** — see above.
+- **`teamId` / `ugTeamId`** — primary (SY) and secondary (UG = Uygulama Geliştirici) team ownership for escalation routing.
+- **`active` / soft-delete** — restore flow uses this; never hard-delete inventory rows from code.
+- Boolean operational toggles: `externalVendor`, `openshift`, `sslPinning`, `internalCert`, `jksKeystore`, `wafEnabled`, `evCertificate`, `actionRequired`, `transferredToSy`, etc. These are admin-facing flags that show up in InventoryManager and on reports — they don't gate the check pipeline.
+
+When you add a new boolean toggle: append to the `OPERATIONAL_FIELDS` array in `InventoryManager.jsx`, add the EMPTY default, wire it into the save payload, add the diff-builder entry in `AdminController.buildInventoryDiff`, and add the setter call in `updateInventory` — missing the setter is the most common bug (the field "saves" but disappears on reload).
+
+### Request/response trace logging (off by default)
+`RequestLoggingFilter` (`@Order(LOWEST_PRECEDENCE - 10)`) can log every HTTP request and response with method, URI, headers, body, status, and duration. It's behind `log.isTraceEnabled()` so the default `com.certmonitor=DEBUG` level keeps it silent.
+- Enable on demand: `logging.level.com.certmonitor.config.RequestLoggingFilter=TRACE` (env or properties).
+- Sensitive values are masked with `*******` via three regex patterns (JSON body / form body / URL query) covering ~60 field-name variants — EN + TR (`password|parola|sifre`, `*_password`, `token|*_token`, `secret|api_key|client_secret`, `private_key`, `session_id|jsessionid`, `pin|otp|mfa_*|verification_code`). Sensitive headers (`authorization`, `cookie`, `x-api-key`, etc.) are masked too.
+- Skipped paths: `/health`, `/favicon.ico`, anything under `/assets/` or `/static/`, and common static extensions (`.js .css .map .png .svg .woff2 .ico`).
+- Body log is truncated at 2000 chars.
 
 ### Escalation & notifications
 `EscalationService` selects recipients from `escalation_contacts` based on alert severity (`minAlertLevel`) and org role. `EmailNotificationService` and `WebhookService` (Teams/Slack) deliver. Every attempt logs to `notification_logs` (SENT/FAILED + error). Re-alert dedupe is daily — `EscalationServiceTest` pins this behaviour; preserve it.
@@ -97,6 +115,37 @@ All config is `application.properties` keys overridden by env vars. Three profil
 - `application-local-pg.properties` — serves pre-built `frontend/dist` from `:8080` so you can run the whole stack on a single port without Vite.
 
 `.env` is consumed by `docker-compose.yml` and `start-local.ps1`. Real values never committed — `.env.example` and `k8s/secret.example.yaml` are templates.
+
+### Runtime schema patches (no Flyway/Liquibase)
+Schema evolves through two mechanisms, not migrations:
+1. `spring.jpa.hibernate.ddl-auto=update` handles new entities and new columns from `@Column` definitions.
+2. **`SchedulerService.applySchemaPatches()`** runs idempotent `ALTER TABLE` / `CREATE TABLE` statements at startup via a `patch()` helper that swallows "column/table already exists" errors. This is how `certificate_inventory.use_proxy`, `escalation_contacts.team_id`, `TEXT` widenings, `scheduler_lock`, and the `port_*` / `dns_*` tables landed.
+
+Rule: when you add a column an existing DB might not have, add a `patch()` line. Don't trust `ddl-auto` alone — it won't backfill defaults, rename columns, or widen types.
+
+### Cert-check thread pool
+`WebConfig` registers a `certCheckExecutor` (`ThreadPoolTaskExecutor`) shared by `CertificateCheckerService` / `PortCheckerService` / `DnsCheckerService` / `UptimeHttpCheckerService`. Sized by env:
+- `EXECUTOR_CORE_SIZE` (default 20), `EXECUTOR_MAX_SIZE` (50), `EXECUTOR_QUEUE_CAPACITY` (1000).
+Bump these when inventory grows past a few hundred rows or you see queue backpressure in metrics.
+
+### Other services in the codebase
+Services worth knowing about beyond the ones already mentioned:
+- **`PortCheckerService` / `DnsCheckerService` / `UptimeHttpCheckerService`** — sibling sweep services with their own scheduler entry points; results flow to the Uptime / Port / DNS tabs. `DnsCheckerService` emits `CHANGED` / `ROTATED` events when records flip — these surface as alerts.
+- **`ChainValidationService`** — chain + OCSP (primary) + CRL (fallback) via BouncyCastle 1.78. CRL responses are Caffeine-cached (max 200 entries, `CRL_CACHE_TTL_HOURS`). Proxy-aware independently of the main cert check.
+- **`GeoIpService`** — login/audit IP enrichment via `ip-api.com`, 1h cache. Powers the audit viewer's country/city columns.
+- **`HttpMetricsService` + `HttpMetricsInterceptor` + `MetricsService`** — feed `/actuator/prometheus`; `micrometer-registry-prometheus` is on the classpath.
+- **`RememberMeService`** — token table `remember_me_tokens`, 7-day TTL, hourly cleanup task.
+- **`ShutdownLogger`** — `@PreDestroy` hook that records the reason for JVM shutdown to the log; added because silent pod restarts were hard to diagnose.
+- **`SqlPlaygroundService` / `SqlPlaygroundController`** — admin-only read-mostly SQL runner under `/api/admin/sql`. Audited.
+- **`ExtendedHealthService`** — backs the System Health tab (heartbeat history, SMTP stats, DB metrics, scan staleness, scheduler-lock status).
+- **`WebhookService`** — Teams / Slack delivery alongside email, 10s timeout, results logged to `notification_logs`.
+
+### Deployment specifics
+- **K8s manifests** (`k8s/`): 3 replicas, rolling update (`maxSurge=1, maxUnavailable=0`); HPA scales 3–10 on CPU 70% / mem 80%; PDB `minAvailable=2`; topology spread by hostname (`maxSkew=1`); non-root `UID 1000`, read-only root FS, all capabilities dropped. Probes: startup (12×10s), readiness (30s delay / 10s period), liveness (60s delay / 30s period). Also includes `postgres.yaml`, `ingress.yaml`, `openshift-route.yaml`.
+- **Helm chart** (`helm/cert-monitor/`): Bitnami PostgreSQL 18.x as a chart dependency; values split per environment. `develop.yaml` runs 1 replica, email OFF, 2h scan, HPA OFF — useful diff to copy from when setting up a new lower env.
+- **Dockerfile**: 3 stages — `node:20-alpine` (frontend) → `maven:3.9` (backend) → `eclipse-temurin:21-jre-alpine` (runtime). Container-aware JVM (`-XX:+UseContainerSupport`, heap ≈ 75%), in-pod debug tools (`curl bash dig`), healthcheck via `wget /health`. Final image runs as `appuser:1000`.
+- **k6 smoke** (`perf/k6-smoke.js`): 50 VU × 30s against `/health` + `/api/system/network-status`. SLA: error rate < 1%, p95 < 500 ms, 99% checks pass. Auth-gated endpoints returning `401` are treated as healthy (gate working).
+- **Local DB**: `data/` holds a SQLite file + WAL/SHM for dev runs (gitignored). Prod uses PostgreSQL exclusively.
 
 ### Timezone
 Backend stores timestamps as UTC (audit, alerts, notifications). Log timestamps are localized via `LOG_TIMEZONE` (default `Europe/Istanbul`). Frontend formats with `date-fns` against Europe/Istanbul (UTC+3, no DST). When doing date arithmetic, use `setUTC*` to avoid the 3-hour drift trap.

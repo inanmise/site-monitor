@@ -2,6 +2,7 @@ package com.certmonitor.repository;
 
 import com.certmonitor.model.CertificateCheck;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
@@ -25,4 +26,10 @@ public interface CertificateCheckRepository extends JpaRepository<CertificateChe
         @Param("to")     String to,
         @Param("limit")  int    limit
     );
+
+    /** Domain rename: tüm geçmiş kontrol kayıtlarını yeni domain'e taşı.
+     *  Caller'da @Transactional zorunlu. */
+    @Modifying
+    @Query("UPDATE CertificateCheck c SET c.domain = :newDomain WHERE c.domain = :oldDomain")
+    int renameDomain(@Param("oldDomain") String oldDomain, @Param("newDomain") String newDomain);
 }

@@ -67,6 +67,30 @@ public class EscalationService {
         AlertThreshold threshold = thresholdRepo.findFirstByActiveTrue()
                 .orElseGet(this::defaultThreshold);
 
+        // ── BATCH ÖN YÜKLEME (N+1 önleme) ──────────────────────────────────
+        // Sweep'te 1000 result × 2 query = 2000 round-trip yerine: 2 query toplam.
+        List<String> allDomains = results.stream()
+                .map(r -> (String) r.get("domain"))
+                .filter(java.util.Objects::nonNull)
+                .distinct()
+                .toList();
+        Map<String, com.certmonitor.model.CertificateInventory> invByDomain = allDomains.isEmpty()
+                ? Map.of()
+                : inventoryRepo.findByDomainIn(allDomains).stream()
+                    .collect(java.util.stream.Collectors.toMap(
+                            com.certmonitor.model.CertificateInventory::getDomain,
+                            inv -> inv,
+                            (a, b) -> a));
+        // (domain, alertType) -> AlertEvent (sadece resolved=false olanlar)
+        Map<String, AlertEvent> openAlertByKey = allDomains.isEmpty()
+                ? Map.of()
+                : alertEventRepo.findOpenByDomainIn(allDomains).stream()
+                    .collect(java.util.stream.Collectors.toMap(
+                            e -> e.getDomain() + "|" + e.getAlertType(),
+                            e -> e,
+                            (a, b) -> a.getCreatedAt() != null && b.getCreatedAt() != null
+                                    && a.getCreatedAt().compareTo(b.getCreatedAt()) >= 0 ? a : b));
+
         for (Map<String, Object> result : results) {
             String domain = (String) result.get("domain");
             String alertType = determineAlertType(result);
@@ -78,15 +102,15 @@ public class EscalationService {
             String alertLevel = determineAlertLevel(result, alertType, threshold);
             if (alertLevel == null) continue;
 
-            // Route alert to the team that owns this cert
-            var inventoryOpt  = inventoryRepo.findByDomain(domain);
+            // Route alert to the team that owns this cert — batch'ten lookup
+            var inventoryOpt  = Optional.ofNullable(invByDomain.get(domain));
             Long domainTeamId = inventoryOpt.map(com.certmonitor.model.CertificateInventory::getTeamId).orElse(null);
             Long ugTeamId     = inventoryOpt.map(com.certmonitor.model.CertificateInventory::getUgTeamId).orElse(null);
 
             Integer daysRemaining = toInt(result.get("days_remaining"));
             String message = buildMessage(domain, alertType, alertLevel, daysRemaining);
 
-            Optional<AlertEvent> existing = alertEventRepo.findOpenAlert(domain, alertType);
+            Optional<AlertEvent> existing = Optional.ofNullable(openAlertByKey.get(domain + "|" + alertType));
 
             if (existing.isEmpty()) {
                 AlertEvent event = newEvent(domain, alertLevel, alertType, message, daysRemaining);

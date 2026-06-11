@@ -277,6 +277,40 @@ public class SchedulerService {
         runCheckForDomains(staleDomains);
     }
 
+    /**
+     * Gece 03:30 (Europe/Istanbul implicit — backend ISO timestamp'i UTC tutuyor
+     * ama cron Spring TaskScheduler'a göre çalışır) eski log/geçmiş kayıtlarını siler.
+     * Bellek/disk şişmesini önlemek için:
+     *   - audit_log       → 180 gün üstü
+     *   - notification_logs → 90 gün üstü
+     *   - sql_query_history → 30 gün üstü
+     * Bulk DELETE → tek transaction, kısa süreli.
+     */
+    @Scheduled(cron = "${cert.monitor.scheduler.cleanup-cron:0 30 3 * * *}")
+    public void cleanupOldLogs() {
+        try {
+            String auditCutoff = ISO.format(Instant.now().minus(180, ChronoUnit.DAYS));
+            String notifCutoff = ISO.format(Instant.now().minus(90,  ChronoUnit.DAYS));
+            String sqlCutoff   = ISO.format(Instant.now().minus(30,  ChronoUnit.DAYS));
+            int a = safeDelete("DELETE FROM audit_log         WHERE event_time   < ?", auditCutoff);
+            int n = safeDelete("DELETE FROM notification_logs WHERE sent_at      < ?", notifCutoff);
+            int s = safeDelete("DELETE FROM sql_query_history WHERE executed_at < ?", sqlCutoff);
+            log.info("Nightly cleanup done: audit={}, notif={}, sql={} (cutoffs: {} / {} / {})",
+                    a, n, s, auditCutoff, notifCutoff, sqlCutoff);
+        } catch (Exception e) {
+            log.warn("Nightly cleanup failed: {}", e.getMessage());
+        }
+    }
+
+    private int safeDelete(String sql, String cutoff) {
+        try {
+            return jdbcTemplate.update(sql, cutoff);
+        } catch (Exception e) {
+            log.warn("Cleanup '{}' failed: {}", sql, e.getMessage());
+            return -1;
+        }
+    }
+
     public boolean isRunning() {
         return running.get();
     }
@@ -300,6 +334,13 @@ public class SchedulerService {
         runCheckForDomains(domains);
     }
 
+    /**
+     * @deprecated Bu metod artık scheduler turunda çağrılmıyor. Domain rename
+     * sırasında {@code latest_checks}'te kalan eski domain'i boş metadata
+     * (tier/ug/sy null) ile re-create ediyordu — auto-sync bug'ı.
+     * Envanter UI ile yönetiliyor; çağrı kaldırıldı.
+     */
+    @Deprecated
     private void syncLatestChecksToInventory() {
         String now = ISO.format(Instant.now());
         latestCheckRepo.findAll().forEach(lc -> {
@@ -330,8 +371,10 @@ public class SchedulerService {
             return;
         }
 
-        // Sync inside both locks so inventory writes never race with saveResult()
-        syncLatestChecksToInventory();
+        // syncLatestChecksToInventory() artık çağrılmıyor — domain rename
+        // sırasında eski domain'i boş metadata ile re-create ediyordu.
+        // Envanter UI ile yönetiliyor; yetim latest_checks kayıtları artık
+        // otomatik envantere dönmesin. Metod gövdesi @Deprecated olarak duruyor.
 
         String runId = UUID.randomUUID().toString().replace("-", "").substring(0, 12);
         currentRunId.set(runId);
@@ -353,6 +396,9 @@ public class SchedulerService {
                     .toList();
 
             results.forEach(certService::saveResult);
+            // Tek seferlik batch evict — saveResult'tan @CacheEvict çıkarıldı,
+            // dashboard sweep sonunda atomik olarak güncel veri görür.
+            certService.evictAllCaches();
 
             long errors   = results.stream().filter(r -> "error".equals(r.get("status"))).count();
             long warnings = results.stream().filter(r -> Boolean.TRUE.equals(r.get("warning"))).count();

@@ -1,12 +1,21 @@
 package com.certmonitor.config;
 
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.converter.HttpMessageNotReadableException;
+import org.springframework.validation.FieldError;
+import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.server.ResponseStatusException;
 
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.NoSuchElementException;
 
+@Slf4j
 @RestControllerAdvice
 public class GlobalExceptionHandler {
 
@@ -35,5 +44,66 @@ public class GlobalExceptionHandler {
     public ResponseEntity<Map<String, Object>> handleForbidden(SecurityException e) {
         return ResponseEntity.status(403)
                 .body(Map.of("success", false, "error", e.getMessage()));
+    }
+
+    /** DB unique-constraint çakışması (örn. domain rename'de aynı isim). */
+    @ExceptionHandler(DataIntegrityViolationException.class)
+    public ResponseEntity<Map<String, Object>> handleDataIntegrityViolation(DataIntegrityViolationException e) {
+        String msg = "Veri çakışması: aynı anahtara sahip kayıt zaten var.";
+        String em = e.getMostSpecificCause() != null
+                ? e.getMostSpecificCause().getMessage() : e.getMessage();
+        if (em != null && em.contains("uk3jgfhgl0acmsnh3q4t1730tin")) {
+            msg = "Bu domain envanterde zaten var.";
+        }
+        return ResponseEntity.status(409)
+                .body(Map.of("success", false, "error", msg));
+    }
+
+    /** @Valid başarısız oldu — body bind sırasında alan kuralı kırıldı. */
+    @ExceptionHandler(MethodArgumentNotValidException.class)
+    public ResponseEntity<Map<String, Object>> handleValidation(MethodArgumentNotValidException e) {
+        Map<String, String> fields = new LinkedHashMap<>();
+        for (FieldError fe : e.getBindingResult().getFieldErrors()) {
+            fields.putIfAbsent(fe.getField(),
+                    fe.getDefaultMessage() != null ? fe.getDefaultMessage() : "geçersiz");
+        }
+        return ResponseEntity.status(400).body(Map.of(
+                "success", false,
+                "error", "Geçersiz alan(lar): " + String.join(", ", fields.keySet()),
+                "fields", fields));
+    }
+
+    /** Bozuk JSON body. */
+    @ExceptionHandler(HttpMessageNotReadableException.class)
+    public ResponseEntity<Map<String, Object>> handleMalformedJson(HttpMessageNotReadableException e) {
+        return ResponseEntity.status(400)
+                .body(Map.of("success", false, "error", "Geçersiz istek formatı"));
+    }
+
+    /** Query/form parametresi eksik. */
+    @ExceptionHandler(MissingServletRequestParameterException.class)
+    public ResponseEntity<Map<String, Object>> handleMissingParam(MissingServletRequestParameterException e) {
+        return ResponseEntity.status(400).body(Map.of(
+                "success", false,
+                "error", "Eksik parametre: " + e.getParameterName()));
+    }
+
+    /** Controller'lardan elle fırlatılmış status hatası — passthrough. */
+    @ExceptionHandler(ResponseStatusException.class)
+    public ResponseEntity<Map<String, Object>> handleResponseStatus(ResponseStatusException e) {
+        String msg = e.getReason() != null ? e.getReason() : e.getMessage();
+        return ResponseEntity.status(e.getStatusCode())
+                .body(Map.of("success", false, "error", msg));
+    }
+
+    /**
+     * Son çare: handler eşleşmeyen her şey burada yakalanır.
+     * Stack trace UI'ye sızmasın — kullanıcıya jenerik mesaj, log'a tam hata.
+     */
+    @ExceptionHandler(Exception.class)
+    public ResponseEntity<Map<String, Object>> handleGeneric(Exception e) {
+        log.error("Beklenmeyen sunucu hatası: {}", e.toString(), e);
+        return ResponseEntity.status(500)
+                .body(Map.of("success", false, "error", "Sunucu hatası"));
     }
 }

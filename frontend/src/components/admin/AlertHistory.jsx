@@ -229,7 +229,7 @@ function NotifyResultModal({ alertId, alertInfo, currentResult, onClose }) {
               <div className="nl-banner-warn">{t('alh.notifModal.emailOff')}</div>
             )}
             {notifications.map((n, i) => (
-              <div key={i} className="nl-quick-row">
+              <div key={n.email ?? `nq-${i}`} className="nl-quick-row">
                 <strong>{n.name}</strong>
                 <span className="role-badge">{n.role}</span>
                 <span className="nl-email">{n.email}</span>
@@ -492,7 +492,7 @@ export default function AlertHistory({ domain = null }) {
                   <div className="alert-notified">
                     <span className="notified-label">{t('alh.notified')}</span>
                     {notifiedList.map((c, i) => (
-                      <span key={i} className="notified-chip" title={c.email}>
+                      <span key={c.email ?? `nc-${i}`} className="notified-chip" title={c.email}>
                         {c.name} <em>({c.role})</em>
                       </span>
                     ))}

@@ -14,6 +14,7 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
 import org.springframework.http.ResponseEntity;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.Instant;
@@ -38,6 +39,7 @@ public class AdminController {
     private final NotificationLogRepository notificationLogRepo;
     private final EscalationService escalationService;
     private final LatestCheckRepository latestCheckRepo;
+    private final CertificateCheckRepository certificateCheckRepo;
     private final CertificateNoteRepository noteRepo;
     private final CertificateNoteRevisionRepository noteRevisionRepo;
     private final UserService userService;
@@ -71,7 +73,7 @@ public class AdminController {
     @CacheEvict(value = {"cert-latest", "cert-warnings", "cert-stats", "renewal-advice"}, allEntries = true)
     @PostMapping("/inventory")
     public ResponseEntity<Map<String, Object>> addInventory(
-            @RequestBody CertificateInventory item, HttpSession session, HttpServletRequest request) {
+            @jakarta.validation.Valid @RequestBody CertificateInventory item, HttpSession session, HttpServletRequest request) {
         requireAdminOrTeamAdmin(session);
         validateDomain(item.getDomain());
         // TEAM_ADMIN: force the new item into the caller's team — payload cannot place
@@ -99,8 +101,9 @@ public class AdminController {
 
     @CacheEvict(value = {"cert-latest", "cert-warnings", "cert-stats", "renewal-advice"}, allEntries = true)
     @PutMapping("/inventory/{id}")
+    @Transactional
     public ResponseEntity<Map<String, Object>> updateInventory(
-            @PathVariable Long id, @RequestBody CertificateInventory item,
+            @PathVariable Long id, @jakarta.validation.Valid @RequestBody CertificateInventory item,
             HttpSession session, HttpServletRequest request) {
         CertificateInventory existing = inventoryRepo.findById(id)
                 .orElseThrow(() -> new NoSuchElementException("Inventory item not found: " + id));
@@ -113,6 +116,29 @@ public class AdminController {
 
         // Build diff BEFORE applying changes
         String diffJson = buildInventoryDiff(existing, item, true);
+
+        // ── Domain rename: latest_checks + geçmiş tabloları yeni isme taşı ────
+        // Aksi halde SchedulerService.syncLatestChecksToInventory (artık devre
+        // dışı ama her ihtimale karşı koruyalım) ya da legacy data kalıntıları
+        // eski domain'i boş metadata ile yeniden oluşturuyordu. Plus rename
+        // çakışmasını UNIQUE constraint patlamadan önce yakala.
+        String oldDomain = existing.getDomain();
+        String newDomain = item.getDomain();
+        boolean renamed = newDomain != null && oldDomain != null
+                && !newDomain.equalsIgnoreCase(oldDomain);
+        if (renamed) {
+            if (inventoryRepo.existsByDomain(newDomain)) {
+                throw new IllegalStateException(
+                        "Bu domain (\"" + newDomain + "\") envanterde zaten var. "
+                        + "Önce diğer kaydı silmelisin veya farklı bir isim seç.");
+            }
+            int lc = latestCheckRepo.renameDomain(oldDomain, newDomain);
+            int cc = certificateCheckRepo.renameDomain(oldDomain, newDomain);
+            int ae = alertEventRepo.renameDomain(oldDomain, newDomain);
+            int nt = noteRepo.renameDomain(oldDomain, newDomain);
+            log.info("Domain renamed: '{}' → '{}' (latest={}, checks={}, alerts={}, notes={})",
+                    oldDomain, newDomain, lc, cc, ae, nt);
+        }
 
         existing.setDomain(item.getDomain());
         existing.setPort(item.getPort() != null ? item.getPort() : 443);

@@ -71,6 +71,9 @@ class AdminControllerTest {
     com.certmonitor.repository.LatestCheckRepository latestCheckRepo;
 
     @MockBean
+    com.certmonitor.repository.CertificateCheckRepository certificateCheckRepo;
+
+    @MockBean
     AuditService auditService;
 
     @MockBean
