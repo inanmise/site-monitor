@@ -177,6 +177,42 @@ class CertificateServiceTest {
         assertThat(saved.getIntermediateDaysRemaining()).isEqualTo(300);
     }
 
+    @Test
+    @DisplayName("saveResult stores via and tls_mode_used transport metadata in LatestCheck")
+    void saveResult_storesViaAndTlsMode() {
+        String domain = "via.example.com";
+        when(inventoryRepo.findByDomain(domain)).thenReturn(Optional.empty());
+        when(latestRepo.findById(domain)).thenReturn(Optional.empty());
+        when(checkRepo.save(any())).thenAnswer(i -> i.getArgument(0));
+        when(latestRepo.save(any())).thenAnswer(i -> i.getArgument(0));
+
+        Map<String, Object> result = certResult(domain, "FP456");
+        result.put("via", "proxy");
+        result.put("tls_mode_used", "browser");
+
+        service.saveResult(result);
+
+        ArgumentCaptor<LatestCheck> captor = ArgumentCaptor.forClass(LatestCheck.class);
+        verify(latestRepo).save(captor.capture());
+        assertThat(captor.getValue().getVia()).isEqualTo("proxy");
+        assertThat(captor.getValue().getTlsModeUsed()).isEqualTo("browser");
+    }
+
+    @Test
+    @DisplayName("CertificateDto.from maps via and tls_mode_used")
+    void certificateDto_from_mapsViaFields() {
+        LatestCheck lc = new LatestCheck();
+        lc.setDomain("via.example.com");
+        lc.setVia("direct");
+        lc.setTlsModeUsed("default");
+
+        CertificateDto dto = CertificateDto.from(lc,
+                Collections.emptyList(), Collections.emptyList(), Collections.emptyList());
+
+        assertThat(dto.getVia()).isEqualTo("direct");
+        assertThat(dto.getTlsModeUsed()).isEqualTo("default");
+    }
+
     // ── getStats ──────────────────────────────────────────────────────────────
 
     @Test

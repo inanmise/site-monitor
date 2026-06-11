@@ -194,6 +194,8 @@ public class SchedulerService {
         patch("ALTER TABLE certificate_inventory ADD COLUMN team_id INTEGER");
         patch("ALTER TABLE certificate_inventory ADD COLUMN use_proxy BOOLEAN DEFAULT false");
         patch("ALTER TABLE certificate_inventory ADD COLUMN tls_mode TEXT");
+        patch("ALTER TABLE latest_checks ADD COLUMN via TEXT");
+        patch("ALTER TABLE latest_checks ADD COLUMN tls_mode_used TEXT");
         patch("ALTER TABLE escalation_contacts ADD COLUMN team_id INTEGER");
         // Widen varchar(255) columns to TEXT — markdown editor / long descriptions can overflow
         patch("ALTER TABLE certificate_inventory ALTER COLUMN change_description TYPE TEXT");

@@ -332,7 +332,8 @@ class CertificateCheckerServiceTest {
         assertThat(result.get("via")).isEqualTo("direct");
         assertThat(result.get("tls_mode_used")).isEqualTo("browser");
         assertThat(result.get("error_stage")).isEqualTo("tcp-connect");
-        assertThat(result).containsKeys("resolved_ips", "elapsed_ms");
+        assertThat(result).containsKeys("resolved_ips", "elapsed_ms",
+                "source_ip", "source_port", "peer_ip", "peer_port");
     }
 
     @Test

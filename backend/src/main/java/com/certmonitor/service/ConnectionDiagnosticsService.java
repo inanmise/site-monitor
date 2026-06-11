@@ -52,6 +52,7 @@ public class ConnectionDiagnosticsService {
         long start = System.currentTimeMillis();
         boolean proxyConfigured = proxyHost != null && !proxyHost.isBlank() && proxyPort > 0;
 
+        Map<String, Object> source = resolveSource();
         Map<String, Object> dns = resolveDns(domain);
 
         List<CertificateCheckerService.CheckOptions> combos = new ArrayList<>();
@@ -91,12 +92,43 @@ public class ConnectionDiagnosticsService {
         out.put("domain", domain);
         out.put("port", port);
         out.put("proxy_configured", proxyConfigured);
+        out.put("source", source);
         out.put("dns", dns);
         out.put("combos", comboResults);
         out.put("elapsed_ms", elapsed);
         log.info("Diagnostics complete: domain={}:{} proxyConfigured={} combos={} elapsed={}ms",
                 domain, port, proxyConfigured, comboResults.size(), elapsed);
         return out;
+    }
+
+    /** Where this probe runs FROM: hostname (the pod name on K8s) plus all
+     *  non-loopback, non-link-local interface addresses. Shown even when every
+     *  combo fails, so the network admin knows which source to trace. Note the
+     *  pod IP may be SNAT'ed at cluster egress — hostname + pod IP is still
+     *  what the cluster-side trace needs. Package-private for test stubbing. */
+    Map<String, Object> resolveSource() {
+        Map<String, Object> src = new LinkedHashMap<>();
+        String hostname = null;
+        try { hostname = InetAddress.getLocalHost().getHostName(); } catch (Exception ignored) { }
+        List<String> ips = new ArrayList<>();
+        try {
+            var ifaces = java.net.NetworkInterface.getNetworkInterfaces();
+            while (ifaces.hasMoreElements()) {
+                var nif = ifaces.nextElement();
+                if (!nif.isUp() || nif.isLoopback()) continue;
+                var addrs = nif.getInetAddresses();
+                while (addrs.hasMoreElements()) {
+                    InetAddress a = addrs.nextElement();
+                    if (a.isLoopbackAddress() || a.isLinkLocalAddress()) continue;
+                    ips.add(a.getHostAddress());
+                }
+            }
+        } catch (Exception ignored) { }
+        // IPv4 first — that's what firewall rules are usually written against
+        ips.sort((x, y) -> Boolean.compare(x.contains(":"), y.contains(":")));
+        src.put("hostname", hostname);
+        src.put("ips", ips);
+        return src;
     }
 
     /** Package-private for deterministic test stubbing (real DNS may hijack NXDOMAIN). */
@@ -130,6 +162,10 @@ public class ConnectionDiagnosticsService {
         c.put("status", ok ? "ok" : "error");
         c.put("step_reached", ok ? "cert-ok" : String.valueOf(raw.getOrDefault("error_stage", "unknown")));
         c.put("elapsed_ms", raw.get("elapsed_ms"));
+        c.put("source_ip", raw.get("source_ip"));
+        c.put("source_port", raw.get("source_port"));
+        c.put("peer_ip", raw.get("peer_ip"));
+        c.put("peer_port", raw.get("peer_port"));
         if (ok) {
             c.put("subject", raw.get("subject"));
             c.put("days_remaining", raw.get("days_remaining"));
@@ -152,6 +188,10 @@ public class ConnectionDiagnosticsService {
         r.put("via", opts.viaProxy() ? "proxy" : "direct");
         r.put("tls_mode_used", opts.tlsMode());
         r.put("elapsed_ms", null);
+        r.put("source_ip", null);
+        r.put("source_port", null);
+        r.put("peer_ip", null);
+        r.put("peer_port", null);
         return r;
     }
 }

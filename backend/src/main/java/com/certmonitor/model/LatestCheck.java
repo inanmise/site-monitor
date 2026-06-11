@@ -65,6 +65,11 @@ public class LatestCheck {
     private String ocspUrl;
     private String crlUrl;
 
+    /** Check transport metadata — path ("proxy"/"direct") and TLS mode the
+     *  final attempt used. Null on rows written before v18.53. */
+    private String via;
+    private String tlsModeUsed;
+
     private String checkedAt;
     private String updatedAt;
 }
