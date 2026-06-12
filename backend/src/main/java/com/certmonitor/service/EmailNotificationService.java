@@ -1484,7 +1484,7 @@ public class EmailNotificationService {
                 numChip("Orta",   i1.get("medium"), "#d97706"),
                 numChip("Düşük",  i1.get("low"),    "#16a34a"))
             + metaLine("Durum", str(i1.get("status_text")))
-            + linkLine("Takip Linki", str(i1.get("tracking_url")))
+            + linkLine("Proaktif İyileştirme kayıtlarına erişmek için tıklayınız", str(i1.get("tracking_url")))
             + mdToHtml(str(i1.get("notes_md")), forEmail, imageWidths, MAIL_IMG_MAX_WIDTH);
 
         // ── Madde 2 ──
@@ -1503,10 +1503,10 @@ public class EmailNotificationService {
                 numChip("Problem",     i2.get("problem_records"), "#ea580c"),
                 numChip("Postmortem",  i2.get("postmortems"),     "#7c3aed"))
             + item2AutoNote
-            + linkLine("Açık Olay Takip Linki", str(i2.get("incidents_url")))
-            + linkLine("Problem Takip Linki", str(i2.get("problems_url")))
-            + linkLine("Postmortem Takip Linki", str(i2.get("postmortems_url")))
-            + linkLine("Takip Linki", str(i2.get("tracking_url"))) // eski raporlardaki genel link
+            + linkLine("Açık olay kayıtları için tıklayınız", str(i2.get("incidents_url")))
+            + linkLine("Problem kayıtları için tıklayınız", str(i2.get("problems_url")))
+            + linkLine("Postmortem kayıtları için tıklayınız", str(i2.get("postmortems_url")))
+            + linkLine("İlgili kayıtlar için tıklayınız", str(i2.get("tracking_url"))) // eski raporlardaki genel link
             + mdToHtml(str(i2.get("notes_md")), forEmail, imageWidths, MAIL_IMG_MAX_WIDTH);
 
         // ── Madde 3 ──
