@@ -65,6 +65,17 @@
             <artifactId>bcpkix-jdk18on</artifactId>
             <version>1.78.1</version>
         </dependency>
+        <!-- CommonMark — haftalık rapor markdown'ını mail HTML'ine çevirir -->
+        <dependency>
+            <groupId>org.commonmark</groupId>
+            <artifactId>commonmark</artifactId>
+            <version>0.24.0</version>
+        </dependency>
+        <dependency>
+            <groupId>org.commonmark</groupId>
+            <artifactId>commonmark-ext-gfm-tables</artifactId>
+            <version>0.24.0</version>
+        </dependency>
         <!-- PostgreSQL for production (Kubernetes) -->
         <dependency>
             <groupId>org.postgresql</groupId>

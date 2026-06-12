@@ -199,6 +199,62 @@ class EmailNotificationServiceTest {
                 .contains("Alarm Süresi").contains("YÜKSEK");
     }
 
+    // ── Haftalık rapor mailleri ─────────────────────────────────────────────────
+
+    private static final String WR_CONTENT = """
+        {"version":1,
+         "item1":{"total":12,"urgent":2,"high":3,"medium":4,"low":3,"status_text":"Çalışılıyor","tracking_url":"https://jira/x","notes_md":"| Kayıt | Durum |\\n| --- | --- |\\n| SSL | OK |"},
+         "item2":{"open_incidents":1,"problem_records":2,"postmortems":0,"tracking_url":"","notes_md":""},
+         "item3":{"notes_md":"- Çalışma A — tamamlandı\\n- Çalışma B — devam ediyor"},
+         "item4":{"channels":[{"id":"c-1","name":"İnternet","notes_md":"![Grafik](/api/weekly-reports/images/5)"}]}}
+        """;
+
+    @Test
+    @DisplayName("Weekly report HTML: hitap, hafta etiketi, 4 madde, markdown tablo render")
+    void buildWeeklyReportHtml_structure() {
+        String html = service.buildWeeklyReportHtml("DijitalSY", "2026-W24 (8–12 Haziran 2026)",
+                "Ali Müdür", WR_CONTENT, false);
+
+        assertThat(html).contains("Sayın Ali Müdür,");
+        assertThat(html).contains("2026-W24 (8–12 Haziran 2026)");
+        assertThat(html).contains("1. Proaktif Servis İyileştirme Kayıtları");
+        assertThat(html).contains("2. Aşım Yaşanan Olay / Problem ve Açık Postmortem Kayıtları");
+        assertThat(html).contains("3. Haftalık Katılım Sağlanan Çalışmalar");
+        assertThat(html).contains("4. Domain Bazlı Kritik İşlerin Durumu");
+        assertThat(html).contains("Toplam: 12").contains("Acil: 2");
+        assertThat(html).contains("<table>");           // markdown tablo render edildi
+        assertThat(html).contains("https://jira/x");
+        assertThat(html).contains("İnternet");
+    }
+
+    @Test
+    @DisplayName("Weekly report HTML: forEmail=true cid dönüşümü, false /api URL korunur")
+    void buildWeeklyReportHtml_cidRewrite() {
+        String forMail = service.buildWeeklyReportHtml("T", "W", "M", WR_CONTENT, true);
+        assertThat(forMail).contains("cid:img5");
+        assertThat(forMail).doesNotContain("/api/weekly-reports/images/5");
+
+        String forUi = service.buildWeeklyReportHtml("T", "W", "M", WR_CONTENT, false);
+        assertThat(forUi).contains("/api/weekly-reports/images/5");
+        assertThat(forUi).doesNotContain("cid:img5");
+    }
+
+    @Test
+    @DisplayName("Weekly report HTML: markdown içindeki raw HTML escape edilir")
+    void buildWeeklyReportHtml_escapesInjectedHtml() {
+        String content = "{\"version\":1,\"item3\":{\"notes_md\":\"<script>alert(1)</script>\"}}";
+        String html = service.buildWeeklyReportHtml("T", "W", "M", content, false);
+        assertThat(html).doesNotContain("<script>alert(1)</script>");
+    }
+
+    @Test
+    @DisplayName("sendHtml disabled → SKIPPED_DISABLED")
+    void sendHtml_disabled_skipped() {
+        String result = service.sendHtml(new String[]{"to@test.com"}, new String[]{"cc@test.com"},
+                "Konu", "<html/>", null);
+        assertThat(result).isEqualTo("SKIPPED_DISABLED");
+    }
+
     // ── HTML content ────────────────────────────────────────────────────────────
 
     @Test

@@ -17,4 +17,7 @@ public interface EscalationContactRepository extends JpaRepository<EscalationCon
     List<EscalationContact> findByTeamIdOrderByRoleAsc(Long teamId);
     List<EscalationContact> findByUserId(Long userId);
     boolean existsByTeamIdAndActiveTrue(Long teamId);
+
+    /** Haftalık rapor akışı: takımın PO / MANAGER kontaklarını çözer. */
+    List<EscalationContact> findByTeamIdAndRoleAndActiveTrue(Long teamId, String role);
 }

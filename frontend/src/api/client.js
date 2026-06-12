@@ -15,9 +15,11 @@ function nonJsonErrorPayload(status) {
 }
 
 async function request(path, options = {}) {
+  // FormData gönderiminde Content-Type'ı tarayıcı belirler (multipart boundary)
+  const isForm = options.body instanceof FormData
   const res = await fetch(`${BASE}${path}`, {
     credentials: 'include',
-    headers: { 'Content-Type': 'application/json', ...options.headers },
+    headers: { ...(isForm ? {} : { 'Content-Type': 'application/json' }), ...options.headers },
     ...options,
   })
   if (res.status === 401) {
@@ -128,6 +130,39 @@ export const api = {
     create: (data) => request('/guide-links', { method: 'POST', body: JSON.stringify(data) }),
     update: (id, data) => request(`/guide-links/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
     delete: (id) => request(`/guide-links/${id}`, { method: 'DELETE' }),
+  },
+
+  // ── Haftalık Raporlar ────────────────────────────────────────────────────
+
+  weeklyReports: {
+    list: (params = {}) => {
+      const q = new URLSearchParams()
+      if (params.teamId) q.set('teamId', params.teamId)
+      if (params.year) q.set('year', params.year)
+      const qs = q.toString()
+      return request(`/weekly-reports${qs ? '?' + qs : ''}`)
+    },
+    get: (id) => request(`/weekly-reports/${id}`),
+    create: (payload) => request('/weekly-reports', {
+      method: 'POST', body: JSON.stringify(payload),
+    }),
+    save: (id, contentJson) => request(`/weekly-reports/${id}`, {
+      method: 'PUT', body: JSON.stringify({ content_json: contentJson }),
+    }),
+    remove: (id) => request(`/weekly-reports/${id}`, { method: 'DELETE' }),
+    submit: (id) => request(`/weekly-reports/${id}/submit`, { method: 'POST' }),
+    approve: (id) => request(`/weekly-reports/${id}/approve`, { method: 'POST' }),
+    reject: (id, note) => request(`/weekly-reports/${id}/reject`, {
+      method: 'POST', body: JSON.stringify({ note }),
+    }),
+    preview: (id) => request(`/weekly-reports/${id}/preview`),
+    uploadImage: (id, file, caption) => {
+      const form = new FormData()
+      form.append('file', file)
+      if (caption) form.append('caption', caption)
+      return request(`/weekly-reports/${id}/images`, { method: 'POST', body: form })
+    },
+    deleteImage: (imageId) => request(`/weekly-reports/images/${imageId}`, { method: 'DELETE' }),
   },
 
   // ── Admin ────────────────────────────────────────────────────────────────

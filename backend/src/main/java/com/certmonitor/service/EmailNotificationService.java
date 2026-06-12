@@ -1,8 +1,13 @@
 package com.certmonitor.service;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.commonmark.ext.gfm.tables.TablesExtension;
+import org.commonmark.parser.Parser;
+import org.commonmark.renderer.html.HtmlRenderer;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.core.io.ByteArrayResource;
 import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.mail.javamail.MimeMessageHelper;
 import org.springframework.stereotype.Service;
@@ -1328,6 +1333,247 @@ public class EmailNotificationService {
             + "</td></tr></table>"
             + "</td></tr></table>"
             + "</body></html>";
+    }
+
+    // ── Haftalık rapor mailleri ──────────────────────────────────────────────
+
+    /** Onay mailinde inline (CID) gömülecek görsel. */
+    public record InlineImage(String cid, byte[] data, String contentType) {}
+
+    private static final ObjectMapper WR_JSON = new ObjectMapper();
+    private static final List<org.commonmark.Extension> MD_EXTENSIONS = List.of(TablesExtension.create());
+    private static final Parser MD_PARSER = Parser.builder().extensions(MD_EXTENSIONS).build();
+    private static final HtmlRenderer MD_RENDERER = HtmlRenderer.builder()
+            .extensions(MD_EXTENSIONS).escapeHtml(true).build();
+
+    /**
+     * Genel amaçlı HTML mail — CC ve inline CID görsel desteğiyle.
+     * ÖNEMLİ: setText(html, true) addInline'dan ÖNCE çağrılmalıdır
+     * (MimeMessageHelper related multipart sıralaması).
+     */
+    public String sendHtml(String[] to, String[] cc, String subject, String html,
+                           List<InlineImage> inline) {
+        if (!enabled) {
+            log.info("⚠ Email devre dışı — TO={} CC={} | KONU={}",
+                    Arrays.toString(to), Arrays.toString(cc != null ? cc : new String[0]), subject);
+            return "SKIPPED_DISABLED";
+        }
+        try {
+            MimeMessage msg = mailSender.createMimeMessage();
+            MimeMessageHelper helper = new MimeMessageHelper(
+                    msg, MimeMessageHelper.MULTIPART_MODE_MIXED_RELATED, "UTF-8");
+            helper.setTo(to);
+            if (cc != null && cc.length > 0) helper.setCc(cc);
+            helper.setFrom(emailFrom);
+            helper.setSubject(subject);
+            helper.setText(html, true);
+            if (inline != null) {
+                for (InlineImage img : inline) {
+                    helper.addInline(img.cid(), new ByteArrayResource(img.data()), img.contentType());
+                }
+            }
+            return doSend(Arrays.toString(to), msg, 1);
+        } catch (Exception e) {
+            log.error("✗ HTML e-posta hazırlanamadı: TO={} | HATA={}", Arrays.toString(to), e.getMessage());
+            return "FAILED: " + e.getMessage();
+        }
+    }
+
+    /** Markdown → HTML (GFM tabloları destekli, raw HTML escape'li).
+     *  forEmail=true: /api/weekly-reports/images/{id} → cid:img{id}. */
+    private String mdToHtml(String md, boolean forEmail) {
+        if (md == null || md.isBlank()) return "";
+        String src = forEmail
+                ? md.replaceAll("\\]\\(/api/weekly-reports/images/(\\d+)\\)", "](cid:img$1)")
+                : md;
+        return MD_RENDERER.render(MD_PARSER.parse(src));
+    }
+
+    /**
+     * Haftalık rapor onay maili / önizleme HTML'i. contentJson şeması için
+     * bkz. WeeklyReportService.DEFAULT_TEMPLATE_JSON. forEmail=false UI
+     * önizlemesi içindir (görsel URL'leri /api olarak kalır).
+     */
+    @SuppressWarnings("unchecked")
+    public String buildWeeklyReportHtml(String teamName, String weekLabel, String managerName,
+                                        String contentJson, boolean forEmail) {
+        String generatedAt = LocalDateTime.now().format(DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm"));
+        String indigo = "#4f46e5";
+
+        Map<String, Object> c;
+        try {
+            c = WR_JSON.readValue(contentJson != null ? contentJson : "{}", Map.class);
+        } catch (Exception e) {
+            c = Map.of();
+        }
+        Map<String, Object> i1 = asMap(c.get("item1"));
+        Map<String, Object> i2 = asMap(c.get("item2"));
+        Map<String, Object> i3 = asMap(c.get("item3"));
+        Map<String, Object> i4 = asMap(c.get("item4"));
+
+        // ── Madde 1 — sayı chip'leri + durum + takip linki ──
+        String item1Body =
+            "<div style='margin-bottom:10px'>"
+            + numChip("Toplam", i1.get("total"), "#334155")
+            + numChip("Acil",   i1.get("urgent"), "#dc2626")
+            + numChip("Yüksek", i1.get("high"),   "#ea580c")
+            + numChip("Orta",   i1.get("medium"), "#d97706")
+            + numChip("Düşük",  i1.get("low"),    "#16a34a")
+            + "</div>"
+            + metaLine("Durum", str(i1.get("status_text")))
+            + linkLine(str(i1.get("tracking_url")))
+            + mdToHtml(str(i1.get("notes_md")), forEmail);
+
+        // ── Madde 2 ──
+        String item2Body =
+            "<div style='margin-bottom:10px'>"
+            + numChip("Açık Olay",   i2.get("open_incidents"),  "#dc2626")
+            + numChip("Problem",     i2.get("problem_records"), "#ea580c")
+            + numChip("Postmortem",  i2.get("postmortems"),     "#7c3aed")
+            + "</div>"
+            + linkLine(str(i2.get("tracking_url")))
+            + mdToHtml(str(i2.get("notes_md")), forEmail);
+
+        // ── Madde 3 ──
+        String item3Body = mdToHtml(str(i3.get("notes_md")), forEmail);
+
+        // ── Madde 4 — kanal alt-kartları ──
+        StringBuilder item4Body = new StringBuilder();
+        Object channelsObj = i4.get("channels");
+        if (channelsObj instanceof List<?> channels) {
+            for (Object chObj : channels) {
+                Map<String, Object> ch = asMap(chObj);
+                item4Body.append("<div style='border:1px solid #e2e8f0;border-radius:10px;margin-bottom:10px;overflow:hidden'>")
+                    .append("<div style='background:#f1f5f9;padding:8px 14px;font-size:13px;font-weight:800;color:#334155'>")
+                    .append(escHtml(str(ch.get("name")))).append("</div>")
+                    .append("<div style='padding:10px 14px'>")
+                    .append(mdToHtml(str(ch.get("notes_md")), forEmail))
+                    .append("</div></div>");
+            }
+        }
+
+        String css = "<style>"
+            + "body,table,td{-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%}"
+            + ".wr-md table{border-collapse:collapse;width:100%;margin:8px 0}"
+            + ".wr-md th,.wr-md td{border:1px solid #e2e8f0;padding:6px 10px;font-size:13px;text-align:left}"
+            + ".wr-md th{background:#f8fafc;font-weight:700}"
+            + ".wr-md img{max-width:100%;height:auto;border-radius:8px;margin:6px 0}"
+            + ".wr-md p{margin:6px 0;font-size:14px;line-height:1.6;color:#1e293b}"
+            + ".wr-md ul,.wr-md ol{margin:6px 0;padding-left:22px;font-size:14px;color:#1e293b}"
+            + "@media only screen and (max-width:620px){"
+            + ".em-wrap{padding:0!important}.em-card{border-radius:0!important;width:100%!important}"
+            + ".em-body{padding:14px!important}"
+            + "}"
+            + "</style>";
+
+        return "<!DOCTYPE html><html lang='tr'>"
+            + "<head><meta charset='UTF-8'>"
+            + "<meta name='viewport' content='width=device-width,initial-scale=1,maximum-scale=1'>"
+            + css + "</head>"
+            + "<body style='margin:0;padding:0;background:#f1f5f9;font-family:\"Segoe UI\",Tahoma,Arial,sans-serif'>"
+
+            + "<table class='em-wrap' width='100%' cellpadding='0' cellspacing='0' border='0'"
+            + " style='background:#f1f5f9;padding:24px 10px'><tr><td align='center'>"
+
+            + "<table class='em-card' width='680' cellpadding='0' cellspacing='0' border='0'"
+            + " style='max-width:680px;width:100%;border-radius:14px;overflow:hidden;"
+            + "box-shadow:0 8px 32px rgba(0,0,0,.15)'><tr><td style='padding:0'>"
+
+            // ── Üst bar ──
+            + "<div style='background:" + indigo + ";padding:22px 24px'>"
+            + "<div style='color:rgba(255,255,255,.65);font-size:11px;font-weight:700;letter-spacing:.12em'>CertMonitor — Haftalık Rapor</div>"
+            + "<div style='color:#fff;font-size:22px;font-weight:900;margin-top:10px;line-height:1.25'>📋 "
+            + escHtml(teamName) + "</div>"
+            + "<div style='color:rgba(255,255,255,.88);font-size:15px;font-weight:700;margin-top:8px'>"
+            + escHtml(weekLabel) + "</div>"
+            + "</div>"
+
+            // ── Gövde ──
+            + "<div class='em-body' style='background:#fff;padding:22px 24px'>"
+
+            // Hitap + giriş
+            + "<p style='font-size:15px;color:#0f172a;margin:0 0 6px'><strong>Sayın "
+            + escHtml(managerName != null && !managerName.isBlank() ? managerName : "Yönetici") + ",</strong></p>"
+            + "<p style='font-size:14px;color:#334155;line-height:1.7;margin:0 0 18px'>"
+            + escHtml(teamName) + " ekibi olarak <strong>" + escHtml(weekLabel)
+            + "</strong> haftası raporumuzu aşağıda paylaşıyoruz.</p>"
+
+            + reportSection("1. Proaktif Servis İyileştirme Kayıtları", item1Body, indigo)
+            + reportSection("2. Aşım Yaşanan Olay / Problem ve Açık Postmortem Kayıtları", item2Body, indigo)
+            + reportSection("3. Haftalık Katılım Sağlanan Çalışmalar", item3Body, indigo)
+            + reportSection("4. Domain Bazlı Kritik İşlerin Durumu", item4Body.toString(), indigo)
+
+            // Footer
+            + "<table width='100%' cellpadding='0' cellspacing='0'><tr>"
+            + "<td style='border-top:1px solid #f1f5f9;padding-top:12px;font-size:11px;color:#94a3b8'>CertMonitor — Haftalık Rapor</td>"
+            + "<td align='right' style='border-top:1px solid #f1f5f9;padding-top:12px;font-size:11px;color:#94a3b8'>"
+            + generatedAt + "</td></tr></table>"
+
+            + "</div>"
+            + "</td></tr></table>"
+            + "</td></tr></table>"
+            + "</body></html>";
+    }
+
+    /** PO'ya onay bekleyen rapor bilgilendirmesi. */
+    public String buildWeeklyReportSubmittedHtml(String teamName, String weekLabel, String submittedBy) {
+        return buildSimpleAlertHtml(
+                "[CertMonitor] " + teamName + " — " + weekLabel + " raporu onayınızı bekliyor",
+                teamName + " ekibinin " + weekLabel + " haftalık raporu "
+                + (submittedBy != null ? submittedBy : "ekip üyesi")
+                + " tarafından onayınıza sunuldu. CertMonitor → Raporlar → Haftalık Raporlar "
+                + "ekranından inceleyip onaylayabilir veya düzeltme talebiyle iade edebilirsiniz.");
+    }
+
+    /** Takıma iade/düzeltme talebi bildirimi. */
+    public String buildWeeklyReportRejectedHtml(String teamName, String weekLabel,
+                                                String note, String rejectedBy) {
+        return buildSimpleAlertHtml(
+                "[CertMonitor] " + teamName + " — " + weekLabel + " raporu iade edildi",
+                weekLabel + " haftalık raporunuz "
+                + (rejectedBy != null ? rejectedBy : "PO")
+                + " tarafından düzeltme talebiyle iade edildi.\n\nDüzeltme notu: "
+                + (note != null ? note : "—")
+                + "\n\nRaporu güncelleyip tekrar onaya gönderebilirsiniz.");
+    }
+
+    private String reportSection(String title, String bodyHtml, String accent) {
+        return "<div style='margin-bottom:20px'>"
+            + "<div style='background:" + accent + ";color:#fff;border-radius:8px 8px 0 0;"
+            + "padding:9px 14px;font-size:13px;font-weight:800;letter-spacing:.02em'>" + title + "</div>"
+            + "<div class='wr-md' style='border:1px solid #e2e8f0;border-top:none;border-radius:0 0 8px 8px;"
+            + "padding:12px 14px'>"
+            + (bodyHtml == null || bodyHtml.isBlank()
+                ? "<p style='color:#94a3b8;font-size:13px;margin:0'>—</p>" : bodyHtml)
+            + "</div></div>";
+    }
+
+    private String numChip(String label, Object value, String color) {
+        String v = value != null ? String.valueOf(value) : "0";
+        return "<span style='display:inline-block;margin:0 6px 6px 0;padding:5px 12px;border-radius:999px;"
+            + "background:" + color + "14;border:1.5px solid " + color + ";font-size:12px;font-weight:700;"
+            + "color:" + color + "'>" + label + ": " + escHtml(v) + "</span>";
+    }
+
+    private String metaLine(String label, String value) {
+        if (value == null || value.isBlank()) return "";
+        return "<p style='font-size:13px;color:#334155;margin:4px 0'><strong>" + label + ":</strong> "
+            + escHtml(value) + "</p>";
+    }
+
+    private String linkLine(String url) {
+        if (url == null || url.isBlank()) return "";
+        return "<p style='font-size:13px;margin:4px 0'>🔗 <a href='" + escHtml(url)
+            + "' style='color:#4f46e5'>" + escHtml(url) + "</a></p>";
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> asMap(Object o) {
+        return o instanceof Map<?, ?> m ? (Map<String, Object>) m : Map.of();
+    }
+
+    private static String str(Object o) {
+        return o != null ? String.valueOf(o) : "";
     }
 
     /** Kesinti süresi (createdAt→resolvedAt) TR formatında: "2 saat 14 dakika". */
