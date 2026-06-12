@@ -1643,12 +1643,22 @@ public class EmailNotificationService {
             + ";white-space:nowrap;text-align:center'>" + escHtml(label) + ": " + escHtml(v) + "</td>";
     }
 
-    /** Rozet hücrelerini tek satırlık tabloya sarar. cellspacing=6 → hücreler
-     *  arası garantili boşluk (Outlook dahil); inline-block kaymasına son. */
+    /** Rozet hücrelerini tek satırlık tabloya sarar. Yerleşim INLINE: Outlook (Word)
+     *  &lt;head&gt;&lt;style&gt; sınıf kurallarını (.wr-md table) yok sayar, önizleme
+     *  (iframe/tarayıcı) onurlandırır. Aynı görünüm için width:100% + border-collapse
+     *  + eşit kolon genişlikleri satır-içinde verilir. */
     private String numChipRow(String... cells) {
-        // margin-top: rozetler başlık şeridine yapışık durmasın (kullanıcı isteği)
-        return "<table role='presentation' border='0' cellspacing='6' cellpadding='0'"
-            + " style='margin:6px 0 10px'><tr>" + String.join("", cells) + "</tr></table>";
+        int n = cells.length;
+        String w = (n > 0 ? Math.round(100.0 / n) : 100) + "%";
+        StringBuilder tds = new StringBuilder();
+        for (String c : cells) {
+            // Her hücreye eşit yüzde: Word otomatik dağıtım yerine eşit kolon kullansın
+            tds.append(c.replaceFirst("<td ", "<td width='" + w + "' "));
+        }
+        // margin: rozetler başlık şeridine yapışık durmasın (önceki fix korunur)
+        return "<table role='presentation' border='0' cellspacing='0' cellpadding='0' width='100%'"
+            + " style='width:100%;border-collapse:collapse;margin:6px 0 10px'><tr>"
+            + tds + "</tr></table>";
     }
 
     /** Hex rengi beyazla harmanlar (ratio=renk payı) → düz açık ton. 8-haneli
