@@ -14,4 +14,7 @@ public interface AppUserRepository extends JpaRepository<AppUser, Long> {
     boolean existsByUsername(String username);
     boolean existsByTeamId(Long teamId);
     long countBySystemRoleAndActiveTrue(String systemRole);
+
+    /** Haftalık rapor PO bildirimi — kontağı olmayan takımlar için fallback. */
+    List<AppUser> findByTeamIdAndOrgRoleAndActiveTrue(Long teamId, String orgRole);
 }
