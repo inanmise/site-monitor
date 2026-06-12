@@ -68,6 +68,7 @@ class WeeklyReportServiceTest {
         when(emailService.buildWeeklyReportRejectedHtml(any(), any(), any(), any())).thenReturn("<html/>");
         when(emailService.buildWeeklyReportHtml(any(), any(), any(), any(), anyBoolean())).thenReturn("<html/>");
         when(emailService.buildWeeklyReportHtml(any(), any(), any(), any(), anyBoolean(), any())).thenReturn("<html/>");
+        when(emailService.buildWeeklyReportHtml(any(), any(), any(), any(), anyBoolean(), any(), any(), any(), any())).thenReturn("<html/>");
         when(imageRepo.findByReportIdOrderByIdAsc(anyLong())).thenReturn(List.of());
         // PO yetki kontrolü DB'den okur
         AppUser po = new AppUser();
@@ -539,7 +540,7 @@ class WeeklyReportServiceTest {
         assertThat(to.getValue()).containsExactly("mudur@test.com");
         assertThat(cc.getValue()).containsExactly("takim@test.com");
         verify(emailService).buildWeeklyReportHtml(eq("DijitalSY"), anyString(),
-                eq("Ali Müdür"), anyString(), eq(true), any());
+                eq("Ali Müdür"), anyString(), eq(true), any(), any(), any(), any());
     }
 
     @Test

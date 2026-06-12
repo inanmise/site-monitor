@@ -15,7 +15,9 @@ import org.springframework.stereotype.Service;
 import jakarta.annotation.PreDestroy;
 import jakarta.mail.internet.MimeMessage;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.time.ZoneOffset;
+import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.Arrays;
 import java.util.List;
@@ -722,6 +724,22 @@ public class EmailNotificationService {
         }
     }
 
+    /** Proje saat dilimi (UTC+3, DST yok). Stored ISO string'leri UTC kabul edilir. */
+    private static final ZoneId IST = ZoneId.of("Europe/Istanbul");
+
+    /** UTC ISO ("yyyy-MM-dd'T'HH:mm:ss") → Europe/Istanbul "dd.MM.yyyy HH:mm".
+     *  null/boş → null (footer'da ilgili satır gizlensin). */
+    private String formatIstanbul(String iso) {
+        if (iso == null || iso.isBlank()) return null;
+        try {
+            LocalDateTime utc = LocalDateTime.parse(iso, DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss"));
+            return utc.atZone(ZoneOffset.UTC).withZoneSameInstant(IST)
+                    .format(DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm"));
+        } catch (Exception e) {
+            return formatIso(iso);
+        }
+    }
+
     private String buildSimpleAlertHtml(String subject, String message) {
         String now = LocalDateTime.now().format(DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm"));
         String color = subject.contains("KRİTİK") || subject.contains("CRITICAL") ? "#dc2626"
@@ -1405,7 +1423,24 @@ public class EmailNotificationService {
                 ? md.replaceAll("\\]\\(/api/weekly-reports/images/(\\d+)\\)", "](cid:img$1)")
                 : md;
         String html = MD_RENDERER.render(MD_PARSER.parse(src));
-        return inlineImageStyles(taskCheckboxesToSymbols(html), forEmail, imageWidths, maxWidth);
+        html = inlineImageStyles(taskCheckboxesToSymbols(html), forEmail, imageWidths, maxWidth);
+        // Outlook <head><style>'ı yok sayar; markdown bloklarının .wr-md stillerini
+        // (liste girintisi, paragraf, tablo) maile inline et → Outlook = önizleme.
+        return forEmail ? inlineBlockStyles(html) : html;
+    }
+
+    /** Markdown çıktısındaki blok elemanlara .wr-md ile birebir aynı inline stilleri
+     *  ekler (yalnız mail yolu). Yalnız markdown HTML'ine uygulanır — chip/section
+     *  tabloları ayrı üretildiğinden etkilenmez. GFM tablo align attr'ı korunur. */
+    private String inlineBlockStyles(String html) {
+        if (html == null || html.isEmpty()) return html;
+        return html
+            .replace("<ul>", "<ul style=\"margin:6px 0;padding-left:22px;font-size:14px;color:#1e293b\">")
+            .replace("<ol>", "<ol style=\"margin:6px 0;padding-left:22px;font-size:14px;color:#1e293b\">")
+            .replace("<p>",  "<p style=\"margin:6px 0;font-size:14px;line-height:1.6;color:#1e293b\">")
+            .replace("<table>", "<table style=\"border-collapse:collapse;width:100%;margin:8px 0\">")
+            .replaceAll("<th(\\s|>)", "<th style=\"border:1px solid #e2e8f0;padding:6px 10px;font-size:13px;text-align:left;background:#f8fafc;font-weight:700\"$1")
+            .replaceAll("<td(\\s|>)", "<td style=\"border:1px solid #e2e8f0;padding:6px 10px;font-size:13px;text-align:left\"$1");
     }
 
     /** Görev listesi checkbox'larını sembole çevirir — mail istemcileri form
@@ -1463,11 +1498,30 @@ public class EmailNotificationService {
 
     /** imageWidths: görsel id → gösterim genişliği px (Outlook width attr için);
      *  null/eksik girişlerde 560 fallback. */
-    @SuppressWarnings("unchecked")
     public String buildWeeklyReportHtml(String teamName, String weekLabel, String managerName,
                                         String contentJson, boolean forEmail,
                                         Map<Long, Integer> imageWidths) {
-        String generatedAt = LocalDateTime.now().format(DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm"));
+        return buildWeeklyReportHtml(teamName, weekLabel, managerName, contentJson, forEmail,
+                imageWidths, null, null, null);
+    }
+
+    /** Footer'a onay bilgisi ekler: approverName + approvedAtIso + sentAtIso (UTC ISO,
+     *  Europe/Istanbul'a çevrilir). null olanlar gizlenir (örn. DRAFT önizleme). */
+    @SuppressWarnings("unchecked")
+    public String buildWeeklyReportHtml(String teamName, String weekLabel, String managerName,
+                                        String contentJson, boolean forEmail,
+                                        Map<Long, Integer> imageWidths,
+                                        String approverName, String approvedAtIso, String sentAtIso) {
+        String generatedAt = ZonedDateTime.now(IST).format(DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm"));
+        // Footer sağ sütun — onay bilgisi (varsa) + oluşturma zamanı; hepsi Europe/Istanbul
+        StringBuilder footerRight = new StringBuilder();
+        if (approverName != null && !approverName.isBlank())
+            footerRight.append("Onaylayan: ").append(escHtml(approverName)).append("<br>");
+        String approvedIst = formatIstanbul(approvedAtIso);
+        if (approvedIst != null) footerRight.append("Onay: ").append(approvedIst).append("<br>");
+        String sentIst = formatIstanbul(sentAtIso);
+        if (sentIst != null) footerRight.append("Gönderim: ").append(sentIst).append("<br>");
+        footerRight.append("Oluşturuldu: ").append(generatedAt);
         // Executive lacivert palet — arkaplanlar Outlook (Word motoru) için
         // table/td + bgcolor ATTRIBUTE ile verilir; style yalnız yedektir.
         String accent = "#1f3864";
@@ -1595,9 +1649,9 @@ public class EmailNotificationService {
 
             // Footer
             + "<table width='100%' cellpadding='0' cellspacing='0'><tr>"
-            + "<td style='border-top:1px solid #f1f5f9;padding-top:12px;font-size:11px;color:#94a3b8'>CertMonitor — Haftalık Rapor</td>"
-            + "<td align='right' style='border-top:1px solid #f1f5f9;padding-top:12px;font-size:11px;color:#94a3b8'>"
-            + generatedAt + "</td></tr></table>"
+            + "<td valign='top' style='border-top:1px solid #f1f5f9;padding-top:12px;font-size:11px;color:#94a3b8'>CertMonitor — Haftalık Rapor</td>"
+            + "<td align='right' valign='top' style='border-top:1px solid #f1f5f9;padding-top:12px;font-size:11px;color:#94a3b8;line-height:1.7'>"
+            + footerRight + "</td></tr></table>"
 
             + "</div>"
             + "</td></tr></table>"
@@ -1634,11 +1688,14 @@ public class EmailNotificationService {
             + "<td bgcolor='" + accent + "' style='background:" + accent + ";color:#ffffff;"
             + "border-radius:8px 8px 0 0;padding:9px 14px;font-size:13px;font-weight:800;"
             + "letter-spacing:.02em'>" + title + "</td></tr></table>"
-            + "<div class='wr-md' style='border:1px solid #e2e8f0;border-top:none;border-radius:0 0 8px 8px;"
-            + "padding:12px 14px'>"
+            // Gövde kabı TABLO+TD: Word <div> padding'i yok sayar, <td> padding'ini onurlandırır
+            // → iç boşluk (başlık ile içerik arası dahil) Outlook'ta da render olur.
+            + "<table width='100%' cellpadding='0' cellspacing='0' border='0' style='border-collapse:collapse'><tr>"
+            + "<td class='wr-md' style='border:1px solid #e2e8f0;border-top:none;border-radius:0 0 8px 8px;"
+            + "padding:14px'>"
             + (bodyHtml == null || bodyHtml.isBlank()
                 ? "<p style='color:#94a3b8;font-size:13px;margin:0'>—</p>" : bodyHtml)
-            + "</div></div>";
+            + "</td></tr></table></div>";
     }
 
     /** Sayı rozeti — tek tablo HÜCRESİ. E-posta-güvenli: inline-block/margin/
@@ -1664,9 +1721,10 @@ public class EmailNotificationService {
             // Her hücreye eşit yüzde: Word otomatik dağıtım yerine eşit kolon kullansın
             tds.append(c.replaceFirst("<td ", "<td width='" + w + "' "));
         }
-        // margin: rozetler başlık şeridine yapışık durmasın (önceki fix korunur)
+        // Üst boşluk artık bölüm gövdesi <td> padding'inden gelir (Outlook+önizleme aynı);
+        // chip tablosunun üst marjı 0 — yoksa önizlemede çift boşluk olurdu (Word marjı yok sayar).
         return "<table role='presentation' border='0' cellspacing='0' cellpadding='0' width='100%'"
-            + " style='width:100%;border-collapse:collapse;margin:6px 0 10px'><tr>"
+            + " style='width:100%;border-collapse:collapse;margin:0 0 10px'><tr>"
             + tds + "</tr></table>";
     }
 

@@ -393,9 +393,13 @@ public class WeeklyReportService {
         String managerName = managers.get(0).getName();
 
         List<EmailNotificationService.InlineImage> inline = collectInlineImages(r);
+        // Footer onay bilgisi: ilk onayda alanlar henüz set değil → actor/şimdi;
+        // tekrar gönderimde orijinal onaylayan + yeni gönderim zamanı.
+        String approver   = r.getApprovedBy() != null ? r.getApprovedBy() : actor.display();
+        String approvedAt = r.getApprovedAt() != null ? r.getApprovedAt() : now();
         String html = emailService.buildWeeklyReportHtml(
                 teamName, r.getWeekLabel(), managerName, r.getContentJson(), true,
-                imageDisplayWidths(inline));
+                imageDisplayWidths(inline), approver, approvedAt, now());
 
         String subject = "[" + teamName + "] Haftalık Rapor — " + r.getWeekLabel();
         String mailStatus = emailService.sendHtml(to, cc, subject, html, inline);
@@ -451,8 +455,11 @@ public class WeeklyReportService {
         String teamName = team != null ? team.getName() : "Takım";
         String managerName = contactRepo.findByTeamIdAndRoleAndActiveTrue(r.getTeamId(), "MANAGER").stream()
                 .findFirst().map(EscalationContact::getName).orElse(null);
+        // Önizlemede de footer onay bilgisi gösterilir (onaylı raporda maille aynı);
+        // DRAFT'ta alanlar null → ilgili satırlar gizlenir.
         return emailService.buildWeeklyReportHtml(teamName, r.getWeekLabel(), managerName,
-                r.getContentJson(), false);
+                r.getContentJson(), false, null,
+                r.getApprovedBy(), r.getApprovedAt(), r.getSentAt());
     }
 
     // ── Görseller ─────────────────────────────────────────────────────────────
