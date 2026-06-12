@@ -20,8 +20,10 @@ FROM eclipse-temurin:21-jre-alpine
 WORKDIR /app
 
 # Debug/troubleshoot tools — pod içinden: curl (HTTP), bash (shell),
-# dig/nslookup (DNS), telnet (port), less (log gezintisi)
-RUN apk add --no-cache curl bash bind-tools busybox-extras less
+# dig/nslookup (DNS), telnet (port), less (log gezintisi),
+# openssl (derin SSL/TLS tanılama), iproute2 (ip addr/route), traceroute
+# (ağ derin analizi — NetworkDiagnosticsService)
+RUN apk add --no-cache curl bash bind-tools busybox-extras less openssl iproute2 traceroute
 
 ARG VERSION=1.0.0
 ARG BUILD_DATE

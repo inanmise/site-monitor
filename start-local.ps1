@@ -32,6 +32,7 @@ $propMap = @{
     CERT_MONITOR_USERNAME      = "cert.monitor.username"
     CERT_MONITOR_PASSWORD      = "cert.monitor.password"
     CORS_ALLOWED_ORIGINS       = "cert.monitor.cors.allowed-origins"
+    OPENSSL_BIN                = "cert.monitor.diagnostics.openssl-bin"
     SPRING_PROFILES_ACTIVE     = "spring.profiles.active"
     DB_HOST                    = "DB_HOST"
     DB_PORT                    = "DB_PORT"

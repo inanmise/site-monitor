@@ -92,6 +92,8 @@ public class ConnectionDiagnosticsService {
         out.put("domain", domain);
         out.put("port", port);
         out.put("proxy_configured", proxyConfigured);
+        // Proxy üzerinden giden kontrollerde hangi proxy adresinin kullanıldığı bilgisi
+        out.put("proxy_address", proxyConfigured ? proxyHost + ":" + proxyPort : null);
         out.put("source", source);
         out.put("dns", dns);
         out.put("combos", comboResults);

@@ -46,6 +46,10 @@ class WeeklyReportControllerTest {
         r.setWeekLabel("2026-W24 (8–12 Haziran 2026)");
         r.setStatus(status);
         r.setContentJson("{\"version\":1}");
+        r.setCreatedBy("Oluşturan Kişi");
+        r.setCreatedAt("2026-06-08T09:00:00");
+        r.setApprovedBy("Onaylayan PO");
+        r.setApprovedAt("2026-06-12T14:30:00");
         return r;
     }
 
@@ -71,13 +75,36 @@ class WeeklyReportControllerTest {
     @DisplayName("GET /api/weekly-reports returns summaries without content_json")
     void list_returnsSummaries() throws Exception {
         when(service.list(any(), any(), any())).thenReturn(List.of(report(1L, 2L, "DRAFT")));
+        when(service.lastMailStatuses(any())).thenReturn(Map.of(1L, "FAILED: smtp down"));
 
         mvc.perform(get("/api/weekly-reports").session(userSession()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success").value(true))
                 .andExpect(jsonPath("$.data[0].week_label").value("2026-W24 (8–12 Haziran 2026)"))
                 .andExpect(jsonPath("$.data[0].status").value("DRAFT"))
+                .andExpect(jsonPath("$.data[0].last_mail_status").value("FAILED: smtp down"))
+                .andExpect(jsonPath("$.data[0].created_by").value("Oluşturan Kişi"))
+                .andExpect(jsonPath("$.data[0].approved_by").value("Onaylayan PO"))
                 .andExpect(jsonPath("$.data[0].content_json").doesNotExist());
+    }
+
+    @Test
+    @DisplayName("GET /{id}/mails returns send history records")
+    void mails_returnsHistory() throws Exception {
+        com.certmonitor.model.WeeklyReportMail m = new com.certmonitor.model.WeeklyReportMail();
+        m.setId(9L); m.setReportId(5L); m.setMailType("APPROVE_MANAGER");
+        m.setFromAddress("certmonitor@test"); m.setToAddresses("mudur@test.com");
+        m.setCcAddresses("takim@test.com"); m.setSubject("[DijitalSY] Haftalık Rapor — W24");
+        m.setStatus("SENT"); m.setBodyHtml("<html>rapor</html>");
+        when(service.mails(eq(5L), any())).thenReturn(List.of(m));
+
+        mvc.perform(get("/api/weekly-reports/5/mails").session(userSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].mail_type").value("APPROVE_MANAGER"))
+                .andExpect(jsonPath("$.data[0].to_addresses").value("mudur@test.com"))
+                .andExpect(jsonPath("$.data[0].cc_addresses").value("takim@test.com"))
+                .andExpect(jsonPath("$.data[0].status").value("SENT"))
+                .andExpect(jsonPath("$.data[0].body_html").value("<html>rapor</html>"));
     }
 
     @Test
@@ -250,5 +277,56 @@ class WeeklyReportControllerTest {
         mvc.perform(post("/api/weekly-reports/5/submit").session(userSession()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.po_mail").value("SENT"));
+    }
+
+    @Test
+    @DisplayName("POST /{id}/reopen returns draft and records audit event")
+    void reopen_recordsAudit() throws Exception {
+        when(service.reopen(eq(5L), any())).thenReturn(report(5L, 2L, "DRAFT"));
+
+        mvc.perform(post("/api/weekly-reports/5/reopen").session(userSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.data.status").value("DRAFT"));
+
+        org.mockito.Mockito.verify(auditService).recordAction(
+                eq("WEEKLY_REPORT_REOPEN"), any(), any(),
+                eq("WEEKLY_REPORT"), eq("5"), contains("2026-W24"));
+    }
+
+    @Test
+    @DisplayName("POST /{id}/reopen maps out-of-window SecurityException to 403")
+    void reopen_forbidden_403() throws Exception {
+        when(service.reopen(eq(6L), any()))
+                .thenThrow(new SecurityException("Yalnızca içinde bulunulan ve bir önceki haftanın raporları revize edilebilir"));
+
+        mvc.perform(post("/api/weekly-reports/6/reopen").session(userSession()))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    @DisplayName("POST /{id}/resend returns mail_status and records audit event")
+    void resend_returnsMailStatus() throws Exception {
+        when(service.resend(eq(5L), any())).thenReturn(Map.of(
+                "data", report(5L, 2L, "APPROVED"),
+                "mail_status", "SENT"));
+
+        mvc.perform(post("/api/weekly-reports/5/resend").session(userSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.mail_status").value("SENT"));
+
+        org.mockito.Mockito.verify(auditService).recordAction(
+                eq("WEEKLY_REPORT_RESEND"), any(), any(),
+                eq("WEEKLY_REPORT"), eq("5"), contains("SENT"));
+    }
+
+    @Test
+    @DisplayName("POST /{id}/resend maps MANAGER_CONTACT_MISSING to 409")
+    void resend_managerMissing_409() throws Exception {
+        when(service.resend(eq(7L), any()))
+                .thenThrow(new IllegalStateException("MANAGER_CONTACT_MISSING"));
+
+        mvc.perform(post("/api/weekly-reports/7/resend").session(userSession()))
+                .andExpect(status().isConflict());
     }
 }

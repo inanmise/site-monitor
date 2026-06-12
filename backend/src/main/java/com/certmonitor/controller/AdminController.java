@@ -47,6 +47,9 @@ public class AdminController {
     private final TeamRepository teamRepo;
     private final com.certmonitor.service.EmailNotificationService emailNotificationService;
     private final com.certmonitor.service.ConnectionDiagnosticsService diagnosticsService;
+    private final com.certmonitor.service.OpensslDiagnosticsService opensslDiagnosticsService;
+    private final com.certmonitor.service.NetworkDiagnosticsService networkDiagnosticsService;
+    private final com.certmonitor.service.DiagnosticHistoryService diagnosticHistoryService;
 
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private com.certmonitor.service.PermissionService permissionService;
@@ -255,7 +258,131 @@ public class AdminController {
         Map<String, Object> data = diagnosticsService.diagnose(domain, port);
         auditService.recordAction("DIAGNOSTICS_RUN", session, request,
                 "CERTIFICATE", domain, "{\"port\":" + port + "}");
+        // Tanılama geçmişi — kim/ne zaman/nereden/sonuç
+        boolean ok = data.get("combos") instanceof java.util.List<?> combos
+                && combos.stream().anyMatch(c -> c instanceof Map<?, ?> m && "ok".equals(m.get("status")));
+        diagnosticHistoryService.record(domain, port, "CONNECTION",
+                actor(session), userIdFromSession(session), teamId(session), clientIp(request),
+                ok, connectionSummary(data), data);
         return ok(Map.of("data", data));
+    }
+
+    /** Derin SSL/TLS taraması — openssl s_client çeşitli parametrelerle. */
+    @PostMapping("/diagnostics/openssl")
+    public ResponseEntity<Map<String, Object>> runOpensslDiagnostics(
+            @RequestBody Map<String, Object> body, HttpSession session, HttpServletRequest request) {
+        requireAdmin(session);
+        String domain = body.get("domain") != null ? body.get("domain").toString().trim() : null;
+        validateDomain(domain);
+        Long portRaw = toLong(body.get("port"));
+        int port = portRaw != null ? portRaw.intValue() : 443;
+        if (port < 1 || port > 65535)
+            throw new IllegalArgumentException("Port must be between 1 and 65535");
+        Map<String, Object> data = opensslDiagnosticsService.probe(domain, port);
+        auditService.recordAction("DIAGNOSTICS_OPENSSL", session, request,
+                "CERTIFICATE", domain, "{\"port\":" + port + "}");
+        boolean ok = Boolean.TRUE.equals(data.get("available"));
+        diagnosticHistoryService.record(domain, port, "OPENSSL",
+                actor(session), userIdFromSession(session), teamId(session), clientIp(request),
+                ok, opensslSummary(data), data);
+        return ok(Map.of("data", data));
+    }
+
+    /** Ağ derin analizi — ping/traceroute/dns/tcp/curl/ip. */
+    @PostMapping("/diagnostics/network")
+    public ResponseEntity<Map<String, Object>> runNetworkDiagnostics(
+            @RequestBody Map<String, Object> body, HttpSession session, HttpServletRequest request) {
+        requireAdmin(session);
+        String domain = body.get("domain") != null ? body.get("domain").toString().trim() : null;
+        validateDomain(domain);
+        Long portRaw = toLong(body.get("port"));
+        int port = portRaw != null ? portRaw.intValue() : 443;
+        if (port < 1 || port > 65535)
+            throw new IllegalArgumentException("Port must be between 1 and 65535");
+        Map<String, Object> data = networkDiagnosticsService.analyze(domain, port);
+        auditService.recordAction("DIAGNOSTICS_NETWORK", session, request,
+                "CERTIFICATE", domain, "{\"port\":" + port + "}");
+        Object okC = data.get("ok_count");
+        Object total = data.get("total");
+        boolean ok = okC instanceof Number n && n.intValue() > 0;
+        diagnosticHistoryService.record(domain, port, "NETWORK",
+                actor(session), userIdFromSession(session), teamId(session), clientIp(request),
+                ok, okC + "/" + total + " kontrol OK", data);
+        return ok(Map.of("data", data));
+    }
+
+    /** Domain tanılama geçmişi listesi (resultJson hariç özet). */
+    @GetMapping("/diagnostics/history")
+    public ResponseEntity<Map<String, Object>> diagnosticsHistory(
+            @RequestParam String domain, HttpSession session) {
+        requireAdmin(session);
+        validateDomain(domain);
+        List<Map<String, Object>> data = diagnosticHistoryService.history(domain).stream()
+                .map(d -> {
+                    Map<String, Object> m = new java.util.LinkedHashMap<>();
+                    m.put("id", d.getId());
+                    m.put("run_type", d.getRunType());
+                    m.put("executed_by", d.getExecutedBy());
+                    m.put("executed_at", d.getExecutedAt());
+                    m.put("source_ip", d.getSourceIp());
+                    m.put("port", d.getPort());
+                    m.put("success", d.getSuccess());
+                    m.put("summary", d.getSummary());
+                    return m;
+                }).toList();
+        return ok(Map.of("data", data));
+    }
+
+    /** Tek geçmiş kaydı — saklanan tam sonucu (resultJson) yeniden gösterim için. */
+    @GetMapping("/diagnostics/history/{id}")
+    public ResponseEntity<Map<String, Object>> diagnosticsHistoryDetail(
+            @PathVariable Long id, HttpSession session) {
+        requireAdmin(session);
+        com.certmonitor.model.DiagnosticRun d = diagnosticHistoryService.get(id);
+        Map<String, Object> m = new java.util.LinkedHashMap<>();
+        m.put("id", d.getId());
+        m.put("domain", d.getDomain());
+        m.put("port", d.getPort());
+        m.put("run_type", d.getRunType());
+        m.put("executed_by", d.getExecutedBy());
+        m.put("executed_at", d.getExecutedAt());
+        m.put("source_ip", d.getSourceIp());
+        m.put("success", d.getSuccess());
+        m.put("summary", d.getSummary());
+        m.put("result_json", d.getResultJson());
+        return ok(Map.of("data", m));
+    }
+
+    /** "3/4 kombinasyon OK" tarzı kısa CONNECTION özeti. */
+    private String connectionSummary(Map<String, Object> data) {
+        if (!(data.get("combos") instanceof java.util.List<?> combos)) return "—";
+        long ok = combos.stream().filter(c -> c instanceof Map<?, ?> m && "ok".equals(m.get("status"))).count();
+        return ok + "/" + combos.size() + " kombinasyon OK";
+    }
+
+    /** "TLS1.0 açık; 2 bayrak" tarzı kısa OPENSSL özeti. */
+    private String opensslSummary(Map<String, Object> data) {
+        if (!Boolean.TRUE.equals(data.get("available"))) return "openssl bulunamadı";
+        StringBuilder sb = new StringBuilder();
+        if (data.get("protocols") instanceof java.util.List<?> protos) {
+            String weak = protos.stream()
+                    .filter(p -> p instanceof Map<?, ?> m
+                            && Boolean.TRUE.equals(m.get("supported")) && "HIGH".equals(m.get("risk")))
+                    .map(p -> String.valueOf(((Map<?, ?>) p).get("proto")))
+                    .reduce((a, b) -> a + ", " + b).orElse(null);
+            sb.append(weak != null ? "Zayıf protokol açık: " + weak : "Zayıf protokol yok");
+        }
+        if (data.get("flags") instanceof java.util.List<?> flags && !flags.isEmpty()) {
+            sb.append("; ").append(flags.size()).append(" sertifika bayrağı");
+        }
+        return sb.toString();
+    }
+
+    /** İstek IP'si — proxy arkasında X-Forwarded-For ilk değeri. */
+    private String clientIp(HttpServletRequest request) {
+        String xff = request.getHeader("X-Forwarded-For");
+        if (xff != null && !xff.isBlank()) return xff.split(",")[0].trim();
+        return request.getRemoteAddr();
     }
 
     @CacheEvict(value = {"cert-latest", "cert-warnings", "cert-stats", "renewal-advice"}, allEntries = true)

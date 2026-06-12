@@ -223,12 +223,42 @@ class EmailNotificationServiceTest {
         assertThat(html).contains("4. Domain Bazlı Kritik İşlerin Durumu");
         assertThat(html).contains("Toplam: 12").contains("Acil: 2");
         assertThat(html).contains("<table>");           // markdown tablo render edildi
-        assertThat(html).contains("https://jira/x");
         assertThat(html).contains("İnternet");
-        // Madde 2: her kayıt türünün ayrı etiketli takip linki
-        assertThat(html).contains("Açık Olay:").contains("https://jira/inc")
-                .contains("Problem:").contains("https://jira/prb")
-                .contains("Postmortem:").contains("https://jira/pm");
+
+        // Lacivert executive palet + Outlook bgcolor attribute güvencesi; mor kalmadı
+        assertThat(html).contains("#1f3864").contains("bgcolor=").doesNotContain("#4f46e5");
+
+        // URL'ler açık yazılmaz — etiket hyperlink'tir (href'te var, görünür metinde yok)
+        assertThat(html).contains("href='https://jira/x'").doesNotContain(">https://jira/x<");
+        assertThat(html).contains("href='https://jira/inc'").doesNotContain(">https://jira/inc<");
+        assertThat(html).contains(">Açık Olay Takip Linki</a>")
+                .contains(">Problem Takip Linki</a>")
+                .contains(">Postmortem Takip Linki</a>");
+
+        // Sayı rozetleri e-posta-güvenli: tablo+cellspacing, 8-haneli hex ve pill YOK
+        assertThat(html).contains("cellspacing='6'")
+                .doesNotContain("#33415514").doesNotContain("#dc262614")
+                .doesNotContain("border-radius:999px");
+    }
+
+    @Test
+    @DisplayName("tint: hex'i beyazla harmanlar (düz açık ton)")
+    void tint_blendsTowardWhite() {
+        assertThat(EmailNotificationService.tint("#dc2626", 0.12)).isEqualTo("#fbe5e5");
+        assertThat(EmailNotificationService.tint("#ffffff", 0.12)).isEqualTo("#ffffff");
+        assertThat(EmailNotificationService.tint("#000000", 0.0)).isEqualTo("#ffffff");
+    }
+
+    @Test
+    @DisplayName("Weekly report HTML: Madde 2 üç sayı da 0 ise otomatik 'kayıt yok' notu; değilse yok")
+    void buildWeeklyReportHtml_item2AutoNote() {
+        String zero = "{\"version\":1,\"item2\":{\"open_incidents\":0,\"problem_records\":0,\"postmortems\":0}}";
+        assertThat(service.buildWeeklyReportHtml("T", "W", "M", zero, false))
+                .contains("aşım yaşanan olay, problem veya açık postmortem kaydı bulunmamaktadır");
+
+        String nonZero = "{\"version\":1,\"item2\":{\"open_incidents\":1,\"problem_records\":0,\"postmortems\":0}}";
+        assertThat(service.buildWeeklyReportHtml("T", "W", "M", nonZero, false))
+                .doesNotContain("kaydı bulunmamaktadır");
     }
 
     @Test
@@ -262,27 +292,34 @@ class EmailNotificationServiceTest {
     }
 
     @Test
-    @DisplayName("Weekly report HTML: mail görselleri inline stil + width attr alır (Outlook taşma fix)")
+    @DisplayName("Weekly report HTML: görsel genişliği konuma göre dinamik (madde1→720, kanal→660); Outlook width attr")
     void buildWeeklyReportHtml_imageWidths() {
-        // Geniş görsel → 560'a kırpılır
-        String wide = service.buildWeeklyReportHtml("T", "W", "M", WR_CONTENT, true,
-                java.util.Map.of(5L, 1600));
-        assertThat(wide).contains("width=\"560\"").contains("max-width:560px")
-                .contains("display:block").contains("cid:img5");
+        // id 7 → madde 1 (tavan 720); id 5 → madde 4 kanal alt-kartı (tavan 660)
+        String content = "{\"version\":1,"
+                + "\"item1\":{\"notes_md\":\"![A](/api/weekly-reports/images/7)\"},"
+                + "\"item4\":{\"channels\":[{\"id\":\"c-1\",\"name\":\"İnternet\","
+                + "\"notes_md\":\"![B](/api/weekly-reports/images/5)\"}]}}";
+
+        // Geniş görseller → bulundukları bölümün tavanına kırpılır (dinamik)
+        String wide = service.buildWeeklyReportHtml("T", "W", "M", content, true,
+                java.util.Map.of(7L, 1600, 5L, 1600));
+        assertThat(wide).contains("width=\"720\"").contains("max-width:720px")   // madde 1
+                .contains("width=\"660\"").contains("max-width:660px")           // madde 4 kanal
+                .contains("display:block").contains("cid:img7").contains("cid:img5");
 
         // Dar görsel → doğal genişliğinde kalır (upscale yok)
-        String narrow = service.buildWeeklyReportHtml("T", "W", "M", WR_CONTENT, true,
-                java.util.Map.of(5L, 300));
+        String narrow = service.buildWeeklyReportHtml("T", "W", "M", content, true,
+                java.util.Map.of(7L, 300, 5L, 300));
         assertThat(narrow).contains("width=\"300\"").contains("max-width:300px");
 
-        // Genişlik bilinmiyorsa 560 fallback
-        String fallback = service.buildWeeklyReportHtml("T", "W", "M", WR_CONTENT, true, null);
-        assertThat(fallback).contains("width=\"560\"");
+        // Genişlik bilinmiyorsa bölüm tavanı fallback (madde1→720, kanal→660)
+        String fallback = service.buildWeeklyReportHtml("T", "W", "M", content, true, null);
+        assertThat(fallback).contains("width=\"720\"").contains("width=\"660\"");
 
-        // Önizleme: /api URL korunur + inline max-width:100%
-        String preview = service.buildWeeklyReportHtml("T", "W", "M", WR_CONTENT, false);
-        assertThat(preview).contains("/api/weekly-reports/images/5")
-                .contains("max-width:100%").doesNotContain("width=\"560\"");
+        // Önizleme: /api URL korunur + inline max-width:100%, sabit width attr yok
+        String preview = service.buildWeeklyReportHtml("T", "W", "M", content, false);
+        assertThat(preview).contains("/api/weekly-reports/images/7")
+                .contains("max-width:100%").doesNotContain("width=\"720\"");
     }
 
     @Test

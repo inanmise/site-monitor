@@ -1355,6 +1355,11 @@ public class EmailNotificationService {
      * ÖNEMLİ: setText(html, true) addInline'dan ÖNCE çağrılmalıdır
      * (MimeMessageHelper related multipart sıralaması).
      */
+    /** Gönderen adres — haftalık rapor gönderim geçmişi kayıtları için. */
+    /* package */ String fromAddress() {
+        return emailFrom;
+    }
+
     public String sendHtml(String[] to, String[] cc, String subject, String html,
                            List<InlineImage> inline) {
         if (!enabled) {
@@ -1385,13 +1390,13 @@ public class EmailNotificationService {
 
     /** Markdown → HTML (GFM tabloları destekli, raw HTML escape'li).
      *  forEmail=true: /api/weekly-reports/images/{id} → cid:img{id}. */
-    private String mdToHtml(String md, boolean forEmail, Map<Long, Integer> imageWidths) {
+    private String mdToHtml(String md, boolean forEmail, Map<Long, Integer> imageWidths, int maxWidth) {
         if (md == null || md.isBlank()) return "";
         String src = forEmail
                 ? md.replaceAll("\\]\\(/api/weekly-reports/images/(\\d+)\\)", "](cid:img$1)")
                 : md;
         String html = MD_RENDERER.render(MD_PARSER.parse(src));
-        return inlineImageStyles(taskCheckboxesToSymbols(html), forEmail, imageWidths);
+        return inlineImageStyles(taskCheckboxesToSymbols(html), forEmail, imageWidths, maxWidth);
     }
 
     /** Görev listesi checkbox'larını sembole çevirir — mail istemcileri form
@@ -1409,14 +1414,16 @@ public class EmailNotificationService {
     }
 
     /** Outlook masaüstü (Word motoru) head'deki style bloğunu yok sayar — görsel
-     *  taşmasını ancak inline stil + açık width attribute engeller. Mail
-     *  tarafında width = min(560, doğal genişlik); modern istemciler için
-     *  width:100%/max-width, Gmail alt boşluğu için display:block. */
-    private static final int MAIL_IMG_MAX_WIDTH = 560;
+     *  taşmasını ancak inline stil + açık width attribute engeller. Görsel
+     *  genişliği bulunduğu bölümün maxWidth'i ile sınırlanır (konuma göre
+     *  dinamik); width attr → Outlook, width:100%/max-width → modern, display:block
+     *  → Gmail alt boşluğu. */
+    /* package */ static final int MAIL_IMG_MAX_WIDTH = 720; // madde 1-3: kart 850 − iç boşluklar
+    /* package */ static final int MAIL_IMG_MAX_WIDTH_CHANNEL = 660; // madde 4 kanal alt-kartı (ekstra padding)
     private static final Pattern CID_IMG = Pattern.compile("<img src=\"cid:img(\\d+)\"");
     private static final Pattern API_IMG = Pattern.compile("<img src=\"(/api/weekly-reports/images/\\d+)\"");
 
-    private String inlineImageStyles(String html, boolean forEmail, Map<Long, Integer> imageWidths) {
+    private String inlineImageStyles(String html, boolean forEmail, Map<Long, Integer> imageWidths, int maxWidth) {
         if (!forEmail) {
             return API_IMG.matcher(html).replaceAll(
                     "<img style=\"max-width:100%;height:auto;border-radius:8px;margin:6px 0\" src=\"$1\"");
@@ -1425,7 +1432,8 @@ public class EmailNotificationService {
         StringBuilder sb = new StringBuilder();
         while (m.find()) {
             Integer natural = imageWidths != null ? imageWidths.get(Long.parseLong(m.group(1))) : null;
-            int w = natural != null ? Math.min(MAIL_IMG_MAX_WIDTH, natural) : MAIL_IMG_MAX_WIDTH;
+            // Görsel doğal genişliğini AŞMASIN ama bölüm sınırını da geçmesin (taşma yok)
+            int w = Math.min(natural != null ? natural : maxWidth, maxWidth);
             m.appendReplacement(sb, "<img width=\"" + w + "\" style=\"display:block;width:100%;"
                     + "max-width:" + w + "px;height:auto;border-radius:8px;margin:6px 0\""
                     + " src=\"cid:img" + m.group(1) + "\"");
@@ -1451,7 +1459,10 @@ public class EmailNotificationService {
                                         String contentJson, boolean forEmail,
                                         Map<Long, Integer> imageWidths) {
         String generatedAt = LocalDateTime.now().format(DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm"));
-        String indigo = "#4f46e5";
+        // Executive lacivert palet — arkaplanlar Outlook (Word motoru) için
+        // table/td + bgcolor ATTRIBUTE ile verilir; style yalnız yedektir.
+        String accent = "#1f3864";
+        String outerBg = "#f4f6f8";
 
         Map<String, Object> c;
         try {
@@ -1466,32 +1477,40 @@ public class EmailNotificationService {
 
         // ── Madde 1 — sayı chip'leri + durum + takip linki ──
         String item1Body =
-            "<div style='margin-bottom:10px'>"
-            + numChip("Toplam", i1.get("total"), "#334155")
-            + numChip("Acil",   i1.get("urgent"), "#dc2626")
-            + numChip("Yüksek", i1.get("high"),   "#ea580c")
-            + numChip("Orta",   i1.get("medium"), "#d97706")
-            + numChip("Düşük",  i1.get("low"),    "#16a34a")
-            + "</div>"
+            numChipRow(
+                numChip("Toplam", i1.get("total"), "#334155"),
+                numChip("Acil",   i1.get("urgent"), "#dc2626"),
+                numChip("Yüksek", i1.get("high"),   "#ea580c"),
+                numChip("Orta",   i1.get("medium"), "#d97706"),
+                numChip("Düşük",  i1.get("low"),    "#16a34a"))
             + metaLine("Durum", str(i1.get("status_text")))
-            + linkLine(str(i1.get("tracking_url")))
-            + mdToHtml(str(i1.get("notes_md")), forEmail, imageWidths);
+            + linkLine("Takip Linki", str(i1.get("tracking_url")))
+            + mdToHtml(str(i1.get("notes_md")), forEmail, imageWidths, MAIL_IMG_MAX_WIDTH);
 
         // ── Madde 2 ──
+        // Üç sayı da 0 ise otomatik vurgulu "kayıt yok" notu (manuel yazıma gerek kalmaz)
+        boolean noItem2Records = intVal(i2.get("open_incidents")) == 0
+                && intVal(i2.get("problem_records")) == 0
+                && intVal(i2.get("postmortems")) == 0;
+        String item2AutoNote = noItem2Records
+            ? "<p style='margin:8px 0;padding:8px 12px;border-left:4px solid #16a34a;background:#e7f6ec;"
+              + "font-size:13px;font-weight:700;color:#14532d'>✔ Bu hafta aşım yaşanan olay, problem veya "
+              + "açık postmortem kaydı bulunmamaktadır.</p>"
+            : "";
         String item2Body =
-            "<div style='margin-bottom:10px'>"
-            + numChip("Açık Olay",   i2.get("open_incidents"),  "#dc2626")
-            + numChip("Problem",     i2.get("problem_records"), "#ea580c")
-            + numChip("Postmortem",  i2.get("postmortems"),     "#7c3aed")
-            + "</div>"
-            + linkLine("Açık Olay", str(i2.get("incidents_url")))
-            + linkLine("Problem", str(i2.get("problems_url")))
-            + linkLine("Postmortem", str(i2.get("postmortems_url")))
-            + linkLine(str(i2.get("tracking_url"))) // eski raporlardaki genel takip linki
-            + mdToHtml(str(i2.get("notes_md")), forEmail, imageWidths);
+            numChipRow(
+                numChip("Açık Olay",   i2.get("open_incidents"),  "#dc2626"),
+                numChip("Problem",     i2.get("problem_records"), "#ea580c"),
+                numChip("Postmortem",  i2.get("postmortems"),     "#7c3aed"))
+            + item2AutoNote
+            + linkLine("Açık Olay Takip Linki", str(i2.get("incidents_url")))
+            + linkLine("Problem Takip Linki", str(i2.get("problems_url")))
+            + linkLine("Postmortem Takip Linki", str(i2.get("postmortems_url")))
+            + linkLine("Takip Linki", str(i2.get("tracking_url"))) // eski raporlardaki genel link
+            + mdToHtml(str(i2.get("notes_md")), forEmail, imageWidths, MAIL_IMG_MAX_WIDTH);
 
         // ── Madde 3 ──
-        String item3Body = mdToHtml(str(i3.get("notes_md")), forEmail, imageWidths);
+        String item3Body = mdToHtml(str(i3.get("notes_md")), forEmail, imageWidths, MAIL_IMG_MAX_WIDTH);
 
         // ── Madde 4 — kanal alt-kartları ──
         StringBuilder item4Body = new StringBuilder();
@@ -1500,10 +1519,12 @@ public class EmailNotificationService {
             for (Object chObj : channels) {
                 Map<String, Object> ch = asMap(chObj);
                 item4Body.append("<div style='border:1px solid #e2e8f0;border-radius:10px;margin-bottom:10px;overflow:hidden'>")
-                    .append("<div style='background:#f1f5f9;padding:8px 14px;font-size:13px;font-weight:800;color:#334155'>")
-                    .append(escHtml(str(ch.get("name")))).append("</div>")
+                    .append("<table width='100%' cellpadding='0' cellspacing='0' border='0'><tr>")
+                    .append("<td bgcolor='#eef1f5' style='background:#eef1f5;padding:8px 14px;")
+                    .append("font-size:13px;font-weight:800;color:#334155'>")
+                    .append(escHtml(str(ch.get("name")))).append("</td></tr></table>")
                     .append("<div style='padding:10px 14px'>")
-                    .append(mdToHtml(str(ch.get("notes_md")), forEmail, imageWidths))
+                    .append(mdToHtml(str(ch.get("notes_md")), forEmail, imageWidths, MAIL_IMG_MAX_WIDTH_CHANNEL))
                     .append("</div></div>");
             }
         }
@@ -1516,7 +1537,7 @@ public class EmailNotificationService {
             + ".wr-md img{max-width:100%;height:auto;border-radius:8px;margin:6px 0}"
             + ".wr-md p{margin:6px 0;font-size:14px;line-height:1.6;color:#1e293b}"
             + ".wr-md ul,.wr-md ol{margin:6px 0;padding-left:22px;font-size:14px;color:#1e293b}"
-            + "@media only screen and (max-width:620px){"
+            + "@media only screen and (max-width:870px){"
             + ".em-wrap{padding:0!important}.em-card{border-radius:0!important;width:100%!important}"
             + ".em-body{padding:14px!important}"
             + "}"
@@ -1526,23 +1547,27 @@ public class EmailNotificationService {
             + "<head><meta charset='UTF-8'>"
             + "<meta name='viewport' content='width=device-width,initial-scale=1,maximum-scale=1'>"
             + css + "</head>"
-            + "<body style='margin:0;padding:0;background:#f1f5f9;font-family:\"Segoe UI\",Tahoma,Arial,sans-serif'>"
+            + "<body bgcolor='" + outerBg + "' style='margin:0;padding:0;background:" + outerBg
+            + ";font-family:\"Segoe UI\",Tahoma,Arial,sans-serif'>"
 
             + "<table class='em-wrap' width='100%' cellpadding='0' cellspacing='0' border='0'"
-            + " style='background:#f1f5f9;padding:24px 10px'><tr><td align='center'>"
+            + " bgcolor='" + outerBg + "' style='background:" + outerBg + ";padding:24px 10px'>"
+            + "<tr><td align='center' bgcolor='" + outerBg + "'>"
 
-            + "<table class='em-card' width='680' cellpadding='0' cellspacing='0' border='0'"
-            + " style='max-width:680px;width:100%;border-radius:14px;overflow:hidden;"
-            + "box-shadow:0 8px 32px rgba(0,0,0,.15)'><tr><td style='padding:0'>"
+            + "<table class='em-card' width='850' cellpadding='0' cellspacing='0' border='0'"
+            + " bgcolor='#ffffff' style='max-width:850px;width:100%;background:#ffffff;"
+            + "border:1px solid #d7dde5;border-radius:14px;overflow:hidden;"
+            + "box-shadow:0 8px 32px rgba(0,0,0,.10)'><tr><td bgcolor='#ffffff' style='padding:0'>"
 
-            // ── Üst bar ──
-            + "<div style='background:" + indigo + ";padding:22px 24px'>"
-            + "<div style='color:rgba(255,255,255,.65);font-size:11px;font-weight:700;letter-spacing:.12em'>CertMonitor — Haftalık Rapor</div>"
-            + "<div style='color:#fff;font-size:22px;font-weight:900;margin-top:10px;line-height:1.25'>📋 "
+            // ── Üst bar — div shading Outlook'ta güvenilmez; td + bgcolor attr ──
+            + "<table width='100%' cellpadding='0' cellspacing='0' border='0'><tr>"
+            + "<td bgcolor='" + accent + "' style='background:" + accent + ";padding:22px 24px'>"
+            + "<div style='color:#aebed8;font-size:11px;font-weight:700;letter-spacing:.12em'>CertMonitor — Haftalık Rapor</div>"
+            + "<div style='color:#ffffff;font-size:22px;font-weight:900;margin-top:10px;line-height:1.25'>📋 "
             + escHtml(teamName) + "</div>"
-            + "<div style='color:rgba(255,255,255,.88);font-size:15px;font-weight:700;margin-top:8px'>"
+            + "<div style='color:#dbe3ef;font-size:15px;font-weight:700;margin-top:8px'>"
             + escHtml(weekLabel) + "</div>"
-            + "</div>"
+            + "</td></tr></table>"
 
             // ── Gövde ──
             + "<div class='em-body' style='background:#fff;padding:22px 24px'>"
@@ -1554,10 +1579,10 @@ public class EmailNotificationService {
             + escHtml(teamName) + " ekibi olarak <strong>" + escHtml(weekLabel)
             + "</strong> haftası raporumuzu aşağıda paylaşıyoruz.</p>"
 
-            + reportSection("1. Proaktif Servis İyileştirme Kayıtları", item1Body, indigo)
-            + reportSection("2. Aşım Yaşanan Olay / Problem ve Açık Postmortem Kayıtları", item2Body, indigo)
-            + reportSection("3. Haftalık Katılım Sağlanan Çalışmalar", item3Body, indigo)
-            + reportSection("4. Domain Bazlı Kritik İşlerin Durumu", item4Body.toString(), indigo)
+            + reportSection("1. Proaktif Servis İyileştirme Kayıtları", item1Body, accent)
+            + reportSection("2. Aşım Yaşanan Olay / Problem ve Açık Postmortem Kayıtları", item2Body, accent)
+            + reportSection("3. Haftalık Katılım Sağlanan Çalışmalar", item3Body, accent)
+            + reportSection("4. Domain Bazlı Kritik İşlerin Durumu", item4Body.toString(), accent)
 
             // Footer
             + "<table width='100%' cellpadding='0' cellspacing='0'><tr>"
@@ -1595,8 +1620,11 @@ public class EmailNotificationService {
 
     private String reportSection(String title, String bodyHtml, String accent) {
         return "<div style='margin-bottom:20px'>"
-            + "<div style='background:" + accent + ";color:#fff;border-radius:8px 8px 0 0;"
-            + "padding:9px 14px;font-size:13px;font-weight:800;letter-spacing:.02em'>" + title + "</div>"
+            // Başlık şeridi: div shading yerine td + bgcolor (Outlook uyumu)
+            + "<table width='100%' cellpadding='0' cellspacing='0' border='0'><tr>"
+            + "<td bgcolor='" + accent + "' style='background:" + accent + ";color:#ffffff;"
+            + "border-radius:8px 8px 0 0;padding:9px 14px;font-size:13px;font-weight:800;"
+            + "letter-spacing:.02em'>" + title + "</td></tr></table>"
             + "<div class='wr-md' style='border:1px solid #e2e8f0;border-top:none;border-radius:0 0 8px 8px;"
             + "padding:12px 14px'>"
             + (bodyHtml == null || bodyHtml.isBlank()
@@ -1604,11 +1632,34 @@ public class EmailNotificationService {
             + "</div></div>";
     }
 
+    /** Sayı rozeti — tek tablo HÜCRESİ. E-posta-güvenli: inline-block/margin/
+     *  border-radius/8-haneli-hex YOK (Outlook/Apple Mail bunları bozar). Düz
+     *  açık zemin (bgcolor attribute) + tam renk kenarlık. numChipRow ile sarılır. */
     private String numChip(String label, Object value, String color) {
         String v = value != null ? String.valueOf(value) : "0";
-        return "<span style='display:inline-block;margin:0 6px 6px 0;padding:5px 12px;border-radius:999px;"
-            + "background:" + color + "14;border:1.5px solid " + color + ";font-size:12px;font-weight:700;"
-            + "color:" + color + "'>" + label + ": " + escHtml(v) + "</span>";
+        String bg = tint(color, 0.12);
+        return "<td bgcolor='" + bg + "' style='background:" + bg + ";border:1px solid " + color
+            + ";padding:6px 12px;font-size:12px;font-weight:700;color:" + color
+            + ";white-space:nowrap;text-align:center'>" + escHtml(label) + ": " + escHtml(v) + "</td>";
+    }
+
+    /** Rozet hücrelerini tek satırlık tabloya sarar. cellspacing=6 → hücreler
+     *  arası garantili boşluk (Outlook dahil); inline-block kaymasına son. */
+    private String numChipRow(String... cells) {
+        return "<table role='presentation' border='0' cellspacing='6' cellpadding='0'"
+            + " style='margin-bottom:10px'><tr>" + String.join("", cells) + "</tr></table>";
+    }
+
+    /** Hex rengi beyazla harmanlar (ratio=renk payı) → düz açık ton. 8-haneli
+     *  alfa hex yerine her istemcide çalışan gerçek katı renk. */
+    static String tint(String hex, double ratio) {
+        int r = Integer.parseInt(hex.substring(1, 3), 16);
+        int g = Integer.parseInt(hex.substring(3, 5), 16);
+        int b = Integer.parseInt(hex.substring(5, 7), 16);
+        r = (int) Math.round(r * ratio + 255 * (1 - ratio));
+        g = (int) Math.round(g * ratio + 255 * (1 - ratio));
+        b = (int) Math.round(b * ratio + 255 * (1 - ratio));
+        return String.format("#%02x%02x%02x", r, g, b);
     }
 
     private String metaLine(String label, String value) {
@@ -1617,16 +1668,12 @@ public class EmailNotificationService {
             + escHtml(value) + "</p>";
     }
 
-    private String linkLine(String url) {
-        if (url == null || url.isBlank()) return "";
-        return "<p style='font-size:13px;margin:4px 0'>🔗 <a href='" + escHtml(url)
-            + "' style='color:#4f46e5'>" + escHtml(url) + "</a></p>";
-    }
-
+    /** Takip linki satırı — URL açık yazılmaz; tıklanabilir metin etikettir
+     *  (kullanıcı isteği: mailde çıplak URL paylaşılmasın). */
     private String linkLine(String label, String url) {
         if (url == null || url.isBlank()) return "";
-        return "<p style='font-size:13px;margin:4px 0'>🔗 <strong>" + escHtml(label) + ":</strong> <a href='"
-            + escHtml(url) + "' style='color:#4f46e5'>" + escHtml(url) + "</a></p>";
+        return "<p style='font-size:13px;margin:4px 0'>🔗 <a href='" + escHtml(url)
+            + "' style='color:#1f3864;font-weight:700'>" + escHtml(label) + "</a></p>";
     }
 
     @SuppressWarnings("unchecked")
@@ -1636,6 +1683,13 @@ public class EmailNotificationService {
 
     private static String str(Object o) {
         return o != null ? String.valueOf(o) : "";
+    }
+
+    /** JSON sayı/metin değerini int'e çevirir (null/parse edilemez → 0). */
+    private static int intVal(Object o) {
+        if (o instanceof Number n) return n.intValue();
+        if (o == null) return 0;
+        try { return Integer.parseInt(o.toString().trim()); } catch (Exception e) { return 0; }
     }
 
     /** Kesinti süresi (createdAt→resolvedAt) TR formatında: "2 saat 14 dakika". */

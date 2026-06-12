@@ -7617,6 +7617,40 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
   font-size: 14px;
   background: transparent;
 }
+/* highlightEnable=false: highlight <pre> katmanı render edilmiyor → kütüphane
+   .w-md-editor-text'e inline min-height:100px veriyor ve yazma alanını kutunun
+   yarısında sabitliyor (sürükleyince de büyümüyor). İçerik alanının tamamını
+   doldur; absolute textarea (overflow:auto) uzun metinde kendi içinde kayar. */
+.wr-editor .w-md-editor-text { min-height: 100% !important; height: 100%; }
+.wr-editor .w-md-editor-area { height: 100%; }
+
+/* İşlemler kebab menüsü (liste tablosu) */
+.wr-menu-wrap { position: relative; display: inline-block; }
+.wr-menu-pop {
+  position: absolute; right: 0; top: 100%; margin-top: 4px; z-index: 50; min-width: 160px;
+  background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0,0,0,.15); padding: 4px;
+}
+.wr-menu-pop button {
+  display: flex; align-items: center; gap: 8px; width: 100%; text-align: left;
+  background: none; border: none; padding: 8px 10px; border-radius: 6px; cursor: pointer;
+  font-size: .85em; color: var(--text); font-family: inherit;
+}
+.wr-menu-pop button:hover { background: rgba(0,0,0,.05); }
+.wr-menu-pop button.danger { color: var(--danger, #dc2626); }
+[data-theme="dark"] .wr-menu-pop button:hover { background: rgba(255,255,255,.06); }
+
+/* Görsel yükleme — açıklama alanı (proje form diliyle uyumlu, geniş, çok satırlı) */
+.wr-caption {
+  width: 100%; box-sizing: border-box; padding: 10px 12px; resize: vertical;
+  min-height: 76px; border: 1px solid var(--border); border-radius: 6px;
+  font-size: .95em; font-family: inherit; line-height: 1.5;
+  background: var(--input-bg, #fff); color: var(--text);
+}
+.wr-caption:focus {
+  outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px rgba(59,130,246,.15);
+}
+.wr-caption::placeholder { color: var(--muted, #94a3b8); }
 /* Görseller kenarlardan taşmasın (editör önizlemesi + salt-okunur render) */
 .wr-editor .wmde-markdown img,
 .show-markdown img {
