@@ -144,6 +144,7 @@ export const api = {
     },
     get: (id) => request(`/weekly-reports/${id}`),
     years: (teamId) => request(`/weekly-reports/years${teamId ? '?teamId=' + teamId : ''}`),
+    mails: (id) => request(`/weekly-reports/${id}/mails`),
     create: (payload) => request('/weekly-reports', {
       method: 'POST', body: JSON.stringify(payload),
     }),
@@ -154,6 +155,8 @@ export const api = {
     unlock: (id) => request(`/weekly-reports/${id}/unlock`, { method: 'POST' }),
     remove: (id) => request(`/weekly-reports/${id}`, { method: 'DELETE' }),
     submit: (id) => request(`/weekly-reports/${id}/submit`, { method: 'POST' }),
+    reopen: (id) => request(`/weekly-reports/${id}/reopen`, { method: 'POST' }),
+    resend: (id) => request(`/weekly-reports/${id}/resend`, { method: 'POST' }),
     approve: (id) => request(`/weekly-reports/${id}/approve`, { method: 'POST' }),
     reject: (id, note) => request(`/weekly-reports/${id}/reject`, {
       method: 'POST', body: JSON.stringify({ note }),
@@ -180,6 +183,14 @@ export const api = {
     runDiagnostics: (domain, port = 443) => request('/admin/diagnostics', {
       method: 'POST', body: JSON.stringify({ domain, port }),
     }),
+    runOpensslDiagnostics: (domain, port = 443) => request('/admin/diagnostics/openssl', {
+      method: 'POST', body: JSON.stringify({ domain, port }),
+    }),
+    runNetworkDiagnostics: (domain, port = 443) => request('/admin/diagnostics/network', {
+      method: 'POST', body: JSON.stringify({ domain, port }),
+    }),
+    diagHistory: (domain) => request(`/admin/diagnostics/history?domain=${encodeURIComponent(domain)}`),
+    diagHistoryDetail: (id) => request(`/admin/diagnostics/history/${id}`),
     transferCertSy: (id, teamId) => request(`/admin/inventory/${id}/transfer`, {
       method: 'POST', body: JSON.stringify({ team_id: teamId }),
     }),

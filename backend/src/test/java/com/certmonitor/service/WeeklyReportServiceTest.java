@@ -4,6 +4,7 @@ import com.certmonitor.model.AppUser;
 import com.certmonitor.model.EscalationContact;
 import com.certmonitor.model.Team;
 import com.certmonitor.model.WeeklyReport;
+import com.certmonitor.model.WeeklyReportMail;
 import com.certmonitor.repository.AppUserRepository;
 import com.certmonitor.repository.EscalationContactRepository;
 import com.certmonitor.repository.TeamRepository;
@@ -39,6 +40,7 @@ class WeeklyReportServiceTest {
 
     @Mock WeeklyReportRepository reportRepo;
     @Mock WeeklyReportImageRepository imageRepo;
+    @Mock com.certmonitor.repository.WeeklyReportMailRepository mailRepo;
     @Mock TeamRepository teamRepo;
     @Mock AppUserRepository userRepo;
     @Mock EscalationContactRepository contactRepo;
@@ -54,10 +56,12 @@ class WeeklyReportServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new WeeklyReportService(reportRepo, imageRepo, teamRepo, userRepo,
+        service = new WeeklyReportService(reportRepo, imageRepo, mailRepo, teamRepo, userRepo,
                 contactRepo, emailService, new ObjectMapper());
         ReflectionTestUtils.setField(service, "imageMaxBytes", 2L * 1024 * 1024);
         when(reportRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(mailRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(emailService.fromAddress()).thenReturn("certmonitor@test");
         when(teamRepo.findById(2L)).thenReturn(Optional.of(team(2L, "DijitalSY", "takim@test.com")));
         when(emailService.sendHtml(any(), any(), anyString(), anyString(), any())).thenReturn("SENT");
         when(emailService.buildWeeklyReportSubmittedHtml(any(), any(), any())).thenReturn("<html/>");
@@ -332,6 +336,110 @@ class WeeklyReportServiceTest {
         assertThat(r.getEditingHeartbeat()).isNull();
     }
 
+    // ── Mail gönderim geçmişi ─────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("submit: SUBMIT_PO gönderim kaydı atılır (to + status + from)")
+    void submit_recordsMail() {
+        WeeklyReport r = report(5L, 2L, "DRAFT");
+        when(reportRepo.findById(5L)).thenReturn(Optional.of(r));
+        when(contactRepo.findByTeamIdAndRoleAndActiveTrue(2L, "PO"))
+                .thenReturn(List.of(contact("PO", "PO İki", "po@test.com")));
+
+        service.submit(5L, USER_T2);
+
+        ArgumentCaptor<WeeklyReportMail> cap = ArgumentCaptor.forClass(WeeklyReportMail.class);
+        verify(mailRepo).save(cap.capture());
+        WeeklyReportMail m = cap.getValue();
+        assertThat(m.getMailType()).isEqualTo("SUBMIT_PO");
+        assertThat(m.getToAddresses()).isEqualTo("po@test.com");
+        assertThat(m.getStatus()).isEqualTo("SENT");
+        assertThat(m.getFromAddress()).isEqualTo("certmonitor@test");
+        assertThat(m.getSubject()).contains("onayınızı bekliyor");
+    }
+
+    @Test
+    @DisplayName("submit: PO kontağı yoksa SKIPPED_NO_CONTACT kaydı (to boş)")
+    void submit_recordsSkippedMail() {
+        WeeklyReport r = report(5L, 2L, "DRAFT");
+        when(reportRepo.findById(5L)).thenReturn(Optional.of(r));
+        when(contactRepo.findByTeamIdAndRoleAndActiveTrue(2L, "PO")).thenReturn(List.of());
+        when(userRepo.findByTeamIdAndOrgRoleAndActiveTrue(2L, "PO")).thenReturn(List.of());
+
+        service.submit(5L, USER_T2);
+
+        ArgumentCaptor<WeeklyReportMail> cap = ArgumentCaptor.forClass(WeeklyReportMail.class);
+        verify(mailRepo).save(cap.capture());
+        assertThat(cap.getValue().getStatus()).isEqualTo("SKIPPED_NO_CONTACT");
+        assertThat(cap.getValue().getToAddresses()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("approve: APPROVE_MANAGER kaydı (to=müdür, cc=takım); FAILED dönüşte status FAILED")
+    void approve_recordsMail() {
+        WeeklyReport r = report(5L, 2L, "PENDING_APPROVAL");
+        when(reportRepo.findById(5L)).thenReturn(Optional.of(r));
+        when(contactRepo.findByTeamIdAndRoleAndActiveTrue(2L, "MANAGER"))
+                .thenReturn(List.of(contact("MANAGER", "Ali Müdür", "mudur@test.com")));
+
+        service.approve(5L, PO_T2);
+
+        ArgumentCaptor<WeeklyReportMail> cap = ArgumentCaptor.forClass(WeeklyReportMail.class);
+        verify(mailRepo).save(cap.capture());
+        WeeklyReportMail m = cap.getValue();
+        assertThat(m.getMailType()).isEqualTo("APPROVE_MANAGER");
+        assertThat(m.getToAddresses()).isEqualTo("mudur@test.com");
+        assertThat(m.getCcAddresses()).isEqualTo("takim@test.com");
+        assertThat(m.getStatus()).isEqualTo("SENT");
+
+        // Mail FAILED dönerse kayıt FAILED, rapor yine APPROVED ama sentAt boş
+        WeeklyReport r2 = report(6L, 2L, "PENDING_APPROVAL");
+        when(reportRepo.findById(6L)).thenReturn(Optional.of(r2));
+        when(emailService.sendHtml(any(), any(), anyString(), anyString(), any()))
+                .thenReturn("FAILED: smtp down");
+
+        service.approve(6L, PO_T2);
+
+        ArgumentCaptor<WeeklyReportMail> cap2 = ArgumentCaptor.forClass(WeeklyReportMail.class);
+        verify(mailRepo, times(2)).save(cap2.capture());
+        assertThat(cap2.getValue().getStatus()).startsWith("FAILED");
+        assertThat(r2.getStatus()).isEqualTo("APPROVED");
+        assertThat(r2.getSentAt()).isNull();
+    }
+
+    @Test
+    @DisplayName("mails: okuma yetkisiyle döner, cid referansları /api'ye çevrilir")
+    void mails_rewritesCid() {
+        WeeklyReport r = report(5L, 2L, "APPROVED");
+        when(reportRepo.findById(5L)).thenReturn(Optional.of(r));
+        WeeklyReportMail m = new WeeklyReportMail();
+        m.setId(9L); m.setReportId(5L); m.setBodyHtml("<img src=\"cid:img7\">");
+        when(mailRepo.findByReportIdOrderByIdDesc(5L)).thenReturn(List.of(m));
+
+        List<WeeklyReportMail> out = service.mails(5L, USER_T2);
+
+        assertThat(out).hasSize(1);
+        assertThat(out.get(0).getBodyHtml()).contains("/api/weekly-reports/images/7")
+                .doesNotContain("cid:img7");
+
+        assertThatThrownBy(() -> service.mails(5L, USER_T7))
+                .isInstanceOf(SecurityException.class); // başka takım okuyamaz
+    }
+
+    @Test
+    @DisplayName("lastMailStatuses: rapor başına en son kaydın status'u")
+    void lastMailStatuses_picksLatest() {
+        WeeklyReportMail old = new WeeklyReportMail();
+        old.setId(1L); old.setReportId(5L); old.setStatus("SENT");
+        WeeklyReportMail newer = new WeeklyReportMail();
+        newer.setId(2L); newer.setReportId(5L); newer.setStatus("FAILED: smtp");
+        when(mailRepo.findByReportIdIn(List.of(5L))).thenReturn(List.of(old, newer));
+
+        Map<Long, String> out = service.lastMailStatuses(List.of(5L));
+
+        assertThat(out).containsEntry(5L, "FAILED: smtp");
+    }
+
     // ── Silme ─────────────────────────────────────────────────────────────────
 
     @Test
@@ -343,6 +451,7 @@ class WeeklyReportServiceTest {
         service.delete(5L, USER_T2);
 
         verify(imageRepo).deleteByReportId(5L);
+        verify(mailRepo).deleteByReportId(5L);
         verify(reportRepo).delete(r);
     }
 
@@ -487,6 +596,98 @@ class WeeklyReportServiceTest {
                 contains("internet kanalı eksik"), eq("PO İki"));
     }
 
+    // ── Tekrar işleme: revize (reopen) + tekrar gönder (resend) ───────────────
+
+    @Test
+    @DisplayName("reopen: USER kendi takımının pencere içi APPROVED'ını DRAFT'a çevirir — onay/gönderim sıfırlanır")
+    void reopen_userOwnTeamInWindow() {
+        WeeklyReport r = report(5L, 2L, "APPROVED");
+        r.setApprovedBy("PO İki"); r.setApprovedAt("2026-06-10T09:00:00Z"); r.setSentAt("2026-06-10T09:00:00Z");
+        int v = r.getVersion();
+        when(reportRepo.findById(5L)).thenReturn(Optional.of(r));
+
+        WeeklyReport out = service.reopen(5L, USER_T2);
+
+        assertThat(out.getStatus()).isEqualTo("DRAFT");
+        assertThat(out.getVersion()).isEqualTo(v + 1);
+        assertThat(out.getSentAt()).isNull();
+        assertThat(out.getApprovedBy()).isNull();
+        assertThat(out.getApprovedAt()).isNull();
+        verify(emailService, never()).sendHtml(any(), any(), anyString(), anyString(), any());
+    }
+
+    @Test
+    @DisplayName("reopen: ADMIN eski haftanın APPROVED raporunu da revize edebilir")
+    void reopen_adminOldWeek() {
+        WeeklyReport r = reportAtWeek(6L, 2L, "APPROVED", LocalDate.now().minusWeeks(5));
+        when(reportRepo.findById(6L)).thenReturn(Optional.of(r));
+
+        assertThat(service.reopen(6L, ADMIN).getStatus()).isEqualTo("DRAFT");
+    }
+
+    @Test
+    @DisplayName("reopen: non-admin pencere dışı → 403; AUDIT → 403; APPROVED değilse → 409")
+    void reopen_forbiddenAndStateGuards() {
+        WeeklyReport oldR = reportAtWeek(6L, 2L, "APPROVED", LocalDate.now().minusWeeks(5));
+        when(reportRepo.findById(6L)).thenReturn(Optional.of(oldR));
+        assertThatThrownBy(() -> service.reopen(6L, USER_T2))
+                .isInstanceOf(SecurityException.class); // pencere dışı (yalnız ADMIN)
+
+        WeeklyReport r = report(5L, 2L, "APPROVED");
+        when(reportRepo.findById(5L)).thenReturn(Optional.of(r));
+        assertThatThrownBy(() -> service.reopen(5L, new Actor(99L, "audit", "Denetçi", null, "AUDIT")))
+                .isInstanceOf(SecurityException.class); // AUDIT yasak
+
+        WeeklyReport draft = report(7L, 2L, "DRAFT");
+        when(reportRepo.findById(7L)).thenReturn(Optional.of(draft));
+        assertThatThrownBy(() -> service.reopen(7L, ADMIN))
+                .isInstanceOf(IllegalStateException.class); // APPROVED değil
+    }
+
+    @Test
+    @DisplayName("resend: onaylı raporu yeniden onaysız müdüre tekrar gönderir — APPROVE_MANAGER kaydı + sentAt + version++")
+    void resend_sendsManagerMailAgain() {
+        WeeklyReport r = report(5L, 2L, "APPROVED");
+        int v = r.getVersion();
+        when(reportRepo.findById(5L)).thenReturn(Optional.of(r));
+        when(contactRepo.findByTeamIdAndRoleAndActiveTrue(2L, "MANAGER"))
+                .thenReturn(List.of(contact("MANAGER", "Ali Müdür", "mudur@test.com")));
+
+        Map<String, Object> out = service.resend(5L, PO_T2);
+
+        WeeklyReport data = (WeeklyReport) out.get("data");
+        assertThat(data.getStatus()).isEqualTo("APPROVED"); // onay durumu korunur
+        assertThat(data.getVersion()).isEqualTo(v + 1);
+        assertThat(data.getSentAt()).isNotNull();
+        assertThat(out.get("mail_status")).isEqualTo("SENT");
+        ArgumentCaptor<WeeklyReportMail> mail = ArgumentCaptor.forClass(WeeklyReportMail.class);
+        verify(mailRepo).save(mail.capture());
+        assertThat(mail.getValue().getMailType()).isEqualTo("APPROVE_MANAGER");
+        verify(emailService).sendHtml(eq(new String[]{"mudur@test.com"}),
+                eq(new String[]{"takim@test.com"}), anyString(), anyString(), any());
+    }
+
+    @Test
+    @DisplayName("resend: MANAGER yoksa 409; APPROVED değilse 409; yetkisiz USER 403")
+    void resend_guards() {
+        WeeklyReport r = report(5L, 2L, "APPROVED");
+        when(reportRepo.findById(5L)).thenReturn(Optional.of(r));
+        when(contactRepo.findByTeamIdAndRoleAndActiveTrue(2L, "MANAGER")).thenReturn(List.of());
+        assertThatThrownBy(() -> service.resend(5L, PO_T2))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("MANAGER_CONTACT_MISSING");
+
+        WeeklyReport draft = report(7L, 2L, "DRAFT");
+        when(reportRepo.findById(7L)).thenReturn(Optional.of(draft));
+        assertThatThrownBy(() -> service.resend(7L, PO_T2))
+                .isInstanceOf(IllegalStateException.class); // APPROVED değil
+
+        WeeklyReport r2 = report(8L, 2L, "APPROVED");
+        when(reportRepo.findById(8L)).thenReturn(Optional.of(r2));
+        assertThatThrownBy(() -> service.resend(8L, USER_T2))
+                .isInstanceOf(SecurityException.class); // orgRole=TECH, onay yetkisi yok
+    }
+
     // ── İçerik / görsel doğrulama ─────────────────────────────────────────────
 
     @Test
@@ -528,5 +729,6 @@ class WeeklyReportServiceTest {
         var img = service.storeImage(5L, "Grafik", okFile, USER_T2);
         assertThat(img.getCaption()).isEqualTo("Grafik");
         assertThat(img.getContentType()).isEqualTo("image/png");
+        assertThat(img.getTeamId()).isEqualTo(2L); // açık takım izolasyonu (raporun takımı)
     }
 }

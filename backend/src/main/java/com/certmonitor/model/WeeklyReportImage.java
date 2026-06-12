@@ -16,7 +16,10 @@ import lombok.NoArgsConstructor;
  */
 @Entity
 @Table(name = "weekly_report_images",
-    indexes = @Index(name = "idx_wri_report", columnList = "report_id"))
+    indexes = {
+        @Index(name = "idx_wri_report", columnList = "report_id"),
+        @Index(name = "idx_wri_team", columnList = "team_id")
+    })
 @Data
 @NoArgsConstructor
 public class WeeklyReportImage {
@@ -27,6 +30,10 @@ public class WeeklyReportImage {
 
     @Column(name = "report_id", nullable = false)
     private Long reportId;
+
+    /** Görselin ait olduğu takım — açık izolasyon/sorgu için (report→team ile aynı). */
+    @Column(name = "team_id")
+    private Long teamId;
 
     /** Görselin üst açıklaması — mailde ve markdown alt-text'inde kullanılır. */
     @Column(length = 300)

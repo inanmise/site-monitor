@@ -95,6 +95,15 @@ class AdminControllerTest {
     @MockBean
     com.certmonitor.service.ConnectionDiagnosticsService diagnosticsService;
 
+    @MockBean
+    com.certmonitor.service.OpensslDiagnosticsService opensslDiagnosticsService;
+
+    @MockBean
+    com.certmonitor.service.NetworkDiagnosticsService networkDiagnosticsService;
+
+    @MockBean
+    com.certmonitor.service.DiagnosticHistoryService diagnosticHistoryService;
+
     @BeforeEach
     void setup() {
         when(userService.listTeams()).thenReturn(java.util.Collections.emptyList());
@@ -276,6 +285,70 @@ class AdminControllerTest {
                         .content("{\"domain\":\"not a domain!\",\"port\":443}"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.success").value(false));
+    }
+
+    @Test
+    @DisplayName("POST /api/admin/diagnostics/openssl as ADMIN returns probe; USER 403")
+    void runOpenssl_adminAndUser() throws Exception {
+        when(opensslDiagnosticsService.probe("example.com", 443)).thenReturn(Map.of(
+                "available", true, "version", "OpenSSL 3.0",
+                "protocols", List.of(Map.of("proto", "TLSv1.0", "supported", true, "risk", "HIGH"))
+        ));
+
+        mvc.perform(post("/api/admin/diagnostics/openssl")
+                        .session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"domain\":\"example.com\",\"port\":443}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.available").value(true))
+                .andExpect(jsonPath("$.data.protocols[0].proto").value("TLSv1.0"));
+
+        mvc.perform(post("/api/admin/diagnostics/openssl")
+                        .session(userSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"domain\":\"example.com\",\"port\":443}"))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    @DisplayName("POST /api/admin/diagnostics/network as ADMIN returns checks; USER 403")
+    void runNetwork_adminAndUser() throws Exception {
+        when(networkDiagnosticsService.analyze("example.com", 443)).thenReturn(Map.of(
+                "domain", "example.com", "os", "linux", "ok_count", 5, "total", 8,
+                "checks", List.of(Map.of("key", "tcp", "label", "TCP 443", "status", "ok",
+                        "summary", "Port açık (12 ms)"))
+        ));
+
+        mvc.perform(post("/api/admin/diagnostics/network")
+                        .session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"domain\":\"example.com\",\"port\":443}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.checks[0].key").value("tcp"))
+                .andExpect(jsonPath("$.data.checks[0].status").value("ok"));
+
+        mvc.perform(post("/api/admin/diagnostics/network")
+                        .session(userSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"domain\":\"example.com\",\"port\":443}"))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    @DisplayName("GET /api/admin/diagnostics/history returns records for domain")
+    void diagnosticsHistory_returnsList() throws Exception {
+        com.certmonitor.model.DiagnosticRun d = new com.certmonitor.model.DiagnosticRun();
+        d.setId(3L); d.setDomain("example.com"); d.setRunType("OPENSSL");
+        d.setExecutedBy("admin"); d.setExecutedAt("2026-06-12T10:00:00");
+        d.setSourceIp("10.0.0.5"); d.setSuccess(true); d.setSummary("Zayıf protokol yok");
+        when(diagnosticHistoryService.history("example.com")).thenReturn(List.of(d));
+
+        mvc.perform(get("/api/admin/diagnostics/history?domain=example.com").session(authSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].run_type").value("OPENSSL"))
+                .andExpect(jsonPath("$.data[0].executed_by").value("admin"))
+                .andExpect(jsonPath("$.data[0].source_ip").value("10.0.0.5"))
+                .andExpect(jsonPath("$.data[0].success").value(true));
     }
 
     @Test

@@ -3,7 +3,7 @@ import MDEditor, { commands as mdCommands } from '@uiw/react-md-editor'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import {
-  Plus, Save, Send, CheckCircle, Undo2, Eye, Trash2, RefreshCcw, ArrowLeft,
+  Plus, Save, Send, CheckCircle, Undo2, Eye, Trash2, RefreshCcw, ArrowLeft, Menu, History, FilePenLine,
 } from 'lucide-react'
 import { api, formatDate } from '../api/client'
 import { useT, useLanguage } from '../i18n/index.jsx'
@@ -56,6 +56,14 @@ const OUTDENT_ICON = (
   </svg>
 )
 
+/** Bayt → okunur boyut (≥1MB ise MB, aksi KB). */
+function fmtFileSize(bytes) {
+  if (bytes == null) return '—'
+  return bytes >= 1024 * 1024
+    ? (bytes / 1024 / 1024).toFixed(1) + ' MB'
+    : Math.max(1, Math.round(bytes / 1024)) + ' KB'
+}
+
 /** Seçimi tam satırlara genişletip her satıra fn uygular (girinti komutları). */
 function transformSelectedLines(state, api, fn) {
   const text = state.text ?? ''
@@ -81,6 +89,7 @@ function MdField({ value, onChange, editable, reportId, height = 220 }) {
   const { theme } = useTheme()
   const toast = useToast()
   const fileRef = useRef(null)
+  const caretRef = useRef(null) // kullanıcı textarea'da imleç hareket ettirince dolar; görsel buraya eklenir
   const [pendingFile, setPendingFile] = useState(null) // { file } → açıklama modalı
   const [caption, setCaption] = useState('')
   const [uploading, setUploading] = useState(false)
@@ -128,6 +137,12 @@ function MdField({ value, onChange, editable, reportId, height = 220 }) {
     ]
   }, [t])
 
+  // Kullanıcının editördeki imleç konumunu izle — görsel buraya eklenecek
+  function recordCaret(e) {
+    if (e.target?.tagName !== 'TEXTAREA') return
+    caretRef.current = { start: e.target.selectionStart, end: e.target.selectionEnd }
+  }
+
   function handlePasteCapture(e) {
     if (e.target?.tagName !== 'TEXTAREA') return
     const md = clipboardToMarkdownTable(e.clipboardData)
@@ -141,25 +156,39 @@ function MdField({ value, onChange, editable, reportId, height = 220 }) {
     toast.success(t('wr.pasteTableDone'))
   }
 
-  function handleFileChosen(e) {
+  // Görsel seçilince HEMEN optimize et (mail için agresif küçültme) — modalda
+  // orijinal→optimize boyutu gösterilir, kullanıcı ne olduğunu görür.
+  async function handleFileChosen(e) {
     const file = e.target.files?.[0]
     e.target.value = ''
     if (!file) return
     setCaption('')
-    setPendingFile({ file })
+    setPendingFile({ processing: true, name: file.name, originalSize: file.size })
+    const processed = await downscaleImage(file)
+    setPendingFile({ file: processed, name: file.name, originalSize: file.size, processedSize: processed.size })
   }
 
   async function doUpload() {
-    if (!pendingFile) return
+    if (!pendingFile || pendingFile.processing || !pendingFile.file) return
     setUploading(true)
     try {
-      const processed = await downscaleImage(pendingFile.file)
       const cap = caption.trim()
-      const res = await api.weeklyReports.uploadImage(reportId, processed, cap || null)
+      const res = await api.weeklyReports.uploadImage(reportId, pendingFile.file, cap || null)
       if (res?.success) {
-        const alt = cap || processed.name
+        const alt = cap || pendingFile.file.name
         const captionLine = cap ? `\n**${cap}**\n` : '\n'
-        onChange((value ?? '') + `${captionLine}\n![${alt}](/api/weekly-reports/images/${res.data.id})\n`)
+        const insert = `${captionLine}\n![${alt}](/api/weekly-reports/images/${res.data.id})\n`
+        const v = value ?? ''
+        const c = caretRef.current
+        if (c && typeof c.start === 'number' && c.start <= v.length) {
+          onChange(v.slice(0, c.start) + insert + v.slice(c.end ?? c.start)) // imleç konumuna
+        } else {
+          onChange(v + insert) // imleç belirtilmemiş → sona
+        }
+        caretRef.current = null // kontrollü değer değişimi caret'i bozar; sonraki etkileşim tazeler
+        if (pendingFile.processedSize < pendingFile.originalSize) {
+          toast.success(t('wr.imageOptimized', fmtFileSize(pendingFile.originalSize), fmtFileSize(pendingFile.processedSize)))
+        }
         setPendingFile(null)
         setCaption('')
       } else {
@@ -181,7 +210,7 @@ function MdField({ value, onChange, editable, reportId, height = 220 }) {
   }
 
   return (
-    <div onPasteCapture={handlePasteCapture}>
+    <div onPasteCapture={handlePasteCapture} onKeyUp={recordCaret} onMouseUp={recordCaret}>
       <div data-color-mode={theme === 'dark' ? 'dark' : 'light'}>
         <MDEditor
           value={value ?? ''}
@@ -196,25 +225,40 @@ function MdField({ value, onChange, editable, reportId, height = 220 }) {
         />
       </div>
       <div className="wr-hint">{t('wr.pasteHint')}</div>
-      <input ref={fileRef} type="file" accept="image/*"
+      <input ref={fileRef} type="file" accept="image/png,image/jpeg,image/gif,image/webp,image/bmp"
         style={{ display: 'none' }} onChange={handleFileChosen} />
 
       {pendingFile && (
         <div className="modal-overlay" onClick={() => !uploading && setPendingFile(null)}>
           <div className="modal-box" onClick={(e) => e.stopPropagation()}>
             <h3>{t('wr.uploadImage')}</h3>
-            <p style={{ fontSize: '.85em', color: 'var(--text-light)', marginBottom: 10 }}>
-              {pendingFile.file.name} · {(pendingFile.file.size / 1024 / 1024).toFixed(1)} MB
+            <div style={{ fontSize: '.8em', color: 'var(--text-light)', marginBottom: 6 }}>{t('wr.imageFormats')}</div>
+            <div className="alert-msg" style={{ fontSize: '.8em', marginBottom: 10 }}>{t('wr.imageLimitNote')}</div>
+            <p style={{ fontSize: '.85em', marginBottom: 10 }}>
+              <strong>{pendingFile.name}</strong>{' · '}
+              {pendingFile.processing ? (
+                <span style={{ color: 'var(--text-light)' }}>{t('wr.imageProcessing')}</span>
+              ) : (
+                <span>
+                  {t('wr.imageOriginal')}: {fmtFileSize(pendingFile.originalSize)}
+                  {pendingFile.processedSize < pendingFile.originalSize && (
+                    <> {' → '}<strong style={{ color: '#16a34a' }}>
+                      {t('wr.imageOptimizedLabel')}: {fmtFileSize(pendingFile.processedSize)}
+                    </strong></>
+                  )}
+                </span>
+              )}
             </p>
             <label style={{ display: 'flex', flexDirection: 'column', gap: 6, fontSize: '.9em' }}>
               {t('wr.imageCaption')}
-              <input autoFocus value={caption} onChange={(e) => setCaption(e.target.value)}
-                onKeyDown={(e) => { if (e.key === 'Enter') doUpload() }} />
+              <textarea className="wr-caption" autoFocus rows={3}
+                value={caption} placeholder={t('wr.imageCaptionPlaceholder')}
+                onChange={(e) => setCaption(e.target.value)} />
             </label>
             <div className="modal-actions">
               <button className="btn btn-secondary" disabled={uploading}
                 onClick={() => setPendingFile(null)}>{t('wr.cancel')}</button>
-              <button className="btn btn-primary" disabled={uploading} onClick={doUpload}>
+              <button className="btn btn-primary" disabled={uploading || pendingFile.processing} onClick={doUpload}>
                 {uploading ? t('wr.uploading') : t('wr.insertImage')}
               </button>
             </div>
@@ -264,7 +308,11 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName }) {
   const [year, setYear] = useState(isoWeekInfo().year)
   const [years, setYears] = useState([])
   const [jumpDate, setJumpDate] = useState('')
+  const [weekFilter, setWeekFilter] = useState(null) // "Tarihe Git" → tabloyu o haftaya daraltır
+  const [openMenuId, setOpenMenuId] = useState(null)  // İşlemler kebab menüsü açık satır
+  const [menuPos, setMenuPos] = useState({ top: 0, left: 0 }) // fixed konum (overflow'dan kaçış)
   const [reports, setReports] = useState([])
+  const [loadingList, setLoadingList] = useState(true)
   const [selectedId, setSelectedId] = useState(null)
   const [report, setReport] = useState(null)      // full report (GET /{id})
   const [content, setContent] = useState(null)    // parsed content_json
@@ -280,6 +328,9 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName }) {
   const [lockHeld, setLockHeld] = useState(false)     // düzenleme kilidi bizde mi
   const [lockHolder, setLockHolder] = useState(null)  // { name } — başkasında ise
   const [conflict, setConflict] = useState(null)      // VERSION_CONFLICT mesajı
+  const [loadingReport, setLoadingReport] = useState(false)
+  const [mailHistory, setMailHistory] = useState(null) // { report, items } — gönderim geçmişi modal'ı
+  const [openMailBody, setOpenMailBody] = useState(null) // içeriği açık olan kayıt id'si
 
   const effTeamId = isAdmin ? (selTeamId ? Number(selTeamId) : null) : teamId
   // Düzenleme/silme: ADMIN her durum + her hafta; diğerleri kendi takımının
@@ -294,10 +345,29 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName }) {
     && (report.status === 'DRAFT' || report.status === 'REJECTED') && !isEditableWeek(report)
   const canSubmit = editable && report.status === 'DRAFT'
   const showApproval = !!report && report.status === 'PENDING_APPROVAL' && !isAudit
+  // Gönderilmiş raporu tekrar işleme: Revize Et (taslağa döndür) / Tekrar Gönder
+  const canReopen = !!report && report.status === 'APPROVED'
+    && (isAdmin || (!isAudit && report.team_id === teamId && isEditableWeek(report)))
+  const canResend = !!report && report.status === 'APPROVED' && !isAudit
 
   useEffect(() => {
     if (isAdmin) api.admin.getTeams().then((res) => { if (res?.success) setTeams(res.data ?? []) })
   }, [isAdmin])
+
+  // İşlemler kebab menüsü — dışarı tıkla / kaydırma / yeniden boyutlandırmada kapan
+  // (menü position:fixed olduğundan scroll'u takip etmez → kapatmak en doğrusu)
+  useEffect(() => {
+    const close = () => setOpenMenuId(null)
+    const onDown = (e) => { if (!e.target.closest('.wr-menu-wrap')) setOpenMenuId(null) }
+    document.addEventListener('mousedown', onDown)
+    window.addEventListener('scroll', close, true)
+    window.addEventListener('resize', close)
+    return () => {
+      document.removeEventListener('mousedown', onDown)
+      window.removeEventListener('scroll', close, true)
+      window.removeEventListener('resize', close)
+    }
+  }, [])
 
   // Yıl dropdown'ı: rapor bulunan yıllar (geriye dönük erişim) — takım değişince yenilenir
   const loadYears = useCallback(async () => {
@@ -322,31 +392,34 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName }) {
   /** Tarihe Git: seçilen tarihin ISO haftası bulunur; kapsamda o haftanın
    *  raporu varsa doğrudan açılır, yoksa yıl filtresi yine o yıla çekilir.
    *  Seçilen tarih alanda görünür kalır. */
-  async function goToDate(dateStr) {
+  /** Tarihe Git: seçilen tarihin ISO haftasını tabloya FİLTRE olarak uygular —
+   *  raporu otomatik açmaz; yükleme göstergesiyle o haftanın kayıtlarını
+   *  tabloda listeler (yoksa boş). Filtre chip'iyle temizlenebilir. */
+  function goToDate(dateStr) {
     setJumpDate(dateStr)
-    if (!dateStr) return
+    if (!dateStr) { setWeekFilter(null); return }
     const picked = new Date(dateStr + 'T12:00:00')
     // Elle yazım sırasında oluşan ara değerler (örn. yıl "0002") tetiklemesin
     if (picked.getFullYear() < 2000 || picked.getFullYear() > 2100) return
     const { year: y, week } = isoWeekInfo(picked)
-    setYear(y)
-    const res = await api.weeklyReports.list({ teamId: effTeamId ?? undefined, year: y })
-    const matches = (res?.success ? res.data ?? [] : []).filter((r) => r.week_no === week)
-    if (matches.length === 1) {
-      setSelectedId(matches[0].id)
-    } else if (!matches.length) {
-      toast.info(t('wr.noReportForWeek'))
-    }
+    setWeekFilter(week)
+    if (y !== year) setYear(y)  // yıl efekti loadList'i tetikler (loading + fetch)
+    else loadList()             // aynı yıl: yükleme göstergesiyle tazele, sonra filtrele
   }
 
   const loadList = useCallback(async () => {
-    const res = await api.weeklyReports.list({ teamId: effTeamId ?? undefined, year })
-    if (res?.success) {
-      setReports(res.data ?? [])
-      // Açık rapor (filtre değişimiyle) listeden kaybolduysa listeye dön
-      if (selectedId && !res.data?.some((r) => r.id === selectedId)) {
-        setSelectedId(null)
+    setLoadingList(true)
+    try {
+      const res = await api.weeklyReports.list({ teamId: effTeamId ?? undefined, year })
+      if (res?.success) {
+        setReports(res.data ?? [])
+        // Açık rapor (filtre değişimiyle) listeden kaybolduysa listeye dön
+        if (selectedId && !res.data?.some((r) => r.id === selectedId)) {
+          setSelectedId(null)
+        }
       }
+    } finally {
+      setLoadingList(false)
     }
   }, [effTeamId, year, selectedId])
 
@@ -354,6 +427,15 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName }) {
 
   const loadReport = useCallback(async (id) => {
     if (!id) { setReport(null); setContent(null); setLockHeld(false); setLockHolder(null); return }
+    setLoadingReport(true)
+    try {
+      await loadReportInner(id)
+    } finally {
+      setLoadingReport(false)
+    }
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function loadReportInner(id) {
     const res = await api.weeklyReports.get(id)
     if (res?.success) {
       const r = res.data.report
@@ -386,8 +468,12 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName }) {
           setPendingBackup(null)
         }
       } catch { setPendingBackup(null) }
+    } else {
+      // Rapor açılamadı (silinmiş/yetki/ağ) — boş ekranda bırakma, listeye dön
+      toast.error(res?.error || t('wr.actionFailed'))
+      setSelectedId(null)
     }
-  }, [])
+  }
 
   useEffect(() => { loadReport(selectedId) }, [selectedId, loadReport])
 
@@ -507,6 +593,30 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName }) {
     return () => clearInterval(id)
   }, [report?.id, lockHeld]) // eslint-disable-line react-hooks/exhaustive-deps
 
+  // ── Mail gönderim geçmişi ────────────────────────────────────────────────
+
+  /** sendHtml status string'i → rozet bilgisi. */
+  function mailStatusInfo(s) {
+    if (!s) return null
+    if (s === 'SENT') return { label: t('wr.mailStatusSent'), color: '#16a34a' }
+    if (s.startsWith('QUEUED_RETRY')) return { label: t('wr.mailStatusQueued'), color: '#d97706' }
+    if (s === 'SKIPPED_NO_CONTACT') return { label: t('wr.mailStatusNoContact'), color: '#dc2626' }
+    if (s === 'SKIPPED_DISABLED') return { label: t('wr.mailStatusDisabled'), color: '#6b7280' }
+    return { label: t('wr.mailStatusFailed'), color: '#dc2626' } // FAILED:*
+  }
+
+  const mailProblem = (s) => !!s && (s.startsWith('FAILED') || s === 'SKIPPED_NO_CONTACT')
+
+  async function openMailHistory(r) {
+    const res = await api.weeklyReports.mails(r.id)
+    if (res?.success) {
+      setOpenMailBody(null)
+      setMailHistory({ report: r, items: res.data ?? [] })
+    } else {
+      toast.error(res?.error || t('wr.actionFailed'))
+    }
+  }
+
   /** Kilit bandındaki "Yenile" — kilidi tekrar dene (rapor da tazelenir). */
   async function retryLock() {
     await loadReport(report.id)
@@ -573,6 +683,46 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName }) {
     setBusy(false)
     if (res?.success) {
       toast.success(t('wr.approveOk'))
+      loadReport(report.id); loadList()
+    } else {
+      toast.error(res?.error || t('wr.actionFailed'))
+    }
+  }
+
+  // Onaylı raporu yeniden düzenlenebilir hale getirir (APPROVED → DRAFT)
+  async function reopenReport() {
+    const ok = await showConfirm({
+      title: t('wr.reopen'),
+      message: t('wr.reopenConfirm'),
+      confirmText: t('wr.reopen'),
+      cancelText: t('wr.cancel'),
+    })
+    if (!ok) return
+    setBusy(true)
+    const res = await api.weeklyReports.reopen(report.id)
+    setBusy(false)
+    if (res?.success) {
+      toast.success(t('wr.reopenOk'))
+      loadReport(report.id); loadList()
+    } else {
+      toast.error(res?.error || t('wr.actionFailed'))
+    }
+  }
+
+  // Onaylı raporu (yeniden onaysız) müdüre tekrar gönderir
+  async function resendReport() {
+    const ok = await showConfirm({
+      title: t('wr.resend'),
+      message: t('wr.resendConfirm'),
+      confirmText: t('wr.resend'),
+      cancelText: t('wr.cancel'),
+    })
+    if (!ok) return
+    setBusy(true)
+    const res = await api.weeklyReports.resend(report.id)
+    setBusy(false)
+    if (res?.success) {
+      toast.success(t('wr.resendOk'))
       loadReport(report.id); loadList()
     } else {
       toast.error(res?.error || t('wr.actionFailed'))
@@ -682,18 +832,25 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName }) {
     setChannelTab(Math.max(0, channelTab - (idx <= channelTab ? 1 : 0)))
   }
 
-  const statusBadge = (status) => (
-    <span style={{
-      background: STATUS_COLOR[status] || '#6b7280', color: '#fff',
-      padding: '3px 10px', borderRadius: 12, fontSize: '.78em', fontWeight: 700,
-    }}>
-      {t(`wr.status${status === 'PENDING_APPROVAL' ? 'Pending' : status.charAt(0) + status.slice(1).toLowerCase()}`)}
-    </span>
-  )
+  /** Durum rozeti — en son gerçek statü: APPROVED + gönderildi → "Gönderildi",
+   *  APPROVED + gönderilmedi → "Onaylandı"; diğerleri durum eşlemesi. */
+  const statusBadge = (status, sentAt) => {
+    const label = status === 'APPROVED'
+      ? (sentAt ? t('wr.statusSent') : t('wr.statusApproved'))
+      : t(`wr.status${status === 'PENDING_APPROVAL' ? 'Pending' : status.charAt(0) + status.slice(1).toLowerCase()}`)
+    return (
+      <span style={{
+        background: STATUS_COLOR[status] || '#6b7280', color: '#fff',
+        padding: '3px 10px', borderRadius: 12, fontSize: '.78em', fontWeight: 700,
+      }}>{label}</span>
+    )
+  }
 
   const i1 = content?.item1 ?? {}
   const i2 = content?.item2 ?? {}
   const channels = content?.item4?.channels ?? []
+  // "Tarihe Git" hafta filtresi etkinse tablo o haftaya daraltılır
+  const displayedReports = weekFilter != null ? reports.filter((r) => r.week_no === weekFilter) : reports
 
   // Üstte ve altta aynı aksiyon barı — kaydırmada ikisi de sticky görünür
   const actionButtons = report && (
@@ -726,6 +883,16 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName }) {
           </button>
         </>
       )}
+      {canResend && (
+        <button className="btn btn-success" onClick={resendReport} disabled={busy || managerMissing}>
+          <RefreshCcw size={14} /> {t('wr.resend')}
+        </button>
+      )}
+      {canReopen && (
+        <button className="btn btn-secondary" onClick={reopenReport} disabled={busy}>
+          <FilePenLine size={14} /> {t('wr.reopen')}
+        </button>
+      )}
     </>
   )
 
@@ -740,7 +907,7 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName }) {
               {isAdmin && (
                 <div className="wr-flt">
                   <span>{t('wr.team')}</span>
-                  <SearchableSelect value={selTeamId} onChange={(v) => setSelTeamId(v)}
+                  <SearchableSelect value={selTeamId} onChange={(v) => { setSelTeamId(v); setLoadingList(true) }}
                     placeholder={t('wr.allTeams')}
                     options={[{ value: '', label: t('wr.allTeams') },
                       ...teams.map((tm) => ({ value: String(tm.id), label: tm.name }))]} />
@@ -748,7 +915,7 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName }) {
               )}
               <div className="wr-flt">
                 <span>{t('wr.year')}</span>
-                <SearchableSelect value={year} onChange={(v) => setYear(Number(v))}
+                <SearchableSelect value={year} onChange={(v) => { setYear(Number(v)); setLoadingList(true) }}
                   options={[...new Set([...years, year])].sort((a, b) => b - a)
                     .map((y) => ({ value: y, label: String(y) }))} />
               </div>
@@ -779,54 +946,107 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName }) {
 
       {/* ── Liste görünümü — hafta bazlı sıralı (backend hafta desc döner) ── */}
       {!selectedId && (
-        reports.length ? (
+        loadingList ? (
+          <div className="loading">{t('app.loading')}</div>
+        ) : (
+          <>
+            {weekFilter != null && (
+              <div style={{
+                display: 'inline-flex', alignItems: 'center', gap: 8, marginBottom: 12,
+                padding: '5px 12px', borderRadius: 16, border: '1px solid var(--border)',
+                background: 'var(--bg-card)', fontSize: '.85em', fontWeight: 600,
+              }}>
+                📅 {formatWeekRange(year, weekFilter, lang)}
+                <button type="button" title={t('wr.clearFilter')} aria-label={t('wr.clearFilter')}
+                  onClick={() => { setWeekFilter(null); setJumpDate('') }}
+                  style={{ border: 'none', background: 'none', cursor: 'pointer', color: 'var(--text-light)', fontSize: '1.1em', lineHeight: 1 }}>✕</button>
+              </div>
+            )}
+            {displayedReports.length ? (
           <div className="admin-table-wrap">
             <table className="admin-table">
               <thead>
                 <tr>
                   <th>{t('wr.colWeek')}</th>
-                  {isAdmin && !selTeamId && <th>{t('wr.team')}</th>}
+                  <th>{t('wr.team')}</th>
                   <th>{t('wr.statusCol')}</th>
+                  <th>{t('wr.colCreated')}</th>
                   <th>{t('wr.colUpdated')}</th>
+                  <th>{t('wr.colApproved')}</th>
                   <th>{t('wr.colSent')}</th>
                   <th>{t('wr.actions')}</th>
                 </tr>
               </thead>
               <tbody>
-                {reports.map((r) => (
+                {displayedReports.map((r) => (
                   <tr key={r.id} onClick={() => setSelectedId(r.id)} style={{ cursor: 'pointer' }}>
-                    <td><strong>{r.week_label}</strong></td>
-                    {isAdmin && !selTeamId && (
-                      <td>{teams.find((tm) => tm.id === r.team_id)?.name ?? r.team_id}</td>
-                    )}
+                    <td><strong>{formatWeekRange(r.report_year, r.week_no, lang)}</strong></td>
+                    <td>{isAdmin ? (teams.find((tm) => tm.id === r.team_id)?.name ?? r.team_id) : (teamName ?? r.team_id)}</td>
                     <td>
-                      {statusBadge(r.status)}
+                      {statusBadge(r.status, r.sent_at)}
                       {r.editing_by && (
                         <div style={{ fontSize: '.72em', color: 'var(--text-light)', marginTop: 3 }}>
                           ✏️ {r.editing_by} {t('wr.editingNow')}
                         </div>
                       )}
+                      {mailProblem(r.last_mail_status) && (
+                        <div title={r.last_mail_status}
+                          style={{ fontSize: '.72em', color: '#dc2626', fontWeight: 700, marginTop: 3 }}>
+                          ⚠ {t('wr.sendError')}
+                        </div>
+                      )}
                     </td>
+                    <td>{r.created_by ? `${r.created_by} · ${formatDate(r.created_at)}` : '—'}</td>
                     <td>{r.updated_by} · {formatDate(r.updated_at)}</td>
+                    <td>{r.approved_by ? `${r.approved_by} · ${formatDate(r.approved_at)}` : '—'}</td>
                     <td>{r.sent_at ? formatDate(r.sent_at) : '—'}</td>
                     <td onClick={(e) => e.stopPropagation()}>
-                      <button className="btn-sm btn-edit" onClick={() => setSelectedId(r.id)}>
-                        {t('wr.open')}
-                      </button>
-                      {canModifyRow(r) && (
-                        <button className="btn-sm btn-del" onClick={() => deleteReport(r)}>
-                          {t('wr.deleteReport')}
+                      <div className="wr-menu-wrap">
+                        <button className="btn-sm" title={t('wr.actions')} aria-label={t('wr.actions')}
+                          style={{ background: '#eef2f7', color: '#334155' }}
+                          onClick={(e) => {
+                            if (openMenuId === r.id) { setOpenMenuId(null); return }
+                            const rect = e.currentTarget.getBoundingClientRect()
+                            setMenuPos({ top: rect.bottom + 4, left: Math.max(8, rect.right - 168) })
+                            setOpenMenuId(r.id)
+                          }}>
+                          <Menu size={15} />
                         </button>
-                      )}
+                        {openMenuId === r.id && (
+                          <div className="wr-menu-pop"
+                            style={{ position: 'fixed', top: menuPos.top, left: menuPos.left, right: 'auto' }}>
+                            <button onClick={() => { setOpenMenuId(null); setSelectedId(r.id) }}>
+                              <Eye size={14} /> {t('wr.open')}
+                            </button>
+                            <button onClick={() => { setOpenMenuId(null); openMailHistory(r) }}>
+                              <History size={14} /> {t('wr.history')}
+                            </button>
+                            {canModifyRow(r) && (
+                              <button className="danger" onClick={() => { setOpenMenuId(null); deleteReport(r) }}>
+                                <Trash2 size={14} /> {t('wr.deleteReport')}
+                              </button>
+                            )}
+                          </div>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
-        ) : (
-          <div className="empty-state">{t('wr.noReportSelected')}</div>
+            ) : (
+              <div className="empty-state">
+                {weekFilter != null ? t('wr.noReportForWeek') : t('wr.noReportSelected')}
+              </div>
+            )}
+          </>
         )
+      )}
+
+      {/* ── Rapor yükleniyor — boş ekran yerine gösterge ── */}
+      {selectedId && !report && loadingReport && (
+        <div className="loading">{t('app.loading')}</div>
       )}
 
       {report && content && (
@@ -834,7 +1054,7 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName }) {
           {/* ── Durum satırı ── */}
           <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', marginBottom: 14 }}>
             <strong style={{ fontSize: '1.05em' }}>{report.week_label}</strong>
-            {statusBadge(report.status)}
+            {statusBadge(report.status, report.sent_at)}
             {report.sent_at && <span style={{ fontSize: '.8em', color: 'var(--text-light)' }}>
               {t('wr.sentAt')} {formatDate(report.sent_at)}
             </span>}
@@ -1081,6 +1301,74 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName }) {
         </div>
       )}
 
+      {/* ── Gönderim geçmişi ── */}
+      {mailHistory && (
+        <div className="modal-overlay" onClick={() => { setMailHistory(null); setOpenMailBody(null) }}>
+          <div className="modal-box" onClick={(e) => e.stopPropagation()}
+            style={{ maxWidth: 860, width: '100%', maxHeight: '88vh', display: 'flex', flexDirection: 'column' }}>
+            <h3>{t('wr.mailHistoryTitle', mailHistory.report.week_label)}</h3>
+            <div style={{ overflowY: 'auto', flex: 1, paddingRight: 4 }}>
+              {!mailHistory.items.length && (
+                <div className="empty-state">{t('wr.mailHistoryEmpty')}</div>
+              )}
+              {mailHistory.items.map((m) => {
+                const st = mailStatusInfo(m.status)
+                return (
+                  <div key={m.id} style={{
+                    border: '1px solid var(--border)', borderRadius: 8,
+                    marginBottom: 12, overflow: 'hidden',
+                  }}>
+                    <div style={{
+                      display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap',
+                      padding: '8px 12px', borderBottom: '1px solid var(--border)',
+                    }}>
+                      <strong style={{ fontSize: '.9em' }}>{t(`wr.mailType${m.mail_type}`)}</strong>
+                      {st && (
+                        <span title={m.status} style={{
+                          background: st.color, color: '#fff', padding: '2px 9px',
+                          borderRadius: 10, fontSize: '.74em', fontWeight: 700,
+                        }}>{st.label}</span>
+                      )}
+                      <span style={{ marginLeft: 'auto', fontSize: '.78em', color: 'var(--text-light)' }}>
+                        {formatDate(m.created_at)}
+                      </span>
+                    </div>
+                    <div style={{ padding: '10px 12px', fontSize: '.85em', display: 'grid', gap: 4 }}>
+                      <div><strong>{t('wr.mailFrom')}:</strong> {m.from_address || '—'}</div>
+                      <div><strong>{t('wr.mailTo')}:</strong> {m.to_addresses || '—'}</div>
+                      {m.cc_addresses && <div><strong>CC:</strong> {m.cc_addresses}</div>}
+                      <div><strong>{t('wr.mailSubject')}:</strong> {m.subject}</div>
+                      <div><strong>{t('wr.mailBy')}:</strong> {m.created_by}</div>
+                      {mailProblem(m.status) && (
+                        <div style={{ color: '#dc2626', fontWeight: 600 }}>⚠ {m.status}</div>
+                      )}
+                    </div>
+                    <div style={{ padding: '0 12px 10px' }}>
+                      <button type="button" className="btn-sm btn-edit"
+                        onClick={() => setOpenMailBody(openMailBody === m.id ? null : m.id)}>
+                        {openMailBody === m.id ? t('wr.mailHideBody') : t('wr.mailShowBody')}
+                      </button>
+                      {openMailBody === m.id && (
+                        // allow-same-origin: görseller oturum çerezi ile yüklenir; script yok
+                        <iframe title={`mail-${m.id}`} srcDoc={m.body_html} sandbox="allow-same-origin"
+                          style={{
+                            width: '100%', height: 420, marginTop: 8,
+                            border: '1px solid var(--border)', borderRadius: 8, background: '#f4f6f8',
+                          }} />
+                      )}
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+            <div className="modal-actions">
+              <button className="btn btn-secondary"
+                onClick={() => { setMailHistory(null); setOpenMailBody(null) }}>{t('wr.close')}</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ── Mail önizleme ── */}
       {previewHtml != null && (
         <div className="modal-overlay" onClick={() => setPreviewHtml(null)}>
@@ -1089,7 +1377,7 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName }) {
             <h3>{t('wr.previewTitle')}</h3>
             {/* allow-same-origin: görsellerin oturum çerezi ile yüklenebilmesi için; script yok */}
             <iframe title="preview" srcDoc={previewHtml} sandbox="allow-same-origin"
-              style={{ flex: 1, border: '1px solid var(--border)', borderRadius: 8, background: '#f1f5f9' }} />
+              style={{ flex: 1, border: '1px solid var(--border)', borderRadius: 8, background: '#f4f6f8' }} />
             <div className="modal-actions">
               <button className="btn btn-secondary" onClick={() => setPreviewHtml(null)}>{t('wr.close')}</button>
             </div>

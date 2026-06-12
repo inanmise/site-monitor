@@ -5,10 +5,12 @@ import com.certmonitor.model.EscalationContact;
 import com.certmonitor.model.Team;
 import com.certmonitor.model.WeeklyReport;
 import com.certmonitor.model.WeeklyReportImage;
+import com.certmonitor.model.WeeklyReportMail;
 import com.certmonitor.repository.AppUserRepository;
 import com.certmonitor.repository.EscalationContactRepository;
 import com.certmonitor.repository.TeamRepository;
 import com.certmonitor.repository.WeeklyReportImageRepository;
+import com.certmonitor.repository.WeeklyReportMailRepository;
 import com.certmonitor.repository.WeeklyReportRepository;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -53,6 +55,7 @@ public class WeeklyReportService {
 
     private final WeeklyReportRepository reportRepo;
     private final WeeklyReportImageRepository imageRepo;
+    private final WeeklyReportMailRepository mailRepo;
     private final TeamRepository teamRepo;
     private final AppUserRepository userRepo;
     private final EscalationContactRepository contactRepo;
@@ -276,16 +279,16 @@ public class WeeklyReportService {
         String teamName = team != null ? team.getName() : "Takım";
 
         List<String> poEmails = resolvePoEmails(r.getTeamId());
+        String poSubject = "[CertMonitor] " + teamName + " — " + r.getWeekLabel() + " raporu onayınızı bekliyor";
+        String poHtml = emailService.buildWeeklyReportSubmittedHtml(teamName, r.getWeekLabel(), actor.display());
         String poMail;
         if (poEmails.isEmpty()) {
             poMail = "SKIPPED_NO_CONTACT";
             log.warn("Haftalık rapor onaya gönderildi ama PO kontağı yok: team={} report={}", teamName, id);
         } else {
-            String html = emailService.buildWeeklyReportSubmittedHtml(teamName, r.getWeekLabel(), actor.display());
-            poMail = emailService.sendHtml(poEmails.toArray(new String[0]), null,
-                    "[CertMonitor] " + teamName + " — " + r.getWeekLabel() + " raporu onayınızı bekliyor",
-                    html, null);
+            poMail = emailService.sendHtml(poEmails.toArray(new String[0]), null, poSubject, poHtml, null);
         }
+        recordMail(r, "SUBMIT_PO", poEmails, null, poSubject, poHtml, poMail, actor);
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("data", r);
         out.put("po_mail", poMail);
@@ -298,6 +301,80 @@ public class WeeklyReportService {
         requireCanApprove(r, actor);
         requireStatus(r, "PENDING_APPROVAL");
 
+        String mailStatus = sendApprovalMail(r, actor); // MANAGER yoksa 409 fırlatır
+
+        r.setStatus("APPROVED");
+        r.setVersion(r.getVersion() + 1);
+        clearLock(r);
+        r.setApprovedBy(actor.display());
+        r.setApprovedAt(now());
+        r.setRejectNote(null);
+        if (mailSent(mailStatus)) r.setSentAt(now());
+        r.setUpdatedBy(actor.display());
+        r.setUpdatedAt(now());
+        reportRepo.save(r);
+
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("data", r);
+        out.put("mail_status", mailStatus);
+        return out;
+    }
+
+    /** Onaylanmış raporu (değiştirmeden, yeniden onaysız) müdüre TEKRAR gönderir
+     *  — "mail ulaşmadı/sorun oldu" senaryosu. Yetki = onay yetkisi. */
+    public Map<String, Object> resend(Long id, Actor actor) {
+        WeeklyReport r = get(id, actor);
+        requireCanApprove(r, actor);
+        requireStatus(r, "APPROVED");
+
+        String mailStatus = sendApprovalMail(r, actor);
+        r.setVersion(r.getVersion() + 1);
+        if (mailSent(mailStatus)) r.setSentAt(now());
+        r.setUpdatedBy(actor.display());
+        r.setUpdatedAt(now());
+        reportRepo.save(r);
+
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("data", r);
+        out.put("mail_status", mailStatus);
+        return out;
+    }
+
+    /** Onaylı raporu yeniden düzenlenebilir hale getirir (APPROVED → DRAFT).
+     *  ADMIN her hafta; non-admin kendi takımı + düzenleme penceresi.
+     *  Onay/gönderim alanları sıfırlanır (taze döngü); geçmiş mailler korunur. */
+    public WeeklyReport reopen(Long id, Actor actor) {
+        WeeklyReport r = get(id, actor);
+        requireStatus(r, "APPROVED");
+        if (actor.isAudit()) throw new SecurityException("AUDIT rolü rapor düzenleyemez");
+        if (!actor.isAdmin()) {
+            if (!Objects.equals(actor.teamId(), r.getTeamId())) {
+                throw new SecurityException("Başka takımın raporu revize edilemez");
+            }
+            if (!inEditWindow(r.getReportYear(), r.getWeekNo())) {
+                throw new SecurityException(
+                        "Yalnızca içinde bulunulan ve bir önceki haftanın raporları revize edilebilir");
+            }
+        }
+        r.setStatus("DRAFT");
+        r.setVersion(r.getVersion() + 1);
+        r.setSentAt(null);
+        r.setApprovedBy(null);
+        r.setApprovedAt(null);
+        r.setUpdatedBy(actor.display());
+        r.setUpdatedAt(now());
+        log.info("Haftalık rapor revizyona açıldı (APPROVED→DRAFT): id={} team={} by={}",
+                id, r.getTeamId(), actor.display());
+        return reportRepo.save(r);
+    }
+
+    private static boolean mailSent(String s) {
+        return "SENT".equals(s) || (s != null && s.startsWith("QUEUED_RETRY"));
+    }
+
+    /** Müdüre rapor maili gönderir + kaydeder; mailStatus döner. MANAGER kontağı
+     *  yoksa MANAGER_CONTACT_MISSING (409). approve ve resend ortak kullanır. */
+    private String sendApprovalMail(WeeklyReport r, Actor actor) {
         List<EscalationContact> managers = contactRepo
                 .findByTeamIdAndRoleAndActiveTrue(r.getTeamId(), "MANAGER").stream()
                 .filter(c -> c.getEmail() != null && !c.getEmail().isBlank())
@@ -305,7 +382,6 @@ public class WeeklyReportService {
         if (managers.isEmpty()) {
             throw new IllegalStateException("MANAGER_CONTACT_MISSING");
         }
-
         Team team = teamRepo.findById(r.getTeamId()).orElse(null);
         String teamName = team != null ? team.getName() : "Takım";
         String teamEmail = team != null && team.getEmail() != null && !team.getEmail().isBlank()
@@ -320,31 +396,15 @@ public class WeeklyReportService {
                 teamName, r.getWeekLabel(), managerName, r.getContentJson(), true,
                 imageDisplayWidths(inline));
 
-        String mailStatus = emailService.sendHtml(to, cc,
-                "[" + teamName + "] Haftalık Rapor — " + r.getWeekLabel(),
-                html, inline);
+        String subject = "[" + teamName + "] Haftalık Rapor — " + r.getWeekLabel();
+        String mailStatus = emailService.sendHtml(to, cc, subject, html, inline);
+        recordMail(r, "APPROVE_MANAGER", List.of(to),
+                cc != null ? List.of(cc) : null, subject, html, mailStatus, actor);
 
-        r.setStatus("APPROVED");
-        r.setVersion(r.getVersion() + 1);
-        clearLock(r);
-        r.setApprovedBy(actor.display());
-        r.setApprovedAt(now());
-        r.setRejectNote(null);
-        if ("SENT".equals(mailStatus) || (mailStatus != null && mailStatus.startsWith("QUEUED_RETRY"))) {
-            r.setSentAt(now());
-        }
-        r.setUpdatedBy(actor.display());
-        r.setUpdatedAt(now());
-        reportRepo.save(r);
-
-        log.info("Haftalık rapor onaylandı ve gönderildi: team={} week={} TO=[{}] CC=[{}] status={}",
+        log.info("Haftalık rapor müdüre gönderildi: team={} week={} TO=[{}] CC=[{}] status={}",
                 teamName, r.getWeekLabel(), String.join(", ", to),
                 teamEmail != null ? teamEmail : "-", mailStatus);
-
-        Map<String, Object> out = new LinkedHashMap<>();
-        out.put("data", r);
-        out.put("mail_status", mailStatus);
-        return out;
+        return mailStatus;
     }
 
     /** PENDING → REJECTED; düzeltme notu Team.email'e mail ile gider. */
@@ -368,15 +428,18 @@ public class WeeklyReportService {
         String teamName = team != null ? team.getName() : "Takım";
         String teamEmail = team != null && team.getEmail() != null && !team.getEmail().isBlank()
                 ? team.getEmail().trim() : null;
+        String rjSubject = "[CertMonitor] " + teamName + " — " + r.getWeekLabel() + " raporu iade edildi";
+        String rjHtml = emailService.buildWeeklyReportRejectedHtml(
+                teamName, r.getWeekLabel(), note.trim(), actor.display());
+        String rjStatus;
         if (teamEmail != null) {
-            String html = emailService.buildWeeklyReportRejectedHtml(
-                    teamName, r.getWeekLabel(), note.trim(), actor.display());
-            emailService.sendHtml(new String[]{teamEmail}, null,
-                    "[CertMonitor] " + teamName + " — " + r.getWeekLabel() + " raporu iade edildi",
-                    html, null);
+            rjStatus = emailService.sendHtml(new String[]{teamEmail}, null, rjSubject, rjHtml, null);
         } else {
+            rjStatus = "SKIPPED_NO_CONTACT";
             log.warn("İade maili atlanıyor — takım email'i yok: team={} report={}", teamName, id);
         }
+        recordMail(r, "REJECT_TEAM", teamEmail != null ? List.of(teamEmail) : List.of(),
+                null, rjSubject, rjHtml, rjStatus, actor);
         return r;
     }
 
@@ -407,6 +470,7 @@ public class WeeklyReportService {
         try {
             WeeklyReportImage img = new WeeklyReportImage();
             img.setReportId(reportId);
+            img.setTeamId(r.getTeamId()); // açık takım izolasyonu
             img.setCaption(caption != null ? caption.trim() : null);
             img.setContentType(ct);
             img.setSizeBytes(file.getSize());
@@ -445,23 +509,74 @@ public class WeeklyReportService {
         WeeklyReport r = get(id, actor);
         requireCanModify(r, actor);
         imageRepo.deleteByReportId(id);
+        mailRepo.deleteByReportId(id);
         reportRepo.delete(r);
         log.info("Haftalık rapor silindi: id={} team={} week={} by={}",
                 id, r.getTeamId(), r.getWeekLabel(), actor.display());
         return r;
     }
 
-    /** Mail görselleri için gösterim genişliği: min(560, doğal genişlik).
-     *  Outlook width attribute'a uyar — taşma bu değerle engellenir; format
-     *  okunamazsa (ör. webp) girilmez, builder 560 fallback kullanır. */
+    // ── Mail gönderim geçmişi ────────────────────────────────────────────────
+
+    /** Her gönderim DENEMESİNİ kaydeder — kayıt hatası mail akışını bozmaz. */
+    private void recordMail(WeeklyReport r, String type, List<String> to, List<String> cc,
+                            String subject, String html, String status, Actor actor) {
+        try {
+            WeeklyReportMail m = new WeeklyReportMail();
+            m.setReportId(r.getId());
+            m.setMailType(type);
+            m.setFromAddress(emailService.fromAddress());
+            m.setToAddresses(to != null ? String.join(", ", to) : "");
+            m.setCcAddresses(cc != null && !cc.isEmpty() ? String.join(", ", cc) : null);
+            m.setSubject(subject);
+            m.setBodyHtml(html);
+            m.setStatus(status != null ? status : "UNKNOWN");
+            m.setCreatedBy(actor.display());
+            m.setCreatedAt(now());
+            mailRepo.save(m);
+        } catch (Exception e) {
+            log.warn("Mail gönderim kaydı yazılamadı: report={} type={} err={}",
+                    r.getId(), type, e.getMessage());
+        }
+    }
+
+    /** Raporun gönderim geçmişi (yeni → eski). Body'deki cid referansları UI
+     *  iframe'inin görselleri oturumla yükleyebilmesi için /api'ye çevrilir. */
+    public List<WeeklyReportMail> mails(Long reportId, Actor actor) {
+        get(reportId, actor); // okuma yetkisi kontrolü
+        List<WeeklyReportMail> list = mailRepo.findByReportIdOrderByIdDesc(reportId);
+        for (WeeklyReportMail m : list) {
+            if (m.getBodyHtml() != null) {
+                m.setBodyHtml(m.getBodyHtml()
+                        .replaceAll("cid:img(\\d+)", "/api/weekly-reports/images/$1"));
+            }
+        }
+        return list;
+    }
+
+    /** Liste rozetleri: rapor başına EN SON gönderim kaydının status'u. */
+    public Map<Long, String> lastMailStatuses(List<Long> reportIds) {
+        if (reportIds == null || reportIds.isEmpty()) return Map.of();
+        Map<Long, WeeklyReportMail> latest = new HashMap<>();
+        for (WeeklyReportMail m : mailRepo.findByReportIdIn(reportIds)) {
+            WeeklyReportMail cur = latest.get(m.getReportId());
+            if (cur == null || m.getId() > cur.getId()) latest.put(m.getReportId(), m);
+        }
+        Map<Long, String> out = new HashMap<>();
+        latest.forEach((reportId, m) -> out.put(reportId, m.getStatus()));
+        return out;
+    }
+
+    /** Mail görsellerinin DOĞAL genişliği (cid id → px). Bölüm sınırı (taşma
+     *  kontrolü) builder'da konuma göre uygulanır; format okunamazsa (ör. webp)
+     *  girilmez, builder bölüm tavanını fallback kullanır. */
     private Map<Long, Integer> imageDisplayWidths(List<EmailNotificationService.InlineImage> images) {
         Map<Long, Integer> widths = new LinkedHashMap<>();
         for (EmailNotificationService.InlineImage img : images) {
             try {
                 BufferedImage bi = ImageIO.read(new ByteArrayInputStream(img.data()));
                 if (bi != null) {
-                    widths.put(Long.parseLong(img.cid().substring("img".length())),
-                            Math.min(560, bi.getWidth()));
+                    widths.put(Long.parseLong(img.cid().substring("img".length())), bi.getWidth());
                 }
             } catch (Exception e) {
                 log.debug("Görsel boyutu okunamadı: cid={} err={}", img.cid(), e.getMessage());

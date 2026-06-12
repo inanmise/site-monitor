@@ -209,6 +209,11 @@ public class SchedulerService {
         patch("ALTER TABLE weekly_reports ADD COLUMN editing_by TEXT");
         patch("ALTER TABLE weekly_reports ADD COLUMN editing_user_id BIGINT");
         patch("ALTER TABLE weekly_reports ADD COLUMN editing_heartbeat TEXT");
+        // Görsel takım izolasyonu — açık team_id + mevcut satırlar için backfill
+        patch("ALTER TABLE weekly_report_images ADD COLUMN team_id BIGINT");
+        patch("UPDATE weekly_report_images i SET team_id = "
+                + "(SELECT r.team_id FROM weekly_reports r WHERE r.id = i.report_id) "
+                + "WHERE i.team_id IS NULL");
         patch("ALTER TABLE escalation_contacts ADD COLUMN team_id INTEGER");
         // Widen varchar(255) columns to TEXT — markdown editor / long descriptions can overflow
         patch("ALTER TABLE certificate_inventory ALTER COLUMN change_description TYPE TEXT");

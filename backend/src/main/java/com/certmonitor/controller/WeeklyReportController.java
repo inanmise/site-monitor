@@ -45,8 +45,34 @@ public class WeeklyReportController {
             HttpSession session) {
         List<WeeklyReport> reports = service.list(teamId, year, actor(session));
         // Liste görünümünde content_json taşınmaz (boyut) — özet alanlar yeter
-        List<Map<String, Object>> summaries = reports.stream().map(this::summary).toList();
+        Map<Long, String> mailStatuses = service.lastMailStatuses(
+                reports.stream().map(WeeklyReport::getId).toList());
+        List<Map<String, Object>> summaries = reports.stream().map(r -> {
+            Map<String, Object> m = summary(r);
+            m.put("last_mail_status", mailStatuses.get(r.getId()));
+            return m;
+        }).toList();
         return ok(Map.of("data", summaries));
+    }
+
+    /** Raporun mail gönderim geçmişi — Geçmiş modal'ı. */
+    @GetMapping("/{id}/mails")
+    public ResponseEntity<Map<String, Object>> mails(@PathVariable Long id, HttpSession session) {
+        List<Map<String, Object>> data = service.mails(id, actor(session)).stream().map(m -> {
+            Map<String, Object> x = new LinkedHashMap<String, Object>();
+            x.put("id", m.getId());
+            x.put("mail_type", m.getMailType());
+            x.put("from_address", m.getFromAddress());
+            x.put("to_addresses", m.getToAddresses());
+            x.put("cc_addresses", m.getCcAddresses());
+            x.put("subject", m.getSubject());
+            x.put("status", m.getStatus());
+            x.put("created_by", m.getCreatedBy());
+            x.put("created_at", m.getCreatedAt());
+            x.put("body_html", m.getBodyHtml());
+            return (Map<String, Object>) x;
+        }).toList();
+        return ok(Map.of("data", data));
     }
 
     @GetMapping("/years")
@@ -150,6 +176,28 @@ public class WeeklyReportController {
         return ok(Map.of("data", r));
     }
 
+    /** Onaylı raporu yeniden düzenlenebilir hale getirir (APPROVED → DRAFT). */
+    @PostMapping("/{id}/reopen")
+    public ResponseEntity<Map<String, Object>> reopen(
+            @PathVariable Long id, HttpSession session, HttpServletRequest request) {
+        WeeklyReport r = service.reopen(id, actor(session));
+        auditService.recordAction("WEEKLY_REPORT_REOPEN", session, request,
+                "WEEKLY_REPORT", id.toString(),
+                "{\"team_id\":" + r.getTeamId() + ",\"week\":\"" + r.getWeekLabel() + "\"}");
+        return ok(Map.of("data", r));
+    }
+
+    /** Onaylı raporu (yeniden onaysız) müdüre tekrar gönderir. */
+    @PostMapping("/{id}/resend")
+    public ResponseEntity<Map<String, Object>> resend(
+            @PathVariable Long id, HttpSession session, HttpServletRequest request) {
+        Map<String, Object> result = service.resend(id, actor(session));
+        auditService.recordAction("WEEKLY_REPORT_RESEND", session, request,
+                "WEEKLY_REPORT", id.toString(),
+                "{\"mail_status\":\"" + result.get("mail_status") + "\"}");
+        return ok(result);
+    }
+
     @DeleteMapping("/{id}")
     public ResponseEntity<Map<String, Object>> delete(
             @PathVariable Long id, HttpSession session, HttpServletRequest request) {
@@ -219,7 +267,10 @@ public class WeeklyReportController {
         m.put("week_no", r.getWeekNo());
         m.put("week_label", r.getWeekLabel());
         m.put("status", r.getStatus());
+        m.put("created_by", r.getCreatedBy());
+        m.put("created_at", r.getCreatedAt());
         m.put("submitted_at", r.getSubmittedAt());
+        m.put("approved_by", r.getApprovedBy());
         m.put("approved_at", r.getApprovedAt());
         m.put("sent_at", r.getSentAt());
         m.put("updated_by", r.getUpdatedBy());
@@ -231,6 +282,7 @@ public class WeeklyReportController {
     private Map<String, Object> imageMeta(WeeklyReportImage img) {
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("id", img.getId());
+        m.put("team_id", img.getTeamId());
         m.put("caption", img.getCaption());
         m.put("content_type", img.getContentType());
         m.put("size_bytes", img.getSizeBytes());
