@@ -105,6 +105,40 @@ public class PermissionService {
         rebuildCache();
     }
 
+    /**
+     * Katalogda yeni eklenen (role, resourceKey, action) default'larını DB'ye EKLER —
+     * mevcut satırlara DOKUNMAZ (admin özelleştirmeleri korunur). Dolu tablolarda
+     * {@link #seedDefaultsIfEmpty()} çalışmadığından yeni modüller (örn. weekly_reports,
+     * diagnostics) için gereklidir. Idempotent: eksik yoksa hiçbir şey yapmaz.
+     */
+    @Transactional
+    public void seedMissingDefaults() {
+        String now = ISO.format(Instant.now());
+        int added = 0;
+        for (String role : new String[] {"ADMIN", "TEAM_ADMIN", "USER", "AUDIT"}) {
+            Map<String, Map<String, Boolean>> defaults = PermissionCatalog.defaultsFor(role);
+            for (Map.Entry<String, Map<String, Boolean>> res : defaults.entrySet()) {
+                for (Map.Entry<String, Boolean> act : res.getValue().entrySet()) {
+                    if (repo.findByRoleAndResourceKeyAndAction(role, res.getKey(), act.getKey()).isEmpty()) {
+                        PermissionGrant g = new PermissionGrant();
+                        g.setRole(role);
+                        g.setResourceKey(res.getKey());
+                        g.setAction(act.getKey());
+                        g.setAllowed(act.getValue());
+                        g.setUpdatedAt(now);
+                        g.setUpdatedBy("system");
+                        repo.save(g);
+                        added++;
+                    }
+                }
+            }
+        }
+        if (added > 0) {
+            log.info("Permission backfill: {} eksik default grant eklendi (yeni modüller).", added);
+            rebuildCache();
+        }
+    }
+
     /** Update single grant. ADMIN row'ları her zaman true; bypass yok. */
     @Transactional
     public PermissionGrant upsertGrant(String role, String resourceKey, String action, boolean allowed, String updatedBy) {

@@ -723,6 +723,7 @@ export const TR = {
   'perm.group.alerts':        'Alarmlar',
   'perm.group.monitoring':    'İzleme',
   'perm.group.logs':          'Loglar & Raporlar',
+  'perm.group.reports':       'Haftalık Raporlar',
   'perm.group.tools':         'Yönetim Araçları',
 
   'perm.res.inventory.list':       'Sertifika envanterini görüntüleme.',
@@ -749,6 +750,11 @@ export const TR = {
   'perm.res.monitoring.trigger':   'Port/DNS izleyiciyi manuel tetikleme.',
   'perm.res.audit_log.read':       'Sistem geneli denetim logunu görüntüleme.',
   'perm.res.weak_algo.read':       'Zayıf algoritma raporunu görüntüleme.',
+  'perm.res.weekly_reports.read':  'Haftalık raporları görüntüleme.',
+  'perm.res.weekly_reports.crud':  'Haftalık rapor oluşturma, düzenleme, silme.',
+  'perm.res.weekly_reports.approve':'Haftalık raporu onaylama, iade, revize, tekrar gönderme.',
+  'perm.res.diagnostics.run':      'Bağlantı/SSL/ağ derin tanılaması çalıştırma.',
+  'perm.res.diagnostics.history':  'Tanılama geçmişini görüntüleme.',
   'perm.res.sql_playground.execute':'SQL Playground sorgusu çalıştırma.',
   'perm.res.guide_links.crud':     'Yenileme rehberi içeriğini yönetme.',
 
@@ -2352,6 +2358,7 @@ export const EN = {
   'perm.group.alerts':        'Alerts',
   'perm.group.monitoring':    'Monitoring',
   'perm.group.logs':          'Logs & Reports',
+  'perm.group.reports':       'Weekly Reports',
   'perm.group.tools':         'Admin Tools',
 
   'perm.res.inventory.list':       'View the certificate inventory.',
@@ -2378,6 +2385,11 @@ export const EN = {
   'perm.res.monitoring.trigger':   'Manually trigger port/DNS monitor.',
   'perm.res.audit_log.read':       'View system-wide audit log.',
   'perm.res.weak_algo.read':       'View weak algorithm report.',
+  'perm.res.weekly_reports.read':  'View weekly reports.',
+  'perm.res.weekly_reports.crud':  'Create, edit, delete weekly reports.',
+  'perm.res.weekly_reports.approve':'Approve, return, revise, resend weekly reports.',
+  'perm.res.diagnostics.run':      'Run connection/SSL/network deep diagnostics.',
+  'perm.res.diagnostics.history':  'View diagnostics history.',
   'perm.res.sql_playground.execute':'Execute SQL playground queries.',
   'perm.res.guide_links.crud':     'Manage renewal guide content.',
 

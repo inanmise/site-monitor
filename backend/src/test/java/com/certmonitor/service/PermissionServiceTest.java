@@ -6,6 +6,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -76,5 +77,27 @@ class PermissionServiceTest {
         assertThat(saved.getAllowed()).isTrue();
         verify(repo).save(any(PermissionGrant.class));
         verify(repo, atLeast(2)).findAll(); // ilk seed + upsert sonrası rebuild
+    }
+
+    @Test
+    @DisplayName("seedMissingDefaults: yalnız EKSİK grant eklenir, mevcutlara dokunulmaz")
+    void seedMissingDefaults_addsOnlyMissing() {
+        // Varsayılan: tüm grant'ler zaten var → hiçbiri eklenmez
+        when(repo.findByRoleAndResourceKeyAndAction(anyString(), anyString(), anyString()))
+                .thenReturn(Optional.of(new PermissionGrant()));
+        // İstisna: ADMIN weekly_reports.approve/execute eksik → tek ekleme beklenir
+        when(repo.findByRoleAndResourceKeyAndAction("ADMIN", "weekly_reports.approve", "execute"))
+                .thenReturn(Optional.empty());
+        when(repo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        service.seedMissingDefaults();
+
+        ArgumentCaptor<PermissionGrant> cap = ArgumentCaptor.forClass(PermissionGrant.class);
+        verify(repo, times(1)).save(cap.capture());
+        PermissionGrant saved = cap.getValue();
+        assertThat(saved.getRole()).isEqualTo("ADMIN");
+        assertThat(saved.getResourceKey()).isEqualTo("weekly_reports.approve");
+        assertThat(saved.getAction()).isEqualTo("execute");
+        assertThat(saved.getAllowed()).isTrue();
     }
 }
