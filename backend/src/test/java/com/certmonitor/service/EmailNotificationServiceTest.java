@@ -231,9 +231,12 @@ class EmailNotificationServiceTest {
         // URL'ler açık yazılmaz — etiket hyperlink'tir (href'te var, görünür metinde yok)
         assertThat(html).contains("href='https://jira/x'").doesNotContain(">https://jira/x<");
         assertThat(html).contains("href='https://jira/inc'").doesNotContain(">https://jira/inc<");
-        assertThat(html).contains(">Açık Olay Takip Linki</a>")
-                .contains(">Problem Takip Linki</a>")
-                .contains(">Postmortem Takip Linki</a>");
+        // Açıklayıcı tıklama metni hyperlink'tir; jenerik "Takip Linki" yazısı kalmadı
+        assertThat(html).contains(">Açık olay kayıtları için tıklayınız</a>")
+                .contains(">Problem kayıtları için tıklayınız</a>")
+                .contains(">Postmortem kayıtları için tıklayınız</a>")
+                .contains(">Proaktif İyileştirme kayıtlarına erişmek için tıklayınız</a>")
+                .doesNotContain("Takip Linki");
 
         // Sayı rozetleri e-posta-güvenli: tablo+cellspacing, 8-haneli hex ve pill YOK
         assertThat(html).contains("cellspacing='6'")
