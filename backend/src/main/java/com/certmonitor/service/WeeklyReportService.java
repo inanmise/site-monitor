@@ -20,6 +20,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
+import javax.imageio.ImageIO;
+import java.awt.image.BufferedImage;
+import java.io.ByteArrayInputStream;
 import java.time.DayOfWeek;
 import java.time.Instant;
 import java.time.LocalDate;
@@ -68,13 +71,17 @@ public class WeeklyReportService {
     private static final int MAX_CONTENT_BYTES = 200 * 1024;
     private static final int MAX_CHANNELS = 20;
 
+    /** Yumuşak kilit bayatlama eşiği — heartbeat 45 sn'de bir tazelenir,
+     *  4 kaçırılmış vuruş sonrası kilit serbest sayılır. */
+    private static final long LOCK_STALE_SECONDS = 180;
+
     private static final Pattern IMAGE_REF =
             Pattern.compile("/api/weekly-reports/images/(\\d+)");
 
     static final String DEFAULT_TEMPLATE_JSON = """
             {"version":1,
              "item1":{"total":0,"urgent":0,"high":0,"medium":0,"low":0,"status_text":"Çalışılıyor","tracking_url":"","notes_md":""},
-             "item2":{"open_incidents":0,"problem_records":0,"postmortems":0,"tracking_url":"","notes_md":""},
+             "item2":{"open_incidents":0,"problem_records":0,"postmortems":0,"incidents_url":"","problems_url":"","postmortems_url":"","notes_md":""},
              "item3":{"notes_md":""},
              "item4":{"channels":[
                {"id":"c-1","name":"İnternet","notes_md":""},
@@ -106,6 +113,19 @@ public class WeeklyReportService {
                     : List.of();
         }
         return reportRepo.findByTeamIdAndReportYearOrderByWeekNoDesc(teamId, y);
+    }
+
+    /** Yıl dropdown'ı: rapor bulunan yıllar (takım scoping'i list() ile aynı);
+     *  içinde bulunulan ISO yılı yoksa başa eklenir — dropdown boş kalmaz. */
+    public List<Integer> years(Long requestedTeamId, Actor actor) {
+        Long teamId = actor.isAdmin() || actor.isAudit() ? requestedTeamId : actor.teamId();
+        int current = LocalDate.now().get(WeekFields.ISO.weekBasedYear());
+        if (!actor.isAdmin() && !actor.isAudit() && teamId == null) {
+            return List.of(current);
+        }
+        List<Integer> years = new ArrayList<>(reportRepo.findDistinctYears(teamId));
+        if (!years.contains(current)) years.add(0, current);
+        return years;
     }
 
     public WeeklyReport get(Long id, Actor actor) {
@@ -159,14 +179,77 @@ public class WeeklyReportService {
         return reportRepo.save(r);
     }
 
-    // ── İçerik kaydetme ───────────────────────────────────────────────────────
+    // ── Düzenleme kilidi (yumuşak) ───────────────────────────────────────────
 
-    public WeeklyReport saveContent(Long id, String contentJson, Actor actor) {
+    /** Kilit taze mi? (heartbeat LOCK_STALE_SECONDS içinde) */
+    public boolean lockFresh(WeeklyReport r) {
+        if (r.getEditingUserId() == null || r.getEditingHeartbeat() == null) return false;
+        try {
+            Instant hb = Instant.from(ISO.parse(r.getEditingHeartbeat()));
+            return hb.isAfter(Instant.now().minusSeconds(LOCK_STALE_SECONDS));
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    public boolean lockHeldByOther(WeeklyReport r, Actor a) {
+        return r.getEditingUserId() != null
+                && !Objects.equals(r.getEditingUserId(), a.userId())
+                && lockFresh(r);
+    }
+
+    /** Kilidi al/tazele. Boş, kendine ait veya bayat kilit alınır; başkasında
+     *  ve tazeyse yalnız ADMIN force ile devralır. */
+    public Map<String, Object> acquireLock(Long id, boolean force, Actor actor) {
         WeeklyReport r = get(id, actor);
         requireCanModify(r, actor);
+        if (lockHeldByOther(r, actor) && !(force && actor.isAdmin())) {
+            Map<String, Object> out = new LinkedHashMap<>();
+            out.put("acquired", false);
+            out.put("editing_by", r.getEditingBy());
+            out.put("heartbeat_at", r.getEditingHeartbeat());
+            return out;
+        }
+        r.setEditingUserId(actor.userId());
+        r.setEditingBy(actor.display());
+        r.setEditingHeartbeat(now());
+        reportRepo.save(r);
+        return Map.of("acquired", true);
+    }
+
+    /** Yalnız kendi kilidini bırakır — başkasının kilidine dokunmaz (sessiz). */
+    public void releaseLock(Long id, Actor actor) {
+        WeeklyReport r = reportRepo.findById(id).orElse(null);
+        if (r == null || !Objects.equals(r.getEditingUserId(), actor.userId())) return;
+        r.setEditingUserId(null);
+        r.setEditingBy(null);
+        r.setEditingHeartbeat(null);
+        reportRepo.save(r);
+    }
+
+    private void clearLock(WeeklyReport r) {
+        r.setEditingUserId(null);
+        r.setEditingBy(null);
+        r.setEditingHeartbeat(null);
+    }
+
+    // ── İçerik kaydetme ───────────────────────────────────────────────────────
+
+    public WeeklyReport saveContent(Long id, String contentJson, Long clientVersion, Actor actor) {
+        WeeklyReport r = get(id, actor);
+        requireCanModify(r, actor);
+        // İyimser kilitleme: istemcinin yüklediği sürüm eskiyse kayıt reddedilir (409)
+        if (clientVersion != null && r.getVersion() != clientVersion.intValue()) {
+            throw new IllegalStateException("VERSION_CONFLICT: rapor " + r.getUpdatedBy()
+                    + " tarafından " + r.getUpdatedAt() + " tarihinde güncellendi");
+        }
         r.setContentJson(validateAndNormalizeContent(contentJson));
         if ("REJECTED".equals(r.getStatus())) {
             r.setStatus("DRAFT"); // iade sonrası düzenleme draft'a döndürür; rejectNote korunur
+        }
+        r.setVersion(r.getVersion() + 1);
+        if (Objects.equals(r.getEditingUserId(), actor.userId())) {
+            r.setEditingHeartbeat(now()); // kayıt = aktivite
         }
         r.setUpdatedBy(actor.display());
         r.setUpdatedAt(now());
@@ -181,6 +264,8 @@ public class WeeklyReportService {
         requireCanModify(r, actor);
         requireStatus(r, "DRAFT"); // ADMIN dahil: yalnız taslak onaya gönderilir
         r.setStatus("PENDING_APPROVAL");
+        r.setVersion(r.getVersion() + 1);
+        clearLock(r); // düzenleme bitti
         r.setSubmittedBy(actor.display());
         r.setSubmittedAt(now());
         r.setUpdatedBy(actor.display());
@@ -230,15 +315,18 @@ public class WeeklyReportService {
         String[] cc = teamEmail != null ? new String[]{teamEmail} : null;
         String managerName = managers.get(0).getName();
 
-        String html = emailService.buildWeeklyReportHtml(
-                teamName, r.getWeekLabel(), managerName, r.getContentJson(), true);
         List<EmailNotificationService.InlineImage> inline = collectInlineImages(r);
+        String html = emailService.buildWeeklyReportHtml(
+                teamName, r.getWeekLabel(), managerName, r.getContentJson(), true,
+                imageDisplayWidths(inline));
 
         String mailStatus = emailService.sendHtml(to, cc,
                 "[" + teamName + "] Haftalık Rapor — " + r.getWeekLabel(),
                 html, inline);
 
         r.setStatus("APPROVED");
+        r.setVersion(r.getVersion() + 1);
+        clearLock(r);
         r.setApprovedBy(actor.display());
         r.setApprovedAt(now());
         r.setRejectNote(null);
@@ -268,6 +356,7 @@ public class WeeklyReportService {
         requireCanApprove(r, actor);
         requireStatus(r, "PENDING_APPROVAL");
         r.setStatus("REJECTED");
+        r.setVersion(r.getVersion() + 1);
         r.setRejectNote(note.trim());
         r.setRejectedBy(actor.display());
         r.setRejectedAt(now());
@@ -360,6 +449,25 @@ public class WeeklyReportService {
         log.info("Haftalık rapor silindi: id={} team={} week={} by={}",
                 id, r.getTeamId(), r.getWeekLabel(), actor.display());
         return r;
+    }
+
+    /** Mail görselleri için gösterim genişliği: min(560, doğal genişlik).
+     *  Outlook width attribute'a uyar — taşma bu değerle engellenir; format
+     *  okunamazsa (ör. webp) girilmez, builder 560 fallback kullanır. */
+    private Map<Long, Integer> imageDisplayWidths(List<EmailNotificationService.InlineImage> images) {
+        Map<Long, Integer> widths = new LinkedHashMap<>();
+        for (EmailNotificationService.InlineImage img : images) {
+            try {
+                BufferedImage bi = ImageIO.read(new ByteArrayInputStream(img.data()));
+                if (bi != null) {
+                    widths.put(Long.parseLong(img.cid().substring("img".length())),
+                            Math.min(560, bi.getWidth()));
+                }
+            } catch (Exception e) {
+                log.debug("Görsel boyutu okunamadı: cid={} err={}", img.cid(), e.getMessage());
+            }
+        }
+        return widths;
     }
 
     /** Onay mailindeki cid:img{id} referansları için raporun markdown'ında
@@ -460,6 +568,15 @@ public class WeeklyReportService {
         }
         try {
             JsonNode root = objectMapper.readTree(contentJson);
+            // Madde 1 Toplam türetilir — istemci ne gönderirse göndersin sunucu yeniden hesaplar
+            if (root.path("item1").isObject()) {
+                ObjectNode i1 = (ObjectNode) root.path("item1");
+                int total = 0;
+                for (String k : List.of("urgent", "high", "medium", "low")) {
+                    total += i1.path(k).asInt(0);
+                }
+                i1.put("total", total);
+            }
             JsonNode channels = root.path("item4").path("channels");
             if (channels.isArray()) {
                 if (channels.size() > MAX_CHANNELS) {
@@ -503,7 +620,7 @@ public class WeeklyReportService {
             ObjectNode root = (ObjectNode) om.readTree(prevContentJson);
             ObjectNode i1 = root.withObject("item1");
             for (String k : List.of("total", "urgent", "high", "medium", "low")) i1.put(k, 0);
-            i1.put("status_text", "");
+            i1.put("status_text", "Çalışılıyor"); // combobox varsayılanı
             i1.put("notes_md", "");
             ObjectNode i2 = root.withObject("item2");
             for (String k : List.of("open_incidents", "problem_records", "postmortems")) i2.put(k, 0);

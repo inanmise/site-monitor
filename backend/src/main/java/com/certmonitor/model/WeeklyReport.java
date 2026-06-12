@@ -67,4 +67,20 @@ public class WeeklyReport {
     private String createdAt;
     private String updatedBy;
     private String updatedAt;
+
+    /** İyimser kilitleme sayacı — her içerik/durum değişiminde artar; istemci
+     *  yüklediği sürümü kayıtta geri gönderir, uyuşmazlık 409 VERSION_CONFLICT. */
+    @Column(nullable = false)
+    private int version = 0;
+
+    /** Yumuşak düzenleme kilidi — editör açıkken 45 sn'de bir heartbeat
+     *  tazelenir; 180 sn aktivite yoksa kilit bayat sayılır. */
+    @Column(name = "editing_by")
+    private String editingBy;
+
+    @Column(name = "editing_user_id")
+    private Long editingUserId;
+
+    @Column(name = "editing_heartbeat")
+    private String editingHeartbeat;
 }

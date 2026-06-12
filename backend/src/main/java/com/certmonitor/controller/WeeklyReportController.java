@@ -49,6 +49,12 @@ public class WeeklyReportController {
         return ok(Map.of("data", summaries));
     }
 
+    @GetMapping("/years")
+    public ResponseEntity<Map<String, Object>> years(
+            @RequestParam(required = false) Long teamId, HttpSession session) {
+        return ok(Map.of("data", service.years(teamId, actor(session))));
+    }
+
     @GetMapping("/{id}")
     public ResponseEntity<Map<String, Object>> get(@PathVariable Long id, HttpSession session) {
         Actor a = actor(session);
@@ -59,7 +65,27 @@ public class WeeklyReportController {
         data.put("report", r);
         data.put("images", images);
         data.put("manager_contact_missing", service.managerContactMissing(r.getTeamId()));
+        // Bayatlık SUNUCUDA hesaplanır — istemci saatine güvenilmez
+        data.put("lock_holder", service.lockHeldByOther(r, a)
+                ? Map.of("name", r.getEditingBy(), "heartbeat_at", r.getEditingHeartbeat())
+                : null);
         return ok(Map.of("data", data));
+    }
+
+    // ── Düzenleme kilidi ──────────────────────────────────────────────────────
+
+    @PostMapping("/{id}/lock")
+    public ResponseEntity<Map<String, Object>> lock(
+            @PathVariable Long id,
+            @RequestParam(defaultValue = "false") boolean force,
+            HttpSession session) {
+        return ok(Map.of("data", service.acquireLock(id, force, actor(session))));
+    }
+
+    @PostMapping("/{id}/unlock")
+    public ResponseEntity<Map<String, Object>> unlock(@PathVariable Long id, HttpSession session) {
+        service.releaseLock(id, actor(session));
+        return ok(Map.of("message", "Released"));
     }
 
     @PostMapping
@@ -81,9 +107,10 @@ public class WeeklyReportController {
 
     @PutMapping("/{id}")
     public ResponseEntity<Map<String, Object>> save(
-            @PathVariable Long id, @RequestBody Map<String, String> body,
+            @PathVariable Long id, @RequestBody Map<String, Object> body,
             HttpSession session, HttpServletRequest request) {
-        WeeklyReport r = service.saveContent(id, body.get("content_json"), actor(session));
+        String contentJson = body.get("content_json") != null ? body.get("content_json").toString() : null;
+        WeeklyReport r = service.saveContent(id, contentJson, toLong(body.get("version")), actor(session));
         auditService.recordAction("WEEKLY_REPORT_SAVE", session, request,
                 "WEEKLY_REPORT", id.toString(),
                 "{\"team_id\":" + r.getTeamId() + ",\"week\":\"" + r.getWeekLabel() + "\"}");
@@ -197,6 +224,7 @@ public class WeeklyReportController {
         m.put("sent_at", r.getSentAt());
         m.put("updated_by", r.getUpdatedBy());
         m.put("updated_at", r.getUpdatedAt());
+        m.put("editing_by", service.lockFresh(r) ? r.getEditingBy() : null); // listede "düzenliyor" ipucu
         return m;
     }
 

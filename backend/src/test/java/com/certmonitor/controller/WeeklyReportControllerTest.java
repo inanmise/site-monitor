@@ -81,6 +81,17 @@ class WeeklyReportControllerTest {
     }
 
     @Test
+    @DisplayName("GET /years returns distinct report years")
+    void years_returnsList() throws Exception {
+        when(service.years(any(), any())).thenReturn(List.of(2026, 2025));
+
+        mvc.perform(get("/api/weekly-reports/years").session(userSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0]").value(2026))
+                .andExpect(jsonPath("$.data[1]").value(2025));
+    }
+
+    @Test
     @DisplayName("GET /{id} returns report + images metadata + manager flag")
     void get_returnsFullReport() throws Exception {
         when(service.get(eq(5L), any())).thenReturn(report(5L, 2L, "DRAFT"));
@@ -172,6 +183,36 @@ class WeeklyReportControllerTest {
         mvc.perform(get("/api/weekly-reports/5/preview").session(userSession()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.html").value("<html>rapor</html>"));
+    }
+
+    @Test
+    @DisplayName("POST /{id}/lock acquires; PUT /{id} passes version to service as Long")
+    void lock_andVersionedSave() throws Exception {
+        when(service.acquireLock(eq(5L), eq(false), any())).thenReturn(Map.of("acquired", true));
+        mvc.perform(post("/api/weekly-reports/5/lock").session(userSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.acquired").value(true));
+
+        when(service.saveContent(eq(5L), anyString(), eq(7L), any())).thenReturn(report(5L, 2L, "DRAFT"));
+        mvc.perform(put("/api/weekly-reports/5").session(userSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"content_json\":\"{}\",\"version\":7}"))
+                .andExpect(status().isOk());
+        org.mockito.Mockito.verify(service).saveContent(eq(5L), eq("{}"), eq(7L), any());
+    }
+
+    @Test
+    @DisplayName("POST /{id}/unlock returns 200; version conflict maps to 409")
+    void unlock_andConflictMapping() throws Exception {
+        mvc.perform(post("/api/weekly-reports/5/unlock").session(userSession()))
+                .andExpect(status().isOk());
+
+        when(service.saveContent(eq(6L), anyString(), any(), any()))
+                .thenThrow(new IllegalStateException("VERSION_CONFLICT: rapor güncellendi"));
+        mvc.perform(put("/api/weekly-reports/6").session(userSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"content_json\":\"{}\",\"version\":1}"))
+                .andExpect(status().isConflict());
     }
 
     @Test

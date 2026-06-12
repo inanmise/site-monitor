@@ -143,12 +143,15 @@ export const api = {
       return request(`/weekly-reports${qs ? '?' + qs : ''}`)
     },
     get: (id) => request(`/weekly-reports/${id}`),
+    years: (teamId) => request(`/weekly-reports/years${teamId ? '?teamId=' + teamId : ''}`),
     create: (payload) => request('/weekly-reports', {
       method: 'POST', body: JSON.stringify(payload),
     }),
-    save: (id, contentJson) => request(`/weekly-reports/${id}`, {
-      method: 'PUT', body: JSON.stringify({ content_json: contentJson }),
+    save: (id, contentJson, version) => request(`/weekly-reports/${id}`, {
+      method: 'PUT', body: JSON.stringify({ content_json: contentJson, version }),
     }),
+    lock: (id, force = false) => request(`/weekly-reports/${id}/lock${force ? '?force=true' : ''}`, { method: 'POST' }),
+    unlock: (id) => request(`/weekly-reports/${id}/unlock`, { method: 'POST' }),
     remove: (id) => request(`/weekly-reports/${id}`, { method: 'DELETE' }),
     submit: (id) => request(`/weekly-reports/${id}/submit`, { method: 'POST' }),
     approve: (id) => request(`/weekly-reports/${id}/approve`, { method: 'POST' }),

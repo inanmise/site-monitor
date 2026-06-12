@@ -7628,3 +7628,99 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .show-markdown table th, .show-markdown table td {
   border: 1px solid var(--border); padding: 5px 9px;
 }
+
+/* Editör form alanları — .form-grid input görünümü + filtre barı mini-etiket
+   deseni (class'sız inputlar tarayıcı varsayılanında kalıyordu). */
+.wr-fields { display: flex; gap: 14px; flex-wrap: wrap; align-items: flex-end; margin: 12px 0; }
+.wr-field { display: flex; flex-direction: column; gap: 4px; }
+.wr-field > span {
+  font-size: .72em; font-weight: 700; color: var(--text-light);
+  text-transform: uppercase; letter-spacing: .05em;
+}
+.wr-field input {
+  padding: 9px 10px; border: 1px solid var(--border); border-radius: 4px;
+  font-size: .9em; font-family: inherit;
+  background: var(--input-bg, #fff); color: var(--text);
+}
+.wr-field input:focus {
+  outline: none; border-color: var(--primary);
+  box-shadow: 0 0 0 3px rgba(59,130,246,.15);
+}
+.wr-field input:disabled { opacity: .65; cursor: not-allowed; }
+.wr-num input { width: 110px; }
+.wr-grow1 { flex: 1 1 220px; }
+.wr-grow2 { flex: 2 1 320px; }
+/* Bölüm başlıkları — 10px'lik show-section-header bu uzun sayfada büyütülür */
+.wr-editor .show-section-header {
+  font-size: 12px; letter-spacing: .07em; text-transform: uppercase;
+  color: var(--text); margin-top: 26px; padding-bottom: 6px;
+}
+.wr-editor .w-md-editor { border-radius: 6px; }
+/* Tam ekran düzenleme — uygulama menüsü/başlığının üstünde, köşesiz */
+.wr-editor .w-md-editor-fullscreen { border-radius: 0; z-index: 9999; }
+/* Aksiyon barları — kaydırmada hep görünür (sticky); kart arkaplanıyla opak */
+.wr-actions {
+  position: sticky; bottom: 0; z-index: 50;
+  background: var(--bg-card);
+  margin-top: 24px; padding-bottom: 10px;
+}
+.wr-actions-top {
+  top: 0; bottom: auto;
+  margin: 0 0 14px; padding: 10px 0;
+  border-top: none; border-bottom: 1px solid var(--border);
+}
+.wr-hint { font-size: .75em; color: var(--text-light); margin-top: 4px; }
+
+/* Haftalık Raporlar filtre barı — kontroller etiketli kompakt sütunlar halinde
+   YAN YANA durur (ss-wrap'in global width:100%'i burada daraltılır). */
+.wr-filters { display: flex; align-items: flex-end; gap: 10px; flex-wrap: wrap; }
+.wr-flt { display: flex; flex-direction: column; gap: 4px; }
+.wr-flt > span {
+  font-size: .72em; font-weight: 700; color: var(--text-light);
+  text-transform: uppercase; letter-spacing: .05em;
+}
+.wr-flt .ss-wrap { width: 180px; }
+.wr-filters > .btn { height: 38px; box-sizing: border-box; }
+
+/* Tarihe Git — hafta odaklı takvim (WeekDatePicker, ss-dropdown üstüne):
+   ISO hafta no sütunu, satır bazlı hafta vurgusu, raporlu haftada nokta. */
+.wdp-pop { width: 286px; padding: 10px; }
+.wdp-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.wdp-title { font-weight: 700; font-size: .9em; color: var(--text); }
+.wdp-nav {
+  background: none; border: none; cursor: pointer; color: var(--text);
+  padding: 4px; border-radius: 4px; display: flex; align-items: center;
+}
+.wdp-nav:hover { background: rgba(79, 70, 229, .12); }
+.wdp-row { display: flex; gap: 2px; border-radius: 6px; align-items: stretch; }
+.wdp-row:not(.wdp-row-head) { cursor: pointer; }
+.wdp-row:not(.wdp-row-head):hover { background: rgba(79, 70, 229, .10); }
+.wdp-wk {
+  width: 30px; flex-shrink: 0; display: flex; align-items: center;
+  justify-content: center; gap: 3px; font-size: .68em; font-weight: 700;
+  color: var(--text-light);
+}
+.wdp-dow {
+  flex: 1; text-align: center; font-size: .68em; font-weight: 700;
+  color: var(--text-light); text-transform: uppercase; padding: 3px 0;
+}
+.wdp-day {
+  flex: 1; border: none; background: none; font-size: .8em; padding: 6px 0;
+  border-radius: 4px; cursor: pointer; color: var(--text); text-align: center;
+  font-family: inherit;
+}
+.wdp-out { opacity: .35; }
+.wdp-today { box-shadow: inset 0 0 0 1px var(--primary); font-weight: 700; }
+.wdp-sel { background: var(--primary); color: #fff !important; font-weight: 700; }
+.wdp-dot {
+  width: 5px; height: 5px; border-radius: 50%; background: #16a34a;
+  display: inline-block; flex-shrink: 0;
+}
+.wdp-foot {
+  display: flex; align-items: center; gap: 6px; margin-top: 8px;
+  padding-top: 8px; border-top: 1px solid var(--border);
+}
+.wdp-legend {
+  display: flex; align-items: center; gap: 5px; font-size: .7em;
+  color: var(--text-light);
+}

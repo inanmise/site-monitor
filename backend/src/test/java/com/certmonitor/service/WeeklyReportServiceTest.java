@@ -63,6 +63,7 @@ class WeeklyReportServiceTest {
         when(emailService.buildWeeklyReportSubmittedHtml(any(), any(), any())).thenReturn("<html/>");
         when(emailService.buildWeeklyReportRejectedHtml(any(), any(), any(), any())).thenReturn("<html/>");
         when(emailService.buildWeeklyReportHtml(any(), any(), any(), any(), anyBoolean())).thenReturn("<html/>");
+        when(emailService.buildWeeklyReportHtml(any(), any(), any(), any(), anyBoolean(), any())).thenReturn("<html/>");
         when(imageRepo.findByReportIdOrderByIdAsc(anyLong())).thenReturn(List.of());
         // PO yetki kontrolü DB'den okur
         AppUser po = new AppUser();
@@ -155,6 +156,20 @@ class WeeklyReportServiceTest {
                 .isEqualTo("2026-W24 (8–12 Haziran 2026)");
     }
 
+    @Test
+    @DisplayName("years: USER kendi takımına zorlanır; içinde bulunulan yıl listede yoksa eklenir")
+    void years_scopingAndCurrentYear() {
+        int current = LocalDate.now().get(WeekFields.ISO.weekBasedYear());
+
+        when(reportRepo.findDistinctYears(2L)).thenReturn(List.of(2025, 2024));
+        List<Integer> result = service.years(7L, USER_T2); // 7 istese de kendi takımı (2) sorgulanır
+        assertThat(result).startsWith(current).contains(2025, 2024);
+        verify(reportRepo).findDistinctYears(2L);
+
+        when(reportRepo.findDistinctYears(null)).thenReturn(List.of(current, 2025));
+        assertThat(service.years(null, ADMIN)).containsExactly(current, 2025);
+    }
+
     // ── Düzenleme yetkileri ───────────────────────────────────────────────────
 
     @Test
@@ -163,10 +178,10 @@ class WeeklyReportServiceTest {
         WeeklyReport r = report(5L, 2L, "DRAFT");
         when(reportRepo.findById(5L)).thenReturn(Optional.of(r));
 
-        WeeklyReport saved = service.saveContent(5L, WeeklyReportService.DEFAULT_TEMPLATE_JSON, USER_T2);
+        WeeklyReport saved = service.saveContent(5L, WeeklyReportService.DEFAULT_TEMPLATE_JSON, null, USER_T2);
         assertThat(saved.getUpdatedBy()).isEqualTo("Kullanıcı İki");
 
-        assertThatThrownBy(() -> service.saveContent(5L, WeeklyReportService.DEFAULT_TEMPLATE_JSON, USER_T7))
+        assertThatThrownBy(() -> service.saveContent(5L, WeeklyReportService.DEFAULT_TEMPLATE_JSON, null, USER_T7))
                 .isInstanceOf(SecurityException.class);
     }
 
@@ -177,7 +192,7 @@ class WeeklyReportServiceTest {
         r.setRejectNote("Madde 2 eksik");
         when(reportRepo.findById(5L)).thenReturn(Optional.of(r));
 
-        WeeklyReport saved = service.saveContent(5L, WeeklyReportService.DEFAULT_TEMPLATE_JSON, USER_T2);
+        WeeklyReport saved = service.saveContent(5L, WeeklyReportService.DEFAULT_TEMPLATE_JSON, null, USER_T2);
 
         assertThat(saved.getStatus()).isEqualTo("DRAFT");
         assertThat(saved.getRejectNote()).isEqualTo("Madde 2 eksik");
@@ -188,7 +203,7 @@ class WeeklyReportServiceTest {
     void saveContent_wrongStatus() {
         WeeklyReport r = report(5L, 2L, "APPROVED");
         when(reportRepo.findById(5L)).thenReturn(Optional.of(r));
-        assertThatThrownBy(() -> service.saveContent(5L, WeeklyReportService.DEFAULT_TEMPLATE_JSON, USER_T2))
+        assertThatThrownBy(() -> service.saveContent(5L, WeeklyReportService.DEFAULT_TEMPLATE_JSON, null, USER_T2))
                 .isInstanceOf(IllegalStateException.class);
     }
 
@@ -197,17 +212,17 @@ class WeeklyReportServiceTest {
     void saveContent_weekWindow() {
         WeeklyReport lastWeek = reportAtWeek(5L, 2L, "REJECTED", LocalDate.now().minusWeeks(1));
         when(reportRepo.findById(5L)).thenReturn(Optional.of(lastWeek));
-        assertThat(service.saveContent(5L, WeeklyReportService.DEFAULT_TEMPLATE_JSON, USER_T2)
+        assertThat(service.saveContent(5L, WeeklyReportService.DEFAULT_TEMPLATE_JSON, null, USER_T2)
                 .getStatus()).isEqualTo("DRAFT"); // iade edilen geçen hafta raporu düzeltilebilir
 
         WeeklyReport old = reportAtWeek(6L, 2L, "DRAFT", LocalDate.now().minusWeeks(2));
         when(reportRepo.findById(6L)).thenReturn(Optional.of(old));
-        assertThatThrownBy(() -> service.saveContent(6L, WeeklyReportService.DEFAULT_TEMPLATE_JSON, USER_T2))
+        assertThatThrownBy(() -> service.saveContent(6L, WeeklyReportService.DEFAULT_TEMPLATE_JSON, null, USER_T2))
                 .isInstanceOf(SecurityException.class)
                 .hasMessageContaining("önceki haftanın");
 
         // ADMIN için hafta penceresi yok
-        assertThat(service.saveContent(6L, WeeklyReportService.DEFAULT_TEMPLATE_JSON, ADMIN)
+        assertThat(service.saveContent(6L, WeeklyReportService.DEFAULT_TEMPLATE_JSON, null, ADMIN)
                 .getUpdatedBy()).isEqualTo("Admin");
     }
 
@@ -217,7 +232,7 @@ class WeeklyReportServiceTest {
         WeeklyReport r = reportAtWeek(5L, 2L, "APPROVED", LocalDate.now().minusWeeks(3));
         when(reportRepo.findById(5L)).thenReturn(Optional.of(r));
 
-        WeeklyReport saved = service.saveContent(5L, WeeklyReportService.DEFAULT_TEMPLATE_JSON, ADMIN);
+        WeeklyReport saved = service.saveContent(5L, WeeklyReportService.DEFAULT_TEMPLATE_JSON, null, ADMIN);
 
         assertThat(saved.getStatus()).isEqualTo("APPROVED");
         assertThat(saved.getUpdatedBy()).isEqualTo("Admin");
@@ -235,6 +250,86 @@ class WeeklyReportServiceTest {
             assertThat(WeeklyReportService.inEditWindow(
                     d.get(wf.weekBasedYear()), d.get(wf.weekOfWeekBasedYear()))).isFalse();
         }
+    }
+
+    // ── Düzenleme kilidi + sürüm ──────────────────────────────────────────────
+
+    /** Servisin ISO formatıyla 'seconds' saniye önceki damga. */
+    private static String isoAgo(long seconds) {
+        return java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss")
+                .withZone(java.time.ZoneOffset.UTC)
+                .format(java.time.Instant.now().minusSeconds(seconds));
+    }
+
+    @Test
+    @DisplayName("acquireLock: boş alınır; başkasında+taze alınamaz; bayat alınır; ADMIN force devralır")
+    void acquireLock_flows() {
+        WeeklyReport r = report(5L, 2L, "DRAFT");
+        when(reportRepo.findById(5L)).thenReturn(Optional.of(r));
+
+        assertThat(service.acquireLock(5L, false, USER_T2).get("acquired")).isEqualTo(true);
+        assertThat(r.getEditingUserId()).isEqualTo(10L);
+
+        // Taze kilit başkasına verilmez — sahibi bildirilir
+        Map<String, Object> denied = service.acquireLock(5L, false, PO_T2);
+        assertThat(denied.get("acquired")).isEqualTo(false);
+        assertThat(denied.get("editing_by")).isEqualTo("Kullanıcı İki");
+
+        // Bayat kilit (10 dk önce) → serbest sayılır
+        r.setEditingHeartbeat(isoAgo(600));
+        assertThat(service.acquireLock(5L, false, PO_T2).get("acquired")).isEqualTo(true);
+        assertThat(r.getEditingUserId()).isEqualTo(13L);
+
+        // Taze kilide ADMIN: force'suz alamaz, force ile devralır
+        assertThat(service.acquireLock(5L, false, ADMIN).get("acquired")).isEqualTo(false);
+        assertThat(service.acquireLock(5L, true, ADMIN).get("acquired")).isEqualTo(true);
+        assertThat(r.getEditingUserId()).isEqualTo(1L);
+    }
+
+    @Test
+    @DisplayName("releaseLock: yalnız kendi kilidini bırakır, başkasınınkine dokunmaz")
+    void releaseLock_ownOnly() {
+        WeeklyReport r = report(5L, 2L, "DRAFT");
+        r.setEditingUserId(10L); r.setEditingBy("Kullanıcı İki"); r.setEditingHeartbeat(isoAgo(0));
+        when(reportRepo.findById(5L)).thenReturn(Optional.of(r));
+
+        service.releaseLock(5L, PO_T2);
+        assertThat(r.getEditingUserId()).isEqualTo(10L);
+
+        service.releaseLock(5L, USER_T2);
+        assertThat(r.getEditingUserId()).isNull();
+        assertThat(r.getEditingBy()).isNull();
+    }
+
+    @Test
+    @DisplayName("saveContent: eski sürümle kayıt VERSION_CONFLICT (409); doğru sürüm artar")
+    void saveContent_versionConflict() {
+        WeeklyReport r = report(5L, 2L, "DRAFT");
+        r.setVersion(3);
+        when(reportRepo.findById(5L)).thenReturn(Optional.of(r));
+
+        assertThatThrownBy(() -> service.saveContent(5L, WeeklyReportService.DEFAULT_TEMPLATE_JSON, 2L, USER_T2))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("VERSION_CONFLICT");
+
+        WeeklyReport saved = service.saveContent(5L, WeeklyReportService.DEFAULT_TEMPLATE_JSON, 3L, USER_T2);
+        assertThat(saved.getVersion()).isEqualTo(4);
+    }
+
+    @Test
+    @DisplayName("submit: kilidi temizler ve sürümü artırır")
+    void submit_clearsLockAndBumpsVersion() {
+        WeeklyReport r = report(5L, 2L, "DRAFT");
+        r.setVersion(1); r.setEditingUserId(10L); r.setEditingBy("Kullanıcı İki"); r.setEditingHeartbeat(isoAgo(0));
+        when(reportRepo.findById(5L)).thenReturn(Optional.of(r));
+        when(contactRepo.findByTeamIdAndRoleAndActiveTrue(2L, "PO")).thenReturn(List.of());
+        when(userRepo.findByTeamIdAndOrgRoleAndActiveTrue(2L, "PO")).thenReturn(List.of());
+
+        service.submit(5L, USER_T2);
+
+        assertThat(r.getVersion()).isEqualTo(2);
+        assertThat(r.getEditingUserId()).isNull();
+        assertThat(r.getEditingHeartbeat()).isNull();
     }
 
     // ── Silme ─────────────────────────────────────────────────────────────────
@@ -335,7 +430,7 @@ class WeeklyReportServiceTest {
         assertThat(to.getValue()).containsExactly("mudur@test.com");
         assertThat(cc.getValue()).containsExactly("takim@test.com");
         verify(emailService).buildWeeklyReportHtml(eq("DijitalSY"), anyString(),
-                eq("Ali Müdür"), anyString(), eq(true));
+                eq("Ali Müdür"), anyString(), eq(true), any());
     }
 
     @Test
@@ -404,6 +499,11 @@ class WeeklyReportServiceTest {
                 .isInstanceOf(IllegalArgumentException.class);
         assertThat(service.validateAndNormalizeContent(WeeklyReportService.DEFAULT_TEMPLATE_JSON))
                 .contains("İnternet");
+
+        // Madde 1 Toplam türetilir — istemcinin gönderdiği 99 yok sayılır, 2+3+4+3=12 yazılır
+        String normalized = service.validateAndNormalizeContent(
+                "{\"item1\":{\"total\":99,\"urgent\":2,\"high\":3,\"medium\":4,\"low\":3}}");
+        assertThat(normalized).contains("\"total\":12");
     }
 
     @Test
