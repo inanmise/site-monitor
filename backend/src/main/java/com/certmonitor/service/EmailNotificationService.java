@@ -1646,8 +1646,9 @@ public class EmailNotificationService {
     /** Rozet hücrelerini tek satırlık tabloya sarar. cellspacing=6 → hücreler
      *  arası garantili boşluk (Outlook dahil); inline-block kaymasına son. */
     private String numChipRow(String... cells) {
+        // margin-top: rozetler başlık şeridine yapışık durmasın (kullanıcı isteği)
         return "<table role='presentation' border='0' cellspacing='6' cellpadding='0'"
-            + " style='margin-bottom:10px'><tr>" + String.join("", cells) + "</tr></table>";
+            + " style='margin:6px 0 10px'><tr>" + String.join("", cells) + "</tr></table>";
     }
 
     /** Hex rengi beyazla harmanlar (ratio=renk payı) → düz açık ton. 8-haneli
