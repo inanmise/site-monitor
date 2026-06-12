@@ -240,10 +240,37 @@ class EmailNotificationServiceTest {
 
         // Sayı rozeti satırı INLINE width:100% + collapse (Outlook = önizleme) +
         // eşit kolon (Madde 1: 5 kutu → 20%, Madde 2: 3 kutu → 33%); 8-haneli hex ve pill YOK
-        assertThat(html).contains("width:100%;border-collapse:collapse;margin:6px 0 10px")
+        assertThat(html).contains("width:100%;border-collapse:collapse;margin:0 0 10px")
                 .contains("width='20%'").contains("width='33%'")
                 .doesNotContain("#33415514").doesNotContain("#dc262614")
                 .doesNotContain("border-radius:999px");
+    }
+
+    @Test
+    @DisplayName("Weekly report HTML (mail): markdown blokları inline stilli (Outlook=önizleme); footer IST + onay")
+    void buildWeeklyReportHtml_emailInlineAndFooter() {
+        String html = service.buildWeeklyReportHtml("DijitalSY", "2026-W24 (8–12 Haziran 2026)",
+                "Ali Müdür", WR_CONTENT, true, null,
+                "Onaylayan Kişi", "2026-06-13T09:00:00", "2026-06-13T09:05:00");
+
+        // Madde 3/4 markdown listeleri Outlook için inline girintili (style bloğuna bağlı değil)
+        assertThat(html).contains("<ul style=\"margin:6px 0;padding-left:22px");
+        // Madde 1 markdown tablosu inline stilli
+        assertThat(html).contains("<table style=\"border-collapse:collapse;width:100%");
+        // Footer: onaylayan + UTC→Europe/Istanbul (+3) çevrimi + oluşturma satırı
+        assertThat(html).contains("Onaylayan: Onaylayan Kişi");
+        assertThat(html).contains("Onay: 13.06.2026 12:00");      // 09:00 UTC → 12:00 IST
+        assertThat(html).contains("Gönderim: 13.06.2026 12:05");  // 09:05 UTC → 12:05 IST
+        assertThat(html).contains("Oluşturuldu:");
+    }
+
+    @Test
+    @DisplayName("Weekly report HTML: footer onay bilgisi yoksa (DRAFT önizleme) yalnız Oluşturuldu satırı")
+    void buildWeeklyReportHtml_footerNoApprovalInfo() {
+        String html = service.buildWeeklyReportHtml("DijitalSY", "2026-W24 (8–12 Haziran 2026)",
+                "Ali Müdür", WR_CONTENT, false);
+        assertThat(html).contains("Oluşturuldu:")
+                .doesNotContain("Onaylayan:").doesNotContain("Gönderim:");
     }
 
     @Test
