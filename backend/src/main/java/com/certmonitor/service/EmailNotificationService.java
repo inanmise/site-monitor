@@ -57,6 +57,15 @@ public class EmailNotificationService {
     @PreDestroy
     void shutdownRetryExecutor() {
         mailRetryExecutor.shutdown();
+        try {
+            // Graceful shutdown: bekleyen 421-retry görevlerine kısa süre tanı
+            if (!mailRetryExecutor.awaitTermination(5, TimeUnit.SECONDS)) {
+                mailRetryExecutor.shutdownNow();
+            }
+        } catch (InterruptedException e) {
+            mailRetryExecutor.shutdownNow();
+            Thread.currentThread().interrupt();
+        }
     }
 
     public String getEmailFrom() { return emailFrom; }

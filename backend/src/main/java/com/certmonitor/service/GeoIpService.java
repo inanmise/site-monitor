@@ -25,6 +25,9 @@ public class GeoIpService {
     @Value("${cert.monitor.geoip.cache-ttl-ms:3600000}")
     private long cacheTtlMs;
 
+    /** Cache üst sınırı — TTL'e ek olarak sayı tavanı (sınırsız büyüme engeli). */
+    private static final int MAX_CACHE_ENTRIES = 10_000;
+
     private HttpClient httpClient;
     private final ConcurrentHashMap<String, CachedGeo> cache = new ConcurrentHashMap<>();
 
@@ -56,6 +59,8 @@ public class GeoIpService {
             HttpResponse<String> resp = httpClient.send(req, HttpResponse.BodyHandlers.ofString());
             if (resp.statusCode() == 200) {
                 GeoInfo info = parse(resp.body());
+                // Sayı tavanına ulaşıldıysa cache'i boşalt (kaba ama bounded; nadiren tetiklenir)
+                if (cache.size() >= MAX_CACHE_ENTRIES) cache.clear();
                 cache.put(ip, new CachedGeo(info, System.currentTimeMillis()));
                 return info;
             }

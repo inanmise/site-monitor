@@ -478,7 +478,7 @@ class CertificateServiceTest {
         CertificateCheck c2 = check("run-1", "b.com", "valid");
         CertificateCheck c3 = check("run-2", "c.com", "error");
         CertificateCheck c4 = check("run-2", "d.com", "valid");
-        when(checkRepo.findByCheckedAtAfter(any())).thenReturn(List.of(c1, c2, c3, c4));
+        when(checkRepo.findByCheckedAtAfterLimited(any(), anyInt())).thenReturn(List.of(c1, c2, c3, c4));
 
         List<Map<String, Object>> runs = service.getActivityLog(24, null);
 

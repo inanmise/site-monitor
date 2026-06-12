@@ -234,6 +234,18 @@ public class SchedulerService {
         // DNS monitoring tables
         patch("CREATE TABLE IF NOT EXISTS dns_monitors (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, domain TEXT NOT NULL, record_type TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1, interval_seconds INTEGER NOT NULL DEFAULT 300, created_at TEXT, updated_at TEXT)");
         patch("CREATE TABLE IF NOT EXISTS dns_records (id INTEGER PRIMARY KEY AUTOINCREMENT, monitor_id INTEGER NOT NULL, record_type TEXT, value TEXT, changed INTEGER NOT NULL DEFAULT 0, previous_value TEXT, checked_at TEXT)");
+
+        // ── Performans index'leri (sıcak sorgu yolları) — idempotent, PG IF NOT EXISTS ──
+        // Tablolar bu noktada Hibernate ddl-auto=update ile oluşmuş durumda.
+        patch("CREATE INDEX IF NOT EXISTS idx_nl_alert_event_id ON notification_logs(alert_event_id)");
+        patch("CREATE INDEX IF NOT EXISTS idx_nl_sent_at ON notification_logs(sent_at)");
+        patch("CREATE INDEX IF NOT EXISTS idx_nl_email_status ON notification_logs(email_status)");
+        patch("CREATE INDEX IF NOT EXISTS idx_ec_team_role_active ON escalation_contacts(team_id, role, active)");
+        patch("CREATE INDEX IF NOT EXISTS idx_ec_active ON escalation_contacts(active)");
+        patch("CREATE INDEX IF NOT EXISTS idx_ci_team_active ON certificate_inventory(team_id, active)");
+        patch("CREATE INDEX IF NOT EXISTS idx_ci_deleted_at ON certificate_inventory(deleted_at)");
+        patch("CREATE INDEX IF NOT EXISTS idx_dnsr_monitor_changed ON dns_records(monitor_id, changed)");
+        patch("CREATE INDEX IF NOT EXISTS idx_wrm_report_id ON weekly_report_mails(report_id)");
     }
 
     /** Assigns any certs/contacts without a team to the first (default) team. */

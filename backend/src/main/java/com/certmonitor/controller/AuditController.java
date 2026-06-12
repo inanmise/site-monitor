@@ -87,14 +87,22 @@ public class AuditController {
 
     @GetMapping("/audit/weak-algorithms")
     public ResponseEntity<Map<String, Object>> weakAlgorithmReport(HttpSession session) {
-        Map<String, CertificateInventory> invMap = inventoryRepo.findAll().stream()
-                .collect(Collectors.toMap(CertificateInventory::getDomain, i -> i, (a, b) -> a));
+        // Tüm tabloyu çekmek yerine zayıf-algoritma adaylarını DB'de filtrele
+        List<LatestCheck> weakCandidates = latestCheckRepo.findWeakAlgorithmCandidates();
+
+        // Envanteri yalnız aday domain'ler için yükle (tüm envanter taranmaz)
+        List<String> weakDomains = weakCandidates.stream()
+                .map(LatestCheck::getDomain).filter(java.util.Objects::nonNull).distinct().toList();
+        Map<String, CertificateInventory> invMap = weakDomains.isEmpty()
+                ? Map.of()
+                : inventoryRepo.findByDomainIn(weakDomains).stream()
+                        .collect(Collectors.toMap(CertificateInventory::getDomain, i -> i, (a, b) -> a));
 
         Map<Long, Team> teamMap = teamRepo.findAll().stream()
                 .collect(Collectors.toMap(Team::getId, t -> t, (a, b) -> a));
 
         List<Map<String, Object>> rows = new ArrayList<>();
-        for (LatestCheck lc : latestCheckRepo.findAll()) {
+        for (LatestCheck lc : weakCandidates) {
             List<String> weaknesses = new ArrayList<>();
             String severity = classifyWeakness(lc, weaknesses);
             if (severity == null) continue;

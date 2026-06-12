@@ -32,6 +32,25 @@ class GlobalExceptionHandlerTest {
     }
 
     @Test
+    @DisplayName("NoSuchElementException mesajsız → 404 + jenerik 'Kayıt bulunamadı'")
+    void notFound_genericWhenBlank() {
+        ResponseEntity<Map<String, Object>> r = handler.handleNotFound(new NoSuchElementException());
+        assertEquals(404, r.getStatusCode().value());
+        assertEquals("Kayıt bulunamadı", r.getBody().get("error"));
+    }
+
+    @Test
+    @DisplayName("DataIntegrityViolation → 409 + ham DB mesajı SIZMAZ")
+    void dataIntegrity_noLeak() {
+        ResponseEntity<Map<String, Object>> r = handler.handleDataIntegrityViolation(
+                new org.springframework.dao.DataIntegrityViolationException(
+                        "duplicate key value violates unique constraint \"pg_secret_xyz\""));
+        assertEquals(409, r.getStatusCode().value());
+        assertFalse(((String) r.getBody().get("error")).contains("pg_secret_xyz"));
+        assertTrue(((String) r.getBody().get("error")).contains("çakışma"));
+    }
+
+    @Test
     @DisplayName("IllegalStateException → 409")
     void conflict() {
         ResponseEntity<Map<String, Object>> r = handler.handleConflict(new IllegalStateException("çakıştı"));

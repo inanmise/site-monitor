@@ -4,6 +4,8 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -20,6 +22,18 @@ public final class ProcessProbe {
 
     private ProcessProbe() {}
 
+    /**
+     * stdout okuma thread'leri için ayrı daemon havuz. Ortak ForkJoinPool
+     * (commonPool) KULLANILMAZ: bloke readAllBytes commonPool'u açlığa sokup
+     * uygulama geneli paralel stream'leri yavaşlatabilir. Daemon thread'ler JVM
+     * kapanışını engellemez; cached havuz boştaki thread'leri 60 sn'de bırakır.
+     */
+    private static final ExecutorService READER_POOL = Executors.newCachedThreadPool(r -> {
+        Thread t = new Thread(r, "process-probe-reader");
+        t.setDaemon(true);
+        return t;
+    });
+
     public record Result(String output, int exitCode, boolean timedOut) {}
 
     public static Result run(List<String> args, String stdin, int timeoutSeconds) {
@@ -32,7 +46,7 @@ public final class ProcessProbe {
             CompletableFuture<byte[]> reader = CompletableFuture.supplyAsync(() -> {
                 try { return p.getInputStream().readAllBytes(); }
                 catch (IOException e) { return new byte[0]; }
-            });
+            }, READER_POOL);
             if (stdin != null) {
                 try (var os = proc.getOutputStream()) {
                     os.write(stdin.getBytes(StandardCharsets.UTF_8));
@@ -48,7 +62,10 @@ public final class ProcessProbe {
             }
             byte[] bytes;
             try { bytes = reader.get(3, TimeUnit.SECONDS); }
-            catch (Exception e) { bytes = new byte[0]; }
+            catch (Exception e) {
+                bytes = new byte[0];
+                reader.cancel(true); // okuma thread'ini bırak (süreç zaten öldürüldü → stream EOF)
+            }
             String output = new String(bytes, StandardCharsets.UTF_8)
                     + (timedOut ? "\n[zaman aşımı: " + timeoutSeconds + "s — komut sonlandırıldı]" : "");
             return new Result(output, timedOut ? -1 : proc.exitValue(), timedOut);
