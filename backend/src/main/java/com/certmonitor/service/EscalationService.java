@@ -63,6 +63,29 @@ public class EscalationService {
     private static final Map<String, Integer> LEVEL_ORDER = Map.of(
             "WARNING", 1, "HIGH", 2, "CRITICAL", 3);
 
+    /** HTTP erişilebilirlik kesintisi alarmı — uptime sweep'i tarafından yönetilir. */
+    public static final String TYPE_ACCESSIBILITY = "ACCESSIBILITY";
+
+    /** Port kesintisi alarmı — port sweep'i tarafından yönetilir. */
+    public static final String TYPE_PORT_DOWN = "PORT_DOWN";
+
+    /** DNS çözümleme hatası alarmı — DNS sweep'i tarafından yönetilir. */
+    public static final String TYPE_DNS_FAILURE = "DNS_FAILURE";
+
+    /** DNS kayıt değişikliği alarmı (YÜKSEK) — teyitsiz, otomatik kapanmaz. */
+    public static final String TYPE_DNS_CHANGED = "DNS_CHANGED";
+
+    /** İzleme kaynaklı alarm tipleri — kadanslarının sahibi ilgili sweep'lerdir;
+     *  cert sweep'inin auto-resolve'u ve startup catch-up bunlara dokunmaz. */
+    public static final Set<String> MONITORING_ALERT_TYPES =
+            Set.of(TYPE_ACCESSIBILITY, TYPE_PORT_DOWN, TYPE_DNS_FAILURE, TYPE_DNS_CHANGED);
+
+    /** Sertifika kaynaklı alarm tipleri — cert sweep'inin auto-resolve kapsamı.
+     *  İzleme tipleri bilinçli olarak DIŞINDA: sertifika kontrolünün düzelmesi
+     *  site erişiminin/portun/DNS'in düzeldiği anlamına gelmez (ve tersi). */
+    public static final Set<String> CERT_ALERT_TYPES =
+            Set.of("EXPIRY", "CHAIN_BROKEN", "REVOKED", "MISMATCH");
+
     public void processResults(List<Map<String, Object>> results) {
         AlertThreshold threshold = thresholdRepo.findFirstByActiveTrue()
                 .orElseGet(this::defaultThreshold);
@@ -95,7 +118,9 @@ public class EscalationService {
             String domain = (String) result.get("domain");
             String alertType = determineAlertType(result);
             if (alertType == null) {
-                resolveAllOpenAlertsForDomain(domain);
+                // Sertifika sağlıklı — SADECE cert tiplerini kapat; açık bir
+                // ACCESSIBILITY alarmı uptime sweep'inin sorumluluğundadır.
+                resolveOpenAlertsForDomain(domain, CERT_ALERT_TYPES);
                 continue;
             }
 
@@ -232,8 +257,12 @@ public class EscalationService {
                               List<EscalationContact> contacts, String domain,
                               String alertLevel, String alertType, Integer daysRemainingFallback) {
         try {
-            Map<String, Object> certContext = latestCheckRepo.findById(domain)
-                    .map(this::latestToCertContext).orElse(null);
+            // İzleme alarmlarında sertifika context'i alakasızdır — builder'lar
+            // null-toleranslı, mail kind'e özgü şablondan üretilir.
+            Map<String, Object> certContext = MONITORING_ALERT_TYPES.contains(alertType)
+                    ? null
+                    : latestCheckRepo.findById(domain)
+                        .map(this::latestToCertContext).orElse(null);
             Integer freshDays     = certContext != null ? toInt(certContext.get("days_remaining")) : null;
             Integer effectiveDays = freshDays != null ? freshDays : daysRemainingFallback;
             String  freshMessage  = buildMessage(domain, alertType, alertLevel, effectiveDays);
@@ -251,6 +280,9 @@ public class EscalationService {
                 .findByResolvedFalseAndAcknowledgedFalseOrderByCreatedAtDesc();
         int sent = 0;
         for (AlertEvent event : openAlerts) {
+            // İzleme tiplerinin kadansının sahibi ilgili sweep'lerdir; restart
+            // sonrası ilk sweep doğrulamadan bayat re-alert atılmasın.
+            if (MONITORING_ALERT_TYPES.contains(event.getAlertType())) continue;
             String lastAlertTime = event.getLastReAlertAt() != null
                     ? event.getLastReAlertAt() : event.getCreatedAt();
             if (isSameUtcDay(lastAlertTime, todayUtc)) {
@@ -299,17 +331,120 @@ public class EscalationService {
         return saved;
     }
 
-    private void resolveAllOpenAlertsForDomain(String domain) {
-        List<AlertEvent> openAlerts = alertEventRepo.findByDomainAndResolvedFalse(domain);
+    private void resolveOpenAlertsForDomain(String domain, Collection<String> types) {
+        List<AlertEvent> openAlerts = alertEventRepo.findByDomainAndAlertTypeInAndResolvedFalse(domain, types);
         for (AlertEvent event : openAlerts) {
             event.setResolved(true);
             event.setResolvedAt(now());
             event.setResolvedBy("system");
             AlertEvent saved = alertEventRepo.save(event);
             self.sendResolutionNotificationAsync(saved, "Sistem (otomatik)", "RESOLUTION");
-            log.info("✅ Alarm çözüldü: {} [{}] — sertifika sağlıklı, otomatik kapatıldı",
+            log.info("✅ Alarm çözüldü: {} [{}] — sorun giderildi, otomatik kapatıldı",
                     domain, event.getAlertType());
         }
+    }
+
+    /** İzleme recovery'si — SADECE verilen tipin alarmlarını kapatır (çözüm maili ile). */
+    public void resolveMonitoringAlertsForDomain(String domain, String alertType) {
+        resolveOpenAlertsForDomain(domain, Set.of(alertType));
+    }
+
+    /**
+     * MonitoringOutageService teyit zinciri tamamlandığında (ya da kesinti
+     * sürerken her sweep'te / DNS_CHANGED'de anında) çağırır. processResults'un
+     * INITIAL / DAILY_REALERT dallarının izleme aynası — seviye sabit
+     * (CRITICAL ya da DNS_CHANGED için HIGH) olduğundan escalation dalı yoktur.
+     */
+    public void processConfirmedOutage(String domain, String alertType, String alertLevel,
+                                       Map<String, Object> outageContext) {
+        var inventoryOpt  = inventoryRepo.findByDomain(domain);
+        Long domainTeamId = inventoryOpt.map(com.certmonitor.model.CertificateInventory::getTeamId).orElse(null);
+        Long ugTeamId     = inventoryOpt.map(com.certmonitor.model.CertificateInventory::getUgTeamId).orElse(null);
+
+        String message = monitoringMessage(domain, alertType, alertLevel, outageContext);
+        Optional<AlertEvent> existing = alertEventRepo.findOpenAlert(domain, alertType);
+
+        if (existing.isEmpty()) {
+            AlertEvent event = newEvent(domain, alertLevel, alertType, message, null);
+            event = alertEventRepo.save(event);
+
+            List<EscalationContact> contacts = getContactsForLevel(alertLevel, domainTeamId);
+            sendCombinedAlert(domainTeamId, ugTeamId, contacts, domain, alertLevel, alertType,
+                    message, "", event.getId(), "INITIAL", null, outageContext);
+
+            event.setNotifiedContacts(serializeContacts(contacts));
+            event.setLastReAlertAt(now());
+            alertEventRepo.save(event);
+            log.warn("🔴 İzleme alarmı oluşturuldu: {} [{}] {} — takım bilgilendirildi",
+                    domain, alertType,
+                    outageContext != null ? outageContext.getOrDefault("detail", "") : "");
+
+        } else if (!existing.get().getAcknowledged()) {
+            AlertEvent event = existing.get();
+            String lastAlertTime = event.getLastReAlertAt() != null
+                    ? event.getLastReAlertAt() : event.getCreatedAt();
+            if (!isSameUtcDay(lastAlertTime, now())) {
+                List<EscalationContact> contacts = getContactsForLevel(alertLevel, domainTeamId);
+                sendCombinedAlert(domainTeamId, ugTeamId, contacts, domain, alertLevel, alertType,
+                        "[RE-ALERT] " + message, "[RE-ALERT] ",
+                        event.getId(), "DAILY_REALERT", null, outageContext);
+
+                event.setLastReAlertAt(now());
+                event.setMessage(message);
+                alertEventRepo.save(event);
+                log.info("İzleme re-alert gönderildi: {} [{}] — önceki gün: {}",
+                        domain, alertType, lastAlertTime.substring(0, 10));
+            } else {
+                log.debug("İzleme alarmı bugün zaten gönderildi, atlanıyor: {} [{}]", domain, alertType);
+            }
+        }
+        // acknowledged açık alarm → sessiz (expiry semantiğiyle aynı)
+    }
+
+    /** İzleme alarm mesajı — ctx alanları varsa zenginleştirilir, yoksa buildMessage'a düşer. */
+    private String monitoringMessage(String domain, String alertType, String alertLevel,
+                                     Map<String, Object> ctx) {
+        if (ctx == null || ctx.isEmpty()) return buildMessage(domain, alertType, alertLevel, null);
+        switch (alertType) {
+            case TYPE_PORT_DOWN -> {
+                Object port = ctx.get("port");
+                Object proto = ctx.getOrDefault("protocol", "TCP");
+                if (port != null) {
+                    return "KRİTİK: " + domain + " üzerindeki " + port + "/" + proto +
+                            " portuna erişilemiyor. Ardışık doğrulama denemeleri başarısız oldu. " +
+                            "Port yeniden açıldığında alarm otomatik kapanacaktır.";
+                }
+            }
+            case TYPE_DNS_FAILURE -> {
+                Object rt = ctx.get("record_type");
+                if (rt != null) {
+                    return "KRİTİK: " + domain + " için " + rt +
+                            " DNS sorgusu çözümlenemiyor. Ardışık doğrulama denemeleri başarısız oldu. " +
+                            "Çözümleme düzeldiğinde alarm otomatik kapanacaktır.";
+                }
+            }
+            case TYPE_DNS_CHANGED -> {
+                Object rt = ctx.get("record_type");
+                String olds = joinValues(ctx.get("old_values"));
+                String news = joinValues(ctx.get("new_values"));
+                if (rt != null && !news.isEmpty()) {
+                    return "YÜKSEK: " + domain + " için " + rt + " kaydı değişti. " +
+                            "Eski değer(ler): " + (olds.isEmpty() ? "—" : olds) +
+                            " → Yeni değer(ler): " + news + ". " +
+                            "Bu alarm otomatik kapanmaz; değişiklik planlı ise alarmı onaylayıp manuel kapatınız.";
+                }
+            }
+            default -> { /* ACCESSIBILITY → buildMessage */ }
+        }
+        return buildMessage(domain, alertType, alertLevel, null);
+    }
+
+    @SuppressWarnings("unchecked")
+    private static String joinValues(Object v) {
+        if (v instanceof List<?> l) {
+            return l.stream().map(String::valueOf).collect(Collectors.joining(", "));
+        }
+        return v != null ? String.valueOf(v) : "";
     }
 
     /**
@@ -388,16 +523,24 @@ public class EscalationService {
             }
 
             String typeTr = switch (event.getAlertType() != null ? event.getAlertType() : "") {
-                case "REVOKED"      -> "İptal";
-                case "MISMATCH"     -> "Dağıtım Eksik";
-                case "CHAIN_BROKEN" -> "Zincir Sorunu";
-                default             -> "Son Kullanma";
+                case "REVOKED"          -> "İptal";
+                case "MISMATCH"         -> "Dağıtım Eksik";
+                case "CHAIN_BROKEN"     -> "Zincir Sorunu";
+                case TYPE_ACCESSIBILITY -> "Erişim Kesintisi";
+                case TYPE_PORT_DOWN     -> "Port Kesintisi";
+                case TYPE_DNS_FAILURE   -> "DNS Çözümleme Hatası";
+                case TYPE_DNS_CHANGED   -> "DNS Değişikliği";
+                default                 -> "Son Kullanma";
             };
             String subject = "[CertMonitor ✅ ÇÖZÜLDÜ] " + event.getDomain()
                     + " — " + typeTr + " sorunu giderildi";
-            Map<String, Object> certContext = latestCheckRepo.findById(event.getDomain())
-                    .map(this::latestToCertContext)
-                    .orElse(null);
+            // İzleme çözüm mailleri süreyi createdAt→resolvedAt'ten hesaplar;
+            // sertifika context'i alakasız olduğundan geçilmez.
+            Map<String, Object> certContext = MONITORING_ALERT_TYPES.contains(event.getAlertType())
+                    ? null
+                    : latestCheckRepo.findById(event.getDomain())
+                        .map(this::latestToCertContext)
+                        .orElse(null);
             String htmlBody = emailService.buildResolutionEmailHtml(
                     event.getDomain(), event.getAlertType(), event.getAlertLevel(),
                     event.getDaysRemaining(), resolvedBy, event.getResolvedAt(),
@@ -494,10 +637,14 @@ public class EscalationService {
             default         -> "UYARI";
         };
         String typeTr = switch (alertType != null ? alertType : "") {
-            case "REVOKED"      -> "İptal Edildi";
-            case "MISMATCH"     -> "Dağıtım Eksik";
-            case "CHAIN_BROKEN" -> "Zincir Sorunu";
-            default             -> daysRemaining != null ? daysRemaining + " gün kaldı" : "Son Kullanma";
+            case "REVOKED"          -> "İptal Edildi";
+            case "MISMATCH"         -> "Dağıtım Eksik";
+            case "CHAIN_BROKEN"     -> "Zincir Sorunu";
+            case TYPE_ACCESSIBILITY -> "Erişim Kesintisi";
+            case TYPE_PORT_DOWN     -> "Port Kesintisi";
+            case TYPE_DNS_FAILURE   -> "DNS Çözümleme Hatası";
+            case TYPE_DNS_CHANGED   -> "DNS Değişikliği";
+            default                 -> daysRemaining != null ? daysRemaining + " gün kaldı" : "Son Kullanma";
         };
         String subject = subjectPrefix + "[CertMonitor " + levelTr + "] " + domain + " — " + typeTr;
 
@@ -636,6 +783,18 @@ public class EscalationService {
 
     private String buildMessage(String domain, String alertType, String alertLevel, Integer days) {
         return switch (alertType) {
+            case TYPE_ACCESSIBILITY -> "KRİTİK: " + domain +
+                    " adresine erişilemiyor. Ardışık doğrulama denemeleri başarısız oldu — " +
+                    "site erişilemez durumda. Erişim geri geldiğinde alarm otomatik kapanacaktır.";
+            case TYPE_PORT_DOWN -> "KRİTİK: " + domain +
+                    " üzerinde izlenen porta erişilemiyor. Ardışık doğrulama denemeleri başarısız oldu. " +
+                    "Port yeniden açıldığında alarm otomatik kapanacaktır.";
+            case TYPE_DNS_FAILURE -> "KRİTİK: " + domain +
+                    " için DNS sorgusu çözümlenemiyor. Ardışık doğrulama denemeleri başarısız oldu. " +
+                    "Çözümleme düzeldiğinde alarm otomatik kapanacaktır.";
+            case TYPE_DNS_CHANGED -> "YÜKSEK: " + domain +
+                    " için izlenen DNS kaydı değişti. Bu alarm otomatik kapanmaz; " +
+                    "değişiklik planlı ise alarmı onaylayıp manuel kapatınız.";
             case "REVOKED" -> "KRİTİK: " + domain +
                     " adresindeki sertifika İPTAL EDİLMİŞTİR. Trafik derhal yönlendirilmelidir.";
             case "MISMATCH" -> "DAĞITIM EKSİK: " + domain +

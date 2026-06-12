@@ -32,6 +32,10 @@ public interface AlertEventRepository extends JpaRepository<AlertEvent, Long> {
 
     List<AlertEvent> findByDomainAndResolvedFalse(String domain);
 
+    /** Tip-kapsamlı açık alarm sorgusu — cert sweep'i sadece cert tiplerini,
+     *  uptime recovery sadece ACCESSIBILITY'yi kapatabilsin diye. */
+    List<AlertEvent> findByDomainAndAlertTypeInAndResolvedFalse(String domain, Collection<String> alertTypes);
+
     @Query("""
             SELECT a FROM AlertEvent a
              WHERE a.resolved = false
@@ -54,6 +58,7 @@ public interface AlertEventRepository extends JpaRepository<AlertEvent, Long> {
               AND (:resolvedSince IS NULL OR e.resolvedAt >= :resolvedSince)
               AND (:resolvedUntil IS NULL OR e.resolvedAt <= :resolvedUntil)
               AND (:domain IS NULL OR e.domain = :domain)
+              AND (:alertType IS NULL OR e.alertType = :alertType)
             """)
     Page<AlertEvent> findFiltered(
             @Param("resolved") Boolean resolved,
@@ -62,7 +67,28 @@ public interface AlertEventRepository extends JpaRepository<AlertEvent, Long> {
             @Param("resolvedSince") String resolvedSince,
             @Param("resolvedUntil") String resolvedUntil,
             @Param("domain") String domain,
+            @Param("alertType") String alertType,
             Pageable pageable);
+
+    /** Tip filtre pill'lerinin canlı sayıları — findFiltered ile aynı filtreler,
+     *  alertType HARİÇ (sayılar her zaman tüm tipleri gösterir). */
+    @Query("""
+            SELECT e.alertType, COUNT(e) FROM AlertEvent e
+            WHERE (:resolved IS NULL OR e.resolved = :resolved)
+              AND (:since IS NULL OR e.createdAt >= :since)
+              AND (:until IS NULL OR e.createdAt <= :until)
+              AND (:resolvedSince IS NULL OR e.resolvedAt >= :resolvedSince)
+              AND (:resolvedUntil IS NULL OR e.resolvedAt <= :resolvedUntil)
+              AND (:domain IS NULL OR e.domain = :domain)
+            GROUP BY e.alertType
+            """)
+    List<Object[]> countFilteredByType(
+            @Param("resolved") Boolean resolved,
+            @Param("since") String since,
+            @Param("until") String until,
+            @Param("resolvedSince") String resolvedSince,
+            @Param("resolvedUntil") String resolvedUntil,
+            @Param("domain") String domain);
 
     /** Domain rename: alarm geçmişini yeni domain'e taşı.
      *  Caller'da @Transactional zorunlu. */

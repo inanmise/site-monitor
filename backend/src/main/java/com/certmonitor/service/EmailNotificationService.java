@@ -13,6 +13,7 @@ import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.util.Arrays;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -70,9 +71,7 @@ public class EmailNotificationService {
             helper.setTo(to);
             helper.setFrom(emailFrom);
             helper.setSubject(subject);
-            String html = (domain != null)
-                    ? buildRichAlertHtml(subject, message, domain, level, alertType, daysRemaining, certContext)
-                    : buildSimpleAlertHtml(subject, message);
+            String html = buildAlertEmailHtml(subject, message, domain, level, alertType, daysRemaining, certContext);
             helper.setText(html, true);
             return doSend(to, msg, 1);
         } catch (Exception e) {
@@ -94,7 +93,7 @@ public class EmailNotificationService {
             helper.setTo(toAddresses);
             helper.setFrom(emailFrom);
             helper.setSubject(subject);
-            helper.setText(buildRichAlertHtml(subject, message, domain, level,
+            helper.setText(buildAlertEmailHtml(subject, message, domain, level,
                     alertType, daysRemaining, certContext), true);
             return doSend(Arrays.toString(toAddresses), msg, 1);
         } catch (Exception e) {
@@ -117,7 +116,7 @@ public class EmailNotificationService {
             helper.setTo(toAddresses);
             helper.setFrom(emailFrom);
             helper.setSubject(subject);
-            helper.setText(buildRichResolvedHtml(domain, alertType, alertLevel,
+            helper.setText(buildResolutionEmailHtml(domain, alertType, alertLevel,
                     daysRemaining, resolvedBy, resolvedAt, createdAt, certContext), true);
             return doSend(Arrays.toString(toAddresses), msg, 1);
         } catch (Exception e) {
@@ -175,7 +174,7 @@ public class EmailNotificationService {
             helper.setTo(to);
             helper.setFrom(emailFrom);
             helper.setSubject(subject);
-            helper.setText(buildRichResolvedHtml(domain, alertType, alertLevel,
+            helper.setText(buildResolutionEmailHtml(domain, alertType, alertLevel,
                     daysRemaining, resolvedBy, resolvedAt, createdAt, certContext), true);
             return doSend(to, msg, 1);
         } catch (Exception e) {
@@ -357,9 +356,18 @@ public class EmailNotificationService {
 
     // ── Public HTML accessors (used to store sent HTML in notification log) ──
 
+    private static final java.util.Set<String> MONITORING_OUTAGE_TYPES =
+            java.util.Set.of("ACCESSIBILITY", "PORT_DOWN", "DNS_FAILURE");
+
     public String buildAlertEmailHtml(String subject, String message,
                                        String domain, String level, String alertType,
                                        Integer daysRemaining, Map<String, Object> certContext) {
+        if (alertType != null && MONITORING_OUTAGE_TYPES.contains(alertType)) {
+            return buildRichMonitoringOutageAlertHtml(message, domain, alertType, certContext);
+        }
+        if ("DNS_CHANGED".equals(alertType)) {
+            return buildRichDnsChangedAlertHtml(message, domain, certContext);
+        }
         return (domain != null)
                 ? buildRichAlertHtml(subject, message, domain, level, alertType, daysRemaining, certContext)
                 : buildSimpleAlertHtml(subject, message);
@@ -369,6 +377,10 @@ public class EmailNotificationService {
                                             Integer daysRemaining, String resolvedBy,
                                             String resolvedAt, String createdAt,
                                             Map<String, Object> certContext) {
+        if ((alertType != null && MONITORING_OUTAGE_TYPES.contains(alertType))
+                || "DNS_CHANGED".equals(alertType)) {
+            return buildRichMonitoringResolvedHtml(domain, alertType, resolvedBy, resolvedAt, createdAt);
+        }
         return buildRichResolvedHtml(domain, alertType, alertLevel,
                 daysRemaining, resolvedBy, resolvedAt, createdAt, certContext);
     }
@@ -864,6 +876,477 @@ public class EmailNotificationService {
             + "</td></tr></table>"   // em-card
             + "</td></tr></table>"   // em-wrap
             + "</body></html>";
+    }
+
+    // ── Accessibility (site down) mails ──────────────────────────────────────
+
+    /**
+     * İzleme kesintisi alarm maili — ACCESSIBILITY / PORT_DOWN / DNS_FAILURE
+     * için ortak şablon; etiketler tipe göre çözülür. ctx,
+     * MonitoringOutageService'in ürettiği kesinti bağlamıdır (port/protocol/
+     * record_type, first_failure_at, last_error, confirm_attempts,
+     * confirm_delay_ms, confirm_attempt_count). "Tekrar Bildir" yolu eksik
+     * context geçirebileceğinden TÜM okumalar null-toleranslıdır.
+     */
+    @SuppressWarnings("unchecked")
+    private String buildRichMonitoringOutageAlertHtml(String message, String domain,
+                                                      String alertType, Map<String, Object> ctx) {
+        String generatedAt = LocalDateTime.now().format(DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm"));
+        String red = "#dc2626";
+
+        String kicker = switch (alertType) {
+            case "PORT_DOWN"   -> "CertMonitor — Port İzleme";
+            case "DNS_FAILURE" -> "CertMonitor — DNS İzleme";
+            default            -> "CertMonitor — Erişilebilirlik İzleme";
+        };
+        String heroTitle = switch (alertType) {
+            case "PORT_DOWN"   -> "PORT ERİŞİLEMEZ";
+            case "DNS_FAILURE" -> "DNS ÇÖZÜLEMİYOR";
+            default            -> "SİTE ERİŞİLEMEZ";
+        };
+        String typeTrLabel = switch (alertType) {
+            case "PORT_DOWN"   -> "Port Kesintisi";
+            case "DNS_FAILURE" -> "DNS Çözümleme Hatası";
+            default            -> "Erişim Kesintisi";
+        };
+        String accessLabel = switch (alertType) {
+            case "PORT_DOWN"   -> "Port";
+            case "DNS_FAILURE" -> "DNS Çözümleme";
+            default            -> "Erişim";
+        };
+
+        String port           = ctxStr(ctx, "port");
+        String protocol       = ctxStr(ctx, "protocol");
+        String recordType     = ctxStr(ctx, "record_type");
+        String firstFailureAt = ctxStr(ctx, "first_failure_at");
+        String lastError      = ctxStr(ctx, "last_error");
+        String attemptCount   = ctxStr(ctx, "confirm_attempt_count");
+        String delayMs        = ctxStr(ctx, "confirm_delay_ms");
+        String endpoint = "DNS_FAILURE".equals(alertType)
+                ? escHtml(domain) + (!recordType.isEmpty() ? " · " + escHtml(recordType) + " kaydı" : "")
+                : escHtml(domain) + (!port.isEmpty() ? ":" + port : "");
+        String attemptsLabel  = !attemptCount.isEmpty() ? attemptCount : "Ardışık";
+        String delayLabel     = !delayMs.isEmpty()
+                ? (Long.parseLong(delayMs) / 1000) + " sn arayla " : "";
+
+        List<Map<String, Object>> attempts = (ctx != null && ctx.get("confirm_attempts") instanceof List<?> l)
+                ? (List<Map<String, Object>>) l : List.of();
+
+        // ── Hero — kesinti bildirimi ──
+        String hero = "<table width='100%' cellpadding='0' cellspacing='0' border='0'"
+            + " style='margin:20px 0;border-radius:14px;overflow:hidden;border:2px solid " + red + "22'>"
+            + "<tr>"
+            + "<td class='em-hero-l' align='center' valign='middle' width='38%'"
+            + " style='background:" + red + ";padding:22px 14px'>"
+            + "<div style='color:#fff;font-size:52px;line-height:1'>🔴</div>"
+            + "<div style='color:#fff;font-size:15px;font-weight:800;margin-top:8px;letter-spacing:.06em'>" + heroTitle + "</div>"
+            + "<div style='color:rgba(255,255,255,.85);font-size:12px;margin-top:8px;padding:0 6px'>⚠ Acil müdahale gerekli</div>"
+            + "</td>"
+            + "<td class='em-hero-r' valign='middle' style='background:" + red + "0d;padding:20px 22px'>"
+            + "<div style='font-size:11px;font-weight:700;letter-spacing:.1em;color:#94a3b8;text-transform:uppercase;margin-bottom:10px'>İlk Hata Zamanı</div>"
+            + "<div style='font-size:24px;font-weight:900;color:" + red + ";letter-spacing:-.5px'>" + formatIso(firstFailureAt) + "</div>"
+            + "<div style='font-size:13px;color:#475569;margin-top:6px;line-height:1.6'>" + formatIsoFull(firstFailureAt) + "</div>"
+            + "<div style='margin-top:12px;padding:6px 12px;background:" + red + ";color:#fff;"
+            + "border-radius:6px;font-size:12px;font-weight:800;display:inline-block'>"
+            + "🔁 " + attemptsLabel + " doğrulama denemesi " + delayLabel + "— tümü başarısız</div>"
+            + "</td>"
+            + "</tr></table>";
+
+        // ── Sol kolon: kesinti bilgileri ──
+        StringBuilder outageRows = new StringBuilder();
+        outageRows.append(tableRow2col("🌐 Uç Nokta", endpoint));
+        if ("PORT_DOWN".equals(alertType) && !protocol.isEmpty()) {
+            outageRows.append(tableRow2col("🔌 Protokol", escHtml(protocol)));
+        }
+        if (!firstFailureAt.isEmpty()) {
+            outageRows.append(tableRow2col("🕐 İlk Hata", formatIso(firstFailureAt)));
+        }
+        if (!lastError.isEmpty()) {
+            String shortErr = lastError.length() > 90 ? lastError.substring(0, 90) + "…" : lastError;
+            outageRows.append(tableRow2col("⚠ Son Hata", escHtml(shortErr)));
+        }
+        for (Map<String, Object> a : attempts) {
+            String at  = String.valueOf(a.getOrDefault("checked_at", ""));
+            String err = String.valueOf(a.getOrDefault("error", ""));
+            String time = at.length() >= 19 ? at.substring(11, 19) + " UTC" : formatIso(at);
+            String detail = !err.isEmpty() && !"null".equals(err)
+                    ? time + " — " + escHtml(err.length() > 60 ? err.substring(0, 60) + "…" : err)
+                    : time + " — yanıt yok";
+            outageRows.append(tableRow2col("🔁 Deneme " + a.getOrDefault("attempt", "?"), detail));
+        }
+
+        // ── Sağ kolon: durum özeti ──
+        String statusRows = statusRow2col(accessLabel,  "✗ ERİŞİLEMİYOR")
+            + statusRow2col("Doğrulama",  "✗ " + (attempts.isEmpty() ? "Başarısız" : attempts.size() + "/" + attempts.size() + " deneme başarısız"))
+            + statusRow2col("Seviye",     "✗ KRİTİK")
+            + statusRow2col("İzleme",     "✓ Devam ediyor");
+
+        String twoColSection =
+            "<table width='100%' cellpadding='0' cellspacing='0' border='0' style='margin-bottom:16px'><tr>"
+            + "<td class='em-col-l' valign='top' style='width:55%;padding-right:8px'>"
+            + "<table width='100%' cellpadding='0' cellspacing='0' border='0' style='border:1px solid #e2e8f0;border-radius:10px;overflow:hidden'>"
+            + "<tr><td style='background:#1e293b;padding:9px 14px;font-size:11px;font-weight:700;letter-spacing:.1em;color:#94a3b8'>KESİNTİ BİLGİLERİ</td></tr>"
+            + outageRows + "</table></td>"
+            + "<td class='em-col-r' valign='top' style='width:45%'>"
+            + "<table width='100%' cellpadding='0' cellspacing='0' border='0' style='border:1px solid #e2e8f0;border-radius:10px;overflow:hidden'>"
+            + "<tr><td style='background:#334155;padding:9px 14px;font-size:11px;font-weight:700;letter-spacing:.1em;color:#94a3b8'>DURUM ÖZETİ</td></tr>"
+            + statusRows + "</table></td>"
+            + "</tr></table>";
+
+        String css = "<style>"
+            + "body,table,td{-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%}"
+            + "@media only screen and (max-width:620px){"
+            + ".em-wrap{padding:0!important}.em-card{border-radius:0!important;width:100%!important}"
+            + ".em-domain{font-size:16px!important;word-break:break-all!important}"
+            + ".em-body{padding:14px!important}"
+            + ".em-hero-l,.em-hero-r{display:block!important;width:100%!important}"
+            + ".em-hero-l{border-radius:12px 12px 0 0!important}"
+            + ".em-hero-r{border-radius:0 0 12px 12px!important;padding:16px!important}"
+            + ".em-col-l{display:block!important;width:100%!important;padding-right:0!important;padding-bottom:10px!important}"
+            + ".em-col-r{display:block!important;width:100%!important}"
+            + "}"
+            + "</style>";
+
+        return "<!DOCTYPE html><html lang='tr'>"
+            + "<head><meta charset='UTF-8'>"
+            + "<meta name='viewport' content='width=device-width,initial-scale=1,maximum-scale=1'>"
+            + css + "</head>"
+            + "<body style='margin:0;padding:0;background:#f1f5f9;font-family:\"Segoe UI\",Tahoma,Arial,sans-serif'>"
+
+            + "<table class='em-wrap' width='100%' cellpadding='0' cellspacing='0' border='0'"
+            + " style='background:#f1f5f9;padding:24px 10px'><tr><td align='center'>"
+
+            + "<table class='em-card' width='640' cellpadding='0' cellspacing='0' border='0'"
+            + " style='max-width:640px;width:100%;border-radius:14px;overflow:hidden;"
+            + "box-shadow:0 8px 32px rgba(0,0,0,.15)'><tr><td style='padding:0'>"
+
+            // ── Top bar ──
+            + "<div style='background:" + red + ";padding:22px 24px'>"
+            + "<div style='color:rgba(255,255,255,.65);font-size:11px;font-weight:700;letter-spacing:.12em'>" + kicker + "</div>"
+            + "<div class='em-domain' style='color:#fff;font-size:22px;font-weight:900;"
+            + "margin-top:10px;word-break:break-all;line-height:1.25'>🌐 " + endpoint + "</div>"
+            + "<div style='color:rgba(255,255,255,.88);font-size:15px;font-weight:700;"
+            + "margin-top:8px;letter-spacing:.02em'>KRİTİK &nbsp;·&nbsp; " + typeTrLabel + "</div>"
+            + "</div>"
+
+            // ── Body ──
+            + "<div class='em-body' style='background:#fff;padding:22px 24px'>"
+            + hero
+            + twoColSection
+
+            // Alarm detayı
+            + "<div style='background:#fef2f2;border-left:4px solid " + red + ";"
+            + "border-radius:0 8px 8px 0;padding:14px 18px;color:#1c1917;"
+            + "font-size:14px;line-height:1.7;margin-bottom:14px'>"
+            + "<div style='font-size:11px;font-weight:700;letter-spacing:.08em;color:" + red + ";margin-bottom:6px'>ALARM DETAYI</div>"
+            + escHtml(message)
+            + "</div>"
+
+            // Otomatik kapanış notu
+            + "<div style='font-size:12px;color:#64748b;line-height:1.6;margin-bottom:20px'>"
+            + "ℹ Sorun düzeldiğinde bu alarm otomatik kapatılır ve çözüm e-postası gönderilir. "
+            + "Alarmı CertMonitor &rarr; Uyarılar &rarr; Alarm Geçmişi ekranından onaylayabilir veya kapatabilirsiniz."
+            + "</div>"
+
+            // Footer
+            + "<table width='100%' cellpadding='0' cellspacing='0'><tr>"
+            + "<td style='border-top:1px solid #f1f5f9;padding-top:12px;font-size:11px;color:#94a3b8'>CertMonitor</td>"
+            + "<td align='right' style='border-top:1px solid #f1f5f9;padding-top:12px;font-size:11px;color:#94a3b8'>"
+            + "Bildirim: " + generatedAt
+            + "</td></tr></table>"
+
+            + "</div>"
+            + "</td></tr></table>"
+            + "</td></tr></table>"
+            + "</body></html>";
+    }
+
+    /** İzleme çözüm maili — süre createdAt→resolvedAt'ten hesaplanır; etiketler tipe göre. */
+    private String buildRichMonitoringResolvedHtml(String domain, String alertType, String resolvedBy,
+                                                   String resolvedAt, String createdAt) {
+        String generatedAt = LocalDateTime.now().format(DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm"));
+        String green = "#16a34a";
+        String by = resolvedBy != null && !resolvedBy.isBlank() ? resolvedBy : "Sistem (otomatik)";
+        String duration = formatOutageDuration(createdAt, resolvedAt);
+        boolean dnsChanged = "DNS_CHANGED".equals(alertType);
+
+        String kicker = switch (alertType != null ? alertType : "") {
+            case "PORT_DOWN"                 -> "CertMonitor — Port İzleme";
+            case "DNS_FAILURE", "DNS_CHANGED" -> "CertMonitor — DNS İzleme";
+            default                          -> "CertMonitor — Erişilebilirlik İzleme";
+        };
+        String heroLine = switch (alertType != null ? alertType : "") {
+            case "PORT_DOWN"   -> "Port Yeniden Açıldı";
+            case "DNS_FAILURE" -> "DNS Çözümleme Düzeldi";
+            case "DNS_CHANGED" -> "DNS Değişikliği Alarmı Kapatıldı";
+            default            -> "Erişim Yeniden Sağlandı";
+        };
+        String typeTrLabel = switch (alertType != null ? alertType : "") {
+            case "PORT_DOWN"   -> "Port Kesintisi";
+            case "DNS_FAILURE" -> "DNS Çözümleme Hatası";
+            case "DNS_CHANGED" -> "DNS Değişikliği";
+            default            -> "Erişim Kesintisi";
+        };
+        String levelTrLabel = dnsChanged ? "YÜKSEK" : "KRİTİK";
+        String levelColor   = dnsChanged ? "#9333ea" : "#dc2626";
+        String durationLabel = dnsChanged ? "⏱ Alarm Süresi" : "⏱ Toplam Kesinti";
+
+        String resolverRows = tableRow2col("👤 Çözen",            escHtml(by))
+            + tableRow2col("🕐 Çözülme Zamanı",     formatIso(resolvedAt))
+            + tableRow2col("📅 Alarm Başlangıcı",   formatIso(createdAt));
+
+        String outageRows = tableRow2col("🌐 Alan Adı",   escHtml(domain))
+            + tableRow2col("⚠ Alarm Tipi",  typeTrLabel)
+            + "<tr style='border-top:1px solid #e2e8f0'>"
+            + "<td style='padding:9px 13px;font-size:12px;color:#64748b;white-space:nowrap'>🔴 Seviye</td>"
+            + "<td style='padding:9px 13px;font-size:14px;font-weight:700;color:" + levelColor + "'>" + levelTrLabel + "</td>"
+            + "</tr>"
+            + "<tr style='border-top:1px solid #e2e8f0;background:#f0fdf4'>"
+            + "<td style='padding:9px 13px;font-size:12px;color:#64748b;white-space:nowrap'>" + durationLabel + "</td>"
+            + "<td style='padding:9px 13px;font-size:14px;font-weight:800;color:" + green + "'>" + duration + "</td>"
+            + "</tr>";
+
+        String twoColSection =
+            "<table width='100%' cellpadding='0' cellspacing='0' border='0' style='margin-bottom:16px'><tr>"
+            + "<td class='em-col-l' valign='top' style='width:50%;padding-right:8px'>"
+            + "<table width='100%' cellpadding='0' cellspacing='0' border='0'"
+            + " style='border:1px solid #bbf7d0;border-radius:10px;overflow:hidden'>"
+            + "<tr><td style='background:#15803d;padding:9px 14px;font-size:11px;font-weight:700;"
+            + "letter-spacing:.1em;color:#dcfce7'>ÇÖZÜM BİLGİSİ</td></tr>"
+            + resolverRows + "</table></td>"
+            + "<td class='em-col-r' valign='top' style='width:50%'>"
+            + "<table width='100%' cellpadding='0' cellspacing='0' border='0'"
+            + " style='border:1px solid #e2e8f0;border-radius:10px;overflow:hidden'>"
+            + "<tr><td style='background:#334155;padding:9px 14px;font-size:11px;font-weight:700;"
+            + "letter-spacing:.1em;color:#94a3b8'>KESİNTİ DETAYI</td></tr>"
+            + outageRows + "</table></td>"
+            + "</tr></table>";
+
+        String css = "<style>"
+            + "body,table,td{-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%}"
+            + "@media only screen and (max-width:620px){"
+            + ".em-wrap{padding:0!important}.em-card{border-radius:0!important;width:100%!important}"
+            + ".em-domain{font-size:16px!important;word-break:break-all!important}"
+            + ".em-body{padding:14px!important}"
+            + ".em-col-l{display:block!important;width:100%!important;padding-right:0!important;padding-bottom:10px!important}"
+            + ".em-col-r{display:block!important;width:100%!important}"
+            + "}"
+            + "</style>";
+
+        return "<!DOCTYPE html><html lang='tr'>"
+            + "<head><meta charset='UTF-8'>"
+            + "<meta name='viewport' content='width=device-width,initial-scale=1,maximum-scale=1'>"
+            + css + "</head>"
+            + "<body style='margin:0;padding:0;background:#f1f5f9;"
+            + "font-family:\"Segoe UI\",Tahoma,Arial,sans-serif'>"
+
+            + "<table class='em-wrap' width='100%' cellpadding='0' cellspacing='0' border='0'"
+            + " style='background:#f1f5f9;padding:24px 10px'><tr><td align='center'>"
+
+            + "<table class='em-card' width='640' cellpadding='0' cellspacing='0' border='0'"
+            + " style='max-width:640px;width:100%;border-radius:14px;overflow:hidden;"
+            + "box-shadow:0 8px 32px rgba(0,0,0,.15)'><tr><td style='padding:0'>"
+
+            // Top bar
+            + "<div style='background:" + green + ";padding:22px 24px'>"
+            + "<div style='color:rgba(255,255,255,.65);font-size:11px;font-weight:700;"
+            + "letter-spacing:.12em'>" + kicker + "</div>"
+            + "<div class='em-domain' style='color:#fff;font-size:22px;font-weight:900;"
+            + "margin-top:10px;word-break:break-all;line-height:1.25'>✅ " + escHtml(domain) + "</div>"
+            + "<div style='color:rgba(255,255,255,.88);font-size:15px;font-weight:700;"
+            + "margin-top:8px;letter-spacing:.02em'>" + heroLine + " &nbsp;·&nbsp; " + typeTrLabel + "</div>"
+            + "</div>"
+
+            // Body
+            + "<div class='em-body' style='background:#fff;padding:22px 24px'>"
+
+            // Hero checkmark
+            + "<div style='text-align:center;margin:16px 0 24px'>"
+            + "<div style='display:inline-block;background:#dcfce7;border-radius:50%;width:80px;"
+            + "height:80px;line-height:80px;font-size:42px;border:3px solid " + green + "'>✓</div>"
+            + "<div style='margin-top:14px;font-size:20px;font-weight:800;color:#15803d;"
+            + "letter-spacing:-.3px'>" + heroLine + "</div>"
+            + "<div style='margin-top:6px;font-size:13px;color:#64748b'>"
+            + "Alarm kapatıldı. İzleme devam etmektedir.</div>"
+            + "</div>"
+
+            + twoColSection
+
+            // Info box
+            + "<div style='background:#f0fdf4;border-left:4px solid " + green + ";"
+            + "border-radius:0 8px 8px 0;padding:14px 18px;color:#14532d;"
+            + "font-size:14px;line-height:1.7;margin-bottom:20px'>"
+            + "<div style='font-size:11px;font-weight:700;letter-spacing:.08em;"
+            + "color:" + green + ";margin-bottom:6px'>BİLGİ</div>"
+            + "<strong>" + escHtml(domain) + "</strong> için açık olan <strong>" + typeTrLabel
+            + "</strong> alarmı kapatıldı. "
+            + (dnsChanged ? "Alarm süresi: " : "Toplam kesinti süresi: ")
+            + "<strong>" + duration + "</strong>."
+            + "</div>"
+
+            // Footer
+            + "<table width='100%' cellpadding='0' cellspacing='0'><tr>"
+            + "<td style='border-top:1px solid #f1f5f9;padding-top:12px;font-size:11px;color:#94a3b8'>"
+            + "CertMonitor</td>"
+            + "<td align='right' style='border-top:1px solid #f1f5f9;padding-top:12px;"
+            + "font-size:11px;color:#94a3b8'>Bildirim: " + generatedAt + "</td>"
+            + "</tr></table>"
+
+            + "</div>"
+            + "</td></tr></table>"
+            + "</td></tr></table>"
+            + "</body></html>";
+    }
+
+    /**
+     * DNS kayıt değişikliği alarm maili (YÜKSEK, mor) — ESKİ | YENİ değerler
+     * iki kolon halinde. Teyit denemeleri bölümü yoktur (değişiklik başarılı
+     * sorgudan pozitif gözlemdir); alarm otomatik kapanmaz. ctx okumaları
+     * null-toleranslıdır ("Tekrar Bildir" yolu eksik context geçirebilir).
+     */
+    private String buildRichDnsChangedAlertHtml(String message, String domain, Map<String, Object> ctx) {
+        String generatedAt = LocalDateTime.now().format(DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm"));
+        String purple = "#9333ea";
+
+        String recordType = ctxStr(ctx, "record_type");
+        String changedAt  = ctxStr(ctx, "changed_at");
+        List<String> oldValues = ctxList(ctx, "old_values");
+        List<String> newValues = ctxList(ctx, "new_values");
+
+        return buildDnsChangedHtmlInternal(message, domain, recordType, changedAt, oldValues, newValues, purple, generatedAt);
+    }
+
+    @SuppressWarnings("unchecked")
+    private List<String> ctxList(Map<String, Object> ctx, String key) {
+        if (ctx == null) return List.of();
+        Object v = ctx.get(key);
+        return v instanceof List<?> l ? (List<String>) l : List.of();
+    }
+
+    private String buildDnsChangedHtmlInternal(String message, String domain, String recordType,
+                                               String changedAt, List<String> oldValues,
+                                               List<String> newValues, String purple, String generatedAt) {
+        StringBuilder oldRows = new StringBuilder();
+        if (oldValues.isEmpty()) {
+            oldRows.append(tableRow2colMono("•", "—"));
+        } else {
+            for (String v : oldValues) oldRows.append(tableRow2colMono("•", escHtml(v)));
+        }
+        StringBuilder newRows = new StringBuilder();
+        if (newValues.isEmpty()) {
+            newRows.append(tableRow2colMono("•", "—"));
+        } else {
+            for (String v : newValues) newRows.append(tableRow2colMono("•", escHtml(v)));
+        }
+
+        String twoColSection =
+            "<table width='100%' cellpadding='0' cellspacing='0' border='0' style='margin-bottom:16px'><tr>"
+            + "<td class='em-col-l' valign='top' style='width:50%;padding-right:8px'>"
+            + "<table width='100%' cellpadding='0' cellspacing='0' border='0' style='border:1px solid #e2e8f0;border-radius:10px;overflow:hidden'>"
+            + "<tr><td style='background:#475569;padding:9px 14px;font-size:11px;font-weight:700;letter-spacing:.1em;color:#cbd5e1'>ESKİ DEĞERLER</td></tr>"
+            + oldRows + "</table></td>"
+            + "<td class='em-col-r' valign='top' style='width:50%'>"
+            + "<table width='100%' cellpadding='0' cellspacing='0' border='0' style='border:1px solid " + purple + "44;border-radius:10px;overflow:hidden'>"
+            + "<tr><td style='background:" + purple + ";padding:9px 14px;font-size:11px;font-weight:700;letter-spacing:.1em;color:#f3e8ff'>YENİ DEĞERLER</td></tr>"
+            + newRows + "</table></td>"
+            + "</tr></table>";
+
+        String css = "<style>"
+            + "body,table,td{-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%}"
+            + "@media only screen and (max-width:620px){"
+            + ".em-wrap{padding:0!important}.em-card{border-radius:0!important;width:100%!important}"
+            + ".em-domain{font-size:16px!important;word-break:break-all!important}"
+            + ".em-body{padding:14px!important}"
+            + ".em-col-l{display:block!important;width:100%!important;padding-right:0!important;padding-bottom:10px!important}"
+            + ".em-col-r{display:block!important;width:100%!important}"
+            + "}"
+            + "</style>";
+
+        return "<!DOCTYPE html><html lang='tr'>"
+            + "<head><meta charset='UTF-8'>"
+            + "<meta name='viewport' content='width=device-width,initial-scale=1,maximum-scale=1'>"
+            + css + "</head>"
+            + "<body style='margin:0;padding:0;background:#f1f5f9;font-family:\"Segoe UI\",Tahoma,Arial,sans-serif'>"
+
+            + "<table class='em-wrap' width='100%' cellpadding='0' cellspacing='0' border='0'"
+            + " style='background:#f1f5f9;padding:24px 10px'><tr><td align='center'>"
+
+            + "<table class='em-card' width='640' cellpadding='0' cellspacing='0' border='0'"
+            + " style='max-width:640px;width:100%;border-radius:14px;overflow:hidden;"
+            + "box-shadow:0 8px 32px rgba(0,0,0,.15)'><tr><td style='padding:0'>"
+
+            // ── Top bar ──
+            + "<div style='background:" + purple + ";padding:22px 24px'>"
+            + "<div style='color:rgba(255,255,255,.65);font-size:11px;font-weight:700;letter-spacing:.12em'>CertMonitor — DNS İzleme</div>"
+            + "<div class='em-domain' style='color:#fff;font-size:22px;font-weight:900;"
+            + "margin-top:10px;word-break:break-all;line-height:1.25'>🔀 " + escHtml(domain)
+            + (!recordType.isEmpty() ? " <span style='font-size:15px;font-weight:700'>· " + escHtml(recordType) + " kaydı</span>" : "")
+            + "</div>"
+            + "<div style='color:rgba(255,255,255,.88);font-size:15px;font-weight:700;"
+            + "margin-top:8px;letter-spacing:.02em'>YÜKSEK &nbsp;·&nbsp; DNS Değişikliği</div>"
+            + "</div>"
+
+            // ── Body ──
+            + "<div class='em-body' style='background:#fff;padding:22px 24px'>"
+
+            // Hero
+            + "<div style='text-align:center;margin:16px 0 22px'>"
+            + "<div style='display:inline-block;background:" + purple + ";color:#fff;"
+            + "border-radius:12px;padding:14px 32px;font-size:17px;font-weight:800;letter-spacing:.02em'>"
+            + "🔀 DNS KAYDI DEĞİŞTİ"
+            + "</div>"
+            + (!changedAt.isEmpty()
+                ? "<div style='margin-top:10px;font-size:13px;color:#64748b'>Tespit zamanı: "
+                  + formatIsoFull(changedAt) + "</div>" : "")
+            + "</div>"
+
+            + twoColSection
+
+            // Alarm detayı
+            + "<div style='background:#faf5ff;border-left:4px solid " + purple + ";"
+            + "border-radius:0 8px 8px 0;padding:14px 18px;color:#1c1917;"
+            + "font-size:14px;line-height:1.7;margin-bottom:14px'>"
+            + "<div style='font-size:11px;font-weight:700;letter-spacing:.08em;color:" + purple + ";margin-bottom:6px'>ALARM DETAYI</div>"
+            + escHtml(message)
+            + "</div>"
+
+            // Manuel kapanış notu
+            + "<div style='font-size:12px;color:#64748b;line-height:1.6;margin-bottom:20px'>"
+            + "ℹ Bu alarm otomatik kapanmaz. Değişiklik planlı ise CertMonitor &rarr; Uyarılar &rarr; "
+            + "Alarm Geçmişi ekranından alarmı onaylayın ve kapatın. Beklenmedik bir değişiklikse "
+            + "(olası domain hijack / hatalı migrasyon) derhal ağ ekibiyle iletişime geçin."
+            + "</div>"
+
+            // Footer
+            + "<table width='100%' cellpadding='0' cellspacing='0'><tr>"
+            + "<td style='border-top:1px solid #f1f5f9;padding-top:12px;font-size:11px;color:#94a3b8'>CertMonitor</td>"
+            + "<td align='right' style='border-top:1px solid #f1f5f9;padding-top:12px;font-size:11px;color:#94a3b8'>"
+            + "Bildirim: " + generatedAt
+            + "</td></tr></table>"
+
+            + "</div>"
+            + "</td></tr></table>"
+            + "</td></tr></table>"
+            + "</body></html>";
+    }
+
+    /** Kesinti süresi (createdAt→resolvedAt) TR formatında: "2 saat 14 dakika". */
+    private String formatOutageDuration(String createdAt, String resolvedAt) {
+        try {
+            DateTimeFormatter f = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss");
+            LocalDateTime a = LocalDateTime.parse(createdAt, f);
+            LocalDateTime b = LocalDateTime.parse(resolvedAt, f);
+            long mins = java.time.Duration.between(a, b).toMinutes();
+            if (mins < 1) return "1 dakikadan az";
+            long days = mins / 1440, hours = (mins % 1440) / 60, rem = mins % 60;
+            StringBuilder sb = new StringBuilder();
+            if (days > 0)  sb.append(days).append(" gün ");
+            if (hours > 0) sb.append(hours).append(" saat ");
+            if (rem > 0)   sb.append(rem).append(" dakika");
+            return sb.toString().trim();
+        } catch (Exception e) {
+            return "—";
+        }
     }
 
     private static String escHtml(String s) {
