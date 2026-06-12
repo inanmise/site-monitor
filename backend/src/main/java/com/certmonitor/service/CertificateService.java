@@ -381,14 +381,15 @@ public class CertificateService {
         List<CertificateDto> syT2All  = syAll.stream().filter(c -> Integer.valueOf(2).equals(tierMap.get(c.getDomain()))).toList();
         List<CertificateDto> syT2Warn = syWarn.stream().filter(c -> Integer.valueOf(2).equals(tierMap.get(c.getDomain()))).toList();
 
+        int[] th = thresholdDays(); // eşik tek okuma → 4 alt-grup aynı değeri kullanır
         Map<String, Object> res = new LinkedHashMap<>();
         res.put("mode",        "personal");
         res.put("team_id",     teamId);
         res.put("team_name",   teamName != null ? teamName : "");
-        res.put("sy_stats",    computeStats(syAll, syWarn));
-        res.put("ug_stats",    computeStats(ugAll, ugWarn));
-        res.put("sy_t1_stats", computeStats(syT1All, syT1Warn));
-        res.put("sy_t2_stats", computeStats(syT2All, syT2Warn));
+        res.put("sy_stats",    computeStats(syAll, syWarn, th[0], th[1]));
+        res.put("ug_stats",    computeStats(ugAll, ugWarn, th[0], th[1]));
+        res.put("sy_t1_stats", computeStats(syT1All, syT1Warn, th[0], th[1]));
+        res.put("sy_t2_stats", computeStats(syT2All, syT2Warn, th[0], th[1]));
         return res;
     }
 
@@ -405,6 +406,7 @@ public class CertificateService {
         }
 
         Map<String, Integer> tierMap = buildTierMap();
+        int[] th = thresholdDays(); // eşik tek okuma → döngüde her team için DB okunmaz
         List<Map<String, Object>> result = new ArrayList<>();
         // findAll() yerine sadece aktif team'leri çek — DB tarafında WHERE active=true
         for (Team team : teamRepo.findByActiveTrueOrderByNameAsc()) {
@@ -422,14 +424,16 @@ public class CertificateService {
             entry.put("team_name", team.getName());
             entry.put("sy_stats",  computeStats(
                 allLatest.stream().filter(c -> sy.contains(c.getDomain())).toList(),
-                allWarnings.stream().filter(c -> sy.contains(c.getDomain())).toList()
+                allWarnings.stream().filter(c -> sy.contains(c.getDomain())).toList(),
+                th[0], th[1]
             ));
             entry.put("ug_stats",  computeStats(
                 allLatest.stream().filter(c -> ug.contains(c.getDomain())).toList(),
-                allWarnings.stream().filter(c -> ug.contains(c.getDomain())).toList()
+                allWarnings.stream().filter(c -> ug.contains(c.getDomain())).toList(),
+                th[0], th[1]
             ));
-            entry.put("sy_t1_stats", computeStats(syT1All, syT1Warn));
-            entry.put("sy_t2_stats", computeStats(syT2All, syT2Warn));
+            entry.put("sy_t1_stats", computeStats(syT1All, syT1Warn, th[0], th[1]));
+            entry.put("sy_t2_stats", computeStats(syT2All, syT2Warn, th[0], th[1]));
             result.add(entry);
         }
         return Map.of("mode", "all_teams", "teams", result);
@@ -440,63 +444,61 @@ public class CertificateService {
         return computeStats(getAllLatest(), getWarnings());
     }
 
+    /** Aktif eşik (kritik/yüksek gün) — TEK okuma; 4-arg computeStats'e geçirilir. */
+    private int[] thresholdDays() {
+        var t = alertThresholdRepo.findFirstByActiveTrue();
+        return new int[]{ t.map(AlertThreshold::getCriticalDays).orElse(7),
+                          t.map(AlertThreshold::getHighDays).orElse(15) };
+    }
+
     private Map<String, Object> computeStats(List<CertificateDto> all, List<CertificateDto> warnings) {
-        var thrOpt2   = alertThresholdRepo.findFirstByActiveTrue();
-        int critDays  = thrOpt2.map(AlertThreshold::getCriticalDays).orElse(7);
-        int highDays   = thrOpt2.map(AlertThreshold::getHighDays).orElse(15);
+        int[] th = thresholdDays();
+        return computeStats(all, warnings, th[0], th[1]);
+    }
 
-        Set<String> warnDomainSet = warnings.stream()
-                .map(CertificateDto::getDomain).collect(Collectors.toSet());
+    /**
+     * İstatistikleri TEK GEÇİŞ ile hesaplar — eski 12+ ayrı stream yerine 2 döngü
+     * (warnings'te bir, all'da bir). Çıktı eski sürümle birebir aynıdır; eşik günleri
+     * dışarıdan verilir ki toplu (per-team) çağrılarda her seferinde DB okunmasın.
+     */
+    private Map<String, Object> computeStats(List<CertificateDto> all, List<CertificateDto> warnings,
+                                             int critDays, int highDays) {
+        long errors = 0, criticalCount = 0, highCount = 0, expiring30 = 0, expiring7 = 0, expired = 0;
+        List<String> warningDomains  = new ArrayList<>();
+        List<String> highDomains     = new ArrayList<>();
+        List<String> criticalDomains = new ArrayList<>();
+        List<String> expiredDomains  = new ArrayList<>();
+        List<String> errorDomains    = new ArrayList<>();
+        Set<String> warnDomainSet    = new HashSet<>();
 
-        long errors        = warnings.stream().filter(c -> "error".equals(c.getStatus())).count();
-        long criticalCount = warnings.stream()
-                .filter(c -> !"error".equals(c.getStatus()))
-                .filter(c -> c.getDaysRemaining() != null && c.getDaysRemaining() <= critDays)
-                .count();
-        long highCount     = warnings.stream()
-                .filter(c -> !"error".equals(c.getStatus()))
-                .filter(c -> c.getDaysRemaining() != null
-                          && c.getDaysRemaining() > critDays
-                          && c.getDaysRemaining() <= highDays)
-                .count();
-        long warningOnly   = warnings.size() - errors - criticalCount - highCount;
-        long valid         = all.stream()
-                .filter(c -> !warnDomainSet.contains(c.getDomain()))
-                .count();
-        long expiring30    = warnings.stream()
-                .filter(c -> c.getDaysRemaining() != null && c.getDaysRemaining() > 0 && c.getDaysRemaining() <= 30)
-                .count();
-        long expiring7     = warnings.stream()
-                .filter(c -> c.getDaysRemaining() != null && c.getDaysRemaining() >= 0 && c.getDaysRemaining() <= 7)
-                .count();
-        long expired       = warnings.stream()
-                .filter(c -> c.getDaysRemaining() != null && c.getDaysRemaining() < 0)
-                .count();
-        long revoked     = all.stream().filter(c -> "REVOKED".equals(c.getRevocationStatus())).count();
-        long mismatch    = all.stream().filter(c -> "INCOMPLETE".equals(c.getDeploymentStatus())).count();
-        long chainBroken = all.stream().filter(c -> "BROKEN".equals(c.getChainStatus())).count();
+        for (CertificateDto c : warnings) {
+            warnDomainSet.add(c.getDomain());
+            boolean isError = "error".equals(c.getStatus());
+            Integer d = c.getDaysRemaining();
+            if (isError) { errors++; errorDomains.add(c.getDomain()); }
+            if (!isError && d != null) {
+                if (d <= critDays) criticalCount++;
+                else if (d <= highDays) highCount++;
+                if (d > highDays) warningDomains.add(c.getDomain());
+                if (d > critDays && d <= highDays) highDomains.add(c.getDomain());
+                if (d >= 0 && d <= critDays) criticalDomains.add(c.getDomain());
+            }
+            if (d != null) {
+                if (d > 0 && d <= 30) expiring30++;
+                if (d >= 0 && d <= 7)  expiring7++;
+                if (d < 0) { expired++; expiredDomains.add(c.getDomain()); }
+            }
+        }
+        long warningOnly = warnings.size() - errors - criticalCount - highCount;
 
-        List<String> validDomains    = all.stream()
-                .filter(c -> !warnDomainSet.contains(c.getDomain())).map(CertificateDto::getDomain).toList();
-        List<String> warningDomains  = warnings.stream()
-                .filter(c -> !"error".equals(c.getStatus()))
-                .filter(c -> c.getDaysRemaining() != null && c.getDaysRemaining() > highDays)
-                .map(CertificateDto::getDomain).toList();
-        List<String> highDomains     = warnings.stream()
-                .filter(c -> !"error".equals(c.getStatus()))
-                .filter(c -> c.getDaysRemaining() != null
-                          && c.getDaysRemaining() > critDays && c.getDaysRemaining() <= highDays)
-                .map(CertificateDto::getDomain).toList();
-        List<String> criticalDomains = warnings.stream()
-                .filter(c -> !"error".equals(c.getStatus()))
-                .filter(c -> c.getDaysRemaining() != null
-                          && c.getDaysRemaining() >= 0 && c.getDaysRemaining() <= critDays)
-                .map(CertificateDto::getDomain).toList();
-        List<String> expiredDomains  = warnings.stream()
-                .filter(c -> c.getDaysRemaining() != null && c.getDaysRemaining() < 0)
-                .map(CertificateDto::getDomain).toList();
-        List<String> errorDomains    = warnings.stream()
-                .filter(c -> "error".equals(c.getStatus())).map(CertificateDto::getDomain).toList();
+        long valid = 0, revoked = 0, mismatch = 0, chainBroken = 0;
+        List<String> validDomains = new ArrayList<>();
+        for (CertificateDto c : all) {
+            if (!warnDomainSet.contains(c.getDomain())) { valid++; validDomains.add(c.getDomain()); }
+            if ("REVOKED".equals(c.getRevocationStatus()))    revoked++;
+            if ("INCOMPLETE".equals(c.getDeploymentStatus())) mismatch++;
+            if ("BROKEN".equals(c.getChainStatus()))          chainBroken++;
+        }
 
         Map<String, Object> result = new HashMap<>();
         result.put("total_certificates",  all.size());
@@ -524,9 +526,12 @@ public class CertificateService {
      * Returns check runs from the last {@code hours} hours, newest first.
      * When teamId is non-null only runs containing that team's domains are included.
      */
+    /** Aktivite log için en fazla bu kadar kontrol satırı belleğe alınır (OOM koruması). */
+    private static final int ACTIVITY_LOG_MAX_ROWS = 20_000;
+
     public List<Map<String, Object>> getActivityLog(int hours, Long teamId) {
         String cutoff = ISO.format(Instant.now().minus(hours, ChronoUnit.HOURS));
-        List<CertificateCheck> checks = checkRepo.findByCheckedAtAfter(cutoff);
+        List<CertificateCheck> checks = checkRepo.findByCheckedAtAfterLimited(cutoff, ACTIVITY_LOG_MAX_ROWS);
 
         if (teamId != null) {
             Set<String> teamDomains = getTeamDomains(teamId);

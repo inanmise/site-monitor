@@ -122,8 +122,13 @@ class WeeklyReportControllerTest {
     @DisplayName("GET /{id} returns report + images metadata + manager flag")
     void get_returnsFullReport() throws Exception {
         when(service.get(eq(5L), any())).thenReturn(report(5L, 2L, "DRAFT"));
-        WeeklyReportImage img = new WeeklyReportImage();
-        img.setId(9L); img.setCaption("Grafik"); img.setContentType("image/png"); img.setSizeBytes(123L);
+        com.certmonitor.repository.WeeklyReportImageMetaView img = new com.certmonitor.repository.WeeklyReportImageMetaView() {
+            public Long getId() { return 9L; }
+            public Long getTeamId() { return 2L; }
+            public String getCaption() { return "Grafik"; }
+            public String getContentType() { return "image/png"; }
+            public Long getSizeBytes() { return 123L; }
+        };
         when(service.imagesMeta(5L)).thenReturn(List.of(img));
         when(service.managerContactMissing(2L)).thenReturn(true);
 

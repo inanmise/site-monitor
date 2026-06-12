@@ -56,7 +56,12 @@ public class PermissionController {
         String role = (String) body.get("role");
         String resourceKey = (String) body.get("resource_key");
         String action = (String) body.get("action");
-        Boolean allowed = (Boolean) body.get("allowed");
+        // allowed boolean ya da "true"/"false" string olabilir — ClassCastException (500) yerine
+        // sağlam ayrıştır; geçersizse 400 (kullanıcıya teknik hata gösterme).
+        Object allowedRaw = body.get("allowed");
+        Boolean allowed = (allowedRaw instanceof Boolean b) ? b
+                : (allowedRaw instanceof String s && ("true".equalsIgnoreCase(s) || "false".equalsIgnoreCase(s)))
+                        ? Boolean.valueOf(s) : null;
         if (role == null || resourceKey == null || action == null || allowed == null) {
             throw new IllegalArgumentException("role, resource_key, action, allowed required");
         }

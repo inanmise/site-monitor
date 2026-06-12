@@ -138,8 +138,9 @@ public class WeeklyReportService {
         return r;
     }
 
-    public List<WeeklyReportImage> imagesMeta(Long reportId) {
-        return imageRepo.findByReportIdOrderByIdAsc(reportId);
+    /** Meta-only liste (byte[] data YÜKLENMEZ) — heap baskısını önler. */
+    public List<com.certmonitor.repository.WeeklyReportImageMetaView> imagesMeta(Long reportId) {
+        return imageRepo.findProjectedByReportIdOrderByIdAsc(reportId);
     }
 
     public boolean managerContactMissing(Long teamId) {

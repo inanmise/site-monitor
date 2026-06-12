@@ -289,6 +289,17 @@ public class WeeklyReportController {
         return m;
     }
 
+    /** Meta projeksiyonundan (byte[] data taşımaz) liste eşlemesi. */
+    private Map<String, Object> imageMeta(com.certmonitor.repository.WeeklyReportImageMetaView img) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("id", img.getId());
+        m.put("team_id", img.getTeamId());
+        m.put("caption", img.getCaption());
+        m.put("content_type", img.getContentType());
+        m.put("size_bytes", img.getSizeBytes());
+        return m;
+    }
+
     private ResponseEntity<Map<String, Object>> ok(Map<String, Object> body) {
         Map<String, Object> response = new LinkedHashMap<>(body);
         response.put("success", true);

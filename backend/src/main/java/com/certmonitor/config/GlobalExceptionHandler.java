@@ -21,8 +21,11 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(NoSuchElementException.class)
     public ResponseEntity<Map<String, Object>> handleNotFound(NoSuchElementException e) {
+        // Mesaj null/boş ise (kütüphane kaynaklı) jenerik metin — teknik içerik sızmasın
+        String msg = (e.getMessage() != null && !e.getMessage().isBlank())
+                ? e.getMessage() : "Kayıt bulunamadı";
         return ResponseEntity.status(404)
-                .body(Map.of("success", false, "error", e.getMessage()));
+                .body(Map.of("success", false, "error", msg));
     }
 
     /** Fired when e.g. trying to re-notify an already-resolved alert. */

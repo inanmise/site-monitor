@@ -9,6 +9,9 @@ public interface WeeklyReportImageRepository extends JpaRepository<WeeklyReportI
 
     List<WeeklyReportImage> findByReportIdOrderByIdAsc(Long reportId);
 
+    /** Meta-only (data hariç) — liste/detayda byte[] yüklemeyi önler. */
+    List<WeeklyReportImageMetaView> findProjectedByReportIdOrderByIdAsc(Long reportId);
+
     long countByReportId(Long reportId);
 
     void deleteByReportId(Long reportId);
