@@ -23,6 +23,8 @@ import java.util.Map;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 @Slf4j
 @Service
@@ -1341,7 +1343,9 @@ public class EmailNotificationService {
     public record InlineImage(String cid, byte[] data, String contentType) {}
 
     private static final ObjectMapper WR_JSON = new ObjectMapper();
-    private static final List<org.commonmark.Extension> MD_EXTENSIONS = List.of(TablesExtension.create());
+    private static final List<org.commonmark.Extension> MD_EXTENSIONS = List.of(
+            TablesExtension.create(),
+            org.commonmark.ext.task.list.items.TaskListItemsExtension.create());
     private static final Parser MD_PARSER = Parser.builder().extensions(MD_EXTENSIONS).build();
     private static final HtmlRenderer MD_RENDERER = HtmlRenderer.builder()
             .extensions(MD_EXTENSIONS).escapeHtml(true).build();
@@ -1381,12 +1385,53 @@ public class EmailNotificationService {
 
     /** Markdown → HTML (GFM tabloları destekli, raw HTML escape'li).
      *  forEmail=true: /api/weekly-reports/images/{id} → cid:img{id}. */
-    private String mdToHtml(String md, boolean forEmail) {
+    private String mdToHtml(String md, boolean forEmail, Map<Long, Integer> imageWidths) {
         if (md == null || md.isBlank()) return "";
         String src = forEmail
                 ? md.replaceAll("\\]\\(/api/weekly-reports/images/(\\d+)\\)", "](cid:img$1)")
                 : md;
-        return MD_RENDERER.render(MD_PARSER.parse(src));
+        String html = MD_RENDERER.render(MD_PARSER.parse(src));
+        return inlineImageStyles(taskCheckboxesToSymbols(html), forEmail, imageWidths);
+    }
+
+    /** Görev listesi checkbox'larını sembole çevirir — mail istemcileri form
+     *  input'larını desteklemez (Outlook tamamen düşürür); ☑/☐ her yerde görünür. */
+    private static final Pattern TASK_CHECKBOX = Pattern.compile("<input[^>]*type=\"checkbox\"[^>]*>");
+
+    private String taskCheckboxesToSymbols(String html) {
+        Matcher m = TASK_CHECKBOX.matcher(html);
+        StringBuilder sb = new StringBuilder();
+        while (m.find()) {
+            m.appendReplacement(sb, m.group().contains("checked") ? "☑ " : "☐ ");
+        }
+        m.appendTail(sb);
+        return sb.toString();
+    }
+
+    /** Outlook masaüstü (Word motoru) head'deki style bloğunu yok sayar — görsel
+     *  taşmasını ancak inline stil + açık width attribute engeller. Mail
+     *  tarafında width = min(560, doğal genişlik); modern istemciler için
+     *  width:100%/max-width, Gmail alt boşluğu için display:block. */
+    private static final int MAIL_IMG_MAX_WIDTH = 560;
+    private static final Pattern CID_IMG = Pattern.compile("<img src=\"cid:img(\\d+)\"");
+    private static final Pattern API_IMG = Pattern.compile("<img src=\"(/api/weekly-reports/images/\\d+)\"");
+
+    private String inlineImageStyles(String html, boolean forEmail, Map<Long, Integer> imageWidths) {
+        if (!forEmail) {
+            return API_IMG.matcher(html).replaceAll(
+                    "<img style=\"max-width:100%;height:auto;border-radius:8px;margin:6px 0\" src=\"$1\"");
+        }
+        Matcher m = CID_IMG.matcher(html);
+        StringBuilder sb = new StringBuilder();
+        while (m.find()) {
+            Integer natural = imageWidths != null ? imageWidths.get(Long.parseLong(m.group(1))) : null;
+            int w = natural != null ? Math.min(MAIL_IMG_MAX_WIDTH, natural) : MAIL_IMG_MAX_WIDTH;
+            m.appendReplacement(sb, "<img width=\"" + w + "\" style=\"display:block;width:100%;"
+                    + "max-width:" + w + "px;height:auto;border-radius:8px;margin:6px 0\""
+                    + " src=\"cid:img" + m.group(1) + "\"");
+        }
+        m.appendTail(sb);
+        return sb.toString();
     }
 
     /**
@@ -1394,9 +1439,17 @@ public class EmailNotificationService {
      * bkz. WeeklyReportService.DEFAULT_TEMPLATE_JSON. forEmail=false UI
      * önizlemesi içindir (görsel URL'leri /api olarak kalır).
      */
-    @SuppressWarnings("unchecked")
     public String buildWeeklyReportHtml(String teamName, String weekLabel, String managerName,
                                         String contentJson, boolean forEmail) {
+        return buildWeeklyReportHtml(teamName, weekLabel, managerName, contentJson, forEmail, null);
+    }
+
+    /** imageWidths: görsel id → gösterim genişliği px (Outlook width attr için);
+     *  null/eksik girişlerde 560 fallback. */
+    @SuppressWarnings("unchecked")
+    public String buildWeeklyReportHtml(String teamName, String weekLabel, String managerName,
+                                        String contentJson, boolean forEmail,
+                                        Map<Long, Integer> imageWidths) {
         String generatedAt = LocalDateTime.now().format(DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm"));
         String indigo = "#4f46e5";
 
@@ -1422,7 +1475,7 @@ public class EmailNotificationService {
             + "</div>"
             + metaLine("Durum", str(i1.get("status_text")))
             + linkLine(str(i1.get("tracking_url")))
-            + mdToHtml(str(i1.get("notes_md")), forEmail);
+            + mdToHtml(str(i1.get("notes_md")), forEmail, imageWidths);
 
         // ── Madde 2 ──
         String item2Body =
@@ -1431,11 +1484,14 @@ public class EmailNotificationService {
             + numChip("Problem",     i2.get("problem_records"), "#ea580c")
             + numChip("Postmortem",  i2.get("postmortems"),     "#7c3aed")
             + "</div>"
-            + linkLine(str(i2.get("tracking_url")))
-            + mdToHtml(str(i2.get("notes_md")), forEmail);
+            + linkLine("Açık Olay", str(i2.get("incidents_url")))
+            + linkLine("Problem", str(i2.get("problems_url")))
+            + linkLine("Postmortem", str(i2.get("postmortems_url")))
+            + linkLine(str(i2.get("tracking_url"))) // eski raporlardaki genel takip linki
+            + mdToHtml(str(i2.get("notes_md")), forEmail, imageWidths);
 
         // ── Madde 3 ──
-        String item3Body = mdToHtml(str(i3.get("notes_md")), forEmail);
+        String item3Body = mdToHtml(str(i3.get("notes_md")), forEmail, imageWidths);
 
         // ── Madde 4 — kanal alt-kartları ──
         StringBuilder item4Body = new StringBuilder();
@@ -1447,7 +1503,7 @@ public class EmailNotificationService {
                     .append("<div style='background:#f1f5f9;padding:8px 14px;font-size:13px;font-weight:800;color:#334155'>")
                     .append(escHtml(str(ch.get("name")))).append("</div>")
                     .append("<div style='padding:10px 14px'>")
-                    .append(mdToHtml(str(ch.get("notes_md")), forEmail))
+                    .append(mdToHtml(str(ch.get("notes_md")), forEmail, imageWidths))
                     .append("</div></div>");
             }
         }
@@ -1565,6 +1621,12 @@ public class EmailNotificationService {
         if (url == null || url.isBlank()) return "";
         return "<p style='font-size:13px;margin:4px 0'>🔗 <a href='" + escHtml(url)
             + "' style='color:#4f46e5'>" + escHtml(url) + "</a></p>";
+    }
+
+    private String linkLine(String label, String url) {
+        if (url == null || url.isBlank()) return "";
+        return "<p style='font-size:13px;margin:4px 0'>🔗 <strong>" + escHtml(label) + ":</strong> <a href='"
+            + escHtml(url) + "' style='color:#4f46e5'>" + escHtml(url) + "</a></p>";
     }
 
     @SuppressWarnings("unchecked")

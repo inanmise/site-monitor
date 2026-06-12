@@ -204,7 +204,7 @@ class EmailNotificationServiceTest {
     private static final String WR_CONTENT = """
         {"version":1,
          "item1":{"total":12,"urgent":2,"high":3,"medium":4,"low":3,"status_text":"Çalışılıyor","tracking_url":"https://jira/x","notes_md":"| Kayıt | Durum |\\n| --- | --- |\\n| SSL | OK |"},
-         "item2":{"open_incidents":1,"problem_records":2,"postmortems":0,"tracking_url":"","notes_md":""},
+         "item2":{"open_incidents":1,"problem_records":2,"postmortems":0,"incidents_url":"https://jira/inc","problems_url":"https://jira/prb","postmortems_url":"https://jira/pm","notes_md":""},
          "item3":{"notes_md":"- Çalışma A — tamamlandı\\n- Çalışma B — devam ediyor"},
          "item4":{"channels":[{"id":"c-1","name":"İnternet","notes_md":"![Grafik](/api/weekly-reports/images/5)"}]}}
         """;
@@ -225,6 +225,28 @@ class EmailNotificationServiceTest {
         assertThat(html).contains("<table>");           // markdown tablo render edildi
         assertThat(html).contains("https://jira/x");
         assertThat(html).contains("İnternet");
+        // Madde 2: her kayıt türünün ayrı etiketli takip linki
+        assertThat(html).contains("Açık Olay:").contains("https://jira/inc")
+                .contains("Problem:").contains("https://jira/prb")
+                .contains("Postmortem:").contains("https://jira/pm");
+    }
+
+    @Test
+    @DisplayName("Weekly report HTML: görev listesi checkbox'ları ☑/☐ sembolüne dönüşür (mail uyumu)")
+    void buildWeeklyReportHtml_taskListSymbols() {
+        String content = "{\"version\":1,\"item3\":{\"notes_md\":\"- [x] yapıldı\\n- [ ] bekleniyor\"}}";
+        String html = service.buildWeeklyReportHtml("T", "W", "M", content, false);
+        assertThat(html).contains("☑").contains("☐")
+                .contains("yapıldı").contains("bekleniyor")
+                .doesNotContain("<input");
+    }
+
+    @Test
+    @DisplayName("Weekly report HTML: eski raporlardaki genel tracking_url hâlâ render edilir")
+    void buildWeeklyReportHtml_legacyTrackingUrl() {
+        String legacy = "{\"version\":1,\"item2\":{\"open_incidents\":1,\"tracking_url\":\"https://jira/old\"}}";
+        String html = service.buildWeeklyReportHtml("T", "W", "M", legacy, false);
+        assertThat(html).contains("https://jira/old");
     }
 
     @Test
@@ -237,6 +259,30 @@ class EmailNotificationServiceTest {
         String forUi = service.buildWeeklyReportHtml("T", "W", "M", WR_CONTENT, false);
         assertThat(forUi).contains("/api/weekly-reports/images/5");
         assertThat(forUi).doesNotContain("cid:img5");
+    }
+
+    @Test
+    @DisplayName("Weekly report HTML: mail görselleri inline stil + width attr alır (Outlook taşma fix)")
+    void buildWeeklyReportHtml_imageWidths() {
+        // Geniş görsel → 560'a kırpılır
+        String wide = service.buildWeeklyReportHtml("T", "W", "M", WR_CONTENT, true,
+                java.util.Map.of(5L, 1600));
+        assertThat(wide).contains("width=\"560\"").contains("max-width:560px")
+                .contains("display:block").contains("cid:img5");
+
+        // Dar görsel → doğal genişliğinde kalır (upscale yok)
+        String narrow = service.buildWeeklyReportHtml("T", "W", "M", WR_CONTENT, true,
+                java.util.Map.of(5L, 300));
+        assertThat(narrow).contains("width=\"300\"").contains("max-width:300px");
+
+        // Genişlik bilinmiyorsa 560 fallback
+        String fallback = service.buildWeeklyReportHtml("T", "W", "M", WR_CONTENT, true, null);
+        assertThat(fallback).contains("width=\"560\"");
+
+        // Önizleme: /api URL korunur + inline max-width:100%
+        String preview = service.buildWeeklyReportHtml("T", "W", "M", WR_CONTENT, false);
+        assertThat(preview).contains("/api/weekly-reports/images/5")
+                .contains("max-width:100%").doesNotContain("width=\"560\"");
     }
 
     @Test

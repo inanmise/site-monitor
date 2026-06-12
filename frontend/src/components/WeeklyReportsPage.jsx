@@ -6,12 +6,15 @@ import {
   Plus, Save, Send, CheckCircle, Undo2, Eye, Trash2, RefreshCcw, ArrowLeft,
 } from 'lucide-react'
 import { api, formatDate } from '../api/client'
-import { useT } from '../i18n/index.jsx'
+import { useT, useLanguage } from '../i18n/index.jsx'
 import { useTheme } from '../i18n/theme.jsx'
 import { useToast } from './ui/Toast.jsx'
 import { useDialog } from './ui/Dialog.jsx'
+import SearchableSelect from './ui/SearchableSelect.jsx'
+import WeekDatePicker from './ui/WeekDatePicker.jsx'
 import { clipboardToMarkdownTable } from '../utils/pasteTable'
 import { downscaleImage } from '../utils/imageDownscale'
+import { isoWeekInfo, isEditableWeek, formatWeekRange } from '../utils/isoWeek'
 
 const STATUS_COLOR = {
   DRAFT: '#6b7280',
@@ -20,24 +23,17 @@ const STATUS_COLOR = {
   REJECTED: '#dc2626',
 }
 
-/** ISO hafta no (yerel tarih) — yeni rapor varsayılanı. */
-function isoWeekInfo(d = new Date()) {
-  const date = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()))
-  const dayNum = date.getUTCDay() || 7
-  date.setUTCDate(date.getUTCDate() + 4 - dayNum)
-  const yearStart = new Date(Date.UTC(date.getUTCFullYear(), 0, 1))
-  const week = Math.ceil(((date - yearStart) / 86400000 + 1) / 7)
-  return { year: date.getUTCFullYear(), week }
-}
+/** Oturum kesintisi yedekleri için localStorage anahtar öneki. */
+const DRAFT_BACKUP_PREFIX = 'wr.draft.'
 
-/** Rapor, içinde bulunulan veya bir önceki ISO haftasında mı? USER düzenleme
- *  penceresi — backend'deki inEditWindow ile aynı kural (önceki hafta: PO
- *  iadesi hafta sınırını aşabilsin diye dahil). */
-function isEditableWeek(r) {
-  const cur = isoWeekInfo()
-  const prev = isoWeekInfo(new Date(Date.now() - 7 * 86400000))
-  return [cur, prev].some((w) => w.year === r.report_year && w.week === r.week_no)
-}
+/** Madde 1 durum seçenekleri — mail her zaman TR olduğundan kanonik değer
+ *  TR string'idir; UI etiketi i18n'den gelir. */
+const ITEM1_STATUS_CHOICES = [
+  { value: 'Çalışılıyor', key: 'wr.statusWorking' },
+  { value: 'Planlandı',   key: 'wr.statusPlanned' },
+  { value: 'Beklemede',   key: 'wr.statusOnHold' },
+  { value: 'Tamamlandı',  key: 'wr.statusDone' },
+]
 
 /** Toolbar'daki özel "görsel yükle" komutu ikonu (varsayılan image komutu
  *  yalnız şablon metni eklediği için kaldırıldı — bu, dosya seçiciyi açar). */
@@ -47,6 +43,31 @@ const IMAGE_UPLOAD_ICON = (
       d="M15 9c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm4-7H1c-.55 0-1 .45-1 1v14c0 .55.45 1 1 1h18c.55 0 1-.45 1-1V3c0-.55-.45-1-1-1zm-1 13l-6-5-2 2-4-5-4 8V4h16v11z" />
   </svg>
 )
+
+const INDENT_ICON = (
+  <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor">
+    <path d="M3 4h18v2H3V4zm8 5h10v2H11V9zm0 5h10v2H11v-2zm-8 5h18v2H3v-2zM3 9l4 3-4 3V9z" />
+  </svg>
+)
+
+const OUTDENT_ICON = (
+  <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor">
+    <path d="M3 4h18v2H3V4zm8 5h10v2H11V9zm0 5h10v2H11v-2zm-8 5h18v2H3v-2zM7 9l-4 3 4 3V9z" />
+  </svg>
+)
+
+/** Seçimi tam satırlara genişletip her satıra fn uygular (girinti komutları). */
+function transformSelectedLines(state, api, fn) {
+  const text = state.text ?? ''
+  const start = text.lastIndexOf('\n', Math.max(0, state.selection.start - 1)) + 1
+  let end = text.indexOf('\n', state.selection.end)
+  if (end === -1) end = text.length
+  const next = text.slice(start, end).split('\n').map(fn).join('\n')
+  api.setSelectionRange({ start, end })
+  api.replaceSelection(next)
+  // Blok seçili kalsın — arka arkaya girintileme akıcı olsun
+  api.setSelectionRange({ start, end: start + next.length })
+}
 
 /**
  * Markdown alanı: geniş tek yazma alanı (sağ üst ikonlarla kaynak/önizleme
@@ -64,21 +85,48 @@ function MdField({ value, onChange, editable, reportId, height = 220 }) {
   const [caption, setCaption] = useState('')
   const [uploading, setUploading] = useState(false)
 
-  const editorCommands = useMemo(() => [
-    mdCommands.bold, mdCommands.italic, mdCommands.strikethrough,
-    mdCommands.divider,
-    mdCommands.link, mdCommands.quote,
-    mdCommands.divider,
-    mdCommands.unorderedListCommand, mdCommands.orderedListCommand,
-    mdCommands.divider,
-    {
-      name: 'image-upload',
-      keyCommand: 'image-upload',
-      buttonProps: { 'aria-label': t('wr.uploadImage'), title: t('wr.uploadImage') },
-      icon: IMAGE_UPLOAD_ICON,
-      execute: () => fileRef.current?.click(),
-    },
-  ], [t])
+  const editorCommands = useMemo(() => {
+    const tt = (key) => ({ 'aria-label': t(key), title: t(key) })
+    return [
+      // Word "Stiller" benzeri başlık menüsü (H1 rapor içinde fazla büyük)
+      mdCommands.group([mdCommands.title2, mdCommands.title3, mdCommands.title4], {
+        name: 'title', groupName: 'title', buttonProps: tt('wr.cmdTitle'),
+      }),
+      mdCommands.divider,
+      mdCommands.bold, mdCommands.italic, mdCommands.strikethrough,
+      mdCommands.divider,
+      mdCommands.link, mdCommands.quote,
+      mdCommands.divider,
+      { ...mdCommands.unorderedListCommand, buttonProps: tt('wr.cmdUl') },
+      { ...mdCommands.orderedListCommand, buttonProps: tt('wr.cmdOl') },
+      { ...mdCommands.checkedListCommand, buttonProps: tt('wr.cmdTaskList') },
+      {
+        name: 'indent',
+        keyCommand: 'indent',
+        buttonProps: tt('wr.cmdIndent'),
+        icon: INDENT_ICON,
+        execute: (state, api) => transformSelectedLines(state, api, (l) => '    ' + l),
+      },
+      {
+        name: 'outdent',
+        keyCommand: 'outdent',
+        buttonProps: tt('wr.cmdOutdent'),
+        icon: OUTDENT_ICON,
+        execute: (state, api) => transformSelectedLines(state, api, (l) => l.replace(/^ {1,4}/, '')),
+      },
+      mdCommands.divider,
+      { ...mdCommands.table, buttonProps: tt('wr.cmdTable') },
+      { ...mdCommands.hr, buttonProps: tt('wr.cmdHr') },
+      mdCommands.divider,
+      {
+        name: 'image-upload',
+        keyCommand: 'image-upload',
+        buttonProps: { 'aria-label': t('wr.uploadImage'), title: t('wr.uploadImage') },
+        icon: IMAGE_UPLOAD_ICON,
+        execute: () => fileRef.current?.click(),
+      },
+    ]
+  }, [t])
 
   function handlePasteCapture(e) {
     if (e.target?.tagName !== 'TEXTAREA') return
@@ -140,15 +188,14 @@ function MdField({ value, onChange, editable, reportId, height = 220 }) {
           onChange={(v) => onChange(v ?? '')}
           preview="edit"
           height={height}
-          visibleDragbar={false}
+          visibleDragbar={true}
           highlightEnable={false}
           commands={editorCommands}
-          extraCommands={[mdCommands.codeEdit, mdCommands.codePreview]}
+          extraCommands={[mdCommands.codeEdit, mdCommands.codePreview,
+            mdCommands.divider, mdCommands.fullscreen]}
         />
       </div>
-      <div style={{ fontSize: '.75em', color: 'var(--text-light)', marginTop: 4 }}>
-        {t('wr.pasteHint')}
-      </div>
+      <div className="wr-hint">{t('wr.pasteHint')}</div>
       <input ref={fileRef} type="file" accept="image/*"
         style={{ display: 'none' }} onChange={handleFileChosen} />
 
@@ -195,18 +242,18 @@ function NumInput({ label, value, onChange, editable }) {
   }
 
   return (
-    <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: '.85em' }}>
-      {label}
+    <label className="wr-field wr-num">
+      <span>{label}</span>
       <input type="text" inputMode="numeric" pattern="[0-9]*" value={text} disabled={!editable}
         onChange={handleChange}
-        onBlur={() => { if (text === '') setText('0') }}
-        style={{ width: 110 }} />
+        onBlur={() => { if (text === '') setText('0') }} />
     </label>
   )
 }
 
 export default function WeeklyReportsPage({ systemRole, teamId, teamName }) {
   const t = useT()
+  const { lang } = useLanguage()
   const toast = useToast()
   const { showConfirm } = useDialog()
   const isAdmin = systemRole === 'ADMIN'
@@ -215,6 +262,8 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName }) {
   const [teams, setTeams] = useState([])
   const [selTeamId, setSelTeamId] = useState(teamId ? String(teamId) : '')
   const [year, setYear] = useState(isoWeekInfo().year)
+  const [years, setYears] = useState([])
+  const [jumpDate, setJumpDate] = useState('')
   const [reports, setReports] = useState([])
   const [selectedId, setSelectedId] = useState(null)
   const [report, setReport] = useState(null)      // full report (GET /{id})
@@ -226,6 +275,11 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName }) {
   const [newModal, setNewModal] = useState(null)  // { year, week }
   const [rejectModal, setRejectModal] = useState(null) // { note }
   const [previewHtml, setPreviewHtml] = useState(null)
+  const [pendingBackup, setPendingBackup] = useState(null) // { content_json, saved_at }
+  const [lastAutoSave, setLastAutoSave] = useState(null)
+  const [lockHeld, setLockHeld] = useState(false)     // düzenleme kilidi bizde mi
+  const [lockHolder, setLockHolder] = useState(null)  // { name } — başkasında ise
+  const [conflict, setConflict] = useState(null)      // VERSION_CONFLICT mesajı
 
   const effTeamId = isAdmin ? (selTeamId ? Number(selTeamId) : null) : teamId
   // Düzenleme/silme: ADMIN her durum + her hafta; diğerleri kendi takımının
@@ -234,7 +288,8 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName }) {
     && r.team_id === teamId
     && (r.status === 'DRAFT' || r.status === 'REJECTED')
     && isEditableWeek(r))
-  const editable = !!report && canModifyRow(report)
+  // Düzenleme = yetki + kilit (kilit başkasındaysa salt-okunur)
+  const editable = !!report && canModifyRow(report) && lockHeld
   const weekLocked = !!report && !isAdmin && !isAudit && report.team_id === teamId
     && (report.status === 'DRAFT' || report.status === 'REJECTED') && !isEditableWeek(report)
   const canSubmit = editable && report.status === 'DRAFT'
@@ -243,6 +298,46 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName }) {
   useEffect(() => {
     if (isAdmin) api.admin.getTeams().then((res) => { if (res?.success) setTeams(res.data ?? []) })
   }, [isAdmin])
+
+  // Yıl dropdown'ı: rapor bulunan yıllar (geriye dönük erişim) — takım değişince yenilenir
+  const loadYears = useCallback(async () => {
+    const res = await api.weeklyReports.years(effTeamId ?? undefined)
+    if (res?.success) setYears(res.data ?? [])
+  }, [effTeamId])
+
+  useEffect(() => { loadYears() }, [loadYears])
+
+  // Takvimde raporlu haftaların işaretlenmesi — yıl başına Set cache'i
+  const [weekMarks, setWeekMarks] = useState({})
+
+  useEffect(() => { setWeekMarks({}) }, [effTeamId])
+
+  const ensureMarks = useCallback(async (y) => {
+    if (weekMarks[y]) return
+    const res = await api.weeklyReports.list({ teamId: effTeamId ?? undefined, year: y })
+    const s = new Set((res?.success ? res.data ?? [] : []).map((r) => r.week_no))
+    setWeekMarks((p) => ({ ...p, [y]: s }))
+  }, [effTeamId, weekMarks])
+
+  /** Tarihe Git: seçilen tarihin ISO haftası bulunur; kapsamda o haftanın
+   *  raporu varsa doğrudan açılır, yoksa yıl filtresi yine o yıla çekilir.
+   *  Seçilen tarih alanda görünür kalır. */
+  async function goToDate(dateStr) {
+    setJumpDate(dateStr)
+    if (!dateStr) return
+    const picked = new Date(dateStr + 'T12:00:00')
+    // Elle yazım sırasında oluşan ara değerler (örn. yıl "0002") tetiklemesin
+    if (picked.getFullYear() < 2000 || picked.getFullYear() > 2100) return
+    const { year: y, week } = isoWeekInfo(picked)
+    setYear(y)
+    const res = await api.weeklyReports.list({ teamId: effTeamId ?? undefined, year: y })
+    const matches = (res?.success ? res.data ?? [] : []).filter((r) => r.week_no === week)
+    if (matches.length === 1) {
+      setSelectedId(matches[0].id)
+    } else if (!matches.length) {
+      toast.info(t('wr.noReportForWeek'))
+    }
+  }
 
   const loadList = useCallback(async () => {
     const res = await api.weeklyReports.list({ teamId: effTeamId ?? undefined, year })
@@ -258,7 +353,7 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName }) {
   useEffect(() => { loadList() }, [effTeamId, year]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const loadReport = useCallback(async (id) => {
-    if (!id) { setReport(null); setContent(null); return }
+    if (!id) { setReport(null); setContent(null); setLockHeld(false); setLockHolder(null); return }
     const res = await api.weeklyReports.get(id)
     if (res?.success) {
       const r = res.data.report
@@ -267,6 +362,30 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName }) {
       try { setContent(JSON.parse(r.content_json)) } catch { setContent(null) }
       setDirty(false)
       setChannelTab(0)
+      setLastAutoSave(null)
+      setConflict(null)
+      // Düzenleme kilidi: yetkimiz varsa almayı dene; başkasındaysa salt-okunur bant
+      setLockHeld(false)
+      setLockHolder(res.data.lock_holder ?? null)
+      if (canModifyRow(r)) {
+        const lk = await api.weeklyReports.lock(r.id)
+        if (lk?.success && lk.data?.acquired) {
+          setLockHeld(true)
+          setLockHolder(null)
+        } else if (lk?.success) {
+          setLockHolder({ name: lk.data?.editing_by })
+        }
+      }
+      // Oturum kesintisinden kalan yerel yedek var mı? (yalnız düzenlenebilirken anlamlı)
+      try {
+        const raw = localStorage.getItem(DRAFT_BACKUP_PREFIX + r.id)
+        if (raw && canModifyRow(r)) {
+          setPendingBackup(JSON.parse(raw))
+        } else {
+          if (raw) localStorage.removeItem(DRAFT_BACKUP_PREFIX + r.id)
+          setPendingBackup(null)
+        }
+      } catch { setPendingBackup(null) }
     }
   }, [])
 
@@ -283,20 +402,149 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName }) {
     setDirty(true)
   }
 
+  /** Madde 1 önem alanları — Toplam elle girilmez, dört alanın toplamından türetilir. */
+  function patchSeverity(key, value) {
+    setContent((prev) => {
+      const next = structuredClone(prev)
+      next.item1[key] = value
+      next.item1.total = ['urgent', 'high', 'medium', 'low']
+        .reduce((sum, k) => sum + (parseInt(next.item1[k], 10) || 0), 0)
+      return next
+    })
+    setDirty(true)
+  }
+
   async function save(showToast = true) {
     if (!report || !content) return false
     setBusy(true)
-    const res = await api.weeklyReports.save(report.id, JSON.stringify(content))
+    const res = await api.weeklyReports.save(report.id, JSON.stringify(content), report.version)
     setBusy(false)
     if (res?.success) {
       if (showToast) toast.success(t('wr.saved'))
       setDirty(false)
-      setReport((p) => ({ ...p, status: res.data.status }))
+      try { localStorage.removeItem(DRAFT_BACKUP_PREFIX + report.id) } catch { /* */ }
+      setReport((p) => ({ ...p, status: res.data.status, version: res.data.version }))
       loadList()
       return true
     }
+    if (res?.error?.includes('VERSION_CONFLICT')) {
+      // Başka kullanıcı araya kaydetmiş — yazılanlar yerel yedekte; banner çözüm sunar
+      writeBackupNow()
+      setConflict(res.error)
+      return false
+    }
     toast.error(res?.error || t('wr.saveFailed'))
     return false
+  }
+
+  // ── Autosave + oturum kesintisi yedeği + kilit ────────────────────────────
+  // Zamanlayıcılar/kapanış handler'ı güncel state'i bu ref üzerinden okur
+  const liveRef = useRef({})
+  liveRef.current = { report, content, dirty, editable, save, lockHeld, conflict }
+
+  function writeBackupNow() {
+    const { report: r, content: c, dirty: d, editable: e } = liveRef.current
+    if (!r || !c || !d || !e) return
+    try {
+      localStorage.setItem(DRAFT_BACKUP_PREFIX + r.id, JSON.stringify({
+        content_json: JSON.stringify(c),
+        saved_at: Date.now(),
+      }))
+    } catch { /* localStorage dolu/kapalı — sessiz geç */ }
+  }
+
+  // İçerik değiştikçe 1.5 sn debounce ile yerel yedek — oturum düşse de yazılanlar kalır
+  useEffect(() => {
+    if (!dirty || !editable) return
+    const id = setTimeout(writeBackupNow, 1500)
+    return () => clearTimeout(id)
+  }, [content, dirty, editable]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Sekme kapanırken / 401 oturum yönlendirmesinde: son hali yedekle + kilidi bırak
+  useEffect(() => {
+    const handleUnload = () => {
+      writeBackupNow()
+      const { report: r, lockHeld: held } = liveRef.current
+      if (r && held) {
+        try { navigator.sendBeacon(`/api/weekly-reports/${r.id}/unlock`) } catch { /* */ }
+      }
+    }
+    window.addEventListener('beforeunload', handleUnload)
+    return () => window.removeEventListener('beforeunload', handleUnload)
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Component kapanırken kilidi bırak (terk edilen kilit 3 dk'da zaten bayatlar)
+  useEffect(() => () => {
+    const { report: r, lockHeld: held } = liveRef.current
+    if (r && held) api.weeklyReports.unlock(r.id)
+  }, [])
+
+  // Sunucuya otomatik kayıt — kaydedilmemiş değişiklik varken 60 sn'de bir
+  // (çakışma durumunda durur; kullanıcı banner'dan çözer)
+  useEffect(() => {
+    if (!editable || !dirty || conflict) return
+    const id = setInterval(async () => {
+      if (liveRef.current.conflict) return
+      if (await liveRef.current.save?.(false)) setLastAutoSave(new Date())
+    }, 60000)
+    return () => clearInterval(id)
+  }, [editable, dirty, conflict, report?.id])
+
+  // Kilit kalp atışı — editör açık ve kilit bizdeyken 45 sn'de bir tazele;
+  // kilit (ADMIN devralması ile) elden gittiyse salt-okunura düş
+  useEffect(() => {
+    if (!report?.id || !lockHeld) return
+    const id = setInterval(async () => {
+      const r = liveRef.current.report
+      if (!r) return
+      const res = await api.weeklyReports.lock(r.id)
+      if (res?.success && !res.data?.acquired) {
+        setLockHeld(false)
+        setLockHolder({ name: res.data?.editing_by })
+        toast.info(t('wr.lockLost'))
+      }
+    }, 45000)
+    return () => clearInterval(id)
+  }, [report?.id, lockHeld]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  /** Kilit bandındaki "Yenile" — kilidi tekrar dene (rapor da tazelenir). */
+  async function retryLock() {
+    await loadReport(report.id)
+  }
+
+  /** ADMIN: tutulan kilidi zorla devral. */
+  async function takeoverLock() {
+    const ok = await showConfirm({
+      title: t('wr.lockTakeover'),
+      message: t('wr.lockTakeoverConfirm', lockHolder?.name ?? ''),
+      variant: 'danger',
+      confirmText: t('wr.lockTakeover'),
+      cancelText: t('wr.cancel'),
+    })
+    if (!ok) return
+    const res = await api.weeklyReports.lock(report.id, true)
+    if (res?.success && res.data?.acquired) {
+      setLockHeld(true)
+      setLockHolder(null)
+    } else {
+      toast.error(res?.error || t('wr.actionFailed'))
+    }
+  }
+
+  function restoreBackup() {
+    try {
+      setContent(JSON.parse(pendingBackup.content_json))
+      setDirty(true)
+      toast.success(t('wr.restored'))
+    } catch {
+      toast.error(t('wr.actionFailed'))
+    }
+    setPendingBackup(null)
+  }
+
+  function discardBackup() {
+    try { localStorage.removeItem(DRAFT_BACKUP_PREFIX + report.id) } catch { /* */ }
+    setPendingBackup(null)
   }
 
   async function submit() {
@@ -354,7 +602,7 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName }) {
 
   async function createReport() {
     const res = await api.weeklyReports.create({
-      team_id: effTeamId ?? undefined,
+      team_id: newModal.teamId ? Number(newModal.teamId) : undefined,
       year: newModal.year,
       week_no: newModal.week,
     })
@@ -363,6 +611,8 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName }) {
       toast.success(t('wr.created'))
       setYear(newModal.year)
       await loadList()
+      loadYears()
+      setWeekMarks({})
       setSelectedId(res.data.id)
     } else {
       toast.error(res?.error?.includes('DUPLICATE_WEEK') ? t('wr.duplicateWeek') : (res?.error || t('wr.actionFailed')))
@@ -383,8 +633,11 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName }) {
     setBusy(false)
     if (res?.success) {
       toast.success(t('wr.deleted'))
+      try { localStorage.removeItem(DRAFT_BACKUP_PREFIX + r.id) } catch { /* */ }
       if (selectedId === r.id) setSelectedId(null)
       loadList()
+      loadYears()
+      setWeekMarks({})
     } else {
       toast.error(res?.error || t('wr.actionFailed'))
     }
@@ -399,7 +652,10 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName }) {
         cancelText: t('wr.cancel'),
       })
       if (!ok) return
+      // Bilinçli vazgeçiş — yerel yedek de düşer
+      try { localStorage.removeItem(DRAFT_BACKUP_PREFIX + (report?.id ?? '')) } catch { /* */ }
     }
+    if (report && lockHeld) api.weeklyReports.unlock(report.id) // best-effort
     setSelectedId(null)
     loadList()
   }
@@ -439,29 +695,76 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName }) {
   const i2 = content?.item2 ?? {}
   const channels = content?.item4?.channels ?? []
 
+  // Üstte ve altta aynı aksiyon barı — kaydırmada ikisi de sticky görünür
+  const actionButtons = report && (
+    <>
+      {canModifyRow(report) && (
+        <button className="btn btn-danger" onClick={() => deleteReport(report)} disabled={busy}>
+          <Trash2 size={14} /> {t('wr.deleteReport')}
+        </button>
+      )}
+      <button className="btn btn-secondary" onClick={openPreview} disabled={busy}>
+        <Eye size={14} /> {t('wr.preview')}
+      </button>
+      {editable && !conflict && (
+        <button className="btn btn-primary" onClick={() => save()} disabled={busy || !dirty}>
+          <Save size={14} /> {busy ? t('wr.saving') : t('wr.save')}
+        </button>
+      )}
+      {canSubmit && !conflict && (
+        <button className="btn btn-success" onClick={submit} disabled={busy}>
+          <Send size={14} /> {t('wr.submit')}
+        </button>
+      )}
+      {showApproval && (
+        <>
+          <button className="btn btn-success" onClick={approve} disabled={busy || managerMissing}>
+            <CheckCircle size={14} /> {t('wr.approve')}
+          </button>
+          <button className="btn btn-secondary" onClick={() => setRejectModal({ note: '' })} disabled={busy}>
+            <Undo2 size={14} /> {t('wr.reject')}
+          </button>
+        </>
+      )}
+    </>
+  )
+
   return (
     <div className="admin-section wr-editor">
       {/* ── Üst bar — listede filtreler, editörde Listeye Dön ── */}
       <div className="admin-section-header">
         <h3>{t('wr.title')}</h3>
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+        <div className="wr-filters">
           {!selectedId ? (
             <>
               {isAdmin && (
-                <select value={selTeamId} onChange={(e) => setSelTeamId(e.target.value)}>
-                  <option value="">{t('wr.allTeams')}</option>
-                  {teams.map((tm) => <option key={tm.id} value={tm.id}>{tm.name}</option>)}
-                </select>
+                <div className="wr-flt">
+                  <span>{t('wr.team')}</span>
+                  <SearchableSelect value={selTeamId} onChange={(v) => setSelTeamId(v)}
+                    placeholder={t('wr.allTeams')}
+                    options={[{ value: '', label: t('wr.allTeams') },
+                      ...teams.map((tm) => ({ value: String(tm.id), label: tm.name }))]} />
+                </div>
               )}
-              <select value={year} onChange={(e) => setYear(Number(e.target.value))}>
-                {[year - 1, year, year + 1].filter((v, i, a) => a.indexOf(v) === i)
-                  .map((y) => <option key={y} value={y}>{y}</option>)}
-              </select>
+              <div className="wr-flt">
+                <span>{t('wr.year')}</span>
+                <SearchableSelect value={year} onChange={(v) => setYear(Number(v))}
+                  options={[...new Set([...years, year])].sort((a, b) => b - a)
+                    .map((y) => ({ value: y, label: String(y) }))} />
+              </div>
+              <div className="wr-flt">
+                <span>{t('wr.goToDate')}</span>
+                <WeekDatePicker value={jumpDate} onChange={goToDate}
+                  placeholder={t('wr.pickDate')} hint={t('wr.goToDateHint')}
+                  isMarked={(y, w) => weekMarks[y]?.has(w) ?? false}
+                  onViewYearChange={ensureMarks} />
+              </div>
               <button className="btn btn-secondary btn-sm-p" onClick={loadList}>
                 <RefreshCcw size={13} />
               </button>
               {!isAudit && (
-                <button className="btn btn-success" onClick={() => setNewModal(isoWeekInfo())}>
+                <button className="btn btn-success"
+                  onClick={() => setNewModal({ ...isoWeekInfo(), teamId: isAdmin ? selTeamId : String(teamId ?? '') })}>
                   <Plus size={14} /> {t('wr.newReport')}
                 </button>
               )}
@@ -496,7 +799,14 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName }) {
                     {isAdmin && !selTeamId && (
                       <td>{teams.find((tm) => tm.id === r.team_id)?.name ?? r.team_id}</td>
                     )}
-                    <td>{statusBadge(r.status)}</td>
+                    <td>
+                      {statusBadge(r.status)}
+                      {r.editing_by && (
+                        <div style={{ fontSize: '.72em', color: 'var(--text-light)', marginTop: 3 }}>
+                          ✏️ {r.editing_by} {t('wr.editingNow')}
+                        </div>
+                      )}
+                    </td>
                     <td>{r.updated_by} · {formatDate(r.updated_at)}</td>
                     <td>{r.sent_at ? formatDate(r.sent_at) : '—'}</td>
                     <td onClick={(e) => e.stopPropagation()}>
@@ -523,7 +833,7 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName }) {
         <>
           {/* ── Durum satırı ── */}
           <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', marginBottom: 14 }}>
-            <strong>{report.week_label}</strong>
+            <strong style={{ fontSize: '1.05em' }}>{report.week_label}</strong>
             {statusBadge(report.status)}
             {report.sent_at && <span style={{ fontSize: '.8em', color: 'var(--text-light)' }}>
               {t('wr.sentAt')} {formatDate(report.sent_at)}
@@ -531,7 +841,16 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName }) {
             <span style={{ fontSize: '.8em', color: 'var(--text-light)' }}>
               {t('wr.lastEdit')} {report.updated_by} · {formatDate(report.updated_at)}
             </span>
+            {lastAutoSave && (
+              <span style={{ fontSize: '.8em', color: '#16a34a', fontWeight: 600 }}>
+                ✓ {t('wr.autoSaved')} {lastAutoSave.toLocaleTimeString(
+                  lang === 'en' ? 'en-GB' : 'tr-TR', { hour: '2-digit', minute: '2-digit' })}
+              </span>
+            )}
           </div>
+
+          {/* ── Üst aksiyon barı (sticky) ── */}
+          <div className="modal-actions wr-actions wr-actions-top">{actionButtons}</div>
 
           {/* ── İade notu / müdür uyarısı ── */}
           {report.reject_note && report.status !== 'APPROVED' && (
@@ -549,24 +868,68 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName }) {
               {t('wr.weekLockedBanner')}
             </div>
           )}
+          {!lockHeld && lockHolder && canModifyRow(report) && (
+            <div className="alert-msg" style={{ marginBottom: 12, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+              <span>{t('wr.lockedBy', lockHolder.name ?? '?')}</span>
+              <button type="button" className="btn-sm btn-edit" onClick={retryLock}>
+                {t('wr.lockRetry')}
+              </button>
+              {isAdmin && (
+                <button type="button" className="btn-sm btn-del" onClick={takeoverLock}>
+                  {t('wr.lockTakeover')}
+                </button>
+              )}
+            </div>
+          )}
+          {conflict && (
+            <div className="alert-msg" style={{
+              marginBottom: 12, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
+              background: '#fde8e8', color: '#9b1c1c',
+            }}>
+              <span>⚠ {t('wr.conflictBanner', conflict.replace('VERSION_CONFLICT: ', ''))}</span>
+              <button type="button" className="btn-sm btn-edit" onClick={() => loadReport(report.id)}>
+                {t('wr.loadLatest')}
+              </button>
+            </div>
+          )}
+          {pendingBackup && (
+            <div className="alert-msg" style={{ marginBottom: 12, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+              <span>💾 {t('wr.backupFound',
+                new Date(pendingBackup.saved_at).toLocaleString(lang === 'en' ? 'en-GB' : 'tr-TR'))}</span>
+              <button type="button" className="btn-sm btn-edit" onClick={restoreBackup}>
+                {t('wr.restore')}
+              </button>
+              <button type="button" className="btn-sm" onClick={discardBackup}>
+                {t('wr.discardBackup')}
+              </button>
+            </div>
+          )}
 
           {/* ── Madde 1 ── */}
           <div className="show-section-header">{t('wr.item1Title')}</div>
-          <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', margin: '10px 0' }}>
-            <NumInput label={t('wr.total')}  value={i1.total}  editable={editable} onChange={(v) => patch(['item1', 'total'], v)} />
-            <NumInput label={t('wr.urgent')} value={i1.urgent} editable={editable} onChange={(v) => patch(['item1', 'urgent'], v)} />
-            <NumInput label={t('wr.high')}   value={i1.high}   editable={editable} onChange={(v) => patch(['item1', 'high'], v)} />
-            <NumInput label={t('wr.medium')} value={i1.medium} editable={editable} onChange={(v) => patch(['item1', 'medium'], v)} />
-            <NumInput label={t('wr.low')}    value={i1.low}    editable={editable} onChange={(v) => patch(['item1', 'low'], v)} />
+          <div className="wr-fields">
+            <NumInput label={t('wr.urgent')} value={i1.urgent} editable={editable} onChange={(v) => patchSeverity('urgent', v)} />
+            <NumInput label={t('wr.high')}   value={i1.high}   editable={editable} onChange={(v) => patchSeverity('high', v)} />
+            <NumInput label={t('wr.medium')} value={i1.medium} editable={editable} onChange={(v) => patchSeverity('medium', v)} />
+            <NumInput label={t('wr.low')}    value={i1.low}    editable={editable} onChange={(v) => patchSeverity('low', v)} />
+            {/* Toplam türetilir — elle girilmez */}
+            <NumInput label={t('wr.total')}  value={i1.total}  editable={false} onChange={() => {}} />
           </div>
-          <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', marginBottom: 10 }}>
-            <label style={{ flex: '1 1 220px', display: 'flex', flexDirection: 'column', gap: 4, fontSize: '.85em' }}>
-              {t('wr.statusText')}
-              <input value={i1.status_text ?? ''} disabled={!editable}
-                onChange={(e) => patch(['item1', 'status_text'], e.target.value)} />
+          <div className="wr-fields">
+            <label className="wr-field wr-grow1">
+              <span>{t('wr.statusText')}</span>
+              <SearchableSelect value={i1.status_text ?? ''} disabled={!editable}
+                onChange={(v) => patch(['item1', 'status_text'], v)}
+                placeholder={t('wr.statusWorking')}
+                options={[
+                  // Eski raporlardaki serbest metin değeri listede yoksa seçenek olarak korunur
+                  ...(i1.status_text && !ITEM1_STATUS_CHOICES.some((s) => s.value === i1.status_text)
+                    ? [{ value: i1.status_text, label: i1.status_text }] : []),
+                  ...ITEM1_STATUS_CHOICES.map((s) => ({ value: s.value, label: t(s.key) })),
+                ]} />
             </label>
-            <label style={{ flex: '2 1 320px', display: 'flex', flexDirection: 'column', gap: 4, fontSize: '.85em' }}>
-              {t('wr.trackingUrl')}
+            <label className="wr-field wr-grow2">
+              <span>{t('wr.trackingUrl')}</span>
               <input value={i1.tracking_url ?? ''} disabled={!editable} placeholder="https://..."
                 onChange={(e) => patch(['item1', 'tracking_url'], e.target.value)} />
             </label>
@@ -575,29 +938,49 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName }) {
             onChange={(v) => patch(['item1', 'notes_md'], v)} height={180} />
 
           {/* ── Madde 2 ── */}
-          <div className="show-section-header" style={{ marginTop: 22 }}>{t('wr.item2Title')}</div>
-          <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', margin: '10px 0' }}>
+          <div className="show-section-header">{t('wr.item2Title')}</div>
+          <div className="wr-fields">
             <NumInput label={t('wr.openIncidents')}  value={i2.open_incidents}  editable={editable} onChange={(v) => patch(['item2', 'open_incidents'], v)} />
             <NumInput label={t('wr.problemRecords')} value={i2.problem_records} editable={editable} onChange={(v) => patch(['item2', 'problem_records'], v)} />
             <NumInput label={t('wr.postmortems')}    value={i2.postmortems}     editable={editable} onChange={(v) => patch(['item2', 'postmortems'], v)} />
-            <label style={{ flex: '2 1 320px', display: 'flex', flexDirection: 'column', gap: 4, fontSize: '.85em' }}>
-              {t('wr.trackingUrl')}
-              <input value={i2.tracking_url ?? ''} disabled={!editable} placeholder="https://..."
-                onChange={(e) => patch(['item2', 'tracking_url'], e.target.value)} />
+          </div>
+          {/* Her kayıt türü için ayrı takip linki; eski raporlardaki genel link doluysa o da gösterilir */}
+          <div className="wr-fields">
+            <label className="wr-field wr-grow1">
+              <span>{t('wr.incidentsUrl')}</span>
+              <input value={i2.incidents_url ?? ''} disabled={!editable} placeholder="https://..."
+                onChange={(e) => patch(['item2', 'incidents_url'], e.target.value)} />
             </label>
+            <label className="wr-field wr-grow1">
+              <span>{t('wr.problemsUrl')}</span>
+              <input value={i2.problems_url ?? ''} disabled={!editable} placeholder="https://..."
+                onChange={(e) => patch(['item2', 'problems_url'], e.target.value)} />
+            </label>
+            <label className="wr-field wr-grow1">
+              <span>{t('wr.postmortemsUrl')}</span>
+              <input value={i2.postmortems_url ?? ''} disabled={!editable} placeholder="https://..."
+                onChange={(e) => patch(['item2', 'postmortems_url'], e.target.value)} />
+            </label>
+            {i2.tracking_url ? (
+              <label className="wr-field wr-grow1">
+                <span>{t('wr.trackingUrl')}</span>
+                <input value={i2.tracking_url} disabled={!editable} placeholder="https://..."
+                  onChange={(e) => patch(['item2', 'tracking_url'], e.target.value)} />
+              </label>
+            ) : null}
           </div>
           <MdField value={i2.notes_md} editable={editable} reportId={report.id}
             onChange={(v) => patch(['item2', 'notes_md'], v)} height={180} />
 
           {/* ── Madde 3 ── */}
-          <div className="show-section-header" style={{ marginTop: 22 }}>{t('wr.item3Title')}</div>
+          <div className="show-section-header">{t('wr.item3Title')}</div>
           <div style={{ marginTop: 10 }}>
             <MdField value={content?.item3?.notes_md} editable={editable} reportId={report.id}
               onChange={(v) => patch(['item3', 'notes_md'], v)} height={240} />
           </div>
 
           {/* ── Madde 4 — kanallar ── */}
-          <div className="show-section-header" style={{ marginTop: 22 }}>{t('wr.item4Title')}</div>
+          <div className="show-section-header">{t('wr.item4Title')}</div>
           <div className="admin-tabs" style={{ marginTop: 10 }}>
             {channels.map((ch, idx) => (
               <button key={ch.id} type="button"
@@ -615,9 +998,9 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName }) {
           {channels[channelTab] && (
             <div style={{ marginTop: 10 }}>
               {editable && (
-                <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 8 }}>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '.85em' }}>
-                    {t('wr.channelName')}
+                <div className="wr-fields" style={{ marginBottom: 8 }}>
+                  <label className="wr-field">
+                    <span>{t('wr.channelName')}</span>
                     <input value={channels[channelTab].name}
                       onChange={(e) => patch(['item4', 'channels', channelTab, 'name'], e.target.value)} />
                   </label>
@@ -631,37 +1014,8 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName }) {
             </div>
           )}
 
-          {/* ── Aksiyonlar ── */}
-          <div className="modal-actions" style={{ marginTop: 24 }}>
-            {canModifyRow(report) && (
-              <button className="btn btn-danger" onClick={() => deleteReport(report)} disabled={busy}>
-                <Trash2 size={14} /> {t('wr.deleteReport')}
-              </button>
-            )}
-            <button className="btn btn-secondary" onClick={openPreview} disabled={busy}>
-              <Eye size={14} /> {t('wr.preview')}
-            </button>
-            {editable && (
-              <button className="btn btn-primary" onClick={() => save()} disabled={busy || !dirty}>
-                <Save size={14} /> {busy ? t('wr.saving') : t('wr.save')}
-              </button>
-            )}
-            {canSubmit && (
-              <button className="btn btn-success" onClick={submit} disabled={busy}>
-                <Send size={14} /> {t('wr.submit')}
-              </button>
-            )}
-            {showApproval && (
-              <>
-                <button className="btn btn-success" onClick={approve} disabled={busy || managerMissing}>
-                  <CheckCircle size={14} /> {t('wr.approve')}
-                </button>
-                <button className="btn btn-secondary" onClick={() => setRejectModal({ note: '' })} disabled={busy}>
-                  <Undo2 size={14} /> {t('wr.reject')}
-                </button>
-              </>
-            )}
-          </div>
+          {/* ── Alt aksiyon barı (sticky) ── */}
+          <div className="modal-actions wr-actions">{actionButtons}</div>
         </>
       )}
 
@@ -670,6 +1024,17 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName }) {
         <div className="modal-overlay" onClick={() => setNewModal(null)}>
           <div className="modal-box" onClick={(e) => e.stopPropagation()}>
             <h3>{t('wr.newReport')}</h3>
+            <label style={{ display: 'flex', flexDirection: 'column', gap: 6, fontSize: '.9em', marginBottom: 10 }}>
+              <span>{t('wr.team')} {isAdmin && <span className="req-star">*</span>}</span>
+              {isAdmin ? (
+                <SearchableSelect value={newModal.teamId}
+                  onChange={(v) => setNewModal({ ...newModal, teamId: v })}
+                  placeholder={t('wr.selectTeam')}
+                  options={teams.map((tm) => ({ value: String(tm.id), label: tm.name }))} />
+              ) : (
+                <input value={teamName ?? ''} disabled />
+              )}
+            </label>
             <div className="form-grid">
               <label>
                 {t('wr.year')}
@@ -682,10 +1047,17 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName }) {
                   onChange={(e) => setNewModal({ ...newModal, week: parseInt(e.target.value || '0', 10) })} />
               </label>
             </div>
+            <div style={{
+              marginTop: 10, padding: '9px 12px', borderRadius: 8,
+              border: '1px solid var(--border)', fontSize: '.9em', fontWeight: 700,
+            }}>
+              📅 {formatWeekRange(newModal.year, newModal.week, lang)}
+            </div>
             <p style={{ fontSize: '.82em', color: 'var(--text-light)', marginTop: 8 }}>{t('wr.templateHint')}</p>
             <div className="modal-actions">
               <button className="btn btn-secondary" onClick={() => setNewModal(null)}>{t('wr.cancel')}</button>
-              <button className="btn btn-primary" onClick={createReport}>{t('wr.create')}</button>
+              <button className="btn btn-primary" onClick={createReport}
+                disabled={isAdmin && !newModal.teamId}>{t('wr.create')}</button>
             </div>
           </div>
         </div>

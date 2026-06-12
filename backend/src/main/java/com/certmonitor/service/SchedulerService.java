@@ -204,6 +204,11 @@ public class SchedulerService {
         patch("ALTER TABLE latest_checks ADD COLUMN tls_mode_used TEXT");
         // Haftalık raporlar — tablolar ddl-auto=update ile oluşur; unique index güvenlik ağı
         patch("CREATE UNIQUE INDEX IF NOT EXISTS ux_weekly_report_team_week ON weekly_reports(team_id, report_year, week_no)");
+        // Eş zamanlı düzenleme: sürüm sayacı + yumuşak düzenleme kilidi alanları
+        patch("ALTER TABLE weekly_reports ADD COLUMN version INTEGER DEFAULT 0");
+        patch("ALTER TABLE weekly_reports ADD COLUMN editing_by TEXT");
+        patch("ALTER TABLE weekly_reports ADD COLUMN editing_user_id BIGINT");
+        patch("ALTER TABLE weekly_reports ADD COLUMN editing_heartbeat TEXT");
         patch("ALTER TABLE escalation_contacts ADD COLUMN team_id INTEGER");
         // Widen varchar(255) columns to TEXT — markdown editor / long descriptions can overflow
         patch("ALTER TABLE certificate_inventory ALTER COLUMN change_description TYPE TEXT");

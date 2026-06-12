@@ -76,6 +76,11 @@
             <artifactId>commonmark-ext-gfm-tables</artifactId>
             <version>0.24.0</version>
         </dependency>
+        <dependency>
+            <groupId>org.commonmark</groupId>
+            <artifactId>commonmark-ext-task-list-items</artifactId>
+            <version>0.24.0</version>
+        </dependency>
         <!-- PostgreSQL for production (Kubernetes) -->
         <dependency>
             <groupId>org.postgresql</groupId>
