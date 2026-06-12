@@ -238,8 +238,10 @@ class EmailNotificationServiceTest {
                 .contains(">Proaktif İyileştirme kayıtlarına erişmek için tıklayınız</a>")
                 .doesNotContain("Takip Linki");
 
-        // Sayı rozetleri e-posta-güvenli: tablo+cellspacing, 8-haneli hex ve pill YOK
-        assertThat(html).contains("cellspacing='6'")
+        // Sayı rozeti satırı INLINE width:100% + collapse (Outlook = önizleme) +
+        // eşit kolon (Madde 1: 5 kutu → 20%, Madde 2: 3 kutu → 33%); 8-haneli hex ve pill YOK
+        assertThat(html).contains("width:100%;border-collapse:collapse;margin:6px 0 10px")
+                .contains("width='20%'").contains("width='33%'")
                 .doesNotContain("#33415514").doesNotContain("#dc262614")
                 .doesNotContain("border-radius:999px");
     }
