@@ -53,6 +53,43 @@ class PermissionCatalogTest {
     }
 
     @Test
+    @DisplayName("Yeni modüller: weekly_reports + diagnostics matriste ve rol varsayılanları doğru")
+    void newModulesDefaults() {
+        // Katalogda mevcutlar
+        assertThat(PermissionCatalog.ALL.stream().map(r -> r.key))
+                .contains("weekly_reports.read", "weekly_reports.crud", "weekly_reports.approve",
+                          "diagnostics.run", "diagnostics.history");
+
+        Map<String, Map<String, Boolean>> admin = PermissionCatalog.defaultsFor("ADMIN");
+        Map<String, Map<String, Boolean>> teamAdmin = PermissionCatalog.defaultsFor("TEAM_ADMIN");
+        Map<String, Map<String, Boolean>> user = PermissionCatalog.defaultsFor("USER");
+        Map<String, Map<String, Boolean>> audit = PermissionCatalog.defaultsFor("AUDIT");
+
+        // ADMIN: hepsi açık
+        assertThat(admin.get("weekly_reports.approve").get("execute")).isTrue();
+        assertThat(admin.get("diagnostics.run").get("execute")).isTrue();
+
+        // TEAM_ADMIN: rapor read/crud/approve açık; diagnostics geçmiş açık, canlı tarama kapalı
+        assertThat(teamAdmin.get("weekly_reports.crud").get("edit")).isTrue();
+        assertThat(teamAdmin.get("weekly_reports.approve").get("execute")).isTrue();
+        assertThat(teamAdmin.get("diagnostics.history").get("view")).isTrue();
+        assertThat(teamAdmin.get("diagnostics.run").get("execute")).isFalse();
+
+        // USER: rapor read/crud açık, approve KAPALI; diagnostics kapalı
+        assertThat(user.get("weekly_reports.read").get("view")).isTrue();
+        assertThat(user.get("weekly_reports.crud").get("edit")).isTrue();
+        assertThat(user.get("weekly_reports.approve").get("execute")).isFalse();
+        assertThat(user.get("diagnostics.run").get("execute")).isFalse();
+        assertThat(user.get("diagnostics.history").get("view")).isFalse();
+
+        // AUDIT: yalnız VIEW açık (read + history); crud/approve/run kapalı
+        assertThat(audit.get("weekly_reports.read").get("view")).isTrue();
+        assertThat(audit.get("weekly_reports.crud").get("edit")).isFalse();
+        assertThat(audit.get("diagnostics.history").get("view")).isTrue();
+        assertThat(audit.get("diagnostics.run").get("execute")).isFalse();
+    }
+
+    @Test
     @DisplayName("Tutarlılık: ALL'daki her resource, 4 rol default'unun en az birinde tanımlı")
     void everyResourceCoveredByDefaults() {
         // ALL'a yeni bir resource eklenip rol default'larına eklenmezse, non-ADMIN

@@ -54,7 +54,14 @@ public final class PermissionCatalog {
         r("audit_log.read",     "logs", VIEW),
         r("weak_algo.read",     "logs", VIEW),
 
+        // ── Haftalık Raporlar ─────────────────────────────────────────────
+        r("weekly_reports.read",    "reports", VIEW),
+        r("weekly_reports.crud",    "reports", EDIT),
+        r("weekly_reports.approve", "reports", EXECUTE, Set.of(EXECUTE)),
+
         // ── Yönetim Araçları (kritik) ─────────────────────────────────────
+        r("diagnostics.run",        "tools", EXECUTE, Set.of(EXECUTE)),
+        r("diagnostics.history",    "tools", VIEW),
         r("sql_playground.execute", "tools", EXECUTE, Set.of(EXECUTE)),
         r("guide_links.crud",       "tools", EDIT)
     );
@@ -129,7 +136,11 @@ public final class PermissionCatalog {
             "alerts.read", "alerts.actions",
             "system_health.read",
             "audit_log.read", "weak_algo.read",
-            "monitoring.read"
+            "monitoring.read",
+            // Haftalık raporlar: takım yöneticisi okur/düzenler ve onaylayabilir;
+            // tanılama geçmişini görür (canlı tarama admin-only kalır)
+            "weekly_reports.read", "weekly_reports.crud", "weekly_reports.approve",
+            "diagnostics.history"
         );
         for (Resource r : ALL) putAll(map, r, allowed.contains(r.key));
         // Internal: team_admin sentinel for legacy helper
@@ -153,7 +164,10 @@ public final class PermissionCatalog {
             "system_health.read",
             "monitoring.read",
             "audit_log.read",
-            "weak_algo.read"
+            "weak_algo.read",
+            // Haftalık raporlar: USER kendi takımının raporunu yazar/düzenler
+            // (onay yetkisi yok — PO onayı servis tarafında orgRole ile ayrı)
+            "weekly_reports.read", "weekly_reports.crud"
         );
         for (Resource r : ALL) putAll(map, r, allowed.contains(r.key));
         for (Resource r : INTERNAL) putAll(map, r, false);

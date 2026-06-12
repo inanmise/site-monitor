@@ -159,6 +159,7 @@ public class SchedulerService {
         applySchemaPatches();
         userService.ensureBootstrapped(adminUsername, adminPassword);
         permissionService.seedDefaultsIfEmpty();
+        permissionService.seedMissingDefaults(); // katalogda yeni eklenen modüllerin grant'lerini backfill et
         ensureDefaultThreshold();
         assignOrphanedCertsToDefaultTeam();
         clearStaleLocksForThisHost();
