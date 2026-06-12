@@ -6,6 +6,7 @@ import { useT, useDateLocale } from '../../i18n/index.jsx'
 import {
   Check, ShieldAlert, TrendingUp, RefreshCcw, Bell, CheckCircle, AlertCircle,
   ChevronUp, ChevronDown, ChevronLeft, ChevronRight, Mail, MailX, Clock, Users, Calendar,
+  Globe, Link2, Ban, Zap, Plug, Server, Shuffle,
 } from 'lucide-react'
 
 const levelColor = { WARNING: '#f0a500', HIGH: '#e07b00', CRITICAL: '#c0392b' }
@@ -278,6 +279,8 @@ export default function AlertHistory({ domain = null }) {
   const [loading,      setLoading]      = useState(false)
   const [notifyModal,  setNotifyModal]  = useState(null)
   const [notifying,    setNotifying]    = useState(null)
+  const [typeFilter,   setTypeFilter]   = useState('')   // '' = tüm tipler
+  const [typeCounts,   setTypeCounts]   = useState({})
 
   const levelLabel = {
     WARNING: t('alh.level.warning'), HIGH: t('alh.level.high'), CRITICAL: t('alh.level.critical'),
@@ -285,6 +288,36 @@ export default function AlertHistory({ domain = null }) {
   const typeLabel = {
     EXPIRY: t('alh.type.expiry'), CHAIN_BROKEN: t('alh.type.chain'),
     REVOKED: t('alh.type.revoked'), MISMATCH: t('alh.type.mismatch'),
+    ACCESSIBILITY: t('alh.type.accessibility'),
+    PORT_DOWN: t('alh.type.portDown'),
+    DNS_FAILURE: t('alh.type.dnsFailure'),
+    DNS_CHANGED: t('alh.type.dnsChanged'),
+  }
+  // Tip bazlı görsel kimlik — pill'lerde ve kart rozetlerinde kullanılır.
+  // Renkler seviye renklerinden (sarı/turuncu/bordo) bilinçli olarak farklı.
+  const typeMeta = {
+    ACCESSIBILITY: { icon: Globe,   color: '#dc2626' },
+    PORT_DOWN:     { icon: Plug,    color: '#db2777' },
+    DNS_FAILURE:   { icon: Server,  color: '#2563eb' },
+    DNS_CHANGED:   { icon: Shuffle, color: '#9333ea' },
+    EXPIRY:        { icon: Clock,   color: '#d97706' },
+    CHAIN_BROKEN:  { icon: Link2,   color: '#7c3aed' },
+    REVOKED:       { icon: Ban,     color: '#be123c' },
+    MISMATCH:      { icon: Zap,     color: '#0891b2' },
+  }
+
+  function TypeChip({ type, size = 13 }) {
+    const meta = typeMeta[type]
+    const Icon = meta?.icon
+    return (
+      <span className="alert-type" style={{
+        color: meta?.color, fontWeight: 700,
+        display: 'inline-flex', alignItems: 'center', gap: 4,
+      }}>
+        {Icon && <Icon size={size} />}
+        {typeLabel[type] || type}
+      </span>
+    )
   }
 
   const load = useCallback(async () => {
@@ -299,18 +332,20 @@ export default function AlertHistory({ domain = null }) {
       if (closedTo)   params.resolvedUntil = closedTo
     }
     if (domain) params.domain = domain
+    if (typeFilter) params.alertType = typeFilter
     const res = await api.admin.getAlerts(params)
     setLoading(false)
     if (res?.success) {
       setAlerts(res.data ?? [])
       setTotal(res.total ?? 0)
+      setTypeCounts(res.type_counts ?? {})
     } else if (res != null) {
       toast.error(res?.error || t('alh.loadError'))
     }
-  }, [tab, page, pageSize, closedFrom, closedTo, domain, t, toast])
+  }, [tab, page, pageSize, closedFrom, closedTo, domain, typeFilter, t, toast])
 
   useEffect(() => { load() }, [load])
-  useEffect(() => { setPage(0) }, [tab, pageSize, closedFrom, closedTo])
+  useEffect(() => { setPage(0) }, [tab, pageSize, closedFrom, closedTo, typeFilter])
 
   function applyQuickRange(days) {
     const now = new Date()
@@ -413,6 +448,37 @@ export default function AlertHistory({ domain = null }) {
         </button>
       </div>
 
+      {/* ── Tip filtre pill'leri — canlı sayılarla ── */}
+      <div className="inv-stats-pills" style={{ marginBottom: 14 }}>
+        <button
+          type="button"
+          className={`inv-stat-pill${typeFilter === '' ? ' is-selected' : ''}`}
+          style={typeFilter === '' ? { borderColor: 'var(--text-muted)', background: 'rgba(100,116,139,.12)' } : undefined}
+          onClick={() => setTypeFilter('')}
+        >
+          {t('alh.typeAll')}: <strong>{Object.values(typeCounts).reduce((s, n) => s + n, 0)}</strong>
+        </button>
+        {Object.keys(typeMeta)
+          .filter(type => (typeCounts[type] ?? 0) > 0 || typeFilter === type)
+          .map(type => {
+            const meta = typeMeta[type]
+            const Icon = meta.icon
+            const selected = typeFilter === type
+            return (
+              <button
+                key={type}
+                type="button"
+                className={`inv-stat-pill${selected ? ' is-selected' : ''}`}
+                style={selected ? { borderColor: meta.color, background: meta.color + '1a' } : undefined}
+                onClick={() => setTypeFilter(selected ? '' : type)}
+              >
+                <Icon size={12} style={{ color: meta.color, flexShrink: 0 }} />
+                {typeLabel[type]}: <strong>{typeCounts[type] ?? 0}</strong>
+              </button>
+            )
+          })}
+      </div>
+
       {isClosed && (
         <div className="alh-filter-bar">
           <div className="alh-quick-pills">
@@ -472,7 +538,7 @@ export default function AlertHistory({ domain = null }) {
                   <span className="alert-level-badge" style={{ background: levelColor[a.alert_level] }}>
                     {levelLabel[a.alert_level] || a.alert_level}
                   </span>
-                  <span className="alert-type">{typeLabel[a.alert_type] || a.alert_type}</span>
+                  <TypeChip type={a.alert_type} />
                   <strong className="alert-domain">{a.domain}</strong>
                   {a.days_remaining != null && (
                     <span className="alert-days">{t('alh.days', a.days_remaining)}</span>
@@ -551,7 +617,16 @@ export default function AlertHistory({ domain = null }) {
                 <div className="ahc-body">
                   <div className="ahc-top">
                     <strong className="ahc-domain">{a.domain}</strong>
-                    <span className="ahc-type">{typeLabel[a.alert_type] || a.alert_type}</span>
+                    <span className="ahc-type" style={{
+                      color: typeMeta[a.alert_type]?.color, fontWeight: 700,
+                      display: 'inline-flex', alignItems: 'center', gap: 4,
+                    }}>
+                      {typeMeta[a.alert_type]?.icon && (() => {
+                        const Icon = typeMeta[a.alert_type].icon
+                        return <Icon size={12} />
+                      })()}
+                      {typeLabel[a.alert_type] || a.alert_type}
+                    </span>
                     <span className="ahc-level" style={{ color: levelColor[a.alert_level] }}>
                       {levelLabel[a.alert_level] || a.alert_level}
                     </span>

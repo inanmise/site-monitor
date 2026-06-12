@@ -72,6 +72,7 @@ public class SchedulerService {
 
     private final UptimeHttpCheckerService uptimeHttpCheckerService;
     private final UptimeCheckRepository uptimeCheckRepo;
+    private final MonitoringOutageService monitoringOutageService;
 
     private final NetworkOutageEventRepository networkOutageRepo;
 
@@ -178,6 +179,11 @@ public class SchedulerService {
             int deleted = jdbcTemplate.update(
                 "DELETE FROM scheduler_lock WHERE name = ? AND locked_by LIKE ?",
                 "cert-check", HOSTNAME + "-%");
+            // İzleme alarm pipeline'ının tip+domain bazlı kilitleri (TTL zaten
+            // kendini temizler; bu sadece crash sonrası toparlanmayı hızlandırır)
+            deleted += jdbcTemplate.update(
+                "DELETE FROM scheduler_lock WHERE name LIKE 'mon-alert:%' AND locked_by LIKE ?",
+                HOSTNAME + "-%");
             if (deleted > 0) {
                 log.info("Cleared {} stale scheduler lock(s) from previous instance(s) on this host", deleted);
             }
@@ -674,25 +680,47 @@ public class SchedulerService {
     public void runUptimeChecks() {
         List<CertificateInventory> active = inventoryRepo.findByActiveTrueOrderByDomainAsc();
         if (active.isEmpty()) return;
-        String now = ISO.format(Instant.now());
+        List<MonitoringOutageService.SweepItem> sweep = new ArrayList<>();
         for (CertificateInventory inv : active) {
             int port = inv.getPort() != null ? inv.getPort() : 443;
             try {
-                Map<String, Object> r = uptimeHttpCheckerService.check(inv.getDomain(), port, 10000);
-                UptimeCheck check = new UptimeCheck();
-                check.setDomain(inv.getDomain());
-                check.setPort(port);
-                check.setStatus((String) r.getOrDefault("status", "down"));
-                check.setResponseMs(r.get("response_ms") != null
-                        ? ((Number) r.get("response_ms")).longValue() : null);
-                check.setError((String) r.get("error"));
-                check.setCheckedAt(now);
-                uptimeCheckRepo.save(check);
+                Map<String, Object> r = recheckUptime(inv.getDomain(), port);
+                sweep.add(new MonitoringOutageService.SweepItem(
+                        EscalationService.TYPE_ACCESSIBILITY, inv.getDomain(), String.valueOf(port),
+                        "up".equals(r.get("status")), (String) r.get("error"),
+                        Map.of("port", port),
+                        () -> recheckUptime(inv.getDomain(), port)));
             } catch (Exception e) {
                 log.warn("Uptime check failed for {}:{}: {}", inv.getDomain(), port, e.getMessage());
             }
         }
+        // Erişilebilirlik alarm pipeline'ı — hatası sweep'i asla kırmasın
+        try {
+            monitoringOutageService.handleSweepResults(EscalationService.TYPE_ACCESSIBILITY, sweep);
+        } catch (Exception e) {
+            log.warn("Uptime outage processing failed: {}", e.getMessage(), e);
+        }
         log.debug("Uptime HTTP checks complete: {} domains", active.size());
+    }
+
+    /** Uptime check + uptime_checks persist'i — hem sweep hem teyit re-check'leri
+     *  bu yoldan geçer (teyit izi Durum izleme geçmişinde görünür). */
+    private Map<String, Object> recheckUptime(String domain, int port) {
+        Map<String, Object> r = uptimeHttpCheckerService.check(domain, port, 10000);
+        try {
+            UptimeCheck check = new UptimeCheck();
+            check.setDomain(domain);
+            check.setPort(port);
+            check.setStatus((String) r.getOrDefault("status", "down"));
+            check.setResponseMs(r.get("response_ms") != null
+                    ? ((Number) r.get("response_ms")).longValue() : null);
+            check.setError((String) r.get("error"));
+            check.setCheckedAt(ISO.format(Instant.now()));
+            uptimeCheckRepo.save(check);
+        } catch (Exception e) {
+            log.warn("Uptime kaydı yazılamadı: {}:{} — {}", domain, port, e.getMessage());
+        }
+        return r;
     }
 
     @Scheduled(fixedDelayString = "${cert.monitor.port.interval-ms:60000}", initialDelayString = "45000")
@@ -702,25 +730,53 @@ public class SchedulerService {
         // Skip monitors whose host is no longer in active inventory (soft-deleted / inactive)
         Set<String> activeDomains = inventoryRepo.findByActiveTrueOrderByDomainAsc().stream()
                 .map(CertificateInventory::getDomain).collect(Collectors.toSet());
-        String now = ISO.format(Instant.now());
         int checked = 0, skipped = 0;
+        List<MonitoringOutageService.SweepItem> sweep = new ArrayList<>();
         for (PortMonitor m : monitors) {
             if (!activeDomains.contains(m.getHost())) { skipped++; continue; }
             try {
-                Map<String, Object> r = portCheckerService.check(m.getHost(), m.getPort(), m.getTimeoutMs());
-                PortCheck check = new PortCheck();
-                check.setMonitorId(m.getId());
-                check.setOpen((Boolean) r.getOrDefault("open", false));
-                check.setResponseMs(r.get("response_ms") != null ? ((Number) r.get("response_ms")).longValue() : null);
-                check.setError((String) r.get("error"));
-                check.setCheckedAt(now);
-                portCheckRepo.save(check);
+                Map<String, Object> r = recheckPort(m);
+                // Hata fırlatan monitör item üretmez — yanlış all-up resolve olmaz
+                sweep.add(new MonitoringOutageService.SweepItem(
+                        EscalationService.TYPE_PORT_DOWN, m.getHost(),
+                        m.getPort() + "/" + m.getProtocol(),
+                        "up".equals(r.get("status")), (String) r.get("error"),
+                        Map.of("port", m.getPort(), "protocol", m.getProtocol() != null ? m.getProtocol() : "TCP"),
+                        () -> recheckPort(m)));
                 checked++;
             } catch (Exception e) {
                 log.warn("Port check failed for {}:{}: {}", m.getHost(), m.getPort(), e.getMessage());
             }
         }
+        // Port kesinti alarm pipeline'ı — hatası sweep'i asla kırmasın
+        try {
+            monitoringOutageService.handleSweepResults(EscalationService.TYPE_PORT_DOWN, sweep);
+        } catch (Exception e) {
+            log.warn("Port outage processing failed: {}", e.getMessage(), e);
+        }
         log.debug("Port checks complete: {} monitors ({} skipped — not in active inventory)", checked, skipped);
+    }
+
+    /** Port check + port_checks persist'i — sweep ve teyit re-check'leri bu
+     *  yoldan geçer (teyit izi port geçmişinde görünür). {"status","error"} döner. */
+    private Map<String, Object> recheckPort(PortMonitor m) {
+        Map<String, Object> r = portCheckerService.check(m.getHost(), m.getPort(), m.getTimeoutMs());
+        boolean open = Boolean.TRUE.equals(r.getOrDefault("open", false));
+        try {
+            PortCheck check = new PortCheck();
+            check.setMonitorId(m.getId());
+            check.setOpen(open);
+            check.setResponseMs(r.get("response_ms") != null ? ((Number) r.get("response_ms")).longValue() : null);
+            check.setError((String) r.get("error"));
+            check.setCheckedAt(ISO.format(Instant.now()));
+            portCheckRepo.save(check);
+        } catch (Exception e) {
+            log.warn("Port kaydı yazılamadı: {}:{} — {}", m.getHost(), m.getPort(), e.getMessage());
+        }
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("status", open ? "up" : "down");
+        out.put("error", r.get("error"));
+        return out;
     }
 
     @Scheduled(fixedDelayString = "${cert.monitor.dns.interval-ms:300000}", initialDelayString = "60000")
@@ -732,17 +788,27 @@ public class SchedulerService {
                 .map(CertificateInventory::getDomain).collect(Collectors.toSet());
         String now = ISO.format(Instant.now());
         int checked = 0, skipped = 0;
+        List<MonitoringOutageService.SweepItem> sweep = new ArrayList<>();
+        List<MonitoringOutageService.DnsChange> changes = new ArrayList<>();
         for (DnsMonitor m : monitors) {
             if (!activeDomains.contains(m.getDomain())) { skipped++; continue; }
             try {
                 Map<String, Object> r = dnsCheckerService.check(m.getDomain(), m.getRecordType());
+                boolean success = Boolean.TRUE.equals(r.get("success"));
                 @SuppressWarnings("unchecked")
                 List<String> values = (List<String>) r.getOrDefault("values", List.of());
                 String valueStr = String.join("\n", values);
 
-                DnsRecord prev = dnsRecordRepo.findTopByMonitorIdOrderByCheckedAtDesc(m.getId()).orElse(null);
-                String prevValue = prev != null ? prev.getValue() : null;
-                DnsCheckerService.ChangeKind kind = DnsCheckerService.detectChange(prevValue, valueStr);
+                // Değişiklik tespiti SADECE başarılı sorguda ve son BAŞARILI
+                // kayda karşı yapılır — aksi halde dolu→boş(hata) geçişi sahte
+                // CHANGED üretir (DNS_FAILURE her seferinde DNS_CHANGED'i tetiklerdi).
+                DnsRecord prevOk = success
+                        ? dnsRecordRepo.findTopByMonitorIdAndValueNotOrderByCheckedAtDesc(m.getId(), "").orElse(null)
+                        : null;
+                String prevValue = prevOk != null ? prevOk.getValue() : null;
+                DnsCheckerService.ChangeKind kind = success
+                        ? DnsCheckerService.detectChange(prevValue, valueStr)
+                        : DnsCheckerService.ChangeKind.NONE;
                 boolean changed = kind == DnsCheckerService.ChangeKind.CHANGED;
                 boolean rotated = kind == DnsCheckerService.ChangeKind.ROTATED;
 
@@ -758,16 +824,40 @@ public class SchedulerService {
                 record.setResponseMs(r.get("response_ms") instanceof Number rn ? rn.longValue() : null);
                 dnsRecordRepo.save(record);
 
+                sweep.add(new MonitoringOutageService.SweepItem(
+                        EscalationService.TYPE_DNS_FAILURE, m.getDomain(), m.getRecordType(),
+                        success, (String) r.get("error"),
+                        Map.of("record_type", m.getRecordType()),
+                        () -> recheckDns(m)));
+
                 if (changed) {
                     log.warn("DNS change detected for {} {}: was='{}' now='{}'",
                             m.getRecordType(), m.getDomain(), prevValue, valueStr);
+                    changes.add(new MonitoringOutageService.DnsChange(
+                            m.getDomain(), m.getRecordType(), prevValue, valueStr, now));
                 }
                 checked++;
             } catch (Exception e) {
                 log.warn("DNS check failed for {} {}: {}", m.getRecordType(), m.getDomain(), e.getMessage());
             }
         }
+        // DNS alarm pipeline'ı (çözümleme hatası + kayıt değişikliği) — sweep'i kırmasın
+        try {
+            monitoringOutageService.handleDnsSweep(sweep, changes);
+        } catch (Exception e) {
+            log.warn("DNS outage processing failed: {}", e.getMessage(), e);
+        }
         log.debug("DNS checks complete: {} monitors ({} skipped — not in active inventory)", checked, skipped);
+    }
+
+    /** DNS teyit re-check'i — BİLEREK DnsRecord persist ETMEZ: dns_records
+     *  değişiklik-tespiti state'idir, 30 sn'lik teyit satırları kirletir. */
+    private Map<String, Object> recheckDns(DnsMonitor m) {
+        Map<String, Object> r = dnsCheckerService.check(m.getDomain(), m.getRecordType());
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("status", Boolean.TRUE.equals(r.get("success")) ? "up" : "down");
+        out.put("error", r.get("error"));
+        return out;
     }
 
     private static String resolveHostname() {

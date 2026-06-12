@@ -249,7 +249,7 @@ class EscalationServiceTest {
     void processResults_certOk_resolvesOpenAlert() {
         String domain = "recovered.example.com";
         AlertEvent existing = existingOpenAlert(domain, "EXPIRY", "WARNING", false);
-        when(alertEventRepo.findByDomainAndResolvedFalse(domain)).thenReturn(List.of(existing));
+        when(alertEventRepo.findByDomainAndAlertTypeInAndResolvedFalse(eq(domain), anyCollection())).thenReturn(List.of(existing));
         when(alertEventRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
         // Now cert is fine
@@ -265,7 +265,7 @@ class EscalationServiceTest {
     @DisplayName("Cert with no alert type does not fire any notification")
     void processResults_certOkNoExistingAlert_noAction() {
         String domain = "healthy.example.com";
-        when(alertEventRepo.findByDomainAndResolvedFalse(domain)).thenReturn(List.of());
+        when(alertEventRepo.findByDomainAndAlertTypeInAndResolvedFalse(eq(domain), anyCollection())).thenReturn(List.of());
 
         service.processResults(List.of(okResult(domain)));
 
@@ -278,7 +278,7 @@ class EscalationServiceTest {
     void processResults_chainBrokenResolved_whenCertHealthy() {
         String domain = "renewed-chain.example.com";
         AlertEvent existing = existingOpenAlert(domain, "CHAIN_BROKEN", "CRITICAL", false);
-        when(alertEventRepo.findByDomainAndResolvedFalse(domain)).thenReturn(List.of(existing));
+        when(alertEventRepo.findByDomainAndAlertTypeInAndResolvedFalse(eq(domain), anyCollection())).thenReturn(List.of(existing));
         when(alertEventRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
         when(latestCheckRepo.findById(domain)).thenReturn(Optional.empty());
 
@@ -296,7 +296,7 @@ class EscalationServiceTest {
     void processResults_revokedAlertResolved_whenCertHealthy() {
         String domain = "renewed-revoked.example.com";
         AlertEvent existing = existingOpenAlert(domain, "REVOKED", "CRITICAL", false);
-        when(alertEventRepo.findByDomainAndResolvedFalse(domain)).thenReturn(List.of(existing));
+        when(alertEventRepo.findByDomainAndAlertTypeInAndResolvedFalse(eq(domain), anyCollection())).thenReturn(List.of(existing));
         when(alertEventRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
         when(latestCheckRepo.findById(domain)).thenReturn(Optional.empty());
 
@@ -455,7 +455,7 @@ class EscalationServiceTest {
     void processResults_autoResolve_sendsResolutionEmail() {
         String domain = "recovered2.example.com";
         AlertEvent existing = existingOpenAlert(domain, "EXPIRY", "WARNING", false);
-        when(alertEventRepo.findByDomainAndResolvedFalse(domain)).thenReturn(List.of(existing));
+        when(alertEventRepo.findByDomainAndAlertTypeInAndResolvedFalse(eq(domain), anyCollection())).thenReturn(List.of(existing));
         when(alertEventRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
         when(contactRepo.findByMinAlertLevelAndActiveTrue("WARNING"))
                 .thenReturn(List.of(contact("po@test.com", "PO", "WARNING")));
@@ -621,6 +621,194 @@ class EscalationServiceTest {
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
+
+    // ── ACCESSIBILITY (erişim kesintisi) alarmları ─────────────────────────────
+
+    private Map<String, Object> outageCtx() {
+        Map<String, Object> ctx = new LinkedHashMap<>();
+        ctx.put("port", 443);
+        ctx.put("first_failure_at", "2026-06-11T10:00:00");
+        ctx.put("last_error", "Connection timed out");
+        ctx.put("confirm_attempt_count", 3);
+        ctx.put("confirm_delay_ms", 30000L);
+        return ctx;
+    }
+
+    @Test
+    @DisplayName("processConfirmedOutage creates CRITICAL ACCESSIBILITY alert with Erişim Kesintisi subject")
+    void processConfirmedOutage_newOutage_createsCriticalAlert() {
+        String domain = "down.example.com";
+        when(inventoryRepo.findByDomain(domain)).thenReturn(Optional.empty());
+        when(alertEventRepo.findOpenAlert(domain, "ACCESSIBILITY")).thenReturn(Optional.empty());
+        when(alertEventRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(contactRepo.findByActiveTrueOrderByRoleAsc())
+                .thenReturn(List.of(contact("team@test.com", "TECH", "WARNING")));
+
+        service.processConfirmedOutage(domain, "ACCESSIBILITY", "CRITICAL", outageCtx());
+
+        ArgumentCaptor<AlertEvent> captor = ArgumentCaptor.forClass(AlertEvent.class);
+        verify(alertEventRepo, atLeast(1)).save(captor.capture());
+        AlertEvent saved = captor.getAllValues().get(0);
+        assertThat(saved.getAlertType()).isEqualTo("ACCESSIBILITY");
+        assertThat(saved.getAlertLevel()).isEqualTo("CRITICAL");
+        assertThat(saved.getDaysRemaining()).isNull();
+        verify(emailService).sendAlert(any(String[].class), contains("Erişim Kesintisi"),
+                anyString(), eq(domain), eq("CRITICAL"), eq("ACCESSIBILITY"), isNull(), any());
+    }
+
+    @Test
+    @DisplayName("processConfirmedOutage: open alert same UTC day → silent")
+    void processConfirmedOutage_sameDay_silent() {
+        String domain = "down.example.com";
+        AlertEvent open = existingOpenAlert(domain, "ACCESSIBILITY", "CRITICAL", false);
+        open.setCreatedAt(ISO.format(Instant.now()));
+        open.setLastReAlertAt(ISO.format(Instant.now()));
+        when(inventoryRepo.findByDomain(domain)).thenReturn(Optional.empty());
+        when(alertEventRepo.findOpenAlert(domain, "ACCESSIBILITY")).thenReturn(Optional.of(open));
+
+        service.processConfirmedOutage(domain, "ACCESSIBILITY", "CRITICAL", outageCtx());
+
+        verify(emailService, never()).sendAlert(any(String[].class), anyString(), anyString(),
+                any(), any(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("processConfirmedOutage: open alert from yesterday, unacked → daily RE-ALERT")
+    void processConfirmedOutage_previousDay_reAlerts() {
+        String domain = "down.example.com";
+        AlertEvent open = existingOpenAlert(domain, "ACCESSIBILITY", "CRITICAL", false);
+        open.setId(5L);
+        when(inventoryRepo.findByDomain(domain)).thenReturn(Optional.empty());
+        when(alertEventRepo.findOpenAlert(domain, "ACCESSIBILITY")).thenReturn(Optional.of(open));
+        when(alertEventRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(contactRepo.findByActiveTrueOrderByRoleAsc())
+                .thenReturn(List.of(contact("team@test.com", "TECH", "WARNING")));
+
+        service.processConfirmedOutage(domain, "ACCESSIBILITY", "CRITICAL", outageCtx());
+
+        verify(emailService).sendAlert(any(String[].class), contains("[RE-ALERT]"),
+                anyString(), eq(domain), eq("CRITICAL"), eq("ACCESSIBILITY"), isNull(), any());
+        assertThat(open.getLastReAlertAt()).isNotNull();
+    }
+
+    @Test
+    @DisplayName("processConfirmedOutage: acknowledged open alert → silent")
+    void processConfirmedOutage_acknowledged_silent() {
+        String domain = "down.example.com";
+        AlertEvent open = existingOpenAlert(domain, "ACCESSIBILITY", "CRITICAL", true);
+        when(inventoryRepo.findByDomain(domain)).thenReturn(Optional.empty());
+        when(alertEventRepo.findOpenAlert(domain, "ACCESSIBILITY")).thenReturn(Optional.of(open));
+
+        service.processConfirmedOutage(domain, "ACCESSIBILITY", "CRITICAL", outageCtx());
+
+        verify(emailService, never()).sendAlert(any(String[].class), anyString(), anyString(),
+                any(), any(), any(), any(), any());
+        verify(alertEventRepo, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("resolveAccessibilityAlertsForDomain resolves only ACCESSIBILITY alerts as system")
+    void resolveAccessibilityAlerts_resolvesOnlyAccessibility() {
+        String domain = "down.example.com";
+        AlertEvent open = existingOpenAlert(domain, "ACCESSIBILITY", "CRITICAL", false);
+        open.setId(5L);
+        when(alertEventRepo.findByDomainAndAlertTypeInAndResolvedFalse(eq(domain), anyCollection()))
+                .thenReturn(List.of(open));
+        when(alertEventRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        service.resolveMonitoringAlertsForDomain(domain, "ACCESSIBILITY");
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Collection<String>> typesCaptor = ArgumentCaptor.forClass(Collection.class);
+        verify(alertEventRepo).findByDomainAndAlertTypeInAndResolvedFalse(eq(domain), typesCaptor.capture());
+        assertThat(typesCaptor.getValue()).containsExactly("ACCESSIBILITY");
+        assertThat(open.getResolved()).isTrue();
+        assertThat(open.getResolvedBy()).isEqualTo("system");
+    }
+
+    @Test
+    @DisplayName("processConfirmedOutage PORT_DOWN → CRITICAL, subject 'Port Kesintisi', mesajda port/protokol")
+    void processConfirmedOutage_portDown_critical() {
+        String domain = "down.example.com";
+        when(inventoryRepo.findByDomain(domain)).thenReturn(Optional.empty());
+        when(alertEventRepo.findOpenAlert(domain, "PORT_DOWN")).thenReturn(Optional.empty());
+        when(alertEventRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(contactRepo.findByActiveTrueOrderByRoleAsc())
+                .thenReturn(List.of(contact("team@test.com", "TECH", "WARNING")));
+
+        Map<String, Object> ctx = new LinkedHashMap<>();
+        ctx.put("port", 8443);
+        ctx.put("protocol", "TCP");
+        ctx.put("detail", "8443/TCP");
+        service.processConfirmedOutage(domain, "PORT_DOWN", "CRITICAL", ctx);
+
+        ArgumentCaptor<AlertEvent> captor = ArgumentCaptor.forClass(AlertEvent.class);
+        verify(alertEventRepo, atLeast(1)).save(captor.capture());
+        assertThat(captor.getAllValues().get(0).getAlertType()).isEqualTo("PORT_DOWN");
+        assertThat(captor.getAllValues().get(0).getAlertLevel()).isEqualTo("CRITICAL");
+        assertThat(captor.getAllValues().get(0).getMessage()).contains("8443/TCP");
+        verify(emailService).sendAlert(any(String[].class), contains("Port Kesintisi"),
+                anyString(), eq(domain), eq("CRITICAL"), eq("PORT_DOWN"), isNull(), any());
+    }
+
+    @Test
+    @DisplayName("processConfirmedOutage DNS_FAILURE → CRITICAL, subject 'DNS Çözümleme Hatası'")
+    void processConfirmedOutage_dnsFailure_critical() {
+        String domain = "down.example.com";
+        when(inventoryRepo.findByDomain(domain)).thenReturn(Optional.empty());
+        when(alertEventRepo.findOpenAlert(domain, "DNS_FAILURE")).thenReturn(Optional.empty());
+        when(alertEventRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(contactRepo.findByActiveTrueOrderByRoleAsc())
+                .thenReturn(List.of(contact("team@test.com", "TECH", "WARNING")));
+
+        service.processConfirmedOutage(domain, "DNS_FAILURE", "CRITICAL",
+                new LinkedHashMap<>(Map.of("record_type", "A", "detail", "A")));
+
+        verify(emailService).sendAlert(any(String[].class), contains("DNS Çözümleme Hatası"),
+                anyString(), eq(domain), eq("CRITICAL"), eq("DNS_FAILURE"), isNull(), any());
+    }
+
+    @Test
+    @DisplayName("processConfirmedOutage DNS_CHANGED → HIGH, mesajda eski/yeni değerler")
+    void processConfirmedOutage_dnsChanged_highWithValues() {
+        String domain = "changed.example.com";
+        when(inventoryRepo.findByDomain(domain)).thenReturn(Optional.empty());
+        when(alertEventRepo.findOpenAlert(domain, "DNS_CHANGED")).thenReturn(Optional.empty());
+        when(alertEventRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(contactRepo.findByMinAlertLevelInAndActiveTrue(List.of("WARNING", "HIGH")))
+                .thenReturn(List.of(contact("team@test.com", "TECH", "WARNING")));
+
+        Map<String, Object> ctx = new LinkedHashMap<>();
+        ctx.put("record_type", "A");
+        ctx.put("old_values", List.of("1.2.3.4"));
+        ctx.put("new_values", List.of("9.9.9.9"));
+        service.processConfirmedOutage(domain, "DNS_CHANGED", "HIGH", ctx);
+
+        ArgumentCaptor<AlertEvent> captor = ArgumentCaptor.forClass(AlertEvent.class);
+        verify(alertEventRepo, atLeast(1)).save(captor.capture());
+        AlertEvent saved = captor.getAllValues().get(0);
+        assertThat(saved.getAlertLevel()).isEqualTo("HIGH");
+        assertThat(saved.getMessage()).contains("1.2.3.4").contains("9.9.9.9").contains("otomatik kapanmaz");
+        verify(emailService).sendAlert(any(String[].class), contains("DNS Değişikliği"),
+                anyString(), eq(domain), eq("HIGH"), eq("DNS_CHANGED"), isNull(), any());
+    }
+
+    @Test
+    @DisplayName("Regression: healthy cert sweep resolves ONLY cert-type alerts, never ACCESSIBILITY")
+    void processResults_healthyCert_doesNotTouchAccessibilityAlerts() {
+        String domain = "healthy.example.com";
+        when(alertEventRepo.findByDomainAndAlertTypeInAndResolvedFalse(eq(domain), anyCollection()))
+                .thenReturn(List.of());
+
+        service.processResults(List.of(okResult(domain)));
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Collection<String>> typesCaptor = ArgumentCaptor.forClass(Collection.class);
+        verify(alertEventRepo).findByDomainAndAlertTypeInAndResolvedFalse(eq(domain), typesCaptor.capture());
+        assertThat(typesCaptor.getValue())
+                .containsExactlyInAnyOrder("EXPIRY", "CHAIN_BROKEN", "REVOKED", "MISMATCH")
+                .doesNotContain("ACCESSIBILITY");
+    }
 
     private AlertThreshold defaultThreshold() {
         AlertThreshold t = new AlertThreshold();

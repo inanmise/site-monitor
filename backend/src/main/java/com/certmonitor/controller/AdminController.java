@@ -475,22 +475,31 @@ public class AdminController {
             @RequestParam(required = false) String resolvedSince,
             @RequestParam(required = false) String resolvedUntil,
             @RequestParam(required = false) String domain,
+            @RequestParam(required = false) String alertType,
             HttpSession session) {
         int sz = Math.max(1, Math.min(size, 200));
         Boolean resolvedEffective = resolved != null ? resolved : (onlyOpen ? Boolean.FALSE : null);
+        String alertTypeEffective = (alertType != null && !alertType.isBlank()) ? alertType.trim() : null;
         // Default sort: en yeniden en eskiye (newest → oldest) — hem açık hem kapalı için.
         Sort sort = Boolean.TRUE.equals(resolvedEffective)
                 ? Sort.by(Sort.Direction.DESC, "resolvedAt").and(Sort.by(Sort.Direction.DESC, "createdAt"))
                 : Sort.by(Sort.Direction.DESC, "createdAt");
         Page<AlertEvent> result = alertEventRepo.findFiltered(
-                resolvedEffective, since, until, resolvedSince, resolvedUntil, domain,
+                resolvedEffective, since, until, resolvedSince, resolvedUntil, domain, alertTypeEffective,
                 PageRequest.of(Math.max(0, page), sz, sort));
         enrichAlerts(result.getContent());
+        // Tip filtre pill'lerinin canlı sayıları — tip filtresinden bağımsız
+        Map<String, Long> typeCounts = new java.util.LinkedHashMap<>();
+        for (Object[] row : alertEventRepo.countFilteredByType(
+                resolvedEffective, since, until, resolvedSince, resolvedUntil, domain)) {
+            typeCounts.put(String.valueOf(row[0]), (Long) row[1]);
+        }
         return ok(Map.of(
-                "data",  result.getContent(),
-                "total", result.getTotalElements(),
-                "page",  result.getNumber(),
-                "size",  result.getSize()));
+                "data",        result.getContent(),
+                "total",       result.getTotalElements(),
+                "page",        result.getNumber(),
+                "size",        result.getSize(),
+                "type_counts", typeCounts));
     }
 
     /**
