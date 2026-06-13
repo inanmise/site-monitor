@@ -3,6 +3,7 @@ import { api } from '../../api/client'
 import { useDialog } from '../ui/Dialog.jsx'
 import { useT } from '../../i18n/index.jsx'
 import SearchableSelect from '../ui/SearchableSelect.jsx'
+import KebabMenu from '../ui/KebabMenu.jsx'
 import { UserPlus, UserCog } from 'lucide-react'
 import AdminAutoResetModal from './AdminAutoResetModal.jsx'
 
@@ -192,18 +193,13 @@ export default function UserManager({ systemRole, ownTeamId, currentUsername, te
                   {user.permanent_lock && <span className="badge badge-err" style={{ marginLeft: 4 }} title={t('usr.permLocked')}>🔒</span>}
                 </td>
                 <td>
-                  {canManage && (
-                    <>
-                      <button className="btn-sm btn-edit" onClick={() => openEdit(user)}>{t('usr.edit')}</button>
-                      <button className="btn-sm" style={{ background: '#0ea5e9', color: '#fff', marginRight: 4 }} onClick={() => setAutoResetModal(user)}>{t('usr.autoResetBtn')}</button>
-                      {user.permanent_lock && (
-                        <button className="btn-sm" style={{ background: '#f59e0b', color: '#fff', marginRight: 4 }} onClick={() => unlock(user.id)}>{t('usr.unlock')}</button>
-                      )}
-                      {!isSelf(user) && !isLastActiveAdmin(user) && (
-                        <button className="btn-sm btn-del" onClick={() => del(user.id)}>{t('usr.delete')}</button>
-                      )}
-                    </>
-                  )}
+                  <KebabMenu label={t('usr.colActions')} items={canManage ? [
+                    { label: t('usr.edit'), onClick: () => openEdit(user) },
+                    { label: t('usr.autoResetBtn'), onClick: () => setAutoResetModal(user) },
+                    { label: t('usr.unlock'), onClick: () => unlock(user.id), hidden: !user.permanent_lock },
+                    { label: t('usr.delete'), danger: true, onClick: () => del(user.id),
+                      hidden: isSelf(user) || isLastActiveAdmin(user) },
+                  ] : []} />
                 </td>
               </tr>
             ))}

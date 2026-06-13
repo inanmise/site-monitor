@@ -3,6 +3,7 @@ import { api } from '../../api/client'
 import { useDialog } from '../ui/Dialog.jsx'
 import { useT } from '../../i18n/index.jsx'
 import SearchableSelect from '../ui/SearchableSelect.jsx'
+import KebabMenu from '../ui/KebabMenu.jsx'
 import { UsersRound, PenLine } from 'lucide-react'
 import UserEditModal from './UserEditModal.jsx'
 
@@ -223,12 +224,10 @@ export default function TeamManager({ systemRole, ownTeamId, onTeamsChange }) {
                   <td>{team.description || '—'}</td>
                   <td><span className={team.active ? 'badge badge-ok' : 'badge badge-err'}>{team.active ? t('team.active') : t('team.inactive')}</span></td>
                   <td>
-                    {canEditRow(team.id) && (
-                      <button className="btn-sm btn-edit" onClick={() => openEdit(team)}>{t('team.edit')}</button>
-                    )}
-                    {isAdmin && (
-                      <button className="btn-sm btn-del" onClick={() => del(team.id)}>{t('team.delete')}</button>
-                    )}
+                    <KebabMenu label={t('team.colActions')} items={[
+                      { label: t('team.edit'), onClick: () => openEdit(team), hidden: !canEditRow(team.id) },
+                      { label: t('team.delete'), danger: true, onClick: () => del(team.id), hidden: !isAdmin },
+                    ]} />
                   </td>
                 </tr>
                 {expandedId === team.id && (
