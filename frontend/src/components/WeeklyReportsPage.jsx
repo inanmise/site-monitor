@@ -4,7 +4,7 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import {
   Plus, Save, Send, CheckCircle, Undo2, Eye, Trash2, RefreshCcw, ArrowLeft, Menu, History, FilePenLine,
-  HelpCircle, ChevronDown, Bell,
+  HelpCircle, ChevronDown, Bell, Mail,
 } from 'lucide-react'
 import { api, formatDate } from '../api/client'
 import { useT, useLanguage } from '../i18n/index.jsx'
@@ -762,6 +762,13 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
     else toast.error(res?.error || t('wr.actionFailed'))
   }
 
+  // Liste kebabından: raporu (editörü) açmadan doğrudan mail önizlemesi
+  async function openPreviewById(id) {
+    const res = await api.weeklyReports.preview(id)
+    if (res?.success) setPreviewHtml(res.html)
+    else toast.error(res?.error || t('wr.actionFailed'))
+  }
+
   // Admin-only: Cuma hatırlatma maillerini cron beklemeden anında gönder (test kolaylığı)
   async function sendReminders() {
     setSendingReminder(true)
@@ -1086,6 +1093,9 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
                             style={{ position: 'fixed', top: menuPos.top, left: menuPos.left, right: 'auto' }}>
                             <button onClick={() => { setOpenMenuId(null); setSelectedId(r.id) }}>
                               <Eye size={14} /> {t('wr.open')}
+                            </button>
+                            <button onClick={() => { setOpenMenuId(null); openPreviewById(r.id) }}>
+                              <Mail size={14} /> {t('wr.preview')}
                             </button>
                             <button onClick={() => { setOpenMenuId(null); openMailHistory(r) }}>
                               <History size={14} /> {t('wr.history')}
