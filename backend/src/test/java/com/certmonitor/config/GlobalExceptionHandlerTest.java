@@ -121,6 +121,17 @@ class GlobalExceptionHandlerTest {
     }
 
     @Test
+    @DisplayName("NoResourceFoundException (favicon vb.) → sessiz 404 (ERROR/stack yok)")
+    void noResource() {
+        ResponseEntity<Map<String, Object>> r = handler.handleNoResource(
+                new org.springframework.web.servlet.resource.NoResourceFoundException(
+                        org.springframework.http.HttpMethod.GET, "/favicon.ico"));
+        assertEquals(404, r.getStatusCode().value());
+        assertEquals(false, r.getBody().get("success"));
+        assertEquals("Kaynak bulunamadı", r.getBody().get("error"));
+    }
+
+    @Test
     @DisplayName("Beklenmeyen Exception → 500 + jenerik mesaj (stack trace sızmaz)")
     void generic() {
         ResponseEntity<Map<String, Object>> r = handler.handleGeneric(
