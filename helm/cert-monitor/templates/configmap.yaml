@@ -27,6 +27,8 @@ data:
   SPRING_MAIL_SMTP_STARTTLS_REQUIRED: {{ .Values.config.smtpStarttlsRequired | quote }}
   SPRING_MAIL_SMTP_SSL_TRUST: {{ .Values.config.smtpSslTrust | quote }}
   CORS_ALLOWED_ORIGINS: {{ .Values.config.corsAllowedOrigins | quote }}
+  # Mail linkleri için dış adres — config.appBaseUrl boşsa ingress host'undan türetilir
+  APP_BASE_URL: {{ .Values.config.appBaseUrl | default (printf "https://%s" .Values.ingress.host) | quote }}
   CHECK_TIMEOUT_SECONDS: {{ .Values.config.checkTimeoutSeconds | quote }}
   WARNING_DAYS: {{ .Values.config.warningDays | quote }}
   PARALLEL_WORKERS: {{ .Values.config.parallelWorkers | quote }}

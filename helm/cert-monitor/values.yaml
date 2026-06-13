@@ -52,6 +52,10 @@ config:
   smtpStarttlsRequired: "true"
   smtpSslTrust: "smtp.gmail.com"
   corsAllowedOrigins: ""
+  # Uygulamanın dışarı bakan adresi (mail linkleri için, ör. haftalık rapor hatırlatması).
+  # Boş bırakılırsa otomatik "https://<ingress.host>" kullanılır (route ile tutarlı) —
+  # genelde elle set etmeye gerek yok. Gerekirse tam URL ver: "https://cert-monitor.example.com".
+  appBaseUrl: ""
   checkTimeoutSeconds: "10"
   warningDays: "30"
   parallelWorkers: "20"
