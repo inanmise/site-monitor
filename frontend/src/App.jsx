@@ -936,7 +936,7 @@ export default function App() {
             {tab === 'uptime'   && <UptimePage   systemRole={systemRole} />}
             {tab === 'port'     && <PortMonitorPage systemRole={systemRole} />}
             {tab === 'dns'      && <DnsMonitorPage  systemRole={systemRole} />}
-            {tab === 'forecast' && <ExpiryForecastPage />}
+            {tab === 'forecast' && <ExpiryForecastPage onSelectDomain={(d) => setModalCert(certs.find(c => c.domain === d) ?? { domain: d })} />}
            </ErrorBoundary>
           </div>
 

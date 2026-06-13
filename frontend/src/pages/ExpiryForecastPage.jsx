@@ -5,9 +5,11 @@ import {
   PieChart, Pie, Cell, Label,
   Legend,
 } from 'recharts'
+import { Calendar } from 'lucide-react'
 import { api } from '../api/client'
 import { useT } from '../i18n/index.jsx'
 import CertMonitorLogo from '../components/ui/CertMonitorLogo.jsx'
+import CertificateCard from '../components/CertificateCard.jsx'
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -233,9 +235,10 @@ function countColor(slot) {
   return '#fbbf24'
 }
 
-function CalendarHeatmap({ certs, t }) {
+function CalendarHeatmap({ certs, t, onSelectDomain }) {
   const [hovered, setHovered] = useState(null)
   const [rangeDays, setRangeDays] = useState(30)
+  const [dayModal, setDayModal] = useState(null)  // { key, certs:[...] } → o günün sertifika kartları
 
   const byDate = useMemo(() => {
     const today = new Date(); today.setHours(0, 0, 0, 0)
@@ -251,7 +254,7 @@ function CalendarHeatmap({ certs, t }) {
       const remDays = cert.days_remaining ?? 999
       const sev = remDays <= 7 ? 'critical' : remDays <= 14 ? 'high' : 'warning'
       if (!map[key]) map[key] = { critical: [], high: [], warning: [] }
-      map[key][sev].push(cert.domain)
+      map[key][sev].push(cert)   // tam cert objesi — kart modalı için
     })
     return map
   }, [certs, rangeDays])
@@ -277,8 +280,8 @@ function CalendarHeatmap({ certs, t }) {
     const inRange = d >= today && d <= inEnd
     const slot = byDate[key] || { critical: [], high: [], warning: [] }
     const count = slot.critical.length + slot.high.length + slot.warning.length
-    const allDoms = [...slot.critical, ...slot.high, ...slot.warning]
-    cells.push({ key, d, inRange, count, allDoms, slot, isToday: key === todayStr, dayNum: d.getDate() })
+    const dayCerts = [...slot.critical, ...slot.high, ...slot.warning]  // tam cert objeleri
+    cells.push({ key, d, inRange, count, dayCerts, slot, isToday: key === todayStr, dayNum: d.getDate() })
   }
 
   const DAYS = t('forecast.calDays').split(',')
@@ -306,14 +309,17 @@ function CalendarHeatmap({ certs, t }) {
         className={`fc-heatmap-grid${weekCount > 10 ? ' fc-heatmap-grid--compact' : ''}`}
         style={{ '--cal-aspect': `7 / ${baselineWeekCount}` }}
       >
-        {cells.map(({ key, inRange, count, allDoms, slot, isToday, dayNum }) => (
+        {cells.map(({ key, inRange, count, dayCerts, slot, isToday, dayNum }) => (
           inRange ? (
             <div
               key={key}
-              className={`fc-hm-cell fc-hm-cell-v2${count === 0 ? ' fc-hm-zero' : ''}${isToday ? ' fc-hm-today' : ''}`}
+              className={`fc-hm-cell fc-hm-cell-v2${count === 0 ? ' fc-hm-zero' : ''}${isToday ? ' fc-hm-today' : ''}${count > 0 ? ' fc-hm-clickable' : ''}`}
               style={{ background: heatColor(count) }}
-              onMouseEnter={() => setHovered({ key, count, allDoms })}
+              onMouseEnter={() => setHovered({ key, count, dayCerts })}
               onMouseLeave={() => setHovered(null)}
+              onClick={count > 0 ? () => setDayModal({ key, certs: dayCerts }) : undefined}
+              role={count > 0 ? 'button' : undefined}
+              title={count > 0 ? t('forecast.dayModalOpen') : undefined}
             >
               <span className="fc-hm-day-num">{dayNum}</span>
               {count > 0 && (
@@ -323,8 +329,8 @@ function CalendarHeatmap({ certs, t }) {
                 <div className="fc-hm-tooltip">
                   <strong>{key}</strong>
                   <div>{count > 0 ? `${count} sertifika` : 'Yok'}</div>
-                  {allDoms.slice(0, 4).map(dm => <div key={dm} className="fc-hm-tdomain">{dm}</div>)}
-                  {allDoms.length > 4 && <div>+{allDoms.length - 4} daha</div>}
+                  {dayCerts.slice(0, 4).map(c => <div key={c.domain} className="fc-hm-tdomain">{c.domain}</div>)}
+                  {dayCerts.length > 4 && <div>+{dayCerts.length - 4} daha</div>}
                 </div>
               )}
             </div>
@@ -340,6 +346,26 @@ function CalendarHeatmap({ certs, t }) {
         ))}
         <span className="fc-hm-leg-label">Çok</span>
       </div>
+
+      {/* ── Gün detay modalı — o günün sertifikaları (genel bakış kartları gibi) ── */}
+      {dayModal && (
+        <div className="modal-overlay" onClick={() => setDayModal(null)}>
+          <div className="modal-box modal-wide" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-icon-hdr modal-icon-hdr--user">
+              <div className="modal-icon-hdr-badge"><Calendar size={20} /></div>
+              <h3>{t('forecast.dayModalTitle', dayModal.key, dayModal.certs.length)}</h3>
+              <button type="button" className="show-close" style={{ marginLeft: 'auto' }}
+                aria-label={t('app.dismiss')} onClick={() => setDayModal(null)}>✕</button>
+            </div>
+            <div className="cards-container" style={{ padding: '0 18px 18px', maxHeight: '70vh', overflowY: 'auto' }}>
+              {dayModal.certs.map((c) => (
+                <CertificateCard key={c.domain} cert={c}
+                  onClick={(d) => onSelectDomain?.(d)} />
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
@@ -431,7 +457,7 @@ function ExpiryList({ upcomingList, t }) {
 
 // ── Main Page ─────────────────────────────────────────────────────────────────
 
-export default function ExpiryForecastPage() {
+export default function ExpiryForecastPage({ onSelectDomain }) {
   const t = useT()
   const time = useClock()
   const [data, setData] = useState(null)
@@ -539,7 +565,7 @@ export default function ExpiryForecastPage() {
           </div>
 
           {/* ── Section 02: Calendar ── */}
-          <CalendarHeatmap certs={data.certs} t={t} />
+          <CalendarHeatmap certs={data.certs} t={t} onSelectDomain={onSelectDomain} />
 
           {/* ── Section 03: Expiry List ── */}
           <ExpiryList upcomingList={data.upcomingList} t={t} />
