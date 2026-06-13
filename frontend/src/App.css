@@ -5387,6 +5387,11 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .upt-rt-down { color: #ef4444; font-weight: 600; white-space: nowrap; }
 .upt-rt-ms   { color: var(--text-muted); white-space: nowrap; }
 .upt-rt-error { color: #ef4444; font-size: 11px; flex: 1; word-break: break-all; line-height: 1.4; }
+/* Port detay geçmişi — kolon başlıklı hizalı grid (Zaman | Durum | Yanıt | Detay) */
+.upt-range-btns { display: flex; gap: 6px; flex-wrap: wrap; margin: 0 0 12px; }
+.upt-rt-grid { display: grid; grid-template-columns: 150px 84px 84px 1fr; gap: 10px; align-items: start; font-size: 12px; padding: 4px 0; border-bottom: 1px solid var(--border); }
+.upt-rt-grid:last-child { border-bottom: none; }
+.upt-rt-head { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--text-muted); border-bottom: 2px solid var(--border); position: sticky; top: 0; background: var(--bg-card); }
 
 /* ── DateTimeRangePicker ─────────────────────────────────────────────────── */
 .dp-wrap { display: flex; flex-direction: column; gap: 10px; }
