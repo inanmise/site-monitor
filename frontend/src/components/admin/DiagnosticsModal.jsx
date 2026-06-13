@@ -70,6 +70,55 @@ export default function DiagnosticsModal({ domain, port, onClose }) {
     }
   }
 
+  /** Sunucu bu isteği (admin'in tarayıcısı → pod) nasıl görüyor: proxy/forwarding
+   *  başlıkları + çözülen client IP. Loglardaki client IP neden proxy IP'si teşhisi. */
+  async function runClientIp() {
+    setDiag((d) => ({ ...d, cip: { loading: true } }))
+    try {
+      const res = await api.admin.clientIpDebug()
+      setDiag((d) => ({ ...d, cip: res?.success ? { data: res.data } : { error: res?.error || t('inv.diagError') } }))
+    } catch {
+      setDiag((d) => ({ ...d, cip: { error: t('inv.diagError') } }))
+    }
+  }
+
+  function renderClientIp(data) {
+    if (!data) return null
+    const headers = data.headers || {}
+    const anyHeader = Object.values(headers).some(v => v != null && String(v).trim() !== '')
+    return (
+      <>
+        <div className="show-grid-2">
+          <ShowField label={t('inv.cipResolved')} mono value={data.resolved || '—'} />
+          <ShowField label={t('inv.cipRemoteAddr')} mono value={data.remote_addr || '—'} />
+        </div>
+        <div className="show-section-header">{t('inv.cipHeaders')}</div>
+        <div className="health-table-wrap">
+          <table className="health-table">
+            <thead><tr><th>{t('inv.cipHeader')}</th><th>{t('inv.cipValue')}</th></tr></thead>
+            <tbody>
+              {Object.entries(headers).map(([k, v]) => (
+                <tr key={k}>
+                  <td className="show-field-mono">{k}</td>
+                  <td className="show-field-mono">
+                    {v == null || String(v).trim() === ''
+                      ? <span style={{ color: 'var(--text-muted)' }}>null</span>
+                      : String(v)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        {!anyHeader && (
+          <div className="alert-msg" style={{ background: '#fef3c7', color: '#92400e', marginTop: 8 }}>
+            {t('inv.cipNoHeaders')}
+          </div>
+        )}
+      </>
+    )
+  }
+
   /** Ağ derin analizi sonucu — kontrol kartları + ham çıktı (canlı + geçmiş). */
   function renderNetwork(data) {
     if (!data) return null
@@ -312,6 +361,18 @@ export default function DiagnosticsModal({ domain, port, onClose }) {
                   )}
                   {diag.net?.error && <div className="alert-msg">{diag.net.error}</div>}
                   {diag.net?.data && renderNetwork(diag.net.data)}
+
+                  {/* ── Client IP / Proxy başlıkları (loglardaki IP teşhisi) ── */}
+                  <div className="show-section-header" style={{ marginTop: 18 }}>{t('inv.cipTitle')}</div>
+                  {!diag.cip && (
+                    <button className="btn btn-secondary btn-sm-p" style={{ marginTop: 6 }}
+                      onClick={() => runClientIp()}>{t('inv.cipRun')}</button>
+                  )}
+                  {diag.cip?.loading && (
+                    <div className="show-field-value"><Loader2 size={14} className="spin" /> {t('inv.diagRunning')}</div>
+                  )}
+                  {diag.cip?.error && <div className="alert-msg">{diag.cip.error}</div>}
+                  {diag.cip?.data && renderClientIp(diag.cip.data)}
                 </>
               )}
 

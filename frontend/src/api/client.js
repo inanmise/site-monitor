@@ -192,6 +192,7 @@ export const api = {
     }),
     diagHistory: (domain) => request(`/admin/diagnostics/history?domain=${encodeURIComponent(domain)}`),
     diagHistoryDetail: (id) => request(`/admin/diagnostics/history/${id}`),
+    clientIpDebug: () => request('/admin/client-ip-debug'),
     transferCertSy: (id, teamId) => request(`/admin/inventory/${id}/transfer`, {
       method: 'POST', body: JSON.stringify({ team_id: teamId }),
     }),
