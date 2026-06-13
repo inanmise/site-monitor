@@ -55,6 +55,13 @@ config:
   checkTimeoutSeconds: "10"
   warningDays: "30"
   parallelWorkers: "20"
+  # Sertifika tarama executor'ı (paralel kontrol thread'leri). CPU-sınırlı küçük
+  # ortamlarda düşür → açılışta CPU oversubscription olmasın.
+  executorCoreSize: "20"
+  executorMaxSize: "50"
+  # Açılışta ağır tarama + escalation catch-up bu kadar ms geciktirilir; login/BCrypt
+  # ilk dakikada CPU'yu serbest bulsun (açılışta ~1dk askıda kalma fix'i).
+  startupCheckDelayMs: "60000"
   javaOpts: "-XX:MaxRAMPercentage=75.0 -XX:MinRAMPercentage=50.0 -Xss512k -XX:+ExitOnOutOfMemoryError"
 
   # Spring Session storage. Default "jdbc" persists sessions to spring_session /
@@ -94,10 +101,10 @@ secret:
 resources:
   requests:
     memory: "512Mi"
-    cpu: "250m"
+    cpu: "500m"
   limits:
-    memory: "1Gi"
-    cpu: "1000m"
+    memory: "1536Mi"
+    cpu: "2000m"
 
 autoscaling:
   enabled: false
