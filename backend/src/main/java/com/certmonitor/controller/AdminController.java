@@ -50,6 +50,7 @@ public class AdminController {
     private final com.certmonitor.service.OpensslDiagnosticsService opensslDiagnosticsService;
     private final com.certmonitor.service.NetworkDiagnosticsService networkDiagnosticsService;
     private final com.certmonitor.service.DiagnosticHistoryService diagnosticHistoryService;
+    private final com.certmonitor.service.ClientIpResolver clientIpResolver;
 
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private com.certmonitor.service.PermissionService permissionService;
@@ -253,6 +254,14 @@ public class AdminController {
         return m;
     }
 
+    /** Tanı: pod'a ulaşan forwarding başlıkları + remoteAddr + çözülen IP. Loglardaki
+     *  client IP yanlışsa (proxy IP), gerçek IP'nin hangi başlıkta olduğunu görmek için. */
+    @GetMapping("/client-ip-debug")
+    public ResponseEntity<Map<String, Object>> clientIpDebug(HttpServletRequest request, HttpSession session) {
+        requireAdmin(session);
+        return ok(Map.of("data", clientIpResolver.debugInfo(request)));
+    }
+
     // ── Connection diagnostics ────────────────────────────────────────────────
 
     @PostMapping("/diagnostics")
@@ -388,11 +397,9 @@ public class AdminController {
         return sb.toString();
     }
 
-    /** İstek IP'si — proxy arkasında X-Forwarded-For ilk değeri. */
+    /** İstek IP'si — merkezî, yapılandırılabilir resolver (proxy/LB başlıkları). */
     private String clientIp(HttpServletRequest request) {
-        String xff = request.getHeader("X-Forwarded-For");
-        if (xff != null && !xff.isBlank()) return xff.split(",")[0].trim();
-        return request.getRemoteAddr();
+        return clientIpResolver.resolve(request);
     }
 
     @CacheEvict(value = {"cert-latest", "cert-warnings", "cert-stats", "renewal-advice"}, allEntries = true)

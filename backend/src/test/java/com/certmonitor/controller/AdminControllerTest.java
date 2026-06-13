@@ -104,6 +104,9 @@ class AdminControllerTest {
     @MockBean
     com.certmonitor.service.DiagnosticHistoryService diagnosticHistoryService;
 
+    @MockBean
+    com.certmonitor.service.ClientIpResolver clientIpResolver;
+
     @BeforeEach
     void setup() {
         when(userService.listTeams()).thenReturn(java.util.Collections.emptyList());
@@ -243,6 +246,19 @@ class AdminControllerTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"domain\":\"example.com\",\"port\":443}"))
                 .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    @DisplayName("GET /api/admin/client-ip-debug: USER 403, ADMIN 200 + resolved")
+    void clientIpDebug_adminOnly() throws Exception {
+        mvc.perform(get("/api/admin/client-ip-debug").session(userSession()))
+                .andExpect(status().isForbidden());
+
+        when(clientIpResolver.debugInfo(any())).thenReturn(Map.of(
+                "remote_addr", "172.21.116.251", "resolved", "10.218.204.187"));
+        mvc.perform(get("/api/admin/client-ip-debug").session(authSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.resolved").value("10.218.204.187"));
     }
 
     @Test

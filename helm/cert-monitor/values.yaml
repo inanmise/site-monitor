@@ -56,6 +56,10 @@ config:
   # Boş bırakılırsa otomatik "https://<ingress.host>" kullanılır (route ile tutarlı) —
   # genelde elle set etmeye gerek yok. Gerekirse tam URL ver: "https://cert-monitor.example.com".
   appBaseUrl: ""
+  # Loglardaki gerçek client IP'si için forwarding başlık sırası (ilk dolu olanın leftmost değeri).
+  # Proxy/LB arkasında doğru başlık ortama göre değişir → /api/admin/client-ip-debug ile bulup
+  # buraya yaz (ör. "X-Real-IP" veya "X-Forwarded-For"). Birden çok: "X-Real-IP,X-Forwarded-For".
+  clientIpHeaders: "X-Forwarded-For"
   checkTimeoutSeconds: "10"
   warningDays: "30"
   parallelWorkers: "20"

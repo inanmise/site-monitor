@@ -34,6 +34,10 @@ import java.util.regex.Pattern;
 @Slf4j
 public class RequestLoggingFilter extends OncePerRequestFilter {
 
+    // required=false: @WebMvcTest filtreyi yükler ama bu @Component'i sağlamaz → null'da fallback.
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.certmonitor.service.ClientIpResolver clientIpResolver;
+
     private static final Set<String> SENSITIVE_HEADERS = Set.of(
             "authorization", "cookie", "set-cookie",
             "x-csrf-token", "x-auth-token", "x-api-key",
@@ -175,6 +179,7 @@ public class RequestLoggingFilter extends OncePerRequestFilter {
     }
 
     private String clientIp(HttpServletRequest req) {
+        if (clientIpResolver != null) return clientIpResolver.resolve(req);
         String xff = req.getHeader("X-Forwarded-For");
         if (xff != null && !xff.isBlank()) return xff.split(",")[0].trim();
         return req.getRemoteAddr();
