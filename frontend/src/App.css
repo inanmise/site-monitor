@@ -7650,6 +7650,9 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .wr-menu-pop button.danger { color: var(--danger, #dc2626); }
 [data-theme="dark"] .wr-menu-pop button:hover { background: rgba(255,255,255,.06); }
 
+/* Admin-only "hatırlatma maillerini şimdi gönder" tetik butonu (yardım kartı üstü) */
+.wr-reminder-trigger { margin-bottom: 12px; }
+
 /* "Nasıl girilir?" yardım kartı — kısa, açılır-kapanır (liste görünümü üstü) */
 .wr-help {
   border: 1px solid var(--border); border-radius: 8px; background: var(--bg-card);

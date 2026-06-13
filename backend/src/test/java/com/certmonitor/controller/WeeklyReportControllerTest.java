@@ -38,6 +38,7 @@ class WeeklyReportControllerTest {
     @MockBean com.certmonitor.service.HttpMetricsService httpMetricsService;
 
     @MockBean WeeklyReportService service;
+    @MockBean com.certmonitor.service.WeeklyReportReminderService reminderService;
     @MockBean AuditService auditService;
 
     private static WeeklyReport report(Long id, Long teamId, String status) {
@@ -61,6 +62,16 @@ class WeeklyReportControllerTest {
         s.setAttribute("userId", 42L);
         s.setAttribute("teamId", 2L);
         s.setAttribute("systemRole", "USER");
+        return s;
+    }
+
+    private MockHttpSession adminSession() {
+        MockHttpSession s = new MockHttpSession();
+        s.setAttribute("authenticated", Boolean.TRUE);
+        s.setAttribute("username", "admin");
+        s.setAttribute("displayName", "Admin");
+        s.setAttribute("userId", 1L);
+        s.setAttribute("systemRole", "ADMIN");
         return s;
     }
 
@@ -333,5 +344,32 @@ class WeeklyReportControllerTest {
 
         mvc.perform(post("/api/weekly-reports/7/resend").session(userSession()))
                 .andExpect(status().isConflict());
+    }
+
+    @Test
+    @DisplayName("POST /reminders/trigger: USER 403 (admin-only)")
+    void triggerReminders_forbiddenForUser() throws Exception {
+        mvc.perform(post("/api/weekly-reports/reminders/trigger").session(userSession()))
+                .andExpect(status().isForbidden());
+        org.mockito.Mockito.verify(reminderService, org.mockito.Mockito.never()).sendFridayReminders();
+    }
+
+    @Test
+    @DisplayName("POST /reminders/trigger: ADMIN 200 — servisi çağırır, sayaçları döner")
+    void triggerReminders_adminRunsAndReturnsCounts() throws Exception {
+        when(reminderService.sendFridayReminders())
+                .thenReturn(new com.certmonitor.service.WeeklyReportReminderService.ReminderResult(3, 2, 1, 0));
+
+        mvc.perform(post("/api/weekly-reports/reminders/trigger").session(adminSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.data.candidates").value(3))
+                .andExpect(jsonPath("$.data.sent").value(2))
+                .andExpect(jsonPath("$.data.skipped_no_email").value(1));
+
+        org.mockito.Mockito.verify(reminderService).sendFridayReminders();
+        org.mockito.Mockito.verify(auditService).recordAction(
+                eq("WEEKLY_REPORT_REMINDER_TRIGGER"), any(), any(),
+                eq("WEEKLY_REPORT"), eq("-"), contains("\"sent\":2"));
     }
 }

@@ -1689,13 +1689,31 @@ public class EmailNotificationService {
         String outerBg = "#f4f6f8";
         String generatedAt = ZonedDateTime.now(IST).format(DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm"));
 
-        // CTA buton — Outlook (Word) için table+td bgcolor; <a> inline-block düz renk
+        // CTA buton — "bulletproof": Outlook (Word) için VML v:roundrect (yuvarlak köşe +
+        // sabit genişlik), diğer istemciler için HTML <td>+<a> (beyaz metin <span> ile sabit).
+        // mso/non-mso koşullu yorumlarıyla her istemci yalnız kendi sürümünü görür.
+        String btnLabel = "📝 Haftalık raporu girmek için tıklayınız &rarr;";
         String cta = (reportUrl != null && !reportUrl.isBlank())
-            ? "<table role='presentation' border='0' cellspacing='0' cellpadding='0' style='margin:4px 0 20px'><tr>"
-              + "<td bgcolor='" + accent + "' style='background:" + accent + ";border-radius:8px'>"
-              + "<a href='" + escHtml(reportUrl) + "' style='display:inline-block;padding:13px 26px;color:#ffffff;"
-              + "font-size:15px;font-weight:800;text-decoration:none'>📝 Haftalık raporu girmek için tıklayınız →</a>"
+            ? "<div style='margin:4px 0 20px'>"
+              + "<!--[if mso]>"
+              + "<v:roundrect xmlns:v=\"urn:schemas-microsoft-com:vml\" xmlns:w=\"urn:schemas-microsoft-com:office:word\""
+              + " href=\"" + escHtml(reportUrl) + "\" style=\"height:48px;v-text-anchor:middle;width:380px;\""
+              + " arcsize=\"16%\" strokecolor=\"" + accent + "\" fillcolor=\"" + accent + "\">"
+              + "<w:anchorlock/>"
+              + "<center style=\"color:#ffffff;font-family:'Segoe UI',Tahoma,Arial,sans-serif;font-size:15px;font-weight:bold;\">"
+              + btnLabel + "</center>"
+              + "</v:roundrect>"
+              + "<![endif]-->"
+              + "<!--[if !mso]><!-->"
+              + "<table role='presentation' border='0' cellspacing='0' cellpadding='0'><tr>"
+              + "<td align='center' bgcolor='" + accent + "' style='background:" + accent + ";border-radius:8px;"
+              + "padding:13px 26px;color:#ffffff'>"
+              + "<a href='" + escHtml(reportUrl) + "' target='_blank' style='color:#ffffff;text-decoration:none;"
+              + "font-size:15px;font-weight:800;font-family:\"Segoe UI\",Tahoma,Arial,sans-serif'>"
+              + "<span style='color:#ffffff'>" + btnLabel + "</span></a>"
               + "</td></tr></table>"
+              + "<!--<![endif]-->"
+              + "</div>"
             : "";
 
         // "Nasıl girilir?" — sabit (güvenilir) HTML; <strong> kaçırılmaz
@@ -1708,7 +1726,8 @@ public class EmailNotificationService {
             + "<li>PO onayından sonra rapor müdüre otomatik iletilir.</li>"
             + "</ol>";
 
-        return "<!DOCTYPE html><html lang='tr'>"
+        return "<!DOCTYPE html><html lang='tr' xmlns:v='urn:schemas-microsoft-com:vml'"
+            + " xmlns:o='urn:schemas-microsoft-com:office:office'>"
             + "<head><meta charset='UTF-8'>"
             + "<meta name='viewport' content='width=device-width,initial-scale=1,maximum-scale=1'>"
             + "<style>@media only screen and (max-width:870px){"

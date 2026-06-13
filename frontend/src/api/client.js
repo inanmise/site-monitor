@@ -155,6 +155,7 @@ export const api = {
     unlock: (id) => request(`/weekly-reports/${id}/unlock`, { method: 'POST' }),
     remove: (id) => request(`/weekly-reports/${id}`, { method: 'DELETE' }),
     submit: (id) => request(`/weekly-reports/${id}/submit`, { method: 'POST' }),
+    triggerReminder: () => request('/weekly-reports/reminders/trigger', { method: 'POST' }),
     reopen: (id) => request(`/weekly-reports/${id}/reopen`, { method: 'POST' }),
     resend: (id) => request(`/weekly-reports/${id}/resend`, { method: 'POST' }),
     approve: (id) => request(`/weekly-reports/${id}/approve`, { method: 'POST' }),

@@ -3,6 +3,7 @@ package com.certmonitor.controller;
 import com.certmonitor.model.WeeklyReport;
 import com.certmonitor.model.WeeklyReportImage;
 import com.certmonitor.service.AuditService;
+import com.certmonitor.service.WeeklyReportReminderService;
 import com.certmonitor.service.WeeklyReportService;
 import com.certmonitor.service.WeeklyReportService.Actor;
 import jakarta.servlet.http.HttpServletRequest;
@@ -33,6 +34,7 @@ import java.util.Map;
 public class WeeklyReportController {
 
     private final WeeklyReportService service;
+    private final WeeklyReportReminderService reminderService;
     private final AuditService auditService;
 
     private static final DateTimeFormatter ISO =
@@ -196,6 +198,26 @@ public class WeeklyReportController {
                 "WEEKLY_REPORT", id.toString(),
                 "{\"mail_status\":\"" + result.get("mail_status") + "\"}");
         return ok(result);
+    }
+
+    /** Cuma hatırlatma maillerini cron beklemeden ANINDA gönderir — yalnız ADMIN.
+     *  Test/operasyon kolaylığı; mantık scheduled cron ile aynı (sendFridayReminders). */
+    @PostMapping("/reminders/trigger")
+    public ResponseEntity<Map<String, Object>> triggerReminders(
+            HttpSession session, HttpServletRequest request) {
+        if (!"ADMIN".equals(session.getAttribute("systemRole"))) {
+            throw new SecurityException("Admin access required");
+        }
+        WeeklyReportReminderService.ReminderResult r = reminderService.sendFridayReminders();
+        auditService.recordAction("WEEKLY_REPORT_REMINDER_TRIGGER", session, request,
+                "WEEKLY_REPORT", "-",
+                "{\"candidates\":" + r.candidates() + ",\"sent\":" + r.sent() + "}");
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("candidates", r.candidates());
+        data.put("sent", r.sent());
+        data.put("skipped_no_email", r.skippedNoEmail());
+        data.put("skipped_done", r.skippedDone());
+        return ok(Map.of("data", data));
     }
 
     @DeleteMapping("/{id}")

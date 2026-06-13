@@ -4,7 +4,7 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import {
   Plus, Save, Send, CheckCircle, Undo2, Eye, Trash2, RefreshCcw, ArrowLeft, Menu, History, FilePenLine,
-  HelpCircle, ChevronDown,
+  HelpCircle, ChevronDown, Bell,
 } from 'lucide-react'
 import { api, formatDate } from '../api/client'
 import { useT, useLanguage } from '../i18n/index.jsx'
@@ -318,6 +318,7 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
   const [helpOpen, setHelpOpen] = useState(() => {
     try { return localStorage.getItem('wr-help-open') === 'true' } catch { return false }
   })
+  const [sendingReminder, setSendingReminder] = useState(false)
   const [report, setReport] = useState(null)      // full report (GET /{id})
   const [content, setContent] = useState(null)    // parsed content_json
   const [managerMissing, setManagerMissing] = useState(false)
@@ -761,6 +762,28 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
     else toast.error(res?.error || t('wr.actionFailed'))
   }
 
+  // Admin-only: Cuma hatırlatma maillerini cron beklemeden anında gönder (test kolaylığı)
+  async function sendReminders() {
+    setSendingReminder(true)
+    try {
+      const res = await api.weeklyReports.triggerReminder()
+      if (res?.success) {
+        const sent = res.data?.sent ?? 0
+        if (sent > 0) {
+          toast.success(t('wr.reminderSent').replace('{0}', sent).replace('{1}', res.data?.candidates ?? 0))
+        } else {
+          toast.info ? toast.info(t('wr.reminderNone')) : toast.success(t('wr.reminderNone'))
+        }
+      } else {
+        toast.error(res?.error || t('wr.reminderFailed'))
+      }
+    } catch {
+      toast.error(t('wr.reminderFailed'))
+    } finally {
+      setSendingReminder(false)
+    }
+  }
+
   async function createReport() {
     const res = await api.weeklyReports.create({
       team_id: newModal.teamId ? Number(newModal.teamId) : undefined,
@@ -954,6 +977,16 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
           )}
         </div>
       </div>
+
+      {/* ── Admin-only: hatırlatma maillerini cron beklemeden gönder (test kolaylığı) ── */}
+      {!selectedId && isAdmin && (
+        <div className="wr-reminder-trigger">
+          <button type="button" className="btn btn-secondary btn-sm-p"
+            onClick={sendReminders} disabled={sendingReminder}>
+            <Bell size={14} /> {sendingReminder ? t('wr.reminderSending') : t('wr.sendReminderNow')}
+          </button>
+        </div>
+      )}
 
       {/* ── "Nasıl girilir?" yardım kartı — kısa, açılır-kapanır (liste görünümünde) ── */}
       {!selectedId && (
