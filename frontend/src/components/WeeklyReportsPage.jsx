@@ -915,7 +915,7 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
                 <div className="wr-flt">
                   <span>{t('wr.team')}</span>
                   <SearchableSelect value={selTeamId} onChange={(v) => { setSelTeamId(v); setLoadingList(true) }}
-                    placeholder={t('wr.allTeams')}
+                    placeholder={t('wr.allTeams')} searchThreshold={2}
                     options={[{ value: '', label: t('wr.allTeams') },
                       ...teams.map((tm) => ({ value: String(tm.id), label: tm.name }))]} />
                 </div>
@@ -1256,7 +1256,7 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
               {isAdmin ? (
                 <SearchableSelect value={newModal.teamId}
                   onChange={(v) => setNewModal({ ...newModal, teamId: v })}
-                  placeholder={t('wr.selectTeam')}
+                  placeholder={t('wr.selectTeam')} searchThreshold={2}
                   options={teams.map((tm) => ({ value: String(tm.id), label: tm.name }))} />
               ) : (
                 <input value={teamName ?? ''} disabled />

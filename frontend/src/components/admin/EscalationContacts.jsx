@@ -148,7 +148,7 @@ export default function EscalationContacts({ teams = [], systemRole, isAdmin: is
           options={[{ value: '', label: t('ec.allLevels') },
             ...LEVELS.map(l => ({ value: l, label: levelLabelMap[l] }))]} />
         {isAdmin && teams.length > 0 && (
-          <SearchableSelect value={fTeam} onChange={setFTeam} placeholder={t('ec.allTeams')}
+          <SearchableSelect value={fTeam} onChange={setFTeam} placeholder={t('ec.allTeams')} searchThreshold={2}
             options={[{ value: '', label: t('ec.allTeams') },
               ...teams.map(tm => ({ value: String(tm.id), label: tm.name }))]} />
         )}
@@ -219,6 +219,7 @@ export default function EscalationContacts({ teams = [], systemRole, isAdmin: is
                   value={form.user_id}
                   onChange={v => setForm({ ...form, user_id: v })}
                   placeholder={t('contact.selectUser')}
+                  searchThreshold={2}
                   options={[
                     { value: '', label: t('contact.selectUser') },
                     ...users.map(u => ({
@@ -241,6 +242,7 @@ export default function EscalationContacts({ teams = [], systemRole, isAdmin: is
                   <SearchableSelect
                     value={form.team_id}
                     onChange={v => setForm({ ...form, team_id: v })}
+                    searchThreshold={2}
                     options={teams.map(team => ({ value: team.id, label: team.name }))}
                   />
                 </label>

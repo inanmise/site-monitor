@@ -335,6 +335,7 @@ export default function TeamManager({ systemRole, ownTeamId, onTeamsChange }) {
                   value={form.leader_id}
                   onChange={v => setForm({ ...form, leader_id: v })}
                   placeholder={t('team.selectLeader')}
+                  searchThreshold={2}
                   options={[
                     { value: '', label: t('team.selectLeader') },
                     ...users.map(u => ({ value: u.id, label: `${u.display_name || u.username} (${u.username})` })),
