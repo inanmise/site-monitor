@@ -9,6 +9,7 @@ import { useToast } from '../ui/Toast.jsx'
 import { useT } from '../../i18n/index.jsx'
 import { useTheme } from '../../i18n/theme.jsx'
 import SearchableSelect from '../ui/SearchableSelect.jsx'
+import KebabMenu from '../ui/KebabMenu.jsx'
 import DiagnosticsModal from './DiagnosticsModal.jsx'
 import { exportInventoryCsv, exportInventoryPdf } from '../../utils/exportInventory'
 
@@ -467,32 +468,20 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
                   }
                 </td>
                 <td>
-                  <button className="btn-sm btn-show" onClick={() => setShowItem(item)}>
-                    {t('inv.show')}
-                  </button>
-                  {item.deleted_at ? (
-                    canManage && (
-                      <button className="btn-sm btn-success" onClick={() => restore(item.id)}>
-                        {t('inv.restore')}
-                      </button>
-                    )
-                  ) : (
-                    <>
-                      {isAdmin && (
-                        <button className="btn-sm btn-show" onClick={() => setDiag({ domain: item.domain, port: item.port || 443 })}>
-                          {t('inv.diagnose')}
-                        </button>
-                      )}
-                      {canManage && <button className="btn-sm btn-edit" onClick={() => openEdit(item)}>{t('inv.edit')}</button>}
-                      {isAdmin && teams.length > 1 && (
-                        <button className="btn-sm btn-transfer-sy"
-                          onClick={() => openTransfer(item)}>
-                          {t('inv.transfer')}
-                        </button>
-                      )}
-                      {canManage && <button className="btn-sm btn-del" onClick={() => del(item.id)}>{t('inv.delete')}</button>}
-                    </>
-                  )}
+                  <KebabMenu label={t('inv.colActions')} items={
+                    item.deleted_at
+                      ? [
+                          { label: t('inv.show'), onClick: () => setShowItem(item) },
+                          { label: t('inv.restore'), onClick: () => restore(item.id), hidden: !canManage },
+                        ]
+                      : [
+                          { label: t('inv.show'), onClick: () => setShowItem(item) },
+                          { label: t('inv.diagnose'), onClick: () => setDiag({ domain: item.domain, port: item.port || 443 }), hidden: !isAdmin },
+                          { label: t('inv.edit'), onClick: () => openEdit(item), hidden: !canManage },
+                          { label: t('inv.transfer'), onClick: () => openTransfer(item), hidden: !(isAdmin && teams.length > 1) },
+                          { label: t('inv.delete'), danger: true, onClick: () => del(item.id), hidden: !canManage },
+                        ]
+                  } />
                 </td>
               </tr>
             ))}
