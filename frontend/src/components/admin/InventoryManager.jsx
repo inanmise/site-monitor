@@ -456,8 +456,8 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
                     ? <span className={`tier-badge tier-badge-${item.tier}`}>T{item.tier}</span>
                     : <span style={{ color: 'var(--text-light)', fontSize: '.8em' }}>—</span>}
                 </td>
-                <td>{teamMap[String(item.team_id)] || '—'}</td>
-                <td>{ugTeamName(item.ug_team_id)}</td>
+                <td>{item.team_name || teamMap[String(item.team_id)] || '—'}</td>
+                <td>{item.ug_team_name || ugTeamName(item.ug_team_id)}</td>
                 <td>{item.description || '—'}</td>
                 <td>
                   {item.deleted_at

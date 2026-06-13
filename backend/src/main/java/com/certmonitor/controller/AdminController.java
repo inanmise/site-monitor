@@ -71,6 +71,16 @@ public class AdminController {
         } else {
             items = inventoryRepo.findByTeamIdAndDeletedAtIsNullOrderByDomainAsc(teamId(session));
         }
+        // SY/UG takım adlarını sunucuda çöz — USER rolü tüm takım listesini çekemediğinden
+        // (kendi takımıyla filtreli) liste kolonlarında takım adları boş kalmasın.
+        java.util.Map<Long, String> teamNames = new java.util.HashMap<>();
+        for (Team tm : userService.listTeams()) {
+            if (tm.getId() != null) teamNames.put(tm.getId(), tm.getName());
+        }
+        for (CertificateInventory it : items) {
+            if (it.getTeamId() != null)   it.setTeamName(teamNames.get(it.getTeamId()));
+            if (it.getUgTeamId() != null) it.setUgTeamName(teamNames.get(it.getUgTeamId()));
+        }
         return ok(Map.of("data", items));
     }
 
