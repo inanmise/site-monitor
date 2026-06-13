@@ -801,6 +801,41 @@ public class AdminController {
         return ok(Map.of("data", filtered));
     }
 
+    /** Admin Users ekranı — filtreli + sayfalı liste (q + systemRole/orgRole/teamId).
+     *  Düz /users (dropdown/kontak kaynağı) bozulmasın diye AYRI uç. */
+    @GetMapping("/users/search")
+    public ResponseEntity<Map<String, Object>> searchUsers(
+            @RequestParam(defaultValue = "0")  int    page,
+            @RequestParam(defaultValue = "20") int    size,
+            @RequestParam(required = false)    String q,
+            @RequestParam(required = false)    String systemRole,
+            @RequestParam(required = false)    String orgRole,
+            @RequestParam(required = false)    Long   teamId,
+            HttpSession session) {
+        size = Math.min(Math.max(size, 1), 200);
+        // TEAM_ADMIN yalnız kendi takımını görür → client teamId yok sayılır, kendi takımına sabitlenir
+        Long effTeamId = isAdminOrAudit(session) ? teamId : teamId(session);
+        if (!isAdminOrAudit(session) && effTeamId == null) {
+            return ok(Map.of("data", List.of(), "total", 0L, "page", 0, "total_pages", 0,
+                    "active_admin_count", userRepo.countBySystemRoleAndActiveTrue("ADMIN")));
+        }
+        String qParam = (q == null || q.isBlank()) ? null : "%" + q.trim().toLowerCase() + "%";
+        String roleParam    = (systemRole == null || systemRole.isBlank()) ? null : systemRole;
+        String orgRoleParam = (orgRole == null || orgRole.isBlank()) ? null : orgRole;
+        Page<AppUser> p = userRepo.findFiltered(
+                qParam, roleParam, orgRoleParam, effTeamId,
+                PageRequest.of(page, size));
+
+        Map<String, Object> resp = new java.util.LinkedHashMap<>();
+        resp.put("data", p.getContent());
+        resp.put("total", p.getTotalElements());
+        resp.put("page", p.getNumber());
+        resp.put("total_pages", p.getTotalPages());
+        // Sayfalamadan bağımsız "son aktif admin" guard'ı için toplam aktif admin sayısı
+        resp.put("active_admin_count", userRepo.countBySystemRoleAndActiveTrue("ADMIN"));
+        return ok(resp);
+    }
+
     @PostMapping("/users")
     public ResponseEntity<Map<String, Object>> createUser(
             @RequestBody Map<String, Object> body, HttpSession session, HttpServletRequest request) {

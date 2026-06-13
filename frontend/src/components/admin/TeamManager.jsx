@@ -1,4 +1,4 @@
-import { useState, useEffect, Fragment } from 'react'
+import { useState, useEffect, useMemo, Fragment } from 'react'
 import { api } from '../../api/client'
 import { useDialog } from '../ui/Dialog.jsx'
 import { useT } from '../../i18n/index.jsx'
@@ -49,6 +49,25 @@ export default function TeamManager({ systemRole, ownTeamId, onTeamsChange }) {
   const [membersCache, setMembersCache] = useState({})
   const [membersLoading, setMembersLoading] = useState(false)
   const [editingUser, setEditingUser]   = useState(null)
+
+  // İstemci-taraflı filtre + sayfalama (getTeams tüm listeyi döndürür — dropdown kaynağı bozulmasın)
+  const [q, setQ]       = useState('')
+  const [fType, setFType] = useState('')
+  const [page, setPage] = useState(0)
+  const [size, setSize] = useState(20)
+
+  const filteredTeams = useMemo(() => {
+    const needle = q.trim().toLowerCase()
+    return teams.filter(tm =>
+      (!needle || (tm.name || '').toLowerCase().includes(needle) || (tm.email || '').toLowerCase().includes(needle))
+      && (!fType || tm.team_type === fType))
+  }, [teams, q, fType])
+
+  const totalPages = Math.max(1, Math.ceil(filteredTeams.length / size))
+  const safePage = Math.min(page, totalPages - 1)
+  const pagedTeams = filteredTeams.slice(safePage * size, safePage * size + size)
+
+  useEffect(() => { setPage(0) }, [q, fType, size])
 
   useEffect(() => { load(); loadUsers() }, [])
 
@@ -152,6 +171,16 @@ export default function TeamManager({ systemRole, ownTeamId, onTeamsChange }) {
         {isAdmin && <button className="btn btn-success" onClick={openAdd}>{t('team.addBtn')}</button>}
       </div>
       {msg && !modal && <div className={`alert-msg${msg.startsWith('✓') ? '' : ' alert-msg--err'}`}>{msg}</div>}
+
+      {/* Filtre çubuğu — ad/e-posta araması + Tür */}
+      <div className="audit-filters">
+        <input className="audit-filter-input" placeholder={t('team.searchPlaceholder')}
+          value={q} onChange={(e) => setQ(e.target.value)} />
+        <SearchableSelect value={fType} onChange={setFType} placeholder={t('team.allTypes')}
+          options={[{ value: '', label: t('team.allTypes') },
+            { value: 'SY', label: 'SY' }, { value: 'UG', label: 'UG' }]} />
+      </div>
+
       <div className="admin-table-wrap">
         <table className="admin-table">
           <thead>
@@ -166,7 +195,12 @@ export default function TeamManager({ systemRole, ownTeamId, onTeamsChange }) {
             </tr>
           </thead>
           <tbody>
-            {teams.map((team) => (
+            {filteredTeams.length === 0 && (
+              <tr><td colSpan={7} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: 18 }}>
+                {t('team.noResults')}
+              </td></tr>
+            )}
+            {pagedTeams.map((team) => (
               <Fragment key={team.id}>
                 <tr>
                   <td>
@@ -263,6 +297,19 @@ export default function TeamManager({ systemRole, ownTeamId, onTeamsChange }) {
             ))}
           </tbody>
         </table>
+      </div>
+
+      {/* Sayfa boyutu + sayfalama (istemci-taraflı) */}
+      <div className="audit-pagination">
+        <label style={{ marginRight: 'auto', display: 'flex', alignItems: 'center', gap: 6 }}>
+          {t('team.perPage')}
+          <select className="audit-filter-input" value={size} onChange={(e) => setSize(Number(e.target.value))}>
+            {[20, 50, 100, 200].map(n => <option key={n} value={n}>{n}</option>)}
+          </select>
+        </label>
+        <button disabled={safePage === 0} onClick={() => setPage(safePage - 1)}>{t('app.prevPage')}</button>
+        <span>{t('team.pageInfo', safePage + 1, totalPages, filteredTeams.length)}</span>
+        <button disabled={safePage + 1 >= totalPages} onClick={() => setPage(safePage + 1)}>{t('app.nextPage')}</button>
       </div>
 
       {modal !== null && (

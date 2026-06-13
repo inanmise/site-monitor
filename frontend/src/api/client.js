@@ -235,6 +235,15 @@ export const api = {
 
     // Users
     getUsers: () => request('/admin/users'),
+    // Filtreli + sayfalı liste (Admin Users ekranı). Boş/null filtreler atlanır.
+    searchUsers: (params) => {
+      const q = new URLSearchParams(
+        Object.fromEntries(
+          Object.entries(params || {}).filter(([, v]) => v !== '' && v != null && v !== false),
+        ),
+      ).toString()
+      return request(`/admin/users/search?${q}`)
+    },
     createUser: (data) => request('/admin/users', { method: 'POST', body: JSON.stringify(data) }),
     updateUser: (id, data) => request(`/admin/users/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
     deleteUser: (id) => request(`/admin/users/${id}`, { method: 'DELETE' }),
