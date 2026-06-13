@@ -360,7 +360,7 @@ function CalendarHeatmap({ certs, t, onSelectDomain }) {
             <div className="cards-container" style={{ padding: '0 18px 18px', maxHeight: '70vh', overflowY: 'auto' }}>
               {dayModal.certs.map((c) => (
                 <CertificateCard key={c.domain} cert={c}
-                  onClick={(d) => onSelectDomain?.(d)} />
+                  onClick={(d) => { setDayModal(null); onSelectDomain?.(d) }} />
               ))}
             </div>
           </div>
