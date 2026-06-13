@@ -47,6 +47,20 @@ function formatDurationShort(ms) {
   return `${h} sa ${m % 60} dk`
 }
 
+// Mail/derin-link ile gelen ?tab= değeri — yalnız bilinen sekme anahtarları kabul edilir.
+const VALID_TABS = new Set([
+  'dashboard', 'all', 'domains', 'forecast', 'renewal', 'renewal-guide',
+  'warnings', 'alerthistory', 'stats', 'weakalgo', 'weeklyreports',
+  'health', 'uptime', 'port', 'dns', 'activity', 'myactivity', 'system',
+  'admin', 'permissions', 'sqlplayground', 'help',
+])
+function initialTabFromUrl() {
+  try {
+    const t = new URLSearchParams(window.location.search).get('tab')
+    return t && VALID_TABS.has(t) ? t : null
+  } catch { return null }
+}
+
 
 export default function App() {
   const { showConfirm } = useDialog()
@@ -110,6 +124,9 @@ export default function App() {
         setTeamId(res.team_id ?? null)
         setTeamName(res.team_name ?? null)
         setMustChangePwd(!!res.must_change_password)
+        // Mail "tıklayınız" linki: ?tab=weeklyreports → doğrudan ilgili sekme
+        const dl = initialTabFromUrl()
+        if (dl) setTab(dl)
       }
       setAuthChecked(true)
     }).catch(() => setAuthChecked(true))
@@ -320,7 +337,7 @@ export default function App() {
   }
 
   function handleLogin(userData) {
-    setTab('dashboard')
+    setTab(initialTabFromUrl() || 'dashboard')
     setUser(userData.username)
     setSystemRole(userData.system_role || 'USER')
     setTeamId(userData.team_id ?? null)

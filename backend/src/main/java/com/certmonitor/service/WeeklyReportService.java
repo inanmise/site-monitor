@@ -720,7 +720,7 @@ public class WeeklyReportService {
     }
 
     /** ISO hafta etiketi: "2026-W24 (8–12 Haziran 2026)" — Pzt–Cum aralığı. */
-    static String computeWeekLabel(int year, int weekNo) {
+    public static String computeWeekLabel(int year, int weekNo) {
         LocalDate monday = LocalDate.of(year, 1, 4)
                 .with(WeekFields.ISO.weekOfWeekBasedYear(), weekNo)
                 .with(DayOfWeek.MONDAY);

@@ -7650,6 +7650,30 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .wr-menu-pop button.danger { color: var(--danger, #dc2626); }
 [data-theme="dark"] .wr-menu-pop button:hover { background: rgba(255,255,255,.06); }
 
+/* "Nasıl girilir?" yardım kartı — kısa, açılır-kapanır (liste görünümü üstü) */
+.wr-help {
+  border: 1px solid var(--border); border-radius: 8px; background: var(--bg-card);
+  margin-bottom: 14px; overflow: hidden;
+}
+.wr-help-toggle {
+  display: flex; align-items: center; gap: 8px; width: 100%; text-align: left;
+  background: none; border: none; padding: 10px 14px; cursor: pointer;
+  font-size: .9em; font-weight: 600; color: var(--text); font-family: inherit;
+}
+.wr-help-toggle:hover { background: rgba(0,0,0,.03); }
+[data-theme="dark"] .wr-help-toggle:hover { background: rgba(255,255,255,.05); }
+.wr-help-title { flex: 1; }
+.wr-help-chevron { transition: transform .18s ease; color: var(--text-light, #94a3b8); }
+.wr-help.is-open .wr-help-chevron { transform: rotate(180deg); }
+.wr-help-body { padding: 2px 16px 14px; border-top: 1px solid var(--border); }
+.wr-help-steps {
+  margin: 10px 0 0; padding-left: 22px; font-size: .88em; line-height: 1.7; color: var(--text);
+}
+.wr-help-steps li { margin: 3px 0; }
+.wr-help-deadline {
+  margin-top: 10px; font-size: .85em; font-weight: 700; color: var(--danger, #dc2626);
+}
+
 /* Görsel yükleme — açıklama alanı (proje form diliyle uyumlu, geniş, çok satırlı) */
 .wr-caption {
   width: 100%; box-sizing: border-box; padding: 10px 12px; resize: vertical;

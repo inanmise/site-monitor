@@ -36,6 +36,15 @@ export default function Nav({ activeTab, onTabChange, username, teamName, system
       ],
     },
     {
+      labelKey: 'nav.groupMonitoring',
+      tabs: [
+        { id: 'health', Icon: Activity, labelKey: 'nav.health', show: true },
+        { id: 'uptime', Icon: Wifi,     labelKey: 'nav.uptime', show: true },
+        { id: 'port',   Icon: Network,  labelKey: 'nav.port',   show: true },
+        { id: 'dns',    Icon: Search,   labelKey: 'nav.dns',    show: true },
+      ],
+    },
+    {
       labelKey: 'nav.groupAlerts',
       tabs: [
         { id: 'warnings',     Icon: AlertTriangle, labelKey: 'nav.warnings',     show: true },
@@ -48,15 +57,6 @@ export default function Nav({ activeTab, onTabChange, username, teamName, system
         { id: 'stats',         Icon: BarChart3,    labelKey: 'nav.stats',         show: true },
         { id: 'weakalgo',      Icon: ShieldAlert,  labelKey: 'nav.weakAlgo',      show: true },
         { id: 'weeklyreports', Icon: CalendarDays, labelKey: 'nav.weeklyReports', show: true },
-      ],
-    },
-    {
-      labelKey: 'nav.groupMonitoring',
-      tabs: [
-        { id: 'health', Icon: Activity, labelKey: 'nav.health', show: true },
-        { id: 'uptime', Icon: Wifi,     labelKey: 'nav.uptime', show: true },
-        { id: 'port',   Icon: Network,  labelKey: 'nav.port',   show: true },
-        { id: 'dns',    Icon: Search,   labelKey: 'nav.dns',    show: true },
       ],
     },
     {

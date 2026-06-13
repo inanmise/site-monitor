@@ -76,6 +76,8 @@ public class SchedulerService {
 
     private final NetworkOutageEventRepository networkOutageRepo;
 
+    private final WeeklyReportReminderService weeklyReportReminderService;
+
     @org.springframework.beans.factory.annotation.Autowired
     @org.springframework.beans.factory.annotation.Qualifier("certCheckExecutor")
     private org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor certCheckExecutor;
@@ -343,6 +345,26 @@ public class SchedulerService {
         } catch (Exception e) {
             log.warn("Cleanup '{}' failed: {}", sql, e.getMessage());
             return -1;
+        }
+    }
+
+    /**
+     * Her Cuma 09:00 Europe/Istanbul — o anki ISO haftası raporunu henüz onaya
+     * göndermemiş aktif SY takımlarına hatırlatma maili. HA: scheduler_lock ile
+     * yalnız bir pod gönderir (TTL = cert-check ile aynı lock-ttl).
+     */
+    @Scheduled(cron = "${cert.monitor.weekly-report.reminder-cron:0 0 9 ? * FRI}", zone = "Europe/Istanbul")
+    public void scheduledWeeklyReportReminder() {
+        if (!tryAcquireSchedulerLock("weekly-report-reminder", lockTtlMinutes)) {
+            log.debug("Haftalık rapor hatırlatması — lock başka pod'da, atlanıyor");
+            return;
+        }
+        try {
+            weeklyReportReminderService.sendFridayReminders();
+        } catch (Exception e) {
+            log.error("Haftalık rapor cuma hatırlatması başarısız: {}", e.getMessage(), e);
+        } finally {
+            releaseSchedulerLock("weekly-report-reminder");
         }
     }
 

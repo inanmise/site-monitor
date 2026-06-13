@@ -1681,6 +1681,89 @@ public class EmailNotificationService {
                 + "\n\nRaporu güncelleyip tekrar onaya gönderebilirsiniz.");
     }
 
+    /** Cuma hatırlatma maili — executive lacivert şablon. Henüz raporunu girmemiş
+     *  SY takımlarına, bugün 15:00 son giriş hatırlatması + "nasıl girilir" kısa kılavuz
+     *  + doğrudan Haftalık Raporlar'a giden CTA link. Mail her zaman TR. */
+    public String buildWeeklyReportReminderHtml(String teamName, String weekLabel, String reportUrl) {
+        String accent = "#1f3864";
+        String outerBg = "#f4f6f8";
+        String generatedAt = ZonedDateTime.now(IST).format(DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm"));
+
+        // CTA buton — Outlook (Word) için table+td bgcolor; <a> inline-block düz renk
+        String cta = (reportUrl != null && !reportUrl.isBlank())
+            ? "<table role='presentation' border='0' cellspacing='0' cellpadding='0' style='margin:4px 0 20px'><tr>"
+              + "<td bgcolor='" + accent + "' style='background:" + accent + ";border-radius:8px'>"
+              + "<a href='" + escHtml(reportUrl) + "' style='display:inline-block;padding:13px 26px;color:#ffffff;"
+              + "font-size:15px;font-weight:800;text-decoration:none'>📝 Haftalık raporu girmek için tıklayınız →</a>"
+              + "</td></tr></table>"
+            : "";
+
+        // "Nasıl girilir?" — sabit (güvenilir) HTML; <strong> kaçırılmaz
+        String stepsBody =
+            "<ol style='margin:0;padding-left:20px;font-size:14px;line-height:1.8;color:#1e293b'>"
+            + "<li>Sol menüden <strong>Raporlar → Haftalık Raporlar</strong>'a gidin.</li>"
+            + "<li><strong>Yeni Hafta Raporu</strong> ile yıl/hafta seçip <strong>Oluştur</strong>'a tıklayın.</li>"
+            + "<li>Dört maddeyi doldurun: Proaktif İyileştirmeler · Olay/Problem/Postmortem · Katılımlar · Domain bazlı kritik işler.</li>"
+            + "<li><strong>Kaydet</strong>; hazır olunca <strong>Onaya Gönder</strong>.</li>"
+            + "<li>PO onayından sonra rapor müdüre otomatik iletilir.</li>"
+            + "</ol>";
+
+        return "<!DOCTYPE html><html lang='tr'>"
+            + "<head><meta charset='UTF-8'>"
+            + "<meta name='viewport' content='width=device-width,initial-scale=1,maximum-scale=1'>"
+            + "<style>@media only screen and (max-width:870px){"
+            + ".em-wrap{padding:0!important}.em-card{border-radius:0!important;width:100%!important}"
+            + ".em-body{padding:14px!important}}</style></head>"
+            + "<body bgcolor='" + outerBg + "' style='margin:0;padding:0;background:" + outerBg
+            + ";font-family:\"Segoe UI\",Tahoma,Arial,sans-serif'>"
+
+            + "<table class='em-wrap' width='100%' cellpadding='0' cellspacing='0' border='0'"
+            + " bgcolor='" + outerBg + "' style='background:" + outerBg + ";padding:24px 10px'>"
+            + "<tr><td align='center' bgcolor='" + outerBg + "'>"
+
+            + "<table class='em-card' width='850' cellpadding='0' cellspacing='0' border='0'"
+            + " bgcolor='#ffffff' style='max-width:850px;width:100%;background:#ffffff;"
+            + "border:1px solid #d7dde5;border-radius:14px;overflow:hidden;"
+            + "box-shadow:0 8px 32px rgba(0,0,0,.10)'><tr><td bgcolor='#ffffff' style='padding:0'>"
+
+            // ── Üst bar ──
+            + "<table width='100%' cellpadding='0' cellspacing='0' border='0'><tr>"
+            + "<td bgcolor='" + accent + "' style='background:" + accent + ";padding:22px 24px'>"
+            + "<div style='color:#aebed8;font-size:11px;font-weight:700;letter-spacing:.12em'>CERTMONITOR — HAFTALIK RAPOR HATIRLATMASI</div>"
+            + "<div style='color:#ffffff;font-size:22px;font-weight:900;margin-top:10px;line-height:1.25'>⏰ "
+            + escHtml(teamName) + "</div>"
+            + "<div style='color:#dbe3ef;font-size:15px;font-weight:700;margin-top:8px'>"
+            + escHtml(weekLabel) + "</div>"
+            + "</td></tr></table>"
+
+            // ── Gövde ──
+            + "<div class='em-body' style='background:#fff;padding:22px 24px'>"
+            + "<p style='font-size:15px;color:#0f172a;margin:0 0 6px'><strong>Sayın " + escHtml(teamName) + " ekibi,</strong></p>"
+            + "<p style='font-size:14px;color:#334155;line-height:1.7;margin:0 0 14px'>"
+            + "Bu haftanın (<strong>" + escHtml(weekLabel) + "</strong>) haftalık raporu sistemde henüz görünmüyor. "
+            + "Mesai başlangıcıyla birlikte raporunuzu hatırlatmak isteriz.</p>"
+
+            // Son giriş uyarısı (vurgulu)
+            + "<p style='margin:0 0 4px;padding:10px 14px;border-left:4px solid #dc2626;background:#fef2f2;"
+            + "font-size:14px;font-weight:700;color:#991b1b'>⏰ Son giriş <strong>bugün saat 15:00</strong> — "
+            + "lütfen bu haftanın raporunu Cert Monitor üzerinden zamanında giriniz.</p>"
+
+            + cta
+
+            + reportSection("Haftalık Rapor Nasıl Girilir?", stepsBody, accent)
+
+            // Footer
+            + "<table width='100%' cellpadding='0' cellspacing='0'><tr>"
+            + "<td valign='top' style='border-top:1px solid #f1f5f9;padding-top:12px;font-size:11px;color:#94a3b8'>CertMonitor — Otomatik Hatırlatma</td>"
+            + "<td align='right' valign='top' style='border-top:1px solid #f1f5f9;padding-top:12px;font-size:11px;color:#94a3b8;line-height:1.7'>"
+            + "Oluşturuldu: " + generatedAt + "</td></tr></table>"
+
+            + "</div>"
+            + "</td></tr></table>"
+            + "</td></tr></table>"
+            + "</body></html>";
+    }
+
     private String reportSection(String title, String bodyHtml, String accent) {
         return "<div style='margin-bottom:20px'>"
             // Başlık şeridi: div shading yerine td + bgcolor (Outlook uyumu)

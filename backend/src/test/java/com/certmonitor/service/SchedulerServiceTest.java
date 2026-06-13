@@ -67,6 +67,7 @@ class SchedulerServiceTest {
     @Mock UptimeCheckRepository uptimeCheckRepo;
     @Mock MonitoringOutageService monitoringOutageService;
     @Mock NetworkOutageEventRepository networkOutageRepo;
+    @Mock WeeklyReportReminderService weeklyReportReminderService;
     @Mock ThreadPoolTaskExecutor certCheckExecutor;
 
     SchedulerService scheduler;
@@ -79,7 +80,8 @@ class SchedulerServiceTest {
                 userService, permissionService, dataSource,
                 portCheckerService, portMonitorRepo, portCheckRepo,
                 dnsCheckerService, dnsMonitorRepo, dnsRecordRepo,
-                uptimeHttpCheckerService, uptimeCheckRepo, monitoringOutageService, networkOutageRepo);
+                uptimeHttpCheckerService, uptimeCheckRepo, monitoringOutageService, networkOutageRepo,
+                weeklyReportReminderService);
         ReflectionTestUtils.setField(scheduler, "certCheckExecutor", certCheckExecutor);
         lenient().when(inventoryRepo.countByActiveTrue()).thenReturn(0L);
     }
