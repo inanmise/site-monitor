@@ -52,7 +52,8 @@ export default function UserEditModal({ user, teams, onClose, onSaved }) {
           <div className="modal-icon-hdr-badge"><UserCog size={20} /></div>
           <h3>{t('usr.editTitle')}</h3>
         </div>
-        <div className="form-grid">
+        {/* form-grid--top: "Takım" uyarı ipucu altta dururken alanlar karşılıklı hizalı kalsın */}
+        <div className="form-grid form-grid--top">
           <label>{t('usr.formUsername')}
             <input value={form.username} disabled />
           </label>

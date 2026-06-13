@@ -229,7 +229,9 @@ export default function UserManager({ systemRole, ownTeamId, currentUsername, te
               </div>
               <h3>{modal === 'add' ? t('usr.addTitle') : t('usr.editTitle')}</h3>
             </div>
-            <div className="form-grid">
+            {/* form-grid--top: alanlar üstten hizalansın — "Takım"daki uyarı ipucu (teamRequired)
+                altta dururken Organizasyonel Rol ile Takım select'leri karşılıklı kalsın (align-items:end kayması) */}
+            <div className="form-grid form-grid--top">
               <label>
                 <span>{t('usr.formUsername')} <span className="req-star">*</span></span>
                 <input value={form.username} disabled={modal !== 'add'}
