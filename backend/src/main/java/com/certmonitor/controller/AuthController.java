@@ -45,6 +45,7 @@ public class AuthController {
     private final RememberMeService rememberMeService;
     private final UserService userService;
     private final com.certmonitor.repository.AuditLogRepository auditLogRepo;
+    private final com.certmonitor.service.ClientIpResolver clientIpResolver;
 
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private com.certmonitor.service.PermissionService permissionService;
@@ -351,11 +352,7 @@ public class AuthController {
     }
 
     private String resolveClientIp(HttpServletRequest request) {
-        String forwarded = request.getHeader("X-Forwarded-For");
-        String ip = (forwarded != null && !forwarded.isBlank())
-                ? forwarded.split(",")[0].trim()
-                : request.getRemoteAddr();
-        return AuditService.normalizeIp(ip);
+        return clientIpResolver.resolve(request);
     }
 
     /** Returns seconds remaining in the block, or 0 if not blocked. */

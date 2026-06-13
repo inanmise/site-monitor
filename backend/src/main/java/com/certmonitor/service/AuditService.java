@@ -24,6 +24,7 @@ public class AuditService {
 
     private final AuditLogRepository auditLogRepo;
     private final GeoIpService geoIpService;
+    private final ClientIpResolver clientIpResolver;
 
     private static final DateTimeFormatter ISO =
             DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
@@ -218,10 +219,7 @@ public class AuditService {
     }
 
     public String resolveIp(HttpServletRequest request) {
-        if (request == null) return "unknown";
-        String fwd = request.getHeader("X-Forwarded-For");
-        String ip = (fwd != null && !fwd.isBlank()) ? fwd.split(",")[0].trim() : request.getRemoteAddr();
-        return normalizeIp(ip);
+        return clientIpResolver.resolve(request);
     }
 
     public static String normalizeIp(String ip) {

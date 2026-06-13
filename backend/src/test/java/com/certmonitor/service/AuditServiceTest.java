@@ -31,7 +31,11 @@ class AuditServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new AuditService(auditLogRepo, geoIpService);
+        // Gerçek resolver — resolveIp delege testleri davranışı doğrulamaya devam etsin
+        ClientIpResolver clientIpResolver = new ClientIpResolver();
+        ReflectionTestUtils.setField(clientIpResolver, "headers", new String[]{"X-Forwarded-For"});
+        ReflectionTestUtils.setField(clientIpResolver, "index", 0);
+        service = new AuditService(auditLogRepo, geoIpService, clientIpResolver);
         // officeStartHour=0, officeEndHour=0 → hour < 0 is never true → isOffHours checks dow>=6
         // Use 0–0 so that on weekdays isOffHours() returns false deterministically
         ReflectionTestUtils.setField(service, "bruteForceWindowSeconds", 600);

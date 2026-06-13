@@ -43,6 +43,9 @@ class AuthControllerTest {
     @MockBean
     com.certmonitor.repository.AuditLogRepository auditLogRepo;
 
+    @MockBean
+    com.certmonitor.service.ClientIpResolver clientIpResolver;
+
     private AppUser testUser;
 
     @BeforeEach
@@ -59,6 +62,7 @@ class AuthControllerTest {
         when(userService.authenticate("nobody", "testpass")).thenReturn(Optional.empty());
         when(userService.authenticate("", "")).thenReturn(Optional.empty());
         when(userService.findByUsername("testuser")).thenReturn(Optional.of(testUser));
+        when(clientIpResolver.resolve(any())).thenReturn("127.0.0.1");
         when(userService.checkLockout(anyString())).thenReturn(new UserService.LockoutStatus(false, 0));
         when(userService.failuresNeededForLevel(anyInt())).thenReturn(5);
         when(auditService.recordLogin(any(), any(), any(), any(), any(), any(), any(),
