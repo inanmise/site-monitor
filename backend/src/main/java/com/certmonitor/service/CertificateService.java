@@ -606,42 +606,42 @@ public class CertificateService {
             String domain = cert.getDomain();
 
             if ("REVOKED".equals(cert.getRevocationStatus())) {
-                advice.add(buildAdvice(domain, "critical",
+                advice.add(buildAdvice(domain, "REVOKED", "critical",
                         "Sertifika İPTAL EDİLDİ! Trafiği derhal kesin.",
                         "Sertifikayı yenileyin ve CDN/load-balancer yapılandırmasını güncelleyin.",
                         days, cert.getNotAfter()));
             } else if ("INCOMPLETE".equals(cert.getDeploymentStatus())) {
-                advice.add(buildAdvice(domain, "critical",
+                advice.add(buildAdvice(domain, "DEPLOYMENT_INCOMPLETE", "critical",
                         "DEPLOYMENT EKSİK: Yenileme yapıldı ancak uç nokta eski sertifikayı sunuyor.",
                         "Yeni sertifikayı uç noktalara deploy edin ve konfigürasyonu yeniden yükleyin.",
                         days, cert.getNotAfter()));
             } else if ("BROKEN".equals(cert.getChainStatus())) {
-                advice.add(buildAdvice(domain, "critical",
+                advice.add(buildAdvice(domain, "CHAIN_BROKEN", "critical",
                         "ZİNCİR SORUNLU: Ara/kök CA sertifikası süresi dolmuş veya geçersiz.",
                         "Ara sertifika zincirini güncelleyin. Sunucu yapılandırmasını kontrol edin.",
                         days, cert.getNotAfter()));
             } else if ("error".equals(cert.getStatus())) {
-                advice.add(buildAdvice(domain, "critical",
+                advice.add(buildAdvice(domain, "UNREACHABLE", "critical",
                         "Sertifikaya ulaşılamıyor.",
                         "Bağlantıyı ve domain yapılandırmasını kontrol edin.",
                         null, cert.getNotAfter()));
             } else if (days != null && days < 0) {
-                advice.add(buildAdvice(domain, "critical",
+                advice.add(buildAdvice(domain, "EXPIRED", "critical",
                         "Sertifika süresi dolmuş! " + Math.abs(days) + " gün önce bitti.",
                         "Sertifikayı derhal yenileyin.",
                         days, cert.getNotAfter()));
             } else if (days != null && days <= 7) {
-                advice.add(buildAdvice(domain, "critical",
+                advice.add(buildAdvice(domain, "EXPIRING_CRITICAL", "critical",
                         "Sertifika " + days + " gün içinde bitiyor! Acil yenileme gerekli.",
                         "Sertifikayı bugün yenileyin.",
                         days, cert.getNotAfter()));
             } else if (days != null && days <= 30) {
-                advice.add(buildAdvice(domain, "warning",
+                advice.add(buildAdvice(domain, "EXPIRING_WARNING", "warning",
                         "Sertifika " + days + " gün içinde bitiyor.",
                         "Sertifika yenileme sürecini başlatın.",
                         days, cert.getNotAfter()));
             } else if (days != null && days <= 60) {
-                advice.add(buildAdvice(domain, "info",
+                advice.add(buildAdvice(domain, "EXPIRING_INFO", "info",
                         "Sertifika " + days + " gün içinde bitiyor.",
                         "Sertifika yenileme takviminizi güncelleyin.",
                         days, cert.getNotAfter()));
@@ -653,11 +653,12 @@ public class CertificateService {
         return advice;
     }
 
-    private Map<String, Object> buildAdvice(String domain, String priority,
+    private Map<String, Object> buildAdvice(String domain, String code, String priority,
                                              String message, String action,
                                              Integer days, String notAfter) {
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("domain", domain);
+        m.put("code", code);
         m.put("priority", priority);
         m.put("message", message);
         m.put("action", action);
