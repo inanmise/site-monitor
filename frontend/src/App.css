@@ -3240,7 +3240,11 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .ss-disabled .ss-trigger { opacity: .6; cursor: not-allowed; }
 
 .ss-dropdown {
-  position: absolute; top: calc(100% + 4px); left: 0; right: 0; z-index: 300;
+  position: absolute; top: calc(100% + 4px); left: 0; right: auto; z-index: 300;
+  /* Tetik dar olsa da (örn. 180px) açılır liste içeriğe göre genişler → uzun takım
+     adları kırpılmaz/sıkışmaz. En az tetik kadar, en çok 360px (taşmasın). */
+  min-width: 100%; width: max-content; max-width: min(360px, 90vw);
+  box-sizing: border-box;
   background: var(--bg-card, #fff); border: 1px solid var(--border);
   border-radius: 6px; box-shadow: 0 8px 24px rgba(0,0,0,.12);
   overflow: hidden; animation: ssSlide .12s ease;
@@ -3255,6 +3259,7 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .ss-option {
   padding: 9px 12px; cursor: pointer; font-size: .93em;
   transition: background .1s; color: var(--text, #1e293b);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .ss-option:hover { background: var(--hover-bg, #f1f5f9); }
 .ss-option.ss-selected { background: #eff6ff; color: var(--primary, #3b82f6); font-weight: 600; }
