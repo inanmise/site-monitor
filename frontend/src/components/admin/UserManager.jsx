@@ -14,6 +14,8 @@ export default function UserManager({ systemRole, ownTeamId, currentUsername, te
   const isTeamAdmin = systemRole === 'TEAM_ADMIN'
   const canManage = isAdmin || isTeamAdmin
   const isSelf = (u) => u?.username === currentUsername
+  const isAudit = systemRole === 'AUDIT'
+  const canSeeAllTeams = isAdmin || isAudit   // takım filtresi yalnız bunlara görünür
   const { showConfirm } = useDialog()
   const [users, setUsers] = useState([])
   const [modal, setModal] = useState(null)
@@ -22,18 +24,42 @@ export default function UserManager({ systemRole, ownTeamId, currentUsername, te
   const [saving, setSaving] = useState(false)
   const [msg, setMsg] = useState(null)
 
-  const activeAdminCount = users.filter(u => u.system_role === 'ADMIN' && u.active).length
+  // Filtre + sunucu-taraflı sayfalama
+  const [q, setQ] = useState('')
+  const [fRole, setFRole] = useState('')
+  const [fOrgRole, setFOrgRole] = useState('')
+  const [fTeam, setFTeam] = useState('')
+  const [page, setPage] = useState(0)
+  const [size, setSize] = useState(20)
+  const [total, setTotal] = useState(0)
+  const [activeAdminCount, setActiveAdminCount] = useState(0)
+  const [loading, setLoading] = useState(false)
+  const totalPages = Math.max(1, Math.ceil(total / size))
+
+  // Son aktif admin sayısı sunucudan gelir → sayfalamadan bağımsız doğru
   const isLastActiveAdmin = (u) =>
     u?.system_role === 'ADMIN' && u?.active && activeAdminCount === 1
 
   const teamMap = Object.fromEntries((teams || []).map(t => [t.id, t.name]))
 
-  useEffect(() => { load() }, [])
-
-  async function load() {
-    const res = await api.admin.getUsers()
-    if (res?.success) setUsers(res.data)
+  async function load(p = page, s = size) {
+    setLoading(true)
+    const res = await api.admin.searchUsers({
+      page: p, size: s, q: q.trim(), systemRole: fRole, orgRole: fOrgRole, teamId: fTeam,
+    })
+    setLoading(false)
+    if (res?.success) {
+      setUsers(res.data); setTotal(res.total ?? 0); setPage(res.page ?? 0)
+      setActiveAdminCount(res.active_admin_count ?? 0)
+    }
   }
+
+  // Filtre/sayfa-boyutu değişince 0. sayfaya dön (arama debounce'lu); ilk yükleme de buradan
+  useEffect(() => {
+    const tmr = setTimeout(() => load(0, size), 300)
+    return () => clearTimeout(tmr)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [q, fRole, fOrgRole, fTeam, size])
 
   function openAdd() { setForm(emptyUser); setMsg(null); setModal('add') }
   function openEdit(user) {
@@ -106,6 +132,24 @@ export default function UserManager({ systemRole, ownTeamId, currentUsername, te
         {canManage && <button className="btn btn-success" onClick={openAdd}>{t('usr.addBtn')}</button>}
       </div>
       {msg && !modal && !autoResetModal && <div className="alert-msg">{msg}</div>}
+
+      {/* Filtre çubuğu — tek arama kutusu (username/sicil/ad/e-posta) + Rol/Org Rol/Takım */}
+      <div className="audit-filters">
+        <input className="audit-filter-input" placeholder={t('usr.searchPlaceholder')}
+          value={q} onChange={(e) => setQ(e.target.value)} />
+        <SearchableSelect value={fRole} onChange={setFRole} placeholder={t('usr.allRoles')}
+          options={[{ value: '', label: t('usr.allRoles') },
+            ...['ADMIN', 'TEAM_ADMIN', 'USER', 'AUDIT'].map(r => ({ value: r, label: r }))]} />
+        <SearchableSelect value={fOrgRole} onChange={setFOrgRole} placeholder={t('usr.allOrgRoles')}
+          options={[{ value: '', label: t('usr.allOrgRoles') },
+            ...['PO', 'TECH', 'MANAGER', 'CLEVEL'].map(r => ({ value: r, label: r }))]} />
+        {canSeeAllTeams && (
+          <SearchableSelect value={fTeam} onChange={setFTeam} placeholder={t('usr.allTeams')}
+            options={[{ value: '', label: t('usr.allTeams') },
+              ...(teams || []).map(tm => ({ value: String(tm.id), label: tm.name }))]} />
+        )}
+      </div>
+
       <div className="admin-table-wrap">
         <table className="admin-table">
           <thead>
@@ -122,6 +166,11 @@ export default function UserManager({ systemRole, ownTeamId, currentUsername, te
             </tr>
           </thead>
           <tbody>
+            {users.length === 0 && (
+              <tr><td colSpan={9} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: 18 }}>
+                {loading ? '…' : t('usr.noResults')}
+              </td></tr>
+            )}
             {users.map((user) => (
               <tr key={user.id}>
                 <td><strong>{user.username}</strong></td>
@@ -160,6 +209,19 @@ export default function UserManager({ systemRole, ownTeamId, currentUsername, te
             ))}
           </tbody>
         </table>
+      </div>
+
+      {/* Sayfa boyutu + sayfalama */}
+      <div className="audit-pagination">
+        <label style={{ marginRight: 'auto', display: 'flex', alignItems: 'center', gap: 6 }}>
+          {t('usr.perPage')}
+          <select className="audit-filter-input" value={size} onChange={(e) => setSize(Number(e.target.value))}>
+            {[20, 50, 100, 200].map(n => <option key={n} value={n}>{n}</option>)}
+          </select>
+        </label>
+        <button disabled={page === 0 || loading} onClick={() => load(page - 1, size)}>{t('app.prevPage')}</button>
+        <span>{t('usr.pageInfo', page + 1, totalPages, total)}</span>
+        <button disabled={page + 1 >= totalPages || loading} onClick={() => load(page + 1, size)}>{t('app.nextPage')}</button>
       </div>
 
       {modal !== null && (

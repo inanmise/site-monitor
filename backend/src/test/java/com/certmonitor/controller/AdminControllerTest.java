@@ -1144,6 +1144,46 @@ class AdminControllerTest {
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 
+    // ── Users: filtreli + sayfalı arama (/users/search) ─────────────────────────
+
+    @Test
+    @DisplayName("GET /users/search: ADMIN sayfalı yanıt + filtreler repo'ya geçer + size 200'e cap")
+    void searchUsers_adminPagedAndFilters() throws Exception {
+        AppUser u = new AppUser();
+        u.setId(5L); u.setUsername("ali"); u.setSystemRole("USER"); u.setTeamId(3L);
+        Page<AppUser> pg = new PageImpl<>(List.of(u),
+                org.springframework.data.domain.PageRequest.of(0, 200), 1);
+        when(userRepo.findFiltered(any(), any(), any(), any(), any())).thenReturn(pg);
+        when(userRepo.countBySystemRoleAndActiveTrue("ADMIN")).thenReturn(2L);
+
+        mvc.perform(get("/api/admin/users/search")
+                        .param("q", "Ali").param("systemRole", "USER").param("orgRole", "PO")
+                        .param("teamId", "3").param("size", "999").session(authSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.data[0].username").value("ali"))
+                .andExpect(jsonPath("$.total").value(1))
+                .andExpect(jsonPath("$.active_admin_count").value(2));
+
+        // q lowercased + %..%, role/orgRole/teamId aynen, size 200'e cap
+        org.mockito.Mockito.verify(userRepo).findFiltered(eq("%ali%"), eq("USER"), eq("PO"), eq(3L),
+                org.mockito.ArgumentMatchers.argThat(p -> p.getPageSize() == 200));
+    }
+
+    @Test
+    @DisplayName("GET /users/search: TEAM_ADMIN kendi takımına sabitli (client teamId yok sayılır)")
+    void searchUsers_teamAdminForcedTeam() throws Exception {
+        when(userRepo.findFiltered(any(), any(), any(), any(), any()))
+                .thenReturn(new PageImpl<>(List.of(), org.springframework.data.domain.PageRequest.of(0, 20), 0));
+        when(userRepo.countBySystemRoleAndActiveTrue("ADMIN")).thenReturn(1L);
+
+        mvc.perform(get("/api/admin/users/search").param("teamId", "99").session(teamAdminSession()))
+                .andExpect(status().isOk());
+
+        // client teamId=99 yok sayılır; oturum takımı (2) zorlanır; diğer filtreler null
+        org.mockito.Mockito.verify(userRepo).findFiltered(isNull(), isNull(), isNull(), eq(2L), any());
+    }
+
     private MockHttpSession authSession() {
         MockHttpSession s = new MockHttpSession();
         s.setAttribute("authenticated", Boolean.TRUE);
