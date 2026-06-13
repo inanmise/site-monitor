@@ -349,8 +349,8 @@ function CalendarHeatmap({ certs, t, onSelectDomain }) {
 
       {/* ── Gün detay modalı — o günün sertifikaları (genel bakış kartları gibi) ── */}
       {dayModal && (
-        <div className="modal-overlay" style={{ zIndex: 990 }} onClick={() => setDayModal(null)}>
-          <div className="modal-box modal-wide" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-overlay" style={{ zIndex: 990 }}>
+          <div className="modal-box modal-wide">
             <div className="modal-icon-hdr modal-icon-hdr--user">
               <div className="modal-icon-hdr-badge"><Calendar size={20} /></div>
               <h3>{t('forecast.dayModalTitle', dayModal.key, dayModal.certs.length)}</h3>
