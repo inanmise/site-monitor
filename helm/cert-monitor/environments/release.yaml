@@ -23,6 +23,9 @@ config:
   corsAllowedOrigins: "https://cert-monitor-staging.example.com"
   certCheckHour: "3"
   certCheckMinute: "0"
+  # CPU limiti orta → executor'ı kıs (açılışta CPU açlığını önle)
+  executorCoreSize: "8"
+  executorMaxSize: "16"
 
 ingress:
   enabled: true
@@ -38,10 +41,10 @@ ingress:
 resources:
   requests:
     memory: "384Mi"
-    cpu: "200m"
+    cpu: "500m"
   limits:
-    memory: "768Mi"
-    cpu: "750m"
+    memory: "1Gi"
+    cpu: "1500m"
 
 autoscaling:
   enabled: true

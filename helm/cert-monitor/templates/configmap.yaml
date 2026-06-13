@@ -30,6 +30,9 @@ data:
   CHECK_TIMEOUT_SECONDS: {{ .Values.config.checkTimeoutSeconds | quote }}
   WARNING_DAYS: {{ .Values.config.warningDays | quote }}
   PARALLEL_WORKERS: {{ .Values.config.parallelWorkers | quote }}
+  EXECUTOR_CORE_SIZE: {{ .Values.config.executorCoreSize | quote }}
+  EXECUTOR_MAX_SIZE: {{ .Values.config.executorMaxSize | quote }}
+  STARTUP_CHECK_DELAY_MS: {{ .Values.config.startupCheckDelayMs | quote }}
   JAVA_OPTS: {{ .Values.config.javaOpts | quote }}
   HTTP_PROXY_HOST: {{ .Values.config.httpProxyHost | quote }}
   HTTP_PROXY_PORT: {{ .Values.config.httpProxyPort | quote }}

@@ -97,6 +97,11 @@ public class SchedulerService {
     @Value("${cert.monitor.scheduler.lock-ttl-minutes:10}")
     private int lockTtlMinutes;
 
+    /** Açılışta ağır iş (catch-up + tam tarama) bu kadar ms geciktirilir — login/BCrypt
+     *  ilk dakikada CPU'yu kapışmasın. 0 = anında (eski davranış). */
+    @Value("${cert.monitor.scheduler.startup-check-delay-ms:60000}")
+    private long startupCheckDelayMs;
+
     @Value("${cert.monitor.alert.default-warning-days:30}")
     private int defaultWarningDays;
 
@@ -166,9 +171,26 @@ public class SchedulerService {
         assignOrphanedCertsToDefaultTeam();
         clearStaleLocksForThisHost();
         restoreOutageStateFromDb();
-        escalationService.catchUpMissedDailyAlerts();
-        escalationService.catchUpAlertsOnDeletedDomains();
-        new Thread(this::runCheck, "startup-check").start();
+        // Ağır açılış işi (escalation catch-up + tam sertifika taraması) ANINDA
+        // çalışırsa, CPU-sınırlı pod'da JVM ısınması + bu işin TLS/OCSP/CRL kriptosu
+        // ilk interaktif isteği (login → BCrypt) aç bırakır → login ~1dk askıda kalır.
+        // Bu yüzden tek daemon thread'e alıp startupCheckDelayMs kadar geciktiriyoruz;
+        // pod Ready olur olmaz login CPU'yu serbest bulur, ağır iş JVM ısınınca başlar.
+        Thread t = new Thread(() -> {
+            try {
+                if (startupCheckDelayMs > 0) Thread.sleep(startupCheckDelayMs);
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+                return;
+            }
+            try { escalationService.catchUpMissedDailyAlerts(); }
+            catch (Exception e) { log.warn("Startup catch-up (daily) failed: {}", e.getMessage()); }
+            try { escalationService.catchUpAlertsOnDeletedDomains(); }
+            catch (Exception e) { log.warn("Startup catch-up (deleted) failed: {}", e.getMessage()); }
+            runCheck();
+        }, "startup-check");
+        t.setDaemon(true);
+        t.start();
     }
 
     /**

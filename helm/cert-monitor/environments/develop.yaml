@@ -24,6 +24,9 @@ config:
   certCheckHour: "*/2"     # every 2 hours in dev
   certCheckMinute: "0"
   emailEnabled: "false"    # emails off in dev
+  # Küçük CPU → düşük paralellik (açılışta CPU oversubscription olmasın)
+  executorCoreSize: "4"
+  executorMaxSize: "8"
 
 ingress:
   enabled: true
@@ -38,10 +41,10 @@ ingress:
 resources:
   requests:
     memory: "256Mi"
-    cpu: "100m"
+    cpu: "250m"
   limits:
-    memory: "512Mi"
-    cpu: "500m"
+    memory: "768Mi"
+    cpu: "1000m"
 
 autoscaling:
   enabled: false
