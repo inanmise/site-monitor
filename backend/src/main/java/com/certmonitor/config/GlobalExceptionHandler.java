@@ -10,6 +10,7 @@ import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.server.ResponseStatusException;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -89,6 +90,15 @@ public class GlobalExceptionHandler {
         return ResponseEntity.status(400).body(Map.of(
                 "success", false,
                 "error", "Eksik parametre: " + e.getParameterName()));
+    }
+
+    /** Eksik statik kaynak (favicon.ico, eşleşmeyen statik yol) — sessiz 404.
+     *  Generic handler'a düşüp ERROR + tam stack basmasın (gereksiz log gürültüsü). */
+    @ExceptionHandler(NoResourceFoundException.class)
+    public ResponseEntity<Map<String, Object>> handleNoResource(NoResourceFoundException e) {
+        log.debug("Statik kaynak bulunamadı: {}", e.getResourcePath());
+        return ResponseEntity.status(404)
+                .body(Map.of("success", false, "error", "Kaynak bulunamadı"));
     }
 
     /** Controller'lardan elle fırlatılmış status hatası — passthrough. */
