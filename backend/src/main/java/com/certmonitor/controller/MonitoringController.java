@@ -332,11 +332,27 @@ public class MonitoringController {
 
     @GetMapping("/port/{id}/history")
     public ResponseEntity<Map<String, Object>> portHistory(@PathVariable Long id,
+            @RequestParam(required = false) Integer days,
             @RequestParam(defaultValue = "100") int limit) {
-        int cap = Math.max(1, Math.min(limit, 10_000));
-        List<PortCheck> checks = portCheckRepo.findByMonitorIdOrderByCheckedAtDesc(id)
-                .stream().limit(cap).toList();
-        return ok(checks);
+        List<PortCheck> checks;
+        long total, down;
+        if (days != null && days > 0) {
+            String cutoff = ISO.format(Instant.now().minus(days, ChronoUnit.DAYS));
+            checks = portCheckRepo.findByMonitorIdAndCheckedAtGreaterThanEqualOrderByCheckedAtDesc(id, cutoff)
+                    .stream().limit(500).toList();           // liste için kapak; özet DB count'tan
+            total = portCheckRepo.countByMonitorIdAndCheckedAtGreaterThanEqual(id, cutoff);
+            down  = portCheckRepo.countByMonitorIdAndOpenFalseAndCheckedAtGreaterThanEqual(id, cutoff);
+        } else {
+            int cap = Math.max(1, Math.min(limit, 10_000));
+            checks = portCheckRepo.findByMonitorIdOrderByCheckedAtDesc(id).stream().limit(cap).toList();
+            total = checks.size();
+            down  = checks.stream().filter(c -> !Boolean.TRUE.equals(c.getOpen())).count();
+        }
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("checks", checks);
+        out.put("total", total);
+        out.put("down", down);
+        return ok(out);
     }
 
     @PostMapping("/port/{id}/check")

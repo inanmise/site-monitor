@@ -21,6 +21,8 @@ export default function PortMonitorPage({ systemRole }) {
   const [selected, setSelected] = useState(null)
   const [history, setHistory] = useState([])
   const [historyLoading, setHistoryLoading] = useState(false)
+  const [rangeDays, setRangeDays] = useState(1)
+  const [summary, setSummary] = useState({ total: 0, down: 0 })
   const [modal, setModal] = useState(null)
   const [form, setForm] = useState({})
   const [saving, setSaving] = useState(false)
@@ -47,17 +49,22 @@ export default function PortMonitorPage({ systemRole }) {
     return () => clearInterval(countdownRef.current)
   }, [])
 
-  async function loadHistory(id) {
+  async function loadHistory(id, days = rangeDays) {
     setHistoryLoading(true)
-    const res = await api.monitoring.getPortHistory(id, 50)
-    if (res?.success) setHistory(res.data)
+    const res = await api.monitoring.getPortHistory(id, { days })
+    if (res?.success) {
+      setHistory(res.data?.checks ?? [])
+      setSummary({ total: res.data?.total ?? 0, down: res.data?.down ?? 0 })
+    }
     setHistoryLoading(false)
   }
+
+  function selectRange(id, days) { setRangeDays(days); loadHistory(id, days) }
 
   async function openModal(m) {
     setSelected(m)
     setHistory([])
-    loadHistory(m.id)
+    loadHistory(m.id, rangeDays)
   }
 
   function closeModal() { setSelected(null); setHistory([]) }
@@ -81,7 +88,7 @@ export default function PortMonitorPage({ systemRole }) {
     const res = await api.monitoring.triggerPortCheck(m.id)
     if (res?.success) {
       setMonitors(prev => prev.map(x => x.id === m.id ? { ...x, ...res.data } : x))
-      if (selected?.id === m.id) { setSelected(res.data); loadHistory(m.id) }
+      if (selected?.id === m.id) { setSelected(res.data); loadHistory(m.id, rangeDays) }
     }
     setChecking(null)
   }
@@ -186,10 +193,42 @@ export default function PortMonitorPage({ systemRole }) {
             </div>
             <div className="upt-modal-divider" />
             <div className="upt-modal-summary">
+              <div className="upt-modal-metric">
+                <span className="upt-modal-metric-val">
+                  {summary.total > 0 ? `%${Math.round((summary.total - summary.down) * 1000 / summary.total) / 10}` : '—'}
+                </span>
+                <span className="upt-modal-metric-lbl">{t('port.sumUptime')}</span>
+              </div>
+              <div className="upt-modal-metric">
+                <span className="upt-modal-metric-val">{summary.total}</span>
+                <span className="upt-modal-metric-lbl">{t('port.sumTotal')}</span>
+              </div>
+              <div className="upt-modal-metric">
+                <span className="upt-modal-metric-val">{summary.down}</span>
+                <span className="upt-modal-metric-lbl">{t('port.sumIncidents')}</span>
+              </div>
               {selected.response_ms != null && (
                 <div className="upt-modal-metric">
                   <span className="upt-modal-metric-val">{selected.response_ms}ms</span>
                   <span className="upt-modal-metric-lbl">{t('port.responseMs')}</span>
+                </div>
+              )}
+              {selected.protocol && (
+                <div className="upt-modal-metric">
+                  <span className="upt-modal-metric-val">{selected.protocol}</span>
+                  <span className="upt-modal-metric-lbl">{t('port.protocol')}</span>
+                </div>
+              )}
+              {selected.interval_seconds != null && (
+                <div className="upt-modal-metric">
+                  <span className="upt-modal-metric-val upt-modal-metric-time">{selected.interval_seconds}s</span>
+                  <span className="upt-modal-metric-lbl">{t('port.intervalLbl')}</span>
+                </div>
+              )}
+              {selected.timeout_ms != null && (
+                <div className="upt-modal-metric">
+                  <span className="upt-modal-metric-val upt-modal-metric-time">{selected.timeout_ms}ms</span>
+                  <span className="upt-modal-metric-lbl">{t('port.timeoutLbl')}</span>
                 </div>
               )}
               {selected.checked_at && (
@@ -201,23 +240,42 @@ export default function PortMonitorPage({ systemRole }) {
             </div>
             <div className="upt-modal-divider" />
             <div className="upt-modal-section-title">{t('port.history')}</div>
+            <div className="upt-range-btns">
+              {[1, 7, 15, 30].map(d => (
+                <button key={d} type="button"
+                  className={`btn btn-sm ${rangeDays === d ? 'btn-primary' : 'btn-secondary'}`}
+                  onClick={() => selectRange(selected.id, d)}>{t(`port.range${d}d`)}</button>
+              ))}
+            </div>
             {historyLoading ? (
               <div className="upt-modal-loading">...</div>
             ) : history.length === 0 ? (
               <div className="upt-modal-loading">{t('uptime.noData')}</div>
             ) : (
               <div className="upt-rt-list">
-                {history.slice(0, 30).map((c, i) => (
-                  <div key={i} className="upt-rt-row">
+                <div className="upt-rt-grid upt-rt-head">
+                  <span>{t('port.colTime')}</span>
+                  <span>{t('port.colStatus')}</span>
+                  <span>{t('port.colResponse')}</span>
+                  <span>{t('port.colDetail')}</span>
+                </div>
+                {history.slice(0, 200).map((c, i) => (
+                  <div key={i} className="upt-rt-grid">
                     <span className="upt-rt-time">{formatDate(c.checkedAt || c.checked_at)}</span>
                     <span className={c.open ? 'upt-rt-up' : 'upt-rt-down'}>
                       {c.open ? t('port.statusOpen') : t('port.statusClosed')}
                     </span>
-                    {(c.responseMs ?? c.response_ms) != null && (
-                      <span className="upt-rt-time">{c.responseMs ?? c.response_ms}ms</span>
-                    )}
+                    <span className="upt-rt-ms">
+                      {(c.responseMs ?? c.response_ms) != null ? `${c.responseMs ?? c.response_ms}ms` : '—'}
+                    </span>
+                    {c.error
+                      ? <span className="upt-rt-error">{c.error}</span>
+                      : <span className="upt-rt-ms">—</span>}
                   </div>
                 ))}
+                {history.length > 200 && (
+                  <div className="upt-modal-loading">{t('port.historyCapped')}</div>
+                )}
               </div>
             )}
           </div>

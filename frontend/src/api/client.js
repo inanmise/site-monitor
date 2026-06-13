@@ -332,7 +332,12 @@ export const api = {
     updatePortMonitor: (id, data) => request(`/monitoring/port/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
     deletePortMonitor: (id) => request(`/monitoring/port/${id}`, { method: 'DELETE' }),
     triggerPortCheck:  (id) => request(`/monitoring/port/${id}/check`, { method: 'POST' }),
-    getPortHistory:    (id, limit = 100) => request(`/monitoring/port/${id}/history?limit=${limit}`),
+    getPortHistory:    (id, { days, limit } = {}) => {
+      const q = new URLSearchParams(
+        Object.fromEntries(Object.entries({ days, limit }).filter(([, v]) => v != null && v !== '')),
+      ).toString()
+      return request(`/monitoring/port/${id}/history${q ? `?${q}` : ''}`)
+    },
 
     // DNS
     getDnsMonitors:    () => request('/monitoring/dns'),
