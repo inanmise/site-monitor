@@ -2,8 +2,9 @@ import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { createPortal } from 'react-dom'
 import { api, formatDate } from '../api/client'
 import { useT } from '../i18n/index.jsx'
-import { RefreshCw, X } from 'lucide-react'
+import { RefreshCw, X, AlertCircle, CheckCircle } from 'lucide-react'
 import DateTimeRangePicker from './ui/DateTimeRangePicker.jsx'
+import DiagnosticsModal from './admin/DiagnosticsModal.jsx'
 
 const REFRESH_INTERVAL = 60
 const PAGE_SIZE = 12
@@ -11,8 +12,9 @@ const PAGE_SIZE = 12
 function todayStartDate() { const d = new Date(); d.setHours(0, 0, 0, 0); return d }
 function toApiStr(date)   { return date.toISOString().slice(0, 16) }
 
-export default function UptimePage() {
+export default function UptimePage({ systemRole }) {
   const t = useT()
+  const isAdmin = systemRole === 'ADMIN'
   const [items, setItems] = useState([])
   const [loading, setLoading] = useState(true)
   const [filterStatus, setFilterStatus] = useState('all')
@@ -20,6 +22,7 @@ export default function UptimePage() {
   const [search, setSearch]             = useState('')
   const [page, setPage]                 = useState(1)
   const [selected, setSelected]         = useState(null)
+  const [diag, setDiag]                 = useState(null)   // { domain, port } → DiagnosticsModal
   const [httpHistory, setHttpHistory]   = useState([])
   const [httpLoading, setHttpLoading]   = useState(false)
   const [sslHistory, setSslHistory]     = useState([])
@@ -151,6 +154,30 @@ export default function UptimePage() {
     return t('uptime.sslDays').replace('{0}', item.ssl_valid_days)
   }
 
+  /** SSL metrik değeri — sertifikaya erişilemediyse (ssl_valid_days null) "—" yerine hata ikonu. */
+  function sslValueNode(item) {
+    if (item.ssl_valid_days == null) {
+      return (
+        <span title={t('uptime.sslError')} style={{ display: 'inline-flex', alignItems: 'center' }}>
+          <AlertCircle size={16} style={{ color: '#ef4444' }} />
+        </span>
+      )
+    }
+    return sslLabel(item)
+  }
+
+  /** HTTP-OK göstergesi — son 24h temizse yeşil, sorunluysa kırmızı; veri yoksa gizli. */
+  function httpOkNode(httpOk) {
+    return (
+      <span title={httpOk ? t('uptime.httpOk') : t('uptime.httpDown')}
+        style={{ display: 'inline-flex', alignItems: 'center' }}>
+        {httpOk
+          ? <CheckCircle size={16} style={{ color: '#22c55e' }} />
+          : <AlertCircle size={16} style={{ color: '#ef4444' }} />}
+      </span>
+    )
+  }
+
   function sslColor(item) {
     if (item.ssl_valid_days == null) return 'var(--text-muted)'
     if (item.ssl_valid_days < 0)     return '#ef4444'
@@ -239,9 +266,15 @@ export default function UptimePage() {
 
               <div className="upt-card-metrics">
                 <div className="upt-metric">
-                  <span className="upt-metric-val" style={{ color: sslColor(item) }}>{sslLabel(item)}</span>
+                  <span className="upt-metric-val" style={{ color: sslColor(item) }}>{sslValueNode(item)}</span>
                   <span className="upt-metric-lbl">SSL</span>
                 </div>
+                {item.http_ok != null && (
+                  <div className="upt-metric">
+                    <span className="upt-metric-val">{httpOkNode(item.http_ok)}</span>
+                    <span className="upt-metric-lbl">HTTP</span>
+                  </div>
+                )}
                 {item.uptime_7d != null && (
                   <div className="upt-metric">
                     <span className="upt-metric-val">{item.uptime_7d}%</span>
@@ -257,13 +290,24 @@ export default function UptimePage() {
                 {item.incidents_30d > 0 && (
                   <div className="upt-metric">
                     <span className="upt-metric-val upt-metric-incident">{item.incidents_30d}</span>
-                    <span className="upt-metric-lbl">{t('uptime.incidents').replace('{0}', '').trim()}</span>
+                    <span className="upt-metric-lbl">{t('uptime.incidents30d')}</span>
                   </div>
                 )}
               </div>
 
-              {(item.uptime_checked_at || item.ssl_checked_at) && (
-                <div className="upt-card-foot">{formatDate(item.uptime_checked_at || item.ssl_checked_at)}</div>
+              {(item.uptime_checked_at || item.ssl_checked_at || isAdmin) && (
+                <div className="upt-card-foot">
+                  <span>{(item.uptime_checked_at || item.ssl_checked_at)
+                    ? formatDate(item.uptime_checked_at || item.ssl_checked_at) : ''}</span>
+                  {isAdmin && (
+                    <button
+                      className="btn-sm btn-show"
+                      onClick={(e) => { e.stopPropagation(); setDiag({ domain: item.domain, port: item.port || 443 }) }}
+                    >
+                      {t('uptime.diagnose')}
+                    </button>
+                  )}
+                </div>
               )}
             </div>
           ))}
@@ -326,9 +370,15 @@ export default function UptimePage() {
             {/* Summary metrics */}
             <div className="upt-modal-summary">
               <div className="upt-modal-metric">
-                <span className="upt-modal-metric-val" style={{ color: sslColor(selected) }}>{sslLabel(selected)}</span>
+                <span className="upt-modal-metric-val" style={{ color: sslColor(selected) }}>{sslValueNode(selected)}</span>
                 <span className="upt-modal-metric-lbl">SSL</span>
               </div>
+              {selected.http_ok != null && (
+                <div className="upt-modal-metric">
+                  <span className="upt-modal-metric-val">{httpOkNode(selected.http_ok)}</span>
+                  <span className="upt-modal-metric-lbl">HTTP</span>
+                </div>
+              )}
               {selected.uptime_7d != null && (
                 <div className="upt-modal-metric">
                   <span className="upt-modal-metric-val">{selected.uptime_7d}%</span>
@@ -344,7 +394,7 @@ export default function UptimePage() {
               {selected.incidents_30d > 0 && (
                 <div className="upt-modal-metric">
                   <span className="upt-modal-metric-val upt-metric-incident">{selected.incidents_30d}</span>
-                  <span className="upt-modal-metric-lbl">{t('uptime.incidents').replace('{0}', '').trim()}</span>
+                  <span className="upt-modal-metric-lbl">{t('uptime.incidents30d')}</span>
                 </div>
               )}
               {selected.response_ms != null && (
@@ -431,6 +481,11 @@ export default function UptimePage() {
           </div>
         </div>,
         document.body
+      )}
+
+      {/* ── Tanılama modalı (envanter ile ortak) — admin-only ── */}
+      {diag && (
+        <DiagnosticsModal domain={diag.domain} port={diag.port} onClose={() => setDiag(null)} />
       )}
     </div>
   )

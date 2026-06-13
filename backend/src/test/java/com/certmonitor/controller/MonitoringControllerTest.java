@@ -3,6 +3,7 @@ package com.certmonitor.controller;
 import com.certmonitor.model.CertificateCheck;
 import com.certmonitor.model.CertificateInventory;
 import com.certmonitor.model.LatestCheck;
+import com.certmonitor.model.UptimeCheck;
 import com.certmonitor.repository.*;
 import com.certmonitor.service.DnsCheckerService;
 import com.certmonitor.service.PortCheckerService;
@@ -73,6 +74,13 @@ class MonitoringControllerTest {
         return c;
     }
 
+    private static UptimeCheck uchk(String domain, String status) {
+        UptimeCheck u = new UptimeCheck();
+        u.setDomain(domain); u.setPort(443); u.setStatus(status);
+        u.setCheckedAt("2099-01-01T00:00:00");
+        return u;
+    }
+
     @Test
     @DisplayName("uptimeOverview: calcUptime (3 ok / 1 error → %75), lc'siz domain → 'unknown'")
     void uptimeOverview_computesUptimeAndHandlesMissingCheck() throws Exception {
@@ -100,6 +108,27 @@ class MonitoringControllerTest {
         mvc.perform(get("/api/monitoring/uptime/overview").session(session("USER")))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data").isArray());
+    }
+
+    @Test
+    @DisplayName("uptimeOverview: http_ok — 24h hep up→true, biri down→false, kayıt yok→null")
+    void uptimeOverview_httpOk() throws Exception {
+        when(latestCheckRepo.findAllByOrderByDomainAsc()).thenReturn(List.of(lc("a.com", "valid"), lc("b.com", "valid")));
+        when(inventoryRepo.findByActiveTrueOrderByDomainAsc()).thenReturn(List.of(inv("a.com"), inv("b.com"), inv("c.com")));
+        when(uptimeCheckRepo.findTopByDomainAndPortOrderByIdDesc(anyString(), anyInt())).thenReturn(Optional.empty());
+        when(certCheckRepo.findByCheckedAtAfter(anyString())).thenReturn(List.of());
+        when(uptimeCheckRepo.findByCheckedAtGreaterThanEqual(anyString())).thenReturn(List.of(
+                uchk("a.com", "up"), uchk("a.com", "up"),
+                uchk("b.com", "up"), uchk("b.com", "down")));
+
+        mvc.perform(get("/api/monitoring/uptime/overview").session(session("USER")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].domain").value("a.com"))
+                .andExpect(jsonPath("$.data[0].http_ok").value(true))
+                .andExpect(jsonPath("$.data[1].domain").value("b.com"))
+                .andExpect(jsonPath("$.data[1].http_ok").value(false))
+                .andExpect(jsonPath("$.data[2].domain").value("c.com"))
+                .andExpect(jsonPath("$.data[2].http_ok").doesNotExist()); // null → kayıt yok
     }
 
     @Test

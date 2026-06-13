@@ -5251,7 +5251,9 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .upt-card-foot {
   font-size: 10.5px; color: var(--text-muted);
   border-top: 1px solid var(--border); padding-top: 8px;
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
 }
+.upt-card-foot .btn-sm { margin-right: 0; }
 
 /* Status dot (used in detail panel title) */
 .upt-status-dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; display: inline-block; }

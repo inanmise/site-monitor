@@ -11,6 +11,9 @@ import java.util.Optional;
 public interface UptimeCheckRepository extends JpaRepository<UptimeCheck, Long> {
     Optional<UptimeCheck> findTopByDomainAndPortOrderByIdDesc(String domain, int port);
 
+    /** Tek toplu sorgu — son N saatteki tüm HTTP kontrolleri (uptime overview http_ok hesabı için). */
+    List<UptimeCheck> findByCheckedAtGreaterThanEqual(String since);
+
     @Query("SELECT u FROM UptimeCheck u WHERE u.domain = :domain AND u.port = :port AND u.checkedAt >= :from AND u.checkedAt <= :to ORDER BY u.checkedAt DESC LIMIT :limit")
     List<UptimeCheck> findByDomainAndPortAndDateRange(
         @Param("domain") String domain,

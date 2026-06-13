@@ -70,6 +70,11 @@ public class MonitoringController {
 
         String cutoff30d = ISO.format(Instant.now().minus(30, ChronoUnit.DAYS));
         String cutoff7d  = ISO.format(Instant.now().minus(7,  ChronoUnit.DAYS));
+        String cutoff24h = ISO.format(Instant.now().minus(24, ChronoUnit.HOURS));
+
+        // Son 24 saatteki tüm HTTP (uptime) kontrolleri — tek toplu sorgu, domaine göre grupla (N sorgu yok).
+        Map<String, List<UptimeCheck>> http24hByDomain = uptimeCheckRepo.findByCheckedAtGreaterThanEqual(cutoff24h).stream()
+                .collect(Collectors.groupingBy(UptimeCheck::getDomain));
 
         List<Map<String, Object>> result = new ArrayList<>();
         for (CertificateInventory inv : inventory) {
@@ -82,6 +87,13 @@ public class MonitoringController {
 
             int port = inv.getPort() != null ? inv.getPort() : 443;
             Optional<UptimeCheck> uc = uptimeCheckRepo.findTopByDomainAndPortOrderByIdDesc(domain, port);
+
+            // HTTP-OK: son 24h kontrolleri varsa hepsi "up" mı? (kayıt yoksa null → gösterme)
+            List<UptimeCheck> http24h = http24hByDomain.get(domain);
+            Boolean httpOk = (http24h == null || http24h.isEmpty())
+                    ? null
+                    : http24h.stream().allMatch(c -> "up".equals(c.getStatus()));
+            item.put("http_ok", httpOk);
 
             if (lc == null) {
                 item.put("status",           uc.map(UptimeCheck::getStatus).orElse("unknown"));
