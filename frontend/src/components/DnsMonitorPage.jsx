@@ -208,7 +208,7 @@ export default function DnsMonitorPage({ systemRole }) {
               </div>
               <h3>{t('dns.modalEdit')}</h3>
             </div>
-            <div className="form-grid">
+            <div className="form-grid form-grid--top">
               <label>
                 <span>{t('dns.domain')}</span>
                 <input value={modal.domain} disabled readOnly />

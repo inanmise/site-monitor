@@ -1502,6 +1502,9 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .form-grid label { display: flex; flex-direction: column; gap: 5px; font-size: .88em; font-weight: 600; }
 .form-grid label input, .form-grid label select { padding: 9px 10px; border: 1px solid var(--border); border-radius: 4px; font-size: .95em; }
 .form-grid .full-width { grid-column: 1 / -1; }
+/* Üstten hizalama — bir alanda input ALTINDA field-hint olunca (örn. DNS edit'te
+   read-only domain), end-hizalama komşu input'u aşağı kaydırır; start ile inputlar üstte hizalı kalır. */
+.form-grid--top { align-items: start; }
 .checkbox-label { flex-direction: row !important; align-items: center; gap: 8px !important; cursor: pointer; }
 .modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--border); }
 .alert-msg { background: #d4edda; color: #155724; padding: 10px 14px; border-radius: 5px; margin-bottom: 12px; font-size: .9em; }
