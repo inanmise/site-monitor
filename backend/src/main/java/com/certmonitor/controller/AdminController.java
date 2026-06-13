@@ -258,9 +258,9 @@ public class AdminController {
     @PostMapping("/diagnostics")
     public ResponseEntity<Map<String, Object>> runDiagnostics(
             @RequestBody Map<String, Object> body, HttpSession session, HttpServletRequest request) {
-        requireAdmin(session);
         String domain = body.get("domain") != null ? body.get("domain").toString().trim() : null;
         validateDomain(domain);
+        requireAdminOrMonitoredDomain(session, domain);
         Long portRaw = toLong(body.get("port"));
         int port = portRaw != null ? portRaw.intValue() : 443;
         if (port < 1 || port > 65535)
@@ -281,9 +281,9 @@ public class AdminController {
     @PostMapping("/diagnostics/openssl")
     public ResponseEntity<Map<String, Object>> runOpensslDiagnostics(
             @RequestBody Map<String, Object> body, HttpSession session, HttpServletRequest request) {
-        requireAdmin(session);
         String domain = body.get("domain") != null ? body.get("domain").toString().trim() : null;
         validateDomain(domain);
+        requireAdminOrMonitoredDomain(session, domain);
         Long portRaw = toLong(body.get("port"));
         int port = portRaw != null ? portRaw.intValue() : 443;
         if (port < 1 || port > 65535)
@@ -302,9 +302,9 @@ public class AdminController {
     @PostMapping("/diagnostics/network")
     public ResponseEntity<Map<String, Object>> runNetworkDiagnostics(
             @RequestBody Map<String, Object> body, HttpSession session, HttpServletRequest request) {
-        requireAdmin(session);
         String domain = body.get("domain") != null ? body.get("domain").toString().trim() : null;
         validateDomain(domain);
+        requireAdminOrMonitoredDomain(session, domain);
         Long portRaw = toLong(body.get("port"));
         int port = portRaw != null ? portRaw.intValue() : 443;
         if (port < 1 || port > 65535)
@@ -325,8 +325,8 @@ public class AdminController {
     @GetMapping("/diagnostics/history")
     public ResponseEntity<Map<String, Object>> diagnosticsHistory(
             @RequestParam String domain, HttpSession session) {
-        requireAdmin(session);
         validateDomain(domain);
+        requireAdminOrMonitoredDomain(session, domain);
         List<Map<String, Object>> data = diagnosticHistoryService.history(domain).stream()
                 .map(d -> {
                     Map<String, Object> m = new java.util.LinkedHashMap<>();
@@ -347,8 +347,8 @@ public class AdminController {
     @GetMapping("/diagnostics/history/{id}")
     public ResponseEntity<Map<String, Object>> diagnosticsHistoryDetail(
             @PathVariable Long id, HttpSession session) {
-        requireAdmin(session);
         com.certmonitor.model.DiagnosticRun d = diagnosticHistoryService.get(id);
+        requireAdminOrMonitoredDomain(session, d.getDomain());
         Map<String, Object> m = new java.util.LinkedHashMap<>();
         m.put("id", d.getId());
         m.put("domain", d.getDomain());
@@ -1233,6 +1233,15 @@ public class AdminController {
             log.warn("Unauthorized admin access attempt by user={}", actor(session));
             throw new SecurityException("Admin access required");
         }
+    }
+
+    /** Tanılama (diagnostics) admin'e her domain için, diğer rollere YALNIZ envanterde
+     *  kayıtlı (izlenen) domainler için açıktır — rastgele host+port probe'u (SSRF) engellenir. */
+    private void requireAdminOrMonitoredDomain(HttpSession session, String domain) {
+        if (isAdmin(session)) return;
+        if (domain != null && inventoryRepo.findByDomain(domain.trim()).isPresent()) return;
+        log.warn("Diagnostics denied (non-admin, unmonitored domain='{}') user={}", domain, actor(session));
+        throw new SecurityException("Bu domain için tanılama yetkiniz yok");
     }
 
     private String resolveDisplayName(HttpSession session) {

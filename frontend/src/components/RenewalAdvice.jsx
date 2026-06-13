@@ -1,13 +1,15 @@
 import { useEffect, useState } from 'react'
 import { api, formatDateOnly } from '../api/client'
 import { useT } from '../i18n/index.jsx'
+import DiagnosticsModal from './admin/DiagnosticsModal.jsx'
 
 const PRIORITY_COLOR = { critical: '#dc3545', warning: '#fd7e14', info: '#0d6efd' }
 
-export default function RenewalAdvice() {
+export default function RenewalAdvice({ onSelectDomain }) {
   const t = useT()
   const [advice, setAdvice] = useState([])
   const [loading, setLoading] = useState(true)
+  const [diag, setDiag] = useState(null)   // { domain, port } → DiagnosticsModal
 
   useEffect(() => {
     api.getRenewalAdvice().then((res) => {
@@ -38,7 +40,9 @@ export default function RenewalAdvice() {
           : days < 0 ? t('renewal.daysAgo') : t('renewal.daysLeft')
 
         return (
-          <div key={i} className="renewal-card" style={{ borderLeftColor: color }}>
+          <div key={i} className="renewal-card" style={{ borderLeftColor: color, cursor: 'pointer' }}
+            onClick={() => onSelectDomain?.(item.domain)}
+            title={t('renewal.openDetail')}>
 
             <div className="renewal-card-body">
               <div className="renewal-card-header">
@@ -49,6 +53,13 @@ export default function RenewalAdvice() {
               <div className="renewal-action">
                 <strong>{t('renewal.action')}</strong> <code>{item.action}</code>
               </div>
+              {/* Bağlantı sorunu (ulaşılamayan sertifika) → derin tanılama linki */}
+              {item.code === 'UNREACHABLE' && (
+                <button type="button" className="renewal-diagnose-link"
+                  onClick={(e) => { e.stopPropagation(); setDiag({ domain: item.domain, port: 443 }) }}>
+                  🔍 {t('renewal.diagnose')}
+                </button>
+              )}
             </div>
 
             <div
@@ -74,6 +85,11 @@ export default function RenewalAdvice() {
           </div>
         )
       })}
+
+      {/* Tanılama modalı (envanter ile ortak) — backend izlenen domainlere açık */}
+      {diag && (
+        <DiagnosticsModal domain={diag.domain} port={diag.port} onClose={() => setDiag(null)} />
+      )}
     </div>
   )
 }

@@ -978,6 +978,14 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .renewal-message { color: var(--text); margin-bottom: 10px; line-height: 1.5; }
 .renewal-action { font-size: .88em; background: #f4f4f4; border-radius: 6px; padding: 8px 12px; }
 .renewal-action code { font-family: 'Courier New', monospace; color: #c0392b; }
+/* "Sorunu tanılamak için tıklayınız" — renewal-action altında derin tanılama linki */
+.renewal-diagnose-link {
+  display: inline-flex; align-items: center; gap: 6px; margin-top: 8px;
+  background: none; border: none; padding: 0; cursor: pointer;
+  font-size: .85em; font-weight: 600; color: var(--primary, #2563eb);
+  font-family: inherit;
+}
+.renewal-diagnose-link:hover { text-decoration: underline; }
 
 /* ── Expiry stamp (right column) ─────────────────────── */
 .renewal-expiry-stamp {

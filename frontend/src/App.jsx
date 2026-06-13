@@ -839,7 +839,7 @@ export default function App() {
             {tab === 'renewal' && (
               <div className="tab-content active">
                 <h2>{t('app.renewalTitle')}</h2>
-                <RenewalAdvice />
+                <RenewalAdvice onSelectDomain={(d) => setModalCert(certs.find(c => c.domain === d) ?? { domain: d })} />
               </div>
             )}
 

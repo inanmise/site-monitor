@@ -277,6 +277,25 @@ class AdminControllerTest {
     }
 
     @Test
+    @DisplayName("POST /api/admin/diagnostics as USER on MONITORED domain returns 200 (izlenen domain açık)")
+    void runDiagnostics_asUser_monitoredDomain_returns200() throws Exception {
+        com.certmonitor.model.CertificateInventory monitored = new com.certmonitor.model.CertificateInventory();
+        monitored.setDomain("example.com");
+        when(inventoryRepo.findByDomain("example.com")).thenReturn(Optional.of(monitored));
+        when(diagnosticsService.diagnose("example.com", 443)).thenReturn(Map.of(
+                "domain", "example.com", "port", 443,
+                "combos", List.of(Map.of("id", "direct+browser", "status", "ok"))
+        ));
+
+        mvc.perform(post("/api/admin/diagnostics")
+                        .session(userSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"domain\":\"example.com\",\"port\":443}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.combos[0].id").value("direct+browser"));
+    }
+
+    @Test
     @DisplayName("POST /api/admin/diagnostics with invalid domain returns 400")
     void runDiagnostics_invalidDomain_returns400() throws Exception {
         mvc.perform(post("/api/admin/diagnostics")
