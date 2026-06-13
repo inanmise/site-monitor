@@ -1524,6 +1524,11 @@ export const TR = {
   'uptime.apply':              'Uygula',
   'uptime.noHttpHistory':      'Bu tarih aralığında HTTP kontrol kaydı yok',
   'uptime.noSslHistory':       'Bu tarih aralığında SSL kontrol kaydı yok',
+  'uptime.diagnose':           'Tanılama',
+  'uptime.sslError':           'Sertifikaya erişilemedi',
+  'uptime.incidents30d':       'kesinti (30g)',
+  'uptime.httpOk':             'HTTP sorunsuz (son 24s)',
+  'uptime.httpDown':           'HTTP sorunlu (son 24s)',
 
   'dp.today':     'Bugün',
   'dp.last7':     'Son 7 Gün',
@@ -3193,6 +3198,11 @@ export const EN = {
   'uptime.apply':              'Apply',
   'uptime.noHttpHistory':      'No HTTP check records for this date range',
   'uptime.noSslHistory':       'No SSL check records for this date range',
+  'uptime.diagnose':           'Diagnostics',
+  'uptime.sslError':           'Certificate unreachable',
+  'uptime.incidents30d':       'outages (30d)',
+  'uptime.httpOk':             'HTTP healthy (last 24h)',
+  'uptime.httpDown':           'HTTP issues (last 24h)',
 
   'dp.today':     'Today',
   'dp.last7':     'Last 7 Days',
