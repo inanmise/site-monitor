@@ -57,6 +57,12 @@ export default function App() {
   const [teamName, setTeamName] = useState(null)
   const [authChecked, setAuthChecked] = useState(false)
   const [tab, setTab] = useState('dashboard')
+  const [wrResetNonce, setWrResetNonce] = useState(0)
+  // Weekly Reports sekmesi zaten açıkken menüye tekrar tıklanınca açık raporu listeye döndür
+  const handleTabChange = (id) => {
+    if (id === 'weeklyreports' && tab === 'weeklyreports') setWrResetNonce((n) => n + 1)
+    setTab(id)
+  }
   const [certs, setCerts] = useState([])
   const [warnings, setWarnings] = useState([])
   const [stats, setStats] = useState(null)
@@ -459,7 +465,7 @@ export default function App() {
         </div>
       )}
 
-      <Nav activeTab={tab} onTabChange={setTab} username={user} teamName={teamName} systemRole={systemRole}
+      <Nav activeTab={tab} onTabChange={handleTabChange} username={user} teamName={teamName} systemRole={systemRole}
         onLogout={handleLogout} onChangePassword={() => setSelfPwdModalOpen(true)} />
 
       {selfPwdModalOpen && user && (
@@ -883,7 +889,7 @@ export default function App() {
 
             {tab === 'weeklyreports' && (
               <div className="tab-content active">
-                <WeeklyReportsPage systemRole={systemRole} teamId={teamId} teamName={teamName} />
+                <WeeklyReportsPage systemRole={systemRole} teamId={teamId} teamName={teamName} resetNonce={wrResetNonce} />
               </div>
             )}
 

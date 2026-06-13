@@ -295,7 +295,7 @@ function NumInput({ label, value, onChange, editable }) {
   )
 }
 
-export default function WeeklyReportsPage({ systemRole, teamId, teamName }) {
+export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetNonce }) {
   const t = useT()
   const { lang } = useLanguage()
   const toast = useToast()
@@ -368,6 +368,13 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName }) {
       window.removeEventListener('resize', close)
     }
   }, [])
+
+  // Menüye tekrar tıklanınca (App.jsx wrResetNonce artar) açık rapor varsa listeye dön.
+  // backToList yeniden kullanılır → kaydedilmemiş değişiklik onayı + kilit bırakma korunur.
+  useEffect(() => {
+    if (resetNonce > 0 && selectedId != null) backToList()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [resetNonce])
 
   // Yıl dropdown'ı: rapor bulunan yıllar (geriye dönük erişim) — takım değişince yenilenir
   const loadYears = useCallback(async () => {
