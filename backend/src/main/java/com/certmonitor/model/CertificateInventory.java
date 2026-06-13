@@ -97,4 +97,10 @@ public class CertificateInventory {
 
     private String createdAt;
     private String updatedAt;
+
+    // ── Liste yanıtı için takım isimleri (DB'de tutulmaz; listInventory doldurur) ──
+    // USER rolünde frontend tüm takım listesini çekemediğinden (kendi takımıyla
+    // filtreli) isimler burada sunucuda çözülür → her rolde SY/UG takım adı görünür.
+    @Transient private String teamName;
+    @Transient private String ugTeamName;
 }
