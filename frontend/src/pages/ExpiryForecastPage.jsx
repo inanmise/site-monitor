@@ -524,8 +524,8 @@ export default function ExpiryForecastPage() {
                 <ComposedChart data={chartData} margin={{ top: 4, right: 20, bottom: 0, left: 0 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#1e3a5f" />
                   <XAxis dataKey="label" tick={{ fill: '#64748b', fontSize: 10 }} interval={Math.max(0, Math.floor(chartRangeDays / 6))} />
-                  <YAxis yAxisId="left"  tick={{ fill: '#94a3b8', fontSize: 10 }} width={26} />
-                  <YAxis yAxisId="right" orientation="right" tick={{ fill: '#3b82f6', fontSize: 10 }} width={36} />
+                  <YAxis yAxisId="left"  allowDecimals={false} tick={{ fill: '#94a3b8', fontSize: 10 }} width={26} />
+                  <YAxis yAxisId="right" orientation="right" allowDecimals={false} tick={{ fill: '#3b82f6', fontSize: 10 }} width={36} />
                   <RTooltip content={<BarTooltip />} cursor={{ fill: 'rgba(255,255,255,.04)' }} />
                   <Bar yAxisId="left" dataKey="critical" stackId="s" fill="#dc2626" name="Critical" />
                   <Bar yAxisId="left" dataKey="high"     stackId="s" fill="#ea580c" name="High" />
