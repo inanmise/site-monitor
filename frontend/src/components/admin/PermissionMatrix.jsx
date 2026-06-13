@@ -4,7 +4,7 @@ import { useT } from '../../i18n/index.jsx'
 import { useDialog } from '../ui/Dialog.jsx'
 import { useToast } from '../ui/Toast.jsx'
 import { usePermissions } from '../../contexts/PermissionsProvider.jsx'
-import { ShieldCheck, Lock, Eye, Pencil, Zap, RotateCcw } from 'lucide-react'
+import { ShieldCheck, Lock, Eye, Pencil, Zap, RotateCcw, ChevronDown } from 'lucide-react'
 
 const ROLES = [
   { key: 'ADMIN',      colorClass: 'perm-role-admin' },
@@ -29,6 +29,16 @@ export default function PermissionMatrix() {
   const [grants, setGrants]   = useState([])
   const [loading, setLoading] = useState(true)
   const [lastUpdate, setLastUpdate] = useState(null)
+  // Akordiyon: varsayılan yalnız "certificates" (Sertifika Yönetimi) açık
+  const [openGroups, setOpenGroups] = useState(() => new Set(['certificates']))
+
+  function toggleGroup(group) {
+    setOpenGroups(prev => {
+      const next = new Set(prev)
+      if (next.has(group)) next.delete(group); else next.add(group)
+      return next
+    })
+  }
 
   useEffect(() => { load() }, [])
 
@@ -182,14 +192,22 @@ export default function PermissionMatrix() {
                 {t('perm.loading')}
               </td></tr>
             )}
-            {!loading && grouped.map(([groupName, items]) => (
+            {!loading && grouped.map(([groupName, items]) => {
+              const open = openGroups.has(groupName)
+              return (
               <Fragment key={groupName}>
-                <tr className="perm-group-row">
+                <tr className={`perm-group-row${open ? ' is-open' : ''}`}>
                   <td colSpan={1 + ROLES.length * ACTIONS.length}>
-                    {t(`perm.group.${groupName}`)}
+                    <button type="button" className="perm-group-toggle"
+                      onClick={() => toggleGroup(groupName)} aria-expanded={open}>
+                      <ChevronDown size={14}
+                        className={`perm-group-chevron${open ? '' : ' perm-group-chevron-closed'}`} />
+                      <span className="perm-group-label">{t(`perm.group.${groupName}`)}</span>
+                      <span className="perm-group-count">{items.length}</span>
+                    </button>
                   </td>
                 </tr>
-                {items.map(item => (
+                {open && items.map(item => (
                   <tr key={item.resource_key}>
                     <td className="perm-feature-cell">
                       <strong>{item.resource_key}</strong>
@@ -232,7 +250,8 @@ export default function PermissionMatrix() {
                   </tr>
                 ))}
               </Fragment>
-            ))}
+              )
+            })}
           </tbody>
         </table>
       </div>

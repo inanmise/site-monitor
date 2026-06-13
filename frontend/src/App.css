@@ -6274,10 +6274,18 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .perm-table-wrap {
   border: 1px solid var(--border);
   border-radius: 8px;
-  overflow-x: auto;
+  overflow: auto;                       /* hem yatay (geniş matris) hem dikey kaydırma */
+  max-height: calc(100vh - 260px);      /* tablo kendi içinde kaysın → başlık sabit kalabilsin */
+  min-height: 320px;
 }
 
 .perm-matrix { width: 100%; border-collapse: separate; border-spacing: 0; table-layout: auto; }
+
+/* Kolon başlıkları (rol adları + aksiyon alt-başlıkları) scroll sırasında tepede sabit kalsın.
+   İki başlık satırı da sticky: 1. satır top:0, 2. satır 1. satırın altına (42px). */
+.perm-matrix thead th { position: sticky; z-index: 2; }
+.perm-matrix thead tr:first-child th { top: 0; z-index: 3; height: 42px; box-sizing: border-box; }
+.perm-matrix thead tr:nth-child(2) th { top: 42px; }
 
 .perm-matrix thead tr:first-child th.perm-feature-col {
   background: var(--bg-surface);
@@ -6407,6 +6415,20 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
   border-bottom: 1px solid var(--border);
   text-align: left !important;
 }
+/* Akordiyon grup başlığı — tüm satır tıklanabilir aç/kapa */
+.perm-group-toggle {
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  background: none; border: none; cursor: pointer; padding: 0;
+  font: inherit; color: inherit; text-align: left;
+  text-transform: inherit; letter-spacing: inherit;
+}
+.perm-group-count {
+  margin-left: 6px; padding: 1px 7px; border-radius: 10px;
+  background: var(--border); color: var(--text-light);
+  font-size: .9em; font-weight: 700; letter-spacing: 0;
+}
+.perm-group-chevron { flex-shrink: 0; transition: transform .18s ease; }
+.perm-group-chevron-closed { transform: rotate(-90deg); }
 
 .perm-na {
   color: var(--text-light);
