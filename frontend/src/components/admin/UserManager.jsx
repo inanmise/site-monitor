@@ -145,7 +145,7 @@ export default function UserManager({ systemRole, ownTeamId, currentUsername, te
           options={[{ value: '', label: t('usr.allOrgRoles') },
             ...['PO', 'TECH', 'MANAGER', 'CLEVEL'].map(r => ({ value: r, label: r }))]} />
         {canSeeAllTeams && (
-          <SearchableSelect value={fTeam} onChange={setFTeam} placeholder={t('usr.allTeams')}
+          <SearchableSelect value={fTeam} onChange={setFTeam} placeholder={t('usr.allTeams')} searchThreshold={2}
             options={[{ value: '', label: t('usr.allTeams') },
               ...(teams || []).map(tm => ({ value: String(tm.id), label: tm.name }))]} />
         )}
@@ -302,6 +302,7 @@ export default function UserManager({ systemRole, ownTeamId, currentUsername, te
                     value={form.team_id}
                     onChange={v => setForm({ ...form, team_id: v ? Number(v) : '' })}
                     placeholder={t('usr.noTeam')}
+                    searchThreshold={2}
                     options={[
                       { value: '', label: t('usr.noTeam') },
                       ...(teams || []).map(team => ({ value: team.id, label: team.name })),

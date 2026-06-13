@@ -699,6 +699,7 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
                   onChange={v => f('team_id', v)}
                   placeholder={t('inv.selectTeam')}
                   disabled={!isAdmin}
+                  searchThreshold={2}
                   options={[
                     { value: '', label: t('inv.selectTeam') },
                     ...syTeams.map(team => ({ value: team.id, label: team.name })),
@@ -712,6 +713,7 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
                   value={form.ug_team_id}
                   onChange={v => f('ug_team_id', v)}
                   placeholder={t('inv.selectTeam')}
+                  searchThreshold={2}
                   options={[
                     { value: '', label: t('inv.selectTeam') },
                     ...ugTeams.map(team => ({ value: team.id, label: team.name })),
@@ -946,6 +948,7 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
                 <SearchableSelect
                   value={transferTeamId}
                   onChange={v => setTransferTeamId(v)}
+                  searchThreshold={2}
                   options={syTeams
                     .filter(team => String(team.id) !== transferUgTeamId)
                     .map(team => ({ value: team.id, label: team.name }))}
@@ -956,6 +959,7 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
                 <SearchableSelect
                   value={transferUgTeamId}
                   onChange={v => setTransferUgTeamId(v)}
+                  searchThreshold={2}
                   options={ugTeams
                     .filter(team => String(team.id) !== transferTeamId)
                     .map(team => ({ value: team.id, label: team.name }))}

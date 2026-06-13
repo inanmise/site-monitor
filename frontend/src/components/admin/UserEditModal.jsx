@@ -99,6 +99,7 @@ export default function UserEditModal({ user, teams, onClose, onSaved }) {
               value={form.team_id}
               onChange={v => setForm({ ...form, team_id: v ? Number(v) : '' })}
               placeholder={t('usr.noTeam')}
+              searchThreshold={2}
               options={[
                 { value: '', label: t('usr.noTeam') },
                 ...(teams || []).map(team => ({ value: team.id, label: team.name })),

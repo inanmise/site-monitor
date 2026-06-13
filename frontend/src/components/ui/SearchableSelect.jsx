@@ -2,7 +2,7 @@ import { useState, useRef, useEffect } from 'react'
 import { useT } from '../../i18n/index.jsx'
 
 export default function SearchableSelect({
-  value, onChange, options, placeholder, disabled = false, searchThreshold = 6
+  value, onChange, options, placeholder, disabled = false, searchThreshold = 4
 }) {
   const t = useT()
   const [open, setOpen] = useState(false)
@@ -11,8 +11,9 @@ export default function SearchableSelect({
 
   const selected = options.find(o => String(o.value) === String(value))
   const showSearch = options.length >= searchThreshold
+  // String(): sayısal/boş label (örn. yıl) düşük eşikte filtre yoluna girince patlamasın
   const filtered = showSearch
-    ? options.filter(o => o.label.toLowerCase().includes(query.toLowerCase()))
+    ? options.filter(o => String(o.label ?? '').toLowerCase().includes(query.toLowerCase()))
     : options
 
   useEffect(() => {
