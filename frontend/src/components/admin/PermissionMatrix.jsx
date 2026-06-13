@@ -29,15 +29,12 @@ export default function PermissionMatrix() {
   const [grants, setGrants]   = useState([])
   const [loading, setLoading] = useState(true)
   const [lastUpdate, setLastUpdate] = useState(null)
-  // Akordiyon: varsayılan yalnız "certificates" (Sertifika Yönetimi) açık
-  const [openGroups, setOpenGroups] = useState(() => new Set(['certificates']))
+  // Akordiyon: aynı anda tek grup açık — varsayılan "certificates" (Sertifika Yönetimi).
+  // Bir gruba tıklayınca o açılır, diğer açık olanlar kapanır; açık olana tıklayınca kapanır.
+  const [openGroup, setOpenGroup] = useState('certificates')
 
   function toggleGroup(group) {
-    setOpenGroups(prev => {
-      const next = new Set(prev)
-      if (next.has(group)) next.delete(group); else next.add(group)
-      return next
-    })
+    setOpenGroup(prev => (prev === group ? null : group))
   }
 
   useEffect(() => { load() }, [])
@@ -193,7 +190,7 @@ export default function PermissionMatrix() {
               </td></tr>
             )}
             {!loading && grouped.map(([groupName, items]) => {
-              const open = openGroups.has(groupName)
+              const open = openGroup === groupName
               return (
               <Fragment key={groupName}>
                 <tr className={`perm-group-row${open ? ' is-open' : ''}`}>
