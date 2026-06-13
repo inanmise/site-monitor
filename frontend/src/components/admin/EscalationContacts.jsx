@@ -1,8 +1,9 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { api } from '../../api/client'
 import { useDialog } from '../ui/Dialog.jsx'
 import { useT } from '../../i18n/index.jsx'
 import SearchableSelect from '../ui/SearchableSelect.jsx'
+import KebabMenu from '../ui/KebabMenu.jsx'
 
 const ROLES  = ['PO', 'TECH', 'MANAGER', 'CLEVEL']
 const LEVELS = ['WARNING', 'HIGH', 'CRITICAL']
@@ -22,6 +23,14 @@ export default function EscalationContacts({ teams = [], systemRole, isAdmin: is
   const [saving, setSaving] = useState(false)
   const [msg, setMsg]       = useState(null)
 
+  // İstemci-taraflı filtre + sayfalama (getContacts tüm listeyi döndürür)
+  const [q, setQ]         = useState('')
+  const [fRole, setFRole] = useState('')
+  const [fLevel, setFLevel] = useState('')
+  const [fTeam, setFTeam] = useState('')
+  const [page, setPage]   = useState(0)
+  const [size, setSize]   = useState(20)
+
   const teamMap = Object.fromEntries(teams.map(t => [t.id, t.name]))
   const userMap = Object.fromEntries(users.map(u => [String(u.id), u]))
 
@@ -31,6 +40,21 @@ export default function EscalationContacts({ teams = [], systemRole, isAdmin: is
   const levelLabelMap = {
     WARNING: t('ec.level.warning'), HIGH: t('ec.level.high'), CRITICAL: t('ec.level.critical'),
   }
+
+  const filteredContacts = useMemo(() => {
+    const needle = q.trim().toLowerCase()
+    return contacts.filter(c =>
+      (!needle || (c.name || '').toLowerCase().includes(needle) || (c.email || '').toLowerCase().includes(needle))
+      && (!fRole  || c.role === fRole)
+      && (!fLevel || c.min_alert_level === fLevel)
+      && (!fTeam  || String(c.team_id) === String(fTeam)))
+  }, [contacts, q, fRole, fLevel, fTeam])
+
+  const totalPages = Math.max(1, Math.ceil(filteredContacts.length / size))
+  const safePage   = Math.min(page, totalPages - 1)
+  const pagedContacts = filteredContacts.slice(safePage * size, safePage * size + size)
+
+  useEffect(() => { setPage(0) }, [q, fRole, fLevel, fTeam, size])
 
   useEffect(() => { load(); loadUsers() }, [])
 
@@ -112,6 +136,24 @@ export default function EscalationContacts({ teams = [], systemRole, isAdmin: is
         {canManage && <button className="btn btn-success" onClick={openAdd}>{t('ec.addBtn')}</button>}
       </div>
       {msg && <div className="alert-msg">{msg}</div>}
+
+      {/* Filtre çubuğu — ad/e-posta araması + Rol/Seviye/Takım */}
+      <div className="audit-filters">
+        <input className="audit-filter-input" placeholder={t('ec.searchPlaceholder')}
+          value={q} onChange={(e) => setQ(e.target.value)} />
+        <SearchableSelect value={fRole} onChange={setFRole} placeholder={t('ec.allRoles')}
+          options={[{ value: '', label: t('ec.allRoles') },
+            ...ROLES.map(r => ({ value: r, label: roleLabelMap[r] }))]} />
+        <SearchableSelect value={fLevel} onChange={setFLevel} placeholder={t('ec.allLevels')}
+          options={[{ value: '', label: t('ec.allLevels') },
+            ...LEVELS.map(l => ({ value: l, label: levelLabelMap[l] }))]} />
+        {isAdmin && teams.length > 0 && (
+          <SearchableSelect value={fTeam} onChange={setFTeam} placeholder={t('ec.allTeams')}
+            options={[{ value: '', label: t('ec.allTeams') },
+              ...teams.map(tm => ({ value: String(tm.id), label: tm.name }))]} />
+        )}
+      </div>
+
       <div className="admin-table-wrap">
         <table className="admin-table">
           <thead>
@@ -127,7 +169,12 @@ export default function EscalationContacts({ teams = [], systemRole, isAdmin: is
             </tr>
           </thead>
           <tbody>
-            {contacts.map((c) => (
+            {filteredContacts.length === 0 && (
+              <tr><td colSpan={8} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: 18 }}>
+                {t('ec.noResults')}
+              </td></tr>
+            )}
+            {pagedContacts.map((c) => (
               <tr key={c.id}>
                 <td>{c.name}</td>
                 <td>{c.email}</td>
@@ -137,13 +184,28 @@ export default function EscalationContacts({ teams = [], systemRole, isAdmin: is
                 <td>{c.webhook_url ? <span className="badge badge-ok">{c.webhook_type}</span> : '—'}</td>
                 <td><span className={c.active ? 'badge badge-ok' : 'badge badge-err'}>{c.active ? t('ec.active') : t('ec.inactive')}</span></td>
                 <td>
-                  {canManage && <button className="btn-sm btn-edit" onClick={() => openEdit(c)}>{t('ec.edit')}</button>}
-                  {canManage && <button className="btn-sm btn-del" onClick={() => del(c.id)}>{t('ec.delete')}</button>}
+                  <KebabMenu label={t('ec.colActions')} items={canManage ? [
+                    { label: t('ec.edit'), onClick: () => openEdit(c) },
+                    { label: t('ec.delete'), danger: true, onClick: () => del(c.id) },
+                  ] : []} />
                 </td>
               </tr>
             ))}
           </tbody>
         </table>
+      </div>
+
+      {/* Sayfa boyutu + sayfalama (istemci-taraflı) */}
+      <div className="audit-pagination">
+        <label style={{ marginRight: 'auto', display: 'flex', alignItems: 'center', gap: 6 }}>
+          {t('ec.perPage')}
+          <select className="audit-filter-input" value={size} onChange={(e) => setSize(Number(e.target.value))}>
+            {[20, 50, 100, 200].map(n => <option key={n} value={n}>{n}</option>)}
+          </select>
+        </label>
+        <button disabled={safePage === 0} onClick={() => setPage(safePage - 1)}>{t('app.prevPage')}</button>
+        <span>{t('ec.pageInfo', safePage + 1, totalPages, filteredContacts.length)}</span>
+        <button disabled={safePage + 1 >= totalPages} onClick={() => setPage(safePage + 1)}>{t('app.nextPage')}</button>
       </div>
 
       {modal !== null && (
