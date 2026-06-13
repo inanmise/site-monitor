@@ -862,7 +862,7 @@ export default function App() {
 
             {tab === 'permissions' && systemRole === 'ADMIN' && (
               <div className="tab-content active">
-                <h2>{t('app.permissionsTitle')}</h2>
+                {/* Başlık PermissionMatrix kendi header'ında (ikon + Reset) — çift başlık olmasın */}
                 <PermissionMatrix />
               </div>
             )}
