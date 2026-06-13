@@ -349,7 +349,7 @@ function CalendarHeatmap({ certs, t, onSelectDomain }) {
 
       {/* ── Gün detay modalı — o günün sertifikaları (genel bakış kartları gibi) ── */}
       {dayModal && (
-        <div className="modal-overlay" onClick={() => setDayModal(null)}>
+        <div className="modal-overlay" style={{ zIndex: 990 }} onClick={() => setDayModal(null)}>
           <div className="modal-box modal-wide" onClick={(e) => e.stopPropagation()}>
             <div className="modal-icon-hdr modal-icon-hdr--user">
               <div className="modal-icon-hdr-badge"><Calendar size={20} /></div>
@@ -360,7 +360,7 @@ function CalendarHeatmap({ certs, t, onSelectDomain }) {
             <div className="cards-container" style={{ padding: '0 18px 18px', maxHeight: '70vh', overflowY: 'auto' }}>
               {dayModal.certs.map((c) => (
                 <CertificateCard key={c.domain} cert={c}
-                  onClick={(d) => { setDayModal(null); onSelectDomain?.(d) }} />
+                  onClick={(d) => onSelectDomain?.(d)} />
               ))}
             </div>
           </div>
