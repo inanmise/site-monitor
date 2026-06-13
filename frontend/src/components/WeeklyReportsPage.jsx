@@ -4,6 +4,7 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import {
   Plus, Save, Send, CheckCircle, Undo2, Eye, Trash2, RefreshCcw, ArrowLeft, Menu, History, FilePenLine,
+  HelpCircle, ChevronDown,
 } from 'lucide-react'
 import { api, formatDate } from '../api/client'
 import { useT, useLanguage } from '../i18n/index.jsx'
@@ -314,6 +315,9 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
   const [reports, setReports] = useState([])
   const [loadingList, setLoadingList] = useState(true)
   const [selectedId, setSelectedId] = useState(null)
+  const [helpOpen, setHelpOpen] = useState(() => {
+    try { return localStorage.getItem('wr-help-open') === 'true' } catch { return false }
+  })
   const [report, setReport] = useState(null)      // full report (GET /{id})
   const [content, setContent] = useState(null)    // parsed content_json
   const [managerMissing, setManagerMissing] = useState(false)
@@ -950,6 +954,31 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
           )}
         </div>
       </div>
+
+      {/* ── "Nasıl girilir?" yardım kartı — kısa, açılır-kapanır (liste görünümünde) ── */}
+      {!selectedId && (
+        <div className={`wr-help${helpOpen ? ' is-open' : ''}`}>
+          <button type="button" className="wr-help-toggle"
+            onClick={() => { const n = !helpOpen; setHelpOpen(n); try { localStorage.setItem('wr-help-open', String(n)) } catch {} }}
+            aria-expanded={helpOpen}>
+            <HelpCircle size={15} />
+            <span className="wr-help-title">{t('wr.helpTitle')}</span>
+            <ChevronDown size={14} className="wr-help-chevron" />
+          </button>
+          {helpOpen && (
+            <div className="wr-help-body">
+              <ol className="wr-help-steps">
+                <li>{t('wr.helpStep1')}</li>
+                <li>{t('wr.helpStep2')}</li>
+                <li>{t('wr.helpStep3')}</li>
+                <li>{t('wr.helpStep4')}</li>
+                <li>{t('wr.helpStep5')}</li>
+              </ol>
+              <div className="wr-help-deadline">⏰ {t('wr.helpDeadline')}</div>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* ── Liste görünümü — hafta bazlı sıralı (backend hafta desc döner) ── */}
       {!selectedId && (
