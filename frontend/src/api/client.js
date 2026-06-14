@@ -193,6 +193,22 @@ export const api = {
     diagHistory: (domain) => request(`/admin/diagnostics/history?domain=${encodeURIComponent(domain)}`),
     diagHistoryDetail: (id) => request(`/admin/diagnostics/history/${id}`),
     clientIpDebug: () => request('/admin/client-ip-debug'),
+
+    // LDAP / Active Directory settings (admin-only Settings page)
+    getLdapSettings: () => request('/admin/ldap/settings'),
+    saveLdapSettings: (dto) => request('/admin/ldap/settings', { method: 'PUT', body: JSON.stringify(dto) }),
+    testLdap: () => request('/admin/ldap/test', { method: 'POST' }),
+    queryLdapUser: (username) => request('/admin/ldap/query-user', {
+      method: 'POST', body: JSON.stringify({ username }),
+    }),
+
+    // SMTP / outbound mail settings (admin-only Settings page)
+    getSmtpSettings: () => request('/admin/smtp/settings'),
+    saveSmtpSettings: (dto) => request('/admin/smtp/settings', { method: 'PUT', body: JSON.stringify(dto) }),
+    testSmtp: () => request('/admin/smtp/test', { method: 'POST' }),
+    sendSmtpTest: (recipient) => request('/admin/smtp/test-email', {
+      method: 'POST', body: JSON.stringify({ recipient }),
+    }),
     transferCertSy: (id, teamId) => request(`/admin/inventory/${id}/transfer`, {
       method: 'POST', body: JSON.stringify({ team_id: teamId }),
     }),

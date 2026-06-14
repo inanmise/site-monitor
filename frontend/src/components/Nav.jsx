@@ -236,6 +236,15 @@ export default function Nav({ activeTab, onTabChange, username, teamName, system
             style={{ left: userMenuPos.left, bottom: userMenuPos.bottom }}
           >
             <div className="sb-user-popover-hdr">{t('nav.userSettings')}</div>
+            {username === 'admin' && (
+              <button
+                className="sb-user-popover-item"
+                onClick={() => { setUserMenuOpen(false); onTabChange('settings') }}
+              >
+                <Settings size={14} />
+                <span>{t('nav.settings')}</span>
+              </button>
+            )}
             <button
               className="sb-user-popover-item"
               onClick={() => { setUserMenuOpen(false); onChangePassword?.() }}

@@ -16,6 +16,7 @@ import RenewalAdvice from './components/RenewalAdvice'
 import CertRenewalGuide from './components/CertRenewalGuide.jsx'
 import PasswordChangeModal from './components/admin/PasswordChangeModal.jsx'
 import AdminPanel from './components/admin/AdminPanel'
+import AdminSettings from './components/admin/AdminSettings'
 import PermissionMatrix from './components/admin/PermissionMatrix'
 import AlertHistory from './components/admin/AlertHistory'
 import InventoryManager from './components/admin/InventoryManager'
@@ -52,7 +53,7 @@ const VALID_TABS = new Set([
   'dashboard', 'all', 'domains', 'forecast', 'renewal', 'renewal-guide',
   'warnings', 'alerthistory', 'stats', 'weakalgo', 'weeklyreports',
   'health', 'uptime', 'port', 'dns', 'activity', 'myactivity', 'system',
-  'admin', 'permissions', 'sqlplayground', 'help',
+  'admin', 'permissions', 'sqlplayground', 'help', 'settings',
 ])
 function initialTabFromUrl() {
   try {
@@ -887,6 +888,13 @@ export default function App() {
               <div className="tab-content active">
                 {/* Başlık PermissionMatrix kendi header'ında (ikon + Reset) — çift başlık olmasın */}
                 <PermissionMatrix />
+              </div>
+            )}
+
+            {/* Uygulama ayarları — yalnız yerel bootstrap admin (username === 'admin') */}
+            {tab === 'settings' && user === 'admin' && (
+              <div className="tab-content active">
+                <AdminSettings />
               </div>
             )}
 
