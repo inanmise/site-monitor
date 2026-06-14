@@ -103,6 +103,13 @@ secret:
   smtpPassword: "REPLACE_WITH_GMAIL_APP_PASSWORD"
   emailFrom: "certmonitor01@gmail.com"
 
+  # Symmetric key (AES-GCM) for encrypting secrets the admin saves from the UI —
+  # the LDAP bind password and SMTP password. MUST be a stable, random value that
+  # stays the SAME across pods/restarts (otherwise saved secrets can't be decrypted).
+  # If left empty the app falls back to an insecure built-in dev key — set a real
+  # value (≥32 random chars) via --set or external-secrets before production use.
+  secretKey: "REPLACE_WITH_RANDOM_SECRET_KEY"
+
   # Corporate proxy auth (Basic). Leave empty for anonymous proxies.
   # Inject real values via --set or external-secrets; do NOT commit them.
   httpProxyUser: ""

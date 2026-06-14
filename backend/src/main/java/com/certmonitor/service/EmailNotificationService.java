@@ -6,9 +6,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.commonmark.ext.gfm.tables.TablesExtension;
 import org.commonmark.parser.Parser;
 import org.commonmark.renderer.html.HtmlRenderer;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.ByteArrayResource;
-import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.mail.javamail.MimeMessageHelper;
 import org.springframework.stereotype.Service;
 
@@ -33,17 +31,11 @@ import java.util.regex.Pattern;
 @RequiredArgsConstructor
 public class EmailNotificationService {
 
-    private final JavaMailSender mailSender;
-
-    @Value("${cert.monitor.email.enabled:false}")
-    private boolean enabled;
-
-    @Value("${cert.monitor.email.from:noreply@certmonitor}")
-    private String emailFrom;
-
-    // How long to wait before retrying a transient 421 rate-limit rejection (default 90 s)
-    @Value("${mail.send.retry-delay-ms:90000}")
-    private long retryDelayMs;
+    // Outbound mail is driven by the DB-backed SMTP settings (admin Settings page).
+    // When nothing is saved yet, SmtpSettingsService falls back to env spring.mail.*
+    // so behaviour is unchanged until the admin saves on the screen.
+    private final SmtpSettingsService smtpSettings;
+    private final SmtpMailService smtpMailService;
 
     /**
      * Tek thread'lik scheduler — SMTP 421 retry'ları için. Caller thread
@@ -70,7 +62,31 @@ public class EmailNotificationService {
         }
     }
 
-    public String getEmailFrom() { return emailFrom; }
+    // ── Current SMTP settings (DB-backed; SmtpSettingsService falls back to env) ──
+    private boolean isEnabled() {
+        return Boolean.TRUE.equals(smtpSettings.getOrDefaults().getEnabled());
+    }
+    private String currentFrom() {
+        String f = smtpSettings.getOrDefaults().getFromAddress();
+        return (f != null && !f.isBlank()) ? f : "noreply@certmonitor";
+    }
+    private String currentFromName() {
+        return smtpSettings.getOrDefaults().getFromName();
+    }
+    private long retry() {
+        Integer r = smtpSettings.getOrDefaults().getRetryDelayMs();
+        return r != null ? r.longValue() : 90000L;
+    }
+    private org.springframework.mail.javamail.JavaMailSenderImpl currentSender() {
+        return smtpMailService.currentSender();
+    }
+    private void applyFrom(MimeMessageHelper helper) throws Exception {
+        String name = currentFromName();
+        if (name != null && !name.isBlank()) helper.setFrom(currentFrom(), name);
+        else helper.setFrom(currentFrom());
+    }
+
+    public String getEmailFrom() { return currentFrom(); }
 
     public String sendAlert(String to, String subject, String message) {
         return sendAlert(to, subject, message, null, null, null, null, null);
@@ -79,15 +95,15 @@ public class EmailNotificationService {
     public String sendAlert(String to, String subject, String message,
                             String domain, String level, String alertType,
                             Integer daysRemaining, Map<String, Object> certContext) {
-        if (!enabled) {
+        if (!isEnabled()) {
             log.info("⚠ Email devre dışı — TO={} | KONU={}", to, subject);
             return "SKIPPED_DISABLED";
         }
         try {
-            MimeMessage msg = mailSender.createMimeMessage();
+            MimeMessage msg = currentSender().createMimeMessage();
             MimeMessageHelper helper = new MimeMessageHelper(msg, true, "UTF-8");
             helper.setTo(to);
-            helper.setFrom(emailFrom);
+            applyFrom(helper);
             helper.setSubject(subject);
             String html = buildAlertEmailHtml(subject, message, domain, level, alertType, daysRemaining, certContext);
             helper.setText(html, true);
@@ -101,15 +117,15 @@ public class EmailNotificationService {
     public String sendAlert(String[] toAddresses, String subject, String message,
                             String domain, String level, String alertType,
                             Integer daysRemaining, Map<String, Object> certContext) {
-        if (!enabled) {
+        if (!isEnabled()) {
             log.info("⚠ Email devre dışı — TO={} | KONU={}", Arrays.toString(toAddresses), subject);
             return "SKIPPED_DISABLED";
         }
         try {
-            MimeMessage msg = mailSender.createMimeMessage();
+            MimeMessage msg = currentSender().createMimeMessage();
             MimeMessageHelper helper = new MimeMessageHelper(msg, true, "UTF-8");
             helper.setTo(toAddresses);
-            helper.setFrom(emailFrom);
+            applyFrom(helper);
             helper.setSubject(subject);
             helper.setText(buildAlertEmailHtml(subject, message, domain, level,
                     alertType, daysRemaining, certContext), true);
@@ -124,15 +140,15 @@ public class EmailNotificationService {
                                       String domain, String alertType, String alertLevel,
                                       Integer daysRemaining, String resolvedBy, String resolvedAt,
                                       String createdAt, Map<String, Object> certContext) {
-        if (!enabled) {
+        if (!isEnabled()) {
             log.info("⚠ Email devre dışı — çözüm bildirimi: TO={}", Arrays.toString(toAddresses));
             return "SKIPPED_DISABLED";
         }
         try {
-            MimeMessage msg = mailSender.createMimeMessage();
+            MimeMessage msg = currentSender().createMimeMessage();
             MimeMessageHelper helper = new MimeMessageHelper(msg, true, "UTF-8");
             helper.setTo(toAddresses);
-            helper.setFrom(emailFrom);
+            applyFrom(helper);
             helper.setSubject(subject);
             helper.setText(buildResolutionEmailHtml(domain, alertType, alertLevel,
                     daysRemaining, resolvedBy, resolvedAt, createdAt, certContext), true);
@@ -145,7 +161,7 @@ public class EmailNotificationService {
 
     private String doSend(String to, MimeMessage msg, int attempt) {
         try {
-            mailSender.send(msg);
+            currentSender().send(msg);
             if (attempt == 1) {
                 log.info("✓ E-posta gönderildi: TO={}", to);
             } else {
@@ -159,7 +175,7 @@ public class EmailNotificationService {
             String errFull = err + " " + e.toString();
             if (attempt == 1 && errFull.contains("421")) {
                 log.warn("⏳ SMTP 421 rate limit — {}ms sonra async retry zamanlandı: TO={}",
-                        retryDelayMs, to);
+                        retry(), to);
                 // Caller'ı bloke etme; retry'ı ayrı thread'de tetikle.
                 mailRetryExecutor.schedule(
                     () -> {
@@ -168,7 +184,7 @@ public class EmailNotificationService {
                             log.error("✗ Async retry başarısız: TO={} | HATA={}", to, ex.getMessage());
                         }
                     },
-                    retryDelayMs, TimeUnit.MILLISECONDS);
+                    retry(), TimeUnit.MILLISECONDS);
                 // İlk denemenin sonucu: 421 ama retry zamanlandı.
                 return "QUEUED_RETRY: " + err;
             }
@@ -182,15 +198,15 @@ public class EmailNotificationService {
                                       String domain, String alertType, String alertLevel,
                                       Integer daysRemaining, String resolvedBy, String resolvedAt,
                                       String createdAt, Map<String, Object> certContext) {
-        if (!enabled) {
+        if (!isEnabled()) {
             log.info("⚠ Email devre dışı — çözüm bildirimi: TO={}", to);
             return "SKIPPED_DISABLED";
         }
         try {
-            MimeMessage msg = mailSender.createMimeMessage();
+            MimeMessage msg = currentSender().createMimeMessage();
             MimeMessageHelper helper = new MimeMessageHelper(msg, true, "UTF-8");
             helper.setTo(to);
-            helper.setFrom(emailFrom);
+            applyFrom(helper);
             helper.setSubject(subject);
             helper.setText(buildResolutionEmailHtml(domain, alertType, alertLevel,
                     daysRemaining, resolvedBy, resolvedAt, createdAt, certContext), true);
@@ -210,15 +226,15 @@ public class EmailNotificationService {
      */
     public String sendPasswordResetEmail(String toAddress, String username,
                                           String displayName, String tempPassword) {
-        if (!enabled) {
+        if (!isEnabled()) {
             log.info("⚠ Email devre dışı — şifre sıfırlama: TO={}", toAddress);
             return "SKIPPED_DISABLED";
         }
         try {
-            MimeMessage msg = mailSender.createMimeMessage();
+            MimeMessage msg = currentSender().createMimeMessage();
             MimeMessageHelper helper = new MimeMessageHelper(msg, true, "UTF-8");
             helper.setTo(toAddress);
-            helper.setFrom(emailFrom);
+            applyFrom(helper);
             helper.setSubject("[CertMonitor] Şifreniz sıfırlandı — lütfen güncelleyin");
             helper.setText(buildPasswordResetHtml(username, displayName, tempPassword), true);
             return doSend(toAddress, msg, 1);
@@ -257,15 +273,15 @@ public class EmailNotificationService {
     public String sendSystemAdminNetworkAlert(String to, String detectedAt,
                                               int networkErrors, int total,
                                               double errorRate, double threshold) {
-        if (!enabled) {
+        if (!isEnabled()) {
             log.info("⚠ Email devre dışı — admin network alert: TO={}", to);
             return "SKIPPED_DISABLED";
         }
         try {
-            MimeMessage msg = mailSender.createMimeMessage();
+            MimeMessage msg = currentSender().createMimeMessage();
             MimeMessageHelper helper = new MimeMessageHelper(msg, true, "UTF-8");
             helper.setTo(to);
-            helper.setFrom(emailFrom);
+            applyFrom(helper);
             helper.setSubject("[CertMonitor] ⚠ Ağ Erişim Sorunu Tespit Edildi");
             helper.setText(buildAdminNetworkAlertHtml(detectedAt, networkErrors, total,
                     errorRate, threshold), true);
@@ -279,15 +295,15 @@ public class EmailNotificationService {
     public String sendSystemAdminNetworkResolved(String to, String detectedAt, String resolvedAt,
                                                  long durationMs, int networkErrors, int total,
                                                  double errorRate) {
-        if (!enabled) {
+        if (!isEnabled()) {
             log.info("⚠ Email devre dışı — admin network resolved: TO={}", to);
             return "SKIPPED_DISABLED";
         }
         try {
-            MimeMessage msg = mailSender.createMimeMessage();
+            MimeMessage msg = currentSender().createMimeMessage();
             MimeMessageHelper helper = new MimeMessageHelper(msg, true, "UTF-8");
             helper.setTo(to);
-            helper.setFrom(emailFrom);
+            applyFrom(helper);
             helper.setSubject("[CertMonitor] ✅ Ağ Erişim Sorunu Çözüldü");
             helper.setText(buildAdminNetworkResolvedHtml(detectedAt, resolvedAt, durationMs,
                     networkErrors, total, errorRate), true);
@@ -1384,23 +1400,23 @@ public class EmailNotificationService {
      */
     /** Gönderen adres — haftalık rapor gönderim geçmişi kayıtları için. */
     /* package */ String fromAddress() {
-        return emailFrom;
+        return currentFrom();
     }
 
     public String sendHtml(String[] to, String[] cc, String subject, String html,
                            List<InlineImage> inline) {
-        if (!enabled) {
+        if (!isEnabled()) {
             log.info("⚠ Email devre dışı — TO={} CC={} | KONU={}",
                     Arrays.toString(to), Arrays.toString(cc != null ? cc : new String[0]), subject);
             return "SKIPPED_DISABLED";
         }
         try {
-            MimeMessage msg = mailSender.createMimeMessage();
+            MimeMessage msg = currentSender().createMimeMessage();
             MimeMessageHelper helper = new MimeMessageHelper(
                     msg, MimeMessageHelper.MULTIPART_MODE_MIXED_RELATED, "UTF-8");
             helper.setTo(to);
             if (cc != null && cc.length > 0) helper.setCc(cc);
-            helper.setFrom(emailFrom);
+            applyFrom(helper);
             helper.setSubject(subject);
             helper.setText(html, true);
             if (inline != null) {

@@ -22,8 +22,10 @@ public class AppUser {
     @Column(nullable = false, unique = true)
     private String username;
 
+    /** BCrypt hash for LOCAL accounts. NULL for LDAP users — they authenticate
+     *  against AD, so no password is ever stored for them. */
     @JsonIgnore
-    @Column(name = "password_hash", nullable = false)
+    @Column(name = "password_hash")
     private String passwordHash;
 
     private String displayName;
@@ -45,6 +47,12 @@ public class AppUser {
 
     @Column(nullable = false)
     private Boolean active = true;
+
+    /** Authentication source: "LOCAL" (BCrypt password) or "LDAP" (AD bind).
+     *  Null (legacy rows) is treated as LOCAL. LDAP users carry a sentinel
+     *  password hash that never matches, so they can only sign in via AD. */
+    @Column(name = "auth_source", length = 20)
+    private String authSource = "LOCAL";
 
     /** ISO-UTC timestamp until which this account is temporarily locked. */
     @Column(name = "lockout_until", length = 30)

@@ -4,12 +4,15 @@ import com.certmonitor.model.LdapSettings;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
+import javax.naming.AuthenticationException;
 import javax.naming.Context;
 import javax.naming.NamingEnumeration;
 import javax.naming.NamingException;
 import javax.naming.PartialResultException;
 import javax.naming.directory.Attribute;
 import javax.naming.directory.Attributes;
+import javax.naming.directory.DirContext;
+import javax.naming.directory.InitialDirContext;
 import javax.naming.directory.SearchControls;
 import javax.naming.directory.SearchResult;
 import javax.naming.ldap.InitialLdapContext;
@@ -35,6 +38,7 @@ import java.util.Hashtable;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 /**
  * Runtime LDAP / Active Directory operations driven entirely by the current
@@ -91,9 +95,9 @@ public class LdapDirectoryService {
      * set of the first match plus resolved group memberships — the inspector the
      * admin uses to decide field mappings before provisioning is wired in.
      */
-    public Map<String, Object> queryUser(String username) {
-        if (username == null || username.isBlank()) {
-            throw new IllegalArgumentException("Kullanıcı adı boş olamaz");
+    public Map<String, Object> queryUser(String value, String searchAttr) {
+        if (value == null || value.isBlank()) {
+            throw new IllegalArgumentException("Arama değeri boş olamaz");
         }
         LdapSettings s = settingsService.getOrDefaults();
         if (s.getHost() == null || s.getHost().isBlank()) {
@@ -104,7 +108,7 @@ public class LdapDirectoryService {
         }
 
         Map<String, Object> out = new LinkedHashMap<>();
-        String filter = buildUserFilter(s, username.trim());
+        String filter = buildUserFilter(s, value.trim(), searchAttr);
         try (LdapConn conn = open(s)) {
             SearchControls controls = new SearchControls();
             controls.setSearchScope(SearchControls.SUBTREE_SCOPE);
@@ -132,6 +136,123 @@ public class LdapDirectoryService {
         } catch (Exception e) {
             throw new IllegalStateException(rootMessage(e), e);
         }
+    }
+
+    /** Identity returned by a successful {@link #authenticate}. */
+    public record LdapUser(String username, String dn, String displayName, String email) {}
+
+    /**
+     * Verifies AD credentials: finds the user with the service account, then binds
+     * as that user's DN with the supplied password. Returns the user's directory
+     * identity on success, {@link Optional#empty()} on wrong password / user-not-found.
+     * Throws {@link IllegalStateException} on configuration / connectivity errors.
+     */
+    public Optional<LdapUser> authenticate(String username, String rawPassword) {
+        if (username == null || username.isBlank() || rawPassword == null || rawPassword.isEmpty()) {
+            return Optional.empty();
+        }
+        LdapSettings s = settingsService.getOrDefaults();
+        if (s.getHost() == null || s.getHost().isBlank()
+                || s.getBaseDn() == null || s.getBaseDn().isBlank()) {
+            throw new IllegalStateException("LDAP yapılandırması eksik (host/base DN)");
+        }
+
+        String userDn;
+        Map<String, Object> attrs;
+        String filter = buildUserFilter(s, username.trim(), null);
+        try (LdapConn conn = open(s)) {
+            SearchControls controls = new SearchControls();
+            controls.setSearchScope(SearchControls.SUBTREE_SCOPE);
+            controls.setCountLimit(2);
+            controls.setTimeLimit(READ_TIMEOUT_MS);
+            controls.setReturningAttributes(null);
+            SearchResult first = firstResult(conn.ctx.search(s.getBaseDn(), filter, controls));
+            if (first == null) return Optional.empty(); // not in directory
+            userDn = first.getNameInNamespace();
+            attrs = readAttributes(first.getAttributes());
+        } catch (RuntimeException re) {
+            throw re;
+        } catch (Exception e) {
+            throw new IllegalStateException(rootMessage(e), e);
+        }
+
+        if (!bindAs(s, userDn, rawPassword)) {
+            return Optional.empty(); // wrong password
+        }
+        String sam = firstAttr(attrs, s.getUserAttribute(), username.trim());
+        String display = firstAttr(attrs, s.getDisplayAttribute(), null);
+        String email = firstAttr(attrs, s.getEmailAttribute(), null);
+        return Optional.of(new LdapUser(sam, userDn, display, email));
+    }
+
+    /** Binds as a specific user DN to verify their password. true=ok, false=bad credentials. */
+    private boolean bindAs(LdapSettings s, String userDn, String password) {
+        boolean startTls = Boolean.TRUE.equals(s.getStartTls());
+        boolean ldaps = Boolean.TRUE.equals(s.getUseLdaps()) && !startTls;
+        boolean customTls = ldaps && needsCustomTls(s);
+
+        Hashtable<String, Object> env = new Hashtable<>();
+        env.put(Context.INITIAL_CONTEXT_FACTORY, CTX_FACTORY);
+        env.put(Context.PROVIDER_URL, url(s));
+        env.put("com.sun.jndi.ldap.connect.timeout", String.valueOf(CONNECT_TIMEOUT_MS));
+        env.put("com.sun.jndi.ldap.read.timeout", String.valueOf(READ_TIMEOUT_MS));
+
+        DirContext ctx = null;
+        StartTlsResponse tls = null;
+        try {
+            if (ldaps) {
+                env.put(Context.SECURITY_PROTOCOL, "ssl");
+                if (customTls) {
+                    ConfigurableSslSocketFactory.set(buildSslSocketFactory(s));
+                    env.put("java.naming.ldap.factory.socket", ConfigurableSslSocketFactory.class.getName());
+                }
+            }
+            if (startTls) {
+                LdapContext lc = new InitialLdapContext(env, null);
+                tls = (StartTlsResponse) lc.extendedOperation(new StartTlsRequest());
+                if (Boolean.TRUE.equals(s.getSkipCertVerification())) {
+                    tls.setHostnameVerifier(ACCEPT_ALL_HOSTS);
+                    tls.negotiate(buildSslSocketFactory(s));
+                } else if (s.getCaCertPem() != null && !s.getCaCertPem().isBlank()) {
+                    tls.negotiate(buildSslSocketFactory(s));
+                } else {
+                    tls.negotiate();
+                }
+                lc.addToEnvironment(Context.SECURITY_AUTHENTICATION, "simple");
+                lc.addToEnvironment(Context.SECURITY_PRINCIPAL, userDn);
+                lc.addToEnvironment(Context.SECURITY_CREDENTIALS, password);
+                lc.reconnect(null); // throws AuthenticationException on bad creds
+                ctx = lc;
+            } else {
+                env.put(Context.SECURITY_AUTHENTICATION, "simple");
+                env.put(Context.SECURITY_PRINCIPAL, userDn);
+                env.put(Context.SECURITY_CREDENTIALS, password);
+                ctx = new InitialDirContext(env);
+            }
+            return true;
+        } catch (AuthenticationException ae) {
+            return false;
+        } catch (Exception e) {
+            throw new IllegalStateException(rootMessage(e), e);
+        } finally {
+            if (tls != null) try { tls.close(); } catch (Exception ignored) {}
+            if (ctx != null) try { ctx.close(); } catch (Exception ignored) {}
+            if (customTls) ConfigurableSslSocketFactory.clear();
+        }
+    }
+
+    /** Case-insensitive single-value attribute read from a {@link #readAttributes} map. */
+    private static String firstAttr(Map<String, Object> attrs, String name, String fallback) {
+        if (attrs == null || name == null) return fallback;
+        for (Map.Entry<String, Object> e : attrs.entrySet()) {
+            if (e.getKey().equalsIgnoreCase(name)) {
+                Object v = e.getValue();
+                String val = (v instanceof List<?> list && !list.isEmpty())
+                        ? String.valueOf(list.get(0)) : String.valueOf(v);
+                if (val != null && !val.isBlank() && !"null".equals(val)) return val;
+            }
+        }
+        return fallback;
     }
 
     // ── Connection handling ──────────────────────────────────────────────────
@@ -236,9 +357,30 @@ public class LdapDirectoryService {
 
     // ── Search helpers ─────────────────────────────────────────────────────────
 
-    private String buildUserFilter(LdapSettings s, String username) {
-        String esc = escapeFilter(username);
+    /**
+     * Builds the user search filter.
+     * <ul>
+     *   <li>{@code searchAttr == "_raw_"} → {@code value} is used as a raw LDAP filter.</li>
+     *   <li>{@code searchAttr} given (mail/cn/displayName/…) → {@code (&(<baseFilter>)(<attr>=<value>))}.</li>
+     *   <li>blank → configured {@code userAttribute} / {{username}} template (default behaviour).</li>
+     * </ul>
+     */
+    private String buildUserFilter(LdapSettings s, String value, String searchAttr) {
+        if ("_raw_".equals(searchAttr)) {
+            return value; // admin-supplied raw LDAP filter
+        }
+        String esc = escapeFilter(value);
         String base = s.getUserSearchFilter();
+
+        if (searchAttr != null && !searchAttr.isBlank()) {
+            String inner = "(" + searchAttr + "=" + esc + ")";
+            // Combine with a plain base filter (skip when base is a {{username}} template).
+            if (base != null && !base.isBlank() && !base.contains("{{username}}")) {
+                return "(&" + base + inner + ")";
+            }
+            return inner;
+        }
+
         if (base != null && base.contains("{{username}}")) {
             return base.replace("{{username}}", esc);
         }

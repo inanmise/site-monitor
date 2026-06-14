@@ -78,11 +78,14 @@ public class LdapAdminController {
     public ResponseEntity<Map<String, Object>> queryUser(
             @RequestBody Map<String, Object> body, HttpSession session, HttpServletRequest request) {
         requireBootstrapAdmin(session);
-        String username = body.get("username") != null ? body.get("username").toString().trim() : "";
+        // Accept {value, attr}; fall back to legacy {username}.
+        Object rawVal = body.get("value") != null ? body.get("value") : body.get("username");
+        String value = rawVal != null ? rawVal.toString().trim() : "";
+        String attr = body.get("attr") != null ? body.get("attr").toString().trim() : null;
         auditService.recordAction("LDAP_QUERY_USER", session, request,
-                "LDAP", username, null);
+                "LDAP", value, attr != null ? "{\"attr\":\"" + attr + "\"}" : null);
         try {
-            Map<String, Object> result = directoryService.queryUser(username);
+            Map<String, Object> result = directoryService.queryUser(value, attr);
             return ok(Map.of("data", result));
         } catch (Exception e) {
             // Diagnostic tool: surface the failure inline rather than as a generic 500.

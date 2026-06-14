@@ -240,6 +240,8 @@ public class SchedulerService {
                 + "(SELECT r.team_id FROM weekly_reports r WHERE r.id = i.report_id) "
                 + "WHERE i.team_id IS NULL");
         patch("ALTER TABLE escalation_contacts ADD COLUMN team_id INTEGER");
+        // LDAP users carry no app password → password_hash must allow NULL on existing tables.
+        patch("ALTER TABLE app_users ALTER COLUMN password_hash DROP NOT NULL");
         // Widen varchar(255) columns to TEXT — markdown editor / long descriptions can overflow
         patch("ALTER TABLE certificate_inventory ALTER COLUMN change_description TYPE TEXT");
         patch("ALTER TABLE certificate_inventory ALTER COLUMN description TYPE TEXT");

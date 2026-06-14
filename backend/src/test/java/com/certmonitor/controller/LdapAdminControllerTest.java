@@ -98,7 +98,7 @@ class LdapAdminControllerTest {
     @Test
     @DisplayName("POST /query-user returns attributes on success")
     void queryUser_success() throws Exception {
-        when(directoryService.queryUser("erdi"))
+        when(directoryService.queryUser("erdi", null))
                 .thenReturn(Map.of("found", true, "dn", "CN=Erdi"));
         mvc.perform(post("/api/admin/ldap/query-user")
                         .session(bootstrapAdmin())
@@ -112,7 +112,7 @@ class LdapAdminControllerTest {
     @Test
     @DisplayName("POST /query-user surfaces failures inline (200, success=false)")
     void queryUser_failureInline() throws Exception {
-        when(directoryService.queryUser("bad"))
+        when(directoryService.queryUser("bad", null))
                 .thenThrow(new IllegalStateException("LDAP unreachable"));
         mvc.perform(post("/api/admin/ldap/query-user")
                         .session(bootstrapAdmin())

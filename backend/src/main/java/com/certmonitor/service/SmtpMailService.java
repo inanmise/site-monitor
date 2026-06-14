@@ -97,6 +97,15 @@ public class SmtpMailService {
         return out;
     }
 
+    /**
+     * JavaMailSenderImpl built from the current effective SMTP settings — used by the
+     * real notification pipeline (EmailNotificationService) so all outbound mail honours
+     * the admin Settings screen. Falls back to env config when nothing is saved.
+     */
+    public JavaMailSenderImpl currentSender() {
+        return buildSender(settingsService.getOrDefaults());
+    }
+
     // ── internals ────────────────────────────────────────────────────────────
 
     private JavaMailSenderImpl buildSender(SmtpSettings s) {

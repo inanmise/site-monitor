@@ -139,6 +139,48 @@ class UserServiceTest {
         assertThat(service.authenticate("nobody", "any")).isEmpty();
     }
 
+    @Test
+    @DisplayName("authenticate: LDAP user (null password hash) never matches local auth")
+    void authenticate_nullHash_returnsEmpty() {
+        AppUser ldapUser = user("ldapuser", null);
+        when(userRepo.findByUsernameAndActiveTrue("ldapuser")).thenReturn(Optional.of(ldapUser));
+        assertThat(service.authenticate("ldapuser", "anything")).isEmpty();
+    }
+
+    // ── provisionLdapUser ─────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("provisionLdapUser: new AD user → USER, no team, NULL password, authSource LDAP")
+    void provisionLdapUser_new_noPasswordStored() {
+        when(userRepo.findByUsername("n64954")).thenReturn(Optional.empty());
+
+        AppUser u = service.provisionLdapUser("n64954", "Erdi İnanmış", "erdi@akbank.com");
+
+        assertThat(u.getUsername()).isEqualTo("n64954");
+        assertThat(u.getSystemRole()).isEqualTo("USER");
+        assertThat(u.getTeamId()).isNull();
+        assertThat(u.getAuthSource()).isEqualTo("LDAP");
+        assertThat(u.getPasswordHash()).isNull();   // no app password for LDAP users
+        assertThat(u.getDisplayName()).isEqualTo("Erdi İnanmış");
+        assertThat(u.getEmail()).isEqualTo("erdi@akbank.com");
+    }
+
+    @Test
+    @DisplayName("provisionLdapUser: existing user → returned and display/email refreshed, still no password")
+    void provisionLdapUser_existing_refreshes() {
+        AppUser existing = user("n64954", null);
+        existing.setAuthSource("LDAP");
+        existing.setSystemRole("USER");
+        existing.setDisplayName("Old Name");
+        when(userRepo.findByUsername("n64954")).thenReturn(Optional.of(existing));
+
+        AppUser u = service.provisionLdapUser("n64954", "New Name", "new@akbank.com");
+
+        assertThat(u.getDisplayName()).isEqualTo("New Name");
+        assertThat(u.getEmail()).isEqualTo("new@akbank.com");
+        assertThat(u.getPasswordHash()).isNull();
+    }
+
     // ── checkLockout ──────────────────────────────────────────────────────────
 
     @Test

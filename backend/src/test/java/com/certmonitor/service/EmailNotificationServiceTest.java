@@ -8,8 +8,8 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
-import org.springframework.mail.javamail.JavaMailSender;
-import org.springframework.test.util.ReflectionTestUtils;
+import com.certmonitor.model.SmtpSettings;
+import org.springframework.mail.javamail.JavaMailSenderImpl;
 
 import java.util.Map;
 
@@ -20,16 +20,25 @@ import static org.mockito.Mockito.*;
 @MockitoSettings(strictness = Strictness.LENIENT)
 class EmailNotificationServiceTest {
 
-    @Mock
-    JavaMailSender mailSender;
+    @Mock SmtpSettingsService settingsService;
+    @Mock SmtpMailService smtpMailService;
+    @Mock JavaMailSenderImpl sender;
 
     private EmailNotificationService service;
 
     @BeforeEach
     void setUp() {
-        service = new EmailNotificationService(mailSender);
-        ReflectionTestUtils.setField(service, "enabled", false);
-        ReflectionTestUtils.setField(service, "emailFrom", "noreply@certmonitor");
+        service = new EmailNotificationService(settingsService, smtpMailService);
+        when(settingsService.getOrDefaults()).thenReturn(settings(false));
+    }
+
+    private SmtpSettings settings(boolean enabled) {
+        SmtpSettings s = new SmtpSettings();
+        s.setEnabled(enabled);
+        s.setFromAddress("noreply@certmonitor");
+        s.setFromName(null);
+        s.setRetryDelayMs(90000);
+        return s;
     }
 
     // ── Email disabled (SKIPPED) ───────────────────────────────────────────────
@@ -40,7 +49,7 @@ class EmailNotificationServiceTest {
         String result = service.sendAlert("to@test.com", "Test subject", "Test message");
 
         assertThat(result).isEqualTo("SKIPPED_DISABLED");
-        verify(mailSender, never()).send(any(jakarta.mail.internet.MimeMessage.class));
+        verify(smtpMailService, never()).currentSender();
     }
 
     @Test
@@ -51,7 +60,7 @@ class EmailNotificationServiceTest {
                 "Test message", "test.com", "WARNING", "EXPIRY", 25, null);
 
         assertThat(result).isEqualTo("SKIPPED_DISABLED");
-        verify(mailSender, never()).send(any(jakarta.mail.internet.MimeMessage.class));
+        verify(smtpMailService, never()).currentSender();
     }
 
     @Test
@@ -64,7 +73,7 @@ class EmailNotificationServiceTest {
                 25, "john.doe", "2026-05-16T10:00:00", "2026-05-01T08:00:00", null);
 
         assertThat(result).isEqualTo("SKIPPED_DISABLED");
-        verify(mailSender, never()).send(any(jakarta.mail.internet.MimeMessage.class));
+        verify(smtpMailService, never()).currentSender();
     }
 
     // ── Accessibility (erişim kesintisi) mailleri ──────────────────────────────
@@ -375,26 +384,28 @@ class EmailNotificationServiceTest {
     @Test
     @DisplayName("sendAlert with enabled flag calls mailSender.send")
     void sendAlert_enabled_callsMailSender() throws Exception {
-        ReflectionTestUtils.setField(service, "enabled", true);
+        when(settingsService.getOrDefaults()).thenReturn(settings(true));
+        when(smtpMailService.currentSender()).thenReturn(sender);
         jakarta.mail.internet.MimeMessage mockMsg = mock(jakarta.mail.internet.MimeMessage.class);
-        when(mailSender.createMimeMessage()).thenReturn(mockMsg);
+        when(sender.createMimeMessage()).thenReturn(mockMsg);
         when(mockMsg.getAllRecipients()).thenReturn(null);
-        doNothing().when(mailSender).send(mockMsg);
+        doNothing().when(sender).send(mockMsg);
 
         String result = service.sendAlert("to@test.com", "Test subject", "Message body");
 
         assertThat(result).isEqualTo("SENT");
-        verify(mailSender).send(mockMsg);
+        verify(sender).send(mockMsg);
     }
 
     @Test
     @DisplayName("sendResolutionAlert with enabled flag calls mailSender.send")
     void sendResolutionAlert_enabled_callsMailSender() throws Exception {
-        ReflectionTestUtils.setField(service, "enabled", true);
+        when(settingsService.getOrDefaults()).thenReturn(settings(true));
+        when(smtpMailService.currentSender()).thenReturn(sender);
         jakarta.mail.internet.MimeMessage mockMsg = mock(jakarta.mail.internet.MimeMessage.class);
-        when(mailSender.createMimeMessage()).thenReturn(mockMsg);
+        when(sender.createMimeMessage()).thenReturn(mockMsg);
         when(mockMsg.getAllRecipients()).thenReturn(null);
-        doNothing().when(mailSender).send(mockMsg);
+        doNothing().when(sender).send(mockMsg);
 
         String result = service.sendResolutionAlert(
                 "to@test.com", "Subject", "example.com", "EXPIRY", "WARNING",
@@ -403,14 +414,15 @@ class EmailNotificationServiceTest {
                         "deployment_status", "OK", "not_after", "2026-06-01T00:00:00"));
 
         assertThat(result).isEqualTo("SENT");
-        verify(mailSender).send(mockMsg);
+        verify(sender).send(mockMsg);
     }
 
     @Test
     @DisplayName("sendAlert returns FAILED when mailSender throws exception")
     void sendAlert_mailSenderThrows_returnsFailed() {
-        ReflectionTestUtils.setField(service, "enabled", true);
-        when(mailSender.createMimeMessage()).thenThrow(new RuntimeException("SMTP error"));
+        when(settingsService.getOrDefaults()).thenReturn(settings(true));
+        when(smtpMailService.currentSender()).thenReturn(sender);
+        when(sender.createMimeMessage()).thenThrow(new RuntimeException("SMTP error"));
 
         String result = service.sendAlert("to@test.com", "Subject", "Message");
 
@@ -420,8 +432,9 @@ class EmailNotificationServiceTest {
     @Test
     @DisplayName("sendResolutionAlert returns FAILED when mailSender throws exception")
     void sendResolutionAlert_mailSenderThrows_returnsFailed() {
-        ReflectionTestUtils.setField(service, "enabled", true);
-        when(mailSender.createMimeMessage()).thenThrow(new RuntimeException("SMTP unavailable"));
+        when(settingsService.getOrDefaults()).thenReturn(settings(true));
+        when(smtpMailService.currentSender()).thenReturn(sender);
+        when(sender.createMimeMessage()).thenThrow(new RuntimeException("SMTP unavailable"));
 
         String result = service.sendResolutionAlert(
                 "to@test.com", "Subject", "example.com", "EXPIRY", "WARNING",
@@ -433,11 +446,12 @@ class EmailNotificationServiceTest {
     @Test
     @DisplayName("sendAlert (plain) with enabled flag and REVOKED type includes correct HTML")
     void sendAlert_revokedType_emailEnabled_sends() throws Exception {
-        ReflectionTestUtils.setField(service, "enabled", true);
+        when(settingsService.getOrDefaults()).thenReturn(settings(true));
+        when(smtpMailService.currentSender()).thenReturn(sender);
         jakarta.mail.internet.MimeMessage mockMsg = mock(jakarta.mail.internet.MimeMessage.class);
-        when(mailSender.createMimeMessage()).thenReturn(mockMsg);
+        when(sender.createMimeMessage()).thenReturn(mockMsg);
         when(mockMsg.getAllRecipients()).thenReturn(null);
-        doNothing().when(mailSender).send(mockMsg);
+        doNothing().when(sender).send(mockMsg);
 
         String result = service.sendAlert(
                 "to@test.com", "[CertMonitor KRİTİK] revoked.com — İptal Edildi",

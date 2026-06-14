@@ -1437,6 +1437,18 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
   margin-top: -8px;
 }
 
+.lp-ldap-hint {
+  margin: 14px 0 0;
+  padding: 9px 12px;
+  font-size: .82rem;
+  color: #1d6fbf;
+  background: #eff6ff;
+  border: 1px solid #dbeafe;
+  border-radius: 6px;
+  text-align: center;
+}
+[data-theme="dark"] .lp-ldap-hint { color: #93c5fd; background: #0c2238; border-color: #1e3a5f; }
+
 /* Responsive */
 @media (max-width: 768px) {
   .lp-root { flex-direction: column; }
@@ -7880,7 +7892,8 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .ldap-attr-table select,
 .ldap-settings .admin-table input,
 .ldap-settings .admin-table select,
-.ldap-lookup-row input {
+.ldap-lookup-row input,
+.ldap-lookup-row select {
   background: var(--input-bg); color: var(--input-text);
   border: 1px solid var(--border); border-radius: 4px; font-size: .95em;
   padding: 9px; width: 100%;
@@ -7917,6 +7930,7 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .ldap-lookup { border-top: 2px solid var(--border); padding-top: 22px; }
 .ldap-lookup-row { display: flex; gap: 10px; align-items: stretch; max-width: 520px; margin-top: 8px; }
 .ldap-lookup-row input { flex: 1; }
+.ldap-lookup-attr { flex: 0 0 auto; max-width: 190px; padding: 9px; }
 .ldap-lookup-row .btn { display: inline-flex; align-items: center; gap: 7px; white-space: nowrap; }
 .ldap-lookup-error { background: #f8d7da; color: #721c24; }
 .ldap-lookup-result { margin-top: 16px; }

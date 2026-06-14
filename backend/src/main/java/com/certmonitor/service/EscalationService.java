@@ -44,18 +44,18 @@ public class EscalationService {
     private final NotificationLogRepository notificationLogRepo;
     private final LatestCheckRepository latestCheckRepo;
     private final TeamRepository teamRepo;
+    private final SmtpSettingsService smtpSettings;
 
     // Self-injection (@Lazy avoids circular dep) — needed to invoke @Async methods via proxy
     @Autowired @Lazy
     private EscalationService self;
 
-    // Delay between each domain's email batch during startup catch-up (default 3 s)
-    @Value("${mail.catch-up.inter-domain-delay-ms:3000}")
-    private long catchUpInterDomainDelayMs;
-
-    // Delay between emails to successive contacts within the same alert (default 5 s)
-    @Value("${mail.send.inter-contact-delay-ms:5000}")
-    private long interContactDelayMs;
+    // Inter-domain catch-up pacing now comes from the DB-backed SMTP settings
+    // (admin Settings → SMTP → Gelişmiş), falling back to the env default.
+    private long interDomainDelayMs() {
+        Integer v = smtpSettings.getOrDefaults().getInterDomainDelayMs();
+        return v != null ? v.longValue() : 3000L;
+    }
 
     private static final DateTimeFormatter ISO =
             DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
@@ -309,7 +309,7 @@ public class EscalationService {
             log.info("Startup catch-up: alert sent for {} [{}] — last was: {}",
                     event.getDomain(), event.getAlertLevel(), lastAlertTime.substring(0, 10));
             // Pace between domain batches to avoid flooding the SMTP gateway
-            try { Thread.sleep(catchUpInterDomainDelayMs); } catch (InterruptedException ie) {
+            try { Thread.sleep(interDomainDelayMs()); } catch (InterruptedException ie) {
                 Thread.currentThread().interrupt();
                 break;
             }
