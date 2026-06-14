@@ -19,7 +19,7 @@
 
   <!-- Register Spring Boot's %clr() colour macro so it's available even before
        SpringApplication.run() completes (e.g. during @SpringBootTest context init). -->
-  <conversionRule conversionWord="clr" converterClass="org.springframework.boot.logging.logback.ColorConverter"/>
+  <conversionRule conversionWord="clr" class="org.springframework.boot.logging.logback.ColorConverter"/>
 
   <!-- ── Bind Spring properties ──────────────────────────────────────────── -->
   <springProperty scope="context" name="LOG_DIR"
