@@ -7831,3 +7831,104 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
   display: flex; align-items: center; gap: 5px; font-size: .7em;
   color: var(--text-light);
 }
+
+/* ── Admin Settings: left menu + right pane ─────────────────────────────── */
+.settings-layout {
+  display: grid; grid-template-columns: 230px 1fr; gap: 22px;
+  align-items: start; margin-top: 4px;
+}
+.settings-menu {
+  display: flex; flex-direction: column; gap: 2px;
+  background: var(--bg-card); border: 1px solid var(--border);
+  border-radius: 10px; padding: 10px; position: sticky; top: 12px;
+}
+.settings-menu-header {
+  font-size: .68em; font-weight: 700; letter-spacing: .08em;
+  text-transform: uppercase; color: var(--text-light); opacity: .65;
+  padding: 6px 10px 10px;
+}
+.settings-menu-item {
+  text-align: left; padding: 9px 12px; border: none; background: transparent;
+  border-radius: 7px; cursor: pointer; font-size: .92em; color: var(--text);
+  transition: background .15s, color .15s;
+}
+.settings-menu-item:hover { background: rgba(0, 123, 255, .08); color: var(--primary); }
+.settings-menu-item.active { background: rgba(0, 123, 255, .12); color: var(--primary); font-weight: 700; }
+.settings-pane { min-width: 0; }
+@media (max-width: 760px) {
+  .settings-layout { grid-template-columns: 1fr; }
+  .settings-menu { position: static; flex-direction: row; flex-wrap: wrap; }
+}
+
+/* ── Admin Settings → LDAP / Active Directory ───────────────────────────── */
+.ldap-settings, .smtp-settings { max-width: 920px; }
+.ldap-settings .admin-section, .smtp-settings .admin-section { margin-bottom: 26px; }
+.ldap-subhdr {
+  font-size: 1.02em; font-weight: 700; margin: 0 0 10px;
+  padding-bottom: 6px; border-bottom: 1px solid var(--border);
+}
+.ldap-meta { font-size: .8em; color: var(--text-light); margin-top: 4px; }
+
+/* Inputs / selects / textarea — dark-mode aware */
+.ldap-settings .threshold-field input,
+.ldap-settings .threshold-field select,
+.ldap-settings .threshold-field textarea,
+.smtp-settings .threshold-field input,
+.smtp-settings .threshold-field select,
+.smtp-settings .threshold-field textarea,
+.ldap-attr-table input,
+.ldap-attr-table select,
+.ldap-settings .admin-table input,
+.ldap-settings .admin-table select,
+.ldap-lookup-row input {
+  background: var(--input-bg); color: var(--input-text);
+  border: 1px solid var(--border); border-radius: 4px; font-size: .95em;
+  padding: 9px; width: 100%;
+}
+.ldap-textarea { font-family: ui-monospace, Menlo, Consolas, monospace; resize: vertical; }
+.ldap-full { width: 100%; margin-bottom: 14px; }
+
+/* Toggles */
+.ldap-toggles { display: flex; flex-wrap: wrap; gap: 10px 22px; margin: 12px 0; }
+.ldap-toggle { display: flex; align-items: center; gap: 8px; font-size: .92em; cursor: pointer; }
+.ldap-toggle input { width: 16px; height: 16px; cursor: pointer; }
+.ldap-toggle-major { font-weight: 700; font-size: 1em; }
+
+/* Role mapping table */
+.ldap-settings .admin-table td { padding: 7px 10px; vertical-align: middle; }
+.ldap-settings .admin-table select { width: 100%; }
+.ldap-empty { text-align: center; color: var(--text-light); font-size: .88em; padding: 14px; }
+.ldap-add-map { margin-top: 10px; display: inline-flex; align-items: center; gap: 6px; }
+.btn-icon-danger {
+  display: inline-flex; align-items: center; justify-content: center;
+  padding: 6px; background: transparent; border: 1px solid var(--border);
+  border-radius: 4px; color: var(--danger); cursor: pointer;
+}
+.btn-icon-danger:hover { background: rgba(220, 53, 69, .1); }
+
+/* Save / test action row */
+.ldap-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin: 8px 0 30px; }
+.ldap-actions .btn { display: inline-flex; align-items: center; gap: 7px; }
+.ldap-test-result { font-size: .88em; font-weight: 600; }
+.ldap-test-result.ok { color: #16a34a; }
+.ldap-test-result.fail { color: var(--danger); }
+
+/* Directory user lookup */
+.ldap-lookup { border-top: 2px solid var(--border); padding-top: 22px; }
+.ldap-lookup-row { display: flex; gap: 10px; align-items: stretch; max-width: 520px; margin-top: 8px; }
+.ldap-lookup-row input { flex: 1; }
+.ldap-lookup-row .btn { display: inline-flex; align-items: center; gap: 7px; white-space: nowrap; }
+.ldap-lookup-error { background: #f8d7da; color: #721c24; }
+.ldap-lookup-result { margin-top: 16px; }
+.ldap-dn { font-size: .9em; margin-bottom: 10px; word-break: break-all; }
+.ldap-dn code, .ldap-attr-val code, .ldap-groups code { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: .92em; }
+.ldap-attr-table td { vertical-align: top; }
+.ldap-attr-name { font-family: ui-monospace, Menlo, Consolas, monospace; font-weight: 700; white-space: nowrap; }
+.ldap-attr-val { word-break: break-word; }
+.ldap-multi { margin: 0; padding-left: 18px; }
+.ldap-multi li { margin: 1px 0; }
+.ldap-groups { margin-top: 14px; font-size: .9em; }
+.ldap-groups ul { margin: 6px 0 0; padding-left: 18px; }
+.ldap-groups li { margin: 2px 0; word-break: break-all; }
+
+[data-theme="dark"] .ldap-lookup-error { background: #2d1519; color: #f87171; }
