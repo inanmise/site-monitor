@@ -71,7 +71,9 @@ public class UserService {
 
     public Optional<AppUser> authenticate(String username, String rawPassword) {
         return userRepo.findByUsernameAndActiveTrue(username)
-                .filter(u -> PASSWORD_ENCODER.matches(rawPassword, u.getPasswordHash()));
+                // LDAP users have no stored password (hash is null) → never match local auth.
+                .filter(u -> u.getPasswordHash() != null
+                        && PASSWORD_ENCODER.matches(rawPassword, u.getPasswordHash()));
     }
 
     /** True when an admin-issued temp password's 24-hour window has elapsed.
@@ -94,6 +96,51 @@ public class UserService {
 
     public Optional<Team> findTeamById(Long id) {
         return teamRepo.findById(id);
+    }
+
+    /**
+     * Finds an existing user by username, or provisions a new LDAP-authenticated one.
+     * AD users get a sentinel password hash (random UUID → never matches local auth),
+     * systemRole=USER, no team (team/attribute mapping is a later phase),
+     * authSource="LDAP". On re-login, refreshes displayName/email from AD.
+     */
+    @Transactional
+    public AppUser provisionLdapUser(String username, String displayName, String email) {
+        String uname = username.trim();
+        String now = now();
+        Optional<AppUser> existing = userRepo.findByUsername(uname);
+        if (existing.isPresent()) {
+            AppUser u = existing.get();
+            boolean changed = false;
+            if (displayName != null && !displayName.isBlank() && !displayName.equals(u.getDisplayName())) {
+                u.setDisplayName(displayName);
+                changed = true;
+            }
+            if (email != null && !email.isBlank() && !email.equals(u.getEmail())) {
+                u.setEmail(email);
+                changed = true;
+            }
+            if (changed) {
+                u.setUpdatedAt(now);
+                userRepo.save(u);
+            }
+            return u;
+        }
+        AppUser u = new AppUser();
+        u.setUsername(uname);
+        // LDAP users authenticate against AD — no password is stored in the app (null hash).
+        u.setPasswordHash(null);
+        u.setDisplayName((displayName != null && !displayName.isBlank()) ? displayName : uname);
+        u.setEmail(email);
+        u.setSystemRole("USER");
+        u.setTeamId(null);
+        u.setAuthSource("LDAP");
+        u.setActive(true);
+        u.setCreatedAt(now);
+        u.setUpdatedAt(now);
+        AppUser saved = userRepo.save(u);
+        log.info("Provisioned LDAP user '{}' (USER, no team)", uname);
+        return saved;
     }
 
     // ── Bootstrap ─────────────────────────────────────────────────────────────

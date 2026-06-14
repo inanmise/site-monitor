@@ -198,8 +198,8 @@ export const api = {
     getLdapSettings: () => request('/admin/ldap/settings'),
     saveLdapSettings: (dto) => request('/admin/ldap/settings', { method: 'PUT', body: JSON.stringify(dto) }),
     testLdap: () => request('/admin/ldap/test', { method: 'POST' }),
-    queryLdapUser: (username) => request('/admin/ldap/query-user', {
-      method: 'POST', body: JSON.stringify({ username }),
+    queryLdapUser: (value, attr) => request('/admin/ldap/query-user', {
+      method: 'POST', body: JSON.stringify({ value, attr }),
     }),
 
     // SMTP / outbound mail settings (admin-only Settings page)

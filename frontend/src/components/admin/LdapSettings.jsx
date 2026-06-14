@@ -18,6 +18,7 @@ export default function LdapSettings() {
   const [testResult, setTestResult] = useState(null)
 
   const [queryName, setQueryName] = useState('')
+  const [queryAttr, setQueryAttr] = useState('') // '' = configured userAttribute
   const [querying, setQuerying] = useState(false)
   const [queryResult, setQueryResult] = useState(null)
 
@@ -78,7 +79,7 @@ export default function LdapSettings() {
     if (!queryName.trim()) return
     setQuerying(true)
     setQueryResult(null)
-    const res = await api.admin.queryLdapUser(queryName.trim())
+    const res = await api.admin.queryLdapUser(queryName.trim(), queryAttr || null)
     setQuerying(false)
     setQueryResult(res)
   }
@@ -284,7 +285,17 @@ export default function LdapSettings() {
         <h4 className="ldap-subhdr">{t('ldap.lookupTitle')}</h4>
         <p className="section-desc">{t('ldap.lookupDesc')}</p>
         <div className="ldap-lookup-row">
-          <input type="text" value={queryName} placeholder={t('ldap.lookupPlaceholder')}
+          <select className="ldap-lookup-attr" value={queryAttr} onChange={(e) => setQueryAttr(e.target.value)}>
+            <option value="">{t('ldap.searchByDefault')}</option>
+            <option value="sAMAccountName">sAMAccountName</option>
+            <option value="mail">{t('ldap.searchByMail')}</option>
+            <option value="cn">cn</option>
+            <option value="displayName">{t('ldap.searchByDisplay')}</option>
+            <option value="userPrincipalName">userPrincipalName</option>
+            <option value="_raw_">{t('ldap.searchByRaw')}</option>
+          </select>
+          <input type="text" value={queryName}
+            placeholder={queryAttr === '_raw_' ? t('ldap.lookupRawPlaceholder') : t('ldap.lookupPlaceholder')}
             onChange={(e) => setQueryName(e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter') runQuery() }} />
           <button className="btn btn-primary" onClick={runQuery} disabled={querying || !queryName.trim()}>

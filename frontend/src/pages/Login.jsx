@@ -251,6 +251,8 @@ export default function Login({ onLogin }) {
                   : <><Lock size={16} /> {t('login.submit')}</>
                 }
               </button>
+
+              <p className="lp-ldap-hint">{t('login.ldapHint')}</p>
             </form>
           )}
 

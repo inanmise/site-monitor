@@ -38,6 +38,7 @@ class EscalationServiceTest {
     @Mock NotificationLogRepository notificationLogRepo;
     @Mock com.certmonitor.repository.LatestCheckRepository latestCheckRepo;
     @Mock com.certmonitor.repository.TeamRepository teamRepo;
+    @Mock SmtpSettingsService smtpSettings;
 
     private EscalationService service;
     private static final DateTimeFormatter ISO =
@@ -46,10 +47,13 @@ class EscalationServiceTest {
     @BeforeEach
     void setUp() {
         service = new EscalationService(alertEventRepo, thresholdRepo, contactRepo,
-                inventoryRepo, emailService, webhookService, new ObjectMapper(), notificationLogRepo, latestCheckRepo, teamRepo);
+                inventoryRepo, emailService, webhookService, new ObjectMapper(), notificationLogRepo, latestCheckRepo, teamRepo, smtpSettings);
 
         // Self-injection bypass for @Async dispatch in tests (runs synchronously)
         ReflectionTestUtils.setField(service, "self", service);
+
+        // SMTP settings (pacing delays) — return entity defaults.
+        when(smtpSettings.getOrDefaults()).thenReturn(new com.certmonitor.model.SmtpSettings());
 
         // Default active threshold
         AlertThreshold t = defaultThreshold();

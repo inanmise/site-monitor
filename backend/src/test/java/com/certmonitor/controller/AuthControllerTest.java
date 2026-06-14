@@ -46,6 +46,12 @@ class AuthControllerTest {
     @MockBean
     com.certmonitor.service.ClientIpResolver clientIpResolver;
 
+    @MockBean
+    com.certmonitor.service.LdapSettingsService ldapSettings;
+
+    @MockBean
+    com.certmonitor.service.LdapDirectoryService ldapDirectory;
+
     private AppUser testUser;
 
     @BeforeEach
@@ -81,6 +87,65 @@ class AuthControllerTest {
                 .andExpect(jsonPath("$.success").value(true))
                 .andExpect(jsonPath("$.username").value("testuser"))
                 .andExpect(jsonPath("$.must_change_password").value(false));
+    }
+
+    // ── LDAP login ──────────────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("LDAP enabled + AD success: provisions a USER and returns 200")
+    void login_ldapUser_success_returns200() throws Exception {
+        com.certmonitor.model.LdapSettings ls = new com.certmonitor.model.LdapSettings();
+        ls.setEnabled(true);
+        when(ldapSettings.getOrDefaults()).thenReturn(ls);
+        when(userService.findByUsername("aduser")).thenReturn(Optional.empty()); // no local row
+        when(ldapDirectory.authenticate("aduser", "adpass")).thenReturn(Optional.of(
+                new com.certmonitor.service.LdapDirectoryService.LdapUser(
+                        "aduser", "CN=aduser,DC=corp", "AD User", "ad@corp.com")));
+        AppUser provisioned = new AppUser();
+        provisioned.setId(99L);
+        provisioned.setUsername("aduser");
+        provisioned.setSystemRole("USER");
+        provisioned.setActive(true);
+        provisioned.setAuthSource("LDAP");
+        when(userService.provisionLdapUser("aduser", "AD User", "ad@corp.com")).thenReturn(provisioned);
+
+        mvc.perform(post("/api/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"username\":\"aduser\",\"password\":\"adpass\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.username").value("aduser"));
+    }
+
+    @Test
+    @DisplayName("LDAP enabled + wrong AD password: returns 401")
+    void login_ldapUser_badPassword_returns401() throws Exception {
+        com.certmonitor.model.LdapSettings ls = new com.certmonitor.model.LdapSettings();
+        ls.setEnabled(true);
+        when(ldapSettings.getOrDefaults()).thenReturn(ls);
+        when(userService.findByUsername("adbad")).thenReturn(Optional.empty());
+        when(ldapDirectory.authenticate("adbad", "bad")).thenReturn(Optional.empty());
+
+        mvc.perform(post("/api/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"username\":\"adbad\",\"password\":\"bad\"}"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.success").value(false));
+    }
+
+    @Test
+    @DisplayName("Local 'admin'-style account uses BCrypt even when LDAP is enabled")
+    void login_localAccount_usesBcrypt_whenLdapEnabled() throws Exception {
+        com.certmonitor.model.LdapSettings ls = new com.certmonitor.model.LdapSettings();
+        ls.setEnabled(true);
+        when(ldapSettings.getOrDefaults()).thenReturn(ls);
+        // testuser is LOCAL (authSource null) and findByUsername returns it → BCrypt path
+        mvc.perform(post("/api/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"username\":\"testuser\",\"password\":\"testpass\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.username").value("testuser"));
     }
 
     @Test

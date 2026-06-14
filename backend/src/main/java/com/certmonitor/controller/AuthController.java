@@ -50,6 +50,13 @@ public class AuthController {
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private com.certmonitor.service.PermissionService permissionService;
 
+    // LDAP/AD — optional so @WebMvcTest contexts without these beans still load.
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.certmonitor.service.LdapSettingsService ldapSettings;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.certmonitor.service.LdapDirectoryService ldapDirectory;
+
     // Per-IP attempt counter within a sliding 60-second window
     private final ConcurrentHashMap<String, AtomicInteger> loginAttempts = new ConcurrentHashMap<>();
     // Per-IP: timestamp when the current counting window started
@@ -97,7 +104,21 @@ public class AuthController {
         String password  = body.getOrDefault("password", "").strip();
         boolean rememberMe = Boolean.parseBoolean(body.getOrDefault("remember_me", "false"));
 
-        Optional<AppUser> userOpt = userService.authenticate(username, password);
+        // Route by auth source: LOCAL accounts (incl. bootstrap admin) → BCrypt;
+        // non-local / unknown usernames → AD bind when LDAP is enabled.
+        Optional<AppUser> existing = userService.findByUsername(username);
+        boolean isLocalAccount = existing.isPresent()
+                && (existing.get().getAuthSource() == null
+                    || "LOCAL".equalsIgnoreCase(existing.get().getAuthSource()));
+
+        Optional<AppUser> userOpt;
+        if (isLocalAccount) {
+            userOpt = userService.authenticate(username, password);   // local BCrypt
+        } else if (ldapEnabled()) {
+            userOpt = tryLdapLogin(username, password);               // AD bind + provision (USER)
+        } else {
+            userOpt = userService.authenticate(username, password);   // LDAP off → local only
+        }
 
         if (userOpt.isPresent()) {
             AppUser user = userOpt.get();
@@ -319,6 +340,36 @@ public class AuthController {
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
+
+    /** True when LDAP auth is configured and enabled. Null-safe (beans optional in tests). */
+    private boolean ldapEnabled() {
+        if (ldapSettings == null || ldapDirectory == null) return false;
+        try {
+            var s = ldapSettings.getOrDefaults();
+            return s != null && Boolean.TRUE.equals(s.getEnabled());
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    /**
+     * Authenticates against AD and provisions/loads the local row (USER, no team).
+     * Returns empty on wrong password / user-not-found / any LDAP error (caller then
+     * records a normal failed attempt). Never throws.
+     */
+    private Optional<AppUser> tryLdapLogin(String username, String password) {
+        try {
+            Optional<com.certmonitor.service.LdapDirectoryService.LdapUser> ad =
+                    ldapDirectory.authenticate(username, password);
+            if (ad.isEmpty()) return Optional.empty();
+            var u = ad.get();
+            String uname = (u.username() != null && !u.username().isBlank()) ? u.username() : username;
+            return Optional.of(userService.provisionLdapUser(uname, u.displayName(), u.email()));
+        } catch (Exception e) {
+            log.warn("LDAP login error for '{}': {}", username, e.getMessage());
+            return Optional.empty();
+        }
+    }
 
     /** Write all user context into the session. */
     public void populateSession(HttpSession session, AppUser user) {
