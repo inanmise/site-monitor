@@ -320,7 +320,25 @@ public class UserService {
         user.setActive(true);
         user.setCreatedAt(now);
         user.setUpdatedAt(now);
-        return userRepo.save(user);
+        AppUser saved = userRepo.save(user);
+        syncPoLeadership(saved);
+        return saved;
+    }
+
+    /**
+     * A PO (orgRole=PO) assigned to a team automatically becomes that team's leader,
+     * but ONLY when the team has no leader yet — an existing leader is never overwritten.
+     * No-op when the user isn't a PO or has no team.
+     */
+    private void syncPoLeadership(AppUser user) {
+        if (user == null || !"PO".equals(user.getOrgRole()) || user.getTeamId() == null) return;
+        teamRepo.findById(user.getTeamId()).ifPresent(team -> {
+            if (team.getLeaderId() == null) {       // mevcut lideri ezme
+                team.setLeaderId(user.getId());
+                team.setUpdatedAt(now());
+                teamRepo.save(team);
+            }
+        });
     }
 
     @Transactional
@@ -343,6 +361,7 @@ public class UserService {
             c.setEmail(saved.getEmail());
             contactRepo.save(c);
         });
+        syncPoLeadership(saved);
         return saved;
     }
 
