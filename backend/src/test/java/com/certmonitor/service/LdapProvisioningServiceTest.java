@@ -1,8 +1,10 @@
 package com.certmonitor.service;
 
 import com.certmonitor.model.AppUser;
+import com.certmonitor.model.EscalationContact;
 import com.certmonitor.model.Team;
 import com.certmonitor.repository.AppUserRepository;
+import com.certmonitor.repository.EscalationContactRepository;
 import com.certmonitor.repository.TeamRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -20,6 +22,7 @@ import java.util.concurrent.atomic.AtomicLong;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.when;
 
@@ -30,11 +33,12 @@ class LdapProvisioningServiceTest {
     @Mock AppUserRepository userRepo;
     @Mock TeamRepository teamRepo;
     @Mock LdapDirectoryService directory;
+    @Mock EscalationContactRepository contactRepo;
     private LdapProvisioningService service;
 
     @BeforeEach
     void setUp() {
-        service = new LdapProvisioningService(userRepo, teamRepo, directory);
+        service = new LdapProvisioningService(userRepo, teamRepo, directory, contactRepo);
         AtomicLong userSeq = new AtomicLong(0);
         AtomicLong teamSeq = new AtomicLong(0);
         when(userRepo.save(any(AppUser.class))).thenAnswer(inv -> {
@@ -203,5 +207,57 @@ class LdapProvisioningServiceTest {
         assertThat(LdapProvisioningService.cnOf("CN=63535,OU=BTPersonel,DC=aknet,DC=akb")).isEqualTo("63535");
         assertThat(LdapProvisioningService.cnOf("CN=SY-DarkSide,OU=ScrumGroups,DC=akb")).isEqualTo("SY-DarkSide");
         assertThat(LdapProvisioningService.cnOf(null)).isNull();
+    }
+
+    @Test
+    @DisplayName("provision: takım + müdür varsa müdür otomatik MANAGER eskalasyon kontağı (HIGH) olur")
+    void provision_autoCreatesManagerEscalationContact() {
+        when(directory.groupMail(anyString())).thenReturn(Optional.of("sy@akbank.com"));
+        // Müdür DB'de mevcut (employeeId=63535), e-postalı → resolveManagerLink onu bulur
+        AppUser mgr = new AppUser();
+        mgr.setId(700L); mgr.setUsername("mgr1"); mgr.setEmployeeId("63535");
+        mgr.setActive(true); mgr.setEmail("mudur@akbank.com"); mgr.setDisplayName("Ali Müdür");
+        when(userRepo.findByEmployeeId("63535")).thenReturn(Optional.of(mgr));
+        when(userRepo.findById(700L)).thenReturn(Optional.of(mgr));
+        when(contactRepo.findByTeamIdOrderByRoleAsc(anyLong())).thenReturn(List.of());
+
+        Map<String, Object> attrs = Map.of(
+                "cn", "80002", "displayName", "Üye",
+                "extensionAttribute4", "CN=63535,OU=BTPersonel,DC=aknet,DC=akb",
+                "memberOf", "CN=SY-DarkSide,OU=ScrumGroups,OU=BTPersonel,OU=Aknet,DC=aknet,DC=akb");
+
+        service.provisionFromAd("uye1", "CN=uye1,DC=aknet,DC=akb", attrs);
+
+        org.mockito.ArgumentCaptor<EscalationContact> cap = org.mockito.ArgumentCaptor.forClass(EscalationContact.class);
+        org.mockito.Mockito.verify(contactRepo).save(cap.capture());
+        EscalationContact c = cap.getValue();
+        assertThat(c.getRole()).isEqualTo("MANAGER");
+        assertThat(c.getMinAlertLevel()).isEqualTo("HIGH");
+        assertThat(c.getEmail()).isEqualTo("mudur@akbank.com");
+        assertThat(c.getActive()).isTrue();
+        assertThat(c.getUserId()).isEqualTo(700L);
+    }
+
+    @Test
+    @DisplayName("provision: aynı müdür zaten MANAGER kontağıysa tekrar eklenmez")
+    void provision_skipsDuplicateManagerContact() {
+        when(directory.groupMail(anyString())).thenReturn(Optional.of("sy@akbank.com"));
+        AppUser mgr = new AppUser();
+        mgr.setId(700L); mgr.setUsername("mgr1"); mgr.setEmployeeId("63535");
+        mgr.setActive(true); mgr.setEmail("mudur@akbank.com");
+        when(userRepo.findByEmployeeId("63535")).thenReturn(Optional.of(mgr));
+        when(userRepo.findById(700L)).thenReturn(Optional.of(mgr));
+        EscalationContact existing = new EscalationContact();
+        existing.setTeamId(1L); existing.setRole("MANAGER"); existing.setEmail("mudur@akbank.com");
+        when(contactRepo.findByTeamIdOrderByRoleAsc(anyLong())).thenReturn(List.of(existing));
+
+        Map<String, Object> attrs = Map.of(
+                "cn", "80002", "displayName", "Üye",
+                "extensionAttribute4", "CN=63535,OU=BTPersonel,DC=aknet,DC=akb",
+                "memberOf", "CN=SY-DarkSide,OU=ScrumGroups,OU=BTPersonel,OU=Aknet,DC=aknet,DC=akb");
+
+        service.provisionFromAd("uye1", "CN=uye1,DC=aknet,DC=akb", attrs);
+
+        org.mockito.Mockito.verify(contactRepo, org.mockito.Mockito.never()).save(any());
     }
 }

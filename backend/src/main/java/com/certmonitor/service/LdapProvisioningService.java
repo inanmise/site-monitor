@@ -1,8 +1,10 @@
 package com.certmonitor.service;
 
 import com.certmonitor.model.AppUser;
+import com.certmonitor.model.EscalationContact;
 import com.certmonitor.model.Team;
 import com.certmonitor.repository.AppUserRepository;
+import com.certmonitor.repository.EscalationContactRepository;
 import com.certmonitor.repository.TeamRepository;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -34,12 +36,14 @@ public class LdapProvisioningService {
     private final AppUserRepository userRepo;
     private final TeamRepository teamRepo;
     private final LdapDirectoryService directory;
+    private final EscalationContactRepository contactRepo;
 
     public LdapProvisioningService(AppUserRepository userRepo, TeamRepository teamRepo,
-                                   LdapDirectoryService directory) {
+                                   LdapDirectoryService directory, EscalationContactRepository contactRepo) {
         this.userRepo = userRepo;
         this.teamRepo = teamRepo;
         this.directory = directory;
+        this.contactRepo = contactRepo;
     }
 
     /** Provision/refresh the authenticated user from AD; resolves team + manager. */
@@ -99,6 +103,9 @@ public class LdapProvisioningService {
         // ── Manager (extensionAttribute4 / manager → CN=sicil) ──
         if (resolveManager) {
             resolveManagerLink(u, attrs);
+            // Takım↔müdür ilişkisi kurulduysa, müdürü otomatik MANAGER eskalasyon
+            // kontağı yap (min seviye HIGH) — manuel ekleme beklenmez.
+            ensureManagerEscalationContact(u.getTeamId(), u.getManagerId());
         }
 
         u.setUpdatedAt(now);
@@ -163,6 +170,34 @@ public class LdapProvisioningService {
             }
         }
         mgr.filter(m -> !m.getId().equals(u.getId())).ifPresent(m -> u.setManagerId(m.getId()));
+    }
+
+    /**
+     * Takımın müdürünü otomatik olarak MANAGER eskalasyon kontağı yapar (min seviye HIGH).
+     * Manuel eskalasyon eklenmesi beklenmez; aynı takım+MANAGER+e-posta kontağı zaten
+     * varsa (aktif/pasif) tekrar eklenmez (idempotent).
+     */
+    private void ensureManagerEscalationContact(Long teamId, Long managerId) {
+        if (teamId == null || managerId == null) return;
+        AppUser mgr = userRepo.findById(managerId).orElse(null);
+        if (mgr == null || mgr.getEmail() == null || mgr.getEmail().isBlank()) return;
+        String email = mgr.getEmail().trim();
+        boolean exists = contactRepo.findByTeamIdOrderByRoleAsc(teamId).stream()
+                .anyMatch(c -> "MANAGER".equals(c.getRole()) && email.equalsIgnoreCase(c.getEmail()));
+        if (exists) return;
+        EscalationContact c = new EscalationContact();
+        c.setTeamId(teamId);
+        c.setRole("MANAGER");
+        c.setUserId(mgr.getId());
+        c.setName((mgr.getDisplayName() != null && !mgr.getDisplayName().isBlank())
+                ? mgr.getDisplayName() : mgr.getUsername());
+        c.setEmail(email);
+        c.setMinAlertLevel("HIGH");
+        c.setActive(true);
+        c.setCreatedAt(now());
+        contactRepo.save(c);
+        log.info("Takım müdürü otomatik MANAGER eskalasyon kontağı eklendi: team={} manager='{}' <{}>",
+                teamId, c.getName(), email);
     }
 
     private void applyMudurluk(AppUser u, String ext5) {

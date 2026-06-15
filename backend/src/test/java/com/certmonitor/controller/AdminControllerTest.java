@@ -1190,6 +1190,39 @@ class AdminControllerTest {
                 .andExpect(jsonPath("$.data.system_role").value("ADMIN"));
     }
 
+    @Test
+    @DisplayName("PUT /users/{id}: ADMIN için boş takım (team_id:null) kullanıcıyı takımdan düşürür")
+    void updateUser_admin_clearsTeam() throws Exception {
+        AppUser updated = new AppUser();
+        updated.setId(7L); updated.setUsername("adm"); updated.setSystemRole("ADMIN"); updated.setTeamId(5L);
+        when(userService.updateUser(eq(7L), any(), any(), any(), eq("ADMIN"), any(), any(), any()))
+                .thenReturn(updated);
+
+        mvc.perform(put("/api/admin/users/7")
+                        .session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"system_role\":\"ADMIN\",\"email\":\"a@b.com\",\"team_id\":null}"))
+                .andExpect(status().isOk());
+
+        org.mockito.Mockito.verify(userRepo)
+                .save(org.mockito.ArgumentMatchers.<AppUser>argThat(u -> u.getTeamId() == null));
+    }
+
+    @Test
+    @DisplayName("PUT /users/{id}: USER için boş takım reddedilir (400, takım zorunlu)")
+    void updateUser_user_clearTeam_rejected() throws Exception {
+        AppUser updated = new AppUser();
+        updated.setId(8L); updated.setUsername("u"); updated.setSystemRole("USER"); updated.setTeamId(5L);
+        when(userService.updateUser(eq(8L), any(), any(), any(), eq("USER"), any(), any(), any()))
+                .thenReturn(updated);
+
+        mvc.perform(put("/api/admin/users/8")
+                        .session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"system_role\":\"USER\",\"email\":\"a@b.com\",\"team_id\":null}"))
+                .andExpect(status().isBadRequest());
+    }
+
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     // ── Users: filtreli + sayfalı arama (/users/search) ─────────────────────────
