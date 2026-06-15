@@ -327,13 +327,17 @@ public class UserService {
 
     /**
      * A PO (orgRole=PO) assigned to a team automatically becomes that team's leader,
-     * but ONLY when the team has no leader yet — an existing leader is never overwritten.
+     * but ONLY when the team has no (valid) leader yet — an existing, real leader is never
+     * overwritten. A dangling leaderId (silinmiş kullanıcıya işaret eden) lidersiz sayılır,
+     * böylece silinen PO yerine yeni eklenen PO otomatik lider atanır.
      * No-op when the user isn't a PO or has no team.
      */
     private void syncPoLeadership(AppUser user) {
         if (user == null || !"PO".equals(user.getOrgRole()) || user.getTeamId() == null) return;
         teamRepo.findById(user.getTeamId()).ifPresent(team -> {
-            if (team.getLeaderId() == null) {       // mevcut lideri ezme
+            Long leaderId = team.getLeaderId();
+            boolean leaderless = leaderId == null || !userRepo.existsById(leaderId);
+            if (leaderless) {                        // gerçek (mevcut) lideri ezme
                 team.setLeaderId(user.getId());
                 team.setUpdatedAt(now());
                 teamRepo.save(team);
@@ -514,6 +518,14 @@ public class UserService {
 
     @Transactional
     public void deleteUser(Long id) {
+        // Bu kullanıcı bir takımın lideriyse, silmeden önce o takım(lar)ın liderliğini boşalt.
+        // Aksi halde leaderId dangling (silinmiş id) kalır → UI "lider atanmadı" gösterir ama
+        // yeni eklenen PO otomatik lider atanmaz (syncPoLeadership null kontrolü geçemez).
+        for (Team t : teamRepo.findByLeaderId(id)) {
+            t.setLeaderId(null);
+            t.setUpdatedAt(now());
+            teamRepo.save(t);
+        }
         userRepo.deleteById(id);
     }
 

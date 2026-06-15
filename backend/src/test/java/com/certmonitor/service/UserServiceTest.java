@@ -480,17 +480,49 @@ class UserServiceTest {
     }
 
     @Test
-    @DisplayName("createUser: PO ama takımın lideri zaten varsa ezilmez")
+    @DisplayName("createUser: PO ama takımın (gerçek) lideri zaten varsa ezilmez")
     void createUser_po_doesNotOverrideExistingLeader() {
         Team team = team(5L, "Payments");
-        team.setLeaderId(77L);   // mevcut lider
+        team.setLeaderId(77L);   // mevcut, gerçek lider
         when(teamRepo.findById(5L)).thenReturn(Optional.of(team));
+        when(userRepo.existsById(77L)).thenReturn(true);   // lider hâlâ var
         when(userRepo.existsByUsername(anyString())).thenReturn(false);
 
         service.createUser("po1", "secret1", "PO Bir", "po@x.com", null, "TEAM_ADMIN", 5L, "PO");
 
         verify(teamRepo, never()).save(any());
         assertThat(team.getLeaderId()).isEqualTo(77L);
+    }
+
+    @Test
+    @DisplayName("createUser: PO, takımın lideri silinmiş (dangling) ise yeni PO lider atanır")
+    void createUser_po_replacesDanglingLeader() {
+        Team team = team(5L, "Payments");
+        team.setLeaderId(77L);   // silinmiş kullanıcıya işaret eden dangling id
+        when(teamRepo.findById(5L)).thenReturn(Optional.of(team));
+        when(userRepo.existsById(77L)).thenReturn(false);  // lider artık yok
+        when(userRepo.existsByUsername(anyString())).thenReturn(false);
+
+        AppUser u = service.createUser("po2", "secret1", "PO İki", "po2@x.com", null, "TEAM_ADMIN", 5L, "PO");
+
+        ArgumentCaptor<Team> cap = ArgumentCaptor.forClass(Team.class);
+        verify(teamRepo).save(cap.capture());
+        assertThat(cap.getValue().getLeaderId()).isEqualTo(u.getId());
+    }
+
+    @Test
+    @DisplayName("deleteUser: kullanıcı bir takımın lideriyse o takımın liderliği boşaltılır")
+    void deleteUser_clearsTeamLeadership() {
+        Team led = team(5L, "Payments");
+        led.setLeaderId(42L);
+        when(teamRepo.findByLeaderId(42L)).thenReturn(List.of(led));
+
+        service.deleteUser(42L);
+
+        ArgumentCaptor<Team> cap = ArgumentCaptor.forClass(Team.class);
+        verify(teamRepo).save(cap.capture());
+        assertThat(cap.getValue().getLeaderId()).isNull();
+        verify(userRepo).deleteById(42L);
     }
 
     // ── User CRUD ─────────────────────────────────────────────────────────────
