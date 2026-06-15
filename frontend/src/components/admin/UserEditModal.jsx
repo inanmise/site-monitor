@@ -4,6 +4,17 @@ import { useT } from '../../i18n/index.jsx'
 import SearchableSelect from '../ui/SearchableSelect.jsx'
 import { UserCog } from 'lucide-react'
 
+/** Modal başlık rozetinde kullanıcının LDAP fotoğrafı; yoksa ikona düşer. */
+export function ModalHeaderAvatar({ userId, children }) {
+  const [err, setErr] = useState(false)
+  useEffect(() => { setErr(false) }, [userId])
+  if (!userId || err) return children
+  return (
+    <img className="modal-icon-hdr-photo" alt=""
+      src={`/api/admin/users/${userId}/photo`} onError={() => setErr(true)} />
+  )
+}
+
 /**
  * Edit-only user modal — reused by TeamManager member cards so that an admin
  * can update a user without leaving the Teams tab. Mirrors the edit branch of
@@ -57,7 +68,9 @@ export default function UserEditModal({ user, teams, onClose, onSaved }) {
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal-box" onClick={(e) => e.stopPropagation()}>
         <div className="modal-icon-hdr modal-icon-hdr--user">
-          <div className="modal-icon-hdr-badge"><UserCog size={20} /></div>
+          <div className="modal-icon-hdr-badge">
+            <ModalHeaderAvatar userId={user?.id}><UserCog size={20} /></ModalHeaderAvatar>
+          </div>
           <h3>{t('usr.editTitle')}</h3>
         </div>
         {/* form-grid--top: "Takım" uyarı ipucu altta dururken alanlar karşılıklı hizalı kalsın */}
@@ -103,7 +116,7 @@ export default function UserEditModal({ user, teams, onClose, onSaved }) {
             />
           </label>
           <label>
-            <span>{t('usr.formTeam')} <span className="req-star">*</span></span>
+            <span>{t('usr.formTeam')} {form.system_role !== 'ADMIN' && <span className="req-star">*</span>}</span>
             <SearchableSelect
               value={form.team_id}
               onChange={v => setForm({ ...form, team_id: v ? Number(v) : '' })}
@@ -114,7 +127,7 @@ export default function UserEditModal({ user, teams, onClose, onSaved }) {
                 ...(teams || []).map(team => ({ value: team.id, label: team.name })),
               ]}
             />
-            {!form.team_id && (
+            {form.system_role !== 'ADMIN' && !form.team_id && (
               <span className="field-hint field-hint--warn">{t('usr.teamRequired')}</span>
             )}
           </label>
@@ -153,7 +166,7 @@ export default function UserEditModal({ user, teams, onClose, onSaved }) {
         <div className="modal-actions">
           <button className="btn btn-secondary" onClick={onClose}>{t('usr.cancel')}</button>
           <button className="btn btn-primary" onClick={save}
-            disabled={saving || !form.username.trim() || !form.email.trim() || !form.team_id}>
+            disabled={saving || !form.username.trim() || !form.email.trim() || (form.system_role !== 'ADMIN' && !form.team_id)}>
             {saving ? t('usr.saving') : t('usr.save')}
           </button>
         </div>

@@ -6,6 +6,7 @@ import SearchableSelect from '../ui/SearchableSelect.jsx'
 import KebabMenu from '../ui/KebabMenu.jsx'
 import { UserPlus, UserCog } from 'lucide-react'
 import AdminAutoResetModal from './AdminAutoResetModal.jsx'
+import { ModalHeaderAvatar } from './UserEditModal.jsx'
 
 const emptyUser = { username: '', password: '', display_name: '', email: '', employee_id: '', system_role: 'USER', team_id: '', org_role: '', active: true,
   first_name: '', last_name: '', title: '', phone: '', department: '', company_level: '', mudurluk_name: '', manager_sicil: '' }
@@ -276,7 +277,9 @@ export default function UserManager({ systemRole, ownTeamId, currentUsername, te
           <div className="modal-box" onClick={(e) => e.stopPropagation()}>
             <div className="modal-icon-hdr modal-icon-hdr--user">
               <div className="modal-icon-hdr-badge">
-                {modal === 'add' ? <UserPlus size={20} /> : <UserCog size={20} />}
+                {modal === 'add'
+                  ? <UserPlus size={20} />
+                  : <ModalHeaderAvatar userId={modal?.id}><UserCog size={20} /></ModalHeaderAvatar>}
               </div>
               <h3>{modal === 'add' ? t('usr.addTitle') : t('usr.editTitle')}</h3>
             </div>
@@ -340,7 +343,7 @@ export default function UserManager({ systemRole, ownTeamId, currentUsername, te
                 />
               </label>
               <label>
-                <span>{t('usr.formTeam')} <span className="req-star">*</span></span>
+                <span>{t('usr.formTeam')} {form.system_role !== 'ADMIN' && <span className="req-star">*</span>}</span>
                 {isTeamAdmin ? (
                   <SearchableSelect
                     value={ownTeamId ?? ''}
@@ -362,7 +365,7 @@ export default function UserManager({ systemRole, ownTeamId, currentUsername, te
                     ]}
                   />
                 )}
-                {!isTeamAdmin && !form.team_id && (
+                {!isTeamAdmin && form.system_role !== 'ADMIN' && !form.team_id && (
                   <span className="field-hint field-hint--warn">{t('usr.teamRequired')}</span>
                 )}
               </label>
@@ -408,7 +411,7 @@ export default function UserManager({ systemRole, ownTeamId, currentUsername, te
             <div className="modal-actions">
               <button className="btn btn-secondary" onClick={() => setModal(null)}>{t('usr.cancel')}</button>
               <button className="btn btn-primary" onClick={save}
-                disabled={saving || !form.username.trim() || !form.email.trim() || !(isTeamAdmin ? ownTeamId : form.team_id) || (modal === 'add' && form.password.length < 4)}>
+                disabled={saving || !form.username.trim() || !form.email.trim() || (form.system_role !== 'ADMIN' && !(isTeamAdmin ? ownTeamId : form.team_id)) || (modal === 'add' && form.password.length < 4)}>
                 {saving ? t('usr.saving') : t('usr.save')}
               </button>
             </div>
