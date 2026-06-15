@@ -440,6 +440,59 @@ class UserServiceTest {
                 .hasMessageContaining("sertifika");
     }
 
+    @Test
+    @DisplayName("createUser: PO + takım → kullanıcı otomatik takım lideri olur")
+    void createUser_po_becomesTeamLeader() {
+        Team team = team(5L, "Payments");
+        when(teamRepo.findById(5L)).thenReturn(Optional.of(team));
+        when(userRepo.existsByUsername(anyString())).thenReturn(false);
+
+        AppUser u = service.createUser("po1", "secret1", "PO Bir", "po@x.com", null, "TEAM_ADMIN", 5L, "PO");
+
+        ArgumentCaptor<Team> cap = ArgumentCaptor.forClass(Team.class);
+        verify(teamRepo).save(cap.capture());
+        assertThat(cap.getValue().getLeaderId()).isEqualTo(u.getId());
+    }
+
+    @Test
+    @DisplayName("updateUser: PO + takım → kullanıcı otomatik takım lideri olur")
+    void updateUser_po_becomesTeamLeader() {
+        AppUser existing = user("po2", "hash");
+        existing.setId(42L);
+        when(userRepo.findById(42L)).thenReturn(Optional.of(existing));
+        when(teamRepo.findById(6L)).thenReturn(Optional.of(team(6L, "Cards")));
+
+        service.updateUser(42L, "PO Iki", "po2@x.com", null, "TEAM_ADMIN", 6L, true, "PO");
+
+        ArgumentCaptor<Team> cap = ArgumentCaptor.forClass(Team.class);
+        verify(teamRepo).save(cap.capture());
+        assertThat(cap.getValue().getLeaderId()).isEqualTo(42L);
+    }
+
+    @Test
+    @DisplayName("createUser: PO değilse takım lideri atanmaz")
+    void createUser_nonPo_noLeaderChange() {
+        when(userRepo.existsByUsername(anyString())).thenReturn(false);
+
+        service.createUser("u1", "secret1", "U Bir", "u@x.com", null, "USER", 5L, null);
+
+        verify(teamRepo, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("createUser: PO ama takımın lideri zaten varsa ezilmez")
+    void createUser_po_doesNotOverrideExistingLeader() {
+        Team team = team(5L, "Payments");
+        team.setLeaderId(77L);   // mevcut lider
+        when(teamRepo.findById(5L)).thenReturn(Optional.of(team));
+        when(userRepo.existsByUsername(anyString())).thenReturn(false);
+
+        service.createUser("po1", "secret1", "PO Bir", "po@x.com", null, "TEAM_ADMIN", 5L, "PO");
+
+        verify(teamRepo, never()).save(any());
+        assertThat(team.getLeaderId()).isEqualTo(77L);
+    }
+
     // ── User CRUD ─────────────────────────────────────────────────────────────
 
     @Test
