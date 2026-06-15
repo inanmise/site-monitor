@@ -272,9 +272,11 @@ export default function TeamManager({ systemRole, ownTeamId, onTeamsChange }) {
                               .filter(id => !memberIds.has(id))
                               .map(id => usersById[id])
                               .filter(Boolean)
-                            // Sıralama: önce müdür kartı, sonra PO, sonra seviye (companyLevel)
-                            // büyükten küçüğe (sayı-duyarlı), sonra ada göre
-                            const rankOf = (c) => c.isManager ? 0 : (c.m.org_role === 'PO' ? 1 : 2)
+                            // Sıralama: önce müdür kartı, sonra MANAGER rolü, sonra PO, sonra
+                            // seviye (companyLevel) büyükten küçüğe (sayı-duyarlı), sonra ada göre
+                            const rankOf = (c) => c.isManager ? 0
+                              : (c.m.org_role === 'MANAGER' ? 1
+                              : (c.m.org_role === 'PO' ? 2 : 3))
                             const cards = [
                               ...members.map(m => ({ m, isManager: false })),
                               ...managerCards.map(m => ({ m, isManager: true })),
