@@ -4919,6 +4919,17 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
   border-radius: 999px;
   box-shadow: 0 1px 3px rgba(29, 78, 216, .35);
 }
+.tm-mc-mgr-badge {
+  margin-left: 6px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: .68em;
+  font-weight: 700;
+  letter-spacing: .03em;
+  color: #fff;
+  background: linear-gradient(135deg, #f59e0b, #d97706);
+  vertical-align: middle;
+}
 
 /* ── AD photo avatars (UserManager list + sidebar) ──────────────────────── */
 .usr-avatar {
