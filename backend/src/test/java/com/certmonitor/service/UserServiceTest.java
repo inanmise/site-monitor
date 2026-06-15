@@ -46,7 +46,6 @@ class UserServiceTest {
     void setUp() {
         service = new UserService(userRepo, teamRepo, inventoryRepo, contactRepo, passwordHistoryRepo);
         when(contactRepo.findByUserId(anyLong())).thenReturn(List.of());
-        when(inventoryRepo.existsByUgTeamIdAndActiveTrueAndDeletedAtIsNull(anyLong())).thenReturn(false);
         when(userRepo.existsByTeamId(anyLong())).thenReturn(false);
         when(contactRepo.existsByTeamIdAndActiveTrue(anyLong())).thenReturn(false);
         org.mockito.Mockito.lenient().when(passwordHistoryRepo.findByUserIdOrderByCreatedAtDesc(anyLong()))
@@ -438,7 +437,7 @@ class UserServiceTest {
         when(inventoryRepo.existsByTeamIdAndActiveTrueAndDeletedAtIsNull(3L)).thenReturn(true);
         assertThatThrownBy(() -> service.deleteTeam(3L))
                 .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("SY");
+                .hasMessageContaining("sertifika");
     }
 
     // ── User CRUD ─────────────────────────────────────────────────────────────
