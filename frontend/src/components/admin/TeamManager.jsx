@@ -129,6 +129,16 @@ export default function TeamManager({ systemRole, ownTeamId, onTeamsChange }) {
 
   const userMap = Object.fromEntries(users.map(u => [u.id, u.display_name || u.username]))
 
+  /** Bir kullanıcının bağlı olduğu müdür etiketi: adı (çözülebiliyorsa) yoksa sicili. */
+  const managerLabelFor = (u) => (u?.manager_id && userMap[u.manager_id]) || u?.manager_sicil || null
+
+  /** Takımın müdürü: o takımdaki kullanıcıların bağlı olduğu müdür(ler)in birleşimi. */
+  const teamManagerLabel = (teamId) => {
+    const labels = new Set()
+    users.forEach(u => { if (u.team_id === teamId) { const l = managerLabelFor(u); if (l) labels.add(l) } })
+    return labels.size ? [...labels].join(', ') : null
+  }
+
   function openAdd() { setForm(emptyTeam); setModal('add'); setMsg(null) }
   function openEdit(team) {
     setForm({ ...team, email: team.email || '', leader_id: String(team.leaderId ?? team.leader_id ?? '') })
@@ -211,7 +221,7 @@ export default function TeamManager({ systemRole, ownTeamId, onTeamsChange }) {
               <th>{t('team.colName')}</th>
               <th>{t('team.colEmail')}</th>
               <th>{t('team.colLeader')}</th>
-              <th>{t('team.colDesc')}</th>
+              <th>{t('team.colManager')}</th>
               <th>{t('team.colActive')}</th>
               <th>{t('team.colActions')}</th>
             </tr>
@@ -237,7 +247,7 @@ export default function TeamManager({ systemRole, ownTeamId, onTeamsChange }) {
                   </td>
                   <td>{team.email || '—'}</td>
                   <td>{userMap[team.leader_id] ?? <span style={{ color: 'var(--danger)' }}>{t('team.noLeader')}</span>}</td>
-                  <td>{team.description || '—'}</td>
+                  <td>{teamManagerLabel(team.id) || '—'}</td>
                   <td><span className={team.active ? 'badge badge-ok' : 'badge badge-err'}>{team.active ? t('team.active') : t('team.inactive')}</span></td>
                   <td>
                     <KebabMenu label={t('team.colActions')} items={[
@@ -297,7 +307,8 @@ export default function TeamManager({ systemRole, ownTeamId, onTeamsChange }) {
                                             {m.title && (<><dt>{t('usr.colTitle')}:</dt><dd>{m.title}</dd></>)}
                                             {m.phone && (<><dt>{t('usr.colPhone')}:</dt><dd>{m.phone}</dd></>)}
                                             {m.department && (<><dt>{t('usr.colDept')}:</dt><dd>{m.department}</dd></>)}
-                                            {m.mudurlukName && (<><dt>{t('usr.colMudurluk')}:</dt><dd>{m.mudurlukName}</dd></>)}
+                                            {m.mudurluk_name && (<><dt>{t('usr.colMudurluk')}:</dt><dd>{m.mudurluk_name}</dd></>)}
+                                            {managerLabelFor(m) && (<><dt>{t('team.memberManager')}:</dt><dd>{managerLabelFor(m)}</dd></>)}
                                           </dl>
                                         </div>
                                       </div>
