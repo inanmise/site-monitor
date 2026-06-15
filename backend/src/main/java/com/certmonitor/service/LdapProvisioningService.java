@@ -113,8 +113,13 @@ public class LdapProvisioningService {
     }
 
     private void resolveTeam(AppUser u, Map<String, Object> attrs, boolean isPo) {
+        // A user can be in several ScrumGroups; the team is the group whose CN does NOT
+        // end with "Onaycı" (those are approver groups, not teams). When both an
+        // "..._Onayci" group and a plain group exist, the plain one is the team. The
+        // mail of that exact group DN becomes the team e-mail (read via groupMail).
         String scrumDn = memberOfList(attrs).stream()
                 .filter(dn -> containsCi(dn, "OU=ScrumGroups"))
+                .filter(dn -> !isApproverCn(cnOf(dn)))
                 .findFirst().orElse(null);
         if (scrumDn == null) return;
         String teamName = cnOf(scrumDn);
@@ -182,6 +187,14 @@ public class LdapProvisioningService {
         int end = dn.indexOf(',', start);
         String cn = (end < 0) ? dn.substring(start) : dn.substring(start, end);
         return cn.trim();
+    }
+
+    /** True when a group CN denotes an approver ("Onaycı") group rather than a team,
+     *  e.g. "SY-Dijital Bankacilik_Onayci". Such groups are skipped for team naming. */
+    static boolean isApproverCn(String cn) {
+        if (cn == null) return false;
+        String c = cn.trim().toLowerCase(java.util.Locale.ROOT);
+        return c.endsWith("onayci") || c.endsWith("onaycı");
     }
 
     @SuppressWarnings("unchecked")

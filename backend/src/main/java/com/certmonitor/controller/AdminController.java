@@ -898,6 +898,9 @@ public class AdminController {
                 requestedRole,
                 requestedTeamId,
                 (String) body.get("org_role"));
+        // AD-mirrored profil alanları (ad/soyad/ünvan/telefon/departman/seviye/müdürlük/müdür sicili)
+        userService.applyProfileFields(user, body);
+        user = userRepo.save(user);
         auditService.recordAction("USER_CREATE", session, request,
                 "USER", user.getUsername(),
                 "{\"role\":\"" + user.getSystemRole() + "\",\"teamId\":" + user.getTeamId() + "}");
@@ -948,6 +951,9 @@ public class AdminController {
                 requestedTeamId,
                 body.get("active") instanceof Boolean ? (Boolean) body.get("active") : null,
                 (String) body.get("org_role"));
+        // AD-mirrored profil alanları (ad/soyad/ünvan/telefon/departman/seviye/müdürlük/müdür sicili)
+        userService.applyProfileFields(user, body);
+        user = userRepo.save(user);
         return ok(Map.of("data", user));
     }
 

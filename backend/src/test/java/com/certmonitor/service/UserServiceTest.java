@@ -905,4 +905,44 @@ class UserServiceTest {
     void computeManageTeamIds_user_empty() {
         assertThat(service.computeManageTeamIds(scopeUser(40L, "USER", "LDAP", 9L))).isEmpty();
     }
+
+    // ── applyProfileFields (AD-mirrored profil alanları) ──────────────────────
+
+    @Test
+    @DisplayName("applyProfileFields: gönderilen alanları set eder, boşları null'lar, eksikleri atlamaz")
+    void applyProfileFields_setsPresentKeys() {
+        AppUser u = new AppUser();
+        u.setTitle("ESKI ÜNVAN");          // body'de title yoksa korunur
+        Map<String, Object> body = new HashMap<>();
+        body.put("first_name", "Erdi");
+        body.put("last_name", "İnanmış");
+        body.put("phone", "  +90 532  ");  // trim
+        body.put("department", "TEKNOLOJİ");
+        body.put("company_level", "Uzman");
+        body.put("mudurluk_name", "TEKN.MİM.");
+        body.put("manager_sicil", "63535");
+        body.put("email", "x@y.com");      // profil alanı değil → yok sayılır
+
+        service.applyProfileFields(u, body);
+
+        assertThat(u.getFirstName()).isEqualTo("Erdi");
+        assertThat(u.getLastName()).isEqualTo("İnanmış");
+        assertThat(u.getPhone()).isEqualTo("+90 532");
+        assertThat(u.getDepartment()).isEqualTo("TEKNOLOJİ");
+        assertThat(u.getCompanyLevel()).isEqualTo("Uzman");
+        assertThat(u.getMudurlukName()).isEqualTo("TEKN.MİM.");
+        assertThat(u.getManagerSicil()).isEqualTo("63535");
+        assertThat(u.getTitle()).isEqualTo("ESKI ÜNVAN");   // body'de yok → dokunulmadı
+    }
+
+    @Test
+    @DisplayName("applyProfileFields: boş string gönderilen alanı null yapar")
+    void applyProfileFields_blankClearsField() {
+        AppUser u = new AppUser();
+        u.setPhone("ESKI");
+        Map<String, Object> body = new HashMap<>();
+        body.put("phone", "   ");
+        service.applyProfileFields(u, body);
+        assertThat(u.getPhone()).isNull();
+    }
 }

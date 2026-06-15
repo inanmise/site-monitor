@@ -34,6 +34,14 @@ export default function UserEditModal({ user, teams, onClose, onSaved }) {
       team_id:      form.team_id || null,
       org_role:     form.org_role || null,
       active:       form.active,
+      first_name:    form.first_name,
+      last_name:     form.last_name,
+      title:         form.title,
+      phone:         form.phone,
+      department:    form.department,
+      company_level: form.company_level,
+      mudurluk_name: form.mudurluk_name,
+      manager_sicil: form.manager_sicil,
     }
     const res = await api.admin.updateUser(user.id, payload)
     setSaving(false)
@@ -110,6 +118,31 @@ export default function UserEditModal({ user, teams, onClose, onSaved }) {
               <span className="field-hint field-hint--warn">{t('usr.teamRequired')}</span>
             )}
           </label>
+          {/* AD'den eşlenen profil alanları (LDAP kullanıcısında bir sonraki login'de tazelenir) */}
+          <label>{t('usr.formFirstName')}
+            <input value={form.first_name} onChange={(e) => setForm({ ...form, first_name: e.target.value })} />
+          </label>
+          <label>{t('usr.formLastName')}
+            <input value={form.last_name} onChange={(e) => setForm({ ...form, last_name: e.target.value })} />
+          </label>
+          <label>{t('usr.colTitle')}
+            <input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} />
+          </label>
+          <label>{t('usr.colPhone')}
+            <input value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} />
+          </label>
+          <label>{t('usr.colDept')}
+            <input value={form.department} onChange={(e) => setForm({ ...form, department: e.target.value })} />
+          </label>
+          <label>{t('usr.formCompanyLevel')}
+            <input value={form.company_level} onChange={(e) => setForm({ ...form, company_level: e.target.value })} />
+          </label>
+          <label>{t('usr.colMudurluk')}
+            <input value={form.mudurluk_name} onChange={(e) => setForm({ ...form, mudurluk_name: e.target.value })} />
+          </label>
+          <label>{t('usr.colManager')}
+            <input value={form.manager_sicil} onChange={(e) => setForm({ ...form, manager_sicil: e.target.value })} />
+          </label>
           <label className="checkbox-label">
             <input type="checkbox" checked={form.active}
               onChange={(e) => setForm({ ...form, active: e.target.checked })} />
@@ -139,5 +172,13 @@ function toForm(user) {
     team_id:      user?.team_id ?? '',
     org_role:     user?.org_role || '',
     active:       user?.active !== false,
+    first_name:    user?.first_name || '',
+    last_name:     user?.last_name || '',
+    title:         user?.title || '',
+    phone:         user?.phone || '',
+    department:    user?.department || '',
+    company_level: user?.company_level || '',
+    mudurluk_name: user?.mudurluk_name || '',
+    manager_sicil: user?.manager_sicil || '',
   }
 }
