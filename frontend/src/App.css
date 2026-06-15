@@ -7750,6 +7750,17 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 
 /* Admin-only "hatırlatma maillerini şimdi gönder" tetik butonu (yardım kartı üstü) */
 .wr-reminder-trigger { margin-bottom: 12px; }
+.wr-bulk-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-card);
+}
+.wr-bulk-count { font-weight: 700; font-size: .88em; margin-right: auto; }
 
 /* "Nasıl girilir?" yardım kartı — kısa, açılır-kapanır (liste görünümü üstü) */
 .wr-help {

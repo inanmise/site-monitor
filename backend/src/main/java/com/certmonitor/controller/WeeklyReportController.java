@@ -200,6 +200,20 @@ public class WeeklyReportController {
         return ok(result);
     }
 
+    /** Toplu / tekil takım transferi — seçilen raporları başka takıma taşır (yalnız ADMIN).
+     *  Body: {"ids":[..], "target_team_id":N}. Yetki kontrolü serviste (actor.isAdmin). */
+    @PostMapping("/transfer")
+    public ResponseEntity<Map<String, Object>> transfer(
+            @RequestBody Map<String, Object> body, HttpSession session, HttpServletRequest request) {
+        Long targetTeamId = toLong(body.get("target_team_id"));
+        List<Long> ids = toLongList(body.get("ids"));
+        Map<String, Object> result = service.transfer(ids, targetTeamId, actor(session));
+        auditService.recordAction("WEEKLY_REPORT_TRANSFER", session, request,
+                "WEEKLY_REPORT", String.valueOf(ids),
+                "{\"target_team_id\":" + targetTeamId + ",\"transferred\":" + result.get("transferred") + "}");
+        return ok(result);
+    }
+
     /** Cuma hatırlatma maillerini cron beklemeden ANINDA gönderir — yalnız ADMIN.
      *  Test/operasyon kolaylığı; mantık scheduled cron ile aynı (sendFridayReminders). */
     @PostMapping("/reminders/trigger")
@@ -339,5 +353,12 @@ public class WeeklyReportController {
         if (v == null) return null;
         if (v instanceof Number n) return n.intValue();
         try { return Integer.parseInt(v.toString()); } catch (Exception e) { return null; }
+    }
+
+    private List<Long> toLongList(Object v) {
+        if (!(v instanceof List<?> list)) return List.of();
+        List<Long> out = new java.util.ArrayList<>();
+        for (Object o : list) { Long l = toLong(o); if (l != null) out.add(l); }
+        return out;
     }
 }

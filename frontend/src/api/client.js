@@ -163,6 +163,9 @@ export const api = {
       method: 'POST', body: JSON.stringify({ note }),
     }),
     preview: (id) => request(`/weekly-reports/${id}/preview`),
+    transfer: (ids, targetTeamId) => request('/weekly-reports/transfer', {
+      method: 'POST', body: JSON.stringify({ ids, target_team_id: targetTeamId }),
+    }),
     uploadImage: (id, file, caption) => {
       const form = new FormData()
       form.append('file', file)

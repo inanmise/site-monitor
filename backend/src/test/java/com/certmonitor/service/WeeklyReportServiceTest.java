@@ -732,4 +732,48 @@ class WeeklyReportServiceTest {
         assertThat(img.getContentType()).isEqualTo("image/png");
         assertThat(img.getTeamId()).isEqualTo(2L); // açık takım izolasyonu (raporun takımı)
     }
+
+    // ── Takım transferi (toplu / tekil) ──────────────────────────────────────
+
+    @Test
+    @DisplayName("transfer: ADMIN değilse SecurityException")
+    void transfer_nonAdmin_throws() {
+        assertThatThrownBy(() -> service.transfer(List.of(5L), 7L, USER_T2))
+                .isInstanceOf(SecurityException.class);
+    }
+
+    @Test
+    @DisplayName("transfer: raporu hedef takıma taşır + görsellerin takım izolasyonunu günceller")
+    void transfer_movesTeamAndImages() {
+        WeeklyReport r = report(5L, 2L, "DRAFT");
+        when(teamRepo.existsById(7L)).thenReturn(true);
+        when(reportRepo.findById(5L)).thenReturn(Optional.of(r));
+        when(reportRepo.findByTeamIdAndReportYearAndWeekNo(eq(7L), anyInt(), anyInt())).thenReturn(Optional.empty());
+        com.certmonitor.model.WeeklyReportImage img = new com.certmonitor.model.WeeklyReportImage();
+        img.setId(99L); img.setReportId(5L); img.setTeamId(2L);
+        when(imageRepo.findByReportIdOrderByIdAsc(5L)).thenReturn(List.of(img));
+
+        Map<String, Object> res = service.transfer(List.of(5L), 7L, ADMIN);
+
+        assertThat(res.get("transferred")).isEqualTo(1);
+        assertThat(r.getTeamId()).isEqualTo(7L);
+        assertThat(img.getTeamId()).isEqualTo(7L);
+        verify(imageRepo).save(img);
+    }
+
+    @Test
+    @DisplayName("transfer: hedef takımda aynı hafta raporu varsa atlanır (çakışma)")
+    void transfer_conflict_skips() {
+        WeeklyReport r = report(5L, 2L, "DRAFT");
+        when(teamRepo.existsById(7L)).thenReturn(true);
+        when(reportRepo.findById(5L)).thenReturn(Optional.of(r));
+        when(reportRepo.findByTeamIdAndReportYearAndWeekNo(eq(7L), anyInt(), anyInt()))
+                .thenReturn(Optional.of(report(88L, 7L, "DRAFT")));
+
+        Map<String, Object> res = service.transfer(List.of(5L), 7L, ADMIN);
+
+        assertThat(res.get("transferred")).isEqualTo(0);
+        assertThat((List<?>) res.get("skipped")).hasSize(1);
+        assertThat(r.getTeamId()).isEqualTo(2L); // değişmedi
+    }
 }
