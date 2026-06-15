@@ -183,6 +183,61 @@ public class WeeklyReportService {
         return reportRepo.save(r);
     }
 
+    // ── Takım transferi (toplu / tekil) ──────────────────────────────────────
+
+    /**
+     * Seçilen raporların sahibi takımı {@code targetTeamId}'ye taşır (YALNIZ ADMIN).
+     * Hedef takımda aynı (yıl, hafta) raporu zaten varsa o rapor UNIQUE çakışması
+     * nedeniyle atlanır; aynı takıma transfer ve bulunamayan id'ler de atlanır.
+     * Raporun görsellerinin takım izolasyonu da güncellenir.
+     * Sonuç: {@code {transferred:int, skipped:[{id, week_label, year, week_no, reason}]}}.
+     */
+    @Transactional
+    public Map<String, Object> transfer(List<Long> ids, Long targetTeamId, Actor actor) {
+        if (!actor.isAdmin()) throw new SecurityException("Transfer yetkisi yok — ADMIN gerekir");
+        if (targetTeamId == null) throw new IllegalArgumentException("Hedef takım seçilmeli");
+        if (!teamRepo.existsById(targetTeamId)) throw new IllegalArgumentException("Hedef takım bulunamadı: " + targetTeamId);
+        if (ids == null || ids.isEmpty()) throw new IllegalArgumentException("Aktarılacak rapor seçilmeli");
+
+        String now = now();
+        int transferred = 0;
+        List<Map<String, Object>> skipped = new ArrayList<>();
+        for (Long id : ids) {
+            WeeklyReport r = reportRepo.findById(id).orElse(null);
+            if (r == null) { skipped.add(skipEntry(id, null, "not_found")); continue; }
+            if (Objects.equals(r.getTeamId(), targetTeamId)) { skipped.add(skipEntry(id, r, "same_team")); continue; }
+            if (reportRepo.findByTeamIdAndReportYearAndWeekNo(targetTeamId, r.getReportYear(), r.getWeekNo()).isPresent()) {
+                skipped.add(skipEntry(id, r, "conflict"));
+                continue;
+            }
+            r.setTeamId(targetTeamId);
+            r.setUpdatedBy(actor.display());
+            r.setUpdatedAt(now);
+            reportRepo.save(r);
+            // Görsellerin takım izolasyonunu da hedef takıma taşı
+            imageRepo.findByReportIdOrderByIdAsc(id).forEach(img -> {
+                img.setTeamId(targetTeamId);
+                imageRepo.save(img);
+            });
+            transferred++;
+            log.info("Weekly report transferred id={} → team={} by={}", id, targetTeamId, actor.display());
+        }
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("transferred", transferred);
+        out.put("skipped", skipped);
+        return out;
+    }
+
+    private Map<String, Object> skipEntry(Long id, WeeklyReport r, String reason) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("id", id);
+        m.put("week_label", r != null ? r.getWeekLabel() : null);
+        m.put("year", r != null ? r.getReportYear() : null);
+        m.put("week_no", r != null ? r.getWeekNo() : null);
+        m.put("reason", reason);
+        return m;
+    }
+
     // ── Düzenleme kilidi (yumuşak) ───────────────────────────────────────────
 
     /** Kilit taze mi? (heartbeat LOCK_STALE_SECONDS içinde) */

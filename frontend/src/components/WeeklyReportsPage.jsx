@@ -4,7 +4,7 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import {
   Plus, Save, Send, CheckCircle, Undo2, Eye, Trash2, RefreshCcw, ArrowLeft, Menu, History, FilePenLine,
-  HelpCircle, ChevronDown, Bell, Mail,
+  HelpCircle, ChevronDown, Bell, Mail, ArrowRightLeft,
 } from 'lucide-react'
 import { api, formatDate } from '../api/client'
 import { useT, useLanguage } from '../i18n/index.jsx'
@@ -336,6 +336,11 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
   const [loadingReport, setLoadingReport] = useState(false)
   const [mailHistory, setMailHistory] = useState(null) // { report, items } — gönderim geçmişi modal'ı
   const [openMailBody, setOpenMailBody] = useState(null) // içeriği açık olan kayıt id'si
+  // Takım transferi (yalnız ADMIN): toplu seçim + tekil (kebab)
+  const [selectedIds, setSelectedIds] = useState(() => new Set())
+  const [transferModal, setTransferModal] = useState(null) // { ids: [...] } | null
+  const [transferTeamId, setTransferTeamId] = useState('')
+  const [transferring, setTransferring] = useState(false)
 
   const effTeamId = isAdmin ? (selTeamId ? Number(selTeamId) : null) : teamId
   // Düzenleme/silme: ADMIN her durum + her hafta; diğerleri kendi takımının
@@ -834,6 +839,43 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
     }
   }
 
+  // ── Takım transferi (yalnız ADMIN) ──────────────────────────────────────
+  function toggleSelect(id) {
+    setSelectedIds((prev) => {
+      const n = new Set(prev)
+      if (n.has(id)) n.delete(id); else n.add(id)
+      return n
+    })
+  }
+  function toggleSelectAll(rows) {
+    setSelectedIds((prev) => {
+      const allSelected = rows.length > 0 && rows.every((r) => prev.has(r.id))
+      return allSelected ? new Set() : new Set(rows.map((r) => r.id))
+    })
+  }
+  function openTransfer(ids) {
+    setTransferTeamId('')
+    setTransferModal({ ids })
+  }
+  async function doTransfer() {
+    if (!transferModal || !transferTeamId) return
+    setTransferring(true)
+    const res = await api.weeklyReports.transfer(transferModal.ids, Number(transferTeamId))
+    setTransferring(false)
+    if (res?.success) {
+      const n = res.transferred ?? 0
+      const skipped = res.skipped ?? []
+      if (n > 0) toast.success(t('wr.transferDone', n))
+      if (skipped.length) toast.error(t('wr.transferSkipped', skipped.length))
+      if (n === 0 && skipped.length === 0) toast.info?.(t('wr.transferNone'))
+      setTransferModal(null)
+      setSelectedIds(new Set())
+      loadList()
+    } else {
+      toast.error(res?.error || t('wr.transferError'))
+    }
+  }
+
   async function backToList() {
     if (dirty) {
       const ok = await showConfirm({
@@ -1038,11 +1080,29 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
                   style={{ border: 'none', background: 'none', cursor: 'pointer', color: 'var(--text-light)', fontSize: '1.1em', lineHeight: 1 }}>✕</button>
               </div>
             )}
+            {isAdmin && selectedIds.size > 0 && (
+              <div className="wr-bulk-bar">
+                <span className="wr-bulk-count">{t('wr.selectedCount', selectedIds.size)}</span>
+                <button type="button" className="btn btn-primary btn-sm-p" onClick={() => openTransfer([...selectedIds])}>
+                  <ArrowRightLeft size={14} /> {t('wr.transferSelected')}
+                </button>
+                <button type="button" className="btn btn-secondary btn-sm-p" onClick={() => setSelectedIds(new Set())}>
+                  {t('wr.clearSelection')}
+                </button>
+              </div>
+            )}
             {displayedReports.length ? (
           <div className="admin-table-wrap">
             <table className="admin-table">
               <thead>
                 <tr>
+                  {isAdmin && (
+                    <th style={{ width: 32 }}>
+                      <input type="checkbox" title={t('wr.selectAll')}
+                        checked={displayedReports.length > 0 && displayedReports.every((r) => selectedIds.has(r.id))}
+                        onChange={() => toggleSelectAll(displayedReports)} />
+                    </th>
+                  )}
                   <th>{t('wr.colWeek')}</th>
                   <th>{t('wr.team')}</th>
                   <th>{t('wr.statusCol')}</th>
@@ -1056,6 +1116,11 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
               <tbody>
                 {displayedReports.map((r) => (
                   <tr key={r.id} onClick={() => setSelectedId(r.id)} style={{ cursor: 'pointer' }}>
+                    {isAdmin && (
+                      <td onClick={(e) => e.stopPropagation()} style={{ width: 32 }}>
+                        <input type="checkbox" checked={selectedIds.has(r.id)} onChange={() => toggleSelect(r.id)} />
+                      </td>
+                    )}
                     <td><strong>{formatWeekRange(r.report_year, r.week_no, lang)}</strong></td>
                     <td>{isAdmin ? (teams.find((tm) => tm.id === r.team_id)?.name ?? r.team_id) : (teamName ?? r.team_id)}</td>
                     <td>
@@ -1100,6 +1165,11 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
                             <button onClick={() => { setOpenMenuId(null); openMailHistory(r) }}>
                               <History size={14} /> {t('wr.history')}
                             </button>
+                            {isAdmin && (
+                              <button onClick={() => { setOpenMenuId(null); openTransfer([r.id]) }}>
+                                <ArrowRightLeft size={14} /> {t('wr.transfer')}
+                              </button>
+                            )}
                             {canModifyRow(r) && (
                               <button className="danger" onClick={() => { setOpenMenuId(null); deleteReport(r) }}>
                                 <Trash2 size={14} /> {t('wr.deleteReport')}
@@ -1375,6 +1445,34 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
             <div className="modal-actions">
               <button className="btn btn-secondary" onClick={() => setRejectModal(null)}>{t('wr.cancel')}</button>
               <button className="btn btn-primary" onClick={doReject} disabled={busy}>{t('wr.reject')}</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Takım transferi (toplu / tekil) ── */}
+      {transferModal && (
+        <div className="modal-overlay" onClick={() => setTransferModal(null)}>
+          <div className="modal-box" onClick={(e) => e.stopPropagation()}>
+            <h3>{t('wr.transferTitle')}</h3>
+            <p style={{ fontSize: '.88em', color: 'var(--text-light)', marginTop: 0 }}>
+              {t('wr.transferDesc', transferModal.ids.length)}
+            </p>
+            <label style={{ display: 'flex', flexDirection: 'column', gap: 6, fontSize: '.9em' }}>
+              <span>{t('wr.transferTarget')} <span className="req-star">*</span></span>
+              <SearchableSelect
+                value={transferTeamId}
+                onChange={(v) => setTransferTeamId(v)}
+                placeholder={t('wr.transferTargetPh')}
+                searchThreshold={2}
+                options={teams.map((tm) => ({ value: String(tm.id), label: tm.name }))}
+              />
+            </label>
+            <div className="modal-actions">
+              <button className="btn btn-secondary" onClick={() => setTransferModal(null)}>{t('wr.cancel')}</button>
+              <button className="btn btn-primary" onClick={doTransfer} disabled={transferring || !transferTeamId}>
+                {transferring ? t('wr.transferring') : t('wr.transferConfirm')}
+              </button>
             </div>
           </div>
         </div>
