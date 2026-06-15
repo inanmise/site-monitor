@@ -477,6 +477,26 @@ public class WeeklyReportService {
         }
     }
 
+    /** Takımın AD müdür(leri): üyelerin bağlı olduğu distinct manager_id → aktif,
+     *  e-postası olan AppUser'lar. MANAGER escalation contact yoksa onay maili için
+     *  alıcı olarak kullanılır. */
+    private List<AppUser> resolveTeamManagerUsers(Long teamId) {
+        java.util.LinkedHashSet<Long> mgrIds = new java.util.LinkedHashSet<>();
+        for (AppUser u : userRepo.findByTeamIdOrderByUsernameAsc(teamId)) {
+            if (Boolean.TRUE.equals(u.getActive()) && u.getManagerId() != null) {
+                mgrIds.add(u.getManagerId());
+            }
+        }
+        List<AppUser> out = new ArrayList<>();
+        for (Long id : mgrIds) {
+            userRepo.findById(id)
+                    .filter(m -> Boolean.TRUE.equals(m.getActive()))
+                    .filter(m -> m.getEmail() != null && !m.getEmail().isBlank())
+                    .ifPresent(out::add);
+        }
+        return out;
+    }
+
     /** Onaylayan etiketi: takımın aktif PO'sunun adı; yoksa genel etiket. */
     private String resolvePoDisplayName(Long teamId) {
         return userRepo.findByTeamIdAndOrgRoleAndActiveTrue(teamId, "PO").stream()
@@ -547,17 +567,28 @@ public class WeeklyReportService {
                 .findByTeamIdAndRoleAndActiveTrue(r.getTeamId(), "MANAGER").stream()
                 .filter(c -> c.getEmail() != null && !c.getEmail().isBlank())
                 .toList();
-        if (managers.isEmpty()) {
-            throw new IllegalStateException("MANAGER_CONTACT_MISSING");
+        String[] to;
+        String managerName;
+        if (!managers.isEmpty()) {
+            to = managers.stream().map(c -> c.getEmail().trim()).toArray(String[]::new);
+            managerName = managers.get(0).getName();
+        } else {
+            // MANAGER escalation contact yoksa AD müdürüne düş: takım üyelerinin
+            // bağlı olduğu müdür(ler)in (manager_id → AppUser) e-postaları.
+            List<AppUser> adManagers = resolveTeamManagerUsers(r.getTeamId());
+            if (adManagers.isEmpty()) {
+                throw new IllegalStateException("MANAGER_CONTACT_MISSING");
+            }
+            to = adManagers.stream().map(m -> m.getEmail().trim()).toArray(String[]::new);
+            AppUser first = adManagers.get(0);
+            managerName = (first.getDisplayName() != null && !first.getDisplayName().isBlank())
+                    ? first.getDisplayName() : first.getUsername();
         }
         Team team = teamRepo.findById(r.getTeamId()).orElse(null);
         String teamName = team != null ? team.getName() : "Takım";
         String teamEmail = team != null && team.getEmail() != null && !team.getEmail().isBlank()
                 ? team.getEmail().trim() : null;
-
-        String[] to = managers.stream().map(c -> c.getEmail().trim()).toArray(String[]::new);
         String[] cc = teamEmail != null ? new String[]{teamEmail} : null;
-        String managerName = managers.get(0).getName();
 
         List<EmailNotificationService.InlineImage> inline = collectInlineImages(r);
         // Footer onay bilgisi: ilk onayda alanlar henüz set değil → actor/şimdi;

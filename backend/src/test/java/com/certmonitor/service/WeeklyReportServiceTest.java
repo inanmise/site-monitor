@@ -849,4 +849,35 @@ class WeeklyReportServiceTest {
         assertThat(st.get("valid")).isEqualTo(false);
         assertThat(st.get("reason")).isEqualTo("not_found");
     }
+
+    @Test
+    @DisplayName("approve: MANAGER contact yoksa AD müdürüne düşer (manager_id → e-posta)")
+    void approve_fallsBackToAdManager() {
+        when(reportRepo.findById(5L)).thenReturn(Optional.of(report(5L, 2L, "PENDING_APPROVAL")));
+        when(contactRepo.findByTeamIdAndRoleAndActiveTrue(2L, "MANAGER")).thenReturn(List.of());
+        AppUser member = new AppUser();
+        member.setId(50L); member.setTeamId(2L); member.setActive(true); member.setManagerId(70L);
+        when(userRepo.findByTeamIdOrderByUsernameAsc(2L)).thenReturn(List.of(member));
+        AppUser mgr = new AppUser();
+        mgr.setId(70L); mgr.setActive(true); mgr.setEmail("mudur@akbank.com"); mgr.setDisplayName("Ali Müdür");
+        when(userRepo.findById(70L)).thenReturn(Optional.of(mgr));
+
+        Map<String, Object> out = service.approve(5L, PO_T2);
+
+        assertThat(((WeeklyReport) out.get("data")).getStatus()).isEqualTo("APPROVED");
+        ArgumentCaptor<String[]> toCap = ArgumentCaptor.forClass(String[].class);
+        verify(emailService).sendHtml(toCap.capture(), any(), anyString(), anyString(), any());
+        assertThat(toCap.getValue()).contains("mudur@akbank.com");
+    }
+
+    @Test
+    @DisplayName("approve: MANAGER contact da AD müdürü de yoksa 409")
+    void approve_noManagerAnywhere_throws() {
+        when(reportRepo.findById(5L)).thenReturn(Optional.of(report(5L, 2L, "PENDING_APPROVAL")));
+        when(contactRepo.findByTeamIdAndRoleAndActiveTrue(2L, "MANAGER")).thenReturn(List.of());
+        when(userRepo.findByTeamIdOrderByUsernameAsc(2L)).thenReturn(List.of());
+        assertThatThrownBy(() -> service.approve(5L, PO_T2))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("MANAGER_CONTACT_MISSING");
+    }
 }
