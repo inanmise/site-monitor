@@ -432,7 +432,6 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
               <th>{t('inv.colPort')}</th>
               <th>{t('inv.colTier')}</th>
               <th>{t('inv.colTeam')}</th>
-              <th>{t('inv.colDesc')}</th>
               <th>{t('inv.colActive')}</th>
               <th>{t('inv.colActions')}</th>
             </tr>
@@ -448,7 +447,6 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
                     : <span style={{ color: 'var(--text-light)', fontSize: '.8em' }}>—</span>}
                 </td>
                 <td>{item.team_name || teamMap[String(item.team_id)] || '—'}</td>
-                <td>{item.description || '—'}</td>
                 <td>
                   {item.deleted_at
                     ? <span className="badge badge-deleted">{t('inv.deletedBadge')}</span>
