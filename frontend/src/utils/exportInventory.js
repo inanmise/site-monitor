@@ -44,14 +44,13 @@ const dateStamp = () => {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
 }
 
-/* ── CSV — 24 columns matching show modal ─────────────────── */
+/* ── CSV — columns matching show modal (single team) ──────── */
 export function exportInventoryCsv(items, teams, t) {
   const yn = (b) => (b ? t('inv.yes') : t('inv.no'))
   const cols = [
     t('inv.formDomain'),
     t('inv.formPort'),
     t('inv.formTeam'),
-    t('inv.formUgTeam'),
     t('inv.formTier'),
     t('inv.formPurchasedBy'),
     t('inv.colActive'),
@@ -66,7 +65,6 @@ export function exportInventoryCsv(items, teams, t) {
     it.domain,
     it.port || 443,
     teamName(it.team_id, teams) || '',
-    teamName(it.ug_team_id, teams) || '',
     tierLabel(it, t),
     it.purchased_by ?? '',
     statusOf(it, t),
@@ -216,7 +214,6 @@ export async function exportInventoryPdf(items, teams, t) {
       [t('inv.formDomain'),      it.domain],
       [t('inv.formPort'),        String(it.port || 443)],
       [t('inv.formTeam'),        teamName(it.team_id, teams) || '—'],
-      [t('inv.formUgTeam'),      teamName(it.ug_team_id, teams) || '—'],
       [t('inv.formTier'),        tierLabel(it, t)],
       [t('inv.formPurchasedBy'), it.purchased_by || '—'],
     ])

@@ -1056,10 +1056,10 @@ export const TR = {
   'usr.deleteConfirm': 'Sil',
   'usr.deleteCancel':  'Vazgeç',
 
-  'inv.colTeam':       'SY Takımı',
+  'inv.colTeam':       'Takım',
   'inv.colSyTeam':     'SY Takımı',
   'inv.colUgTeam':     'UG Takımı',
-  'inv.formTeam':      'SY Takımı (Servis Yönetimi)',
+  'inv.formTeam':      'Takım',
   'inv.formUgTeam':    'UG Takımı (Uygulama Geliştirici)',
   'inv.ugTeamRequired':'UG Takımı seçimi zorunludur.',
   'inv.formDescription':'Açıklama',
@@ -1180,6 +1180,7 @@ export const TR = {
   'inv.transferredUg':  'UG ekibi güncellendi',
   'inv.newSyTeam':      'Yeni SY Ekibi',
   'inv.newUgTeam':      'Yeni UG Ekibi',
+  'inv.newTeam':        'Yeni Takım',
 
   'ec.colTeam':        'Takım',
   'ec.formTeam':       'Takım',
@@ -2881,10 +2882,10 @@ export const EN = {
   'usr.deleteConfirm': 'Delete',
   'usr.deleteCancel':  'Cancel',
 
-  'inv.colTeam':       'SY Team',
+  'inv.colTeam':       'Team',
   'inv.colSyTeam':     'SY Team',
   'inv.colUgTeam':     'UG Team',
-  'inv.formTeam':      'SY Team (Service Management)',
+  'inv.formTeam':      'Team',
   'inv.formUgTeam':    'UG Team (Application Developer)',
   'inv.ugTeamRequired':'UG Team selection is required.',
   'inv.formDescription':'Description',
@@ -3005,6 +3006,7 @@ export const EN = {
   'inv.transferredUg':  'UG team updated',
   'inv.newSyTeam':      'New SY Team',
   'inv.newUgTeam':      'New UG Team',
+  'inv.newTeam':        'New Team',
 
   'ec.colTeam':        'Team',
   'ec.formTeam':       'Team',
