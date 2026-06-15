@@ -43,7 +43,7 @@ class WeeklyReportReminderServiceTest {
 
     private static Team team(Long id, String name, String email) {
         Team t = new Team();
-        t.setId(id); t.setName(name); t.setEmail(email); t.setActive(true); t.setTeamType("SY");
+        t.setId(id); t.setName(name); t.setEmail(email); t.setActive(true);
         return t;
     }
 
@@ -61,7 +61,7 @@ class WeeklyReportReminderServiceTest {
         Team c = team(3L, "GammaSY",   "gamma@x.com");   // APPROVED        → atla (girilmiş)
         Team d = team(4L, "DeltaSY",   "");              // rapor yok, mail yok → atla
         Team e = team(5L, "EpsilonSY", "eps@x.com");     // PENDING_APPROVAL → atla (girilmiş)
-        when(teamRepo.findByTeamTypeAndActiveTrueOrderByNameAsc("SY"))
+        when(teamRepo.findByActiveTrueOrderByNameAsc())
                 .thenReturn(List.of(a, b, c, d, e));
 
         when(reportRepo.findByTeamIdAndReportYearAndWeekNo(eq(1L), anyInt(), anyInt())).thenReturn(Optional.empty());
@@ -88,7 +88,7 @@ class WeeklyReportReminderServiceTest {
     @DisplayName("sendFridayReminders: mail linki ?tab=weeklyreports deep-link içerir (çift / temizlenir)")
     void buildsDeepLinkUrl() {
         Team a = team(1L, "AlphaSY", "alpha@x.com");
-        when(teamRepo.findByTeamTypeAndActiveTrueOrderByNameAsc("SY")).thenReturn(List.of(a));
+        when(teamRepo.findByActiveTrueOrderByNameAsc()).thenReturn(java.util.List.of(a));
         when(reportRepo.findByTeamIdAndReportYearAndWeekNo(anyLong(), anyInt(), anyInt())).thenReturn(Optional.empty());
 
         service.sendFridayReminders();

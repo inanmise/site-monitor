@@ -18,6 +18,10 @@ public interface CertificateNoteRepository extends JpaRepository<CertificateNote
     @Query("SELECT n FROM CertificateNote n WHERE n.domain = :domain AND n.teamId = :teamId ORDER BY n.createdAt DESC")
     List<CertificateNote> findByDomainAndTeamIdOrderByCreatedAtDesc(@Param("domain") String domain, @Param("teamId") Long teamId);
 
+    /** Faz 3b — çok-takım kapsamı: domain'in notları, teamId verilen kümede olanlar. */
+    @Query("SELECT n FROM CertificateNote n WHERE n.domain = :domain AND n.teamId IN :teamIds ORDER BY n.createdAt DESC")
+    List<CertificateNote> findByDomainAndTeamIdInOrderByCreatedAtDesc(@Param("domain") String domain, @Param("teamIds") java.util.Collection<Long> teamIds);
+
     /** Domain rename: notları yeni domain'e taşı.
      *  Caller'da @Transactional zorunlu. */
     @Modifying

@@ -31,8 +31,50 @@ public class AppUser {
     private String displayName;
     private String email;
 
+    /** Sicil No — from AD `cn`. */
     @Column(name = "employee_id", length = 50)
     private String employeeId;
+
+    // ── AD profile fields (populated on LDAP login) ───────────────────────────
+    @Column(name = "first_name", length = 100)
+    private String firstName;        // AD givenName
+
+    @Column(name = "last_name", length = 100)
+    private String lastName;         // AD sn
+
+    @Column(length = 150)
+    private String title;            // AD title
+
+    @Column(length = 50)
+    private String phone;            // AD mobile
+
+    @Column(length = 200)
+    private String department;       // AD department
+
+    /** Şirket içi seviye — AD `description`. */
+    @Column(name = "company_level", length = 200)
+    private String companyLevel;
+
+    /** Manager's sicil (cn) from AD extensionAttribute4 / manager. */
+    @Column(name = "manager_sicil", length = 50)
+    private String managerSicil;
+
+    /** FK to the manager's AppUser row (resolved/provisioned from managerSicil). */
+    @Column(name = "manager_id")
+    private Long managerId;
+
+    /** Müdürlük (directorate) id + name — AD extensionAttribute5 "ID;Name". */
+    @Column(name = "mudurluk_id")
+    private Long mudurlukId;
+
+    @Column(name = "mudurluk_name", length = 250)
+    private String mudurlukName;
+
+    /** Base64 JPEG from AD thumbnailPhoto. Served via a dedicated photo endpoint,
+     *  never inlined in JSON. */
+    @JsonIgnore
+    @Column(name = "photo_base64", columnDefinition = "TEXT")
+    private String photoBase64;
 
     /** ADMIN — full access to all teams; USER — restricted to own team */
     @Column(nullable = false)

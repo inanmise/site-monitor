@@ -15,6 +15,9 @@ public interface EscalationContactRepository extends JpaRepository<EscalationCon
     List<EscalationContact> findByTeamIdAndMinAlertLevelInAndActiveTrue(Long teamId, List<String> levels);
     List<EscalationContact> findByTeamIdAndMinAlertLevelAndActiveTrue(Long teamId, String level);
     List<EscalationContact> findByTeamIdOrderByRoleAsc(Long teamId);
+    // Faz 3b — çok-takım kapsamı
+    List<EscalationContact> findByTeamIdInAndActiveTrueOrderByRoleAsc(java.util.Collection<Long> teamIds);
+    List<EscalationContact> findByTeamIdInOrderByRoleAsc(java.util.Collection<Long> teamIds);
     List<EscalationContact> findByUserId(Long userId);
     boolean existsByTeamIdAndActiveTrue(Long teamId);
 

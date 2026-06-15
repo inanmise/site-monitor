@@ -13,11 +13,16 @@ import java.util.Optional;
 public interface AppUserRepository extends JpaRepository<AppUser, Long> {
     Optional<AppUser> findByUsername(String username);
     Optional<AppUser> findByUsernameAndActiveTrue(String username);
+    Optional<AppUser> findByEmployeeId(String employeeId);     // sicil (AD cn)
     List<AppUser> findByTeamIdOrderByUsernameAsc(Long teamId);
     List<AppUser> findAllByOrderByUsernameAsc();
     boolean existsByUsername(String username);
     boolean existsByTeamId(Long teamId);
     long countBySystemRoleAndActiveTrue(String systemRole);
+
+    // ── Faz 3b: manager (müdür) → astları / yönettiği takımlar ──
+    List<AppUser> findByManagerId(Long managerId);
+    boolean existsByManagerId(Long managerId);
 
     /** Haftalık rapor PO bildirimi — kontağı olmayan takımlar için fallback. */
     List<AppUser> findByTeamIdAndOrgRoleAndActiveTrue(Long teamId, String orgRole);

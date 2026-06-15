@@ -94,7 +94,7 @@ class CertificateControllerTest {
     @Test
     @DisplayName("GET /api/certificates with auth returns 200 and success:true")
     void getCertificates_authenticated_returns200() throws Exception {
-        when(certService.getAllLatestForTeam(null)).thenReturn(List.of());
+        when(certService.getAllLatestForTeams(null)).thenReturn(List.of());
 
         mvc.perform(get("/api/certificates").session(authSession()))
                 .andExpect(status().isOk())
@@ -107,7 +107,7 @@ class CertificateControllerTest {
     void getCertificates_returnsCertList() throws Exception {
         CertificateDto dto = new CertificateDto();
         dto.setDomain("example.com");
-        when(certService.getAllLatestForTeam(null)).thenReturn(List.of(dto));
+        when(certService.getAllLatestForTeams(null)).thenReturn(List.of(dto));
 
         mvc.perform(get("/api/certificates").session(authSession()))
                 .andExpect(status().isOk())
@@ -117,7 +117,7 @@ class CertificateControllerTest {
     @Test
     @DisplayName("GET /api/warnings returns 200 with warning list")
     void getWarnings_authenticated_returns200() throws Exception {
-        when(certService.getWarningsForTeam(null)).thenReturn(Collections.emptyList());
+        when(certService.getWarningsForTeams(null)).thenReturn(Collections.emptyList());
 
         mvc.perform(get("/api/warnings").session(authSession()))
                 .andExpect(status().isOk())
@@ -128,7 +128,7 @@ class CertificateControllerTest {
     @Test
     @DisplayName("GET /api/stats returns 200 with stats map")
     void getStats_authenticated_returns200() throws Exception {
-        when(certService.getStatsForTeam(null)).thenReturn(Map.of("total_certificates", 5));
+        when(certService.getStatsForTeams(null)).thenReturn(Map.of("total_certificates", 5));
 
         mvc.perform(get("/api/stats").session(authSession()))
                 .andExpect(status().isOk())
@@ -157,7 +157,7 @@ class CertificateControllerTest {
     @Test
     @DisplayName("GET /api/renewal-advice returns 200 with advice list")
     void getRenewalAdvice_authenticated_returns200() throws Exception {
-        when(certService.getRenewalAdviceForTeam(null)).thenReturn(Collections.emptyList());
+        when(certService.getRenewalAdviceForTeams(null)).thenReturn(Collections.emptyList());
 
         mvc.perform(get("/api/renewal-advice").session(authSession()))
                 .andExpect(status().isOk())

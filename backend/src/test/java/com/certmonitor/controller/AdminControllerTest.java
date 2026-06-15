@@ -905,22 +905,33 @@ class AdminControllerTest {
     // ── TEAM_ADMIN role gating ────────────────────────────────────────────────
 
     @Test
-    @DisplayName("POST /api/admin/inventory as TEAM_ADMIN forces team_id to caller's team")
-    void addInventory_asTeamAdmin_forcesOwnTeam() throws Exception {
+    @DisplayName("POST /api/admin/inventory as TEAM_ADMIN can add to a team it manages")
+    void addInventory_asTeamAdmin_inScopeTeam_returns200() throws Exception {
         when(inventoryRepo.save(any())).thenAnswer(inv -> {
             CertificateInventory i = inv.getArgument(0);
             i.setId(99L);
             return i;
         });
 
+        // Faz 3b: PO/TEAM_ADMIN formdan yönetebildiği bir takım seçer (manageTeamIds=[2]).
         mvc.perform(post("/api/admin/inventory")
                         .session(teamAdminSession())
                         .contentType(MediaType.APPLICATION_JSON)
-                        // payload tries to plant the item on team 999 — must be overridden
-                        .content("{\"domain\":\"x.com\",\"port\":443,\"team_id\":999}"))
+                        .content("{\"domain\":\"x.com\",\"port\":443,\"team_id\":2}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success").value(true))
                 .andExpect(jsonPath("$.data.team_id").value(2));
+    }
+
+    @Test
+    @DisplayName("POST /api/admin/inventory as TEAM_ADMIN on a team it does NOT manage returns 403")
+    void addInventory_asTeamAdmin_outOfScopeTeam_returns403() throws Exception {
+        // Faz 3b: yönetim kapsamı dışındaki takıma (999) ekleme reddedilir.
+        mvc.perform(post("/api/admin/inventory")
+                        .session(teamAdminSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"domain\":\"x.com\",\"port\":443,\"team_id\":999}"))
+                .andExpect(status().isForbidden());
     }
 
     @Test
@@ -1000,7 +1011,7 @@ class AdminControllerTest {
         Team updated = new Team();
         updated.setId(2L);
         updated.setName("Renamed");
-        when(userService.updateTeam(eq(2L), any(), any(), any(), any(), any(), any()))
+        when(userService.updateTeam(eq(2L), any(), any(), any(), any(), any()))
                 .thenReturn(updated);
 
         mvc.perform(put("/api/admin/teams/2")
@@ -1234,6 +1245,9 @@ class AdminControllerTest {
         s.setAttribute("userId", 42L);
         s.setAttribute("teamId", 2L);
         s.setAttribute("systemRole", "USER");
+        // Faz 3b: USER görür yalnız kendi takımını; yönetim yok.
+        s.setAttribute("viewTeamIds", new java.util.ArrayList<>(java.util.List.of(2L)));
+        s.setAttribute("manageTeamIds", new java.util.ArrayList<Long>());
         return s;
     }
 
@@ -1244,6 +1258,9 @@ class AdminControllerTest {
         s.setAttribute("userId", 99L);
         s.setAttribute("teamId", 2L);
         s.setAttribute("systemRole", "TEAM_ADMIN");
+        // Faz 3b: TEAM_ADMIN (PO) liderlik ettiği takım(lar)ı görür + yönetir.
+        s.setAttribute("viewTeamIds", new java.util.ArrayList<>(java.util.List.of(2L)));
+        s.setAttribute("manageTeamIds", new java.util.ArrayList<>(java.util.List.of(2L)));
         return s;
     }
 

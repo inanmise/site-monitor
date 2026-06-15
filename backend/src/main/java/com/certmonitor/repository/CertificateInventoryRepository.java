@@ -19,6 +19,12 @@ public interface CertificateInventoryRepository extends JpaRepository<Certificat
     long countByActiveTrue();
     List<CertificateInventory> findByUgTeamIdAndActiveTrueOrderByDomainAsc(Long ugTeamId);
 
+    // Faz 3b — çok-takım kapsamı (müdür/PO): teamId VEYA ugTeamId ∈ ids
+    List<CertificateInventory> findByTeamIdInAndActiveTrueOrderByDomainAsc(Collection<Long> teamIds);
+    List<CertificateInventory> findByUgTeamIdInAndActiveTrueOrderByDomainAsc(Collection<Long> ugTeamIds);
+    List<CertificateInventory> findByTeamIdInAndDeletedAtIsNullOrderByDomainAsc(Collection<Long> teamIds);
+    List<CertificateInventory> findByUgTeamIdInAndDeletedAtIsNullOrderByDomainAsc(Collection<Long> ugTeamIds);
+
     // Soft-delete aware
     List<CertificateInventory> findAllByOrderByDomainAsc();
     List<CertificateInventory> findByDeletedAtIsNullOrderByDomainAsc();

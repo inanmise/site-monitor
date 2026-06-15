@@ -10,13 +10,15 @@ import {
 } from 'lucide-react'
 import CertMonitorLogo from './ui/CertMonitorLogo.jsx'
 
-export default function Nav({ activeTab, onTabChange, username, teamName, systemRole, onLogout, onChangePassword }) {
+export default function Nav({ activeTab, onTabChange, username, teamName, systemRole, globalAdmin, onLogout, onChangePassword }) {
   const t = useT()
   const { toggle } = useLanguage()
   const { theme, toggle: toggleTheme } = useTheme()
   const isAdmin     = systemRole === 'ADMIN'
   const isTeamAdmin = systemRole === 'TEAM_ADMIN'
   const isAudit     = systemRole === 'AUDIT'
+  // Faz 3b: global-only sekmeler yalnız global admin'e; scoped müdür (ADMIN) görmez.
+  const isGlobalAdmin = !!globalAdmin
 
   const GROUPS = [
     {
@@ -64,15 +66,15 @@ export default function Nav({ activeTab, onTabChange, username, teamName, system
       tabs: [
         { id: 'activity',   Icon: ClipboardList, labelKey: 'nav.activity',   show: true               },
         { id: 'myactivity', Icon: UserCheck,     labelKey: 'nav.myActivity', show: true               },
-        { id: 'system',     Icon: Server,        labelKey: 'nav.system',     show: isAdmin || isAudit },
+        { id: 'system',     Icon: Server,        labelKey: 'nav.system',     show: isGlobalAdmin || isAudit },
       ],
     },
     {
       labelKey: 'nav.groupAdmin',
       tabs: [
         { id: 'admin',         Icon: Settings,    labelKey: 'nav.admin',         show: true    },
-        { id: 'permissions',   Icon: ShieldCheck, labelKey: 'nav.permissions',   show: isAdmin },
-        { id: 'sqlplayground', Icon: Database,    labelKey: 'nav.sqlPlayground', show: isAdmin },
+        { id: 'permissions',   Icon: ShieldCheck, labelKey: 'nav.permissions',   show: isGlobalAdmin },
+        { id: 'sqlplayground', Icon: Database,    labelKey: 'nav.sqlPlayground', show: isGlobalAdmin },
       ],
     },
     {
@@ -101,6 +103,7 @@ export default function Nav({ activeTab, onTabChange, username, teamName, system
 
   const [userMenuOpen, setUserMenuOpen] = useState(false)
   const [userMenuPos, setUserMenuPos] = useState(null)
+  const [photoErr, setPhotoErr] = useState(false)
   const userTriggerRef = useRef(null)
   const userPopoverRef = useRef(null)
 
@@ -217,7 +220,9 @@ export default function Nav({ activeTab, onTabChange, username, teamName, system
             onClick={() => setUserMenuOpen(v => !v)}
             title={!open ? t('nav.userSettings') : undefined}
           >
-            <User size={14} />
+            {photoErr
+              ? <User size={14} />
+              : <img className="sb-user-photo" alt="" src="/api/me/photo" onError={() => setPhotoErr(true)} />}
             {open && (
               <div className="sb-user-info">
                 <span className="sb-user-name">{username}</span>

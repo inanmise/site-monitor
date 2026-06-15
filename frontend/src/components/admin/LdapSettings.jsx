@@ -292,10 +292,13 @@ export default function LdapSettings() {
             <option value="cn">cn</option>
             <option value="displayName">{t('ldap.searchByDisplay')}</option>
             <option value="userPrincipalName">userPrincipalName</option>
+            <option value="memberOf">{t('ldap.searchByMemberOf')}</option>
             <option value="_raw_">{t('ldap.searchByRaw')}</option>
           </select>
           <input type="text" value={queryName}
-            placeholder={queryAttr === '_raw_' ? t('ldap.lookupRawPlaceholder') : t('ldap.lookupPlaceholder')}
+            placeholder={queryAttr === '_raw_' ? t('ldap.lookupRawPlaceholder')
+              : queryAttr === 'memberOf' ? t('ldap.lookupMemberOfPlaceholder')
+              : t('ldap.lookupPlaceholder')}
             onChange={(e) => setQueryName(e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter') runQuery() }} />
           <button className="btn btn-primary" onClick={runQuery} disabled={querying || !queryName.trim()}>
@@ -316,6 +319,29 @@ function LookupResult({ result, t }) {
   const data = result.data || {}
   if (!data.found) {
     return <div className="alert-msg">{t('ldap.lookupNotFound')}{data.filter ? ` (${data.filter})` : ''}</div>
+  }
+  // Multiple matches (e.g. memberOf group-membership search) → compact member list.
+  if ((data.count ?? (data.matches?.length ?? 0)) > 1) {
+    return (
+      <div className="ldap-lookup-result">
+        <div className="ldap-dn">{t('ldap.matchCount', data.count)}</div>
+        <div className="admin-table-wrap">
+          <table className="admin-table">
+            <thead><tr><th>sAMAccountName</th><th>{t('ldap.colDisplay')}</th><th>mail</th><th>DN</th></tr></thead>
+            <tbody>
+              {data.matches.map((m, i) => (
+                <tr key={i}>
+                  <td className="ldap-attr-name">{m.username || '—'}</td>
+                  <td>{m.displayName || '—'}</td>
+                  <td>{m.email || '—'}</td>
+                  <td className="ldap-attr-val"><code>{m.dn}</code></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    )
   }
   const attrs = data.attributes || {}
   const keys = Object.keys(attrs).sort((a, b) => a.localeCompare(b))

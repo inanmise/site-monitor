@@ -9,6 +9,36 @@ import AdminAutoResetModal from './AdminAutoResetModal.jsx'
 
 const emptyUser = { username: '', password: '', display_name: '', email: '', employee_id: '', system_role: 'USER', team_id: '', org_role: '', active: true }
 
+const AVATAR_PALETTE = [
+  'linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)',
+  'linear-gradient(135deg, #0ea5e9 0%, #06b6d4 100%)',
+  'linear-gradient(135deg, #10b981 0%, #14b8a6 100%)',
+  'linear-gradient(135deg, #f59e0b 0%, #ef4444 100%)',
+  'linear-gradient(135deg, #ec4899 0%, #a855f7 100%)',
+]
+function initialsOf(name) {
+  const parts = String(name || '').trim().split(/\s+/).filter(Boolean)
+  if (parts.length === 0) return '?'
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase()
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase()
+}
+function avatarBg(seed) {
+  const s = String(seed || '')
+  let h = 0
+  for (let i = 0; i < s.length; i++) h = ((h << 5) - h + s.charCodeAt(i)) | 0
+  return AVATAR_PALETTE[Math.abs(h) % AVATAR_PALETTE.length]
+}
+/** AD photo with graceful fallback to a colored-initials badge. */
+function UserAvatar({ user }) {
+  const [err, setErr] = useState(false)
+  if (!err) {
+    return <img className="usr-avatar" alt="" src={`/api/admin/users/${user.id}/photo`} onError={() => setErr(true)} />
+  }
+  return <span className="usr-avatar usr-avatar-fallback" style={{ background: avatarBg(user.username) }}>
+    {initialsOf(user.display_name || user.username)}
+  </span>
+}
+
 export default function UserManager({ systemRole, ownTeamId, currentUsername, teams }) {
   const t = useT()
   const isAdmin = systemRole === 'ADMIN'
@@ -155,9 +185,11 @@ export default function UserManager({ systemRole, ownTeamId, currentUsername, te
         <table className="admin-table">
           <thead>
             <tr>
+              <th aria-label="avatar"></th>
               <th>{t('usr.colUsername')}</th>
               <th>{t('usr.colEmployeeId')}</th>
               <th>{t('usr.colDisplay')}</th>
+              <th>{t('usr.colTitle')}</th>
               <th>{t('usr.colEmail')}</th>
               <th>{t('usr.colRole')}</th>
               <th>{t('usr.colOrgRole')}</th>
@@ -168,15 +200,17 @@ export default function UserManager({ systemRole, ownTeamId, currentUsername, te
           </thead>
           <tbody>
             {users.length === 0 && (
-              <tr><td colSpan={9} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: 18 }}>
+              <tr><td colSpan={11} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: 18 }}>
                 {loading ? '…' : t('usr.noResults')}
               </td></tr>
             )}
             {users.map((user) => (
               <tr key={user.id}>
+                <td><UserAvatar user={user} /></td>
                 <td><strong>{user.username}</strong></td>
                 <td>{user.employee_id || '—'}</td>
                 <td>{user.display_name || '—'}</td>
+                <td>{user.title || '—'}</td>
                 <td>{user.email || '—'}</td>
                 <td>
                   <span className={`role-badge${user.system_role === 'ADMIN' ? ' role-admin' : user.system_role === 'AUDIT' ? ' role-audit' : ''}`}>{user.system_role}</span>

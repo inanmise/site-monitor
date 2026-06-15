@@ -57,6 +57,9 @@ public class AuthController {
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private com.certmonitor.service.LdapDirectoryService ldapDirectory;
 
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.certmonitor.service.LdapProvisioningService ldapProvisioning;
+
     // Per-IP attempt counter within a sliding 60-second window
     private final ConcurrentHashMap<String, AtomicInteger> loginAttempts = new ConcurrentHashMap<>();
     // Per-IP: timestamp when the current counting window started
@@ -163,7 +166,7 @@ public class AuthController {
                 cookie.setPath("/");
                 response.addCookie(cookie);
             }
-            return ResponseEntity.ok(buildMeResponse(user));
+            return ResponseEntity.ok(buildMeResponse(user, newSession));
         }
 
         // 3. Failed — record attempt, check for BRUTE_FORCE, apply progressive lockout
@@ -250,7 +253,50 @@ public class AuthController {
         resp.put("system_role", session.getAttribute("systemRole"));
         resp.put("must_change_password",
                 Boolean.TRUE.equals(session.getAttribute("mustChangePassword")));
+        // Profile fields (AD-provisioned). Loaded fresh so they reflect the latest sync.
+        userService.findByUsername(username).ifPresent(u -> {
+            resp.put("display_name", u.getDisplayName());
+            resp.put("first_name", u.getFirstName());
+            resp.put("last_name", u.getLastName());
+            resp.put("email", u.getEmail());
+            resp.put("employee_id", u.getEmployeeId());
+            resp.put("title", u.getTitle());
+            resp.put("phone", u.getPhone());
+            resp.put("department", u.getDepartment());
+            resp.put("company_level", u.getCompanyLevel());
+            resp.put("org_role", u.getOrgRole());
+            resp.put("mudurluk_name", u.getMudurlukName());
+            resp.put("manager_sicil", u.getManagerSicil());
+            resp.put("has_photo", u.getPhotoBase64() != null && !u.getPhotoBase64().isBlank());
+        });
+        // Faz 3b: scope flags for the UI (hide global-only tabs from scoped müdür-admins).
+        resp.put("global_admin", SessionScope.isGlobalAdmin(session));
+        resp.put("scoped", session.getAttribute("viewTeamIds") != null);
         return ResponseEntity.ok(resp);
+    }
+
+    /** Returns the logged-in user's AD photo (JPEG), or 404 if none. */
+    @GetMapping("/me/photo")
+    public ResponseEntity<byte[]> mePhoto(HttpSession session) {
+        String username = (String) session.getAttribute("username");
+        if (username == null) return ResponseEntity.status(401).build();
+        return userService.findByUsername(username)
+                .map(u -> photoResponse(u.getPhotoBase64()))
+                .orElse(ResponseEntity.notFound().build());
+    }
+
+    /** Decodes a stored base64 JPEG into an image response; 404 when absent/invalid. */
+    static ResponseEntity<byte[]> photoResponse(String base64) {
+        if (base64 == null || base64.isBlank()) return ResponseEntity.notFound().build();
+        try {
+            byte[] bytes = java.util.Base64.getDecoder().decode(base64.trim());
+            return ResponseEntity.ok()
+                    .header("Content-Type", "image/jpeg")
+                    .header("Cache-Control", "private, max-age=3600")
+                    .body(bytes);
+        } catch (Exception e) {
+            return ResponseEntity.notFound().build();
+        }
     }
 
     /**
@@ -364,7 +410,8 @@ public class AuthController {
             if (ad.isEmpty()) return Optional.empty();
             var u = ad.get();
             String uname = (u.username() != null && !u.username().isBlank()) ? u.username() : username;
-            return Optional.of(userService.provisionLdapUser(uname, u.displayName(), u.email()));
+            // Map all AD attributes → user/team/manager (Faz 3a).
+            return Optional.of(ldapProvisioning.provisionFromAd(uname, u.dn(), u.attributes()));
         } catch (Exception e) {
             log.warn("LDAP login error for '{}': {}", username, e.getMessage());
             return Optional.empty();
@@ -386,9 +433,17 @@ public class AuthController {
                 ? userService.findTeamById(user.getTeamId()).map(Team::getName).orElse(null)
                 : null;
         session.setAttribute("teamName", teamName);
+
+        // ── Team scope (Faz 3b): null = unrestricted (global admin / AUDIT) → no attribute. ──
+        java.util.List<Long> view = userService.computeViewTeamIds(user);
+        java.util.List<Long> manage = userService.computeManageTeamIds(user);
+        if (view == null) session.removeAttribute("viewTeamIds");
+        else session.setAttribute("viewTeamIds", new java.util.ArrayList<>(view));
+        if (manage == null) session.removeAttribute("manageTeamIds");
+        else session.setAttribute("manageTeamIds", new java.util.ArrayList<>(manage));
     }
 
-    private Map<String, Object> buildMeResponse(AppUser user) {
+    private Map<String, Object> buildMeResponse(AppUser user, HttpSession session) {
         Map<String, Object> resp = new LinkedHashMap<>();
         resp.put("success", true);
         resp.put("message", "Login successful");
@@ -399,6 +454,9 @@ public class AuthController {
                 ? userService.findTeamById(user.getTeamId()).map(Team::getName).orElse(null) : null);
         resp.put("system_role", user.getSystemRole());
         resp.put("must_change_password", Boolean.TRUE.equals(user.getMustChangePassword()));
+        // Faz 3b: scope flags so the UI hides global-only tabs from scoped müdür-admins.
+        resp.put("global_admin", SessionScope.isGlobalAdmin(session));
+        resp.put("scoped", session.getAttribute("viewTeamIds") != null);
         return resp;
     }
 

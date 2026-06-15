@@ -68,6 +68,9 @@ export default function App() {
   const t = useT()
   const [user, setUser] = useState(null)
   const [systemRole, setSystemRole] = useState('USER')
+  // Faz 3b: yalnız global (yerel/bootstrap) admin global-only sekmeleri görür;
+  // kapsamlı (scoped) müdür-admin systemRole==='ADMIN' olsa da görmemeli (backend 403 döner).
+  const [globalAdmin, setGlobalAdmin] = useState(false)
   const [teamId, setTeamId] = useState(null)
   const [teamName, setTeamName] = useState(null)
   const [authChecked, setAuthChecked] = useState(false)
@@ -122,6 +125,7 @@ export default function App() {
       if (res?.success) {
         setUser(res.username)
         setSystemRole(res.system_role || 'USER')
+        setGlobalAdmin(!!res.global_admin)
         setTeamId(res.team_id ?? null)
         setTeamName(res.team_name ?? null)
         setMustChangePwd(!!res.must_change_password)
@@ -341,6 +345,7 @@ export default function App() {
     setTab(initialTabFromUrl() || 'dashboard')
     setUser(userData.username)
     setSystemRole(userData.system_role || 'USER')
+    setGlobalAdmin(!!userData.global_admin)
     setTeamId(userData.team_id ?? null)
     setTeamName(userData.team_name ?? null)
     setMustChangePwd(!!userData.must_change_password)
@@ -484,6 +489,7 @@ export default function App() {
       )}
 
       <Nav activeTab={tab} onTabChange={handleTabChange} username={user} teamName={teamName} systemRole={systemRole}
+        globalAdmin={globalAdmin}
         onLogout={handleLogout} onChangePassword={() => setSelfPwdModalOpen(true)} />
 
       {selfPwdModalOpen && user && (
@@ -884,7 +890,7 @@ export default function App() {
               </div>
             )}
 
-            {tab === 'permissions' && systemRole === 'ADMIN' && (
+            {tab === 'permissions' && globalAdmin && (
               <div className="tab-content active">
                 {/* Başlık PermissionMatrix kendi header'ında (ikon + Reset) — çift başlık olmasın */}
                 <PermissionMatrix />
@@ -898,7 +904,7 @@ export default function App() {
               </div>
             )}
 
-            {tab === 'system' && (systemRole === 'ADMIN' || systemRole === 'AUDIT') && (
+            {tab === 'system' && (globalAdmin || systemRole === 'AUDIT') && (
               <div className="tab-content active">
                 <h2>{t('app.systemTitle')}</h2>
                 <AuditLogViewer />
@@ -918,7 +924,7 @@ export default function App() {
               </div>
             )}
 
-            {tab === 'sqlplayground' && systemRole === 'ADMIN' && (
+            {tab === 'sqlplayground' && globalAdmin && (
               <div className="tab-content active">
                 <h2>{t('app.sqlPlaygroundTitle')}</h2>
                 <SqlPlayground />

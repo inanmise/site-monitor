@@ -98,6 +98,54 @@ public class UserService {
         return teamRepo.findById(id);
     }
 
+    // ── Team scoping (Faz 3b) ───────────────────────────────────────────────
+    // null  = unrestricted (global admin / AUDIT read)
+    // list  = restricted to those team ids (empty = nothing)
+
+    /** Read scope: which teams' objects this user may SEE. */
+    public List<Long> computeViewTeamIds(AppUser u) {
+        if (u == null) return java.util.List.of();
+        String role = u.getSystemRole();
+        if ("AUDIT".equals(role)) return null;                  // system-wide read
+        boolean ldap = "LDAP".equalsIgnoreCase(u.getAuthSource());
+        if ("ADMIN".equals(role)) {
+            // Local/bootstrap ADMIN → global; AD ADMIN (müdür) → only subordinates' teams.
+            return ldap ? subordinateTeamIds(u.getId()) : null;
+        }
+        if ("TEAM_ADMIN".equals(role)) return ledPlusOwnTeamIds(u);
+        // USER
+        java.util.List<Long> own = new java.util.ArrayList<>();
+        if (u.getTeamId() != null) own.add(u.getTeamId());
+        return own;
+    }
+
+    /** Write scope: which teams' objects this user may MANAGE. */
+    public List<Long> computeManageTeamIds(AppUser u) {
+        if (u == null) return java.util.List.of();
+        String role = u.getSystemRole();
+        boolean ldap = "LDAP".equalsIgnoreCase(u.getAuthSource());
+        if ("ADMIN".equals(role) && !ldap) return null;         // global manage
+        if ("TEAM_ADMIN".equals(role)) return ledPlusOwnTeamIds(u);
+        // müdür (AD admin), USER, AUDIT → no team management
+        return java.util.List.of();
+    }
+
+    private List<Long> subordinateTeamIds(Long managerId) {
+        if (managerId == null) return new java.util.ArrayList<>();
+        java.util.LinkedHashSet<Long> ids = new java.util.LinkedHashSet<>();
+        for (AppUser sub : userRepo.findByManagerId(managerId)) {
+            if (sub.getTeamId() != null) ids.add(sub.getTeamId());
+        }
+        return new java.util.ArrayList<>(ids);
+    }
+
+    private List<Long> ledPlusOwnTeamIds(AppUser u) {
+        java.util.LinkedHashSet<Long> ids = new java.util.LinkedHashSet<>();
+        for (Team t : teamRepo.findByLeaderId(u.getId())) ids.add(t.getId());
+        if (u.getTeamId() != null) ids.add(u.getTeamId());
+        return new java.util.ArrayList<>(ids);
+    }
+
     /**
      * Finds an existing user by username, or provisions a new LDAP-authenticated one.
      * AD users get a sentinel password hash (random UUID → never matches local auth),
@@ -195,19 +243,19 @@ public class UserService {
     }
 
     @Transactional
-    public Team createTeam(String name, String email, String description, Long leaderId, String teamType) {
+    public Team createTeam(String name, String email, String description, Long leaderId) {
         if (name == null || name.isBlank()) throw new IllegalArgumentException("Team name cannot be blank");
         if (email == null || email.isBlank()) throw new IllegalArgumentException("Team email is required");
-        if (leaderId == null) throw new IllegalArgumentException("Team leader is required");
         if (teamRepo.existsByName(name.trim())) throw new IllegalArgumentException("Team already exists: " + name);
-        if (!userRepo.existsById(leaderId)) throw new IllegalArgumentException("Leader user not found: " + leaderId);
+        // Leader (PO) is OPTIONAL — a team may be created before its PO has logged in.
+        if (leaderId != null && !userRepo.existsById(leaderId))
+            throw new IllegalArgumentException("Leader user not found: " + leaderId);
         String now = now();
         Team team = new Team();
         team.setName(name.trim());
         team.setEmail(email.trim());
         team.setDescription(description);
         team.setLeaderId(leaderId);
-        team.setTeamType(teamType);
         team.setActive(true);
         team.setCreatedAt(now);
         team.setUpdatedAt(now);
@@ -215,7 +263,7 @@ public class UserService {
     }
 
     @Transactional
-    public Team updateTeam(Long id, String name, String email, String description, Boolean active, Long leaderId, String teamType) {
+    public Team updateTeam(Long id, String name, String email, String description, Boolean active, Long leaderId) {
         Team team = teamRepo.findById(id).orElseThrow(() -> new NoSuchElementException("Team not found: " + id));
         if (name != null && !name.isBlank()) team.setName(name.trim());
         if (email != null && !email.isBlank()) team.setEmail(email.trim());
@@ -223,13 +271,10 @@ public class UserService {
             throw new IllegalArgumentException("Team email is required");
         if (description != null) team.setDescription(description);
         if (active != null) team.setActive(active);
-        if (leaderId != null) {
+        if (leaderId != null) {   // optional; only validated when provided
             if (!userRepo.existsById(leaderId)) throw new IllegalArgumentException("Leader user not found: " + leaderId);
             team.setLeaderId(leaderId);
-        } else if (team.getLeaderId() == null) {
-            throw new IllegalArgumentException("Team leader is required");
         }
-        if (teamType != null) team.setTeamType(teamType);
         team.setUpdatedAt(now());
         return teamRepo.save(team);
     }

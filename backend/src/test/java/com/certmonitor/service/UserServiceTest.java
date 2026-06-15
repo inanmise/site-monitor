@@ -337,7 +337,7 @@ class UserServiceTest {
         when(teamRepo.existsByName("Alpha")).thenReturn(false);
         when(userRepo.existsById(1L)).thenReturn(true);
 
-        Team result = service.createTeam("Alpha", "alpha@example.com", "Desc", 1L, "SY");
+        Team result = service.createTeam("Alpha", "alpha@example.com", "Desc", 1L);
 
         assertThat(result.getName()).isEqualTo("Alpha");
         assertThat(result.getEmail()).isEqualTo("alpha@example.com");
@@ -347,7 +347,7 @@ class UserServiceTest {
     @Test
     @DisplayName("createTeam: blank name → IllegalArgumentException")
     void createTeam_blankName_throwsIllegalArgument() {
-        assertThatThrownBy(() -> service.createTeam("  ", "a@b.com", null, 1L, null))
+        assertThatThrownBy(() -> service.createTeam("  ", "a@b.com", null, 1L))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("name");
     }
@@ -355,25 +355,26 @@ class UserServiceTest {
     @Test
     @DisplayName("createTeam: blank email → IllegalArgumentException")
     void createTeam_blankEmail_throwsIllegalArgument() {
-        assertThatThrownBy(() -> service.createTeam("Alpha", "", null, 1L, null))
+        assertThatThrownBy(() -> service.createTeam("Alpha", "", null, 1L))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("email");
     }
 
     @Test
-    @DisplayName("createTeam: null leaderId → IllegalArgumentException")
-    void createTeam_nullLeader_throwsIllegalArgument() {
+    @DisplayName("createTeam: null leaderId is now allowed (PO optional)")
+    void createTeam_nullLeader_isAllowed() {
         when(teamRepo.existsByName("Alpha")).thenReturn(false);
-        assertThatThrownBy(() -> service.createTeam("Alpha", "a@b.com", null, null, null))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("leader");
+        Team result = service.createTeam("Alpha", "a@b.com", null, null);
+        assertThat(result.getName()).isEqualTo("Alpha");
+        assertThat(result.getLeaderId()).isNull();
+        verify(teamRepo).save(any(Team.class));
     }
 
     @Test
     @DisplayName("createTeam: duplicate name → IllegalArgumentException")
     void createTeam_duplicateName_throwsIllegalArgument() {
         when(teamRepo.existsByName("Alpha")).thenReturn(true);
-        assertThatThrownBy(() -> service.createTeam("Alpha", "a@b.com", null, 1L, null))
+        assertThatThrownBy(() -> service.createTeam("Alpha", "a@b.com", null, 1L))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("already exists");
     }
@@ -383,7 +384,7 @@ class UserServiceTest {
     void createTeam_leaderNotFound_throwsIllegalArgument() {
         when(teamRepo.existsByName("Alpha")).thenReturn(false);
         when(userRepo.existsById(99L)).thenReturn(false);
-        assertThatThrownBy(() -> service.createTeam("Alpha", "a@b.com", null, 99L, null))
+        assertThatThrownBy(() -> service.createTeam("Alpha", "a@b.com", null, 99L))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("Leader user not found");
     }
@@ -396,7 +397,7 @@ class UserServiceTest {
         t.setLeaderId(5L);
         when(teamRepo.findById(2L)).thenReturn(Optional.of(t));
 
-        service.updateTeam(2L, "NewName", null, null, null, null, null);
+        service.updateTeam(2L, "NewName", null, null, null, null);
 
         assertThat(t.getName()).isEqualTo("NewName");
         verify(teamRepo).save(t);
@@ -410,7 +411,7 @@ class UserServiceTest {
         t.setLeaderId(5L);
         when(teamRepo.findById(2L)).thenReturn(Optional.of(t));
 
-        service.updateTeam(2L, null, null, null, null, null, null);
+        service.updateTeam(2L, null, null, null, null, null);
 
         assertThat(t.getLeaderId()).isEqualTo(5L);
     }
@@ -419,7 +420,7 @@ class UserServiceTest {
     @DisplayName("updateTeam: not found → NoSuchElementException")
     void updateTeam_notFound_throwsNoSuchElement() {
         when(teamRepo.findById(999L)).thenReturn(Optional.empty());
-        assertThatThrownBy(() -> service.updateTeam(999L, "X", "x@x.com", null, null, null, null))
+        assertThatThrownBy(() -> service.updateTeam(999L, "X", "x@x.com", null, null, null))
                 .isInstanceOf(NoSuchElementException.class);
     }
 
@@ -826,5 +827,82 @@ class UserServiceTest {
         t.setName(name);
         t.setActive(true);
         return t;
+    }
+
+    // ── Faz 3b: computeViewTeamIds / computeManageTeamIds ─────────────────────
+
+    private AppUser scopeUser(Long id, String systemRole, String authSource, Long teamId) {
+        AppUser u = new AppUser();
+        u.setId(id);
+        u.setUsername("u" + id);
+        u.setSystemRole(systemRole);
+        u.setAuthSource(authSource);
+        u.setTeamId(teamId);
+        return u;
+    }
+
+    @Test
+    @DisplayName("computeViewTeamIds: AUDIT → null (system-wide read)")
+    void computeViewTeamIds_audit_null() {
+        assertThat(service.computeViewTeamIds(scopeUser(1L, "AUDIT", "LOCAL", 5L))).isNull();
+    }
+
+    @Test
+    @DisplayName("computeViewTeamIds: local/bootstrap ADMIN → null (global)")
+    void computeViewTeamIds_localAdmin_null() {
+        assertThat(service.computeViewTeamIds(scopeUser(1L, "ADMIN", "LOCAL", 5L))).isNull();
+    }
+
+    @Test
+    @DisplayName("computeViewTeamIds: AD ADMIN (müdür) → subordinates' distinct teams, not global")
+    void computeViewTeamIds_adAdmin_subordinateTeams() {
+        AppUser mudur = scopeUser(10L, "ADMIN", "LDAP", 1L);
+        when(userRepo.findByManagerId(10L)).thenReturn(List.of(
+                scopeUser(20L, "USER", "LDAP", 3L),
+                scopeUser(21L, "USER", "LDAP", 3L),  // duplicate team → deduped
+                scopeUser(22L, "USER", "LDAP", 7L),
+                scopeUser(23L, "USER", "LDAP", null) // no team → ignored
+        ));
+        assertThat(service.computeViewTeamIds(mudur)).containsExactly(3L, 7L);
+    }
+
+    @Test
+    @DisplayName("computeViewTeamIds: TEAM_ADMIN (PO) → led teams ∪ own")
+    void computeViewTeamIds_teamAdmin_ledPlusOwn() {
+        AppUser po = scopeUser(30L, "TEAM_ADMIN", "LDAP", 2L);
+        when(teamRepo.findByLeaderId(30L)).thenReturn(List.of(team(4L, "A"), team(5L, "B")));
+        assertThat(service.computeViewTeamIds(po)).containsExactly(4L, 5L, 2L);
+    }
+
+    @Test
+    @DisplayName("computeViewTeamIds: USER → only own team")
+    void computeViewTeamIds_user_ownOnly() {
+        assertThat(service.computeViewTeamIds(scopeUser(40L, "USER", "LDAP", 9L))).containsExactly(9L);
+    }
+
+    @Test
+    @DisplayName("computeManageTeamIds: local ADMIN → null (global manage)")
+    void computeManageTeamIds_localAdmin_null() {
+        assertThat(service.computeManageTeamIds(scopeUser(1L, "ADMIN", "LOCAL", 5L))).isNull();
+    }
+
+    @Test
+    @DisplayName("computeManageTeamIds: müdür (AD ADMIN) → empty (read-only)")
+    void computeManageTeamIds_mudur_empty() {
+        assertThat(service.computeManageTeamIds(scopeUser(10L, "ADMIN", "LDAP", 1L))).isEmpty();
+    }
+
+    @Test
+    @DisplayName("computeManageTeamIds: TEAM_ADMIN (PO) → led teams ∪ own")
+    void computeManageTeamIds_teamAdmin_ledPlusOwn() {
+        AppUser po = scopeUser(30L, "TEAM_ADMIN", "LDAP", 2L);
+        when(teamRepo.findByLeaderId(30L)).thenReturn(List.of(team(4L, "A")));
+        assertThat(service.computeManageTeamIds(po)).containsExactly(4L, 2L);
+    }
+
+    @Test
+    @DisplayName("computeManageTeamIds: USER → empty (no management)")
+    void computeManageTeamIds_user_empty() {
+        assertThat(service.computeManageTeamIds(scopeUser(40L, "USER", "LDAP", 9L))).isEmpty();
     }
 }

@@ -56,7 +56,7 @@ public class WeeklyReportReminderService {
         String weekLabel = WeeklyReportService.computeWeekLabel(year, week);
         String url = buildReportUrl();
 
-        List<Team> syTeams = teamRepo.findByTeamTypeAndActiveTrueOrderByNameAsc("SY");
+        List<Team> syTeams = teamRepo.findByActiveTrueOrderByNameAsc();
         int sent = 0, skippedNoEmail = 0, skippedDone = 0;
 
         for (Team team : syTeams) {

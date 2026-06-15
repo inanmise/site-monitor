@@ -234,17 +234,20 @@ public class CertificateService {
                         (a, b) -> a));
     }
 
-    /** Returns certs visible to the given team (null = ADMIN, sees all). */
-    public List<CertificateDto> getAllLatestForTeam(Long teamId) {
-        if (teamId == null) return getAllLatest();
-        Set<String> domains = getTeamDomains(teamId);
+    /** Certs visible to the given team scope. null = unrestricted (global); empty = none. */
+    public List<CertificateDto> getAllLatestForTeams(java.util.Collection<Long> teamIds) {
+        if (teamIds == null) return getAllLatest();
+        if (teamIds.isEmpty()) return List.of();
+        Set<String> domains = getTeamDomains(teamIds);
         return getAllLatest().stream()
                 .filter(c -> domains.contains(c.getDomain()))
                 .collect(Collectors.toList());
     }
 
-    private Set<String> getTeamDomains(Long teamId) {
-        return inventoryRepo.findByTeamIdAndActiveTrueOrderByDomainAsc(teamId)
+    /** Distinct domains owned (SY slot) by any of the given teams. */
+    private Set<String> getTeamDomains(java.util.Collection<Long> teamIds) {
+        if (teamIds == null || teamIds.isEmpty()) return Set.of();
+        return inventoryRepo.findByTeamIdInAndActiveTrueOrderByDomainAsc(teamIds)
                 .stream().map(com.certmonitor.model.CertificateInventory::getDomain)
                 .collect(Collectors.toSet());
     }
@@ -252,8 +255,8 @@ public class CertificateService {
     public Map<String, Object> getPaginated(int page, int perPage,
                                              String sortBy, String sortDir,
                                              String filterDomain, String filterIssuer,
-                                             String filterStatus, Long teamId) {
-        List<CertificateDto> all = getAllLatestForTeam(teamId);
+                                             String filterStatus, java.util.Collection<Long> teamIds) {
+        List<CertificateDto> all = getAllLatestForTeams(teamIds);
 
         var thrOpt   = alertThresholdRepo.findFirstByActiveTrue();
         int critDays = thrOpt.map(AlertThreshold::getCriticalDays).orElse(7);
@@ -319,9 +322,10 @@ public class CertificateService {
                 .collect(Collectors.toList());
     }
 
-    public List<CertificateDto> getWarningsForTeam(Long teamId) {
-        if (teamId == null) return getWarnings();
-        Set<String> domains = getTeamDomains(teamId);
+    public List<CertificateDto> getWarningsForTeams(java.util.Collection<Long> teamIds) {
+        if (teamIds == null) return getWarnings();
+        if (teamIds.isEmpty()) return List.of();
+        Set<String> domains = getTeamDomains(teamIds);
         return getWarnings().stream()
                 .filter(c -> domains.contains(c.getDomain()))
                 .collect(Collectors.toList());
@@ -352,10 +356,10 @@ public class CertificateService {
                 .collect(Collectors.toList());
     }
 
-    public Map<String, Object> getStatsForTeam(Long teamId) {
-        if (teamId == null) return getStats();
-        List<CertificateDto> all = getAllLatestForTeam(teamId);
-        List<CertificateDto> warnings = getWarningsForTeam(teamId);
+    public Map<String, Object> getStatsForTeams(java.util.Collection<Long> teamIds) {
+        if (teamIds == null) return getStats();
+        List<CertificateDto> all = getAllLatestForTeams(teamIds);
+        List<CertificateDto> warnings = getWarningsForTeams(teamIds);
         return computeStats(all, warnings);
     }
 
@@ -366,8 +370,8 @@ public class CertificateService {
     }
 
     public Map<String, Object> getTeamBreakdownStats(Long teamId, String teamName) {
-        List<CertificateDto> syAll  = getAllLatestForTeam(teamId);
-        List<CertificateDto> syWarn = getWarningsForTeam(teamId);
+        List<CertificateDto> syAll  = getAllLatestForTeams(List.of(teamId));
+        List<CertificateDto> syWarn = getWarningsForTeams(List.of(teamId));
 
         Set<String> ugDomains = getUgTeamDomains(teamId);
         List<CertificateDto> ugAll  = getAllLatest().stream()
@@ -393,7 +397,14 @@ public class CertificateService {
         return res;
     }
 
-    public Map<String, Object> getAllTeamsBreakdownStats() {
+    public Map<String, Object> getAllTeamsBreakdownStats() { return teamsBreakdown(null); }
+
+    /** Per-team breakdown limited to the given teams (Faz 3b scoped müdür/PO). null = all. */
+    public Map<String, Object> getTeamsBreakdownStats(java.util.Collection<Long> onlyTeamIds) {
+        return teamsBreakdown(onlyTeamIds);
+    }
+
+    private Map<String, Object> teamsBreakdown(java.util.Collection<Long> onlyTeamIds) {
         List<CertificateInventory> allInv     = inventoryRepo.findByActiveTrueOrderByDomainAsc();
         List<CertificateDto>       allLatest  = getAllLatest();
         List<CertificateDto>       allWarnings = getWarnings();
@@ -411,6 +422,7 @@ public class CertificateService {
         // findAll() yerine sadece aktif team'leri çek — DB tarafında WHERE active=true
         for (Team team : teamRepo.findByActiveTrueOrderByNameAsc()) {
             Long tid = team.getId();
+            if (onlyTeamIds != null && !onlyTeamIds.contains(tid)) continue;  // Faz 3b scope
             Set<String> sy = syMap.getOrDefault(tid, Set.of());
             Set<String> ug = ugMap.getOrDefault(tid, Set.of());
 
@@ -529,12 +541,12 @@ public class CertificateService {
     /** Aktivite log için en fazla bu kadar kontrol satırı belleğe alınır (OOM koruması). */
     private static final int ACTIVITY_LOG_MAX_ROWS = 20_000;
 
-    public List<Map<String, Object>> getActivityLog(int hours, Long teamId) {
+    public List<Map<String, Object>> getActivityLog(int hours, java.util.Collection<Long> teamIds) {
         String cutoff = ISO.format(Instant.now().minus(hours, ChronoUnit.HOURS));
         List<CertificateCheck> checks = checkRepo.findByCheckedAtAfterLimited(cutoff, ACTIVITY_LOG_MAX_ROWS);
 
-        if (teamId != null) {
-            Set<String> teamDomains = getTeamDomains(teamId);
+        if (teamIds != null) {
+            Set<String> teamDomains = getTeamDomains(teamIds);
             checks = checks.stream().filter(c -> teamDomains.contains(c.getDomain())).collect(Collectors.toList());
         }
 
@@ -588,9 +600,9 @@ public class CertificateService {
         return runs;
     }
 
-    public List<Map<String, Object>> getRenewalAdviceForTeam(Long teamId) {
-        if (teamId == null) return getRenewalAdvice();
-        return computeRenewalAdvice(getAllLatestForTeam(teamId));
+    public List<Map<String, Object>> getRenewalAdviceForTeams(java.util.Collection<Long> teamIds) {
+        if (teamIds == null) return getRenewalAdvice();
+        return computeRenewalAdvice(getAllLatestForTeams(teamIds));
     }
 
     @Cacheable("renewal-advice")

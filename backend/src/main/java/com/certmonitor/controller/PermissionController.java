@@ -84,7 +84,7 @@ public class PermissionController {
     }
 
     private void requireAdmin(HttpSession session) {
-        if (!"ADMIN".equals(session.getAttribute("systemRole"))) {
+        if (!SessionScope.isGlobalAdmin(session)) {
             log.warn("Unauthorized permission-matrix access by user={}",
                 session.getAttribute("username"));
             throw new SecurityException("Admin access required");

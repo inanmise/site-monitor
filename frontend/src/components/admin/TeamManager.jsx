@@ -7,7 +7,7 @@ import KebabMenu from '../ui/KebabMenu.jsx'
 import { UsersRound, PenLine } from 'lucide-react'
 import UserEditModal from './UserEditModal.jsx'
 
-const emptyTeam = { name: '', email: '', description: '', active: true, leader_id: '', team_type: '' }
+const emptyTeam = { name: '', email: '', description: '', active: true, leader_id: '' }
 
 const ORG_ROLE_COLORS = { PO: '#2563eb', MANAGER: '#d97706', CLEVEL: '#dc2626', TECH: '#16a34a' }
 
@@ -53,22 +53,20 @@ export default function TeamManager({ systemRole, ownTeamId, onTeamsChange }) {
 
   // İstemci-taraflı filtre + sayfalama (getTeams tüm listeyi döndürür — dropdown kaynağı bozulmasın)
   const [q, setQ]       = useState('')
-  const [fType, setFType] = useState('')
   const [page, setPage] = useState(0)
   const [size, setSize] = useState(20)
 
   const filteredTeams = useMemo(() => {
     const needle = q.trim().toLowerCase()
     return teams.filter(tm =>
-      (!needle || (tm.name || '').toLowerCase().includes(needle) || (tm.email || '').toLowerCase().includes(needle))
-      && (!fType || tm.team_type === fType))
-  }, [teams, q, fType])
+      (!needle || (tm.name || '').toLowerCase().includes(needle) || (tm.email || '').toLowerCase().includes(needle)))
+  }, [teams, q])
 
   const totalPages = Math.max(1, Math.ceil(filteredTeams.length / size))
   const safePage = Math.min(page, totalPages - 1)
   const pagedTeams = filteredTeams.slice(safePage * size, safePage * size + size)
 
-  useEffect(() => { setPage(0) }, [q, fType, size])
+  useEffect(() => { setPage(0) }, [q, size])
 
   useEffect(() => { load(); loadUsers() }, [])
 
@@ -103,7 +101,7 @@ export default function TeamManager({ systemRole, ownTeamId, onTeamsChange }) {
 
   function openAdd() { setForm(emptyTeam); setModal('add'); setMsg(null) }
   function openEdit(team) {
-    setForm({ ...team, email: team.email || '', leader_id: String(team.leaderId ?? team.leader_id ?? ''), team_type: team.team_type ?? '' })
+    setForm({ ...team, email: team.email || '', leader_id: String(team.leaderId ?? team.leader_id ?? '') })
     setModal(team)
     setMsg(null)
   }
@@ -111,8 +109,6 @@ export default function TeamManager({ systemRole, ownTeamId, onTeamsChange }) {
 
   async function save() {
     setMsg(null)
-    if (!form.leader_id) { setMsg(t('team.leaderRequired')); return }
-    if (!form.team_type) { setMsg(t('team.typeRequired')); return }
     if (form.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim())) {
       setMsg(t('team.emailInvalid'))
       return
@@ -123,8 +119,7 @@ export default function TeamManager({ systemRole, ownTeamId, onTeamsChange }) {
       email: form.email.trim(),
       description: form.description,
       active: form.active,
-      leader_id: Number(form.leader_id),
-      team_type: form.team_type,
+      leader_id: form.leader_id ? Number(form.leader_id) : null,  // PO optional
     }
     const isAdd = modal === 'add'
     const editedId = isAdd ? null : modal.id
@@ -163,7 +158,7 @@ export default function TeamManager({ systemRole, ownTeamId, onTeamsChange }) {
     onTeamsChange?.()
   }
 
-  const canSave = form.name.trim() && form.email.trim() && form.leader_id && form.team_type
+  const canSave = form.name.trim() && form.email.trim()
 
   return (
     <div className="admin-section">
@@ -173,13 +168,10 @@ export default function TeamManager({ systemRole, ownTeamId, onTeamsChange }) {
       </div>
       {msg && !modal && <div className={`alert-msg${msg.startsWith('✓') ? '' : ' alert-msg--err'}`}>{msg}</div>}
 
-      {/* Filtre çubuğu — ad/e-posta araması + Tür */}
+      {/* Filtre çubuğu — ad/e-posta araması */}
       <div className="audit-filters">
         <input className="audit-filter-input" placeholder={t('team.searchPlaceholder')}
           value={q} onChange={(e) => setQ(e.target.value)} />
-        <SearchableSelect value={fType} onChange={setFType} placeholder={t('team.allTypes')}
-          options={[{ value: '', label: t('team.allTypes') },
-            { value: 'SY', label: 'SY' }, { value: 'UG', label: 'UG' }]} />
       </div>
 
       <div className="admin-table-wrap">
@@ -187,7 +179,6 @@ export default function TeamManager({ systemRole, ownTeamId, onTeamsChange }) {
           <thead>
             <tr>
               <th>{t('team.colName')}</th>
-              <th>{t('team.colType')}</th>
               <th>{t('team.colEmail')}</th>
               <th>{t('team.colLeader')}</th>
               <th>{t('team.colDesc')}</th>
@@ -197,7 +188,7 @@ export default function TeamManager({ systemRole, ownTeamId, onTeamsChange }) {
           </thead>
           <tbody>
             {filteredTeams.length === 0 && (
-              <tr><td colSpan={7} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: 18 }}>
+              <tr><td colSpan={6} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: 18 }}>
                 {t('team.noResults')}
               </td></tr>
             )}
@@ -214,11 +205,6 @@ export default function TeamManager({ systemRole, ownTeamId, onTeamsChange }) {
                     </button>
                     <strong>{team.name}</strong>
                   </td>
-                  <td>
-                    {team.team_type
-                      ? <span className={`badge badge-team-type badge-team-type-${team.team_type.toLowerCase()}`}>{team.team_type}</span>
-                      : <span style={{ color: 'var(--text-light)', fontSize: '.8em' }}>—</span>}
-                  </td>
                   <td>{team.email || '—'}</td>
                   <td>{userMap[team.leader_id] ?? <span style={{ color: 'var(--danger)' }}>{t('team.noLeader')}</span>}</td>
                   <td>{team.description || '—'}</td>
@@ -232,7 +218,7 @@ export default function TeamManager({ systemRole, ownTeamId, onTeamsChange }) {
                 </tr>
                 {expandedId === team.id && (
                   <tr key={`${team.id}-members`} className="team-members-row">
-                    <td colSpan={7}>
+                    <td colSpan={6}>
                       {membersLoading && !membersCache[team.id]
                         ? <span className="field-hint">{t('team.loadingMembers')}</span>
                         : (() => {
@@ -280,6 +266,10 @@ export default function TeamManager({ systemRole, ownTeamId, onTeamsChange }) {
                                                 <span className={`badge-role badge-role-${m.org_role}`}>{m.org_role}</span>
                                               </dd>
                                             </>)}
+                                            {m.title && (<><dt>{t('usr.colTitle')}:</dt><dd>{m.title}</dd></>)}
+                                            {m.phone && (<><dt>{t('usr.colPhone')}:</dt><dd>{m.phone}</dd></>)}
+                                            {m.department && (<><dt>{t('usr.colDept')}:</dt><dd>{m.department}</dd></>)}
+                                            {m.mudurlukName && (<><dt>{t('usr.colMudurluk')}:</dt><dd>{m.mudurlukName}</dd></>)}
                                           </dl>
                                         </div>
                                       </div>
@@ -330,7 +320,7 @@ export default function TeamManager({ systemRole, ownTeamId, onTeamsChange }) {
                 <input type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} placeholder="team@example.com" />
               </label>
               <label>
-                <span>{t('team.formLeader')} <span className="req-star">*</span></span>
+                <span>{t('team.formLeader')}</span>
                 <SearchableSelect
                   value={form.leader_id}
                   onChange={v => setForm({ ...form, leader_id: v })}
@@ -341,21 +331,7 @@ export default function TeamManager({ systemRole, ownTeamId, onTeamsChange }) {
                     ...users.map(u => ({ value: u.id, label: `${u.display_name || u.username} (${u.username})` })),
                   ]}
                 />
-                {users.length === 0 && (
-                  <span className="field-hint field-hint--warn">{t('team.noUsersHint')}</span>
-                )}
-              </label>
-              <label>
-                <span>{t('team.formType')} <span className="req-star">*</span></span>
-                <SearchableSelect
-                  value={form.team_type}
-                  onChange={v => setForm({ ...form, team_type: v })}
-                  options={[
-                    { value: '', label: t('team.selectType') },
-                    { value: 'SY', label: t('team.typeSy') },
-                    { value: 'UG', label: t('team.typeUg') },
-                  ]}
-                />
+                <span className="field-hint">{t('team.leaderOptionalHint')}</span>
               </label>
               <label className="full-width">{t('team.formDesc')}
                 <input value={form.description || ''} onChange={(e) => setForm({ ...form, description: e.target.value })} />

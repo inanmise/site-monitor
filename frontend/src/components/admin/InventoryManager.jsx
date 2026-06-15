@@ -78,8 +78,9 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
   const exportRef = useRef(null)
 
   const teamMap  = Object.fromEntries(teams.map(t => [String(t.id), t.name]))
-  const syTeams  = teams.filter(t => !t.team_type || t.team_type === 'SY')
-  const ugTeams  = teams.filter(t => !t.team_type || t.team_type === 'UG')
+  // "Takım Türü" kaldırıldı — her iki seçici de tüm takımları listeler (ikili SY/UG cert ataması kalır).
+  const syTeams  = teams
+  const ugTeams  = teams
 
   useEffect(() => {
     load()
