@@ -64,7 +64,7 @@ class WeeklyReportServiceTest {
         when(emailService.fromAddress()).thenReturn("certmonitor@test");
         when(teamRepo.findById(2L)).thenReturn(Optional.of(team(2L, "DijitalSY", "takim@test.com")));
         when(emailService.sendHtml(any(), any(), anyString(), anyString(), any())).thenReturn("SENT");
-        when(emailService.buildWeeklyReportSubmittedHtml(any(), any(), any())).thenReturn("<html/>");
+        when(emailService.buildWeeklyReportSubmittedHtml(any(), any(), any(), any())).thenReturn("<html/>");
         when(emailService.buildWeeklyReportRejectedHtml(any(), any(), any(), any())).thenReturn("<html/>");
         when(emailService.buildWeeklyReportHtml(any(), any(), any(), any(), anyBoolean())).thenReturn("<html/>");
         when(emailService.buildWeeklyReportHtml(any(), any(), any(), any(), anyBoolean(), any())).thenReturn("<html/>");
@@ -775,5 +775,78 @@ class WeeklyReportServiceTest {
         assertThat(res.get("transferred")).isEqualTo(0);
         assertThat((List<?>) res.get("skipped")).hasSize(1);
         assertThat(r.getTeamId()).isEqualTo(2L); // değişmedi
+    }
+
+    // ── E-posta ile hızlı onay (token) ───────────────────────────────────────
+
+    private static String tokenTime(long secondsFromNow) {
+        return java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss")
+                .withZone(java.time.ZoneOffset.UTC)
+                .format(java.time.Instant.now().plusSeconds(secondsFromNow));
+    }
+
+    @Test
+    @DisplayName("approveViaToken: geçerli token PENDING raporu onaylar + token temizlenir")
+    void approveViaToken_valid_approves() {
+        WeeklyReport r = report(5L, 2L, "PENDING_APPROVAL");
+        r.setApprovalToken("T1"); r.setApprovalTokenExpiresAt(tokenTime(86400));
+        when(reportRepo.findByApprovalToken("T1")).thenReturn(Optional.of(r));
+        when(contactRepo.findByTeamIdAndRoleAndActiveTrue(2L, "MANAGER"))
+                .thenReturn(List.of(contact("MANAGER", "Ali Müdür", "mudur@test.com")));
+
+        Map<String, Object> out = service.approveViaToken("T1");
+
+        assertThat(r.getStatus()).isEqualTo("APPROVED");
+        assertThat(r.getApprovalToken()).isNull();
+        assertThat(out.get("mail_status")).isNotNull();
+    }
+
+    @Test
+    @DisplayName("approveViaToken: süresi geçmiş token reddedilir, durum değişmez")
+    void approveViaToken_expired_throws() {
+        WeeklyReport r = report(5L, 2L, "PENDING_APPROVAL");
+        r.setApprovalToken("T1"); r.setApprovalTokenExpiresAt(tokenTime(-86400));
+        when(reportRepo.findByApprovalToken("T1")).thenReturn(Optional.of(r));
+        assertThatThrownBy(() -> service.approveViaToken("T1"))
+                .isInstanceOf(IllegalStateException.class);
+        assertThat(r.getStatus()).isEqualTo("PENDING_APPROVAL");
+    }
+
+    @Test
+    @DisplayName("approveViaToken: bilinmeyen token reddedilir")
+    void approveViaToken_unknown_throws() {
+        when(reportRepo.findByApprovalToken("X")).thenReturn(Optional.empty());
+        assertThatThrownBy(() -> service.approveViaToken("X"))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    @DisplayName("approveViaToken: zaten onaylanmış raporda hata")
+    void approveViaToken_alreadyApproved_throws() {
+        WeeklyReport r = report(5L, 2L, "APPROVED");
+        r.setApprovalToken("T1"); r.setApprovalTokenExpiresAt(tokenTime(86400));
+        when(reportRepo.findByApprovalToken("T1")).thenReturn(Optional.of(r));
+        assertThatThrownBy(() -> service.approveViaToken("T1"))
+                .isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
+    @DisplayName("approvalTokenStatus: geçerli PENDING → valid=true + özet")
+    void approvalTokenStatus_valid() {
+        WeeklyReport r = report(5L, 2L, "PENDING_APPROVAL");
+        r.setApprovalToken("T1"); r.setApprovalTokenExpiresAt(tokenTime(86400));
+        when(reportRepo.findByApprovalToken("T1")).thenReturn(Optional.of(r));
+        Map<String, Object> st = service.approvalTokenStatus("T1");
+        assertThat(st.get("valid")).isEqualTo(true);
+        assertThat(st.get("week_label")).isNotNull();
+    }
+
+    @Test
+    @DisplayName("approvalTokenStatus: bilinmeyen token → valid=false (not_found)")
+    void approvalTokenStatus_unknown() {
+        when(reportRepo.findByApprovalToken("X")).thenReturn(Optional.empty());
+        Map<String, Object> st = service.approvalTokenStatus("X");
+        assertThat(st.get("valid")).isEqualTo(false);
+        assertThat(st.get("reason")).isEqualTo("not_found");
     }
 }

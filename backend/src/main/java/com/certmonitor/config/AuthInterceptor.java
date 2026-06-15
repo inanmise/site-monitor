@@ -21,7 +21,11 @@ import java.util.Set;
 @Component
 public class AuthInterceptor implements HandlerInterceptor {
 
-    private static final Set<String> PUBLIC = Set.of("/api/login", "/api/logout");
+    private static final Set<String> PUBLIC = Set.of(
+            "/api/login", "/api/logout",
+            // Haftalık rapor e-posta onayı — PO login'siz, token ile onaylar (token = yetki).
+            "/api/weekly-reports/approve-link",
+            "/api/weekly-reports/approve-link/confirm");
 
     /** Endpoints a user with mustChangePassword=true is still allowed to call. */
     private static final Set<String> FORCED_CHANGE_WHITELIST = Set.of(

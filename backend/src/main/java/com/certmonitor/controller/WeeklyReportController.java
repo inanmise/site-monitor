@@ -282,6 +282,79 @@ public class WeeklyReportController {
         return ok(Map.of("message", "Deleted"));
     }
 
+    // ── E-posta ile hızlı onay (login'siz, public — AuthInterceptor PUBLIC) ──
+
+    /** PO maildeki linke tıklayınca: rapor özeti + "Onayla" butonu (GET mutasyon yapmaz). */
+    @GetMapping(value = "/approve-link", produces = MediaType.TEXT_HTML_VALUE)
+    public ResponseEntity<String> approveLinkPage(@RequestParam(required = false) String token) {
+        Map<String, Object> st = service.approvalTokenStatus(token);
+        String team = esc(String.valueOf(st.getOrDefault("team_name", "—")));
+        String week = esc(String.valueOf(st.getOrDefault("week_label", "—")));
+        if (!Boolean.TRUE.equals(st.get("valid"))) {
+            String reason = String.valueOf(st.get("reason"));
+            String msg = switch (reason) {
+                case "already_approved" -> "Bu rapor zaten onaylanmış. Ek bir işlem gerekmiyor.";
+                case "expired"          -> "Onay bağlantısının süresi dolmuş. Ekipten raporu tekrar onaya göndermesini isteyebilirsiniz.";
+                case "not_pending"      -> "Rapor şu an onay bekleme durumunda değil.";
+                default                 -> "Onay bağlantısı geçersiz veya daha önce kullanılmış.";
+            };
+            return htmlPage("Haftalık Rapor Onayı",
+                "<div class='wk'>" + team + " · " + week + "</div>"
+                + "<p class='msg'>" + esc(msg) + "</p>", "#64748b");
+        }
+        String body =
+            "<div class='wk'>" + team + " · " + week + "</div>"
+            + "<p class='msg'>Bu haftalık raporu onaylamak üzeresiniz. Onayladığınızda rapor müdüre otomatik iletilecek.</p>"
+            + "<form method='post' action='/api/weekly-reports/approve-link/confirm'>"
+            + "<input type='hidden' name='token' value='" + esc(token) + "'>"
+            + "<button type='submit' class='btn'>✅ Raporu Onayla</button>"
+            + "</form>";
+        return htmlPage("Haftalık Rapor Onayı", body, "#15803d");
+    }
+
+    /** Onayla butonu POST eder → token ile onay. (GET değil; e-posta ön-yüklemesi onaylamaz.) */
+    @PostMapping(value = "/approve-link/confirm", produces = MediaType.TEXT_HTML_VALUE)
+    public ResponseEntity<String> approveLinkConfirm(@RequestParam(required = false) String token) {
+        try {
+            Map<String, Object> res = service.approveViaToken(token);
+            String mail = String.valueOf(res.get("mail_status"));
+            String note = (mail != null && (mail.startsWith("SENT") || mail.equals("QUEUED_RETRY")))
+                ? "Rapor müdüre e-posta ile iletildi."
+                : "Rapor onaylandı; müdür e-postası gönderilemedi/atlandı (" + esc(mail) + "). Uygulamadan tekrar gönderebilirsiniz.";
+            return htmlPage("Onaylandı",
+                "<p class='msg'><strong>Rapor onaylandı.</strong><br>" + note + "</p>", "#15803d");
+        } catch (Exception e) {
+            String msg = e.getMessage() != null ? e.getMessage() : "Onay işlemi başarısız.";
+            return htmlPage("Onay Başarısız", "<p class='msg'>" + esc(msg) + "</p>", "#dc2626");
+        }
+    }
+
+    private ResponseEntity<String> htmlPage(String title, String bodyHtml, String accent) {
+        String html = "<!DOCTYPE html><html lang='tr'><head><meta charset='UTF-8'>"
+            + "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+            + "<title>" + esc(title) + " — CertMonitor</title>"
+            + "<style>body{margin:0;background:#f3f4f6;font-family:'Segoe UI',Arial,sans-serif;color:#1e293b}"
+            + ".card{max-width:460px;margin:48px auto;background:#fff;border-radius:14px;overflow:hidden;"
+            + "box-shadow:0 6px 28px rgba(0,0,0,.12)}"
+            + ".hd{background:" + accent + ";color:#fff;padding:20px 26px}"
+            + ".hd .b{font-size:11px;font-weight:700;letter-spacing:.1em;opacity:.85}"
+            + ".hd .t{font-size:20px;font-weight:800;margin-top:4px}"
+            + ".bd{padding:26px}.wk{font-weight:700;font-size:15px;margin-bottom:6px}"
+            + ".msg{font-size:14px;line-height:1.7;color:#334155}"
+            + ".btn{display:inline-block;margin-top:18px;background:" + accent + ";color:#fff;border:none;"
+            + "border-radius:8px;padding:13px 28px;font-size:15px;font-weight:800;cursor:pointer}"
+            + "</style></head><body><div class='card'>"
+            + "<div class='hd'><div class='b'>CertMonitor — Haftalık Rapor</div><div class='t'>" + esc(title) + "</div></div>"
+            + "<div class='bd'>" + bodyHtml + "</div></div></body></html>";
+        return ResponseEntity.ok().contentType(MediaType.valueOf("text/html;charset=UTF-8")).body(html);
+    }
+
+    private static String esc(String s) {
+        if (s == null) return "";
+        return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+                .replace("\"", "&quot;").replace("'", "&#39;");
+    }
+
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     private Actor actor(HttpSession session) {
