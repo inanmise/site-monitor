@@ -4893,6 +4893,27 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
   flex-direction: column;
   gap: 4px;
 }
+.tm-mc-avatar-wrap {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+.tm-mc-photo {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  object-fit: cover;
+  background: var(--bg-card, #fff);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, .12);
+}
+.tm-mc-initials {
+  font-weight: 700;
+  font-size: .72em;
+  letter-spacing: .03em;
+  color: var(--text-muted, #64748b);
+}
 
 /* ── AD photo avatars (UserManager list + sidebar) ──────────────────────── */
 .usr-avatar {

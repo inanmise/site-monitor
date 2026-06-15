@@ -33,6 +33,36 @@ function avatarStyleFor(seed) {
   return { background: AVATAR_PALETTE[Math.abs(hash) % AVATAR_PALETTE.length], color: '#fff' }
 }
 
+/** Ad + Soyad baş harfleri (AD'den); yoksa display_name'e düşer. Türkçe-uyumlu büyütme. */
+function adSoyadInitials(m) {
+  const fn = (m.first_name || '').trim()
+  const ln = (m.last_name || '').trim()
+  if (fn || ln) {
+    const ii = ((fn[0] || '') + (ln[0] || '')).toLocaleUpperCase('tr-TR')
+    if (ii) return ii
+  }
+  return computeInitials(m.display_name || m.username)
+}
+
+/** Üye kartı avatarı: LDAP fotoğrafı + altında Ad/Soyad baş harfleri; foto yoksa baş harf rozeti. */
+function MemberAvatar({ m }) {
+  const [err, setErr] = useState(false)
+  const initials = adSoyadInitials(m)
+  if (err) {
+    return (
+      <div className="tm-mc-avatar-wrap">
+        <div className="tm-mc-avatar" style={avatarStyleFor(m.username || m.display_name || String(m.id))}>{initials}</div>
+      </div>
+    )
+  }
+  return (
+    <div className="tm-mc-avatar-wrap">
+      <img className="tm-mc-photo" alt="" src={`/api/admin/users/${m.id}/photo`} onError={() => setErr(true)} />
+      <span className="tm-mc-initials">{initials}</span>
+    </div>
+  )
+}
+
 export default function TeamManager({ systemRole, ownTeamId, onTeamsChange }) {
   const t = useT()
   const isAdmin = systemRole === 'ADMIN'
@@ -228,8 +258,6 @@ export default function TeamManager({ systemRole, ownTeamId, onTeamsChange }) {
                               : (
                                 <div className="tm-member-cards">
                                   {members.map(m => {
-                                    const initials = computeInitials(m.display_name || m.username)
-                                    const avatarStyle = avatarStyleFor(m.username || m.display_name || String(m.id))
                                     return (
                                       <div
                                         key={m.id}
@@ -240,7 +268,7 @@ export default function TeamManager({ systemRole, ownTeamId, onTeamsChange }) {
                                         onKeyDown={canManage ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setEditingUser(m) } } : undefined}
                                         title={canManage ? t('usr.editTitle') : undefined}
                                       >
-                                        <div className="tm-mc-avatar" style={avatarStyle}>{initials}</div>
+                                        <MemberAvatar m={m} />
                                         <div className="tm-mc-body">
                                           <strong className="tm-mc-name">{m.display_name || m.username}</strong>
                                           <dl className="tm-mc-fields">
