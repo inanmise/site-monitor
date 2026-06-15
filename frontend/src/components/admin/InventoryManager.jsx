@@ -15,7 +15,7 @@ import { exportInventoryCsv, exportInventoryPdf } from '../../utils/exportInvent
 
 const EMPTY = {
   domain: '', port: 443, owner: '', description: '', active: true,
-  team_id: '', ug_team_id: '', tier: null,
+  team_id: '', tier: null,
   external_vendor: false, action_required: false, openshift: false,
   ssl_pinning: false, internal_cert: false, jks_keystore: false,
   server_update: false, netscaler: false, waf_enabled: false,
@@ -66,7 +66,6 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
   const formGridRef                   = useRef(null)
   const [showScrollHint, setShowScrollHint] = useState(false)
   const [transferTeamId, setTransferTeamId]     = useState('')
-  const [transferUgTeamId, setTransferUgTeamId] = useState('')
   const [form, setForm]               = useState(EMPTY)
   const [saving, setSaving]           = useState(false)
   const [msg, setMsg]                 = useState(null)
@@ -78,13 +77,12 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
   const exportRef = useRef(null)
 
   const teamMap  = Object.fromEntries(teams.map(t => [String(t.id), t.name]))
-  // "Takım Türü" kaldırıldı — her iki seçici de tüm takımları listeler (ikili SY/UG cert ataması kalır).
-  const syTeams  = teams
-  const ugTeams  = teams
 
   useEffect(() => {
     load()
-    if (isAdmin) api.admin.getTeams().then(res => { if (res?.success) setTeams(res.data) })
+    // Tek takım modeli: ekleyebilen/düzenleyebilen herkes (admin + team-admin) takım
+    // listesine ihtiyaç duyar; team-admin'e backend yalnız kapsamındaki takımları döner.
+    if (canManage) api.admin.getTeams().then(res => { if (res?.success) setTeams(res.data) })
   }, [])
 
   useEffect(() => {
@@ -184,7 +182,6 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
       ...EMPTY,
       ...item,
       team_id:            String(item.team_id ?? ''),
-      ug_team_id:         String(item.ug_team_id ?? ''),
       external_vendor:    item.external_vendor  ?? false,
       action_required:    item.action_required  ?? false,
       openshift:          item.openshift        ?? false,
@@ -211,13 +208,11 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
   function openTransfer(item) {
     setTransferModal(item)
     setTransferTeamId(String(item.team_id ?? ''))
-    setTransferUgTeamId(String(item.ug_team_id ?? ''))
   }
 
   function validate() {
     if (!form.domain.trim()) return t('inv.formDomain') + ' zorunlu'
-    if (isAdmin && !form.team_id) return t('inv.teamRequired')
-    if (!form.ug_team_id) return t('inv.ugTeamRequired')
+    if (!form.team_id) return t('inv.teamRequired')
     return null
   }
 
@@ -250,7 +245,7 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
       description:        form.description,
       active:             form.active,
       team_id:            form.team_id ? Number(form.team_id) : null,
-      ug_team_id:         form.ug_team_id ? Number(form.ug_team_id) : null,
+      ug_team_id:         null,   // tek takım modeli — UG ayrımı kaldırıldı
       external_vendor:    form.external_vendor,
       action_required:    form.action_required,
       openshift:          form.openshift,
@@ -340,30 +335,26 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
   }
 
   async function doTransfer() {
-    const syChanged = transferTeamId   !== String(transferModal.team_id   ?? '')
-    const ugChanged = transferUgTeamId !== String(transferModal.ug_team_id ?? '')
-    if (!syChanged && !ugChanged) { setTransferModal(null); return }
+    const changed = transferTeamId !== String(transferModal.team_id ?? '')
+    if (!changed || !transferTeamId) { setTransferModal(null); return }
     setSaving(true)
-    const settled = await Promise.allSettled([
-      syChanged ? api.admin.transferCertSy(transferModal.id, Number(transferTeamId))   : Promise.resolve({ success: true }),
-      ugChanged ? api.admin.transferCertUg(transferModal.id, Number(transferUgTeamId)) : Promise.resolve({ success: true }),
-    ])
+    let res
+    try {
+      res = await api.admin.transferCertSy(transferModal.id, Number(transferTeamId))
+    } catch (e) {
+      setSaving(false)
+      toast.error(e?.message || t('inv.transferError'))
+      return
+    }
     setSaving(false)
-    const rejected = settled.find(r => r.status === 'rejected')
-    const failed   = settled.find(r => r.status === 'fulfilled' && !r.value?.success)
-    if (rejected || failed) {
-      const errTxt = rejected
-        ? (rejected.reason?.message || t('inv.transferError'))
-        : (failed.value?.error || t('inv.transferError'))
-      toast.error(errTxt)
-    } else {
+    if (res?.success) {
       setTransferModal(null)
       toast.success(t('inv.transferred'))
       load()
+    } else {
+      toast.error(res?.error || t('inv.transferError'))
     }
   }
-
-  const ugTeamName = (id) => teamMap[String(id)] || '—'
 
   return (
     <div className="admin-section">
@@ -440,8 +431,7 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
               <th>{t('inv.colDomain')}</th>
               <th>{t('inv.colPort')}</th>
               <th>{t('inv.colTier')}</th>
-              <th>{t('inv.colSyTeam')}</th>
-              <th>{t('inv.colUgTeam')}</th>
+              <th>{t('inv.colTeam')}</th>
               <th>{t('inv.colDesc')}</th>
               <th>{t('inv.colActive')}</th>
               <th>{t('inv.colActions')}</th>
@@ -458,7 +448,6 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
                     : <span style={{ color: 'var(--text-light)', fontSize: '.8em' }}>—</span>}
                 </td>
                 <td>{item.team_name || teamMap[String(item.team_id)] || '—'}</td>
-                <td>{item.ug_team_name || ugTeamName(item.ug_team_id)}</td>
                 <td>{item.description || '—'}</td>
                 <td>
                   {item.deleted_at
@@ -521,25 +510,11 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
                   value={form.team_id}
                   onChange={v => f('team_id', v)}
                   placeholder={t('inv.selectTeam')}
-                  disabled={!isAdmin}
+                  disabled={!canManage}
                   searchThreshold={2}
                   options={[
                     { value: '', label: t('inv.selectTeam') },
-                    ...syTeams.map(team => ({ value: team.id, label: team.name })),
-                  ]}
-                />
-              </label>
-
-              <label>
-                <span>{t('inv.formUgTeam')} <span className="req-star">*</span></span>
-                <SearchableSelect
-                  value={form.ug_team_id}
-                  onChange={v => f('ug_team_id', v)}
-                  placeholder={t('inv.selectTeam')}
-                  searchThreshold={2}
-                  options={[
-                    { value: '', label: t('inv.selectTeam') },
-                    ...ugTeams.map(team => ({ value: team.id, label: team.name })),
+                    ...teams.map(team => ({ value: team.id, label: team.name })),
                   ]}
                 />
               </label>
@@ -635,7 +610,7 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
             <div className="modal-actions">
               <button className="btn btn-secondary" onClick={() => setModal(null)}>{t('inv.cancel')}</button>
               <button className="btn btn-primary" onClick={save}
-                disabled={saving || !form.domain.trim() || (isAdmin && !form.team_id) || !form.ug_team_id}>
+                disabled={saving || !form.domain.trim() || !form.team_id}>
                 {saving ? t('inv.saving') : t('inv.save')}
               </button>
             </div>
@@ -677,7 +652,6 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
                 <ShowField label={t('inv.formDomain')}  value={showItem.domain} mono />
                 <ShowField label={t('inv.formPort')}    value={showItem.port || 443} />
                 <ShowField label={t('inv.formTeam')}    value={teamMap[String(showItem.team_id)]    || '—'} />
-                <ShowField label={t('inv.formUgTeam')}  value={teamMap[String(showItem.ug_team_id)] || '—'} />
                 <ShowField label={t('inv.formTier')}    value={
                   showItem.tier
                     ? `T${showItem.tier} — ${t(`inv.tier${showItem.tier}`)}`
@@ -767,25 +741,12 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
             <h3>{t('inv.transferTitle', transferModal.domain)}</h3>
             <div className="form-grid">
               <label className="full-width">
-                {t('inv.newSyTeam')}
+                {t('inv.newTeam')}
                 <SearchableSelect
                   value={transferTeamId}
                   onChange={v => setTransferTeamId(v)}
                   searchThreshold={2}
-                  options={syTeams
-                    .filter(team => String(team.id) !== transferUgTeamId)
-                    .map(team => ({ value: team.id, label: team.name }))}
-                />
-              </label>
-              <label className="full-width">
-                {t('inv.newUgTeam')}
-                <SearchableSelect
-                  value={transferUgTeamId}
-                  onChange={v => setTransferUgTeamId(v)}
-                  searchThreshold={2}
-                  options={ugTeams
-                    .filter(team => String(team.id) !== transferTeamId)
-                    .map(team => ({ value: team.id, label: team.name }))}
+                  options={teams.map(team => ({ value: team.id, label: team.name }))}
                 />
               </label>
             </div>
