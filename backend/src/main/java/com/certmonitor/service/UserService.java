@@ -283,9 +283,7 @@ public class UserService {
     @Transactional
     public void deleteTeam(Long id) {
         if (inventoryRepo.existsByTeamIdAndActiveTrueAndDeletedAtIsNull(id))
-            throw new IllegalStateException("Bu takım aktif sertifikalara (SY) atanmış — önce sertifikaları başka bir takıma taşıyın.");
-        if (inventoryRepo.existsByUgTeamIdAndActiveTrueAndDeletedAtIsNull(id))
-            throw new IllegalStateException("Bu takım aktif sertifikalara (UG) atanmış — önce sertifikaları başka bir takıma taşıyın.");
+            throw new IllegalStateException("Bu takım aktif sertifikalara atanmış — önce sertifikaları başka bir takıma taşıyın.");
         if (userRepo.existsByTeamId(id))
             throw new IllegalStateException("Bu takımda hâlâ kullanıcılar var — önce kullanıcıları başka bir takıma taşıyın.");
         if (contactRepo.existsByTeamIdAndActiveTrue(id))
@@ -305,7 +303,8 @@ public class UserService {
         if (username == null || username.isBlank()) throw new IllegalArgumentException("Username cannot be blank");
         if (rawPassword == null || rawPassword.length() < passwordMinLength) throw new IllegalArgumentException("Password too short (min " + passwordMinLength + " chars)");
         if (email == null || email.isBlank()) throw new IllegalArgumentException("Email is required");
-        if (teamId == null) throw new IllegalArgumentException("Team is required");
+        // Takım, ADMIN dışındaki roller için zorunlu (global admin bir takıma bağlı olmak zorunda değil).
+        if (teamId == null && !"ADMIN".equals(systemRole)) throw new IllegalArgumentException("Team is required");
         if (userRepo.existsByUsername(username.trim())) throw new IllegalArgumentException("Username already exists: " + username);
 
         String now = now();
