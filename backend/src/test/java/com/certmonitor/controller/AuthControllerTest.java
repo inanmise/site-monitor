@@ -52,6 +52,9 @@ class AuthControllerTest {
     @MockBean
     com.certmonitor.service.LdapDirectoryService ldapDirectory;
 
+    @MockBean
+    com.certmonitor.service.LdapProvisioningService ldapProvisioning;
+
     private AppUser testUser;
 
     @BeforeEach
@@ -100,14 +103,15 @@ class AuthControllerTest {
         when(userService.findByUsername("aduser")).thenReturn(Optional.empty()); // no local row
         when(ldapDirectory.authenticate("aduser", "adpass")).thenReturn(Optional.of(
                 new com.certmonitor.service.LdapDirectoryService.LdapUser(
-                        "aduser", "CN=aduser,DC=corp", "AD User", "ad@corp.com")));
+                        "aduser", "CN=aduser,DC=corp",
+                        java.util.Map.of("displayName", "AD User", "mail", "ad@corp.com"))));
         AppUser provisioned = new AppUser();
         provisioned.setId(99L);
         provisioned.setUsername("aduser");
         provisioned.setSystemRole("USER");
         provisioned.setActive(true);
         provisioned.setAuthSource("LDAP");
-        when(userService.provisionLdapUser("aduser", "AD User", "ad@corp.com")).thenReturn(provisioned);
+        when(ldapProvisioning.provisionFromAd(eq("aduser"), any(), any())).thenReturn(provisioned);
 
         mvc.perform(post("/api/login")
                         .contentType(MediaType.APPLICATION_JSON)

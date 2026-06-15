@@ -69,7 +69,7 @@ public class SqlPlaygroundController {
     }
 
     private boolean isAdmin(HttpSession s) {
-        return "ADMIN".equals(s.getAttribute("systemRole"));
+        return SessionScope.isGlobalAdmin(s);
     }
 
     private void requireAdmin(HttpSession s) {

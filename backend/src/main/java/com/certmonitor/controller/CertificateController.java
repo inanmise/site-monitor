@@ -41,7 +41,7 @@ public class CertificateController {
 
     @GetMapping("/certificates")
     public ResponseEntity<Map<String, Object>> getCertificates(HttpSession session) {
-        List<CertificateDto> data = certService.getAllLatestForTeam(teamId(session));
+        List<CertificateDto> data = certService.getAllLatestForTeams(SessionScope.viewTeamIds(session));
         return ok(Map.of("success", true, "data", data, "timestamp", now()));
     }
 
@@ -57,7 +57,7 @@ public class CertificateController {
             HttpSession session) {
 
         Map<String, Object> result = certService.getPaginated(page, per_page, sort_by, sort_dir,
-                filter_domain, filter_issuer, filter_status, teamId(session));
+                filter_domain, filter_issuer, filter_status, SessionScope.viewTeamIds(session));
         return ok(Map.of("success", true,
                 "data", result.get("data"),
                 "pagination", result.get("pagination"),
@@ -66,7 +66,7 @@ public class CertificateController {
 
     @GetMapping("/warnings")
     public ResponseEntity<Map<String, Object>> getWarnings(HttpSession session) {
-        List<CertificateDto> warnings = certService.getWarningsForTeam(teamId(session));
+        List<CertificateDto> warnings = certService.getWarningsForTeams(SessionScope.viewTeamIds(session));
         return ok(Map.of("success", true, "data", warnings, "count", warnings.size(), "timestamp", now()));
     }
 
@@ -108,24 +108,27 @@ public class CertificateController {
     @GetMapping("/activity")
     public ResponseEntity<Map<String, Object>> getActivityLog(
             @RequestParam(defaultValue = "24") int hours, HttpSession session) {
-        return ok(Map.of("success", true, "data", certService.getActivityLog(hours, teamId(session)), "timestamp", now()));
+        return ok(Map.of("success", true, "data", certService.getActivityLog(hours, SessionScope.viewTeamIds(session)), "timestamp", now()));
     }
 
     @GetMapping("/stats")
     public ResponseEntity<Map<String, Object>> getStats(HttpSession session) {
-        return ok(Map.of("success", true, "data", certService.getStatsForTeam(teamId(session)), "timestamp", now()));
+        return ok(Map.of("success", true, "data", certService.getStatsForTeams(SessionScope.viewTeamIds(session)), "timestamp", now()));
     }
 
     @GetMapping("/stats/teams")
     public ResponseEntity<Map<String, Object>> getTeamStats(HttpSession session) {
-        String role = (String) session.getAttribute("systemRole");
-        if ("ADMIN".equals(role)) {
+        List<Long> scope = SessionScope.viewTeamIds(session);
+        if (scope == null) {  // global admin / AUDIT → all teams
             return ok(Map.of("success", true, "data", certService.getAllTeamsBreakdownStats(), "timestamp", now()));
         }
-        Long teamId = teamId(session);
-        if (teamId == null) return ok(Map.of("success", true, "data", Map.of(), "timestamp", now()));
-        String teamName = (String) session.getAttribute("teamName");
-        return ok(Map.of("success", true, "data", certService.getTeamBreakdownStats(teamId, teamName), "timestamp", now()));
+        if (scope.isEmpty()) return ok(Map.of("success", true, "data", Map.of(), "timestamp", now()));
+        if (scope.size() == 1) {  // single team → personal breakdown (unchanged)
+            String teamName = (String) session.getAttribute("teamName");
+            return ok(Map.of("success", true, "data", certService.getTeamBreakdownStats(scope.get(0), teamName), "timestamp", now()));
+        }
+        // müdür / PO → per-team breakdown limited to their teams
+        return ok(Map.of("success", true, "data", certService.getTeamsBreakdownStats(scope), "timestamp", now()));
     }
 
     @PostMapping("/scheduler/run")
@@ -194,7 +197,7 @@ public class CertificateController {
 
     @GetMapping("/renewal-advice")
     public ResponseEntity<Map<String, Object>> getRenewalAdvice(HttpSession session) {
-        List<Map<String, Object>> advice = certService.getRenewalAdviceForTeam(teamId(session));
+        List<Map<String, Object>> advice = certService.getRenewalAdviceForTeams(SessionScope.viewTeamIds(session));
         return ok(Map.of("success", true, "data", advice, "count", advice.size(), "timestamp", now()));
     }
 
@@ -209,7 +212,7 @@ public class CertificateController {
     }
 
     private void requireAdmin(HttpSession session) {
-        if (!"ADMIN".equals(session.getAttribute("systemRole"))) {
+        if (!SessionScope.isGlobalAdmin(session)) {   // global-only (müdür scoped-admin excluded)
             throw new SecurityException("Admin access required");
         }
     }

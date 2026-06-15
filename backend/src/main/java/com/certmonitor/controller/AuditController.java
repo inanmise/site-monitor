@@ -199,7 +199,7 @@ public class AuditController {
 
     private void requireAuditAccess(HttpSession session) {
         String role = (String) session.getAttribute("systemRole");
-        if (!"ADMIN".equals(role) && !"AUDIT".equals(role))
+        if (!SessionScope.isGlobalAdmin(session) && !"AUDIT".equals(role))
             throw new SecurityException("Audit access required");
     }
 

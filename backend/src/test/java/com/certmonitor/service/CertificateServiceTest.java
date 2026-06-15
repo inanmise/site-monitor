@@ -499,14 +499,14 @@ class CertificateServiceTest {
         teamInv.setActive(true);
         teamInv.setTeamId(5L);
 
-        when(inventoryRepo.findByTeamIdAndActiveTrueOrderByDomainAsc(5L)).thenReturn(List.of(teamInv));
+        when(inventoryRepo.findByTeamIdInAndActiveTrueOrderByDomainAsc(List.of(5L))).thenReturn(List.of(teamInv));
         when(latestRepo.findAllByOrderByDomainAsc()).thenReturn(List.of(
                 latestCheck("team.domain.com", "warning", true, 10, "VALID", "OK"),
                 latestCheck("other.domain.com", "warning", true, 5, "VALID", "OK")
         ));
         when(inventoryRepo.findAll()).thenReturn(Collections.emptyList());
 
-        List<Map<String, Object>> advice = service.getRenewalAdviceForTeam(5L);
+        List<Map<String, Object>> advice = service.getRenewalAdviceForTeams(List.of(5L));
 
         List<String> domains = advice.stream().map(a -> (String) a.get("domain")).toList();
         assertThat(domains).containsOnly("team.domain.com");

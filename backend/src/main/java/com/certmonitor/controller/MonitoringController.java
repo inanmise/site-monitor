@@ -49,7 +49,7 @@ public class MonitoringController {
 
     /** Write endpoints are admin-only — USER role gets a 403 via GlobalExceptionHandler. */
     private void requireAdmin(HttpSession session) {
-        if (!"ADMIN".equals(session.getAttribute("systemRole"))) {
+        if (!SessionScope.isGlobalAdmin(session)) {
             throw new SecurityException("Admin access required");
         }
     }

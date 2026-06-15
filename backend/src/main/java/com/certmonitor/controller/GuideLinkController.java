@@ -94,7 +94,7 @@ public class GuideLinkController {
 
     private void requireAdmin(HttpSession session) {
         requireAuth(session);
-        if (!"ADMIN".equals(session.getAttribute("systemRole"))) {
+        if (!SessionScope.isGlobalAdmin(session)) {
             log.warn("Unauthorized guide-link admin attempt by user={}", actor(session));
             throw new SecurityException("Admin access required");
         }

@@ -205,7 +205,7 @@ public class WeeklyReportController {
     @PostMapping("/reminders/trigger")
     public ResponseEntity<Map<String, Object>> triggerReminders(
             HttpSession session, HttpServletRequest request) {
-        if (!"ADMIN".equals(session.getAttribute("systemRole"))) {
+        if (!SessionScope.isGlobalAdmin(session)) {
             throw new SecurityException("Admin access required");
         }
         WeeklyReportReminderService.ReminderResult r = reminderService.sendFridayReminders();

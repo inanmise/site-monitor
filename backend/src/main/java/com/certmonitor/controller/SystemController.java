@@ -95,7 +95,7 @@ public class SystemController {
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     private void requireAdmin(HttpSession session) {
-        if (!"ADMIN".equals(session.getAttribute("systemRole"))) {
+        if (!SessionScope.isGlobalAdmin(session)) {
             throw new SecurityException("Admin access required");
         }
     }

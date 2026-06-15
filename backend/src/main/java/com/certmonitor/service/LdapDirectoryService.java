@@ -58,6 +58,8 @@ public class LdapDirectoryService {
     private static final String CTX_FACTORY = "com.sun.jndi.ldap.LdapCtxFactory";
     private static final int CONNECT_TIMEOUT_MS = 5000;
     private static final int READ_TIMEOUT_MS = 10000;
+    /** Cap for multi-match searches (e.g. memberOf group membership). */
+    private static final int MAX_MATCHES = 50;
 
     private final LdapSettingsService settingsService;
 
@@ -109,27 +111,44 @@ public class LdapDirectoryService {
 
         Map<String, Object> out = new LinkedHashMap<>();
         String filter = buildUserFilter(s, value.trim(), searchAttr);
+        out.put("filter", filter);
         try (LdapConn conn = open(s)) {
             SearchControls controls = new SearchControls();
             controls.setSearchScope(SearchControls.SUBTREE_SCOPE);
-            controls.setCountLimit(2);
+            controls.setCountLimit(MAX_MATCHES);   // memberOf/group searches can match many
             controls.setTimeLimit(READ_TIMEOUT_MS);
             controls.setReturningAttributes(null); // all attributes
 
-            SearchResult first = firstResult(conn.ctx.search(s.getBaseDn(), filter, controls));
-            if (first == null) {
-                out.put("found", false);
-                out.put("filter", filter);
-                return out;
+            List<Map<String, Object>> matches = new ArrayList<>();
+            SearchResult firstResult = null;
+            Map<String, Object> firstAttrs = null;
+            NamingEnumeration<SearchResult> results = conn.ctx.search(s.getBaseDn(), filter, controls);
+            try {
+                while (results.hasMore()) {
+                    SearchResult r = results.next();
+                    Map<String, Object> attrs = readAttributes(r.getAttributes());
+                    Map<String, Object> summary = new LinkedHashMap<>();
+                    summary.put("dn", r.getNameInNamespace());
+                    summary.put("username", firstAttr(attrs, s.getUserAttribute(), null));
+                    summary.put("displayName", firstAttr(attrs, s.getDisplayAttribute(), null));
+                    summary.put("email", firstAttr(attrs, s.getEmailAttribute(), null));
+                    matches.add(summary);
+                    if (firstResult == null) { firstResult = r; firstAttrs = attrs; }
+                }
+            } catch (PartialResultException | javax.naming.SizeLimitExceededException ignored) {
+                // AD referral chasing / size cap — return what we collected so far.
             }
-            String dn = first.getNameInNamespace();
-            Map<String, Object> attrs = readAttributes(first.getAttributes());
 
-            out.put("found", true);
-            out.put("dn", dn);
-            out.put("filter", filter);
-            out.put("attributes", attrs);
-            out.put("groups", resolveGroups(conn.ctx, s, dn, attrs));
+            out.put("found", !matches.isEmpty());
+            out.put("count", matches.size());
+            out.put("matches", matches);
+            // Single hit → also include the full attribute set + resolved groups.
+            if (matches.size() == 1 && firstResult != null) {
+                String dn = firstResult.getNameInNamespace();
+                out.put("dn", dn);
+                out.put("attributes", firstAttrs);
+                out.put("groups", resolveGroups(conn.ctx, s, dn, firstAttrs));
+            }
             return out;
         } catch (RuntimeException re) {
             throw re;
@@ -139,7 +158,8 @@ public class LdapDirectoryService {
     }
 
     /** Identity returned by a successful {@link #authenticate}. */
-    public record LdapUser(String username, String dn, String displayName, String email) {}
+    /** Authenticated identity + the full AD attribute map (incl. memberOf) for provisioning. */
+    public record LdapUser(String username, String dn, Map<String, Object> attributes) {}
 
     /**
      * Verifies AD credentials: finds the user with the service account, then binds
@@ -180,9 +200,54 @@ public class LdapDirectoryService {
             return Optional.empty(); // wrong password
         }
         String sam = firstAttr(attrs, s.getUserAttribute(), username.trim());
-        String display = firstAttr(attrs, s.getDisplayAttribute(), null);
-        String email = firstAttr(attrs, s.getEmailAttribute(), null);
-        return Optional.of(new LdapUser(sam, userDn, display, email));
+        return Optional.of(new LdapUser(sam, userDn, attrs));
+    }
+
+    /**
+     * Service-account lookup of a single directory entry by an attribute
+     * (e.g. {@code cn=<sicil>}). Returns the entry's attributes (with its DN under
+     * key {@code "_dn"}), or empty if not found / on error.
+     */
+    public Optional<Map<String, Object>> findOne(String attr, String value) {
+        if (value == null || value.isBlank()) return Optional.empty();
+        LdapSettings s = settingsService.getOrDefaults();
+        if (s.getHost() == null || s.getHost().isBlank()
+                || s.getBaseDn() == null || s.getBaseDn().isBlank()) {
+            return Optional.empty();
+        }
+        String filter = buildUserFilter(s, value.trim(), attr);
+        try (LdapConn conn = open(s)) {
+            SearchControls c = new SearchControls();
+            c.setSearchScope(SearchControls.SUBTREE_SCOPE);
+            c.setCountLimit(2);
+            c.setTimeLimit(READ_TIMEOUT_MS);
+            c.setReturningAttributes(null);
+            SearchResult first = firstResult(conn.ctx.search(s.getBaseDn(), filter, c));
+            if (first == null) return Optional.empty();
+            Map<String, Object> a = readAttributes(first.getAttributes());
+            a.put("_dn", first.getNameInNamespace());
+            return Optional.of(a);
+        } catch (Exception e) {
+            log.debug("findOne {}={} failed: {}", attr, value, rootMessage(e));
+            return Optional.empty();
+        }
+    }
+
+    /** Reads the {@code mail} attribute of a group entry by its full DN (service account). */
+    public Optional<String> groupMail(String groupDn) {
+        if (groupDn == null || groupDn.isBlank()) return Optional.empty();
+        LdapSettings s = settingsService.getOrDefaults();
+        if (s.getHost() == null || s.getHost().isBlank()) return Optional.empty();
+        try (LdapConn conn = open(s)) {
+            Attributes a = conn.ctx.getAttributes(groupDn, new String[]{"mail"});
+            Attribute m = (a != null) ? a.get("mail") : null;
+            if (m != null && m.size() > 0 && m.get() != null) {
+                return Optional.of(m.get().toString());
+            }
+        } catch (Exception e) {
+            log.debug("groupMail {} failed: {}", groupDn, rootMessage(e));
+        }
+        return Optional.empty();
     }
 
     /** Binds as a specific user DN to verify their password. true=ok, false=bad credentials. */

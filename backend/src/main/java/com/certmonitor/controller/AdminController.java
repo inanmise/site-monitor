@@ -65,12 +65,15 @@ public class AdminController {
             @RequestParam(defaultValue = "false") boolean showDeleted,
             HttpSession session) {
         List<CertificateInventory> items;
-        if (isAdmin(session)) {
+        if (isAdminOrAudit(session)) {                     // global admin / AUDIT → all
             items = showDeleted
                     ? inventoryRepo.findAllByOrderByDomainAsc()
                     : inventoryRepo.findByDeletedAtIsNullOrderByDomainAsc();
-        } else {
-            items = inventoryRepo.findByTeamIdAndDeletedAtIsNullOrderByDomainAsc(teamId(session));
+        } else {                                           // scoped (müdür/PO/USER)
+            List<Long> scope = viewScope(session);
+            items = (scope == null || scope.isEmpty())
+                    ? java.util.List.of()
+                    : inventoryRepo.findByTeamIdInAndDeletedAtIsNullOrderByDomainAsc(scope);
         }
         // SY/UG takım adlarını sunucuda çöz — USER rolü tüm takım listesini çekemediğinden
         // (kendi takımıyla filtreli) liste kolonlarında takım adları boş kalmasın.
@@ -91,14 +94,12 @@ public class AdminController {
             @jakarta.validation.Valid @RequestBody CertificateInventory item, HttpSession session, HttpServletRequest request) {
         requireAdminOrTeamAdmin(session);
         validateDomain(item.getDomain());
-        // TEAM_ADMIN: force the new item into the caller's team — payload cannot place
-        // it on another team's books.
-        if (isTeamAdmin(session)) {
-            item.setTeamId(teamId(session));
-        }
         if (item.getTeamId() == null) {
             throw new IllegalArgumentException("A team must be selected for the certificate");
         }
+        // The chosen team must be within the caller's manage scope (global admin: any;
+        // PO: only teams they lead; müdür: none).
+        requireTeamScopedAdmin(session, item.getTeamId());
         String now = now();
         item.setId(null);
         item.setCreatedAt(now);
@@ -523,17 +524,29 @@ public class AdminController {
 
     @GetMapping("/contacts")
     public ResponseEntity<Map<String, Object>> listContacts(HttpSession session) {
-        List<EscalationContact> contacts = isAdmin(session)
-                ? contactRepo.findByActiveTrueOrderByRoleAsc()
-                : contactRepo.findByTeamIdAndActiveTrueOrderByRoleAsc(teamId(session));
+        List<EscalationContact> contacts;
+        if (isAdminOrAudit(session)) {
+            contacts = contactRepo.findByActiveTrueOrderByRoleAsc();
+        } else {
+            List<Long> scope = viewScope(session);
+            contacts = (scope == null || scope.isEmpty())
+                    ? java.util.List.of()
+                    : contactRepo.findByTeamIdInAndActiveTrueOrderByRoleAsc(scope);
+        }
         return ok(Map.of("data", contacts));
     }
 
     @GetMapping("/contacts/all")
     public ResponseEntity<Map<String, Object>> listAllContacts(HttpSession session) {
-        List<EscalationContact> contacts = isAdmin(session)
-                ? contactRepo.findAll()
-                : contactRepo.findByTeamIdOrderByRoleAsc(teamId(session));
+        List<EscalationContact> contacts;
+        if (isAdminOrAudit(session)) {
+            contacts = contactRepo.findAll();
+        } else {
+            List<Long> scope = viewScope(session);
+            contacts = (scope == null || scope.isEmpty())
+                    ? java.util.List.of()
+                    : contactRepo.findByTeamIdInOrderByRoleAsc(scope);
+        }
         return ok(Map.of("data", contacts));
     }
 
@@ -745,10 +758,10 @@ public class AdminController {
         if (isAdminOrAudit(session)) {
             return ok(Map.of("data", all));
         }
-        Long tid = teamId(session);
-        var filtered = (tid == null)
+        List<Long> scope = viewScope(session);
+        var filtered = (scope == null || scope.isEmpty())
                 ? java.util.List.<com.certmonitor.model.Team>of()
-                : all.stream().filter(t -> Objects.equals(t.getId(), tid)).toList();
+                : all.stream().filter(t -> scope.contains(t.getId())).toList();
         return ok(Map.of("data", filtered));
     }
 
@@ -760,12 +773,10 @@ public class AdminController {
                 (String) body.get("name"),
                 (String) body.get("email"),
                 (String) body.get("description"),
-                toLong(body.get("leader_id")),
-                (String) body.get("team_type"));
+                toLong(body.get("leader_id")));
         auditService.recordAction("TEAM_CREATE", session, request,
                 "TEAM", team.getId().toString(),
-                "{\"name\":\"" + team.getName() + "\",\"leaderId\":" + team.getLeaderId()
-                + ",\"teamType\":\"" + team.getTeamType() + "\"}");
+                "{\"name\":\"" + team.getName() + "\",\"leaderId\":" + team.getLeaderId() + "}");
         return ok(Map.of("data", team, "message", "Team created"));
     }
 
@@ -778,17 +789,28 @@ public class AdminController {
                 (String) body.get("email"),
                 (String) body.get("description"),
                 body.get("active") instanceof Boolean ? (Boolean) body.get("active") : null,
-                toLong(body.get("leader_id")),
-                (String) body.get("team_type"));
+                toLong(body.get("leader_id")));
         return ok(Map.of("data", team));
+    }
+
+    /** A user's AD photo (JPEG) for avatars; 404 when none. Visible to admins/team-admins. */
+    @GetMapping("/users/{id}/photo")
+    public ResponseEntity<byte[]> userPhoto(@PathVariable Long id, HttpSession session) {
+        requireAdminOrTeamAdmin(session);
+        return userRepo.findById(id)
+                .map(u -> AuthController.photoResponse(u.getPhotoBase64()))
+                .orElse(ResponseEntity.notFound().build());
     }
 
     @GetMapping("/teams/{id}/users")
     public ResponseEntity<Map<String, Object>> listTeamUsers(
             @PathVariable Long id, HttpSession session) {
-        // Read-only visibility: admin/audit see any team; everyone else only their own.
-        if (!isAdminOrAudit(session) && !id.equals(teamId(session))) {
-            throw new SecurityException("Cannot view another team's members");
+        // Read-only visibility: admin/audit see any team; scoped roles only teams in their view scope.
+        if (!isAdminOrAudit(session)) {
+            List<Long> scope = viewScope(session);
+            if (scope == null || !scope.contains(id)) {
+                throw new SecurityException("Cannot view another team's members");
+            }
         }
         return ok(Map.of("data", userService.listUsers().stream()
                 .filter(u -> id.equals(u.getTeamId())).toList()));
@@ -811,10 +833,10 @@ public class AdminController {
         if (isAdminOrAudit(session)) {
             return ok(Map.of("data", all));
         }
-        Long tid = teamId(session);
-        var filtered = (tid == null)
+        List<Long> scope = viewScope(session);
+        var filtered = (scope == null || scope.isEmpty())
                 ? java.util.List.<AppUser>of()
-                : all.stream().filter(u -> Objects.equals(u.getTeamId(), tid)).toList();
+                : all.stream().filter(u -> u.getTeamId() != null && scope.contains(u.getTeamId())).toList();
         return ok(Map.of("data", filtered));
     }
 
@@ -995,9 +1017,15 @@ public class AdminController {
     @GetMapping("/notes/{domain}")
     public ResponseEntity<Map<String, Object>> getNotes(
             @PathVariable String domain, HttpSession session) {
-        List<CertificateNote> notes = isAdmin(session)
-                ? noteRepo.findByDomainOrderByCreatedAtDesc(domain)
-                : noteRepo.findByDomainAndTeamIdOrderByCreatedAtDesc(domain, teamId(session));
+        List<CertificateNote> notes;
+        if (isAdminOrAudit(session)) {
+            notes = noteRepo.findByDomainOrderByCreatedAtDesc(domain);
+        } else {
+            List<Long> scope = viewScope(session);
+            notes = (scope == null || scope.isEmpty())
+                    ? java.util.List.of()
+                    : noteRepo.findByDomainAndTeamIdInOrderByCreatedAtDesc(domain, scope);
+        }
         return ok(Map.of("data", notes));
     }
 
@@ -1184,20 +1212,14 @@ public class AdminController {
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 
+    /** Global (unrestricted) admin — the bootstrap/local ADMIN. A scoped müdür is NOT global. */
     private boolean isAdmin(HttpSession session) {
-        if (permissionService != null) {
-            return permissionService.allows(session, "system.global_admin", "execute");
-        }
-        return "ADMIN".equals(session.getAttribute("systemRole"));
+        return SessionScope.isGlobalAdmin(session);
     }
 
+    /** Sees all teams (read): global admin or AUDIT — both have null view scope. */
     private boolean isAdminOrAudit(HttpSession session) {
-        Object role = session.getAttribute("systemRole");
-        if (permissionService != null) {
-            return permissionService.allows(session, "system.global_admin", "execute")
-                || "AUDIT".equals(role);
-        }
-        return "ADMIN".equals(role) || "AUDIT".equals(role);
+        return SessionScope.isGlobalViewer(session);
     }
 
     private boolean isTeamAdmin(HttpSession session) {
@@ -1208,13 +1230,15 @@ public class AdminController {
         return "TEAM_ADMIN".equals(session.getAttribute("systemRole"));
     }
 
-    /** Either system admin or a team admin acting on a resource that belongs to their team. */
+    /** Read scope: null = all teams; else only these (müdür: subordinates'; PO: led; USER: own). */
+    private java.util.List<Long> viewScope(HttpSession session) {
+        return SessionScope.viewTeamIds(session);
+    }
+
+    /** Global admin, or a manager-scope (PO) that includes the resource's team. (Müdür → false.) */
     private boolean canManageTeamResource(HttpSession session, Long resourceTeamId) {
-        if (isAdmin(session)) return true;
-        if (isTeamAdmin(session)) {
-            return resourceTeamId != null && resourceTeamId.equals(teamId(session));
-        }
-        return false;
+        if (isAdmin(session)) return true;                 // global admin
+        return SessionScope.canManage(session, resourceTeamId);
     }
 
     private void requireTeamScopedAdmin(HttpSession session, Long resourceTeamId) {
@@ -1226,10 +1250,11 @@ public class AdminController {
     }
 
     private void requireAdminOrTeamAdmin(HttpSession session) {
-        if (!isAdmin(session) && !isTeamAdmin(session)) {
-            log.warn("Non-admin/team-admin write attempt by user={}", actor(session));
-            throw new SecurityException("Admin or team-admin required");
-        }
+        if (isAdmin(session)) return;
+        java.util.List<Long> m = SessionScope.manageTeamIds(session);
+        if (m != null && !m.isEmpty()) return;             // PO with managed teams
+        log.warn("Non-admin/team-admin write attempt by user={}", actor(session));
+        throw new SecurityException("Admin or team-admin required");
     }
 
     private static final java.util.Set<String> TEAM_ADMIN_ASSIGNABLE_ROLES =
@@ -1245,7 +1270,7 @@ public class AdminController {
     /** Tanılama (diagnostics) admin'e her domain için, diğer rollere YALNIZ envanterde
      *  kayıtlı (izlenen) domainler için açıktır — rastgele host+port probe'u (SSRF) engellenir. */
     private void requireAdminOrMonitoredDomain(HttpSession session, String domain) {
-        if (isAdmin(session)) return;
+        if (isAdminOrAudit(session)) return;
         if (domain != null && inventoryRepo.findByDomain(domain.trim()).isPresent()) return;
         log.warn("Diagnostics denied (non-admin, unmonitored domain='{}') user={}", domain, actor(session));
         throw new SecurityException("Bu domain için tanılama yetkiniz yok");
