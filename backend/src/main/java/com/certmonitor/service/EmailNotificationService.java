@@ -1888,7 +1888,7 @@ public class EmailNotificationService {
         String v = value != null ? String.valueOf(value) : "0";
         String bg = tint(color, 0.12);
         return "<td bgcolor='" + bg + "' style='background:" + bg + ";border:1px solid " + color
-            + ";padding:6px 12px;font-size:12px;font-weight:700;color:" + color
+            + ";padding:8px 13px;font-size:14px;font-weight:700;color:" + color
             + ";white-space:nowrap;text-align:center'>" + escHtml(label) + ": " + escHtml(v) + "</td>";
     }
 
