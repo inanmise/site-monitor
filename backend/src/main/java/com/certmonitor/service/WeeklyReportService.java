@@ -360,13 +360,19 @@ public class WeeklyReportService {
 
         List<String> poEmails = resolvePoEmails(r.getTeamId());
         String poSubject = "[CertMonitor] " + teamName + " — " + r.getWeekLabel() + " raporu onayınızı bekliyor";
-        String poHtml = emailService.buildWeeklyReportSubmittedHtml(teamName, r.getWeekLabel(), actor.display(), approveUrl(token));
+        // PO mailine raporun TAMAMI gömülür + "Onayla" CTA'sı: PO maili açıp raporu görür
+        // ve maildeki linkten (login'siz) onaylayabilir. Görseller inline gider.
+        List<EmailNotificationService.InlineImage> inline = collectInlineImages(r);
+        String poHtml = emailService.buildWeeklyReportHtml(
+                teamName, r.getWeekLabel(), resolvePoDisplayName(r.getTeamId()),
+                r.getContentJson(), true, imageDisplayWidths(inline),
+                null, null, null, approveUrl(token));
         String poMail;
         if (poEmails.isEmpty()) {
             poMail = "SKIPPED_NO_CONTACT";
             log.warn("Haftalık rapor onaya gönderildi ama PO kontağı yok: team={} report={}", teamName, id);
         } else {
-            poMail = emailService.sendHtml(poEmails.toArray(new String[0]), null, poSubject, poHtml, null);
+            poMail = emailService.sendHtml(poEmails.toArray(new String[0]), null, poSubject, poHtml, inline);
         }
         recordMail(r, "SUBMIT_PO", poEmails, null, poSubject, poHtml, poMail, actor);
         Map<String, Object> out = new LinkedHashMap<>();

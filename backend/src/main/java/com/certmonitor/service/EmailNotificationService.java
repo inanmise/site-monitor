@@ -1541,6 +1541,19 @@ public class EmailNotificationService {
      * bkz. WeeklyReportService.DEFAULT_TEMPLATE_JSON. forEmail=false UI
      * önizlemesi içindir (görsel URL'leri /api olarak kalır).
      */
+    /** PO onay-bekleyen mailinde rapor içeriğinin üstüne/altına eklenen onay CTA bloğu
+     *  (yeşil banner + bulletproof "Onayla" butonu). url boşsa boş döner. */
+    private String approveCtaBlock(String approveUrl) {
+        if (approveUrl == null || approveUrl.isBlank()) return "";
+        return "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' style='margin:0 0 18px'>"
+            + "<tr><td align='center' bgcolor='#ecfdf5' style='background:#ecfdf5;border:1px solid #a7f3d0;"
+            + "border-radius:10px;padding:16px'>"
+            + "<div style='font-size:14px;font-weight:700;color:#065f46;margin-bottom:10px'>"
+            + "Bu rapor onayınızı bekliyor</div>"
+            + ctaButton(approveUrl, "✅ Raporu onaylamak için tıklayınız &rarr;", "#15803d")
+            + "</td></tr></table>";
+    }
+
     public String buildWeeklyReportHtml(String teamName, String weekLabel, String managerName,
                                         String contentJson, boolean forEmail) {
         return buildWeeklyReportHtml(teamName, weekLabel, managerName, contentJson, forEmail, null);
@@ -1562,6 +1575,17 @@ public class EmailNotificationService {
                                         String contentJson, boolean forEmail,
                                         Map<Long, Integer> imageWidths,
                                         String approverName, String approvedAtIso, String sentAtIso) {
+        return buildWeeklyReportHtml(teamName, weekLabel, managerName, contentJson, forEmail,
+                imageWidths, approverName, approvedAtIso, sentAtIso, null);
+    }
+
+    /** {@code approveCtaUrl} doluysa (PO onay-bekleyen maili): rapor içeriğinin üstüne ve
+     *  altına "Raporu onayla" CTA bloğu eklenir; PO raporu görüp maildeki linkten onaylar. */
+    public String buildWeeklyReportHtml(String teamName, String weekLabel, String managerName,
+                                        String contentJson, boolean forEmail,
+                                        Map<Long, Integer> imageWidths,
+                                        String approverName, String approvedAtIso, String sentAtIso,
+                                        String approveCtaUrl) {
         String generatedAt = ZonedDateTime.now(IST).format(DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm"));
         // Footer sağ sütun — onay bilgisi (varsa) + oluşturma zamanı; hepsi Europe/Istanbul
         StringBuilder footerRight = new StringBuilder();
@@ -1692,10 +1716,14 @@ public class EmailNotificationService {
             + escHtml(teamName) + " ekibi olarak <strong>" + escHtml(weekLabel)
             + "</strong> haftası raporumuzu aşağıda paylaşıyoruz.</p>"
 
+            + approveCtaBlock(approveCtaUrl)
+
             + reportSection("1. Proaktif Servis İyileştirme Kayıtları", item1Body, accent)
             + reportSection("2. Aşım Yaşanan Olay / Problem ve Açık Postmortem Kayıtları", item2Body, accent)
             + reportSection("3. Haftalık Katılım Sağlanan Çalışmalar", item3Body, accent)
             + reportSection("4. Domain Bazlı Kritik İşlerin Durumu", item4Body.toString(), accent)
+
+            + approveCtaBlock(approveCtaUrl)
 
             // Footer
             + "<table width='100%' cellpadding='0' cellspacing='0'><tr>"
