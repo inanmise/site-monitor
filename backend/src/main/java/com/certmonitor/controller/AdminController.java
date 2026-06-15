@@ -951,6 +951,17 @@ public class AdminController {
                 requestedTeamId,
                 body.get("active") instanceof Boolean ? (Boolean) body.get("active") : null,
                 (String) body.get("org_role"));
+        // Boş takım seçimi (team_id alanı açıkça null gönderildi) → kullanıcıyı takımdan düşür.
+        // updateUser'da null = "değiştirme" anlamına geldiği için burada açıkça ele alınır.
+        // Yalnız global admin yapabilir; takımsız kalmaya yalnız ADMIN rollü kullanıcı uygundur.
+        boolean clearTeam = body.containsKey("team_id") && requestedTeamId == null && !isTeamAdmin(session);
+        if (clearTeam) {
+            String effRole = requestedRole != null ? requestedRole : user.getSystemRole();
+            if (!"ADMIN".equals(effRole)) {
+                throw new IllegalArgumentException("Team is required");
+            }
+            user.setTeamId(null);
+        }
         // AD-mirrored profil alanları (ad/soyad/ünvan/telefon/departman/seviye/müdürlük/müdür sicili)
         userService.applyProfileFields(user, body);
         user = userRepo.save(user);
