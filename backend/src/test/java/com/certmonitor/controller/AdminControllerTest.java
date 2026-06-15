@@ -120,6 +120,8 @@ class AdminControllerTest {
             u.setTeamId(1L);
             return Optional.of(u);
         });
+        // createUser/updateUser persist AD profile fields via a follow-up save → echo the entity.
+        when(userRepo.save(any(AppUser.class))).thenAnswer(inv -> inv.getArgument(0));
     }
 
     // ── Auth guard ────────────────────────────────────────────────────────────

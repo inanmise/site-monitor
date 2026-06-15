@@ -7,7 +7,8 @@ import KebabMenu from '../ui/KebabMenu.jsx'
 import { UserPlus, UserCog } from 'lucide-react'
 import AdminAutoResetModal from './AdminAutoResetModal.jsx'
 
-const emptyUser = { username: '', password: '', display_name: '', email: '', employee_id: '', system_role: 'USER', team_id: '', org_role: '', active: true }
+const emptyUser = { username: '', password: '', display_name: '', email: '', employee_id: '', system_role: 'USER', team_id: '', org_role: '', active: true,
+  first_name: '', last_name: '', title: '', phone: '', department: '', company_level: '', mudurluk_name: '', manager_sicil: '' }
 
 const AVATAR_PALETTE = [
   'linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)',
@@ -104,6 +105,14 @@ export default function UserManager({ systemRole, ownTeamId, currentUsername, te
       team_id: user.team_id ?? '',
       org_role: user.org_role || '',
       active: user.active,
+      first_name: user.first_name || '',
+      last_name: user.last_name || '',
+      title: user.title || '',
+      phone: user.phone || '',
+      department: user.department || '',
+      company_level: user.company_level || '',
+      mudurluk_name: user.mudurluk_name || '',
+      manager_sicil: user.manager_sicil || '',
     })
     setMsg(null)
     setModal(user)
@@ -124,6 +133,14 @@ export default function UserManager({ systemRole, ownTeamId, currentUsername, te
       team_id: isTeamAdmin ? ownTeamId : (form.team_id || null),
       org_role: form.org_role || null,
       active: form.active,
+      first_name: form.first_name,
+      last_name: form.last_name,
+      title: form.title,
+      phone: form.phone,
+      department: form.department,
+      company_level: form.company_level,
+      mudurluk_name: form.mudurluk_name,
+      manager_sicil: form.manager_sicil,
     }
     let res
     if (modal === 'add') {
@@ -348,6 +365,31 @@ export default function UserManager({ systemRole, ownTeamId, currentUsername, te
                 {!isTeamAdmin && !form.team_id && (
                   <span className="field-hint field-hint--warn">{t('usr.teamRequired')}</span>
                 )}
+              </label>
+              {/* AD'den eşlenen profil alanları (LDAP kullanıcısında bir sonraki login'de tazelenir) */}
+              <label>{t('usr.formFirstName')}
+                <input value={form.first_name} onChange={(e) => setForm({ ...form, first_name: e.target.value })} />
+              </label>
+              <label>{t('usr.formLastName')}
+                <input value={form.last_name} onChange={(e) => setForm({ ...form, last_name: e.target.value })} />
+              </label>
+              <label>{t('usr.colTitle')}
+                <input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} />
+              </label>
+              <label>{t('usr.colPhone')}
+                <input value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} />
+              </label>
+              <label>{t('usr.colDept')}
+                <input value={form.department} onChange={(e) => setForm({ ...form, department: e.target.value })} />
+              </label>
+              <label>{t('usr.formCompanyLevel')}
+                <input value={form.company_level} onChange={(e) => setForm({ ...form, company_level: e.target.value })} />
+              </label>
+              <label>{t('usr.colMudurluk')}
+                <input value={form.mudurluk_name} onChange={(e) => setForm({ ...form, mudurluk_name: e.target.value })} />
+              </label>
+              <label>{t('usr.colManager')}
+                <input value={form.manager_sicil} onChange={(e) => setForm({ ...form, manager_sicil: e.target.value })} />
               </label>
               <label className="checkbox-label">
                 <input type="checkbox" checked={form.active}

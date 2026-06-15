@@ -163,6 +163,41 @@ class LdapProvisioningServiceTest {
     }
 
     @Test
+    @DisplayName("ScrumGroups: '...Onayci' grubu takım sayılmaz; düz grup takım adı + mail o DN'den")
+    void teamFromScrumGroups_skipsApproverGroup() {
+        // Onayci grubunun maili yanlışlıkla seçilmesin diye yalnız düz grubun DN'ine mail ver.
+        String teamDn = "CN=SY-Dijital Bankacilik,OU=ScrumGroups,OU=BTPersonel,OU=Aknet,DC=aknet,DC=akb";
+        when(directory.groupMail(teamDn)).thenReturn(Optional.of("sy-dijitalbankacilik@akbank.com"));
+        org.mockito.ArgumentCaptor<Team> teamCap = org.mockito.ArgumentCaptor.forClass(Team.class);
+        Map<String, Object> attrs = Map.of(
+                "cn", "64954", "company", "PRODUCT OWNER",
+                "memberOf", List.of(
+                        "CN=SY-Dijital Bankacilik_Onayci,OU=ScrumGroups,OU=BTPersonel,OU=Aknet,DC=aknet,DC=akb",
+                        teamDn));
+
+        service.provisionFromAd("n64954", "CN=n64954,DC=aknet,DC=akb", attrs);
+
+        org.mockito.Mockito.verify(teamRepo, org.mockito.Mockito.atLeastOnce()).save(teamCap.capture());
+        Team created = teamCap.getAllValues().stream()
+                .filter(t -> t.getName() != null && !t.getName().toLowerCase().contains("onayci"))
+                .findFirst().orElseThrow();
+        assertThat(created.getName()).isEqualTo("SY-Dijital Bankacilik");
+        assertThat(created.getEmail()).isEqualTo("sy-dijitalbankacilik@akbank.com");
+        // "...Onayci" adıyla hiçbir takım oluşturulmamalı.
+        assertThat(teamCap.getAllValues()).noneMatch(t ->
+                t.getName() != null && t.getName().toLowerCase().contains("onayci"));
+    }
+
+    @Test
+    @DisplayName("isApproverCn: yalnız Onayci/Onaycı ile bitenler true")
+    void isApproverCnHelper() {
+        assertThat(LdapProvisioningService.isApproverCn("SY-Dijital Bankacilik_Onayci")).isTrue();
+        assertThat(LdapProvisioningService.isApproverCn("SY-Dijital Bankacilik Onaycı")).isTrue();
+        assertThat(LdapProvisioningService.isApproverCn("SY-Dijital Bankacilik")).isFalse();
+        assertThat(LdapProvisioningService.isApproverCn(null)).isFalse();
+    }
+
+    @Test
     @DisplayName("cnOf extracts the CN value from a DN")
     void cnOfHelper() {
         assertThat(LdapProvisioningService.cnOf("CN=63535,OU=BTPersonel,DC=aknet,DC=akb")).isEqualTo("63535");

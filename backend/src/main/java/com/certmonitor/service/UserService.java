@@ -22,6 +22,7 @@ import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.NoSuchElementException;
 import java.util.Optional;
 
@@ -344,6 +345,30 @@ public class UserService {
             contactRepo.save(c);
         });
         return saved;
+    }
+
+    /**
+     * Applies the AD-mirrored profile fields (ad/soyad/ünvan/telefon/departman/seviye/
+     * müdürlük/müdür sicili) from an admin create/update request body onto {@code u}.
+     * Only keys actually present in the body are touched; blank values clear the field.
+     * For LDAP users these are refreshed from AD on next login (same as displayName/email).
+     */
+    public void applyProfileFields(AppUser u, Map<String, Object> body) {
+        if (body == null) return;
+        if (body.containsKey("first_name"))    u.setFirstName(bodyStr(body.get("first_name")));
+        if (body.containsKey("last_name"))     u.setLastName(bodyStr(body.get("last_name")));
+        if (body.containsKey("title"))         u.setTitle(bodyStr(body.get("title")));
+        if (body.containsKey("phone"))         u.setPhone(bodyStr(body.get("phone")));
+        if (body.containsKey("department"))    u.setDepartment(bodyStr(body.get("department")));
+        if (body.containsKey("company_level")) u.setCompanyLevel(bodyStr(body.get("company_level")));
+        if (body.containsKey("mudurluk_name")) u.setMudurlukName(bodyStr(body.get("mudurluk_name")));
+        if (body.containsKey("manager_sicil")) u.setManagerSicil(bodyStr(body.get("manager_sicil")));
+    }
+
+    private static String bodyStr(Object v) {
+        if (v == null) return null;
+        String s = v.toString().trim();
+        return s.isEmpty() ? null : s;
     }
 
     @Transactional
