@@ -881,4 +881,19 @@ class WeeklyReportServiceTest {
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("MANAGER_CONTACT_MISSING");
     }
+
+    @Test
+    @DisplayName("releaseLocksForUser: kullanıcının düzenleme kilitlerini repo üzerinden bırakır")
+    void releaseLocksForUser_clears() {
+        when(reportRepo.clearLocksByUser(10L)).thenReturn(2);
+        service.releaseLocksForUser(10L);
+        verify(reportRepo).clearLocksByUser(10L);
+    }
+
+    @Test
+    @DisplayName("releaseLocksForUser: null userId → no-op")
+    void releaseLocksForUser_nullNoop() {
+        service.releaseLocksForUser(null);
+        verify(reportRepo, never()).clearLocksByUser(anyLong());
+    }
 }

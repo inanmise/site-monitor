@@ -271,6 +271,15 @@ public class WeeklyReportService {
         }
     }
 
+    /** Logout / oturum sonu: kullanıcının tuttuğu tüm rapor düzenleme kilitlerini bırakır.
+     *  Böylece kullanıcı çıkınca başkaları "X düzenliyor" ipucunu görmeye devam etmez. */
+    @Transactional
+    public void releaseLocksForUser(Long userId) {
+        if (userId == null) return;
+        int n = reportRepo.clearLocksByUser(userId);
+        if (n > 0) log.info("Oturum sonu: {} haftalık rapor düzenleme kilidi serbest bırakıldı (userId={})", n, userId);
+    }
+
     public boolean lockHeldByOther(WeeklyReport r, Actor a) {
         return r.getEditingUserId() != null
                 && !Objects.equals(r.getEditingUserId(), a.userId())

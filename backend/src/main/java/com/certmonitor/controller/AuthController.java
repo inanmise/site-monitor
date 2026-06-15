@@ -60,6 +60,9 @@ public class AuthController {
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private com.certmonitor.service.LdapProvisioningService ldapProvisioning;
 
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.certmonitor.service.WeeklyReportService weeklyReportService;
+
     // Per-IP attempt counter within a sliding 60-second window
     private final ConcurrentHashMap<String, AtomicInteger> loginAttempts = new ConcurrentHashMap<>();
     // Per-IP: timestamp when the current counting window started
@@ -229,9 +232,14 @@ public class AuthController {
             String username = (String) session.getAttribute("username");
             Object userId   = session.getAttribute("userId");
             String sid      = session.getId();
+            Long uid = userId instanceof Long l ? l : userId != null ? Long.parseLong(userId.toString()) : null;
+            // Çıkışta kullanıcının haftalık rapor düzenleme kilitlerini bırak —
+            // aksi halde başkaları "X düzenliyor" ipucunu (kilit bayatlayana dek) görür.
+            if (weeklyReportService != null && uid != null) {
+                try { weeklyReportService.releaseLocksForUser(uid); } catch (Exception ignored) {}
+            }
             session.invalidate();
             if (username != null) {
-                Long uid = userId instanceof Long l ? l : userId != null ? Long.parseLong(userId.toString()) : null;
                 auditService.recordLogout(username, uid, resolveClientIp(request), sid);
             }
         }

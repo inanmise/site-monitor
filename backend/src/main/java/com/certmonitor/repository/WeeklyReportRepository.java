@@ -2,6 +2,7 @@ package com.certmonitor.repository;
 
 import com.certmonitor.model.WeeklyReport;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
@@ -27,4 +28,10 @@ public interface WeeklyReportRepository extends JpaRepository<WeeklyReport, Long
 
     /** Yeni hafta şablonunun kaynağı — takımın en güncel raporu. */
     Optional<WeeklyReport> findFirstByTeamIdOrderByReportYearDescWeekNoDesc(Long teamId);
+
+    /** Logout/oturum sonu: kullanıcının elindeki tüm düzenleme kilitlerini serbest bırak. */
+    @Modifying
+    @Query("update WeeklyReport r set r.editingBy = null, r.editingUserId = null,"
+            + " r.editingHeartbeat = null where r.editingUserId = :userId")
+    int clearLocksByUser(@Param("userId") Long userId);
 }
