@@ -128,6 +128,7 @@ export default function TeamManager({ systemRole, ownTeamId, onTeamsChange }) {
   }
 
   const userMap = Object.fromEntries(users.map(u => [u.id, u.display_name || u.username]))
+  const usersById = Object.fromEntries(users.map(u => [u.id, u]))
 
   /** Bir kullanıcının bağlı olduğu müdür etiketi: adı (çözülebiliyorsa) yoksa sicili. */
   const managerLabelFor = (u) => (u?.manager_id && userMap[u.manager_id]) || u?.manager_sicil || null
@@ -263,11 +264,21 @@ export default function TeamManager({ systemRole, ownTeamId, onTeamsChange }) {
                         ? <span className="field-hint">{t('team.loadingMembers')}</span>
                         : (() => {
                             const members = membersCache[team.id] || []
-                            return members.length === 0
-                              ? <span className="field-hint">{t('team.noMembers')}</span>
-                              : (
+                            if (members.length === 0)
+                              return <span className="field-hint">{t('team.noMembers')}</span>
+                            // Üyelerin bağlı olduğu müdür(ler)in kartlarını da listele
+                            const memberIds = new Set(members.map(x => x.id))
+                            const managerCards = [...new Set(members.map(x => x.manager_id).filter(Boolean))]
+                              .filter(id => !memberIds.has(id))
+                              .map(id => usersById[id])
+                              .filter(Boolean)
+                            const cards = [
+                              ...members.map(m => ({ m, isManager: false })),
+                              ...managerCards.map(m => ({ m, isManager: true })),
+                            ]
+                            return (
                                 <div className="tm-member-cards">
-                                  {members.map(m => {
+                                  {cards.map(({ m, isManager }) => {
                                     return (
                                       <div
                                         key={m.id}
@@ -280,7 +291,10 @@ export default function TeamManager({ systemRole, ownTeamId, onTeamsChange }) {
                                       >
                                         <MemberAvatar m={m} />
                                         <div className="tm-mc-body">
-                                          <strong className="tm-mc-name">{m.display_name || m.username}</strong>
+                                          <strong className="tm-mc-name">
+                                            {m.display_name || m.username}
+                                            {isManager && <span className="tm-mc-mgr-badge">{t('team.managerBadge')}</span>}
+                                          </strong>
                                           <dl className="tm-mc-fields">
                                             <dt>{t('usr.colUsername')}:</dt>
                                             <dd>{m.username}</dd>
