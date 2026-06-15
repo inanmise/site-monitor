@@ -65,6 +65,26 @@ public class WeeklyReportService {
     @Value("${cert.monitor.weekly-report.image-max-bytes:2097152}")
     private long imageMaxBytes;
 
+    /** E-posta onay linkleri için uygulamanın dış URL'i (reminder ile aynı ayar). */
+    @Value("${cert.monitor.app.base-url:http://localhost:5173}")
+    private String appBaseUrl;
+
+    /** Onay token'ı geçerlilik süresi (gün). */
+    private static final long APPROVAL_TOKEN_TTL_DAYS = 7;
+    private static final java.security.SecureRandom TOKEN_RNG = new java.security.SecureRandom();
+
+    private String newApprovalToken() {
+        byte[] b = new byte[24];
+        TOKEN_RNG.nextBytes(b);
+        return java.util.Base64.getUrlEncoder().withoutPadding().encodeToString(b);
+    }
+
+    private String approveUrl(String token) {
+        String base = (appBaseUrl != null && !appBaseUrl.isBlank())
+                ? appBaseUrl.replaceAll("/+$", "") : "";
+        return base + "/api/weekly-reports/approve-link?token=" + token;
+    }
+
     private static final DateTimeFormatter ISO =
             DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
 
@@ -329,6 +349,10 @@ public class WeeklyReportService {
         r.setSubmittedAt(now());
         r.setUpdatedBy(actor.display());
         r.setUpdatedAt(now());
+        // E-posta ile hızlı onay token'ı (tek-kullanımlık, süreli)
+        String token = newApprovalToken();
+        r.setApprovalToken(token);
+        r.setApprovalTokenExpiresAt(ISO.format(Instant.now().plus(java.time.Duration.ofDays(APPROVAL_TOKEN_TTL_DAYS))));
         reportRepo.save(r);
 
         Team team = teamRepo.findById(r.getTeamId()).orElse(null);
@@ -336,7 +360,7 @@ public class WeeklyReportService {
 
         List<String> poEmails = resolvePoEmails(r.getTeamId());
         String poSubject = "[CertMonitor] " + teamName + " — " + r.getWeekLabel() + " raporu onayınızı bekliyor";
-        String poHtml = emailService.buildWeeklyReportSubmittedHtml(teamName, r.getWeekLabel(), actor.display());
+        String poHtml = emailService.buildWeeklyReportSubmittedHtml(teamName, r.getWeekLabel(), actor.display(), approveUrl(token));
         String poMail;
         if (poEmails.isEmpty()) {
             poMail = "SKIPPED_NO_CONTACT";
@@ -362,6 +386,7 @@ public class WeeklyReportService {
         r.setStatus("APPROVED");
         r.setVersion(r.getVersion() + 1);
         clearLock(r);
+        clearApprovalToken(r);
         r.setApprovedBy(actor.display());
         r.setApprovedAt(now());
         r.setRejectNote(null);
@@ -374,6 +399,93 @@ public class WeeklyReportService {
         out.put("data", r);
         out.put("mail_status", mailStatus);
         return out;
+    }
+
+    private void clearApprovalToken(WeeklyReport r) {
+        r.setApprovalToken(null);
+        r.setApprovalTokenExpiresAt(null);
+    }
+
+    // ── E-posta ile hızlı onay (token, login'siz) ────────────────────────────
+
+    /** Token durumunu döner (GET onay sayfası için): valid + rapor özeti. Mutasyon yok. */
+    public Map<String, Object> approvalTokenStatus(String token) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        WeeklyReport r = (token == null || token.isBlank())
+                ? null : reportRepo.findByApprovalToken(token.trim()).orElse(null);
+        if (r == null) {
+            out.put("valid", false);
+            out.put("reason", "not_found");
+            return out;
+        }
+        Team team = teamRepo.findById(r.getTeamId()).orElse(null);
+        out.put("team_name", team != null ? team.getName() : "—");
+        out.put("week_label", r.getWeekLabel());
+        out.put("status", r.getStatus());
+        if (tokenExpired(r)) { out.put("valid", false); out.put("reason", "expired"); return out; }
+        if (!"PENDING_APPROVAL".equals(r.getStatus())) {
+            out.put("valid", false);
+            out.put("reason", "APPROVED".equals(r.getStatus()) ? "already_approved" : "not_pending");
+            return out;
+        }
+        out.put("valid", true);
+        return out;
+    }
+
+    /** Token ile onay (login'siz). Geçerli + süresi geçmemiş + PENDING_APPROVAL şart.
+     *  Onaylayan, takımın PO'su olarak kaydedilir. Tek-kullanımlık: onaydan sonra token silinir. */
+    @Transactional
+    public Map<String, Object> approveViaToken(String token) {
+        if (token == null || token.isBlank()) throw new IllegalArgumentException("Geçersiz onay bağlantısı");
+        WeeklyReport r = reportRepo.findByApprovalToken(token.trim())
+                .orElseThrow(() -> new IllegalArgumentException("Onay bağlantısı geçersiz veya kullanılmış"));
+        if (tokenExpired(r)) throw new IllegalStateException("Onay bağlantısının süresi dolmuş");
+        if (!"PENDING_APPROVAL".equals(r.getStatus())) {
+            throw new IllegalStateException("APPROVED".equals(r.getStatus())
+                    ? "Bu rapor zaten onaylanmış" : "Rapor onay bekleme durumunda değil");
+        }
+        String approver = resolvePoDisplayName(r.getTeamId());
+        Actor actor = new Actor(null, "email-approval", approver, r.getTeamId(), "ADMIN");
+        String mailStatus = sendApprovalMail(r, actor); // MANAGER yoksa 409 fırlatır
+
+        r.setStatus("APPROVED");
+        r.setVersion(r.getVersion() + 1);
+        clearLock(r);
+        clearApprovalToken(r);
+        r.setApprovedBy(approver);
+        r.setApprovedAt(now());
+        r.setRejectNote(null);
+        if (mailSent(mailStatus)) r.setSentAt(now());
+        r.setUpdatedBy(approver);
+        r.setUpdatedAt(now());
+        reportRepo.save(r);
+        log.info("Haftalık rapor e-posta linki ile onaylandı: id={} team={} approver={} mail={}",
+                r.getId(), r.getTeamId(), approver, mailStatus);
+
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("data", r);
+        out.put("mail_status", mailStatus);
+        return out;
+    }
+
+    private boolean tokenExpired(WeeklyReport r) {
+        if (r.getApprovalTokenExpiresAt() == null) return true;
+        try {
+            return Instant.from(ISO.parse(r.getApprovalTokenExpiresAt())).isBefore(Instant.now());
+        } catch (Exception e) {
+            return true;
+        }
+    }
+
+    /** Onaylayan etiketi: takımın aktif PO'sunun adı; yoksa genel etiket. */
+    private String resolvePoDisplayName(Long teamId) {
+        return userRepo.findByTeamIdAndOrgRoleAndActiveTrue(teamId, "PO").stream()
+                .findFirst()
+                .map(u -> {
+                    String dn = u.getDisplayName();
+                    return (dn != null && !dn.isBlank()) ? dn : u.getUsername();
+                })
+                .orElse("PO (e-posta onayı)");
     }
 
     /** Onaylanmış raporu (değiştirmeden, yeniden onaysız) müdüre TEKRAR gönderir
@@ -477,6 +589,7 @@ public class WeeklyReportService {
         requireStatus(r, "PENDING_APPROVAL");
         r.setStatus("REJECTED");
         r.setVersion(r.getVersion() + 1);
+        clearApprovalToken(r);
         r.setRejectNote(note.trim());
         r.setRejectedBy(actor.display());
         r.setRejectedAt(now());

@@ -757,6 +757,35 @@ public class EmailNotificationService {
     }
 
     private String buildSimpleAlertHtml(String subject, String message) {
+        return buildSimpleAlertHtml(subject, message, null, null);
+    }
+
+    /** Outlook (Word/VML) + diğer istemciler (HTML) için "bulletproof" CTA butonu.
+     *  mso/non-mso koşullu yorumlarıyla her istemci yalnız kendi sürümünü görür. */
+    private String ctaButton(String url, String label, String accent) {
+        if (url == null || url.isBlank()) return "";
+        String safe = escHtml(url);
+        return "<!--[if mso]>"
+            + "<v:roundrect xmlns:v=\"urn:schemas-microsoft-com:vml\" xmlns:w=\"urn:schemas-microsoft-com:office:word\""
+            + " href=\"" + safe + "\" style=\"height:48px;v-text-anchor:middle;width:360px;\""
+            + " arcsize=\"16%\" strokecolor=\"" + accent + "\" fillcolor=\"" + accent + "\">"
+            + "<w:anchorlock/>"
+            + "<center style=\"color:#ffffff;font-family:'Segoe UI',Tahoma,Arial,sans-serif;font-size:15px;font-weight:bold;\">"
+            + label + "</center>"
+            + "</v:roundrect>"
+            + "<![endif]-->"
+            + "<!--[if !mso]><!-->"
+            + "<table role='presentation' border='0' cellspacing='0' cellpadding='0' style='display:inline-block'><tr>"
+            + "<td align='center' bgcolor='" + accent + "' style='background:" + accent + ";border-radius:8px;"
+            + "padding:13px 26px;color:#ffffff'>"
+            + "<a href='" + safe + "' target='_blank' style='color:#ffffff;text-decoration:none;"
+            + "font-size:15px;font-weight:800;font-family:\"Segoe UI\",Tahoma,Arial,sans-serif'>"
+            + "<span style='color:#ffffff'>" + label + "</span></a>"
+            + "</td></tr></table>"
+            + "<!--<![endif]-->";
+    }
+
+    private String buildSimpleAlertHtml(String subject, String message, String ctaUrl, String ctaLabel) {
         String now = LocalDateTime.now().format(DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm"));
         String color = subject.contains("KRİTİK") || subject.contains("CRITICAL") ? "#dc2626"
                 : subject.contains("YÜKSEK") || subject.contains("HIGH") ? "#ea580c" : "#d97706";
@@ -766,7 +795,11 @@ public class EmailNotificationService {
             + ".em-body{padding:16px!important}"
             + "}"
             + "</style>";
-        return "<!DOCTYPE html><html lang='tr'>"
+        String cta = (ctaUrl != null && !ctaUrl.isBlank())
+            ? "<div style='text-align:center;margin-top:20px'>" + ctaButton(ctaUrl, ctaLabel, "#15803d") + "</div>"
+            : "";
+        return "<!DOCTYPE html><html lang='tr' xmlns:v='urn:schemas-microsoft-com:vml'"
+            + " xmlns:o='urn:schemas-microsoft-com:office:office'>"
             + "<head><meta charset='UTF-8'><meta name='viewport' content='width=device-width,initial-scale=1'>" + css + "</head>"
             + "<body style='margin:0;padding:0;background:#f3f4f6;font-family:\"Segoe UI\",Arial,sans-serif'>"
             + "<table class='em-wrap' width='100%' cellpadding='0' cellspacing='0' border='0' style='background:#f3f4f6;padding:24px 10px'>"
@@ -781,6 +814,7 @@ public class EmailNotificationService {
             + "<div style='background:#fffbeb;border-left:4px solid " + color + ";"
             + "border-radius:0 8px 8px 0;padding:14px 16px;color:#1c1917;font-size:14px;line-height:1.7'>"
             + escHtml(message) + "</div>"
+            + cta
             + "<div style='text-align:center;color:#94a3b8;font-size:11px;margin-top:20px;"
             + "padding-top:16px;border-top:1px solid #f1f5f9'>CertMonitor &nbsp;·&nbsp; " + now + "</div>"
             + "</td></tr></table>"
@@ -1676,13 +1710,16 @@ public class EmailNotificationService {
     }
 
     /** PO'ya onay bekleyen rapor bilgilendirmesi. */
-    public String buildWeeklyReportSubmittedHtml(String teamName, String weekLabel, String submittedBy) {
+    public String buildWeeklyReportSubmittedHtml(String teamName, String weekLabel, String submittedBy,
+                                                 String approveUrl) {
         return buildSimpleAlertHtml(
                 "[CertMonitor] " + teamName + " — " + weekLabel + " raporu onayınızı bekliyor",
                 teamName + " ekibinin " + weekLabel + " haftalık raporu "
                 + (submittedBy != null ? submittedBy : "ekip üyesi")
-                + " tarafından onayınıza sunuldu. CertMonitor → Raporlar → Haftalık Raporlar "
-                + "ekranından inceleyip onaylayabilir veya düzeltme talebiyle iade edebilirsiniz.");
+                + " tarafından onayınıza sunuldu. Aşağıdaki butonla (giriş yapmadan) doğrudan "
+                + "onaylayabilir ya da CertMonitor → Raporlar → Haftalık Raporlar ekranından "
+                + "inceleyip düzeltme talebiyle iade edebilirsiniz.",
+                approveUrl, "✅ Raporu onaylamak için tıklayınız →");
     }
 
     /** Takıma iade/düzeltme talebi bildirimi. */

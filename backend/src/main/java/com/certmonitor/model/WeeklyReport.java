@@ -68,6 +68,15 @@ public class WeeklyReport {
     private String updatedBy;
     private String updatedAt;
 
+    /** E-posta ile hızlı onay için tek-kullanımlık token (onaya gönderildiğinde üretilir,
+     *  onaylanınca temizlenir). PO maildeki linke tıklayıp login'siz onaylar. */
+    @Column(name = "approval_token", length = 64)
+    private String approvalToken;
+
+    /** Onay token'ının son geçerlilik anı (ISO-8601, UTC). */
+    @Column(name = "approval_token_expires_at")
+    private String approvalTokenExpiresAt;
+
     /** İyimser kilitleme sayacı — her içerik/durum değişiminde artar; istemci
      *  yüklediği sürümü kayıtta geri gönderir, uyuşmazlık 409 VERSION_CONFLICT. */
     @Column(nullable = false)

@@ -22,6 +22,9 @@ public interface WeeklyReportRepository extends JpaRepository<WeeklyReport, Long
 
     Optional<WeeklyReport> findByTeamIdAndReportYearAndWeekNo(Long teamId, Integer reportYear, Integer weekNo);
 
+    /** E-posta ile hızlı onay — token ile rapor bulma. */
+    Optional<WeeklyReport> findByApprovalToken(String approvalToken);
+
     /** Yeni hafta şablonunun kaynağı — takımın en güncel raporu. */
     Optional<WeeklyReport> findFirstByTeamIdOrderByReportYearDescWeekNoDesc(Long teamId);
 }
