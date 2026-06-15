@@ -170,28 +170,37 @@ public class EmailNotificationService {
             return "SENT";
         } catch (Exception e) {
             String err = e.getMessage() != null ? e.getMessage() : "";
-            // 421 = transient rate-limit from SMTP gateway — schedule retry async
-            // Check both getMessage() and toString() because MailSendException may wrap the inner cause
+            // 421 = transient rate-limit from SMTP gateway — birden çok kez, artan
+            // bekleme (exponential backoff) ile async retry. Check both getMessage()
+            // and toString() because MailSendException may wrap the inner cause.
             String errFull = err + " " + e.toString();
-            if (attempt == 1 && errFull.contains("421")) {
-                log.warn("⏳ SMTP 421 rate limit — {}ms sonra async retry zamanlandı: TO={}",
-                        retry(), to);
+            if (errFull.contains("421") && attempt < MAX_SEND_ATTEMPTS) {
+                // backoff: retryDelay × 2^(attempt-1) → base, 2×, 4× …
+                long delay = retry() * (1L << (attempt - 1));
+                log.warn("⏳ SMTP 421 rate limit (deneme {}/{}) — {}ms sonra async retry: TO={}",
+                        attempt, MAX_SEND_ATTEMPTS, delay, to);
                 // Caller'ı bloke etme; retry'ı ayrı thread'de tetikle.
                 mailRetryExecutor.schedule(
                     () -> {
-                        try { doSend(to, msg, 2); }
+                        try { doSend(to, msg, attempt + 1); }
                         catch (Exception ex) {
                             log.error("✗ Async retry başarısız: TO={} | HATA={}", to, ex.getMessage());
                         }
                     },
-                    retry(), TimeUnit.MILLISECONDS);
-                // İlk denemenin sonucu: 421 ama retry zamanlandı.
-                return "QUEUED_RETRY: " + err;
+                    delay, TimeUnit.MILLISECONDS);
+                // İlk denemenin sonucu caller'a döner (sonraki retry'lar async, sonucu yutulur).
+                return attempt == 1 ? "QUEUED_RETRY: " + err : "QUEUED_RETRY";
+            }
+            if (errFull.contains("421")) {
+                log.error("✗ E-posta {} denemede de 421 rate limit ile gönderilemedi: TO={}", MAX_SEND_ATTEMPTS, to);
             }
             log.error("✗ E-posta gönderilemedi: TO={} | HATA={}", to, err);
             return "FAILED: " + err;
         }
     }
+
+    /** 421 rate-limit için toplam deneme sayısı (1 ilk + 3 retry); her retry artan beklemeli. */
+    private static final int MAX_SEND_ATTEMPTS = 4;
 
     /** Rich resolution email with full context (manual or auto resolve). */
     public String sendResolutionAlert(String to, String subject,
