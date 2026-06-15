@@ -272,7 +272,8 @@ export default function TeamManager({ systemRole, ownTeamId, onTeamsChange }) {
                               .filter(id => !memberIds.has(id))
                               .map(id => usersById[id])
                               .filter(Boolean)
-                            // Sıralama: önce müdür kartı, sonra PO, sonra seviye (companyLevel) + ada göre
+                            // Sıralama: önce müdür kartı, sonra PO, sonra seviye (companyLevel)
+                            // büyükten küçüğe (sayı-duyarlı), sonra ada göre
                             const rankOf = (c) => c.isManager ? 0 : (c.m.org_role === 'PO' ? 1 : 2)
                             const cards = [
                               ...members.map(m => ({ m, isManager: false })),
@@ -281,7 +282,7 @@ export default function TeamManager({ systemRole, ownTeamId, onTeamsChange }) {
                               if (rankOf(a) !== rankOf(b)) return rankOf(a) - rankOf(b)
                               const la = (a.m.company_level || '').toLowerCase()
                               const lb = (b.m.company_level || '').toLowerCase()
-                              if (la !== lb) return la.localeCompare(lb, 'tr')
+                              if (la !== lb) return lb.localeCompare(la, 'tr', { numeric: true })
                               return (a.m.display_name || a.m.username || '').localeCompare(
                                 b.m.display_name || b.m.username || '', 'tr')
                             })
