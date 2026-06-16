@@ -76,6 +76,77 @@ class EmailNotificationServiceTest {
         verify(smtpMailService, never()).currentSender();
     }
 
+    // ── Sertifika alarm tipleri (EXPIRY/REVOKED/MISMATCH/CHAIN_BROKEN) ─────────
+
+    private Map<String, Object> certCtx() {
+        Map<String, Object> c = new java.util.LinkedHashMap<>();
+        c.put("issuer", "Test CA");
+        c.put("issuer_cn", "Test CA");
+        c.put("not_after", "2026-01-01T00:00:00");
+        c.put("days_remaining", 25);
+        return c;
+    }
+
+    @Test
+    @DisplayName("EXPIRY alarm HTML: domain + 'gün sonra sona eriyor' kahramanı")
+    void buildAlertEmailHtml_expiry_containsDaysHero() {
+        String html = service.buildAlertEmailHtml(
+                "[CertMonitor UYARI] x.com — 25 gün kaldı", "msg",
+                "x.com", "WARNING", "EXPIRY", 25, certCtx());
+        assertThat(html).contains("x.com");
+        assertThat(html).contains("25 gün sonra sona eriyor");
+    }
+
+    @Test
+    @DisplayName("REVOKED alarm HTML: domain + 'İptal' içerir")
+    void buildAlertEmailHtml_revoked_containsRevokedLabel() {
+        String html = service.buildAlertEmailHtml(
+                "[CertMonitor KRİTİK] x.com — iptal", "msg",
+                "x.com", "CRITICAL", "REVOKED", null, certCtx());
+        assertThat(html).contains("x.com");
+        assertThat(html).contains("İptal");
+    }
+
+    @Test
+    @DisplayName("MISMATCH alarm HTML: 'Dağıtım Eksik' içerir")
+    void buildAlertEmailHtml_mismatch_containsLabel() {
+        String html = service.buildAlertEmailHtml(
+                "[CertMonitor] x.com — dağıtım", "msg",
+                "x.com", "HIGH", "MISMATCH", null, certCtx());
+        assertThat(html).contains("x.com");
+        assertThat(html).contains("Dağıtım Eksik");
+    }
+
+    @Test
+    @DisplayName("CHAIN_BROKEN alarm HTML: 'Zincir Sorunu' içerir")
+    void buildAlertEmailHtml_chainBroken_containsLabel() {
+        String html = service.buildAlertEmailHtml(
+                "[CertMonitor] x.com — zincir", "msg",
+                "x.com", "HIGH", "CHAIN_BROKEN", null, certCtx());
+        assertThat(html).contains("x.com");
+        assertThat(html).contains("Zincir Sorunu");
+    }
+
+    // ── Haftalık rapor: onay-bekleyen (CTA) + iade builder'ları ────────────────
+
+    @Test
+    @DisplayName("Onay-bekleyen mail: rapor + 'Onayla' CTA + onay linki içerir")
+    void buildWeeklyReportSubmittedHtml_containsApproveCta() {
+        String url = "https://cm.example.com/api/weekly-reports/approve-link?token=ABC123";
+        String html = service.buildWeeklyReportSubmittedHtml("DijitalSY", "2026-W24", "Erdi", url);
+        assertThat(html).contains(url);
+        assertThat(html).contains("onaylamak için tıklayınız");
+    }
+
+    @Test
+    @DisplayName("İade maili: düzeltme notu + iade eden içerir")
+    void buildWeeklyReportRejectedHtml_containsNoteAndRejecter() {
+        String html = service.buildWeeklyReportRejectedHtml(
+                "DijitalSY", "2026-W24", "Madde 2 eksik, düzeltiniz", "PO Bey");
+        assertThat(html).contains("Madde 2 eksik, düzeltiniz");
+        assertThat(html).contains("PO Bey");
+    }
+
     // ── Accessibility (erişim kesintisi) mailleri ──────────────────────────────
 
     @Test
