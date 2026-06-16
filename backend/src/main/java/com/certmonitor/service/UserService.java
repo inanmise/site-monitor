@@ -238,9 +238,9 @@ public class UserService {
     // ── Team CRUD ─────────────────────────────────────────────────────────────
 
     public List<Team> listTeams() {
-        return teamRepo.findAll().stream()
-                .sorted((a, b) -> a.getName().compareToIgnoreCase(b.getName()))
-                .toList();
+        // Sıralamayı DB'ye bırak (LOWER(name)) — Java tarafında findAll()+sort yerine.
+        return teamRepo.findAll(org.springframework.data.domain.Sort.by(
+                org.springframework.data.domain.Sort.Order.asc("name").ignoreCase()));
     }
 
     @Transactional
