@@ -165,6 +165,16 @@ class SqlPlaygroundServiceTest {
         verify(jdbc).queryForList(anyString());
     }
 
+    @Test
+    @DisplayName("Yasak kelimeyi İÇEREN sütun adları reddedilmez (kelime sınırı)")
+    void execute_columnNamesContainingKeywords_allowed() {
+        when(jdbc.queryForList(anyString())).thenReturn(List.of());
+        // insertion_date/updated_at/created_at → insert/update/create alt-dizisi içerir
+        // ama \b sınırı nedeniyle FORBIDDEN eşleşmemeli (yanlış pozitif olmamalı).
+        service.execute("SELECT insertion_date, updated_at, created_at FROM teams", "admin");
+        verify(jdbc).queryForList(anyString());
+    }
+
     // ── listTables / listColumns ──────────────────────────────────────────────
 
     @Test
