@@ -345,18 +345,27 @@ public class LdapDirectoryService {
             if (startTls) {
                 // StartTLS: connect anonymously in the clear, negotiate TLS, then bind.
                 LdapContext ctx = new InitialLdapContext(env, null);
-                StartTlsResponse tls = (StartTlsResponse) ctx.extendedOperation(new StartTlsRequest());
-                if (Boolean.TRUE.equals(s.getSkipCertVerification())) {
-                    tls.setHostnameVerifier(ACCEPT_ALL_HOSTS);
-                    tls.negotiate(buildSslSocketFactory(s));
-                } else if (s.getCaCertPem() != null && !s.getCaCertPem().isBlank()) {
-                    tls.negotiate(buildSslSocketFactory(s));
-                } else {
-                    tls.negotiate();
+                StartTlsResponse tls = null;
+                try {
+                    tls = (StartTlsResponse) ctx.extendedOperation(new StartTlsRequest());
+                    if (Boolean.TRUE.equals(s.getSkipCertVerification())) {
+                        tls.setHostnameVerifier(ACCEPT_ALL_HOSTS);
+                        tls.negotiate(buildSslSocketFactory(s));
+                    } else if (s.getCaCertPem() != null && !s.getCaCertPem().isBlank()) {
+                        tls.negotiate(buildSslSocketFactory(s));
+                    } else {
+                        tls.negotiate();
+                    }
+                    applyBind(ctx, s);
+                    ctx.reconnect(null);
+                    return new LdapConn(ctx, tls, false);
+                } catch (Exception inner) {
+                    // negotiate/bind/reconnect başarısızsa yarı-açık ctx+tls sızmasın:
+                    // LdapConn dönmediği için çağırandaki try-with-resources close() çalışmaz.
+                    try { if (tls != null) tls.close(); } catch (Exception ignored) {}
+                    try { ctx.close(); } catch (Exception ignored) {}
+                    throw inner;
                 }
-                applyBind(ctx, s);
-                ctx.reconnect(null);
-                return new LdapConn(ctx, tls, false);
             }
 
             applyBindEnv(env, s);

@@ -1,6 +1,5 @@
 package com.certmonitor.controller;
 
-import com.certmonitor.model.CertificateCheck;
 import com.certmonitor.model.CertificateInventory;
 import com.certmonitor.model.LatestCheck;
 import com.certmonitor.model.UptimeCheck;
@@ -67,13 +66,6 @@ class MonitoringControllerTest {
         return c;
     }
 
-    private static CertificateCheck chk(String domain, String status) {
-        CertificateCheck c = new CertificateCheck();
-        c.setDomain(domain); c.setStatus(status);
-        c.setCheckedAt("2099-01-01T00:00:00"); // her cutoff'tan yeni → 7d ve 30d'ye dahil
-        return c;
-    }
-
     private static UptimeCheck uchk(String domain, String status) {
         UptimeCheck u = new UptimeCheck();
         u.setDomain(domain); u.setPort(443); u.setStatus(status);
@@ -82,13 +74,13 @@ class MonitoringControllerTest {
     }
 
     @Test
-    @DisplayName("uptimeOverview: calcUptime (3 ok / 1 error → %75), lc'siz domain → 'unknown'")
+    @DisplayName("uptimeOverview: uptime% domain-bazlı toplu sorgudan (4 toplam/1 hata → %75), lc'siz domain → 'unknown'")
     void uptimeOverview_computesUptimeAndHandlesMissingCheck() throws Exception {
         when(latestCheckRepo.findAllByOrderByDomainAsc()).thenReturn(List.of(lc("a.com", "valid")));
         when(inventoryRepo.findByActiveTrueOrderByDomainAsc()).thenReturn(List.of(inv("a.com"), inv("b.com")));
-        when(uptimeCheckRepo.findTopByDomainAndPortOrderByIdDesc(anyString(), anyInt())).thenReturn(Optional.empty());
-        when(certCheckRepo.findByCheckedAtAfter(anyString())).thenReturn(List.of(
-                chk("a.com", "valid"), chk("a.com", "valid"), chk("a.com", "valid"), chk("a.com", "error")));
+        // P1/N1: artık domain başına findByCheckedAtAfter (tüm tablo) yerine tek gruplu sorgu.
+        when(certCheckRepo.aggregateStatusCountsSince(anyString()))
+                .thenReturn(List.<Object[]>of(new Object[]{"a.com", 4L, 1L}));
 
         mvc.perform(get("/api/monitoring/uptime/overview").session(session("USER")))
                 .andExpect(status().isOk())
@@ -98,6 +90,11 @@ class MonitoringControllerTest {
                 .andExpect(jsonPath("$.data[1].domain").value("b.com"))
                 .andExpect(jsonPath("$.data[1].status").value("unknown"))
                 .andExpect(jsonPath("$.data[1].uptime_30d").doesNotExist()); // null
+
+        // Regresyon: domain başına tüm-tablo taraması bir daha yapılmamalı (P1).
+        org.mockito.Mockito.verify(certCheckRepo, org.mockito.Mockito.never()).findByCheckedAtAfter(anyString());
+        org.mockito.Mockito.verify(uptimeCheckRepo, org.mockito.Mockito.never())
+                .findTopByDomainAndPortOrderByIdDesc(anyString(), anyInt());
     }
 
     @Test

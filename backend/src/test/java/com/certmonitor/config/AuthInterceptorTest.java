@@ -1,0 +1,156 @@
+package com.certmonitor.config;
+
+import com.certmonitor.controller.AuthController;
+import com.certmonitor.model.AppUser;
+import com.certmonitor.service.RememberMeService;
+import com.certmonitor.service.UserService;
+import jakarta.servlet.http.Cookie;
+import jakarta.servlet.http.HttpSession;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.mock.web.MockHttpServletRequest;
+import org.springframework.mock.web.MockHttpServletResponse;
+import org.springframework.mock.web.MockHttpSession;
+
+import java.util.Optional;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.*;
+
+/**
+ * AuthInterceptor güvenlik regresyonları (A1 + A2):
+ *  - A1: remember-me çerezi hesap kilidini (geçici/kalıcı) veya disable'ı geçersiz kılmamalı.
+ *  - A2: mustChangePassword kapısı çerezle geri-yüklenen oturumda da uygulanmalı.
+ */
+@ExtendWith(MockitoExtension.class)
+class AuthInterceptorTest {
+
+    @Mock RememberMeService rememberMeService;
+    @Mock UserService userService;
+    @Mock AuthController authController;
+
+    @InjectMocks AuthInterceptor interceptor;
+
+    private static MockHttpServletRequest reqWithCookie(String path) {
+        MockHttpServletRequest req = new MockHttpServletRequest();
+        req.setRequestURI(path);
+        req.setCookies(new Cookie(RememberMeService.COOKIE_NAME, "tok"));
+        return req;
+    }
+
+    private static AppUser activeUser() {
+        AppUser u = new AppUser();
+        u.setUsername("alice");
+        u.setActive(true);
+        return u;
+    }
+
+    @Test
+    @DisplayName("A1: kalıcı kilitli kullanıcı geçerli remember-me çereziyle bile 401 alır")
+    void rememberMe_lockedUser_rejected() throws Exception {
+        MockHttpServletRequest req = reqWithCookie("/api/certificates");
+        MockHttpServletResponse res = new MockHttpServletResponse();
+        when(rememberMeService.validate("tok")).thenReturn(Optional.of("alice"));
+        when(userService.findByUsername("alice")).thenReturn(Optional.of(activeUser()));
+        when(userService.checkLockout("alice")).thenReturn(new UserService.LockoutStatus(true, 0));
+
+        boolean allowed = interceptor.preHandle(req, res, new Object());
+
+        assertThat(allowed).isFalse();
+        assertThat(res.getStatus()).isEqualTo(401);
+        verify(authController, never()).populateSession(any(), any());
+    }
+
+    @Test
+    @DisplayName("A1: geçici kilitli kullanıcı remember-me çereziyle 401 alır")
+    void rememberMe_temporarilyLockedUser_rejected() throws Exception {
+        MockHttpServletRequest req = reqWithCookie("/api/certificates");
+        MockHttpServletResponse res = new MockHttpServletResponse();
+        when(rememberMeService.validate("tok")).thenReturn(Optional.of("alice"));
+        when(userService.findByUsername("alice")).thenReturn(Optional.of(activeUser()));
+        when(userService.checkLockout("alice")).thenReturn(new UserService.LockoutStatus(false, 120));
+
+        boolean allowed = interceptor.preHandle(req, res, new Object());
+
+        assertThat(allowed).isFalse();
+        assertThat(res.getStatus()).isEqualTo(401);
+        verify(authController, never()).populateSession(any(), any());
+    }
+
+    @Test
+    @DisplayName("A2: mustChangePassword olan kullanıcı çerezle geri-yüklense de whitelist dışı yola 403 alır")
+    void rememberMe_mustChangePassword_blocksNonWhitelistedPath() throws Exception {
+        MockHttpServletRequest req = reqWithCookie("/api/certificates");
+        MockHttpServletResponse res = new MockHttpServletResponse();
+        when(rememberMeService.validate("tok")).thenReturn(Optional.of("alice"));
+        when(userService.findByUsername("alice")).thenReturn(Optional.of(activeUser()));
+        when(userService.checkLockout("alice")).thenReturn(new UserService.LockoutStatus(false, 0));
+        // Gerçek populateSession davranışını taklit et: mustChangePassword session'a yazılır.
+        doAnswer(inv -> {
+            HttpSession s = inv.getArgument(0);
+            s.setAttribute("mustChangePassword", true);
+            return null;
+        }).when(authController).populateSession(any(), any());
+
+        boolean allowed = interceptor.preHandle(req, res, new Object());
+
+        assertThat(allowed).isFalse();
+        assertThat(res.getStatus()).isEqualTo(403);
+    }
+
+    @Test
+    @DisplayName("A2: mustChangePassword olsa bile whitelist'teki yol (change-password) çerezle erişilebilir")
+    void rememberMe_mustChangePassword_allowsWhitelistedPath() throws Exception {
+        MockHttpServletRequest req = reqWithCookie("/api/me/change-password");
+        MockHttpServletResponse res = new MockHttpServletResponse();
+        when(rememberMeService.validate("tok")).thenReturn(Optional.of("alice"));
+        when(userService.findByUsername("alice")).thenReturn(Optional.of(activeUser()));
+        when(userService.checkLockout("alice")).thenReturn(new UserService.LockoutStatus(false, 0));
+        doAnswer(inv -> {
+            HttpSession s = inv.getArgument(0);
+            s.setAttribute("mustChangePassword", true);
+            return null;
+        }).when(authController).populateSession(any(), any());
+
+        boolean allowed = interceptor.preHandle(req, res, new Object());
+
+        assertThat(allowed).isTrue();
+    }
+
+    @Test
+    @DisplayName("Aktif, kilitsiz kullanıcı remember-me çereziyle oturumu geri-yüklenir (true)")
+    void rememberMe_activeUser_allowed() throws Exception {
+        MockHttpServletRequest req = reqWithCookie("/api/certificates");
+        MockHttpServletResponse res = new MockHttpServletResponse();
+        when(rememberMeService.validate("tok")).thenReturn(Optional.of("alice"));
+        when(userService.findByUsername("alice")).thenReturn(Optional.of(activeUser()));
+        when(userService.checkLockout("alice")).thenReturn(new UserService.LockoutStatus(false, 0));
+
+        boolean allowed = interceptor.preHandle(req, res, new Object());
+
+        assertThat(allowed).isTrue();
+        verify(authController).populateSession(any(), any());
+    }
+
+    @Test
+    @DisplayName("A2 (regresyon): mevcut oturumda mustChangePassword whitelist dışı yola 403")
+    void session_mustChangePassword_blocksNonWhitelisted() throws Exception {
+        MockHttpServletRequest req = new MockHttpServletRequest();
+        req.setRequestURI("/api/certificates");
+        MockHttpSession s = new MockHttpSession();
+        s.setAttribute("authenticated", true);
+        s.setAttribute("mustChangePassword", true);
+        req.setSession(s);
+        MockHttpServletResponse res = new MockHttpServletResponse();
+
+        boolean allowed = interceptor.preHandle(req, res, new Object());
+
+        assertThat(allowed).isFalse();
+        assertThat(res.getStatus()).isEqualTo(403);
+    }
+}
