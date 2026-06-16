@@ -98,8 +98,14 @@ public class AuditController {
                 : inventoryRepo.findByDomainIn(weakDomains).stream()
                         .collect(Collectors.toMap(CertificateInventory::getDomain, i -> i, (a, b) -> a));
 
-        Map<Long, Team> teamMap = teamRepo.findAll().stream()
-                .collect(Collectors.toMap(Team::getId, t -> t, (a, b) -> a));
+        // Tüm takım tablosunu çekmek yerine yalnız zayıf-domain envanterindeki takımları yükle
+        java.util.Set<Long> teamIds = invMap.values().stream()
+                .map(CertificateInventory::getTeamId).filter(java.util.Objects::nonNull)
+                .collect(Collectors.toSet());
+        Map<Long, Team> teamMap = teamIds.isEmpty()
+                ? Map.of()
+                : teamRepo.findAllById(teamIds).stream()
+                        .collect(Collectors.toMap(Team::getId, t -> t, (a, b) -> a));
 
         List<Map<String, Object>> rows = new ArrayList<>();
         for (LatestCheck lc : weakCandidates) {
