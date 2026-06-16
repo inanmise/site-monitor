@@ -333,34 +333,42 @@ public class LdapDirectoryService {
         env.put("com.sun.jndi.ldap.read.timeout", String.valueOf(READ_TIMEOUT_MS));
 
         boolean customTls = ldaps && needsCustomTls(s);
-        if (ldaps) {
-            env.put(Context.SECURITY_PROTOCOL, "ssl");
-            if (customTls) {
-                ConfigurableSslSocketFactory.set(buildSslSocketFactory(s));
-                env.put("java.naming.ldap.factory.socket", ConfigurableSslSocketFactory.class.getName());
+        try {
+            if (ldaps) {
+                env.put(Context.SECURITY_PROTOCOL, "ssl");
+                if (customTls) {
+                    ConfigurableSslSocketFactory.set(buildSslSocketFactory(s));
+                    env.put("java.naming.ldap.factory.socket", ConfigurableSslSocketFactory.class.getName());
+                }
             }
-        }
 
-        if (startTls) {
-            // StartTLS: connect anonymously in the clear, negotiate TLS, then bind.
+            if (startTls) {
+                // StartTLS: connect anonymously in the clear, negotiate TLS, then bind.
+                LdapContext ctx = new InitialLdapContext(env, null);
+                StartTlsResponse tls = (StartTlsResponse) ctx.extendedOperation(new StartTlsRequest());
+                if (Boolean.TRUE.equals(s.getSkipCertVerification())) {
+                    tls.setHostnameVerifier(ACCEPT_ALL_HOSTS);
+                    tls.negotiate(buildSslSocketFactory(s));
+                } else if (s.getCaCertPem() != null && !s.getCaCertPem().isBlank()) {
+                    tls.negotiate(buildSslSocketFactory(s));
+                } else {
+                    tls.negotiate();
+                }
+                applyBind(ctx, s);
+                ctx.reconnect(null);
+                return new LdapConn(ctx, tls, false);
+            }
+
+            applyBindEnv(env, s);
             LdapContext ctx = new InitialLdapContext(env, null);
-            StartTlsResponse tls = (StartTlsResponse) ctx.extendedOperation(new StartTlsRequest());
-            if (Boolean.TRUE.equals(s.getSkipCertVerification())) {
-                tls.setHostnameVerifier(ACCEPT_ALL_HOSTS);
-                tls.negotiate(buildSslSocketFactory(s));
-            } else if (s.getCaCertPem() != null && !s.getCaCertPem().isBlank()) {
-                tls.negotiate(buildSslSocketFactory(s));
-            } else {
-                tls.negotiate();
-            }
-            applyBind(ctx, s);
-            ctx.reconnect(null);
-            return new LdapConn(ctx, tls, false);
+            return new LdapConn(ctx, null, customTls);
+        } catch (Exception e) {
+            // Bağlantı/bind kurulamazsa LdapConn dönmez → çağırandaki try-with-resources
+            // close()'u çağrılamaz → ThreadLocal SSL factory havuzdaki thread'de sızar.
+            // Hata yolunda da temizle (yalnız customTls set ettiyse).
+            if (customTls) ConfigurableSslSocketFactory.clear();
+            throw e;
         }
-
-        applyBindEnv(env, s);
-        LdapContext ctx = new InitialLdapContext(env, null);
-        return new LdapConn(ctx, null, customTls);
     }
 
     private void applyBindEnv(Hashtable<String, Object> env, LdapSettings s) {

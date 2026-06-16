@@ -13,6 +13,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.ResponseEntity;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.Arrays;
@@ -497,6 +498,26 @@ public class AuthController {
         int count = loginAttempts.computeIfAbsent(ip, k -> new AtomicInteger(0)).incrementAndGet();
         if (count >= maxLoginAttempts) {
             blockedUntil.put(ip, now + (long) blockSeconds * 1000);
+        }
+    }
+
+    /**
+     * Periyodik temizlik (saatlik) — IP rate-limit haritalarının sınırsız büyümesini önler.
+     * Bir kez deneyip dönmeyen IP'lerin kayıtları aksi halde süresiz birikir (memory leak).
+     * Penceresi geçmiş (60sn) ve bloğu sona ermiş IP'ler kaldırılır.
+     */
+    @Scheduled(fixedDelay = 3_600_000L)
+    void pruneRateLimitState() {
+        long now = System.currentTimeMillis();
+        for (String ip : new java.util.ArrayList<>(windowStart.keySet())) {
+            Long until = blockedUntil.get(ip);
+            boolean blocked = until != null && until > now;
+            Long ws = windowStart.get(ip);
+            if (!blocked && (ws == null || now - ws > 60_000L)) {
+                windowStart.remove(ip);
+                loginAttempts.remove(ip);
+                blockedUntil.remove(ip);
+            }
         }
     }
 }
