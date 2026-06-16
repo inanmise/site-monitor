@@ -278,6 +278,20 @@ public class EscalationService {
         String todayUtc = now().substring(0, 10);
         List<AlertEvent> openAlerts = alertEventRepo
                 .findByResolvedFalseAndAcknowledgedFalseOrderByCreatedAtDesc();
+        // N+1 önleme: re-alert adayı domain'lerin inventory + latest_check'ini TEK sorguda topla
+        // (önceden döngü içinde her alarm için ayrı findByDomain + findById çalışıyordu).
+        java.util.Set<String> candidateDomains = openAlerts.stream()
+                .filter(e -> !MONITORING_ALERT_TYPES.contains(e.getAlertType()))
+                .map(AlertEvent::getDomain).filter(java.util.Objects::nonNull)
+                .collect(java.util.stream.Collectors.toSet());
+        Map<String, com.certmonitor.model.CertificateInventory> invByDomain = candidateDomains.isEmpty()
+                ? Map.of()
+                : inventoryRepo.findByDomainIn(candidateDomains).stream().collect(
+                    java.util.stream.Collectors.toMap(com.certmonitor.model.CertificateInventory::getDomain, i -> i, (a, b) -> a));
+        Map<String, com.certmonitor.model.LatestCheck> latestByDomain = candidateDomains.isEmpty()
+                ? Map.of()
+                : latestCheckRepo.findByDomainIn(candidateDomains).stream().collect(
+                    java.util.stream.Collectors.toMap(com.certmonitor.model.LatestCheck::getDomain, l -> l, (a, b) -> a));
         int sent = 0;
         for (AlertEvent event : openAlerts) {
             // İzleme tiplerinin kadansının sahibi ilgili sweep'lerdir; restart
@@ -289,11 +303,11 @@ public class EscalationService {
                 log.debug("Catch-up: {} already notified today, skipping", event.getDomain());
                 continue;
             }
-            var inventoryOpt  = inventoryRepo.findByDomain(event.getDomain());
+            var inventoryOpt  = java.util.Optional.ofNullable(invByDomain.get(event.getDomain()));
             Long domainTeamId = inventoryOpt.map(com.certmonitor.model.CertificateInventory::getTeamId).orElse(null);
             Long ugTeamId     = inventoryOpt.map(com.certmonitor.model.CertificateInventory::getUgTeamId).orElse(null);
             List<EscalationContact> contacts = getContactsForLevel(event.getAlertLevel(), domainTeamId);
-            Map<String, Object> certContext = latestCheckRepo.findById(event.getDomain())
+            Map<String, Object> certContext = java.util.Optional.ofNullable(latestByDomain.get(event.getDomain()))
                     .map(this::latestToCertContext).orElse(null);
             Integer freshDays     = certContext != null ? toInt(certContext.get("days_remaining")) : null;
             Integer effectiveDays = freshDays != null ? freshDays : event.getDaysRemaining();
