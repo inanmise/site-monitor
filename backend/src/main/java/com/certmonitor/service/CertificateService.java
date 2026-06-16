@@ -416,6 +416,14 @@ public class CertificateService {
             if (inv.getUgTeamId() != null) ugMap.computeIfAbsent(inv.getUgTeamId(), k -> new HashSet<>()).add(inv.getDomain());
         }
 
+        // Domain → DTO indeksleri (her domain için tek satır: latest_checks per-domain'dir).
+        // Böylece per-team filtrelemede TÜM sertifikaları taramak yerine takımın kendi
+        // (küçük) domain kümesinden O(1) lookup yapılır → O(takım × sertifika) yerine ~O(sertifika).
+        Map<String, CertificateDto> latestByDomain = new HashMap<>(allLatest.size() * 2);
+        for (CertificateDto c : allLatest) latestByDomain.putIfAbsent(c.getDomain(), c);
+        Map<String, CertificateDto> warnByDomain = new HashMap<>(allWarnings.size() * 2);
+        for (CertificateDto c : allWarnings) warnByDomain.putIfAbsent(c.getDomain(), c);
+
         Map<String, Integer> tierMap = buildTierMap();
         int[] th = thresholdDays(); // eşik tek okuma → döngüde her team için DB okunmaz
         List<Map<String, Object>> result = new ArrayList<>();
@@ -426,29 +434,48 @@ public class CertificateService {
             Set<String> sy = syMap.getOrDefault(tid, Set.of());
             Set<String> ug = ugMap.getOrDefault(tid, Set.of());
 
-            List<CertificateDto> syT1All  = allLatest.stream().filter(c -> sy.contains(c.getDomain()) && Integer.valueOf(1).equals(tierMap.get(c.getDomain()))).toList();
-            List<CertificateDto> syT1Warn = allWarnings.stream().filter(c -> sy.contains(c.getDomain()) && Integer.valueOf(1).equals(tierMap.get(c.getDomain()))).toList();
-            List<CertificateDto> syT2All  = allLatest.stream().filter(c -> sy.contains(c.getDomain()) && Integer.valueOf(2).equals(tierMap.get(c.getDomain()))).toList();
-            List<CertificateDto> syT2Warn = allWarnings.stream().filter(c -> sy.contains(c.getDomain()) && Integer.valueOf(2).equals(tierMap.get(c.getDomain()))).toList();
+            // Takımın kendi domain'leri üzerinden lookup (domain'e göre sıralı → çıktı sırası
+            // eski "allLatest.filter" sürümüyle birebir aynı; allLatest zaten domain-sıralı).
+            List<CertificateDto> syAll  = lookupByDomains(sy, latestByDomain);
+            List<CertificateDto> syWarn = lookupByDomains(sy, warnByDomain);
+            List<CertificateDto> ugAll  = lookupByDomains(ug, latestByDomain);
+            List<CertificateDto> ugWarn = lookupByDomains(ug, warnByDomain);
+
+            List<CertificateDto> syT1All  = filterTier(syAll,  tierMap, 1);
+            List<CertificateDto> syT1Warn = filterTier(syWarn, tierMap, 1);
+            List<CertificateDto> syT2All  = filterTier(syAll,  tierMap, 2);
+            List<CertificateDto> syT2Warn = filterTier(syWarn, tierMap, 2);
 
             Map<String, Object> entry = new HashMap<>();
             entry.put("team_id",   tid);
             entry.put("team_name", team.getName());
-            entry.put("sy_stats",  computeStats(
-                allLatest.stream().filter(c -> sy.contains(c.getDomain())).toList(),
-                allWarnings.stream().filter(c -> sy.contains(c.getDomain())).toList(),
-                th[0], th[1]
-            ));
-            entry.put("ug_stats",  computeStats(
-                allLatest.stream().filter(c -> ug.contains(c.getDomain())).toList(),
-                allWarnings.stream().filter(c -> ug.contains(c.getDomain())).toList(),
-                th[0], th[1]
-            ));
+            entry.put("sy_stats",  computeStats(syAll, syWarn, th[0], th[1]));
+            entry.put("ug_stats",  computeStats(ugAll, ugWarn, th[0], th[1]));
             entry.put("sy_t1_stats", computeStats(syT1All, syT1Warn, th[0], th[1]));
             entry.put("sy_t2_stats", computeStats(syT2All, syT2Warn, th[0], th[1]));
             result.add(entry);
         }
         return Map.of("mode", "all_teams", "teams", result);
+    }
+
+    /** Verilen domain kümesine ait DTO'ları indeksten toplar; domain'e göre sıralı döner
+     *  (kaynak allLatest/allWarnings domain-sıralı olduğu için eski filter sırasıyla aynı). */
+    private static List<CertificateDto> lookupByDomains(Set<String> domains, Map<String, CertificateDto> byDomain) {
+        List<CertificateDto> out = new ArrayList<>(domains.size());
+        for (String d : domains) {
+            CertificateDto c = byDomain.get(d);
+            if (c != null) out.add(c);
+        }
+        out.sort(Comparator.comparing(CertificateDto::getDomain, Comparator.nullsLast(String::compareTo)));
+        return out;
+    }
+
+    private static List<CertificateDto> filterTier(List<CertificateDto> certs, Map<String, Integer> tierMap, int tier) {
+        List<CertificateDto> out = new ArrayList<>();
+        for (CertificateDto c : certs) {
+            if (Integer.valueOf(tier).equals(tierMap.get(c.getDomain()))) out.add(c);
+        }
+        return out;
     }
 
     @Cacheable("cert-stats")

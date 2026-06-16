@@ -3,6 +3,7 @@ package com.certmonitor.service;
 import com.certmonitor.dto.CertificateDto;
 import com.certmonitor.model.CertificateInventory;
 import com.certmonitor.model.LatestCheck;
+import com.certmonitor.model.Team;
 import com.certmonitor.repository.AlertThresholdRepository;
 import com.certmonitor.repository.CertificateCheckRepository;
 import com.certmonitor.repository.CertificateInventoryRepository;
@@ -522,6 +523,68 @@ class CertificateServiceTest {
         c.setWarning("error".equals(status) || "warning".equals(status));
         c.setCheckedAt("2026-01-01T00:00:00");
         return c;
+    }
+
+    // ── teamsBreakdown (domain-indeksli optimizasyon korumalı) ────────────────
+
+    @Test
+    @DisplayName("getAllTeamsBreakdownStats: SY/UG + tier kırılımı domain indeksiyle doğru gruplanır")
+    void teamsBreakdown_groupsByTeamSyUgAndTier() {
+        when(inventoryRepo.findByActiveTrueOrderByDomainAsc()).thenReturn(List.of(
+                invTeam("d1", 1L, null, 1),
+                invTeam("d2", 1L, null, 2),
+                invTeam("d3", 1L, null, null),
+                invTeam("d4", null, 1L, null),
+                invTeam("d5", 2L, null, 1)
+        ));
+        when(latestRepo.findAllByOrderByDomainAsc()).thenReturn(List.of(
+                latestCheck("d1", "valid", false, 100, "VALID", "OK"),
+                latestCheck("d2", "warning", true, 10, "VALID", "OK"),
+                latestCheck("d3", "valid", false, 100, "VALID", "OK"),
+                latestCheck("d4", "valid", false, 100, "VALID", "OK"),
+                latestCheck("d5", "error", true, null, "VALID", "OK")
+        ));
+        when(latestRepo.findByWarningTrueOrStatus("error")).thenReturn(List.of(
+                latestCheck("d2", "warning", true, 10, "VALID", "OK"),
+                latestCheck("d5", "error", true, null, "VALID", "OK")
+        ));
+        when(teamRepo.findByActiveTrueOrderByNameAsc()).thenReturn(List.of(
+                teamRow(1L, "Alpha"), teamRow(2L, "Beta")));
+
+        Map<String, Object> out = service.getAllTeamsBreakdownStats();
+
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> teams = (List<Map<String, Object>>) out.get("teams");
+        assertThat(teams).hasSize(2);
+        Map<String, Object> a = teams.stream().filter(m -> Long.valueOf(1L).equals(m.get("team_id"))).findFirst().orElseThrow();
+        Map<String, Object> b = teams.stream().filter(m -> Long.valueOf(2L).equals(m.get("team_id"))).findFirst().orElseThrow();
+
+        // Team Alpha: SY={d1,d2,d3}, UG={d4}; tier1∩SY={d1}, tier2∩SY={d2}
+        assertThat(stat(a, "sy_stats", "total_certificates")).isEqualTo(3);
+        assertThat(stat(a, "ug_stats", "total_certificates")).isEqualTo(1);
+        assertThat(stat(a, "sy_t1_stats", "total_certificates")).isEqualTo(1);
+        assertThat(stat(a, "sy_t2_stats", "total_certificates")).isEqualTo(1);
+        // Team Beta: SY={d5} (error), UG={}
+        assertThat(stat(b, "sy_stats", "total_certificates")).isEqualTo(1);
+        assertThat(stat(b, "sy_stats", "error_count")).isEqualTo(1L);
+        assertThat(stat(b, "ug_stats", "total_certificates")).isEqualTo(0);
+    }
+
+    private CertificateInventory invTeam(String domain, Long syTeam, Long ugTeam, Integer tier) {
+        CertificateInventory i = new CertificateInventory();
+        i.setDomain(domain); i.setActive(true);
+        i.setTeamId(syTeam); i.setUgTeamId(ugTeam); i.setTier(tier);
+        return i;
+    }
+
+    private Team teamRow(Long id, String name) {
+        Team t = new Team(); t.setId(id); t.setName(name); t.setActive(true);
+        return t;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Object stat(Map<String, Object> teamEntry, String statKey, String field) {
+        return ((Map<String, Object>) teamEntry.get(statKey)).get(field);
     }
 
     private CertificateInventory inventory(String domain, String expectedFingerprint) {
