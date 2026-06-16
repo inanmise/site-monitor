@@ -135,6 +135,18 @@ export default function PermissionMatrix() {
         <span>{t('perm.adminLockedNote')}</span>
       </div>
 
+      <div className="perm-rolemodel">
+        <div className="perm-rolemodel-title">{t('perm.roleModelTitle')}</div>
+        <ul className="perm-rolemodel-list">
+          <li><strong>ADMIN</strong> — {t('perm.roleModelAdmin')}</li>
+          <li><strong>{t('perm.roleModelManagerName')}</strong> — {t('perm.roleModelManager')}</li>
+          <li><strong>TEAM_ADMIN / PO</strong> — {t('perm.roleModelTeamAdmin')}</li>
+          <li><strong>USER</strong> — {t('perm.roleModelUser')}</li>
+          <li><strong>AUDIT</strong> — {t('perm.roleModelAudit')}</li>
+        </ul>
+        <div className="perm-rolemodel-note">{t('perm.roleModelNote')}</div>
+      </div>
+
       <div className="perm-legend">
         <div className="perm-legend-title">{t('perm.legendTitle')}</div>
         <div className="perm-legend-items">
