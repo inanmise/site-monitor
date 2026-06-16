@@ -307,7 +307,7 @@ public class LdapDirectoryService {
     }
 
     /** Case-insensitive single-value attribute read from a {@link #readAttributes} map. */
-    private static String firstAttr(Map<String, Object> attrs, String name, String fallback) {
+    static String firstAttr(Map<String, Object> attrs, String name, String fallback) {  // package-private: birim testi
         if (attrs == null || name == null) return fallback;
         for (Map.Entry<String, Object> e : attrs.entrySet()) {
             if (e.getKey().equalsIgnoreCase(name)) {
@@ -438,7 +438,7 @@ public class LdapDirectoryService {
      *   <li>blank → configured {@code userAttribute} / {{username}} template (default behaviour).</li>
      * </ul>
      */
-    private String buildUserFilter(LdapSettings s, String value, String searchAttr) {
+    String buildUserFilter(LdapSettings s, String value, String searchAttr) {  // package-private: birim testi
         if ("_raw_".equals(searchAttr)) {
             return value; // admin-supplied raw LDAP filter
         }
@@ -552,7 +552,7 @@ public class LdapDirectoryService {
     }
 
     /** RFC 4515 filter escaping. */
-    private static String escapeFilter(String v) {
+    static String escapeFilter(String v) {  // package-private: birim testi
         StringBuilder sb = new StringBuilder(v.length());
         for (int i = 0; i < v.length(); i++) {
             char c = v.charAt(i);
