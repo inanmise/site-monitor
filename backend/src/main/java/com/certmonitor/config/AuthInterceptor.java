@@ -54,29 +54,27 @@ public class AuthInterceptor implements HandlerInterceptor {
         // 1. Valid session check
         HttpSession session = req.getSession(false);
         if (session != null && Boolean.TRUE.equals(session.getAttribute("authenticated"))) {
-            // Forced password change: while the flag is set, only the
-            // whitelisted endpoints are reachable so the user cannot
-            // sidestep the modal by hitting another API directly.
-            if (Boolean.TRUE.equals(session.getAttribute("mustChangePassword"))
-                    && !FORCED_CHANGE_WHITELIST.contains(path)) {
-                res.setStatus(403);
-                res.setContentType("application/json;charset=UTF-8");
-                mapper.writeValue(res.getWriter(),
-                        Map.of("success", false, "error", "Password change required"));
-                return false;
-            }
-            return true;
+            return enforceForcedPasswordChange(session, path, res);
         }
 
-        // 2. Remember-me cookie — if valid, restore full user session
+        // 2. Remember-me cookie — if valid, restore full user session.
+        //    The cookie must NOT outrank account state: a disabled (active=false)
+        //    or locked (temporary/permanent lockout) account is rejected here, same
+        //    as the password-login path, otherwise an admin lock could be bypassed
+        //    by an outstanding remember-me cookie until its 7-day TTL expires.
         Optional<String> usernameOpt = findRememberMeCookie(req).flatMap(rememberMeService::validate);
 
         if (usernameOpt.isPresent()) {
-            Optional<AppUser> userOpt = userService.findByUsername(usernameOpt.get());
-            if (userOpt.isPresent() && Boolean.TRUE.equals(userOpt.get().getActive())) {
+            String username = usernameOpt.get();
+            Optional<AppUser> userOpt = userService.findByUsername(username);
+            if (userOpt.isPresent()
+                    && Boolean.TRUE.equals(userOpt.get().getActive())
+                    && !userService.checkLockout(username).isBlocked()) {
                 HttpSession newSession = req.getSession(true);
                 authController.populateSession(newSession, userOpt.get());
-                return true;
+                // Apply the forced-password-change gate to the restored session too,
+                // so the cookie path can't sidestep the modal for one request.
+                return enforceForcedPasswordChange(newSession, path, res);
             }
         }
 
@@ -84,6 +82,24 @@ public class AuthInterceptor implements HandlerInterceptor {
         res.setContentType("application/json;charset=UTF-8");
         mapper.writeValue(res.getWriter(), Map.of("success", false, "error", "Unauthorized"));
         return false;
+    }
+
+    /**
+     * Forced password change: while the flag is set, only the whitelisted
+     * endpoints are reachable so the user cannot sidestep the modal by hitting
+     * another API directly. Returns true when the request may proceed.
+     */
+    private boolean enforceForcedPasswordChange(HttpSession session, String path, HttpServletResponse res)
+            throws Exception {
+        if (Boolean.TRUE.equals(session.getAttribute("mustChangePassword"))
+                && !FORCED_CHANGE_WHITELIST.contains(path)) {
+            res.setStatus(403);
+            res.setContentType("application/json;charset=UTF-8");
+            mapper.writeValue(res.getWriter(),
+                    Map.of("success", false, "error", "Password change required"));
+            return false;
+        }
+        return true;
     }
 
     private Optional<String> findRememberMeCookie(HttpServletRequest req) {

@@ -12,6 +12,11 @@ import java.util.Optional;
 public interface DnsRecordRepository extends JpaRepository<DnsRecord, Long> {
     List<DnsRecord> findByMonitorIdOrderByCheckedAtDesc(Long monitorId);
     Optional<DnsRecord> findTopByMonitorIdOrderByCheckedAtDesc(Long monitorId);
+
+    /** Her monitör için en güncel kayıt — DNS listesinde monitör başına sorgu yerine tek toplu sorgu. */
+    @Query("SELECT r FROM DnsRecord r WHERE r.id IN "
+         + "(SELECT MAX(r2.id) FROM DnsRecord r2 GROUP BY r2.monitorId)")
+    List<DnsRecord> findLatestPerMonitor();
     List<DnsRecord> findByMonitorIdAndCheckedAtGreaterThanEqualOrderByCheckedAtAsc(Long monitorId, String since);
     List<DnsRecord> findByMonitorIdAndCheckedAtGreaterThanEqualOrderByCheckedAtDesc(Long monitorId, String since);
 

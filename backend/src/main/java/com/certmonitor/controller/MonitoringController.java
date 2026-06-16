@@ -76,6 +76,14 @@ public class MonitoringController {
         Map<String, List<UptimeCheck>> http24hByDomain = uptimeCheckRepo.findByCheckedAtGreaterThanEqual(cutoff24h).stream()
                 .collect(Collectors.groupingBy(UptimeCheck::getDomain));
 
+        // En güncel uptime kontrolü (domain:port) — tek sorgu (eski: domain başına findTop... → N+1).
+        Map<String, UptimeCheck> latestUptime = uptimeCheckRepo.findLatestPerDomainPort().stream()
+                .collect(Collectors.toMap(u -> u.getDomain() + ":" + u.getPort(), u -> u, (a, b) -> a));
+
+        // Uptime % / incident özetleri — domain başına tüm-tablo taraması yerine iki gruplu DB sorgusu.
+        Map<String, long[]> agg30 = aggregateByDomain(certCheckRepo.aggregateStatusCountsSince(cutoff30d));
+        Map<String, long[]> agg7  = aggregateByDomain(certCheckRepo.aggregateStatusCountsSince(cutoff7d));
+
         List<Map<String, Object>> result = new ArrayList<>();
         for (CertificateInventory inv : inventory) {
             String domain = inv.getDomain();
@@ -86,7 +94,7 @@ public class MonitoringController {
             item.put("port",   inv.getPort());
 
             int port = inv.getPort() != null ? inv.getPort() : 443;
-            Optional<UptimeCheck> uc = uptimeCheckRepo.findTopByDomainAndPortOrderByIdDesc(domain, port);
+            Optional<UptimeCheck> uc = Optional.ofNullable(latestUptime.get(domain + ":" + port));
 
             // HTTP-OK: son 24h kontrolleri varsa hepsi "up" mı? (kayıt yoksa null → gösterme)
             List<UptimeCheck> http24h = http24hByDomain.get(domain);
@@ -117,23 +125,33 @@ public class MonitoringController {
             item.put("ssl_valid_days",   lc.getDaysRemaining());
             item.put("ssl_not_after",    lc.getNotAfter());
 
-            // Uptime % from certificate_checks history
-            List<CertificateCheck> history30d = certCheckRepo.findByCheckedAtAfter(cutoff30d).stream()
-                    .filter(c -> domain.equals(c.getDomain()))
-                    .toList();
-            List<CertificateCheck> history7d = history30d.stream()
-                    .filter(c -> c.getCheckedAt() != null && c.getCheckedAt().compareTo(cutoff7d) >= 0)
-                    .toList();
-
-            item.put("uptime_7d",  calcUptime(history7d));
-            item.put("uptime_30d", calcUptime(history30d));
-            item.put("incidents_30d", history30d.stream()
-                    .filter(c -> "error".equals(c.getStatus())).count());
+            // Uptime % — önceden hesaplanan domain-bazlı toplam/hata sayılarından (kayıt yoksa 100% / 0 olay).
+            long[] s30 = agg30.get(domain);
+            long[] s7  = agg7.get(domain);
+            item.put("uptime_7d",  s7  == null ? 100.0 : uptimePct(s7[0],  s7[1]));
+            item.put("uptime_30d", s30 == null ? 100.0 : uptimePct(s30[0], s30[1]));
+            item.put("incidents_30d", s30 == null ? 0L : s30[1]);
 
             result.add(item);
         }
 
         return ok(result);
+    }
+
+    /** aggregateStatusCountsSince satırlarını domain → [toplam, hata] map'ine indeksle. */
+    private static Map<String, long[]> aggregateByDomain(List<Object[]> rows) {
+        Map<String, long[]> m = new HashMap<>();
+        for (Object[] r : rows) {
+            m.put((String) r[0], new long[]{ ((Number) r[1]).longValue(), ((Number) r[2]).longValue() });
+        }
+        return m;
+    }
+
+    /** toplam/hata → uptime yüzdesi (eski calcUptime ile aynı yuvarlama; "error" dışı = up). */
+    private static double uptimePct(long total, long errors) {
+        if (total == 0) return 100.0;
+        long up = total - errors;
+        return Math.round((up * 1000.0 / total)) / 10.0;
     }
 
     /** Normalize date/datetime strings to full ISO-8601 (19 chars) for "from" range end. */
@@ -150,13 +168,6 @@ public class MonitoringController {
         if (s.length() == 10) return s + "T23:59:59";   // date only  → end of day
         if (s.length() == 16) return s + ":59";          // HH:MM      → :59 seconds
         return s;
-    }
-
-    private double calcUptime(List<CertificateCheck> checks) {
-        if (checks.isEmpty()) return 100.0;
-        long total = checks.size();
-        long up    = checks.stream().filter(c -> !"error".equals(c.getStatus())).count();
-        return Math.round((up * 1000.0 / total)) / 10.0;
     }
 
     @GetMapping("/uptime/{domain}/history")
@@ -274,24 +285,46 @@ public class MonitoringController {
     public ResponseEntity<Map<String, Object>> listPort() {
         List<CertificateInventory> inventory = inventoryRepo.findByActiveTrueOrderByDomainAsc();
         String now = ISO.format(Instant.now());
+
+        // Tüm monitörleri tek sorguda yükle, host:port ile indeksle (en küçük id = findFirst...OrderByIdAsc).
+        Map<String, PortMonitor> monitorByKey = new HashMap<>();
+        for (PortMonitor m : portMonitorRepo.findAll()) {
+            monitorByKey.merge(m.getHost() + ":" + m.getPort(), m, (a, b) -> a.getId() <= b.getId() ? a : b);
+        }
+
+        // Eksik domainler için monitörleri tek batch insert'te lazy-provision et (eski: döngüde tek tek save).
+        List<PortMonitor> toCreate = new ArrayList<>();
+        for (CertificateInventory inv : inventory) {
+            int invPort = inv.getPort() != null ? inv.getPort() : 443;
+            String key = inv.getDomain() + ":" + invPort;
+            if (!monitorByKey.containsKey(key)) {
+                PortMonitor m = new PortMonitor();
+                m.setName(inv.getDomain());
+                m.setHost(inv.getDomain());
+                m.setPort(invPort);
+                m.setProtocol("TCP");
+                m.setActive(true);
+                m.setIntervalSeconds(60);
+                m.setTimeoutMs(5000);
+                m.setCreatedAt(now);
+                m.setUpdatedAt(now);
+                monitorByKey.put(key, m);
+                toCreate.add(m);
+            }
+        }
+        if (!toCreate.isEmpty()) portMonitorRepo.saveAll(toCreate);
+
+        // Her monitör için en güncel kontrol — tek toplu sorgu (eski: monitör başına findTop... → N+1).
+        Map<Long, PortCheck> latestByMonitor = portCheckRepo.findLatestPerMonitor().stream()
+                .filter(pc -> pc.getMonitorId() != null)
+                .collect(Collectors.toMap(PortCheck::getMonitorId, pc -> pc, (a, b) -> a));
+
         List<Map<String, Object>> result = new ArrayList<>();
         for (CertificateInventory inv : inventory) {
             int invPort = inv.getPort() != null ? inv.getPort() : 443;
-            PortMonitor monitor = portMonitorRepo.findFirstByHostAndPortOrderByIdAsc(inv.getDomain(), invPort)
-                    .orElseGet(() -> {
-                        PortMonitor m = new PortMonitor();
-                        m.setName(inv.getDomain());
-                        m.setHost(inv.getDomain());
-                        m.setPort(invPort);
-                        m.setProtocol("TCP");
-                        m.setActive(true);
-                        m.setIntervalSeconds(60);
-                        m.setTimeoutMs(5000);
-                        m.setCreatedAt(now);
-                        m.setUpdatedAt(now);
-                        return portMonitorRepo.save(m);
-                    });
-            result.add(enrichPort(monitor, portCheckRepo.findTopByMonitorIdOrderByCheckedAtDesc(monitor.getId()).orElse(null)));
+            PortMonitor monitor = monitorByKey.get(inv.getDomain() + ":" + invPort);
+            PortCheck latest = monitor.getId() != null ? latestByMonitor.get(monitor.getId()) : null;
+            result.add(enrichPort(monitor, latest));
         }
         return ok(result);
     }
@@ -416,21 +449,41 @@ public class MonitoringController {
     public ResponseEntity<Map<String, Object>> listDns() {
         List<CertificateInventory> inventory = inventoryRepo.findByActiveTrueOrderByDomainAsc();
         String now = ISO.format(Instant.now());
+
+        // Tüm monitörleri tek sorguda yükle, domain ile indeksle (en küçük id = findFirst...OrderByIdAsc).
+        Map<String, DnsMonitor> monitorByDomain = new HashMap<>();
+        for (DnsMonitor m : dnsMonitorRepo.findAll()) {
+            monitorByDomain.merge(m.getDomain(), m, (a, b) -> a.getId() <= b.getId() ? a : b);
+        }
+
+        // Eksik domainler için monitörleri tek batch insert'te lazy-provision et (eski: döngüde tek tek save).
+        List<DnsMonitor> toCreate = new ArrayList<>();
+        for (CertificateInventory inv : inventory) {
+            if (!monitorByDomain.containsKey(inv.getDomain())) {
+                DnsMonitor m = new DnsMonitor();
+                m.setName(inv.getDomain());
+                m.setDomain(inv.getDomain());
+                m.setRecordType("A");
+                m.setActive(true);
+                m.setIntervalSeconds(300);
+                m.setCreatedAt(now);
+                m.setUpdatedAt(now);
+                monitorByDomain.put(inv.getDomain(), m);
+                toCreate.add(m);
+            }
+        }
+        if (!toCreate.isEmpty()) dnsMonitorRepo.saveAll(toCreate);
+
+        // Her monitör için en güncel kayıt — tek toplu sorgu (eski: monitör başına findTop... → N+1).
+        Map<Long, DnsRecord> latestByMonitor = dnsRecordRepo.findLatestPerMonitor().stream()
+                .filter(r -> r.getMonitorId() != null)
+                .collect(Collectors.toMap(DnsRecord::getMonitorId, r -> r, (a, b) -> a));
+
         List<Map<String, Object>> result = new ArrayList<>();
         for (CertificateInventory inv : inventory) {
-            DnsMonitor monitor = dnsMonitorRepo.findFirstByDomainOrderByIdAsc(inv.getDomain())
-                    .orElseGet(() -> {
-                        DnsMonitor m = new DnsMonitor();
-                        m.setName(inv.getDomain());
-                        m.setDomain(inv.getDomain());
-                        m.setRecordType("A");
-                        m.setActive(true);
-                        m.setIntervalSeconds(300);
-                        m.setCreatedAt(now);
-                        m.setUpdatedAt(now);
-                        return dnsMonitorRepo.save(m);
-                    });
-            result.add(enrichDns(monitor, dnsRecordRepo.findTopByMonitorIdOrderByCheckedAtDesc(monitor.getId()).orElse(null)));
+            DnsMonitor monitor = monitorByDomain.get(inv.getDomain());
+            DnsRecord latest = monitor.getId() != null ? latestByMonitor.get(monitor.getId()) : null;
+            result.add(enrichDns(monitor, latest));
         }
         return ok(result);
     }
