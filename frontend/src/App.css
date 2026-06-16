@@ -6311,6 +6311,20 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 }
 .perm-notice svg { flex-shrink: 0; }
 
+/* Rol modeli paneli — güncel rol/kapsam açıklaması (matrisin üstünde) */
+.perm-rolemodel {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px 14px;
+  margin: 0 0 16px 0;
+  font-size: .86em;
+}
+.perm-rolemodel-title { font-weight: 700; margin-bottom: 8px; color: var(--text); }
+.perm-rolemodel-list { margin: 0; padding-left: 18px; line-height: 1.6; color: var(--text); }
+.perm-rolemodel-list li { margin: 2px 0; }
+.perm-rolemodel-note { margin-top: 8px; color: var(--text-muted, #64748b); font-size: .95em; }
+
 /* Legend — kullanıcıya görsel sembolleri açıklar */
 .perm-legend {
   background: var(--bg-card);
