@@ -317,6 +317,9 @@ public class CertificateCheckerService {
                 Map<String, Object> result = parseLeafCert(leaf, domain);
                 result.putAll(route);
                 result.put("tls_version", tlsVersion);
+                // Tanılama/kök-neden için: anlaşılan cipher + ALPN (JDK TLS yığını farkı görünür olsun)
+                result.put("cipher_suite", socket.getSession().getCipherSuite());
+                result.put("alpn", socket.getApplicationProtocol());
 
                 String revocation = "UNKNOWN";
                 if (opts.lightweight()) {
