@@ -65,7 +65,7 @@ export default function SystemHealth({ systemRole, preFilterDomain, openSmtpModa
   const [poolLastRefreshed, setPoolLastRefreshed]   = useState(null)
   const [hbRefreshing, setHbRefreshing] = useState(false)
   const [hbModalOpen, setHbModalOpen] = useState(false)
-  const [openSection, setOpenSection] = useState('sys')
+  const [openSection, setOpenSection] = useState(null) // varsayılan: tüm akordiyon kapalı
   const toggleSection = (key) => setOpenSection(prev => prev === key ? null : key)
   const sysVisible  = openSection === 'sys'
   const dbVisible   = openSection === 'db'
