@@ -6,6 +6,9 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 import org.springframework.stereotype.Service;
 
+import javax.net.ssl.SSLContext;
+import javax.net.ssl.SSLParameters;
+import javax.net.ssl.SSLSocket;
 import java.net.InetAddress;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -96,6 +99,11 @@ public class ConnectionDiagnosticsService {
         out.put("proxy_address", proxyConfigured ? proxyHost + ":" + proxyPort : null);
         out.put("source", source);
         out.put("dns", dns);
+        // Çalışan JDK'nın TLS istemci parmak izi (sunulan protokol/cipher/ALPN).
+        // JDK sürümleri arası handshake farkını (ör. akbankpos WAF) kök-neden
+        // karşılaştırması için: aynı teşhisi JDK 21 ve JDK 25 instance'larında
+        // koşup bu bölümü + combo cipher'larını karşılaştır.
+        out.put("tls_client", buildTlsClientInfo());
         out.put("combos", comboResults);
         out.put("elapsed_ms", elapsed);
         log.info("Diagnostics complete: domain={}:{} proxyConfigured={} combos={} elapsed={}ms",
@@ -172,12 +180,54 @@ public class ConnectionDiagnosticsService {
             c.put("subject", raw.get("subject"));
             c.put("days_remaining", raw.get("days_remaining"));
             c.put("tls_version", raw.get("tls_version"));
+            c.put("cipher_suite", raw.get("cipher_suite"));
+            c.put("alpn", raw.get("alpn"));
             c.put("error", null);
         } else {
             c.put("error_class", raw.get("error_class"));
             c.put("error", raw.get("error"));
         }
         return c;
+    }
+
+    /**
+     * Çalışan JVM'in TLS istemci parmak izi: JDK sürümü + "browser" (TLS 1.2 +
+     * ALPN) ve "default" modlarında sunulan protokoller/cipher suite'ler (+ varsa
+     * imza şemaları / named-group'lar). JDK sürümleri arası ClientHello farkını
+     * kök-neden olarak görünür kılar — aynı teşhisi iki JDK instance'ında koşup
+     * karşılaştır. (Not: imza şeması / named-group JDK VARSAYILANLARI public
+     * API'de null döner; bunlar için javax.net.debug=ssl:handshake gerekir.)
+     */
+    Map<String, Object> buildTlsClientInfo() {
+        Map<String, Object> info = new LinkedHashMap<>();
+        info.put("java_version", System.getProperty("java.version"));
+        info.put("java_vendor", System.getProperty("java.vendor"));
+        info.put("browser", offeredParams(new String[]{"TLSv1.2"}, new String[]{"h2", "http/1.1"}));
+        info.put("default", offeredParams(null, null));
+        return info;
+    }
+
+    /** Bağlanmadan, verilen modda soketin SUNACAĞI TLS parametrelerini okur. */
+    private Map<String, Object> offeredParams(String[] protocols, String[] alpn) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        try {
+            SSLContext ctx = SSLContext.getDefault();
+            try (SSLSocket s = (SSLSocket) ctx.getSocketFactory().createSocket()) {
+                if (protocols != null) s.setEnabledProtocols(protocols);
+                SSLParameters p = s.getSSLParameters();
+                if (alpn != null) p.setApplicationProtocols(alpn);
+                s.setSSLParameters(p);
+                SSLParameters eff = s.getSSLParameters();
+                m.put("protocols", s.getEnabledProtocols());
+                m.put("cipher_suites", s.getEnabledCipherSuites());
+                m.put("signature_schemes", eff.getSignatureSchemes()); // null = JDK varsayılanı
+                m.put("named_groups", eff.getNamedGroups());           // null = JDK varsayılanı
+                m.put("application_protocols", eff.getApplicationProtocols());
+            }
+        } catch (Exception e) {
+            m.put("error", e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage());
+        }
+        return m;
     }
 
     private Map<String, Object> syntheticError(String domain, CertificateCheckerService.CheckOptions opts, Throwable ex) {

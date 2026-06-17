@@ -144,6 +144,36 @@ export default function DiagnosticsModal({ domain, port, onClose }) {
     )
   }
 
+  /** Çalışan JVM'in TLS istemci parmak izi: JDK sürümü + browser/default modda
+   *  sunulan protokol/cipher/ALPN (+ varsa imza şeması/named-group). JDK sürümleri
+   *  arası handshake farkını (ör. akbankpos WAF) karşılaştırmak için: aynı teşhisi
+   *  JDK 21 ve JDK 25 instance'ında koşup bu bölümü + combo cipher'larını kıyasla. */
+  function renderTlsClient(tc) {
+    if (!tc) return null
+    const arr = (v) => Array.isArray(v) && v.length ? v.join(', ') : t('inv.diagTlsDefaultVal')
+    const mode = (m, label) => !m ? null : (
+      <details style={{ marginBottom: 6, border: '1px solid var(--border)', borderRadius: 6 }}>
+        <summary style={{ cursor: 'pointer', padding: '7px 10px' }}><strong>{label}</strong></summary>
+        <div style={{ padding: '0 10px 8px' }}>
+          <ShowField full label={t('inv.diagTlsProtocols')} mono value={arr(m.protocols)} />
+          <ShowField full label={t('inv.diagTlsAlpn')} mono value={arr(m.application_protocols)} />
+          <ShowField full label={t('inv.diagTlsCiphers')} mono value={arr(m.cipher_suites)} />
+          <ShowField full label={t('inv.diagTlsSig')} mono value={arr(m.signature_schemes)} />
+          <ShowField full label={t('inv.diagTlsGroups')} mono value={arr(m.named_groups)} />
+        </div>
+      </details>
+    )
+    return (
+      <>
+        <ShowField label={t('inv.diagTlsJdk')} mono
+          value={`${tc.java_version || '—'}${tc.java_vendor ? ' · ' + tc.java_vendor : ''}`} />
+        <div style={{ fontSize: '.82em', color: 'var(--text-muted)', margin: '4px 0 8px' }}>{t('inv.diagTlsHint')}</div>
+        {mode(tc.browser, t('inv.diagTlsBrowserMode'))}
+        {mode(tc.default, t('inv.diagTlsDefaultMode'))}
+      </>
+    )
+  }
+
   // ── Tanılama geçmişi ──
   async function openHistory(it) {
     setHistory({ item: it, loading: true })
@@ -329,7 +359,7 @@ export default function DiagnosticsModal({ domain, port, onClose }) {
                                 {c.status === 'ok' ? t('inv.diagOk') : (c.error_class || 'ERROR')}
                               </span>
                               {c.status === 'ok'
-                                ? <span style={{ marginLeft: 8 }}>{c.subject} · {c.days_remaining}d · {c.tls_version}</span>
+                                ? <span style={{ marginLeft: 8 }}>{c.subject} · {c.days_remaining}d · {c.tls_version}{c.cipher_suite ? ' · ' + c.cipher_suite : ''}{c.alpn ? ' · ALPN:' + c.alpn : ''}</span>
                                 : <span style={{ marginLeft: 8 }}>{(c.error || '').slice(0, 120)}</span>}
                             </td>
                           </tr>
@@ -337,6 +367,10 @@ export default function DiagnosticsModal({ domain, port, onClose }) {
                       </tbody>
                     </table>
                   </div>
+
+                  {/* ── TLS İstemci Parmak İzi (JDK) — kök-neden karşılaştırması ── */}
+                  <div className="show-section-header" style={{ marginTop: 18 }}>{t('inv.diagTlsClient')}</div>
+                  {renderTlsClient(diag.data.tls_client)}
 
                   {/* ── Derin SSL/TLS taraması (openssl) ── */}
                   <div className="show-section-header" style={{ marginTop: 18 }}>{t('inv.osslTitle')}</div>
@@ -494,6 +528,12 @@ export default function DiagnosticsModal({ domain, port, onClose }) {
                             </tbody>
                           </table>
                         </div>
+                        {history.detail.result?.tls_client && (
+                          <>
+                            <div className="show-section-header" style={{ marginTop: 12 }}>{t('inv.diagTlsClient')}</div>
+                            {renderTlsClient(history.detail.result.tls_client)}
+                          </>
+                        )}
                       </>
                     )}
                 </>
