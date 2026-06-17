@@ -2,7 +2,7 @@ $ErrorActionPreference = "Stop"
 $ScriptDir  = Split-Path -Parent $MyInvocation.MyCommand.Path
 $EnvFile    = Join-Path $ScriptDir ".env"
 $JarPattern = Join-Path $ScriptDir "backend\target\*.jar"
-$Java       = "C:\Program Files\Zulu\zulu-21\bin\java.exe"
+$Java       = "C:\Program Files\Zulu\zulu-25\bin\java.exe"
 
 if (-not (Test-Path $EnvFile)) {
     Write-Error ".env not found at $EnvFile"
@@ -63,7 +63,7 @@ if ($existing) {
 }
 
 $allArgs = $dProps + @("-jar", $jar.FullName)
-Write-Host "Starting $($jar.Name) with Zulu 21..."
+Write-Host "Starting $($jar.Name) with Zulu 25..."
 Write-Host "  Profile      : $($cfg['SPRING_PROFILES_ACTIVE'])"
 Write-Host "  DB host      : $($cfg['DB_HOST']):$($cfg['DB_PORT'])/$($cfg['DB_NAME'])"
 Write-Host "  Mail enabled : $($cfg['CERT_MONITOR_EMAIL_ENABLED'])"

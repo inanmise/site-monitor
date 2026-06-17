@@ -29,7 +29,7 @@ Kurumunuzdaki SSL/TLS sertifikalarını, port erişilebilirliğini, HTTP/S çal�
 
 | Katman | Teknoloji |
 |--------|-----------|
-| Backend | Java 21, Spring Boot 3.3.6, Spring Data JPA |
+| Backend | Java 25, Spring Boot 4.1.0, Spring Data JPA |
 | Veritabanı | PostgreSQL |
 | Sertifika | BouncyCastle (OCSP, CRL, zincir doğrulama) |
 | Frontend | React 18.3.1, Vite 5, lucide-react |
@@ -72,7 +72,7 @@ cert-monitor/
 
 ### Gereksinimler
 
-- Java 21 (Azul Zulu / Eclipse Temurin)
+- Java 25 (Azul Zulu / Eclipse Temurin)
 - Maven 3.9+
 - Node.js 20+
 

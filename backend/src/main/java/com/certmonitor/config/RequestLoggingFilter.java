@@ -105,7 +105,9 @@ public class RequestLoggingFilter extends OncePerRequestFilter {
             return;
         }
 
-        ContentCachingRequestWrapper wReq = new ContentCachingRequestWrapper(req);
+        // Spring Framework 7: ContentCachingRequestWrapper artık zorunlu bir cache limiti ister.
+        // Sadece TRACE log'da çalışırız ve gövdeyi zaten truncate ederiz → 64 KB fazlasıyla yeter.
+        ContentCachingRequestWrapper wReq = new ContentCachingRequestWrapper(req, 64 * 1024);
         ContentCachingResponseWrapper wResp = new ContentCachingResponseWrapper(resp);
         long start = System.currentTimeMillis();
         String query = req.getQueryString();

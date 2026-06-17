@@ -10,8 +10,8 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
-import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.Pageable;
@@ -38,73 +38,73 @@ class AdminControllerTest {
     @Autowired
     MockMvc mvc;
 
-    @MockBean
+    @MockitoBean
     RememberMeService rememberMeService;
 
-    @MockBean
+    @MockitoBean
     UserService userService;
 
-    @MockBean
+    @MockitoBean
     AuthController authController;
 
-    @MockBean
+    @MockitoBean
     com.certmonitor.service.HttpMetricsService httpMetricsService;
 
-    @MockBean
+    @MockitoBean
     CertificateInventoryRepository inventoryRepo;
 
-    @MockBean
+    @MockitoBean
     AlertThresholdRepository thresholdRepo;
 
-    @MockBean
+    @MockitoBean
     EscalationContactRepository contactRepo;
 
-    @MockBean
+    @MockitoBean
     AlertEventRepository alertEventRepo;
 
-    @MockBean
+    @MockitoBean
     EscalationService escalationService;
 
-    @MockBean
+    @MockitoBean
     NotificationLogRepository notificationLogRepo;
 
-    @MockBean
+    @MockitoBean
     com.certmonitor.repository.LatestCheckRepository latestCheckRepo;
 
-    @MockBean
+    @MockitoBean
     com.certmonitor.repository.CertificateCheckRepository certificateCheckRepo;
 
-    @MockBean
+    @MockitoBean
     AuditService auditService;
 
-    @MockBean
+    @MockitoBean
     CertificateNoteRepository noteRepo;
 
-    @MockBean
+    @MockitoBean
     com.certmonitor.repository.CertificateNoteRevisionRepository noteRevisionRepo;
 
-    @MockBean
+    @MockitoBean
     AppUserRepository userRepo;
 
-    @MockBean
+    @MockitoBean
     com.certmonitor.repository.TeamRepository teamRepo;
 
-    @MockBean
+    @MockitoBean
     com.certmonitor.service.EmailNotificationService emailNotificationService;
 
-    @MockBean
+    @MockitoBean
     com.certmonitor.service.ConnectionDiagnosticsService diagnosticsService;
 
-    @MockBean
+    @MockitoBean
     com.certmonitor.service.OpensslDiagnosticsService opensslDiagnosticsService;
 
-    @MockBean
+    @MockitoBean
     com.certmonitor.service.NetworkDiagnosticsService networkDiagnosticsService;
 
-    @MockBean
+    @MockitoBean
     com.certmonitor.service.DiagnosticHistoryService diagnosticHistoryService;
 
-    @MockBean
+    @MockitoBean
     com.certmonitor.service.ClientIpResolver clientIpResolver;
 
     @BeforeEach

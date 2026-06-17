@@ -11,8 +11,8 @@ import com.certmonitor.service.UserService;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
-import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.mock.web.MockHttpSession;
@@ -30,15 +30,15 @@ class AuditControllerTest {
 
     @Autowired MockMvc mvc;
 
-    @MockBean RememberMeService rememberMeService;
-    @MockBean UserService userService;
-    @MockBean AuthController authController;
-    @MockBean com.certmonitor.service.HttpMetricsService httpMetricsService;
+    @MockitoBean RememberMeService rememberMeService;
+    @MockitoBean UserService userService;
+    @MockitoBean AuthController authController;
+    @MockitoBean com.certmonitor.service.HttpMetricsService httpMetricsService;
 
-    @MockBean AuditLogRepository auditLogRepo;
-    @MockBean LatestCheckRepository latestCheckRepo;
-    @MockBean CertificateInventoryRepository inventoryRepo;
-    @MockBean TeamRepository teamRepo;
+    @MockitoBean AuditLogRepository auditLogRepo;
+    @MockitoBean LatestCheckRepository latestCheckRepo;
+    @MockitoBean CertificateInventoryRepository inventoryRepo;
+    @MockitoBean TeamRepository teamRepo;
 
     private MockHttpSession session(String role) {
         MockHttpSession s = new MockHttpSession();

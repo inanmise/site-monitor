@@ -8,6 +8,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 import org.springframework.web.filter.OncePerRequestFilter;
 import org.springframework.web.servlet.config.annotation.CorsRegistry;
@@ -20,10 +21,16 @@ import java.util.concurrent.Executor;
 @Configuration
 public class WebConfig implements WebMvcConfigurer {
 
-    @Autowired
+    // @Lazy: WebConfig aynı zamanda certCheckExecutor (AsyncTaskExecutor) tanımlar.
+    // Spring Boot 4'te JPA EntityManagerFactoryBuilder, bootstrap executor'ı çözerken
+    // bu @Configuration'ı örnekler; interceptor'lar eager enjekte edilirse
+    // WebConfig → authInterceptor → rememberMeService → JPA repo → EMF dairesel
+    // bağımlılığı oluşur (Spring 7 artık reddediyor). Lazy proxy ile döngü kırılır;
+    // gerçek bean'ler addInterceptors() çağrılırken (context refresh sonrası) çözülür.
+    @Autowired @Lazy
     private AuthInterceptor authInterceptor;
 
-    @Autowired
+    @Autowired @Lazy
     private HttpMetricsInterceptor httpMetricsInterceptor;
 
     @Value("${cert.monitor.cors.allowed-origins:http://localhost:5173,http://localhost:3000}")

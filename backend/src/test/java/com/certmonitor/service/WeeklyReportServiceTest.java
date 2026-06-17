@@ -11,7 +11,7 @@ import com.certmonitor.repository.TeamRepository;
 import com.certmonitor.repository.WeeklyReportImageRepository;
 import com.certmonitor.repository.WeeklyReportRepository;
 import com.certmonitor.service.WeeklyReportService.Actor;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;

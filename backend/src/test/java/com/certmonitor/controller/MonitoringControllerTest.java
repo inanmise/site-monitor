@@ -11,8 +11,8 @@ import com.certmonitor.service.UserService;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
-import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.mock.web.MockHttpSession;
 import org.springframework.test.web.servlet.MockMvc;
 
@@ -29,21 +29,21 @@ class MonitoringControllerTest {
 
     @Autowired MockMvc mvc;
 
-    @MockBean RememberMeService rememberMeService;
-    @MockBean UserService userService;
-    @MockBean AuthController authController;
-    @MockBean com.certmonitor.service.HttpMetricsService httpMetricsService;
+    @MockitoBean RememberMeService rememberMeService;
+    @MockitoBean UserService userService;
+    @MockitoBean AuthController authController;
+    @MockitoBean com.certmonitor.service.HttpMetricsService httpMetricsService;
 
-    @MockBean LatestCheckRepository latestCheckRepo;
-    @MockBean CertificateInventoryRepository inventoryRepo;
-    @MockBean CertificateCheckRepository certCheckRepo;
-    @MockBean UptimeCheckRepository uptimeCheckRepo;
-    @MockBean PortMonitorRepository portMonitorRepo;
-    @MockBean PortCheckRepository portCheckRepo;
-    @MockBean PortCheckerService portChecker;
-    @MockBean DnsMonitorRepository dnsMonitorRepo;
-    @MockBean DnsRecordRepository dnsRecordRepo;
-    @MockBean DnsCheckerService dnsChecker;
+    @MockitoBean LatestCheckRepository latestCheckRepo;
+    @MockitoBean CertificateInventoryRepository inventoryRepo;
+    @MockitoBean CertificateCheckRepository certCheckRepo;
+    @MockitoBean UptimeCheckRepository uptimeCheckRepo;
+    @MockitoBean PortMonitorRepository portMonitorRepo;
+    @MockitoBean PortCheckRepository portCheckRepo;
+    @MockitoBean PortCheckerService portChecker;
+    @MockitoBean DnsMonitorRepository dnsMonitorRepo;
+    @MockitoBean DnsRecordRepository dnsRecordRepo;
+    @MockitoBean DnsCheckerService dnsChecker;
 
     private MockHttpSession session(String role) {
         MockHttpSession s = new MockHttpSession();

@@ -4,13 +4,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-CertMonitor — full-stack SSL/TLS certificate monitoring system. Spring Boot 3.3 / Java 21 backend serves a React 18 (Vite 5) SPA; PostgreSQL is the system of record. Single deployable: the React `dist/` is served as static content from the Spring Boot jar in prod. Single VERSION file (`./VERSION`) is authoritative for both backend (`pom.xml` is currently out of sync — version comes from the file) and frontend (`vite.config.js` reads it at build time).
+CertMonitor — full-stack SSL/TLS certificate monitoring system. Spring Boot 4.1 / Java 25 backend serves a React 18 (Vite 5) SPA; PostgreSQL is the system of record. Single deployable: the React `dist/` is served as static content from the Spring Boot jar in prod. Single VERSION file (`./VERSION`) is authoritative for both backend (`pom.xml` is currently out of sync — version comes from the file) and frontend (`vite.config.js` reads it at build time).
 
 The UI is bilingual TR/EN; default language is Turkish. Most identifiers, log messages, and admin-panel strings are Turkish — keep i18n keys in sync (see `i18n-parity.test.jsx`).
 
 ## Common commands
 
-Java + Maven paths are user-specific: `JAVA_HOME=C:\Program Files\Zulu\zulu-21`, Maven at `D:\portablePrograms\apache-maven-3.9.9\bin\mvn.cmd`. Backend health endpoint is `/health` (Actuator remapped, base-path is `/`).
+Java + Maven paths are user-specific: `JAVA_HOME=C:\Program Files\Zulu\zulu-25`, Maven at `D:\portablePrograms\apache-maven-3.9.9\bin\mvn.cmd`. Backend health endpoint is `/health` (Actuator remapped, base-path is `/`).
 
 ### Backend (from `backend/`)
 ```
@@ -143,7 +143,7 @@ Services worth knowing about beyond the ones already mentioned:
 ### Deployment specifics
 - **K8s manifests** (`k8s/`): 3 replicas, rolling update (`maxSurge=1, maxUnavailable=0`); HPA scales 3–10 on CPU 70% / mem 80%; PDB `minAvailable=2`; topology spread by hostname (`maxSkew=1`); non-root `UID 1000`, read-only root FS, all capabilities dropped. Probes: startup (12×10s), readiness (30s delay / 10s period), liveness (60s delay / 30s period). Also includes `postgres.yaml`, `ingress.yaml`, `openshift-route.yaml`.
 - **Helm chart** (`helm/cert-monitor/`): Bitnami PostgreSQL 18.x as a chart dependency; values split per environment. `develop.yaml` runs 1 replica, email OFF, 2h scan, HPA OFF — useful diff to copy from when setting up a new lower env.
-- **Dockerfile**: 3 stages — `node:20-alpine` (frontend) → `maven:3.9` (backend) → `eclipse-temurin:21-jre-alpine` (runtime). Container-aware JVM (`-XX:+UseContainerSupport`, heap ≈ 75%), in-pod debug tools (`curl bash dig`), healthcheck via `wget /health`. Final image runs as `appuser:1000`.
+- **Dockerfile**: 3 stages — `node:20-alpine` (frontend) → `maven:3.9` (backend) → `eclipse-temurin:25-jre-alpine` (runtime). Container-aware JVM (`-XX:+UseContainerSupport`, heap ≈ 75%), in-pod debug tools (`curl bash dig`), healthcheck via `wget /health`. Final image runs as `appuser:1000`.
 - **k6 smoke** (`perf/k6-smoke.js`): 50 VU × 30s against `/health` + `/api/system/network-status`. SLA: error rate < 1%, p95 < 500 ms, 99% checks pass. Auth-gated endpoints returning `401` are treated as healthy (gate working).
 - **Local DB**: `data/` holds a SQLite file + WAL/SHM for dev runs (gitignored). Prod uses PostgreSQL exclusively.
 
@@ -157,7 +157,7 @@ Backend stores timestamps as UTC (audit, alerts, notifications). Log timestamps 
 
 ## CI gates (`.github/workflows/`)
 
-- `ci.yml` — Java 21 + Node 24. Backend runs `mvn -B clean verify` (uploads Surefire + Jacoco artifacts). Frontend runs `npm ci` → `lint --if-present` → `test --silent -- --run` → `build` → `npm audit --audit-level=high --omit=dev` (non-blocking). Helm-lint runs against all three env values files.
+- `ci.yml` — Java 25 + Node 24. Backend runs `mvn -B clean verify` (uploads Surefire + Jacoco artifacts). Frontend runs `npm ci` → `lint --if-present` → `test --silent -- --run` → `build` → `npm audit --audit-level=high --omit=dev` (non-blocking). Helm-lint runs against all three env values files.
 - `docker-build.yml` — multi-arch image build + Trivy scan (HIGH/CRITICAL, currently report-only).
 - `release.yml` — runs on `main`; detects bump from conventional commit prefix (`feat:` → minor, `fix:` → patch, `BREAKING CHANGE` → major), writes `VERSION`, publishes Helm chart. Does **not** re-run tests; trusts `ci.yml`.
 

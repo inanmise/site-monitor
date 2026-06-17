@@ -11,8 +11,8 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
-import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.http.MediaType;
 import org.springframework.mock.web.MockHttpSession;
 import org.springframework.test.web.servlet.MockMvc;
@@ -30,15 +30,15 @@ class LdapAdminControllerTest {
 
     @Autowired MockMvc mvc;
 
-    @MockBean LdapSettingsService settingsService;
-    @MockBean LdapDirectoryService directoryService;
-    @MockBean AuditService auditService;
+    @MockitoBean LdapSettingsService settingsService;
+    @MockitoBean LdapDirectoryService directoryService;
+    @MockitoBean AuditService auditService;
 
     // Beans pulled in by WebConfig / AuthInterceptor / HttpMetricsInterceptor.
-    @MockBean RememberMeService rememberMeService;
-    @MockBean UserService userService;
-    @MockBean AuthController authController;
-    @MockBean HttpMetricsService httpMetricsService;
+    @MockitoBean RememberMeService rememberMeService;
+    @MockitoBean UserService userService;
+    @MockitoBean AuthController authController;
+    @MockitoBean HttpMetricsService httpMetricsService;
 
     @BeforeEach
     void setUp() {

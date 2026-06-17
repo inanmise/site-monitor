@@ -35,7 +35,7 @@ k6 run -e BASE_URL=http://localhost:8080 ./perf/k6-smoke.js
 | **User Acceptance (UAT)** | **Not yet automated.** Phase 3 plans a Cucumber BDD framework so business analysts can express acceptance scenarios in Gherkin. | — |
 | **Performance** | `perf/k6-smoke.js` — basic load probe. Phase 2 adds full read/write profiles. | `perf/` |
 | **Security** | CI runs `npm audit` (high+ severity on prod deps) and Trivy on the built Docker image (HIGH/CRITICAL). Both currently non-blocking until the baseline is clean; flip `exit-code: '1'` in the workflows once triaged. | `.github/workflows/ci.yml`, `docker-build.yml` |
-| **Compatibility** | Backend pinned to Java 21 (Zulu) + PostgreSQL 17 in dev. Cross-version matrix is Phase 3. | — |
+| **Compatibility** | Backend pinned to Java 25 (Zulu) + PostgreSQL 17 in dev. Cross-version matrix is Phase 3. | — |
 | **Localization** | `i18n-parity.test.jsx` enforces TR↔EN key parity, no empty values, and matching placeholder counts. | `frontend/src/test/i18n-parity.test.jsx` |
 | **Usability** | Manual today. Phase 2 plans axe-core (vitest-axe) over every component test for an automated a11y subset; full WCAG audit stays manual. | — |
 

@@ -8,8 +8,8 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
-import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.mock.web.MockHttpSession;
 import org.springframework.test.web.servlet.MockMvc;
 
@@ -25,25 +25,25 @@ class SystemControllerTest {
     @Autowired
     MockMvc mvc;
 
-    @MockBean
+    @MockitoBean
     SchedulerService schedulerService;
 
-    @MockBean
+    @MockitoBean
     MetricsService metricsService;
 
-    @MockBean
+    @MockitoBean
     HttpMetricsService httpMetricsService;
 
-    @MockBean
+    @MockitoBean
     ExtendedHealthService extendedHealthService;
 
-    @MockBean
+    @MockitoBean
     com.certmonitor.service.RememberMeService rememberMeService;
 
-    @MockBean
+    @MockitoBean
     com.certmonitor.service.UserService userService;
 
-    @MockBean
+    @MockitoBean
     AuthController authController;
 
     @BeforeEach

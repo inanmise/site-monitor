@@ -217,7 +217,7 @@ Alarmlar ve bildirimler sertifikanın atandığı takıma ve onun eskalasyon ki�
 
 | Bileşen | Teknoloji | Versiyon |
 |---|---|---|
-| Uygulama çerçevesi | Spring Boot | 3.3.6 |
+| Uygulama çerçevesi | Spring Boot | 4.1.0 |
 | Dil | Java | 21 (LTS) |
 | ORM | Hibernate / JPA | Spring Data JPA (`ddl-auto=update`) |
 | Veritabanı sürücüsü | PostgreSQL JDBC | 16 |
@@ -340,7 +340,7 @@ N+1 yöntemi           : Sweep başında inventoryRepo.findByDomainIn +
 │  ┌────────────────┐  ┌────────────────┐  ┌────────────────┐        │
 │  │   Pod 1        │  │   Pod 2        │  │   Pod 3        │        │
 │  │  Spring Boot   │  │  Spring Boot   │  │  Spring Boot   │        │
-│  │  Java 21       │  │  Java 21       │  │  Java 21       │        │
+│  │  Java 25       │  │  Java 25       │  │  Java 25       │        │
 │  │  512Mi–8Gi     │  │  512Mi–8Gi     │  │  512Mi–8Gi     │        │
 │  │  500m–5000m    │  │  500m–5000m    │  │  500m–5000m    │        │
 │  └───────┬────────┘  └───────┬────────┘  └───────┬────────┘        │
@@ -1862,7 +1862,7 @@ Birden fazla pod aynı anda tarama yapmaz. DB tabanlı kilit (TTL: 10 dk) yalnı
 |---|---|
 | Güncel Versiyon | 18.83.x |
 | Java Versiyonu | 21 (LTS) |
-| Spring Boot | 3.3.6 |
+| Spring Boot | 4.1.0 |
 | BouncyCastle | 1.78.1 |
 | React / Vite | 18.3 / 5.4 |
 | PostgreSQL | 16-alpine |

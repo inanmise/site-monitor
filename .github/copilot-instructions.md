@@ -6,7 +6,7 @@ Kurumsal SSL/TLS sertifikalarını otomatik izleyen, çok seviyeli uyarı veren 
 
 ## Teknoloji Yığını
 
-- **Backend:** Java 21, Spring Boot 3.3.6, Spring Data JPA, BouncyCastle
+- **Backend:** Java 25, Spring Boot 4.1.0, Spring Data JPA, BouncyCastle
 - **Veritabanı:** PostgreSQL
 - **Frontend:** React 18.3.1, Vite 5, lucide-react
 - **Konteyner:** Docker (çok aşamalı build), Docker Compose
