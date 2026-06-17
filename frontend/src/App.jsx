@@ -23,6 +23,7 @@ import InventoryManager from './components/admin/InventoryManager'
 import AuditLogViewer from './components/admin/AuditLogViewer'
 import WeakAlgorithmReport from './components/admin/WeakAlgorithmReport'
 import WeeklyReportsPage from './components/WeeklyReportsPage'
+import IncidentHistoryPage from './components/IncidentHistoryPage'
 import SystemHealth from './components/admin/SystemHealth'
 import SqlPlayground from './components/admin/SqlPlayground'
 import ActivityLog from './components/ActivityLog'
@@ -51,7 +52,7 @@ function formatDurationShort(ms) {
 // Mail/derin-link ile gelen ?tab= değeri — yalnız bilinen sekme anahtarları kabul edilir.
 const VALID_TABS = new Set([
   'dashboard', 'all', 'domains', 'forecast', 'renewal', 'renewal-guide',
-  'warnings', 'alerthistory', 'stats', 'weakalgo', 'weeklyreports',
+  'warnings', 'alerthistory', 'stats', 'weakalgo', 'weeklyreports', 'incident-history',
   'health', 'uptime', 'port', 'dns', 'activity', 'myactivity', 'system',
   'admin', 'permissions', 'sqlplayground', 'help', 'settings',
 ])
@@ -921,6 +922,12 @@ export default function App() {
             {tab === 'weeklyreports' && (
               <div className="tab-content active">
                 <WeeklyReportsPage systemRole={systemRole} teamId={teamId} teamName={teamName} resetNonce={wrResetNonce} />
+              </div>
+            )}
+
+            {tab === 'incident-history' && (
+              <div className="tab-content active">
+                <IncidentHistoryPage />
               </div>
             )}
 

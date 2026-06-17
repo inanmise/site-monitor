@@ -45,6 +45,7 @@ class WeeklyReportServiceTest {
     @Mock AppUserRepository userRepo;
     @Mock EscalationContactRepository contactRepo;
     @Mock EmailNotificationService emailService;
+    @Mock AppSettingsService appSettings;
 
     private WeeklyReportService service;
 
@@ -57,8 +58,9 @@ class WeeklyReportServiceTest {
     @BeforeEach
     void setUp() {
         service = new WeeklyReportService(reportRepo, imageRepo, mailRepo, teamRepo, userRepo,
-                contactRepo, emailService, new ObjectMapper());
+                contactRepo, emailService, new ObjectMapper(), appSettings);
         ReflectionTestUtils.setField(service, "imageMaxBytes", 2L * 1024 * 1024);
+        when(appSettings.getString(anyString(), any())).thenAnswer(i -> i.getArgument(1));
         when(reportRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
         when(mailRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
         when(emailService.fromAddress()).thenReturn("certmonitor@test");

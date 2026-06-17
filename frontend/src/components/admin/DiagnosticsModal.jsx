@@ -70,6 +70,17 @@ export default function DiagnosticsModal({ domain, port, onClose }) {
     }
   }
 
+  /** HSTS analizi — Strict-Transport-Security başlığı + yönergeler + neden/sınır açıklaması. */
+  async function runHsts(it) {
+    setDiag((d) => ({ ...d, hsts: { loading: true } }))
+    try {
+      const res = await api.admin.runHstsDiagnostics(it.domain, it.port || 443)
+      setDiag((d) => ({ ...d, hsts: res?.success ? { data: res.data } : { error: res?.error || t('inv.diagError') } }))
+    } catch {
+      setDiag((d) => ({ ...d, hsts: { error: t('inv.diagError') } }))
+    }
+  }
+
   /** Sunucu bu isteği (admin'in tarayıcısı → pod) nasıl görüyor: proxy/forwarding
    *  başlıkları + çözülen client IP. Loglardaki client IP neden proxy IP'si teşhisi. */
   async function runClientIp() {
@@ -144,6 +155,82 @@ export default function DiagnosticsModal({ domain, port, onClose }) {
     )
   }
 
+  /** HSTS analiz sonucu — karar + yönergeler + "neyi nasıl kontrol etti" + "neyi bulamaz". */
+  function renderHsts(data) {
+    if (!data) return null
+    const verdictBadge = (v) => {
+      if (v === 'ENFORCED') return <span className="badge badge-ok">{t('inv.hstsEnforced')}</span>
+      if (v === 'NOT_ENFORCED') return <span className="badge" style={{ background: '#fef3c7', color: '#92400e' }}>{t('inv.hstsNotEnforced')}</span>
+      if (v === 'ABSENT') return <span className="badge badge-err">{t('inv.hstsAbsent')}</span>
+      return <span className="badge badge-err">{t('inv.hstsConnectFail')}</span>
+    }
+    const stBadge = (s) => {
+      if (s === 'ok') return <span className="badge badge-ok">✓</span>
+      if (s === 'fail') return <span className="badge badge-err">✗</span>
+      if (s === 'na') return <span className="badge">–</span>
+      return <span className="badge" style={{ background: '#fef3c7', color: '#92400e' }}>!</span>
+    }
+    const yesNo = (b) => (b == null ? '—' : b ? t('inv.hstsYes') : t('inv.hstsNo'))
+    return (
+      <>
+        <div style={{ margin: '4px 0 8px' }}>{verdictBadge(data.verdict)}</div>
+        <ShowField full mono label={t('inv.hstsHeaderField')} value={data.raw_value || t('inv.hstsNone')} />
+        {data.header_present && (
+          <>
+            <ShowField label={t('inv.hstsMaxAge')} value={data.max_age != null ? data.max_age + ' s' : '—'} />
+            <ShowField label={t('inv.hstsIncludeSub')} value={yesNo(data.include_subdomains)} />
+            <ShowField label={t('inv.hstsPreload')} value={yesNo(data.preload)} />
+          </>
+        )}
+        {data.http_redirects_to_https !== undefined && (
+          <ShowField label={t('inv.hstsHttpRedirect')} value={yesNo(data.http_redirects_to_https)} />
+        )}
+
+        {/* Neyi nasıl kontrol etti */}
+        <div className="show-section-header" style={{ marginTop: 12 }}>{t('inv.hstsChecks')}</div>
+        {(data.checks ?? []).map((c) => (
+          <div key={c.key} style={{ marginBottom: 7 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+              {stBadge(c.status)} <strong style={{ fontSize: '.9em' }}>{c.result}</strong>
+            </div>
+            <div style={{ fontSize: '.82em', color: 'var(--text-muted)', marginLeft: 2 }}>{c.how}</div>
+          </div>
+        ))}
+
+        {/* Gelen ham yanıt başlıkları — STS'in hangi başlıklar arasında arandığı görünsün */}
+        {(data.response_headers ?? []).length > 0 && (
+          <details style={{ marginTop: 10 }}>
+            <summary style={{ cursor: 'pointer', fontWeight: 600, fontSize: '.88em' }}>
+              {t('inv.hstsRespHeaders')} ({data.header_count ?? data.response_headers.length})
+            </summary>
+            <div className="show-pre" style={{ marginTop: 6, maxHeight: 300, overflow: 'auto', fontSize: '.82em' }}>
+              {data.status_line && <div style={{ color: 'var(--text-muted)' }}>{data.status_line}</div>}
+              {data.response_headers.map((h, i) => {
+                const isSts = String(h.name).toLowerCase() === 'strict-transport-security'
+                return (
+                  <div key={i} style={isSts ? { background: 'rgba(34,197,94,.15)', fontWeight: 700, borderRadius: 3 } : undefined}>
+                    <span style={{ color: isSts ? '#16a34a' : 'var(--primary)' }}>{h.name}</span>: {h.value}
+                  </div>
+                )
+              })}
+            </div>
+          </details>
+        )}
+
+        {/* Neyi bulamaz / sınırlar */}
+        {(data.notes ?? []).length > 0 && (
+          <>
+            <div className="show-section-header" style={{ marginTop: 12 }}>{t('inv.hstsNotes')}</div>
+            <ul style={{ margin: '4px 0 0 18px', fontSize: '.83em', color: 'var(--text-muted)' }}>
+              {data.notes.map((n, i) => <li key={i} style={{ marginBottom: 4 }}>{n}</li>)}
+            </ul>
+          </>
+        )}
+        {data.error && <div className="alert-msg" style={{ marginTop: 8 }}>{data.error}</div>}
+      </>
+    )
+  }
+
   /** Çalışan JVM'in TLS istemci parmak izi: JDK sürümü + browser/default modda
    *  sunulan protokol/cipher/ALPN (+ varsa imza şeması/named-group). JDK sürümleri
    *  arası handshake farkını (ör. akbankpos WAF) karşılaştırmak için: aynı teşhisi
@@ -182,7 +269,8 @@ export default function DiagnosticsModal({ domain, port, onClose }) {
   }
 
   const histTypeLabel = (rt) => rt === 'OPENSSL' ? t('inv.histTypeOpenssl')
-    : rt === 'NETWORK' ? t('inv.histTypeNetwork') : t('inv.histTypeConnection')
+    : rt === 'NETWORK' ? t('inv.histTypeNetwork')
+    : rt === 'HSTS' ? t('inv.histTypeHsts') : t('inv.histTypeConnection')
 
   async function openHistoryDetail(id) {
     const res = await api.admin.diagHistoryDetail(id)
@@ -396,6 +484,18 @@ export default function DiagnosticsModal({ domain, port, onClose }) {
                   {diag.net?.error && <div className="alert-msg">{diag.net.error}</div>}
                   {diag.net?.data && renderNetwork(diag.net.data)}
 
+                  {/* ── HSTS Analizi ── */}
+                  <div className="show-section-header" style={{ marginTop: 18 }}>{t('inv.hstsTitle')}</div>
+                  {!diag.hsts && (
+                    <button className="btn btn-secondary btn-sm-p" style={{ marginTop: 6 }}
+                      onClick={() => runHsts(diag.item)}>{t('inv.hstsRun')}</button>
+                  )}
+                  {diag.hsts?.loading && (
+                    <div className="show-field-value"><Loader2 size={14} className="spin" /> {t('inv.diagRunning')}</div>
+                  )}
+                  {diag.hsts?.error && <div className="alert-msg">{diag.hsts.error}</div>}
+                  {diag.hsts?.data && renderHsts(diag.hsts.data)}
+
                   {/* ── Client IP / Proxy başlıkları (loglardaki IP teşhisi) ── */}
                   <div className="show-section-header" style={{ marginTop: 18 }}>{t('inv.cipTitle')}</div>
                   {!diag.cip && (
@@ -494,11 +594,13 @@ export default function DiagnosticsModal({ domain, port, onClose }) {
                     <ShowField label={t('inv.histColSource')} mono value={history.detail.source_ip || '—'} />
                     <ShowField label={t('inv.histColType')} value={histTypeLabel(history.detail.run_type)} />
                   </div>
-                  {/* OPENSSL → openssl render; NETWORK → ağ kartları; CONNECTION → combo matrisi */}
+                  {/* OPENSSL → openssl; NETWORK → ağ; HSTS → hsts; CONNECTION → combo matrisi */}
                   {history.detail.run_type === 'OPENSSL'
                     ? <div style={{ marginTop: 8 }}>{renderOssl(history.detail.result)}</div>
                     : history.detail.run_type === 'NETWORK'
                     ? <div style={{ marginTop: 8 }}>{renderNetwork(history.detail.result)}</div>
+                    : history.detail.run_type === 'HSTS'
+                    ? <div style={{ marginTop: 8 }}>{renderHsts(history.detail.result)}</div>
                     : (
                       <>
                         <div className="show-section-header" style={{ marginTop: 8 }}>{t('inv.diagMatrix')}</div>

@@ -2617,6 +2617,17 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
   border: 1px solid rgba(255,255,255,.2);
   white-space: nowrap;
 }
+/* Tanıla butonu — durum pill'inin yanında, header dark-temasıyla uyumlu (translucent). */
+.modal-header-diag-btn {
+  flex-shrink: 0;
+  display: inline-flex; align-items: center; gap: 5px;
+  font-size: .72em; font-weight: 700;
+  padding: 3px 10px; border-radius: 20px;
+  border: 1px solid rgba(255,255,255,.35);
+  background: rgba(255,255,255,.12); color: #fff;
+  cursor: pointer; transition: background .15s, border-color .15s;
+}
+.modal-header-diag-btn:hover { background: rgba(255,255,255,.22); border-color: rgba(255,255,255,.6); }
 .modal-status-valid    { background: rgba(34,197,94,.2);   color: #86efac; }
 .modal-status-warning  { background: rgba(245,158,11,.2);  color: #fcd34d; }
 .modal-status-high     { background: rgba(249,115,22,.2);  color: #fdba74; }
@@ -3278,6 +3289,13 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .ss-option.ss-selected { background: #eff6ff; color: var(--primary, #3b82f6); font-weight: 600; }
 .ss-opt-placeholder { color: var(--muted, #94a3b8); font-style: italic; }
 .ss-no-result { padding: 10px 12px; color: var(--muted, #94a3b8); font-size: .9em; text-align: center; }
+/* creatable "+ Ekle" satırı — option görünümü + accent (yeni stil üretmeden) */
+.ss-option.ss-create { color: var(--primary, #3b82f6); font-weight: 600; border-top: 1px solid var(--border); }
+/* silinebilir seçenek — etiket + sağda × */
+.ss-option.ss-option-deletable { display: flex; align-items: center; gap: 8px; }
+.ss-option-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.ss-option-del { flex-shrink: 0; color: var(--text-muted, #94a3b8); font-size: 1.15em; line-height: 1; padding: 0 2px; border-radius: 4px; }
+.ss-option-del:hover { color: var(--danger, #dc2626); background: rgba(220,38,38,.1); }
 
 .field-hint { display: block; font-size: .82em; margin-top: 5px; }
 .field-hint--warn { color: var(--warning, #f59e0b); }
@@ -5497,6 +5515,18 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .dp-trigger-label { font-size: 10px; font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: .06em; }
 .dp-trigger-value { font-weight: 600; }
 .dp-trigger-chevron { color: var(--text-muted); flex-shrink: 0; }
+
+/* DateTimeField (incident formu) — native datetime-local yerine .dp-trigger stili;
+   form hücresini doldurur, form-grid input görünümüyle eşleşir. Scope: yalnız .dtf. */
+.dtf, .dtf .react-datepicker-wrapper, .dtf .react-datepicker__input-container { width: 100%; }
+.dtf .dp-trigger { width: 100%; padding: 9px 10px; border-radius: 4px; font-size: .95em; font-weight: 400; }
+.dtf .dp-trigger-value { flex: 1; min-width: 0; text-align: left; overflow: hidden; text-overflow: ellipsis; }
+.dtf .dp-trigger-chevron[role="button"] { cursor: pointer; }
+.dtf .dp-trigger-chevron[role="button"]:hover { color: var(--danger); }
+/* Inline varyant (filtre From/To) — auto genişlik, filtre pill görünümü (.filter-* ile eşleşir). */
+.dtf.dtf-inline, .dtf.dtf-inline .react-datepicker-wrapper, .dtf.dtf-inline .react-datepicker__input-container { width: auto; }
+.dtf.dtf-inline .dp-trigger { width: auto; padding: 9px 11px; font-size: .92em; }
+.dtf.dtf-inline .dp-trigger-value { flex: 0 1 auto; }
 
 .upt-apply-btn {
   padding: 7px 18px; font-size: 13px; font-weight: 600;

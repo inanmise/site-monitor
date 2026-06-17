@@ -53,6 +53,7 @@ public class MonitoringOutageService {
     private final EscalationService escalationService;
     private final JdbcTemplate jdbcTemplate;
     private final DnsRecordRepository dnsRecordRepo;
+    private final AppSettingsService appSettings;
 
     @Value("${cert.monitor.uptime.alert-enabled:true}")
     private boolean uptimeAlertEnabled;
@@ -180,7 +181,7 @@ public class MonitoringOutageService {
      */
     public void handleDnsSweep(List<SweepItem> failureItems, List<DnsChange> changes) {
         handleSweepResults(EscalationService.TYPE_DNS_FAILURE, failureItems);
-        if (!dnsAlertEnabled) return;
+        if (!appSettings.getBoolean("cert.monitor.dns.alert-enabled", dnsAlertEnabled)) return;
 
         Set<String> changedThisSweep = new HashSet<>();
         if (changes != null) {
@@ -261,10 +262,13 @@ public class MonitoringOutageService {
 
     private boolean alertEnabled(String alertType) {
         return switch (alertType) {
-            case EscalationService.TYPE_PORT_DOWN   -> portAlertEnabled;
+            case EscalationService.TYPE_PORT_DOWN   ->
+                    appSettings.getBoolean("cert.monitor.port.alert-enabled", portAlertEnabled);
             case EscalationService.TYPE_DNS_FAILURE,
-                 EscalationService.TYPE_DNS_CHANGED -> dnsAlertEnabled;
-            default                                 -> uptimeAlertEnabled;
+                 EscalationService.TYPE_DNS_CHANGED ->
+                    appSettings.getBoolean("cert.monitor.dns.alert-enabled", dnsAlertEnabled);
+            default                                 ->
+                    appSettings.getBoolean("cert.monitor.uptime.alert-enabled", uptimeAlertEnabled);
         };
     }
 

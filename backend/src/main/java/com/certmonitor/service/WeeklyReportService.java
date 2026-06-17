@@ -61,6 +61,7 @@ public class WeeklyReportService {
     private final EscalationContactRepository contactRepo;
     private final EmailNotificationService emailService;
     private final ObjectMapper objectMapper;
+    private final AppSettingsService appSettings;
 
     /** static resetTemplate için paylaşılan, thread-safe mapper — her çağrıda
      *  yeni ObjectMapper kurma maliyetini önler (Jackson 3 mapper'ları yeniden
@@ -85,8 +86,9 @@ public class WeeklyReportService {
     }
 
     private String approveUrl(String token) {
-        String base = (appBaseUrl != null && !appBaseUrl.isBlank())
-                ? appBaseUrl.replaceAll("/+$", "") : "";
+        // Canlı okunur (Genel Ayarlar'dan değişebilir); @Value yalnız fallback varsayılan.
+        String url = appSettings.getString("cert.monitor.app.base-url", appBaseUrl);
+        String base = (url != null && !url.isBlank()) ? url.replaceAll("/+$", "") : "";
         return base + "/api/weekly-reports/approve-link?token=" + token;
     }
 
