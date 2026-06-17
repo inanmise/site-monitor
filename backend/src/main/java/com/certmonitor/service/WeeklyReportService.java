@@ -62,6 +62,11 @@ public class WeeklyReportService {
     private final EmailNotificationService emailService;
     private final ObjectMapper objectMapper;
 
+    /** static resetTemplate için paylaşılan, thread-safe mapper — her çağrıda
+     *  yeni ObjectMapper kurma maliyetini önler (Jackson 3 mapper'ları yeniden
+     *  kullanım için tasarlıdır). */
+    private static final ObjectMapper TEMPLATE_MAPPER = new ObjectMapper();
+
     @Value("${cert.monitor.weekly-report.image-max-bytes:2097152}")
     private long imageMaxBytes;
 
@@ -952,7 +957,7 @@ public class WeeklyReportService {
     /** Şablon kopyalama: kanal id/ad + takip URL'leri korunur; sayılar
      *  sıfırlanır, notes_md/status_text boşalır. Bozuk JSON → default şablon. */
     static String resetTemplate(String prevContentJson) {
-        ObjectMapper om = new ObjectMapper();
+        ObjectMapper om = TEMPLATE_MAPPER;
         try {
             ObjectNode root = (ObjectNode) om.readTree(prevContentJson);
             ObjectNode i1 = root.withObject("item1");
