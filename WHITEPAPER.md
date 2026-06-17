@@ -199,7 +199,7 @@ Alarmlar ve bildirimler sertifikanın atandığı takıma yönlendirilir.
 | Bileşen | Teknoloji | Versiyon |
 |---|---|---|
 | Uygulama çerçevesi | Spring Boot | 4.1.0 |
-| Dil | Java | 21 (LTS) |
+| Dil | Java | 25 (LTS) |
 | ORM | Hibernate / JPA | Spring Data JPA (`ddl-auto=update`) |
 | Veritabanı sürücüsü | PostgreSQL JDBC | 16 |
 | Şifreleme / ASN.1 | BouncyCastle | 1.78.1 |
@@ -1749,7 +1749,7 @@ Birden fazla pod aynı anda tarama yapmaz. DB tabanlı kilit (TTL: 10 dk) yalnı
 | Bilgi | Değer |
 |---|---|
 | Güncel Versiyon | 18.50.x |
-| Java Versiyonu | 21 (LTS) |
+| Java Versiyonu | 25 (LTS) |
 | Spring Boot | 4.1.0 |
 | BouncyCastle | 1.78.1 |
 | React / Vite | 18.3 / 5.4 |

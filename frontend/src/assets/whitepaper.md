@@ -218,7 +218,7 @@ Alarmlar ve bildirimler sertifikanın atandığı takıma ve onun eskalasyon ki�
 | Bileşen | Teknoloji | Versiyon |
 |---|---|---|
 | Uygulama çerçevesi | Spring Boot | 4.1.0 |
-| Dil | Java | 21 (LTS) |
+| Dil | Java | 25 (LTS) |
 | ORM | Hibernate / JPA | Spring Data JPA (`ddl-auto=update`) |
 | Veritabanı sürücüsü | PostgreSQL JDBC | 16 |
 | Şifreleme / ASN.1 | BouncyCastle | 1.78.1 |
@@ -227,7 +227,7 @@ Alarmlar ve bildirimler sertifikanın atandığı takıma ve onun eskalasyon ki�
 | JSON | Jackson (SNAKE_CASE) | 2.x |
 | HTTP güvenliği | Spring Session JDBC | Distributed sessions |
 | Metrikler | Micrometer + Prometheus | `/actuator/prometheus` |
-| Test | JUnit 5 + Mockito | 829 test |
+| Test | JUnit 5 + Mockito | 835 test |
 | Build | Maven | 3.9.9 |
 
 **Temel Servisler:**
@@ -1861,18 +1861,27 @@ Birden fazla pod aynı anda tarama yapmaz. DB tabanlı kilit (TTL: 10 dk) yalnı
 | Bilgi | Değer |
 |---|---|
 | Güncel Versiyon | 18.83.x |
-| Java Versiyonu | 21 (LTS) |
-| Spring Boot | 4.1.0 |
+| Java Versiyonu | 25 (LTS) |
+| Spring Boot | 4.1.0 (Spring Framework 7, Jakarta EE 11) |
 | BouncyCastle | 1.78.1 |
 | React / Vite | 18.3 / 5.4 |
 | PostgreSQL | 16-alpine |
 | Docker Image | `ghcr.io/inanmise/certmonitor` |
 | Helm Chart | `ghcr.io/inanmise/certmonitor-chart` |
-| Backend Test Sayısı | 829 |
+| Backend Test Sayısı | 835 |
 | Frontend Test Sayısı | 121 |
 | Desteklenen Diller | Türkçe / İngilizce |
 | Lisans | Kurumsal kullanım |
 | Geliştirici | inanmise (erdi.inanmis@gmail.com) |
+
+### Platform Yükseltmesi — JDK 25 + Spring Boot 4.1 (Haziran 2026)
+
+- **Çalışma zamanı:** Java 21 → **25 (LTS)**; Spring Boot 3.3.6 → **4.1.0** (Spring Framework 7, Jakarta EE 11, Hibernate 7, Tomcat 11). JDK 25 desteği için Spring Boot major yükseltmesi zorunluydu.
+- **Jackson 2 → Jackson 3** (`tools.jackson`): SNAKE_CASE API sözleşmesi korundu (controller JSON testleriyle doğrulandı); tarih özellikleri `spring.jackson.datatype.datetime.*` altına taşındı.
+- **Test çerçevesi (SB4):** `@MockBean` → `@MockitoBean`, modüler test starter'ları (`webmvc-test`, `data-jpa-test`); `@WebMvcTest` cache döngüsü için `@EnableCaching` ayrı config'e; EMF dairesel bağımlılığı `@Lazy` ile kırıldı.
+- **Araç zinciri:** JaCoCo 0.8.14 (JDK 25 bytecode), Lombok 1.18.42 + `annotationProcessorPaths` (JDK 23+ artık classpath'ten processor keşfetmiyor); Docker/CI Eclipse Temurin 25.
+- **Doğrulama:** 835 backend + 145 frontend test JDK 25'te yeşil; performans denetiminde upgrade kaynaklı leak/bug bulunmadı (yalnız bir mapper yeniden-kullanım iyileştirmesi).
+- **Operasyonel not:** Spring Session 4 oturum şeması değişmiş olabilir → ilk deploy'da kullanıcılar bir kez yeniden login olabilir; Hibernate 7 `ddl-auto=update` ilk açılışta izlenmeli.
 
 ### 18.83.x Sürüm Vurguları (Haziran 2026)
 
