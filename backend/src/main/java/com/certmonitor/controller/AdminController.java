@@ -49,6 +49,7 @@ public class AdminController {
     private final com.certmonitor.service.ConnectionDiagnosticsService diagnosticsService;
     private final com.certmonitor.service.OpensslDiagnosticsService opensslDiagnosticsService;
     private final com.certmonitor.service.NetworkDiagnosticsService networkDiagnosticsService;
+    private final com.certmonitor.service.HstsDiagnosticsService hstsDiagnosticsService;
     private final com.certmonitor.service.DiagnosticHistoryService diagnosticHistoryService;
     private final com.certmonitor.service.ClientIpResolver clientIpResolver;
 
@@ -328,6 +329,29 @@ public class AdminController {
         diagnosticHistoryService.record(domain, port, "NETWORK",
                 actor(session), userIdFromSession(session), teamId(session), clientIp(request),
                 ok, okC + "/" + total + " kontrol OK", data);
+        return ok(Map.of("data", data));
+    }
+
+    /** HSTS analizi — Strict-Transport-Security başlığını okur, yönergeleri ayrıştırır,
+     *  neyi nasıl kontrol ettiğini ve neyi bulamadığını açıklar. */
+    @PostMapping("/diagnostics/hsts")
+    public ResponseEntity<Map<String, Object>> runHstsDiagnostics(
+            @RequestBody Map<String, Object> body, HttpSession session, HttpServletRequest request) {
+        String domain = body.get("domain") != null ? body.get("domain").toString().trim() : null;
+        validateDomain(domain);
+        requireAdminOrMonitoredDomain(session, domain);
+        Long portRaw = toLong(body.get("port"));
+        int port = portRaw != null ? portRaw.intValue() : 443;
+        if (port < 1 || port > 65535)
+            throw new IllegalArgumentException("Port must be between 1 and 65535");
+        Map<String, Object> data = hstsDiagnosticsService.diagnose(domain, port);
+        auditService.recordAction("DIAGNOSTICS_HSTS", session, request,
+                "CERTIFICATE", domain, "{\"port\":" + port + "}");
+        String verdict = String.valueOf(data.get("verdict"));
+        boolean ok = "ok".equals(data.get("status"));
+        diagnosticHistoryService.record(domain, port, "HSTS",
+                actor(session), userIdFromSession(session), teamId(session), clientIp(request),
+                ok, "HSTS: " + verdict, data);
         return ok(Map.of("data", data));
     }
 

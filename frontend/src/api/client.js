@@ -134,6 +134,42 @@ export const api = {
 
   // ── Haftalık Raporlar ────────────────────────────────────────────────────
 
+  incidents: {
+    list: (params = {}) => {
+      const q = new URLSearchParams()
+      for (const k of ['q', 'severity', 'category', 'status', 'service', 'channel', 'since', 'until', 'page', 'size']) {
+        if (params[k] != null && params[k] !== '') q.set(k, params[k])
+      }
+      if (params.slaBreached != null) q.set('sla_breached', params.slaBreached)
+      const qs = q.toString()
+      return request(`/incidents${qs ? '?' + qs : ''}`)
+    },
+    get: (id) => request(`/incidents/${id}`),
+    options: (type) => request(`/incidents/options?type=${encodeURIComponent(type)}`),
+    addOption: (type, value) =>
+      request('/incidents/options', { method: 'POST', body: JSON.stringify({ type, value }) }),
+    deleteOption: (type, value) =>
+      request(`/incidents/options?type=${encodeURIComponent(type)}&value=${encodeURIComponent(value)}`, { method: 'DELETE' }),
+    trends: (since, until) => {
+      const q = new URLSearchParams()
+      if (since) q.set('since', since)
+      if (until) q.set('until', until)
+      const qs = q.toString()
+      return request(`/incidents/trends${qs ? '?' + qs : ''}`)
+    },
+    create: (payload) => request('/incidents', { method: 'POST', body: JSON.stringify(payload) }),
+    update: (id, payload) => request(`/incidents/${id}`, { method: 'PUT', body: JSON.stringify(payload) }),
+    remove: (id) => request(`/incidents/${id}`, { method: 'DELETE' }),
+    uploadImage: (id, file, caption) => {
+      const form = new FormData()
+      form.append('file', file)
+      if (caption) form.append('caption', caption)
+      // id yoksa (create modu) taslak yükleme; kaydedince backend markdown'daki görseli olaya bağlar
+      const path = id ? `/incidents/${id}/images` : '/incidents/images'
+      return request(path, { method: 'POST', body: form })
+    },
+  },
+
   weeklyReports: {
     list: (params = {}) => {
       const q = new URLSearchParams()
@@ -193,9 +229,16 @@ export const api = {
     runNetworkDiagnostics: (domain, port = 443) => request('/admin/diagnostics/network', {
       method: 'POST', body: JSON.stringify({ domain, port }),
     }),
+    runHstsDiagnostics: (domain, port = 443) => request('/admin/diagnostics/hsts', {
+      method: 'POST', body: JSON.stringify({ domain, port }),
+    }),
     diagHistory: (domain) => request(`/admin/diagnostics/history?domain=${encodeURIComponent(domain)}`),
     diagHistoryDetail: (id) => request(`/admin/diagnostics/history/${id}`),
     clientIpDebug: () => request('/admin/client-ip-debug'),
+
+    // Genel Ayarlar — küratörlü runtime config (admin-only Settings page)
+    getGeneralSettings: () => request('/admin/general/settings'),
+    saveGeneralSettings: (dto) => request('/admin/general/settings', { method: 'PUT', body: JSON.stringify(dto) }),
 
     // LDAP / Active Directory settings (admin-only Settings page)
     getLdapSettings: () => request('/admin/ldap/settings'),

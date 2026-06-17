@@ -1,21 +1,27 @@
 package com.certmonitor.config;
 
+import com.certmonitor.service.AppSettingsService;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
+import org.springframework.web.cors.CorsConfiguration;
+import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
+import org.springframework.web.filter.CorsFilter;
 import org.springframework.web.filter.OncePerRequestFilter;
-import org.springframework.web.servlet.config.annotation.CorsRegistry;
 import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 
 import java.io.IOException;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.Executor;
 
 @Configuration
@@ -33,6 +39,12 @@ public class WebConfig implements WebMvcConfigurer {
     @Autowired @Lazy
     private HttpMetricsInterceptor httpMetricsInterceptor;
 
+    // CORS origin'leri istek anında AppSettingsService'ten (Genel Ayarlar) CANLI okunur.
+    // ObjectProvider: bean yoksa (örn. @WebMvcTest slice'ı) hata vermez, @Value fallback'ine düşer;
+    // ayrıca EMF bootstrap sırasındaki dairesel bağımlılığı önler (lazy resolve).
+    @Autowired
+    private ObjectProvider<AppSettingsService> appSettingsProvider;
+
     @Value("${cert.monitor.cors.allowed-origins:http://localhost:5173,http://localhost:3000}")
     private String allowedOrigins;
 
@@ -48,20 +60,44 @@ public class WebConfig implements WebMvcConfigurer {
     @Value("${cert.monitor.executor.queue-capacity:100}")
     private int executorQueueCapacity;
 
-    @Override
-    public void addCorsMappings(CorsRegistry registry) {
-        String[] origins = allowedOrigins.isBlank()
-                ? new String[0]
-                : allowedOrigins.split(",");
+    /**
+     * CORS — statik addCorsMappings yerine istek-anında AppSettingsService'ten origin
+     * okuyan CorsFilter. Genel Ayarlar'dan origin değişimi yeni isteklerde CANLI yansır
+     * (yeniden başlatma gerekmez). /api/** ile sınırlı; preflight'ı (OPTIONS) filtre yanıtlar.
+     */
+    @Bean
+    public CorsFilter corsFilter() {
+        UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource() {
+            @Override
+            public CorsConfiguration getCorsConfiguration(HttpServletRequest request) {
+                if (request.getRequestURI() == null || !request.getRequestURI().startsWith("/api/")) return null;
+                AppSettingsService s = appSettingsProvider.getIfAvailable();
+                List<String> origins = (s != null)
+                        ? s.getCsv("cert.monitor.cors.allowed-origins", allowedOrigins)
+                        : csv(allowedOrigins);
+                if (origins.isEmpty()) return null;
+                CorsConfiguration c = new CorsConfiguration();
+                c.setAllowedOrigins(origins);
+                c.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS"));
+                c.setAllowedHeaders(List.of("Content-Type", "X-Requested-With"));
+                c.setAllowCredentials(true);
+                c.setMaxAge(corsMaxAge);
+                return c;
+            }
+        };
+        return new CorsFilter(source);
+    }
 
-        if (origins.length > 0) {
-            registry.addMapping("/api/**")
-                    .allowedOrigins(origins)
-                    .allowedMethods("GET", "POST", "PUT", "DELETE", "OPTIONS")
-                    .allowedHeaders("Content-Type", "X-Requested-With")
-                    .allowCredentials(true)
-                    .maxAge(corsMaxAge);
+    /** CSV → trimlenmiş, boşsuz liste (AppSettingsService yokken @Value fallback'i için). */
+    private static List<String> csv(String raw) {
+        List<String> out = new ArrayList<>();
+        if (raw != null) {
+            for (String p : raw.split(",")) {
+                String t = p.trim();
+                if (!t.isEmpty()) out.add(t);
+            }
         }
+        return out;
     }
 
     @Override

@@ -2,9 +2,10 @@ import { useEffect, useState, useRef } from 'react'
 import { api, formatDate } from '../api/client'
 import { useT } from '../i18n/index.jsx'
 import { useDialog } from './ui/Dialog.jsx'
-import { Trash2, Globe, X, Pencil, Clock, User, History, Undo2 } from 'lucide-react'
+import { Trash2, Globe, X, Pencil, Clock, User, History, Undo2, Stethoscope } from 'lucide-react'
 import AlertHistory from './admin/AlertHistory'
 import SslCheckerPanel from './SslCheckerPanel.jsx'
+import DiagnosticsModal from './admin/DiagnosticsModal.jsx'
 
 const NOTE_CATEGORIES   = ['NOTE', 'DEPLOYMENT', 'INCIDENT', 'RENEWAL']
 const NOTE_EDIT_WINDOW_MS = 24 * 60 * 60 * 1000
@@ -361,6 +362,8 @@ export default function CertificateModal({ domain, alertLevel, onClose, initialD
   const [sslData, setSslData]         = useState(null)
   const [sslLoading, setSslLoading]   = useState(false)
   const [activeTab, setActiveTab]     = useState('ssl')
+  const [showDiag, setShowDiag]       = useState(false)
+  const isAdmin = currentUserRole === 'ADMIN' || currentUserRole === 'TEAM_ADMIN'
 
   useEffect(() => {
     if (!domain) return
@@ -394,6 +397,7 @@ export default function CertificateModal({ domain, alertLevel, onClose, initialD
   const d = certData
 
   return (
+    <>
     <div className="modal show" onClick={(e) => e.target.classList.contains('modal') && onClose()}>
       <div className="modal-content modal-wide">
         <div className="modal-header-row">
@@ -401,6 +405,11 @@ export default function CertificateModal({ domain, alertLevel, onClose, initialD
             <span className="modal-header-icon"><Globe size={16} /></span>
             <h2 className="modal-title">{domain}</h2>
             {d && <span className={`modal-status-pill modal-status-${alertLevel ?? statusKey(d)}`}>{statusLabel(alertLevel ?? statusKey(d), t)}</span>}
+            {!previewMode && isAdmin && (
+              <button className="modal-header-diag-btn" onClick={() => setShowDiag(true)} title={t('inv.diagnose')}>
+                <Stethoscope size={13} /> {t('inv.diagnose')}
+              </button>
+            )}
           </div>
           <button className="modal-close-btn" onClick={onClose} aria-label="Close">
             <X size={16} />
@@ -559,6 +568,10 @@ export default function CertificateModal({ domain, alertLevel, onClose, initialD
         )}
       </div>
     </div>
+    {showDiag && (
+      <DiagnosticsModal domain={domain} port={d?.port || 443} onClose={() => setShowDiag(false)} />
+    )}
+    </>
   )
 }
 

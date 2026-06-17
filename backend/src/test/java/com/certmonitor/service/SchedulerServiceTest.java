@@ -25,6 +25,8 @@ import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
+import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.anyDouble;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyLong;
@@ -68,6 +70,8 @@ class SchedulerServiceTest {
     @Mock MonitoringOutageService monitoringOutageService;
     @Mock NetworkOutageEventRepository networkOutageRepo;
     @Mock WeeklyReportReminderService weeklyReportReminderService;
+    @Mock IncidentService incidentService;
+    @Mock AppSettingsService appSettings;
     @Mock ThreadPoolTaskExecutor certCheckExecutor;
 
     SchedulerService scheduler;
@@ -81,9 +85,14 @@ class SchedulerServiceTest {
                 portCheckerService, portMonitorRepo, portCheckRepo,
                 dnsCheckerService, dnsMonitorRepo, dnsRecordRepo,
                 uptimeHttpCheckerService, uptimeCheckRepo, monitoringOutageService, networkOutageRepo,
-                weeklyReportReminderService);
+                weeklyReportReminderService, incidentService, appSettings);
         ReflectionTestUtils.setField(scheduler, "certCheckExecutor", certCheckExecutor);
         lenient().when(inventoryRepo.countByActiveTrue()).thenReturn(0L);
+        // AppSettings: override yok → fallback (ikinci argüman) döner
+        lenient().when(appSettings.getInt(anyString(), anyInt())).thenAnswer(i -> i.getArgument(1));
+        lenient().when(appSettings.getDouble(anyString(), anyDouble())).thenAnswer(i -> i.getArgument(1));
+        lenient().when(appSettings.getString(anyString(), any())).thenAnswer(i -> i.getArgument(1));
+        lenient().when(appSettings.getBoolean(anyString(), anyBoolean())).thenAnswer(i -> i.getArgument(1));
     }
 
     @Test

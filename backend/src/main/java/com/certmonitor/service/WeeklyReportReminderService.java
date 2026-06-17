@@ -34,6 +34,7 @@ public class WeeklyReportReminderService {
     private final TeamRepository teamRepo;
     private final WeeklyReportRepository reportRepo;
     private final EmailNotificationService emailService;
+    private final AppSettingsService appSettings;
 
     @Value("${cert.monitor.weekly-report.reminder-enabled:true}")
     private boolean enabled;
@@ -92,7 +93,8 @@ public class WeeklyReportReminderService {
 
     /** OpenShift route (APP_BASE_URL) + doğrudan Haftalık Raporlar sekmesi deep-link'i. */
     private String buildReportUrl() {
-        String base = appBaseUrl != null ? appBaseUrl.replaceAll("/+$", "") : "";
+        String url = appSettings.getString("cert.monitor.app.base-url", appBaseUrl);
+        String base = url != null ? url.replaceAll("/+$", "") : "";
         return base + "/?tab=weeklyreports";
     }
 }

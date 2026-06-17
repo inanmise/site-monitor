@@ -2,7 +2,8 @@ import { useState, useRef, useEffect } from 'react'
 import { useT } from '../../i18n/index.jsx'
 
 export default function SearchableSelect({
-  value, onChange, options, placeholder, disabled = false, searchThreshold = 4
+  value, onChange, options, placeholder, disabled = false, searchThreshold = 4,
+  creatable = false, onCreate, onDelete
 }) {
   const t = useT()
   const [open, setOpen] = useState(false)
@@ -10,7 +11,8 @@ export default function SearchableSelect({
   const ref = useRef(null)
 
   const selected = options.find(o => String(o.value) === String(value))
-  const showSearch = options.length >= searchThreshold
+  // creatable: arama kutusu her zaman açık (yeni değer yazabilmek için)
+  const showSearch = creatable || options.length >= searchThreshold
   // String(): sayısal/boş label (örn. yıl) düşük eşikte filtre yoluna girince patlamasın
   const filtered = showSearch
     ? options.filter(o => String(o.label ?? '').toLowerCase().includes(query.toLowerCase()))
@@ -46,7 +48,18 @@ export default function SearchableSelect({
     setQuery('')
   }
 
+  async function handleCreate(val) {
+    const v = val.trim()
+    if (!v) return
+    if (onCreate) { try { await onCreate(v) } catch { /* parent toast eder */ } }
+    select(v)
+  }
+
   const isEmpty = value === '' || value === null || value === undefined
+  // creatable serbest değer: options'ta yoksa bile değeri etiket olarak göster
+  const triggerLabel = selected ? selected.label : (isEmpty ? (placeholder || t('ss.choose')) : String(value))
+  const trimmedQuery = query.trim()
+  const queryExists = options.some(o => String(o.label ?? '').toLowerCase() === trimmedQuery.toLowerCase())
 
   return (
     <div className={`ss-wrap${disabled ? ' ss-disabled' : ''}`} ref={ref}>
@@ -57,7 +70,7 @@ export default function SearchableSelect({
         onKeyDown={handleTriggerKeyDown}
         disabled={disabled}
       >
-        <span className="ss-label">{selected ? selected.label : (placeholder || t('ss.choose'))}</span>
+        <span className="ss-label">{triggerLabel}</span>
         <svg className="ss-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="14" height="14">
           <polyline points="6 9 12 15 18 9" />
         </svg>
@@ -81,17 +94,30 @@ export default function SearchableSelect({
             </div>
           )}
           <div className="ss-options">
-            {filtered.map(opt => (
-              <div
-                key={String(opt.value)}
-                className={`ss-option${String(opt.value) === String(value) ? ' ss-selected' : ''}${opt.value === '' ? ' ss-opt-placeholder' : ''}`}
-                onMouseDown={(e) => { e.preventDefault(); select(opt.value) }}
-              >
-                {opt.label}
-              </div>
-            ))}
-            {filtered.length === 0 && (
+            {filtered.map(opt => {
+              const deletable = onDelete && opt.value !== '' && opt.value != null
+              return (
+                <div
+                  key={String(opt.value)}
+                  className={`ss-option${deletable ? ' ss-option-deletable' : ''}${String(opt.value) === String(value) ? ' ss-selected' : ''}${opt.value === '' ? ' ss-opt-placeholder' : ''}`}
+                  onMouseDown={(e) => { e.preventDefault(); select(opt.value) }}
+                >
+                  {deletable ? <span className="ss-option-label">{opt.label}</span> : opt.label}
+                  {deletable && (
+                    <span className="ss-option-del" role="button" title={t('ss.delete')}
+                      onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); onDelete(opt.value) }}>×</span>
+                  )}
+                </div>
+              )
+            })}
+            {filtered.length === 0 && !(creatable && trimmedQuery) && (
               <div className="ss-no-result">{t('ss.noResult')}</div>
+            )}
+            {creatable && trimmedQuery && !queryExists && (
+              <div className="ss-option ss-create"
+                   onMouseDown={(e) => { e.preventDefault(); handleCreate(trimmedQuery) }}>
+                + {t('ss.add')} “{trimmedQuery}”
+              </div>
             )}
           </div>
         </div>

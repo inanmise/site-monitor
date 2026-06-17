@@ -29,14 +29,16 @@ class WeeklyReportReminderServiceTest {
     @Mock TeamRepository teamRepo;
     @Mock WeeklyReportRepository reportRepo;
     @Mock EmailNotificationService emailService;
+    @Mock AppSettingsService appSettings;
 
     private WeeklyReportReminderService service;
 
     @BeforeEach
     void setUp() {
-        service = new WeeklyReportReminderService(teamRepo, reportRepo, emailService);
+        service = new WeeklyReportReminderService(teamRepo, reportRepo, emailService, appSettings);
         ReflectionTestUtils.setField(service, "enabled", true);
         ReflectionTestUtils.setField(service, "appBaseUrl", "https://cm.example.com/");
+        when(appSettings.getString(anyString(), any())).thenAnswer(i -> i.getArgument(1));
         when(emailService.buildWeeklyReportReminderHtml(any(), any(), any())).thenReturn("<html/>");
         when(emailService.sendHtml(any(), any(), anyString(), anyString(), any())).thenReturn("SENT");
     }

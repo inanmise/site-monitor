@@ -102,6 +102,9 @@ class AdminControllerTest {
     com.certmonitor.service.NetworkDiagnosticsService networkDiagnosticsService;
 
     @MockitoBean
+    com.certmonitor.service.HstsDiagnosticsService hstsDiagnosticsService;
+
+    @MockitoBean
     com.certmonitor.service.DiagnosticHistoryService diagnosticHistoryService;
 
     @MockitoBean

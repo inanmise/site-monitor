@@ -38,6 +38,7 @@ class MonitoringOutageServiceTest {
     @Mock EscalationService escalationService;
     @Mock JdbcTemplate jdbcTemplate;
     @Mock DnsRecordRepository dnsRecordRepo;
+    @Mock AppSettingsService appSettings;
 
     private MonitoringOutageService service;
 
@@ -55,7 +56,9 @@ class MonitoringOutageServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new MonitoringOutageService(alertEventRepo, escalationService, jdbcTemplate, dnsRecordRepo);
+        service = new MonitoringOutageService(alertEventRepo, escalationService, jdbcTemplate, dnsRecordRepo, appSettings);
+        // AppSettings override yok → fallback (alan değeri) döner
+        when(appSettings.getBoolean(anyString(), anyBoolean())).thenAnswer(i -> i.getArgument(1));
         ReflectionTestUtils.setField(service, "uptimeAlertEnabled", true);
         ReflectionTestUtils.setField(service, "portAlertEnabled", true);
         ReflectionTestUtils.setField(service, "dnsAlertEnabled", true);
