@@ -12,7 +12,7 @@ import com.certmonitor.repository.EscalationContactRepository;
 import com.certmonitor.repository.LatestCheckRepository;
 import com.certmonitor.repository.NotificationLogRepository;
 import com.certmonitor.repository.TeamRepository;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;

@@ -8,8 +8,8 @@ import com.certmonitor.service.UserService;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
-import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.http.MediaType;
 import org.springframework.mock.web.MockHttpSession;
 import org.springframework.test.web.servlet.MockMvc;
@@ -27,12 +27,12 @@ class SqlPlaygroundControllerTest {
 
     @Autowired MockMvc mvc;
 
-    @MockBean SqlPlaygroundService service;
-    @MockBean AuditService auditService;
-    @MockBean RememberMeService rememberMeService;
-    @MockBean UserService userService;
-    @MockBean HttpMetricsService httpMetricsService;
-    @MockBean AuthController authController;
+    @MockitoBean SqlPlaygroundService service;
+    @MockitoBean AuditService auditService;
+    @MockitoBean RememberMeService rememberMeService;
+    @MockitoBean UserService userService;
+    @MockitoBean HttpMetricsService httpMetricsService;
+    @MockitoBean AuthController authController;
 
     @Test
     @DisplayName("GET /tables without auth returns 401")

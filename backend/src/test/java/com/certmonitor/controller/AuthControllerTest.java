@@ -9,8 +9,8 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
-import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.http.MediaType;
 import org.springframework.mock.web.MockHttpSession;
 import org.springframework.test.web.servlet.MockMvc;
@@ -28,31 +28,31 @@ class AuthControllerTest {
     @Autowired
     MockMvc mvc;
 
-    @MockBean
+    @MockitoBean
     RememberMeService rememberMeService;
 
-    @MockBean
+    @MockitoBean
     UserService userService;
 
-    @MockBean
+    @MockitoBean
     com.certmonitor.service.HttpMetricsService httpMetricsService;
 
-    @MockBean
+    @MockitoBean
     AuditService auditService;
 
-    @MockBean
+    @MockitoBean
     com.certmonitor.repository.AuditLogRepository auditLogRepo;
 
-    @MockBean
+    @MockitoBean
     com.certmonitor.service.ClientIpResolver clientIpResolver;
 
-    @MockBean
+    @MockitoBean
     com.certmonitor.service.LdapSettingsService ldapSettings;
 
-    @MockBean
+    @MockitoBean
     com.certmonitor.service.LdapDirectoryService ldapDirectory;
 
-    @MockBean
+    @MockitoBean
     com.certmonitor.service.LdapProvisioningService ldapProvisioning;
 
     private AppUser testUser;

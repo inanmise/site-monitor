@@ -97,7 +97,7 @@ class GlobalExceptionHandlerTest {
     @DisplayName("HttpMessageNotReadableException → 400 jenerik mesaj")
     void malformedJson() {
         ResponseEntity<Map<String, Object>> r = handler.handleMalformedJson(
-                new HttpMessageNotReadableException("bozuk json"));
+                new HttpMessageNotReadableException("bozuk json", (org.springframework.http.HttpInputMessage) null));
         assertEquals(400, r.getStatusCode().value());
         assertEquals("Geçersiz istek formatı", r.getBody().get("error"));
     }
@@ -125,7 +125,7 @@ class GlobalExceptionHandlerTest {
     void noResource() {
         ResponseEntity<Map<String, Object>> r = handler.handleNoResource(
                 new org.springframework.web.servlet.resource.NoResourceFoundException(
-                        org.springframework.http.HttpMethod.GET, "/favicon.ico"));
+                        org.springframework.http.HttpMethod.GET, "/favicon.ico", "/favicon.ico"));
         assertEquals(404, r.getStatusCode().value());
         assertEquals(false, r.getBody().get("success"));
         assertEquals("Kaynak bulunamadı", r.getBody().get("error"));

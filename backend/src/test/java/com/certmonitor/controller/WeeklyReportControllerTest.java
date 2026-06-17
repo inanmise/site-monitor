@@ -9,8 +9,8 @@ import com.certmonitor.service.WeeklyReportService;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
-import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.http.MediaType;
 import org.springframework.mock.web.MockHttpSession;
 import org.springframework.mock.web.MockMultipartFile;
@@ -32,14 +32,14 @@ class WeeklyReportControllerTest {
     MockMvc mvc;
 
     // AuthInterceptor bağımlılıkları — @WebMvcTest zorunlu seti
-    @MockBean RememberMeService rememberMeService;
-    @MockBean UserService userService;
-    @MockBean AuthController authController;
-    @MockBean com.certmonitor.service.HttpMetricsService httpMetricsService;
+    @MockitoBean RememberMeService rememberMeService;
+    @MockitoBean UserService userService;
+    @MockitoBean AuthController authController;
+    @MockitoBean com.certmonitor.service.HttpMetricsService httpMetricsService;
 
-    @MockBean WeeklyReportService service;
-    @MockBean com.certmonitor.service.WeeklyReportReminderService reminderService;
-    @MockBean AuditService auditService;
+    @MockitoBean WeeklyReportService service;
+    @MockitoBean com.certmonitor.service.WeeklyReportReminderService reminderService;
+    @MockitoBean AuditService auditService;
 
     private static WeeklyReport report(Long id, Long teamId, String status) {
         WeeklyReport r = new WeeklyReport();

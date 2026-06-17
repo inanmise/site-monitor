@@ -6,8 +6,8 @@ import com.certmonitor.service.RememberMeService;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
-import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.http.MediaType;
 import org.springframework.mock.web.MockHttpSession;
 import org.springframework.test.web.servlet.MockMvc;
@@ -35,12 +35,12 @@ class GuideLinkControllerTest {
 
     @Autowired MockMvc mvc;
 
-    @MockBean GuideLinkRepository repo;
-    @MockBean RememberMeService rememberMeService;
-    @MockBean com.certmonitor.service.UserService userService;
-    @MockBean com.certmonitor.service.HttpMetricsService httpMetricsService;
-    @MockBean com.certmonitor.repository.AppUserRepository userRepo;
-    @MockBean AuthController authController;
+    @MockitoBean GuideLinkRepository repo;
+    @MockitoBean RememberMeService rememberMeService;
+    @MockitoBean com.certmonitor.service.UserService userService;
+    @MockitoBean com.certmonitor.service.HttpMetricsService httpMetricsService;
+    @MockitoBean com.certmonitor.repository.AppUserRepository userRepo;
+    @MockitoBean AuthController authController;
 
     @Test
     @DisplayName("GET /api/guide-links without session returns 401")
