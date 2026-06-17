@@ -1,5 +1,5 @@
 # CertMonitor — Kurumsal SSL/TLS Sertifika İzleme Platformu
-## White Paper | Versiyon 18.50.x | Haziran 2026
+## White Paper | Versiyon 18.83.x | Haziran 2026
 
 ---
 
@@ -43,18 +43,18 @@ CertMonitor bu sorunu çözmek için:
 - Tüm sertifikaları saatlik periyotlarla otomatik kontrol eder
 - Sertifika zinciri, iptal durumu ve dağıtım uyumluluğunu doğrular
 - Süre dolmadan **30 / 15 / 7 gün önce** ilgili ekiplere e-posta ve webhook bildirimi gönderir
-- Sorumlulukları takım bazında yönetir (SY — Servis Yönetimi / UG — Uygulama Geliştirici)
+- Sorumlulukları takım bazında yönetir (her sertifika bir takıma atanır; takımın lideri/müdürü/üyeleri ile)
 - Tüm işlemleri coğrafi konum ve tarayıcı bilgisiyle denetim kaydına yazar
 
 ### Hedef Kitle
 
 | Kullanıcı Profili | Kullanım Amacı |
 |---|---|
-| Servis Yönetimi (SY) Ekibi | Altyapı sertifikalarını izleme, yenileme koordinasyonu |
-| Uygulama Geliştirici (UG) Ekibi | Uygulama SSL sertifikalarını izleme |
+| Operasyon / Altyapı Ekipleri | Sertifikaları izleme, yenileme koordinasyonu |
+| Uygulama Geliştirme Ekipleri | Uygulama SSL sertifikalarını izleme, haftalık rapor girişi |
 | BT Güvenlik Ekibi | Denetim, zayıf algoritma tespiti, uyumluluk |
-| Yöneticiler (PO, Manager, C-Level) | Genel durum izleme, eskalasyon bildirimleri alma |
-| Sistem Yöneticileri | Platform kurulumu, yapılandırma, kullanıcı yönetimi |
+| Yöneticiler (PO, Müdür, C-Level) | Genel durum izleme, eskalasyon bildirimleri alma, rapor onayı |
+| Sistem Yöneticileri | Platform kurulumu, yapılandırma, kullanıcı/yetki yönetimi |
 
 ---
 
@@ -156,6 +156,24 @@ Her taramada şu bilgiler elde edilip kaydedilir:
 - Admin envanterde domain değiştirdiğinde geçmiş tüm kontrol verisi, alarm geçmişi ve notlar yeni domain'e atomik olarak taşınır (`@Transactional`)
 - Aynı isimde kayıt varsa 409 ile uyarı verilir (bilgi sızıntısı yok)
 
+**LDAP / Active Directory Entegrasyonu**
+- Yerel hesapların yanında AD/LDAP ile kimlik doğrulama (login anında bind)
+- İlk girişte kullanıcı otomatik provizyon edilir: ünvan/`company` → orgRole (PO/MANAGER/TECH), `manager` → müdür ilişkisi, takım ataması
+- Müdür–takım ilişkisi kurulunca takıma otomatik MANAGER eskalasyon kontağı eklenir
+- Bind parolası AES-GCM ile şifrelenir; bağlantı Ayarlar ekranından test edilebilir (öznitelik görüntüleyici dahil)
+
+**Haftalık Raporlar**
+- Takımlar haftalık operasyon raporu girer (acil/yüksek olay sayıları, açık problemler, planlı işler)
+- PO **e-posta bağlantısı üzerinden onay** verir (tek tıkla onay/iade)
+- Cuma hatırlatma ve özet e-postaları; rapor başka takıma transfer edilebilir
+
+**Yetki Matrisi (Permissions)**
+- Rol bazında (TEAM_ADMIN/USER/AUDIT) view/edit/execute izinleri ekrandan açılıp kapanır; ADMIN tam yetkili ve kilitlidir
+- Hassas işlemler için onay; "varsayılanlara dön" desteği
+
+**SQL Playground (yalnız global admin)**
+- Salt-okuma (SELECT) sorgu konsolu; sorgu geçmişi tutulur ve gece temizlenir
+
 ### 3.2 Alarm Yönetimi
 
 Sistem üç seviyede alarm üretir:
@@ -184,11 +202,12 @@ Ayrıca alarm tipleri:
 
 ### 3.4 Takım Tabanlı Sorumluluk
 
-Her sertifika iki takıma atanabilir:
-- **SY Takımı** (Servis Yönetimi): Altyapı sorumlusu
-- **UG Takımı** (Uygulama Geliştirici): Uygulama sorumlusu
+Her sertifika **bir takıma** atanır (eski SY/UG ikili takım modeli kaldırılmıştır). Takım, kendi içinde:
+- **Takım lideri** (genelde PO): takımın yönetiminden sorumlu
+- **Müdür** (manager): AD `manager` ilişkisinden türetilir; takıma otomatik MANAGER eskalasyon kontağı olarak eklenir
+- **Üyeler**: takımın sertifikalarını görüntüler ve haftalık rapor girer
 
-Alarmlar ve bildirimler sertifikanın atandığı takıma yönlendirilir.
+Alarmlar ve bildirimler sertifikanın atandığı takıma ve onun eskalasyon kişilerine yönlendirilir.
 
 ---
 
@@ -208,7 +227,7 @@ Alarmlar ve bildirimler sertifikanın atandığı takıma yönlendirilir.
 | JSON | Jackson (SNAKE_CASE) | 2.x |
 | HTTP güvenliği | Spring Session JDBC | Distributed sessions |
 | Metrikler | Micrometer + Prometheus | `/actuator/prometheus` |
-| Test | JUnit 5 + Mockito | 539 test |
+| Test | JUnit 5 + Mockito | 835 test |
 | Build | Maven | 3.9.9 |
 
 **Temel Servisler:**
@@ -386,15 +405,15 @@ Akış:
 
 ## 6. Veritabanı Şeması
 
-Toplam **16 tablo** bulunmaktadır:
+Toplam **30'dan fazla tablo** bulunmaktadır (`ddl-auto=update` ile yönetilir):
 
 ### 6.1 Temel Tablolar
 
 | Tablo | Amaç | Kritik Alanlar |
 |---|---|---|
-| `app_users` | Kullanıcı hesapları | username, password_hash, system_role, team_id, lockout_until |
-| `teams` | Takım tanımları | name, team_type (SY/UG), leader_id, email |
-| `certificate_inventory` | Domain envanteri | domain, port, team_id, ug_team_id, tier, deleted_at |
+| `app_users` | Kullanıcı hesapları | username, password_hash, system_role, org_role, team_id, manager_id, manager_sicil, auth_source (LOCAL/LDAP), lockout_until |
+| `teams` | Takım tanımları | name, leader_id, email, active |
+| `certificate_inventory` | Domain envanteri | domain, port, team_id (ug_team_id: legacy), tier, deleted_at |
 | `latest_checks` | Her domain için son kontrol (tek kayıt) | domain (PK), not_after, days_remaining, status, fingerprint |
 | `certificate_checks` | Tüm kontrol geçmişi | domain, run_id, checked_at, tüm sertifika alanları |
 
@@ -419,6 +438,14 @@ Toplam **16 tablo** bulunmaktadır:
 | `spring_session` | Kullanıcı oturumları (opsiyonel JDBC store) |
 | `spring_session_attributes` | Oturum özellikleri |
 | `remember_me_tokens` | "Beni Hatırla" tokenleri |
+| `permission_grants` | Rol bazlı yetki matrisi (role/resource/action/allowed) |
+| `ldap_settings` / `smtp_settings` | LDAP/AD ve SMTP yapılandırması (bind parolası AES-GCM) |
+| `weekly_report` / `weekly_report_mail` / `weekly_report_image` | Haftalık rapor, onay/iade postaları, görseller |
+| `uptime_check` / `port_monitor` / `port_check` / `dns_monitor` / `dns_record` | İzleme hedefleri ve ölçümleri |
+| `network_outage_event` | İzleme kesinti teyit olayları |
+| `sql_query_history` | SQL Playground sorgu geçmişi |
+| `password_history` | Parola tekrar kullanım kontrolü |
+| `guide_link` | Yardım/rehber bağlantıları |
 
 ### 6.4 Soft Delete
 
@@ -672,7 +699,14 @@ cert.monitor.email.from=gönderen@adres
 **Oturum Tabanlı Kimlik Doğrulama:**
 - Spring Session ile yönetilen HTTP oturumları
 - Opsiyonel JDBC Session Store (HA modunda tüm pod'larda oturum paylaşımı)
-- BCrypt ile şifrelenmiş parolalar
+- BCrypt ile şifrelenmiş yerel parolalar
+
+**LDAP / Active Directory ile Kimlik Doğrulama:**
+- Ayarlardan etkinleştirilir; login anında AD'ye bind edilerek doğrulama yapılır
+- İlk başarılı girişte kullanıcı otomatik provizyon edilir (orgRole, müdür ilişkisi, takım) — bkz. §3.1
+- Provizyon sonucu sistem rolü atanır: müdür → kapsamlı ADMIN (salt-okuma), PO → TEAM_ADMIN, diğerleri → USER (bkz. §11)
+- Yerel `admin` hesabı her zaman geçerlidir (acil erişim / bootstrap); LDAP/SMTP ayarları yalnız bu hesaba açıktır
+- Bind parolası AES-GCM ile şifreli saklanır (`CERT_MONITOR_SECRET_KEY`)
 
 **"Beni Hatırla" Özelliği:**
 - 7 günlük kalıcı oturum
@@ -794,51 +828,52 @@ Geçersiz body → 400 + alan listesi (stack trace yok).
 
 ### 11.1 Sistem Rolleri
 
-| Rol | Açıklama | Erişim |
+| Rol | Açıklama | Erişim Kapsamı |
 |---|---|---|
-| **ADMIN** | Tam yönetici | Tüm ekranlar, tüm işlemler |
-| **AUDIT** | Denetçi | Salt okunur + Audit Log ekranı |
-| **USER** | Normal kullanıcı | Sadece kendi takımının sertifikaları |
+| **ADMIN (global)** | Yerel/bootstrap admin (`admin`) | Tüm takımlar + global işlemler (yetki matrisi, SQL Playground, sistem denetimi, LDAP/SMTP ayarları) |
+| **ADMIN (müdür, kapsamlı)** | AD'den gelen, astı olan kullanıcı | Sistem rolü ADMIN'dir ama **yalnız astlarının takımlarını GÖRÜNTÜLER (salt-okunur)**; global işlemlere giremez |
+| **TEAM_ADMIN** | Genelde PO (orgRole=PO) | Liderlik ettiği takım(lar)da **görüntüleme + yönetim** (çok-takım) |
+| **USER** | Normal kullanıcı | Yalnız kendi takımı: okuma + kendi takım alarm aksiyonları + haftalık rapor girişi |
+| **AUDIT** | Denetçi | Sistem geneli **salt-okuma** + Denetim Günlüğü |
 
-### 11.2 Organizasyonel Roller
+> **Kapsam (Faz 3b):** Oturuma `viewTeamIds` (okuma) ve `manageTeamIds` (yönetim) kapsamları yazılır. Global admin'de bu kapsamlar sınırsızdır (null). Müdürün kapsamı **astlarının** takımları, PO'nun kapsamı **liderlik ettiği** takımlardır — bu ilişkiler AD'den (yönetici/lider) türetilir. Bir rolün sistemRole'ü ADMIN olsa bile kapsamı doluysa **global değildir** (yetki sızıntısını önler).
 
-Eskalasyon matrisinde kullanılır, sistem erişimini etkilemez:
+### 11.2 Organizasyonel Roller (orgRole)
 
-| Org Rol | Renk | Hangi Alarmda Bildirim Alır |
+AD'deki `company`/ünvan bilgisinden türetilir; hem eskalasyon bildirim seviyesini hem de sistem rolünü etkiler:
+
+| Org Rol | Eşlenen Sistem Rolü | Hangi Alarmda Bildirim Alır |
 |---|---|---|
-| **TECH** | Yeşil | WARNING + HIGH + CRITICAL |
-| **PO** | Mavi | WARNING + HIGH + CRITICAL |
-| **MANAGER** | Turuncu | HIGH + CRITICAL |
-| **C-LEVEL** | Kırmızı | CRITICAL |
+| **PO** (Product Owner) | TEAM_ADMIN + takım lideri | WARNING + HIGH + CRITICAL |
+| **MANAGER** (Müdür) | ADMIN (kapsamlı/salt-okuma) | HIGH + CRITICAL |
+| **TECH** | USER | WARNING + HIGH + CRITICAL |
+| **C-LEVEL** | — | CRITICAL |
 
-### 11.3 Takım Türleri
+### 11.3 Takım Kapsamı ve AD İlişkileri
 
-| Takım Türü | Kod | Sorumluluk |
-|---|---|---|
-| Servis Yönetimi | SY | Altyapı, sunucu, dağıtım |
-| Uygulama Geliştirici | UG | Uygulama kodu, API'ler |
-
-Her sertifika bir SY ve bir UG takımına atanabilir. Alarmlar her iki takıma da yönlendirilebilir.
+- Her sertifika **tek bir takıma** atanır (eski SY/UG ikili takım modeli kaldırılmıştır).
+- Takım–müdür ilişkisi AD provizyonunda kurulur: üyenin `manager` alanı → müdür; müdür bulununca o takıma **otomatik olarak MANAGER eskalasyon kontağı** (min. seviye HIGH) eklenir.
+- PO bir takıma atandığında, takımın lideri yoksa **otomatik takım lideri** olur (mevcut lider ezilmez).
 
 ### 11.4 Yetki Matrisi (Detaylı)
 
-| İşlev | ADMIN | AUDIT | USER |
-|---|---|---|---|
-| Dashboard görüntüleme | ✓ | ✓ | ✓ (takım bazlı) |
-| Sertifika detayı görme | ✓ | ✓ | ✓ (takım bazlı) |
-| "Şimdi Kontrol Et" | ✓ | ✗ | ✗ |
-| Domain Inventory | ✓ | ✗ | ✗ |
-| Alarm Geçmişi | ✓ | ✓ | ✗ |
-| Alarm Onaylama | ✓ | ✗ | ✗ |
-| Yeniden Bildir | ✓ | ✗ | ✗ |
-| Çözüldü İşaretle | ✓ | ✗ | ✗ |
-| Eskalasyon Kişileri | ✓ | ✗ | ✗ |
-| Alarm Eşikleri | ✓ | ✗ | ✗ |
-| Takım Yönetimi | ✓ | ✗ | ✗ |
-| Kullanıcı Yönetimi | ✓ | ✗ | ✗ |
-| Audit Log | ✓ | ✓ | ✗ |
-| Sistem Sağlığı | ✓ | ✗ | ✗ |
-| Zayıf Algoritma Raporu | ✓ | ✓ | ✗ |
+Aşağıdaki varsayılanlar **Yetki (Permissions) ekranından** rol bazında düzenlenebilir (ADMIN her zaman tam yetkilidir ve kilitlidir). Müdür/PO kapsamı (hangi takımlar) AD ilişkilerinden gelir.
+
+| İşlev | ADMIN | TEAM_ADMIN (PO) | USER | AUDIT |
+|---|---|---|---|---|
+| Dashboard / sertifika görüntüleme | ✓ | ✓ (kapsam) | ✓ (kendi takımı) | ✓ (tümü) |
+| "Şimdi Kontrol Et" / canlı tarama | ✓ | ✗ | ✗ | ✗ |
+| Domain Envanteri (CRUD) | ✓ | ✓ (kapsam) | ✗ (okuma) | ✗ (okuma) |
+| Alarm onay / yeniden bildir / çözüldü | ✓ | ✓ (kapsam) | ✓ (kendi takımı) | ✗ |
+| Eskalasyon kişileri (CRUD) | ✓ | ✓ (kapsam) | ✗ (okuma) | ✗ (okuma) |
+| Alarm eşikleri | ✓ | ✗ | ✗ (okuma) | ✗ (okuma) |
+| Takım / kullanıcı yönetimi | ✓ | ✓ (kapsam) | ✗ (okuma) | ✗ (okuma) |
+| Haftalık raporlar (yaz/düzenle) | ✓ | ✓ | ✓ (kendi takımı) | ✗ (okuma) |
+| Haftalık rapor **onay** | ✓ | ✓ (PO) | ✗ | ✗ |
+| İzleme (uptime/port/dns) yapılandırma | ✓ | ✗ (okuma) | ✗ (okuma) | ✗ (okuma) |
+| Denetim Günlüğü | ✓ | ✓ (kapsam) | ✗ | ✓ |
+| Yetki Matrisi / SQL Playground / Sistem Denetimi | ✓ (yalnız global) | ✗ | ✗ | ✗ |
+| LDAP / SMTP Ayarları | ✓ (yalnız `admin`) | ✗ | ✗ | ✗ |
 
 ---
 
@@ -968,7 +1003,7 @@ Her sertifika bir SY ve bir UG takımına atanabilir. Alarmlar her iki takıma d
 | Detaylı sertifika sayıları (toplam/geçerli/uyarı/hata/süresi dolmuş) |
 | **Tier Dağılım Grafiği**: Tier 1-4 ve sınıflandırılmamış pasta grafiği |
 | **Takım Bazlı Dağılım**: Her takım için geçerli/uyarı/hata sayıları |
-| SY ve UG ayrımında takım istatistikleri |
+| Takım kırılımı (kapsamlı rollerde yalnız erişilen takımlar) |
 
 **Aksiyonlar:**
 
@@ -1027,12 +1062,13 @@ Her sertifika için öncelik sıralamalı Türkçe aksiyon önerileri:
 |---|
 | Domain + Port |
 | Tier (rozet: Tier 1-4 / Sınıflandırılmamış) |
-| SY Takımı |
-| UG Takımı |
+| Takım |
 | Sahip |
 | Açıklama |
 | Aktif Durumu |
 | Aksiyonlar (Düzenle / Devret / Sil / Geri Yükle) |
+
+> **Kapsam:** Global admin tüm envanteri görür ve yönetir. PO/TEAM_ADMIN yalnız liderlik ettiği takımların domain'lerini görür+yönetir; müdür (kapsamlı ADMIN) astlarının takımlarını **salt-okuma** görür; USER/AUDIT salt-okuma.
 
 **Aksiyon: Yeni Domain Ekle**
 
@@ -1044,8 +1080,7 @@ Modal 5 bölümden oluşur:
 |---|---|---|
 | Domain | ✓ | FQDN (ör. api.example.com) |
 | Port | ✓ | Varsayılan: 443 |
-| SY Takımı | ✓ | Servis yönetim takımı |
-| UG Takımı | ✓ | Uygulama geliştirici takımı |
+| Takım | ✓ | Sorumlu takım (alarm/bildirim yönlendirmesi) |
 | Tier | ✗ | 1: Müşteri hizmetleri prod / 2: İç prod / 3: UAT / 4: Dev |
 | Sahip | ✗ | Sorumlu kişi/birim |
 | Aktif | ✓ | Sertifika izlensin mi |
@@ -1065,7 +1100,6 @@ Modal 5 bölümden oluşur:
 | WAF Aktif | Web Application Firewall aktif mi |
 | Kullanımda | Bu sertifika aktif olarak kullanılıyor mu |
 | EV Sertifikası | Extended Validation sertifikası mı |
-| SY'ye Devredildi | SY takımına devir tamamlandı mı |
 
 **Bölüm 3 — Süreç Bilgisi**
 
@@ -1078,7 +1112,7 @@ Modal 5 bölümden oluşur:
 | Alan | Açıklama |
 |---|---|
 | Açıklama | Genel serbest metin açıklaması |
-| Değişiklik Açıklaması | Süreç notu (SY takım devir süreci vb.) |
+| Değişiklik Açıklaması | Süreç notu (devir/yenileme süreci vb.) |
 
 **Bölüm 5 — Gelişmiş**
 
@@ -1098,15 +1132,10 @@ Modal 5 bölümden oluşur:
 - Silinen satırda "Geri Yükle" butonuna tıklanır
 - `deleted_at = null`, `active = true` yapılır
 
-**Aksiyon: Devret (SY Takımı)**
-- Sertifikayı başka bir SY takımına aktar
-- Dropdown'da yalnızca SY tipi takımlar listelenir
-- Mevcut SY takımı seçili gelir
-
-**Aksiyon: Devret (UG Takımı)**
-- Sertifikayı başka bir UG takımına aktar
-- Dropdown'da yalnızca UG tipi takımlar listelenir
-- Mevcut UG takımı seçili gelir
+**Aksiyon: Devret (Takım)**
+- Sertifikayı başka bir takıma aktar
+- Dropdown'da tüm takımlar listelenir; mevcut takım seçili gelir
+- Yalnız global admin için açık global işlemdir
 
 **Toggle: Silinenleri Göster/Gizle**
 - Silinmiş sertifikaları tabloda göster veya gizle
@@ -1232,13 +1261,15 @@ CRITICAL→ PO + Technical Team + Manager + C-Level
 
 **Tablo Kolonları:**
 
-| Kolon |
+Takımlar **kart görünümünde** listelenir; her kartta takım adı, e-posta, lider (PO), müdür ve üye sayısı/org rolleri gösterilir (eski SY/UG takım türü kaldırılmıştır).
+
+| Kart Bilgisi |
 |---|
-| Takım Adı + Üye genişletme butonu |
-| Takım Türü (SY / UG rozeti) |
+| Takım Adı |
 | E-posta |
-| Lider |
-| Açıklama |
+| Lider (PO) |
+| Müdür (AD `manager` ilişkisinden) |
+| Üyeler + org rolleri (renkli rozet) |
 | Aktif Durumu |
 | Aksiyonlar |
 
@@ -1247,15 +1278,16 @@ CRITICAL→ PO + Technical Team + Manager + C-Level
 | Alan | Zorunlu | Açıklama |
 |---|---|---|
 | Takım Adı | ✓ | Benzersiz olmalı |
-| Takım Türü | ✓ | SY — Servis Yönetimi / UG — Uygulama Geliştirici |
 | E-posta | ✓ | Takım iletişim e-postası |
-| Lider | ✓ | Sistemdeki aktif kullanıcılardan seç |
+| Lider | ✗ | Sistemdeki aktif kullanıcılardan seç (PO atanınca otomatik dolabilir) |
 | Açıklama | ✗ | Takım hakkında not |
 | Aktif | ✓ | Takım aktif mi |
 
 **Aksiyon: Düzenle** — Tüm alanları güncelle (başarılı kayıt sonrası modal 1.8s içinde kapanır)  
 **Aksiyon: Sil** — Sertifika ataması yoksa silinebilir, onay diyaloğu gösterilir  
-**Aksiyon: Üyeleri Genişlet** — Takım adının yanındaki ▶ butonuyla üyeler listelenir, org rolleri renkli görünür
+**Aksiyon: Üyeleri Görüntüle** — Kart üzerinden üyeler listelenir, org rolleri renkli görünür
+
+> **Otomatik lider:** Bir kullanıcı PO olarak takıma atandığında, takımın lideri yoksa otomatik lider olur; mevcut lider **ezilmez**. Müdür–takım ilişkisi kurulunca takıma otomatik MANAGER eskalasyon kontağı eklenir.
 
 ---
 
@@ -1271,9 +1303,11 @@ CRITICAL→ PO + Technical Team + Manager + C-Level
 | Sicil No |
 | Ad Soyad |
 | E-posta |
+| Kaynak (Yerel / LDAP) |
 | Sistem Rolü (rozet) |
 | Org Rolü (renkli rozet) |
 | Takım |
+| Müdür |
 | Aktif Durumu |
 | Kilit Durumu (🔒 kalıcı kilitliyse) |
 | Aksiyonlar |
@@ -1283,19 +1317,22 @@ CRITICAL→ PO + Technical Team + Manager + C-Level
 | Alan | Zorunlu | Açıklama |
 |---|---|---|
 | Kullanıcı Adı | ✓ | Benzersiz, sonradan değiştirilemez |
-| Şifre | ✓ | Min. 4 karakter |
+| Şifre | ✓ | Min. 4 karakter (yerel hesaplar için) |
 | Ad Soyad | ✓ | Görünen ad |
 | E-posta | ✓ | İletişim e-postası |
 | Sicil No | ✗ | Kurum kimlik numarası |
 | Sistem Rolü | ✓ | USER / AUDIT / ADMIN |
 | Org Rolü | ✗ | TECH / PO / MANAGER / C-LEVEL |
 | Takım | ✓ | Hangi takıma atanacak |
+| Müdür | ✗ | Üst yönetici (kapsam/eskalasyon için) |
 | Aktif | ✓ | Hesap aktif mi |
 
-**Aksiyon: Düzenle** — Kullanıcı adı dışında tüm alanları güncelle  
-**Aksiyon: Şifre Değiştir** — Ayrı modal, yeni şifre girişi  
+**Aksiyon: Düzenle** — Kullanıcı adı dışında tüm alanları güncelle (AD'den gelen kullanıcılarda da org rol/takım/müdür düzenlenip kaydedilebilir; bir sonraki AD girişinde provizyon yeniden uygulanabilir)  
+**Aksiyon: Şifre Değiştir** — Ayrı modal, yeni şifre girişi (yerel hesaplar)  
 **Aksiyon: Kilidi Aç** — Kalıcı kilitli hesabı serbest bırak  
 **Aksiyon: Sil** — Onay sonrası kullanıcıyı sil
+
+> **Not:** LDAP/AD kaynaklı kullanıcılar ilk girişte otomatik oluşur; org rol, müdür ve takım ilişkisi AD özniteliklerinden türetilir (bkz. §3.1, §10.1). Sistem rolü ADMIN/AUDIT için manuel atama korunur (provizyon bunu düşürmez).
 
 ---
 
@@ -1438,6 +1475,83 @@ SHA-1 imzalı, RSA-1024, RC4 gibi güvensiz algoritma kullanan sertifikaları li
 
 ---
 
+### 12.18 Haftalık Raporlar Ekranı
+
+**Erişim:** Üst menü → Haftalık Raporlar
+
+Takımların haftalık operasyon raporlarını yazdığı, izlediği ve PO'nun onayladığı ekran.
+
+| Bölüm |
+|---|
+| Hafta seçimi (geçerli/geçmiş haftalar) |
+| Bölüm 1 — Olay özeti (acil / yüksek olay sayıları) |
+| Bölüm 2 — Açık olay & problemler, planlı işler (☑/☐ liste) |
+| Durum (Taslak / Gönderildi / Onaylandı / İade) |
+
+**Aksiyonlar:**
+- **Gönder** — raporu PO onayına gönderir; PO'ya HTML e-posta ile bildirim/onay bağlantısı gider
+- **PO Onayı** — PO doğrudan ekrandan veya **e-postadaki bağlantıdan tek tıkla** onaylar/iade eder
+- **Transfer** — rapor başka bir takıma devredilebilir
+- **Cuma hatırlatması** — bekleyen raporlar için otomatik hatırlatma e-postası
+
+> Kapsam: USER kendi takımının raporunu yazar; PO/TEAM_ADMIN liderlik ettiği takımların raporlarını görür ve onaylar; global admin tümünü görür.
+
+---
+
+### 12.19 İzleme Ekranı (Monitoring)
+
+**Erişim:** Üst menü → İzleme
+
+Sertifika dışı erişilebilirlik izlemesi (sertifika sweep'inden bağımsız).
+
+| İzleme Tipi | Ölçülen |
+|---|---|
+| Uptime (HTTP) | Statü kodu + yanıt süresi |
+| Port (TCP/UDP) | Açık/kapalı + bağlantı süresi |
+| DNS | A/AAAA/CNAME/MX/TXT kayıt değişimi (`CHANGED` / `ROTATED`) |
+
+**Alarm tipleri:** `ACCESSIBILITY` (erişilemiyor), `PORT_DOWN`, `DNS_FAILURE`, `DNS_CHANGED`. Kesinti teyidi `MonitoringOutageService` ile birkaç ardışık başarısız kontrol sonrası verilir (tek seferlik dalgalanma alarm üretmez).
+
+> Yapılandırma (hedef ekleme/düzenleme) yalnız global admin'e açıktır; diğer roller salt-okuma görür.
+
+---
+
+### 12.20 Ayarlar Ekranı (yalnız `admin`)
+
+**Erişim:** Üst menü → Ayarlar (yalnız yerel `admin` hesabı)
+
+**LDAP / Active Directory:**
+- Sunucu URL, base DN, bind DN/parolası (AES-GCM şifreli), kullanıcı/öznitelik eşlemeleri
+- **Bağlantı testi** ve **öznitelik görüntüleyici** (bir kullanıcının AD özniteliklerini canlı görüntüleme)
+
+**SMTP / E-posta:**
+- Sunucu/port/STARTTLS, kullanıcı adı/parola, gönderen adresi
+- Test e-postası gönderimi
+
+---
+
+### 12.21 SQL Playground Ekranı (yalnız global admin)
+
+**Erişim:** Üst menü → SQL Playground
+
+- Salt-okuma (SELECT) sorgu konsolu — yazma sorguları reddedilir
+- Sonuç tablosu + sorgu geçmişi (gece otomatik temizlenir)
+- Yalnız global admin erişebilir (denetim altında)
+
+---
+
+### 12.22 Yetki (Permissions) Ekranı (yalnız global admin)
+
+**Erişim:** Admin Panel → Yetki sekmesi
+
+- Rol bazında (TEAM_ADMIN / USER / AUDIT) **view / edit / execute** izinlerini açıp kapatan matris
+- ADMIN sütunu tam yetkili ve **kilitlidir**
+- Kaynaklar gruplara ayrılır: sertifikalar, iletişim, yönetim, alarmlar, izleme, günlükler, raporlar, araçlar
+- Hassas işlemler için onay diyaloğu; **"Varsayılanlara Dön"** ile rol varsayılanlarına sıfırlama
+- Ekranın üstündeki bilgi paneli güncel rol modelini (ADMIN / Müdür / TEAM_ADMIN-PO / USER / AUDIT ve kapsam mantığı) özetler
+
+---
+
 ## 13. Operasyonel Prosedürler
 
 ### 13.1 Yeni Domain Nasıl Eklenir
@@ -1447,8 +1561,7 @@ SHA-1 imzalı, RSA-1024, RC4 gibi güvensiz algoritma kullanan sertifikaları li
 3. **Temel Bilgiler** bölümünde:
    - Domain adını gir (ör. `api.example.com`)
    - Port'u gir (çoğunlukla `443`)
-   - SY Takımını seç (altyapı sorumlusu)
-   - UG Takımını seç (uygulama sorumlusu)
+   - Sorumlu Takımı seç (alarm/bildirim bu takıma yönlendirilir)
    - Tier seç (Tier 1 = müşteriye dönük production)
 4. **Operasyonel Bayraklar** bölümünü doldu
 5. **Kaydet** butonuna bas
@@ -1497,8 +1610,7 @@ SHA-1 imzalı, RSA-1024, RC4 gibi güvensiz algoritma kullanan sertifikaları li
 
 **Adım 2 — Takımı Oluştur:**
 - Admin Panel → Takım Yönetimi → Yeni Takım Ekle
-- Takım türünü seç: SY (altyapı) veya UG (uygulama)
-- Takım liderini ata
+- Takım liderini (PO) ata
 - Takım e-postasını gir
 
 **Adım 3 — Kullanıcıları Takıma Ata:**
@@ -1510,14 +1622,14 @@ SHA-1 imzalı, RSA-1024, RC4 gibi güvensiz algoritma kullanan sertifikaları li
 - İsteğe bağlı Slack/Teams webhook ekle
 
 **Adım 5 — Sertifikaları Takıma Ata:**
-- Domain Inventory → Düzenle → SY Takımı ve UG Takımı seç
+- Domain Inventory → Düzenle → Sorumlu Takımı seç
 
 ---
 
 ### 13.5 Eskalasyon Kişisi Nasıl Tanımlanır
 
 ```
-Senaryo: SY takımı için eskalasyon ayarla
+Senaryo: Bir takım için eskalasyon ayarla
 
 PO (Ürün Sahibi):
   Min Seviye: WARNING → Her alarm türünde haberdar olur
@@ -1748,19 +1860,38 @@ Birden fazla pod aynı anda tarama yapmaz. DB tabanlı kilit (TTL: 10 dk) yalnı
 
 | Bilgi | Değer |
 |---|---|
-| Güncel Versiyon | 18.50.x |
+| Güncel Versiyon | 18.83.x |
 | Java Versiyonu | 25 (LTS) |
-| Spring Boot | 4.1.0 |
+| Spring Boot | 4.1.0 (Spring Framework 7, Jakarta EE 11) |
 | BouncyCastle | 1.78.1 |
 | React / Vite | 18.3 / 5.4 |
 | PostgreSQL | 16-alpine |
 | Docker Image | `ghcr.io/inanmise/certmonitor` |
 | Helm Chart | `ghcr.io/inanmise/certmonitor-chart` |
-| Backend Test Sayısı | 539 |
+| Backend Test Sayısı | 835 |
 | Frontend Test Sayısı | 121 |
 | Desteklenen Diller | Türkçe / İngilizce |
 | Lisans | Kurumsal kullanım |
 | Geliştirici | inanmise (erdi.inanmis@gmail.com) |
+
+### Platform Yükseltmesi — JDK 25 + Spring Boot 4.1 (Haziran 2026)
+
+- **Çalışma zamanı:** Java 21 → **25 (LTS)**; Spring Boot 3.3.6 → **4.1.0** (Spring Framework 7, Jakarta EE 11, Hibernate 7, Tomcat 11). JDK 25 desteği için Spring Boot major yükseltmesi zorunluydu.
+- **Jackson 2 → Jackson 3** (`tools.jackson`): SNAKE_CASE API sözleşmesi korundu (controller JSON testleriyle doğrulandı); tarih özellikleri `spring.jackson.datatype.datetime.*` altına taşındı.
+- **Test çerçevesi (SB4):** `@MockBean` → `@MockitoBean`, modüler test starter'ları (`webmvc-test`, `data-jpa-test`); `@WebMvcTest` cache döngüsü için `@EnableCaching` ayrı config'e; EMF dairesel bağımlılığı `@Lazy` ile kırıldı.
+- **Araç zinciri:** JaCoCo 0.8.14 (JDK 25 bytecode), Lombok 1.18.42 + `annotationProcessorPaths` (JDK 23+ artık classpath'ten processor keşfetmiyor); Docker/CI Eclipse Temurin 25.
+- **Doğrulama:** 835 backend + 145 frontend test JDK 25'te yeşil; performans denetiminde upgrade kaynaklı leak/bug bulunmadı (yalnız bir mapper yeniden-kullanım iyileştirmesi).
+- **Operasyonel not:** Spring Session 4 oturum şeması değişmiş olabilir → ilk deploy'da kullanıcılar bir kez yeniden login olabilir; Hibernate 7 `ddl-auto=update` ilk açılışta izlenmeli.
+
+### 18.83.x Sürüm Vurguları (Haziran 2026)
+
+- **Kimlik & Provizyon:** LDAP/Active Directory ile giriş; ilk girişte otomatik provizyon (orgRole, müdür ilişkisi, takım). Bind parolası AES-GCM şifreli; Ayarlardan bağlantı testi + öznitelik görüntüleyici.
+- **Rol modeli (Faz 3b):** Çok-takım yetki kapsamı — müdür = kapsamlı **salt-okuma** ADMIN (astlarının takımları), PO = TEAM_ADMIN (liderlik ettiği takımlar, görüntüleme+yönetim). Oturuma `viewTeamIds`/`manageTeamIds` kapsamları yazılır; global-only işlemler yalnız global admin'e açık.
+- **Tek takım modeli:** Eski SY/UG ikili takım yapısı kaldırıldı; her sertifika tek takıma atanır. Takım yönetimi kart görünümüne geçti (lider/müdür/üyeler).
+- **Haftalık Raporlar:** Takım operasyon raporları + PO **e-posta bağlantısıyla onay**, cuma hatırlatması, takımlar arası transfer.
+- **İzleme:** Uptime/port/DNS izleme + `ACCESSIBILITY`/`PORT_DOWN`/`DNS_FAILURE`/`DNS_CHANGED` alarmları; `MonitoringOutageService` ardışık-başarısızlık teyidi.
+- **Yetki Matrisi:** Rol bazlı view/edit/execute izin ekranı (ADMIN kilitli) + güncel rol modeli bilgi paneli; SQL Playground salt-okuma konsolu (yalnız global admin).
+- **Sağlamlaştırma:** Uçtan uca performans/kilit/sızıntı denetimi; backend test sayısı **539 → 829**'a çıkarıldı (e-posta/SMTP builder, LDAP, SQL, eskalasyon N+1, zayıf-algoritma kapsamı).
 
 ### 18.50.x Sürüm Vurguları (Haziran 2026)
 
@@ -1785,5 +1916,5 @@ Birden fazla pod aynı anda tarama yapmaz. DB tabanlı kilit (TTL: 10 dk) yalnı
 
 ---
 
-*Bu belge CertMonitor v10.8.x için Mayıs 2026 itibarıyla hazırlanmıştır.*  
+*Bu belge CertMonitor v18.83.x için Haziran 2026 itibarıyla hazırlanmıştır.*  
 *Güncellemeler için: "raporu güncelle" komutu ile belge yenilenebilir.*
