@@ -92,6 +92,11 @@ public class SmtpSettingsService {
         return cached != null;
     }
 
+    /** Gerçek bir şifreleme anahtarı (CERT_MONITOR_SECRET_KEY) ayarlı mı — UI uyarısı için. */
+    public boolean isSecretKeyConfigured() {
+        return cipher.isKeyConfigured();
+    }
+
     /** True when an effective password exists (stored row, or live env password). */
     public boolean isPasswordSet() {
         if (cached != null && cached.getPasswordEnc() != null && !cached.getPasswordEnc().isBlank()) {

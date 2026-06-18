@@ -72,6 +72,11 @@ public class LdapSettingsService {
         return cached != null;
     }
 
+    /** Gerçek bir şifreleme anahtarı (CERT_MONITOR_SECRET_KEY) ayarlı mı — UI uyarısı için. */
+    public boolean isSecretKeyConfigured() {
+        return cipher.isKeyConfigured();
+    }
+
     /** Decrypted service-account password for the current configuration (null if unset). */
     public String decryptedBindPassword() {
         LdapSettings s = getOrDefaults();

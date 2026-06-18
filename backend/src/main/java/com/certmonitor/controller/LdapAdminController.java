@@ -44,7 +44,8 @@ public class LdapAdminController {
         LdapSettings s = settingsService.getOrDefaults();
         return ok(Map.of(
                 "data", settingsService.toClientMap(s),
-                "configured", settingsService.isConfigured()));
+                "configured", settingsService.isConfigured(),
+                "secret_key_set", settingsService.isSecretKeyConfigured()));
     }
 
     @PutMapping("/settings")

@@ -3,12 +3,14 @@ import { useT } from '../../i18n/index.jsx'
 import SmtpSettings from './SmtpSettings'
 import LdapSettings from './LdapSettings'
 import GeneralSettings from './GeneralSettings'
+import SecretTools from './SecretTools'
 
 // Left-menu sections. More land in later phases.
 const SECTIONS = [
   { id: 'general', labelKey: 'settings.navGeneral' },
   { id: 'smtp', labelKey: 'settings.navSmtp' },
   { id: 'ldap', labelKey: 'settings.navLdap' },
+  { id: 'secrets', labelKey: 'settings.navSecrets' },
 ]
 
 export default function AdminSettings() {
@@ -34,6 +36,7 @@ export default function AdminSettings() {
         {active === 'general' && <GeneralSettings />}
         {active === 'smtp' && <SmtpSettings />}
         {active === 'ldap' && <LdapSettings />}
+        {active === 'secrets' && <SecretTools />}
       </section>
     </div>
   )

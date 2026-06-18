@@ -3,6 +3,7 @@ import { Loader2, Search, Plus, Trash2 } from 'lucide-react'
 import { api } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
 import { useToast } from '../ui/Toast.jsx'
+import SecretKeyWarning from './SecretKeyWarning.jsx'
 
 // Role values match AppUser.systemRole tokens (used when provisioning is wired in a later phase).
 const ROLES = ['ADMIN', 'TEAM_ADMIN', 'USER', 'AUDIT']
@@ -21,6 +22,7 @@ export default function LdapSettings() {
   const [queryAttr, setQueryAttr] = useState('') // '' = configured userAttribute
   const [querying, setQuerying] = useState(false)
   const [queryResult, setQueryResult] = useState(null)
+  const [secretKeySet, setSecretKeySet] = useState(true)
 
   useEffect(() => { load() }, [])
 
@@ -28,6 +30,7 @@ export default function LdapSettings() {
     const res = await api.admin.getLdapSettings()
     if (res?.success) {
       setForm({ ...res.data, role_mappings: res.data.role_mappings || [] })
+      setSecretKeySet(res.secret_key_set !== false)
     } else {
       toast.error(res?.error || t('settings.loadError'))
     }
@@ -90,6 +93,7 @@ export default function LdapSettings() {
 
   return (
     <div className="ldap-settings">
+      {!secretKeySet && <SecretKeyWarning />}
       {/* Header */}
       <div className="admin-section">
         <h3>{t('ldap.title')}</h3>

@@ -34,13 +34,27 @@ public class SecretCipher {
 
     private final SecureRandom random = new SecureRandom();
     private SecretKeySpec key;
+    private volatile boolean keyConfigured;
 
     @Value("${cert.monitor.secret-key:}")
     private String configuredKey;
 
+    /** true = gerçek bir CERT_MONITOR_SECRET_KEY ayarlı; false = güvensiz DEV varsayılanı kullanılıyor.
+     *  UI, gerçek parola kaydetmeden önce admin'i uyarmak için bunu kullanır. */
+    public boolean isKeyConfigured() {
+        return keyConfigured;
+    }
+
+    /** Anahtar ayarlı değilken kullanılan gömülü DEV varsayılan anahtarı. Gizli değil (kaynak kodda
+     *  sabit); admin "kayıtlı parolalar bununla mı şifrelenmiş?" testi yapabilsin diye UI'da gösterilir. */
+    public String devDefaultKey() {
+        return DEV_DEFAULT;
+    }
+
     @PostConstruct
     void init() {
-        String material = (configuredKey == null || configuredKey.isBlank()) ? DEV_DEFAULT : configuredKey;
+        this.keyConfigured = !(configuredKey == null || configuredKey.isBlank());
+        String material = keyConfigured ? configuredKey : DEV_DEFAULT;
         if (material.equals(DEV_DEFAULT)) {
             log.warn("SecretCipher: cert.monitor.secret-key not set — using insecure DEV default. "
                     + "Set CERT_MONITOR_SECRET_KEY (stable across pods) before storing real secrets.");
@@ -89,6 +103,30 @@ public class SecretCipher {
             return new String(pt, StandardCharsets.UTF_8);
         } catch (Exception e) {
             log.warn("SecretCipher: decrypt failed (wrong key or corrupt value?): {}", e.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * Verilen anahtar MATERYALİYLE (yapılandırılmış anahtar değil) çözer — admin'in anahtar
+     * kurtarma/doğrulama aracı için. Yanlış anahtar (GCM doğrulaması düşer) / bozuk / şifreli-olmayan
+     * değer → null. Loglama YOK (anahtar/plaintext sızdırmamak için).
+     */
+    public String decryptWith(String stored, String keyMaterial) {
+        if (stored == null || stored.isBlank() || !stored.startsWith(PREFIX)) return null;
+        if (keyMaterial == null || keyMaterial.isBlank()) return null;
+        try {
+            byte[] digest = MessageDigest.getInstance("SHA-256")
+                    .digest(keyMaterial.getBytes(StandardCharsets.UTF_8));
+            SecretKeySpec k = new SecretKeySpec(digest, "AES");
+            byte[] all = Base64.getDecoder().decode(stored.substring(PREFIX.length()));
+            byte[] iv = new byte[IV_LEN];
+            System.arraycopy(all, 0, iv, 0, IV_LEN);
+            Cipher c = Cipher.getInstance("AES/GCM/NoPadding");
+            c.init(Cipher.DECRYPT_MODE, k, new GCMParameterSpec(TAG_BITS, iv));
+            byte[] pt = c.doFinal(all, IV_LEN, all.length - IV_LEN);
+            return new String(pt, StandardCharsets.UTF_8);
+        } catch (Exception e) {
             return null;
         }
     }
