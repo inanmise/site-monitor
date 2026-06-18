@@ -3,6 +3,7 @@ import { Loader2, Send, PlugZap } from 'lucide-react'
 import { api } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
 import { useToast } from '../ui/Toast.jsx'
+import SecretKeyWarning from './SecretKeyWarning.jsx'
 
 export default function SmtpSettings() {
   const t = useT()
@@ -16,12 +17,13 @@ export default function SmtpSettings() {
   const [recipient, setRecipient] = useState('')
   const [sending, setSending] = useState(false)
   const [sendResult, setSendResult] = useState(null)
+  const [secretKeySet, setSecretKeySet] = useState(true)
 
   useEffect(() => { load() }, [])
 
   async function load() {
     const res = await api.admin.getSmtpSettings()
-    if (res?.success) setForm({ ...res.data })
+    if (res?.success) { setForm({ ...res.data }); setSecretKeySet(res.secret_key_set !== false) }
     else toast.error(res?.error || t('settings.loadError'))
   }
 
@@ -76,6 +78,7 @@ export default function SmtpSettings() {
 
   return (
     <div className="smtp-settings">
+      {!secretKeySet && <SecretKeyWarning />}
       {/* Header */}
       <div className="admin-section">
         <h3>{t('smtp.title')}</h3>

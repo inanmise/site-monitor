@@ -82,6 +82,11 @@ export default function GeneralSettings() {
     byGroup[it.group].push(it)
   }
 
+  // APP_BASE_URL hâlâ localhost ise (sıfır kurulum) e-posta linkleri çalışmaz → uyar
+  const baseItem = items.find((i) => i.key === 'cert.monitor.app.base-url')
+  const baseVal = baseItem ? (edited[baseItem.key] ?? baseItem.value ?? '') : ''
+  const baseLocal = /localhost|127\.0\.0\.1/i.test(String(baseVal))
+
   return (
     <div className="ldap-settings">
       <div className="admin-section">
@@ -89,6 +94,8 @@ export default function GeneralSettings() {
         <p className="section-desc">{t('general.desc')}</p>
         <p className="ldap-meta">{t('general.liveHint')}</p>
       </div>
+
+      {baseLocal && <div className="settings-warn">{t('general.baseUrlWarn')}</div>}
 
       {order.map((g) => (
         <div className="admin-section" key={g}>

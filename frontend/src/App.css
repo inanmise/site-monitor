@@ -7992,6 +7992,11 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
   padding-bottom: 6px; border-bottom: 1px solid var(--border);
 }
 .ldap-meta { font-size: .8em; color: var(--text-light); margin-top: 4px; }
+/* Ayarlar uyarı banner'ı (secret-key yok / APP_BASE_URL localhost) — amber */
+.settings-warn { display: flex; align-items: flex-start; gap: 8px; margin: 0 0 16px;
+  padding: 11px 14px; border-radius: 8px; background: #fffbeb; border: 1px solid #fcd34d;
+  color: #92400e; font-size: .88em; font-weight: 600; line-height: 1.5; }
+[data-theme="dark"] .settings-warn { background: #3a2e10; border-color: #a16207; color: #fde68a; }
 
 /* Inputs / selects / textarea — dark-mode aware */
 .ldap-settings .threshold-field input,

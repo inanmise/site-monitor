@@ -244,6 +244,10 @@ export const api = {
     getGeneralSettings: () => request('/admin/general/settings'),
     saveGeneralSettings: (dto) => request('/admin/general/settings', { method: 'PUT', body: JSON.stringify(dto) }),
 
+    // Anahtar çözümleme aracı — verilen CERT_MONITOR_SECRET_KEY ile şifreli alanları çöz
+    secretToolsInfo: () => request('/admin/secret-tools/info'),
+    decryptSecrets: (key) => request('/admin/secret-tools/decrypt', { method: 'POST', body: JSON.stringify({ key }) }),
+
     // LDAP / Active Directory settings (admin-only Settings page)
     getLdapSettings: () => request('/admin/ldap/settings'),
     saveLdapSettings: (dto) => request('/admin/ldap/settings', { method: 'PUT', body: JSON.stringify(dto) }),
