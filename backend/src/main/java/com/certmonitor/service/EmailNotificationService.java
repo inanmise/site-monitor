@@ -1909,6 +1909,155 @@ public class EmailNotificationService {
             + "</td></tr></table></div>";
     }
 
+    /**
+     * Olay & Hata bildirimi — executive Outlook/Mac-safe şablon (table + bgcolor attr,
+     * inline stil; div shading'e güvenmez). Önem'e göre renklenen başlık, künye tablosu,
+     * RCA / iş etkisi / çözüm bölümleri ve olayı açma CTA'sı. {@code inc} = controller dto
+     * (snake_case alanlar). Mevcut buildWeeklyReportHtml deseniyle birebir uyumlu.
+     */
+    public String buildIncidentNotificationHtml(Map<String, Object> inc, String managerName,
+                                                String kind, String ctaUrl) {
+        boolean resolved = "RESOLVED".equals(kind);
+        boolean isNew = "NEW".equals(kind);
+        String sev = str(inc.get("severity"));
+        // Çözüldüde önem rengi yerine YEŞİL (iyi haber); aksi halde önem rengi.
+        String accent = resolved ? "#15803d" : switch (sev == null ? "" : sev) {
+            case "CRITICAL" -> "#b91c1c";
+            case "HIGH"     -> "#c2410c";
+            case "MEDIUM"   -> "#b45309";
+            case "LOW"      -> "#15803d";
+            default          -> "#1f3864";
+        };
+        String outerBg = "#f4f6f8";
+        String title = str(inc.get("title"));
+        String teamName = str(inc.get("team_name"));
+        String generatedAt = ZonedDateTime.now(IST).format(DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm"));
+        String eyebrow = resolved ? "CertMonitor — Olay Çözüldü ✓"
+                       : isNew    ? "CertMonitor — Yeni Olay Bildirimi"
+                                  : "CertMonitor — Olay Güncellendi";
+
+        StringBuilder facts = new StringBuilder()
+            .append(kvRow("Önem", sevBadgeText(sev)))
+            .append(kvRow("Durum", statusText(str(inc.get("status")))))
+            .append(kvRow("Takım", teamName))
+            .append(kvRow("Kanal", str(inc.get("channel"))))
+            .append(kvRow("Servis / Domain", str(inc.get("service"))))
+            .append(kvRow("Kategori", str(inc.get("category"))))
+            .append(kvRow("Oluş Zamanı", fmtOrDash(formatIstanbul(str(inc.get("occurred_at"))))))
+            .append(kvRow("Tespit Zamanı", fmtOrDash(formatIstanbul(str(inc.get("detected_at"))))))
+            .append(kvRow("Çözülme Zamanı", fmtOrDash(formatIstanbul(str(inc.get("resolved_at"))))));
+        if (inc.get("duration_minutes") != null) facts.append(kvRow("Süre", inc.get("duration_minutes") + " dk"));
+        if (Boolean.TRUE.equals(inc.get("sla_breached"))) facts.append(kvRow("SLA", "İHLAL EDİLDİ"));
+        if (inc.get("error_budget_burn_pct") != null) facts.append(kvRow("Error Budget Tüketimi", inc.get("error_budget_burn_pct") + "%"));
+
+        String factsTable = "<table width='100%' cellpadding='0' cellspacing='0' border='0' "
+            + "style='border-collapse:collapse'>" + facts + "</table>";
+
+        String cta = (ctaUrl != null && !ctaUrl.isBlank())
+            ? "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' style='margin:2px 0 18px'>"
+              + "<tr><td align='center'>" + ctaButton(ctaUrl, "Olay kaydını açmak için tıklayınız &rarr;", accent)
+              + "</td></tr></table>"
+            : "";
+
+        return "<!DOCTYPE html><html lang='tr'><head><meta charset='UTF-8'>"
+            + "<meta name='viewport' content='width=device-width,initial-scale=1,maximum-scale=1'>"
+            + "<style>body,table,td{-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%}"
+            + ".inc-md p{margin:0;font-size:14px;line-height:1.7;color:#1e293b}"
+            + "@media only screen and (max-width:870px){.em-wrap{padding:0!important}"
+            + ".em-card{border-radius:0!important;width:100%!important}.em-body{padding:14px!important}}</style></head>"
+            + "<body bgcolor='" + outerBg + "' style='margin:0;padding:0;background:" + outerBg
+            + ";font-family:\"Segoe UI\",Tahoma,Arial,sans-serif'>"
+            + "<table class='em-wrap' width='100%' cellpadding='0' cellspacing='0' border='0' bgcolor='" + outerBg
+            + "' style='background:" + outerBg + ";padding:24px 10px'><tr><td align='center' bgcolor='" + outerBg + "'>"
+            + "<table class='em-card' width='850' cellpadding='0' cellspacing='0' border='0' bgcolor='#ffffff' "
+            + "style='max-width:850px;width:100%;background:#ffffff;border:1px solid #d7dde5;border-radius:14px;"
+            + "overflow:hidden;box-shadow:0 8px 32px rgba(0,0,0,.10)'><tr><td bgcolor='#ffffff' style='padding:0'>"
+            // ── Başlık (önem rengi) ──
+            + "<table width='100%' cellpadding='0' cellspacing='0' border='0'><tr>"
+            + "<td bgcolor='" + accent + "' style='background:" + accent + ";padding:22px 24px'>"
+            + "<div style='color:#ffffff;opacity:.78;font-size:11px;font-weight:700;letter-spacing:.12em'>"
+            + escHtml(eyebrow) + "</div>"
+            + "<div style='color:#ffffff;font-size:21px;font-weight:900;margin-top:10px;line-height:1.3'>"
+            + escHtml(title) + "</div>"
+            + "<div style='color:#ffffff;opacity:.92;font-size:14px;font-weight:700;margin-top:8px'>"
+            + escHtml(sevBadgeText(sev)) + " &middot; " + escHtml(teamName) + "</div>"
+            + "</td></tr></table>"
+            // ── Gövde ──
+            + "<div class='em-body' style='background:#fff;padding:22px 24px'>"
+            + "<p style='font-size:15px;color:#0f172a;margin:0 0 6px'><strong>Sayın "
+            + escHtml(managerName != null && !managerName.isBlank() ? managerName : "Yetkili") + ",</strong></p>"
+            + "<p style='font-size:14px;color:#334155;line-height:1.7;margin:0 0 18px'>"
+            + (resolved ? "Ekibinize ait bir olay/hata kaydı <strong>çözüldü</strong>. Çözüm özeti aşağıdadır."
+                     : isNew ? "Ekibinize ait yeni bir olay/hata kaydı oluşturuldu. Yönetici özeti aşağıdadır."
+                     : "Ekibinize ait bir olay/hata kaydı güncellendi. Güncel yönetici özeti aşağıdadır.")
+            + "</p>"
+            + (resolved ? resolvedBanner(inc) : "")
+            + cta
+            + reportSection("Olay Künyesi", factsTable, accent)
+            + reportSection("Kök Neden (RCA)", textBlock(str(inc.get("rca_summary"))), accent)
+            + reportSection("İş Etkisi", textBlock(str(inc.get("business_impact"))), accent)
+            + reportSection("Çözüm / Müdahale Adımları", textBlock(str(inc.get("resolution_steps"))), accent)
+            + cta
+            // ── Footer ──
+            + "<table width='100%' cellpadding='0' cellspacing='0'><tr>"
+            + "<td valign='top' style='border-top:1px solid #f1f5f9;padding-top:12px;font-size:11px;color:#94a3b8'>"
+            + "CertMonitor — Olay & Hata Bildirimi</td>"
+            + "<td align='right' valign='top' style='border-top:1px solid #f1f5f9;padding-top:12px;font-size:11px;"
+            + "color:#94a3b8'>Oluşturuldu: " + generatedAt + "</td></tr></table>"
+            + "</div></td></tr></table></td></tr></table></body></html>";
+    }
+
+    /** Çözüldü banner'ı — yeşil başarı kutusu + çözülme zamanı/süre. */
+    private String resolvedBanner(Map<String, Object> inc) {
+        String resolvedAt = fmtOrDash(formatIstanbul(str(inc.get("resolved_at"))));
+        String dur = inc.get("duration_minutes") != null ? inc.get("duration_minutes") + " dk" : "—";
+        return "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' style='margin:0 0 16px'>"
+            + "<tr><td bgcolor='#ecfdf5' style='background:#ecfdf5;border:1px solid #a7f3d0;border-radius:10px;padding:14px 16px'>"
+            + "<div style='font-size:15px;font-weight:800;color:#065f46'>&#10003; Bu olay çözüldü</div>"
+            + "<div style='font-size:13px;color:#047857;margin-top:6px'>Çözülme: <strong>" + escHtml(resolvedAt)
+            + "</strong> &middot; Süre: <strong>" + escHtml(dur) + "</strong></div>"
+            + "</td></tr></table>";
+    }
+
+    /** Künye satırı (label/value) — Outlook-safe td+bgcolor. */
+    private String kvRow(String label, String value) {
+        String v = (value == null || value.isBlank()) ? "—" : escHtml(value);
+        return "<tr>"
+            + "<td bgcolor='#f8fafc' style='background:#f8fafc;border:1px solid #e2e8f0;padding:8px 12px;"
+            + "font-size:13px;font-weight:700;color:#475569;width:38%;vertical-align:top'>" + escHtml(label) + "</td>"
+            + "<td style='border:1px solid #e2e8f0;padding:8px 12px;font-size:13px;color:#0f172a;"
+            + "vertical-align:top;word-break:break-word'>" + v + "</td></tr>";
+    }
+
+    /** Markdown metin → e-posta-güvenli paragraf: görsel sözdizimini at, escape + satır sonu→&lt;br&gt;. */
+    private String textBlock(String md) {
+        if (md == null || md.isBlank()) return "";
+        String s = md.replaceAll("!\\[[^\\]]*\\]\\([^)]*\\)", "").trim();
+        if (s.isEmpty()) return "";
+        return "<p style='margin:0;font-size:14px;line-height:1.7;color:#1e293b'>"
+            + escHtml(s).replace("\n", "<br>") + "</p>";
+    }
+
+    private static String fmtOrDash(String s) { return (s == null || s.isBlank()) ? "—" : s; }
+
+    private static String sevBadgeText(String sev) {
+        if (sev == null) return "—";
+        return switch (sev) {
+            case "CRITICAL" -> "KRİTİK"; case "HIGH" -> "YÜKSEK";
+            case "MEDIUM"   -> "ORTA";   case "LOW"  -> "DÜŞÜK";
+            default -> sev;
+        };
+    }
+
+    private static String statusText(String st) {
+        if (st == null) return "—";
+        return switch (st) {
+            case "OPEN" -> "Açık"; case "INVESTIGATING" -> "İnceleniyor";
+            case "MITIGATED" -> "Hafifletildi"; case "RESOLVED" -> "Çözüldü";
+            default -> st;
+        };
+    }
+
     /** Sayı rozeti — tek tablo HÜCRESİ. E-posta-güvenli: inline-block/margin/
      *  border-radius/8-haneli-hex YOK (Outlook/Apple Mail bunları bozar). Düz
      *  açık zemin (bgcolor attribute) + tam renk kenarlık. numChipRow ile sarılır. */

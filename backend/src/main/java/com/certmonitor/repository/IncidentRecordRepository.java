@@ -28,6 +28,8 @@ public interface IncidentRecordRepository extends JpaRepository<IncidentRecord, 
                AND (:since    IS NULL OR i.occurredAt >= :since)
                AND (:until    IS NULL OR i.occurredAt <= :until)
                AND (:slaBreached IS NULL OR i.slaBreached = :slaBreached)
+               AND (:open IS NULL OR (:open = TRUE AND i.status <> 'RESOLVED')
+                                  OR (:open = FALSE AND i.status = 'RESOLVED'))
             """)
     Page<IncidentRecord> findFiltered(@Param("q") String q,
                                       @Param("severity") String severity,
@@ -38,6 +40,7 @@ public interface IncidentRecordRepository extends JpaRepository<IncidentRecord, 
                                       @Param("since") String since,
                                       @Param("until") String until,
                                       @Param("slaBreached") Boolean slaBreached,
+                                      @Param("open") Boolean open,
                                       Pageable pageable);
 
     /** Günlük olay sayısı (trend) — ISO string'in ilk 10 hanesi = gün. */

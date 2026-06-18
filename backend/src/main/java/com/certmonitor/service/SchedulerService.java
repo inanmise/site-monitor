@@ -284,6 +284,9 @@ public class SchedulerService {
         // Kanal kolonu + index (ddl-auto=update yeni kolonu ekler; güvenlik ağı + filtre index'i).
         patch("ALTER TABLE incident_records ADD COLUMN channel TEXT");
         patch("CREATE INDEX IF NOT EXISTS idx_inc_channel ON incident_records(channel)");
+        patch("ALTER TABLE incident_records ADD COLUMN team_id BIGINT");
+        patch("ALTER TABLE incident_records ADD COLUMN team_name TEXT");
+        patch("CREATE INDEX IF NOT EXISTS idx_inc_team ON incident_records(team_id)");
         // Yönetilen seçenekler (kanal/domain) — tablo ddl-auto ile oluşur; (type,value) unique güvenlik ağı.
         patch("CREATE UNIQUE INDEX IF NOT EXISTS uk_inc_opt_type_value ON incident_options(type, opt_value)");
         patch("CREATE INDEX IF NOT EXISTS idx_inc_opt_type ON incident_options(type)");

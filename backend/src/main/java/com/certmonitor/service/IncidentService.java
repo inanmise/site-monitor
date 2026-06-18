@@ -67,11 +67,11 @@ public class IncidentService {
 
     public Page<IncidentRecord> list(String q, String severity, String category, String status,
                                      String service, String channel, String since, String until,
-                                     Boolean slaBreached, Pageable pageable) {
+                                     Boolean slaBreached, Boolean open, Pageable pageable) {
         String like = (q != null && !q.isBlank()) ? "%" + q.trim().toLowerCase() + "%" : null;
         String svc  = (service != null && !service.isBlank()) ? "%" + service.trim().toLowerCase() + "%" : null;
         return repo.findFiltered(like, blankToNull(severity), blankToNull(category), blankToNull(status),
-                svc, blankToNull(channel), blankToNull(since), blankToNull(until), slaBreached, pageable);
+                svc, blankToNull(channel), blankToNull(since), blankToNull(until), slaBreached, open, pageable);
     }
 
     public IncidentRecord get(Long id) {
@@ -92,13 +92,15 @@ public class IncidentService {
         long critical = bySeverity.getOrDefault("CRITICAL", 0L);
         long sla      = repo.countSlaBreached(s, u);
         long open     = repo.countOpen(s, u);
+        long resolved = Math.max(0, total - open); // open = status<>RESOLVED → resolved = total - open
 
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("daily", daily);
         out.put("by_severity", bySeverity);
         out.put("by_category", byCategory);
         out.put("by_channel", byChannel);
-        out.put("summary", Map.of("total", total, "critical", critical, "sla_breached", sla, "open", open));
+        out.put("summary", Map.of("total", total, "critical", critical, "sla_breached", sla,
+                "open", open, "resolved", resolved));
         return out;
     }
 
@@ -135,6 +137,22 @@ public class IncidentService {
         IncidentRecord e = get(id);
         repo.delete(e);
         return e;
+    }
+
+    /** Toplu takım transferi — seçili olayların takımını (teamId+teamName) değiştirir. */
+    @Transactional
+    public int transfer(List<Long> ids, Long teamId, String teamName, String actor) {
+        if (ids == null || ids.isEmpty() || teamId == null) return 0;
+        List<IncidentRecord> recs = repo.findAllById(ids);
+        String ts = now();
+        for (IncidentRecord e : recs) {
+            e.setTeamId(teamId);
+            e.setTeamName(teamName);
+            e.setUpdatedAt(ts);
+            e.setUpdatedBy(actor);
+        }
+        repo.saveAll(recs);
+        return recs.size();
     }
 
     // ── Görseller (markdown alanlarına gömülür) ───────────────────────────────
@@ -257,6 +275,8 @@ public class IncidentService {
         if (body.containsKey("category") || create)         e.setCategory(reqEnum(body, "category", CATEGORIES, e.getCategory(), create));
         if (body.containsKey("service"))                    e.setService(str(body, "service"));
         if (body.containsKey("channel"))                    e.setChannel(str(body, "channel"));
+        if (body.containsKey("team_id"))                    e.setTeamId(toLong(body.get("team_id")));
+        if (body.containsKey("team_name"))                  e.setTeamName(str(body, "team_name"));
         if (body.containsKey("detected_at"))                e.setDetectedAt(str(body, "detected_at"));
         if (body.containsKey("resolved_at"))                e.setResolvedAt(str(body, "resolved_at"));
         if (body.containsKey("rca_summary"))                e.setRcaSummary(str(body, "rca_summary"));
@@ -321,5 +341,12 @@ public class IncidentService {
         if (v == null) return null;
         if (v instanceof Number n) return n.intValue();
         try { return Integer.parseInt(v.toString()); } catch (Exception e) { return null; }
+    }
+    private static Long toLong(Object v) {
+        if (v == null) return null;
+        if (v instanceof Number n) return n.longValue();
+        String s = v.toString().trim();
+        if (s.isEmpty()) return null;
+        try { return Long.parseLong(s); } catch (Exception e) { return null; }
     }
 }

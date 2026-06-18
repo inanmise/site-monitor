@@ -141,6 +141,7 @@ export const api = {
         if (params[k] != null && params[k] !== '') q.set(k, params[k])
       }
       if (params.slaBreached != null) q.set('sla_breached', params.slaBreached)
+      if (params.open != null) q.set('open', params.open)
       const qs = q.toString()
       return request(`/incidents${qs ? '?' + qs : ''}`)
     },
@@ -160,6 +161,9 @@ export const api = {
     create: (payload) => request('/incidents', { method: 'POST', body: JSON.stringify(payload) }),
     update: (id, payload) => request(`/incidents/${id}`, { method: 'PUT', body: JSON.stringify(payload) }),
     remove: (id) => request(`/incidents/${id}`, { method: 'DELETE' }),
+    transfer: (ids, teamId, teamName) => request('/incidents/transfer', {
+      method: 'POST', body: JSON.stringify({ ids, team_id: teamId, team_name: teamName }),
+    }),
     uploadImage: (id, file, caption) => {
       const form = new FormData()
       form.append('file', file)
