@@ -301,6 +301,12 @@ public class SchedulerService {
             )
             """);
         patch("CREATE UNIQUE INDEX IF NOT EXISTS ux_app_settings_key ON app_settings(setting_key)");
+        // USER artık kendi takımı için olay girer/düzenler — eski sistem-default'u (false) güncelle.
+        // Yalnız sistem tarafından tohumlanmış (admin'in elle kapatmadığı) satırı çevirir; silme (incidents.delete)
+        // TEAM_ADMIN/ADMIN'de kalır (seedMissingDefaults yeni resource'u doğru tohumlar).
+        patch("UPDATE permission_grants SET allowed = TRUE WHERE role = 'USER' "
+                + "AND resource_key = 'incidents.manage' AND action = 'edit' "
+                + "AND updated_by = 'system' AND allowed = FALSE");
     }
 
     /** Assigns any certs/contacts without a team to the first (default) team. */

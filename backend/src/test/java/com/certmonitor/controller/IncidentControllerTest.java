@@ -68,6 +68,24 @@ class IncidentControllerTest {
     }
 
     @Test
+    @DisplayName("DELETE: incidents.manage var ama incidents.delete yoksa → 403")
+    void delete_noDeletePerm_403() throws Exception {
+        when(permissionService.allows(any(jakarta.servlet.http.HttpSession.class), eq("incidents.manage"), eq("edit"))).thenReturn(true);
+        mvc.perform(delete("/api/incidents/1").session(adminSession()))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    @DisplayName("DELETE: incidents.delete varsa → 200")
+    void delete_withPerm_200() throws Exception {
+        when(permissionService.allows(any(jakarta.servlet.http.HttpSession.class), eq("incidents.delete"), eq("execute"))).thenReturn(true);
+        when(service.delete(1L)).thenReturn(sample());
+        mvc.perform(delete("/api/incidents/1").session(adminSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true));
+    }
+
+    @Test
     @DisplayName("GET /api/incidents/options view varsa → 200 + liste")
     void options_view_200() throws Exception {
         when(permissionService.allows(any(jakarta.servlet.http.HttpSession.class), eq("incidents.view"), eq("view"))).thenReturn(true);

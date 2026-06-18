@@ -89,6 +89,48 @@ function CheckInput({ label, checked, onChange, disabled }) {
     </label>
   )
 }
+/** Etiket metninden tutarlı bir renk tonu (aynı etiket hep aynı renk, farklı etiket farklı). */
+function tagHue(s) {
+  let h = 0
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) % 360
+  return h
+}
+/** Etiket chip input — text yazıp Enter (veya virgül) → altına renkli etiket. CSV saklanır. */
+function TagInput({ label, value, onChange, disabled, t }) {
+  const [text, setText] = useState('')
+  const tags = (value || '').split(',').map(s => s.trim()).filter(Boolean)
+  const add = () => {
+    const v = text.trim()
+    if (v && !tags.some(x => x.toLowerCase() === v.toLowerCase())) onChange([...tags, v].join(', '))
+    setText('')
+  }
+  const remove = (tag) => onChange(tags.filter(x => x !== tag).join(', '))
+  return (
+    <label className="full-width">
+      <span>{label}</span>
+      {!disabled && (
+        <input type="text" value={text} placeholder={t('inc.tagsHint')}
+          onChange={e => setText(e.target.value)} onBlur={add}
+          onKeyDown={e => { if (e.key === 'Enter' || e.key === ',') { e.preventDefault(); add() } }} />
+      )}
+      {tags.length > 0 && (
+        <div className="tag-chips">
+          {tags.map(tag => {
+            const h = tagHue(tag)
+            return (
+              <span key={tag} className="tag-chip"
+                style={{ background: `hsl(${h},70%,93%)`, color: `hsl(${h},65%,30%)`, borderColor: `hsl(${h},70%,78%)` }}>
+                {tag}
+                {!disabled && <button type="button" className="tag-chip-x" aria-label="remove"
+                  style={{ color: `hsl(${h},60%,38%)` }} onClick={() => remove(tag)}>×</button>}
+              </span>
+            )
+          })}
+        </div>
+      )}
+    </label>
+  )
+}
 
 /**
  * SRE Olay & Hata Geçmişi — Raporlar menüsü altında, manuel ledger.
@@ -99,9 +141,10 @@ export default function IncidentHistoryPage() {
   const t = useT()
   const toast = useToast()
   const { showConfirm } = useDialog()
-  const { canView, canEdit } = usePermissions()
+  const { canView, canEdit, canExecute } = usePermissions()
   const allowView = canView('incidents.view')
   const allowManage = canEdit('incidents.manage')
+  const allowDelete = canExecute('incidents.delete') // silme yalnız TEAM_ADMIN/ADMIN
 
   const [rows, setRows]   = useState([])
   const [total, setTotal] = useState(0)
@@ -412,7 +455,7 @@ export default function IncidentHistoryPage() {
       )}
 
       {modal && <IncidentModal modal={modal} setModal={setModal} save={save} remove={remove}
-                               saving={saving} allowManage={allowManage} t={t} teams={teams}
+                               saving={saving} allowManage={allowManage} allowDelete={allowDelete} t={t} teams={teams}
                                channelOpts={channelOpts} domainOpts={domainOpts}
                                onAddOption={addOption} onDeleteOption={deleteOption} />}
     </div>
@@ -420,7 +463,7 @@ export default function IncidentHistoryPage() {
 }
 
 /** Detay (read-only) / düzenle / oluştur modalı — proje form deseni (modal-box + form-grid). */
-function IncidentModal({ modal, setModal, save, remove, saving, allowManage, t, teams, channelOpts, domainOpts, onAddOption, onDeleteOption }) {
+function IncidentModal({ modal, setModal, save, remove, saving, allowManage, allowDelete, t, teams, channelOpts, domainOpts, onAddOption, onDeleteOption }) {
   const editing = modal.mode !== 'view'
   const f = modal.form
   const set = (k, v) => setModal(m => ({ ...m, form: { ...m.form, [k]: v } }))
@@ -502,7 +545,7 @@ function IncidentModal({ modal, setModal, save, remove, saving, allowManage, t, 
             onChange={v => set('duration_minutes', v)} />
           <CheckInput label={t('inc.fSla')} checked={f.sla_breached} disabled={!editing} onChange={v => set('sla_breached', v)} />
           <TextInput label={t('inc.fAffected')} full value={f.affected_services} disabled={!editing} onChange={v => set('affected_services', v)} />
-          <TextInput label={t('inc.fTags')} full value={f.tags} disabled={!editing} onChange={v => set('tags', v)} />
+          <TagInput label={t('inc.fTags')} value={f.tags} disabled={!editing} t={t} onChange={v => set('tags', v)} />
           <MdArea label={t('inc.fRca')} value={f.rca_summary} editable={editing} incidentId={f.id} makeUniqueCaption={makeUniqueCaption} onChange={v => set('rca_summary', v)} />
           <MdArea label={t('inc.fDescription')} value={f.description} editable={editing} incidentId={f.id} makeUniqueCaption={makeUniqueCaption} onChange={v => set('description', v)} />
           <MdArea label={t('inc.fResolution')} value={f.resolution_steps} editable={editing} incidentId={f.id} makeUniqueCaption={makeUniqueCaption} onChange={v => set('resolution_steps', v)} />
@@ -511,10 +554,10 @@ function IncidentModal({ modal, setModal, save, remove, saving, allowManage, t, 
 
         <div className="modal-actions">
           {editing && <button className="btn btn-primary" onClick={save} disabled={saving}>{t('inc.save')}</button>}
-          {modal.mode === 'view' && allowManage && (
+          {modal.mode === 'view' && (
             <>
-              <button className="btn btn-secondary" onClick={() => setModal(m => ({ ...m, mode: 'edit' }))}>{t('inc.edit')}</button>
-              <button className="btn btn-danger" onClick={() => remove(f)}><Trash2 size={13} /> {t('inc.delete')}</button>
+              {allowManage && <button className="btn btn-secondary" onClick={() => setModal(m => ({ ...m, mode: 'edit' }))}>{t('inc.edit')}</button>}
+              {allowDelete && <button className="btn btn-danger" onClick={() => remove(f)}><Trash2 size={13} /> {t('inc.delete')}</button>}
             </>
           )}
           <button className="btn btn-secondary" onClick={() => setModal(null)}>{t('inc.cancel')}</button>

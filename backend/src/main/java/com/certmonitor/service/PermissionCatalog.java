@@ -62,6 +62,7 @@ public final class PermissionCatalog {
         // ── Olay & Hata Geçmişi (SRE incident ledger) ─────────────────────
         r("incidents.view",   "reports", VIEW),
         r("incidents.manage", "reports", EDIT),
+        r("incidents.delete", "reports", EXECUTE, Set.of(EXECUTE)),
 
         // ── Yönetim Araçları (kritik) ─────────────────────────────────────
         r("diagnostics.run",        "tools", EXECUTE, Set.of(EXECUTE)),
@@ -144,7 +145,7 @@ public final class PermissionCatalog {
             // Haftalık raporlar: takım yöneticisi okur/düzenler ve onaylayabilir;
             // tanılama geçmişini görür (canlı tarama admin-only kalır)
             "weekly_reports.read", "weekly_reports.crud", "weekly_reports.approve",
-            "incidents.view", "incidents.manage",
+            "incidents.view", "incidents.manage", "incidents.delete",
             "diagnostics.history"
         );
         for (Resource r : ALL) putAll(map, r, allowed.contains(r.key));
@@ -173,8 +174,9 @@ public final class PermissionCatalog {
             // Haftalık raporlar: USER kendi takımının raporunu yazar/düzenler
             // (onay yetkisi yok — PO onayı servis tarafında orgRole ile ayrı)
             "weekly_reports.read", "weekly_reports.crud",
-            // Olay geçmişi: USER görüntüler (yazma TEAM_ADMIN/ADMIN; matrix'ten açılabilir)
-            "incidents.view"
+            // Olay geçmişi: USER kendi takımı için olay girer/düzenler (incidents.manage);
+            // silme yetkisi (incidents.delete) yalnız TEAM_ADMIN/ADMIN'de
+            "incidents.view", "incidents.manage"
         );
         for (Resource r : ALL) putAll(map, r, allowed.contains(r.key));
         for (Resource r : INTERNAL) putAll(map, r, false);
