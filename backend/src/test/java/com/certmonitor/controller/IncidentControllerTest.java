@@ -32,6 +32,7 @@ class IncidentControllerTest {
     @MockitoBean IncidentService service;
     @MockitoBean PermissionService permissionService;
     @MockitoBean AuditService auditService;
+    @MockitoBean com.certmonitor.service.IncidentNotificationService notificationService;
     @MockitoBean RememberMeService rememberMeService;
     @MockitoBean UserService userService;
     @MockitoBean HttpMetricsService httpMetricsService;
@@ -55,7 +56,7 @@ class IncidentControllerTest {
     @DisplayName("GET /api/incidents view varsa → 200 + data")
     void list_view_200() throws Exception {
         when(permissionService.allows(any(jakarta.servlet.http.HttpSession.class), eq("incidents.view"), eq("view"))).thenReturn(true);
-        when(service.list(any(), any(), any(), any(), any(), any(), any(), any(), any(), any()))
+        when(service.list(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()))
                 .thenReturn(new PageImpl<>(List.of(sample())));
 
         mvc.perform(get("/api/incidents").session(userSession()))

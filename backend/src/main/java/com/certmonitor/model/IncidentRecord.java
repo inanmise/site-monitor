@@ -21,7 +21,8 @@ import lombok.NoArgsConstructor;
         @Index(name = "idx_inc_category",    columnList = "category"),
         @Index(name = "idx_inc_status",      columnList = "status"),
         @Index(name = "idx_inc_service",     columnList = "service"),
-        @Index(name = "idx_inc_channel",     columnList = "channel")
+        @Index(name = "idx_inc_channel",     columnList = "channel"),
+        @Index(name = "idx_inc_team",        columnList = "teamId")
     }
 )
 @Data
@@ -62,6 +63,13 @@ public class IncidentRecord {
      *  Inbound, IVR, ATM ...). incident_options(type=CHANNEL) listesinden; sayfadan eklenebilir. */
     @Column(length = 150)
     private String channel;
+
+    /** Olayın kayıtlı olduğu takım — girişte kullanıcı seçer (createdByTeamId = girişi yapanın
+     *  takımı; bu ise olayın ait olduğu takım, farklı olabilir). teamName görüntü için snapshot. */
+    private Long teamId;
+
+    @Column(length = 255)
+    private String teamName;
 
     /** Sade dille kök neden (Layer-1 executive). */
     @Column(columnDefinition = "TEXT")

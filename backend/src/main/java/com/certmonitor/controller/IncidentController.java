@@ -3,6 +3,7 @@ package com.certmonitor.controller;
 import com.certmonitor.model.IncidentImage;
 import com.certmonitor.model.IncidentRecord;
 import com.certmonitor.service.AuditService;
+import com.certmonitor.service.IncidentNotificationService;
 import com.certmonitor.service.IncidentService;
 import com.certmonitor.service.PermissionService;
 import jakarta.servlet.http.HttpServletRequest;
@@ -39,6 +40,7 @@ public class IncidentController {
     private final IncidentService service;
     private final PermissionService permissionService;
     private final AuditService auditService;
+    private final IncidentNotificationService notificationService;
 
     private static final DateTimeFormatter ISO =
             DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
@@ -54,13 +56,14 @@ public class IncidentController {
             @RequestParam(required = false) String since,
             @RequestParam(required = false) String until,
             @RequestParam(name = "sla_breached", required = false) Boolean slaBreached,
+            @RequestParam(required = false) Boolean open,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "20") int size,
             HttpSession session) {
         requireView(session);
         int sz = Math.max(1, Math.min(size, 200));
         Page<IncidentRecord> result = this.service.list(q, severity, category, status, service, channel,
-                since, until, slaBreached,
+                since, until, slaBreached, open,
                 PageRequest.of(Math.max(0, page), sz, Sort.by(Sort.Direction.DESC, "occurredAt")));
         return ok(Map.of(
                 "data",  result.getContent().stream().map(this::dto).toList(),
@@ -125,7 +128,9 @@ public class IncidentController {
         auditService.recordAction("INCIDENT_CREATE", session, request,
                 "INCIDENT", String.valueOf(e.getId()),
                 "{\"severity\":\"" + e.getSeverity() + "\",\"category\":\"" + e.getCategory() + "\"}");
-        return ok(Map.of("data", dto(e)));
+        Map<String, Object> created = dto(e);
+        notificationService.notifyIncident(created, "NEW"); // takım + müdür executive bildirim (async)
+        return ok(Map.of("data", created));
     }
 
     @PutMapping("/{id}")
@@ -133,11 +138,34 @@ public class IncidentController {
             @PathVariable Long id, @RequestBody Map<String, Object> body,
             HttpSession session, HttpServletRequest request) {
         requireManage(session);
+        String prevStatus = service.get(id).getStatus(); // RESOLVED'e GEÇİŞ tespiti için
         IncidentRecord e = service.update(id, body, (String) session.getAttribute("username"));
         auditService.recordAction("INCIDENT_UPDATE", session, request,
                 "INCIDENT", id.toString(),
                 "{\"severity\":\"" + e.getSeverity() + "\",\"status\":\"" + e.getStatus() + "\"}");
-        return ok(Map.of("data", dto(e)));
+        Map<String, Object> updated = dto(e);
+        boolean justResolved = "RESOLVED".equals(e.getStatus()) && !"RESOLVED".equals(prevStatus);
+        notificationService.notifyIncident(updated, justResolved ? "RESOLVED" : "UPDATED"); // async bildirim
+        return ok(Map.of("data", updated));
+    }
+
+    @PostMapping("/transfer")
+    public ResponseEntity<Map<String, Object>> transfer(
+            @RequestBody Map<String, Object> body, HttpSession session, HttpServletRequest request) {
+        requireManage(session);
+        List<Long> ids = new java.util.ArrayList<>();
+        if (body.get("ids") instanceof List<?> raw) {
+            for (Object o : raw) {
+                try { ids.add(Long.valueOf(String.valueOf(o))); } catch (Exception ignored) {}
+            }
+        }
+        Long teamId = longVal(body.get("team_id"));
+        String teamName = body.get("team_name") == null ? null : String.valueOf(body.get("team_name"));
+        int n = service.transfer(ids, teamId, teamName, (String) session.getAttribute("username"));
+        auditService.recordAction("INCIDENT_TRANSFER", session, request,
+                "INCIDENT", String.valueOf(teamId),
+                "{\"count\":" + n + ",\"team\":\"" + safe(teamName) + "\"}");
+        return ok(Map.of("data", Map.of("transferred", n)));
     }
 
     @DeleteMapping("/{id}")
@@ -218,6 +246,8 @@ public class IncidentController {
         m.put("category", e.getCategory());
         m.put("service", e.getService());
         m.put("channel", e.getChannel());
+        m.put("team_id", e.getTeamId());
+        m.put("team_name", e.getTeamName());
         m.put("rca_summary", e.getRcaSummary());
         m.put("description", e.getDescription());
         m.put("resolution_steps", e.getResolutionSteps());
@@ -240,6 +270,12 @@ public class IncidentController {
         response.put("success", true);
         response.put("timestamp", ISO.format(Instant.now()));
         return ResponseEntity.ok(response);
+    }
+
+    private static Long longVal(Object v) {
+        if (v == null) return null;
+        if (v instanceof Number n) return n.longValue();
+        try { return Long.valueOf(v.toString().trim()); } catch (Exception e) { return null; }
     }
 
     private Long longAttr(HttpSession session, String key) {

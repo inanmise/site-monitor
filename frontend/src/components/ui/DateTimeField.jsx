@@ -73,15 +73,18 @@ function toDateOnly(d) {
  * verilirse saat seçimi olmadan sadece gün döner (filtre From/To). `className` ile
  * sarmalayıcıya ek sınıf (örn. inline filtre için 'dtf-inline') eklenir.
  */
-export default function DateTimeField({ value, onChange, disabled, placeholder, clearable, dateOnly, className }) {
+export default function DateTimeField({ value, onChange, disabled, placeholder, clearable, dateOnly, className, min }) {
   const { lang } = useLanguage()
-  const selected = dateOnly ? parseDateOnly(value) : parseIso(value)
+  const parse = dateOnly ? parseDateOnly : parseIso
+  const selected = parse(value)
+  const minDate = min ? parse(min) : null
   return (
     <div className={'dtf' + (className ? ' ' + className : '')}>
       <DatePicker
         selected={selected}
         onChange={(d) => onChange(dateOnly ? toDateOnly(d) : toIso(d))}
         disabled={disabled}
+        minDate={minDate || undefined}
         showTimeSelect={!dateOnly}
         timeFormat="HH:mm"
         timeIntervals={15}

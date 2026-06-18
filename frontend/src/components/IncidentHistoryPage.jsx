@@ -16,9 +16,9 @@ const SEV_COLOR  = { CRITICAL: '#dc2626', HIGH: '#ea580c', MEDIUM: '#d97706', LO
 
 const EMPTY = {
   title: '', occurred_at: '', severity: 'HIGH', status: 'OPEN', category: 'APPLICATION',
-  service: '', channel: '', detected_at: '', resolved_at: '', rca_summary: '', description: '',
-  resolution_steps: '', business_impact: '', affected_services: '', sla_breached: false,
-  error_budget_burn_pct: '', duration_minutes: '', tags: '',
+  service: '', channel: '', team_id: '', team_name: '', detected_at: '', resolved_at: '',
+  rca_summary: '', description: '', resolution_steps: '', business_impact: '',
+  affected_services: '', sla_breached: false, error_budget_burn_pct: '', duration_minutes: '', tags: '',
 }
 
 // ── Modül seviyesi alan bileşenleri (stabil kimlik → input remount/odak kaybı OLMAZ) ──
@@ -30,19 +30,19 @@ function TextInput({ label, value, onChange, disabled, type = 'text', req, full 
     </label>
   )
 }
-function DateInput({ label, value, onChange, disabled, req }) {
+function DateInput({ label, value, onChange, disabled, req, min }) {
   return (
     <label>
       <span>{label}{req && <span className="req-star"> *</span>}</span>
       <DateTimeField value={value} onChange={onChange} disabled={disabled}
-                     placeholder={label} clearable={!req} />
+                     placeholder={label} clearable={!req} min={min} />
     </label>
   )
 }
-function SelectInput({ label, value, onChange, disabled, options }) {
+function SelectInput({ label, value, onChange, disabled, options, req }) {
   return (
     <label>
-      <span>{label}</span>
+      <span>{label}{req && <span className="req-star"> *</span>}</span>
       <select value={value ?? ''} disabled={disabled} onChange={e => onChange(e.target.value)}>
         {options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
       </select>
@@ -114,6 +114,9 @@ export default function IncidentHistoryPage() {
   const [saving, setSaving] = useState(false)
   const [channelOpts, setChannelOpts] = useState([])
   const [domainOpts, setDomainOpts]   = useState([])
+  const [teams, setTeams]             = useState([])
+  const [selected, setSelected]       = useState(() => new Set()) // toplu transfer seçimi (id'ler)
+  const [transferTeam, setTransferTeam] = useState('')
 
   const load = useCallback(async () => {
     if (!allowView) return
@@ -141,6 +144,14 @@ export default function IncidentHistoryPage() {
     } catch { /* sessiz — dropdown boş kalır, yine de yeni değer eklenebilir */ }
   }, [allowView])
 
+  const loadTeams = useCallback(async () => {
+    if (!allowManage) return // takım seçimi yalnız yazma yetkisi olanlara lazım
+    try {
+      const res = await api.admin.getTeams()
+      if (res?.success) setTeams(res.data ?? [])
+    } catch { /* sessiz */ }
+  }, [allowManage])
+
   const addOption = useCallback(async (type, value) => {
     const res = await api.incidents.addOption(type, value)
     if (res?.success) await loadOptions()
@@ -161,16 +172,40 @@ export default function IncidentHistoryPage() {
   useEffect(() => { load() }, [load])
   useEffect(() => { loadTrends() }, [loadTrends])
   useEffect(() => { loadOptions() }, [loadOptions])
+  useEffect(() => { loadTeams() }, [loadTeams])
   useEffect(() => { setPage(0) }, [filters, size])
+  useEffect(() => { setSelected(new Set()) }, [filters, page, size]) // sayfa/filtre değişince seçim sıfırlanır
 
   if (!allowView) return <div className="empty-state">{t('inc.noAccess')}</div>
 
   const totalPages = Math.max(1, Math.ceil(total / size))
   const setF = (k, v) => setFilters(f => ({ ...f, [k]: v }))
 
+  // Özet kartları filtre görevi görür — tarih penceresini (since/until) korur, diğer
+  // boyut filtrelerini sıfırlar, kartın boyutunu uygular. Aktif kart tekrar tıklanırsa kalkar.
+  function applyCardFilter(kind) {
+    setFilters(prev => {
+      const active = (kind === 'critical' && prev.severity === 'CRITICAL')
+        || (kind === 'sla' && prev.slaBreached === true)
+        || (kind === 'open' && prev.open === true)
+        || (kind === 'resolved' && prev.status === 'RESOLVED')
+      const base = { ...prev, q: '', severity: '', category: '', status: '', channel: '',
+        slaBreached: undefined, open: undefined }
+      if (kind === 'total' || active) return base
+      if (kind === 'critical') return { ...base, severity: 'CRITICAL' }
+      if (kind === 'sla')      return { ...base, slaBreached: true }
+      if (kind === 'open')     return { ...base, open: true }
+      if (kind === 'resolved') return { ...base, status: 'RESOLVED' }
+      return base
+    })
+  }
+
   async function save() {
     const f = modal.form
-    if (!f.title?.trim() || !f.occurred_at?.trim()) { toast.error(t('inc.required')); return }
+    if (!f.title?.trim() || !f.occurred_at?.trim() || !f.team_id) { toast.error(t('inc.required')); return }
+    if (f.detected_at && f.resolved_at && new Date(f.resolved_at) < new Date(f.detected_at)) {
+      toast.error(t('inc.resolvedBeforeDetected')); return
+    }
     const payload = { ...f }
     if (payload.error_budget_burn_pct === '') delete payload.error_budget_burn_pct
     if (payload.duration_minutes === '') delete payload.duration_minutes
@@ -196,6 +231,27 @@ export default function IncidentHistoryPage() {
     else toast.error(res?.error || t('inc.saveError'))
   }
 
+  const allOnPage = rows.length > 0 && rows.every(r => selected.has(r.id))
+  const toggleSel = (id) => setSelected(s => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n })
+  const toggleAll = () => setSelected(s => {
+    const n = new Set(s); if (allOnPage) rows.forEach(r => n.delete(r.id)); else rows.forEach(r => n.add(r.id)); return n
+  })
+
+  async function doTransfer() {
+    const tm = teams.find(x => String(x.id) === String(transferTeam))
+    if (!tm || selected.size === 0) return
+    const ok = await showConfirm({
+      title: t('inc.transferTitle'), message: t('inc.transferConfirm', selected.size, tm.name),
+      confirmText: t('inc.transferBtn'), cancelText: t('inc.cancel'),
+    })
+    if (!ok) return
+    const res = await api.incidents.transfer([...selected], tm.id, tm.name)
+    if (res?.success) {
+      toast.success(t('inc.transferred', res.data?.transferred ?? selected.size))
+      setSelected(new Set()); setTransferTeam(''); load(); loadTrends()
+    } else toast.error(res?.error || t('inc.saveError'))
+  }
+
   const sevBadge = (s) => <span style={{ color: SEV_COLOR[s] || '#64748b', fontWeight: 700 }}>{t('inc.sev' + s) || s}</span>
   const sum = trends?.summary || {}
   const daily = trends?.daily || []
@@ -217,15 +273,27 @@ export default function IncidentHistoryPage() {
         </div>
       </div>
 
-      {/* Executive özet kartları — proje stats-panel deseni */}
-      <div className="stats-panel" style={{ gridTemplateColumns: 'repeat(4,1fr)' }}>
-        {[['sumTotal', sum.total, 'total'], ['sumCritical', sum.critical, 'critical'],
-          ['sumSla', sum.sla_breached, 'alert'], ['sumOpen', sum.open, 'warning']].map(([k, v, variant]) => (
-          <div key={k} className={`stat-item stat-item-${variant}`}>
-            <div className={`stat-value stat-value-${variant}`}>{v ?? 0}</div>
-            <span className="stat-label">{t('inc.' + k)}</span>
-          </div>
-        ))}
+      {/* Executive özet kartları — tıklanınca filtre uygular (proje stats-panel deseni) */}
+      <div className="stats-panel" style={{ gridTemplateColumns: 'repeat(5,1fr)' }}>
+        {[['sumTotal', sum.total, 'total', 'total'], ['sumCritical', sum.critical, 'critical', 'critical'],
+          ['sumSla', sum.sla_breached, 'alert', 'sla'], ['sumOpen', sum.open, 'warning', 'open'],
+          ['sumResolved', sum.resolved, 'valid', 'resolved']].map(([k, v, variant, kind]) => {
+          const active = (kind === 'critical' && filters.severity === 'CRITICAL')
+            || (kind === 'sla' && filters.slaBreached === true)
+            || (kind === 'open' && filters.open === true)
+            || (kind === 'resolved' && filters.status === 'RESOLVED')
+            || (kind === 'total' && !filters.severity && !filters.slaBreached && !filters.open
+                && filters.status !== 'RESOLVED' && !filters.category && !filters.channel && !filters.q)
+          return (
+            <div key={k} className={`stat-item stat-item-${variant}`} role="button" tabIndex={0}
+                 title={t('inc.filterByCard')} onClick={() => applyCardFilter(kind)}
+                 onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); applyCardFilter(kind) } }}
+                 style={{ cursor: 'pointer', ...(active ? { outline: '2px solid var(--primary)', outlineOffset: '-2px' } : {}) }}>
+              <div className={`stat-value stat-value-${variant}`}>{v ?? 0}</div>
+              <span className="stat-label">{t('inc.' + k)}</span>
+            </div>
+          )
+        })}
       </div>
 
       {/* Günlük trend (basit bar) */}
@@ -268,6 +336,20 @@ export default function IncidentHistoryPage() {
           value={filters.until} onChange={v => setF('until', v ? v + 'T23:59:59' : '')} />
       </div>
 
+      {/* Toplu transfer çubuğu — seçim varken */}
+      {allowManage && selected.size > 0 && (
+        <div className="inv-stats-pills" style={{ marginBottom: 10, gap: 8, alignItems: 'center',
+          background: '#f1f5f9', padding: '8px 12px', borderRadius: 6 }}>
+          <span style={{ fontWeight: 700, fontSize: '.9em' }}>{t('inc.selectedN', selected.size)}</span>
+          <select className="filter-select" value={transferTeam} onChange={e => setTransferTeam(e.target.value)}>
+            <option value="">{t('inc.transferTo')}</option>
+            {teams.map(tm => <option key={tm.id} value={String(tm.id)}>{tm.name}</option>)}
+          </select>
+          <button className="btn btn-primary btn-sm-p" disabled={!transferTeam} onClick={doTransfer}>{t('inc.transferBtn')}</button>
+          <button className="btn btn-secondary btn-sm-p" onClick={() => setSelected(new Set())}>{t('inc.clearSel')}</button>
+        </div>
+      )}
+
       {/* Tablo */}
       {loading && <div className="loading">{t('inc.loading')}</div>}
       {!loading && rows.length === 0 && <div className="empty-state">{t('inc.noResults')}</div>}
@@ -275,14 +357,21 @@ export default function IncidentHistoryPage() {
         <div className="admin-table-wrap">
           <table className="admin-table">
             <thead><tr>
-              <th>{t('inc.colTime')}</th><th>{t('inc.colChannel')}</th><th>{t('inc.colService')}</th>
+              {allowManage && <th style={{ width: 28 }}>
+                <input type="checkbox" checked={allOnPage} onChange={toggleAll} title={t('inc.selectAll')} />
+              </th>}
+              <th>{t('inc.colTime')}</th><th>{t('inc.colTeam')}</th><th>{t('inc.colChannel')}</th><th>{t('inc.colService')}</th>
               <th>{t('inc.colCategory')}</th><th>{t('inc.colSeverity')}</th><th>{t('inc.colStatus')}</th>
               <th>{t('inc.colSla')}</th><th>{t('inc.colTitle')}</th><th></th>
             </tr></thead>
             <tbody>
               {rows.map(r => (
                 <tr key={r.id} style={{ cursor: 'pointer' }} onClick={() => setModal({ mode: 'view', form: { ...EMPTY, ...r } })}>
+                  {allowManage && <td onClick={e => e.stopPropagation()}>
+                    <input type="checkbox" checked={selected.has(r.id)} onChange={() => toggleSel(r.id)} />
+                  </td>}
                   <td style={{ whiteSpace: 'nowrap' }}>{formatDate(r.occurred_at)}</td>
+                  <td>{r.team_name || '—'}</td>
                   <td>{r.channel || '—'}</td>
                   <td>{r.service || '—'}</td>
                   <td>{t('inc.cat' + r.category) || r.category}</td>
@@ -323,7 +412,7 @@ export default function IncidentHistoryPage() {
       )}
 
       {modal && <IncidentModal modal={modal} setModal={setModal} save={save} remove={remove}
-                               saving={saving} allowManage={allowManage} t={t}
+                               saving={saving} allowManage={allowManage} t={t} teams={teams}
                                channelOpts={channelOpts} domainOpts={domainOpts}
                                onAddOption={addOption} onDeleteOption={deleteOption} />}
     </div>
@@ -331,12 +420,17 @@ export default function IncidentHistoryPage() {
 }
 
 /** Detay (read-only) / düzenle / oluştur modalı — proje form deseni (modal-box + form-grid). */
-function IncidentModal({ modal, setModal, save, remove, saving, allowManage, t, channelOpts, domainOpts, onAddOption, onDeleteOption }) {
+function IncidentModal({ modal, setModal, save, remove, saving, allowManage, t, teams, channelOpts, domainOpts, onAddOption, onDeleteOption }) {
   const editing = modal.mode !== 'view'
   const f = modal.form
   const set = (k, v) => setModal(m => ({ ...m, form: { ...m.form, [k]: v } }))
   const titleKey = modal.mode === 'create' ? 'inc.newTitle' : modal.mode === 'edit' ? 'inc.editTitle' : 'inc.detailTitle'
   const opts = (arr, pfx) => arr.map(x => ({ value: x, label: t(pfx + x) }))
+
+  // Takım seçenekleri — seçili takım yüklenen listede yoksa (kapsam dışı/eski kayıt) yine de göster
+  const teamOptions = [{ value: '', label: '—' }, ...teams.map(tm => ({ value: String(tm.id), label: tm.name }))]
+  if (f.team_id != null && f.team_id !== '' && !teams.some(tm => String(tm.id) === String(f.team_id)))
+    teamOptions.push({ value: String(f.team_id), label: f.team_name || ('#' + f.team_id) })
 
   // Süre (dk) otomatik: tespit ↔ çözülme farkı (ikisi de geçerli ve resolved >= detected ise).
   // İkisi de aynı UTC string formatında olduğundan yerel parse'ta offset sadeleşir → fark doğru.
@@ -387,6 +481,10 @@ function IncidentModal({ modal, setModal, save, remove, saving, allowManage, t, 
         <div className="form-grid form-grid--top">
           <TextInput label={t('inc.fTitle')} req full value={f.title} disabled={!editing} onChange={v => set('title', v)} />
           <DateInput label={t('inc.fOccurredAt')} req value={f.occurred_at} disabled={!editing} onChange={v => set('occurred_at', v)} />
+          <SelectInput label={t('inc.fTeam')} req value={f.team_id != null ? String(f.team_id) : ''} disabled={!editing}
+            onChange={v => setModal(m => ({ ...m, form: { ...m.form, team_id: v,
+              team_name: teams.find(tm => String(tm.id) === String(v))?.name || '' } }))}
+            options={teamOptions} />
           <CreatableSelect label={t('inc.fChannel')} value={f.channel} disabled={!editing}
             options={channelOpts} onChange={v => set('channel', v)}
             onCreate={v => onAddOption('CHANNEL', v)} onDelete={v => onDeleteOption('CHANNEL', v)} />
@@ -397,7 +495,7 @@ function IncidentModal({ modal, setModal, save, remove, saving, allowManage, t, 
           <SelectInput label={t('inc.fStatus')} value={f.status} disabled={!editing} onChange={v => set('status', v)} options={opts(STATUSES, 'inc.st')} />
           <SelectInput label={t('inc.fCategory')} value={f.category} disabled={!editing} onChange={v => set('category', v)} options={opts(CATEGORIES, 'inc.cat')} />
           <DateInput label={t('inc.fDetectedAt')} value={f.detected_at} disabled={!editing} onChange={v => set('detected_at', v)} />
-          <DateInput label={t('inc.fResolvedAt')} value={f.resolved_at} disabled={!editing} onChange={v => set('resolved_at', v)} />
+          <DateInput label={t('inc.fResolvedAt')} value={f.resolved_at} disabled={!editing} min={f.detected_at} onChange={v => set('resolved_at', v)} />
           <TextInput label={t('inc.fErrorBudget')} type="number" value={f.error_budget_burn_pct} disabled={!editing} onChange={v => set('error_budget_burn_pct', v)} />
           <TextInput label={t('inc.fDuration')} type="number" value={f.duration_minutes}
             disabled={!editing || (!!f.detected_at && !!f.resolved_at)}
