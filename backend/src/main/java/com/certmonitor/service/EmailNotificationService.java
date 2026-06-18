@@ -336,7 +336,7 @@ public class EmailNotificationService {
                 "Bu, host'un outbound bağlantısında bir problem olabileceğini gösteriyor.</p>" +
                 "<table style='width:100%;border-collapse:collapse;margin:16px 0;font-size:.92em;'>" +
                 "<tr><th style='text-align:left;padding:6px 10px;background:#f3f4f6;border:1px solid #e5e7eb;'>Tespit Zamanı</th>" +
-                "<td style='padding:6px 10px;border:1px solid #e5e7eb;'>" + detectedAt + "</td></tr>" +
+                "<td style='padding:6px 10px;border:1px solid #e5e7eb;'>" + formatIso(detectedAt) + "</td></tr>" +
                 "<tr><th style='text-align:left;padding:6px 10px;background:#f3f4f6;border:1px solid #e5e7eb;'>Etkilenen Domain</th>" +
                 "<td style='padding:6px 10px;border:1px solid #e5e7eb;'>" + networkErrors + " / " + total + "</td></tr>" +
                 "<tr><th style='text-align:left;padding:6px 10px;background:#f3f4f6;border:1px solid #e5e7eb;'>Hata Oranı</th>" +
@@ -376,9 +376,9 @@ public class EmailNotificationService {
                 "Sertifika kontrolleri normal işleyişe döndü.</p>" +
                 "<table style='width:100%;border-collapse:collapse;margin:16px 0;font-size:.92em;'>" +
                 "<tr><th style='text-align:left;padding:6px 10px;background:#f3f4f6;border:1px solid #e5e7eb;'>Tespit Zamanı</th>" +
-                "<td style='padding:6px 10px;border:1px solid #e5e7eb;'>" + detectedAt + "</td></tr>" +
+                "<td style='padding:6px 10px;border:1px solid #e5e7eb;'>" + formatIso(detectedAt) + "</td></tr>" +
                 "<tr><th style='text-align:left;padding:6px 10px;background:#f3f4f6;border:1px solid #e5e7eb;'>Çözüm Zamanı</th>" +
-                "<td style='padding:6px 10px;border:1px solid #e5e7eb;'>" + resolvedAt + "</td></tr>" +
+                "<td style='padding:6px 10px;border:1px solid #e5e7eb;'>" + formatIso(resolvedAt) + "</td></tr>" +
                 "<tr><th style='text-align:left;padding:6px 10px;background:#f3f4f6;border:1px solid #e5e7eb;'>Toplam Süre</th>" +
                 "<td style='padding:6px 10px;border:1px solid #e5e7eb;'>" + durationStr + "</td></tr>" +
                 "<tr><th style='text-align:left;padding:6px 10px;background:#f3f4f6;border:1px solid #e5e7eb;'>Tespit Anında Etkilenen</th>" +
@@ -433,7 +433,7 @@ public class EmailNotificationService {
     private String buildRichAlertHtml(String subject, String message,
                                        String domain, String level, String alertType,
                                        Integer daysRemaining, Map<String, Object> certContext) {
-        String generatedAt = LocalDateTime.now().format(DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm"));
+        String generatedAt = LocalDateTime.now(IST).format(DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm"));
 
         String accentColor = switch (level != null ? level : "") {
             case "CRITICAL" -> "#dc2626";
@@ -640,14 +640,16 @@ public class EmailNotificationService {
     private String formatIsoFull(String iso) {
         if (iso == null || iso.isBlank()) return "—";
         try {
-            LocalDateTime dt = LocalDateTime.parse(iso, DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss"));
+            // UTC ISO'yu Europe/Istanbul'a çevir → kullanıcıya her zaman yerel saat
+            LocalDateTime dt = LocalDateTime.parse(iso, DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss"))
+                    .atZone(ZoneOffset.UTC).withZoneSameInstant(IST).toLocalDateTime();
             String[] months = {"Ocak","Şubat","Mart","Nisan","Mayıs","Haziran",
                                "Temmuz","Ağustos","Eylül","Ekim","Kasım","Aralık"};
             String[] days = {"Pazartesi","Salı","Çarşamba","Perşembe","Cuma","Cumartesi","Pazar"};
             String month   = months[dt.getMonthValue() - 1];
             String dayName = days[dt.getDayOfWeek().getValue() - 1];
             return dt.getDayOfMonth() + " " + month + " " + dt.getYear() + ", " + dayName
-                 + " — " + String.format("%02d:%02d", dt.getHour(), dt.getMinute()) + " UTC";
+                 + " — " + String.format("%02d:%02d", dt.getHour(), dt.getMinute());
         } catch (Exception e) {
             return formatIso(iso);
         }
@@ -738,14 +740,22 @@ public class EmailNotificationService {
         return v != null ? String.valueOf(v) : "";
     }
 
+    /** UTC ISO ("yyyy-MM-dd'T'HH:mm:ss") → Europe/Istanbul "dd.MM.yyyy HH:mm" (yerel saat).
+     *  Tüm e-posta tarihleri buradan geçer; proje genelinde kullanıcıya her zaman local gösterilir. */
     private String formatIso(String iso) {
         if (iso == null || iso.isBlank()) return "—";
         try {
-            // yyyy-MM-dd'T'HH:mm:ss → dd.MM.yyyy HH:mm
-            return iso.substring(8, 10) + "." + iso.substring(5, 7) + "." + iso.substring(0, 4)
-                 + " " + iso.substring(11, 16);
+            LocalDateTime utc = LocalDateTime.parse(iso, DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss"));
+            return utc.atZone(ZoneOffset.UTC).withZoneSameInstant(IST)
+                    .format(DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm"));
         } catch (Exception e) {
-            return iso;
+            try {
+                // Beklenmeyen biçim — saat dilimi çevirmeden en azından okunur biçime getir
+                return iso.substring(8, 10) + "." + iso.substring(5, 7) + "." + iso.substring(0, 4)
+                     + " " + iso.substring(11, 16);
+            } catch (Exception e2) {
+                return iso;
+            }
         }
     }
 
@@ -795,7 +805,7 @@ public class EmailNotificationService {
     }
 
     private String buildSimpleAlertHtml(String subject, String message, String ctaUrl, String ctaLabel) {
-        String now = LocalDateTime.now().format(DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm"));
+        String now = LocalDateTime.now(IST).format(DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm"));
         String color = subject.contains("KRİTİK") || subject.contains("CRITICAL") ? "#dc2626"
                 : subject.contains("YÜKSEK") || subject.contains("HIGH") ? "#ea580c" : "#d97706";
         String css = "<style>"
@@ -834,7 +844,7 @@ public class EmailNotificationService {
     private String buildRichResolvedHtml(String domain, String alertType, String alertLevel,
                                           Integer daysRemaining, String resolvedBy, String resolvedAt,
                                           String createdAt, Map<String, Object> certContext) {
-        String generatedAt = LocalDateTime.now().format(DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm"));
+        String generatedAt = LocalDateTime.now(IST).format(DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm"));
         String green = "#16a34a";
 
         String levelTr = switch (alertLevel != null ? alertLevel : "") {
@@ -862,8 +872,8 @@ public class EmailNotificationService {
 
         // ── Resolution info (left column) ──
         String resolverRows = tableRow2col("👤 Çözen Kişi",          escHtml(by))
-            + tableRow2col("🕐 Çözülme Tarihi",  formatIso(resolvedAt))
-            + tableRow2col("📅 Alarm Oluşturma", formatIso(createdAt))
+            + tableRow2col("🕐 Çözülme Tarihi",  fmtOrDash(formatIstanbul(resolvedAt)))
+            + tableRow2col("📅 Alarm Oluşturma", fmtOrDash(formatIstanbul(createdAt)))
             + (daysRemaining != null
                 ? tableRow2col("📊 Alarm Anındaki Kalan Gün", daysRemaining + " gün") : "");
 
@@ -1003,7 +1013,7 @@ public class EmailNotificationService {
     @SuppressWarnings("unchecked")
     private String buildRichMonitoringOutageAlertHtml(String message, String domain,
                                                       String alertType, Map<String, Object> ctx) {
-        String generatedAt = LocalDateTime.now().format(DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm"));
+        String generatedAt = LocalDateTime.now(IST).format(DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm"));
         String red = "#dc2626";
 
         String kicker = switch (alertType) {
@@ -1080,7 +1090,7 @@ public class EmailNotificationService {
         for (Map<String, Object> a : attempts) {
             String at  = String.valueOf(a.getOrDefault("checked_at", ""));
             String err = String.valueOf(a.getOrDefault("error", ""));
-            String time = at.length() >= 19 ? at.substring(11, 19) + " UTC" : formatIso(at);
+            String time = formatIso(at); // her zaman yerel saat (Europe/Istanbul)
             String detail = !err.isEmpty() && !"null".equals(err)
                     ? time + " — " + escHtml(err.length() > 60 ? err.substring(0, 60) + "…" : err)
                     : time + " — yanıt yok";
@@ -1176,7 +1186,7 @@ public class EmailNotificationService {
     /** İzleme çözüm maili — süre createdAt→resolvedAt'ten hesaplanır; etiketler tipe göre. */
     private String buildRichMonitoringResolvedHtml(String domain, String alertType, String resolvedBy,
                                                    String resolvedAt, String createdAt) {
-        String generatedAt = LocalDateTime.now().format(DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm"));
+        String generatedAt = LocalDateTime.now(IST).format(DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm"));
         String green = "#16a34a";
         String by = resolvedBy != null && !resolvedBy.isBlank() ? resolvedBy : "Sistem (otomatik)";
         String duration = formatOutageDuration(createdAt, resolvedAt);
@@ -1204,8 +1214,8 @@ public class EmailNotificationService {
         String durationLabel = dnsChanged ? "⏱ Alarm Süresi" : "⏱ Toplam Kesinti";
 
         String resolverRows = tableRow2col("👤 Çözen",            escHtml(by))
-            + tableRow2col("🕐 Çözülme Zamanı",     formatIso(resolvedAt))
-            + tableRow2col("📅 Alarm Başlangıcı",   formatIso(createdAt));
+            + tableRow2col("🕐 Çözülme Zamanı",     fmtOrDash(formatIstanbul(resolvedAt)))
+            + tableRow2col("📅 Alarm Başlangıcı",   fmtOrDash(formatIstanbul(createdAt)));
 
         String outageRows = tableRow2col("🌐 Alan Adı",   escHtml(domain))
             + tableRow2col("⚠ Alarm Tipi",  typeTrLabel)
@@ -1317,7 +1327,7 @@ public class EmailNotificationService {
      * null-toleranslıdır ("Tekrar Bildir" yolu eksik context geçirebilir).
      */
     private String buildRichDnsChangedAlertHtml(String message, String domain, Map<String, Object> ctx) {
-        String generatedAt = LocalDateTime.now().format(DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm"));
+        String generatedAt = LocalDateTime.now(IST).format(DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm"));
         String purple = "#9333ea";
 
         String recordType = ctxStr(ctx, "record_type");
