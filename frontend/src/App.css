@@ -1527,6 +1527,13 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
    read-only domain), end-hizalama komşu input'u aşağı kaydırır; start ile inputlar üstte hizalı kalır. */
 .form-grid--top { align-items: start; }
 .checkbox-label { flex-direction: row !important; align-items: center; gap: 8px !important; cursor: pointer; }
+/* Etiket chip input (incident formu) — text+Enter ile renkli etiketler */
+.tag-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 7px; }
+.tag-chip { display: inline-flex; align-items: center; gap: 5px; padding: 3px 10px; border-radius: 20px;
+  border: 1px solid; font-size: .82em; font-weight: 600; line-height: 1.5; }
+.tag-chip-x { background: none; border: none; cursor: pointer; font-size: 1.15em; line-height: 1;
+  padding: 0; font-weight: 700; }
+.tag-chip-x:hover { opacity: .65; }
 .modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--border); }
 .alert-msg { background: #d4edda; color: #155724; padding: 10px 14px; border-radius: 5px; margin-bottom: 12px; font-size: .9em; }
 

@@ -913,7 +913,8 @@ export const TR = {
   'perm.res.weekly_reports.crud':  'Haftalık rapor oluşturma, düzenleme, silme.',
   'perm.res.weekly_reports.approve':'Haftalık raporu onaylama, iade, revize, tekrar gönderme.',
   'perm.res.incidents.view':   'Olay & hata geçmişini görüntüleme.',
-  'perm.res.incidents.manage': 'Olay kaydı oluşturma, düzenleme, silme.',
+  'perm.res.incidents.manage': 'Olay kaydı oluşturma ve düzenleme.',
+  'perm.res.incidents.delete': 'Olay kaydı silme (yalnız takım yöneticisi).',
   'perm.res.diagnostics.run':      'Bağlantı/SSL/ağ derin tanılaması çalıştırma.',
   'perm.res.diagnostics.history':  'Tanılama geçmişini görüntüleme.',
   'perm.res.sql_playground.execute':'SQL Playground sorgusu çalıştırma.',
@@ -1549,7 +1550,8 @@ export const TR = {
   'inc.fResolution':      'Çözüm / Müdahale Adımları',
   'inc.fBusinessImpact':  'İş Etkisi',
   'inc.fRunbook':         'Runbook URL',
-  'inc.fTags':            'Etiketler (CSV)',
+  'inc.fTags':            'Etiketler',
+  'inc.tagsHint':         'Etiket yazıp Enter’a basın',
 
   // ── Haftalık Raporlar ──
   'wr.title':            'Haftalık Raporlar',
@@ -2917,7 +2919,8 @@ export const EN = {
   'perm.res.weekly_reports.crud':  'Create, edit, delete weekly reports.',
   'perm.res.weekly_reports.approve':'Approve, return, revise, resend weekly reports.',
   'perm.res.incidents.view':   'View incident & error history.',
-  'perm.res.incidents.manage': 'Create, edit, delete incident records.',
+  'perm.res.incidents.manage': 'Create and edit incident records.',
+  'perm.res.incidents.delete': 'Delete incident records (team admin only).',
   'perm.res.diagnostics.run':      'Run connection/SSL/network deep diagnostics.',
   'perm.res.diagnostics.history':  'View diagnostics history.',
   'perm.res.sql_playground.execute':'Execute SQL playground queries.',
@@ -3553,7 +3556,8 @@ export const EN = {
   'inc.fResolution':      'Resolution / Mitigation Steps',
   'inc.fBusinessImpact':  'Business Impact',
   'inc.fRunbook':         'Runbook URL',
-  'inc.fTags':            'Tags (CSV)',
+  'inc.fTags':            'Tags',
+  'inc.tagsHint':         'Type a tag, press Enter',
 
   // ── Weekly Reports ──
   'wr.title':            'Weekly Reports',

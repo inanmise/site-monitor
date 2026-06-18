@@ -171,7 +171,7 @@ public class IncidentController {
     @DeleteMapping("/{id}")
     public ResponseEntity<Map<String, Object>> delete(
             @PathVariable Long id, HttpSession session, HttpServletRequest request) {
-        requireManage(session);
+        requireDelete(session);
         IncidentRecord e = service.delete(id);
         auditService.recordAction("INCIDENT_DELETE", session, request,
                 "INCIDENT", id.toString(),
@@ -232,6 +232,12 @@ public class IncidentController {
     private void requireManage(HttpSession session) {
         if (!permissionService.allows(session, "incidents.manage", "edit"))
             throw new SecurityException("incidents.manage yetkisi gerekli");
+    }
+
+    /** Silme yalnız TEAM_ADMIN/ADMIN (incidents.delete/execute); USER gir/düzenle yapar, silemez. */
+    private void requireDelete(HttpSession session) {
+        if (!permissionService.allows(session, "incidents.delete", "execute"))
+            throw new SecurityException("incidents.delete yetkisi gerekli");
     }
 
     private Map<String, Object> dto(IncidentRecord e) {
