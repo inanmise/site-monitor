@@ -57,6 +57,38 @@ describe('api.getMe', () => {
   })
 })
 
+// ── request timeout / dayanıklılık (beyaz ekran önleme) ────────────────────────
+
+describe('request timeout resilience', () => {
+  it('getMe: bağlantı asılırsa abort olur ve yumuşak {success:false} döner (sonsuz loading yok)', async () => {
+    vi.useFakeTimers()
+    // Yanıt vermeyen bağlantı: yalnız abort sinyalinde reject eder.
+    global.fetch = vi.fn((url, opts) => new Promise((_, reject) => {
+      opts.signal.addEventListener('abort', () =>
+        reject(Object.assign(new Error('aborted'), { name: 'AbortError' })))
+    }))
+    const p = api.getMe()
+    await vi.advanceTimersByTimeAsync(15000)   // DEFAULT_TIMEOUT_MS
+    const res = await p
+    expect(res).toEqual(expect.objectContaining({ success: false }))
+    expect(global.fetch.mock.calls[0][1].signal).toBeInstanceOf(AbortSignal)
+    vi.useRealTimers()
+  })
+
+  it('uzun-süren çağrılar (runScheduler) abort edilmez — timeout sinyali eklenmez', async () => {
+    mockFetch({ success: true })
+    await api.runScheduler()
+    expect(global.fetch.mock.calls[0][1].signal).toBeUndefined()
+  })
+
+  it('login: ağ hatasında yumuşak {success:false} döner (yakalanmamış throw yok)', async () => {
+    global.fetch = vi.fn().mockRejectedValue(new TypeError('Failed to fetch'))
+    const res = await api.login('u', 'p')
+    expect(res.success).toBe(false)
+    expect(typeof res.error).toBe('string')
+  })
+})
+
 // ── api.logout ────────────────────────────────────────────────────────────────
 
 describe('api.logout', () => {
