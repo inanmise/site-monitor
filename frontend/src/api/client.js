@@ -14,14 +14,50 @@ function nonJsonErrorPayload(status) {
   }
 }
 
+/**
+ * Bağlantı açılıp hiç yanıt vermezse (OpenShift pod restart / HAProxy bağlantıyı
+ * RST'siz düşürürse oluşan yarı-açık socket) `fetch` süresiz asılı kalır. AbortController
+ * + timeout ile bunu sınırlandırırız; özellikle açılış akışında (getMe/login) sonsuz
+ * "Yükleniyor…" ekranını (pratikte beyaz ekran) önler. timeoutMs <= 0 → timeout uygulanmaz.
+ */
+const DEFAULT_TIMEOUT_MS = 15000
+
+async function fetchWithTimeout(url, options = {}, timeoutMs = DEFAULT_TIMEOUT_MS) {
+  if (!(timeoutMs > 0) || typeof AbortController === 'undefined') {
+    return fetch(url, options)
+  }
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
+  try {
+    return await fetch(url, { ...options, signal: controller.signal })
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
 async function request(path, options = {}) {
   // FormData gönderiminde Content-Type'ı tarayıcı belirler (multipart boundary)
   const isForm = options.body instanceof FormData
-  const res = await fetch(`${BASE}${path}`, {
-    credentials: 'include',
-    headers: { ...(isForm ? {} : { 'Content-Type': 'application/json' }), ...options.headers },
-    ...options,
-  })
+  // timeoutMs opsiyoneldir: varsayılan 0 (timeout yok) → uzun-süren çağrılar
+  // (scheduler/diagnostics/checkDomain/upload/sql) ETKİLENMEZ. Açılış çağrıları
+  // (getMe) açıkça bir timeout geçirir.
+  const { timeoutMs = 0, ...opts } = options
+  let res
+  try {
+    res = await fetchWithTimeout(`${BASE}${path}`, {
+      credentials: 'include',
+      headers: { ...(isForm ? {} : { 'Content-Type': 'application/json' }), ...opts.headers },
+      ...opts,
+    }, timeoutMs)
+  } catch (e) {
+    // Timeout (abort) → asılı kalmak yerine yumuşak hata payload'ı döndür; böylece
+    // çağıran (örn. App.jsx getMe.then) authChecked'i true yapıp login'i gösterir.
+    // Diğer ağ hataları mevcut davranışı korur (reject → çağıranın .catch'i).
+    if (e?.name === 'AbortError') {
+      return { success: false, status: 0, error: 'İstek zaman aşımına uğradı — sunucu yanıt vermedi' }
+    }
+    throw e
+  }
   if (res.status === 401) {
     // Session expired or invalidated (typically: pod restart wiped in-memory
     // sessions). Don't redirect during the initial auth bootstrap or from the
@@ -61,12 +97,24 @@ export const api = {
   },
 
   login: async (username, password, rememberMe = false) => {
-    const r = await fetch(`${BASE}/login`, {
-      method: 'POST',
-      credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username, password, remember_me: String(rememberMe) }),
-    })
+    let r
+    try {
+      r = await fetchWithTimeout(`${BASE}/login`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, password, remember_me: String(rememberMe) }),
+      })
+    } catch (e) {
+      // Login isteği asılır/başarısız olursa buton sonsuz "bekliyor"da kalmasın
+      return {
+        success: false,
+        status: 0,
+        error: e?.name === 'AbortError'
+          ? 'Giriş zaman aşımına uğradı — sunucu yanıt vermedi'
+          : 'Sunucuya ulaşılamadı (ağ hatası)',
+      }
+    }
     let body
     try { body = await r.json() } catch { body = nonJsonErrorPayload(r.status) }
     // Flag a successful login so the 401 handler in request() knows that any
@@ -85,7 +133,7 @@ export const api = {
     return request('/logout', { method: 'POST' })
   },
 
-  getMe: () => request('/me'),
+  getMe: () => request('/me', { timeoutMs: DEFAULT_TIMEOUT_MS }),
 
   getCertificates: () => request('/certificates'),
 
