@@ -126,10 +126,23 @@ public class WebConfig implements WebMvcConfigurer {
                         "style-src 'self' 'unsafe-inline'; img-src 'self' data:; " +
                         "connect-src 'self'; font-src 'self'; frame-ancestors 'none'; " +
                         "base-uri 'self'; form-action 'self'");
-                // No caching for API responses
-                if (req.getRequestURI().startsWith("/api/")) {
+                // ── Cache politikası (SPA) ──────────────────────────────────────
+                // API yanıtları hiç cache'lenmez.
+                // /assets/** Vite tarafından İÇERİK-HASH'li üretilir (örn. index-<hash>.js) →
+                //   güvenle uzun süre cache'lenir (yeni build = yeni dosya adı = yeni URL).
+                // Diğer her şey (index.html SPA kabuğu, "/", favicon) ASLA cache'lenmez; böylece
+                //   her deploy'da taze index.html çekilir ve GÜNCEL asset hash'lerine işaret eder.
+                //   Aksi halde eski cache'li index.html artık var olmayan eski bundle'ı (404)
+                //   çağırır → React mount olamaz → BEYAZ EKRAN. (prod'da cache.period set değil,
+                //   bu yüzden framework Cache-Control yazmaz; buradaki header otoritedir.)
+                String uri = req.getRequestURI();
+                if (uri.startsWith("/api/")) {
                     res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
                     res.setHeader("Pragma", "no-cache");
+                } else if (uri.startsWith("/assets/")) {
+                    res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+                } else {
+                    res.setHeader("Cache-Control", "no-store, must-revalidate");
                 }
                 chain.doFilter(req, res);
             }
