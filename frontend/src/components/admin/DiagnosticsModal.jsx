@@ -399,6 +399,12 @@ export default function DiagnosticsModal({ domain, port, onClose }) {
                       value={diag.data.source?.hostname || '—'} />
                     <ShowField label={t('inv.diagSourceIps')} mono
                       value={diag.data.source?.ips?.length ? diag.data.source.ips.join(', ') : '—'} />
+                    {diag.data.source?.node_name && (
+                      <ShowField label={t('inv.diagSourceNode')} mono value={diag.data.source.node_name} />
+                    )}
+                    {diag.data.source?.pod_name && (
+                      <ShowField label={t('inv.diagSourcePod')} mono value={diag.data.source.pod_name} />
+                    )}
                   </div>
 
                   <div className="show-section-header">{t('inv.diagDns')}</div>

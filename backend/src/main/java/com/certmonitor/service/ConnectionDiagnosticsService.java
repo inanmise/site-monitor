@@ -116,6 +116,10 @@ public class ConnectionDiagnosticsService {
      *  combo fails, so the network admin knows which source to trace. Note the
      *  pod IP may be SNAT'ed at cluster egress — hostname + pod IP is still
      *  what the cluster-side trace needs. Package-private for test stubbing. */
+    private static String emptyToNull(String s) {
+        return (s == null || s.isBlank()) ? null : s.trim();
+    }
+
     Map<String, Object> resolveSource() {
         Map<String, Object> src = new LinkedHashMap<>();
         String hostname = null;
@@ -138,6 +142,11 @@ public class ConnectionDiagnosticsService {
         ips.sort((x, y) -> Boolean.compare(x.contains(":"), y.contains(":")));
         src.put("hostname", hostname);
         src.put("ips", ips);
+        // K8s Downward API (deployment env) — pod'un koştuğu worker node + pod kimliği.
+        // Node'a bağlı egress/akbankpos sorununu korele etmek için. K8s dışında null.
+        src.put("node_name", emptyToNull(System.getenv("NODE_NAME")));
+        src.put("pod_name",  emptyToNull(System.getenv("POD_NAME")));
+        src.put("pod_ip",    emptyToNull(System.getenv("POD_IP")));
         return src;
     }
 
