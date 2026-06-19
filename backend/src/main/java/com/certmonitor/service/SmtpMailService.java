@@ -3,6 +3,8 @@ package com.certmonitor.service;
 import com.certmonitor.model.SmtpSettings;
 import jakarta.mail.internet.MimeMessage;
 import lombok.extern.slf4j.Slf4j;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.mail.javamail.JavaMailSenderImpl;
 import org.springframework.mail.javamail.MimeMessageHelper;
 import org.springframework.stereotype.Service;
@@ -26,6 +28,10 @@ import java.util.Properties;
 @Service
 public class SmtpMailService {
 
+    // Mail'e özel logger (EmailNotificationService ile ortak) — bağımsız TRACE toggle:
+    // logging.level.com.certmonitor.mail=TRACE. Tanılama uçlarının detayları buraya gider.
+    private static final Logger MAIL_LOG = LoggerFactory.getLogger("com.certmonitor.mail");
+
     private final SmtpSettingsService settingsService;
 
     public SmtpMailService(SmtpSettingsService settingsService) {
@@ -42,14 +48,19 @@ public class SmtpMailService {
             return out;
         }
         long start = System.currentTimeMillis();
+        if (MAIL_LOG.isTraceEnabled()) MAIL_LOG.trace("→ SMTP testConnection: {}", smtpContextOf(s));
         try {
             buildSender(s).testConnection();
+            long ms = System.currentTimeMillis() - start;
             out.put("success", true);
             out.put("message", "Bağlantı başarılı (" + s.getHost() + ":" + s.getPort() + ")");
-            out.put("elapsed_ms", System.currentTimeMillis() - start);
+            out.put("elapsed_ms", ms);
+            if (MAIL_LOG.isTraceEnabled()) MAIL_LOG.trace("✓ SMTP testConnection OK: süre={}ms | {}", ms, smtpContextOf(s));
         } catch (Exception e) {
             out.put("success", false);
             out.put("error", rootMessage(e));
+            // Son arg `e` (Throwable) → tam stack. Admin-tetikli tanılama olduğundan WARN.
+            log.warn("✗ SMTP test bağlantısı başarısız: {} | {}", rootMessage(e), smtpContextOf(s), e);
         }
         return out;
     }
@@ -75,6 +86,9 @@ public class SmtpMailService {
             out.put("error", "From adresi tanımlı değil");
             return out;
         }
+        long start = System.currentTimeMillis();
+        if (MAIL_LOG.isTraceEnabled())
+            MAIL_LOG.trace("→ SMTP sendTest: TO={} | from={} | {}", to.trim(), from, smtpContextOf(s));
         try {
             JavaMailSenderImpl sender = buildSender(s);
             MimeMessage msg = sender.createMimeMessage();
@@ -90,9 +104,13 @@ public class SmtpMailService {
             sender.send(msg);
             out.put("success", true);
             out.put("message", "Test e-postası gönderildi: " + to.trim());
+            if (MAIL_LOG.isTraceEnabled())
+                MAIL_LOG.trace("✓ SMTP sendTest OK: TO={} | süre={}ms", to.trim(), System.currentTimeMillis() - start);
         } catch (Exception e) {
             out.put("success", false);
             out.put("error", rootMessage(e));
+            // Son arg `e` (Throwable) → tam stack. Admin-tetikli tanılama olduğundan WARN.
+            log.warn("✗ SMTP test e-postası başarısız: TO={} | {} | {}", to.trim(), rootMessage(e), smtpContextOf(s), e);
         }
         return out;
     }
@@ -160,6 +178,20 @@ public class SmtpMailService {
     private static String esc(String s) {
         if (s == null) return "";
         return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
+    }
+
+    /** Tek satır SMTP bağlamı (host/port/auth/TLS/timeout) — PAROLA ASLA dahil edilmez. */
+    private static String smtpContextOf(SmtpSettings s) {
+        boolean auth = Boolean.TRUE.equals(s.getAuthEnabled());
+        return "smtp=" + s.getHost() + ":" + (s.getPort() != null ? s.getPort() : 587)
+                + " auth=" + (auth ? "on" : "off")
+                + " user=" + (s.getUsername() != null ? s.getUsername() : "-")
+                + " starttls=" + Boolean.TRUE.equals(s.getStartTlsEnable())
+                + "/req=" + Boolean.TRUE.equals(s.getStartTlsRequired())
+                + " sslTrust=" + (s.getSslTrust() != null && !s.getSslTrust().isBlank() ? s.getSslTrust() : "-")
+                + " timeout(conn/read/write)=" + orDefault(s.getConnectionTimeoutMs(), 10000)
+                + "/" + orDefault(s.getReadTimeoutMs(), 15000)
+                + "/" + orDefault(s.getWriteTimeoutMs(), 15000) + "ms";
     }
 
     private static String rootMessage(Throwable e) {

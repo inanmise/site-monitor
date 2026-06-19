@@ -2,17 +2,22 @@ package com.certmonitor.config;
 
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
+import jakarta.servlet.ServletOutputStream;
+import jakarta.servlet.WriteListener;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import jakarta.servlet.http.HttpServletResponseWrapper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 import org.springframework.web.util.ContentCachingRequestWrapper;
-import org.springframework.web.util.ContentCachingResponseWrapper;
 
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.OutputStreamWriter;
+import java.io.PrintWriter;
 import java.nio.charset.StandardCharsets;
 import java.util.Enumeration;
 import java.util.LinkedHashMap;
@@ -95,6 +100,9 @@ public class RequestLoggingFilter extends OncePerRequestFilter {
     );
 
     private static final int MAX_BODY_LOG = 2000;
+    // Yanıt gövdesinden loglama için yakalanacak azami bayt. truncate() zaten MAX_BODY_LOG
+    // karaktere kısar; bu kadar yakalama yeter, gerisi atılır (bellek koruması).
+    private static final int CAPTURE_CAP = 8 * 1024;
 
     @Override
     protected void doFilterInternal(HttpServletRequest req, HttpServletResponse resp, FilterChain chain)
@@ -108,7 +116,12 @@ public class RequestLoggingFilter extends OncePerRequestFilter {
         // Spring Framework 7: ContentCachingRequestWrapper artık zorunlu bir cache limiti ister.
         // Sadece TRACE log'da çalışırız ve gövdeyi zaten truncate ederiz → 64 KB fazlasıyla yeter.
         ContentCachingRequestWrapper wReq = new ContentCachingRequestWrapper(req, 64 * 1024);
-        ContentCachingResponseWrapper wResp = new ContentCachingResponseWrapper(resp);
+        // Yanıtı TEE'leriz: baytlar gerçek çıkışa doğrudan akar (Tomcat gzip sıkıştırması ve
+        // Content-Length aynen çalışır), aynı anda loglama için sınırlı bir tampona kopyalanır.
+        // Buffer-and-replay (ContentCachingResponseWrapper.copyBodyToResponse) KULLANMAYIZ; o yöntem
+        // sıkıştırılmamış uzunlukla Content-Length yazıp connector gzip'iyle çakışıyor ve TRACE'te
+        // yanıtı bozup beyaz ekrana yol açıyordu.
+        TeeResponseWrapper wResp = new TeeResponseWrapper(resp, CAPTURE_CAP);
         long start = System.currentTimeMillis();
         String query = req.getQueryString();
         String fullUri = req.getRequestURI() + (query != null ? "?" + sanitizeQuery(query) : "");
@@ -119,13 +132,15 @@ public class RequestLoggingFilter extends OncePerRequestFilter {
         try {
             chain.doFilter(wReq, wResp);
         } finally {
+            // Writer buffer'ındaki son baytları tee'ye (gerçek çıkış + capture) it ki loglanan
+            // gövde eksik kalmasın. Content-Length'e DOKUNMAYIZ; gövde gerçek yanıta zaten yazıldı.
+            try { wResp.flushBuffer(); } catch (Exception ignore) { /* yanıt kapanmış olabilir */ }
             long durationMs = System.currentTimeMillis() - start;
             String reqBody  = redact(bodyOf(wReq.getContentAsByteArray()));
-            String respBody = redact(bodyOf(wResp.getContentAsByteArray()));
+            String respBody = redact(bodyOf(wResp.getCaptured()));
             log.trace("<<< {} {} -> {} ({} ms) | reqBody={} | respBody={}",
                     req.getMethod(), fullUri, wResp.getStatus(), durationMs,
                     truncate(reqBody), truncate(respBody));
-            wResp.copyBodyToResponse();
         }
     }
 
@@ -185,5 +200,109 @@ public class RequestLoggingFilter extends OncePerRequestFilter {
         String xff = req.getHeader("X-Forwarded-For");
         if (xff != null && !xff.isBlank()) return xff.split(",")[0].trim();
         return req.getRemoteAddr();
+    }
+
+    /**
+     * Yanıtı TEE'leyen wrapper: gerçek çıkışa normal yazar (sıkıştırma/Content-Length aynen çalışır),
+     * aynı anda loglama için sınırlı bir tampona kopyalar. getOutputStream/getWriter tek seferlik ve
+     * birbirini dışlar (servlet sözleşmesi). copyBodyToResponse YOKtur — replay yapılmaz.
+     */
+    private static final class TeeResponseWrapper extends HttpServletResponseWrapper {
+        private final ByteArrayOutputStream capture = new ByteArrayOutputStream();
+        private final int cap;
+        private TeeServletOutputStream tee;
+        private PrintWriter writer;
+
+        TeeResponseWrapper(HttpServletResponse response, int cap) {
+            super(response);
+            this.cap = cap;
+        }
+
+        @Override
+        public ServletOutputStream getOutputStream() throws IOException {
+            if (writer != null) {
+                throw new IllegalStateException("getWriter() already called on this response");
+            }
+            if (tee == null) {
+                tee = new TeeServletOutputStream(getResponse().getOutputStream(), capture, cap);
+            }
+            return tee;
+        }
+
+        @Override
+        public PrintWriter getWriter() throws IOException {
+            if (tee != null) {
+                throw new IllegalStateException("getOutputStream() already called on this response");
+            }
+            if (writer == null) {
+                String enc = getCharacterEncoding();
+                TeeServletOutputStream out =
+                        new TeeServletOutputStream(getResponse().getOutputStream(), capture, cap);
+                this.tee = out;
+                writer = new PrintWriter(new OutputStreamWriter(
+                        out, enc != null ? enc : StandardCharsets.UTF_8.name()));
+            }
+            return writer;
+        }
+
+        @Override
+        public void flushBuffer() throws IOException {
+            if (writer != null) writer.flush();
+            if (tee != null) tee.flush();
+            super.flushBuffer();
+        }
+
+        byte[] getCaptured() {
+            return capture.toByteArray();
+        }
+    }
+
+    /**
+     * Tüm yazımları gerçek {@code delegate}'e geçirir; bir yandan {@code capture}'a (cap'e kadar)
+     * kopyalar. flush/close yalnız delegate'e gider — capture açık kalır, sonradan okunur.
+     */
+    private static final class TeeServletOutputStream extends ServletOutputStream {
+        private final ServletOutputStream delegate;
+        private final ByteArrayOutputStream capture;
+        private final int cap;
+
+        TeeServletOutputStream(ServletOutputStream delegate, ByteArrayOutputStream capture, int cap) {
+            this.delegate = delegate;
+            this.capture = capture;
+            this.cap = cap;
+        }
+
+        @Override
+        public void write(int b) throws IOException {
+            delegate.write(b);
+            if (capture.size() < cap) capture.write(b);
+        }
+
+        @Override
+        public void write(byte[] b, int off, int len) throws IOException {
+            delegate.write(b, off, len);
+            int remaining = cap - capture.size();
+            if (remaining > 0) capture.write(b, off, Math.min(len, remaining));
+        }
+
+        @Override
+        public void flush() throws IOException {
+            delegate.flush();
+        }
+
+        @Override
+        public void close() throws IOException {
+            delegate.close();
+        }
+
+        @Override
+        public boolean isReady() {
+            return delegate.isReady();
+        }
+
+        @Override
+        public void setWriteListener(WriteListener writeListener) {
+            delegate.setWriteListener(writeListener);
+        }
     }
 }

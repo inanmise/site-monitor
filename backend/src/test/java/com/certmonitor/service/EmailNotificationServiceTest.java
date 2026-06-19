@@ -1,5 +1,6 @@
 package com.certmonitor.service;
 
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -9,8 +10,16 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 import com.certmonitor.model.SmtpSettings;
+import org.springframework.mail.MailSendException;
 import org.springframework.mail.javamail.JavaMailSenderImpl;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
+import org.slf4j.LoggerFactory;
+
+import jakarta.mail.internet.MimeMessage;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -27,10 +36,63 @@ class EmailNotificationServiceTest {
 
     private EmailNotificationService service;
 
+    // Logback yakalayıcılar: mail TRACE detayları "com.certmonitor.mail"; operasyonel
+    // ERROR/WARN (stack dahil) EmailNotificationService sınıf logger'ında.
+    private Logger mailLogger;
+    private Logger classLogger;
+    private ListAppender<ILoggingEvent> mailAppender;
+    private ListAppender<ILoggingEvent> classAppender;
+    private Level mailOrig;
+    private Level classOrig;
+
     @BeforeEach
     void setUp() {
         service = new EmailNotificationService(settingsService, smtpMailService);
         when(settingsService.getOrDefaults()).thenReturn(settings(false));
+
+        mailLogger = (Logger) LoggerFactory.getLogger("com.certmonitor.mail");
+        classLogger = (Logger) LoggerFactory.getLogger(EmailNotificationService.class);
+        mailOrig = mailLogger.getLevel();
+        classOrig = classLogger.getLevel();
+        mailAppender = new ListAppender<>();
+        classAppender = new ListAppender<>();
+        mailAppender.start();
+        classAppender.start();
+        mailLogger.addAppender(mailAppender);
+        classLogger.addAppender(classAppender);
+    }
+
+    @AfterEach
+    void tearDown() {
+        mailLogger.detachAppender(mailAppender);
+        classLogger.detachAppender(classAppender);
+        mailLogger.setLevel(mailOrig);
+        classLogger.setLevel(classOrig);
+    }
+
+    /** Tam SMTP ayarlı (host/auth/TLS/timeout) etkin profil — bağlam loglarını anlamlı test eder. */
+    private SmtpSettings settingsEnabledFull() {
+        SmtpSettings s = settings(true);
+        s.setFromAddress("noreply@certmonitor.com");
+        s.setHost("smtp.test");
+        s.setPort(587);
+        s.setAuthEnabled(true);
+        s.setUsername("svc@certmonitor.com");
+        s.setStartTlsEnable(true);
+        s.setStartTlsRequired(true);
+        s.setConnectionTimeoutMs(10000);
+        s.setReadTimeoutMs(15000);
+        s.setWriteTimeoutMs(15000);
+        return s;
+    }
+
+    /** mailAppender'daki, prefiks ile başlayan son formatlanmış TRACE satırı. */
+    private String lastMailLine(String prefix) {
+        return mailAppender.list.stream()
+                .map(ILoggingEvent::getFormattedMessage)
+                .filter(m -> m.startsWith(prefix))
+                .reduce((a, b) -> b)
+                .orElse("");
     }
 
     private SmtpSettings settings(boolean enabled) {
@@ -568,5 +630,100 @@ class EmailNotificationServiceTest {
         assertThat(html).contains("18.06.2026 10:15");          // resolvedAt 07:15 UTC → 10:15 IST
         assertThat(html).contains("18.06.2026 01:00");          // createdAt 17 22:00 UTC → 18 01:00 IST
         assertThat(html).doesNotContain("18.06.2026 07:15");    // ham UTC sızmamalı
+    }
+
+    // ── Mail TRACE logging + hata stack izi (com.certmonitor.mail) ────────────────
+
+    @Test
+    @DisplayName("Gönderim başarısız: ERROR'da tam stack + TRACE'te SMTP bağlamı/konu — mail GÖVDESİ loglanmaz")
+    void doSend_failure_errorHasStack_traceHasContext_noBody() {
+        mailLogger.setLevel(Level.TRACE);
+        when(settingsService.getOrDefaults()).thenReturn(settingsEnabledFull());
+        JavaMailSenderImpl spySender = spy(new JavaMailSenderImpl());
+        doThrow(new MailSendException("550 mailbox unavailable")).when(spySender).send(any(MimeMessage.class));
+        when(smtpMailService.currentSender()).thenReturn(spySender);
+
+        String result = service.sendAlert("to@test.com", "KONU-X", "GIZLI-GOVDE-12345");
+
+        assertThat(result).startsWith("FAILED:");
+
+        // ERROR satırına tam stack iliştirildi (TRACE açmaya gerek yok)
+        ILoggingEvent err = classAppender.list.stream()
+                .filter(e -> e.getFormattedMessage().startsWith("✗ E-posta gönderilemedi"))
+                .reduce((a, b) -> b).orElseThrow();
+        assertThat(err.getThrowableProxy()).isNotNull();
+        assertThat(err.getThrowableProxy().getClassName()).contains("MailSendException");
+
+        // TRACE ayrıntı: SMTP bağlamı + konu var; mail GÖVDESİ asla yok
+        String trace = lastMailLine("✗ SMTP hata ayrıntı");
+        assertThat(trace).contains("smtp.test:587").contains("konu=KONU-X").contains("timeout(");
+        assertThat(trace).doesNotContain("GIZLI-GOVDE-12345");
+        // Gönderim-öncesi giriş TRACE'i de basıldı (her gönderimde)
+        assertThat(lastMailLine("→ SMTP gönderim")).contains("deneme=1/4").contains("smtp.test:587");
+    }
+
+    @Test
+    @DisplayName("Gönderim başarılı: TRACE'te '✓ SMTP gönderim OK ... süre=' satırı")
+    void doSend_success_tracesOkWithDuration() {
+        mailLogger.setLevel(Level.TRACE);
+        when(settingsService.getOrDefaults()).thenReturn(settingsEnabledFull());
+        JavaMailSenderImpl spySender = spy(new JavaMailSenderImpl());
+        doNothing().when(spySender).send(any(MimeMessage.class));
+        when(smtpMailService.currentSender()).thenReturn(spySender);
+
+        String result = service.sendAlert("to@test.com", "KONU-X", "mesaj");
+
+        assertThat(result).isEqualTo("SENT");
+        assertThat(lastMailLine("✓ SMTP gönderim OK")).contains("süre=").contains("TO=to@test.com");
+    }
+
+    @Test
+    @DisplayName("TRACE kapalı (INFO): com.certmonitor.mail'e hiç TRACE satırı düşmez")
+    void traceOff_noMailTraceLines() {
+        mailLogger.setLevel(Level.INFO);
+        when(settingsService.getOrDefaults()).thenReturn(settingsEnabledFull());
+        JavaMailSenderImpl spySender = spy(new JavaMailSenderImpl());
+        doNothing().when(spySender).send(any(MimeMessage.class));
+        when(smtpMailService.currentSender()).thenReturn(spySender);
+
+        service.sendAlert("to@test.com", "KONU-X", "mesaj");
+
+        boolean anyTrace = mailAppender.list.stream().anyMatch(e -> e.getLevel() == Level.TRACE);
+        assertThat(anyTrace).isFalse();
+    }
+
+    @Test
+    @DisplayName("421 rate-limit: WARN + async retry kuyruğu; TRACE'te '⏳ SMTP 421 ayrıntı'")
+    void error421_warnsAndQueuesRetry_traceDetail() {
+        mailLogger.setLevel(Level.TRACE);
+        when(settingsService.getOrDefaults()).thenReturn(settingsEnabledFull());
+        JavaMailSenderImpl spySender = spy(new JavaMailSenderImpl());
+        doThrow(new MailSendException("421 4.7.0 Too many messages")).when(spySender).send(any(MimeMessage.class));
+        when(smtpMailService.currentSender()).thenReturn(spySender);
+
+        String result = service.sendAlert("to@test.com", "KONU-X", "mesaj");
+
+        assertThat(result).startsWith("QUEUED_RETRY");
+        boolean warned = classAppender.list.stream()
+                .anyMatch(e -> e.getLevel() == Level.WARN && e.getFormattedMessage().contains("421 rate limit"));
+        assertThat(warned).isTrue();
+        assertThat(lastMailLine("⏳ SMTP 421 ayrıntı")).contains("smtp.test:587");
+    }
+
+    @Test
+    @DisplayName("Hazırlık hatası (createMimeMessage atar): ERROR'da tam stack")
+    void prepFailure_errorHasStack() {
+        when(settingsService.getOrDefaults()).thenReturn(settingsEnabledFull());
+        when(smtpMailService.currentSender()).thenReturn(sender);
+        when(sender.createMimeMessage()).thenThrow(new RuntimeException("boom-prep"));
+
+        String result = service.sendAlert("to@test.com", "KONU-X", "mesaj");
+
+        assertThat(result).startsWith("FAILED:");
+        ILoggingEvent err = classAppender.list.stream()
+                .filter(e -> e.getFormattedMessage().startsWith("✗ E-posta hazırlanamadı"))
+                .reduce((a, b) -> b).orElseThrow();
+        assertThat(err.getThrowableProxy()).isNotNull();
+        assertThat(err.getThrowableProxy().getMessage()).contains("boom-prep");
     }
 }
