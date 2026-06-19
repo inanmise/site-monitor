@@ -170,6 +170,47 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
     setStatusFilter(prev => prev === kind ? 'default' : kind)
   }
 
+  // ── Toplu seçim (yalnız silinmemiş kayıtlar seçilebilir) ──────────────────
+  const [selected, setSelected] = useState(() => new Set())
+  const selectableItems = useMemo(() => visibleItems.filter(i => !i.deleted_at), [visibleItems])
+  const allOnPage = selectableItems.length > 0 && selectableItems.every(i => selected.has(i.id))
+  const toggleSel = (id) => setSelected(s => {
+    const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n
+  })
+  const toggleAll = () => setSelected(s => {
+    const n = new Set(s)
+    if (allOnPage) selectableItems.forEach(i => n.delete(i.id))
+    else selectableItems.forEach(i => n.add(i.id))
+    return n
+  })
+  // Filtre değişince seçimi temizle (görünmeyen satırlar seçili kalmasın)
+  useEffect(() => { setSelected(new Set()) }, [statusFilter])
+
+  async function bulkAction(action) {
+    const ids = [...selected]
+    if (ids.length === 0) return
+    const cfg = {
+      activate:   { title: t('inv.bulkActivateTitle'),   msg: t('inv.bulkActivateMsg', ids.length),   confirm: t('inv.bulkActivateBtn'),   variant: 'warning' },
+      deactivate: { title: t('inv.bulkDeactivateTitle'), msg: t('inv.bulkDeactivateMsg', ids.length), confirm: t('inv.bulkDeactivateBtn'), variant: 'warning' },
+      delete:     { title: t('inv.bulkDeleteTitle'),     msg: t('inv.bulkDeleteMsg', ids.length),     confirm: t('inv.bulkDeleteBtn'),     variant: 'danger'  },
+    }[action]
+    const ok = await showConfirm({
+      title: cfg.title, message: cfg.msg, variant: cfg.variant,
+      confirmText: cfg.confirm, cancelText: t('inv.cancel'),
+    })
+    if (!ok) return
+    const res = await api.admin.bulkInventory(ids, action)
+    if (res?.success) {
+      const d = res.data || {}
+      toast.success(t('inv.bulkDone', d.processed ?? 0, d.skipped ?? 0))
+      setSelected(new Set())
+      load()
+      onInventoryChange?.()
+    } else {
+      toast.error(res?.error || t('inv.saveError'))
+    }
+  }
+
   function f(field, val) { setForm(prev => ({ ...prev, [field]: val })) }
 
   function openAdd() {
@@ -273,6 +314,9 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
     if (res?.success) {
       setModal(null)
       toast.success(t('inv.saved'))
+      if ((res.alertsClosed ?? 0) > 0) {
+        toast.success(t('inv.deactivatedAlerts', res.alertsClosed))
+      }
       load()
       onInventoryChange?.()
     } else {
@@ -424,10 +468,27 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
         </div>
       </div>
 
+      {canManage && selected.size > 0 && (
+        <div className="inv-stats-pills" style={{ marginBottom: 10, gap: 8, alignItems: 'center',
+          background: '#f1f5f9', padding: '8px 12px', borderRadius: 6 }}>
+          <span style={{ fontWeight: 700, fontSize: '.9em' }}>{t('inv.bulkSelected', selected.size)}</span>
+          <button className="btn btn-success btn-sm-p"   onClick={() => bulkAction('activate')}>{t('inv.bulkActivateBtn')}</button>
+          <button className="btn btn-warning btn-sm-p"   onClick={() => bulkAction('deactivate')}>{t('inv.bulkDeactivateBtn')}</button>
+          <button className="btn btn-danger btn-sm-p"    onClick={() => bulkAction('delete')}>{t('inv.bulkDeleteBtn')}</button>
+          <button className="btn btn-secondary btn-sm-p" onClick={() => setSelected(new Set())}>{t('inv.bulkClear')}</button>
+        </div>
+      )}
+
       <div className="admin-table-wrap">
         <table className="admin-table">
           <thead>
             <tr>
+              {canManage && (
+                <th style={{ width: 28 }}>
+                  <input type="checkbox" checked={allOnPage} onChange={toggleAll}
+                    disabled={selectableItems.length === 0} title={t('inv.bulkSelectAll')} />
+                </th>
+              )}
               <th>{t('inv.colDomain')}</th>
               <th>{t('inv.colPort')}</th>
               <th>{t('inv.colTier')}</th>
@@ -439,6 +500,14 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
           <tbody>
             {visibleItems.map((item) => (
               <tr key={item.id} className={item.deleted_at ? 'inv-row-deleted' : ''}>
+                {canManage && (
+                  <td onClick={e => e.stopPropagation()}>
+                    {!item.deleted_at && (
+                      <input type="checkbox" checked={selected.has(item.id)}
+                        onChange={() => toggleSel(item.id)} />
+                    )}
+                  </td>
+                )}
                 <td><strong>{item.domain}</strong></td>
                 <td>{item.port}</td>
                 <td>

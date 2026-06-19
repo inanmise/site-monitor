@@ -164,6 +164,7 @@ public class AdminController {
         existing.setDescription(item.getDescription());
         existing.setOwner(item.getOwner());
         existing.setTags(item.getTags());
+        boolean wasActive = Boolean.TRUE.equals(existing.getActive());
         existing.setActive(item.getActive() != null ? item.getActive() : true);
         existing.setExpectedFingerprint(item.getExpectedFingerprint());
         existing.setExpectedSubject(item.getExpectedSubject());
@@ -189,11 +190,18 @@ public class AdminController {
         existing.setUpdatedAt(now());
         CertificateInventory saved = inventoryRepo.save(existing);
 
+        // Pasife alındıysa (true→false) açık alarmları sessizce kapat — izleme durduğundan
+        // aksi halde otomatik çözülemezler (toplu pasif akışıyla aynı semantik).
+        int alertsClosed = 0;
+        if (wasActive && Boolean.FALSE.equals(saved.getActive()) && saved.getDeletedAt() == null) {
+            alertsClosed = escalationService.closeAlertsOnDeactivate(saved.getDomain());
+        }
+
         if (!diffJson.equals("{}")) {
             auditService.recordAction("DOMAIN_EDIT", session, request,
                     "CERTIFICATE", saved.getDomain(), diffJson);
         }
-        return ok(Map.of("data", saved));
+        return ok(Map.of("data", saved, "alertsClosed", alertsClosed));
     }
 
     private String buildInventoryDiff(CertificateInventory o, CertificateInventory n, boolean isAdmin) {
@@ -442,6 +450,77 @@ public class AdminController {
                     "{\"teamId\":" + inv.getTeamId() + ",\"alertsClosed\":" + alertsClosed + "}");
             return ok(Map.of("message", "Deleted", "alertsClosed", alertsClosed));
         }).orElse(ResponseEntity.notFound().build());
+    }
+
+    /**
+     * Toplu envanter işlemi — seçili domain'leri tek istekte aktif/pasif yapar ya da siler.
+     * action ∈ {activate, deactivate, delete}. Yetki tekil uçlarla aynı: girişte
+     * admin/team-admin şartı, ardından her kayıt için takım kapsamı (yetkisiz/yok olan
+     * kayıt atlanır; tek kaydın yetkisizliği partiyi düşürmez). "delete" tekil soft-delete
+     * ile birebir (deletedAt+active=false + alarm kapatma). Zaten silinmiş/silinmiş kayıtlar
+     * activate/deactivate için atlanır (geri yükleme ayrı akıştır).
+     */
+    @CacheEvict(value = {"cert-latest", "cert-warnings", "cert-stats", "renewal-advice"}, allEntries = true)
+    @PostMapping("/inventory/bulk")
+    @Transactional
+    public ResponseEntity<Map<String, Object>> bulkInventoryAction(
+            @RequestBody Map<String, Object> body, HttpSession session, HttpServletRequest request) {
+        requireAdminOrTeamAdmin(session);
+        String action = body.get("action") != null ? body.get("action").toString().trim().toLowerCase() : "";
+        if (!java.util.Set.of("activate", "deactivate", "delete").contains(action)) {
+            throw new IllegalArgumentException("action must be one of: activate, deactivate, delete");
+        }
+        java.util.LinkedHashSet<Long> ids = new java.util.LinkedHashSet<>();
+        if (body.get("ids") instanceof List<?> raw) {
+            for (Object o : raw) { Long id = toLong(o); if (id != null) ids.add(id); }
+        }
+        if (ids.isEmpty()) throw new IllegalArgumentException("No ids provided");
+
+        int processed = 0, skipped = 0, alertsClosed = 0;
+        String ts = now();
+        for (Long id : ids) {
+            CertificateInventory inv = inventoryRepo.findById(id).orElse(null);
+            if (inv == null || !canManageTeamResource(session, inv.getTeamId())) { skipped++; continue; }
+            boolean deleted = inv.getDeletedAt() != null;
+            switch (action) {
+                case "activate" -> {
+                    if (deleted) { skipped++; }            // silinmiş kayıt → "geri yükle" akışı kullanılmalı
+                    else { inv.setActive(true);  inv.setUpdatedAt(ts); inventoryRepo.save(inv); processed++; }
+                }
+                case "deactivate" -> {
+                    if (deleted) { skipped++; }
+                    else {
+                        boolean wasActive = Boolean.TRUE.equals(inv.getActive());
+                        inv.setActive(false); inv.setUpdatedAt(ts); inventoryRepo.save(inv);
+                        // Pasife alınan domain artık taranmaz → açık alarmlarını sessizce kapat
+                        if (wasActive) alertsClosed += escalationService.closeAlertsOnDeactivate(inv.getDomain());
+                        processed++;
+                    }
+                }
+                case "delete" -> {
+                    if (deleted) { skipped++; }            // zaten silinmiş → no-op
+                    else {
+                        inv.setDeletedAt(ts); inv.setActive(false); inv.setUpdatedAt(ts);
+                        inventoryRepo.save(inv);
+                        alertsClosed += escalationService.closeAlertsOnInventoryDelete(inv.getDomain());
+                        processed++;
+                    }
+                }
+            }
+        }
+        String auditAction = switch (action) {
+            case "activate"   -> "DOMAIN_BULK_ACTIVATE";
+            case "deactivate" -> "DOMAIN_BULK_DEACTIVATE";
+            default            -> "DOMAIN_BULK_DELETE";
+        };
+        auditService.recordAction(auditAction, session, request, "CERTIFICATE",
+                processed + " domain",
+                "{\"processed\":" + processed + ",\"skipped\":" + skipped + ",\"alertsClosed\":" + alertsClosed + "}");
+        Map<String, Object> data = new java.util.LinkedHashMap<>();
+        data.put("processed", processed);
+        data.put("skipped", skipped);
+        data.put("alertsClosed", alertsClosed);
+        return ok(Map.of("data", data, "message", "Bulk " + action + " complete"));
     }
 
     @CacheEvict(value = {"cert-latest", "cert-warnings", "cert-stats", "renewal-advice"}, allEntries = true)
