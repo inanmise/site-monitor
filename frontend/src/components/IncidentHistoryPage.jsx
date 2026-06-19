@@ -528,7 +528,8 @@ function IncidentModal({ modal, setModal, save, remove, saving, allowManage, all
   }, [])
 
   return (
-    <div className="modal-overlay" onClick={() => setModal(null)}>
+    <div className="modal-overlay">
+      {/* Dış tıklamada KAPANMAZ — giriş kaybını önlemek için yalnız İptal/Kaydet ile kapanır */}
       <div className="modal-box modal-wide" onClick={e => e.stopPropagation()}>
         <div className="modal-icon-hdr">
           <div className="modal-icon-hdr-badge" style={{ background: 'linear-gradient(135deg,#0f172a,#334155)', color: '#fff' }}>
