@@ -586,10 +586,31 @@ public class EscalationService {
         return null;
     }
 
+    /** Sertifikaya erişilemediğini / sertifika bilgilerinin alınamadığını gösteren,
+     *  ağ veya firewall kaynaklı ulaşılabilirlik hata sınıfları. Bunlar gerçek bir
+     *  sertifika kusuru değildir; gerçek kusurlar REVOKED/MISMATCH/CHAIN_BROKEN ve
+     *  eşik tabanlı (gün) son kullanma alarmlarıdır. */
+    private static final Set<String> REACHABILITY_ERROR_CLASSES = Set.of("NETWORK", "DNS");
+
     private String determineAlertLevel(Map<String, Object> result, String alertType,
                                         AlertThreshold threshold) {
+        // Doğrulanmış sertifika kusurları → her zaman KRİTİK (müdüre eskalasyon haklı).
         if ("REVOKED".equals(alertType) || "MISMATCH".equals(alertType)
-                || "CHAIN_BROKEN".equals(alertType) || "error".equals(result.get("status"))) {
+                || "CHAIN_BROKEN".equals(alertType)) {
+            return "CRITICAL";
+        }
+        // Sertifikaya erişilemedi / bilgileri alınamadı (status=error). Ağ veya firewall
+        // kaynaklı bir ulaşılabilirlik hatası gerçek bir sertifika sorunu değildir →
+        // müdürü KRİTİK ile rahatsız etmemek için UYARI seviyesinde tut; takım bildirimi
+        // yeterli (UYARI seviyesinde yalnız WARNING kontağı alır, müdür HIGH/CRITICAL
+        // kontağıdır → otomatik hariç). Müdür yalnız eşik tabanlı YÜKSEK/KRİTİK
+        // (yaklaşan son kullanma) ve doğrulanmış kusurlarda bilgilendirilir.
+        if ("error".equals(result.get("status"))) {
+            String errorClass = result.get("error_class") instanceof String s ? s : null;
+            if (errorClass != null && REACHABILITY_ERROR_CLASSES.contains(errorClass)) {
+                return "WARNING";
+            }
+            // SSL/UNKNOWN — olası gerçek TLS/sertifika kusuru, mevcut davranış (KRİTİK) korunur.
             return "CRITICAL";
         }
         Integer days = toInt(result.get("days_remaining"));
@@ -821,8 +842,9 @@ public class EscalationService {
                     case "HIGH"     -> "YÜKSEK";
                     default         -> "UYARI";
                 };
-                yield lvl + ": " + domain + " adresindeki sertifikanın süresi " +
-                        (days != null ? days + " gün içinde doluyor." : "bilinmeyen bir hata nedeniyle kontrol edilemedi.");
+                yield days != null
+                    ? lvl + ": " + domain + " adresindeki sertifikanın süresi " + days + " gün içinde doluyor."
+                    : lvl + ": " + domain + " adresindeki sertifikaya erişilemediği için sertifika bilgileri alınamadı (ağ/firewall kaynaklı olabilir).";
             }
         };
     }

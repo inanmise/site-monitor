@@ -624,6 +624,131 @@ class EscalationServiceTest {
                 eq("teamonly.example.com"), any(), any(), any(), any());
     }
 
+    // ── Sertifikaya erişilemezlik (ağ/firewall) → UYARI + müdür hariç ───────────
+    // Kullanıcı kuralı: sertifika bilgileri ağ/firewall kaynaklı alınamadığında alarm
+    // KRİTİK değil UYARI olmalı ve müdür (HIGH/CRITICAL kontağı) bilgilendirilmemeli.
+
+    /** status=error + verilen error_class ile bir sweep sonucu. determineAlertType → EXPIRY. */
+    private Map<String, Object> errorResult(String domain, String errorClass) {
+        Map<String, Object> r = new LinkedHashMap<>();
+        r.put("domain", domain);
+        r.put("status", "error");
+        if (errorClass != null) r.put("error_class", errorClass);
+        return r;
+    }
+
+    @Test
+    @DisplayName("NETWORK erişilemezlik → UYARI seviyesi + müdür (KRİTİK kontak) sorgulanmaz/hariç")
+    void networkUnreachable_isWarning_managerExcluded() {
+        String domain = "unreachable.example.com";
+        when(contactRepo.findByMinAlertLevelAndActiveTrue("WARNING"))
+                .thenReturn(List.of(contact("takim@test.com", "TECH", "WARNING")));
+        // Müdür var ama yalnız KRİTİK dalda dönmeli — UYARI'da çağrılmamalı:
+        when(contactRepo.findByActiveTrueOrderByRoleAsc())
+                .thenReturn(List.of(contact("takim@test.com", "TECH", "WARNING"),
+                                    contact("mudur@test.com", "MANAGER", "CRITICAL")));
+        when(alertEventRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        service.processResults(List.of(errorResult(domain, "NETWORK")));
+
+        ArgumentCaptor<AlertEvent> captor = ArgumentCaptor.forClass(AlertEvent.class);
+        verify(alertEventRepo, atLeast(1)).save(captor.capture());
+        AlertEvent saved = captor.getAllValues().get(0);
+        assertThat(saved.getAlertLevel()).isEqualTo("WARNING");
+        assertThat(saved.getAlertType()).isEqualTo("EXPIRY");
+
+        // Müdürü getirecek KRİTİK kontak sorgusu HİÇ çağrılmadı
+        verify(contactRepo, never()).findByActiveTrueOrderByRoleAsc();
+
+        // Mail yalnız takım/UYARI alıcısına; müdür alıcı listesinde yok, seviye UYARI
+        ArgumentCaptor<String[]> toCap = ArgumentCaptor.forClass(String[].class);
+        verify(emailService).sendAlert(toCap.capture(), contains("UYARI"), anyString(),
+                eq(domain), eq("WARNING"), eq("EXPIRY"), isNull(), any());
+        assertThat(toCap.getValue()).containsExactly("takim@test.com");
+        assertThat(toCap.getValue()).doesNotContain("mudur@test.com");
+    }
+
+    @Test
+    @DisplayName("NETWORK erişilemezlik mesajı: 'erişilemediği için ... alınamadı (ağ/firewall ...)'")
+    void networkUnreachable_messageMentionsReachability() {
+        String domain = "unreachable2.example.com";
+        when(contactRepo.findByMinAlertLevelAndActiveTrue("WARNING"))
+                .thenReturn(List.of(contact("takim@test.com", "TECH", "WARNING")));
+        when(alertEventRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        service.processResults(List.of(errorResult(domain, "NETWORK")));
+
+        ArgumentCaptor<AlertEvent> captor = ArgumentCaptor.forClass(AlertEvent.class);
+        verify(alertEventRepo, atLeast(1)).save(captor.capture());
+        assertThat(captor.getAllValues().get(0).getMessage())
+                .contains("erişilemediği").contains("ağ/firewall");
+    }
+
+    @Test
+    @DisplayName("DNS çözümleme hatası → UYARI seviyesi (ulaşılabilirlik)")
+    void dnsUnreachable_isWarning() {
+        String domain = "dnsfail.example.com";
+        when(contactRepo.findByMinAlertLevelAndActiveTrue("WARNING"))
+                .thenReturn(List.of(contact("takim@test.com", "TECH", "WARNING")));
+        when(alertEventRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        service.processResults(List.of(errorResult(domain, "DNS")));
+
+        ArgumentCaptor<AlertEvent> captor = ArgumentCaptor.forClass(AlertEvent.class);
+        verify(alertEventRepo, atLeast(1)).save(captor.capture());
+        assertThat(captor.getAllValues().get(0).getAlertLevel()).isEqualTo("WARNING");
+        verify(contactRepo, never()).findByActiveTrueOrderByRoleAsc();
+    }
+
+    @Test
+    @DisplayName("SSL handshake hatası → KRİTİK korunur (olası gerçek TLS/sertifika kusuru) + müdür dahil")
+    void sslError_staysCritical_managerIncluded() {
+        String domain = "sslfail.example.com";
+        when(contactRepo.findByActiveTrueOrderByRoleAsc())
+                .thenReturn(List.of(contact("takim@test.com", "TECH", "WARNING"),
+                                    contact("mudur@test.com", "MANAGER", "CRITICAL")));
+        when(alertEventRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        service.processResults(List.of(errorResult(domain, "SSL")));
+
+        ArgumentCaptor<AlertEvent> captor = ArgumentCaptor.forClass(AlertEvent.class);
+        verify(alertEventRepo, atLeast(1)).save(captor.capture());
+        assertThat(captor.getAllValues().get(0).getAlertLevel()).isEqualTo("CRITICAL");
+
+        ArgumentCaptor<String[]> toCap = ArgumentCaptor.forClass(String[].class);
+        verify(emailService).sendAlert(toCap.capture(), contains("KRİTİK"), anyString(),
+                eq(domain), eq("CRITICAL"), eq("EXPIRY"), isNull(), any());
+        assertThat(toCap.getValue()).containsExactlyInAnyOrder("takim@test.com", "mudur@test.com");
+    }
+
+    @Test
+    @DisplayName("UNKNOWN hata sınıfı → KRİTİK korunur")
+    void unknownError_staysCritical() {
+        String domain = "weird.example.com";
+        when(contactRepo.findByActiveTrueOrderByRoleAsc()).thenReturn(List.of());
+        when(alertEventRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        service.processResults(List.of(errorResult(domain, "UNKNOWN")));
+
+        ArgumentCaptor<AlertEvent> captor = ArgumentCaptor.forClass(AlertEvent.class);
+        verify(alertEventRepo, atLeast(1)).save(captor.capture());
+        assertThat(captor.getAllValues().get(0).getAlertLevel()).isEqualTo("CRITICAL");
+    }
+
+    @Test
+    @DisplayName("status=error fakat error_class yok → KRİTİK korunur (defansif)")
+    void errorWithoutClass_staysCritical() {
+        String domain = "noclass.example.com";
+        when(contactRepo.findByActiveTrueOrderByRoleAsc()).thenReturn(List.of());
+        when(alertEventRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        service.processResults(List.of(errorResult(domain, null)));
+
+        ArgumentCaptor<AlertEvent> captor = ArgumentCaptor.forClass(AlertEvent.class);
+        verify(alertEventRepo, atLeast(1)).save(captor.capture());
+        assertThat(captor.getAllValues().get(0).getAlertLevel()).isEqualTo("CRITICAL");
+    }
+
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     // ── ACCESSIBILITY (erişim kesintisi) alarmları ─────────────────────────────
