@@ -42,6 +42,8 @@ public class CertificateCheck {
     private String fingerprint;
     private String chainStatus;
     private String revocationStatus;
+    /** TRUSTED / UNTRUSTED / UNKNOWN — zincir cacerts veya admin CA paketiyle güven köküne bağlanıyor mu. */
+    private String trustStatus;
     private String deploymentStatus;
     private String intermediateExpiry;
     private Integer intermediateDaysRemaining;
