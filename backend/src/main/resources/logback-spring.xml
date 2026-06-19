@@ -5,6 +5,9 @@
   Runtime control via environment variable or application property:
     LOG_LEVEL = ERROR | WARN | INFO | DEBUG | TRACE   (default: see per-profile)
     LOG_DIR   = /path/to/logs                          (default: logs/)
+    LOGGING_LEVEL_COM_CERTMONITOR_MAIL = TRACE         (mail gönderim tanılaması; yalnız
+                                                        com.certmonitor.mail logger'ını TRACE'e alır,
+                                                        uygulamanın geri kalanı LOG_LEVEL'da kalır)
 
   Profiles:
     default / local / local-pg  →  DEBUG, console + file
@@ -26,6 +29,10 @@
                   source="logging.file.path" defaultValue="logs"/>
   <springProperty scope="context" name="LOG_LEVEL"
                   source="logging.level.com.certmonitor" defaultValue="INFO"/>
+  <!-- Mail tracing'i bağımsız aç/kapat: LOGGING_LEVEL_COM_CERTMONITOR_MAIL=TRACE (env) ya da
+       logging.level.com.certmonitor.mail=TRACE. Set edilmezse com.certmonitor (LOG_LEVEL) ile aynı. -->
+  <springProperty scope="context" name="MAIL_LOG_LEVEL"
+                  source="logging.level.com.certmonitor.mail"/>
   <springProperty scope="context" name="LOG_TZ"
                   source="cert.monitor.log.timezone" defaultValue="Europe/Istanbul"/>
 
@@ -172,6 +179,11 @@
       <appender-ref ref="ERROR_FILE"/>
     </logger>
 
+    <!-- Mail'e özel logger: kendi appender'ı yok → additivity ile parent (com.certmonitor)
+         appender'larına tek kez yazar. Default seviye com.certmonitor ile aynı (${LOG_LEVEL});
+         yalnız logging.level.com.certmonitor.mail set edilince bağımsız (örn. TRACE) olur. -->
+    <logger name="com.certmonitor.mail" level="${MAIL_LOG_LEVEL:-${LOG_LEVEL}}"/>
+
     <root level="INFO">
       <appender-ref ref="CONSOLE"/>
       <appender-ref ref="FILE"/>
@@ -192,6 +204,10 @@
       <appender-ref ref="ASYNC_FILE"/>
       <appender-ref ref="ASYNC_ERROR"/>
     </logger>
+
+    <!-- Mail tracing'i uygulama-geneli TRACE'e geçmeden açmak için:
+         LOGGING_LEVEL_COM_CERTMONITOR_MAIL=TRACE (yalnız mail TRACE; gerisi LOG_LEVEL'da kalır). -->
+    <logger name="com.certmonitor.mail" level="${MAIL_LOG_LEVEL:-${LOG_LEVEL}}"/>
 
     <root level="WARN">
       <appender-ref ref="CONSOLE"/>

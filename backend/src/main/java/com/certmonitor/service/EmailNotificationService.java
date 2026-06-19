@@ -3,6 +3,8 @@ package com.certmonitor.service;
 import tools.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.commonmark.ext.gfm.tables.TablesExtension;
 import org.commonmark.parser.Parser;
 import org.commonmark.renderer.html.HtmlRenderer;
@@ -30,6 +32,12 @@ import java.util.regex.Pattern;
 @Service
 @RequiredArgsConstructor
 public class EmailNotificationService {
+
+    // Mail'e özel logger — bağımsız açılır/kapanır: logging.level.com.certmonitor.mail=TRACE
+    // (env LOGGING_LEVEL_COM_CERTMONITOR_MAIL=TRACE). Detaylı gönderim TRACE'leri buraya gider;
+    // operasyonel INFO/ERROR (stack dahil) mevcut @Slf4j `log` üzerinde kalır → TRACE kapalıyken
+    // bile hatanın tam stack'i her zaman görünür.
+    private static final Logger MAIL_LOG = LoggerFactory.getLogger("com.certmonitor.mail");
 
     // Outbound mail is driven by the DB-backed SMTP settings (admin Settings page).
     // When nothing is saved yet, SmtpSettingsService falls back to env spring.mail.*
@@ -109,7 +117,7 @@ public class EmailNotificationService {
             helper.setText(html, true);
             return doSend(to, msg, 1);
         } catch (Exception e) {
-            log.error("✗ E-posta hazırlanamadı: TO={} | HATA={}", to, e.getMessage());
+            log.error("✗ E-posta hazırlanamadı: TO={} | HATA={}", to, e.getMessage(), e);
             return "FAILED: " + e.getMessage();
         }
     }
@@ -131,7 +139,7 @@ public class EmailNotificationService {
                     alertType, daysRemaining, certContext), true);
             return doSend(Arrays.toString(toAddresses), msg, 1);
         } catch (Exception e) {
-            log.error("✗ E-posta hazırlanamadı: TO={} | HATA={}", Arrays.toString(toAddresses), e.getMessage());
+            log.error("✗ E-posta hazırlanamadı: TO={} | HATA={}", Arrays.toString(toAddresses), e.getMessage(), e);
             return "FAILED: " + e.getMessage();
         }
     }
@@ -154,21 +162,32 @@ public class EmailNotificationService {
                     daysRemaining, resolvedBy, resolvedAt, createdAt, certContext), true);
             return doSend(Arrays.toString(toAddresses), msg, 1);
         } catch (Exception e) {
-            log.error("✗ Çözüm e-postası hazırlanamadı: TO={} | HATA={}", Arrays.toString(toAddresses), e.getMessage());
+            log.error("✗ Çözüm e-postası hazırlanamadı: TO={} | HATA={}", Arrays.toString(toAddresses), e.getMessage(), e);
             return "FAILED: " + e.getMessage();
         }
     }
 
     private String doSend(String to, MimeMessage msg, int attempt) {
+        long t0 = System.currentTimeMillis();
+        if (MAIL_LOG.isTraceEnabled()) {
+            MAIL_LOG.trace("→ SMTP gönderim: TO={} | deneme={}/{} | {} | {}",
+                    to, attempt, MAX_SEND_ATTEMPTS, describeMessage(msg), smtpContext());
+        }
         try {
             currentSender().send(msg);
+            long ms = System.currentTimeMillis() - t0;
             if (attempt == 1) {
                 log.info("✓ E-posta gönderildi: TO={}", to);
             } else {
                 log.info("✓ E-posta gönderildi (retry #{}): TO={}", attempt - 1, to);
             }
+            if (MAIL_LOG.isTraceEnabled()) {
+                MAIL_LOG.trace("✓ SMTP gönderim OK: TO={} | süre={}ms | messageId={} | boyut={}B",
+                        to, ms, safeMessageId(msg), safeSize(msg));
+            }
             return "SENT";
         } catch (Exception e) {
+            long ms = System.currentTimeMillis() - t0;
             String err = e.getMessage() != null ? e.getMessage() : "";
             // 421 = transient rate-limit from SMTP gateway — birden çok kez, artan
             // bekleme (exponential backoff) ile async retry. Check both getMessage()
@@ -179,12 +198,17 @@ public class EmailNotificationService {
                 long delay = retry() * (1L << (attempt - 1));
                 log.warn("⏳ SMTP 421 rate limit (deneme {}/{}) — {}ms sonra async retry: TO={}",
                         attempt, MAX_SEND_ATTEMPTS, delay, to);
+                if (MAIL_LOG.isTraceEnabled()) {
+                    // Son arg `e` (Throwable) → TRACE'te tam stack de basılır.
+                    MAIL_LOG.trace("⏳ SMTP 421 ayrıntı: TO={} | süre={}ms | {} | kök sebep={}",
+                            to, ms, smtpContext(), rootMessage(e), e);
+                }
                 // Caller'ı bloke etme; retry'ı ayrı thread'de tetikle.
                 mailRetryExecutor.schedule(
                     () -> {
                         try { doSend(to, msg, attempt + 1); }
                         catch (Exception ex) {
-                            log.error("✗ Async retry başarısız: TO={} | HATA={}", to, ex.getMessage());
+                            log.error("✗ Async retry başarısız: TO={} | HATA={}", to, ex.getMessage(), ex);
                         }
                     },
                     delay, TimeUnit.MILLISECONDS);
@@ -194,9 +218,65 @@ public class EmailNotificationService {
             if (errFull.contains("421")) {
                 log.error("✗ E-posta {} denemede de 421 rate limit ile gönderilemedi: TO={}", MAX_SEND_ATTEMPTS, to);
             }
-            log.error("✗ E-posta gönderilemedi: TO={} | HATA={}", to, err);
+            // Son arg `e` (Throwable) → SLF4J tam stack trace'i ERROR'a HER ZAMAN basar
+            // (TRACE açmaya gerek yok). SMTP bağlamı + mesaj ayrıntısı ek olarak TRACE'te.
+            log.error("✗ E-posta gönderilemedi: TO={} | süre={}ms | HATA={}", to, ms, err, e);
+            if (MAIL_LOG.isTraceEnabled()) {
+                MAIL_LOG.trace("✗ SMTP hata ayrıntı: TO={} | {} | {} | kök sebep={}",
+                        to, describeMessage(msg), smtpContext(), rootMessage(e));
+            }
             return "FAILED: " + err;
         }
+    }
+
+    // ── Mail tanılama yardımcıları (yalnız log; mail GÖVDESİ ve SMTP PAROLASI asla loglanmaz) ──
+
+    /** Mesaj meta verisi (alıcılar, konu, boyut) — gövde OKUNMAZ. Hata olsa bile gönderimi etkilemez. */
+    private static String describeMessage(MimeMessage msg) {
+        try {
+            jakarta.mail.Address[] rcpts = msg.getAllRecipients();
+            int size = msg.getSize();
+            return "alıcılar=" + Arrays.toString(rcpts)
+                    + " konu=" + msg.getSubject()
+                    + " boyut=" + (size >= 0 ? size + "B" : "?");
+        } catch (Exception ex) {
+            return "msg=?(okunamadı: " + ex.getClass().getSimpleName() + ")";
+        }
+    }
+
+    /** Etkin SMTP bağlamı — host/port/auth/TLS/timeout. PAROLA ASLA dahil edilmez. */
+    private String smtpContext() {
+        try {
+            var s = smtpSettings.getOrDefaults();
+            return "smtp=" + s.getHost() + ":" + s.getPort()
+                    + " auth=" + (Boolean.TRUE.equals(s.getAuthEnabled()) ? "on" : "off")
+                    + " user=" + (s.getUsername() != null ? s.getUsername() : "-")
+                    + " starttls=" + Boolean.TRUE.equals(s.getStartTlsEnable())
+                    + "/req=" + Boolean.TRUE.equals(s.getStartTlsRequired())
+                    + " sslTrust=" + (s.getSslTrust() != null ? s.getSslTrust() : "-")
+                    + " timeout(conn/read/write)=" + s.getConnectionTimeoutMs()
+                    + "/" + s.getReadTimeoutMs() + "/" + s.getWriteTimeoutMs() + "ms";
+        } catch (Exception ex) {
+            return "smtp=?(okunamadı: " + ex.getClass().getSimpleName() + ")";
+        }
+    }
+
+    /** Throwable zincirinin kök sebebine inip mesajını döndürür (mesaj boşsa sınıf adı). */
+    private static String rootMessage(Throwable e) {
+        Throwable cur = e;
+        while (cur.getCause() != null && cur.getCause() != cur) cur = cur.getCause();
+        String msg = cur.getMessage();
+        return (msg != null && !msg.isBlank()) ? msg : cur.getClass().getSimpleName();
+    }
+
+    private static String safeMessageId(MimeMessage msg) {
+        try { String id = msg.getMessageID(); return id != null ? id : "?"; }
+        catch (Exception ex) { return "?"; }
+    }
+
+    private static String safeSize(MimeMessage msg) {
+        try { int n = msg.getSize(); return n >= 0 ? String.valueOf(n) : "?"; }
+        catch (Exception ex) { return "?"; }
     }
 
     /** 421 rate-limit için toplam deneme sayısı (1 ilk + 3 retry); her retry artan beklemeli. */
@@ -221,7 +301,7 @@ public class EmailNotificationService {
                     daysRemaining, resolvedBy, resolvedAt, createdAt, certContext), true);
             return doSend(to, msg, 1);
         } catch (Exception e) {
-            log.error("✗ Çözüm e-postası hazırlanamadı: TO={} | HATA={}", to, e.getMessage());
+            log.error("✗ Çözüm e-postası hazırlanamadı: TO={} | HATA={}", to, e.getMessage(), e);
             return "FAILED: " + e.getMessage();
         }
     }
@@ -248,7 +328,7 @@ public class EmailNotificationService {
             helper.setText(buildPasswordResetHtml(username, displayName, tempPassword), true);
             return doSend(toAddress, msg, 1);
         } catch (Exception e) {
-            log.error("✗ Şifre sıfırlama e-postası hazırlanamadı: TO={} | HATA={}", toAddress, e.getMessage());
+            log.error("✗ Şifre sıfırlama e-postası hazırlanamadı: TO={} | HATA={}", toAddress, e.getMessage(), e);
             return "FAILED: " + e.getMessage();
         }
     }
@@ -296,7 +376,7 @@ public class EmailNotificationService {
                     errorRate, threshold), true);
             return doSend(to, msg, 1);
         } catch (Exception e) {
-            log.error("✗ Admin network alert hazırlanamadı: TO={} | HATA={}", to, e.getMessage());
+            log.error("✗ Admin network alert hazırlanamadı: TO={} | HATA={}", to, e.getMessage(), e);
             return "FAILED: " + e.getMessage();
         }
     }
@@ -318,7 +398,7 @@ public class EmailNotificationService {
                     networkErrors, total, errorRate), true);
             return doSend(to, msg, 1);
         } catch (Exception e) {
-            log.error("✗ Admin network resolved hazırlanamadı: TO={} | HATA={}", to, e.getMessage());
+            log.error("✗ Admin network resolved hazırlanamadı: TO={} | HATA={}", to, e.getMessage(), e);
             return "FAILED: " + e.getMessage();
         }
     }
@@ -1498,7 +1578,7 @@ public class EmailNotificationService {
             }
             return doSend(Arrays.toString(to), msg, 1);
         } catch (Exception e) {
-            log.error("✗ HTML e-posta hazırlanamadı: TO={} | HATA={}", Arrays.toString(to), e.getMessage());
+            log.error("✗ HTML e-posta hazırlanamadı: TO={} | HATA={}", Arrays.toString(to), e.getMessage(), e);
             return "FAILED: " + e.getMessage();
         }
     }
