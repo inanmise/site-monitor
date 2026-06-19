@@ -303,6 +303,7 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
   const { showConfirm } = useDialog()
   const isAdmin = systemRole === 'ADMIN'
   const isAudit = systemRole === 'AUDIT'
+  const isTeamAdmin = systemRole === 'TEAM_ADMIN'
 
   const [teams, setTeams] = useState([])
   const [selTeamId, setSelTeamId] = useState(teamId ? String(teamId) : '')
@@ -349,6 +350,9 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
     && r.team_id === teamId
     && (r.status === 'DRAFT' || r.status === 'REJECTED')
     && isEditableWeek(r))
+  // Silme: düzenleme yetkisine EK olarak yönetici rolü gerekir — salt USER (ve PO,
+  // systemRole=USER) silemez; yalnız ADMIN ya da takımın TEAM_ADMIN'i (backend ile aynı).
+  const canDeleteRow = (r) => (isAdmin || isTeamAdmin) && canModifyRow(r)
   // Düzenleme = yetki + kilit (kilit başkasındaysa salt-okunur)
   const editable = !!report && canModifyRow(report) && lockHeld
   const weekLocked = !!report && !isAdmin && !isAudit && report.team_id === teamId
@@ -938,7 +942,7 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
   // Üstte ve altta aynı aksiyon barı — kaydırmada ikisi de sticky görünür
   const actionButtons = report && (
     <>
-      {canModifyRow(report) && (
+      {canDeleteRow(report) && (
         <button className="btn btn-danger" onClick={() => deleteReport(report)} disabled={busy}>
           <Trash2 size={14} /> {t('wr.deleteReport')}
         </button>
@@ -1170,7 +1174,7 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
                                 <ArrowRightLeft size={14} /> {t('wr.transfer')}
                               </button>
                             )}
-                            {canModifyRow(r) && (
+                            {canDeleteRow(r) && (
                               <button className="danger" onClick={() => { setOpenMenuId(null); deleteReport(r) }}>
                                 <Trash2 size={14} /> {t('wr.deleteReport')}
                               </button>

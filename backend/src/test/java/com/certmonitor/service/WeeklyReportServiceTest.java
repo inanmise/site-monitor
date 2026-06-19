@@ -447,16 +447,41 @@ class WeeklyReportServiceTest {
     // ── Silme ─────────────────────────────────────────────────────────────────
 
     @Test
-    @DisplayName("delete: USER kendi pencere içi DRAFT'ını siler — görseller de gider")
-    void delete_userOwnDraft() {
+    @DisplayName("delete: salt USER kendi takımının DRAFT'ını dahi SİLEMEZ (403) — yalnız yönetici siler")
+    void delete_userCannotDelete() {
         WeeklyReport r = report(5L, 2L, "DRAFT");
         when(reportRepo.findById(5L)).thenReturn(Optional.of(r));
 
-        service.delete(5L, USER_T2);
+        assertThatThrownBy(() -> service.delete(5L, USER_T2))
+                .isInstanceOf(SecurityException.class);
+
+        verify(reportRepo, never()).delete(any(WeeklyReport.class));
+        verify(imageRepo, never()).deleteByReportId(anyLong());
+    }
+
+    @Test
+    @DisplayName("delete: takımın TEAM_ADMIN'i kendi pencere içi DRAFT'ını siler")
+    void delete_teamAdminOwnDraft() {
+        WeeklyReport r = report(5L, 2L, "DRAFT");
+        when(reportRepo.findById(5L)).thenReturn(Optional.of(r));
+
+        service.delete(5L, TADMIN_T2);
 
         verify(imageRepo).deleteByReportId(5L);
         verify(mailRepo).deleteByReportId(5L);
         verify(reportRepo).delete(r);
+    }
+
+    @Test
+    @DisplayName("delete: PO (systemRole=USER) raporu SİLEMEZ (403) — onaylayabilir ama silemez")
+    void delete_poCannotDelete() {
+        WeeklyReport r = report(5L, 2L, "DRAFT");
+        when(reportRepo.findById(5L)).thenReturn(Optional.of(r));
+
+        assertThatThrownBy(() -> service.delete(5L, PO_T2))
+                .isInstanceOf(SecurityException.class);
+
+        verify(reportRepo, never()).delete(any(WeeklyReport.class));
     }
 
     @Test
@@ -472,13 +497,21 @@ class WeeklyReportServiceTest {
     }
 
     @Test
-    @DisplayName("delete: USER APPROVED'ı silemez (409); başka takım 403")
+    @DisplayName("delete: yönetici bile APPROVED'ı silemez (409); USER her durumda 403; başka takım 403")
     void delete_forbidden() {
+        // Salt USER kendi takımının APPROVED'ını → rol kapısı önce → 403 (SecurityException)
         WeeklyReport approved = report(5L, 2L, "APPROVED");
         when(reportRepo.findById(5L)).thenReturn(Optional.of(approved));
         assertThatThrownBy(() -> service.delete(5L, USER_T2))
+                .isInstanceOf(SecurityException.class);
+
+        // TEAM_ADMIN yönetici ama APPROVED durumu engeller → 409 (IllegalStateException)
+        WeeklyReport approved2 = report(7L, 2L, "APPROVED");
+        when(reportRepo.findById(7L)).thenReturn(Optional.of(approved2));
+        assertThatThrownBy(() -> service.delete(7L, TADMIN_T2))
                 .isInstanceOf(IllegalStateException.class);
 
+        // Başka takımın kullanıcısı → 403
         WeeklyReport draft = report(6L, 2L, "DRAFT");
         when(reportRepo.findById(6L)).thenReturn(Optional.of(draft));
         assertThatThrownBy(() -> service.delete(6L, USER_T7))

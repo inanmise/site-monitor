@@ -736,7 +736,7 @@ public class WeeklyReportService {
     @Transactional
     public WeeklyReport delete(Long id, Actor actor) {
         WeeklyReport r = get(id, actor);
-        requireCanModify(r, actor);
+        requireCanDelete(r, actor);
         imageRepo.deleteByReportId(id);
         mailRepo.deleteByReportId(id);
         reportRepo.delete(r);
@@ -869,14 +869,34 @@ public class WeeklyReportService {
     }
 
     private void requireCanApprove(WeeklyReport r, Actor a) {
-        if (a.isAdmin()) return;
-        if (a.isTeamAdmin() && Objects.equals(a.teamId(), r.getTeamId())) return;
-        // PO: orgRole DB'den okunur (session'da yok)
-        if (a.userId() != null && Objects.equals(a.teamId(), r.getTeamId())) {
-            Optional<AppUser> u = userRepo.findById(a.userId());
-            if (u.isPresent() && "PO".equals(u.get().getOrgRole())) return;
-        }
+        if (a.isAdmin() || isTeamManager(r.getTeamId(), a)) return;
         throw new SecurityException("Onay yetkisi yok — takımın PO'su, TEAM_ADMIN'i veya ADMIN gerekir");
+    }
+
+    /**
+     * Silme yetkisi düzenlemeden DAR: salt USER rolü (orgRole=PO dahil — PO'nun systemRole'ü
+     * USER'dır) raporu silemez. Yalnız ADMIN ya da takımın TEAM_ADMIN'i siler. Oluşturma/düzenleme
+     * USER'a açık kalır; PO onaylamaya devam eder. Role ek olarak takım kapsamı + düzenleme
+     * penceresi + DRAFT/REJECTED durumu (requireCanModify) korunur — APPROVED rapor yalnız ADMIN'de.
+     */
+    private void requireCanDelete(WeeklyReport r, Actor a) {
+        if (!a.isAdmin() && !a.isTeamAdmin()) {
+            throw new SecurityException(
+                    "Rapor silme yetkisi yok — ADMIN veya takımın TEAM_ADMIN'i gerekir");
+        }
+        requireCanModify(r, a);
+    }
+
+    /** Aktör, verilen takımın yöneticisi mi? = takımın TEAM_ADMIN'i ya da orgRole=PO'su.
+     *  (PO'nun systemRole'ü USER'dır; orgRole DB'den okunur — session'da yok.) Onay yetkisinde
+     *  kullanılır; silme bilinçli olarak PO'yu kapsamaz (yalnız ADMIN/TEAM_ADMIN siler). */
+    private boolean isTeamManager(Long teamId, Actor a) {
+        if (a.isTeamAdmin() && Objects.equals(a.teamId(), teamId)) return true;
+        if (a.userId() != null && Objects.equals(a.teamId(), teamId)) {
+            return userRepo.findById(a.userId())
+                    .map(u -> "PO".equals(u.getOrgRole())).orElse(false);
+        }
+        return false;
     }
 
     private void requireStatus(WeeklyReport r, String... allowed) {
