@@ -39,6 +39,8 @@ public class LatestCheck {
     private String intermediateExpiry;
     private Integer intermediateDaysRemaining;
     private String revocationStatus;
+    /** TRUSTED / UNTRUSTED / UNKNOWN — zincir cacerts veya admin CA paketiyle güven köküne bağlanıyor mu. */
+    private String trustStatus;
 
     @Column(columnDefinition = "TEXT")
     private String chainDetails;

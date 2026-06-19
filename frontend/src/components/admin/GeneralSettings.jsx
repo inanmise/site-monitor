@@ -62,6 +62,13 @@ export default function GeneralSettings() {
         </select>
       )
     }
+    if (it.type === 'TEXT') {
+      return (
+        <textarea value={v} rows={8} spellCheck={false}
+          style={{ width: '100%', fontFamily: 'monospace', resize: 'vertical' }}
+          onChange={(e) => set(it.key, e.target.value)} />
+      )
+    }
     const numeric = it.type === 'INT' || it.type === 'DOUBLE'
     return (
       <input type={numeric ? 'number' : 'text'} value={v}

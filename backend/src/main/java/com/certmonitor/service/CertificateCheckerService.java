@@ -38,6 +38,7 @@ public class CertificateCheckerService {
     private final ChainValidationService chainValidator;
     private final DnsCheckerService dnsCheckerService;
     private final ObjectMapper objectMapper;
+    private final TrustEvaluator trustEvaluator;
 
     @Value("${cert.monitor.check-timeout-seconds:6}")
     private int timeoutSeconds;
@@ -79,6 +80,29 @@ public class CertificateCheckerService {
 
     private static final String[] BROWSER_TLS_PROTOCOLS = { "TLSv1.2" };
     private static final String[] BROWSER_ALPN          = { "h2", "http/1.1" };
+
+    /**
+     * Sertifika ÇEKİMİ için trust-all soket factory'si. Bir izleme aracının, zincir public CA ile
+     * doğrulanmasa bile (kurumsal/iç CA, self-signed) sertifikayı OKUYUP süre/zincir/ayrıntıyı
+     * raporlayabilmesi gerekir. Güven, okunan zincir üzerinde AYRI bir adımda {@link TrustEvaluator}
+     * ile değerlendirilir ({@code trust_status}); handshake artık güveni zorlamaz. (Aynı desen:
+     * HstsDiagnosticsService.buildTrustAll, LdapDirectoryService.TRUST_ALL.)
+     */
+    private static final SSLSocketFactory TRUST_ALL_FACTORY = buildTrustAllFactory();
+
+    private static SSLSocketFactory buildTrustAllFactory() {
+        try {
+            SSLContext ctx = SSLContext.getInstance("TLS");
+            ctx.init(null, new TrustManager[]{ new X509TrustManager() {
+                public void checkClientTrusted(X509Certificate[] c, String a) {}
+                public void checkServerTrusted(X509Certificate[] c, String a) {}
+                public X509Certificate[] getAcceptedIssuers() { return new X509Certificate[0]; }
+            }}, new java.security.SecureRandom());
+            return ctx.getSocketFactory();
+        } catch (Exception e) {
+            return (SSLSocketFactory) SSLSocketFactory.getDefault();
+        }
+    }
 
     @Value("${cert.monitor.proxy.host:}")     private String proxyHost;
     @Value("${cert.monitor.proxy.port:0}")    private int    proxyPort;
@@ -262,7 +286,9 @@ public class CertificateCheckerService {
         route.put("peer_ip", null);
         route.put("peer_port", null);
         try {
-            SSLSocketFactory factory = (SSLSocketFactory) SSLSocketFactory.getDefault();
+            // Trust-all: sertifikayı her durumda OKU (güven AYRI değerlendirilir → trust_status).
+            // İç/kurumsal CA ile imzalı host'lar artık "PKIX path building failed" ile düşmez.
+            SSLSocketFactory factory = TRUST_ALL_FACTORY;
             log.debug("Certificate check start: domain={}:{} via={} tlsMode={} resolvedIps={}",
                     domain, port,
                     useProxy ? "proxy(" + proxyHost + ":" + proxyPort + ")" : "direct",
@@ -329,6 +355,7 @@ public class CertificateCheckerService {
                     result.put("chain", Collections.emptyList());
                     result.put("fingerprint", null);
                     result.put("revocation_status", "UNKNOWN");
+                    result.put("trust_status", "UNKNOWN");
                 } else {
                     // Full chain analysis
                     Map<String, Object> chainInfo = chainValidator.analyzeChain(peerCerts);
@@ -350,6 +377,21 @@ public class CertificateCheckerService {
                         result.put("chain_status", "BROKEN");
                     } else if ("REVOKED".equals(revocation)) {
                         result.put("chain_status", "REVOKED");
+                    }
+
+                    // Güven değerlendirmesi: zincir varsayılan cacerts VEYA admin CA paketiyle
+                    // bir güven köküne bağlanıyor mu? (Çekimi engellemez — yalnız raporlar.)
+                    try {
+                        X509Certificate[] x509Chain = new X509Certificate[peerCerts.length];
+                        for (int ci = 0; ci < peerCerts.length; ci++) {
+                            x509Chain[ci] = (X509Certificate) peerCerts[ci];
+                        }
+                        TrustEvaluator.TrustResult tr = trustEvaluator.evaluate(x509Chain);
+                        result.put("trust_status", tr.trusted() ? "TRUSTED" : "UNTRUSTED");
+                        if (!tr.trusted()) result.put("trust_error", tr.reason());
+                    } catch (Exception te) {
+                        result.put("trust_status", "UNKNOWN");
+                        log.debug("trust evaluate skipped for {}: {}", domain, te.getMessage());
                     }
                 }
 

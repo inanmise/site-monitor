@@ -120,6 +120,10 @@ export default function SslCheckerPanel({ data }) {
       <div className="ssl-checks">
         <CheckRow ok={dnsOk}      text={dnsText} />
         <CheckRow ok={trustOk}    text={t(trustOk ? 'ssl.trustOk' : 'ssl.trustFail')} />
+        {(data.trust_status === 'TRUSTED' || data.trust_status === 'UNTRUSTED') && (
+          <CheckRow ok={data.trust_status === 'TRUSTED'}
+            text={t(data.trust_status === 'TRUSTED' ? 'ssl.anchorOk' : 'ssl.anchorFail')} />
+        )}
         <CheckRow ok={!!caName}   text={t('ssl.issuedBy', caName)} />
         <CheckRow ok={expiryOk}   text={expiryText} />
         <CheckRow ok={hostnameOk} text={t(hostnameOk ? 'ssl.hostnameOk' : 'ssl.hostnameFail', data.domain)} />

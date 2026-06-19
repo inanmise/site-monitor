@@ -26,11 +26,14 @@ class CertificateCheckerServiceTest {
     @Mock
     private DnsCheckerService dnsCheckerService;
 
+    @Mock
+    private TrustEvaluator trustEvaluator;
+
     private CertificateCheckerService service;
 
     @BeforeEach
     void setUp() {
-        service = new CertificateCheckerService(chainValidationService, dnsCheckerService, new ObjectMapper());
+        service = new CertificateCheckerService(chainValidationService, dnsCheckerService, new ObjectMapper(), trustEvaluator);
     }
 
     // ── SAN serialization ──────────────────────────────────────────────────────
@@ -81,11 +84,14 @@ class CertificateCheckerServiceTest {
     @Test
     @DisplayName("check with unreachable domain returns error map with required keys")
     void check_unreachableDomain_returnsErrorMap() {
-        // .invalid is RFC 2606 reserved, DNS lookup fails immediately
-        Map<String, Object> result = service.check("host.invalid", 443);
+        // Kapalı localhost portu → deterministik connection-refused (NETWORK error),
+        // DNS'ten bağımsız. (Bazı kurumsal resolver'lar .invalid'i wildcard'a çözer;
+        // trust-all çekimle ÇÖZÜLEBİLEN bir host artık cert okuyup "valid" döner — bu
+        // yüzden kesin bir başarısızlık hedefi gerekir.)
+        Map<String, Object> result = service.check("localhost", 1);
 
         assertThat(result.get("status")).isEqualTo("error");
-        assertThat(result.get("domain")).isEqualTo("host.invalid");
+        assertThat(result.get("domain")).isEqualTo("localhost");
         assertThat(result.get("error")).isNotNull();
         assertThat(result.get("warning")).isEqualTo(true);
         assertThat(result.get("chain_status")).isEqualTo("UNKNOWN");
@@ -98,7 +104,7 @@ class CertificateCheckerServiceTest {
     @Test
     @DisplayName("check always returns san key (empty list on error)")
     void check_error_sanIsEmptyList() {
-        Map<String, Object> result = service.check("host.invalid", 443);
+        Map<String, Object> result = service.check("localhost", 1);
         Object san = result.get("san");
         assertThat(san).isNotNull().isInstanceOf(List.class);
     }

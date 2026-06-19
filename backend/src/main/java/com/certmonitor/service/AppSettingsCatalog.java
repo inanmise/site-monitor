@@ -14,7 +14,7 @@ public final class AppSettingsCatalog {
 
     private AppSettingsCatalog() {}
 
-    public enum Type { STRING, INT, BOOL, DOUBLE, CSV, ENUM }
+    public enum Type { STRING, INT, BOOL, DOUBLE, CSV, ENUM, TEXT }
 
     public record Setting(String key, String group, Type type, List<String> enumOptions) {
         public Setting(String key, String group, Type type) {
@@ -33,6 +33,9 @@ public final class AppSettingsCatalog {
         new Setting("cert.monitor.uptime.alert-enabled",         "monitoring", Type.BOOL),
         new Setting("cert.monitor.port.alert-enabled",           "monitoring", Type.BOOL),
         new Setting("cert.monitor.dns.alert-enabled",            "monitoring", Type.BOOL),
+        // Kurumsal/iç kök+ara CA paketi (PEM) — bu CA ile imzalı host'lar TRUSTED sayılır.
+        // TrustEvaluator okuma anında okur (canlı reload). Boş = yalnız public CA'lar (cacerts).
+        new Setting("cert.monitor.trust.ca-bundle-pem",          "security",   Type.TEXT),
         new Setting("logging.level.com.certmonitor",             "logging",    Type.ENUM,
                     List.of("DEBUG", "INFO", "WARN", "ERROR"))
     );

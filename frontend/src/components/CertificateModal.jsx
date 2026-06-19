@@ -519,6 +519,13 @@ export default function CertificateModal({ domain, alertLevel, onClose, initialD
               {d.deployment_status && (
                 <Row
                   label={t('modal.deploymentStatus')} value={d.deployment_status || 'N/A'}
+                  label2={d.trust_status ? t('modal.trustStatus') : ''}
+                  value2={d.trust_status || ''}
+                />
+              )}
+              {!d.deployment_status && d.trust_status && (
+                <Row
+                  label={t('modal.trustStatus')} value={d.trust_status}
                   label2="" value2=""
                 />
               )}

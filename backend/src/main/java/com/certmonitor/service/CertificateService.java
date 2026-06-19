@@ -91,6 +91,7 @@ public class CertificateService {
             check.setFingerprint(servedFingerprint);
             check.setChainStatus((String) result.get("chain_status"));
             check.setRevocationStatus((String) result.get("revocation_status"));
+            check.setTrustStatus((String) result.get("trust_status"));
             check.setDeploymentStatus(deploymentStatus);
             check.setIntermediateExpiry((String) result.get("intermediate_expiry"));
             check.setIntermediateDaysRemaining(toInt(result.get("intermediate_days_remaining")));
@@ -130,6 +131,7 @@ public class CertificateService {
             latest.setSan(sanJson);
             latest.setFingerprint(servedFingerprint);
             latest.setChainStatus((String) result.get("chain_status"));
+            latest.setTrustStatus((String) result.get("trust_status"));
             latest.setDeploymentStatus(deploymentStatus);
             latest.setIntermediateExpiry((String) result.get("intermediate_expiry"));
             latest.setIntermediateDaysRemaining(toInt(result.get("intermediate_days_remaining")));
