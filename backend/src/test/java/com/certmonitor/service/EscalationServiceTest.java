@@ -408,6 +408,37 @@ class EscalationServiceTest {
     }
 
     @Test
+    @DisplayName("closeAlertsOnDeactivate: pasife alınan domain'in açık alarmlarını sessizce kapatır (resolvedBy=inventory_deactivate, mail yok)")
+    void closeAlertsOnDeactivate_silentClose_noEmail() {
+        String domain = "passive.example.com";
+        AlertEvent expiry = existingOpenAlert(domain, "EXPIRY", "WARNING", false);
+        AlertEvent chain  = existingOpenAlert(domain, "CHAIN_BROKEN", "CRITICAL", false);
+        when(alertEventRepo.findByDomainAndResolvedFalse(domain)).thenReturn(List.of(expiry, chain));
+        when(alertEventRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        int closed = service.closeAlertsOnDeactivate(domain);
+
+        assertThat(closed).isEqualTo(2);
+        ArgumentCaptor<AlertEvent> captor = ArgumentCaptor.forClass(AlertEvent.class);
+        verify(alertEventRepo, times(2)).save(captor.capture());
+        for (AlertEvent saved : captor.getAllValues()) {
+            assertThat(saved.getResolved()).isTrue();
+            assertThat(saved.getResolvedBy()).isEqualTo("inventory_deactivate");
+            assertThat(saved.getResolvedAt()).isNotNull();
+        }
+        verifyNoInteractions(emailService);
+    }
+
+    @Test
+    @DisplayName("closeAlertsOnDeactivate: açık alarm yoksa 0 döner")
+    void closeAlertsOnDeactivate_noOpenAlerts_returnsZero() {
+        when(alertEventRepo.findByDomainAndResolvedFalse("clean.example.com")).thenReturn(List.of());
+        assertThat(service.closeAlertsOnDeactivate("clean.example.com")).isZero();
+        verify(alertEventRepo, never()).save(any());
+        verifyNoInteractions(emailService);
+    }
+
+    @Test
     @DisplayName("closeAlertsOnInventoryDelete: returns 0 when no open alerts")
     void closeAlertsOnInventoryDelete_noOpenAlerts_returnsZero() {
         when(alertEventRepo.findByDomainAndResolvedFalse("clean.example.com"))

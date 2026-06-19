@@ -467,14 +467,27 @@ public class EscalationService {
      * spamming contacts with a "resolved" email would be noise.
      */
     public int closeAlertsOnInventoryDelete(String domain) {
+        return closeOpenAlerts(domain, "inventory_delete", "envanter silindi");
+    }
+
+    /**
+     * Silent close for inventory deactivation (active=false). Pasife alınan domain
+     * artık taranmaz; açık alarmları otomatik çözülemeyeceğinden burada sessizce
+     * (resolution maili olmadan) kapatılır. Delete'ten farkı: kayıt silinmez,
+     * resolvedBy = "inventory_deactivate".
+     */
+    public int closeAlertsOnDeactivate(String domain) {
+        return closeOpenAlerts(domain, "inventory_deactivate", "domain pasife alındı");
+    }
+
+    private int closeOpenAlerts(String domain, String resolvedBy, String reason) {
         List<AlertEvent> openAlerts = alertEventRepo.findByDomainAndResolvedFalse(domain);
         for (AlertEvent event : openAlerts) {
             event.setResolved(true);
             event.setResolvedAt(now());
-            event.setResolvedBy("inventory_delete");
+            event.setResolvedBy(resolvedBy);
             alertEventRepo.save(event);
-            log.info("Alarm kapatıldı (envanter silindi): {} [{}]",
-                    domain, event.getAlertType());
+            log.info("Alarm kapatıldı ({}): {} [{}]", reason, domain, event.getAlertType());
         }
         return openAlerts.size();
     }

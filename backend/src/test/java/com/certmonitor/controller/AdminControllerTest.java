@@ -198,6 +198,44 @@ class AdminControllerTest {
     }
 
     @Test
+    @DisplayName("PUT /api/admin/inventory/{id} deactivating (active true→false) closes open alerts")
+    void updateInventory_deactivate_closesAlerts() throws Exception {
+        CertificateInventory existing = inventory("dom.com"); // active=true
+        existing.setId(1L);
+        when(inventoryRepo.findById(1L)).thenReturn(Optional.of(existing));
+        when(inventoryRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(escalationService.closeAlertsOnDeactivate("dom.com")).thenReturn(4);
+
+        mvc.perform(put("/api/admin/inventory/1")
+                        .session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"domain\":\"dom.com\",\"port\":443,\"active\":false}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.alertsClosed").value(4));
+
+        org.mockito.Mockito.verify(escalationService).closeAlertsOnDeactivate("dom.com");
+    }
+
+    @Test
+    @DisplayName("PUT /api/admin/inventory/{id} staying active does NOT close alerts")
+    void updateInventory_stayActive_noAlertClose() throws Exception {
+        CertificateInventory existing = inventory("dom2.com"); // active=true
+        existing.setId(1L);
+        when(inventoryRepo.findById(1L)).thenReturn(Optional.of(existing));
+        when(inventoryRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        mvc.perform(put("/api/admin/inventory/1")
+                        .session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"domain\":\"dom2.com\",\"port\":443,\"active\":true}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.alertsClosed").value(0));
+
+        org.mockito.Mockito.verify(escalationService, org.mockito.Mockito.never())
+                .closeAlertsOnDeactivate(org.mockito.ArgumentMatchers.anyString());
+    }
+
+    @Test
     @DisplayName("PUT /api/admin/inventory/{id} with unknown id returns 404")
     void updateInventory_unknownId_returns404() throws Exception {
         when(inventoryRepo.findById(999L)).thenReturn(Optional.empty());
@@ -422,6 +460,119 @@ class AdminControllerTest {
                 .andExpect(jsonPath("$.alertsClosed").value(3));
 
         org.mockito.Mockito.verify(escalationService).closeAlertsOnInventoryDelete("stuck.example.com");
+    }
+
+    // ── Bulk inventory actions ────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("POST /api/admin/inventory/bulk deactivate → counts + closes alerts (not delete)")
+    void bulkInventory_deactivate_returns200() throws Exception {
+        CertificateInventory a = inventory("a.com"); a.setId(1L);
+        CertificateInventory b = inventory("b.com"); b.setId(2L);
+        when(inventoryRepo.findById(1L)).thenReturn(Optional.of(a));
+        when(inventoryRepo.findById(2L)).thenReturn(Optional.of(b));
+        when(inventoryRepo.save(any())).thenAnswer(i -> i.getArgument(0));
+        when(escalationService.closeAlertsOnDeactivate("a.com")).thenReturn(2);
+        when(escalationService.closeAlertsOnDeactivate("b.com")).thenReturn(0);
+
+        mvc.perform(post("/api/admin/inventory/bulk").session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"action\":\"deactivate\",\"ids\":[1,2]}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.data.processed").value(2))
+                .andExpect(jsonPath("$.data.skipped").value(0))
+                .andExpect(jsonPath("$.data.alertsClosed").value(2));
+
+        org.mockito.Mockito.verify(inventoryRepo, org.mockito.Mockito.times(2)).save(any());
+        // Pasife alma alarmları kapatır ama domain'i SİLMEZ (soft-delete tetiklenmez)
+        org.mockito.Mockito.verify(escalationService).closeAlertsOnDeactivate("a.com");
+        org.mockito.Mockito.verify(escalationService).closeAlertsOnDeactivate("b.com");
+        org.mockito.Mockito.verify(escalationService, org.mockito.Mockito.never())
+                .closeAlertsOnInventoryDelete(org.mockito.ArgumentMatchers.anyString());
+    }
+
+    @Test
+    @DisplayName("POST /api/admin/inventory/bulk activate skips soft-deleted rows")
+    void bulkInventory_activate_skipsDeleted() throws Exception {
+        CertificateInventory live = inventory("live.com"); live.setId(1L);
+        CertificateInventory gone = inventory("gone.com"); gone.setId(2L); gone.setDeletedAt("2026-06-01T00:00:00");
+        when(inventoryRepo.findById(1L)).thenReturn(Optional.of(live));
+        when(inventoryRepo.findById(2L)).thenReturn(Optional.of(gone));
+        when(inventoryRepo.save(any())).thenAnswer(i -> i.getArgument(0));
+
+        mvc.perform(post("/api/admin/inventory/bulk").session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"action\":\"activate\",\"ids\":[1,2]}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.processed").value(1))
+                .andExpect(jsonPath("$.data.skipped").value(1));
+    }
+
+    @Test
+    @DisplayName("POST /api/admin/inventory/bulk delete closes alerts and reports count")
+    void bulkInventory_delete_closesAlerts() throws Exception {
+        CertificateInventory a = inventory("d1.com"); a.setId(1L);
+        CertificateInventory b = inventory("d2.com"); b.setId(2L);
+        when(inventoryRepo.findById(1L)).thenReturn(Optional.of(a));
+        when(inventoryRepo.findById(2L)).thenReturn(Optional.of(b));
+        when(inventoryRepo.save(any())).thenAnswer(i -> i.getArgument(0));
+        when(escalationService.closeAlertsOnInventoryDelete("d1.com")).thenReturn(2);
+        when(escalationService.closeAlertsOnInventoryDelete("d2.com")).thenReturn(1);
+
+        mvc.perform(post("/api/admin/inventory/bulk").session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"action\":\"delete\",\"ids\":[1,2]}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.processed").value(2))
+                .andExpect(jsonPath("$.data.alertsClosed").value(3));
+
+        org.mockito.Mockito.verify(escalationService).closeAlertsOnInventoryDelete("d1.com");
+        org.mockito.Mockito.verify(escalationService).closeAlertsOnInventoryDelete("d2.com");
+    }
+
+    @Test
+    @DisplayName("POST /api/admin/inventory/bulk invalid action → 400")
+    void bulkInventory_invalidAction_returns400() throws Exception {
+        mvc.perform(post("/api/admin/inventory/bulk").session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"action\":\"frobnicate\",\"ids\":[1]}"))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    @DisplayName("POST /api/admin/inventory/bulk empty ids → 400")
+    void bulkInventory_emptyIds_returns400() throws Exception {
+        mvc.perform(post("/api/admin/inventory/bulk").session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"action\":\"deactivate\",\"ids\":[]}"))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    @DisplayName("POST /api/admin/inventory/bulk as TEAM_ADMIN skips out-of-scope rows")
+    void bulkInventory_asTeamAdmin_skipsOutOfScope() throws Exception {
+        CertificateInventory own   = inventory("own.com");   own.setId(1L);   own.setTeamId(2L);  // managed
+        CertificateInventory other = inventory("other.com"); other.setId(2L); other.setTeamId(7L); // not managed
+        when(inventoryRepo.findById(1L)).thenReturn(Optional.of(own));
+        when(inventoryRepo.findById(2L)).thenReturn(Optional.of(other));
+        when(inventoryRepo.save(any())).thenAnswer(i -> i.getArgument(0));
+
+        mvc.perform(post("/api/admin/inventory/bulk").session(teamAdminSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"action\":\"deactivate\",\"ids\":[1,2]}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.processed").value(1))
+                .andExpect(jsonPath("$.data.skipped").value(1));
+    }
+
+    @Test
+    @DisplayName("POST /api/admin/inventory/bulk as USER → 403")
+    void bulkInventory_asUser_returns403() throws Exception {
+        mvc.perform(post("/api/admin/inventory/bulk").session(userSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"action\":\"deactivate\",\"ids\":[1]}"))
+                .andExpect(status().isForbidden());
     }
 
     // ── Thresholds ────────────────────────────────────────────────────────────
