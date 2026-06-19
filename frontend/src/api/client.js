@@ -251,6 +251,9 @@ export const api = {
     secretToolsInfo: () => request('/admin/secret-tools/info'),
     decryptSecrets: (key) => request('/admin/secret-tools/decrypt', { method: 'POST', body: JSON.stringify({ key }) }),
 
+    // Veritabanı bilgileri (admin-only Settings sayfası) — bağlı PostgreSQL meta verisi
+    getDatabaseInfo: () => request('/admin/database/info'),
+
     // LDAP / Active Directory settings (admin-only Settings page)
     getLdapSettings: () => request('/admin/ldap/settings'),
     saveLdapSettings: (dto) => request('/admin/ldap/settings', { method: 'PUT', body: JSON.stringify(dto) }),
