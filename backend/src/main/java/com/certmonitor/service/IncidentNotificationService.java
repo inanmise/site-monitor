@@ -49,7 +49,8 @@ public class IncidentNotificationService {
         });
     }
 
-    private void doNotify(Map<String, Object> dto, String kind) {
+    /* package-private (test): senkron çözüm + alıcı/konu doğrulaması için. */
+    void doNotify(Map<String, Object> dto, String kind) {
         Object teamIdObj = dto.get("team_id");
         if (!(teamIdObj instanceof Number tid)) {
             log.debug("Incident notify skipped — no team_id on incident '{}'", dto.get("title"));

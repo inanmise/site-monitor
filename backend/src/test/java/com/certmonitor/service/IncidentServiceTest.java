@@ -11,6 +11,7 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.test.context.TestPropertySource;
 
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.*;
@@ -166,5 +167,34 @@ class IncidentServiceTest {
         bad.put("status", "WAT");
         assertThatThrownBy(() -> service.update(e.getId(), bad, "sre1"))
                 .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    @DisplayName("transfer: seçili kayıtların takımını değiştirir; boş id / null takım → 0")
+    void transfer_changesTeam() {
+        IncidentRecord a = service.create(body("a", "2026-06-14T10:00:00", "LOW", "OTHER"), "admin", 1L, 1L);
+        IncidentRecord b = service.create(body("b", "2026-06-15T10:00:00", "LOW", "OTHER"), "admin", 1L, 1L);
+
+        int n = service.transfer(List.of(a.getId(), b.getId()), 99L, "Yeni Takım", "admin");
+        assertThat(n).isEqualTo(2);
+        assertThat(service.get(a.getId()).getTeamId()).isEqualTo(99L);
+        assertThat(service.get(a.getId()).getTeamName()).isEqualTo("Yeni Takım");
+        assertThat(service.get(b.getId()).getTeamId()).isEqualTo(99L);
+
+        assertThat(service.transfer(List.of(), 99L, "X", "admin")).isZero();
+        assertThat(service.transfer(List.of(a.getId()), null, "X", "admin")).isZero();
+    }
+
+    @Test
+    @DisplayName("removeOption: kayıtlı seçeneği siler (kullanımdaki union etkilenmez)")
+    void removeOption_removes() {
+        service.addOption("CHANNEL", "Geçici Kanal", "admin");
+        assertThat(service.listOptions("CHANNEL")).contains("Geçici Kanal");
+
+        service.removeOption("CHANNEL", "geçici kanal"); // büyük/küçük harf duyarsız
+        assertThat(service.listOptions("CHANNEL")).doesNotContain("Geçici Kanal");
+
+        // boş/null değer no-op (exception fırlatmaz)
+        service.removeOption("CHANNEL", "  ");
     }
 }

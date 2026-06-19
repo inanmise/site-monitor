@@ -11,6 +11,7 @@ import org.mockito.quality.Strictness;
 import com.certmonitor.model.SmtpSettings;
 import org.springframework.mail.javamail.JavaMailSenderImpl;
 
+import java.util.HashMap;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -531,5 +532,41 @@ class EmailNotificationServiceTest {
                         "deployment_status", "OK"));
 
         assertThat(result).isEqualTo("SENT");
+    }
+
+    // ── Olay bildirimi HTML — tarihler her zaman Europe/Istanbul (UTC+3) ──────────
+
+    @Test
+    @DisplayName("buildIncidentNotificationHtml: UTC tarihler IST'ye çevrilir (+3) + çözüldü eyebrow")
+    void incidentHtml_localTime() {
+        Map<String, Object> inc = new HashMap<>();
+        inc.put("title", "Ödeme servisi kesintisi");
+        inc.put("team_name", "Dijital SY");
+        inc.put("severity", "CRITICAL");
+        inc.put("status", "RESOLVED");
+        inc.put("occurred_at", "2026-06-18T10:00:00");  // 10:00 UTC → 13:00 IST
+        inc.put("resolved_at", "2026-06-18T12:30:00");  // 12:30 UTC → 15:30 IST
+
+        String html = service.buildIncidentNotificationHtml(inc, "Müdür Bey", "RESOLVED",
+                "https://cm.example.com/?tab=incident-history");
+
+        assertThat(html).contains("18.06.2026 13:00");          // occurred_at IST
+        assertThat(html).contains("18.06.2026 15:30");          // resolved_at IST
+        assertThat(html).doesNotContain("18.06.2026 10:00");    // ham UTC sızmamalı
+        assertThat(html).doesNotContain("18.06.2026 12:30");
+        assertThat(html).contains("Olay Çözüldü");              // RESOLVED eyebrow
+        assertThat(html).contains("Müdür Bey");
+    }
+
+    @Test
+    @DisplayName("buildResolutionEmailHtml: çözülme/oluşturma tarihleri IST'ye çevrilir (sertifika)")
+    void resolutionHtml_localTime() {
+        String html = service.buildResolutionEmailHtml(
+                "example.com", "EXPIRY", "WARNING", 12,
+                "system", "2026-06-18T07:15:00", "2026-06-17T22:00:00", null);
+
+        assertThat(html).contains("18.06.2026 10:15");          // resolvedAt 07:15 UTC → 10:15 IST
+        assertThat(html).contains("18.06.2026 01:00");          // createdAt 17 22:00 UTC → 18 01:00 IST
+        assertThat(html).doesNotContain("18.06.2026 07:15");    // ham UTC sızmamalı
     }
 }

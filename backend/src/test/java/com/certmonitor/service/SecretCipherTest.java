@@ -60,4 +60,38 @@ class SecretCipherTest {
         other.init();
         assertThat(other.decrypt(enc)).isNull();
     }
+
+    @Test
+    @DisplayName("decryptWith: doğru materyalle çözer, yanlış/boş/prefixsizde null")
+    void decryptWith_rightAndWrong() {
+        String enc = cipher.encrypt("creds");                      // dev default ile şifreli
+        assertThat(cipher.decryptWith(enc, cipher.devDefaultKey())).isEqualTo("creds");
+        assertThat(cipher.decryptWith(enc, "baska-anahtar")).isNull();
+        assertThat(cipher.decryptWith(null, "k")).isNull();
+        assertThat(cipher.decryptWith("plain-not-prefixed", "k")).isNull();
+        assertThat(cipher.decryptWith(enc, "   ")).isNull();
+    }
+
+    @Test
+    @DisplayName("isKeyConfigured: anahtar yokken false, ayarlıyken true")
+    void isKeyConfigured_flag() {
+        assertThat(cipher.isKeyConfigured()).isFalse();            // setUp: configuredKey yok
+        SecretCipher configured = new SecretCipher();
+        try {
+            var f = SecretCipher.class.getDeclaredField("configuredKey");
+            f.setAccessible(true);
+            f.set(configured, "real-strong-key");
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
+        configured.init();
+        assertThat(configured.isKeyConfigured()).isTrue();
+    }
+
+    @Test
+    @DisplayName("devDefaultKey boş değil ve onunla şifrelenen çözülebilir")
+    void devDefaultKey_present() {
+        assertThat(cipher.devDefaultKey()).isNotBlank();
+        assertThat(cipher.decryptWith(cipher.encrypt("x"), cipher.devDefaultKey())).isEqualTo("x");
+    }
 }
