@@ -555,6 +555,60 @@ public class AdminController {
         }).orElse(ResponseEntity.notFound().build());
     }
 
+    /**
+     * Kalıcı sil (purge) — yalnız SOFT-DELETE edilmiş bir envanter kaydını ve o domain'in
+     * tüm kontrol verisini (latest_checks + certificate_checks) GERİ ALINAMAZ şekilde siler.
+     * Yalnız GLOBAL ADMIN ({@link #requireAdmin}); takım-admin yapamaz. Alarmlar zaten
+     * soft-delete sırasında kapandığı için burada ek alarm işlemi yok.
+     */
+    @CacheEvict(value = {"cert-latest", "cert-warnings", "cert-stats", "renewal-advice"}, allEntries = true)
+    @DeleteMapping("/inventory/{id}/permanent")
+    @Transactional
+    public ResponseEntity<Map<String, Object>> purgeInventory(
+            @PathVariable Long id, HttpSession session, HttpServletRequest request) {
+        requireAdmin(session); // yalnız global admin — geri alınamaz temizlik
+        return inventoryRepo.findById(id).map(inv -> {
+            if (inv.getDeletedAt() == null) {
+                throw new IllegalArgumentException("Yalnız önce silinmiş (soft-delete) kayıtlar kalıcı silinebilir");
+            }
+            String domain = inv.getDomain();
+            int checks = certificateCheckRepo.deleteByDomain(domain);
+            latestCheckRepo.findById(domain).ifPresent(latestCheckRepo::delete);
+            inventoryRepo.delete(inv);
+            auditService.recordAction("DOMAIN_PURGE", session, request, "CERTIFICATE", domain,
+                    "{\"teamId\":" + inv.getTeamId() + ",\"checksDeleted\":" + checks + "}");
+            return ok(Map.of("message", "Purged", "checksDeleted", checks));
+        }).orElse(ResponseEntity.notFound().build());
+    }
+
+    /**
+     * Toplu kalıcı sil — TÜM soft-delete edilmiş envanter kayıtlarını ve ilgili kontrol
+     * verisini tek istekte GERİ ALINAMAZ şekilde temizler. Yalnız GLOBAL ADMIN.
+     */
+    @CacheEvict(value = {"cert-latest", "cert-warnings", "cert-stats", "renewal-advice"}, allEntries = true)
+    @PostMapping("/inventory/purge-deleted")
+    @Transactional
+    public ResponseEntity<Map<String, Object>> purgeAllDeleted(
+            HttpSession session, HttpServletRequest request) {
+        requireAdmin(session);
+        List<CertificateInventory> deleted = inventoryRepo.findByDeletedAtIsNotNullOrderByDomainAsc();
+        int purged = 0, checksDeleted = 0;
+        for (CertificateInventory inv : deleted) {
+            String domain = inv.getDomain();
+            checksDeleted += certificateCheckRepo.deleteByDomain(domain);
+            latestCheckRepo.findById(domain).ifPresent(latestCheckRepo::delete);
+            inventoryRepo.delete(inv);
+            purged++;
+        }
+        auditService.recordAction("DOMAIN_BULK_PURGE", session, request, "CERTIFICATE",
+                purged + " domain",
+                "{\"purged\":" + purged + ",\"checksDeleted\":" + checksDeleted + "}");
+        Map<String, Object> data = new java.util.LinkedHashMap<>();
+        data.put("purged", purged);
+        data.put("checksDeleted", checksDeleted);
+        return ok(Map.of("data", data, "message", "Purge complete"));
+    }
+
     @PostMapping("/inventory/{id}/transfer")
     public ResponseEntity<Map<String, Object>> transferInventory(
             @PathVariable Long id, @RequestBody Map<String, Object> body,

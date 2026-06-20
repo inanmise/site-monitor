@@ -31,6 +31,7 @@ public class AppSettingsService {
     private static final DateTimeFormatter ISO =
             DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
     private static final String LOG_LEVEL_KEY = "logging.level.com.certmonitor";
+    private static final String MAIL_LOG_LEVEL_KEY = "logging.level.com.certmonitor.mail";
 
     private final AppSettingRepository repo;
     private final Environment environment;
@@ -165,14 +166,21 @@ public class AppSettingsService {
         }
     }
 
-    /** logging.level.com.certmonitor için Logback seviyesini canlı uygular. */
+    /** logging.level.* override'larını Logback'e canlı uygular (com.certmonitor + .mail). */
     private void applyLogLevel() {
         try {
             String lvl = resolve(LOG_LEVEL_KEY);
-            if (lvl == null || lvl.isBlank()) return;
-            ch.qos.logback.classic.Logger logger =
-                    (ch.qos.logback.classic.Logger) LoggerFactory.getLogger("com.certmonitor");
-            logger.setLevel(ch.qos.logback.classic.Level.valueOf(lvl.trim().toUpperCase()));
+            if (lvl != null && !lvl.isBlank()) {
+                ((ch.qos.logback.classic.Logger) LoggerFactory.getLogger("com.certmonitor"))
+                        .setLevel(ch.qos.logback.classic.Level.valueOf(lvl.trim().toUpperCase()));
+            }
+            // Mail logger: override varsa uygula, yoksa null → parent'tan (com.certmonitor) miras al.
+            // Böylece ekrandan mail TRACE'i aç/kapat uygulama-geneli TRACE'e geçmeden canlı yapılır.
+            String mailLvl = resolve(MAIL_LOG_LEVEL_KEY);
+            ((ch.qos.logback.classic.Logger) LoggerFactory.getLogger("com.certmonitor.mail"))
+                    .setLevel((mailLvl == null || mailLvl.isBlank())
+                            ? null
+                            : ch.qos.logback.classic.Level.valueOf(mailLvl.trim().toUpperCase()));
         } catch (Exception e) {
             log.debug("applyLogLevel skipped: {}", e.getMessage());
         }
