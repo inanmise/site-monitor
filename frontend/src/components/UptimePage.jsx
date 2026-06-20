@@ -2,9 +2,10 @@ import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { createPortal } from 'react-dom'
 import { api, formatDate } from '../api/client'
 import { useT } from '../i18n/index.jsx'
-import { RefreshCw, X, AlertCircle, CheckCircle } from 'lucide-react'
+import { RefreshCw, X, AlertCircle, CheckCircle, Users } from 'lucide-react'
 import DateTimeRangePicker from './ui/DateTimeRangePicker.jsx'
 import DiagnosticsModal from './admin/DiagnosticsModal.jsx'
+import SearchableSelect from './ui/SearchableSelect.jsx'
 
 const REFRESH_INTERVAL = 60
 const PAGE_SIZE = 12
@@ -20,6 +21,7 @@ export default function UptimePage({ systemRole }) {
   const [filterStatus, setFilterStatus] = useState('all')
   const [sortKey, setSortKey]           = useState('default')
   const [search, setSearch]             = useState('')
+  const [teamFilter, setTeamFilter]     = useState('all')
   const [page, setPage]                 = useState(1)
   const [selected, setSelected]         = useState(null)
   const [diag, setDiag]                 = useState(null)   // { domain, port } → DiagnosticsModal
@@ -100,6 +102,10 @@ export default function UptimePage({ systemRole }) {
     let list = [...items]
     if (filterStatus === 'down') list = list.filter(x => x.status !== 'up')
     if (filterStatus === 'up')   list = list.filter(x => x.status === 'up')
+    if (teamFilter !== 'all') {
+      if (teamFilter === '__none__') list = list.filter(x => !x.team_name)
+      else                            list = list.filter(x => x.team_name === teamFilter)
+    }
     if (search.trim()) {
       const q = search.trim().toLowerCase()
       list = list.filter(x => x.domain.toLowerCase().includes(q))
@@ -117,9 +123,21 @@ export default function UptimePage({ systemRole }) {
       return 0
     })
     return list
-  }, [items, filterStatus, sortKey, search])
+  }, [items, filterStatus, sortKey, search, teamFilter])
 
-  useEffect(() => { setPage(1) }, [filterStatus, sortKey, search])
+  useEffect(() => { setPage(1) }, [filterStatus, sortKey, search, teamFilter])
+
+  // Takım filtresi seçenekleri — listeden türetilir (dashboard deseni).
+  const teamOptions = (() => {
+    const names = new Set()
+    let hasNone = false
+    for (const x of items) { if (x.team_name) names.add(x.team_name); else hasNone = true }
+    const opts = [{ value: 'all', label: t('app.allTeams') }]
+    ;[...names].sort((a, b) => a.localeCompare(b)).forEach((n) => opts.push({ value: n, label: n }))
+    if (hasNone) opts.push({ value: '__none__', label: t('app.noTeam') })
+    return opts
+  })()
+  const hasTeamOptions = teamOptions.some(o => o.value !== 'all' && o.value !== '__none__')
 
   const totalPages = Math.max(1, Math.ceil(displayItems.length / PAGE_SIZE))
   const safePage   = Math.min(page, totalPages)
@@ -233,6 +251,9 @@ export default function UptimePage({ systemRole }) {
               <option value="uptime-asc">{t('uptime.sortUptimeAsc')}</option>
               <option value="incidents-desc">{t('uptime.sortIncidentsDesc')}</option>
             </select>
+            {hasTeamOptions && (
+              <SearchableSelect value={teamFilter} onChange={setTeamFilter} options={teamOptions} />
+            )}
           </div>
           <input className="upt-search" type="text"
             placeholder={t('uptime.searchPlaceholder')}
@@ -261,6 +282,12 @@ export default function UptimePage({ systemRole }) {
               </div>
 
               <div className="upt-card-domain">{item.domain}</div>
+              {item.team_name && (
+                <div title={t('card.team')} style={{ display: 'flex', alignItems: 'center', gap: 5,
+                  fontSize: '.78em', color: 'var(--text-muted)', marginTop: 2 }}>
+                  <Users size={12} />{item.team_name}
+                </div>
+              )}
 
               <div className="upt-card-divider" />
 

@@ -2,6 +2,7 @@ package com.certmonitor.controller;
 
 import com.certmonitor.model.*;
 import com.certmonitor.repository.*;
+import com.certmonitor.service.CertificateService;
 import com.certmonitor.service.DnsCheckerService;
 import com.certmonitor.service.PortCheckerService;
 import jakarta.servlet.http.HttpSession;
@@ -38,6 +39,9 @@ public class MonitoringController {
     private final DnsRecordRepository dnsRecordRepo;
     private final DnsCheckerService dnsChecker;
 
+    /** domain/host → sorumlu takım adı (izleme ekranlarında takım gösterimi/filtresi). */
+    private final CertificateService certificateService;
+
     private static final DateTimeFormatter ISO =
             DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
 
@@ -67,6 +71,7 @@ public class MonitoringController {
                 .collect(Collectors.toMap(LatestCheck::getDomain, lc -> lc));
 
         List<CertificateInventory> inventory = inventoryRepo.findByActiveTrueOrderByDomainAsc();
+        Map<String, String> teamMap = certificateService.domainTeamNameMap();
 
         String cutoff30d = ISO.format(Instant.now().minus(30, ChronoUnit.DAYS));
         String cutoff7d  = ISO.format(Instant.now().minus(7,  ChronoUnit.DAYS));
@@ -92,6 +97,7 @@ public class MonitoringController {
             Map<String, Object> item = new LinkedHashMap<>();
             item.put("domain", domain);
             item.put("port",   inv.getPort());
+            item.put("team_name", teamMap.get(domain));
 
             int port = inv.getPort() != null ? inv.getPort() : 443;
             Optional<UptimeCheck> uc = Optional.ofNullable(latestUptime.get(domain + ":" + port));
@@ -319,12 +325,13 @@ public class MonitoringController {
                 .filter(pc -> pc.getMonitorId() != null)
                 .collect(Collectors.toMap(PortCheck::getMonitorId, pc -> pc, (a, b) -> a));
 
+        Map<String, String> teamMap = certificateService.domainTeamNameMap();
         List<Map<String, Object>> result = new ArrayList<>();
         for (CertificateInventory inv : inventory) {
             int invPort = inv.getPort() != null ? inv.getPort() : 443;
             PortMonitor monitor = monitorByKey.get(inv.getDomain() + ":" + invPort);
             PortCheck latest = monitor.getId() != null ? latestByMonitor.get(monitor.getId()) : null;
-            result.add(enrichPort(monitor, latest));
+            result.add(enrichPort(monitor, latest, teamMap));
         }
         return ok(result);
     }
@@ -344,7 +351,7 @@ public class MonitoringController {
         m.setCreatedAt(now);
         m.setUpdatedAt(now);
         PortMonitor saved = portMonitorRepo.save(m);
-        return ok(enrichPort(saved, null));
+        return ok(enrichPort(saved, null, certificateService.domainTeamNameMap()));
     }
 
     @PutMapping("/port/{id}")
@@ -360,7 +367,7 @@ public class MonitoringController {
             if (body.get("timeoutMs")       != null) m.setTimeoutMs(((Number) body.get("timeoutMs")).intValue());
             m.setUpdatedAt(ISO.format(Instant.now()));
             PortMonitor saved = portMonitorRepo.save(m);
-            return ok(enrichPort(saved, portCheckRepo.findTopByMonitorIdOrderByCheckedAtDesc(id).orElse(null)));
+            return ok(enrichPort(saved, portCheckRepo.findTopByMonitorIdOrderByCheckedAtDesc(id).orElse(null), certificateService.domainTeamNameMap()));
         }).orElse(notFound("Port monitor not found"));
     }
 
@@ -413,15 +420,16 @@ public class MonitoringController {
             check.setError((String) r.get("error"));
             check.setCheckedAt(now);
             portCheckRepo.save(check);
-            return ok(enrichPort(m, check));
+            return ok(enrichPort(m, check, certificateService.domainTeamNameMap()));
         }).orElse(notFound("Port monitor not found"));
     }
 
-    private Map<String, Object> enrichPort(PortMonitor m, PortCheck latest) {
+    private Map<String, Object> enrichPort(PortMonitor m, PortCheck latest, Map<String, String> teamMap) {
         Map<String, Object> item = new LinkedHashMap<>();
         item.put("id",              m.getId());
         item.put("name",            m.getName());
         item.put("host",            m.getHost());
+        item.put("team_name",       teamMap.get(m.getHost()));
         item.put("port",            m.getPort());
         item.put("protocol",        m.getProtocol());
         item.put("active",          m.getActive());
@@ -479,11 +487,12 @@ public class MonitoringController {
                 .filter(r -> r.getMonitorId() != null)
                 .collect(Collectors.toMap(DnsRecord::getMonitorId, r -> r, (a, b) -> a));
 
+        Map<String, String> teamMap = certificateService.domainTeamNameMap();
         List<Map<String, Object>> result = new ArrayList<>();
         for (CertificateInventory inv : inventory) {
             DnsMonitor monitor = monitorByDomain.get(inv.getDomain());
             DnsRecord latest = monitor.getId() != null ? latestByMonitor.get(monitor.getId()) : null;
-            result.add(enrichDns(monitor, latest));
+            result.add(enrichDns(monitor, latest, teamMap));
         }
         return ok(result);
     }
@@ -501,7 +510,7 @@ public class MonitoringController {
         m.setCreatedAt(now);
         m.setUpdatedAt(now);
         DnsMonitor saved = dnsMonitorRepo.save(m);
-        return ok(enrichDns(saved, null));
+        return ok(enrichDns(saved, null, certificateService.domainTeamNameMap()));
     }
 
     @PutMapping("/dns/{id}")
@@ -515,7 +524,7 @@ public class MonitoringController {
             if (body.get("intervalSeconds") != null) m.setIntervalSeconds(((Number) body.get("intervalSeconds")).intValue());
             m.setUpdatedAt(ISO.format(Instant.now()));
             DnsMonitor saved = dnsMonitorRepo.save(m);
-            return ok(enrichDns(saved, dnsRecordRepo.findTopByMonitorIdOrderByCheckedAtDesc(id).orElse(null)));
+            return ok(enrichDns(saved, dnsRecordRepo.findTopByMonitorIdOrderByCheckedAtDesc(id).orElse(null), certificateService.domainTeamNameMap()));
         }).orElse(notFound("DNS monitor not found"));
     }
 
@@ -574,7 +583,7 @@ public class MonitoringController {
             record.setResponseMs(r.get("response_ms") instanceof Number rn ? rn.longValue() : null);
             dnsRecordRepo.save(record);
 
-            return ok(enrichDns(m, record));
+            return ok(enrichDns(m, record, certificateService.domainTeamNameMap()));
         }).orElse(notFound("DNS monitor not found"));
     }
 
@@ -583,16 +592,17 @@ public class MonitoringController {
     public ResponseEntity<Map<String, Object>> dnsDetails(@PathVariable Long id) {
         return dnsMonitorRepo.findById(id).map(m -> {
             Map<String, Object> data = new LinkedHashMap<>(dnsChecker.enrichedQuery(m.getDomain()));
-            data.put("monitor", enrichDns(m, dnsRecordRepo.findTopByMonitorIdOrderByCheckedAtDesc(m.getId()).orElse(null)));
+            data.put("monitor", enrichDns(m, dnsRecordRepo.findTopByMonitorIdOrderByCheckedAtDesc(m.getId()).orElse(null), certificateService.domainTeamNameMap()));
             return ResponseEntity.ok(Map.of("success", true, "data", data));
         }).orElse(notFound("DNS monitor not found"));
     }
 
-    private Map<String, Object> enrichDns(DnsMonitor m, DnsRecord latest) {
+    private Map<String, Object> enrichDns(DnsMonitor m, DnsRecord latest, Map<String, String> teamMap) {
         Map<String, Object> item = new LinkedHashMap<>();
         item.put("id",              m.getId());
         item.put("name",            m.getName());
         item.put("domain",          m.getDomain());
+        item.put("team_name",       teamMap.get(m.getDomain()));
         item.put("record_type",     m.getRecordType());
         item.put("active",          m.getActive());
         item.put("interval_seconds",m.getIntervalSeconds());

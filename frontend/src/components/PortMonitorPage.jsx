@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { api, formatDate } from '../api/client'
 import { useT } from '../i18n/index.jsx'
+import SearchableSelect from './ui/SearchableSelect.jsx'
 import { Play, Pencil, X, RefreshCw, Plug } from 'lucide-react'
 
 const INTERVALS = [
@@ -28,6 +29,7 @@ export default function PortMonitorPage({ systemRole }) {
   const [saving, setSaving] = useState(false)
   const [checking, setChecking] = useState(null)
   const [search, setSearch] = useState('')
+  const [teamFilter, setTeamFilter] = useState('all')
   const [secondsSince, setSecondsSince] = useState(0)
   const countdownRef = useRef(null)
 
@@ -93,9 +95,26 @@ export default function PortMonitorPage({ systemRole }) {
     setChecking(null)
   }
 
-  const displayMonitors = search.trim()
-    ? monitors.filter(m => m.host.toLowerCase().includes(search.trim().toLowerCase()))
-    : monitors
+  // Takım filtresi seçenekleri — listeden türetilir (dashboard deseni).
+  const teamOptions = (() => {
+    const names = new Set()
+    let hasNone = false
+    for (const m of monitors) { if (m.team_name) names.add(m.team_name); else hasNone = true }
+    const opts = [{ value: 'all', label: t('app.allTeams') }]
+    ;[...names].sort((a, b) => a.localeCompare(b)).forEach((n) => opts.push({ value: n, label: n }))
+    if (hasNone) opts.push({ value: '__none__', label: t('app.noTeam') })
+    return opts
+  })()
+  const hasTeamOptions = teamOptions.some(o => o.value !== 'all' && o.value !== '__none__')
+
+  const displayMonitors = monitors.filter(m => {
+    if (teamFilter !== 'all') {
+      if (teamFilter === '__none__') { if (m.team_name) return false }
+      else if (m.team_name !== teamFilter) return false
+    }
+    if (!search.trim()) return true
+    return m.host.toLowerCase().includes(search.trim().toLowerCase())
+  })
 
   function statusBadge(status) {
     const cls = status === 'open' ? 'upt-badge--up' : status === 'closed' ? 'upt-badge--down' : 'upt-badge--unknown'
@@ -126,7 +145,10 @@ export default function PortMonitorPage({ systemRole }) {
       </div>
 
       {!loading && monitors.length > 0 && (
-        <div className="upt-toolbar" style={{ justifyContent: 'flex-end', marginBottom: '14px' }}>
+        <div className="upt-toolbar" style={{ justifyContent: 'flex-end', marginBottom: '14px', gap: 8 }}>
+          {hasTeamOptions && (
+            <SearchableSelect value={teamFilter} onChange={setTeamFilter} options={teamOptions} />
+          )}
           <input className="upt-search" type="text"
             placeholder={t('port.searchPlaceholder')}
             value={search} onChange={e => setSearch(e.target.value)} />
@@ -141,6 +163,7 @@ export default function PortMonitorPage({ systemRole }) {
             <thead>
               <tr>
                 <th>{t('port.host')}</th>
+                <th>{t('port.colTeam')}</th>
                 <th>{t('port.port')}</th>
                 <th>{t('port.status')}</th>
                 <th>{t('port.responseMs')}</th>
@@ -156,6 +179,7 @@ export default function PortMonitorPage({ systemRole }) {
                   onClick={() => openModal(m)}
                 >
                   <td className="mon-cell-mono">{m.host}</td>
+                  <td>{m.team_name || '—'}</td>
                   <td className="mon-cell-num">{m.port}</td>
                   <td>{statusBadge(m.status)}</td>
                   <td className="mon-cell-num">{m.response_ms != null ? `${m.response_ms}ms` : '—'}</td>

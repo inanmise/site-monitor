@@ -238,6 +238,24 @@ public class CertificateService {
         return "valid";
     }
 
+    /**
+     * domain → sorumlu (SY) takım adı (aktif envanter). İzleme ekranları (uptime/port/dns)
+     * yanıtlarını takımla zenginleştirmek için — getAllLatest'teki aynı domain→team deseni.
+     * Cache'li sıcak yolu (getAllLatest) bozmamak için ayrı, bağımsız bir okuma.
+     */
+    public Map<String, String> domainTeamNameMap() {
+        Map<Long, String> teamNames = teamRepo.findAll().stream()
+                .filter(tm -> tm.getId() != null && tm.getName() != null)
+                .collect(Collectors.toMap(Team::getId, Team::getName, (a, b) -> a));
+        Map<String, String> out = new HashMap<>();
+        for (CertificateInventory inv : inventoryRepo.findByActiveTrueOrderByDomainAsc()) {
+            if (inv.getDomain() == null || inv.getTeamId() == null) continue;
+            String tn = teamNames.get(inv.getTeamId());
+            if (tn != null) out.put(inv.getDomain(), tn);
+        }
+        return out;
+    }
+
     private Map<String, Integer> buildTierMap() {
         // Yalnız aktif envanteri çek + tier set olanları seç. findAll() ile
         // tüm tabloyu yüklemek yerine WHERE active=true filtresi DB tarafına iner.

@@ -4,10 +4,12 @@ import com.certmonitor.model.CertificateInventory;
 import com.certmonitor.model.LatestCheck;
 import com.certmonitor.model.UptimeCheck;
 import com.certmonitor.repository.*;
+import com.certmonitor.service.CertificateService;
 import com.certmonitor.service.DnsCheckerService;
 import com.certmonitor.service.PortCheckerService;
 import com.certmonitor.service.RememberMeService;
 import com.certmonitor.service.UserService;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -44,6 +46,13 @@ class MonitoringControllerTest {
     @MockitoBean DnsMonitorRepository dnsMonitorRepo;
     @MockitoBean DnsRecordRepository dnsRecordRepo;
     @MockitoBean DnsCheckerService dnsChecker;
+    @MockitoBean CertificateService certificateService;
+
+    @BeforeEach
+    void stubTeamMap() {
+        // İzleme uçları artık domain→takım map'ini buradan alıyor; boş map yeterli (team_name=null).
+        when(certificateService.domainTeamNameMap()).thenReturn(java.util.Map.of());
+    }
 
     private MockHttpSession session(String role) {
         MockHttpSession s = new MockHttpSession();
