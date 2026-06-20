@@ -62,6 +62,46 @@ function CreatableSelect({ label, value, onChange, options, disabled, onCreate, 
     </label>
   )
 }
+/** Çoklu seçim + creatable — değer CSV string ('a, b, c'). Seçilenler kaldırılabilir chip;
+ *  "Ekle" için tekil SearchableSelect (seçilenler hariç). Picker seçim sonrası boş kalır.
+ *  tagHue/.tag-chip yeniden kullanılır (yeni CSS yok). */
+function CreatableMultiSelect({ label, value, onChange, options, disabled, onCreate, onDelete }) {
+  const selected = (value || '').split(',').map(s => s.trim()).filter(Boolean)
+  const add = (v) => {
+    const x = (v ?? '').trim()
+    if (x && !selected.some(s => s.toLowerCase() === x.toLowerCase())) onChange([...selected, x].join(', '))
+  }
+  const remove = (val) => onChange(selected.filter(x => x !== val).join(', '))
+  const opts = [
+    { value: '', label: '—' },
+    ...options.filter(o => !selected.some(s => s.toLowerCase() === String(o).toLowerCase()))
+              .map(o => ({ value: o, label: o })),
+  ]
+  return (
+    <label>
+      <span>{label}</span>
+      {!disabled && (
+        <SearchableSelect value="" onChange={add} options={opts} creatable
+          onCreate={v => { onCreate?.(v); add(v) }} onDelete={onDelete} placeholder="—" />
+      )}
+      {selected.length > 0 ? (
+        <div className="tag-chips">
+          {selected.map(val => {
+            const h = tagHue(val)
+            return (
+              <span key={val} className="tag-chip"
+                style={{ background: `hsl(${h},70%,93%)`, color: `hsl(${h},65%,30%)`, borderColor: `hsl(${h},70%,78%)` }}>
+                {val}
+                {!disabled && <button type="button" className="tag-chip-x" aria-label="remove"
+                  style={{ color: `hsl(${h},60%,38%)` }} onClick={() => remove(val)}>×</button>}
+              </span>
+            )
+          })}
+        </div>
+      ) : (disabled && <span className="show-field-value">—</span>)}
+    </label>
+  )
+}
 /** Zengin metin alanı — Weekly Reports ile aynı markdown editör (full-width).
  *  editable iken görsel yükleme aktif; incidentId yoksa (create modu) taslak yüklenir,
  *  kaydedince backend görseli olaya bağlar. makeUniqueCaption = aynı incident içinde
@@ -545,10 +585,10 @@ function IncidentModal({ modal, setModal, save, remove, saving, allowManage, all
             onChange={v => setModal(m => ({ ...m, form: { ...m.form, team_id: v,
               team_name: teams.find(tm => String(tm.id) === String(v))?.name || '' } }))}
             options={teamOptions} />
-          <CreatableSelect label={t('inc.fChannel')} value={f.channel} disabled={!editing}
+          <CreatableMultiSelect label={t('inc.fChannel')} value={f.channel} disabled={!editing}
             options={channelOpts} onChange={v => set('channel', v)}
             onCreate={v => onAddOption('CHANNEL', v)} onDelete={v => onDeleteOption('CHANNEL', v)} />
-          <CreatableSelect label={t('inc.fService')} value={f.service} disabled={!editing}
+          <CreatableMultiSelect label={t('inc.fService')} value={f.service} disabled={!editing}
             options={domainOpts} onChange={v => set('service', v)}
             onCreate={v => onAddOption('DOMAIN', v)} onDelete={v => onDeleteOption('DOMAIN', v)} />
           <SelectInput label={t('inc.fSeverity')} value={f.severity} disabled={!editing} onChange={v => set('severity', v)} options={opts(SEVERITIES, 'inc.sev')} />

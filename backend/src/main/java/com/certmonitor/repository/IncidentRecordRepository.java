@@ -24,7 +24,7 @@ public interface IncidentRecordRepository extends JpaRepository<IncidentRecord, 
                AND (:category IS NULL OR i.category = :category)
                AND (:status   IS NULL OR i.status   = :status)
                AND (:service  IS NULL OR LOWER(i.service) LIKE :service)
-               AND (:channel  IS NULL OR i.channel = :channel)
+               AND (:channel  IS NULL OR LOWER(i.channel) LIKE :channel)
                AND (:since    IS NULL OR i.occurredAt >= :since)
                AND (:until    IS NULL OR i.occurredAt <= :until)
                AND (:slaBreached IS NULL OR i.slaBreached = :slaBreached)

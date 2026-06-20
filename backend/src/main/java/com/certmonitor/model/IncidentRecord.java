@@ -55,13 +55,13 @@ public class IncidentRecord {
     @Column(nullable = false, length = 30)
     private String category;
 
-    /** Etkilenen servis/domain (incident sayfasından yönetilen liste; arama hedefi). */
-    @Column(length = 255)
+    /** Etkilenen servis/domain — çoklu seçim CSV ('a, b, c'). incident sayfasından yönetilen liste; arama hedefi. */
+    @Column(length = 500)
     private String service;
 
-    /** Kanal — incident'ın geldiği kanal/uygulama (Bireysel İnternet Şubesi, Çağrı Merkezi
-     *  Inbound, IVR, ATM ...). incident_options(type=CHANNEL) listesinden; sayfadan eklenebilir. */
-    @Column(length = 150)
+    /** Kanal(lar) — incident'ın geldiği kanal/uygulama, çoklu seçim CSV ('ATM, IVR'). (Bireysel İnternet
+     *  Şubesi, Çağrı Merkezi Inbound, IVR, ATM ...). incident_options(type=CHANNEL) listesinden; sayfadan eklenebilir. */
+    @Column(length = 500)
     private String channel;
 
     /** Olayın kayıtlı olduğu takım — girişte kullanıcı seçer (createdByTeamId = girişi yapanın

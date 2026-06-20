@@ -70,8 +70,10 @@ public class IncidentService {
                                      Boolean slaBreached, Boolean open, Pageable pageable) {
         String like = (q != null && !q.isBlank()) ? "%" + q.trim().toLowerCase() + "%" : null;
         String svc  = (service != null && !service.isBlank()) ? "%" + service.trim().toLowerCase() + "%" : null;
+        // channel artık CSV saklanabildiğinden TAM eşleşme yerine CSV-içinde-geçen (LIKE) eşleşme.
+        String chn  = (channel != null && !channel.isBlank()) ? "%" + channel.trim().toLowerCase() + "%" : null;
         return repo.findFiltered(like, blankToNull(severity), blankToNull(category), blankToNull(status),
-                svc, blankToNull(channel), blankToNull(since), blankToNull(until), slaBreached, open, pageable);
+                svc, chn, blankToNull(since), blankToNull(until), slaBreached, open, pageable);
     }
 
     public IncidentRecord get(Long id) {
@@ -87,7 +89,17 @@ public class IncidentService {
         }
         Map<String, Long> bySeverity = toCountMap(repo.countBySeverity(s, u));
         Map<String, Long> byCategory = toCountMap(repo.countByCategory(s, u));
-        Map<String, Long> byChannel  = toCountMap(repo.countByChannel(s, u));
+        // channel CSV olabildiğinden combo'ya göre değil, virgülle bölüp TEKİL kanal bazında say.
+        Map<String, Long> byChannel = new LinkedHashMap<>();
+        for (Object[] row : repo.countByChannel(s, u)) {
+            String csv = (String) row[0];
+            long cnt = ((Number) row[1]).longValue();
+            if (csv == null) continue;
+            for (String part : csv.split(",")) {
+                String c = part.trim();
+                if (!c.isEmpty()) byChannel.merge(c, cnt, Long::sum);
+            }
+        }
         long total    = repo.countRange(s, u);
         long critical = bySeverity.getOrDefault("CRITICAL", 0L);
         long sla      = repo.countSlaBreached(s, u);
@@ -196,8 +208,17 @@ public class IncidentService {
         String t = normType(type);
         Set<String> set = new TreeSet<>(String.CASE_INSENSITIVE_ORDER);
         for (IncidentOption o : optionRepo.findByTypeOrderByValueAsc(t)) set.add(o.getValue());
-        if (OPT_CHANNEL.equals(t))      repo.distinctChannels().forEach(set::add);
-        else if (OPT_DOMAIN.equals(t))  repo.distinctServices().forEach(set::add);
+        // Olaylardaki değerler artık CSV olabilir → virgülle bölüp TEKİL değerleri ekle
+        // (dropdown'da "ATM, POS" gibi combo görünmesin).
+        List<String> distinct = OPT_CHANNEL.equals(t) ? repo.distinctChannels()
+                : OPT_DOMAIN.equals(t) ? repo.distinctServices() : List.of();
+        for (String csv : distinct) {
+            if (csv == null) continue;
+            for (String part : csv.split(",")) {
+                String v = part.trim();
+                if (!v.isEmpty()) set.add(v);
+            }
+        }
         return new ArrayList<>(set);
     }
 

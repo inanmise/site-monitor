@@ -106,6 +106,34 @@ class IncidentServiceTest {
     }
 
     @Test
+    @DisplayName("kanal/servis CSV (çoklu): filtre CSV içinde bulur, trend+options tekile böler")
+    void channel_service_multi_csv() {
+        Map<String, Object> b = body("çoklu kanal", "2026-06-16T10:00:00", "HIGH", "APPLICATION");
+        b.put("channel", "ATM, IVR");
+        b.put("service", "svc-a, svc-b");
+        service.create(b, "admin", 1L, 1L);
+
+        // CSV içinde geçen kanalı/servisi filtrele (LIKE)
+        assertThat(service.list(null, null, null, null, null, "ATM", null, null, null, null, PageRequest.of(0, 20))
+                .getTotalElements()).isEqualTo(1);
+        assertThat(service.list(null, null, null, null, null, "IVR", null, null, null, null, PageRequest.of(0, 20))
+                .getTotalElements()).isEqualTo(1);
+        assertThat(service.list(null, null, null, null, "svc-b", null, null, null, null, null, PageRequest.of(0, 20))
+                .getTotalElements()).isEqualTo(1);
+
+        // options: combo değil TEKİL değerler
+        assertThat(service.listOptions("CHANNEL")).contains("ATM", "IVR").doesNotContain("ATM, IVR");
+        assertThat(service.listOptions("DOMAIN")).contains("svc-a", "svc-b").doesNotContain("svc-a, svc-b");
+
+        // trend by_channel: combo yerine tekil kanallar sayılır
+        @SuppressWarnings("unchecked")
+        var byCh = (Map<String, Long>) service.trends(null, null).get("by_channel");
+        assertThat(byCh.get("ATM")).isEqualTo(1L);
+        assertThat(byCh.get("IVR")).isEqualTo(1L);
+        assertThat(byCh).doesNotContainKey("ATM, IVR");
+    }
+
+    @Test
     @DisplayName("open filtresi: true=çözülmemiş, false=çözülmüş")
     void open_filter() {
         Map<String, Object> a = body("açık kayıt", "2026-06-14T10:00:00", "HIGH", "OTHER");
