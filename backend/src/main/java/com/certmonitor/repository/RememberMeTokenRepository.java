@@ -15,6 +15,11 @@ public interface RememberMeTokenRepository extends JpaRepository<RememberMeToken
     @Transactional
     void deleteByToken(String token);
 
+    /** Tek aktif oturum: yeni login'de kullanıcının TÜM remember-me token'larını iptal et
+     *  (eski tarayıcı cookie ile sessizce geri dönemesin). */
+    @Transactional
+    void deleteByUsername(String username);
+
     @Modifying
     @Transactional
     @Query("DELETE FROM RememberMeToken t WHERE t.expiresAt < :now")
