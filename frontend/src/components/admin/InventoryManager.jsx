@@ -378,6 +378,47 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
     }
   }
 
+  // Kalıcı sil (geri alınamaz) — yalnız admin. Envanter + o domain'in kontrol geçmişi silinir.
+  async function purge(id) {
+    const item = items.find(i => i.id === id)
+    const ok = await showConfirm({
+      title: t('inv.purgeTitle'),
+      message: t('inv.purgeMsg', item?.domain ?? id),
+      variant: 'danger',
+      confirmText: t('inv.purgeConfirm'),
+      cancelText: t('inv.deleteCancel'),
+    })
+    if (!ok) return
+    const res = await api.admin.purgeInventory(id)
+    if (res?.success) {
+      toast.success(t('inv.purged', item?.domain ?? id))
+      load()
+      onInventoryChange?.()
+    } else {
+      toast.error(res?.error || 'Error')
+    }
+  }
+
+  // Toplu kalıcı sil — tüm silinmiş kayıtlar + kontrol geçmişleri. Yalnız admin.
+  async function purgeAll() {
+    const ok = await showConfirm({
+      title: t('inv.purgeAllTitle'),
+      message: t('inv.purgeAllMsg', stats.deleted),
+      variant: 'danger',
+      confirmText: t('inv.purgeAllConfirm'),
+      cancelText: t('inv.deleteCancel'),
+    })
+    if (!ok) return
+    const res = await api.admin.purgeDeletedInventory()
+    if (res?.success) {
+      toast.success(t('inv.purgedAll', res.data?.purged ?? 0))
+      load()
+      onInventoryChange?.()
+    } else {
+      toast.error(res?.error || 'Error')
+    }
+  }
+
   async function doTransfer() {
     const changed = transferTeamId !== String(transferModal.team_id ?? '')
     if (!changed || !transferTeamId) { setTransferModal(null); return }
@@ -479,6 +520,14 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
         </div>
       )}
 
+      {isAdmin && statusFilter === 'deleted' && stats.deleted > 0 && (
+        <div className="inv-stats-pills" style={{ marginBottom: 10, gap: 8, alignItems: 'center',
+          background: '#fef2f2', padding: '8px 12px', borderRadius: 6 }}>
+          <span style={{ fontWeight: 700, fontSize: '.9em' }}>{t('inv.purgeAllHint', stats.deleted)}</span>
+          <button className="btn btn-danger btn-sm-p" onClick={purgeAll}>{t('inv.purgeAllBtn')}</button>
+        </div>
+      )}
+
       <div className="admin-table-wrap">
         <table className="admin-table">
           <thead>
@@ -530,6 +579,7 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
                       ? [
                           { label: t('inv.show'), onClick: () => setShowItem(item) },
                           { label: t('inv.restore'), onClick: () => restore(item.id), hidden: !canManage },
+                          { label: t('inv.purge'), danger: true, onClick: () => purge(item.id), hidden: !isAdmin },
                         ]
                       : [
                           { label: t('inv.show'), onClick: () => setShowItem(item) },

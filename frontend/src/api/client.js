@@ -272,6 +272,9 @@ export const api = {
     updateInventory: (id, item) => request(`/admin/inventory/${id}`, { method: 'PUT', body: JSON.stringify(item) }),
     deleteInventory: (id) => request(`/admin/inventory/${id}`, { method: 'DELETE' }),
     restoreInventory: (id) => request(`/admin/inventory/${id}/restore`, { method: 'POST' }),
+    // Kalıcı sil (geri alınamaz) — yalnız admin. Envanter + o domain'in kontrol geçmişi.
+    purgeInventory: (id) => request(`/admin/inventory/${id}/permanent`, { method: 'DELETE' }),
+    purgeDeletedInventory: () => request('/admin/inventory/purge-deleted', { method: 'POST' }),
     bulkInventory: (ids, action) => request('/admin/inventory/bulk', {
       method: 'POST', body: JSON.stringify({ ids, action }),
     }),
