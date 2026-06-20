@@ -67,4 +67,14 @@ describe('CertificateCard', () => {
     render(<CertificateCard cert={makeCert()} onClick={() => {}} hasSilentAlert={true} />)
     expect(screen.getByText('Alert fired — no notification sent')).toBeDefined()
   })
+
+  it('shows the team name when team_name is present', () => {
+    render(<CertificateCard cert={makeCert({ team_name: 'Dijital SY' })} onClick={() => {}} />)
+    expect(screen.getByText('Dijital SY')).toBeDefined()
+  })
+
+  it('does not render a team line when team_name is absent', () => {
+    render(<CertificateCard cert={makeCert()} onClick={() => {}} />)
+    expect(screen.queryByText('Dijital SY')).toBeNull()
+  })
 })

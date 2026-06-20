@@ -96,6 +96,13 @@ public class CertificateDto {
     /** Criticality tier from inventory (1–4, null = unclassified) */
     private Integer tier;
 
+    /** Sorumlu (SY) takım — envanterden (null = takımsız/envantersiz). Dashboard kart etiketi + filtre. */
+    @JsonProperty("team_id")
+    private Long teamId;
+
+    @JsonProperty("team_name")
+    private String teamName;
+
     public static CertificateDto from(LatestCheck c, List<String> sanList,
                                       List<String> keyUsageList, List<String> extKeyUsageList) {
         CertificateDto dto = new CertificateDto();
