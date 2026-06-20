@@ -107,6 +107,7 @@ export default function App() {
   const [statsFilter, setStatsFilter] = useState(null)
   const [statusFilter, setStatusFilter] = useState('all')
   const [expiryFilter, setExpiryFilter] = useState('all')
+  const [teamFilter, setTeamFilter] = useState('all')
   const [dashPage, setDashPage] = useState(1)
   const [pageSize, setPageSize] = useState(12)
   const [activityRefreshKey, setActivityRefreshKey] = useState(0)
@@ -430,10 +431,29 @@ export default function App() {
   const statusFn = STATUS_FILTER_FN[statusFilter] ?? (() => true)
   const expiryFn = EXPIRY_FILTER_FN[expiryFilter] ?? (() => true)
 
+  // Takım filtresi seçenekleri — cert listesinden türetilir (yeni endpoint yok).
+  // NOT: düz const (useMemo DEĞİL) — bu satır erken-return'lerden (authChecked/user)
+  // sonra geldiği için hook çağrısı React kuralını ihlal eder. filtered/sorted gibi
+  // her render'da ucuzca hesaplanır.
+  const teamOptions = (() => {
+    const names = new Set()
+    let hasNone = false
+    for (const c of certs) { if (c.team_name) names.add(c.team_name); else hasNone = true }
+    const opts = [{ value: 'all', label: t('app.allTeams') }]
+    ;[...names].sort((a, b) => a.localeCompare(b)).forEach((n) => opts.push({ value: n, label: n }))
+    if (hasNone) opts.push({ value: '__none__', label: t('app.noTeam') })
+    return opts
+  })()
+  const hasTeamOptions = teamOptions.some((o) => o.value !== 'all' && o.value !== '__none__')
+
   const filtered = certs.filter((c) => {
     if (statFn   && !statFn(c))   return false
     if (!statusFn(c))              return false
     if (!expiryFn(c))              return false
+    if (teamFilter !== 'all') {
+      if (teamFilter === '__none__') { if (c.team_name) return false }
+      else if (c.team_name !== teamFilter) return false
+    }
     if (!search)                   return true
     const s = search.toLowerCase()
     return c.domain?.toLowerCase().includes(s) || c.issuer?.toLowerCase().includes(s) || c.subject?.toLowerCase().includes(s)
@@ -603,6 +623,16 @@ export default function App() {
                       { value: 'days90',  label: t('app.days90') },
                     ]}
                   />
+                  {hasTeamOptions && (
+                    <>
+                      <label>{t('app.teamLabel')}</label>
+                      <SearchableSelect
+                        value={teamFilter}
+                        onChange={v => { setTeamFilter(v); setDashPage(1) }}
+                        options={teamOptions}
+                      />
+                    </>
+                  )}
                   <input
                     className="sort-bar-search"
                     type="text"

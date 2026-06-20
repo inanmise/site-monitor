@@ -1,6 +1,12 @@
-import { ShieldAlert, ShieldCheck, MailWarning, BellOff, Clock, Calendar, Network, Globe } from 'lucide-react'
+import { ShieldAlert, ShieldCheck, MailWarning, BellOff, Clock, Calendar, Network, Globe, Users, Building2 } from 'lucide-react'
 import { formatDate } from '../api/client'
 import { useT } from '../i18n/index.jsx'
+
+/** DN içinden bir alanı çıkar (örn. O=...) — SslCheckerPanel ile aynı desen. */
+function parseDn(dn, field) {
+  const m = dn?.match(new RegExp(`(?:^|,)\\s*${field}=([^,]+)`))
+  return m ? m[1].trim() : null
+}
 
 export default function CertificateCard({ cert, onClick, hasSilentAlert = false, hasMailFailure = false, onMailFailureClick, isWeak }) {
   const t = useT()
@@ -39,14 +45,15 @@ export default function CertificateCard({ cert, onClick, hasSilentAlert = false,
     ? `${cert.public_key_algorithm}${cert.public_key_size ? ' ' + cert.public_key_size : ''}`
     : null
 
-  const issuerName = cert.issuer_cn || cert.issuer || 'N/A'
+  // İhraç eden (CA) organizasyonu — issuer_dn'deki O alanı; yoksa CA CN'ine düş.
+  const issuerName = parseDn(cert.issuer_dn, 'O') || cert.issuer_cn || cert.issuer || 'N/A'
   const showAlgo   = !!algoLabel && isWeak !== undefined && !isError
   const hasDetail  = !!cert.not_after || showAlgo
   const hasFooter  = hasSilentAlert || hasMailFailure
 
   // Kontrol yolu rozeti: hata kartlarında her zaman, sağlıklı kartlarda
   // sadece proxy ile kontrol edilenlerde (direct varsayılan — gürültü yapma)
-  const showVia  = !!cert.via && (isError || cert.via === 'proxy')
+  const showVia  = !!cert.via   // tutarlı: via (Doğrudan/Proxy) dolu olan her kartta göster
   const viaLabel = cert.via === 'proxy' ? t('card.viaProxy') : t('card.viaDirect')
 
   const beforeMs = cert.not_before ? Date.parse(cert.not_before) : NaN
@@ -103,8 +110,14 @@ export default function CertificateCard({ cert, onClick, hasSilentAlert = false,
 
       {/* ── Identity — domain + issuer + error message ── */}
       <div className="cc-identity">
-        <div className="cc-domain">{cert.domain || t('card.unknown')}</div>
-        <div className="cc-meta-line">{issuerName}</div>
+        <div className="cc-domain" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <Globe size={14} style={{ flexShrink: 0, opacity: .65 }} />
+          <span>{cert.domain || t('card.unknown')}</span>
+        </div>
+        <div className="cc-meta-line" style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+          <Building2 size={12} style={{ flexShrink: 0, opacity: .7 }} />
+          <span>{issuerName}</span>
+        </div>
         {cert.error && <div className="cc-error-line">{cert.error}</div>}
       </div>
 
@@ -124,6 +137,24 @@ export default function CertificateCard({ cert, onClick, hasSilentAlert = false,
             >
               {isWeak ? <ShieldAlert size={13} /> : <ShieldCheck size={13} />}
               <span>{algoLabel}</span>
+            </span>
+          )}
+        </div>
+      )}
+
+      {/* ── Takım (sol) ↔ kontrol yolu (sağ) — aynı satırda karşılıklı ── */}
+      {(cert.team_name || showVia) && (
+        <div className="cc-detail-row">
+          {cert.team_name ? (
+            <span className="cc-meta" title={t('card.team')} style={{ marginLeft: 0 }}>
+              <Users size={12} />
+              {cert.team_name}
+            </span>
+          ) : <span />}
+          {showVia && (
+            <span className="cc-meta" title={t('card.viaTooltip', viaLabel, cert.tls_mode_used || '—')}>
+              {cert.via === 'proxy' ? <Network size={11} /> : <Globe size={11} />}
+              {viaLabel}
             </span>
           )}
         </div>
@@ -152,16 +183,6 @@ export default function CertificateCard({ cert, onClick, hasSilentAlert = false,
         </div>
       )}
 
-      {/* ── Kontrol yolu — kartın sağ alt köşesi ── */}
-      {showVia && (
-        <div className="cc-detail-row">
-          <span />
-          <span className="cc-meta" title={t('card.viaTooltip', viaLabel, cert.tls_mode_used || '—')}>
-            {cert.via === 'proxy' ? <Network size={11} /> : <Globe size={11} />}
-            {viaLabel}
-          </span>
-        </div>
-      )}
     </div>
   )
 }
