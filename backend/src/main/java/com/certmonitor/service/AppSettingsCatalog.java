@@ -37,7 +37,7 @@ public final class AppSettingsCatalog {
         // TrustEvaluator okuma anında okur (canlı reload). Boş = yalnız public CA'lar (cacerts).
         new Setting("cert.monitor.trust.ca-bundle-pem",          "security",   Type.TEXT),
         new Setting("logging.level.com.certmonitor",             "logging",    Type.ENUM,
-                    List.of("DEBUG", "INFO", "WARN", "ERROR")),
+                    List.of("TRACE", "DEBUG", "INFO", "WARN", "ERROR")),
         // Yalnız mail gönderim logger'ı — uygulama geneli TRACE'e geçmeden ekrandan mail
         // TRACE'i aç/kapat. Boş = com.certmonitor (LOG_LEVEL) ile aynı.
         new Setting("logging.level.com.certmonitor.mail",        "logging",    Type.ENUM,

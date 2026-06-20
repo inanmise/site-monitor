@@ -123,6 +123,23 @@ class RememberMeServiceTest {
         verify(repo, never()).deleteByToken(any());
     }
 
+    // ── invalidateAllForUser (tek aktif oturum) ────────────────────────────────
+
+    @Test
+    @DisplayName("invalidateAllForUser: kullanıcı adı → deleteByUsername çağrılır")
+    void invalidateAllForUser_callsDeleteByUsername() {
+        service.invalidateAllForUser("alice");
+        verify(repo).deleteByUsername("alice");
+    }
+
+    @Test
+    @DisplayName("invalidateAllForUser: null/blank → repo çağrılmaz")
+    void invalidateAllForUser_blank_doesNotCallRepo() {
+        service.invalidateAllForUser(null);
+        service.invalidateAllForUser("  ");
+        verify(repo, never()).deleteByUsername(any());
+    }
+
     // ── cleanExpired ──────────────────────────────────────────────────────────
 
     @Test

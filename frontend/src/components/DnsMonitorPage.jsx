@@ -40,6 +40,7 @@ export default function DnsMonitorPage({ systemRole }) {
   const [saving, setSaving] = useState(false)
   const [checking, setChecking] = useState(null)
   const [search, setSearch] = useState('')
+  const [teamFilter, setTeamFilter] = useState('all')
   const [infoOpen, setInfoOpen] = useState(false)
 
   const load = useCallback(async () => {
@@ -83,7 +84,23 @@ export default function DnsMonitorPage({ systemRole }) {
     setChecking(null)
   }
 
+  // Takım filtresi seçenekleri — listeden türetilir (dashboard deseni).
+  const teamOptions = (() => {
+    const names = new Set()
+    let hasNone = false
+    for (const m of monitors) { if (m.team_name) names.add(m.team_name); else hasNone = true }
+    const opts = [{ value: 'all', label: t('app.allTeams') }]
+    ;[...names].sort((a, b) => a.localeCompare(b)).forEach((n) => opts.push({ value: n, label: n }))
+    if (hasNone) opts.push({ value: '__none__', label: t('app.noTeam') })
+    return opts
+  })()
+  const hasTeamOptions = teamOptions.some(o => o.value !== 'all' && o.value !== '__none__')
+
   const filtered = monitors.filter(m => {
+    if (teamFilter !== 'all') {
+      if (teamFilter === '__none__') { if (m.team_name) return false }
+      else if (m.team_name !== teamFilter) return false
+    }
     if (!search.trim()) return true
     const s = search.toLowerCase()
     return m.domain?.toLowerCase().includes(s) || m.record_type?.toLowerCase().includes(s)
@@ -123,6 +140,9 @@ export default function DnsMonitorPage({ systemRole }) {
       </div>
 
       <div className="dns-toolbar">
+        {hasTeamOptions && (
+          <SearchableSelect value={teamFilter} onChange={setTeamFilter} options={teamOptions} />
+        )}
         <input
           className="dns-search-input"
           type="text"
@@ -146,6 +166,7 @@ export default function DnsMonitorPage({ systemRole }) {
             <thead>
               <tr>
                 <th>{t('dns.domain')}</th>
+                <th>{t('dns.colTeam')}</th>
                 <th>{t('dns.recordType')}</th>
                 <th>{t('dns.currentValue')}</th>
                 <th>{t('dns.ttl')}</th>
@@ -162,6 +183,7 @@ export default function DnsMonitorPage({ systemRole }) {
                   onClick={() => setDetailMonitor(m)}
                 >
                   <td className="dns-cell-mono"><strong>{m.domain}</strong></td>
+                  <td>{m.team_name || '—'}</td>
                   <td>
                     <span className="dns-type-badge">{m.record_type}</span>
                   </td>

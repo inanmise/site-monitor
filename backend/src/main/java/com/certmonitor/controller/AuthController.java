@@ -14,6 +14,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.ResponseEntity;
 import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.session.FindByIndexNameSessionRepository;
+import org.springframework.session.Session;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.Arrays;
@@ -50,6 +52,11 @@ public class AuthController {
 
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private com.certmonitor.service.PermissionService permissionService;
+
+    // Tek aktif oturum: Spring Session JDBC (prod) JdbcIndexedSessionRepository'yi sağlar; dev
+    // store-type=none'da bean yok → null → invalidateOtherSessions no-op (yalnız token iptali çalışır).
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private FindByIndexNameSessionRepository<? extends Session> sessionRepository;
 
     // LDAP/AD — optional so @WebMvcTest contexts without these beans still load.
     @org.springframework.beans.factory.annotation.Autowired(required = false)
@@ -154,6 +161,10 @@ public class AuthController {
             if (oldSession != null) oldSession.invalidate();
             HttpSession newSession = request.getSession(true);
             populateSession(newSession, user);
+            // Tek aktif oturum: bu kullanıcının diğer (eski) oturumlarını kapat + eski remember-me
+            // token'larını iptal et (eski tarayıcı cookie ile sessizce geri dönüp yeni oturumu kicklemesin).
+            invalidateOtherSessions(username, newSession.getId());
+            rememberMeService.invalidateAllForUser(username);
 
             log.info("User logged in: {} (role={}, teamId={}, rememberMe={}, IP={})",
                     username, user.getSystemRole(), user.getTeamId(), rememberMe, clientIp);
@@ -431,6 +442,9 @@ public class AuthController {
     public void populateSession(HttpSession session, AppUser user) {
         session.setAttribute("authenticated", true);
         session.setAttribute("username", user.getUsername());
+        // Tek aktif oturum: oturumu kullanıcı adına indexle (Spring Session JDBC principal_name) →
+        // sonradan invalidateOtherSessions kullanıcı adına bulup eski oturumları kapatabilir.
+        session.setAttribute(FindByIndexNameSessionRepository.PRINCIPAL_NAME_INDEX_NAME, user.getUsername());
         session.setAttribute("displayName", user.getDisplayName() != null ? user.getDisplayName() : user.getUsername());
         session.setAttribute("userId", user.getId());
         session.setAttribute("teamId", user.getTeamId());
@@ -450,6 +464,23 @@ public class AuthController {
         else session.setAttribute("viewTeamIds", new java.util.ArrayList<>(view));
         if (manage == null) session.removeAttribute("manageTeamIds");
         else session.setAttribute("manageTeamIds", new java.util.ArrayList<>(manage));
+    }
+
+    /**
+     * Tek aktif oturum — bu kullanıcının {@code keepId} dışındaki tüm oturumlarını kapatır
+     * (Spring Session JDBC principal-name index üzerinden). Dev store-type=none'da repo yoktur → no-op.
+     */
+    public void invalidateOtherSessions(String username, String keepId) {
+        if (sessionRepository == null || username == null) return;
+        try {
+            var sessions = sessionRepository.findByIndexNameAndIndexValue(
+                    FindByIndexNameSessionRepository.PRINCIPAL_NAME_INDEX_NAME, username);
+            for (String id : sessions.keySet()) {
+                if (!id.equals(keepId)) sessionRepository.deleteById(id);
+            }
+        } catch (Exception e) {
+            log.warn("invalidateOtherSessions atlandı: user={} hata={}", username, e.getMessage());
+        }
     }
 
     private Map<String, Object> buildMeResponse(AppUser user, HttpSession session) {

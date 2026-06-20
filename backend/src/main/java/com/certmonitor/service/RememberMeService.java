@@ -48,6 +48,14 @@ public class RememberMeService {
         }
     }
 
+    /** Kullanıcının tüm remember-me token'larını iptal eder (tek aktif oturum — yeni login eski
+     *  tarayıcıların sessizce geri dönmesini engeller). */
+    public void invalidateAllForUser(String username) {
+        if (username != null && !username.isBlank()) {
+            repo.deleteByUsername(username);
+        }
+    }
+
     @Scheduled(fixedDelayString = "${cert.monitor.remember.cleanup-interval-ms:3600000}")
     public void cleanExpired() {
         long now = Instant.now().getEpochSecond();

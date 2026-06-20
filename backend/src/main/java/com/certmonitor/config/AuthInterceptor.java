@@ -72,6 +72,8 @@ public class AuthInterceptor implements HandlerInterceptor {
                     && !userService.checkLockout(username).isBlocked()) {
                 HttpSession newSession = req.getSession(true);
                 authController.populateSession(newSession, userOpt.get());
+                // Tek aktif oturum: remember-me ile kurulan oturum da "tek" olsun — diğerlerini kapat.
+                authController.invalidateOtherSessions(username, newSession.getId());
                 // Apply the forced-password-change gate to the restored session too,
                 // so the cookie path can't sidestep the modal for one request.
                 return enforceForcedPasswordChange(newSession, path, res);
