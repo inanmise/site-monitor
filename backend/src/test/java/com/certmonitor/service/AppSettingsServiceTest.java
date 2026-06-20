@@ -95,6 +95,6 @@ class AppSettingsServiceTest {
         // enum girişinde options yer alır
         Map<String, Object> logLevel = cat.stream()
                 .filter(m -> "logging.level.com.certmonitor".equals(m.get("key"))).findFirst().orElseThrow();
-        assertThat(logLevel.get("options")).isEqualTo(List.of("DEBUG", "INFO", "WARN", "ERROR"));
+        assertThat(logLevel.get("options")).isEqualTo(List.of("TRACE", "DEBUG", "INFO", "WARN", "ERROR"));
     }
 }
