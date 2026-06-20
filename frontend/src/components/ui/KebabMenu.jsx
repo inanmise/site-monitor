@@ -48,7 +48,7 @@ export default function KebabMenu({ items = [], label = 'İşlemler' }) {
         <Menu size={15} />
       </button>
       {open && (
-        <div className="wr-menu-pop" style={{ position: 'fixed', top: pos.top, left: pos.left, right: 'auto' }}>
+        <div className="wr-menu-pop" style={{ position: 'fixed', top: pos.top, left: pos.left, right: 'auto', zIndex: 900 }}>
           {visible.map((it, i) => (
             <button key={i} type="button" className={it.danger ? 'danger' : ''}
               onClick={() => { setOpen(false); it.onClick() }}>
