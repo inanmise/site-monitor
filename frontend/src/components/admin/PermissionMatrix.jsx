@@ -17,7 +17,7 @@ const ACTIONS = [
   { key: 'edit',    Icon: Pencil, labelKey: 'perm.edit',    shortKey: 'perm.editShort' },
   { key: 'execute', Icon: Zap,    labelKey: 'perm.execute', shortKey: 'perm.executeShort' },
 ]
-const GROUP_ORDER = ['certificates', 'communication', 'management', 'alerts', 'monitoring', 'logs', 'reports', 'tools']
+const GROUP_ORDER = ['certificates', 'communication', 'management', 'alerts', 'monitoring', 'logs', 'reports', 'tools', 'settings']
 
 export default function PermissionMatrix() {
   const t = useT()
@@ -32,6 +32,8 @@ export default function PermissionMatrix() {
   // Akordiyon: aynı anda tek grup açık — varsayılan "certificates" (Sertifika Yönetimi).
   // Bir gruba tıklayınca o açılır, diğer açık olanlar kapanır; açık olana tıklayınca kapanır.
   const [openGroup, setOpenGroup] = useState('certificates')
+  // Rol Modeli bilgi bölümü — akordiyon, varsayılan KAPALI.
+  const [roleModelOpen, setRoleModelOpen] = useState(false)
 
   function toggleGroup(group) {
     setOpenGroup(prev => (prev === group ? null : group))
@@ -136,15 +138,24 @@ export default function PermissionMatrix() {
       </div>
 
       <div className="perm-rolemodel">
-        <div className="perm-rolemodel-title">{t('perm.roleModelTitle')}</div>
-        <ul className="perm-rolemodel-list">
-          <li><strong>ADMIN</strong> — {t('perm.roleModelAdmin')}</li>
-          <li><strong>{t('perm.roleModelManagerName')}</strong> — {t('perm.roleModelManager')}</li>
-          <li><strong>TEAM_ADMIN / PO</strong> — {t('perm.roleModelTeamAdmin')}</li>
-          <li><strong>USER</strong> — {t('perm.roleModelUser')}</li>
-          <li><strong>AUDIT</strong> — {t('perm.roleModelAudit')}</li>
-        </ul>
-        <div className="perm-rolemodel-note">{t('perm.roleModelNote')}</div>
+        <button type="button" className="perm-group-toggle"
+          onClick={() => setRoleModelOpen(o => !o)} aria-expanded={roleModelOpen}>
+          <ChevronDown size={14}
+            className={`perm-group-chevron${roleModelOpen ? '' : ' perm-group-chevron-closed'}`} />
+          <span className="perm-rolemodel-title">{t('perm.roleModelTitle')}</span>
+        </button>
+        {roleModelOpen && (
+          <>
+            <ul className="perm-rolemodel-list">
+              <li><strong>ADMIN</strong> — {t('perm.roleModelAdmin')}</li>
+              <li><strong>{t('perm.roleModelManagerName')}</strong> — {t('perm.roleModelManager')}</li>
+              <li><strong>TEAM_ADMIN / PO</strong> — {t('perm.roleModelTeamAdmin')}</li>
+              <li><strong>USER</strong> — {t('perm.roleModelUser')}</li>
+              <li><strong>AUDIT</strong> — {t('perm.roleModelAudit')}</li>
+            </ul>
+            <div className="perm-rolemodel-note">{t('perm.roleModelNote')}</div>
+          </>
+        )}
       </div>
 
       <div className="perm-legend">

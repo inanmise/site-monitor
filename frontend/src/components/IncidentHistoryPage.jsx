@@ -459,9 +459,9 @@ export default function IncidentHistoryPage() {
               {allowManage && <th style={{ width: 28 }}>
                 <input type="checkbox" checked={allOnPage} onChange={toggleAll} title={t('inc.selectAll')} />
               </th>}
-              <th>{t('inc.colTime')}</th><th>{t('inc.colTeam')}</th><th>{t('inc.colChannel')}</th><th>{t('inc.colService')}</th>
+              <th>{t('inc.colTime')}</th><th>{t('inc.colTitle')}</th><th>{t('inc.colTeam')}</th><th>{t('inc.colChannel')}</th><th>{t('inc.colService')}</th>
               <th>{t('inc.colCategory')}</th><th>{t('inc.colSeverity')}</th><th>{t('inc.colStatus')}</th>
-              <th>{t('inc.colSla')}</th><th>{t('inc.colTitle')}</th><th></th>
+              <th>{t('inc.colSla')}</th><th></th>
             </tr></thead>
             <tbody>
               {rows.map(r => (
@@ -470,6 +470,7 @@ export default function IncidentHistoryPage() {
                     <input type="checkbox" checked={selected.has(r.id)} onChange={() => toggleSel(r.id)} />
                   </td>}
                   <td style={{ whiteSpace: 'nowrap' }}>{formatDate(r.occurred_at)}</td>
+                  <td>{r.title}</td>
                   <td>{r.team_name || '—'}</td>
                   <td>{r.channel || '—'}</td>
                   <td>{r.service || '—'}</td>
@@ -477,7 +478,6 @@ export default function IncidentHistoryPage() {
                   <td>{sevBadge(r.severity)}</td>
                   <td>{t('inc.st' + r.status) || r.status}</td>
                   <td>{r.sla_breached ? <span style={{ color: '#dc2626', fontWeight: 700 }}>✓</span> : '—'}</td>
-                  <td>{r.title}</td>
                   <td onClick={e => e.stopPropagation()}>
                     {allowManage && (
                       <button className="btn-sm btn-show" title={t('inc.edit')}

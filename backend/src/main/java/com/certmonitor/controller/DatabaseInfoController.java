@@ -28,19 +28,19 @@ public class DatabaseInfoController {
             DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
 
     private final DatabaseInfoService service;
+    private final com.certmonitor.service.PermissionService permissionService;
 
     @GetMapping("/info")
     public ResponseEntity<Map<String, Object>> info(HttpSession session) {
-        requireBootstrapAdmin(session);
+        requireSettingsAccess(session, "settings.database", "view");
         return ok(Map.of("data", service.getInfo()));
     }
 
-    private void requireBootstrapAdmin(HttpSession session) {
+    /** Bootstrap admin ("admin") HER ZAMAN erişir (fallback); aksi halde matris izni (settings.database/view). */
+    private void requireSettingsAccess(HttpSession session, String key, String action) {
         Object u = session != null ? session.getAttribute("username") : null;
-        if (!"admin".equals(u)) {
-            log.warn("Database info access denied for user={} (bootstrap admin required)", u);
-            throw new SecurityException("Bu sayfaya yalnızca yönetici (admin) hesabı erişebilir");
-        }
+        if ("admin".equals(u)) return;
+        permissionService.require(session, key, action);
     }
 
     private ResponseEntity<Map<String, Object>> ok(Map<String, Object> body) {

@@ -65,6 +65,18 @@ public class PermissionService {
         return allows((String) session.getAttribute("systemRole"), resourceKey, action);
     }
 
+    /** Yetki kapısı: rolün bu (resource, action) iznine sahip olmaması 403 (SecurityException) üretir.
+     *  Takım-scope kontrolleri AYRI yapılır; bu yalnız "rol bu işlemi yapabilir mi" sorusudur. */
+    public void require(HttpSession session, String resourceKey, String action) {
+        require((String) session.getAttribute("systemRole"), resourceKey, action);
+    }
+
+    public void require(String role, String resourceKey, String action) {
+        if (!allows(role, resourceKey, action)) {
+            throw new SecurityException("Bu işlem için yetkiniz yok: " + resourceKey + "/" + action);
+        }
+    }
+
     /** Role bazlı snapshot — frontend için ön-derlenmiş map. */
     public Map<String, Map<String, Boolean>> snapshotForRole(String role) {
         Map<String, Map<String, Boolean>> src = cache.getOrDefault(role, Map.of());

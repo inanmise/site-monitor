@@ -66,6 +66,9 @@ class CertificateControllerTest {
     @MockitoBean
     com.certmonitor.service.ExtendedHealthService extendedHealthService;
 
+    @MockitoBean
+    com.certmonitor.service.PermissionService permissionService;
+
     // ── Auth guard ────────────────────────────────────────────────────────────
 
     @Test

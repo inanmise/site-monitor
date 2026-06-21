@@ -39,6 +39,7 @@ class AuditControllerTest {
     @MockitoBean LatestCheckRepository latestCheckRepo;
     @MockitoBean CertificateInventoryRepository inventoryRepo;
     @MockitoBean TeamRepository teamRepo;
+    @MockitoBean com.certmonitor.service.PermissionService permissionService;
 
     private MockHttpSession session(String role) {
         MockHttpSession s = new MockHttpSession();

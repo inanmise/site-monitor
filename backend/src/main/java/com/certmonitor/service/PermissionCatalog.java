@@ -68,7 +68,17 @@ public final class PermissionCatalog {
         r("diagnostics.run",        "tools", EXECUTE, Set.of(EXECUTE)),
         r("diagnostics.history",    "tools", VIEW),
         r("sql_playground.execute", "tools", EXECUTE, Set.of(EXECUTE)),
-        r("guide_links.crud",       "tools", EDIT)
+        r("guide_links.crud",       "tools", EDIT),
+
+        // ── Manuel Tarama ─────────────────────────────────────────────────
+        r("scheduler.run",          "monitoring", EXECUTE, Set.of(EXECUTE)),
+
+        // ── Sistem Ayarları (varsayılan yalnız ADMIN; literal bootstrap 'admin' HER ZAMAN erişir) ──
+        r("settings.smtp",     "settings", EDIT, Set.of(EDIT)),
+        r("settings.ldap",     "settings", EDIT, Set.of(EDIT)),
+        r("settings.general",  "settings", EDIT),
+        r("settings.database", "settings", VIEW),
+        r("settings.secrets",  "settings", EXECUTE, Set.of(EXECUTE))
     );
 
     /**
@@ -140,7 +150,9 @@ public final class PermissionCatalog {
             "users.list", "users.crud", "users.actions",
             "alerts.read", "alerts.actions",
             "system_health.read",
-            "audit_log.read", "weak_algo.read",
+            // audit_log.read: denetim kaydı sistem-geneli (tüm takımlar/kullanıcılar) → yalnız
+            // global admin/AUDIT erişebilir (requireAuditAccess); TEAM_ADMIN'e verilmez.
+            "weak_algo.read",
             "monitoring.read",
             // Haftalık raporlar: takım yöneticisi okur/düzenler ve onaylayabilir;
             // tanılama geçmişini görür (canlı tarama admin-only kalır)
@@ -169,7 +181,7 @@ public final class PermissionCatalog {
             "alerts.read", "alerts.actions",
             "system_health.read",
             "monitoring.read",
-            "audit_log.read",
+            // audit_log.read: sistem-geneli denetim → yalnız admin/AUDIT (requireAuditAccess)
             "weak_algo.read",
             // Haftalık raporlar: USER kendi takımının raporunu yazar/düzenler
             // (onay yetkisi yok — PO onayı servis tarafında orgRole ile ayrı)
@@ -185,9 +197,10 @@ public final class PermissionCatalog {
 
     private static Map<String, Map<String, Boolean>> auditDefaults() {
         var map = new java.util.LinkedHashMap<String, Map<String, Boolean>>();
-        // System-wide read-only auditor.
+        // System-wide read-only auditor. Sistem ayarları (SMTP/LDAP/secret/DB) AUDIT'e
+        // otomatik AÇILMAZ — kimlik bilgisi/altyapı sırrı sızmasın (yalnız ADMIN veya grant).
         for (Resource r : ALL) {
-            boolean isRead = r.actions.contains(VIEW);
+            boolean isRead = r.actions.contains(VIEW) && !"settings".equals(r.group);
             putAll(map, r, isRead);
         }
         for (Resource r : INTERNAL) putAll(map, r, false);
