@@ -1396,6 +1396,22 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .lp-btn:active:not(:disabled) { transform: translateY(0); }
 .lp-btn:disabled { opacity: .65; cursor: not-allowed; }
 
+/* İkincil (ghost) aksiyon — örn. "Başka yerde aktif oturum" onayında net "Hayır/Vazgeç".
+   Login kartı beyaz zeminlidir → koyu metin + görünür gri çerçeve (mavi birincil butona kontrast). */
+.lp-btn--ghost {
+  background: #fff;
+  color: #475569;
+  border: 1px solid #cbd5e1;
+  box-shadow: none;
+  margin-top: 8px;
+}
+.lp-btn--ghost:hover:not(:disabled) {
+  background: #f1f5f9;
+  border-color: #94a3b8;
+  color: #1e293b;
+  box-shadow: none;
+}
+
 /* Spinner */
 .lp-spinner {
   width: 16px; height: 16px;

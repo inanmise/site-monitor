@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { api } from '../api/client'
 import { useT, useLanguage } from '../i18n/index.jsx'
-import { ShieldAlert, ShieldCheck, Lock, Globe, Bell, BarChart3, RefreshCw } from 'lucide-react'
+import { ShieldAlert, ShieldCheck, Lock, Globe, Bell, BarChart3, RefreshCw, X } from 'lucide-react'
 import CertMonitorLogo from '../components/ui/CertMonitorLogo.jsx'
 
 const STORAGE_KEY = 'cert-monitor-remembered-user'
@@ -195,8 +195,8 @@ export default function Login({ onLogin }) {
                   : <><Lock size={16} /> {t('login.activeSessionConfirm')}</>
                 }
               </button>
-              <button type="button" className="lp-lang-btn" onClick={cancelActiveSession} disabled={loading}>
-                {t('login.activeSessionCancel')}
+              <button type="button" className="lp-btn lp-btn--ghost" onClick={cancelActiveSession} disabled={loading}>
+                <X size={16} /> {t('login.activeSessionCancel')}
               </button>
             </div>
 
