@@ -56,6 +56,27 @@ describe('Login', () => {
     expect(onLogin).not.toHaveBeenCalled()
   })
 
+  it('shows confirm modal on ACTIVE_SESSION_EXISTS and force-logs-in on confirm', async () => {
+    api.login
+      .mockResolvedValueOnce({ success: false, error_code: 'ACTIVE_SESSION_EXISTS' })
+      .mockResolvedValueOnce({ success: true, username: 'admin' })
+    const onLogin = vi.fn()
+
+    render(<Login onLogin={onLogin} />)
+    fireEvent.change(screen.getByLabelText(/username/i), { target: { value: 'admin' } })
+    fireEvent.change(document.getElementById('lp-pass'), { target: { value: 'secret' } })
+    fireEvent.submit(document.querySelector('form'))
+
+    // Onay modalı çıkar, henüz login tamamlanmaz
+    await waitFor(() => expect(screen.getByText(/Active Session Elsewhere/i)).toBeDefined())
+    expect(onLogin).not.toHaveBeenCalled()
+
+    // Onayla → force_login=true ile tekrar çağrılır ve giriş tamamlanır
+    fireEvent.click(screen.getByText(/Continue and close the other/i))
+    await waitFor(() => expect(api.login).toHaveBeenLastCalledWith('admin', 'secret', false, true))
+    await waitFor(() => expect(onLogin).toHaveBeenCalled())
+  })
+
   it('remember-me persists the username on successful login', async () => {
     api.login.mockResolvedValueOnce({ success: true, username: 'remember-user' })
     const onLogin = vi.fn()

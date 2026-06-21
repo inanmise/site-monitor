@@ -10,6 +10,9 @@ vi.mock('../api/client', () => ({
       getMetrics:      vi.fn(),
       getHttpMetrics:  vi.fn(),
       getDbStats:      vi.fn(),
+      // user/session observability — varsayılan başarılı (clearAllMocks impl'i korur)
+      getUserActivity:      vi.fn().mockResolvedValue({ success: true, data: {} }),
+      terminateUserSession: vi.fn().mockResolvedValue({ success: true }),
       // unused but referenced in the file
       releaseSchedulerLock:   vi.fn(),
       triggerSchedulerRun:    vi.fn(),

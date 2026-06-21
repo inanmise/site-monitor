@@ -96,14 +96,18 @@ export const api = {
     getPermissions: () => request('/me/permissions'),
   },
 
-  login: async (username, password, rememberMe = false) => {
+  login: async (username, password, rememberMe = false, forceLogin = false) => {
     let r
     try {
       r = await fetchWithTimeout(`${BASE}/login`, {
         method: 'POST',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username, password, remember_me: String(rememberMe) }),
+        body: JSON.stringify({
+          username, password,
+          remember_me: String(rememberMe),
+          force_login: String(forceLogin),
+        }),
       })
     } catch (e) {
       // Login isteği asılır/başarısız olursa buton sonsuz "bekliyor"da kalmasın
@@ -134,6 +138,9 @@ export const api = {
   },
 
   getMe: () => request('/me', { timeoutMs: DEFAULT_TIMEOUT_MS }),
+
+  // Hafif oturum geçerlilik yoklaması — süpersede ise 401 → request() otomatik /?session=expired.
+  sessionPing: () => request('/session/ping', { timeoutMs: DEFAULT_TIMEOUT_MS }),
 
   getCertificates: () => request('/certificates'),
 
@@ -438,10 +445,19 @@ export const api = {
     getMetrics: () => request('/admin/system/metrics'),
     getHttpMetrics: () => request('/admin/system/http-metrics'),
     getDbStats: () => request('/admin/system/db-stats'),
+    getDbAnalytics: (days = 7) => request(`/admin/system/db-analytics?days=${days}`),
     getSmtpLogs: (days) =>
       request(`/admin/system/smtp-logs${days ? `?days=${days}` : ''}`),
     triggerHeartbeat: () => request('/admin/system/heartbeat', { method: 'POST' }),
     getHeartbeatTimeline: (days = 1) => request(`/admin/system/heartbeat-timeline?days=${days}`),
+    // Kullanıcı / oturum izleme
+    getUserActivity: () => request('/admin/system/user-activity'),
+    // Esnek login serisi — aralık seçimi (1g/7g/30g), gün-navigasyonu, zoom
+    getLoginSeries: (from, to, granularity = 'day') =>
+      request(`/admin/system/user-activity/series?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}&granularity=${granularity}`),
+    terminateUserSession: (username) => request('/admin/system/terminate-session', {
+      method: 'POST', body: JSON.stringify({ username }),
+    }),
   },
 
   // ── Monitoring ───────────────────────────────────────────────────────────
@@ -489,6 +505,19 @@ export function formatDate(iso) {
     return new Date(toUtc(iso)).toLocaleString('tr-TR', {
       year: 'numeric', month: '2-digit', day: '2-digit',
       hour: '2-digit', minute: '2-digit',
+    })
+  } catch {
+    return iso
+  }
+}
+
+// formatDate gibi ama saniye dahil (login/oturum zamanları için — saniye hassasiyeti gerekir).
+export function formatDateSec(iso) {
+  if (!iso) return 'N/A'
+  try {
+    return new Date(toUtc(iso)).toLocaleString('tr-TR', {
+      year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit', second: '2-digit',
     })
   } catch {
     return iso

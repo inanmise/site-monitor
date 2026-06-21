@@ -131,6 +131,10 @@ export default function App() {
         setTeamId(res.team_id ?? null)
         setTeamName(res.team_name ?? null)
         setMustChangePwd(!!res.must_change_password)
+        // Oturum aktif bayrağı: login yalnız bu sekmede yapılmamış olabilir (cookie reauth ya da
+        // başka sekmede login). Bayrağı burada da set et ki oturum sonradan düş/süpersede olunca
+        // client.js 401'i yakalayıp temiz /?session=expired'a yönlendirsin ("Yüklenemedi" yerine).
+        try { sessionStorage.setItem('cm.session.active', '1') } catch { /* sessionStorage yok */ }
         // Mail "tıklayınız" linki: ?tab=weeklyreports → doğrudan ilgili sekme
         const dl = initialTabFromUrl()
         if (dl) setTab(dl)
@@ -244,6 +248,24 @@ export default function App() {
     }
     const id = setInterval(tick, 60_000)
     return () => clearInterval(id)
+  }, [user])
+
+  // Süpersede edilen oturumu HIZLI yakala: kısa aralıklı hafif yoklama + sekmeye/pencereye
+  // dönünce anında kontrol. Oturum başka yerden düşürüldüyse ping 401 döner ve client.js
+  // otomatik /?session=expired'a yönlendirir — kullanıcı boştayken bile gecikme ~15 sn.
+  useEffect(() => {
+    if (!user) return
+    const ms = Number(import.meta.env.VITE_SESSION_PING_MS ?? 15_000)
+    const ping = () => { api.sessionPing() }
+    const id = setInterval(ping, ms)
+    const onVisible = () => { if (document.visibilityState === 'visible') ping() }
+    document.addEventListener('visibilitychange', onVisible)
+    window.addEventListener('focus', ping)
+    return () => {
+      clearInterval(id)
+      document.removeEventListener('visibilitychange', onVisible)
+      window.removeEventListener('focus', ping)
+    }
   }, [user])
 
   useEffect(() => {
@@ -973,6 +995,7 @@ export default function App() {
                 <h2>{t('app.healthTitle')}</h2>
                 <SystemHealth
                   systemRole={systemRole}
+                  globalAdmin={globalAdmin}
                   preFilterDomain={smtpPreFilterDomain}
                   openSmtpModalOnLoad={openSmtpModalOnLoad}
                   onSmtpPreFilterConsumed={() => {

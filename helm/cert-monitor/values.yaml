@@ -172,3 +172,9 @@ postgresql:
     persistence:
       enabled: true
       size: 8Gi
+    # DB-geneli SQL istatistikleri (Sistem Sağlığı → Veritabanı analitiği) için pg_stat_statements.
+    # shared_preload_libraries restart gerektirir; uygulama açılışta CREATE EXTENSION'ı best-effort dener.
+    # Bu eklenti yoksa analitik, sql_query_history (Playground) fallback'ine düşer.
+    extendedConfiguration: |
+      shared_preload_libraries = 'pg_stat_statements'
+      pg_stat_statements.track = top

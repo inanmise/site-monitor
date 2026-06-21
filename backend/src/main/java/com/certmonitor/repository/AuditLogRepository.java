@@ -8,6 +8,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import java.util.List;
+import java.util.Optional;
 
 public interface AuditLogRepository extends JpaRepository<AuditLog, Long> {
 
@@ -28,6 +29,23 @@ public interface AuditLogRepository extends JpaRepository<AuditLog, Long> {
 
     @Query("SELECT COUNT(a) FROM AuditLog a WHERE a.eventType = 'LOGIN_FAILED' AND a.eventTime > :since")
     long countFailedLoginsSince(@Param("since") String since);
+
+    // ── Kullanıcı/oturum izleme (UserActivityService) — okuma, şema değişikliği yok ──
+    /** Verilen tipteki login olaylarını pencere içinde çeker; seri/top/anomali/heatmap Java'da kümelenir. */
+    @Query("SELECT a FROM AuditLog a WHERE a.eventType IN :types AND a.eventTime >= :since ORDER BY a.eventTime ASC")
+    List<AuditLog> findLoginEventsSince(@Param("types") List<String> types, @Param("since") String since);
+
+    /** Esnek aralık (from–to) içindeki login olayları — grafik aralık seçimi/zoom/gün-navigasyonu için. */
+    @Query("SELECT a FROM AuditLog a WHERE a.eventType IN :types AND a.eventTime >= :from AND a.eventTime <= :to ORDER BY a.eventTime ASC")
+    List<AuditLog> findLoginEventsBetween(@Param("types") List<String> types,
+                                          @Param("from") String from, @Param("to") String to);
+
+    /** Bir oturuma ait en güncel audit satırı — aktif kullanıcının login zamanı + IP/konum/tarayıcısı. */
+    Optional<AuditLog> findTopByActorAndSessionIdOrderByEventTimeDesc(String actor, String sessionId);
+
+    /** Fallback: oturum eşleşmezse kullanıcının en güncel başarılı LOGIN'i. */
+    Optional<AuditLog> findTopByActorAndEventTypeAndOutcomeOrderByEventTimeDesc(
+            String actor, String eventType, String outcome);
 
     @Query("SELECT a FROM AuditLog a WHERE " +
            "(:actor IS NULL OR LOWER(a.actor) LIKE :actor) AND " +

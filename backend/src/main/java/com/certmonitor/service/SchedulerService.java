@@ -169,6 +169,15 @@ public class SchedulerService {
         log.info("Application started [instance={}] — bootstrapping...", INSTANCE_ID);
         applySchemaPatches();
         userService.ensureBootstrapped(adminUsername, adminPassword);
+        // In-memory oturumlar restart'ta silinir ama DB'deki activeSessionId kalır → aksi halde
+        // "Aktif Oturum" sayımı şişer ve restart sonrası ilk login'de gerçekte canlı oturum
+        // olmasa da "başka yerde aktif oturum" onayı çıkar. Açılışta stale işaretleri temizle.
+        try {
+            int cleared = userService.clearAllActiveSessions();
+            if (cleared > 0) log.info("Cleared {} stale active-session marker(s) on startup", cleared);
+        } catch (Exception e) {
+            log.warn("Startup active-session cleanup failed: {}", e.getMessage());
+        }
         permissionService.seedDefaultsIfEmpty();
         permissionService.seedMissingDefaults(); // katalogda yeni eklenen modüllerin grant'lerini backfill et
         try { incidentService.seedOptions(); } // olay modülü varsayılan kanalları (idempotent)

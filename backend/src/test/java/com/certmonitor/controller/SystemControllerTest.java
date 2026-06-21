@@ -44,6 +44,12 @@ class SystemControllerTest {
     com.certmonitor.service.UserService userService;
 
     @MockitoBean
+    com.certmonitor.service.UserActivityService userActivityService;
+
+    @MockitoBean
+    com.certmonitor.service.DbAnalyticsService dbAnalyticsService;
+
+    @MockitoBean
     AuthController authController;
 
     @BeforeEach
@@ -53,6 +59,9 @@ class SystemControllerTest {
         when(extendedHealthService.measureDbResponseMs()).thenReturn(5L);
         when(extendedHealthService.getHeartbeatStatus()).thenReturn(Map.of("ok", true));
         when(extendedHealthService.getNetworkStatus()).thenReturn(Map.of("alarm", false));
+        when(userActivityService.getOverview()).thenReturn(Map.of("summary", Map.of("active_count", 1)));
+        when(dbAnalyticsService.getOverview(org.mockito.ArgumentMatchers.anyInt()))
+                .thenReturn(Map.of("summary", Map.of("queries", 0)));
     }
 
     @Test
@@ -100,6 +109,75 @@ class SystemControllerTest {
                 .andExpect(jsonPath("$.success").value(true));
     }
 
+    @Test
+    @DisplayName("GET /api/admin/system/user-activity as ADMIN returns 200")
+    void userActivity_asAdmin_returns200() throws Exception {
+        mvc.perform(get("/api/admin/system/user-activity").session(adminSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true));
+    }
+
+    @Test
+    @DisplayName("GET /api/admin/system/user-activity as USER returns 403 (admin/audit-only)")
+    void userActivity_asUser_returns403() throws Exception {
+        mvc.perform(get("/api/admin/system/user-activity").session(userSession()))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    @DisplayName("GET /api/admin/system/db-analytics as ADMIN returns 200")
+    void dbAnalytics_asAdmin_returns200() throws Exception {
+        mvc.perform(get("/api/admin/system/db-analytics?days=7").session(adminSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true));
+    }
+
+    @Test
+    @DisplayName("GET /api/admin/system/db-analytics as USER returns 403 (admin/audit-only)")
+    void dbAnalytics_asUser_returns403() throws Exception {
+        mvc.perform(get("/api/admin/system/db-analytics?days=7").session(userSession()))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    @DisplayName("GET /api/admin/system/user-activity as AUDIT returns 200 (read-only viewer)")
+    void userActivity_asAudit_returns200() throws Exception {
+        mvc.perform(get("/api/admin/system/user-activity").session(auditSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true));
+    }
+
+    @Test
+    @DisplayName("POST /api/admin/system/terminate-session as AUDIT returns 403 (mutating, admin-only)")
+    void terminateSession_asAudit_returns403() throws Exception {
+        mvc.perform(post("/api/admin/system/terminate-session")
+                        .session(auditSession())
+                        .contentType("application/json")
+                        .content("{\"username\":\"bob\"}"))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    @DisplayName("POST /api/admin/system/terminate-session as ADMIN returns 200")
+    void terminateSession_asAdmin_returns200() throws Exception {
+        mvc.perform(post("/api/admin/system/terminate-session")
+                        .session(adminSession())
+                        .contentType("application/json")
+                        .content("{\"username\":\"bob\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true));
+    }
+
+    @Test
+    @DisplayName("POST /api/admin/system/terminate-session as USER returns 403 (admin-only)")
+    void terminateSession_asUser_returns403() throws Exception {
+        mvc.perform(post("/api/admin/system/terminate-session")
+                        .session(userSession())
+                        .contentType("application/json")
+                        .content("{\"username\":\"bob\"}"))
+                .andExpect(status().isForbidden());
+    }
+
     private MockHttpSession userSession() {
         MockHttpSession s = new MockHttpSession();
         s.setAttribute("authenticated", Boolean.TRUE);
@@ -113,6 +191,14 @@ class SystemControllerTest {
         s.setAttribute("authenticated", Boolean.TRUE);
         s.setAttribute("username", "admin");
         s.setAttribute("systemRole", "ADMIN");
+        return s;
+    }
+
+    private MockHttpSession auditSession() {
+        MockHttpSession s = new MockHttpSession();
+        s.setAttribute("authenticated", Boolean.TRUE);
+        s.setAttribute("username", "auditor");
+        s.setAttribute("systemRole", "AUDIT");
         return s;
     }
 }

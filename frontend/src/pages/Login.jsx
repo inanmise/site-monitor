@@ -18,6 +18,7 @@ export default function Login({ onLogin }) {
   const [showPass, setShowPass] = useState(false)
   const [lockout, setLockout]           = useState(0)    // seconds remaining
   const [permanentLock, setPermanentLock] = useState(false) // admin must unlock
+  const [confirmActiveSession, setConfirmActiveSession] = useState(false) // başka yerde aktif oturum onayı
 
   useEffect(() => {
     if (lockout <= 0) return
@@ -60,6 +61,10 @@ export default function Login({ onLogin }) {
       } else if (data.wait_seconds) {
         setLockout(data.wait_seconds)
         setError('')
+      } else if (data.error_code === 'ACTIVE_SESSION_EXISTS') {
+        // Başka yerde aktif oturum var — kullanıcıya onay sor (diğerini düşürmeden).
+        setConfirmActiveSession(true)
+        setError('')
       } else if (data.error_code === 'TEMP_PASSWORD_EXPIRED') {
         setError(t('auth.tempPasswordExpired'))
       } else {
@@ -70,6 +75,36 @@ export default function Login({ onLogin }) {
     } finally {
       setLoading(false)
     }
+  }
+
+  // Onay sonrası: force_login=true ile tekrar dene → backend diğer oturumu düşürüp girişi tamamlar.
+  async function confirmAndLogin() {
+    setLoading(true)
+    setError('')
+    try {
+      const data = await api.login(username, password, rememberMe, true)
+      if (data.success) {
+        if (rememberMe) {
+          localStorage.setItem(STORAGE_KEY, username)
+        } else {
+          localStorage.removeItem(STORAGE_KEY)
+        }
+        onLogin(data)
+      } else {
+        setConfirmActiveSession(false)
+        setError(data.error || t('login.failed'))
+      }
+    } catch {
+      setConfirmActiveSession(false)
+      setError(t('login.serverError'))
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  function cancelActiveSession() {
+    setConfirmActiveSession(false)
+    setPassword('')
   }
 
   return (
@@ -146,8 +181,26 @@ export default function Login({ onLogin }) {
             <p className="lp-intro-desc">{t('login.desc')}</p>
           </div>
 
-          {/* Kalıcı kilit ekranı */}
-          {permanentLock ? (
+          {/* Başka yerde aktif oturum — onay ekranı */}
+          {confirmActiveSession ? (
+            <div className="lp-blocked" role="alertdialog" aria-live="polite">
+              <div className="lp-blocked-icon">
+                <ShieldAlert size={36} />
+              </div>
+              <h3 className="lp-blocked-title">{t('login.activeSessionTitle')}</h3>
+              <p className="lp-blocked-desc">{t('login.activeSessionDesc')}</p>
+              <button className="lp-btn" onClick={confirmAndLogin} disabled={loading}>
+                {loading
+                  ? <><span className="lp-spinner" /> {t('login.loading')}</>
+                  : <><Lock size={16} /> {t('login.activeSessionConfirm')}</>
+                }
+              </button>
+              <button type="button" className="lp-lang-btn" onClick={cancelActiveSession} disabled={loading}>
+                {t('login.activeSessionCancel')}
+              </button>
+            </div>
+
+          ) : permanentLock ? (
             <div className="lp-blocked lp-blocked--permanent" role="alert">
               <div className="lp-blocked-icon lp-blocked-icon--permanent">
                 <ShieldAlert size={36} />

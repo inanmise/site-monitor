@@ -1,13 +1,19 @@
 // Pure-SVG sparkline chart — no external dependencies.
-// props: data [{ts, value}], color, label, unit, maxY
+// props: data [{ts, value}], color, label, unit, maxY, gran ('day'|'hour'|'minute'|undefined)
 // ts values come from the backend as UTC (no Z suffix) — add Z before parsing so
-// toLocaleTimeString converts correctly to the browser's local timezone.
-const localHHMM = ts => {
+// toLocale* converts correctly to the browser's local timezone.
+// gran='day': eksen tarih gösterir (kovalar yerel gece yarısı olduğundan saat hep 00:00).
+// lastInclusive: son kovanın BİTİŞİNİ göster (saatlik → +59 dk: "23:00" yerine "23:59" → tüm saat olduğu anlaşılır).
+const axisLabel = (ts, gran, lastInclusive) => {
   if (!ts) return ''
-  return new Date(ts + 'Z').toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+  let d = new Date(ts + 'Z')
+  if (lastInclusive && gran === 'hour') d = new Date(d.getTime() + 59 * 60_000)
+  return gran === 'day'
+    ? d.toLocaleDateString([], { day: '2-digit', month: '2-digit' })
+    : d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
 }
 
-export default function MiniChart({ data = [], color = '#4f9cf9', label, unit = '%', maxY, onClick }) {
+export default function MiniChart({ data = [], color = '#4f9cf9', label, unit = '%', maxY, onClick, gran }) {
   const W = 400, H = 82
   const PAD = { top: 8, bottom: 20, left: 34, right: 8 }
   const pw = W - PAD.left - PAD.right   // plot width
@@ -92,11 +98,11 @@ export default function MiniChart({ data = [], color = '#4f9cf9', label, unit = 
         {data.length > 1 && (
           <>
             <text x={PAD.left} y={H - 3} fontSize="7" fill="var(--chart-label)">
-              {localHHMM(data[0].ts)}
+              {axisLabel(data[0].ts, gran, false)}
             </text>
             <text x={W - PAD.right} y={H - 3} fontSize="7"
               fill="var(--chart-label)" textAnchor="end">
-              {localHHMM(data[data.length - 1].ts)}
+              {axisLabel(data[data.length - 1].ts, gran, true)}
             </text>
           </>
         )}

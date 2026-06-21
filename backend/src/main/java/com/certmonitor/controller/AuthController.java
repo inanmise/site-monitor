@@ -14,8 +14,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.ResponseEntity;
 import org.springframework.scheduling.annotation.Scheduled;
-import org.springframework.session.FindByIndexNameSessionRepository;
-import org.springframework.session.Session;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.Arrays;
@@ -52,11 +50,6 @@ public class AuthController {
 
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private com.certmonitor.service.PermissionService permissionService;
-
-    // Tek aktif oturum: Spring Session JDBC (prod) JdbcIndexedSessionRepository'yi sağlar; dev
-    // store-type=none'da bean yok → null → invalidateOtherSessions no-op (yalnız token iptali çalışır).
-    @org.springframework.beans.factory.annotation.Autowired(required = false)
-    private FindByIndexNameSessionRepository<? extends Session> sessionRepository;
 
     // LDAP/AD — optional so @WebMvcTest contexts without these beans still load.
     @org.springframework.beans.factory.annotation.Autowired(required = false)
@@ -157,13 +150,30 @@ public class AuthController {
             blockedUntil.remove(clientIp);
             userService.clearLockoutOnSuccess(username);
 
+            // Tek aktif oturum onayı: kullanıcının başka bir yerde aktif oturumu varsa ve henüz
+            // onaylamadıysa, mevcut oturumu DÜŞÜRMEDEN 409 dön → frontend onay modalı gösterir.
+            // Onaylarsa force_login=true ile tekrar gelir; o zaman aşağıdaki akış (recordActiveSession)
+            // eski oturumu düşürüp girişi tamamlar. (TERMINATED sentinel'i = zaten kapatılmış, sayılmaz.)
+            boolean forceLogin = Boolean.parseBoolean(body.getOrDefault("force_login", "false"));
+            // Yalnız CANLI (son ping penceresi içinde) bir aktif oturum varsa onay iste; logout'suz
+            // kapatılan/ölen oturumlar tazelik penceresi dışına düşer → yanlış onay çıkmaz.
+            boolean hasActiveElsewhere = userService.hasLiveSession(user);
+            if (hasActiveElsewhere && !forceLogin) {
+                log.info("Login needs confirmation — active session exists elsewhere: user={} IP={}", username, clientIp);
+                return ResponseEntity.status(409).body(Map.of(
+                        "success", false,
+                        "error_code", "ACTIVE_SESSION_EXISTS",
+                        "error", "An active session already exists for this account elsewhere."));
+            }
+
             HttpSession oldSession = request.getSession(false);
             if (oldSession != null) oldSession.invalidate();
             HttpSession newSession = request.getSession(true);
             populateSession(newSession, user);
-            // Tek aktif oturum: bu kullanıcının diğer (eski) oturumlarını kapat + eski remember-me
-            // token'larını iptal et (eski tarayıcı cookie ile sessizce geri dönüp yeni oturumu kicklemesin).
-            invalidateOtherSessions(username, newSession.getId());
+            // Tek aktif oturum (store-agnostik): bu oturumu kullanıcının "aktif" oturumu olarak kaydet —
+            // AuthInterceptor her istekte karşılaştırır, eşleşmeyen eski oturumu kapatır. Ayrıca eski
+            // remember-me token'larını iptal et (eski tarayıcı cookie ile sessizce geri dönüp kicklemesin).
+            userService.recordActiveSession(username, newSession.getId());
             rememberMeService.invalidateAllForUser(username);
 
             log.info("User logged in: {} (role={}, teamId={}, rememberMe={}, IP={})",
@@ -250,12 +260,26 @@ public class AuthController {
             if (weeklyReportService != null && uid != null) {
                 try { weeklyReportService.releaseLocksForUser(uid); } catch (Exception ignored) {}
             }
+            // Tek aktif oturum: kayıtlı aktif oturum bu ise temizle (başka cihazdaki yeni oturumu silme).
+            if (username != null) userService.clearActiveSession(username, sid);
             session.invalidate();
             if (username != null) {
                 auditService.recordLogout(username, uid, resolveClientIp(request), sid);
             }
         }
         return ResponseEntity.ok(Map.of("success", true, "message", "Logged out"));
+    }
+
+    /** Hafif oturum geçerlilik yoklaması — frontend periyodik çağırır. Oturum başka yerden
+     *  süpersede edildiyse AuthInterceptor bu metoda girmeden 401 döner; böylece dropped taraf
+     *  boştayken bile kısa sürede /?session=expired'a düşer (tam getMe yükü olmadan). */
+    @GetMapping("/session/ping")
+    public ResponseEntity<Map<String, Object>> sessionPing(HttpSession session) {
+        // Oturum canlılığını tazele (aktif sayım + login-onayı bunu kullanır). Süpersede oturum bu
+        // metoda girmeden interceptor'da 401 alır; buraya gelen istek geçerli/güncel oturumdur.
+        String username = (String) session.getAttribute("username");
+        if (username != null) userService.touchActiveSession(username, session.getId());
+        return ResponseEntity.ok(Map.of("success", true));
     }
 
     @GetMapping("/me")
@@ -442,9 +466,6 @@ public class AuthController {
     public void populateSession(HttpSession session, AppUser user) {
         session.setAttribute("authenticated", true);
         session.setAttribute("username", user.getUsername());
-        // Tek aktif oturum: oturumu kullanıcı adına indexle (Spring Session JDBC principal_name) →
-        // sonradan invalidateOtherSessions kullanıcı adına bulup eski oturumları kapatabilir.
-        session.setAttribute(FindByIndexNameSessionRepository.PRINCIPAL_NAME_INDEX_NAME, user.getUsername());
         session.setAttribute("displayName", user.getDisplayName() != null ? user.getDisplayName() : user.getUsername());
         session.setAttribute("userId", user.getId());
         session.setAttribute("teamId", user.getTeamId());
@@ -464,23 +485,6 @@ public class AuthController {
         else session.setAttribute("viewTeamIds", new java.util.ArrayList<>(view));
         if (manage == null) session.removeAttribute("manageTeamIds");
         else session.setAttribute("manageTeamIds", new java.util.ArrayList<>(manage));
-    }
-
-    /**
-     * Tek aktif oturum — bu kullanıcının {@code keepId} dışındaki tüm oturumlarını kapatır
-     * (Spring Session JDBC principal-name index üzerinden). Dev store-type=none'da repo yoktur → no-op.
-     */
-    public void invalidateOtherSessions(String username, String keepId) {
-        if (sessionRepository == null || username == null) return;
-        try {
-            var sessions = sessionRepository.findByIndexNameAndIndexValue(
-                    FindByIndexNameSessionRepository.PRINCIPAL_NAME_INDEX_NAME, username);
-            for (String id : sessions.keySet()) {
-                if (!id.equals(keepId)) sessionRepository.deleteById(id);
-            }
-        } catch (Exception e) {
-            log.warn("invalidateOtherSessions atlandı: user={} hata={}", username, e.getMessage());
-        }
     }
 
     private Map<String, Object> buildMeResponse(AppUser user, HttpSession session) {

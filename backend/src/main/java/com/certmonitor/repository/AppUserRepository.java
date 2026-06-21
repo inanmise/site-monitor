@@ -4,6 +4,7 @@ import com.certmonitor.model.AppUser;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
@@ -19,6 +20,24 @@ public interface AppUserRepository extends JpaRepository<AppUser, Long> {
     boolean existsByUsername(String username);
     boolean existsByTeamId(Long teamId);
     long countBySystemRoleAndActiveTrue(String systemRole);
+
+    /** Tek-oturum izleme: o an login (aktif oturumu olan) kullanıcılar. Admin "Sonlandır" sonrası
+     *  konan sentinel ('TERMINATED:...') aktif sayılmaz, hariç tutulur. */
+    @Query("SELECT u FROM AppUser u WHERE u.activeSessionId IS NOT NULL "
+        + "AND u.activeSessionId NOT LIKE 'TERMINATED:%' ORDER BY u.username ASC")
+    List<AppUser> findAllWithActiveSession();
+
+    /** Açılışta stale tek-oturum işaretlerini topluca temizler — in-memory oturumlar restart'ı
+     *  yaşamaz, ama DB'deki activeSessionId kalır; aksi halde restart sonrası aktif sayım şişer ve
+     *  login'de yanlış "başka yerde aktif oturum" onayı çıkar. Temizlenen satır sayısını döner. */
+    @Modifying
+    @Query("UPDATE AppUser u SET u.activeSessionId = null WHERE u.activeSessionId IS NOT NULL")
+    int clearAllActiveSessions();
+
+    /** Oturum ping'i: yalnız kullanıcının GÜNCEL oturumu için lastSeenAt'i tazeler (tek statement). */
+    @Modifying
+    @Query("UPDATE AppUser u SET u.lastSeenAt = :ts WHERE u.username = :username AND u.activeSessionId = :sid")
+    int touchLastSeen(@Param("username") String username, @Param("sid") String sid, @Param("ts") String ts);
 
     // ── Faz 3b: manager (müdür) → astları / yönettiği takımlar ──
     List<AppUser> findByManagerId(Long managerId);
