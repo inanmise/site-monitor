@@ -210,6 +210,89 @@ class LdapProvisioningServiceTest {
     }
 
     @Test
+    @DisplayName("çoklu ScrumGroup → tüm takımlar üyelik olur; birincil = memberOf'taki ilk grup")
+    void collectsAllScrumGroupsIntoMembership() {
+        Map<String, Object> attrs = Map.of(
+                "cn", "70010",
+                "memberOf", List.of(
+                        "CN=SY-Alpha,OU=ScrumGroups,DC=aknet,DC=akb",
+                        "CN=SY-Beta,OU=ScrumGroups,DC=aknet,DC=akb"));
+
+        AppUser u = service.provisionFromAd("multi1", "CN=multi1,DC=akb", attrs);
+
+        // teamSeq: ilk oluşturulan (SY-Alpha)=1, ikinci (SY-Beta)=2 — sıra korunur, birincil=1
+        assertThat(u.getTeamIds()).containsExactly(1L, 2L);
+        assertThat(u.getTeamId()).isEqualTo(1L);
+    }
+
+    @Test
+    @DisplayName("company fallback: ScrumGroup yokken company'den tek takım çıkarılır")
+    void companyFallback_whenNoScrumGroup() {
+        org.mockito.ArgumentCaptor<Team> cap = org.mockito.ArgumentCaptor.forClass(Team.class);
+        Map<String, Object> attrs = Map.of(
+                "cn", "80004", "company", "YAZILIM UZMANI-SY-MevduatMuhasebeSigorta");
+
+        AppUser u = service.provisionFromAd("yaz1", "CN=yaz1,DC=akb", attrs);
+
+        assertThat(u.getTeamIds()).hasSize(1);
+        assertThat(u.getTeamId()).isNotNull();
+        org.mockito.Mockito.verify(teamRepo, org.mockito.Mockito.atLeastOnce()).save(cap.capture());
+        assertThat(cap.getAllValues()).anyMatch(t -> "SY-MevduatMuhasebeSigorta".equals(t.getName()));
+    }
+
+    @Test
+    @DisplayName("company fallback: birden çok takım (PO) → her takıma üye + PO her lidersiz takımın lideri")
+    void companyFallback_multipleTeams() {
+        org.mockito.ArgumentCaptor<Team> cap = org.mockito.ArgumentCaptor.forClass(Team.class);
+        Map<String, Object> attrs = Map.of(
+                "cn", "80005",
+                "company", "PRODUCT OWNER-SY-MevduatMuhasebeSigorta,SY-Dijital Mobil Servis");
+
+        AppUser u = service.provisionFromAd("po3", "CN=po3,DC=akb", attrs);
+
+        assertThat(u.getTeamIds()).hasSize(2);
+        org.mockito.Mockito.verify(teamRepo, org.mockito.Mockito.atLeastOnce()).save(cap.capture());
+        java.util.List<String> names = cap.getAllValues().stream().map(Team::getName).toList();
+        assertThat(names).contains("SY-MevduatMuhasebeSigorta", "SY-Dijital Mobil Servis");
+        // PO her iki takımın da lideri olmalı (lider boştu)
+        assertThat(cap.getAllValues())
+                .filteredOn(t -> t.getName() != null && t.getName().startsWith("SY-"))
+                .allMatch(t -> u.getId().equals(t.getLeaderId()));
+    }
+
+    @Test
+    @DisplayName("company fallback: ScrumGroup varsa company KULLANILMAZ")
+    void companyFallback_notUsedWhenScrumGroupPresent() {
+        org.mockito.ArgumentCaptor<Team> cap = org.mockito.ArgumentCaptor.forClass(Team.class);
+        Map<String, Object> attrs = Map.of(
+                "cn", "80006",
+                "company", "YAZILIM UZMANI-SY-ShouldNotAppear",
+                "memberOf", "CN=SY-RealTeam,OU=ScrumGroups,DC=aknet,DC=akb");
+
+        AppUser u = service.provisionFromAd("u6", "CN=u6,DC=akb", attrs);
+
+        assertThat(u.getTeamIds()).hasSize(1);
+        org.mockito.Mockito.verify(teamRepo, org.mockito.Mockito.atLeastOnce()).save(cap.capture());
+        java.util.List<String> names = cap.getAllValues().stream().map(Team::getName).toList();
+        assertThat(names).contains("SY-RealTeam");
+        assertThat(names).doesNotContain("SY-ShouldNotAppear");
+    }
+
+    @Test
+    @DisplayName("companyTeamNames: rol önekini at, yalnız ilk tireden böl, virgülle ayır")
+    void companyTeamNamesHelper() {
+        assertThat(LdapProvisioningService.companyTeamNames(
+                "PRODUCT OWNER-SY-MevduatMuhasebeSigorta,SY-Dijital Mobil Servis"))
+                .containsExactly("SY-MevduatMuhasebeSigorta", "SY-Dijital Mobil Servis");
+        assertThat(LdapProvisioningService.companyTeamNames("YAZILIM UZMANI-SY-MevduatMuhasebeSigorta"))
+                .containsExactly("SY-MevduatMuhasebeSigorta");
+        assertThat(LdapProvisioningService.companyTeamNames("SCRUM MASTER-SY-Dijital Mobil Servis"))
+                .containsExactly("SY-Dijital Mobil Servis");
+        assertThat(LdapProvisioningService.companyTeamNames("PRODUCT OWNER")).isEmpty();  // tire yok
+        assertThat(LdapProvisioningService.companyTeamNames(null)).isEmpty();
+    }
+
+    @Test
     @DisplayName("provision: takım + müdür varsa müdür otomatik MANAGER eskalasyon kontağı (HIGH) olur")
     void provision_autoCreatesManagerEscalationContact() {
         when(directory.groupMail(anyString())).thenReturn(Optional.of("sy@akbank.com"));

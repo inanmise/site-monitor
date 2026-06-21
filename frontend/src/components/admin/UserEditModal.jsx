@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { api } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
 import SearchableSelect from '../ui/SearchableSelect.jsx'
+import MultiTeamSelect from '../ui/MultiTeamSelect.jsx'
 import { UserCog } from 'lucide-react'
 
 /** Modal başlık rozetinde kullanıcının LDAP fotoğrafı; yoksa ikona düşer. */
@@ -42,7 +43,8 @@ export default function UserEditModal({ user, teams, onClose, onSaved }) {
       email:        form.email,
       employee_id:  form.employee_id,
       system_role:  form.system_role,
-      team_id:      form.team_id || null,
+      team_ids:     form.team_ids,
+      team_id:      form.team_ids[0] ?? null,
       org_role:     form.org_role || null,
       active:       form.active,
       first_name:    form.first_name,
@@ -116,19 +118,16 @@ export default function UserEditModal({ user, teams, onClose, onSaved }) {
             />
           </label>
           <label>
-            <span>{t('usr.formTeam')} {form.system_role !== 'ADMIN' && <span className="req-star">*</span>}</span>
-            <SearchableSelect
-              value={form.team_id}
-              onChange={v => setForm({ ...form, team_id: v ? Number(v) : '' })}
-              placeholder={t('usr.noTeam')}
+            <span>{t('usr.teamsLabel')} {form.system_role !== 'ADMIN' && <span className="req-star">*</span>}</span>
+            <MultiTeamSelect
+              value={form.team_ids}
+              onChange={ids => setForm({ ...form, team_ids: ids.map(Number) })}
+              placeholder={t('usr.teamsPlaceholder')}
               searchThreshold={2}
-              options={[
-                { value: '', label: t('usr.noTeam') },
-                ...(teams || []).map(team => ({ value: team.id, label: team.name })),
-              ]}
+              options={(teams || []).map(team => ({ value: team.id, label: team.name }))}
             />
-            {form.system_role !== 'ADMIN' && !form.team_id && (
-              <span className="field-hint field-hint--warn">{t('usr.teamRequired')}</span>
+            {form.system_role !== 'ADMIN' && form.team_ids.length === 0 && (
+              <span className="field-hint field-hint--warn">{t('usr.teamsRequired')}</span>
             )}
           </label>
           {/* AD'den eşlenen profil alanları (LDAP kullanıcısında bir sonraki login'de tazelenir) */}
@@ -166,7 +165,7 @@ export default function UserEditModal({ user, teams, onClose, onSaved }) {
         <div className="modal-actions">
           <button className="btn btn-secondary" onClick={onClose}>{t('usr.cancel')}</button>
           <button className="btn btn-primary" onClick={save}
-            disabled={saving || !form.username.trim() || !form.email.trim() || (form.system_role !== 'ADMIN' && !form.team_id)}>
+            disabled={saving || !form.username.trim() || !form.email.trim() || (form.system_role !== 'ADMIN' && form.team_ids.length === 0)}>
             {saving ? t('usr.saving') : t('usr.save')}
           </button>
         </div>
@@ -182,7 +181,7 @@ function toForm(user) {
     email:        user?.email || '',
     employee_id:  user?.employee_id || '',
     system_role:  user?.system_role || 'USER',
-    team_id:      user?.team_id ?? '',
+    team_ids:     user?.team_ids ?? user?.teamIds ?? (user?.team_id != null ? [user.team_id] : []),
     org_role:     user?.org_role || '',
     active:       user?.active !== false,
     first_name:    user?.first_name || '',

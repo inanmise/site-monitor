@@ -8,6 +8,7 @@ import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 
@@ -19,6 +20,19 @@ public interface AppUserRepository extends JpaRepository<AppUser, Long> {
     List<AppUser> findAllByOrderByUsernameAsc();
     boolean existsByUsername(String username);
     boolean existsByTeamId(Long teamId);
+
+    // ── Çoklu takım üyeliği (app_user_teams) ──
+    /** Belirli bir takıma ÜYE (birincil veya ek) tüm kullanıcılar. */
+    @Query("SELECT DISTINCT u FROM AppUser u JOIN u.teamIds tid WHERE tid = :teamId ORDER BY u.username ASC")
+    List<AppUser> findByMembershipTeamId(@Param("teamId") Long teamId);
+
+    /** Verilen takım kümesinden HERHANGİ birine üye kullanıcılar (scope filtresi). */
+    @Query("SELECT DISTINCT u FROM AppUser u JOIN u.teamIds tid WHERE tid IN :teamIds ORDER BY u.username ASC")
+    List<AppUser> findByAnyTeamId(@Param("teamIds") Collection<Long> teamIds);
+
+    /** Takım silme guard'ı: takıma üye (birincil veya ek) kullanıcı var mı. */
+    @Query("SELECT COUNT(u) > 0 FROM AppUser u JOIN u.teamIds tid WHERE tid = :teamId")
+    boolean existsByMembershipTeamId(@Param("teamId") Long teamId);
     long countBySystemRoleAndActiveTrue(String systemRole);
 
     /** Tek-oturum izleme: o an login (aktif oturumu olan) kullanıcılar. Admin "Sonlandır" sonrası
@@ -56,7 +70,7 @@ public interface AppUserRepository extends JpaRepository<AppUser, Long> {
         +              "OR LOWER(u.email) LIKE :q OR LOWER(u.employeeId) LIKE :q) AND "
         + "(:systemRole IS NULL OR u.systemRole = :systemRole) AND "
         + "(:orgRole IS NULL OR u.orgRole = :orgRole) AND "
-        + "(:teamId IS NULL OR u.teamId = :teamId) "
+        + "(:teamId IS NULL OR u.teamId = :teamId OR :teamId IN (SELECT tid FROM u.teamIds tid)) "
         + "ORDER BY u.username ASC")
     Page<AppUser> findFiltered(@Param("q") String q,
                                @Param("systemRole") String systemRole,
