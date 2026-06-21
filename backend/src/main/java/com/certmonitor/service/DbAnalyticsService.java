@@ -46,6 +46,7 @@ public class DbAnalyticsService {
             DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
     private static final int TOP_N = 10;
     private static final int FAILED_N = 25;
+    private static final int RECENT_N = 200;      // "Sorgu" kartı drill-down: son ham sorgu satırları
     private static final int SQL_PREVIEW = 240;   // SQL metni gösterim kısaltması
     private static final long DAY = 86_400L;
 
@@ -77,6 +78,7 @@ public class DbAnalyticsService {
         out.put("top_sql",      pgss ? topSqlFromPgss() : topSqlFromHistory(rows));
         out.put("slowest_sql",  pgss ? slowestFromPgss() : slowestFromHistory(rows));
         out.put("failed",       buildFailed(rows));
+        out.put("recent_queries", recentQueries(rows));
         out.put("top_tables",   topTables());
         out.put("table_sizes",  tableSizes());
         out.put("series",       buildSeries(rows, win == 1 ? Gran.HOUR : Gran.DAY, win));
@@ -209,6 +211,23 @@ public class DbAnalyticsService {
                     m.put("username", r.getExecutedBy());
                     m.put("sql", preview(r.getSqlText()));
                     m.put("error", r.getErrorMessage());
+                    return m;
+                }).toList();
+    }
+
+    // ── Son sorgular (sql_query_history ham satırlar) — "Sorgu" kartı detayı ──────
+    private List<Map<String, Object>> recentQueries(List<SqlQueryHistory> rows) {
+        return rows.stream()
+                .sorted((x, y) -> nullSafe(y.getExecutedAt()).compareTo(nullSafe(x.getExecutedAt())))
+                .limit(RECENT_N)
+                .map(r -> {
+                    Map<String, Object> m = new LinkedHashMap<>();
+                    m.put("time", r.getExecutedAt());
+                    m.put("username", r.getExecutedBy());
+                    m.put("sql", preview(r.getSqlText()));
+                    m.put("duration_ms", r.getDurationMs());
+                    m.put("success", r.getSuccess());
+                    m.put("rows", r.getRowCount());
                     return m;
                 }).toList();
     }

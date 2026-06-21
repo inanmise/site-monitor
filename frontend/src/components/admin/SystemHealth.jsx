@@ -1013,8 +1013,8 @@ export default function SystemHealth({ systemRole, globalAdmin = false, preFilte
 
               {/* KPI — kartlara tıkla → detay modalı (veriler dbData içinden) */}
               <div className="uact-kpi-grid">
-                {kpi2('q', Database, sum.queries ?? 0, t('db.kpiQueries'), winLbl, undefined, () => setDbKpiDetail({ title: t('db.kpiQueries'), kind: 'series' }))}
-                {kpi2('avg', Cpu, (sum.avg_ms ?? 0) + ' ms', t('db.kpiAvg'), winLbl, undefined, () => setDbKpiDetail({ title: t('db.kpiAvg'), kind: 'series' }))}
+                {kpi2('q', Database, sum.queries ?? 0, t('db.kpiQueries'), winLbl, undefined, () => setDbKpiDetail({ title: t('db.kpiQueries'), kind: 'queries' }))}
+                {kpi2('avg', Cpu, (sum.avg_ms ?? 0) + ' ms', t('db.kpiAvg'), winLbl, undefined, () => setDbKpiDetail({ title: t('db.kpiAvg'), kind: 'queries', sort: 'dur' }))}
                 {kpi2('slow', Server, (sum.max_ms ?? 0) + ' ms', t('db.kpiSlowest'), winLbl, undefined, () => setDbKpiDetail({ title: t('db.kpiSlowest'), kind: 'slowest' }))}
                 {kpi2('fail', XCircle, sum.failed ?? 0, t('db.kpiFailed'), winLbl, (sum.failed ?? 0) > 0 ? 'danger' : undefined, () => setDbKpiDetail({ title: t('db.kpiFailed'), kind: 'failed' }))}
                 {kpi2('conn', Globe, sum.active_connections ?? '—', t('db.connActive'), t('db.kpiNow'), 'ok', () => setDbKpiDetail({ title: t('db.connActive'), kind: 'connections' }))}
@@ -1590,23 +1590,24 @@ export default function SystemHealth({ systemRole, globalAdmin = false, preFilte
         const wrapStyle = { maxWidth: 440, whiteSpace: 'normal', wordBreak: 'break-word' }
         let count = 0
         let body = <div className="sys-muted">—</div>
-        if (k === 'series') {
-          const rows = dd?.series || []
+        if (k === 'queries') {
+          let rows = dd?.recent_queries || []
+          if (dbKpiDetail.sort === 'dur') rows = [...rows].sort((a, b) => (b.duration_ms ?? 0) - (a.duration_ms ?? 0))
           count = rows.length
           if (rows.length) body = (
             <div className="health-table-wrap"><table className="health-dbtable">
               <thead><tr>
                 <th className="dbtcol-th">{t('uact.colTime')}</th>
-                <th className="dbtcol-th dbtcol-th-num">{t('db.colQueries')}</th>
-                <th className="dbtcol-th dbtcol-th-num">{t('db.colAvgMs')}</th>
-                <th className="dbtcol-th dbtcol-th-num">{t('db.colFailed')}</th>
+                <th className="dbtcol-th">{t('uact.colUser')}</th>
+                <th className="dbtcol-th">SQL</th>
+                <th className="dbtcol-th dbtcol-th-num">{t('db.colDurMs')}</th>
               </tr></thead>
               <tbody>{rows.map((r, i) => (
                 <tr key={i}>
-                  <td className="sys-mono sys-small">{r.ts ? formatDateSec(r.ts) : '—'}</td>
-                  <td className="dbtcol-num-cell">{r.count}</td>
-                  <td className="dbtcol-num-cell">{r.avg_ms}</td>
-                  <td className={`dbtcol-num-cell ${r.failed > 0 ? 'sys-err-text' : ''}`}>{r.failed}</td>
+                  <td className="sys-mono sys-small">{r.time ? formatDateSec(r.time) : '—'}</td>
+                  <td className="sys-mono">{r.username || '—'}</td>
+                  <td className={`sys-mono sys-small ${r.success === false ? 'sys-err-text' : ''}`} style={wrapStyle}>{r.sql || '—'}</td>
+                  <td className="dbtcol-num-cell">{r.duration_ms ?? '—'}</td>
                 </tr>
               ))}</tbody>
             </table></div>
