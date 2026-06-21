@@ -14,6 +14,20 @@ const STATUSES   = ['OPEN', 'INVESTIGATING', 'MITIGATED', 'RESOLVED']
 const CATEGORIES = ['DATABASE', 'NETWORK', 'CERTIFICATE', 'APPLICATION', 'INFRASTRUCTURE', 'OTHER']
 const SEV_COLOR  = { CRITICAL: '#dc2626', HIGH: '#ea580c', MEDIUM: '#d97706', LOW: '#16a34a' }
 
+// Filtre tarih sınırını YEREL gün → UTC ISO'ya çevirir. Kayıtlar UTC saklanır, formatDate
+// tarayıcı yerel saatine göre gösterir; bu yüzden "17 Haz" seçimi yerel 17 Haz 00:00–23:59:59'a,
+// yani UTC karşılığına çevrilmeli. Aksi halde 18 Haz 01:00 (yerel) = 17 Haz 22:00 (UTC) kaydı
+// "17 Haz" filtresine sızar. endOfDay=true → günün sonu (23:59:59).
+function localDayToUtcIso(dateStr, endOfDay) {
+  if (!dateStr) return undefined
+  const [y, m, d] = dateStr.slice(0, 10).split('-').map(Number)
+  if (!y || !m || !d) return undefined
+  const dt = new Date(y, m - 1, d, endOfDay ? 23 : 0, endOfDay ? 59 : 0, endOfDay ? 59 : 0)
+  const p = (n) => String(n).padStart(2, '0')
+  return `${dt.getUTCFullYear()}-${p(dt.getUTCMonth() + 1)}-${p(dt.getUTCDate())}` +
+         `T${p(dt.getUTCHours())}:${p(dt.getUTCMinutes())}:${p(dt.getUTCSeconds())}`
+}
+
 const EMPTY = {
   title: '', occurred_at: '', severity: 'HIGH', status: 'OPEN', category: 'APPLICATION',
   service: '', channel: '', team_id: '', team_name: '', detected_at: '', resolved_at: '',
@@ -208,7 +222,7 @@ export default function IncidentHistoryPage() {
   const [size, setSize]   = useState(20)
   const [loading, setLoading] = useState(false)
   const [trends, setTrends]   = useState(null)
-  const [filters, setFilters] = useState({ q: '', severity: '', category: '', status: '', channel: '', since: '', until: '' })
+  const [filters, setFilters] = useState({ q: '', severity: '', category: '', status: '', channel: '', team_id: '', since: '', until: '' })
   const [modal, setModal] = useState(null) // { mode:'view'|'edit'|'create', form }
   const [saving, setSaving] = useState(false)
   const [channelOpts, setChannelOpts] = useState([])
@@ -221,7 +235,9 @@ export default function IncidentHistoryPage() {
     if (!allowView) return
     setLoading(true)
     try {
-      const res = await api.incidents.list({ ...filters, page, size })
+      const res = await api.incidents.list({ ...filters,
+        since: localDayToUtcIso(filters.since, false),
+        until: localDayToUtcIso(filters.until, true), page, size })
       if (res?.success) { setRows(res.data ?? []); setTotal(res.total ?? 0) }
       else toast.error(res?.error || t('inc.loadError'))
     } catch { toast.error(t('inc.loadError')) }
@@ -230,7 +246,7 @@ export default function IncidentHistoryPage() {
 
   const loadTrends = useCallback(async () => {
     if (!allowView) return
-    const res = await api.incidents.trends(filters.since || undefined, filters.until || undefined)
+    const res = await api.incidents.trends(localDayToUtcIso(filters.since, false), localDayToUtcIso(filters.until, true))
     if (res?.success) setTrends(res.data)
   }, [filters.since, filters.until, allowView]) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -244,12 +260,12 @@ export default function IncidentHistoryPage() {
   }, [allowView])
 
   const loadTeams = useCallback(async () => {
-    if (!allowManage) return // takım seçimi yalnız yazma yetkisi olanlara lazım
+    if (!allowView) return // takım listesi hem filtre (görüntüleyici) hem modal (yazma) için lazım
     try {
       const res = await api.admin.getTeams()
       if (res?.success) setTeams(res.data ?? [])
-    } catch { /* sessiz */ }
-  }, [allowManage])
+    } catch { /* sessiz — yetkisizse dropdown boş kalır, "tüm takımlar" gibi davranır */ }
+  }, [allowView])
 
   const addOption = useCallback(async (type, value) => {
     const res = await api.incidents.addOption(type, value)
@@ -429,10 +445,16 @@ export default function IncidentHistoryPage() {
           <option value="">{t('inc.filterChannel')}</option>
           {channelOpts.map(c => <option key={c} value={c}>{c}</option>)}
         </select>
+        <select className="filter-select" value={filters.team_id} onChange={e => setF('team_id', e.target.value)}>
+          <option value="">{t('inc.filterTeam')}</option>
+          {teams.map(tm => <option key={tm.id} value={String(tm.id)}>{tm.name}</option>)}
+        </select>
+        <span style={{ fontSize: '.8rem', color: 'var(--text-muted)', fontWeight: 600 }}>{t('inc.since')}</span>
         <DateTimeField dateOnly clearable className="dtf-inline" placeholder={t('inc.since')}
-          value={filters.since} onChange={v => setF('since', v ? v + 'T00:00:00' : '')} />
+          value={filters.since} onChange={v => setF('since', v || '')} />
+        <span style={{ fontSize: '.8rem', color: 'var(--text-muted)', fontWeight: 600 }}>{t('inc.until')}</span>
         <DateTimeField dateOnly clearable className="dtf-inline" placeholder={t('inc.until')}
-          value={filters.until} onChange={v => setF('until', v ? v + 'T23:59:59' : '')} />
+          value={filters.until} onChange={v => setF('until', v || '')} />
       </div>
 
       {/* Toplu transfer çubuğu — seçim varken */}
