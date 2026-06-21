@@ -67,13 +67,13 @@ public class IncidentService {
 
     public Page<IncidentRecord> list(String q, String severity, String category, String status,
                                      String service, String channel, String since, String until,
-                                     Boolean slaBreached, Boolean open, Pageable pageable) {
+                                     Long teamId, Boolean slaBreached, Boolean open, Pageable pageable) {
         String like = (q != null && !q.isBlank()) ? "%" + q.trim().toLowerCase() + "%" : null;
         String svc  = (service != null && !service.isBlank()) ? "%" + service.trim().toLowerCase() + "%" : null;
         // channel artık CSV saklanabildiğinden TAM eşleşme yerine CSV-içinde-geçen (LIKE) eşleşme.
         String chn  = (channel != null && !channel.isBlank()) ? "%" + channel.trim().toLowerCase() + "%" : null;
         return repo.findFiltered(like, blankToNull(severity), blankToNull(category), blankToNull(status),
-                svc, chn, blankToNull(since), blankToNull(until), slaBreached, open, pageable);
+                svc, chn, blankToNull(since), blankToNull(until), teamId, slaBreached, open, pageable);
     }
 
     public IncidentRecord get(Long id) {

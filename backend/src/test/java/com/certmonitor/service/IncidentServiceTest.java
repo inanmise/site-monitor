@@ -63,16 +63,16 @@ class IncidentServiceTest {
         service.create(body("Sertifika uyarısı", "2026-06-16T08:00:00", "MEDIUM", "CERTIFICATE"), "admin", 1L, 1L);
 
         // severity filtresi
-        assertThat(service.list(null, "CRITICAL", null, null, null, null, null, null, null, null, PageRequest.of(0, 20))
+        assertThat(service.list(null, "CRITICAL", null, null, null, null, null, null, null, null, null, PageRequest.of(0, 20))
                 .getTotalElements()).isEqualTo(1);
         // keyword (LOWER LIKE — başlık)
-        assertThat(service.list("pool", null, null, null, null, null, null, null, null, null, PageRequest.of(0, 20))
+        assertThat(service.list("pool", null, null, null, null, null, null, null, null, null, null, PageRequest.of(0, 20))
                 .getTotalElements()).isEqualTo(1);
         // tarih aralığı (ISO string >= / <=)
-        assertThat(service.list(null, null, null, null, null, null, "2026-06-15T00:00:00", "2026-06-16T23:59:59", null, null,
+        assertThat(service.list(null, null, null, null, null, null, "2026-06-15T00:00:00", "2026-06-16T23:59:59", null, null, null,
                 PageRequest.of(0, 20)).getTotalElements()).isEqualTo(2);
         // sla_breached = false (varsayılan) → hepsi
-        assertThat(service.list(null, null, null, null, null, null, null, null, Boolean.FALSE, null, PageRequest.of(0, 20))
+        assertThat(service.list(null, null, null, null, null, null, null, null, null, Boolean.FALSE, null, PageRequest.of(0, 20))
                 .getTotalElements()).isEqualTo(3);
     }
 
@@ -88,7 +88,7 @@ class IncidentServiceTest {
         service.create(b2, "admin", 1L, 1L);
 
         // kanal filtresi
-        assertThat(service.list(null, null, null, null, null, "IVR", null, null, null, null, PageRequest.of(0, 20))
+        assertThat(service.list(null, null, null, null, null, "IVR", null, null, null, null, null, PageRequest.of(0, 20))
                 .getTotalElements()).isEqualTo(1);
 
         // addOption + listOptions union: eklenen + olaylarda kullanılan kanallar
@@ -114,11 +114,11 @@ class IncidentServiceTest {
         service.create(b, "admin", 1L, 1L);
 
         // CSV içinde geçen kanalı/servisi filtrele (LIKE)
-        assertThat(service.list(null, null, null, null, null, "ATM", null, null, null, null, PageRequest.of(0, 20))
+        assertThat(service.list(null, null, null, null, null, "ATM", null, null, null, null, null, PageRequest.of(0, 20))
                 .getTotalElements()).isEqualTo(1);
-        assertThat(service.list(null, null, null, null, null, "IVR", null, null, null, null, PageRequest.of(0, 20))
+        assertThat(service.list(null, null, null, null, null, "IVR", null, null, null, null, null, PageRequest.of(0, 20))
                 .getTotalElements()).isEqualTo(1);
-        assertThat(service.list(null, null, null, null, "svc-b", null, null, null, null, null, PageRequest.of(0, 20))
+        assertThat(service.list(null, null, null, null, "svc-b", null, null, null, null, null, null, PageRequest.of(0, 20))
                 .getTotalElements()).isEqualTo(1);
 
         // options: combo değil TEKİL değerler
@@ -140,9 +140,9 @@ class IncidentServiceTest {
         a.put("status", "OPEN");
         service.create(a, "admin", 1L, 1L);
         service.create(body("çözülmüş kayıt", "2026-06-15T10:00:00", "LOW", "OTHER"), "admin", 1L, 1L); // body → RESOLVED
-        assertThat(service.list(null, null, null, null, null, null, null, null, null, Boolean.TRUE, PageRequest.of(0, 20))
+        assertThat(service.list(null, null, null, null, null, null, null, null, null, null, Boolean.TRUE, PageRequest.of(0, 20))
                 .getTotalElements()).isEqualTo(1);
-        assertThat(service.list(null, null, null, null, null, null, null, null, null, Boolean.FALSE, PageRequest.of(0, 20))
+        assertThat(service.list(null, null, null, null, null, null, null, null, null, null, Boolean.FALSE, PageRequest.of(0, 20))
                 .getTotalElements()).isEqualTo(1);
     }
 

@@ -27,6 +27,7 @@ public interface IncidentRecordRepository extends JpaRepository<IncidentRecord, 
                AND (:channel  IS NULL OR LOWER(i.channel) LIKE :channel)
                AND (:since    IS NULL OR i.occurredAt >= :since)
                AND (:until    IS NULL OR i.occurredAt <= :until)
+               AND (:teamId   IS NULL OR i.teamId = :teamId)
                AND (:slaBreached IS NULL OR i.slaBreached = :slaBreached)
                AND (:open IS NULL OR (:open = TRUE AND i.status <> 'RESOLVED')
                                   OR (:open = FALSE AND i.status = 'RESOLVED'))
@@ -39,6 +40,7 @@ public interface IncidentRecordRepository extends JpaRepository<IncidentRecord, 
                                       @Param("channel") String channel,
                                       @Param("since") String since,
                                       @Param("until") String until,
+                                      @Param("teamId") Long teamId,
                                       @Param("slaBreached") Boolean slaBreached,
                                       @Param("open") Boolean open,
                                       Pageable pageable);

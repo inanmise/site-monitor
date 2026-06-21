@@ -192,7 +192,7 @@ export const api = {
   incidents: {
     list: (params = {}) => {
       const q = new URLSearchParams()
-      for (const k of ['q', 'severity', 'category', 'status', 'service', 'channel', 'since', 'until', 'page', 'size']) {
+      for (const k of ['q', 'severity', 'category', 'status', 'service', 'channel', 'since', 'until', 'team_id', 'page', 'size']) {
         if (params[k] != null && params[k] !== '') q.set(k, params[k])
       }
       if (params.slaBreached != null) q.set('sla_breached', params.slaBreached)

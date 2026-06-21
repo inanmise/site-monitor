@@ -55,6 +55,7 @@ public class IncidentController {
             @RequestParam(required = false) String channel,
             @RequestParam(required = false) String since,
             @RequestParam(required = false) String until,
+            @RequestParam(name = "team_id", required = false) Long teamId,
             @RequestParam(name = "sla_breached", required = false) Boolean slaBreached,
             @RequestParam(required = false) Boolean open,
             @RequestParam(defaultValue = "0") int page,
@@ -63,7 +64,7 @@ public class IncidentController {
         requireView(session);
         int sz = Math.max(1, Math.min(size, 200));
         Page<IncidentRecord> result = this.service.list(q, severity, category, status, service, channel,
-                since, until, slaBreached, open,
+                since, until, teamId, slaBreached, open,
                 PageRequest.of(Math.max(0, page), sz, Sort.by(Sort.Direction.DESC, "occurredAt")));
         return ok(Map.of(
                 "data",  result.getContent().stream().map(this::dto).toList(),
