@@ -33,6 +33,7 @@ class SqlPlaygroundControllerTest {
     @MockitoBean UserService userService;
     @MockitoBean HttpMetricsService httpMetricsService;
     @MockitoBean AuthController authController;
+    @MockitoBean com.certmonitor.service.PermissionService permissionService;
 
     @Test
     @DisplayName("GET /tables without auth returns 401")

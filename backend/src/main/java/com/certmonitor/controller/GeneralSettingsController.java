@@ -31,17 +31,18 @@ public class GeneralSettingsController {
 
     private final AppSettingsService settingsService;
     private final AuditService auditService;
+    private final com.certmonitor.service.PermissionService permissionService;
 
     @GetMapping("/settings")
     public ResponseEntity<Map<String, Object>> getSettings(HttpSession session) {
-        requireBootstrapAdmin(session);
+        requireSettingsAccess(session, "settings.general", "edit");
         return ok(Map.of("data", settingsService.getCatalogForClient()));
     }
 
     @PutMapping("/settings")
     public ResponseEntity<Map<String, Object>> saveSettings(
             @RequestBody Map<String, Object> body, HttpSession session, HttpServletRequest request) {
-        requireBootstrapAdmin(session);
+        requireSettingsAccess(session, "settings.general", "edit");
         settingsService.save(body, actor(session));
         auditService.recordAction("GENERAL_SETTINGS_SAVE", session, request,
                 "SETTINGS", "general", "{\"keys\":" + (body.get("values") != null
@@ -53,12 +54,11 @@ public class GeneralSettingsController {
 
     // ── helpers ────────────────────────────────────────────────────────────────
 
-    private void requireBootstrapAdmin(HttpSession session) {
+    /** Bootstrap admin ("admin") HER ZAMAN erişir (fallback); aksi halde matris izni (settings.general/edit). */
+    private void requireSettingsAccess(HttpSession session, String key, String action) {
         Object u = session != null ? session.getAttribute("username") : null;
-        if (!"admin".equals(u)) {
-            log.warn("General settings access denied for user={} (bootstrap admin required)", u);
-            throw new SecurityException("Bu sayfaya yalnızca yönetici (admin) hesabı erişebilir");
-        }
+        if ("admin".equals(u)) return;
+        permissionService.require(session, key, action);
     }
 
     private String actor(HttpSession session) {

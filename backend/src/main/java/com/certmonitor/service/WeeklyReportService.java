@@ -62,6 +62,7 @@ public class WeeklyReportService {
     private final EmailNotificationService emailService;
     private final ObjectMapper objectMapper;
     private final AppSettingsService appSettings;
+    private final PermissionService permissionService;
 
     /** static resetTemplate için paylaşılan, thread-safe mapper — her çağrıda
      *  yeni ObjectMapper kurma maliyetini önler (Jackson 3 mapper'ları yeniden
@@ -891,8 +892,12 @@ public class WeeklyReportService {
      *  (PO'nun systemRole'ü USER'dır; orgRole DB'den okunur — session'da yok.) Onay yetkisinde
      *  kullanılır; silme bilinçli olarak PO'yu kapsamaz (yalnız ADMIN/TEAM_ADMIN siler). */
     private boolean isTeamManager(Long teamId, Actor a) {
-        if (a.isTeamAdmin() && Objects.equals(a.teamId(), teamId)) return true;
-        if (a.userId() != null && Objects.equals(a.teamId(), teamId)) {
+        // Onay yetkisi = (aynı takım) VE (weekly_reports.approve matris izni VEYA orgRole=PO).
+        // Matris izni systemRole'e göre (TEAM_ADMIN varsayılan=true); PO ise systemRole=USER
+        // olduğundan bilinçli özel durum (orgRole DB'den). Takım eşleşmesi her iki yolda da şart.
+        if (!Objects.equals(a.teamId(), teamId)) return false;
+        if (permissionService.allows(a.systemRole(), "weekly_reports.approve", "execute")) return true;
+        if (a.userId() != null) {
             return userRepo.findById(a.userId())
                     .map(u -> "PO".equals(u.getOrgRole())).orElse(false);
         }

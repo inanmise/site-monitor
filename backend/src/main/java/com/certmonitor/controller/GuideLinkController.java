@@ -21,6 +21,7 @@ import java.util.NoSuchElementException;
 public class GuideLinkController {
 
     private final GuideLinkRepository repo;
+    private final com.certmonitor.service.PermissionService permissionService;
 
     @GetMapping
     public ResponseEntity<Map<String, Object>> list(HttpSession session) {
@@ -32,6 +33,7 @@ public class GuideLinkController {
     @PostMapping
     public ResponseEntity<Map<String, Object>> create(@RequestBody GuideLink body, HttpSession session) {
         requireAdmin(session);
+        permissionService.require(session, "guide_links.crud", "edit");
         validate(body);
         body.setId(null);
         Instant now = Instant.now();
@@ -48,6 +50,7 @@ public class GuideLinkController {
     public ResponseEntity<Map<String, Object>> update(
             @PathVariable Long id, @RequestBody GuideLink body, HttpSession session) {
         requireAdmin(session);
+        permissionService.require(session, "guide_links.crud", "edit");
         validate(body);
         GuideLink existing = repo.findById(id)
                 .orElseThrow(() -> new NoSuchElementException("Guide link not found: " + id));
@@ -65,6 +68,7 @@ public class GuideLinkController {
     @DeleteMapping("/{id}")
     public ResponseEntity<Map<String, Object>> delete(@PathVariable Long id, HttpSession session) {
         requireAdmin(session);
+        permissionService.require(session, "guide_links.crud", "edit");
         if (!repo.existsById(id)) {
             throw new NoSuchElementException("Guide link not found: " + id);
         }

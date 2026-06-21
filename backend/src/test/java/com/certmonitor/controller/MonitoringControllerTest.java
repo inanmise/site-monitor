@@ -47,6 +47,7 @@ class MonitoringControllerTest {
     @MockitoBean DnsRecordRepository dnsRecordRepo;
     @MockitoBean DnsCheckerService dnsChecker;
     @MockitoBean CertificateService certificateService;
+    @MockitoBean com.certmonitor.service.PermissionService permissionService;
 
     @BeforeEach
     void stubTeamMap() {

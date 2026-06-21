@@ -41,6 +41,7 @@ public class MonitoringController {
 
     /** domain/host → sorumlu takım adı (izleme ekranlarında takım gösterimi/filtresi). */
     private final CertificateService certificateService;
+    private final com.certmonitor.service.PermissionService permissionService;
 
     private static final DateTimeFormatter ISO =
             DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
@@ -65,7 +66,8 @@ public class MonitoringController {
     // ── Uptime Overview ───────────────────────────────────────────────────────
 
     @GetMapping("/uptime/overview")
-    public ResponseEntity<Map<String, Object>> uptimeOverview() {
+    public ResponseEntity<Map<String, Object>> uptimeOverview(HttpSession session) {
+        permissionService.require(session, "monitoring.read", "view");
         List<LatestCheck> latestChecks = latestCheckRepo.findAllByOrderByDomainAsc();
         Map<String, LatestCheck> checkMap = latestChecks.stream()
                 .collect(Collectors.toMap(LatestCheck::getDomain, lc -> lc));
@@ -288,7 +290,8 @@ public class MonitoringController {
     // ── Port Monitors ─────────────────────────────────────────────────────────
 
     @GetMapping("/port")
-    public ResponseEntity<Map<String, Object>> listPort() {
+    public ResponseEntity<Map<String, Object>> listPort(HttpSession session) {
+        permissionService.require(session, "monitoring.read", "view");
         List<CertificateInventory> inventory = inventoryRepo.findByActiveTrueOrderByDomainAsc();
         String now = ISO.format(Instant.now());
 
@@ -339,6 +342,7 @@ public class MonitoringController {
     @PostMapping("/port")
     public ResponseEntity<Map<String, Object>> createPort(@RequestBody Map<String, Object> body, HttpSession session) {
         requireAdmin(session);
+        permissionService.require(session, "monitoring.crud", "edit");
         String now = ISO.format(Instant.now());
         PortMonitor m = new PortMonitor();
         m.setName((String) body.get("name"));
@@ -357,6 +361,7 @@ public class MonitoringController {
     @PutMapping("/port/{id}")
     public ResponseEntity<Map<String, Object>> updatePort(@PathVariable Long id, @RequestBody Map<String, Object> body, HttpSession session) {
         requireAdmin(session);
+        permissionService.require(session, "monitoring.crud", "edit");
         return portMonitorRepo.findById(id).map(m -> {
             if (body.get("name")            != null) m.setName((String) body.get("name"));
             if (body.get("host")            != null) m.setHost((String) body.get("host"));
@@ -374,6 +379,7 @@ public class MonitoringController {
     @DeleteMapping("/port/{id}")
     public ResponseEntity<Map<String, Object>> deletePort(@PathVariable Long id, HttpSession session) {
         requireAdmin(session);
+        permissionService.require(session, "monitoring.crud", "edit");
         return portMonitorRepo.findById(id).map(m -> {
             m.setActive(false);
             m.setUpdatedAt(ISO.format(Instant.now()));
@@ -410,6 +416,7 @@ public class MonitoringController {
     @PostMapping("/port/{id}/check")
     public ResponseEntity<Map<String, Object>> triggerPort(@PathVariable Long id, HttpSession session) {
         requireAdmin(session);
+        permissionService.require(session, "monitoring.trigger", "execute");
         return portMonitorRepo.findById(id).map(m -> {
             Map<String, Object> r = portChecker.check(m.getHost(), m.getPort(), m.getTimeoutMs());
             String now = ISO.format(Instant.now());
@@ -454,7 +461,8 @@ public class MonitoringController {
     // ── DNS Monitors ──────────────────────────────────────────────────────────
 
     @GetMapping("/dns")
-    public ResponseEntity<Map<String, Object>> listDns() {
+    public ResponseEntity<Map<String, Object>> listDns(HttpSession session) {
+        permissionService.require(session, "monitoring.read", "view");
         List<CertificateInventory> inventory = inventoryRepo.findByActiveTrueOrderByDomainAsc();
         String now = ISO.format(Instant.now());
 
@@ -500,6 +508,7 @@ public class MonitoringController {
     @PostMapping("/dns")
     public ResponseEntity<Map<String, Object>> createDns(@RequestBody Map<String, Object> body, HttpSession session) {
         requireAdmin(session);
+        permissionService.require(session, "monitoring.crud", "edit");
         String now = ISO.format(Instant.now());
         DnsMonitor m = new DnsMonitor();
         m.setName((String) body.get("name"));
@@ -516,6 +525,7 @@ public class MonitoringController {
     @PutMapping("/dns/{id}")
     public ResponseEntity<Map<String, Object>> updateDns(@PathVariable Long id, @RequestBody Map<String, Object> body, HttpSession session) {
         requireAdmin(session);
+        permissionService.require(session, "monitoring.crud", "edit");
         return dnsMonitorRepo.findById(id).map(m -> {
             if (body.get("name")            != null) m.setName((String) body.get("name"));
             if (body.get("domain")          != null) m.setDomain((String) body.get("domain"));
@@ -531,6 +541,7 @@ public class MonitoringController {
     @DeleteMapping("/dns/{id}")
     public ResponseEntity<Map<String, Object>> deleteDns(@PathVariable Long id, HttpSession session) {
         requireAdmin(session);
+        permissionService.require(session, "monitoring.crud", "edit");
         return dnsMonitorRepo.findById(id).map(m -> {
             m.setActive(false);
             m.setUpdatedAt(ISO.format(Instant.now()));
@@ -558,6 +569,7 @@ public class MonitoringController {
     @PostMapping("/dns/{id}/check")
     public ResponseEntity<Map<String, Object>> triggerDns(@PathVariable Long id, HttpSession session) {
         requireAdmin(session);
+        permissionService.require(session, "monitoring.trigger", "execute");
         return dnsMonitorRepo.findById(id).map(m -> {
             Map<String, Object> r = dnsChecker.check(m.getDomain(), m.getRecordType());
             String now = ISO.format(Instant.now());

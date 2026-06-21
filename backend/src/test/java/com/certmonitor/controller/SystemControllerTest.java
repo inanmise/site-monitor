@@ -52,6 +52,9 @@ class SystemControllerTest {
     @MockitoBean
     AuthController authController;
 
+    @MockitoBean
+    com.certmonitor.service.PermissionService permissionService;
+
     @BeforeEach
     void setup() {
         when(schedulerService.getSystemHealth()).thenReturn(Map.of("scheduler", "OK"));

@@ -37,10 +37,11 @@ public class LdapAdminController {
     private final LdapSettingsService settingsService;
     private final LdapDirectoryService directoryService;
     private final AuditService auditService;
+    private final com.certmonitor.service.PermissionService permissionService;
 
     @GetMapping("/settings")
     public ResponseEntity<Map<String, Object>> getSettings(HttpSession session) {
-        requireBootstrapAdmin(session);
+        requireSettingsAccess(session, "settings.ldap", "edit");
         LdapSettings s = settingsService.getOrDefaults();
         return ok(Map.of(
                 "data", settingsService.toClientMap(s),
@@ -51,7 +52,7 @@ public class LdapAdminController {
     @PutMapping("/settings")
     public ResponseEntity<Map<String, Object>> saveSettings(
             @RequestBody Map<String, Object> body, HttpSession session, HttpServletRequest request) {
-        requireBootstrapAdmin(session);
+        requireSettingsAccess(session, "settings.ldap", "edit");
         LdapSettings saved = settingsService.save(body, actor(session));
         auditService.recordAction("LDAP_SETTINGS_SAVE", session, request,
                 "LDAP", "settings",
@@ -66,7 +67,7 @@ public class LdapAdminController {
 
     @PostMapping("/test")
     public ResponseEntity<Map<String, Object>> testConnection(HttpSession session, HttpServletRequest request) {
-        requireBootstrapAdmin(session);
+        requireSettingsAccess(session, "settings.ldap", "edit");
         Map<String, Object> result = directoryService.testConnection();
         auditService.recordAction("LDAP_TEST", session, request,
                 "LDAP", "test", "{\"success\":" + result.get("success") + "}");
@@ -78,7 +79,7 @@ public class LdapAdminController {
     @PostMapping("/query-user")
     public ResponseEntity<Map<String, Object>> queryUser(
             @RequestBody Map<String, Object> body, HttpSession session, HttpServletRequest request) {
-        requireBootstrapAdmin(session);
+        requireSettingsAccess(session, "settings.ldap", "edit");
         // Accept {value, attr}; fall back to legacy {username}.
         Object rawVal = body.get("value") != null ? body.get("value") : body.get("username");
         String value = rawVal != null ? rawVal.toString().trim() : "";
@@ -100,13 +101,11 @@ public class LdapAdminController {
 
     // ── helpers ────────────────────────────────────────────────────────────────
 
-    /** Only the local bootstrap admin (username "admin") may touch app settings. */
-    private void requireBootstrapAdmin(HttpSession session) {
+    /** Bootstrap admin ("admin") HER ZAMAN erişir (fallback); aksi halde matris izni (settings.ldap/edit). */
+    private void requireSettingsAccess(HttpSession session, String key, String action) {
         Object u = session != null ? session.getAttribute("username") : null;
-        if (!"admin".equals(u)) {
-            log.warn("Settings access denied for user={} (bootstrap admin required)", u);
-            throw new SecurityException("Bu sayfaya yalnızca yönetici (admin) hesabı erişebilir");
-        }
+        if ("admin".equals(u)) return;
+        permissionService.require(session, key, action);
     }
 
     private String actor(HttpSession session) {

@@ -30,6 +30,7 @@ public class AuditController {
     private final LatestCheckRepository        latestCheckRepo;
     private final CertificateInventoryRepository inventoryRepo;
     private final TeamRepository               teamRepo;
+    private final com.certmonitor.service.PermissionService permissionService;
 
     private static final DateTimeFormatter ISO =
             DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
@@ -46,6 +47,7 @@ public class AuditController {
             @RequestParam(defaultValue = "false") boolean anomalyOnly,
             HttpSession session) {
         requireAuditAccess(session);
+        permissionService.require(session, "audit_log.read", "view");
 
         size = Math.min(size, 200);
         String actorParam = (actor == null || actor.isBlank()) ? null : "%" + actor.toLowerCase() + "%";
@@ -66,6 +68,7 @@ public class AuditController {
     @GetMapping("/audit/stats")
     public ResponseEntity<Map<String, Object>> auditStats(HttpSession session) {
         requireAuditAccess(session);
+        permissionService.require(session, "audit_log.read", "view");
 
         String last24h = ISO.format(Instant.now().minusSeconds(86_400));
         String last7d  = ISO.format(Instant.now().minusSeconds(7 * 86_400L));
@@ -87,6 +90,7 @@ public class AuditController {
 
     @GetMapping("/audit/weak-algorithms")
     public ResponseEntity<Map<String, Object>> weakAlgorithmReport(HttpSession session) {
+        permissionService.require(session, "weak_algo.read", "view");
         // Tüm tabloyu çekmek yerine zayıf-algoritma adaylarını DB'de filtrele
         List<LatestCheck> weakCandidates = latestCheckRepo.findWeakAlgorithmCandidates();
 

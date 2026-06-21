@@ -33,6 +33,7 @@ class LdapAdminControllerTest {
     @MockitoBean LdapSettingsService settingsService;
     @MockitoBean LdapDirectoryService directoryService;
     @MockitoBean AuditService auditService;
+    @MockitoBean com.certmonitor.service.PermissionService permissionService;
 
     // Beans pulled in by WebConfig / AuthInterceptor / HttpMetricsInterceptor.
     @MockitoBean RememberMeService rememberMeService;
@@ -46,6 +47,10 @@ class LdapAdminControllerTest {
         when(settingsService.isConfigured()).thenReturn(false);
         when(settingsService.toClientMap(any()))
                 .thenReturn(Map.of("enabled", true, "bind_password_set", false));
+        // Bootstrap admin require'ı atlar; non-bootstrap için matris izni reddini simüle et (→ 403).
+        org.mockito.Mockito.doThrow(new SecurityException("no perm")).when(permissionService)
+                .require(org.mockito.ArgumentMatchers.any(jakarta.servlet.http.HttpSession.class),
+                        org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyString());
     }
 
     @Test

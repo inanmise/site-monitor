@@ -110,6 +110,9 @@ class AdminControllerTest {
     @MockitoBean
     com.certmonitor.service.ClientIpResolver clientIpResolver;
 
+    @MockitoBean
+    com.certmonitor.service.PermissionService permissionService;
+
     @BeforeEach
     void setup() {
         when(userService.listTeams()).thenReturn(java.util.Collections.emptyList());
@@ -125,6 +128,16 @@ class AdminControllerTest {
         });
         // createUser/updateUser persist AD profile fields via a follow-up save → echo the entity.
         when(userRepo.save(any(AppUser.class))).thenAnswer(inv -> inv.getArgument(0));
+        // isTeamAdmin(session) artık permissionService.allows(system.team_admin/global_admin) ile çözülür
+        // (eski systemRole-attribute fallback'i yok) → rol-bazlı stub: ADMIN+TEAM_ADMIN team_admin'e,
+        // yalnız ADMIN global_admin'e sahip. Diğer izin kontrolleri (require) mock'ta no-op.
+        when(permissionService.allows(any(jakarta.servlet.http.HttpSession.class), eq("system.team_admin"), eq("execute")))
+                .thenAnswer(inv -> {
+                    Object r = ((jakarta.servlet.http.HttpSession) inv.getArgument(0)).getAttribute("systemRole");
+                    return "ADMIN".equals(r) || "TEAM_ADMIN".equals(r);
+                });
+        when(permissionService.allows(any(jakarta.servlet.http.HttpSession.class), eq("system.global_admin"), eq("execute")))
+                .thenAnswer(inv -> "ADMIN".equals(((jakarta.servlet.http.HttpSession) inv.getArgument(0)).getAttribute("systemRole")));
     }
 
     // ── Auth guard ────────────────────────────────────────────────────────────

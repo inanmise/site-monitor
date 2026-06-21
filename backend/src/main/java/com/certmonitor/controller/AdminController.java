@@ -53,8 +53,7 @@ public class AdminController {
     private final com.certmonitor.service.DiagnosticHistoryService diagnosticHistoryService;
     private final com.certmonitor.service.ClientIpResolver clientIpResolver;
 
-    @org.springframework.beans.factory.annotation.Autowired(required = false)
-    private com.certmonitor.service.PermissionService permissionService;
+    private final com.certmonitor.service.PermissionService permissionService;
 
     private static final DateTimeFormatter ISO =
             DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
@@ -65,6 +64,7 @@ public class AdminController {
     public ResponseEntity<Map<String, Object>> listInventory(
             @RequestParam(defaultValue = "false") boolean showDeleted,
             HttpSession session) {
+        requirePerm(session, "inventory.list", "view");
         List<CertificateInventory> items;
         if (isAdminOrAudit(session)) {                     // global admin / AUDIT → all
             items = showDeleted
@@ -94,6 +94,7 @@ public class AdminController {
     public ResponseEntity<Map<String, Object>> addInventory(
             @jakarta.validation.Valid @RequestBody CertificateInventory item, HttpSession session, HttpServletRequest request) {
         requireAdminOrTeamAdmin(session);
+        requirePerm(session, "inventory.crud", "edit");
         validateDomain(item.getDomain());
         if (item.getTeamId() == null) {
             throw new IllegalArgumentException("A team must be selected for the certificate");
@@ -126,6 +127,7 @@ public class AdminController {
         CertificateInventory existing = inventoryRepo.findById(id)
                 .orElseThrow(() -> new NoSuchElementException("Inventory item not found: " + id));
         requireTeamScopedAdmin(session, existing.getTeamId());
+        requirePerm(session, "inventory.crud", "edit");
         // TEAM_ADMIN cannot transfer an item to another team via this endpoint —
         // freeze teamId to its current value.
         if (isTeamAdmin(session)) {
@@ -280,6 +282,7 @@ public class AdminController {
         String domain = body.get("domain") != null ? body.get("domain").toString().trim() : null;
         validateDomain(domain);
         requireAdminOrMonitoredDomain(session, domain);
+        requirePerm(session, "diagnostics.run", "execute");
         Long portRaw = toLong(body.get("port"));
         int port = portRaw != null ? portRaw.intValue() : 443;
         if (port < 1 || port > 65535)
@@ -303,6 +306,7 @@ public class AdminController {
         String domain = body.get("domain") != null ? body.get("domain").toString().trim() : null;
         validateDomain(domain);
         requireAdminOrMonitoredDomain(session, domain);
+        requirePerm(session, "diagnostics.run", "execute");
         Long portRaw = toLong(body.get("port"));
         int port = portRaw != null ? portRaw.intValue() : 443;
         if (port < 1 || port > 65535)
@@ -324,6 +328,7 @@ public class AdminController {
         String domain = body.get("domain") != null ? body.get("domain").toString().trim() : null;
         validateDomain(domain);
         requireAdminOrMonitoredDomain(session, domain);
+        requirePerm(session, "diagnostics.run", "execute");
         Long portRaw = toLong(body.get("port"));
         int port = portRaw != null ? portRaw.intValue() : 443;
         if (port < 1 || port > 65535)
@@ -348,6 +353,7 @@ public class AdminController {
         String domain = body.get("domain") != null ? body.get("domain").toString().trim() : null;
         validateDomain(domain);
         requireAdminOrMonitoredDomain(session, domain);
+        requirePerm(session, "diagnostics.run", "execute");
         Long portRaw = toLong(body.get("port"));
         int port = portRaw != null ? portRaw.intValue() : 443;
         if (port < 1 || port > 65535)
@@ -369,6 +375,7 @@ public class AdminController {
             @RequestParam String domain, HttpSession session) {
         validateDomain(domain);
         requireAdminOrMonitoredDomain(session, domain);
+        requirePerm(session, "diagnostics.history", "view");
         List<Map<String, Object>> data = diagnosticHistoryService.history(domain).stream()
                 .map(d -> {
                     Map<String, Object> m = new java.util.LinkedHashMap<>();
@@ -391,6 +398,7 @@ public class AdminController {
             @PathVariable Long id, HttpSession session) {
         com.certmonitor.model.DiagnosticRun d = diagnosticHistoryService.get(id);
         requireAdminOrMonitoredDomain(session, d.getDomain());
+        requirePerm(session, "diagnostics.history", "view");
         Map<String, Object> m = new java.util.LinkedHashMap<>();
         m.put("id", d.getId());
         m.put("domain", d.getDomain());
@@ -441,6 +449,7 @@ public class AdminController {
             @PathVariable Long id, HttpSession session, HttpServletRequest request) {
         return inventoryRepo.findById(id).map(inv -> {
             requireTeamScopedAdmin(session, inv.getTeamId());
+            requirePerm(session, "inventory.crud", "edit");
             inv.setDeletedAt(now());
             inv.setActive(false);
             inventoryRepo.save(inv);
@@ -466,6 +475,7 @@ public class AdminController {
     public ResponseEntity<Map<String, Object>> bulkInventoryAction(
             @RequestBody Map<String, Object> body, HttpSession session, HttpServletRequest request) {
         requireAdminOrTeamAdmin(session);
+        requirePerm(session, "inventory.crud", "edit");
         String action = body.get("action") != null ? body.get("action").toString().trim().toLowerCase() : "";
         if (!java.util.Set.of("activate", "deactivate", "delete").contains(action)) {
             throw new IllegalArgumentException("action must be one of: activate, deactivate, delete");
@@ -534,6 +544,7 @@ public class AdminController {
         } else {
             requireAdmin(session);
         }
+        requirePerm(session, "inventory.crud", "edit");
         latestCheckRepo.deleteById(domain);
         auditService.recordAction("DOMAIN_DELETE_CHECK", session, request, "CERTIFICATE", domain, null);
         return ok(Map.of("message", "Deleted"));
@@ -544,6 +555,7 @@ public class AdminController {
             @PathVariable Long id, HttpSession session, HttpServletRequest request) {
         return inventoryRepo.findById(id).map(inv -> {
             requireTeamScopedAdmin(session, inv.getTeamId());
+            requirePerm(session, "inventory.crud", "edit");
             inv.setDeletedAt(null);
             inv.setActive(true);
             inv.setUpdatedAt(now());
@@ -614,6 +626,7 @@ public class AdminController {
             @PathVariable Long id, @RequestBody Map<String, Object> body,
             HttpSession session, HttpServletRequest request) {
         requireAdmin(session);
+        requirePerm(session, "inventory.transfer", "execute");
         Long newTeamId = toLong(body.get("team_id"));
         CertificateInventory inv = inventoryRepo.findById(id)
                 .orElseThrow(() -> new NoSuchElementException("Inventory item not found: " + id));
@@ -632,6 +645,7 @@ public class AdminController {
             @PathVariable Long id, @RequestBody Map<String, Object> body,
             HttpSession session, HttpServletRequest request) {
         requireAdmin(session);
+        requirePerm(session, "inventory.transfer", "execute");
         Long newUgTeamId = toLong(body.get("ug_team_id"));
         CertificateInventory inv = inventoryRepo.findById(id)
                 .orElseThrow(() -> new NoSuchElementException("Inventory item not found: " + id));
@@ -649,7 +663,7 @@ public class AdminController {
 
     @GetMapping("/thresholds")
     public ResponseEntity<Map<String, Object>> getThresholds(HttpSession session) {
-        requireAdmin(session);
+        requirePerm(session, "thresholds.read", "view");
         return ok(Map.of("data", thresholdRepo.findAll()));
     }
 
@@ -657,6 +671,7 @@ public class AdminController {
     public ResponseEntity<Map<String, Object>> createThreshold(
             @RequestBody AlertThreshold t, HttpSession session) {
         requireAdmin(session);
+        requirePerm(session, "thresholds.edit", "edit");
         t.setId(null);
         return ok(Map.of("data", thresholdRepo.save(t)));
     }
@@ -665,6 +680,7 @@ public class AdminController {
     public ResponseEntity<Map<String, Object>> updateThreshold(
             @PathVariable Long id, @RequestBody AlertThreshold t, HttpSession session) {
         requireAdmin(session);
+        requirePerm(session, "thresholds.edit", "edit");
         AlertThreshold existing = thresholdRepo.findById(id)
                 .orElseThrow(() -> new NoSuchElementException("Threshold not found: " + id));
         existing.setName(t.getName() != null ? t.getName() : existing.getName());
@@ -681,6 +697,7 @@ public class AdminController {
 
     @GetMapping("/contacts")
     public ResponseEntity<Map<String, Object>> listContacts(HttpSession session) {
+        requirePerm(session, "contacts.list", "view");
         List<EscalationContact> contacts;
         if (isAdminOrAudit(session)) {
             contacts = contactRepo.findByActiveTrueOrderByRoleAsc();
@@ -695,6 +712,7 @@ public class AdminController {
 
     @GetMapping("/contacts/all")
     public ResponseEntity<Map<String, Object>> listAllContacts(HttpSession session) {
+        requirePerm(session, "contacts.list", "view");
         List<EscalationContact> contacts;
         if (isAdminOrAudit(session)) {
             contacts = contactRepo.findAll();
@@ -711,6 +729,7 @@ public class AdminController {
     public ResponseEntity<Map<String, Object>> addContact(
             @RequestBody Map<String, Object> body, HttpSession session) {
         requireAdminOrTeamAdmin(session);
+        requirePerm(session, "contacts.crud", "edit");
         EscalationContact contact = new EscalationContact();
         applyContactFields(contact, body, session);
         contact.setId(null);
@@ -732,6 +751,7 @@ public class AdminController {
         EscalationContact existing = contactRepo.findById(id)
                 .orElseThrow(() -> new NoSuchElementException("Contact not found: " + id));
         requireTeamScopedAdmin(session, existing.getTeamId());
+        requirePerm(session, "contacts.crud", "edit");
         applyContactFields(existing, body, session);
         return ok(Map.of("data", contactRepo.save(existing)));
     }
@@ -772,6 +792,7 @@ public class AdminController {
         EscalationContact existing = contactRepo.findById(id)
                 .orElseThrow(() -> new NoSuchElementException("Contact not found: " + id));
         requireTeamScopedAdmin(session, existing.getTeamId());
+        requirePerm(session, "contacts.crud", "edit");
         contactRepo.deleteById(id);
         return ok(Map.of("message", "Deleted"));
     }
@@ -791,6 +812,7 @@ public class AdminController {
             @RequestParam(required = false) String domain,
             @RequestParam(required = false) String alertType,
             HttpSession session) {
+        requirePerm(session, "alerts.read", "view");
         int sz = Math.max(1, Math.min(size, 200));
         Boolean resolvedEffective = resolved != null ? resolved : (onlyOpen ? Boolean.FALSE : null);
         String alertTypeEffective = (alertType != null && !alertType.isBlank()) ? alertType.trim() : null;
@@ -875,6 +897,7 @@ public class AdminController {
     public ResponseEntity<Map<String, Object>> acknowledgeAlert(
             @PathVariable Long id,
             HttpSession session, HttpServletRequest request) {
+        requirePerm(session, "alerts.actions", "execute");
         String by = resolveDisplayName(session);
         AlertEvent event = escalationService.acknowledge(id, by);
         auditService.recordAction("ALERT_ACKNOWLEDGE", session, request,
@@ -887,6 +910,7 @@ public class AdminController {
     public ResponseEntity<Map<String, Object>> resolveAlert(
             @PathVariable Long id,
             HttpSession session, HttpServletRequest request) {
+        requirePerm(session, "alerts.actions", "execute");
         String by = resolveDisplayName(session);
         AlertEvent event = escalationService.resolve(id, by);
         auditService.recordAction("ALERT_RESOLVE", session, request,
@@ -898,12 +922,14 @@ public class AdminController {
     @PostMapping("/alerts/{id}/re-notify")
     public ResponseEntity<Map<String, Object>> reNotifyAlert(
             @PathVariable Long id, HttpSession session) {
+        requirePerm(session, "alerts.actions", "execute");
         return ok(Map.of("data", escalationService.reNotify(id), "message", "Notification triggered"));
     }
 
     @GetMapping("/alerts/{id}/notifications")
     public ResponseEntity<Map<String, Object>> getAlertNotifications(
             @PathVariable Long id, HttpSession session) {
+        requirePerm(session, "alerts.read", "view");
         return ok(Map.of("data", notificationLogRepo.findByAlertEventIdOrderBySentAtDesc(id)));
     }
 
@@ -911,6 +937,7 @@ public class AdminController {
 
     @GetMapping("/teams")
     public ResponseEntity<Map<String, Object>> listTeams(HttpSession session) {
+        requirePerm(session, "teams.list", "view");
         var all = userService.listTeams();
         if (isAdminOrAudit(session)) {
             return ok(Map.of("data", all));
@@ -926,6 +953,7 @@ public class AdminController {
     public ResponseEntity<Map<String, Object>> createTeam(
             @RequestBody Map<String, Object> body, HttpSession session, HttpServletRequest request) {
         requireAdmin(session);
+        requirePerm(session, "teams.lifecycle", "execute");
         Team team = userService.createTeam(
                 (String) body.get("name"),
                 (String) body.get("email"),
@@ -941,6 +969,7 @@ public class AdminController {
     public ResponseEntity<Map<String, Object>> updateTeam(
             @PathVariable Long id, @RequestBody Map<String, Object> body, HttpSession session) {
         requireTeamScopedAdmin(session, id);
+        requirePerm(session, "teams.update", "edit");
         Team team = userService.updateTeam(id,
                 (String) body.get("name"),
                 (String) body.get("email"),
@@ -962,6 +991,7 @@ public class AdminController {
     @GetMapping("/teams/{id}/users")
     public ResponseEntity<Map<String, Object>> listTeamUsers(
             @PathVariable Long id, HttpSession session) {
+        requirePerm(session, "users.list", "view");
         // Read-only visibility: admin/audit see any team; scoped roles only teams in their view scope.
         if (!isAdminOrAudit(session)) {
             List<Long> scope = viewScope(session);
@@ -978,6 +1008,7 @@ public class AdminController {
     public ResponseEntity<Map<String, Object>> deleteTeam(
             @PathVariable Long id, HttpSession session, HttpServletRequest request) {
         requireAdmin(session);
+        requirePerm(session, "teams.lifecycle", "execute");
         userService.deleteTeam(id);
         auditService.recordAction("TEAM_DELETE", session, request, "TEAM", id.toString(), null);
         return ok(Map.of("message", "Team deleted"));
@@ -987,6 +1018,7 @@ public class AdminController {
 
     @GetMapping("/users")
     public ResponseEntity<Map<String, Object>> listUsers(HttpSession session) {
+        requirePerm(session, "users.list", "view");
         var all = userService.listUsers();
         if (isAdminOrAudit(session)) {
             return ok(Map.of("data", all));
@@ -1009,6 +1041,7 @@ public class AdminController {
             @RequestParam(required = false)    String orgRole,
             @RequestParam(required = false)    Long   teamId,
             HttpSession session) {
+        requirePerm(session, "users.list", "view");
         size = Math.min(Math.max(size, 1), 200);
         // TEAM_ADMIN yalnız kendi takımını görür → client teamId yok sayılır, kendi takımına sabitlenir
         Long effTeamId = isAdminOrAudit(session) ? teamId : teamId(session);
@@ -1037,6 +1070,7 @@ public class AdminController {
     public ResponseEntity<Map<String, Object>> createUser(
             @RequestBody Map<String, Object> body, HttpSession session, HttpServletRequest request) {
         requireAdminOrTeamAdmin(session);
+        requirePerm(session, "users.crud", "edit");
         String requestedRole = (String) body.get("system_role");
         java.util.List<Long> requestedTeams = teamIdsFromBody(body);
         if (isTeamAdmin(session)) {
@@ -1072,6 +1106,7 @@ public class AdminController {
         AppUser target = userRepo.findById(id)
                 .orElseThrow(() -> new NoSuchElementException("User not found: " + id));
         requireTeamScopedAdmin(session, target.getTeamId());
+        requirePerm(session, "users.crud", "edit");
         String requestedRole = (String) body.get("system_role");
         // null = takımlara dokunma (kısmi güncelleme); team_ids veya team_id verilirse (boş dahil) set et.
         java.util.List<Long> requestedTeams =
@@ -1136,6 +1171,7 @@ public class AdminController {
         AppUser target = userRepo.findById(id)
                 .orElseThrow(() -> new NoSuchElementException("User not found: " + id));
         requireTeamScopedAdmin(session, target.getTeamId());
+        requirePerm(session, "users.actions", "execute");
         String adminPwd = body.get("admin_password");
         if (adminPwd == null || adminPwd.isBlank()) {
             throw new IllegalArgumentException("Admin password required");
@@ -1164,6 +1200,7 @@ public class AdminController {
         AppUser target = userRepo.findById(id)
                 .orElseThrow(() -> new NoSuchElementException("User not found: " + id));
         requireTeamScopedAdmin(session, target.getTeamId());
+        requirePerm(session, "users.actions", "execute");
         userService.unlockUser(id);
         auditService.recordAction("USER_UNLOCK", session, request, "USER", id.toString(), null);
         return ok(Map.of("message", "User unlocked"));
@@ -1179,6 +1216,7 @@ public class AdminController {
         AppUser target = userRepo.findById(id)
                 .orElseThrow(() -> new NoSuchElementException("User not found: " + id));
         requireTeamScopedAdmin(session, target.getTeamId());
+        requirePerm(session, "users.crud", "edit");
         guardLastActiveAdmin(target, false);
         userService.deleteUser(id);
         auditService.recordAction("USER_DELETE", session, request, "USER", id.toString(), null);
@@ -1195,6 +1233,7 @@ public class AdminController {
     @GetMapping("/notes/{domain}")
     public ResponseEntity<Map<String, Object>> getNotes(
             @PathVariable String domain, HttpSession session) {
+        requirePerm(session, "notes.read", "view");
         List<CertificateNote> notes;
         if (isAdminOrAudit(session)) {
             notes = noteRepo.findByDomainOrderByCreatedAtDesc(domain);
@@ -1213,6 +1252,7 @@ public class AdminController {
             @RequestBody Map<String, String> body,
             HttpSession session, HttpServletRequest request) {
         requireAdminOrTeamAdmin(session);
+        requirePerm(session, "notes.crud", "edit");
         String text = body.get("note");
         if (text == null || text.isBlank())
             throw new IllegalArgumentException("Note text cannot be blank");
@@ -1252,6 +1292,7 @@ public class AdminController {
             @RequestBody Map<String, String> body,
             HttpSession session, HttpServletRequest request) {
         requireAdminOrTeamAdmin(session);
+        requirePerm(session, "notes.crud", "edit");
         CertificateNote note = noteRepo.findById(noteId)
                 .orElseThrow(() -> new NoSuchElementException("Note not found: " + noteId));
         if (note.getDeletedAt() != null)
@@ -1300,6 +1341,7 @@ public class AdminController {
             @PathVariable String domain, @PathVariable Long noteId,
             HttpSession session, HttpServletRequest request) {
         requireAdminOrTeamAdmin(session);
+        requirePerm(session, "notes.crud", "edit");
         CertificateNote note = noteRepo.findById(noteId)
                 .orElseThrow(() -> new NoSuchElementException("Note not found: " + noteId));
         if (note.getDeletedAt() != null)
@@ -1332,6 +1374,7 @@ public class AdminController {
     @GetMapping("/notes/{domain}/{noteId}/revisions")
     public ResponseEntity<Map<String, Object>> getNoteRevisions(
             @PathVariable String domain, @PathVariable Long noteId, HttpSession session) {
+        requirePerm(session, "notes.read", "view");
         CertificateNote note = noteRepo.findById(noteId)
                 .orElseThrow(() -> new NoSuchElementException("Note not found: " + noteId));
         if (!domain.equals(note.getDomain()))
@@ -1345,6 +1388,7 @@ public class AdminController {
             @PathVariable String domain, @PathVariable Long noteId,
             HttpSession session, HttpServletRequest request) {
         requireAdmin(session);
+        requirePerm(session, "notes.crud", "edit");
         CertificateNote note = noteRepo.findById(noteId)
                 .orElseThrow(() -> new NoSuchElementException("Note not found: " + noteId));
         if (!domain.equals(note.getDomain()))
@@ -1401,11 +1445,13 @@ public class AdminController {
     }
 
     private boolean isTeamAdmin(HttpSession session) {
-        if (permissionService != null) {
-            return permissionService.allows(session, "system.team_admin", "execute")
-                && !permissionService.allows(session, "system.global_admin", "execute");
-        }
-        return "TEAM_ADMIN".equals(session.getAttribute("systemRole"));
+        return permissionService.allows(session, "system.team_admin", "execute")
+            && !permissionService.allows(session, "system.global_admin", "execute");
+    }
+
+    /** Yetki kapısı kısayolu — rolün (resource, action) iznini doğrular (403 fırlatır). Takım-scope AYRI. */
+    private void requirePerm(HttpSession session, String key, String action) {
+        permissionService.require(session, key, action);
     }
 
     /** Read scope: null = all teams; else only these (müdür: subordinates'; PO: led; USER: own). */

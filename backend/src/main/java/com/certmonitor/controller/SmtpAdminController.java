@@ -36,10 +36,11 @@ public class SmtpAdminController {
     private final SmtpSettingsService settingsService;
     private final SmtpMailService mailService;
     private final AuditService auditService;
+    private final com.certmonitor.service.PermissionService permissionService;
 
     @GetMapping("/settings")
     public ResponseEntity<Map<String, Object>> getSettings(HttpSession session) {
-        requireBootstrapAdmin(session);
+        requireSettingsAccess(session, "settings.smtp", "edit");
         SmtpSettings s = settingsService.getOrDefaults();
         return ok(Map.of(
                 "data", settingsService.toClientMap(s),
@@ -50,7 +51,7 @@ public class SmtpAdminController {
     @PutMapping("/settings")
     public ResponseEntity<Map<String, Object>> saveSettings(
             @RequestBody Map<String, Object> body, HttpSession session, HttpServletRequest request) {
-        requireBootstrapAdmin(session);
+        requireSettingsAccess(session, "settings.smtp", "edit");
         SmtpSettings saved = settingsService.save(body, actor(session));
         auditService.recordAction("SMTP_SETTINGS_SAVE", session, request,
                 "SMTP", "settings",
@@ -64,7 +65,7 @@ public class SmtpAdminController {
 
     @PostMapping("/test")
     public ResponseEntity<Map<String, Object>> testConnection(HttpSession session, HttpServletRequest request) {
-        requireBootstrapAdmin(session);
+        requireSettingsAccess(session, "settings.smtp", "edit");
         Map<String, Object> result = mailService.testConnection();
         auditService.recordAction("SMTP_TEST", session, request,
                 "SMTP", "test", "{\"success\":" + result.get("success") + "}");
@@ -76,7 +77,7 @@ public class SmtpAdminController {
     @PostMapping("/test-email")
     public ResponseEntity<Map<String, Object>> sendTest(
             @RequestBody Map<String, Object> body, HttpSession session, HttpServletRequest request) {
-        requireBootstrapAdmin(session);
+        requireSettingsAccess(session, "settings.smtp", "edit");
         String recipient = body.get("recipient") != null ? body.get("recipient").toString().trim() : "";
         Map<String, Object> result = mailService.sendTest(recipient);
         auditService.recordAction("SMTP_TEST_EMAIL", session, request,
@@ -88,13 +89,12 @@ public class SmtpAdminController {
 
     // ── helpers ────────────────────────────────────────────────────────────────
 
-    /** Only the local bootstrap admin (username "admin") may touch app settings. */
-    private void requireBootstrapAdmin(HttpSession session) {
+    /** Yerel bootstrap admin ("admin") HER ZAMAN erişir (güvenlik fallback'i); aksi halde matris
+     *  izni gerekir (ör. settings.smtp/edit). Böylece SMTP ayarları yetkilendirilebilir olur. */
+    private void requireSettingsAccess(HttpSession session, String key, String action) {
         Object u = session != null ? session.getAttribute("username") : null;
-        if (!"admin".equals(u)) {
-            log.warn("SMTP settings access denied for user={} (bootstrap admin required)", u);
-            throw new SecurityException("Bu sayfaya yalnızca yönetici (admin) hesabı erişebilir");
-        }
+        if ("admin".equals(u)) return;
+        permissionService.require(session, key, action);
     }
 
     private String actor(HttpSession session) {

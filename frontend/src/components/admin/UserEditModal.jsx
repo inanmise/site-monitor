@@ -98,9 +98,10 @@ export default function UserEditModal({ user, teams, onClose, onSaved }) {
               value={form.system_role}
               onChange={v => setForm({ ...form, system_role: v })}
               options={[
-                { value: 'USER',  label: 'USER' },
-                { value: 'AUDIT', label: 'AUDIT' },
-                { value: 'ADMIN', label: 'ADMIN' },
+                { value: 'USER',       label: 'USER' },
+                { value: 'TEAM_ADMIN', label: 'TEAM_ADMIN' },
+                { value: 'AUDIT',      label: 'AUDIT' },
+                { value: 'ADMIN',      label: 'ADMIN' },
               ]}
             />
           </label>

@@ -33,6 +33,7 @@ class SmtpAdminControllerTest {
     @MockitoBean SmtpSettingsService settingsService;
     @MockitoBean SmtpMailService mailService;
     @MockitoBean AuditService auditService;
+    @MockitoBean com.certmonitor.service.PermissionService permissionService;
 
     // Beans pulled in by WebConfig / AuthInterceptor / HttpMetricsInterceptor.
     @MockitoBean RememberMeService rememberMeService;
@@ -46,6 +47,11 @@ class SmtpAdminControllerTest {
         when(settingsService.isConfigured()).thenReturn(false);
         when(settingsService.toClientMap(any()))
                 .thenReturn(Map.of("enabled", true, "host", "smtp.gmail.com", "password_set", true));
+        // Bootstrap admin ("admin") require'ı atlar (erken dönüş); non-bootstrap için require çağrılır →
+        // matris izni reddini simüle etmek için her zaman fırlat (→ 403). Bootstrap happy-path etkilenmez.
+        org.mockito.Mockito.doThrow(new SecurityException("no perm")).when(permissionService)
+                .require(org.mockito.ArgumentMatchers.any(jakarta.servlet.http.HttpSession.class),
+                        org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyString());
     }
 
     @Test

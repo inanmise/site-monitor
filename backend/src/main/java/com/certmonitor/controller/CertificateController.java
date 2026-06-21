@@ -35,6 +35,7 @@ public class CertificateController {
     private final CertificateInventoryRepository inventoryRepo;
     private final NetworkOutageEventRepository networkOutageRepo;
     private final com.certmonitor.service.ExtendedHealthService extendedHealthService;
+    private final com.certmonitor.service.PermissionService permissionService;
 
     private static final DateTimeFormatter ISO =
             DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
@@ -134,6 +135,7 @@ public class CertificateController {
     @PostMapping("/scheduler/run")
     public ResponseEntity<Map<String, Object>> runScheduler(HttpSession session) {
         requireAdmin(session);
+        permissionService.require(session, "scheduler.run", "execute");
         new Thread(schedulerService::runCheck).start();
         return ok(Map.of("success", true, "message", "Check started", "timestamp", now()));
     }

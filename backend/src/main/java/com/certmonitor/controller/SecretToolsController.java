@@ -32,10 +32,11 @@ public class SecretToolsController {
 
     private final SecretToolsService service;
     private final AuditService auditService;
+    private final com.certmonitor.service.PermissionService permissionService;
 
     @GetMapping("/info")
     public ResponseEntity<Map<String, Object>> info(HttpSession session) {
-        requireBootstrapAdmin(session);
+        requireSettingsAccess(session, "settings.secrets", "execute");
         return ok(Map.of(
                 "dev_default_key", service.devDefaultKey(),
                 "secret_key_set", service.isSecretKeyConfigured()));
@@ -44,7 +45,7 @@ public class SecretToolsController {
     @PostMapping("/decrypt")
     public ResponseEntity<Map<String, Object>> decrypt(
             @RequestBody Map<String, Object> body, HttpSession session, HttpServletRequest request) {
-        requireBootstrapAdmin(session);
+        requireSettingsAccess(session, "settings.secrets", "execute");
         String key = body.get("key") == null ? "" : String.valueOf(body.get("key")).trim();
         if (key.isEmpty()) throw new IllegalArgumentException("Çözümleme için anahtar gerekli");
         List<Map<String, Object>> data = service.decryptWithKey(key);
@@ -55,12 +56,11 @@ public class SecretToolsController {
         return ok(Map.of("data", data));
     }
 
-    private void requireBootstrapAdmin(HttpSession session) {
+    /** Bootstrap admin ("admin") HER ZAMAN erişir (fallback); aksi halde matris izni (settings.secrets/execute). */
+    private void requireSettingsAccess(HttpSession session, String key, String action) {
         Object u = session != null ? session.getAttribute("username") : null;
-        if (!"admin".equals(u)) {
-            log.warn("Secret tools access denied for user={} (bootstrap admin required)", u);
-            throw new SecurityException("Bu sayfaya yalnızca yönetici (admin) hesabı erişebilir");
-        }
+        if ("admin".equals(u)) return;
+        permissionService.require(session, key, action);
     }
 
     private ResponseEntity<Map<String, Object>> ok(Map<String, Object> body) {

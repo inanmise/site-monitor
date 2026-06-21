@@ -6,6 +6,7 @@ import com.certmonitor.service.PermissionService;
 import com.certmonitor.service.RememberMeService;
 import com.certmonitor.service.SecretToolsService;
 import com.certmonitor.service.UserService;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -34,6 +35,14 @@ class SecretToolsControllerTest {
     @MockitoBean UserService userService;
     @MockitoBean HttpMetricsService httpMetricsService;
     @MockitoBean AuthController authController;
+
+    @BeforeEach
+    void setUp() {
+        // Bootstrap admin ("admin") require'ı atlar; non-bootstrap için matris izni reddini simüle et → 403.
+        org.mockito.Mockito.doThrow(new SecurityException("no perm")).when(permissionService)
+                .require(org.mockito.ArgumentMatchers.any(jakarta.servlet.http.HttpSession.class),
+                        org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyString());
+    }
 
     @Test
     @DisplayName("POST decrypt oturumsuz → 401")

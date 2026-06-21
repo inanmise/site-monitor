@@ -21,10 +21,12 @@ public class SqlPlaygroundController {
 
     private final SqlPlaygroundService service;
     private final AuditService auditService;
+    private final com.certmonitor.service.PermissionService permissionService;
 
     @GetMapping("/tables")
     public ResponseEntity<Map<String, Object>> tables(HttpSession session) {
         requireAdmin(session);
+        permissionService.require(session, "sql_playground.execute", "execute");
         return ok(Map.of("data", service.listTables()));
     }
 
@@ -32,6 +34,7 @@ public class SqlPlaygroundController {
     public ResponseEntity<Map<String, Object>> columns(
             @PathVariable String name, HttpSession session) {
         requireAdmin(session);
+        permissionService.require(session, "sql_playground.execute", "execute");
         return ok(Map.of("data", service.listColumns(name)));
     }
 
@@ -40,6 +43,7 @@ public class SqlPlaygroundController {
             @RequestBody Map<String, String> body,
             HttpSession session, HttpServletRequest request) {
         requireAdmin(session);
+        permissionService.require(session, "sql_playground.execute", "execute");
         String sql = body.get("sql");
         String actor = (String) session.getAttribute("username");
         Map<String, Object> result = service.execute(sql, actor != null ? actor : "anonymous");
@@ -58,6 +62,7 @@ public class SqlPlaygroundController {
     @GetMapping("/history")
     public ResponseEntity<Map<String, Object>> history(HttpSession session) {
         requireAdmin(session);
+        permissionService.require(session, "sql_playground.execute", "execute");
         String actor = (String) session.getAttribute("username");
         return ok(Map.of("data", service.recentHistory(actor != null ? actor : "anonymous")));
     }
@@ -65,6 +70,7 @@ public class SqlPlaygroundController {
     @GetMapping("/samples")
     public ResponseEntity<Map<String, Object>> samples(HttpSession session) {
         requireAdmin(session);
+        permissionService.require(session, "sql_playground.execute", "execute");
         return ok(Map.of("data", SqlSamples.list()));
     }
 

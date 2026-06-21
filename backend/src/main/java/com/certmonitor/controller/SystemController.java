@@ -32,6 +32,7 @@ public class SystemController {
     private final DbAnalyticsService    dbAnalyticsService;
     private final UserService           userService;
     private final RememberMeService     rememberMeService;
+    private final com.certmonitor.service.PermissionService permissionService;
 
     private static final DateTimeFormatter ISO =
             DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
@@ -79,6 +80,7 @@ public class SystemController {
     @PostMapping("/heartbeat")
     public ResponseEntity<Map<String, Object>> triggerHeartbeat(HttpSession session) {
         requireAdmin(session);
+        permissionService.require(session, "system_health.actions", "execute");
         extendedHealthService.recordHeartbeat();
         return ResponseEntity.ok(Map.of("success", true, "data", extendedHealthService.getHeartbeatStatus(), "timestamp", now()));
     }
@@ -87,6 +89,7 @@ public class SystemController {
     public ResponseEntity<Map<String, Object>> heartbeatTimeline(
             @RequestParam(defaultValue = "1") int days,
             HttpSession session) {
+        permissionService.require(session, "system_health.read", "view");
         return ResponseEntity.ok(Map.of(
             "success",   true,
             "data",      extendedHealthService.getHeartbeatTimeline(days),
@@ -96,6 +99,7 @@ public class SystemController {
     @DeleteMapping("/scheduler-lock")
     public ResponseEntity<Map<String, Object>> forceReleaseLock(HttpSession session) {
         requireAdmin(session);
+        permissionService.require(session, "system_health.actions", "execute");
         schedulerService.forceReleaseLock();
         return ResponseEntity.ok(Map.of("success", true, "message", "Scheduler lock released", "timestamp", now()));
     }
@@ -105,6 +109,7 @@ public class SystemController {
     @GetMapping("/user-activity")
     public ResponseEntity<Map<String, Object>> getUserActivity(HttpSession session) {
         requireSystemRead(session);
+        permissionService.require(session, "system_health.read", "view");
         return ResponseEntity.ok(Map.of(
                 "success",   true,
                 "data",      userActivityService.getOverview(),
@@ -117,6 +122,7 @@ public class SystemController {
     public ResponseEntity<Map<String, Object>> dbAnalytics(
             @RequestParam(defaultValue = "7") int days, HttpSession session) {
         requireSystemRead(session);
+        permissionService.require(session, "system_health.read", "view");
         return ResponseEntity.ok(Map.of(
                 "success",   true,
                 "data",      dbAnalyticsService.getOverview(days),
@@ -132,6 +138,7 @@ public class SystemController {
             @RequestParam(defaultValue = "day") String granularity,
             HttpSession session) {
         requireSystemRead(session);
+        permissionService.require(session, "system_health.read", "view");
         return ResponseEntity.ok(Map.of(
                 "success",   true,
                 "data",      userActivityService.getLoginSeries(from, to, granularity),
@@ -143,6 +150,7 @@ public class SystemController {
     public ResponseEntity<Map<String, Object>> terminateSession(
             @RequestBody Map<String, String> body, HttpSession session) {
         requireAdmin(session);
+        permissionService.require(session, "system_health.actions", "execute");
         String username = body != null ? body.get("username") : null;
         if (username == null || username.isBlank()) {
             return ResponseEntity.badRequest().body(Map.of(
