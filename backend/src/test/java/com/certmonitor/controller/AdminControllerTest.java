@@ -1139,7 +1139,7 @@ class AdminControllerTest {
         created.setUsername("newbie");
         created.setTeamId(2L);
         created.setSystemRole("USER");
-        when(userService.createUser(any(), any(), any(), any(), any(), eq("USER"), eq(2L), any()))
+        when(userService.createUser(any(), any(), any(), any(), any(), eq("USER"), eq(java.util.List.of(2L)), any()))
                 .thenReturn(created);
 
         mvc.perform(post("/api/admin/users")
@@ -1347,9 +1347,10 @@ class AdminControllerTest {
     @Test
     @DisplayName("PUT /users/{id}: ADMIN için boş takım (team_id:null) kullanıcıyı takımdan düşürür")
     void updateUser_admin_clearsTeam() throws Exception {
+        // Boş takım → updateUser([]) servis içinde teamId'yi null'lar; mock bunu yansıtsın.
         AppUser updated = new AppUser();
-        updated.setId(7L); updated.setUsername("adm"); updated.setSystemRole("ADMIN"); updated.setTeamId(5L);
-        when(userService.updateUser(eq(7L), any(), any(), any(), eq("ADMIN"), any(), any(), any()))
+        updated.setId(7L); updated.setUsername("adm"); updated.setSystemRole("ADMIN");
+        when(userService.updateUser(eq(7L), any(), any(), any(), eq("ADMIN"), eq(java.util.List.of()), any(), any()))
                 .thenReturn(updated);
 
         mvc.perform(put("/api/admin/users/7")

@@ -97,8 +97,8 @@ public class LdapProvisioningService {
         boolean isManager = !resolveManager || userRepo.existsByManagerId(u.getId());
         applyRole(u, isManager ? "ADMIN" : (isPo ? "TEAM_ADMIN" : "USER"));
 
-        // ── Team (memberOf under OU=ScrumGroups) ──
-        resolveTeam(u, attrs, isPo);
+        // ── Takım(lar): memberOf (OU=ScrumGroups) → boşsa company fallback ──
+        resolveTeams(u, attrs, isPo);
 
         // ── Manager (extensionAttribute4 / manager → CN=sicil) ──
         if (resolveManager) {
@@ -119,38 +119,85 @@ public class LdapProvisioningService {
         if (!"ADMIN".equals(cur) && !"AUDIT".equals(cur)) u.setSystemRole(desired);
     }
 
-    private void resolveTeam(AppUser u, Map<String, Object> attrs, boolean isPo) {
-        // A user can be in several ScrumGroups; the team is the group whose CN does NOT
-        // end with "Onaycı" (those are approver groups, not teams). When both an
-        // "..._Onayci" group and a plain group exist, the plain one is the team. The
-        // mail of that exact group DN becomes the team e-mail (read via groupMail).
-        String scrumDn = memberOfList(attrs).stream()
+    private void resolveTeams(AppUser u, Map<String, Object> attrs, boolean isPo) {
+        // Bir kullanıcı birden çok ScrumGroup'ta olabilir; takım, CN'i "Onaycı" ile bitMEYEN
+        // gruplardır (onaycı grupları takım değil). TÜM uygun gruplar üyelik olur (sıra korunur);
+        // her grubun mail'i (groupMail) o takımın e-postasıdır. Hiç grup yoksa company fallback.
+        List<String> scrumDns = memberOfList(attrs).stream()
                 .filter(dn -> containsCi(dn, "OU=ScrumGroups"))
                 .filter(dn -> !isApproverCn(cnOf(dn)))
-                .findFirst().orElse(null);
-        if (scrumDn == null) return;
-        String teamName = cnOf(scrumDn);
-        if (teamName == null || teamName.isBlank()) return;
+                .toList();
 
+        java.util.LinkedHashSet<Long> teamIds = new java.util.LinkedHashSet<>();
+        for (String dn : scrumDns) {
+            String teamName = cnOf(dn);
+            if (teamName == null || teamName.isBlank()) continue;
+            Team team = findOrCreateTeam(teamName, dn);
+            teamIds.add(team.getId());
+            if (isPo) assignLeaderIfVacant(team, u);
+        }
+
+        // Fallback: grup üyeliğinden HİÇ takım çıkmadıysa company attribute'undan çıkar.
+        if (teamIds.isEmpty()) {
+            for (String teamName : companyTeamNames(str(attrs, "company"))) {
+                Team team = findOrCreateTeam(teamName, null);   // DN yok → e-posta null
+                teamIds.add(team.getId());
+                if (isPo) assignLeaderIfVacant(team, u);
+            }
+        }
+
+        if (teamIds.isEmpty()) return;                 // takımsız kal
+        u.setTeamIds(teamIds);
+        u.setTeamId(teamIds.iterator().next());        // birincil = ilk çözülen
+    }
+
+    /** Takımı adıyla bul, yoksa oluştur. {@code dnForMail} verilirse grubun AD mail'i takım e-postası olur. */
+    private Team findOrCreateTeam(String teamName, String dnForMail) {
         Team team = teamRepo.findByName(teamName).orElseGet(() -> {
             Team t = new Team();
             t.setName(teamName);
-            t.setEmail(directory.groupMail(scrumDn).orElse(null));
+            t.setEmail(dnForMail != null ? directory.groupMail(dnForMail).orElse(null) : null);
             t.setActive(true);
             t.setCreatedAt(now());
             t.setUpdatedAt(now());
             return teamRepo.save(t);
         });
-        // Backfill team mail if it was created before group lookup worked.
-        if ((team.getEmail() == null || team.getEmail().isBlank())) {
-            directory.groupMail(scrumDn).ifPresent(m -> { team.setEmail(m); teamRepo.save(team); });
+        // E-postası boşsa ve bir grup DN'imiz varsa sonradan doldur.
+        if (dnForMail != null && (team.getEmail() == null || team.getEmail().isBlank())) {
+            directory.groupMail(dnForMail).ifPresent(m -> { team.setEmail(m); teamRepo.save(team); });
         }
-        u.setTeamId(team.getId());
-        if (isPo && (team.getLeaderId() == null)) {
-            team.setLeaderId(u.getId());
+        return team;
+    }
+
+    private void assignLeaderIfVacant(Team team, AppUser po) {
+        if (team.getLeaderId() == null) {
+            team.setLeaderId(po.getId());
             team.setUpdatedAt(now());
             teamRepo.save(team);
         }
+    }
+
+    /**
+     * AD {@code company} attribute'undan takım adlarını çıkarır (grup üyeliği boşken fallback).
+     * Format: {@code "<ROL>-<TAKIM1>[,<TAKIM2>...]"}. Takım adları iç tire içerir
+     * (ör. "SY-MevduatMuhasebeSigorta"), bu yüzden yalnız İLK tireden böl (rol önekini at), kalanı
+     * virgülle ayır. Örnekler:
+     * <pre>
+     *   "PRODUCT OWNER-SY-MevduatMuhasebeSigorta,SY-Dijital Mobil Servis"
+     *        → [SY-MevduatMuhasebeSigorta, SY-Dijital Mobil Servis]
+     *   "YAZILIM UZMANI-SY-MevduatMuhasebeSigorta" → [SY-MevduatMuhasebeSigorta]
+     * </pre>
+     */
+    static List<String> companyTeamNames(String company) {
+        if (company == null) return List.of();
+        int dash = company.indexOf('-');
+        if (dash < 0 || dash + 1 >= company.length()) return List.of();
+        java.util.List<String> names = new java.util.ArrayList<>();
+        for (String part : company.substring(dash + 1).split(",")) {
+            String name = part.trim();
+            if (!name.isEmpty() && !names.contains(name)) names.add(name);
+        }
+        return names;
     }
 
     private void resolveManagerLink(AppUser u, Map<String, Object> attrs) {

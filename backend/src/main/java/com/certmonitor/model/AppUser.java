@@ -5,6 +5,9 @@ import jakarta.persistence.*;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
+import java.util.LinkedHashSet;
+import java.util.Set;
+
 @Entity
 @Table(name = "app_users",
     indexes = {
@@ -84,8 +87,19 @@ public class AppUser {
     @Column(name = "org_role")
     private String orgRole;
 
+    /** Birincil takım (geriye-uyum + varsayılanlar: denetim actorTeamId, haftalık rapor varsayılanı,
+     *  Nav gösterimi, eskalasyon kontağı). Her zaman {@link #teamIds} içindedir. */
     @Column(name = "team_id")
     private Long teamId;
+
+    /** Kullanıcının ÜYE olduğu TÜM takımlar (çoklu takım). Birincil takım da bu kümededir.
+     *  Görünürlük/yetki scope'u (computeViewTeamIds/computeManageTeamIds) bu kümeden beslenir.
+     *  EAGER: /me ve admin-liste JSON'unda (tx dışı) okunur. Join kolonu pinli (varsayılan
+     *  app_user_id değil, user_id) — backfill patch'i bununla aynı isimde olmalı. */
+    @ElementCollection(fetch = FetchType.EAGER)
+    @CollectionTable(name = "app_user_teams", joinColumns = @JoinColumn(name = "user_id"))
+    @Column(name = "team_id")
+    private Set<Long> teamIds = new LinkedHashSet<>();
 
     @Column(nullable = false)
     private Boolean active = true;

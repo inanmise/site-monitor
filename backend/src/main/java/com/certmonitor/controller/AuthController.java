@@ -312,6 +312,7 @@ public class AuthController {
             resp.put("mudurluk_name", u.getMudurlukName());
             resp.put("manager_sicil", u.getManagerSicil());
             resp.put("has_photo", u.getPhotoBase64() != null && !u.getPhotoBase64().isBlank());
+            putTeams(resp, u);
         });
         // Faz 3b: scope flags for the UI (hide global-only tabs from scoped müdür-admins).
         resp.put("global_admin", SessionScope.isGlobalAdmin(session));
@@ -496,12 +497,23 @@ public class AuthController {
         resp.put("team_id", user.getTeamId());
         resp.put("team_name", user.getTeamId() != null
                 ? userService.findTeamById(user.getTeamId()).map(Team::getName).orElse(null) : null);
+        putTeams(resp, user);
         resp.put("system_role", user.getSystemRole());
         resp.put("must_change_password", Boolean.TRUE.equals(user.getMustChangePassword()));
         // Faz 3b: scope flags so the UI hides global-only tabs from scoped müdür-admins.
         resp.put("global_admin", SessionScope.isGlobalAdmin(session));
         resp.put("scoped", session.getAttribute("viewTeamIds") != null);
         return resp;
+    }
+
+    /** Birincil takım ilk olacak şekilde kullanıcının TÜM üyeliklerini team_ids + team_names olarak ekler. */
+    private void putTeams(Map<String, Object> resp, AppUser user) {
+        java.util.List<Long> ids = new java.util.ArrayList<>();
+        if (user.getTeamId() != null) ids.add(user.getTeamId());
+        if (user.getTeamIds() != null)
+            for (Long t : user.getTeamIds()) if (t != null && !ids.contains(t)) ids.add(t);
+        resp.put("team_ids", ids);
+        resp.put("team_names", userService.teamNamesFor(ids));
     }
 
     private String resolveClientIp(HttpServletRequest request) {

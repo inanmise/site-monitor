@@ -316,6 +316,14 @@ public class SchedulerService {
         patch("UPDATE permission_grants SET allowed = TRUE WHERE role = 'USER' "
                 + "AND resource_key = 'incidents.manage' AND action = 'edit' "
                 + "AND updated_by = 'system' AND allowed = FALSE");
+        // Çoklu takım üyeliği (app_user_teams): tablo @ElementCollection + ddl-auto ile oluşur.
+        // Join kolonu AppUser'da pinli (user_id). Mevcut tek-takımlı kullanıcıların team_id'sini
+        // üyelik tablosuna backfill et (idempotent) — yoksa eski kullanıcılar üyeliksiz kalır.
+        patch("INSERT INTO app_user_teams(user_id, team_id) "
+                + "SELECT id, team_id FROM app_users a WHERE a.team_id IS NOT NULL "
+                + "AND NOT EXISTS (SELECT 1 FROM app_user_teams t "
+                + "                WHERE t.user_id = a.id AND t.team_id = a.team_id)");
+        patch("CREATE INDEX IF NOT EXISTS idx_aut_team ON app_user_teams(team_id)");
     }
 
     /** Assigns any certs/contacts without a team to the first (default) team. */

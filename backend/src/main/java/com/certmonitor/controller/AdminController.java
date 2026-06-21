@@ -970,7 +970,8 @@ public class AdminController {
             }
         }
         return ok(Map.of("data", userService.listUsers().stream()
-                .filter(u -> id.equals(u.getTeamId())).toList()));
+                .filter(u -> id.equals(u.getTeamId())
+                        || (u.getTeamIds() != null && u.getTeamIds().contains(id))).toList()));
     }
 
     @DeleteMapping("/teams/{id}")
@@ -993,7 +994,7 @@ public class AdminController {
         List<Long> scope = viewScope(session);
         var filtered = (scope == null || scope.isEmpty())
                 ? java.util.List.<AppUser>of()
-                : all.stream().filter(u -> u.getTeamId() != null && scope.contains(u.getTeamId())).toList();
+                : all.stream().filter(u -> inScope(u, scope)).toList();
         return ok(Map.of("data", filtered));
     }
 
@@ -1037,14 +1038,15 @@ public class AdminController {
             @RequestBody Map<String, Object> body, HttpSession session, HttpServletRequest request) {
         requireAdminOrTeamAdmin(session);
         String requestedRole = (String) body.get("system_role");
-        Long requestedTeamId = toLong(body.get("team_id"));
+        java.util.List<Long> requestedTeams = teamIdsFromBody(body);
         if (isTeamAdmin(session)) {
             // TEAM_ADMIN can only seed USER or TEAM_ADMIN; never ADMIN/AUDIT.
             if (requestedRole != null && !TEAM_ADMIN_ASSIGNABLE_ROLES.contains(requestedRole)) {
                 throw new SecurityException("Team admin cannot assign role: " + requestedRole);
             }
             // And the new user lands in the team admin's team — payload can't override.
-            requestedTeamId = teamId(session);
+            Long own = teamId(session);
+            requestedTeams = own != null ? java.util.List.of(own) : java.util.List.of();
         }
         AppUser user = userService.createUser(
                 (String) body.get("username"),
@@ -1053,7 +1055,7 @@ public class AdminController {
                 (String) body.get("email"),
                 (String) body.get("employee_id"),
                 requestedRole,
-                requestedTeamId,
+                requestedTeams,
                 (String) body.get("org_role"));
         // AD-mirrored profil alanları (ad/soyad/ünvan/telefon/departman/seviye/müdürlük/müdür sicili)
         userService.applyProfileFields(user, body);
@@ -1071,7 +1073,9 @@ public class AdminController {
                 .orElseThrow(() -> new NoSuchElementException("User not found: " + id));
         requireTeamScopedAdmin(session, target.getTeamId());
         String requestedRole = (String) body.get("system_role");
-        Long requestedTeamId = toLong(body.get("team_id"));
+        // null = takımlara dokunma (kısmi güncelleme); team_ids veya team_id verilirse (boş dahil) set et.
+        java.util.List<Long> requestedTeams =
+                (body.containsKey("team_ids") || body.containsKey("team_id")) ? teamIdsFromBody(body) : null;
         Long selfId = userIdFromSession(session);
         if (selfId != null && selfId.equals(id)) {
             if (requestedRole != null && !requestedRole.equals(target.getSystemRole())) {
@@ -1094,31 +1098,31 @@ public class AdminController {
             if (requestedRole != null && !TEAM_ADMIN_ASSIGNABLE_ROLES.contains(requestedRole)) {
                 throw new SecurityException("Team admin cannot assign role: " + requestedRole);
             }
-            // Cannot transfer the user out of the team admin's team.
-            if (requestedTeamId != null && !requestedTeamId.equals(target.getTeamId())) {
-                throw new SecurityException("Team admin cannot transfer users to another team");
+            // TEAM_ADMIN kullanıcıyı kendi takımı dışına taşıyamaz / çoklu takım atayamaz.
+            if (requestedTeams != null) {
+                for (Long t : requestedTeams) {
+                    if (!t.equals(target.getTeamId())) {
+                        throw new SecurityException("Team admin cannot transfer users to another team");
+                    }
+                }
             }
-            requestedTeamId = target.getTeamId();
+            requestedTeams = null;   // üyeliği değiştirmesine izin verilmez
+        }
+        // Boş takım = takımsız; yalnız ADMIN rollü kullanıcı takımsız kalabilir.
+        if (requestedTeams != null && requestedTeams.isEmpty()) {
+            String effRole = requestedRole != null ? requestedRole : target.getSystemRole();
+            if (!"ADMIN".equals(effRole)) {
+                throw new IllegalArgumentException("Team is required");
+            }
         }
         AppUser user = userService.updateUser(id,
                 (String) body.get("display_name"),
                 (String) body.get("email"),
                 (String) body.get("employee_id"),
                 requestedRole,
-                requestedTeamId,
+                requestedTeams,
                 body.get("active") instanceof Boolean ? (Boolean) body.get("active") : null,
                 (String) body.get("org_role"));
-        // Boş takım seçimi (team_id alanı açıkça null gönderildi) → kullanıcıyı takımdan düşür.
-        // updateUser'da null = "değiştirme" anlamına geldiği için burada açıkça ele alınır.
-        // Yalnız global admin yapabilir; takımsız kalmaya yalnız ADMIN rollü kullanıcı uygundur.
-        boolean clearTeam = body.containsKey("team_id") && requestedTeamId == null && !isTeamAdmin(session);
-        if (clearTeam) {
-            String effRole = requestedRole != null ? requestedRole : user.getSystemRole();
-            if (!"ADMIN".equals(effRole)) {
-                throw new IllegalArgumentException("Team is required");
-            }
-            user.setTeamId(null);
-        }
         // AD-mirrored profil alanları (ad/soyad/ünvan/telefon/departman/seviye/müdürlük/müdür sicili)
         userService.applyProfileFields(user, body);
         user = userRepo.save(user);
@@ -1524,5 +1528,25 @@ public class AdminController {
         if (v instanceof Integer i) return i.longValue();
         if (v instanceof Number n) return n.longValue();
         try { return Long.parseLong(v.toString()); } catch (Exception e) { return null; }
+    }
+
+    /** Body'den çoklu takım listesi: önce `team_ids` (dizi), yoksa tek `team_id` → [id] (geriye-uyum).
+     *  Sıra korunur (birincil = ilk). İçerik yoksa boş liste döner. */
+    private java.util.List<Long> teamIdsFromBody(Map<String, Object> body) {
+        java.util.List<Long> out = new java.util.ArrayList<>();
+        if (body.get("team_ids") instanceof java.util.List<?> list) {
+            for (Object o : list) { Long v = toLong(o); if (v != null && !out.contains(v)) out.add(v); }
+            return out;
+        }
+        Long single = toLong(body.get("team_id"));
+        if (single != null) out.add(single);
+        return out;
+    }
+
+    /** Kullanıcı, verilen görünür-takım scope'undaki herhangi bir takıma üye mi (birincil veya ek). */
+    private boolean inScope(AppUser u, java.util.List<Long> scope) {
+        if (u.getTeamId() != null && scope.contains(u.getTeamId())) return true;
+        if (u.getTeamIds() != null) for (Long t : u.getTeamIds()) if (scope.contains(t)) return true;
+        return false;
     }
 }

@@ -3,12 +3,13 @@ import { api } from '../../api/client'
 import { useDialog } from '../ui/Dialog.jsx'
 import { useT } from '../../i18n/index.jsx'
 import SearchableSelect from '../ui/SearchableSelect.jsx'
+import MultiTeamSelect from '../ui/MultiTeamSelect.jsx'
 import KebabMenu from '../ui/KebabMenu.jsx'
 import { UserPlus, UserCog } from 'lucide-react'
 import AdminAutoResetModal from './AdminAutoResetModal.jsx'
 import { ModalHeaderAvatar } from './UserEditModal.jsx'
 
-const emptyUser = { username: '', password: '', display_name: '', email: '', employee_id: '', system_role: 'USER', team_id: '', org_role: '', active: true,
+const emptyUser = { username: '', password: '', display_name: '', email: '', employee_id: '', system_role: 'USER', team_ids: [], org_role: '', active: true,
   first_name: '', last_name: '', title: '', phone: '', department: '', company_level: '', mudurluk_name: '', manager_sicil: '' }
 
 const AVATAR_PALETTE = [
@@ -103,7 +104,7 @@ export default function UserManager({ systemRole, ownTeamId, currentUsername, te
       email: user.email || '',
       employee_id: user.employee_id || '',
       system_role: user.system_role || 'USER',
-      team_id: user.team_id ?? '',
+      team_ids: user.team_ids ?? user.teamIds ?? (user.team_id != null ? [user.team_id] : []),
       org_role: user.org_role || '',
       active: user.active,
       first_name: user.first_name || '',
@@ -125,13 +126,17 @@ export default function UserManager({ systemRole, ownTeamId, currentUsername, te
       return
     }
     setSaving(true)
+    const teamIds = isTeamAdmin
+      ? (ownTeamId != null ? [ownTeamId] : [])
+      : (form.team_ids || [])
     const payload = {
       username: form.username.trim(),
       display_name: form.display_name,
       email: form.email,
       employee_id: form.employee_id,
       system_role: form.system_role,
-      team_id: isTeamAdmin ? ownTeamId : (form.team_id || null),
+      team_ids: teamIds,
+      team_id: teamIds[0] ?? null,
       org_role: form.org_role || null,
       active: form.active,
       first_name: form.first_name,
@@ -239,7 +244,8 @@ export default function UserManager({ systemRole, ownTeamId, currentUsername, te
                   )}
                 </td>
                 <td>{user.org_role ? <span className={`badge-role badge-role-${user.org_role}`}>{user.org_role}</span> : '—'}</td>
-                <td>{teamMap[user.team_id] || '—'}</td>
+                <td>{((user.team_ids ?? user.teamIds ?? (user.team_id != null ? [user.team_id] : []))
+                  .map(id => teamMap[id]).filter(Boolean).join(', ')) || '—'}</td>
                 <td>
                   <span className={user.active ? 'badge badge-ok' : 'badge badge-err'}>{user.active ? t('usr.active') : t('usr.inactive')}</span>
                   {user.permanent_lock && <span className="badge badge-err" style={{ marginLeft: 4 }} title={t('usr.permLocked')}>🔒</span>}
@@ -343,7 +349,7 @@ export default function UserManager({ systemRole, ownTeamId, currentUsername, te
                 />
               </label>
               <label>
-                <span>{t('usr.formTeam')} {form.system_role !== 'ADMIN' && <span className="req-star">*</span>}</span>
+                <span>{t('usr.teamsLabel')} {form.system_role !== 'ADMIN' && <span className="req-star">*</span>}</span>
                 {isTeamAdmin ? (
                   <SearchableSelect
                     value={ownTeamId ?? ''}
@@ -354,19 +360,16 @@ export default function UserManager({ systemRole, ownTeamId, currentUsername, te
                     ]}
                   />
                 ) : (
-                  <SearchableSelect
-                    value={form.team_id}
-                    onChange={v => setForm({ ...form, team_id: v ? Number(v) : '' })}
-                    placeholder={t('usr.noTeam')}
+                  <MultiTeamSelect
+                    value={form.team_ids}
+                    onChange={ids => setForm({ ...form, team_ids: ids.map(Number) })}
+                    placeholder={t('usr.teamsPlaceholder')}
                     searchThreshold={2}
-                    options={[
-                      { value: '', label: t('usr.noTeam') },
-                      ...(teams || []).map(team => ({ value: team.id, label: team.name })),
-                    ]}
+                    options={(teams || []).map(team => ({ value: team.id, label: team.name }))}
                   />
                 )}
-                {!isTeamAdmin && form.system_role !== 'ADMIN' && !form.team_id && (
-                  <span className="field-hint field-hint--warn">{t('usr.teamRequired')}</span>
+                {!isTeamAdmin && form.system_role !== 'ADMIN' && form.team_ids.length === 0 && (
+                  <span className="field-hint field-hint--warn">{t('usr.teamsRequired')}</span>
                 )}
               </label>
               {/* AD'den eşlenen profil alanları (LDAP kullanıcısında bir sonraki login'de tazelenir) */}
@@ -411,7 +414,7 @@ export default function UserManager({ systemRole, ownTeamId, currentUsername, te
             <div className="modal-actions">
               <button className="btn btn-secondary" onClick={() => setModal(null)}>{t('usr.cancel')}</button>
               <button className="btn btn-primary" onClick={save}
-                disabled={saving || !form.username.trim() || !form.email.trim() || (form.system_role !== 'ADMIN' && !(isTeamAdmin ? ownTeamId : form.team_id)) || (modal === 'add' && form.password.length < 4)}>
+                disabled={saving || !form.username.trim() || !form.email.trim() || (form.system_role !== 'ADMIN' && (isTeamAdmin ? !ownTeamId : form.team_ids.length === 0)) || (modal === 'add' && form.password.length < 4)}>
                 {saving ? t('usr.saving') : t('usr.save')}
               </button>
             </div>

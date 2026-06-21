@@ -447,7 +447,7 @@ class UserServiceTest {
         when(teamRepo.findById(5L)).thenReturn(Optional.of(team));
         when(userRepo.existsByUsername(anyString())).thenReturn(false);
 
-        AppUser u = service.createUser("po1", "secret1", "PO Bir", "po@x.com", null, "TEAM_ADMIN", 5L, "PO");
+        AppUser u = service.createUser("po1", "secret1", "PO Bir", "po@x.com", null, "TEAM_ADMIN", List.of(5L), "PO");
 
         ArgumentCaptor<Team> cap = ArgumentCaptor.forClass(Team.class);
         verify(teamRepo).save(cap.capture());
@@ -462,7 +462,7 @@ class UserServiceTest {
         when(userRepo.findById(42L)).thenReturn(Optional.of(existing));
         when(teamRepo.findById(6L)).thenReturn(Optional.of(team(6L, "Cards")));
 
-        service.updateUser(42L, "PO Iki", "po2@x.com", null, "TEAM_ADMIN", 6L, true, "PO");
+        service.updateUser(42L, "PO Iki", "po2@x.com", null, "TEAM_ADMIN", List.of(6L), true, "PO");
 
         ArgumentCaptor<Team> cap = ArgumentCaptor.forClass(Team.class);
         verify(teamRepo).save(cap.capture());
@@ -474,7 +474,7 @@ class UserServiceTest {
     void createUser_nonPo_noLeaderChange() {
         when(userRepo.existsByUsername(anyString())).thenReturn(false);
 
-        service.createUser("u1", "secret1", "U Bir", "u@x.com", null, "USER", 5L, null);
+        service.createUser("u1", "secret1", "U Bir", "u@x.com", null, "USER", List.of(5L), null);
 
         verify(teamRepo, never()).save(any());
     }
@@ -488,7 +488,7 @@ class UserServiceTest {
         when(userRepo.existsById(77L)).thenReturn(true);   // lider hâlâ var
         when(userRepo.existsByUsername(anyString())).thenReturn(false);
 
-        service.createUser("po1", "secret1", "PO Bir", "po@x.com", null, "TEAM_ADMIN", 5L, "PO");
+        service.createUser("po1", "secret1", "PO Bir", "po@x.com", null, "TEAM_ADMIN", List.of(5L), "PO");
 
         verify(teamRepo, never()).save(any());
         assertThat(team.getLeaderId()).isEqualTo(77L);
@@ -503,7 +503,7 @@ class UserServiceTest {
         when(userRepo.existsById(77L)).thenReturn(false);  // lider artık yok
         when(userRepo.existsByUsername(anyString())).thenReturn(false);
 
-        AppUser u = service.createUser("po2", "secret1", "PO İki", "po2@x.com", null, "TEAM_ADMIN", 5L, "PO");
+        AppUser u = service.createUser("po2", "secret1", "PO İki", "po2@x.com", null, "TEAM_ADMIN", List.of(5L), "PO");
 
         ArgumentCaptor<Team> cap = ArgumentCaptor.forClass(Team.class);
         verify(teamRepo).save(cap.capture());
@@ -533,7 +533,7 @@ class UserServiceTest {
         when(userRepo.existsByUsername("alice")).thenReturn(false);
         String raw = "pass1234";
 
-        AppUser result = service.createUser("alice", raw, "Alice", "alice@example.com", null, "USER", 1L, null);
+        AppUser result = service.createUser("alice", raw, "Alice", "alice@example.com", null, "USER", List.of(1L), null);
 
         assertThat(result.getPasswordHash()).isNotEqualTo(raw);
         assertThat(ENCODER.matches(raw, result.getPasswordHash())).isTrue();
@@ -542,7 +542,7 @@ class UserServiceTest {
     @Test
     @DisplayName("createUser: blank username → IllegalArgumentException")
     void createUser_blankUsername_throwsIllegalArgument() {
-        assertThatThrownBy(() -> service.createUser("  ", "pass1234", "D", "e@e.com", null, "USER", 1L, null))
+        assertThatThrownBy(() -> service.createUser("  ", "pass1234", "D", "e@e.com", null, "USER", List.of(1L), null))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("Username");
     }
@@ -550,7 +550,7 @@ class UserServiceTest {
     @Test
     @DisplayName("createUser: password shorter than minLength → IllegalArgumentException")
     void createUser_shortPassword_throwsIllegalArgument() {
-        assertThatThrownBy(() -> service.createUser("alice", "ab", "D", "e@e.com", null, "USER", 1L, null))
+        assertThatThrownBy(() -> service.createUser("alice", "ab", "D", "e@e.com", null, "USER", List.of(1L), null))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("too short");
     }
@@ -559,7 +559,7 @@ class UserServiceTest {
     @DisplayName("createUser: duplicate username → IllegalArgumentException")
     void createUser_duplicateUsername_throwsIllegalArgument() {
         when(userRepo.existsByUsername("alice")).thenReturn(true);
-        assertThatThrownBy(() -> service.createUser("alice", "pass1234", "D", "e@e.com", null, "USER", 1L, null))
+        assertThatThrownBy(() -> service.createUser("alice", "pass1234", "D", "e@e.com", null, "USER", List.of(1L), null))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("already exists");
     }
@@ -568,7 +568,7 @@ class UserServiceTest {
     @DisplayName("createUser: valid orgRole → field set on saved user")
     void createUser_withValidOrgRole_setsField() {
         when(userRepo.existsByUsername("bob")).thenReturn(false);
-        AppUser result = service.createUser("bob", "pass1234", "Bob", "bob@example.com", null, "USER", 1L, "PO");
+        AppUser result = service.createUser("bob", "pass1234", "Bob", "bob@example.com", null, "USER", List.of(1L), "PO");
         assertThat(result.getOrgRole()).isEqualTo("PO");
     }
 
@@ -576,7 +576,7 @@ class UserServiceTest {
     @DisplayName("createUser: blank orgRole → stored as null")
     void createUser_blankOrgRole_storesNull() {
         when(userRepo.existsByUsername("carol")).thenReturn(false);
-        AppUser result = service.createUser("carol", "pass1234", "Carol", "carol@example.com", null, "USER", 1L, "  ");
+        AppUser result = service.createUser("carol", "pass1234", "Carol", "carol@example.com", null, "USER", List.of(1L), "  ");
         assertThat(result.getOrgRole()).isNull();
     }
 
