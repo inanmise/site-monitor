@@ -119,6 +119,7 @@ export default function SystemHealth({ systemRole, globalAdmin = false, preFilte
   const [dbDays, setDbDays] = useState(7)
   const [dbData, setDbData] = useState(null)
   const [dbLoading, setDbLoading] = useState(false)
+  const [dbKpiDetail, setDbKpiDetail] = useState(null) // DB KPI kartı drill-down {title, kind}
 
   const load = useCallback(async () => {
     // allSettled: bir endpoint çökse de diğerleri yüklensin; her bölüm
@@ -969,8 +970,10 @@ export default function SystemHealth({ systemRole, globalAdmin = false, preFilte
           const pgss = !!sum.pgss
           const winLbl = dbDays === 1 ? t('uact.range1d') : dbDays === 7 ? t('uact.range7d') : t('uact.range30d')
           const gran = dbDays === 1 ? 'hour' : 'day'
-          const kpi2 = (key, Icon, val, label, sub, variant) => (
-            <div key={key} className={`uact-kpi${variant ? ' uact-kpi--' + variant : ''}`}>
+          const kpi2 = (key, Icon, val, label, sub, variant, onClick) => (
+            <div key={key}
+              className={`uact-kpi${variant ? ' uact-kpi--' + variant : ''}${onClick ? ' is-clickable' : ''}`}
+              onClick={onClick} title={onClick ? t('uact.detailHint') : undefined}>
               <span className="uact-kpi-icon"><Icon size={16} /></span>
               <span className="uact-kpi-val">{val}</span>
               <span className="uact-kpi-lbl">{label}</span>
@@ -1008,14 +1011,14 @@ export default function SystemHealth({ systemRole, globalAdmin = false, preFilte
                 {dbLoading && <Loader2 size={14} className="spin" />}
               </div>
 
-              {/* KPI */}
+              {/* KPI — kartlara tıkla → detay modalı (veriler dbData içinden) */}
               <div className="uact-kpi-grid">
-                {kpi2('q', Database, sum.queries ?? 0, t('db.kpiQueries'), winLbl)}
-                {kpi2('avg', Cpu, (sum.avg_ms ?? 0) + ' ms', t('db.kpiAvg'), winLbl)}
-                {kpi2('slow', Server, (sum.max_ms ?? 0) + ' ms', t('db.kpiSlowest'), winLbl)}
-                {kpi2('fail', XCircle, sum.failed ?? 0, t('db.kpiFailed'), winLbl, (sum.failed ?? 0) > 0 ? 'danger' : undefined)}
-                {kpi2('conn', Globe, sum.active_connections ?? '—', t('db.connActive'), t('db.kpiNow'), 'ok')}
-                {kpi2('size', Database, sum.db_size || '—', t('db.connSize'), t('db.kpiNow'))}
+                {kpi2('q', Database, sum.queries ?? 0, t('db.kpiQueries'), winLbl, undefined, () => setDbKpiDetail({ title: t('db.kpiQueries'), kind: 'series' }))}
+                {kpi2('avg', Cpu, (sum.avg_ms ?? 0) + ' ms', t('db.kpiAvg'), winLbl, undefined, () => setDbKpiDetail({ title: t('db.kpiAvg'), kind: 'series' }))}
+                {kpi2('slow', Server, (sum.max_ms ?? 0) + ' ms', t('db.kpiSlowest'), winLbl, undefined, () => setDbKpiDetail({ title: t('db.kpiSlowest'), kind: 'slowest' }))}
+                {kpi2('fail', XCircle, sum.failed ?? 0, t('db.kpiFailed'), winLbl, (sum.failed ?? 0) > 0 ? 'danger' : undefined, () => setDbKpiDetail({ title: t('db.kpiFailed'), kind: 'failed' }))}
+                {kpi2('conn', Globe, sum.active_connections ?? '—', t('db.connActive'), t('db.kpiNow'), 'ok', () => setDbKpiDetail({ title: t('db.connActive'), kind: 'connections' }))}
+                {kpi2('size', Database, sum.db_size || '—', t('db.connSize'), t('db.kpiNow'), undefined, () => setDbKpiDetail({ title: t('db.connSize'), kind: 'sizes' }))}
               </div>
 
               {!dd ? <div className="sys-muted sys-small" style={{ padding: '8px 2px' }}>{t('sys.loading')}</div> : (
@@ -1573,6 +1576,154 @@ export default function SystemHealth({ systemRole, globalAdmin = false, preFilte
                   </div>
                 )}
               </div>
+            </div>
+          </div>
+        )
+      })()}
+
+      {/* Veritabanı Analitiği KPI kartı → detay modalı (veriler dbData içinden) */}
+      {dbKpiDetail && (() => {
+        const dd = dbData
+        const k = dbKpiDetail.kind
+        const pgss = !!dd?.summary?.pgss
+        const winLbl = dbDays === 1 ? t('uact.range1d') : dbDays === 7 ? t('uact.range7d') : t('uact.range30d')
+        const wrapStyle = { maxWidth: 440, whiteSpace: 'normal', wordBreak: 'break-word' }
+        let count = 0
+        let body = <div className="sys-muted">—</div>
+        if (k === 'series') {
+          const rows = dd?.series || []
+          count = rows.length
+          if (rows.length) body = (
+            <div className="health-table-wrap"><table className="health-dbtable">
+              <thead><tr>
+                <th className="dbtcol-th">{t('uact.colTime')}</th>
+                <th className="dbtcol-th dbtcol-th-num">{t('db.colQueries')}</th>
+                <th className="dbtcol-th dbtcol-th-num">{t('db.colAvgMs')}</th>
+                <th className="dbtcol-th dbtcol-th-num">{t('db.colFailed')}</th>
+              </tr></thead>
+              <tbody>{rows.map((r, i) => (
+                <tr key={i}>
+                  <td className="sys-mono sys-small">{r.ts ? formatDateSec(r.ts) : '—'}</td>
+                  <td className="dbtcol-num-cell">{r.count}</td>
+                  <td className="dbtcol-num-cell">{r.avg_ms}</td>
+                  <td className={`dbtcol-num-cell ${r.failed > 0 ? 'sys-err-text' : ''}`}>{r.failed}</td>
+                </tr>
+              ))}</tbody>
+            </table></div>
+          )
+        } else if (k === 'slowest') {
+          const rows = dd?.slowest_sql || []
+          count = rows.length
+          if (rows.length) body = pgss ? (
+            <div className="health-table-wrap"><table className="health-dbtable">
+              <thead><tr>
+                <th className="dbtcol-th">SQL</th>
+                <th className="dbtcol-th dbtcol-th-num">{t('db.colAvgMs')}</th>
+                <th className="dbtcol-th dbtcol-th-num">{t('db.colMaxMs')}</th>
+                <th className="dbtcol-th dbtcol-th-num">{t('db.colCalls')}</th>
+              </tr></thead>
+              <tbody>{rows.map((r, i) => (
+                <tr key={i}>
+                  <td className="sys-mono sys-small" style={wrapStyle}>{r.sql || '—'}</td>
+                  <td className="dbtcol-num-cell">{r.avg_ms}</td>
+                  <td className="dbtcol-num-cell">{r.max_ms}</td>
+                  <td className="dbtcol-num-cell">{r.calls}</td>
+                </tr>
+              ))}</tbody>
+            </table></div>
+          ) : (
+            <div className="health-table-wrap"><table className="health-dbtable">
+              <thead><tr>
+                <th className="dbtcol-th">SQL</th>
+                <th className="dbtcol-th dbtcol-th-num">{t('db.colDurMs')}</th>
+                <th className="dbtcol-th">{t('uact.colUser')}</th>
+                <th className="dbtcol-th">{t('uact.colTime')}</th>
+              </tr></thead>
+              <tbody>{rows.map((r, i) => (
+                <tr key={i}>
+                  <td className="sys-mono sys-small" style={wrapStyle}>{r.sql || '—'}</td>
+                  <td className="dbtcol-num-cell">{r.duration_ms}</td>
+                  <td className="sys-mono">{r.username || '—'}</td>
+                  <td className="sys-mono sys-small">{r.time ? formatDateSec(r.time) : '—'}</td>
+                </tr>
+              ))}</tbody>
+            </table></div>
+          )
+        } else if (k === 'failed') {
+          const rows = dd?.failed || []
+          count = rows.length
+          if (rows.length) body = (
+            <div className="health-table-wrap"><table className="health-dbtable">
+              <thead><tr>
+                <th className="dbtcol-th">{t('uact.colTime')}</th>
+                <th className="dbtcol-th">{t('uact.colUser')}</th>
+                <th className="dbtcol-th">SQL</th>
+                <th className="dbtcol-th">{t('uact.colReason')}</th>
+              </tr></thead>
+              <tbody>{rows.map((r, i) => (
+                <tr key={i}>
+                  <td className="sys-mono sys-small">{r.time ? formatDateSec(r.time) : '—'}</td>
+                  <td className="sys-mono">{r.username || '—'}</td>
+                  <td className="sys-mono sys-small" style={wrapStyle}>{r.sql || '—'}</td>
+                  <td className="sys-small sys-err-text">{r.error || '—'}</td>
+                </tr>
+              ))}</tbody>
+            </table></div>
+          )
+        } else if (k === 'sizes') {
+          const rows = dd?.table_sizes || []
+          count = rows.length
+          if (rows.length) body = (
+            <div className="health-table-wrap"><table className="health-dbtable">
+              <thead><tr>
+                <th className="dbtcol-th">{t('health.dbTable')}</th>
+                <th className="dbtcol-th dbtcol-th-num">{t('health.dbRows')}</th>
+                <th className="dbtcol-th dbtcol-th-num">{t('health.dbTableSize')}</th>
+                <th className="dbtcol-th dbtcol-th-num">{t('health.dbTotalSize')}</th>
+              </tr></thead>
+              <tbody>{rows.map((r, i) => (
+                <tr key={i}>
+                  <td className="sys-mono">{r.table_name}</td>
+                  <td className="dbtcol-num-cell">{Number(r.row_count ?? 0).toLocaleString()}</td>
+                  <td className="dbtcol-num-cell sys-muted">{r.table_size}</td>
+                  <td className="dbtcol-num-cell">{r.total_size}</td>
+                </tr>
+              ))}</tbody>
+            </table></div>
+          )
+        } else if (k === 'connections') {
+          const c = dd?.connections || {}
+          const items = [
+            [t('db.connActive'), c.active ?? '—'],
+            [t('db.connMax'), c.max ?? '—'],
+            [t('db.connSize'), c.db_size || '—'],
+            [t('db.connResp'), (c.response_ms ?? '—') + ' ms'],
+          ]
+          count = items.length
+          body = (
+            <div className="health-table-wrap"><table className="health-dbtable">
+              <thead><tr>
+                <th className="dbtcol-th">{t('db.connMetric')}</th>
+                <th className="dbtcol-th dbtcol-th-num">{t('db.connValue')}</th>
+              </tr></thead>
+              <tbody>{items.map(([lbl, val], i) => (
+                <tr key={i}><td className="sys-small">{lbl}</td><td className="dbtcol-num-cell sys-mono">{val}</td></tr>
+              ))}</tbody>
+            </table></div>
+          )
+        }
+        return (
+          <div className="modal-overlay" onClick={() => setDbKpiDetail(null)}>
+            <div className="modal-box modal-show" onClick={e => e.stopPropagation()}>
+              <div className="show-header">
+                <div className="show-header-title">
+                  <span className="show-domain">{dbKpiDetail.title}</span>
+                  <span className="sys-muted sys-small">{winLbl}</span>
+                  <span className="show-badge show-badge-port">{count}</span>
+                </div>
+                <button type="button" className="show-close" aria-label={t('app.dismiss')} onClick={() => setDbKpiDetail(null)}>✕</button>
+              </div>
+              <div className="show-body">{body}</div>
             </div>
           </div>
         )
