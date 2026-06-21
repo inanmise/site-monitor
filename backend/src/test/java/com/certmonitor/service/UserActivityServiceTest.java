@@ -126,6 +126,25 @@ class UserActivityServiceTest {
     }
 
     @Test
+    @DisplayName("details: KPI drill-down listeleri (24s login/başarısız/anomali/tekil)")
+    @SuppressWarnings("unchecked")
+    void kpiDetails_lists() {
+        Instant now = Instant.now();
+        List<AuditLog> window = List.of(
+                ev("alice", "1.1.1.1", "SUCCESS", "ADMIN", 10L, null, "TR", "Istanbul", now),
+                ev("alice", "1.1.1.1", "SUCCESS", "ADMIN", 10L, null, "TR", "Istanbul", now),
+                ev("bob",   "2.2.2.2", "FAILURE", "USER",  20L, "OFF_HOURS", null, null, now),
+                ev("carol", "3.3.3.3", "BLOCKED", null,    null, "RATE_LIMITED", null, null, now));
+
+        Map<String, Object> det = (Map<String, Object>) overviewWithWindow(window).get("details");
+
+        assertThat((List<?>) det.get("logins")).hasSize(2);
+        assertThat((List<?>) det.get("failed")).hasSize(2);          // FAILURE + BLOCKED
+        assertThat((List<?>) det.get("anomalies")).hasSize(2);       // OFF_HOURS + RATE_LIMITED
+        assertThat((List<?>) det.get("unique_users")).hasSize(1);    // alice
+    }
+
+    @Test
     @DisplayName("top_users: başarılı login sayısına göre sıralı")
     @SuppressWarnings("unchecked")
     void topUsers_rankedByLogins() {
@@ -214,17 +233,49 @@ class UserActivityServiceTest {
         List<AuditLog> window = List.of(
                 ev("alice", "1.1.1.1", "SUCCESS", "ADMIN", 10L, null, null, null, now));
 
-        Map<String, Object> hm = (Map<String, Object>) overviewWithWindow(window).get("heatmap");
+        List<Map<String, Object>> hms = (List<Map<String, Object>>) overviewWithWindow(window).get("heatmaps");
+        assertThat(hms).hasSize(3);                       // bu hafta + 1 önceki + 2 önceki
+        Map<String, Object> hm = hms.get(0);              // bu hafta (now olayını içerir)
         List<List<Long>> matrix = (List<List<Long>>) hm.get("matrix");
 
         assertThat(matrix).hasSize(7);
         assertThat(matrix.get(0)).hasSize(24);
         assertThat(((Number) hm.get("max")).longValue()).isEqualTo(1);
+        assertThat(hm.get("from")).isNotNull();
+        assertThat(hm.get("to")).isNotNull();
+        assertThat(hm.get("failed")).isNotNull();   // başarısız-login matrisi (kırmızı hücre)
         // Hücre detayları: tıklayınca o saatteki girişleri getirir (toplam 1 olay)
         Map<String, List<Object>> cells = (Map<String, List<Object>>) hm.get("cells");
-        assertThat(cells).isNotEmpty();
         int total = cells.values().stream().mapToInt(List::size).sum();
         assertThat(total).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("getLoginSeries: aralık+granülarite kovaları + outcome ayrımı")
+    @SuppressWarnings("unchecked")
+    void getLoginSeries_buckets() {
+        Instant now = Instant.now();
+        List<AuditLog> window = List.of(
+                ev("alice", "1.1.1.1", "SUCCESS", "ADMIN", 10L, null, null, null, now),
+                ev("bob",   "2.2.2.2", "FAILURE", "USER",  20L, null, null, null, now));
+        when(auditLogRepo.findLoginEventsBetween(any(), any(), any())).thenReturn(window);
+
+        Map<String, Object> res = service.getLoginSeries(
+                ISO.format(now.minusSeconds(3600)), ISO.format(now.plusSeconds(60)), "hour");
+
+        assertThat(res.get("granularity")).isEqualTo("hour");
+        List<Map<String, Object>> buckets = (List<Map<String, Object>>) res.get("buckets");
+        long success = buckets.stream().mapToLong(b -> ((Number) b.get("success")).longValue()).sum();
+        long failed  = buckets.stream().mapToLong(b -> ((Number) b.get("failed")).longValue()).sum();
+        assertThat(success).isEqualTo(1);
+        assertThat(failed).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("getLoginSeries: geçersiz/eksik aralık → boş kova")
+    void getLoginSeries_invalid_empty() {
+        Map<String, Object> res = service.getLoginSeries(null, null, "day");
+        assertThat((List<?>) res.get("buckets")).isEmpty();
     }
 
     @Test

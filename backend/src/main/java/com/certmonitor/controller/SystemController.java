@@ -1,5 +1,6 @@
 package com.certmonitor.controller;
 
+import com.certmonitor.service.DbAnalyticsService;
 import com.certmonitor.service.ExtendedHealthService;
 import com.certmonitor.service.HttpMetricsService;
 import com.certmonitor.service.MetricsService;
@@ -28,6 +29,7 @@ public class SystemController {
     private final HttpMetricsService    httpMetricsService;
     private final ExtendedHealthService extendedHealthService;
     private final UserActivityService   userActivityService;
+    private final DbAnalyticsService    dbAnalyticsService;
     private final UserService           userService;
     private final RememberMeService     rememberMeService;
 
@@ -106,6 +108,33 @@ public class SystemController {
         return ResponseEntity.ok(Map.of(
                 "success",   true,
                 "data",      userActivityService.getOverview(),
+                "timestamp", now()));
+    }
+
+    /** Veritabanı analitiği — top kullanıcı/SQL, yavaş sorgular, tablolar, seri, bağlantılar (tek payload).
+     *  days = pencere (1/7/30). */
+    @GetMapping("/db-analytics")
+    public ResponseEntity<Map<String, Object>> dbAnalytics(
+            @RequestParam(defaultValue = "7") int days, HttpSession session) {
+        requireSystemRead(session);
+        return ResponseEntity.ok(Map.of(
+                "success",   true,
+                "data",      dbAnalyticsService.getOverview(days),
+                "timestamp", now()));
+    }
+
+    /** Esnek login serisi — grafik aralık seçimi (1g/7g/30g), gün-navigasyonu ve zoom için.
+     *  from/to UTC ISO; granularity = day|hour|minute. */
+    @GetMapping("/user-activity/series")
+    public ResponseEntity<Map<String, Object>> loginSeries(
+            @RequestParam String from,
+            @RequestParam String to,
+            @RequestParam(defaultValue = "day") String granularity,
+            HttpSession session) {
+        requireSystemRead(session);
+        return ResponseEntity.ok(Map.of(
+                "success",   true,
+                "data",      userActivityService.getLoginSeries(from, to, granularity),
                 "timestamp", now()));
     }
 

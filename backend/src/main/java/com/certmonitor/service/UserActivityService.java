@@ -10,6 +10,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
+import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
@@ -49,6 +50,8 @@ public class UserActivityService {
     private static final int TOP_N = 10;
     private static final int RECENT_ANOMALIES = 20;
     private static final int HEATMAP_CELL_CAP = 200;   // hücre başına en fazla login detayı
+    private static final int DETAIL_CAP = 500;         // KPI drill-down liste üst sınırı
+    private static final long MAX_RANGE_DAYS = 31;     // esnek seri sorgusu üst sınırı
     private static final long DAY_SECONDS = 86_400L;
 
     private enum Gran { DAY, HOUR, MINUTE }
@@ -69,8 +72,53 @@ public class UserActivityService {
         out.put("top_sources",  buildTopSources(window));
         out.put("anomalies",    buildAnomalies(window));
         out.put("role_team",    buildRoleTeam(window, teamNames));
-        out.put("heatmap",      buildHeatmap(window));
+        out.put("heatmaps",     buildWeeklyHeatmaps());   // bu hafta + 1 önceki + 2 önceki (her biri from/to'lu)
+        out.put("details",      buildKpiDetails(window)); // KPI kartlarına tıklayınca 24s drill-down listeleri
         return out;
+    }
+
+    /** Esnek aralık + granülarite login serisi (grafik aralık seçimi / gün-navigasyonu / zoom).
+     *  from/to UTC ISO; granularity = day|hour|minute. Aralık MAX_RANGE_DAYS ile sınırlanır. */
+    public Map<String, Object> getLoginSeries(String fromIso, String toIso, String granularity) {
+        Instant from = parse(fromIso);
+        Instant to   = parse(toIso);
+        if (from == null || to == null || !from.isBefore(to)) {
+            return Map.of("buckets", List.of(), "granularity", "day");
+        }
+        if (Duration.between(from, to).toDays() > MAX_RANGE_DAYS) {
+            from = to.minusSeconds(MAX_RANGE_DAYS * DAY_SECONDS);   // aralığı kırp
+        }
+        Gran g = switch (granularity == null ? "" : granularity.toLowerCase()) {
+            case "minute" -> Gran.MINUTE;
+            case "hour"   -> Gran.HOUR;
+            default       -> Gran.DAY;
+        };
+        String fromKey = ISO.format(from), toKey = ISO.format(to);
+        List<AuditLog> window = auditLogRepo.findLoginEventsBetween(LOGIN_TYPES, fromKey, toKey);
+        List<Map<String, Object>> buckets = fillSeries(bucketRange(from, to, g), g, window);
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("buckets", buckets);
+        out.put("granularity", g.name().toLowerCase());
+        out.put("from", fromKey);
+        out.put("to", toKey);
+        return out;
+    }
+
+    /** Verilen [from,to] aralığını granülariteye göre kova başlangıçlarına böler (Europe/Istanbul). */
+    private List<ZonedDateTime> bucketRange(Instant from, Instant to, Gran g) {
+        List<ZonedDateTime> list = new ArrayList<>();
+        ZonedDateTime cur = bucketStart(from.atZone(ZONE), g);
+        int guard = 0;
+        while (!cur.toInstant().isAfter(to) && guard < 100_000) {
+            list.add(cur);
+            cur = switch (g) {
+                case DAY    -> cur.plusDays(1);
+                case HOUR   -> cur.plusHours(1);
+                case MINUTE -> cur.plusMinutes(1);
+            };
+            guard++;
+        }
+        return list;
     }
 
     // ── Summary ────────────────────────────────────────────────────────────────
@@ -106,6 +154,62 @@ public class UserActivityService {
         m.put("anomalies_7d",      d7Anom);
         m.put("unique_users_7d",   users7d.size());
         return m;
+    }
+
+    // ── KPI drill-down (son 24 saat) — kartlara tıklayınca detay listeleri ──────
+    private Map<String, Object> buildKpiDetails(List<AuditLog> window) {
+        String s24 = ISO.format(Instant.now().minusSeconds(DAY_SECONDS));
+        List<AuditLog> logins = new ArrayList<>();
+        List<AuditLog> failed = new ArrayList<>();
+        List<AuditLog> anoms  = new ArrayList<>();
+        Map<String, long[]> userAgg = new LinkedHashMap<>();
+        Map<String, String> userLast = new LinkedHashMap<>();
+        for (AuditLog a : window) {
+            if (a.getEventTime() == null || a.getEventTime().compareTo(s24) < 0) continue;
+            if ("SUCCESS".equals(a.getOutcome())) {
+                logins.add(a);
+                if (a.getActor() != null) {
+                    userAgg.computeIfAbsent(a.getActor(), k -> new long[1])[0]++;
+                    userLast.merge(a.getActor(), a.getEventTime(), (c, n) -> n.compareTo(c) > 0 ? n : c);
+                }
+            } else {
+                failed.add(a);
+            }
+            if (a.getAnomalyFlags() != null && !a.getAnomalyFlags().isBlank()) anoms.add(a);
+        }
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("logins", eventRows(logins));
+        out.put("failed", eventRows(failed));
+        out.put("anomalies", eventRows(anoms));
+        out.put("unique_users", userAgg.entrySet().stream()
+                .sorted((x, y) -> Long.compare(y.getValue()[0], x.getValue()[0]))
+                .map(e -> {
+                    Map<String, Object> m = new LinkedHashMap<>();
+                    m.put("username", e.getKey());
+                    m.put("logins", e.getValue()[0]);
+                    m.put("last_login", userLast.get(e.getKey()));
+                    return m;
+                }).toList());
+        return out;
+    }
+
+    /** Olay listesini yeni→eski sırada, cap'li UI satırlarına çevirir (ortak satır şekli). */
+    private List<Map<String, Object>> eventRows(List<AuditLog> events) {
+        return events.stream()
+                .sorted((x, y) -> nullSafe(y.getEventTime()).compareTo(nullSafe(x.getEventTime())))
+                .limit(DETAIL_CAP)
+                .map(a -> {
+                    Map<String, Object> m = new LinkedHashMap<>();
+                    m.put("time", a.getEventTime());
+                    m.put("actor", a.getActor());
+                    m.put("ip", a.getIpAddress());
+                    m.put("country", a.getIpCountry());
+                    m.put("city", a.getIpCity());
+                    m.put("outcome", a.getOutcome());
+                    m.put("flags", a.getAnomalyFlags());
+                    m.put("reason", a.getFailureReason());
+                    return m;
+                }).toList();
     }
 
     // ── Aktif kullanıcılar ───────────────────────────────────────────────────────
@@ -339,9 +443,36 @@ public class UserActivityService {
         return out;
     }
 
+    // ── Peak ısı haritaları: bu hafta + 1 önceki + 2 önceki (her biri from/to + matrix/max/cells) ──
+    // Pencereler YEREL gün sınırına hizalı (her biri 7 ayrı gün) — rolling olsa sınır günü aynı
+    // hafta-gününü iki kez sayardı. week0 = bugün + önceki 6 gün; week1/2 = ondan önceki 7'şer gün.
+    private List<Map<String, Object>> buildWeeklyHeatmaps() {
+        ZonedDateTime todayStart = ZonedDateTime.now(ZONE).toLocalDate().atStartOfDay(ZONE);
+        String sinceK = ISO.format(todayStart.minusDays(20).toInstant());   // 3 hafta = 21 gün
+        List<AuditLog> all = auditLogRepo.findLoginEventsSince(LOGIN_TYPES, sinceK);
+        List<Map<String, Object>> out = new ArrayList<>(3);
+        for (int w = 0; w < 3; w++) {
+            ZonedDateTime toZ   = todayStart.minusDays(7L * w).plusDays(1);  // gün sonu (exclusive)
+            ZonedDateTime fromZ = toZ.minusDays(7);
+            String fromK = ISO.format(fromZ.toInstant());
+            String toK   = ISO.format(toZ.toInstant());
+            List<AuditLog> wk = new ArrayList<>();
+            for (AuditLog a : all) {
+                String t = a.getEventTime();
+                if (t != null && t.compareTo(fromK) >= 0 && t.compareTo(toK) < 0) wk.add(a);
+            }
+            Map<String, Object> hm = buildHeatmap(wk);   // matrix / max / cells
+            hm.put("from", fromK);
+            hm.put("to", toK);
+            out.add(hm);
+        }
+        return out;
+    }
+
     // ── Peak ısı haritası (hafta-günü × saat) ────────────────────────────────────
     private Map<String, Object> buildHeatmap(List<AuditLog> window) {
-        long[][] grid = new long[7][24]; // [weekday 0=Pzt..6=Paz][hour 0..23]
+        long[][] grid   = new long[7][24]; // toplam login [weekday 0=Pzt..6=Paz][hour 0..23]
+        long[][] failed = new long[7][24]; // başarısız (SUCCESS olmayan) login sayısı — hücreyi kırmızı yapar
         // Hücre detayları: "dow-hour" → o kovadaki login olayları (tıklayınca kullanıcıları göster).
         Map<String, List<Map<String, Object>>> cells = new LinkedHashMap<>();
         long max = 0;
@@ -353,6 +484,7 @@ public class UserActivityService {
             int hour = z.getHour();
             long v = ++grid[dow][hour];
             if (v > max) max = v;
+            if (!"SUCCESS".equals(a.getOutcome())) failed[dow][hour]++;
             List<Map<String, Object>> lst = cells.computeIfAbsent(dow + "-" + hour, k -> new ArrayList<>());
             if (lst.size() < HEATMAP_CELL_CAP) {
                 Map<String, Object> m = new LinkedHashMap<>();
@@ -362,20 +494,26 @@ public class UserActivityService {
                 m.put("country", a.getIpCountry());
                 m.put("city",    a.getIpCity());
                 m.put("outcome", a.getOutcome());
+                m.put("reason",  a.getFailureReason());
                 lst.add(m);
             }
         }
-        List<List<Long>> matrix = new ArrayList<>(7);
-        for (long[] row : grid) {
-            List<Long> r = new ArrayList<>(24);
-            for (long v : row) r.add(v);
-            matrix.add(r);
-        }
         Map<String, Object> out = new LinkedHashMap<>();
-        out.put("matrix", matrix);
+        out.put("matrix", toMatrix(grid));
+        out.put("failed", toMatrix(failed));
         out.put("max", max);
         out.put("cells", cells);
         return out;
+    }
+
+    private List<List<Long>> toMatrix(long[][] grid) {
+        List<List<Long>> matrix = new ArrayList<>(grid.length);
+        for (long[] row : grid) {
+            List<Long> r = new ArrayList<>(row.length);
+            for (long v : row) r.add(v);
+            matrix.add(r);
+        }
+        return matrix;
     }
 
     // ── Yardımcılar ───────────────────────────────────────────────────────────────

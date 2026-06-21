@@ -445,12 +445,16 @@ export const api = {
     getMetrics: () => request('/admin/system/metrics'),
     getHttpMetrics: () => request('/admin/system/http-metrics'),
     getDbStats: () => request('/admin/system/db-stats'),
+    getDbAnalytics: (days = 7) => request(`/admin/system/db-analytics?days=${days}`),
     getSmtpLogs: (days) =>
       request(`/admin/system/smtp-logs${days ? `?days=${days}` : ''}`),
     triggerHeartbeat: () => request('/admin/system/heartbeat', { method: 'POST' }),
     getHeartbeatTimeline: (days = 1) => request(`/admin/system/heartbeat-timeline?days=${days}`),
     // Kullanıcı / oturum izleme
     getUserActivity: () => request('/admin/system/user-activity'),
+    // Esnek login serisi — aralık seçimi (1g/7g/30g), gün-navigasyonu, zoom
+    getLoginSeries: (from, to, granularity = 'day') =>
+      request(`/admin/system/user-activity/series?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}&granularity=${granularity}`),
     terminateUserSession: (username) => request('/admin/system/terminate-session', {
       method: 'POST', body: JSON.stringify({ username }),
     }),

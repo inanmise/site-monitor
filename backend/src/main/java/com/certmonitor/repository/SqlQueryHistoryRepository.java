@@ -10,4 +10,7 @@ public interface SqlQueryHistoryRepository extends JpaRepository<SqlQueryHistory
     List<SqlQueryHistory> findTop50ByOrderByExecutedAtDesc();
 
     List<SqlQueryHistory> findTop50ByExecutedByOrderByExecutedAtDesc(String executedBy);
+
+    /** DB analitiği — pencere içindeki sorgu geçmişi (Java'da kullanıcı/SQL/zaman kümelemesi için). */
+    List<SqlQueryHistory> findByExecutedAtGreaterThanEqualOrderByExecutedAtAsc(String since);
 }

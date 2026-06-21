@@ -47,6 +47,9 @@ class SystemControllerTest {
     com.certmonitor.service.UserActivityService userActivityService;
 
     @MockitoBean
+    com.certmonitor.service.DbAnalyticsService dbAnalyticsService;
+
+    @MockitoBean
     AuthController authController;
 
     @BeforeEach
@@ -57,6 +60,8 @@ class SystemControllerTest {
         when(extendedHealthService.getHeartbeatStatus()).thenReturn(Map.of("ok", true));
         when(extendedHealthService.getNetworkStatus()).thenReturn(Map.of("alarm", false));
         when(userActivityService.getOverview()).thenReturn(Map.of("summary", Map.of("active_count", 1)));
+        when(dbAnalyticsService.getOverview(org.mockito.ArgumentMatchers.anyInt()))
+                .thenReturn(Map.of("summary", Map.of("queries", 0)));
     }
 
     @Test
@@ -116,6 +121,21 @@ class SystemControllerTest {
     @DisplayName("GET /api/admin/system/user-activity as USER returns 403 (admin/audit-only)")
     void userActivity_asUser_returns403() throws Exception {
         mvc.perform(get("/api/admin/system/user-activity").session(userSession()))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    @DisplayName("GET /api/admin/system/db-analytics as ADMIN returns 200")
+    void dbAnalytics_asAdmin_returns200() throws Exception {
+        mvc.perform(get("/api/admin/system/db-analytics?days=7").session(adminSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true));
+    }
+
+    @Test
+    @DisplayName("GET /api/admin/system/db-analytics as USER returns 403 (admin/audit-only)")
+    void dbAnalytics_asUser_returns403() throws Exception {
+        mvc.perform(get("/api/admin/system/db-analytics?days=7").session(userSession()))
                 .andExpect(status().isForbidden());
     }
 

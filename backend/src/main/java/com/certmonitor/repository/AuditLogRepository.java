@@ -35,6 +35,11 @@ public interface AuditLogRepository extends JpaRepository<AuditLog, Long> {
     @Query("SELECT a FROM AuditLog a WHERE a.eventType IN :types AND a.eventTime >= :since ORDER BY a.eventTime ASC")
     List<AuditLog> findLoginEventsSince(@Param("types") List<String> types, @Param("since") String since);
 
+    /** Esnek aralık (from–to) içindeki login olayları — grafik aralık seçimi/zoom/gün-navigasyonu için. */
+    @Query("SELECT a FROM AuditLog a WHERE a.eventType IN :types AND a.eventTime >= :from AND a.eventTime <= :to ORDER BY a.eventTime ASC")
+    List<AuditLog> findLoginEventsBetween(@Param("types") List<String> types,
+                                          @Param("from") String from, @Param("to") String to);
+
     /** Bir oturuma ait en güncel audit satırı — aktif kullanıcının login zamanı + IP/konum/tarayıcısı. */
     Optional<AuditLog> findTopByActorAndSessionIdOrderByEventTimeDesc(String actor, String sessionId);
 

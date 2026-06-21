@@ -8,25 +8,36 @@ const RANGES = [
   { key: '24h',  labelKey: 'chart.range24h',  minutes: 1440 },
 ]
 
-// isDate=true → günlük seride eksen/tooltip tarih gösterir (kovalar yerel gece yarısı → saat hep 00:00).
-const localHHMM = (ts, isDate) => {
+// gran: 'day' → tarih ekseni (kovalar yerel gece yarısı); 'hour'/'minute'/undefined → saat ekseni.
+const hm = d => d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+
+// Eksen etiketi (kova başlangıcı).
+const axisLabel = (ts, gran) => {
   if (!ts) return ''
   const d = new Date(ts + 'Z')
-  return isDate
+  return gran === 'day'
     ? d.toLocaleDateString([], { day: '2-digit', month: '2-digit' })
-    : d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    : hm(d)
 }
 
-const localFull = (ts, isDate) => {
+// Son kova bitişi: saatlik → +59 dk (23:00 → 23:59, tüm saat olduğu anlaşılır).
+const endLabel = (ts, gran) => {
+  if (!ts) return ''
+  if (gran === 'hour') return hm(new Date(new Date(ts + 'Z').getTime() + 59 * 60_000))
+  return axisLabel(ts, gran)
+}
+
+// Tooltip: saatlik → "23:00 – 23:59" aralığı; günlük → tarih; diğer → tarih+saat.
+const tipLabel = (ts, gran) => {
   if (!ts) return ''
   const d = new Date(ts + 'Z')
-  return isDate
-    ? d.toLocaleDateString([], { weekday: 'short', day: '2-digit', month: '2-digit' })
-    : d.toLocaleString([], { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
+  if (gran === 'hour') return `${hm(d)} – ${hm(new Date(d.getTime() + 59 * 60_000))}`
+  if (gran === 'day')  return d.toLocaleDateString([], { weekday: 'short', day: '2-digit', month: '2-digit' })
+  return d.toLocaleString([], { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
 }
 
 // ── Big SVG chart ─────────────────────────────────────────────────────────────
-function BigChart({ data, color, unit, maxY, isDate }) {
+function BigChart({ data, color, unit, maxY, gran }) {
   const [hovered, setHovered] = useState(null)
 
   const W = 800, H = 200
@@ -114,7 +125,7 @@ function BigChart({ data, color, unit, maxY, isDate }) {
         {xIndices.map(i => (
           <text key={i} x={toX(i)} y={H - 6} textAnchor="middle"
             fontSize="8.5" fill="var(--chart-label)">
-            {localHHMM(data[i]?.ts, isDate)}
+            {axisLabel(data[i]?.ts, gran)}
           </text>
         ))}
 
@@ -132,7 +143,7 @@ function BigChart({ data, color, unit, maxY, isDate }) {
       {/* Tooltip */}
       {hovered && hovered.d && (
         <div className="chart-tooltip">
-          <strong>{localFull(hovered.d.ts, isDate)}</strong>
+          <strong>{tipLabel(hovered.d.ts, gran)}</strong>
           <span>{hovered.d.value ?? '—'}{unit}</span>
         </div>
       )}
@@ -154,14 +165,15 @@ export default function ChartModal({ chart, onClose }) {
 
   if (!chart) return null
 
-  const { label, unit, color, maxY, data, xMode } = chart
-  const isDate = xMode === 'date'
-
-  // Filter data to selected range — yalnız zaman (intraday) modunda; gün serisinde tüm 7 günü göster.
+  const { label, unit, color, maxY, data, gran } = chart
+  // gran set ise (Giriş Trendi grafikleri) aralık paneldeki kontrollerle yönetilir → modal'da
+  // 15dk/1s/6s/24s aralık butonları gösterme, gelen tüm aralığı çiz. Yalnız legacy zaman serileri
+  // (http/cpu — gran yok) intraday filtre + aralık butonları kullanır.
+  const showRange = !gran
   const rangeMs  = (RANGES.find(r => r.key === range)?.minutes ?? Infinity) * 60_000
   const cutoff   = Date.now() - rangeMs
   const filtered = data.filter(d => d.ts && new Date(d.ts + 'Z').getTime() >= cutoff)
-  const display  = isDate ? data : (filtered.length > 0 ? filtered : data)
+  const display  = showRange ? (filtered.length > 0 ? filtered : data) : data
 
   // Stats for selected range
   const vals    = display.map(d => d.value).filter(v => v != null)
@@ -180,8 +192,8 @@ export default function ChartModal({ chart, onClose }) {
           <button className="chart-modal-close" onClick={onClose} aria-label="Kapat">✕</button>
         </div>
 
-        {/* Time range buttons — yalnız intraday (saat/dakika) serilerde; gün serisinde anlamsız, gizle */}
-        {!isDate && (
+        {/* Aralık butonları — yalnız legacy zaman serileri (http/cpu). Trend grafiklerinde panel kontrol eder. */}
+        {showRange && (
           <div className="chart-range-bar">
             {RANGES.map(r => (
               <button
@@ -217,12 +229,12 @@ export default function ChartModal({ chart, onClose }) {
         </div>
 
         {/* Big chart */}
-        <BigChart data={display} color={color} unit={unit} maxY={maxY} isDate={isDate} />
+        <BigChart data={display} color={color} unit={unit} maxY={maxY} gran={gran} />
 
-        {/* Time span label */}
+        {/* Time span label — son kova bitiş-dahil (saatlik → 23:59) */}
         {display.length > 1 && (
           <p className="chart-timespan">
-            {localFull(display[0].ts, isDate)} — {localFull(display[display.length - 1].ts, isDate)}
+            {axisLabel(display[0].ts, gran)} — {endLabel(display[display.length - 1].ts, gran)}
           </p>
         )}
       </div>
