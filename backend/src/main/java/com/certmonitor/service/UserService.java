@@ -25,6 +25,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.NoSuchElementException;
 import java.util.Optional;
+import java.util.UUID;
 
 @Slf4j
 @Service
@@ -36,6 +37,10 @@ public class UserService {
     private final CertificateInventoryRepository inventoryRepo;
     private final EscalationContactRepository contactRepo;
     private final PasswordHistoryRepository passwordHistoryRepo;
+
+    /** Admin "Sonlandır" sonrası activeSessionId'ye yazılan sentinel öneki — gerçek oturum ID'sine
+     *  asla eşleşmez; AppUserRepository.findAllWithActiveSession bunu hariç tutar. */
+    public static final String SESSION_TERMINATED_PREFIX = "TERMINATED:";
 
     private static final BCryptPasswordEncoder PASSWORD_ENCODER = new BCryptPasswordEncoder();
     private static final DateTimeFormatter ISO =
@@ -57,6 +62,11 @@ public class UserService {
 
     @Value("${cert.monitor.password.history-count:3}")
     private int passwordHistoryCount;
+
+    /** "Aktif oturum" tazelik penceresi (sn): son ping bu süre içindeyse oturum canlı sayılır.
+     *  Frontend ping aralığı ~15 sn; arka-plan sekmesi kısıtlamasına (≈1/dk) tolerans için 120 sn. */
+    @Value("${cert.monitor.session.active-window-seconds:120}")
+    private long activeWindowSeconds;
 
     /** Returns how many failures are needed to trigger the next lockout for this account. */
     public int failuresNeededForLevel(Integer failedBlockCount) {
@@ -93,6 +103,80 @@ public class UserService {
 
     public Optional<AppUser> findByUsername(String username) {
         return userRepo.findByUsername(username);
+    }
+
+    // ── Tek aktif oturum (single active session per user) — store-agnostik ──────
+    /** Kullanıcının en güncel oturum ID'sini kaydeder (yeni login / remember-me reauth → newest wins). */
+    @Transactional
+    public void recordActiveSession(String username, String sessionId) {
+        if (username == null || sessionId == null) return;
+        userRepo.findByUsername(username).ifPresent(u -> {
+            u.setActiveSessionId(sessionId);
+            u.setLastSeenAt(ISO.format(Instant.now()));   // login = taze etkinlik
+            userRepo.save(u);
+        });
+    }
+
+    /** Oturum ping'i (frontend ~15 sn): kullanıcının güncel oturumunun lastSeenAt'ini tazeler.
+     *  Süpersede oturum (sid eşleşmez) güncellenmez — interceptor zaten 401 verir. */
+    @Transactional
+    public void touchActiveSession(String username, String sessionId) {
+        if (username == null || sessionId == null) return;
+        userRepo.touchLastSeen(username, sessionId, ISO.format(Instant.now()));
+    }
+
+    /** Kullanıcının CANLI bir aktif oturumu var mı? activeSessionId set (TERMINATED sentinel değil) VE
+     *  lastSeenAt tazelik penceresi içinde (son ping). Aktif sayım + login-onayı bunu kullanır;
+     *  böylece logout'suz kapatılan/ölen oturumlar otomatik düşer. */
+    public boolean hasLiveSession(AppUser u) {
+        if (u == null) return false;
+        String sid = u.getActiveSessionId();
+        if (sid == null || sid.isBlank() || sid.startsWith(SESSION_TERMINATED_PREFIX)) return false;
+        String last = u.getLastSeenAt();
+        if (last == null || last.isBlank()) return false;
+        String threshold = ISO.format(Instant.now().minusSeconds(activeWindowSeconds));
+        return last.compareTo(threshold) >= 0;
+    }
+
+    /** Bu oturum, kullanıcının kayıtlı (daha yeni) oturumu tarafından geçersiz kılındı mı?
+     *  Yalnız kayıtlı activeSessionId VARSA ve verilenden FARKLIYSA true → başka yerden login olmuş, bu eski
+     *  oturum kapatılmalı. Kayıt yoksa (null, deploy öncesi eski oturumlar) veya eşleşiyorsa false → zorlama yok. */
+    public boolean isSessionSuperseded(String username, String sessionId) {
+        if (username == null || sessionId == null) return false;
+        String active = userRepo.findByUsername(username).map(AppUser::getActiveSessionId).orElse(null);
+        return active != null && !active.equals(sessionId);
+    }
+
+    /** Çıkışta aktif oturum kaydını temizler — yalnız eşleşiyorsa (yarıştaki yeni oturumu silmesin). */
+    @Transactional
+    public void clearActiveSession(String username, String sessionId) {
+        if (username == null || sessionId == null) return;
+        userRepo.findByUsername(username).ifPresent(u -> {
+            if (sessionId.equals(u.getActiveSessionId())) {
+                u.setActiveSessionId(null);
+                userRepo.save(u);
+            }
+        });
+    }
+
+    /** Açılışta: tüm stale activeSessionId kayıtlarını temizler (in-memory oturumlar restart'ı yaşamaz).
+     *  Temizlenen satır sayısını döner. */
+    @Transactional
+    public int clearAllActiveSessions() {
+        return userRepo.clearAllActiveSessions();
+    }
+
+    /** Admin tarafından uzaktan oturum sonlandırma (kick). activeSessionId'yi kullanıcının GERÇEK
+     *  oturumuna asla eşleşmeyecek bir sentinel'e çeker → kullanıcının sonraki isteğinde
+     *  isSessionSuperseded=true olur, oturum kapanır. (null yapmak grandfather yüzünden ATMAZ.)
+     *  remember-me iptali çağıran tarafça yapılır (sessiz reauth olmasın). */
+    @Transactional
+    public void terminateActiveSession(String username) {
+        if (username == null) return;
+        userRepo.findByUsername(username).ifPresent(u -> {
+            u.setActiveSessionId(SESSION_TERMINATED_PREFIX + UUID.randomUUID());
+            userRepo.save(u);
+        });
     }
 
     public Optional<Team> findTeamById(Long id) {

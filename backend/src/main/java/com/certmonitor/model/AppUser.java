@@ -123,6 +123,20 @@ public class AppUser {
     @Column(name = "temp_password_expires_at", length = 30)
     private String tempPasswordExpiresAt;
 
+    /** Tek aktif oturum: kullanıcının EN GÜNCEL oturumunun ID'si. Yeni login/remember-me reauth bunu
+     *  günceller; AuthInterceptor her istekte karşılaştırır, eşleşmeyen (eski) oturumu kapatır.
+     *  Store-agnostik (bellek/jdbc fark etmez). İstemciye sızmasın diye @JsonIgnore. */
+    @JsonIgnore
+    @Column(name = "active_session_id", length = 200)
+    private String activeSessionId;
+
+    /** Aktif oturumun son etkinlik (ping) zamanı — ISO-8601 UTC. Frontend ~15 sn'de bir
+     *  /api/session/ping çağırır; "aktif kullanıcı" sayımı ve login-onayı bunu tazelik penceresiyle
+     *  kontrol eder. Tarayıcı logout'suz kapanınca ping durur → bayatlar → aktif sayılmaz. */
+    @JsonIgnore
+    @Column(name = "last_seen_at", length = 30)
+    private String lastSeenAt;
+
     private String createdAt;
     private String updatedAt;
 }

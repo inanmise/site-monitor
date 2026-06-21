@@ -3,7 +3,10 @@ package com.certmonitor.controller;
 import com.certmonitor.service.ExtendedHealthService;
 import com.certmonitor.service.HttpMetricsService;
 import com.certmonitor.service.MetricsService;
+import com.certmonitor.service.RememberMeService;
 import com.certmonitor.service.SchedulerService;
+import com.certmonitor.service.UserActivityService;
+import com.certmonitor.service.UserService;
 import jakarta.servlet.http.HttpSession;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
@@ -24,6 +27,9 @@ public class SystemController {
     private final MetricsService        metricsService;
     private final HttpMetricsService    httpMetricsService;
     private final ExtendedHealthService extendedHealthService;
+    private final UserActivityService   userActivityService;
+    private final UserService           userService;
+    private final RememberMeService     rememberMeService;
 
     private static final DateTimeFormatter ISO =
             DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
@@ -92,11 +98,45 @@ public class SystemController {
         return ResponseEntity.ok(Map.of("success", true, "message", "Scheduler lock released", "timestamp", now()));
     }
 
+    /** Kullanıcı / oturum izleme — aktif oturumlar, login serileri, top/anomali/peak (tek payload).
+     *  Sayfa görünürlüğüyle aynı kitle: global admin VEYA AUDIT (salt-okuma denetçi). */
+    @GetMapping("/user-activity")
+    public ResponseEntity<Map<String, Object>> getUserActivity(HttpSession session) {
+        requireSystemRead(session);
+        return ResponseEntity.ok(Map.of(
+                "success",   true,
+                "data",      userActivityService.getOverview(),
+                "timestamp", now()));
+    }
+
+    /** Admin: bir kullanıcının aktif oturumunu uzaktan sonlandır (kick) + remember-me token'larını iptal. */
+    @PostMapping("/terminate-session")
+    public ResponseEntity<Map<String, Object>> terminateSession(
+            @RequestBody Map<String, String> body, HttpSession session) {
+        requireAdmin(session);
+        String username = body != null ? body.get("username") : null;
+        if (username == null || username.isBlank()) {
+            return ResponseEntity.badRequest().body(Map.of(
+                    "success", false, "error", "username required", "timestamp", now()));
+        }
+        userService.terminateActiveSession(username);
+        rememberMeService.invalidateAllForUser(username);
+        return ResponseEntity.ok(Map.of("success", true, "username", username, "timestamp", now()));
+    }
+
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     private void requireAdmin(HttpSession session) {
         if (!SessionScope.isGlobalAdmin(session)) {
             throw new SecurityException("Admin access required");
+        }
+    }
+
+    /** Salt-okuma izleme: global admin veya AUDIT (System Health sekmesini gören kitle). */
+    private void requireSystemRead(HttpSession session) {
+        String role = session != null ? (String) session.getAttribute("systemRole") : null;
+        if (!SessionScope.isGlobalAdmin(session) && !"AUDIT".equals(role)) {
+            throw new SecurityException("Admin or audit access required");
         }
     }
 

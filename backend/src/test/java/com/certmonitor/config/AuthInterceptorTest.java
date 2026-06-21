@@ -5,6 +5,7 @@ import com.certmonitor.model.AppUser;
 import com.certmonitor.service.RememberMeService;
 import com.certmonitor.service.UserService;
 import jakarta.servlet.http.Cookie;
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpSession;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -152,5 +153,48 @@ class AuthInterceptorTest {
 
         assertThat(allowed).isFalse();
         assertThat(res.getStatus()).isEqualTo(403);
+    }
+
+    // ── Tek aktif oturum / süpersede → otomatik logout (500 değil temiz 401) ─────
+
+    @Test
+    @DisplayName("Süpersede oturum → 401 + invalidate + remember-me cookie temizlenir (500 değil)")
+    void session_superseded_returns401() throws Exception {
+        MockHttpServletRequest req = new MockHttpServletRequest();
+        req.setRequestURI("/api/certificates");
+        MockHttpSession s = new MockHttpSession();
+        s.setAttribute("authenticated", true);
+        s.setAttribute("username", "alice");
+        req.setSession(s);
+        MockHttpServletResponse res = new MockHttpServletResponse();
+        when(userService.isSessionSuperseded(any(), any())).thenReturn(true);
+
+        boolean allowed = interceptor.preHandle(req, res, new Object());
+
+        assertThat(allowed).isFalse();
+        assertThat(res.getStatus()).isEqualTo(401);
+        assertThat(res.getContentAsString()).contains("Session superseded");
+        assertThat(s.isInvalid()).isTrue();
+        Cookie c = res.getCookie(RememberMeService.COOKIE_NAME);
+        assertThat(c).isNotNull();
+        assertThat(c.getMaxAge()).isZero();   // remember-me cookie silindi
+    }
+
+    @Test
+    @DisplayName("Yarış: oturum paralel istekçe kapatılmış (getAttribute IllegalStateException) → 500 değil 401")
+    void session_concurrentlyInvalidated_returns401_notError() throws Exception {
+        HttpServletRequest req = mock(HttpServletRequest.class);
+        HttpSession s = mock(HttpSession.class);
+        when(req.getRequestURI()).thenReturn("/api/me");
+        when(req.getSession(false)).thenReturn(s);
+        when(s.getAttribute("authenticated"))
+                .thenThrow(new IllegalStateException("getAttribute: Session already invalidated"));
+        MockHttpServletResponse res = new MockHttpServletResponse();
+
+        boolean allowed = interceptor.preHandle(req, res, new Object());
+
+        assertThat(allowed).isFalse();
+        assertThat(res.getStatus()).isEqualTo(401);
+        assertThat(res.getContentAsString()).contains("Session superseded");
     }
 }

@@ -53,8 +53,29 @@ public class AuthInterceptor implements HandlerInterceptor {
 
         // 1. Valid session check
         HttpSession session = req.getSession(false);
-        if (session != null && Boolean.TRUE.equals(session.getAttribute("authenticated"))) {
-            return enforceForcedPasswordChange(session, path, res);
+        if (session != null) {
+            try {
+                if (Boolean.TRUE.equals(session.getAttribute("authenticated"))) {
+                    // Tek aktif oturum: bu oturum kullanıcının kayıtlı (daha yeni) oturumu tarafından
+                    // geçersiz kılındıysa (başka yerden login ya da admin "Sonlandır"), oturumu kapat ve
+                    // temiz 401 dön → frontend otomatik logout (/?session=expired). remember-me cookie'si
+                    // de silinir ki kullanıcı sessizce geri dönmesin.
+                    String username = (String) session.getAttribute("username");
+                    if (userService.isSessionSuperseded(username, session.getId())) {
+                        try { session.invalidate(); } catch (IllegalStateException ignored) { /* zaten kapalı */ }
+                        clearRememberMeCookie(res);
+                        return writeUnauthorized(res, "Session superseded");
+                    }
+                    return enforceForcedPasswordChange(session, path, res);
+                }
+            } catch (IllegalStateException alreadyInvalidated) {
+                // Oturum, eşzamanlı (paralel) bir istek tarafından zaten geçersiz kılınmış. Tarayıcılar
+                // aynı anda birden fazla istek atar; biri süpersede ile oturumu kapatınca diğeri kapalı
+                // oturumda getAttribute çağırıp HTTP 500'e yol açabiliyordu. Artık 500 yerine temiz 401
+                // (oto-logout) dönüyoruz.
+                clearRememberMeCookie(res);
+                return writeUnauthorized(res, "Session superseded");
+            }
         }
 
         // 2. Remember-me cookie — if valid, restore full user session.
@@ -72,18 +93,32 @@ public class AuthInterceptor implements HandlerInterceptor {
                     && !userService.checkLockout(username).isBlocked()) {
                 HttpSession newSession = req.getSession(true);
                 authController.populateSession(newSession, userOpt.get());
-                // Tek aktif oturum: remember-me ile kurulan oturum da "tek" olsun — diğerlerini kapat.
-                authController.invalidateOtherSessions(username, newSession.getId());
+                // Tek aktif oturum: remember-me ile kurulan oturum da kullanıcının "aktif" oturumu olsun.
+                userService.recordActiveSession(username, newSession.getId());
                 // Apply the forced-password-change gate to the restored session too,
                 // so the cookie path can't sidestep the modal for one request.
                 return enforceForcedPasswordChange(newSession, path, res);
             }
         }
 
+        return writeUnauthorized(res, "Unauthorized");
+    }
+
+    /** Temiz 401 JSON yanıtı (frontend bunu yakalayıp otomatik logout eder). */
+    private boolean writeUnauthorized(HttpServletResponse res, String error) throws Exception {
         res.setStatus(401);
         res.setContentType("application/json;charset=UTF-8");
-        mapper.writeValue(res.getWriter(), Map.of("success", false, "error", "Unauthorized"));
+        mapper.writeValue(res.getWriter(), Map.of("success", false, "error", error));
         return false;
+    }
+
+    /** Süpersede edilen tarafta remember-me cookie'sini sil — redirect sonrası sessiz reauth olmasın. */
+    private void clearRememberMeCookie(HttpServletResponse res) {
+        Cookie del = new Cookie(RememberMeService.COOKIE_NAME, "");
+        del.setMaxAge(0);
+        del.setHttpOnly(true);
+        del.setPath("/");
+        res.addCookie(del);
     }
 
     /**

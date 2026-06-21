@@ -1,10 +1,11 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
-import { api, formatDate } from '../../api/client'
+import { api, formatDate, formatDateSec } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
-import { CheckCircle, XCircle, MinusCircle, HelpCircle, Mail, ChevronRight, Check, Loader2, Server, Database, Globe, Cpu, ChevronDown } from 'lucide-react'
+import { CheckCircle, XCircle, MinusCircle, HelpCircle, Mail, ChevronRight, Check, Loader2, Server, Database, Globe, Cpu, ChevronDown, Users } from 'lucide-react'
 import MiniChart from './MiniChart'
 import ChartModal from './ChartModal'
 import HeartbeatHistoryModal from './HeartbeatHistoryModal'
+import LoginHeatmap from './LoginHeatmap'
 
 function SmtpStatusCell({ row, t }) {
   const cfg = {
@@ -52,8 +53,33 @@ function DbColor(ms) {
   return 'sys-err-text'
 }
 
-export default function SystemHealth({ systemRole, preFilterDomain, openSmtpModalOnLoad, onSmtpPreFilterConsumed }) {
+// Kullanıcı/oturum izleme yardımcıları
+function shortUa(ua) {
+  if (!ua) return '—'
+  if (/Edg\//.test(ua)) return 'Edge'
+  if (/OPR\/|Opera/.test(ua)) return 'Opera'
+  if (/Chrome\//.test(ua)) return 'Chrome'
+  if (/Firefox\//.test(ua)) return 'Firefox'
+  if (/Safari\//.test(ua)) return 'Safari'
+  if (/curl\//i.test(ua)) return 'curl'
+  return ua.split(' ')[0] || '—'
+}
+function fmtMins(m) {
+  const n = Number(m) || 0
+  if (n < 60) return `${n} dk`
+  const h = Math.floor(n / 60), mm = n % 60
+  return `${h} sa ${mm} dk`
+}
+function locStr(country, city) {
+  const parts = [city, country].filter(Boolean)
+  return parts.length ? parts.join(', ') : '—'
+}
+
+export default function SystemHealth({ systemRole, globalAdmin = false, preFilterDomain, openSmtpModalOnLoad, onSmtpPreFilterConsumed }) {
   const isAdmin = systemRole === 'ADMIN'
+  // Kullanıcı/oturum izleme yalnız global admin veya AUDIT'e açık (backend requireSystemRead ile aynı).
+  // Sağlık sekmesi herkese görünür; yetkisiz kullanıcıda bu bölümü hiç çağırma/gösterme → 403/"Yüklenemedi" olmaz.
+  const canViewUserActivity = !!globalAdmin || systemRole === 'AUDIT'
   const t = useT()
   const [health, setHealth]           = useState(null)
   const [metrics, setMetrics]         = useState([])
@@ -71,6 +97,7 @@ export default function SystemHealth({ systemRole, preFilterDomain, openSmtpModa
   const dbVisible   = openSection === 'db'
   const httpVisible = openSection === 'http'
   const cpuVisible  = openSection === 'cpu'
+  const usersVisible = openSection === 'users'
   const [smtpPeriod, setSmtpPeriod]   = useState('7d')
   const [loading, setLoading]         = useState(true)
   const [releasing, setReleasing]     = useState(false)
@@ -84,18 +111,27 @@ export default function SystemHealth({ systemRole, preFilterDomain, openSmtpModa
   const [smtpLoading, setSmtpLoading] = useState(false)
   const [selectedLog, setSelectedLog] = useState(null)
   const [smtpFilters, setSmtpFilters] = useState({ from: '', to: '', subject: '', status: '', domain: '' })
-  const [loadErrors, setLoadErrors]   = useState({ health: false, metrics: false, http: false, db: false })
+  const [loadErrors, setLoadErrors]   = useState({ health: false, metrics: false, http: false, db: false, users: false })
+  const [userActivity, setUserActivity] = useState(null)
+  const [uactSort, setUactSort]       = useState({ col: 'duration_min', dir: 'desc' })
+  const [terminatingUser, setTerminatingUser] = useState(null)
+  const [sessionDetail, setSessionDetail] = useState(null) // tıklanan aktif oturum detay modalı
+  const [showActiveList, setShowActiveList] = useState(false) // "Aktif Oturum" kartı → kişi listesi modalı
+  const [heatCell, setHeatCell] = useState(null) // ısı haritası hücresi {weekday,hour} → o saatteki girişler
 
   const load = useCallback(async () => {
     // allSettled: bir endpoint çökse de diğerleri yüklensin; her bölüm
     // kendi hata durumunu loadErrors üzerinden gösterir.
-    const [healthRes, metricsRes, httpRes, dbRes] = await Promise.allSettled([
+    const [healthRes, metricsRes, httpRes, dbRes, uactRes] = await Promise.allSettled([
       api.admin.getSystemHealth(),
       api.admin.getMetrics(),
       api.admin.getHttpMetrics(),
       api.admin.getDbStats(),
+      // Kullanıcı/oturum izleme yalnız yetkili (global admin/AUDIT) için — aksi halde hiç çağırma,
+      // böylece yetkisiz kullanıcıda 403 → "Yüklenemedi: Kullanıcılar" çıkmaz.
+      canViewUserActivity ? api.admin.getUserActivity() : Promise.resolve(null),
     ])
-    const errs = { health: false, metrics: false, http: false, db: false }
+    const errs = { health: false, metrics: false, http: false, db: false, users: false }
     if (healthRes.status === 'fulfilled' && healthRes.value?.success) {
       setHealth(healthRes.value.data); setPoolLastRefreshed(new Date())
     } else { errs.health = true }
@@ -108,9 +144,14 @@ export default function SystemHealth({ systemRole, preFilterDomain, openSmtpModa
     if (dbRes.status === 'fulfilled' && dbRes.value?.success) {
       setDbStats(dbRes.value.data ?? [])
     } else { errs.db = true }
+    if (canViewUserActivity) {
+      if (uactRes.status === 'fulfilled' && uactRes.value?.success) {
+        setUserActivity(uactRes.value.data)
+      } else { errs.users = true }
+    }
     setLoadErrors(errs)
     setLoading(false)
-  }, [])
+  }, [canViewUserActivity])
 
   useEffect(() => {
     load()
@@ -127,6 +168,19 @@ export default function SystemHealth({ systemRole, preFilterDomain, openSmtpModa
     if (res?.success) setHealth(prev => ({ ...prev, heartbeat: res.data }))
     setHbRefreshing(false)
   }, [])
+
+  const handleTerminateSession = useCallback(async (username) => {
+    if (!username) return
+    if (!window.confirm(t('uact.terminateConfirm', username))) return
+    setTerminatingUser(username)
+    const res = await api.admin.terminateUserSession(username)
+    if (res?.success) {
+      const uact = await api.admin.getUserActivity()
+      if (uact?.success) setUserActivity(uact.data)
+      setMsg(t('uact.terminated', username))
+    }
+    setTerminatingUser(null)
+  }, [t])
 
   const refreshPool = useCallback(async () => {
     setPoolCardRefreshing(true)
@@ -962,9 +1016,433 @@ export default function SystemHealth({ systemRole, preFilterDomain, openSmtpModa
         )}
       </div>
 
+      {/* Kullanıcı / Oturum izleme — yalnız yetkili (global admin/AUDIT) görür */}
+      {canViewUserActivity && (
+      <div className="stats-section">
+        <div
+          className="stats-collapse-bar"
+          onClick={() => toggleSection('users')}
+          title={usersVisible ? t('app.collapseStats') : t('app.expandStats')}
+        >
+          <span className="stats-collapse-icon"><Users size={18} /></span>
+          <span className="stats-collapse-label">{t('uact.section')}</span>
+          {!usersVisible && (
+            <span className="stats-collapse-hint">{t('health.sectionShow', t('uact.section'))}</span>
+          )}
+          <span className={`stats-collapse-chevron${usersVisible ? ' open' : ''}`}>
+            <ChevronDown size={18} />
+          </span>
+        </div>
+        {usersVisible && (
+        <div className="metrics-section">
+          {loadErrors.users && <div className="sys-msg">{t('uact.loadError')}</div>}
+          {userActivity && (() => {
+            const ua = userActivity
+            const sum = ua.summary || {}
+            const series = ua.series || {}
+            const active = ua.active_users || []
+            const anomalies = ua.anomalies || {}
+            const roleTeam = ua.role_team || {}
+            const heat = ua.heatmap || {}
+            const dayLabels = t('uact.weekdays').split(',')
+            const mc = (arr, field) => (arr ?? []).map(b => ({ ts: b.ts, value: b[field] }))
+            const seriesGrid = (arr, prefix, xMode = 'time') => (
+              <div className="metrics-grid">
+                <MiniChart label={`${prefix} · ${t('uact.requests')}`} unit="" color="#4f9cf9" xMode={xMode}
+                  data={mc(arr, 'total')}
+                  onClick={() => setModalChart({ label: `${prefix} · ${t('uact.requests')}`, unit: '', color: '#4f9cf9', xMode, data: mc(arr, 'total') })} />
+                <MiniChart label={`${prefix} · ${t('uact.success')}`} unit="" color="#10b981" xMode={xMode}
+                  data={mc(arr, 'success')}
+                  onClick={() => setModalChart({ label: `${prefix} · ${t('uact.success')}`, unit: '', color: '#10b981', xMode, data: mc(arr, 'success') })} />
+                <MiniChart label={`${prefix} · ${t('uact.failed')}`} unit="" color="#ef4444" xMode={xMode}
+                  data={mc(arr, 'failed')}
+                  onClick={() => setModalChart({ label: `${prefix} · ${t('uact.failed')}`, unit: '', color: '#ef4444', xMode, data: mc(arr, 'failed') })} />
+              </div>
+            )
+            const uSort = (col) => setUactSort(s => s.col === col
+              ? { col, dir: s.dir === 'asc' ? 'desc' : 'asc' }
+              : { col, dir: col === 'username' ? 'asc' : 'desc' })
+            const uArrow = (col) => uactSort.col === col ? (uactSort.dir === 'asc' ? ' ↑' : ' ↓') : ''
+            const sortedActive = [...active].sort((a, b) => {
+              const av = a[uactSort.col], bv = b[uactSort.col]
+              const cmp = typeof av === 'number' ? av - bv : String(av ?? '').localeCompare(String(bv ?? ''))
+              return uactSort.dir === 'asc' ? cmp : -cmp
+            })
+            return (
+              <>
+                {/* Özet */}
+                <div className="http-stats-row">
+                  <div className="http-stat uact-row-click" style={{ cursor: 'pointer' }}
+                    title={t('uact.activeCardHint')} onClick={() => setShowActiveList(true)}>
+                    <span className="http-stat-val">{sum.active_count ?? 0}</span>
+                    <span className="http-stat-lbl">{t('uact.activeNow')} ›</span>
+                  </div>
+                  <div className="http-stat">
+                    <span className="http-stat-val">{sum.logins_24h ?? 0}</span>
+                    <span className="http-stat-lbl">{t('uact.logins24h')}</span>
+                  </div>
+                  <div className="http-stat">
+                    <span className={`http-stat-val ${(sum.failed_24h ?? 0) > 0 ? 'http-stat-err' : ''}`}>{sum.failed_24h ?? 0}</span>
+                    <span className="http-stat-lbl">{t('uact.failed24h')}</span>
+                  </div>
+                  <div className="http-stat">
+                    <span className={`http-stat-val ${(sum.anomalies_24h ?? 0) > 0 ? 'http-stat-err' : ''}`}>{sum.anomalies_24h ?? 0}</span>
+                    <span className="http-stat-lbl">{t('uact.anomalies24h')}</span>
+                  </div>
+                  <div className="http-stat">
+                    <span className="http-stat-val">{sum.unique_users_24h ?? 0}</span>
+                    <span className="http-stat-lbl">{t('uact.uniqueUsers24h')}</span>
+                  </div>
+                </div>
+
+                {/* Login serileri */}
+                <h3 className="metrics-title">{t('uact.seriesDay')}</h3>
+                {seriesGrid(series.day, t('uact.granDay'), 'date')}
+                <h3 className="metrics-title">{t('uact.seriesHour')}</h3>
+                {seriesGrid(series.hour, t('uact.granHour'))}
+                <h3 className="metrics-title">{t('uact.seriesMinute')}</h3>
+                {seriesGrid(series.minute, t('uact.granMinute'))}
+
+                {/* Peak ısı haritası */}
+                <h3 className="metrics-title">{t('uact.peakTitle')}</h3>
+                <div className="metrics-grid">
+                  <LoginHeatmap matrix={heat.matrix || []} max={heat.max || 0}
+                    dayLabels={dayLabels} title={t('uact.peakTitle')} hourLabel={t('uact.hour')}
+                    onCellClick={(weekday, hour) => setHeatCell({ weekday, hour })} />
+                </div>
+
+                {/* Aktif kullanıcılar */}
+                <h3 className="metrics-title">{t('uact.activeListTitle')} ({active.length})</h3>
+                <div className="health-table-wrap">
+                  <table className="health-dbtable">
+                    <thead><tr>
+                      <th className="dbtcol-th" onClick={() => uSort('username')}>{t('uact.colUser')}<span className="dbt-arrow">{uArrow('username')}</span></th>
+                      <th className="dbtcol-th">{t('uact.colRole')}</th>
+                      <th className="dbtcol-th">{t('uact.colTeam')}</th>
+                      <th className="dbtcol-th" onClick={() => uSort('login_at')}>{t('uact.colLoginAt')}<span className="dbt-arrow">{uArrow('login_at')}</span></th>
+                      <th className="dbtcol-th dbtcol-th-num" onClick={() => uSort('duration_min')}>{t('uact.colDuration')}<span className="dbt-arrow">{uArrow('duration_min')}</span></th>
+                      <th className="dbtcol-th">{t('uact.colLocation')}</th>
+                      <th className="dbtcol-th">{t('uact.colBrowser')}</th>
+                      {isAdmin && <th className="dbtcol-th">{t('uact.colAction')}</th>}
+                    </tr></thead>
+                    <tbody>
+                      {sortedActive.length === 0 && (
+                        <tr><td colSpan={isAdmin ? 8 : 7} className="sys-muted">{t('uact.noActive')}</td></tr>
+                      )}
+                      {sortedActive.map(u => (
+                        <tr key={u.username} className="uact-row-click" style={{ cursor: 'pointer' }}
+                          title={t('uact.detailHint')} onClick={() => setSessionDetail(u)}>
+                          <td className="sys-mono">{u.username}{u.display_name ? <span className="sys-muted sys-small"> ({u.display_name})</span> : null}</td>
+                          <td>{u.system_role || '—'}</td>
+                          <td>{u.team_name || '—'}</td>
+                          <td className="sys-mono sys-small">{u.login_at ? formatDateSec(u.login_at) : '—'}</td>
+                          <td className="dbtcol-num-cell">{fmtMins(u.duration_min)}</td>
+                          <td className="sys-small">{u.ip ? <span className="sys-mono">{u.ip}</span> : '—'}{u.ip ? <span className="sys-muted"> {locStr(u.country, u.city)}</span> : null}</td>
+                          <td className="sys-small">{shortUa(u.user_agent)}</td>
+                          {isAdmin && (
+                            <td>
+                              <button className="health-db-refresh-btn" disabled={terminatingUser === u.username}
+                                onClick={(e) => { e.stopPropagation(); handleTerminateSession(u.username) }}>
+                                {terminatingUser === u.username ? t('uact.terminating') : t('uact.terminate')}
+                              </button>
+                            </td>
+                          )}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+
+                {/* Top kullanıcılar */}
+                <h3 className="metrics-title">{t('uact.topUsersTitle')}</h3>
+                <div className="health-table-wrap">
+                  <table className="health-dbtable">
+                    <thead><tr>
+                      <th className="dbtcol-th">{t('uact.colUser')}</th>
+                      <th className="dbtcol-th dbtcol-th-num">{t('uact.colLogins')}</th>
+                      <th className="dbtcol-th">{t('uact.colLastLogin')}</th>
+                    </tr></thead>
+                    <tbody>
+                      {(ua.top_users || []).map(r => (
+                        <tr key={r.username}>
+                          <td className="sys-mono">{r.username}</td>
+                          <td className="dbtcol-num-cell">{r.logins}</td>
+                          <td className="sys-mono sys-small">{r.last_login ? formatDateSec(r.last_login) : '—'}</td>
+                        </tr>
+                      ))}
+                      {(ua.top_users || []).length === 0 && <tr><td colSpan={3} className="sys-muted">—</td></tr>}
+                    </tbody>
+                  </table>
+                </div>
+
+                {/* Top kaynaklar */}
+                <h3 className="metrics-title">{t('uact.topSourcesTitle')}</h3>
+                <div className="health-table-wrap">
+                  <table className="health-dbtable">
+                    <thead><tr>
+                      <th className="dbtcol-th">{t('uact.colIp')}</th>
+                      <th className="dbtcol-th">{t('uact.colLocation')}</th>
+                      <th className="dbtcol-th dbtcol-th-num">{t('uact.colTotal')}</th>
+                      <th className="dbtcol-th dbtcol-th-num">{t('uact.success')}</th>
+                      <th className="dbtcol-th dbtcol-th-num">{t('uact.failed')}</th>
+                    </tr></thead>
+                    <tbody>
+                      {(ua.top_sources || []).map(r => (
+                        <tr key={r.ip}>
+                          <td className="sys-mono">{r.ip}</td>
+                          <td className="sys-small">{locStr(r.country, r.city)}</td>
+                          <td className="dbtcol-num-cell">{r.total}</td>
+                          <td className="dbtcol-num-cell sys-ok-text">{r.success}</td>
+                          <td className="dbtcol-num-cell sys-err-text">{r.failed}</td>
+                        </tr>
+                      ))}
+                      {(ua.top_sources || []).length === 0 && <tr><td colSpan={5} className="sys-muted">—</td></tr>}
+                    </tbody>
+                  </table>
+                </div>
+
+                {/* Anomaliler */}
+                <h3 className="metrics-title">{t('uact.anomaliesTitle')} ({anomalies.total ?? 0})</h3>
+                <div className="http-stats-row">
+                  {['OFF_HOURS', 'UNUSUAL_IP', 'GEO_VELOCITY', 'BRUTE_FORCE', 'RATE_LIMITED'].map(k => (
+                    <div className="http-stat" key={k}>
+                      <span className={`http-stat-val ${(anomalies.counts?.[k] ?? 0) > 0 ? 'http-stat-err' : ''}`}>{anomalies.counts?.[k] ?? 0}</span>
+                      <span className="http-stat-lbl">{t(`uact.anom_${k}`)}</span>
+                    </div>
+                  ))}
+                </div>
+                {(anomalies.recent || []).length > 0 && (
+                  <div className="health-table-wrap">
+                    <table className="health-dbtable">
+                      <thead><tr>
+                        <th className="dbtcol-th">{t('uact.colTime')}</th>
+                        <th className="dbtcol-th">{t('uact.colUser')}</th>
+                        <th className="dbtcol-th">{t('uact.colIp')}</th>
+                        <th className="dbtcol-th">{t('uact.colLocation')}</th>
+                        <th className="dbtcol-th">{t('uact.colFlags')}</th>
+                        <th className="dbtcol-th">{t('uact.colOutcome')}</th>
+                      </tr></thead>
+                      <tbody>
+                        {anomalies.recent.map((r, i) => (
+                          <tr key={i}>
+                            <td className="sys-mono sys-small">{r.time ? formatDateSec(r.time) : '—'}</td>
+                            <td className="sys-mono">{r.actor || '—'}</td>
+                            <td className="sys-mono sys-small">{r.ip || '—'}</td>
+                            <td className="sys-small">{locStr(r.country, r.city)}</td>
+                            <td className="sys-small">{r.flags || '—'}</td>
+                            <td className="sys-small">{r.outcome || '—'}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+
+                {/* Rol / Takım kırılımı */}
+                <h3 className="metrics-title">{t('uact.roleTeamTitle')}</h3>
+                <div className="health-table-wrap">
+                  <table className="health-dbtable">
+                    <thead><tr>
+                      <th className="dbtcol-th">{t('uact.colRole')}</th>
+                      <th className="dbtcol-th dbtcol-th-num">{t('uact.colLogins')}</th>
+                    </tr></thead>
+                    <tbody>
+                      {(roleTeam.by_role || []).map(r => (
+                        <tr key={r.role}><td>{r.role}</td><td className="dbtcol-num-cell">{r.count}</td></tr>
+                      ))}
+                      {(roleTeam.by_role || []).length === 0 && <tr><td colSpan={2} className="sys-muted">—</td></tr>}
+                    </tbody>
+                  </table>
+                </div>
+                <div className="health-table-wrap">
+                  <table className="health-dbtable">
+                    <thead><tr>
+                      <th className="dbtcol-th">{t('uact.colTeam')}</th>
+                      <th className="dbtcol-th dbtcol-th-num">{t('uact.colLogins')}</th>
+                    </tr></thead>
+                    <tbody>
+                      {(roleTeam.by_team || []).map((r, i) => (
+                        <tr key={i}><td>{r.team_name || '—'}</td><td className="dbtcol-num-cell">{r.count}</td></tr>
+                      ))}
+                      {(roleTeam.by_team || []).length === 0 && <tr><td colSpan={2} className="sys-muted">—</td></tr>}
+                    </tbody>
+                  </table>
+                </div>
+              </>
+            )
+          })()}
+        </div>
+        )}
+      </div>
+      )}
+
       <p className="sys-refresh-note">↻ {t('sys.autoRefresh')}</p>
 
       <ChartModal chart={modalChart} onClose={() => setModalChart(null)} />
+
+      {/* Isı haritası hücresi → o hafta-günü/saatteki girişler */}
+      {heatCell && (() => {
+        const labels = t('uact.weekdays').split(',')
+        const key = `${heatCell.weekday}-${heatCell.hour}`
+        const list = (userActivity?.heatmap?.cells && userActivity.heatmap.cells[key]) || []
+        const hh = String(heatCell.hour).padStart(2, '0')
+        return (
+          <div className="modal-overlay" onClick={() => setHeatCell(null)}>
+            <div className="modal-box modal-show" onClick={e => e.stopPropagation()}>
+              <div className="show-header">
+                <div className="show-header-title">
+                  <span className="show-domain">{labels[heatCell.weekday] || ''} {hh}:00</span>
+                  <span className="show-badge show-badge-port">{list.length}</span>
+                </div>
+                <button type="button" className="show-close" aria-label={t('app.dismiss')} onClick={() => setHeatCell(null)}>✕</button>
+              </div>
+              <div className="show-body">
+                {list.length === 0 ? (
+                  <div className="sys-muted">{t('uact.noLogins')}</div>
+                ) : (
+                  <div className="health-table-wrap">
+                    <table className="health-dbtable">
+                      <thead><tr>
+                        <th className="dbtcol-th">{t('uact.colTime')}</th>
+                        <th className="dbtcol-th">{t('uact.colUser')}</th>
+                        <th className="dbtcol-th">{t('uact.colIp')}</th>
+                        <th className="dbtcol-th">{t('uact.colLocation')}</th>
+                        <th className="dbtcol-th">{t('uact.colOutcome')}</th>
+                      </tr></thead>
+                      <tbody>
+                        {list.map((r, i) => (
+                          <tr key={i}>
+                            <td className="sys-mono sys-small">{r.time ? formatDateSec(r.time) : '—'}</td>
+                            <td className="sys-mono">{r.actor || '—'}</td>
+                            <td className="sys-mono sys-small">{r.ip || '—'}</td>
+                            <td className="sys-small">{locStr(r.country, r.city)}</td>
+                            <td className="sys-small">{r.outcome === 'SUCCESS'
+                              ? <span className="sys-ok-text">{r.outcome}</span>
+                              : <span className="sys-err-text">{r.outcome || '—'}</span>}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )
+      })()}
+
+      {/* "Aktif Oturum" kartı → oturumdaki kişiler listesi modalı */}
+      {showActiveList && (() => {
+        const list = userActivity?.active_users || []
+        return (
+          <div className="modal-overlay" onClick={() => setShowActiveList(false)}>
+            <div className="modal-box modal-show" onClick={e => e.stopPropagation()}>
+              <div className="show-header">
+                <div className="show-header-title">
+                  <span className="show-domain">{t('uact.activeListTitle')}</span>
+                  <span className="show-badge show-badge-port">{list.length}</span>
+                </div>
+                <button type="button" className="show-close" aria-label={t('app.dismiss')} onClick={() => setShowActiveList(false)}>✕</button>
+              </div>
+              <div className="show-body">
+                {list.length === 0 ? (
+                  <div className="sys-muted">{t('uact.noActive')}</div>
+                ) : (
+                  <div className="health-table-wrap">
+                    <table className="health-dbtable">
+                      <thead><tr>
+                        <th className="dbtcol-th">{t('uact.colUser')}</th>
+                        <th className="dbtcol-th">{t('uact.colRole')}</th>
+                        <th className="dbtcol-th">{t('uact.colTeam')}</th>
+                        <th className="dbtcol-th">{t('uact.colLoginAt')}</th>
+                        <th className="dbtcol-th dbtcol-th-num">{t('uact.colDuration')}</th>
+                        <th className="dbtcol-th">{t('uact.colLocation')}</th>
+                      </tr></thead>
+                      <tbody>
+                        {list.map(u => (
+                          <tr key={u.username} className="uact-row-click" style={{ cursor: 'pointer' }}
+                            title={t('uact.detailHint')}
+                            onClick={() => setSessionDetail(u)}>
+                            <td className="sys-mono">{u.username}{u.display_name ? <span className="sys-muted sys-small"> ({u.display_name})</span> : null}</td>
+                            <td>{u.system_role || '—'}</td>
+                            <td>{u.team_name || '—'}</td>
+                            <td className="sys-mono sys-small">{u.login_at ? formatDateSec(u.login_at) : '—'}</td>
+                            <td className="dbtcol-num-cell">{fmtMins(u.duration_min)}</td>
+                            <td className="sys-small">{u.ip ? <span className="sys-mono">{u.ip}</span> : '—'}{u.ip ? <span className="sys-muted"> {locStr(u.country, u.city)}</span> : null}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )
+      })()}
+
+      {/* Aktif oturum detay modalı — satıra tıklayınca tüm bilgiler */}
+      {sessionDetail && (() => {
+        const u = sessionDetail
+        const field = (label, value, mono) => (
+          <div className="show-field" key={label}>
+            <span className="show-field-label">{label}</span>
+            <span className={`show-field-value${mono ? ' show-field-mono' : ''}`}>{value || '—'}</span>
+          </div>
+        )
+        return (
+          <div className="modal-overlay" style={{ zIndex: 2100 }} onClick={() => setSessionDetail(null)}>
+            <div className="modal-box modal-show" onClick={e => e.stopPropagation()}>
+              <div className="show-header">
+                <div className="show-header-title">
+                  <span className="show-domain">{u.username}</span>
+                  {u.system_role && <span className="show-badge show-badge-port">{u.system_role}</span>}
+                </div>
+                <button type="button" className="show-close" aria-label={t('app.dismiss')} onClick={() => setSessionDetail(null)}>✕</button>
+              </div>
+              <div className="show-body">
+                <div className="show-section-header">{t('uact.detailUser')}</div>
+                <div className="show-grid-2">
+                  {field(t('uact.colUser'), u.username, true)}
+                  {field(t('uact.detailDisplayName'), u.display_name)}
+                  {field(t('uact.detailEmail'), u.email, true)}
+                  {field(t('uact.detailEmployeeId'), u.employee_id, true)}
+                  {field(t('uact.colRole'), u.system_role)}
+                  {field(t('uact.detailOrgRole'), u.org_role)}
+                  {field(t('uact.colTeam'), u.team_name)}
+                </div>
+
+                <div className="show-section-header">{t('uact.detailSession')}</div>
+                <div className="show-grid-2">
+                  {field(t('uact.colLoginAt'), u.login_at ? formatDateSec(u.login_at) : '—', true)}
+                  {field(t('uact.colDuration'), fmtMins(u.duration_min))}
+                  {field(t('uact.detailLastSeen'), u.last_seen ? formatDateSec(u.last_seen) : '—', true)}
+                </div>
+
+                <div className="show-section-header">{t('uact.detailSource')}</div>
+                <div className="show-grid-2">
+                  {field(t('uact.colIp'), u.ip, true)}
+                  {field(t('uact.colLocation'), locStr(u.country, u.city))}
+                  {field(t('uact.detailOrg'), u.org)}
+                  {field(t('uact.colBrowser'), shortUa(u.user_agent))}
+                </div>
+                <div className="show-field show-field-full">
+                  <span className="show-field-label">{t('uact.detailUserAgent')}</span>
+                  <span className="show-field-value show-field-mono">{u.user_agent || '—'}</span>
+                </div>
+
+                {isAdmin && (
+                  <button className="health-db-refresh-btn" style={{ marginTop: 14 }}
+                    disabled={terminatingUser === u.username}
+                    onClick={() => { handleTerminateSession(u.username); setSessionDetail(null) }}>
+                    {t('uact.terminate')}
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        )
+      })()}
 
       {selectedLog && (
         <div className="smtp-detail-overlay" onClick={() => setSelectedLog(null)}>

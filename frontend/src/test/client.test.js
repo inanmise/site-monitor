@@ -28,7 +28,7 @@ describe('api.login', () => {
       '/api/login',
       expect.objectContaining({
         method: 'POST',
-        body: JSON.stringify({ username: 'testuser', password: 'pass', remember_me: 'false' }),
+        body: JSON.stringify({ username: 'testuser', password: 'pass', remember_me: 'false', force_login: 'false' }),
       })
     )
     expect(result.success).toBe(true)
@@ -40,7 +40,18 @@ describe('api.login', () => {
     expect(global.fetch).toHaveBeenCalledWith(
       '/api/login',
       expect.objectContaining({
-        body: JSON.stringify({ username: 'testuser', password: 'pass', remember_me: 'true' }),
+        body: JSON.stringify({ username: 'testuser', password: 'pass', remember_me: 'true', force_login: 'false' }),
+      })
+    )
+  })
+
+  it('passes force_login=true when confirming an existing active session', async () => {
+    mockFetch({ success: true, username: 'testuser' })
+    await api.login('testuser', 'pass', false, true)
+    expect(global.fetch).toHaveBeenCalledWith(
+      '/api/login',
+      expect.objectContaining({
+        body: JSON.stringify({ username: 'testuser', password: 'pass', remember_me: 'false', force_login: 'true' }),
       })
     )
   })

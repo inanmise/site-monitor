@@ -92,6 +92,46 @@ class AuthControllerTest {
                 .andExpect(jsonPath("$.must_change_password").value(false));
     }
 
+    // ── Tek aktif oturum onayı ────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("Başka yerde CANLI aktif oturum varsa (force yok) → 409 ACTIVE_SESSION_EXISTS, oturum düşmez")
+    void login_activeSessionElsewhere_returns409() throws Exception {
+        when(userService.hasLiveSession(any())).thenReturn(true);
+
+        mvc.perform(post("/api/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"username\":\"testuser\",\"password\":\"testpass\"}"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.success").value(false))
+                .andExpect(jsonPath("$.error_code").value("ACTIVE_SESSION_EXISTS"));
+    }
+
+    @Test
+    @DisplayName("force_login=true → canlı oturum olsa bile düşürülür, giriş 200 ile tamamlanır")
+    void login_activeSessionElsewhere_forceLogin_returns200() throws Exception {
+        when(userService.hasLiveSession(any())).thenReturn(true);
+
+        mvc.perform(post("/api/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"username\":\"testuser\",\"password\":\"testpass\",\"force_login\":\"true\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.username").value("testuser"));
+    }
+
+    @Test
+    @DisplayName("TERMINATED sentinel'i aktif oturum sayılmaz → onay gerekmez, 200")
+    void login_terminatedSentinel_noConfirmation_returns200() throws Exception {
+        testUser.setActiveSessionId("TERMINATED:abc-123");
+
+        mvc.perform(post("/api/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"username\":\"testuser\",\"password\":\"testpass\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true));
+    }
+
     // ── LDAP login ──────────────────────────────────────────────────────────────
 
     @Test
@@ -275,6 +315,27 @@ class AuthControllerTest {
     @DisplayName("GET /api/me without session returns 401")
     void me_unauthenticated_returns401() throws Exception {
         mvc.perform(get("/api/me"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    // ── Oturum ping (hızlı süpersede yakalama) ─────────────────────────────────
+
+    @Test
+    @DisplayName("GET /api/session/ping with session returns 200")
+    void sessionPing_authenticated_returns200() throws Exception {
+        MockHttpSession session = new MockHttpSession();
+        session.setAttribute("authenticated", Boolean.TRUE);
+        session.setAttribute("username", "testuser");
+
+        mvc.perform(get("/api/session/ping").session(session))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true));
+    }
+
+    @Test
+    @DisplayName("GET /api/session/ping without session returns 401 (interceptor)")
+    void sessionPing_unauthenticated_returns401() throws Exception {
+        mvc.perform(get("/api/session/ping"))
                 .andExpect(status().isUnauthorized());
     }
 

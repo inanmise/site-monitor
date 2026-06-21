@@ -8,17 +8,25 @@ const RANGES = [
   { key: '24h',  labelKey: 'chart.range24h',  minutes: 1440 },
 ]
 
-const localHHMM = ts =>
-  ts ? new Date(ts + 'Z').toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''
+// isDate=true → günlük seride eksen/tooltip tarih gösterir (kovalar yerel gece yarısı → saat hep 00:00).
+const localHHMM = (ts, isDate) => {
+  if (!ts) return ''
+  const d = new Date(ts + 'Z')
+  return isDate
+    ? d.toLocaleDateString([], { day: '2-digit', month: '2-digit' })
+    : d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+}
 
-const localFull = ts =>
-  ts ? new Date(ts + 'Z').toLocaleString([], {
-    month: '2-digit', day: '2-digit',
-    hour: '2-digit', minute: '2-digit',
-  }) : ''
+const localFull = (ts, isDate) => {
+  if (!ts) return ''
+  const d = new Date(ts + 'Z')
+  return isDate
+    ? d.toLocaleDateString([], { weekday: 'short', day: '2-digit', month: '2-digit' })
+    : d.toLocaleString([], { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
+}
 
 // ── Big SVG chart ─────────────────────────────────────────────────────────────
-function BigChart({ data, color, unit, maxY }) {
+function BigChart({ data, color, unit, maxY, isDate }) {
   const [hovered, setHovered] = useState(null)
 
   const W = 800, H = 200
@@ -106,7 +114,7 @@ function BigChart({ data, color, unit, maxY }) {
         {xIndices.map(i => (
           <text key={i} x={toX(i)} y={H - 6} textAnchor="middle"
             fontSize="8.5" fill="var(--chart-label)">
-            {localHHMM(data[i]?.ts)}
+            {localHHMM(data[i]?.ts, isDate)}
           </text>
         ))}
 
@@ -124,7 +132,7 @@ function BigChart({ data, color, unit, maxY }) {
       {/* Tooltip */}
       {hovered && hovered.d && (
         <div className="chart-tooltip">
-          <strong>{localFull(hovered.d.ts)}</strong>
+          <strong>{localFull(hovered.d.ts, isDate)}</strong>
           <span>{hovered.d.value ?? '—'}{unit}</span>
         </div>
       )}
@@ -146,13 +154,14 @@ export default function ChartModal({ chart, onClose }) {
 
   if (!chart) return null
 
-  const { label, unit, color, maxY, data } = chart
+  const { label, unit, color, maxY, data, xMode } = chart
+  const isDate = xMode === 'date'
 
-  // Filter data to selected range
+  // Filter data to selected range — yalnız zaman (intraday) modunda; gün serisinde tüm 7 günü göster.
   const rangeMs  = (RANGES.find(r => r.key === range)?.minutes ?? Infinity) * 60_000
   const cutoff   = Date.now() - rangeMs
   const filtered = data.filter(d => d.ts && new Date(d.ts + 'Z').getTime() >= cutoff)
-  const display  = filtered.length > 0 ? filtered : data
+  const display  = isDate ? data : (filtered.length > 0 ? filtered : data)
 
   // Stats for selected range
   const vals    = display.map(d => d.value).filter(v => v != null)
@@ -171,18 +180,20 @@ export default function ChartModal({ chart, onClose }) {
           <button className="chart-modal-close" onClick={onClose} aria-label="Kapat">✕</button>
         </div>
 
-        {/* Time range buttons */}
-        <div className="chart-range-bar">
-          {RANGES.map(r => (
-            <button
-              key={r.key}
-              className={`chart-range-btn ${range === r.key ? 'chart-range-btn-active' : ''}`}
-              onClick={() => setRange(r.key)}
-            >
-              {t(r.labelKey)}
-            </button>
-          ))}
-        </div>
+        {/* Time range buttons — yalnız intraday (saat/dakika) serilerde; gün serisinde anlamsız, gizle */}
+        {!isDate && (
+          <div className="chart-range-bar">
+            {RANGES.map(r => (
+              <button
+                key={r.key}
+                className={`chart-range-btn ${range === r.key ? 'chart-range-btn-active' : ''}`}
+                onClick={() => setRange(r.key)}
+              >
+                {t(r.labelKey)}
+              </button>
+            ))}
+          </div>
+        )}
 
         {/* Stats row */}
         <div className="chart-stats-row">
@@ -206,12 +217,12 @@ export default function ChartModal({ chart, onClose }) {
         </div>
 
         {/* Big chart */}
-        <BigChart data={display} color={color} unit={unit} maxY={maxY} />
+        <BigChart data={display} color={color} unit={unit} maxY={maxY} isDate={isDate} />
 
         {/* Time span label */}
         {display.length > 1 && (
           <p className="chart-timespan">
-            {localFull(display[0].ts)} — {localFull(display[display.length - 1].ts)}
+            {localFull(display[0].ts, isDate)} — {localFull(display[display.length - 1].ts, isDate)}
           </p>
         )}
       </div>
