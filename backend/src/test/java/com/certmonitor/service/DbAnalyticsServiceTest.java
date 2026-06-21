@@ -78,6 +78,7 @@ class DbAnalyticsServiceTest {
         assertThat((List<?>) d.get("top_users")).hasSize(2);                 // alice, bob
         assertThat((List<?>) d.get("top_sql")).hasSize(2);                   // "SELECT 1", "SELECT 2"
         assertThat((List<?>) d.get("failed")).hasSize(1);                    // bob
+        assertThat((List<?>) d.get("recent_queries")).hasSize(3);            // 3 ham satır (SQL metinli)
         // 7 günlük seri → 7 günlük kova; gün sayısı en az 7
         assertThat((List<?>) d.get("series")).hasSizeGreaterThanOrEqualTo(7);
     }
