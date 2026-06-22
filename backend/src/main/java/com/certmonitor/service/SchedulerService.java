@@ -300,6 +300,18 @@ public class SchedulerService {
         // Yönetilen seçenekler (kanal/domain) — tablo ddl-auto ile oluşur; (type,value) unique güvenlik ağı.
         patch("CREATE UNIQUE INDEX IF NOT EXISTS uk_inc_opt_type_value ON incident_options(type, opt_value)");
         patch("CREATE INDEX IF NOT EXISTS idx_inc_opt_type ON incident_options(type)");
+        // ── DB performans index'leri (hot-path sorgular; entity @Index dışında kalan eksikler) ──
+        // uptime_checks: haftalık erişilebilirlik raporu domain+port+tarih-aralığı tarar (en hızlı büyüyen tablo).
+        patch("CREATE INDEX IF NOT EXISTS idx_uc_domain_port_checked ON uptime_checks(domain, port, checked_at)");
+        // dns_monitors: findChangedByDomain alt-sorgusu + findFirstByDomain (entity'de hiç index yok).
+        patch("CREATE INDEX IF NOT EXISTS idx_dnsm_domain ON dns_monitors(domain)");
+        patch("CREATE INDEX IF NOT EXISTS idx_dnsm_active ON dns_monitors(active)");
+        // certificate_inventory: team_id zaten idx_ci_team_active'te; ikinci takım (UG) kapalı değil.
+        patch("CREATE INDEX IF NOT EXISTS idx_ci_ugteam_active ON certificate_inventory(ug_team_id, active)");
+        // port_monitors: aktif sweep taraması (findByActiveTrue).
+        patch("CREATE INDEX IF NOT EXISTS idx_pm_active ON port_monitors(active)");
+        // remember_me_tokens: saatlik expired-token temizliği (DELETE WHERE expires_at < ?).
+        patch("CREATE INDEX IF NOT EXISTS idx_rmt_expires ON remember_me_tokens(expires_at)");
         // Genel Ayarlar (runtime config override'ları) — tablo ddl-auto ile oluşur; unique key güvenlik ağı.
         patch("""
             CREATE TABLE IF NOT EXISTS app_settings(
@@ -409,9 +421,14 @@ public class SchedulerService {
      * Gece 03:30 (Europe/Istanbul implicit — backend ISO timestamp'i UTC tutuyor
      * ama cron Spring TaskScheduler'a göre çalışır) eski log/geçmiş kayıtlarını siler.
      * Bellek/disk şişmesini önlemek için:
-     *   - audit_log       → 180 gün üstü
+     *   - audit_log         → 180 gün üstü
      *   - notification_logs → 90 gün üstü
      *   - sql_query_history → 30 gün üstü
+     *   - uptime_checks / certificate_checks / port_checks → 180 gün üstü (yüksek hacimli
+     *     zaman serisi; daha önce HİÇ temizlenmiyordu — sınırsız büyüyordu)
+     *   - dns_records → 180 gün üstü, ANCAK her monitör için en yeni (MAX(id)) satır korunur;
+     *     yoksa baseline silinince sonraki kontrol sahte "değişti" üretir.
+     * Tüm zaman serisi tablolarında checked_at index'li → DELETE verimli.
      * Bulk DELETE → tek transaction, kısa süreli.
      */
     @Scheduled(cron = "${cert.monitor.scheduler.cleanup-cron:0 30 3 * * *}")
@@ -420,11 +437,19 @@ public class SchedulerService {
             String auditCutoff = ISO.format(Instant.now().minus(180, ChronoUnit.DAYS));
             String notifCutoff = ISO.format(Instant.now().minus(90,  ChronoUnit.DAYS));
             String sqlCutoff   = ISO.format(Instant.now().minus(30,  ChronoUnit.DAYS));
-            int a = safeDelete("DELETE FROM audit_log         WHERE event_time   < ?", auditCutoff);
-            int n = safeDelete("DELETE FROM notification_logs WHERE sent_at      < ?", notifCutoff);
-            int s = safeDelete("DELETE FROM sql_query_history WHERE executed_at < ?", sqlCutoff);
-            log.info("Nightly cleanup done: audit={}, notif={}, sql={} (cutoffs: {} / {} / {})",
-                    a, n, s, auditCutoff, notifCutoff, sqlCutoff);
+            String tsCutoff    = ISO.format(Instant.now().minus(180, ChronoUnit.DAYS)); // zaman serisi
+            int a = safeDelete("DELETE FROM audit_log          WHERE event_time  < ?", auditCutoff);
+            int n = safeDelete("DELETE FROM notification_logs  WHERE sent_at     < ?", notifCutoff);
+            int s = safeDelete("DELETE FROM sql_query_history  WHERE executed_at < ?", sqlCutoff);
+            int u = safeDelete("DELETE FROM uptime_checks      WHERE checked_at  < ?", tsCutoff);
+            int c = safeDelete("DELETE FROM certificate_checks WHERE checked_at  < ?", tsCutoff);
+            int p = safeDelete("DELETE FROM port_checks        WHERE checked_at  < ?", tsCutoff);
+            // dns_records: her monitör için en yeni satırı koru (baseline) → guard'lı sil.
+            int d = safeDelete("DELETE FROM dns_records WHERE checked_at < ? "
+                    + "AND id NOT IN (SELECT MAX(id) FROM dns_records GROUP BY monitor_id)", tsCutoff);
+            log.info("Nightly cleanup done: audit={}, notif={}, sql={}, uptime={}, cert={}, port={}, dns={} "
+                    + "(log cutoffs: {} / {} / {}; ts cutoff: {})",
+                    a, n, s, u, c, p, d, auditCutoff, notifCutoff, sqlCutoff, tsCutoff);
         } catch (Exception e) {
             log.warn("Nightly cleanup failed: {}", e.getMessage());
         }
