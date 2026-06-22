@@ -2032,8 +2032,10 @@ public class EmailNotificationService {
               + "⚠ Bu hafta kesinti yaşayan domainler (" + s.downDomainCount() + ")</td></tr></table>"
               + "<table width='100%' cellpadding='0' cellspacing='0' border='0' bgcolor='#fef2f2' style='background:#fef2f2;border:1px solid #fecaca;border-top:none;border-radius:0 0 8px 8px'>"
               + down + "</table></div>"
-            : "<div style='margin:0 0 18px;padding:12px 16px;border-left:4px solid #16a34a;background:#ecfdf5;"
-              + "border-radius:0 8px 8px 0;font-size:14px;font-weight:700;color:#15803d'>✓ Bu hafta hiçbir domain kesinti yaşamadı 🎉</div>";
+            : "<table width='100%' cellpadding='0' cellspacing='0' border='0' style='margin:0 0 18px'><tr>"
+              + "<td bgcolor='#ecfdf5' style='background:#ecfdf5;border-left:4px solid #16a34a;border-radius:0 8px 8px 0;"
+              + "padding:12px 16px;font-size:14px;font-weight:700;color:#15803d'>✓ Bu hafta hiçbir domain kesinti yaşamadı 🎉</td>"
+              + "</tr></table>";
 
         // Domain tablosu (en kötü üstte — servis sıralar)
         StringBuilder body = new StringBuilder();
@@ -2073,15 +2075,21 @@ public class EmailNotificationService {
         return "<!DOCTYPE html><html lang='tr' xmlns:v='urn:schemas-microsoft-com:vml'"
             + " xmlns:o='urn:schemas-microsoft-com:office:office'>"
             + "<head><meta charset='UTF-8'>"
-            + "<meta name='viewport' content='width=device-width,initial-scale=1,maximum-scale=1'>"
+            + "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+            + "<meta http-equiv='X-UA-Compatible' content='IE=edge'>"
+            // Outlook (Word motoru) yazı tipi fallback'i — Segoe UI yoksa Arial
+            + "<!--[if mso]><style>table,td,div,p{font-family:'Segoe UI',Arial,sans-serif!important}</style><![endif]-->"
             + "<style>@media only screen and (max-width:870px){"
-            + ".em-wrap{padding:0!important}.em-card{border-radius:0!important;width:100%!important}"
+            + ".em-pad{padding:16px 0!important}.em-card{border-radius:0!important;width:100%!important}"
             + ".em-body{padding:14px!important}}</style></head>"
             + "<body bgcolor='" + outerBg + "' style='margin:0;padding:0;background:" + outerBg
-            + ";font-family:\"Segoe UI\",Tahoma,Arial,sans-serif'>"
-            + "<table class='em-wrap' width='100%' cellpadding='0' cellspacing='0' border='0'"
-            + " bgcolor='" + outerBg + "' style='background:" + outerBg + ";padding:24px 10px'>"
-            + "<tr><td align='center' bgcolor='" + outerBg + "'>"
+            + ";-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%;font-family:\"Segoe UI\",Tahoma,Arial,sans-serif'>"
+            // Dış padding TABLO style'ında değil merkez TD'sinde — Outlook tablo padding'ini yok sayar
+            + "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0'"
+            + " bgcolor='" + outerBg + "' style='background:" + outerBg + ";mso-table-lspace:0pt;mso-table-rspace:0pt'>"
+            + "<tr><td align='center' class='em-pad' bgcolor='" + outerBg + "' style='padding:24px 10px'>"
+            // MSO ghost-table: Outlook'ta kartı 850px sabit + ortalı tutar
+            + "<!--[if mso]><table role='presentation' width='850' align='center' cellpadding='0' cellspacing='0' border='0'><tr><td><![endif]-->"
             + "<table class='em-card' width='850' cellpadding='0' cellspacing='0' border='0'"
             + " bgcolor='#ffffff' style='max-width:850px;width:100%;background:#ffffff;"
             + "border:1px solid #d7dde5;border-radius:14px;overflow:hidden;box-shadow:0 8px 32px rgba(0,0,0,.10)'>"
@@ -2093,8 +2101,9 @@ public class EmailNotificationService {
             + "<div style='color:#ffffff;font-size:22px;font-weight:900;margin-top:10px;line-height:1.25'>📊 " + escHtml(teamName) + "</div>"
             + "<div style='color:#dbe3ef;font-size:15px;font-weight:700;margin-top:8px'>" + escHtml(weekLabel) + "</div>"
             + "</td></tr></table>"
-            // Gövde
-            + "<div class='em-body' style='background:#fff;padding:22px 24px'>"
+            // Gövde — div padding'i Outlook yok sayar → td padding'i (em-body class'ı td'de)
+            + "<table width='100%' cellpadding='0' cellspacing='0' border='0' bgcolor='#ffffff'><tr>"
+            + "<td class='em-body' bgcolor='#ffffff' style='padding:22px 24px'>"
             + "<p style='font-size:15px;color:#0f172a;margin:0 0 6px'><strong>Sayın " + escHtml(teamName) + " ekibi,</strong></p>"
             + "<p style='font-size:14px;color:#334155;line-height:1.7;margin:0 0 14px'>"
             + "Aşağıda sahip olduğunuz domainlerin geçen haftaya (<strong>" + escHtml(weekLabel) + "</strong>) ait erişilebilirlik özeti yer almaktadır.</p>"
@@ -2106,8 +2115,10 @@ public class EmailNotificationService {
             + "<table width='100%' cellpadding='0' cellspacing='0'><tr>"
             + "<td valign='top' style='border-top:1px solid #f1f5f9;padding-top:12px;font-size:11px;color:#94a3b8'>CertMonitor — Otomatik Haftalık Rapor</td>"
             + "<td align='right' valign='top' style='border-top:1px solid #f1f5f9;padding-top:12px;font-size:11px;color:#94a3b8'>Oluşturuldu: " + generatedAt + "</td></tr></table>"
-            + "</div></td></tr></table>"
-            + "</td></tr></table></body></html>";
+            + "</td></tr></table>"   // em-body td + gövde tablosu
+            + "</td></tr></table>"   // kart iç td + kart tablosu
+            + "<!--[if mso]></td></tr></table><![endif]-->"
+            + "</td></tr></table></body></html>";   // merkez td + dış tablo
     }
 
     private String kpiCard(String label, String value, String valueColor, String bg) {
@@ -2132,7 +2143,7 @@ public class EmailNotificationService {
     }
     private static String pctText(Double pct) {
         if (pct == null) return "veri yok";
-        return (Math.round(pct * 100.0) / 100.0) + "%";
+        return String.format(java.util.Locale.US, "%.2f%%", pct);
     }
 
     private String reportSection(String title, String bodyHtml, String accent) {

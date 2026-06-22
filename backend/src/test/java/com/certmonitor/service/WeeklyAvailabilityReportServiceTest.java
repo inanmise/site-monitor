@@ -99,7 +99,7 @@ class WeeklyAvailabilityReportServiceTest {
 
         assertThat(r.outageCount()).isEqualTo(1);
         assertThat(r.downtimeMinutes()).isEqualTo(8);        // 00:02 → 00:10 (pencere sonu)
-        assertThat(r.availabilityPct()).isEqualTo(33.3);     // 1 up / 3
+        assertThat(r.availabilityPct()).isEqualTo(33.33);    // 1 up / 3 (2 ondalık)
     }
 
     @Test
@@ -109,6 +109,27 @@ class WeeklyAvailabilityReportServiceTest {
         assertThat(r.availabilityPct()).isNull();
         assertThat(r.outageCount()).isZero();
         assertThat(r.avgMs()).isNull();
+    }
+
+    @Test
+    @DisplayName("computeRow: tek down örnek (2015/2016) 100'e yuvarlanmaz → %99.95 (2 ondalık)")
+    void computeRow_singleDownNotRoundedTo100() {
+        List<UptimeCheck> checks = new java.util.ArrayList<>();
+        for (int i = 0; i < 2015; i++) checks.add(uc("up", 100L, "2026-06-15T00:00:00"));
+        checks.add(uc("down", null, "2026-06-21T23:00:00"));
+        AvailabilityRow r = service.computeRow("x", checks, Instant.parse("2026-06-22T00:00:00Z"), null);
+        assertThat(r.availabilityPct()).isEqualTo(99.95);   // ÖNCEDEN 100.0 görünüyordu
+        assertThat(r.outageCount()).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("computeRow: down varsa availability asla 100.00 değil — clamp 99.99")
+    void computeRow_clampNever100() {
+        List<UptimeCheck> checks = new java.util.ArrayList<>();
+        for (int i = 0; i < 20000; i++) checks.add(uc("up", 100L, "2026-06-15T00:00:00"));
+        checks.add(uc("down", null, "2026-06-21T23:00:00"));  // 20000/20001 → yuvarlama 100.00 → clamp
+        AvailabilityRow r = service.computeRow("x", checks, Instant.parse("2026-06-22T00:00:00Z"), null);
+        assertThat(r.availabilityPct()).isEqualTo(99.99);
     }
 
     @Test
