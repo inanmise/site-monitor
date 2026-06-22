@@ -21,7 +21,7 @@ export function ModalHeaderAvatar({ userId, children }) {
  * can update a user without leaving the Teams tab. Mirrors the edit branch of
  * UserManager.jsx; for "add" use UserManager directly.
  */
-export default function UserEditModal({ user, teams, onClose, onSaved }) {
+export default function UserEditModal({ user, teams, onClose, onSaved, readOnly = false }) {
   const t = useT()
   const [form, setForm] = useState(toForm(user))
   const [saving, setSaving] = useState(false)
@@ -73,7 +73,7 @@ export default function UserEditModal({ user, teams, onClose, onSaved }) {
           <div className="modal-icon-hdr-badge">
             <ModalHeaderAvatar userId={user?.id}><UserCog size={20} /></ModalHeaderAvatar>
           </div>
-          <h3>{t('usr.editTitle')}</h3>
+          <h3>{readOnly ? t('usr.viewTitle') : t('usr.editTitle')}</h3>
         </div>
         {/* form-grid--top: "Takım" uyarı ipucu altta dururken alanlar karşılıklı hizalı kalsın */}
         <div className="form-grid form-grid--top">
@@ -81,22 +81,23 @@ export default function UserEditModal({ user, teams, onClose, onSaved }) {
             <input value={form.username} disabled />
           </label>
           <label>{t('usr.formDisplay')}
-            <input value={form.display_name}
+            <input value={form.display_name} disabled={readOnly}
               onChange={(e) => setForm({ ...form, display_name: e.target.value })} />
           </label>
           <label>
-            <span>{t('usr.formEmail')} <span className="req-star">*</span></span>
-            <input type="email" value={form.email}
+            <span>{t('usr.formEmail')} {!readOnly && <span className="req-star">*</span>}</span>
+            <input type="email" value={form.email} disabled={readOnly}
               onChange={(e) => setForm({ ...form, email: e.target.value })} />
           </label>
           <label>{t('usr.formEmployeeId')}
-            <input value={form.employee_id}
+            <input value={form.employee_id} disabled={readOnly}
               onChange={(e) => setForm({ ...form, employee_id: e.target.value })} />
           </label>
           <label>{t('usr.formRole')}
             <SearchableSelect
               value={form.system_role}
               onChange={v => setForm({ ...form, system_role: v })}
+              disabled={readOnly}
               options={[
                 { value: 'USER',       label: 'USER' },
                 { value: 'TEAM_ADMIN', label: 'TEAM_ADMIN' },
@@ -109,6 +110,7 @@ export default function UserEditModal({ user, teams, onClose, onSaved }) {
             <SearchableSelect
               value={form.org_role}
               onChange={v => setForm({ ...form, org_role: v })}
+              disabled={readOnly}
               options={[
                 { value: '',        label: t('usr.orgRoleNone') },
                 { value: 'TECH',    label: 'Tech' },
@@ -119,56 +121,63 @@ export default function UserEditModal({ user, teams, onClose, onSaved }) {
             />
           </label>
           <label>
-            <span>{t('usr.teamsLabel')} {form.system_role !== 'ADMIN' && <span className="req-star">*</span>}</span>
+            <span>{t('usr.teamsLabel')} {!readOnly && form.system_role !== 'ADMIN' && <span className="req-star">*</span>}</span>
             <MultiTeamSelect
               value={form.team_ids}
               onChange={ids => setForm({ ...form, team_ids: ids.map(Number) })}
               placeholder={t('usr.teamsPlaceholder')}
               searchThreshold={2}
+              disabled={readOnly}
               options={(teams || []).map(team => ({ value: team.id, label: team.name }))}
             />
-            {form.system_role !== 'ADMIN' && form.team_ids.length === 0 && (
+            {!readOnly && form.system_role !== 'ADMIN' && form.team_ids.length === 0 && (
               <span className="field-hint field-hint--warn">{t('usr.teamsRequired')}</span>
             )}
           </label>
           {/* AD'den eşlenen profil alanları (LDAP kullanıcısında bir sonraki login'de tazelenir) */}
           <label>{t('usr.formFirstName')}
-            <input value={form.first_name} onChange={(e) => setForm({ ...form, first_name: e.target.value })} />
+            <input value={form.first_name} disabled={readOnly} onChange={(e) => setForm({ ...form, first_name: e.target.value })} />
           </label>
           <label>{t('usr.formLastName')}
-            <input value={form.last_name} onChange={(e) => setForm({ ...form, last_name: e.target.value })} />
+            <input value={form.last_name} disabled={readOnly} onChange={(e) => setForm({ ...form, last_name: e.target.value })} />
           </label>
           <label>{t('usr.colTitle')}
-            <input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} />
+            <input value={form.title} disabled={readOnly} onChange={(e) => setForm({ ...form, title: e.target.value })} />
           </label>
           <label>{t('usr.colPhone')}
-            <input value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} />
+            <input value={form.phone} disabled={readOnly} onChange={(e) => setForm({ ...form, phone: e.target.value })} />
           </label>
           <label>{t('usr.colDept')}
-            <input value={form.department} onChange={(e) => setForm({ ...form, department: e.target.value })} />
+            <input value={form.department} disabled={readOnly} onChange={(e) => setForm({ ...form, department: e.target.value })} />
           </label>
           <label>{t('usr.formCompanyLevel')}
-            <input value={form.company_level} onChange={(e) => setForm({ ...form, company_level: e.target.value })} />
+            <input value={form.company_level} disabled={readOnly} onChange={(e) => setForm({ ...form, company_level: e.target.value })} />
           </label>
           <label>{t('usr.colMudurluk')}
-            <input value={form.mudurluk_name} onChange={(e) => setForm({ ...form, mudurluk_name: e.target.value })} />
+            <input value={form.mudurluk_name} disabled={readOnly} onChange={(e) => setForm({ ...form, mudurluk_name: e.target.value })} />
           </label>
           <label>{t('usr.colManager')}
-            <input value={form.manager_sicil} onChange={(e) => setForm({ ...form, manager_sicil: e.target.value })} />
+            <input value={form.manager_sicil} disabled={readOnly} onChange={(e) => setForm({ ...form, manager_sicil: e.target.value })} />
           </label>
           <label className="checkbox-label">
-            <input type="checkbox" checked={form.active}
+            <input type="checkbox" checked={form.active} disabled={readOnly}
               onChange={(e) => setForm({ ...form, active: e.target.checked })} />
             {t('usr.formActive')}
           </label>
         </div>
         {msg && <div className="alert-msg alert-msg--err" style={{ marginTop: 8 }}>{msg}</div>}
         <div className="modal-actions">
-          <button className="btn btn-secondary" onClick={onClose}>{t('usr.cancel')}</button>
-          <button className="btn btn-primary" onClick={save}
-            disabled={saving || !form.username.trim() || !form.email.trim() || (form.system_role !== 'ADMIN' && form.team_ids.length === 0)}>
-            {saving ? t('usr.saving') : t('usr.save')}
-          </button>
+          {readOnly ? (
+            <button className="btn btn-secondary" onClick={onClose}>{t('usr.close')}</button>
+          ) : (
+            <>
+              <button className="btn btn-secondary" onClick={onClose}>{t('usr.cancel')}</button>
+              <button className="btn btn-primary" onClick={save}
+                disabled={saving || !form.username.trim() || !form.email.trim() || (form.system_role !== 'ADMIN' && form.team_ids.length === 0)}>
+                {saving ? t('usr.saving') : t('usr.save')}
+              </button>
+            </>
+          )}
         </div>
       </div>
     </div>

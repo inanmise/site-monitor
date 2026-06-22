@@ -52,16 +52,20 @@ jobs:
           PREV_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
           if [ -n "$PREV_TAG" ]; then
             COMMITS=$(git log "${PREV_TAG}..HEAD" --pretty=format:"%s%n%b" --no-merges)
+            SUBJECTS=$(git log "${PREV_TAG}..HEAD" --pretty=format:"%s" --no-merges)
           else
             COMMITS=$(git log --pretty=format:"%s%n%b" --no-merges)
+            SUBJECTS=$(git log --pretty=format:"%s" --no-merges)
           fi
 
           echo "Commits since ${PREV_TAG:-beginning}:"
           echo "$COMMITS"
           echo "---"
 
-          # Release bot commit'lerini, CI-only ve boş satırları filtrele
-          MEANINGFUL=$(echo "$COMMITS" | grep -vE '^\s*$|^chore\(release\)|^\[skip ci\]|^ci(\([^)]*\))?:' || true)
+          # Release/CI-only commit'lerini ele. Karar YALNIZ commit BAŞLIKLARINDAN
+          # ($SUBJECTS) verilir — çok satırlı gövde ci:/docs: skip'ini bozmasın diye
+          # %b dahil EDİLMEZ. (BREAKING CHANGE taraması aşağıda gövdeyi kullanır.)
+          MEANINGFUL=$(echo "$SUBJECTS" | grep -vE '^\s*$|^chore\(release\)|^\[skip ci\]|^ci(\([^)]*\))?:' || true)
           if [ -z "$MEANINGFUL" ]; then
             echo "No meaningful commits — skipping release."
             echo "should_release=false" >> "$GITHUB_OUTPUT"
@@ -70,13 +74,13 @@ jobs:
           fi
 
           # Bump tipini belirle (en yüksek öncelikli kural kazanır)
-          # major: BREAKING CHANGE veya ! ile işaretlenmiş commit
-          # minor: feat: veya feat(scope):
+          # major: BREAKING CHANGE (gövde/footer) veya ! ile işaretlenmiş başlık
+          # minor: feat: / feat(scope): (başlık)
           # patch: fix:, chore:, docs:, refactor:, perf:, test:, style:, ci:, build:
           BUMP="patch"
-          if echo "$COMMITS" | grep -qiE "BREAKING[- ]CHANGE|^[a-z]+(\([^)]*\))?!:"; then
+          if echo "$COMMITS" | grep -qiE "BREAKING[- ]CHANGE" || echo "$SUBJECTS" | grep -qE "^[a-z]+(\([^)]*\))?!:"; then
             BUMP="major"
-          elif echo "$COMMITS" | grep -qE "^feat(\([^)]*\))?:"; then
+          elif echo "$SUBJECTS" | grep -qE "^feat(\([^)]*\))?:"; then
             BUMP="minor"
           fi
 
