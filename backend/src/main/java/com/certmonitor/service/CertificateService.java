@@ -193,7 +193,12 @@ public class CertificateService {
         Set<String> activeDomains = new HashSet<>(activeInventory.size());
         Map<String, Integer> tierMap = new HashMap<>(activeInventory.size());
         // domain → sorumlu (SY) takım — dashboard kart etiketi + takım filtresi için.
-        Map<Long, String> teamNames = teamRepo.findAll().stream()
+        // Yalnız aktif envanterin atıf yaptığı takımları yükle (tüm teams tablosu yerine).
+        Set<Long> neededTeamIds = activeInventory.stream()
+                .map(CertificateInventory::getTeamId)
+                .filter(id -> id != null)
+                .collect(Collectors.toSet());
+        Map<Long, String> teamNames = teamRepo.findAllById(neededTeamIds).stream()
                 .filter(tm -> tm.getId() != null && tm.getName() != null)
                 .collect(Collectors.toMap(Team::getId, Team::getName, (a, b) -> a));
         Map<String, Long> teamIdMap = new HashMap<>(activeInventory.size());
