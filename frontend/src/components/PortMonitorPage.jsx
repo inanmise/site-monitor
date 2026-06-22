@@ -294,7 +294,9 @@ export default function PortMonitorPage({ systemRole }) {
                     </span>
                     {c.error
                       ? <span className="upt-rt-error">{c.error}</span>
-                      : <span className="upt-rt-ms">—</span>}
+                      : c.open
+                        ? <span className="upt-rt-up">{t('port.detailOk')}</span>
+                        : <span className="upt-rt-ms">—</span>}
                   </div>
                 ))}
                 {history.length > 200 && (
