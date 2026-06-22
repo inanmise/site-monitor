@@ -3,7 +3,8 @@ name: Docker — Build & Push
 on:
   push:
     branches:
-      - main
+      # main'de imaj Release workflow'u tarafından (yeni sürüm tag'i + latest) build/push
+      # edilir — burada tekrar etmemek için main hariç. develop/release'te Release yok.
       - develop
       - "release/**"
 

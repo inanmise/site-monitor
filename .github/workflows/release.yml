@@ -181,6 +181,18 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      # ── Security: container image vulnerability scan ──
+      # docker-build.yml main'den çıkarıldığı için Trivy taraması burada (release imajı üstünde).
+      # Non-blocking (exit-code 0) — baseline temizlenince '1'e çek.
+      - name: Trivy image scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ghcr.io/inanmise/certmonitor:${{ steps.ver.outputs.tag }}
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: '0'
+          format: table
+
       # ── 5. Helm OCI push ─────────────────────────────────────────────────
       - name: Set up Helm
         uses: azure/setup-helm@v5
