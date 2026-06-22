@@ -63,6 +63,10 @@ config:
   checkTimeoutSeconds: "10"
   warningDays: "30"
   parallelWorkers: "20"
+  # Haftalık erişilebilirlik e-postası: sertifika sahibi takıma her Pazartesi 10:00 (Europe/Istanbul)
+  # geçen haftanın domain availability özeti. Genel Ayarlar'dan da canlı aç/kapa edilebilir.
+  weeklyAvailEnabled: "true"
+  weeklyAvailCron: "0 0 10 ? * MON"
   # Sertifika tarama executor'ı (paralel kontrol thread'leri). CPU-sınırlı küçük
   # ortamlarda düşür → açılışta CPU oversubscription olmasın.
   executorCoreSize: "20"

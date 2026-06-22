@@ -28,4 +28,9 @@ public interface UptimeCheckRepository extends JpaRepository<UptimeCheck, Long> 
         @Param("to")     String to,
         @Param("limit")  int    limit
     );
+
+    /** Haftalık erişilebilirlik raporu — pencere içi (UTC ISO) kontroller, kronolojik sıralı
+     *  (up→down geçiş/kesinti tespiti için). checkedAt UTC ISO string. */
+    List<UptimeCheck> findByDomainAndPortAndCheckedAtBetweenOrderByCheckedAtAsc(
+        String domain, Integer port, String checkedAtStart, String checkedAtEnd);
 }

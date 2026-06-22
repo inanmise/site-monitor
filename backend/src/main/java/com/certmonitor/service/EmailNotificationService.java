@@ -1982,6 +1982,159 @@ public class EmailNotificationService {
             + "</body></html>";
     }
 
+    // ── Haftalık Erişilebilirlik (availability) e-postası ───────────────────────
+
+    /** E-posta görünüm DTO'ları — view katmanı kendi girdilerini sahiplenir (servis bağımlılığı
+     *  email→report yönünde değil). availabilityPct/avgMs/p95Ms/certDays null = veri yok. */
+    public record AvailabilityRow(String domain, Double availabilityPct,
+                                  int outageCount, long downtimeMinutes, long longestOutageMinutes,
+                                  Long avgMs, Long p95Ms, Integer certDaysRemaining) {}
+    public record AvailabilitySummary(int domainCount, int withDataCount, Double avgAvailabilityPct,
+                                      String bestDomain, Double bestPct, String worstDomain, Double worstPct,
+                                      int downDomainCount, Integer nearestCertDays) {}
+
+    /** Sertifika sahibi takıma haftalık erişilebilirlik özeti (executive). rows en kötü
+     *  availability üstte sıralı gelir; down domainler ayrı vurgulanır. */
+    public String buildWeeklyAvailabilityHtml(String teamName, String weekLabel,
+                                              List<AvailabilityRow> rows, AvailabilitySummary s) {
+        String accent = "#1f3864";
+        String outerBg = "#f4f6f8";
+        String generatedAt = ZonedDateTime.now(IST).format(DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm"));
+
+        // KPI bandı (4 kart) — td+bgcolor (Outlook uyumlu)
+        String avgTxt = pctText(s.avgAvailabilityPct());
+        String kpi =
+            "<table width='100%' cellpadding='0' cellspacing='0' border='0' style='margin:4px 0 18px;border-collapse:separate;border-spacing:8px 0'><tr>"
+            + kpiCard("İZLENEN DOMAIN", String.valueOf(s.domainCount()), "#1e293b", "#f8fafc")
+            + kpiCard("ORT. ERİŞİLEBİLİRLİK", avgTxt, pctColor(s.avgAvailabilityPct()), "#f8fafc")
+            + kpiCard("KESİNTİ YAŞAYAN", String.valueOf(s.downDomainCount()),
+                      s.downDomainCount() > 0 ? "#dc2626" : "#16a34a", "#f8fafc")
+            + kpiCard("EN YAKIN SERTİFİKA", s.nearestCertDays() != null ? s.nearestCertDays() + " gün" : "—",
+                      s.nearestCertDays() != null && s.nearestCertDays() <= 30 ? "#dc2626" : "#1e293b", "#f8fafc")
+            + "</tr></table>";
+
+        // Kesinti bölümü — varsa kırmızı liste, yoksa yeşil "kesinti yok" bandı (mail her durumda gider)
+        StringBuilder down = new StringBuilder();
+        for (AvailabilityRow r : rows) {
+            if (r.outageCount() > 0) {
+                down.append("<tr style='border-top:1px solid #fecaca'>")
+                    .append("<td style='padding:7px 12px;font-size:13px;font-weight:700;color:#991b1b'>").append(escHtml(r.domain())).append("</td>")
+                    .append("<td style='padding:7px 12px;font-size:13px;color:#b91c1c;white-space:nowrap'>").append(pctText(r.availabilityPct())).append("</td>")
+                    .append("<td style='padding:7px 12px;font-size:13px;color:#b91c1c;white-space:nowrap'>")
+                    .append(r.outageCount()).append(" kesinti · ").append(r.downtimeMinutes()).append(" dk</td>")
+                    .append("</tr>");
+            }
+        }
+        String downSection = s.downDomainCount() > 0
+            ? "<div style='margin:0 0 18px'>"
+              + "<table width='100%' cellpadding='0' cellspacing='0' border='0'><tr>"
+              + "<td bgcolor='#dc2626' style='background:#dc2626;color:#fff;border-radius:8px 8px 0 0;padding:9px 14px;font-size:13px;font-weight:800'>"
+              + "⚠ Bu hafta kesinti yaşayan domainler (" + s.downDomainCount() + ")</td></tr></table>"
+              + "<table width='100%' cellpadding='0' cellspacing='0' border='0' bgcolor='#fef2f2' style='background:#fef2f2;border:1px solid #fecaca;border-top:none;border-radius:0 0 8px 8px'>"
+              + down + "</table></div>"
+            : "<div style='margin:0 0 18px;padding:12px 16px;border-left:4px solid #16a34a;background:#ecfdf5;"
+              + "border-radius:0 8px 8px 0;font-size:14px;font-weight:700;color:#15803d'>✓ Bu hafta hiçbir domain kesinti yaşamadı 🎉</div>";
+
+        // Domain tablosu (en kötü üstte — servis sıralar)
+        StringBuilder body = new StringBuilder();
+        body.append("<tr>")
+            .append(thCell("Domain", "left")).append(thCell("Erişilebilirlik", "left"))
+            .append(thCell("Kesinti", "left")).append(thCell("Yanıt (ort/p95)", "left"))
+            .append(thCell("Sertifika", "left")).append("</tr>");
+        for (AvailabilityRow r : rows) {
+            String pc = pctColor(r.availabilityPct());
+            String resp = (r.avgMs() != null)
+                ? r.avgMs() + " / " + (r.p95Ms() != null ? r.p95Ms() : "—") + " ms" : "—";
+            String certTxt = r.certDaysRemaining() != null ? r.certDaysRemaining() + " gün" : "—";
+            String certColor = r.certDaysRemaining() != null && r.certDaysRemaining() <= 30 ? "#dc2626"
+                             : r.certDaysRemaining() != null && r.certDaysRemaining() <= 60 ? "#d97706" : "#475569";
+            body.append("<tr style='border-top:1px solid #e2e8f0'>")
+                .append("<td style='padding:9px 13px;font-size:13px;font-weight:600;color:#1e293b;word-break:break-all'>").append(escHtml(r.domain())).append("</td>")
+                .append("<td style='padding:9px 13px;font-size:14px;font-weight:800;color:").append(pc).append(";white-space:nowrap'>").append(pctText(r.availabilityPct())).append("</td>")
+                .append("<td style='padding:9px 13px;font-size:13px;color:").append(r.outageCount() > 0 ? "#b91c1c" : "#64748b").append(";white-space:nowrap'>")
+                .append(r.outageCount() > 0 ? r.outageCount() + " · " + r.downtimeMinutes() + " dk" : "—").append("</td>")
+                .append("<td style='padding:9px 13px;font-size:13px;color:#475569;white-space:nowrap'>").append(resp).append("</td>")
+                .append("<td style='padding:9px 13px;font-size:13px;font-weight:600;color:").append(certColor).append(";white-space:nowrap'>").append(certTxt).append("</td>")
+                .append("</tr>");
+        }
+        String table =
+            "<div style='margin:0 0 18px'>"
+            + "<table width='100%' cellpadding='0' cellspacing='0' border='0'><tr>"
+            + "<td bgcolor='" + accent + "' style='background:" + accent + ";color:#fff;border-radius:8px 8px 0 0;padding:9px 14px;font-size:13px;font-weight:800'>Domain Erişilebilirlik Detayı</td></tr></table>"
+            + "<table width='100%' cellpadding='0' cellspacing='0' border='0' style='border:1px solid #e2e8f0;border-top:none;border-radius:0 0 8px 8px;border-collapse:collapse'>"
+            + body + "</table></div>";
+
+        String bestWorst = (s.bestDomain() != null && s.worstDomain() != null && s.withDataCount() > 0)
+            ? "<p style='font-size:13px;color:#475569;margin:0 0 14px;line-height:1.7'>"
+              + "En yüksek: <strong style='color:#15803d'>" + escHtml(s.bestDomain()) + "</strong> (" + pctText(s.bestPct()) + ") · "
+              + "En düşük: <strong style='color:" + pctColor(s.worstPct()) + "'>" + escHtml(s.worstDomain()) + "</strong> (" + pctText(s.worstPct()) + ")</p>"
+            : "";
+
+        return "<!DOCTYPE html><html lang='tr' xmlns:v='urn:schemas-microsoft-com:vml'"
+            + " xmlns:o='urn:schemas-microsoft-com:office:office'>"
+            + "<head><meta charset='UTF-8'>"
+            + "<meta name='viewport' content='width=device-width,initial-scale=1,maximum-scale=1'>"
+            + "<style>@media only screen and (max-width:870px){"
+            + ".em-wrap{padding:0!important}.em-card{border-radius:0!important;width:100%!important}"
+            + ".em-body{padding:14px!important}}</style></head>"
+            + "<body bgcolor='" + outerBg + "' style='margin:0;padding:0;background:" + outerBg
+            + ";font-family:\"Segoe UI\",Tahoma,Arial,sans-serif'>"
+            + "<table class='em-wrap' width='100%' cellpadding='0' cellspacing='0' border='0'"
+            + " bgcolor='" + outerBg + "' style='background:" + outerBg + ";padding:24px 10px'>"
+            + "<tr><td align='center' bgcolor='" + outerBg + "'>"
+            + "<table class='em-card' width='850' cellpadding='0' cellspacing='0' border='0'"
+            + " bgcolor='#ffffff' style='max-width:850px;width:100%;background:#ffffff;"
+            + "border:1px solid #d7dde5;border-radius:14px;overflow:hidden;box-shadow:0 8px 32px rgba(0,0,0,.10)'>"
+            + "<tr><td bgcolor='#ffffff' style='padding:0'>"
+            // Üst bar
+            + "<table width='100%' cellpadding='0' cellspacing='0' border='0'><tr>"
+            + "<td bgcolor='" + accent + "' style='background:" + accent + ";padding:22px 24px'>"
+            + "<div style='color:#aebed8;font-size:11px;font-weight:700;letter-spacing:.12em'>CERTMONITOR — HAFTALIK ERİŞİLEBİLİRLİK</div>"
+            + "<div style='color:#ffffff;font-size:22px;font-weight:900;margin-top:10px;line-height:1.25'>📊 " + escHtml(teamName) + "</div>"
+            + "<div style='color:#dbe3ef;font-size:15px;font-weight:700;margin-top:8px'>" + escHtml(weekLabel) + "</div>"
+            + "</td></tr></table>"
+            // Gövde
+            + "<div class='em-body' style='background:#fff;padding:22px 24px'>"
+            + "<p style='font-size:15px;color:#0f172a;margin:0 0 6px'><strong>Sayın " + escHtml(teamName) + " ekibi,</strong></p>"
+            + "<p style='font-size:14px;color:#334155;line-height:1.7;margin:0 0 14px'>"
+            + "Aşağıda sahip olduğunuz domainlerin geçen haftaya (<strong>" + escHtml(weekLabel) + "</strong>) ait erişilebilirlik özeti yer almaktadır.</p>"
+            + kpi
+            + downSection
+            + bestWorst
+            + table
+            // Footer
+            + "<table width='100%' cellpadding='0' cellspacing='0'><tr>"
+            + "<td valign='top' style='border-top:1px solid #f1f5f9;padding-top:12px;font-size:11px;color:#94a3b8'>CertMonitor — Otomatik Haftalık Rapor</td>"
+            + "<td align='right' valign='top' style='border-top:1px solid #f1f5f9;padding-top:12px;font-size:11px;color:#94a3b8'>Oluşturuldu: " + generatedAt + "</td></tr></table>"
+            + "</div></td></tr></table>"
+            + "</td></tr></table></body></html>";
+    }
+
+    private String kpiCard(String label, String value, String valueColor, String bg) {
+        return "<td width='25%' bgcolor='" + bg + "' style='background:" + bg + ";border:1px solid #e2e8f0;"
+            + "border-radius:10px;padding:12px 14px' valign='top'>"
+            + "<div style='font-size:22px;font-weight:900;color:" + valueColor + ";line-height:1.1'>" + escHtml(value) + "</div>"
+            + "<div style='font-size:10px;font-weight:700;letter-spacing:.08em;color:#94a3b8;margin-top:5px'>" + escHtml(label) + "</div>"
+            + "</td>";
+    }
+
+    private String thCell(String label, String align) {
+        return "<td bgcolor='#1e293b' align='" + align + "' style='background:#1e293b;padding:9px 13px;"
+            + "font-size:11px;font-weight:700;letter-spacing:.06em;color:#cbd5e1;white-space:nowrap'>" + escHtml(label) + "</td>";
+    }
+
+    /** Availability %'sine göre renk: ≥99.9 yeşil, ≥99 amber, <99 kırmızı, null gri. */
+    private static String pctColor(Double pct) {
+        if (pct == null) return "#94a3b8";
+        if (pct >= 99.9) return "#16a34a";
+        if (pct >= 99.0) return "#d97706";
+        return "#dc2626";
+    }
+    private static String pctText(Double pct) {
+        if (pct == null) return "veri yok";
+        return (Math.round(pct * 100.0) / 100.0) + "%";
+    }
+
     private String reportSection(String title, String bodyHtml, String accent) {
         return "<div style='margin-bottom:20px'>"
             // Başlık şeridi: div shading yerine td + bgcolor (Outlook uyumu)

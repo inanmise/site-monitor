@@ -33,6 +33,7 @@ public class SystemController {
     private final UserService           userService;
     private final RememberMeService     rememberMeService;
     private final com.certmonitor.service.PermissionService permissionService;
+    private final com.certmonitor.service.WeeklyAvailabilityReportService weeklyAvailabilityReportService;
 
     private static final DateTimeFormatter ISO =
             DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
@@ -159,6 +160,99 @@ public class SystemController {
         userService.terminateActiveSession(username);
         rememberMeService.invalidateAllForUser(username);
         return ResponseEntity.ok(Map.of("success", true, "username", username, "timestamp", now()));
+    }
+
+    /** Admin: haftalık erişilebilirlik raporunu ŞİMDİ tetikle (Pazartesi'yi beklemeden test/önizleme).
+     *  force=true → idempotency atlanır; geçen tam hafta penceresiyle ilgili takımlara mail gider. */
+    @PostMapping("/weekly-availability/run")
+    public ResponseEntity<Map<String, Object>> runWeeklyAvailability(HttpSession session) {
+        requireAdmin(session);
+        permissionService.require(session, "system_health.actions", "execute");
+        var result = weeklyAvailabilityReportService.sendWeeklyReports(true);
+        return ResponseEntity.ok(Map.of("success", true, "data", result, "timestamp", now()));
+    }
+
+    /** Admin: haftalık erişilebilirlik durum kartı (genel anahtar + cron + raporlanan hafta + mail kitlesi). */
+    @GetMapping("/weekly-availability/status")
+    public ResponseEntity<Map<String, Object>> weeklyAvailabilityStatus(HttpSession session) {
+        requireAdmin(session);
+        var data = weeklyAvailabilityReportService.status();
+        return ResponseEntity.ok(Map.of("success", true, "data", data, "timestamp", now()));
+    }
+
+    /** Admin: bir takımın geçen haftalık raporunu GÖNDERMEDEN önizle (executive HTML + çözülmüş alıcılar). */
+    @GetMapping("/weekly-availability/preview")
+    public ResponseEntity<Map<String, Object>> weeklyAvailabilityPreview(
+            @RequestParam Long teamId, HttpSession session) {
+        requireAdmin(session);
+        try {
+            var data = weeklyAvailabilityReportService.preview(teamId);
+            return ResponseEntity.ok(Map.of("success", true, "data", data, "timestamp", now()));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(Map.of(
+                    "success", false, "error", e.getMessage(), "timestamp", now()));
+        }
+    }
+
+    /** Admin: seçilen takımın raporunu yalnız verilen test adresine gönder (toplu gönderim DEĞİL). */
+    @PostMapping("/weekly-availability/send-test")
+    public ResponseEntity<Map<String, Object>> weeklyAvailabilitySendTest(
+            @RequestBody Map<String, Object> body, HttpSession session) {
+        requireAdmin(session);
+        permissionService.require(session, "system_health.actions", "execute");
+        Object teamIdRaw = body != null ? body.get("teamId") : null;
+        String email = body != null && body.get("email") != null ? body.get("email").toString().trim() : "";
+        if (teamIdRaw == null || email.isBlank() || !email.matches("^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$")) {
+            return ResponseEntity.badRequest().body(Map.of(
+                    "success", false, "error", "teamId ve geçerli email gerekli", "timestamp", now()));
+        }
+        Long teamId = Long.valueOf(teamIdRaw.toString());
+        try {
+            String status = weeklyAvailabilityReportService.sendTest(teamId, email);
+            boolean ok = status == null || !status.startsWith("FAILED");
+            return ResponseEntity.ok(Map.of("success", ok, "data", Map.of("status", status == null ? "" : status),
+                    "message", status == null ? "" : status, "timestamp", now()));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(Map.of(
+                    "success", false, "error", e.getMessage(), "timestamp", now()));
+        }
+    }
+
+    /** Admin: arşivlenmiş giden haftalık erişilebilirlik mailleri (geçmişe dönük inceleme). */
+    @GetMapping("/weekly-availability/history")
+    public ResponseEntity<Map<String, Object>> weeklyAvailabilityHistory(
+            @RequestParam(defaultValue = "50") int limit,
+            @RequestParam(defaultValue = "false") boolean includeTest,
+            HttpSession session) {
+        requireAdmin(session);
+        var data = weeklyAvailabilityReportService.history(limit, includeTest);
+        return ResponseEntity.ok(Map.of("success", true, "data", data, "timestamp", now()));
+    }
+
+    /** Admin: tek bir arşiv kaydının tam içeriği (saklanan HTML — önizleme modal'ında gösterilir). */
+    @GetMapping("/weekly-availability/history/{id}")
+    public ResponseEntity<Map<String, Object>> weeklyAvailabilityHistoryItem(
+            @PathVariable Long id, HttpSession session) {
+        requireAdmin(session);
+        try {
+            var data = weeklyAvailabilityReportService.historyItem(id);
+            return ResponseEntity.ok(Map.of("success", true, "data", data, "timestamp", now()));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(Map.of(
+                    "success", false, "error", e.getMessage(), "timestamp", now()));
+        }
+    }
+
+    /** Admin: haftalık erişilebilirlik e-postasını genel olarak aç/kapa (duraklat). */
+    @PutMapping("/weekly-availability/enabled")
+    public ResponseEntity<Map<String, Object>> weeklyAvailabilitySetEnabled(
+            @RequestBody Map<String, Object> body, HttpSession session) {
+        requireAdmin(session);
+        permissionService.require(session, "system_health.actions", "execute");
+        boolean enabled = body != null && Boolean.parseBoolean(String.valueOf(body.get("enabled")));
+        String actor = session != null ? (String) session.getAttribute("username") : null;
+        weeklyAvailabilityReportService.setEnabled(enabled, actor != null ? actor : "admin");
+        return ResponseEntity.ok(Map.of("success", true, "data", Map.of("enabled", enabled), "timestamp", now()));
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────

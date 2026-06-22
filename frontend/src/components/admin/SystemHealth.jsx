@@ -28,6 +28,14 @@ function SmtpStatusCell({ row, t }) {
   )
 }
 
+// Haftalık erişilebilirlik gönderim durumunu SmtpStatusCell'in beklediği "kind"e indirger.
+function waKind(status) {
+  if (!status) return 'UNKNOWN'
+  if (status === 'SENT') return 'SENT'
+  if (status.startsWith('FAILED')) return 'FAILED'
+  return 'SKIPPED' // NO_RECIPIENT vb.
+}
+
 function triggerLabel(trigger, t) {
   const map = {
     INITIAL:       t('health.triggerInitial'),
@@ -102,6 +110,11 @@ export default function SystemHealth({ systemRole, globalAdmin = false, preFilte
   const [smtpLoading, setSmtpLoading] = useState(false)
   const [selectedLog, setSelectedLog] = useState(null)
   const [smtpFilters, setSmtpFilters] = useState({ from: '', to: '', subject: '', status: '', domain: '' })
+  // Haftalık erişilebilirlik gönderim logları (kart → modal)
+  const [waLogsModal, setWaLogsModal]   = useState(false)
+  const [waLogs, setWaLogs]             = useState(null)
+  const [waLogsLoading, setWaLogsLoading] = useState(false)
+  const [waLogItem, setWaLogItem]       = useState(null)
   const [loadErrors, setLoadErrors]   = useState({ health: false, metrics: false, http: false, db: false, users: false })
   const [userActivity, setUserActivity] = useState(null)
   const [uactSort, setUactSort]       = useState({ col: 'duration_min', dir: 'desc' })
@@ -239,6 +252,20 @@ export default function SystemHealth({ systemRole, globalAdmin = false, preFilte
     setSmtpLoading(false)
   }, [smtpPeriod])
 
+  const openWaLogsModal = useCallback(async () => {
+    setWaLogsModal(true)
+    setWaLogs(null)
+    setWaLogsLoading(true)
+    const res = await api.admin.getWeeklyAvailHistory(100, true)
+    setWaLogs(res?.success ? res.data : [])
+    setWaLogsLoading(false)
+  }, [])
+
+  const openWaItem = useCallback(async (row) => {
+    const res = await api.admin.getWeeklyAvailHistoryItem(row.id)
+    if (res?.success) setWaLogItem(res.data)
+  }, [])
+
   useEffect(() => {
     if (openSmtpModalOnLoad) {
       openSmtpModal(preFilterDomain ? { domain: preFilterDomain } : undefined)
@@ -311,8 +338,15 @@ export default function SystemHealth({ systemRole, globalAdmin = false, preFilte
     return <div className="sys-loading">{t('sys.loading')}</div>
   }
 
-  const { scheduler, lock, pool, executor_pool, memory, scan, scan_alarm, smtp, heartbeat } = health || {}
+  const { scheduler, lock, pool, executor_pool, memory, scan, scan_alarm, smtp, heartbeat,
+          weekly_availability: weeklyAvail } = health || {}
   const isRunning = scheduler?.running
+
+  // Haftalık erişilebilirlik scheduler durumu
+  const waEnabled = weeklyAvail?.enabled
+  const waRunning = weeklyAvail?.running
+  const waBadgeClass = waRunning ? 'sys-badge-running' : waEnabled ? 'sys-badge-free' : 'sys-badge-idle'
+  const waBadgeText  = waRunning ? t('sys.running') : waEnabled ? t('waSched.active') : t('waSched.paused')
 
   const smtpData = smtp?.periods?.[smtpPeriod] ?? smtp ?? {}
   const smtpRate = smtpData.rate ?? 100
@@ -459,6 +493,46 @@ export default function SystemHealth({ systemRole, globalAdmin = false, preFilte
             <p className="sys-free-msg">{t('sys.lockFree')}</p>
           )}
         </div>
+
+        {/* Weekly availability email scheduler card */}
+        {weeklyAvail && (
+          <div className="sys-card sys-card-clickable" onClick={openWaLogsModal} title={t('waLogs.clickHint')}>
+            <div className="sys-card-header">
+              <div className="hb-title-row">
+                <svg className={`sched-icon ${waEnabled ? 'sched-icon-running' : 'sched-icon-idle'}`} viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <rect x="2" y="4" width="20" height="16" rx="2"/>
+                  <path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/>
+                </svg>
+                <h3>{t('waSched.title')}</h3>
+              </div>
+              <span className={`sys-badge ${waBadgeClass}`}>{waBadgeText}</span>
+            </div>
+            <dl className="sys-dl">
+              <dt>{t('waSched.schedule')}</dt>
+              <dd>{t('waSched.scheduleVal')}</dd>
+              <dt>{t('sys.nextRun')}</dt>
+              <dd>{waEnabled ? (weeklyAvail.next_run ? formatDate(weeklyAvail.next_run) : '—') : t('waSched.pausedShort')}</dd>
+              <dt>{t('sys.lastRun')}</dt>
+              <dd>{weeklyAvail.last_run_at ? formatDate(weeklyAvail.last_run_at) : t('sys.never')}</dd>
+              {weeklyAvail.last_run_at && (
+                <>
+                  <dt>{t('waSched.lastResult')}</dt>
+                  <dd>
+                    <span className="sys-ok-text">{weeklyAvail.last_run_sent ?? 0}/{weeklyAvail.last_run_teams ?? 0} {t('waSched.sent')}</span>
+                    {(weeklyAvail.last_run_failed ?? 0) > 0 && (
+                      <span className="sys-err-text"> · {weeklyAvail.last_run_failed} {t('waSched.failed')}</span>
+                    )}
+                    {(weeklyAvail.last_run_no_recipient ?? 0) > 0 && (
+                      <span className="sys-warn-text"> · {weeklyAvail.last_run_no_recipient} {t('waSched.noRecipient')}</span>
+                    )}
+                  </dd>
+                  <dt>{t('waSched.reportedWeek')}</dt>
+                  <dd>{weeklyAvail.last_run_week || '—'}</dd>
+                </>
+              )}
+            </dl>
+          </div>
+        )}
 
         {/* Pool card */}
         <div className="sys-card">
@@ -1896,6 +1970,93 @@ export default function SystemHealth({ systemRole, globalAdmin = false, preFilte
 
       {hbModalOpen && (
         <HeartbeatHistoryModal onClose={() => setHbModalOpen(false)} />
+      )}
+
+      {/* Haftalık erişilebilirlik gönderim logları (SMTP status modalıyla aynı yapı) */}
+      {waLogsModal && (
+        <div className="smtp-modal-overlay" onClick={() => setWaLogsModal(false)}>
+          <div className="smtp-modal" onClick={e => e.stopPropagation()}>
+            <div className="smtp-modal-header">
+              <h3>{t('waLogs.title')}</h3>
+              <button type="button" className="smtp-modal-close" aria-label={t('app.dismiss')} onClick={() => setWaLogsModal(false)}>✕</button>
+            </div>
+            {waLogsLoading ? (
+              <div className="smtp-modal-loading">{t('sys.loading')}</div>
+            ) : (waLogs?.length ?? 0) === 0 ? (
+              <div className="smtp-modal-empty">{t('waLogs.empty')}</div>
+            ) : (
+              <div className="smtp-modal-body">
+                <table className="smtp-log-table">
+                  <thead>
+                    <tr>
+                      <th>{t('health.smtpLogDate')}</th>
+                      <th>{t('waLogs.colTeam')}</th>
+                      <th>{t('waLogs.colRecipients')}</th>
+                      <th>{t('waLogs.colType')}</th>
+                      <th>{t('health.smtpLogStatus')}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {waLogs.map(row => (
+                      <tr key={row.id} className="smtp-log-row" onClick={() => openWaItem(row)}>
+                        <td className="smtp-log-date sys-mono">{formatDate(row.sent_at)}</td>
+                        <td>{row.team || '—'}</td>
+                        <td>
+                          <div className="smtp-log-email sys-muted sys-small" title={row.to || ''}>{row.to || '—'}</div>
+                          {row.cc && <div className="smtp-log-email sys-muted sys-small" title={row.cc}>CC: {row.cc}</div>}
+                        </td>
+                        <td><span className="sys-small">{row.trigger === 'WEEKLY_AVAILABILITY_TEST' ? t('waLogs.test') : t('waLogs.scheduled')}</span></td>
+                        <td><SmtpStatusCell row={{ kind: waKind(row.status), error: row.status?.startsWith('FAILED') ? row.status : null }} t={t} /></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Haftalık erişilebilirlik mail gövdesi (satır detayı) */}
+      {waLogItem && (
+        <div className="smtp-detail-overlay" onClick={() => setWaLogItem(null)}>
+          <div className="smtp-detail-panel" onClick={e => e.stopPropagation()}>
+            <div className="smtp-detail-header">
+              <div className="smtp-detail-header-left">
+                <Mail size={17} className="smtp-detail-mail-icon" />
+                <span>{t('waLogs.detailTitle')}</span>
+              </div>
+              <button type="button" className="smtp-modal-close" aria-label={t('app.dismiss')} onClick={() => setWaLogItem(null)}>✕</button>
+            </div>
+            <div className="smtp-detail-meta">
+              <div className="smtp-detail-meta-row">
+                <span className="smtp-detail-label">{t('health.emailDetailTo')}</span>
+                <span><strong>{waLogItem.team}</strong>{waLogItem.to && <span className="sys-muted"> &lt;{waLogItem.to}&gt;</span>}</span>
+              </div>
+              {waLogItem.cc && (
+                <div className="smtp-detail-meta-row">
+                  <span className="smtp-detail-label">CC</span>
+                  <span className="sys-muted">{waLogItem.cc}</span>
+                </div>
+              )}
+              <div className="smtp-detail-meta-row">
+                <span className="smtp-detail-label">{t('health.smtpLogSubject')}</span>
+                <span className="smtp-detail-subject">{waLogItem.subject}</span>
+              </div>
+              <div className="smtp-detail-meta-row">
+                <span className="smtp-detail-label">{t('health.smtpLogDate')}</span>
+                <span className="sys-mono">{formatDate(waLogItem.sent_at)}</span>
+              </div>
+              <div className="smtp-detail-meta-row">
+                <span className="smtp-detail-label">{t('waLogs.colType')}</span>
+                <span className="sys-small">{waLogItem.trigger === 'WEEKLY_AVAILABILITY_TEST' ? t('waLogs.test') : t('waLogs.scheduled')}</span>
+                <SmtpStatusCell row={{ kind: waKind(waLogItem.status), error: waLogItem.status?.startsWith('FAILED') ? waLogItem.status : null }} t={t} />
+              </div>
+            </div>
+            <div className="smtp-detail-body-label">{t('health.emailDetailBody')}</div>
+            <iframe className="smtp-detail-iframe" srcDoc={waLogItem.html} sandbox="" title={waLogItem.subject} />
+          </div>
+        </div>
       )}
 
       {smtpModal && (

@@ -42,3 +42,6 @@ data:
   HTTP_PROXY_PORT: {{ .Values.config.httpProxyPort | quote }}
   NO_PROXY:        {{ .Values.config.noProxy | quote }}
   SPRING_SESSION_STORE_TYPE: {{ .Values.config.sessionStoreType | quote }}
+  # Haftalık erişilebilirlik e-postası (sertifika sahibi takıma) — Pazartesi 10:00 Europe/Istanbul
+  WEEKLY_AVAIL_ENABLED: {{ .Values.config.weeklyAvailEnabled | quote }}
+  WEEKLY_AVAIL_CRON: {{ .Values.config.weeklyAvailCron | quote }}

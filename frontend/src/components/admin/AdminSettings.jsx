@@ -5,11 +5,13 @@ import LdapSettings from './LdapSettings'
 import GeneralSettings from './GeneralSettings'
 import SecretTools from './SecretTools'
 import DatabaseInfo from './DatabaseInfo'
+import WeeklyAvailabilitySettings from './WeeklyAvailabilitySettings'
 
 // Left-menu sections. More land in later phases.
 const SECTIONS = [
   { id: 'general', labelKey: 'settings.navGeneral' },
   { id: 'smtp', labelKey: 'settings.navSmtp' },
+  { id: 'weeklyavail', labelKey: 'settings.navWeeklyAvail' },
   { id: 'ldap', labelKey: 'settings.navLdap' },
   { id: 'database', labelKey: 'settings.navDatabase' },
   { id: 'secrets', labelKey: 'settings.navSecrets' },
@@ -37,6 +39,7 @@ export default function AdminSettings() {
       <section className="settings-pane">
         {active === 'general' && <GeneralSettings />}
         {active === 'smtp' && <SmtpSettings />}
+        {active === 'weeklyavail' && <WeeklyAvailabilitySettings />}
         {active === 'ldap' && <LdapSettings />}
         {active === 'database' && <DatabaseInfo />}
         {active === 'secrets' && <SecretTools />}

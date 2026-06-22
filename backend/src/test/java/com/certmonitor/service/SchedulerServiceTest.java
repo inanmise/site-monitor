@@ -70,6 +70,7 @@ class SchedulerServiceTest {
     @Mock MonitoringOutageService monitoringOutageService;
     @Mock NetworkOutageEventRepository networkOutageRepo;
     @Mock WeeklyReportReminderService weeklyReportReminderService;
+    @Mock WeeklyAvailabilityReportService weeklyAvailabilityReportService;
     @Mock IncidentService incidentService;
     @Mock AppSettingsService appSettings;
     @Mock ThreadPoolTaskExecutor certCheckExecutor;
@@ -85,7 +86,7 @@ class SchedulerServiceTest {
                 portCheckerService, portMonitorRepo, portCheckRepo,
                 dnsCheckerService, dnsMonitorRepo, dnsRecordRepo,
                 uptimeHttpCheckerService, uptimeCheckRepo, monitoringOutageService, networkOutageRepo,
-                weeklyReportReminderService, incidentService, appSettings);
+                weeklyReportReminderService, weeklyAvailabilityReportService, incidentService, appSettings);
         ReflectionTestUtils.setField(scheduler, "certCheckExecutor", certCheckExecutor);
         lenient().when(inventoryRepo.countByActiveTrue()).thenReturn(0L);
         // AppSettings: override yok → fallback (ikinci argüman) döner
