@@ -2132,7 +2132,7 @@ public class EmailNotificationService {
     }
     private static String pctText(Double pct) {
         if (pct == null) return "veri yok";
-        return (Math.round(pct * 100.0) / 100.0) + "%";
+        return String.format(java.util.Locale.US, "%.2f%%", pct);
     }
 
     private String reportSection(String title, String bodyHtml, String accent) {

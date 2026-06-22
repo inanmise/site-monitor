@@ -312,7 +312,10 @@ public class WeeklyAvailabilityReportService {
             return new AvailabilityRow(domain, null, 0, 0, 0, null, null, certDays);
         }
         long up = ordered.stream().filter(WeeklyAvailabilityReportService::isUp).count();
-        double pct = Math.round(up * 1000.0 / total) / 10.0;
+        // 2 ondalık hassasiyet; hiç down örnek varsa (up<total) asla 100.00 gösterme — yuvarlama
+        // tek bir kesinti örneğini (örn. 2015/2016 = %99.95) yanıltıcı şekilde %100'e çekmesin.
+        double pct = Math.round(up * 10000.0 / total) / 100.0;
+        if (pct >= 100.0 && up < total) pct = 99.99;
 
         // Yanıt süreleri (yalnız up + responseMs dolu)
         List<Long> resp = ordered.stream()
@@ -351,7 +354,9 @@ public class WeeklyAvailabilityReportService {
     private AvailabilitySummary summarize(List<AvailabilityRow> rows) {
         List<AvailabilityRow> withData = rows.stream().filter(r -> r.availabilityPct() != null).toList();
         Double avg = withData.isEmpty() ? null
-                : Math.round(withData.stream().mapToDouble(AvailabilityRow::availabilityPct).average().orElse(0) * 10.0) / 10.0;
+                : Math.round(withData.stream().mapToDouble(AvailabilityRow::availabilityPct).average().orElse(0) * 100.0) / 100.0;
+        // Domainlerden biri bile %100 değilse ortalama da yanıltıcı şekilde 100.00 gösterilmesin.
+        if (avg != null && avg >= 100.0 && withData.stream().anyMatch(r -> r.availabilityPct() < 100.0)) avg = 99.99;
         AvailabilityRow best = withData.stream().max(Comparator.comparingDouble(AvailabilityRow::availabilityPct)).orElse(null);
         AvailabilityRow worst = withData.stream().min(Comparator.comparingDouble(AvailabilityRow::availabilityPct)).orElse(null);
         int downCount = (int) rows.stream().filter(r -> r.outageCount() > 0).count();
