@@ -55,6 +55,9 @@ class SystemControllerTest {
     @MockitoBean
     com.certmonitor.service.PermissionService permissionService;
 
+    @MockitoBean
+    com.certmonitor.service.WeeklyAvailabilityReportService weeklyAvailabilityReportService;
+
     @BeforeEach
     void setup() {
         when(schedulerService.getSystemHealth()).thenReturn(Map.of("scheduler", "OK"));
@@ -178,6 +181,117 @@ class SystemControllerTest {
                         .session(userSession())
                         .contentType("application/json")
                         .content("{\"username\":\"bob\"}"))
+                .andExpect(status().isForbidden());
+    }
+
+    // ── Haftalık erişilebilirlik e-postası (Ayarlar sayfası uçları) ──
+
+    @Test
+    @DisplayName("GET /weekly-availability/status as ADMIN returns 200")
+    void weeklyAvailStatus_asAdmin_returns200() throws Exception {
+        when(weeklyAvailabilityReportService.status()).thenReturn(
+                new com.certmonitor.service.WeeklyAvailabilityReportService.StatusResult(
+                        true, "0 0 10 ? * MON", "9–15 Haziran 2026", java.util.List.of()));
+        mvc.perform(get("/api/admin/system/weekly-availability/status").session(adminSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true));
+    }
+
+    @Test
+    @DisplayName("GET /weekly-availability/status as USER returns 403")
+    void weeklyAvailStatus_asUser_returns403() throws Exception {
+        mvc.perform(get("/api/admin/system/weekly-availability/status").session(userSession()))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    @DisplayName("GET /weekly-availability/preview as ADMIN returns 200")
+    void weeklyAvailPreview_asAdmin_returns200() throws Exception {
+        when(weeklyAvailabilityReportService.preview(org.mockito.ArgumentMatchers.anyLong())).thenReturn(
+                new com.certmonitor.service.WeeklyAvailabilityReportService.PreviewResult(
+                        "<html></html>", "Dijital", "9–15 Haziran 2026",
+                        java.util.List.of("a@b.com"), java.util.List.of(), 1, false));
+        mvc.perform(get("/api/admin/system/weekly-availability/preview?teamId=5").session(adminSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true));
+    }
+
+    @Test
+    @DisplayName("GET /weekly-availability/preview as USER returns 403")
+    void weeklyAvailPreview_asUser_returns403() throws Exception {
+        mvc.perform(get("/api/admin/system/weekly-availability/preview?teamId=5").session(userSession()))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    @DisplayName("POST /weekly-availability/send-test as ADMIN returns 200")
+    void weeklyAvailSendTest_asAdmin_returns200() throws Exception {
+        when(weeklyAvailabilityReportService.sendTest(org.mockito.ArgumentMatchers.anyLong(),
+                org.mockito.ArgumentMatchers.anyString())).thenReturn("SENT");
+        mvc.perform(post("/api/admin/system/weekly-availability/send-test").session(adminSession())
+                        .contentType("application/json").content("{\"teamId\":5,\"email\":\"a@b.com\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true));
+    }
+
+    @Test
+    @DisplayName("POST /weekly-availability/send-test as USER returns 403")
+    void weeklyAvailSendTest_asUser_returns403() throws Exception {
+        mvc.perform(post("/api/admin/system/weekly-availability/send-test").session(userSession())
+                        .contentType("application/json").content("{\"teamId\":5,\"email\":\"a@b.com\"}"))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    @DisplayName("PUT /weekly-availability/enabled as ADMIN returns 200")
+    void weeklyAvailEnabled_asAdmin_returns200() throws Exception {
+        mvc.perform(put("/api/admin/system/weekly-availability/enabled").session(adminSession())
+                        .contentType("application/json").content("{\"enabled\":false}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true));
+    }
+
+    @Test
+    @DisplayName("PUT /weekly-availability/enabled as USER returns 403")
+    void weeklyAvailEnabled_asUser_returns403() throws Exception {
+        mvc.perform(put("/api/admin/system/weekly-availability/enabled").session(userSession())
+                        .contentType("application/json").content("{\"enabled\":false}"))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    @DisplayName("GET /weekly-availability/history as ADMIN returns 200")
+    void weeklyAvailHistory_asAdmin_returns200() throws Exception {
+        when(weeklyAvailabilityReportService.history(org.mockito.ArgumentMatchers.anyInt(),
+                org.mockito.ArgumentMatchers.anyBoolean())).thenReturn(java.util.List.of());
+        mvc.perform(get("/api/admin/system/weekly-availability/history?limit=50&includeTest=false").session(adminSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true));
+    }
+
+    @Test
+    @DisplayName("GET /weekly-availability/history as USER returns 403")
+    void weeklyAvailHistory_asUser_returns403() throws Exception {
+        mvc.perform(get("/api/admin/system/weekly-availability/history").session(userSession()))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    @DisplayName("GET /weekly-availability/history/{id} as ADMIN returns 200")
+    void weeklyAvailHistoryItem_asAdmin_returns200() throws Exception {
+        when(weeklyAvailabilityReportService.historyItem(org.mockito.ArgumentMatchers.anyLong())).thenReturn(
+                new com.certmonitor.service.WeeklyAvailabilityReportService.ArchivedMailDetail(
+                        7L, "2026-06-15T08:00:00", "Dijital", "a@b.com", null,
+                        "konu", "SENT", "WEEKLY_AVAILABILITY", "<html></html>"));
+        mvc.perform(get("/api/admin/system/weekly-availability/history/7").session(adminSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true));
+    }
+
+    @Test
+    @DisplayName("GET /weekly-availability/history/{id} as USER returns 403")
+    void weeklyAvailHistoryItem_asUser_returns403() throws Exception {
+        mvc.perform(get("/api/admin/system/weekly-availability/history/7").session(userSession()))
                 .andExpect(status().isForbidden());
     }
 

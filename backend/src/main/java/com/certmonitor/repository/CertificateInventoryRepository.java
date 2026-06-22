@@ -31,6 +31,8 @@ public interface CertificateInventoryRepository extends JpaRepository<Certificat
     List<CertificateInventory> findByDeletedAtIsNotNullOrderByDomainAsc();
     List<CertificateInventory> findByTeamIdAndDeletedAtIsNullOrderByDomainAsc(Long teamId);
     List<CertificateInventory> findByUgTeamIdAndDeletedAtIsNullOrderByDomainAsc(Long ugTeamId);
+    /** Haftalık erişilebilirlik raporu — takımın aktif + silinmemiş domainleri. */
+    List<CertificateInventory> findByTeamIdAndActiveTrueAndDeletedAtIsNullOrderByDomainAsc(Long teamId);
     boolean existsByTeamIdAndActiveTrueAndDeletedAtIsNull(Long teamId);
     boolean existsByUgTeamIdAndActiveTrueAndDeletedAtIsNull(Long ugTeamId);
 }

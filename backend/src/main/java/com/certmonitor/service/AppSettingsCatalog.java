@@ -33,6 +33,8 @@ public final class AppSettingsCatalog {
         new Setting("cert.monitor.uptime.alert-enabled",         "monitoring", Type.BOOL),
         new Setting("cert.monitor.port.alert-enabled",           "monitoring", Type.BOOL),
         new Setting("cert.monitor.dns.alert-enabled",            "monitoring", Type.BOOL),
+        // Haftalık erişilebilirlik e-postası (Pazartesi 10:00) aç/kapa — canlı.
+        new Setting("cert.monitor.weekly-availability.enabled",  "monitoring", Type.BOOL),
         // Kurumsal/iç kök+ara CA paketi (PEM) — bu CA ile imzalı host'lar TRUSTED sayılır.
         // TrustEvaluator okuma anında okur (canlı reload). Boş = yalnız public CA'lar (cacerts).
         new Setting("cert.monitor.trust.ca-bundle-pem",          "security",   Type.TEXT),

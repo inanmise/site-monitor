@@ -327,6 +327,21 @@ export const api = {
     sendSmtpTest: (recipient) => request('/admin/smtp/test-email', {
       method: 'POST', body: JSON.stringify({ recipient }),
     }),
+
+    // Haftalık erişilebilirlik e-postası (Ayarlar → Haftalık E-posta sayfası)
+    getWeeklyAvailStatus: () => request('/admin/system/weekly-availability/status'),
+    getWeeklyAvailPreview: (teamId) =>
+      request(`/admin/system/weekly-availability/preview?teamId=${encodeURIComponent(teamId)}`),
+    sendWeeklyAvailTest: (teamId, email) => request('/admin/system/weekly-availability/send-test', {
+      method: 'POST', body: JSON.stringify({ teamId, email }),
+    }),
+    setWeeklyAvailEnabled: (enabled) => request('/admin/system/weekly-availability/enabled', {
+      method: 'PUT', body: JSON.stringify({ enabled }),
+    }),
+    getWeeklyAvailHistory: (limit = 50, includeTest = false) =>
+      request(`/admin/system/weekly-availability/history?limit=${limit}&includeTest=${includeTest}`),
+    getWeeklyAvailHistoryItem: (id) =>
+      request(`/admin/system/weekly-availability/history/${encodeURIComponent(id)}`),
     transferCertSy: (id, teamId) => request(`/admin/inventory/${id}/transfer`, {
       method: 'POST', body: JSON.stringify({ team_id: teamId }),
     }),

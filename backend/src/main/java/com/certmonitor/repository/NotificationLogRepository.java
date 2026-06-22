@@ -1,6 +1,7 @@
 package com.certmonitor.repository;
 
 import com.certmonitor.model.NotificationLog;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -10,6 +11,9 @@ import java.util.List;
 
 public interface NotificationLogRepository extends JpaRepository<NotificationLog, Long> {
     List<NotificationLog> findByAlertEventIdOrderBySentAtDesc(Long alertEventId);
+
+    /** Trigger'a göre arşiv (en yeni üstte) — haftalık erişilebilirlik giden mail geçmişi için. */
+    List<NotificationLog> findByTriggerInOrderBySentAtDesc(Collection<String> triggers, Pageable pageable);
 
     /**
      * Bulk count: returns [alertEventId, sentCount, failedCount] rows.
