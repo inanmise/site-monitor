@@ -64,6 +64,12 @@ public class MonitoringOutageService {
     @Value("${cert.monitor.dns.alert-enabled:true}")
     private boolean dnsAlertEnabled;
 
+    @Value("${cert.monitor.keyword.alert-enabled:true}")
+    private boolean keywordAlertEnabled;
+
+    @Value("${cert.monitor.ping.alert-enabled:true}")
+    private boolean pingAlertEnabled;
+
     /** Teyit zinciri parametreleri — üç teyitli tip için ortaktır. */
     @Value("${cert.monitor.uptime.confirm-attempts:3}")
     private int confirmAttempts;
@@ -267,6 +273,10 @@ public class MonitoringOutageService {
             case EscalationService.TYPE_DNS_FAILURE,
                  EscalationService.TYPE_DNS_CHANGED ->
                     appSettings.getBoolean("cert.monitor.dns.alert-enabled", dnsAlertEnabled);
+            case EscalationService.TYPE_KEYWORD     ->
+                    appSettings.getBoolean("cert.monitor.keyword.alert-enabled", keywordAlertEnabled);
+            case EscalationService.TYPE_PING_DOWN   ->
+                    appSettings.getBoolean("cert.monitor.ping.alert-enabled", pingAlertEnabled);
             default                                 ->
                     appSettings.getBoolean("cert.monitor.uptime.alert-enabled", uptimeAlertEnabled);
         };

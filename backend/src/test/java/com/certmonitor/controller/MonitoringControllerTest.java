@@ -49,6 +49,14 @@ class MonitoringControllerTest {
     @MockitoBean CertificateService certificateService;
     @MockitoBean com.certmonitor.service.PermissionService permissionService;
 
+    @MockitoBean KeywordMonitorRepository keywordMonitorRepo;
+    @MockitoBean KeywordResultRepository keywordResultRepo;
+    @MockitoBean com.certmonitor.service.KeywordCheckerService keywordChecker;
+    @MockitoBean PingMonitorRepository pingMonitorRepo;
+    @MockitoBean PingCheckRepository pingCheckRepo;
+    @MockitoBean com.certmonitor.service.PingCheckerService pingChecker;
+    @MockitoBean TeamRepository teamRepo;
+
     @BeforeEach
     void stubTeamMap() {
         // İzleme uçları artık domain→takım map'ini buradan alıyor; boş map yeterli (team_name=null).

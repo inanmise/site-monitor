@@ -75,10 +75,17 @@ public class EscalationService {
     /** DNS kayıt değişikliği alarmı (YÜKSEK) — teyitsiz, otomatik kapanmaz. */
     public static final String TYPE_DNS_CHANGED = "DNS_CHANGED";
 
+    /** Keyword monitor alarmı — keyword sweep'i tarafından yönetilir. */
+    public static final String TYPE_KEYWORD = "KEYWORD";
+
+    /** Ping (ICMP) kesintisi alarmı — ping sweep'i tarafından yönetilir. */
+    public static final String TYPE_PING_DOWN = "PING_DOWN";
+
     /** İzleme kaynaklı alarm tipleri — kadanslarının sahibi ilgili sweep'lerdir;
      *  cert sweep'inin auto-resolve'u ve startup catch-up bunlara dokunmaz. */
     public static final Set<String> MONITORING_ALERT_TYPES =
-            Set.of(TYPE_ACCESSIBILITY, TYPE_PORT_DOWN, TYPE_DNS_FAILURE, TYPE_DNS_CHANGED);
+            Set.of(TYPE_ACCESSIBILITY, TYPE_PORT_DOWN, TYPE_DNS_FAILURE, TYPE_DNS_CHANGED,
+                   TYPE_KEYWORD, TYPE_PING_DOWN);
 
     /** Sertifika kaynaklı alarm tipleri — cert sweep'inin auto-resolve kapsamı.
      *  İzleme tipleri bilinçli olarak DIŞINDA: sertifika kontrolünün düzelmesi
@@ -371,9 +378,18 @@ public class EscalationService {
      */
     public void processConfirmedOutage(String domain, String alertType, String alertLevel,
                                        Map<String, Object> outageContext) {
-        var inventoryOpt  = inventoryRepo.findByDomain(domain);
-        Long domainTeamId = inventoryOpt.map(com.certmonitor.model.CertificateInventory::getTeamId).orElse(null);
-        Long ugTeamId     = inventoryOpt.map(com.certmonitor.model.CertificateInventory::getUgTeamId).orElse(null);
+        // Serbest-form izleme (keyword/ping) takımı outageContext.team_id'den gelir
+        // (envantere bağlı değil); uptime/port/dns ise domain→envanter eşlemesinden.
+        Long domainTeamId, ugTeamId;
+        Object ctxTeam = outageContext != null ? outageContext.get("team_id") : null;
+        if (ctxTeam instanceof Number teamNum) {
+            domainTeamId = teamNum.longValue();
+            ugTeamId = null;
+        } else {
+            var inventoryOpt = inventoryRepo.findByDomain(domain);
+            domainTeamId = inventoryOpt.map(com.certmonitor.model.CertificateInventory::getTeamId).orElse(null);
+            ugTeamId     = inventoryOpt.map(com.certmonitor.model.CertificateInventory::getUgTeamId).orElse(null);
+        }
 
         String message = monitoringMessage(domain, alertType, alertLevel, outageContext);
         Optional<AlertEvent> existing = alertEventRepo.findOpenAlert(domain, alertType);
@@ -446,6 +462,29 @@ public class EscalationService {
                             "Eski değer(ler): " + (olds.isEmpty() ? "—" : olds) +
                             " → Yeni değer(ler): " + news + ". " +
                             "Bu alarm otomatik kapanmaz; değişiklik planlı ise alarmı onaylayıp manuel kapatınız.";
+                }
+            }
+            case TYPE_KEYWORD -> {
+                Object url = ctx.get("url");
+                Object kw = ctx.get("keyword");
+                Object cond = ctx.getOrDefault("condition", "NOT_CONTAINS");
+                if (url != null && kw != null) {
+                    if ("CONTAINS".equals(cond)) {
+                        return "KRİTİK: " + url + " sayfasında istenmeyen \"" + kw +
+                                "\" ifadesi bulundu. Ardışık doğrulama denemeleri bunu doğruladı. " +
+                                "İfade kaybolduğunda alarm otomatik kapanacaktır.";
+                    }
+                    return "KRİTİK: " + url + " sayfasında \"" + kw +
+                            "\" anahtar kelimesi bulunamıyor. Ardışık doğrulama denemeleri başarısız oldu. " +
+                            "Kelime tekrar göründüğünde alarm otomatik kapanacaktır.";
+                }
+            }
+            case TYPE_PING_DOWN -> {
+                Object host = ctx.get("host");
+                if (host != null) {
+                    return "KRİTİK: " + host + " ICMP ping'e yanıt vermiyor. " +
+                            "Ardışık doğrulama denemeleri başarısız oldu. " +
+                            "Host yeniden yanıt verdiğinde alarm otomatik kapanacaktır.";
                 }
             }
             default -> { /* ACCESSIBILITY → buildMessage */ }

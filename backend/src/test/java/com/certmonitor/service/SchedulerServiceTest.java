@@ -9,6 +9,10 @@ import com.certmonitor.repository.NetworkOutageEventRepository;
 import com.certmonitor.repository.PortCheckRepository;
 import com.certmonitor.repository.PortMonitorRepository;
 import com.certmonitor.repository.UptimeCheckRepository;
+import com.certmonitor.repository.KeywordMonitorRepository;
+import com.certmonitor.repository.KeywordResultRepository;
+import com.certmonitor.repository.PingMonitorRepository;
+import com.certmonitor.repository.PingCheckRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -68,6 +72,12 @@ class SchedulerServiceTest {
     @Mock UptimeHttpCheckerService uptimeHttpCheckerService;
     @Mock UptimeCheckRepository uptimeCheckRepo;
     @Mock MonitoringOutageService monitoringOutageService;
+    @Mock KeywordCheckerService keywordCheckerService;
+    @Mock KeywordMonitorRepository keywordMonitorRepo;
+    @Mock KeywordResultRepository keywordResultRepo;
+    @Mock PingCheckerService pingCheckerService;
+    @Mock PingMonitorRepository pingMonitorRepo;
+    @Mock PingCheckRepository pingCheckRepo;
     @Mock NetworkOutageEventRepository networkOutageRepo;
     @Mock WeeklyReportReminderService weeklyReportReminderService;
     @Mock WeeklyAvailabilityReportService weeklyAvailabilityReportService;
@@ -85,7 +95,10 @@ class SchedulerServiceTest {
                 userService, permissionService, dataSource,
                 portCheckerService, portMonitorRepo, portCheckRepo,
                 dnsCheckerService, dnsMonitorRepo, dnsRecordRepo,
-                uptimeHttpCheckerService, uptimeCheckRepo, monitoringOutageService, networkOutageRepo,
+                uptimeHttpCheckerService, uptimeCheckRepo, monitoringOutageService,
+                keywordCheckerService, keywordMonitorRepo, keywordResultRepo,
+                pingCheckerService, pingMonitorRepo, pingCheckRepo,
+                networkOutageRepo,
                 weeklyReportReminderService, weeklyAvailabilityReportService, incidentService, appSettings);
         ReflectionTestUtils.setField(scheduler, "certCheckExecutor", certCheckExecutor);
         lenient().when(inventoryRepo.countByActiveTrue()).thenReturn(0L);

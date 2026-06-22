@@ -568,6 +568,7 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .stat-item-alert    { border-top-color: #f97316; background: #fff7ed; }
 .stat-item-expired  { border-top-color: #dc2626; background: #fef2f2; }
 .stat-item-weak     { border-top-color: #a855f7; background: #faf5ff; }
+.stat-item-certissue { border-top-color: #e11d48; background: #fff1f2; }
 
 .stat-icon  { display: flex; align-items: center; justify-content: center; margin-bottom: 4px; }
 .stat-item-warning  .stat-icon { color: #d97706; }
@@ -590,7 +591,9 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .stat-value-alert    { color: #ea580c; }
 .stat-value-expired  { color: #b91c1c; }
 .stat-value-weak     { color: #a855f7; }
+.stat-value-certissue { color: #e11d48; }
 .stat-weak-sub       { font-size: .65em; color: var(--text-muted); text-align: center; margin-top: 3px; line-height: 1.4; }
+.stat-certissue-sub  { font-size: .65em; color: var(--text-muted); text-align: center; margin-top: 3px; line-height: 1.4; }
 .stat-issuer-sub     { font-size: .65em; color: var(--text-muted); text-align: center; margin-top: 3px; line-height: 1.4; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
 
 
@@ -2918,6 +2921,8 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 [data-theme="dark"] .stat-item-expired  { background: #270c0c; }
 [data-theme="dark"] .stat-item-weak     { background: #1e0a3c; border-top-color: #c084fc; }
 [data-theme="dark"] .stat-value-weak    { color: #c084fc; }
+[data-theme="dark"] .stat-item-certissue { background: #3f0d1a; border-top-color: #fb7185; }
+[data-theme="dark"] .stat-value-certissue { color: #fb7185; }
 [data-theme="dark"] .algo-chip-weak   { background: #3b0a0a; color: #fca5a5; border-color: #7f1d1d; }
 [data-theme="dark"] .algo-chip-strong { background: #052e16; color: #4ade80; border-color: #14532d; }
 [data-theme="dark"] .stat-label { color: #94a3b8; }

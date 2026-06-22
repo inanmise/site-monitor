@@ -1,10 +1,10 @@
 import { useT } from '../i18n/index.jsx'
 import {
   LayoutDashboard, ShieldCheck, TriangleAlert, OctagonAlert, Siren,
-  ServerCrash, AlarmClock, CalendarClock, CalendarX, ShieldAlert, Building2
+  ServerCrash, AlarmClock, CalendarClock, CalendarX, ShieldAlert, ShieldX, Building2
 } from 'lucide-react'
 
-export default function StatsPanel({ stats, visible, onStatClick, activeFilter, weakStats, issuerStats, onCaClick }) {
+export default function StatsPanel({ stats, visible, onStatClick, activeFilter, weakStats, issuerStats, certIssueStats, onCaClick }) {
   const t = useT()
   if (!visible || !stats) return null
 
@@ -70,6 +70,30 @@ export default function StatsPanel({ stats, visible, onStatClick, activeFilter, 
                 {weakStats.critical > 0 && weakStats.high > 0 ? ' · ' : ''}
                 {weakStats.high > 0 ? `${weakStats.high} HIGH` : ''}
               </span>
+            )}
+            {isActive && <span className="stat-active-dot" />}
+          </div>
+        )
+      })()}
+      {certIssueStats != null && (() => {
+        const isActive = activeFilter === 'certissue'
+        const label = t('stat.certIssue')
+        const parts = []
+        if (certIssueStats.revoked > 0)    parts.push(`${certIssueStats.revoked} ${t('stat.ciRevoked')}`)
+        if (certIssueStats.chain > 0)      parts.push(`${certIssueStats.chain} ${t('stat.ciChain')}`)
+        if (certIssueStats.trust > 0)      parts.push(`${certIssueStats.trust} ${t('stat.ciTrust')}`)
+        if (certIssueStats.deployment > 0) parts.push(`${certIssueStats.deployment} ${t('stat.ciDeploy')}`)
+        return (
+          <div
+            className={`stat-item stat-item-certissue stat-clickable${isActive ? ' stat-active' : ''}`}
+            onClick={() => onStatClick('certissue')}
+            title={isActive ? t('stat.clearTip') : t('stat.filterTip', label)}
+          >
+            <span className="stat-icon"><ShieldX size={32} /></span>
+            <span className="stat-value stat-value-certissue">{certIssueStats.total ?? 0}</span>
+            <span className="stat-label">{label}</span>
+            {parts.length > 0 && (
+              <span className="stat-certissue-sub">{parts.join(' · ')}</span>
             )}
             {isActive && <span className="stat-active-dot" />}
           </div>

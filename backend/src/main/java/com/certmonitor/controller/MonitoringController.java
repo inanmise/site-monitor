@@ -5,6 +5,8 @@ import com.certmonitor.repository.*;
 import com.certmonitor.service.CertificateService;
 import com.certmonitor.service.DnsCheckerService;
 import com.certmonitor.service.PortCheckerService;
+import com.certmonitor.service.KeywordCheckerService;
+import com.certmonitor.service.PingCheckerService;
 import jakarta.servlet.http.HttpSession;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -38,6 +40,16 @@ public class MonitoringController {
     private final DnsMonitorRepository dnsMonitorRepo;
     private final DnsRecordRepository dnsRecordRepo;
     private final DnsCheckerService dnsChecker;
+
+    private final KeywordMonitorRepository keywordMonitorRepo;
+    private final KeywordResultRepository keywordResultRepo;
+    private final KeywordCheckerService keywordChecker;
+
+    private final PingMonitorRepository pingMonitorRepo;
+    private final PingCheckRepository pingCheckRepo;
+    private final PingCheckerService pingChecker;
+
+    private final TeamRepository teamRepo;
 
     /** domain/host → sorumlu takım adı (izleme ekranlarında takım gösterimi/filtresi). */
     private final CertificateService certificateService;
@@ -636,5 +648,296 @@ public class MonitoringController {
             item.put("response_ms",  null);
         }
         return item;
+    }
+
+    // ── Keyword Monitors (serbest-form) ───────────────────────────────────────
+
+    @GetMapping("/keyword")
+    public ResponseEntity<Map<String, Object>> listKeyword(HttpSession session) {
+        permissionService.require(session, "monitoring.read", "view");
+        Map<Long, KeywordResult> latest = keywordResultRepo.findLatestPerMonitor().stream()
+                .filter(r -> r.getMonitorId() != null)
+                .collect(Collectors.toMap(KeywordResult::getMonitorId, r -> r, (a, b) -> a));
+        Map<Long, String> teams = teamNameMap();
+        List<Map<String, Object>> result = keywordMonitorRepo.findAllByOrderByNameAsc().stream()
+                .map(m -> enrichKeyword(m, latest.get(m.getId()), teams)).toList();
+        return ok(result);
+    }
+
+    @PostMapping("/keyword")
+    public ResponseEntity<Map<String, Object>> createKeyword(@RequestBody Map<String, Object> body, HttpSession session) {
+        requireAdmin(session);
+        permissionService.require(session, "monitoring.crud", "edit");
+        String now = ISO.format(Instant.now());
+        KeywordMonitor m = new KeywordMonitor();
+        m.setName((String) body.get("name"));
+        m.setUrl((String) body.get("url"));
+        m.setKeyword((String) body.get("keyword"));
+        String cond = body.get("condition") != null ? body.get("condition").toString() : "NOT_CONTAINS";
+        m.setAlertCondition("CONTAINS".equals(cond) ? "CONTAINS" : "NOT_CONTAINS");
+        if (body.get("teamId") != null) m.setTeamId(((Number) body.get("teamId")).longValue());
+        m.setActive(true);
+        if (body.get("intervalSeconds") != null) m.setIntervalSeconds(((Number) body.get("intervalSeconds")).intValue());
+        if (body.get("timeoutMs")       != null) m.setTimeoutMs(((Number) body.get("timeoutMs")).intValue());
+        m.setCreatedAt(now);
+        m.setUpdatedAt(now);
+        KeywordMonitor saved = keywordMonitorRepo.save(m);
+        return ok(enrichKeyword(saved, null, teamNameMap()));
+    }
+
+    @PutMapping("/keyword/{id}")
+    public ResponseEntity<Map<String, Object>> updateKeyword(@PathVariable Long id, @RequestBody Map<String, Object> body, HttpSession session) {
+        requireAdmin(session);
+        permissionService.require(session, "monitoring.crud", "edit");
+        return keywordMonitorRepo.findById(id).map(m -> {
+            if (body.get("name")            != null) m.setName((String) body.get("name"));
+            if (body.get("url")             != null) m.setUrl((String) body.get("url"));
+            if (body.get("keyword")         != null) m.setKeyword((String) body.get("keyword"));
+            if (body.get("condition")       != null) m.setAlertCondition("CONTAINS".equals(body.get("condition").toString()) ? "CONTAINS" : "NOT_CONTAINS");
+            if (body.containsKey("teamId"))          m.setTeamId(body.get("teamId") != null ? ((Number) body.get("teamId")).longValue() : null);
+            if (body.get("active")          != null) m.setActive((Boolean) body.get("active"));
+            if (body.get("intervalSeconds") != null) m.setIntervalSeconds(((Number) body.get("intervalSeconds")).intValue());
+            if (body.get("timeoutMs")       != null) m.setTimeoutMs(((Number) body.get("timeoutMs")).intValue());
+            m.setUpdatedAt(ISO.format(Instant.now()));
+            KeywordMonitor saved = keywordMonitorRepo.save(m);
+            return ok(enrichKeyword(saved, keywordResultRepo.findTopByMonitorIdOrderByCheckedAtDesc(id).orElse(null), teamNameMap()));
+        }).orElse(notFound("Keyword monitor not found"));
+    }
+
+    @DeleteMapping("/keyword/{id}")
+    public ResponseEntity<Map<String, Object>> deleteKeyword(@PathVariable Long id, HttpSession session) {
+        requireAdmin(session);
+        permissionService.require(session, "monitoring.crud", "edit");
+        return keywordMonitorRepo.findById(id).map(m -> {
+            m.setActive(false);
+            m.setUpdatedAt(ISO.format(Instant.now()));
+            keywordMonitorRepo.save(m);
+            return ok(Map.of("deleted", true));
+        }).orElse(notFound("Keyword monitor not found"));
+    }
+
+    @GetMapping("/keyword/{id}/history")
+    public ResponseEntity<Map<String, Object>> keywordHistory(@PathVariable Long id,
+            @RequestParam(required = false) Integer days,
+            @RequestParam(defaultValue = "100") int limit) {
+        List<KeywordResult> checks;
+        long total, down;
+        if (days != null && days > 0) {
+            String cutoff = ISO.format(Instant.now().minus(days, ChronoUnit.DAYS));
+            checks = keywordResultRepo.findByMonitorIdAndCheckedAtGreaterThanEqualOrderByCheckedAtDesc(id, cutoff)
+                    .stream().limit(500).toList();
+            total = keywordResultRepo.countByMonitorIdAndCheckedAtGreaterThanEqual(id, cutoff);
+            down  = keywordResultRepo.countByMonitorIdAndOkFalseAndCheckedAtGreaterThanEqual(id, cutoff);
+        } else {
+            int cap = Math.max(1, Math.min(limit, 10_000));
+            checks = keywordResultRepo.findByMonitorIdOrderByCheckedAtDesc(id).stream().limit(cap).toList();
+            total = checks.size();
+            down  = checks.stream().filter(c -> !Boolean.TRUE.equals(c.getOk())).count();
+        }
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("checks", checks);
+        out.put("total", total);
+        out.put("down", down);
+        return ok(out);
+    }
+
+    @PostMapping("/keyword/{id}/check")
+    public ResponseEntity<Map<String, Object>> triggerKeyword(@PathVariable Long id, HttpSession session) {
+        requireAdmin(session);
+        permissionService.require(session, "monitoring.trigger", "execute");
+        return keywordMonitorRepo.findById(id).map(m -> {
+            Map<String, Object> r = keywordChecker.check(m.getUrl(), m.getKeyword(),
+                    m.getTimeoutMs() != null ? m.getTimeoutMs() : 10000);
+            boolean found = Boolean.TRUE.equals(r.getOrDefault("found", false));
+            boolean ok = r.get("error") == null && ("CONTAINS".equals(m.getAlertCondition()) ? !found : found);
+            KeywordResult res = new KeywordResult();
+            res.setMonitorId(m.getId());
+            res.setFound(found);
+            res.setOk(ok);
+            res.setHttpStatus(r.get("http_status") instanceof Number n ? n.intValue() : null);
+            res.setResponseMs(r.get("response_ms") instanceof Number n ? n.longValue() : null);
+            res.setSnippet((String) r.get("snippet"));
+            res.setError((String) r.get("error"));
+            res.setCheckedAt(ISO.format(Instant.now()));
+            keywordResultRepo.save(res);
+            return ok(enrichKeyword(m, res, teamNameMap()));
+        }).orElse(notFound("Keyword monitor not found"));
+    }
+
+    private Map<String, Object> enrichKeyword(KeywordMonitor m, KeywordResult latest, Map<Long, String> teams) {
+        Map<String, Object> item = new LinkedHashMap<>();
+        item.put("id",               m.getId());
+        item.put("name",             m.getName());
+        item.put("url",              m.getUrl());
+        item.put("keyword",          m.getKeyword());
+        item.put("condition",        m.getAlertCondition());
+        item.put("team_id",          m.getTeamId());
+        item.put("team_name",        m.getTeamId() != null ? teams.get(m.getTeamId()) : null);
+        item.put("active",           m.getActive());
+        item.put("interval_seconds", m.getIntervalSeconds());
+        item.put("timeout_ms",       m.getTimeoutMs());
+        if (latest != null) {
+            item.put("status",      latest.getError() != null ? "error" : (Boolean.TRUE.equals(latest.getOk()) ? "up" : "down"));
+            item.put("found",       latest.getFound());
+            item.put("ok",          latest.getOk());
+            item.put("http_status", latest.getHttpStatus());
+            item.put("response_ms", latest.getResponseMs());
+            item.put("snippet",     latest.getSnippet());
+            item.put("error",       latest.getError());
+            item.put("checked_at",  latest.getCheckedAt());
+        } else {
+            item.put("status", "unknown");
+            item.put("found", null); item.put("ok", null); item.put("http_status", null);
+            item.put("response_ms", null); item.put("snippet", null); item.put("error", null); item.put("checked_at", null);
+        }
+        return item;
+    }
+
+    // ── Ping Monitors (serbest-form) ──────────────────────────────────────────
+
+    @GetMapping("/ping")
+    public ResponseEntity<Map<String, Object>> listPing(HttpSession session) {
+        permissionService.require(session, "monitoring.read", "view");
+        Map<Long, PingCheck> latest = pingCheckRepo.findLatestPerMonitor().stream()
+                .filter(c -> c.getMonitorId() != null)
+                .collect(Collectors.toMap(PingCheck::getMonitorId, c -> c, (a, b) -> a));
+        Map<Long, String> teams = teamNameMap();
+        List<Map<String, Object>> result = pingMonitorRepo.findAllByOrderByNameAsc().stream()
+                .map(m -> enrichPing(m, latest.get(m.getId()), teams)).toList();
+        return ok(result);
+    }
+
+    @PostMapping("/ping")
+    public ResponseEntity<Map<String, Object>> createPing(@RequestBody Map<String, Object> body, HttpSession session) {
+        requireAdmin(session);
+        permissionService.require(session, "monitoring.crud", "edit");
+        String now = ISO.format(Instant.now());
+        PingMonitor m = new PingMonitor();
+        m.setName((String) body.get("name"));
+        m.setHost((String) body.get("host"));
+        String ipv = body.get("ipVersion") != null ? body.get("ipVersion").toString() : "auto";
+        m.setIpVersion(Set.of("v4", "v6", "auto").contains(ipv) ? ipv : "auto");
+        if (body.get("teamId") != null) m.setTeamId(((Number) body.get("teamId")).longValue());
+        m.setActive(true);
+        if (body.get("intervalSeconds") != null) m.setIntervalSeconds(((Number) body.get("intervalSeconds")).intValue());
+        if (body.get("timeoutMs")       != null) m.setTimeoutMs(((Number) body.get("timeoutMs")).intValue());
+        if (body.get("packetCount")     != null) m.setPacketCount(((Number) body.get("packetCount")).intValue());
+        m.setCreatedAt(now);
+        m.setUpdatedAt(now);
+        PingMonitor saved = pingMonitorRepo.save(m);
+        return ok(enrichPing(saved, null, teamNameMap()));
+    }
+
+    @PutMapping("/ping/{id}")
+    public ResponseEntity<Map<String, Object>> updatePing(@PathVariable Long id, @RequestBody Map<String, Object> body, HttpSession session) {
+        requireAdmin(session);
+        permissionService.require(session, "monitoring.crud", "edit");
+        return pingMonitorRepo.findById(id).map(m -> {
+            if (body.get("name")            != null) m.setName((String) body.get("name"));
+            if (body.get("host")            != null) m.setHost((String) body.get("host"));
+            if (body.get("ipVersion")       != null) { String v = body.get("ipVersion").toString(); m.setIpVersion(Set.of("v4","v6","auto").contains(v) ? v : "auto"); }
+            if (body.containsKey("teamId"))          m.setTeamId(body.get("teamId") != null ? ((Number) body.get("teamId")).longValue() : null);
+            if (body.get("active")          != null) m.setActive((Boolean) body.get("active"));
+            if (body.get("intervalSeconds") != null) m.setIntervalSeconds(((Number) body.get("intervalSeconds")).intValue());
+            if (body.get("timeoutMs")       != null) m.setTimeoutMs(((Number) body.get("timeoutMs")).intValue());
+            if (body.get("packetCount")     != null) m.setPacketCount(((Number) body.get("packetCount")).intValue());
+            m.setUpdatedAt(ISO.format(Instant.now()));
+            PingMonitor saved = pingMonitorRepo.save(m);
+            return ok(enrichPing(saved, pingCheckRepo.findTopByMonitorIdOrderByCheckedAtDesc(id).orElse(null), teamNameMap()));
+        }).orElse(notFound("Ping monitor not found"));
+    }
+
+    @DeleteMapping("/ping/{id}")
+    public ResponseEntity<Map<String, Object>> deletePing(@PathVariable Long id, HttpSession session) {
+        requireAdmin(session);
+        permissionService.require(session, "monitoring.crud", "edit");
+        return pingMonitorRepo.findById(id).map(m -> {
+            m.setActive(false);
+            m.setUpdatedAt(ISO.format(Instant.now()));
+            pingMonitorRepo.save(m);
+            return ok(Map.of("deleted", true));
+        }).orElse(notFound("Ping monitor not found"));
+    }
+
+    @GetMapping("/ping/{id}/history")
+    public ResponseEntity<Map<String, Object>> pingHistory(@PathVariable Long id,
+            @RequestParam(required = false) Integer days,
+            @RequestParam(defaultValue = "100") int limit) {
+        List<PingCheck> checks;
+        long total, down;
+        if (days != null && days > 0) {
+            String cutoff = ISO.format(Instant.now().minus(days, ChronoUnit.DAYS));
+            checks = pingCheckRepo.findByMonitorIdAndCheckedAtGreaterThanEqualOrderByCheckedAtDesc(id, cutoff)
+                    .stream().limit(500).toList();
+            total = pingCheckRepo.countByMonitorIdAndCheckedAtGreaterThanEqual(id, cutoff);
+            down  = pingCheckRepo.countByMonitorIdAndUpFalseAndCheckedAtGreaterThanEqual(id, cutoff);
+        } else {
+            int cap = Math.max(1, Math.min(limit, 10_000));
+            checks = pingCheckRepo.findByMonitorIdOrderByCheckedAtDesc(id).stream().limit(cap).toList();
+            total = checks.size();
+            down  = checks.stream().filter(c -> !Boolean.TRUE.equals(c.getUp())).count();
+        }
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("checks", checks);
+        out.put("total", total);
+        out.put("down", down);
+        return ok(out);
+    }
+
+    @PostMapping("/ping/{id}/check")
+    public ResponseEntity<Map<String, Object>> triggerPing(@PathVariable Long id, HttpSession session) {
+        requireAdmin(session);
+        permissionService.require(session, "monitoring.trigger", "execute");
+        return pingMonitorRepo.findById(id).map(m -> {
+            Map<String, Object> r = pingChecker.check(m.getHost(), m.getIpVersion(),
+                    m.getPacketCount() != null ? m.getPacketCount() : 4,
+                    m.getTimeoutMs() != null ? m.getTimeoutMs() : 5000);
+            PingCheck check = new PingCheck();
+            check.setMonitorId(m.getId());
+            check.setUp(Boolean.TRUE.equals(r.getOrDefault("up", false)));
+            check.setRttMs(r.get("rtt_ms") instanceof Number n ? n.longValue() : null);
+            check.setPacketLoss(r.get("packet_loss") instanceof Number n ? n.intValue() : null);
+            check.setError((String) r.get("error"));
+            check.setCheckedAt(ISO.format(Instant.now()));
+            pingCheckRepo.save(check);
+            return ok(enrichPing(m, check, teamNameMap()));
+        }).orElse(notFound("Ping monitor not found"));
+    }
+
+    private Map<String, Object> enrichPing(PingMonitor m, PingCheck latest, Map<Long, String> teams) {
+        Map<String, Object> item = new LinkedHashMap<>();
+        item.put("id",               m.getId());
+        item.put("name",             m.getName());
+        item.put("host",             m.getHost());
+        item.put("ip_version",       m.getIpVersion());
+        item.put("team_id",          m.getTeamId());
+        item.put("team_name",        m.getTeamId() != null ? teams.get(m.getTeamId()) : null);
+        item.put("active",           m.getActive());
+        item.put("interval_seconds", m.getIntervalSeconds());
+        item.put("timeout_ms",       m.getTimeoutMs());
+        item.put("packet_count",     m.getPacketCount());
+        if (latest != null) {
+            boolean up = Boolean.TRUE.equals(latest.getUp());
+            boolean na = !up && latest.getError() != null && latest.getError().contains("ICMP bu ortamda");
+            item.put("status",      up ? "up" : (na ? "na" : "down"));
+            item.put("up",          latest.getUp());
+            item.put("rtt_ms",      latest.getRttMs());
+            item.put("packet_loss", latest.getPacketLoss());
+            item.put("error",       latest.getError());
+            item.put("checked_at",  latest.getCheckedAt());
+        } else {
+            item.put("status", "unknown");
+            item.put("up", null); item.put("rtt_ms", null); item.put("packet_loss", null);
+            item.put("error", null); item.put("checked_at", null);
+        }
+        return item;
+    }
+
+    private Map<Long, String> teamNameMap() {
+        Map<Long, String> m = new HashMap<>();
+        for (Team t : teamRepo.findAll()) {
+            if (t.getId() != null) m.put(t.getId(), t.getName());
+        }
+        return m;
     }
 }

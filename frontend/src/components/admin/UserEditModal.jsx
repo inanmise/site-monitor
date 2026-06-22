@@ -21,7 +21,7 @@ export function ModalHeaderAvatar({ userId, children }) {
  * can update a user without leaving the Teams tab. Mirrors the edit branch of
  * UserManager.jsx; for "add" use UserManager directly.
  */
-export default function UserEditModal({ user, teams, onClose, onSaved, readOnly = false }) {
+export default function UserEditModal({ user, teams, onClose, onSaved, readOnly = false, onEdit }) {
   const t = useT()
   const [form, setForm] = useState(toForm(user))
   const [saving, setSaving] = useState(false)
@@ -168,7 +168,10 @@ export default function UserEditModal({ user, teams, onClose, onSaved, readOnly 
         {msg && <div className="alert-msg alert-msg--err" style={{ marginTop: 8 }}>{msg}</div>}
         <div className="modal-actions">
           {readOnly ? (
-            <button className="btn btn-secondary" onClick={onClose}>{t('usr.close')}</button>
+            <>
+              <button className="btn btn-secondary" onClick={onClose}>{t('usr.close')}</button>
+              {onEdit && <button className="btn btn-primary" onClick={onEdit}>{t('usr.edit')}</button>}
+            </>
           ) : (
             <>
               <button className="btn btn-secondary" onClick={onClose}>{t('usr.cancel')}</button>

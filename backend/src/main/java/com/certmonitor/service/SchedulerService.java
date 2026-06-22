@@ -17,6 +17,14 @@ import com.certmonitor.repository.NetworkOutageEventRepository;
 import com.certmonitor.repository.PortCheckRepository;
 import com.certmonitor.repository.PortMonitorRepository;
 import com.certmonitor.repository.UptimeCheckRepository;
+import com.certmonitor.repository.KeywordMonitorRepository;
+import com.certmonitor.repository.KeywordResultRepository;
+import com.certmonitor.repository.PingMonitorRepository;
+import com.certmonitor.repository.PingCheckRepository;
+import com.certmonitor.model.KeywordMonitor;
+import com.certmonitor.model.PingMonitor;
+import com.certmonitor.model.KeywordResult;
+import com.certmonitor.model.PingCheck;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -73,6 +81,14 @@ public class SchedulerService {
     private final UptimeHttpCheckerService uptimeHttpCheckerService;
     private final UptimeCheckRepository uptimeCheckRepo;
     private final MonitoringOutageService monitoringOutageService;
+
+    private final KeywordCheckerService keywordCheckerService;
+    private final KeywordMonitorRepository keywordMonitorRepo;
+    private final KeywordResultRepository keywordResultRepo;
+
+    private final PingCheckerService pingCheckerService;
+    private final PingMonitorRepository pingMonitorRepo;
+    private final PingCheckRepository pingCheckRepo;
 
     private final NetworkOutageEventRepository networkOutageRepo;
 
@@ -975,6 +991,126 @@ public class SchedulerService {
         }
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("status", open ? "up" : "down");
+        out.put("error", r.get("error"));
+        return out;
+    }
+
+    // ── Keyword monitor sweep (serbest-form; envanter filtresi YOK) ──────────────
+    @Scheduled(fixedDelayString = "${cert.monitor.keyword.interval-ms:60000}", initialDelayString = "55000")
+    public void runKeywordChecks() {
+        List<KeywordMonitor> monitors = keywordMonitorRepo.findByActiveTrue();
+        if (monitors.isEmpty()) return;
+        int checked = 0;
+        List<MonitoringOutageService.SweepItem> sweep = new ArrayList<>();
+        for (KeywordMonitor m : monitors) {
+            try {
+                Map<String, Object> r = recheckKeyword(m);
+                Map<String, Object> ctx = new LinkedHashMap<>();
+                ctx.put("url", m.getUrl());
+                ctx.put("keyword", m.getKeyword());
+                ctx.put("condition", m.getAlertCondition());
+                if (m.getTeamId() != null) ctx.put("team_id", m.getTeamId());
+                String kw = m.getKeyword() != null ? m.getKeyword() : "";
+                sweep.add(new MonitoringOutageService.SweepItem(
+                        EscalationService.TYPE_KEYWORD, m.getUrl(),
+                        kw.length() > 40 ? kw.substring(0, 40) : kw,
+                        "up".equals(r.get("status")), (String) r.get("error"),
+                        ctx, () -> recheckKeyword(m)));
+                checked++;
+            } catch (Exception e) {
+                log.warn("Keyword check failed for {}: {}", m.getUrl(), e.getMessage());
+            }
+        }
+        try {
+            monitoringOutageService.handleSweepResults(EscalationService.TYPE_KEYWORD, sweep);
+        } catch (Exception e) {
+            log.warn("Keyword outage processing failed: {}", e.getMessage(), e);
+        }
+        log.debug("Keyword checks complete: {} monitors", checked);
+    }
+
+    /** Keyword check + keyword_results persist'i. Koşul (içerir/içermez) burada uygulanır;
+     *  HTTP hatası → ok=false (down). {"status","error"} döner. */
+    private Map<String, Object> recheckKeyword(KeywordMonitor m) {
+        int timeout = m.getTimeoutMs() != null ? m.getTimeoutMs() : 10000;
+        Map<String, Object> r = keywordCheckerService.check(m.getUrl(), m.getKeyword(), timeout);
+        boolean found = Boolean.TRUE.equals(r.getOrDefault("found", false));
+        boolean hadError = r.get("error") != null;
+        // NOT_CONTAINS: kelime yoksa alarm → varken sağlıklı (ok=found).
+        // CONTAINS: kelime varsa alarm → yokken sağlıklı (ok=!found).
+        boolean ok = !hadError && ("CONTAINS".equals(m.getAlertCondition()) ? !found : found);
+        try {
+            KeywordResult res = new KeywordResult();
+            res.setMonitorId(m.getId());
+            res.setFound(found);
+            res.setOk(ok);
+            res.setHttpStatus(r.get("http_status") instanceof Number n ? n.intValue() : null);
+            res.setResponseMs(r.get("response_ms") instanceof Number n ? n.longValue() : null);
+            res.setSnippet((String) r.get("snippet"));
+            res.setError((String) r.get("error"));
+            res.setCheckedAt(ISO.format(Instant.now()));
+            keywordResultRepo.save(res);
+        } catch (Exception e) {
+            log.warn("Keyword kaydı yazılamadı: {} — {}", m.getUrl(), e.getMessage());
+        }
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("status", ok ? "up" : "down");
+        out.put("error", r.get("error"));
+        return out;
+    }
+
+    // ── Ping monitor sweep (serbest-form; envanter filtresi YOK) ─────────────────
+    @Scheduled(fixedDelayString = "${cert.monitor.ping.interval-ms:60000}", initialDelayString = "65000")
+    public void runPingChecks() {
+        List<PingMonitor> monitors = pingMonitorRepo.findByActiveTrue();
+        if (monitors.isEmpty()) return;
+        int checked = 0;
+        List<MonitoringOutageService.SweepItem> sweep = new ArrayList<>();
+        for (PingMonitor m : monitors) {
+            try {
+                Map<String, Object> r = recheckPing(m);
+                Map<String, Object> ctx = new LinkedHashMap<>();
+                ctx.put("host", m.getHost());
+                if (m.getTeamId() != null) ctx.put("team_id", m.getTeamId());
+                sweep.add(new MonitoringOutageService.SweepItem(
+                        EscalationService.TYPE_PING_DOWN, m.getHost(), "ICMP",
+                        "up".equals(r.get("status")), (String) r.get("error"),
+                        ctx, () -> recheckPing(m)));
+                checked++;
+            } catch (Exception e) {
+                log.warn("Ping check failed for {}: {}", m.getHost(), e.getMessage());
+            }
+        }
+        try {
+            monitoringOutageService.handleSweepResults(EscalationService.TYPE_PING_DOWN, sweep);
+        } catch (Exception e) {
+            log.warn("Ping outage processing failed: {}", e.getMessage(), e);
+        }
+        log.debug("Ping checks complete: {} monitors", checked);
+    }
+
+    /** Ping check + ping_checks persist'i. N/A (ortam ICMP'ye izin vermiyor) → DOWN sayılmaz
+     *  (yanlış alarm önlemek için status=up); kayıt up=false + error ile tutulur. */
+    private Map<String, Object> recheckPing(PingMonitor m) {
+        Map<String, Object> r = pingCheckerService.check(m.getHost(), m.getIpVersion(),
+                m.getPacketCount() != null ? m.getPacketCount() : 4,
+                m.getTimeoutMs() != null ? m.getTimeoutMs() : 5000);
+        boolean up = Boolean.TRUE.equals(r.getOrDefault("up", false));
+        boolean na = Boolean.TRUE.equals(r.get("na"));
+        try {
+            PingCheck check = new PingCheck();
+            check.setMonitorId(m.getId());
+            check.setUp(up);
+            check.setRttMs(r.get("rtt_ms") instanceof Number n ? n.longValue() : null);
+            check.setPacketLoss(r.get("packet_loss") instanceof Number n ? n.intValue() : null);
+            check.setError((String) r.get("error"));
+            check.setCheckedAt(ISO.format(Instant.now()));
+            pingCheckRepo.save(check);
+        } catch (Exception e) {
+            log.warn("Ping kaydı yazılamadı: {} — {}", m.getHost(), e.getMessage());
+        }
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("status", (up || na) ? "up" : "down");
         out.put("error", r.get("error"));
         return out;
     }
