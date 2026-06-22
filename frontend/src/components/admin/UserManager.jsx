@@ -7,7 +7,7 @@ import MultiTeamSelect from '../ui/MultiTeamSelect.jsx'
 import KebabMenu from '../ui/KebabMenu.jsx'
 import { UserPlus, UserCog } from 'lucide-react'
 import AdminAutoResetModal from './AdminAutoResetModal.jsx'
-import { ModalHeaderAvatar } from './UserEditModal.jsx'
+import UserEditModal, { ModalHeaderAvatar } from './UserEditModal.jsx'
 
 const emptyUser = { username: '', password: '', display_name: '', email: '', employee_id: '', system_role: 'USER', team_ids: [], org_role: '', active: true,
   first_name: '', last_name: '', title: '', phone: '', department: '', company_level: '', mudurluk_name: '', manager_sicil: '' }
@@ -54,6 +54,7 @@ export default function UserManager({ systemRole, ownTeamId, currentUsername, te
   const [users, setUsers] = useState([])
   const [modal, setModal] = useState(null)
   const [autoResetModal, setAutoResetModal] = useState(null)
+  const [viewUser, setViewUser] = useState(null)   // satıra tıklayınca açılan salt-okunur detay modalı
   const [form, setForm] = useState(emptyUser)
   const [saving, setSaving] = useState(false)
   const [msg, setMsg] = useState(null)
@@ -228,7 +229,8 @@ export default function UserManager({ systemRole, ownTeamId, currentUsername, te
               </td></tr>
             )}
             {users.map((user) => (
-              <tr key={user.id}>
+              <tr key={user.id} style={{ cursor: 'pointer' }} title={t('usr.viewTitle')}
+                onClick={() => setViewUser(user)}>
                 <td><UserAvatar user={user} /></td>
                 <td><strong>{user.username}</strong></td>
                 <td>{user.employee_id || '—'}</td>
@@ -250,7 +252,7 @@ export default function UserManager({ systemRole, ownTeamId, currentUsername, te
                   <span className={user.active ? 'badge badge-ok' : 'badge badge-err'}>{user.active ? t('usr.active') : t('usr.inactive')}</span>
                   {user.permanent_lock && <span className="badge badge-err" style={{ marginLeft: 4 }} title={t('usr.permLocked')}>🔒</span>}
                 </td>
-                <td>
+                <td onClick={(e) => e.stopPropagation()}>
                   <KebabMenu label={t('usr.colActions')} items={canManage ? [
                     { label: t('usr.edit'), onClick: () => openEdit(user) },
                     { label: t('usr.autoResetBtn'), onClick: () => setAutoResetModal(user) },
@@ -430,6 +432,11 @@ export default function UserManager({ systemRole, ownTeamId, currentUsername, te
             emailStatus?.startsWith('SENT') ? t('usr.autoResetSent') : t('usr.autoResetFailed')
           )}
         />
+      )}
+
+      {/* Satıra tıklayınca: kullanıcı düzenle ekranının salt-okunur (gösterim) hali */}
+      {viewUser && (
+        <UserEditModal user={viewUser} teams={teams} readOnly onClose={() => setViewUser(null)} />
       )}
     </div>
   )
