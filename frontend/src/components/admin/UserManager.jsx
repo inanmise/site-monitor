@@ -436,7 +436,9 @@ export default function UserManager({ systemRole, ownTeamId, currentUsername, te
 
       {/* Satıra tıklayınca: kullanıcı düzenle ekranının salt-okunur (gösterim) hali */}
       {viewUser && (
-        <UserEditModal user={viewUser} teams={teams} readOnly onClose={() => setViewUser(null)} />
+        <UserEditModal user={viewUser} teams={teams} readOnly
+          onClose={() => setViewUser(null)}
+          onEdit={canManage ? () => { const u = viewUser; setViewUser(null); openEdit(u) } : undefined} />
       )}
     </div>
   )

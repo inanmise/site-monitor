@@ -23,7 +23,8 @@ WORKDIR /app
 # dig/nslookup (DNS), telnet (port), less (log gezintisi),
 # openssl (derin SSL/TLS tanılama), iproute2 (ip addr/route), traceroute
 # (ağ derin analizi — NetworkDiagnosticsService)
-RUN apk add --no-cache curl bash bind-tools busybox-extras less openssl iproute2 traceroute
+# iputils: ping monitor için non-root ICMP (net.ipv4.ping_group_range sysctl ile DGRAM-ICMP).
+RUN apk add --no-cache curl bash bind-tools busybox-extras less openssl iproute2 traceroute iputils
 
 ARG VERSION=1.0.0
 ARG BUILD_DATE

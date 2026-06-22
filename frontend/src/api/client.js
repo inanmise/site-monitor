@@ -507,6 +507,32 @@ export const api = {
     triggerDnsCheck:   (id) => request(`/monitoring/dns/${id}/check`, { method: 'POST' }),
     getDnsHistory:     (id, days = 7) => request(`/monitoring/dns/${id}/history?days=${days}`),
     getDnsDetails:     (id) => request(`/monitoring/dns/${id}/details`),
+
+    // Keyword
+    getKeywordMonitors:   () => request('/monitoring/keyword'),
+    createKeywordMonitor: (data) => request('/monitoring/keyword', { method: 'POST', body: JSON.stringify(data) }),
+    updateKeywordMonitor: (id, data) => request(`/monitoring/keyword/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+    deleteKeywordMonitor: (id) => request(`/monitoring/keyword/${id}`, { method: 'DELETE' }),
+    triggerKeywordCheck:  (id) => request(`/monitoring/keyword/${id}/check`, { method: 'POST' }),
+    getKeywordHistory:    (id, { days, limit } = {}) => {
+      const q = new URLSearchParams(
+        Object.fromEntries(Object.entries({ days, limit }).filter(([, v]) => v != null && v !== '')),
+      ).toString()
+      return request(`/monitoring/keyword/${id}/history${q ? `?${q}` : ''}`)
+    },
+
+    // Ping
+    getPingMonitors:   () => request('/monitoring/ping'),
+    createPingMonitor: (data) => request('/monitoring/ping', { method: 'POST', body: JSON.stringify(data) }),
+    updatePingMonitor: (id, data) => request(`/monitoring/ping/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+    deletePingMonitor: (id) => request(`/monitoring/ping/${id}`, { method: 'DELETE' }),
+    triggerPingCheck:  (id) => request(`/monitoring/ping/${id}/check`, { method: 'POST' }),
+    getPingHistory:    (id, { days, limit } = {}) => {
+      const q = new URLSearchParams(
+        Object.fromEntries(Object.entries({ days, limit }).filter(([, v]) => v != null && v !== '')),
+      ).toString()
+      return request(`/monitoring/ping/${id}/history${q ? `?${q}` : ''}`)
+    },
   },
 }
 

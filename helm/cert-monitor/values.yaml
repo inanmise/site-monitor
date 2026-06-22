@@ -147,6 +147,13 @@ podSecurityContext:
   runAsNonRoot: true
   runAsUser: 1000
   fsGroup: 1000
+  # Ping monitor (ICMP) için non-root unprivileged ICMP soketi. K8s "safe" sysctl —
+  # CAP_NET_RAW gerektirmez. fsGroup (1000) ping_group_range içinde olunca iputils
+  # ping non-root çalışır. Cluster PodSecurity policy'si safe sysctl'lere izin
+  # vermiyorsa bu blok kaldırılabilir (ping monitor o zaman zarifçe N/A döner).
+  sysctls:
+    - name: net.ipv4.ping_group_range
+      value: "0 2147483647"
 
 securityContext:
   allowPrivilegeEscalation: false

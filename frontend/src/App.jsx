@@ -33,6 +33,8 @@ import HelpPage from './components/HelpPage'
 import UptimePage from './components/UptimePage'
 import PortMonitorPage from './components/PortMonitorPage'
 import DnsMonitorPage from './components/DnsMonitorPage'
+import KeywordMonitorPage from './components/KeywordMonitorPage'
+import PingMonitorPage from './components/PingMonitorPage'
 import ExpiryForecastPage from './pages/ExpiryForecastPage'
 import ErrorBoundary from './components/ErrorBoundary.jsx'
 
@@ -53,7 +55,7 @@ function formatDurationShort(ms) {
 const VALID_TABS = new Set([
   'dashboard', 'all', 'domains', 'forecast', 'renewal', 'renewal-guide',
   'warnings', 'alerthistory', 'stats', 'weakalgo', 'weeklyreports', 'incident-history',
-  'health', 'uptime', 'port', 'dns', 'activity', 'myactivity', 'system',
+  'health', 'uptime', 'port', 'dns', 'keyword', 'ping', 'activity', 'myactivity', 'system',
   'admin', 'permissions', 'sqlplayground', 'help', 'settings',
 ])
 function initialTabFromUrl() {
@@ -394,6 +396,24 @@ export default function App() {
     return { uniqueCount: entries.length, dominantIssuer, dominantCount, dominantPct }
   }, [certs])
 
+  // Sertifika doğrulama/güvenlik sorunları (süre & zayıf-algo hariç) — birleşik "Sertifika Sorunu" kartı.
+  const certIssueStats = useMemo(() => {
+    if (certs.length === 0) return null
+    let total = 0, revoked = 0, chain = 0, trust = 0, deployment = 0
+    for (const c of certs) {
+      const r  = c.revocation_status === 'REVOKED'
+      const ch = c.chain_status === 'BROKEN' || c.chain_status === 'INCOMPLETE'
+      const tr = c.trust_status === 'UNTRUSTED'
+      const d  = c.deployment_status === 'INCOMPLETE' || c.deployment_status === 'MISMATCH'
+      if (r)  revoked++
+      if (ch) chain++
+      if (tr) trust++
+      if (d)  deployment++
+      if (r || ch || tr || d) total++
+    }
+    return { total, revoked, chain, trust, deployment }
+  }, [certs])
+
   if (!authChecked) return <div className="loading" style={{ marginTop: 80, textAlign: 'center' }}>{t('app.loading')}</div>
   if (!user) return <Login onLogin={handleLogin} />
   if (mustChangePwd) {
@@ -421,11 +441,12 @@ export default function App() {
     expiring30: (c) => c.days_remaining != null && c.days_remaining >= 0 && c.days_remaining <= 30,
     expired:    (c) => c.days_remaining != null && c.days_remaining < 0,
     weak:       (c) => weakDomainSet.has(c.domain),
+    certissue:  (c) => c.revocation_status === 'REVOKED' || c.chain_status === 'BROKEN' || c.chain_status === 'INCOMPLETE' || c.trust_status === 'UNTRUSTED' || c.deployment_status === 'INCOMPLETE' || c.deployment_status === 'MISMATCH',
   }
   const STAT_FILTER_LABEL = {
     total: t('stat.total'), valid: t('stat.valid'), critical: t('stat.critical'), high: t('stat.high'),
     warning: t('stat.warning'), error: t('stat.error'), expiring7: t('stat.expiring7'), expiring30: t('stat.expiring30'), expired: t('stat.expired'),
-    weak: t('stat.weak'),
+    weak: t('stat.weak'), certissue: t('stat.certIssue'),
   }
 
   function handleStatClick(key) {
@@ -603,6 +624,7 @@ export default function App() {
               <StatsPanel stats={stats} visible={statsVisible}
                 onStatClick={handleStatClick} activeFilter={statsFilter}
                 weakStats={weakAlgStats} issuerStats={issuerStats}
+                certIssueStats={certIssueStats}
                 onCaClick={() => setCaModal(true)} />
             </div>
           )}
@@ -1010,6 +1032,8 @@ export default function App() {
             {tab === 'uptime'   && <UptimePage   systemRole={systemRole} />}
             {tab === 'port'     && <PortMonitorPage systemRole={systemRole} />}
             {tab === 'dns'      && <DnsMonitorPage  systemRole={systemRole} />}
+            {tab === 'keyword'  && <KeywordMonitorPage systemRole={systemRole} />}
+            {tab === 'ping'     && <PingMonitorPage systemRole={systemRole} />}
             {tab === 'forecast' && <ExpiryForecastPage onSelectDomain={(d) => setModalCert(certs.find(c => c.domain === d) ?? { domain: d })} />}
            </ErrorBoundary>
           </div>

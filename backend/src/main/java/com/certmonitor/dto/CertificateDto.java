@@ -53,6 +53,9 @@ public class CertificateDto {
     @JsonProperty("revocation_status")
     private String revocationStatus;
 
+    @JsonProperty("trust_status")
+    private String trustStatus;
+
     // Extended certificate metadata
     @JsonProperty("serial_number")
     private String serialNumber;
@@ -124,6 +127,7 @@ public class CertificateDto {
         dto.intermediateExpiry = c.getIntermediateExpiry();
         dto.intermediateDaysRemaining = c.getIntermediateDaysRemaining();
         dto.revocationStatus = c.getRevocationStatus();
+        dto.trustStatus = c.getTrustStatus();
         dto.serialNumber = c.getSerialNumber();
         dto.signatureAlgorithm = c.getSignatureAlgorithm();
         dto.publicKeyAlgorithm = c.getPublicKeyAlgorithm();
