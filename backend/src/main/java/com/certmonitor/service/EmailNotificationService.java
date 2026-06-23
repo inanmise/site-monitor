@@ -2192,7 +2192,7 @@ public class EmailNotificationService {
 
         StringBuilder facts = new StringBuilder()
             .append(kvRow("Önem", sevBadgeText(sev)))
-            .append(kvRow("Durum", statusText(str(inc.get("status")))))
+            .append(kvRow("Durum", statusText(str(inc.get("status"))), statusColor(str(inc.get("status")))))
             .append(kvRow("Takım", teamName))
             .append(kvRow("Kanal", str(inc.get("channel"))))
             .append(kvRow("Servis / Domain", str(inc.get("service"))))
@@ -2213,7 +2213,8 @@ public class EmailNotificationService {
               + "</td></tr></table>"
             : "";
 
-        return "<!DOCTYPE html><html lang='tr'><head><meta charset='UTF-8'>"
+        return "<!DOCTYPE html><html lang='tr' xmlns:v='urn:schemas-microsoft-com:vml'"
+            + " xmlns:o='urn:schemas-microsoft-com:office:office'><head><meta charset='UTF-8'>"
             + "<meta name='viewport' content='width=device-width,initial-scale=1,maximum-scale=1'>"
             + "<style>body,table,td{-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%}"
             + ".inc-md p{margin:0;font-size:14px;line-height:1.7;color:#1e293b}"
@@ -2283,6 +2284,16 @@ public class EmailNotificationService {
             + "vertical-align:top;word-break:break-word'>" + v + "</td></tr>";
     }
 
+    /** Künye satırı — renkli + kalın değer (örn. Durum: Çözüldü=yeşil). */
+    private String kvRow(String label, String value, String valueColor) {
+        String v = (value == null || value.isBlank()) ? "—" : escHtml(value);
+        return "<tr>"
+            + "<td bgcolor='#f8fafc' style='background:#f8fafc;border:1px solid #e2e8f0;padding:8px 12px;"
+            + "font-size:13px;font-weight:700;color:#475569;width:38%;vertical-align:top'>" + escHtml(label) + "</td>"
+            + "<td style='border:1px solid #e2e8f0;padding:8px 12px;font-size:13px;color:" + valueColor + ";"
+            + "font-weight:700;vertical-align:top;word-break:break-word'>" + v + "</td></tr>";
+    }
+
     /** Markdown metin → e-posta-güvenli paragraf: görsel sözdizimini at, escape + satır sonu→&lt;br&gt;. */
     private String textBlock(String md) {
         if (md == null || md.isBlank()) return "";
@@ -2309,6 +2320,18 @@ public class EmailNotificationService {
             case "OPEN" -> "Açık"; case "INVESTIGATING" -> "İnceleniyor";
             case "MITIGATED" -> "Hafifletildi"; case "RESOLVED" -> "Çözüldü";
             default -> st;
+        };
+    }
+
+    /** Durum rengi (künye "Durum" hücresi) — severity renk deseninin eşi. */
+    private static String statusColor(String st) {
+        if (st == null) return "#6b7280";
+        return switch (st) {
+            case "RESOLVED"      -> "#15803d";  // yeşil
+            case "OPEN"          -> "#dc2626";  // kırmızı
+            case "INVESTIGATING" -> "#ea580c";  // turuncu
+            case "MITIGATED"     -> "#f59e0b";  // amber
+            default              -> "#6b7280";  // gri
         };
     }
 
