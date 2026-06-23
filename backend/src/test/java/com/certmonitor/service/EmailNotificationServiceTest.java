@@ -626,7 +626,10 @@ class EmailNotificationServiceTest {
         Map<String, Object> ctx = new HashMap<>();
         ctx.put("url", "https://www.akbank.com/");
         ctx.put("keyword", "Melih Ekmekçi");
-        ctx.put("condition", "NOT_CONTAINS");
+        ctx.put("operator", "GTE");
+        ctx.put("match_count", 3);
+        ctx.put("occurrences", 1);
+        ctx.put("monitor_id", 42);
         ctx.put("http_status", 200);
         ctx.put("first_failure_at", "2026-06-23T12:00:00");
         String html = service.buildAlertEmailHtml("[CertMonitor KRİTİK] keyword",
@@ -634,6 +637,9 @@ class EmailNotificationServiceTest {
         assertThat(html).contains("İçerik (Keyword) İzleme");
         assertThat(html).contains("Aranan kelime");
         assertThat(html).contains("Melih Ekmekçi");
+        assertThat(html).contains("en az 3 kez");                 // opPhrase
+        assertThat(html).contains("tab=keyword");                 // CTA deep-link (&amp; ile escape'li)
+        assertThat(html).contains("monitor=42");
         // cert/expiry şablonundan hiçbir alan sızmamalı
         assertThat(html).doesNotContain("Son Kullanma");
         assertThat(html).doesNotContain("Veren Kurum");

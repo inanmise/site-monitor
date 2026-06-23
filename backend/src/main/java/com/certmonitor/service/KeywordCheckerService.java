@@ -83,9 +83,15 @@ public class KeywordCheckerService {
             String body = new String(bytes, StandardCharsets.UTF_8);
             String hay = body.toLowerCase(Locale.ROOT);
             String needle = keyword != null ? keyword.toLowerCase(Locale.ROOT) : "";
-            boolean found = !needle.isEmpty() && hay.contains(needle);
+            int count = 0;
+            if (!needle.isEmpty()) {
+                int from = 0, idx;
+                while ((idx = hay.indexOf(needle, from)) >= 0) { count++; from = idx + needle.length(); }
+            }
+            boolean found = count > 0;
 
             result.put("found", found);
+            result.put("count", count);
             result.put("http_status", resp.statusCode());
             result.put("response_ms", ms);
             if (found) {
@@ -98,10 +104,33 @@ public class KeywordCheckerService {
             }
         } catch (Exception e) {
             result.put("found", false);
+            result.put("count", 0);
             result.put("response_ms", System.currentTimeMillis() - start);
             result.put("error", e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName());
             log.debug("Keyword check failed for {}: {}", url, e.getMessage());
         }
         return result;
+    }
+
+    /** Adet koşulu değerlendirmesi: SAĞLIKLI = (geçiş adedi) [operatör] (eşik). */
+    public static boolean evaluate(int count, String op, int threshold) {
+        return switch (op == null ? "GTE" : op) {
+            case "LTE" -> count <= threshold;
+            case "EQ"  -> count == threshold;
+            case "GT"  -> count >  threshold;
+            case "LT"  -> count <  threshold;
+            default    -> count >= threshold;   // GTE
+        };
+    }
+
+    /** Operatör + eşik → Türkçe ifade ("en az 3 kez" vb.) — mesaj/şablon/UI için. */
+    public static String opPhrase(String op, int n) {
+        return switch (op == null ? "GTE" : op) {
+            case "LTE" -> "en fazla " + n + " kez";
+            case "EQ"  -> "tam olarak " + n + " kez";
+            case "GT"  -> n + " kezden fazla";
+            case "LT"  -> n + " kezden az";
+            default    -> "en az " + n + " kez";   // GTE
+        };
     }
 }

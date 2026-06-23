@@ -25,6 +25,10 @@ public class KeywordResult {
     @Column(nullable = false)
     private Boolean found = false;
 
+    /** Kelimenin gövdede kaç kez geçtiği (adet koşulu için gözlenen değer). */
+    @Column(name = "occurrences")
+    private Integer occurrences;
+
     /** Koşula göre "sağlıklı" mı: NOT_CONTAINS→ok=!found, CONTAINS→ok=found. */
     @Column(nullable = false)
     private Boolean ok = false;

@@ -399,6 +399,7 @@ public class EscalationService {
         if (existing.isEmpty()) {
             AlertEvent event = newEvent(domain, alertLevel, alertType, message, null);
             event.setTeamId(domainTeamId);   // çözüm bildiriminde takımı buradan bul (özellikle keyword/ping)
+            event.setContextJson(snapshotContext(outageContext));   // çözüldü mailinde keyword/koşul detayı için
             event = alertEventRepo.save(event);
 
             List<EscalationContact> contacts = teamOnly ? List.of() : getContactsForLevel(alertLevel, domainTeamId);
@@ -470,16 +471,15 @@ public class EscalationService {
             case TYPE_KEYWORD -> {
                 Object url = ctx.get("url");
                 Object kw = ctx.get("keyword");
-                Object cond = ctx.getOrDefault("condition", "NOT_CONTAINS");
                 if (url != null && kw != null) {
-                    if ("CONTAINS".equals(cond)) {
-                        return "KRİTİK: " + url + " sayfasında istenmeyen \"" + kw +
-                                "\" ifadesi bulundu. Ardışık doğrulama denemeleri bunu doğruladı. " +
-                                "İfade kaybolduğunda alarm otomatik kapanacaktır.";
-                    }
-                    return "KRİTİK: " + url + " sayfasında \"" + kw +
-                            "\" anahtar kelimesi bulunamıyor. Ardışık doğrulama denemeleri başarısız oldu. " +
-                            "Kelime tekrar göründüğünde alarm otomatik kapanacaktır.";
+                    String op = ctx.get("operator") != null ? ctx.get("operator").toString() : "GTE";
+                    int n = ctx.get("match_count") instanceof Number mn ? mn.intValue() : 1;
+                    Object occ = ctx.get("occurrences");
+                    String occPart = occ != null ? " Şu an " + occ + " kez bulundu." : "";
+                    return "KRİTİK: " + url + " sayfasında \"" + kw + "\" " +
+                            KeywordCheckerService.opPhrase(op, n) + " bulunmalı; koşul sağlanmıyor." + occPart +
+                            " Ardışık doğrulama denemeleri başarısız oldu. " +
+                            "Koşul yeniden sağlandığında alarm otomatik kapanacaktır.";
                 }
             }
             case TYPE_PING_DOWN -> {
@@ -617,11 +617,14 @@ public class EscalationService {
                     + " — " + typeTr + " sorunu giderildi";
             // İzleme çözüm mailleri süreyi createdAt→resolvedAt'ten hesaplar;
             // sertifika context'i alakasız olduğundan geçilmez.
-            Map<String, Object> certContext = MONITORING_ALERT_TYPES.contains(event.getAlertType())
-                    ? null
-                    : latestCheckRepo.findById(event.getDomain())
-                        .map(this::latestToCertContext)
-                        .orElse(null);
+            Map<String, Object> certContext;
+            if (teamOnly) {                 // keyword/ping — alarm anı snapshot'ından detay (keyword/koşul)
+                certContext = deserializeContext(event.getContextJson());
+            } else if (MONITORING_ALERT_TYPES.contains(event.getAlertType())) {
+                certContext = null;
+            } else {
+                certContext = latestCheckRepo.findById(event.getDomain()).map(this::latestToCertContext).orElse(null);
+            }
             String htmlBody = emailService.buildResolutionEmailHtml(
                     event.getDomain(), event.getAlertType(), event.getAlertLevel(),
                     event.getDaysRemaining(), resolvedBy, event.getResolvedAt(),
@@ -929,6 +932,24 @@ public class EscalationService {
         e.setResolved(false);
         e.setCreatedAt(now());
         return e;
+    }
+
+    /** Çözüldü e-postasında detay için alarm anı context'inin küçük JSON snapshot'ı. */
+    private String snapshotContext(Map<String, Object> ctx) {
+        if (ctx == null) return null;
+        Map<String, Object> snap = new LinkedHashMap<>();
+        for (String k : List.of("keyword", "operator", "match_count", "occurrences",
+                                 "url", "host", "ip_version", "monitor_id", "condition")) {
+            if (ctx.get(k) != null) snap.put(k, ctx.get(k));
+        }
+        if (snap.isEmpty()) return null;
+        try { return objectMapper.writeValueAsString(snap); } catch (Exception e) { return null; }
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> deserializeContext(String json) {
+        if (json == null || json.isBlank()) return null;
+        try { return objectMapper.readValue(json, Map.class); } catch (Exception e) { return null; }
     }
 
     private String serializeContacts(List<EscalationContact> contacts) {

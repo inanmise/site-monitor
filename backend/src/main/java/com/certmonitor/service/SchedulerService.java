@@ -354,6 +354,11 @@ public class SchedulerService {
         patch("UPDATE permission_grants SET allowed = TRUE WHERE role IN ('USER','TEAM_ADMIN') "
                 + "AND resource_key = 'monitoring.trigger' AND action = 'execute' "
                 + "AND updated_by = 'system' AND allowed = FALSE");
+        // Keyword adet/operatör koşulu — mevcut binary alert_condition → operatör+eşik backfill (idempotent).
+        patch("UPDATE keyword_monitors SET match_operator='GTE', match_count=1 "
+                + "WHERE match_operator IS NULL AND (alert_condition='NOT_CONTAINS' OR alert_condition IS NULL)");
+        patch("UPDATE keyword_monitors SET match_operator='LTE', match_count=0 "
+                + "WHERE match_operator IS NULL AND alert_condition='CONTAINS'");
         // Çoklu takım üyeliği (app_user_teams): tablo @ElementCollection + ddl-auto ile oluşur.
         // Join kolonu AppUser'da pinli (user_id). Mevcut tek-takımlı kullanıcıların team_id'sini
         // üyelik tablosuna backfill et (idempotent) — yoksa eski kullanıcılar üyeliksiz kalır.
@@ -1018,10 +1023,14 @@ public class SchedulerService {
                 ctx.put("url", m.getUrl());
                 ctx.put("keyword", m.getKeyword());
                 ctx.put("condition", m.getAlertCondition());
+                ctx.put("operator", m.getMatchOperator());
+                ctx.put("match_count", m.getMatchCount());
+                ctx.put("monitor_id", m.getId());
                 if (m.getTeamId() != null) ctx.put("team_id", m.getTeamId());
                 if (r.get("http_status") != null) ctx.put("http_status", r.get("http_status"));
                 if (r.get("response_ms") != null) ctx.put("response_ms", r.get("response_ms"));
                 if (r.get("snippet") != null)     ctx.put("snippet", r.get("snippet"));
+                if (r.get("occurrences") != null) ctx.put("occurrences", r.get("occurrences"));
                 String kw = m.getKeyword() != null ? m.getKeyword() : "";
                 sweep.add(new MonitoringOutageService.SweepItem(
                         EscalationService.TYPE_KEYWORD, m.getUrl(),
@@ -1047,14 +1056,16 @@ public class SchedulerService {
         int timeout = m.getTimeoutMs() != null ? m.getTimeoutMs() : 10000;
         Map<String, Object> r = keywordCheckerService.check(m.getUrl(), m.getKeyword(), timeout);
         boolean found = Boolean.TRUE.equals(r.getOrDefault("found", false));
+        int count = r.get("count") instanceof Number cn ? cn.intValue() : (found ? 1 : 0);
+        int threshold = m.getMatchCount() != null ? m.getMatchCount() : 1;
         boolean hadError = r.get("error") != null;
-        // NOT_CONTAINS: kelime yoksa alarm → varken sağlıklı (ok=found).
-        // CONTAINS: kelime varsa alarm → yokken sağlıklı (ok=!found).
-        boolean ok = !hadError && ("CONTAINS".equals(m.getAlertCondition()) ? !found : found);
+        // Adet koşulu: SAĞLIKLI = count [operatör] threshold (HTTP hatası → down).
+        boolean ok = !hadError && KeywordCheckerService.evaluate(count, m.getMatchOperator(), threshold);
         try {
             KeywordResult res = new KeywordResult();
             res.setMonitorId(m.getId());
             res.setFound(found);
+            res.setOccurrences(count);
             res.setOk(ok);
             res.setHttpStatus(r.get("http_status") instanceof Number n ? n.intValue() : null);
             res.setResponseMs(r.get("response_ms") instanceof Number n ? n.longValue() : null);
@@ -1071,6 +1082,7 @@ public class SchedulerService {
         out.put("http_status", r.get("http_status"));   // alarm e-postası için zengin metrik
         out.put("response_ms", r.get("response_ms"));
         out.put("snippet", r.get("snippet"));
+        out.put("occurrences", count);
         return out;
     }
 
@@ -1087,6 +1099,7 @@ public class SchedulerService {
                 Map<String, Object> ctx = new LinkedHashMap<>();
                 ctx.put("host", m.getHost());
                 ctx.put("ip_version", m.getIpVersion());
+                ctx.put("monitor_id", m.getId());
                 if (m.getTeamId() != null) ctx.put("team_id", m.getTeamId());
                 if (r.get("rtt_ms") != null)      ctx.put("rtt_ms", r.get("rtt_ms"));
                 if (r.get("packet_loss") != null) ctx.put("packet_loss", r.get("packet_loss"));

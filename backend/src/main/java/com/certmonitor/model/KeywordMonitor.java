@@ -29,9 +29,22 @@ public class KeywordMonitor {
     @Column(nullable = false)
     private String keyword;
 
-    /** "NOT_CONTAINS" (kelime yoksa alarm) | "CONTAINS" (kelime varsa alarm). */
+    /** Eski binary koşul (legacy) — operatör/adet modelinden create/update'te türetilir. */
     @Column(name = "alert_condition", nullable = false)
     private String alertCondition = "NOT_CONTAINS";
+
+    /** Adet koşulu operatörü: GTE (≥) | LTE (≤) | EQ (=) | GT (>) | LT (<).
+     *  Sağlıklı = geçişAdedi <operatör> matchCount. */
+    @Column(name = "match_operator")
+    private String matchOperator = "GTE";
+
+    /** Operatörle karşılaştırılan eşik adet (N). */
+    @Column(name = "match_count")
+    private Integer matchCount = 1;
+
+    /** Mantıksal grup (ör. "X Sistemleri") — filtreleme/gruplama; serbest-form. */
+    @Column(name = "group_name")
+    private String groupName;
 
     /** Sorumlu takım — alarm yönlendirmesi (envanterden bağımsız). */
     @Column(name = "team_id")
