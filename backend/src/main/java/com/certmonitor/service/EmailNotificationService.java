@@ -1423,17 +1423,17 @@ public class EmailNotificationService {
         String generatedAt = LocalDateTime.now(IST).format(DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm"));
 
         String hero = "<table width='100%' cellpadding='0' cellspacing='0' border='0'"
-            + " style='margin:20px 0;border-radius:14px;overflow:hidden;border:2px solid " + accent + "22'><tr>"
+            + " style='margin:18px 0;border-radius:14px;overflow:hidden;border:1px solid #e2e8f0'><tr>"
             + "<td class='em-hero-l' align='center' valign='middle' width='38%' style='background:" + accent + ";padding:22px 14px'>"
             + "<div style='color:#fff;font-size:46px;line-height:1'>" + emoji + "</div>"
             + "<div style='color:#fff;font-size:14px;font-weight:800;margin-top:8px;letter-spacing:.04em'>" + heroTitle + "</div>"
             + "<div style='color:rgba(255,255,255,.85);font-size:12px;margin-top:8px;padding:0 6px'>" + heroSub + "</div>"
             + "</td>"
-            + "<td class='em-hero-r' valign='middle' style='background:" + accent + "0d;padding:20px 22px'>"
+            + "<td class='em-hero-r' valign='middle' style='background:#f8fafc;padding:20px 22px'>"
             + "<div style='font-size:11px;font-weight:700;letter-spacing:.1em;color:#94a3b8;text-transform:uppercase;margin-bottom:10px'>İlk Hata Zamanı</div>"
             + "<div style='font-size:24px;font-weight:900;color:" + accent + ";letter-spacing:-.5px'>" + formatIso(firstFailureAt) + "</div>"
             + "<div style='font-size:13px;color:#475569;margin-top:6px;line-height:1.6'>" + formatIsoFull(firstFailureAt) + "</div>"
-            + "<div style='margin-top:12px;padding:6px 12px;background:" + accent + ";color:#fff;border-radius:6px;font-size:12px;font-weight:800;display:inline-block'>"
+            + "<div style='margin-top:12px;font-size:12px;font-weight:700;color:#475569'>"
             + "🔁 " + attemptsLabel + " doğrulama denemesi " + delayLabel + "— tümü başarısız</div>"
             + "</td></tr></table>";
 
@@ -1466,9 +1466,13 @@ public class EmailNotificationService {
             + "<div style='color:rgba(255,255,255,.88);font-size:15px;font-weight:700;margin-top:8px;letter-spacing:.02em'>KRİTİK &nbsp;·&nbsp; " + typeBadge + "</div>"
             + "</div>"
             + "<div class='em-body' style='background:#fff;padding:22px 24px'>"
+            // Sorunu en üstte, sade ve net (executive) — kırmızı şeritli uyarı kutusu
+            + "<table width='100%' cellpadding='0' cellspacing='0' border='0' style='margin:2px 0 16px'><tr>"
+            + "<td style='background:#fef2f2;border-left:5px solid #dc2626;padding:15px 18px'>"
+            + "<div style='font-size:12px;font-weight:800;letter-spacing:.07em;color:#dc2626;margin-bottom:6px'>⚠ SORUN TESPİT EDİLDİ</div>"
+            + "<div style='font-size:15px;font-weight:600;color:#1c1917;line-height:1.6'>" + escHtml(message) + "</div>"
+            + "</td></tr></table>"
             + hero + twoCol + extraBox
-            + "<div style='background:" + accent + "0d;border-left:4px solid " + accent + ";border-radius:0 8px 8px 0;padding:14px 18px;color:#1c1917;font-size:14px;line-height:1.7;margin-bottom:14px'>"
-            + "<div style='font-size:11px;font-weight:700;letter-spacing:.08em;color:" + accent + ";margin-bottom:6px'>ALARM DETAYI</div>" + escHtml(message) + "</div>"
             + "<div style='font-size:12px;color:#64748b;line-height:1.6;margin-bottom:20px'>" + infoNote + "</div>"
             + "<table width='100%' cellpadding='0' cellspacing='0'><tr>"
             + "<td style='border-top:1px solid #f1f5f9;padding-top:12px;font-size:11px;color:#94a3b8'>CertMonitor</td>"
@@ -1520,8 +1524,8 @@ public class EmailNotificationService {
         if (!httpStatus.isEmpty()) left.append(tableRow2col("📡 HTTP durumu", escHtml(httpStatus)));
         if (!responseMs.isEmpty()) left.append(tableRow2col("⏱ Yanıt süresi", escHtml(responseMs) + " ms"));
         if (!firstFailureAt.isEmpty()) left.append(tableRow2col("🕐 İlk hata", formatIso(firstFailureAt)));
-        if (!lastError.isEmpty()) left.append(tableRow2col("⚠ Son hata", escHtml(lastError.length() > 90 ? lastError.substring(0, 90) + "…" : lastError)));
-        left.append(attemptRows(ctx));
+        if (!lastError.isEmpty() && !"null".equalsIgnoreCase(lastError))
+            left.append(tableRow2col("⚠ Son hata", escHtml(lastError.length() > 90 ? lastError.substring(0, 90) + "…" : lastError)));
 
         String right = statusRow2col("Kelime durumu", contains ? "✗ İstenmeyen ifade var" : "✗ Bulunamadı")
             + statusRow2col("Doğrulama", "✗ " + (n == 0 ? "Başarısız" : n + "/" + n + " başarısız"))
@@ -1563,8 +1567,8 @@ public class EmailNotificationService {
         left.append(tableRow2col("📉 Paket kaybı", lossLabel));
         if (!rttMs.isEmpty()) left.append(tableRow2col("⏱ RTT", escHtml(rttMs) + " ms"));
         if (!firstFailureAt.isEmpty()) left.append(tableRow2col("🕐 İlk hata", formatIso(firstFailureAt)));
-        if (!lastError.isEmpty()) left.append(tableRow2col("⚠ Son hata", escHtml(lastError.length() > 90 ? lastError.substring(0, 90) + "…" : lastError)));
-        left.append(attemptRows(ctx));
+        if (!lastError.isEmpty() && !"null".equalsIgnoreCase(lastError))
+            left.append(tableRow2col("⚠ Son hata", escHtml(lastError.length() > 90 ? lastError.substring(0, 90) + "…" : lastError)));
 
         String right = statusRow2col("Ping durumu", na ? "✗ ICMP kullanılamıyor" : "✗ Yanıt yok")
             + statusRow2col("Paket kaybı", "✗ " + lossLabel)
@@ -1624,9 +1628,9 @@ public class EmailNotificationService {
             + "<div style='color:rgba(255,255,255,.88);font-size:15px;font-weight:700;margin-top:8px;letter-spacing:.02em'>" + heroLine + " &nbsp;·&nbsp; " + typeTrLabel + "</div>"
             + "</div>"
             + "<div class='em-body' style='background:#fff;padding:22px 24px'>"
-            + "<div style='text-align:center;margin:16px 0 24px'>"
-            + "<div style='display:inline-block;background:#dcfce7;border-radius:50%;width:80px;height:80px;line-height:80px;font-size:42px;border:3px solid " + green + "'>" + emoji + "</div>"
-            + "<div style='margin-top:14px;font-size:20px;font-weight:800;color:#15803d;letter-spacing:-.3px'>" + heroLine + "</div>"
+            + "<div style='text-align:center;margin:14px 0 22px'>"
+            + "<div style='font-size:54px;line-height:1;color:" + green + "'>✓</div>"
+            + "<div style='margin-top:8px;font-size:20px;font-weight:800;color:#15803d'>" + heroLine + "</div>"
             + "<div style='margin-top:6px;font-size:13px;color:#64748b'>Alarm kapatıldı. İzleme devam etmektedir.</div></div>"
             + twoCol
             + "<div style='background:#f0fdf4;border-left:4px solid " + green + ";border-radius:0 8px 8px 0;padding:14px 18px;color:#14532d;font-size:14px;line-height:1.7;margin-bottom:20px'>"

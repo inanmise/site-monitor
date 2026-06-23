@@ -609,6 +609,8 @@ public class EscalationService {
                 case TYPE_PORT_DOWN     -> "Port Kesintisi";
                 case TYPE_DNS_FAILURE   -> "DNS Çözümleme Hatası";
                 case TYPE_DNS_CHANGED   -> "DNS Değişikliği";
+                case TYPE_KEYWORD       -> "İçerik Doğrulama";
+                case TYPE_PING_DOWN     -> "Erişilebilirlik (Ping)";
                 default                 -> "Son Kullanma";
             };
             String subject = "[CertMonitor ✅ ÇÖZÜLDÜ] " + event.getDomain()
@@ -744,6 +746,8 @@ public class EscalationService {
             case TYPE_PORT_DOWN     -> "Port Kesintisi";
             case TYPE_DNS_FAILURE   -> "DNS Çözümleme Hatası";
             case TYPE_DNS_CHANGED   -> "DNS Değişikliği";
+            case TYPE_KEYWORD       -> "İçerik Doğrulama";
+            case TYPE_PING_DOWN     -> "Erişilebilirlik (Ping)";
             default                 -> daysRemaining != null ? daysRemaining + " gün kaldı" : "Son Kullanma";
         };
         String subject = subjectPrefix + "[CertMonitor " + levelTr + "] " + domain + " — " + typeTr;
