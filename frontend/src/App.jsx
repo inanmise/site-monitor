@@ -414,6 +414,21 @@ export default function App() {
     return { total, revoked, chain, trust, deployment }
   }, [certs])
 
+  // Oturum açıldığında (login ya da zaten geçerli oturumla açılış) URL'deki
+  // ?session=expired bildirimini adres çubuğundan temizle — login olunca
+  // kaybolmuyordu. Diğer paramlar (ör. ?tab=) korunur.
+  useEffect(() => {
+    if (!user) return
+    try {
+      const url = new URL(window.location.href)
+      if (url.searchParams.has('session')) {
+        url.searchParams.delete('session')
+        const qs = url.searchParams.toString()
+        window.history.replaceState({}, '', url.pathname + (qs ? `?${qs}` : '') + url.hash)
+      }
+    } catch { /* yoksay */ }
+  }, [user])
+
   if (!authChecked) return <div className="loading" style={{ marginTop: 80, textAlign: 'center' }}>{t('app.loading')}</div>
   if (!user) return <Login onLogin={handleLogin} />
   if (mustChangePwd) {
