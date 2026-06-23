@@ -45,6 +45,11 @@ public class AlertEvent {
     @Column(columnDefinition = "TEXT")
     private String notifiedContacts;
 
+    /** Alarm anı context snapshot'ı (JSON) — özellikle keyword/ping çözüldü e-postasında
+     *  hangi kelime/koşul/ne bulundu detayını göstermek için (url/host envanterde yok). */
+    @Column(name = "context_json", columnDefinition = "TEXT")
+    private String contextJson;
+
     @Column(nullable = false)
     private Boolean acknowledged = false;
 

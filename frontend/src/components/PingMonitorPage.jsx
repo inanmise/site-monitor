@@ -40,6 +40,7 @@ export default function PingMonitorPage({ systemRole, teamId, teamName }) {
   const [teamFilter, setTeamFilter] = useState('all')
   const [secondsSince, setSecondsSince] = useState(0)
   const countdownRef = useRef(null)
+  const deepLinkDone = useRef(false)
 
   const load = useCallback(async () => {
     const res = await api.monitoring.getPingMonitors()
@@ -62,6 +63,21 @@ export default function PingMonitorPage({ systemRole, teamId, teamName }) {
     if (!isAdmin) return
     api.admin.getTeams().then(r => { if (r?.success) setTeams(r.data || []) })
   }, [isAdmin])
+
+  // E-posta CTA deep-link: ?monitor=<id> → ilgili monitörün detayını aç (bir kez), paramı temizle.
+  useEffect(() => {
+    if (deepLinkDone.current || monitors.length === 0) return
+    deepLinkDone.current = true
+    let id
+    try { id = new URLSearchParams(window.location.search).get('monitor') } catch { return }
+    if (!id) return
+    const m = monitors.find(x => String(x.id) === String(id))
+    if (m) openDetail(m)
+    try {
+      const u = new URL(window.location.href); u.searchParams.delete('monitor')
+      window.history.replaceState({}, '', u.pathname + u.search + u.hash)
+    } catch { /* yoksay */ }
+  }, [monitors]) // eslint-disable-line react-hooks/exhaustive-deps
 
   async function loadHistory(id, days = rangeDays) {
     setHistoryLoading(true)

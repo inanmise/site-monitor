@@ -118,6 +118,26 @@ public class MonitoringController {
         return o == null || o.toString().isBlank();
     }
 
+    private static final java.util.Set<String> KW_OPERATORS = java.util.Set.of("GTE", "LTE", "EQ", "GT", "LT");
+
+    /** Keyword adet koşulunu (operator + matchCount) body'den uygular; legacy 'condition' desteklenir;
+     *  alertCondition (NOT NULL) operatörden türetilir. */
+    private void applyKeywordCondition(KeywordMonitor m, Map<String, Object> body) {
+        if (body.get("operator") != null) {
+            String op = body.get("operator").toString().toUpperCase();
+            m.setMatchOperator(KW_OPERATORS.contains(op) ? op : "GTE");
+        }
+        if (body.get("matchCount") instanceof Number n) m.setMatchCount(Math.max(0, n.intValue()));
+        else if (body.get("operator") == null && body.get("condition") != null) {
+            if ("CONTAINS".equals(body.get("condition").toString())) { m.setMatchOperator("LTE"); m.setMatchCount(0); }
+            else { m.setMatchOperator("GTE"); m.setMatchCount(1); }
+        }
+        String op = m.getMatchOperator() != null ? m.getMatchOperator() : "GTE";
+        int n = m.getMatchCount() != null ? m.getMatchCount() : 1;
+        boolean absent = ("LTE".equals(op) || "EQ".equals(op) || "LT".equals(op)) && n == 0;
+        m.setAlertCondition(absent ? "CONTAINS" : "NOT_CONTAINS");
+    }
+
     // ── Uptime Overview ───────────────────────────────────────────────────────
 
     @GetMapping("/uptime/overview")
@@ -718,8 +738,8 @@ public class MonitoringController {
         m.setName((String) body.get("name"));
         m.setUrl((String) body.get("url"));
         m.setKeyword((String) body.get("keyword"));
-        String cond = body.get("condition") != null ? body.get("condition").toString() : "NOT_CONTAINS";
-        m.setAlertCondition("CONTAINS".equals(cond) ? "CONTAINS" : "NOT_CONTAINS");
+        applyKeywordCondition(m, body);
+        if (body.containsKey("groupName")) m.setGroupName(blank(body.get("groupName")) ? null : body.get("groupName").toString().trim());
         m.setTeamId(teamId);
         m.setActive(true);
         if (body.get("intervalSeconds") != null) m.setIntervalSeconds(((Number) body.get("intervalSeconds")).intValue());
@@ -738,7 +758,8 @@ public class MonitoringController {
             if (body.get("name")            != null) m.setName((String) body.get("name"));
             if (body.get("url")             != null) m.setUrl((String) body.get("url"));
             if (body.get("keyword")         != null) m.setKeyword((String) body.get("keyword"));
-            if (body.get("condition")       != null) m.setAlertCondition("CONTAINS".equals(body.get("condition").toString()) ? "CONTAINS" : "NOT_CONTAINS");
+            if (body.get("operator") != null || body.get("matchCount") != null || body.get("condition") != null) applyKeywordCondition(m, body);
+            if (body.containsKey("groupName"))       m.setGroupName(blank(body.get("groupName")) ? null : body.get("groupName").toString().trim());
             if (body.containsKey("teamId"))          m.setTeamId(resolveTeamChange(session, m.getTeamId(), body.get("teamId")));
             if (body.get("active")          != null) m.setActive((Boolean) body.get("active"));
             if (body.get("intervalSeconds") != null) m.setIntervalSeconds(((Number) body.get("intervalSeconds")).intValue());
@@ -792,10 +813,13 @@ public class MonitoringController {
             Map<String, Object> r = keywordChecker.check(m.getUrl(), m.getKeyword(),
                     m.getTimeoutMs() != null ? m.getTimeoutMs() : 10000);
             boolean found = Boolean.TRUE.equals(r.getOrDefault("found", false));
-            boolean ok = r.get("error") == null && ("CONTAINS".equals(m.getAlertCondition()) ? !found : found);
+            int count = r.get("count") instanceof Number cn ? cn.intValue() : (found ? 1 : 0);
+            int threshold = m.getMatchCount() != null ? m.getMatchCount() : 1;
+            boolean ok = r.get("error") == null && com.certmonitor.service.KeywordCheckerService.evaluate(count, m.getMatchOperator(), threshold);
             KeywordResult res = new KeywordResult();
             res.setMonitorId(m.getId());
             res.setFound(found);
+            res.setOccurrences(count);
             res.setOk(ok);
             res.setHttpStatus(r.get("http_status") instanceof Number n ? n.intValue() : null);
             res.setResponseMs(r.get("response_ms") instanceof Number n ? n.longValue() : null);
@@ -814,6 +838,9 @@ public class MonitoringController {
         item.put("url",              m.getUrl());
         item.put("keyword",          m.getKeyword());
         item.put("condition",        m.getAlertCondition());
+        item.put("operator",         m.getMatchOperator());
+        item.put("match_count",      m.getMatchCount());
+        item.put("group_name",       m.getGroupName());
         item.put("team_id",          m.getTeamId());
         item.put("team_name",        m.getTeamId() != null ? teams.get(m.getTeamId()) : null);
         item.put("active",           m.getActive());
@@ -822,6 +849,7 @@ public class MonitoringController {
         if (latest != null) {
             item.put("status",      latest.getError() != null ? "error" : (Boolean.TRUE.equals(latest.getOk()) ? "up" : "down"));
             item.put("found",       latest.getFound());
+            item.put("occurrences", latest.getOccurrences());
             item.put("ok",          latest.getOk());
             item.put("http_status", latest.getHttpStatus());
             item.put("response_ms", latest.getResponseMs());
@@ -830,7 +858,7 @@ public class MonitoringController {
             item.put("checked_at",  latest.getCheckedAt());
         } else {
             item.put("status", "unknown");
-            item.put("found", null); item.put("ok", null); item.put("http_status", null);
+            item.put("found", null); item.put("occurrences", null); item.put("ok", null); item.put("http_status", null);
             item.put("response_ms", null); item.put("snippet", null); item.put("error", null); item.put("checked_at", null);
         }
         return item;

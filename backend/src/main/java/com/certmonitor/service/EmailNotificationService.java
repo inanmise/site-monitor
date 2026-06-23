@@ -45,6 +45,11 @@ public class EmailNotificationService {
     private final SmtpSettingsService smtpSettings;
     private final SmtpMailService smtpMailService;
 
+    /** Uygulama dış adresi — e-posta CTA deep-link'leri için. Spring @Value enjekte eder;
+     *  birim testte (manuel new) initializer değeri kullanılır. */
+    @org.springframework.beans.factory.annotation.Value("${cert.monitor.app.base-url:http://localhost:5173}")
+    private String appBaseUrl = "http://localhost:5173";
+
     /**
      * Tek thread'lik scheduler — SMTP 421 retry'ları için. Caller thread
      * (sweep executor ya da HTTP request) 90 saniye block etmesin.
@@ -507,10 +512,10 @@ public class EmailNotificationService {
                                             String resolvedAt, String createdAt,
                                             Map<String, Object> certContext) {
         if ("KEYWORD".equals(alertType)) {
-            return buildRichKeywordResolvedHtml(domain, resolvedBy, resolvedAt, createdAt);
+            return buildRichKeywordResolvedHtml(domain, certContext, resolvedBy, resolvedAt, createdAt);
         }
         if ("PING_DOWN".equals(alertType)) {
-            return buildRichPingResolvedHtml(domain, resolvedBy, resolvedAt, createdAt);
+            return buildRichPingResolvedHtml(domain, certContext, resolvedBy, resolvedAt, createdAt);
         }
         if ((alertType != null && MONITORING_OUTAGE_TYPES.contains(alertType))
                 || "DNS_CHANGED".equals(alertType)) {
@@ -1416,11 +1421,23 @@ public class EmailNotificationService {
     // Cert/expiry şablonuyla hiçbir alan paylaşmaz; ortak yalnız kart/CSS iskeleti (aşağıdaki frame helper'ları).
 
     /** Ortak executive alarm kartı (keyword/ping) — kimlik (accent/ikon/başlık) ve içerik dışarıdan gelir. */
+    /** Monitör detayına deep-link CTA URL'si (?tab=<tab>&monitor=<id>); base/monitor yoksa boş. */
+    private String monitorCtaUrl(String tab, Map<String, Object> ctx) {
+        Object mid = ctx != null ? ctx.get("monitor_id") : null;
+        if (mid == null) return "";
+        String base = appBaseUrl != null ? appBaseUrl.replaceAll("/+$", "") : "";
+        return base + "/?tab=" + tab + "&monitor=" + mid;
+    }
+
     private String monitoringTypedAlert(String accent, String kicker, String emoji,
             String heroTitle, String heroSub, String endpoint, String typeBadge,
             String firstFailureAt, String attemptsLabel, String delayLabel,
-            String leftRows, String rightRows, String extraBox, String message, String infoNote) {
+            String leftRows, String rightRows, String extraBox, String message, String infoNote, String ctaUrl) {
         String generatedAt = LocalDateTime.now(IST).format(DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm"));
+        String cta = (ctaUrl != null && !ctaUrl.isBlank())
+            ? "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' style='margin:4px 0 16px'><tr><td align='center'>"
+              + ctaButton(ctaUrl, "Monitörü Aç &rarr;", accent) + "</td></tr></table>"
+            : "";
 
         String hero = "<table width='100%' cellpadding='0' cellspacing='0' border='0'"
             + " style='margin:18px 0;border-radius:14px;overflow:hidden;border:1px solid #e2e8f0'><tr>"
@@ -1455,7 +1472,7 @@ public class EmailNotificationService {
             + ".em-col-l{display:block!important;width:100%!important;padding-right:0!important;padding-bottom:10px!important}"
             + ".em-col-r{display:block!important;width:100%!important}}</style>";
 
-        return "<!DOCTYPE html><html lang='tr'><head><meta charset='UTF-8'>"
+        return "<!DOCTYPE html><html lang='tr' xmlns:v='urn:schemas-microsoft-com:vml' xmlns:o='urn:schemas-microsoft-com:office:office'><head><meta charset='UTF-8'>"
             + "<meta name='viewport' content='width=device-width,initial-scale=1,maximum-scale=1'>" + css + "</head>"
             + "<body style='margin:0;padding:0;background:#f1f5f9;font-family:\"Segoe UI\",Tahoma,Arial,sans-serif'>"
             + "<table class='em-wrap' width='100%' cellpadding='0' cellspacing='0' border='0' style='background:#f1f5f9;padding:24px 10px'><tr><td align='center'>"
@@ -1472,7 +1489,7 @@ public class EmailNotificationService {
             + "<div style='font-size:12px;font-weight:800;letter-spacing:.07em;color:#dc2626;margin-bottom:6px'>⚠ SORUN TESPİT EDİLDİ</div>"
             + "<div style='font-size:15px;font-weight:600;color:#1c1917;line-height:1.6'>" + escHtml(message) + "</div>"
             + "</td></tr></table>"
-            + hero + twoCol + extraBox
+            + hero + twoCol + extraBox + cta
             + "<div style='font-size:12px;color:#64748b;line-height:1.6;margin-bottom:20px'>" + infoNote + "</div>"
             + "<table width='100%' cellpadding='0' cellspacing='0'><tr>"
             + "<td style='border-top:1px solid #f1f5f9;padding-top:12px;font-size:11px;color:#94a3b8'>CertMonitor</td>"
@@ -1501,11 +1518,15 @@ public class EmailNotificationService {
         return (ctx != null && ctx.get("confirm_attempts") instanceof List<?> l) ? l.size() : 0;
     }
 
-    /** Keyword izleme alarmı — menekşe kimlik, içerik doğrulaması alanları. */
+    /** Keyword izleme alarmı — kurumsal lacivert, adet/operatör koşulu alanları. */
     private String buildRichKeywordAlertHtml(String message, String url, String level, Map<String, Object> ctx) {
-        String accent = "#6d28d9";
+        String accent = "#1f3864";   // Akbank kurumsal lacivert
         String keyword   = ctxStr(ctx, "keyword");
-        boolean contains = "CONTAINS".equals(ctxStr(ctx, "condition"));
+        String operator  = ctxStr(ctx, "operator"); if (operator.isEmpty()) operator = "GTE";
+        int threshold = ctx != null && ctx.get("match_count") instanceof Number mn ? mn.intValue() : 1;
+        boolean absent = ("LTE".equals(operator) || "EQ".equals(operator) || "LT".equals(operator)) && threshold == 0;
+        String condPhrase = KeywordCheckerService.opPhrase(operator, threshold);
+        String occ = ctxStr(ctx, "occurrences");
         String httpStatus = ctxStr(ctx, "http_status");
         String responseMs = ctxStr(ctx, "response_ms");
         String snippet    = ctxStr(ctx, "snippet");
@@ -1520,34 +1541,39 @@ public class EmailNotificationService {
         StringBuilder left = new StringBuilder();
         left.append(tableRow2col("🌐 Adres", escHtml(url)));
         left.append(tableRow2col("🔎 Aranan kelime", escHtml(keyword)));
-        left.append(tableRow2col("⚙ Beklenen koşul", contains ? "Sayfada bulunmamalı" : "Sayfada bulunmalı"));
+        left.append(tableRow2col("⚙ Beklenen koşul", condPhrase + " bulunmalı"));
+        if (!occ.isEmpty()) left.append(tableRow2col("🔢 Bulunan adet", occ + " kez"));
         if (!httpStatus.isEmpty()) left.append(tableRow2col("📡 HTTP durumu", escHtml(httpStatus)));
         if (!responseMs.isEmpty()) left.append(tableRow2col("⏱ Yanıt süresi", escHtml(responseMs) + " ms"));
         if (!firstFailureAt.isEmpty()) left.append(tableRow2col("🕐 İlk hata", formatIso(firstFailureAt)));
         if (!lastError.isEmpty() && !"null".equalsIgnoreCase(lastError))
             left.append(tableRow2col("⚠ Son hata", escHtml(lastError.length() > 90 ? lastError.substring(0, 90) + "…" : lastError)));
 
-        String right = statusRow2col("Kelime durumu", contains ? "✗ İstenmeyen ifade var" : "✗ Bulunamadı")
+        String wordStatus = absent ? "✗ İstenmeyen ifade var"
+                : (!occ.isEmpty() ? "✗ " + occ + " kez · gerekli: " + condPhrase : "✗ Koşul sağlanmadı");
+        String right = statusRow2col("Kelime durumu", wordStatus)
             + statusRow2col("Doğrulama", "✗ " + (n == 0 ? "Başarısız" : n + "/" + n + " başarısız"))
             + statusRow2col("Seviye", "✗ KRİTİK")
             + statusRow2col("İzleme", "✓ Devam ediyor");
 
-        String extraBox = (contains && !snippet.isEmpty())
-            ? "<div style='background:" + accent + "0d;border-left:4px solid " + accent + ";border-radius:0 8px 8px 0;padding:12px 16px;margin-bottom:14px'>"
+        String extraBox = (absent && !snippet.isEmpty())
+            ? "<table width='100%' cellpadding='0' cellspacing='0' border='0' style='margin-bottom:14px'><tr>"
+              + "<td style='background:#f8fafc;border-left:4px solid " + accent + ";padding:12px 16px'>"
               + "<div style='font-size:11px;font-weight:700;letter-spacing:.08em;color:" + accent + ";margin-bottom:6px'>EŞLEŞME BAĞLAMI</div>"
-              + "<div style='font-size:13px;color:#1c1917;font-family:Consolas,monospace;word-break:break-word'>…" + escHtml(snippet) + "…</div></div>"
+              + "<div style='font-size:13px;color:#1c1917;font-family:Consolas,monospace;word-break:break-word'>…" + escHtml(snippet) + "…</div></td></tr></table>"
             : "";
 
         return monitoringTypedAlert(accent, "CertMonitor — İçerik (Keyword) İzleme", "🔎",
-                contains ? "İSTENMEYEN İFADE BULUNDU" : "ANAHTAR KELİME BULUNAMADI",
-                "⚠ İçerik doğrulaması başarısız", escHtml(url), "Anahtar Kelime Doğrulaması",
+                absent ? "İSTENMEYEN İFADE BULUNDU" : "KOŞUL SAĞLANMADI",
+                "⚠ İçerik doğrulaması başarısız", escHtml(url), "İçerik Doğrulama",
                 firstFailureAt, attemptsLabel, delayLabel, left.toString(), right, extraBox, message,
-                "ℹ Kelime tekrar uygun duruma geldiğinde bu alarm otomatik kapatılır ve çözüm e-postası gönderilir.");
+                "ℹ Koşul yeniden sağlandığında bu alarm otomatik kapatılır ve çözüm e-postası gönderilir.",
+                monitorCtaUrl("keyword", ctx));
     }
 
-    /** Ping (ICMP) izleme alarmı — teal kimlik, erişilebilirlik alanları. */
+    /** Ping (ICMP) izleme alarmı — kurumsal lacivert, erişilebilirlik alanları. */
     private String buildRichPingAlertHtml(String message, String host, String level, Map<String, Object> ctx) {
-        String accent = "#0e7490";
+        String accent = "#1f3864";
         boolean na = "true".equalsIgnoreCase(ctxStr(ctx, "na"));
         String ipVersion  = ctxStr(ctx, "ip_version");
         String packetLoss = ctxStr(ctx, "packet_loss");
@@ -1578,18 +1604,29 @@ public class EmailNotificationService {
 
         return monitoringTypedAlert(accent, "CertMonitor — Ping (ICMP) İzleme", "📡",
                 na ? "ICMP KULLANILAMIYOR" : "HOST YANIT VERMİYOR",
-                "⚠ Erişilebilirlik kaybı", escHtml(host), "ICMP Erişim",
+                "⚠ Erişilebilirlik kaybı", escHtml(host), "Erişilebilirlik (Ping)",
                 firstFailureAt, attemptsLabel, delayLabel, left.toString(), right, "", message,
-                "ℹ Host yeniden yanıt verdiğinde bu alarm otomatik kapatılır ve çözüm e-postası gönderilir.");
+                "ℹ Host yeniden yanıt verdiğinde bu alarm otomatik kapatılır ve çözüm e-postası gönderilir.",
+                monitorCtaUrl("ping", ctx));
     }
 
     /** Ortak executive çözüm (yeşil) kartı — keyword/ping kimliğiyle. */
     private String monitoringTypedResolved(String domain, String kicker, String heroLine,
-            String typeTrLabel, String emoji, String resolvedBy, String resolvedAt, String createdAt) {
+            String typeTrLabel, String emoji, String detailRows, String ctaUrl,
+            String resolvedBy, String resolvedAt, String createdAt) {
         String generatedAt = LocalDateTime.now(IST).format(DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm"));
         String green = "#16a34a";
         String by = resolvedBy != null && !resolvedBy.isBlank() ? resolvedBy : "Sistem (otomatik)";
         String duration = formatOutageDuration(createdAt, resolvedAt);
+        String detailSection = (detailRows != null && !detailRows.isBlank())
+            ? "<table width='100%' cellpadding='0' cellspacing='0' border='0' style='margin-bottom:16px;border:1px solid #e2e8f0;border-radius:10px;overflow:hidden'>"
+              + "<tr><td style='background:#1f3864;padding:9px 14px;font-size:11px;font-weight:700;letter-spacing:.1em;color:#cbd5e1'>ÇÖZÜLEN ALARM DETAYI</td></tr>"
+              + detailRows + "</table>"
+            : "";
+        String cta = (ctaUrl != null && !ctaUrl.isBlank())
+            ? "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' style='margin:0 0 16px'><tr><td align='center'>"
+              + ctaButton(ctaUrl, "Monitörü Aç &rarr;", "#1f3864") + "</td></tr></table>"
+            : "";
 
         String resolverRows = tableRow2col("👤 Çözen", escHtml(by))
             + tableRow2col("🕐 Çözülme Zamanı", fmtOrDash(formatIstanbul(resolvedAt)))
@@ -1617,7 +1654,7 @@ public class EmailNotificationService {
             + ".em-col-l{display:block!important;width:100%!important;padding-right:0!important;padding-bottom:10px!important}"
             + ".em-col-r{display:block!important;width:100%!important}}</style>";
 
-        return "<!DOCTYPE html><html lang='tr'><head><meta charset='UTF-8'>"
+        return "<!DOCTYPE html><html lang='tr' xmlns:v='urn:schemas-microsoft-com:vml' xmlns:o='urn:schemas-microsoft-com:office:office'><head><meta charset='UTF-8'>"
             + "<meta name='viewport' content='width=device-width,initial-scale=1,maximum-scale=1'>" + css + "</head>"
             + "<body style='margin:0;padding:0;background:#f1f5f9;font-family:\"Segoe UI\",Tahoma,Arial,sans-serif'>"
             + "<table class='em-wrap' width='100%' cellpadding='0' cellspacing='0' border='0' style='background:#f1f5f9;padding:24px 10px'><tr><td align='center'>"
@@ -1633,25 +1670,43 @@ public class EmailNotificationService {
             + "<div style='margin-top:8px;font-size:20px;font-weight:800;color:#15803d'>" + heroLine + "</div>"
             + "<div style='margin-top:6px;font-size:13px;color:#64748b'>Alarm kapatıldı. İzleme devam etmektedir.</div></div>"
             + twoCol
+            + detailSection
             + "<div style='background:#f0fdf4;border-left:4px solid " + green + ";border-radius:0 8px 8px 0;padding:14px 18px;color:#14532d;font-size:14px;line-height:1.7;margin-bottom:20px'>"
             + "<div style='font-size:11px;font-weight:700;letter-spacing:.08em;color:" + green + ";margin-bottom:6px'>BİLGİ</div>"
             + "<strong>" + escHtml(domain) + "</strong> için açık olan <strong>" + typeTrLabel + "</strong> alarmı kapatıldı. Toplam kesinti süresi: <strong>" + duration + "</strong>.</div>"
+            + cta
             + "<table width='100%' cellpadding='0' cellspacing='0'><tr>"
             + "<td style='border-top:1px solid #f1f5f9;padding-top:12px;font-size:11px;color:#94a3b8'>CertMonitor</td>"
             + "<td align='right' style='border-top:1px solid #f1f5f9;padding-top:12px;font-size:11px;color:#94a3b8'>Bildirim: " + generatedAt + "</td></tr></table>"
             + "</div></td></tr></table></td></tr></table></body></html>";
     }
 
-    private String buildRichKeywordResolvedHtml(String url, String resolvedBy, String resolvedAt, String createdAt) {
+    private String buildRichKeywordResolvedHtml(String url, Map<String, Object> ctx, String resolvedBy, String resolvedAt, String createdAt) {
+        StringBuilder d = new StringBuilder();
+        if (ctx != null) {
+            String kw = ctxStr(ctx, "keyword");
+            String op = ctxStr(ctx, "operator"); if (op.isEmpty()) op = "GTE";
+            int n = ctx.get("match_count") instanceof Number mn ? mn.intValue() : 1;
+            String occ = ctxStr(ctx, "occurrences");
+            if (!kw.isEmpty()) d.append(tableRow2col("🔎 Aranan kelime", escHtml(kw)));
+            d.append(tableRow2col("⚙ Koşul", KeywordCheckerService.opPhrase(op, n) + " bulunmalı"));
+            if (!occ.isEmpty()) d.append(tableRow2col("🔢 Alarm anı bulunan", occ + " kez"));
+        }
         return monitoringTypedResolved(url, "CertMonitor — İçerik (Keyword) İzleme",
-                "İçerik Doğrulaması Yeniden Başarılı", "Anahtar Kelime Doğrulaması", "🔎",
-                resolvedBy, resolvedAt, createdAt);
+                "İçerik Doğrulaması Yeniden Başarılı", "İçerik Doğrulama", "🔎",
+                d.toString(), monitorCtaUrl("keyword", ctx), resolvedBy, resolvedAt, createdAt);
     }
 
-    private String buildRichPingResolvedHtml(String host, String resolvedBy, String resolvedAt, String createdAt) {
+    private String buildRichPingResolvedHtml(String host, Map<String, Object> ctx, String resolvedBy, String resolvedAt, String createdAt) {
+        StringBuilder d = new StringBuilder();
+        if (ctx != null) {
+            String ipv = ctxStr(ctx, "ip_version");
+            d.append(tableRow2col("📡 Host", escHtml(host)));
+            if (!ipv.isEmpty() && !"auto".equals(ipv)) d.append(tableRow2col("🔢 IP sürümü", escHtml(ipv.toUpperCase())));
+        }
         return monitoringTypedResolved(host, "CertMonitor — Ping (ICMP) İzleme",
-                "Host Yeniden Yanıt Veriyor", "ICMP Erişim", "📡",
-                resolvedBy, resolvedAt, createdAt);
+                "Host Yeniden Yanıt Veriyor", "Erişilebilirlik (Ping)", "📡",
+                d.toString(), monitorCtaUrl("ping", ctx), resolvedBy, resolvedAt, createdAt);
     }
 
     /**

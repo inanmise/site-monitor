@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom'
 import { api, formatDate } from '../api/client'
 import { useT } from '../i18n/index.jsx'
 import SearchableSelect from './ui/SearchableSelect.jsx'
-import { Play, Pencil, X, RefreshCw, Plus, Trash2, Target, Users } from 'lucide-react'
+import { Play, Pencil, X, RefreshCw, Plus, Trash2, Target, Users, Layers } from 'lucide-react'
 
 const INTERVALS = [
   { value: 30,  labelKey: 'ping.interval30s' },
@@ -12,7 +12,8 @@ const INTERVALS = [
   { value: 900, labelKey: 'ping.interval15m' },
 ]
 const REFRESH_INTERVAL = 60
-const emptyForm = { name: '', url: '', keyword: '', condition: 'NOT_CONTAINS', teamId: '',
+const OP_SYM = { GTE: '≥', LTE: '≤', EQ: '=', GT: '>', LT: '<' }
+const emptyForm = { name: '', url: '', keyword: '', operator: 'GTE', matchCount: 1, groupName: '', teamId: '',
   intervalSeconds: 60, timeoutMs: 10000, active: true }
 
 export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
@@ -38,8 +39,10 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
   const [checking, setChecking] = useState(null)
   const [search, setSearch] = useState('')
   const [teamFilter, setTeamFilter] = useState('all')
+  const [groupFilter, setGroupFilter] = useState('all')
   const [secondsSince, setSecondsSince] = useState(0)
   const countdownRef = useRef(null)
+  const deepLinkDone = useRef(false)
 
   const load = useCallback(async () => {
     const res = await api.monitoring.getKeywordMonitors()
@@ -63,6 +66,21 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
     api.admin.getTeams().then(r => { if (r?.success) setTeams(r.data || []) })
   }, [isAdmin])
 
+  // E-posta CTA deep-link: ?monitor=<id> → ilgili monitörün detayını aç (bir kez), paramı temizle.
+  useEffect(() => {
+    if (deepLinkDone.current || monitors.length === 0) return
+    deepLinkDone.current = true
+    let id
+    try { id = new URLSearchParams(window.location.search).get('monitor') } catch { return }
+    if (!id) return
+    const m = monitors.find(x => String(x.id) === String(id))
+    if (m) openDetail(m)
+    try {
+      const u = new URL(window.location.href); u.searchParams.delete('monitor')
+      window.history.replaceState({}, '', u.pathname + u.search + u.hash)
+    } catch { /* yoksay */ }
+  }, [monitors]) // eslint-disable-line react-hooks/exhaustive-deps
+
   async function loadHistory(id, days = rangeDays) {
     setHistoryLoading(true)
     const res = await api.monitoring.getKeywordHistory(id, { days })
@@ -79,7 +97,8 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
   function openNew() { setForm({ ...emptyForm, teamId: isAdmin ? '' : (myTeam ?? '') }); setModal('new') }
   function openEdit(m) {
     setForm({ name: m.name || '', url: m.url || '', keyword: m.keyword || '',
-      condition: m.condition || 'NOT_CONTAINS', teamId: m.team_id != null ? String(m.team_id) : '',
+      operator: m.operator || 'GTE', matchCount: m.match_count ?? 1, groupName: m.group_name || '',
+      teamId: m.team_id != null ? String(m.team_id) : '',
       intervalSeconds: m.interval_seconds ?? 60, timeoutMs: m.timeout_ms ?? 10000, active: m.active !== false })
     setModal(m)
   }
@@ -90,7 +109,8 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
     setSaving(true)
     const payload = {
       name: (form.name || form.url).trim(), url: form.url.trim(), keyword: form.keyword,
-      condition: form.condition, teamId: form.teamId === '' ? null : Number(form.teamId),
+      operator: form.operator, matchCount: Number(form.matchCount),
+      groupName: form.groupName?.trim() || null, teamId: form.teamId === '' ? null : Number(form.teamId),
       intervalSeconds: Number(form.intervalSeconds), timeoutMs: Number(form.timeoutMs), active: form.active,
     }
     if (modal === 'new') await api.monitoring.createKeywordMonitor(payload)
@@ -125,11 +145,21 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
   const hasTeamOptions = teamOptions.some(o => o.value !== 'all' && o.value !== '__none__')
   const teamSelectOptions = [{ value: '', label: t('keyword.noTeam') },
     ...teams.map(tm => ({ value: String(tm.id), label: tm.name }))]
+  const groupNames = [...new Set(monitors.map(m => m.group_name).filter(Boolean))].sort((a, b) => a.localeCompare(b))
+  const hasGroupOptions = groupNames.length > 0
+  const groupFilterOptions = [{ value: 'all', label: t('keyword.allGroups') },
+    ...groupNames.map(g => ({ value: g, label: g })),
+    ...(monitors.some(m => !m.group_name) ? [{ value: '__none__', label: t('keyword.noGroup') }] : [])]
+  const groupSelectOptions = groupNames.map(g => ({ value: g, label: g }))
 
   const displayMonitors = monitors.filter(m => {
     if (teamFilter !== 'all') {
       if (teamFilter === '__none__') { if (m.team_name) return false }
       else if (m.team_name !== teamFilter) return false
+    }
+    if (groupFilter !== 'all') {
+      if (groupFilter === '__none__') { if (m.group_name) return false }
+      else if (m.group_name !== groupFilter) return false
     }
     if (!search.trim()) return true
     const q = search.trim().toLowerCase()
@@ -174,6 +204,7 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
 
       {!loading && monitors.length > 0 && (
         <div className="upt-toolbar" style={{ justifyContent: 'flex-end', gap: 8 }}>
+          {hasGroupOptions && <SearchableSelect value={groupFilter} onChange={setGroupFilter} options={groupFilterOptions} searchThreshold={2} />}
           {hasTeamOptions && <SearchableSelect value={teamFilter} onChange={setTeamFilter} options={teamOptions} />}
           <input className="upt-search" type="text" placeholder={t('keyword.searchPlaceholder')}
             value={search} onChange={e => setSearch(e.target.value)} />
@@ -190,7 +221,7 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
               <div className="upt-card-top">
                 {statusBadge(m)}
                 <span className="upt-port-tag">
-                  {m.condition === 'CONTAINS' ? t('keyword.condContainsShort') : t('keyword.condNotContainsShort')}
+                  {(OP_SYM[m.operator] || '≥') + (m.match_count ?? 1)} kez
                 </span>
               </div>
               <div className="upt-card-domain" title={m.url}>{m.url}</div>
@@ -200,6 +231,11 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
               {m.team_name && (
                 <div style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: '.78em', color: 'var(--text-muted)', marginTop: 2 }}>
                   <Users size={12} />{m.team_name}
+                </div>
+              )}
+              {m.group_name && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: '.78em', color: 'var(--text-muted)', marginTop: 2 }}>
+                  <Layers size={12} />{m.group_name}
                 </div>
               )}
               <div className="upt-card-divider" />
@@ -212,6 +248,12 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
                   <div className="upt-metric">
                     <span className="upt-metric-val">{m.response_ms}ms</span>
                     <span className="upt-metric-lbl">{t('keyword.responseMs')}</span>
+                  </div>
+                )}
+                {m.occurrences != null && (
+                  <div className="upt-metric">
+                    <span className="upt-metric-val">{m.occurrences}</span>
+                    <span className="upt-metric-lbl">{t('keyword.occurrences')}</span>
                   </div>
                 )}
               </div>
@@ -294,9 +336,17 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
             <div className="form-grid">
               <label className="full-width"><span>{t('keyword.url')} <span className="req-star">*</span></span>
                 <input value={form.url} placeholder="https://example.com" onChange={e => setForm(f => ({ ...f, url: e.target.value }))} /></label>
-              <label className="full-width"><span>{t('keyword.condition')}</span>
-                <SearchableSelect value={form.condition} onChange={v => setForm(f => ({ ...f, condition: v }))}
-                  options={[{ value: 'NOT_CONTAINS', label: t('keyword.condNotContains') }, { value: 'CONTAINS', label: t('keyword.condContains') }]} /></label>
+              <label><span>{t('keyword.operator')}</span>
+                <SearchableSelect value={form.operator} onChange={v => setForm(f => ({ ...f, operator: v }))}
+                  options={[{ value: 'GTE', label: t('keyword.opGte') }, { value: 'LTE', label: t('keyword.opLte') },
+                    { value: 'EQ', label: t('keyword.opEq') }, { value: 'GT', label: t('keyword.opGt') },
+                    { value: 'LT', label: t('keyword.opLt') }]} /></label>
+              <label><span>{t('keyword.matchCount')}</span>
+                <input type="number" min="0" value={form.matchCount} onChange={e => setForm(f => ({ ...f, matchCount: Number(e.target.value) }))} /></label>
+              <label className="full-width"><span>{t('keyword.group')}</span>
+                <SearchableSelect value={form.groupName} onChange={v => setForm(f => ({ ...f, groupName: v }))}
+                  options={[{ value: '', label: t('keyword.noGroup') }, ...groupSelectOptions]}
+                  creatable onCreate={() => {}} searchThreshold={2} placeholder={t('keyword.noGroup')} /></label>
               <label className="full-width"><span>{t('keyword.keyword')} <span className="req-star">*</span></span>
                 <input value={form.keyword} placeholder="SUCCESS" onChange={e => setForm(f => ({ ...f, keyword: e.target.value }))} /></label>
               <label className="full-width"><span>{t('keyword.name')}</span>
