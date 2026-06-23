@@ -2070,6 +2070,24 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 [data-theme="dark"] .cert-note-history-eventDELETE  { color: #fca5a5; }
 [data-theme="dark"] .cert-note-history-eventRESTORE { color: #c4b5fd; }
 
+/* Incident sayfası — özet kartları + trend akordiyonu (varsayılan kapalı, "Göster" ile açılır).
+   Design token'lar kullanıldığı için dark mode otomatik uyumlu. */
+.inc-summary-acc {
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  padding: 9px 14px; margin-bottom: 14px;
+  background: var(--bg-surface); border: 1px solid var(--border);
+  border-radius: 8px; cursor: pointer; text-align: left;
+  font-size: .9em; font-weight: 700; color: var(--text);
+  transition: background .12s ease, border-color .12s ease;
+}
+.inc-summary-acc:hover { border-color: var(--primary); }
+.inc-summary-acc-chev   { flex-shrink: 0; color: var(--text-muted); }
+.inc-summary-acc-title  { flex: 1; }
+.inc-summary-acc-action {
+  font-size: .8em; font-weight: 600; color: var(--primary);
+  border: 1px solid var(--primary); border-radius: 12px; padding: 1px 11px;
+}
+
 /* ── Activity Log ───────────────────────────────────── */
 .activity-log { display: flex; flex-direction: column; gap: 12px; }
 
