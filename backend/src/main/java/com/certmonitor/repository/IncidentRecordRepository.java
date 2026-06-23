@@ -96,6 +96,15 @@ public interface IncidentRecordRepository extends JpaRepository<IncidentRecord, 
     @Query("SELECT DISTINCT i.service FROM IncidentRecord i WHERE i.service IS NOT NULL AND i.service <> ''")
     List<String> distinctServices();
 
+    @Query("SELECT DISTINCT i.errorCode FROM IncidentRecord i WHERE i.errorCode IS NOT NULL AND i.errorCode <> ''")
+    List<String> distinctErrorCodes();
+
+    @Query("SELECT DISTINCT i.functionCode FROM IncidentRecord i WHERE i.functionCode IS NOT NULL AND i.functionCode <> ''")
+    List<String> distinctFunctionCodes();
+
+    @Query("SELECT DISTINCT i.channelCode FROM IncidentRecord i WHERE i.channelCode IS NOT NULL AND i.channelCode <> ''")
+    List<String> distinctChannelCodes();
+
     @Query("""
             SELECT COUNT(i) FROM IncidentRecord i
              WHERE i.slaBreached = true

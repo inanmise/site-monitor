@@ -4,7 +4,7 @@ import { useT } from '../i18n/index.jsx'
 import { usePermissions } from '../contexts/PermissionsProvider.jsx'
 import { useToast } from './ui/Toast.jsx'
 import { useDialog } from './ui/Dialog.jsx'
-import { RefreshCcw, Plus, ChevronLeft, ChevronRight, Pencil, Trash2, ListChecks } from 'lucide-react'
+import { RefreshCcw, Plus, ChevronLeft, ChevronRight, ChevronDown, Pencil, Trash2, ListChecks } from 'lucide-react'
 import MarkdownEditor from './ui/MarkdownEditor.jsx'
 import DateTimeField from './ui/DateTimeField.jsx'
 import SearchableSelect from './ui/SearchableSelect.jsx'
@@ -30,7 +30,7 @@ function localDayToUtcIso(dateStr, endOfDay) {
 
 const EMPTY = {
   title: '', occurred_at: '', severity: 'HIGH', status: 'OPEN', category: 'APPLICATION',
-  service: '', channel: '', team_id: '', team_name: '', detected_at: '', resolved_at: '',
+  error_code: '', function_code: '', channel_code: '', service: '', channel: '', team_id: '', team_name: '', detected_at: '', resolved_at: '',
   rca_summary: '', description: '', resolution_steps: '', business_impact: '',
   affected_services: '', sla_breached: false, error_budget_burn_pct: '', duration_minutes: '', tags: '',
 }
@@ -227,9 +227,13 @@ export default function IncidentHistoryPage() {
   const [saving, setSaving] = useState(false)
   const [channelOpts, setChannelOpts] = useState([])
   const [domainOpts, setDomainOpts]   = useState([])
+  const [errorCodeOpts, setErrorCodeOpts] = useState([])
+  const [functionCodeOpts, setFunctionCodeOpts] = useState([])
+  const [channelCodeOpts, setChannelCodeOpts]   = useState([])
   const [teams, setTeams]             = useState([])
   const [selected, setSelected]       = useState(() => new Set()) // toplu transfer seçimi (id'ler)
   const [transferTeam, setTransferTeam] = useState('')
+  const [showSummary, setShowSummary]   = useState(false) // özet kartları + trend akordiyonu — varsayılan kapalı
 
   const load = useCallback(async () => {
     if (!allowView) return
@@ -253,9 +257,14 @@ export default function IncidentHistoryPage() {
   const loadOptions = useCallback(async () => {
     if (!allowView) return
     try {
-      const [ch, dm] = await Promise.all([api.incidents.options('CHANNEL'), api.incidents.options('DOMAIN')])
+      const [ch, dm, ec, fc, cc] = await Promise.all([
+        api.incidents.options('CHANNEL'), api.incidents.options('DOMAIN'), api.incidents.options('ERROR_CODE'),
+        api.incidents.options('FUNCTION_CODE'), api.incidents.options('CHANNEL_CODE')])
       if (ch?.success) setChannelOpts(ch.data ?? [])
       if (dm?.success) setDomainOpts(dm.data ?? [])
+      if (ec?.success) setErrorCodeOpts(ec.data ?? [])
+      if (fc?.success) setFunctionCodeOpts(fc.data ?? [])
+      if (cc?.success) setChannelCodeOpts(cc.data ?? [])
     } catch { /* sessiz — dropdown boş kalır, yine de yeni değer eklenebilir */ }
   }, [allowView])
 
@@ -388,6 +397,16 @@ export default function IncidentHistoryPage() {
         </div>
       </div>
 
+      {/* Özet (executive kartlar + günlük trend) — akordiyon: varsayılan kapalı, "Göster" ile açılır */}
+      <button type="button" className="inc-summary-acc" aria-expanded={showSummary}
+              onClick={() => setShowSummary(s => !s)}>
+        {showSummary ? <ChevronDown size={16} className="inc-summary-acc-chev" />
+                     : <ChevronRight size={16} className="inc-summary-acc-chev" />}
+        <span className="inc-summary-acc-title">{t('inc.summary')}</span>
+        <span className="inc-summary-acc-action">{showSummary ? t('inc.hide') : t('inc.show')}</span>
+      </button>
+
+      {showSummary && (<>
       {/* Executive özet kartları — tıklanınca filtre uygular (proje stats-panel deseni) */}
       <div className="stats-panel" style={{ gridTemplateColumns: 'repeat(5,1fr)' }}>
         {[['sumTotal', sum.total, 'total', 'total'], ['sumCritical', sum.critical, 'critical', 'critical'],
@@ -424,6 +443,7 @@ export default function IncidentHistoryPage() {
           </div>
         </div>
       )}
+      </>)}
 
       {/* Filtreler */}
       <div className="inv-stats-pills" style={{ marginBottom: 12, gap: 8, alignItems: 'center' }}>
@@ -534,14 +554,15 @@ export default function IncidentHistoryPage() {
 
       {modal && <IncidentModal modal={modal} setModal={setModal} save={save} remove={remove}
                                saving={saving} allowManage={allowManage} allowDelete={allowDelete} t={t} teams={teams}
-                               channelOpts={channelOpts} domainOpts={domainOpts}
+                               channelOpts={channelOpts} domainOpts={domainOpts} errorCodeOpts={errorCodeOpts}
+                               functionCodeOpts={functionCodeOpts} channelCodeOpts={channelCodeOpts}
                                onAddOption={addOption} onDeleteOption={deleteOption} />}
     </div>
   )
 }
 
 /** Detay (read-only) / düzenle / oluştur modalı — proje form deseni (modal-box + form-grid). */
-function IncidentModal({ modal, setModal, save, remove, saving, allowManage, allowDelete, t, teams, channelOpts, domainOpts, onAddOption, onDeleteOption }) {
+function IncidentModal({ modal, setModal, save, remove, saving, allowManage, allowDelete, t, teams, channelOpts, domainOpts, errorCodeOpts, functionCodeOpts, channelCodeOpts, onAddOption, onDeleteOption }) {
   const editing = modal.mode !== 'view'
   const f = modal.form
   const set = (k, v) => setModal(m => ({ ...m, form: { ...m.form, [k]: v } }))
@@ -616,6 +637,15 @@ function IncidentModal({ modal, setModal, save, remove, saving, allowManage, all
           <SelectInput label={t('inc.fSeverity')} value={f.severity} disabled={!editing} onChange={v => set('severity', v)} options={opts(SEVERITIES, 'inc.sev')} />
           <SelectInput label={t('inc.fStatus')} value={f.status} disabled={!editing} onChange={v => set('status', v)} options={opts(STATUSES, 'inc.st')} />
           <SelectInput label={t('inc.fCategory')} value={f.category} disabled={!editing} onChange={v => set('category', v)} options={opts(CATEGORIES, 'inc.cat')} />
+          <CreatableSelect label={t('inc.fErrorCode')} value={f.error_code} disabled={!editing}
+            options={errorCodeOpts} onChange={v => set('error_code', v)}
+            onCreate={v => onAddOption('ERROR_CODE', v)} onDelete={v => onDeleteOption('ERROR_CODE', v)} />
+          <CreatableSelect label={t('inc.fFunctionCode')} value={f.function_code} disabled={!editing}
+            options={functionCodeOpts} onChange={v => set('function_code', v)}
+            onCreate={v => onAddOption('FUNCTION_CODE', v)} onDelete={v => onDeleteOption('FUNCTION_CODE', v)} />
+          <CreatableSelect label={t('inc.fChannelCode')} value={f.channel_code} disabled={!editing}
+            options={channelCodeOpts} onChange={v => set('channel_code', v)}
+            onCreate={v => onAddOption('CHANNEL_CODE', v)} onDelete={v => onDeleteOption('CHANNEL_CODE', v)} />
           <DateInput label={t('inc.fDetectedAt')} value={f.detected_at} disabled={!editing} onChange={v => set('detected_at', v)} />
           <DateInput label={t('inc.fResolvedAt')} value={f.resolved_at} disabled={!editing} min={f.detected_at} onChange={v => set('resolved_at', v)} />
           <TextInput label={t('inc.fErrorBudget')} type="number" value={f.error_budget_burn_pct} disabled={!editing} onChange={v => set('error_budget_burn_pct', v)} />

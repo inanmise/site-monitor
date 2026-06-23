@@ -55,6 +55,21 @@ public class IncidentRecord {
     @Column(nullable = false, length = 30)
     private String category;
 
+    /** Hata kodu — opsiyonel; incident_options(type=ERROR_CODE) listesinden seçilir ya da
+     *  yeni eklenir (creatable). Kullanıcı kodu biliyorsa combobox'tan seçer, bilmiyorsa yeni ekler. */
+    @Column(length = 100)
+    private String errorCode;
+
+    /** Fonksiyon kodu — opsiyonel; incident_options(type=FUNCTION_CODE) listesinden seçilir ya da
+     *  yeni eklenir (creatable). Biliniyorsa girilir; bilinen kod yoksa combobox'a eklenir. */
+    @Column(length = 100)
+    private String functionCode;
+
+    /** Kanal kodu — opsiyonel; incident_options(type=CHANNEL_CODE) listesinden seçilir ya da
+     *  yeni eklenir (creatable). Mevcut serbest "channel" alanından ayrı bir koddur. */
+    @Column(length = 100)
+    private String channelCode;
+
     /** Etkilenen servis/domain — çoklu seçim CSV ('a, b, c'). incident sayfasından yönetilen liste; arama hedefi. */
     @Column(length = 500)
     private String service;

@@ -251,6 +251,9 @@ public class IncidentController {
         m.put("severity", e.getSeverity());
         m.put("status", e.getStatus());
         m.put("category", e.getCategory());
+        m.put("error_code", e.getErrorCode());
+        m.put("function_code", e.getFunctionCode());
+        m.put("channel_code", e.getChannelCode());
         m.put("service", e.getService());
         m.put("channel", e.getChannel());
         m.put("team_id", e.getTeamId());

@@ -45,9 +45,12 @@ public class IncidentService {
                                                  "APPLICATION", "INFRASTRUCTURE", "OTHER");
 
     /** Yönetilen seçenek tipleri (incident sayfasından genişletilebilir dropdown'lar). */
-    static final String OPT_CHANNEL = "CHANNEL";
-    static final String OPT_DOMAIN  = "DOMAIN";
-    static final Set<String> OPTION_TYPES = Set.of(OPT_CHANNEL, OPT_DOMAIN);
+    static final String OPT_CHANNEL       = "CHANNEL";
+    static final String OPT_DOMAIN        = "DOMAIN";
+    static final String OPT_ERROR_CODE    = "ERROR_CODE";
+    static final String OPT_FUNCTION_CODE = "FUNCTION_CODE";
+    static final String OPT_CHANNEL_CODE  = "CHANNEL_CODE";
+    static final Set<String> OPTION_TYPES = Set.of(OPT_CHANNEL, OPT_DOMAIN, OPT_ERROR_CODE, OPT_FUNCTION_CODE, OPT_CHANNEL_CODE);
 
     /** Açılışta tohumlanan varsayılan kanallar (banka kanalları; kullanıcı ekleyip çıkarabilir). */
     private static final List<String> CHANNEL_DEFAULTS = List.of(
@@ -211,7 +214,10 @@ public class IncidentService {
         // Olaylardaki değerler artık CSV olabilir → virgülle bölüp TEKİL değerleri ekle
         // (dropdown'da "ATM, POS" gibi combo görünmesin).
         List<String> distinct = OPT_CHANNEL.equals(t) ? repo.distinctChannels()
-                : OPT_DOMAIN.equals(t) ? repo.distinctServices() : List.of();
+                : OPT_DOMAIN.equals(t) ? repo.distinctServices()
+                : OPT_ERROR_CODE.equals(t) ? repo.distinctErrorCodes()
+                : OPT_FUNCTION_CODE.equals(t) ? repo.distinctFunctionCodes()
+                : OPT_CHANNEL_CODE.equals(t) ? repo.distinctChannelCodes() : List.of();
         for (String csv : distinct) {
             if (csv == null) continue;
             for (String part : csv.split(",")) {
@@ -294,6 +300,9 @@ public class IncidentService {
         if (body.containsKey("severity") || create)         e.setSeverity(reqEnum(body, "severity", SEVERITIES, e.getSeverity(), create));
         if (body.containsKey("status") || create)           e.setStatus(reqEnum(body, "status", STATUSES, e.getStatus(), create));
         if (body.containsKey("category") || create)         e.setCategory(reqEnum(body, "category", CATEGORIES, e.getCategory(), create));
+        if (body.containsKey("error_code"))                 e.setErrorCode(str(body, "error_code"));
+        if (body.containsKey("function_code"))              e.setFunctionCode(str(body, "function_code"));
+        if (body.containsKey("channel_code"))               e.setChannelCode(str(body, "channel_code"));
         if (body.containsKey("service"))                    e.setService(str(body, "service"));
         if (body.containsKey("channel"))                    e.setChannel(str(body, "channel"));
         if (body.containsKey("team_id"))                    e.setTeamId(toLong(body.get("team_id")));
