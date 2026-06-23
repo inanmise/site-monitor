@@ -212,7 +212,7 @@ export default function EscalationContacts({ teams = [], systemRole, isAdmin: is
         <div className="modal-overlay" onClick={() => setModal(null)}>
           <div className="modal-box" onClick={(e) => e.stopPropagation()}>
             <h3>{modal === 'add' ? t('ec.addTitle') : t('ec.editTitle')}</h3>
-            <div className="form-grid">
+            <div className="form-grid form-grid--top">
               <label>
                 <span>{t('contact.user')} <span className="req-star">*</span></span>
                 <SearchableSelect
