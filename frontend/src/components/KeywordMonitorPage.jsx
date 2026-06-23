@@ -15,9 +15,15 @@ const REFRESH_INTERVAL = 60
 const emptyForm = { name: '', url: '', keyword: '', condition: 'NOT_CONTAINS', teamId: '',
   intervalSeconds: 60, timeoutMs: 10000, active: true }
 
-export default function KeywordMonitorPage({ systemRole }) {
+export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
   const t = useT()
   const isAdmin = systemRole === 'ADMIN'
+  const isTeamAdmin = systemRole === 'TEAM_ADMIN'
+  const canWrite = isAdmin || isTeamAdmin || systemRole === 'USER'      // USER ve üstü: kendi takımı için oluştur/düzenle/kontrol
+  const myTeam = teamId != null ? String(teamId) : null
+  const isOwnTeam = (m) => myTeam != null && String(m.team_id) === myTeam
+  const canManageRow = (m) => isAdmin || isOwnTeam(m)                    // düzenle + kontrol (kendi takımı)
+  const canDeleteRow = (m) => isAdmin || (isTeamAdmin && isOwnTeam(m))   // silme: TEAM_ADMIN/ADMIN
   const [monitors, setMonitors] = useState([])
   const [loading, setLoading] = useState(true)
   const [teams, setTeams] = useState([])
@@ -70,7 +76,7 @@ export default function KeywordMonitorPage({ systemRole }) {
   function openDetail(m) { setSelected(m); setHistory([]); loadHistory(m.id, rangeDays) }
   function closeDetail() { setSelected(null); setHistory([]) }
 
-  function openNew() { setForm(emptyForm); setModal('new') }
+  function openNew() { setForm({ ...emptyForm, teamId: isAdmin ? '' : (myTeam ?? '') }); setModal('new') }
   function openEdit(m) {
     setForm({ name: m.name || '', url: m.url || '', keyword: m.keyword || '',
       condition: m.condition || 'NOT_CONTAINS', teamId: m.team_id != null ? String(m.team_id) : '',
@@ -158,7 +164,7 @@ export default function KeywordMonitorPage({ systemRole }) {
           <button className="btn btn-sm upt-refresh-btn" onClick={load}>
             <RefreshCw size={14} />{t('keyword.refresh')}
           </button>
-          {isAdmin && (
+          {canWrite && (
             <button className="btn btn-sm btn-primary" onClick={openNew}>
               <Plus size={14} />{t('keyword.addMonitor')}
             </button>
@@ -175,7 +181,7 @@ export default function KeywordMonitorPage({ systemRole }) {
       )}
 
       {loading ? <div className="loading">...</div> : monitors.length === 0 ? (
-        <div className="loading">{isAdmin ? t('keyword.noMonitorsAdmin') : t('keyword.noMonitors')}</div>
+        <div className="loading">{canWrite ? t('keyword.noMonitorsAdmin') : t('keyword.noMonitors')}</div>
       ) : (
         <div className="upt-grid">
           {displayMonitors.map(m => (
@@ -211,7 +217,7 @@ export default function KeywordMonitorPage({ systemRole }) {
               </div>
               <div className="upt-card-foot">
                 <span>{m.checked_at ? formatDate(m.checked_at) : ''}</span>
-                {isAdmin && (
+                {canManageRow(m) && (
                   <span style={{ display: 'flex', gap: 6 }} onClick={e => e.stopPropagation()}>
                     <button className="btn btn-sm mon-btn-check" disabled={checking === m.id} onClick={() => checkNow(m)} title={t('keyword.check')}><Play size={12} /></button>
                     <button className="btn btn-sm mon-btn-edit" onClick={() => openEdit(m)} title={t('keyword.edit')}><Pencil size={12} /></button>
@@ -296,7 +302,9 @@ export default function KeywordMonitorPage({ systemRole }) {
               <label className="full-width"><span>{t('keyword.name')}</span>
                 <input value={form.name} placeholder={form.url} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} /></label>
               <label className="full-width"><span>{t('keyword.team')}</span>
-                <SearchableSelect value={form.teamId} onChange={v => setForm(f => ({ ...f, teamId: v }))} options={teamSelectOptions} searchThreshold={2} /></label>
+                {isAdmin
+                  ? <SearchableSelect value={form.teamId} onChange={v => setForm(f => ({ ...f, teamId: v }))} options={teamSelectOptions} searchThreshold={2} />
+                  : <input value={teamName || t('keyword.noTeam')} disabled />}</label>
               <label><span>{t('keyword.interval')}</span>
                 <select value={form.intervalSeconds} onChange={e => setForm(f => ({ ...f, intervalSeconds: Number(e.target.value) }))}>
                   {INTERVALS.map(o => <option key={o.value} value={o.value}>{t(o.labelKey)}</option>)}
@@ -307,7 +315,7 @@ export default function KeywordMonitorPage({ systemRole }) {
                 <input type="checkbox" checked={form.active} onChange={e => setForm(f => ({ ...f, active: e.target.checked }))} />{t('keyword.active')}</label>
             </div>
             <div className="modal-actions">
-              {modal !== 'new' && <button className="btn btn-danger" style={{ marginRight: 'auto' }} onClick={del}><Trash2 size={14} />{t('keyword.delete')}</button>}
+              {modal !== 'new' && canDeleteRow(modal) && <button className="btn btn-danger" style={{ marginRight: 'auto' }} onClick={del}><Trash2 size={14} />{t('keyword.delete')}</button>}
               <button className="btn btn-secondary" onClick={closeEdit}>{t('keyword.cancel')}</button>
               <button className="btn btn-primary" onClick={save} disabled={saving || !form.url.trim() || !form.keyword.trim()}>{saving ? '...' : t('keyword.save')}</button>
             </div>

@@ -598,7 +598,8 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
 
       {/* ── Ana Form Modalı ── */}
       {modal !== null && (
-        <div className="modal-overlay" onClick={() => setModal(null)}>
+        // Dış (overlay) tıklamada KAPANMAZ — girilen veri kaybolmasın; yalnız İptal/Kaydet kapatır.
+        <div className="modal-overlay">
           <div className="modal-box modal-wide" onClick={(e) => e.stopPropagation()}>
             <h3>{modal === 'add' ? t('inv.addTitle') : t('inv.editTitle')}</h3>
 

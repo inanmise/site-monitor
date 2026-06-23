@@ -15,9 +15,15 @@ const REFRESH_INTERVAL = 60
 const emptyForm = { name: '', host: '', ipVersion: 'auto', teamId: '',
   intervalSeconds: 60, timeoutMs: 5000, packetCount: 4, active: true }
 
-export default function PingMonitorPage({ systemRole }) {
+export default function PingMonitorPage({ systemRole, teamId, teamName }) {
   const t = useT()
   const isAdmin = systemRole === 'ADMIN'
+  const isTeamAdmin = systemRole === 'TEAM_ADMIN'
+  const canWrite = isAdmin || isTeamAdmin || systemRole === 'USER'      // USER ve üstü: kendi takımı için oluştur/düzenle/kontrol
+  const myTeam = teamId != null ? String(teamId) : null
+  const isOwnTeam = (m) => myTeam != null && String(m.team_id) === myTeam
+  const canManageRow = (m) => isAdmin || isOwnTeam(m)                    // düzenle + kontrol (kendi takımı)
+  const canDeleteRow = (m) => isAdmin || (isTeamAdmin && isOwnTeam(m))   // silme: TEAM_ADMIN/ADMIN
   const [monitors, setMonitors] = useState([])
   const [loading, setLoading] = useState(true)
   const [teams, setTeams] = useState([])
@@ -70,7 +76,7 @@ export default function PingMonitorPage({ systemRole }) {
   function openDetail(m) { setSelected(m); setHistory([]); loadHistory(m.id, rangeDays) }
   function closeDetail() { setSelected(null); setHistory([]) }
 
-  function openNew() { setForm(emptyForm); setModal('new') }
+  function openNew() { setForm({ ...emptyForm, teamId: isAdmin ? '' : (myTeam ?? '') }); setModal('new') }
   function openEdit(m) {
     setForm({ name: m.name || '', host: m.host || '', ipVersion: m.ip_version || 'auto',
       teamId: m.team_id != null ? String(m.team_id) : '', intervalSeconds: m.interval_seconds ?? 60,
@@ -156,7 +162,7 @@ export default function PingMonitorPage({ systemRole }) {
           <button className="btn btn-sm upt-refresh-btn" onClick={load}>
             <RefreshCw size={14} />{t('ping.refresh')}
           </button>
-          {isAdmin && (
+          {canWrite && (
             <button className="btn btn-sm btn-primary" onClick={openNew}>
               <Plus size={14} />{t('ping.addMonitor')}
             </button>
@@ -173,7 +179,7 @@ export default function PingMonitorPage({ systemRole }) {
       )}
 
       {loading ? <div className="loading">...</div> : monitors.length === 0 ? (
-        <div className="loading">{isAdmin ? t('ping.noMonitorsAdmin') : t('ping.noMonitors')}</div>
+        <div className="loading">{canWrite ? t('ping.noMonitorsAdmin') : t('ping.noMonitors')}</div>
       ) : (
         <div className="upt-grid">
           {displayMonitors.map(m => (
@@ -204,7 +210,7 @@ export default function PingMonitorPage({ systemRole }) {
               </div>
               <div className="upt-card-foot">
                 <span>{m.checked_at ? formatDate(m.checked_at) : ''}</span>
-                {isAdmin && (
+                {canManageRow(m) && (
                   <span style={{ display: 'flex', gap: 6 }} onClick={e => e.stopPropagation()}>
                     <button className="btn btn-sm mon-btn-check" disabled={checking === m.id} onClick={() => checkNow(m)} title={t('ping.check')}><Play size={12} /></button>
                     <button className="btn btn-sm mon-btn-edit" onClick={() => openEdit(m)} title={t('ping.edit')}><Pencil size={12} /></button>
@@ -290,7 +296,9 @@ export default function PingMonitorPage({ systemRole }) {
               <label className="full-width"><span>{t('ping.name')}</span>
                 <input value={form.name} placeholder={form.host} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} /></label>
               <label className="full-width"><span>{t('ping.team')}</span>
-                <SearchableSelect value={form.teamId} onChange={v => setForm(f => ({ ...f, teamId: v }))} options={teamSelectOptions} searchThreshold={2} /></label>
+                {isAdmin
+                  ? <SearchableSelect value={form.teamId} onChange={v => setForm(f => ({ ...f, teamId: v }))} options={teamSelectOptions} searchThreshold={2} />
+                  : <input value={teamName || t('ping.noTeam')} disabled />}</label>
               <label><span>{t('ping.interval')}</span>
                 <select value={form.intervalSeconds} onChange={e => setForm(f => ({ ...f, intervalSeconds: Number(e.target.value) }))}>
                   {INTERVALS.map(o => <option key={o.value} value={o.value}>{t(o.labelKey)}</option>)}
@@ -301,7 +309,7 @@ export default function PingMonitorPage({ systemRole }) {
                 <input type="checkbox" checked={form.active} onChange={e => setForm(f => ({ ...f, active: e.target.checked }))} />{t('ping.active')}</label>
             </div>
             <div className="modal-actions">
-              {modal !== 'new' && <button className="btn btn-danger" style={{ marginRight: 'auto' }} onClick={del}><Trash2 size={14} />{t('ping.delete')}</button>}
+              {modal !== 'new' && canDeleteRow(modal) && <button className="btn btn-danger" style={{ marginRight: 'auto' }} onClick={del}><Trash2 size={14} />{t('ping.delete')}</button>}
               <button className="btn btn-secondary" onClick={closeEdit}>{t('ping.cancel')}</button>
               <button className="btn btn-primary" onClick={save} disabled={saving || !form.host.trim()}>{saving ? '...' : t('ping.save')}</button>
             </div>
