@@ -5,10 +5,17 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 
+import javax.net.ssl.SSLContext;
+import javax.net.ssl.TrustManager;
+import javax.net.ssl.X509TrustManager;
+import java.io.InputStream;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
+import java.security.SecureRandom;
+import java.security.cert.X509Certificate;
 import java.time.Duration;
 import java.util.LinkedHashMap;
 import java.util.Locale;
@@ -25,14 +32,30 @@ import java.util.concurrent.CompletableFuture;
 @Service
 public class KeywordCheckerService {
 
+    /** Yanıt gövdesi okuma tavanı (OOM koruması) — keyword aramaya fazlasıyla yeter. */
+    private static final int MAX_BODY_BYTES = 2_000_000;
+
     private HttpClient httpClient;
 
+    /** İç-CA / self-signed HTTPS sitelerini de izleyebilmek için trust-all
+     *  (içerik kontrolü; sertifika geçerliliği ayrı cert checker'da izlenir). */
     @PostConstruct
     public void init() {
-        httpClient = HttpClient.newBuilder()
+        HttpClient.Builder b = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(10))
-                .followRedirects(HttpClient.Redirect.NORMAL)
-                .build();
+                .followRedirects(HttpClient.Redirect.NORMAL);
+        try {
+            SSLContext ssl = SSLContext.getInstance("TLS");
+            ssl.init(null, new TrustManager[]{ new X509TrustManager() {
+                public void checkClientTrusted(X509Certificate[] c, String a) {}
+                public void checkServerTrusted(X509Certificate[] c, String a) {}
+                public X509Certificate[] getAcceptedIssuers() { return new X509Certificate[0]; }
+            }}, new SecureRandom());
+            b.sslContext(ssl);
+        } catch (Exception e) {
+            log.warn("Keyword checker trust-all SSL kurulamadı, varsayılan kullanılacak: {}", e.getMessage());
+        }
+        httpClient = b.build();
     }
 
     @Async("certCheckExecutor")
@@ -51,9 +74,13 @@ public class KeywordCheckerService {
                     .header("User-Agent", "CertMonitor-KeywordMonitor/1.0")
                     .GET()
                     .build();
-            HttpResponse<String> resp = httpClient.send(req, HttpResponse.BodyHandlers.ofString());
+            HttpResponse<InputStream> resp = httpClient.send(req, HttpResponse.BodyHandlers.ofInputStream());
+            byte[] bytes;
+            try (InputStream is = resp.body()) {
+                bytes = is.readNBytes(MAX_BODY_BYTES);   // bellek koruması: gövde tavanı
+            }
             long ms = System.currentTimeMillis() - start;
-            String body = resp.body() != null ? resp.body() : "";
+            String body = new String(bytes, StandardCharsets.UTF_8);
             String hay = body.toLowerCase(Locale.ROOT);
             String needle = keyword != null ? keyword.toLowerCase(Locale.ROOT) : "";
             boolean found = !needle.isEmpty() && hay.contains(needle);
