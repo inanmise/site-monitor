@@ -71,6 +71,41 @@ public class MonitoringController {
         }
     }
 
+    /** Oturum sahibinin kendi takımı (session "teamId"). */
+    private static Long sessionTeamId(HttpSession session) {
+        Object v = session != null ? session.getAttribute("teamId") : null;
+        if (v instanceof Number n) return n.longValue();
+        if (v != null) { try { return Long.valueOf(v.toString().trim()); } catch (Exception ignored) {} }
+        return null;
+    }
+
+    /** Serbest-form izleme (keyword/ping) üzerinde yazma/çalıştırma kapsamı:
+     *  global admin → her takım; TEAM_ADMIN → yönetim kapsamındaki takımlar; USER → kendi takımı. */
+    private boolean canOperateTeam(HttpSession session, Long teamId) {
+        if (SessionScope.isGlobalAdmin(session)) return true;
+        if (teamId == null) return false;
+        if (SessionScope.canManage(session, teamId)) return true;   // TEAM_ADMIN yönetim kapsamı
+        return teamId.equals(sessionTeamId(session));               // USER kendi takımı
+    }
+
+    /** Oluştururken hedef takımı çözer: global admin istediğini (veya takımsız) atar; diğerleri
+     *  yalnız iş görebildikleri bir takıma — değilse kendi takımlarına düşer. */
+    private Long resolveWriteTeam(HttpSession session, Map<String, Object> body) {
+        Long requested = body.get("teamId") instanceof Number n ? n.longValue() : null;
+        if (SessionScope.isGlobalAdmin(session)) return requested;
+        if (requested != null && canOperateTeam(session, requested)) return requested;
+        return sessionTeamId(session);
+    }
+
+    /** Güncellemede takım değişimini çözer: admin serbest; diğerleri yalnız iş görebildikleri
+     *  bir takıma taşıyabilir — yetkisiz/null hedef yok sayılır (mevcut takım korunur). */
+    private Long resolveTeamChange(HttpSession session, Long current, Object requestedRaw) {
+        Long requested = requestedRaw instanceof Number n ? n.longValue() : null;
+        if (SessionScope.isGlobalAdmin(session)) return requested;
+        if (requested != null && canOperateTeam(session, requested)) return requested;
+        return current;
+    }
+
     private ResponseEntity<Map<String, Object>> notFound(String msg) {
         return ResponseEntity.status(404).body(Map.of("success", false, "error", msg));
     }
@@ -674,9 +709,10 @@ public class MonitoringController {
 
     @PostMapping("/keyword")
     public ResponseEntity<Map<String, Object>> createKeyword(@RequestBody Map<String, Object> body, HttpSession session) {
-        requireAdmin(session);
         permissionService.require(session, "monitoring.crud", "edit");
         if (blank(body.get("url")) || blank(body.get("keyword"))) return badRequest("url ve keyword zorunlu");
+        Long teamId = resolveWriteTeam(session, body);
+        if (teamId == null && !SessionScope.isGlobalAdmin(session)) return badRequest("Bir takıma atanmamışsınız; izleme oluşturulamıyor");
         String now = ISO.format(Instant.now());
         KeywordMonitor m = new KeywordMonitor();
         m.setName((String) body.get("name"));
@@ -684,7 +720,7 @@ public class MonitoringController {
         m.setKeyword((String) body.get("keyword"));
         String cond = body.get("condition") != null ? body.get("condition").toString() : "NOT_CONTAINS";
         m.setAlertCondition("CONTAINS".equals(cond) ? "CONTAINS" : "NOT_CONTAINS");
-        if (body.get("teamId") != null) m.setTeamId(((Number) body.get("teamId")).longValue());
+        m.setTeamId(teamId);
         m.setActive(true);
         if (body.get("intervalSeconds") != null) m.setIntervalSeconds(((Number) body.get("intervalSeconds")).intValue());
         if (body.get("timeoutMs")       != null) m.setTimeoutMs(((Number) body.get("timeoutMs")).intValue());
@@ -696,14 +732,14 @@ public class MonitoringController {
 
     @PutMapping("/keyword/{id}")
     public ResponseEntity<Map<String, Object>> updateKeyword(@PathVariable Long id, @RequestBody Map<String, Object> body, HttpSession session) {
-        requireAdmin(session);
         permissionService.require(session, "monitoring.crud", "edit");
         return keywordMonitorRepo.findById(id).map(m -> {
+            if (!canOperateTeam(session, m.getTeamId())) throw new SecurityException("Bu takımın izlemesini düzenleyemezsiniz");
             if (body.get("name")            != null) m.setName((String) body.get("name"));
             if (body.get("url")             != null) m.setUrl((String) body.get("url"));
             if (body.get("keyword")         != null) m.setKeyword((String) body.get("keyword"));
             if (body.get("condition")       != null) m.setAlertCondition("CONTAINS".equals(body.get("condition").toString()) ? "CONTAINS" : "NOT_CONTAINS");
-            if (body.containsKey("teamId"))          m.setTeamId(body.get("teamId") != null ? ((Number) body.get("teamId")).longValue() : null);
+            if (body.containsKey("teamId"))          m.setTeamId(resolveTeamChange(session, m.getTeamId(), body.get("teamId")));
             if (body.get("active")          != null) m.setActive((Boolean) body.get("active"));
             if (body.get("intervalSeconds") != null) m.setIntervalSeconds(((Number) body.get("intervalSeconds")).intValue());
             if (body.get("timeoutMs")       != null) m.setTimeoutMs(((Number) body.get("timeoutMs")).intValue());
@@ -715,9 +751,9 @@ public class MonitoringController {
 
     @DeleteMapping("/keyword/{id}")
     public ResponseEntity<Map<String, Object>> deleteKeyword(@PathVariable Long id, HttpSession session) {
-        requireAdmin(session);
         permissionService.require(session, "monitoring.crud", "edit");
         return keywordMonitorRepo.findById(id).map(m -> {
+            if (!SessionScope.canManage(session, m.getTeamId())) throw new SecurityException("Silme yetkisi yok (yalnız takım yöneticisi/ADMIN)");
             m.setActive(false);
             m.setUpdatedAt(ISO.format(Instant.now()));
             keywordMonitorRepo.save(m);
@@ -752,9 +788,9 @@ public class MonitoringController {
 
     @PostMapping("/keyword/{id}/check")
     public ResponseEntity<Map<String, Object>> triggerKeyword(@PathVariable Long id, HttpSession session) {
-        requireAdmin(session);
         permissionService.require(session, "monitoring.trigger", "execute");
         return keywordMonitorRepo.findById(id).map(m -> {
+            if (!canOperateTeam(session, m.getTeamId())) throw new SecurityException("Bu takımın izlemesini çalıştıramazsınız");
             Map<String, Object> r = keywordChecker.check(m.getUrl(), m.getKeyword(),
                     m.getTimeoutMs() != null ? m.getTimeoutMs() : 10000);
             boolean found = Boolean.TRUE.equals(r.getOrDefault("found", false));
@@ -818,16 +854,17 @@ public class MonitoringController {
 
     @PostMapping("/ping")
     public ResponseEntity<Map<String, Object>> createPing(@RequestBody Map<String, Object> body, HttpSession session) {
-        requireAdmin(session);
         permissionService.require(session, "monitoring.crud", "edit");
         if (blank(body.get("host"))) return badRequest("host zorunlu");
+        Long teamId = resolveWriteTeam(session, body);
+        if (teamId == null && !SessionScope.isGlobalAdmin(session)) return badRequest("Bir takıma atanmamışsınız; izleme oluşturulamıyor");
         String now = ISO.format(Instant.now());
         PingMonitor m = new PingMonitor();
         m.setName((String) body.get("name"));
         m.setHost((String) body.get("host"));
         String ipv = body.get("ipVersion") != null ? body.get("ipVersion").toString() : "auto";
         m.setIpVersion(Set.of("v4", "v6", "auto").contains(ipv) ? ipv : "auto");
-        if (body.get("teamId") != null) m.setTeamId(((Number) body.get("teamId")).longValue());
+        m.setTeamId(teamId);
         m.setActive(true);
         if (body.get("intervalSeconds") != null) m.setIntervalSeconds(((Number) body.get("intervalSeconds")).intValue());
         if (body.get("timeoutMs")       != null) m.setTimeoutMs(((Number) body.get("timeoutMs")).intValue());
@@ -840,13 +877,13 @@ public class MonitoringController {
 
     @PutMapping("/ping/{id}")
     public ResponseEntity<Map<String, Object>> updatePing(@PathVariable Long id, @RequestBody Map<String, Object> body, HttpSession session) {
-        requireAdmin(session);
         permissionService.require(session, "monitoring.crud", "edit");
         return pingMonitorRepo.findById(id).map(m -> {
+            if (!canOperateTeam(session, m.getTeamId())) throw new SecurityException("Bu takımın izlemesini düzenleyemezsiniz");
             if (body.get("name")            != null) m.setName((String) body.get("name"));
             if (body.get("host")            != null) m.setHost((String) body.get("host"));
             if (body.get("ipVersion")       != null) { String v = body.get("ipVersion").toString(); m.setIpVersion(Set.of("v4","v6","auto").contains(v) ? v : "auto"); }
-            if (body.containsKey("teamId"))          m.setTeamId(body.get("teamId") != null ? ((Number) body.get("teamId")).longValue() : null);
+            if (body.containsKey("teamId"))          m.setTeamId(resolveTeamChange(session, m.getTeamId(), body.get("teamId")));
             if (body.get("active")          != null) m.setActive((Boolean) body.get("active"));
             if (body.get("intervalSeconds") != null) m.setIntervalSeconds(((Number) body.get("intervalSeconds")).intValue());
             if (body.get("timeoutMs")       != null) m.setTimeoutMs(((Number) body.get("timeoutMs")).intValue());
@@ -859,9 +896,9 @@ public class MonitoringController {
 
     @DeleteMapping("/ping/{id}")
     public ResponseEntity<Map<String, Object>> deletePing(@PathVariable Long id, HttpSession session) {
-        requireAdmin(session);
         permissionService.require(session, "monitoring.crud", "edit");
         return pingMonitorRepo.findById(id).map(m -> {
+            if (!SessionScope.canManage(session, m.getTeamId())) throw new SecurityException("Silme yetkisi yok (yalnız takım yöneticisi/ADMIN)");
             m.setActive(false);
             m.setUpdatedAt(ISO.format(Instant.now()));
             pingMonitorRepo.save(m);
@@ -896,9 +933,9 @@ public class MonitoringController {
 
     @PostMapping("/ping/{id}/check")
     public ResponseEntity<Map<String, Object>> triggerPing(@PathVariable Long id, HttpSession session) {
-        requireAdmin(session);
         permissionService.require(session, "monitoring.trigger", "execute");
         return pingMonitorRepo.findById(id).map(m -> {
+            if (!canOperateTeam(session, m.getTeamId())) throw new SecurityException("Bu takımın izlemesini çalıştıramazsınız");
             Map<String, Object> r = pingChecker.check(m.getHost(), m.getIpVersion(),
                     m.getPacketCount() != null ? m.getPacketCount() : 4,
                     m.getTimeoutMs() != null ? m.getTimeoutMs() : 5000);

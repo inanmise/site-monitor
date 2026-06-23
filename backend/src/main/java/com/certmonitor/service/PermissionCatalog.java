@@ -153,7 +153,8 @@ public final class PermissionCatalog {
             // audit_log.read: denetim kaydı sistem-geneli (tüm takımlar/kullanıcılar) → yalnız
             // global admin/AUDIT erişebilir (requireAuditAccess); TEAM_ADMIN'e verilmez.
             "weak_algo.read",
-            "monitoring.read",
+            // monitoring.crud/trigger: kendi takımı için keyword/ping izleme oluştur/düzenle/çalıştır
+            "monitoring.read", "monitoring.crud", "monitoring.trigger",
             // Haftalık raporlar: takım yöneticisi okur/düzenler ve onaylayabilir;
             // tanılama geçmişini görür (canlı tarama admin-only kalır)
             "weekly_reports.read", "weekly_reports.crud", "weekly_reports.approve",
@@ -180,7 +181,9 @@ public final class PermissionCatalog {
             "thresholds.read",
             "alerts.read", "alerts.actions",
             "system_health.read",
-            "monitoring.read",
+            // monitoring.crud/trigger: USER kendi takımı için keyword/ping izleme oluşturur/düzenler/çalıştırır
+            // (silme canManage ile TEAM_ADMIN/ADMIN'de; Port/DNS yazma requireAdmin ile admin-only kalır)
+            "monitoring.read", "monitoring.crud", "monitoring.trigger",
             // audit_log.read: sistem-geneli denetim → yalnız admin/AUDIT (requireAuditAccess)
             "weak_algo.read",
             // Haftalık raporlar: USER kendi takımının raporunu yazar/düzenler

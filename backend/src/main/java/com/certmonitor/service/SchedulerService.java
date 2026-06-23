@@ -345,6 +345,15 @@ public class SchedulerService {
         patch("UPDATE permission_grants SET allowed = TRUE WHERE role = 'USER' "
                 + "AND resource_key = 'incidents.manage' AND action = 'edit' "
                 + "AND updated_by = 'system' AND allowed = FALSE");
+        // USER + TEAM_ADMIN artık kendi takımı için keyword/ping izleme oluşturur/düzenler/çalıştırır.
+        // Eski sistem-default'larını (false) çevir. Silme (canManage) ve Port/DNS yazma (requireAdmin)
+        // controller'da admin/takım-yöneticisinde kalır; bu yalnız rol-kapısını açar.
+        patch("UPDATE permission_grants SET allowed = TRUE WHERE role IN ('USER','TEAM_ADMIN') "
+                + "AND resource_key = 'monitoring.crud' AND action = 'edit' "
+                + "AND updated_by = 'system' AND allowed = FALSE");
+        patch("UPDATE permission_grants SET allowed = TRUE WHERE role IN ('USER','TEAM_ADMIN') "
+                + "AND resource_key = 'monitoring.trigger' AND action = 'execute' "
+                + "AND updated_by = 'system' AND allowed = FALSE");
         // Çoklu takım üyeliği (app_user_teams): tablo @ElementCollection + ddl-auto ile oluşur.
         // Join kolonu AppUser'da pinli (user_id). Mevcut tek-takımlı kullanıcıların team_id'sini
         // üyelik tablosuna backfill et (idempotent) — yoksa eski kullanıcılar üyeliksiz kalır.

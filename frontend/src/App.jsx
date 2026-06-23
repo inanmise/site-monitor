@@ -1047,8 +1047,8 @@ export default function App() {
             {tab === 'uptime'   && <UptimePage   systemRole={systemRole} />}
             {tab === 'port'     && <PortMonitorPage systemRole={systemRole} />}
             {tab === 'dns'      && <DnsMonitorPage  systemRole={systemRole} />}
-            {tab === 'keyword'  && <KeywordMonitorPage systemRole={systemRole} />}
-            {tab === 'ping'     && <PingMonitorPage systemRole={systemRole} />}
+            {tab === 'keyword'  && <KeywordMonitorPage systemRole={systemRole} teamId={teamId} teamName={teamName} />}
+            {tab === 'ping'     && <PingMonitorPage systemRole={systemRole} teamId={teamId} teamName={teamName} />}
             {tab === 'forecast' && <ExpiryForecastPage onSelectDomain={(d) => setModalCert(certs.find(c => c.domain === d) ?? { domain: d })} />}
            </ErrorBoundary>
           </div>
