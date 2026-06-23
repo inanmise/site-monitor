@@ -75,6 +75,14 @@ public class MonitoringController {
         return ResponseEntity.status(404).body(Map.of("success", false, "error", msg));
     }
 
+    private ResponseEntity<Map<String, Object>> badRequest(String msg) {
+        return ResponseEntity.badRequest().body(Map.of("success", false, "error", msg));
+    }
+
+    private static boolean blank(Object o) {
+        return o == null || o.toString().isBlank();
+    }
+
     // ── Uptime Overview ───────────────────────────────────────────────────────
 
     @GetMapping("/uptime/overview")
@@ -668,6 +676,7 @@ public class MonitoringController {
     public ResponseEntity<Map<String, Object>> createKeyword(@RequestBody Map<String, Object> body, HttpSession session) {
         requireAdmin(session);
         permissionService.require(session, "monitoring.crud", "edit");
+        if (blank(body.get("url")) || blank(body.get("keyword"))) return badRequest("url ve keyword zorunlu");
         String now = ISO.format(Instant.now());
         KeywordMonitor m = new KeywordMonitor();
         m.setName((String) body.get("name"));
@@ -811,6 +820,7 @@ public class MonitoringController {
     public ResponseEntity<Map<String, Object>> createPing(@RequestBody Map<String, Object> body, HttpSession session) {
         requireAdmin(session);
         permissionService.require(session, "monitoring.crud", "edit");
+        if (blank(body.get("host"))) return badRequest("host zorunlu");
         String now = ISO.format(Instant.now());
         PingMonitor m = new PingMonitor();
         m.setName((String) body.get("name"));
