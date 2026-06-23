@@ -283,9 +283,9 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
         document.body
       )}
 
-      {/* ── Create / Edit Modal ── */}
+      {/* ── Create / Edit Modal ── (dış/overlay tıklamada KAPANMAZ — veri kaybı önlenir; yalnız İptal/Kaydet) */}
       {modal && createPortal(
-        <div className="modal-overlay" onClick={closeEdit}>
+        <div className="modal-overlay">
           <div className="modal-box" onClick={e => e.stopPropagation()} style={{ maxWidth: 460 }}>
             <div className="modal-icon-hdr modal-icon-hdr--port">
               <div className="modal-icon-hdr-badge"><Target size={20} /></div>

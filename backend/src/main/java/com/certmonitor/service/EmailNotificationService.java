@@ -488,6 +488,12 @@ public class EmailNotificationService {
         if (alertType != null && MONITORING_OUTAGE_TYPES.contains(alertType)) {
             return buildRichMonitoringOutageAlertHtml(message, domain, alertType, certContext);
         }
+        if ("KEYWORD".equals(alertType)) {
+            return buildRichKeywordAlertHtml(message, domain, level, certContext);
+        }
+        if ("PING_DOWN".equals(alertType)) {
+            return buildRichPingAlertHtml(message, domain, level, certContext);
+        }
         if ("DNS_CHANGED".equals(alertType)) {
             return buildRichDnsChangedAlertHtml(message, domain, certContext);
         }
@@ -500,6 +506,12 @@ public class EmailNotificationService {
                                             Integer daysRemaining, String resolvedBy,
                                             String resolvedAt, String createdAt,
                                             Map<String, Object> certContext) {
+        if ("KEYWORD".equals(alertType)) {
+            return buildRichKeywordResolvedHtml(domain, resolvedBy, resolvedAt, createdAt);
+        }
+        if ("PING_DOWN".equals(alertType)) {
+            return buildRichPingResolvedHtml(domain, resolvedBy, resolvedAt, createdAt);
+        }
         if ((alertType != null && MONITORING_OUTAGE_TYPES.contains(alertType))
                 || "DNS_CHANGED".equals(alertType)) {
             return buildRichMonitoringResolvedHtml(domain, alertType, resolvedBy, resolvedAt, createdAt);
@@ -1398,6 +1410,244 @@ public class EmailNotificationService {
             + "</td></tr></table>"
             + "</td></tr></table>"
             + "</body></html>";
+    }
+
+    // ── Keyword / Ping izleme — kendine ÖZGÜ executive alarm + çözüm şablonları ──
+    // Cert/expiry şablonuyla hiçbir alan paylaşmaz; ortak yalnız kart/CSS iskeleti (aşağıdaki frame helper'ları).
+
+    /** Ortak executive alarm kartı (keyword/ping) — kimlik (accent/ikon/başlık) ve içerik dışarıdan gelir. */
+    private String monitoringTypedAlert(String accent, String kicker, String emoji,
+            String heroTitle, String heroSub, String endpoint, String typeBadge,
+            String firstFailureAt, String attemptsLabel, String delayLabel,
+            String leftRows, String rightRows, String extraBox, String message, String infoNote) {
+        String generatedAt = LocalDateTime.now(IST).format(DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm"));
+
+        String hero = "<table width='100%' cellpadding='0' cellspacing='0' border='0'"
+            + " style='margin:20px 0;border-radius:14px;overflow:hidden;border:2px solid " + accent + "22'><tr>"
+            + "<td class='em-hero-l' align='center' valign='middle' width='38%' style='background:" + accent + ";padding:22px 14px'>"
+            + "<div style='color:#fff;font-size:46px;line-height:1'>" + emoji + "</div>"
+            + "<div style='color:#fff;font-size:14px;font-weight:800;margin-top:8px;letter-spacing:.04em'>" + heroTitle + "</div>"
+            + "<div style='color:rgba(255,255,255,.85);font-size:12px;margin-top:8px;padding:0 6px'>" + heroSub + "</div>"
+            + "</td>"
+            + "<td class='em-hero-r' valign='middle' style='background:" + accent + "0d;padding:20px 22px'>"
+            + "<div style='font-size:11px;font-weight:700;letter-spacing:.1em;color:#94a3b8;text-transform:uppercase;margin-bottom:10px'>İlk Hata Zamanı</div>"
+            + "<div style='font-size:24px;font-weight:900;color:" + accent + ";letter-spacing:-.5px'>" + formatIso(firstFailureAt) + "</div>"
+            + "<div style='font-size:13px;color:#475569;margin-top:6px;line-height:1.6'>" + formatIsoFull(firstFailureAt) + "</div>"
+            + "<div style='margin-top:12px;padding:6px 12px;background:" + accent + ";color:#fff;border-radius:6px;font-size:12px;font-weight:800;display:inline-block'>"
+            + "🔁 " + attemptsLabel + " doğrulama denemesi " + delayLabel + "— tümü başarısız</div>"
+            + "</td></tr></table>";
+
+        String twoCol = "<table width='100%' cellpadding='0' cellspacing='0' border='0' style='margin-bottom:16px'><tr>"
+            + "<td class='em-col-l' valign='top' style='width:55%;padding-right:8px'>"
+            + "<table width='100%' cellpadding='0' cellspacing='0' border='0' style='border:1px solid #e2e8f0;border-radius:10px;overflow:hidden'>"
+            + "<tr><td style='background:#1e293b;padding:9px 14px;font-size:11px;font-weight:700;letter-spacing:.1em;color:#94a3b8'>İZLEME BİLGİLERİ</td></tr>"
+            + leftRows + "</table></td>"
+            + "<td class='em-col-r' valign='top' style='width:45%'>"
+            + "<table width='100%' cellpadding='0' cellspacing='0' border='0' style='border:1px solid #e2e8f0;border-radius:10px;overflow:hidden'>"
+            + "<tr><td style='background:#334155;padding:9px 14px;font-size:11px;font-weight:700;letter-spacing:.1em;color:#94a3b8'>DOĞRULAMA ÖZETİ</td></tr>"
+            + rightRows + "</table></td></tr></table>";
+
+        String css = "<style>body,table,td{-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%}"
+            + "@media only screen and (max-width:620px){.em-wrap{padding:0!important}.em-card{border-radius:0!important;width:100%!important}"
+            + ".em-domain{font-size:16px!important;word-break:break-all!important}.em-body{padding:14px!important}"
+            + ".em-hero-l,.em-hero-r{display:block!important;width:100%!important}.em-hero-l{border-radius:12px 12px 0 0!important}"
+            + ".em-hero-r{border-radius:0 0 12px 12px!important;padding:16px!important}"
+            + ".em-col-l{display:block!important;width:100%!important;padding-right:0!important;padding-bottom:10px!important}"
+            + ".em-col-r{display:block!important;width:100%!important}}</style>";
+
+        return "<!DOCTYPE html><html lang='tr'><head><meta charset='UTF-8'>"
+            + "<meta name='viewport' content='width=device-width,initial-scale=1,maximum-scale=1'>" + css + "</head>"
+            + "<body style='margin:0;padding:0;background:#f1f5f9;font-family:\"Segoe UI\",Tahoma,Arial,sans-serif'>"
+            + "<table class='em-wrap' width='100%' cellpadding='0' cellspacing='0' border='0' style='background:#f1f5f9;padding:24px 10px'><tr><td align='center'>"
+            + "<table class='em-card' width='640' cellpadding='0' cellspacing='0' border='0' style='max-width:640px;width:100%;border-radius:14px;overflow:hidden;box-shadow:0 8px 32px rgba(0,0,0,.15)'><tr><td style='padding:0'>"
+            + "<div style='background:" + accent + ";padding:22px 24px'>"
+            + "<div style='color:rgba(255,255,255,.65);font-size:11px;font-weight:700;letter-spacing:.12em'>" + kicker + "</div>"
+            + "<div class='em-domain' style='color:#fff;font-size:22px;font-weight:900;margin-top:10px;word-break:break-all;line-height:1.25'>" + emoji + " " + endpoint + "</div>"
+            + "<div style='color:rgba(255,255,255,.88);font-size:15px;font-weight:700;margin-top:8px;letter-spacing:.02em'>KRİTİK &nbsp;·&nbsp; " + typeBadge + "</div>"
+            + "</div>"
+            + "<div class='em-body' style='background:#fff;padding:22px 24px'>"
+            + hero + twoCol + extraBox
+            + "<div style='background:" + accent + "0d;border-left:4px solid " + accent + ";border-radius:0 8px 8px 0;padding:14px 18px;color:#1c1917;font-size:14px;line-height:1.7;margin-bottom:14px'>"
+            + "<div style='font-size:11px;font-weight:700;letter-spacing:.08em;color:" + accent + ";margin-bottom:6px'>ALARM DETAYI</div>" + escHtml(message) + "</div>"
+            + "<div style='font-size:12px;color:#64748b;line-height:1.6;margin-bottom:20px'>" + infoNote + "</div>"
+            + "<table width='100%' cellpadding='0' cellspacing='0'><tr>"
+            + "<td style='border-top:1px solid #f1f5f9;padding-top:12px;font-size:11px;color:#94a3b8'>CertMonitor</td>"
+            + "<td align='right' style='border-top:1px solid #f1f5f9;padding-top:12px;font-size:11px;color:#94a3b8'>Bildirim: " + generatedAt + "</td></tr></table>"
+            + "</div></td></tr></table></td></tr></table></body></html>";
+    }
+
+    /** Ortak attempt satırları — keyword/ping alarm sol kolonunda teyit denemeleri. */
+    @SuppressWarnings("unchecked")
+    private String attemptRows(Map<String, Object> ctx) {
+        List<Map<String, Object>> attempts = (ctx != null && ctx.get("confirm_attempts") instanceof List<?> l)
+                ? (List<Map<String, Object>>) l : List.of();
+        StringBuilder sb = new StringBuilder();
+        for (Map<String, Object> a : attempts) {
+            String at = String.valueOf(a.getOrDefault("checked_at", ""));
+            String err = String.valueOf(a.getOrDefault("error", ""));
+            String detail = !err.isEmpty() && !"null".equals(err)
+                    ? formatIso(at) + " — " + escHtml(err.length() > 60 ? err.substring(0, 60) + "…" : err)
+                    : formatIso(at) + " — doğrulanamadı";
+            sb.append(tableRow2col("🔁 Deneme " + a.getOrDefault("attempt", "?"), detail));
+        }
+        return sb.toString();
+    }
+
+    private static int attemptCount(Map<String, Object> ctx) {
+        return (ctx != null && ctx.get("confirm_attempts") instanceof List<?> l) ? l.size() : 0;
+    }
+
+    /** Keyword izleme alarmı — menekşe kimlik, içerik doğrulaması alanları. */
+    private String buildRichKeywordAlertHtml(String message, String url, String level, Map<String, Object> ctx) {
+        String accent = "#6d28d9";
+        String keyword   = ctxStr(ctx, "keyword");
+        boolean contains = "CONTAINS".equals(ctxStr(ctx, "condition"));
+        String httpStatus = ctxStr(ctx, "http_status");
+        String responseMs = ctxStr(ctx, "response_ms");
+        String snippet    = ctxStr(ctx, "snippet");
+        String firstFailureAt = ctxStr(ctx, "first_failure_at");
+        String lastError      = ctxStr(ctx, "last_error");
+        String ac = ctxStr(ctx, "confirm_attempt_count");
+        String delayMs = ctxStr(ctx, "confirm_delay_ms");
+        String attemptsLabel = !ac.isEmpty() ? ac : "Ardışık";
+        String delayLabel    = !delayMs.isEmpty() ? (Long.parseLong(delayMs) / 1000) + " sn arayla " : "";
+        int n = attemptCount(ctx);
+
+        StringBuilder left = new StringBuilder();
+        left.append(tableRow2col("🌐 Adres", escHtml(url)));
+        left.append(tableRow2col("🔎 Aranan kelime", escHtml(keyword)));
+        left.append(tableRow2col("⚙ Beklenen koşul", contains ? "Sayfada bulunmamalı" : "Sayfada bulunmalı"));
+        if (!httpStatus.isEmpty()) left.append(tableRow2col("📡 HTTP durumu", escHtml(httpStatus)));
+        if (!responseMs.isEmpty()) left.append(tableRow2col("⏱ Yanıt süresi", escHtml(responseMs) + " ms"));
+        if (!firstFailureAt.isEmpty()) left.append(tableRow2col("🕐 İlk hata", formatIso(firstFailureAt)));
+        if (!lastError.isEmpty()) left.append(tableRow2col("⚠ Son hata", escHtml(lastError.length() > 90 ? lastError.substring(0, 90) + "…" : lastError)));
+        left.append(attemptRows(ctx));
+
+        String right = statusRow2col("Kelime durumu", contains ? "✗ İstenmeyen ifade var" : "✗ Bulunamadı")
+            + statusRow2col("Doğrulama", "✗ " + (n == 0 ? "Başarısız" : n + "/" + n + " başarısız"))
+            + statusRow2col("Seviye", "✗ KRİTİK")
+            + statusRow2col("İzleme", "✓ Devam ediyor");
+
+        String extraBox = (contains && !snippet.isEmpty())
+            ? "<div style='background:" + accent + "0d;border-left:4px solid " + accent + ";border-radius:0 8px 8px 0;padding:12px 16px;margin-bottom:14px'>"
+              + "<div style='font-size:11px;font-weight:700;letter-spacing:.08em;color:" + accent + ";margin-bottom:6px'>EŞLEŞME BAĞLAMI</div>"
+              + "<div style='font-size:13px;color:#1c1917;font-family:Consolas,monospace;word-break:break-word'>…" + escHtml(snippet) + "…</div></div>"
+            : "";
+
+        return monitoringTypedAlert(accent, "CertMonitor — İçerik (Keyword) İzleme", "🔎",
+                contains ? "İSTENMEYEN İFADE BULUNDU" : "ANAHTAR KELİME BULUNAMADI",
+                "⚠ İçerik doğrulaması başarısız", escHtml(url), "Anahtar Kelime Doğrulaması",
+                firstFailureAt, attemptsLabel, delayLabel, left.toString(), right, extraBox, message,
+                "ℹ Kelime tekrar uygun duruma geldiğinde bu alarm otomatik kapatılır ve çözüm e-postası gönderilir.");
+    }
+
+    /** Ping (ICMP) izleme alarmı — teal kimlik, erişilebilirlik alanları. */
+    private String buildRichPingAlertHtml(String message, String host, String level, Map<String, Object> ctx) {
+        String accent = "#0e7490";
+        boolean na = "true".equalsIgnoreCase(ctxStr(ctx, "na"));
+        String ipVersion  = ctxStr(ctx, "ip_version");
+        String packetLoss = ctxStr(ctx, "packet_loss");
+        String rttMs      = ctxStr(ctx, "rtt_ms");
+        String firstFailureAt = ctxStr(ctx, "first_failure_at");
+        String lastError      = ctxStr(ctx, "last_error");
+        String ac = ctxStr(ctx, "confirm_attempt_count");
+        String delayMs = ctxStr(ctx, "confirm_delay_ms");
+        String attemptsLabel = !ac.isEmpty() ? ac : "Ardışık";
+        String delayLabel    = !delayMs.isEmpty() ? (Long.parseLong(delayMs) / 1000) + " sn arayla " : "";
+        String lossLabel     = !packetLoss.isEmpty() ? "%" + packetLoss : "%100";
+        int n = attemptCount(ctx);
+
+        StringBuilder left = new StringBuilder();
+        left.append(tableRow2col("📡 Host", escHtml(host)));
+        left.append(tableRow2col("🔢 IP sürümü", ipVersion.isEmpty() || "auto".equals(ipVersion) ? "Otomatik" : escHtml(ipVersion.toUpperCase())));
+        left.append(tableRow2col("📉 Paket kaybı", lossLabel));
+        if (!rttMs.isEmpty()) left.append(tableRow2col("⏱ RTT", escHtml(rttMs) + " ms"));
+        if (!firstFailureAt.isEmpty()) left.append(tableRow2col("🕐 İlk hata", formatIso(firstFailureAt)));
+        if (!lastError.isEmpty()) left.append(tableRow2col("⚠ Son hata", escHtml(lastError.length() > 90 ? lastError.substring(0, 90) + "…" : lastError)));
+        left.append(attemptRows(ctx));
+
+        String right = statusRow2col("Ping durumu", na ? "✗ ICMP kullanılamıyor" : "✗ Yanıt yok")
+            + statusRow2col("Paket kaybı", "✗ " + lossLabel)
+            + statusRow2col("Doğrulama", "✗ " + (n == 0 ? "Başarısız" : n + "/" + n + " başarısız"))
+            + statusRow2col("Seviye", "✗ KRİTİK")
+            + statusRow2col("İzleme", "✓ Devam ediyor");
+
+        return monitoringTypedAlert(accent, "CertMonitor — Ping (ICMP) İzleme", "📡",
+                na ? "ICMP KULLANILAMIYOR" : "HOST YANIT VERMİYOR",
+                "⚠ Erişilebilirlik kaybı", escHtml(host), "ICMP Erişim",
+                firstFailureAt, attemptsLabel, delayLabel, left.toString(), right, "", message,
+                "ℹ Host yeniden yanıt verdiğinde bu alarm otomatik kapatılır ve çözüm e-postası gönderilir.");
+    }
+
+    /** Ortak executive çözüm (yeşil) kartı — keyword/ping kimliğiyle. */
+    private String monitoringTypedResolved(String domain, String kicker, String heroLine,
+            String typeTrLabel, String emoji, String resolvedBy, String resolvedAt, String createdAt) {
+        String generatedAt = LocalDateTime.now(IST).format(DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm"));
+        String green = "#16a34a";
+        String by = resolvedBy != null && !resolvedBy.isBlank() ? resolvedBy : "Sistem (otomatik)";
+        String duration = formatOutageDuration(createdAt, resolvedAt);
+
+        String resolverRows = tableRow2col("👤 Çözen", escHtml(by))
+            + tableRow2col("🕐 Çözülme Zamanı", fmtOrDash(formatIstanbul(resolvedAt)))
+            + tableRow2col("📅 Alarm Başlangıcı", fmtOrDash(formatIstanbul(createdAt)));
+        String outageRows = tableRow2col("🌐 İzlenen", escHtml(domain))
+            + tableRow2col("⚠ Alarm Tipi", typeTrLabel)
+            + "<tr style='border-top:1px solid #e2e8f0'><td style='padding:9px 13px;font-size:12px;color:#64748b;white-space:nowrap'>🔴 Seviye</td>"
+            + "<td style='padding:9px 13px;font-size:14px;font-weight:700;color:#dc2626'>KRİTİK</td></tr>"
+            + "<tr style='border-top:1px solid #e2e8f0;background:#f0fdf4'><td style='padding:9px 13px;font-size:12px;color:#64748b;white-space:nowrap'>⏱ Toplam Kesinti</td>"
+            + "<td style='padding:9px 13px;font-size:14px;font-weight:800;color:" + green + "'>" + duration + "</td></tr>";
+
+        String twoCol = "<table width='100%' cellpadding='0' cellspacing='0' border='0' style='margin-bottom:16px'><tr>"
+            + "<td class='em-col-l' valign='top' style='width:50%;padding-right:8px'>"
+            + "<table width='100%' cellpadding='0' cellspacing='0' border='0' style='border:1px solid #bbf7d0;border-radius:10px;overflow:hidden'>"
+            + "<tr><td style='background:#15803d;padding:9px 14px;font-size:11px;font-weight:700;letter-spacing:.1em;color:#dcfce7'>ÇÖZÜM BİLGİSİ</td></tr>"
+            + resolverRows + "</table></td>"
+            + "<td class='em-col-r' valign='top' style='width:50%'>"
+            + "<table width='100%' cellpadding='0' cellspacing='0' border='0' style='border:1px solid #e2e8f0;border-radius:10px;overflow:hidden'>"
+            + "<tr><td style='background:#334155;padding:9px 14px;font-size:11px;font-weight:700;letter-spacing:.1em;color:#94a3b8'>KESİNTİ DETAYI</td></tr>"
+            + outageRows + "</table></td></tr></table>";
+
+        String css = "<style>body,table,td{-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%}"
+            + "@media only screen and (max-width:620px){.em-wrap{padding:0!important}.em-card{border-radius:0!important;width:100%!important}"
+            + ".em-domain{font-size:16px!important;word-break:break-all!important}.em-body{padding:14px!important}"
+            + ".em-col-l{display:block!important;width:100%!important;padding-right:0!important;padding-bottom:10px!important}"
+            + ".em-col-r{display:block!important;width:100%!important}}</style>";
+
+        return "<!DOCTYPE html><html lang='tr'><head><meta charset='UTF-8'>"
+            + "<meta name='viewport' content='width=device-width,initial-scale=1,maximum-scale=1'>" + css + "</head>"
+            + "<body style='margin:0;padding:0;background:#f1f5f9;font-family:\"Segoe UI\",Tahoma,Arial,sans-serif'>"
+            + "<table class='em-wrap' width='100%' cellpadding='0' cellspacing='0' border='0' style='background:#f1f5f9;padding:24px 10px'><tr><td align='center'>"
+            + "<table class='em-card' width='640' cellpadding='0' cellspacing='0' border='0' style='max-width:640px;width:100%;border-radius:14px;overflow:hidden;box-shadow:0 8px 32px rgba(0,0,0,.15)'><tr><td style='padding:0'>"
+            + "<div style='background:" + green + ";padding:22px 24px'>"
+            + "<div style='color:rgba(255,255,255,.65);font-size:11px;font-weight:700;letter-spacing:.12em'>" + kicker + "</div>"
+            + "<div class='em-domain' style='color:#fff;font-size:22px;font-weight:900;margin-top:10px;word-break:break-all;line-height:1.25'>✅ " + escHtml(domain) + "</div>"
+            + "<div style='color:rgba(255,255,255,.88);font-size:15px;font-weight:700;margin-top:8px;letter-spacing:.02em'>" + heroLine + " &nbsp;·&nbsp; " + typeTrLabel + "</div>"
+            + "</div>"
+            + "<div class='em-body' style='background:#fff;padding:22px 24px'>"
+            + "<div style='text-align:center;margin:16px 0 24px'>"
+            + "<div style='display:inline-block;background:#dcfce7;border-radius:50%;width:80px;height:80px;line-height:80px;font-size:42px;border:3px solid " + green + "'>" + emoji + "</div>"
+            + "<div style='margin-top:14px;font-size:20px;font-weight:800;color:#15803d;letter-spacing:-.3px'>" + heroLine + "</div>"
+            + "<div style='margin-top:6px;font-size:13px;color:#64748b'>Alarm kapatıldı. İzleme devam etmektedir.</div></div>"
+            + twoCol
+            + "<div style='background:#f0fdf4;border-left:4px solid " + green + ";border-radius:0 8px 8px 0;padding:14px 18px;color:#14532d;font-size:14px;line-height:1.7;margin-bottom:20px'>"
+            + "<div style='font-size:11px;font-weight:700;letter-spacing:.08em;color:" + green + ";margin-bottom:6px'>BİLGİ</div>"
+            + "<strong>" + escHtml(domain) + "</strong> için açık olan <strong>" + typeTrLabel + "</strong> alarmı kapatıldı. Toplam kesinti süresi: <strong>" + duration + "</strong>.</div>"
+            + "<table width='100%' cellpadding='0' cellspacing='0'><tr>"
+            + "<td style='border-top:1px solid #f1f5f9;padding-top:12px;font-size:11px;color:#94a3b8'>CertMonitor</td>"
+            + "<td align='right' style='border-top:1px solid #f1f5f9;padding-top:12px;font-size:11px;color:#94a3b8'>Bildirim: " + generatedAt + "</td></tr></table>"
+            + "</div></td></tr></table></td></tr></table></body></html>";
+    }
+
+    private String buildRichKeywordResolvedHtml(String url, String resolvedBy, String resolvedAt, String createdAt) {
+        return monitoringTypedResolved(url, "CertMonitor — İçerik (Keyword) İzleme",
+                "İçerik Doğrulaması Yeniden Başarılı", "Anahtar Kelime Doğrulaması", "🔎",
+                resolvedBy, resolvedAt, createdAt);
+    }
+
+    private String buildRichPingResolvedHtml(String host, String resolvedBy, String resolvedAt, String createdAt) {
+        return monitoringTypedResolved(host, "CertMonitor — Ping (ICMP) İzleme",
+                "Host Yeniden Yanıt Veriyor", "ICMP Erişim", "📡",
+                resolvedBy, resolvedAt, createdAt);
     }
 
     /**

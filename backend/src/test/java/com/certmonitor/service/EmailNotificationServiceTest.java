@@ -621,6 +621,56 @@ class EmailNotificationServiceTest {
     }
 
     @Test
+    @DisplayName("buildAlertEmailHtml: KEYWORD alarmı kendine özgü şablon — cert alanları YOK")
+    void keywordAlert_ownTemplate() {
+        Map<String, Object> ctx = new HashMap<>();
+        ctx.put("url", "https://www.akbank.com/");
+        ctx.put("keyword", "Melih Ekmekçi");
+        ctx.put("condition", "NOT_CONTAINS");
+        ctx.put("http_status", 200);
+        ctx.put("first_failure_at", "2026-06-23T12:00:00");
+        String html = service.buildAlertEmailHtml("[CertMonitor KRİTİK] keyword",
+                "KRİTİK: kelime bulunamıyor", "https://www.akbank.com/", "CRITICAL", "KEYWORD", null, ctx);
+        assertThat(html).contains("İçerik (Keyword) İzleme");
+        assertThat(html).contains("Aranan kelime");
+        assertThat(html).contains("Melih Ekmekçi");
+        // cert/expiry şablonundan hiçbir alan sızmamalı
+        assertThat(html).doesNotContain("Son Kullanma");
+        assertThat(html).doesNotContain("Veren Kurum");
+        assertThat(html).doesNotContain("Geçerlilik Başlangıcı");
+    }
+
+    @Test
+    @DisplayName("buildAlertEmailHtml: PING_DOWN alarmı kendine özgü şablon — cert alanları YOK")
+    void pingAlert_ownTemplate() {
+        Map<String, Object> ctx = new HashMap<>();
+        ctx.put("host", "10.0.0.1");
+        ctx.put("ip_version", "v4");
+        ctx.put("packet_loss", 100);
+        ctx.put("first_failure_at", "2026-06-23T12:00:00");
+        String html = service.buildAlertEmailHtml("[CertMonitor KRİTİK] ping",
+                "KRİTİK: host yanıt vermiyor", "10.0.0.1", "CRITICAL", "PING_DOWN", null, ctx);
+        assertThat(html).contains("Ping (ICMP) İzleme");
+        assertThat(html).contains("HOST YANIT VERMİYOR");
+        assertThat(html).contains("10.0.0.1");
+        assertThat(html).doesNotContain("Son Kullanma");
+        assertThat(html).doesNotContain("Veren Kurum");
+    }
+
+    @Test
+    @DisplayName("buildResolutionEmailHtml: KEYWORD/PING çözüldü kendine özgü — cert alanları YOK")
+    void keywordPingResolved_ownTemplate() {
+        String kw = service.buildResolutionEmailHtml("https://www.akbank.com/", "KEYWORD", "CRITICAL",
+                null, "Sistem (otomatik)", "2026-06-23T13:00:00", "2026-06-23T12:00:00", null);
+        assertThat(kw).contains("İçerik Doğrulaması Yeniden Başarılı");
+        assertThat(kw).doesNotContain("Son Kullanma");
+        String pg = service.buildResolutionEmailHtml("10.0.0.1", "PING_DOWN", "CRITICAL",
+                null, "Sistem (otomatik)", "2026-06-23T13:00:00", "2026-06-23T12:00:00", null);
+        assertThat(pg).contains("Host Yeniden Yanıt Veriyor");
+        assertThat(pg).doesNotContain("Son Kullanma");
+    }
+
+    @Test
     @DisplayName("buildResolutionEmailHtml: çözülme/oluşturma tarihleri IST'ye çevrilir (sertifika)")
     void resolutionHtml_localTime() {
         String html = service.buildResolutionEmailHtml(

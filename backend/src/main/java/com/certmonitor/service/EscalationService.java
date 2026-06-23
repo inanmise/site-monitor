@@ -390,15 +390,18 @@ public class EscalationService {
             domainTeamId = inventoryOpt.map(com.certmonitor.model.CertificateInventory::getTeamId).orElse(null);
             ugTeamId     = inventoryOpt.map(com.certmonitor.model.CertificateInventory::getUgTeamId).orElse(null);
         }
+        // Serbest-form izleme (keyword/ping) alarmı YALNIZ takıma gider — müdür/eskalasyon kontağı eklenmez.
+        boolean teamOnly = TYPE_KEYWORD.equals(alertType) || TYPE_PING_DOWN.equals(alertType);
 
         String message = monitoringMessage(domain, alertType, alertLevel, outageContext);
         Optional<AlertEvent> existing = alertEventRepo.findOpenAlert(domain, alertType);
 
         if (existing.isEmpty()) {
             AlertEvent event = newEvent(domain, alertLevel, alertType, message, null);
+            event.setTeamId(domainTeamId);   // çözüm bildiriminde takımı buradan bul (özellikle keyword/ping)
             event = alertEventRepo.save(event);
 
-            List<EscalationContact> contacts = getContactsForLevel(alertLevel, domainTeamId);
+            List<EscalationContact> contacts = teamOnly ? List.of() : getContactsForLevel(alertLevel, domainTeamId);
             sendCombinedAlert(domainTeamId, ugTeamId, contacts, domain, alertLevel, alertType,
                     message, "", event.getId(), "INITIAL", null, outageContext);
 
@@ -414,7 +417,7 @@ public class EscalationService {
             String lastAlertTime = event.getLastReAlertAt() != null
                     ? event.getLastReAlertAt() : event.getCreatedAt();
             if (!isSameUtcDay(lastAlertTime, now())) {
-                List<EscalationContact> contacts = getContactsForLevel(alertLevel, domainTeamId);
+                List<EscalationContact> contacts = teamOnly ? List.of() : getContactsForLevel(alertLevel, domainTeamId);
                 sendCombinedAlert(domainTeamId, ugTeamId, contacts, domain, alertLevel, alertType,
                         "[RE-ALERT] " + message, "[RE-ALERT] ",
                         event.getId(), "DAILY_REALERT", null, outageContext);
@@ -566,10 +569,20 @@ public class EscalationService {
 
     private void sendResolutionNotification(AlertEvent event, String resolvedBy, String trigger) {
         try {
-            var inventoryOpt  = inventoryRepo.findByDomain(event.getDomain());
-            Long domainTeamId = inventoryOpt.map(com.certmonitor.model.CertificateInventory::getTeamId).orElse(null);
-            Long ugTeamId     = inventoryOpt.map(com.certmonitor.model.CertificateInventory::getUgTeamId).orElse(null);
-            List<EscalationContact> contacts = getContactsForLevel(event.getAlertLevel(), domainTeamId);
+            // Keyword/Ping çözüm bildirimi YALNIZ takıma gider; takım AlertEvent.teamId'den (envanter değil).
+            boolean teamOnly = TYPE_KEYWORD.equals(event.getAlertType()) || TYPE_PING_DOWN.equals(event.getAlertType());
+            Long domainTeamId, ugTeamId;
+            List<EscalationContact> contacts;
+            if (teamOnly) {
+                domainTeamId = event.getTeamId();
+                ugTeamId = null;
+                contacts = List.of();
+            } else {
+                var inventoryOpt = inventoryRepo.findByDomain(event.getDomain());
+                domainTeamId = inventoryOpt.map(com.certmonitor.model.CertificateInventory::getTeamId).orElse(null);
+                ugTeamId     = inventoryOpt.map(com.certmonitor.model.CertificateInventory::getUgTeamId).orElse(null);
+                contacts = getContactsForLevel(event.getAlertLevel(), domainTeamId);
+            }
 
             // Build combined TO: team emails + contact emails (deduped)
             List<String> teamEmails = collectTeamEmails(domainTeamId, ugTeamId);
