@@ -1019,6 +1019,9 @@ public class SchedulerService {
                 ctx.put("keyword", m.getKeyword());
                 ctx.put("condition", m.getAlertCondition());
                 if (m.getTeamId() != null) ctx.put("team_id", m.getTeamId());
+                if (r.get("http_status") != null) ctx.put("http_status", r.get("http_status"));
+                if (r.get("response_ms") != null) ctx.put("response_ms", r.get("response_ms"));
+                if (r.get("snippet") != null)     ctx.put("snippet", r.get("snippet"));
                 String kw = m.getKeyword() != null ? m.getKeyword() : "";
                 sweep.add(new MonitoringOutageService.SweepItem(
                         EscalationService.TYPE_KEYWORD, m.getUrl(),
@@ -1065,6 +1068,9 @@ public class SchedulerService {
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("status", ok ? "up" : "down");
         out.put("error", r.get("error"));
+        out.put("http_status", r.get("http_status"));   // alarm e-postası için zengin metrik
+        out.put("response_ms", r.get("response_ms"));
+        out.put("snippet", r.get("snippet"));
         return out;
     }
 
@@ -1080,7 +1086,11 @@ public class SchedulerService {
                 Map<String, Object> r = recheckPing(m);
                 Map<String, Object> ctx = new LinkedHashMap<>();
                 ctx.put("host", m.getHost());
+                ctx.put("ip_version", m.getIpVersion());
                 if (m.getTeamId() != null) ctx.put("team_id", m.getTeamId());
+                if (r.get("rtt_ms") != null)      ctx.put("rtt_ms", r.get("rtt_ms"));
+                if (r.get("packet_loss") != null) ctx.put("packet_loss", r.get("packet_loss"));
+                if (Boolean.TRUE.equals(r.get("na"))) ctx.put("na", true);
                 sweep.add(new MonitoringOutageService.SweepItem(
                         EscalationService.TYPE_PING_DOWN, m.getHost(), "ICMP",
                         "up".equals(r.get("status")), (String) r.get("error"),
@@ -1121,6 +1131,9 @@ public class SchedulerService {
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("status", (up || na) ? "up" : "down");
         out.put("error", r.get("error"));
+        out.put("rtt_ms", r.get("rtt_ms"));            // alarm e-postası için zengin metrik
+        out.put("packet_loss", r.get("packet_loss"));
+        out.put("na", na);
         return out;
     }
 

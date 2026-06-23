@@ -38,6 +38,10 @@ public class AlertEvent {
 
     private Integer daysRemaining;
 
+    /** Sorumlu takım — özellikle serbest-form izleme (keyword/ping) çözüm bildiriminde alıcıyı
+     *  (yalnız takım) buradan bulmak için (url/host envanterde olmadığından). Oluşturulurken doldurulur. */
+    private Long teamId;
+
     @Column(columnDefinition = "TEXT")
     private String notifiedContacts;
 

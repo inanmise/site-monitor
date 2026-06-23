@@ -754,9 +754,7 @@ public class MonitoringController {
         permissionService.require(session, "monitoring.crud", "edit");
         return keywordMonitorRepo.findById(id).map(m -> {
             if (!SessionScope.canManage(session, m.getTeamId())) throw new SecurityException("Silme yetkisi yok (yalnız takım yöneticisi/ADMIN)");
-            m.setActive(false);
-            m.setUpdatedAt(ISO.format(Instant.now()));
-            keywordMonitorRepo.save(m);
+            keywordMonitorRepo.delete(m);   // hard delete — "Sil" listeden kaldırır ("Aktif" toggle ayrı)
             return ok(Map.of("deleted", true));
         }).orElse(notFound("Keyword monitor not found"));
     }
@@ -899,9 +897,7 @@ public class MonitoringController {
         permissionService.require(session, "monitoring.crud", "edit");
         return pingMonitorRepo.findById(id).map(m -> {
             if (!SessionScope.canManage(session, m.getTeamId())) throw new SecurityException("Silme yetkisi yok (yalnız takım yöneticisi/ADMIN)");
-            m.setActive(false);
-            m.setUpdatedAt(ISO.format(Instant.now()));
-            pingMonitorRepo.save(m);
+            pingMonitorRepo.delete(m);   // hard delete — "Sil" listeden kaldırır ("Aktif" toggle ayrı)
             return ok(Map.of("deleted", true));
         }).orElse(notFound("Ping monitor not found"));
     }
