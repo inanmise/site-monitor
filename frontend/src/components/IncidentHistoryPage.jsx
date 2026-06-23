@@ -300,6 +300,26 @@ export default function IncidentHistoryPage() {
   useEffect(() => { setPage(0) }, [filters, size])
   useEffect(() => { setSelected(new Set()) }, [filters, page, size]) // sayfa/filtre değişince seçim sıfırlanır
 
+  // E-posta deep-link: ?incident=<id> → o olayı çekip detay modalını aç, sonra paramı temizle
+  // (yenilemede tekrar açılmasın; ?tab gibi diğer paramlar korunur).
+  useEffect(() => {
+    if (!allowView) return
+    let id
+    try { id = new URLSearchParams(window.location.search).get('incident') } catch { return }
+    if (!id) return
+    let cancelled = false
+    api.incidents.get(id).then(res => {
+      if (!cancelled && res?.success && res.data) setModal({ mode: 'view', form: { ...EMPTY, ...res.data } })
+    }).catch(() => {})
+    try {
+      const url = new URL(window.location.href)
+      url.searchParams.delete('incident')
+      const qs = url.searchParams.toString()
+      window.history.replaceState({}, '', url.pathname + (qs ? `?${qs}` : '') + url.hash)
+    } catch { /* yoksay */ }
+    return () => { cancelled = true }
+  }, [allowView]) // eslint-disable-line react-hooks/exhaustive-deps
+
   if (!allowView) return <div className="empty-state">{t('inc.noAccess')}</div>
 
   const totalPages = Math.max(1, Math.ceil(total / size))

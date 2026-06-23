@@ -78,7 +78,9 @@ public class IncidentNotificationService {
         }
 
         String base = appBaseUrl != null ? appBaseUrl.replaceAll("/+$", "") : "";
-        String ctaUrl = base + "/?tab=incident-history";
+        Object incId = dto.get("id");
+        // Spesifik olaya deep-link: frontend ?incident=<id>'yi okuyup detay modalını açar.
+        String ctaUrl = base + "/?tab=incident-history" + (incId != null ? "&incident=" + incId : "");
         String html = emailService.buildIncidentNotificationHtml(dto, managerName, kind, ctaUrl);
         String prefix = "RESOLVED".equals(kind) ? "Olay Çözüldü"
                       : "NEW".equals(kind)      ? "Yeni Olay"
