@@ -234,7 +234,7 @@ class UserActivityServiceTest {
                 ev("alice", "1.1.1.1", "SUCCESS", "ADMIN", 10L, null, null, null, now));
 
         List<Map<String, Object>> hms = (List<Map<String, Object>>) overviewWithWindow(window).get("heatmaps");
-        assertThat(hms).hasSize(3);                       // bu hafta + 1 önceki + 2 önceki
+        assertThat(hms).hasSize(4);                       // bu hafta + 3 önceki = 4 hafta
         Map<String, Object> hm = hms.get(0);              // bu hafta (now olayını içerir)
         List<List<Long>> matrix = (List<List<Long>>) hm.get("matrix");
 
