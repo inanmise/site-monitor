@@ -328,8 +328,11 @@ public class SchedulerService {
         patch("ALTER TABLE incident_records ADD COLUMN team_id BIGINT");
         patch("ALTER TABLE incident_records ADD COLUMN team_name TEXT");
         patch("CREATE INDEX IF NOT EXISTS idx_inc_team ON incident_records(team_id)");
-        // Yönetilen seçenekler (kanal/domain) — tablo ddl-auto ile oluşur; (type,value) unique güvenlik ağı.
-        patch("CREATE UNIQUE INDEX IF NOT EXISTS uk_inc_opt_type_value ON incident_options(type, opt_value)");
+        // Yönetilen seçenekler artık TAKIMA ÖZEL (team_id, ddl-auto ekler) → eski (type,opt_value) tekil
+        // kısıtı kaldırılır ki aynı değer farklı takımlarda bulunabilsin (tekrarlar ensureOption kapsam
+        // kontrolüyle önlenir). Constraint VE standalone index formu denenir (idempotent; hata yutulur).
+        patch("ALTER TABLE incident_options DROP CONSTRAINT IF EXISTS uk_inc_opt_type_value");
+        patch("DROP INDEX IF EXISTS uk_inc_opt_type_value");
         patch("CREATE INDEX IF NOT EXISTS idx_inc_opt_type ON incident_options(type)");
         // ── DB performans index'leri (hot-path sorgular; entity @Index dışında kalan eksikler) ──
         // uptime_checks: haftalık erişilebilirlik raporu domain+port+tarih-aralığı tarar (en hızlı büyüyen tablo).

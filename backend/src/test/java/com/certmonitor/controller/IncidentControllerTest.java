@@ -89,7 +89,7 @@ class IncidentControllerTest {
     @DisplayName("GET /api/incidents/options view varsa → 200 + liste")
     void options_view_200() throws Exception {
         when(permissionService.allows(any(jakarta.servlet.http.HttpSession.class), eq("incidents.view"), eq("view"))).thenReturn(true);
-        when(service.listOptions("CHANNEL")).thenReturn(List.of("IVR", "ATM"));
+        when(service.listOptions(eq("CHANNEL"), any(), anyBoolean())).thenReturn(List.of("IVR", "ATM"));
         mvc.perform(get("/api/incidents/options").param("type", "CHANNEL").session(userSession()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data[0]").value("IVR"))
@@ -100,7 +100,7 @@ class IncidentControllerTest {
     @DisplayName("POST /api/incidents/options manage varsa → 200 + eklenen değer")
     void addOption_manage_200() throws Exception {
         when(permissionService.allows(any(jakarta.servlet.http.HttpSession.class), eq("incidents.manage"), eq("edit"))).thenReturn(true);
-        when(service.addOption(eq("CHANNEL"), eq("Şube TV"), any())).thenReturn("Şube TV");
+        when(service.addOption(eq("CHANNEL"), eq("Şube TV"), any(), any())).thenReturn("Şube TV");
         mvc.perform(post("/api/incidents/options").session(adminSession())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"type\":\"CHANNEL\",\"value\":\"Şube TV\"}"))

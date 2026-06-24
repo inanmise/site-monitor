@@ -87,7 +87,9 @@ public class IncidentController {
     @GetMapping("/options")
     public ResponseEntity<Map<String, Object>> options(@RequestParam String type, HttpSession session) {
         requireView(session);
-        return ok(Map.of("data", service.listOptions(type)));
+        // Seçenekler takıma özel: kullanıcı global + kendi takımını görür; admin tümünü.
+        return ok(Map.of("data", service.listOptions(type, longAttr(session, "teamId"),
+                "ADMIN".equals(session.getAttribute("systemRole")))));
     }
 
     @PostMapping("/options")
@@ -96,7 +98,8 @@ public class IncidentController {
         requireManage(session);
         String type  = body.get("type")  == null ? null : String.valueOf(body.get("type"));
         String value = body.get("value") == null ? null : String.valueOf(body.get("value"));
-        String saved = service.addOption(type, value, (String) session.getAttribute("username"));
+        String saved = service.addOption(type, value, (String) session.getAttribute("username"),
+                longAttr(session, "teamId"));   // seçenek ekleyenin takımına yazılır (admin → global)
         auditService.recordAction("INCIDENT_OPTION_ADD", session, request,
                 "INCIDENT_OPTION", type, "{\"value\":\"" + safe(saved) + "\"}");
         return ok(Map.of("data", saved));
@@ -107,7 +110,9 @@ public class IncidentController {
             @RequestParam String type, @RequestParam String value,
             HttpSession session, HttpServletRequest request) {
         requireManage(session);
-        service.removeOption(type, value);
+        // Kullanıcı yalnız kendi takımının seçeneğini silebilir; admin her şeyi.
+        service.removeOption(type, value, longAttr(session, "teamId"),
+                "ADMIN".equals(session.getAttribute("systemRole")));
         auditService.recordAction("INCIDENT_OPTION_DELETE", session, request,
                 "INCIDENT_OPTION", type, "{\"value\":\"" + safe(value) + "\"}");
         return ok(Map.of("message", "Deleted"));
