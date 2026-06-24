@@ -4,6 +4,7 @@ import { api, formatDate } from '../api/client'
 import { useT } from '../i18n/index.jsx'
 import SearchableSelect from './ui/SearchableSelect.jsx'
 import { Play, Pencil, X, RefreshCw, Plus, Trash2, Radio, Users, Layers } from 'lucide-react'
+import AlertHistory from './admin/AlertHistory.jsx'
 
 const INTERVALS = [
   { value: 30,  labelKey: 'ping.interval30s' },
@@ -13,7 +14,7 @@ const INTERVALS = [
 ]
 const REFRESH_INTERVAL = 60
 const emptyForm = { name: '', host: '', ipVersion: 'auto', groupName: '', teamId: '',
-  intervalSeconds: 60, timeoutMs: 5000, packetCount: 4, active: true }
+  intervalSeconds: 60, timeoutMs: 5000, packetCount: 4, confirmAttempts: 3, confirmIntervalSeconds: 30, active: true }
 
 export default function PingMonitorPage({ systemRole, teamId, teamName }) {
   const t = useT()
@@ -40,8 +41,6 @@ export default function PingMonitorPage({ systemRole, teamId, teamName }) {
   const [teamFilter, setTeamFilter] = useState('all')
   const [groupFilter, setGroupFilter] = useState('all')
   const [secondsSince, setSecondsSince] = useState(0)
-  const [alerts, setAlerts] = useState([])
-  const [alertsLoading, setAlertsLoading] = useState(false)
   const countdownRef = useRef(null)
   const deepLinkDone = useRef(false)
 
@@ -92,20 +91,16 @@ export default function PingMonitorPage({ systemRole, teamId, teamName }) {
     setHistoryLoading(false)
   }
   function selectRange(id, days) { setRangeDays(days); loadHistory(id, days) }
-  async function loadAlerts(id) {
-    setAlertsLoading(true); setAlerts([])
-    const res = await api.monitoring.getPingAlerts(id)
-    if (res?.success) setAlerts(res.data ?? [])
-    setAlertsLoading(false)
-  }
-  function openDetail(m) { setSelected(m); setHistory([]); loadHistory(m.id, rangeDays); loadAlerts(m.id) }
-  function closeDetail() { setSelected(null); setHistory([]); setAlerts([]) }
+  function openDetail(m) { setSelected(m); setHistory([]); loadHistory(m.id, rangeDays) }
+  function closeDetail() { setSelected(null); setHistory([]) }
 
   function openNew() { setForm({ ...emptyForm, teamId: isAdmin ? '' : (myTeam ?? '') }); setModal('new') }
   function openEdit(m) {
     setForm({ name: m.name || '', host: m.host || '', ipVersion: m.ip_version || 'auto', groupName: m.group_name || '',
       teamId: m.team_id != null ? String(m.team_id) : '', intervalSeconds: m.interval_seconds ?? 60,
-      timeoutMs: m.timeout_ms ?? 5000, packetCount: m.packet_count ?? 4, active: m.active !== false })
+      timeoutMs: m.timeout_ms ?? 5000, packetCount: m.packet_count ?? 4,
+      confirmAttempts: m.confirm_attempts ?? 3, confirmIntervalSeconds: m.confirm_interval_seconds ?? 30,
+      active: m.active !== false })
     setModal(m)
   }
   function closeEdit() { setModal(null) }
@@ -117,7 +112,9 @@ export default function PingMonitorPage({ systemRole, teamId, teamName }) {
       name: (form.name || form.host).trim(), host: form.host.trim(), ipVersion: form.ipVersion,
       groupName: form.groupName?.trim() || null,
       teamId: form.teamId === '' ? null : Number(form.teamId), intervalSeconds: Number(form.intervalSeconds),
-      timeoutMs: Number(form.timeoutMs), packetCount: Number(form.packetCount), active: form.active,
+      timeoutMs: Number(form.timeoutMs), packetCount: Number(form.packetCount),
+      confirmAttempts: Number(form.confirmAttempts), confirmIntervalSeconds: Number(form.confirmIntervalSeconds),
+      active: form.active,
     }
     if (modal === 'new') await api.monitoring.createPingMonitor(payload)
     else await api.monitoring.updatePingMonitor(modal.id, payload)
@@ -298,27 +295,7 @@ export default function PingMonitorPage({ systemRole, teamId, teamName }) {
             {selected.status === 'na' && <div className="alert-msg" style={{ marginTop: 4 }}>{t('ping.naHint')}</div>}
             <div className="upt-modal-divider" />
             <div className="upt-modal-section-title">{t('ping.alertHistory')}</div>
-            {alertsLoading ? <div className="upt-modal-loading">...</div>
-              : alerts.length === 0 ? <div className="upt-modal-loading">{t('ping.noAlerts')}</div>
-              : (
-                <div className="upt-rt-list">
-                  <div className="upt-rt-grid upt-rt-head">
-                    <span>{t('ping.colStatus')}</span><span>{t('ping.alertLevel')}</span><span>{t('ping.colTime')}</span><span>{t('ping.alertResolution')}</span>
-                  </div>
-                  {alerts.map(a => (
-                    <div key={a.id} className="upt-rt-grid">
-                      <span className={a.resolved ? 'upt-rt-up' : 'upt-rt-down'}>{a.resolved ? t('ping.alertResolved') : t('ping.alertOpen')}</span>
-                      <span className="upt-rt-ms">{a.level}</span>
-                      <span className="upt-rt-time">{formatDate(a.created_at)}</span>
-                      <span className="upt-rt-ms" title={a.message || ''}>
-                        {a.resolved
-                          ? (a.resolved_at ? formatDate(a.resolved_at) : '—') + (a.resolved_by ? ' · ' + a.resolved_by : '')
-                          : (a.acknowledged ? t('ping.alertAcked') : t('ping.alertOngoing'))}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              )}
+            <AlertHistory domain={selected.host} />
             <div className="upt-modal-divider" />
             <div className="upt-modal-section-title">{t('ping.history')}</div>
             <div className="upt-range-btns">
@@ -382,6 +359,13 @@ export default function PingMonitorPage({ systemRole, teamId, teamName }) {
                 </select></label>
               <label><span>{t('ping.timeout')}</span>
                 <input type="number" value={form.timeoutMs} onChange={e => setForm(f => ({ ...f, timeoutMs: Number(e.target.value) }))} /></label>
+              <label><span>{t('ping.confirmAttempts')}</span>
+                <input type="number" min="1" max="10" value={form.confirmAttempts} onChange={e => setForm(f => ({ ...f, confirmAttempts: Number(e.target.value) }))} /></label>
+              <label><span>{t('ping.confirmInterval')}</span>
+                <input type="number" min="10" max="600" value={form.confirmIntervalSeconds} onChange={e => setForm(f => ({ ...f, confirmIntervalSeconds: Number(e.target.value) }))} /></label>
+              <div className="full-width" style={{ fontSize: '.8em', color: 'var(--text-muted)', marginTop: -2, lineHeight: 1.5 }}>
+                ⓘ {t('ping.confirmHint')}
+              </div>
               <label className="checkbox-label full-width">
                 <input type="checkbox" checked={form.active} onChange={e => setForm(f => ({ ...f, active: e.target.checked }))} />{t('ping.active')}</label>
             </div>

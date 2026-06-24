@@ -881,24 +881,15 @@ public class EmailNotificationService {
     private String ctaButton(String url, String label, String accent) {
         if (url == null || url.isBlank()) return "";
         String safe = escHtml(url);
-        return "<!--[if mso]>"
-            + "<v:roundrect xmlns:v=\"urn:schemas-microsoft-com:vml\" xmlns:w=\"urn:schemas-microsoft-com:office:word\""
-            + " href=\"" + safe + "\" style=\"height:48px;v-text-anchor:middle;width:360px;\""
-            + " arcsize=\"16%\" strokecolor=\"" + accent + "\" fillcolor=\"" + accent + "\">"
-            + "<w:anchorlock/>"
-            + "<center style=\"color:#ffffff;font-family:'Segoe UI',Tahoma,Arial,sans-serif;font-size:15px;font-weight:bold;\">"
-            + label + "</center>"
-            + "</v:roundrect>"
-            + "<![endif]-->"
-            + "<!--[if !mso]><!-->"
-            + "<table role='presentation' border='0' cellspacing='0' cellpadding='0' style='display:inline-block'><tr>"
-            + "<td align='center' bgcolor='" + accent + "' style='background:" + accent + ";border-radius:8px;"
-            + "padding:13px 26px;color:#ffffff'>"
-            + "<a href='" + safe + "' target='_blank' style='color:#ffffff;text-decoration:none;"
-            + "font-size:15px;font-weight:800;font-family:\"Segoe UI\",Tahoma,Arial,sans-serif'>"
-            + "<span style='color:#ffffff'>" + label + "</span></a>"
-            + "</td></tr></table>"
-            + "<!--<![endif]-->";
+        // VML'siz tek "bulletproof" buton — Outlook dahil her istemcide tıklanabilir GERÇEK <a>.
+        // (Önceki VML <v:roundrect> bazı Outlook sürümlerinde tıklanmıyordu.) Buton boyutu Outlook'ta
+        // mso-padding-alt ile, diğer istemcilerde <a> padding ile; köşe Outlook'ta düz, link her yerde çalışır.
+        return "<table role='presentation' border='0' cellspacing='0' cellpadding='0' align='center' style='margin:0 auto'><tr>"
+            + "<td align='center' bgcolor='" + accent + "' style='background:" + accent + ";border-radius:8px;mso-padding-alt:14px 32px'>"
+            + "<a href='" + safe + "' target='_blank' style='display:inline-block;padding:14px 32px;"
+            + "color:#ffffff;text-decoration:none;font-size:15px;font-weight:bold;border-radius:8px;"
+            + "font-family:\"Segoe UI\",Tahoma,Arial,sans-serif'>" + label + "</a>"
+            + "</td></tr></table>";
     }
 
     private String buildSimpleAlertHtml(String subject, String message, String ctaUrl, String ctaLabel) {
