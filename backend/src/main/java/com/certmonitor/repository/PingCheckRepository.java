@@ -3,6 +3,7 @@ package com.certmonitor.repository;
 import com.certmonitor.model.PingCheck;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
 import java.util.List;
 import java.util.Optional;
@@ -19,4 +20,12 @@ public interface PingCheckRepository extends JpaRepository<PingCheck, Long> {
     List<PingCheck> findByMonitorIdAndCheckedAtGreaterThanEqualOrderByCheckedAtDesc(Long monitorId, String since);
     long countByMonitorIdAndCheckedAtGreaterThanEqual(Long monitorId, String since);
     long countByMonitorIdAndUpFalseAndCheckedAtGreaterThanEqual(Long monitorId, String since);
+
+    /** RTT grafiği için ham veri: [checked_at, rtt_ms (null olabilir), up, packet_loss] — aralık + cap
+     *  (en yeni :limit). Null filtresi YOK: down kovaları için tüm kayıtlar gelir. */
+    @Query("SELECT c.checkedAt, c.rttMs, c.up, c.packetLoss FROM PingCheck c "
+         + "WHERE c.monitorId = :id AND c.checkedAt >= :from AND c.checkedAt <= :to "
+         + "ORDER BY c.checkedAt DESC LIMIT :limit")
+    List<Object[]> responseSeriesRaw(@Param("id") Long id, @Param("from") String from,
+                                     @Param("to") String to, @Param("limit") int limit);
 }

@@ -68,4 +68,13 @@ describe('KeywordMonitorPage', () => {
     await waitFor(() => expect(api.monitoring.testKeyword).toHaveBeenCalled())
     expect(await screen.findByText(/condition met|koşul sağlanıyor/i)).toBeInTheDocument()
   })
+
+  it('karta tıkla → detay modalında 3 sekme görünür', async () => {
+    render(<KeywordMonitorPage systemRole="USER" teamId={5} teamName="SY-A" />)
+    await waitFor(() => expect(api.monitoring.getKeywordMonitors).toHaveBeenCalled())
+    fireEvent.click(screen.getByText('https://www.akbank.com/'))
+    await waitFor(() => expect(api.monitoring.getKeywordHistory).toHaveBeenCalled())
+    expect(screen.getByRole('button', { name: /check history|kontrol/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /response chart|süre/i })).toBeInTheDocument()
+  })
 })

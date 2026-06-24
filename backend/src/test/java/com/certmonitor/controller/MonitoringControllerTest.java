@@ -179,4 +179,42 @@ class MonitoringControllerTest {
                 .contentType("application/json").content("{\"url\":\"\",\"keyword\":\"\"}"))
                 .andExpect(status().isBadRequest());
     }
+
+    @Test
+    @DisplayName("GET /keyword/{id}/response-series: kovalar avg/min/max/p95/down döner")
+    void keywordResponseSeries_buckets() throws Exception {
+        when(keywordMonitorRepo.existsById(5L)).thenReturn(true);
+        // Aynı saat kovasında 3 kayıt (100/200/300 ms), biri down (ok=false)
+        List<Object[]> rows = List.of(
+                new Object[]{ "2026-06-24T10:05:00", 100L, true },
+                new Object[]{ "2026-06-24T10:25:00", 300L, true },
+                new Object[]{ "2026-06-24T10:45:00", 200L, false });
+        when(keywordResultRepo.responseSeriesRaw(eq(5L), anyString(), anyString(), anyInt())).thenReturn(rows);
+
+        mvc.perform(get("/api/monitoring/keyword/5/response-series?days=7").session(session("USER")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.bucket").value("hour"))
+                .andExpect(jsonPath("$.data.series[0].count").value(3))
+                .andExpect(jsonPath("$.data.series[0].down").value(1))
+                .andExpect(jsonPath("$.data.series[0].avg").value(200))
+                .andExpect(jsonPath("$.data.series[0].min").value(100))
+                .andExpect(jsonPath("$.data.series[0].max").value(300))
+                .andExpect(jsonPath("$.data.series[0].p95").value(300));
+    }
+
+    @Test
+    @DisplayName("GET /ping/{id}/response-series: RTT ortalaması + paket kaybı + down")
+    void pingResponseSeries_withLoss() throws Exception {
+        when(pingMonitorRepo.existsById(9L)).thenReturn(true);
+        List<Object[]> rows = List.of(
+                new Object[]{ "2026-06-24T10:05:00", 10L, true,  0 },
+                new Object[]{ "2026-06-24T10:25:00", 30L, false, 100 });
+        when(pingCheckRepo.responseSeriesRaw(eq(9L), anyString(), anyString(), anyInt())).thenReturn(rows);
+
+        mvc.perform(get("/api/monitoring/ping/9/response-series?days=7").session(session("USER")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.series[0].down").value(1))
+                .andExpect(jsonPath("$.data.series[0].avg").value(20))
+                .andExpect(jsonPath("$.data.series[0].loss").value(50));
+    }
 }

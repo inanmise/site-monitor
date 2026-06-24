@@ -515,6 +515,12 @@ export const api = {
     deleteKeywordMonitor: (id) => request(`/monitoring/keyword/${id}`, { method: 'DELETE' }),
     triggerKeywordCheck:  (id) => request(`/monitoring/keyword/${id}/check`, { method: 'POST' }),
     testKeyword:          (data) => request('/monitoring/keyword/test', { method: 'POST', body: JSON.stringify(data) }),
+    getKeywordResponseSeries: (id, { from, to, days } = {}) => {
+      const q = new URLSearchParams(
+        Object.fromEntries(Object.entries({ from, to, days }).filter(([, v]) => v != null && v !== '')),
+      ).toString()
+      return request(`/monitoring/keyword/${id}/response-series${q ? `?${q}` : ''}`)
+    },
     getKeywordHistory:    (id, { days, limit } = {}) => {
       const q = new URLSearchParams(
         Object.fromEntries(Object.entries({ days, limit }).filter(([, v]) => v != null && v !== '')),
@@ -533,6 +539,12 @@ export const api = {
         Object.fromEntries(Object.entries({ days, limit }).filter(([, v]) => v != null && v !== '')),
       ).toString()
       return request(`/monitoring/ping/${id}/history${q ? `?${q}` : ''}`)
+    },
+    getPingResponseSeries: (id, { from, to, days } = {}) => {
+      const q = new URLSearchParams(
+        Object.fromEntries(Object.entries({ from, to, days }).filter(([, v]) => v != null && v !== '')),
+      ).toString()
+      return request(`/monitoring/ping/${id}/response-series${q ? `?${q}` : ''}`)
     },
   },
 }

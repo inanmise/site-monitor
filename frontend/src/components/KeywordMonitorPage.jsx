@@ -1,10 +1,12 @@
-import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
+import { useState, useEffect, useCallback, useRef, useMemo, lazy, Suspense } from 'react'
 import { createPortal } from 'react-dom'
 import { api, formatDate, formatDateSec } from '../api/client'
 import { useT } from '../i18n/index.jsx'
 import SearchableSelect from './ui/SearchableSelect.jsx'
 import { Play, Pencil, X, RefreshCw, Plus, Trash2, Target, Users, Layers, FlaskConical, Check, AlertTriangle } from 'lucide-react'
 import AlertHistory from './admin/AlertHistory.jsx'
+// recharts ağır — yalnız "Süre Grafiği" sekmesi açılınca yüklensin (eager bundle'a girmesin).
+const ResponseTimeChart = lazy(() => import('./ResponseTimeChart.jsx'))
 
 const INTERVALS = [
   { value: 30,  labelKey: 'ping.interval30s' },
@@ -40,6 +42,7 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
   const [checking, setChecking] = useState(null)
   const [testing, setTesting] = useState(false)
   const [testResult, setTestResult] = useState(null)
+  const [detailTab, setDetailTab] = useState('control')
   const [search, setSearch] = useState('')
   const [teamFilter, setTeamFilter] = useState('all')
   const [groupFilter, setGroupFilter] = useState('all')
@@ -94,7 +97,7 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
     setHistoryLoading(false)
   }
   function selectRange(id, days) { setRangeDays(days); loadHistory(id, days) }
-  function openDetail(m) { setSelected(m); setHistory([]); loadHistory(m.id, rangeDays) }
+  function openDetail(m) { setSelected(m); setHistory([]); setDetailTab('control'); loadHistory(m.id, rangeDays) }
   function closeDetail() { setSelected(null); setHistory([]) }
 
   function openNew() { setTestResult(null); setForm({ ...emptyForm, teamId: isAdmin ? '' : (myTeam ?? '') }); setModal('new') }
@@ -347,41 +350,53 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
               {selected.checked_at && <div className="upt-modal-metric"><span className="upt-modal-metric-val upt-modal-metric-time">{formatDateSec(selected.checked_at)}</span><span className="upt-modal-metric-lbl">{t('keyword.lastCheck')}</span></div>}
             </div>
             <div className="upt-modal-divider" />
-            <div className="upt-modal-section-title">{t('keyword.alertHistory')}</div>
-            <AlertHistory domain={selected.url} />
-            <div className="upt-modal-divider" />
-            <div className="upt-modal-section-title">{t('keyword.history')}</div>
-            <div className="upt-range-btns">
-              {[1, 7, 15, 30].map(d => (
-                <button key={d} type="button" className={`btn btn-sm ${rangeDays === d ? 'btn-primary' : 'btn-secondary'}`}
-                  onClick={() => selectRange(selected.id, d)}>{t(`keyword.range${d}d`)}</button>
-              ))}
+            <div className="modal-tabs">
+              <button className={`modal-tab${detailTab === 'control' ? ' active' : ''}`} onClick={() => setDetailTab('control')}>{t('keyword.tabControl')}</button>
+              <button className={`modal-tab${detailTab === 'alerts' ? ' active' : ''}`} onClick={() => setDetailTab('alerts')}>{t('keyword.tabAlerts')}</button>
+              <button className={`modal-tab${detailTab === 'chart' ? ' active' : ''}`} onClick={() => setDetailTab('chart')}>{t('keyword.tabChart')}</button>
             </div>
-            {historyLoading ? <div className="upt-modal-loading">...</div> : history.length === 0 ? (
-              <div className="upt-modal-loading">{t('keyword.noData')}</div>
-            ) : (
-              <div className="upt-rt-list">
-                <div className="upt-rt-grid upt-rt-head">
-                  <span>{t('keyword.colTime')}</span><span>{t('keyword.colStatus')}</span><span>HTTP</span><span>{t('keyword.colDetail')}</span>
-                </div>
-                {history.slice(0, 200).map((c, i) => {
-                  const occ = c.occurrences != null ? c.occurrences : (c.found ? '≥1' : 0)
-                  const cmp = `${OP_SYM[selected.operator] || '≥'}${selected.match_count ?? 1}`
-                  return (
-                    <div key={`${c.checkedAt || c.checked_at || ''}#${i}`} className="upt-rt-grid">
-                      <span className="upt-rt-time">{formatDateSec(c.checkedAt || c.checked_at)}</span>
-                      <span className={c.ok ? 'upt-rt-up' : 'upt-rt-down'}>{c.ok ? t('keyword.statusOk') : (c.error ? t('keyword.statusError') : t('keyword.statusViolation'))}</span>
-                      <span className="upt-rt-ms">{c.httpStatus ?? c.http_status ?? '—'}</span>
-                      {c.error
-                        ? <span className="upt-rt-error" title={c.error}>{c.error}</span>
-                        : <span style={{ whiteSpace: 'nowrap' }}
-                            title={`« ${selected.keyword} » → ${occ} ${t('keyword.testFound')} · ${t('keyword.testRequired')}: ${cmp} (${expectPhrase(selected.operator, selected.match_count ?? 1)})${c.snippet ? '\n— ' + c.snippet : ''}`}>
-                            <strong>{occ}</strong> {t('keyword.testFound')} <span style={{ color: 'var(--text-muted)' }}>· {cmp}</span>
-                          </span>}
-                    </div>
-                  )
-                })}
+
+            {detailTab === 'control' && (<>
+              <div className="upt-range-btns">
+                {[1, 7, 15, 30].map(d => (
+                  <button key={d} type="button" className={`btn btn-sm ${rangeDays === d ? 'btn-primary' : 'btn-secondary'}`}
+                    onClick={() => selectRange(selected.id, d)}>{t(`keyword.range${d}d`)}</button>
+                ))}
               </div>
+              {historyLoading ? <div className="upt-modal-loading">...</div> : history.length === 0 ? (
+                <div className="upt-modal-loading">{t('keyword.noData')}</div>
+              ) : (
+                <div className="upt-rt-list">
+                  <div className="upt-rt-grid upt-rt-head">
+                    <span>{t('keyword.colTime')}</span><span>{t('keyword.colStatus')}</span><span>HTTP</span><span>{t('keyword.colDetail')}</span>
+                  </div>
+                  {history.slice(0, 200).map((c, i) => {
+                    const occ = c.occurrences != null ? c.occurrences : (c.found ? '≥1' : 0)
+                    const cmp = `${OP_SYM[selected.operator] || '≥'}${selected.match_count ?? 1}`
+                    return (
+                      <div key={`${c.checkedAt || c.checked_at || ''}#${i}`} className="upt-rt-grid">
+                        <span className="upt-rt-time">{formatDateSec(c.checkedAt || c.checked_at)}</span>
+                        <span className={c.ok ? 'upt-rt-up' : 'upt-rt-down'}>{c.ok ? t('keyword.statusOk') : (c.error ? t('keyword.statusError') : t('keyword.statusViolation'))}</span>
+                        <span className="upt-rt-ms">{c.httpStatus ?? c.http_status ?? '—'}</span>
+                        {c.error
+                          ? <span className="upt-rt-error" title={c.error}>{c.error}</span>
+                          : <span style={{ whiteSpace: 'nowrap' }}
+                              title={`« ${selected.keyword} » → ${occ} ${t('keyword.testFound')} · ${t('keyword.testRequired')}: ${cmp} (${expectPhrase(selected.operator, selected.match_count ?? 1)})${c.snippet ? '\n— ' + c.snippet : ''}`}>
+                              <strong>{occ}</strong> {t('keyword.testFound')} <span style={{ color: 'var(--text-muted)' }}>· {cmp}</span>
+                            </span>}
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+            </>)}
+
+            {detailTab === 'alerts' && <AlertHistory domain={selected.url} />}
+
+            {detailTab === 'chart' && (
+              <Suspense fallback={<div className="upt-modal-loading">…</div>}>
+                <ResponseTimeChart monitorId={selected.id} kind="keyword" />
+              </Suspense>
             )}
           </div>
         </div>,

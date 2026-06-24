@@ -1,10 +1,12 @@
-import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
+import { useState, useEffect, useCallback, useRef, useMemo, lazy, Suspense } from 'react'
 import { createPortal } from 'react-dom'
 import { api, formatDate } from '../api/client'
 import { useT } from '../i18n/index.jsx'
 import SearchableSelect from './ui/SearchableSelect.jsx'
 import { Play, Pencil, X, RefreshCw, Plus, Trash2, Radio, Users, Layers } from 'lucide-react'
 import AlertHistory from './admin/AlertHistory.jsx'
+// recharts ağır — yalnız "Süre Grafiği" sekmesi açılınca yüklensin.
+const ResponseTimeChart = lazy(() => import('./ResponseTimeChart.jsx'))
 
 const INTERVALS = [
   { value: 30,  labelKey: 'ping.interval30s' },
@@ -41,6 +43,7 @@ export default function PingMonitorPage({ systemRole, teamId, teamName }) {
   const [teamFilter, setTeamFilter] = useState('all')
   const [groupFilter, setGroupFilter] = useState('all')
   const [secondsSince, setSecondsSince] = useState(0)
+  const [detailTab, setDetailTab] = useState('control')
   const countdownRef = useRef(null)
   const deepLinkDone = useRef(false)
 
@@ -91,7 +94,7 @@ export default function PingMonitorPage({ systemRole, teamId, teamName }) {
     setHistoryLoading(false)
   }
   function selectRange(id, days) { setRangeDays(days); loadHistory(id, days) }
-  function openDetail(m) { setSelected(m); setHistory([]); loadHistory(m.id, rangeDays) }
+  function openDetail(m) { setSelected(m); setHistory([]); setDetailTab('control'); loadHistory(m.id, rangeDays) }
   function closeDetail() { setSelected(null); setHistory([]) }
 
   function openNew() { setForm({ ...emptyForm, teamId: isAdmin ? '' : (myTeam ?? '') }); setModal('new') }
@@ -294,33 +297,45 @@ export default function PingMonitorPage({ systemRole, teamId, teamName }) {
             </div>
             {selected.status === 'na' && <div className="alert-msg" style={{ marginTop: 4 }}>{t('ping.naHint')}</div>}
             <div className="upt-modal-divider" />
-            <div className="upt-modal-section-title">{t('ping.alertHistory')}</div>
-            <AlertHistory domain={selected.host} />
-            <div className="upt-modal-divider" />
-            <div className="upt-modal-section-title">{t('ping.history')}</div>
-            <div className="upt-range-btns">
-              {[1, 7, 15, 30].map(d => (
-                <button key={d} type="button" className={`btn btn-sm ${rangeDays === d ? 'btn-primary' : 'btn-secondary'}`}
-                  onClick={() => selectRange(selected.id, d)}>{t(`ping.range${d}d`)}</button>
-              ))}
+            <div className="modal-tabs">
+              <button className={`modal-tab${detailTab === 'control' ? ' active' : ''}`} onClick={() => setDetailTab('control')}>{t('ping.tabControl')}</button>
+              <button className={`modal-tab${detailTab === 'alerts' ? ' active' : ''}`} onClick={() => setDetailTab('alerts')}>{t('ping.tabAlerts')}</button>
+              <button className={`modal-tab${detailTab === 'chart' ? ' active' : ''}`} onClick={() => setDetailTab('chart')}>{t('ping.tabChart')}</button>
             </div>
-            {historyLoading ? <div className="upt-modal-loading">...</div> : history.length === 0 ? (
-              <div className="upt-modal-loading">{t('ping.noData')}</div>
-            ) : (
-              <div className="upt-rt-list">
-                <div className="upt-rt-grid upt-rt-head">
-                  <span>{t('ping.colTime')}</span><span>{t('ping.colStatus')}</span><span>{t('ping.rtt')}</span><span>{t('ping.colDetail')}</span>
-                </div>
-                {history.slice(0, 200).map((c, i) => (
-                  <div key={`${c.checkedAt || c.checked_at || ''}#${i}`} className="upt-rt-grid">
-                    <span className="upt-rt-time">{formatDate(c.checkedAt || c.checked_at)}</span>
-                    <span className={c.up ? 'upt-rt-up' : 'upt-rt-down'}>{c.up ? t('ping.statusUp') : t('ping.statusDown')}</span>
-                    <span className="upt-rt-ms">{(c.rttMs ?? c.rtt_ms) != null ? `${c.rttMs ?? c.rtt_ms}ms` : '—'}</span>
-                    {c.error ? <span className="upt-rt-error" title={c.error}>{c.error}</span>
-                      : <span className="upt-rt-ms">{(c.packetLoss ?? c.packet_loss) != null ? `%${c.packetLoss ?? c.packet_loss}` : '—'}</span>}
-                  </div>
+
+            {detailTab === 'control' && (<>
+              <div className="upt-range-btns">
+                {[1, 7, 15, 30].map(d => (
+                  <button key={d} type="button" className={`btn btn-sm ${rangeDays === d ? 'btn-primary' : 'btn-secondary'}`}
+                    onClick={() => selectRange(selected.id, d)}>{t(`ping.range${d}d`)}</button>
                 ))}
               </div>
+              {historyLoading ? <div className="upt-modal-loading">...</div> : history.length === 0 ? (
+                <div className="upt-modal-loading">{t('ping.noData')}</div>
+              ) : (
+                <div className="upt-rt-list">
+                  <div className="upt-rt-grid upt-rt-head">
+                    <span>{t('ping.colTime')}</span><span>{t('ping.colStatus')}</span><span>{t('ping.rtt')}</span><span>{t('ping.colDetail')}</span>
+                  </div>
+                  {history.slice(0, 200).map((c, i) => (
+                    <div key={`${c.checkedAt || c.checked_at || ''}#${i}`} className="upt-rt-grid">
+                      <span className="upt-rt-time">{formatDate(c.checkedAt || c.checked_at)}</span>
+                      <span className={c.up ? 'upt-rt-up' : 'upt-rt-down'}>{c.up ? t('ping.statusUp') : t('ping.statusDown')}</span>
+                      <span className="upt-rt-ms">{(c.rttMs ?? c.rtt_ms) != null ? `${c.rttMs ?? c.rtt_ms}ms` : '—'}</span>
+                      {c.error ? <span className="upt-rt-error" title={c.error}>{c.error}</span>
+                        : <span className="upt-rt-ms">{(c.packetLoss ?? c.packet_loss) != null ? `%${c.packetLoss ?? c.packet_loss}` : '—'}</span>}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </>)}
+
+            {detailTab === 'alerts' && <AlertHistory domain={selected.host} />}
+
+            {detailTab === 'chart' && (
+              <Suspense fallback={<div className="upt-modal-loading">…</div>}>
+                <ResponseTimeChart monitorId={selected.id} kind="ping" />
+              </Suspense>
             )}
           </div>
         </div>,
