@@ -41,10 +41,10 @@ ingress:
 resources:
   requests:
     memory: "256Mi"
-    cpu: "250m"
+    cpu: "500m"      # warmup'ta JIT+TLS kripto için garanti CPU payı (250m→500m); autoscale yok → HPA etkisi yok
   limits:
     memory: "768Mi"
-    cpu: "1000m"
+    cpu: "2000m"     # soğuk-başlangıç CPU burst tavanı (1000m→2000m) → CFS throttling azalır, readiness daha hızlı ACCEPTING
 
 autoscaling:
   enabled: false

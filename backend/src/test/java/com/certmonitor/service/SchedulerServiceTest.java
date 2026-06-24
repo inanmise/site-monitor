@@ -19,6 +19,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 import org.springframework.test.util.ReflectionTestUtils;
@@ -63,6 +64,7 @@ class SchedulerServiceTest {
     @Mock UserService userService;
     @Mock PermissionService permissionService;
     @Mock DataSource dataSource;
+    @Mock ApplicationEventPublisher eventPublisher;
     @Mock PortCheckerService portCheckerService;
     @Mock PortMonitorRepository portMonitorRepo;
     @Mock PortCheckRepository portCheckRepo;
@@ -92,7 +94,7 @@ class SchedulerServiceTest {
         scheduler = new SchedulerService(
                 checkerService, certService, emailService, escalationService,
                 inventoryRepo, latestCheckRepo, thresholdRepo, jdbcTemplate,
-                userService, permissionService, dataSource,
+                userService, permissionService, dataSource, eventPublisher,
                 portCheckerService, portMonitorRepo, portCheckRepo,
                 dnsCheckerService, dnsMonitorRepo, dnsRecordRepo,
                 uptimeHttpCheckerService, uptimeCheckRepo, monitoringOutageService,

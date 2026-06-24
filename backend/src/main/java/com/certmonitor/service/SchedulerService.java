@@ -29,6 +29,9 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
+import org.springframework.boot.availability.AvailabilityChangeEvent;
+import org.springframework.boot.availability.ReadinessState;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.context.event.EventListener;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -69,6 +72,7 @@ public class SchedulerService {
     private final UserService userService;
     private final PermissionService permissionService;
     private final DataSource dataSource;
+    private final ApplicationEventPublisher eventPublisher;   // readiness gating (REFUSING/ACCEPTING_TRAFFIC)
 
     private final PortCheckerService portCheckerService;
     private final PortMonitorRepository portMonitorRepo;
@@ -184,25 +188,36 @@ public class SchedulerService {
     @EventListener(ApplicationReadyEvent.class)
     public void runOnStartup() {
         log.info("Application started [instance={}] — bootstrapping...", INSTANCE_ID);
-        applySchemaPatches();
-        userService.ensureBootstrapped(adminUsername, adminPassword);
-        // In-memory oturumlar restart'ta silinir ama DB'deki activeSessionId kalır → aksi halde
-        // "Aktif Oturum" sayımı şişer ve restart sonrası ilk login'de gerçekte canlı oturum
-        // olmasa da "başka yerde aktif oturum" onayı çıkar. Açılışta stale işaretleri temizle.
+        // Senkron bootstrap boyunca trafiği REDDET: /health/readiness 503 döner → kubelet pod'u Service
+        // endpoint'lerine EKLEMEZ. Böylece soğuk-JVM + şema patch + seeding sürerken kullanıcı isteği
+        // bu pod'a yönlenmez (ilk tıklama askıda kalmaz). Bitince finally'de ACCEPTING → sıcak servis.
+        AvailabilityChangeEvent.publish(eventPublisher, this, ReadinessState.REFUSING_TRAFFIC);
         try {
-            int cleared = userService.clearAllActiveSessions();
-            if (cleared > 0) log.info("Cleared {} stale active-session marker(s) on startup", cleared);
-        } catch (Exception e) {
-            log.warn("Startup active-session cleanup failed: {}", e.getMessage());
+            applySchemaPatches();
+            userService.ensureBootstrapped(adminUsername, adminPassword);
+            // In-memory oturumlar restart'ta silinir ama DB'deki activeSessionId kalır → aksi halde
+            // "Aktif Oturum" sayımı şişer ve restart sonrası ilk login'de gerçekte canlı oturum
+            // olmasa da "başka yerde aktif oturum" onayı çıkar. Açılışta stale işaretleri temizle.
+            try {
+                int cleared = userService.clearAllActiveSessions();
+                if (cleared > 0) log.info("Cleared {} stale active-session marker(s) on startup", cleared);
+            } catch (Exception e) {
+                log.warn("Startup active-session cleanup failed: {}", e.getMessage());
+            }
+            permissionService.seedDefaultsIfEmpty();
+            permissionService.seedMissingDefaults(); // katalogda yeni eklenen modüllerin grant'lerini backfill et
+            try { incidentService.seedOptions(); } // olay modülü varsayılan kanalları (idempotent)
+            catch (Exception e) { log.warn("Incident option seed failed: {}", e.getMessage()); }
+            ensureDefaultThreshold();
+            assignOrphanedCertsToDefaultTeam();
+            clearStaleLocksForThisHost();
+            restoreOutageStateFromDb();
+        } finally {
+            // Senkron bootstrap bitti (başarılı ya da değil — mevcut davranış: app yine de çalışmaya
+            // devam eder) → trafiğe HAZIR. Gecikmeli ağır tarama aşağıda arka planda kalır.
+            AvailabilityChangeEvent.publish(eventPublisher, this, ReadinessState.ACCEPTING_TRAFFIC);
+            log.info("Bootstrap complete — readiness=ACCEPTING_TRAFFIC [instance={}]", INSTANCE_ID);
         }
-        permissionService.seedDefaultsIfEmpty();
-        permissionService.seedMissingDefaults(); // katalogda yeni eklenen modüllerin grant'lerini backfill et
-        try { incidentService.seedOptions(); } // olay modülü varsayılan kanalları (idempotent)
-        catch (Exception e) { log.warn("Incident option seed failed: {}", e.getMessage()); }
-        ensureDefaultThreshold();
-        assignOrphanedCertsToDefaultTeam();
-        clearStaleLocksForThisHost();
-        restoreOutageStateFromDb();
         // Ağır açılış işi (escalation catch-up + tam sertifika taraması) ANINDA
         // çalışırsa, CPU-sınırlı pod'da JVM ısınması + bu işin TLS/OCSP/CRL kriptosu
         // ilk interaktif isteği (login → BCrypt) aç bırakır → login ~1dk askıda kalır.

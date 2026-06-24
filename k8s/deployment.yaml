@@ -54,26 +54,31 @@ spec:
             limits:
               memory: "8Gi"
               cpu: "5000m"
+          # Spring Boot Actuator probe grupları: readiness=readinessState (warmup'ta app REFUSING_TRAFFIC
+          # ile gate eder → pod gerçekten hazır olana dek trafik almaz); liveness=livenessState (DB'den
+          # bağımsız → gereksiz restart yok). startup readiness'a bakar (app hazır olunca tamamlanır).
+          startupProbe:
+            httpGet:
+              path: /health/readiness
+              port: 8080
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 30        # ~300s bootstrap bütçesi
           readinessProbe:
             httpGet:
-              path: /health
+              path: /health/readiness
               port: 8080
-            initialDelaySeconds: 30
-            periodSeconds: 10
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
             failureThreshold: 3
           livenessProbe:
             httpGet:
-              path: /health
+              path: /health/liveness
               port: 8080
-            initialDelaySeconds: 60
-            periodSeconds: 30
-            failureThreshold: 3
-          startupProbe:
-            httpGet:
-              path: /health
-              port: 8080
-            failureThreshold: 12
-            periodSeconds: 10
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 6
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
