@@ -12,7 +12,6 @@ vi.mock('../api/client', () => ({
       updatePingMonitor: vi.fn(),
       deletePingMonitor: vi.fn(),
       triggerPingCheck:  vi.fn(),
-      getPingAlerts:     vi.fn(),
     },
     admin: { getTeams: vi.fn() },
   },
