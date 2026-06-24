@@ -39,6 +39,8 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
   const [checking, setChecking] = useState(null)
   const [testing, setTesting] = useState(false)
   const [testResult, setTestResult] = useState(null)
+  const [alerts, setAlerts] = useState([])
+  const [alertsLoading, setAlertsLoading] = useState(false)
   const [search, setSearch] = useState('')
   const [teamFilter, setTeamFilter] = useState('all')
   const [groupFilter, setGroupFilter] = useState('all')
@@ -93,8 +95,14 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
     setHistoryLoading(false)
   }
   function selectRange(id, days) { setRangeDays(days); loadHistory(id, days) }
-  function openDetail(m) { setSelected(m); setHistory([]); loadHistory(m.id, rangeDays) }
-  function closeDetail() { setSelected(null); setHistory([]) }
+  async function loadAlerts(id) {
+    setAlertsLoading(true); setAlerts([])
+    const res = await api.monitoring.getKeywordAlerts(id)
+    if (res?.success) setAlerts(res.data ?? [])
+    setAlertsLoading(false)
+  }
+  function openDetail(m) { setSelected(m); setHistory([]); loadHistory(m.id, rangeDays); loadAlerts(m.id) }
+  function closeDetail() { setSelected(null); setHistory([]); setAlerts([]) }
 
   function openNew() { setTestResult(null); setForm({ ...emptyForm, teamId: isAdmin ? '' : (myTeam ?? '') }); setModal('new') }
   function openEdit(m) {
@@ -341,6 +349,29 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
               {selected.http_status != null && <div className="upt-modal-metric"><span className="upt-modal-metric-val">{selected.http_status}</span><span className="upt-modal-metric-lbl">HTTP</span></div>}
               {selected.checked_at && <div className="upt-modal-metric"><span className="upt-modal-metric-val upt-modal-metric-time">{formatDateSec(selected.checked_at)}</span><span className="upt-modal-metric-lbl">{t('keyword.lastCheck')}</span></div>}
             </div>
+            <div className="upt-modal-divider" />
+            <div className="upt-modal-section-title">{t('keyword.alertHistory')}</div>
+            {alertsLoading ? <div className="upt-modal-loading">...</div>
+              : alerts.length === 0 ? <div className="upt-modal-loading">{t('keyword.noAlerts')}</div>
+              : (
+                <div className="upt-rt-list">
+                  <div className="upt-rt-grid upt-rt-head">
+                    <span>{t('keyword.colStatus')}</span><span>{t('keyword.alertLevel')}</span><span>{t('keyword.colTime')}</span><span>{t('keyword.alertResolution')}</span>
+                  </div>
+                  {alerts.map(a => (
+                    <div key={a.id} className="upt-rt-grid">
+                      <span className={a.resolved ? 'upt-rt-up' : 'upt-rt-down'}>{a.resolved ? t('keyword.alertResolved') : t('keyword.alertOpen')}</span>
+                      <span className="upt-rt-ms">{a.level}</span>
+                      <span className="upt-rt-time">{formatDateSec(a.created_at)}</span>
+                      <span className="upt-rt-ms" title={a.message || ''}>
+                        {a.resolved
+                          ? (a.resolved_at ? formatDateSec(a.resolved_at) : '—') + (a.resolved_by ? ' · ' + a.resolved_by : '')
+                          : (a.acknowledged ? t('keyword.alertAcked') : t('keyword.alertOngoing'))}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
             <div className="upt-modal-divider" />
             <div className="upt-modal-section-title">{t('keyword.history')}</div>
             <div className="upt-range-btns">

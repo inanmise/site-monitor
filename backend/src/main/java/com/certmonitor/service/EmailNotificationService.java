@@ -1481,7 +1481,8 @@ public class EmailNotificationService {
             + "<table class='em-card' width='640' cellpadding='0' cellspacing='0' border='0' bgcolor='#ffffff' style='max-width:640px;width:100%;background:#ffffff;border-radius:14px;overflow:hidden;box-shadow:0 8px 32px rgba(0,0,0,.15);mso-table-lspace:0pt;mso-table-rspace:0pt'><tr><td style='padding:0'>"
             + "<div style='background:" + accent + ";padding:22px 24px'>"
             + "<div style='color:rgba(255,255,255,.65);font-size:11px;font-weight:700;letter-spacing:.12em'>" + kicker + "</div>"
-            + "<div class='em-domain' style='color:#fff;font-size:22px;font-weight:900;margin-top:10px;word-break:break-all;line-height:1.25'>" + emoji + " " + endpoint + "</div>"
+            // URL explicit beyaz <a> içinde — Outlook çıplak URL'yi otomatik linkleyip mavi yapıyor (navy zeminde okunmaz).
+            + "<div class='em-domain' style='color:#fff;font-size:22px;font-weight:900;margin-top:10px;word-break:break-all;line-height:1.25'>" + emoji + " <a href='" + escHtml(endpoint) + "' target='_blank' style='color:#ffffff;text-decoration:none'>" + escHtml(endpoint) + "</a></div>"
             + "<div style='color:rgba(255,255,255,.88);font-size:15px;font-weight:700;margin-top:8px;letter-spacing:.02em'>KRİTİK &nbsp;·&nbsp; " + typeBadge + "</div>"
             + "</div>"
             + "<div class='em-body' style='background:#fff;padding:22px 24px'>"
@@ -1665,7 +1666,8 @@ public class EmailNotificationService {
             + "<table class='em-card' width='640' cellpadding='0' cellspacing='0' border='0' bgcolor='#ffffff' style='max-width:640px;width:100%;background:#ffffff;border-radius:14px;overflow:hidden;box-shadow:0 8px 32px rgba(0,0,0,.15);mso-table-lspace:0pt;mso-table-rspace:0pt'><tr><td style='padding:0'>"
             + "<div style='background:" + green + ";padding:22px 24px'>"
             + "<div style='color:rgba(255,255,255,.65);font-size:11px;font-weight:700;letter-spacing:.12em'>" + kicker + "</div>"
-            + "<div class='em-domain' style='color:#fff;font-size:22px;font-weight:900;margin-top:10px;word-break:break-all;line-height:1.25'>✅ " + escHtml(domain) + "</div>"
+            // URL explicit beyaz <a> içinde — Outlook çıplak URL'yi otomatik linkleyip mavi yapıyor (yeşil zeminde okunmaz).
+            + "<div class='em-domain' style='color:#fff;font-size:22px;font-weight:900;margin-top:10px;word-break:break-all;line-height:1.25'>✅ <a href='" + escHtml(domain) + "' target='_blank' style='color:#ffffff;text-decoration:none'>" + escHtml(domain) + "</a></div>"
             + "<div style='color:rgba(255,255,255,.88);font-size:15px;font-weight:700;margin-top:8px;letter-spacing:.02em'>" + heroLine + " &nbsp;·&nbsp; " + typeTrLabel + "</div>"
             + "</div>"
             + "<div class='em-body' style='background:#fff;padding:22px 24px'>"

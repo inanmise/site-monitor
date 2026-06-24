@@ -16,6 +16,7 @@ vi.mock('../api/client', () => ({
       deleteKeywordMonitor: vi.fn(),
       triggerKeywordCheck:  vi.fn(),
       testKeyword:          vi.fn(),
+      getKeywordAlerts:     vi.fn(),
     },
     admin: { getTeams: vi.fn() },
   },

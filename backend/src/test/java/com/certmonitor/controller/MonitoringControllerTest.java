@@ -57,6 +57,7 @@ class MonitoringControllerTest {
     @MockitoBean com.certmonitor.service.PingCheckerService pingChecker;
     @MockitoBean TeamRepository teamRepo;
     @MockitoBean com.certmonitor.service.EscalationService escalationService;
+    @MockitoBean com.certmonitor.repository.AlertEventRepository alertEventRepo;
 
     @BeforeEach
     void stubTeamMap() {
@@ -178,5 +179,25 @@ class MonitoringControllerTest {
         mvc.perform(post("/api/monitoring/keyword/test").session(session("USER"))
                 .contentType("application/json").content("{\"url\":\"\",\"keyword\":\"\"}"))
                 .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    @DisplayName("GET /keyword/{id}/alerts: monitörün KEYWORD alarm geçmişini döner")
+    void keywordAlerts_returnsEvents() throws Exception {
+        com.certmonitor.model.KeywordMonitor m = new com.certmonitor.model.KeywordMonitor();
+        m.setId(7L); m.setUrl("https://x.example.com");
+        when(keywordMonitorRepo.findById(7L)).thenReturn(Optional.of(m));
+        com.certmonitor.model.AlertEvent ev = new com.certmonitor.model.AlertEvent();
+        ev.setId(1L); ev.setDomain("https://x.example.com"); ev.setAlertType("KEYWORD");
+        ev.setAlertLevel("CRITICAL"); ev.setResolved(true); ev.setResolvedBy("Sistem");
+        ev.setCreatedAt("2026-06-24T16:00:00");
+        when(alertEventRepo.findByDomainOrderByCreatedAtDesc("https://x.example.com"))
+                .thenReturn(List.of(ev));
+
+        mvc.perform(get("/api/monitoring/keyword/7/alerts").session(session("USER")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].level").value("CRITICAL"))
+                .andExpect(jsonPath("$.data[0].resolved").value(true))
+                .andExpect(jsonPath("$.data[0].resolved_by").value("Sistem"));
     }
 }
