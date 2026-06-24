@@ -406,8 +406,27 @@ export default function IncidentHistoryPage() {
 
   const sevBadge = (s) => <span style={{ color: SEV_COLOR[s] || '#64748b', fontWeight: 700 }}>{t('inc.sev' + s) || s}</span>
   const sum = trends?.summary || {}
-  const daily = trends?.daily || []
-  const maxDay = daily.reduce((m, d) => Math.max(m, Number(d.count) || 0), 0) || 1
+  // Günlük trend: aralığı SÜREKLİ günlere doldur (olaysız gün = 0) → gerçek takvim trendi (2-3 blok yerine).
+  // Çok geniş/garip aralıkta (>120 gün) doldurma yapma; yalnız veri günlerini sırala (devasa grafik olmasın).
+  const dailyChart = useMemo(() => {
+    const rows = (trends?.daily || []).map(d => ({ day: String(d.day).slice(0, 10), count: Number(d.count) || 0 }))
+    if (rows.length === 0) return []
+    const sorted = [...rows].sort((a, b) => a.day.localeCompare(b.day))
+    const byDay = new Map(sorted.map(r => [r.day, r.count]))
+    const start = (filters.since || sorted[0].day).slice(0, 10)
+    const end = (filters.until || sorted[sorted.length - 1].day).slice(0, 10)
+    const d0 = new Date(start + 'T00:00:00'), d1 = new Date(end + 'T00:00:00')
+    const span = Math.round((d1 - d0) / 86400000) + 1
+    if (!(span >= 1 && span <= 120)) return sorted
+    const out = []
+    for (let i = 0; i < span; i++) {
+      const dt = new Date(d0.getTime() + i * 86400000)
+      const key = `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`
+      out.push({ day: key, count: byDay.get(key) || 0 })
+    }
+    return out
+  }, [trends, filters.since, filters.until])
+  const maxDay = dailyChart.reduce((m, d) => Math.max(m, d.count), 0) || 1
 
   return (
     <div className="admin-section">
@@ -458,16 +477,30 @@ export default function IncidentHistoryPage() {
         })}
       </div>
 
-      {/* Günlük trend (basit bar) */}
-      {daily.length > 0 && (
+      {/* Günlük trend — gün başına olay sayısı (olaysız günler dahil; tarih + adet etiketli) */}
+      {dailyChart.length > 0 && (
         <div style={{ marginBottom: 16 }}>
           <div className="show-section-header">{t('inc.trend')}</div>
-          <div style={{ display: 'flex', alignItems: 'flex-end', gap: 3, height: 70, padding: '4px 0' }}>
-            {daily.map(d => (
-              <div key={d.day} title={`${d.day}: ${d.count}`}
-                   style={{ flex: 1, minWidth: 4, background: '#11557a', borderRadius: '3px 3px 0 0',
-                            height: `${Math.max(6, (Number(d.count) / maxDay) * 64)}px` }} />
-            ))}
+          <div style={{ display: 'flex', alignItems: 'flex-end', gap: 3, height: 92, padding: '4px 0',
+                        justifyContent: dailyChart.length < 12 ? 'flex-start' : 'stretch', overflowX: 'auto' }}>
+            {dailyChart.map((d, i) => {
+              const step = Math.max(1, Math.ceil(dailyChart.length / 14))
+              const showLbl = dailyChart.length <= 14 || i % step === 0
+              const dm = d.day.slice(8, 10) + '.' + d.day.slice(5, 7)   // DD.MM
+              const h = d.count > 0 ? Math.max(8, (d.count / maxDay) * 60) : 2
+              return (
+                <div key={d.day} title={`${d.day}: ${d.count}`}
+                     style={{ flex: '1 1 0', maxWidth: 40, minWidth: 6, display: 'flex',
+                              flexDirection: 'column', alignItems: 'center', gap: 2 }}>
+                  <span style={{ fontSize: '.62rem', fontWeight: 700, lineHeight: 1,
+                                 color: d.count > 0 ? '#11557a' : 'transparent' }}>{d.count || ''}</span>
+                  <div style={{ width: '100%', background: d.count > 0 ? '#11557a' : '#e2e8f0',
+                                borderRadius: '3px 3px 0 0', height: `${h}px` }} />
+                  <span style={{ fontSize: '.58rem', color: 'var(--text-muted)', lineHeight: 1.1,
+                                 whiteSpace: 'nowrap' }}>{showLbl ? dm : ''}</span>
+                </div>
+              )
+            })}
           </div>
         </div>
       )}
