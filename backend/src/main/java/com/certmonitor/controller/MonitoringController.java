@@ -873,6 +873,116 @@ public class MonitoringController {
         return ok(out);
     }
 
+    // ── Yanıt-süresi / RTT grafiği (detay modalı "Süre Grafiği" sekmesi) ─────
+    private static final int SERIES_RAW_CAP = 200_000;
+    private static final DateTimeFormatter LDT = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss");
+
+    @GetMapping("/keyword/{id}/response-series")
+    public ResponseEntity<Map<String, Object>> keywordResponseSeries(@PathVariable Long id,
+            @RequestParam(required = false) String from, @RequestParam(required = false) String to,
+            @RequestParam(defaultValue = "30") int days, HttpSession session) {
+        permissionService.require(session, "monitoring.read", "view");
+        if (!keywordMonitorRepo.existsById(id)) return notFound("Keyword monitor not found");
+        String[] range = resolveRange(from, to, days);
+        return ok(buildResponseSeries(keywordResultRepo.responseSeriesRaw(id, range[0], range[1], SERIES_RAW_CAP),
+                range[0], range[1], false));
+    }
+
+    @GetMapping("/ping/{id}/response-series")
+    public ResponseEntity<Map<String, Object>> pingResponseSeries(@PathVariable Long id,
+            @RequestParam(required = false) String from, @RequestParam(required = false) String to,
+            @RequestParam(defaultValue = "30") int days, HttpSession session) {
+        permissionService.require(session, "monitoring.read", "view");
+        if (!pingMonitorRepo.existsById(id)) return notFound("Ping monitor not found");
+        String[] range = resolveRange(from, to, days);
+        return ok(buildResponseSeries(pingCheckRepo.responseSeriesRaw(id, range[0], range[1], SERIES_RAW_CAP),
+                range[0], range[1], true));
+    }
+
+    /** from/to verilmişse onları (to normalize), yoksa son `days` günü kullan. */
+    private String[] resolveRange(String from, String to, int days) {
+        String toIso   = (to != null && !to.isBlank())    ? normalizeTo(to) : ISO.format(Instant.now());
+        String fromIso = (from != null && !from.isBlank()) ? from
+                : ISO.format(Instant.now().minus(Math.max(1, Math.min(days, 365)), ChronoUnit.DAYS));
+        return new String[]{ fromIso, toIso };
+    }
+
+    /** Aralık genişliğine göre kova anahtarı uzunluğu: ≤48s → 10-dk(15), ≤31g → saat(13), üstü → gün(10). */
+    private static int bucketKeyLen(String from, String to) {
+        try {
+            long hours = java.time.Duration.between(LocalDateTime.parse(from, LDT), LocalDateTime.parse(to, LDT)).toHours();
+            if (hours <= 48) return 15;
+            if (hours <= 31 * 24) return 13;
+            return 10;
+        } catch (Exception e) { return 13; }
+    }
+
+    /** Kova anahtarını (kısaltılmış ISO) tam ISO timestamp'e açar (grafik x-ekseni). */
+    private static String bucketIso(String key, int keyLen) {
+        return switch (keyLen) {
+            case 15 -> key + "0:00";        // ...THH:m → ...THH:m0:00
+            case 13 -> key + ":00:00";      // ...THH   → ...THH:00:00
+            default -> key + "T00:00:00";   // yyyy-MM-dd → ...T00:00:00
+        };
+    }
+
+    /** Ham [checkedAt, süre, durum(up/ok)[, paket kaybı]] satırlarını kovalar:
+     *  her kovada avg/min/max/p95/count/down[+loss]. Null süreler istatistiğe katılmaz; down durumdan sayılır. */
+    private Map<String, Object> buildResponseSeries(List<Object[]> rows, String from, String to, boolean withLoss) {
+        int keyLen = bucketKeyLen(from, to);
+        Map<String, List<Long>> values = new HashMap<>();
+        Map<String, Integer> counts = new HashMap<>();
+        Map<String, Integer> downs = new HashMap<>();
+        Map<String, long[]> loss = withLoss ? new HashMap<>() : null;
+        for (Object[] r : rows) {
+            String ts = (String) r[0];
+            if (ts == null || ts.length() < keyLen) continue;
+            String key = ts.substring(0, keyLen);
+            counts.merge(key, 1, Integer::sum);
+            if (r[1] instanceof Number v) values.computeIfAbsent(key, k -> new ArrayList<>()).add(v.longValue());
+            if (!Boolean.TRUE.equals(r[2])) downs.merge(key, 1, Integer::sum);
+            if (withLoss && r.length > 3 && r[3] instanceof Number pl) {
+                long[] a = loss.computeIfAbsent(key, k -> new long[2]);
+                a[0] += pl.longValue(); a[1]++;
+            }
+        }
+        List<Map<String, Object>> series = new ArrayList<>();
+        long downTotal = 0;
+        for (String key : new java.util.TreeSet<>(counts.keySet())) {
+            List<Long> vs = values.get(key);
+            int down = downs.getOrDefault(key, 0);
+            downTotal += down;
+            Map<String, Object> pt = new LinkedHashMap<>();
+            pt.put("ts",    bucketIso(key, keyLen));
+            pt.put("count", counts.getOrDefault(key, 0));
+            pt.put("down",  down);
+            if (vs != null && !vs.isEmpty()) {
+                List<Long> sorted = vs.stream().sorted().toList();
+                pt.put("avg", Math.round(sorted.stream().mapToLong(Long::longValue).average().orElse(0)));
+                pt.put("min", sorted.get(0));
+                pt.put("max", sorted.get(sorted.size() - 1));
+                pt.put("p95", sorted.get((int) Math.ceil(0.95 * sorted.size()) - 1));
+            } else {
+                pt.put("avg", null); pt.put("min", null); pt.put("max", null); pt.put("p95", null);
+            }
+            if (withLoss) {
+                long[] a = loss.get(key);
+                pt.put("loss", a != null && a[1] > 0 ? Math.round((double) a[0] / a[1]) : null);
+            }
+            series.add(pt);
+        }
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("series",     series);
+        out.put("bucket",     keyLen == 15 ? "10m" : keyLen == 13 ? "hour" : "day");
+        out.put("unit",       "ms");
+        out.put("from",       from);
+        out.put("to",         to);
+        out.put("total",      rows.size());
+        out.put("down_total", downTotal);
+        out.put("capped",     rows.size() >= SERIES_RAW_CAP);
+        return out;
+    }
+
     private Map<String, Object> enrichKeyword(KeywordMonitor m, KeywordResult latest, Map<Long, String> teams) {
         Map<String, Object> item = new LinkedHashMap<>();
         item.put("id",               m.getId());

@@ -43,4 +43,13 @@ describe('PingMonitorPage', () => {
     fireEvent.click(screen.getByRole('button', { name: /new monitor|yeni monitor|yeni ping|new ping/i }))
     expect(screen.getByText(/^Group$|^Grup$/)).toBeInTheDocument()
   })
+
+  it('karta tıkla → detay modalında 3 sekme görünür', async () => {
+    render(<PingMonitorPage systemRole="USER" teamId={5} teamName="SY-A" />)
+    await waitFor(() => expect(api.monitoring.getPingMonitors).toHaveBeenCalled())
+    fireEvent.click(screen.getByText('10.0.0.1'))
+    await waitFor(() => expect(api.monitoring.getPingHistory).toHaveBeenCalled())
+    expect(screen.getByRole('button', { name: /check history|kontrol/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /response chart|süre/i })).toBeInTheDocument()
+  })
 })
