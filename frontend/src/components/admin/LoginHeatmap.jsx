@@ -8,7 +8,7 @@ export default function LoginHeatmap({
   matrix = [], failed = [], max = 0, dayLabels = [], title, hourLabel, onCellClick,
   todayDow = -1, rowTotals = [], colTotals = [], total = 0,
 }) {
-  const cell = 16, leftPad = 38, topPad = 6, rightPad = 30, bottomPad = 30
+  const cell = 16, leftPad = 38, topPad = 6, rightPad = 30, bottomPad = 36
   const cols = 24, rows = 7
   const W = leftPad + cols * cell + rightPad
   const H = topPad + rows * cell + bottomPad
@@ -70,12 +70,12 @@ export default function LoginHeatmap({
         {Array.from({ length: cols }).map((_, c) => (
           <g key={c}>
             {c % 3 === 0 && (
-              <text x={leftPad + c * cell + (cell - 2) / 2} y={topPad + rows * cell + 10}
-                textAnchor="middle" fontSize="7" fill="var(--chart-label)">{c}</text>
+              <text x={leftPad + c * cell + (cell - 2) / 2} y={topPad + rows * cell + 13}
+                textAnchor="middle" fontSize="9" fontWeight="600" fill="#64748b">{c}</text>
             )}
             {colTotals[c] > 0 && (
-              <text x={leftPad + c * cell + (cell - 2) / 2} y={topPad + rows * cell + 22}
-                textAnchor="middle" fontSize="6" fill="var(--text-muted, #94a3b8)">{colTotals[c]}</text>
+              <text x={leftPad + c * cell + (cell - 2) / 2} y={topPad + rows * cell + 29}
+                textAnchor="middle" fontSize="11" fontWeight="700" fill="#2563eb">{colTotals[c]}</text>
             )}
           </g>
         ))}
