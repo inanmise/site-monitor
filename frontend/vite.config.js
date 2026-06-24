@@ -10,6 +10,10 @@ export default defineConfig({
     __APP_VERSION__: JSON.stringify(version),
   },
   plugins: [react()],
+  // Kod-bölme: ağır/seyrek admin & rapor sekmeleri App.jsx'te React.lazy ile yüklenir;
+  // Vite varsayılanı her lazy sekmenin kendine özel ağır bağımlılığını (recharts/md-editor/
+  // jspdf) o sekmenin async chunk'ına koyar → ilk (eager) paket küçülür. Manuel chunk
+  // bölmesi döngüsel chunk'a yol açtığı için kullanılmıyor.
   test: {
     globals: true,
     environment: 'jsdom',

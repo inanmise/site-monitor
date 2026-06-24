@@ -260,8 +260,10 @@ public class MonitoringController {
             @RequestParam(defaultValue = "24") int hours) {
 
         String cutoff = ISO.format(Instant.now().minus(hours, ChronoUnit.HOURS));
-        List<CertificateCheck> checks = certCheckRepo.findByCheckedAtAfter(cutoff).stream()
-                .filter(c -> domain.equals(c.getDomain()))
+        String nowIso = ISO.format(Instant.now());
+        // Domain-kapsamlı sorgu (idx_cc_domain_ts) — tüm cert_checks tablosunu yükleyip
+        // in-memory domain filtrelemek yerine; tek domain'in geçmişi.
+        List<CertificateCheck> checks = certCheckRepo.findByDomainAndDateRange(domain, cutoff, nowIso, 5000).stream()
                 .sorted(Comparator.comparing(CertificateCheck::getCheckedAt))
                 .toList();
 
@@ -1043,10 +1045,7 @@ public class MonitoringController {
     }
 
     private Map<Long, String> teamNameMap() {
-        Map<Long, String> m = new HashMap<>();
-        for (Team t : teamRepo.findAll()) {
-            if (t.getId() != null) m.put(t.getId(), t.getName());
-        }
-        return m;
+        // 60s cache'li (CertificateService.teamNamesById) — her liste isteğinde teamRepo.findAll() yok.
+        return certificateService.teamNamesById();
     }
 }

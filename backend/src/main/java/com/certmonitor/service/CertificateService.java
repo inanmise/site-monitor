@@ -244,6 +244,17 @@ public class CertificateService {
     }
 
     /**
+     * Takım id→ad haritası (izleme listesi zenginleştirmesi). Takımlar nadiren değişir →
+     * 60s cache; her liste isteğinde (keyword/ping/port/dns) teamRepo.findAll() round-trip'ini önler.
+     */
+    @Cacheable("teamNames")
+    public Map<Long, String> teamNamesById() {
+        return teamRepo.findAll().stream()
+                .filter(tm -> tm.getId() != null && tm.getName() != null)
+                .collect(Collectors.toMap(Team::getId, Team::getName, (a, b) -> a));
+    }
+
+    /**
      * domain → sorumlu (SY) takım adı (aktif envanter). İzleme ekranları (uptime/port/dns)
      * yanıtlarını takımla zenginleştirmek için — getAllLatest'teki aynı domain→team deseni.
      * Cache'li sıcak yolu (getAllLatest) bozmamak için ayrı, bağımsız bir okuma.
