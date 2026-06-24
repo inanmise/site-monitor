@@ -1,4 +1,4 @@
-import { forwardRef } from 'react'
+import { forwardRef, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import DatePicker, { registerLocale } from 'react-datepicker'
 import 'react-datepicker/dist/react-datepicker.css'
@@ -75,12 +75,14 @@ function toDateOnly(d) {
  */
 export default function DateTimeField({ value, onChange, disabled, placeholder, clearable, dateOnly, className, min }) {
   const { lang } = useLanguage()
+  const dpRef = useRef(null)
   const parse = dateOnly ? parseDateOnly : parseIso
   const selected = parse(value)
   const minDate = min ? parse(min) : null
   return (
     <div className={'dtf' + (className ? ' ' + className : '')}>
       <DatePicker
+        ref={dpRef}
         selected={selected}
         onChange={(d) => onChange(dateOnly ? toDateOnly(d) : toIso(d))}
         disabled={disabled}
@@ -98,7 +100,21 @@ export default function DateTimeField({ value, onChange, disabled, placeholder, 
         popperPlacement="bottom-start"
         calendarClassName="dp-calendar"
         shouldCloseOnSelect={!!dateOnly}
-      />
+      >
+        {/* Saatli seçimde otomatik kapanma yok (kullanıcı gün+saati ayarlar) → seçimin bittiğini
+            belirten ve takvimi kapatan açık bir "Tamam" butonu. dateOnly modunda gerek yok (gün
+            tıklanınca zaten kapanır). */}
+        {!dateOnly && (
+          <div style={{ padding: '6px 8px', borderTop: '1px solid var(--border, #e2e8f0)',
+                        display: 'flex', justifyContent: 'flex-end' }}>
+            <button type="button" onClick={() => dpRef.current?.setOpen(false)}
+              style={{ padding: '5px 16px', fontWeight: 600, fontSize: '.85rem', cursor: 'pointer',
+                       background: 'var(--primary, #2563eb)', color: '#fff', border: 'none', borderRadius: 6 }}>
+              {lang === 'tr' ? 'Tamam' : 'Done'}
+            </button>
+          </div>
+        )}
+      </DatePicker>
     </div>
   )
 }
