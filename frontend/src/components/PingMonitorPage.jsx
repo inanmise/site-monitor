@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { createPortal } from 'react-dom'
 import { api, formatDate } from '../api/client'
 import { useT } from '../i18n/index.jsx'
@@ -132,27 +132,33 @@ export default function PingMonitorPage({ systemRole, teamId, teamName }) {
     setChecking(null)
   }
 
-  const teamOptions = (() => {
+  // Türetilmiş listeler memoize — 1sn countdown her saniye render tetikler.
+  const teamOptions = useMemo(() => {
     const names = new Set(); let hasNone = false
     for (const m of monitors) { if (m.team_name) names.add(m.team_name); else hasNone = true }
     const opts = [{ value: 'all', label: t('app.allTeams') }]
     ;[...names].sort((a, b) => a.localeCompare(b)).forEach(n => opts.push({ value: n, label: n }))
     if (hasNone) opts.push({ value: '__none__', label: t('app.noTeam') })
     return opts
-  })()
+  }, [monitors, t])
   const hasTeamOptions = teamOptions.some(o => o.value !== 'all' && o.value !== '__none__')
-  const teamSelectOptions = [{ value: '', label: t('ping.noTeam') },
-    ...teams.map(tm => ({ value: String(tm.id), label: tm.name }))]
+  const teamSelectOptions = useMemo(() => [{ value: '', label: t('ping.noTeam') },
+    ...teams.map(tm => ({ value: String(tm.id), label: tm.name }))], [teams, t])
   // Gruplar takıma özgü: kullanıcı yalnız kendi takımının gruplarını görür/seçer (admin tümünü).
-  const groupMonitors = isAdmin ? monitors : monitors.filter(m => isOwnTeam(m))
-  const groupNames = [...new Set(groupMonitors.map(m => m.group_name).filter(Boolean))].sort((a, b) => a.localeCompare(b))
+  const groupMonitors = useMemo(
+    () => (isAdmin ? monitors : monitors.filter(m => myTeam != null && String(m.team_id) === myTeam)),
+    [monitors, isAdmin, myTeam])
+  const groupNames = useMemo(
+    () => [...new Set(groupMonitors.map(m => m.group_name).filter(Boolean))].sort((a, b) => a.localeCompare(b)),
+    [groupMonitors])
   const hasGroupOptions = groupNames.length > 0
-  const groupFilterOptions = [{ value: 'all', label: t('ping.allGroups') },
+  const groupFilterOptions = useMemo(() => [{ value: 'all', label: t('ping.allGroups') },
     ...groupNames.map(g => ({ value: g, label: g })),
-    ...(groupMonitors.some(m => !m.group_name) ? [{ value: '__none__', label: t('ping.noGroup') }] : [])]
-  const groupSelectOptions = groupNames.map(g => ({ value: g, label: g }))
+    ...(groupMonitors.some(m => !m.group_name) ? [{ value: '__none__', label: t('ping.noGroup') }] : [])],
+    [groupNames, groupMonitors, t])
+  const groupSelectOptions = useMemo(() => groupNames.map(g => ({ value: g, label: g })), [groupNames])
 
-  const displayMonitors = monitors.filter(m => {
+  const displayMonitors = useMemo(() => monitors.filter(m => {
     if (teamFilter !== 'all') {
       if (teamFilter === '__none__') { if (m.team_name) return false }
       else if (m.team_name !== teamFilter) return false
@@ -163,7 +169,7 @@ export default function PingMonitorPage({ systemRole, teamId, teamName }) {
     }
     if (!search.trim()) return true
     return (m.host || '').toLowerCase().includes(search.trim().toLowerCase())
-  })
+  }), [monitors, teamFilter, groupFilter, search])
 
   function cardClass(m) {
     if (m.status === 'up') return 'upt-card--up'
@@ -298,7 +304,7 @@ export default function PingMonitorPage({ systemRole, teamId, teamName }) {
                   <span>{t('ping.colTime')}</span><span>{t('ping.colStatus')}</span><span>{t('ping.rtt')}</span><span>{t('ping.colDetail')}</span>
                 </div>
                 {history.slice(0, 200).map((c, i) => (
-                  <div key={i} className="upt-rt-grid">
+                  <div key={`${c.checkedAt || c.checked_at || ''}#${i}`} className="upt-rt-grid">
                     <span className="upt-rt-time">{formatDate(c.checkedAt || c.checked_at)}</span>
                     <span className={c.up ? 'upt-rt-up' : 'upt-rt-down'}>{c.up ? t('ping.statusUp') : t('ping.statusDown')}</span>
                     <span className="upt-rt-ms">{(c.rttMs ?? c.rtt_ms) != null ? `${c.rttMs ?? c.rtt_ms}ms` : '—'}</span>

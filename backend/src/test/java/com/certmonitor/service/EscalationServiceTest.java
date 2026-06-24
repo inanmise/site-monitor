@@ -794,6 +794,67 @@ class EscalationServiceTest {
         return ctx;
     }
 
+    // ── resolveOpenAlertsSilently (izleme silindiğinde sessiz kapanma) ─────────
+
+    @Test
+    @DisplayName("resolveOpenAlertsSilently: açık alarmı kapatır, ÇÖZÜM MAİLİ göndermez")
+    void resolveOpenAlertsSilently_closesWithoutEmail() {
+        String domain = "https://kw.example.com/";
+        AlertEvent open = new AlertEvent();
+        open.setId(7L); open.setDomain(domain); open.setAlertType("KEYWORD"); open.setResolved(false);
+        when(alertEventRepo.findByDomainAndAlertTypeInAndResolvedFalse(eq(domain), anyCollection()))
+                .thenReturn(List.of(open));
+        when(alertEventRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        service.resolveOpenAlertsSilently(domain, Set.of("KEYWORD"), "Sistem (izleme silindi)");
+
+        ArgumentCaptor<AlertEvent> cap = ArgumentCaptor.forClass(AlertEvent.class);
+        verify(alertEventRepo).save(cap.capture());
+        AlertEvent saved = cap.getValue();
+        assertThat(saved.getResolved()).isTrue();
+        assertThat(saved.getResolvedBy()).isEqualTo("Sistem (izleme silindi)");
+        assertThat(saved.getResolvedAt()).isNotBlank();
+        // KRİTİK: silme kaynaklı kapanma → hiç bildirim/çözüldü maili yok
+        verifyNoInteractions(emailService, webhookService);
+    }
+
+    @Test
+    @DisplayName("resolveOpenAlertsSilently: açık alarm yoksa no-op")
+    void resolveOpenAlertsSilently_noOpenAlerts_noOp() {
+        when(alertEventRepo.findByDomainAndAlertTypeInAndResolvedFalse(any(), anyCollection()))
+                .thenReturn(List.of());
+        service.resolveOpenAlertsSilently("d", Set.of("PING_DOWN"), "x");
+        verify(alertEventRepo, never()).save(any());
+        verifyNoInteractions(emailService);
+    }
+
+    @Test
+    @DisplayName("processConfirmedOutage KEYWORD: contextJson snapshot + teamId (çözüldü detayı için)")
+    void processConfirmedOutage_keyword_snapshotAndTeam() {
+        String domain = "https://kw.example.com/";
+        Map<String, Object> ctx = new LinkedHashMap<>();
+        ctx.put("team_id", 9L);
+        ctx.put("keyword", "akbank");
+        ctx.put("operator", "GTE");
+        ctx.put("match_count", 1);
+        ctx.put("occurrences", 0);
+        ctx.put("first_failure_at", "2026-06-24T00:00:00");
+        ctx.put("monitor_id", 42);
+        when(alertEventRepo.findOpenAlert(domain, "KEYWORD")).thenReturn(Optional.empty());
+        when(alertEventRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        service.processConfirmedOutage(domain, "KEYWORD", "CRITICAL", ctx);
+
+        ArgumentCaptor<AlertEvent> cap = ArgumentCaptor.forClass(AlertEvent.class);
+        verify(alertEventRepo, atLeast(1)).save(cap.capture());
+        AlertEvent saved = cap.getAllValues().get(0);
+        assertThat(saved.getAlertType()).isEqualTo("KEYWORD");
+        assertThat(saved.getAlertLevel()).isEqualTo("CRITICAL");
+        assertThat(saved.getTeamId()).isEqualTo(9L);
+        assertThat(saved.getContextJson()).isNotNull();
+        assertThat(saved.getContextJson()).contains("akbank");   // snapshot → çözüldü mailinde kelime detayı
+    }
+
     @Test
     @DisplayName("processConfirmedOutage creates CRITICAL ACCESSIBILITY alert with Erişim Kesintisi subject")
     void processConfirmedOutage_newOutage_createsCriticalAlert() {

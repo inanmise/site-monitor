@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
+import { useState, useEffect, useCallback, useRef, useMemo, lazy, Suspense } from 'react'
 import { ChevronDown, BarChart3, AlertOctagon, X, Wifi, CheckCircle, Clock } from 'lucide-react'
 import { api, formatDate } from './api/client'
 import { useDialog } from './components/ui/Dialog.jsx'
@@ -15,28 +15,31 @@ import CaDiversityModal from './components/CaDiversityModal'
 import RenewalAdvice from './components/RenewalAdvice'
 import CertRenewalGuide from './components/CertRenewalGuide.jsx'
 import PasswordChangeModal from './components/admin/PasswordChangeModal.jsx'
-import AdminPanel from './components/admin/AdminPanel'
-import AdminSettings from './components/admin/AdminSettings'
-import PermissionMatrix from './components/admin/PermissionMatrix'
-import AlertHistory from './components/admin/AlertHistory'
-import InventoryManager from './components/admin/InventoryManager'
-import AuditLogViewer from './components/admin/AuditLogViewer'
-import WeakAlgorithmReport from './components/admin/WeakAlgorithmReport'
-import WeeklyReportsPage from './components/WeeklyReportsPage'
-import IncidentHistoryPage from './components/IncidentHistoryPage'
-import SystemHealth from './components/admin/SystemHealth'
-import SqlPlayground from './components/admin/SqlPlayground'
-import ActivityLog from './components/ActivityLog'
-import MyAuditLog from './components/MyAuditLog'
 import { PermissionsProvider } from './contexts/PermissionsProvider.jsx'
-import HelpPage from './components/HelpPage'
 import UptimePage from './components/UptimePage'
 import PortMonitorPage from './components/PortMonitorPage'
 import DnsMonitorPage from './components/DnsMonitorPage'
 import KeywordMonitorPage from './components/KeywordMonitorPage'
 import PingMonitorPage from './components/PingMonitorPage'
-import ExpiryForecastPage from './pages/ExpiryForecastPage'
 import ErrorBoundary from './components/ErrorBoundary.jsx'
+
+// Ağır/seyrek admin & rapor sekmeleri — lazy (kod-bölme): ilk yük küçülür, sekme
+// açılınca yüklenir. Hepsi aşağıdaki tek <Suspense> sınırı altında render edilir.
+const AdminPanel = lazy(() => import('./components/admin/AdminPanel'))
+const AdminSettings = lazy(() => import('./components/admin/AdminSettings'))
+const PermissionMatrix = lazy(() => import('./components/admin/PermissionMatrix'))
+const AlertHistory = lazy(() => import('./components/admin/AlertHistory'))
+const InventoryManager = lazy(() => import('./components/admin/InventoryManager'))
+const AuditLogViewer = lazy(() => import('./components/admin/AuditLogViewer'))
+const WeakAlgorithmReport = lazy(() => import('./components/admin/WeakAlgorithmReport'))
+const WeeklyReportsPage = lazy(() => import('./components/WeeklyReportsPage'))
+const IncidentHistoryPage = lazy(() => import('./components/IncidentHistoryPage'))
+const SystemHealth = lazy(() => import('./components/admin/SystemHealth'))
+const SqlPlayground = lazy(() => import('./components/admin/SqlPlayground'))
+const ActivityLog = lazy(() => import('./components/ActivityLog'))
+const MyAuditLog = lazy(() => import('./components/MyAuditLog'))
+const HelpPage = lazy(() => import('./components/HelpPage'))
+const ExpiryForecastPage = lazy(() => import('./pages/ExpiryForecastPage'))
 
 const INACTIVITY_MS   = Number(import.meta.env.VITE_INACTIVITY_MS   ?? 300_000)
 const WARN_BEFORE_MS  = Number(import.meta.env.VITE_WARN_BEFORE_MS  ?? 60_000)
@@ -646,6 +649,7 @@ export default function App() {
 
           <div className="content">
            <ErrorBoundary key={tab} onReload={() => setTab(tab)}>
+            <Suspense fallback={<div className="loading">…</div>}>
             {tab === 'dashboard' && (
               <div className="tab-content active">
                 <div className="sort-controls sort-bar">
@@ -1050,6 +1054,7 @@ export default function App() {
             {tab === 'keyword'  && <KeywordMonitorPage systemRole={systemRole} teamId={teamId} teamName={teamName} />}
             {tab === 'ping'     && <PingMonitorPage systemRole={systemRole} teamId={teamId} teamName={teamName} />}
             {tab === 'forecast' && <ExpiryForecastPage onSelectDomain={(d) => setModalCert(certs.find(c => c.domain === d) ?? { domain: d })} />}
+            </Suspense>
            </ErrorBoundary>
           </div>
 

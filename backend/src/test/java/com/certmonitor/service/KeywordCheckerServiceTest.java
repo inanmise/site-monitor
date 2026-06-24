@@ -1,7 +1,13 @@
 package com.certmonitor.service;
 
+import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+
+import java.io.IOException;
+import java.net.InetSocketAddress;
+import java.nio.charset.StandardCharsets;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -35,5 +41,65 @@ class KeywordCheckerServiceTest {
         assertThat(KeywordCheckerService.opPhrase("EQ", 1)).isEqualTo("tam olarak 1 kez");
         assertThat(KeywordCheckerService.opPhrase("GT", 5)).isEqualTo("5 kezden fazla");
         assertThat(KeywordCheckerService.opPhrase("LT", 4)).isEqualTo("4 kezden az");
+    }
+
+    // ── check() — gerçek HTTP yolu (in-process sunucu) ───────────────────────
+
+    private static HttpServer serve(String body) throws IOException {
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/", ex -> {
+            byte[] b = body.getBytes(StandardCharsets.UTF_8);
+            ex.sendResponseHeaders(200, b.length);
+            try (var os = ex.getResponseBody()) { os.write(b); }
+        });
+        server.start();
+        return server;
+    }
+
+    private static KeywordCheckerService newChecker() {
+        KeywordCheckerService svc = new KeywordCheckerService();
+        svc.init();   // @PostConstruct — HttpClient kur
+        return svc;
+    }
+
+    @Test
+    @DisplayName("check: case-insensitive non-overlapping sayım + http_status + snippet")
+    void check_countsAndMeta() throws IOException {
+        HttpServer server = serve("<p>ABCabc abc tail</p>");   // 'abc' → 3 kez (3,6,10)
+        try {
+            Map<String, Object> r = newChecker()
+                    .check("http://127.0.0.1:" + server.getAddress().getPort() + "/", "abc", 3000);
+            assertThat(r.get("found")).isEqualTo(true);
+            assertThat(r.get("count")).isEqualTo(3);
+            assertThat(r.get("http_status")).isEqualTo(200);
+            assertThat(r.get("response_ms")).isInstanceOf(Long.class);
+            assertThat(r.get("snippet")).isInstanceOf(String.class);
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    @DisplayName("check: kelime yoksa found=false, count=0")
+    void check_notFound() throws IOException {
+        HttpServer server = serve("<p>nothing here</p>");
+        try {
+            Map<String, Object> r = newChecker()
+                    .check("http://127.0.0.1:" + server.getAddress().getPort() + "/", "akbank", 3000);
+            assertThat(r.get("found")).isEqualTo(false);
+            assertThat(r.get("count")).isEqualTo(0);
+            assertThat(r.get("http_status")).isEqualTo(200);
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    @DisplayName("check: bağlantı reddi → found=false, count=0, error döner")
+    void check_connectionError() {
+        Map<String, Object> r = newChecker().check("http://127.0.0.1:1/", "x", 500);
+        assertThat(r.get("found")).isEqualTo(false);
+        assertThat(r.get("count")).isEqualTo(0);
+        assertThat(r).containsKey("error");
     }
 }

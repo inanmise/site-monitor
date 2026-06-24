@@ -111,9 +111,11 @@ public class MonitoringOutageService {
     public record DnsChange(String domain, String recordType,
                             String previousValue, String newValue, String detectedAt) {}
 
-    /** Teyit re-check'leri için tek thread'li daemon zamanlayıcı. */
+    /** Teyit re-check'leri için küçük daemon havuzu — eşzamanlı çok-domain DOWN'da
+     *  teyit zincirleri paralel ilerlesin (tek-thread'de seri kuyruk → alarm gecikmesi).
+     *  Re-check'ler bağımsız; çift-zincir guard'ı için {@link #inFlight} kullanılır. */
     private final ScheduledExecutorService confirmExecutor =
-            Executors.newSingleThreadScheduledExecutor(r -> {
+            Executors.newScheduledThreadPool(4, r -> {
                 Thread t = new Thread(r, "monitoring-confirm");
                 t.setDaemon(true);
                 return t;

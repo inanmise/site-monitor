@@ -62,6 +62,8 @@ class MonitoringControllerTest {
     void stubTeamMap() {
         // İzleme uçları artık domain→takım map'ini buradan alıyor; boş map yeterli (team_name=null).
         when(certificateService.domainTeamNameMap()).thenReturn(java.util.Map.of());
+        // teamNameMap() artık CertificateService.teamNamesById()'e (cache'li) delege ediyor.
+        when(certificateService.teamNamesById()).thenReturn(java.util.Map.of());
     }
 
     private MockHttpSession session(String role) {
@@ -152,5 +154,29 @@ class MonitoringControllerTest {
     void deletePort_forbiddenForUser() throws Exception {
         mvc.perform(delete("/api/monitoring/port/1").session(session("USER")))
                 .andExpect(status().isForbidden());
+    }
+
+    @Test
+    @DisplayName("POST /keyword/test: canlı koşul testi (occurrences/condition_met/phrase)")
+    void testKeyword_returnsResult() throws Exception {
+        java.util.Map<String, Object> cr = new java.util.HashMap<>();
+        cr.put("count", 5); cr.put("http_status", 200); cr.put("response_ms", 12L);
+        when(keywordChecker.check(eq("https://x.example.com"), eq("akbank"), anyInt())).thenReturn(cr);
+
+        mvc.perform(post("/api/monitoring/keyword/test").session(session("USER"))
+                .contentType("application/json")
+                .content("{\"url\":\"https://x.example.com\",\"keyword\":\"akbank\",\"operator\":\"GTE\",\"matchCount\":3,\"timeoutMs\":5000}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.occurrences").value(5))
+                .andExpect(jsonPath("$.data.condition_met").value(true))   // 5 >= 3
+                .andExpect(jsonPath("$.data.phrase").value("en az 3 kez"));
+    }
+
+    @Test
+    @DisplayName("POST /keyword/test: url/keyword boş → 400")
+    void testKeyword_blank_returns400() throws Exception {
+        mvc.perform(post("/api/monitoring/keyword/test").session(session("USER"))
+                .contentType("application/json").content("{\"url\":\"\",\"keyword\":\"\"}"))
+                .andExpect(status().isBadRequest());
     }
 }

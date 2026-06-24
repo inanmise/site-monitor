@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { createPortal } from 'react-dom'
 import { api, formatDate, formatDateSec } from '../api/client'
 import { useT } from '../i18n/index.jsx'
@@ -149,28 +149,35 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
     setChecking(null)
   }
 
-  const teamOptions = (() => {
+  // Türetilmiş listeler memoize — 1sn countdown her saniye render tetikler; bu O(n)
+  // hesaplar her tıkta değil yalnız bağımlılık değişince çalışsın.
+  const teamOptions = useMemo(() => {
     const names = new Set(); let hasNone = false
     for (const m of monitors) { if (m.team_name) names.add(m.team_name); else hasNone = true }
     const opts = [{ value: 'all', label: t('app.allTeams') }]
     ;[...names].sort((a, b) => a.localeCompare(b)).forEach(n => opts.push({ value: n, label: n }))
     if (hasNone) opts.push({ value: '__none__', label: t('app.noTeam') })
     return opts
-  })()
+  }, [monitors, t])
   const hasTeamOptions = teamOptions.some(o => o.value !== 'all' && o.value !== '__none__')
-  const teamSelectOptions = [{ value: '', label: t('keyword.noTeam') },
-    ...teams.map(tm => ({ value: String(tm.id), label: tm.name }))]
+  const teamSelectOptions = useMemo(() => [{ value: '', label: t('keyword.noTeam') },
+    ...teams.map(tm => ({ value: String(tm.id), label: tm.name }))], [teams, t])
   // Gruplar takıma özgüdür: kullanıcı yalnız kendi takımının gruplarını görür/seçer (admin tümünü).
   // Yeni grup creatable ile yazılıp seçilebilir (mevcut grup olmasa bile).
-  const groupMonitors = isAdmin ? monitors : monitors.filter(m => isOwnTeam(m))
-  const groupNames = [...new Set(groupMonitors.map(m => m.group_name).filter(Boolean))].sort((a, b) => a.localeCompare(b))
+  const groupMonitors = useMemo(
+    () => (isAdmin ? monitors : monitors.filter(m => myTeam != null && String(m.team_id) === myTeam)),
+    [monitors, isAdmin, myTeam])
+  const groupNames = useMemo(
+    () => [...new Set(groupMonitors.map(m => m.group_name).filter(Boolean))].sort((a, b) => a.localeCompare(b)),
+    [groupMonitors])
   const hasGroupOptions = groupNames.length > 0
-  const groupFilterOptions = [{ value: 'all', label: t('keyword.allGroups') },
+  const groupFilterOptions = useMemo(() => [{ value: 'all', label: t('keyword.allGroups') },
     ...groupNames.map(g => ({ value: g, label: g })),
-    ...(groupMonitors.some(m => !m.group_name) ? [{ value: '__none__', label: t('keyword.noGroup') }] : [])]
-  const groupSelectOptions = groupNames.map(g => ({ value: g, label: g }))
+    ...(groupMonitors.some(m => !m.group_name) ? [{ value: '__none__', label: t('keyword.noGroup') }] : [])],
+    [groupNames, groupMonitors, t])
+  const groupSelectOptions = useMemo(() => groupNames.map(g => ({ value: g, label: g })), [groupNames])
 
-  const displayMonitors = monitors.filter(m => {
+  const displayMonitors = useMemo(() => monitors.filter(m => {
     if (teamFilter !== 'all') {
       if (teamFilter === '__none__') { if (m.team_name) return false }
       else if (m.team_name !== teamFilter) return false
@@ -182,7 +189,7 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
     if (!search.trim()) return true
     const q = search.trim().toLowerCase()
     return (m.url || '').toLowerCase().includes(q) || (m.keyword || '').toLowerCase().includes(q)
-  })
+  }), [monitors, teamFilter, groupFilter, search])
 
   function cardClass(m) {
     if (m.status === 'up') return 'upt-card--up'
@@ -353,7 +360,7 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
                   const occ = c.occurrences != null ? c.occurrences : (c.found ? '≥1' : 0)
                   const cmp = `${OP_SYM[selected.operator] || '≥'}${selected.match_count ?? 1}`
                   return (
-                    <div key={i} className="upt-rt-grid">
+                    <div key={`${c.checkedAt || c.checked_at || ''}#${i}`} className="upt-rt-grid">
                       <span className="upt-rt-time">{formatDateSec(c.checkedAt || c.checked_at)}</span>
                       <span className={c.ok ? 'upt-rt-up' : 'upt-rt-down'}>{c.ok ? t('keyword.statusOk') : (c.error ? t('keyword.statusError') : t('keyword.statusViolation'))}</span>
                       <span className="upt-rt-ms">{c.httpStatus ?? c.http_status ?? '—'}</span>
