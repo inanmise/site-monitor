@@ -197,14 +197,28 @@ public class AuditService {
     public void enrichGeoAsync(Long auditLogId, String ip) {
         try {
             GeoIpService.GeoInfo geo = geoIpService.lookup(ip);
+            String host = reverseDns(ip);   // login anında PTR çözümü (gösterimde tekrar yapılmaz)
             auditLogRepo.findById(auditLogId).ifPresent(entry -> {
                 entry.setIpCountry(geo.country());
                 entry.setIpCity(geo.city());
                 entry.setIpOrg(geo.org());
+                if (host != null) entry.setIpReverseHost(host);
                 auditLogRepo.save(entry);
             });
         } catch (Exception e) {
             log.debug("Geo enrichment failed for id={}: {}", auditLogId, e.getMessage());
+        }
+    }
+
+    /** Reverse-DNS (PTR): gerçek bir hostname çözünürse döndürür; PTR yok / özel IP / hata → null
+     *  (getCanonicalHostName PTR yoksa IP'nin kendisini döner — onu null'a çeviririz). Async yolda. */
+    private String reverseDns(String ip) {
+        if (ip == null || ip.isBlank() || geoIpService.isPrivateIp(ip)) return null;
+        try {
+            String host = java.net.InetAddress.getByName(ip).getCanonicalHostName();
+            return (host != null && !host.equalsIgnoreCase(ip)) ? host : null;
+        } catch (Exception e) {
+            return null;
         }
     }
 

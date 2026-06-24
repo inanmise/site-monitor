@@ -86,8 +86,9 @@ export default function DateTimeField({ value, onChange, disabled, placeholder, 
         disabled={disabled}
         minDate={minDate || undefined}
         showTimeSelect={!dateOnly}
+        showTimeInput={!dateOnly}
         timeFormat="HH:mm"
-        timeIntervals={15}
+        timeIntervals={5}
         dateFormat={dateOnly ? 'dd.MM.yyyy' : 'dd.MM.yyyy HH:mm'}
         locale={lang === 'tr' ? 'tr' : 'en'}
         popperContainer={BodyPortal}

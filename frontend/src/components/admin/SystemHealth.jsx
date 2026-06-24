@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef, Fragment } from 'react'
 import { api, formatDate, formatDateSec } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
 import { CheckCircle, XCircle, MinusCircle, HelpCircle, Mail, ChevronRight, Check, Loader2, Server, Database, Globe, Cpu, ChevronDown, Users, LogIn, ShieldAlert, UserCheck } from 'lucide-react'
@@ -7,6 +7,39 @@ import ChartModal from './ChartModal'
 import HeartbeatHistoryModal from './HeartbeatHistoryModal'
 import LoginHeatmap from './LoginHeatmap'
 import DateTimeField from '../ui/DateTimeField.jsx'
+
+// Kullanıcı rozeti: AD resmi (varsa /api/admin/users/{id}/photo) + ad-soyad/kullanıcı adı; resim
+// yoksa baş-harf rozeti. Top kullanıcılar + rol/takım drill-down'da kullanılır.
+function avatarBg(s) {
+  let h = 0; for (let i = 0; i < (s || '').length; i++) h = (h * 31 + s.charCodeAt(i)) % 360
+  return `hsl(${h} 45% 52%)`
+}
+function initialsOf(name, username) {
+  const base = (name || username || '?').trim()
+  const p = base.split(/\s+/)
+  return (((p[0]?.[0] || '') + (p[1]?.[0] || '')).toUpperCase()) || base[0]?.toUpperCase() || '?'
+}
+function UserBadge({ user, count }) {
+  const [imgErr, setImgErr] = useState(false)
+  const name = user.display_name || user.username
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, minWidth: 0, width: '100%' }}>
+      {user.user_id != null && !imgErr ? (
+        <img src={`/api/admin/users/${user.user_id}/photo`} alt="" onError={() => setImgErr(true)}
+          style={{ width: 26, height: 26, borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }} />
+      ) : (
+        <span style={{ width: 26, height: 26, borderRadius: '50%', flexShrink: 0, color: '#fff', fontSize: 11,
+          fontWeight: 700, display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+          background: avatarBg(user.username) }}>{initialsOf(user.display_name, user.username)}</span>
+      )}
+      <span style={{ minWidth: 0, lineHeight: 1.25 }}>
+        <span style={{ fontWeight: 600 }}>{name}</span>
+        {user.display_name && <span className="sys-mono sys-small sys-muted" style={{ display: 'block' }}>{user.username}</span>}
+      </span>
+      {count != null && <span style={{ marginLeft: 'auto', fontWeight: 700 }}>{count}</span>}
+    </span>
+  )
+}
 
 function SmtpStatusCell({ row, t }) {
   const cfg = {
@@ -122,6 +155,8 @@ export default function SystemHealth({ systemRole, globalAdmin = false, preFilte
   const [sessionDetail, setSessionDetail] = useState(null) // tıklanan aktif oturum detay modalı
   const [showActiveList, setShowActiveList] = useState(false) // "Aktif Oturum" kartı → kişi listesi modalı
   const [heatCell, setHeatCell] = useState(null) // ısı haritası hücresi {weekday,hour} → o saatteki girişler
+  const [expRole, setExpRole] = useState(null)   // rol drill-down (açık rol)
+  const [expTeam, setExpTeam] = useState(null)   // takım drill-down (açık takım index)
   const [kpiDetail, setKpiDetail] = useState(null) // KPI kartı drill-down {title, kind}
   // Giriş trendi: esnek aralık (1g/7g/30g) + istenen güne gitme (saatlik) — zoom/navigasyon
   const [trendDays, setTrendDays] = useState(7)    // 1 | 7 | 30
@@ -1355,6 +1390,7 @@ export default function SystemHealth({ systemRole, globalAdmin = false, preFilte
                   {heatmaps.map((hm, i) => (
                     <LoginHeatmap key={i} matrix={hm.matrix || []} failed={hm.failed || []} max={hm.max || 0}
                       dayLabels={dayLabels} title={weekBase(i)} hourLabel={fmtHeatRange(hm)}
+                      todayDow={hm.today_dow ?? -1} rowTotals={hm.row_totals || []} colTotals={hm.col_totals || []} total={hm.total || 0}
                       onCellClick={(weekday, hour) => setHeatCell({ weekday, hour, cells: hm.cells || {}, label: `${weekBase(i)} · ${fmtHeatRange(hm)}` })} />
                   ))}
                   {heatmaps.length === 0 && <div className="sys-muted sys-small">{t('uact.noLogins')}</div>}
@@ -1414,7 +1450,7 @@ export default function SystemHealth({ systemRole, globalAdmin = false, preFilte
                     <tbody>
                       {(ua.top_users || []).map(r => (
                         <tr key={r.username}>
-                          <td className="sys-mono">{r.username}</td>
+                          <td><UserBadge user={r} /></td>
                           <td className="dbtcol-num-cell">{r.logins}</td>
                           <td className="sys-mono sys-small">{r.last_login ? formatDateSec(r.last_login) : '—'}</td>
                         </tr>
@@ -1438,7 +1474,7 @@ export default function SystemHealth({ systemRole, globalAdmin = false, preFilte
                     <tbody>
                       {(ua.top_sources || []).map(r => (
                         <tr key={r.ip}>
-                          <td className="sys-mono">{r.ip}</td>
+                          <td className="sys-mono">{r.ip}{r.reverse_dns && <span className="sys-small sys-muted" style={{ display: 'block' }}>{r.reverse_dns}</span>}</td>
                           <td className="sys-small">{locStr(r.country, r.city)}</td>
                           <td className="dbtcol-num-cell">{r.total}</td>
                           <td className="dbtcol-num-cell sys-ok-text">{r.success}</td>
@@ -1494,7 +1530,18 @@ export default function SystemHealth({ systemRole, globalAdmin = false, preFilte
                     </tr></thead>
                     <tbody>
                       {(roleTeam.by_role || []).map(r => (
-                        <tr key={r.role}><td>{r.role}</td><td className="dbtcol-num-cell">{r.count}</td></tr>
+                        <Fragment key={r.role}>
+                          <tr style={r.users?.length ? { cursor: 'pointer' } : undefined}
+                            onClick={r.users?.length ? () => setExpRole(x => x === r.role ? null : r.role) : undefined}>
+                            <td>{r.users?.length ? (expRole === r.role ? '▾ ' : '▸ ') : ''}{r.role}</td>
+                            <td className="dbtcol-num-cell">{r.count}</td>
+                          </tr>
+                          {expRole === r.role && r.users?.length > 0 && (
+                            <tr><td colSpan={2} style={{ padding: '4px 10px', background: 'var(--bg-subtle, #f8fafc)' }}>
+                              {r.users.map(u => <div key={u.username} style={{ padding: '3px 0' }}><UserBadge user={u} count={u.count} /></div>)}
+                            </td></tr>
+                          )}
+                        </Fragment>
                       ))}
                       {(roleTeam.by_role || []).length === 0 && <tr><td colSpan={2} className="sys-muted">—</td></tr>}
                     </tbody>
@@ -1508,7 +1555,18 @@ export default function SystemHealth({ systemRole, globalAdmin = false, preFilte
                     </tr></thead>
                     <tbody>
                       {(roleTeam.by_team || []).map((r, i) => (
-                        <tr key={i}><td>{r.team_name || '—'}</td><td className="dbtcol-num-cell">{r.count}</td></tr>
+                        <Fragment key={i}>
+                          <tr style={r.users?.length ? { cursor: 'pointer' } : undefined}
+                            onClick={r.users?.length ? () => setExpTeam(x => x === i ? null : i) : undefined}>
+                            <td>{r.users?.length ? (expTeam === i ? '▾ ' : '▸ ') : ''}{r.team_name || '—'}</td>
+                            <td className="dbtcol-num-cell">{r.count}</td>
+                          </tr>
+                          {expTeam === i && r.users?.length > 0 && (
+                            <tr><td colSpan={2} style={{ padding: '4px 10px', background: 'var(--bg-subtle, #f8fafc)' }}>
+                              {r.users.map(u => <div key={u.username} style={{ padding: '3px 0' }}><UserBadge user={u} count={u.count} /></div>)}
+                            </td></tr>
+                          )}
+                        </Fragment>
                       ))}
                       {(roleTeam.by_team || []).length === 0 && <tr><td colSpan={2} className="sys-muted">—</td></tr>}
                     </tbody>
