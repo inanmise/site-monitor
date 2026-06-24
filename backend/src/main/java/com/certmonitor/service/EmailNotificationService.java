@@ -619,11 +619,11 @@ public class EmailNotificationService {
         // Wrapper table: col-l and col-r stack to 100% on mobile via media query
         String twoColSection =
             "<table width='100%' cellpadding='0' cellspacing='0' border='0' style='margin-bottom:16px'><tr>"
-            + "<td class='em-col-l' valign='top' style='width:55%;padding-right:8px'>"
+            + "<td class='em-col-l' valign='top' width='55%' style='width:55%;padding-right:8px'>"
             + "<table width='100%' cellpadding='0' cellspacing='0' border='0' style='border:1px solid #e2e8f0;border-radius:10px;overflow:hidden'>"
             + "<tr><td style='background:#1e293b;padding:9px 14px;font-size:11px;font-weight:700;letter-spacing:.1em;color:#94a3b8'>SERTİFİKA BİLGİLERİ</td></tr>"
             + certRows + "</table></td>"
-            + "<td class='em-col-r' valign='top' style='width:45%'>"
+            + "<td class='em-col-r' valign='top' width='45%' style='width:45%'>"
             + "<table width='100%' cellpadding='0' cellspacing='0' border='0' style='border:1px solid #e2e8f0;border-radius:10px;overflow:hidden'>"
             + "<tr><td style='background:#334155;padding:9px 14px;font-size:11px;font-weight:700;letter-spacing:.1em;color:#94a3b8'>DURUM ÖZETİ</td></tr>"
             + statusRows + "</table></td>"
@@ -711,14 +711,14 @@ public class EmailNotificationService {
 
     private String tableRow2col(String label, String value) {
         return "<tr style='border-top:1px solid #e2e8f0'>"
-            + "<td style='padding:9px 13px;font-size:12px;color:#64748b;white-space:nowrap'>" + label + "</td>"
+            + "<td width='1%' style='padding:9px 13px;font-size:12px;color:#64748b;white-space:nowrap'>" + label + "</td>"
             + "<td style='padding:9px 13px;font-size:14px;font-weight:600;color:#1e293b;word-break:break-all'>" + value + "</td>"
             + "</tr>";
     }
 
     private String tableRow2colMono(String label, String value) {
         return "<tr style='border-top:1px solid #e2e8f0'>"
-            + "<td style='padding:9px 13px;font-size:12px;color:#64748b;white-space:nowrap'>" + label + "</td>"
+            + "<td width='1%' style='padding:9px 13px;font-size:12px;color:#64748b;white-space:nowrap'>" + label + "</td>"
             + "<td style='padding:9px 13px;font-size:11px;font-family:monospace;color:#475569;word-break:break-all'>" + value + "</td>"
             + "</tr>";
     }
@@ -729,7 +729,7 @@ public class EmailNotificationService {
         String bg         = ok || neutral ? "" : "background:#fff7ed";
         String valueColor = ok ? "#15803d" : neutral ? "#6b7280" : "#b45309";
         return "<tr style='border-top:1px solid #e2e8f0;" + bg + "'>"
-            + "<td style='padding:9px 13px;font-size:12px;color:#64748b;white-space:nowrap'>" + label + "</td>"
+            + "<td width='1%' style='padding:9px 13px;font-size:12px;color:#64748b;white-space:nowrap'>" + label + "</td>"
             + "<td style='padding:9px 13px;font-size:13px;font-weight:700;color:" + valueColor + "'>" + value + "</td>"
             + "</tr>";
     }
@@ -977,7 +977,7 @@ public class EmailNotificationService {
         // ── Alert detail (right column) ──
         String alertRows = tableRow2col("⚠ Alarm Tipi",      typeTr)
             + "<tr style='border-top:1px solid #e2e8f0'>"
-            + "<td style='padding:9px 13px;font-size:12px;color:#64748b;white-space:nowrap'>🔴 Alarm Seviyesi</td>"
+            + "<td width='1%' style='padding:9px 13px;font-size:12px;color:#64748b;white-space:nowrap'>🔴 Alarm Seviyesi</td>"
             + "<td style='padding:9px 13px;font-size:14px;font-weight:700;color:" + levelColor + "'>" + levelTr + "</td>"
             + "</tr>"
             + tableRow2col("🌐 Alan Adı",         escHtml(domain))
@@ -988,13 +988,13 @@ public class EmailNotificationService {
 
         String twoColSection =
             "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' style='margin-bottom:4px'><tr>"
-            + "<td class='em-col-l' valign='top' style='width:50%;padding-right:8px'>"
+            + "<td class='em-col-l' valign='top' width='50%' style='width:50%;padding-right:8px'>"
             + "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0'"
             + " style='border:1px solid #bbf7d0;border-radius:10px;overflow:hidden'>"
             + "<tr><td colspan='2' bgcolor='#15803d' style='background-color:#15803d;padding:9px 14px;font-size:11px;font-weight:700;"
             + "letter-spacing:.1em;color:#dcfce7'>&#10003; ÇÖZÜM BİLGİSİ</td></tr>"
             + resolverRows + "</table></td>"
-            + "<td class='em-col-r' valign='top' style='width:50%'>"
+            + "<td class='em-col-r' valign='top' width='50%' style='width:50%'>"
             + "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0'"
             + " style='border:1px solid #e2e8f0;border-radius:10px;overflow:hidden'>"
             + "<tr><td colspan='2' bgcolor='#334155' style='background-color:#334155;padding:9px 14px;font-size:11px;font-weight:700;"
@@ -1202,11 +1202,11 @@ public class EmailNotificationService {
 
         String twoColSection =
             "<table width='100%' cellpadding='0' cellspacing='0' border='0' style='margin-bottom:16px'><tr>"
-            + "<td class='em-col-l' valign='top' style='width:55%;padding-right:8px'>"
+            + "<td class='em-col-l' valign='top' width='55%' style='width:55%;padding-right:8px'>"
             + "<table width='100%' cellpadding='0' cellspacing='0' border='0' style='border:1px solid #e2e8f0;border-radius:10px;overflow:hidden'>"
             + "<tr><td style='background:#1e293b;padding:9px 14px;font-size:11px;font-weight:700;letter-spacing:.1em;color:#94a3b8'>KESİNTİ BİLGİLERİ</td></tr>"
             + outageRows + "</table></td>"
-            + "<td class='em-col-r' valign='top' style='width:45%'>"
+            + "<td class='em-col-r' valign='top' width='45%' style='width:45%'>"
             + "<table width='100%' cellpadding='0' cellspacing='0' border='0' style='border:1px solid #e2e8f0;border-radius:10px;overflow:hidden'>"
             + "<tr><td style='background:#334155;padding:9px 14px;font-size:11px;font-weight:700;letter-spacing:.1em;color:#94a3b8'>DURUM ÖZETİ</td></tr>"
             + statusRows + "</table></td>"
@@ -1317,23 +1317,23 @@ public class EmailNotificationService {
         String outageRows = tableRow2col("🌐 Alan Adı",   escHtml(domain))
             + tableRow2col("⚠ Alarm Tipi",  typeTrLabel)
             + "<tr style='border-top:1px solid #e2e8f0'>"
-            + "<td style='padding:9px 13px;font-size:12px;color:#64748b;white-space:nowrap'>🔴 Seviye</td>"
+            + "<td width='1%' style='padding:9px 13px;font-size:12px;color:#64748b;white-space:nowrap'>🔴 Seviye</td>"
             + "<td style='padding:9px 13px;font-size:14px;font-weight:700;color:" + levelColor + "'>" + levelTrLabel + "</td>"
             + "</tr>"
             + "<tr style='border-top:1px solid #e2e8f0;background:#f0fdf4'>"
-            + "<td style='padding:9px 13px;font-size:12px;color:#64748b;white-space:nowrap'>" + durationLabel + "</td>"
+            + "<td width='1%' style='padding:9px 13px;font-size:12px;color:#64748b;white-space:nowrap'>" + durationLabel + "</td>"
             + "<td style='padding:9px 13px;font-size:14px;font-weight:800;color:" + green + "'>" + duration + "</td>"
             + "</tr>";
 
         String twoColSection =
             "<table width='100%' cellpadding='0' cellspacing='0' border='0' style='margin-bottom:16px'><tr>"
-            + "<td class='em-col-l' valign='top' style='width:50%;padding-right:8px'>"
+            + "<td class='em-col-l' valign='top' width='50%' style='width:50%;padding-right:8px'>"
             + "<table width='100%' cellpadding='0' cellspacing='0' border='0'"
             + " style='border:1px solid #bbf7d0;border-radius:10px;overflow:hidden'>"
             + "<tr><td style='background:#15803d;padding:9px 14px;font-size:11px;font-weight:700;"
             + "letter-spacing:.1em;color:#dcfce7'>ÇÖZÜM BİLGİSİ</td></tr>"
             + resolverRows + "</table></td>"
-            + "<td class='em-col-r' valign='top' style='width:50%'>"
+            + "<td class='em-col-r' valign='top' width='50%' style='width:50%'>"
             + "<table width='100%' cellpadding='0' cellspacing='0' border='0'"
             + " style='border:1px solid #e2e8f0;border-radius:10px;overflow:hidden'>"
             + "<tr><td style='background:#334155;padding:9px 14px;font-size:11px;font-weight:700;"
@@ -1455,11 +1455,11 @@ public class EmailNotificationService {
             + "</td></tr></table>";
 
         String twoCol = "<table width='100%' cellpadding='0' cellspacing='0' border='0' style='margin-bottom:16px'><tr>"
-            + "<td class='em-col-l' valign='top' style='width:55%;padding-right:8px'>"
+            + "<td class='em-col-l' valign='top' width='55%' style='width:55%;padding-right:8px'>"
             + "<table width='100%' cellpadding='0' cellspacing='0' border='0' style='border:1px solid #e2e8f0;border-radius:10px;overflow:hidden'>"
             + "<tr><td style='background:#1e293b;padding:9px 14px;font-size:11px;font-weight:700;letter-spacing:.1em;color:#94a3b8'>İZLEME BİLGİLERİ</td></tr>"
             + leftRows + "</table></td>"
-            + "<td class='em-col-r' valign='top' style='width:45%'>"
+            + "<td class='em-col-r' valign='top' width='45%' style='width:45%'>"
             + "<table width='100%' cellpadding='0' cellspacing='0' border='0' style='border:1px solid #e2e8f0;border-radius:10px;overflow:hidden'>"
             + "<tr><td style='background:#334155;padding:9px 14px;font-size:11px;font-weight:700;letter-spacing:.1em;color:#94a3b8'>DOĞRULAMA ÖZETİ</td></tr>"
             + rightRows + "</table></td></tr></table>";
@@ -1633,17 +1633,17 @@ public class EmailNotificationService {
             + tableRow2col("📅 Alarm Başlangıcı", fmtOrDash(formatIstanbul(createdAt)));
         String outageRows = tableRow2col("🌐 İzlenen", escHtml(domain))
             + tableRow2col("⚠ Alarm Tipi", typeTrLabel)
-            + "<tr style='border-top:1px solid #e2e8f0'><td style='padding:9px 13px;font-size:12px;color:#64748b;white-space:nowrap'>🔴 Seviye</td>"
+            + "<tr style='border-top:1px solid #e2e8f0'><td width='1%' style='padding:9px 13px;font-size:12px;color:#64748b;white-space:nowrap'>🔴 Seviye</td>"
             + "<td style='padding:9px 13px;font-size:14px;font-weight:700;color:#dc2626'>KRİTİK</td></tr>"
-            + "<tr style='border-top:1px solid #e2e8f0;background:#f0fdf4'><td style='padding:9px 13px;font-size:12px;color:#64748b;white-space:nowrap'>⏱ Toplam Kesinti</td>"
+            + "<tr style='border-top:1px solid #e2e8f0;background:#f0fdf4'><td width='1%' style='padding:9px 13px;font-size:12px;color:#64748b;white-space:nowrap'>⏱ Toplam Kesinti</td>"
             + "<td style='padding:9px 13px;font-size:14px;font-weight:800;color:" + green + "'>" + duration + "</td></tr>";
 
         String twoCol = "<table width='100%' cellpadding='0' cellspacing='0' border='0' style='margin-bottom:16px'><tr>"
-            + "<td class='em-col-l' valign='top' style='width:50%;padding-right:8px'>"
+            + "<td class='em-col-l' valign='top' width='50%' style='width:50%;padding-right:8px'>"
             + "<table width='100%' cellpadding='0' cellspacing='0' border='0' style='border:1px solid #bbf7d0;border-radius:10px;overflow:hidden'>"
             + "<tr><td style='background:#15803d;padding:9px 14px;font-size:11px;font-weight:700;letter-spacing:.1em;color:#dcfce7'>ÇÖZÜM BİLGİSİ</td></tr>"
             + resolverRows + "</table></td>"
-            + "<td class='em-col-r' valign='top' style='width:50%'>"
+            + "<td class='em-col-r' valign='top' width='50%' style='width:50%'>"
             + "<table width='100%' cellpadding='0' cellspacing='0' border='0' style='border:1px solid #e2e8f0;border-radius:10px;overflow:hidden'>"
             + "<tr><td style='background:#334155;padding:9px 14px;font-size:11px;font-weight:700;letter-spacing:.1em;color:#94a3b8'>KESİNTİ DETAYI</td></tr>"
             + outageRows + "</table></td></tr></table>";
@@ -1752,11 +1752,11 @@ public class EmailNotificationService {
 
         String twoColSection =
             "<table width='100%' cellpadding='0' cellspacing='0' border='0' style='margin-bottom:16px'><tr>"
-            + "<td class='em-col-l' valign='top' style='width:50%;padding-right:8px'>"
+            + "<td class='em-col-l' valign='top' width='50%' style='width:50%;padding-right:8px'>"
             + "<table width='100%' cellpadding='0' cellspacing='0' border='0' style='border:1px solid #e2e8f0;border-radius:10px;overflow:hidden'>"
             + "<tr><td style='background:#475569;padding:9px 14px;font-size:11px;font-weight:700;letter-spacing:.1em;color:#cbd5e1'>ESKİ DEĞERLER</td></tr>"
             + oldRows + "</table></td>"
-            + "<td class='em-col-r' valign='top' style='width:50%'>"
+            + "<td class='em-col-r' valign='top' width='50%' style='width:50%'>"
             + "<table width='100%' cellpadding='0' cellspacing='0' border='0' style='border:1px solid " + purple + "44;border-radius:10px;overflow:hidden'>"
             + "<tr><td style='background:" + purple + ";padding:9px 14px;font-size:11px;font-weight:700;letter-spacing:.1em;color:#f3e8ff'>YENİ DEĞERLER</td></tr>"
             + newRows + "</table></td>"

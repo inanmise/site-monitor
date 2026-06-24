@@ -371,6 +371,24 @@ public class EscalationService {
     }
 
     /**
+     * İzleme SİLİNDİĞİNDE açık alarmları SESSİZCE kapatır — resolve/çözüldü maili
+     * GÖNDERİLMEZ (kapanma silme kaynaklı; kullanıcı bildirim istemiyor). Alarm
+     * geçmişinde resolved (kapalı) görünür, resolvedBy = silme nedenidir.
+     */
+    public void resolveOpenAlertsSilently(String domain, Collection<String> types, String resolvedBy) {
+        if (domain == null || types == null || types.isEmpty()) return;
+        String by = resolvedBy != null && !resolvedBy.isBlank() ? resolvedBy : "Sistem (izleme silindi)";
+        List<AlertEvent> openAlerts = alertEventRepo.findByDomainAndAlertTypeInAndResolvedFalse(domain, types);
+        for (AlertEvent event : openAlerts) {
+            event.setResolved(true);
+            event.setResolvedAt(now());
+            event.setResolvedBy(by);
+            alertEventRepo.save(event);   // mail YOK — sendResolutionNotification çağrılmaz
+            log.info("✅ Alarm sessizce kapatıldı (izleme silindi, mail yok): {} [{}]", domain, event.getAlertType());
+        }
+    }
+
+    /**
      * MonitoringOutageService teyit zinciri tamamlandığında (ya da kesinti
      * sürerken her sweep'te / DNS_CHANGED'de anında) çağırır. processResults'un
      * INITIAL / DAILY_REALERT dallarının izleme aynası — seviye sabit

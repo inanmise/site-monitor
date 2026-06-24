@@ -28,6 +28,10 @@ public class PingMonitor {
     @Column(name = "ip_version", nullable = false)
     private String ipVersion = "auto";
 
+    /** Mantıksal grup (ör. "X Sistemleri") — filtreleme/gruplama; serbest-form. */
+    @Column(name = "group_name")
+    private String groupName;
+
     /** Sorumlu takım — alarm yönlendirmesi. */
     @Column(name = "team_id")
     private Long teamId;

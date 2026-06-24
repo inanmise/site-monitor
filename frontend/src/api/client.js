@@ -514,6 +514,7 @@ export const api = {
     updateKeywordMonitor: (id, data) => request(`/monitoring/keyword/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
     deleteKeywordMonitor: (id) => request(`/monitoring/keyword/${id}`, { method: 'DELETE' }),
     triggerKeywordCheck:  (id) => request(`/monitoring/keyword/${id}/check`, { method: 'POST' }),
+    testKeyword:          (data) => request('/monitoring/keyword/test', { method: 'POST', body: JSON.stringify(data) }),
     getKeywordHistory:    (id, { days, limit } = {}) => {
       const q = new URLSearchParams(
         Object.fromEntries(Object.entries({ days, limit }).filter(([, v]) => v != null && v !== '')),
