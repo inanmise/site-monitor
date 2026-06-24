@@ -1,9 +1,9 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { createPortal } from 'react-dom'
-import { api, formatDate } from '../api/client'
+import { api, formatDate, formatDateSec } from '../api/client'
 import { useT } from '../i18n/index.jsx'
 import SearchableSelect from './ui/SearchableSelect.jsx'
-import { Play, Pencil, X, RefreshCw, Plus, Trash2, Target, Users, Layers } from 'lucide-react'
+import { Play, Pencil, X, RefreshCw, Plus, Trash2, Target, Users, Layers, FlaskConical, Check, AlertTriangle } from 'lucide-react'
 
 const INTERVALS = [
   { value: 30,  labelKey: 'ping.interval30s' },
@@ -37,6 +37,8 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
   const [form, setForm] = useState(emptyForm)
   const [saving, setSaving] = useState(false)
   const [checking, setChecking] = useState(null)
+  const [testing, setTesting] = useState(false)
+  const [testResult, setTestResult] = useState(null)
   const [search, setSearch] = useState('')
   const [teamFilter, setTeamFilter] = useState('all')
   const [groupFilter, setGroupFilter] = useState('all')
@@ -94,15 +96,28 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
   function openDetail(m) { setSelected(m); setHistory([]); loadHistory(m.id, rangeDays) }
   function closeDetail() { setSelected(null); setHistory([]) }
 
-  function openNew() { setForm({ ...emptyForm, teamId: isAdmin ? '' : (myTeam ?? '') }); setModal('new') }
+  function openNew() { setTestResult(null); setForm({ ...emptyForm, teamId: isAdmin ? '' : (myTeam ?? '') }); setModal('new') }
   function openEdit(m) {
+    setTestResult(null)
     setForm({ name: m.name || '', url: m.url || '', keyword: m.keyword || '',
       operator: m.operator || 'GTE', matchCount: m.match_count ?? 1, groupName: m.group_name || '',
       teamId: m.team_id != null ? String(m.team_id) : '',
       intervalSeconds: m.interval_seconds ?? 60, timeoutMs: m.timeout_ms ?? 10000, active: m.active !== false })
     setModal(m)
   }
-  function closeEdit() { setModal(null) }
+  function closeEdit() { setModal(null); setTestResult(null) }
+
+  // Canlı koşul testi — kaydetmeden formdaki değerlerle URL'yi çekip koşulu değerlendirir.
+  async function runTest() {
+    if (!form.url.trim() || !form.keyword.trim()) return
+    setTesting(true); setTestResult(null)
+    const res = await api.monitoring.testKeyword({
+      url: form.url.trim(), keyword: form.keyword, operator: form.operator,
+      matchCount: Number(form.matchCount), timeoutMs: Number(form.timeoutMs),
+    })
+    setTestResult(res?.success ? res.data : { error: res?.error || t('keyword.testError') })
+    setTesting(false)
+  }
 
   async function save() {
     if (!form.url.trim() || !form.keyword.trim()) return
@@ -145,11 +160,14 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
   const hasTeamOptions = teamOptions.some(o => o.value !== 'all' && o.value !== '__none__')
   const teamSelectOptions = [{ value: '', label: t('keyword.noTeam') },
     ...teams.map(tm => ({ value: String(tm.id), label: tm.name }))]
-  const groupNames = [...new Set(monitors.map(m => m.group_name).filter(Boolean))].sort((a, b) => a.localeCompare(b))
+  // Gruplar takıma özgüdür: kullanıcı yalnız kendi takımının gruplarını görür/seçer (admin tümünü).
+  // Yeni grup creatable ile yazılıp seçilebilir (mevcut grup olmasa bile).
+  const groupMonitors = isAdmin ? monitors : monitors.filter(m => isOwnTeam(m))
+  const groupNames = [...new Set(groupMonitors.map(m => m.group_name).filter(Boolean))].sort((a, b) => a.localeCompare(b))
   const hasGroupOptions = groupNames.length > 0
   const groupFilterOptions = [{ value: 'all', label: t('keyword.allGroups') },
     ...groupNames.map(g => ({ value: g, label: g })),
-    ...(monitors.some(m => !m.group_name) ? [{ value: '__none__', label: t('keyword.noGroup') }] : [])]
+    ...(groupMonitors.some(m => !m.group_name) ? [{ value: '__none__', label: t('keyword.noGroup') }] : [])]
   const groupSelectOptions = groupNames.map(g => ({ value: g, label: g }))
 
   const displayMonitors = monitors.filter(m => {
@@ -178,6 +196,28 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
       : s === 'unknown' ? t('keyword.statusUnknown')
       : s === 'error' ? t('keyword.statusError') : t('keyword.statusViolation')
     return <span className={`upt-badge ${cls}`}><span className="upt-badge-dot" />{label}</span>
+  }
+
+  // Operatör + adet → sağlıklı (alarmsız) koşul ifadesi — opPhrase aynası.
+  function expectPhrase(op, n) {
+    switch (op) {
+      case 'LTE': return `en fazla ${n} kez`
+      case 'EQ':  return `tam olarak ${n} kez`
+      case 'GT':  return `${n} kezden fazla`
+      case 'LT':  return `${n} kezden az`
+      default:    return `en az ${n} kez`   // GTE
+    }
+  }
+  // Alarmın HANGİ durumda tetikleneceği — düz, net Türkçe (koşulun sağlanmadığı taraf).
+  function triggerPhrase(op, n, kw) {
+    const k = kw && kw.trim() ? `« ${kw.trim()} »` : t('keyword.theKeyword')
+    switch (op) {
+      case 'LTE': return n === 0 ? `${k} sayfada bulunursa` : `${k} sayfada ${n} kezden fazla bulunursa`
+      case 'EQ':  return `${k} sayfada tam olarak ${n} kez bulunmazsa`
+      case 'GT':  return `${k} sayfada ${n} veya daha az bulunursa`
+      case 'LT':  return `${k} sayfada ${n} veya daha fazla bulunursa`
+      default:    return n <= 1 ? `${k} sayfada hiç bulunmazsa` : `${k} sayfada ${n} kezden az bulunursa`   // GTE
+    }
   }
 
   return (
@@ -292,7 +332,7 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
               <div className="upt-modal-metric"><span className="upt-modal-metric-val">{summary.down}</span><span className="upt-modal-metric-lbl">{t('keyword.sumIncidents')}</span></div>
               <div className="upt-modal-metric"><span className="upt-modal-metric-val">{selected.keyword}</span><span className="upt-modal-metric-lbl">{t('keyword.keyword')}</span></div>
               {selected.http_status != null && <div className="upt-modal-metric"><span className="upt-modal-metric-val">{selected.http_status}</span><span className="upt-modal-metric-lbl">HTTP</span></div>}
-              {selected.checked_at && <div className="upt-modal-metric"><span className="upt-modal-metric-val upt-modal-metric-time">{formatDate(selected.checked_at)}</span><span className="upt-modal-metric-lbl">{t('keyword.lastCheck')}</span></div>}
+              {selected.checked_at && <div className="upt-modal-metric"><span className="upt-modal-metric-val upt-modal-metric-time">{formatDateSec(selected.checked_at)}</span><span className="upt-modal-metric-lbl">{t('keyword.lastCheck')}</span></div>}
             </div>
             <div className="upt-modal-divider" />
             <div className="upt-modal-section-title">{t('keyword.history')}</div>
@@ -309,15 +349,23 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
                 <div className="upt-rt-grid upt-rt-head">
                   <span>{t('keyword.colTime')}</span><span>{t('keyword.colStatus')}</span><span>HTTP</span><span>{t('keyword.colDetail')}</span>
                 </div>
-                {history.slice(0, 200).map((c, i) => (
-                  <div key={i} className="upt-rt-grid">
-                    <span className="upt-rt-time">{formatDate(c.checkedAt || c.checked_at)}</span>
-                    <span className={c.ok ? 'upt-rt-up' : 'upt-rt-down'}>{c.ok ? t('keyword.statusOk') : (c.error ? t('keyword.statusError') : t('keyword.statusViolation'))}</span>
-                    <span className="upt-rt-ms">{c.httpStatus ?? c.http_status ?? '—'}</span>
-                    {c.error ? <span className="upt-rt-error" title={c.error}>{c.error}</span>
-                      : <span className="upt-rt-ms">{c.found ? t('keyword.found') : t('keyword.notFound')}</span>}
-                  </div>
-                ))}
+                {history.slice(0, 200).map((c, i) => {
+                  const occ = c.occurrences != null ? c.occurrences : (c.found ? '≥1' : 0)
+                  const cmp = `${OP_SYM[selected.operator] || '≥'}${selected.match_count ?? 1}`
+                  return (
+                    <div key={i} className="upt-rt-grid">
+                      <span className="upt-rt-time">{formatDateSec(c.checkedAt || c.checked_at)}</span>
+                      <span className={c.ok ? 'upt-rt-up' : 'upt-rt-down'}>{c.ok ? t('keyword.statusOk') : (c.error ? t('keyword.statusError') : t('keyword.statusViolation'))}</span>
+                      <span className="upt-rt-ms">{c.httpStatus ?? c.http_status ?? '—'}</span>
+                      {c.error
+                        ? <span className="upt-rt-error" title={c.error}>{c.error}</span>
+                        : <span style={{ whiteSpace: 'nowrap' }}
+                            title={`« ${selected.keyword} » → ${occ} ${t('keyword.testFound')} · ${t('keyword.testRequired')}: ${cmp} (${expectPhrase(selected.operator, selected.match_count ?? 1)})${c.snippet ? '\n— ' + c.snippet : ''}`}>
+                            <strong>{occ}</strong> {t('keyword.testFound')} <span style={{ color: 'var(--text-muted)' }}>· {cmp}</span>
+                          </span>}
+                    </div>
+                  )
+                })}
               </div>
             )}
           </div>
@@ -343,6 +391,10 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
                     { value: 'LT', label: t('keyword.opLt') }]} /></label>
               <label><span>{t('keyword.matchCount')}</span>
                 <input type="number" min="0" value={form.matchCount} onChange={e => setForm(f => ({ ...f, matchCount: Number(e.target.value) }))} /></label>
+              <div className="full-width" style={{ background: '#f1f5f9', borderLeft: '3px solid #1f3864', borderRadius: '0 6px 6px 0', padding: '9px 12px', fontSize: '.82em', lineHeight: 1.55, color: '#334155' }}>
+                <div><Check size={12} style={{ verticalAlign: '-2px', color: '#15803d' }} /> <strong>{t('keyword.explHealthy')}:</strong> « {form.keyword?.trim() || t('keyword.theKeyword')} » {expectPhrase(form.operator, Number(form.matchCount) || 0)} bulunmalı.</div>
+                <div style={{ marginTop: 4 }}><AlertTriangle size={12} style={{ verticalAlign: '-2px', color: '#dc2626' }} /> <strong>{t('keyword.explAlarm')}:</strong> {triggerPhrase(form.operator, Number(form.matchCount) || 0, form.keyword)} tetiklenir.</div>
+              </div>
               <label className="full-width"><span>{t('keyword.group')}</span>
                 <SearchableSelect value={form.groupName} onChange={v => setForm(f => ({ ...f, groupName: v }))}
                   options={[{ value: '', label: t('keyword.noGroup') }, ...groupSelectOptions]}
@@ -364,8 +416,35 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
               <label className="checkbox-label full-width">
                 <input type="checkbox" checked={form.active} onChange={e => setForm(f => ({ ...f, active: e.target.checked }))} />{t('keyword.active')}</label>
             </div>
+            {testResult && (
+              <div style={{ margin: '2px 0 12px', padding: '10px 12px', borderRadius: 8, fontSize: '.86em', lineHeight: 1.5,
+                display: 'flex', alignItems: 'flex-start', gap: 8, border: '1px solid',
+                ...(testResult.error
+                  ? { background: '#fef2f2', borderColor: '#fecaca', color: '#b91c1c' }
+                  : testResult.condition_met
+                    ? { background: '#f0fdf4', borderColor: '#bbf7d0', color: '#15803d' }
+                    : { background: '#fff7ed', borderColor: '#fed7aa', color: '#b45309' }) }}>
+                {testResult.error || !testResult.condition_met
+                  ? <AlertTriangle size={16} style={{ flexShrink: 0, marginTop: 1 }} />
+                  : <Check size={16} style={{ flexShrink: 0, marginTop: 1 }} />}
+                <span>
+                  {testResult.error
+                    ? <><strong>{t('keyword.testError')}:</strong> {testResult.error}</>
+                    : <>
+                        <strong>{testResult.condition_met ? t('keyword.testMet') : t('keyword.testNotMet')}</strong>
+                        {' — « '}{form.keyword}{' » '}{testResult.occurrences} {t('keyword.testFound')} · {t('keyword.testRequired')}: {testResult.phrase}
+                        {testResult.http_status != null && <> · HTTP {testResult.http_status}</>}
+                        {testResult.response_ms != null && <> · {testResult.response_ms}ms</>}
+                      </>}
+                </span>
+              </div>
+            )}
             <div className="modal-actions">
-              {modal !== 'new' && canDeleteRow(modal) && <button className="btn btn-danger" style={{ marginRight: 'auto' }} onClick={del}><Trash2 size={14} />{t('keyword.delete')}</button>}
+              <button className="btn btn-secondary" style={{ marginRight: 'auto' }} onClick={runTest}
+                disabled={testing || !form.url.trim() || !form.keyword.trim()}>
+                <FlaskConical size={14} />{testing ? t('keyword.testing') : t('keyword.test')}
+              </button>
+              {modal !== 'new' && canDeleteRow(modal) && <button className="btn btn-danger" onClick={del}><Trash2 size={14} />{t('keyword.delete')}</button>}
               <button className="btn btn-secondary" onClick={closeEdit}>{t('keyword.cancel')}</button>
               <button className="btn btn-primary" onClick={save} disabled={saving || !form.url.trim() || !form.keyword.trim()}>{saving ? '...' : t('keyword.save')}</button>
             </div>

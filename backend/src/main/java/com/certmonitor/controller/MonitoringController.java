@@ -54,6 +54,7 @@ public class MonitoringController {
     /** domain/host → sorumlu takım adı (izleme ekranlarında takım gösterimi/filtresi). */
     private final CertificateService certificateService;
     private final com.certmonitor.service.PermissionService permissionService;
+    private final com.certmonitor.service.EscalationService escalationService;
 
     private static final DateTimeFormatter ISO =
             DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
@@ -775,6 +776,9 @@ public class MonitoringController {
         permissionService.require(session, "monitoring.crud", "edit");
         return keywordMonitorRepo.findById(id).map(m -> {
             if (!SessionScope.canManage(session, m.getTeamId())) throw new SecurityException("Silme yetkisi yok (yalnız takım yöneticisi/ADMIN)");
+            // Silme kaynaklı kapanma: açık alarmı sessizce resolved'a geçir (çözüldü maili YOK).
+            escalationService.resolveOpenAlertsSilently(m.getUrl(),
+                    java.util.Set.of(com.certmonitor.service.EscalationService.TYPE_KEYWORD), "Sistem (izleme silindi)");
             keywordMonitorRepo.delete(m);   // hard delete — "Sil" listeden kaldırır ("Aktif" toggle ayrı)
             return ok(Map.of("deleted", true));
         }).orElse(notFound("Keyword monitor not found"));
@@ -829,6 +833,34 @@ public class MonitoringController {
             keywordResultRepo.save(res);
             return ok(enrichKeyword(m, res, teamNameMap()));
         }).orElse(notFound("Keyword monitor not found"));
+    }
+
+    /**
+     * Canlı koşul testi — kaydetmeden, formdaki değerlerle (url/keyword/operator/matchCount)
+     * URL'yi çekip koşulun sağlanıp sağlanmadığını döndürür. "Test" butonu kullanır.
+     */
+    @PostMapping("/keyword/test")
+    public ResponseEntity<Map<String, Object>> testKeyword(@RequestBody Map<String, Object> body, HttpSession session) {
+        permissionService.require(session, "monitoring.crud", "edit");
+        String url = body.get("url") != null ? body.get("url").toString().trim() : "";
+        String keyword = body.get("keyword") != null ? body.get("keyword").toString() : "";
+        if (url.isEmpty() || keyword.isEmpty()) return badRequest("url ve keyword zorunlu");
+        String op = body.get("operator") != null ? body.get("operator").toString() : "GTE";
+        if (!KW_OPERATORS.contains(op)) op = "GTE";
+        int threshold = body.get("matchCount") instanceof Number mn ? mn.intValue() : 1;
+        int timeoutMs = body.get("timeoutMs") instanceof Number tn ? tn.intValue() : 10000;
+        Map<String, Object> r = keywordChecker.check(url, keyword, timeoutMs);
+        int count = r.get("count") instanceof Number cn ? cn.intValue() : 0;
+        boolean met = r.get("error") == null && KeywordCheckerService.evaluate(count, op, threshold);
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("occurrences",   count);
+        out.put("condition_met", met);
+        out.put("http_status",   r.get("http_status"));
+        out.put("response_ms",   r.get("response_ms"));
+        out.put("snippet",       r.get("snippet"));
+        out.put("error",         r.get("error"));
+        out.put("phrase",        KeywordCheckerService.opPhrase(op, threshold));
+        return ok(out);
     }
 
     private Map<String, Object> enrichKeyword(KeywordMonitor m, KeywordResult latest, Map<Long, String> teams) {
@@ -890,6 +922,7 @@ public class MonitoringController {
         m.setHost((String) body.get("host"));
         String ipv = body.get("ipVersion") != null ? body.get("ipVersion").toString() : "auto";
         m.setIpVersion(Set.of("v4", "v6", "auto").contains(ipv) ? ipv : "auto");
+        if (body.containsKey("groupName")) m.setGroupName(blank(body.get("groupName")) ? null : body.get("groupName").toString().trim());
         m.setTeamId(teamId);
         m.setActive(true);
         if (body.get("intervalSeconds") != null) m.setIntervalSeconds(((Number) body.get("intervalSeconds")).intValue());
@@ -909,6 +942,7 @@ public class MonitoringController {
             if (body.get("name")            != null) m.setName((String) body.get("name"));
             if (body.get("host")            != null) m.setHost((String) body.get("host"));
             if (body.get("ipVersion")       != null) { String v = body.get("ipVersion").toString(); m.setIpVersion(Set.of("v4","v6","auto").contains(v) ? v : "auto"); }
+            if (body.containsKey("groupName"))       m.setGroupName(blank(body.get("groupName")) ? null : body.get("groupName").toString().trim());
             if (body.containsKey("teamId"))          m.setTeamId(resolveTeamChange(session, m.getTeamId(), body.get("teamId")));
             if (body.get("active")          != null) m.setActive((Boolean) body.get("active"));
             if (body.get("intervalSeconds") != null) m.setIntervalSeconds(((Number) body.get("intervalSeconds")).intValue());
@@ -925,6 +959,9 @@ public class MonitoringController {
         permissionService.require(session, "monitoring.crud", "edit");
         return pingMonitorRepo.findById(id).map(m -> {
             if (!SessionScope.canManage(session, m.getTeamId())) throw new SecurityException("Silme yetkisi yok (yalnız takım yöneticisi/ADMIN)");
+            // Silme kaynaklı kapanma: açık alarmı sessizce resolved'a geçir (çözüldü maili YOK).
+            escalationService.resolveOpenAlertsSilently(m.getHost(),
+                    java.util.Set.of(com.certmonitor.service.EscalationService.TYPE_PING_DOWN), "Sistem (izleme silindi)");
             pingMonitorRepo.delete(m);   // hard delete — "Sil" listeden kaldırır ("Aktif" toggle ayrı)
             return ok(Map.of("deleted", true));
         }).orElse(notFound("Ping monitor not found"));
@@ -981,6 +1018,7 @@ public class MonitoringController {
         item.put("name",             m.getName());
         item.put("host",             m.getHost());
         item.put("ip_version",       m.getIpVersion());
+        item.put("group_name",       m.getGroupName());
         item.put("team_id",          m.getTeamId());
         item.put("team_name",        m.getTeamId() != null ? teams.get(m.getTeamId()) : null);
         item.put("active",           m.getActive());

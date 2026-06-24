@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom'
 import { api, formatDate } from '../api/client'
 import { useT } from '../i18n/index.jsx'
 import SearchableSelect from './ui/SearchableSelect.jsx'
-import { Play, Pencil, X, RefreshCw, Plus, Trash2, Radio, Users } from 'lucide-react'
+import { Play, Pencil, X, RefreshCw, Plus, Trash2, Radio, Users, Layers } from 'lucide-react'
 
 const INTERVALS = [
   { value: 30,  labelKey: 'ping.interval30s' },
@@ -12,7 +12,7 @@ const INTERVALS = [
   { value: 900, labelKey: 'ping.interval15m' },
 ]
 const REFRESH_INTERVAL = 60
-const emptyForm = { name: '', host: '', ipVersion: 'auto', teamId: '',
+const emptyForm = { name: '', host: '', ipVersion: 'auto', groupName: '', teamId: '',
   intervalSeconds: 60, timeoutMs: 5000, packetCount: 4, active: true }
 
 export default function PingMonitorPage({ systemRole, teamId, teamName }) {
@@ -38,6 +38,7 @@ export default function PingMonitorPage({ systemRole, teamId, teamName }) {
   const [checking, setChecking] = useState(null)
   const [search, setSearch] = useState('')
   const [teamFilter, setTeamFilter] = useState('all')
+  const [groupFilter, setGroupFilter] = useState('all')
   const [secondsSince, setSecondsSince] = useState(0)
   const countdownRef = useRef(null)
   const deepLinkDone = useRef(false)
@@ -94,7 +95,7 @@ export default function PingMonitorPage({ systemRole, teamId, teamName }) {
 
   function openNew() { setForm({ ...emptyForm, teamId: isAdmin ? '' : (myTeam ?? '') }); setModal('new') }
   function openEdit(m) {
-    setForm({ name: m.name || '', host: m.host || '', ipVersion: m.ip_version || 'auto',
+    setForm({ name: m.name || '', host: m.host || '', ipVersion: m.ip_version || 'auto', groupName: m.group_name || '',
       teamId: m.team_id != null ? String(m.team_id) : '', intervalSeconds: m.interval_seconds ?? 60,
       timeoutMs: m.timeout_ms ?? 5000, packetCount: m.packet_count ?? 4, active: m.active !== false })
     setModal(m)
@@ -106,6 +107,7 @@ export default function PingMonitorPage({ systemRole, teamId, teamName }) {
     setSaving(true)
     const payload = {
       name: (form.name || form.host).trim(), host: form.host.trim(), ipVersion: form.ipVersion,
+      groupName: form.groupName?.trim() || null,
       teamId: form.teamId === '' ? null : Number(form.teamId), intervalSeconds: Number(form.intervalSeconds),
       timeoutMs: Number(form.timeoutMs), packetCount: Number(form.packetCount), active: form.active,
     }
@@ -141,11 +143,23 @@ export default function PingMonitorPage({ systemRole, teamId, teamName }) {
   const hasTeamOptions = teamOptions.some(o => o.value !== 'all' && o.value !== '__none__')
   const teamSelectOptions = [{ value: '', label: t('ping.noTeam') },
     ...teams.map(tm => ({ value: String(tm.id), label: tm.name }))]
+  // Gruplar takıma özgü: kullanıcı yalnız kendi takımının gruplarını görür/seçer (admin tümünü).
+  const groupMonitors = isAdmin ? monitors : monitors.filter(m => isOwnTeam(m))
+  const groupNames = [...new Set(groupMonitors.map(m => m.group_name).filter(Boolean))].sort((a, b) => a.localeCompare(b))
+  const hasGroupOptions = groupNames.length > 0
+  const groupFilterOptions = [{ value: 'all', label: t('ping.allGroups') },
+    ...groupNames.map(g => ({ value: g, label: g })),
+    ...(groupMonitors.some(m => !m.group_name) ? [{ value: '__none__', label: t('ping.noGroup') }] : [])]
+  const groupSelectOptions = groupNames.map(g => ({ value: g, label: g }))
 
   const displayMonitors = monitors.filter(m => {
     if (teamFilter !== 'all') {
       if (teamFilter === '__none__') { if (m.team_name) return false }
       else if (m.team_name !== teamFilter) return false
+    }
+    if (groupFilter !== 'all') {
+      if (groupFilter === '__none__') { if (m.group_name) return false }
+      else if (m.group_name !== groupFilter) return false
     }
     if (!search.trim()) return true
     return (m.host || '').toLowerCase().includes(search.trim().toLowerCase())
@@ -188,6 +202,7 @@ export default function PingMonitorPage({ systemRole, teamId, teamName }) {
 
       {!loading && monitors.length > 0 && (
         <div className="upt-toolbar" style={{ justifyContent: 'flex-end', gap: 8 }}>
+          {hasGroupOptions && <SearchableSelect value={groupFilter} onChange={setGroupFilter} options={groupFilterOptions} searchThreshold={2} />}
           {hasTeamOptions && <SearchableSelect value={teamFilter} onChange={setTeamFilter} options={teamOptions} />}
           <input className="upt-search" type="text" placeholder={t('ping.searchPlaceholder')}
             value={search} onChange={e => setSearch(e.target.value)} />
@@ -209,6 +224,11 @@ export default function PingMonitorPage({ systemRole, teamId, teamName }) {
               {m.team_name && (
                 <div style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: '.78em', color: 'var(--text-muted)', marginTop: 2 }}>
                   <Users size={12} />{m.team_name}
+                </div>
+              )}
+              {m.group_name && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: '.78em', color: 'var(--text-muted)', marginTop: 2 }}>
+                  <Layers size={12} />{m.group_name}
                 </div>
               )}
               <div className="upt-card-divider" />
@@ -315,6 +335,10 @@ export default function PingMonitorPage({ systemRole, teamId, teamName }) {
                 {isAdmin
                   ? <SearchableSelect value={form.teamId} onChange={v => setForm(f => ({ ...f, teamId: v }))} options={teamSelectOptions} searchThreshold={2} />
                   : <input value={teamName || t('ping.noTeam')} disabled />}</label>
+              <label className="full-width"><span>{t('ping.group')}</span>
+                <SearchableSelect value={form.groupName} onChange={v => setForm(f => ({ ...f, groupName: v }))}
+                  options={[{ value: '', label: t('ping.noGroup') }, ...groupSelectOptions]}
+                  creatable onCreate={() => {}} searchThreshold={2} placeholder={t('ping.noGroup')} /></label>
               <label><span>{t('ping.interval')}</span>
                 <select value={form.intervalSeconds} onChange={e => setForm(f => ({ ...f, intervalSeconds: Number(e.target.value) }))}>
                   {INTERVALS.map(o => <option key={o.value} value={o.value}>{t(o.labelKey)}</option>)}

@@ -56,6 +56,7 @@ class MonitoringControllerTest {
     @MockitoBean PingCheckRepository pingCheckRepo;
     @MockitoBean com.certmonitor.service.PingCheckerService pingChecker;
     @MockitoBean TeamRepository teamRepo;
+    @MockitoBean com.certmonitor.service.EscalationService escalationService;
 
     @BeforeEach
     void stubTeamMap() {
