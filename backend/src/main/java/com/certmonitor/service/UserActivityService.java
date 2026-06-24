@@ -517,10 +517,10 @@ public class UserActivityService {
         ZonedDateTime mondayThisWeek = todayStart.with(
                 java.time.temporal.TemporalAdjusters.previousOrSame(java.time.DayOfWeek.MONDAY));
         int todayDow = todayStart.getDayOfWeek().getValue() - 1;   // bugünün hafta-günü 0(Pzt)..6(Paz)
-        String sinceK = ISO.format(mondayThisWeek.minusWeeks(2).toInstant());
+        String sinceK = ISO.format(mondayThisWeek.minusWeeks(3).toInstant());
         List<AuditLog> all = auditLogRepo.findLoginEventsSince(LOGIN_TYPES, sinceK);
-        List<Map<String, Object>> out = new ArrayList<>(3);
-        for (int w = 0; w < 3; w++) {
+        List<Map<String, Object>> out = new ArrayList<>(4);
+        for (int w = 0; w < 4; w++) {   // bu hafta + 3 önceki = 4 hafta
             ZonedDateTime fromZ = mondayThisWeek.minusWeeks(w);    // o haftanın Pazartesi 00:00
             ZonedDateTime toZ   = fromZ.plusWeeks(1);              // sonraki Pazartesi (exclusive)
             String fromK = ISO.format(fromZ.toInstant());

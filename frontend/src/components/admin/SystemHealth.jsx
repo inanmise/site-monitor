@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo, useRef, Fragment } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef, Fragment, lazy, Suspense } from 'react'
 import { api, formatDate, formatDateSec } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
 import { CheckCircle, XCircle, MinusCircle, HelpCircle, Mail, ChevronRight, Check, Loader2, Server, Database, Globe, Cpu, ChevronDown, Users, LogIn, ShieldAlert, UserCheck } from 'lucide-react'
@@ -7,8 +7,10 @@ import ChartModal from './ChartModal'
 import HeartbeatHistoryModal from './HeartbeatHistoryModal'
 import LoginHeatmap from './LoginHeatmap'
 import DateTimeField from '../ui/DateTimeField.jsx'
+import DateTimeRangePicker from '../ui/DateTimeRangePicker.jsx'
 
 import UserBadge from '../ui/UserBadge.jsx'   // proje-geneli ortak kullanıcı rozeti (avatar + ad-soyad)
+const LoginActivityChart = lazy(() => import('./LoginActivityChart.jsx'))   // recharts → tembel yükle (bundle hafif)
 
 function SmtpStatusCell({ row, t }) {
   const cfg = {
@@ -131,6 +133,8 @@ export default function SystemHealth({ systemRole, globalAdmin = false, preFilte
   // Giriş trendi: esnek aralık (1g/7g/30g) + istenen güne gitme (saatlik) — zoom/navigasyon
   const [trendDays, setTrendDays] = useState(7)    // 1 | 7 | 30
   const [trendDate, setTrendDate] = useState('')   // 'yyyy-mm-dd' seçili gün (saatlik); boşsa aralık modu
+  const [trendCustom, setTrendCustom] = useState(null)   // {from,to} UTC ISO — özel aralık ("x gün x saat")
+  const [trendShowCustom, setTrendShowCustom] = useState(false)
   const [trendData, setTrendData] = useState(null) // { buckets, granularity }
   const [trendLoading, setTrendLoading] = useState(false)
   // Veritabanı analitiği (executive): pencere (1/7/30) + payload
@@ -185,7 +189,10 @@ export default function SystemHealth({ systemRole, globalAdmin = false, preFilte
     setTrendLoading(true)
     const iso = d => d.toISOString().slice(0, 19)
     let fromD, toD, gran
-    if (trendDate) {
+    if (trendCustom) {
+      fromD = new Date(trendCustom.from + 'Z'); toD = new Date(trendCustom.to + 'Z')
+      gran  = (toD - fromD) <= 2 * 86_400_000 ? 'hour' : 'day'   // ≤2 gün → saatlik, üstü günlük
+    } else if (trendDate) {
       fromD = new Date(`${trendDate}T00:00:00`)          // yerel gün başı
       toD   = new Date(`${trendDate}T23:59:59`)          // AYNI gün sonu (ertesi güne taşmaz)
       gran  = 'hour'
@@ -197,7 +204,7 @@ export default function SystemHealth({ systemRole, globalAdmin = false, preFilte
     const res = await api.admin.getLoginSeries(iso(fromD), iso(toD), gran)
     if (res?.success) setTrendData(res.data)
     setTrendLoading(false)
-  }, [canViewUserActivity, trendDays, trendDate])
+  }, [canViewUserActivity, trendDays, trendDate, trendCustom])
 
   useEffect(() => { if (usersVisible) loadTrend() }, [usersVisible, loadTrend])
 
@@ -1272,21 +1279,7 @@ export default function SystemHealth({ systemRole, globalAdmin = false, preFilte
               const f = d => d.toLocaleDateString([], { day: '2-digit', month: '2-digit' })
               return `${f(from)} – ${f(endIncl)}`
             }
-            const weekBase = (i) => i === 0 ? t('uact.weekThis') : i === 1 ? t('uact.weekPrev1') : t('uact.weekPrev2')
-            const mc = (arr, field) => (arr ?? []).map(b => ({ ts: b.ts, value: b[field] }))
-            const seriesGrid = (arr, prefix, gran) => (
-              <div className="metrics-grid">
-                <MiniChart label={`${prefix} · ${t('uact.requests')}`} unit="" color="#4f9cf9" gran={gran}
-                  data={mc(arr, 'total')}
-                  onClick={() => setModalChart({ label: `${prefix} · ${t('uact.requests')}`, unit: '', color: '#4f9cf9', gran, data: mc(arr, 'total') })} />
-                <MiniChart label={`${prefix} · ${t('uact.success')}`} unit="" color="#10b981" gran={gran}
-                  data={mc(arr, 'success')}
-                  onClick={() => setModalChart({ label: `${prefix} · ${t('uact.success')}`, unit: '', color: '#10b981', gran, data: mc(arr, 'success') })} />
-                <MiniChart label={`${prefix} · ${t('uact.failed')}`} unit="" color="#ef4444" gran={gran}
-                  data={mc(arr, 'failed')}
-                  onClick={() => setModalChart({ label: `${prefix} · ${t('uact.failed')}`, unit: '', color: '#ef4444', gran, data: mc(arr, 'failed') })} />
-              </div>
-            )
+            const weekBase = (i) => i === 0 ? t('uact.weekThis') : i === 1 ? t('uact.weekPrev1') : i === 2 ? t('uact.weekPrev2') : t('uact.weekPrev3')
             const uSort = (col) => setUactSort(s => s.col === col
               ? { col, dir: s.dir === 'asc' ? 'desc' : 'asc' }
               : { col, dir: col === 'username' ? 'asc' : 'desc' })
@@ -1330,28 +1323,38 @@ export default function SystemHealth({ systemRole, globalAdmin = false, preFilte
 
                 {/* Login trendi — esnek aralık (1g/7g/30g) + istenen güne gitme (saatlik) + zoom */}
                 <h3 className="metrics-title">{t('uact.trendTitle')}</h3>
-                <div className="chart-range-bar" style={{ alignItems: 'center' }}>
+                <div className="chart-range-bar" style={{ alignItems: 'center', flexWrap: 'wrap' }}>
                   {[1, 7, 30].map(d => (
                     <button key={d} type="button"
-                      className={`chart-range-btn ${!trendDate && trendDays === d ? 'chart-range-btn-active' : ''}`}
-                      onClick={() => { setTrendDate(''); setTrendDays(d) }}>
+                      className={`chart-range-btn ${!trendDate && !trendCustom && trendDays === d ? 'chart-range-btn-active' : ''}`}
+                      onClick={() => { setTrendDate(''); setTrendCustom(null); setTrendShowCustom(false); setTrendDays(d) }}>
                       {t(`uact.range${d}d`)}
                     </button>
                   ))}
                   <span className="sys-muted sys-small">·</span>
-                  <DateTimeField dateOnly clearable className="dtf-inline"
-                    value={trendDate} onChange={setTrendDate} placeholder={t('uact.gotoDay')} />
+                  <DateTimeField dateOnly clearable className="dtf-inline" value={trendDate}
+                    onChange={(v) => { setTrendCustom(null); setTrendShowCustom(false); setTrendDate(v) }}
+                    placeholder={t('uact.gotoDay')} />
+                  <button type="button" className={`chart-range-btn ${trendCustom ? 'chart-range-btn-active' : ''}`}
+                    onClick={() => setTrendShowCustom(s => !s)}>{t('chart.custom')}</button>
                   {trendLoading && <Loader2 size={14} className="spin" />}
                 </div>
+                {trendShowCustom && (
+                  <div style={{ margin: '8px 0' }}>
+                    <DateTimeRangePicker
+                      from={trendCustom ? new Date(trendCustom.from + 'Z') : new Date(Date.now() - 7 * 86_400_000)}
+                      to={trendCustom ? new Date(trendCustom.to + 'Z') : new Date()}
+                      onApply={(f, to) => { setTrendDate(''); setTrendDays(7); setTrendCustom({ from: f.toISOString().slice(0, 19), to: to.toISOString().slice(0, 19) }) }} />
+                  </div>
+                )}
                 {(() => {
                   const buckets = trendData?.buckets || []
                   const gran = trendData?.granularity || 'day'
-                  const prefix = trendDate
-                    ? trendDate
-                    : (trendDays === 1 ? t('uact.range1d') : trendDays === 7 ? t('uact.range7d') : t('uact.range30d'))
                   return buckets.length === 0
                     ? <div className="sys-muted sys-small" style={{ padding: '8px 2px' }}>{t('uact.noLogins')}</div>
-                    : seriesGrid(buckets, prefix, gran)
+                    : <Suspense fallback={<div className="sys-muted sys-small" style={{ padding: 8 }}>…</div>}>
+                        <LoginActivityChart buckets={buckets} gran={gran} />
+                      </Suspense>
                 })()}
 
                 {/* Peak ısı haritası — tek hafta (BÜYÜK) + hafta navigasyonu (geriye 3 hafta) */}
