@@ -41,10 +41,10 @@ ingress:
 resources:
   requests:
     memory: "384Mi"
-    cpu: "500m"
+    cpu: "500m"      # request sabit → HPA baseline (%CPU/request) bozulmaz
   limits:
     memory: "1Gi"
-    cpu: "1500m"
+    cpu: "2000m"     # soğuk-başlangıç CPU burst tavanı (1500m→2000m) → warmup'ta CFS throttling azalır
 
 autoscaling:
   enabled: true
