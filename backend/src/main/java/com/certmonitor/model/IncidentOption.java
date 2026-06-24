@@ -12,7 +12,9 @@ import lombok.NoArgsConstructor;
 @Entity
 @Table(
     name = "incident_options",
-    uniqueConstraints = @UniqueConstraint(name = "uk_inc_opt_type_value", columnNames = {"type", "opt_value"}),
+    // (type, opt_value) tekil kısıtı KALDIRILDI — seçenekler artık takıma özel (team_id); aynı değer
+    // farklı takımlarda bulunabilir. Tekrarlar uygulama düzeyinde (ensureOption kapsam kontrolü) önlenir.
+    // Mevcut DB'lerde eski kısıt SchedulerService.applySchemaPatches içinde DROP edilir.
     indexes = @Index(name = "idx_inc_opt_type", columnList = "type")
 )
 @Data
@@ -34,10 +36,20 @@ public class IncidentOption {
     private String createdBy;
     private String createdAt;
 
+    /** Seçeneğin ait olduğu takım. null = GLOBAL (tohumlanan varsayılanlar + admin'in eklediği) →
+     *  herkese görünür. Dolu ise yalnız o takıma (+ global'lere) görünür ve yalnız o takım silebilir. */
+    @Column(name = "team_id")
+    private Long teamId;
+
     public IncidentOption(String type, String value, String createdBy, String createdAt) {
+        this(type, value, createdBy, createdAt, null);
+    }
+
+    public IncidentOption(String type, String value, String createdBy, String createdAt, Long teamId) {
         this.type = type;
         this.value = value;
         this.createdBy = createdBy;
         this.createdAt = createdAt;
+        this.teamId = teamId;
     }
 }

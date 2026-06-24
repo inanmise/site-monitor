@@ -89,21 +89,23 @@ public interface IncidentRecordRepository extends JpaRepository<IncidentRecord, 
             """)
     long countRange(@Param("since") String since, @Param("until") String until);
 
-    /** Olaylarda fiilen kullanılan farklı kanal/domain değerleri — dropdown union'ı için. */
-    @Query("SELECT DISTINCT i.channel FROM IncidentRecord i WHERE i.channel IS NOT NULL AND i.channel <> ''")
-    List<String> distinctChannels();
+    /** Olaylarda fiilen kullanılan farklı kanal/domain değerleri — dropdown union'ı için. Kapsam
+     *  olayı OLUŞTURAN takım (createdByTeamId): teamId null → tüm olaylar (admin); dolu → yalnız o
+     *  takımın oluşturduğu olaylar → bir takımın eklediği değer başka takıma sızmaz. */
+    @Query("SELECT DISTINCT i.channel FROM IncidentRecord i WHERE i.channel IS NOT NULL AND i.channel <> '' AND (:teamId IS NULL OR i.createdByTeamId = :teamId)")
+    List<String> distinctChannels(@Param("teamId") Long teamId);
 
-    @Query("SELECT DISTINCT i.service FROM IncidentRecord i WHERE i.service IS NOT NULL AND i.service <> ''")
-    List<String> distinctServices();
+    @Query("SELECT DISTINCT i.service FROM IncidentRecord i WHERE i.service IS NOT NULL AND i.service <> '' AND (:teamId IS NULL OR i.createdByTeamId = :teamId)")
+    List<String> distinctServices(@Param("teamId") Long teamId);
 
-    @Query("SELECT DISTINCT i.errorCode FROM IncidentRecord i WHERE i.errorCode IS NOT NULL AND i.errorCode <> ''")
-    List<String> distinctErrorCodes();
+    @Query("SELECT DISTINCT i.errorCode FROM IncidentRecord i WHERE i.errorCode IS NOT NULL AND i.errorCode <> '' AND (:teamId IS NULL OR i.createdByTeamId = :teamId)")
+    List<String> distinctErrorCodes(@Param("teamId") Long teamId);
 
-    @Query("SELECT DISTINCT i.functionCode FROM IncidentRecord i WHERE i.functionCode IS NOT NULL AND i.functionCode <> ''")
-    List<String> distinctFunctionCodes();
+    @Query("SELECT DISTINCT i.functionCode FROM IncidentRecord i WHERE i.functionCode IS NOT NULL AND i.functionCode <> '' AND (:teamId IS NULL OR i.createdByTeamId = :teamId)")
+    List<String> distinctFunctionCodes(@Param("teamId") Long teamId);
 
-    @Query("SELECT DISTINCT i.channelCode FROM IncidentRecord i WHERE i.channelCode IS NOT NULL AND i.channelCode <> ''")
-    List<String> distinctChannelCodes();
+    @Query("SELECT DISTINCT i.channelCode FROM IncidentRecord i WHERE i.channelCode IS NOT NULL AND i.channelCode <> '' AND (:teamId IS NULL OR i.createdByTeamId = :teamId)")
+    List<String> distinctChannelCodes(@Param("teamId") Long teamId);
 
     @Query("""
             SELECT COUNT(i) FROM IncidentRecord i

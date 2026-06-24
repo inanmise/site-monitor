@@ -92,12 +92,12 @@ class IncidentServiceTest {
                 .getTotalElements()).isEqualTo(1);
 
         // addOption + listOptions union: eklenen + olaylarda kullanılan kanallar
-        service.addOption("CHANNEL", "ATM", "admin");
-        var channels = service.listOptions("CHANNEL");
+        service.addOption("CHANNEL", "ATM", "admin", 1L);
+        var channels = service.listOptions("CHANNEL", 1L, false);
         assertThat(channels).contains("ATM", "IVR", "Bireysel İnternet Şubesi");
 
         // DOMAIN union: kullanılan service değerleri
-        assertThat(service.listOptions("DOMAIN")).contains("ib-bireysel");
+        assertThat(service.listOptions("DOMAIN", 1L, false)).contains("ib-bireysel");
 
         // trend by_channel
         @SuppressWarnings("unchecked")
@@ -122,8 +122,8 @@ class IncidentServiceTest {
                 .getTotalElements()).isEqualTo(1);
 
         // options: combo değil TEKİL değerler
-        assertThat(service.listOptions("CHANNEL")).contains("ATM", "IVR").doesNotContain("ATM, IVR");
-        assertThat(service.listOptions("DOMAIN")).contains("svc-a", "svc-b").doesNotContain("svc-a, svc-b");
+        assertThat(service.listOptions("CHANNEL", 1L, false)).contains("ATM", "IVR").doesNotContain("ATM, IVR");
+        assertThat(service.listOptions("DOMAIN", 1L, false)).contains("svc-a", "svc-b").doesNotContain("svc-a, svc-b");
 
         // trend by_channel: combo yerine tekil kanallar sayılır
         @SuppressWarnings("unchecked")
@@ -149,9 +149,9 @@ class IncidentServiceTest {
     @Test
     @DisplayName("addOption: geçersiz tip reddedilir, boş değer reddedilir")
     void addOption_validation() {
-        assertThatThrownBy(() -> service.addOption("WAT", "x", "admin"))
+        assertThatThrownBy(() -> service.addOption("WAT", "x", "admin", 1L))
                 .isInstanceOf(IllegalArgumentException.class);
-        assertThatThrownBy(() -> service.addOption("CHANNEL", "  ", "admin"))
+        assertThatThrownBy(() -> service.addOption("CHANNEL", "  ", "admin", 1L))
                 .isInstanceOf(IllegalArgumentException.class);
     }
 
@@ -216,13 +216,13 @@ class IncidentServiceTest {
     @Test
     @DisplayName("removeOption: kayıtlı seçeneği siler (kullanımdaki union etkilenmez)")
     void removeOption_removes() {
-        service.addOption("CHANNEL", "Geçici Kanal", "admin");
-        assertThat(service.listOptions("CHANNEL")).contains("Geçici Kanal");
+        service.addOption("CHANNEL", "Geçici Kanal", "admin", 1L);
+        assertThat(service.listOptions("CHANNEL", 1L, false)).contains("Geçici Kanal");
 
-        service.removeOption("CHANNEL", "geçici kanal"); // büyük/küçük harf duyarsız
-        assertThat(service.listOptions("CHANNEL")).doesNotContain("Geçici Kanal");
+        service.removeOption("CHANNEL", "geçici kanal", 1L, false); // büyük/küçük harf duyarsız
+        assertThat(service.listOptions("CHANNEL", 1L, false)).doesNotContain("Geçici Kanal");
 
         // boş/null değer no-op (exception fırlatmaz)
-        service.removeOption("CHANNEL", "  ");
+        service.removeOption("CHANNEL", "  ", 1L, false);
     }
 }

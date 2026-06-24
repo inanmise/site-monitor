@@ -207,61 +207,72 @@ public class IncidentService {
 
     /** Tip için seçenek listesi = kayıtlı seçenekler ∪ olaylarda fiilen kullanılan değerler
      *  (case-insensitive, alfabetik). Böylece API'den/eski kayıttan gelen değer de dropdown'da görünür. */
-    public List<String> listOptions(String type) {
+    public List<String> listOptions(String type, Long teamId, boolean admin) {
         String t = normType(type);
         Set<String> set = new TreeSet<>(String.CASE_INSENSITIVE_ORDER);
-        for (IncidentOption o : optionRepo.findByTypeOrderByValueAsc(t)) set.add(o.getValue());
-        // Olaylardaki değerler artık CSV olabilir → virgülle bölüp TEKİL değerleri ekle
-        // (dropdown'da "ATM, POS" gibi combo görünmesin).
-        List<String> distinct = OPT_CHANNEL.equals(t) ? repo.distinctChannels()
-                : OPT_DOMAIN.equals(t) ? repo.distinctServices()
-                : OPT_ERROR_CODE.equals(t) ? repo.distinctErrorCodes()
-                : OPT_FUNCTION_CODE.equals(t) ? repo.distinctFunctionCodes()
-                : OPT_CHANNEL_CODE.equals(t) ? repo.distinctChannelCodes() : List.of();
-        for (String csv : distinct) {
-            if (csv == null) continue;
-            for (String part : csv.split(",")) {
-                String v = part.trim();
-                if (!v.isEmpty()) set.add(v);
+        // Kayıtlı seçenekler — admin: tüm takımlar; kullanıcı: global + kendi takımı.
+        List<IncidentOption> opts = admin ? optionRepo.findByTypeOrderByValueAsc(t)
+                                          : optionRepo.findByTypeForTeam(t, teamId);
+        for (IncidentOption o : opts) set.add(o.getValue());
+        // Olaylarda fiilen kullanılan değerler — takıma göre (sızıntı yok). admin: tüm olaylar;
+        // takımlı kullanıcı: kendi takımının olayları; takımsız non-admin: olay-türevi öneri yok.
+        if (admin || teamId != null) {
+            Long dt = admin ? null : teamId;   // null → distinct sorgusu tümünü döndürür (admin)
+            List<String> distinct = OPT_CHANNEL.equals(t) ? repo.distinctChannels(dt)
+                    : OPT_DOMAIN.equals(t) ? repo.distinctServices(dt)
+                    : OPT_ERROR_CODE.equals(t) ? repo.distinctErrorCodes(dt)
+                    : OPT_FUNCTION_CODE.equals(t) ? repo.distinctFunctionCodes(dt)
+                    : OPT_CHANNEL_CODE.equals(t) ? repo.distinctChannelCodes(dt) : List.of();
+            for (String csv : distinct) {
+                if (csv == null) continue;
+                for (String part : csv.split(",")) {
+                    String v = part.trim();
+                    if (!v.isEmpty()) set.add(v);
+                }
             }
         }
         return new ArrayList<>(set);
     }
 
-    /** Incident sayfasından yeni seçenek ekler (creatable dropdown). (type,value) tekil. */
+    /** Incident sayfasından yeni seçenek ekler (creatable dropdown). Seçenek ekleyenin takımına yazılır
+     *  (admin → global). Aynı değer kapsamda (global + o takım) zaten varsa eklenmez. */
     @Transactional
-    public String addOption(String type, String value, String actor) {
+    public String addOption(String type, String value, String actor, Long teamId) {
         String t = normType(type);
         if (value == null || value.isBlank()) throw new IllegalArgumentException("Değer boş olamaz");
         String v = value.trim();
         if (v.length() > 150) v = v.substring(0, 150);
-        ensureOption(t, v, actor);
+        ensureOption(t, v, actor, teamId);
         return v;
     }
 
-    /** Incident sayfasından bir seçeneği siler (creatable dropdown'dan kaldırma).
-     *  Not: değer bir olayda fiilen kullanılıyorsa listOptions union'ı onu yine gösterir. */
+    /** Incident sayfasından bir seçeneği siler. Kullanıcı yalnız KENDİ takımının seçeneğini silebilir
+     *  (global/başka takım dokunulmaz); admin her şeyi silebilir. Not: değer bir olayda fiilen
+     *  kullanılıyorsa listOptions union'ı onu yine gösterir. */
     @Transactional
-    public void removeOption(String type, String value) {
+    public void removeOption(String type, String value, Long teamId, boolean admin) {
         String t = normType(type);
         if (value == null || value.isBlank()) return;
-        optionRepo.findFirstByTypeAndValueIgnoreCase(t, value.trim()).ifPresent(optionRepo::delete);
+        String v = value.trim();
+        List<IncidentOption> found = admin ? optionRepo.findByTypeAndValue(t, v)
+                : (teamId == null ? List.of() : optionRepo.findByTypeAndValueAndTeam(t, v, teamId));
+        if (!found.isEmpty()) optionRepo.deleteAll(found);
     }
 
-    /** Açılışta varsayılan kanalları tohumlar — yalnız hiç CHANNEL seçeneği yoksa
+    /** Açılışta varsayılan kanalları GLOBAL (team_id=null) tohumlar — yalnız hiç CHANNEL seçeneği yoksa
      *  (kullanıcının sildiği varsayılanlar her restart'ta geri gelmesin). */
     @Transactional
     public void seedOptions() {
         if (!optionRepo.findByTypeOrderByValueAsc(OPT_CHANNEL).isEmpty()) return;
-        for (String ch : CHANNEL_DEFAULTS) ensureOption(OPT_CHANNEL, ch, "system");
+        for (String ch : CHANNEL_DEFAULTS) ensureOption(OPT_CHANNEL, ch, "system", null);
     }
 
-    /** Yoksa ekler (case-insensitive). Yarış durumunda unique kısıt → sessizce yok say. */
-    private void ensureOption(String type, String value, String actor) {
+    /** Yoksa ekler (case-insensitive, kapsam=global+takım). Yarışta sessizce yok say. */
+    private void ensureOption(String type, String value, String actor, Long teamId) {
         if (value == null || value.isBlank()) return;
         String v = value.trim();
-        if (optionRepo.findFirstByTypeAndValueIgnoreCase(type, v).isPresent()) return;
-        optionRepo.save(new IncidentOption(type, v, actor, now()));
+        if (!optionRepo.findScoped(type, v, teamId).isEmpty()) return;
+        optionRepo.save(new IncidentOption(type, v, actor, now(), teamId));
     }
 
     private static String normType(String type) {
