@@ -124,6 +124,10 @@ public class MonitoringController {
 
     /** Keyword adet koşulunu (operator + matchCount) body'den uygular; legacy 'condition' desteklenir;
      *  alertCondition (NOT NULL) operatörden türetilir. */
+    /** Per-monitor teyit parametreleri için makul sınırlar (kullanıcı girişi). */
+    private static int clampAttempts(int v) { return Math.max(1, Math.min(10, v)); }
+    private static int clampInterval(int v) { return Math.max(10, Math.min(600, v)); }
+
     private void applyKeywordCondition(KeywordMonitor m, Map<String, Object> body) {
         if (body.get("operator") != null) {
             String op = body.get("operator").toString().toUpperCase();
@@ -748,6 +752,8 @@ public class MonitoringController {
         m.setActive(true);
         if (body.get("intervalSeconds") != null) m.setIntervalSeconds(((Number) body.get("intervalSeconds")).intValue());
         if (body.get("timeoutMs")       != null) m.setTimeoutMs(((Number) body.get("timeoutMs")).intValue());
+        if (body.get("confirmAttempts") != null)        m.setConfirmAttempts(clampAttempts(((Number) body.get("confirmAttempts")).intValue()));
+        if (body.get("confirmIntervalSeconds") != null) m.setConfirmIntervalSeconds(clampInterval(((Number) body.get("confirmIntervalSeconds")).intValue()));
         m.setCreatedAt(now);
         m.setUpdatedAt(now);
         KeywordMonitor saved = keywordMonitorRepo.save(m);
@@ -768,6 +774,8 @@ public class MonitoringController {
             if (body.get("active")          != null) m.setActive((Boolean) body.get("active"));
             if (body.get("intervalSeconds") != null) m.setIntervalSeconds(((Number) body.get("intervalSeconds")).intValue());
             if (body.get("timeoutMs")       != null) m.setTimeoutMs(((Number) body.get("timeoutMs")).intValue());
+            if (body.get("confirmAttempts") != null)        m.setConfirmAttempts(clampAttempts(((Number) body.get("confirmAttempts")).intValue()));
+            if (body.get("confirmIntervalSeconds") != null) m.setConfirmIntervalSeconds(clampInterval(((Number) body.get("confirmIntervalSeconds")).intValue()));
             m.setUpdatedAt(ISO.format(Instant.now()));
             KeywordMonitor saved = keywordMonitorRepo.save(m);
             return ok(enrichKeyword(saved, keywordResultRepo.findTopByMonitorIdOrderByCheckedAtDesc(id).orElse(null), teamNameMap()));
@@ -921,6 +929,8 @@ public class MonitoringController {
         item.put("active",           m.getActive());
         item.put("interval_seconds", m.getIntervalSeconds());
         item.put("timeout_ms",       m.getTimeoutMs());
+        item.put("confirm_attempts",         m.getConfirmAttempts());
+        item.put("confirm_interval_seconds", m.getConfirmIntervalSeconds());
         if (latest != null) {
             item.put("status",      latest.getError() != null ? "error" : (Boolean.TRUE.equals(latest.getOk()) ? "up" : "down"));
             item.put("found",       latest.getFound());
@@ -971,6 +981,8 @@ public class MonitoringController {
         if (body.get("intervalSeconds") != null) m.setIntervalSeconds(((Number) body.get("intervalSeconds")).intValue());
         if (body.get("timeoutMs")       != null) m.setTimeoutMs(((Number) body.get("timeoutMs")).intValue());
         if (body.get("packetCount")     != null) m.setPacketCount(((Number) body.get("packetCount")).intValue());
+        if (body.get("confirmAttempts") != null)        m.setConfirmAttempts(clampAttempts(((Number) body.get("confirmAttempts")).intValue()));
+        if (body.get("confirmIntervalSeconds") != null) m.setConfirmIntervalSeconds(clampInterval(((Number) body.get("confirmIntervalSeconds")).intValue()));
         m.setCreatedAt(now);
         m.setUpdatedAt(now);
         PingMonitor saved = pingMonitorRepo.save(m);
@@ -991,6 +1003,8 @@ public class MonitoringController {
             if (body.get("intervalSeconds") != null) m.setIntervalSeconds(((Number) body.get("intervalSeconds")).intValue());
             if (body.get("timeoutMs")       != null) m.setTimeoutMs(((Number) body.get("timeoutMs")).intValue());
             if (body.get("packetCount")     != null) m.setPacketCount(((Number) body.get("packetCount")).intValue());
+            if (body.get("confirmAttempts") != null)        m.setConfirmAttempts(clampAttempts(((Number) body.get("confirmAttempts")).intValue()));
+            if (body.get("confirmIntervalSeconds") != null) m.setConfirmIntervalSeconds(clampInterval(((Number) body.get("confirmIntervalSeconds")).intValue()));
             m.setUpdatedAt(ISO.format(Instant.now()));
             PingMonitor saved = pingMonitorRepo.save(m);
             return ok(enrichPing(saved, pingCheckRepo.findTopByMonitorIdOrderByCheckedAtDesc(id).orElse(null), teamNameMap()));
@@ -1068,6 +1082,8 @@ public class MonitoringController {
         item.put("interval_seconds", m.getIntervalSeconds());
         item.put("timeout_ms",       m.getTimeoutMs());
         item.put("packet_count",     m.getPacketCount());
+        item.put("confirm_attempts",         m.getConfirmAttempts());
+        item.put("confirm_interval_seconds", m.getConfirmIntervalSeconds());
         if (latest != null) {
             boolean up = Boolean.TRUE.equals(latest.getUp());
             boolean na = !up && latest.getError() != null && latest.getError().contains("ICMP bu ortamda");

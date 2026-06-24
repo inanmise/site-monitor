@@ -4,6 +4,7 @@ import { api, formatDate, formatDateSec } from '../api/client'
 import { useT } from '../i18n/index.jsx'
 import SearchableSelect from './ui/SearchableSelect.jsx'
 import { Play, Pencil, X, RefreshCw, Plus, Trash2, Target, Users, Layers, FlaskConical, Check, AlertTriangle } from 'lucide-react'
+import AlertHistory from './admin/AlertHistory.jsx'
 
 const INTERVALS = [
   { value: 30,  labelKey: 'ping.interval30s' },
@@ -14,7 +15,7 @@ const INTERVALS = [
 const REFRESH_INTERVAL = 60
 const OP_SYM = { GTE: '≥', LTE: '≤', EQ: '=', GT: '>', LT: '<' }
 const emptyForm = { name: '', url: '', keyword: '', operator: 'GTE', matchCount: 1, groupName: '', teamId: '',
-  intervalSeconds: 60, timeoutMs: 10000, active: true }
+  intervalSeconds: 60, timeoutMs: 10000, confirmAttempts: 3, confirmIntervalSeconds: 30, active: true }
 
 export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
   const t = useT()
@@ -39,8 +40,6 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
   const [checking, setChecking] = useState(null)
   const [testing, setTesting] = useState(false)
   const [testResult, setTestResult] = useState(null)
-  const [alerts, setAlerts] = useState([])
-  const [alertsLoading, setAlertsLoading] = useState(false)
   const [search, setSearch] = useState('')
   const [teamFilter, setTeamFilter] = useState('all')
   const [groupFilter, setGroupFilter] = useState('all')
@@ -95,14 +94,8 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
     setHistoryLoading(false)
   }
   function selectRange(id, days) { setRangeDays(days); loadHistory(id, days) }
-  async function loadAlerts(id) {
-    setAlertsLoading(true); setAlerts([])
-    const res = await api.monitoring.getKeywordAlerts(id)
-    if (res?.success) setAlerts(res.data ?? [])
-    setAlertsLoading(false)
-  }
-  function openDetail(m) { setSelected(m); setHistory([]); loadHistory(m.id, rangeDays); loadAlerts(m.id) }
-  function closeDetail() { setSelected(null); setHistory([]); setAlerts([]) }
+  function openDetail(m) { setSelected(m); setHistory([]); loadHistory(m.id, rangeDays) }
+  function closeDetail() { setSelected(null); setHistory([]) }
 
   function openNew() { setTestResult(null); setForm({ ...emptyForm, teamId: isAdmin ? '' : (myTeam ?? '') }); setModal('new') }
   function openEdit(m) {
@@ -110,7 +103,9 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
     setForm({ name: m.name || '', url: m.url || '', keyword: m.keyword || '',
       operator: m.operator || 'GTE', matchCount: m.match_count ?? 1, groupName: m.group_name || '',
       teamId: m.team_id != null ? String(m.team_id) : '',
-      intervalSeconds: m.interval_seconds ?? 60, timeoutMs: m.timeout_ms ?? 10000, active: m.active !== false })
+      intervalSeconds: m.interval_seconds ?? 60, timeoutMs: m.timeout_ms ?? 10000,
+      confirmAttempts: m.confirm_attempts ?? 3, confirmIntervalSeconds: m.confirm_interval_seconds ?? 30,
+      active: m.active !== false })
     setModal(m)
   }
   function closeEdit() { setModal(null); setTestResult(null) }
@@ -134,7 +129,9 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
       name: (form.name || form.url).trim(), url: form.url.trim(), keyword: form.keyword,
       operator: form.operator, matchCount: Number(form.matchCount),
       groupName: form.groupName?.trim() || null, teamId: form.teamId === '' ? null : Number(form.teamId),
-      intervalSeconds: Number(form.intervalSeconds), timeoutMs: Number(form.timeoutMs), active: form.active,
+      intervalSeconds: Number(form.intervalSeconds), timeoutMs: Number(form.timeoutMs),
+      confirmAttempts: Number(form.confirmAttempts), confirmIntervalSeconds: Number(form.confirmIntervalSeconds),
+      active: form.active,
     }
     if (modal === 'new') await api.monitoring.createKeywordMonitor(payload)
     else await api.monitoring.updateKeywordMonitor(modal.id, payload)
@@ -351,27 +348,7 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
             </div>
             <div className="upt-modal-divider" />
             <div className="upt-modal-section-title">{t('keyword.alertHistory')}</div>
-            {alertsLoading ? <div className="upt-modal-loading">...</div>
-              : alerts.length === 0 ? <div className="upt-modal-loading">{t('keyword.noAlerts')}</div>
-              : (
-                <div className="upt-rt-list">
-                  <div className="upt-rt-grid upt-rt-head">
-                    <span>{t('keyword.colStatus')}</span><span>{t('keyword.alertLevel')}</span><span>{t('keyword.colTime')}</span><span>{t('keyword.alertResolution')}</span>
-                  </div>
-                  {alerts.map(a => (
-                    <div key={a.id} className="upt-rt-grid">
-                      <span className={a.resolved ? 'upt-rt-up' : 'upt-rt-down'}>{a.resolved ? t('keyword.alertResolved') : t('keyword.alertOpen')}</span>
-                      <span className="upt-rt-ms">{a.level}</span>
-                      <span className="upt-rt-time">{formatDateSec(a.created_at)}</span>
-                      <span className="upt-rt-ms" title={a.message || ''}>
-                        {a.resolved
-                          ? (a.resolved_at ? formatDateSec(a.resolved_at) : '—') + (a.resolved_by ? ' · ' + a.resolved_by : '')
-                          : (a.acknowledged ? t('keyword.alertAcked') : t('keyword.alertOngoing'))}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              )}
+            <AlertHistory domain={selected.url} />
             <div className="upt-modal-divider" />
             <div className="upt-modal-section-title">{t('keyword.history')}</div>
             <div className="upt-range-btns">
@@ -451,6 +428,13 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
                 </select></label>
               <label><span>{t('keyword.timeout')}</span>
                 <input type="number" value={form.timeoutMs} onChange={e => setForm(f => ({ ...f, timeoutMs: Number(e.target.value) }))} /></label>
+              <label><span>{t('keyword.confirmAttempts')}</span>
+                <input type="number" min="1" max="10" value={form.confirmAttempts} onChange={e => setForm(f => ({ ...f, confirmAttempts: Number(e.target.value) }))} /></label>
+              <label><span>{t('keyword.confirmInterval')}</span>
+                <input type="number" min="10" max="600" value={form.confirmIntervalSeconds} onChange={e => setForm(f => ({ ...f, confirmIntervalSeconds: Number(e.target.value) }))} /></label>
+              <div className="full-width" style={{ fontSize: '.8em', color: 'var(--text-muted)', marginTop: -2, lineHeight: 1.5 }}>
+                ⓘ {t('keyword.confirmHint')}
+              </div>
               <label className="checkbox-label full-width">
                 <input type="checkbox" checked={form.active} onChange={e => setForm(f => ({ ...f, active: e.target.checked }))} />{t('keyword.active')}</label>
             </div>

@@ -217,6 +217,16 @@ public class MonitoringOutageService {
                 });
     }
 
+    /** Per-monitor teyit override'ı (keyword/ping ctxExtra'sından) — yoksa global varsayılan. */
+    private int effAttempts(SweepItem item) {
+        Object v = item.ctxExtra() != null ? item.ctxExtra().get("monitor_confirm_attempts") : null;
+        return v instanceof Number n && n.intValue() > 0 ? n.intValue() : confirmAttempts;
+    }
+    private long effDelayMs(SweepItem item) {
+        Object v = item.ctxExtra() != null ? item.ctxExtra().get("monitor_confirm_interval_ms") : null;
+        return v instanceof Number n && n.longValue() > 0 ? n.longValue() : confirmDelayMs;
+    }
+
     void startConfirmation(SweepItem item) {
         String key = item.alertType() + ":" + item.domain() + ":" + item.detail();
         if (!inFlight.add(key)) {
@@ -226,10 +236,10 @@ public class MonitoringOutageService {
         String firstFailureAt = now();
         List<Map<String, Object>> attempts = new ArrayList<>(); // tek thread'li executor → senkronizasyon gereksiz
         log.info("{} DOWN tespit edildi: {} [{}] — {} sn arayla {} doğrulama denemesi başlatıldı",
-                item.alertType(), item.domain(), item.detail(), confirmDelayMs / 1000, confirmAttempts);
+                item.alertType(), item.domain(), item.detail(), effDelayMs(item) / 1000, effAttempts(item));
         confirmExecutor.schedule(
                 () -> runConfirmAttempt(key, item, firstFailureAt, attempts, 1),
-                confirmDelayMs, TimeUnit.MILLISECONDS);
+                effDelayMs(item), TimeUnit.MILLISECONDS);
     }
 
     void runConfirmAttempt(String key, SweepItem item, String firstFailureAt,
@@ -248,15 +258,15 @@ public class MonitoringOutageService {
                 inFlight.remove(key);
                 return;
             }
-            if (n < confirmAttempts) {
+            if (n < effAttempts(item)) {
                 confirmExecutor.schedule(
                         () -> runConfirmAttempt(key, item, firstFailureAt, attempts, n + 1),
-                        confirmDelayMs, TimeUnit.MILLISECONDS);
+                        effDelayMs(item), TimeUnit.MILLISECONDS);
                 return;
             }
 
             log.warn("{} kesintisi TEYİT EDİLDİ: {} [{}] — {}/{} doğrulama denemesi başarısız",
-                    item.alertType(), item.domain(), item.detail(), confirmAttempts, confirmAttempts);
+                    item.alertType(), item.domain(), item.detail(), effAttempts(item), effAttempts(item));
             Map<String, Object> ctx = buildOutageContext(item, firstFailureAt, attempts);
             withLock(item.alertType(), item.domain(), () ->
                     escalationService.processConfirmedOutage(item.domain(), item.alertType(),
@@ -293,8 +303,8 @@ public class MonitoringOutageService {
         ctx.put("detail", item.detail());
         ctx.put("first_failure_at", now());
         ctx.put("last_error", item.error());
-        ctx.put("confirm_attempt_count", confirmAttempts);
-        ctx.put("confirm_delay_ms", confirmDelayMs);
+        ctx.put("confirm_attempt_count", effAttempts(item));
+        ctx.put("confirm_delay_ms", effDelayMs(item));
         if (item.ctxExtra() != null) ctx.putAll(item.ctxExtra());
         return ctx;
     }
@@ -308,8 +318,8 @@ public class MonitoringOutageService {
         ctx.put("first_failure_at", firstFailureAt);
         ctx.put("last_error", lastError);
         ctx.put("confirm_attempts", attempts);
-        ctx.put("confirm_attempt_count", confirmAttempts);
-        ctx.put("confirm_delay_ms", confirmDelayMs);
+        ctx.put("confirm_attempt_count", effAttempts(item));
+        ctx.put("confirm_delay_ms", effDelayMs(item));
         if (item.ctxExtra() != null) ctx.putAll(item.ctxExtra());
         return ctx;
     }

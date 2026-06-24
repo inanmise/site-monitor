@@ -48,6 +48,14 @@ public class PingMonitor {
     @Column(name = "packet_count")
     private Integer packetCount = 4;
 
+    /** Per-monitor teyit: alarm öncesi doğrulama denemesi sayısı (varsayılan 3). */
+    @Column(name = "confirm_attempts")
+    private Integer confirmAttempts = 3;
+
+    /** Per-monitor teyit: denemeler arası saniye (varsayılan 30). */
+    @Column(name = "confirm_interval_seconds")
+    private Integer confirmIntervalSeconds = 30;
+
     @Column(name = "created_at")
     private String createdAt;
 
