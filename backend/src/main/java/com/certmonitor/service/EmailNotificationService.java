@@ -726,8 +726,8 @@ public class EmailNotificationService {
     private String statusRow2col(String label, String value) {
         boolean ok      = value.startsWith("✓");
         boolean neutral = value.startsWith("~") || value.startsWith("—");
-        String bg         = ok || neutral ? "" : "background:#fff7ed";
-        String valueColor = ok ? "#15803d" : neutral ? "#6b7280" : "#b45309";
+        String bg         = ok || neutral ? "" : "background:#fef2f2";
+        String valueColor = ok ? "#15803d" : neutral ? "#6b7280" : "#dc2626";
         return "<tr style='border-top:1px solid #e2e8f0;" + bg + "'>"
             + "<td width='1%' style='padding:9px 13px;font-size:12px;color:#64748b;white-space:nowrap'>" + label + "</td>"
             + "<td style='padding:9px 13px;font-size:13px;font-weight:700;color:" + valueColor + "'>" + value + "</td>"
@@ -755,8 +755,8 @@ public class EmailNotificationService {
     private String statusRow(String label, String value) {
         boolean ok      = value.startsWith("✓");
         boolean neutral = value.startsWith("~") || value.startsWith("—");
-        String bg         = ok || neutral ? "" : "background:#fff7ed";
-        String valueColor = ok ? "#15803d" : neutral ? "#6b7280" : "#b45309";
+        String bg         = ok || neutral ? "" : "background:#fef2f2";
+        String valueColor = ok ? "#15803d" : neutral ? "#6b7280" : "#dc2626";
         return "<tr style='border-top:1px solid #e2e8f0;" + bg + "'>"
             + "<td style='padding:9px 14px;font-size:13px;color:#64748b;width:48%'>" + label + "</td>"
             + "<td style='padding:9px 14px;font-size:13px;font-weight:700;color:" + valueColor + "'>" + value + "</td>"
@@ -772,7 +772,7 @@ public class EmailNotificationService {
     }
 
     private String infoRowHighlight(String label, String value, String color) {
-        return "<tr style='border-top:1px solid #e2e8f0;background:#fff7ed'>"
+        return "<tr style='border-top:1px solid #e2e8f0;background:#fef2f2'>"
             + "<td style='padding:9px 14px;font-size:12px;color:#64748b;width:44%;white-space:nowrap'>" + label + "</td>"
             + "<td style='padding:9px 14px;font-size:14px;font-weight:800;color:" + color + "'>" + value + "</td>"
             + "</tr>";
@@ -1441,12 +1441,12 @@ public class EmailNotificationService {
 
         String hero = "<table width='100%' cellpadding='0' cellspacing='0' border='0'"
             + " style='margin:18px 0;border-radius:14px;overflow:hidden;border:1px solid #e2e8f0'><tr>"
-            + "<td class='em-hero-l' align='center' valign='middle' width='38%' style='background:" + accent + ";padding:22px 14px'>"
+            + "<td class='em-hero-l' align='center' valign='middle' width='38%' bgcolor='" + accent + "' style='background:" + accent + ";padding:22px 14px'>"
             + "<div style='color:#fff;font-size:46px;line-height:1'>" + emoji + "</div>"
             + "<div style='color:#fff;font-size:14px;font-weight:800;margin-top:8px;letter-spacing:.04em'>" + heroTitle + "</div>"
             + "<div style='color:rgba(255,255,255,.85);font-size:12px;margin-top:8px;padding:0 6px'>" + heroSub + "</div>"
             + "</td>"
-            + "<td class='em-hero-r' valign='middle' style='background:#f8fafc;padding:20px 22px'>"
+            + "<td class='em-hero-r' valign='middle' bgcolor='#f8fafc' style='background:#f8fafc;padding:20px 22px'>"
             + "<div style='font-size:11px;font-weight:700;letter-spacing:.1em;color:#94a3b8;text-transform:uppercase;margin-bottom:10px'>İlk Hata Zamanı</div>"
             + "<div style='font-size:24px;font-weight:900;color:" + accent + ";letter-spacing:-.5px'>" + formatIso(firstFailureAt) + "</div>"
             + "<div style='font-size:13px;color:#475569;margin-top:6px;line-height:1.6'>" + formatIsoFull(firstFailureAt) + "</div>"
@@ -1454,15 +1454,13 @@ public class EmailNotificationService {
             + "🔁 " + attemptsLabel + " doğrulama denemesi " + delayLabel + "— tümü başarısız</div>"
             + "</td></tr></table>";
 
-        String twoCol = "<table width='100%' cellpadding='0' cellspacing='0' border='0' style='margin-bottom:16px'><tr>"
-            + "<td class='em-col-l' valign='top' width='55%' style='width:55%;padding-right:8px'>"
-            + "<table width='100%' cellpadding='0' cellspacing='0' border='0' style='border:1px solid #e2e8f0;border-radius:10px;overflow:hidden'>"
-            + "<tr><td style='background:#1e293b;padding:9px 14px;font-size:11px;font-weight:700;letter-spacing:.1em;color:#94a3b8'>İZLEME BİLGİLERİ</td></tr>"
-            + leftRows + "</table></td>"
-            + "<td class='em-col-r' valign='top' width='45%' style='width:45%'>"
-            + "<table width='100%' cellpadding='0' cellspacing='0' border='0' style='border:1px solid #e2e8f0;border-radius:10px;overflow:hidden'>"
-            + "<tr><td style='background:#334155;padding:9px 14px;font-size:11px;font-weight:700;letter-spacing:.1em;color:#94a3b8'>DOĞRULAMA ÖZETİ</td></tr>"
-            + rightRows + "</table></td></tr></table>";
+        // Tek-kolon (alt alta) — Outlook'ta yan-yana kolonlar kayıyordu; tam genişlik bölümler kaymaz.
+        String twoCol = "<table width='100%' cellpadding='0' cellspacing='0' border='0' style='margin:0 0 12px;border:1px solid #e2e8f0;border-radius:10px;overflow:hidden'>"
+            + "<tr><td colspan='2' bgcolor='#1f3864' style='background:#1f3864;padding:9px 14px;font-size:11px;font-weight:700;letter-spacing:.1em;color:#cbd5e1'>İZLEME BİLGİLERİ</td></tr>"
+            + leftRows + "</table>"
+            + "<table width='100%' cellpadding='0' cellspacing='0' border='0' style='margin:0 0 16px;border:1px solid #e2e8f0;border-radius:10px;overflow:hidden'>"
+            + "<tr><td colspan='2' bgcolor='#1f3864' style='background:#1f3864;padding:9px 14px;font-size:11px;font-weight:700;letter-spacing:.1em;color:#cbd5e1'>DOĞRULAMA ÖZETİ</td></tr>"
+            + rightRows + "</table>";
 
         String css = "<style>body,table,td{-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%}"
             + "@media only screen and (max-width:620px){.em-wrap{padding:0!important}.em-card{border-radius:0!important;width:100%!important}"
@@ -1473,10 +1471,14 @@ public class EmailNotificationService {
             + ".em-col-r{display:block!important;width:100%!important}}</style>";
 
         return "<!DOCTYPE html><html lang='tr' xmlns:v='urn:schemas-microsoft-com:vml' xmlns:o='urn:schemas-microsoft-com:office:office'><head><meta charset='UTF-8'>"
-            + "<meta name='viewport' content='width=device-width,initial-scale=1,maximum-scale=1'>" + css + "</head>"
-            + "<body style='margin:0;padding:0;background:#f1f5f9;font-family:\"Segoe UI\",Tahoma,Arial,sans-serif'>"
-            + "<table class='em-wrap' width='100%' cellpadding='0' cellspacing='0' border='0' style='background:#f1f5f9;padding:24px 10px'><tr><td align='center'>"
-            + "<table class='em-card' width='640' cellpadding='0' cellspacing='0' border='0' style='max-width:640px;width:100%;border-radius:14px;overflow:hidden;box-shadow:0 8px 32px rgba(0,0,0,.15)'><tr><td style='padding:0'>"
+            + "<meta name='viewport' content='width=device-width,initial-scale=1,maximum-scale=1'>"
+            + "<meta http-equiv='X-UA-Compatible' content='IE=edge'>"
+            + "<!--[if mso]><style>table,td,div,p,a{font-family:'Segoe UI',Arial,sans-serif!important}</style><![endif]-->" + css + "</head>"
+            // Dış arka plan (bgcolor attr) + tablo lspace/rspace sıfır (Outlook tabloya boşluk eklemesin → kayma);
+            // dış padding TD'de (Outlook tablo padding'ini yok sayar); kart bgcolor='#ffffff' → dış gri içeri sızmaz.
+            + "<body bgcolor='#f1f5f9' style='margin:0;padding:0;background:#f1f5f9;-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%;font-family:\"Segoe UI\",Tahoma,Arial,sans-serif'>"
+            + "<table role='presentation' class='em-wrap' width='100%' cellpadding='0' cellspacing='0' border='0' bgcolor='#f1f5f9' style='background:#f1f5f9;mso-table-lspace:0pt;mso-table-rspace:0pt'><tr><td align='center' style='padding:24px 10px'>"
+            + "<table class='em-card' width='640' cellpadding='0' cellspacing='0' border='0' bgcolor='#ffffff' style='max-width:640px;width:100%;background:#ffffff;border-radius:14px;overflow:hidden;box-shadow:0 8px 32px rgba(0,0,0,.15);mso-table-lspace:0pt;mso-table-rspace:0pt'><tr><td style='padding:0'>"
             + "<div style='background:" + accent + ";padding:22px 24px'>"
             + "<div style='color:rgba(255,255,255,.65);font-size:11px;font-weight:700;letter-spacing:.12em'>" + kicker + "</div>"
             + "<div class='em-domain' style='color:#fff;font-size:22px;font-weight:900;margin-top:10px;word-break:break-all;line-height:1.25'>" + emoji + " " + endpoint + "</div>"
@@ -1485,7 +1487,7 @@ public class EmailNotificationService {
             + "<div class='em-body' style='background:#fff;padding:22px 24px'>"
             // Sorunu en üstte, sade ve net (executive) — kırmızı şeritli uyarı kutusu
             + "<table width='100%' cellpadding='0' cellspacing='0' border='0' style='margin:2px 0 16px'><tr>"
-            + "<td style='background:#fef2f2;border-left:5px solid #dc2626;padding:15px 18px'>"
+            + "<td bgcolor='#fef2f2' style='background:#fef2f2;border-left:5px solid #dc2626;padding:15px 18px'>"
             + "<div style='font-size:12px;font-weight:800;letter-spacing:.07em;color:#dc2626;margin-bottom:6px'>⚠ SORUN TESPİT EDİLDİ</div>"
             + "<div style='font-size:15px;font-weight:600;color:#1c1917;line-height:1.6'>" + escHtml(message) + "</div>"
             + "</td></tr></table>"
@@ -1638,15 +1640,13 @@ public class EmailNotificationService {
             + "<tr style='border-top:1px solid #e2e8f0;background:#f0fdf4'><td width='1%' style='padding:9px 13px;font-size:12px;color:#64748b;white-space:nowrap'>⏱ Toplam Kesinti</td>"
             + "<td style='padding:9px 13px;font-size:14px;font-weight:800;color:" + green + "'>" + duration + "</td></tr>";
 
-        String twoCol = "<table width='100%' cellpadding='0' cellspacing='0' border='0' style='margin-bottom:16px'><tr>"
-            + "<td class='em-col-l' valign='top' width='50%' style='width:50%;padding-right:8px'>"
-            + "<table width='100%' cellpadding='0' cellspacing='0' border='0' style='border:1px solid #bbf7d0;border-radius:10px;overflow:hidden'>"
-            + "<tr><td style='background:#15803d;padding:9px 14px;font-size:11px;font-weight:700;letter-spacing:.1em;color:#dcfce7'>ÇÖZÜM BİLGİSİ</td></tr>"
-            + resolverRows + "</table></td>"
-            + "<td class='em-col-r' valign='top' width='50%' style='width:50%'>"
-            + "<table width='100%' cellpadding='0' cellspacing='0' border='0' style='border:1px solid #e2e8f0;border-radius:10px;overflow:hidden'>"
-            + "<tr><td style='background:#334155;padding:9px 14px;font-size:11px;font-weight:700;letter-spacing:.1em;color:#94a3b8'>KESİNTİ DETAYI</td></tr>"
-            + outageRows + "</table></td></tr></table>";
+        // Tek-kolon (alt alta) — Outlook'ta yan-yana kolonlar kayıyordu; tam genişlik bölümler kaymaz.
+        String twoCol = "<table width='100%' cellpadding='0' cellspacing='0' border='0' style='margin:0 0 12px;border:1px solid #bbf7d0;border-radius:10px;overflow:hidden'>"
+            + "<tr><td colspan='2' bgcolor='#15803d' style='background:#15803d;padding:9px 14px;font-size:11px;font-weight:700;letter-spacing:.1em;color:#dcfce7'>ÇÖZÜM BİLGİSİ</td></tr>"
+            + resolverRows + "</table>"
+            + "<table width='100%' cellpadding='0' cellspacing='0' border='0' style='margin:0 0 16px;border:1px solid #e2e8f0;border-radius:10px;overflow:hidden'>"
+            + "<tr><td colspan='2' bgcolor='#1f3864' style='background:#1f3864;padding:9px 14px;font-size:11px;font-weight:700;letter-spacing:.1em;color:#cbd5e1'>KESİNTİ DETAYI</td></tr>"
+            + outageRows + "</table>";
 
         String css = "<style>body,table,td{-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%}"
             + "@media only screen and (max-width:620px){.em-wrap{padding:0!important}.em-card{border-radius:0!important;width:100%!important}"
@@ -1655,10 +1655,14 @@ public class EmailNotificationService {
             + ".em-col-r{display:block!important;width:100%!important}}</style>";
 
         return "<!DOCTYPE html><html lang='tr' xmlns:v='urn:schemas-microsoft-com:vml' xmlns:o='urn:schemas-microsoft-com:office:office'><head><meta charset='UTF-8'>"
-            + "<meta name='viewport' content='width=device-width,initial-scale=1,maximum-scale=1'>" + css + "</head>"
-            + "<body style='margin:0;padding:0;background:#f1f5f9;font-family:\"Segoe UI\",Tahoma,Arial,sans-serif'>"
-            + "<table class='em-wrap' width='100%' cellpadding='0' cellspacing='0' border='0' style='background:#f1f5f9;padding:24px 10px'><tr><td align='center'>"
-            + "<table class='em-card' width='640' cellpadding='0' cellspacing='0' border='0' style='max-width:640px;width:100%;border-radius:14px;overflow:hidden;box-shadow:0 8px 32px rgba(0,0,0,.15)'><tr><td style='padding:0'>"
+            + "<meta name='viewport' content='width=device-width,initial-scale=1,maximum-scale=1'>"
+            + "<meta http-equiv='X-UA-Compatible' content='IE=edge'>"
+            + "<!--[if mso]><style>table,td,div,p,a{font-family:'Segoe UI',Arial,sans-serif!important}</style><![endif]-->" + css + "</head>"
+            // Dış arka plan (bgcolor attr) + tablo lspace/rspace sıfır (Outlook tabloya boşluk eklemesin → kayma);
+            // dış padding TD'de (Outlook tablo padding'ini yok sayar); kart bgcolor='#ffffff' → dış gri içeri sızmaz.
+            + "<body bgcolor='#f1f5f9' style='margin:0;padding:0;background:#f1f5f9;-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%;font-family:\"Segoe UI\",Tahoma,Arial,sans-serif'>"
+            + "<table role='presentation' class='em-wrap' width='100%' cellpadding='0' cellspacing='0' border='0' bgcolor='#f1f5f9' style='background:#f1f5f9;mso-table-lspace:0pt;mso-table-rspace:0pt'><tr><td align='center' style='padding:24px 10px'>"
+            + "<table class='em-card' width='640' cellpadding='0' cellspacing='0' border='0' bgcolor='#ffffff' style='max-width:640px;width:100%;background:#ffffff;border-radius:14px;overflow:hidden;box-shadow:0 8px 32px rgba(0,0,0,.15);mso-table-lspace:0pt;mso-table-rspace:0pt'><tr><td style='padding:0'>"
             + "<div style='background:" + green + ";padding:22px 24px'>"
             + "<div style='color:rgba(255,255,255,.65);font-size:11px;font-weight:700;letter-spacing:.12em'>" + kicker + "</div>"
             + "<div class='em-domain' style='color:#fff;font-size:22px;font-weight:900;margin-top:10px;word-break:break-all;line-height:1.25'>✅ " + escHtml(domain) + "</div>"
