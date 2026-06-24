@@ -1582,7 +1582,7 @@ public class EmailNotificationService {
         int n = attemptCount(ctx);
 
         StringBuilder left = new StringBuilder();
-        left.append(tableRow2col("📡 Host", escHtml(host)));
+        left.append(tableRow2col("🖥️ Host", escHtml(host)));
         left.append(tableRow2col("🔢 IP sürümü", ipVersion.isEmpty() || "auto".equals(ipVersion) ? "Otomatik" : escHtml(ipVersion.toUpperCase())));
         left.append(tableRow2col("📉 Paket kaybı", lossLabel));
         if (!rttMs.isEmpty()) left.append(tableRow2col("⏱ RTT", escHtml(rttMs) + " ms"));
@@ -1596,7 +1596,7 @@ public class EmailNotificationService {
             + statusRow2col("Seviye", "✗ KRİTİK")
             + statusRow2col("İzleme", "✓ Devam ediyor");
 
-        return monitoringTypedAlert(accent, "CertMonitor — Ping (ICMP) İzleme", "📡",
+        return monitoringTypedAlert(accent, "CertMonitor — Ping (ICMP) İzleme", "🖥️",
                 na ? "ICMP KULLANILAMIYOR" : "HOST YANIT VERMİYOR",
                 "⚠ Erişilebilirlik kaybı", escHtml(host), "Erişilebilirlik (Ping)",
                 firstFailureAt, attemptsLabel, delayLabel, left.toString(), right, "", message,
@@ -1698,11 +1698,11 @@ public class EmailNotificationService {
         StringBuilder d = new StringBuilder();
         if (ctx != null) {
             String ipv = ctxStr(ctx, "ip_version");
-            d.append(tableRow2col("📡 Host", escHtml(host)));
+            d.append(tableRow2col("🖥️ Host", escHtml(host)));
             if (!ipv.isEmpty() && !"auto".equals(ipv)) d.append(tableRow2col("🔢 IP sürümü", escHtml(ipv.toUpperCase())));
         }
         return monitoringTypedResolved(host, "CertMonitor — Ping (ICMP) İzleme",
-                "Host Yeniden Yanıt Veriyor", "Erişilebilirlik (Ping)", "📡",
+                "Host Yeniden Yanıt Veriyor", "Erişilebilirlik (Ping)", "🖥️",
                 d.toString(), monitorCtaUrl("ping", ctx), resolvedBy, resolvedAt, createdAt);
     }
 
