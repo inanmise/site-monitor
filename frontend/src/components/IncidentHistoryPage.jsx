@@ -87,7 +87,7 @@ function CreatableSelect({ label, value, onChange, options, disabled, onCreate, 
 /** Çoklu seçim + creatable — değer CSV string ('a, b, c'). Seçilenler kaldırılabilir chip;
  *  "Ekle" için tekil SearchableSelect (seçilenler hariç). Picker seçim sonrası boş kalır.
  *  tagHue/.tag-chip yeniden kullanılır (yeni CSS yok). */
-function CreatableMultiSelect({ label, value, onChange, options, disabled, onCreate, onDelete }) {
+function CreatableMultiSelect({ label, value, onChange, options, disabled, onCreate, onDelete, placeholder }) {
   const selected = (value || '').split(',').map(s => s.trim()).filter(Boolean)
   const add = (v) => {
     const x = (v ?? '').trim()
@@ -95,7 +95,7 @@ function CreatableMultiSelect({ label, value, onChange, options, disabled, onCre
   }
   const remove = (val) => onChange(selected.filter(x => x !== val).join(', '))
   const opts = [
-    { value: '', label: '—' },
+    { value: '', label: placeholder || '—' },
     ...options.filter(o => !selected.some(s => s.toLowerCase() === String(o).toLowerCase()))
               .map(o => ({ value: o, label: o })),
   ]
@@ -104,7 +104,7 @@ function CreatableMultiSelect({ label, value, onChange, options, disabled, onCre
       <span>{label}</span>
       {!disabled && (
         <SearchableSelect value="" onChange={add} options={opts} creatable
-          onCreate={v => { onCreate?.(v); add(v) }} onDelete={onDelete} placeholder="—" />
+          onCreate={v => { onCreate?.(v); add(v) }} onDelete={onDelete} placeholder={placeholder || '—'} />
       )}
       {selected.length > 0 ? (
         <div className="tag-chips">
@@ -657,13 +657,13 @@ function IncidentModal({ modal, setModal, save, remove, saving, allowManage, all
               team_name: teams.find(tm => String(tm.id) === String(v))?.name || '' } }))}
             options={teamOptions} />
           <CreatableMultiSelect label={t('inc.fChannel')} value={f.channel} disabled={!editing}
-            options={channelOpts} onChange={v => set('channel', v)}
+            options={channelOpts} onChange={v => set('channel', v)} placeholder={t('inc.selectChannel')}
             onCreate={v => onAddOption('CHANNEL', v)} onDelete={v => onDeleteOption('CHANNEL', v)} />
           <CreatableMultiSelect label={t('inc.fService')} value={f.service} disabled={!editing}
-            options={domainOpts} onChange={v => set('service', v)}
+            options={domainOpts} onChange={v => set('service', v)} placeholder={t('inc.selectService')}
             onCreate={v => onAddOption('DOMAIN', v)} onDelete={v => onDeleteOption('DOMAIN', v)} />
           <CreatableMultiSelect label={t('inc.fProblemType')} value={f.problem_types} disabled={!editing}
-            options={PROBLEM_TYPES} onChange={v => set('problem_types', v)} />
+            options={PROBLEM_TYPES} onChange={v => set('problem_types', v)} placeholder={t('inc.selectProblemType')} />
           <SelectInput label={t('inc.fSeverity')} value={f.severity} disabled={!editing} onChange={v => set('severity', v)} options={opts(SEVERITIES, 'inc.sev')} />
           <SelectInput label={t('inc.fStatus')} value={f.status} disabled={!editing} onChange={v => set('status', v)} options={opts(STATUSES, 'inc.st')} />
           <SelectInput label={t('inc.fCategory')} value={f.category} disabled={!editing} onChange={v => set('category', v)} options={opts(CATEGORIES, 'inc.cat')} />
