@@ -126,6 +126,7 @@ export default function SystemHealth({ systemRole, globalAdmin = false, preFilte
   const [heatCell, setHeatCell] = useState(null) // ısı haritası hücresi {weekday,hour} → o saatteki girişler
   const [expRole, setExpRole] = useState(null)   // rol drill-down (açık rol)
   const [expTeam, setExpTeam] = useState(null)   // takım drill-down (açık takım index)
+  const [weekIdx, setWeekIdx] = useState(0)      // heatmap hafta navigasyonu (0=bu hafta .. 2=2 hafta önce)
   const [kpiDetail, setKpiDetail] = useState(null) // KPI kartı drill-down {title, kind}
   // Giriş trendi: esnek aralık (1g/7g/30g) + istenen güne gitme (saatlik) — zoom/navigasyon
   const [trendDays, setTrendDays] = useState(7)    // 1 | 7 | 30
@@ -1353,17 +1354,33 @@ export default function SystemHealth({ systemRole, globalAdmin = false, preFilte
                     : seriesGrid(buckets, prefix, gran)
                 })()}
 
-                {/* Peak ısı haritaları — bu hafta + 1 önceki + 2 önceki (her biri tarih aralıklı) */}
+                {/* Peak ısı haritası — tek hafta (BÜYÜK) + hafta navigasyonu (geriye 3 hafta) */}
                 <h3 className="metrics-title">{t('uact.peakTitle')}</h3>
-                <div className="metrics-grid">
-                  {heatmaps.map((hm, i) => (
-                    <LoginHeatmap key={i} matrix={hm.matrix || []} failed={hm.failed || []} max={hm.max || 0}
-                      dayLabels={dayLabels} title={weekBase(i)} hourLabel={fmtHeatRange(hm)}
-                      todayDow={hm.today_dow ?? -1} rowTotals={hm.row_totals || []} colTotals={hm.col_totals || []} total={hm.total || 0}
-                      onCellClick={(weekday, hour) => setHeatCell({ weekday, hour, cells: hm.cells || {}, label: `${weekBase(i)} · ${fmtHeatRange(hm)}` })} />
-                  ))}
-                  {heatmaps.length === 0 && <div className="sys-muted sys-small">{t('uact.noLogins')}</div>}
-                </div>
+                {heatmaps.length > 0 ? (() => {
+                  const wi = Math.min(weekIdx, heatmaps.length - 1)
+                  const hm = heatmaps[wi]
+                  const navBtn = (disabled) => ({
+                    padding: '5px 14px', fontSize: '.82rem', fontWeight: 600, borderRadius: 6,
+                    border: '1px solid var(--border, #cbd5e1)', background: 'var(--bg-subtle, #f8fafc)',
+                    cursor: disabled ? 'default' : 'pointer', opacity: disabled ? 0.4 : 1,
+                  })
+                  const olderDisabled = wi >= heatmaps.length - 1   // daha eski yok
+                  const newerDisabled = wi <= 0                     // bu haftadan yenisi yok
+                  return (
+                    <div>
+                      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginBottom: 8 }}>
+                        <button type="button" disabled={olderDisabled} style={navBtn(olderDisabled)}
+                          onClick={() => setWeekIdx(Math.min(heatmaps.length - 1, wi + 1))}>← {t('uact.prevWeek')}</button>
+                        <button type="button" disabled={newerDisabled} style={navBtn(newerDisabled)}
+                          onClick={() => setWeekIdx(Math.max(0, wi - 1))}>{t('uact.nextWeek')} →</button>
+                      </div>
+                      <LoginHeatmap matrix={hm.matrix || []} failed={hm.failed || []} max={hm.max || 0}
+                        dayLabels={dayLabels} title={weekBase(wi)} hourLabel={fmtHeatRange(hm)}
+                        todayDow={hm.today_dow ?? -1} rowTotals={hm.row_totals || []} colTotals={hm.col_totals || []} total={hm.total || 0}
+                        onCellClick={(weekday, hour) => setHeatCell({ weekday, hour, cells: hm.cells || {}, label: `${weekBase(wi)} · ${fmtHeatRange(hm)}` })} />
+                    </div>
+                  )
+                })() : <div className="sys-muted sys-small">{t('uact.noLogins')}</div>}
 
                 {/* Aktif kullanıcılar */}
                 <h3 className="metrics-title">{t('uact.activeListTitle')} ({active.length})</h3>
