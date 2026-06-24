@@ -329,7 +329,7 @@ public class UserActivityService {
                 .sorted((x, y) -> Long.compare(y.getValue()[0], x.getValue()[0]))
                 .limit(TOP_N)
                 .map(e -> {
-                    AppUser u = usersByName.get(e.getKey());
+                    AppUser u = usersByName.get(lc(e.getKey()));   // case-insensitive (actor küçük/büyük harf olabilir)
                     Map<String, Object> m = new LinkedHashMap<>();
                     m.put("username",     e.getKey());
                     m.put("user_id",      u != null ? u.getId() : null);   // /api/admin/users/{id}/photo için
@@ -469,12 +469,18 @@ public class UserActivityService {
         return out;
     }
 
-    /** username → AppUser (ad-soyad/resim drill-down'ları için tek toplu okuma). */
+    /** username(küçük harf) → AppUser. Audit actor login'de yazıldığı gibi saklanır (örn. küçük harf
+     *  "n64954"); AppUser.username ise kanonik olabilir (büyük harf "N64954"). Login case-insensitive
+     *  eşleştiği için her iki yazım da giriş yapabilir → eşleştirmeyi de case-insensitive yapmalıyız,
+     *  aksi halde küçük-harf login eden kullanıcının resmi/adı top-user & rol/takım listesinde çıkmaz. */
     private Map<String, AppUser> usersByName() {
         Map<String, AppUser> m = new java.util.HashMap<>();
-        for (AppUser u : userRepo.findAll()) if (u.getUsername() != null) m.put(u.getUsername(), u);
+        for (AppUser u : userRepo.findAll()) if (u.getUsername() != null) m.put(lc(u.getUsername()), u);
         return m;
     }
+
+    /** Case-insensitive eşleştirme anahtarı (Locale.ROOT — Türkçe i/ı tuzağından kaçınmak için). */
+    private static String lc(String s) { return s == null ? null : s.toLowerCase(java.util.Locale.ROOT); }
 
     /** displayName → yoksa "Ad Soyad" → yoksa null. */
     private static String displayName(AppUser u) {
@@ -491,7 +497,7 @@ public class UserActivityService {
         return actors.entrySet().stream()
                 .sorted((x, y) -> Long.compare(y.getValue(), x.getValue()))
                 .map(e -> {
-                    AppUser u = usersByName.get(e.getKey());
+                    AppUser u = usersByName.get(lc(e.getKey()));   // case-insensitive (actor küçük/büyük harf olabilir)
                     Map<String, Object> m = new LinkedHashMap<>();
                     m.put("username",     e.getKey());
                     m.put("user_id",      u != null ? u.getId() : null);
