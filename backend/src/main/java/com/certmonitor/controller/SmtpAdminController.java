@@ -92,8 +92,10 @@ public class SmtpAdminController {
     /** Yerel bootstrap admin ("admin") HER ZAMAN erişir (güvenlik fallback'i); aksi halde matris
      *  izni gerekir (ör. settings.smtp/edit). Böylece SMTP ayarları yetkilendirilebilir olur. */
     private void requireSettingsAccess(HttpSession session, String key, String action) {
-        Object u = session != null ? session.getAttribute("username") : null;
-        if ("admin".equals(u)) return;
+        // Konfigüre bootstrap admin (cert.monitor.username) HER ZAMAN erişir — login'de set edilen
+        // 'bootstrapAdmin' bayrağı (literal "admin" değil → admin yeniden adlandırılırsa kilitlenmez,
+        // "admin" adlı başka kullanıcı bypass alamaz). Aksi halde matris izni gerekir.
+        if (Boolean.TRUE.equals(session != null ? session.getAttribute("bootstrapAdmin") : null)) return;
         permissionService.require(session, key, action);
     }
 

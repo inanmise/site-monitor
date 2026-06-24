@@ -101,10 +101,10 @@ public class LdapAdminController {
 
     // ── helpers ────────────────────────────────────────────────────────────────
 
-    /** Bootstrap admin ("admin") HER ZAMAN erişir (fallback); aksi halde matris izni (settings.ldap/edit). */
+    /** Konfigüre bootstrap admin (cert.monitor.username) HER ZAMAN erişir (kilitlenme-güvenli fallback —
+     *  login'de set edilen 'bootstrapAdmin' bayrağı); aksi halde matris izni (settings.ldap/edit). */
     private void requireSettingsAccess(HttpSession session, String key, String action) {
-        Object u = session != null ? session.getAttribute("username") : null;
-        if ("admin".equals(u)) return;
+        if (Boolean.TRUE.equals(session != null ? session.getAttribute("bootstrapAdmin") : null)) return;
         permissionService.require(session, key, action);
     }
 

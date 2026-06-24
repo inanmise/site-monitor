@@ -78,6 +78,7 @@ class SecretToolsControllerTest {
         s.setAttribute("authenticated", Boolean.TRUE);
         s.setAttribute("username", username);
         s.setAttribute("systemRole", "admin".equals(username) ? "ADMIN" : "USER");
+        s.setAttribute("bootstrapAdmin", "admin".equals(username));   // settings gate bayrağı (literal username yerine)
         return s;
     }
 }

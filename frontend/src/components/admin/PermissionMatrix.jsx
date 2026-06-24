@@ -17,7 +17,7 @@ const ACTIONS = [
   { key: 'edit',    Icon: Pencil, labelKey: 'perm.edit',    shortKey: 'perm.editShort' },
   { key: 'execute', Icon: Zap,    labelKey: 'perm.execute', shortKey: 'perm.executeShort' },
 ]
-const GROUP_ORDER = ['certificates', 'communication', 'management', 'alerts', 'monitoring', 'logs', 'reports', 'tools', 'settings']
+const GROUP_ORDER = ['certificates', 'communication', 'management', 'alerts', 'monitoring', 'logs', 'reports', 'incidents', 'tools', 'settings']
 
 export default function PermissionMatrix() {
   const t = useT()
