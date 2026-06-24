@@ -314,6 +314,11 @@ public class IncidentService {
         if (body.containsKey("resolution_steps"))           e.setResolutionSteps(str(body, "resolution_steps"));
         if (body.containsKey("business_impact"))            e.setBusinessImpact(str(body, "business_impact"));
         if (body.containsKey("affected_services"))          e.setAffectedServices(str(body, "affected_services"));
+        if (body.containsKey("problem_types"))              e.setProblemTypes(str(body, "problem_types"));
+        if (body.containsKey("affected_app"))               e.setAffectedApp(str(body, "affected_app"));
+        if (body.containsKey("affected_systems"))           e.setAffectedSystems(str(body, "affected_systems"));
+        if (body.containsKey("affected_customers"))         e.setAffectedCustomers(toInt(body.get("affected_customers")));
+        if (body.containsKey("affected_transactions"))      e.setAffectedTransactions(toInt(body.get("affected_transactions")));
         if (body.containsKey("runbook_url"))                e.setRunbookUrl(str(body, "runbook_url"));
         if (body.containsKey("tags"))                       e.setTags(str(body, "tags"));
         if (body.containsKey("sla_breached"))               e.setSlaBreached(Boolean.TRUE.equals(toBool(body.get("sla_breached"))));

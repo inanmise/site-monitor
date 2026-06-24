@@ -263,6 +263,11 @@ public class IncidentController {
         m.put("resolution_steps", e.getResolutionSteps());
         m.put("business_impact", e.getBusinessImpact());
         m.put("affected_services", e.getAffectedServices());
+        m.put("problem_types", e.getProblemTypes());
+        m.put("affected_app", e.getAffectedApp());
+        m.put("affected_systems", e.getAffectedSystems());
+        m.put("affected_customers", e.getAffectedCustomers());
+        m.put("affected_transactions", e.getAffectedTransactions());
         m.put("sla_breached", e.getSlaBreached());
         m.put("error_budget_burn_pct", e.getErrorBudgetBurnPct());
         m.put("duration_minutes", e.getDurationMinutes());
