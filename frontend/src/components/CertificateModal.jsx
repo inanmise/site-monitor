@@ -2,6 +2,7 @@ import { useEffect, useState, useRef } from 'react'
 import { api, formatDate } from '../api/client'
 import { useT } from '../i18n/index.jsx'
 import { useDialog } from './ui/Dialog.jsx'
+import UserBadge from './ui/UserBadge.jsx'
 import { Trash2, Globe, X, Pencil, Clock, User, History, Undo2, Stethoscope } from 'lucide-react'
 import AlertHistory from './admin/AlertHistory'
 import SslCheckerPanel from './SslCheckerPanel.jsx'
@@ -158,14 +159,12 @@ function NotesTab({ domain, t, currentUser, isAdmin }) {
   )
 
   function renderAuthorLine(authorName, authorUsername) {
-    const name = authorName || authorUsername || t('notes.authorUnknown')
+    if (!authorName && !authorUsername) {
+      return <span className="cert-note-meta-item"><User size={12} /> {t('notes.authorUnknown')}</span>
+    }
     return (
       <span className="cert-note-meta-item">
-        <User size={12} />
-        <span className="cert-note-author-strong">{name}</span>
-        {authorUsername && authorUsername !== name && (
-          <span className="cert-note-author-username">({authorUsername})</span>
-        )}
+        <UserBadge username={authorUsername || authorName} displayName={authorName || undefined} inline size="sm" />
       </span>
     )
   }
@@ -334,10 +333,9 @@ function NotesTab({ domain, t, currentUser, isAdmin }) {
                                   {t(`notes.event${r.event_type}`)}
                                 </span>
                                 <span> · {fmtTs(r.edited_at, t('notes.dateUnknown'))}</span>
-                                <span> · <strong>{r.edited_by_name || r.edited_by || t('notes.authorUnknown')}</strong></span>
-                                {r.edited_by && r.edited_by_name && r.edited_by_name !== r.edited_by && (
-                                  <span className="cert-note-author-username"> ({r.edited_by})</span>
-                                )}
+                                <span> · {(r.edited_by || r.edited_by_name)
+                                  ? <UserBadge username={r.edited_by || r.edited_by_name} displayName={r.edited_by_name || undefined} inline size="sm" />
+                                  : <strong>{t('notes.authorUnknown')}</strong>}</span>
                               </div>
                               {r.body && <div className="cert-note-history-body">{r.body}</div>}
                             </div>

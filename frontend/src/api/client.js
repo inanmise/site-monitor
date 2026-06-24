@@ -80,6 +80,10 @@ async function request(path, options = {}) {
 }
 
 export const api = {
+  // Hafif kullanıcı dizini (her authenticated kullanıcı) — UserDirectory bağlamı bununla beslenir.
+  users: {
+    directory: () => request('/users/directory'),
+  },
   me: {
     changePassword: (currentPwd, newPwd) => request('/me/change-password', {
       method: 'POST',

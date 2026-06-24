@@ -3,6 +3,7 @@ import { api, formatDate } from '../../api/client'
 import { useDialog } from '../ui/Dialog.jsx'
 import { useToast } from '../ui/Toast.jsx'
 import { useT, useDateLocale } from '../../i18n/index.jsx'
+import UserBadge from '../ui/UserBadge.jsx'
 import {
   Check, ShieldAlert, TrendingUp, RefreshCcw, Bell, CheckCircle, AlertCircle,
   ChevronUp, ChevronDown, ChevronLeft, ChevronRight, Mail, MailX, Clock, Users, Calendar,
@@ -56,7 +57,7 @@ function AuditRow({ label, by, at, variant }) {
       <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
         <span style={{ color: c.text, fontWeight: 700 }}>{label}</span>
         <span style={{ color: '#64748b' }}>
-          <strong>{by}</strong>
+          <UserBadge username={by} inline size="sm" />
           {at && <> &nbsp;·&nbsp; {formatDate(at)}</>}
         </span>
       </div>
@@ -559,7 +560,7 @@ export default function AlertHistory({ domain = null }) {
                     <span className="notified-label">{t('alh.notified')}</span>
                     {notifiedList.map((c, i) => (
                       <span key={c.email ?? `nc-${i}`} className="notified-chip" title={c.email}>
-                        {c.name} <em>({c.role})</em>
+                        <UserBadge displayName={c.name} email={c.email} inline size="sm" /> <em>({c.role})</em>
                       </span>
                     ))}
                   </div>
@@ -680,7 +681,7 @@ export default function AlertHistory({ domain = null }) {
                         <div>
                           <div className="ahc-tl-label">{t('alh.tlAck')}</div>
                           <div className="ahc-tl-val">
-                            <strong>{a.acknowledged_by}</strong>
+                            <UserBadge username={a.acknowledged_by} inline size="sm" />
                             {a.acknowledged_at && <> &nbsp;·&nbsp; {formatDate(a.acknowledged_at)}</>}
                           </div>
                         </div>
@@ -700,7 +701,9 @@ export default function AlertHistory({ domain = null }) {
                       <div>
                         <div className="ahc-tl-label">{t('alh.tlResolved')}</div>
                         <div className="ahc-tl-val">
-                          <strong>{a.resolved_by === 'system' ? t('alh.autoResolved') : (a.resolved_by ?? '—')}</strong>
+                          {a.resolved_by === 'system'
+                            ? <strong>{t('alh.autoResolved')}</strong>
+                            : <UserBadge username={a.resolved_by} inline size="sm" />}
                           {a.resolved_at && <> &nbsp;·&nbsp; {formatDate(a.resolved_at)}</>}
                         </div>
                       </div>

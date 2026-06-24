@@ -6,6 +6,7 @@ import {
   Plus, Save, Send, CheckCircle, Undo2, Eye, Trash2, RefreshCcw, ArrowLeft, Menu, History, FilePenLine,
   HelpCircle, ChevronDown, Bell, Mail, ArrowRightLeft,
 } from 'lucide-react'
+import UserBadge from './ui/UserBadge.jsx'
 import { api, formatDate } from '../api/client'
 import { useT, useLanguage } from '../i18n/index.jsx'
 import { useTheme } from '../i18n/theme.jsx'
@@ -1131,7 +1132,7 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
                       {statusBadge(r.status, r.sent_at)}
                       {r.editing_by && (
                         <div style={{ fontSize: '.72em', color: 'var(--text-light)', marginTop: 3 }}>
-                          ✏️ {r.editing_by} {t('wr.editingNow')}
+                          ✏️ <UserBadge username={r.editing_by} inline size="sm" /> {t('wr.editingNow')}
                         </div>
                       )}
                       {mailProblem(r.last_mail_status) && (
@@ -1141,9 +1142,9 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
                         </div>
                       )}
                     </td>
-                    <td>{r.created_by ? `${r.created_by} · ${formatDate(r.created_at)}` : '—'}</td>
-                    <td>{r.updated_by} · {formatDate(r.updated_at)}</td>
-                    <td>{r.approved_by ? `${r.approved_by} · ${formatDate(r.approved_at)}` : '—'}</td>
+                    <td>{r.created_by ? <><UserBadge username={r.created_by} inline size="sm" /> · {formatDate(r.created_at)}</> : '—'}</td>
+                    <td>{r.updated_by ? <><UserBadge username={r.updated_by} inline size="sm" /> · {formatDate(r.updated_at)}</> : '—'}</td>
+                    <td>{r.approved_by ? <><UserBadge username={r.approved_by} inline size="sm" /> · {formatDate(r.approved_at)}</> : '—'}</td>
                     <td>{r.sent_at ? formatDate(r.sent_at) : '—'}</td>
                     <td onClick={(e) => e.stopPropagation()}>
                       <div className="wr-menu-wrap">

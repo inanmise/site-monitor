@@ -16,6 +16,7 @@ import RenewalAdvice from './components/RenewalAdvice'
 import CertRenewalGuide from './components/CertRenewalGuide.jsx'
 import PasswordChangeModal from './components/admin/PasswordChangeModal.jsx'
 import { PermissionsProvider } from './contexts/PermissionsProvider.jsx'
+import { UserDirectoryProvider } from './components/ui/UserDirectory.jsx'
 import UptimePage from './components/UptimePage'
 import PortMonitorPage from './components/PortMonitorPage'
 import DnsMonitorPage from './components/DnsMonitorPage'
@@ -561,6 +562,7 @@ export default function App() {
 
   return (
     <PermissionsProvider user={user}>
+    <UserDirectoryProvider>
     <div className="app-layout">
 
       {inactivityWarning && (
@@ -1068,6 +1070,7 @@ export default function App() {
       <CertificateModal domain={modalCert?.domain} alertLevel={modalCert?.alert_level} initialData={modalCert?._preview ? modalCert : undefined} previewMode={!!modalCert?._preview} currentUser={user} currentUserRole={systemRole} onClose={() => setModalCert(null)} />
       {caModal && <CaDiversityModal certs={certs} onClose={() => setCaModal(false)} />}
     </div>
+    </UserDirectoryProvider>
     </PermissionsProvider>
   )
 }

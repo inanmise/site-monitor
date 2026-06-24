@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { api, formatDate } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
 import SearchableSelect from '../ui/SearchableSelect.jsx'
+import UserBadge from '../ui/UserBadge.jsx'
 
 const EVENT_TYPES = [
   'LOGIN', 'LOGIN_FAILED', 'LOGOUT',
@@ -249,7 +250,7 @@ export default function AuditLogViewer() {
                     </span>
                   </td>
                   <td>
-                    <div>{row.actor || '—'}</div>
+                    <div>{row.actor ? <UserBadge username={row.actor} inline size="sm" /> : '—'}</div>
                     {row.actor_role && <div className="audit-sub">{row.actor_role}</div>}
                   </td>
                   <td className="audit-mono">{row.ip_address || '—'}</td>
