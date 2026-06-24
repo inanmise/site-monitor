@@ -74,4 +74,9 @@ public class AuditLog {
     /** Comma-separated flags: OFF_HOURS, UNUSUAL_IP, GEO_VELOCITY, BRUTE_FORCE, RATE_LIMITED */
     @Column(name = "anomaly_flags", length = 200)
     private String anomalyFlags;
+
+    /** Login anında reverse-DNS (PTR) ile çözünen hostname — varsa. Gösterimde tekrar nslookup
+     *  yapılmaz; null ise yalnız IP gösterilir. */
+    @Column(name = "ip_reverse_host", length = 255)
+    private String ipReverseHost;
 }

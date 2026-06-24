@@ -61,6 +61,7 @@ public class UserActivityService {
         String since7d = ISO.format(Instant.now().minusSeconds(7 * DAY_SECONDS));
         List<AuditLog> window = auditLogRepo.findLoginEventsSince(LOGIN_TYPES, since7d);
         Map<Long, String> teamNames = teamNameMap();
+        Map<String, AppUser> usersByName = usersByName();   // username → AppUser (ad/soyad/resim drill-down için)
 
         List<Map<String, Object>> activeUsers = buildActiveUsers(teamNames);
 
@@ -68,10 +69,10 @@ public class UserActivityService {
         out.put("summary",      buildSummary(window, activeUsers.size()));
         out.put("active_users", activeUsers);
         out.put("series",       buildSeries(window));
-        out.put("top_users",    buildTopUsers(window));
+        out.put("top_users",    buildTopUsers(window, usersByName));
         out.put("top_sources",  buildTopSources(window));
         out.put("anomalies",    buildAnomalies(window));
-        out.put("role_team",    buildRoleTeam(window, teamNames));
+        out.put("role_team",    buildRoleTeam(window, teamNames, usersByName));
         out.put("heatmaps",     buildWeeklyHeatmaps());   // bu hafta + 1 önceki + 2 önceki (her biri from/to'lu)
         out.put("details",      buildKpiDetails(window)); // KPI kartlarına tıklayınca 24s drill-down listeleri
         return out;
@@ -315,7 +316,7 @@ public class UserActivityService {
     }
 
     // ── Top kullanıcılar / kaynaklar ─────────────────────────────────────────────
-    private List<Map<String, Object>> buildTopUsers(List<AuditLog> window) {
+    private List<Map<String, Object>> buildTopUsers(List<AuditLog> window, Map<String, AppUser> usersByName) {
         Map<String, long[]> agg = new LinkedHashMap<>();   // actor → [logins]
         Map<String, String> last = new LinkedHashMap<>();  // actor → last login ts
         for (AuditLog a : window) {
@@ -328,10 +329,13 @@ public class UserActivityService {
                 .sorted((x, y) -> Long.compare(y.getValue()[0], x.getValue()[0]))
                 .limit(TOP_N)
                 .map(e -> {
+                    AppUser u = usersByName.get(e.getKey());
                     Map<String, Object> m = new LinkedHashMap<>();
-                    m.put("username",   e.getKey());
-                    m.put("logins",     e.getValue()[0]);
-                    m.put("last_login", last.get(e.getKey()));
+                    m.put("username",     e.getKey());
+                    m.put("user_id",      u != null ? u.getId() : null);   // /api/admin/users/{id}/photo için
+                    m.put("display_name", displayName(u));
+                    m.put("logins",       e.getValue()[0]);
+                    m.put("last_login",   last.get(e.getKey()));
                     return m;
                 })
                 .toList();
@@ -340,6 +344,7 @@ public class UserActivityService {
     private List<Map<String, Object>> buildTopSources(List<AuditLog> window) {
         Map<String, long[]> agg = new LinkedHashMap<>();    // ip → [total, success, failed]
         Map<String, String[]> geo = new LinkedHashMap<>();  // ip → [country, city]
+        Map<String, String> hosts = new LinkedHashMap<>();  // ip → reverse-DNS host (login anında kaydedilmiş)
         for (AuditLog a : window) {
             String ip = a.getIpAddress();
             if (ip == null || ip.isBlank()) continue;
@@ -347,6 +352,7 @@ public class UserActivityService {
             c[0]++;
             if ("SUCCESS".equals(a.getOutcome())) c[1]++; else c[2]++;
             geo.computeIfAbsent(ip, k -> new String[]{a.getIpCountry(), a.getIpCity()});
+            if (a.getIpReverseHost() != null && !hosts.containsKey(ip)) hosts.put(ip, a.getIpReverseHost());
         }
         return agg.entrySet().stream()
                 .sorted((x, y) -> Long.compare(y.getValue()[0], x.getValue()[0]))
@@ -355,12 +361,13 @@ public class UserActivityService {
                     long[] c = e.getValue();
                     String[] g = geo.getOrDefault(e.getKey(), new String[]{null, null});
                     Map<String, Object> m = new LinkedHashMap<>();
-                    m.put("ip",       e.getKey());
-                    m.put("total",    c[0]);
-                    m.put("success",  c[1]);
-                    m.put("failed",   c[2]);
-                    m.put("country",  g[0]);
-                    m.put("city",     g[1]);
+                    m.put("ip",          e.getKey());
+                    m.put("total",       c[0]);
+                    m.put("success",     c[1]);
+                    m.put("failed",      c[2]);
+                    m.put("country",     g[0]);
+                    m.put("city",        g[1]);
+                    m.put("reverse_dns", hosts.get(e.getKey()));
                     return m;
                 })
                 .toList();
@@ -403,22 +410,39 @@ public class UserActivityService {
         return out;
     }
 
-    // ── Rol / Takım kırılımı ─────────────────────────────────────────────────────
-    private Map<String, Object> buildRoleTeam(List<AuditLog> window, Map<Long, String> teamNames) {
+    // ── Rol / Takım kırılımı (her rol/takım altında kimler login oldu — drill-down) ──
+    private Map<String, Object> buildRoleTeam(List<AuditLog> window, Map<Long, String> teamNames,
+                                              Map<String, AppUser> usersByName) {
         Map<String, Long> byRole = new LinkedHashMap<>();
         Map<Long, Long> byTeam = new LinkedHashMap<>();
-        boolean[] hasNullTeam = {false};
+        Map<String, Map<String, Long>> roleActors = new LinkedHashMap<>();  // role → actor → count
+        Map<Long, Map<String, Long>> teamActors = new LinkedHashMap<>();    // teamId → actor → count
+        Map<String, Long> nullTeamActors = new LinkedHashMap<>();
         long[] nullTeamCount = {0};
         for (AuditLog a : window) {
             if (!"SUCCESS".equals(a.getOutcome())) continue;
             String role = a.getActorRole() != null ? a.getActorRole() : "—";
             byRole.merge(role, 1L, Long::sum);
-            if (a.getActorTeamId() != null) byTeam.merge(a.getActorTeamId(), 1L, Long::sum);
-            else { hasNullTeam[0] = true; nullTeamCount[0]++; }
+            if (a.getActor() != null)
+                roleActors.computeIfAbsent(role, k -> new LinkedHashMap<>()).merge(a.getActor(), 1L, Long::sum);
+            if (a.getActorTeamId() != null) {
+                byTeam.merge(a.getActorTeamId(), 1L, Long::sum);
+                if (a.getActor() != null)
+                    teamActors.computeIfAbsent(a.getActorTeamId(), k -> new LinkedHashMap<>()).merge(a.getActor(), 1L, Long::sum);
+            } else {
+                nullTeamCount[0]++;
+                if (a.getActor() != null) nullTeamActors.merge(a.getActor(), 1L, Long::sum);
+            }
         }
         List<Map<String, Object>> roles = byRole.entrySet().stream()
                 .sorted((x, y) -> Long.compare(y.getValue(), x.getValue()))
-                .map(e -> entryMap("role", e.getKey(), e.getValue()))
+                .map(e -> {
+                    Map<String, Object> m = new LinkedHashMap<>();
+                    m.put("role",  e.getKey());
+                    m.put("count", e.getValue());
+                    m.put("users", actorList(roleActors.get(e.getKey()), usersByName));
+                    return m;
+                })
                 .toList();
         List<Map<String, Object>> teams = new ArrayList<>(byTeam.entrySet().stream()
                 .sorted((x, y) -> Long.compare(y.getValue(), x.getValue()))
@@ -427,14 +451,16 @@ public class UserActivityService {
                     m.put("team_id",   e.getKey());
                     m.put("team_name", teamNames.get(e.getKey()));
                     m.put("count",     e.getValue());
+                    m.put("users",     actorList(teamActors.get(e.getKey()), usersByName));
                     return m;
                 })
                 .toList());
-        if (hasNullTeam[0]) {
+        if (nullTeamCount[0] > 0) {
             Map<String, Object> m = new LinkedHashMap<>();
             m.put("team_id", null);
             m.put("team_name", null);
             m.put("count", nullTeamCount[0]);
+            m.put("users", actorList(nullTeamActors, usersByName));
             teams.add(m);
         }
         Map<String, Object> out = new LinkedHashMap<>();
@@ -443,17 +469,54 @@ public class UserActivityService {
         return out;
     }
 
+    /** username → AppUser (ad-soyad/resim drill-down'ları için tek toplu okuma). */
+    private Map<String, AppUser> usersByName() {
+        Map<String, AppUser> m = new java.util.HashMap<>();
+        for (AppUser u : userRepo.findAll()) if (u.getUsername() != null) m.put(u.getUsername(), u);
+        return m;
+    }
+
+    /** displayName → yoksa "Ad Soyad" → yoksa null. */
+    private static String displayName(AppUser u) {
+        if (u == null) return null;
+        if (u.getDisplayName() != null && !u.getDisplayName().isBlank()) return u.getDisplayName();
+        String full = ((u.getFirstName() != null ? u.getFirstName() : "") + " "
+                     + (u.getLastName() != null ? u.getLastName() : "")).trim();
+        return full.isEmpty() ? null : full;
+    }
+
+    /** actor→count haritasını [{username, user_id, display_name, count}] listesine (azalan) çevirir. */
+    private List<Map<String, Object>> actorList(Map<String, Long> actors, Map<String, AppUser> usersByName) {
+        if (actors == null || actors.isEmpty()) return List.of();
+        return actors.entrySet().stream()
+                .sorted((x, y) -> Long.compare(y.getValue(), x.getValue()))
+                .map(e -> {
+                    AppUser u = usersByName.get(e.getKey());
+                    Map<String, Object> m = new LinkedHashMap<>();
+                    m.put("username",     e.getKey());
+                    m.put("user_id",      u != null ? u.getId() : null);
+                    m.put("display_name", displayName(u));
+                    m.put("count",        e.getValue());
+                    return m;
+                })
+                .toList();
+    }
+
     // ── Peak ısı haritaları: bu hafta + 1 önceki + 2 önceki (her biri from/to + matrix/max/cells) ──
     // Pencereler YEREL gün sınırına hizalı (her biri 7 ayrı gün) — rolling olsa sınır günü aynı
     // hafta-gününü iki kez sayardı. week0 = bugün + önceki 6 gün; week1/2 = ondan önceki 7'şer gün.
     private List<Map<String, Object>> buildWeeklyHeatmaps() {
         ZonedDateTime todayStart = ZonedDateTime.now(ZONE).toLocalDate().atStartOfDay(ZONE);
-        String sinceK = ISO.format(todayStart.minusDays(20).toInstant());   // 3 hafta = 21 gün
+        // ISO hafta: Pazartesi başlangıç → bu haftanın Pazartesi'si (bugün dahil geriye en yakın Pzt).
+        ZonedDateTime mondayThisWeek = todayStart.with(
+                java.time.temporal.TemporalAdjusters.previousOrSame(java.time.DayOfWeek.MONDAY));
+        int todayDow = todayStart.getDayOfWeek().getValue() - 1;   // bugünün hafta-günü 0(Pzt)..6(Paz)
+        String sinceK = ISO.format(mondayThisWeek.minusWeeks(2).toInstant());
         List<AuditLog> all = auditLogRepo.findLoginEventsSince(LOGIN_TYPES, sinceK);
         List<Map<String, Object>> out = new ArrayList<>(3);
         for (int w = 0; w < 3; w++) {
-            ZonedDateTime toZ   = todayStart.minusDays(7L * w).plusDays(1);  // gün sonu (exclusive)
-            ZonedDateTime fromZ = toZ.minusDays(7);
+            ZonedDateTime fromZ = mondayThisWeek.minusWeeks(w);    // o haftanın Pazartesi 00:00
+            ZonedDateTime toZ   = fromZ.plusWeeks(1);              // sonraki Pazartesi (exclusive)
             String fromK = ISO.format(fromZ.toInstant());
             String toK   = ISO.format(toZ.toInstant());
             List<AuditLog> wk = new ArrayList<>();
@@ -461,9 +524,10 @@ public class UserActivityService {
                 String t = a.getEventTime();
                 if (t != null && t.compareTo(fromK) >= 0 && t.compareTo(toK) < 0) wk.add(a);
             }
-            Map<String, Object> hm = buildHeatmap(wk);   // matrix / max / cells
+            Map<String, Object> hm = buildHeatmap(wk);   // matrix / max / cells / totals
             hm.put("from", fromK);
             hm.put("to", toK);
+            hm.put("today_dow", w == 0 ? todayDow : -1);   // yalnız bu hafta bugünü vurgula
             out.add(hm);
         }
         return out;
@@ -498,12 +562,26 @@ public class UserActivityService {
                 lst.add(m);
             }
         }
+        long[] rowTotals = new long[7];    // gün başına toplam
+        long[] colTotals = new long[24];   // saat başına toplam
+        long total = 0;
+        for (int d = 0; d < 7; d++)
+            for (int h = 0; h < 24; h++) { rowTotals[d] += grid[d][h]; colTotals[h] += grid[d][h]; total += grid[d][h]; }
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("matrix", toMatrix(grid));
         out.put("failed", toMatrix(failed));
         out.put("max", max);
         out.put("cells", cells);
+        out.put("row_totals", toLongList(rowTotals));   // gün başına toplam login (gün sonu)
+        out.put("col_totals", toLongList(colTotals));   // saat başına toplam login
+        out.put("total", total);                        // hafta toplamı
         return out;
+    }
+
+    private static List<Long> toLongList(long[] arr) {
+        List<Long> l = new ArrayList<>(arr.length);
+        for (long v : arr) l.add(v);
+        return l;
     }
 
     private List<List<Long>> toMatrix(long[][] grid) {
