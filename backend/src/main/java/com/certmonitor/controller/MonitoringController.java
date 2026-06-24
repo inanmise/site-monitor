@@ -55,6 +55,7 @@ public class MonitoringController {
     private final CertificateService certificateService;
     private final com.certmonitor.service.PermissionService permissionService;
     private final com.certmonitor.service.EscalationService escalationService;
+    private final com.certmonitor.repository.AlertEventRepository alertEventRepo;
 
     private static final DateTimeFormatter ISO =
             DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
@@ -863,6 +864,46 @@ public class MonitoringController {
         out.put("error",         r.get("error"));
         out.put("phrase",        KeywordCheckerService.opPhrase(op, threshold));
         return ok(out);
+    }
+
+    /** Bir keyword monitörünün ALARM geçmişi (AlertEvent'ler) — detay modalı için. */
+    @GetMapping("/keyword/{id}/alerts")
+    public ResponseEntity<Map<String, Object>> keywordAlerts(@PathVariable Long id, HttpSession session) {
+        permissionService.require(session, "monitoring.read", "view");
+        return keywordMonitorRepo.findById(id)
+                .map(m -> ok(monitorAlertDtos(m.getUrl(), "KEYWORD")))
+                .orElse(notFound("Keyword monitor not found"));
+    }
+
+    /** Bir ping monitörünün ALARM geçmişi (AlertEvent'ler) — detay modalı için. */
+    @GetMapping("/ping/{id}/alerts")
+    public ResponseEntity<Map<String, Object>> pingAlerts(@PathVariable Long id, HttpSession session) {
+        permissionService.require(session, "monitoring.read", "view");
+        return pingMonitorRepo.findById(id)
+                .map(m -> ok(monitorAlertDtos(m.getHost(), "PING_DOWN")))
+                .orElse(notFound("Ping monitor not found"));
+    }
+
+    /** Domain+tip için alarm olaylarını (en yeni 100) DTO listesine çevirir. */
+    private List<Map<String, Object>> monitorAlertDtos(String domain, String alertType) {
+        return alertEventRepo.findByDomainOrderByCreatedAtDesc(domain).stream()
+                .filter(e -> alertType.equals(e.getAlertType()))
+                .limit(100)
+                .map(e -> {
+                    Map<String, Object> d = new LinkedHashMap<>();
+                    d.put("id",              e.getId());
+                    d.put("level",           e.getAlertLevel());
+                    d.put("message",         e.getMessage());
+                    d.put("created_at",      e.getCreatedAt());
+                    d.put("resolved",        e.getResolved());
+                    d.put("resolved_at",     e.getResolvedAt());
+                    d.put("resolved_by",     e.getResolvedBy());
+                    d.put("acknowledged",    e.getAcknowledged());
+                    d.put("acknowledged_by", e.getAcknowledgedBy());
+                    d.put("acknowledged_at", e.getAcknowledgedAt());
+                    return d;
+                })
+                .toList();
     }
 
     private Map<String, Object> enrichKeyword(KeywordMonitor m, KeywordResult latest, Map<Long, String> teams) {

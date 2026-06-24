@@ -40,6 +40,8 @@ export default function PingMonitorPage({ systemRole, teamId, teamName }) {
   const [teamFilter, setTeamFilter] = useState('all')
   const [groupFilter, setGroupFilter] = useState('all')
   const [secondsSince, setSecondsSince] = useState(0)
+  const [alerts, setAlerts] = useState([])
+  const [alertsLoading, setAlertsLoading] = useState(false)
   const countdownRef = useRef(null)
   const deepLinkDone = useRef(false)
 
@@ -90,8 +92,14 @@ export default function PingMonitorPage({ systemRole, teamId, teamName }) {
     setHistoryLoading(false)
   }
   function selectRange(id, days) { setRangeDays(days); loadHistory(id, days) }
-  function openDetail(m) { setSelected(m); setHistory([]); loadHistory(m.id, rangeDays) }
-  function closeDetail() { setSelected(null); setHistory([]) }
+  async function loadAlerts(id) {
+    setAlertsLoading(true); setAlerts([])
+    const res = await api.monitoring.getPingAlerts(id)
+    if (res?.success) setAlerts(res.data ?? [])
+    setAlertsLoading(false)
+  }
+  function openDetail(m) { setSelected(m); setHistory([]); loadHistory(m.id, rangeDays); loadAlerts(m.id) }
+  function closeDetail() { setSelected(null); setHistory([]); setAlerts([]) }
 
   function openNew() { setForm({ ...emptyForm, teamId: isAdmin ? '' : (myTeam ?? '') }); setModal('new') }
   function openEdit(m) {
@@ -288,6 +296,29 @@ export default function PingMonitorPage({ systemRole, teamId, teamName }) {
               {selected.checked_at && <div className="upt-modal-metric"><span className="upt-modal-metric-val upt-modal-metric-time">{formatDate(selected.checked_at)}</span><span className="upt-modal-metric-lbl">{t('ping.lastCheck')}</span></div>}
             </div>
             {selected.status === 'na' && <div className="alert-msg" style={{ marginTop: 4 }}>{t('ping.naHint')}</div>}
+            <div className="upt-modal-divider" />
+            <div className="upt-modal-section-title">{t('ping.alertHistory')}</div>
+            {alertsLoading ? <div className="upt-modal-loading">...</div>
+              : alerts.length === 0 ? <div className="upt-modal-loading">{t('ping.noAlerts')}</div>
+              : (
+                <div className="upt-rt-list">
+                  <div className="upt-rt-grid upt-rt-head">
+                    <span>{t('ping.colStatus')}</span><span>{t('ping.alertLevel')}</span><span>{t('ping.colTime')}</span><span>{t('ping.alertResolution')}</span>
+                  </div>
+                  {alerts.map(a => (
+                    <div key={a.id} className="upt-rt-grid">
+                      <span className={a.resolved ? 'upt-rt-up' : 'upt-rt-down'}>{a.resolved ? t('ping.alertResolved') : t('ping.alertOpen')}</span>
+                      <span className="upt-rt-ms">{a.level}</span>
+                      <span className="upt-rt-time">{formatDate(a.created_at)}</span>
+                      <span className="upt-rt-ms" title={a.message || ''}>
+                        {a.resolved
+                          ? (a.resolved_at ? formatDate(a.resolved_at) : '—') + (a.resolved_by ? ' · ' + a.resolved_by : '')
+                          : (a.acknowledged ? t('ping.alertAcked') : t('ping.alertOngoing'))}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
             <div className="upt-modal-divider" />
             <div className="upt-modal-section-title">{t('ping.history')}</div>
             <div className="upt-range-btns">
