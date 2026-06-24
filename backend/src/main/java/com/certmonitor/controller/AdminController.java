@@ -578,7 +578,7 @@ public class AdminController {
     @Transactional
     public ResponseEntity<Map<String, Object>> purgeInventory(
             @PathVariable Long id, HttpSession session, HttpServletRequest request) {
-        requireAdmin(session); // yalnız global admin — geri alınamaz temizlik
+        requirePerm(session, "inventory.purge", "execute"); // dedike sensitive yetki (varsayılan ADMIN-only, matristen yönetilebilir)
         return inventoryRepo.findById(id).map(inv -> {
             if (inv.getDeletedAt() == null) {
                 throw new IllegalArgumentException("Yalnız önce silinmiş (soft-delete) kayıtlar kalıcı silinebilir");
@@ -602,7 +602,7 @@ public class AdminController {
     @Transactional
     public ResponseEntity<Map<String, Object>> purgeAllDeleted(
             HttpSession session, HttpServletRequest request) {
-        requireAdmin(session);
+        requirePerm(session, "inventory.purge", "execute");
         List<CertificateInventory> deleted = inventoryRepo.findByDeletedAtIsNotNullOrderByDomainAsc();
         int purged = 0, checksDeleted = 0;
         for (CertificateInventory inv : deleted) {

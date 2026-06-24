@@ -99,8 +99,8 @@ public class SystemController {
 
     @DeleteMapping("/scheduler-lock")
     public ResponseEntity<Map<String, Object>> forceReleaseLock(HttpSession session) {
-        requireAdmin(session);
-        permissionService.require(session, "system_health.actions", "execute");
+        requireAdmin(session);   // sistem-geneli yıkıcı işlem → admin-only (defense-in-depth)
+        permissionService.require(session, "system_health.scheduler_lock", "execute"); // dedike + sensitive (matriste görünür)
         schedulerService.forceReleaseLock();
         return ResponseEntity.ok(Map.of("success", true, "message", "Scheduler lock released", "timestamp", now()));
     }
@@ -150,8 +150,8 @@ public class SystemController {
     @PostMapping("/terminate-session")
     public ResponseEntity<Map<String, Object>> terminateSession(
             @RequestBody Map<String, String> body, HttpSession session) {
-        requireAdmin(session);
-        permissionService.require(session, "system_health.actions", "execute");
+        requireAdmin(session);   // sistem-geneli yıkıcı işlem → admin-only (defense-in-depth)
+        permissionService.require(session, "system_health.terminate", "execute"); // dedike + sensitive (matriste görünür)
         String username = body != null ? body.get("username") : null;
         if (username == null || username.isBlank()) {
             return ResponseEntity.badRequest().body(Map.of(
@@ -176,6 +176,7 @@ public class SystemController {
     @GetMapping("/weekly-availability/status")
     public ResponseEntity<Map<String, Object>> weeklyAvailabilityStatus(HttpSession session) {
         requireAdmin(session);
+        permissionService.require(session, "system_health.actions", "execute");   // peer uçlarla tutarlı (admin-only)
         var data = weeklyAvailabilityReportService.status();
         return ResponseEntity.ok(Map.of("success", true, "data", data, "timestamp", now()));
     }
@@ -185,6 +186,7 @@ public class SystemController {
     public ResponseEntity<Map<String, Object>> weeklyAvailabilityPreview(
             @RequestParam Long teamId, HttpSession session) {
         requireAdmin(session);
+        permissionService.require(session, "system_health.actions", "execute");
         try {
             var data = weeklyAvailabilityReportService.preview(teamId);
             return ResponseEntity.ok(Map.of("success", true, "data", data, "timestamp", now()));
@@ -225,6 +227,7 @@ public class SystemController {
             @RequestParam(defaultValue = "false") boolean includeTest,
             HttpSession session) {
         requireAdmin(session);
+        permissionService.require(session, "system_health.actions", "execute");
         var data = weeklyAvailabilityReportService.history(limit, includeTest);
         return ResponseEntity.ok(Map.of("success", true, "data", data, "timestamp", now()));
     }
@@ -234,6 +237,7 @@ public class SystemController {
     public ResponseEntity<Map<String, Object>> weeklyAvailabilityHistoryItem(
             @PathVariable Long id, HttpSession session) {
         requireAdmin(session);
+        permissionService.require(session, "system_health.actions", "execute");
         try {
             var data = weeklyAvailabilityReportService.historyItem(id);
             return ResponseEntity.ok(Map.of("success", true, "data", data, "timestamp", now()));

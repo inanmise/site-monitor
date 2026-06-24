@@ -128,6 +128,7 @@ class SmtpAdminControllerTest {
         MockHttpSession s = new MockHttpSession();
         s.setAttribute("authenticated", Boolean.TRUE);
         s.setAttribute("username", "admin");
+        s.setAttribute("bootstrapAdmin", Boolean.TRUE);   // settings gate bayrağı (literal username yerine)
         s.setAttribute("systemRole", "ADMIN");
         return s;
     }

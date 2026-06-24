@@ -32,6 +32,11 @@ public class AuthController {
     @Value("${server.servlet.session.cookie.secure:false}")
     private boolean cookieSecure;
 
+    /** Konfigüre bootstrap admin kullanıcı adı (cert.monitor.username). Settings (SMTP/LDAP/secret/DB)
+     *  geçidi bu kullanıcıyı HER ZAMAN geçirir — literal "admin" yerine (kilitlenme-güvenli). */
+    @Value("${cert.monitor.username:user}")
+    private String bootstrapAdminUsername;
+
     @Value("${cert.monitor.login.max-attempts:10}")
     private int maxLoginAttempts;
 
@@ -471,6 +476,9 @@ public class AuthController {
         session.setAttribute("userId", user.getId());
         session.setAttribute("teamId", user.getTeamId());
         session.setAttribute("systemRole", user.getSystemRole());
+        // Settings (SMTP/LDAP/secret/DB) gate'i için: kullanıcı konfigüre bootstrap admin mi?
+        session.setAttribute("bootstrapAdmin",
+                user.getUsername() != null && user.getUsername().equalsIgnoreCase(bootstrapAdminUsername));
         session.setAttribute("mustChangePassword",
                 Boolean.TRUE.equals(user.getMustChangePassword()));
         // Resolve team name

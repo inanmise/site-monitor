@@ -21,6 +21,7 @@ public final class PermissionCatalog {
         // ── Sertifika Yönetimi ────────────────────────────────────────────
         r("inventory.list",     "certificates", VIEW),
         r("inventory.crud",     "certificates", EDIT),
+        r("inventory.purge",    "certificates", EXECUTE, Set.of(EXECUTE)),   // kalıcı (geri-alınamaz) silme — dedike + sensitive
         r("inventory.transfer", "certificates", "execute", Set.of(EXECUTE)),
         r("notes.read",         "certificates", VIEW),
         r("notes.crud",         "certificates", EDIT),
@@ -44,8 +45,10 @@ public final class PermissionCatalog {
         r("alerts.actions",     "alerts", EXECUTE),
 
         // ── İzleme ────────────────────────────────────────────────────────
-        r("system_health.read",    "monitoring", VIEW),
-        r("system_health.actions", "monitoring", EXECUTE, Set.of(EXECUTE)),
+        r("system_health.read",          "monitoring", VIEW),
+        r("system_health.actions",       "monitoring", EXECUTE, Set.of(EXECUTE)),
+        r("system_health.terminate",     "monitoring", EXECUTE, Set.of(EXECUTE)),   // kullanıcı oturumu sonlandırma (kick)
+        r("system_health.scheduler_lock","monitoring", EXECUTE, Set.of(EXECUTE)),   // dağıtık-kilit force-release
         r("monitoring.read",       "monitoring", VIEW),
         r("monitoring.crud",       "monitoring", EDIT),
         r("monitoring.trigger",    "monitoring", EXECUTE),
@@ -59,10 +62,10 @@ public final class PermissionCatalog {
         r("weekly_reports.crud",    "reports", EDIT),
         r("weekly_reports.approve", "reports", EXECUTE, Set.of(EXECUTE)),
 
-        // ── Olay & Hata Geçmişi (SRE incident ledger) ─────────────────────
-        r("incidents.view",   "reports", VIEW),
-        r("incidents.manage", "reports", EDIT),
-        r("incidents.delete", "reports", EXECUTE, Set.of(EXECUTE)),
+        // ── Olay & Hata Geçmişi (SRE incident ledger) — kendi grubu (reports'tan ayrı) ──
+        r("incidents.view",   "incidents", VIEW),
+        r("incidents.manage", "incidents", EDIT),
+        r("incidents.delete", "incidents", EXECUTE, Set.of(EXECUTE)),
 
         // ── Yönetim Araçları (kritik) ─────────────────────────────────────
         r("diagnostics.run",        "tools", EXECUTE, Set.of(EXECUTE)),
