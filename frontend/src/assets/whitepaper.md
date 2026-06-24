@@ -1,5 +1,5 @@
 # CertMonitor — Kurumsal SSL/TLS Sertifika İzleme Platformu
-## White Paper | Versiyon 18.83.x | Haziran 2026
+## White Paper | Versiyon 19.11.x | Haziran 2026
 
 ---
 
@@ -22,6 +22,7 @@
 15. [Yüksek Erişilebilirlik](#15-yüksek-erişilebilirlik)
 16. [Konfigürasyon Referansı](#16-konfigürasyon-referansı)
 17. [Sürüm ve Yayın Bilgisi](#17-sürüm-ve-yayın-bilgisi)
+18. [Production Dağıtım & Güvenlik Checklist'i](#18-production-dağıtım--güvenlik-checklisti)
 
 ---
 
@@ -1860,7 +1861,7 @@ Birden fazla pod aynı anda tarama yapmaz. DB tabanlı kilit (TTL: 10 dk) yalnı
 
 | Bilgi | Değer |
 |---|---|
-| Güncel Versiyon | 18.83.x |
+| Güncel Versiyon | 19.11.x |
 | Java Versiyonu | 25 (LTS) |
 | Spring Boot | 4.1.0 (Spring Framework 7, Jakarta EE 11) |
 | BouncyCastle | 1.78.1 |
@@ -1868,11 +1869,43 @@ Birden fazla pod aynı anda tarama yapmaz. DB tabanlı kilit (TTL: 10 dk) yalnı
 | PostgreSQL | 16-alpine |
 | Docker Image | `ghcr.io/inanmise/certmonitor` |
 | Helm Chart | `ghcr.io/inanmise/certmonitor-chart` |
-| Backend Test Sayısı | 835 |
-| Frontend Test Sayısı | 121 |
+| Backend Test Sayısı | 1024 |
+| Frontend Test Sayısı | 168 |
 | Desteklenen Diller | Türkçe / İngilizce |
 | Lisans | Kurumsal kullanım |
 | Geliştirici | inanmise (erdi.inanmis@gmail.com) |
+
+### 19.x Sürüm Vurguları (bu sürüm — Haziran 2026)
+
+- **İzleme detay grafikleri:** Keyword/Ping izleme kartına tıklayınca açılan modal **üç sekme** (Kontrol
+  Geçmişi / Alarm Geçmişi / **Süre Grafiği**). Süre grafiği keyword için HTTP yanıt süresi, ping için RTT'yi
+  **30/90 güne** kadar gösterir: **ortalama + min/max bandı + p95**, kesinti kovaları kırmızı, ping'de **paket
+  kaybı (%) ikinci eksende**. Hazır aralık (24s/7g/30g/90g) + **özel aralık** (x gün önce şu saatler arası).
+  recharts tembel-yüklenir.
+- **Per-monitor doğrulama:** Keyword/Ping alarmı girilirken **doğrulama denemesi sayısı + aralık** kullanıcıdan
+  alınır (varsayılan 30sn × 3); yanlış pozitifleri azaltır.
+- **SystemHealth — Kullanıcı & Oturum:**
+  - **Login aktivite zaman-serisi grafiği** (ResponseTimeChart deseni): X=zaman, Y=login adedi; toplam + başarılı/
+    başarısız çizgileri → gün-içi/günler-arası artış-azalış. 1g/7g/30g + **istenen güne git** (saatlik) + **özel
+    aralık** ("x gün x saat").
+  - **Aktivite heatmap** (hafta-günü × saat): **ISO hafta (Pzt–Paz)**, **bugün satırı vurgulu**, **gün/saat/hafta
+    toplamları**; tek hafta tam-genişlik **büyük** gösterim + **Önceki/Sonraki Hafta** ile **4 hafta** geriye gezme.
+  - **Reverse-DNS:** login anında PTR çözümü kaydedilir; "en çok login kaynakları"nda IP yanında DNS adı.
+  - **En çok login kullanıcılar** + rol/takım drill-down: **ad-soyad + AD fotoğrafı** (case-insensitive eşleştirme).
+- **Proje-geneli kullanıcı kimliği:** username görünen her yer ortak **`UserBadge`** ile **ad-soyad + avatar**
+  gösterir (denetim kaydı actor, haftalık rapor oluşturan/onaylayan, sertifika not yazarı, alarm ack/çözen +
+  bildirilen alıcılar, eskalasyon kontakları). Hafif **`/api/users/directory`** (username/e-posta → ad/foto).
+- **Olay (incident) modülü:** **Problem Tipi** (çoklu seçim), **Etkilenen Uygulama/Sistemler/Müşteri-Adedi/
+  İşlem-Adedi** alanları; combobox seçenekleri (Kanal/Servis/Hata-kodu/Fonksiyon-kodu) **takıma özel** (bir
+  takımın eklediği değer diğerine sızmaz); tarih alanları **tam-dakika** + "Tamam" butonu; combobox placeholder'ları;
+  günlük trend grafiği okunaklı (olaysız günler + tarih/adet etiketleri).
+- **OpenShift sağlamlaştırma:** Actuator **probe grupları** (`/health/readiness`, `/health/liveness`) +
+  **readiness-gating** (açılış bootstrap'ı boyunca `REFUSING_TRAFFIC`) → pod yalnız gerçekten hazır olunca trafiğe
+  girer ("Ready ama ilk istekler askıda" sorunu çözüldü); liveness DB'den bağımsız (gereksiz restart yok); warmup CPU tavanı.
+- **Güvenlik (prod-öncesi):** Settings (SMTP/LDAP/Secret/DB) erişimi **konfigüre bootstrap-admin** bayrağıyla
+  (literal "admin" değil → kilitlenme-güvenli); yıkıcı işlemler için **dedike+sensitive yetkiler** (`inventory.purge`,
+  `system_health.terminate`, `system_health.scheduler_lock`); `incidents.*` kendi izin grubunda; **parola politikası**
+  min 12 / max 64 / history 5.
 
 ### Platform Yükseltmesi — JDK 25 + Spring Boot 4.1 (Haziran 2026)
 
@@ -1916,5 +1949,53 @@ Birden fazla pod aynı anda tarama yapmaz. DB tabanlı kilit (TTL: 10 dk) yalnı
 
 ---
 
-*Bu belge CertMonitor v18.83.x için Haziran 2026 itibarıyla hazırlanmıştır.*  
+## 18. Production Dağıtım & Güvenlik Checklist'i
+
+CertMonitor'ın **varsayılan konfigürasyonu yerel geliştirme** içindir; kod default'ları kasıtlı olarak
+güvensizdir ve prod profilinde / ortam değişkenleriyle override edilir. **Prod'a çıkmadan önce** aşağıdakiler
+ayarlanmalıdır.
+
+### 18.1 Zorunlu (güvenlik-kritik)
+
+| Değişken | Neden | Güvensiz Default |
+|---|---|---|
+| `CERT_MONITOR_SECRET_KEY` | Saklanan LDAP/SMTP parolaları AES-GCM ile bu anahtarla şifrelenir. Boşsa dahili **dev anahtarına** düşer → sırlar kaynak koduna erişen herkesçe çözülebilir. **≥32 rastgele karakter, kalıcı.** | boş → dev anahtarı |
+| `CERT_MONITOR_USERNAME` / `CERT_MONITOR_PASSWORD` | Bootstrap admin kimliği (zayıf default). | `user` / `password` |
+| `CORS_ALLOWED_ORIGINS` | Yalnız prod host(lar)ına izin ver. | `localhost:5173/3000` |
+| `COOKIE_SECURE=true` | Oturum çerezi yalnız HTTPS üzerinden (oturum çalınmasını önler). | `false` (prod profilinde `true`) |
+| `DB_PASSWORD` | PostgreSQL parolası (prod profilinde zorunlu, default yok). | — |
+
+### 18.2 Önerilen
+
+| Değişken | Açıklama |
+|---|---|
+| `APP_BASE_URL=https://<host>` | E-posta linkleri (haftalık rapor, şifre sıfırlama, olay) bu adresi kullanır; yoksa localhost. |
+| `SYSTEM_ADMIN_EMAIL` | Ağ-kesinti/sistem bildirimleri buraya gider — kişisel default'u override edin. |
+| `CERT_MONITOR_EMAIL_ENABLED=true` + SMTP | E-posta kapalıyken alarm/eskalasyon/olay bildirimleri **sessizce gönderilmez**. |
+| `SPRING_SESSION_STORE_TYPE=jdbc` | Pod restart'larında oturumlar korunur (HA). |
+| `PASSWORD_MIN_LENGTH` / `MAX_LENGTH` / `HISTORY_COUNT` | Varsayılanlar prod-uygun (12 / 64 / 5); kurumsal politikaya göre artırılabilir. |
+
+### 18.3 Erişim & Yetki
+
+- **Bootstrap-admin geçidi:** SMTP/LDAP/Secret/DB/General ayarlarına `cert.monitor.username` ile tanımlı bootstrap
+  admin HER ZAMAN erişir (literal "admin" değil) → admin `CERT_MONITOR_USERNAME` ile yeniden adlandırılsa da
+  kilitlenmez; "admin" adlı başka kullanıcı bypass alamaz.
+- **Permission Matrix:** ADMIN tüm yetkilere sahiptir (UI'da kilitli, revoke edilemez). **Yıkıcı işlemler**
+  (`inventory.purge`, `system_health.terminate`, `system_health.scheduler_lock`) **sensitive** — matriste grant
+  verirken onay ister; sistem-geneli iki işlem ayrıca admin-gated kalır.
+- Default grant'ler ilk açılışta seed'lenir; yeni sürümlerin eklediği yetkiler `seedMissingDefaults` ile mevcut
+  DB'ye backfill edilir (admin özelleştirmeleri korunur).
+
+### 18.4 OpenShift / Kubernetes
+
+- Sağlık probe'ları Actuator gruplarını kullanır: `livenessProbe → /health/liveness` (DB'den bağımsız → DB blip'i
+  pod'u restart ettirmez), `readinessProbe` + `startupProbe → /health/readiness`. Uygulama açılış bootstrap'ı
+  boyunca readiness'i `REFUSING_TRAFFIC` tutar → **pod yalnız gerçekten hazır olunca** Service endpoint'lerine
+  girer (soğuk-başlangıçta "Ready ama ilk istekler askıda" sorunu yaşanmaz).
+- Dağıtım: `helm upgrade` ile chart (`certmonitor-chart`) + imaj güncellenir; `oc rollout status` ile doğrulanır.
+  Soğuk-başlangıç CPU tavanı (resources.limits.cpu) warmup'ı hızlandırır.
+
+---
+
+*Bu belge CertMonitor v19.11.x için Haziran 2026 itibarıyla hazırlanmıştır.*  
 *Güncellemeler için: "raporu güncelle" komutu ile belge yenilenebilir.*
