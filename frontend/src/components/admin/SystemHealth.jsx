@@ -8,38 +8,7 @@ import HeartbeatHistoryModal from './HeartbeatHistoryModal'
 import LoginHeatmap from './LoginHeatmap'
 import DateTimeField from '../ui/DateTimeField.jsx'
 
-// Kullanıcı rozeti: AD resmi (varsa /api/admin/users/{id}/photo) + ad-soyad/kullanıcı adı; resim
-// yoksa baş-harf rozeti. Top kullanıcılar + rol/takım drill-down'da kullanılır.
-function avatarBg(s) {
-  let h = 0; for (let i = 0; i < (s || '').length; i++) h = (h * 31 + s.charCodeAt(i)) % 360
-  return `hsl(${h} 45% 52%)`
-}
-function initialsOf(name, username) {
-  const base = (name || username || '?').trim()
-  const p = base.split(/\s+/)
-  return (((p[0]?.[0] || '') + (p[1]?.[0] || '')).toUpperCase()) || base[0]?.toUpperCase() || '?'
-}
-function UserBadge({ user, count }) {
-  const [imgErr, setImgErr] = useState(false)
-  const name = user.display_name || user.username
-  return (
-    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, minWidth: 0, width: '100%' }}>
-      {user.user_id != null && !imgErr ? (
-        <img src={`/api/admin/users/${user.user_id}/photo`} alt="" onError={() => setImgErr(true)}
-          style={{ width: 26, height: 26, borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }} />
-      ) : (
-        <span style={{ width: 26, height: 26, borderRadius: '50%', flexShrink: 0, color: '#fff', fontSize: 11,
-          fontWeight: 700, display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-          background: avatarBg(user.username) }}>{initialsOf(user.display_name, user.username)}</span>
-      )}
-      <span style={{ minWidth: 0, lineHeight: 1.25 }}>
-        <span style={{ fontWeight: 600 }}>{name}</span>
-        {user.display_name && <span className="sys-mono sys-small sys-muted" style={{ display: 'block' }}>{user.username}</span>}
-      </span>
-      {count != null && <span style={{ marginLeft: 'auto', fontWeight: 700 }}>{count}</span>}
-    </span>
-  )
-}
+import UserBadge from '../ui/UserBadge.jsx'   // proje-geneli ortak kullanıcı rozeti (avatar + ad-soyad)
 
 function SmtpStatusCell({ row, t }) {
   const cfg = {
@@ -1417,7 +1386,7 @@ export default function SystemHealth({ systemRole, globalAdmin = false, preFilte
                       {sortedActive.map(u => (
                         <tr key={u.username} className="uact-row-click" style={{ cursor: 'pointer' }}
                           title={t('uact.detailHint')} onClick={() => setSessionDetail(u)}>
-                          <td className="sys-mono">{u.username}{u.display_name ? <span className="sys-muted sys-small"> ({u.display_name})</span> : null}</td>
+                          <td><UserBadge username={u.username} userId={u.user_id} displayName={u.display_name} /></td>
                           <td>{u.system_role || '—'}</td>
                           <td>{u.team_name || '—'}</td>
                           <td className="sys-mono sys-small">{u.login_at ? formatDateSec(u.login_at) : '—'}</td>
@@ -1450,7 +1419,7 @@ export default function SystemHealth({ systemRole, globalAdmin = false, preFilte
                     <tbody>
                       {(ua.top_users || []).map(r => (
                         <tr key={r.username}>
-                          <td><UserBadge user={r} /></td>
+                          <td><UserBadge username={r.username} userId={r.user_id} displayName={r.display_name} /></td>
                           <td className="dbtcol-num-cell">{r.logins}</td>
                           <td className="sys-mono sys-small">{r.last_login ? formatDateSec(r.last_login) : '—'}</td>
                         </tr>
@@ -1508,7 +1477,7 @@ export default function SystemHealth({ systemRole, globalAdmin = false, preFilte
                         {anomalies.recent.map((r, i) => (
                           <tr key={i}>
                             <td className="sys-mono sys-small">{r.time ? formatDateSec(r.time) : '—'}</td>
-                            <td className="sys-mono">{r.actor || '—'}</td>
+                            <td>{r.actor ? <UserBadge username={r.actor} inline size="sm" /> : '—'}</td>
                             <td className="sys-mono sys-small">{r.ip || '—'}</td>
                             <td className="sys-small">{locStr(r.country, r.city)}</td>
                             <td className="sys-small">{r.flags || '—'}</td>
@@ -1538,7 +1507,7 @@ export default function SystemHealth({ systemRole, globalAdmin = false, preFilte
                           </tr>
                           {expRole === r.role && r.users?.length > 0 && (
                             <tr><td colSpan={2} style={{ padding: '4px 10px', background: 'var(--bg-subtle, #f8fafc)' }}>
-                              {r.users.map(u => <div key={u.username} style={{ padding: '3px 0' }}><UserBadge user={u} count={u.count} /></div>)}
+                              {r.users.map(u => <div key={u.username} style={{ padding: '3px 0' }}><UserBadge username={u.username} userId={u.user_id} displayName={u.display_name} count={u.count} /></div>)}
                             </td></tr>
                           )}
                         </Fragment>
@@ -1563,7 +1532,7 @@ export default function SystemHealth({ systemRole, globalAdmin = false, preFilte
                           </tr>
                           {expTeam === i && r.users?.length > 0 && (
                             <tr><td colSpan={2} style={{ padding: '4px 10px', background: 'var(--bg-subtle, #f8fafc)' }}>
-                              {r.users.map(u => <div key={u.username} style={{ padding: '3px 0' }}><UserBadge user={u} count={u.count} /></div>)}
+                              {r.users.map(u => <div key={u.username} style={{ padding: '3px 0' }}><UserBadge username={u.username} userId={u.user_id} displayName={u.display_name} count={u.count} /></div>)}
                             </td></tr>
                           )}
                         </Fragment>
@@ -1619,7 +1588,7 @@ export default function SystemHealth({ systemRole, globalAdmin = false, preFilte
                         {list.map((r, i) => (
                           <tr key={i}>
                             <td className="sys-mono sys-small">{r.time ? formatDateSec(r.time) : '—'}</td>
-                            <td className="sys-mono">{r.actor || '—'}</td>
+                            <td>{r.actor ? <UserBadge username={r.actor} inline size="sm" /> : '—'}</td>
                             <td className="sys-mono sys-small">{r.ip || '—'}</td>
                             <td className="sys-small">{locStr(r.country, r.city)}</td>
                             <td className="sys-small">{r.outcome === 'SUCCESS'
@@ -1693,7 +1662,7 @@ export default function SystemHealth({ systemRole, globalAdmin = false, preFilte
                         {rows.map((r, i) => (
                           <tr key={i}>
                             <td className="sys-mono sys-small">{r.time ? formatDateSec(r.time) : '—'}</td>
-                            <td className="sys-mono">{r.actor || '—'}</td>
+                            <td>{r.actor ? <UserBadge username={r.actor} inline size="sm" /> : '—'}</td>
                             <td className="sys-mono sys-small">{r.ip || '—'}</td>
                             <td className="sys-small">{locStr(r.country, r.city)}</td>
                             {isAnom && <td className="sys-small">{r.flags || '—'}</td>}
@@ -1894,7 +1863,7 @@ export default function SystemHealth({ systemRole, globalAdmin = false, preFilte
                           <tr key={u.username} className="uact-row-click" style={{ cursor: 'pointer' }}
                             title={t('uact.detailHint')}
                             onClick={() => setSessionDetail(u)}>
-                            <td className="sys-mono">{u.username}{u.display_name ? <span className="sys-muted sys-small"> ({u.display_name})</span> : null}</td>
+                            <td><UserBadge username={u.username} userId={u.user_id} displayName={u.display_name} /></td>
                             <td>{u.system_role || '—'}</td>
                             <td>{u.team_name || '—'}</td>
                             <td className="sys-mono sys-small">{u.login_at ? formatDateSec(u.login_at) : '—'}</td>

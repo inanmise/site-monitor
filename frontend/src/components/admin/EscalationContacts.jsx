@@ -4,6 +4,7 @@ import { useDialog } from '../ui/Dialog.jsx'
 import { useT } from '../../i18n/index.jsx'
 import SearchableSelect from '../ui/SearchableSelect.jsx'
 import KebabMenu from '../ui/KebabMenu.jsx'
+import UserBadge from '../ui/UserBadge.jsx'
 
 const ROLES  = ['PO', 'TECH', 'MANAGER', 'CLEVEL']
 const LEVELS = ['WARNING', 'HIGH', 'CRITICAL']
@@ -176,7 +177,7 @@ export default function EscalationContacts({ teams = [], systemRole, isAdmin: is
             )}
             {pagedContacts.map((c) => (
               <tr key={c.id}>
-                <td>{c.name}</td>
+                <td><UserBadge displayName={c.name} email={c.email} inline size="sm" /></td>
                 <td>{c.email}</td>
                 <td>{teamMap[c.team_id] || '—'}</td>
                 <td><span className="role-badge">{roleLabelMap[c.role] || c.role}</span></td>
