@@ -106,6 +106,25 @@ public class IncidentRecord {
     @Column(length = 255)
     private String affectedServices;
 
+    /** Problem tipi — çoklu seçim CSV (Performans/kodlama, Test/kontrol eksikliği, Operasyonel Hata,
+     *  Analiz eksikliği, Konfigürasyon, Dış Firma Kaynaklı, Donanım Arızası, Plansız Değişiklik, Diğer). */
+    @Column(length = 500)
+    private String problemTypes;
+
+    /** Etkilenen uygulama adı — serbest metin. */
+    @Column(length = 255)
+    private String affectedApp;
+
+    /** Etkilenen sistemler — serbest metin. */
+    @Column(length = 500)
+    private String affectedSystems;
+
+    /** Etkilenen müşteri adedi — opsiyonel. */
+    private Integer affectedCustomers;
+
+    /** Etkilenen işlem adedi — opsiyonel. */
+    private Integer affectedTransactions;
+
     @Column(nullable = false)
     private Boolean slaBreached = false;
 

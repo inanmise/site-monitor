@@ -32,8 +32,16 @@ const EMPTY = {
   title: '', occurred_at: '', severity: 'HIGH', status: 'OPEN', category: 'APPLICATION',
   error_code: '', function_code: '', channel_code: '', service: '', channel: '', team_id: '', team_name: '', detected_at: '', resolved_at: '',
   rca_summary: '', description: '', resolution_steps: '', business_impact: '',
-  affected_services: '', sla_breached: false, error_budget_burn_pct: '', duration_minutes: '', tags: '',
+  affected_services: '', problem_types: '', affected_app: '', affected_systems: '',
+  affected_customers: '', affected_transactions: '',
+  sla_breached: false, error_budget_burn_pct: '', duration_minutes: '', tags: '',
 }
+
+// Problem tipi — sabit ana maddeler (combobox'ta çoklu seçilir; gerekirse serbest ekleme de yapılabilir).
+const PROBLEM_TYPES = [
+  'Performans/Kodlama', 'Test/Kontrol Eksikliği', 'Operasyonel Hata', 'Analiz Eksikliği',
+  'Konfigürasyon', 'Dış Firma Kaynaklı', 'Donanım Arızası', 'Plansız Değişiklik', 'Diğer',
+]
 
 // ── Modül seviyesi alan bileşenleri (stabil kimlik → input remount/odak kaybı OLMAZ) ──
 function TextInput({ label, value, onChange, disabled, type = 'text', req, full }) {
@@ -654,6 +662,8 @@ function IncidentModal({ modal, setModal, save, remove, saving, allowManage, all
           <CreatableMultiSelect label={t('inc.fService')} value={f.service} disabled={!editing}
             options={domainOpts} onChange={v => set('service', v)}
             onCreate={v => onAddOption('DOMAIN', v)} onDelete={v => onDeleteOption('DOMAIN', v)} />
+          <CreatableMultiSelect label={t('inc.fProblemType')} value={f.problem_types} disabled={!editing}
+            options={PROBLEM_TYPES} onChange={v => set('problem_types', v)} />
           <SelectInput label={t('inc.fSeverity')} value={f.severity} disabled={!editing} onChange={v => set('severity', v)} options={opts(SEVERITIES, 'inc.sev')} />
           <SelectInput label={t('inc.fStatus')} value={f.status} disabled={!editing} onChange={v => set('status', v)} options={opts(STATUSES, 'inc.st')} />
           <SelectInput label={t('inc.fCategory')} value={f.category} disabled={!editing} onChange={v => set('category', v)} options={opts(CATEGORIES, 'inc.cat')} />
@@ -674,6 +684,10 @@ function IncidentModal({ modal, setModal, save, remove, saving, allowManage, all
             onChange={v => set('duration_minutes', v)} />
           <CheckInput label={t('inc.fSla')} checked={f.sla_breached} disabled={!editing} onChange={v => set('sla_breached', v)} />
           <TextInput label={t('inc.fAffected')} full value={f.affected_services} disabled={!editing} onChange={v => set('affected_services', v)} />
+          <TextInput label={t('inc.fAffectedApp')} full value={f.affected_app} disabled={!editing} onChange={v => set('affected_app', v)} />
+          <TextInput label={t('inc.fAffectedSystems')} full value={f.affected_systems} disabled={!editing} onChange={v => set('affected_systems', v)} />
+          <TextInput label={t('inc.fAffectedCustomers')} type="number" value={f.affected_customers} disabled={!editing} onChange={v => set('affected_customers', v)} />
+          <TextInput label={t('inc.fAffectedTransactions')} type="number" value={f.affected_transactions} disabled={!editing} onChange={v => set('affected_transactions', v)} />
           <TagInput label={t('inc.fTags')} value={f.tags} disabled={!editing} t={t} onChange={v => set('tags', v)} />
           <MdArea label={t('inc.fRca')} value={f.rca_summary} editable={editing} incidentId={f.id} makeUniqueCaption={makeUniqueCaption} onChange={v => set('rca_summary', v)} />
           <MdArea label={t('inc.fDescription')} value={f.description} editable={editing} incidentId={f.id} makeUniqueCaption={makeUniqueCaption} onChange={v => set('description', v)} />
