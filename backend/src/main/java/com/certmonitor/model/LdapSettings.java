@@ -3,6 +3,7 @@ package com.certmonitor.model;
 import jakarta.persistence.*;
 import lombok.Data;
 import lombok.NoArgsConstructor;
+import lombok.ToString;
 
 /**
  * Singleton (id=1) row holding the runtime-editable LDAP / Active Directory
@@ -51,6 +52,7 @@ public class LdapSettings {
     private String bindDn;
 
     /** AES-GCM encrypted service-account password. Never serialized to the client. */
+    @ToString.Exclude   // şifreli de olsa bind parolası toString/log'a sızmasın
     @Column(name = "bind_password_enc", columnDefinition = "TEXT")
     private String bindPasswordEnc;
 

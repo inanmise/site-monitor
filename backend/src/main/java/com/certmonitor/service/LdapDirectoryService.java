@@ -455,6 +455,11 @@ public class LdapDirectoryService {
         String base = s.getUserSearchFilter();
 
         if (searchAttr != null && !searchAttr.isBlank()) {
+            // Değer escapeFilter'lı ama attribute ADI da filtreye gömülüyor → LDAP filtre injection'ı
+            // önlemek için yalnız geçerli attribute adı kabul et (admin-gated uçta savunma derinliği).
+            if (!searchAttr.matches("[a-zA-Z][a-zA-Z0-9-]*")) {
+                throw new IllegalArgumentException("Geçersiz arama attribute adı: " + searchAttr);
+            }
             String inner = "(" + searchAttr + "=" + esc + ")";
             // Combine with a plain base filter (skip when base is a {{username}} template).
             if (base != null && !base.isBlank() && !base.contains("{{username}}")) {
