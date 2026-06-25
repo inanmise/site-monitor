@@ -59,6 +59,10 @@ public interface AlertEventRepository extends JpaRepository<AlertEvent, Long> {
               AND (:resolvedUntil IS NULL OR e.resolvedAt <= :resolvedUntil)
               AND (:domain IS NULL OR e.domain = :domain)
               AND (:alertType IS NULL OR e.alertType = :alertType)
+              AND (:scoped = FALSE OR e.teamId IN :scope OR EXISTS (
+                      SELECT 1 FROM CertificateInventory i
+                       WHERE i.domain = e.domain
+                         AND (i.teamId IN :scope OR i.ugTeamId IN :scope)))
             """)
     Page<AlertEvent> findFiltered(
             @Param("resolved") Boolean resolved,
@@ -68,6 +72,8 @@ public interface AlertEventRepository extends JpaRepository<AlertEvent, Long> {
             @Param("resolvedUntil") String resolvedUntil,
             @Param("domain") String domain,
             @Param("alertType") String alertType,
+            @Param("scoped") boolean scoped,
+            @Param("scope") List<Long> scope,
             Pageable pageable);
 
     /** Tip filtre pill'lerinin canlı sayıları — findFiltered ile aynı filtreler,
@@ -80,6 +86,10 @@ public interface AlertEventRepository extends JpaRepository<AlertEvent, Long> {
               AND (:resolvedSince IS NULL OR e.resolvedAt >= :resolvedSince)
               AND (:resolvedUntil IS NULL OR e.resolvedAt <= :resolvedUntil)
               AND (:domain IS NULL OR e.domain = :domain)
+              AND (:scoped = FALSE OR e.teamId IN :scope OR EXISTS (
+                      SELECT 1 FROM CertificateInventory i
+                       WHERE i.domain = e.domain
+                         AND (i.teamId IN :scope OR i.ugTeamId IN :scope)))
             GROUP BY e.alertType
             """)
     List<Object[]> countFilteredByType(
@@ -88,7 +98,9 @@ public interface AlertEventRepository extends JpaRepository<AlertEvent, Long> {
             @Param("until") String until,
             @Param("resolvedSince") String resolvedSince,
             @Param("resolvedUntil") String resolvedUntil,
-            @Param("domain") String domain);
+            @Param("domain") String domain,
+            @Param("scoped") boolean scoped,
+            @Param("scope") List<Long> scope);
 
     /** Domain rename: alarm geçmişini yeni domain'e taşı.
      *  Caller'da @Transactional zorunlu. */

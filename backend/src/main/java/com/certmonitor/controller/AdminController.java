@@ -820,14 +820,23 @@ public class AdminController {
         Sort sort = Boolean.TRUE.equals(resolvedEffective)
                 ? Sort.by(Sort.Direction.DESC, "resolvedAt").and(Sort.by(Sort.Direction.DESC, "createdAt"))
                 : Sort.by(Sort.Direction.DESC, "createdAt");
+        // Takım kapsamı (IDOR engeli): global viewer (admin/AUDIT) tümünü; aksi halde alarmın takımı
+        // (keyword/ping: e.teamId; cert: domain→envanter SY/UG) çağıranın görüntüleme kapsamında olmalı.
+        List<Long> scope = SessionScope.isGlobalViewer(session) ? null : SessionScope.viewTeamIds(session);
+        boolean scoped = scope != null;
+        if (scoped && scope.isEmpty()) {   // kapsamsız kullanıcı → hiçbir alarm
+            return ok(Map.of("data", List.of(), "total", 0L, "page", 0, "size", sz,
+                    "type_counts", java.util.Map.of()));
+        }
+        List<Long> scopeList = scoped ? scope : List.of(-1L);   // global'de dummy (scoped=false kısa-devre)
         Page<AlertEvent> result = alertEventRepo.findFiltered(
                 resolvedEffective, since, until, resolvedSince, resolvedUntil, domain, alertTypeEffective,
-                PageRequest.of(Math.max(0, page), sz, sort));
+                scoped, scopeList, PageRequest.of(Math.max(0, page), sz, sort));
         enrichAlerts(result.getContent());
         // Tip filtre pill'lerinin canlı sayıları — tip filtresinden bağımsız
         Map<String, Long> typeCounts = new java.util.LinkedHashMap<>();
         for (Object[] row : alertEventRepo.countFilteredByType(
-                resolvedEffective, since, until, resolvedSince, resolvedUntil, domain)) {
+                resolvedEffective, since, until, resolvedSince, resolvedUntil, domain, scoped, scopeList)) {
             typeCounts.put(String.valueOf(row[0]), (Long) row[1]);
         }
         return ok(Map.of(
@@ -898,6 +907,7 @@ public class AdminController {
             @PathVariable Long id,
             HttpSession session, HttpServletRequest request) {
         requirePerm(session, "alerts.actions", "execute");
+        requireAlertScope(session, id);   // takım kapsamı (IDOR engeli)
         String by = resolveDisplayName(session);
         AlertEvent event = escalationService.acknowledge(id, by);
         auditService.recordAction("ALERT_ACKNOWLEDGE", session, request,
@@ -911,6 +921,7 @@ public class AdminController {
             @PathVariable Long id,
             HttpSession session, HttpServletRequest request) {
         requirePerm(session, "alerts.actions", "execute");
+        requireAlertScope(session, id);   // takım kapsamı (IDOR engeli)
         String by = resolveDisplayName(session);
         AlertEvent event = escalationService.resolve(id, by);
         auditService.recordAction("ALERT_RESOLVE", session, request,
@@ -923,6 +934,7 @@ public class AdminController {
     public ResponseEntity<Map<String, Object>> reNotifyAlert(
             @PathVariable Long id, HttpSession session) {
         requirePerm(session, "alerts.actions", "execute");
+        requireAlertScope(session, id);   // takım kapsamı (IDOR engeli)
         return ok(Map.of("data", escalationService.reNotify(id), "message", "Notification triggered"));
     }
 
@@ -930,7 +942,34 @@ public class AdminController {
     public ResponseEntity<Map<String, Object>> getAlertNotifications(
             @PathVariable Long id, HttpSession session) {
         requirePerm(session, "alerts.read", "view");
+        requireAlertScope(session, id);   // takım kapsamı (IDOR engeli)
         return ok(Map.of("data", notificationLogRepo.findByAlertEventIdOrderBySentAtDesc(id)));
+    }
+
+    // ── Alarm takım kapsamı (IDOR engeli) ─────────────────────────────────────
+    /** Bir alarmın ait olabileceği takım id'leri: kendi teamId'si (keyword/ping) + cert alarmında
+     *  domain→envanter (SY teamId + UG ugTeamId). cert alarmlarında teamId NULL olduğundan envanter şart. */
+    private java.util.Set<Long> alertTeamIds(AlertEvent ev) {
+        java.util.Set<Long> ids = new java.util.HashSet<>();
+        if (ev.getTeamId() != null) ids.add(ev.getTeamId());
+        if (ev.getDomain() != null) {
+            inventoryRepo.findByDomain(ev.getDomain()).ifPresent(inv -> {
+                if (inv.getTeamId()   != null) ids.add(inv.getTeamId());
+                if (inv.getUgTeamId() != null) ids.add(inv.getUgTeamId());
+            });
+        }
+        return ids;
+    }
+
+    /** Alarm takıma-gizli: global viewer (admin/AUDIT) tümünü; aksi halde alarmın takım(lar)ından
+     *  biri çağıranın görüntüleme kapsamında olmalı (yoksa 403). Global olmayanda alarmı yükler. */
+    private void requireAlertScope(HttpSession session, Long id) {
+        if (SessionScope.isGlobalViewer(session)) return;
+        List<Long> v = SessionScope.viewTeamIds(session);
+        AlertEvent ev = alertEventRepo.findById(id)
+                .orElseThrow(() -> new NoSuchElementException("Alert not found: " + id));
+        if (v != null) for (Long t : alertTeamIds(ev)) if (v.contains(t)) return;
+        throw new SecurityException("Bu alarm sizin takım(lar)ınıza ait değil");
     }
 
     // ── Teams (ADMIN only) ────────────────────────────────────────────────────
