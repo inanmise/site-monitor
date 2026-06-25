@@ -92,6 +92,27 @@ class AuthControllerTest {
                 .andExpect(jsonPath("$.must_change_password").value(false));
     }
 
+    @Test
+    @DisplayName("Aktif oturum CANONICAL username ile kaydedilir (AD case farkı aktif sayımı bozmasın)")
+    void login_recordsActiveSessionWithCanonicalUsername() throws Exception {
+        // Kullanıcı farklı case ile girer ("TestUser"); DB canonical "testuser". AD girişinde tipik.
+        when(userService.findByUsername("TestUser")).thenReturn(Optional.of(testUser));
+        when(userService.authenticate("TestUser", "testpass")).thenReturn(Optional.of(testUser));
+
+        mvc.perform(post("/api/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"username\":\"TestUser\",\"password\":\"testpass\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true));
+
+        // recordActiveSession YAZILAN case ("TestUser") ile DEĞİL, canonical user.getUsername() ("testuser")
+        // ile çağrılmalı — aksi halde findByUsername (case-sensitive) satırı bulamaz, kullanıcı aktif sayılmaz.
+        org.mockito.Mockito.verify(userService).recordActiveSession(
+                org.mockito.ArgumentMatchers.eq("testuser"), org.mockito.ArgumentMatchers.any());
+        org.mockito.Mockito.verify(userService, org.mockito.Mockito.never()).recordActiveSession(
+                org.mockito.ArgumentMatchers.eq("TestUser"), org.mockito.ArgumentMatchers.any());
+    }
+
     // ── Tek aktif oturum onayı ────────────────────────────────────────────────
 
     @Test
