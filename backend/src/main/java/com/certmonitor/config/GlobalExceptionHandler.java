@@ -1,7 +1,9 @@
 package com.certmonitor.config;
 
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.dao.TransientDataAccessException;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.validation.FieldError;
@@ -107,6 +109,18 @@ public class GlobalExceptionHandler {
         String msg = e.getReason() != null ? e.getReason() : e.getMessage();
         return ResponseEntity.status(e.getStatusCode())
                 .body(Map.of("success", false, "error", msg));
+    }
+
+    /** Veritabanına erişilemiyor (bağlantı kurulamadı / havuz tükendi) ya da geçici DB hatası → 503 (geçici,
+     *  tekrar denenebilir). DataAccessResourceFailureException = "Unable to acquire JDBC Connection" (postgres
+     *  blip'i / havuz boş); CannotGetJdbcConnectionException onun alt-sınıfı → kapsanır. Bad SQL grammar gibi
+     *  KALICI DAO hataları bu handler'a düşmez → jenerik 500'de kalır. WARN (blipte ERROR yığını basmasın). */
+    @ExceptionHandler({DataAccessResourceFailureException.class, TransientDataAccessException.class})
+    public ResponseEntity<Map<String, Object>> handleDbUnavailable(Exception e) {
+        log.warn("Veritabanına erişilemiyor (geçici): {}", e.toString());
+        return ResponseEntity.status(503)
+                .body(Map.of("success", false,
+                        "error", "Veritabanına şu anda ulaşılamıyor, lütfen birazdan tekrar deneyin"));
     }
 
     /**

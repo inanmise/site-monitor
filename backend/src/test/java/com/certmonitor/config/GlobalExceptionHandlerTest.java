@@ -132,6 +132,16 @@ class GlobalExceptionHandlerTest {
     }
 
     @Test
+    @DisplayName("DataAccessResourceFailureException (DB erişilemez/havuz boş) → 503 geçici")
+    void dbUnavailable_returns503() {
+        ResponseEntity<Map<String, Object>> r = handler.handleDbUnavailable(
+                new org.springframework.dao.DataAccessResourceFailureException("Unable to acquire JDBC Connection"));
+        assertEquals(503, r.getStatusCode().value());
+        assertEquals(false, r.getBody().get("success"));
+        assertTrue(((String) r.getBody().get("error")).contains("ulaşılamıyor"));
+    }
+
+    @Test
     @DisplayName("Beklenmeyen Exception → 500 + jenerik mesaj (stack trace sızmaz)")
     void generic() {
         ResponseEntity<Map<String, Object>> r = handler.handleGeneric(
