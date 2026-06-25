@@ -70,7 +70,7 @@ public class KeywordMonitor {
     /** Recovery period: alarmın otomatik kapanması için gereken ardışık başarılı kontrol sayısı
      *  (varsayılan 1 = ilk başarılı kontrolde kapat). */
     @Column(name = "recovery_checks")
-    private Integer recoveryChecks = 1;
+    private Integer recoveryChecks = 3;
 
     /** Cache busting: satır başına "Name: Value" özel HTTP header'ları (ör. Cache-Control: no-cache).
      *  URL'de {timestamp} placeholder'ı her kontrolde güncel Unix saniye ile değiştirilir. */

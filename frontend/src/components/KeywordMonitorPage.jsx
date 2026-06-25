@@ -17,7 +17,7 @@ const INTERVALS = [
 const REFRESH_INTERVAL = 60
 const OP_SYM = { GTE: '≥', LTE: '≤', EQ: '=', GT: '>', LT: '<' }
 const emptyForm = { name: '', url: '', keyword: '', operator: 'GTE', matchCount: 1, groupName: '', teamId: '',
-  intervalSeconds: 60, timeoutMs: 10000, confirmAttempts: 3, confirmIntervalSeconds: 30, recoveryChecks: 1, customHeaders: '', active: true }
+  intervalSeconds: 60, timeoutMs: 10000, confirmAttempts: 3, confirmIntervalSeconds: 30, recoveryChecks: 3, customHeaders: '', active: true }
 
 export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
   const t = useT()
@@ -119,7 +119,7 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
       operator: m.operator || 'GTE', matchCount: m.match_count ?? 1, groupName: m.group_name || '',
       teamId: m.team_id != null ? String(m.team_id) : '',
       intervalSeconds: m.interval_seconds ?? 60, timeoutMs: m.timeout_ms ?? 10000,
-      confirmAttempts: m.confirm_attempts ?? 3, confirmIntervalSeconds: m.confirm_interval_seconds ?? 30, recoveryChecks: m.recovery_checks ?? 1, customHeaders: m.custom_headers || '',
+      confirmAttempts: m.confirm_attempts ?? 3, confirmIntervalSeconds: m.confirm_interval_seconds ?? 30, recoveryChecks: m.recovery_checks ?? 3, customHeaders: m.custom_headers || '',
       active: m.active !== false })
     setModal(m)
   }
@@ -433,6 +433,9 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
                   onChange={e => setForm(f => ({ ...f, customHeaders: e.target.value }))} /></label>
               <div className="full-width" style={{ fontSize: '.8em', color: 'var(--text-muted)', marginTop: -2, lineHeight: 1.5 }}>
                 ⓘ {t('keyword.cacheBustHint')}
+              </div>
+              <div className="full-width" style={{ fontSize: '.8em', color: 'var(--text-muted)', marginTop: -2, lineHeight: 1.6, whiteSpace: 'pre-line' }}>
+                {t('keyword.cacheBustExamples')}
               </div>
               <label><span>{t('keyword.operator')}</span>
                 <SearchableSelect value={form.operator} onChange={v => setForm(f => ({ ...f, operator: v }))}

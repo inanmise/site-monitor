@@ -173,7 +173,9 @@ public class MonitoringController {
         Map<String, String> teamMap = certificateService.domainTeamNameMap();
 
         String cutoff30d = ISO.format(Instant.now().minus(30, ChronoUnit.DAYS));
+        String cutoff15d = ISO.format(Instant.now().minus(15, ChronoUnit.DAYS));
         String cutoff7d  = ISO.format(Instant.now().minus(7,  ChronoUnit.DAYS));
+        String cutoff1d  = ISO.format(Instant.now().minus(1,  ChronoUnit.DAYS));
         String cutoff24h = ISO.format(Instant.now().minus(24, ChronoUnit.HOURS));
 
         // Son 24 saatteki tüm HTTP (uptime) kontrolleri — tek toplu sorgu, domaine göre grupla (N sorgu yok).
@@ -186,7 +188,9 @@ public class MonitoringController {
 
         // Uptime % / incident özetleri — domain başına tüm-tablo taraması yerine iki gruplu DB sorgusu.
         Map<String, long[]> agg30 = aggregateByDomain(certCheckRepo.aggregateStatusCountsSince(cutoff30d));
+        Map<String, long[]> agg15 = aggregateByDomain(certCheckRepo.aggregateStatusCountsSince(cutoff15d));
         Map<String, long[]> agg7  = aggregateByDomain(certCheckRepo.aggregateStatusCountsSince(cutoff7d));
+        Map<String, long[]> agg1  = aggregateByDomain(certCheckRepo.aggregateStatusCountsSince(cutoff1d));
 
         List<Map<String, Object>> result = new ArrayList<>();
         for (CertificateInventory inv : inventory) {
@@ -217,6 +221,9 @@ public class MonitoringController {
                 item.put("ssl_not_after",    null);
                 item.put("uptime_7d",        null);
                 item.put("uptime_30d",       null);
+                item.put("incidents_1d",     0);
+                item.put("incidents_7d",     0);
+                item.put("incidents_15d",    0);
                 item.put("incidents_30d",    0);
                 result.add(item);
                 continue;
@@ -232,9 +239,14 @@ public class MonitoringController {
 
             // Uptime % — önceden hesaplanan domain-bazlı toplam/hata sayılarından (kayıt yoksa 100% / 0 olay).
             long[] s30 = agg30.get(domain);
+            long[] s15 = agg15.get(domain);
             long[] s7  = agg7.get(domain);
+            long[] s1  = agg1.get(domain);
             item.put("uptime_7d",  s7  == null ? 100.0 : uptimePct(s7[0],  s7[1]));
             item.put("uptime_30d", s30 == null ? 100.0 : uptimePct(s30[0], s30[1]));
+            item.put("incidents_1d",  s1  == null ? 0L : s1[1]);
+            item.put("incidents_7d",  s7  == null ? 0L : s7[1]);
+            item.put("incidents_15d", s15 == null ? 0L : s15[1]);
             item.put("incidents_30d", s30 == null ? 0L : s30[1]);
 
             result.add(item);

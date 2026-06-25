@@ -314,12 +314,17 @@ export default function UptimePage({ systemRole }) {
                     <span className="upt-metric-lbl">{t('uptime.uptime30d')}</span>
                   </div>
                 )}
-                {item.incidents_30d > 0 && (
-                  <div className="upt-metric">
-                    <span className="upt-metric-val upt-metric-incident">{item.incidents_30d}</span>
-                    <span className="upt-metric-lbl">{t('uptime.incidents30d')}</span>
+                {[
+                  { v: item.incidents_1d,  lbl: t('uptime.incidents1d')  },
+                  { v: item.incidents_7d,  lbl: t('uptime.incidents7d')  },
+                  { v: item.incidents_15d, lbl: t('uptime.incidents15d') },
+                  { v: item.incidents_30d, lbl: t('uptime.incidents30d') },
+                ].filter(m => m.v > 0).map((m, i) => (
+                  <div key={i} className="upt-metric">
+                    <span className="upt-metric-val upt-metric-incident">{m.v}</span>
+                    <span className="upt-metric-lbl">{m.lbl}</span>
                   </div>
-                )}
+                ))}
               </div>
 
               {(item.uptime_checked_at || item.ssl_checked_at || isAdmin) && (
@@ -418,12 +423,17 @@ export default function UptimePage({ systemRole }) {
                   <span className="upt-modal-metric-lbl">{t('uptime.uptime30d')}</span>
                 </div>
               )}
-              {selected.incidents_30d > 0 && (
-                <div className="upt-modal-metric">
-                  <span className="upt-modal-metric-val upt-metric-incident">{selected.incidents_30d}</span>
-                  <span className="upt-modal-metric-lbl">{t('uptime.incidents30d')}</span>
+              {[
+                { v: selected.incidents_1d,  lbl: t('uptime.incidents1d')  },
+                { v: selected.incidents_7d,  lbl: t('uptime.incidents7d')  },
+                { v: selected.incidents_15d, lbl: t('uptime.incidents15d') },
+                { v: selected.incidents_30d, lbl: t('uptime.incidents30d') },
+              ].filter(m => m.v > 0).map((m, i) => (
+                <div key={i} className="upt-modal-metric">
+                  <span className="upt-modal-metric-val upt-metric-incident">{m.v}</span>
+                  <span className="upt-modal-metric-lbl">{m.lbl}</span>
                 </div>
-              )}
+              ))}
               {selected.response_ms != null && (
                 <div className="upt-modal-metric">
                   <span className="upt-modal-metric-val">{selected.response_ms}ms</span>
