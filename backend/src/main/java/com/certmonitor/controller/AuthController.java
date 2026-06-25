@@ -178,12 +178,19 @@ public class AuthController {
             // Tek aktif oturum (store-agnostik): bu oturumu kullanıcının "aktif" oturumu olarak kaydet —
             // AuthInterceptor her istekte karşılaştırır, eşleşmeyen eski oturumu kapatır. Ayrıca eski
             // remember-me token'larını iptal et (eski tarayıcı cookie ile sessizce geri dönüp kicklemesin).
-            userService.recordActiveSession(username, newSession.getId());
+            // CANONICAL username (user.getUsername()) kullan: AD/LDAP girişinde yazılan case (ör. "N68753")
+            // DB'deki canonical'dan ("n68753") farklı olabilir; recordActiveSession→findByUsername case-sensitive
+            // olduğundan yazılan case'le satır bulunamaz ve aktif-oturum/lastSeenAt set EDİLMEZ → kullanıcı
+            // "aktif" sayılmaz. populateSession + sessionPing zaten canonical kullanıyor; burada da hizala.
+            userService.recordActiveSession(user.getUsername(), newSession.getId());
             rememberMeService.invalidateAllForUser(username);
 
             log.info("User logged in: {} (role={}, teamId={}, rememberMe={}, IP={})",
-                    username, user.getSystemRole(), user.getTeamId(), rememberMe, clientIp);
-            auditService.recordLogin(username, user.getId(), user.getTeamId(),
+                    user.getUsername(), user.getSystemRole(), user.getTeamId(), rememberMe, clientIp);
+            // Audit actor'ı da CANONICAL: yazılan case ile kaydedilirse aktif-oturum kartı enrichment'i
+            // (findTopByActor(canonical, sid)) eşleşmez → login zamanı/IP boş kalır; ayrıca aynı kullanıcı
+            // audit'te iki farklı case ("N68753"/"n68753") ile görünür.
+            auditService.recordLogin(user.getUsername(), user.getId(), user.getTeamId(),
                     user.getSystemRole(), clientIp,
                     request.getHeader("User-Agent"), newSession.getId(), true, null, null, 5);
 

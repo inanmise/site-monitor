@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom'
 import { api, formatDate } from '../api/client'
 import { useT } from '../i18n/index.jsx'
 import SearchableSelect from './ui/SearchableSelect.jsx'
-import { Play, Pencil, X, RefreshCw, Plus, Trash2, Radio, Users, Layers } from 'lucide-react'
+import { Play, Pencil, X, RefreshCw, Plus, Trash2, Radio, Users, Layers, FlaskConical, Check, AlertTriangle } from 'lucide-react'
 import AlertHistory from './admin/AlertHistory.jsx'
 // recharts ağır — yalnız "Süre Grafiği" sekmesi açılınca yüklensin.
 const ResponseTimeChart = lazy(() => import('./ResponseTimeChart.jsx'))
@@ -39,6 +39,8 @@ export default function PingMonitorPage({ systemRole, teamId, teamName }) {
   const [form, setForm] = useState(emptyForm)
   const [saving, setSaving] = useState(false)
   const [checking, setChecking] = useState(null)
+  const [testing, setTesting] = useState(false)
+  const [testResult, setTestResult] = useState(null)
   const [search, setSearch] = useState('')
   const [teamFilter, setTeamFilter] = useState('all')
   const [groupFilter, setGroupFilter] = useState('all')
@@ -46,6 +48,9 @@ export default function PingMonitorPage({ systemRole, teamId, teamName }) {
   const [detailTab, setDetailTab] = useState('control')
   const countdownRef = useRef(null)
   const deepLinkDone = useRef(false)
+
+  // Modal her açıldığında/değiştiğinde önceki test sonucunu temizle.
+  useEffect(() => { setTestResult(null) }, [modal])
 
   const load = useCallback(async () => {
     const res = await api.monitoring.getPingMonitors()
@@ -122,6 +127,18 @@ export default function PingMonitorPage({ systemRole, teamId, teamName }) {
     if (modal === 'new') await api.monitoring.createPingMonitor(payload)
     else await api.monitoring.updatePingMonitor(modal.id, payload)
     await load(); setSaving(false); closeEdit()
+  }
+
+  // Kaydetmeden formdaki host/parametrelerle bir kez ping atar; ping atılabildi mi + koşul (erişilebilirlik) sağlandı mı.
+  async function runTest() {
+    if (!form.host.trim()) return
+    setTesting(true); setTestResult(null)
+    const res = await api.monitoring.testPingMonitor({
+      host: form.host.trim(), ipVersion: form.ipVersion,
+      packetCount: Number(form.packetCount), timeoutMs: Number(form.timeoutMs),
+    })
+    setTestResult(res?.success ? res.data : { error: res?.error || t('ping.testError') })
+    setTesting(false)
   }
 
   async function del() {
@@ -384,8 +401,38 @@ export default function PingMonitorPage({ systemRole, teamId, teamName }) {
               <label className="checkbox-label full-width">
                 <input type="checkbox" checked={form.active} onChange={e => setForm(f => ({ ...f, active: e.target.checked }))} />{t('ping.active')}</label>
             </div>
+            {testResult && (
+              <div style={{ margin: '0 0 4px', padding: '10px 12px', borderRadius: 8, fontSize: '.86em', lineHeight: 1.5,
+                display: 'flex', alignItems: 'flex-start', gap: 8, border: '1px solid',
+                ...(testResult.condition_met
+                  ? { background: '#f0fdf4', borderColor: '#bbf7d0', color: '#15803d' }
+                  : testResult.na
+                    ? { background: '#fff7ed', borderColor: '#fed7aa', color: '#b45309' }
+                    : { background: '#fef2f2', borderColor: '#fecaca', color: '#b91c1c' }) }}>
+                {testResult.condition_met
+                  ? <Check size={16} style={{ flexShrink: 0, marginTop: 1 }} />
+                  : <AlertTriangle size={16} style={{ flexShrink: 0, marginTop: 1 }} />}
+                <span>
+                  {testResult.sent === undefined
+                    ? <><strong>{t('ping.testError')}:</strong> {testResult.error}</>
+                    : testResult.na
+                      ? <><strong>{t('ping.testNa')}</strong></>
+                      : testResult.condition_met
+                        ? <><strong>{t('ping.testMet')}</strong> — {t('ping.testReachable')}
+                            {testResult.rtt_ms != null && <> · RTT {testResult.rtt_ms}ms</>}
+                            {testResult.packet_loss != null && <> · {t('ping.loss')} %{testResult.packet_loss}</>}</>
+                        : <><strong>{t('ping.testNotMet')}</strong> — {t('ping.testUnreachable')}
+                            {testResult.packet_loss != null && <> · {t('ping.loss')} %{testResult.packet_loss}</>}</>}
+                </span>
+              </div>
+            )}
             <div className="modal-actions">
-              {modal !== 'new' && canDeleteRow(modal) && <button className="btn btn-danger" style={{ marginRight: 'auto' }} onClick={del}><Trash2 size={14} />{t('ping.delete')}</button>}
+              <div style={{ display: 'flex', gap: 8, marginRight: 'auto' }}>
+                <button className="btn btn-secondary" onClick={runTest} disabled={testing || !form.host.trim()}>
+                  <FlaskConical size={14} />{testing ? t('ping.testing') : t('ping.test')}
+                </button>
+                {modal !== 'new' && canDeleteRow(modal) && <button className="btn btn-danger" onClick={del}><Trash2 size={14} />{t('ping.delete')}</button>}
+              </div>
               <button className="btn btn-secondary" onClick={closeEdit}>{t('ping.cancel')}</button>
               <button className="btn btn-primary" onClick={save} disabled={saving || !form.host.trim()}>{saving ? '...' : t('ping.save')}</button>
             </div>
