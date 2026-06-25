@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { api, formatDate } from '../api/client'
 import { useT } from '../i18n/index.jsx'
 import { usePermissions } from '../contexts/PermissionsProvider.jsx'
@@ -328,6 +328,28 @@ export default function IncidentHistoryPage() {
     return () => { cancelled = true }
   }, [allowView]) // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Günlük trend: aralığı SÜREKLİ günlere doldur (olaysız gün = 0) → gerçek takvim trendi (2-3 blok yerine).
+  // Çok geniş/garip aralıkta (>120 gün) doldurma yapma; yalnız veri günlerini sırala (devasa grafik olmasın).
+  // NOT: useMemo bir HOOK → koşullu erken dönüşün (allowView) ÜSTÜNDE, tüm render'larda koşulsuz çağrılmalı.
+  const dailyChart = useMemo(() => {
+    const rows = (trends?.daily || []).map(d => ({ day: String(d.day).slice(0, 10), count: Number(d.count) || 0 }))
+    if (rows.length === 0) return []
+    const sorted = [...rows].sort((a, b) => a.day.localeCompare(b.day))
+    const byDay = new Map(sorted.map(r => [r.day, r.count]))
+    const start = (filters.since || sorted[0].day).slice(0, 10)
+    const end = (filters.until || sorted[sorted.length - 1].day).slice(0, 10)
+    const d0 = new Date(start + 'T00:00:00'), d1 = new Date(end + 'T00:00:00')
+    const span = Math.round((d1 - d0) / 86400000) + 1
+    if (!(span >= 1 && span <= 120)) return sorted
+    const out = []
+    for (let i = 0; i < span; i++) {
+      const dt = new Date(d0.getTime() + i * 86400000)
+      const key = `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`
+      out.push({ day: key, count: byDay.get(key) || 0 })
+    }
+    return out
+  }, [trends, filters.since, filters.until])
+
   if (!allowView) return <div className="empty-state">{t('inc.noAccess')}</div>
 
   const totalPages = Math.max(1, Math.ceil(total / size))
@@ -406,26 +428,6 @@ export default function IncidentHistoryPage() {
 
   const sevBadge = (s) => <span style={{ color: SEV_COLOR[s] || '#64748b', fontWeight: 700 }}>{t('inc.sev' + s) || s}</span>
   const sum = trends?.summary || {}
-  // Günlük trend: aralığı SÜREKLİ günlere doldur (olaysız gün = 0) → gerçek takvim trendi (2-3 blok yerine).
-  // Çok geniş/garip aralıkta (>120 gün) doldurma yapma; yalnız veri günlerini sırala (devasa grafik olmasın).
-  const dailyChart = useMemo(() => {
-    const rows = (trends?.daily || []).map(d => ({ day: String(d.day).slice(0, 10), count: Number(d.count) || 0 }))
-    if (rows.length === 0) return []
-    const sorted = [...rows].sort((a, b) => a.day.localeCompare(b.day))
-    const byDay = new Map(sorted.map(r => [r.day, r.count]))
-    const start = (filters.since || sorted[0].day).slice(0, 10)
-    const end = (filters.until || sorted[sorted.length - 1].day).slice(0, 10)
-    const d0 = new Date(start + 'T00:00:00'), d1 = new Date(end + 'T00:00:00')
-    const span = Math.round((d1 - d0) / 86400000) + 1
-    if (!(span >= 1 && span <= 120)) return sorted
-    const out = []
-    for (let i = 0; i < span; i++) {
-      const dt = new Date(d0.getTime() + i * 86400000)
-      const key = `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`
-      out.push({ day: key, count: byDay.get(key) || 0 })
-    }
-    return out
-  }, [trends, filters.since, filters.until])
   const maxDay = dailyChart.reduce((m, d) => Math.max(m, d.count), 0) || 1
 
   return (

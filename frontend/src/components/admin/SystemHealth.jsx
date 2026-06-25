@@ -135,6 +135,7 @@ export default function SystemHealth({ systemRole, globalAdmin = false, preFilte
   const [trendDays, setTrendDays] = useState(7)    // 1 | 7 | 30
   const [trendDate, setTrendDate] = useState('')   // 'yyyy-mm-dd' seçili gün (saatlik); boşsa aralık modu
   const [trendCustom, setTrendCustom] = useState(null)   // {from,to} UTC ISO — özel aralık ("x gün x saat")
+  const [trendPreset, setTrendPreset] = useState(null)   // null | '1h' | '6h' — hızlı küçük-aralık (dakika bazlı)
   const [trendShowCustom, setTrendShowCustom] = useState(false)
   const [trendData, setTrendData] = useState(null) // { buckets, granularity }
   const [trendLoading, setTrendLoading] = useState(false)
@@ -190,7 +191,10 @@ export default function SystemHealth({ systemRole, globalAdmin = false, preFilte
     setTrendLoading(true)
     const iso = d => d.toISOString().slice(0, 19)
     let fromD, toD, gran
-    if (trendCustom) {
+    if (trendPreset) {
+      const hrs = trendPreset === '1h' ? 1 : 6
+      toD = new Date(); fromD = new Date(toD.getTime() - hrs * 3_600_000); gran = 'minute'   // hızlı küçük-aralık → dakika
+    } else if (trendCustom) {
       fromD = new Date(trendCustom.from + 'Z'); toD = new Date(trendCustom.to + 'Z')
       const span = toD - fromD
       // Adaptif granülerlik: aralık küçüldükçe daha ince kova — ≤6 saat → DAKİKA, ≤2 gün → saat, üstü → gün.
@@ -207,7 +211,7 @@ export default function SystemHealth({ systemRole, globalAdmin = false, preFilte
     const res = await api.admin.getLoginSeries(iso(fromD), iso(toD), gran)
     if (res?.success) setTrendData(res.data)
     setTrendLoading(false)
-  }, [canViewUserActivity, trendDays, trendDate, trendCustom])
+  }, [canViewUserActivity, trendDays, trendDate, trendCustom, trendPreset])
 
   useEffect(() => { if (usersVisible) loadTrend() }, [usersVisible, loadTrend])
 
@@ -1340,16 +1344,23 @@ export default function SystemHealth({ systemRole, globalAdmin = false, preFilte
                 {/* Login trendi — esnek aralık (1g/7g/30g) + istenen güne gitme (saatlik) + zoom */}
                 <h3 className="metrics-title">{t('uact.trendTitle')}</h3>
                 <div className="chart-range-bar" style={{ alignItems: 'center', flexWrap: 'wrap' }}>
+                  {['1h', '6h'].map(h => (
+                    <button key={h} type="button"
+                      className={`chart-range-btn ${trendPreset === h ? 'chart-range-btn-active' : ''}`}
+                      onClick={() => { setTrendDate(''); setTrendCustom(null); setTrendShowCustom(false); setTrendPreset(h) }}>
+                      {t(`uact.range${h}`)}
+                    </button>
+                  ))}
                   {[1, 7, 30].map(d => (
                     <button key={d} type="button"
-                      className={`chart-range-btn ${!trendDate && !trendCustom && trendDays === d ? 'chart-range-btn-active' : ''}`}
-                      onClick={() => { setTrendDate(''); setTrendCustom(null); setTrendShowCustom(false); setTrendDays(d) }}>
+                      className={`chart-range-btn ${!trendDate && !trendCustom && !trendPreset && trendDays === d ? 'chart-range-btn-active' : ''}`}
+                      onClick={() => { setTrendDate(''); setTrendCustom(null); setTrendShowCustom(false); setTrendPreset(null); setTrendDays(d) }}>
                       {t(`uact.range${d}d`)}
                     </button>
                   ))}
                   <span className="sys-muted sys-small">·</span>
                   <DateTimeField dateOnly clearable className="dtf-inline" value={trendDate}
-                    onChange={(v) => { setTrendCustom(null); setTrendShowCustom(false); setTrendDate(v) }}
+                    onChange={(v) => { setTrendCustom(null); setTrendShowCustom(false); setTrendPreset(null); setTrendDate(v) }}
                     placeholder={t('uact.gotoDay')} />
                   <button type="button" className={`chart-range-btn ${trendCustom ? 'chart-range-btn-active' : ''}`}
                     onClick={() => setTrendShowCustom(s => !s)}>{t('chart.custom')}</button>
@@ -1360,7 +1371,7 @@ export default function SystemHealth({ systemRole, globalAdmin = false, preFilte
                     <DateTimeRangePicker
                       from={trendCustom ? new Date(trendCustom.from + 'Z') : new Date(Date.now() - 7 * 86_400_000)}
                       to={trendCustom ? new Date(trendCustom.to + 'Z') : new Date()}
-                      onApply={(f, to) => { setTrendDate(''); setTrendDays(7); setTrendCustom({ from: f.toISOString().slice(0, 19), to: to.toISOString().slice(0, 19) }) }} />
+                      onApply={(f, to) => { setTrendDate(''); setTrendDays(7); setTrendPreset(null); setTrendCustom({ from: f.toISOString().slice(0, 19), to: to.toISOString().slice(0, 19) }) }} />
                   </div>
                 )}
                 {(() => {

@@ -1118,6 +1118,16 @@ public class SchedulerService {
     @Scheduled(fixedDelayString = "${cert.monitor.ping.interval-ms:60000}", initialDelayString = "65000")
     public void runPingChecks() {
         List<PingMonitor> monitors = pingMonitorRepo.findByActiveTrue();
+        // Öksüz ping alarmı temizliği: host rename/silme sonrası recovery'nin asla kapatamadığı açık
+        // PING_DOWN alarmlarını kapat (aktif+pasif TÜM mevcut host'lara göre). Aktif izleme yoksa da çalışır.
+        try {
+            java.util.Set<String> existingHosts = pingMonitorRepo.findAll().stream()
+                    .map(PingMonitor::getHost).filter(java.util.Objects::nonNull)
+                    .collect(java.util.stream.Collectors.toSet());
+            escalationService.resolveOrphanedPingAlerts(existingHosts);
+        } catch (Exception e) {
+            log.warn("Öksüz ping alarmı temizliği başarısız: {}", e.getMessage());
+        }
         if (monitors.isEmpty()) return;
         int checked = 0;
         List<MonitoringOutageService.SweepItem> sweep = new ArrayList<>();

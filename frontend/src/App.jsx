@@ -993,8 +993,8 @@ export default function App() {
               </div>
             )}
 
-            {/* Uygulama ayarları — yalnız yerel bootstrap admin (username === 'admin') */}
-            {tab === 'settings' && user === 'admin' && (
+            {/* Uygulama ayarları — yalnız yerel bootstrap admin. Case-insensitive: username artık BÜYÜK harf ('ADMIN'). */}
+            {tab === 'settings' && user?.toLowerCase() === 'admin' && (
               <div className="tab-content active">
                 <AdminSettings />
               </div>
