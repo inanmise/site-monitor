@@ -124,6 +124,11 @@ public class MonitoringOutageService {
     /** "tip:domain:detail" — aynı hedef için çift teyit zinciri başlatma guard'ı. */
     private final Set<String> inFlight = ConcurrentHashMap.newKeySet();
 
+    /** Recovery period: "tip:domain" → ardışık başarılı ("up") kontrol sayacı. Açık alarm,
+     *  recoveryChecks kadar ardışık başarılı kontrol gelene dek KAPANMAZ; arada bir DOWN sayacı
+     *  sıfırlar. In-memory → restart'ta sıfırlanır (recovery yeniden başlar). */
+    private final Map<String, Integer> recoveryUpCount = new ConcurrentHashMap<>();
+
     @PreDestroy
     void shutdown() {
         confirmExecutor.shutdownNow();
@@ -162,12 +167,33 @@ public class MonitoringOutageService {
 
             if (!anyDown) {
                 if (hasOpenAlert) {
-                    // Tüm monitörler up — alarmı otomatik kapat (çözüm maili ile)
-                    withLock(alertType, domain, () ->
-                            escalationService.resolveMonitoringAlertsForDomain(domain, alertType));
+                    // Tüm monitörler up — RECOVERY PERIOD: recoveryChecks kadar ardışık başarılı
+                    // kontrol sağlanınca alarmı kapat (çözüm maili ile). Aksi halde sayacı artır, bekle.
+                    int required = recoveryChecksFor(domainItems);
+                    String rkey = alertType + ":" + domain;
+                    if (required <= 1) {
+                        recoveryUpCount.remove(rkey);
+                        withLock(alertType, domain, () ->
+                                escalationService.resolveMonitoringAlertsForDomain(domain, alertType));
+                    } else {
+                        int up = recoveryUpCount.merge(rkey, 1, Integer::sum);
+                        if (up >= required) {
+                            recoveryUpCount.remove(rkey);
+                            log.info("Recovery tamamlandı: {} [{}] — {}/{} ardışık başarılı kontrol, alarm kapatılıyor",
+                                    domain, alertType, up, required);
+                            withLock(alertType, domain, () ->
+                                    escalationService.resolveMonitoringAlertsForDomain(domain, alertType));
+                        } else {
+                            log.info("Recovery sürüyor: {} [{}] — {}/{} ardışık başarılı kontrol (kapatma bekliyor)",
+                                    domain, alertType, up, required);
+                        }
+                    }
+                } else {
+                    recoveryUpCount.remove(alertType + ":" + domain);   // açık alarm yok → bayat sayaç temizle
                 }
             } else if (hasOpenAlert) {
-                // Kesinti sürüyor, alarm zaten teyitli — günlük re-alert yolu
+                // Kesinti SÜRÜYOR — recovery penceresini SIFIRLA + günlük re-alert yolu
+                recoveryUpCount.remove(alertType + ":" + domain);
                 SweepItem firstDown = domainItems.stream().filter(it -> !it.up()).findFirst().orElseThrow();
                 withLock(alertType, domain, () ->
                         escalationService.processConfirmedOutage(domain, alertType,
@@ -220,11 +246,21 @@ public class MonitoringOutageService {
     /** Per-monitor teyit override'ı (keyword/ping ctxExtra'sından) — yoksa global varsayılan. */
     private int effAttempts(SweepItem item) {
         Object v = item.ctxExtra() != null ? item.ctxExtra().get("monitor_confirm_attempts") : null;
-        return v instanceof Number n && n.intValue() > 0 ? n.intValue() : confirmAttempts;
+        return v instanceof Number n && n.intValue() >= 0 ? n.intValue() : confirmAttempts;   // 0 = immediate
     }
     private long effDelayMs(SweepItem item) {
         Object v = item.ctxExtra() != null ? item.ctxExtra().get("monitor_confirm_interval_ms") : null;
         return v instanceof Number n && n.longValue() > 0 ? n.longValue() : confirmDelayMs;
+    }
+
+    /** Recovery period: per-monitor recoveryChecks (ctxExtra) varsa onu, yoksa global varsayılanı
+     *  (cert.monitor.uptime.recovery-checks, default 1 = ilk başarılı kontrolde kapat) döner. */
+    private int recoveryChecksFor(List<SweepItem> items) {
+        for (SweepItem it : items) {
+            Object v = it.ctxExtra() != null ? it.ctxExtra().get("monitor_recovery_checks") : null;
+            if (v instanceof Number n && n.intValue() > 0) return n.intValue();
+        }
+        return Math.max(1, appSettings.getInt("cert.monitor.uptime.recovery-checks", 1));
     }
 
     void startConfirmation(SweepItem item) {
@@ -235,6 +271,17 @@ public class MonitoringOutageService {
         }
         String firstFailureAt = now();
         List<Map<String, Object>> attempts = new ArrayList<>(); // tek thread'li executor → senkronizasyon gereksiz
+        if (effAttempts(item) <= 0) {
+            // Immediate (confirmation period = 0) — DOWN tespitinde incident'ı HEMEN aç, teyit bekleme.
+            log.warn("{} DOWN tespit edildi: {} [{}] — immediate mod (teyit yok), incident hemen açılıyor",
+                    item.alertType(), item.domain(), item.detail());
+            Map<String, Object> ctx = buildOutageContext(item, firstFailureAt, attempts);
+            withLock(item.alertType(), item.domain(), () ->
+                    escalationService.processConfirmedOutage(item.domain(), item.alertType(),
+                            levelFor(item.alertType()), ctx));
+            inFlight.remove(key);
+            return;
+        }
         log.info("{} DOWN tespit edildi: {} [{}] — {} sn arayla {} doğrulama denemesi başlatıldı",
                 item.alertType(), item.domain(), item.detail(), effDelayMs(item) / 1000, effAttempts(item));
         confirmExecutor.schedule(

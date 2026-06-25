@@ -17,7 +17,7 @@ const INTERVALS = [
 const REFRESH_INTERVAL = 60
 const OP_SYM = { GTE: '≥', LTE: '≤', EQ: '=', GT: '>', LT: '<' }
 const emptyForm = { name: '', url: '', keyword: '', operator: 'GTE', matchCount: 1, groupName: '', teamId: '',
-  intervalSeconds: 60, timeoutMs: 10000, confirmAttempts: 3, confirmIntervalSeconds: 30, active: true }
+  intervalSeconds: 60, timeoutMs: 10000, confirmAttempts: 3, confirmIntervalSeconds: 30, recoveryChecks: 1, customHeaders: '', active: true }
 
 export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
   const t = useT()
@@ -38,6 +38,7 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
   const [summary, setSummary] = useState({ total: 0, down: 0 })
   const [modal, setModal] = useState(null)          // 'new' | monitor | null
   const [form, setForm] = useState(emptyForm)
+  const [defaults, setDefaults] = useState(null)   // per-tip varsayılan aralık/timeout (Kontrol Sıklığı ayarı)
   const [saving, setSaving] = useState(false)
   const [checking, setChecking] = useState(null)
   const [testing, setTesting] = useState(false)
@@ -72,6 +73,11 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
     api.admin.getTeams().then(r => { if (r?.success) setTeams(r.data || []) })
   }, [isAdmin])
 
+  // Yeni monitör için per-tip varsayılan kontrol aralığı + timeout (Genel Ayarlar → Kontrol Sıklığı).
+  useEffect(() => {
+    api.monitoring.monitorDefaults?.()?.then(r => { if (r?.success) setDefaults(r.data?.keyword) })
+  }, [])
+
   // E-posta CTA deep-link: ?monitor=<id> → ilgili monitörün detayını aç (bir kez), paramı temizle.
   useEffect(() => {
     if (deepLinkDone.current || monitors.length === 0) return
@@ -100,14 +106,20 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
   function openDetail(m) { setSelected(m); setHistory([]); setDetailTab('control'); loadHistory(m.id, rangeDays) }
   function closeDetail() { setSelected(null); setHistory([]) }
 
-  function openNew() { setTestResult(null); setForm({ ...emptyForm, teamId: isAdmin ? '' : (myTeam ?? '') }); setModal('new') }
+  function openNew() {
+    setTestResult(null)
+    setForm({ ...emptyForm, teamId: isAdmin ? '' : (myTeam ?? ''),
+      intervalSeconds: defaults?.intervalSeconds ?? emptyForm.intervalSeconds,
+      timeoutMs: defaults?.timeoutMs ?? emptyForm.timeoutMs })
+    setModal('new')
+  }
   function openEdit(m) {
     setTestResult(null)
     setForm({ name: m.name || '', url: m.url || '', keyword: m.keyword || '',
       operator: m.operator || 'GTE', matchCount: m.match_count ?? 1, groupName: m.group_name || '',
       teamId: m.team_id != null ? String(m.team_id) : '',
       intervalSeconds: m.interval_seconds ?? 60, timeoutMs: m.timeout_ms ?? 10000,
-      confirmAttempts: m.confirm_attempts ?? 3, confirmIntervalSeconds: m.confirm_interval_seconds ?? 30,
+      confirmAttempts: m.confirm_attempts ?? 3, confirmIntervalSeconds: m.confirm_interval_seconds ?? 30, recoveryChecks: m.recovery_checks ?? 1, customHeaders: m.custom_headers || '',
       active: m.active !== false })
     setModal(m)
   }
@@ -120,6 +132,7 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
     const res = await api.monitoring.testKeyword({
       url: form.url.trim(), keyword: form.keyword, operator: form.operator,
       matchCount: Number(form.matchCount), timeoutMs: Number(form.timeoutMs),
+      customHeaders: form.customHeaders?.trim() || null,
     })
     setTestResult(res?.success ? res.data : { error: res?.error || t('keyword.testError') })
     setTesting(false)
@@ -133,7 +146,8 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
       operator: form.operator, matchCount: Number(form.matchCount),
       groupName: form.groupName?.trim() || null, teamId: form.teamId === '' ? null : Number(form.teamId),
       intervalSeconds: Number(form.intervalSeconds), timeoutMs: Number(form.timeoutMs),
-      confirmAttempts: Number(form.confirmAttempts), confirmIntervalSeconds: Number(form.confirmIntervalSeconds),
+      confirmAttempts: Number(form.confirmAttempts), confirmIntervalSeconds: Number(form.confirmIntervalSeconds), recoveryChecks: Number(form.recoveryChecks),
+      customHeaders: form.customHeaders?.trim() || null,
       active: form.active,
     }
     if (modal === 'new') await api.monitoring.createKeywordMonitor(payload)
@@ -414,6 +428,12 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
             <div className="form-grid">
               <label className="full-width"><span>{t('keyword.url')} <span className="req-star">*</span></span>
                 <input value={form.url} placeholder="https://example.com" onChange={e => setForm(f => ({ ...f, url: e.target.value }))} /></label>
+              <label className="full-width"><span>{t('keyword.customHeaders')}</span>
+                <textarea rows={2} value={form.customHeaders} spellCheck={false} placeholder={'Cache-Control: no-cache'}
+                  onChange={e => setForm(f => ({ ...f, customHeaders: e.target.value }))} /></label>
+              <div className="full-width" style={{ fontSize: '.8em', color: 'var(--text-muted)', marginTop: -2, lineHeight: 1.5 }}>
+                ⓘ {t('keyword.cacheBustHint')}
+              </div>
               <label><span>{t('keyword.operator')}</span>
                 <SearchableSelect value={form.operator} onChange={v => setForm(f => ({ ...f, operator: v }))}
                   options={[{ value: 'GTE', label: t('keyword.opGte') }, { value: 'LTE', label: t('keyword.opLte') },
@@ -444,9 +464,11 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
               <label><span>{t('keyword.timeout')}</span>
                 <input type="number" value={form.timeoutMs} onChange={e => setForm(f => ({ ...f, timeoutMs: Number(e.target.value) }))} /></label>
               <label><span>{t('keyword.confirmAttempts')}</span>
-                <input type="number" min="1" max="10" value={form.confirmAttempts} onChange={e => setForm(f => ({ ...f, confirmAttempts: Number(e.target.value) }))} /></label>
+                <input type="number" min="0" max="10" value={form.confirmAttempts} onChange={e => setForm(f => ({ ...f, confirmAttempts: Number(e.target.value) }))} /></label>
               <label><span>{t('keyword.confirmInterval')}</span>
                 <input type="number" min="10" max="600" value={form.confirmIntervalSeconds} onChange={e => setForm(f => ({ ...f, confirmIntervalSeconds: Number(e.target.value) }))} /></label>
+              <label><span>{t('keyword.recoveryChecks')}</span>
+                <input type="number" min="1" max="20" value={form.recoveryChecks} onChange={e => setForm(f => ({ ...f, recoveryChecks: Number(e.target.value) }))} /></label>
               <div className="full-width" style={{ fontSize: '.8em', color: 'var(--text-muted)', marginTop: -2, lineHeight: 1.5 }}>
                 ⓘ {t('keyword.confirmHint')}
               </div>

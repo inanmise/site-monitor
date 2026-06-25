@@ -820,6 +820,9 @@ export default function App() {
             {tab === 'warnings' && (
               <div className="tab-content active">
                 <h2>{t('app.warningsTitle')}</h2>
+                <div style={{ fontSize: '.85em', color: 'var(--text-muted, #64748b)', margin: '0 0 14px', lineHeight: 1.5 }}>
+                  ⓘ {t('app.sslHourlyNote')}
+                </div>
                 {warnings.length === 0 ? (
                   <div className="loading">{t('app.noWarnings')}</div>
                 ) : (

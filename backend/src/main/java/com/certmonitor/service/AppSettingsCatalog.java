@@ -33,6 +33,16 @@ public final class AppSettingsCatalog {
         new Setting("cert.monitor.uptime.alert-enabled",         "monitoring", Type.BOOL),
         new Setting("cert.monitor.port.alert-enabled",           "monitoring", Type.BOOL),
         new Setting("cert.monitor.dns.alert-enabled",            "monitoring", Type.BOOL),
+        new Setting("cert.monitor.keyword.alert-enabled",        "monitoring", Type.BOOL),
+        new Setting("cert.monitor.ping.alert-enabled",           "monitoring", Type.BOOL),
+        new Setting("cert.monitor.expiry.alert-enabled",         "monitoring", Type.BOOL),
+        // Kontrol sıklığı + request timeout — per-tip VARSAYILAN (yeni monitör oluştururken kullanılır).
+        new Setting("cert.monitor.ping.default-interval-seconds",    "frequency", Type.INT),
+        new Setting("cert.monitor.keyword.default-interval-seconds", "frequency", Type.INT),
+        new Setting("cert.monitor.port.default-interval-seconds",    "frequency", Type.INT),
+        new Setting("cert.monitor.ping.default-timeout-ms",          "frequency", Type.INT),
+        new Setting("cert.monitor.keyword.default-timeout-ms",       "frequency", Type.INT),
+        new Setting("cert.monitor.port.default-timeout-ms",          "frequency", Type.INT),
         // Haftalık erişilebilirlik e-postası (Pazartesi 10:00) aç/kapa — canlı.
         new Setting("cert.monitor.weekly-availability.enabled",  "monitoring", Type.BOOL),
         // Kurumsal/iç kök+ara CA paketi (PEM) — bu CA ile imzalı host'lar TRUSTED sayılır.

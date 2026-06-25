@@ -55,6 +55,7 @@ public class MonitoringController {
     private final CertificateService certificateService;
     private final com.certmonitor.service.PermissionService permissionService;
     private final com.certmonitor.service.EscalationService escalationService;
+    private final com.certmonitor.service.AppSettingsService appSettings;
 
     private static final DateTimeFormatter ISO =
             DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
@@ -63,6 +64,21 @@ public class MonitoringController {
 
     private ResponseEntity<Map<String, Object>> ok(Object data) {
         return ResponseEntity.ok(Map.of("success", true, "data", data, "timestamp", ISO.format(Instant.now())));
+    }
+
+    /** Yeni monitör formları için per-tip VARSAYILAN kontrol aralığı (sn) + request timeout (ms).
+     *  Genel Ayarlar → Kontrol Sıklığı'ndan canlı ayarlanır; create-modal'lar bunu ön-doldurur. */
+    @GetMapping("/defaults")
+    public ResponseEntity<Map<String, Object>> monitorDefaults(HttpSession session) {
+        permissionService.require(session, "monitoring.read", "view");
+        return ok(Map.of(
+            "ping",    Map.of("intervalSeconds", appSettings.getInt("cert.monitor.ping.default-interval-seconds", 60),
+                              "timeoutMs",        appSettings.getInt("cert.monitor.ping.default-timeout-ms", 5000)),
+            "keyword", Map.of("intervalSeconds", appSettings.getInt("cert.monitor.keyword.default-interval-seconds", 60),
+                              "timeoutMs",        appSettings.getInt("cert.monitor.keyword.default-timeout-ms", 10000)),
+            "port",    Map.of("intervalSeconds", appSettings.getInt("cert.monitor.port.default-interval-seconds", 60),
+                              "timeoutMs",        appSettings.getInt("cert.monitor.port.default-timeout-ms", 5000))
+        ));
     }
 
     /** Write endpoints are admin-only — USER role gets a 403 via GlobalExceptionHandler. */
@@ -124,8 +140,9 @@ public class MonitoringController {
     /** Keyword adet koşulunu (operator + matchCount) body'den uygular; legacy 'condition' desteklenir;
      *  alertCondition (NOT NULL) operatörden türetilir. */
     /** Per-monitor teyit parametreleri için makul sınırlar (kullanıcı girişi). */
-    private static int clampAttempts(int v) { return Math.max(1, Math.min(10, v)); }
+    private static int clampAttempts(int v) { return Math.max(0, Math.min(10, v)); }   // 0 = immediate (teyitsiz)
     private static int clampInterval(int v) { return Math.max(10, Math.min(600, v)); }
+    private static int clampRecovery(int v) { return Math.max(1, Math.min(20, v)); }   // 1 = ilk up'ta kapat
 
     private void applyKeywordCondition(KeywordMonitor m, Map<String, Object> body) {
         if (body.get("operator") != null) {
@@ -745,6 +762,7 @@ public class MonitoringController {
         m.setName((String) body.get("name"));
         m.setUrl((String) body.get("url"));
         m.setKeyword((String) body.get("keyword"));
+        if (body.get("customHeaders") != null) m.setCustomHeaders((String) body.get("customHeaders"));
         applyKeywordCondition(m, body);
         if (body.containsKey("groupName")) m.setGroupName(blank(body.get("groupName")) ? null : body.get("groupName").toString().trim());
         m.setTeamId(teamId);
@@ -753,6 +771,7 @@ public class MonitoringController {
         if (body.get("timeoutMs")       != null) m.setTimeoutMs(((Number) body.get("timeoutMs")).intValue());
         if (body.get("confirmAttempts") != null)        m.setConfirmAttempts(clampAttempts(((Number) body.get("confirmAttempts")).intValue()));
         if (body.get("confirmIntervalSeconds") != null) m.setConfirmIntervalSeconds(clampInterval(((Number) body.get("confirmIntervalSeconds")).intValue()));
+        if (body.get("recoveryChecks") != null)         m.setRecoveryChecks(clampRecovery(((Number) body.get("recoveryChecks")).intValue()));
         m.setCreatedAt(now);
         m.setUpdatedAt(now);
         KeywordMonitor saved = keywordMonitorRepo.save(m);
@@ -767,6 +786,7 @@ public class MonitoringController {
             if (body.get("name")            != null) m.setName((String) body.get("name"));
             if (body.get("url")             != null) m.setUrl((String) body.get("url"));
             if (body.get("keyword")         != null) m.setKeyword((String) body.get("keyword"));
+            if (body.containsKey("customHeaders"))    m.setCustomHeaders((String) body.get("customHeaders"));
             if (body.get("operator") != null || body.get("matchCount") != null || body.get("condition") != null) applyKeywordCondition(m, body);
             if (body.containsKey("groupName"))       m.setGroupName(blank(body.get("groupName")) ? null : body.get("groupName").toString().trim());
             if (body.containsKey("teamId"))          m.setTeamId(resolveTeamChange(session, m.getTeamId(), body.get("teamId")));
@@ -775,6 +795,7 @@ public class MonitoringController {
             if (body.get("timeoutMs")       != null) m.setTimeoutMs(((Number) body.get("timeoutMs")).intValue());
             if (body.get("confirmAttempts") != null)        m.setConfirmAttempts(clampAttempts(((Number) body.get("confirmAttempts")).intValue()));
             if (body.get("confirmIntervalSeconds") != null) m.setConfirmIntervalSeconds(clampInterval(((Number) body.get("confirmIntervalSeconds")).intValue()));
+            if (body.get("recoveryChecks") != null)         m.setRecoveryChecks(clampRecovery(((Number) body.get("recoveryChecks")).intValue()));
             m.setUpdatedAt(ISO.format(Instant.now()));
             KeywordMonitor saved = keywordMonitorRepo.save(m);
             return ok(enrichKeyword(saved, keywordResultRepo.findTopByMonitorIdOrderByCheckedAtDesc(id).orElse(null), teamNameMap()));
@@ -825,7 +846,7 @@ public class MonitoringController {
         return keywordMonitorRepo.findById(id).map(m -> {
             if (!canOperateTeam(session, m.getTeamId())) throw new SecurityException("Bu takımın izlemesini çalıştıramazsınız");
             Map<String, Object> r = keywordChecker.check(m.getUrl(), m.getKeyword(),
-                    m.getTimeoutMs() != null ? m.getTimeoutMs() : 10000);
+                    m.getTimeoutMs() != null ? m.getTimeoutMs() : 10000, m.getCustomHeaders());
             boolean found = Boolean.TRUE.equals(r.getOrDefault("found", false));
             int count = r.get("count") instanceof Number cn ? cn.intValue() : (found ? 1 : 0);
             int threshold = m.getMatchCount() != null ? m.getMatchCount() : 1;
@@ -859,7 +880,8 @@ public class MonitoringController {
         if (!KW_OPERATORS.contains(op)) op = "GTE";
         int threshold = body.get("matchCount") instanceof Number mn ? mn.intValue() : 1;
         int timeoutMs = body.get("timeoutMs") instanceof Number tn ? tn.intValue() : 10000;
-        Map<String, Object> r = keywordChecker.check(url, keyword, timeoutMs);
+        String customHeaders = body.get("customHeaders") != null ? body.get("customHeaders").toString() : null;
+        Map<String, Object> r = keywordChecker.check(url, keyword, timeoutMs, customHeaders);
         int count = r.get("count") instanceof Number cn ? cn.intValue() : 0;
         boolean met = r.get("error") == null && KeywordCheckerService.evaluate(count, op, threshold);
         Map<String, Object> out = new LinkedHashMap<>();
@@ -1078,6 +1100,7 @@ public class MonitoringController {
         if (body.get("packetCount")     != null) m.setPacketCount(((Number) body.get("packetCount")).intValue());
         if (body.get("confirmAttempts") != null)        m.setConfirmAttempts(clampAttempts(((Number) body.get("confirmAttempts")).intValue()));
         if (body.get("confirmIntervalSeconds") != null) m.setConfirmIntervalSeconds(clampInterval(((Number) body.get("confirmIntervalSeconds")).intValue()));
+        if (body.get("recoveryChecks") != null)         m.setRecoveryChecks(clampRecovery(((Number) body.get("recoveryChecks")).intValue()));
         m.setCreatedAt(now);
         m.setUpdatedAt(now);
         PingMonitor saved = pingMonitorRepo.save(m);
@@ -1109,6 +1132,7 @@ public class MonitoringController {
             if (body.get("packetCount")     != null) m.setPacketCount(((Number) body.get("packetCount")).intValue());
             if (body.get("confirmAttempts") != null)        m.setConfirmAttempts(clampAttempts(((Number) body.get("confirmAttempts")).intValue()));
             if (body.get("confirmIntervalSeconds") != null) m.setConfirmIntervalSeconds(clampInterval(((Number) body.get("confirmIntervalSeconds")).intValue()));
+            if (body.get("recoveryChecks") != null)         m.setRecoveryChecks(clampRecovery(((Number) body.get("recoveryChecks")).intValue()));
             m.setUpdatedAt(ISO.format(Instant.now()));
             PingMonitor saved = pingMonitorRepo.save(m);
             return ok(enrichPing(saved, pingCheckRepo.findTopByMonitorIdOrderByCheckedAtDesc(id).orElse(null), teamNameMap()));

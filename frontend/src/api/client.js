@@ -454,6 +454,8 @@ export const api = {
     // SQL Playground
     sqlListTables:  () => request('/admin/sql/tables'),
     sqlListColumns: (table) => request(`/admin/sql/tables/${encodeURIComponent(table)}/columns`),
+    sqlTableDetails: (table) => request(`/admin/sql/tables/${encodeURIComponent(table)}/details`),
+    sqlRelations:   () => request('/admin/sql/relationships'),
     sqlExecute:     (sql) => request('/admin/sql/execute', { method: 'POST', body: JSON.stringify({ sql }) }),
     sqlHistory:     () => request('/admin/sql/history'),
     sqlSamples:     () => request('/admin/sql/samples'),
@@ -534,6 +536,7 @@ export const api = {
 
     // Ping
     getPingMonitors:   () => request('/monitoring/ping'),
+    monitorDefaults: () => request('/monitoring/defaults'),
     createPingMonitor: (data) => request('/monitoring/ping', { method: 'POST', body: JSON.stringify(data) }),
     updatePingMonitor: (id, data) => request(`/monitoring/ping/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
     deletePingMonitor: (id) => request(`/monitoring/ping/${id}`, { method: 'DELETE' }),
