@@ -86,6 +86,32 @@ class IncidentControllerTest {
     }
 
     @Test
+    @DisplayName("PUT: USER kendi takımının olayını düzenler (manageTeamIds boş olsa da) → 200")
+    void update_userOwnTeam_200() throws Exception {
+        when(permissionService.allows(any(jakarta.servlet.http.HttpSession.class), eq("incidents.manage"), eq("edit"))).thenReturn(true);
+        IncidentRecord rec = sample();
+        rec.setTeamId(5L);
+        when(service.get(1L)).thenReturn(rec);
+        when(service.update(eq(1L), any(), any())).thenReturn(rec);
+        mvc.perform(put("/api/incidents/1").session(userSessionTeam(5L))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"status\":\"OPEN\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true));
+    }
+
+    @Test
+    @DisplayName("PUT: USER başka takımın olayını düzenleyemez (IDOR) → 403")
+    void update_userOtherTeam_403() throws Exception {
+        when(permissionService.allows(any(jakarta.servlet.http.HttpSession.class), eq("incidents.manage"), eq("edit"))).thenReturn(true);
+        IncidentRecord rec = sample();
+        rec.setTeamId(99L);
+        when(service.get(1L)).thenReturn(rec);
+        mvc.perform(put("/api/incidents/1").session(userSessionTeam(5L))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"status\":\"OPEN\"}"))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
     @DisplayName("GET /api/incidents/options view varsa → 200 + liste")
     void options_view_200() throws Exception {
         when(permissionService.allows(any(jakarta.servlet.http.HttpSession.class), eq("incidents.view"), eq("view"))).thenReturn(true);
@@ -180,6 +206,17 @@ class IncidentControllerTest {
         s.setAttribute("authenticated", Boolean.TRUE);
         s.setAttribute("username", "admin");
         s.setAttribute("systemRole", "ADMIN");
+        return s;
+    }
+
+    /** USER oturumu, görüntüleme kapsamı = [teamId], yönetim kapsamı BOŞ (USER gerçeği). */
+    private MockHttpSession userSessionTeam(Long teamId) {
+        MockHttpSession s = new MockHttpSession();
+        s.setAttribute("authenticated", Boolean.TRUE);
+        s.setAttribute("username", "sre1");
+        s.setAttribute("systemRole", "USER");
+        s.setAttribute("viewTeamIds", new java.util.ArrayList<>(java.util.List.of(teamId)));
+        s.setAttribute("manageTeamIds", new java.util.ArrayList<Long>());
         return s;
     }
 }
