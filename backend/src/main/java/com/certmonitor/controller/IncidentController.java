@@ -247,8 +247,10 @@ public class IncidentController {
             throw new SecurityException("incidents.manage yetkisi gerekli");
     }
 
-    // ── Takım kapsamı (IDOR engeli): olaylar takıma-gizli. Global viewer/admin (AUDIT dahil okuma)
-    //    tümünü; aksi halde olayın teamId VEYA createdByTeamId'si çağıranın view/manage kapsamında olmalı. ──
+    // ── Takım kapsamı (IDOR engeli): olaylar takıma-gizli. Olay SINIRI = takım ÜYELİĞİ (viewTeamIds);
+    //    global viewer/admin (AUDIT dahil) tümünü görür. Eylem yetkisini (view/manage/delete) ayrıca
+    //    requireView/requireManage/requireDelete kontrol eder — bu yüzden YAZMA da AYNI üyelik sınırını
+    //    kullanır (USER'ın manageTeamIds'i boştur ama kendi takımının olayını düzenleyebilmeli). ──
     private List<Long> incidentViewScope(HttpSession session) {
         return SessionScope.isGlobalViewer(session) ? null : SessionScope.viewTeamIds(session);
     }
@@ -258,11 +260,9 @@ public class IncidentController {
         if (v != null && (v.contains(e.getTeamId()) || v.contains(e.getCreatedByTeamId()))) return;
         throw new SecurityException("Bu olay kaydı sizin takım(lar)ınıza ait değil");
     }
+    /** Yazma sınırı = okuma sınırı (takım üyeliği). Eylem yetkisini requireManage/requireDelete kontrol eder. */
     private void requireIncidentWrite(HttpSession session, IncidentRecord e) {
-        if (SessionScope.isGlobalAdmin(session)) return;
-        List<Long> m = SessionScope.manageTeamIds(session);
-        if (m != null && (m.contains(e.getTeamId()) || m.contains(e.getCreatedByTeamId()))) return;
-        throw new SecurityException("Bu olay kaydı üzerinde işlem yetkiniz yok");
+        requireIncidentRead(session, e);
     }
 
     /** Silme yalnız TEAM_ADMIN/ADMIN (incidents.delete/execute); USER gir/düzenle yapar, silemez. */
