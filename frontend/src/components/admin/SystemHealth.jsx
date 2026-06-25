@@ -192,7 +192,9 @@ export default function SystemHealth({ systemRole, globalAdmin = false, preFilte
     let fromD, toD, gran
     if (trendCustom) {
       fromD = new Date(trendCustom.from + 'Z'); toD = new Date(trendCustom.to + 'Z')
-      gran  = (toD - fromD) <= 2 * 86_400_000 ? 'hour' : 'day'   // ≤2 gün → saatlik, üstü günlük
+      const span = toD - fromD
+      // Adaptif granülerlik: aralık küçüldükçe daha ince kova — ≤6 saat → DAKİKA, ≤2 gün → saat, üstü → gün.
+      gran = span <= 6 * 3_600_000 ? 'minute' : span <= 2 * 86_400_000 ? 'hour' : 'day'
     } else if (trendDate) {
       fromD = new Date(`${trendDate}T00:00:00`)          // yerel gün başı
       toD   = new Date(`${trendDate}T23:59:59`)          // AYNI gün sonu (ertesi güne taşmaz)
