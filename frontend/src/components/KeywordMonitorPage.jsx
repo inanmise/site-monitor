@@ -39,6 +39,7 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
   const [modal, setModal] = useState(null)          // 'new' | monitor | null
   const [form, setForm] = useState(emptyForm)
   const [defaults, setDefaults] = useState(null)   // per-tip varsayılan aralık/timeout (Kontrol Sıklığı ayarı)
+  const [showCacheHelp, setShowCacheHelp] = useState(false)   // cache busting açıklama modal'ı
   const [saving, setSaving] = useState(false)
   const [checking, setChecking] = useState(null)
   const [testing, setTesting] = useState(false)
@@ -428,15 +429,13 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
             <div className="form-grid">
               <label className="full-width"><span>{t('keyword.url')} <span className="req-star">*</span></span>
                 <input value={form.url} placeholder="https://example.com" onChange={e => setForm(f => ({ ...f, url: e.target.value }))} /></label>
-              <label className="full-width"><span>{t('keyword.customHeaders')}</span>
+              <label className="full-width"><span>{t('keyword.customHeaders')}{' '}
+                <button type="button" onClick={() => setShowCacheHelp(true)}
+                  style={{ background: 'none', border: 'none', color: 'var(--primary, #4f46e5)', cursor: 'pointer', fontSize: '.85em', textDecoration: 'underline', padding: 0, fontWeight: 500 }}>
+                  {t('keyword.cacheBustLink')}
+                </button></span>
                 <textarea rows={2} value={form.customHeaders} spellCheck={false} placeholder={'Cache-Control: no-cache'}
                   onChange={e => setForm(f => ({ ...f, customHeaders: e.target.value }))} /></label>
-              <div className="full-width" style={{ fontSize: '.8em', color: 'var(--text-muted)', marginTop: -2, lineHeight: 1.5 }}>
-                ⓘ {t('keyword.cacheBustHint')}
-              </div>
-              <div className="full-width" style={{ fontSize: '.8em', color: 'var(--text-muted)', marginTop: -2, lineHeight: 1.6, whiteSpace: 'pre-line' }}>
-                {t('keyword.cacheBustExamples')}
-              </div>
               <label><span>{t('keyword.operator')}</span>
                 <SearchableSelect value={form.operator} onChange={v => setForm(f => ({ ...f, operator: v }))}
                   options={[{ value: 'GTE', label: t('keyword.opGte') }, { value: 'LTE', label: t('keyword.opLte') },
@@ -509,6 +508,25 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
               {modal !== 'new' && canDeleteRow(modal) && <button className="btn btn-danger" onClick={del}><Trash2 size={14} />{t('keyword.delete')}</button>}
               <button className="btn btn-secondary" onClick={closeEdit}>{t('keyword.cancel')}</button>
               <button className="btn btn-primary" onClick={save} disabled={saving || !form.url.trim() || !form.keyword.trim()}>{saving ? '...' : t('keyword.save')}</button>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {showCacheHelp && createPortal(
+        <div className="modal-overlay" onClick={() => setShowCacheHelp(false)}>
+          <div className="modal-box" onClick={e => e.stopPropagation()} style={{ maxWidth: 560 }}>
+            <div className="modal-icon-hdr modal-icon-hdr--port">
+              <div className="modal-icon-hdr-badge"><Target size={20} /></div>
+              <h3>{t('keyword.cacheBustTitle')}</h3>
+            </div>
+            <div style={{ fontSize: '.9em', color: 'var(--text, #1e293b)', lineHeight: 1.6, padding: '4px 2px' }}>
+              <p style={{ marginTop: 0 }}>{t('keyword.cacheBustHint')}</p>
+              <div style={{ whiteSpace: 'pre-line' }}>{t('keyword.cacheBustExamples')}</div>
+            </div>
+            <div className="modal-actions">
+              <button className="btn btn-secondary" onClick={() => setShowCacheHelp(false)}>{t('sql.closeRowDetails')}</button>
             </div>
           </div>
         </div>,
