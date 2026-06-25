@@ -31,6 +31,7 @@ public interface IncidentRecordRepository extends JpaRepository<IncidentRecord, 
                AND (:slaBreached IS NULL OR i.slaBreached = :slaBreached)
                AND (:open IS NULL OR (:open = TRUE AND i.status <> 'RESOLVED')
                                   OR (:open = FALSE AND i.status = 'RESOLVED'))
+               AND (:scoped = FALSE OR i.teamId IN :scope OR i.createdByTeamId IN :scope)
             """)
     Page<IncidentRecord> findFiltered(@Param("q") String q,
                                       @Param("severity") String severity,
@@ -43,6 +44,8 @@ public interface IncidentRecordRepository extends JpaRepository<IncidentRecord, 
                                       @Param("teamId") Long teamId,
                                       @Param("slaBreached") Boolean slaBreached,
                                       @Param("open") Boolean open,
+                                      @Param("scoped") boolean scoped,
+                                      @Param("scope") List<Long> scope,
                                       Pageable pageable);
 
     /** Günlük olay sayısı (trend) — ISO string'in ilk 10 hanesi = gün. */

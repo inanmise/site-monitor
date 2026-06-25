@@ -59,4 +59,12 @@ public final class SessionScope {
         List<Long> m = manageTeamIds(session);
         return m != null && teamId != null && m.contains(teamId);
     }
+
+    /** Whether the caller may VIEW a resource owned by {@code teamId}. Global viewer (admin/AUDIT)
+     *  sees all; otherwise the team must be in the read scope. */
+    public static boolean canView(HttpSession session, Long teamId) {
+        if (isGlobalViewer(session)) return true;
+        List<Long> v = viewTeamIds(session);
+        return v != null && teamId != null && v.contains(teamId);
+    }
 }
