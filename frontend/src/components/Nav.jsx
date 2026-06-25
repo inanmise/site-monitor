@@ -244,7 +244,7 @@ export default function Nav({ activeTab, onTabChange, username, teamName, system
             style={{ left: userMenuPos.left, bottom: userMenuPos.bottom }}
           >
             <div className="sb-user-popover-hdr">{t('nav.userSettings')}</div>
-            {username === 'admin' && (
+            {username?.toLowerCase() === 'admin' && (
               <button
                 className="sb-user-popover-item"
                 onClick={() => { setUserMenuOpen(false); onTabChange('settings') }}

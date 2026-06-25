@@ -1090,7 +1090,16 @@ public class MonitoringController {
         return pingMonitorRepo.findById(id).map(m -> {
             if (!canOperateTeam(session, m.getTeamId())) throw new SecurityException("Bu takımın izlemesini düzenleyemezsiniz");
             if (body.get("name")            != null) m.setName((String) body.get("name"));
-            if (body.get("host")            != null) m.setHost((String) body.get("host"));
+            if (body.get("host")            != null) {
+                String newHost = (String) body.get("host");
+                if (m.getHost() != null && !m.getHost().equals(newHost)) {
+                    // Host DEĞİŞTİ → eski host'un açık alarmını sessizce kapat. Aksi halde recovery yeni host
+                    // ile arar, "domain=eskiHost" alarmı öksüz kalır ve asla resolve edilmez (BUG: takılı PING_DOWN).
+                    escalationService.resolveOpenAlertsSilently(m.getHost(),
+                            java.util.Set.of(com.certmonitor.service.EscalationService.TYPE_PING_DOWN), "Sistem (host değişti)");
+                }
+                m.setHost(newHost);
+            }
             if (body.get("ipVersion")       != null) { String v = body.get("ipVersion").toString(); m.setIpVersion(Set.of("v4","v6","auto").contains(v) ? v : "auto"); }
             if (body.containsKey("groupName"))       m.setGroupName(blank(body.get("groupName")) ? null : body.get("groupName").toString().trim());
             if (body.containsKey("teamId"))          m.setTeamId(resolveTeamChange(session, m.getTeamId(), body.get("teamId")));

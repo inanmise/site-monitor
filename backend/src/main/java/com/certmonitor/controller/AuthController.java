@@ -475,11 +475,20 @@ public class AuthController {
         }
     }
 
+    /** Görünen ad: displayName → ad+soyad (AD givenName+sn) → username. AD'de displayName boşsa ad soyad
+     *  kullanılır → session displayName + haftalık rapor Oluşturan/Onaylayan/Son düzenleme sicil yerine ad soyad. */
+    static String resolveDisplayName(AppUser user) {
+        if (user.getDisplayName() != null && !user.getDisplayName().isBlank()) return user.getDisplayName();
+        String full = ((user.getFirstName() != null ? user.getFirstName() : "") + " "
+                     + (user.getLastName()  != null ? user.getLastName()  : "")).trim();
+        return !full.isEmpty() ? full : user.getUsername();
+    }
+
     /** Write all user context into the session. */
     public void populateSession(HttpSession session, AppUser user) {
         session.setAttribute("authenticated", true);
         session.setAttribute("username", user.getUsername());
-        session.setAttribute("displayName", user.getDisplayName() != null ? user.getDisplayName() : user.getUsername());
+        session.setAttribute("displayName", resolveDisplayName(user));   // displayName → ad soyad → username
         session.setAttribute("userId", user.getId());
         session.setAttribute("teamId", user.getTeamId());
         session.setAttribute("systemRole", user.getSystemRole());

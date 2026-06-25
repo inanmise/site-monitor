@@ -389,6 +389,29 @@ public class EscalationService {
     }
 
     /**
+     * Öksüz ping alarmı temizliği — aktif/pasif HİÇBİR ping monitör host'una karşılık gelmeyen açık
+     * PING_DOWN alarmlarını SESSİZCE kapatır. Host rename (updatePing eski host'u değiştirir) veya eski
+     * kayıt sonrası recovery bu alarmı asla resolve edemez: kapatma domain=host ile aranır, ama o host
+     * artık hiçbir monitörde yok → alarm süresiz açık kalır. Mevcut host kümesinde olmayan domain'ler öksüz.
+     * @param existingHosts aktif + pasif tüm ping monitörlerinin host'ları (silinen/yeniden adlandırılan hariç)
+     * @return kapatılan öksüz domain sayısı
+     */
+    public int resolveOrphanedPingAlerts(java.util.Set<String> existingHosts) {
+        if (existingHosts == null) return 0;
+        java.util.Set<String> orphanDomains = new java.util.HashSet<>();
+        for (AlertEvent e : alertEventRepo.findAllOpenOrderBySeverity()) {
+            if (!TYPE_PING_DOWN.equals(e.getAlertType())) continue;
+            if (e.getDomain() == null || existingHosts.contains(e.getDomain())) continue;  // eşleşen monitör var → dokunma
+            orphanDomains.add(e.getDomain());
+        }
+        for (String d : orphanDomains) {
+            resolveOpenAlertsSilently(d, Set.of(TYPE_PING_DOWN), "Sistem (öksüz alarm — eşleşen ping izlemesi yok)");
+        }
+        if (!orphanDomains.isEmpty()) log.info("🧹 Öksüz ping alarmı temizlendi: {} domain {}", orphanDomains.size(), orphanDomains);
+        return orphanDomains.size();
+    }
+
+    /**
      * MonitoringOutageService teyit zinciri tamamlandığında (ya da kesinti
      * sürerken her sweep'te / DNS_CHANGED'de anında) çağırır. processResults'un
      * INITIAL / DAILY_REALERT dallarının izleme aynası — seviye sabit
