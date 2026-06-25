@@ -63,17 +63,37 @@ class IncidentServiceTest {
         service.create(body("Sertifika uyarısı", "2026-06-16T08:00:00", "MEDIUM", "CERTIFICATE"), "admin", 1L, 1L);
 
         // severity filtresi
-        assertThat(service.list(null, "CRITICAL", null, null, null, null, null, null, null, null, null, PageRequest.of(0, 20))
+        assertThat(service.list(null, "CRITICAL", null, null, null, null, null, null, null, null, null, null, PageRequest.of(0, 20))
                 .getTotalElements()).isEqualTo(1);
         // keyword (LOWER LIKE — başlık)
-        assertThat(service.list("pool", null, null, null, null, null, null, null, null, null, null, PageRequest.of(0, 20))
+        assertThat(service.list("pool", null, null, null, null, null, null, null, null, null, null, null, PageRequest.of(0, 20))
                 .getTotalElements()).isEqualTo(1);
         // tarih aralığı (ISO string >= / <=)
         assertThat(service.list(null, null, null, null, null, null, "2026-06-15T00:00:00", "2026-06-16T23:59:59", null, null, null,
-                PageRequest.of(0, 20)).getTotalElements()).isEqualTo(2);
+                null, PageRequest.of(0, 20)).getTotalElements()).isEqualTo(2);
         // sla_breached = false (varsayılan) → hepsi
-        assertThat(service.list(null, null, null, null, null, null, null, null, null, Boolean.FALSE, null, PageRequest.of(0, 20))
+        assertThat(service.list(null, null, null, null, null, null, null, null, null, Boolean.FALSE, null, null, PageRequest.of(0, 20))
                 .getTotalElements()).isEqualTo(3);
+    }
+
+    @Test
+    @DisplayName("takım kapsamı (IDOR engeli): scope yalnız o takımın (teamId VEYA createdByTeamId) olaylarını döndürür")
+    void list_teamScope() {
+        service.create(body("t1 olay", "2026-06-14T10:00:00", "HIGH", "OTHER"), "u1", 10L, 1L); // createdByTeamId=1
+        service.create(body("t2 olay", "2026-06-15T10:00:00", "HIGH", "OTHER"), "u2", 20L, 2L); // createdByTeamId=2
+
+        // global (scope=null) → ikisi de görünür
+        assertThat(service.list(null, null, null, null, null, null, null, null, null, null, null,
+                null, PageRequest.of(0, 20)).getTotalElements()).isEqualTo(2);
+        // scope=[1] → yalnız team 1'in olayı
+        assertThat(service.list(null, null, null, null, null, null, null, null, null, null, null,
+                java.util.List.of(1L), PageRequest.of(0, 20)).getTotalElements()).isEqualTo(1);
+        // scope=[2] → yalnız team 2'nin olayı
+        assertThat(service.list(null, null, null, null, null, null, null, null, null, null, null,
+                java.util.List.of(2L), PageRequest.of(0, 20)).getTotalElements()).isEqualTo(1);
+        // scope=[] (kapsamsız kullanıcı) → hiçbiri (başka takımın kaydı sızmaz)
+        assertThat(service.list(null, null, null, null, null, null, null, null, null, null, null,
+                java.util.List.of(), PageRequest.of(0, 20)).getTotalElements()).isEqualTo(0);
     }
 
     @Test
@@ -88,7 +108,7 @@ class IncidentServiceTest {
         service.create(b2, "admin", 1L, 1L);
 
         // kanal filtresi
-        assertThat(service.list(null, null, null, null, null, "IVR", null, null, null, null, null, PageRequest.of(0, 20))
+        assertThat(service.list(null, null, null, null, null, "IVR", null, null, null, null, null, null, PageRequest.of(0, 20))
                 .getTotalElements()).isEqualTo(1);
 
         // addOption + listOptions union: eklenen + olaylarda kullanılan kanallar
@@ -114,11 +134,11 @@ class IncidentServiceTest {
         service.create(b, "admin", 1L, 1L);
 
         // CSV içinde geçen kanalı/servisi filtrele (LIKE)
-        assertThat(service.list(null, null, null, null, null, "ATM", null, null, null, null, null, PageRequest.of(0, 20))
+        assertThat(service.list(null, null, null, null, null, "ATM", null, null, null, null, null, null, PageRequest.of(0, 20))
                 .getTotalElements()).isEqualTo(1);
-        assertThat(service.list(null, null, null, null, null, "IVR", null, null, null, null, null, PageRequest.of(0, 20))
+        assertThat(service.list(null, null, null, null, null, "IVR", null, null, null, null, null, null, PageRequest.of(0, 20))
                 .getTotalElements()).isEqualTo(1);
-        assertThat(service.list(null, null, null, null, "svc-b", null, null, null, null, null, null, PageRequest.of(0, 20))
+        assertThat(service.list(null, null, null, null, "svc-b", null, null, null, null, null, null, null, PageRequest.of(0, 20))
                 .getTotalElements()).isEqualTo(1);
 
         // options: combo değil TEKİL değerler
@@ -140,9 +160,9 @@ class IncidentServiceTest {
         a.put("status", "OPEN");
         service.create(a, "admin", 1L, 1L);
         service.create(body("çözülmüş kayıt", "2026-06-15T10:00:00", "LOW", "OTHER"), "admin", 1L, 1L); // body → RESOLVED
-        assertThat(service.list(null, null, null, null, null, null, null, null, null, null, Boolean.TRUE, PageRequest.of(0, 20))
+        assertThat(service.list(null, null, null, null, null, null, null, null, null, null, Boolean.TRUE, null, PageRequest.of(0, 20))
                 .getTotalElements()).isEqualTo(1);
-        assertThat(service.list(null, null, null, null, null, null, null, null, null, null, Boolean.FALSE, PageRequest.of(0, 20))
+        assertThat(service.list(null, null, null, null, null, null, null, null, null, null, Boolean.FALSE, null, PageRequest.of(0, 20))
                 .getTotalElements()).isEqualTo(1);
     }
 

@@ -64,7 +64,7 @@ public class IncidentController {
         requireView(session);
         int sz = Math.max(1, Math.min(size, 200));
         Page<IncidentRecord> result = this.service.list(q, severity, category, status, service, channel,
-                since, until, teamId, slaBreached, open,
+                since, until, teamId, slaBreached, open, incidentViewScope(session),
                 PageRequest.of(Math.max(0, page), sz, Sort.by(Sort.Direction.DESC, "occurredAt")));
         return ok(Map.of(
                 "data",  result.getContent().stream().map(this::dto).toList(),
@@ -121,7 +121,9 @@ public class IncidentController {
     @GetMapping("/{id}")
     public ResponseEntity<Map<String, Object>> get(@PathVariable Long id, HttpSession session) {
         requireView(session);
-        return ok(Map.of("data", dto(service.get(id))));
+        IncidentRecord e = service.get(id);
+        requireIncidentRead(session, e);   // takım kapsamı (IDOR engeli)
+        return ok(Map.of("data", dto(e)));
     }
 
     @PostMapping
@@ -144,7 +146,9 @@ public class IncidentController {
             @PathVariable Long id, @RequestBody Map<String, Object> body,
             HttpSession session, HttpServletRequest request) {
         requireManage(session);
-        String prevStatus = service.get(id).getStatus(); // RESOLVED'e GEÇİŞ tespiti için
+        IncidentRecord cur = service.get(id);
+        requireIncidentWrite(session, cur);   // takım kapsamı (IDOR engeli)
+        String prevStatus = cur.getStatus(); // RESOLVED'e GEÇİŞ tespiti için
         IncidentRecord e = service.update(id, body, (String) session.getAttribute("username"));
         auditService.recordAction("INCIDENT_UPDATE", session, request,
                 "INCIDENT", id.toString(),
@@ -178,6 +182,7 @@ public class IncidentController {
     public ResponseEntity<Map<String, Object>> delete(
             @PathVariable Long id, HttpSession session, HttpServletRequest request) {
         requireDelete(session);
+        requireIncidentWrite(session, service.get(id));   // takım kapsamı (IDOR engeli)
         IncidentRecord e = service.delete(id);
         auditService.recordAction("INCIDENT_DELETE", session, request,
                 "INCIDENT", id.toString(),
@@ -194,6 +199,7 @@ public class IncidentController {
             @RequestParam(value = "caption", required = false) String caption,
             HttpSession session, HttpServletRequest request) {
         requireManage(session);
+        requireIncidentWrite(session, service.get(id));   // takım kapsamı (IDOR engeli)
         IncidentImage img = service.storeImage(id, caption, file, (String) session.getAttribute("username"));
         auditService.recordAction("INCIDENT_IMAGE_ADD", session, request,
                 "INCIDENT", id.toString(),
@@ -222,6 +228,7 @@ public class IncidentController {
     public ResponseEntity<byte[]> serveImage(@PathVariable Long imageId, HttpSession session) {
         requireView(session);
         IncidentImage img = service.getImage(imageId);
+        if (img.getIncidentId() != null) requireIncidentRead(session, service.get(img.getIncidentId())); // takım kapsamı
         return ResponseEntity.ok()
                 .contentType(MediaType.parseMediaType(img.getContentType()))
                 .header("Cache-Control", "private, max-age=3600")
@@ -238,6 +245,24 @@ public class IncidentController {
     private void requireManage(HttpSession session) {
         if (!permissionService.allows(session, "incidents.manage", "edit"))
             throw new SecurityException("incidents.manage yetkisi gerekli");
+    }
+
+    // ── Takım kapsamı (IDOR engeli): olaylar takıma-gizli. Global viewer/admin (AUDIT dahil okuma)
+    //    tümünü; aksi halde olayın teamId VEYA createdByTeamId'si çağıranın view/manage kapsamında olmalı. ──
+    private List<Long> incidentViewScope(HttpSession session) {
+        return SessionScope.isGlobalViewer(session) ? null : SessionScope.viewTeamIds(session);
+    }
+    private void requireIncidentRead(HttpSession session, IncidentRecord e) {
+        if (SessionScope.isGlobalViewer(session)) return;
+        List<Long> v = SessionScope.viewTeamIds(session);
+        if (v != null && (v.contains(e.getTeamId()) || v.contains(e.getCreatedByTeamId()))) return;
+        throw new SecurityException("Bu olay kaydı sizin takım(lar)ınıza ait değil");
+    }
+    private void requireIncidentWrite(HttpSession session, IncidentRecord e) {
+        if (SessionScope.isGlobalAdmin(session)) return;
+        List<Long> m = SessionScope.manageTeamIds(session);
+        if (m != null && (m.contains(e.getTeamId()) || m.contains(e.getCreatedByTeamId()))) return;
+        throw new SecurityException("Bu olay kaydı üzerinde işlem yetkiniz yok");
     }
 
     /** Silme yalnız TEAM_ADMIN/ADMIN (incidents.delete/execute); USER gir/düzenle yapar, silemez. */
