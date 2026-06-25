@@ -91,17 +91,19 @@ public class IncidentService {
     }
 
     /** Trend + özet: günlük seri, severity/category kırılımı, özet sayılar. */
-    public Map<String, Object> trends(String since, String until) {
+    public Map<String, Object> trends(String since, String until, List<Long> scope) {
+        boolean scoped = scope != null;                                          // null = global (admin/AUDIT)
+        List<Long> scopeList = (scope != null && !scope.isEmpty()) ? scope : List.of(-1L); // boş kapsam → hiçbir şey eşleşmez
         String s = blankToNull(since), u = blankToNull(until);
         List<Map<String, Object>> daily = new ArrayList<>();
-        for (Object[] row : repo.countByDay(s, u)) {
+        for (Object[] row : repo.countByDay(s, u, scoped, scopeList)) {
             daily.add(Map.of("day", row[0], "count", ((Number) row[1]).longValue()));
         }
-        Map<String, Long> bySeverity = toCountMap(repo.countBySeverity(s, u));
-        Map<String, Long> byCategory = toCountMap(repo.countByCategory(s, u));
+        Map<String, Long> bySeverity = toCountMap(repo.countBySeverity(s, u, scoped, scopeList));
+        Map<String, Long> byCategory = toCountMap(repo.countByCategory(s, u, scoped, scopeList));
         // channel CSV olabildiğinden combo'ya göre değil, virgülle bölüp TEKİL kanal bazında say.
         Map<String, Long> byChannel = new LinkedHashMap<>();
-        for (Object[] row : repo.countByChannel(s, u)) {
+        for (Object[] row : repo.countByChannel(s, u, scoped, scopeList)) {
             String csv = (String) row[0];
             long cnt = ((Number) row[1]).longValue();
             if (csv == null) continue;
@@ -110,10 +112,10 @@ public class IncidentService {
                 if (!c.isEmpty()) byChannel.merge(c, cnt, Long::sum);
             }
         }
-        long total    = repo.countRange(s, u);
+        long total    = repo.countRange(s, u, scoped, scopeList);
         long critical = bySeverity.getOrDefault("CRITICAL", 0L);
-        long sla      = repo.countSlaBreached(s, u);
-        long open     = repo.countOpen(s, u);
+        long sla      = repo.countSlaBreached(s, u, scoped, scopeList);
+        long open     = repo.countOpen(s, u, scoped, scopeList);
         long resolved = Math.max(0, total - open); // open = status<>RESOLVED → resolved = total - open
 
         Map<String, Object> out = new LinkedHashMap<>();

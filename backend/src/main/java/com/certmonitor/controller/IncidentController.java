@@ -79,7 +79,7 @@ public class IncidentController {
             @RequestParam(required = false) String until,
             HttpSession session) {
         requireView(session);
-        return ok(Map.of("data", service.trends(since, until)));
+        return ok(Map.of("data", service.trends(since, until, incidentViewScope(session))));
     }
 
     // ── Yönetilen seçenekler (kanal / domain) — creatable dropdown beslemesi ──────────────────
