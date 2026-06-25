@@ -94,6 +94,16 @@ class IncidentServiceTest {
         // scope=[] (kapsamsız kullanıcı) → hiçbiri (başka takımın kaydı sızmaz)
         assertThat(service.list(null, null, null, null, null, null, null, null, null, null, null,
                 java.util.List.of(), PageRequest.of(0, 20)).getTotalElements()).isEqualTo(0);
+
+        // trend/özet de kapsamlı: global → total 2, scope=[1] → 1, boş kapsam → 0
+        assertThat(trendTotal(service.trends(null, null, null))).isEqualTo(2L);
+        assertThat(trendTotal(service.trends(null, null, java.util.List.of(1L)))).isEqualTo(1L);
+        assertThat(trendTotal(service.trends(null, null, java.util.List.of()))).isEqualTo(0L);
+    }
+
+    @SuppressWarnings("unchecked")
+    private static long trendTotal(Map<String, Object> trends) {
+        return ((Number) ((Map<String, Object>) trends.get("summary")).get("total")).longValue();
     }
 
     @Test
@@ -121,7 +131,7 @@ class IncidentServiceTest {
 
         // trend by_channel
         @SuppressWarnings("unchecked")
-        var byCh = (Map<String, Long>) service.trends(null, null).get("by_channel");
+        var byCh = (Map<String, Long>) service.trends(null, null, null).get("by_channel");
         assertThat(byCh.get("IVR")).isEqualTo(1L);
     }
 
@@ -147,7 +157,7 @@ class IncidentServiceTest {
 
         // trend by_channel: combo yerine tekil kanallar sayılır
         @SuppressWarnings("unchecked")
-        var byCh = (Map<String, Long>) service.trends(null, null).get("by_channel");
+        var byCh = (Map<String, Long>) service.trends(null, null, null).get("by_channel");
         assertThat(byCh.get("ATM")).isEqualTo(1L);
         assertThat(byCh.get("IVR")).isEqualTo(1L);
         assertThat(byCh).doesNotContainKey("ATM, IVR");
@@ -182,7 +192,7 @@ class IncidentServiceTest {
         service.create(body("b", "2026-06-14T12:00:00", "HIGH", "NETWORK"), "admin", 1L, 1L);
         service.create(body("c", "2026-06-15T09:00:00", "CRITICAL", "DATABASE"), "admin", 1L, 1L);
 
-        Map<String, Object> tr = service.trends(null, null);
+        Map<String, Object> tr = service.trends(null, null, null);
 
         @SuppressWarnings("unchecked")
         var daily = (java.util.List<Map<String, Object>>) tr.get("daily");

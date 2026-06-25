@@ -54,26 +54,32 @@ public interface IncidentRecordRepository extends JpaRepository<IncidentRecord, 
               FROM IncidentRecord i
              WHERE (:since IS NULL OR i.occurredAt >= :since)
                AND (:until IS NULL OR i.occurredAt <= :until)
+               AND (:scoped = FALSE OR i.teamId IN :scope OR i.createdByTeamId IN :scope)
              GROUP BY SUBSTRING(i.occurredAt, 1, 10)
              ORDER BY SUBSTRING(i.occurredAt, 1, 10)
             """)
-    List<Object[]> countByDay(@Param("since") String since, @Param("until") String until);
+    List<Object[]> countByDay(@Param("since") String since, @Param("until") String until,
+                              @Param("scoped") boolean scoped, @Param("scope") List<Long> scope);
 
     @Query("""
             SELECT i.severity, COUNT(i) FROM IncidentRecord i
              WHERE (:since IS NULL OR i.occurredAt >= :since)
                AND (:until IS NULL OR i.occurredAt <= :until)
+               AND (:scoped = FALSE OR i.teamId IN :scope OR i.createdByTeamId IN :scope)
              GROUP BY i.severity
             """)
-    List<Object[]> countBySeverity(@Param("since") String since, @Param("until") String until);
+    List<Object[]> countBySeverity(@Param("since") String since, @Param("until") String until,
+                                   @Param("scoped") boolean scoped, @Param("scope") List<Long> scope);
 
     @Query("""
             SELECT i.category, COUNT(i) FROM IncidentRecord i
              WHERE (:since IS NULL OR i.occurredAt >= :since)
                AND (:until IS NULL OR i.occurredAt <= :until)
+               AND (:scoped = FALSE OR i.teamId IN :scope OR i.createdByTeamId IN :scope)
              GROUP BY i.category
             """)
-    List<Object[]> countByCategory(@Param("since") String since, @Param("until") String until);
+    List<Object[]> countByCategory(@Param("since") String since, @Param("until") String until,
+                                   @Param("scoped") boolean scoped, @Param("scope") List<Long> scope);
 
     /** Kanal kırılımı (NULL kanallar hariç) — kanal bazlı segmentasyon trendi. */
     @Query("""
@@ -81,16 +87,20 @@ public interface IncidentRecordRepository extends JpaRepository<IncidentRecord, 
              WHERE i.channel IS NOT NULL
                AND (:since IS NULL OR i.occurredAt >= :since)
                AND (:until IS NULL OR i.occurredAt <= :until)
+               AND (:scoped = FALSE OR i.teamId IN :scope OR i.createdByTeamId IN :scope)
              GROUP BY i.channel
             """)
-    List<Object[]> countByChannel(@Param("since") String since, @Param("until") String until);
+    List<Object[]> countByChannel(@Param("since") String since, @Param("until") String until,
+                                  @Param("scoped") boolean scoped, @Param("scope") List<Long> scope);
 
     @Query("""
             SELECT COUNT(i) FROM IncidentRecord i
              WHERE (:since IS NULL OR i.occurredAt >= :since)
                AND (:until IS NULL OR i.occurredAt <= :until)
+               AND (:scoped = FALSE OR i.teamId IN :scope OR i.createdByTeamId IN :scope)
             """)
-    long countRange(@Param("since") String since, @Param("until") String until);
+    long countRange(@Param("since") String since, @Param("until") String until,
+                    @Param("scoped") boolean scoped, @Param("scope") List<Long> scope);
 
     /** Olaylarda fiilen kullanılan farklı kanal/domain değerleri — dropdown union'ı için. Kapsam
      *  olayı OLUŞTURAN takım (createdByTeamId): teamId null → tüm olaylar (admin); dolu → yalnız o
@@ -115,14 +125,18 @@ public interface IncidentRecordRepository extends JpaRepository<IncidentRecord, 
              WHERE i.slaBreached = true
                AND (:since IS NULL OR i.occurredAt >= :since)
                AND (:until IS NULL OR i.occurredAt <= :until)
+               AND (:scoped = FALSE OR i.teamId IN :scope OR i.createdByTeamId IN :scope)
             """)
-    long countSlaBreached(@Param("since") String since, @Param("until") String until);
+    long countSlaBreached(@Param("since") String since, @Param("until") String until,
+                          @Param("scoped") boolean scoped, @Param("scope") List<Long> scope);
 
     @Query("""
             SELECT COUNT(i) FROM IncidentRecord i
              WHERE i.status <> 'RESOLVED'
                AND (:since IS NULL OR i.occurredAt >= :since)
                AND (:until IS NULL OR i.occurredAt <= :until)
+               AND (:scoped = FALSE OR i.teamId IN :scope OR i.createdByTeamId IN :scope)
             """)
-    long countOpen(@Param("since") String since, @Param("until") String until);
+    long countOpen(@Param("since") String since, @Param("until") String until,
+                   @Param("scoped") boolean scoped, @Param("scope") List<Long> scope);
 }

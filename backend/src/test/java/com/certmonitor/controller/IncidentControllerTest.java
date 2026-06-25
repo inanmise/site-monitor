@@ -171,7 +171,7 @@ class IncidentControllerTest {
     @DisplayName("GET /api/incidents/trends view varsa → 200")
     void trends_view_200() throws Exception {
         when(permissionService.allows(any(jakarta.servlet.http.HttpSession.class), eq("incidents.view"), eq("view"))).thenReturn(true);
-        when(service.trends(any(), any())).thenReturn(java.util.Map.of(
+        when(service.trends(any(), any(), any())).thenReturn(java.util.Map.of(
                 "daily", List.of(), "by_severity", java.util.Map.of(), "summary", java.util.Map.of("total", 0L)));
         mvc.perform(get("/api/incidents/trends").session(userSession()))
                 .andExpect(status().isOk())
