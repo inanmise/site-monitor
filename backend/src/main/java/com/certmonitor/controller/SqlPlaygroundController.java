@@ -38,6 +38,23 @@ public class SqlPlaygroundController {
         return ok(Map.of("data", service.listColumns(name)));
     }
 
+    /** Tablo şema detayları: kolon+tip-sınırı, constraint (data integrity), index, trigger. */
+    @GetMapping("/tables/{name}/details")
+    public ResponseEntity<Map<String, Object>> tableDetails(
+            @PathVariable String name, HttpSession session) {
+        requireAdmin(session);
+        permissionService.require(session, "sql_playground.execute", "execute");
+        return ok(Map.of("data", service.tableDetails(name)));
+    }
+
+    /** Tablolar arası ilişki (hiyerarşi) grafiği — gerçek FK + *_id çıkarımı. */
+    @GetMapping("/relationships")
+    public ResponseEntity<Map<String, Object>> relationships(HttpSession session) {
+        requireAdmin(session);
+        permissionService.require(session, "sql_playground.execute", "execute");
+        return ok(Map.of("data", service.relationships()));
+    }
+
     @PostMapping("/execute")
     public ResponseEntity<Map<String, Object>> execute(
             @RequestBody Map<String, String> body,

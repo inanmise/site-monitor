@@ -63,17 +63,23 @@ public class KeywordCheckerService {
         return CompletableFuture.completedFuture(check(url, keyword, timeoutMs));
     }
 
-    /** {"found", "http_status", "response_ms", "snippet"?, "error"?} döner. */
+    /** Geriye uyum: özel header'sız. */
     public Map<String, Object> check(String url, String keyword, int timeoutMs) {
+        return check(url, keyword, timeoutMs, null);
+    }
+
+    /** {"found", "http_status", "response_ms", "snippet"?, "error"?} döner. Cache busting: URL'deki
+     *  {timestamp} → güncel Unix saniye; customHeaders ("Name: Value" satırları, ör. Cache-Control: no-cache). */
+    public Map<String, Object> check(String url, String keyword, int timeoutMs, String customHeaders) {
         long start = System.currentTimeMillis();
         Map<String, Object> result = new LinkedHashMap<>();
         try {
-            HttpRequest req = HttpRequest.newBuilder()
-                    .uri(URI.create(url))
+            HttpRequest.Builder rb = HttpRequest.newBuilder()
+                    .uri(URI.create(applyTimestamp(url)))
                     .timeout(Duration.ofMillis(Math.max(1000, timeoutMs)))
-                    .header("User-Agent", "CertMonitor-KeywordMonitor/1.0")
-                    .GET()
-                    .build();
+                    .header("User-Agent", "CertMonitor-KeywordMonitor/1.0");
+            applyCustomHeaders(rb, customHeaders);
+            HttpRequest req = rb.GET().build();
             HttpResponse<InputStream> resp = httpClient.send(req, HttpResponse.BodyHandlers.ofInputStream());
             byte[] bytes;
             try (InputStream is = resp.body()) {
@@ -110,6 +116,27 @@ public class KeywordCheckerService {
             log.debug("Keyword check failed for {}: {}", url, e.getMessage());
         }
         return result;
+    }
+
+    /** {timestamp} → güncel Unix saniye (her kontrolde benzersiz URL → ara cache bypass). */
+    private static String applyTimestamp(String url) {
+        if (url == null || !url.contains("{timestamp}")) return url;
+        return url.replace("{timestamp}", String.valueOf(java.time.Instant.now().getEpochSecond()));
+    }
+
+    /** Satır başına "Name: Value" özel HTTP header'larını isteğe ekler (ör. Cache-Control: no-cache).
+     *  HttpClient kısıtlı header'ları (Host/Connection vb.) reddederse o satır sessizce atlanır. */
+    private static void applyCustomHeaders(HttpRequest.Builder rb, String customHeaders) {
+        if (customHeaders == null || customHeaders.isBlank()) return;
+        for (String line : customHeaders.split("\\r?\\n")) {
+            int c = line.indexOf(':');
+            if (c <= 0) continue;
+            String name = line.substring(0, c).trim();
+            String value = line.substring(c + 1).trim();
+            if (name.isEmpty()) continue;
+            try { rb.header(name, value); }
+            catch (IllegalArgumentException ignore) { /* kısıtlı/geçersiz header — atla */ }
+        }
     }
 
     /** Adet koşulu değerlendirmesi: SAĞLIKLI = (geçiş adedi) [operatör] (eşik). */

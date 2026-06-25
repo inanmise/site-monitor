@@ -4,9 +4,11 @@ import { useT } from '../../i18n/index.jsx'
 import { useToast } from '../ui/Toast.jsx'
 import {
   Play, Download, History, BookOpen, ChevronRight, ChevronDown,
-  Database, Loader2, AlertCircle, X, RefreshCw,
+  Database, Loader2, AlertCircle, X, RefreshCw, Network, Table,
 } from 'lucide-react'
 import SqlRowDetailModal from './SqlRowDetailModal.jsx'
+import TableDetailsModal from './TableDetailsModal.jsx'
+import SchemaDiagramModal from './SchemaDiagramModal.jsx'
 
 const DEFAULT_QUERY = ''
 
@@ -25,6 +27,8 @@ export default function SqlPlayground() {
   const [history, setHistory]       = useState([])
   const [openMenu, setOpenMenu]     = useState(null)   // 'samples' | 'history' | null
   const [rowDetail, setRowDetail]   = useState(null)   // { row, index, cols } | null
+  const [tableDetail, setTableDetail] = useState(null) // { table, details, loading } | null
+  const [diagram, setDiagram]       = useState(null)   // { data, loading } | null
   const editorRef = useRef(null)
   const samplesBtnRef = useRef(null)
   const historyBtnRef = useRef(null)
@@ -88,6 +92,21 @@ export default function SqlPlayground() {
     toast.success(t('sql.colCopied', col))
   }
 
+  const openTableDetails = async (name, e) => {
+    e?.stopPropagation()
+    setTableDetail({ table: name, details: null, loading: true })
+    const r = await api.admin.sqlTableDetails(name)
+    setTableDetail({ table: name, details: r?.success ? r.data : null, loading: false })
+    if (!r?.success) toast.error(r?.error || t('sql.td.loadError'))
+  }
+
+  const openDiagram = async () => {
+    setDiagram({ data: null, loading: true })
+    const r = await api.admin.sqlRelations()
+    setDiagram({ data: r?.success ? r.data : null, loading: false })
+    if (!r?.success) toast.error(r?.error || t('sql.td.loadError'))
+  }
+
   const run = useCallback(async () => {
     if (!sql?.trim() || running) return
     setRunning(true)
@@ -139,6 +158,14 @@ export default function SqlPlayground() {
           <button
             type="button"
             className="sqlpg-refresh-btn"
+            onClick={openDiagram}
+            title={t('sql.diag.open')}
+          >
+            <Network size={12} />
+          </button>
+          <button
+            type="button"
+            className="sqlpg-refresh-btn"
             onClick={refreshTables}
             disabled={tablesLoading}
             title={t('sql.refreshTables')}
@@ -165,6 +192,13 @@ export default function SqlPlayground() {
                     : <ChevronRight size={12} />}
                 </span>
                 <span className="sqlpg-table-name">{tbl.table_name}</span>
+                <span
+                  className="sqlpg-table-info"
+                  onClick={(e) => openTableDetails(tbl.table_name, e)}
+                  title={t('sql.td.open')}
+                >
+                  <Table size={11} />
+                </span>
               </button>
               {expandedTable === tbl.table_name && (columnsMap[tbl.table_name] ?? []).map(c => (
                 <button
@@ -356,6 +390,25 @@ export default function SqlPlayground() {
           cols={rowDetail.cols}
           index={rowDetail.index}
           onClose={() => setRowDetail(null)}
+          t={t}
+        />
+      )}
+
+      {tableDetail && (
+        <TableDetailsModal
+          table={tableDetail.table}
+          details={tableDetail.details}
+          loading={tableDetail.loading}
+          onClose={() => setTableDetail(null)}
+          t={t}
+        />
+      )}
+
+      {diagram && (
+        <SchemaDiagramModal
+          data={diagram.data}
+          loading={diagram.loading}
+          onClose={() => setDiagram(null)}
           t={t}
         />
       )}

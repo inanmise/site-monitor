@@ -67,6 +67,16 @@ public class KeywordMonitor {
     @Column(name = "confirm_interval_seconds")
     private Integer confirmIntervalSeconds = 30;
 
+    /** Recovery period: alarmın otomatik kapanması için gereken ardışık başarılı kontrol sayısı
+     *  (varsayılan 1 = ilk başarılı kontrolde kapat). */
+    @Column(name = "recovery_checks")
+    private Integer recoveryChecks = 1;
+
+    /** Cache busting: satır başına "Name: Value" özel HTTP header'ları (ör. Cache-Control: no-cache).
+     *  URL'de {timestamp} placeholder'ı her kontrolde güncel Unix saniye ile değiştirilir. */
+    @Column(name = "custom_headers", columnDefinition = "TEXT")
+    private String customHeaders;
+
     @Column(name = "created_at")
     private String createdAt;
 

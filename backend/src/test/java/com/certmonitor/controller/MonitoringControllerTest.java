@@ -57,6 +57,7 @@ class MonitoringControllerTest {
     @MockitoBean com.certmonitor.service.PingCheckerService pingChecker;
     @MockitoBean TeamRepository teamRepo;
     @MockitoBean com.certmonitor.service.EscalationService escalationService;
+    @MockitoBean com.certmonitor.service.AppSettingsService appSettings;
 
     @BeforeEach
     void stubTeamMap() {
@@ -161,7 +162,7 @@ class MonitoringControllerTest {
     void testKeyword_returnsResult() throws Exception {
         java.util.Map<String, Object> cr = new java.util.HashMap<>();
         cr.put("count", 5); cr.put("http_status", 200); cr.put("response_ms", 12L);
-        when(keywordChecker.check(eq("https://x.example.com"), eq("akbank"), anyInt())).thenReturn(cr);
+        when(keywordChecker.check(eq("https://x.example.com"), eq("akbank"), anyInt(), any())).thenReturn(cr);
 
         mvc.perform(post("/api/monitoring/keyword/test").session(session("USER"))
                 .contentType("application/json")

@@ -4,6 +4,7 @@ import com.fasterxml.jackson.annotation.JsonIgnore;
 import jakarta.persistence.*;
 import lombok.Data;
 import lombok.NoArgsConstructor;
+import lombok.ToString;
 
 import java.util.LinkedHashSet;
 import java.util.Set;
@@ -28,6 +29,7 @@ public class AppUser {
     /** BCrypt hash for LOCAL accounts. NULL for LDAP users — they authenticate
      *  against AD, so no password is ever stored for them. */
     @JsonIgnore
+    @ToString.Exclude   // parola hash'i toString/log'a ASLA sızmasın
     @Column(name = "password_hash")
     private String passwordHash;
 
@@ -141,6 +143,7 @@ public class AppUser {
      *  günceller; AuthInterceptor her istekte karşılaştırır, eşleşmeyen (eski) oturumu kapatır.
      *  Store-agnostik (bellek/jdbc fark etmez). İstemciye sızmasın diye @JsonIgnore. */
     @JsonIgnore
+    @ToString.Exclude   // aktif oturum kimliği (token benzeri) toString/log'a sızmasın
     @Column(name = "active_session_id", length = 200)
     private String activeSessionId;
 

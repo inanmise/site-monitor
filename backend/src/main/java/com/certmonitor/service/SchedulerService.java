@@ -103,6 +103,10 @@ public class SchedulerService {
 
     private final AppSettingsService appSettings;
 
+    /** Per-monitör son kontrol zamanı (epoch ms), key "type:id". In-memory → restart'ta sıfırlanır
+     *  (ilk sweep'te hepsi due). Gerçek "check frequency": sweep, aralığı henüz dolmayan monitörü atlar. */
+    private final java.util.concurrent.ConcurrentHashMap<String, Long> lastMonitorCheckAt = new java.util.concurrent.ConcurrentHashMap<>();
+
     @org.springframework.beans.factory.annotation.Autowired
     @org.springframework.beans.factory.annotation.Qualifier("certCheckExecutor")
     private org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor certCheckExecutor;
@@ -702,7 +706,10 @@ public class SchedulerService {
                     trySendAdminResolved();
                 }
                 if (pendingAdminResolvedEmail.get()) trySendAdminResolved();
-                escalationService.processResults(results);
+                // Cert/domain expiry izleme kapalıysa cert alarmları işlenmez (SSL kontrol + durum güncellemesi sürer).
+                if (appSettings.getBoolean("cert.monitor.expiry.alert-enabled", true)) {
+                    escalationService.processResults(results);
+                }
             }
 
         } finally {
@@ -930,10 +937,24 @@ public class SchedulerService {
         }
     }
 
+    /** Per-monitör kontrol sıklığı kapısı: monitör son kontrolünden bu yana intervalSeconds dolmadıysa bu
+     *  sweep'te ATLA (gerçek "check frequency"). True dönerse "şimdi kontrol edildi" olarak işaretler. */
+    private boolean checkDue(String type, Long id, Integer intervalSeconds) {
+        if (id == null) return true;
+        int sec = intervalSeconds != null && intervalSeconds > 0 ? intervalSeconds : 60;
+        long nowMs = System.currentTimeMillis();
+        String key = type + ":" + id;
+        Long last = lastMonitorCheckAt.get(key);
+        if (last != null && nowMs - last < sec * 1000L) return false;
+        lastMonitorCheckAt.put(key, nowMs);
+        return true;
+    }
+
     // ── Port / DNS / Uptime periodic checks ──────────────────────────────────
 
     @Scheduled(fixedDelayString = "${cert.monitor.uptime.interval-ms:300000}", initialDelayString = "60000")
     public void runUptimeChecks() {
+        if (!appSettings.getBoolean("cert.monitor.uptime.alert-enabled", true)) return;   // izleme duraklatıldı → kontrol+alarm yok
         List<CertificateInventory> active = inventoryRepo.findByActiveTrueOrderByDomainAsc();
         if (active.isEmpty()) return;
         List<MonitoringOutageService.SweepItem> sweep = new ArrayList<>();
@@ -979,8 +1000,9 @@ public class SchedulerService {
         return r;
     }
 
-    @Scheduled(fixedDelayString = "${cert.monitor.port.interval-ms:60000}", initialDelayString = "45000")
+    @Scheduled(fixedDelayString = "${cert.monitor.port.interval-ms:30000}", initialDelayString = "45000")
     public void runPortChecks() {
+        if (!appSettings.getBoolean("cert.monitor.port.alert-enabled", true)) return;   // izleme duraklatıldı → kontrol+alarm yok
         List<PortMonitor> monitors = portMonitorRepo.findByActiveTrue();
         if (monitors.isEmpty()) return;
         // Skip monitors whose host is no longer in active inventory (soft-deleted / inactive)
@@ -990,6 +1012,7 @@ public class SchedulerService {
         List<MonitoringOutageService.SweepItem> sweep = new ArrayList<>();
         for (PortMonitor m : monitors) {
             if (!activeDomains.contains(m.getHost())) { skipped++; continue; }
+            if (!checkDue("port", m.getId(), m.getIntervalSeconds())) continue;   // aralığı dolmadı → bu sweep'te atla
             try {
                 Map<String, Object> r = recheckPort(m);
                 // Hata fırlatan monitör item üretmez — yanlış all-up resolve olmaz
@@ -1036,13 +1059,15 @@ public class SchedulerService {
     }
 
     // ── Keyword monitor sweep (serbest-form; envanter filtresi YOK) ──────────────
-    @Scheduled(fixedDelayString = "${cert.monitor.keyword.interval-ms:60000}", initialDelayString = "55000")
+    @Scheduled(fixedDelayString = "${cert.monitor.keyword.interval-ms:30000}", initialDelayString = "55000")
     public void runKeywordChecks() {
+        if (!appSettings.getBoolean("cert.monitor.keyword.alert-enabled", true)) return;   // izleme duraklatıldı → kontrol+alarm yok
         List<KeywordMonitor> monitors = keywordMonitorRepo.findByActiveTrue();
         if (monitors.isEmpty()) return;
         int checked = 0;
         List<MonitoringOutageService.SweepItem> sweep = new ArrayList<>();
         for (KeywordMonitor m : monitors) {
+            if (!checkDue("keyword", m.getId(), m.getIntervalSeconds())) continue;   // aralığı dolmadı → bu sweep'te atla
             try {
                 Map<String, Object> r = recheckKeyword(m);
                 Map<String, Object> ctx = new LinkedHashMap<>();
@@ -1054,6 +1079,7 @@ public class SchedulerService {
                 ctx.put("monitor_id", m.getId());
                 ctx.put("monitor_confirm_attempts", m.getConfirmAttempts());
                 ctx.put("monitor_confirm_interval_ms", m.getConfirmIntervalSeconds() != null ? m.getConfirmIntervalSeconds() * 1000L : null);
+                ctx.put("monitor_recovery_checks", m.getRecoveryChecks());
                 if (m.getTeamId() != null) ctx.put("team_id", m.getTeamId());
                 if (r.get("http_status") != null) ctx.put("http_status", r.get("http_status"));
                 if (r.get("response_ms") != null) ctx.put("response_ms", r.get("response_ms"));
@@ -1082,7 +1108,7 @@ public class SchedulerService {
      *  HTTP hatası → ok=false (down). {"status","error"} döner. */
     private Map<String, Object> recheckKeyword(KeywordMonitor m) {
         int timeout = m.getTimeoutMs() != null ? m.getTimeoutMs() : 10000;
-        Map<String, Object> r = keywordCheckerService.check(m.getUrl(), m.getKeyword(), timeout);
+        Map<String, Object> r = keywordCheckerService.check(m.getUrl(), m.getKeyword(), timeout, m.getCustomHeaders());
         boolean found = Boolean.TRUE.equals(r.getOrDefault("found", false));
         int count = r.get("count") instanceof Number cn ? cn.intValue() : (found ? 1 : 0);
         int threshold = m.getMatchCount() != null ? m.getMatchCount() : 1;
@@ -1115,8 +1141,9 @@ public class SchedulerService {
     }
 
     // ── Ping monitor sweep (serbest-form; envanter filtresi YOK) ─────────────────
-    @Scheduled(fixedDelayString = "${cert.monitor.ping.interval-ms:60000}", initialDelayString = "65000")
+    @Scheduled(fixedDelayString = "${cert.monitor.ping.interval-ms:30000}", initialDelayString = "65000")
     public void runPingChecks() {
+        if (!appSettings.getBoolean("cert.monitor.ping.alert-enabled", true)) return;   // izleme duraklatıldı → kontrol+alarm yok
         List<PingMonitor> monitors = pingMonitorRepo.findByActiveTrue();
         // Öksüz ping alarmı temizliği: host rename/silme sonrası recovery'nin asla kapatamadığı açık
         // PING_DOWN alarmlarını kapat (aktif+pasif TÜM mevcut host'lara göre). Aktif izleme yoksa da çalışır.
@@ -1132,6 +1159,7 @@ public class SchedulerService {
         int checked = 0;
         List<MonitoringOutageService.SweepItem> sweep = new ArrayList<>();
         for (PingMonitor m : monitors) {
+            if (!checkDue("ping", m.getId(), m.getIntervalSeconds())) continue;   // aralığı dolmadı → bu sweep'te atla
             try {
                 Map<String, Object> r = recheckPing(m);
                 Map<String, Object> ctx = new LinkedHashMap<>();
@@ -1140,6 +1168,7 @@ public class SchedulerService {
                 ctx.put("monitor_id", m.getId());
                 ctx.put("monitor_confirm_attempts", m.getConfirmAttempts());
                 ctx.put("monitor_confirm_interval_ms", m.getConfirmIntervalSeconds() != null ? m.getConfirmIntervalSeconds() * 1000L : null);
+                ctx.put("monitor_recovery_checks", m.getRecoveryChecks());
                 if (m.getTeamId() != null) ctx.put("team_id", m.getTeamId());
                 if (r.get("rtt_ms") != null)      ctx.put("rtt_ms", r.get("rtt_ms"));
                 if (r.get("packet_loss") != null) ctx.put("packet_loss", r.get("packet_loss"));
@@ -1192,6 +1221,7 @@ public class SchedulerService {
 
     @Scheduled(fixedDelayString = "${cert.monitor.dns.interval-ms:300000}", initialDelayString = "60000")
     public void runDnsChecks() {
+        if (!appSettings.getBoolean("cert.monitor.dns.alert-enabled", true)) return;   // izleme duraklatıldı → kontrol+alarm yok
         List<DnsMonitor> monitors = dnsMonitorRepo.findByActiveTrue();
         if (monitors.isEmpty()) return;
         // Skip monitors whose domain is no longer in active inventory (soft-deleted / inactive)
