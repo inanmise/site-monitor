@@ -92,6 +92,7 @@ export default function SystemHealth({ systemRole, globalAdmin = false, preFilte
   const [httpMetrics, setHttpMetrics] = useState(null)
   const [poolCardRefreshing, setPoolCardRefreshing] = useState(false)
   const [poolLastRefreshed, setPoolLastRefreshed]   = useState(null)
+  const [uactRefreshing, setUactRefreshing]         = useState(false)
   const [hbRefreshing, setHbRefreshing] = useState(false)
   const [hbModalOpen, setHbModalOpen] = useState(false)
   const [openSection, setOpenSection] = useState(null) // varsayılan: tüm akordiyon kapalı
@@ -246,6 +247,14 @@ export default function SystemHealth({ systemRole, globalAdmin = false, preFilte
       setPoolLastRefreshed(new Date())
     }
     setPoolCardRefreshing(false)
+  }, [])
+
+  // Kullanıcı Etkinliği'ni manuel tazele (aktif oturum/sayaçlar/grafikler) — buton tıklamasıyla.
+  const refreshUserActivity = useCallback(async () => {
+    setUactRefreshing(true)
+    const res = await api.admin.getUserActivity()
+    if (res?.success) setUserActivity(res.data)
+    setUactRefreshing(false)
   }, [])
 
   useEffect(() => {
@@ -1307,9 +1316,14 @@ export default function SystemHealth({ systemRole, globalAdmin = false, preFilte
                     <span className="uact-hero-eyebrow">{t('uact.section')}</span>
                     <span className="uact-hero-h">{t('uact.heroTitle')}</span>
                   </div>
-                  <button type="button" className="uact-hero-live" onClick={() => setShowActiveList(true)} title={t('uact.activeCardHint')}>
-                    <span className="uact-hero-dot" />{sum.active_count ?? 0} {t('uact.activeNow')}
-                  </button>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <button type="button" className="uact-hero-live" onClick={() => setShowActiveList(true)} title={t('uact.activeCardHint')}>
+                      <span className="uact-hero-dot" />{sum.active_count ?? 0} {t('uact.activeNow')}
+                    </button>
+                    <button type="button" className="sys-card-refresh-btn" onClick={refreshUserActivity} disabled={uactRefreshing} title={t('uact.refresh')}>
+                      <span className={uactRefreshing ? 'spin' : ''}>↻</span>
+                    </button>
+                  </div>
                 </div>
 
                 {/* KPI özet kartları */}
