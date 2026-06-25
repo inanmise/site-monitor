@@ -538,6 +538,7 @@ export const api = {
     updatePingMonitor: (id, data) => request(`/monitoring/ping/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
     deletePingMonitor: (id) => request(`/monitoring/ping/${id}`, { method: 'DELETE' }),
     triggerPingCheck:  (id) => request(`/monitoring/ping/${id}/check`, { method: 'POST' }),
+    testPingMonitor:   (data) => request('/monitoring/ping/test', { method: 'POST', body: JSON.stringify(data) }),
     getPingHistory:    (id, { days, limit } = {}) => {
       const q = new URLSearchParams(
         Object.fromEntries(Object.entries({ days, limit }).filter(([, v]) => v != null && v !== '')),

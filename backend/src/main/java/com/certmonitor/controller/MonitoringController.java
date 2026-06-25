@@ -873,6 +873,32 @@ public class MonitoringController {
         return ok(out);
     }
 
+    /**
+     * Ad-hoc ping testi — kaydetmeden, formdaki host/parametrelerle bir kez ping atar; ping atılabildi mi (sent)
+     * ve koşul (erişilebilirlik = up) sağlandı mı döndürür. "Test" butonu kullanır.
+     */
+    @PostMapping("/ping/test")
+    public ResponseEntity<Map<String, Object>> testPing(@RequestBody Map<String, Object> body, HttpSession session) {
+        permissionService.require(session, "monitoring.crud", "edit");
+        String host = body.get("host") != null ? body.get("host").toString().trim() : "";
+        if (host.isEmpty()) return badRequest("host zorunlu");
+        String ipVersion = body.get("ipVersion") != null ? body.get("ipVersion").toString() : "auto";
+        int count     = body.get("packetCount") instanceof Number cn ? cn.intValue() : 4;
+        int timeoutMs = body.get("timeoutMs")   instanceof Number tn ? tn.intValue() : 5000;
+        Map<String, Object> r = pingChecker.check(host, ipVersion, Math.max(1, Math.min(count, 10)), timeoutMs);
+        boolean na = Boolean.TRUE.equals(r.get("na"));
+        boolean up = Boolean.TRUE.equals(r.get("up"));
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("sent",          !na);          // ping atılabildi mi (ICMP ortamı uygun mu)
+        out.put("up",            up);
+        out.put("condition_met", up);           // ping koşulu = host erişilebilir
+        out.put("rtt_ms",        r.get("rtt_ms"));
+        out.put("packet_loss",   r.get("packet_loss"));
+        out.put("na",            na);
+        out.put("error",         r.get("error"));
+        return ok(out);
+    }
+
     // ── Yanıt-süresi / RTT grafiği (detay modalı "Süre Grafiği" sekmesi) ─────
     private static final int SERIES_RAW_CAP = 200_000;
     private static final DateTimeFormatter LDT = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss");
