@@ -289,6 +289,10 @@ public class SchedulerService {
         patch("ALTER TABLE escalation_contacts ADD COLUMN team_id INTEGER");
         // LDAP users carry no app password → password_hash must allow NULL on existing tables.
         patch("ALTER TABLE app_users ALTER COLUMN password_hash DROP NOT NULL");
+        // Username'leri tek-bicim BUYUK harfe cek (case tutarsizligi -> ayni kullanici tek kimlik; aktif-oturum
+        // sayimi/audit dogru). DB UPPER, idempotent (yalniz farkli satirlar). remember_me_tokens da hizalanir.
+        patch("UPDATE app_users SET username = UPPER(username) WHERE username <> UPPER(username)");
+        patch("UPDATE remember_me_tokens SET username = UPPER(username) WHERE username <> UPPER(username)");
         // Widen varchar(255) columns to TEXT — markdown editor / long descriptions can overflow
         patch("ALTER TABLE certificate_inventory ALTER COLUMN change_description TYPE TEXT");
         patch("ALTER TABLE certificate_inventory ALTER COLUMN description TYPE TEXT");

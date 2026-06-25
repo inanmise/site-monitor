@@ -13,12 +13,18 @@ import java.util.List;
 import java.util.Optional;
 
 public interface AppUserRepository extends JpaRepository<AppUser, Long> {
-    Optional<AppUser> findByUsername(String username);
-    Optional<AppUser> findByUsernameAndActiveTrue(String username);
+    // Username eşleştirmesi CASE-INSENSITIVE (DB UPPER): canonical saklama BÜYÜK harf olsa da yazılan/eski
+    // satırların case'i ne olursa olsun aynı kullanıcıya çözülür (Melih "N68753"/"n68753" tek satır) +
+    // LDAP re-provision eski satırı bulur (dup yaratmaz). DB UPPER iki tarafta → collation-tutarlı.
+    @Query("SELECT u FROM AppUser u WHERE UPPER(u.username) = UPPER(:username)")
+    Optional<AppUser> findByUsername(@Param("username") String username);
+    @Query("SELECT u FROM AppUser u WHERE UPPER(u.username) = UPPER(:username) AND u.active = true")
+    Optional<AppUser> findByUsernameAndActiveTrue(@Param("username") String username);
     Optional<AppUser> findByEmployeeId(String employeeId);     // sicil (AD cn)
     List<AppUser> findByTeamIdOrderByUsernameAsc(Long teamId);
     List<AppUser> findAllByOrderByUsernameAsc();
-    boolean existsByUsername(String username);
+    @Query("SELECT COUNT(u) > 0 FROM AppUser u WHERE UPPER(u.username) = UPPER(:username)")
+    boolean existsByUsername(@Param("username") String username);
     boolean existsByTeamId(Long teamId);
 
     // ── Çoklu takım üyeliği (app_user_teams) ──
@@ -50,7 +56,7 @@ public interface AppUserRepository extends JpaRepository<AppUser, Long> {
 
     /** Oturum ping'i: yalnız kullanıcının GÜNCEL oturumu için lastSeenAt'i tazeler (tek statement). */
     @Modifying
-    @Query("UPDATE AppUser u SET u.lastSeenAt = :ts WHERE u.username = :username AND u.activeSessionId = :sid")
+    @Query("UPDATE AppUser u SET u.lastSeenAt = :ts WHERE UPPER(u.username) = UPPER(:username) AND u.activeSessionId = :sid")
     int touchLastSeen(@Param("username") String username, @Param("sid") String sid, @Param("ts") String ts);
 
     // ── Faz 3b: manager (müdür) → astları / yönettiği takımlar ──

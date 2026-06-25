@@ -79,7 +79,7 @@ class LdapProvisioningServiceTest {
 
         AppUser u = service.provisionFromAd("n64954", "CN=n64954,OU=BTPersonel,DC=aknet,DC=akb", attrs);
 
-        assertThat(u.getUsername()).isEqualTo("n64954");
+        assertThat(u.getUsername()).isEqualTo("N64954");   // username HER ZAMAN büyük harf
         assertThat(u.getEmail()).isEqualTo("erdi@akbank.com");
         assertThat(u.getEmployeeId()).isEqualTo("63999");          // cn = sicil
         assertThat(u.getFirstName()).isEqualTo("Erdi");
@@ -151,7 +151,7 @@ class LdapProvisioningServiceTest {
         org.mockito.ArgumentCaptor<AppUser> cap = org.mockito.ArgumentCaptor.forClass(AppUser.class);
         org.mockito.Mockito.verify(userRepo, org.mockito.Mockito.atLeastOnce()).save(cap.capture());
         AppUser manager = cap.getAllValues().stream()
-                .filter(x -> "mgr1".equals(x.getUsername())).findFirst().orElseThrow();
+                .filter(x -> "MGR1".equals(x.getUsername())).findFirst().orElseThrow();   // normalize → BÜYÜK
         assertThat(manager.getSystemRole()).isEqualTo("ADMIN");  // müdür = scoped ADMIN
     }
 

@@ -106,6 +106,13 @@ public class UserService {
     }
 
     // ── Tek aktif oturum (single active session per user) — store-agnostik ──────
+    /** Username normalizasyonu: trim + BÜYÜK harf (Locale.ROOT — Türkçe locale'de 'i'→'İ' OLMASIN; ASCII).
+     *  Tek kaynak: tüm oluşturma noktalari (bootstrap / LDAP provision / admin create) bunu kullanir →
+     *  app_users.username HER ZAMAN büyük harf. Aramalar AppUserRepository'de case-insensitive (DB UPPER). */
+    public static String normalizeUsername(String username) {
+        return username == null ? null : username.strip().toUpperCase(java.util.Locale.ROOT);
+    }
+
     /** Kullanıcının en güncel oturum ID'sini kaydeder (yeni login / remember-me reauth → newest wins). */
     @Transactional
     public void recordActiveSession(String username, String sessionId) {
@@ -257,7 +264,7 @@ public class UserService {
      */
     @Transactional
     public AppUser provisionLdapUser(String username, String displayName, String email) {
-        String uname = username.trim();
+        String uname = normalizeUsername(username);
         String now = now();
         Optional<AppUser> existing = userRepo.findByUsername(uname);
         if (existing.isPresent()) {
@@ -319,7 +326,7 @@ public class UserService {
 
         // Create admin user
         AppUser admin = new AppUser();
-        admin.setUsername(adminUsername);
+        admin.setUsername(normalizeUsername(adminUsername));
         admin.setPasswordHash(PASSWORD_ENCODER.encode(rawPassword));
         admin.setDisplayName(adminUsername);
         admin.setSystemRole("ADMIN");
@@ -409,11 +416,12 @@ public class UserService {
         java.util.LinkedHashSet<Long> teams = normalizeTeams(teamIds);
         // Takım, ADMIN dışındaki roller için zorunlu (global admin bir takıma bağlı olmak zorunda değil).
         if (teams.isEmpty() && !"ADMIN".equals(systemRole)) throw new IllegalArgumentException("Team is required");
-        if (userRepo.existsByUsername(username.trim())) throw new IllegalArgumentException("Username already exists: " + username);
+        String uname = normalizeUsername(username);
+        if (userRepo.existsByUsername(uname)) throw new IllegalArgumentException("Username already exists: " + uname);
 
         String now = now();
         AppUser user = new AppUser();
-        user.setUsername(username.trim());
+        user.setUsername(uname);
         user.setPasswordHash(PASSWORD_ENCODER.encode(rawPassword));
         user.setDisplayName(displayName);
         user.setEmail(email.trim());

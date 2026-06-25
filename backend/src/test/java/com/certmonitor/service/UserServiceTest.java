@@ -151,17 +151,25 @@ class UserServiceTest {
     @Test
     @DisplayName("provisionLdapUser: new AD user → USER, no team, NULL password, authSource LDAP")
     void provisionLdapUser_new_noPasswordStored() {
-        when(userRepo.findByUsername("n64954")).thenReturn(Optional.empty());
+        when(userRepo.findByUsername("N64954")).thenReturn(Optional.empty());
 
         AppUser u = service.provisionLdapUser("n64954", "Erdi İnanmış", "erdi@akbank.com");
 
-        assertThat(u.getUsername()).isEqualTo("n64954");
+        assertThat(u.getUsername()).isEqualTo("N64954");   // username HER ZAMAN büyük harf
         assertThat(u.getSystemRole()).isEqualTo("USER");
         assertThat(u.getTeamId()).isNull();
         assertThat(u.getAuthSource()).isEqualTo("LDAP");
         assertThat(u.getPasswordHash()).isNull();   // no app password for LDAP users
         assertThat(u.getDisplayName()).isEqualTo("Erdi İnanmış");
         assertThat(u.getEmail()).isEqualTo("erdi@akbank.com");
+    }
+
+    @Test
+    @DisplayName("normalizeUsername: trim + ASCII büyük harf (Locale.ROOT — 'i'→'I', Türkçe 'İ' DEĞİL)")
+    void normalizeUsername_uppercaseAsciiSafe() {
+        assertThat(UserService.normalizeUsername("  n68753 ")).isEqualTo("N68753");
+        assertThat(UserService.normalizeUsername("Admin")).isEqualTo("ADMIN");   // 'i' → ASCII 'I', 'İ' DEĞİL
+        assertThat(UserService.normalizeUsername(null)).isNull();
     }
 
     @Test
@@ -558,7 +566,7 @@ class UserServiceTest {
     @Test
     @DisplayName("createUser: duplicate username → IllegalArgumentException")
     void createUser_duplicateUsername_throwsIllegalArgument() {
-        when(userRepo.existsByUsername("alice")).thenReturn(true);
+        when(userRepo.existsByUsername("ALICE")).thenReturn(true);   // createUser username'i normalize eder (BÜYÜK)
         assertThatThrownBy(() -> service.createUser("alice", "pass1234", "D", "e@e.com", null, "USER", List.of(1L), null))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("already exists");
