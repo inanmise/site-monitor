@@ -59,7 +59,7 @@ public class PingMonitor {
     /** Recovery period: alarmın otomatik kapanması için gereken ardışık başarılı kontrol sayısı
      *  (varsayılan 1 = ilk başarılı kontrolde kapat). */
     @Column(name = "recovery_checks")
-    private Integer recoveryChecks = 1;
+    private Integer recoveryChecks = 3;
 
     @Column(name = "created_at")
     private String createdAt;

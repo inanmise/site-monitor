@@ -16,7 +16,7 @@ const INTERVALS = [
 ]
 const REFRESH_INTERVAL = 60
 const emptyForm = { name: '', host: '', ipVersion: 'auto', groupName: '', teamId: '',
-  intervalSeconds: 60, timeoutMs: 5000, packetCount: 4, confirmAttempts: 3, confirmIntervalSeconds: 30, recoveryChecks: 1, active: true }
+  intervalSeconds: 60, timeoutMs: 5000, packetCount: 4, confirmAttempts: 3, confirmIntervalSeconds: 30, recoveryChecks: 3, active: true }
 
 export default function PingMonitorPage({ systemRole, teamId, teamName }) {
   const t = useT()
@@ -118,7 +118,7 @@ export default function PingMonitorPage({ systemRole, teamId, teamName }) {
     setForm({ name: m.name || '', host: m.host || '', ipVersion: m.ip_version || 'auto', groupName: m.group_name || '',
       teamId: m.team_id != null ? String(m.team_id) : '', intervalSeconds: m.interval_seconds ?? 60,
       timeoutMs: m.timeout_ms ?? 5000, packetCount: m.packet_count ?? 4,
-      confirmAttempts: m.confirm_attempts ?? 3, confirmIntervalSeconds: m.confirm_interval_seconds ?? 30, recoveryChecks: m.recovery_checks ?? 1,
+      confirmAttempts: m.confirm_attempts ?? 3, confirmIntervalSeconds: m.confirm_interval_seconds ?? 30, recoveryChecks: m.recovery_checks ?? 3,
       active: m.active !== false })
     setModal(m)
   }
