@@ -58,9 +58,9 @@ public class LdapProvisioningService {
      * recursively (avoids walking the management chain indefinitely).
      */
     private AppUser upsert(String username, Map<String, Object> attrs, boolean resolveManager) {
-        String uname = username.trim();
+        String uname = com.certmonitor.service.UserService.normalizeUsername(username);  // hep BÜYÜK harf
         String now = now();
-        AppUser u = userRepo.findByUsername(uname).orElseGet(AppUser::new);
+        AppUser u = userRepo.findByUsername(uname).orElseGet(AppUser::new);   // case-insensitive → eski satırı bulur
         boolean isNew = (u.getId() == null);
         if (isNew) {
             u.setUsername(uname);
