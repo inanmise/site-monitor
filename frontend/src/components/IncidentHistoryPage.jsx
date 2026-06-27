@@ -360,16 +360,33 @@ export default function IncidentHistoryPage() {
   function applyCardFilter(kind) {
     setFilters(prev => {
       const active = (kind === 'critical' && prev.severity === 'CRITICAL')
+        || (kind === 'high' && prev.severity === 'HIGH')
+        || (kind === 'medium' && prev.severity === 'MEDIUM')
+        || (kind === 'low' && prev.severity === 'LOW')
         || (kind === 'sla' && prev.slaBreached === true)
         || (kind === 'open' && prev.open === true)
-        || (kind === 'resolved' && prev.status === 'RESOLVED')
+        || (kind === 'investigating' && prev.status === 'INVESTIGATING')
+        || (kind === 'mitigated' && prev.status === 'MITIGATED')
+        || (kind === 'resolved' && prev.status === 'RESOLVED' && prev.slaBreached !== false)
+        || (kind === 'resolved_sla' && prev.status === 'RESOLVED' && prev.slaBreached === false)
       const base = { ...prev, q: '', severity: '', category: '', status: '', channel: '',
-        slaBreached: undefined, open: undefined }
+        slaBreached: undefined, open: undefined, _preset: undefined }
       if (kind === 'total' || active) return base
       if (kind === 'critical') return { ...base, severity: 'CRITICAL' }
+      if (kind === 'high')     return { ...base, severity: 'HIGH' }
+      if (kind === 'medium')   return { ...base, severity: 'MEDIUM' }
+      if (kind === 'low')      return { ...base, severity: 'LOW' }
       if (kind === 'sla')      return { ...base, slaBreached: true }
       if (kind === 'open')     return { ...base, open: true }
+      if (kind === 'investigating') return { ...base, status: 'INVESTIGATING' }
+      if (kind === 'mitigated')     return { ...base, status: 'MITIGATED' }
       if (kind === 'resolved') return { ...base, status: 'RESOLVED' }
+      if (kind === 'resolved_sla') return { ...base, status: 'RESOLVED', slaBreached: false }
+      if (kind === 'last30d') {
+        const ymd = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+        const today = new Date()
+        return { ...base, since: ymd(new Date(today.getTime() - 30 * 86400000)), until: ymd(today), _preset: 'last30d' }
+      }
       return base
     })
   }
@@ -428,6 +445,8 @@ export default function IncidentHistoryPage() {
 
   const sevBadge = (s) => <span style={{ color: SEV_COLOR[s] || '#64748b', fontWeight: 700 }}>{t('inc.sev' + s) || s}</span>
   const sum = trends?.summary || {}
+  const bySev = trends?.by_severity || {}
+  const byStatus = trends?.by_status || {}
   const maxDay = dailyChart.reduce((m, d) => Math.max(m, d.count), 0) || 1
 
   return (
@@ -457,16 +476,32 @@ export default function IncidentHistoryPage() {
 
       {showSummary && (<>
       {/* Executive özet kartları — tıklanınca filtre uygular (proje stats-panel deseni) */}
-      <div className="stats-panel" style={{ gridTemplateColumns: 'repeat(5,1fr)' }}>
-        {[['sumTotal', sum.total, 'total', 'total'], ['sumCritical', sum.critical, 'critical', 'critical'],
-          ['sumSla', sum.sla_breached, 'alert', 'sla'], ['sumOpen', sum.open, 'warning', 'open'],
-          ['sumResolved', sum.resolved, 'valid', 'resolved']].map(([k, v, variant, kind]) => {
+      <div className="stats-panel" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))' }}>
+        {[['sumTotal', sum.total, 'total', 'total'],
+          ['sumCritical', sum.critical, 'critical', 'critical'],
+          ['sumHigh', bySev.HIGH, 'high', 'high'],
+          ['sumMedium', bySev.MEDIUM, 'medium', 'medium'],
+          ['sumLow', bySev.LOW, 'low', 'low'],
+          ['sumOpen', sum.open, 'warning', 'open'],
+          ['sumInvestigating', byStatus.INVESTIGATING, 'investigating', 'investigating'],
+          ['sumMitigated', byStatus.MITIGATED, 'mitigated', 'mitigated'],
+          ['sumResolved', sum.resolved, 'valid', 'resolved'],
+          ['sumSla', sum.sla_breached, 'alert', 'sla'],
+          ['sumResolvedSla', sum.resolved_within_sla, 'resolvedsla', 'resolved_sla'],
+          ['sumLast30d', sum.last_30d, 'last30d', 'last30d']].map(([k, v, variant, kind]) => {
           const active = (kind === 'critical' && filters.severity === 'CRITICAL')
+            || (kind === 'high' && filters.severity === 'HIGH')
+            || (kind === 'medium' && filters.severity === 'MEDIUM')
+            || (kind === 'low' && filters.severity === 'LOW')
             || (kind === 'sla' && filters.slaBreached === true)
             || (kind === 'open' && filters.open === true)
-            || (kind === 'resolved' && filters.status === 'RESOLVED')
-            || (kind === 'total' && !filters.severity && !filters.slaBreached && !filters.open
-                && filters.status !== 'RESOLVED' && !filters.category && !filters.channel && !filters.q)
+            || (kind === 'investigating' && filters.status === 'INVESTIGATING')
+            || (kind === 'mitigated' && filters.status === 'MITIGATED')
+            || (kind === 'resolved' && filters.status === 'RESOLVED' && filters.slaBreached !== false)
+            || (kind === 'resolved_sla' && filters.status === 'RESOLVED' && filters.slaBreached === false)
+            || (kind === 'last30d' && filters._preset === 'last30d')
+            || (kind === 'total' && !filters.severity && !filters.status && filters.slaBreached === undefined
+                && filters.open === undefined && !filters.category && !filters.channel && !filters.q && filters._preset !== 'last30d')
           return (
             <div key={k} className={`stat-item stat-item-${variant}`} role="button" tabIndex={0}
                  title={t('inc.filterByCard')} onClick={() => applyCardFilter(kind)}

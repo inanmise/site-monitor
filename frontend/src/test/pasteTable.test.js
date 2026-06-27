@@ -50,4 +50,18 @@ describe('clipboardToMarkdownTable', () => {
     expect(clipboardToMarkdownTable(clip())).toBeNull()
     expect(clipboardToMarkdownTable(null)).toBeNull()
   })
+
+  it('returns null for a pasted exception stack trace (ilk satır = mesaj, tab yok → tablo değil)', () => {
+    const stack = [
+      'com.akbank.bsa.core.exception.BSAException: Teknik bir hata oluştu. İşleminizi kontrol ediniz.',
+      '\tat deployment.BSAWEB.war//com.akbank.channel.AbstractChannelDispatcher.dispach(AbstractChannelDispatcher.java:134)',
+      '\tat deployment.BSAWEB.war//com.akbank.channel.ChannelWsDispatcher.dispach(ChannelWsDispatcher.java:11)',
+    ].join('\r\n')
+    expect(clipboardToMarkdownTable(clip({ text: stack }))).toBeNull()
+  })
+
+  it('returns null when only tab-indented lines are pasted (girinti, ızgara değil)', () => {
+    const text = ['\tat foo.Bar.baz(Bar.java:1)', '\tat foo.Bar.qux(Bar.java:2)'].join('\n')
+    expect(clipboardToMarkdownTable(clip({ text }))).toBeNull()
+  })
 })

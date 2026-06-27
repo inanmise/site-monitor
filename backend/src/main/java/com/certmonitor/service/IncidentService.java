@@ -95,11 +95,27 @@ public class IncidentService {
         boolean scoped = scope != null;                                          // null = global (admin/AUDIT)
         List<Long> scopeList = (scope != null && !scope.isEmpty()) ? scope : List.of(-1L); // boş kapsam → hiçbir şey eşleşmez
         String s = blankToNull(since), u = blankToNull(until);
-        List<Map<String, Object>> daily = new ArrayList<>();
-        for (Object[] row : repo.countByDay(s, u, scoped, scopeList)) {
-            daily.add(Map.of("day", row[0], "count", ((Number) row[1]).longValue()));
+
+        // Günlük trend — olay zamanını UTC'den Europe/Istanbul'a çevirip YEREL güne göre grupla
+        // (tabloda saatler IST gösterildiğinden; ham UTC günü gece-yarısı kayıtlarını bir önceki güne kaydırırdı).
+        java.time.ZoneId ist = java.time.ZoneId.of("Europe/Istanbul");
+        java.util.TreeMap<String, Long> dayCounts = new java.util.TreeMap<>();
+        for (String oa : repo.occurredAtInRange(s, u, scoped, scopeList)) {
+            if (oa == null || oa.length() < 10) continue;
+            String day;
+            try {
+                java.time.LocalDateTime utc = java.time.LocalDateTime.parse(oa.substring(0, Math.min(19, oa.length())));
+                day = utc.atZone(java.time.ZoneOffset.UTC).withZoneSameInstant(ist).toLocalDate().toString();
+            } catch (Exception ex) {
+                day = oa.substring(0, 10);   // ayrıştırılamazsa ham UTC günü
+            }
+            dayCounts.merge(day, 1L, Long::sum);
         }
+        List<Map<String, Object>> daily = new ArrayList<>();
+        dayCounts.forEach((d, c) -> daily.add(Map.of("day", d, "count", c)));
+
         Map<String, Long> bySeverity = toCountMap(repo.countBySeverity(s, u, scoped, scopeList));
+        Map<String, Long> byStatus   = toCountMap(repo.countByStatus(s, u, scoped, scopeList));
         Map<String, Long> byCategory = toCountMap(repo.countByCategory(s, u, scoped, scopeList));
         // channel CSV olabildiğinden combo'ya göre değil, virgülle bölüp TEKİL kanal bazında say.
         Map<String, Long> byChannel = new LinkedHashMap<>();
@@ -117,14 +133,20 @@ public class IncidentService {
         long sla      = repo.countSlaBreached(s, u, scoped, scopeList);
         long open     = repo.countOpen(s, u, scoped, scopeList);
         long resolved = Math.max(0, total - open); // open = status<>RESOLVED → resolved = total - open
+        long resolvedWithinSla = repo.countResolvedWithinSla(s, u, scoped, scopeList);
+        // Son 30 gün — sayfanın tarih filtresinden BAĞIMSIZ sabit pencere (hızlı önayar kartı).
+        String since30 = ISO.format(java.time.Instant.now().minus(30, java.time.temporal.ChronoUnit.DAYS));
+        long last30d  = repo.countRange(since30, null, scoped, scopeList);
 
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("daily", daily);
         out.put("by_severity", bySeverity);
+        out.put("by_status", byStatus);
         out.put("by_category", byCategory);
         out.put("by_channel", byChannel);
         out.put("summary", Map.of("total", total, "critical", critical, "sla_breached", sla,
-                "open", open, "resolved", resolved));
+                "open", open, "resolved", resolved,
+                "resolved_within_sla", resolvedWithinSla, "last_30d", last30d));
         return out;
     }
 

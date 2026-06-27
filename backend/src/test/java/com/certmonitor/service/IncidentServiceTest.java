@@ -255,4 +255,52 @@ class IncidentServiceTest {
         // boş/null değer no-op (exception fırlatmaz)
         service.removeOption("CHANNEL", "  ", 1L, false);
     }
+
+    @Test
+    @DisplayName("trends: günlük seri Europe/Istanbul YEREL gününe göre (gece-yarısı UTC kayması düzeltildi)")
+    void trends_dailyBucketedByIstanbul() {
+        // 2026-06-18T22:00:00 UTC = 2026-06-19T01:00:00 IST → trend 19'da olmalı (18'de DEĞİL)
+        service.create(body("gece olayı", "2026-06-18T22:00:00", "HIGH", "OTHER"), "admin", 1L, 1L);
+
+        @SuppressWarnings("unchecked")
+        var daily = (List<Map<String, Object>>) service.trends(null, null, null).get("daily");
+        assertThat(daily).hasSize(1);
+        assertThat(daily.get(0).get("day")).isEqualTo("2026-06-19");
+    }
+
+    @Test
+    @DisplayName("trends: by_status kırılımı + resolved_within_sla (RESOLVED & SLA ihlali yok)")
+    void trends_byStatusAndResolvedWithinSla() {
+        Map<String, Object> inv = body("inceleniyor", "2026-06-20T10:00:00", "HIGH", "OTHER");
+        inv.put("status", "INVESTIGATING");
+        service.create(inv, "admin", 1L, 1L);
+        service.create(body("sla içinde", "2026-06-20T11:00:00", "LOW", "OTHER"), "admin", 1L, 1L); // RESOLVED, sla=false
+        Map<String, Object> breached = body("sla ihlal", "2026-06-20T12:00:00", "CRITICAL", "OTHER");
+        breached.put("sla_breached", true);
+        service.create(breached, "admin", 1L, 1L); // RESOLVED + ihlal
+
+        Map<String, Object> tr = service.trends(null, null, null);
+        @SuppressWarnings("unchecked")
+        var byStatus = (Map<String, Long>) tr.get("by_status");
+        assertThat(byStatus.get("INVESTIGATING")).isEqualTo(1L);
+        assertThat(byStatus.get("RESOLVED")).isEqualTo(2L);
+
+        @SuppressWarnings("unchecked")
+        var summary = (Map<String, Object>) tr.get("summary");
+        // 2 RESOLVED'dan yalnız 1'i SLA içinde (diğeri ihlal)
+        assertThat(((Number) summary.get("resolved_within_sla")).longValue()).isEqualTo(1L);
+    }
+
+    @Test
+    @DisplayName("trends: last_30d sabit pencere — eski olay hariç, son 30 gün içindeki sayılır")
+    void trends_last30dWindow() {
+        var fmt = java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss");
+        String recent = java.time.LocalDateTime.now(java.time.ZoneOffset.UTC).minusDays(3).format(fmt);
+        service.create(body("eski", "2019-01-01T10:00:00", "LOW", "OTHER"), "admin", 1L, 1L);
+        service.create(body("yakın", recent, "LOW", "OTHER"), "admin", 1L, 1L);
+
+        @SuppressWarnings("unchecked")
+        var summary = (Map<String, Object>) service.trends(null, null, null).get("summary");
+        assertThat(((Number) summary.get("last_30d")).longValue()).isEqualTo(1L); // yalnız "yakın"
+    }
 }

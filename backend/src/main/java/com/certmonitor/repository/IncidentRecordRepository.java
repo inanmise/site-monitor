@@ -48,18 +48,16 @@ public interface IncidentRecordRepository extends JpaRepository<IncidentRecord, 
                                       @Param("scope") List<Long> scope,
                                       Pageable pageable);
 
-    /** Günlük olay sayısı (trend) — ISO string'in ilk 10 hanesi = gün. */
+    /** Aralıktaki olayların occurredAt (UTC ISO) değerleri — günlük trend YEREL gün (Europe/Istanbul)
+     *  gruplaması serviste yapılır; UTC SUBSTRING gece-yarısı kayıtlarını bir önceki güne kaydırırdı. */
     @Query("""
-            SELECT SUBSTRING(i.occurredAt, 1, 10), COUNT(i)
-              FROM IncidentRecord i
+            SELECT i.occurredAt FROM IncidentRecord i
              WHERE (:since IS NULL OR i.occurredAt >= :since)
                AND (:until IS NULL OR i.occurredAt <= :until)
                AND (:scoped = FALSE OR i.teamId IN :scope OR i.createdByTeamId IN :scope)
-             GROUP BY SUBSTRING(i.occurredAt, 1, 10)
-             ORDER BY SUBSTRING(i.occurredAt, 1, 10)
             """)
-    List<Object[]> countByDay(@Param("since") String since, @Param("until") String until,
-                              @Param("scoped") boolean scoped, @Param("scope") List<Long> scope);
+    List<String> occurredAtInRange(@Param("since") String since, @Param("until") String until,
+                                   @Param("scoped") boolean scoped, @Param("scope") List<Long> scope);
 
     @Query("""
             SELECT i.severity, COUNT(i) FROM IncidentRecord i
@@ -70,6 +68,16 @@ public interface IncidentRecordRepository extends JpaRepository<IncidentRecord, 
             """)
     List<Object[]> countBySeverity(@Param("since") String since, @Param("until") String until,
                                    @Param("scoped") boolean scoped, @Param("scope") List<Long> scope);
+
+    @Query("""
+            SELECT i.status, COUNT(i) FROM IncidentRecord i
+             WHERE (:since IS NULL OR i.occurredAt >= :since)
+               AND (:until IS NULL OR i.occurredAt <= :until)
+               AND (:scoped = FALSE OR i.teamId IN :scope OR i.createdByTeamId IN :scope)
+             GROUP BY i.status
+            """)
+    List<Object[]> countByStatus(@Param("since") String since, @Param("until") String until,
+                                 @Param("scoped") boolean scoped, @Param("scope") List<Long> scope);
 
     @Query("""
             SELECT i.category, COUNT(i) FROM IncidentRecord i
@@ -129,6 +137,17 @@ public interface IncidentRecordRepository extends JpaRepository<IncidentRecord, 
             """)
     long countSlaBreached(@Param("since") String since, @Param("until") String until,
                           @Param("scoped") boolean scoped, @Param("scope") List<Long> scope);
+
+    /** SLA içinde çözülen: status=RESOLVED ve SLA ihlali yok. */
+    @Query("""
+            SELECT COUNT(i) FROM IncidentRecord i
+             WHERE i.status = 'RESOLVED' AND i.slaBreached = false
+               AND (:since IS NULL OR i.occurredAt >= :since)
+               AND (:until IS NULL OR i.occurredAt <= :until)
+               AND (:scoped = FALSE OR i.teamId IN :scope OR i.createdByTeamId IN :scope)
+            """)
+    long countResolvedWithinSla(@Param("since") String since, @Param("until") String until,
+                                @Param("scoped") boolean scoped, @Param("scope") List<Long> scope);
 
     @Query("""
             SELECT COUNT(i) FROM IncidentRecord i

@@ -23,12 +23,19 @@ export function clipboardToMarkdownTable(clipboardData) {
     }
   }
 
+  // text/plain → yalnız GERÇEK ızgara (Excel/TSV) tabloya çevrilir. Stack trace / girintili düz metin
+  // YANLIŞLIKLA tabloya dönmesin: en az 2 satır olmalı ve HER satır tab içermeli (exception metninde ilk
+  // satır = mesaj, tab yok → tabloya çevrilmez). Ayrıca satırların çoğu girinti amaçlı tek-baştaki-tab
+  // (boş ilk hücre) ise bu da ızgara değildir (yalnız "at ..." satırları kopyalansa bile yakalanır).
   const text = clipboardData.getData('text/plain')
-  if (text && text.includes('\t')) {
+  if (text) {
     const lines = text.replace(/\r\n?/g, '\n').split('\n').filter(l => l.trim() !== '')
-    if (lines.length >= 2 || (lines.length === 1 && lines[0].includes('\t'))) {
-      const rows = lines.map(l => l.split('\t').map(cleanCell))
-      return rowsToMarkdown(rows)
+    if (lines.length >= 2 && lines.every(l => l.includes('\t'))) {
+      const indentRows = lines.filter(l => l.split('\t')[0].trim() === '').length
+      if (indentRows <= lines.length / 2) {
+        const rows = lines.map(l => l.split('\t').map(cleanCell))
+        return rowsToMarkdown(rows)
+      }
     }
   }
 
