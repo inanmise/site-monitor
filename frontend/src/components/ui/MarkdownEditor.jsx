@@ -170,7 +170,7 @@ export default function MarkdownEditor({ value, onChange, editable = true, heigh
 
   return (
     <div onPasteCapture={handlePasteCapture} onKeyUp={recordCaret} onMouseUp={recordCaret}>
-      <div data-color-mode={theme === 'dark' ? 'dark' : 'light'}>
+      <div className="wr-editor" data-color-mode={theme === 'dark' ? 'dark' : 'light'}>
         <MDEditor
           value={value ?? ''}
           onChange={(v) => onChange(v ?? '')}

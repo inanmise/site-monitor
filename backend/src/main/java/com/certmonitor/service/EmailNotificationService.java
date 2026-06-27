@@ -2475,8 +2475,16 @@ public class EmailNotificationService {
      * RCA / iş etkisi / çözüm bölümleri ve olayı açma CTA'sı. {@code inc} = controller dto
      * (snake_case alanlar). Mevcut buildWeeklyReportHtml deseniyle birebir uyumlu.
      */
+    /** 4-arg: mail gönderimi için (forEmail=true → görseller CID inline). */
     public String buildIncidentNotificationHtml(Map<String, Object> inc, String managerName,
                                                 String kind, String ctaUrl) {
+        return buildIncidentNotificationHtml(inc, managerName, kind, ctaUrl, true);
+    }
+
+    /** forEmail=false: UI önizlemesi (iframe) — markdown görselleri /api/incidents/images/{id} URL'siyle
+     *  kalır (CID'e çevrilmez), iframe oturum çerezi ile yükler. */
+    public String buildIncidentNotificationHtml(Map<String, Object> inc, String managerName,
+                                                String kind, String ctaUrl, boolean forEmail) {
         boolean resolved = "RESOLVED".equals(kind);
         boolean isNew = "NEW".equals(kind);
         String sev = str(inc.get("severity"));
@@ -2555,10 +2563,10 @@ public class EmailNotificationService {
             + (resolved ? resolvedBanner(inc) : "")
             + cta
             + reportSection("Olay Künyesi", factsTable, accent)
-            + reportSection("Kök Neden (RCA)", textBlock(str(inc.get("rca_summary"))), accent)
-            + incidentSectionOpt("Teknik Açıklama", str(inc.get("description")), accent)
-            + reportSection("İş Etkisi", textBlock(str(inc.get("business_impact"))), accent)
-            + reportSection("Çözüm / Müdahale Adımları", textBlock(str(inc.get("resolution_steps"))), accent)
+            + reportSection("Kök Neden (RCA)", textBlock(str(inc.get("rca_summary")), forEmail), accent)
+            + incidentSectionOpt("Teknik Açıklama", str(inc.get("description")), accent, forEmail)
+            + reportSection("İş Etkisi", textBlock(str(inc.get("business_impact")), forEmail), accent)
+            + reportSection("Çözüm / Müdahale Adımları", textBlock(str(inc.get("resolution_steps")), forEmail), accent)
             + cta
             // ── Footer ──
             + "<table width='100%' cellpadding='0' cellspacing='0'><tr>"
@@ -2603,25 +2611,31 @@ public class EmailNotificationService {
 
     /** Markdown metin → e-posta-güvenli paragraf: görsel sözdizimini at, escape + satır sonu→&lt;br&gt;. */
     private static final Pattern INC_CID_IMG = Pattern.compile("<img src=\"cid:incimg(\\d+)\"");
+    private static final Pattern INC_API_IMG = Pattern.compile("<img src=\"(/api/incidents/images/\\d+)\"");
 
-    /** Olay markdown alanı → e-posta HTML'i: TAM markdown (GFM tablo/liste/kalın/görev kutusu) +
-     *  gömülü görseller. /api/incidents/images/{id} → cid:incimg{id} (CID inline; InlineImage'ları
-     *  IncidentNotificationService yükler). Outlook head&lt;style&gt;'ı yok saydığından blok stilleri
-     *  inline edilir (haftalık rapor mdToHtml deseni). escapeHtml=true → ham HTML güvenli (escape). */
-    private String textBlock(String md) {
+    /** Olay markdown alanı → HTML: TAM markdown (GFM tablo/liste/kalın/görev kutusu) + gömülü görseller.
+     *  forEmail=true → /api/incidents/images/{id} CID inline (mail; InlineImage'ları IncidentNotificationService
+     *  yükler). forEmail=false → /api URL korunur (iframe önizleme, oturum çerezi ile yüklenir).
+     *  Outlook head&lt;style&gt;'ı yok saydığından blok stilleri inline edilir. escapeHtml=true → ham HTML güvenli. */
+    private String textBlock(String md, boolean forEmail) {
         if (md == null || md.isBlank()) return "";
-        String src = md.replaceAll("\\]\\(/api/incidents/images/(\\d+)\\)", "](cid:incimg$1)");
+        String src = forEmail
+                ? md.replaceAll("\\]\\(/api/incidents/images/(\\d+)\\)", "](cid:incimg$1)")
+                : md;
         String html = taskCheckboxesToSymbols(MD_RENDERER.render(MD_PARSER.parse(src)));
-        // incident CID görsellerine inline genişlik/stil (Outlook taşma engeli)
-        html = INC_CID_IMG.matcher(html).replaceAll(
-                "<img width=\"680\" style=\"display:block;width:100%;max-width:680px;height:auto;"
-                + "border-radius:8px;margin:8px 0;border:1px solid #e2e8f0\" src=\"cid:incimg$1\"");
+        html = forEmail
+                ? INC_CID_IMG.matcher(html).replaceAll(
+                    "<img width=\"680\" style=\"display:block;width:100%;max-width:680px;height:auto;"
+                    + "border-radius:8px;margin:8px 0;border:1px solid #e2e8f0\" src=\"cid:incimg$1\"")
+                : INC_API_IMG.matcher(html).replaceAll(
+                    "<img style=\"display:block;max-width:100%;height:auto;border-radius:8px;margin:8px 0;"
+                    + "border:1px solid #e2e8f0\" src=\"$1\"");
         return inlineBlockStyles(html);
     }
 
     /** Boş değilse bölüm kutusu üretir (boş markdown alanında boş kutu render etmemek için). */
-    private String incidentSectionOpt(String title, String md, String accent) {
-        String body = textBlock(md);
+    private String incidentSectionOpt(String title, String md, String accent, boolean forEmail) {
+        String body = textBlock(md, forEmail);
         return body.isBlank() ? "" : reportSection(title, body, accent);
     }
 

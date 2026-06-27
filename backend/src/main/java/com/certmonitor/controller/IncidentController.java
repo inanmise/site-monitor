@@ -137,7 +137,9 @@ public class IncidentController {
                 "INCIDENT", String.valueOf(e.getId()),
                 "{\"severity\":\"" + e.getSeverity() + "\",\"category\":\"" + e.getCategory() + "\"}");
         Map<String, Object> created = dto(e);
-        notificationService.notifyIncident(created, "NEW"); // takım + müdür executive bildirim (async)
+        // Mail YALNIZ kullanıcı "Mail gönder"i seçtiyse gider (varsayılan: kayıtta mail yok).
+        if (Boolean.TRUE.equals(body.get("send_notification")))
+            notificationService.notifyIncident(created, "NEW"); // takım + müdür executive bildirim (async)
         return ok(Map.of("data", created));
     }
 
@@ -155,8 +157,19 @@ public class IncidentController {
                 "{\"severity\":\"" + e.getSeverity() + "\",\"status\":\"" + e.getStatus() + "\"}");
         Map<String, Object> updated = dto(e);
         boolean justResolved = "RESOLVED".equals(e.getStatus()) && !"RESOLVED".equals(prevStatus);
-        notificationService.notifyIncident(updated, justResolved ? "RESOLVED" : "UPDATED"); // async bildirim
+        // Mail YALNIZ kullanıcı "Mail gönder"i seçtiyse gider (varsayılan: kayıtta mail yok).
+        if (Boolean.TRUE.equals(body.get("send_notification")))
+            notificationService.notifyIncident(updated, justResolved ? "RESOLVED" : "UPDATED"); // async bildirim
         return ok(Map.of("data", updated));
+    }
+
+    /** Gidecek bildirim mailinin ÖNİZLEME HTML'i — kaydetmez/göndermez (modal'daki "Mail Önizle"). */
+    @PostMapping("/preview-notification")
+    public ResponseEntity<Map<String, Object>> previewNotification(
+            @RequestBody Map<String, Object> body, HttpSession session) {
+        requireManage(session);
+        String kind = body.get("kind") instanceof String k ? k : "UPDATED";
+        return ok(Map.of("html", notificationService.previewHtml(body, kind)));
     }
 
     @PostMapping("/transfer")

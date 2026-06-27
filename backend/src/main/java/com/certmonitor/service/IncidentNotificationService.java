@@ -100,6 +100,31 @@ public class IncidentNotificationService {
                 kind, team.getId(), recipients, status, inline.size());
     }
 
+    /** Önizleme için olay bildirim HTML'i — KAYDETMEZ/GÖNDERMEZ. Görseller /api/incidents/images/{id} URL'siyle
+     *  kalır (iframe oturum çerezi ile yükler). team_name'i team_id'den, müdür adını takım leader'ından çözer.
+     *  Alıcı/team-mail gerektirmez (yalnız HTML üretir). */
+    public String previewHtml(Map<String, Object> dto, String kind) {
+        if (dto == null) return "";
+        Map<String, Object> inc = new java.util.LinkedHashMap<>(dto);
+        String managerName = null;
+        if (dto.get("team_id") instanceof Number tid) {
+            Team team = teamRepo.findById(tid.longValue()).orElse(null);
+            if (team != null) {
+                inc.put("team_name", team.getName());   // form'daki team_id'ye göre güncel takım adı
+                if (team.getLeaderId() != null) {
+                    AppUser mgr = userRepo.findById(team.getLeaderId()).orElse(null);
+                    if (mgr != null) managerName = (mgr.getDisplayName() != null && !mgr.getDisplayName().isBlank())
+                            ? mgr.getDisplayName() : mgr.getUsername();
+                }
+            }
+        }
+        String base = appBaseUrl != null ? appBaseUrl.replaceAll("/+$", "") : "";
+        Object incId = dto.get("id");
+        String ctaUrl = base + "/?tab=incident-history" + (incId != null ? "&incident=" + incId : "");
+        String norm = ("NEW".equals(kind) || "RESOLVED".equals(kind)) ? kind : "UPDATED";
+        return emailService.buildIncidentNotificationHtml(inc, managerName, norm, ctaUrl, false);
+    }
+
     private static final Pattern INC_IMG_ID = Pattern.compile("/api/incidents/images/(\\d+)");
 
     /** Olayın markdown alanlarındaki /api/incidents/images/{id} ref'lerini tarar, görselleri yükleyip

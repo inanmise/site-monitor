@@ -219,6 +219,7 @@ export const api = {
     },
     create: (payload) => request('/incidents', { method: 'POST', body: JSON.stringify(payload) }),
     update: (id, payload) => request(`/incidents/${id}`, { method: 'PUT', body: JSON.stringify(payload) }),
+    previewNotification: (payload) => request('/incidents/preview-notification', { method: 'POST', body: JSON.stringify(payload) }),
     remove: (id) => request(`/incidents/${id}`, { method: 'DELETE' }),
     transfer: (ids, teamId, teamName) => request('/incidents/transfer', {
       method: 'POST', body: JSON.stringify({ ids, team_id: teamId, team_name: teamName }),

@@ -20,7 +20,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import java.util.List;
 
 import static org.mockito.ArgumentMatchers.*;
-import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
@@ -165,6 +165,27 @@ class IncidentControllerTest {
                         .content("{\"title\":\"DB pool tükendi\",\"occurred_at\":\"2026-06-14T10:00:00\",\"severity\":\"CRITICAL\",\"status\":\"RESOLVED\",\"category\":\"DATABASE\"}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.severity").value("CRITICAL"));
+    }
+
+    @Test
+    @DisplayName("POST /api/incidents: send_notification kontrolü — bayraksız mail YOK, true ise VAR")
+    void create_sendNotificationGate() throws Exception {
+        when(permissionService.allows(any(jakarta.servlet.http.HttpSession.class), eq("incidents.manage"), eq("edit"))).thenReturn(true);
+        when(service.create(any(), any(), any(), any())).thenReturn(sample());
+
+        // bayrak yok → mail GİTMEZ
+        mvc.perform(post("/api/incidents").session(adminSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"title\":\"x\",\"occurred_at\":\"2026-06-14T10:00:00\"}"))
+                .andExpect(status().isOk());
+        verify(notificationService, never()).notifyIncident(any(), any());
+
+        // send_notification=true → mail GİDER (kind=NEW)
+        mvc.perform(post("/api/incidents").session(adminSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"title\":\"x\",\"occurred_at\":\"2026-06-14T10:00:00\",\"send_notification\":true}"))
+                .andExpect(status().isOk());
+        verify(notificationService).notifyIncident(any(), eq("NEW"));
     }
 
     @Test
