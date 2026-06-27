@@ -78,4 +78,22 @@ describe('AlertHistory closed-alert details', () => {
     // 6 days 2 hours between 2026-06-01 08:00 and 2026-06-07 10:00
     expect(card.textContent).toMatch(/6g/)
   })
+
+  it('shows the "send failed" badge next to the domain when email_failed_count > 0', async () => {
+    render(<AlertHistory />)
+    await waitFor(() => expect(api.admin.getAlerts).toHaveBeenCalled())
+    // default tab = open → open-card layout renders the domain + badge
+    await waitFor(() => expect(screen.getByText('foo.example.com')).toBeDefined())
+    expect(screen.getByText(/alarm gönderilemedi|could not be sent/i)).toBeDefined()
+  })
+
+  it('hides the "send failed" badge when email_failed_count is 0', async () => {
+    api.admin.getAlerts.mockResolvedValue({
+      success: true, data: [{ ...closedAlert, email_failed_count: 0 }], total: 1, page: 0, size: 20,
+    })
+    render(<AlertHistory />)
+    await waitFor(() => expect(api.admin.getAlerts).toHaveBeenCalled())
+    await waitFor(() => expect(screen.getByText('foo.example.com')).toBeDefined())
+    expect(screen.queryByText(/alarm gönderilemedi|could not be sent/i)).toBeNull()
+  })
 })

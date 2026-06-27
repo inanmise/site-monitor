@@ -10,8 +10,11 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 import com.certmonitor.model.SmtpSettings;
+import com.certmonitor.model.NotificationLog;
+import com.certmonitor.repository.NotificationLogRepository;
 import org.springframework.mail.MailSendException;
 import org.springframework.mail.javamail.JavaMailSenderImpl;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.Logger;
@@ -22,9 +25,13 @@ import org.slf4j.LoggerFactory;
 import jakarta.mail.internet.MimeMessage;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Optional;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.*;
+import static org.mockito.ArgumentMatchers.*;
 
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
@@ -33,6 +40,7 @@ class EmailNotificationServiceTest {
     @Mock SmtpSettingsService settingsService;
     @Mock SmtpMailService smtpMailService;
     @Mock JavaMailSenderImpl sender;
+    @Mock NotificationLogRepository notificationLogRepo;
 
     private EmailNotificationService service;
 
@@ -47,7 +55,7 @@ class EmailNotificationServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new EmailNotificationService(settingsService, smtpMailService);
+        service = new EmailNotificationService(settingsService, smtpMailService, notificationLogRepo);
         when(settingsService.getOrDefaults()).thenReturn(settings(false));
 
         mailLogger = (Logger) LoggerFactory.getLogger("com.certmonitor.mail");
@@ -575,6 +583,69 @@ class EmailNotificationServiceTest {
                 null, "admin", null, null, null);
 
         assertThat(result).startsWith("FAILED:");
+    }
+
+    // ── 421 retry sonucunun bildirim loguna geri-yazılması ───────────────────────
+    // İlk denemede "QUEUED_RETRY" kaydedilen log, async retry'ların terminal sonucuyla
+    // (SENT/FAILED) güncellenir — aksi halde "Alarm gönderilemedi" rozeti yanlış çalışır.
+
+    /** mailRetryExecutor'ı, zamanlanan görevi GECİKMESİZ ve aynı thread'de çalıştıracak
+     *  şekilde değiştirir → async retry'lar testte deterministik biter. */
+    private void runRetriesInline() {
+        ScheduledExecutorService inline = mock(ScheduledExecutorService.class);
+        when(inline.schedule(any(Runnable.class), anyLong(), any(TimeUnit.class)))
+                .thenAnswer(inv -> { ((Runnable) inv.getArgument(0)).run(); return null; });
+        ReflectionTestUtils.setField(service, "mailRetryExecutor", inline);
+    }
+
+    @Test
+    @DisplayName("doSend: 421 retry'ları tükenince QUEUED_RETRY logu FAILED'a geri-yazılır")
+    void retryExhausted_writesBackFailed() throws Exception {
+        String subject = "[CertMonitor YÜKSEK] kartfree.com — DNS";
+        when(settingsService.getOrDefaults()).thenReturn(settings(true));
+        when(smtpMailService.currentSender()).thenReturn(sender);
+        MimeMessage mockMsg = mock(MimeMessage.class);
+        when(sender.createMimeMessage()).thenReturn(mockMsg);
+        when(mockMsg.getAllRecipients()).thenReturn(null);
+        when(mockMsg.getSubject()).thenReturn(subject);
+        // her gönderim 421 → tüm denemeler tükenir → terminal FAILED
+        doThrow(new MailSendException("421 4.4.2 Try again later")).when(sender).send(mockMsg);
+        runRetriesInline();
+        NotificationLog stuck = new NotificationLog();
+        stuck.setEmailStatus("QUEUED_RETRY: 421 4.4.2 Try again later");
+        when(notificationLogRepo.findTopBySubjectAndEmailStatusStartingWithOrderByIdDesc(subject, "QUEUED_RETRY"))
+                .thenReturn(Optional.of(stuck));
+
+        String result = service.sendAlert("to@test.com", subject, "msg");
+
+        assertThat(result).startsWith("QUEUED_RETRY");          // caller'a ilk denemenin sonucu döner
+        assertThat(stuck.getEmailStatus()).startsWith("FAILED:"); // log terminal duruma geri-yazıldı
+        verify(notificationLogRepo).save(stuck);
+    }
+
+    @Test
+    @DisplayName("doSend: 421 sonrası retry başarılı → QUEUED_RETRY logu SENT'e geri-yazılır")
+    void retrySucceeds_writesBackSent() throws Exception {
+        String subject = "[CertMonitor YÜKSEK] genesys.akbank.com — DNS";
+        when(settingsService.getOrDefaults()).thenReturn(settings(true));
+        when(smtpMailService.currentSender()).thenReturn(sender);
+        MimeMessage mockMsg = mock(MimeMessage.class);
+        when(sender.createMimeMessage()).thenReturn(mockMsg);
+        when(mockMsg.getAllRecipients()).thenReturn(null);
+        when(mockMsg.getSubject()).thenReturn(subject);
+        // ilk gönderim 421, ikinci (retry) başarılı
+        doThrow(new MailSendException("421 4.4.2 Try again later")).doNothing().when(sender).send(mockMsg);
+        runRetriesInline();
+        NotificationLog stuck = new NotificationLog();
+        stuck.setEmailStatus("QUEUED_RETRY: 421 4.4.2 Try again later");
+        when(notificationLogRepo.findTopBySubjectAndEmailStatusStartingWithOrderByIdDesc(subject, "QUEUED_RETRY"))
+                .thenReturn(Optional.of(stuck));
+
+        String result = service.sendAlert("to@test.com", subject, "msg");
+
+        assertThat(result).startsWith("QUEUED_RETRY");
+        assertThat(stuck.getEmailStatus()).isEqualTo("SENT");   // retry başarılı → log SENT'e geri-yazıldı
+        verify(notificationLogRepo).save(stuck);
     }
 
     @Test
