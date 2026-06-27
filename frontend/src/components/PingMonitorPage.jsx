@@ -373,7 +373,7 @@ export default function PingMonitorPage({ systemRole, teamId, teamName }) {
       {/* ── Create / Edit Modal ── (dış/overlay tıklamada KAPANMAZ — veri kaybı önlenir; yalnız İptal/Kaydet) */}
       {modal && createPortal(
         <div className="modal-overlay">
-          <div className="modal-box" onClick={e => e.stopPropagation()} style={{ maxWidth: 460 }}>
+          <div className="modal-box" onClick={e => e.stopPropagation()} style={{ maxWidth: 720, width: '92vw', maxHeight: '90vh', overflowY: 'auto' }}>
             <div className="modal-icon-hdr modal-icon-hdr--port">
               <div className="modal-icon-hdr-badge"><Radio size={20} /></div>
               <h3>{modal === 'new' ? t('ping.modalNew') : t('ping.modalEdit')}</h3>
@@ -386,13 +386,13 @@ export default function PingMonitorPage({ systemRole, teamId, teamName }) {
                   options={[{ value: 'auto', label: t('ping.ipAuto') }, { value: 'v4', label: 'IPv4' }, { value: 'v6', label: 'IPv6' }]} /></label>
               <label><span>{t('ping.packetCount')}</span>
                 <input type="number" min="1" max="10" value={form.packetCount} onChange={e => setForm(f => ({ ...f, packetCount: Number(e.target.value) }))} /></label>
-              <label className="full-width"><span>{t('ping.name')}</span>
+              <label><span>{t('ping.name')}</span>
                 <input value={form.name} placeholder={form.host} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} /></label>
-              <label className="full-width"><span>{t('ping.team')}</span>
+              <label><span>{t('ping.team')}</span>
                 {isAdmin
                   ? <SearchableSelect value={form.teamId} onChange={v => setForm(f => ({ ...f, teamId: v }))} options={teamSelectOptions} searchThreshold={2} />
                   : <input value={teamName || t('ping.noTeam')} disabled />}</label>
-              <label className="full-width"><span>{t('ping.group')}</span>
+              <label><span>{t('ping.group')}</span>
                 <SearchableSelect value={form.groupName} onChange={v => setForm(f => ({ ...f, groupName: v }))}
                   options={[{ value: '', label: t('ping.noGroup') }, ...groupSelectOptions]}
                   creatable onCreate={() => {}} searchThreshold={2} placeholder={t('ping.noGroup')} /></label>
@@ -411,7 +411,7 @@ export default function PingMonitorPage({ systemRole, teamId, teamName }) {
               <div className="full-width" style={{ fontSize: '.8em', color: 'var(--text-muted)', marginTop: -2, lineHeight: 1.5 }}>
                 ⓘ {t('ping.confirmHint')}
               </div>
-              <label className="checkbox-label full-width">
+              <label className="checkbox-label">
                 <input type="checkbox" checked={form.active} onChange={e => setForm(f => ({ ...f, active: e.target.checked }))} />{t('ping.active')}</label>
             </div>
             {testResult && (

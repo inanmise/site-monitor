@@ -6845,7 +6845,7 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 /* ── DNS Monitor Page (project-styled redesign) ──────────────────────── */
 .dns-page { padding: 4px 0; }
 
-.dns-header { margin-bottom: 12px; }
+.dns-header { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
 .dns-title-row { display: flex; align-items: flex-start; gap: 10px; }
 .dns-title-row > svg { color: var(--primary); margin-top: 4px; flex-shrink: 0; }
 .dns-title { font-size: 1.3em; margin: 0; color: var(--text); }

@@ -158,7 +158,6 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName }) {
           <Globe size={22} />
           <div>
             <h2 className="dns-title">{t('dns.title')}</h2>
-            <p className="dns-subtitle">{t('dns.subtitle')}</p>
           </div>
         </div>
         {canWrite && (
