@@ -821,6 +821,8 @@ export const TR = {
   'alh.ugTeam':          'UG Ekibi',
   'alh.mailsSent':       '{0} başarılı',
   'alh.mailsFailed':     '{0} başarısız',
+  'alh.sendFailed':      'Alarm gönderilemedi',
+  'alh.sendFailedTip':   'Bu alarmın bildirim e-postası gönderilemedi',
   'alh.openDuration':    'Açık kalma süresi',
   'alh.tier':            'Tier',
 
@@ -3384,6 +3386,8 @@ export const EN = {
   'alh.ugTeam':          'UG Team',
   'alh.mailsSent':       '{0} sent',
   'alh.mailsFailed':     '{0} failed',
+  'alh.sendFailed':      'Alert could not be sent',
+  'alh.sendFailedTip':   'Notification email for this alert could not be sent',
   'alh.openDuration':    'Open duration',
   'alh.tier':            'Tier',
 

@@ -1731,6 +1731,7 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .alert-type { font-size: .85em; color: var(--text-light); }
 .alert-domain { font-size: 1em; }
 .alert-days { background: #f8d7da; color: #721c24; padding: 2px 8px; border-radius: 10px; font-size: .82em; font-weight: 700; }
+.alert-send-failed { display: inline-flex; align-items: center; gap: 4px; background: #fde8e8; color: #b91c1c; border: 1px solid #f5b5b5; padding: 2px 8px; border-radius: 10px; font-size: .78em; font-weight: 700; white-space: nowrap; }
 .alert-message { color: var(--text); margin-bottom: 8px; font-size: .95em; }
 .alert-meta { display: flex; gap: 16px; font-size: .82em; color: var(--text-light); margin-bottom: 10px; flex-wrap: wrap; }
 .alert-actions { display: flex; gap: 8px; flex-wrap: wrap; }
@@ -3140,6 +3141,7 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 [data-theme="dark"] .role-badge { background: #1a2940; color: #60a5fa; }
 [data-theme="dark"] .notified-chip { background: #1a2940; color: #60a5fa; }
 [data-theme="dark"] .alert-days { background: #270c0c; color: #f87171; }
+[data-theme="dark"] .alert-send-failed { background: #2a0d0d; color: #f87171; border-color: #5b1f1f; }
 [data-theme="dark"] .notified-label { color: var(--text-light); }
 
 /* ── System Health ───────────────────────────────────────── */

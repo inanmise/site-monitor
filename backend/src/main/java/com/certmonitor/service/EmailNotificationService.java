@@ -44,6 +44,9 @@ public class EmailNotificationService {
     // so behaviour is unchanged until the admin saves on the screen.
     private final SmtpSettingsService smtpSettings;
     private final SmtpMailService smtpMailService;
+    /** Async 421-retry'ın terminal sonucunu, ilk denemede "QUEUED_RETRY" kaydedilen
+     *  bildirim loguna geri-yazmak için (subject ile eşleştirilir). */
+    private final com.certmonitor.repository.NotificationLogRepository notificationLogRepo;
 
     /** Uygulama dış adresi — e-posta CTA deep-link'leri için. Spring @Value enjekte eder;
      *  birim testte (manuel new) initializer değeri kullanılır. */
@@ -190,6 +193,9 @@ public class EmailNotificationService {
                 MAIL_LOG.trace("✓ SMTP gönderim OK: TO={} | süre={}ms | messageId={} | boyut={}B",
                         to, ms, safeMessageId(msg), safeSize(msg));
             }
+            // Bir async retry (attempt>1) sonunda başarılıysa: ilk denemede "QUEUED_RETRY"
+            // kaydedilen log satırını SENT'e güncelle (aksi halde sahte "gönderilemedi" görünür).
+            if (attempt > 1) writeBackRetryStatus(msg, "SENT");
             return "SENT";
         } catch (Exception e) {
             long ms = System.currentTimeMillis() - t0;
@@ -230,7 +236,31 @@ public class EmailNotificationService {
                 MAIL_LOG.trace("✗ SMTP hata ayrıntı: TO={} | {} | {} | kök sebep={}",
                         to, describeMessage(msg), smtpContext(), rootMessage(e));
             }
+            // Tüm async retry'lar (attempt>1) tükendi ve gönderilemedi: ilk denemede "QUEUED_RETRY"
+            // kaydedilen log satırını gerçek FAILED durumuna güncelle (rozet bunu yakalar).
+            if (attempt > 1) writeBackRetryStatus(msg, "FAILED: " + err);
             return "FAILED: " + err;
+        }
+    }
+
+    /**
+     * Async 421-retry'ın terminal sonucunu ("SENT" / "FAILED: ...") bildirim loguna geri-yazar:
+     * ilk denemede EscalationService'in "QUEUED_RETRY..." olarak kaydettiği satırı subject ile
+     * (en güncel) bulup günceller. Async retry sonuçları aksi halde yutulduğundan, log gerçeği
+     * yansıtmaz ve "Alarm gönderilemedi" rozeti yanlış çalışır. Gönderimi ASLA kırmaz (try/catch).
+     */
+    private void writeBackRetryStatus(MimeMessage msg, String terminalStatus) {
+        try {
+            String subject = msg.getSubject();
+            if (subject == null || subject.isBlank()) return;
+            notificationLogRepo
+                    .findTopBySubjectAndEmailStatusStartingWithOrderByIdDesc(subject, "QUEUED_RETRY")
+                    .ifPresent(logRow -> {
+                        logRow.setEmailStatus(terminalStatus);
+                        notificationLogRepo.save(logRow);
+                    });
+        } catch (Exception e) {
+            log.warn("Retry sonucu bildirim loguna yazılamadı: {}", e.getMessage());
         }
     }
 

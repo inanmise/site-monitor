@@ -549,6 +549,11 @@ export default function AlertHistory({ domain = null }) {
                   </span>
                   <TypeChip type={a.alert_type} />
                   <strong className="alert-domain">{a.domain}</strong>
+                  {(a.email_failed_count ?? 0) > 0 && (
+                    <span className="alert-send-failed" title={t('alh.sendFailedTip')}>
+                      <MailX size={12} /> {t('alh.sendFailed')}
+                    </span>
+                  )}
                   {a.days_remaining != null && (
                     <span className="alert-days">{t('alh.days', a.days_remaining)}</span>
                   )}

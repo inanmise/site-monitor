@@ -8,9 +8,18 @@ import org.springframework.data.repository.query.Param;
 
 import java.util.Collection;
 import java.util.List;
+import java.util.Optional;
 
 public interface NotificationLogRepository extends JpaRepository<NotificationLog, Long> {
     List<NotificationLog> findByAlertEventIdOrderBySentAtDesc(Long alertEventId);
+
+    /**
+     * Async 421-retry'ın terminal sonucunu (SENT/FAILED) geri-yazmak için: ilk denemede
+     * "QUEUED_RETRY..." kaydedilen log satırını subject ile bulur (en güncel). Subject
+     * prefiks+seviye+domain+tip içerdiğinden yeterince benzersiz; eşleşme yoksa boş döner.
+     */
+    Optional<NotificationLog> findTopBySubjectAndEmailStatusStartingWithOrderByIdDesc(
+            String subject, String emailStatusPrefix);
 
     /** Trigger'a göre arşiv (en yeni üstte) — haftalık erişilebilirlik giden mail geçmişi için. */
     List<NotificationLog> findByTriggerInOrderBySentAtDesc(Collection<String> triggers, Pageable pageable);
