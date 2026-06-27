@@ -10,6 +10,7 @@ import com.certmonitor.model.UptimeCheck;
 import com.certmonitor.model.NetworkOutageEvent;
 import com.certmonitor.repository.AlertThresholdRepository;
 import com.certmonitor.repository.CertificateInventoryRepository;
+import com.certmonitor.repository.DnsAuthoritySnapshotRepository;
 import com.certmonitor.repository.DnsMonitorRepository;
 import com.certmonitor.repository.DnsRecordRepository;
 import com.certmonitor.repository.LatestCheckRepository;
@@ -81,6 +82,7 @@ public class SchedulerService {
     private final DnsCheckerService dnsCheckerService;
     private final DnsMonitorRepository dnsMonitorRepo;
     private final DnsRecordRepository dnsRecordRepo;
+    private final DnsAuthoritySnapshotRepository dnsAuthorityRepo;
 
     private final UptimeHttpCheckerService uptimeHttpCheckerService;
     private final UptimeCheckRepository uptimeCheckRepo;
@@ -336,6 +338,9 @@ public class SchedulerService {
         patch("ALTER TABLE incident_records ADD COLUMN team_id BIGINT");
         patch("ALTER TABLE incident_records ADD COLUMN team_name TEXT");
         patch("CREATE INDEX IF NOT EXISTS idx_inc_team ON incident_records(team_id)");
+        // Olay görseli taslak yüklemesi: yeni olay henüz kaydedilmeden görsel eklenir (incident_id=null,
+        // kaydedince linkImages bağlar). Eski NOT NULL kısıtı taslakları reddediyordu → kaldır (idempotent).
+        patch("ALTER TABLE incident_images ALTER COLUMN incident_id DROP NOT NULL");
         // Yönetilen seçenekler artık TAKIMA ÖZEL (team_id, ddl-auto ekler) → eski (type,opt_value) tekil
         // kısıtı kaldırılır ki aynı değer farklı takımlarda bulunabilsin (tekrarlar ensureOption kapsam
         // kontrolüyle önlenir). Constraint VE standalone index formu denenir (idempotent; hata yutulur).
@@ -1230,9 +1235,23 @@ public class SchedulerService {
         String now = ISO.format(Instant.now());
         int checked = 0, skipped = 0;
         List<MonitoringOutageService.SweepItem> sweep = new ArrayList<>();
+        List<MonitoringOutageService.SweepItem> slowSweep = new ArrayList<>();
+        List<MonitoringOutageService.SweepItem> unexpectedSweep = new ArrayList<>();
+        List<MonitoringOutageService.SweepItem> inconsistentSweep = new ArrayList<>();
         List<MonitoringOutageService.DnsChange> changes = new ArrayList<>();
+        int slowThresholdMs       = appSettings.getInt("cert.monitor.dns.slow-threshold-ms", 1500);
+        int slowConfirmAttempts   = appSettings.getInt("cert.monitor.dns.slow-confirm-attempts", 3);
+        int slowConfirmIntervalMs = appSettings.getInt("cert.monitor.dns.slow-confirm-interval-ms", 60000);
+        boolean authorityEnabled = appSettings.getBoolean("cert.monitor.dns.authority-enabled", true);
+        List<MonitoringOutageService.AuthorityChange> authorityChanges = new ArrayList<>();
+        Set<String> authorityDone = new java.util.HashSet<>();   // otorite/hijack kontrolü domain başına bir kez
+        // Çoklu-resolver tutarlılık (propagation) için public resolver listesi (opt-in monitörlerde kullanılır).
+        List<String> dnsResolvers = java.util.Arrays.stream(
+                        appSettings.getString("cert.monitor.dns.resolvers", "8.8.8.8,1.1.1.1,9.9.9.9").split(","))
+                .map(String::trim).filter(s -> !s.isEmpty()).toList();
         for (DnsMonitor m : monitors) {
-            if (!activeDomains.contains(m.getDomain())) { skipped++; continue; }
+            // Standalone monitör (DNS sayfasından eklenen, sertifikadan bağımsız) envanter-skip'i baypas eder.
+            if (!Boolean.TRUE.equals(m.getStandalone()) && !activeDomains.contains(m.getDomain())) { skipped++; continue; }
             try {
                 Map<String, Object> r = dnsCheckerService.check(m.getDomain(), m.getRecordType());
                 boolean success = Boolean.TRUE.equals(r.get("success"));
@@ -1265,26 +1284,94 @@ public class SchedulerService {
                 record.setResponseMs(r.get("response_ms") instanceof Number rn ? rn.longValue() : null);
                 dnsRecordRepo.save(record);
 
+                Map<String, Object> failCtx = new LinkedHashMap<>();
+                failCtx.put("record_type", m.getRecordType());
+                if (m.getTeamId() != null) failCtx.put("team_id", m.getTeamId());   // standalone → alarm takıma
                 sweep.add(new MonitoringOutageService.SweepItem(
                         EscalationService.TYPE_DNS_FAILURE, m.getDomain(), m.getRecordType(),
                         success, (String) r.get("error"),
-                        Map.of("record_type", m.getRecordType()),
+                        failCtx,
                         () -> recheckDns(m)));
+
+                // YAVAŞ/TIMEOUT'lu çözümleme: çözüm BAŞARILI ama response_ms eşiği aşıyor (primary DNS timeout
+                // → fallback). Ayrı DNS_SLOW alarmı; 1 dk arayla 3 yeniden ölçümde de yavaşsa doğrulanır (ctxExtra).
+                if (success) {
+                    long responseMs = r.get("response_ms") instanceof Number rn2 ? rn2.longValue() : 0L;
+                    boolean slow = responseMs > slowThresholdMs;
+                    Map<String, Object> slowCtx = new LinkedHashMap<>();
+                    slowCtx.put("record_type", m.getRecordType());
+                    slowCtx.put("response_ms", responseMs);
+                    slowCtx.put("slow_threshold_ms", slowThresholdMs);
+                    slowCtx.put("monitor_confirm_attempts", slowConfirmAttempts);
+                    slowCtx.put("monitor_confirm_interval_ms", (long) slowConfirmIntervalMs);
+                    if (m.getTeamId() != null) slowCtx.put("team_id", m.getTeamId());   // standalone → alarm takıma
+                    slowSweep.add(new MonitoringOutageService.SweepItem(
+                            EscalationService.TYPE_DNS_SLOW, m.getDomain(), m.getRecordType(),
+                            !slow, slow ? responseMs + " ms" : null,
+                            slowCtx, () -> recheckDnsSlow(m, slowThresholdMs)));
+                }
+
+                // BEKLENEN-DEĞER KİLİDİ: sabitlenen "beklenen değer"de OLMAYAN bir değer çözümlenirse
+                // DNS_UNEXPECTED (esnek/hijack-odaklı). State alarmı: değer beklenene dönünce oto-kapanır.
+                if (success && m.getExpectedValue() != null && !m.getExpectedValue().isBlank()) {
+                    List<String> unexpected = DnsCheckerService.unexpectedValues(m.getExpectedValue(), values);
+                    Map<String, Object> unexpCtx = new LinkedHashMap<>();
+                    unexpCtx.put("record_type", m.getRecordType());
+                    unexpCtx.put("unexpected_values", unexpected);
+                    unexpCtx.put("expected_values", DnsCheckerService.splitLines(m.getExpectedValue()));
+                    if (m.getTeamId() != null) unexpCtx.put("team_id", m.getTeamId());   // standalone → alarm takıma
+                    unexpectedSweep.add(new MonitoringOutageService.SweepItem(
+                            EscalationService.TYPE_DNS_UNEXPECTED, m.getDomain(), m.getRecordType(),
+                            unexpected.isEmpty(), unexpected.isEmpty() ? null : String.join(", ", unexpected),
+                            unexpCtx, () -> recheckDnsUnexpected(m)));
+                }
 
                 if (changed) {
                     log.warn("DNS change detected for {} {}: was='{}' now='{}'",
                             m.getRecordType(), m.getDomain(), prevValue, valueStr);
                     changes.add(new MonitoringOutageService.DnsChange(
-                            m.getDomain(), m.getRecordType(), prevValue, valueStr, now));
+                            m.getDomain(), m.getRecordType(), prevValue, valueStr, now, m.getTeamId()));
                 }
                 checked++;
             } catch (Exception e) {
                 log.warn("DNS check failed for {} {}: {}", m.getRecordType(), m.getDomain(), e.getMessage());
             }
+            // DNS yetki/delegasyon (hijack): domain başına BİR kez (çok monitör aynı domain'i paylaşabilir),
+            // monitörün kayıt-tipi sorgusundan bağımsız — NS/SOA değişimi ya da serial rollback yakalar.
+            if (authorityEnabled && authorityDone.add(m.getDomain())) {
+                try {
+                    MonitoringOutageService.AuthorityChange ac = checkDnsAuthority(m, now);
+                    if (ac != null) authorityChanges.add(ac);
+                } catch (Exception ex) {
+                    log.debug("DNS authority check failed for {}: {}", m.getDomain(), ex.getMessage());
+                }
+            }
+            // Çoklu-resolver tutarlılık (propagation) — OPT-IN: yalnız propagationCheck açık monitörlerde.
+            // Domain'i her public resolver'a AYRI sorar; cevaplar farklıysa DNS_INCONSISTENT (teyitli; oto-kapanır).
+            if (Boolean.TRUE.equals(m.getPropagationCheck()) && dnsResolvers.size() >= 2) {
+                try {
+                    Map<String, Object> prop = dnsCheckerService.checkPropagation(m.getDomain(), m.getRecordType(), dnsResolvers);
+                    boolean inconsistent = Boolean.TRUE.equals(prop.get("inconsistent"));
+                    @SuppressWarnings("unchecked")
+                    Map<String, String> perResolver = (Map<String, String>) prop.getOrDefault("per_resolver", Map.of());
+                    String detail = perResolver.entrySet().stream()
+                            .map(en -> en.getKey() + "→" + en.getValue()).collect(Collectors.joining(" | "));
+                    Map<String, Object> incCtx = new LinkedHashMap<>();
+                    incCtx.put("record_type", m.getRecordType());
+                    incCtx.put("resolver_detail", detail);
+                    if (m.getTeamId() != null) incCtx.put("team_id", m.getTeamId());   // standalone → alarm takıma
+                    inconsistentSweep.add(new MonitoringOutageService.SweepItem(
+                            EscalationService.TYPE_DNS_INCONSISTENT, m.getDomain(), m.getRecordType(),
+                            !inconsistent, inconsistent ? detail : null,
+                            incCtx, () -> recheckDnsPropagation(m, dnsResolvers)));
+                } catch (Exception ex) {
+                    log.debug("DNS propagation check failed for {}: {}", m.getDomain(), ex.getMessage());
+                }
+            }
         }
-        // DNS alarm pipeline'ı (çözümleme hatası + kayıt değişikliği) — sweep'i kırmasın
+        // DNS alarm pipeline'ı (hata + değişiklik + yetki/hijack + beklenmeyen + tutarsızlık) — sweep'i kırmasın
         try {
-            monitoringOutageService.handleDnsSweep(sweep, changes);
+            monitoringOutageService.handleDnsSweep(sweep, slowSweep, changes, authorityChanges, unexpectedSweep, inconsistentSweep);
         } catch (Exception e) {
             log.warn("DNS outage processing failed: {}", e.getMessage(), e);
         }
@@ -1299,6 +1386,103 @@ public class SchedulerService {
         out.put("status", Boolean.TRUE.equals(r.get("success")) ? "up" : "down");
         out.put("error", r.get("error"));
         return out;
+    }
+
+    /** DNS_SLOW teyit re-check'i: çözüm başarılı ama hâlâ yavaş (response_ms > eşik) ise "down" (teyit sürer);
+     *  hızlandıysa ya da çözülemiyorsa "up" (slow alarmı üretilmez/kapanır — başarısızlık DNS_FAILURE'ın işi). */
+    private Map<String, Object> recheckDnsSlow(DnsMonitor m, int thresholdMs) {
+        Map<String, Object> r = dnsCheckerService.check(m.getDomain(), m.getRecordType());
+        boolean success = Boolean.TRUE.equals(r.get("success"));
+        long responseMs = r.get("response_ms") instanceof Number rn ? rn.longValue() : 0L;
+        boolean slow = success && responseMs > thresholdMs;
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("status", slow ? "down" : "up");
+        out.put("error", slow ? responseMs + " ms" : (String) r.get("error"));
+        return out;
+    }
+
+    /** DNS_UNEXPECTED teyit re-check'i: canlı sonuçta hâlâ BEKLENMEYEN değer varsa "down" (alarm sürer);
+     *  değer beklenene dönmüşse ya da çözülemiyorsa "up" (alarm kapanır — başarısızlık DNS_FAILURE'ın işi). */
+    private Map<String, Object> recheckDnsUnexpected(DnsMonitor m) {
+        Map<String, Object> r = dnsCheckerService.check(m.getDomain(), m.getRecordType());
+        boolean success = Boolean.TRUE.equals(r.get("success"));
+        @SuppressWarnings("unchecked")
+        List<String> values = (List<String>) r.getOrDefault("values", List.of());
+        List<String> unexpected = success ? DnsCheckerService.unexpectedValues(m.getExpectedValue(), values) : List.of();
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("status", !unexpected.isEmpty() ? "down" : "up");
+        out.put("error", unexpected.isEmpty() ? null : String.join(", ", unexpected));
+        return out;
+    }
+
+    /** DNS_INCONSISTENT teyit re-check'i: resolver'lar arası hâlâ tutarsızsa "down" (alarm sürer);
+     *  aynılaştıysa "up" (alarm kapanır — propagation gecikmesi geçti). */
+    private Map<String, Object> recheckDnsPropagation(DnsMonitor m, List<String> resolvers) {
+        Map<String, Object> prop = dnsCheckerService.checkPropagation(m.getDomain(), m.getRecordType(), resolvers);
+        boolean inconsistent = Boolean.TRUE.equals(prop.get("inconsistent"));
+        @SuppressWarnings("unchecked")
+        Map<String, String> perResolver = (Map<String, String>) prop.getOrDefault("per_resolver", Map.of());
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("status", inconsistent ? "down" : "up");
+        out.put("error", inconsistent ? perResolver.toString() : null);
+        return out;
+    }
+
+    /**
+     * DNS yetki/delegasyon (hijack) kontrolü: domain otoritesini (authoritative NS-set + SOA serial + primary-NS)
+     * son snapshot'a göre kıyaslar. Şu sinyallerden biri varsa AuthorityChange döner: NS-set değişimi /
+     * SOA primary-NS değişimi / SOA serial GERİ-GİDİŞİ (rollback). Referans snapshot'ı (ilk ölçüm veya bilinen-iyi
+     * değer değişimi) günceller. Başarısız alt-sorgular önceki bilinen-iyi değeri korur (boş→dolu sahte alarmı yok).
+     */
+    private MonitoringOutageService.AuthorityChange checkDnsAuthority(DnsMonitor m, String now) {
+        Map<String, Object> auth = dnsCheckerService.queryAuthority(m.getDomain());
+        boolean nsOk  = Boolean.TRUE.equals(auth.get("ns_success"));
+        boolean soaOk = Boolean.TRUE.equals(auth.get("soa_success"));
+        if (!nsOk && !soaOk) return null;   // veri yok → atla (çözümleme hatasını DNS_FAILURE yakalar)
+
+        @SuppressWarnings("unchecked")
+        List<String> nsList = (List<String>) auth.getOrDefault("ns_values", List.of());
+        String curNs       = nsOk ? String.join("\n", nsList) : null;
+        Long   curSerial   = soaOk && auth.get("soa_serial") instanceof Number n ? n.longValue() : null;
+        String curPrimary  = soaOk ? (String) auth.get("soa_primary_ns") : null;
+
+        com.certmonitor.model.DnsAuthoritySnapshot prev =
+                dnsAuthorityRepo.findTopByDomainOrderByIdDesc(m.getDomain()).orElse(null);
+
+        String signal = null, oldVal = null, newVal = null;
+        if (prev != null) {
+            if (curNs != null && !curNs.isBlank() && prev.getNsValues() != null && !prev.getNsValues().isBlank()
+                    && !curNs.equals(prev.getNsValues())) {
+                signal = "ns_changed"; oldVal = prev.getNsValues(); newVal = curNs;
+            } else if (curPrimary != null && prev.getSoaPrimaryNs() != null
+                    && !curPrimary.equals(prev.getSoaPrimaryNs())) {
+                signal = "primary_ns_changed"; oldVal = prev.getSoaPrimaryNs(); newVal = curPrimary;
+            } else if (curSerial != null && prev.getSoaSerial() != null && curSerial < prev.getSoaSerial()) {
+                signal = "serial_rollback"; oldVal = String.valueOf(prev.getSoaSerial()); newVal = String.valueOf(curSerial);
+            }
+        }
+
+        // Referans snapshot'ı güncelle: ilk ölçüm VEYA bilinen-iyi değer değişti (alarmlı ya da meşru).
+        String effNs      = curNs != null && !curNs.isBlank() ? curNs : (prev != null ? prev.getNsValues() : null);
+        Long   effSerial  = curSerial  != null ? curSerial  : (prev != null ? prev.getSoaSerial() : null);
+        String effPrimary = curPrimary != null ? curPrimary : (prev != null ? prev.getSoaPrimaryNs() : null);
+        boolean differs = prev == null
+                || !java.util.Objects.equals(effNs, prev.getNsValues())
+                || !java.util.Objects.equals(effSerial, prev.getSoaSerial())
+                || !java.util.Objects.equals(effPrimary, prev.getSoaPrimaryNs());
+        if (differs) {
+            com.certmonitor.model.DnsAuthoritySnapshot snap = new com.certmonitor.model.DnsAuthoritySnapshot();
+            snap.setDomain(m.getDomain());
+            snap.setNsValues(effNs);
+            snap.setSoaSerial(effSerial);
+            snap.setSoaPrimaryNs(effPrimary);
+            snap.setCheckedAt(now);
+            dnsAuthorityRepo.save(snap);
+        }
+
+        if (signal == null) return null;
+        log.warn("DNS authority change for {}: {} ({} -> {})", m.getDomain(), signal, oldVal, newVal);
+        return new MonitoringOutageService.AuthorityChange(m.getDomain(), signal, oldVal, newVal, m.getTeamId());
     }
 
     private static String resolveHostname() {

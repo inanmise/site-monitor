@@ -109,6 +109,10 @@ public class CertificateCheckerService {
     @Value("${cert.monitor.proxy.user:}")     private String proxyUser;
     @Value("${cert.monitor.proxy.pass:}")     private String proxyPass;
     @Value("${cert.monitor.proxy.no-proxy:}") private String noProxyList;
+    /** Direct kontrol TCP düzeyinde başarısız olunca OTOMATİK proxy'ye düşülsün mü? VARSAYILAN KAPALI:
+     *  domain'in "Proxy Üzerinden Kontrol Et = Hayır" tercihi kesin onurlanır (aksi halde internal domain'ler
+     *  DMZ proxy'sine yönlenip yanlış "Proxy" etiketi + timeout veriyordu). Eski davranış global açılarak geri alınır. */
+    @Value("${cert.monitor.proxy.auto-fallback:false}") private boolean autoProxyFallback;
 
     private static final DateTimeFormatter ISO =
             DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
@@ -210,7 +214,9 @@ public class CertificateCheckerService {
             return prev.withTlsMode(
                 "browser".equalsIgnoreCase(prev.tlsMode()) ? "default" : "browser");
         }
-        if (!prev.viaProxy() && "tcp-connect".equals(stage)
+        // Direct TCP bloğu + proxy yapılandırılmış → proxy'ye düş. YALNIZ auto-fallback global açıksa:
+        // varsayılan kapalı, böylece per-domain "Proxy Üzerinden Kontrol Et = Hayır" tercihi EZİLMEZ.
+        if (autoProxyFallback && !prev.viaProxy() && "tcp-connect".equals(stage)
                 && (msg.contains("reset") || msg.contains("refused")
                     || msg.contains("no route") || msg.contains("timeout"))
                 && proxyEnabled() && !shouldBypassProxy(domain)) {
@@ -428,7 +434,9 @@ public class CertificateCheckerService {
                             hc.setRequestProperty("Proxy-Authorization", "Basic " + creds);
                         }
                     } else {
-                        hc = (HttpURLConnection) url.openConnection();
+                        // Direct = KESİN direct: JVM ProxySelector / sistem proxy env'ini baypas et (Proxy.NO_PROXY),
+                        // böylece use_proxy=false iken HSTS HEAD'i de proxy'ye sızmaz.
+                        hc = (HttpURLConnection) url.openConnection(java.net.Proxy.NO_PROXY);
                     }
                     if (hc instanceof HttpsURLConnection https) {
                         https.setSSLSocketFactory(factory);

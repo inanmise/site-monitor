@@ -33,9 +33,16 @@ public final class AppSettingsCatalog {
         new Setting("cert.monitor.uptime.alert-enabled",         "monitoring", Type.BOOL),
         new Setting("cert.monitor.port.alert-enabled",           "monitoring", Type.BOOL),
         new Setting("cert.monitor.dns.alert-enabled",            "monitoring", Type.BOOL),
+        new Setting("cert.monitor.dns.authority-enabled",        "monitoring", Type.BOOL),
+        new Setting("cert.monitor.dns.resolvers",                "monitoring", Type.CSV),
         new Setting("cert.monitor.keyword.alert-enabled",        "monitoring", Type.BOOL),
         new Setting("cert.monitor.ping.alert-enabled",           "monitoring", Type.BOOL),
         new Setting("cert.monitor.expiry.alert-enabled",         "monitoring", Type.BOOL),
+        // DNS yavaş/timeout alarmı (DNS_SLOW) tunable'ları — canlı.
+        new Setting("cert.monitor.dns.slow-threshold-ms",        "monitoring", Type.INT),
+        new Setting("cert.monitor.dns.query-timeout-ms",         "monitoring", Type.INT),
+        new Setting("cert.monitor.dns.slow-confirm-attempts",    "monitoring", Type.INT),
+        new Setting("cert.monitor.dns.slow-confirm-interval-ms", "monitoring", Type.INT),
         // Kontrol sıklığı + request timeout — per-tip VARSAYILAN (yeni monitör oluştururken kullanılır).
         new Setting("cert.monitor.ping.default-interval-seconds",    "frequency", Type.INT),
         new Setting("cert.monitor.keyword.default-interval-seconds", "frequency", Type.INT),

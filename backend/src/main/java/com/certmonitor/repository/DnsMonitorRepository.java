@@ -10,4 +10,6 @@ public interface DnsMonitorRepository extends JpaRepository<DnsMonitor, Long> {
     List<DnsMonitor> findByActiveTrue();
     List<DnsMonitor> findAllByOrderByNameAsc();
     Optional<DnsMonitor> findFirstByDomainOrderByIdAsc(String domain);
+    List<DnsMonitor> findByStandaloneTrueAndActiveTrue();
+    Optional<DnsMonitor> findFirstByDomainAndRecordTypeAndStandaloneTrue(String domain, String recordType);
 }

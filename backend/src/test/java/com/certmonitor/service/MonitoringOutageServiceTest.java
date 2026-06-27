@@ -161,8 +161,12 @@ class MonitoringOutageServiceTest {
         service.handleDnsSweep(
                 List.of(item(EscalationService.TYPE_DNS_FAILURE, "changed.example.com", "A", true,
                         Map.of("record_type", "A"), downThenUp(99, calls))),
+                List.of(),
                 List.of(new MonitoringOutageService.DnsChange(
-                        "changed.example.com", "A", "1.2.3.4\n5.6.7.8", "9.9.9.9", "2026-06-11T10:00:00")));
+                        "changed.example.com", "A", "1.2.3.4\n5.6.7.8", "9.9.9.9", "2026-06-11T10:00:00", null)),
+                List.of(),
+                List.of(),
+                List.of());
 
         @SuppressWarnings("unchecked")
         ArgumentCaptor<Map<String, Object>> ctx = ArgumentCaptor.forClass(Map.class);
@@ -190,6 +194,10 @@ class MonitoringOutageServiceTest {
         service.handleDnsSweep(
                 List.of(item(EscalationService.TYPE_DNS_FAILURE, "stale.example.com", "A", true,
                         Map.of("record_type", "A"), MonitoringOutageServiceTest::up)),
+                List.of(),
+                List.of(),
+                List.of(),
+                List.of(),
                 List.of());
 
         @SuppressWarnings("unchecked")
@@ -326,7 +334,11 @@ class MonitoringOutageServiceTest {
         service.handleDnsSweep(
                 List.of(item(EscalationService.TYPE_DNS_FAILURE, "down.example.com", "A", false,
                         Map.of(), downThenUp(99, calls))),
-                List.of(new MonitoringOutageService.DnsChange("c.example.com", "A", "1.1.1.1", "2.2.2.2", "now")));
+                List.of(),
+                List.of(new MonitoringOutageService.DnsChange("c.example.com", "A", "1.1.1.1", "2.2.2.2", "now", null)),
+                List.of(),
+                List.of(),
+                List.of());
 
         assertThat(calls.get()).isZero();
         verifyNoInteractions(escalationService);

@@ -1,8 +1,10 @@
 package com.certmonitor.service;
 
 import com.certmonitor.model.AppUser;
+import com.certmonitor.model.IncidentImage;
 import com.certmonitor.model.Team;
 import com.certmonitor.repository.AppUserRepository;
+import com.certmonitor.repository.IncidentImageRepository;
 import com.certmonitor.repository.TeamRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -34,12 +36,13 @@ class IncidentNotificationServiceTest {
     @Mock EmailNotificationService emailService;
     @Mock TeamRepository teamRepo;
     @Mock AppUserRepository userRepo;
+    @Mock IncidentImageRepository imageRepo;
 
     IncidentNotificationService service;
 
     @BeforeEach
     void setUp() {
-        service = new IncidentNotificationService(emailService, teamRepo, userRepo);
+        service = new IncidentNotificationService(emailService, teamRepo, userRepo, imageRepo);
         ReflectionTestUtils.setField(service, "appBaseUrl", "https://cm.example.com/");
         when(emailService.buildIncidentNotificationHtml(anyMap(), any(), anyString(), anyString()))
                 .thenReturn("<html/>");
@@ -98,6 +101,28 @@ class IncidentNotificationServiceTest {
         ArgumentCaptor<String> subject = ArgumentCaptor.forClass(String.class);
         verify(emailService).sendHtml(any(), isNull(), subject.capture(), anyString(), isNull());
         assertThat(subject.getValue()).contains("Olay Çözüldü");
+    }
+
+    @Test
+    @DisplayName("Görsel ref'li olay → sendHtml CID inline ekleriyle çağrılır (eski: görseller silinip null geçiliyordu)")
+    void notify_inlineImagesAttached() {
+        when(teamRepo.findById(7L)).thenReturn(Optional.of(team("takim@bank.com", null)));
+        IncidentImage img = new IncidentImage();
+        img.setId(5L); img.setContentType("image/png"); img.setData(new byte[]{1, 2, 3});
+        when(imageRepo.findById(5L)).thenReturn(Optional.of(img));
+
+        Map<String, Object> d = dto();
+        d.put("resolution_steps", "Düzeltildi.\n\n![web.config](/api/incidents/images/5)");
+
+        service.doNotify(d, "RESOLVED");
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<java.util.List<EmailNotificationService.InlineImage>> inlineCap =
+                ArgumentCaptor.forClass(java.util.List.class);
+        verify(emailService).sendHtml(any(), isNull(), anyString(), anyString(), inlineCap.capture());
+        assertThat(inlineCap.getValue()).hasSize(1);
+        assertThat(inlineCap.getValue().get(0).cid()).isEqualTo("incimg5");
+        assertThat(inlineCap.getValue().get(0).contentType()).isEqualTo("image/png");
     }
 
     @Test

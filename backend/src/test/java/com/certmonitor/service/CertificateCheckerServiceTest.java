@@ -256,6 +256,7 @@ class CertificateCheckerServiceTest {
         ReflectionTestUtils.setField(spy, "retryFallback", true);
         ReflectionTestUtils.setField(spy, "proxyHost", "proxy.local");
         ReflectionTestUtils.setField(spy, "proxyPort", 8080);
+        ReflectionTestUtils.setField(spy, "autoProxyFallback", true);   // opt-in özellik (varsayılan KAPALI)
         doReturn(errAtStage("NETWORK", "Socket error: Connection reset", "tcp-connect"))
                 .doReturn(ok())
                 .when(spy).tryCheckOnce(eq("test.example.com"), eq(443), anyOpts());
@@ -270,6 +271,26 @@ class CertificateCheckerServiceTest {
         assertThat(captor.getAllValues().get(1).tlsMode()).isEqualTo("browser");
         assertThat(result.get("retry_recovered")).isEqualTo(true);
         assertThat(result.get("retry_fallback")).isEqualTo("direct/browser→proxy/browser");
+    }
+
+    @Test
+    @DisplayName("fallback: auto-fallback KAPALI (varsayılan) → direct TCP timeout proxy'ye DÜŞMEZ (use_proxy=false onurlanır)")
+    void fallback_autoFallbackOff_staysDirect() {
+        CertificateCheckerService spy = spyWithRetry(true);
+        ReflectionTestUtils.setField(spy, "retryFallback", true);
+        ReflectionTestUtils.setField(spy, "proxyHost", "proxy.local");
+        ReflectionTestUtils.setField(spy, "proxyPort", 8080);
+        // autoProxyFallback VARSAYILAN false → direct timeout'ta proxy'ye düşülmez.
+        doReturn(errAtStage("NETWORK", "Connection timeout after 6s", "tcp-connect"))
+                .when(spy).tryCheckOnce(eq("test.example.com"), eq(443), anyOpts());
+
+        spy.check("test.example.com", 443);
+
+        ArgumentCaptor<CertificateCheckerService.CheckOptions> captor =
+                ArgumentCaptor.forClass(CertificateCheckerService.CheckOptions.class);
+        verify(spy, times(2)).tryCheckOnce(eq("test.example.com"), eq(443), captor.capture());
+        assertThat(captor.getAllValues().get(0).viaProxy()).isFalse();
+        assertThat(captor.getAllValues().get(1).viaProxy()).isFalse();   // proxy'ye DÜŞMEDİ
     }
 
     @Test
@@ -347,6 +368,7 @@ class CertificateCheckerServiceTest {
     void chooseFallback_decisionTable() {
         ReflectionTestUtils.setField(service, "proxyHost", "proxy.local");
         ReflectionTestUtils.setField(service, "proxyPort", 8080);
+        ReflectionTestUtils.setField(service, "autoProxyFallback", true);   // rule #2 için (varsayılan KAPALI)
         var direct = new CertificateCheckerService.CheckOptions(false, "browser", 6, false);
         var viaProxy = new CertificateCheckerService.CheckOptions(true, "default", 6, false);
 
@@ -371,6 +393,13 @@ class CertificateCheckerServiceTest {
         // Rule 4: anything else → unchanged
         assertThat(service.chooseFallback(direct,
                 err("NETWORK", "Socket error: Connection reset"), "x.com"))
+                .isEqualTo(direct);
+
+        // Auto-fallback KAPALI (varsayılan): direct TCP timeout'ta bile proxy'ye DÜŞMEZ →
+        // per-domain "Proxy Üzerinden Kontrol Et = Hayır" tercihi kesin onurlanır.
+        ReflectionTestUtils.setField(service, "autoProxyFallback", false);
+        assertThat(service.chooseFallback(direct,
+                errAtStage("NETWORK", "Connection timeout after 6s", "tcp-connect"), "x.com"))
                 .isEqualTo(direct);
     }
 

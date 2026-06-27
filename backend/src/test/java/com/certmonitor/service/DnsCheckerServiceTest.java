@@ -6,7 +6,12 @@ import org.junit.jupiter.api.Test;
 import java.util.List;
 import java.util.Map;
 
+import org.junit.jupiter.api.BeforeEach;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 /**
  * Unit tests for {@link DnsCheckerService}.
@@ -20,7 +25,14 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 class DnsCheckerServiceTest {
 
-    private final DnsCheckerService service = new DnsCheckerService();
+    private final AppSettingsService appSettings = mock(AppSettingsService.class);
+    private final DnsCheckerService service = new DnsCheckerService(appSettings);
+
+    @BeforeEach
+    void stubSettings() {
+        // getInt(key, fallback) → fallback (ör. query-timeout-ms = 2000)
+        when(appSettings.getInt(anyString(), anyInt())).thenAnswer(inv -> inv.getArgument(1));
+    }
 
     @Test
     @DisplayName("check returns a result map with success/values keys")
@@ -139,6 +151,23 @@ class DnsCheckerServiceTest {
                 "1.2.3.4",
                 "1.2.3.4\n9.9.9.9"))
             .isEqualTo(DnsCheckerService.ChangeKind.ROTATED);
+    }
+
+    @Test
+    @DisplayName("unexpectedValues: beklenmeyen değer raporlanır; rotasyon (alt küme) tolere edilir")
+    void unexpectedValues_flexible() {
+        // beklenmeyen yeni değer → raporla
+        assertThat(DnsCheckerService.unexpectedValues("1.2.3.4\n5.6.7.8", List.of("9.9.9.9")))
+            .containsExactly("9.9.9.9");
+        // rotasyon: canlı = beklenenin alt kümesi → sapma yok
+        assertThat(DnsCheckerService.unexpectedValues("1.2.3.4\n5.6.7.8", List.of("1.2.3.4")))
+            .isEmpty();
+        // beklenen boş/null = kilit kapalı → boş
+        assertThat(DnsCheckerService.unexpectedValues("", List.of("9.9.9.9"))).isEmpty();
+        assertThat(DnsCheckerService.unexpectedValues(null, List.of("9.9.9.9"))).isEmpty();
+        // karışık: bir beklenen + bir beklenmeyen → yalnız beklenmeyeni raporla
+        assertThat(DnsCheckerService.unexpectedValues("1.2.3.4", List.of("1.2.3.4", "9.9.9.9")))
+            .containsExactly("9.9.9.9");
     }
 
     @Test

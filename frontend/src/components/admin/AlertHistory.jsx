@@ -7,7 +7,7 @@ import UserBadge from '../ui/UserBadge.jsx'
 import {
   Check, ShieldAlert, TrendingUp, RefreshCcw, Bell, CheckCircle, AlertCircle,
   ChevronUp, ChevronDown, ChevronLeft, ChevronRight, Mail, MailX, Clock, Users, Calendar,
-  Globe, Link2, Ban, Zap, Plug, Server, Shuffle,
+  Globe, Link2, Ban, Zap, Plug, Server, Shuffle, Network,
 } from 'lucide-react'
 
 const levelColor = { WARNING: '#f0a500', HIGH: '#e07b00', CRITICAL: '#c0392b' }
@@ -292,6 +292,10 @@ export default function AlertHistory({ domain = null }) {
     ACCESSIBILITY: t('alh.type.accessibility'),
     PORT_DOWN: t('alh.type.portDown'),
     DNS_FAILURE: t('alh.type.dnsFailure'),
+    DNS_SLOW: t('alh.type.dnsSlow'),
+    DNS_AUTHORITY: t('alh.type.dnsAuthority'),
+    DNS_UNEXPECTED: t('alh.type.dnsUnexpected'),
+    DNS_INCONSISTENT: t('alh.type.dnsInconsistent'),
     DNS_CHANGED: t('alh.type.dnsChanged'),
   }
   // Tip bazlı görsel kimlik — pill'lerde ve kart rozetlerinde kullanılır.
@@ -300,6 +304,10 @@ export default function AlertHistory({ domain = null }) {
     ACCESSIBILITY: { icon: Globe,   color: '#dc2626' },
     PORT_DOWN:     { icon: Plug,    color: '#db2777' },
     DNS_FAILURE:   { icon: Server,  color: '#2563eb' },
+    DNS_SLOW:      { icon: Clock,   color: '#0d9488' },
+    DNS_AUTHORITY: { icon: ShieldAlert, color: '#b91c1c' },
+    DNS_UNEXPECTED:{ icon: AlertCircle, color: '#ea580c' },
+    DNS_INCONSISTENT: { icon: Network, color: '#0284c7' },
     DNS_CHANGED:   { icon: Shuffle, color: '#9333ea' },
     EXPIRY:        { icon: Clock,   color: '#d97706' },
     CHAIN_BROKEN:  { icon: Link2,   color: '#7c3aed' },

@@ -131,11 +131,16 @@ public class MonitoringController {
         return ResponseEntity.badRequest().body(Map.of("success", false, "error", msg));
     }
 
+    private ResponseEntity<Map<String, Object>> forbidden(String msg) {
+        return ResponseEntity.status(403).body(Map.of("success", false, "error", msg));
+    }
+
     private static boolean blank(Object o) {
         return o == null || o.toString().isBlank();
     }
 
     private static final java.util.Set<String> KW_OPERATORS = java.util.Set.of("GTE", "LTE", "EQ", "GT", "LT");
+    private static final java.util.Set<String> DNS_RECORD_TYPES = java.util.Set.of("A", "AAAA", "CNAME", "MX", "TXT", "NS");
 
     /** Keyword adet koşulunu (operator + matchCount) body'den uygular; legacy 'condition' desteklenir;
      *  alertCondition (NOT NULL) operatörden türetilir. */
@@ -580,6 +585,7 @@ public class MonitoringController {
         // Tüm monitörleri tek sorguda yükle, domain ile indeksle (en küçük id = findFirst...OrderByIdAsc).
         Map<String, DnsMonitor> monitorByDomain = new HashMap<>();
         for (DnsMonitor m : dnsMonitorRepo.findAll()) {
+            if (Boolean.TRUE.equals(m.getStandalone())) continue;   // standalone'lar envantere bağlı değil — ayrı işlenir
             monitorByDomain.merge(m.getDomain(), m, (a, b) -> a.getId() <= b.getId() ? a : b);
         }
 
@@ -607,56 +613,100 @@ public class MonitoringController {
                 .collect(Collectors.toMap(DnsRecord::getMonitorId, r -> r, (a, b) -> a));
 
         Map<String, String> teamMap = certificateService.domainTeamNameMap();
+        Map<Long, String> teamById = teamNameMap();
         List<Map<String, Object>> result = new ArrayList<>();
         for (CertificateInventory inv : inventory) {
             DnsMonitor monitor = monitorByDomain.get(inv.getDomain());
             DnsRecord latest = monitor.getId() != null ? latestByMonitor.get(monitor.getId()) : null;
-            result.add(enrichDns(monitor, latest, teamMap));
+            result.add(enrichDns(monitor, latest, teamMap, teamById));
+        }
+        // Standalone (sertifikadan bağımsız) monitörler — envanter döngüsünde yok; takım görüş kapsamına göre ekle.
+        for (DnsMonitor m : dnsMonitorRepo.findByStandaloneTrueAndActiveTrue()) {
+            if (!SessionScope.canView(session, m.getTeamId())) continue;
+            DnsRecord latest = m.getId() != null ? latestByMonitor.get(m.getId()) : null;
+            result.add(enrichDns(m, latest, teamMap, teamById));
         }
         return ok(result);
     }
 
+    /** DNS sayfasından STANDALONE (sertifikadan bağımsız) monitör oluşturur. monitoring.crud yetkili
+     *  kullanıcı ekler; monitör + alarm resolveWriteTeam ile kullanıcının takımına atanır. */
     @PostMapping("/dns")
     public ResponseEntity<Map<String, Object>> createDns(@RequestBody Map<String, Object> body, HttpSession session) {
-        requireAdmin(session);
         permissionService.require(session, "monitoring.crud", "edit");
+        if (blank(body.get("domain")))     return badRequest("domain zorunludur");
+        if (blank(body.get("recordType"))) return badRequest("recordType zorunludur");
+        String domain = body.get("domain").toString().trim();
+        String recordType = body.get("recordType").toString().trim().toUpperCase();
+        if (!DNS_RECORD_TYPES.contains(recordType)) return badRequest("Geçersiz DNS kayıt tipi: " + recordType);
+        // Aynı (domain, recordType) standalone monitör zaten varsa onu dön — tekrar oluşturma.
+        var dup = dnsMonitorRepo.findFirstByDomainAndRecordTypeAndStandaloneTrue(domain, recordType);
+        if (dup.isPresent()) {
+            return ok(enrichDns(dup.get(),
+                    dnsRecordRepo.findTopByMonitorIdOrderByCheckedAtDesc(dup.get().getId()).orElse(null),
+                    certificateService.domainTeamNameMap(), teamNameMap()));
+        }
         String now = ISO.format(Instant.now());
         DnsMonitor m = new DnsMonitor();
-        m.setName((String) body.get("name"));
-        m.setDomain((String) body.get("domain"));
-        m.setRecordType(((String) body.get("recordType")).toUpperCase());
+        m.setName(blank(body.get("name")) ? domain : body.get("name").toString().trim());
+        m.setDomain(domain);
+        m.setRecordType(recordType);
         m.setActive(true);
+        m.setStandalone(true);                          // sertifikadan bağımsız → envanter-skip'i baypas eder
+        m.setTeamId(resolveWriteTeam(session, body));   // alarm yönlendirme + liste kapsamı için takım
+        Object ev = body.get("expectedValue");          // beklenen-değer kilidi (opsiyonel)
+        m.setExpectedValue(ev != null && !ev.toString().isBlank() ? ev.toString().trim() : null);
+        m.setPropagationCheck(Boolean.TRUE.equals(body.get("propagationCheck")));   // çoklu-resolver tutarlılık (opt-in)
         if (body.get("intervalSeconds") != null) m.setIntervalSeconds(((Number) body.get("intervalSeconds")).intValue());
         m.setCreatedAt(now);
         m.setUpdatedAt(now);
         DnsMonitor saved = dnsMonitorRepo.save(m);
-        return ok(enrichDns(saved, null, certificateService.domainTeamNameMap()));
+        return ok(enrichDns(saved, null, certificateService.domainTeamNameMap(), teamNameMap()));
     }
 
     @PutMapping("/dns/{id}")
     public ResponseEntity<Map<String, Object>> updateDns(@PathVariable Long id, @RequestBody Map<String, Object> body, HttpSession session) {
-        requireAdmin(session);
         permissionService.require(session, "monitoring.crud", "edit");
         return dnsMonitorRepo.findById(id).map(m -> {
+            // Envanter-türevi monitör admin gerektirir; standalone'u sorumlu takımı yönetebilir.
+            if (Boolean.TRUE.equals(m.getStandalone())) {
+                if (!canOperateTeam(session, m.getTeamId())) return forbidden("Bu monitörü düzenleme yetkiniz yok");
+            } else {
+                requireAdmin(session);
+            }
             if (body.get("name")            != null) m.setName((String) body.get("name"));
             if (body.get("domain")          != null) m.setDomain((String) body.get("domain"));
             if (body.get("recordType")      != null) m.setRecordType(((String) body.get("recordType")).toUpperCase());
             if (body.get("active")          != null) m.setActive((Boolean) body.get("active"));
             if (body.get("intervalSeconds") != null) m.setIntervalSeconds(((Number) body.get("intervalSeconds")).intValue());
+            if (Boolean.TRUE.equals(m.getStandalone()) && body.containsKey("teamId"))
+                m.setTeamId(resolveTeamChange(session, m.getTeamId(), body.get("teamId")));
+            if (body.containsKey("expectedValue")) {   // beklenen-değer kilidi (boş = kilit kapalı)
+                Object ev = body.get("expectedValue");
+                m.setExpectedValue(ev != null && !ev.toString().isBlank() ? ev.toString().trim() : null);
+            }
+            if (body.containsKey("propagationCheck"))   // çoklu-resolver tutarlılık (opt-in)
+                m.setPropagationCheck(Boolean.TRUE.equals(body.get("propagationCheck")));
             m.setUpdatedAt(ISO.format(Instant.now()));
             DnsMonitor saved = dnsMonitorRepo.save(m);
-            return ok(enrichDns(saved, dnsRecordRepo.findTopByMonitorIdOrderByCheckedAtDesc(id).orElse(null), certificateService.domainTeamNameMap()));
+            return ok(enrichDns(saved, dnsRecordRepo.findTopByMonitorIdOrderByCheckedAtDesc(id).orElse(null),
+                    certificateService.domainTeamNameMap(), teamNameMap()));
         }).orElse(notFound("DNS monitor not found"));
     }
 
     @DeleteMapping("/dns/{id}")
     public ResponseEntity<Map<String, Object>> deleteDns(@PathVariable Long id, HttpSession session) {
-        requireAdmin(session);
         permissionService.require(session, "monitoring.crud", "edit");
         return dnsMonitorRepo.findById(id).map(m -> {
-            m.setActive(false);
-            m.setUpdatedAt(ISO.format(Instant.now()));
-            dnsMonitorRepo.save(m);
+            if (Boolean.TRUE.equals(m.getStandalone())) {
+                if (!canOperateTeam(session, m.getTeamId())) return forbidden("Bu monitörü silme yetkiniz yok");
+                dnsMonitorRepo.delete(m);   // standalone → gerçek silme (envanterle bağı yok)
+            } else {
+                requireAdmin(session);
+                m.setActive(false);         // envanter-türevi → soft-delete (envanter senkronu yeniden açabilir)
+                m.setUpdatedAt(ISO.format(Instant.now()));
+                dnsMonitorRepo.save(m);
+            }
             return ok(Map.of("deleted", true));
         }).orElse(notFound("DNS monitor not found"));
     }
@@ -706,7 +756,7 @@ public class MonitoringController {
             record.setResponseMs(r.get("response_ms") instanceof Number rn ? rn.longValue() : null);
             dnsRecordRepo.save(record);
 
-            return ok(enrichDns(m, record, certificateService.domainTeamNameMap()));
+            return ok(enrichDns(m, record, certificateService.domainTeamNameMap(), teamNameMap()));
         }).orElse(notFound("DNS monitor not found"));
     }
 
@@ -715,17 +765,26 @@ public class MonitoringController {
     public ResponseEntity<Map<String, Object>> dnsDetails(@PathVariable Long id) {
         return dnsMonitorRepo.findById(id).map(m -> {
             Map<String, Object> data = new LinkedHashMap<>(dnsChecker.enrichedQuery(m.getDomain()));
-            data.put("monitor", enrichDns(m, dnsRecordRepo.findTopByMonitorIdOrderByCheckedAtDesc(m.getId()).orElse(null), certificateService.domainTeamNameMap()));
+            data.put("monitor", enrichDns(m, dnsRecordRepo.findTopByMonitorIdOrderByCheckedAtDesc(m.getId()).orElse(null), certificateService.domainTeamNameMap(), teamNameMap()));
+            data.put("slow_threshold_ms", appSettings.getInt("cert.monitor.dns.slow-threshold-ms", 1500));   // latency grafiği eşik çizgisi
             return ResponseEntity.ok(Map.of("success", true, "data", data));
         }).orElse(notFound("DNS monitor not found"));
     }
 
-    private Map<String, Object> enrichDns(DnsMonitor m, DnsRecord latest, Map<String, String> teamMap) {
+    private Map<String, Object> enrichDns(DnsMonitor m, DnsRecord latest,
+                                          Map<String, String> teamMap, Map<Long, String> teamById) {
         Map<String, Object> item = new LinkedHashMap<>();
+        boolean standalone = Boolean.TRUE.equals(m.getStandalone());
         item.put("id",              m.getId());
         item.put("name",            m.getName());
         item.put("domain",          m.getDomain());
-        item.put("team_name",       teamMap.get(m.getDomain()));
+        item.put("standalone",      standalone);
+        item.put("team_id",         m.getTeamId());
+        item.put("expected_value",  m.getExpectedValue());
+        item.put("propagation_check", Boolean.TRUE.equals(m.getPropagationCheck()));
+        // Standalone monitör takımını teamId'den çöz (envantere bağlı değil); envanter-türevi domain→envanter eşlemesinden.
+        item.put("team_name",       standalone && m.getTeamId() != null
+                ? teamById.get(m.getTeamId()) : teamMap.get(m.getDomain()));
         item.put("record_type",     m.getRecordType());
         item.put("active",          m.getActive());
         item.put("interval_seconds",m.getIntervalSeconds());

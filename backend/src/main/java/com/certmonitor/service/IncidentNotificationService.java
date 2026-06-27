@@ -3,6 +3,7 @@ package com.certmonitor.service;
 import com.certmonitor.model.AppUser;
 import com.certmonitor.model.Team;
 import com.certmonitor.repository.AppUserRepository;
+import com.certmonitor.repository.IncidentImageRepository;
 import com.certmonitor.repository.TeamRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -10,10 +11,14 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * Olay/Hata kaydı oluşturulduğunda veya güncellendiğinde, olayın kayıtlı olduğu
@@ -30,6 +35,7 @@ public class IncidentNotificationService {
     private final EmailNotificationService emailService;
     private final TeamRepository teamRepo;
     private final AppUserRepository userRepo;
+    private final IncidentImageRepository imageRepo;
 
     @Value("${cert.monitor.app.base-url:http://localhost:5173}")
     private String appBaseUrl;
@@ -87,7 +93,31 @@ public class IncidentNotificationService {
                                                 : "Olay Güncellendi";
         String subject = "[CertMonitor] " + prefix + " — " + dto.get("title") + " (" + team.getName() + ")";
 
-        String status = emailService.sendHtml(recipients.toArray(new String[0]), null, subject, html, null);
-        log.info("Incident notification ({}) team={} to={} status={}", kind, team.getId(), recipients, status);
+        List<EmailNotificationService.InlineImage> inline = collectInlineImages(dto);
+        String status = emailService.sendHtml(recipients.toArray(new String[0]), null, subject, html,
+                inline.isEmpty() ? null : inline);
+        log.info("Incident notification ({}) team={} to={} status={} images={}",
+                kind, team.getId(), recipients, status, inline.size());
+    }
+
+    private static final Pattern INC_IMG_ID = Pattern.compile("/api/incidents/images/(\\d+)");
+
+    /** Olayın markdown alanlarındaki /api/incidents/images/{id} ref'lerini tarar, görselleri yükleyip
+     *  CID inline ekleri (cid:incimg{id}) döner — buildIncidentNotificationHtml'in gömdüğü CID img'lerle eşleşir.
+     *  Eskiden mail görselleri hiç eklemiyordu (textBlock siliyor + inline=null) → mailde görsel görünmüyordu. */
+    private List<EmailNotificationService.InlineImage> collectInlineImages(Map<String, Object> dto) {
+        Set<Long> ids = new LinkedHashSet<>();
+        for (String field : List.of("rca_summary", "description", "resolution_steps", "business_impact")) {
+            Object v = dto.get(field);
+            if (v == null) continue;
+            Matcher m = INC_IMG_ID.matcher(v.toString());
+            while (m.find()) ids.add(Long.parseLong(m.group(1)));
+        }
+        List<EmailNotificationService.InlineImage> out = new ArrayList<>();
+        for (Long id : ids) {
+            imageRepo.findById(id).ifPresent(img -> out.add(new EmailNotificationService.InlineImage(
+                    "incimg" + id, img.getData(), img.getContentType())));
+        }
+        return out;
     }
 }
