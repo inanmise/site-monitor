@@ -2556,6 +2556,7 @@ public class EmailNotificationService {
             + cta
             + reportSection("Olay Künyesi", factsTable, accent)
             + reportSection("Kök Neden (RCA)", textBlock(str(inc.get("rca_summary"))), accent)
+            + incidentSectionOpt("Teknik Açıklama", str(inc.get("description")), accent)
             + reportSection("İş Etkisi", textBlock(str(inc.get("business_impact"))), accent)
             + reportSection("Çözüm / Müdahale Adımları", textBlock(str(inc.get("resolution_steps"))), accent)
             + cta
@@ -2601,12 +2602,27 @@ public class EmailNotificationService {
     }
 
     /** Markdown metin → e-posta-güvenli paragraf: görsel sözdizimini at, escape + satır sonu→&lt;br&gt;. */
+    private static final Pattern INC_CID_IMG = Pattern.compile("<img src=\"cid:incimg(\\d+)\"");
+
+    /** Olay markdown alanı → e-posta HTML'i: TAM markdown (GFM tablo/liste/kalın/görev kutusu) +
+     *  gömülü görseller. /api/incidents/images/{id} → cid:incimg{id} (CID inline; InlineImage'ları
+     *  IncidentNotificationService yükler). Outlook head&lt;style&gt;'ı yok saydığından blok stilleri
+     *  inline edilir (haftalık rapor mdToHtml deseni). escapeHtml=true → ham HTML güvenli (escape). */
     private String textBlock(String md) {
         if (md == null || md.isBlank()) return "";
-        String s = md.replaceAll("!\\[[^\\]]*\\]\\([^)]*\\)", "").trim();
-        if (s.isEmpty()) return "";
-        return "<p style='margin:0;font-size:14px;line-height:1.7;color:#1e293b'>"
-            + escHtml(s).replace("\n", "<br>") + "</p>";
+        String src = md.replaceAll("\\]\\(/api/incidents/images/(\\d+)\\)", "](cid:incimg$1)");
+        String html = taskCheckboxesToSymbols(MD_RENDERER.render(MD_PARSER.parse(src)));
+        // incident CID görsellerine inline genişlik/stil (Outlook taşma engeli)
+        html = INC_CID_IMG.matcher(html).replaceAll(
+                "<img width=\"680\" style=\"display:block;width:100%;max-width:680px;height:auto;"
+                + "border-radius:8px;margin:8px 0;border:1px solid #e2e8f0\" src=\"cid:incimg$1\"");
+        return inlineBlockStyles(html);
+    }
+
+    /** Boş değilse bölüm kutusu üretir (boş markdown alanında boş kutu render etmemek için). */
+    private String incidentSectionOpt(String title, String md, String accent) {
+        String body = textBlock(md);
+        return body.isBlank() ? "" : reportSection(title, body, accent);
     }
 
     private static String fmtOrDash(String s) { return (s == null || s.isBlank()) ? "—" : s; }

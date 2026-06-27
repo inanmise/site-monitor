@@ -23,7 +23,10 @@ public class IncidentImage {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @Column(name = "incident_id", nullable = false)
+    // Taslak yükleme: yeni olay henüz KAYDEDİLMEDEN görsel yüklenir (incidentId=null);
+    // olay kaydedilince IncidentService.linkImages markdown referanslarından olaya bağlar.
+    // Bu yüzden nullable OLMALI (eski NOT NULL kısıtı taslakları reddediyordu).
+    @Column(name = "incident_id")
     private Long incidentId;
 
     @Column(length = 300)

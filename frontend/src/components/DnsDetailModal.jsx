@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom'
 import { api, formatDate } from '../api/client'
 import { useT } from '../i18n/index.jsx'
 import { X, Activity, Clock, Server, FileText, Globe } from 'lucide-react'
-import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts'
+import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, ReferenceLine } from 'recharts'
 
 function ChartTooltip({ active, payload, t }) {
   if (!active || !payload || !payload.length) return null
@@ -222,12 +222,25 @@ export default function DnsDetailModal({ monitor, onClose }) {
                 rotated: h.rotated,
               })).filter(p => p.ms != null)
               if (chartData.length < 2) return null
+              // p50/p95: görünür aralıktaki yanıt sürelerinden (gecikme dağılımı özeti).
+              const msVals = chartData.map(p => p.ms).slice().sort((a, b) => a - b)
+              const pct = (arr, p) => arr.length ? arr[Math.min(arr.length - 1, Math.floor((p / 100) * arr.length))] : null
+              const p50 = pct(msVals, 50)
+              const p95 = pct(msVals, 95)
+              const slowThr = details?.slow_threshold_ms
               return (
                 <div className="dns-section">
                   <h4 className="dns-section-title">
                     <Activity size={14} /> {t('dns.responseTrend')}
                     <span className="dns-range-hint">· {t(activeRangeOption.labelKey)}</span>
                   </h4>
+                  <div className="dns-latency-stats">
+                    <span><b>{t('dns.p50')}:</b> {p50}ms</span>
+                    <span><b>{t('dns.p95')}:</b> {p95}ms</span>
+                    {slowThr != null && (
+                      <span className="dns-latency-thr"><b>{t('dns.slowThreshold')}:</b> {slowThr}ms</span>
+                    )}
+                  </div>
                   <div className="dns-chart-wrap">
                     <ResponsiveContainer width="100%" height={200}>
                       <LineChart data={chartData} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
@@ -244,6 +257,10 @@ export default function DnsDetailModal({ monitor, onClose }) {
                           tickFormatter={(v) => `${v}ms`}
                         />
                         <Tooltip content={<ChartTooltip t={t} />} />
+                        {slowThr != null && (
+                          <ReferenceLine y={slowThr} stroke="#dc2626" strokeDasharray="4 3"
+                            label={{ value: t('dns.slowThreshold'), position: 'insideTopRight', fontSize: 10, fill: '#dc2626' }} />
+                        )}
                         <Line
                           type="monotone"
                           dataKey="ms"

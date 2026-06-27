@@ -1,9 +1,12 @@
 package com.certmonitor.service;
 
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.xbill.DNS.DClass;
+import org.xbill.DNS.ExtendedResolver;
+import org.xbill.DNS.SimpleResolver;
 import org.xbill.DNS.Message;
 import org.xbill.DNS.Name;
 import org.xbill.DNS.Rcode;
@@ -11,7 +14,6 @@ import org.xbill.DNS.Record;
 import org.xbill.DNS.Resolver;
 import org.xbill.DNS.SOARecord;
 import org.xbill.DNS.Section;
-import org.xbill.DNS.SimpleResolver;
 import org.xbill.DNS.Type;
 
 import java.time.Duration;
@@ -24,7 +26,10 @@ import java.util.concurrent.CompletableFuture;
  */
 @Slf4j
 @Service
+@RequiredArgsConstructor
 public class DnsCheckerService {
+
+    private final AppSettingsService appSettings;
 
     private static final String[] STANDARD_TYPES = {"A", "AAAA", "CNAME", "MX", "TXT", "NS"};
 
@@ -105,6 +110,66 @@ public class DnsCheckerService {
         return result;
     }
 
+    /** Belirli bir resolver IP'sine (ör. 8.8.8.8) doğrudan tek-kayıt sorgusu — çoklu-resolver tutarlılık
+     *  (propagation) kontrolü için. {success, values(sıralı), error}. ExtendedResolver yerine SimpleResolver(ip). */
+    public Map<String, Object> checkVia(String domain, String recordType, String resolverIp) {
+        Map<String, Object> result = new LinkedHashMap<>();
+        try {
+            int type = typeOf(recordType);
+            Name name = Name.fromString(domain.endsWith(".") ? domain : domain + ".");
+            Record question = Record.newRecord(name, type, DClass.IN);
+            Message query = Message.newQuery(question);
+            int timeoutMs = appSettings.getInt("cert.monitor.dns.query-timeout-ms", 2000);
+            Resolver resolver = new SimpleResolver(resolverIp);
+            resolver.setTimeout(Duration.ofMillis(Math.max(500, timeoutMs)));
+            Message response = resolver.send(query);
+            List<String> values = new ArrayList<>();
+            for (Record r : response.getSection(Section.ANSWER)) {
+                if (type != Type.CNAME && r.getType() == Type.CNAME) continue;
+                if (r.getType() != type) continue;
+                values.add(rdataAsString(r));
+            }
+            Collections.sort(values);
+            boolean ok = response.getRcode() == Rcode.NOERROR && !values.isEmpty();
+            result.put("success", ok);
+            result.put("values", values);
+            if (!ok) result.put("error", response.getRcode() == Rcode.NOERROR ? "no answer" : Rcode.string(response.getRcode()));
+        } catch (Exception e) {
+            result.put("success", false);
+            result.put("values", List.of());
+            result.put("error", e.getMessage());
+        }
+        return result;
+    }
+
+    /**
+     * Çoklu-resolver tutarlılık (propagation) kontrolü: domain'i her resolver'a AYRI sorar, BAŞARILI
+     * cevapların değer-setlerini karşılaştırır. ≥2 başarılı resolver varsa ve setler birebir AYNI değilse
+     * inconsistent=true (split-DNS / propagation gecikmesi / poisoning sinyali). perResolver: ip → "değerler" | "HATA".
+     */
+    public Map<String, Object> checkPropagation(String domain, String recordType, List<String> resolverIps) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        Map<String, String> perResolver = new LinkedHashMap<>();
+        Set<String> distinctSets = new HashSet<>();
+        int okCount = 0;
+        for (String ip : resolverIps) {
+            Map<String, Object> r = checkVia(domain, recordType, ip);
+            if (Boolean.TRUE.equals(r.get("success"))) {
+                @SuppressWarnings("unchecked")
+                List<String> v = (List<String>) r.get("values");
+                perResolver.put(ip, String.join(", ", v));
+                distinctSets.add(String.join("\n", v));
+                okCount++;
+            } else {
+                perResolver.put(ip, "HATA: " + r.getOrDefault("error", "?"));
+            }
+        }
+        out.put("inconsistent", okCount >= 2 && distinctSets.size() > 1);
+        out.put("per_resolver", perResolver);
+        out.put("ok_count", okCount);
+        return out;
+    }
+
     public Map<String, Object> querySoa(String domain) {
         Map<String, Object> soa = new LinkedHashMap<>();
         long start = System.nanoTime();
@@ -141,6 +206,29 @@ public class DnsCheckerService {
         return soa;
     }
 
+    /**
+     * Otorite/delegasyon anlık görüntüsü (hijack tespiti için): authoritative NS seti (sıralı) +
+     * SOA serial + SOA primary-NS (MNAME). Sorgu başarısızsa ilgili alan null/boş döner; gerçek
+     * değişim karşılaştırması (NS-set / primary-NS / serial-rollback) çağıranda yapılır.
+     */
+    public Map<String, Object> queryAuthority(String domain) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        Map<String, Object> ns = check(domain, "NS");
+        @SuppressWarnings("unchecked")
+        List<String> nsValues = (List<String>) ns.getOrDefault("values", List.of());
+        List<String> sortedNs = new ArrayList<>(nsValues);
+        Collections.sort(sortedNs);
+        out.put("ns_values", sortedNs);
+        out.put("ns_success", Boolean.TRUE.equals(ns.get("success")));
+
+        Map<String, Object> soa = querySoa(domain);
+        boolean soaOk = Boolean.TRUE.equals(soa.get("success"));
+        out.put("soa_success", soaOk);
+        out.put("soa_serial", soaOk && soa.get("serial") instanceof Number n ? n.longValue() : null);
+        out.put("soa_primary_ns", soaOk ? (String) soa.get("primary_ns") : null);
+        return out;
+    }
+
     private static SOARecord findSoa(List<Record> records) {
         if (records == null) return null;
         for (Record r : records) {
@@ -154,12 +242,16 @@ public class DnsCheckerService {
      * resolver is created fresh per call and the Message is sent directly,
      * so {@code response_ms} measures the actual network round-trip.
      */
-    private static Message sendQuery(String domain, int type) throws Exception {
+    private Message sendQuery(String domain, int type) throws Exception {
         Name name = Name.fromString(domain.endsWith(".") ? domain : domain + ".");
         Record question = Record.newRecord(name, type, DClass.IN);
         Message query = Message.newQuery(question);
-        Resolver resolver = new SimpleResolver();
-        resolver.setTimeout(Duration.ofSeconds(5));
+        // ExtendedResolver: OS/nslookup gibi TÜM sistem DNS sunucularini sirayla dener (primary timeout →
+        // fallback). Per-query timeout canli yapilandirilabilir; toplam response_ms timeout gecikmesini
+        // yansitir → DNS_SLOW tespiti buna dayanir.
+        int timeoutMs = appSettings.getInt("cert.monitor.dns.query-timeout-ms", 2000);
+        Resolver resolver = new ExtendedResolver();
+        resolver.setTimeout(Duration.ofMillis(Math.max(500, timeoutMs)));
         return resolver.send(query);
     }
 
@@ -213,4 +305,32 @@ public class DnsCheckerService {
     }
 
     public enum ChangeKind { NONE, ROTATED, CHANGED }
+
+    /**
+     * Beklenen-değer kilidi karşılaştırması (ESNEK / hijack-odaklı): canlı değerlerden BEKLENEN sette
+     * OLMAYANLARI döner. Boş liste = sapma yok. Beklenen boş/null ise kilit kapalı → boş döner. Rotasyon
+     * (canlı = beklenenin alt kümesi) sapma SAYILMAZ; yalnız beklenmeyen/enjekte edilmiş değer raporlanır.
+     */
+    /** Satır (\n) ayrılmış değeri trim'lenmiş, boş-olmayan satırların listesine çevirir. */
+    public static List<String> splitLines(String joined) {
+        if (joined == null || joined.isBlank()) return List.of();
+        List<String> out = new ArrayList<>();
+        for (String s : joined.split("\n")) {
+            String t = s.trim();
+            if (!t.isEmpty()) out.add(t);
+        }
+        return out;
+    }
+
+    public static List<String> unexpectedValues(String expectedJoined, List<String> live) {
+        if (live == null || live.isEmpty()) return List.of();
+        Set<String> expected = new HashSet<>(splitLines(expectedJoined));
+        if (expected.isEmpty()) return List.of();
+        List<String> unexpected = new ArrayList<>();
+        for (String v : live) {
+            String t = v == null ? "" : v.trim();
+            if (!t.isEmpty() && !expected.contains(t)) unexpected.add(t);
+        }
+        return unexpected;
+    }
 }

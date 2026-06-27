@@ -6980,6 +6980,12 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 
 .dns-btn-check { background: var(--success, #28a745); color: #fff; border: none; }
 .dns-btn-edit  { background: var(--primary);             color: #fff; border: none; }
+.dns-btn-del   { background: var(--danger, #dc2626);     color: #fff; border: none; }
+.dns-standalone-badge { display: inline-block; background: #e0f2fe; color: #0369a1; padding: 1px 6px; border-radius: 3px; font-size: .68em; font-weight: 700; margin-left: 6px; vertical-align: middle; letter-spacing: .02em; }
+[data-theme="dark"] .dns-standalone-badge { background: rgba(2,132,199,.20); color: #7dd3fc; }
+.dns-expected-label { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.dns-pin-btn { background: var(--bg-surface); border: 1px solid var(--border); color: var(--primary); border-radius: 5px; padding: 2px 8px; font-size: 11px; cursor: pointer; font-weight: 600; }
+.dns-pin-btn:hover { background: var(--primary); color: #fff; }
 
 /* DNS Detail Modal */
 .dns-modal-overlay {
@@ -7293,6 +7299,17 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
   border-radius: 8px;
   padding: 12px 8px 6px 4px;
 }
+.dns-latency-stats {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin: 2px 0 8px;
+  font-size: .82em;
+  color: var(--text-light);
+}
+.dns-latency-stats b { color: var(--text); font-weight: 600; }
+.dns-latency-stats .dns-latency-thr b { color: #dc2626; }
+[data-theme="dark"] .dns-latency-stats .dns-latency-thr b { color: #fca5a5; }
 .dns-chart-tooltip {
   background: var(--bg-card);
   border: 1px solid var(--border);
