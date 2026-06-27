@@ -1878,8 +1878,10 @@ public class EmailNotificationService {
             TablesExtension.create(),
             org.commonmark.ext.task.list.items.TaskListItemsExtension.create());
     private static final Parser MD_PARSER = Parser.builder().extensions(MD_EXTENSIONS).build();
+    // softbreak("<br />\n"): tek satır-sonu (\n) HTML'de <br/> olur — kullanıcının alt alta yazdığı
+    // satırlar (log/stack trace/adım listesi) mailde de alt alta görünür (yoksa markdown boşluğa düzlerdi).
     private static final HtmlRenderer MD_RENDERER = HtmlRenderer.builder()
-            .extensions(MD_EXTENSIONS).escapeHtml(true).build();
+            .extensions(MD_EXTENSIONS).escapeHtml(true).softbreak("<br />\n").build();
 
     /**
      * Genel amaçlı HTML mail — CC ve inline CID görsel desteğiyle.

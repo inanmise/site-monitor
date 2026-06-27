@@ -421,7 +421,7 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
       {/* ── Create / Edit Modal ── (dış/overlay tıklamada KAPANMAZ — veri kaybı önlenir; yalnız İptal/Kaydet) */}
       {modal && createPortal(
         <div className="modal-overlay">
-          <div className="modal-box" onClick={e => e.stopPropagation()} style={{ maxWidth: 460 }}>
+          <div className="modal-box" onClick={e => e.stopPropagation()} style={{ maxWidth: 720, width: '92vw', maxHeight: '90vh', overflowY: 'auto' }}>
             <div className="modal-icon-hdr modal-icon-hdr--port">
               <div className="modal-icon-hdr-badge"><Target size={20} /></div>
               <h3>{modal === 'new' ? t('keyword.modalNew') : t('keyword.modalEdit')}</h3>
@@ -447,15 +447,15 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
                 <div><Check size={12} style={{ verticalAlign: '-2px', color: '#15803d' }} /> <strong>{t('keyword.explHealthy')}:</strong> « {form.keyword?.trim() || t('keyword.theKeyword')} » {expectPhrase(form.operator, Number(form.matchCount) || 0)} bulunmalı.</div>
                 <div style={{ marginTop: 4 }}><AlertTriangle size={12} style={{ verticalAlign: '-2px', color: '#dc2626' }} /> <strong>{t('keyword.explAlarm')}:</strong> {triggerPhrase(form.operator, Number(form.matchCount) || 0, form.keyword)} tetiklenir.</div>
               </div>
-              <label className="full-width"><span>{t('keyword.group')}</span>
+              <label><span>{t('keyword.keyword')} <span className="req-star">*</span></span>
+                <input value={form.keyword} placeholder="SUCCESS" onChange={e => setForm(f => ({ ...f, keyword: e.target.value }))} /></label>
+              <label><span>{t('keyword.group')}</span>
                 <SearchableSelect value={form.groupName} onChange={v => setForm(f => ({ ...f, groupName: v }))}
                   options={[{ value: '', label: t('keyword.noGroup') }, ...groupSelectOptions]}
                   creatable onCreate={() => {}} searchThreshold={2} placeholder={t('keyword.noGroup')} /></label>
-              <label className="full-width"><span>{t('keyword.keyword')} <span className="req-star">*</span></span>
-                <input value={form.keyword} placeholder="SUCCESS" onChange={e => setForm(f => ({ ...f, keyword: e.target.value }))} /></label>
-              <label className="full-width"><span>{t('keyword.name')}</span>
+              <label><span>{t('keyword.name')}</span>
                 <input value={form.name} placeholder={form.url} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} /></label>
-              <label className="full-width"><span>{t('keyword.team')}</span>
+              <label><span>{t('keyword.team')}</span>
                 {isAdmin
                   ? <SearchableSelect value={form.teamId} onChange={v => setForm(f => ({ ...f, teamId: v }))} options={teamSelectOptions} searchThreshold={2} />
                   : <input value={teamName || t('keyword.noTeam')} disabled />}</label>
@@ -471,11 +471,11 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
                 <input type="number" min="10" max="600" value={form.confirmIntervalSeconds} onChange={e => setForm(f => ({ ...f, confirmIntervalSeconds: Number(e.target.value) }))} /></label>
               <label><span>{t('keyword.recoveryChecks')}</span>
                 <input type="number" min="1" max="20" value={form.recoveryChecks} onChange={e => setForm(f => ({ ...f, recoveryChecks: Number(e.target.value) }))} /></label>
+              <label className="checkbox-label">
+                <input type="checkbox" checked={form.active} onChange={e => setForm(f => ({ ...f, active: e.target.checked }))} />{t('keyword.active')}</label>
               <div className="full-width" style={{ fontSize: '.8em', color: 'var(--text-muted)', marginTop: -2, lineHeight: 1.5 }}>
                 ⓘ {t('keyword.confirmHint')}
               </div>
-              <label className="checkbox-label full-width">
-                <input type="checkbox" checked={form.active} onChange={e => setForm(f => ({ ...f, active: e.target.checked }))} />{t('keyword.active')}</label>
             </div>
             {testResult && (
               <div style={{ margin: '2px 0 12px', padding: '10px 12px', borderRadius: 8, fontSize: '.86em', lineHeight: 1.5,

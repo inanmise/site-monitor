@@ -569,6 +569,12 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .stat-item-expired  { border-top-color: #dc2626; background: #fef2f2; }
 .stat-item-weak     { border-top-color: #a855f7; background: #faf5ff; }
 .stat-item-certissue { border-top-color: #e11d48; background: #fff1f2; }
+.stat-item-medium    { border-top-color: #eab308; background: #fefce8; }
+.stat-item-low       { border-top-color: #0ea5e9; background: #f0f9ff; }
+.stat-item-investigating { border-top-color: #6366f1; background: #eef2ff; }
+.stat-item-mitigated { border-top-color: #14b8a6; background: #f0fdfa; }
+.stat-item-resolvedsla { border-top-color: #10b981; background: #ecfdf5; }
+.stat-item-last30d   { border-top-color: #8b5cf6; background: #f5f3ff; }
 
 .stat-icon  { display: flex; align-items: center; justify-content: center; margin-bottom: 4px; }
 .stat-item-warning  .stat-icon { color: #d97706; }
@@ -592,6 +598,12 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .stat-value-expired  { color: #b91c1c; }
 .stat-value-weak     { color: #a855f7; }
 .stat-value-certissue { color: #e11d48; }
+.stat-value-medium    { color: #ca8a04; }
+.stat-value-low       { color: #0284c7; }
+.stat-value-investigating { color: #4f46e5; }
+.stat-value-mitigated { color: #0d9488; }
+.stat-value-resolvedsla { color: #059669; }
+.stat-value-last30d   { color: #7c3aed; }
 .stat-weak-sub       { font-size: .65em; color: var(--text-muted); text-align: center; margin-top: 3px; line-height: 1.4; }
 .stat-certissue-sub  { font-size: .65em; color: var(--text-muted); text-align: center; margin-top: 3px; line-height: 1.4; }
 .stat-issuer-sub     { font-size: .65em; color: var(--text-muted); text-align: center; margin-top: 3px; line-height: 1.4; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
