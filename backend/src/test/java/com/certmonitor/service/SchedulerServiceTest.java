@@ -3,7 +3,6 @@ package com.certmonitor.service;
 import com.certmonitor.repository.AlertThresholdRepository;
 import com.certmonitor.repository.CertificateInventoryRepository;
 import com.certmonitor.repository.DnsMonitorRepository;
-import com.certmonitor.repository.DnsAuthoritySnapshotRepository;
 import com.certmonitor.repository.DnsRecordRepository;
 import com.certmonitor.repository.LatestCheckRepository;
 import com.certmonitor.repository.NetworkOutageEventRepository;
@@ -72,7 +71,6 @@ class SchedulerServiceTest {
     @Mock DnsCheckerService dnsCheckerService;
     @Mock DnsMonitorRepository dnsMonitorRepo;
     @Mock DnsRecordRepository dnsRecordRepo;
-    @Mock DnsAuthoritySnapshotRepository dnsAuthorityRepo;
     @Mock UptimeHttpCheckerService uptimeHttpCheckerService;
     @Mock UptimeCheckRepository uptimeCheckRepo;
     @Mock MonitoringOutageService monitoringOutageService;
@@ -98,7 +96,7 @@ class SchedulerServiceTest {
                 inventoryRepo, latestCheckRepo, thresholdRepo, jdbcTemplate,
                 userService, permissionService, dataSource, eventPublisher,
                 portCheckerService, portMonitorRepo, portCheckRepo,
-                dnsCheckerService, dnsMonitorRepo, dnsRecordRepo, dnsAuthorityRepo,
+                dnsCheckerService, dnsMonitorRepo, dnsRecordRepo,
                 uptimeHttpCheckerService, uptimeCheckRepo, monitoringOutageService,
                 keywordCheckerService, keywordMonitorRepo, keywordResultRepo,
                 pingCheckerService, pingMonitorRepo, pingCheckRepo,
@@ -215,7 +213,7 @@ class SchedulerServiceTest {
 
         org.mockito.ArgumentCaptor<List<MonitoringOutageService.DnsChange>> changeCaptor =
                 org.mockito.ArgumentCaptor.forClass(List.class);
-        verify(monitoringOutageService).handleDnsSweep(anyList(), anyList(), changeCaptor.capture(), anyList(), anyList(), anyList());
+        verify(monitoringOutageService).handleDnsSweep(anyList(), anyList(), changeCaptor.capture(), anyList(), anyList());
         assertThat(changeCaptor.getValue()).hasSize(1);
         assertThat(changeCaptor.getValue().get(0).previousValue()).isEqualTo("5.6.7.8");
         assertThat(changeCaptor.getValue().get(0).newValue()).isEqualTo("1.2.3.4");
@@ -229,7 +227,7 @@ class SchedulerServiceTest {
 
         org.mockito.ArgumentCaptor<List<MonitoringOutageService.DnsChange>> changeCaptor2 =
                 org.mockito.ArgumentCaptor.forClass(List.class);
-        verify(monitoringOutageService).handleDnsSweep(anyList(), anyList(), changeCaptor2.capture(), anyList(), anyList(), anyList());
+        verify(monitoringOutageService).handleDnsSweep(anyList(), anyList(), changeCaptor2.capture(), anyList(), anyList());
         assertThat(changeCaptor2.getValue()).isEmpty();
         org.mockito.ArgumentCaptor<com.certmonitor.model.DnsRecord> recCaptor =
                 org.mockito.ArgumentCaptor.forClass(com.certmonitor.model.DnsRecord.class);
@@ -260,77 +258,12 @@ class SchedulerServiceTest {
         // Failure sweep'te yer aldı, up=true (başarılı) ve ctx team_id taşıyor → alarm takıma yönlenir.
         org.mockito.ArgumentCaptor<List<MonitoringOutageService.SweepItem>> failCaptor =
                 org.mockito.ArgumentCaptor.forClass(List.class);
-        verify(monitoringOutageService).handleDnsSweep(failCaptor.capture(), anyList(), anyList(), anyList(), anyList(), anyList());
+        verify(monitoringOutageService).handleDnsSweep(failCaptor.capture(), anyList(), anyList(), anyList(), anyList());
         assertThat(failCaptor.getValue()).hasSize(1);
         MonitoringOutageService.SweepItem fail = failCaptor.getValue().get(0);
         assertThat(fail.domain()).isEqualTo("standalone.example.com");
         assertThat(fail.up()).isTrue();
         assertThat(fail.ctxExtra().get("team_id")).isEqualTo(9L);
-    }
-
-    @Test
-    @DisplayName("runDnsChecks: authoritative NS seti değişti → DNS_AUTHORITY (hijack) sinyali + team_id + snapshot")
-    void runDnsChecks_authorityNsChange() {
-        com.certmonitor.model.CertificateInventory inv = new com.certmonitor.model.CertificateInventory();
-        inv.setDomain("auth.example.com");
-        when(inventoryRepo.findByActiveTrueOrderByDomainAsc()).thenReturn(List.of(inv));
-
-        com.certmonitor.model.DnsMonitor m = new com.certmonitor.model.DnsMonitor();
-        m.setId(11L); m.setDomain("auth.example.com"); m.setRecordType("A"); m.setTeamId(4L);
-        when(dnsMonitorRepo.findByActiveTrue()).thenReturn(List.of(m));
-        when(dnsCheckerService.check("auth.example.com", "A"))
-                .thenReturn(Map.of("success", true, "values", List.of("1.2.3.4"), "response_ms", 5L));
-
-        // Otorite: NS seti ns1 → ns9 (DEĞİŞTİ); SOA serial + primary aynı.
-        when(dnsCheckerService.queryAuthority("auth.example.com")).thenReturn(Map.of(
-                "ns_success", true, "ns_values", List.of("ns9.example.com"),
-                "soa_success", true, "soa_serial", 100L, "soa_primary_ns", "ns1.example.com"));
-        com.certmonitor.model.DnsAuthoritySnapshot prev = new com.certmonitor.model.DnsAuthoritySnapshot();
-        prev.setDomain("auth.example.com"); prev.setNsValues("ns1.example.com");
-        prev.setSoaSerial(100L); prev.setSoaPrimaryNs("ns1.example.com");
-        when(dnsAuthorityRepo.findTopByDomainOrderByIdDesc("auth.example.com"))
-                .thenReturn(java.util.Optional.of(prev));
-
-        scheduler.runDnsChecks();
-
-        // Referans snapshot güncellendi
-        verify(dnsAuthorityRepo).save(org.mockito.ArgumentMatchers.any(com.certmonitor.model.DnsAuthoritySnapshot.class));
-        // authorityChanges (handleDnsSweep 4. arg) ns_changed + team_id taşıyor
-        org.mockito.ArgumentCaptor<List<MonitoringOutageService.AuthorityChange>> authCaptor =
-                org.mockito.ArgumentCaptor.forClass(List.class);
-        verify(monitoringOutageService).handleDnsSweep(anyList(), anyList(), anyList(), authCaptor.capture(), anyList(), anyList());
-        assertThat(authCaptor.getValue()).hasSize(1);
-        MonitoringOutageService.AuthorityChange ac = authCaptor.getValue().get(0);
-        assertThat(ac.domain()).isEqualTo("auth.example.com");
-        assertThat(ac.signal()).isEqualTo("ns_changed");
-        assertThat(ac.teamId()).isEqualTo(4L);
-    }
-
-    @Test
-    @DisplayName("runDnsChecks: ilk otorite ölçümü (snapshot yok) → alarm yok, referans kaydedilir")
-    void runDnsChecks_authorityFirstRun_noAlarm() {
-        com.certmonitor.model.CertificateInventory inv = new com.certmonitor.model.CertificateInventory();
-        inv.setDomain("first.example.com");
-        when(inventoryRepo.findByActiveTrueOrderByDomainAsc()).thenReturn(List.of(inv));
-
-        com.certmonitor.model.DnsMonitor m = new com.certmonitor.model.DnsMonitor();
-        m.setId(12L); m.setDomain("first.example.com"); m.setRecordType("A");
-        when(dnsMonitorRepo.findByActiveTrue()).thenReturn(List.of(m));
-        when(dnsCheckerService.check("first.example.com", "A"))
-                .thenReturn(Map.of("success", true, "values", List.of("1.2.3.4"), "response_ms", 5L));
-        when(dnsCheckerService.queryAuthority("first.example.com")).thenReturn(Map.of(
-                "ns_success", true, "ns_values", List.of("ns1.example.com"),
-                "soa_success", true, "soa_serial", 100L, "soa_primary_ns", "ns1.example.com"));
-        when(dnsAuthorityRepo.findTopByDomainOrderByIdDesc("first.example.com"))
-                .thenReturn(java.util.Optional.empty());   // önceki snapshot yok
-
-        scheduler.runDnsChecks();
-
-        verify(dnsAuthorityRepo).save(org.mockito.ArgumentMatchers.any(com.certmonitor.model.DnsAuthoritySnapshot.class)); // baseline
-        org.mockito.ArgumentCaptor<List<MonitoringOutageService.AuthorityChange>> authCaptor =
-                org.mockito.ArgumentCaptor.forClass(List.class);
-        verify(monitoringOutageService).handleDnsSweep(anyList(), anyList(), anyList(), authCaptor.capture(), anyList(), anyList());
-        assertThat(authCaptor.getValue()).isEmpty();   // ilk ölçümde alarm yok
     }
 
     @Test
@@ -349,10 +282,10 @@ class SchedulerServiceTest {
 
         scheduler.runDnsChecks();
 
-        // handleDnsSweep'in 5. argümanı (unexpectedItems): down + ctx unexpected/team
+        // handleDnsSweep'in 4. argümanı (unexpectedItems): down + ctx unexpected/team
         org.mockito.ArgumentCaptor<List<MonitoringOutageService.SweepItem>> unexpCap =
                 org.mockito.ArgumentCaptor.forClass(List.class);
-        verify(monitoringOutageService).handleDnsSweep(anyList(), anyList(), anyList(), anyList(), unexpCap.capture(), anyList());
+        verify(monitoringOutageService).handleDnsSweep(anyList(), anyList(), anyList(), unexpCap.capture(), anyList());
         assertThat(unexpCap.getValue()).hasSize(1);
         MonitoringOutageService.SweepItem it = unexpCap.getValue().get(0);
         assertThat(it.domain()).isEqualTo("locked.example.com");
@@ -382,10 +315,10 @@ class SchedulerServiceTest {
 
         scheduler.runDnsChecks();
 
-        // handleDnsSweep'in 6. argümanı (inconsistentItems): down + ctx resolver_detail/team
+        // handleDnsSweep'in 5. argümanı (inconsistentItems): down + ctx resolver_detail/team
         org.mockito.ArgumentCaptor<List<MonitoringOutageService.SweepItem>> incCap =
                 org.mockito.ArgumentCaptor.forClass(List.class);
-        verify(monitoringOutageService).handleDnsSweep(anyList(), anyList(), anyList(), anyList(), anyList(), incCap.capture());
+        verify(monitoringOutageService).handleDnsSweep(anyList(), anyList(), anyList(), anyList(), incCap.capture());
         assertThat(incCap.getValue()).hasSize(1);
         MonitoringOutageService.SweepItem it = incCap.getValue().get(0);
         assertThat(it.domain()).isEqualTo("prop.example.com");

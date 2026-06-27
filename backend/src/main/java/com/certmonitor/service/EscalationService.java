@@ -79,10 +79,6 @@ public class EscalationService {
      *  (primary DNS timeout → fallback). DNS sweep teyit zinciriyle doğrular. */
     public static final String TYPE_DNS_SLOW = "DNS_SLOW";
 
-    /** DNS yetki/delegasyon (hijack) alarmı (YÜKSEK) — authoritative NS seti / SOA primary-NS değişimi ya da
-     *  SOA serial geri-gidişi (rollback). Teyitsiz, anında; otomatik kapanmaz. */
-    public static final String TYPE_DNS_AUTHORITY = "DNS_AUTHORITY";
-
     /** DNS beklenen-değer kilidi alarmı (YÜKSEK) — canlı sonuçta, monitöre sabitlenen "beklenen değer"de
      *  OLMAYAN bir değer çözümlenir (esnek/hijack-odaklı). State alarmı: değer beklenene dönünce oto-kapanır. */
     public static final String TYPE_DNS_UNEXPECTED = "DNS_UNEXPECTED";
@@ -101,7 +97,7 @@ public class EscalationService {
      *  cert sweep'inin auto-resolve'u ve startup catch-up bunlara dokunmaz. */
     public static final Set<String> MONITORING_ALERT_TYPES =
             Set.of(TYPE_ACCESSIBILITY, TYPE_PORT_DOWN, TYPE_DNS_FAILURE, TYPE_DNS_CHANGED,
-                   TYPE_DNS_SLOW, TYPE_DNS_AUTHORITY, TYPE_DNS_UNEXPECTED, TYPE_DNS_INCONSISTENT,
+                   TYPE_DNS_SLOW, TYPE_DNS_UNEXPECTED, TYPE_DNS_INCONSISTENT,
                    TYPE_KEYWORD, TYPE_PING_DOWN);
 
     /** Sertifika kaynaklı alarm tipleri — cert sweep'inin auto-resolve kapsamı.
@@ -537,23 +533,6 @@ public class EscalationService {
                             "Bu alarm otomatik kapanmaz; değişiklik planlı ise alarmı onaylayıp manuel kapatınız.";
                 }
             }
-            case TYPE_DNS_AUTHORITY -> {
-                Object signal = ctx.get("signal");
-                String olds = joinValues(ctx.get("old_values"));
-                String news = joinValues(ctx.get("new_values"));
-                if (signal != null) {
-                    String what = switch (signal.toString()) {
-                        case "ns_changed"         -> "authoritative NS seti değişti";
-                        case "primary_ns_changed" -> "SOA birincil NS (primary) değişti";
-                        case "serial_rollback"    -> "SOA serial GERİ GİTTİ (rollback)";
-                        default                   -> "otorite/delegasyon değişti";
-                    };
-                    return "YÜKSEK: " + domain + " için DNS yetki/delegasyonu değişti — " + what + ". " +
-                            "Eski: " + (olds.isEmpty() ? "—" : olds) + " → Yeni: " + (news.isEmpty() ? "—" : news) + ". " +
-                            "OLASI HIJACK/kurcalama — planlı değilse acil doğrulayın. " +
-                            "Alarm otomatik kapanmaz; doğruladıktan sonra onaylayıp kapatınız.";
-                }
-            }
             case TYPE_DNS_UNEXPECTED -> {
                 Object rt = ctx.get("record_type");
                 String unexp = joinValues(ctx.get("unexpected_values"));
@@ -715,7 +694,6 @@ public class EscalationService {
                 case TYPE_PORT_DOWN     -> "Port Kesintisi";
                 case TYPE_DNS_FAILURE   -> "DNS Çözümleme Hatası";
                 case TYPE_DNS_SLOW      -> "DNS Yavaş/Timeout";
-                case TYPE_DNS_AUTHORITY -> "DNS Yetki Değişikliği";
                 case TYPE_DNS_UNEXPECTED -> "DNS Beklenmeyen Değer";
                 case TYPE_DNS_INCONSISTENT -> "DNS Tutarsızlığı";
                 case TYPE_DNS_CHANGED   -> "DNS Değişikliği";
@@ -859,7 +837,6 @@ public class EscalationService {
             case TYPE_PORT_DOWN     -> "Port Kesintisi";
             case TYPE_DNS_FAILURE   -> "DNS Çözümleme Hatası";
             case TYPE_DNS_SLOW      -> "DNS Yavaş/Timeout";
-            case TYPE_DNS_AUTHORITY -> "DNS Yetki Değişikliği";
             case TYPE_DNS_UNEXPECTED -> "DNS Beklenmeyen Değer";
             case TYPE_DNS_INCONSISTENT -> "DNS Tutarsızlığı";
             case TYPE_DNS_CHANGED   -> "DNS Değişikliği";
@@ -1019,9 +996,6 @@ public class EscalationService {
             case TYPE_DNS_CHANGED -> "YÜKSEK: " + domain +
                     " için izlenen DNS kaydı değişti. Bu alarm otomatik kapanmaz; " +
                     "değişiklik planlı ise alarmı onaylayıp manuel kapatınız.";
-            case TYPE_DNS_AUTHORITY -> "YÜKSEK: " + domain +
-                    " için DNS yetki/delegasyonu (NS/SOA) değişti — olası hijack. Planlı değilse acil doğrulayın. " +
-                    "Alarm otomatik kapanmaz; doğruladıktan sonra onaylayıp kapatınız.";
             case TYPE_DNS_UNEXPECTED -> "YÜKSEK: " + domain +
                     " için izlenen DNS kaydında beklenmeyen (sabitlenen değerde olmayan) bir değer çözümleniyor — " +
                     "olası hijack/yanlış yönlendirme. Doğrulayın; değer beklenene dönünce alarm otomatik kapanır.";

@@ -112,11 +112,6 @@ public class MonitoringOutageService {
     public record DnsChange(String domain, String recordType,
                             String previousValue, String newValue, String detectedAt, Long teamId) {}
 
-    /** DNS yetki/delegasyon değişikliği (hijack sinyali): authoritative NS-set / SOA primary-NS değişimi
-     *  ya da SOA serial GERİ-GİDİŞİ. signal = "ns_changed" | "primary_ns_changed" | "serial_rollback";
-     *  old/new okunabilir özet (satır-ayrılmış); teamId standalone monitörde takıma yönlendirir. */
-    public record AuthorityChange(String domain, String signal, String oldValue, String newValue, Long teamId) {}
-
     /** Teyit re-check'leri için küçük daemon havuzu — eşzamanlı çok-domain DOWN'da
      *  teyit zincirleri paralel ilerlesin (tek-thread'de seri kuyruk → alarm gecikmesi).
      *  Re-check'ler bağımsız; çift-zincir guard'ı için {@link #inFlight} kullanılır. */
@@ -220,23 +215,13 @@ public class MonitoringOutageService {
      * (sonraki sweep'ler changed=false görür, kadansın sahibi burasıdır).
      */
     public void handleDnsSweep(List<SweepItem> failureItems, List<SweepItem> slowItems,
-                               List<DnsChange> changes, List<AuthorityChange> authorityChanges,
+                               List<DnsChange> changes,
                                List<SweepItem> unexpectedItems, List<SweepItem> inconsistentItems) {
         handleSweepResults(EscalationService.TYPE_DNS_FAILURE, failureItems);
         handleSweepResults(EscalationService.TYPE_DNS_SLOW, slowItems);   // yavaş/timeout'lu çözümleme — kendi teyit zinciri (3×60sn ctxExtra'dan)
         handleSweepResults(EscalationService.TYPE_DNS_UNEXPECTED, unexpectedItems);   // beklenen-değer kilidi (state; değer beklenene dönünce oto-kapanır)
         handleSweepResults(EscalationService.TYPE_DNS_INCONSISTENT, inconsistentItems);   // çoklu-resolver tutarsızlık (state; teyitli; resolver'lar aynılaşınca oto-kapanır)
         if (!appSettings.getBoolean("cert.monitor.dns.alert-enabled", dnsAlertEnabled)) return;
-
-        // DNS yetki/delegasyon (hijack): NS-set / SOA primary-NS değişimi ya da SOA serial rollback —
-        // anında, teyitsiz (DNS_CHANGED gibi), oto-kapanmaz. ctx team_id taşırsa takıma yönlenir.
-        if (authorityChanges != null) {
-            for (AuthorityChange a : authorityChanges) {
-                withLock(EscalationService.TYPE_DNS_AUTHORITY, a.domain(), () ->
-                        escalationService.processConfirmedOutage(a.domain(),
-                                EscalationService.TYPE_DNS_AUTHORITY, "HIGH", authorityCtx(a)));
-            }
-        }
 
         Set<String> changedThisSweep = new HashSet<>();
         if (changes != null) {
@@ -368,7 +353,6 @@ public class MonitoringOutageService {
     static String levelFor(String alertType) {
         return (EscalationService.TYPE_DNS_CHANGED.equals(alertType)
                 || EscalationService.TYPE_DNS_SLOW.equals(alertType)
-                || EscalationService.TYPE_DNS_AUTHORITY.equals(alertType)
                 || EscalationService.TYPE_DNS_UNEXPECTED.equals(alertType)
                 || EscalationService.TYPE_DNS_INCONSISTENT.equals(alertType)) ? "HIGH" : "CRITICAL";
     }
@@ -409,15 +393,6 @@ public class MonitoringOutageService {
         // NOT: günlük re-alert reconstructChangeCtx'ten gelir (team_id taşımaz) → standalone re-alert
         // alıcısı global'e düşer; açılan event'in teamId'si (çözüm bildirimi) doğru kalır.
         if (c.teamId() != null) ctx.put("team_id", c.teamId());
-        return ctx;
-    }
-
-    private Map<String, Object> authorityCtx(AuthorityChange c) {
-        Map<String, Object> ctx = new LinkedHashMap<>();
-        ctx.put("signal", c.signal());
-        ctx.put("old_values", splitValues(c.oldValue()));
-        ctx.put("new_values", splitValues(c.newValue()));
-        if (c.teamId() != null) ctx.put("team_id", c.teamId());   // standalone → alarm takıma
         return ctx;
     }
 

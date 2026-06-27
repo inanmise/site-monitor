@@ -10,7 +10,6 @@ import com.certmonitor.model.UptimeCheck;
 import com.certmonitor.model.NetworkOutageEvent;
 import com.certmonitor.repository.AlertThresholdRepository;
 import com.certmonitor.repository.CertificateInventoryRepository;
-import com.certmonitor.repository.DnsAuthoritySnapshotRepository;
 import com.certmonitor.repository.DnsMonitorRepository;
 import com.certmonitor.repository.DnsRecordRepository;
 import com.certmonitor.repository.LatestCheckRepository;
@@ -82,7 +81,6 @@ public class SchedulerService {
     private final DnsCheckerService dnsCheckerService;
     private final DnsMonitorRepository dnsMonitorRepo;
     private final DnsRecordRepository dnsRecordRepo;
-    private final DnsAuthoritySnapshotRepository dnsAuthorityRepo;
 
     private final UptimeHttpCheckerService uptimeHttpCheckerService;
     private final UptimeCheckRepository uptimeCheckRepo;
@@ -1242,9 +1240,6 @@ public class SchedulerService {
         int slowThresholdMs       = appSettings.getInt("cert.monitor.dns.slow-threshold-ms", 1500);
         int slowConfirmAttempts   = appSettings.getInt("cert.monitor.dns.slow-confirm-attempts", 3);
         int slowConfirmIntervalMs = appSettings.getInt("cert.monitor.dns.slow-confirm-interval-ms", 60000);
-        boolean authorityEnabled = appSettings.getBoolean("cert.monitor.dns.authority-enabled", true);
-        List<MonitoringOutageService.AuthorityChange> authorityChanges = new ArrayList<>();
-        Set<String> authorityDone = new java.util.HashSet<>();   // otorite/hijack kontrolü domain başına bir kez
         // Çoklu-resolver tutarlılık (propagation) için public resolver listesi (opt-in monitörlerde kullanılır).
         List<String> dnsResolvers = java.util.Arrays.stream(
                         appSettings.getString("cert.monitor.dns.resolvers", "8.8.8.8,1.1.1.1,9.9.9.9").split(","))
@@ -1336,16 +1331,6 @@ public class SchedulerService {
             } catch (Exception e) {
                 log.warn("DNS check failed for {} {}: {}", m.getRecordType(), m.getDomain(), e.getMessage());
             }
-            // DNS yetki/delegasyon (hijack): domain başına BİR kez (çok monitör aynı domain'i paylaşabilir),
-            // monitörün kayıt-tipi sorgusundan bağımsız — NS/SOA değişimi ya da serial rollback yakalar.
-            if (authorityEnabled && authorityDone.add(m.getDomain())) {
-                try {
-                    MonitoringOutageService.AuthorityChange ac = checkDnsAuthority(m, now);
-                    if (ac != null) authorityChanges.add(ac);
-                } catch (Exception ex) {
-                    log.debug("DNS authority check failed for {}: {}", m.getDomain(), ex.getMessage());
-                }
-            }
             // Çoklu-resolver tutarlılık (propagation) — OPT-IN: yalnız propagationCheck açık monitörlerde.
             // Domain'i her public resolver'a AYRI sorar; cevaplar farklıysa DNS_INCONSISTENT (teyitli; oto-kapanır).
             if (Boolean.TRUE.equals(m.getPropagationCheck()) && dnsResolvers.size() >= 2) {
@@ -1369,9 +1354,9 @@ public class SchedulerService {
                 }
             }
         }
-        // DNS alarm pipeline'ı (hata + değişiklik + yetki/hijack + beklenmeyen + tutarsızlık) — sweep'i kırmasın
+        // DNS alarm pipeline'ı (hata + değişiklik + beklenmeyen + tutarsızlık) — sweep'i kırmasın
         try {
-            monitoringOutageService.handleDnsSweep(sweep, slowSweep, changes, authorityChanges, unexpectedSweep, inconsistentSweep);
+            monitoringOutageService.handleDnsSweep(sweep, slowSweep, changes, unexpectedSweep, inconsistentSweep);
         } catch (Exception e) {
             log.warn("DNS outage processing failed: {}", e.getMessage(), e);
         }
@@ -1426,63 +1411,6 @@ public class SchedulerService {
         out.put("status", inconsistent ? "down" : "up");
         out.put("error", inconsistent ? perResolver.toString() : null);
         return out;
-    }
-
-    /**
-     * DNS yetki/delegasyon (hijack) kontrolü: domain otoritesini (authoritative NS-set + SOA serial + primary-NS)
-     * son snapshot'a göre kıyaslar. Şu sinyallerden biri varsa AuthorityChange döner: NS-set değişimi /
-     * SOA primary-NS değişimi / SOA serial GERİ-GİDİŞİ (rollback). Referans snapshot'ı (ilk ölçüm veya bilinen-iyi
-     * değer değişimi) günceller. Başarısız alt-sorgular önceki bilinen-iyi değeri korur (boş→dolu sahte alarmı yok).
-     */
-    private MonitoringOutageService.AuthorityChange checkDnsAuthority(DnsMonitor m, String now) {
-        Map<String, Object> auth = dnsCheckerService.queryAuthority(m.getDomain());
-        boolean nsOk  = Boolean.TRUE.equals(auth.get("ns_success"));
-        boolean soaOk = Boolean.TRUE.equals(auth.get("soa_success"));
-        if (!nsOk && !soaOk) return null;   // veri yok → atla (çözümleme hatasını DNS_FAILURE yakalar)
-
-        @SuppressWarnings("unchecked")
-        List<String> nsList = (List<String>) auth.getOrDefault("ns_values", List.of());
-        String curNs       = nsOk ? String.join("\n", nsList) : null;
-        Long   curSerial   = soaOk && auth.get("soa_serial") instanceof Number n ? n.longValue() : null;
-        String curPrimary  = soaOk ? (String) auth.get("soa_primary_ns") : null;
-
-        com.certmonitor.model.DnsAuthoritySnapshot prev =
-                dnsAuthorityRepo.findTopByDomainOrderByIdDesc(m.getDomain()).orElse(null);
-
-        String signal = null, oldVal = null, newVal = null;
-        if (prev != null) {
-            if (curNs != null && !curNs.isBlank() && prev.getNsValues() != null && !prev.getNsValues().isBlank()
-                    && !curNs.equals(prev.getNsValues())) {
-                signal = "ns_changed"; oldVal = prev.getNsValues(); newVal = curNs;
-            } else if (curPrimary != null && prev.getSoaPrimaryNs() != null
-                    && !curPrimary.equals(prev.getSoaPrimaryNs())) {
-                signal = "primary_ns_changed"; oldVal = prev.getSoaPrimaryNs(); newVal = curPrimary;
-            } else if (curSerial != null && prev.getSoaSerial() != null && curSerial < prev.getSoaSerial()) {
-                signal = "serial_rollback"; oldVal = String.valueOf(prev.getSoaSerial()); newVal = String.valueOf(curSerial);
-            }
-        }
-
-        // Referans snapshot'ı güncelle: ilk ölçüm VEYA bilinen-iyi değer değişti (alarmlı ya da meşru).
-        String effNs      = curNs != null && !curNs.isBlank() ? curNs : (prev != null ? prev.getNsValues() : null);
-        Long   effSerial  = curSerial  != null ? curSerial  : (prev != null ? prev.getSoaSerial() : null);
-        String effPrimary = curPrimary != null ? curPrimary : (prev != null ? prev.getSoaPrimaryNs() : null);
-        boolean differs = prev == null
-                || !java.util.Objects.equals(effNs, prev.getNsValues())
-                || !java.util.Objects.equals(effSerial, prev.getSoaSerial())
-                || !java.util.Objects.equals(effPrimary, prev.getSoaPrimaryNs());
-        if (differs) {
-            com.certmonitor.model.DnsAuthoritySnapshot snap = new com.certmonitor.model.DnsAuthoritySnapshot();
-            snap.setDomain(m.getDomain());
-            snap.setNsValues(effNs);
-            snap.setSoaSerial(effSerial);
-            snap.setSoaPrimaryNs(effPrimary);
-            snap.setCheckedAt(now);
-            dnsAuthorityRepo.save(snap);
-        }
-
-        if (signal == null) return null;
-        log.warn("DNS authority change for {}: {} ({} -> {})", m.getDomain(), signal, oldVal, newVal);
-        return new MonitoringOutageService.AuthorityChange(m.getDomain(), signal, oldVal, newVal, m.getTeamId());
     }
 
     private static String resolveHostname() {
