@@ -206,29 +206,6 @@ public class DnsCheckerService {
         return soa;
     }
 
-    /**
-     * Otorite/delegasyon anlık görüntüsü (hijack tespiti için): authoritative NS seti (sıralı) +
-     * SOA serial + SOA primary-NS (MNAME). Sorgu başarısızsa ilgili alan null/boş döner; gerçek
-     * değişim karşılaştırması (NS-set / primary-NS / serial-rollback) çağıranda yapılır.
-     */
-    public Map<String, Object> queryAuthority(String domain) {
-        Map<String, Object> out = new LinkedHashMap<>();
-        Map<String, Object> ns = check(domain, "NS");
-        @SuppressWarnings("unchecked")
-        List<String> nsValues = (List<String>) ns.getOrDefault("values", List.of());
-        List<String> sortedNs = new ArrayList<>(nsValues);
-        Collections.sort(sortedNs);
-        out.put("ns_values", sortedNs);
-        out.put("ns_success", Boolean.TRUE.equals(ns.get("success")));
-
-        Map<String, Object> soa = querySoa(domain);
-        boolean soaOk = Boolean.TRUE.equals(soa.get("success"));
-        out.put("soa_success", soaOk);
-        out.put("soa_serial", soaOk && soa.get("serial") instanceof Number n ? n.longValue() : null);
-        out.put("soa_primary_ns", soaOk ? (String) soa.get("primary_ns") : null);
-        return out;
-    }
-
     private static SOARecord findSoa(List<Record> records) {
         if (records == null) return null;
         for (Record r : records) {

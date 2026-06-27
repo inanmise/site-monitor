@@ -33,7 +33,6 @@ public final class AppSettingsCatalog {
         new Setting("cert.monitor.uptime.alert-enabled",         "monitoring", Type.BOOL),
         new Setting("cert.monitor.port.alert-enabled",           "monitoring", Type.BOOL),
         new Setting("cert.monitor.dns.alert-enabled",            "monitoring", Type.BOOL),
-        new Setting("cert.monitor.dns.authority-enabled",        "monitoring", Type.BOOL),
         new Setting("cert.monitor.dns.resolvers",                "monitoring", Type.CSV),
         new Setting("cert.monitor.keyword.alert-enabled",        "monitoring", Type.BOOL),
         new Setting("cert.monitor.ping.alert-enabled",           "monitoring", Type.BOOL),
