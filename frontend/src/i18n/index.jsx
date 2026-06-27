@@ -2459,8 +2459,7 @@ export const TR = {
   'port.historyCapped':   'En yeni 200 kayıt gösteriliyor (özet tüm aralığı kapsar).',
 
   'dns.title':            'DNS Kayıt İzleme',
-  'dns.subtitle':         'Yetkisiz DNS değişikliklerini erken tespit edin.',
-  'dns.addMonitor':       '+ Yeni Monitor',
+  'dns.addMonitor':       'Yeni Monitor',
   'dns.name':             'İsim',
   'dns.domain':           'Domain',
   'dns.colTeam':          'Takım',
@@ -5030,8 +5029,7 @@ export const EN = {
   'port.historyCapped':   'Showing newest 200 records (summary covers the whole range).',
 
   'dns.title':            'DNS Record Monitoring',
-  'dns.subtitle':         'Catch unauthorized DNS changes early.',
-  'dns.addMonitor':       '+ New Monitor',
+  'dns.addMonitor':       'New Monitor',
   'dns.name':             'Name',
   'dns.domain':           'Domain',
   'dns.colTeam':          'Team',
