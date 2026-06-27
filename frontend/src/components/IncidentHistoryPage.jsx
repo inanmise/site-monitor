@@ -138,7 +138,7 @@ function MdArea({ label, value, onChange, editable, incidentId, makeUniqueCaptio
   return (
     <div className="full-width" style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
       <span style={{ fontSize: '.88em', fontWeight: 600 }}>{label}</span>
-      <MarkdownEditor value={value} onChange={onChange} editable={editable} height={170}
+      <MarkdownEditor value={value} onChange={onChange} editable={editable} height={240}
                       uploadImage={uploadImage} makeUniqueCaption={makeUniqueCaption} />
     </div>
   )
@@ -631,6 +631,23 @@ function IncidentModal({ modal, setModal, save, remove, saving, allowManage, all
   const set = (k, v) => setModal(m => ({ ...m, form: { ...m.form, [k]: v } }))
   const titleKey = modal.mode === 'create' ? 'inc.newTitle' : modal.mode === 'edit' ? 'inc.editTitle' : 'inc.detailTitle'
   const opts = (arr, pfx) => arr.map(x => ({ value: x, label: t(pfx + x) }))
+  const toast = useToast()
+  const [previewHtml, setPreviewHtml] = useState(null)
+  const [previewing, setPreviewing] = useState(false)
+  // Gidecek mailin önizlemesi — kaydetmez/göndermez (backend forEmail=false → görseller /api URL'siyle render).
+  async function openPreview() {
+    const payload = { ...f }
+    if (payload.error_budget_burn_pct === '') delete payload.error_budget_burn_pct
+    if (payload.duration_minutes === '') delete payload.duration_minutes
+    payload.kind = modal.mode === 'create' ? 'NEW' : (f.status === 'RESOLVED' ? 'RESOLVED' : 'UPDATED')
+    setPreviewing(true)
+    try {
+      const res = await api.incidents.previewNotification(payload)
+      if (res?.success) setPreviewHtml(res.html ?? '')
+      else toast.error(res?.error || t('inc.saveError'))
+    } catch { toast.error(t('inc.saveError')) }
+    setPreviewing(false)
+  }
 
   // Takım seçenekleri — seçili takım yüklenen listede yoksa (kapsam dışı/eski kayıt) yine de göster
   const teamOptions = [{ value: '', label: '—' }, ...teams.map(tm => ({ value: String(tm.id), label: tm.name }))]
@@ -674,6 +691,7 @@ function IncidentModal({ modal, setModal, save, remove, saving, allowManage, all
   }, [])
 
   return (
+    <>
     <div className="modal-overlay">
       {/* Dış tıklamada KAPANMAZ — giriş kaybını önlemek için yalnız İptal/Kaydet ile kapanır */}
       <div className="modal-box modal-wide" onClick={e => e.stopPropagation()}>
@@ -731,6 +749,13 @@ function IncidentModal({ modal, setModal, save, remove, saving, allowManage, all
         </div>
 
         <div className="modal-actions">
+          {editing && (
+            <label className="inc-sendmail" style={{ display: 'flex', alignItems: 'center', gap: 6, marginRight: 'auto', fontSize: '.85em', fontWeight: 600, cursor: 'pointer' }}>
+              <input type="checkbox" checked={!!f.send_notification} onChange={e => set('send_notification', e.target.checked)} />
+              {t('inc.sendMail')}
+            </label>
+          )}
+          {editing && <button className="btn btn-secondary" onClick={openPreview} disabled={previewing}>{previewing ? t('inc.previewing') : t('inc.previewMail')}</button>}
           {editing && <button className="btn btn-primary" onClick={save} disabled={saving}>{t('inc.save')}</button>}
           {modal.mode === 'view' && (
             <>
@@ -742,5 +767,20 @@ function IncidentModal({ modal, setModal, save, remove, saving, allowManage, all
         </div>
       </div>
     </div>
+    {/* Mail önizleme — kaydetmeden gidecek mailin görünümü (haftalık rapor deseni) */}
+    {previewHtml != null && (
+      <div className="modal-overlay" onClick={() => setPreviewHtml(null)}>
+        <div className="modal-box modal-wide" onClick={e => e.stopPropagation()}
+          style={{ maxWidth: 820, height: '85vh', display: 'flex', flexDirection: 'column' }}>
+          <h3>{t('inc.previewTitle')}</h3>
+          <iframe title="mail-preview" srcDoc={previewHtml} sandbox="allow-same-origin"
+            style={{ flex: 1, border: '1px solid var(--border)', borderRadius: 8, background: '#f4f6f8' }} />
+          <div className="modal-actions">
+            <button className="btn btn-secondary" onClick={() => setPreviewHtml(null)}>{t('inc.cancel')}</button>
+          </div>
+        </div>
+      </div>
+    )}
+    </>
   )
 }
