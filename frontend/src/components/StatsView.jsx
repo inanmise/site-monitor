@@ -216,7 +216,7 @@ function TeamTierSection({ certs, teamStats, tierFilter, setTierFilter, teamFilt
 }
 
 // ── StatsView (main) ──────────────────────────────────────────────────────────
-export default function StatsView({ certs = [], teamStats, onRowClick }) {
+export default function StatsView({ certs = [], teamStats, onRowClick, onAddDomain, canAddDomain = false }) {
   const t = useT()
 
   const domainMap = useMemo(() => buildDomainMap(teamStats), [teamStats])
@@ -352,8 +352,13 @@ export default function StatsView({ certs = [], teamStats, onRowClick }) {
       <div className="advanced-filters sv-table-filters">
         <div className="filter-group">
           <label>{t('tbl.domainSearch')}</label>
-          <input className="filter-input" placeholder={t('tbl.domainPh')} value={filterDomain}
-            onChange={e => { setFilterDomain(e.target.value); setPage(1) }} />
+          <div className="sv-domain-row">
+            <input className="filter-input" placeholder={t('tbl.domainPh')} value={filterDomain}
+              onChange={e => { setFilterDomain(e.target.value); setPage(1) }} />
+            {canAddDomain && onAddDomain && (
+              <button className="btn btn-success sv-add-domain" onClick={onAddDomain}>{t('inv.addBtn')}</button>
+            )}
+          </div>
         </div>
         <div className="filter-group">
           <label>{t('tbl.issuerSearch')}</label>

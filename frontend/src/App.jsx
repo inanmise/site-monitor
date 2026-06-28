@@ -82,6 +82,7 @@ export default function App() {
   const [teamName, setTeamName] = useState(null)
   const [authChecked, setAuthChecked] = useState(false)
   const [tab, setTab] = useState('dashboard')
+  const [pendingAddDomain, setPendingAddDomain] = useState(false)  // dashboard "domain ekle" → envantere geç + add modal
   const [wrResetNonce, setWrResetNonce] = useState(0)
   // Weekly Reports sekmesi zaten açıkken menüye tekrar tıklanınca açık raporu listeye döndür
   const handleTabChange = (id) => {
@@ -813,7 +814,9 @@ export default function App() {
             {tab === 'stats' && (
               <div className="tab-content active">
                 <h2>{t('app.statsTitle')}</h2>
-                <StatsView certs={certs} teamStats={teamStats} onRowClick={(d) => setModalCert(certs.find(c => c.domain === d) ?? null)} />
+                <StatsView certs={certs} teamStats={teamStats} onRowClick={(d) => setModalCert(certs.find(c => c.domain === d) ?? null)}
+                  canAddDomain={systemRole === 'ADMIN' || systemRole === 'TEAM_ADMIN'}
+                  onAddDomain={() => { setPendingAddDomain(true); setTab('domains') }} />
               </div>
             )}
 
@@ -978,7 +981,8 @@ export default function App() {
 
             {tab === 'domains' && (
               <div className="tab-content active">
-                <InventoryManager onInventoryChange={loadData} systemRole={systemRole} />
+                <InventoryManager onInventoryChange={loadData} systemRole={systemRole}
+                  openAddSignal={pendingAddDomain} onAddConsumed={() => setPendingAddDomain(false)} />
               </div>
             )}
 
@@ -1054,7 +1058,7 @@ export default function App() {
 
             {tab === 'help'     && <HelpPage />}
             {tab === 'uptime'   && <UptimePage   systemRole={systemRole} />}
-            {tab === 'port'     && <PortMonitorPage systemRole={systemRole} />}
+            {tab === 'port'     && <PortMonitorPage systemRole={systemRole} teamId={teamId} teamName={teamName} />}
             {tab === 'dns'      && <DnsMonitorPage  systemRole={systemRole} teamId={teamId} teamName={teamName} />}
             {tab === 'keyword'  && <KeywordMonitorPage systemRole={systemRole} teamId={teamId} teamName={teamName} />}
             {tab === 'ping'     && <PingMonitorPage systemRole={systemRole} teamId={teamId} teamName={teamName} />}

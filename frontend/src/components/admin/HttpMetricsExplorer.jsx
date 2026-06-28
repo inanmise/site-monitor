@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import {
-  ResponsiveContainer, ComposedChart, Area, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
+  ResponsiveContainer, ComposedChart, Area, Line, XAxis, YAxis, CartesianGrid, Tooltip,
 } from 'recharts'
 import { RefreshCw } from 'lucide-react'
 import { api } from '../../api/client'
@@ -52,6 +52,7 @@ export default function HttpMetricsExplorer() {
   const [loading, setLoading] = useState(false)
   const [retention, setRetention] = useState(null)      // null = okunamadı/yetkisiz → kutu gizli
   const [savingRet, setSavingRet] = useState(false)
+  const [hidden, setHidden] = useState(() => new Set())  // gizli seri anahtarları (tıklanabilir legend)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -98,6 +99,22 @@ export default function HttpMetricsExplorer() {
   const tickEvery = Math.max(0, Math.floor(chartData.length / 10))
   // Grafana benzeri nokta işaretçileri — yalnız kısa aralıklarda (yoğun seride performans + okunabilirlik).
   const dots = chartData.length <= 240 ? { r: 2, strokeWidth: 0 } : false
+
+  const SERIES = [
+    { key: 'count',  name: t('http.exp.count'),  color: '#3b82f6' },
+    { key: 'errors', name: t('http.exp.errors'), color: '#ef4444' },
+    { key: 'avg',    name: t('http.exp.avg'),    color: '#f59e0b' },
+    { key: 'p95',    name: t('http.exp.p95'),    color: '#9333ea' },
+    { key: 'p99',    name: t('http.exp.p99'),    color: '#be123c' },
+  ]
+  // Tıklanabilir legend: düz tık → yalnız bunu göster (izole); sonraki tıklar → aç/kapat; hepsi gizlenince → hepsi.
+  const toggleSeries = (key) => setHidden(prev => {
+    const allKeys = SERIES.map(s => s.key)
+    if (allKeys.every(k => !prev.has(k))) return new Set(allKeys.filter(k => k !== key))   // ilk tık → izole
+    const next = new Set(prev)
+    if (next.has(key)) next.delete(key); else next.add(key)
+    return allKeys.every(k => next.has(k)) ? new Set() : next                              // hepsi gizli → hepsini göster
+  })
   const epOptions = [{ value: '', label: t('http.exp.allEndpoints') },
     ...endpoints.map(e => ({ value: e.endpoint, label: `${e.endpoint}  ·  ${e.count}` }))]
 
@@ -148,19 +165,31 @@ export default function HttpMetricsExplorer() {
             <YAxis yAxisId="ms" orientation="right" tick={{ fontSize: 10, fill: 'var(--text-light)' }}
               stroke="var(--border)" width={46} tickFormatter={(v) => `${v}ms`} />
             <Tooltip content={<ChartTooltip t={t} />} />
-            <Legend wrapperStyle={{ fontSize: '.78em' }} />
-            <Area yAxisId="cnt" type="linear" dataKey="count" name={t('http.exp.count')}
+            <Area yAxisId="cnt" type="linear" dataKey="count" name={t('http.exp.count')} hide={hidden.has('count')}
               fill="#bfdbfe" fillOpacity={0.4} stroke="#3b82f6" strokeWidth={1.5} dot={dots} isAnimationActive={false} />
-            <Line yAxisId="cnt" type="linear" dataKey="errors" name={t('http.exp.errors')}
+            <Line yAxisId="cnt" type="linear" dataKey="errors" name={t('http.exp.errors')} hide={hidden.has('errors')}
               stroke="#ef4444" strokeWidth={1.5} dot={dots} connectNulls={false} isAnimationActive={false} />
-            <Line yAxisId="ms" type="linear" dataKey="avg" name={t('http.exp.avg')}
+            <Line yAxisId="ms" type="linear" dataKey="avg" name={t('http.exp.avg')} hide={hidden.has('avg')}
               stroke="#f59e0b" strokeWidth={1.5} dot={dots} connectNulls={false} isAnimationActive={false} />
-            <Line yAxisId="ms" type="linear" dataKey="p95" name={t('http.exp.p95')}
+            <Line yAxisId="ms" type="linear" dataKey="p95" name={t('http.exp.p95')} hide={hidden.has('p95')}
               stroke="#9333ea" strokeWidth={1.5} strokeDasharray="4 3" dot={dots} connectNulls={false} isAnimationActive={false} />
-            <Line yAxisId="ms" type="linear" dataKey="p99" name={t('http.exp.p99')}
+            <Line yAxisId="ms" type="linear" dataKey="p99" name={t('http.exp.p99')} hide={hidden.has('p99')}
               stroke="#be123c" strokeWidth={1.5} strokeDasharray="2 2" dot={dots} connectNulls={false} isAnimationActive={false} />
           </ComposedChart>
         </ResponsiveContainer>
+      )}
+
+      {/* Tıklanabilir legend — düz tık izole eder, sonraki tıklar ekler/çıkarır, hepsi gizlenince hepsi döner */}
+      {chartData.length > 0 && (
+        <div className="hme-legend">
+          {SERIES.map(s => (
+            <button key={s.key} type="button" title={t('http.exp.legendTip')}
+                    className={`hme-legend-item${hidden.has(s.key) ? ' hme-legend-off' : ''}`}
+                    onClick={() => toggleSeries(s.key)}>
+              <span className="hme-legend-dot" style={{ background: s.color }} />{s.name}
+            </button>
+          ))}
+        </div>
       )}
     </div>
   )

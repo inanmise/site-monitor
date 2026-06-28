@@ -51,7 +51,7 @@ function ShowField({ label, value, mono, full }) {
   )
 }
 
-export default function InventoryManager({ onInventoryChange, systemRole, teams: teamsProp = [], isAdmin: isAdminProp = false }) {
+export default function InventoryManager({ onInventoryChange, systemRole, teams: teamsProp = [], isAdmin: isAdminProp = false, openAddSignal = false, onAddConsumed }) {
   const t = useT()
   const { theme } = useTheme()
   const toast = useToast()
@@ -217,6 +217,11 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
     setForm(EMPTY)
     setModal('add')
   }
+
+  // Dashboard'daki "domain ekle" butonundan tetiklenince add modalını aç (bir kez; App tüketince sıfırlar).
+  useEffect(() => {
+    if (openAddSignal) { openAdd(); onAddConsumed?.() }
+  }, [openAddSignal]) // eslint-disable-line react-hooks/exhaustive-deps
 
   function openEdit(item) {
     setForm({

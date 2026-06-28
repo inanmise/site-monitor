@@ -139,7 +139,7 @@ class EmailNotificationServiceTest {
     void sendResolutionAlert_emailDisabled_returnsSkipped() {
         String result = service.sendResolutionAlert(
                 "to@test.com",
-                "[CertMonitor ✅ ÇÖZÜLDÜ] test.com — Son Kullanma sorunu giderildi",
+                "[CertMonitor ✅ ÇÖZÜLDÜ] test.com — Sertifika Süre Bitişi sorunu giderildi",
                 "test.com", "EXPIRY", "WARNING",
                 25, "john.doe", "2026-05-16T10:00:00", "2026-05-01T08:00:00", null);
 
@@ -159,13 +159,13 @@ class EmailNotificationServiceTest {
     }
 
     @Test
-    @DisplayName("EXPIRY alarm HTML: domain + 'gün sonra sona eriyor' kahramanı")
+    @DisplayName("EXPIRY alarm HTML: domain + 'gün sonra geçerliliği sona eriyor' kahramanı")
     void buildAlertEmailHtml_expiry_containsDaysHero() {
         String html = service.buildAlertEmailHtml(
                 "[CertMonitor UYARI] x.com — 25 gün kaldı", "msg",
                 "x.com", "WARNING", "EXPIRY", 25, certCtx());
         assertThat(html).contains("x.com");
-        assertThat(html).contains("25 gün sonra sona eriyor");
+        assertThat(html).contains("25 gün sonra geçerliliği sona eriyor");
     }
 
     @Test
