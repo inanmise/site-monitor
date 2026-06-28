@@ -11,6 +11,7 @@ import DateTimeRangePicker from '../ui/DateTimeRangePicker.jsx'
 
 import UserBadge from '../ui/UserBadge.jsx'   // proje-geneli ortak kullanıcı rozeti (avatar + ad-soyad)
 const LoginActivityChart = lazy(() => import('./LoginActivityChart.jsx'))   // recharts → tembel yükle (bundle hafif)
+const HttpMetricsExplorer = lazy(() => import('./HttpMetricsExplorer.jsx'))  // recharts → tembel yükle
 
 function SmtpStatusCell({ row, t }) {
   const cfg = {
@@ -985,6 +986,12 @@ export default function SystemHealth({ systemRole, globalAdmin = false, preFilte
               })}
             />
           </div>
+
+          {/* Kalıcı, Grafana benzeri HTTP metrik gezgini — endpoint + zaman aralığı + p95/p99 */}
+          <h3 className="metrics-title" style={{ marginTop: 20 }}>{t('http.exp.title')}</h3>
+          <Suspense fallback={<div className="upt-modal-loading">…</div>}>
+            <HttpMetricsExplorer />
+          </Suspense>
         </div>
           )}
         </div>
