@@ -134,9 +134,11 @@ public class IncidentService {
         long open     = repo.countOpen(s, u, scoped, scopeList);
         long resolved = Math.max(0, total - open); // open = status<>RESOLVED → resolved = total - open
         long resolvedWithinSla = repo.countResolvedWithinSla(s, u, scoped, scopeList);
-        // Son 30 gün — sayfanın tarih filtresinden BAĞIMSIZ sabit pencere (hızlı önayar kartı).
-        String since30 = ISO.format(java.time.Instant.now().minus(30, java.time.temporal.ChronoUnit.DAYS));
-        long last30d  = repo.countRange(since30, null, scoped, scopeList);
+        // Zaman önayar kartları (Bugün / Son 7 / Son 30 gün) — sayfanın tarih filtresinden BAĞIMSIZ sabit pencereler.
+        // Bugün = Europe/Istanbul yerel günün başlangıcından; 7/30 gün = kayan UTC pencere.
+        long today   = repo.countRange(ISO.format(java.time.LocalDate.now(ist).atStartOfDay(ist).toInstant()), null, scoped, scopeList);
+        long last7d  = repo.countRange(ISO.format(java.time.Instant.now().minus(7,  java.time.temporal.ChronoUnit.DAYS)), null, scoped, scopeList);
+        long last30d = repo.countRange(ISO.format(java.time.Instant.now().minus(30, java.time.temporal.ChronoUnit.DAYS)), null, scoped, scopeList);
 
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("daily", daily);
@@ -145,8 +147,8 @@ public class IncidentService {
         out.put("by_category", byCategory);
         out.put("by_channel", byChannel);
         out.put("summary", Map.of("total", total, "critical", critical, "sla_breached", sla,
-                "open", open, "resolved", resolved,
-                "resolved_within_sla", resolvedWithinSla, "last_30d", last30d));
+                "open", open, "resolved", resolved, "resolved_within_sla", resolvedWithinSla,
+                "today", today, "last_7d", last7d, "last_30d", last30d));
         return out;
     }
 

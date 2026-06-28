@@ -302,5 +302,7 @@ class IncidentServiceTest {
         @SuppressWarnings("unchecked")
         var summary = (Map<String, Object>) service.trends(null, null, null).get("summary");
         assertThat(((Number) summary.get("last_30d")).longValue()).isEqualTo(1L); // yalnız "yakın"
+        assertThat(((Number) summary.get("last_7d")).longValue()).isEqualTo(1L);  // 3 gün önce → 7 gün içinde
+        assertThat(((Number) summary.get("today")).longValue()).isEqualTo(0L);    // 3 gün önce → bugün değil
     }
 }

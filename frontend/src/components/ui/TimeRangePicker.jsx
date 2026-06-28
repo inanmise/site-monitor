@@ -1,4 +1,5 @@
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useLayoutEffect } from 'react'
+import { createPortal } from 'react-dom'
 import { Clock, ChevronDown } from 'lucide-react'
 import { useT } from '../../i18n/index.jsx'
 
@@ -16,29 +17,52 @@ export const QUICK_RANGES = [
   { key: '7d',  minutes: 10080 },
 ]
 
+const POP_WIDTH = 480
 const pad = (n) => String(n).padStart(2, '0')
 const toLocalInput = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
 
 /**
  * Grafana benzeri zaman-aralığı seçici. Buton (saat ikonu + etiket) → 2 sütunlu popover:
  * SOL = mutlak (From/To + Uygula), SAĞ = hızlı aralıklar (arama + liste).
- * value = { type:'rel', minutes, key } | { type:'abs', from, to } (from/to = yerel "YYYY-MM-DDTHH:mm").
- * onChange(descriptor) çağrılır; çağıran descriptor'ı gerçek from/to (UTC ISO) çözer.
+ * Popover PORTAL ile body'ye render edilir + fixed konumlandırılır → hiçbir overflow'lu ataya takılıp KIRPILMAZ.
+ * value = { type:'rel', minutes, key } | { type:'abs', from, to }; onChange(descriptor).
  */
 export default function TimeRangePicker({ value, onChange }) {
   const t = useT()
   const [open, setOpen] = useState(false)
   const [search, setSearch] = useState('')
-  const wrapRef = useRef(null)
+  const [pos, setPos] = useState({ top: 0, left: 0 })
+  const triggerRef = useRef(null)
+  const popRef = useRef(null)
   const now = new Date()
   const [from, setFrom] = useState(() => toLocalInput(new Date(now.getTime() - 3600_000)))
   const [to, setTo] = useState(() => toLocalInput(now))
 
+  const place = () => {
+    const r = triggerRef.current?.getBoundingClientRect()
+    if (!r) return
+    let left = r.left
+    if (left + POP_WIDTH > window.innerWidth - 12) left = Math.max(12, window.innerWidth - POP_WIDTH - 12)
+    setPos({ top: r.bottom + 6, left })
+  }
+
+  useLayoutEffect(() => { if (open) place() }, [open])
+
   useEffect(() => {
     if (!open) return
-    const onDoc = (e) => { if (wrapRef.current && !wrapRef.current.contains(e.target)) setOpen(false) }
+    const onDoc = (e) => {
+      if (triggerRef.current?.contains(e.target) || popRef.current?.contains(e.target)) return
+      setOpen(false)
+    }
+    const reposition = () => place()
     document.addEventListener('mousedown', onDoc)
-    return () => document.removeEventListener('mousedown', onDoc)
+    window.addEventListener('resize', reposition)
+    window.addEventListener('scroll', reposition, true)   // capture: iç scroll'larda da yeniden konumla
+    return () => {
+      document.removeEventListener('mousedown', onDoc)
+      window.removeEventListener('resize', reposition)
+      window.removeEventListener('scroll', reposition, true)
+    }
   }, [open])
 
   const label = value?.type === 'abs'
@@ -52,12 +76,12 @@ export default function TimeRangePicker({ value, onChange }) {
     t('range.' + r.key).toLowerCase().includes(search.trim().toLowerCase()))
 
   return (
-    <div className="trp-wrap" ref={wrapRef}>
-      <button type="button" className="trp-trigger" onClick={() => setOpen(o => !o)}>
+    <div className="trp-wrap">
+      <button ref={triggerRef} type="button" className="trp-trigger" onClick={() => setOpen(o => !o)}>
         <Clock size={15} /><span className="trp-label">{label}</span><ChevronDown size={14} />
       </button>
-      {open && (
-        <div className="trp-pop">
+      {open && createPortal(
+        <div ref={popRef} className="trp-pop" style={{ top: pos.top, left: pos.left, width: POP_WIDTH }}>
           <div className="trp-col trp-col-abs">
             <div className="trp-col-title">{t('range.absolute')}</div>
             <label className="trp-field"><span>{t('range.from')}</span>
@@ -80,7 +104,8 @@ export default function TimeRangePicker({ value, onChange }) {
               {filtered.length === 0 && <div className="trp-empty">—</div>}
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   )
