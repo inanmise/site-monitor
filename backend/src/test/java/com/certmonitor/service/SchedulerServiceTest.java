@@ -173,7 +173,7 @@ class SchedulerServiceTest {
         notInInv.setId(2L); notInInv.setHost("ghost.example.com"); notInInv.setPort(80);
         notInInv.setProtocol("TCP"); notInInv.setTimeoutMs(5000);
         when(portMonitorRepo.findByActiveTrue()).thenReturn(List.of(inInv, notInInv));
-        when(portCheckerService.check(eq("x.example.com"), eq(8443), anyInt()))
+        when(portCheckerService.check(any(com.certmonitor.model.PortMonitor.class)))
                 .thenReturn(Map.of("open", false, "error", "refused"));
 
         scheduler.runPortChecks();

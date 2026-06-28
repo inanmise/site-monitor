@@ -1046,7 +1046,7 @@ public class SchedulerService {
     /** Port check + port_checks persist'i — sweep ve teyit re-check'leri bu
      *  yoldan geçer (teyit izi port geçmişinde görünür). {"status","error"} döner. */
     private Map<String, Object> recheckPort(PortMonitor m) {
-        Map<String, Object> r = portCheckerService.check(m.getHost(), m.getPort(), m.getTimeoutMs());
+        Map<String, Object> r = portCheckerService.check(m);
         boolean open = Boolean.TRUE.equals(r.getOrDefault("open", false));
         try {
             PortCheck check = new PortCheck();

@@ -1552,6 +1552,21 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .modal-icon-hdr--team .modal-icon-hdr-badge { background: linear-gradient(135deg, #10b981, #059669); color: #fff; }
 .modal-icon-hdr--port .modal-icon-hdr-badge { background: linear-gradient(135deg, #f59e0b, #d97706); color: #fff; }
 .modal-icon-hdr--dns  .modal-icon-hdr-badge { background: linear-gradient(135deg, #8b5cf6, #6d28d9); color: #fff; }
+.modal-icon-hdr--check .modal-icon-hdr-badge { background: linear-gradient(135deg, #3b82f6, #0ea5e9); color: #fff; }
+/* Şimdi Kontrol Et — akan ilerleme modalı */
+.chk-modal { max-width: 560px; width: 92vw; }
+.chk-count { margin-left: auto; font-size: .82em; font-weight: 700; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.chk-list { max-height: 50vh; overflow-y: auto; margin: 4px 0 10px; border: 1px solid var(--border); border-radius: 8px; }
+.chk-row { display: flex; align-items: center; gap: 10px; padding: 7px 12px; font-size: .85em; border-bottom: 1px solid var(--border); }
+.chk-row:last-child { border-bottom: none; }
+.chk-tick { flex-shrink: 0; width: 18px; height: 18px; border-radius: 50%; background: #16a34a; color: #fff; font-size: 12px; font-weight: 800; display: inline-flex; align-items: center; justify-content: center; }
+.chk-tick-err { background: #dc2626; }
+.chk-domain { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; color: var(--text); }
+.chk-times { flex-shrink: 0; color: var(--text-muted); font-variant-numeric: tabular-nums; font-size: .92em; }
+.chk-times b { color: var(--text); font-weight: 700; }
+.chk-pending { color: var(--text-muted); font-style: italic; }
+.chk-spin { animation: chk-spin 1s linear infinite; vertical-align: middle; }
+@keyframes chk-spin { to { transform: rotate(360deg); } }
 .modal-icon-hdr-photo { width: 46px; height: 46px; border-radius: 12px; object-fit: cover; display: block; }
 .req-star { color: var(--danger); }
 /* Modal içi kaydetme hatası (port/izleme formları) */
@@ -3395,6 +3410,8 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
   line-height: 1; height: 32px;
 }
 .sort-bar-search-clear:hover { background: #f3f4f6; color: #b91c1c; border-color: #fca5a5; }
+/* Dashboard arama satırının sağına "Domain Ekle" — envanter add modalını açar */
+.sort-bar-add-domain { margin-left: auto; flex-shrink: 0; white-space: nowrap; height: 32px; }
 [data-theme="dark"] .sort-bar-search { background: var(--bg-surface); color: var(--text); border-color: var(--border); }
 [data-theme="dark"] .sort-bar-search-clear { color: #9ca3af; }
 [data-theme="dark"] .sort-bar-search-clear:hover { background: #374151; color: #fca5a5; border-color: #fca5a5; }

@@ -13,7 +13,8 @@ const INTERVALS = [
 ]
 
 const REFRESH_INTERVAL = 60
-const emptyForm = { name: '', host: '', port: '', protocol: 'TCP', teamId: '', groupName: '',
+const PORT_TYPES = ['TCP', 'TLS', 'HTTP', 'BANNER', 'UDP']
+const emptyForm = { name: '', host: '', port: '', protocol: 'TCP', expect: '', sendData: '', teamId: '', groupName: '',
   intervalSeconds: 60, timeoutMs: 5000, active: true }
 
 export default function PortMonitorPage({ systemRole, teamId, teamName }) {
@@ -96,6 +97,7 @@ export default function PortMonitorPage({ systemRole, teamId, teamName }) {
   }
   function openEdit(m) {
     setForm({ name: m.name || '', host: m.host || '', port: m.port ?? '', protocol: m.protocol || 'TCP',
+      expect: m.expect || '', sendData: m.send_data || '',
       teamId: m.team_id != null ? String(m.team_id) : '', groupName: m.group_name || '',
       intervalSeconds: m.interval_seconds ?? 60, timeoutMs: m.timeout_ms ?? 5000, active: m.active !== false })
     setModal(m)
@@ -108,6 +110,7 @@ export default function PortMonitorPage({ systemRole, teamId, teamName }) {
     const payload = {
       name: (form.name || form.host).trim(), host: form.host.trim(), port: Number(form.port),
       protocol: form.protocol?.trim() || 'TCP',
+      expect: form.expect?.trim() || null, sendData: form.sendData || null,
       teamId: form.teamId === '' ? null : Number(form.teamId), groupName: form.groupName?.trim() || null,
       intervalSeconds: Number(form.intervalSeconds), timeoutMs: Number(form.timeoutMs), active: form.active,
     }
@@ -381,9 +384,24 @@ export default function PortMonitorPage({ systemRole, teamId, teamName }) {
               <label><span>{t('port.name')}</span>
                 <input value={form.name} placeholder={form.host}
                   onChange={e => setForm(f => ({ ...f, name: e.target.value }))} /></label>
-              <label><span>{t('port.protocol')}</span>
-                <input value={form.protocol} placeholder="TCP"
-                  onChange={e => setForm(f => ({ ...f, protocol: e.target.value }))} /></label>
+              <label><span>{t('port.checkType')}</span>
+                <SearchableSelect value={form.protocol} onChange={v => setForm(f => ({ ...f, protocol: v }))}
+                  options={PORT_TYPES.map(v => ({ value: v, label: t(`port.type.${v}`) }))} /></label>
+              {(form.protocol === 'HTTP' || form.protocol === 'BANNER' || form.protocol === 'UDP') && (
+                <label><span>{form.protocol === 'HTTP' ? t('port.pathLabel') : t('port.sendLabel')}</span>
+                  <input value={form.sendData} placeholder={form.protocol === 'HTTP' ? '/health' : ''}
+                    onChange={e => setForm(f => ({ ...f, sendData: e.target.value }))} /></label>
+              )}
+              {(form.protocol === 'HTTP' || form.protocol === 'BANNER') && (
+                <label><span>{form.protocol === 'HTTP' ? t('port.expectStatus') : t('port.expectResp')}</span>
+                  <input value={form.expect} placeholder={form.protocol === 'HTTP' ? '200, 2xx, 200-399' : '220, +OK, SSH-2.0'}
+                    onChange={e => setForm(f => ({ ...f, expect: e.target.value }))} /></label>
+              )}
+              {(form.protocol === 'HTTP' || form.protocol === 'BANNER' || form.protocol === 'UDP') && (
+                <div className="full-width" style={{ fontSize: '.78em', color: 'var(--text-muted)', marginTop: -2, lineHeight: 1.5 }}>
+                  ⓘ {t(`port.typeHint.${form.protocol}`)}
+                </div>
+              )}
               <label><span>{t('port.team')}</span>
                 {isAdmin
                   ? <SearchableSelect value={form.teamId} onChange={v => setForm(f => ({ ...f, teamId: v }))} options={teamSelectOptions} searchThreshold={2} />

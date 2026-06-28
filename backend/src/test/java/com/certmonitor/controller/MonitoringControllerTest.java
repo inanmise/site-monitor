@@ -189,6 +189,21 @@ class MonitoringControllerTest {
     }
 
     @Test
+    @DisplayName("POST /port: HTTP tipi (küçük harf) normalize edilir + expect/send_data persist")
+    void createPort_httpType_persistsCheckConfig() throws Exception {
+        when(portMonitorRepo.findFirstByHostAndPortOrderByIdAsc(anyString(), anyInt())).thenReturn(Optional.empty());
+        when(portMonitorRepo.save(any(com.certmonitor.model.PortMonitor.class)))
+                .thenAnswer(a -> { com.certmonitor.model.PortMonitor p = a.getArgument(0); p.setId(9L); return p; });
+        mvc.perform(post("/api/monitoring/port").session(session("ADMIN"))
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                .content("{\"host\":\"svc.local\",\"port\":8080,\"protocol\":\"http\",\"expect\":\"2xx\",\"sendData\":\"/health\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.protocol").value("HTTP"))
+                .andExpect(jsonPath("$.data.expect").value("2xx"))
+                .andExpect(jsonPath("$.data.send_data").value("/health"));
+    }
+
+    @Test
     @DisplayName("POST /keyword/test: canlı koşul testi (occurrences/condition_met/phrase)")
     void testKeyword_returnsResult() throws Exception {
         java.util.Map<String, Object> cr = new java.util.HashMap<>();

@@ -1,5 +1,6 @@
 package com.certmonitor.service;
 
+import com.certmonitor.model.PortMonitor;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -59,5 +60,41 @@ class PortCheckerServiceTest {
         Map<String, Object> r = service.check("192.0.2.1", 443, 50);
         assertThat(r).containsKey("open");
         assertThat(r).containsKey("response_ms");
+    }
+
+    @Test
+    @DisplayName("bilinmeyen tip TCP'ye duser (acik portta open=true)")
+    void unknownType_fallsBackToTcp() throws IOException {
+        try (ServerSocket server = new ServerSocket(0)) {
+            Map<String, Object> r = service.check("127.0.0.1", server.getLocalPort(), 1000, "WEIRD", null, null);
+            assertThat(r.get("open")).isEqualTo(true);
+        }
+    }
+
+    @Test
+    @DisplayName("check(PortMonitor) tipe gore dispatch eder; TLS duz portta exception sizdirmadan down")
+    void checkByMonitor_dispatchesTls_failsGracefully() throws IOException {
+        try (ServerSocket server = new ServerSocket(0)) {
+            PortMonitor m = new PortMonitor();
+            m.setHost("127.0.0.1");
+            m.setPort(server.getLocalPort());
+            m.setTimeoutMs(1200);
+            m.setProtocol("TLS");
+            Map<String, Object> r = service.check(m);
+            assertThat(r.get("open")).isEqualTo(false);
+            assertThat(r).containsKey("error");
+        }
+    }
+
+    @Test
+    @DisplayName("httpStatusMatches: bos->2xx/3xx, tam, sinif (2xx), aralik (200-399), coklu")
+    void httpStatusMatches_patterns() {
+        assertThat(PortCheckerService.httpStatusMatches(200, null)).isTrue();
+        assertThat(PortCheckerService.httpStatusMatches(404, null)).isFalse();
+        assertThat(PortCheckerService.httpStatusMatches(200, "200")).isTrue();
+        assertThat(PortCheckerService.httpStatusMatches(204, "2xx")).isTrue();
+        assertThat(PortCheckerService.httpStatusMatches(301, "200-399")).isTrue();
+        assertThat(PortCheckerService.httpStatusMatches(404, "2xx,3xx")).isFalse();
+        assertThat(PortCheckerService.httpStatusMatches(401, "401, 403")).isTrue();
     }
 }

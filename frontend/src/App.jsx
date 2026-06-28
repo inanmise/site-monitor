@@ -1,5 +1,8 @@
 import { useState, useEffect, useCallback, useRef, useMemo, lazy, Suspense } from 'react'
-import { ChevronDown, BarChart3, AlertOctagon, X, Wifi, CheckCircle, Clock } from 'lucide-react'
+import { ChevronDown, BarChart3, AlertOctagon, X, Wifi, CheckCircle, Clock, RefreshCw, Loader2 } from 'lucide-react'
+
+// Date → "HH:mm:ss" (Şimdi Kontrol Et modalında başlangıç/bitiş saati)
+const fmtClock = (d) => (d instanceof Date ? d.toTimeString().slice(0, 8) : '')
 import { api, formatDate } from './api/client'
 import { useDialog } from './components/ui/Dialog.jsx'
 import { useT } from './i18n/index.jsx'
@@ -107,7 +110,7 @@ export default function App() {
   const [newDomain,    setNewDomain]    = useState('')
   const [checkLoading, setCheckLoading] = useState(false)
   const [refreshing, setRefreshing] = useState(false)
-  const [refreshProgress, setRefreshProgress] = useState(null)
+  const [checkRun, setCheckRun] = useState(null)        // Şimdi Kontrol Et — akan ilerleme modalı (domain başına ✓ + süre)
   const [lastUpdate, setLastUpdate] = useState(null)
   const [inactivityWarning, setInactivityWarning] = useState(false)
   const [countdown, setCountdown] = useState(60)
@@ -128,6 +131,7 @@ export default function App() {
   const warnTimer = useRef(null)
   const countdownInterval = useRef(null)
   const refreshPollRef = useRef(null)
+  const chkListRef = useRef(null)
 
   useEffect(() => {
     api.getMe().then((res) => {
@@ -308,50 +312,42 @@ export default function App() {
     setRefreshing(false)
   }
 
+  // "Şimdi Kontrol Et": her domain'i sırayla yeniden kontrol eder; başlangıç/bitiş/süre ölçüp
+  // akan modala yazar (alt alta ✓ + zaman). Bittiğinde veriyi tazeler; "Kapat" ile kapanır.
   async function handleRefresh() {
     if (refreshing) return
     setRefreshing(true)
-    setRefreshProgress(null)
+    const domains = [...new Set(certs.map(c => c.domain).filter(Boolean))].sort((a, b) => a.localeCompare(b))
+    setCheckRun({ rows: [], total: domains.length, done: false })
 
-    const triggerTime = new Date().toISOString().substring(0, 19)
-    await api.runScheduler()
-    setActivityRefreshKey(k => k + 1)
+    for (const domain of domains) {
+      const start = new Date()
+      const t0 = Date.now()
+      let ok = false
+      try { const r = await api.checkDomain(domain); ok = !!r?.success } catch { ok = false }
+      const end = new Date()
+      const ms = Date.now() - t0
+      setCheckRun(cr => cr ? { ...cr, rows: [...cr.rows, { domain, start, end, ms, ok }] } : cr)
+    }
 
-    const POLL_MS   = 2000
-    const MAX_MS    = 5 * 60 * 1000
-    const startedAt = Date.now()
-
-    clearInterval(refreshPollRef.current)
-    refreshPollRef.current = setInterval(async () => {
-      const [certsRes, statusRes] = await Promise.all([
-        api.getCertificates(),
-        api.getSchedulerStatus(),
+    try {
+      const [certsRes, statsRes, silentRes] = await Promise.all([
+        api.getCertificates(), api.getStats(), api.getSilentAlertDomains(),
       ])
-
-      if (certsRes?.success) {
-        setCerts(certsRes.data)
-        setLastUpdate(certsRes.timestamp)
-        const updated = certsRes.data.filter(
-          (c) => c.checked_at && c.checked_at >= triggerTime
-        ).length
-        setRefreshProgress({ checked: updated, total: certsRes.data.length })
-      }
-
-      setActivityRefreshKey(k => k + 1)
-
-      const done     = !statusRes?.data?.running
-      const timedOut = Date.now() - startedAt > MAX_MS
-
-      if (done || timedOut) {
-        clearInterval(refreshPollRef.current)
-        const [statsRes, silentRes] = await Promise.all([api.getStats(), api.getSilentAlertDomains()])
-        if (statsRes?.success) setStats(statsRes.data)
-        if (silentRes?.success) setSilentAlertDomains(new Set(silentRes.data))
-        setRefreshing(false)
-        setRefreshProgress(null)
-      }
-    }, POLL_MS)
+      if (certsRes?.success) { setCerts(certsRes.data); setLastUpdate(certsRes.timestamp) }
+      if (statsRes?.success) setStats(statsRes.data)
+      if (silentRes?.success) setSilentAlertDomains(new Set(silentRes.data))
+    } catch { /* tazeleme hatası yoksay — modal yine de tamamlanır */ }
+    setActivityRefreshKey(k => k + 1)
+    setCheckRun(cr => cr ? { ...cr, done: true } : cr)
+    setRefreshing(false)
   }
+
+  // Yeni satır eklendikçe listeyi en alta kaydır (akış efekti).
+  useEffect(() => {
+    const el = chkListRef.current
+    if (el) el.scrollTop = el.scrollHeight
+  }, [checkRun?.rows.length])
 
   async function handleAddDomain() {
     if (!newDomain.trim() || checkLoading) return
@@ -591,9 +587,7 @@ export default function App() {
           <div className="controls">
             <button className="btn btn-primary" onClick={handleRefresh} disabled={refreshing}>
               {refreshing
-                ? refreshProgress
-                  ? t('app.checkedOf', refreshProgress.checked, refreshProgress.total)
-                  : t('app.starting')
+                ? t('app.checkedOf', checkRun?.rows.length ?? 0, checkRun?.total ?? 0)
                 : t('app.checkNow')}
             </button>
             <div className="add-domain-section">
@@ -714,6 +708,12 @@ export default function App() {
                       title={t('app.clearFilter')}
                     >
                       ✕
+                    </button>
+                  )}
+                  {(systemRole === 'ADMIN' || systemRole === 'TEAM_ADMIN') && (
+                    <button type="button" className="btn btn-success sort-bar-add-domain"
+                            onClick={() => { setPendingAddDomain(true); setTab('domains') }}>
+                      {t('inv.addBtn')}
                     </button>
                   )}
                 </div>
@@ -1076,6 +1076,36 @@ export default function App() {
 
       <CertificateModal domain={modalCert?.domain} alertLevel={modalCert?.alert_level} initialData={modalCert?._preview ? modalCert : undefined} previewMode={!!modalCert?._preview} currentUser={user} currentUserRole={systemRole} onClose={() => setModalCert(null)} />
       {caModal && <CaDiversityModal certs={certs} onClose={() => setCaModal(false)} />}
+
+      {/* Şimdi Kontrol Et — akan ilerleme modalı (her domain ✓ + başlangıç/bitiş/süre) */}
+      {checkRun && (
+        <div className="modal-overlay">
+          <div className="modal-box chk-modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-icon-hdr modal-icon-hdr--check">
+              <div className="modal-icon-hdr-badge"><RefreshCw size={20} /></div>
+              <h3>{t('app.checkProgressTitle')}</h3>
+              <span className="chk-count">{checkRun.rows.length}/{checkRun.total}</span>
+            </div>
+            <div className="chk-list" ref={chkListRef}>
+              {checkRun.rows.map((r, i) => (
+                <div key={i} className="chk-row">
+                  <span className={`chk-tick${r.ok ? '' : ' chk-tick-err'}`}>{r.ok ? '✓' : '✕'}</span>
+                  <span className="chk-domain" title={r.domain}>{r.domain}</span>
+                  <span className="chk-times">{fmtClock(r.start)} → {fmtClock(r.end)} · <b>{r.ms} ms</b></span>
+                </div>
+              ))}
+              {!checkRun.done && (
+                <div className="chk-row chk-pending">
+                  <Loader2 size={14} className="chk-spin" /> {t('app.checking')}
+                </div>
+              )}
+            </div>
+            <div className="modal-actions">
+              <button className="btn btn-secondary" onClick={() => setCheckRun(null)}>{t('app.close')}</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
     </UserDirectoryProvider>
     </PermissionsProvider>
