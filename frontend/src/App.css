@@ -574,6 +574,8 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .stat-item-investigating { border-top-color: #6366f1; background: #eef2ff; }
 .stat-item-mitigated { border-top-color: #14b8a6; background: #f0fdfa; }
 .stat-item-resolvedsla { border-top-color: #10b981; background: #ecfdf5; }
+.stat-item-today     { border-top-color: #06b6d4; background: #ecfeff; }
+.stat-item-last7d    { border-top-color: #6366f1; background: #e0e7ff; }
 .stat-item-last30d   { border-top-color: #8b5cf6; background: #f5f3ff; }
 
 .stat-icon  { display: flex; align-items: center; justify-content: center; margin-bottom: 4px; }
@@ -603,6 +605,8 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .stat-value-investigating { color: #4f46e5; }
 .stat-value-mitigated { color: #0d9488; }
 .stat-value-resolvedsla { color: #059669; }
+.stat-value-today     { color: #0e7490; }
+.stat-value-last7d    { color: #4338ca; }
 .stat-value-last30d   { color: #7c3aed; }
 .stat-weak-sub       { font-size: .65em; color: var(--text-muted); text-align: center; margin-top: 3px; line-height: 1.4; }
 .stat-certissue-sub  { font-size: .65em; color: var(--text-muted); text-align: center; margin-top: 3px; line-height: 1.4; }
@@ -4184,8 +4188,9 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .trp-trigger { display: inline-flex; align-items: center; gap: 7px; padding: 6px 11px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-card, #fff); color: var(--text); cursor: pointer; font-size: .88em; }
 .trp-trigger:hover { border-color: var(--primary); }
 .trp-label { font-weight: 600; }
-.trp-pop { position: absolute; top: calc(100% + 6px); right: 0; z-index: 60; display: flex; gap: 0; background: var(--bg-card, #fff); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 10px 30px rgba(0,0,0,.18); overflow: hidden; }
-.trp-col { padding: 14px 16px; min-width: 230px; }
+/* Portal ile body'ye render edilir + fixed konumlandırılır (top/left/width inline) → overflow'lu atalara takılıp kırpılmaz. */
+.trp-pop { position: fixed; z-index: 1000; display: flex; gap: 0; background: var(--bg-card, #fff); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 12px 34px rgba(0,0,0,.22); overflow: hidden; }
+.trp-col { padding: 14px 16px; flex: 1 1 0; min-width: 0; }
 .trp-col-abs { border-right: 1px solid var(--border); }
 .trp-col-title { font-weight: 700; font-size: .85em; margin-bottom: 10px; color: var(--text); }
 .trp-field { display: flex; flex-direction: column; gap: 4px; font-size: .8em; color: var(--text-light); margin-bottom: 9px; }
@@ -5618,6 +5623,15 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .dtf.dtf-inline, .dtf.dtf-inline .react-datepicker-wrapper, .dtf.dtf-inline .react-datepicker__input-container { width: auto; }
 .dtf.dtf-inline .dp-trigger { width: auto; padding: 9px 11px; font-size: .92em; }
 .dtf.dtf-inline .dp-trigger-value { flex: 0 1 auto; }
+/* Tarih filtresi: etiket + alan TEK parça olarak sarılır (etiket satır sonunda, alan satır başında kalmasın). */
+.inc-date-pair { display: inline-flex; align-items: center; gap: 6px; }
+.inc-date-lbl { font-size: .8rem; color: var(--text-muted); font-weight: 600; white-space: nowrap; }
+/* Günlük trend 30/60/90 gün seçici */
+.inc-trend-head { display: flex; align-items: center; gap: 12px; }
+.inc-trend-range { display: inline-flex; gap: 4px; }
+.inc-trend-btn { background: var(--bg-soft, #f1f5f9); border: 1px solid var(--border); color: var(--text-light); border-radius: 5px; padding: 3px 9px; font-size: .78em; font-weight: 600; cursor: pointer; }
+.inc-trend-btn:hover { border-color: var(--primary); color: var(--primary); }
+.inc-trend-btn.active { background: var(--primary); border-color: var(--primary); color: #fff; }
 
 /* ── Kullanıcı / Oturum — executive görünüm (uact-) ─────────────────────────
    Tema değişkenleriyle (var(--*)) dark/light otomatik uyum; hero bandı uygulama
@@ -6473,6 +6487,10 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 
 /* ── Şema ilişki (hiyerarşi) diyagramı ── */
 .sqlpg-diagram-modal { max-width: 92vw; }
+.sqlpg-diag-fs-btn { margin-left: auto; display: inline-flex; align-items: center; background: none; border: 1px solid var(--border); border-radius: 6px; padding: 6px 9px; cursor: pointer; color: var(--text-light); }
+.sqlpg-diag-fs-btn:hover { color: var(--primary); border-color: var(--primary); }
+.sqlpg-diagram-modal.sqlpg-diag-fs { max-width: 98vw; width: 98vw; max-height: 96vh; height: 96vh; }
+.sqlpg-diagram-modal.sqlpg-diag-fs .sqlpg-diag-canvas { max-height: none; flex: 1 1 auto; min-height: 0; }
 .sqlpg-diag-legend {
   display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
   font-size: .8em; color: var(--text-light, #64748b); margin: 4px 0 8px;

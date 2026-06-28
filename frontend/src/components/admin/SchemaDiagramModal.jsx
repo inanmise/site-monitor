@@ -1,5 +1,5 @@
-import { useMemo } from 'react'
-import { Network, Loader2 } from 'lucide-react'
+import { useMemo, useState } from 'react'
+import { Network, Loader2, Maximize2, Minimize2 } from 'lucide-react'
 
 const NODE_W = 158
 const NODE_H = 30
@@ -15,13 +15,19 @@ const PAD = 28
  */
 export default function SchemaDiagramModal({ data, loading, onClose, t }) {
   const { nodes, edges, width, height, isolatedCount } = useMemo(() => layout(data), [data])
+  const [fs, setFs] = useState(false)
 
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <div className="modal-box modal-wide sqlpg-diagram-modal" onClick={(e) => e.stopPropagation()}>
+      <div className={`modal-box modal-wide sqlpg-diagram-modal${fs ? ' sqlpg-diag-fs' : ''}`}
+           onClick={(e) => e.stopPropagation()}>
         <div className="modal-icon-hdr modal-icon-hdr--user">
           <div className="modal-icon-hdr-badge"><Network size={20} /></div>
           <h3>{t('sql.diag.title')}</h3>
+          <button type="button" className="sqlpg-diag-fs-btn" onClick={() => setFs(v => !v)}
+                  title={t(fs ? 'sql.diag.exitFs' : 'sql.diag.fullscreen')}>
+            {fs ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
+          </button>
         </div>
 
         <div className="sqlpg-diag-legend">

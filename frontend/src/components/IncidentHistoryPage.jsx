@@ -242,6 +242,8 @@ export default function IncidentHistoryPage() {
   const [selected, setSelected]       = useState(() => new Set()) // toplu transfer seçimi (id'ler)
   const [transferTeam, setTransferTeam] = useState('')
   const [showSummary, setShowSummary]   = useState(false) // özet kartları + trend akordiyonu — varsayılan kapalı
+  const [trendDays, setTrendDays]       = useState(30)    // günlük trend penceresi (30/60/90), tablo filtresinden bağımsız
+  const [trendDaily, setTrendDaily]     = useState([])
 
   const load = useCallback(async () => {
     if (!allowView) return
@@ -303,6 +305,17 @@ export default function IncidentHistoryPage() {
 
   useEffect(() => { load() }, [load])
   useEffect(() => { loadTrends() }, [loadTrends])
+
+  // Günlük trend: SON trendDays gün için tablo filtresinden BAĞIMSIZ ayrı çekim (bugünle biten kayan pencere).
+  const loadTrendDaily = useCallback(async () => {
+    if (!allowView) return
+    const ymd = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+    const today = new Date()
+    const since = ymd(new Date(today.getTime() - (trendDays - 1) * 86400000))
+    const res = await api.incidents.trends(localDayToUtcIso(since, false), localDayToUtcIso(ymd(today), true))
+    if (res?.success) setTrendDaily(res.data?.daily ?? [])
+  }, [trendDays, allowView]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { loadTrendDaily() }, [loadTrendDaily])
   useEffect(() => { loadOptions() }, [loadOptions])
   useEffect(() => { loadTeams() }, [loadTeams])
   useEffect(() => { setPage(0) }, [filters, size])
@@ -332,23 +345,16 @@ export default function IncidentHistoryPage() {
   // Çok geniş/garip aralıkta (>120 gün) doldurma yapma; yalnız veri günlerini sırala (devasa grafik olmasın).
   // NOT: useMemo bir HOOK → koşullu erken dönüşün (allowView) ÜSTÜNDE, tüm render'larda koşulsuz çağrılmalı.
   const dailyChart = useMemo(() => {
-    const rows = (trends?.daily || []).map(d => ({ day: String(d.day).slice(0, 10), count: Number(d.count) || 0 }))
-    if (rows.length === 0) return []
-    const sorted = [...rows].sort((a, b) => a.day.localeCompare(b.day))
-    const byDay = new Map(sorted.map(r => [r.day, r.count]))
-    const start = (filters.since || sorted[0].day).slice(0, 10)
-    const end = (filters.until || sorted[sorted.length - 1].day).slice(0, 10)
-    const d0 = new Date(start + 'T00:00:00'), d1 = new Date(end + 'T00:00:00')
-    const span = Math.round((d1 - d0) / 86400000) + 1
-    if (!(span >= 1 && span <= 120)) return sorted
+    const byDay = new Map((trendDaily || []).map(d => [String(d.day).slice(0, 10), Number(d.count) || 0]))
     const out = []
-    for (let i = 0; i < span; i++) {
-      const dt = new Date(d0.getTime() + i * 86400000)
+    const today = new Date()
+    for (let i = trendDays - 1; i >= 0; i--) {
+      const dt = new Date(today.getTime() - i * 86400000)
       const key = `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`
       out.push({ day: key, count: byDay.get(key) || 0 })
     }
     return out
-  }, [trends, filters.since, filters.until])
+  }, [trendDaily, trendDays])
 
   if (!allowView) return <div className="empty-state">{t('inc.noAccess')}</div>
 
@@ -382,10 +388,11 @@ export default function IncidentHistoryPage() {
       if (kind === 'mitigated')     return { ...base, status: 'MITIGATED' }
       if (kind === 'resolved') return { ...base, status: 'RESOLVED' }
       if (kind === 'resolved_sla') return { ...base, status: 'RESOLVED', slaBreached: false }
-      if (kind === 'last30d') {
+      if (kind === 'today' || kind === 'last7d' || kind === 'last30d') {
         const ymd = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
         const today = new Date()
-        return { ...base, since: ymd(new Date(today.getTime() - 30 * 86400000)), until: ymd(today), _preset: 'last30d' }
+        const backDays = kind === 'today' ? 0 : kind === 'last7d' ? 7 : 30
+        return { ...base, since: ymd(new Date(today.getTime() - backDays * 86400000)), until: ymd(today), _preset: kind }
       }
       return base
     })
@@ -406,7 +413,7 @@ export default function IncidentHistoryPage() {
         ? await api.incidents.create(payload)
         : await api.incidents.update(modal.form.id, payload)
       setSaving(false)
-      if (res?.success) { toast.success(t('inc.saved')); setModal(null); load(); loadTrends() }
+      if (res?.success) { toast.success(t('inc.saved')); setModal(null); load(); loadTrends(); loadTrendDaily() }
       else toast.error(res?.error || t('inc.saveError'))
     } catch { setSaving(false); toast.error(t('inc.saveError')) }
   }
@@ -418,7 +425,7 @@ export default function IncidentHistoryPage() {
     })
     if (!ok) return
     const res = await api.incidents.remove(rec.id)
-    if (res?.success) { toast.success(t('inc.deleted')); setModal(null); load(); loadTrends() }
+    if (res?.success) { toast.success(t('inc.deleted')); setModal(null); load(); loadTrends(); loadTrendDaily() }
     else toast.error(res?.error || t('inc.saveError'))
   }
 
@@ -439,7 +446,7 @@ export default function IncidentHistoryPage() {
     const res = await api.incidents.transfer([...selected], tm.id, tm.name)
     if (res?.success) {
       toast.success(t('inc.transferred', res.data?.transferred ?? selected.size))
-      setSelected(new Set()); setTransferTeam(''); load(); loadTrends()
+      setSelected(new Set()); setTransferTeam(''); load(); loadTrends(); loadTrendDaily()
     } else toast.error(res?.error || t('inc.saveError'))
   }
 
@@ -454,7 +461,7 @@ export default function IncidentHistoryPage() {
       <div className="admin-section-header">
         <h3>{t('inc.title')}</h3>
         <div style={{ display: 'flex', gap: 8 }}>
-          <button className="btn btn-secondary btn-sm-p" onClick={() => { load(); loadTrends() }} disabled={loading}>
+          <button className="btn btn-secondary btn-sm-p" onClick={() => { load(); loadTrends(); loadTrendDaily() }} disabled={loading}>
             <RefreshCcw size={13} /> {t('inc.refresh')}
           </button>
           {allowManage && (
@@ -488,6 +495,8 @@ export default function IncidentHistoryPage() {
           ['sumResolved', sum.resolved, 'valid', 'resolved'],
           ['sumSla', sum.sla_breached, 'alert', 'sla'],
           ['sumResolvedSla', sum.resolved_within_sla, 'resolvedsla', 'resolved_sla'],
+          ['sumToday', sum.today, 'today', 'today'],
+          ['sumLast7d', sum.last_7d, 'last7d', 'last7d'],
           ['sumLast30d', sum.last_30d, 'last30d', 'last30d']].map(([k, v, variant, kind]) => {
           const active = (kind === 'critical' && filters.severity === 'CRITICAL')
             || (kind === 'high' && filters.severity === 'HIGH')
@@ -499,9 +508,11 @@ export default function IncidentHistoryPage() {
             || (kind === 'mitigated' && filters.status === 'MITIGATED')
             || (kind === 'resolved' && filters.status === 'RESOLVED' && filters.slaBreached !== false)
             || (kind === 'resolved_sla' && filters.status === 'RESOLVED' && filters.slaBreached === false)
+            || (kind === 'today' && filters._preset === 'today')
+            || (kind === 'last7d' && filters._preset === 'last7d')
             || (kind === 'last30d' && filters._preset === 'last30d')
             || (kind === 'total' && !filters.severity && !filters.status && filters.slaBreached === undefined
-                && filters.open === undefined && !filters.category && !filters.channel && !filters.q && filters._preset !== 'last30d')
+                && filters.open === undefined && !filters.category && !filters.channel && !filters.q && !filters._preset)
           return (
             <div key={k} className={`stat-item stat-item-${variant}`} role="button" tabIndex={0}
                  title={t('inc.filterByCard')} onClick={() => applyCardFilter(kind)}
@@ -517,7 +528,16 @@ export default function IncidentHistoryPage() {
       {/* Günlük trend — gün başına olay sayısı (olaysız günler dahil; tarih + adet etiketli) */}
       {dailyChart.length > 0 && (
         <div style={{ marginBottom: 16 }}>
-          <div className="show-section-header">{t('inc.trend')}</div>
+          <div className="show-section-header inc-trend-head">
+            <span>{t('inc.trend')}</span>
+            <span className="inc-trend-range">
+              {[30, 60, 90].map(dd => (
+                <button key={dd} type="button"
+                        className={`inc-trend-btn${trendDays === dd ? ' active' : ''}`}
+                        onClick={() => setTrendDays(dd)}>{dd}{t('inc.trendDayUnit')}</button>
+              ))}
+            </span>
+          </div>
           <div style={{ display: 'flex', alignItems: 'flex-end', gap: 3, height: 92, padding: '4px 0',
                         justifyContent: dailyChart.length < 12 ? 'flex-start' : 'stretch', overflowX: 'auto' }}>
             {dailyChart.map((d, i) => {
@@ -567,12 +587,16 @@ export default function IncidentHistoryPage() {
           <option value="">{t('inc.filterTeam')}</option>
           {teams.map(tm => <option key={tm.id} value={String(tm.id)}>{tm.name}</option>)}
         </select>
-        <span style={{ fontSize: '.8rem', color: 'var(--text-muted)', fontWeight: 600 }}>{t('inc.since')}</span>
-        <DateTimeField dateOnly clearable className="dtf-inline" placeholder={t('inc.since')}
-          value={filters.since} onChange={v => setF('since', v || '')} />
-        <span style={{ fontSize: '.8rem', color: 'var(--text-muted)', fontWeight: 600 }}>{t('inc.until')}</span>
-        <DateTimeField dateOnly clearable className="dtf-inline" placeholder={t('inc.until')}
-          value={filters.until} onChange={v => setF('until', v || '')} />
+        <span className="inc-date-pair">
+          <span className="inc-date-lbl">{t('inc.since')}</span>
+          <DateTimeField dateOnly clearable className="dtf-inline" placeholder={t('inc.since')}
+            value={filters.since} onChange={v => setF('since', v || '')} />
+        </span>
+        <span className="inc-date-pair">
+          <span className="inc-date-lbl">{t('inc.until')}</span>
+          <DateTimeField dateOnly clearable className="dtf-inline" placeholder={t('inc.until')}
+            value={filters.until} onChange={v => setF('until', v || '')} />
+        </span>
       </div>
 
       {/* Toplu transfer çubuğu — seçim varken */}
