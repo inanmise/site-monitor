@@ -151,10 +151,41 @@ class MonitoringControllerTest {
     }
 
     @Test
-    @DisplayName("DELETE /port/{id}: USER 403 (admin-only write)")
-    void deletePort_forbiddenForUser() throws Exception {
+    @DisplayName("DELETE /port/{id}: başka takımın monitörü → 403 (canOperateTeam)")
+    void deletePort_forbiddenForOtherTeam() throws Exception {
+        com.certmonitor.model.PortMonitor m = new com.certmonitor.model.PortMonitor();
+        m.setId(1L); m.setHost("x"); m.setPort(443); m.setTeamId(999L); m.setActive(true);
+        when(portMonitorRepo.findById(1L)).thenReturn(Optional.of(m));
         mvc.perform(delete("/api/monitoring/port/1").session(session("USER")))
                 .andExpect(status().isForbidden());
+    }
+
+    @Test
+    @DisplayName("POST /port: aynı host:port AKTİF varken → 400 (zaten izleniyor)")
+    void createPort_duplicateActive_rejected() throws Exception {
+        com.certmonitor.model.PortMonitor existing = new com.certmonitor.model.PortMonitor();
+        existing.setId(5L); existing.setHost("x.example.com"); existing.setPort(8443); existing.setActive(true);
+        when(portMonitorRepo.findFirstByHostAndPortOrderByIdAsc("x.example.com", 8443)).thenReturn(Optional.of(existing));
+        mvc.perform(post("/api/monitoring/port").session(session("ADMIN"))
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                .content("{\"host\":\"x.example.com\",\"port\":8443}"))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    @DisplayName("POST /port: ADMIN yeni host:port ekler → team_id/group_name döner, 200")
+    void createPort_admin_success() throws Exception {
+        when(portMonitorRepo.findFirstByHostAndPortOrderByIdAsc(anyString(), anyInt())).thenReturn(Optional.empty());
+        when(portMonitorRepo.save(any(com.certmonitor.model.PortMonitor.class)))
+                .thenAnswer(a -> { com.certmonitor.model.PortMonitor p = a.getArgument(0); p.setId(7L); return p; });
+        mvc.perform(post("/api/monitoring/port").session(session("ADMIN"))
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                .content("{\"host\":\"1.2.3.4\",\"port\":25,\"teamId\":3,\"groupName\":\"mail\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.host").value("1.2.3.4"))
+                .andExpect(jsonPath("$.data.port").value(25))
+                .andExpect(jsonPath("$.data.team_id").value(3))
+                .andExpect(jsonPath("$.data.group_name").value("mail"));
     }
 
     @Test

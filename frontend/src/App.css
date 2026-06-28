@@ -1554,6 +1554,9 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .modal-icon-hdr--dns  .modal-icon-hdr-badge { background: linear-gradient(135deg, #8b5cf6, #6d28d9); color: #fff; }
 .modal-icon-hdr-photo { width: 46px; height: 46px; border-radius: 12px; object-fit: cover; display: block; }
 .req-star { color: var(--danger); }
+/* Modal içi kaydetme hatası (port/izleme formları) */
+.mon-modal-error { margin: 4px 0 0; padding: 9px 12px; border-radius: 8px; font-size: .85em; line-height: 1.45;
+  background: #fef2f2; border: 1px solid #fecaca; color: #b91c1c; }
 .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; align-items: end; }
 .form-grid label { display: flex; flex-direction: column; gap: 5px; font-size: .88em; font-weight: 600; }
 .form-grid label input, .form-grid label select { padding: 9px 10px; border: 1px solid var(--border); border-radius: 4px; font-size: .95em; }
@@ -4182,6 +4185,12 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .hme-pills { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
 .hme-pill { display: inline-flex; align-items: baseline; gap: 4px; background: var(--bg-soft, #f1f5f9); border: 1px solid var(--border); border-radius: 8px; padding: 5px 10px; font-size: .8em; color: var(--text-light); }
 .hme-pill b { font-size: 1.25em; font-weight: 800; color: var(--text); font-variant-numeric: tabular-nums; }
+/* Tıklanabilir legend (seri göster/gizle) */
+.hme-legend { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px 16px; margin-top: 8px; }
+.hme-legend-item { display: inline-flex; align-items: center; gap: 6px; background: none; border: none; cursor: pointer; font-size: .8em; color: var(--text); padding: 2px 4px; transition: opacity .12s; }
+.hme-legend-item:hover { opacity: .75; }
+.hme-legend-dot { width: 13px; height: 3px; border-radius: 2px; display: inline-block; flex-shrink: 0; }
+.hme-legend-off { opacity: .38; text-decoration: line-through; }
 
 /* ── Time range picker (Grafana benzeri 2 sütun) ─────────────── */
 .trp-wrap { position: relative; display: inline-block; }
@@ -5626,6 +5635,10 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 /* Tarih filtresi: etiket + alan TEK parça olarak sarılır (etiket satır sonunda, alan satır başında kalmasın). */
 .inc-date-pair { display: inline-flex; align-items: center; gap: 6px; }
 .inc-date-lbl { font-size: .8rem; color: var(--text-muted); font-weight: 600; white-space: nowrap; }
+/* Dashboard domain arama + "domain ekle" butonu yan yana */
+.sv-domain-row { display: flex; align-items: center; gap: 8px; }
+.sv-domain-row .filter-input { flex: 1 1 auto; min-width: 0; }
+.sv-add-domain { flex-shrink: 0; white-space: nowrap; }
 /* Günlük trend 30/60/90 gün seçici */
 .inc-trend-head { display: flex; align-items: center; gap: 12px; }
 .inc-trend-range { display: inline-flex; gap: 4px; }

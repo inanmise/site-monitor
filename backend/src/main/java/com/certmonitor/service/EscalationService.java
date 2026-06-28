@@ -699,7 +699,7 @@ public class EscalationService {
                 case TYPE_DNS_CHANGED   -> "DNS Değişikliği";
                 case TYPE_KEYWORD       -> "İçerik Doğrulama";
                 case TYPE_PING_DOWN     -> "Erişilebilirlik (Ping)";
-                default                 -> "Son Kullanma";
+                default                 -> "Sertifika Süre Bitişi";
             };
             String subject = "[CertMonitor ✅ ÇÖZÜLDÜ] " + event.getDomain()
                     + " — " + typeTr + " sorunu giderildi";
@@ -842,7 +842,7 @@ public class EscalationService {
             case TYPE_DNS_CHANGED   -> "DNS Değişikliği";
             case TYPE_KEYWORD       -> "İçerik Doğrulama";
             case TYPE_PING_DOWN     -> "Erişilebilirlik (Ping)";
-            default                 -> daysRemaining != null ? daysRemaining + " gün kaldı" : "Son Kullanma";
+            default                 -> daysRemaining != null ? "Sertifika Süre Bitişi (" + daysRemaining + " gün kaldı)" : "Sertifika Süre Bitişi";
         };
         String subject = subjectPrefix + "[CertMonitor " + levelTr + "] " + domain + " — " + typeTr;
 

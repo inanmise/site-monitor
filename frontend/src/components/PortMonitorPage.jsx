@@ -1,9 +1,9 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { createPortal } from 'react-dom'
 import { api, formatDate } from '../api/client'
 import { useT } from '../i18n/index.jsx'
 import SearchableSelect from './ui/SearchableSelect.jsx'
-import { Play, Pencil, X, RefreshCw, Plug } from 'lucide-react'
+import { Play, Pencil, X, RefreshCw, Plug, Plus, Trash2 } from 'lucide-react'
 
 const INTERVALS = [
   { value: 30,  labelKey: 'ping.interval30s' },
@@ -13,20 +13,30 @@ const INTERVALS = [
 ]
 
 const REFRESH_INTERVAL = 60
+const emptyForm = { name: '', host: '', port: '', protocol: 'TCP', teamId: '', groupName: '',
+  intervalSeconds: 60, timeoutMs: 5000, active: true }
 
-export default function PortMonitorPage({ systemRole }) {
+export default function PortMonitorPage({ systemRole, teamId, teamName }) {
   const t = useT()
   const isAdmin = systemRole === 'ADMIN'
+  const isTeamAdmin = systemRole === 'TEAM_ADMIN'
+  const canWrite = isAdmin || isTeamAdmin                          // ekle/düzenle/sil butonu (takım-kapsamlı)
+  const myTeam = teamId != null ? String(teamId) : null
+  const isOwnTeam = (m) => myTeam != null && String(m.team_id) === myTeam
+  const canManageRow = (m) => isAdmin || isOwnTeam(m)              // düzenle + kontrol (otomatik :443/team_id=null → yalnız admin)
+  const canDeleteRow = (m) => isAdmin || (isTeamAdmin && isOwnTeam(m))
   const [monitors, setMonitors] = useState([])
   const [loading, setLoading] = useState(true)
+  const [teams, setTeams] = useState([])
   const [selected, setSelected] = useState(null)
   const [history, setHistory] = useState([])
   const [historyLoading, setHistoryLoading] = useState(false)
   const [rangeDays, setRangeDays] = useState(1)
   const [summary, setSummary] = useState({ total: 0, down: 0 })
   const [modal, setModal] = useState(null)
-  const [form, setForm] = useState({})
+  const [form, setForm] = useState(emptyForm)
   const [saving, setSaving] = useState(false)
+  const [saveError, setSaveError] = useState(null)
   const [checking, setChecking] = useState(null)
   const [search, setSearch] = useState('')
   const [teamFilter, setTeamFilter] = useState('all')
@@ -51,6 +61,15 @@ export default function PortMonitorPage({ systemRole }) {
     return () => clearInterval(countdownRef.current)
   }, [])
 
+  // Takım atama seçici yalnız admin'e — takımları bir kez yükle.
+  useEffect(() => {
+    if (!isAdmin) return
+    api.admin.getTeams().then(r => { if (r?.success) setTeams(r.data || []) })
+  }, [isAdmin])
+
+  // Modal her açıldığında önceki kaydetme hatasını temizle.
+  useEffect(() => { setSaveError(null) }, [modal])
+
   async function loadHistory(id, days = rangeDays) {
     setHistoryLoading(true)
     const res = await api.monitoring.getPortHistory(id, { days })
@@ -71,18 +90,41 @@ export default function PortMonitorPage({ systemRole }) {
 
   function closeModal() { setSelected(null); setHistory([]) }
 
+  function openNew() {
+    setForm({ ...emptyForm, teamId: isAdmin ? '' : (myTeam ?? '') })
+    setModal('new')
+  }
   function openEdit(m) {
-    setForm({ intervalSeconds: m.interval_seconds, timeoutMs: m.timeout_ms })
+    setForm({ name: m.name || '', host: m.host || '', port: m.port ?? '', protocol: m.protocol || 'TCP',
+      teamId: m.team_id != null ? String(m.team_id) : '', groupName: m.group_name || '',
+      intervalSeconds: m.interval_seconds ?? 60, timeoutMs: m.timeout_ms ?? 5000, active: m.active !== false })
     setModal(m)
   }
   function closeEdit() { setModal(null) }
 
   async function save() {
-    setSaving(true)
-    await api.monitoring.updatePortMonitor(modal.id, form)
-    await load()
+    if (!form.host.trim() || !form.port) { setSaveError(t('port.hostRequired')); return }
+    setSaving(true); setSaveError(null)
+    const payload = {
+      name: (form.name || form.host).trim(), host: form.host.trim(), port: Number(form.port),
+      protocol: form.protocol?.trim() || 'TCP',
+      teamId: form.teamId === '' ? null : Number(form.teamId), groupName: form.groupName?.trim() || null,
+      intervalSeconds: Number(form.intervalSeconds), timeoutMs: Number(form.timeoutMs), active: form.active,
+    }
+    const res = modal === 'new'
+      ? await api.monitoring.createPortMonitor(payload)
+      : await api.monitoring.updatePortMonitor(modal.id, payload)
     setSaving(false)
-    closeEdit()
+    if (!res?.success) { setSaveError(res?.error || t('port.saveError')); return }
+    await load(); closeEdit()
+  }
+
+  async function del() {
+    if (!modal || modal === 'new') return
+    if (!window.confirm(t('port.deleteConfirm'))) return
+    const res = await api.monitoring.deletePortMonitor(modal.id)
+    if (!res?.success) { setSaveError(res?.error || t('port.saveError')); return }
+    await load(); closeEdit()
   }
 
   async function checkNow(m) {
@@ -106,6 +148,13 @@ export default function PortMonitorPage({ systemRole }) {
     return opts
   })()
   const hasTeamOptions = teamOptions.some(o => o.value !== 'all' && o.value !== '__none__')
+
+  // Modal seçicileri: takım (admin → tüm takımlar) + grup (mevcut gruplardan, yeni grup oluşturulabilir).
+  const teamSelectOptions = useMemo(() => [{ value: '', label: t('app.noTeam') },
+    ...teams.map(tm => ({ value: String(tm.id), label: tm.name }))], [teams, t])
+  const groupNames = useMemo(
+    () => [...new Set(monitors.map(m => m.group_name).filter(Boolean))].sort((a, b) => a.localeCompare(b)), [monitors])
+  const groupSelectOptions = useMemo(() => groupNames.map(g => ({ value: g, label: g })), [groupNames])
 
   const displayMonitors = monitors.filter(m => {
     if (teamFilter !== 'all') {
@@ -141,6 +190,11 @@ export default function PortMonitorPage({ systemRole }) {
           <button className="btn btn-sm upt-refresh-btn" onClick={load}>
             <RefreshCw size={14} />{t('port.refresh')}
           </button>
+          {canWrite && (
+            <button className="btn btn-sm btn-primary" onClick={openNew}>
+              <Plus size={14} />{t('port.addMonitor')}
+            </button>
+          )}
         </div>
       </div>
 
@@ -185,12 +239,12 @@ export default function PortMonitorPage({ systemRole }) {
                   <td className="mon-cell-num">{m.response_ms != null ? `${m.response_ms}ms` : '—'}</td>
                   <td className="mon-cell-time">{m.checked_at ? formatDate(m.checked_at) : '—'}</td>
                   <td className="mon-cell-actions" onClick={e => e.stopPropagation()}>
-                    {isAdmin && (
+                    {canManageRow(m) && (
                       <button className="btn btn-sm mon-btn-check" disabled={checking === m.id} onClick={() => checkNow(m)} title={t('port.check')}>
                         <Play size={12} />
                       </button>
                     )}
-                    {isAdmin && (
+                    {canManageRow(m) && (
                       <button className="btn btn-sm mon-btn-edit" onClick={() => openEdit(m)} title={t('port.edit')}>
                         <Pencil size={12} />
                       </button>
@@ -309,39 +363,51 @@ export default function PortMonitorPage({ systemRole }) {
         document.body
       )}
 
-      {/* ── Edit Modal ── */}
+      {/* ── Create / Edit Modal ── (overlay tıklamada KAPANMAZ — veri kaybı önlenir; yalnız İptal/Kaydet) */}
       {modal && createPortal(
-        <div className="modal-overlay" onClick={closeEdit}>
-          <div className="modal-box" onClick={e => e.stopPropagation()} style={{ maxWidth: 420 }}>
+        <div className="modal-overlay">
+          <div className="modal-box" onClick={e => e.stopPropagation()} style={{ maxWidth: 640, width: '92vw', maxHeight: '90vh', overflowY: 'auto' }}>
             <div className="modal-icon-hdr modal-icon-hdr--port">
               <div className="modal-icon-hdr-badge"><Plug size={20} /></div>
-              <h3>{t('port.modalEdit')}</h3>
+              <h3>{modal === 'new' ? t('port.modalAdd') : t('port.modalEdit')}</h3>
             </div>
             <div className="form-grid">
-              <label className="full-width">
-                {t('port.host')}
-                <input value={`${modal.host}:${modal.port}`} readOnly disabled className="mon-readonly-field" />
-              </label>
-              <label className="full-width">
-                {t('port.interval')}
-                <select value={form.intervalSeconds}
-                  onChange={e => setForm(f => ({ ...f, intervalSeconds: Number(e.target.value) }))}>
-                  {INTERVALS.map(opt => (
-                    <option key={opt.value} value={opt.value}>{t(opt.labelKey)}</option>
-                  ))}
-                </select>
-              </label>
-              <label className="full-width">
-                {t('port.timeout')}
-                <input type="number" value={form.timeoutMs}
-                  onChange={e => setForm(f => ({ ...f, timeoutMs: Number(e.target.value) }))} />
-              </label>
+              <label><span>{t('port.host')} <span className="req-star">*</span></span>
+                <input value={form.host} placeholder="1.2.3.4 / host.example.com"
+                  onChange={e => setForm(f => ({ ...f, host: e.target.value }))} /></label>
+              <label><span>{t('port.port')} <span className="req-star">*</span></span>
+                <input type="number" min="1" max="65535" value={form.port}
+                  onChange={e => setForm(f => ({ ...f, port: e.target.value }))} /></label>
+              <label><span>{t('port.name')}</span>
+                <input value={form.name} placeholder={form.host}
+                  onChange={e => setForm(f => ({ ...f, name: e.target.value }))} /></label>
+              <label><span>{t('port.protocol')}</span>
+                <input value={form.protocol} placeholder="TCP"
+                  onChange={e => setForm(f => ({ ...f, protocol: e.target.value }))} /></label>
+              <label><span>{t('port.team')}</span>
+                {isAdmin
+                  ? <SearchableSelect value={form.teamId} onChange={v => setForm(f => ({ ...f, teamId: v }))} options={teamSelectOptions} searchThreshold={2} />
+                  : <input value={teamName || t('app.noTeam')} disabled />}</label>
+              <label><span>{t('port.group')}</span>
+                <SearchableSelect value={form.groupName} onChange={v => setForm(f => ({ ...f, groupName: v }))}
+                  options={[{ value: '', label: t('port.noGroup') }, ...groupSelectOptions]}
+                  creatable onCreate={() => {}} searchThreshold={2} placeholder={t('port.noGroup')} /></label>
+              <label><span>{t('port.interval')}</span>
+                <select value={form.intervalSeconds} onChange={e => setForm(f => ({ ...f, intervalSeconds: Number(e.target.value) }))}>
+                  {INTERVALS.map(o => <option key={o.value} value={o.value}>{t(o.labelKey)}</option>)}
+                </select></label>
+              <label><span>{t('port.timeout')}</span>
+                <input type="number" value={form.timeoutMs} onChange={e => setForm(f => ({ ...f, timeoutMs: Number(e.target.value) }))} /></label>
+              <label className="checkbox-label">
+                <input type="checkbox" checked={form.active} onChange={e => setForm(f => ({ ...f, active: e.target.checked }))} />{t('port.active')}</label>
             </div>
+            {saveError && <div className="mon-modal-error">{saveError}</div>}
             <div className="modal-actions">
+              {modal !== 'new' && canDeleteRow(modal) && (
+                <button className="btn btn-danger" style={{ marginRight: 'auto' }} onClick={del}><Trash2 size={14} />{t('port.delete')}</button>
+              )}
               <button className="btn btn-secondary" onClick={closeEdit}>{t('port.cancel')}</button>
-              <button className="btn btn-primary" onClick={save} disabled={saving}>
-                {saving ? '...' : t('port.save')}
-              </button>
+              <button className="btn btn-primary" onClick={save} disabled={saving || !form.host.trim() || !form.port}>{saving ? '...' : t('port.save')}</button>
             </div>
           </div>
         </div>,

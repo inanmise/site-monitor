@@ -445,58 +445,75 @@ public class MonitoringController {
                 .collect(Collectors.toMap(PortCheck::getMonitorId, pc -> pc, (a, b) -> a));
 
         Map<String, String> teamMap = certificateService.domainTeamNameMap();
+        Map<Long, String> teamById = teamNameMap();
         List<Map<String, Object>> result = new ArrayList<>();
         for (CertificateInventory inv : inventory) {
             int invPort = inv.getPort() != null ? inv.getPort() : 443;
             PortMonitor monitor = monitorByKey.get(inv.getDomain() + ":" + invPort);
             PortCheck latest = monitor.getId() != null ? latestByMonitor.get(monitor.getId()) : null;
-            result.add(enrichPort(monitor, latest, teamMap));
+            result.add(enrichPort(monitor, latest, teamMap, teamById));
         }
         return ok(result);
     }
 
     @PostMapping("/port")
     public ResponseEntity<Map<String, Object>> createPort(@RequestBody Map<String, Object> body, HttpSession session) {
-        requireAdmin(session);
         permissionService.require(session, "monitoring.crud", "edit");
+        if (blank(body.get("host"))) return badRequest("host zorunlu");
+        if (!(body.get("port") instanceof Number)) return badRequest("port zorunlu");
+        String host = body.get("host").toString().trim();
+        int port = ((Number) body.get("port")).intValue();
+        if (port < 1 || port > 65535) return badRequest("port 1-65535 aralığında olmalı");
+        // Aynı host:port zaten AKTİF izleniyorsa tekrar ekleme (otomatik :443 kayıtlarıyla çakışmayı da önler).
+        if (portMonitorRepo.findFirstByHostAndPortOrderByIdAsc(host, port)
+                .filter(ex -> Boolean.TRUE.equals(ex.getActive())).isPresent())
+            return badRequest("Bu host:port zaten izleniyor");
+        Long teamId = resolveWriteTeam(session, body);
+        if (teamId == null && !SessionScope.isGlobalAdmin(session))
+            return badRequest("Bir takıma atanmamışsınız; izleme oluşturulamıyor");
         String now = ISO.format(Instant.now());
         PortMonitor m = new PortMonitor();
-        m.setName((String) body.get("name"));
-        m.setHost((String) body.get("host"));
-        m.setPort(((Number) body.get("port")).intValue());
-        m.setProtocol(body.getOrDefault("protocol", "TCP").toString());
+        m.setName(blank(body.get("name")) ? host : body.get("name").toString().trim());
+        m.setHost(host);
+        m.setPort(port);
+        m.setProtocol(blank(body.get("protocol")) ? "TCP" : body.get("protocol").toString().trim());
         m.setActive(true);
+        m.setTeamId(teamId);
+        if (body.containsKey("groupName")) m.setGroupName(blank(body.get("groupName")) ? null : body.get("groupName").toString().trim());
         if (body.get("intervalSeconds") != null) m.setIntervalSeconds(((Number) body.get("intervalSeconds")).intValue());
         if (body.get("timeoutMs")       != null) m.setTimeoutMs(((Number) body.get("timeoutMs")).intValue());
         m.setCreatedAt(now);
         m.setUpdatedAt(now);
         PortMonitor saved = portMonitorRepo.save(m);
-        return ok(enrichPort(saved, null, certificateService.domainTeamNameMap()));
+        return ok(enrichPort(saved, null, certificateService.domainTeamNameMap(), teamNameMap()));
     }
 
     @PutMapping("/port/{id}")
     public ResponseEntity<Map<String, Object>> updatePort(@PathVariable Long id, @RequestBody Map<String, Object> body, HttpSession session) {
-        requireAdmin(session);
         permissionService.require(session, "monitoring.crud", "edit");
         return portMonitorRepo.findById(id).map(m -> {
+            if (!canOperateTeam(session, m.getTeamId())) return forbidden("Bu izleme üzerinde yetkiniz yok");
             if (body.get("name")            != null) m.setName((String) body.get("name"));
-            if (body.get("host")            != null) m.setHost((String) body.get("host"));
+            if (body.get("host")            != null) m.setHost(((String) body.get("host")).trim());
             if (body.get("port")            != null) m.setPort(((Number) body.get("port")).intValue());
             if (body.get("protocol")        != null) m.setProtocol((String) body.get("protocol"));
             if (body.get("active")          != null) m.setActive((Boolean) body.get("active"));
+            if (body.containsKey("teamId"))    m.setTeamId(resolveTeamChange(session, m.getTeamId(), body.get("teamId")));
+            if (body.containsKey("groupName")) m.setGroupName(blank(body.get("groupName")) ? null : body.get("groupName").toString().trim());
             if (body.get("intervalSeconds") != null) m.setIntervalSeconds(((Number) body.get("intervalSeconds")).intValue());
             if (body.get("timeoutMs")       != null) m.setTimeoutMs(((Number) body.get("timeoutMs")).intValue());
             m.setUpdatedAt(ISO.format(Instant.now()));
             PortMonitor saved = portMonitorRepo.save(m);
-            return ok(enrichPort(saved, portCheckRepo.findTopByMonitorIdOrderByCheckedAtDesc(id).orElse(null), certificateService.domainTeamNameMap()));
+            return ok(enrichPort(saved, portCheckRepo.findTopByMonitorIdOrderByCheckedAtDesc(id).orElse(null),
+                    certificateService.domainTeamNameMap(), teamNameMap()));
         }).orElse(notFound("Port monitor not found"));
     }
 
     @DeleteMapping("/port/{id}")
     public ResponseEntity<Map<String, Object>> deletePort(@PathVariable Long id, HttpSession session) {
-        requireAdmin(session);
         permissionService.require(session, "monitoring.crud", "edit");
         return portMonitorRepo.findById(id).map(m -> {
+            if (!canOperateTeam(session, m.getTeamId())) return forbidden("Bu izleme üzerinde yetkiniz yok");
             m.setActive(false);
             m.setUpdatedAt(ISO.format(Instant.now()));
             portMonitorRepo.save(m);
@@ -531,9 +548,9 @@ public class MonitoringController {
 
     @PostMapping("/port/{id}/check")
     public ResponseEntity<Map<String, Object>> triggerPort(@PathVariable Long id, HttpSession session) {
-        requireAdmin(session);
         permissionService.require(session, "monitoring.trigger", "execute");
         return portMonitorRepo.findById(id).map(m -> {
+            if (!canOperateTeam(session, m.getTeamId())) return forbidden("Bu izleme üzerinde yetkiniz yok");
             Map<String, Object> r = portChecker.check(m.getHost(), m.getPort(), m.getTimeoutMs());
             String now = ISO.format(Instant.now());
             PortCheck check = new PortCheck();
@@ -543,16 +560,19 @@ public class MonitoringController {
             check.setError((String) r.get("error"));
             check.setCheckedAt(now);
             portCheckRepo.save(check);
-            return ok(enrichPort(m, check, certificateService.domainTeamNameMap()));
+            return ok(enrichPort(m, check, certificateService.domainTeamNameMap(), teamNameMap()));
         }).orElse(notFound("Port monitor not found"));
     }
 
-    private Map<String, Object> enrichPort(PortMonitor m, PortCheck latest, Map<String, String> teamMap) {
+    private Map<String, Object> enrichPort(PortMonitor m, PortCheck latest, Map<String, String> teamMap, Map<Long, String> teamById) {
         Map<String, Object> item = new LinkedHashMap<>();
         item.put("id",              m.getId());
         item.put("name",            m.getName());
         item.put("host",            m.getHost());
-        item.put("team_name",       teamMap.get(m.getHost()));
+        // Manuel eklenen kayıt takımı teamId'den; otomatik üretilen (teamId=null) kayıt domain→takım haritasından.
+        item.put("team_id",         m.getTeamId());
+        item.put("team_name",       m.getTeamId() != null ? teamById.get(m.getTeamId()) : teamMap.get(m.getHost()));
+        item.put("group_name",      m.getGroupName());
         item.put("port",            m.getPort());
         item.put("protocol",        m.getProtocol());
         item.put("active",          m.getActive());

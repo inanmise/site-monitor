@@ -576,7 +576,7 @@ public class EmailNotificationService {
             case "REVOKED"      -> "İptal Edildi";
             case "MISMATCH"     -> "Dağıtım Eksik";
             case "CHAIN_BROKEN" -> "Zincir Sorunu";
-            default             -> "Son Kullanma Tarihi";
+            default             -> "Sertifika Süre Bitişi";
         };
         String typeIcon = switch (alertType != null ? alertType : "") {
             case "REVOKED"      -> "🚫";
@@ -605,22 +605,23 @@ public class EmailNotificationService {
                               : daysRemaining <= 15 ? "En kısa sürede yenilenmeli"
                               : "Yenileme planlanmalı";
 
-            expiryHero = "<table width='100%' cellpadding='0' cellspacing='0' border='0'"
-                + " style='margin:20px 0;border-radius:14px;overflow:hidden;border:2px solid " + dc + "22'>"
+            expiryHero = "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0'"
+                + " style='margin:20px 0;border-radius:14px;overflow:hidden;border:2px solid " + dc + "'>"
                 + "<tr>"
                 + "<td class='em-hero-l' align='center' valign='middle' width='38%'"
-                + " style='background:" + dc + ";padding:22px 14px'>"
+                + " bgcolor='" + dc + "' style='background-color:" + dc + ";padding:22px 14px'>"
                 + "<div style='color:#fff;font-size:64px;font-weight:900;line-height:1;letter-spacing:-2px'>" + daysRemaining + "</div>"
                 + "<div style='color:#fff;font-size:14px;font-weight:800;margin-top:4px;letter-spacing:.06em'>GÜN KALDI</div>"
-                + "<div style='color:rgba(255,255,255,.85);font-size:12px;margin-top:8px;padding:0 6px'>" + urgencyMsg + "</div>"
+                + "<div style='color:#ffffff;font-size:12px;margin-top:8px;padding:0 6px'>" + urgencyMsg + "</div>"
                 + "</td>"
-                + "<td class='em-hero-r' valign='middle' style='background:" + dc + "0d;padding:20px 22px'>"
-                + "<div style='font-size:11px;font-weight:700;letter-spacing:.1em;color:#94a3b8;text-transform:uppercase;margin-bottom:10px'>Son Kullanma Tarihi</div>"
+                + "<td class='em-hero-r' valign='middle' bgcolor='#f8fafc' style='background-color:#f8fafc;padding:20px 22px'>"
+                + "<div style='font-size:11px;font-weight:700;letter-spacing:.1em;color:#94a3b8;text-transform:uppercase;margin-bottom:10px'>Sertifikanın Geçerlilik Bitiş Tarihi</div>"
                 + "<div style='font-size:24px;font-weight:900;color:" + dc + ";letter-spacing:-.5px'>" + formatIso(notAfter) + "</div>"
                 + "<div style='font-size:13px;color:#475569;margin-top:6px;line-height:1.6'>" + formatIsoFull(notAfter) + "</div>"
-                + "<div style='margin-top:12px;padding:6px 12px;background:" + dc + ";color:#fff;"
-                + "border-radius:6px;font-size:12px;font-weight:800;display:inline-block'>"
-                + "📅 " + daysRemaining + " gün sonra sona eriyor</div>"
+                + "<table role='presentation' cellpadding='0' cellspacing='0' border='0' style='margin-top:12px'><tr>"
+                + "<td bgcolor='" + dc + "' style='background-color:" + dc + ";border-radius:6px;padding:6px 12px;font-size:12px;font-weight:800;color:#fff'>"
+                + "📅 " + daysRemaining + " gün sonra geçerliliği sona eriyor</td>"
+                + "</tr></table>"
                 + "</td>"
                 + "</tr></table>";
         } else if (!"EXPIRY".equals(alertType)) {
@@ -651,11 +652,11 @@ public class EmailNotificationService {
             "<table width='100%' cellpadding='0' cellspacing='0' border='0' style='margin-bottom:16px'><tr>"
             + "<td class='em-col-l' valign='top' width='55%' style='width:55%;padding-right:8px'>"
             + "<table width='100%' cellpadding='0' cellspacing='0' border='0' style='border:1px solid #e2e8f0;border-radius:10px;overflow:hidden'>"
-            + "<tr><td style='background:#1e293b;padding:9px 14px;font-size:11px;font-weight:700;letter-spacing:.1em;color:#94a3b8'>SERTİFİKA BİLGİLERİ</td></tr>"
+            + "<tr><td bgcolor='#1e293b' style='background-color:#1e293b;padding:9px 14px;font-size:11px;font-weight:700;letter-spacing:.1em;color:#94a3b8'>SERTİFİKA BİLGİLERİ</td></tr>"
             + certRows + "</table></td>"
             + "<td class='em-col-r' valign='top' width='45%' style='width:45%'>"
             + "<table width='100%' cellpadding='0' cellspacing='0' border='0' style='border:1px solid #e2e8f0;border-radius:10px;overflow:hidden'>"
-            + "<tr><td style='background:#334155;padding:9px 14px;font-size:11px;font-weight:700;letter-spacing:.1em;color:#94a3b8'>DURUM ÖZETİ</td></tr>"
+            + "<tr><td bgcolor='#334155' style='background-color:#334155;padding:9px 14px;font-size:11px;font-weight:700;letter-spacing:.1em;color:#94a3b8'>DURUM ÖZETİ</td></tr>"
             + statusRows + "</table></td>"
             + "</tr></table>";
 
@@ -687,45 +688,47 @@ public class EmailNotificationService {
             + "<head>"
             + "<meta charset='UTF-8'>"
             + "<meta name='viewport' content='width=device-width,initial-scale=1,maximum-scale=1'>"
+            + "<meta name='color-scheme' content='light only'>"
+            + "<meta name='supported-color-schemes' content='light'>"
+            + "<!--[if mso]><style>*{font-family:Arial,Helvetica,sans-serif !important}</style><![endif]-->"
             + css
             + "</head>"
-            + "<body style='margin:0;padding:0;background:#f1f5f9;font-family:\"Segoe UI\",Tahoma,Arial,sans-serif'>"
+            + "<body style='margin:0;padding:0;background-color:#f1f5f9;font-family:\"Segoe UI\",Tahoma,Arial,sans-serif'>"
 
-            // Outer centering table (fluid)
-            + "<table class='em-wrap' width='100%' cellpadding='0' cellspacing='0' border='0'"
-            + " style='background:#f1f5f9;padding:24px 10px'>"
-            + "<tr><td align='center'>"
+            // Dış ortalama tablosu (Outlook-safe: bgcolor + mso)
+            + "<table role='presentation' class='em-wrap' width='100%' cellpadding='0' cellspacing='0' border='0'"
+            + " bgcolor='#f1f5f9' style='background-color:#f1f5f9;mso-table-lspace:0;mso-table-rspace:0'>"
+            + "<tr><td align='center' style='padding:24px 10px'>"
 
-            // Card container — max 640px, collapses to full width on mobile
-            + "<table class='em-card' width='640' cellpadding='0' cellspacing='0' border='0'"
-            + " style='max-width:640px;width:100%;border-radius:14px;overflow:hidden;"
+            // Kart — max 640px, mobilde tam genişlik
+            + "<table role='presentation' class='em-card' width='640' cellpadding='0' cellspacing='0' border='0' bgcolor='#ffffff'"
+            + " style='width:640px;max-width:640px;background-color:#ffffff;border-radius:14px;overflow:hidden;"
             + "box-shadow:0 8px 32px rgba(0,0,0,.15)'>"
-            + "<tr><td style='padding:0'>"
 
-            // ── Top bar ──
-            + "<div style='background:" + accentColor + ";padding:22px 24px'>"
-            + "<div style='color:rgba(255,255,255,.65);font-size:11px;font-weight:700;letter-spacing:.12em'>CertMonitor — Sertifika İzleme</div>"
+            // ── Top bar — bgcolor'lı <td> ──
+            + "<tr><td bgcolor='" + accentColor + "' style='background-color:" + accentColor + ";padding:22px 24px'>"
+            + "<div style='color:#ffffff;font-size:11px;font-weight:700;letter-spacing:.12em'>CertMonitor — Sertifika İzleme</div>"
             + "<div class='em-domain' style='color:#fff;font-size:22px;font-weight:900;"
             + "margin-top:10px;word-break:break-all;line-height:1.25'>🌐 " + escHtml(domain) + "</div>"
-            + "<div style='color:rgba(255,255,255,.88);font-size:15px;font-weight:700;"
-            + "margin-top:8px;letter-spacing:.02em'>" + levelTr + " &nbsp;·&nbsp; " + typeTr + "</div>"
-            + "</div>"
+            + "<div style='color:#ffffff;font-size:15px;font-weight:700;"
+            + "margin-top:8px;letter-spacing:.02em'>" + levelTr + " &nbsp;&#183;&nbsp; " + typeTr + "</div>"
+            + "</td></tr>"
 
             // ── Body ──
-            + "<div class='em-body' style='background:#fff;padding:22px 24px'>"
+            + "<tr><td bgcolor='#ffffff' style='background-color:#ffffff;padding:22px 24px'>"
             + expiryHero
             + twoColSection
 
-            // Alert detail
-            + "<div style='background:#fffbeb;border-left:4px solid " + accentColor + ";"
-            + "border-radius:0 8px 8px 0;padding:14px 18px;color:#1c1917;"
-            + "font-size:14px;line-height:1.7;margin-bottom:20px'>"
+            // Alarm detayı (sol aksan-şeritli tablo — border-left div değil)
+            + "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' style='border-radius:10px;overflow:hidden;margin-bottom:20px'><tr>"
+            + "<td width='5' bgcolor='" + accentColor + "' style='background-color:" + accentColor + ";width:5px;font-size:0;line-height:0'>&nbsp;</td>"
+            + "<td bgcolor='#fffbeb' style='background-color:#fffbeb;padding:14px 18px;color:#1c1917;font-size:14px;line-height:1.7'>"
             + "<div style='font-size:11px;font-weight:700;letter-spacing:.08em;color:" + accentColor + ";margin-bottom:6px'>ALARM DETAYI</div>"
             + escHtml(message)
-            + "</div>"
+            + "</td></tr></table>"
 
             // Footer
-            + "<table width='100%' cellpadding='0' cellspacing='0'><tr>"
+            + "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0'><tr>"
             + "<td style='border-top:1px solid #f1f5f9;padding-top:12px;font-size:11px;color:#94a3b8'>CertMonitor</td>"
             + "<td align='right' style='border-top:1px solid #f1f5f9;padding-top:12px;font-size:11px;color:#94a3b8'>"
             + (!checkedAtDisplay.equals("—")
@@ -733,8 +736,9 @@ public class EmailNotificationService {
             + " Bildirim: " + generatedAt
             + "</td></tr></table>"
 
-            + "</div>"  // em-body
-            + "</td></tr></table>"  // em-card
+            + "</td></tr>"
+
+            + "</table>"  // em-card
             + "</td></tr></table>"  // em-wrap
             + "</body></html>";
     }
@@ -756,11 +760,12 @@ public class EmailNotificationService {
     private String statusRow2col(String label, String value) {
         boolean ok      = value.startsWith("✓");
         boolean neutral = value.startsWith("~") || value.startsWith("—");
-        String bg         = ok || neutral ? "" : "background:#fef2f2";
+        String bgAttr  = ok || neutral ? "" : " bgcolor='#fef2f2'";
+        String bgStyle = ok || neutral ? "" : "background-color:#fef2f2;";
         String valueColor = ok ? "#15803d" : neutral ? "#6b7280" : "#dc2626";
-        return "<tr style='border-top:1px solid #e2e8f0;" + bg + "'>"
-            + "<td width='1%' style='padding:9px 13px;font-size:12px;color:#64748b;white-space:nowrap'>" + label + "</td>"
-            + "<td style='padding:9px 13px;font-size:13px;font-weight:700;color:" + valueColor + "'>" + value + "</td>"
+        return "<tr style='border-top:1px solid #e2e8f0'>"
+            + "<td width='1%'" + bgAttr + " style='" + bgStyle + "padding:9px 13px;font-size:12px;color:#64748b;white-space:nowrap'>" + label + "</td>"
+            + "<td" + bgAttr + " style='" + bgStyle + "padding:9px 13px;font-size:13px;font-weight:700;color:" + valueColor + "'>" + value + "</td>"
             + "</tr>";
     }
 
@@ -943,14 +948,15 @@ public class EmailNotificationService {
             + "<tr><td align='center'>"
             + "<table class='em-card' width='600' cellpadding='0' cellspacing='0' border='0'"
             + " style='max-width:600px;width:100%;background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,.12)'>"
-            + "<tr><td style='background:" + color + ";padding:20px 24px;color:#fff'>"
-            + "<div style='font-size:11px;font-weight:700;letter-spacing:.1em;opacity:.8'>CertMonitor — Sertifika İzleme</div>"
+            + "<tr><td bgcolor='" + color + "' style='background-color:" + color + ";padding:20px 24px;color:#fff'>"
+            + "<div style='font-size:11px;font-weight:700;letter-spacing:.1em;color:#ffffff'>CertMonitor — Sertifika İzleme</div>"
             + "<div style='font-size:18px;font-weight:800;margin-top:4px;word-break:break-word'>" + escHtml(subject) + "</div>"
             + "</td></tr>"
             + "<tr><td class='em-body' style='padding:24px'>"
-            + "<div style='background:#fffbeb;border-left:4px solid " + color + ";"
-            + "border-radius:0 8px 8px 0;padding:14px 16px;color:#1c1917;font-size:14px;line-height:1.7'>"
-            + escHtml(message) + "</div>"
+            + "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' style='border-radius:0 8px 8px 0;overflow:hidden'><tr>"
+            + "<td width='4' bgcolor='" + color + "' style='background-color:" + color + ";width:4px;font-size:0;line-height:0'>&nbsp;</td>"
+            + "<td bgcolor='#fffbeb' style='background-color:#fffbeb;padding:14px 16px;color:#1c1917;font-size:14px;line-height:1.7'>"
+            + escHtml(message) + "</td></tr></table>"
             + cta
             + "<div style='text-align:center;color:#94a3b8;font-size:11px;margin-top:20px;"
             + "padding-top:16px;border-top:1px solid #f1f5f9'>CertMonitor &nbsp;·&nbsp; " + now + "</div>"
@@ -979,7 +985,7 @@ public class EmailNotificationService {
             case "REVOKED"      -> "İptal";
             case "MISMATCH"     -> "Dağıtım Eksik";
             case "CHAIN_BROKEN" -> "Zincir Sorunu";
-            default             -> "Son Kullanma";
+            default             -> "Sertifika Süre Bitişi";
         };
 
         String notAfter      = ctxStr(certContext, "not_after");
@@ -1173,22 +1179,23 @@ public class EmailNotificationService {
                 ? (List<Map<String, Object>>) l : List.of();
 
         // ── Hero — kesinti bildirimi ──
-        String hero = "<table width='100%' cellpadding='0' cellspacing='0' border='0'"
-            + " style='margin:20px 0;border-radius:14px;overflow:hidden;border:2px solid " + red + "22'>"
+        String hero = "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0'"
+            + " style='margin:20px 0;border-radius:14px;overflow:hidden;border:2px solid #fecaca'>"
             + "<tr>"
             + "<td class='em-hero-l' align='center' valign='middle' width='38%'"
-            + " style='background:" + red + ";padding:22px 14px'>"
+            + " bgcolor='" + red + "' style='background-color:" + red + ";padding:22px 14px'>"
             + "<div style='color:#fff;font-size:52px;line-height:1'>🔴</div>"
             + "<div style='color:#fff;font-size:15px;font-weight:800;margin-top:8px;letter-spacing:.06em'>" + heroTitle + "</div>"
-            + "<div style='color:rgba(255,255,255,.85);font-size:12px;margin-top:8px;padding:0 6px'>⚠ Acil müdahale gerekli</div>"
+            + "<div style='color:#ffe4e6;font-size:12px;margin-top:8px;padding:0 6px'>⚠ Acil müdahale gerekli</div>"
             + "</td>"
-            + "<td class='em-hero-r' valign='middle' style='background:" + red + "0d;padding:20px 22px'>"
+            + "<td class='em-hero-r' valign='middle' bgcolor='#fef2f2' style='background-color:#fef2f2;padding:20px 22px'>"
             + "<div style='font-size:11px;font-weight:700;letter-spacing:.1em;color:#94a3b8;text-transform:uppercase;margin-bottom:10px'>İlk Hata Zamanı</div>"
             + "<div style='font-size:24px;font-weight:900;color:" + red + ";letter-spacing:-.5px'>" + formatIso(firstFailureAt) + "</div>"
             + "<div style='font-size:13px;color:#475569;margin-top:6px;line-height:1.6'>" + formatIsoFull(firstFailureAt) + "</div>"
-            + "<div style='margin-top:12px;padding:6px 12px;background:" + red + ";color:#fff;"
-            + "border-radius:6px;font-size:12px;font-weight:800;display:inline-block'>"
-            + "🔁 " + attemptsLabel + " doğrulama denemesi " + delayLabel + "— tümü başarısız</div>"
+            + "<table role='presentation' cellpadding='0' cellspacing='0' border='0' style='margin-top:12px'><tr>"
+            + "<td bgcolor='" + red + "' style='background-color:" + red + ";border-radius:6px;padding:6px 12px;font-size:12px;font-weight:800;color:#fff'>"
+            + "🔁 " + attemptsLabel + " doğrulama denemesi " + delayLabel + "— tümü başarısız</td>"
+            + "</tr></table>"
             + "</td>"
             + "</tr></table>";
 
@@ -1225,11 +1232,11 @@ public class EmailNotificationService {
             "<table width='100%' cellpadding='0' cellspacing='0' border='0' style='margin-bottom:16px'><tr>"
             + "<td class='em-col-l' valign='top' width='55%' style='width:55%;padding-right:8px'>"
             + "<table width='100%' cellpadding='0' cellspacing='0' border='0' style='border:1px solid #e2e8f0;border-radius:10px;overflow:hidden'>"
-            + "<tr><td style='background:#1e293b;padding:9px 14px;font-size:11px;font-weight:700;letter-spacing:.1em;color:#94a3b8'>KESİNTİ BİLGİLERİ</td></tr>"
+            + "<tr><td bgcolor='#1e293b' style='background-color:#1e293b;padding:9px 14px;font-size:11px;font-weight:700;letter-spacing:.1em;color:#94a3b8'>KESİNTİ BİLGİLERİ</td></tr>"
             + outageRows + "</table></td>"
             + "<td class='em-col-r' valign='top' width='45%' style='width:45%'>"
             + "<table width='100%' cellpadding='0' cellspacing='0' border='0' style='border:1px solid #e2e8f0;border-radius:10px;overflow:hidden'>"
-            + "<tr><td style='background:#334155;padding:9px 14px;font-size:11px;font-weight:700;letter-spacing:.1em;color:#94a3b8'>DURUM ÖZETİ</td></tr>"
+            + "<tr><td bgcolor='#334155' style='background-color:#334155;padding:9px 14px;font-size:11px;font-weight:700;letter-spacing:.1em;color:#94a3b8'>DURUM ÖZETİ</td></tr>"
             + statusRows + "</table></td>"
             + "</tr></table>";
 
@@ -1250,37 +1257,41 @@ public class EmailNotificationService {
         return "<!DOCTYPE html><html lang='tr'>"
             + "<head><meta charset='UTF-8'>"
             + "<meta name='viewport' content='width=device-width,initial-scale=1,maximum-scale=1'>"
+            + "<meta name='color-scheme' content='light only'>"
+            + "<meta name='supported-color-schemes' content='light'>"
+            + "<!--[if mso]><style>*{font-family:Arial,Helvetica,sans-serif !important}</style><![endif]-->"
             + css + "</head>"
-            + "<body style='margin:0;padding:0;background:#f1f5f9;font-family:\"Segoe UI\",Tahoma,Arial,sans-serif'>"
+            + "<body style='margin:0;padding:0;background-color:#f1f5f9;font-family:\"Segoe UI\",Tahoma,Arial,sans-serif'>"
 
-            + "<table class='em-wrap' width='100%' cellpadding='0' cellspacing='0' border='0'"
-            + " style='background:#f1f5f9;padding:24px 10px'><tr><td align='center'>"
+            + "<table role='presentation' class='em-wrap' width='100%' cellpadding='0' cellspacing='0' border='0'"
+            + " bgcolor='#f1f5f9' style='background-color:#f1f5f9;mso-table-lspace:0;mso-table-rspace:0'>"
+            + "<tr><td align='center' style='padding:24px 10px'>"
 
-            + "<table class='em-card' width='640' cellpadding='0' cellspacing='0' border='0'"
-            + " style='max-width:640px;width:100%;border-radius:14px;overflow:hidden;"
-            + "box-shadow:0 8px 32px rgba(0,0,0,.15)'><tr><td style='padding:0'>"
+            + "<table role='presentation' class='em-card' width='640' cellpadding='0' cellspacing='0' border='0' bgcolor='#ffffff'"
+            + " style='width:640px;max-width:640px;background-color:#ffffff;border-radius:14px;overflow:hidden;"
+            + "box-shadow:0 8px 32px rgba(0,0,0,.15)'>"
 
-            // ── Top bar ──
-            + "<div style='background:" + red + ";padding:22px 24px'>"
-            + "<div style='color:rgba(255,255,255,.65);font-size:11px;font-weight:700;letter-spacing:.12em'>" + kicker + "</div>"
-            + "<div class='em-domain' style='color:#fff;font-size:22px;font-weight:900;"
+            // ── Top bar (kırmızı) — bgcolor'lı <td> ──
+            + "<tr><td bgcolor='" + red + "' style='background-color:" + red + ";padding:22px 24px'>"
+            + "<div style='color:#ffe4e6;font-size:11px;font-weight:700;letter-spacing:.12em'>" + kicker + "</div>"
+            + "<div class='em-domain' style='color:#ffffff;font-size:22px;font-weight:900;"
             + "margin-top:10px;word-break:break-all;line-height:1.25'>🌐 " + endpoint + "</div>"
-            + "<div style='color:rgba(255,255,255,.88);font-size:15px;font-weight:700;"
-            + "margin-top:8px;letter-spacing:.02em'>KRİTİK &nbsp;·&nbsp; " + typeTrLabel + "</div>"
-            + "</div>"
+            + "<div style='color:#ffe4e6;font-size:15px;font-weight:700;"
+            + "margin-top:8px;letter-spacing:.02em'>KRİTİK &nbsp;&#183;&nbsp; " + typeTrLabel + "</div>"
+            + "</td></tr>"
 
             // ── Body ──
-            + "<div class='em-body' style='background:#fff;padding:22px 24px'>"
+            + "<tr><td bgcolor='#ffffff' style='background-color:#ffffff;padding:22px 24px'>"
             + hero
             + twoColSection
 
-            // Alarm detayı
-            + "<div style='background:#fef2f2;border-left:4px solid " + red + ";"
-            + "border-radius:0 8px 8px 0;padding:14px 18px;color:#1c1917;"
-            + "font-size:14px;line-height:1.7;margin-bottom:14px'>"
+            // Alarm detayı (sol aksan-şeritli tablo — border-left div değil)
+            + "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' style='border-radius:10px;overflow:hidden;margin-bottom:14px'><tr>"
+            + "<td width='5' bgcolor='" + red + "' style='background-color:" + red + ";width:5px;font-size:0;line-height:0'>&nbsp;</td>"
+            + "<td bgcolor='#fef2f2' style='background-color:#fef2f2;padding:14px 18px;color:#1c1917;font-size:14px;line-height:1.7'>"
             + "<div style='font-size:11px;font-weight:700;letter-spacing:.08em;color:" + red + ";margin-bottom:6px'>ALARM DETAYI</div>"
             + escHtml(message)
-            + "</div>"
+            + "</td></tr></table>"
 
             // Otomatik kapanış notu
             + "<div style='font-size:12px;color:#64748b;line-height:1.6;margin-bottom:20px'>"
@@ -1289,15 +1300,16 @@ public class EmailNotificationService {
             + "</div>"
 
             // Footer
-            + "<table width='100%' cellpadding='0' cellspacing='0'><tr>"
+            + "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0'><tr>"
             + "<td style='border-top:1px solid #f1f5f9;padding-top:12px;font-size:11px;color:#94a3b8'>CertMonitor</td>"
             + "<td align='right' style='border-top:1px solid #f1f5f9;padding-top:12px;font-size:11px;color:#94a3b8'>"
             + "Bildirim: " + generatedAt
             + "</td></tr></table>"
 
-            + "</div>"
-            + "</td></tr></table>"
-            + "</td></tr></table>"
+            + "</td></tr>"
+
+            + "</table>"             // em-card
+            + "</td></tr></table>"   // dış sarmalayıcı
             + "</body></html>";
     }
 
@@ -1341,9 +1353,9 @@ public class EmailNotificationService {
             + "<td width='1%' style='padding:9px 13px;font-size:12px;color:#64748b;white-space:nowrap'>🔴 Seviye</td>"
             + "<td style='padding:9px 13px;font-size:14px;font-weight:700;color:" + levelColor + "'>" + levelTrLabel + "</td>"
             + "</tr>"
-            + "<tr style='border-top:1px solid #e2e8f0;background:#f0fdf4'>"
-            + "<td width='1%' style='padding:9px 13px;font-size:12px;color:#64748b;white-space:nowrap'>" + durationLabel + "</td>"
-            + "<td style='padding:9px 13px;font-size:14px;font-weight:800;color:" + green + "'>" + duration + "</td>"
+            + "<tr style='border-top:1px solid #e2e8f0'>"
+            + "<td width='1%' bgcolor='#f0fdf4' style='background-color:#f0fdf4;padding:9px 13px;font-size:12px;color:#64748b;white-space:nowrap'>" + durationLabel + "</td>"
+            + "<td bgcolor='#f0fdf4' style='background-color:#f0fdf4;padding:9px 13px;font-size:14px;font-weight:800;color:" + green + "'>" + duration + "</td>"
             + "</tr>";
 
         String twoColSection =
@@ -1351,13 +1363,13 @@ public class EmailNotificationService {
             + "<td class='em-col-l' valign='top' width='50%' style='width:50%;padding-right:8px'>"
             + "<table width='100%' cellpadding='0' cellspacing='0' border='0'"
             + " style='border:1px solid #bbf7d0;border-radius:10px;overflow:hidden'>"
-            + "<tr><td style='background:#15803d;padding:9px 14px;font-size:11px;font-weight:700;"
+            + "<tr><td bgcolor='#15803d' style='background-color:#15803d;padding:9px 14px;font-size:11px;font-weight:700;"
             + "letter-spacing:.1em;color:#dcfce7'>ÇÖZÜM BİLGİSİ</td></tr>"
             + resolverRows + "</table></td>"
             + "<td class='em-col-r' valign='top' width='50%' style='width:50%'>"
             + "<table width='100%' cellpadding='0' cellspacing='0' border='0'"
             + " style='border:1px solid #e2e8f0;border-radius:10px;overflow:hidden'>"
-            + "<tr><td style='background:#334155;padding:9px 14px;font-size:11px;font-weight:700;"
+            + "<tr><td bgcolor='#334155' style='background-color:#334155;padding:9px 14px;font-size:11px;font-weight:700;"
             + "letter-spacing:.1em;color:#94a3b8'>KESİNTİ DETAYI</td></tr>"
             + outageRows + "</table></td>"
             + "</tr></table>";
@@ -1376,65 +1388,67 @@ public class EmailNotificationService {
         return "<!DOCTYPE html><html lang='tr'>"
             + "<head><meta charset='UTF-8'>"
             + "<meta name='viewport' content='width=device-width,initial-scale=1,maximum-scale=1'>"
+            + "<meta name='color-scheme' content='light only'>"
+            + "<meta name='supported-color-schemes' content='light'>"
+            + "<!--[if mso]><style>*{font-family:Arial,Helvetica,sans-serif !important}</style><![endif]-->"
             + css + "</head>"
-            + "<body style='margin:0;padding:0;background:#f1f5f9;"
+            + "<body style='margin:0;padding:0;background-color:#f1f5f9;"
             + "font-family:\"Segoe UI\",Tahoma,Arial,sans-serif'>"
 
-            + "<table class='em-wrap' width='100%' cellpadding='0' cellspacing='0' border='0'"
-            + " style='background:#f1f5f9;padding:24px 10px'><tr><td align='center'>"
+            + "<table role='presentation' class='em-wrap' width='100%' cellpadding='0' cellspacing='0' border='0'"
+            + " bgcolor='#f1f5f9' style='background-color:#f1f5f9;mso-table-lspace:0;mso-table-rspace:0'>"
+            + "<tr><td align='center' style='padding:24px 10px'>"
 
-            + "<table class='em-card' width='640' cellpadding='0' cellspacing='0' border='0'"
-            + " style='max-width:640px;width:100%;border-radius:14px;overflow:hidden;"
-            + "box-shadow:0 8px 32px rgba(0,0,0,.15)'><tr><td style='padding:0'>"
+            + "<table role='presentation' class='em-card' width='640' cellpadding='0' cellspacing='0' border='0' bgcolor='#ffffff'"
+            + " style='width:640px;max-width:640px;background-color:#ffffff;border-radius:14px;overflow:hidden;"
+            + "box-shadow:0 8px 32px rgba(0,0,0,.15)'>"
 
-            // Top bar
-            + "<div style='background:" + green + ";padding:22px 24px'>"
-            + "<div style='color:rgba(255,255,255,.65);font-size:11px;font-weight:700;"
-            + "letter-spacing:.12em'>" + kicker + "</div>"
-            + "<div class='em-domain' style='color:#fff;font-size:22px;font-weight:900;"
-            + "margin-top:10px;word-break:break-all;line-height:1.25'>✅ " + escHtml(domain) + "</div>"
-            + "<div style='color:rgba(255,255,255,.88);font-size:15px;font-weight:700;"
-            + "margin-top:8px;letter-spacing:.02em'>" + heroLine + " &nbsp;·&nbsp; " + typeTrLabel + "</div>"
-            + "</div>"
+            // ── Top bar (yeşil) — bgcolor'lı <td> (Outlook-safe) ──
+            + "<tr><td bgcolor='" + green + "' style='background-color:" + green + ";padding:22px 24px'>"
+            + "<div style='color:#dcfce7;font-size:11px;font-weight:700;letter-spacing:.12em'>" + kicker + "</div>"
+            + "<div class='em-domain' style='color:#ffffff;font-size:22px;font-weight:900;"
+            + "margin-top:10px;word-break:break-all;line-height:1.25'>&#9989; " + escHtml(domain) + "</div>"
+            + "<div style='color:#eafff1;font-size:15px;font-weight:700;"
+            + "margin-top:8px;letter-spacing:.02em'>" + heroLine + " &nbsp;&#183;&nbsp; " + typeTrLabel + "</div>"
+            + "</td></tr>"
 
-            // Body
-            + "<div class='em-body' style='background:#fff;padding:22px 24px'>"
+            // ── Hero ✓ (daire = nested <td bgcolor>, div+border-radius değil) ──
+            + "<tr><td bgcolor='#ffffff' style='background-color:#ffffff;padding:22px 24px 6px'>"
+            + "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0'><tr><td align='center'>"
+            + "<table role='presentation' cellpadding='0' cellspacing='0' border='0' align='center'><tr>"
+            + "<td width='80' height='80' align='center' valign='middle' bgcolor='#dcfce7'"
+            + " style='background-color:#dcfce7;border-radius:40px;border:3px solid " + green + ";"
+            + "color:#15803d;font-size:42px;line-height:80px;text-align:center'>&#10003;</td>"
+            + "</tr></table>"
+            + "<div style='margin-top:14px;font-size:20px;font-weight:800;color:#15803d;letter-spacing:-.3px'>" + heroLine + "</div>"
+            + "<div style='margin-top:6px;font-size:13px;color:#64748b'>Alarm kapatıldı. İzleme devam etmektedir.</div>"
+            + "</td></tr></table></td></tr>"
 
-            // Hero checkmark
-            + "<div style='text-align:center;margin:16px 0 24px'>"
-            + "<div style='display:inline-block;background:#dcfce7;border-radius:50%;width:80px;"
-            + "height:80px;line-height:80px;font-size:42px;border:3px solid " + green + "'>✓</div>"
-            + "<div style='margin-top:14px;font-size:20px;font-weight:800;color:#15803d;"
-            + "letter-spacing:-.3px'>" + heroLine + "</div>"
-            + "<div style='margin-top:6px;font-size:13px;color:#64748b'>"
-            + "Alarm kapatıldı. İzleme devam etmektedir.</div>"
-            + "</div>"
+            // ── İki kolon detay ──
+            + "<tr><td bgcolor='#ffffff' style='background-color:#ffffff;padding:18px 24px 4px'>" + twoColSection + "</td></tr>"
 
-            + twoColSection
-
-            // Info box
-            + "<div style='background:#f0fdf4;border-left:4px solid " + green + ";"
-            + "border-radius:0 8px 8px 0;padding:14px 18px;color:#14532d;"
-            + "font-size:14px;line-height:1.7;margin-bottom:20px'>"
-            + "<div style='font-size:11px;font-weight:700;letter-spacing:.08em;"
-            + "color:" + green + ";margin-bottom:6px'>BİLGİ</div>"
+            // ── Bilgi kutusu (sol aksan-şeritli tablo — border-left div değil) ──
+            + "<tr><td bgcolor='#ffffff' style='background-color:#ffffff;padding:0 24px 22px'>"
+            + "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' style='border-radius:10px;overflow:hidden'><tr>"
+            + "<td width='5' bgcolor='" + green + "' style='background-color:" + green + ";width:5px;font-size:0;line-height:0'>&nbsp;</td>"
+            + "<td bgcolor='#f0fdf4' style='background-color:#f0fdf4;padding:14px 18px;color:#14532d;font-size:14px;line-height:1.7'>"
+            + "<div style='font-size:11px;font-weight:700;letter-spacing:.08em;color:" + green + ";margin-bottom:6px'>BİLGİ</div>"
             + "<strong>" + escHtml(domain) + "</strong> için açık olan <strong>" + typeTrLabel
             + "</strong> alarmı kapatıldı. "
             + (dnsChanged ? "Alarm süresi: " : "Toplam kesinti süresi: ")
             + "<strong>" + duration + "</strong>."
-            + "</div>"
+            + "</td></tr></table></td></tr>"
 
-            // Footer
-            + "<table width='100%' cellpadding='0' cellspacing='0'><tr>"
-            + "<td style='border-top:1px solid #f1f5f9;padding-top:12px;font-size:11px;color:#94a3b8'>"
-            + "CertMonitor</td>"
+            // ── Footer ──
+            + "<tr><td bgcolor='#ffffff' style='background-color:#ffffff;padding:0 24px 18px'>"
+            + "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0'><tr>"
+            + "<td style='border-top:1px solid #f1f5f9;padding-top:12px;font-size:11px;color:#94a3b8'>CertMonitor</td>"
             + "<td align='right' style='border-top:1px solid #f1f5f9;padding-top:12px;"
             + "font-size:11px;color:#94a3b8'>Bildirim: " + generatedAt + "</td>"
-            + "</tr></table>"
+            + "</tr></table></td></tr>"
 
-            + "</div>"
-            + "</td></tr></table>"
-            + "</td></tr></table>"
+            + "</table>"             // em-card
+            + "</td></tr></table>"   // dış sarmalayıcı
             + "</body></html>";
     }
 
@@ -1465,7 +1479,7 @@ public class EmailNotificationService {
             + "<td class='em-hero-l' align='center' valign='middle' width='38%' bgcolor='" + accent + "' style='background:" + accent + ";padding:22px 14px'>"
             + "<div style='color:#fff;font-size:46px;line-height:1'>" + emoji + "</div>"
             + "<div style='color:#fff;font-size:14px;font-weight:800;margin-top:8px;letter-spacing:.04em'>" + heroTitle + "</div>"
-            + "<div style='color:rgba(255,255,255,.85);font-size:12px;margin-top:8px;padding:0 6px'>" + heroSub + "</div>"
+            + "<div style='color:#ffffff;font-size:12px;margin-top:8px;padding:0 6px'>" + heroSub + "</div>"
             + "</td>"
             + "<td class='em-hero-r' valign='middle' bgcolor='#f8fafc' style='background:#f8fafc;padding:20px 22px'>"
             + "<div style='font-size:11px;font-weight:700;letter-spacing:.1em;color:#94a3b8;text-transform:uppercase;margin-bottom:10px'>İlk Hata Zamanı</div>"
@@ -1500,13 +1514,13 @@ public class EmailNotificationService {
             + "<body bgcolor='#f1f5f9' style='margin:0;padding:0;background:#f1f5f9;-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%;font-family:\"Segoe UI\",Tahoma,Arial,sans-serif'>"
             + "<table role='presentation' class='em-wrap' width='100%' cellpadding='0' cellspacing='0' border='0' bgcolor='#f1f5f9' style='background:#f1f5f9;mso-table-lspace:0pt;mso-table-rspace:0pt'><tr><td align='center' style='padding:24px 10px'>"
             + "<table class='em-card' width='640' cellpadding='0' cellspacing='0' border='0' bgcolor='#ffffff' style='max-width:640px;width:100%;background:#ffffff;border-radius:14px;overflow:hidden;box-shadow:0 8px 32px rgba(0,0,0,.15);mso-table-lspace:0pt;mso-table-rspace:0pt'><tr><td style='padding:0'>"
-            + "<div style='background:" + accent + ";padding:22px 24px'>"
-            + "<div style='color:rgba(255,255,255,.65);font-size:11px;font-weight:700;letter-spacing:.12em'>" + kicker + "</div>"
+            + "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' bgcolor='" + accent + "' style='background-color:" + accent + "'><tr><td style='padding:22px 24px'>"
+            + "<div style='color:#ffffff;font-size:11px;font-weight:700;letter-spacing:.12em'>" + kicker + "</div>"
             // URL explicit beyaz <a> içinde — Outlook çıplak URL'yi otomatik linkleyip mavi yapıyor (navy zeminde okunmaz).
             + "<div class='em-domain' style='color:#fff;font-size:22px;font-weight:900;margin-top:10px;word-break:break-all;line-height:1.25'>" + emoji + " <a href='" + escHtml(endpoint) + "' target='_blank' style='color:#ffffff;text-decoration:none'>" + escHtml(endpoint) + "</a></div>"
-            + "<div style='color:rgba(255,255,255,.88);font-size:15px;font-weight:700;margin-top:8px;letter-spacing:.02em'>KRİTİK &nbsp;·&nbsp; " + typeBadge + "</div>"
-            + "</div>"
-            + "<div class='em-body' style='background:#fff;padding:22px 24px'>"
+            + "<div style='color:#ffffff;font-size:15px;font-weight:700;margin-top:8px;letter-spacing:.02em'>KRİTİK &nbsp;&#183;&nbsp; " + typeBadge + "</div>"
+            + "</td></tr></table>"
+            + "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' bgcolor='#ffffff' style='background-color:#ffffff'><tr><td class='em-body' style='padding:22px 24px'>"
             // Sorunu en üstte, sade ve net (executive) — kırmızı şeritli uyarı kutusu
             + "<table width='100%' cellpadding='0' cellspacing='0' border='0' style='margin:2px 0 16px'><tr>"
             + "<td bgcolor='#fef2f2' style='background:#fef2f2;border-left:5px solid #dc2626;padding:15px 18px'>"
@@ -1518,7 +1532,7 @@ public class EmailNotificationService {
             + "<table width='100%' cellpadding='0' cellspacing='0'><tr>"
             + "<td style='border-top:1px solid #f1f5f9;padding-top:12px;font-size:11px;color:#94a3b8'>CertMonitor</td>"
             + "<td align='right' style='border-top:1px solid #f1f5f9;padding-top:12px;font-size:11px;color:#94a3b8'>Bildirim: " + generatedAt + "</td></tr></table>"
-            + "</div></td></tr></table></td></tr></table></body></html>";
+            + "</td></tr></table></td></tr></table></td></tr></table></body></html>";
     }
 
     /** Ortak attempt satırları — keyword/ping alarm sol kolonunda teyit denemeleri. */
@@ -1582,7 +1596,7 @@ public class EmailNotificationService {
 
         String extraBox = (absent && !snippet.isEmpty())
             ? "<table width='100%' cellpadding='0' cellspacing='0' border='0' style='margin-bottom:14px'><tr>"
-              + "<td style='background:#f8fafc;border-left:4px solid " + accent + ";padding:12px 16px'>"
+              + "<td bgcolor='#f8fafc' style='background-color:#f8fafc;border-left:4px solid " + accent + ";padding:12px 16px'>"
               + "<div style='font-size:11px;font-weight:700;letter-spacing:.08em;color:" + accent + ";margin-bottom:6px'>EŞLEŞME BAĞLAMI</div>"
               + "<div style='font-size:13px;color:#1c1917;font-family:Consolas,monospace;word-break:break-word'>…" + escHtml(snippet) + "…</div></td></tr></table>"
             : "";
@@ -1644,7 +1658,7 @@ public class EmailNotificationService {
         String duration = formatOutageDuration(createdAt, resolvedAt);
         String detailSection = (detailRows != null && !detailRows.isBlank())
             ? "<table width='100%' cellpadding='0' cellspacing='0' border='0' style='margin-bottom:16px;border:1px solid #e2e8f0;border-radius:10px;overflow:hidden'>"
-              + "<tr><td style='background:#1f3864;padding:9px 14px;font-size:11px;font-weight:700;letter-spacing:.1em;color:#cbd5e1'>ÇÖZÜLEN ALARM DETAYI</td></tr>"
+              + "<tr><td bgcolor='#1f3864' style='background-color:#1f3864;padding:9px 14px;font-size:11px;font-weight:700;letter-spacing:.1em;color:#cbd5e1'>ÇÖZÜLEN ALARM DETAYI</td></tr>"
               + detailRows + "</table>"
             : "";
         String cta = (ctaUrl != null && !ctaUrl.isBlank())
@@ -1685,27 +1699,29 @@ public class EmailNotificationService {
             + "<body bgcolor='#f1f5f9' style='margin:0;padding:0;background:#f1f5f9;-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%;font-family:\"Segoe UI\",Tahoma,Arial,sans-serif'>"
             + "<table role='presentation' class='em-wrap' width='100%' cellpadding='0' cellspacing='0' border='0' bgcolor='#f1f5f9' style='background:#f1f5f9;mso-table-lspace:0pt;mso-table-rspace:0pt'><tr><td align='center' style='padding:24px 10px'>"
             + "<table class='em-card' width='640' cellpadding='0' cellspacing='0' border='0' bgcolor='#ffffff' style='max-width:640px;width:100%;background:#ffffff;border-radius:14px;overflow:hidden;box-shadow:0 8px 32px rgba(0,0,0,.15);mso-table-lspace:0pt;mso-table-rspace:0pt'><tr><td style='padding:0'>"
-            + "<div style='background:" + green + ";padding:22px 24px'>"
-            + "<div style='color:rgba(255,255,255,.65);font-size:11px;font-weight:700;letter-spacing:.12em'>" + kicker + "</div>"
+            + "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' bgcolor='" + green + "' style='background-color:" + green + "'><tr><td style='padding:22px 24px'>"
+            + "<div style='color:#ffffff;font-size:11px;font-weight:700;letter-spacing:.12em'>" + kicker + "</div>"
             // URL explicit beyaz <a> içinde — Outlook çıplak URL'yi otomatik linkleyip mavi yapıyor (yeşil zeminde okunmaz).
             + "<div class='em-domain' style='color:#fff;font-size:22px;font-weight:900;margin-top:10px;word-break:break-all;line-height:1.25'>✅ <a href='" + escHtml(domain) + "' target='_blank' style='color:#ffffff;text-decoration:none'>" + escHtml(domain) + "</a></div>"
-            + "<div style='color:rgba(255,255,255,.88);font-size:15px;font-weight:700;margin-top:8px;letter-spacing:.02em'>" + heroLine + " &nbsp;·&nbsp; " + typeTrLabel + "</div>"
-            + "</div>"
-            + "<div class='em-body' style='background:#fff;padding:22px 24px'>"
+            + "<div style='color:#ffffff;font-size:15px;font-weight:700;margin-top:8px;letter-spacing:.02em'>" + heroLine + " &nbsp;&#183;&nbsp; " + typeTrLabel + "</div>"
+            + "</td></tr></table>"
+            + "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' bgcolor='#ffffff' style='background-color:#ffffff'><tr><td class='em-body' style='padding:22px 24px'>"
             + "<div style='text-align:center;margin:14px 0 22px'>"
             + "<div style='font-size:54px;line-height:1;color:" + green + "'>✓</div>"
             + "<div style='margin-top:8px;font-size:20px;font-weight:800;color:#15803d'>" + heroLine + "</div>"
             + "<div style='margin-top:6px;font-size:13px;color:#64748b'>Alarm kapatıldı. İzleme devam etmektedir.</div></div>"
             + twoCol
             + detailSection
-            + "<div style='background:#f0fdf4;border-left:4px solid " + green + ";border-radius:0 8px 8px 0;padding:14px 18px;color:#14532d;font-size:14px;line-height:1.7;margin-bottom:20px'>"
+            + "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' style='border-radius:10px;overflow:hidden;margin-bottom:20px'><tr>"
+            + "<td width='5' bgcolor='" + green + "' style='background-color:" + green + ";width:5px;font-size:0;line-height:0'>&nbsp;</td>"
+            + "<td bgcolor='#f0fdf4' style='background-color:#f0fdf4;padding:14px 18px;color:#14532d;font-size:14px;line-height:1.7'>"
             + "<div style='font-size:11px;font-weight:700;letter-spacing:.08em;color:" + green + ";margin-bottom:6px'>BİLGİ</div>"
-            + "<strong>" + escHtml(domain) + "</strong> için açık olan <strong>" + typeTrLabel + "</strong> alarmı kapatıldı. Toplam kesinti süresi: <strong>" + duration + "</strong>.</div>"
+            + "<strong>" + escHtml(domain) + "</strong> için açık olan <strong>" + typeTrLabel + "</strong> alarmı kapatıldı. Toplam kesinti süresi: <strong>" + duration + "</strong>.</td></tr></table>"
             + cta
-            + "<table width='100%' cellpadding='0' cellspacing='0'><tr>"
+            + "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0'><tr>"
             + "<td style='border-top:1px solid #f1f5f9;padding-top:12px;font-size:11px;color:#94a3b8'>CertMonitor</td>"
             + "<td align='right' style='border-top:1px solid #f1f5f9;padding-top:12px;font-size:11px;color:#94a3b8'>Bildirim: " + generatedAt + "</td></tr></table>"
-            + "</div></td></tr></table></td></tr></table></body></html>";
+            + "</td></tr></table></td></tr></table></td></tr></table></body></html>";
     }
 
     private String buildRichKeywordResolvedHtml(String url, Map<String, Object> ctx, String resolvedBy, String resolvedAt, String createdAt) {
@@ -1781,11 +1797,11 @@ public class EmailNotificationService {
             "<table width='100%' cellpadding='0' cellspacing='0' border='0' style='margin-bottom:16px'><tr>"
             + "<td class='em-col-l' valign='top' width='50%' style='width:50%;padding-right:8px'>"
             + "<table width='100%' cellpadding='0' cellspacing='0' border='0' style='border:1px solid #e2e8f0;border-radius:10px;overflow:hidden'>"
-            + "<tr><td style='background:#475569;padding:9px 14px;font-size:11px;font-weight:700;letter-spacing:.1em;color:#cbd5e1'>ESKİ DEĞERLER</td></tr>"
+            + "<tr><td bgcolor='#475569' style='background-color:#475569;padding:9px 14px;font-size:11px;font-weight:700;letter-spacing:.1em;color:#cbd5e1'>ESKİ DEĞERLER</td></tr>"
             + oldRows + "</table></td>"
             + "<td class='em-col-r' valign='top' width='50%' style='width:50%'>"
-            + "<table width='100%' cellpadding='0' cellspacing='0' border='0' style='border:1px solid " + purple + "44;border-radius:10px;overflow:hidden'>"
-            + "<tr><td style='background:" + purple + ";padding:9px 14px;font-size:11px;font-weight:700;letter-spacing:.1em;color:#f3e8ff'>YENİ DEĞERLER</td></tr>"
+            + "<table width='100%' cellpadding='0' cellspacing='0' border='0' style='border:1px solid " + purple + ";border-radius:10px;overflow:hidden'>"
+            + "<tr><td bgcolor='" + purple + "' style='background-color:" + purple + ";padding:9px 14px;font-size:11px;font-weight:700;letter-spacing:.1em;color:#f3e8ff'>YENİ DEĞERLER</td></tr>"
             + newRows + "</table></td>"
             + "</tr></table>";
 
@@ -1803,50 +1819,53 @@ public class EmailNotificationService {
         return "<!DOCTYPE html><html lang='tr'>"
             + "<head><meta charset='UTF-8'>"
             + "<meta name='viewport' content='width=device-width,initial-scale=1,maximum-scale=1'>"
+            + "<meta name='color-scheme' content='light only'>"
+            + "<meta name='supported-color-schemes' content='light'>"
+            + "<!--[if mso]><style>*{font-family:Arial,Helvetica,sans-serif !important}</style><![endif]-->"
             + css + "</head>"
-            + "<body style='margin:0;padding:0;background:#f1f5f9;font-family:\"Segoe UI\",Tahoma,Arial,sans-serif'>"
+            + "<body style='margin:0;padding:0;background-color:#f1f5f9;font-family:\"Segoe UI\",Tahoma,Arial,sans-serif'>"
 
-            + "<table class='em-wrap' width='100%' cellpadding='0' cellspacing='0' border='0'"
-            + " style='background:#f1f5f9;padding:24px 10px'><tr><td align='center'>"
+            + "<table role='presentation' class='em-wrap' width='100%' cellpadding='0' cellspacing='0' border='0'"
+            + " bgcolor='#f1f5f9' style='background-color:#f1f5f9;mso-table-lspace:0;mso-table-rspace:0'>"
+            + "<tr><td align='center' style='padding:24px 10px'>"
 
-            + "<table class='em-card' width='640' cellpadding='0' cellspacing='0' border='0'"
-            + " style='max-width:640px;width:100%;border-radius:14px;overflow:hidden;"
-            + "box-shadow:0 8px 32px rgba(0,0,0,.15)'><tr><td style='padding:0'>"
+            + "<table role='presentation' class='em-card' width='640' cellpadding='0' cellspacing='0' border='0' bgcolor='#ffffff'"
+            + " style='width:640px;max-width:640px;background-color:#ffffff;border-radius:14px;overflow:hidden;"
+            + "box-shadow:0 8px 32px rgba(0,0,0,.15)'>"
 
-            // ── Top bar ──
-            + "<div style='background:" + purple + ";padding:22px 24px'>"
-            + "<div style='color:rgba(255,255,255,.65);font-size:11px;font-weight:700;letter-spacing:.12em'>CertMonitor — DNS İzleme</div>"
+            // ── Top bar (mor) — bgcolor'lı <td> ──
+            + "<tr><td bgcolor='" + purple + "' style='background-color:" + purple + ";padding:22px 24px'>"
+            + "<div style='color:#ffffff;font-size:11px;font-weight:700;letter-spacing:.12em'>CertMonitor — DNS İzleme</div>"
             + "<div class='em-domain' style='color:#fff;font-size:22px;font-weight:900;"
             + "margin-top:10px;word-break:break-all;line-height:1.25'>🔀 " + escHtml(domain)
             + (!recordType.isEmpty() ? " <span style='font-size:15px;font-weight:700'>· " + escHtml(recordType) + " kaydı</span>" : "")
             + "</div>"
-            + "<div style='color:rgba(255,255,255,.88);font-size:15px;font-weight:700;"
-            + "margin-top:8px;letter-spacing:.02em'>YÜKSEK &nbsp;·&nbsp; DNS Değişikliği</div>"
-            + "</div>"
+            + "<div style='color:#ffffff;font-size:15px;font-weight:700;"
+            + "margin-top:8px;letter-spacing:.02em'>YÜKSEK &nbsp;&#183;&nbsp; DNS Değişikliği</div>"
+            + "</td></tr>"
 
             // ── Body ──
-            + "<div class='em-body' style='background:#fff;padding:22px 24px'>"
+            + "<tr><td bgcolor='#ffffff' style='background-color:#ffffff;padding:22px 24px'>"
 
-            // Hero
-            + "<div style='text-align:center;margin:16px 0 22px'>"
-            + "<div style='display:inline-block;background:" + purple + ";color:#fff;"
-            + "border-radius:12px;padding:14px 32px;font-size:17px;font-weight:800;letter-spacing:.02em'>"
-            + "🔀 DNS KAYDI DEĞİŞTİ"
-            + "</div>"
+            // Hero (mor pill — bgcolor'lı <td>, inline-block div değil)
+            + "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' style='margin:16px 0 22px'><tr><td align='center'>"
+            + "<table role='presentation' cellpadding='0' cellspacing='0' border='0' align='center'><tr>"
+            + "<td bgcolor='" + purple + "' style='background-color:" + purple + ";border-radius:12px;padding:14px 32px;font-size:17px;font-weight:800;letter-spacing:.02em;color:#fff'>"
+            + "🔀 DNS KAYDI DEĞİŞTİ</td>"
+            + "</tr></table>"
             + (!changedAt.isEmpty()
-                ? "<div style='margin-top:10px;font-size:13px;color:#64748b'>Tespit zamanı: "
-                  + formatIsoFull(changedAt) + "</div>" : "")
-            + "</div>"
+                ? "<div style='margin-top:10px;font-size:13px;color:#64748b'>Tespit zamanı: " + formatIsoFull(changedAt) + "</div>" : "")
+            + "</td></tr></table>"
 
             + twoColSection
 
-            // Alarm detayı
-            + "<div style='background:#faf5ff;border-left:4px solid " + purple + ";"
-            + "border-radius:0 8px 8px 0;padding:14px 18px;color:#1c1917;"
-            + "font-size:14px;line-height:1.7;margin-bottom:14px'>"
+            // Alarm detayı (sol aksan-şeritli tablo)
+            + "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' style='border-radius:10px;overflow:hidden;margin-bottom:14px'><tr>"
+            + "<td width='5' bgcolor='" + purple + "' style='background-color:" + purple + ";width:5px;font-size:0;line-height:0'>&nbsp;</td>"
+            + "<td bgcolor='#faf5ff' style='background-color:#faf5ff;padding:14px 18px;color:#1c1917;font-size:14px;line-height:1.7'>"
             + "<div style='font-size:11px;font-weight:700;letter-spacing:.08em;color:" + purple + ";margin-bottom:6px'>ALARM DETAYI</div>"
             + escHtml(message)
-            + "</div>"
+            + "</td></tr></table>"
 
             // Manuel kapanış notu
             + "<div style='font-size:12px;color:#64748b;line-height:1.6;margin-bottom:20px'>"
@@ -1856,14 +1875,15 @@ public class EmailNotificationService {
             + "</div>"
 
             // Footer
-            + "<table width='100%' cellpadding='0' cellspacing='0'><tr>"
+            + "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0'><tr>"
             + "<td style='border-top:1px solid #f1f5f9;padding-top:12px;font-size:11px;color:#94a3b8'>CertMonitor</td>"
             + "<td align='right' style='border-top:1px solid #f1f5f9;padding-top:12px;font-size:11px;color:#94a3b8'>"
             + "Bildirim: " + generatedAt
             + "</td></tr></table>"
 
-            + "</div>"
-            + "</td></tr></table>"
+            + "</td></tr>"
+
+            + "</table>"
             + "</td></tr></table>"
             + "</body></html>";
     }

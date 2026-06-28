@@ -29,6 +29,14 @@ public class PortMonitor {
     @Column(nullable = false)
     private Boolean active = true;
 
+    // Takım kapsamı (ping/keyword gibi) — null: sertifika envanterinden otomatik üretilen kayıtlar
+    // (takım, domain→takım haritasından türetilir). Manuel eklenenlerde set edilir.
+    @Column(name = "team_id")
+    private Long teamId;
+
+    @Column(name = "group_name")
+    private String groupName;
+
     @Column(name = "interval_seconds")
     private Integer intervalSeconds = 60;
 
