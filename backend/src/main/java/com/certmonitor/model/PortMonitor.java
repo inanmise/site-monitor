@@ -23,8 +23,17 @@ public class PortMonitor {
     @Column(nullable = false)
     private Integer port;
 
+    // Kontrol tipi: TCP (connect) | TLS (handshake) | HTTP (durum kodu) | BANNER (yanit eslestirme) | UDP
     @Column(nullable = false)
     private String protocol = "TCP";
+
+    // HTTP -> beklenen durum kodu kalibi (or. "200", "2xx", "200-399"); BANNER -> beklenen yanit alt-dizgesi.
+    @Column(name = "expect")
+    private String expect;
+
+    // HTTP -> istek yolu (path, vars. "/"); BANNER/UDP -> gonderilecek veri (opsiyonel, \r\n kacis destekli).
+    @Column(name = "send_data")
+    private String sendData;
 
     @Column(nullable = false)
     private Boolean active = true;

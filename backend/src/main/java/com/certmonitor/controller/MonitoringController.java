@@ -149,6 +149,14 @@ public class MonitoringController {
     private static int clampInterval(int v) { return Math.max(10, Math.min(600, v)); }
     private static int clampRecovery(int v) { return Math.max(1, Math.min(20, v)); }   // 1 = ilk up'ta kapat
 
+    /** Port kontrol tipi — gecerli degilse TCP'ye duser. */
+    private static final java.util.Set<String> PORT_TYPES = java.util.Set.of("TCP", "TLS", "HTTP", "BANNER", "UDP");
+    private static String normalizePortType(Object o) {
+        if (o == null) return "TCP";
+        String s = o.toString().trim().toUpperCase();
+        return PORT_TYPES.contains(s) ? s : "TCP";
+    }
+
     private void applyKeywordCondition(KeywordMonitor m, Map<String, Object> body) {
         if (body.get("operator") != null) {
             String op = body.get("operator").toString().toUpperCase();
@@ -476,7 +484,9 @@ public class MonitoringController {
         m.setName(blank(body.get("name")) ? host : body.get("name").toString().trim());
         m.setHost(host);
         m.setPort(port);
-        m.setProtocol(blank(body.get("protocol")) ? "TCP" : body.get("protocol").toString().trim());
+        m.setProtocol(normalizePortType(body.get("protocol")));
+        m.setExpect(blank(body.get("expect")) ? null : body.get("expect").toString().trim());
+        m.setSendData(blank(body.get("sendData")) ? null : body.get("sendData").toString());
         m.setActive(true);
         m.setTeamId(teamId);
         if (body.containsKey("groupName")) m.setGroupName(blank(body.get("groupName")) ? null : body.get("groupName").toString().trim());
@@ -496,7 +506,9 @@ public class MonitoringController {
             if (body.get("name")            != null) m.setName((String) body.get("name"));
             if (body.get("host")            != null) m.setHost(((String) body.get("host")).trim());
             if (body.get("port")            != null) m.setPort(((Number) body.get("port")).intValue());
-            if (body.get("protocol")        != null) m.setProtocol((String) body.get("protocol"));
+            if (body.get("protocol")        != null) m.setProtocol(normalizePortType(body.get("protocol")));
+            if (body.containsKey("expect"))    m.setExpect(blank(body.get("expect")) ? null : body.get("expect").toString().trim());
+            if (body.containsKey("sendData"))  m.setSendData(blank(body.get("sendData")) ? null : body.get("sendData").toString());
             if (body.get("active")          != null) m.setActive((Boolean) body.get("active"));
             if (body.containsKey("teamId"))    m.setTeamId(resolveTeamChange(session, m.getTeamId(), body.get("teamId")));
             if (body.containsKey("groupName")) m.setGroupName(blank(body.get("groupName")) ? null : body.get("groupName").toString().trim());
@@ -551,7 +563,7 @@ public class MonitoringController {
         permissionService.require(session, "monitoring.trigger", "execute");
         return portMonitorRepo.findById(id).map(m -> {
             if (!canOperateTeam(session, m.getTeamId())) return forbidden("Bu izleme üzerinde yetkiniz yok");
-            Map<String, Object> r = portChecker.check(m.getHost(), m.getPort(), m.getTimeoutMs());
+            Map<String, Object> r = portChecker.check(m);
             String now = ISO.format(Instant.now());
             PortCheck check = new PortCheck();
             check.setMonitorId(m.getId());
@@ -575,6 +587,8 @@ public class MonitoringController {
         item.put("group_name",      m.getGroupName());
         item.put("port",            m.getPort());
         item.put("protocol",        m.getProtocol());
+        item.put("expect",          m.getExpect());
+        item.put("send_data",       m.getSendData());
         item.put("active",          m.getActive());
         item.put("interval_seconds",m.getIntervalSeconds());
         item.put("timeout_ms",      m.getTimeoutMs());
