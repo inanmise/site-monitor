@@ -27,6 +27,7 @@ public class SystemController {
     private final SchedulerService      schedulerService;
     private final MetricsService        metricsService;
     private final HttpMetricsService    httpMetricsService;
+    private final com.certmonitor.service.HttpMetricsQueryService httpMetricsQueryService;
     private final ExtendedHealthService extendedHealthService;
     private final UserActivityService   userActivityService;
     private final DbAnalyticsService    dbAnalyticsService;
@@ -76,6 +77,30 @@ public class SystemController {
         data.put("summary", httpMetricsService.getSummary());
         data.put("history", httpMetricsService.getHistory());
         return ResponseEntity.ok(Map.of("success", true, "data", data, "timestamp", now()));
+    }
+
+    /** Kalıcı HTTP metrikleri — aralıktaki endpoint listesi (seçici + özet). from/to UTC ISO. */
+    @GetMapping("/http-metrics/endpoints")
+    public ResponseEntity<Map<String, Object>> httpMetricEndpoints(
+            @RequestParam String from, @RequestParam String to, HttpSession session) {
+        requireSystemRead(session);
+        permissionService.require(session, "system_health.read", "view");
+        return ResponseEntity.ok(Map.of("success", true,
+                "data", httpMetricsQueryService.endpoints(from, to), "timestamp", now()));
+    }
+
+    /** Kalıcı HTTP metrikleri — zaman serisi + özet (count/errors/avg/p50/p95/p99). from/to UTC ISO;
+     *  endpoint boş → tüm endpoint'ler ("Tümü"); granularity = minute|hour (boş → aralığa göre otomatik). */
+    @GetMapping("/http-metrics/series")
+    public ResponseEntity<Map<String, Object>> httpMetricSeries(
+            @RequestParam String from, @RequestParam String to,
+            @RequestParam(required = false) String endpoint,
+            @RequestParam(required = false) String granularity,
+            HttpSession session) {
+        requireSystemRead(session);
+        permissionService.require(session, "system_health.read", "view");
+        return ResponseEntity.ok(Map.of("success", true,
+                "data", httpMetricsQueryService.series(from, to, endpoint, granularity), "timestamp", now()));
     }
 
     @PostMapping("/heartbeat")

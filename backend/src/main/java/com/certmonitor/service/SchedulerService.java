@@ -510,9 +510,13 @@ public class SchedulerService {
             // dns_records: her monitör için en yeni satırı koru (baseline) → guard'lı sil.
             int d = safeDelete("DELETE FROM dns_records WHERE checked_at < ? "
                     + "AND id NOT IN (SELECT MAX(id) FROM dns_records GROUP BY monitor_id)", tsCutoff);
-            log.info("Nightly cleanup done: audit={}, notif={}, sql={}, uptime={}, cert={}, port={}, dns={} "
-                    + "(log cutoffs: {} / {} / {}; ts cutoff: {})",
-                    a, n, s, u, c, p, d, auditCutoff, notifCutoff, sqlCutoff, tsCutoff);
+            // HTTP metrik serisi — yapılandırılabilir gün-bazlı retention (canlı ayar; varsayılan 7).
+            int httpRetDays = Math.max(1, appSettings.getInt("cert.monitor.metrics.http.retention-days", 7));
+            String httpCutoff = ISO.format(Instant.now().minus(httpRetDays, ChronoUnit.DAYS));
+            int h = safeDelete("DELETE FROM http_metric_minute WHERE bucket_minute < ?", httpCutoff);
+            log.info("Nightly cleanup done: audit={}, notif={}, sql={}, uptime={}, cert={}, port={}, dns={}, httpMetrics={} "
+                    + "(log cutoffs: {} / {} / {}; ts cutoff: {}; http retention: {}d)",
+                    a, n, s, u, c, p, d, h, auditCutoff, notifCutoff, sqlCutoff, tsCutoff, httpRetDays);
         } catch (Exception e) {
             log.warn("Nightly cleanup failed: {}", e.getMessage());
         }

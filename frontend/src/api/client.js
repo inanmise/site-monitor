@@ -466,6 +466,14 @@ export const api = {
     forceReleaseLock: () => request('/admin/system/scheduler-lock', { method: 'DELETE' }),
     getMetrics: () => request('/admin/system/metrics'),
     getHttpMetrics: () => request('/admin/system/http-metrics'),
+    getHttpMetricsEndpoints: (from, to) =>
+      request(`/admin/system/http-metrics/endpoints?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`),
+    getHttpMetricsSeries: (from, to, endpoint, granularity) => {
+      const q = new URLSearchParams({ from, to })
+      if (endpoint) q.set('endpoint', endpoint)
+      if (granularity) q.set('granularity', granularity)
+      return request(`/admin/system/http-metrics/series?${q.toString()}`)
+    },
     getDbStats: () => request('/admin/system/db-stats'),
     getDbAnalytics: (days = 7) => request(`/admin/system/db-analytics?days=${days}`),
     getSmtpLogs: (days) =>

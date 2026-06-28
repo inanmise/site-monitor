@@ -35,6 +35,9 @@ class SystemControllerTest {
     HttpMetricsService httpMetricsService;
 
     @MockitoBean
+    com.certmonitor.service.HttpMetricsQueryService httpMetricsQueryService;
+
+    @MockitoBean
     ExtendedHealthService extendedHealthService;
 
     @MockitoBean

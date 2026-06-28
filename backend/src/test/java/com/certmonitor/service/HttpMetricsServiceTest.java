@@ -1,16 +1,19 @@
 package com.certmonitor.service;
 
+import com.certmonitor.model.HttpMetricMinute;
+import com.certmonitor.repository.HttpMetricMinuteRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 
-import java.util.ArrayDeque;
-import java.util.Deque;
+import java.util.List;
 import java.util.Map;
 
 import org.springframework.test.util.ReflectionTestUtils;
 
 import static org.assertj.core.api.Assertions.*;
+import static org.mockito.Mockito.*;
 
 class HttpMetricsServiceTest {
 
@@ -113,5 +116,46 @@ class HttpMetricsServiceTest {
         java.util.List<Map<String, Object>> history = service.getHistory();
         assertThat(history).isNotEmpty();
         assertThat(history.stream().mapToLong(b -> (Long) b.get("count")).sum()).isEqualTo(1L);
+    }
+
+    // ── endpoint bazlı kalıcılık (yeni) ─────────────────────────────────────────
+
+    @Test
+    @DisplayName("histIndex: ms doğru kovaya; taşma son indeks")
+    void histIndex_boundaries() {
+        assertThat(HttpMetricsService.histIndex(1)).isZero();
+        assertThat(HttpMetricsService.histIndex(75)).isEqualTo(7);   // bounds[7]=75
+        assertThat(HttpMetricsService.histIndex(50_000)).isEqualTo(HttpMetricsService.HISTOGRAM_BOUNDS.length); // overflow
+    }
+
+    @Test
+    @DisplayName("rotation: biten dakikanın endpoint kovaları DB'ye (saveAll) yazılır + histogram dolu")
+    @SuppressWarnings("unchecked")
+    void rotation_persistsEndpointBuckets() throws Exception {
+        HttpMetricMinuteRepository repo = mock(HttpMetricMinuteRepository.class);
+        ReflectionTestUtils.setField(service, "metricRepo", repo);
+
+        service.record("GET /api/x", 200, 40);
+        service.record("GET /api/x", 500, 120);   // 1 hata, sumMs=160, max=120
+
+        // Dakikayı zorla değiştir: current'ı eski-anahtarlı kovaya çek → rotate() rotateTo+flush tetikler.
+        var ctor = Class.forName("com.certmonitor.service.HttpMetricsService$MinuteBucket")
+                .getDeclaredConstructor(String.class);
+        ctor.setAccessible(true);
+        ReflectionTestUtils.setField(service, "current", ctor.newInstance("2000-01-01T00:00:00"));
+
+        service.rotate();
+
+        ArgumentCaptor<List<HttpMetricMinute>> cap = ArgumentCaptor.forClass(List.class);
+        verify(repo).saveAll(cap.capture());
+        List<HttpMetricMinute> rows = cap.getValue();
+        assertThat(rows).hasSize(1);
+        HttpMetricMinute m = rows.get(0);
+        assertThat(m.getEndpoint()).isEqualTo("GET /api/x");
+        assertThat(m.getReqCount()).isEqualTo(2L);
+        assertThat(m.getErrorCount()).isEqualTo(1L);
+        assertThat(m.getSumMs()).isEqualTo(160L);
+        assertThat(m.getMaxMs()).isEqualTo(120L);
+        assertThat(m.getHist()).contains(",");   // histogram CSV dolu
     }
 }

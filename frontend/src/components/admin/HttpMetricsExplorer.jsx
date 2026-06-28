@@ -1,0 +1,165 @@
+import { useState, useEffect, useCallback, useMemo } from 'react'
+import {
+  ResponsiveContainer, ComposedChart, Area, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
+} from 'recharts'
+import { RefreshCw } from 'lucide-react'
+import { api } from '../../api/client'
+import { useT } from '../../i18n/index.jsx'
+import { useToast } from '../ui/Toast.jsx'
+import TimeRangePicker, { resolveRange } from '../ui/TimeRangePicker.jsx'
+import SearchableSelect from '../ui/SearchableSelect.jsx'
+
+const RETENTION_KEY = 'cert.monitor.metrics.http.retention-days'
+const pad = (n) => String(n).padStart(2, '0')
+
+// Backend ts'i Europe/Istanbul YEREL duvar-saati ("YYYY-MM-DDTHH:mm:ss", Z YOK) → olduğu gibi yerel okunur.
+function tickLabel(ts, gran) {
+  const d = new Date(ts)
+  if (Number.isNaN(d.getTime())) return ts
+  if (gran === 'hour') return `${pad(d.getDate())}.${pad(d.getMonth() + 1)} ${pad(d.getHours())}:00`
+  return `${pad(d.getDate())}.${pad(d.getMonth() + 1)} ${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
+
+function ChartTooltip({ active, payload, t }) {
+  if (!active || !payload || !payload.length) return null
+  const d = payload[0].payload
+  const row = (label, val, suffix = '') => val == null ? null : (
+    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 16 }}>
+      <span style={{ color: 'var(--text-muted)' }}>{label}</span><strong>{val}{suffix}</strong>
+    </div>
+  )
+  return (
+    <div style={{ background: 'var(--bg-card,#fff)', border: '1px solid var(--border)', borderRadius: 8,
+      padding: '8px 11px', fontSize: '.82em', lineHeight: 1.7, boxShadow: '0 4px 16px rgba(0,0,0,.12)' }}>
+      <div style={{ fontWeight: 700, marginBottom: 4 }}>{String(d.ts).replace('T', ' ')}</div>
+      {row(t('http.exp.count'), d.count)}
+      {row(t('http.exp.errors'), d.errors)}
+      {row(t('http.exp.avg'), d.avg, ' ms')}
+      {row(t('http.exp.p95'), d.p95, ' ms')}
+      {row(t('http.exp.p99'), d.p99, ' ms')}
+    </div>
+  )
+}
+
+/** Kalıcı, Grafana benzeri HTTP istek metrik gezgini — endpoint seçimi + zaman aralığı + p95/p99. */
+export default function HttpMetricsExplorer() {
+  const t = useT()
+  const toast = useToast()
+  const [range, setRange] = useState({ type: 'rel', minutes: 60, key: '1h' })
+  const [endpoint, setEndpoint] = useState('')          // '' = Tümü
+  const [endpoints, setEndpoints] = useState([])
+  const [series, setSeries] = useState(null)
+  const [loading, setLoading] = useState(false)
+  const [retention, setRetention] = useState(null)      // null = okunamadı/yetkisiz → kutu gizli
+  const [savingRet, setSavingRet] = useState(false)
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    const { from, to } = resolveRange(range)
+    const [epRes, srRes] = await Promise.all([
+      api.admin.getHttpMetricsEndpoints(from, to),
+      api.admin.getHttpMetricsSeries(from, to, endpoint),
+    ])
+    if (epRes?.success) setEndpoints(epRes.data ?? [])
+    if (srRes?.success) setSeries(srRes.data ?? null)
+    setLoading(false)
+  }, [range, endpoint])
+
+  useEffect(() => { load() }, [load])
+
+  // Retention'ı Genel Ayarlar'dan oku (yetki yoksa sessiz → kutu gizli).
+  useEffect(() => {
+    api.admin.getGeneralSettings().then(res => {
+      if (!res?.success) return
+      const list = res.data?.settings ?? res.data ?? []
+      const row = Array.isArray(list) ? list.find(s => s.key === RETENTION_KEY) : null
+      if (row) setRetention(String(row.value ?? row.default ?? '7'))
+    }).catch(() => {})
+  }, [])
+
+  async function saveRetention() {
+    const d = parseInt(retention, 10)
+    if (!Number.isFinite(d) || d < 1) { toast.error(t('http.exp.retentionInvalid')); return }
+    setSavingRet(true)
+    try {
+      const res = await api.admin.saveGeneralSettings({ values: { [RETENTION_KEY]: String(d) } })
+      if (res?.success) toast.success(t('http.exp.retentionSaved', d))
+      else toast.error(res?.error || t('http.exp.saveError'))
+    } catch { toast.error(t('http.exp.saveError')) }
+    setSavingRet(false)
+  }
+
+  const gran = series?.granularity
+  const chartData = useMemo(() => (series?.data ?? []).map(p => ({
+    ts: p.ts, label: tickLabel(p.ts, gran),
+    count: p.count, errors: p.errors, avg: p.avg_ms, p95: p.p95_ms, p99: p.p99_ms,
+  })), [series, gran])
+  const sum = series?.summary || {}
+  const tickEvery = Math.max(0, Math.floor(chartData.length / 10))
+  const epOptions = [{ value: '', label: t('http.exp.allEndpoints') },
+    ...endpoints.map(e => ({ value: e.endpoint, label: `${e.endpoint}  ·  ${e.count}` }))]
+
+  return (
+    <div className="hme-panel">
+      <div className="hme-bar">
+        <div className="hme-bar-left">
+          <div className="hme-ep"><SearchableSelect value={endpoint} onChange={setEndpoint}
+            options={epOptions} searchThreshold={2} placeholder={t('http.exp.allEndpoints')} /></div>
+          <TimeRangePicker value={range} onChange={setRange} />
+          <button type="button" className="btn btn-sm btn-secondary" onClick={load} disabled={loading}>
+            <RefreshCw size={14} />{t('http.exp.refresh')}
+          </button>
+        </div>
+        {retention != null && (
+          <div className="hme-retention">
+            <span>{t('http.exp.retention')}</span>
+            <input type="number" min="1" max="365" value={retention}
+              onChange={e => setRetention(e.target.value)} />
+            <span>{t('http.exp.days')}</span>
+            <button type="button" className="btn btn-sm btn-primary" onClick={saveRetention} disabled={savingRet}>
+              {t('http.exp.save')}
+            </button>
+          </div>
+        )}
+      </div>
+
+      <div className="hme-pills">
+        <span className="hme-pill"><b>{sum.total ?? 0}</b> {t('http.exp.total')}</span>
+        <span className="hme-pill"><b>{sum.errors ?? 0}</b> {t('http.exp.errors')}</span>
+        <span className="hme-pill"><b>{sum.error_rate_pct ?? 0}%</b> {t('http.exp.errRate')}</span>
+        <span className="hme-pill"><b>{sum.avg_ms ?? 0} ms</b> {t('http.exp.avg')}</span>
+        <span className="hme-pill"><b>{sum.p95_ms ?? 0} ms</b> {t('http.exp.p95')}</span>
+        <span className="hme-pill"><b>{sum.p99_ms ?? 0} ms</b> {t('http.exp.p99')}</span>
+      </div>
+
+      {loading ? (
+        <div className="upt-modal-loading">…</div>
+      ) : chartData.length === 0 ? (
+        <div className="upt-modal-loading">{t('http.exp.noData')}</div>
+      ) : (
+        <ResponsiveContainer width="100%" height={320}>
+          <ComposedChart data={chartData} margin={{ top: 10, right: 12, left: 0, bottom: 0 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+            <XAxis dataKey="label" tick={{ fontSize: 10, fill: 'var(--text-light)' }} stroke="var(--border)"
+              interval={tickEvery} minTickGap={16} />
+            <YAxis yAxisId="cnt" tick={{ fontSize: 10, fill: 'var(--text-light)' }} stroke="var(--border)" width={42} />
+            <YAxis yAxisId="ms" orientation="right" tick={{ fontSize: 10, fill: 'var(--text-light)' }}
+              stroke="var(--border)" width={46} tickFormatter={(v) => `${v}ms`} />
+            <Tooltip content={<ChartTooltip t={t} />} />
+            <Legend wrapperStyle={{ fontSize: '.78em' }} />
+            <Area yAxisId="cnt" type="monotone" dataKey="count" name={t('http.exp.count')}
+              fill="#bfdbfe" fillOpacity={0.4} stroke="#3b82f6" strokeWidth={1.5} isAnimationActive={false} />
+            <Line yAxisId="cnt" type="monotone" dataKey="errors" name={t('http.exp.errors')}
+              stroke="#ef4444" strokeWidth={1.5} dot={false} isAnimationActive={false} />
+            <Line yAxisId="ms" type="monotone" dataKey="avg" name={t('http.exp.avg')}
+              stroke="#f59e0b" strokeWidth={1.5} dot={false} isAnimationActive={false} />
+            <Line yAxisId="ms" type="monotone" dataKey="p95" name={t('http.exp.p95')}
+              stroke="#9333ea" strokeWidth={1.5} strokeDasharray="4 3" dot={false} isAnimationActive={false} />
+            <Line yAxisId="ms" type="monotone" dataKey="p99" name={t('http.exp.p99')}
+              stroke="#be123c" strokeWidth={1.5} strokeDasharray="2 2" dot={false} isAnimationActive={false} />
+          </ComposedChart>
+        </ResponsiveContainer>
+      )}
+    </div>
+  )
+}
