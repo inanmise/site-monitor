@@ -63,8 +63,13 @@ public class HttpMetricsQueryService {
             overall.add(m);
         }
 
-        List<Map<String, Object>> data = new ArrayList<>(buckets.size());
-        buckets.forEach((ts, a) -> data.add(a.toPoint(ts)));
+        // Tüm zaman eksenini doldur: istek GELMEYEN kovalar count=0 + null süreler → grafik boşlukları çizgiyle
+        // BİRLEŞTİRMEZ (latency çizgileri null'da kırılır; istek alanı 0'a iner → sahte süreklilik olmaz).
+        List<Map<String, Object>> data = new ArrayList<>();
+        for (String key : bucketKeysInRange(from, to, gran)) {
+            Agg a = buckets.get(key);
+            data.add(a != null ? a.toPoint(key) : emptyPoint(key));
+        }
 
         Map<String, Object> summary = new LinkedHashMap<>();
         summary.put("total", overall.count);
@@ -88,11 +93,11 @@ public class HttpMetricsQueryService {
     static String resolveGranularity(String gran, String from, String to) {
         if ("hour".equalsIgnoreCase(gran)) return "hour";
         if ("minute".equalsIgnoreCase(gran)) return "minute";
-        // otomatik: aralık > 12 saat → saat, değilse dakika
+        // otomatik: aralık > 24 saat → saat, değilse dakika (Grafana benzeri ince çözünürlük; 24s = dakika).
         try {
             LocalDateTime f = LocalDateTime.parse(from.substring(0, Math.min(19, from.length())));
             LocalDateTime t = LocalDateTime.parse(to.substring(0, Math.min(19, to.length())));
-            return java.time.Duration.between(f, t).toHours() > 12 ? "hour" : "minute";
+            return java.time.Duration.between(f, t).toHours() > 24 ? "hour" : "minute";
         } catch (Exception e) {
             return "minute";
         }
@@ -109,6 +114,41 @@ public class HttpMetricsQueryService {
         } catch (Exception e) {
             return utcMinute;
         }
+    }
+
+    /** [from,to] (UTC ISO) aralığındaki TÜM kova anahtarları (IST yerel, granülarite adımıyla) — boş kovalar dahil. */
+    static List<String> bucketKeysInRange(String fromUtc, String toUtc, String gran) {
+        List<String> keys = new ArrayList<>();
+        try {
+            boolean hour = "hour".equals(gran);
+            java.time.temporal.ChronoUnit step = hour ? java.time.temporal.ChronoUnit.HOURS : java.time.temporal.ChronoUnit.MINUTES;
+            ZonedDateTime f = LocalDateTime.parse(fromUtc.substring(0, Math.min(19, fromUtc.length())))
+                    .atZone(ZoneOffset.UTC).withZoneSameInstant(IST).truncatedTo(step);
+            ZonedDateTime t = LocalDateTime.parse(toUtc.substring(0, Math.min(19, toUtc.length())))
+                    .atZone(ZoneOffset.UTC).withZoneSameInstant(IST);
+            int guard = 0;
+            for (ZonedDateTime cur = f; !cur.isAfter(t) && guard < 5000; guard++, cur = cur.plus(1, step)) {
+                String d = cur.toLocalDate().toString();
+                keys.add(hour ? d + "T" + String.format("%02d:00:00", cur.getHour())
+                              : d + "T" + String.format("%02d:%02d:00", cur.getHour(), cur.getMinute()));
+            }
+        } catch (Exception ignore) { }
+        return keys;
+    }
+
+    /** İstek gelmeyen kova — count/errors 0, süreler null (grafik boşlukta çizgiyi birleştirmesin). */
+    private static Map<String, Object> emptyPoint(String ts) {
+        Map<String, Object> p = new LinkedHashMap<>();
+        p.put("ts", ts);
+        p.put("count", 0L);
+        p.put("errors", 0L);
+        p.put("avg_ms", null);
+        p.put("max_ms", null);
+        p.put("min_ms", null);
+        p.put("p50_ms", null);
+        p.put("p95_ms", null);
+        p.put("p99_ms", null);
+        return p;
     }
 
     // ── Histogram yardımcıları (test edilebilir) ────────────────────────────────

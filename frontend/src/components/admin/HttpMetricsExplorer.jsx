@@ -96,6 +96,8 @@ export default function HttpMetricsExplorer() {
   })), [series, gran])
   const sum = series?.summary || {}
   const tickEvery = Math.max(0, Math.floor(chartData.length / 10))
+  // Grafana benzeri nokta işaretçileri — yalnız kısa aralıklarda (yoğun seride performans + okunabilirlik).
+  const dots = chartData.length <= 240 ? { r: 2, strokeWidth: 0 } : false
   const epOptions = [{ value: '', label: t('http.exp.allEndpoints') },
     ...endpoints.map(e => ({ value: e.endpoint, label: `${e.endpoint}  ·  ${e.count}` }))]
 
@@ -147,16 +149,16 @@ export default function HttpMetricsExplorer() {
               stroke="var(--border)" width={46} tickFormatter={(v) => `${v}ms`} />
             <Tooltip content={<ChartTooltip t={t} />} />
             <Legend wrapperStyle={{ fontSize: '.78em' }} />
-            <Area yAxisId="cnt" type="monotone" dataKey="count" name={t('http.exp.count')}
-              fill="#bfdbfe" fillOpacity={0.4} stroke="#3b82f6" strokeWidth={1.5} isAnimationActive={false} />
-            <Line yAxisId="cnt" type="monotone" dataKey="errors" name={t('http.exp.errors')}
-              stroke="#ef4444" strokeWidth={1.5} dot={false} isAnimationActive={false} />
-            <Line yAxisId="ms" type="monotone" dataKey="avg" name={t('http.exp.avg')}
-              stroke="#f59e0b" strokeWidth={1.5} dot={false} isAnimationActive={false} />
-            <Line yAxisId="ms" type="monotone" dataKey="p95" name={t('http.exp.p95')}
-              stroke="#9333ea" strokeWidth={1.5} strokeDasharray="4 3" dot={false} isAnimationActive={false} />
-            <Line yAxisId="ms" type="monotone" dataKey="p99" name={t('http.exp.p99')}
-              stroke="#be123c" strokeWidth={1.5} strokeDasharray="2 2" dot={false} isAnimationActive={false} />
+            <Area yAxisId="cnt" type="linear" dataKey="count" name={t('http.exp.count')}
+              fill="#bfdbfe" fillOpacity={0.4} stroke="#3b82f6" strokeWidth={1.5} dot={dots} isAnimationActive={false} />
+            <Line yAxisId="cnt" type="linear" dataKey="errors" name={t('http.exp.errors')}
+              stroke="#ef4444" strokeWidth={1.5} dot={dots} connectNulls={false} isAnimationActive={false} />
+            <Line yAxisId="ms" type="linear" dataKey="avg" name={t('http.exp.avg')}
+              stroke="#f59e0b" strokeWidth={1.5} dot={dots} connectNulls={false} isAnimationActive={false} />
+            <Line yAxisId="ms" type="linear" dataKey="p95" name={t('http.exp.p95')}
+              stroke="#9333ea" strokeWidth={1.5} strokeDasharray="4 3" dot={dots} connectNulls={false} isAnimationActive={false} />
+            <Line yAxisId="ms" type="linear" dataKey="p99" name={t('http.exp.p99')}
+              stroke="#be123c" strokeWidth={1.5} strokeDasharray="2 2" dot={dots} connectNulls={false} isAnimationActive={false} />
           </ComposedChart>
         </ResponsiveContainer>
       )}

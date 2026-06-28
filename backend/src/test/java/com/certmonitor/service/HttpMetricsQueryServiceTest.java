@@ -76,10 +76,11 @@ class HttpMetricsQueryServiceTest {
     }
 
     @Test
-    @DisplayName("resolveGranularity: >12 saat → hour, değilse minute")
+    @DisplayName("resolveGranularity: >24 saat → hour, değilse minute (24s dahil dakika)")
     void resolveGranularity_auto() {
-        assertThat(HttpMetricsQueryService.resolveGranularity(null, "2026-06-18T00:00:00", "2026-06-18T06:00:00")).isEqualTo("minute");
-        assertThat(HttpMetricsQueryService.resolveGranularity(null, "2026-06-18T00:00:00", "2026-06-20T00:00:00")).isEqualTo("hour");
+        assertThat(HttpMetricsQueryService.resolveGranularity(null, "2026-06-18T00:00:00", "2026-06-18T06:00:00")).isEqualTo("minute"); // 6s
+        assertThat(HttpMetricsQueryService.resolveGranularity(null, "2026-06-18T00:00:00", "2026-06-19T00:00:00")).isEqualTo("minute"); // 24s → dakika
+        assertThat(HttpMetricsQueryService.resolveGranularity(null, "2026-06-18T00:00:00", "2026-06-20T00:00:00")).isEqualTo("hour");   // 48s → saat
         assertThat(HttpMetricsQueryService.resolveGranularity("hour", "2026-06-18T00:00:00", "2026-06-18T01:00:00")).isEqualTo("hour");
     }
 
@@ -102,11 +103,18 @@ class HttpMetricsQueryServiceTest {
         repo.save(row("2026-06-18T10:01:00", "GET /api/x", 20, 0, 600, 90, 30));   // IST 13:01
         repo.save(row("2026-06-18T10:00:00", "GET /api/y", 5, 0, 100, 20, 20));    // başka endpoint (filtrelenir)
 
-        Map<String, Object> res = service.series("2026-06-18T00:00:00", "2026-06-18T23:59:59", "GET /api/x", "minute");
+        Map<String, Object> res = service.series("2026-06-18T09:55:00", "2026-06-18T10:10:00", "GET /api/x", "minute");
         var data = (List<Map<String, Object>>) res.get("data");
-        assertThat(data).hasSize(2);
-        assertThat(data.get(0).get("ts")).isEqualTo("2026-06-18T13:00:00");
-        assertThat(((Number) data.get(0).get("count")).longValue()).isEqualTo(10L);
+        assertThat(data).hasSize(16);   // IST 12:55..13:10 = 16 dakika kovası (boşlar dahil)
+        var b1300 = data.stream().filter(p -> "2026-06-18T13:00:00".equals(p.get("ts"))).findFirst().orElseThrow();
+        var b1301 = data.stream().filter(p -> "2026-06-18T13:01:00".equals(p.get("ts"))).findFirst().orElseThrow();
+        assertThat(((Number) b1300.get("count")).longValue()).isEqualTo(10L);
+        assertThat(((Number) b1301.get("count")).longValue()).isEqualTo(20L);
+        // boş kova (13:05): count=0, süreler null → grafik boşlukta çizgiyi birleştirmez
+        var empty = data.stream().filter(p -> "2026-06-18T13:05:00".equals(p.get("ts"))).findFirst().orElseThrow();
+        assertThat(((Number) empty.get("count")).longValue()).isZero();
+        assertThat(empty.get("avg_ms")).isNull();
+        assertThat(empty.get("p95_ms")).isNull();
 
         var summary = (Map<String, Object>) res.get("summary");
         assertThat(((Number) summary.get("total")).longValue()).isEqualTo(30L);   // yalnız x
@@ -123,12 +131,15 @@ class HttpMetricsQueryServiceTest {
         repo.save(row("2026-06-18T10:00:00", "GET /api/x", 10, 0, 400, 80, 40));
         repo.save(row("2026-06-18T10:30:00", "GET /api/y", 20, 2, 600, 90, 30));   // aynı IST saati (13:xx)
 
-        Map<String, Object> res = service.series("2026-06-18T00:00:00", "2026-06-18T23:59:59", null, "hour");
+        Map<String, Object> res = service.series("2026-06-18T09:00:00", "2026-06-18T11:00:00", null, "hour");
         var data = (List<Map<String, Object>>) res.get("data");
-        assertThat(data).hasSize(1);                                  // 13:00 tek saat kovası
-        assertThat(data.get(0).get("ts")).isEqualTo("2026-06-18T13:00:00");
-        assertThat(((Number) data.get(0).get("count")).longValue()).isEqualTo(30L);  // x + y
-        assertThat(((Number) data.get(0).get("errors")).longValue()).isEqualTo(2L);
+        assertThat(data).hasSize(3);                                  // IST 12:00,13:00,14:00 (boşlar dahil)
+        var b13 = data.stream().filter(p -> "2026-06-18T13:00:00".equals(p.get("ts"))).findFirst().orElseThrow();
+        assertThat(((Number) b13.get("count")).longValue()).isEqualTo(30L);  // x + y
+        assertThat(((Number) b13.get("errors")).longValue()).isEqualTo(2L);
+        // boş saat (12:00) → count=0
+        var empty12 = data.stream().filter(p -> "2026-06-18T12:00:00".equals(p.get("ts"))).findFirst().orElseThrow();
+        assertThat(((Number) empty12.get("count")).longValue()).isZero();
     }
 
     @Test
