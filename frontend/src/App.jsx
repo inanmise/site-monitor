@@ -2,7 +2,11 @@ import { useState, useEffect, useCallback, useRef, useMemo, lazy, Suspense } fro
 import { ChevronDown, BarChart3, AlertOctagon, X, Wifi, CheckCircle, Clock, RefreshCw, Loader2 } from 'lucide-react'
 
 // Date → "HH:mm:ss" (Şimdi Kontrol Et modalında başlangıç/bitiş saati)
-const fmtClock = (d) => (d instanceof Date ? d.toTimeString().slice(0, 8) : '')
+const fmtClock = (d) => (d instanceof Date
+  ? d.toTimeString().slice(0, 8) + '.' + String(d.getMilliseconds()).padStart(3, '0')   // HH:mm:ss.SSS
+  : '')
+// Geçen süre — <1 sn ise ms, değilse saniye (3 hane ms hassasiyeti).
+const fmtDur = (ms) => (ms == null ? '' : ms < 1000 ? `${ms} ms` : `${(ms / 1000).toFixed(3)} s`)
 import { api, formatDate } from './api/client'
 import { useDialog } from './components/ui/Dialog.jsx'
 import { useT } from './i18n/index.jsx'
@@ -1087,11 +1091,21 @@ export default function App() {
               <span className="chk-count">{checkRun.rows.length}/{checkRun.total}</span>
             </div>
             <div className="chk-list" ref={chkListRef}>
+              <div className="chk-row chk-head">
+                <span className="chk-domain">{t('app.checkColDomain')}</span>
+                <span className="chk-col">{t('app.checkColStart')}</span>
+                <span className="chk-col">{t('app.checkColEnd')}</span>
+                <span className="chk-col">{t('app.checkColDur')}</span>
+              </div>
               {checkRun.rows.map((r, i) => (
                 <div key={i} className="chk-row">
-                  <span className={`chk-tick${r.ok ? '' : ' chk-tick-err'}`}>{r.ok ? '✓' : '✕'}</span>
-                  <span className="chk-domain" title={r.domain}>{r.domain}</span>
-                  <span className="chk-times">{fmtClock(r.start)} → {fmtClock(r.end)} · <b>{r.ms} ms</b></span>
+                  <span className="chk-domain" title={r.domain}>
+                    <span className={`chk-tick${r.ok ? '' : ' chk-tick-err'}`}>{r.ok ? '✓' : '✕'}</span>
+                    {r.domain}
+                  </span>
+                  <span className="chk-col chk-mono">{fmtClock(r.start)}</span>
+                  <span className="chk-col chk-mono">{fmtClock(r.end)}</span>
+                  <span className="chk-col chk-mono"><b>{fmtDur(r.ms)}</b></span>
                 </div>
               ))}
               {!checkRun.done && (
