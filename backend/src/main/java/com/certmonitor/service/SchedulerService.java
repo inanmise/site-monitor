@@ -437,13 +437,61 @@ public class SchedulerService {
         }
     }
 
+    private static final java.util.regex.Pattern ADD_COL_RE =
+            java.util.regex.Pattern.compile("(?i)ALTER\\s+TABLE\\s+(\\w+)\\s+ADD\\s+COLUMN\\s+(\\w+)");
+    private static final java.util.regex.Pattern CREATE_TBL_RE =
+            java.util.regex.Pattern.compile("(?i)CREATE\\s+TABLE\\s+(?:IF\\s+NOT\\s+EXISTS\\s+)?(\\w+)");
+
+    /**
+     * Idempotent şema/veri yaması. INFO "applied" YALNIZ gerçekten bir değişiklik olduğunda yazılır;
+     * her boot'ta tekrar eden no-op'lar (zaten var olan kolon/tablo, 0 satır etkileyen UPDATE,
+     * CREATE ... IF NOT EXISTS index'ler) DEBUG'a iner → log gürültüsü gider, davranış aynı kalır.
+     */
     private void patch(String ddl) {
+        String shortDdl = ddl.length() > 60 ? ddl.substring(0, 60) + "…" : ddl;
+        String head = ddl.trim().toUpperCase(java.util.Locale.ROOT);
         try {
-            jdbcTemplate.execute(ddl);
-            log.info("Schema patch applied: {}", ddl.length() > 60 ? ddl.substring(0, 60) + "…" : ddl);
+            if (head.startsWith("ALTER TABLE") && head.contains(" ADD COLUMN ")) {
+                var m = ADD_COL_RE.matcher(ddl);
+                if (m.find() && columnExists(m.group(1), m.group(2))) {     // kolon zaten var → hiç çalıştırma (hata gürültüsü de biter)
+                    log.debug("Schema patch noop (column exists): {}", shortDdl); return;
+                }
+                jdbcTemplate.execute(ddl);
+                log.info("Schema patch applied (column added): {}", shortDdl);
+            } else if (head.startsWith("CREATE TABLE")) {
+                var m = CREATE_TBL_RE.matcher(ddl);
+                if (m.find() && tableExists(m.group(1))) {                  // tablo zaten var → atla
+                    log.debug("Schema patch noop (table exists): {}", shortDdl); return;
+                }
+                jdbcTemplate.execute(ddl);
+                log.info("Schema patch applied (table created): {}", shortDdl);
+            } else if (head.startsWith("UPDATE") || head.startsWith("INSERT") || head.startsWith("DELETE")) {
+                int rows = jdbcTemplate.update(ddl);                        // gerçek değişiklik = etkilenen satır > 0
+                if (rows > 0) log.info("Schema patch applied ({} row(s)): {}", rows, shortDdl);
+                else          log.debug("Schema patch noop (0 rows): {}", shortDdl);
+            } else {
+                jdbcTemplate.execute(ddl);   // CREATE [UNIQUE] INDEX IF NOT EXISTS, DROP ..., ALTER ... TYPE — idempotent, sessiz
+                log.debug("Schema patch ran: {}", shortDdl);
+            }
         } catch (Exception e) {
             log.debug("Schema patch skipped: {}", e.getMessage());
         }
+    }
+
+    private boolean columnExists(String table, String col) {
+        Integer n = jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM information_schema.columns "
+              + "WHERE lower(table_schema)='public' AND lower(table_name)=lower(?) AND lower(column_name)=lower(?)",
+                Integer.class, table, col);
+        return n != null && n > 0;
+    }
+
+    private boolean tableExists(String table) {
+        Integer n = jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM information_schema.tables "
+              + "WHERE lower(table_schema)='public' AND lower(table_name)=lower(?)",
+                Integer.class, table);
+        return n != null && n > 0;
     }
 
     /** Full sweep: runs at the top of every hour (configurable via cert.monitor.scheduler.cron). */
