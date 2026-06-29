@@ -116,7 +116,12 @@ export default function HttpMetricsExplorer() {
     return allKeys.every(k => next.has(k)) ? new Set() : next                              // hepsi gizli → hepsini göster
   })
   const epOptions = [{ value: '', label: t('http.exp.allEndpoints') },
-    ...endpoints.map(e => ({ value: e.endpoint, label: `${e.endpoint}  ·  ${e.count}` }))]
+    ...endpoints.map(e => ({ value: e.endpoint,
+      label: `${e.endpoint}  ·  ${e.count}${e.errors > 0 ? '  ·  ⚠ ' + e.errors : ''}` }))]
+  // Aralıkta hata alan endpoint'ler — en çok hatadan başlayarak (tıklanınca grafikte o endpoint'e filtrele).
+  const errorEndpoints = useMemo(
+    () => (endpoints || []).filter(e => (e.errors || 0) > 0).sort((a, b) => b.errors - a.errors),
+    [endpoints])
 
   return (
     <div className="hme-panel">
@@ -150,6 +155,21 @@ export default function HttpMetricsExplorer() {
         <span className="hme-pill"><b>{sum.p95_ms ?? 0} ms</b> {t('http.exp.p95')}</span>
         <span className="hme-pill"><b>{sum.p99_ms ?? 0} ms</b> {t('http.exp.p99')}</span>
       </div>
+
+      {errorEndpoints.length > 0 && (
+        <div className="hme-errlist">
+          <span className="hme-errlist-lbl">⚠ {t('http.exp.errEndpoints')}</span>
+          {errorEndpoints.slice(0, 8).map(e => (
+            <button key={e.endpoint} type="button"
+                    className={`hme-errchip${endpoint === e.endpoint ? ' is-active' : ''}`}
+                    onClick={() => setEndpoint(endpoint === e.endpoint ? '' : e.endpoint)}
+                    title={t('http.exp.errChipTip')}>
+              <span className="hme-errchip-ep">{e.endpoint}</span>
+              <span className="hme-errchip-n">{e.errors} {t('http.exp.errors')} · %{e.error_rate_pct}</span>
+            </button>
+          ))}
+        </div>
+      )}
 
       {loading ? (
         <div className="upt-modal-loading">…</div>

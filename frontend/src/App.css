@@ -1572,6 +1572,16 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 /* Modal içi kaydetme hatası (port/izleme formları) */
 .mon-modal-error { margin: 4px 0 0; padding: 9px 12px; border-radius: 8px; font-size: .85em; line-height: 1.45;
   background: #fef2f2; border: 1px solid #fecaca; color: #b91c1c; }
+/* Port monitör "Test Et" sonucu */
+.port-test-result { margin: 4px 0 0; padding: 10px 13px; border-radius: 8px; font-size: .84em; line-height: 1.5; border: 1px solid; }
+.port-test-result.ptr-ok { background: #f0fdf4; border-color: #bbf7d0; color: #166534; }
+.port-test-result.ptr-fail { background: #fef2f2; border-color: #fecaca; color: #b91c1c; }
+.ptr-head { font-weight: 800; font-size: 1.02em; }
+.ptr-ms { font-weight: 600; opacity: .8; font-variant-numeric: tabular-nums; }
+.ptr-row { margin-top: 3px; word-break: break-word; }
+.ptr-row b { font-weight: 700; }
+.ptr-err { color: #b91c1c; }
+.ptr-note { margin-top: 6px; font-size: .92em; opacity: .85; }
 .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; align-items: end; }
 .form-grid label { display: flex; flex-direction: column; gap: 5px; font-size: .88em; font-weight: 600; }
 .form-grid label input, .form-grid label select { padding: 9px 10px; border: 1px solid var(--border); border-radius: 4px; font-size: .95em; }
@@ -4208,6 +4218,16 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .hme-legend-item:hover { opacity: .75; }
 .hme-legend-dot { width: 13px; height: 3px; border-radius: 2px; display: inline-block; flex-shrink: 0; }
 .hme-legend-off { opacity: .38; text-decoration: line-through; }
+/* HTTP explorer — hata alan endpoint çipleri (tıklanınca grafikte o endpoint'e filtreler) */
+.hme-errlist { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 10px; }
+.hme-errlist-lbl { font-size: .8em; font-weight: 700; color: #b91c1c; }
+.hme-errchip { display: inline-flex; flex-direction: column; align-items: flex-start; gap: 1px; cursor: pointer;
+  background: #fef2f2; border: 1px solid #fecaca; border-radius: 8px; padding: 5px 10px; text-align: left; transition: border-color .12s; }
+.hme-errchip:hover { border-color: #f87171; }
+.hme-errchip.is-active { border-color: #dc2626; box-shadow: 0 0 0 2px #fecaca; }
+.hme-errchip-ep { font-size: .8em; font-weight: 700; color: var(--text); font-family: monospace; }
+.hme-errchip-n { font-size: .72em; color: #b91c1c; font-variant-numeric: tabular-nums; }
+[data-theme="dark"] .hme-errchip { background: rgba(220,38,38,.12); border-color: rgba(248,113,113,.4); }
 
 /* ── Time range picker (Grafana benzeri 2 sütun) ─────────────── */
 .trp-wrap { position: relative; display: inline-block; }
@@ -5569,6 +5589,7 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
   display: flex; gap: 28px; flex-wrap: wrap;
 }
 .upt-modal-metric { display: flex; flex-direction: column; gap: 3px; }
+.upt-modal-metric[title] { cursor: help; }
 .upt-modal-metric-val {
   font-size: 15px; font-weight: 700; color: var(--text); line-height: 1.2;
 }
