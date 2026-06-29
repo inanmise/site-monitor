@@ -576,6 +576,32 @@ public class MonitoringController {
         }).orElse(notFound("Port monitor not found"));
     }
 
+    /** Kaydetmeden canli kontrol — formdaki tip/expect/sendData ile bir kez calistirir; ne dondugunu + alarm
+     *  kosulunun (open) saglanip saglanmadigini doner. Kayit olusturmaz/guncellemez. */
+    @PostMapping("/port/test")
+    public ResponseEntity<Map<String, Object>> testPort(@RequestBody Map<String, Object> body, HttpSession session) {
+        permissionService.require(session, "monitoring.crud", "edit");
+        if (blank(body.get("host"))) return badRequest("host zorunlu");
+        if (!(body.get("port") instanceof Number)) return badRequest("port zorunlu");
+        String host = body.get("host").toString().trim();
+        int port = ((Number) body.get("port")).intValue();
+        if (port < 1 || port > 65535) return badRequest("port 1-65535 araliginda olmali");
+        int timeoutMs = body.get("timeoutMs") instanceof Number tn ? tn.intValue() : 5000;
+        String type = normalizePortType(body.get("protocol"));
+        String send = blank(body.get("sendData")) ? null : body.get("sendData").toString();
+        String expect = blank(body.get("expect")) ? null : body.get("expect").toString().trim();
+        Map<String, Object> r = portChecker.check(host, port, timeoutMs, type, send, expect);
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("type",          type);
+        out.put("open",          Boolean.TRUE.equals(r.get("open")));   // kontrol gecti mi (acik/eslesti)
+        out.put("condition_met", Boolean.TRUE.equals(r.get("open")));   // alarm kosulu = kontrolun gecmesi
+        out.put("response_ms",   r.get("response_ms"));
+        out.put("detail",        r.get("detail"));                      // donen: HTTP durum / banner / TLS surumu
+        out.put("error",         r.get("error"));
+        out.put("expect",        expect);
+        return ok(out);
+    }
+
     private Map<String, Object> enrichPort(PortMonitor m, PortCheck latest, Map<String, String> teamMap, Map<Long, String> teamById) {
         Map<String, Object> item = new LinkedHashMap<>();
         item.put("id",              m.getId());

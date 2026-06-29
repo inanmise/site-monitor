@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom'
 import { api, formatDate } from '../api/client'
 import { useT } from '../i18n/index.jsx'
 import SearchableSelect from './ui/SearchableSelect.jsx'
-import { Play, Pencil, X, RefreshCw, Plug, Plus, Trash2 } from 'lucide-react'
+import { Play, Pencil, X, RefreshCw, Plug, Plus, Trash2, FlaskConical } from 'lucide-react'
 
 const INTERVALS = [
   { value: 30,  labelKey: 'ping.interval30s' },
@@ -38,6 +38,8 @@ export default function PortMonitorPage({ systemRole, teamId, teamName }) {
   const [form, setForm] = useState(emptyForm)
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState(null)
+  const [testing, setTesting] = useState(false)
+  const [testResult, setTestResult] = useState(null)
   const [checking, setChecking] = useState(null)
   const [search, setSearch] = useState('')
   const [teamFilter, setTeamFilter] = useState('all')
@@ -68,8 +70,8 @@ export default function PortMonitorPage({ systemRole, teamId, teamName }) {
     api.admin.getTeams().then(r => { if (r?.success) setTeams(r.data || []) })
   }, [isAdmin])
 
-  // Modal her açıldığında önceki kaydetme hatasını temizle.
-  useEffect(() => { setSaveError(null) }, [modal])
+  // Modal her açıldığında önceki kaydetme hatası + test sonucunu temizle.
+  useEffect(() => { setSaveError(null); setTestResult(null) }, [modal])
 
   async function loadHistory(id, days = rangeDays) {
     setHistoryLoading(true)
@@ -120,6 +122,18 @@ export default function PortMonitorPage({ systemRole, teamId, teamName }) {
     setSaving(false)
     if (!res?.success) { setSaveError(res?.error || t('port.saveError')); return }
     await load(); closeEdit()
+  }
+
+  // Kaydetmeden formdaki ayarlarla bir kez kontrol eder: ne döndü (HTTP durum/banner/TLS) + alarm koşulu sağlandı mı.
+  async function runTest() {
+    if (!form.host.trim() || !form.port) { setSaveError(t('port.hostRequired')); return }
+    setTesting(true); setTestResult(null); setSaveError(null)
+    const res = await api.monitoring.testPortMonitor({
+      host: form.host.trim(), port: Number(form.port), protocol: form.protocol,
+      expect: form.expect?.trim() || null, sendData: form.sendData || null, timeoutMs: Number(form.timeoutMs),
+    })
+    setTestResult(res?.success ? res.data : { error: res?.error || t('port.testError') })
+    setTesting(false)
   }
 
   async function del() {
@@ -419,11 +433,29 @@ export default function PortMonitorPage({ systemRole, teamId, teamName }) {
               <label className="checkbox-label">
                 <input type="checkbox" checked={form.active} onChange={e => setForm(f => ({ ...f, active: e.target.checked }))} />{t('port.active')}</label>
             </div>
+            {testResult && (testResult.open === undefined && testResult.error
+              ? <div className="mon-modal-error">{testResult.error}</div>
+              : (
+                <div className={`port-test-result ${testResult.open ? 'ptr-ok' : 'ptr-fail'}`}>
+                  <div className="ptr-head">
+                    {testResult.open ? '✓ ' + t('port.testPass') : '✕ ' + t('port.testNoPass')}
+                    {testResult.response_ms != null && <span className="ptr-ms"> · {testResult.response_ms} ms</span>}
+                  </div>
+                  {testResult.detail && <div className="ptr-row">{t('port.testReturned')}: <b>{testResult.detail}</b></div>}
+                  {testResult.error && <div className="ptr-row ptr-err">{testResult.error}</div>}
+                  <div className="ptr-note">{testResult.open ? t('port.testNoteOk') : t('port.testNoteFail')}</div>
+                </div>
+              ))}
             {saveError && <div className="mon-modal-error">{saveError}</div>}
             <div className="modal-actions">
-              {modal !== 'new' && canDeleteRow(modal) && (
-                <button className="btn btn-danger" style={{ marginRight: 'auto' }} onClick={del}><Trash2 size={14} />{t('port.delete')}</button>
-              )}
+              <div style={{ display: 'flex', gap: 8, marginRight: 'auto' }}>
+                <button className="btn btn-secondary" onClick={runTest} disabled={testing || !form.host.trim() || !form.port}>
+                  <FlaskConical size={14} />{testing ? t('port.testing') : t('port.test')}
+                </button>
+                {modal !== 'new' && canDeleteRow(modal) && (
+                  <button className="btn btn-danger" onClick={del}><Trash2 size={14} />{t('port.delete')}</button>
+                )}
+              </div>
               <button className="btn btn-secondary" onClick={closeEdit}>{t('port.cancel')}</button>
               <button className="btn btn-primary" onClick={save} disabled={saving || !form.host.trim() || !form.port}>{saving ? '...' : t('port.save')}</button>
             </div>

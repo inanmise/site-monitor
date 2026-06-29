@@ -204,6 +204,23 @@ class MonitoringControllerTest {
     }
 
     @Test
+    @DisplayName("POST /port/test: kaydetmeden kontrol çalıştırır; sonuç + condition_met döner, kayıt OLUŞMAZ")
+    void testPort_runsCheckWithoutSaving() throws Exception {
+        when(portChecker.check(eq("svc.local"), eq(8080), anyInt(), eq("HTTP"), any(), eq("2xx")))
+                .thenReturn(java.util.Map.of("open", true, "response_ms", 12L, "detail", "HTTP 200"));
+        mvc.perform(post("/api/monitoring/port/test").session(session("ADMIN"))
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                .content("{\"host\":\"svc.local\",\"port\":8080,\"protocol\":\"HTTP\",\"expect\":\"2xx\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.open").value(true))
+                .andExpect(jsonPath("$.data.condition_met").value(true))
+                .andExpect(jsonPath("$.data.detail").value("HTTP 200"))
+                .andExpect(jsonPath("$.data.type").value("HTTP"));
+        org.mockito.Mockito.verify(portMonitorRepo, org.mockito.Mockito.never())
+                .save(any(com.certmonitor.model.PortMonitor.class));
+    }
+
+    @Test
     @DisplayName("POST /keyword/test: canlı koşul testi (occurrences/condition_met/phrase)")
     void testKeyword_returnsResult() throws Exception {
         java.util.Map<String, Object> cr = new java.util.HashMap<>();

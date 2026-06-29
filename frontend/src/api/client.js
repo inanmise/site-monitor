@@ -507,6 +507,7 @@ export const api = {
     updatePortMonitor: (id, data) => request(`/monitoring/port/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
     deletePortMonitor: (id) => request(`/monitoring/port/${id}`, { method: 'DELETE' }),
     triggerPortCheck:  (id) => request(`/monitoring/port/${id}/check`, { method: 'POST' }),
+    testPortMonitor:   (data) => request('/monitoring/port/test', { method: 'POST', body: JSON.stringify(data) }),
     getPortHistory:    (id, { days, limit } = {}) => {
       const q = new URLSearchParams(
         Object.fromEntries(Object.entries({ days, limit }).filter(([, v]) => v != null && v !== '')),
