@@ -1091,28 +1091,34 @@ export default function App() {
               <span className="chk-count">{checkRun.rows.length}/{checkRun.total}</span>
             </div>
             <div className="chk-list" ref={chkListRef}>
-              <div className="chk-row chk-head">
-                <span className="chk-domain">{t('app.checkColDomain')}</span>
-                <span className="chk-col">{t('app.checkColStart')}</span>
-                <span className="chk-col">{t('app.checkColEnd')}</span>
-                <span className="chk-col">{t('app.checkColDur')}</span>
-              </div>
-              {checkRun.rows.map((r, i) => (
-                <div key={i} className="chk-row">
-                  <span className="chk-domain" title={r.domain}>
-                    <span className={`chk-tick${r.ok ? '' : ' chk-tick-err'}`}>{r.ok ? '✓' : '✕'}</span>
-                    {r.domain}
-                  </span>
-                  <span className="chk-col chk-mono">{fmtClock(r.start)}</span>
-                  <span className="chk-col chk-mono">{fmtClock(r.end)}</span>
-                  <span className="chk-col chk-mono"><b>{fmtDur(r.ms)}</b></span>
-                </div>
-              ))}
-              {!checkRun.done && (
-                <div className="chk-row chk-pending">
-                  <Loader2 size={14} className="chk-spin" /> {t('app.checking')}
-                </div>
-              )}
+              <table className="chk-table">
+                <thead>
+                  <tr>
+                    <th className="chk-th-domain">{t('app.checkColDomain')}</th>
+                    <th>{t('app.checkColStart')}</th>
+                    <th>{t('app.checkColEnd')}</th>
+                    <th>{t('app.checkColDur')}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {checkRun.rows.map((r, i) => (
+                    <tr key={i}>
+                      <td className="chk-td-domain">
+                        <span className={`chk-tick${r.ok ? '' : ' chk-tick-err'}`}>{r.ok ? '✓' : '✕'}</span>
+                        {r.domain}
+                      </td>
+                      <td className="chk-mono">{fmtClock(r.start)}</td>
+                      <td className="chk-mono">{fmtClock(r.end)}</td>
+                      <td className="chk-mono"><b>{fmtDur(r.ms)}</b></td>
+                    </tr>
+                  ))}
+                  {!checkRun.done && (
+                    <tr><td className="chk-pending" colSpan={4}>
+                      <Loader2 size={14} className="chk-spin" /> {t('app.checking')}
+                    </td></tr>
+                  )}
+                </tbody>
+              </table>
             </div>
             <div className="modal-actions">
               <button className="btn btn-secondary" onClick={() => setCheckRun(null)}>{t('app.close')}</button>
