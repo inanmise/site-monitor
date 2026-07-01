@@ -115,11 +115,12 @@ export default function UserEditModal({ user, teams, onClose, onSaved, readOnly 
               onChange={v => setForm({ ...form, org_role: v })}
               disabled={readOnly}
               options={[
-                { value: '',        label: t('usr.orgRoleNone') },
-                { value: 'TECH',    label: 'Tech' },
-                { value: 'PO',      label: 'Product Owner (PO)' },
-                { value: 'MANAGER', label: 'Manager' },
-                { value: 'CLEVEL',  label: 'C-Level' },
+                { value: '',              label: t('usr.orgRoleNone') },
+                { value: 'TECH',          label: t('usr.orgRoleVal.TECH') },
+                { value: 'PO',            label: t('usr.orgRoleVal.PO') },
+                { value: 'MANAGER',       label: t('usr.orgRoleVal.MANAGER') },
+                { value: 'BOLUM_BASKANI', label: t('usr.orgRoleVal.BOLUM_BASKANI') },
+                { value: 'CLEVEL',        label: t('usr.orgRoleVal.CLEVEL') },
               ]}
             />
           </label>

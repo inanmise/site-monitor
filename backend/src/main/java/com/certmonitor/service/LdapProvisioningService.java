@@ -86,7 +86,7 @@ public class LdapProvisioningService {
         applyMudurluk(u, str(attrs, "extensionAttribute5"));
 
         boolean isPo = containsCi(str(attrs, "company"), "PRODUCT OWNER");
-        if (isPo) u.setOrgRole("PO");                      // don't clobber existing orgRole with null
+        applyOrgRole(u, isPo);                             // PO > D6->MANAGER > D7->BOLUM_BASKANI > TECH (kilitliyse dokunmaz)
 
         u.setUpdatedAt(now);
         u = userRepo.save(u);                              // ensure id before role/scope checks
@@ -122,6 +122,27 @@ public class LdapProvisioningService {
         if ("ADMIN".equals(desired)) { u.setSystemRole("ADMIN"); return; }
         String cur = u.getSystemRole();
         if (!"ADMIN".equals(cur) && !"AUDIT".equals(cur)) u.setSystemRole(desired);
+    }
+
+    /**
+     * AD'den organizasyonel rolü türetir: PO > seviye D6 → MANAGER > seviye D7 → BOLUM_BASKANI > TECH.
+     * Admin manuel değiştirmişse (orgRoleLocked) HİÇ dokunma — manuel org rol her girişte ezilmez.
+     * companyLevel = AD `description` (ör. "D6"/"D7"); word-boundary + case-insensitive eşleşme.
+     */
+    private void applyOrgRole(AppUser u, boolean isPo) {
+        if (Boolean.TRUE.equals(u.getOrgRoleLocked())) return;   // admin manuel kilitledi → LDAP dokunmaz
+        String desired = isPo ? "PO"
+                : levelIs(u.getCompanyLevel(), "D6") ? "MANAGER"
+                : levelIs(u.getCompanyLevel(), "D7") ? "BOLUM_BASKANI"
+                : "TECH";
+        u.setOrgRole(desired);
+    }
+
+    /** companyLevel içinde {@code code} (ör. "D6") tam kelime olarak (case-insensitive) geçiyor mu. */
+    private static boolean levelIs(String companyLevel, String code) {
+        return companyLevel != null && java.util.regex.Pattern
+                .compile("\\b" + code + "\\b", java.util.regex.Pattern.CASE_INSENSITIVE)
+                .matcher(companyLevel).find();
     }
 
     private void resolveTeams(AppUser u, Map<String, Object> attrs, boolean isPo) {

@@ -90,9 +90,14 @@ public class AppUser {
     @Column(name = "role_locked")
     private Boolean roleLocked;
 
-    /** Organizational role: PO | TECH | MANAGER | CLEVEL | null (regular member) */
+    /** Organizational role: PO | TECH | MANAGER | CLEVEL | BOLUM_BASKANI | null (regular member) */
     @Column(name = "org_role")
     private String orgRole;
+
+    /** true → org_role admin tarafından manuel ayarlandı; LDAP provisyonu seviyeden türetip bunu EZMEZ
+     *  (aksi halde PO/D6/D7/TECH türetmesi her girişte manuel değişikliği ezerdi). Null = AD-yönetimli. */
+    @Column(name = "org_role_locked")
+    private Boolean orgRoleLocked;
 
     /** Birincil takım (geriye-uyum + varsayılanlar: denetim actorTeamId, haftalık rapor varsayılanı,
      *  Nav gösterimi, eskalasyon kontağı). Her zaman {@link #teamIds} içindedir. */

@@ -1258,6 +1258,19 @@ public class AdminController {
         return ok(Map.of("message", "User role unlocked"));
     }
 
+    /** Org-rol kilidini kaldır → kullanıcının org_role'ü tekrar AD (LDAP) yönetimine döner. */
+    @PostMapping("/users/{id}/org-role-unlock")
+    public ResponseEntity<Map<String, Object>> unlockUserOrgRole(
+            @PathVariable Long id, HttpSession session, HttpServletRequest request) {
+        AppUser target = userRepo.findById(id)
+                .orElseThrow(() -> new NoSuchElementException("User not found: " + id));
+        requireTeamScopedAdmin(session, target.getTeamId());
+        requirePerm(session, "users.crud", "edit");
+        userService.unlockOrgRole(id);
+        auditService.recordAction("USER_ORG_ROLE_UNLOCK", session, request, "USER", id.toString(), null);
+        return ok(Map.of("message", "User org role unlocked"));
+    }
+
     @DeleteMapping("/users/{id}")
     public ResponseEntity<Map<String, Object>> deleteUser(
             @PathVariable Long id, HttpSession session, HttpServletRequest request) {

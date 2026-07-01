@@ -131,7 +131,7 @@ class LdapProvisioningServiceTest {
         AppUser u = service.provisionFromAd("usr1", "CN=usr1,DC=aknet,DC=akb", attrs);
 
         assertThat(u.getSystemRole()).isEqualTo("USER");
-        assertThat(u.getOrgRole()).isNull();
+        assertThat(u.getOrgRole()).isEqualTo("TECH");   // PO/D6/D7 değil → TECH (eski davranış: null)
         assertThat(u.getManagerSicil()).isEqualTo("63535");
         assertThat(u.getManagerId()).isNotNull();   // manager provisioned + linked
     }
@@ -378,5 +378,57 @@ class LdapProvisioningServiceTest {
         AppUser u = service.provisionFromAd("aduser", "CN=aduser,DC=example,DC=com", attrs);
 
         assertThat(u.getSystemRole()).isEqualTo("USER");         // kilitsiz → AD davranışı
+    }
+
+    @Test
+    @DisplayName("org_role türetme: seviye D6 (description) → orgRole MANAGER (PO değil)")
+    void level_d6_becomesManager() {
+        Map<String, Object> attrs = Map.of("cn", "11111", "displayName", "D6 User", "description", "D6");
+        AppUser u = service.provisionFromAd("d6user", "CN=d6user,DC=example,DC=com", attrs);
+        assertThat(u.getOrgRole()).isEqualTo("MANAGER");
+    }
+
+    @Test
+    @DisplayName("org_role türetme: seviye D7 → orgRole BOLUM_BASKANI (PO değil)")
+    void level_d7_becomesBolumBaskani() {
+        Map<String, Object> attrs = Map.of("cn", "22222", "displayName", "D7 User", "description", "D7");
+        AppUser u = service.provisionFromAd("d7user", "CN=d7user,DC=example,DC=com", attrs);
+        assertThat(u.getOrgRole()).isEqualTo("BOLUM_BASKANI");
+    }
+
+    @Test
+    @DisplayName("org_role türetme: PO önceliği — company PRODUCT OWNER + seviye D6 → PO (D6'yı ezmez)")
+    void po_takesPrecedenceOverLevel() {
+        Map<String, Object> attrs = Map.of("cn", "33333", "displayName", "PO D6",
+                "company", "PRODUCT OWNER", "description", "D6");
+        AppUser u = service.provisionFromAd("pod6", "CN=pod6,DC=example,DC=com", attrs);
+        assertThat(u.getOrgRole()).isEqualTo("PO");
+    }
+
+    @Test
+    @DisplayName("org_role türetme: PO/D6/D7 değil (ör. D5) → orgRole TECH")
+    void otherLevel_becomesTech() {
+        Map<String, Object> attrs = Map.of("cn", "44444", "displayName", "D5 User", "description", "D5");
+        AppUser u = service.provisionFromAd("d5user", "CN=d5user,DC=example,DC=com", attrs);
+        assertThat(u.getOrgRole()).isEqualTo("TECH");
+    }
+
+    @Test
+    @DisplayName("org_role_locked kullanıcının org rolü LDAP girişinde EZİLMEZ (manuel MANAGER korunur)")
+    void lockedOrgRole_notOverwrittenOnLogin() {
+        AppUser existing = new AppUser();
+        existing.setId(600L);
+        existing.setUsername("ORGLOCK");
+        existing.setOrgRole("MANAGER");        // admin elle atadı
+        existing.setOrgRoleLocked(true);       // + kilitledi
+        existing.setAuthSource("LDAP");
+        when(userRepo.findByUsername("ORGLOCK")).thenReturn(Optional.of(existing));
+        // AD normalde TECH türetirdi (description yok, PO değil)
+        Map<String, Object> attrs = Map.of("cn", "55555", "displayName", "Org Locked");
+
+        AppUser u = service.provisionFromAd("orglock", "CN=orglock,DC=example,DC=com", attrs);
+
+        assertThat(u.getOrgRole()).isEqualTo("MANAGER");   // EZİLMEDİ
+        assertThat(u.getOrgRoleLocked()).isTrue();
     }
 }
