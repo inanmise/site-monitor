@@ -100,4 +100,26 @@ class PermissionServiceTest {
         assertThat(saved.getAction()).isEqualTo("execute");
         assertThat(saved.getAllowed()).isTrue();
     }
+
+    @Test
+    @DisplayName("refreshFromDb: başka instance grant değiştirince cache DB'den tazelenir (çok-pod)")
+    void refreshFromDb_picksUpExternalChange() {
+        assertThat(service.allows("USER", "inventory.crud", "edit")).isFalse();   // seed
+        // Başka bir pod DB'de crud=true yaptı + yeni bir grant ekledi
+        when(repo.findAll()).thenReturn(List.of(
+                grant("USER", "inventory.list", "view", true),
+                grant("USER", "inventory.crud", "edit", true),
+                grant("USER", "notes.read", "view", true)));
+        service.refreshFromDb();
+        assertThat(service.allows("USER", "inventory.crud", "edit")).isTrue();
+        assertThat(service.allows("USER", "notes.read", "view")).isTrue();
+    }
+
+    @Test
+    @DisplayName("refreshFromDb: DB değişmediyse no-op (cache aynı)")
+    void refreshFromDb_noopWhenUnchanged() {
+        service.refreshFromDb();   // findAll seed ile aynı
+        assertThat(service.allows("USER", "inventory.list", "view")).isTrue();
+        assertThat(service.allows("USER", "inventory.crud", "edit")).isFalse();
+    }
 }

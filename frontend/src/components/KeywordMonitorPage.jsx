@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef, useMemo, lazy, Suspense } fro
 import { createPortal } from 'react-dom'
 import { api, formatDate, formatDateSec } from '../api/client'
 import { useT } from '../i18n/index.jsx'
+import { useToast } from './ui/Toast.jsx'
 import SearchableSelect from './ui/SearchableSelect.jsx'
 import { Play, Pencil, X, RefreshCw, Plus, Trash2, Target, Users, Layers, FlaskConical, Check, AlertTriangle } from 'lucide-react'
 import AlertHistory from './admin/AlertHistory.jsx'
@@ -21,6 +22,7 @@ const emptyForm = { name: '', url: '', keyword: '', operator: 'GTE', matchCount:
 
 export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
   const t = useT()
+  const toast = useToast()
   const isAdmin = systemRole === 'ADMIN'
   const isTeamAdmin = systemRole === 'TEAM_ADMIN'
   const canWrite = isAdmin || isTeamAdmin || systemRole === 'USER'      // USER ve üstü: kendi takımı için oluştur/düzenle/kontrol
@@ -151,15 +153,20 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
       customHeaders: form.customHeaders?.trim() || null,
       active: form.active,
     }
-    if (modal === 'new') await api.monitoring.createKeywordMonitor(payload)
-    else await api.monitoring.updateKeywordMonitor(modal.id, payload)
-    await load(); setSaving(false); closeEdit()
+    const res = modal === 'new'
+      ? await api.monitoring.createKeywordMonitor(payload)
+      : await api.monitoring.updateKeywordMonitor(modal.id, payload)
+    await load(); setSaving(false)
+    if (!res?.success) { toast.error(res?.error || 'Error'); return }
+    toast.success(t('keyword.saved')); closeEdit()
   }
 
   async function del() {
     if (!modal || modal === 'new') return
-    await api.monitoring.deleteKeywordMonitor(modal.id)
-    await load(); closeEdit()
+    const res = await api.monitoring.deleteKeywordMonitor(modal.id)
+    await load()
+    if (!res?.success) { toast.error(res?.error || 'Error'); return }
+    toast.success(t('keyword.deleted')); closeEdit()
   }
 
   async function checkNow(m) {

@@ -97,4 +97,31 @@ class LdapSettingsServiceTest {
         assertThat(parsed.get(0)).containsEntry("group", "CN=CertAdmins").containsEntry("role", "admin");
         assertThat(parsed.get(1)).containsEntry("group", "CN=Auditors").containsEntry("role", "audit");
     }
+
+    @Test
+    @DisplayName("refreshFromDb: başka instance kaydedince (updated_at) cache DB'den tazelenir (çok-pod)")
+    void refreshFromDb_picksUpExternalSave() {
+        assertThat(service.isConfigured()).isFalse();               // bu pod'da henüz yok
+        LdapSettings dbRow = new LdapSettings();
+        dbRow.setId(LdapSettings.SINGLETON_ID);
+        dbRow.setEnabled(true);
+        dbRow.setHost("ldap.example.com");
+        dbRow.setUpdatedAt("2026-07-01T10:00:00");
+        when(repo.findById(LdapSettings.SINGLETON_ID)).thenReturn(java.util.Optional.of(dbRow));
+
+        service.refreshFromDb();
+        assertThat(service.isConfigured()).isTrue();
+        assertThat(service.getOrDefaults().getHost()).isEqualTo("ldap.example.com");
+
+        // Başka pod GÜNCELLEDİ (yeni updated_at) → tazelenir
+        LdapSettings updated = new LdapSettings();
+        updated.setId(LdapSettings.SINGLETON_ID);
+        updated.setEnabled(true);
+        updated.setHost("ldap2.example.com");
+        updated.setUpdatedAt("2026-07-01T11:00:00");
+        when(repo.findById(LdapSettings.SINGLETON_ID)).thenReturn(java.util.Optional.of(updated));
+
+        service.refreshFromDb();
+        assertThat(service.getOrDefaults().getHost()).isEqualTo("ldap2.example.com");
+    }
 }

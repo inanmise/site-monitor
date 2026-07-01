@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef, useMemo, lazy, Suspense } fro
 import { createPortal } from 'react-dom'
 import { api, formatDate } from '../api/client'
 import { useT } from '../i18n/index.jsx'
+import { useToast } from './ui/Toast.jsx'
 import SearchableSelect from './ui/SearchableSelect.jsx'
 import { Play, Pencil, X, RefreshCw, Plus, Trash2, Radio, Users, Layers, FlaskConical, Check, AlertTriangle } from 'lucide-react'
 import AlertHistory from './admin/AlertHistory.jsx'
@@ -20,6 +21,7 @@ const emptyForm = { name: '', host: '', ipVersion: 'auto', groupName: '', teamId
 
 export default function PingMonitorPage({ systemRole, teamId, teamName }) {
   const t = useT()
+  const toast = useToast()
   const isAdmin = systemRole === 'ADMIN'
   const isTeamAdmin = systemRole === 'TEAM_ADMIN'
   const canWrite = isAdmin || isTeamAdmin || systemRole === 'USER'      // USER ve üstü: kendi takımı için oluştur/düzenle/kontrol
@@ -135,9 +137,12 @@ export default function PingMonitorPage({ systemRole, teamId, teamName }) {
       confirmAttempts: Number(form.confirmAttempts), confirmIntervalSeconds: Number(form.confirmIntervalSeconds), recoveryChecks: Number(form.recoveryChecks),
       active: form.active,
     }
-    if (modal === 'new') await api.monitoring.createPingMonitor(payload)
-    else await api.monitoring.updatePingMonitor(modal.id, payload)
-    await load(); setSaving(false); closeEdit()
+    const res = modal === 'new'
+      ? await api.monitoring.createPingMonitor(payload)
+      : await api.monitoring.updatePingMonitor(modal.id, payload)
+    await load(); setSaving(false)
+    if (!res?.success) { toast.error(res?.error || 'Error'); return }
+    toast.success(t('ping.saved')); closeEdit()
   }
 
   // Kaydetmeden formdaki host/parametrelerle bir kez ping atar; ping atılabildi mi + koşul (erişilebilirlik) sağlandı mı.
@@ -154,8 +159,10 @@ export default function PingMonitorPage({ systemRole, teamId, teamName }) {
 
   async function del() {
     if (!modal || modal === 'new') return
-    await api.monitoring.deletePingMonitor(modal.id)
-    await load(); closeEdit()
+    const res = await api.monitoring.deletePingMonitor(modal.id)
+    await load()
+    if (!res?.success) { toast.error(res?.error || 'Error'); return }
+    toast.success(t('ping.deleted')); closeEdit()
   }
 
   async function checkNow(m) {

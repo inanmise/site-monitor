@@ -85,6 +85,11 @@ public class AppUser {
     @Column(nullable = false)
     private String systemRole = "USER";
 
+    /** true → rol admin tarafından manuel ayarlandı; LDAP provisyonu bu kullanıcının systemRole'üne
+     *  DOKUNMAZ (aksi halde AD'den türetilen rol her girişte manuel değişikliği ezerdi). Null = AD-yönetimli. */
+    @Column(name = "role_locked")
+    private Boolean roleLocked;
+
     /** Organizational role: PO | TECH | MANAGER | CLEVEL | null (regular member) */
     @Column(name = "org_role")
     private String orgRole;

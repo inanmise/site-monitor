@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { api } from '../../api/client'
 import { useDialog } from '../ui/Dialog.jsx'
 import { useT } from '../../i18n/index.jsx'
+import { useToast } from '../ui/Toast.jsx'
 import SearchableSelect from '../ui/SearchableSelect.jsx'
 import MultiTeamSelect from '../ui/MultiTeamSelect.jsx'
 import KebabMenu from '../ui/KebabMenu.jsx'
@@ -44,6 +45,7 @@ function UserAvatar({ user }) {
 
 export default function UserManager({ systemRole, ownTeamId, currentUsername, teams }) {
   const t = useT()
+  const toast = useToast()
   const isAdmin = systemRole === 'ADMIN'
   const isTeamAdmin = systemRole === 'TEAM_ADMIN'
   const canManage = isAdmin || isTeamAdmin
@@ -156,14 +158,20 @@ export default function UserManager({ systemRole, ownTeamId, currentUsername, te
       res = await api.admin.updateUser(modal.id, payload)
     }
     setSaving(false)
-    if (res?.success) { setModal(null); setMsg(t('usr.saved')); load() }
+    if (res?.success) { setModal(null); toast.success(t('usr.saved')); load() }
     else setMsg(res?.error || 'Error')
   }
 
   async function unlock(id) {
     const res = await api.admin.unlockUser(id)
-    if (res?.success) { setMsg(t('usr.unlocked')); load() }
-    else setMsg(res?.error || 'Error')
+    if (res?.success) { toast.success(t('usr.unlocked')); load() }
+    else toast.error(res?.error || 'Error')
+  }
+
+  async function roleUnlock(id) {
+    const res = await api.admin.unlockUserRole(id)
+    if (res?.success) { toast.success(t('usr.roleUnlocked')); load() }
+    else toast.error(res?.error || 'Error')
   }
 
   async function del(id) {
@@ -176,8 +184,9 @@ export default function UserManager({ systemRole, ownTeamId, currentUsername, te
       cancelText: t('usr.deleteCancel'),
     })
     if (!ok) return
-    await api.admin.deleteUser(id)
-    load()
+    const res = await api.admin.deleteUser(id)
+    if (res?.success) { toast.success(t('usr.deleted')); load() }
+    else toast.error(res?.error || 'Error')
   }
 
   return (
@@ -239,6 +248,9 @@ export default function UserManager({ systemRole, ownTeamId, currentUsername, te
                 <td>{user.email || '—'}</td>
                 <td>
                   <span className={`role-badge${user.system_role === 'ADMIN' ? ' role-admin' : user.system_role === 'AUDIT' ? ' role-audit' : ''}`}>{user.system_role}</span>
+                  {user.role_locked && (
+                    <span style={{ marginLeft: 6, cursor: 'help' }} title={t('usr.roleLockedTitle')}>🔒</span>
+                  )}
                   {isLastActiveAdmin(user) && (
                     <span className="badge badge-err" style={{ marginLeft: 6 }} title={t('usr.lastAdminTitle')}>
                       {t('usr.lastAdminBadge')}
@@ -257,6 +269,7 @@ export default function UserManager({ systemRole, ownTeamId, currentUsername, te
                     { label: t('usr.edit'), onClick: () => openEdit(user) },
                     { label: t('usr.autoResetBtn'), onClick: () => setAutoResetModal(user) },
                     { label: t('usr.unlock'), onClick: () => unlock(user.id), hidden: !user.permanent_lock },
+                    { label: t('usr.roleUnlock'), onClick: () => roleUnlock(user.id), hidden: !user.role_locked },
                     { label: t('usr.delete'), danger: true, onClick: () => del(user.id),
                       hidden: isSelf(user) || isLastActiveAdmin(user) },
                   ] : []} />

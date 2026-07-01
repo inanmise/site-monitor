@@ -342,9 +342,18 @@ public class AuthController {
                 .orElse(ResponseEntity.notFound().build());
     }
 
-    /** Decodes a stored base64 JPEG into an image response; 404 when absent/invalid. */
+    /**
+     * Decodes a stored base64 JPEG into an image response. When no (or unusable) photo exists,
+     * returns 204 No Content — NOT 404 — so the frontend {@code <img onError>} still falls back to
+     * the initials avatar, but the response is not counted as an error by the HTTP metrics
+     * (which flag status &gt;= 400). Most users have no AD/LDAP photo, so 404 here inflated the
+     * dashboard error rate with benign "missing avatar" misses. A Cache-Control on the empty
+     * response also lets the browser stop re-requesting a photo it knows is absent.
+     */
     static ResponseEntity<byte[]> photoResponse(String base64) {
-        if (base64 == null || base64.isBlank()) return ResponseEntity.notFound().build();
+        if (base64 == null || base64.isBlank()) {
+            return ResponseEntity.noContent().header("Cache-Control", "private, max-age=3600").build();
+        }
         try {
             byte[] bytes = java.util.Base64.getDecoder().decode(base64.trim());
             return ResponseEntity.ok()
@@ -352,7 +361,7 @@ public class AuthController {
                     .header("Cache-Control", "private, max-age=3600")
                     .body(bytes);
         } catch (Exception e) {
-            return ResponseEntity.notFound().build();
+            return ResponseEntity.noContent().build();
         }
     }
 

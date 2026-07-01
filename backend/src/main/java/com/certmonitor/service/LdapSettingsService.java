@@ -5,6 +5,7 @@ import com.certmonitor.repository.LdapSettingsRepository;
 import tools.jackson.databind.ObjectMapper;
 import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
 import java.time.Instant;
@@ -43,6 +44,23 @@ public class LdapSettingsService {
         this.cached = repo.findById(LdapSettings.SINGLETON_ID).orElse(null);
         if (cached != null) {
             log.info("LDAP settings loaded (enabled={}, host={})", cached.getEnabled(), cached.getHost());
+        }
+    }
+
+    /** Çok-pod tutarlılığı: başka bir instance kaydettiyse (updated_at farklı) cache'i DB'den tazele.
+     *  Aynı pod kaydında no-op. Aralık: cert.monitor.settings.refresh-ms (vars. 10 sn). */
+    @Scheduled(fixedDelayString = "${cert.monitor.settings.refresh-ms:10000}", initialDelayString = "15000")
+    void refreshFromDb() {
+        try {
+            LdapSettings db = repo.findById(LdapSettings.SINGLETON_ID).orElse(null);
+            String dbUa  = db     != null ? db.getUpdatedAt()     : null;
+            String curUa = cached != null ? cached.getUpdatedAt() : null;
+            if (!java.util.Objects.equals(dbUa, curUa)) {
+                this.cached = db;
+                log.info("LDAP settings cache refreshed from DB (updated by another instance)");
+            }
+        } catch (Exception e) {
+            log.debug("LDAP settings refresh skipped: {}", e.getMessage());
         }
     }
 

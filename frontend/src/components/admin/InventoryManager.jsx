@@ -356,8 +356,12 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
     if (!ok) return
 
     const res = await api.admin.deleteInventory(id)
-    if (res?.success && (res.alertsClosed ?? 0) > 0) {
-      toast.success(t('inv.deleteWithAlerts', domain, res.alertsClosed))
+    if (res?.success) {
+      toast.success((res.alertsClosed ?? 0) > 0
+        ? t('inv.deleteWithAlerts', domain, res.alertsClosed)
+        : t('inv.deleted', domain))
+    } else {
+      toast.error(res?.error || 'Error')
     }
     load()
     onInventoryChange?.()

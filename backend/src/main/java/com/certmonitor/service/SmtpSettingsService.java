@@ -5,6 +5,7 @@ import com.certmonitor.repository.SmtpSettingsRepository;
 import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
 import java.time.Instant;
@@ -62,6 +63,22 @@ public class SmtpSettingsService {
         if (cached != null) {
             log.info("SMTP settings loaded (enabled={}, host={}:{})",
                     cached.getEnabled(), cached.getHost(), cached.getPort());
+        }
+    }
+
+    /** Çok-pod tutarlılığı: başka bir instance kaydettiyse (updated_at farklı) cache'i DB'den tazele. */
+    @Scheduled(fixedDelayString = "${cert.monitor.settings.refresh-ms:10000}", initialDelayString = "15000")
+    void refreshFromDb() {
+        try {
+            SmtpSettings db = repo.findById(SmtpSettings.SINGLETON_ID).orElse(null);
+            String dbUa  = db     != null ? db.getUpdatedAt()     : null;
+            String curUa = cached != null ? cached.getUpdatedAt() : null;
+            if (!java.util.Objects.equals(dbUa, curUa)) {
+                this.cached = db;
+                log.info("SMTP settings cache refreshed from DB (updated by another instance)");
+            }
+        } catch (Exception e) {
+            log.debug("SMTP settings refresh skipped: {}", e.getMessage());
         }
     }
 

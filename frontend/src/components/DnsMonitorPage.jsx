@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { api, formatDate } from '../api/client'
 import { useT } from '../i18n/index.jsx'
+import { useToast } from './ui/Toast.jsx'
 import { Play, Pencil, Trash2, Plus, ChevronDown, Globe, Info, Network } from 'lucide-react'
 import DnsDetailModal from './DnsDetailModal.jsx'
 import SearchableSelect from './ui/SearchableSelect.jsx'
@@ -33,6 +34,7 @@ function truncateValue(val, max = 50) {
 
 export default function DnsMonitorPage({ systemRole, teamId, teamName }) {
   const t = useT()
+  const toast = useToast()
   const isAdmin = systemRole === 'ADMIN'
   const isTeamAdmin = systemRole === 'TEAM_ADMIN'
   const canWrite = isAdmin || isTeamAdmin || systemRole === 'USER'   // USER ve üstü: kendi takımı için standalone DNS ekler
@@ -91,6 +93,7 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName }) {
 
   async function save() {
     setSaving(true)
+    const isNew = modal === 'new'
     const payload = {
       name: (form.name || '').trim(),
       recordType: form.recordType,
@@ -99,16 +102,19 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName }) {
       propagationCheck: !!form.propagationCheck,
       active: form.active,
     }
-    if (modal === 'new') {
+    let res
+    if (isNew) {
       payload.domain = (form.domain || '').trim()
       payload.teamId = form.teamId === '' ? null : Number(form.teamId)
-      await api.monitoring.createDnsMonitor(payload)
+      res = await api.monitoring.createDnsMonitor(payload)
     } else {
       if (modal.standalone) payload.teamId = form.teamId === '' ? null : Number(form.teamId)
-      await api.monitoring.updateDnsMonitor(modal.id, payload)
+      res = await api.monitoring.updateDnsMonitor(modal.id, payload)
     }
     await load()
     setSaving(false)
+    if (!res?.success) { toast.error(res?.error || 'Error'); return }
+    toast.success(t('dns.saved'))
     closeEditModal()
   }
 
@@ -125,7 +131,8 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName }) {
     if (!window.confirm(t('dns.deleteConfirm'))) return
     setDeleting(m.id)
     const res = await api.monitoring.deleteDnsMonitor(m.id)
-    if (res?.success) await load()
+    if (res?.success) { toast.success(t('dns.deleted')); await load() }
+    else toast.error(res?.error || 'Error')
     setDeleting(null)
   }
 

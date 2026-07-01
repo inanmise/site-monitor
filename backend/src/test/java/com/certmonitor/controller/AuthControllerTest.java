@@ -17,6 +17,7 @@ import org.springframework.test.web.servlet.MockMvc;
 
 import java.util.Optional;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
@@ -415,5 +416,22 @@ class AuthControllerTest {
         s.setAttribute("userId", 1L);
         s.setAttribute("systemRole", "USER");
         return s;
+    }
+
+    @Test
+    @DisplayName("photoResponse: foto yok/geçersiz → 204 (404 DEĞİL) → HTTP metriklerinde hata sayılmaz")
+    void photoResponse_noPhoto_returns204() {
+        assertThat(AuthController.photoResponse(null).getStatusCode().value()).isEqualTo(204);
+        assertThat(AuthController.photoResponse("   ").getStatusCode().value()).isEqualTo(204);
+        assertThat(AuthController.photoResponse("@@@ not base64 @@@").getStatusCode().value()).isEqualTo(204);
+    }
+
+    @Test
+    @DisplayName("photoResponse: geçerli base64 → 200 image/jpeg")
+    void photoResponse_valid_returns200() {
+        String b64 = java.util.Base64.getEncoder().encodeToString(new byte[]{1, 2, 3, 4});
+        var resp = AuthController.photoResponse(b64);
+        assertThat(resp.getStatusCode().value()).isEqualTo(200);
+        assertThat(resp.getHeaders().getFirst("Content-Type")).isEqualTo("image/jpeg");
     }
 }

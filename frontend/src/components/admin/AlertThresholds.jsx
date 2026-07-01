@@ -1,13 +1,14 @@
 import { useState, useEffect } from 'react'
 import { api } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
+import { useToast } from '../ui/Toast.jsx'
 
 export default function AlertThresholds() {
   const t = useT()
+  const toast = useToast()
   const [thresholds, setThresholds] = useState([])
   const [editing, setEditing] = useState(null)
   const [saving, setSaving] = useState(false)
-  const [msg, setMsg] = useState(null)
 
   useEffect(() => { load() }, [])
 
@@ -24,14 +25,14 @@ export default function AlertThresholds() {
     setSaving(true)
     const res = await api.admin.updateThreshold(editing.id, editing)
     setSaving(false)
-    if (res?.success) { setEditing(null); setMsg(t('thr.saved')); load() }
+    if (res?.success) { setEditing(null); toast.success(t('thr.saved')); load() }
+    else toast.error(res?.error || 'Error')
   }
 
   return (
     <div className="admin-section">
       <h3>{t('thr.title')}</h3>
       <p className="section-desc">{t('thr.desc')}</p>
-      {msg && <div className="alert-msg">{msg}</div>}
       {thresholds.map((thr) => (
         <div key={thr.id} className="threshold-card">
           {editing?.id === thr.id ? (

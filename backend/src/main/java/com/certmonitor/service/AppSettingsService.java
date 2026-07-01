@@ -7,6 +7,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.slf4j.LoggerFactory;
 import org.springframework.core.env.Environment;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -51,6 +52,25 @@ public class AppSettingsService {
             applyLogLevel(); // boot'ta saklı log seviyesi override'ını uygula
         } catch (Exception e) {
             log.warn("AppSettings load skipped (table not ready?): {}", e.getMessage());
+        }
+    }
+
+    /** Çok-pod tutarlılığı: başka bir instance app_settings'i değiştirdiyse override haritasını DB'den tazele. */
+    @Scheduled(fixedDelayString = "${cert.monitor.settings.refresh-ms:10000}", initialDelayString = "15000")
+    void refreshFromDb() {
+        try {
+            Map<String, String> m = new HashMap<>();
+            for (AppSetting s : repo.findAll()) {
+                if (s.getValue() != null) m.put(s.getSettingKey(), s.getValue());
+            }
+            Map<String, String> next = Map.copyOf(m);
+            if (!next.equals(overrides)) {
+                this.overrides = next;
+                applyLogLevel();
+                log.info("AppSettings cache refreshed from DB (updated by another instance): {} override(s)", next.size());
+            }
+        } catch (Exception e) {
+            log.debug("AppSettings refresh skipped: {}", e.getMessage());
         }
     }
 
