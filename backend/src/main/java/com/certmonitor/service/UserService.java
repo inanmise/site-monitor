@@ -429,6 +429,7 @@ public class UserService {
         user.setSystemRole(systemRole != null ? systemRole : "USER");
         user.setRoleLocked(true);       // admin tarafından oluşturuldu → rol manuel; LDAP ezmesin
         user.setOrgRole(orgRole != null && !orgRole.isBlank() ? orgRole : null);
+        user.setOrgRoleLocked(true);    // admin oluşturdu → org rol manuel; LDAP provisyonu ezmesin
         applyTeams(user, teams);
         user.setActive(true);
         user.setCreatedAt(now);
@@ -485,7 +486,11 @@ public class UserService {
         // teamIds == null → takımlara dokunma (kısmi güncelleme); verilirse (boş dahil) üyeliği set et.
         if (teamIds != null) applyTeams(user, normalizeTeams(teamIds));
         if (active != null) user.setActive(active);
-        user.setOrgRole(orgRole != null && !orgRole.isBlank() ? orgRole : null);
+        String newOrg = (orgRole != null && !orgRole.isBlank()) ? orgRole : null;
+        if (!java.util.Objects.equals(newOrg, user.getOrgRole())) {
+            user.setOrgRole(newOrg);
+            user.setOrgRoleLocked(true);   // admin manuel değiştirdi → LDAP org rolünü ezmesin
+        }
         user.setUpdatedAt(now());
         AppUser saved = userRepo.save(user);
         String syncName = saved.getDisplayName() != null && !saved.getDisplayName().isBlank()
@@ -506,6 +511,17 @@ public class UserService {
         AppUser user = userRepo.findById(id)
                 .orElseThrow(() -> new NoSuchElementException("User not found: " + id));
         user.setRoleLocked(false);
+        user.setUpdatedAt(now());
+        userRepo.save(user);
+    }
+
+    /** Admin kullanıcının org-rol kilidini kaldırır → org_role tekrar AD (LDAP) yönetimine döner
+     *  (sonraki LDAP girişinde seviyeden yeniden türetilir). */
+    @Transactional
+    public void unlockOrgRole(Long id) {
+        AppUser user = userRepo.findById(id)
+                .orElseThrow(() -> new NoSuchElementException("User not found: " + id));
+        user.setOrgRoleLocked(false);
         user.setUpdatedAt(now());
         userRepo.save(user);
     }

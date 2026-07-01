@@ -4992,6 +4992,7 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .badge-role-MANAGER { background: #d97706; }
 .badge-role-CLEVEL  { background: #dc2626; }
 .badge-role-TECH    { background: #16a34a; }
+.badge-role-BOLUM_BASKANI { background: #7c3aed; }
 
 /* ── Team member expand row ──────────────────────── */
 .team-expand-btn {

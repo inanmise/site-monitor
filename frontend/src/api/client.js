@@ -409,6 +409,7 @@ export const api = {
     }),
     unlockUser: (id) => request(`/admin/users/${id}/unlock`, { method: 'POST' }),
     unlockUserRole: (id) => request(`/admin/users/${id}/role-unlock`, { method: 'POST' }),
+    unlockUserOrgRole: (id) => request(`/admin/users/${id}/org-role-unlock`, { method: 'POST' }),
 
     // Cert transfer
     transferCert: (id, teamId) => request(`/admin/inventory/${id}/transfer`, {

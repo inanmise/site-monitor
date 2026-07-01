@@ -174,6 +174,12 @@ export default function UserManager({ systemRole, ownTeamId, currentUsername, te
     else toast.error(res?.error || 'Error')
   }
 
+  async function orgRoleUnlock(id) {
+    const res = await api.admin.unlockUserOrgRole(id)
+    if (res?.success) { toast.success(t('usr.orgRoleUnlocked')); load() }
+    else toast.error(res?.error || 'Error')
+  }
+
   async function del(id) {
     const user = users.find(u => u.id === id)
     const ok = await showConfirm({
@@ -206,7 +212,7 @@ export default function UserManager({ systemRole, ownTeamId, currentUsername, te
             ...['ADMIN', 'TEAM_ADMIN', 'USER', 'AUDIT'].map(r => ({ value: r, label: r }))]} />
         <SearchableSelect value={fOrgRole} onChange={setFOrgRole} placeholder={t('usr.allOrgRoles')}
           options={[{ value: '', label: t('usr.allOrgRoles') },
-            ...['PO', 'TECH', 'MANAGER', 'CLEVEL'].map(r => ({ value: r, label: r }))]} />
+            ...['PO', 'TECH', 'MANAGER', 'BOLUM_BASKANI', 'CLEVEL'].map(r => ({ value: r, label: t('usr.orgRoleVal.' + r) }))]} />
         {canSeeAllTeams && (
           <SearchableSelect value={fTeam} onChange={setFTeam} placeholder={t('usr.allTeams')} searchThreshold={2}
             options={[{ value: '', label: t('usr.allTeams') },
@@ -257,7 +263,7 @@ export default function UserManager({ systemRole, ownTeamId, currentUsername, te
                     </span>
                   )}
                 </td>
-                <td>{user.org_role ? <span className={`badge-role badge-role-${user.org_role}`}>{user.org_role}</span> : '—'}</td>
+                <td>{user.org_role ? <span className={`badge-role badge-role-${user.org_role}`}>{t('usr.orgRoleVal.' + user.org_role)}</span> : '—'}</td>
                 <td>{((user.team_ids ?? user.teamIds ?? (user.team_id != null ? [user.team_id] : []))
                   .map(id => teamMap[id]).filter(Boolean).join(', ')) || '—'}</td>
                 <td>
@@ -270,6 +276,7 @@ export default function UserManager({ systemRole, ownTeamId, currentUsername, te
                     { label: t('usr.autoResetBtn'), onClick: () => setAutoResetModal(user) },
                     { label: t('usr.unlock'), onClick: () => unlock(user.id), hidden: !user.permanent_lock },
                     { label: t('usr.roleUnlock'), onClick: () => roleUnlock(user.id), hidden: !user.role_locked },
+                    { label: t('usr.orgRoleUnlock'), onClick: () => orgRoleUnlock(user.id), hidden: !user.org_role_locked },
                     { label: t('usr.delete'), danger: true, onClick: () => del(user.id),
                       hidden: isSelf(user) || isLastActiveAdmin(user) },
                   ] : []} />
@@ -355,11 +362,12 @@ export default function UserManager({ systemRole, ownTeamId, currentUsername, te
                   value={form.org_role}
                   onChange={v => setForm({ ...form, org_role: v })}
                   options={[
-                    { value: '',        label: t('usr.orgRoleNone') },
-                    { value: 'TECH',    label: 'Tech' },
-                    { value: 'PO',      label: 'Product Owner (PO)' },
-                    { value: 'MANAGER', label: 'Manager' },
-                    { value: 'CLEVEL',  label: 'C-Level' },
+                    { value: '',              label: t('usr.orgRoleNone') },
+                    { value: 'TECH',          label: t('usr.orgRoleVal.TECH') },
+                    { value: 'PO',            label: t('usr.orgRoleVal.PO') },
+                    { value: 'MANAGER',       label: t('usr.orgRoleVal.MANAGER') },
+                    { value: 'BOLUM_BASKANI', label: t('usr.orgRoleVal.BOLUM_BASKANI') },
+                    { value: 'CLEVEL',        label: t('usr.orgRoleVal.CLEVEL') },
                   ]}
                 />
               </label>

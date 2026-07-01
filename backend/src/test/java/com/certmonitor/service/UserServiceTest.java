@@ -578,6 +578,7 @@ class UserServiceTest {
         when(userRepo.existsByUsername("bob")).thenReturn(false);
         AppUser result = service.createUser("bob", "pass1234", "Bob", "bob@example.com", null, "USER", List.of(1L), "PO");
         assertThat(result.getOrgRole()).isEqualTo("PO");
+        assertThat(result.getOrgRoleLocked()).isTrue();   // admin oluşturdu → org rol kilitli
     }
 
     @Test
@@ -620,6 +621,36 @@ class UserServiceTest {
         service.updateUser(1L, null, null, null, null, null, null, "MANAGER");
 
         assertThat(u.getOrgRole()).isEqualTo("MANAGER");
+        assertThat(u.getOrgRoleLocked()).isTrue();        // TECH→MANAGER değişikliği → kilitle
+        verify(userRepo).save(u);
+    }
+
+    @Test
+    @DisplayName("updateUser: orgRole DEĞİŞMEZSE org rol kilidi konmaz")
+    void updateUser_orgRoleUnchanged_doesNotLock() {
+        AppUser u = user("alice", "hash");
+        u.setId(1L);
+        u.setOrgRole("MANAGER");
+        u.setOrgRoleLocked(null);
+        when(userRepo.findById(1L)).thenReturn(Optional.of(u));
+
+        service.updateUser(1L, null, null, null, null, null, null, "MANAGER");   // aynı değer
+
+        assertThat(u.getOrgRole()).isEqualTo("MANAGER");
+        assertThat(u.getOrgRoleLocked()).isNull();        // değişmedi → kilitlenmedi
+    }
+
+    @Test
+    @DisplayName("unlockOrgRole: org rol kilidini kaldırır (AD yönetimine döner)")
+    void unlockOrgRole_clearsLock() {
+        AppUser u = user("alice", "hash");
+        u.setId(1L);
+        u.setOrgRoleLocked(true);
+        when(userRepo.findById(1L)).thenReturn(Optional.of(u));
+
+        service.unlockOrgRole(1L);
+
+        assertThat(u.getOrgRoleLocked()).isFalse();
         verify(userRepo).save(u);
     }
 

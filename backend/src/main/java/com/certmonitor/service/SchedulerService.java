@@ -279,6 +279,7 @@ public class SchedulerService {
         patch("ALTER TABLE latest_checks ADD COLUMN via TEXT");
         patch("ALTER TABLE latest_checks ADD COLUMN tls_mode_used TEXT");
         patch("ALTER TABLE app_users ADD COLUMN role_locked BOOLEAN DEFAULT false");
+        patch("ALTER TABLE app_users ADD COLUMN org_role_locked BOOLEAN DEFAULT false");
         // Haftalık raporlar — tablolar ddl-auto=update ile oluşur; unique index güvenlik ağı
         patch("CREATE UNIQUE INDEX IF NOT EXISTS ux_weekly_report_team_week ON weekly_reports(team_id, report_year, week_no)");
         // Eş zamanlı düzenleme: sürüm sayacı + yumuşak düzenleme kilidi alanları
