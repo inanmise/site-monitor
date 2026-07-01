@@ -335,8 +335,9 @@ export const api = {
 
     // Haftalık erişilebilirlik e-postası (Ayarlar → Haftalık E-posta sayfası)
     getWeeklyAvailStatus: () => request('/admin/system/weekly-availability/status'),
-    getWeeklyAvailPreview: (teamId) =>
-      request(`/admin/system/weekly-availability/preview?teamId=${encodeURIComponent(teamId)}`),
+    getWeeklyAvailPreview: (teamId, weekOffset) =>
+      request(`/admin/system/weekly-availability/preview?teamId=${encodeURIComponent(teamId)}`
+        + (weekOffset != null ? `&weekOffset=${encodeURIComponent(weekOffset)}` : '')),
     sendWeeklyAvailTest: (teamId, email) => request('/admin/system/weekly-availability/send-test', {
       method: 'POST', body: JSON.stringify({ teamId, email }),
     }),

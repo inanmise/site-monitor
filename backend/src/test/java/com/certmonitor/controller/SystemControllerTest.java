@@ -194,7 +194,7 @@ class SystemControllerTest {
     void weeklyAvailStatus_asAdmin_returns200() throws Exception {
         when(weeklyAvailabilityReportService.status()).thenReturn(
                 new com.certmonitor.service.WeeklyAvailabilityReportService.StatusResult(
-                        true, "0 0 10 ? * MON", "9–15 Haziran 2026", java.util.List.of()));
+                        true, "0 0 10 ? * MON", "9–15 Haziran 2026", java.util.List.of(), java.util.List.of()));
         mvc.perform(get("/api/admin/system/weekly-availability/status").session(adminSession()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success").value(true));
@@ -210,7 +210,8 @@ class SystemControllerTest {
     @Test
     @DisplayName("GET /weekly-availability/preview as ADMIN returns 200")
     void weeklyAvailPreview_asAdmin_returns200() throws Exception {
-        when(weeklyAvailabilityReportService.preview(org.mockito.ArgumentMatchers.anyLong())).thenReturn(
+        when(weeklyAvailabilityReportService.preview(org.mockito.ArgumentMatchers.anyLong(),
+                org.mockito.ArgumentMatchers.any())).thenReturn(
                 new com.certmonitor.service.WeeklyAvailabilityReportService.PreviewResult(
                         "<html></html>", "Dijital", "9–15 Haziran 2026",
                         java.util.List.of("a@b.com"), java.util.List.of(), 1, false));

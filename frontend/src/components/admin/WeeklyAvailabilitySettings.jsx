@@ -14,6 +14,7 @@ export default function WeeklyAvailabilitySettings() {
   const [savingEnabled, setSavingEnabled] = useState(false)
 
   const [previewTeamId, setPreviewTeamId] = useState('')
+  const [previewWeekOffset, setPreviewWeekOffset] = useState(0)   // 0 = bu hafta (varsayılan)
   const [previewing, setPreviewing] = useState(false)
 
   const [testTeamId, setTestTeamId] = useState('')
@@ -76,7 +77,7 @@ export default function WeeklyAvailabilitySettings() {
   async function doPreview() {
     if (!previewTeamId) return
     setPreviewing(true)
-    const res = await api.admin.getWeeklyAvailPreview(previewTeamId)
+    const res = await api.admin.getWeeklyAvailPreview(previewTeamId, previewWeekOffset)
     setPreviewing(false)
     if (res?.success) {
       const d = res.data
@@ -128,6 +129,10 @@ export default function WeeklyAvailabilitySettings() {
 
   const teams = status.teams || []
   const teamOptions = teams.map((tm) => ({ value: String(tm.id), label: tm.name }))
+  const weekSelectOptions = (status.weeks || []).map((w) => ({
+    value: String(w.offset),
+    label: w.label + (w.current ? t('weeklyavail.weekCurrent') : w.emailed ? t('weeklyavail.weekEmailed') : ''),
+  }))
 
   function statusCell(s) {
     if (!s) return <span className="hint">—</span>
@@ -210,6 +215,8 @@ export default function WeeklyAvailabilitySettings() {
         <div className="ldap-lookup-row">
           <SearchableSelect value={previewTeamId} onChange={setPreviewTeamId}
             placeholder={t('weeklyavail.selectTeam')} searchThreshold={2} options={teamOptions} />
+          <SearchableSelect value={String(previewWeekOffset)} onChange={(v) => setPreviewWeekOffset(Number(v))}
+            placeholder={t('weeklyavail.previewWeek')} options={weekSelectOptions} />
           <button className="btn btn-primary" onClick={doPreview} disabled={previewing || !previewTeamId}>
             {previewing ? <Loader2 className="spin" size={15} /> : <Eye size={15} />} {t('weeklyavail.previewBtn')}
           </button>

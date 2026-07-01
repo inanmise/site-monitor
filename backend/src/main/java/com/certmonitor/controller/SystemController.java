@@ -209,11 +209,12 @@ public class SystemController {
     /** Admin: bir takımın geçen haftalık raporunu GÖNDERMEDEN önizle (executive HTML + çözülmüş alıcılar). */
     @GetMapping("/weekly-availability/preview")
     public ResponseEntity<Map<String, Object>> weeklyAvailabilityPreview(
-            @RequestParam Long teamId, HttpSession session) {
+            @RequestParam Long teamId,
+            @RequestParam(required = false) Integer weekOffset, HttpSession session) {
         requireAdmin(session);
         permissionService.require(session, "system_health.actions", "execute");
         try {
-            var data = weeklyAvailabilityReportService.preview(teamId);
+            var data = weeklyAvailabilityReportService.preview(teamId, weekOffset);
             return ResponseEntity.ok(Map.of("success", true, "data", data, "timestamp", now()));
         } catch (IllegalArgumentException e) {
             return ResponseEntity.badRequest().body(Map.of(
