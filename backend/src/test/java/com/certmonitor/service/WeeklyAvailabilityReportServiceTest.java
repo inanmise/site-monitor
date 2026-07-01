@@ -246,6 +246,53 @@ class WeeklyAvailabilityReportServiceTest {
     }
 
     @Test
+    @DisplayName("windowForOffset: 1 = lastFullWeekWindow (geçen tam hafta); 0 = içinde bulunulan hafta (bitiş ≈ now)")
+    void windowForOffset_currentVsLast() {
+        var last = service.windowForOffset(1);
+        var lastAlias = service.lastFullWeekWindow();
+        assertThat(last.year()).isEqualTo(lastAlias.year());
+        assertThat(last.week()).isEqualTo(lastAlias.week());
+        assertThat(last.weekLabel()).isEqualTo(lastAlias.weekLabel());
+
+        var cur = service.windowForOffset(0);
+        LocalDate thisMonday = LocalDate.now(java.time.ZoneId.of("Europe/Istanbul"))
+                .with(java.time.temporal.TemporalAdjusters.previousOrSame(java.time.DayOfWeek.MONDAY));
+        assertThat(cur.week())
+                .isEqualTo(thisMonday.get(java.time.temporal.WeekFields.ISO.weekOfWeekBasedYear()));
+        assertThat(cur.week()).isNotEqualTo(last.week());                 // bu hafta ≠ geçen hafta
+        assertThat(cur.windowEnd()).isBeforeOrEqualTo(Instant.now().plusSeconds(5));  // gelecek Pazar'a değil, now'a kırpılı
+    }
+
+    @Test
+    @DisplayName("weekOptions: [0]=bu hafta(current), [1]=e-posta(emailed), 9 seçenek, etiketler dolu")
+    void weekOptions_currentAndEmailedFlags() {
+        var opts = service.weekOptions();
+        assertThat(opts).hasSize(9);
+        assertThat(opts.get(0).offset()).isZero();
+        assertThat(opts.get(0).current()).isTrue();
+        assertThat(opts.get(0).emailed()).isFalse();
+        assertThat(opts.get(1).offset()).isEqualTo(1);
+        assertThat(opts.get(1).current()).isFalse();
+        assertThat(opts.get(1).emailed()).isTrue();
+        assertThat(opts).allSatisfy(o -> assertThat(o.label()).isNotBlank());
+    }
+
+    @Test
+    @DisplayName("preview(teamId, offset): seçilen haftanın etiketini kullanır; null → geçen hafta (offset 1)")
+    void preview_usesSelectedWeek() {
+        Team t = team(5L, "Dijital", "dijital@x.com");
+        when(teamRepo.findById(5L)).thenReturn(Optional.of(t));
+        when(inventoryRepo.findByTeamIdAndActiveTrueAndDeletedAtIsNullOrderByDomainAsc(5L)).thenReturn(List.of(inv("a.com")));
+        when(uptimeCheckRepo.findByDomainAndPortAndCheckedAtBetweenOrderByCheckedAtAsc(anyString(), anyInt(), any(), any()))
+                .thenReturn(List.of(uc("up", 120L, "2026-06-15T00:00:00")));
+        when(contactRepo.findByTeamIdAndRoleAndActiveTrue(anyLong(), anyString())).thenReturn(List.of());
+
+        assertThat(service.preview(5L, 0).weekLabel()).isEqualTo(service.windowForOffset(0).weekLabel());   // bu hafta
+        assertThat(service.preview(5L, 2).weekLabel()).isEqualTo(service.windowForOffset(2).weekLabel());   // 2 hafta önce
+        assertThat(service.preview(5L, null).weekLabel()).isEqualTo(service.preview(5L, 1).weekLabel());     // null = offset 1
+    }
+
+    @Test
     @DisplayName("sendTest: yalnız verilen adrese, cc yok, idempotency log'una YAZMAZ")
     void sendTest_sendsOnlyToGivenAddress_noCc_noWalLog() {
         Team t = team(5L, "Dijital", "dijital@x.com");

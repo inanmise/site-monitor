@@ -68,8 +68,12 @@ public class WeeklyAvailabilityReportService {
     public record PreviewResult(String html, String teamName, String weekLabel,
                                 List<String> to, List<String> cc, int domainCount, boolean noRecipients) {}
 
-    /** Durum sayfası: genel anahtar + cron + raporlanan hafta + mail kitlesindeki takımlar. */
-    public record StatusResult(boolean enabled, String cron, String weekLabel, List<TeamStatus> teams) {}
+    /** Önizleme hafta seçici için bir seçenek (offset = kaç hafta öncesi). */
+    public record WeekOption(int offset, String label, boolean current, boolean emailed) {}
+
+    /** Durum sayfası: genel anahtar + cron + raporlanan hafta + mail kitlesi + önizleme hafta seçenekleri. */
+    public record StatusResult(boolean enabled, String cron, String weekLabel,
+                               List<TeamStatus> teams, List<WeekOption> weeks) {}
     public record TeamStatus(Long id, String name, int domainCount, List<String> to, List<String> cc,
                              String lastStatus, String lastSentAt) {}
 
@@ -141,19 +145,40 @@ public class WeeklyAvailabilityReportService {
 
     // ── Pencere + tek takım rapor üretimi ────────────────────────────────────────
 
-    /** Geçen tam ISO hafta (Pzt 00:00 – Paz 23:59:59, Europe/Istanbul) → UTC ISO sınırlar. */
+    /** Geçen tam ISO hafta (Pzt 00:00 – Paz 23:59:59, Europe/Istanbul) → gerçek e-postanın raporladığı pencere. */
     Window lastFullWeekWindow() {
+        return windowForOffset(1);
+    }
+
+    /**
+     * {@code offset} hafta öncesinin penceresi (Europe/Istanbul → UTC ISO sınırlar).
+     * offset==0 → İÇİNDE BULUNULAN hafta: Pzt 00:00'dan ŞU ANA kadar (kısmi veri; yalnız önizleme).
+     * offset>=1 → o kadar hafta önceki TAM hafta (Pzt 00:00 – Paz 23:59:59). offset=1 = gerçek e-postanın haftası.
+     */
+    Window windowForOffset(int offset) {
         LocalDate thisMonday = LocalDate.now(IST).with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY));
-        LocalDate lastMonday = thisMonday.minusWeeks(1);
-        LocalDate lastSunday = thisMonday.minusDays(1);
-        ZonedDateTime fromZ = lastMonday.atStartOfDay(IST);
-        ZonedDateTime toZ   = lastSunday.atTime(23, 59, 59).atZone(IST);
-        int year = lastMonday.get(WeekFields.ISO.weekBasedYear());
-        int week = lastMonday.get(WeekFields.ISO.weekOfWeekBasedYear());
+        LocalDate monday = thisMonday.minusWeeks(offset);
+        LocalDate sunday = monday.plusDays(6);
+        ZonedDateTime fromZ = monday.atStartOfDay(IST);
+        Instant end = (offset == 0)
+                ? Instant.now()                                       // bu hafta: yalnız şu ana kadarki veri
+                : sunday.atTime(23, 59, 59).atZone(IST).toInstant();  // tamamlanmış hafta
+        int year = monday.get(WeekFields.ISO.weekBasedYear());
+        int week = monday.get(WeekFields.ISO.weekOfWeekBasedYear());
         // Availability 7/24 izlenir → etiket TAM haftayı (Pzt–Paz) gösterir; haftalık RAPOR modülünün
         // Pzt–Cum (iş haftası) etiketini KULLANMA — yoksa "15–21 veri" ama "15–19 etiket" tutarsızlığı olur.
-        return new Window(UTC_ISO.format(fromZ.toInstant()), UTC_ISO.format(toZ.toInstant()),
-                toZ.toInstant(), year, week, weekRangeLabel(lastMonday, lastSunday));
+        return new Window(UTC_ISO.format(fromZ.toInstant()), UTC_ISO.format(end),
+                end, year, week, weekRangeLabel(monday, sunday));
+    }
+
+    /** Önizleme hafta seçici seçenekleri: offset 0 (bu hafta, kısmi) … 8 (son 8 tam hafta). */
+    List<WeekOption> weekOptions() {
+        List<WeekOption> opts = new ArrayList<>();
+        for (int offset = 0; offset <= 8; offset++) {
+            Window w = windowForOffset(offset);
+            opts.add(new WeekOption(offset, w.weekLabel(), offset == 0, offset == 1));
+        }
+        return opts;
     }
 
     /** "15–21 Haziran 2026" / "29 Haziran – 5 Temmuz 2026" / "29 Aralık 2025 – 4 Ocak 2026" (Pzt–Paz, dahil). */
@@ -195,11 +220,20 @@ public class WeeklyAvailabilityReportService {
 
     // ── Önizleme / test / durum (Ayarlar sayfası) ────────────────────────────────
 
-    /** Tek takımın geçen haftalık raporunu GÖNDERMEDEN üretir (Ayarlar → önizleme). */
+    /** Geriye uyumlu: hafta belirtilmezse geçen tam hafta (e-posta ile giden). */
     public PreviewResult preview(Long teamId) {
+        return preview(teamId, null);
+    }
+
+    /**
+     * Tek takımın haftalık raporunu GÖNDERMEDEN üretir (Ayarlar → önizleme).
+     * weekOffset: 0 = bu hafta (kısmi), 1 = geçen tam hafta (e-posta ile giden), null → 1. [0,8] aralığına kırpılır.
+     */
+    public PreviewResult preview(Long teamId, Integer weekOffset) {
         Team team = teamRepo.findById(teamId)
                 .orElseThrow(() -> new IllegalArgumentException("Takım bulunamadı: " + teamId));
-        Window w = lastFullWeekWindow();
+        int offset = weekOffset != null ? Math.max(0, Math.min(weekOffset, 8)) : 1;
+        Window w = windowForOffset(offset);
         List<CertificateInventory> domains =
                 inventoryRepo.findByTeamIdAndActiveTrueAndDeletedAtIsNullOrderByDomainAsc(teamId);
         TeamReport report = buildTeamReport(team, w, domains);
@@ -241,7 +275,7 @@ public class WeeklyAvailabilityReportService {
                     prev.map(WeeklyAvailabilityLog::getStatus).orElse(null),
                     prev.map(WeeklyAvailabilityLog::getSentAt).orElse(null)));
         }
-        return new StatusResult(isEnabled(), cronExpr, w.weekLabel(), teamStatuses);
+        return new StatusResult(isEnabled(), cronExpr, w.weekLabel(), teamStatuses, weekOptions());
     }
 
     /** Arşiv listesi: gönderilmiş haftalık erişilebilirlik mailleri (en yeni üstte). includeTest → test maillerini de getir. */
