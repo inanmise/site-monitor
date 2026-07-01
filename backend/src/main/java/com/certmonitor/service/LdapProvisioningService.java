@@ -112,8 +112,13 @@ public class LdapProvisioningService {
         return userRepo.save(u);
     }
 
-    /** Applies the AD-derived role without downgrading a manually-elevated ADMIN/AUDIT. */
+    /**
+     * AD'den türetilen rolü uygular. Rol admin tarafından KİLİTLENMİŞSE (role_locked) hiç dokunma —
+     * manuel atanan rol (örn. USER→TEAM_ADMIN) her girişte ezilmez. Kilitsiz kullanıcılarda eski
+     * davranış korunur: elle yükseltilmiş ADMIN/AUDIT düşürülmez.
+     */
     private void applyRole(AppUser u, String desired) {
+        if (Boolean.TRUE.equals(u.getRoleLocked())) return;   // admin manuel kilitledi → LDAP dokunmaz
         if ("ADMIN".equals(desired)) { u.setSystemRole("ADMIN"); return; }
         String cur = u.getSystemRole();
         if (!"ADMIN".equals(cur) && !"AUDIT".equals(cur)) u.setSystemRole(desired);

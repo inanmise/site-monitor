@@ -407,6 +407,7 @@ export const api = {
       method: 'POST', body: JSON.stringify({ admin_password: adminPassword }),
     }),
     unlockUser: (id) => request(`/admin/users/${id}/unlock`, { method: 'POST' }),
+    unlockUserRole: (id) => request(`/admin/users/${id}/role-unlock`, { method: 'POST' }),
 
     // Cert transfer
     transferCert: (id, teamId) => request(`/admin/inventory/${id}/transfer`, {

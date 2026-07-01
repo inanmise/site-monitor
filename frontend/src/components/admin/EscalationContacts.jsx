@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo } from 'react'
 import { api } from '../../api/client'
 import { useDialog } from '../ui/Dialog.jsx'
 import { useT } from '../../i18n/index.jsx'
+import { useToast } from '../ui/Toast.jsx'
 import SearchableSelect from '../ui/SearchableSelect.jsx'
 import KebabMenu from '../ui/KebabMenu.jsx'
 import UserBadge from '../ui/UserBadge.jsx'
@@ -13,6 +14,7 @@ const emptyContact = { user_id: '', role: 'TECH', min_alert_level: 'WARNING', we
 
 export default function EscalationContacts({ teams = [], systemRole, isAdmin: isAdminProp = false }) {
   const t = useT()
+  const toast = useToast()
   const isAdmin = systemRole ? systemRole === 'ADMIN' : isAdminProp
   const isTeamAdmin = systemRole === 'TEAM_ADMIN'
   const canManage = isAdmin || isTeamAdmin
@@ -101,7 +103,7 @@ export default function EscalationContacts({ teams = [], systemRole, isAdmin: is
       ? await api.admin.addContact(payload)
       : await api.admin.updateContact(modal.id, payload)
     setSaving(false)
-    if (res?.success) { setModal(null); setMsg(t('ec.saved')); load() }
+    if (res?.success) { setModal(null); toast.success(t('ec.saved')); load() }
     else setMsg(res?.error || 'Error')
   }
 
@@ -115,8 +117,9 @@ export default function EscalationContacts({ teams = [], systemRole, isAdmin: is
       cancelText: t('ec.deleteCancel'),
     })
     if (!ok) return
-    await api.admin.deleteContact(id)
-    load()
+    const res = await api.admin.deleteContact(id)
+    if (res?.success) { toast.success(t('ec.deleted')); load() }
+    else toast.error(res?.error || 'Error')
   }
 
   const selectedUser = form.user_id ? userMap[form.user_id] : null

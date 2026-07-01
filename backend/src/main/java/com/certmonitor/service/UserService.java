@@ -427,6 +427,7 @@ public class UserService {
         user.setEmail(email.trim());
         user.setEmployeeId(employeeId);
         user.setSystemRole(systemRole != null ? systemRole : "USER");
+        user.setRoleLocked(true);       // admin tarafından oluşturuldu → rol manuel; LDAP ezmesin
         user.setOrgRole(orgRole != null && !orgRole.isBlank() ? orgRole : null);
         applyTeams(user, teams);
         user.setActive(true);
@@ -477,7 +478,10 @@ public class UserService {
         if (displayName != null) user.setDisplayName(displayName);
         if (email != null && !email.isBlank()) user.setEmail(email.trim());
         if (employeeId != null) user.setEmployeeId(employeeId);
-        if (systemRole != null) user.setSystemRole(systemRole);
+        if (systemRole != null && !systemRole.equals(user.getSystemRole())) {
+            user.setSystemRole(systemRole);
+            user.setRoleLocked(true);   // admin manuel değiştirdi → LDAP provisyonu bu rolü ezmesin
+        }
         // teamIds == null → takımlara dokunma (kısmi güncelleme); verilirse (boş dahil) üyeliği set et.
         if (teamIds != null) applyTeams(user, normalizeTeams(teamIds));
         if (active != null) user.setActive(active);
@@ -493,6 +497,17 @@ public class UserService {
         });
         syncPoLeadership(saved);
         return saved;
+    }
+
+    /** Admin kullanıcının rol-kilidini kaldırır → systemRole tekrar AD (LDAP) yönetimine döner
+     *  (sonraki LDAP girişinde rol AD'den yeniden türetilir). */
+    @Transactional
+    public void unlockRole(Long id) {
+        AppUser user = userRepo.findById(id)
+                .orElseThrow(() -> new NoSuchElementException("User not found: " + id));
+        user.setRoleLocked(false);
+        user.setUpdatedAt(now());
+        userRepo.save(user);
     }
 
     /**

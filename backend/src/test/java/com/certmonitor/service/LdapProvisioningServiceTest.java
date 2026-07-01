@@ -343,4 +343,40 @@ class LdapProvisioningServiceTest {
 
         org.mockito.Mockito.verify(contactRepo, org.mockito.Mockito.never()).save(any());
     }
+
+    @Test
+    @DisplayName("role_locked kullanıcının rolü LDAP girişinde EZİLMEZ (manuel TEAM_ADMIN korunur)")
+    void lockedRole_notOverwrittenOnLogin() {
+        AppUser existing = new AppUser();
+        existing.setId(500L);
+        existing.setUsername("LOCKEDUSER");
+        existing.setSystemRole("TEAM_ADMIN");    // admin elle yükseltti
+        existing.setRoleLocked(true);            // + kilitledi
+        existing.setAuthSource("LDAP");
+        when(userRepo.findByUsername("LOCKEDUSER")).thenReturn(Optional.of(existing));
+        // AD normalde bu kişiyi USER yapardı (PO/müdür değil)
+        Map<String, Object> attrs = Map.of("cn", "12345", "displayName", "Locked User");
+
+        AppUser u = service.provisionFromAd("lockeduser", "CN=lockeduser,DC=example,DC=com", attrs);
+
+        assertThat(u.getSystemRole()).isEqualTo("TEAM_ADMIN");   // EZİLMEDİ
+        assertThat(u.getRoleLocked()).isTrue();
+    }
+
+    @Test
+    @DisplayName("role_locked yoksa (null) rol AD'den güncellenir — kilitsiz eski davranış korunur")
+    void unlockedRole_stillUpdatedFromAd() {
+        AppUser existing = new AppUser();
+        existing.setId(501L);
+        existing.setUsername("ADUSER");
+        existing.setSystemRole("TEAM_ADMIN");    // AD-PO iken olmuş, artık PO değil
+        existing.setRoleLocked(null);            // kilit yok → AD yönetir
+        existing.setAuthSource("LDAP");
+        when(userRepo.findByUsername("ADUSER")).thenReturn(Optional.of(existing));
+        Map<String, Object> attrs = Map.of("cn", "12346", "displayName", "AD User");   // PO değil → USER
+
+        AppUser u = service.provisionFromAd("aduser", "CN=aduser,DC=example,DC=com", attrs);
+
+        assertThat(u.getSystemRole()).isEqualTo("USER");         // kilitsiz → AD davranışı
+    }
 }

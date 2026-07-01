@@ -6,6 +6,7 @@ import jakarta.annotation.PostConstruct;
 import jakarta.servlet.http.HttpSession;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -41,15 +42,34 @@ public class PermissionService {
         rebuildCache();
     }
 
-    public synchronized void rebuildCache() {
+    private Map<String, Map<String, Map<String, Boolean>>> buildCache() {
         Map<String, Map<String, Map<String, Boolean>>> next = new HashMap<>();
         for (PermissionGrant g : repo.findAll()) {
             next.computeIfAbsent(g.getRole(), r -> new HashMap<>())
                 .computeIfAbsent(g.getResourceKey(), rk -> new HashMap<>())
                 .put(g.getAction(), Boolean.TRUE.equals(g.getAllowed()));
         }
-        cache = next;
-        log.info("Permission cache rebuilt: {} roles", next.size());
+        return next;
+    }
+
+    public synchronized void rebuildCache() {
+        this.cache = buildCache();
+        log.info("Permission cache rebuilt: {} roles", cache.size());
+    }
+
+    /** Çok-pod tutarlılığı: başka bir instance grant değiştirdiyse yetki matrisini DB'den tazele.
+     *  Aynı pod değişikliğinde no-op (rebuildCache zaten güncelledi). */
+    @Scheduled(fixedDelayString = "${cert.monitor.settings.refresh-ms:10000}", initialDelayString = "15000")
+    synchronized void refreshFromDb() {
+        try {
+            Map<String, Map<String, Map<String, Boolean>>> next = buildCache();
+            if (!next.equals(cache)) {
+                this.cache = next;
+                log.info("Permission cache refreshed from DB (updated by another instance): {} roles", next.size());
+            }
+        } catch (Exception e) {
+            log.debug("Permission refresh skipped: {}", e.getMessage());
+        }
     }
 
     public boolean allows(String role, String resourceKey, String action) {

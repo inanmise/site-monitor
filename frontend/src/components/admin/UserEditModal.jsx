@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { api } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
+import { useToast } from '../ui/Toast.jsx'
 import SearchableSelect from '../ui/SearchableSelect.jsx'
 import MultiTeamSelect from '../ui/MultiTeamSelect.jsx'
 import { UserCog } from 'lucide-react'
@@ -23,6 +24,7 @@ export function ModalHeaderAvatar({ userId, children }) {
  */
 export default function UserEditModal({ user, teams, onClose, onSaved, readOnly = false, onEdit }) {
   const t = useT()
+  const toast = useToast()
   const [form, setForm] = useState(toForm(user))
   const [saving, setSaving] = useState(false)
   const [msg, setMsg] = useState(null)
@@ -59,6 +61,7 @@ export default function UserEditModal({ user, teams, onClose, onSaved, readOnly 
     const res = await api.admin.updateUser(user.id, payload)
     setSaving(false)
     if (res?.success) {
+      toast.success(t('usr.saved'))
       onSaved?.(res.data ?? null)
       onClose?.()
     } else {

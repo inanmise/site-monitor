@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo, Fragment } from 'react'
 import { api } from '../../api/client'
 import { useDialog } from '../ui/Dialog.jsx'
 import { useT } from '../../i18n/index.jsx'
+import { useToast } from '../ui/Toast.jsx'
 import SearchableSelect from '../ui/SearchableSelect.jsx'
 import KebabMenu from '../ui/KebabMenu.jsx'
 import { UsersRound, PenLine } from 'lucide-react'
@@ -65,6 +66,7 @@ function MemberAvatar({ m }) {
 
 export default function TeamManager({ systemRole, ownTeamId, onTeamsChange }) {
   const t = useT()
+  const toast = useToast()
   const isAdmin = systemRole === 'ADMIN'
   const isTeamAdmin = systemRole === 'TEAM_ADMIN'
   const canManage = isAdmin || isTeamAdmin
@@ -169,10 +171,10 @@ export default function TeamManager({ systemRole, ownTeamId, onTeamsChange }) {
       : await api.admin.updateTeam(editedId, payload)
     setSaving(false)
     if (res?.success) {
-      setMsg('✓ ' + t('team.saved'))
+      toast.success(t('team.saved'))
       load(); onTeamsChange?.()
       if (!isAdd) setMembersCache(prev => { const n = { ...prev }; delete n[editedId]; return n })
-      setTimeout(() => closeModal(), 1800)
+      closeModal()
     } else {
       setMsg(res?.error || 'Error')
     }
@@ -190,9 +192,10 @@ export default function TeamManager({ systemRole, ownTeamId, onTeamsChange }) {
     if (!ok) return
     const res = await api.admin.deleteTeam(id)
     if (!res?.success) {
-      setMsg(res?.error || t('team.deleteError'))
+      toast.error(res?.error || t('team.deleteError'))
       return
     }
+    toast.success(t('team.deleted'))
     setMembersCache(prev => { const n = { ...prev }; delete n[id]; return n })
     if (expandedId === id) setExpandedId(null)
     load()

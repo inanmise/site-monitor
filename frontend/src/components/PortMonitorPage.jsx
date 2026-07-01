@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { createPortal } from 'react-dom'
 import { api, formatDate } from '../api/client'
 import { useT } from '../i18n/index.jsx'
+import { useToast } from './ui/Toast.jsx'
 import SearchableSelect from './ui/SearchableSelect.jsx'
 import { Play, Pencil, X, RefreshCw, Plug, Plus, Trash2, FlaskConical } from 'lucide-react'
 
@@ -19,6 +20,7 @@ const emptyForm = { name: '', host: '', port: '', protocol: 'TCP', expect: '', s
 
 export default function PortMonitorPage({ systemRole, teamId, teamName }) {
   const t = useT()
+  const toast = useToast()
   const isAdmin = systemRole === 'ADMIN'
   const isTeamAdmin = systemRole === 'TEAM_ADMIN'
   const canWrite = isAdmin || isTeamAdmin                          // ekle/düzenle/sil butonu (takım-kapsamlı)
@@ -121,6 +123,7 @@ export default function PortMonitorPage({ systemRole, teamId, teamName }) {
       : await api.monitoring.updatePortMonitor(modal.id, payload)
     setSaving(false)
     if (!res?.success) { setSaveError(res?.error || t('port.saveError')); return }
+    toast.success(t('port.saved'))
     await load(); closeEdit()
   }
 
@@ -141,6 +144,7 @@ export default function PortMonitorPage({ systemRole, teamId, teamName }) {
     if (!window.confirm(t('port.deleteConfirm'))) return
     const res = await api.monitoring.deletePortMonitor(modal.id)
     if (!res?.success) { setSaveError(res?.error || t('port.saveError')); return }
+    toast.success(t('port.deleted'))
     await load(); closeEdit()
   }
 
