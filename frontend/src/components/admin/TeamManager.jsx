@@ -330,7 +330,7 @@ export default function TeamManager({ systemRole, ownTeamId, onTeamsChange }) {
                                             {m.org_role && (<>
                                               <dt>{t('usr.colOrgRole')}:</dt>
                                               <dd>
-                                                <span className={`badge-role badge-role-${m.org_role}`}>{m.org_role}</span>
+                                                <span className={`badge-role badge-role-${m.org_role}`}>{t('usr.orgRoleVal.' + m.org_role)}</span>
                                               </dd>
                                             </>)}
                                             {m.title && (<><dt>{t('usr.colTitle')}:</dt><dd>{m.title}</dd></>)}

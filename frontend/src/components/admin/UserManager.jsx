@@ -263,7 +263,12 @@ export default function UserManager({ systemRole, ownTeamId, currentUsername, te
                     </span>
                   )}
                 </td>
-                <td>{user.org_role ? <span className={`badge-role badge-role-${user.org_role}`}>{t('usr.orgRoleVal.' + user.org_role)}</span> : '—'}</td>
+                <td>
+                  {user.org_role ? <span className={`badge-role badge-role-${user.org_role}`}>{t('usr.orgRoleVal.' + user.org_role)}</span> : '—'}
+                  {user.org_role_locked && (
+                    <span style={{ marginLeft: 6, cursor: 'help' }} title={t('usr.orgRoleLockedTitle')}>🔒</span>
+                  )}
+                </td>
                 <td>{((user.team_ids ?? user.teamIds ?? (user.team_id != null ? [user.team_id] : []))
                   .map(id => teamMap[id]).filter(Boolean).join(', ')) || '—'}</td>
                 <td>
