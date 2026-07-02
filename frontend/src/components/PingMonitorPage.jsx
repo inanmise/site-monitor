@@ -227,6 +227,17 @@ export default function PingMonitorPage({ systemRole, teamId, teamName }) {
     return <span className={`upt-badge ${cls}`}><span className="upt-badge-dot" />{label}</span>
   }
 
+  // Aynı host + takım için mevcut monitör (kendisi hariç) → mükerrer engelleme uyarısı
+  const dupHost = (() => {
+    const h = (form.host || '').trim().toLowerCase()
+    if (!h) return null
+    const targetTeam = (form.teamId === '' || form.teamId == null) ? null : Number(form.teamId)
+    const editingId = (modal && modal !== 'new') ? modal.id : null
+    return monitors.find(m => m.id !== editingId
+      && (m.host || '').trim().toLowerCase() === h
+      && (m.team_id ?? null) === targetTeam)
+  })()
+
   return (
     <div className="upt-page">
       <div className="upt-header">
@@ -387,7 +398,8 @@ export default function PingMonitorPage({ systemRole, teamId, teamName }) {
             </div>
             <div className="form-grid">
               <label className="full-width"><span>{t('ping.host')} <span className="req-star">*</span></span>
-                <input value={form.host} placeholder="1.2.3.4 / host.example.com" onChange={e => setForm(f => ({ ...f, host: e.target.value }))} /></label>
+                <input value={form.host} placeholder="1.2.3.4 / host.example.com" onChange={e => setForm(f => ({ ...f, host: e.target.value }))} />
+                {dupHost && <span className="field-hint field-hint--warn">{t('ping.dupHostWarn')}</span>}</label>
               <label><span>{t('ping.ipVersion')}</span>
                 <SearchableSelect value={form.ipVersion} onChange={v => setForm(f => ({ ...f, ipVersion: v }))}
                   options={[{ value: 'auto', label: t('ping.ipAuto') }, { value: 'v4', label: 'IPv4' }, { value: 'v6', label: 'IPv6' }]} /></label>
@@ -454,7 +466,7 @@ export default function PingMonitorPage({ systemRole, teamId, teamName }) {
                 {modal !== 'new' && canDeleteRow(modal) && <button className="btn btn-danger" onClick={del}><Trash2 size={14} />{t('ping.delete')}</button>}
               </div>
               <button className="btn btn-secondary" onClick={closeEdit}>{t('ping.cancel')}</button>
-              <button className="btn btn-primary" onClick={save} disabled={saving || !form.host.trim()}>{saving ? '...' : t('ping.save')}</button>
+              <button className="btn btn-primary" onClick={save} disabled={saving || !form.host.trim() || !!dupHost}>{saving ? '...' : t('ping.save')}</button>
             </div>
           </div>
         </div>,
