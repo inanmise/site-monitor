@@ -189,6 +189,29 @@ class MonitoringControllerTest {
     }
 
     @Test
+    @DisplayName("POST /ping: aynı host+takım zaten varken → 400 (mükerrer engellenir)")
+    void createPing_duplicate_rejected() throws Exception {
+        when(pingMonitorRepo.existsDuplicate(anyString(), any(), any())).thenReturn(true);
+        mvc.perform(post("/api/monitoring/ping").session(session("ADMIN"))
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                .content("{\"host\":\"x.example.com\",\"teamId\":3}"))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    @DisplayName("POST /ping: mükerrer yoksa ADMIN ekler → 200")
+    void createPing_admin_success() throws Exception {
+        when(pingMonitorRepo.existsDuplicate(anyString(), any(), any())).thenReturn(false);
+        when(pingMonitorRepo.save(any(com.certmonitor.model.PingMonitor.class)))
+                .thenAnswer(a -> { com.certmonitor.model.PingMonitor p = a.getArgument(0); p.setId(7L); return p; });
+        mvc.perform(post("/api/monitoring/ping").session(session("ADMIN"))
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                .content("{\"host\":\"1.2.3.4\",\"teamId\":3}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.host").value("1.2.3.4"));
+    }
+
+    @Test
     @DisplayName("POST /port: HTTP tipi (küçük harf) normalize edilir + expect/send_data persist")
     void createPort_httpType_persistsCheckConfig() throws Exception {
         when(portMonitorRepo.findFirstByHostAndPortOrderByIdAsc(anyString(), anyInt())).thenReturn(Optional.empty());

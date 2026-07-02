@@ -1217,10 +1217,13 @@ public class MonitoringController {
         if (blank(body.get("host"))) return badRequest("host zorunlu");
         Long teamId = resolveWriteTeam(session, body);
         if (teamId == null && !SessionScope.isGlobalAdmin(session)) return badRequest("Bir takıma atanmamışsınız; izleme oluşturulamıyor");
+        String host = ((String) body.get("host")).trim();
+        if (pingMonitorRepo.existsDuplicate(host, teamId, null))
+            return badRequest("Bu host bu takımda zaten izleniyor; mükerrer ping monitörü oluşturulamaz.");
         String now = ISO.format(Instant.now());
         PingMonitor m = new PingMonitor();
         m.setName((String) body.get("name"));
-        m.setHost((String) body.get("host"));
+        m.setHost(host);
         String ipv = body.get("ipVersion") != null ? body.get("ipVersion").toString() : "auto";
         m.setIpVersion(Set.of("v4", "v6", "auto").contains(ipv) ? ipv : "auto");
         if (body.containsKey("groupName")) m.setGroupName(blank(body.get("groupName")) ? null : body.get("groupName").toString().trim());
@@ -1243,6 +1246,11 @@ public class MonitoringController {
         permissionService.require(session, "monitoring.crud", "edit");
         return pingMonitorRepo.findById(id).map(m -> {
             if (!canOperateTeam(session, m.getTeamId())) throw new SecurityException("Bu takımın izlemesini düzenleyemezsiniz");
+            // Mükerrer guard: nihai host + takım ile (kendisi hariç) — host mutasyonu/alarm yan etkisinden ÖNCE.
+            String intendedHost = body.get("host") != null ? ((String) body.get("host")).trim() : m.getHost();
+            Long intendedTeam = body.containsKey("teamId") ? resolveTeamChange(session, m.getTeamId(), body.get("teamId")) : m.getTeamId();
+            if (intendedHost != null && pingMonitorRepo.existsDuplicate(intendedHost, intendedTeam, id))
+                return badRequest("Bu host bu takımda zaten izleniyor; mükerrer ping monitörü oluşturulamaz.");
             if (body.get("name")            != null) m.setName((String) body.get("name"));
             if (body.get("host")            != null) {
                 String newHost = (String) body.get("host");
