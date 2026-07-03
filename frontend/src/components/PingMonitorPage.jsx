@@ -4,8 +4,10 @@ import { api, formatDateSec } from '../api/client'
 import { useT } from '../i18n/index.jsx'
 import { useToast } from './ui/Toast.jsx'
 import SearchableSelect from './ui/SearchableSelect.jsx'
-import { Play, Pencil, X, RefreshCw, Plus, Trash2, Radio, Users, Layers, FlaskConical, Check, AlertTriangle } from 'lucide-react'
+import { Play, Pencil, X, RefreshCw, Plus, Trash2, Radio, Users, Layers, FlaskConical, Check, AlertTriangle,
+  LayoutDashboard, CheckCircle2, WifiOff, Siren, BellDot, PauseCircle, BarChart3, ChevronDown } from 'lucide-react'
 import AlertHistory from './admin/AlertHistory.jsx'
+import MonitorStatsBar from './MonitorStatsBar.jsx'
 // recharts ağır — yalnız "Süre Grafiği" sekmesi açılınca yüklensin.
 const ResponseTimeChart = lazy(() => import('./ResponseTimeChart.jsx'))
 const MonitorNotes = lazy(() => import('./MonitorNotes.jsx'))
@@ -48,6 +50,8 @@ export default function PingMonitorPage({ systemRole, teamId, teamName }) {
   const [search, setSearch] = useState('')
   const [teamFilter, setTeamFilter] = useState('all')
   const [groupFilter, setGroupFilter] = useState('all')
+  const [statFilter, setStatFilter] = useState(null)
+  const [statsVisible, setStatsVisible] = useState(false)
   const [secondsSince, setSecondsSince] = useState(0)
   const [detailTab, setDetailTab] = useState('control')
   const countdownRef = useRef(null)
@@ -202,7 +206,7 @@ export default function PingMonitorPage({ systemRole, teamId, teamName }) {
     [groupNames, groupMonitors, t])
   const groupSelectOptions = useMemo(() => groupNames.map(g => ({ value: g, label: g })), [groupNames])
 
-  const displayMonitors = useMemo(() => monitors.filter(m => {
+  const scoped = useMemo(() => monitors.filter(m => {
     if (teamFilter !== 'all') {
       if (teamFilter === '__none__') { if (m.team_name) return false }
       else if (m.team_name !== teamFilter) return false
@@ -214,6 +218,40 @@ export default function PingMonitorPage({ systemRole, teamId, teamName }) {
     if (!search.trim()) return true
     return (m.host || '').toLowerCase().includes(search.trim().toLowerCase())
   }), [monitors, teamFilter, groupFilter, search])
+
+  const counts = useMemo(() => {
+    const c = { total: scoped.length, up: 0, down: 0, alarm: 0, unacked: 0, paused: 0 }
+    for (const m of scoped) {
+      if (m.status === 'up') c.up++
+      else if (m.status === 'down') c.down++
+      if (m.active_alarm) { c.alarm++; if (!m.alarm_acknowledged) c.unacked++ }
+      if (m.active === false) c.paused++
+    }
+    return c
+  }, [scoped])
+
+  const displayMonitors = useMemo(() => {
+    if (!statFilter || statFilter === 'total') return scoped
+    const pred = {
+      up:      m => m.status === 'up',
+      down:    m => m.status === 'down',
+      alarm:   m => m.active_alarm,
+      unacked: m => m.active_alarm && !m.alarm_acknowledged,
+      paused:  m => m.active === false,
+    }[statFilter]
+    return pred ? scoped.filter(pred) : scoped
+  }, [scoped, statFilter])
+
+  const statItems = [
+    { key: 'total',   Icon: LayoutDashboard, label: t('ping.dashTotal'),   value: counts.total,   cls: 'total'    },
+    { key: 'up',      Icon: CheckCircle2,    label: t('ping.dashUp'),      value: counts.up,      cls: 'valid'    },
+    { key: 'down',    Icon: WifiOff,         label: t('ping.dashDown'),    value: counts.down,    cls: 'critical' },
+    { key: 'alarm',   Icon: Siren,           label: t('ping.dashAlarm'),   value: counts.alarm,   cls: 'high'     },
+    { key: 'unacked', Icon: BellDot,         label: t('ping.dashUnacked'), value: counts.unacked, cls: 'warning'  },
+    { key: 'paused',  Icon: PauseCircle,     label: t('ping.dashPaused'),  value: counts.paused,  cls: 'paused'   },
+  ]
+  const onStatClick = (key) => setStatFilter(k => k === key ? null : key)
+  const toggleStats = () => { if (statsVisible) setStatFilter(null); setStatsVisible(v => !v) }
 
   function cardClass(m) {
     if (m.status === 'up') return 'upt-card--up'
@@ -274,6 +312,25 @@ export default function PingMonitorPage({ systemRole, teamId, teamName }) {
           {hasTeamOptions && <SearchableSelect value={teamFilter} onChange={setTeamFilter} options={teamOptions} />}
           <input className="upt-search" type="text" placeholder={t('ping.searchPlaceholder')}
             value={search} onChange={e => setSearch(e.target.value)} />
+        </div>
+      )}
+
+      {!loading && monitors.length > 0 && (
+        <div className="stats-collapse-bar" onClick={toggleStats}
+          title={statsVisible ? t('app.collapseStats') : t('app.expandStats')}>
+          <span className="stats-collapse-icon"><BarChart3 size={18} /></span>
+          <span className="stats-collapse-label">{t('app.statistics')}</span>
+          {!statsVisible && <span className="stats-collapse-hint">{t('app.expandStats')}</span>}
+          <span className={`stats-collapse-chevron${statsVisible ? ' open' : ''}`}><ChevronDown size={18} /></span>
+        </div>
+      )}
+      {statsVisible && !loading && monitors.length > 0 && (
+        <MonitorStatsBar items={statItems} activeFilter={statFilter} onStatClick={onStatClick} />
+      )}
+      {statsVisible && statFilter && statFilter !== 'total' && (
+        <div className="stats-filter-bar" style={{ marginBottom: 16 }}>
+          <span>{statItems.find(s => s.key === statFilter)?.label} — {t('mondash.showing', displayMonitors.length)}</span>
+          <button className="stats-filter-clear" onClick={() => setStatFilter(null)}>{t('app.clearFilter')}</button>
         </div>
       )}
 
