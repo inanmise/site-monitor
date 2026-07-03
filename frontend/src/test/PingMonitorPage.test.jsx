@@ -53,4 +53,37 @@ describe('PingMonitorPage', () => {
     expect(screen.getByRole('button', { name: /check history|kontrol/i })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /response chart|süre/i })).toBeInTheDocument()
   })
+
+  it('istatistik panosu: sayımlar doğru + karta tıklayınca grid filtrelenir/temizlenir', async () => {
+    api.monitoring.getPingMonitors.mockResolvedValue({ success: true, data: [
+      { id: 1, host: '10.0.0.1', status: 'up',   active: true },
+      { id: 2, host: '10.0.0.2', status: 'down', active: true, active_alarm: true, alarm_acknowledged: false, alarm_level: 'CRITICAL' },
+      { id: 3, host: '10.0.0.3', status: 'up',   active: false },
+    ] })
+    const { container } = render(<PingMonitorPage systemRole="USER" teamId={5} teamName="SY-A" />)
+    await waitFor(() => expect(api.monitoring.getPingMonitors).toHaveBeenCalled())
+    await screen.findByText('10.0.0.1')
+
+    // Pano varsayılan KAPALI → aç/kapa çubuğuna tıkla
+    expect(container.querySelector('.stats-panel')).toBeNull()
+    fireEvent.click(container.querySelector('.stats-collapse-bar'))
+    expect(container.querySelector('.stats-panel')).not.toBeNull()
+
+    // Sayımlar (dil-bağımsız: renk sınıfına göre)
+    expect(container.querySelector('.stat-item-total .stat-value').textContent).toBe('3')
+    expect(container.querySelector('.stat-item-critical .stat-value').textContent).toBe('1')  // Erişilemiyor
+    expect(container.querySelector('.stat-item-high .stat-value').textContent).toBe('1')       // Aktif alarm
+    expect(container.querySelector('.stat-item-paused .stat-value').textContent).toBe('1')      // Duraklatılmış
+
+    // "Erişilemiyor" kartına tıkla → yalnız down host kalır
+    fireEvent.click(container.querySelector('.stat-item-critical'))
+    await waitFor(() => expect(screen.queryByText('10.0.0.1')).not.toBeInTheDocument())
+    expect(screen.getByText('10.0.0.2')).toBeInTheDocument()
+    expect(screen.queryByText('10.0.0.3')).not.toBeInTheDocument()
+
+    // Tekrar tıkla → filtre temizlenir (hepsi geri gelir)
+    fireEvent.click(container.querySelector('.stat-item-critical'))
+    await screen.findByText('10.0.0.1')
+    expect(screen.getByText('10.0.0.3')).toBeInTheDocument()
+  })
 })

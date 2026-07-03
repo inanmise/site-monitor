@@ -77,4 +77,36 @@ describe('KeywordMonitorPage', () => {
     expect(screen.getByRole('button', { name: /check history|kontrol/i })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /response chart|süre/i })).toBeInTheDocument()
   })
+
+  it('istatistik panosu: İhlal/Hata ayrımı + filtreleme/temizleme', async () => {
+    api.monitoring.getKeywordMonitors.mockResolvedValue({ success: true, data: [
+      { id: 1, url: 'https://a.example.com', keyword: 'a', status: 'up',    active: true },
+      { id: 2, url: 'https://b.example.com', keyword: 'b', status: 'down',  active: true, active_alarm: true, alarm_acknowledged: false, alarm_level: 'CRITICAL' },
+      { id: 3, url: 'https://c.example.com', keyword: 'c', status: 'error', active: true },
+    ] })
+    const { container } = render(<KeywordMonitorPage systemRole="USER" teamId={5} teamName="SY-A" />)
+    await waitFor(() => expect(api.monitoring.getKeywordMonitors).toHaveBeenCalled())
+    await screen.findByText('https://a.example.com')
+
+    // Pano varsayılan KAPALI → aç/kapa çubuğuna tıkla
+    expect(container.querySelector('.stats-panel')).toBeNull()
+    fireEvent.click(container.querySelector('.stats-collapse-bar'))
+    expect(container.querySelector('.stats-panel')).not.toBeNull()
+
+    expect(container.querySelector('.stat-item-total .stat-value').textContent).toBe('3')
+    expect(container.querySelector('.stat-item-critical .stat-value').textContent).toBe('1')  // İhlal (down)
+    expect(container.querySelector('.stat-item-error .stat-value').textContent).toBe('1')       // Hata (error)
+    expect(container.querySelector('.stat-item-high .stat-value').textContent).toBe('1')         // Aktif alarm
+
+    // "Hata" kartına tıkla → yalnız error url kalır (İhlal'den ayrı)
+    fireEvent.click(container.querySelector('.stat-item-error'))
+    await waitFor(() => expect(screen.queryByText('https://a.example.com')).not.toBeInTheDocument())
+    expect(screen.getByText('https://c.example.com')).toBeInTheDocument()
+    expect(screen.queryByText('https://b.example.com')).not.toBeInTheDocument()
+
+    // Tekrar tıkla → filtre temizlenir
+    fireEvent.click(container.querySelector('.stat-item-error'))
+    await screen.findByText('https://a.example.com')
+    expect(screen.getByText('https://b.example.com')).toBeInTheDocument()
+  })
 })
