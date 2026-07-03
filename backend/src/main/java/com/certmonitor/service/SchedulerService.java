@@ -1137,6 +1137,7 @@ public class SchedulerService {
                 ctx.put("monitor_confirm_attempts", m.getConfirmAttempts());
                 ctx.put("monitor_confirm_interval_ms", m.getConfirmIntervalSeconds() != null ? m.getConfirmIntervalSeconds() * 1000L : null);
                 ctx.put("monitor_recovery_checks", m.getRecoveryChecks());
+                ctx.put("monitor_recovery_interval_ms", m.getRecoveryIntervalSeconds() != null ? m.getRecoveryIntervalSeconds() * 1000L : null);
                 if (m.getTeamId() != null) ctx.put("team_id", m.getTeamId());
                 if (r.get("http_status") != null) ctx.put("http_status", r.get("http_status"));
                 if (r.get("response_ms") != null) ctx.put("response_ms", r.get("response_ms"));
@@ -1226,6 +1227,7 @@ public class SchedulerService {
                 ctx.put("monitor_confirm_attempts", m.getConfirmAttempts());
                 ctx.put("monitor_confirm_interval_ms", m.getConfirmIntervalSeconds() != null ? m.getConfirmIntervalSeconds() * 1000L : null);
                 ctx.put("monitor_recovery_checks", m.getRecoveryChecks());
+                ctx.put("monitor_recovery_interval_ms", m.getRecoveryIntervalSeconds() != null ? m.getRecoveryIntervalSeconds() * 1000L : null);
                 if (m.getTeamId() != null) ctx.put("team_id", m.getTeamId());
                 if (r.get("rtt_ms") != null)      ctx.put("rtt_ms", r.get("rtt_ms"));
                 if (r.get("packet_loss") != null) ctx.put("packet_loss", r.get("packet_loss"));

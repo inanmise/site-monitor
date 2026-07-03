@@ -130,9 +130,21 @@ public class MonitoringOutageService {
      *  sıfırlar. In-memory → restart'ta sıfırlanır (recovery yeniden başlar). */
     private final Map<String, Integer> recoveryUpCount = new ConcurrentHashMap<>();
 
+    /** Aktif recovery re-check havuzu (keyword/ping: recoveryIntervalSeconds set) — confirm havuzunun eşi. */
+    private final ScheduledExecutorService recoveryExecutor =
+            Executors.newScheduledThreadPool(2, r -> {
+                Thread t = new Thread(r, "monitoring-recovery");
+                t.setDaemon(true);
+                return t;
+            });
+
+    /** "tip:domain" — aktif recovery döngüsü çift-başlatma + iptal guard'ı. */
+    private final Set<String> recoveryInFlight = ConcurrentHashMap.newKeySet();
+
     @PreDestroy
     void shutdown() {
         confirmExecutor.shutdownNow();
+        recoveryExecutor.shutdownNow();
     }
 
     /** Uptime/Port/DNS-failure sweep'leri her tur sonunda bir kez çağırır. */
@@ -168,11 +180,16 @@ public class MonitoringOutageService {
 
             if (!anyDown) {
                 if (hasOpenAlert) {
-                    // Tüm monitörler up — RECOVERY PERIOD: recoveryChecks kadar ardışık başarılı
-                    // kontrol sağlanınca alarmı kapat (çözüm maili ile). Aksi halde sayacı artır, bekle.
-                    int required = recoveryChecksFor(domainItems);
+                    // Tüm monitörler up — RECOVERY PERIOD: recoveryChecks kadar ardışık başarılı kontrolde alarm kapanır.
                     String rkey = alertType + ":" + domain;
-                    if (required <= 1) {
+                    int required = recoveryChecksFor(domainItems);
+                    Long recIntervalMs = recoveryIntervalMsFor(domainItems);
+                    if (recIntervalMs != null) {
+                        // AKTİF recovery (keyword/ping, recoveryIntervalSeconds set): pasif sayacı kullanma,
+                        // recIntervalMs arayla required denemeyle aktif olarak doğrula.
+                        recoveryUpCount.remove(rkey);
+                        startRecovery(alertType, domain, domainItems, required, recIntervalMs);
+                    } else if (required <= 1) {
                         recoveryUpCount.remove(rkey);
                         withLock(alertType, domain, () ->
                                 escalationService.resolveMonitoringAlertsForDomain(domain, alertType));
@@ -191,10 +208,12 @@ public class MonitoringOutageService {
                     }
                 } else {
                     recoveryUpCount.remove(alertType + ":" + domain);   // açık alarm yok → bayat sayaç temizle
+                    recoveryInFlight.remove(alertType + ":" + domain);
                 }
             } else if (hasOpenAlert) {
-                // Kesinti SÜRÜYOR — recovery penceresini SIFIRLA + günlük re-alert yolu
+                // Kesinti SÜRÜYOR — recovery penceresini SIFIRLA (pasif + aktif) + günlük re-alert yolu
                 recoveryUpCount.remove(alertType + ":" + domain);
+                recoveryInFlight.remove(alertType + ":" + domain);   // aktif recovery döngüsünü iptal et
                 SweepItem firstDown = domainItems.stream().filter(it -> !it.up()).findFirst().orElseThrow();
                 withLock(alertType, domain, () ->
                         escalationService.processConfirmedOutage(domain, alertType,
@@ -269,6 +288,16 @@ public class MonitoringOutageService {
         return Math.max(1, appSettings.getInt("cert.monitor.uptime.recovery-checks", 1));
     }
 
+    /** Aktif recovery aralığı (ms): per-monitor recoveryIntervalSeconds (ctxExtra monitor_recovery_interval_ms)
+     *  varsa onu döner; yoksa null (→ pasif recovery). Yalnız keyword/ping sweep'lerinde set edilir. */
+    private Long recoveryIntervalMsFor(List<SweepItem> items) {
+        for (SweepItem it : items) {
+            Object v = it.ctxExtra() != null ? it.ctxExtra().get("monitor_recovery_interval_ms") : null;
+            if (v instanceof Number n && n.longValue() > 0) return n.longValue();
+        }
+        return null;
+    }
+
     void startConfirmation(SweepItem item) {
         String key = item.alertType() + ":" + item.domain() + ":" + item.detail();
         if (!inFlight.add(key)) {
@@ -328,6 +357,59 @@ public class MonitoringOutageService {
         } catch (Exception e) {
             log.error("Teyit başarısız oldu: {} — {}", key, e.getMessage(), e);
             inFlight.remove(key);
+        }
+    }
+
+    /** Aktif recovery döngüsü (keyword/ping): alarm açıkken tüm monitörler up görülünce başlar; required kadar
+     *  ardışık başarılı re-check (intervalMs arayla) sağlanınca alarmı kapatır; arada DOWN görülürse iptal olur. */
+    void startRecovery(String alertType, String domain, List<SweepItem> items, int required, long intervalMs) {
+        String key = alertType + ":" + domain;
+        if (required <= 1) {
+            recoveryInFlight.remove(key);   // tek kontrol yeterli → beklemeden kapat
+            withLock(alertType, domain, () ->
+                    escalationService.resolveMonitoringAlertsForDomain(domain, alertType));
+            return;
+        }
+        if (!recoveryInFlight.add(key)) {
+            log.debug("Aktif recovery zaten sürüyor, atlanıyor: {}", key);
+            return;
+        }
+        log.info("Recovery başladı (aktif): {} [{}] — {} sn arayla {} doğrulama denemesi",
+                domain, alertType, intervalMs / 1000, required - 1);
+        recoveryExecutor.schedule(
+                () -> runRecoveryAttempt(key, alertType, domain, items, required, intervalMs, 1),
+                intervalMs, TimeUnit.MILLISECONDS);
+    }
+
+    void runRecoveryAttempt(String key, String alertType, String domain, List<SweepItem> items,
+                            int required, long intervalMs, int n) {
+        if (!recoveryInFlight.contains(key)) return;   // arada DOWN → dışarıdan iptal edilmiş
+        try {
+            boolean allUp = true;
+            for (SweepItem it : items) {
+                Map<String, Object> r = it.recheck().get();
+                if (!"up".equals(r.get("status"))) { allUp = false; break; }
+            }
+            if (!allUp) {
+                log.info("Recovery kesildi (yeniden DOWN): {} [{}] — {}. denemede", domain, alertType, n);
+                recoveryInFlight.remove(key);
+                return;   // alarm açık kalır; sonraki sweep kesinti-sürüyor yolunu işletir
+            }
+            int done = n + 1;   // ilk başarılı sweep (tetikleyici) = 1, sonrası aktif re-check'ler
+            if (done >= required) {
+                log.info("Recovery tamamlandı (aktif): {} [{}] — {}/{} ardışık başarılı, alarm kapatılıyor",
+                        domain, alertType, done, required);
+                recoveryInFlight.remove(key);
+                withLock(alertType, domain, () ->
+                        escalationService.resolveMonitoringAlertsForDomain(domain, alertType));
+                return;
+            }
+            recoveryExecutor.schedule(
+                    () -> runRecoveryAttempt(key, alertType, domain, items, required, intervalMs, n + 1),
+                    intervalMs, TimeUnit.MILLISECONDS);
+        } catch (Exception e) {
+            log.error("Recovery re-check hatası: {} [{}] — {}", domain, alertType, e.getMessage(), e);
+            recoveryInFlight.remove(key);
         }
     }
 

@@ -19,7 +19,7 @@ const INTERVALS = [
 const REFRESH_INTERVAL = 60
 const OP_SYM = { GTE: '≥', LTE: '≤', EQ: '=', GT: '>', LT: '<' }
 const emptyForm = { name: '', url: '', keyword: '', operator: 'GTE', matchCount: 1, groupName: '', teamId: '',
-  intervalSeconds: 60, timeoutMs: 10000, confirmAttempts: 3, confirmIntervalSeconds: 30, recoveryChecks: 3, customHeaders: '', active: true }
+  intervalSeconds: 60, timeoutMs: 10000, confirmAttempts: 3, confirmIntervalSeconds: 30, recoveryChecks: 3, recoveryIntervalSeconds: 30, customHeaders: '', active: true }
 
 export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
   const t = useT()
@@ -123,7 +123,7 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
       operator: m.operator || 'GTE', matchCount: m.match_count ?? 1, groupName: m.group_name || '',
       teamId: m.team_id != null ? String(m.team_id) : '',
       intervalSeconds: m.interval_seconds ?? 60, timeoutMs: m.timeout_ms ?? 10000,
-      confirmAttempts: m.confirm_attempts ?? 3, confirmIntervalSeconds: m.confirm_interval_seconds ?? 30, recoveryChecks: m.recovery_checks ?? 3, customHeaders: m.custom_headers || '',
+      confirmAttempts: m.confirm_attempts ?? 3, confirmIntervalSeconds: m.confirm_interval_seconds ?? 30, recoveryChecks: m.recovery_checks ?? 3, recoveryIntervalSeconds: m.recovery_interval_seconds ?? 30, customHeaders: m.custom_headers || '',
       active: m.active !== false })
     setModal(m)
   }
@@ -150,7 +150,7 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
       operator: form.operator, matchCount: Number(form.matchCount),
       groupName: form.groupName?.trim() || null, teamId: form.teamId === '' ? null : Number(form.teamId),
       intervalSeconds: Number(form.intervalSeconds), timeoutMs: Number(form.timeoutMs),
-      confirmAttempts: Number(form.confirmAttempts), confirmIntervalSeconds: Number(form.confirmIntervalSeconds), recoveryChecks: Number(form.recoveryChecks),
+      confirmAttempts: Number(form.confirmAttempts), confirmIntervalSeconds: Number(form.confirmIntervalSeconds), recoveryChecks: Number(form.recoveryChecks), recoveryIntervalSeconds: Number(form.recoveryIntervalSeconds),
       customHeaders: form.customHeaders?.trim() || null,
       active: form.active,
     }
@@ -373,6 +373,21 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
               {selected.checked_at && <div className="upt-modal-metric"><span className="upt-modal-metric-val upt-modal-metric-time">{formatDateSec(selected.checked_at)}</span><span className="upt-modal-metric-lbl">{t('keyword.lastCheck')}</span></div>}
             </div>
             <div className="upt-modal-divider" />
+            <div className="kw-reqinfo">
+              <div className="kw-reqinfo-title">{t('keyword.reqSettings')}</div>
+              <div className="kw-reqinfo-row">
+                <span className="kw-reqinfo-k">{t('keyword.cacheBusting')}</span>
+                <span className={selected.url && selected.url.includes('{timestamp}') ? 'kw-on' : 'kw-off'}>
+                  {selected.url && selected.url.includes('{timestamp}') ? t('keyword.cbOn') : t('keyword.cbOff')}
+                </span>
+              </div>
+              <div className="kw-reqinfo-row">
+                <span className="kw-reqinfo-k">{t('keyword.customHeadersShort')}</span>
+                {selected.custom_headers
+                  ? <pre className="kw-reqinfo-headers">{selected.custom_headers}</pre>
+                  : <span className="kw-off">{t('keyword.none')}</span>}
+              </div>
+            </div>
             <div className="modal-tabs">
               <button className={`modal-tab${detailTab === 'control' ? ' active' : ''}`} onClick={() => setDetailTab('control')}>{t('keyword.tabControl')}</button>
               <button className={`modal-tab${detailTab === 'alerts' ? ' active' : ''}`} onClick={() => setDetailTab('alerts')}>{t('keyword.tabAlerts')}</button>
@@ -449,7 +464,7 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
                   style={{ background: 'none', border: 'none', color: 'var(--primary, #4f46e5)', cursor: 'pointer', fontSize: '.85em', textDecoration: 'underline', padding: 0, fontWeight: 500 }}>
                   {t('keyword.cacheBustLink')}
                 </button></span>
-                <textarea rows={2} value={form.customHeaders} spellCheck={false} placeholder={'Cache-Control: no-cache'}
+                <textarea rows={2} value={form.customHeaders} spellCheck={false} placeholder={t('keyword.customHeadersPh')}
                   onChange={e => setForm(f => ({ ...f, customHeaders: e.target.value }))} /></label>
               <label><span>{t('keyword.operator')}</span>
                 <SearchableSelect value={form.operator} onChange={v => setForm(f => ({ ...f, operator: v }))}
@@ -486,6 +501,8 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
                 <input type="number" min="10" max="600" value={form.confirmIntervalSeconds} onChange={e => setForm(f => ({ ...f, confirmIntervalSeconds: Number(e.target.value) }))} /></label>
               <label><span>{t('keyword.recoveryChecks')}</span>
                 <input type="number" min="1" max="20" value={form.recoveryChecks} onChange={e => setForm(f => ({ ...f, recoveryChecks: Number(e.target.value) }))} /></label>
+              <label><span>{t('keyword.recoveryInterval')}</span>
+                <input type="number" min="10" max="600" value={form.recoveryIntervalSeconds} onChange={e => setForm(f => ({ ...f, recoveryIntervalSeconds: Number(e.target.value) }))} /></label>
               <label className="checkbox-label">
                 <input type="checkbox" checked={form.active} onChange={e => setForm(f => ({ ...f, active: e.target.checked }))} />{t('keyword.active')}</label>
               <div className="full-width" style={{ fontSize: '.8em', color: 'var(--text-muted)', marginTop: -2, lineHeight: 1.5 }}>

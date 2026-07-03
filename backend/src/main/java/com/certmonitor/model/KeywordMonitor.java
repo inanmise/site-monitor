@@ -72,6 +72,11 @@ public class KeywordMonitor {
     @Column(name = "recovery_checks")
     private Integer recoveryChecks = 3;
 
+    /** Recovery aktif re-check aralığı (sn): recoveryChecks denemesi bu süre arayla yapılır (keyword/ping).
+     *  Set ise recovery aktif döngüyle yürür; null → pasif (kontrol aralığında sayım). */
+    @Column(name = "recovery_interval_seconds")
+    private Integer recoveryIntervalSeconds = 30;
+
     /** Cache busting: satır başına "Name: Value" özel HTTP header'ları (ör. Cache-Control: no-cache).
      *  URL'de {timestamp} placeholder'ı her kontrolde güncel Unix saniye ile değiştirilir. */
     @Column(name = "custom_headers", columnDefinition = "TEXT")

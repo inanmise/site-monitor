@@ -304,4 +304,37 @@ class MonitoringControllerTest {
                 .andExpect(jsonPath("$.data.series[0].avg").value(20))
                 .andExpect(jsonPath("$.data.series[0].loss").value(50));
     }
+
+    @Test
+    @DisplayName("POST /keyword: yanıt custom_headers + recovery_checks + recovery_interval_seconds taşır; interval clamp (5→10)")
+    void createKeyword_returnsHeadersAndRecoveryFields_withClamp() throws Exception {
+        when(keywordMonitorRepo.save(any(com.certmonitor.model.KeywordMonitor.class)))
+                .thenAnswer(a -> { com.certmonitor.model.KeywordMonitor k = a.getArgument(0); k.setId(11L); return k; });
+
+        mvc.perform(post("/api/monitoring/keyword").session(session("ADMIN"))
+                .contentType("application/json")
+                .content("{\"url\":\"https://x.example.com\",\"keyword\":\"foo\",\"operator\":\"GTE\",\"matchCount\":1,\"teamId\":3," +
+                        "\"customHeaders\":\"Cache-Control: no-cache\",\"recoveryChecks\":4,\"recoveryIntervalSeconds\":5}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.custom_headers").value("Cache-Control: no-cache"))
+                .andExpect(jsonPath("$.data.recovery_checks").value(4))
+                .andExpect(jsonPath("$.data.recovery_interval_seconds").value(10)); // clampInterval(5) → 10
+    }
+
+    @Test
+    @DisplayName("PUT /keyword/{id}: recoveryIntervalSeconds üst sınıra clamp (999→600), yanıtta görünür")
+    void updateKeyword_clampsRecoveryIntervalHigh() throws Exception {
+        com.certmonitor.model.KeywordMonitor m = new com.certmonitor.model.KeywordMonitor();
+        m.setId(7L); m.setUrl("https://x.example.com"); m.setKeyword("foo"); m.setActive(true);
+        when(keywordMonitorRepo.findById(7L)).thenReturn(Optional.of(m));
+        when(keywordMonitorRepo.save(any(com.certmonitor.model.KeywordMonitor.class)))
+                .thenAnswer(a -> a.getArgument(0));
+        when(keywordResultRepo.findTopByMonitorIdOrderByCheckedAtDesc(7L)).thenReturn(Optional.empty());
+
+        mvc.perform(put("/api/monitoring/keyword/7").session(session("ADMIN"))
+                .contentType("application/json")
+                .content("{\"recoveryIntervalSeconds\":999}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.recovery_interval_seconds").value(600)); // clampInterval(999) → 600
+    }
 }

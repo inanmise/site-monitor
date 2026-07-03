@@ -349,4 +349,42 @@ class MonitoringOutageServiceTest {
         assertThat(MonitoringOutageService.levelFor(EscalationService.TYPE_DNS_FAILURE)).isEqualTo("CRITICAL");
         assertThat(MonitoringOutageService.levelFor(EscalationService.TYPE_ACCESSIBILITY)).isEqualTo("CRITICAL");
     }
+
+    @Test
+    @DisplayName("Aktif recovery (keyword): recoveryIntervalSeconds set + ardışık UP re-check → resolve bir kez")
+    void activeRecovery_allUp_resolvesOnce() {
+        ReflectionTestUtils.setField(service, "keywordAlertEnabled", true);
+        ReflectionTestUtils.setField(service, "recoveryExecutor", immediateExecutor());
+        when(alertEventRepo.findOpenByDomainIn(anyCollection()))
+                .thenReturn(List.of(openAlert("kw.example.com", EscalationService.TYPE_KEYWORD)));
+        AtomicInteger calls = new AtomicInteger();
+        Map<String, Object> extra = Map.of("monitor_recovery_checks", 3, "monitor_recovery_interval_ms", 20000L);
+
+        service.handleSweepResults(EscalationService.TYPE_KEYWORD, List.of(
+                item(EscalationService.TYPE_KEYWORD, "kw.example.com", "keyword", true, extra,
+                        () -> { calls.incrementAndGet(); return up(); })));
+
+        verify(escalationService, times(1)).resolveMonitoringAlertsForDomain(
+                "kw.example.com", EscalationService.TYPE_KEYWORD);
+        assertThat(calls.get()).isEqualTo(2); // tetikleyici sweep=1 + 2 aktif re-check = 3 ardışık başarılı
+    }
+
+    @Test
+    @DisplayName("Aktif recovery: doğrulama sırasında yeniden DOWN → alarm kapanmaz (resolve YOK)")
+    void activeRecovery_downMidway_noResolve() {
+        ReflectionTestUtils.setField(service, "keywordAlertEnabled", true);
+        ReflectionTestUtils.setField(service, "recoveryExecutor", immediateExecutor());
+        when(alertEventRepo.findOpenByDomainIn(anyCollection()))
+                .thenReturn(List.of(openAlert("kw.example.com", EscalationService.TYPE_KEYWORD)));
+        AtomicInteger calls = new AtomicInteger();
+        // 1. re-check up, 2. re-check down → aktif döngü kesilir, alarm açık kalır
+        Supplier<Map<String, Object>> upThenDown = () -> calls.incrementAndGet() <= 1 ? up() : down("timeout");
+        Map<String, Object> extra = Map.of("monitor_recovery_checks", 3, "monitor_recovery_interval_ms", 20000L);
+
+        service.handleSweepResults(EscalationService.TYPE_KEYWORD, List.of(
+                item(EscalationService.TYPE_KEYWORD, "kw.example.com", "keyword", true, extra, upThenDown)));
+
+        verify(escalationService, never()).resolveMonitoringAlertsForDomain(anyString(), anyString());
+        assertThat(calls.get()).isEqualTo(2); // n=1 up, n=2 down → dur
+    }
 }
