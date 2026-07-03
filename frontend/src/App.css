@@ -5445,6 +5445,26 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
   box-shadow: 0 0 0 3px rgba(59,130,246,.15);
 }
 
+/* Aktif (çözülmemiş) alarm — durum şeridinden bağımsız kart kenarı + üst satır ikonu.
+   Alarm, monitör tekrar 'up' okusa bile recovery penceresinde açık olabilir; bu yüzden
+   ::before durum şeridine değil ayrı bir outline'a bindirilir. */
+.upt-card--alarm {
+  outline: 1.5px solid rgba(239, 68, 68, .55);
+  outline-offset: -1.5px;
+  background: rgba(239, 68, 68, .05);
+}
+[data-theme="dark"] .upt-card--alarm { background: rgba(239, 68, 68, .10); }
+
+.upt-alarm-ico {
+  display: inline-flex; align-items: center;
+  margin: 0 auto 0 6px;   /* status badge'in yanına yasla, IP tag'i sağa it (space-between'i ez) */
+}
+.upt-alarm-ico.pulse { animation: upt-alarm-pulse 1.4s ease-in-out infinite; }
+@keyframes upt-alarm-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%       { opacity: .4; transform: scale(.82); }
+}
+
 /* Top row: badge + port */
 .upt-card-top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
 

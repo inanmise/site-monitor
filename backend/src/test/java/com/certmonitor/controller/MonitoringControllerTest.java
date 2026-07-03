@@ -58,6 +58,7 @@ class MonitoringControllerTest {
     @MockitoBean TeamRepository teamRepo;
     @MockitoBean com.certmonitor.service.EscalationService escalationService;
     @MockitoBean com.certmonitor.service.AppSettingsService appSettings;
+    @MockitoBean AlertEventRepository alertEventRepo;
 
     @BeforeEach
     void stubTeamMap() {
@@ -336,5 +337,60 @@ class MonitoringControllerTest {
                 .content("{\"recoveryIntervalSeconds\":999}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.recovery_interval_seconds").value(600)); // clampInterval(999) → 600
+    }
+
+    @Test
+    @DisplayName("GET /ping: açık PING_DOWN alarmı olan host → active_alarm=true + alarm_level + acknowledged")
+    void listPing_withOpenAlarm_marksActiveAlarm() throws Exception {
+        com.certmonitor.model.PingMonitor m = new com.certmonitor.model.PingMonitor();
+        m.setId(3L); m.setName("m"); m.setHost("alarm.example.com"); m.setActive(true);
+        when(pingMonitorRepo.findAllByOrderByNameAsc()).thenReturn(List.of(m));
+        when(pingCheckRepo.findLatestPerMonitor()).thenReturn(List.of());
+        com.certmonitor.model.AlertEvent ev = new com.certmonitor.model.AlertEvent();
+        ev.setDomain("alarm.example.com");
+        ev.setAlertType(com.certmonitor.service.EscalationService.TYPE_PING_DOWN);
+        ev.setAlertLevel("CRITICAL"); ev.setAcknowledged(false); ev.setResolved(false);
+        when(alertEventRepo.findOpenByDomainIn(anyCollection())).thenReturn(List.of(ev));
+
+        mvc.perform(get("/api/monitoring/ping").session(session("USER")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].host").value("alarm.example.com"))
+                .andExpect(jsonPath("$.data[0].active_alarm").value(true))
+                .andExpect(jsonPath("$.data[0].alarm_level").value("CRITICAL"))
+                .andExpect(jsonPath("$.data[0].alarm_acknowledged").value(false));
+    }
+
+    @Test
+    @DisplayName("GET /ping: açık alarm yoksa active_alarm=false")
+    void listPing_noOpenAlarm_activeAlarmFalse() throws Exception {
+        com.certmonitor.model.PingMonitor m = new com.certmonitor.model.PingMonitor();
+        m.setId(4L); m.setHost("ok.example.com"); m.setActive(true);
+        when(pingMonitorRepo.findAllByOrderByNameAsc()).thenReturn(List.of(m));
+        when(pingCheckRepo.findLatestPerMonitor()).thenReturn(List.of());
+        when(alertEventRepo.findOpenByDomainIn(anyCollection())).thenReturn(List.of());
+
+        mvc.perform(get("/api/monitoring/ping").session(session("USER")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].active_alarm").value(false));
+    }
+
+    @Test
+    @DisplayName("GET /keyword: açık KEYWORD alarmı (domain=url) → active_alarm=true; farklı tip alarm sayılmaz")
+    void listKeyword_withOpenAlarm_marksActiveAlarm() throws Exception {
+        com.certmonitor.model.KeywordMonitor m = new com.certmonitor.model.KeywordMonitor();
+        m.setId(5L); m.setUrl("https://k.example.com"); m.setKeyword("foo"); m.setActive(true);
+        when(keywordMonitorRepo.findAllByOrderByNameAsc()).thenReturn(List.of(m));
+        when(keywordResultRepo.findLatestPerMonitor()).thenReturn(List.of());
+        com.certmonitor.model.AlertEvent ev = new com.certmonitor.model.AlertEvent();
+        ev.setDomain("https://k.example.com");
+        ev.setAlertType(com.certmonitor.service.EscalationService.TYPE_KEYWORD);
+        ev.setAlertLevel("HIGH"); ev.setAcknowledged(true); ev.setResolved(false);
+        when(alertEventRepo.findOpenByDomainIn(anyCollection())).thenReturn(List.of(ev));
+
+        mvc.perform(get("/api/monitoring/keyword").session(session("USER")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].active_alarm").value(true))
+                .andExpect(jsonPath("$.data[0].alarm_level").value("HIGH"))
+                .andExpect(jsonPath("$.data[0].alarm_acknowledged").value(true));
     }
 }

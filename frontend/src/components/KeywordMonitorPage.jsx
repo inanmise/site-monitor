@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef, useMemo, lazy, Suspense } from 'react'
 import { createPortal } from 'react-dom'
-import { api, formatDate, formatDateSec } from '../api/client'
+import { api, formatDateSec } from '../api/client'
 import { useT } from '../i18n/index.jsx'
 import { useToast } from './ui/Toast.jsx'
 import SearchableSelect from './ui/SearchableSelect.jsx'
@@ -235,6 +235,13 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
       : s === 'error' ? t('keyword.statusError') : t('keyword.statusViolation')
     return <span className={`upt-badge ${cls}`}><span className="upt-badge-dot" />{label}</span>
   }
+  const alarmLevelColor = (lvl) => lvl === 'CRITICAL' ? '#c0392b' : lvl === 'HIGH' ? '#e07b00' : '#f0a500'
+  function alarmBadge(m) {
+    if (!m?.active_alarm) return null
+    const title = `${t('keyword.activeAlarm')}${m.alarm_level ? ' — ' + m.alarm_level : ''}`
+    return <span className={`upt-alarm-ico${m.alarm_acknowledged ? '' : ' pulse'}`}
+      style={{ color: alarmLevelColor(m.alarm_level) }} title={title}><AlertTriangle size={14} /></span>
+  }
 
   // Operatör + adet → sağlıklı (alarmsız) koşul ifadesi — opPhrase aynası.
   function expectPhrase(op, n) {
@@ -294,10 +301,11 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
       ) : (
         <div className="upt-grid">
           {displayMonitors.map(m => (
-            <div key={m.id} className={`upt-card ${cardClass(m)}${!m.active ? ' mon-row-inactive' : ''}`}
+            <div key={m.id} className={`upt-card ${cardClass(m)}${m.active_alarm ? ' upt-card--alarm' : ''}${!m.active ? ' mon-row-inactive' : ''}`}
               onClick={() => openDetail(m)}>
               <div className="upt-card-top">
                 {statusBadge(m)}
+                {alarmBadge(m)}
                 <span className="upt-port-tag">
                   {(OP_SYM[m.operator] || '≥') + (m.match_count ?? 1)} kez
                 </span>
@@ -336,7 +344,7 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
                 )}
               </div>
               <div className="upt-card-foot">
-                <span>{m.checked_at ? formatDate(m.checked_at) : ''}</span>
+                <span>{m.checked_at ? formatDateSec(m.checked_at) : ''}</span>
                 {canManageRow(m) && (
                   <span style={{ display: 'flex', gap: 6 }} onClick={e => e.stopPropagation()}>
                     <button className="btn btn-sm mon-btn-check" disabled={checking === m.id} onClick={() => checkNow(m)} title={t('keyword.check')}><Play size={12} /></button>
