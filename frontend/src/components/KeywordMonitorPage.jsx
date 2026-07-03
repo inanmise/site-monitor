@@ -8,6 +8,7 @@ import { Play, Pencil, X, RefreshCw, Plus, Trash2, Target, Users, Layers, FlaskC
 import AlertHistory from './admin/AlertHistory.jsx'
 // recharts ağır — yalnız "Süre Grafiği" sekmesi açılınca yüklensin (eager bundle'a girmesin).
 const ResponseTimeChart = lazy(() => import('./ResponseTimeChart.jsx'))
+const MonitorNotes = lazy(() => import('./MonitorNotes.jsx'))
 
 const INTERVALS = [
   { value: 30,  labelKey: 'ping.interval30s' },
@@ -376,6 +377,7 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
               <button className={`modal-tab${detailTab === 'control' ? ' active' : ''}`} onClick={() => setDetailTab('control')}>{t('keyword.tabControl')}</button>
               <button className={`modal-tab${detailTab === 'alerts' ? ' active' : ''}`} onClick={() => setDetailTab('alerts')}>{t('keyword.tabAlerts')}</button>
               <button className={`modal-tab${detailTab === 'chart' ? ' active' : ''}`} onClick={() => setDetailTab('chart')}>{t('keyword.tabChart')}</button>
+              <button className={`modal-tab${detailTab === 'notes' ? ' active' : ''}`} onClick={() => setDetailTab('notes')}>{t('keyword.tabGuide')}</button>
             </div>
 
             {detailTab === 'control' && (<>
@@ -418,6 +420,12 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
             {detailTab === 'chart' && (
               <Suspense fallback={<div className="upt-modal-loading">…</div>}>
                 <ResponseTimeChart monitorId={selected.id} kind="keyword" />
+              </Suspense>
+            )}
+
+            {detailTab === 'notes' && (
+              <Suspense fallback={<div className="upt-modal-loading">…</div>}>
+                <MonitorNotes type="KEYWORD" target={selected.url} />
               </Suspense>
             )}
           </div>

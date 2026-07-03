@@ -307,7 +307,7 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
   const isTeamAdmin = systemRole === 'TEAM_ADMIN'
 
   const [teams, setTeams] = useState([])
-  const [selTeamId, setSelTeamId] = useState(teamId ? String(teamId) : '')
+  const [selTeamId, setSelTeamId] = useState('')   // varsayılan: Tüm Takımlar (admin takım combobox'ı)
   const [year, setYear] = useState(isoWeekInfo().year)
   const [years, setYears] = useState([])
   const [jumpDate, setJumpDate] = useState('')

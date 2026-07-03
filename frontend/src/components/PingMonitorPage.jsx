@@ -8,6 +8,7 @@ import { Play, Pencil, X, RefreshCw, Plus, Trash2, Radio, Users, Layers, FlaskCo
 import AlertHistory from './admin/AlertHistory.jsx'
 // recharts ağır — yalnız "Süre Grafiği" sekmesi açılınca yüklensin.
 const ResponseTimeChart = lazy(() => import('./ResponseTimeChart.jsx'))
+const MonitorNotes = lazy(() => import('./MonitorNotes.jsx'))
 
 const INTERVALS = [
   { value: 30,  labelKey: 'ping.interval30s' },
@@ -347,6 +348,7 @@ export default function PingMonitorPage({ systemRole, teamId, teamName }) {
               <button className={`modal-tab${detailTab === 'control' ? ' active' : ''}`} onClick={() => setDetailTab('control')}>{t('ping.tabControl')}</button>
               <button className={`modal-tab${detailTab === 'alerts' ? ' active' : ''}`} onClick={() => setDetailTab('alerts')}>{t('ping.tabAlerts')}</button>
               <button className={`modal-tab${detailTab === 'chart' ? ' active' : ''}`} onClick={() => setDetailTab('chart')}>{t('ping.tabChart')}</button>
+              <button className={`modal-tab${detailTab === 'notes' ? ' active' : ''}`} onClick={() => setDetailTab('notes')}>{t('ping.tabGuide')}</button>
             </div>
 
             {detailTab === 'control' && (<>
@@ -381,6 +383,12 @@ export default function PingMonitorPage({ systemRole, teamId, teamName }) {
             {detailTab === 'chart' && (
               <Suspense fallback={<div className="upt-modal-loading">…</div>}>
                 <ResponseTimeChart monitorId={selected.id} kind="ping" />
+              </Suspense>
+            )}
+
+            {detailTab === 'notes' && (
+              <Suspense fallback={<div className="upt-modal-loading">…</div>}>
+                <MonitorNotes type="PING" target={selected.host} />
               </Suspense>
             )}
           </div>

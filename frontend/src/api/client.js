@@ -496,6 +496,15 @@ export const api = {
   // ── Monitoring ───────────────────────────────────────────────────────────
 
   monitoring: {
+    // Monitor guide + notes (hedef-bazlı: type = KEYWORD|PING, target = url/host)
+    getMonitorNotes: (type, target) =>
+      request(`/monitoring/notes?type=${encodeURIComponent(type)}&target=${encodeURIComponent(target)}`),
+    saveMonitorGuide: (type, target, guide) =>
+      request('/monitoring/notes/guide', { method: 'PUT', body: JSON.stringify({ type, target, guide }) }),
+    addMonitorNote: (data) => request('/monitoring/notes', { method: 'POST', body: JSON.stringify(data) }),
+    updateMonitorNote: (id, data) => request(`/monitoring/notes/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+    deleteMonitorNote: (id) => request(`/monitoring/notes/${id}`, { method: 'DELETE' }),
+
     // Uptime
     getUptimeOverview:    () => request('/monitoring/uptime/overview'),
     getUptimeHistory:     (domain, hours = 24) => request(`/monitoring/uptime/${encodeURIComponent(domain)}/history?hours=${hours}`),
