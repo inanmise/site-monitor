@@ -326,15 +326,6 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
       </div>
 
       {!loading && monitors.length > 0 && (
-        <div className="upt-toolbar" style={{ justifyContent: 'flex-end', gap: 8 }}>
-          {hasGroupOptions && <SearchableSelect value={groupFilter} onChange={setGroupFilter} options={groupFilterOptions} searchThreshold={2} />}
-          {hasTeamOptions && <SearchableSelect value={teamFilter} onChange={setTeamFilter} options={teamOptions} />}
-          <input className="upt-search" type="text" placeholder={t('keyword.searchPlaceholder')}
-            value={search} onChange={e => setSearch(e.target.value)} />
-        </div>
-      )}
-
-      {!loading && monitors.length > 0 && (
         <div className="stats-collapse-bar" onClick={toggleStats}
           title={statsVisible ? t('app.collapseStats') : t('app.expandStats')}>
           <span className="stats-collapse-icon"><BarChart3 size={18} /></span>
@@ -350,6 +341,15 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
         <div className="stats-filter-bar" style={{ marginBottom: 16 }}>
           <span>{statItems.find(s => s.key === statFilter)?.label} — {t('mondash.showing', displayMonitors.length)}</span>
           <button className="stats-filter-clear" onClick={() => setStatFilter(null)}>{t('app.clearFilter')}</button>
+        </div>
+      )}
+
+      {!loading && monitors.length > 0 && (
+        <div className="upt-toolbar" style={{ justifyContent: 'flex-end', gap: 8 }}>
+          {hasGroupOptions && <SearchableSelect value={groupFilter} onChange={setGroupFilter} options={groupFilterOptions} searchThreshold={2} />}
+          {hasTeamOptions && <SearchableSelect value={teamFilter} onChange={setTeamFilter} options={teamOptions} />}
+          <input className="upt-search" type="text" placeholder={t('keyword.searchPlaceholder')}
+            value={search} onChange={e => setSearch(e.target.value)} />
         </div>
       )}
 
