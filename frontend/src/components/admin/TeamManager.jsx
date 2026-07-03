@@ -269,12 +269,23 @@ export default function TeamManager({ systemRole, ownTeamId, onTeamsChange }) {
                             const members = membersCache[team.id] || []
                             if (members.length === 0)
                               return <span className="field-hint">{t('team.noMembers')}</span>
-                            // Üyelerin bağlı olduğu müdür(ler)in kartlarını da listele
+                            // Üyelerin yönetim zincirini (müdür + müdürün müdürü/bölüm başkanı) kart olarak
+                            // listele — üyeden 2 seviye yukarı özyinele. Bölüm başkanının takımı olmasa da görünür.
                             const memberIds = new Set(members.map(x => x.id))
-                            const managerCards = [...new Set(members.map(x => x.manager_id).filter(Boolean))]
-                              .filter(id => !memberIds.has(id))
-                              .map(id => usersById[id])
-                              .filter(Boolean)
+                            const MANAGER_LEVELS = 2
+                            const managerIds = new Set()
+                            members.forEach(member => {
+                              let cur = member
+                              for (let lvl = 0; lvl < MANAGER_LEVELS; lvl++) {
+                                const mid = cur?.manager_id
+                                if (!mid) break
+                                const mgr = usersById[mid]
+                                if (!mgr) break
+                                if (!memberIds.has(mid)) managerIds.add(mid)
+                                cur = mgr
+                              }
+                            })
+                            const managerCards = [...managerIds].map(id => usersById[id]).filter(Boolean)
                             // Sıralama: önce müdür kartı, sonra MANAGER rolü, sonra PO, sonra
                             // seviye (companyLevel) büyükten küçüğe (sayı-duyarlı), sonra ada göre
                             const rankOf = (c) => c.isManager ? 0
