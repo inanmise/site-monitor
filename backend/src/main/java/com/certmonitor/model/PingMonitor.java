@@ -61,6 +61,11 @@ public class PingMonitor {
     @Column(name = "recovery_checks")
     private Integer recoveryChecks = 3;
 
+    /** Recovery aktif re-check aralığı (sn): recoveryChecks denemesi bu süre arayla yapılır.
+     *  Set ise recovery aktif döngüyle yürür; null → pasif (kontrol aralığında sayım). */
+    @Column(name = "recovery_interval_seconds")
+    private Integer recoveryIntervalSeconds = 30;
+
     @Column(name = "created_at")
     private String createdAt;
 
