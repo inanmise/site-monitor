@@ -50,6 +50,7 @@ public class MonitoringController {
     private final PingCheckerService pingChecker;
 
     private final TeamRepository teamRepo;
+    private final AlertEventRepository alertEventRepo;
 
     /** domain/host → sorumlu takım adı (izleme ekranlarında takım gösterimi/filtresi). */
     private final CertificateService certificateService;
@@ -877,8 +878,12 @@ public class MonitoringController {
                 .filter(r -> r.getMonitorId() != null)
                 .collect(Collectors.toMap(KeywordResult::getMonitorId, r -> r, (a, b) -> a));
         Map<Long, String> teams = teamNameMap();
-        List<Map<String, Object>> result = keywordMonitorRepo.findAllByOrderByNameAsc().stream()
-                .map(m -> enrichKeyword(m, latest.get(m.getId()), teams)).toList();
+        List<KeywordMonitor> monitors = keywordMonitorRepo.findAllByOrderByNameAsc();
+        Map<String, AlertEvent> alarms = openAlarmsByDomain(
+                monitors.stream().map(KeywordMonitor::getUrl).collect(Collectors.toSet()),
+                com.certmonitor.service.EscalationService.TYPE_KEYWORD);
+        List<Map<String, Object>> result = monitors.stream()
+                .map(m -> enrichKeyword(m, latest.get(m.getId()), teams, alarms.get(m.getUrl()))).toList();
         return ok(result);
     }
 
@@ -907,7 +912,7 @@ public class MonitoringController {
         m.setCreatedAt(now);
         m.setUpdatedAt(now);
         KeywordMonitor saved = keywordMonitorRepo.save(m);
-        return ok(enrichKeyword(saved, null, teamNameMap()));
+        return ok(enrichKeyword(saved, null, teamNameMap(), null));
     }
 
     @PutMapping("/keyword/{id}")
@@ -931,7 +936,8 @@ public class MonitoringController {
             if (body.get("recoveryIntervalSeconds") != null) m.setRecoveryIntervalSeconds(clampInterval(((Number) body.get("recoveryIntervalSeconds")).intValue()));
             m.setUpdatedAt(ISO.format(Instant.now()));
             KeywordMonitor saved = keywordMonitorRepo.save(m);
-            return ok(enrichKeyword(saved, keywordResultRepo.findTopByMonitorIdOrderByCheckedAtDesc(id).orElse(null), teamNameMap()));
+            return ok(enrichKeyword(saved, keywordResultRepo.findTopByMonitorIdOrderByCheckedAtDesc(id).orElse(null), teamNameMap(),
+                    alertEventRepo.findOpenAlert(saved.getUrl(), com.certmonitor.service.EscalationService.TYPE_KEYWORD).orElse(null)));
         }).orElse(notFound("Keyword monitor not found"));
     }
 
@@ -995,7 +1001,8 @@ public class MonitoringController {
             res.setError((String) r.get("error"));
             res.setCheckedAt(ISO.format(Instant.now()));
             keywordResultRepo.save(res);
-            return ok(enrichKeyword(m, res, teamNameMap()));
+            return ok(enrichKeyword(m, res, teamNameMap(),
+                    alertEventRepo.findOpenAlert(m.getUrl(), com.certmonitor.service.EscalationService.TYPE_KEYWORD).orElse(null)));
         }).orElse(notFound("Keyword monitor not found"));
     }
 
@@ -1164,7 +1171,7 @@ public class MonitoringController {
         return out;
     }
 
-    private Map<String, Object> enrichKeyword(KeywordMonitor m, KeywordResult latest, Map<Long, String> teams) {
+    private Map<String, Object> enrichKeyword(KeywordMonitor m, KeywordResult latest, Map<Long, String> teams, AlertEvent openAlarm) {
         Map<String, Object> item = new LinkedHashMap<>();
         item.put("id",               m.getId());
         item.put("name",             m.getName());
@@ -1184,6 +1191,9 @@ public class MonitoringController {
         item.put("recovery_checks",           m.getRecoveryChecks());
         item.put("recovery_interval_seconds", m.getRecoveryIntervalSeconds());
         item.put("custom_headers",            m.getCustomHeaders());
+        item.put("active_alarm",       openAlarm != null);
+        item.put("alarm_level",        openAlarm != null ? openAlarm.getAlertLevel() : null);
+        item.put("alarm_acknowledged", openAlarm != null ? openAlarm.getAcknowledged() : null);
         if (latest != null) {
             item.put("status",      latest.getError() != null ? "error" : (Boolean.TRUE.equals(latest.getOk()) ? "up" : "down"));
             item.put("found",       latest.getFound());
@@ -1211,8 +1221,12 @@ public class MonitoringController {
                 .filter(c -> c.getMonitorId() != null)
                 .collect(Collectors.toMap(PingCheck::getMonitorId, c -> c, (a, b) -> a));
         Map<Long, String> teams = teamNameMap();
-        List<Map<String, Object>> result = pingMonitorRepo.findAllByOrderByNameAsc().stream()
-                .map(m -> enrichPing(m, latest.get(m.getId()), teams)).toList();
+        List<PingMonitor> monitors = pingMonitorRepo.findAllByOrderByNameAsc();
+        Map<String, AlertEvent> alarms = openAlarmsByDomain(
+                monitors.stream().map(PingMonitor::getHost).collect(Collectors.toSet()),
+                com.certmonitor.service.EscalationService.TYPE_PING_DOWN);
+        List<Map<String, Object>> result = monitors.stream()
+                .map(m -> enrichPing(m, latest.get(m.getId()), teams, alarms.get(m.getHost()))).toList();
         return ok(result);
     }
 
@@ -1244,7 +1258,7 @@ public class MonitoringController {
         m.setCreatedAt(now);
         m.setUpdatedAt(now);
         PingMonitor saved = pingMonitorRepo.save(m);
-        return ok(enrichPing(saved, null, teamNameMap()));
+        return ok(enrichPing(saved, null, teamNameMap(), null));
     }
 
     @PutMapping("/ping/{id}")
@@ -1281,7 +1295,8 @@ public class MonitoringController {
             if (body.get("recoveryIntervalSeconds") != null) m.setRecoveryIntervalSeconds(clampInterval(((Number) body.get("recoveryIntervalSeconds")).intValue()));
             m.setUpdatedAt(ISO.format(Instant.now()));
             PingMonitor saved = pingMonitorRepo.save(m);
-            return ok(enrichPing(saved, pingCheckRepo.findTopByMonitorIdOrderByCheckedAtDesc(id).orElse(null), teamNameMap()));
+            return ok(enrichPing(saved, pingCheckRepo.findTopByMonitorIdOrderByCheckedAtDesc(id).orElse(null), teamNameMap(),
+                    alertEventRepo.findOpenAlert(saved.getHost(), com.certmonitor.service.EscalationService.TYPE_PING_DOWN).orElse(null)));
         }).orElse(notFound("Ping monitor not found"));
     }
 
@@ -1339,11 +1354,12 @@ public class MonitoringController {
             check.setError((String) r.get("error"));
             check.setCheckedAt(ISO.format(Instant.now()));
             pingCheckRepo.save(check);
-            return ok(enrichPing(m, check, teamNameMap()));
+            return ok(enrichPing(m, check, teamNameMap(),
+                    alertEventRepo.findOpenAlert(m.getHost(), com.certmonitor.service.EscalationService.TYPE_PING_DOWN).orElse(null)));
         }).orElse(notFound("Ping monitor not found"));
     }
 
-    private Map<String, Object> enrichPing(PingMonitor m, PingCheck latest, Map<Long, String> teams) {
+    private Map<String, Object> enrichPing(PingMonitor m, PingCheck latest, Map<Long, String> teams, AlertEvent openAlarm) {
         Map<String, Object> item = new LinkedHashMap<>();
         item.put("id",               m.getId());
         item.put("name",             m.getName());
@@ -1360,6 +1376,9 @@ public class MonitoringController {
         item.put("confirm_interval_seconds", m.getConfirmIntervalSeconds());
         item.put("recovery_checks",           m.getRecoveryChecks());
         item.put("recovery_interval_seconds", m.getRecoveryIntervalSeconds());
+        item.put("active_alarm",       openAlarm != null);
+        item.put("alarm_level",        openAlarm != null ? openAlarm.getAlertLevel() : null);
+        item.put("alarm_acknowledged", openAlarm != null ? openAlarm.getAcknowledged() : null);
         if (latest != null) {
             boolean up = Boolean.TRUE.equals(latest.getUp());
             boolean na = !up && latest.getError() != null && latest.getError().contains("ICMP bu ortamda");
@@ -1380,5 +1399,14 @@ public class MonitoringController {
     private Map<Long, String> teamNameMap() {
         // 60s cache'li (CertificateService.teamNamesById) — her liste isteğinde teamRepo.findAll() yok.
         return certificateService.teamNamesById();
+    }
+
+    /** Açık (resolved=false) alarmları domain→AlertEvent map'ine indir (verilen tip için).
+     *  Liste uçlarında toplu kart-alarm işareti için tek sorgu (N+1 yok). */
+    private Map<String, AlertEvent> openAlarmsByDomain(java.util.Collection<String> domains, String alertType) {
+        if (domains.isEmpty()) return Map.of();
+        return alertEventRepo.findOpenByDomainIn(domains).stream()
+                .filter(e -> alertType.equals(e.getAlertType()))
+                .collect(Collectors.toMap(AlertEvent::getDomain, e -> e, (a, b) -> a));
     }
 }

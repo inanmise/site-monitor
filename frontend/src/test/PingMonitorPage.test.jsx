@@ -4,6 +4,7 @@ import PingMonitorPage from '../components/PingMonitorPage.jsx'
 
 vi.mock('../api/client', () => ({
   formatDate: (s) => s ?? '',
+  formatDateSec: (s) => s ?? '',
   api: {
     monitoring: {
       getPingMonitors:   vi.fn(),
