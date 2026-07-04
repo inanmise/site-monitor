@@ -126,6 +126,13 @@ public class SchedulerService {
     @Value("${cert.monitor.scheduler.lock-ttl-minutes:10}")
     private int lockTtlMinutes;
 
+    /** Sweep-level distributed lock TTL. Kısa tutulur (2 dk) → crash sonrası kilit hızlı
+     *  self-heal olur; startup temizliği (clearStaleLocksForThisHost) de ayrıca siler.
+     *  İzleme sweep'leri hızlıdır; çok sayıda monitörde bir sweep bu süreyi aşarsa 2+ pod'da
+     *  ikinci pod aynı turu başlatabilir → o zaman artırılır (env: SWEEP_LOCK_TTL_MINUTES). */
+    @Value("${cert.monitor.scheduler.sweep-lock-ttl-minutes:2}")
+    private int sweepLockTtlMinutes;
+
     /** Açılışta ağır iş (catch-up + tam tarama) bu kadar ms geciktirilir — login/BCrypt
      *  ilk dakikada CPU'yu kapışmasın. 0 = anında (eski davranış). */
     @Value("${cert.monitor.scheduler.startup-check-delay-ms:60000}")
@@ -259,6 +266,11 @@ public class SchedulerService {
             // kendini temizler; bu sadece crash sonrası toparlanmayı hızlandırır)
             deleted += jdbcTemplate.update(
                 "DELETE FROM scheduler_lock WHERE name LIKE 'mon-alert:%' AND locked_by LIKE ?",
+                HOSTNAME + "-%");
+            // İzleme sweep kilitleri (uptime/port/keyword/ping/dns '-sweep'). Crash sonrası
+            // bu host'un bıraktığı satırı anında sil → sweep'ler TTL (2 dk) dolana kadar susmasın.
+            deleted += jdbcTemplate.update(
+                "DELETE FROM scheduler_lock WHERE name LIKE '%-sweep' AND locked_by LIKE ?",
                 HOSTNAME + "-%");
             if (deleted > 0) {
                 log.info("Cleared {} stale scheduler lock(s) from previous instance(s) on this host", deleted);
@@ -1012,6 +1024,20 @@ public class SchedulerService {
     @Scheduled(fixedDelayString = "${cert.monitor.uptime.interval-ms:300000}", initialDelayString = "60000")
     public void runUptimeChecks() {
         if (!appSettings.getBoolean("cert.monitor.uptime.alert-enabled", true)) return;   // izleme duraklatıldı → kontrol+alarm yok
+        // HA: tüm-tur dağıtık kilit — 2+ pod'da bir turu yalnız bir pod çalıştırır (mükerrer probe/geçmiş kaydı önlenir).
+        if (!tryAcquireSchedulerLock("uptime-sweep", sweepLockTtlMinutes)) {
+            log.debug("Uptime sweep — lock başka instance'da, atlanıyor");
+            return;
+        }
+        try {
+            runUptimeChecksLocked();
+        } finally {
+            releaseSchedulerLock("uptime-sweep");
+        }
+    }
+
+    /** Tüm-tur kilit içinde çalışan gerçek uptime sweep gövdesi (bkz. runUptimeChecks). */
+    private void runUptimeChecksLocked() {
         List<CertificateInventory> active = inventoryRepo.findByActiveTrueOrderByDomainAsc();
         if (active.isEmpty()) return;
         List<MonitoringOutageService.SweepItem> sweep = new ArrayList<>();
@@ -1060,6 +1086,20 @@ public class SchedulerService {
     @Scheduled(fixedDelayString = "${cert.monitor.port.interval-ms:30000}", initialDelayString = "45000")
     public void runPortChecks() {
         if (!appSettings.getBoolean("cert.monitor.port.alert-enabled", true)) return;   // izleme duraklatıldı → kontrol+alarm yok
+        // HA: tüm-tur dağıtık kilit — 2+ pod'da bir turu yalnız bir pod çalıştırır.
+        if (!tryAcquireSchedulerLock("port-sweep", sweepLockTtlMinutes)) {
+            log.debug("Port sweep — lock başka instance'da, atlanıyor");
+            return;
+        }
+        try {
+            runPortChecksLocked();
+        } finally {
+            releaseSchedulerLock("port-sweep");
+        }
+    }
+
+    /** Tüm-tur kilit içinde çalışan gerçek port sweep gövdesi (bkz. runPortChecks). */
+    private void runPortChecksLocked() {
         List<PortMonitor> monitors = portMonitorRepo.findByActiveTrue();
         if (monitors.isEmpty()) return;
         // Skip monitors whose host is no longer in active inventory (soft-deleted / inactive)
@@ -1119,6 +1159,20 @@ public class SchedulerService {
     @Scheduled(fixedDelayString = "${cert.monitor.keyword.interval-ms:30000}", initialDelayString = "55000")
     public void runKeywordChecks() {
         if (!appSettings.getBoolean("cert.monitor.keyword.alert-enabled", true)) return;   // izleme duraklatıldı → kontrol+alarm yok
+        // HA: tüm-tur dağıtık kilit — 2+ pod'da bir turu yalnız bir pod çalıştırır.
+        if (!tryAcquireSchedulerLock("keyword-sweep", sweepLockTtlMinutes)) {
+            log.debug("Keyword sweep — lock başka instance'da, atlanıyor");
+            return;
+        }
+        try {
+            runKeywordChecksLocked();
+        } finally {
+            releaseSchedulerLock("keyword-sweep");
+        }
+    }
+
+    /** Tüm-tur kilit içinde çalışan gerçek keyword sweep gövdesi (bkz. runKeywordChecks). */
+    private void runKeywordChecksLocked() {
         List<KeywordMonitor> monitors = keywordMonitorRepo.findByActiveTrue();
         if (monitors.isEmpty()) return;
         int checked = 0;
@@ -1202,6 +1256,20 @@ public class SchedulerService {
     @Scheduled(fixedDelayString = "${cert.monitor.ping.interval-ms:30000}", initialDelayString = "65000")
     public void runPingChecks() {
         if (!appSettings.getBoolean("cert.monitor.ping.alert-enabled", true)) return;   // izleme duraklatıldı → kontrol+alarm yok
+        // HA: tüm-tur dağıtık kilit — 2+ pod'da bir turu (öksüz-alarm temizliği dahil) yalnız bir pod çalıştırır.
+        if (!tryAcquireSchedulerLock("ping-sweep", sweepLockTtlMinutes)) {
+            log.debug("Ping sweep — lock başka instance'da, atlanıyor");
+            return;
+        }
+        try {
+            runPingChecksLocked();
+        } finally {
+            releaseSchedulerLock("ping-sweep");
+        }
+    }
+
+    /** Tüm-tur kilit içinde çalışan gerçek ping sweep gövdesi (bkz. runPingChecks). */
+    private void runPingChecksLocked() {
         List<PingMonitor> monitors = pingMonitorRepo.findByActiveTrue();
         // Öksüz ping alarmı temizliği: host rename/silme sonrası recovery'nin asla kapatamadığı açık
         // PING_DOWN alarmlarını kapat (aktif+pasif TÜM mevcut host'lara göre). Aktif izleme yoksa da çalışır.
@@ -1281,6 +1349,20 @@ public class SchedulerService {
     @Scheduled(fixedDelayString = "${cert.monitor.dns.interval-ms:300000}", initialDelayString = "60000")
     public void runDnsChecks() {
         if (!appSettings.getBoolean("cert.monitor.dns.alert-enabled", true)) return;   // izleme duraklatıldı → kontrol+alarm yok
+        // HA: tüm-tur dağıtık kilit — 2+ pod'da bir turu yalnız bir pod çalıştırır.
+        if (!tryAcquireSchedulerLock("dns-sweep", sweepLockTtlMinutes)) {
+            log.debug("DNS sweep — lock başka instance'da, atlanıyor");
+            return;
+        }
+        try {
+            runDnsChecksLocked();
+        } finally {
+            releaseSchedulerLock("dns-sweep");
+        }
+    }
+
+    /** Tüm-tur kilit içinde çalışan gerçek DNS sweep gövdesi (bkz. runDnsChecks). */
+    private void runDnsChecksLocked() {
         List<DnsMonitor> monitors = dnsMonitorRepo.findByActiveTrue();
         if (monitors.isEmpty()) return;
         // Skip monitors whose domain is no longer in active inventory (soft-deleted / inactive)
