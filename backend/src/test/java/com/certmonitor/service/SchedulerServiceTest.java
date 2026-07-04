@@ -37,6 +37,7 @@ import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.contains;
+import static org.mockito.ArgumentMatchers.startsWith;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
@@ -188,6 +189,24 @@ class SchedulerServiceTest {
         assertThat(item.detail()).isEqualTo("8443/TCP");
         assertThat(item.up()).isFalse();
         assertThat(item.ctxExtra().get("port")).isEqualTo(8443);
+    }
+
+    @Test
+    @DisplayName("runPingChecks: sweep kilidi başka instance'da (UNIQUE) → tüm sweep atlanır, hiç probe/kayıt yok")
+    void runPingChecks_lockHeldByOther_skipsSweep() {
+        // tryAcquireSchedulerLock: INSERT scheduler_lock UNIQUE ihlali fırlatırsa kilit başka
+        // pod'da demektir → false döner → sweep gövdesi (probe + geçmiş kaydı + alarm) hiç koşmaz.
+        // 3 ayrı vararg matcher'ı: INSERT'in tam aritesi (name, locked_by, locked_until). lenient()
+        // şart: bu sınıf STRICT_STUBS; eşleşmeyen DELETE çağrıları (acquire+release) aksi halde
+        // PotentialStubbingProblem fırlatır, onu da tryAcquireSchedulerLock'un catch'i yutup degrade
+        // ile true döner (kilit alınmış sayılır). lenient → DELETE'ler varsayılan 0 döner, INSERT atar.
+        lenient().when(jdbcTemplate.update(startsWith("INSERT INTO scheduler_lock"), any(), any(), any()))
+                .thenThrow(new RuntimeException("UNIQUE constraint failed: scheduler_lock.name"));
+
+        scheduler.runPingChecks();
+
+        // Kilit alınamadı → izleme deposuna, checker'a ve alarm pipeline'ına hiç dokunulmaz (mükerrer iş yok).
+        org.mockito.Mockito.verifyNoInteractions(pingMonitorRepo, pingCheckerService, monitoringOutageService);
     }
 
     @Test
