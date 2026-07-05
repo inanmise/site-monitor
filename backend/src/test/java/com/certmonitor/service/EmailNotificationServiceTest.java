@@ -41,6 +41,7 @@ class EmailNotificationServiceTest {
     @Mock SmtpMailService smtpMailService;
     @Mock JavaMailSenderImpl sender;
     @Mock NotificationLogRepository notificationLogRepo;
+    @Mock AppSettingsService appSettings;
 
     private EmailNotificationService service;
 
@@ -55,8 +56,9 @@ class EmailNotificationServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new EmailNotificationService(settingsService, smtpMailService, notificationLogRepo);
+        service = new EmailNotificationService(settingsService, smtpMailService, notificationLogRepo, appSettings);
         when(settingsService.getOrDefaults()).thenReturn(settings(false));
+        when(appSettings.getString(eq("cert.monitor.app.base-url"), any())).thenAnswer(inv -> inv.getArgument(1));
 
         mailLogger = (Logger) LoggerFactory.getLogger("com.certmonitor.mail");
         classLogger = (Logger) LoggerFactory.getLogger(EmailNotificationService.class);

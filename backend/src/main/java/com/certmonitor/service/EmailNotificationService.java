@@ -48,6 +48,7 @@ public class EmailNotificationService {
     /** Async 421-retry'ın terminal sonucunu, ilk denemede "QUEUED_RETRY" kaydedilen
      *  bildirim loguna geri-yazmak için (subject ile eşleştirilir). */
     private final com.certmonitor.repository.NotificationLogRepository notificationLogRepo;
+    private final AppSettingsService appSettings;
 
     /** Uygulama dış adresi — e-posta CTA deep-link'leri için. Spring @Value enjekte eder;
      *  birim testte (manuel new) initializer değeri kullanılır. */
@@ -369,28 +370,44 @@ public class EmailNotificationService {
         }
     }
 
+    /** Tier-3 (sistem/admin) e-postaları için sade Outlook-güvenli çerçeve: dış bgcolor tablo → ortalanmış
+     *  sabit-genişlik beyaz kart → padding TD'de (Outlook div padding'ini ve max-width'i yok sayar).
+     *  İç içerik (h2/p/tablo/ul) olduğu gibi bu td'ye yerleştirilir; rich builder'lardaki gibi hep-açık. */
+    private String simpleFrameOpen(int maxWidth) {
+        String css = "<style>@media only screen and (max-width:600px){.em-wrap{padding:0!important}"
+            + ".em-card{border-radius:0!important;width:100%!important}.em-body{padding:18px!important}}</style>";
+        return "<!DOCTYPE html><html lang='tr' xmlns:v='urn:schemas-microsoft-com:vml' xmlns:o='urn:schemas-microsoft-com:office:office'>"
+            + "<head><meta charset='UTF-8'><meta name='viewport' content='width=device-width,initial-scale=1'>"
+            + LIGHT_SCHEME_META
+            + "<!--[if mso]><style>table,td,div,p,a{font-family:'Segoe UI',Arial,sans-serif!important}</style><![endif]-->"
+            + css + "</head>"
+            + "<body style='margin:0;padding:0;background:#f1f5f9;font-family:\"Segoe UI\",Arial,sans-serif;color:#1f2937'>"
+            + "<table role='presentation' class='em-wrap' width='100%' cellpadding='0' cellspacing='0' border='0' bgcolor='#f1f5f9' style='background:#f1f5f9;mso-table-lspace:0pt;mso-table-rspace:0pt'>"
+            + "<tr><td align='center' style='padding:24px 10px'>"
+            + "<table role='presentation' class='em-card' width='" + maxWidth + "' cellpadding='0' cellspacing='0' border='0' bgcolor='#ffffff' style='max-width:" + maxWidth + "px;width:100%;background:#ffffff;border:1px solid #e5e7eb;border-radius:12px;overflow:hidden'>"
+            + "<tr><td class='em-body' bgcolor='#ffffff' style='padding:24px'>";
+    }
+
+    private String simpleFrameClose() {
+        return "</td></tr></table></td></tr></table></body></html>";
+    }
+
     private String buildPasswordResetHtml(String username, String displayName, String tempPwd) {
         String name = (displayName != null && !displayName.isBlank()) ? displayName : username;
-        return """
-            <div style="font-family:Arial,sans-serif;max-width:560px;margin:0 auto;padding:20px;color:#1e293b">
-              <h2 style="color:#4f46e5;margin-top:0">Şifreniz sıfırlandı</h2>
-              <p>Sayın <strong>%s</strong>,</p>
-              <p>CertMonitor hesabınızın şifresi bir yönetici tarafından sıfırlandı.</p>
-              <table style="border-collapse:collapse;margin:14px 0;font-size:.95em">
-                <tr>
-                  <td style="padding:4px 12px 4px 0;color:#64748b">Kullanıcı adı:</td>
-                  <td style="padding:4px 0;font-family:ui-monospace,Consolas,monospace;font-weight:600">%s</td>
-                </tr>
-                <tr>
-                  <td style="padding:4px 12px 4px 0;color:#64748b;vertical-align:top">Geçici şifre:</td>
-                  <td style="padding:4px 0;font-family:ui-monospace,Consolas,monospace;font-weight:700;letter-spacing:.04em;font-size:1.1em">%s</td>
-                </tr>
-              </table>
-              <p><strong>Bu şifre 24 saat geçerlidir.</strong> Bu süre içinde giriş yapmazsanız geçici şifreniz devre dışı kalır ve yeni bir sıfırlama talep etmeniz gerekir.</p>
-              <p>İlk girişinizde sistem sizden kalıcı bir şifre belirlemenizi isteyecektir.</p>
-              <p style="font-size:.9em;color:#64748b">Bu işlemi siz başlatmadıysanız lütfen sistem yöneticinizle iletişime geçin.</p>
-            </div>
-            """.formatted(name, username, tempPwd);
+        return simpleFrameOpen(560)
+            + "<h2 style='color:#4f46e5;margin:0 0 12px;font-size:20px'>Şifreniz sıfırlandı</h2>"
+            + "<p style='margin:0 0 10px'>Sayın <strong>" + escHtml(name) + "</strong>,</p>"
+            + "<p style='margin:0 0 10px'>CertMonitor hesabınızın şifresi bir yönetici tarafından sıfırlandı.</p>"
+            + "<table role='presentation' cellpadding='0' cellspacing='0' border='0' style='border-collapse:collapse;margin:14px 0;font-size:14px'>"
+            + "<tr><td style='padding:4px 12px 4px 0;color:#64748b'>Kullanıcı adı:</td>"
+            + "<td style='padding:4px 0;font-family:Consolas,\"Courier New\",monospace;font-weight:600'>" + escHtml(username) + "</td></tr>"
+            + "<tr><td style='padding:4px 12px 4px 0;color:#64748b;vertical-align:top'>Geçici şifre:</td>"
+            + "<td style='padding:4px 0;font-family:Consolas,\"Courier New\",monospace;font-weight:700;letter-spacing:.04em;font-size:16px'>" + escHtml(tempPwd) + "</td></tr>"
+            + "</table>"
+            + "<p style='margin:0 0 10px'><strong>Bu şifre 24 saat geçerlidir.</strong> Bu süre içinde giriş yapmazsanız geçici şifreniz devre dışı kalır ve yeni bir sıfırlama talep etmeniz gerekir.</p>"
+            + "<p style='margin:0 0 10px'>İlk girişinizde sistem sizden kalıcı bir şifre belirlemenizi isteyecektir.</p>"
+            + "<p style='font-size:13px;color:#64748b;margin:0'>Bu işlemi siz başlatmadıysanız lütfen sistem yöneticinizle iletişime geçin.</p>"
+            + simpleFrameClose();
     }
 
     // ── System admin — network outage notifications ──────────────────────────
@@ -439,44 +456,46 @@ public class EmailNotificationService {
         }
     }
 
+    /** Admin bilgi tablosu satırı — etiket hücresi bgcolor'lı (Outlook-güvenli), değer hücresi düz. */
+    private String adminRow(String label, String value) {
+        return "<tr>"
+            + "<td bgcolor='#f3f4f6' style='background-color:#f3f4f6;text-align:left;padding:7px 10px;border:1px solid #e5e7eb;font-weight:700;white-space:nowrap'>" + escHtml(label) + "</td>"
+            + "<td style='padding:7px 10px;border:1px solid #e5e7eb'>" + value + "</td></tr>";
+    }
+
     private String buildAdminNetworkAlertHtml(String detectedAt, int networkErrors, int total,
                                               double errorRate, double threshold) {
         String ratePct = String.format("%.0f%%", errorRate * 100);
         String threshPct = String.format("%.0f%%", threshold * 100);
-        return "<!DOCTYPE html><html><head><meta charset='UTF-8'></head><body style='font-family:Segoe UI,Arial,sans-serif;color:#1f2937;'>" +
-                "<div style='max-width:640px;margin:0 auto;padding:24px;background:#fff;'>" +
-                "<h2 style='color:#b91c1c;margin:0 0 12px;'>⚠ CertMonitor — Ağ Erişim Sorunu Tespit Edildi</h2>" +
-                "<p style='font-size:.95em;line-height:1.55;'>CertMonitor host'unun bir veya daha fazla sertifika kontrolünü tamamlayamadığı tespit edildi. " +
-                "Tarama turunda <strong>" + networkErrors + " / " + total + "</strong> domain ağ-class hatasıyla düştü " +
-                "(oran: <strong>" + ratePct + "</strong>, eşik: " + threshPct + "). " +
-                "Bu, host'un outbound bağlantısında bir problem olabileceğini gösteriyor.</p>" +
-                "<table style='width:100%;border-collapse:collapse;margin:16px 0;font-size:.92em;'>" +
-                "<tr><th style='text-align:left;padding:6px 10px;background:#f3f4f6;border:1px solid #e5e7eb;'>Tespit Zamanı</th>" +
-                "<td style='padding:6px 10px;border:1px solid #e5e7eb;'>" + formatIso(detectedAt) + "</td></tr>" +
-                "<tr><th style='text-align:left;padding:6px 10px;background:#f3f4f6;border:1px solid #e5e7eb;'>Etkilenen Domain</th>" +
-                "<td style='padding:6px 10px;border:1px solid #e5e7eb;'>" + networkErrors + " / " + total + "</td></tr>" +
-                "<tr><th style='text-align:left;padding:6px 10px;background:#f3f4f6;border:1px solid #e5e7eb;'>Hata Oranı</th>" +
-                "<td style='padding:6px 10px;border:1px solid #e5e7eb;'>" + ratePct + "</td></tr>" +
-                "<tr><th style='text-align:left;padding:6px 10px;background:#f3f4f6;border:1px solid #e5e7eb;'>Eşik</th>" +
-                "<td style='padding:6px 10px;border:1px solid #e5e7eb;'>" + threshPct + "</td></tr>" +
-                "</table>" +
-                "<h3 style='color:#374151;font-size:1em;margin:20px 0 8px;'>Sistemin Aksiyonu</h3>" +
-                "<ul style='font-size:.9em;line-height:1.6;'>" +
-                "<li>Yeni alarm üretimi <strong>geçici olarak duraklatıldı</strong></li>" +
-                "<li>Auto-resolve işlemi <strong>askıya alındı</strong> (sahte resolved e-posta yağmuru engellenir)</li>" +
-                "<li>Dashboard'da operatörlere uyarı banner'ı gösterildi</li>" +
-                "</ul>" +
-                "<h3 style='color:#374151;font-size:1em;margin:20px 0 8px;'>Önerilen Kontroller</h3>" +
-                "<ul style='font-size:.9em;line-height:1.6;'>" +
-                "<li>Host'un internet bağlantısı (modem/router)</li>" +
-                "<li>Outbound proxy ayarları</li>" +
-                "<li>Kurumsal firewall/NAT politikaları</li>" +
-                "<li>DNS sunucu erişilebilirliği</li>" +
-                "</ul>" +
-                "<p style='font-size:.88em;color:#6b7280;margin-top:24px;'>Ağ erişimi normale döner dönmez ayrıca bir <strong>\"Çözüldü\"</strong> e-postası alacaksınız.</p>" +
-                "<hr style='border:none;border-top:1px solid #e5e7eb;margin:24px 0 12px;' />" +
-                "<p style='font-size:.78em;color:#9ca3af;'>CertMonitor — System Admin Notification</p>" +
-                "</div></body></html>";
+        return simpleFrameOpen(640)
+                + "<h2 style='color:#b91c1c;margin:0 0 12px;font-size:20px'>⚠ CertMonitor — Ağ Erişim Sorunu Tespit Edildi</h2>"
+                + "<p style='font-size:14px;line-height:1.55;margin:0 0 12px'>CertMonitor host'unun bir veya daha fazla sertifika kontrolünü tamamlayamadığı tespit edildi. "
+                + "Tarama turunda <strong>" + networkErrors + " / " + total + "</strong> domain ağ-class hatasıyla düştü "
+                + "(oran: <strong>" + ratePct + "</strong>, eşik: " + threshPct + "). "
+                + "Bu, host'un outbound bağlantısında bir problem olabileceğini gösteriyor.</p>"
+                + "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' style='border-collapse:collapse;margin:16px 0;font-size:13px'>"
+                + adminRow("Tespit Zamanı", formatIso(detectedAt))
+                + adminRow("Etkilenen Domain", networkErrors + " / " + total)
+                + adminRow("Hata Oranı", ratePct)
+                + adminRow("Eşik", threshPct)
+                + "</table>"
+                + "<h3 style='color:#374151;font-size:15px;margin:20px 0 8px'>Sistemin Aksiyonu</h3>"
+                + "<ul style='font-size:13px;line-height:1.6;margin:0 0 8px;padding-left:20px'>"
+                + "<li>Yeni alarm üretimi <strong>geçici olarak duraklatıldı</strong></li>"
+                + "<li>Auto-resolve işlemi <strong>askıya alındı</strong> (sahte resolved e-posta yağmuru engellenir)</li>"
+                + "<li>Dashboard'da operatörlere uyarı banner'ı gösterildi</li>"
+                + "</ul>"
+                + "<h3 style='color:#374151;font-size:15px;margin:20px 0 8px'>Önerilen Kontroller</h3>"
+                + "<ul style='font-size:13px;line-height:1.6;margin:0 0 8px;padding-left:20px'>"
+                + "<li>Host'un internet bağlantısı (modem/router)</li>"
+                + "<li>Outbound proxy ayarları</li>"
+                + "<li>Kurumsal firewall/NAT politikaları</li>"
+                + "<li>DNS sunucu erişilebilirliği</li>"
+                + "</ul>"
+                + "<p style='font-size:13px;color:#6b7280;margin:24px 0 0'>Ağ erişimi normale döner dönmez ayrıca bir <strong>\"Çözüldü\"</strong> e-postası alacaksınız.</p>"
+                + "<hr style='border:none;border-top:1px solid #e5e7eb;margin:24px 0 12px' />"
+                + "<p style='font-size:11px;color:#9ca3af;margin:0'>CertMonitor — System Admin Notification</p>"
+                + simpleFrameClose();
     }
 
     private String buildAdminNetworkResolvedHtml(String detectedAt, String resolvedAt, long durationMs,
@@ -485,32 +504,30 @@ public class EmailNotificationService {
         long durationSec = (durationMs / 1000) % 60;
         String durationStr = durationMin + " dk " + durationSec + " sn";
         String ratePct = String.format("%.0f%%", errorRate * 100);
-        return "<!DOCTYPE html><html><head><meta charset='UTF-8'></head><body style='font-family:Segoe UI,Arial,sans-serif;color:#1f2937;'>" +
-                "<div style='max-width:640px;margin:0 auto;padding:24px;background:#fff;'>" +
-                "<h2 style='color:#15803d;margin:0 0 12px;'>✅ CertMonitor — Ağ Erişim Sorunu Çözüldü</h2>" +
-                "<p style='font-size:.95em;line-height:1.55;'>CertMonitor host'unun outbound bağlantı sorunu çözüldü. " +
-                "Sertifika kontrolleri normal işleyişe döndü.</p>" +
-                "<table style='width:100%;border-collapse:collapse;margin:16px 0;font-size:.92em;'>" +
-                "<tr><th style='text-align:left;padding:6px 10px;background:#f3f4f6;border:1px solid #e5e7eb;'>Tespit Zamanı</th>" +
-                "<td style='padding:6px 10px;border:1px solid #e5e7eb;'>" + formatIso(detectedAt) + "</td></tr>" +
-                "<tr><th style='text-align:left;padding:6px 10px;background:#f3f4f6;border:1px solid #e5e7eb;'>Çözüm Zamanı</th>" +
-                "<td style='padding:6px 10px;border:1px solid #e5e7eb;'>" + formatIso(resolvedAt) + "</td></tr>" +
-                "<tr><th style='text-align:left;padding:6px 10px;background:#f3f4f6;border:1px solid #e5e7eb;'>Toplam Süre</th>" +
-                "<td style='padding:6px 10px;border:1px solid #e5e7eb;'>" + durationStr + "</td></tr>" +
-                "<tr><th style='text-align:left;padding:6px 10px;background:#f3f4f6;border:1px solid #e5e7eb;'>Tespit Anında Etkilenen</th>" +
-                "<td style='padding:6px 10px;border:1px solid #e5e7eb;'>" + networkErrors + " / " + total + " (" + ratePct + ")</td></tr>" +
-                "</table>" +
-                "<h3 style='color:#374151;font-size:1em;margin:20px 0 8px;'>Sistemin Aksiyonu</h3>" +
-                "<ul style='font-size:.9em;line-height:1.6;'>" +
-                "<li>Yeni alarm üretimi <strong>yeniden aktif</strong></li>" +
-                "<li>Auto-resolve işlemi <strong>yeniden aktif</strong></li>" +
-                "<li>Dashboard uyarı banner'ı kaldırıldı</li>" +
-                "</ul>" +
-                "<p style='font-size:.88em;color:#15803d;background:#f0fdf4;border:1px solid #bbf7d0;padding:10px 14px;border-radius:6px;'>" +
-                "<em>Not: Outage süresince üretilebilecek sahte alarmlar bastırıldığı için ekibinize ÇÖZÜLDÜ e-posta yağmuru gönderilmedi.</em></p>" +
-                "<hr style='border:none;border-top:1px solid #e5e7eb;margin:24px 0 12px;' />" +
-                "<p style='font-size:.78em;color:#9ca3af;'>CertMonitor — System Admin Notification</p>" +
-                "</div></body></html>";
+        return simpleFrameOpen(640)
+                + "<h2 style='color:#15803d;margin:0 0 12px;font-size:20px'>✅ CertMonitor — Ağ Erişim Sorunu Çözüldü</h2>"
+                + "<p style='font-size:14px;line-height:1.55;margin:0 0 12px'>CertMonitor host'unun outbound bağlantı sorunu çözüldü. "
+                + "Sertifika kontrolleri normal işleyişe döndü.</p>"
+                + "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' style='border-collapse:collapse;margin:16px 0;font-size:13px'>"
+                + adminRow("Tespit Zamanı", formatIso(detectedAt))
+                + adminRow("Çözüm Zamanı", formatIso(resolvedAt))
+                + adminRow("Toplam Süre", durationStr)
+                + adminRow("Tespit Anında Etkilenen", networkErrors + " / " + total + " (" + ratePct + ")")
+                + "</table>"
+                + "<h3 style='color:#374151;font-size:15px;margin:20px 0 8px'>Sistemin Aksiyonu</h3>"
+                + "<ul style='font-size:13px;line-height:1.6;margin:0 0 8px;padding-left:20px'>"
+                + "<li>Yeni alarm üretimi <strong>yeniden aktif</strong></li>"
+                + "<li>Auto-resolve işlemi <strong>yeniden aktif</strong></li>"
+                + "<li>Dashboard uyarı banner'ı kaldırıldı</li>"
+                + "</ul>"
+                // Renkli not: <p background> Outlook'ta beyaza düşer → accent-şeritli tablo (td bgcolor)
+                + "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' style='margin:16px 0 0;border-radius:8px;overflow:hidden'><tr>"
+                + "<td width='4' bgcolor='#16a34a' style='background-color:#16a34a;width:4px;font-size:0;line-height:0'>&nbsp;</td>"
+                + "<td bgcolor='#f0fdf4' style='background-color:#f0fdf4;padding:10px 14px;font-size:13px;color:#15803d'>"
+                + "<em>Not: Outage süresince üretilebilecek sahte alarmlar bastırıldığı için ekibinize ÇÖZÜLDÜ e-posta yağmuru gönderilmedi.</em></td></tr></table>"
+                + "<hr style='border:none;border-top:1px solid #e5e7eb;margin:24px 0 12px' />"
+                + "<p style='font-size:11px;color:#9ca3af;margin:0'>CertMonitor — System Admin Notification</p>"
+                + simpleFrameClose();
     }
 
     // ── Public HTML accessors (used to store sent HTML in notification log) ──
@@ -626,11 +643,13 @@ public class EmailNotificationService {
                 + "</td>"
                 + "</tr></table>";
         } else if (!"EXPIRY".equals(alertType)) {
-            expiryHero = "<div style='text-align:center;margin:20px 0'>"
-                + "<div style='display:inline-block;background:" + accentColor + ";color:#fff;"
-                + "border-radius:12px;padding:14px 32px;font-size:17px;font-weight:800;letter-spacing:.02em'>"
+            // Rozet: inline-block div Outlook'ta stilsiz düz metne çöker → ortalanmış iç-td pill (DNS hero deseni)
+            expiryHero = "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' style='margin:20px 0'><tr><td align='center'>"
+                + "<table role='presentation' cellpadding='0' cellspacing='0' border='0' align='center'><tr>"
+                + "<td bgcolor='" + accentColor + "' style='background-color:" + accentColor + ";border-radius:12px;padding:14px 32px;font-size:17px;font-weight:800;letter-spacing:.02em;color:#fff'>"
                 + typeIcon + " " + typeTr.toUpperCase() + " TESPİT EDİLDİ"
-                + "</div></div>";
+                + "</td></tr></table>"
+                + "</td></tr></table>";
         }
 
         // ── Two-column info section ──
@@ -895,6 +914,11 @@ public class EmailNotificationService {
     /** Proje saat dilimi (UTC+3, DST yok). Stored ISO string'leri UTC kabul edilir. */
     private static final ZoneId IST = ZoneId.of("Europe/Istanbul");
 
+    /** Apple Mail/iOS dark-mode oto-inversiyonunu kapatır (beyaz kartlar kararmaz → hep-açık WebKit preview'a uyum).
+     *  Tüm builder head'lerinde viewport meta'sından sonra aynı iki satır kullanılır. */
+    private static final String LIGHT_SCHEME_META =
+            "<meta name='color-scheme' content='light only'><meta name='supported-color-schemes' content='light'>";
+
     /** UTC ISO ("yyyy-MM-dd'T'HH:mm:ss") → Europe/Istanbul "dd.MM.yyyy HH:mm".
      *  null/boş → null (footer'da ilgili satır gizlensin). */
     private String formatIstanbul(String iso) {
@@ -912,20 +936,44 @@ public class EmailNotificationService {
         return buildSimpleAlertHtml(subject, message, null, null);
     }
 
-    /** Outlook (Word/VML) + diğer istemciler (HTML) için "bulletproof" CTA butonu.
-     *  mso/non-mso koşullu yorumlarıyla her istemci yalnız kendi sürümünü görür. */
+    /** Outlook (Word/VML v:roundrect — yuvarlak köşe + TAM-ALAN tıklanır) + diğer istemciler (HTML &lt;a&gt;) için
+     *  çift "bulletproof" CTA. mso/non-mso koşullu yorumlarıyla her istemci yalnız kendi sürümünü görür.
+     *  [if !mso] dalı eski çıktının bayt-bayt aynısı → Outlook-dışı (Apple Mail/Gmail/preview) SIFIR regresyon.
+     *  href + w:anchorlock roundrect ELEMENTİNDE → eski "bazı Outlook'ta tıklanmıyordu" sorunu çözülür
+     *  (aynı desen buildWeeklyReportReminderHtml'de kanıtlı çalışıyor). Genişlik VML'de sabit olmalı → vmlButtonWidth. */
     private String ctaButton(String url, String label, String accent) {
         if (url == null || url.isBlank()) return "";
         String safe = escHtml(url);
-        // VML'siz tek "bulletproof" buton — Outlook dahil her istemcide tıklanabilir GERÇEK <a>.
-        // (Önceki VML <v:roundrect> bazı Outlook sürümlerinde tıklanmıyordu.) Buton boyutu Outlook'ta
-        // mso-padding-alt ile, diğer istemcilerde <a> padding ile; köşe Outlook'ta düz, link her yerde çalışır.
-        return "<table role='presentation' border='0' cellspacing='0' cellpadding='0' align='center' style='margin:0 auto'><tr>"
+        int w = vmlButtonWidth(label);
+        return "<!--[if mso]>"
+            + "<table role='presentation' border='0' cellspacing='0' cellpadding='0' align='center' style='margin:0 auto'><tr><td align='center'>"
+            + "<v:roundrect xmlns:v=\"urn:schemas-microsoft-com:vml\" xmlns:w=\"urn:schemas-microsoft-com:office:word\""
+            + " href=\"" + safe + "\" style=\"height:44px;v-text-anchor:middle;width:" + w + "px;\""
+            + " arcsize=\"16%\" strokecolor=\"" + accent + "\" fillcolor=\"" + accent + "\">"
+            + "<w:anchorlock/>"
+            + "<center style=\"color:#ffffff;font-family:'Segoe UI',Tahoma,Arial,sans-serif;font-size:15px;font-weight:bold;\">"
+            + label + "</center>"
+            + "</v:roundrect>"
+            + "</td></tr></table>"
+            + "<![endif]-->"
+            + "<!--[if !mso]><!-->"
+            + "<table role='presentation' border='0' cellspacing='0' cellpadding='0' align='center' style='margin:0 auto'><tr>"
             + "<td align='center' bgcolor='" + accent + "' style='background:" + accent + ";border-radius:8px;mso-padding-alt:14px 32px'>"
             + "<a href='" + safe + "' target='_blank' style='display:inline-block;padding:14px 32px;"
             + "color:#ffffff;text-decoration:none;font-size:15px;font-weight:bold;border-radius:8px;"
             + "font-family:\"Segoe UI\",Tahoma,Arial,sans-serif'>" + label + "</a>"
-            + "</td></tr></table>";
+            + "</td></tr></table>"
+            + "<!--<![endif]-->";
+    }
+
+    /** VML v:roundrect auto-size yapamaz → görünür etiket uzunluğundan px genişlik türet
+     *  (HTML entity'ler ve olası etiketler ~1 karakter sayılır). Fazla tahmin butonu genişletir, asla kırpmaz. */
+    private static int vmlButtonWidth(String label) {
+        String visible = label == null ? "" : label
+                .replaceAll("&[a-zA-Z]+;|&#\\d+;", "x")   // &rarr; &nbsp; &#183; → tek karakter
+                .replaceAll("<[^>]+>", "");                // olası inline etiket
+        int w = visible.length() * 9 + 56;
+        return Math.max(200, Math.min(600, w));
     }
 
     private String buildSimpleAlertHtml(String subject, String message, String ctaUrl, String ctaLabel) {
@@ -943,7 +991,7 @@ public class EmailNotificationService {
             : "";
         return "<!DOCTYPE html><html lang='tr' xmlns:v='urn:schemas-microsoft-com:vml'"
             + " xmlns:o='urn:schemas-microsoft-com:office:office'>"
-            + "<head><meta charset='UTF-8'><meta name='viewport' content='width=device-width,initial-scale=1'>" + css + "</head>"
+            + "<head><meta charset='UTF-8'><meta name='viewport' content='width=device-width,initial-scale=1'>" + LIGHT_SCHEME_META + css + "</head>"
             + "<body style='margin:0;padding:0;background:#f3f4f6;font-family:\"Segoe UI\",Arial,sans-serif'>"
             + "<table class='em-wrap' width='100%' cellpadding='0' cellspacing='0' border='0' style='background:#f3f4f6;padding:24px 10px'>"
             + "<tr><td align='center'>"
@@ -1461,8 +1509,20 @@ public class EmailNotificationService {
     private String monitorCtaUrl(String tab, Map<String, Object> ctx) {
         Object mid = ctx != null ? ctx.get("monitor_id") : null;
         if (mid == null) return "";
-        String base = appBaseUrl != null ? appBaseUrl.replaceAll("/+$", "") : "";
+        // CANLI okunur (Genel Ayarlar'dan değişebilir); @Value yalnız fallback — reminder/approve/incident ile AYNI kaynak.
+        String url = appSettings.getString("cert.monitor.app.base-url", appBaseUrl);
+        String base = (url != null && !url.isBlank()) ? url.replaceAll("/+$", "") : "";
         return base + "/?tab=" + tab + "&monitor=" + mid;
+    }
+
+    /** Header'da izlenen hedefi beyaz stille gösterir. Gerçek URL ise (http/https) tıklanabilir &lt;a&gt;;
+     *  çıplak host (ping/port) ise şemasız kırık link yerine stillendirilmiş &lt;span&gt; (Outlook auto-link engeli korunur). */
+    private String endpointLink(String value) {
+        String esc = escHtml(value);
+        boolean url = value != null && (value.startsWith("http://") || value.startsWith("https://"));
+        return url
+            ? "<a href='" + esc + "' target='_blank' style='color:#ffffff;text-decoration:none'>" + esc + "</a>"
+            : "<span style='color:#ffffff'>" + esc + "</span>";
     }
 
     private String monitoringTypedAlert(String accent, String kicker, String emoji,
@@ -1508,6 +1568,7 @@ public class EmailNotificationService {
 
         return "<!DOCTYPE html><html lang='tr' xmlns:v='urn:schemas-microsoft-com:vml' xmlns:o='urn:schemas-microsoft-com:office:office'><head><meta charset='UTF-8'>"
             + "<meta name='viewport' content='width=device-width,initial-scale=1,maximum-scale=1'>"
+            + LIGHT_SCHEME_META
             + "<meta http-equiv='X-UA-Compatible' content='IE=edge'>"
             + "<!--[if mso]><style>table,td,div,p,a{font-family:'Segoe UI',Arial,sans-serif!important}</style><![endif]-->" + css + "</head>"
             // Dış arka plan (bgcolor attr) + tablo lspace/rspace sıfır (Outlook tabloya boşluk eklemesin → kayma);
@@ -1518,7 +1579,7 @@ public class EmailNotificationService {
             + "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' bgcolor='" + accent + "' style='background-color:" + accent + "'><tr><td style='padding:22px 24px'>"
             + "<div style='color:#ffffff;font-size:11px;font-weight:700;letter-spacing:.12em'>" + kicker + "</div>"
             // URL explicit beyaz <a> içinde — Outlook çıplak URL'yi otomatik linkleyip mavi yapıyor (navy zeminde okunmaz).
-            + "<div class='em-domain' style='color:#fff;font-size:22px;font-weight:900;margin-top:10px;word-break:break-all;line-height:1.25'>" + emoji + " <a href='" + escHtml(endpoint) + "' target='_blank' style='color:#ffffff;text-decoration:none'>" + escHtml(endpoint) + "</a></div>"
+            + "<div class='em-domain' style='color:#fff;font-size:22px;font-weight:900;margin-top:10px;word-break:break-all;line-height:1.25'>" + emoji + " " + endpointLink(endpoint) + "</div>"
             + "<div style='color:#ffffff;font-size:15px;font-weight:700;margin-top:8px;letter-spacing:.02em'>KRİTİK &nbsp;&#183;&nbsp; " + typeBadge + "</div>"
             + "</td></tr></table>"
             + "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' bgcolor='#ffffff' style='background-color:#ffffff'><tr><td class='em-body' style='padding:22px 24px'>"
@@ -1674,8 +1735,9 @@ public class EmailNotificationService {
             + tableRow2col("⚠ Alarm Tipi", typeTrLabel)
             + "<tr style='border-top:1px solid #e2e8f0'><td width='1%' style='padding:9px 13px;font-size:12px;color:#64748b;white-space:nowrap'>🔴 Seviye</td>"
             + "<td style='padding:9px 13px;font-size:14px;font-weight:700;color:#dc2626'>KRİTİK</td></tr>"
-            + "<tr style='border-top:1px solid #e2e8f0;background:#f0fdf4'><td width='1%' style='padding:9px 13px;font-size:12px;color:#64748b;white-space:nowrap'>⏱ Toplam Kesinti</td>"
-            + "<td style='padding:9px 13px;font-size:14px;font-weight:800;color:" + green + "'>" + duration + "</td></tr>";
+            // Vurgu satırı: <tr background> Outlook'ta beyaza düşer → her td'ye bgcolor (kardeş buildRichMonitoringResolvedHtml deseni)
+            + "<tr style='border-top:1px solid #e2e8f0'><td width='1%' bgcolor='#f0fdf4' style='background-color:#f0fdf4;padding:9px 13px;font-size:12px;color:#64748b;white-space:nowrap'>⏱ Toplam Kesinti</td>"
+            + "<td bgcolor='#f0fdf4' style='background-color:#f0fdf4;padding:9px 13px;font-size:14px;font-weight:800;color:" + green + "'>" + duration + "</td></tr>";
 
         // Tek-kolon (alt alta) — Outlook'ta yan-yana kolonlar kayıyordu; tam genişlik bölümler kaymaz.
         String twoCol = "<table width='100%' cellpadding='0' cellspacing='0' border='0' style='margin:0 0 12px;border:1px solid #bbf7d0;border-radius:10px;overflow:hidden'>"
@@ -1693,6 +1755,7 @@ public class EmailNotificationService {
 
         return "<!DOCTYPE html><html lang='tr' xmlns:v='urn:schemas-microsoft-com:vml' xmlns:o='urn:schemas-microsoft-com:office:office'><head><meta charset='UTF-8'>"
             + "<meta name='viewport' content='width=device-width,initial-scale=1,maximum-scale=1'>"
+            + LIGHT_SCHEME_META
             + "<meta http-equiv='X-UA-Compatible' content='IE=edge'>"
             + "<!--[if mso]><style>table,td,div,p,a{font-family:'Segoe UI',Arial,sans-serif!important}</style><![endif]-->" + css + "</head>"
             // Dış arka plan (bgcolor attr) + tablo lspace/rspace sıfır (Outlook tabloya boşluk eklemesin → kayma);
@@ -1703,7 +1766,7 @@ public class EmailNotificationService {
             + "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' bgcolor='" + green + "' style='background-color:" + green + "'><tr><td style='padding:22px 24px'>"
             + "<div style='color:#ffffff;font-size:11px;font-weight:700;letter-spacing:.12em'>" + kicker + "</div>"
             // URL explicit beyaz <a> içinde — Outlook çıplak URL'yi otomatik linkleyip mavi yapıyor (yeşil zeminde okunmaz).
-            + "<div class='em-domain' style='color:#fff;font-size:22px;font-weight:900;margin-top:10px;word-break:break-all;line-height:1.25'>✅ <a href='" + escHtml(domain) + "' target='_blank' style='color:#ffffff;text-decoration:none'>" + escHtml(domain) + "</a></div>"
+            + "<div class='em-domain' style='color:#fff;font-size:22px;font-weight:900;margin-top:10px;word-break:break-all;line-height:1.25'>✅ " + endpointLink(domain) + "</div>"
             + "<div style='color:#ffffff;font-size:15px;font-weight:700;margin-top:8px;letter-spacing:.02em'>" + heroLine + " &nbsp;&#183;&nbsp; " + typeTrLabel + "</div>"
             + "</td></tr></table>"
             + "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' bgcolor='#ffffff' style='background-color:#ffffff'><tr><td class='em-body' style='padding:22px 24px'>"
@@ -2005,7 +2068,7 @@ public class EmailNotificationService {
             Integer natural = imageWidths != null ? imageWidths.get(Long.parseLong(m.group(1))) : null;
             // Görsel doğal genişliğini AŞMASIN ama bölüm sınırını da geçmesin (taşma yok)
             int w = Math.min(natural != null ? natural : maxWidth, maxWidth);
-            m.appendReplacement(sb, "<img width=\"" + w + "\" style=\"display:block;width:100%;"
+            m.appendReplacement(sb, "<img width=\"" + w + "\" border=\"0\" alt=\"Rapor görseli\" style=\"display:block;width:100%;"
                     + "max-width:" + w + "px;height:auto;border-radius:8px;margin:6px 0\""
                     + " src=\"cid:img" + m.group(1) + "\"");
         }
@@ -2107,9 +2170,11 @@ public class EmailNotificationService {
                 && intVal(i2.get("problem_records")) == 0
                 && intVal(i2.get("postmortems")) == 0;
         String item2AutoNote = noItem2Records
-            ? "<p style='margin:8px 0;padding:8px 12px;border-left:4px solid #16a34a;background:#e7f6ec;"
-              + "font-size:13px;font-weight:700;color:#14532d'>✔ Bu hafta aşım yaşanan olay, problem veya "
-              + "açık postmortem kaydı bulunmamaktadır.</p>"
+            // Renkli kutu: <p background> Outlook'ta beyaza düşer → accent-şeritli tablo (td bgcolor)
+            ? "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' style='margin:8px 0;border-radius:8px;overflow:hidden'><tr>"
+              + "<td width='4' bgcolor='#16a34a' style='background-color:#16a34a;width:4px;font-size:0;line-height:0'>&nbsp;</td>"
+              + "<td bgcolor='#e7f6ec' style='background-color:#e7f6ec;padding:8px 12px;font-size:13px;font-weight:700;color:#14532d'>"
+              + "✔ Bu hafta aşım yaşanan olay, problem veya açık postmortem kaydı bulunmamaktadır.</td></tr></table>"
             : "";
         String item2Body =
             numChipRow(
@@ -2157,9 +2222,10 @@ public class EmailNotificationService {
             + "}"
             + "</style>";
 
-        return "<!DOCTYPE html><html lang='tr'>"
+        return "<!DOCTYPE html><html lang='tr' xmlns:v='urn:schemas-microsoft-com:vml' xmlns:o='urn:schemas-microsoft-com:office:office'>"
             + "<head><meta charset='UTF-8'>"
             + "<meta name='viewport' content='width=device-width,initial-scale=1,maximum-scale=1'>"
+            + LIGHT_SCHEME_META
             + css + "</head>"
             + "<body bgcolor='" + outerBg + "' style='margin:0;padding:0;background:" + outerBg
             + ";font-family:\"Segoe UI\",Tahoma,Arial,sans-serif'>"
@@ -2168,6 +2234,8 @@ public class EmailNotificationService {
             + " bgcolor='" + outerBg + "' style='background:" + outerBg + ";padding:24px 10px'>"
             + "<tr><td align='center' bgcolor='" + outerBg + "'>"
 
+            // MSO ghost-table: Outlook'ta kartı 850px sabit + ortalı tutar (availability deseni)
+            + "<!--[if mso]><table role='presentation' width='850' align='center' cellpadding='0' cellspacing='0' border='0'><tr><td><![endif]-->"
             + "<table class='em-card' width='850' cellpadding='0' cellspacing='0' border='0'"
             + " bgcolor='#ffffff' style='max-width:850px;width:100%;background:#ffffff;"
             + "border:1px solid #d7dde5;border-radius:14px;overflow:hidden;"
@@ -2184,7 +2252,9 @@ public class EmailNotificationService {
             + "</td></tr></table>"
 
             // ── Gövde ──
-            + "<div class='em-body' style='background:#fff;padding:22px 24px'>"
+            // Gövde — div padding'i Outlook (Word) yok sayar → td padding'i (em-body class'ı td'de)
+            + "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' bgcolor='#ffffff'><tr>"
+            + "<td class='em-body' bgcolor='#ffffff' style='padding:22px 24px'>"
 
             // Hitap + giriş
             + "<p style='font-size:15px;color:#0f172a;margin:0 0 6px'><strong>Sayın "
@@ -2208,9 +2278,10 @@ public class EmailNotificationService {
             + "<td align='right' valign='top' style='border-top:1px solid #f1f5f9;padding-top:12px;font-size:11px;color:#94a3b8;line-height:1.7'>"
             + footerRight + "</td></tr></table>"
 
-            + "</div>"
-            + "</td></tr></table>"
-            + "</td></tr></table>"
+            + "</td></tr></table>"   // em-body td + gövde tablosu
+            + "</td></tr></table>"   // kart iç td + kart tablosu
+            + "<!--[if mso]></td></tr></table><![endif]-->"
+            + "</td></tr></table>"   // dış (wrap) td + tablo
             + "</body></html>";
     }
 
@@ -2288,6 +2359,7 @@ public class EmailNotificationService {
             + " xmlns:o='urn:schemas-microsoft-com:office:office'>"
             + "<head><meta charset='UTF-8'>"
             + "<meta name='viewport' content='width=device-width,initial-scale=1,maximum-scale=1'>"
+            + LIGHT_SCHEME_META
             + "<style>@media only screen and (max-width:870px){"
             + ".em-wrap{padding:0!important}.em-card{border-radius:0!important;width:100%!important}"
             + ".em-body{padding:14px!important}}</style></head>"
@@ -2298,6 +2370,8 @@ public class EmailNotificationService {
             + " bgcolor='" + outerBg + "' style='background:" + outerBg + ";padding:24px 10px'>"
             + "<tr><td align='center' bgcolor='" + outerBg + "'>"
 
+            // MSO ghost-table: Outlook'ta kartı 850px sabit + ortalı tutar (availability deseni)
+            + "<!--[if mso]><table role='presentation' width='850' align='center' cellpadding='0' cellspacing='0' border='0'><tr><td><![endif]-->"
             + "<table class='em-card' width='850' cellpadding='0' cellspacing='0' border='0'"
             + " bgcolor='#ffffff' style='max-width:850px;width:100%;background:#ffffff;"
             + "border:1px solid #d7dde5;border-radius:14px;overflow:hidden;"
@@ -2313,17 +2387,20 @@ public class EmailNotificationService {
             + escHtml(weekLabel) + "</div>"
             + "</td></tr></table>"
 
-            // ── Gövde ──
-            + "<div class='em-body' style='background:#fff;padding:22px 24px'>"
+            // ── Gövde ── (div padding'i Outlook yok sayar → td-tabanlı em-body)
+            + "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' bgcolor='#ffffff'><tr>"
+            + "<td class='em-body' bgcolor='#ffffff' style='padding:22px 24px'>"
             + "<p style='font-size:15px;color:#0f172a;margin:0 0 6px'><strong>Sayın " + escHtml(teamName) + " ekibi,</strong></p>"
             + "<p style='font-size:14px;color:#334155;line-height:1.7;margin:0 0 14px'>"
             + "Bu haftanın (<strong>" + escHtml(weekLabel) + "</strong>) haftalık raporu sistemde henüz görünmüyor. "
             + "Mesai başlangıcıyla birlikte raporunuzu hatırlatmak isteriz.</p>"
 
             // Son giriş uyarısı (vurgulu)
-            + "<p style='margin:0 0 4px;padding:10px 14px;border-left:4px solid #dc2626;background:#fef2f2;"
-            + "font-size:14px;font-weight:700;color:#991b1b'>⏰ Son giriş <strong>bugün saat 15:00</strong> — "
-            + "lütfen bu haftanın raporunu Cert Monitor üzerinden zamanında giriniz.</p>"
+            // Renkli kutu: <p background> Outlook'ta beyaza düşer → accent-şeritli tablo (td bgcolor)
+            + "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' style='margin:0 0 4px;border-radius:8px;overflow:hidden'><tr>"
+            + "<td width='4' bgcolor='#dc2626' style='background-color:#dc2626;width:4px;font-size:0;line-height:0'>&nbsp;</td>"
+            + "<td bgcolor='#fef2f2' style='background-color:#fef2f2;padding:10px 14px;font-size:14px;font-weight:700;color:#991b1b'>"
+            + "⏰ Son giriş <strong>bugün saat 15:00</strong> — lütfen bu haftanın raporunu Cert Monitor üzerinden zamanında giriniz.</td></tr></table>"
 
             + cta
 
@@ -2335,9 +2412,10 @@ public class EmailNotificationService {
             + "<td align='right' valign='top' style='border-top:1px solid #f1f5f9;padding-top:12px;font-size:11px;color:#94a3b8;line-height:1.7'>"
             + "Oluşturuldu: " + generatedAt + "</td></tr></table>"
 
-            + "</div>"
-            + "</td></tr></table>"
-            + "</td></tr></table>"
+            + "</td></tr></table>"   // em-body td + gövde tablosu
+            + "</td></tr></table>"   // kart iç td + kart tablosu
+            + "<!--[if mso]></td></tr></table><![endif]-->"
+            + "</td></tr></table>"   // dış (wrap) td + tablo
             + "</body></html>";
     }
 
@@ -2435,6 +2513,7 @@ public class EmailNotificationService {
             + " xmlns:o='urn:schemas-microsoft-com:office:office'>"
             + "<head><meta charset='UTF-8'>"
             + "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+            + LIGHT_SCHEME_META
             + "<meta http-equiv='X-UA-Compatible' content='IE=edge'>"
             // Outlook (Word motoru) yazı tipi fallback'i — Segoe UI yoksa Arial
             + "<!--[if mso]><style>table,td,div,p{font-family:'Segoe UI',Arial,sans-serif!important}</style><![endif]-->"
@@ -2583,6 +2662,7 @@ public class EmailNotificationService {
         return "<!DOCTYPE html><html lang='tr' xmlns:v='urn:schemas-microsoft-com:vml'"
             + " xmlns:o='urn:schemas-microsoft-com:office:office'><head><meta charset='UTF-8'>"
             + "<meta name='viewport' content='width=device-width,initial-scale=1,maximum-scale=1'>"
+            + LIGHT_SCHEME_META
             + "<style>body,table,td{-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%}"
             + ".inc-md p{margin:0;font-size:14px;line-height:1.7;color:#1e293b}"
             + "@media only screen and (max-width:870px){.em-wrap{padding:0!important}"
@@ -2591,6 +2671,8 @@ public class EmailNotificationService {
             + ";font-family:\"Segoe UI\",Tahoma,Arial,sans-serif'>"
             + "<table class='em-wrap' width='100%' cellpadding='0' cellspacing='0' border='0' bgcolor='" + outerBg
             + "' style='background:" + outerBg + ";padding:24px 10px'><tr><td align='center' bgcolor='" + outerBg + "'>"
+            // MSO ghost-table: Outlook'ta kartı 850px sabit + ortalı tutar (availability deseni)
+            + "<!--[if mso]><table role='presentation' width='850' align='center' cellpadding='0' cellspacing='0' border='0'><tr><td><![endif]-->"
             + "<table class='em-card' width='850' cellpadding='0' cellspacing='0' border='0' bgcolor='#ffffff' "
             + "style='max-width:850px;width:100%;background:#ffffff;border:1px solid #d7dde5;border-radius:14px;"
             + "overflow:hidden;box-shadow:0 8px 32px rgba(0,0,0,.10)'><tr><td bgcolor='#ffffff' style='padding:0'>"
@@ -2604,8 +2686,9 @@ public class EmailNotificationService {
             + "<div style='color:#ffffff;opacity:.92;font-size:14px;font-weight:700;margin-top:8px'>"
             + escHtml(sevBadgeText(sev)) + " &middot; " + escHtml(teamName) + "</div>"
             + "</td></tr></table>"
-            // ── Gövde ──
-            + "<div class='em-body' style='background:#fff;padding:22px 24px'>"
+            // ── Gövde ── (div padding'i Outlook yok sayar → td-tabanlı em-body)
+            + "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' bgcolor='#ffffff'><tr>"
+            + "<td class='em-body' bgcolor='#ffffff' style='padding:22px 24px'>"
             + "<p style='font-size:15px;color:#0f172a;margin:0 0 6px'><strong>Sayın "
             + escHtml(managerName != null && !managerName.isBlank() ? managerName : "Yetkili") + ",</strong></p>"
             + "<p style='font-size:14px;color:#334155;line-height:1.7;margin:0 0 18px'>"
@@ -2627,7 +2710,9 @@ public class EmailNotificationService {
             + "CertMonitor — Olay & Hata Bildirimi</td>"
             + "<td align='right' valign='top' style='border-top:1px solid #f1f5f9;padding-top:12px;font-size:11px;"
             + "color:#94a3b8'>Oluşturuldu: " + generatedAt + "</td></tr></table>"
-            + "</div></td></tr></table></td></tr></table></body></html>";
+            + "</td></tr></table></td></tr></table>"
+            + "<!--[if mso]></td></tr></table><![endif]-->"
+            + "</td></tr></table></body></html>";
     }
 
     /** Çözüldü banner'ı — yeşil başarı kutusu + çözülme zamanı/süre. */
@@ -2678,7 +2763,7 @@ public class EmailNotificationService {
         String html = taskCheckboxesToSymbols(MD_RENDERER.render(MD_PARSER.parse(src)));
         html = forEmail
                 ? INC_CID_IMG.matcher(html).replaceAll(
-                    "<img width=\"680\" style=\"display:block;width:100%;max-width:680px;height:auto;"
+                    "<img width=\"680\" border=\"0\" alt=\"Olay görseli\" style=\"display:block;width:100%;max-width:680px;height:auto;"
                     + "border-radius:8px;margin:8px 0;border:1px solid #e2e8f0\" src=\"cid:incimg$1\"")
                 : INC_API_IMG.matcher(html).replaceAll(
                     "<img style=\"display:block;max-width:100%;height:auto;border-radius:8px;margin:8px 0;"

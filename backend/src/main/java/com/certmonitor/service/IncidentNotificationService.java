@@ -36,6 +36,7 @@ public class IncidentNotificationService {
     private final TeamRepository teamRepo;
     private final AppUserRepository userRepo;
     private final IncidentImageRepository imageRepo;
+    private final AppSettingsService appSettings;
 
     @Value("${cert.monitor.app.base-url:http://localhost:5173}")
     private String appBaseUrl;
@@ -53,6 +54,13 @@ public class IncidentNotificationService {
             try { doNotify(dto, kind); }
             catch (Exception e) { log.warn("Incident notification failed: {}", e.getMessage()); }
         });
+    }
+
+    /** E-posta deep-link'leri için dış base URL — CANLI okunur (Genel Ayarlar'dan değişebilir);
+     *  @Value yalnız fallback. Haftalık reminder/approve linkleriyle AYNI kaynak (cert.monitor.app.base-url). */
+    private String baseUrl() {
+        String url = appSettings.getString("cert.monitor.app.base-url", appBaseUrl);
+        return (url != null && !url.isBlank()) ? url.replaceAll("/+$", "") : "";
     }
 
     /* package-private (test): senkron çözüm + alıcı/konu doğrulaması için. */
@@ -83,7 +91,7 @@ public class IncidentNotificationService {
             return;
         }
 
-        String base = appBaseUrl != null ? appBaseUrl.replaceAll("/+$", "") : "";
+        String base = baseUrl();
         Object incId = dto.get("id");
         // Spesifik olaya deep-link: frontend ?incident=<id>'yi okuyup detay modalını açar.
         String ctaUrl = base + "/?tab=incident-history" + (incId != null ? "&incident=" + incId : "");
@@ -118,7 +126,7 @@ public class IncidentNotificationService {
                 }
             }
         }
-        String base = appBaseUrl != null ? appBaseUrl.replaceAll("/+$", "") : "";
+        String base = baseUrl();
         Object incId = dto.get("id");
         String ctaUrl = base + "/?tab=incident-history" + (incId != null ? "&incident=" + incId : "");
         String norm = ("NEW".equals(kind) || "RESOLVED".equals(kind)) ? kind : "UPDATED";
