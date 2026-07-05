@@ -24,8 +24,23 @@ vi.mock('../api/client', () => ({
       acknowledgeAlert: vi.fn().mockResolvedValue({ success: true }),
       resolveAlert: vi.fn().mockResolvedValue({ success: true }),
       reNotify:     vi.fn().mockResolvedValue({ success: true }),
+      getInventoryByDomain: vi.fn().mockResolvedValue({ success: true, data: {
+        domain: 'example.com', port: 443, tier: 2, team_name: 'Team X', tls_mode: '',
+        purchased_by: 'ACME-Buyer', external_vendor: true, action_required: false,
+        openshift: false, ssl_pinning: false, internal_cert: false, jks_keystore: false,
+        server_update: false, netscaler: false, waf_enabled: false, in_use: true,
+        ev_certificate: false, transferred_to_sy: false, use_proxy: false,
+        change_description: '', expected_fingerprint: '', expected_subject: '',
+        created_at: '2026-01-01', updated_at: '2026-01-02',
+      } }),
     },
   },
+}))
+
+// canView('inventory.list') → true so the new Envanter Bilgileri tab is present.
+// (Without a PermissionsProvider it is null-safe/false, so the other tests are unaffected.)
+vi.mock('../contexts/PermissionsProvider.jsx', () => ({
+  usePermissions: () => ({ canView: () => true, canEdit: () => true, canExecute: () => true, perms: {} }),
 }))
 
 import CertificateModal from '../components/CertificateModal.jsx'
@@ -69,6 +84,21 @@ describe('CertificateModal', () => {
     const closeBtn = await screen.findByLabelText(/close/i)
     closeBtn.click()
     expect(onClose).toHaveBeenCalled()
+  })
+
+  it('shows the Inventory Info tab and its content when the user can view inventory', async () => {
+    render(
+      <CertificateModal
+        domain="example.com"
+        onClose={() => {}}
+        currentUser="admin"
+        currentUserRole="ADMIN"
+      />
+    )
+    const invTab = await screen.findByRole('button', { name: 'Inventory Info' })
+    invTab.click()
+    // A language-independent field value from the mocked inventory record.
+    expect(await screen.findByText('ACME-Buyer')).toBeDefined()
   })
 
 })

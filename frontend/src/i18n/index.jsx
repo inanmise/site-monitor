@@ -638,6 +638,8 @@ export const TR = {
   'modal.crlUrl':          'CRL URL',
   'modal.fingerprint':     'Parmak İzi (SHA-256)',
   'modal.notesTab':        'Notlar',
+  'modal.inventoryTab':    'Envanter Bilgileri',
+  'modal.inventoryEmpty':  'Bu domain için envanter kaydı bulunamadı.',
 
   'note.placeholder':  'Bu sertifika ile ilgili bir not ekleyin... (Ctrl+Enter ile kaydet)',
   'note.add':          'Not Ekle',
@@ -3363,6 +3365,8 @@ export const EN = {
   'modal.crlUrl':          'CRL URL',
   'modal.fingerprint':     'Fingerprint (SHA-256)',
   'modal.notesTab':        'Notes',
+  'modal.inventoryTab':    'Inventory Info',
+  'modal.inventoryEmpty':  'No inventory record found for this domain.',
 
   'note.placeholder':  'Add a note about this certificate... (Ctrl+Enter to save)',
   'note.add':          'Add Note',

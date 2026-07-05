@@ -104,6 +104,36 @@ public class AdminController {
         return ok(Map.of("data", items));
     }
 
+    /** Tek domain'in envanter kaydı (kart modalındaki "Envanter Bilgileri" tab'ı için).
+     *  listInventory ile AYNI izin + kapsam; domain tekil → en fazla tek kayıt (yoksa data:null). */
+    @GetMapping("/inventory/by-domain")
+    public ResponseEntity<Map<String, Object>> getInventoryByDomain(
+            @RequestParam String domain,
+            HttpSession session) {
+        requirePerm(session, "inventory.list", "view");
+        CertificateInventory rec = inventoryRepo.findByDomain(domain).orElse(null);
+        // Kapsam: admin/audit değilse yalnız kendi görüş kapsamındaki takımın kaydı görünür
+        // (çapraz-takım sızıntısı olmasın — listInventory'deki viewScope semantiği).
+        if (rec != null && !isAdminOrAudit(session)) {
+            List<Long> scope = viewScope(session);
+            if (scope == null || scope.isEmpty()
+                    || rec.getTeamId() == null || !scope.contains(rec.getTeamId())) {
+                rec = null;
+            }
+        }
+        if (rec != null) {
+            Map<Long, String> teamNames = new HashMap<>();
+            for (Team tm : userService.listTeams()) {
+                if (tm.getId() != null) teamNames.put(tm.getId(), tm.getName());
+            }
+            if (rec.getTeamId() != null)   rec.setTeamName(teamNames.get(rec.getTeamId()));
+            if (rec.getUgTeamId() != null) rec.setUgTeamName(teamNames.get(rec.getUgTeamId()));
+        }
+        Map<String, Object> body = new HashMap<>();
+        body.put("data", rec);   // Map.of null değer almaz → HashMap
+        return ok(body);
+    }
+
     @CacheEvict(value = {"cert-latest", "cert-warnings", "cert-stats", "renewal-advice"}, allEntries = true)
     @PostMapping("/inventory")
     public ResponseEntity<Map<String, Object>> addInventory(

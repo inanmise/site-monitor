@@ -180,6 +180,35 @@ class AdminControllerTest {
     }
 
     @Test
+    @DisplayName("GET /api/admin/inventory/by-domain returns the record for an existing domain")
+    void getInventoryByDomain_returns200() throws Exception {
+        when(inventoryRepo.findByDomain("example.com")).thenReturn(Optional.of(inventory("example.com")));
+
+        mvc.perform(get("/api/admin/inventory/by-domain").param("domain", "example.com").session(authSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.data.domain").value("example.com"));
+    }
+
+    @Test
+    @DisplayName("GET /api/admin/inventory/by-domain returns no record for an unknown domain")
+    void getInventoryByDomain_unknownDomain_returnsNoRecord() throws Exception {
+        when(inventoryRepo.findByDomain("nope.com")).thenReturn(Optional.empty());
+
+        mvc.perform(get("/api/admin/inventory/by-domain").param("domain", "nope.com").session(authSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.data.domain").doesNotExist());
+    }
+
+    @Test
+    @DisplayName("GET /api/admin/inventory/by-domain without auth returns 401")
+    void getInventoryByDomain_unauthenticated_returns401() throws Exception {
+        mvc.perform(get("/api/admin/inventory/by-domain").param("domain", "example.com"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
     @DisplayName("POST /api/admin/inventory creates new inventory item")
     void addInventory_authenticated_returns200() throws Exception {
         CertificateInventory saved = inventory("newdomain.com");
