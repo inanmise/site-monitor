@@ -43,7 +43,10 @@ config:
   dbPort: "5432"
   dbName: certmonitor
   dbUser: certmonitor
-  dbPoolMax: "10"
+  # Tek pod / 100 kullanıcı: 25. Tek pod → tek Postgres'e güvenli (replica çarpımı yok).
+  # AKSİYON: prod Postgres max_connections'ı doğrula; düşük tier (25-50) ise buna göre kıs.
+  # Çok-pod'a geçilirse (replica × 25) max_connections'ı aşmasın diye tekrar boyutlandır.
+  dbPoolMax: "25"
   emailEnabled: "true"
   smtpHost: smtp.gmail.com
   smtpPort: "587"
@@ -69,8 +72,10 @@ config:
   weeklyAvailCron: "0 0 10 ? * MON"
   # Sertifika tarama executor'ı (paralel kontrol thread'leri). CPU-sınırlı küçük
   # ortamlarda düşür → açılışta CPU oversubscription olmasın.
-  executorCoreSize: "20"
-  executorMaxSize: "50"
+  # Tek pod: sweep TLS/OCSP kriptosu kullanıcı istekleriyle aynı çekirdekleri paylaşır. Peak thread'i
+  # 50→30'a çek (CallerRunsPolicy sayesinde taşan iş reddedilmez, caller'da koşar → güvenli).
+  executorCoreSize: "12"
+  executorMaxSize: "30"
   # Açılışta ağır tarama + escalation catch-up bu kadar ms geciktirilir; login/BCrypt
   # ilk dakikada CPU'yu serbest bulsun (açılışta ~1dk askıda kalma fix'i).
   startupCheckDelayMs: "60000"
@@ -119,13 +124,18 @@ secret:
   httpProxyUser: ""
   httpProxyPass: ""
 
+# Tek pod, 100 kullanıcı + 200-1000 domain: dikey kapasite tek ölçekleme kaynağı (yatay yok).
+# CPU 2→4 çekirdek (BCrypt/TLS + scheduler + istek işleme aynı pod'da), RAM 1.5→3Gi (heap ~2.3Gi:
+# eşzamanlılık + cache + büyük-okuma tamponları; OOM=tam kesinti). request'ler garanti kapasite için
+# yükseltildi (eski 512Mi/500m node over-commit + CFS throttling'e açıktı).
+# AKSİYON: node'un bu pod'a 4 CPU / 3Gi verebildiğini doğrula.
 resources:
   requests:
-    memory: "512Mi"
-    cpu: "500m"
-  limits:
     memory: "1536Mi"
-    cpu: "2000m"
+    cpu: "1500m"
+  limits:
+    memory: "3072Mi"
+    cpu: "4000m"
 
 # Kubernetes/OpenShift sağlık probe'ları — Spring Boot Actuator grupları:
 #   /health/readiness → readinessState (warmup boyunca uygulama REFUSING_TRAFFIC ile gate eder →

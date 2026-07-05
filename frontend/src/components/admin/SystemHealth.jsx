@@ -264,10 +264,8 @@ export default function SystemHealth({ systemRole, globalAdmin = false, preFilte
     setUactRefreshing(false)
   }, [])
 
-  useEffect(() => {
-    const id = setInterval(refreshPool, 60_000)
-    return () => clearInterval(id)
-  }, [refreshPool])
+  // (Kaldırıldı) 60 sn'lik refreshPool auto-timer — 30 sn'lik `load` zaten getSystemHealth'i
+  // (havuz dahil) çekiyordu; yinelenen poll'du. Manuel "havuz yenile" butonu (refreshPool) duruyor.
 
   const openSmtpModal = useCallback(async (overrides) => {
     setSmtpModal(true)

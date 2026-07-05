@@ -192,9 +192,14 @@ public class MonitoringController {
         String cutoff1d  = ISO.format(Instant.now().minus(1,  ChronoUnit.DAYS));
         String cutoff24h = ISO.format(Instant.now().minus(24, ChronoUnit.HOURS));
 
-        // Son 24 saatteki tüm HTTP (uptime) kontrolleri — tek toplu sorgu, domaine göre grupla (N sorgu yok).
-        Map<String, List<UptimeCheck>> http24hByDomain = uptimeCheckRepo.findByCheckedAtGreaterThanEqual(cutoff24h).stream()
-                .collect(Collectors.groupingBy(UptimeCheck::getDomain));
+        // Son 24 saat HTTP-OK: domain başına [total, upCount] SQL agregasyonu — 24h TÜM satırları
+        // JVM'e yüklemek yerine (500 domain'de ~144k satır heap yükü giderildi). httpOk = up==total.
+        Map<String, Boolean> httpOkByDomain = new java.util.HashMap<>();
+        for (Object[] row : uptimeCheckRepo.aggregateHttpOkSince(cutoff24h)) {
+            long total = ((Number) row[1]).longValue();
+            long up    = ((Number) row[2]).longValue();
+            httpOkByDomain.put((String) row[0], up == total);   // GROUP BY → total ≥ 1
+        }
 
         // En güncel uptime kontrolü (domain:port) — tek sorgu (eski: domain başına findTop... → N+1).
         Map<String, UptimeCheck> latestUptime = uptimeCheckRepo.findLatestPerDomainPort().stream()
@@ -220,10 +225,7 @@ public class MonitoringController {
             Optional<UptimeCheck> uc = Optional.ofNullable(latestUptime.get(domain + ":" + port));
 
             // HTTP-OK: son 24h kontrolleri varsa hepsi "up" mı? (kayıt yoksa null → gösterme)
-            List<UptimeCheck> http24h = http24hByDomain.get(domain);
-            Boolean httpOk = (http24h == null || http24h.isEmpty())
-                    ? null
-                    : http24h.stream().allMatch(c -> "up".equals(c.getStatus()));
+            Boolean httpOk = httpOkByDomain.get(domain);   // domain 24h'te yoksa null (aynı semantik)
             item.put("http_ok", httpOk);
 
             if (lc == null) {
@@ -542,13 +544,12 @@ public class MonitoringController {
         long total, down;
         if (days != null && days > 0) {
             String cutoff = ISO.format(Instant.now().minus(days, ChronoUnit.DAYS));
-            checks = portCheckRepo.findByMonitorIdAndCheckedAtGreaterThanEqualOrderByCheckedAtDesc(id, cutoff)
-                    .stream().limit(500).toList();           // liste için kapak; özet DB count'tan
+            checks = portCheckRepo.findRecentByMonitorIdSince(id, cutoff, 500);   // SQL-LIMIT; özet DB count'tan
             total = portCheckRepo.countByMonitorIdAndCheckedAtGreaterThanEqual(id, cutoff);
             down  = portCheckRepo.countByMonitorIdAndOpenFalseAndCheckedAtGreaterThanEqual(id, cutoff);
         } else {
             int cap = Math.max(1, Math.min(limit, 10_000));
-            checks = portCheckRepo.findByMonitorIdOrderByCheckedAtDesc(id).stream().limit(cap).toList();
+            checks = portCheckRepo.findRecentByMonitorId(id, cap);   // SQL-LIMIT
             total = checks.size();
             down  = checks.stream().filter(c -> !Boolean.TRUE.equals(c.getOpen())).count();
         }
@@ -776,16 +777,16 @@ public class MonitoringController {
     public ResponseEntity<Map<String, Object>> dnsHistory(@PathVariable Long id,
             @RequestParam(required = false) Integer days,
             @RequestParam(defaultValue = "5000") int limit) {
+        int cap = Math.max(1, Math.min(limit, 10_000));
         List<DnsRecord> records;
         if (days != null && days > 0) {
             int d = Math.min(days, 90);
             String cutoff = ISO.format(Instant.now().minus(d, ChronoUnit.DAYS));
-            records = dnsRecordRepo.findByMonitorIdAndCheckedAtGreaterThanEqualOrderByCheckedAtDesc(id, cutoff);
+            records = dnsRecordRepo.findRecentByMonitorIdSince(id, cutoff, cap);   // SQL-LIMIT
         } else {
-            records = dnsRecordRepo.findByMonitorIdOrderByCheckedAtDesc(id);
+            records = dnsRecordRepo.findRecentByMonitorId(id, cap);   // SQL-LIMIT
         }
-        int cap = Math.max(1, Math.min(limit, 10_000));
-        return ok(records.stream().limit(cap).toList());
+        return ok(records);
     }
 
     @PostMapping("/dns/{id}/check")
@@ -962,13 +963,12 @@ public class MonitoringController {
         long total, down;
         if (days != null && days > 0) {
             String cutoff = ISO.format(Instant.now().minus(days, ChronoUnit.DAYS));
-            checks = keywordResultRepo.findByMonitorIdAndCheckedAtGreaterThanEqualOrderByCheckedAtDesc(id, cutoff)
-                    .stream().limit(500).toList();
+            checks = keywordResultRepo.findRecentByMonitorIdSince(id, cutoff, 500);   // SQL-LIMIT
             total = keywordResultRepo.countByMonitorIdAndCheckedAtGreaterThanEqual(id, cutoff);
             down  = keywordResultRepo.countByMonitorIdAndOkFalseAndCheckedAtGreaterThanEqual(id, cutoff);
         } else {
             int cap = Math.max(1, Math.min(limit, 10_000));
-            checks = keywordResultRepo.findByMonitorIdOrderByCheckedAtDesc(id).stream().limit(cap).toList();
+            checks = keywordResultRepo.findRecentByMonitorId(id, cap);   // SQL-LIMIT
             total = checks.size();
             down  = checks.stream().filter(c -> !Boolean.TRUE.equals(c.getOk())).count();
         }
@@ -1062,7 +1062,7 @@ public class MonitoringController {
     }
 
     // ── Yanıt-süresi / RTT grafiği (detay modalı "Süre Grafiği" sekmesi) ─────
-    private static final int SERIES_RAW_CAP = 200_000;
+    private static final int SERIES_RAW_CAP = 50_000;   // heap koruması (tek-pod): 200k→50k; grafik p95 için yeterli
     private static final DateTimeFormatter LDT = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss");
 
     @GetMapping("/keyword/{id}/response-series")
@@ -1321,13 +1321,12 @@ public class MonitoringController {
         long total, down;
         if (days != null && days > 0) {
             String cutoff = ISO.format(Instant.now().minus(days, ChronoUnit.DAYS));
-            checks = pingCheckRepo.findByMonitorIdAndCheckedAtGreaterThanEqualOrderByCheckedAtDesc(id, cutoff)
-                    .stream().limit(500).toList();
+            checks = pingCheckRepo.findRecentByMonitorIdSince(id, cutoff, 500);   // SQL-LIMIT
             total = pingCheckRepo.countByMonitorIdAndCheckedAtGreaterThanEqual(id, cutoff);
             down  = pingCheckRepo.countByMonitorIdAndUpFalseAndCheckedAtGreaterThanEqual(id, cutoff);
         } else {
             int cap = Math.max(1, Math.min(limit, 10_000));
-            checks = pingCheckRepo.findByMonitorIdOrderByCheckedAtDesc(id).stream().limit(cap).toList();
+            checks = pingCheckRepo.findRecentByMonitorId(id, cap);   // SQL-LIMIT
             total = checks.size();
             down  = checks.stream().filter(c -> !Boolean.TRUE.equals(c.getUp())).count();
         }

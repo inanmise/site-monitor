@@ -12,6 +12,13 @@ public interface PingCheckRepository extends JpaRepository<PingCheck, Long> {
     List<PingCheck> findByMonitorIdOrderByCheckedAtDesc(Long monitorId);
     Optional<PingCheck> findTopByMonitorIdOrderByCheckedAtDesc(Long monitorId);
 
+    /** History detay listesi — SQL-LIMIT'li: tüm geçmişi JVM'e çekmeden en yeni :limit satır. */
+    @Query("SELECT c FROM PingCheck c WHERE c.monitorId = :id ORDER BY c.checkedAt DESC LIMIT :limit")
+    List<PingCheck> findRecentByMonitorId(@Param("id") Long id, @Param("limit") int limit);
+
+    @Query("SELECT c FROM PingCheck c WHERE c.monitorId = :id AND c.checkedAt >= :since ORDER BY c.checkedAt DESC LIMIT :limit")
+    List<PingCheck> findRecentByMonitorIdSince(@Param("id") Long id, @Param("since") String since, @Param("limit") int limit);
+
     /** Her monitör için en güncel kontrol — tek toplu sorgu (N+1 önleme). */
     @Query("SELECT pc FROM PingCheck pc WHERE pc.id IN "
          + "(SELECT MAX(pc2.id) FROM PingCheck pc2 GROUP BY pc2.monitorId)")

@@ -108,21 +108,21 @@ class UserServiceSessionTest {
     @Test
     @DisplayName("isSessionSuperseded: kayıtlı oturumla eşleşir → false (geçersiz kılınmadı)")
     void isSessionSuperseded_match_false() {
-        when(userRepo.findByUsername("alice")).thenReturn(Optional.of(user("alice", "S1")));
+        when(userRepo.findActiveSessionIdByUsername("alice")).thenReturn(Optional.of("S1"));
         assertThat(service.isSessionSuperseded("alice", "S1")).isFalse();
     }
 
     @Test
     @DisplayName("isSessionSuperseded: farklı (daha yeni) oturum kayıtlı → true (bu eski oturum kapatılmalı)")
     void isSessionSuperseded_mismatch_true() {
-        when(userRepo.findByUsername("alice")).thenReturn(Optional.of(user("alice", "S2")));
+        when(userRepo.findActiveSessionIdByUsername("alice")).thenReturn(Optional.of("S2"));
         assertThat(service.isSessionSuperseded("alice", "S1")).isTrue();
     }
 
     @Test
     @DisplayName("isSessionSuperseded: activeSessionId null (kayıt yok) → false (zorlama yok)")
     void isSessionSuperseded_noRecord_false() {
-        when(userRepo.findByUsername("alice")).thenReturn(Optional.of(user("alice", null)));
+        when(userRepo.findActiveSessionIdByUsername("alice")).thenReturn(Optional.empty());
         assertThat(service.isSessionSuperseded("alice", "S1")).isFalse();
     }
 
@@ -172,6 +172,8 @@ class UserServiceSessionTest {
         String sentinel = captor.getValue().getActiveSessionId();
         assertThat(sentinel).startsWith(UserService.SESSION_TERMINATED_PREFIX);
         // Sentinel gerçek oturuma eşleşmez → kullanıcının sonraki isteği superseded (atılır).
+        // isSessionSuperseded artık activeSessionId'yi projeksiyon sorgusuyla okur → sentinel'i döndür.
+        when(userRepo.findActiveSessionIdByUsername("alice")).thenReturn(Optional.of(sentinel));
         assertThat(service.isSessionSuperseded("alice", "REAL-SESSION")).isTrue();
     }
 
