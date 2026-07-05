@@ -12,6 +12,14 @@ public interface KeywordResultRepository extends JpaRepository<KeywordResult, Lo
     List<KeywordResult> findByMonitorIdOrderByCheckedAtDesc(Long monitorId);
     Optional<KeywordResult> findTopByMonitorIdOrderByCheckedAtDesc(Long monitorId);
 
+    /** History detay listesi — SQL-LIMIT'li: tüm geçmişi JVM'e çekmeden en yeni :limit satır
+     *  (eski: findByMonitorIdOrderByCheckedAtDesc(id).stream().limit(cap) → aylarca satır yüklüyordu). */
+    @Query("SELECT r FROM KeywordResult r WHERE r.monitorId = :id ORDER BY r.checkedAt DESC LIMIT :limit")
+    List<KeywordResult> findRecentByMonitorId(@Param("id") Long id, @Param("limit") int limit);
+
+    @Query("SELECT r FROM KeywordResult r WHERE r.monitorId = :id AND r.checkedAt >= :since ORDER BY r.checkedAt DESC LIMIT :limit")
+    List<KeywordResult> findRecentByMonitorIdSince(@Param("id") Long id, @Param("since") String since, @Param("limit") int limit);
+
     /** Her monitör için en güncel kontrol — tek toplu sorgu (N+1 önleme). */
     @Query("SELECT r FROM KeywordResult r WHERE r.id IN "
          + "(SELECT MAX(r2.id) FROM KeywordResult r2 GROUP BY r2.monitorId)")

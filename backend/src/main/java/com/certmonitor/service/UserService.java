@@ -150,7 +150,8 @@ public class UserService {
      *  oturum kapatılmalı. Kayıt yoksa (null, deploy öncesi eski oturumlar) veya eşleşiyorsa false → zorlama yok. */
     public boolean isSessionSuperseded(String username, String sessionId) {
         if (username == null || sessionId == null) return false;
-        String active = userRepo.findByUsername(username).map(AppUser::getActiveSessionId).orElse(null);
+        // Sıcak yol: tam entity + EAGER teamIds join yerine tek-kolon projeksiyon (bkz. repo).
+        String active = userRepo.findActiveSessionIdByUsername(username).orElse(null);
         return active != null && !active.equals(sessionId);
     }
 

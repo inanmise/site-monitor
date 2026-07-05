@@ -186,7 +186,7 @@ public class CertificateService {
         // metod gövdesi boş — annotation'lar Spring AOP'a iş yaptırır
     }
 
-    @Cacheable("cert-latest")
+    @Cacheable(value = "cert-latest", sync = true)
     public List<CertificateDto> getAllLatest() {
         // Active inventory'yi TEK SEFER yükle — hem domain set'i hem tier map'i bundan üret
         List<CertificateInventory> activeInventory = inventoryRepo.findByActiveTrueOrderByDomainAsc();
@@ -360,7 +360,7 @@ public class CertificateService {
         );
     }
 
-    @Cacheable("cert-warnings")
+    @Cacheable(value = "cert-warnings", sync = true)
     public List<CertificateDto> getWarnings() {
         Set<String> activeDomains = inventoryRepo.findByActiveTrueOrderByDomainAsc()
                 .stream().map(CertificateInventory::getDomain).collect(Collectors.toSet());
@@ -527,7 +527,7 @@ public class CertificateService {
         return out;
     }
 
-    @Cacheable("cert-stats")
+    @Cacheable(value = "cert-stats", sync = true)
     public Map<String, Object> getStats() {
         return computeStats(getAllLatest(), getWarnings());
     }
@@ -681,7 +681,7 @@ public class CertificateService {
         return computeRenewalAdvice(getAllLatestForTeams(teamIds));
     }
 
-    @Cacheable("renewal-advice")
+    @Cacheable(value = "renewal-advice", sync = true)
     public List<Map<String, Object>> getRenewalAdvice() {
         return computeRenewalAdvice(getAllLatest());
     }

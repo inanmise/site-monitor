@@ -156,6 +156,11 @@ public class WebConfig implements WebMvcConfigurer {
         executor.setMaxPoolSize(executorMaxSize);
         executor.setQueueCapacity(executorQueueCapacity);
         executor.setThreadNamePrefix("cert-check-");
+        // Tek-pod CPU koruması: havuz+queue dolarsa görevi REDDETME (sweep'i kırma) — çağıran
+        // (scheduler) thread'inde çalıştır. Böylece büyük ölçekte (1000 domain) tarama geri-basınçla
+        // yavaşlar ama kullanıcı isteklerini aç bırakacak kadar thread açmaz + RejectedExecutionException
+        // riski biter. Bu sayede max havuz güvenle küçültülebilir (values.yaml executorMaxSize).
+        executor.setRejectedExecutionHandler(new java.util.concurrent.ThreadPoolExecutor.CallerRunsPolicy());
         executor.initialize();
         return executor;
     }

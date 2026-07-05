@@ -13,6 +13,13 @@ public interface DnsRecordRepository extends JpaRepository<DnsRecord, Long> {
     List<DnsRecord> findByMonitorIdOrderByCheckedAtDesc(Long monitorId);
     Optional<DnsRecord> findTopByMonitorIdOrderByCheckedAtDesc(Long monitorId);
 
+    /** History detay listesi — SQL-LIMIT'li: tüm geçmişi JVM'e çekmeden en yeni :limit satır. */
+    @Query("SELECT r FROM DnsRecord r WHERE r.monitorId = :id ORDER BY r.checkedAt DESC LIMIT :limit")
+    List<DnsRecord> findRecentByMonitorId(@Param("id") Long id, @Param("limit") int limit);
+
+    @Query("SELECT r FROM DnsRecord r WHERE r.monitorId = :id AND r.checkedAt >= :since ORDER BY r.checkedAt DESC LIMIT :limit")
+    List<DnsRecord> findRecentByMonitorIdSince(@Param("id") Long id, @Param("since") String since, @Param("limit") int limit);
+
     /** Her monitör için en güncel kayıt — DNS listesinde monitör başına sorgu yerine tek toplu sorgu. */
     @Query("SELECT r FROM DnsRecord r WHERE r.id IN "
          + "(SELECT MAX(r2.id) FROM DnsRecord r2 GROUP BY r2.monitorId)")

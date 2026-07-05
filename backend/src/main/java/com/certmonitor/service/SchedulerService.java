@@ -539,7 +539,7 @@ public class SchedulerService {
             return;
         }
         log.info("Stale sweep: {} domain(s) not checked in {} min", staleDomains.size(), staleMin);
-        runCheckForDomains(staleDomains);
+        runCheckForDomains(staleDomains, false);   // stale alt-küme → evict etme, 300 sn TTL tazelesin
     }
 
     /**
@@ -569,6 +569,10 @@ public class SchedulerService {
             int u = safeDelete("DELETE FROM uptime_checks      WHERE checked_at  < ?", tsCutoff);
             int c = safeDelete("DELETE FROM certificate_checks WHERE checked_at  < ?", tsCutoff);
             int p = safeDelete("DELETE FROM port_checks        WHERE checked_at  < ?", tsCutoff);
+            // keyword_results / ping_checks: 30 sn sweep kadansında en hızlı büyüyen izleme serileri;
+            // önceden HİÇ temizlenmiyordu (sınırsız büyüme). 180 gün üstünü sil (diğer serilerle aynı).
+            int kw = safeDelete("DELETE FROM keyword_results    WHERE checked_at  < ?", tsCutoff);
+            int pg = safeDelete("DELETE FROM ping_checks        WHERE checked_at  < ?", tsCutoff);
             // dns_records: her monitör için en yeni satırı koru (baseline) → guard'lı sil.
             int d = safeDelete("DELETE FROM dns_records WHERE checked_at < ? "
                     + "AND id NOT IN (SELECT MAX(id) FROM dns_records GROUP BY monitor_id)", tsCutoff);
@@ -576,9 +580,9 @@ public class SchedulerService {
             int httpRetDays = Math.max(1, appSettings.getInt("cert.monitor.metrics.http.retention-days", 7));
             String httpCutoff = ISO.format(Instant.now().minus(httpRetDays, ChronoUnit.DAYS));
             int h = safeDelete("DELETE FROM http_metric_minute WHERE bucket_minute < ?", httpCutoff);
-            log.info("Nightly cleanup done: audit={}, notif={}, sql={}, uptime={}, cert={}, port={}, dns={}, httpMetrics={} "
+            log.info("Nightly cleanup done: audit={}, notif={}, sql={}, uptime={}, cert={}, port={}, keyword={}, ping={}, dns={}, httpMetrics={} "
                     + "(log cutoffs: {} / {} / {}; ts cutoff: {}; http retention: {}d)",
-                    a, n, s, u, c, p, d, h, auditCutoff, notifCutoff, sqlCutoff, tsCutoff, httpRetDays);
+                    a, n, s, u, c, p, kw, pg, d, h, auditCutoff, notifCutoff, sqlCutoff, tsCutoff, httpRetDays);
         } catch (Exception e) {
             log.warn("Nightly cleanup failed: {}", e.getMessage());
         }
@@ -653,7 +657,7 @@ public class SchedulerService {
             log.warn("No active domains in inventory — skipping check");
             return;
         }
-        runCheckForDomains(domains);
+        runCheckForDomains(domains, true);   // tam sweep → cache evict
     }
 
     /**
@@ -679,7 +683,7 @@ public class SchedulerService {
         });
     }
 
-    private void runCheckForDomains(List<Map<String, Object>> domains) {
+    private void runCheckForDomains(List<Map<String, Object>> domains, boolean evictCaches) {
         // 1. In-process guard (fast fail for same JVM)
         if (!running.compareAndSet(false, true)) {
             log.warn("Check already in progress (runId={}) — skipping duplicate trigger", currentRunId.get());
@@ -719,9 +723,10 @@ public class SchedulerService {
                     .toList();
 
             results.forEach(certService::saveResult);
-            // Tek seferlik batch evict — saveResult'tan @CacheEvict çıkarıldı,
-            // dashboard sweep sonunda atomik olarak güncel veri görür.
-            certService.evictAllCaches();
+            // Cache evict YALNIZ veri-değiştiren tam/manuel sweep sonrası (evictCaches=true).
+            // 5 dk'lık stale sweep (alt-küme, zaten 65+ dk bayat domainler) evict ETMEZ → cert
+            // dashboard cache'i 300 sn TTL ile tazelenir, thundering-herd + gereksiz global evict biter.
+            if (evictCaches) certService.evictAllCaches();
 
             long errors   = results.stream().filter(r -> "error".equals(r.get("status"))).count();
             long warnings = results.stream().filter(r -> Boolean.TRUE.equals(r.get("warning"))).count();

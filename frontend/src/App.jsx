@@ -213,30 +213,24 @@ export default function App() {
 
   const loadData = useCallback(async () => {
     // allSettled: bir endpoint çökse de diğerleri yansısın
-    const [certsRes, statsRes, silentRes, teamStatsRes, weakRes, netRes, mailFailRes] = await Promise.allSettled([
+    // network-status + weak-algorithms BURADAN çıkarıldı: network → 60 sn tick tek kaynak;
+    // weak-algorithms → login'de bir kez (aşağıda) çünkü zayıf-algoritma verisi ancak cert
+    // sweep'iyle (~saatlik) değişir → 5 dk'da 100 kullanıcı × tekrar gereksizdi.
+    const [certsRes, statsRes, silentRes, teamStatsRes, mailFailRes] = await Promise.allSettled([
       api.getCertificates(), api.getStats(), api.getSilentAlertDomains(), api.getTeamStats(),
-      api.admin.getWeakAlgorithms(),
-      api.getNetworkStatus(),
       api.getMailFailureDomains(),
     ])
     if (!loadAliveRef.current) return // unmount/logout'ta state'i kirletme
     const v = (s) => s.status === 'fulfilled' ? s.value : null
     const certs = v(certsRes), stats = v(statsRes), silent = v(silentRes),
-          teamStats = v(teamStatsRes), weak = v(weakRes), net = v(netRes),
+          teamStats = v(teamStatsRes),
           mailFail = v(mailFailRes)
     if (certs?.success) { setCerts(certs.data); setLastUpdate(certs.timestamp) }
     if (stats?.success) setStats(stats.data)
     if (silent?.success) setSilentAlertDomains(new Set(silent.data))
     if (mailFail?.success) setMailFailureDomains(new Set(mailFail.data ?? []))
     if (teamStats?.success) setTeamStats(teamStats.data)
-    if (weak?.success) setWeakAlgStats(weak)
-    if (net?.success) {
-      setNetworkStatus(prev => {
-        // Reset dismissal flag when a new outage starts (alarm transitions false -> true)
-        if (net.data?.alarm && !prev?.alarm) setNetworkBannerDismissed(false)
-        return net.data
-      })
-    }
+    // networkStatus → 60 sn tick (dedup); weakAlgStats → login'de bir kez ayrı effect (aşağıda).
   }, [])
 
   useEffect(() => {
@@ -261,8 +255,16 @@ export default function App() {
         })
       }
     }
+    tick()   // login'de hemen (loadData'dan çıkarıldı → ağ durumu 60 sn beklemesin)
     const id = setInterval(tick, 60_000)
     return () => clearInterval(id)
+  }, [user])
+
+  // Zayıf-algoritma rozetleri: login'de BİR KEZ (5 dk'lık loadData'dan çıkarıldı). Zayıf-algoritma
+  // verisi ancak cert sweep'iyle (~saatlik) değişir → sık çekmeye gerek yok; sayfa yenilenince tazelenir.
+  useEffect(() => {
+    if (!user) return
+    api.admin.getWeakAlgorithms().then(r => { if (r?.success) setWeakAlgStats(r) })
   }, [user])
 
   // Süpersede edilen oturumu HIZLI yakala: kısa aralıklı hafif yoklama + sekmeye/pencereye

@@ -193,6 +193,10 @@ public class ExtendedHealthService {
     /** Domains whose last N consecutive non-SKIPPED mail attempts (within the last
      *  {@code days} days) are all FAILED. SKIPPED_DISABLED is excluded from the
      *  "last N" window — it represents an admin choice, not a delivery failure. */
+    // Global veri (kullanıcıya özel değil), her /api/notifications/failure-domains isteğinde 7 günlük
+    // notification_logs taraması. 100 kullanıcı × 5 dk dashboard fan-out'unda 100× tekrar ediyordu →
+    // cache'le (sync: eşzamanlı çağrılar tek hesaba iner). TTL 300 sn CacheConfig'te; anahtar (consecutive,days).
+    @org.springframework.cache.annotation.Cacheable(value = "failure-domains", sync = true)
     public List<String> findDomainsWithConsecutiveMailFailures(int consecutive, int days) {
         if (consecutive < 1) return List.of();
         String cutoff = LocalDateTime.now(ZoneOffset.UTC).minusDays(days)

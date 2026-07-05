@@ -20,6 +20,12 @@ public interface AppUserRepository extends JpaRepository<AppUser, Long> {
     Optional<AppUser> findByUsername(@Param("username") String username);
     @Query("SELECT u FROM AppUser u WHERE UPPER(u.username) = UPPER(:username) AND u.active = true")
     Optional<AppUser> findByUsernameAndActiveTrue(@Param("username") String username);
+
+    /** SICAK YOL (her /api/** isteği): tek-oturum supersede kontrolü için YALNIZ activeSessionId
+     *  kolonunu çeker — tam AppUser entity'sini hidrate etmez ve EAGER teamIds (app_user_teams)
+     *  join'ini tetiklemez. Eski findByUsername iki SELECT'e mal oluyordu; bu tek hafif indexli okuma. */
+    @Query("SELECT u.activeSessionId FROM AppUser u WHERE UPPER(u.username) = UPPER(:username)")
+    Optional<String> findActiveSessionIdByUsername(@Param("username") String username);
     Optional<AppUser> findByEmployeeId(String employeeId);     // sicil (AD cn)
     List<AppUser> findByTeamIdOrderByUsernameAsc(Long teamId);
     List<AppUser> findAllByOrderByUsernameAsc();

@@ -137,9 +137,10 @@ class MonitoringControllerTest {
         when(inventoryRepo.findByActiveTrueOrderByDomainAsc()).thenReturn(List.of(inv("a.com"), inv("b.com"), inv("c.com")));
         when(uptimeCheckRepo.findTopByDomainAndPortOrderByIdDesc(anyString(), anyInt())).thenReturn(Optional.empty());
         when(certCheckRepo.findByCheckedAtAfter(anyString())).thenReturn(List.of());
-        when(uptimeCheckRepo.findByCheckedAtGreaterThanEqual(anyString())).thenReturn(List.of(
-                uchk("a.com", "up"), uchk("a.com", "up"),
-                uchk("b.com", "up"), uchk("b.com", "down")));
+        // http_ok artık domain başına [domain, total, upCount] SQL agregasyonundan gelir (upCount==total).
+        when(uptimeCheckRepo.aggregateHttpOkSince(anyString())).thenReturn(List.<Object[]>of(
+                new Object[]{"a.com", 2L, 2L},    // 2 kontrol, 2 up → http_ok true
+                new Object[]{"b.com", 2L, 1L}));  // 2 kontrol, 1 up → http_ok false (c.com yok → null)
 
         mvc.perform(get("/api/monitoring/uptime/overview").session(session("USER")))
                 .andExpect(status().isOk())
