@@ -389,9 +389,7 @@ export default function SqlPlayground() {
           row={rowDetail.row}
           cols={rowDetail.cols}
           index={rowDetail.index}
-          onClose={() => setRowDetail(null)}
-          t={t}
-        />
+          onClose={() => setRowDetail(null)}        />
       )}
 
       {tableDetail && (
@@ -399,18 +397,14 @@ export default function SqlPlayground() {
           table={tableDetail.table}
           details={tableDetail.details}
           loading={tableDetail.loading}
-          onClose={() => setTableDetail(null)}
-          t={t}
-        />
+          onClose={() => setTableDetail(null)}        />
       )}
 
       {diagram && (
         <SchemaDiagramModal
           data={diagram.data}
           loading={diagram.loading}
-          onClose={() => setDiagram(null)}
-          t={t}
-        />
+          onClose={() => setDiagram(null)}        />
       )}
     </div>
   )

@@ -21,9 +21,14 @@ import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.Collection;
+import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.NoSuchElementException;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -110,7 +115,7 @@ public class UserService {
      *  Tek kaynak: tüm oluşturma noktalari (bootstrap / LDAP provision / admin create) bunu kullanir →
      *  app_users.username HER ZAMAN büyük harf. Aramalar AppUserRepository'de case-insensitive (DB UPPER). */
     public static String normalizeUsername(String username) {
-        return username == null ? null : username.strip().toUpperCase(java.util.Locale.ROOT);
+        return username == null ? null : username.strip().toUpperCase(Locale.ROOT);
     }
 
     /** Kullanıcının en güncel oturum ID'sini kaydeder (yeni login / remember-me reauth → newest wins). */
@@ -197,7 +202,7 @@ public class UserService {
 
     /** Read scope: which teams' objects this user may SEE. */
     public List<Long> computeViewTeamIds(AppUser u) {
-        if (u == null) return java.util.List.of();
+        if (u == null) return List.of();
         String role = u.getSystemRole();
         if ("AUDIT".equals(role)) return null;                  // system-wide read
         boolean ldap = "LDAP".equalsIgnoreCase(u.getAuthSource());
@@ -212,47 +217,47 @@ public class UserService {
 
     /** Kullanıcının üye olduğu tüm takımlar (birincil {@code teamId} dahil), sıralı + tekil. */
     private List<Long> ownTeamIds(AppUser u) {
-        java.util.LinkedHashSet<Long> ids = new java.util.LinkedHashSet<>();
+        LinkedHashSet<Long> ids = new LinkedHashSet<>();
         if (u.getTeamIds() != null) for (Long t : u.getTeamIds()) if (t != null) ids.add(t);
         if (u.getTeamId() != null) ids.add(u.getTeamId());
-        return new java.util.ArrayList<>(ids);
+        return new ArrayList<>(ids);
     }
 
     /** Write scope: which teams' objects this user may MANAGE. */
     public List<Long> computeManageTeamIds(AppUser u) {
-        if (u == null) return java.util.List.of();
+        if (u == null) return List.of();
         String role = u.getSystemRole();
         boolean ldap = "LDAP".equalsIgnoreCase(u.getAuthSource());
         if ("ADMIN".equals(role) && !ldap) return null;         // global manage
         if ("TEAM_ADMIN".equals(role)) return ledPlusOwnTeamIds(u);
         // müdür (AD admin), USER, AUDIT → no team management
-        return java.util.List.of();
+        return List.of();
     }
 
     private List<Long> subordinateTeamIds(Long managerId) {
-        if (managerId == null) return new java.util.ArrayList<>();
-        java.util.LinkedHashSet<Long> ids = new java.util.LinkedHashSet<>();
+        if (managerId == null) return new ArrayList<>();
+        LinkedHashSet<Long> ids = new LinkedHashSet<>();
         for (AppUser sub : userRepo.findByManagerId(managerId)) {
             if (sub.getTeamIds() != null) for (Long t : sub.getTeamIds()) if (t != null) ids.add(t);
             if (sub.getTeamId() != null) ids.add(sub.getTeamId());
         }
-        return new java.util.ArrayList<>(ids);
+        return new ArrayList<>(ids);
     }
 
     private List<Long> ledPlusOwnTeamIds(AppUser u) {
-        java.util.LinkedHashSet<Long> ids = new java.util.LinkedHashSet<>();
+        LinkedHashSet<Long> ids = new LinkedHashSet<>();
         for (Team t : teamRepo.findByLeaderId(u.getId())) ids.add(t.getId());
         if (u.getTeamIds() != null) for (Long t : u.getTeamIds()) if (t != null) ids.add(t);
         if (u.getTeamId() != null) ids.add(u.getTeamId());
-        return new java.util.ArrayList<>(ids);
+        return new ArrayList<>(ids);
     }
 
     /** Verilen takım id'lerini ada çevirir (sıra korunur, bulunamayanlar atlanır) — /me için. */
-    public List<String> teamNamesFor(java.util.Collection<Long> ids) {
-        if (ids == null || ids.isEmpty()) return java.util.List.of();
-        java.util.Map<Long, String> byId = new java.util.HashMap<>();
+    public List<String> teamNamesFor(Collection<Long> ids) {
+        if (ids == null || ids.isEmpty()) return List.of();
+        Map<Long, String> byId = new HashMap<>();
         teamRepo.findAllById(ids).forEach(t -> byId.put(t.getId(), t.getName()));
-        java.util.List<String> names = new java.util.ArrayList<>();
+        List<String> names = new ArrayList<>();
         for (Long id : ids) { String n = byId.get(id); if (n != null) names.add(n); }
         return names;
     }
@@ -410,11 +415,11 @@ public class UserService {
     @Transactional
     public AppUser createUser(String username, String rawPassword, String displayName,
                                String email, String employeeId, String systemRole,
-                               java.util.Collection<Long> teamIds, String orgRole) {
+                               Collection<Long> teamIds, String orgRole) {
         if (username == null || username.isBlank()) throw new IllegalArgumentException("Username cannot be blank");
         if (rawPassword == null || rawPassword.length() < passwordMinLength) throw new IllegalArgumentException("Password too short (min " + passwordMinLength + " chars)");
         if (email == null || email.isBlank()) throw new IllegalArgumentException("Email is required");
-        java.util.LinkedHashSet<Long> teams = normalizeTeams(teamIds);
+        LinkedHashSet<Long> teams = normalizeTeams(teamIds);
         // Takım, ADMIN dışındaki roller için zorunlu (global admin bir takıma bağlı olmak zorunda değil).
         if (teams.isEmpty() && !"ADMIN".equals(systemRole)) throw new IllegalArgumentException("Team is required");
         String uname = normalizeUsername(username);
@@ -441,14 +446,14 @@ public class UserService {
     }
 
     /** Çoklu takımı kullanıcıya uygular: üyelik kümesini yazar, birincil = ilk eleman. */
-    private void applyTeams(AppUser user, java.util.LinkedHashSet<Long> teams) {
+    private void applyTeams(AppUser user, LinkedHashSet<Long> teams) {
         user.setTeamIds(teams);
         user.setTeamId(teams.isEmpty() ? null : teams.iterator().next());
     }
 
     /** Gelen id koleksiyonunu sırayı koruyarak tekilleştirir (null'ları atar). */
-    private java.util.LinkedHashSet<Long> normalizeTeams(java.util.Collection<Long> teamIds) {
-        java.util.LinkedHashSet<Long> set = new java.util.LinkedHashSet<>();
+    private LinkedHashSet<Long> normalizeTeams(Collection<Long> teamIds) {
+        LinkedHashSet<Long> set = new LinkedHashSet<>();
         if (teamIds != null) for (Long t : teamIds) if (t != null) set.add(t);
         return set;
     }
@@ -475,7 +480,7 @@ public class UserService {
 
     @Transactional
     public AppUser updateUser(Long id, String displayName, String email, String employeeId,
-                               String systemRole, java.util.Collection<Long> teamIds, Boolean active, String orgRole) {
+                               String systemRole, Collection<Long> teamIds, Boolean active, String orgRole) {
         AppUser user = userRepo.findById(id).orElseThrow(() -> new NoSuchElementException("User not found: " + id));
         if (displayName != null) user.setDisplayName(displayName);
         if (email != null && !email.isBlank()) user.setEmail(email.trim());
@@ -488,7 +493,7 @@ public class UserService {
         if (teamIds != null) applyTeams(user, normalizeTeams(teamIds));
         if (active != null) user.setActive(active);
         String newOrg = (orgRole != null && !orgRole.isBlank()) ? orgRole : null;
-        if (!java.util.Objects.equals(newOrg, user.getOrgRole())) {
+        if (!Objects.equals(newOrg, user.getOrgRole())) {
             user.setOrgRole(newOrg);
             user.setOrgRoleLocked(true);   // admin manuel değiştirdi → LDAP org rolünü ezmesin
         }

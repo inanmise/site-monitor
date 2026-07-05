@@ -2,6 +2,7 @@ package com.certmonitor.controller;
 
 import com.certmonitor.model.SmtpSettings;
 import com.certmonitor.service.AuditService;
+import com.certmonitor.service.PermissionService;
 import com.certmonitor.service.SmtpMailService;
 import com.certmonitor.service.SmtpSettingsService;
 import jakarta.servlet.http.HttpServletRequest;
@@ -36,7 +37,7 @@ public class SmtpAdminController {
     private final SmtpSettingsService settingsService;
     private final SmtpMailService mailService;
     private final AuditService auditService;
-    private final com.certmonitor.service.PermissionService permissionService;
+    private final PermissionService permissionService;
 
     @GetMapping("/settings")
     public ResponseEntity<Map<String, Object>> getSettings(HttpSession session) {

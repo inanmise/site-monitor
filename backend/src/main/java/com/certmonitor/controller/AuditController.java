@@ -8,6 +8,7 @@ import com.certmonitor.repository.AuditLogRepository;
 import com.certmonitor.repository.CertificateInventoryRepository;
 import com.certmonitor.repository.LatestCheckRepository;
 import com.certmonitor.repository.TeamRepository;
+import com.certmonitor.service.PermissionService;
 import jakarta.servlet.http.HttpSession;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
@@ -30,7 +31,7 @@ public class AuditController {
     private final LatestCheckRepository        latestCheckRepo;
     private final CertificateInventoryRepository inventoryRepo;
     private final TeamRepository               teamRepo;
-    private final com.certmonitor.service.PermissionService permissionService;
+    private final PermissionService permissionService;
 
     private static final DateTimeFormatter ISO =
             DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
@@ -55,14 +56,12 @@ public class AuditController {
                 actorParam, nil(eventType), nil(outcome), nil(since), nil(until), anomalyOnly,
                 PageRequest.of(page, size));
 
-        Map<String, Object> resp = new LinkedHashMap<>();
-        resp.put("success", true);
-        resp.put("data", result.getContent());
-        resp.put("total", result.getTotalElements());
-        resp.put("page", result.getNumber());
-        resp.put("total_pages", result.getTotalPages());
-        resp.put("timestamp", now());
-        return ResponseEntity.ok(resp);
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("data", result.getContent());
+        body.put("total", result.getTotalElements());
+        body.put("page", result.getNumber());
+        body.put("total_pages", result.getTotalPages());
+        return ok(body);
     }
 
     @GetMapping("/audit/stats")
@@ -81,11 +80,7 @@ public class AuditController {
         stats.put("anomalies_7d",     auditLogRepo.countAnomaliesSince(last7d));
         stats.put("failed_logins_7d", auditLogRepo.countFailedLoginsSince(last7d));
 
-        Map<String, Object> resp = new LinkedHashMap<>();
-        resp.put("success", true);
-        resp.put("data", stats);
-        resp.put("timestamp", now());
-        return ResponseEntity.ok(resp);
+        return ok(Map.of("data", stats));
     }
 
     @GetMapping("/audit/weak-algorithms")
@@ -96,15 +91,15 @@ public class AuditController {
 
         // Envanteri yalnız aday domain'ler için yükle (tüm envanter taranmaz)
         List<String> weakDomains = weakCandidates.stream()
-                .map(LatestCheck::getDomain).filter(java.util.Objects::nonNull).distinct().toList();
+                .map(LatestCheck::getDomain).filter(Objects::nonNull).distinct().toList();
         Map<String, CertificateInventory> invMap = weakDomains.isEmpty()
                 ? Map.of()
                 : inventoryRepo.findByDomainIn(weakDomains).stream()
                         .collect(Collectors.toMap(CertificateInventory::getDomain, i -> i, (a, b) -> a));
 
         // Tüm takım tablosunu çekmek yerine yalnız zayıf-domain envanterindeki takımları yükle
-        java.util.Set<Long> teamIds = invMap.values().stream()
-                .map(CertificateInventory::getTeamId).filter(java.util.Objects::nonNull)
+        Set<Long> teamIds = invMap.values().stream()
+                .map(CertificateInventory::getTeamId).filter(Objects::nonNull)
                 .collect(Collectors.toSet());
         Map<Long, Team> teamMap = teamIds.isEmpty()
                 ? Map.of()
@@ -150,14 +145,12 @@ public class AuditController {
         long critical = rows.stream().filter(r -> "CRITICAL".equals(r.get("severity"))).count();
         long high     = rows.stream().filter(r -> "HIGH".equals(r.get("severity"))).count();
 
-        Map<String, Object> resp = new LinkedHashMap<>();
-        resp.put("success",   true);
-        resp.put("data",      rows);
-        resp.put("total",     rows.size());
-        resp.put("critical",  critical);
-        resp.put("high",      high);
-        resp.put("timestamp", now());
-        return ResponseEntity.ok(resp);
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("data",     rows);
+        body.put("total",    rows.size());
+        body.put("critical", critical);
+        body.put("high",     high);
+        return ok(body);
     }
 
     private String classifyWeakness(LatestCheck lc, List<String> weaknesses) {
@@ -211,6 +204,13 @@ public class AuditController {
         String role = (String) session.getAttribute("systemRole");
         if (!SessionScope.isGlobalAdmin(session) && !"AUDIT".equals(role))
             throw new SecurityException("Audit access required");
+    }
+
+    private ResponseEntity<Map<String, Object>> ok(Map<String, Object> body) {
+        Map<String, Object> response = new LinkedHashMap<>(body);
+        response.put("success", true);
+        response.put("timestamp", now());
+        return ResponseEntity.ok(response);
     }
 
     private String nil(String v) { return (v == null || v.isBlank()) ? null : v; }

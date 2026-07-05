@@ -8,6 +8,7 @@ import org.slf4j.LoggerFactory;
 import org.commonmark.ext.gfm.tables.TablesExtension;
 import org.commonmark.parser.Parser;
 import org.commonmark.renderer.html.HtmlRenderer;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.ByteArrayResource;
 import org.springframework.mail.javamail.MimeMessageHelper;
 import org.springframework.stereotype.Service;
@@ -50,7 +51,7 @@ public class EmailNotificationService {
 
     /** Uygulama dış adresi — e-posta CTA deep-link'leri için. Spring @Value enjekte eder;
      *  birim testte (manuel new) initializer değeri kullanılır. */
-    @org.springframework.beans.factory.annotation.Value("${cert.monitor.app.base-url:http://localhost:5173}")
+    @Value("${cert.monitor.app.base-url:http://localhost:5173}")
     private String appBaseUrl = "http://localhost:5173";
 
     /**

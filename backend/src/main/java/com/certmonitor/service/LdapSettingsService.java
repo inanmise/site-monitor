@@ -4,6 +4,7 @@ import com.certmonitor.model.LdapSettings;
 import com.certmonitor.repository.LdapSettingsRepository;
 import tools.jackson.databind.ObjectMapper;
 import jakarta.annotation.PostConstruct;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
@@ -23,6 +24,7 @@ import java.util.Map;
  */
 @Slf4j
 @Service
+@RequiredArgsConstructor
 public class LdapSettingsService {
 
     private static final DateTimeFormatter ISO =
@@ -33,11 +35,6 @@ public class LdapSettingsService {
     private final ObjectMapper mapper = new ObjectMapper();
 
     private volatile LdapSettings cached;
-
-    public LdapSettingsService(LdapSettingsRepository repo, SecretCipher cipher) {
-        this.repo = repo;
-        this.cipher = cipher;
-    }
 
     @PostConstruct
     void load() {

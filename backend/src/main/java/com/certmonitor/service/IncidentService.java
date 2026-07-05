@@ -99,7 +99,7 @@ public class IncidentService {
         // Günlük trend — olay zamanını UTC'den Europe/Istanbul'a çevirip YEREL güne göre grupla
         // (tabloda saatler IST gösterildiğinden; ham UTC günü gece-yarısı kayıtlarını bir önceki güne kaydırırdı).
         java.time.ZoneId ist = java.time.ZoneId.of("Europe/Istanbul");
-        java.util.TreeMap<String, Long> dayCounts = new java.util.TreeMap<>();
+        TreeMap<String, Long> dayCounts = new TreeMap<>();
         for (String oa : repo.occurredAtInRange(s, u, scoped, scopeList)) {
             if (oa == null || oa.length() < 10) continue;
             String day;

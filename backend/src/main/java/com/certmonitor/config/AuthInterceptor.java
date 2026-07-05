@@ -9,7 +9,7 @@ import jakarta.servlet.http.Cookie;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import jakarta.servlet.http.HttpSession;
-import org.springframework.beans.factory.annotation.Autowired;
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 import org.springframework.web.servlet.HandlerInterceptor;
 
@@ -19,6 +19,7 @@ import java.util.Optional;
 import java.util.Set;
 
 @Component
+@RequiredArgsConstructor
 public class AuthInterceptor implements HandlerInterceptor {
 
     private static final Set<String> PUBLIC = Set.of(
@@ -37,14 +38,9 @@ public class AuthInterceptor implements HandlerInterceptor {
 
     private final ObjectMapper mapper = new ObjectMapper();
 
-    @Autowired
-    private RememberMeService rememberMeService;
-
-    @Autowired
-    private UserService userService;
-
-    @Autowired
-    private AuthController authController;
+    private final RememberMeService rememberMeService;
+    private final UserService userService;
+    private final AuthController authController;
 
     @Override
     public boolean preHandle(HttpServletRequest req, HttpServletResponse res, Object handler) throws Exception {

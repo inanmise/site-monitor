@@ -6,6 +6,7 @@ import com.certmonitor.model.Team;
 import com.certmonitor.repository.AppUserRepository;
 import com.certmonitor.repository.EscalationContactRepository;
 import com.certmonitor.repository.TeamRepository;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -28,6 +29,7 @@ import java.util.Optional;
  */
 @Slf4j
 @Service
+@RequiredArgsConstructor
 public class LdapProvisioningService {
 
     private static final DateTimeFormatter ISO =
@@ -37,14 +39,6 @@ public class LdapProvisioningService {
     private final TeamRepository teamRepo;
     private final LdapDirectoryService directory;
     private final EscalationContactRepository contactRepo;
-
-    public LdapProvisioningService(AppUserRepository userRepo, TeamRepository teamRepo,
-                                   LdapDirectoryService directory, EscalationContactRepository contactRepo) {
-        this.userRepo = userRepo;
-        this.teamRepo = teamRepo;
-        this.directory = directory;
-        this.contactRepo = contactRepo;
-    }
 
     /** Provision/refresh the authenticated user from AD; resolves team + manager. */
     @Transactional

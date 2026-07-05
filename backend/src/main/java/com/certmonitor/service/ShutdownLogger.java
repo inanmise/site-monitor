@@ -23,11 +23,11 @@ public class ShutdownLogger {
     private final HttpMetricsService httpMetricsService;
     private final MetricsService     metricsService;
 
-    // Set by the UncaughtExceptionHandler if a crash triggers shutdown
+    // Bir çökme (crash) kapanmayı tetiklerse UncaughtExceptionHandler tarafından ayarlanır
     private static final AtomicReference<String> CRASH_REASON = new AtomicReference<>();
     private final AtomicBoolean logged = new AtomicBoolean(false);
 
-    // ── Init ──────────────────────────────────────────────────────────────────
+    // ── Başlatma ──────────────────────────────────────────────────────────────
 
     @PostConstruct
     public void init() {
@@ -35,9 +35,9 @@ public class ShutdownLogger {
         installJvmShutdownHook();
     }
 
-    // ── Spring lifecycle events ──────────────────────────────────────────��────
+    // ── Spring yaşam döngüsü olayları ─────────────────────────────────────────
 
-    /** Fires on graceful shutdown (SIGTERM, Spring context close). Beans are still alive. */
+    /** Nazik (graceful) kapanışta tetiklenir (SIGTERM, Spring context close). Bean'ler hâlâ canlıdır. */
     @EventListener(ContextClosedEvent.class)
     public void onContextClosed() {
         String reason = CRASH_REASON.get() != null
@@ -46,7 +46,7 @@ public class ShutdownLogger {
         writeShutdownLog(reason, true);
     }
 
-    /** Fires when the application fails to start. */
+    /** Uygulama başlatılamadığında tetiklenir. */
     @EventListener(ApplicationFailedEvent.class)
     public void onApplicationFailed(ApplicationFailedEvent event) {
         Throwable cause = event.getException();
@@ -54,7 +54,7 @@ public class ShutdownLogger {
         log.error("[STARTUP-FAIL] {}: {}", cause.getClass().getName(), cause.getMessage(), cause);
     }
 
-    // ── Internals ─────────────────────────────────────────────────────────────
+    // ── Dahili ────────────────────────────────────────────────────────────────
 
     private void installUncaughtExceptionHandler() {
         Thread.UncaughtExceptionHandler previous = Thread.getDefaultUncaughtExceptionHandler();
@@ -64,7 +64,7 @@ public class ShutdownLogger {
 
             log.error("═══ UNCAUGHT EXCEPTION ═══ thread='{}' ts={}", thread.getName(), Instant.now());
             log.error("[CRASH] {}", reason, ex);
-            logJvmState();   // lightweight — no Spring beans
+            logJvmState();   // hafif — Spring bean'i yok
 
             if (previous != null) previous.uncaughtException(thread, ex);
         });
@@ -72,7 +72,7 @@ public class ShutdownLogger {
 
     private void installJvmShutdownHook() {
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
-            // ContextClosedEvent already handled graceful shutdown — only run here for hard exits
+            // ContextClosedEvent nazik kapanışı zaten ele aldı — burada yalnız sert (hard) çıkışlar için çalışır
             if (!logged.get()) {
                 String reason = CRASH_REASON.get() != null
                         ? "crash — " + CRASH_REASON.get()
@@ -83,15 +83,15 @@ public class ShutdownLogger {
     }
 
     /**
-     * @param springAlive true when called from ContextClosedEvent (Spring beans usable),
-     *                    false when called from the JVM shutdown hook.
+     * @param springAlive ContextClosedEvent'ten çağrıldığında true (Spring bean'leri kullanılabilir),
+     *                    JVM shutdown hook'undan çağrıldığında false.
      */
     private void writeShutdownLog(String reason, boolean springAlive) {
         if (!logged.compareAndSet(false, true)) return;
 
         log.warn("═══ APPLICATION SHUTTING DOWN ═══ reason=\"{}\" ts={}", reason, Instant.now());
 
-        // Scheduler — AtomicRef fields, always safe
+        // Scheduler — AtomicRef alanları, her zaman güvenli
         try {
             Map<String, Object> sched = schedulerService.getShutdownSnapshot();
             log.warn("[SHUTDOWN] Scheduler: instance={} running={} lastRun={} runId={}",
@@ -101,7 +101,7 @@ public class ShutdownLogger {
             log.warn("[SHUTDOWN] Scheduler state unavailable: {}", e.getMessage());
         }
 
-        // HTTP metrics — pure in-memory, always safe
+        // HTTP metrikleri — tamamen bellek-içi, her zaman güvenli
         try {
             Map<String, Object> http = httpMetricsService.getSummary();
             log.warn("[SHUTDOWN] HTTP (24h): requests={} errors={} errorRate={}% avgMs={} maxMs={}",
@@ -111,7 +111,7 @@ public class ShutdownLogger {
             log.warn("[SHUTDOWN] HTTP metrics unavailable: {}", e.getMessage());
         }
 
-        // Last JVM/CPU sample — in-memory, always safe
+        // Son JVM/CPU örneği — bellek-içi, her zaman güvenli
         try {
             var history = metricsService.getHistory();
             if (!history.isEmpty()) {
@@ -129,7 +129,7 @@ public class ShutdownLogger {
         log.warn("═══ END SHUTDOWN LOG ═══");
     }
 
-    /** Fully static — no Spring beans, safe from any thread at any time. */
+    /** Tamamen static — Spring bean'i yok, her thread'den her an güvenli. */
     private static void logJvmState() {
         try {
             Runtime rt      = Runtime.getRuntime();

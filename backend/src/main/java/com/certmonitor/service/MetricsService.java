@@ -41,7 +41,7 @@ public class MetricsService {
         Map<String, Object> p = new LinkedHashMap<>();
         p.put("ts", ISO.format(Instant.now()));
 
-        // Process & system CPU %
+        // İşlem & sistem CPU %
         if (osMx != null) {
             double cpuProc = osMx.getProcessCpuLoad() * 100;
             double cpuSys  = osMx.getCpuLoad()        * 100;
@@ -64,10 +64,10 @@ public class MetricsService {
         MemoryUsage nonHeap = memMx.getNonHeapMemoryUsage();
         p.put("non_heap_mb", nonHeap.getUsed() / (1024 * 1024));
 
-        // Live thread count
+        // Canlı thread sayısı
         p.put("threads", threadMx.getThreadCount());
 
-        // GC pause delta (ms) since last sample
+        // Son örneklemeden bu yana GC duraklama (pause) deltası (ms)
         long gcNow = ManagementFactory.getGarbageCollectorMXBeans()
                 .stream().mapToLong(GarbageCollectorMXBean::getCollectionTime).sum();
         p.put("gc_delta_ms", Math.max(0, gcNow - lastGcMs));

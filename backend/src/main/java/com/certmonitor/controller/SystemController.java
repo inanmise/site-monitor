@@ -2,12 +2,15 @@ package com.certmonitor.controller;
 
 import com.certmonitor.service.DbAnalyticsService;
 import com.certmonitor.service.ExtendedHealthService;
+import com.certmonitor.service.HttpMetricsQueryService;
 import com.certmonitor.service.HttpMetricsService;
 import com.certmonitor.service.MetricsService;
+import com.certmonitor.service.PermissionService;
 import com.certmonitor.service.RememberMeService;
 import com.certmonitor.service.SchedulerService;
 import com.certmonitor.service.UserActivityService;
 import com.certmonitor.service.UserService;
+import com.certmonitor.service.WeeklyAvailabilityReportService;
 import jakarta.servlet.http.HttpSession;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
@@ -27,14 +30,14 @@ public class SystemController {
     private final SchedulerService      schedulerService;
     private final MetricsService        metricsService;
     private final HttpMetricsService    httpMetricsService;
-    private final com.certmonitor.service.HttpMetricsQueryService httpMetricsQueryService;
+    private final HttpMetricsQueryService httpMetricsQueryService;
     private final ExtendedHealthService extendedHealthService;
     private final UserActivityService   userActivityService;
     private final DbAnalyticsService    dbAnalyticsService;
     private final UserService           userService;
     private final RememberMeService     rememberMeService;
-    private final com.certmonitor.service.PermissionService permissionService;
-    private final com.certmonitor.service.WeeklyAvailabilityReportService weeklyAvailabilityReportService;
+    private final PermissionService permissionService;
+    private final WeeklyAvailabilityReportService weeklyAvailabilityReportService;
 
     private static final DateTimeFormatter ISO =
             DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
@@ -46,7 +49,7 @@ public class SystemController {
         data.put("db_ms",     extendedHealthService.measureDbResponseMs());
         data.put("heartbeat", extendedHealthService.getHeartbeatStatus());
         data.put("network",   extendedHealthService.getNetworkStatus());
-        return ResponseEntity.ok(Map.of("success", true, "data", data, "timestamp", now()));
+        return ok(Map.of("data", data));
     }
 
     @GetMapping("/smtp-logs")
@@ -54,29 +57,27 @@ public class SystemController {
             @RequestParam(defaultValue = "30") int days,
             HttpSession session) {
         int d = Math.max(1, Math.min(days, 365));
-        return ResponseEntity.ok(Map.of(
-                "success",   true,
-                "data",      extendedHealthService.getSmtpFailures(d),
-                "days",      d,
-                "timestamp", now()));
+        return ok(Map.of(
+                "data", extendedHealthService.getSmtpFailures(d),
+                "days", d));
     }
 
     @GetMapping("/db-stats")
     public ResponseEntity<Map<String, Object>> getDbStats(HttpSession session) {
-        return ResponseEntity.ok(Map.of("success", true, "data", extendedHealthService.getTableStats(), "timestamp", now()));
+        return ok(Map.of("data", extendedHealthService.getTableStats()));
     }
 
     @GetMapping("/metrics")
     public ResponseEntity<Map<String, Object>> getMetrics(HttpSession session) {
-        return ResponseEntity.ok(Map.of("success", true, "data", metricsService.getHistory(), "timestamp", now()));
+        return ok(Map.of("data", metricsService.getHistory()));
     }
 
     @GetMapping("/http-metrics")
     public ResponseEntity<Map<String, Object>> getHttpMetrics(HttpSession session) {
-        Map<String, Object> data = new java.util.LinkedHashMap<>();
+        Map<String, Object> data = new LinkedHashMap<>();
         data.put("summary", httpMetricsService.getSummary());
         data.put("history", httpMetricsService.getHistory());
-        return ResponseEntity.ok(Map.of("success", true, "data", data, "timestamp", now()));
+        return ok(Map.of("data", data));
     }
 
     /** Kalıcı HTTP metrikleri — aralıktaki endpoint listesi (seçici + özet). from/to UTC ISO. */
@@ -85,8 +86,7 @@ public class SystemController {
             @RequestParam String from, @RequestParam String to, HttpSession session) {
         requireSystemRead(session);
         permissionService.require(session, "system_health.read", "view");
-        return ResponseEntity.ok(Map.of("success", true,
-                "data", httpMetricsQueryService.endpoints(from, to), "timestamp", now()));
+        return ok(Map.of("data", httpMetricsQueryService.endpoints(from, to)));
     }
 
     /** Kalıcı HTTP metrikleri — zaman serisi + özet (count/errors/avg/p50/p95/p99). from/to UTC ISO;
@@ -99,8 +99,7 @@ public class SystemController {
             HttpSession session) {
         requireSystemRead(session);
         permissionService.require(session, "system_health.read", "view");
-        return ResponseEntity.ok(Map.of("success", true,
-                "data", httpMetricsQueryService.series(from, to, endpoint, granularity), "timestamp", now()));
+        return ok(Map.of("data", httpMetricsQueryService.series(from, to, endpoint, granularity)));
     }
 
     @PostMapping("/heartbeat")
@@ -108,7 +107,7 @@ public class SystemController {
         requireAdmin(session);
         permissionService.require(session, "system_health.actions", "execute");
         extendedHealthService.recordHeartbeat();
-        return ResponseEntity.ok(Map.of("success", true, "data", extendedHealthService.getHeartbeatStatus(), "timestamp", now()));
+        return ok(Map.of("data", extendedHealthService.getHeartbeatStatus()));
     }
 
     @GetMapping("/heartbeat-timeline")
@@ -116,10 +115,8 @@ public class SystemController {
             @RequestParam(defaultValue = "1") int days,
             HttpSession session) {
         permissionService.require(session, "system_health.read", "view");
-        return ResponseEntity.ok(Map.of(
-            "success",   true,
-            "data",      extendedHealthService.getHeartbeatTimeline(days),
-            "timestamp", now()));
+        return ok(Map.of(
+            "data", extendedHealthService.getHeartbeatTimeline(days)));
     }
 
     @DeleteMapping("/scheduler-lock")
@@ -127,7 +124,7 @@ public class SystemController {
         requireAdmin(session);   // sistem-geneli yıkıcı işlem → admin-only (defense-in-depth)
         permissionService.require(session, "system_health.scheduler_lock", "execute"); // dedike + sensitive (matriste görünür)
         schedulerService.forceReleaseLock();
-        return ResponseEntity.ok(Map.of("success", true, "message", "Scheduler lock released", "timestamp", now()));
+        return ok(Map.of("message", "Scheduler lock released"));
     }
 
     /** Kullanıcı / oturum izleme — aktif oturumlar, login serileri, top/anomali/peak (tek payload).
@@ -136,10 +133,8 @@ public class SystemController {
     public ResponseEntity<Map<String, Object>> getUserActivity(HttpSession session) {
         requireSystemRead(session);
         permissionService.require(session, "system_health.read", "view");
-        return ResponseEntity.ok(Map.of(
-                "success",   true,
-                "data",      userActivityService.getOverview(),
-                "timestamp", now()));
+        return ok(Map.of(
+                "data", userActivityService.getOverview()));
     }
 
     /** Veritabanı analitiği — top kullanıcı/SQL, yavaş sorgular, tablolar, seri, bağlantılar (tek payload).
@@ -149,10 +144,8 @@ public class SystemController {
             @RequestParam(defaultValue = "7") int days, HttpSession session) {
         requireSystemRead(session);
         permissionService.require(session, "system_health.read", "view");
-        return ResponseEntity.ok(Map.of(
-                "success",   true,
-                "data",      dbAnalyticsService.getOverview(days),
-                "timestamp", now()));
+        return ok(Map.of(
+                "data", dbAnalyticsService.getOverview(days)));
     }
 
     /** Esnek login serisi — grafik aralık seçimi (1g/7g/30g), gün-navigasyonu ve zoom için.
@@ -165,10 +158,8 @@ public class SystemController {
             HttpSession session) {
         requireSystemRead(session);
         permissionService.require(session, "system_health.read", "view");
-        return ResponseEntity.ok(Map.of(
-                "success",   true,
-                "data",      userActivityService.getLoginSeries(from, to, granularity),
-                "timestamp", now()));
+        return ok(Map.of(
+                "data", userActivityService.getLoginSeries(from, to, granularity)));
     }
 
     /** Admin: bir kullanıcının aktif oturumunu uzaktan sonlandır (kick) + remember-me token'larını iptal. */
@@ -184,7 +175,7 @@ public class SystemController {
         }
         userService.terminateActiveSession(username);
         rememberMeService.invalidateAllForUser(username);
-        return ResponseEntity.ok(Map.of("success", true, "username", username, "timestamp", now()));
+        return ok(Map.of("username", username));
     }
 
     /** Admin: haftalık erişilebilirlik raporunu ŞİMDİ tetikle (Pazartesi'yi beklemeden test/önizleme).
@@ -194,7 +185,7 @@ public class SystemController {
         requireAdmin(session);
         permissionService.require(session, "system_health.actions", "execute");
         var result = weeklyAvailabilityReportService.sendWeeklyReports(true);
-        return ResponseEntity.ok(Map.of("success", true, "data", result, "timestamp", now()));
+        return ok(Map.of("data", result));
     }
 
     /** Admin: haftalık erişilebilirlik durum kartı (genel anahtar + cron + raporlanan hafta + mail kitlesi). */
@@ -203,7 +194,7 @@ public class SystemController {
         requireAdmin(session);
         permissionService.require(session, "system_health.actions", "execute");   // peer uçlarla tutarlı (admin-only)
         var data = weeklyAvailabilityReportService.status();
-        return ResponseEntity.ok(Map.of("success", true, "data", data, "timestamp", now()));
+        return ok(Map.of("data", data));
     }
 
     /** Admin: bir takımın geçen haftalık raporunu GÖNDERMEDEN önizle (executive HTML + çözülmüş alıcılar). */
@@ -215,7 +206,7 @@ public class SystemController {
         permissionService.require(session, "system_health.actions", "execute");
         try {
             var data = weeklyAvailabilityReportService.preview(teamId, weekOffset);
-            return ResponseEntity.ok(Map.of("success", true, "data", data, "timestamp", now()));
+            return ok(Map.of("data", data));
         } catch (IllegalArgumentException e) {
             return ResponseEntity.badRequest().body(Map.of(
                     "success", false, "error", e.getMessage(), "timestamp", now()));
@@ -255,7 +246,7 @@ public class SystemController {
         requireAdmin(session);
         permissionService.require(session, "system_health.actions", "execute");
         var data = weeklyAvailabilityReportService.history(limit, includeTest);
-        return ResponseEntity.ok(Map.of("success", true, "data", data, "timestamp", now()));
+        return ok(Map.of("data", data));
     }
 
     /** Admin: tek bir arşiv kaydının tam içeriği (saklanan HTML — önizleme modal'ında gösterilir). */
@@ -266,7 +257,7 @@ public class SystemController {
         permissionService.require(session, "system_health.actions", "execute");
         try {
             var data = weeklyAvailabilityReportService.historyItem(id);
-            return ResponseEntity.ok(Map.of("success", true, "data", data, "timestamp", now()));
+            return ok(Map.of("data", data));
         } catch (IllegalArgumentException e) {
             return ResponseEntity.badRequest().body(Map.of(
                     "success", false, "error", e.getMessage(), "timestamp", now()));
@@ -282,7 +273,7 @@ public class SystemController {
         boolean enabled = body != null && Boolean.parseBoolean(String.valueOf(body.get("enabled")));
         String actor = session != null ? (String) session.getAttribute("username") : null;
         weeklyAvailabilityReportService.setEnabled(enabled, actor != null ? actor : "admin");
-        return ResponseEntity.ok(Map.of("success", true, "data", Map.of("enabled", enabled), "timestamp", now()));
+        return ok(Map.of("data", Map.of("enabled", enabled)));
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
@@ -299,6 +290,13 @@ public class SystemController {
         if (!SessionScope.isGlobalAdmin(session) && !"AUDIT".equals(role)) {
             throw new SecurityException("Admin or audit access required");
         }
+    }
+
+    private ResponseEntity<Map<String, Object>> ok(Map<String, Object> body) {
+        Map<String, Object> response = new LinkedHashMap<>(body);
+        response.put("success", true);
+        response.put("timestamp", now());
+        return ResponseEntity.ok(response);
     }
 
     private String now() {

@@ -17,9 +17,13 @@ import java.time.ZoneOffset;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * System Health "Kullanıcı / Oturum İzleme" akordiyonu için toplulaştırma servisi.
@@ -127,8 +131,8 @@ public class UserActivityService {
         String s24 = ISO.format(Instant.now().minusSeconds(DAY_SECONDS));
         long s24Logins = 0, s24Failed = 0, s24Anom = 0;
         long d7Logins = 0, d7Failed = 0, d7Anom = 0;
-        java.util.Set<String> users24 = new java.util.HashSet<>();
-        java.util.Set<String> users7d = new java.util.HashSet<>();
+        Set<String> users24 = new HashSet<>();
+        Set<String> users7d = new HashSet<>();
 
         for (AuditLog a : window) {
             boolean success = "SUCCESS".equals(a.getOutcome());
@@ -474,13 +478,13 @@ public class UserActivityService {
      *  eşleştiği için her iki yazım da giriş yapabilir → eşleştirmeyi de case-insensitive yapmalıyız,
      *  aksi halde küçük-harf login eden kullanıcının resmi/adı top-user & rol/takım listesinde çıkmaz. */
     private Map<String, AppUser> usersByName() {
-        Map<String, AppUser> m = new java.util.HashMap<>();
+        Map<String, AppUser> m = new HashMap<>();
         for (AppUser u : userRepo.findAll()) if (u.getUsername() != null) m.put(lc(u.getUsername()), u);
         return m;
     }
 
     /** Case-insensitive eşleştirme anahtarı (Locale.ROOT — Türkçe i/ı tuzağından kaçınmak için). */
-    private static String lc(String s) { return s == null ? null : s.toLowerCase(java.util.Locale.ROOT); }
+    private static String lc(String s) { return s == null ? null : s.toLowerCase(Locale.ROOT); }
 
     /** displayName → yoksa "Ad Soyad" → yoksa null. */
     private static String displayName(AppUser u) {

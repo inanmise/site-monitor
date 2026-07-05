@@ -1,6 +1,7 @@
 package com.certmonitor.controller;
 
 import com.certmonitor.service.AuditService;
+import com.certmonitor.service.PermissionService;
 import com.certmonitor.service.SqlPlaygroundService;
 import com.certmonitor.util.SqlSamples;
 import jakarta.servlet.http.HttpServletRequest;
@@ -21,7 +22,7 @@ public class SqlPlaygroundController {
 
     private final SqlPlaygroundService service;
     private final AuditService auditService;
-    private final com.certmonitor.service.PermissionService permissionService;
+    private final PermissionService permissionService;
 
     @GetMapping("/tables")
     public ResponseEntity<Map<String, Object>> tables(HttpSession session) {

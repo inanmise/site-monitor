@@ -3,10 +3,19 @@ package com.certmonitor.controller;
 import com.certmonitor.model.*;
 import com.certmonitor.repository.*;
 import com.certmonitor.service.AuditService;
+import com.certmonitor.service.ClientIpResolver;
+import com.certmonitor.service.ConnectionDiagnosticsService;
+import com.certmonitor.service.DiagnosticHistoryService;
+import com.certmonitor.service.EmailNotificationService;
 import com.certmonitor.service.EscalationService;
+import com.certmonitor.service.HstsDiagnosticsService;
+import com.certmonitor.service.NetworkDiagnosticsService;
+import com.certmonitor.service.OpensslDiagnosticsService;
+import com.certmonitor.service.PermissionService;
 import com.certmonitor.service.UserService;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpSession;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.cache.annotation.CacheEvict;
@@ -20,10 +29,16 @@ import org.springframework.web.bind.annotation.*;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.NoSuchElementException;
 import java.util.Objects;
+import java.util.Set;
 
 @Slf4j
 @RestController
@@ -45,15 +60,15 @@ public class AdminController {
     private final UserService userService;
     private final AppUserRepository userRepo;
     private final TeamRepository teamRepo;
-    private final com.certmonitor.service.EmailNotificationService emailNotificationService;
-    private final com.certmonitor.service.ConnectionDiagnosticsService diagnosticsService;
-    private final com.certmonitor.service.OpensslDiagnosticsService opensslDiagnosticsService;
-    private final com.certmonitor.service.NetworkDiagnosticsService networkDiagnosticsService;
-    private final com.certmonitor.service.HstsDiagnosticsService hstsDiagnosticsService;
-    private final com.certmonitor.service.DiagnosticHistoryService diagnosticHistoryService;
-    private final com.certmonitor.service.ClientIpResolver clientIpResolver;
+    private final EmailNotificationService emailNotificationService;
+    private final ConnectionDiagnosticsService diagnosticsService;
+    private final OpensslDiagnosticsService opensslDiagnosticsService;
+    private final NetworkDiagnosticsService networkDiagnosticsService;
+    private final HstsDiagnosticsService hstsDiagnosticsService;
+    private final DiagnosticHistoryService diagnosticHistoryService;
+    private final ClientIpResolver clientIpResolver;
 
-    private final com.certmonitor.service.PermissionService permissionService;
+    private final PermissionService permissionService;
 
     private static final DateTimeFormatter ISO =
             DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
@@ -73,12 +88,12 @@ public class AdminController {
         } else {                                           // scoped (müdür/PO/USER)
             List<Long> scope = viewScope(session);
             items = (scope == null || scope.isEmpty())
-                    ? java.util.List.of()
+                    ? List.of()
                     : inventoryRepo.findByTeamIdInAndDeletedAtIsNullOrderByDomainAsc(scope);
         }
         // SY/UG takım adlarını sunucuda çöz — USER rolü tüm takım listesini çekemediğinden
         // (kendi takımıyla filtreli) liste kolonlarında takım adları boş kalmasın.
-        java.util.Map<Long, String> teamNames = new java.util.HashMap<>();
+        Map<Long, String> teamNames = new HashMap<>();
         for (Team tm : userService.listTeams()) {
             if (tm.getId() != null) teamNames.put(tm.getId(), tm.getName());
         }
@@ -92,7 +107,7 @@ public class AdminController {
     @CacheEvict(value = {"cert-latest", "cert-warnings", "cert-stats", "renewal-advice"}, allEntries = true)
     @PostMapping("/inventory")
     public ResponseEntity<Map<String, Object>> addInventory(
-            @jakarta.validation.Valid @RequestBody CertificateInventory item, HttpSession session, HttpServletRequest request) {
+            @Valid @RequestBody CertificateInventory item, HttpSession session, HttpServletRequest request) {
         requireAdminOrTeamAdmin(session);
         requirePerm(session, "inventory.crud", "edit");
         validateDomain(item.getDomain());
@@ -122,7 +137,7 @@ public class AdminController {
     @PutMapping("/inventory/{id}")
     @Transactional
     public ResponseEntity<Map<String, Object>> updateInventory(
-            @PathVariable Long id, @jakarta.validation.Valid @RequestBody CertificateInventory item,
+            @PathVariable Long id, @Valid @RequestBody CertificateInventory item,
             HttpSession session, HttpServletRequest request) {
         CertificateInventory existing = inventoryRepo.findById(id)
                 .orElseThrow(() -> new NoSuchElementException("Inventory item not found: " + id));
@@ -291,7 +306,7 @@ public class AdminController {
         auditService.recordAction("DIAGNOSTICS_RUN", session, request,
                 "CERTIFICATE", domain, "{\"port\":" + port + "}");
         // Tanılama geçmişi — kim/ne zaman/nereden/sonuç
-        boolean ok = data.get("combos") instanceof java.util.List<?> combos
+        boolean ok = data.get("combos") instanceof List<?> combos
                 && combos.stream().anyMatch(c -> c instanceof Map<?, ?> m && "ok".equals(m.get("status")));
         diagnosticHistoryService.record(domain, port, "CONNECTION",
                 actor(session), userIdFromSession(session), teamId(session), clientIp(request),
@@ -378,7 +393,7 @@ public class AdminController {
         requirePerm(session, "diagnostics.history", "view");
         List<Map<String, Object>> data = diagnosticHistoryService.history(domain).stream()
                 .map(d -> {
-                    Map<String, Object> m = new java.util.LinkedHashMap<>();
+                    Map<String, Object> m = new LinkedHashMap<>();
                     m.put("id", d.getId());
                     m.put("run_type", d.getRunType());
                     m.put("executed_by", d.getExecutedBy());
@@ -399,7 +414,7 @@ public class AdminController {
         com.certmonitor.model.DiagnosticRun d = diagnosticHistoryService.get(id);
         requireAdminOrMonitoredDomain(session, d.getDomain());
         requirePerm(session, "diagnostics.history", "view");
-        Map<String, Object> m = new java.util.LinkedHashMap<>();
+        Map<String, Object> m = new LinkedHashMap<>();
         m.put("id", d.getId());
         m.put("domain", d.getDomain());
         m.put("port", d.getPort());
@@ -415,7 +430,7 @@ public class AdminController {
 
     /** "3/4 kombinasyon OK" tarzı kısa CONNECTION özeti. */
     private String connectionSummary(Map<String, Object> data) {
-        if (!(data.get("combos") instanceof java.util.List<?> combos)) return "—";
+        if (!(data.get("combos") instanceof List<?> combos)) return "—";
         long ok = combos.stream().filter(c -> c instanceof Map<?, ?> m && "ok".equals(m.get("status"))).count();
         return ok + "/" + combos.size() + " kombinasyon OK";
     }
@@ -424,7 +439,7 @@ public class AdminController {
     private String opensslSummary(Map<String, Object> data) {
         if (!Boolean.TRUE.equals(data.get("available"))) return "openssl bulunamadı";
         StringBuilder sb = new StringBuilder();
-        if (data.get("protocols") instanceof java.util.List<?> protos) {
+        if (data.get("protocols") instanceof List<?> protos) {
             String weak = protos.stream()
                     .filter(p -> p instanceof Map<?, ?> m
                             && Boolean.TRUE.equals(m.get("supported")) && "HIGH".equals(m.get("risk")))
@@ -432,7 +447,7 @@ public class AdminController {
                     .reduce((a, b) -> a + ", " + b).orElse(null);
             sb.append(weak != null ? "Zayıf protokol açık: " + weak : "Zayıf protokol yok");
         }
-        if (data.get("flags") instanceof java.util.List<?> flags && !flags.isEmpty()) {
+        if (data.get("flags") instanceof List<?> flags && !flags.isEmpty()) {
             sb.append("; ").append(flags.size()).append(" sertifika bayrağı");
         }
         return sb.toString();
@@ -477,10 +492,10 @@ public class AdminController {
         requireAdminOrTeamAdmin(session);
         requirePerm(session, "inventory.crud", "edit");
         String action = body.get("action") != null ? body.get("action").toString().trim().toLowerCase() : "";
-        if (!java.util.Set.of("activate", "deactivate", "delete").contains(action)) {
+        if (!Set.of("activate", "deactivate", "delete").contains(action)) {
             throw new IllegalArgumentException("action must be one of: activate, deactivate, delete");
         }
-        java.util.LinkedHashSet<Long> ids = new java.util.LinkedHashSet<>();
+        LinkedHashSet<Long> ids = new LinkedHashSet<>();
         if (body.get("ids") instanceof List<?> raw) {
             for (Object o : raw) { Long id = toLong(o); if (id != null) ids.add(id); }
         }
@@ -526,7 +541,7 @@ public class AdminController {
         auditService.recordAction(auditAction, session, request, "CERTIFICATE",
                 processed + " domain",
                 "{\"processed\":" + processed + ",\"skipped\":" + skipped + ",\"alertsClosed\":" + alertsClosed + "}");
-        Map<String, Object> data = new java.util.LinkedHashMap<>();
+        Map<String, Object> data = new LinkedHashMap<>();
         data.put("processed", processed);
         data.put("skipped", skipped);
         data.put("alertsClosed", alertsClosed);
@@ -615,7 +630,7 @@ public class AdminController {
         auditService.recordAction("DOMAIN_BULK_PURGE", session, request, "CERTIFICATE",
                 purged + " domain",
                 "{\"purged\":" + purged + ",\"checksDeleted\":" + checksDeleted + "}");
-        Map<String, Object> data = new java.util.LinkedHashMap<>();
+        Map<String, Object> data = new LinkedHashMap<>();
         data.put("purged", purged);
         data.put("checksDeleted", checksDeleted);
         return ok(Map.of("data", data, "message", "Purge complete"));
@@ -704,7 +719,7 @@ public class AdminController {
         } else {
             List<Long> scope = viewScope(session);
             contacts = (scope == null || scope.isEmpty())
-                    ? java.util.List.of()
+                    ? List.of()
                     : contactRepo.findByTeamIdInAndActiveTrueOrderByRoleAsc(scope);
         }
         return ok(Map.of("data", contacts));
@@ -719,7 +734,7 @@ public class AdminController {
         } else {
             List<Long> scope = viewScope(session);
             contacts = (scope == null || scope.isEmpty())
-                    ? java.util.List.of()
+                    ? List.of()
                     : contactRepo.findByTeamIdInOrderByRoleAsc(scope);
         }
         return ok(Map.of("data", contacts));
@@ -826,7 +841,7 @@ public class AdminController {
         boolean scoped = scope != null;
         if (scoped && scope.isEmpty()) {   // kapsamsız kullanıcı → hiçbir alarm
             return ok(Map.of("data", List.of(), "total", 0L, "page", 0, "size", sz,
-                    "type_counts", java.util.Map.of()));
+                    "type_counts", Map.of()));
         }
         List<Long> scopeList = scoped ? scope : List.of(-1L);   // global'de dummy (scoped=false kısa-devre)
         Page<AlertEvent> result = alertEventRepo.findFiltered(
@@ -834,7 +849,7 @@ public class AdminController {
                 scoped, scopeList, PageRequest.of(Math.max(0, page), sz, sort));
         enrichAlerts(result.getContent());
         // Tip filtre pill'lerinin canlı sayıları — tip filtresinden bağımsız
-        Map<String, Long> typeCounts = new java.util.LinkedHashMap<>();
+        Map<String, Long> typeCounts = new LinkedHashMap<>();
         for (Object[] row : alertEventRepo.countFilteredByType(
                 resolvedEffective, since, until, resolvedSince, resolvedUntil, domain, scoped, scopeList)) {
             typeCounts.put(String.valueOf(row[0]), (Long) row[1]);
@@ -855,15 +870,15 @@ public class AdminController {
     private void enrichAlerts(List<AlertEvent> events) {
         if (events.isEmpty()) return;
 
-        java.util.Set<String> domains = new java.util.HashSet<>();
-        java.util.Set<Long> alertIds  = new java.util.HashSet<>();
+        Set<String> domains = new HashSet<>();
+        Set<Long> alertIds  = new HashSet<>();
         for (AlertEvent ev : events) {
             if (ev.getDomain() != null) domains.add(ev.getDomain());
             if (ev.getId() != null)     alertIds.add(ev.getId());
         }
 
-        Map<String, CertificateInventory> invByDomain = new java.util.HashMap<>();
-        java.util.Set<Long> teamIds = new java.util.HashSet<>();
+        Map<String, CertificateInventory> invByDomain = new HashMap<>();
+        Set<Long> teamIds = new HashSet<>();
         if (!domains.isEmpty()) {
             for (CertificateInventory inv : inventoryRepo.findByDomainIn(domains)) {
                 invByDomain.putIfAbsent(inv.getDomain(), inv);
@@ -872,14 +887,14 @@ public class AdminController {
             }
         }
 
-        Map<Long, String> teamNames = new java.util.HashMap<>();
+        Map<Long, String> teamNames = new HashMap<>();
         if (!teamIds.isEmpty()) {
             for (Team t : teamRepo.findAllById(teamIds)) {
                 teamNames.put(t.getId(), t.getName());
             }
         }
 
-        Map<Long, long[]> mailCounts = new java.util.HashMap<>();
+        Map<Long, long[]> mailCounts = new HashMap<>();
         if (!alertIds.isEmpty()) {
             for (Object[] row : notificationLogRepo.countByAlertIds(alertIds)) {
                 Long alertId = ((Number) row[0]).longValue();
@@ -949,8 +964,8 @@ public class AdminController {
     // ── Alarm takım kapsamı (IDOR engeli) ─────────────────────────────────────
     /** Bir alarmın ait olabileceği takım id'leri: kendi teamId'si (keyword/ping) + cert alarmında
      *  domain→envanter (SY teamId + UG ugTeamId). cert alarmlarında teamId NULL olduğundan envanter şart. */
-    private java.util.Set<Long> alertTeamIds(AlertEvent ev) {
-        java.util.Set<Long> ids = new java.util.HashSet<>();
+    private Set<Long> alertTeamIds(AlertEvent ev) {
+        Set<Long> ids = new HashSet<>();
         if (ev.getTeamId() != null) ids.add(ev.getTeamId());
         if (ev.getDomain() != null) {
             inventoryRepo.findByDomain(ev.getDomain()).ifPresent(inv -> {
@@ -983,7 +998,7 @@ public class AdminController {
         }
         List<Long> scope = viewScope(session);
         var filtered = (scope == null || scope.isEmpty())
-                ? java.util.List.<com.certmonitor.model.Team>of()
+                ? List.<com.certmonitor.model.Team>of()
                 : all.stream().filter(t -> scope.contains(t.getId())).toList();
         return ok(Map.of("data", filtered));
     }
@@ -1064,7 +1079,7 @@ public class AdminController {
         }
         List<Long> scope = viewScope(session);
         var filtered = (scope == null || scope.isEmpty())
-                ? java.util.List.<AppUser>of()
+                ? List.<AppUser>of()
                 : all.stream().filter(u -> inScope(u, scope)).toList();
         return ok(Map.of("data", filtered));
     }
@@ -1095,7 +1110,7 @@ public class AdminController {
                 qParam, roleParam, orgRoleParam, effTeamId,
                 PageRequest.of(page, size));
 
-        Map<String, Object> resp = new java.util.LinkedHashMap<>();
+        Map<String, Object> resp = new LinkedHashMap<>();
         resp.put("data", p.getContent());
         resp.put("total", p.getTotalElements());
         resp.put("page", p.getNumber());
@@ -1111,7 +1126,7 @@ public class AdminController {
         requireAdminOrTeamAdmin(session);
         requirePerm(session, "users.crud", "edit");
         String requestedRole = (String) body.get("system_role");
-        java.util.List<Long> requestedTeams = teamIdsFromBody(body);
+        List<Long> requestedTeams = teamIdsFromBody(body);
         if (isTeamAdmin(session)) {
             // TEAM_ADMIN can only seed USER or TEAM_ADMIN; never ADMIN/AUDIT.
             if (requestedRole != null && !TEAM_ADMIN_ASSIGNABLE_ROLES.contains(requestedRole)) {
@@ -1119,7 +1134,7 @@ public class AdminController {
             }
             // And the new user lands in the team admin's team — payload can't override.
             Long own = teamId(session);
-            requestedTeams = own != null ? java.util.List.of(own) : java.util.List.of();
+            requestedTeams = own != null ? List.of(own) : List.of();
         }
         AppUser user = userService.createUser(
                 (String) body.get("username"),
@@ -1148,7 +1163,7 @@ public class AdminController {
         requirePerm(session, "users.crud", "edit");
         String requestedRole = (String) body.get("system_role");
         // null = takımlara dokunma (kısmi güncelleme); team_ids veya team_id verilirse (boş dahil) set et.
-        java.util.List<Long> requestedTeams =
+        List<Long> requestedTeams =
                 (body.containsKey("team_ids") || body.containsKey("team_id")) ? teamIdsFromBody(body) : null;
         Long selfId = userIdFromSession(session);
         if (selfId != null && selfId.equals(id)) {
@@ -1290,8 +1305,8 @@ public class AdminController {
 
     // ── Certificate Notes ──────────────────────────────────────────────────────
 
-    private static final java.util.Set<String> NOTE_CATEGORIES =
-            java.util.Set.of("NOTE", "DEPLOYMENT", "INCIDENT", "RENEWAL");
+    private static final Set<String> NOTE_CATEGORIES =
+            Set.of("NOTE", "DEPLOYMENT", "INCIDENT", "RENEWAL");
     private static final int NOTE_MAX_LENGTH = 5000;
     private static final long NOTE_EDIT_WINDOW_HOURS = 24L;
 
@@ -1305,7 +1320,7 @@ public class AdminController {
         } else {
             List<Long> scope = viewScope(session);
             notes = (scope == null || scope.isEmpty())
-                    ? java.util.List.of()
+                    ? List.of()
                     : noteRepo.findByDomainAndTeamIdInOrderByCreatedAtDesc(domain, scope);
         }
         return ok(Map.of("data", notes));
@@ -1367,7 +1382,7 @@ public class AdminController {
         if (!isAdmin(session)) checkOwnership(note.getTeamId(), session);
 
         String currentUser = (String) session.getAttribute("username");
-        if (!java.util.Objects.equals(currentUser, note.getAuthorUsername()))
+        if (!Objects.equals(currentUser, note.getAuthorUsername()))
             throw new SecurityException("NOT_AUTHOR");
 
         try {
@@ -1416,7 +1431,7 @@ public class AdminController {
         if (!isAdmin(session)) checkOwnership(note.getTeamId(), session);
 
         String currentUser = (String) session.getAttribute("username");
-        if (!isAdmin(session) && !java.util.Objects.equals(currentUser, note.getAuthorUsername()))
+        if (!isAdmin(session) && !Objects.equals(currentUser, note.getAuthorUsername()))
             throw new SecurityException("Only the author or an admin can delete a note");
 
         String deletedAt = now();
@@ -1520,7 +1535,7 @@ public class AdminController {
     }
 
     /** Read scope: null = all teams; else only these (müdür: subordinates'; PO: led; USER: own). */
-    private java.util.List<Long> viewScope(HttpSession session) {
+    private List<Long> viewScope(HttpSession session) {
         return SessionScope.viewTeamIds(session);
     }
 
@@ -1540,14 +1555,14 @@ public class AdminController {
 
     private void requireAdminOrTeamAdmin(HttpSession session) {
         if (isAdmin(session)) return;
-        java.util.List<Long> m = SessionScope.manageTeamIds(session);
+        List<Long> m = SessionScope.manageTeamIds(session);
         if (m != null && !m.isEmpty()) return;             // PO with managed teams
         log.warn("Non-admin/team-admin write attempt by user={}", actor(session));
         throw new SecurityException("Admin or team-admin required");
     }
 
-    private static final java.util.Set<String> TEAM_ADMIN_ASSIGNABLE_ROLES =
-            java.util.Set.of("USER", "TEAM_ADMIN");
+    private static final Set<String> TEAM_ADMIN_ASSIGNABLE_ROLES =
+            Set.of("USER", "TEAM_ADMIN");
 
     private void requireAdmin(HttpSession session) {
         if (!isAdmin(session)) {
@@ -1612,7 +1627,7 @@ public class AdminController {
     }
 
     private ResponseEntity<Map<String, Object>> ok(Map<String, Object> body) {
-        Map<String, Object> response = new java.util.LinkedHashMap<>(body);
+        Map<String, Object> response = new LinkedHashMap<>(body);
         response.put("success", true);
         response.put("timestamp", now());
         return ResponseEntity.ok(response);
@@ -1643,9 +1658,9 @@ public class AdminController {
 
     /** Body'den çoklu takım listesi: önce `team_ids` (dizi), yoksa tek `team_id` → [id] (geriye-uyum).
      *  Sıra korunur (birincil = ilk). İçerik yoksa boş liste döner. */
-    private java.util.List<Long> teamIdsFromBody(Map<String, Object> body) {
-        java.util.List<Long> out = new java.util.ArrayList<>();
-        if (body.get("team_ids") instanceof java.util.List<?> list) {
+    private List<Long> teamIdsFromBody(Map<String, Object> body) {
+        List<Long> out = new ArrayList<>();
+        if (body.get("team_ids") instanceof List<?> list) {
             for (Object o : list) { Long v = toLong(o); if (v != null && !out.contains(v)) out.add(v); }
             return out;
         }
@@ -1655,7 +1670,7 @@ public class AdminController {
     }
 
     /** Kullanıcı, verilen görünür-takım scope'undaki herhangi bir takıma üye mi (birincil veya ek). */
-    private boolean inScope(AppUser u, java.util.List<Long> scope) {
+    private boolean inScope(AppUser u, List<Long> scope) {
         if (u.getTeamId() != null && scope.contains(u.getTeamId())) return true;
         if (u.getTeamIds() != null) for (Long t : u.getTeamIds()) if (scope.contains(t)) return true;
         return false;

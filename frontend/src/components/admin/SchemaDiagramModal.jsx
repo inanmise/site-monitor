@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react'
 import { Network, Loader2, Maximize2, Minimize2 } from 'lucide-react'
+import { useT } from '../../i18n/index.jsx'
 
 const NODE_W = 158
 const NODE_H = 30
@@ -13,7 +14,8 @@ const PAD = 28
  * üstte, referans EDEN (alt/child: log/check tabloları) altta. Düz çizgi = gerçek FK, kesik çizgi =
  * `*_id` kolonundan ÇIKARIM (bu şemada DB seviyesinde gerçek FK yok — ilişkiler örtük).
  */
-export default function SchemaDiagramModal({ data, loading, onClose, t }) {
+export default function SchemaDiagramModal({ data, loading, onClose }) {
+  const t = useT()
   const { nodes, edges, width, height, isolatedCount } = useMemo(() => layout(data), [data])
   const [fs, setFs] = useState(false)
 

@@ -2,6 +2,7 @@ package com.certmonitor.service;
 
 import com.certmonitor.model.SmtpSettings;
 import jakarta.mail.internet.MimeMessage;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -26,6 +27,7 @@ import java.util.Properties;
  */
 @Slf4j
 @Service
+@RequiredArgsConstructor
 public class SmtpMailService {
 
     // Mail'e özel logger (EmailNotificationService ile ortak) — bağımsız TRACE toggle:
@@ -33,10 +35,6 @@ public class SmtpMailService {
     private static final Logger MAIL_LOG = LoggerFactory.getLogger("com.certmonitor.mail");
 
     private final SmtpSettingsService settingsService;
-
-    public SmtpMailService(SmtpSettingsService settingsService) {
-        this.settingsService = settingsService;
-    }
 
     /** Validates host/port/security/auth via JavaMail Transport.connect() — sends nothing. */
     public Map<String, Object> testConnection() {

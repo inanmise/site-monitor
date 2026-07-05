@@ -7,6 +7,9 @@ import com.certmonitor.service.DnsCheckerService;
 import com.certmonitor.service.PortCheckerService;
 import com.certmonitor.service.KeywordCheckerService;
 import com.certmonitor.service.PingCheckerService;
+import com.certmonitor.service.AppSettingsService;
+import com.certmonitor.service.EscalationService;
+import com.certmonitor.service.PermissionService;
 import jakarta.servlet.http.HttpSession;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -54,9 +57,9 @@ public class MonitoringController {
 
     /** domain/host → sorumlu takım adı (izleme ekranlarında takım gösterimi/filtresi). */
     private final CertificateService certificateService;
-    private final com.certmonitor.service.PermissionService permissionService;
-    private final com.certmonitor.service.EscalationService escalationService;
-    private final com.certmonitor.service.AppSettingsService appSettings;
+    private final PermissionService permissionService;
+    private final EscalationService escalationService;
+    private final AppSettingsService appSettings;
 
     private static final DateTimeFormatter ISO =
             DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
@@ -140,8 +143,8 @@ public class MonitoringController {
         return o == null || o.toString().isBlank();
     }
 
-    private static final java.util.Set<String> KW_OPERATORS = java.util.Set.of("GTE", "LTE", "EQ", "GT", "LT");
-    private static final java.util.Set<String> DNS_RECORD_TYPES = java.util.Set.of("A", "AAAA", "CNAME", "MX", "TXT", "NS");
+    private static final Set<String> KW_OPERATORS = Set.of("GTE", "LTE", "EQ", "GT", "LT");
+    private static final Set<String> DNS_RECORD_TYPES = Set.of("A", "AAAA", "CNAME", "MX", "TXT", "NS");
 
     /** Keyword adet koşulunu (operator + matchCount) body'den uygular; legacy 'condition' desteklenir;
      *  alertCondition (NOT NULL) operatörden türetilir. */
@@ -151,7 +154,7 @@ public class MonitoringController {
     private static int clampRecovery(int v) { return Math.max(1, Math.min(20, v)); }   // 1 = ilk up'ta kapat
 
     /** Port kontrol tipi — gecerli degilse TCP'ye duser. */
-    private static final java.util.Set<String> PORT_TYPES = java.util.Set.of("TCP", "TLS", "HTTP", "BANNER", "UDP");
+    private static final Set<String> PORT_TYPES = Set.of("TCP", "TLS", "HTTP", "BANNER", "UDP");
     private static String normalizePortType(Object o) {
         if (o == null) return "TCP";
         String s = o.toString().trim().toUpperCase();
@@ -194,7 +197,7 @@ public class MonitoringController {
 
         // Son 24 saat HTTP-OK: domain başına [total, upCount] SQL agregasyonu — 24h TÜM satırları
         // JVM'e yüklemek yerine (500 domain'de ~144k satır heap yükü giderildi). httpOk = up==total.
-        Map<String, Boolean> httpOkByDomain = new java.util.HashMap<>();
+        Map<String, Boolean> httpOkByDomain = new HashMap<>();
         for (Object[] row : uptimeCheckRepo.aggregateHttpOkSince(cutoff24h)) {
             long total = ((Number) row[1]).longValue();
             long up    = ((Number) row[2]).longValue();
@@ -882,7 +885,7 @@ public class MonitoringController {
         List<KeywordMonitor> monitors = keywordMonitorRepo.findAllByOrderByNameAsc();
         Map<String, AlertEvent> alarms = openAlarmsByDomain(
                 monitors.stream().map(KeywordMonitor::getUrl).collect(Collectors.toSet()),
-                com.certmonitor.service.EscalationService.TYPE_KEYWORD);
+                EscalationService.TYPE_KEYWORD);
         List<Map<String, Object>> result = monitors.stream()
                 .map(m -> enrichKeyword(m, latest.get(m.getId()), teams, alarms.get(m.getUrl()))).toList();
         return ok(result);
@@ -938,7 +941,7 @@ public class MonitoringController {
             m.setUpdatedAt(ISO.format(Instant.now()));
             KeywordMonitor saved = keywordMonitorRepo.save(m);
             return ok(enrichKeyword(saved, keywordResultRepo.findTopByMonitorIdOrderByCheckedAtDesc(id).orElse(null), teamNameMap(),
-                    alertEventRepo.findOpenAlert(saved.getUrl(), com.certmonitor.service.EscalationService.TYPE_KEYWORD).orElse(null)));
+                    alertEventRepo.findOpenAlert(saved.getUrl(), EscalationService.TYPE_KEYWORD).orElse(null)));
         }).orElse(notFound("Keyword monitor not found"));
     }
 
@@ -949,7 +952,7 @@ public class MonitoringController {
             if (!SessionScope.canManage(session, m.getTeamId())) throw new SecurityException("Silme yetkisi yok (yalnız takım yöneticisi/ADMIN)");
             // Silme kaynaklı kapanma: açık alarmı sessizce resolved'a geçir (çözüldü maili YOK).
             escalationService.resolveOpenAlertsSilently(m.getUrl(),
-                    java.util.Set.of(com.certmonitor.service.EscalationService.TYPE_KEYWORD), "Sistem (izleme silindi)");
+                    Set.of(EscalationService.TYPE_KEYWORD), "Sistem (izleme silindi)");
             keywordMonitorRepo.delete(m);   // hard delete — "Sil" listeden kaldırır ("Aktif" toggle ayrı)
             return ok(Map.of("deleted", true));
         }).orElse(notFound("Keyword monitor not found"));
@@ -989,7 +992,7 @@ public class MonitoringController {
             boolean found = Boolean.TRUE.equals(r.getOrDefault("found", false));
             int count = r.get("count") instanceof Number cn ? cn.intValue() : (found ? 1 : 0);
             int threshold = m.getMatchCount() != null ? m.getMatchCount() : 1;
-            boolean ok = r.get("error") == null && com.certmonitor.service.KeywordCheckerService.evaluate(count, m.getMatchOperator(), threshold);
+            boolean ok = r.get("error") == null && KeywordCheckerService.evaluate(count, m.getMatchOperator(), threshold);
             KeywordResult res = new KeywordResult();
             res.setMonitorId(m.getId());
             res.setFound(found);
@@ -1002,7 +1005,7 @@ public class MonitoringController {
             res.setCheckedAt(ISO.format(Instant.now()));
             keywordResultRepo.save(res);
             return ok(enrichKeyword(m, res, teamNameMap(),
-                    alertEventRepo.findOpenAlert(m.getUrl(), com.certmonitor.service.EscalationService.TYPE_KEYWORD).orElse(null)));
+                    alertEventRepo.findOpenAlert(m.getUrl(), EscalationService.TYPE_KEYWORD).orElse(null)));
         }).orElse(notFound("Keyword monitor not found"));
     }
 
@@ -1136,7 +1139,7 @@ public class MonitoringController {
         }
         List<Map<String, Object>> series = new ArrayList<>();
         long downTotal = 0;
-        for (String key : new java.util.TreeSet<>(counts.keySet())) {
+        for (String key : new TreeSet<>(counts.keySet())) {
             List<Long> vs = values.get(key);
             int down = downs.getOrDefault(key, 0);
             downTotal += down;
@@ -1224,7 +1227,7 @@ public class MonitoringController {
         List<PingMonitor> monitors = pingMonitorRepo.findAllByOrderByNameAsc();
         Map<String, AlertEvent> alarms = openAlarmsByDomain(
                 monitors.stream().map(PingMonitor::getHost).collect(Collectors.toSet()),
-                com.certmonitor.service.EscalationService.TYPE_PING_DOWN);
+                EscalationService.TYPE_PING_DOWN);
         List<Map<String, Object>> result = monitors.stream()
                 .map(m -> enrichPing(m, latest.get(m.getId()), teams, alarms.get(m.getHost()))).toList();
         return ok(result);
@@ -1278,7 +1281,7 @@ public class MonitoringController {
                     // Host DEĞİŞTİ → eski host'un açık alarmını sessizce kapat. Aksi halde recovery yeni host
                     // ile arar, "domain=eskiHost" alarmı öksüz kalır ve asla resolve edilmez (BUG: takılı PING_DOWN).
                     escalationService.resolveOpenAlertsSilently(m.getHost(),
-                            java.util.Set.of(com.certmonitor.service.EscalationService.TYPE_PING_DOWN), "Sistem (host değişti)");
+                            Set.of(EscalationService.TYPE_PING_DOWN), "Sistem (host değişti)");
                 }
                 m.setHost(newHost);
             }
@@ -1296,7 +1299,7 @@ public class MonitoringController {
             m.setUpdatedAt(ISO.format(Instant.now()));
             PingMonitor saved = pingMonitorRepo.save(m);
             return ok(enrichPing(saved, pingCheckRepo.findTopByMonitorIdOrderByCheckedAtDesc(id).orElse(null), teamNameMap(),
-                    alertEventRepo.findOpenAlert(saved.getHost(), com.certmonitor.service.EscalationService.TYPE_PING_DOWN).orElse(null)));
+                    alertEventRepo.findOpenAlert(saved.getHost(), EscalationService.TYPE_PING_DOWN).orElse(null)));
         }).orElse(notFound("Ping monitor not found"));
     }
 
@@ -1307,7 +1310,7 @@ public class MonitoringController {
             if (!SessionScope.canManage(session, m.getTeamId())) throw new SecurityException("Silme yetkisi yok (yalnız takım yöneticisi/ADMIN)");
             // Silme kaynaklı kapanma: açık alarmı sessizce resolved'a geçir (çözüldü maili YOK).
             escalationService.resolveOpenAlertsSilently(m.getHost(),
-                    java.util.Set.of(com.certmonitor.service.EscalationService.TYPE_PING_DOWN), "Sistem (izleme silindi)");
+                    Set.of(EscalationService.TYPE_PING_DOWN), "Sistem (izleme silindi)");
             pingMonitorRepo.delete(m);   // hard delete — "Sil" listeden kaldırır ("Aktif" toggle ayrı)
             return ok(Map.of("deleted", true));
         }).orElse(notFound("Ping monitor not found"));
@@ -1354,7 +1357,7 @@ public class MonitoringController {
             check.setCheckedAt(ISO.format(Instant.now()));
             pingCheckRepo.save(check);
             return ok(enrichPing(m, check, teamNameMap(),
-                    alertEventRepo.findOpenAlert(m.getHost(), com.certmonitor.service.EscalationService.TYPE_PING_DOWN).orElse(null)));
+                    alertEventRepo.findOpenAlert(m.getHost(), EscalationService.TYPE_PING_DOWN).orElse(null)));
         }).orElse(notFound("Ping monitor not found"));
     }
 

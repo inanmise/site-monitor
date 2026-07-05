@@ -2,6 +2,7 @@ package com.certmonitor.controller;
 
 import com.certmonitor.model.GuideLink;
 import com.certmonitor.repository.GuideLinkRepository;
+import com.certmonitor.service.PermissionService;
 import jakarta.servlet.http.HttpSession;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -21,7 +22,7 @@ import java.util.NoSuchElementException;
 public class GuideLinkController {
 
     private final GuideLinkRepository repo;
-    private final com.certmonitor.service.PermissionService permissionService;
+    private final PermissionService permissionService;
 
     @GetMapping
     public ResponseEntity<Map<String, Object>> list(HttpSession session) {
