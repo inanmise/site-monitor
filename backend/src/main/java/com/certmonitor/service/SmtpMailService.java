@@ -153,20 +153,29 @@ public class SmtpMailService {
 
     private String buildTestHtml(SmtpSettings s) {
         String now = LocalDateTime.now().format(DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm"));
-        return "<div style=\"font-family:Segoe UI,Arial,sans-serif;max-width:520px;margin:0 auto;"
-                + "padding:22px;color:#1e293b\">"
-                + "<h2 style=\"color:#2563eb;margin-top:0\">CertMonitor — SMTP test</h2>"
-                + "<p>Bu, CertMonitor Ayarlar ekranından gönderilen bir SMTP test e-postasıdır.</p>"
-                + "<table style=\"border-collapse:collapse;font-size:.92em;margin:10px 0\">"
-                + "<tr><td style=\"padding:3px 12px 3px 0;color:#64748b\">Sunucu:</td>"
-                + "<td style=\"padding:3px 0;font-weight:600\">" + esc(s.getHost()) + ":" + s.getPort() + "</td></tr>"
-                + "<tr><td style=\"padding:3px 12px 3px 0;color:#64748b\">STARTTLS:</td>"
-                + "<td style=\"padding:3px 0\">" + Boolean.TRUE.equals(s.getStartTlsEnable()) + "</td></tr>"
-                + "<tr><td style=\"padding:3px 12px 3px 0;color:#64748b\">Zaman:</td>"
-                + "<td style=\"padding:3px 0\">" + now + "</td></tr>"
+        // Outlook-güvenli çerçeve: dış bgcolor tablo → ortalanmış 520px beyaz kart → padding td'de; Apple dark-mode kapalı.
+        return "<!DOCTYPE html><html lang='tr'><head><meta charset='UTF-8'>"
+                + "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+                + "<meta name='color-scheme' content='light only'><meta name='supported-color-schemes' content='light'>"
+                + "<!--[if mso]><style>table,td,div,p,a{font-family:'Segoe UI',Arial,sans-serif!important}</style><![endif]-->"
+                + "<style>@media only screen and (max-width:600px){.em-wrap{padding:0!important}.em-card{border-radius:0!important;width:100%!important}.em-body{padding:16px!important}}</style>"
+                + "</head><body style=\"margin:0;padding:0;background:#f1f5f9;font-family:'Segoe UI',Arial,sans-serif;color:#1e293b\">"
+                + "<table role='presentation' class='em-wrap' width='100%' cellpadding='0' cellspacing='0' border='0' bgcolor='#f1f5f9' style='background:#f1f5f9;mso-table-lspace:0pt;mso-table-rspace:0pt'>"
+                + "<tr><td align='center' style='padding:24px 10px'>"
+                + "<table role='presentation' class='em-card' width='520' cellpadding='0' cellspacing='0' border='0' bgcolor='#ffffff' style='max-width:520px;width:100%;background:#ffffff;border:1px solid #e5e7eb;border-radius:12px;overflow:hidden'>"
+                + "<tr><td class='em-body' bgcolor='#ffffff' style='padding:22px'>"
+                + "<h2 style='color:#2563eb;margin:0 0 10px;font-size:20px'>CertMonitor — SMTP test</h2>"
+                + "<p style='margin:0 0 10px'>Bu, CertMonitor Ayarlar ekranından gönderilen bir SMTP test e-postasıdır.</p>"
+                + "<table role='presentation' cellpadding='0' cellspacing='0' border='0' style='border-collapse:collapse;font-size:13px;margin:10px 0'>"
+                + "<tr><td style='padding:3px 12px 3px 0;color:#64748b'>Sunucu:</td>"
+                + "<td style='padding:3px 0;font-weight:600'>" + esc(s.getHost()) + ":" + s.getPort() + "</td></tr>"
+                + "<tr><td style='padding:3px 12px 3px 0;color:#64748b'>STARTTLS:</td>"
+                + "<td style='padding:3px 0'>" + Boolean.TRUE.equals(s.getStartTlsEnable()) + "</td></tr>"
+                + "<tr><td style='padding:3px 12px 3px 0;color:#64748b'>Zaman:</td>"
+                + "<td style='padding:3px 0'>" + now + "</td></tr>"
                 + "</table>"
-                + "<p style=\"font-size:.85em;color:#94a3b8\">Bu e-postayı aldıysanız SMTP ayarlarınız çalışıyor demektir.</p>"
-                + "</div>";
+                + "<p style='font-size:12px;color:#94a3b8;margin:0'>Bu e-postayı aldıysanız SMTP ayarlarınız çalışıyor demektir.</p>"
+                + "</td></tr></table></td></tr></table></body></html>";
     }
 
     private static int orDefault(Integer v, int def) {

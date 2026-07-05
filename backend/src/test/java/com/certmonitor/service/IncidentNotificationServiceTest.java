@@ -37,13 +37,16 @@ class IncidentNotificationServiceTest {
     @Mock TeamRepository teamRepo;
     @Mock AppUserRepository userRepo;
     @Mock IncidentImageRepository imageRepo;
+    @Mock AppSettingsService appSettings;
 
     IncidentNotificationService service;
 
     @BeforeEach
     void setUp() {
-        service = new IncidentNotificationService(emailService, teamRepo, userRepo, imageRepo);
+        service = new IncidentNotificationService(emailService, teamRepo, userRepo, imageRepo, appSettings);
         ReflectionTestUtils.setField(service, "appBaseUrl", "https://cm.example.com/");
+        // Canlı DB değeri yok → getString fallback (@Value = reflection ile set edilen appBaseUrl) döner.
+        when(appSettings.getString(eq("cert.monitor.app.base-url"), any())).thenAnswer(inv -> inv.getArgument(1));
         when(emailService.buildIncidentNotificationHtml(anyMap(), any(), anyString(), anyString()))
                 .thenReturn("<html/>");
         when(emailService.sendHtml(any(), any(), anyString(), anyString(), any())).thenReturn("SENT");
