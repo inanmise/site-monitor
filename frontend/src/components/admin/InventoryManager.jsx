@@ -1,9 +1,8 @@
 import { useState, useEffect, useRef, useMemo } from 'react'
-import { ChevronDown, Check, Download, Loader2 } from 'lucide-react'
+import { ChevronDown, Download, Loader2 } from 'lucide-react'
 import MDEditor from '@uiw/react-md-editor'
-import ReactMarkdown from 'react-markdown'
-import remarkGfm from 'remark-gfm'
-import { api, formatDate } from '../../api/client'
+import { api } from '../../api/client'
+import { InventoryDetails } from '../inventory/InventoryDetails.jsx'
 import { useDialog } from '../ui/Dialog.jsx'
 import { useToast } from '../ui/Toast.jsx'
 import { useT } from '../../i18n/index.jsx'
@@ -40,15 +39,6 @@ function YesNo({ value, onChange }) {
 
 function SectionHeader({ label }) {
   return <div className="form-section-header">{label}</div>
-}
-
-function ShowField({ label, value, mono, full }) {
-  return (
-    <div className={`show-field${full ? ' show-field-full' : ''}`}>
-      <span className="show-field-label">{label}</span>
-      <span className={`show-field-value${mono ? ' show-field-mono' : ''}`}>{value ?? '—'}</span>
-    </div>
-  )
 }
 
 export default function InventoryManager({ onInventoryChange, systemRole, teams: teamsProp = [], isAdmin: isAdminProp = false, openAddSignal = false, onAddConsumed }) {
@@ -771,91 +761,7 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
               <button type="button" className="show-close" aria-label={t('app.dismiss')} onClick={() => setShowItem(null)}>✕</button>
             </div>
 
-            <div className="show-body">
-
-              {/* Temel Bilgiler */}
-              <div className="show-section-header">{t('inv.sectionBasic')}</div>
-              <div className="show-grid-2">
-                <ShowField label={t('inv.formDomain')}  value={showItem.domain} mono />
-                <ShowField label={t('inv.formPort')}    value={showItem.port || 443} />
-                <ShowField label={t('inv.formTeam')}    value={teamMap[String(showItem.team_id)]    || '—'} />
-                <ShowField label={t('inv.formTier')}    value={
-                  showItem.tier
-                    ? `T${showItem.tier} — ${t(`inv.tier${showItem.tier}`)}`
-                    : t('inv.tierNone')
-                } />
-                <ShowField label={t('inv.formPurchasedBy')} value={showItem.purchased_by || '—'} />
-                <ShowField label={t('inv.formTlsMode')} value={
-                  showItem.tls_mode === 'browser' ? t('inv.tlsModeBrowser')
-                  : showItem.tls_mode === 'default' ? t('inv.tlsModeDefault')
-                  : t('inv.tlsModeInherit')
-                } />
-              </div>
-
-              {/* Operasyonel Bilgiler */}
-              <div className="show-section-header">{t('inv.sectionOps')}</div>
-              <div className="show-yn-grid">
-                {[
-                  ['inv.formExternalVendor', showItem.external_vendor],
-                  ['inv.formActionRequired', showItem.action_required],
-                  ['inv.formOpenshift',      showItem.openshift],
-                  ['inv.formSslPinning',     showItem.ssl_pinning],
-                  ['inv.formInternal',       showItem.internal_cert],
-                  ['inv.formJksKeystore',    showItem.jks_keystore],
-                  ['inv.formServerUpdate',   showItem.server_update],
-                  ['inv.formNetscaler',      showItem.netscaler],
-                  ['inv.formWafEnabled',     showItem.waf_enabled],
-                  ['inv.formInUse',          showItem.in_use],
-                  ['inv.formEvCert',         showItem.ev_certificate],
-                  ['inv.formTransferredToSy',showItem.transferred_to_sy],
-                  ['inv.formUseProxy',       showItem.use_proxy],
-                ].map(([key, val]) => (
-                  <div key={key} className={`show-yn-cell${val ? ' is-yes' : ''}`}>
-                    <span className="show-yn-label">{t(key)}</span>
-                    <span className={`show-yn-badge ${val ? 'show-yn-yes' : 'show-yn-no'}`}>
-                      {val && <Check size={13} strokeWidth={3} />}
-                      {val ? t('inv.yes') : t('inv.no')}
-                    </span>
-                  </div>
-                ))}
-              </div>
-
-
-              {showItem.change_description && (
-                <div className="show-field show-field-full">
-                  <span className="show-field-label">{t('inv.formChangeDesc')}</span>
-                  <div className="show-markdown" data-color-mode={theme === 'dark' ? 'dark' : 'light'}>
-                    <ReactMarkdown remarkPlugins={[remarkGfm]}>{showItem.change_description}</ReactMarkdown>
-                  </div>
-                </div>
-              )}
-
-              {/* Gelişmiş */}
-              {(showItem.expected_fingerprint || showItem.expected_subject) && (
-                <>
-                  <div className="show-section-header">{t('inv.sectionAdv')}</div>
-                  <div className="show-grid-1">
-                    {showItem.expected_fingerprint && (
-                      <ShowField label={t('inv.formFP')} value={showItem.expected_fingerprint} mono full />
-                    )}
-                    {showItem.expected_subject && (
-                      <ShowField label={t('inv.formSubject')} value={showItem.expected_subject} mono full />
-                    )}
-                  </div>
-                </>
-              )}
-
-            </div>
-
-            {/* Footer — metadata */}
-            <div className="show-footer">
-              {showItem.created_at && (
-                <span>{t('inv.metaCreated')}: {formatDate(showItem.created_at)}</span>
-              )}
-              {showItem.updated_at && (
-                <span>{t('inv.metaUpdated')}: {formatDate(showItem.updated_at)}</span>
-              )}
-            </div>
+            <InventoryDetails record={showItem} teamMap={teamMap} />
 
           </div>
         </div>

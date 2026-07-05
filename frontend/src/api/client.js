@@ -280,6 +280,7 @@ export const api = {
   admin: {
     // Inventory
     getInventory: (showDeleted = false) => request(`/admin/inventory?showDeleted=${showDeleted}`),
+    getInventoryByDomain: (domain) => request(`/admin/inventory/by-domain?domain=${encodeURIComponent(domain)}`),
     addInventory: (item) => request('/admin/inventory', { method: 'POST', body: JSON.stringify(item) }),
     updateInventory: (id, item) => request(`/admin/inventory/${id}`, { method: 'PUT', body: JSON.stringify(item) }),
     deleteInventory: (id) => request(`/admin/inventory/${id}`, { method: 'DELETE' }),

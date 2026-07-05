@@ -7,6 +7,8 @@ import { Trash2, Globe, X, Pencil, Clock, User, History, Undo2, Stethoscope } fr
 import AlertHistory from './admin/AlertHistory'
 import SslCheckerPanel from './SslCheckerPanel.jsx'
 import DiagnosticsModal from './admin/DiagnosticsModal.jsx'
+import { usePermissions } from '../contexts/PermissionsProvider.jsx'
+import { InventoryTab } from './inventory/InventoryDetails.jsx'
 
 const NOTE_CATEGORIES   = ['NOTE', 'DEPLOYMENT', 'INCIDENT', 'RENEWAL']
 const NOTE_EDIT_WINDOW_MS = 24 * 60 * 60 * 1000
@@ -362,6 +364,7 @@ export default function CertificateModal({ domain, alertLevel, onClose, initialD
   const [activeTab, setActiveTab]     = useState('ssl')
   const [showDiag, setShowDiag]       = useState(false)
   const isAdmin = currentUserRole === 'ADMIN' || currentUserRole === 'TEAM_ADMIN'
+  const canViewInventory = usePermissions().canView('inventory.list')
 
   useEffect(() => {
     if (!domain) return
@@ -433,6 +436,14 @@ export default function CertificateModal({ domain, alertLevel, onClose, initialD
               onClick={() => switchTab('alerts')}
             >
               {t('modal.alertsTab')}
+            </button>
+          )}
+          {!previewMode && canViewInventory && (
+            <button
+              className={`modal-tab${activeTab === 'inventory' ? ' active' : ''}`}
+              onClick={() => switchTab('inventory')}
+            >
+              {t('modal.inventoryTab')}
             </button>
           )}
           {!previewMode && (
@@ -566,6 +577,10 @@ export default function CertificateModal({ domain, alertLevel, onClose, initialD
 
         {!previewMode && activeTab === 'alerts' && (
           <AlertHistory domain={domain} />
+        )}
+
+        {!previewMode && canViewInventory && activeTab === 'inventory' && (
+          <InventoryTab domain={domain} />
         )}
 
         {!previewMode && activeTab === 'notes' && (
