@@ -9,6 +9,8 @@ import com.certmonitor.repository.NetworkOutageEventRepository;
 import org.springframework.data.domain.PageRequest;
 import com.certmonitor.service.CertificateCheckerService;
 import com.certmonitor.service.CertificateService;
+import com.certmonitor.service.ExtendedHealthService;
+import com.certmonitor.service.PermissionService;
 import com.certmonitor.service.SchedulerService;
 import jakarta.servlet.http.HttpSession;
 import lombok.RequiredArgsConstructor;
@@ -19,6 +21,7 @@ import org.springframework.web.bind.annotation.*;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -34,8 +37,8 @@ public class CertificateController {
     private final AlertEventRepository alertEventRepository;
     private final CertificateInventoryRepository inventoryRepo;
     private final NetworkOutageEventRepository networkOutageRepo;
-    private final com.certmonitor.service.ExtendedHealthService extendedHealthService;
-    private final com.certmonitor.service.PermissionService permissionService;
+    private final ExtendedHealthService extendedHealthService;
+    private final PermissionService permissionService;
 
     private static final DateTimeFormatter ISO =
             DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
@@ -88,7 +91,7 @@ public class CertificateController {
         var inv = inventoryRepo.findByDomain(domain);
         boolean forceProxy = inv.map(ci -> Boolean.TRUE.equals(ci.getUseProxy())).orElse(false);
         String tlsOverride = inv.map(ci -> ci.getTlsMode()).orElse(null);
-        Map<String, Object> result = new java.util.LinkedHashMap<>(checkerService.check(domain, 443, forceProxy, tlsOverride));
+        Map<String, Object> result = new LinkedHashMap<>(checkerService.check(domain, 443, forceProxy, tlsOverride));
         result.put("run_id", "manual");
         certService.saveResult(result);
         certService.ensureInInventory(domain, 443, teamId(session));
@@ -102,7 +105,7 @@ public class CertificateController {
         var inv = inventoryRepo.findByDomain(domain);
         boolean forceProxy = inv.map(ci -> Boolean.TRUE.equals(ci.getUseProxy())).orElse(false);
         String tlsOverride = inv.map(ci -> ci.getTlsMode()).orElse(null);
-        Map<String, Object> result = new java.util.LinkedHashMap<>(checkerService.check(domain, 443, forceProxy, tlsOverride));
+        Map<String, Object> result = new LinkedHashMap<>(checkerService.check(domain, 443, forceProxy, tlsOverride));
         return ok(Map.of("success", true, "data", result, "timestamp", now()));
     }
 
@@ -149,7 +152,7 @@ public class CertificateController {
      *  Used by Dashboard banner so all logged-in users see an outage notice. */
     @GetMapping("/system/network-status")
     public ResponseEntity<Map<String, Object>> publicNetworkStatus() {
-        Map<String, Object> data = new java.util.LinkedHashMap<>();
+        Map<String, Object> data = new LinkedHashMap<>();
         data.put("alarm",       schedulerService.isNetworkOutageActive());
         data.put("detected_at", schedulerService.getNetworkOutageDetectedAt());
         return ok(Map.of("success", true, "data", data, "timestamp", now()));
@@ -166,7 +169,7 @@ public class CertificateController {
     }
 
     private Map<String, Object> outageEventToMap(NetworkOutageEvent e) {
-        Map<String, Object> m = new java.util.LinkedHashMap<>();
+        Map<String, Object> m = new LinkedHashMap<>();
         m.put("id", e.getId());
         m.put("detected_at", e.getDetectedAt());
         m.put("resolved_at", e.getResolvedAt());

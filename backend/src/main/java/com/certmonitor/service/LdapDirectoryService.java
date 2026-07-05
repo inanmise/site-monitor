@@ -1,6 +1,7 @@
 package com.certmonitor.service;
 
 import com.certmonitor.model.LdapSettings;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
@@ -53,6 +54,7 @@ import java.util.Optional;
  */
 @Slf4j
 @Service
+@RequiredArgsConstructor
 public class LdapDirectoryService {
 
     private static final String CTX_FACTORY = "com.sun.jndi.ldap.LdapCtxFactory";
@@ -62,10 +64,6 @@ public class LdapDirectoryService {
     private static final int MAX_MATCHES = 50;
 
     private final LdapSettingsService settingsService;
-
-    public LdapDirectoryService(LdapSettingsService settingsService) {
-        this.settingsService = settingsService;
-    }
 
     // ── Public operations ────────────────────────────────────────────────────
 

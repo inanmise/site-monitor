@@ -3,6 +3,7 @@ package com.certmonitor.service;
 import com.certmonitor.model.SmtpSettings;
 import com.certmonitor.repository.SmtpSettingsRepository;
 import jakarta.annotation.PostConstruct;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -24,6 +25,7 @@ import java.util.Map;
  */
 @Slf4j
 @Service
+@RequiredArgsConstructor
 public class SmtpSettingsService {
 
     private static final DateTimeFormatter ISO =
@@ -51,11 +53,6 @@ public class SmtpSettingsService {
     @Value("${mail.send.retry-delay-ms:90000}") int envRetryDelay;
     @Value("${mail.send.inter-contact-delay-ms:5000}") int envInterContact;
     @Value("${mail.catch-up.inter-domain-delay-ms:3000}") int envInterDomain;
-
-    public SmtpSettingsService(SmtpSettingsRepository repo, SecretCipher cipher) {
-        this.repo = repo;
-        this.cipher = cipher;
-    }
 
     @PostConstruct
     void load() {

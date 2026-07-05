@@ -2,6 +2,7 @@ package com.certmonitor.controller;
 
 import com.certmonitor.service.AppSettingsService;
 import com.certmonitor.service.AuditService;
+import com.certmonitor.service.PermissionService;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpSession;
 import lombok.RequiredArgsConstructor;
@@ -31,7 +32,7 @@ public class GeneralSettingsController {
 
     private final AppSettingsService settingsService;
     private final AuditService auditService;
-    private final com.certmonitor.service.PermissionService permissionService;
+    private final PermissionService permissionService;
 
     @GetMapping("/settings")
     public ResponseEntity<Map<String, Object>> getSettings(HttpSession session) {

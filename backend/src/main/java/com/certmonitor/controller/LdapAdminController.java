@@ -4,6 +4,7 @@ import com.certmonitor.model.LdapSettings;
 import com.certmonitor.service.AuditService;
 import com.certmonitor.service.LdapDirectoryService;
 import com.certmonitor.service.LdapSettingsService;
+import com.certmonitor.service.PermissionService;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpSession;
 import lombok.RequiredArgsConstructor;
@@ -37,7 +38,7 @@ public class LdapAdminController {
     private final LdapSettingsService settingsService;
     private final LdapDirectoryService directoryService;
     private final AuditService auditService;
-    private final com.certmonitor.service.PermissionService permissionService;
+    private final PermissionService permissionService;
 
     @GetMapping("/settings")
     public ResponseEntity<Map<String, Object>> getSettings(HttpSession session) {

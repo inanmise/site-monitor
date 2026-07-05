@@ -1,6 +1,7 @@
 package com.certmonitor.controller;
 
 import com.certmonitor.service.AuditService;
+import com.certmonitor.service.PermissionService;
 import com.certmonitor.service.SecretToolsService;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpSession;
@@ -32,7 +33,7 @@ public class SecretToolsController {
 
     private final SecretToolsService service;
     private final AuditService auditService;
-    private final com.certmonitor.service.PermissionService permissionService;
+    private final PermissionService permissionService;
 
     @GetMapping("/info")
     public ResponseEntity<Map<String, Object>> info(HttpSession session) {

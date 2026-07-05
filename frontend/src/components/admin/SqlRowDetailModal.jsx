@@ -1,12 +1,14 @@
 import { useState } from 'react'
 import { Table, Copy, Check } from 'lucide-react'
+import { useT } from '../../i18n/index.jsx'
 
 /**
  * Vertical, label/value presentation of a single SQL Playground result row.
  * Opened by double-clicking a row in the result table — purely a read-only
  * detail view; each value carries a one-click copy-to-clipboard button.
  */
-export default function SqlRowDetailModal({ row, cols, index, onClose, t }) {
+export default function SqlRowDetailModal({ row, cols, index, onClose }) {
+  const t = useT()
   const [copiedKey, setCopiedKey] = useState(null)
 
   function copyValue(key, val) {

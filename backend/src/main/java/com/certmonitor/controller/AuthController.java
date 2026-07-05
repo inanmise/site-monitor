@@ -3,21 +3,32 @@ package com.certmonitor.controller;
 import com.certmonitor.model.AppUser;
 import com.certmonitor.model.Team;
 import com.certmonitor.service.AuditService;
+import com.certmonitor.service.ClientIpResolver;
+import com.certmonitor.service.LdapDirectoryService;
+import com.certmonitor.service.LdapProvisioningService;
+import com.certmonitor.service.LdapSettingsService;
+import com.certmonitor.service.PermissionCatalog;
+import com.certmonitor.service.PermissionService;
 import com.certmonitor.service.RememberMeService;
 import com.certmonitor.service.UserService;
+import com.certmonitor.service.WeeklyReportService;
 import jakarta.servlet.http.Cookie;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import jakarta.servlet.http.HttpSession;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.ResponseEntity;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Base64;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
@@ -51,23 +62,23 @@ public class AuthController {
     private final RememberMeService rememberMeService;
     private final UserService userService;
     private final com.certmonitor.repository.AuditLogRepository auditLogRepo;
-    private final com.certmonitor.service.ClientIpResolver clientIpResolver;
+    private final ClientIpResolver clientIpResolver;
 
-    @org.springframework.beans.factory.annotation.Autowired(required = false)
-    private com.certmonitor.service.PermissionService permissionService;
+    @Autowired(required = false)
+    private PermissionService permissionService;
 
     // LDAP/AD — optional so @WebMvcTest contexts without these beans still load.
-    @org.springframework.beans.factory.annotation.Autowired(required = false)
-    private com.certmonitor.service.LdapSettingsService ldapSettings;
+    @Autowired(required = false)
+    private LdapSettingsService ldapSettings;
 
-    @org.springframework.beans.factory.annotation.Autowired(required = false)
-    private com.certmonitor.service.LdapDirectoryService ldapDirectory;
+    @Autowired(required = false)
+    private LdapDirectoryService ldapDirectory;
 
-    @org.springframework.beans.factory.annotation.Autowired(required = false)
-    private com.certmonitor.service.LdapProvisioningService ldapProvisioning;
+    @Autowired(required = false)
+    private LdapProvisioningService ldapProvisioning;
 
-    @org.springframework.beans.factory.annotation.Autowired(required = false)
-    private com.certmonitor.service.WeeklyReportService weeklyReportService;
+    @Autowired(required = false)
+    private WeeklyReportService weeklyReportService;
 
     // Per-IP attempt counter within a sliding 60-second window
     private final ConcurrentHashMap<String, AtomicInteger> loginAttempts = new ConcurrentHashMap<>();
@@ -355,7 +366,7 @@ public class AuthController {
             return ResponseEntity.noContent().header("Cache-Control", "private, max-age=3600").build();
         }
         try {
-            byte[] bytes = java.util.Base64.getDecoder().decode(base64.trim());
+            byte[] bytes = Base64.getDecoder().decode(base64.trim());
             return ResponseEntity.ok()
                     .header("Content-Type", "image/jpeg")
                     .header("Cache-Control", "private, max-age=3600")
@@ -414,7 +425,7 @@ public class AuthController {
         String role = (String) session.getAttribute("systemRole");
         Map<String, Map<String, Boolean>> snapshot = permissionService != null
             ? permissionService.snapshotForRole(role)
-            : com.certmonitor.service.PermissionCatalog.defaultsFor(role);
+            : PermissionCatalog.defaultsFor(role);
         return ResponseEntity.ok(Map.of("success", true, "data", snapshot));
     }
 
@@ -471,7 +482,7 @@ public class AuthController {
      */
     private Optional<AppUser> tryLdapLogin(String username, String password) {
         try {
-            Optional<com.certmonitor.service.LdapDirectoryService.LdapUser> ad =
+            Optional<LdapDirectoryService.LdapUser> ad =
                     ldapDirectory.authenticate(username, password);
             if (ad.isEmpty()) return Optional.empty();
             var u = ad.get();
@@ -513,12 +524,12 @@ public class AuthController {
         session.setAttribute("teamName", teamName);
 
         // ── Team scope (Faz 3b): null = unrestricted (global admin / AUDIT) → no attribute. ──
-        java.util.List<Long> view = userService.computeViewTeamIds(user);
-        java.util.List<Long> manage = userService.computeManageTeamIds(user);
+        List<Long> view = userService.computeViewTeamIds(user);
+        List<Long> manage = userService.computeManageTeamIds(user);
         if (view == null) session.removeAttribute("viewTeamIds");
-        else session.setAttribute("viewTeamIds", new java.util.ArrayList<>(view));
+        else session.setAttribute("viewTeamIds", new ArrayList<>(view));
         if (manage == null) session.removeAttribute("manageTeamIds");
-        else session.setAttribute("manageTeamIds", new java.util.ArrayList<>(manage));
+        else session.setAttribute("manageTeamIds", new ArrayList<>(manage));
     }
 
     private Map<String, Object> buildMeResponse(AppUser user, HttpSession session) {
@@ -541,7 +552,7 @@ public class AuthController {
 
     /** Birincil takım ilk olacak şekilde kullanıcının TÜM üyeliklerini team_ids + team_names olarak ekler. */
     private void putTeams(Map<String, Object> resp, AppUser user) {
-        java.util.List<Long> ids = new java.util.ArrayList<>();
+        List<Long> ids = new ArrayList<>();
         if (user.getTeamId() != null) ids.add(user.getTeamId());
         if (user.getTeamIds() != null)
             for (Long t : user.getTeamIds()) if (t != null && !ids.contains(t)) ids.add(t);
@@ -589,7 +600,7 @@ public class AuthController {
     @Scheduled(fixedDelay = 3_600_000L)
     void pruneRateLimitState() {
         long now = System.currentTimeMillis();
-        for (String ip : new java.util.ArrayList<>(windowStart.keySet())) {
+        for (String ip : new ArrayList<>(windowStart.keySet())) {
             Long until = blockedUntil.get(ip);
             boolean blocked = until != null && until > now;
             Long ws = windowStart.get(ip);

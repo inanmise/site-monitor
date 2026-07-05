@@ -27,6 +27,8 @@ import com.certmonitor.model.KeywordResult;
 import com.certmonitor.model.PingCheck;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.boot.availability.AvailabilityChangeEvent;
@@ -107,8 +109,8 @@ public class SchedulerService {
      *  (ilk sweep'te hepsi due). Gerçek "check frequency": sweep, aralığı henüz dolmayan monitörü atlar. */
     private final java.util.concurrent.ConcurrentHashMap<String, Long> lastMonitorCheckAt = new java.util.concurrent.ConcurrentHashMap<>();
 
-    @org.springframework.beans.factory.annotation.Autowired
-    @org.springframework.beans.factory.annotation.Qualifier("certCheckExecutor")
+    @Autowired
+    @Qualifier("certCheckExecutor")
     private org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor certCheckExecutor;
 
     @Value("${cert.monitor.username:user}")

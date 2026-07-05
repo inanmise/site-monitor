@@ -5,7 +5,7 @@ import { api } from '../../api/client'
 // Bir kez çekilir (login sonrası), her UserBadge buradan ad-soyad + avatar çözer. Böylece
 // düzinelerce backend DTO'suna user_id eklemeden, sadece username (veya e-posta) olan her yerde
 // ad-soyad+resim gösterebiliriz.
-const Ctx = createContext({ lookup: () => null, lookupByEmail: () => null, ready: false })
+const UserDirectoryCtx = createContext({ lookup: () => null, lookupByEmail: () => null, ready: false })
 
 export function UserDirectoryProvider({ children }) {
   const [maps, setMaps] = useState(null) // { byName, byEmail } | null
@@ -38,7 +38,7 @@ export function UserDirectoryProvider({ children }) {
   }, [maps])
 
   const value = useMemo(() => ({ lookup, lookupByEmail, ready: maps != null }), [lookup, lookupByEmail, maps])
-  return <Ctx.Provider value={value}>{children}</Ctx.Provider>
+  return <UserDirectoryCtx.Provider value={value}>{children}</UserDirectoryCtx.Provider>
 }
 
-export function useUserDirectory() { return useContext(Ctx) }
+export function useUserDirectory() { return useContext(UserDirectoryCtx) }

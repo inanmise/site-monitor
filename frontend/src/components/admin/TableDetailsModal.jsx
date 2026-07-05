@@ -1,4 +1,5 @@
 import { Table, Loader2 } from 'lucide-react'
+import { useT } from '../../i18n/index.jsx'
 
 /**
  * SQL Playground — tablo şema detayları (salt-okunur):
@@ -8,7 +9,8 @@ import { Table, Loader2 } from 'lucide-react'
  *  • Trigger'lar
  * Veri backend'in /admin/sql/tables/{name}/details ucundan gelir (Postgres katalogu).
  */
-export default function TableDetailsModal({ table, details, loading, onClose, t }) {
+export default function TableDetailsModal({ table, details, loading, onClose }) {
+  const t = useT()
   const columns     = details?.columns ?? []
   const constraints = details?.constraints ?? []
   const indexes     = details?.indexes ?? []

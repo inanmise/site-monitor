@@ -71,8 +71,8 @@ public class ChainValidationService {
     }
 
     /**
-     * If cert.monitor.proxy.host wasn't set (HTTP_PROXY_HOST env), fall back to
-     * parsing the standard HTTPS_PROXY / HTTP_PROXY URL env vars (Linux convention).
+     * cert.monitor.proxy.host ayarlanmamışsa (HTTP_PROXY_HOST env), standart
+     * HTTPS_PROXY / HTTP_PROXY URL env değişkenlerini ayrıştırmaya geri döner (Linux geleneği).
      */
     private void resolveProxyFromEnv() {
         if (proxyHost != null && !proxyHost.isBlank()) return;
@@ -116,8 +116,8 @@ public class ChainValidationService {
     }
 
     /**
-     * Builds chain info from the full SSL peer certificate chain.
-     * Returns a map with: chain (list), intermediate_expiry, intermediate_days_remaining, chain_status.
+     * Tam SSL peer sertifika zincirinden zincir bilgisini oluşturur.
+     * Şu anahtarlarla bir map döner: chain (liste), intermediate_expiry, intermediate_days_remaining, chain_status.
      */
     public Map<String, Object> analyzeChain(java.security.cert.Certificate[] peerCerts) {
         List<Map<String, Object>> chainList = new ArrayList<>();
@@ -154,7 +154,7 @@ public class ChainValidationService {
                 certInfo.put("expired", false);
             }
 
-            // Track earliest non-leaf expiry
+            // En erken leaf-olmayan (intermediate) sertifikanın son kullanımını izle
             if (!isLeaf) {
                 String expiryIso = ISO.format(notAfter);
                 int days = (int) Math.max(daysRemaining, 0);
@@ -177,15 +177,15 @@ public class ChainValidationService {
     }
 
     /**
-     * Checks OCSP revocation for the leaf cert using its issuer from the chain.
-     * Returns VALID, REVOKED, or UNKNOWN.
+     * Leaf sertifikanın OCSP iptal (revocation) durumunu, zincirdeki issuer'ıyla kontrol eder.
+     * VALID, REVOKED veya UNKNOWN döner.
      */
     public String checkRevocation(java.security.cert.Certificate[] peerCerts) {
         if (peerCerts.length < 2) return "UNKNOWN";
         if (!(peerCerts[0] instanceof X509Certificate leaf)) return "UNKNOWN";
         if (!(peerCerts[1] instanceof X509Certificate issuer)) return "UNKNOWN";
 
-        // Try OCSP first, fall back to CRL
+        // Önce OCSP dene, olmazsa CRL'e geri düş
         String ocspResult = checkOcsp(leaf, issuer);
         if (!"UNKNOWN".equals(ocspResult)) return ocspResult;
 
@@ -240,7 +240,7 @@ public class ChainValidationService {
         try {
             List<String> urls = getCrlUrls(cert);
             for (String url : urls) {
-                // Check without holding any cache lock, download separately to avoid blocking
+                // Herhangi bir cache kilidi tutmadan kontrol et; bloklamayı önlemek için ayrı indir
                 X509CRL crl = crlCache.getIfPresent(url);
                 if (crl == null) {
                     crl = downloadCrl(url);
@@ -329,9 +329,9 @@ public class ChainValidationService {
     }
 
     /**
-     * Opens HTTP connection through the configured proxy if set, otherwise direct.
-     * Mirrors CertificateCheckerService proxy pattern so OCSP/CRL traffic also
-     * traverses the corporate egress proxy (OpenShift / restricted networks).
+     * Ayarlıysa yapılandırılmış proxy üzerinden, değilse doğrudan HTTP bağlantısı açar.
+     * CertificateCheckerService proxy desenini yansıtır; böylece OCSP/CRL trafiği de
+     * kurumsal çıkış (egress) proxy'sinden geçer (OpenShift / kısıtlı ağlar).
      */
     private HttpURLConnection openWithProxy(String url) throws IOException {
         HttpURLConnection conn;

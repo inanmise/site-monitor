@@ -114,7 +114,7 @@ public class EscalationService {
         // Sweep'te 1000 result × 2 query = 2000 round-trip yerine: 2 query toplam.
         List<String> allDomains = results.stream()
                 .map(r -> (String) r.get("domain"))
-                .filter(java.util.Objects::nonNull)
+                .filter(Objects::nonNull)
                 .distinct()
                 .toList();
         Map<String, com.certmonitor.model.CertificateInventory> invByDomain = allDomains.isEmpty()
@@ -300,9 +300,9 @@ public class EscalationService {
                 .findByResolvedFalseAndAcknowledgedFalseOrderByCreatedAtDesc();
         // N+1 önleme: re-alert adayı domain'lerin inventory + latest_check'ini TEK sorguda topla
         // (önceden döngü içinde her alarm için ayrı findByDomain + findById çalışıyordu).
-        java.util.Set<String> candidateDomains = openAlerts.stream()
+        Set<String> candidateDomains = openAlerts.stream()
                 .filter(e -> !MONITORING_ALERT_TYPES.contains(e.getAlertType()))
-                .map(AlertEvent::getDomain).filter(java.util.Objects::nonNull)
+                .map(AlertEvent::getDomain).filter(Objects::nonNull)
                 .collect(java.util.stream.Collectors.toSet());
         Map<String, com.certmonitor.model.CertificateInventory> invByDomain = candidateDomains.isEmpty()
                 ? Map.of()
@@ -323,11 +323,11 @@ public class EscalationService {
                 log.debug("Catch-up: {} already notified today, skipping", event.getDomain());
                 continue;
             }
-            var inventoryOpt  = java.util.Optional.ofNullable(invByDomain.get(event.getDomain()));
+            var inventoryOpt  = Optional.ofNullable(invByDomain.get(event.getDomain()));
             Long domainTeamId = inventoryOpt.map(com.certmonitor.model.CertificateInventory::getTeamId).orElse(null);
             Long ugTeamId     = inventoryOpt.map(com.certmonitor.model.CertificateInventory::getUgTeamId).orElse(null);
             List<EscalationContact> contacts = getContactsForLevel(event.getAlertLevel(), domainTeamId);
-            Map<String, Object> certContext = java.util.Optional.ofNullable(latestByDomain.get(event.getDomain()))
+            Map<String, Object> certContext = Optional.ofNullable(latestByDomain.get(event.getDomain()))
                     .map(this::latestToCertContext).orElse(null);
             Integer freshDays     = certContext != null ? toInt(certContext.get("days_remaining")) : null;
             Integer effectiveDays = freshDays != null ? freshDays : event.getDaysRemaining();
@@ -409,9 +409,9 @@ public class EscalationService {
      * @param existingHosts aktif + pasif tüm ping monitörlerinin host'ları (silinen/yeniden adlandırılan hariç)
      * @return kapatılan öksüz domain sayısı
      */
-    public int resolveOrphanedPingAlerts(java.util.Set<String> existingHosts) {
+    public int resolveOrphanedPingAlerts(Set<String> existingHosts) {
         if (existingHosts == null) return 0;
-        java.util.Set<String> orphanDomains = new java.util.HashSet<>();
+        Set<String> orphanDomains = new HashSet<>();
         for (AlertEvent e : alertEventRepo.findAllOpenOrderBySeverity()) {
             if (!TYPE_PING_DOWN.equals(e.getAlertType())) continue;
             if (e.getDomain() == null || existingHosts.contains(e.getDomain())) continue;  // eşleşen monitör var → dokunma

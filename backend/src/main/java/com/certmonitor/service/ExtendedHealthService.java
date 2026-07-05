@@ -9,6 +9,7 @@ import com.certmonitor.repository.SystemHeartbeatRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.cache.annotation.Cacheable;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
@@ -196,7 +197,7 @@ public class ExtendedHealthService {
     // Global veri (kullanıcıya özel değil), her /api/notifications/failure-domains isteğinde 7 günlük
     // notification_logs taraması. 100 kullanıcı × 5 dk dashboard fan-out'unda 100× tekrar ediyordu →
     // cache'le (sync: eşzamanlı çağrılar tek hesaba iner). TTL 300 sn CacheConfig'te; anahtar (consecutive,days).
-    @org.springframework.cache.annotation.Cacheable(value = "failure-domains", sync = true)
+    @Cacheable(value = "failure-domains", sync = true)
     public List<String> findDomainsWithConsecutiveMailFailures(int consecutive, int days) {
         if (consecutive < 1) return List.of();
         String cutoff = LocalDateTime.now(ZoneOffset.UTC).minusDays(days)

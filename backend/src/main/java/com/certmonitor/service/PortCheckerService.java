@@ -17,15 +17,15 @@ import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 
 /**
- * Port izleme kontrolleri. Tip ({@code protocol}) baz alinir:
+ * Port izleme kontrolleri. Tip ({@code protocol}) baz alınır:
  * <ul>
- *   <li><b>TCP</b> — soket connect (port acik mi).</li>
- *   <li><b>TLS</b> — TLS handshake basarili mi (sunucu sertifika sunuyor mu).</li>
- *   <li><b>HTTP</b> — HTTP(S) GET; donen durum kodu beklenen kalibi tutuyor mu (vars. 2xx/3xx). 443/8443 -> https.</li>
- *   <li><b>BANNER</b> — baglan, (varsa) veri gonder, sunucu yanitini oku, beklenen alt-dizgeyi dogrula.</li>
- *   <li><b>UDP</b> — datagram gonder; yanit/ICMP'ye bakar (baglantisiz oldugundan sonuc guvenilir degildir).</li>
+ *   <li><b>TCP</b> — soket connect (port açık mı).</li>
+ *   <li><b>TLS</b> — TLS handshake başarılı mı (sunucu sertifika sunuyor mu).</li>
+ *   <li><b>HTTP</b> — HTTP(S) GET; dönen durum kodu beklenen kalıbı tutuyor mu (vars. 2xx/3xx). 443/8443 -> https.</li>
+ *   <li><b>BANNER</b> — bağlan, (varsa) veri gönder, sunucu yanıtını oku, beklenen alt-dizgeyi doğrula.</li>
+ *   <li><b>UDP</b> — datagram gönder; yanıt/ICMP'ye bakar (bağlantısız olduğundan sonuç güvenilir değildir).</li>
  * </ul>
- * Sonuc: {@code {open, response_ms, error?, detail?}}.
+ * Sonuç: {@code {open, response_ms, error?, detail?}}.
  */
 @Slf4j
 @Service
@@ -36,12 +36,12 @@ public class PortCheckerService {
         return CompletableFuture.completedFuture(check(host, port, timeoutMs));
     }
 
-    /** Geriye donuk uyumluluk — duz TCP connect (eski cagrilar/testler). */
+    /** Geriye dönük uyumluluk — düz TCP connect (eski çağrılar/testler). */
     public Map<String, Object> check(String host, int port, int timeoutMs) {
         return check(host, port, timeoutMs, "TCP", null, null);
     }
 
-    /** Monitor tipine gore kontrol. */
+    /** Monitor tipine göre kontrol. */
     public Map<String, Object> check(PortMonitor m) {
         return check(m.getHost(), m.getPort(),
                 m.getTimeoutMs() != null ? m.getTimeoutMs() : 5000,
@@ -170,7 +170,7 @@ public class PortCheckerService {
         }
     }
 
-    /** Beklenen kalip: bos -> 2xx/3xx; "200" tam; "2xx" sinif; "200-399" aralik; virgul/bosluk ile coklu. */
+    /** Beklenen kalıp: boş -> 2xx/3xx; "200" tam; "2xx" sınıf; "200-399" aralık; virgül/boşluk ile çoklu. */
     static boolean httpStatusMatches(int code, String expect) {
         if (expect == null || expect.isBlank()) return code >= 200 && code < 400;
         for (String part : expect.split("[,\\s]+")) {
@@ -185,7 +185,7 @@ public class PortCheckerService {
                 } else if (code == Integer.parseInt(e)) {
                     return true;
                 }
-            } catch (NumberFormatException ignore) { /* gecersiz parca atlanir */ }
+            } catch (NumberFormatException ignore) { /* geçersiz parça atlanır */ }
         }
         return false;
     }

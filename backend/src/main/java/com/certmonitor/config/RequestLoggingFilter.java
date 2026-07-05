@@ -1,5 +1,6 @@
 package com.certmonitor.config;
 
+import com.certmonitor.service.ClientIpResolver;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.ServletOutputStream;
@@ -8,6 +9,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import jakarta.servlet.http.HttpServletResponseWrapper;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
@@ -40,8 +42,8 @@ import java.util.regex.Pattern;
 public class RequestLoggingFilter extends OncePerRequestFilter {
 
     // required=false: @WebMvcTest filtreyi yükler ama bu @Component'i sağlamaz → null'da fallback.
-    @org.springframework.beans.factory.annotation.Autowired(required = false)
-    private com.certmonitor.service.ClientIpResolver clientIpResolver;
+    @Autowired(required = false)
+    private ClientIpResolver clientIpResolver;
 
     private static final Set<String> SENSITIVE_HEADERS = Set.of(
             "authorization", "cookie", "set-cookie",

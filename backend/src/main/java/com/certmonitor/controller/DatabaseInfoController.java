@@ -1,6 +1,7 @@
 package com.certmonitor.controller;
 
 import com.certmonitor.service.DatabaseInfoService;
+import com.certmonitor.service.PermissionService;
 import jakarta.servlet.http.HttpSession;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -28,7 +29,7 @@ public class DatabaseInfoController {
             DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
 
     private final DatabaseInfoService service;
-    private final com.certmonitor.service.PermissionService permissionService;
+    private final PermissionService permissionService;
 
     @GetMapping("/info")
     public ResponseEntity<Map<String, Object>> info(HttpSession session) {

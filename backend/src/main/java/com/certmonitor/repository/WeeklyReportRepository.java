@@ -12,8 +12,8 @@ import java.util.Optional;
 public interface WeeklyReportRepository extends JpaRepository<WeeklyReport, Long> {
 
     /** Yıl filtresi dropdown'ı — rapor bulunan yıllar (yeni → eski). */
-    @Query("select distinct r.reportYear from WeeklyReport r"
-            + " where (:teamId is null or r.teamId = :teamId) order by r.reportYear desc")
+    @Query("SELECT DISTINCT r.reportYear FROM WeeklyReport r"
+            + " WHERE (:teamId IS NULL OR r.teamId = :teamId) ORDER BY r.reportYear DESC")
     List<Integer> findDistinctYears(@Param("teamId") Long teamId);
 
     List<WeeklyReport> findByTeamIdAndReportYearOrderByWeekNoDesc(Long teamId, Integer reportYear);
@@ -31,7 +31,7 @@ public interface WeeklyReportRepository extends JpaRepository<WeeklyReport, Long
 
     /** Logout/oturum sonu: kullanıcının elindeki tüm düzenleme kilitlerini serbest bırak. */
     @Modifying
-    @Query("update WeeklyReport r set r.editingBy = null, r.editingUserId = null,"
-            + " r.editingHeartbeat = null where r.editingUserId = :userId")
+    @Query("UPDATE WeeklyReport r SET r.editingBy = null, r.editingUserId = null,"
+            + " r.editingHeartbeat = null WHERE r.editingUserId = :userId")
     int clearLocksByUser(@Param("userId") Long userId);
 }
