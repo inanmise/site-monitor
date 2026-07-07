@@ -8,12 +8,14 @@ vi.mock('../api/client', () => ({
     monitoring: {
       getPortMonitors:   vi.fn(),
       getPortHistory:    vi.fn(),
+      getPortResponseSeries: vi.fn(),
+      getMonitorNotes:   vi.fn(),
       createPortMonitor: vi.fn(),
       updatePortMonitor: vi.fn(),
       deletePortMonitor: vi.fn(),
       triggerPortCheck:  vi.fn(),
     },
-    admin: { getTeams: vi.fn() },
+    admin: { getTeams: vi.fn(), getAlerts: vi.fn() },
   },
 }))
 import { api } from '../api/client'
@@ -58,5 +60,20 @@ describe('PortMonitorPage', () => {
     const payload = api.monitoring.createPortMonitor.mock.calls[0][0]
     expect(payload.host).toBe('mail.example.com')
     expect(payload.port).toBe(993)
+  })
+
+  it('detay modali 4 sekme (Kontrol/Alarm/Grafik/Rehber) gösterir; Rehber sekmesi MonitorNotes\'u host:port hedefiyle yükler', async () => {
+    api.monitoring.getMonitorNotes.mockResolvedValue({ success: true, data: { guide: null, notes: [] } })
+    render(<PortMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
+    await waitFor(() => expect(api.monitoring.getPortMonitors).toHaveBeenCalled())
+    fireEvent.click(await screen.findByText('10.0.0.1'))            // satıra tıkla → detay modali açılır
+    // 4 sekmeli parite çubuğu (ping/keyword ile aynı)
+    expect(screen.getByRole('button', { name: /check history|kontrol geçmişi/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /alarm history|alarm geçmişi/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /response chart|süre grafiği/i })).toBeInTheDocument()
+    // Rehber & Notlar sekmesi → MonitorNotes type=PORT, target=host:port
+    fireEvent.click(screen.getByRole('button', { name: /guide & notes|rehber & notlar/i }))
+    // MonitorNotes lazy import + mount → getMonitorNotes(type, target); dinamik import ilk seferde yavaş olabilir.
+    await waitFor(() => expect(api.monitoring.getMonitorNotes).toHaveBeenCalledWith('PORT', '10.0.0.1:25'), { timeout: 5000 })
   })
 })

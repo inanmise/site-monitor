@@ -50,6 +50,15 @@ public class DnsMonitor {
     @Column(name = "propagation_check")
     private Boolean propagationCheck = false;
 
+    /** Per-monitor DNS_SLOW eşiği (ms). null = global cert.monitor.dns.slow-threshold-ms (varsayılan 1500).
+     *  Bu süreyi aşan çözümlemelerde DNS_SLOW alarmı; boşsa genel ayar kullanılır. */
+    @Column(name = "slow_threshold_ms")
+    private Integer slowThresholdMs;
+
+    /** Mantıksal grup (ör. "X Sistemleri") — filtreleme/gruplama; serbest-form (ping/keyword ile aynı). */
+    @Column(name = "group_name")
+    private String groupName;
+
     @Column(name = "created_at")
     private String createdAt;
 

@@ -8,6 +8,7 @@ import java.util.Optional;
 
 public interface PortMonitorRepository extends JpaRepository<PortMonitor, Long> {
     List<PortMonitor> findByActiveTrue();
+    List<PortMonitor> findByStandaloneTrueAndActiveTrue();
     List<PortMonitor> findAllByOrderByNameAsc();
     Optional<PortMonitor> findFirstByHostAndPortOrderByIdAsc(String host, int port);
 }

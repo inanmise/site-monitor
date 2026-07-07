@@ -29,4 +29,13 @@ public interface PortCheckRepository extends JpaRepository<PortCheck, Long> {
     List<PortCheck> findByMonitorIdAndCheckedAtGreaterThanEqualOrderByCheckedAtDesc(Long monitorId, String since);
     long countByMonitorIdAndCheckedAtGreaterThanEqual(Long monitorId, String since);
     long countByMonitorIdAndOpenFalseAndCheckedAtGreaterThanEqual(Long monitorId, String since);
+
+    /** Yanıt-süresi grafiği için ham veri: [checked_at, response_ms (null olabilir), open] — aralık + cap
+     *  (en yeni :limit). Null filtresi YOK: down/error kovaları için tüm kayıtlar gelir, istatistik
+     *  Java'da null'sız hesaplanır (keyword/ping responseSeriesRaw ile aynı desen). */
+    @Query("SELECT pc.checkedAt, pc.responseMs, pc.open FROM PortCheck pc "
+         + "WHERE pc.monitorId = :id AND pc.checkedAt >= :from AND pc.checkedAt <= :to "
+         + "ORDER BY pc.checkedAt DESC LIMIT :limit")
+    List<Object[]> responseSeriesRaw(@Param("id") Long id, @Param("from") String from,
+                                     @Param("to") String to, @Param("limit") int limit);
 }

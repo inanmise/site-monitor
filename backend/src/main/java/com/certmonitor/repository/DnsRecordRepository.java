@@ -40,4 +40,12 @@ public interface DnsRecordRepository extends JpaRepository<DnsRecord, Long> {
              ORDER BY r.checkedAt DESC
             """)
     List<DnsRecord> findChangedByDomain(@Param("domain") String domain, Pageable pageable);
+
+    /** Yanıt-süresi grafiği için ham veri: [checked_at, response_ms (null olabilir), başarı-bayrağı] — aralık + cap.
+     *  DNS'te up/down bool yok → başarı = değer dolu (boş value = çözümleme başarısız). buildResponseSeries ile paylaşımlı. */
+    @Query("SELECT r.checkedAt, r.responseMs, CASE WHEN r.value IS NULL OR r.value = '' THEN false ELSE true END FROM DnsRecord r "
+         + "WHERE r.monitorId = :id AND r.checkedAt >= :from AND r.checkedAt <= :to "
+         + "ORDER BY r.checkedAt DESC LIMIT :limit")
+    List<Object[]> responseSeriesRaw(@Param("id") Long id, @Param("from") String from,
+                                     @Param("to") String to, @Param("limit") int limit);
 }

@@ -332,6 +332,7 @@ public class SchedulerService {
         // DNS monitoring tables
         patch("CREATE TABLE IF NOT EXISTS dns_monitors (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, domain TEXT NOT NULL, record_type TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1, interval_seconds INTEGER NOT NULL DEFAULT 300, created_at TEXT, updated_at TEXT)");
         patch("CREATE TABLE IF NOT EXISTS dns_records (id INTEGER PRIMARY KEY AUTOINCREMENT, monitor_id INTEGER NOT NULL, record_type TEXT, value TEXT, changed INTEGER NOT NULL DEFAULT 0, previous_value TEXT, checked_at TEXT)");
+        patch("ALTER TABLE dns_monitors ADD COLUMN slow_threshold_ms INTEGER");   // per-monitor DNS_SLOW eşiği; null=global (ddl-auto zaten ekler — güvenlik ağı)
 
         // ── Performans index'leri (sıcak sorgu yolları) — idempotent, PG IF NOT EXISTS ──
         // Tablolar bu noktada Hibernate ddl-auto=update ile oluşmuş durumda.
@@ -1108,6 +1109,15 @@ public class SchedulerService {
     /** Tüm-tur kilit içinde çalışan gerçek port sweep gövdesi (bkz. runPortChecks). */
     private void runPortChecksLocked() {
         List<PortMonitor> monitors = portMonitorRepo.findByActiveTrue();
+        // Öksüz port alarmı temizliği: host rename/silme sonrası recovery'nin kapatamadığı açık PORT_DOWN alarmı (ping ile paritede).
+        try {
+            java.util.Set<String> existingHosts = portMonitorRepo.findAll().stream()
+                    .map(PortMonitor::getHost).filter(java.util.Objects::nonNull)
+                    .collect(java.util.stream.Collectors.toSet());
+            escalationService.resolveOrphanedPortAlerts(existingHosts);
+        } catch (Exception e) {
+            log.warn("Öksüz port alarmı temizliği başarısız: {}", e.getMessage());
+        }
         if (monitors.isEmpty()) return;
         // Skip monitors whose host is no longer in active inventory (soft-deleted / inactive)
         Set<String> activeDomains = inventoryRepo.findByActiveTrueOrderByDomainAsc().stream()
@@ -1115,16 +1125,26 @@ public class SchedulerService {
         int checked = 0, skipped = 0;
         List<MonitoringOutageService.SweepItem> sweep = new ArrayList<>();
         for (PortMonitor m : monitors) {
-            if (!activeDomains.contains(m.getHost())) { skipped++; continue; }
+            if (!Boolean.TRUE.equals(m.getStandalone()) && !activeDomains.contains(m.getHost())) { skipped++; continue; }   // standalone → envanter-skip baypas
             if (!checkDue("port", m.getId(), m.getIntervalSeconds())) continue;   // aralığı dolmadı → bu sweep'te atla
             try {
                 Map<String, Object> r = recheckPort(m);
+                // ctxExtra: port/protocol + per-monitor teyit/recovery override'ları (ping/keyword ile aynı → tunable + aktif recovery)
+                Map<String, Object> ctx = new LinkedHashMap<>();
+                ctx.put("port", m.getPort());
+                ctx.put("protocol", m.getProtocol() != null ? m.getProtocol() : "TCP");
+                ctx.put("monitor_id", m.getId());
+                ctx.put("monitor_confirm_attempts", m.getConfirmAttempts());
+                ctx.put("monitor_confirm_interval_ms", m.getConfirmIntervalSeconds() != null ? m.getConfirmIntervalSeconds() * 1000L : null);
+                ctx.put("monitor_recovery_checks", m.getRecoveryChecks());
+                ctx.put("monitor_recovery_interval_ms", m.getRecoveryIntervalSeconds() != null ? m.getRecoveryIntervalSeconds() * 1000L : null);
+                if (m.getTeamId() != null) ctx.put("team_id", m.getTeamId());
                 // Hata fırlatan monitör item üretmez — yanlış all-up resolve olmaz
                 sweep.add(new MonitoringOutageService.SweepItem(
                         EscalationService.TYPE_PORT_DOWN, m.getHost(),
                         m.getPort() + "/" + m.getProtocol(),
                         "up".equals(r.get("status")), (String) r.get("error"),
-                        Map.of("port", m.getPort(), "protocol", m.getProtocol() != null ? m.getProtocol() : "TCP"),
+                        ctx,
                         () -> recheckPort(m)));
                 checked++;
             } catch (Exception e) {
@@ -1181,6 +1201,15 @@ public class SchedulerService {
     /** Tüm-tur kilit içinde çalışan gerçek keyword sweep gövdesi (bkz. runKeywordChecks). */
     private void runKeywordChecksLocked() {
         List<KeywordMonitor> monitors = keywordMonitorRepo.findByActiveTrue();
+        // Öksüz keyword alarmı temizliği: url rename/silme sonrası recovery'nin kapatamadığı açık KEYWORD alarmı (ping ile paritede).
+        try {
+            java.util.Set<String> existingUrls = keywordMonitorRepo.findAll().stream()
+                    .map(KeywordMonitor::getUrl).filter(java.util.Objects::nonNull)
+                    .collect(java.util.stream.Collectors.toSet());
+            escalationService.resolveOrphanedKeywordAlerts(existingUrls);
+        } catch (Exception e) {
+            log.warn("Öksüz keyword alarmı temizliği başarısız: {}", e.getMessage());
+        }
         if (monitors.isEmpty()) return;
         int checked = 0;
         List<MonitoringOutageService.SweepItem> sweep = new ArrayList<>();
@@ -1392,6 +1421,7 @@ public class SchedulerService {
         for (DnsMonitor m : monitors) {
             // Standalone monitör (DNS sayfasından eklenen, sertifikadan bağımsız) envanter-skip'i baypas eder.
             if (!Boolean.TRUE.equals(m.getStandalone()) && !activeDomains.contains(m.getDomain())) { skipped++; continue; }
+            if (!checkDue("dns", m.getId(), m.getIntervalSeconds())) continue;   // aralığı dolmadı → bu sweep'te atla (port/ping/keyword ile paritede)
             try {
                 Map<String, Object> r = dnsCheckerService.check(m.getDomain(), m.getRecordType());
                 boolean success = Boolean.TRUE.equals(r.get("success"));
@@ -1426,6 +1456,7 @@ public class SchedulerService {
 
                 Map<String, Object> failCtx = new LinkedHashMap<>();
                 failCtx.put("record_type", m.getRecordType());
+                failCtx.put("monitor_id", m.getId());   // e-posta CTA deep-link (?tab=dns&monitor=<id>)
                 if (m.getTeamId() != null) failCtx.put("team_id", m.getTeamId());   // standalone → alarm takıma
                 sweep.add(new MonitoringOutageService.SweepItem(
                         EscalationService.TYPE_DNS_FAILURE, m.getDomain(), m.getRecordType(),
@@ -1437,18 +1468,19 @@ public class SchedulerService {
                 // → fallback). Ayrı DNS_SLOW alarmı; 1 dk arayla 3 yeniden ölçümde de yavaşsa doğrulanır (ctxExtra).
                 if (success) {
                     long responseMs = r.get("response_ms") instanceof Number rn2 ? rn2.longValue() : 0L;
-                    boolean slow = responseMs > slowThresholdMs;
+                    int effSlow = m.getSlowThresholdMs() != null ? m.getSlowThresholdMs() : slowThresholdMs;  // per-monitor eşik ?? global
+                    boolean slow = responseMs > effSlow;
                     Map<String, Object> slowCtx = new LinkedHashMap<>();
                     slowCtx.put("record_type", m.getRecordType());
                     slowCtx.put("response_ms", responseMs);
-                    slowCtx.put("slow_threshold_ms", slowThresholdMs);
+                    slowCtx.put("slow_threshold_ms", effSlow);
                     slowCtx.put("monitor_confirm_attempts", slowConfirmAttempts);
                     slowCtx.put("monitor_confirm_interval_ms", (long) slowConfirmIntervalMs);
                     if (m.getTeamId() != null) slowCtx.put("team_id", m.getTeamId());   // standalone → alarm takıma
                     slowSweep.add(new MonitoringOutageService.SweepItem(
                             EscalationService.TYPE_DNS_SLOW, m.getDomain(), m.getRecordType(),
                             !slow, slow ? responseMs + " ms" : null,
-                            slowCtx, () -> recheckDnsSlow(m, slowThresholdMs)));
+                            slowCtx, () -> recheckDnsSlow(m, effSlow)));
                 }
 
                 // BEKLENEN-DEĞER KİLİDİ: sabitlenen "beklenen değer"de OLMAYAN bir değer çözümlenirse
@@ -1469,8 +1501,11 @@ public class SchedulerService {
                 if (changed) {
                     log.warn("DNS change detected for {} {}: was='{}' now='{}'",
                             m.getRecordType(), m.getDomain(), prevValue, valueStr);
+                    // DNS_CHANGED artık 3× teyitli: değişiklik ardışık kontrollerde kalıcıysa alarmlanır
+                    // (geçici/rotasyon baseline'a dönerse iptal). Baseline = değişiklik öncesi bilinen-iyi değer.
                     changes.add(new MonitoringOutageService.DnsChange(
-                            m.getDomain(), m.getRecordType(), prevValue, valueStr, now, m.getTeamId()));
+                            m.getDomain(), m.getRecordType(), prevValue, valueStr, now, m.getTeamId(),
+                            () -> recheckDnsChanged(m, prevValue)));
                 }
                 checked++;
             } catch (Exception e) {
@@ -1528,6 +1563,23 @@ public class SchedulerService {
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("status", slow ? "down" : "up");
         out.put("error", slow ? responseMs + " ms" : (String) r.get("error"));
+        return out;
+    }
+
+    /** DNS_CHANGED teyit re-check'i: canlı değer HÂLÂ pre-change baseline'dan AYRIK (CHANGED) ise "down"
+     *  (değişiklik kalıcı → teyit sürer → alarm); baseline'a dönmüş / rotasyon / çözülemiyorsa "up"
+     *  (geçici → alarm üretilmez). Baseline = değişikliğin önceki (bilinen-iyi) değeri. */
+    private Map<String, Object> recheckDnsChanged(DnsMonitor m, String baseline) {
+        Map<String, Object> r = dnsCheckerService.check(m.getDomain(), m.getRecordType());
+        boolean success = Boolean.TRUE.equals(r.get("success"));
+        @SuppressWarnings("unchecked")
+        List<String> values = (List<String>) r.getOrDefault("values", List.of());
+        boolean stillChanged = success
+                && DnsCheckerService.detectChange(baseline, String.join("\n", values))
+                   == DnsCheckerService.ChangeKind.CHANGED;
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("status", stillChanged ? "down" : "up");
+        out.put("error", stillChanged ? "changed" : null);
         return out;
     }
 

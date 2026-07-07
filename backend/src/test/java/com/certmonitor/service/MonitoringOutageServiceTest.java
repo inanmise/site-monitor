@@ -155,15 +155,16 @@ class MonitoringOutageServiceTest {
     }
 
     @Test
-    @DisplayName("DNS_CHANGED: anında HIGH alarm, sıfır recheck, ctx eski/yeni değerleri taşır")
-    void dnsChange_immediateHighAlert() {
+    @DisplayName("DNS_CHANGED: 3× teyit sonrası HIGH alarm; ctx eski/yeni değerleri taşır")
+    void dnsChange_confirmsAfterRechecks() {
         AtomicInteger calls = new AtomicInteger();
         service.handleDnsSweep(
                 List.of(item(EscalationService.TYPE_DNS_FAILURE, "changed.example.com", "A", true,
-                        Map.of("record_type", "A"), downThenUp(99, calls))),
+                        Map.of("record_type", "A"), downThenUp(99, new AtomicInteger()))),
                 List.of(),
                 List.of(new MonitoringOutageService.DnsChange(
-                        "changed.example.com", "A", "1.2.3.4\n5.6.7.8", "9.9.9.9", "2026-06-11T10:00:00", null)),
+                        "changed.example.com", "A", "1.2.3.4\n5.6.7.8", "9.9.9.9", "2026-06-11T10:00:00", null,
+                        downThenUp(99, calls))),   // değişiklik kalıcı → 3 recheck de "down" → teyit edilir
                 List.of(),
                 List.of());
 
@@ -173,7 +174,25 @@ class MonitoringOutageServiceTest {
                 eq("changed.example.com"), eq(EscalationService.TYPE_DNS_CHANGED), eq("HIGH"), ctx.capture());
         assertThat(ctx.getValue().get("old_values")).isEqualTo(List.of("1.2.3.4", "5.6.7.8"));
         assertThat(ctx.getValue().get("new_values")).isEqualTo(List.of("9.9.9.9"));
-        assertThat(calls.get()).isZero();
+        assertThat(calls.get()).isEqualTo(3);   // 3 ardışık teyit denemesi
+    }
+
+    @Test
+    @DisplayName("DNS_CHANGED: recheck baseline'a döner (geçici/rotasyon) → alarm ÜRETİLMEZ")
+    void dnsChange_revertsMidway_noAlert() {
+        AtomicInteger calls = new AtomicInteger();
+        service.handleDnsSweep(
+                List.of(),
+                List.of(),
+                List.of(new MonitoringOutageService.DnsChange(
+                        "flap.example.com", "A", "1.2.3.4", "9.9.9.9", "2026-06-11T10:00:00", null,
+                        () -> { calls.incrementAndGet(); return up(); })),   // ilk recheck'te baseline'a döndü
+                List.of(),
+                List.of());
+
+        verify(escalationService, never()).processConfirmedOutage(
+                anyString(), eq(EscalationService.TYPE_DNS_CHANGED), anyString(), any());
+        assertThat(calls.get()).isEqualTo(1);   // ilk denemede "up" → iptal
     }
 
     @Test
@@ -333,7 +352,7 @@ class MonitoringOutageServiceTest {
                 List.of(item(EscalationService.TYPE_DNS_FAILURE, "down.example.com", "A", false,
                         Map.of(), downThenUp(99, calls))),
                 List.of(),
-                List.of(new MonitoringOutageService.DnsChange("c.example.com", "A", "1.1.1.1", "2.2.2.2", "now", null)),
+                List.of(new MonitoringOutageService.DnsChange("c.example.com", "A", "1.1.1.1", "2.2.2.2", "now", null, () -> up())),
                 List.of(),
                 List.of());
 

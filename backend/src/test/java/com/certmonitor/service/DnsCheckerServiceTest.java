@@ -43,6 +43,24 @@ class DnsCheckerServiceTest {
     }
 
     @Test
+    @DisplayName("toHostname: URL şema/userinfo/path/port/trailing-dot ayıklanır → çıplak host (sahte NXDOMAIN fix)")
+    void toHostname_stripsUrlParts() {
+        assertThat(DnsCheckerService.toHostname("https://www.akbank.com/basvuru/Juzdan/")).isEqualTo("www.akbank.com");
+        assertThat(DnsCheckerService.toHostname("http://example.com:8443/path?q=1")).isEqualTo("example.com");
+        assertThat(DnsCheckerService.toHostname("user@host.example.com/x")).isEqualTo("host.example.com");
+        assertThat(DnsCheckerService.toHostname("WWW.Example.COM.")).isEqualTo("www.example.com");
+    }
+
+    @Test
+    @DisplayName("toHostname: zaten çıplak host değişmez; port ayıklanır; null/boş güvenli")
+    void toHostname_bareHostAndEdgeCases() {
+        assertThat(DnsCheckerService.toHostname("www.example.com")).isEqualTo("www.example.com");
+        assertThat(DnsCheckerService.toHostname("example.com:53")).isEqualTo("example.com");
+        assertThat(DnsCheckerService.toHostname(null)).isNull();
+        assertThat(DnsCheckerService.toHostname("   ")).isEqualTo("");
+    }
+
+    @Test
     @DisplayName("success=false branch always carries an error key")
     void check_failureCarriesErrorMessage() {
         // Try several inputs that should fail in most environments. Even if one of

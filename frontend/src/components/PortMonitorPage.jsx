@@ -1,10 +1,14 @@
-import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
+import { useState, useEffect, useCallback, useRef, useMemo, lazy, Suspense } from 'react'
 import { createPortal } from 'react-dom'
 import { api, formatDate } from '../api/client'
 import { useT } from '../i18n/index.jsx'
 import { useToast } from './ui/Toast.jsx'
 import SearchableSelect from './ui/SearchableSelect.jsx'
-import { Play, Pencil, X, RefreshCw, Plug, Plus, Trash2, FlaskConical } from 'lucide-react'
+import { Play, Pencil, X, RefreshCw, Plug, Plus, Trash2, FlaskConical, AlertTriangle, Network, Check, Pause, BarChart3, ChevronDown, BellDot } from 'lucide-react'
+import AlertHistory from './admin/AlertHistory.jsx'
+import MonitorStatsBar from './MonitorStatsBar.jsx'
+const ResponseTimeChart = lazy(() => import('./ResponseTimeChart.jsx'))
+const MonitorNotes = lazy(() => import('./MonitorNotes.jsx'))
 
 const INTERVALS = [
   { value: 30,  labelKey: 'ping.interval30s' },
@@ -16,7 +20,8 @@ const INTERVALS = [
 const REFRESH_INTERVAL = 60
 const PORT_TYPES = ['TCP', 'TLS', 'HTTP', 'BANNER', 'UDP']
 const emptyForm = { name: '', host: '', port: '', protocol: 'TCP', expect: '', sendData: '', teamId: '', groupName: '',
-  intervalSeconds: 60, timeoutMs: 5000, active: true }
+  intervalSeconds: 60, timeoutMs: 5000,
+  confirmAttempts: 3, confirmIntervalSeconds: 30, recoveryChecks: 3, recoveryIntervalSeconds: 30, active: true }
 
 export default function PortMonitorPage({ systemRole, teamId, teamName }) {
   const t = useT()
@@ -31,10 +36,14 @@ export default function PortMonitorPage({ systemRole, teamId, teamName }) {
   const [monitors, setMonitors] = useState([])
   const [loading, setLoading] = useState(true)
   const [teams, setTeams] = useState([])
+  const [defaults, setDefaults] = useState(null)
   const [selected, setSelected] = useState(null)
   const [history, setHistory] = useState([])
   const [historyLoading, setHistoryLoading] = useState(false)
   const [rangeDays, setRangeDays] = useState(1)
+  const [historyPage, setHistoryPage] = useState(0)
+  const [historyPageSize, setHistoryPageSize] = useState(50)
+  const [detailTab, setDetailTab] = useState('control')
   const [summary, setSummary] = useState({ total: 0, down: 0 })
   const [modal, setModal] = useState(null)
   const [form, setForm] = useState(emptyForm)
@@ -44,6 +53,10 @@ export default function PortMonitorPage({ systemRole, teamId, teamName }) {
   const [testResult, setTestResult] = useState(null)
   const [checking, setChecking] = useState(null)
   const [search, setSearch] = useState('')
+  const [groupFilter, setGroupFilter] = useState('all')
+  const [statFilter, setStatFilter] = useState(null)
+  const [statsVisible, setStatsVisible] = useState(false)
+  const deepLinkDone = useRef(false)
   const [teamFilter, setTeamFilter] = useState('all')
   const [secondsSince, setSecondsSince] = useState(0)
   const countdownRef = useRef(null)
@@ -72,6 +85,26 @@ export default function PortMonitorPage({ systemRole, teamId, teamName }) {
     api.admin.getTeams().then(r => { if (r?.success) setTeams(r.data || []) })
   }, [isAdmin])
 
+  // Yeni monitör için per-tip varsayılan kontrol aralığı + timeout (Genel Ayarlar → Kontrol Sıklığı).
+  useEffect(() => {
+    api.monitoring.monitorDefaults?.()?.then(r => { if (r?.success) setDefaults(r.data?.port) })
+  }, [])
+
+  // E-posta CTA deep-link: ?monitor=<id> → ilgili port monitörünün detayını aç (bir kez), paramı temizle.
+  useEffect(() => {
+    if (deepLinkDone.current || monitors.length === 0) return
+    deepLinkDone.current = true
+    let id
+    try { id = new URLSearchParams(window.location.search).get('monitor') } catch { return }
+    if (!id) return
+    const m = monitors.find(x => String(x.id) === String(id))
+    if (m) openModal(m)
+    try {
+      const u = new URL(window.location.href); u.searchParams.delete('monitor')
+      window.history.replaceState({}, '', u.pathname + u.search + u.hash)
+    } catch { /* yoksay */ }
+  }, [monitors]) // eslint-disable-line react-hooks/exhaustive-deps
+
   // Modal her açıldığında önceki kaydetme hatası + test sonucunu temizle.
   useEffect(() => { setSaveError(null); setTestResult(null) }, [modal])
 
@@ -85,25 +118,32 @@ export default function PortMonitorPage({ systemRole, teamId, teamName }) {
     setHistoryLoading(false)
   }
 
-  function selectRange(id, days) { setRangeDays(days); loadHistory(id, days) }
+  function selectRange(id, days) { setRangeDays(days); setHistoryPage(0); loadHistory(id, days) }
 
   async function openModal(m) {
     setSelected(m)
+    setDetailTab('control')
     setHistory([])
+    setHistoryPage(0)
     loadHistory(m.id, rangeDays)
   }
 
   function closeModal() { setSelected(null); setHistory([]) }
 
   function openNew() {
-    setForm({ ...emptyForm, teamId: isAdmin ? '' : (myTeam ?? '') })
+    setForm({ ...emptyForm, teamId: isAdmin ? '' : (myTeam ?? ''),
+      intervalSeconds: defaults?.intervalSeconds ?? emptyForm.intervalSeconds,
+      timeoutMs: defaults?.timeoutMs ?? emptyForm.timeoutMs })
     setModal('new')
   }
   function openEdit(m) {
     setForm({ name: m.name || '', host: m.host || '', port: m.port ?? '', protocol: m.protocol || 'TCP',
       expect: m.expect || '', sendData: m.send_data || '',
       teamId: m.team_id != null ? String(m.team_id) : '', groupName: m.group_name || '',
-      intervalSeconds: m.interval_seconds ?? 60, timeoutMs: m.timeout_ms ?? 5000, active: m.active !== false })
+      intervalSeconds: m.interval_seconds ?? 60, timeoutMs: m.timeout_ms ?? 5000,
+      confirmAttempts: m.confirm_attempts ?? 3, confirmIntervalSeconds: m.confirm_interval_seconds ?? 30,
+      recoveryChecks: m.recovery_checks ?? 3, recoveryIntervalSeconds: m.recovery_interval_seconds ?? 30,
+      active: m.active !== false })
     setModal(m)
   }
   function closeEdit() { setModal(null) }
@@ -116,7 +156,10 @@ export default function PortMonitorPage({ systemRole, teamId, teamName }) {
       protocol: form.protocol?.trim() || 'TCP',
       expect: form.expect?.trim() || null, sendData: form.sendData || null,
       teamId: form.teamId === '' ? null : Number(form.teamId), groupName: form.groupName?.trim() || null,
-      intervalSeconds: Number(form.intervalSeconds), timeoutMs: Number(form.timeoutMs), active: form.active,
+      intervalSeconds: Number(form.intervalSeconds), timeoutMs: Number(form.timeoutMs),
+      confirmAttempts: Number(form.confirmAttempts), confirmIntervalSeconds: Number(form.confirmIntervalSeconds),
+      recoveryChecks: Number(form.recoveryChecks), recoveryIntervalSeconds: Number(form.recoveryIntervalSeconds),
+      active: form.active,
     }
     const res = modal === 'new'
       ? await api.monitoring.createPortMonitor(payload)
@@ -176,11 +219,52 @@ export default function PortMonitorPage({ systemRole, teamId, teamName }) {
   const groupNames = useMemo(
     () => [...new Set(monitors.map(m => m.group_name).filter(Boolean))].sort((a, b) => a.localeCompare(b)), [monitors])
   const groupSelectOptions = useMemo(() => groupNames.map(g => ({ value: g, label: g })), [groupNames])
+  const hasGroupOptions = groupNames.length > 0
+  const groupFilterOptions = [{ value: 'all', label: t('port.allGroups') },
+    ...groupNames.map(g => ({ value: g, label: g })),
+    ...(monitors.some(m => !m.group_name) ? [{ value: '__none__', label: t('port.noGroup') }] : [])]
+
+  const portCounts = {
+    total: monitors.length,
+    up: monitors.filter(m => m.status === 'open').length,
+    down: monitors.filter(m => m.status === 'closed').length,
+    alarm: monitors.filter(m => m.active_alarm).length,
+    unacked: monitors.filter(m => m.active_alarm && !m.alarm_acknowledged).length,
+    paused: monitors.filter(m => m.active === false).length,
+  }
+  const statItems = [
+    { key: 'total',   Icon: Network,       label: t('port.statTotal'),    value: portCounts.total,   cls: 'total'    },
+    { key: 'up',      Icon: Check,         label: t('port.statUp'),       value: portCounts.up,      cls: 'valid'    },
+    { key: 'down',    Icon: X,             label: t('port.statDown'),     value: portCounts.down,    cls: 'critical' },
+    { key: 'alarm',   Icon: AlertTriangle, label: t('port.statAlarm'),    value: portCounts.alarm,   cls: 'high'     },
+    { key: 'unacked', Icon: BellDot,       label: t('port.statUnacked'),  value: portCounts.unacked, cls: 'warning'  },
+    { key: 'paused',  Icon: Pause,         label: t('port.statPaused'),   value: portCounts.paused,  cls: 'paused'   },
+  ]
+  const onStatClick = (key) => setStatFilter(k => k === key ? null : key)
+  const toggleStats = () => { if (statsVisible) setStatFilter(null); setStatsVisible(v => !v) }
+
+  // Geçmiş sayfalaması (DNS ile aynı 50/100/200)
+  const histTotalPages = Math.max(1, Math.ceil(history.length / historyPageSize))
+  const histSafePage = Math.min(historyPage, histTotalPages - 1)
+  const histStart = histSafePage * historyPageSize
+  const histEnd = Math.min(histStart + historyPageSize, history.length)
+  const pagedHistory = history.slice(histStart, histEnd)
 
   const displayMonitors = monitors.filter(m => {
     if (teamFilter !== 'all') {
       if (teamFilter === '__none__') { if (m.team_name) return false }
       else if (m.team_name !== teamFilter) return false
+    }
+    if (groupFilter !== 'all') {
+      if (groupFilter === '__none__') { if (m.group_name) return false }
+      else if (m.group_name !== groupFilter) return false
+    }
+    if (statFilter && statFilter !== 'total') {
+      if (statFilter === 'up' && m.status !== 'open') return false
+      if (statFilter === 'down' && m.status !== 'closed') return false
+      if (statFilter === 'alarm' && !m.active_alarm) return false
+      if (statFilter === 'unacked' && !(m.active_alarm && !m.alarm_acknowledged)) return false
+      if (statFilter === 'paused' && m.active !== false) return false
     }
     if (!search.trim()) return true
     return m.host.toLowerCase().includes(search.trim().toLowerCase())
@@ -195,6 +279,13 @@ export default function PortMonitorPage({ systemRole, teamId, teamName }) {
         {label}
       </span>
     )
+  }
+  const alarmLevelColor = (lvl) => lvl === 'CRITICAL' ? '#c0392b' : lvl === 'HIGH' ? '#e07b00' : '#f0a500'
+  function alarmBadge(m) {
+    if (!m?.active_alarm) return null
+    const title = `${t('port.activeAlarm')}${m.alarm_level ? ' — ' + m.alarm_level : ''}`
+    return <span className={`upt-alarm-ico${m.alarm_acknowledged ? '' : ' pulse'}`}
+      style={{ color: alarmLevelColor(m.alarm_level) }} title={title}><AlertTriangle size={14} /></span>
   }
 
   return (
@@ -220,9 +311,31 @@ export default function PortMonitorPage({ systemRole, teamId, teamName }) {
       </div>
 
       {!loading && monitors.length > 0 && (
+        <div className="stats-collapse-bar" onClick={toggleStats}
+          title={statsVisible ? t('app.collapseStats') : t('app.expandStats')}>
+          <span className="stats-collapse-icon"><BarChart3 size={18} /></span>
+          <span className="stats-collapse-label">{t('app.statistics')}</span>
+          {!statsVisible && <span className="stats-collapse-hint">{t('app.expandStats')}</span>}
+          <span className={`stats-collapse-chevron${statsVisible ? ' open' : ''}`}><ChevronDown size={18} /></span>
+        </div>
+      )}
+      {statsVisible && !loading && monitors.length > 0 && (
+        <MonitorStatsBar items={statItems} activeFilter={statFilter} onStatClick={onStatClick} />
+      )}
+      {statsVisible && statFilter && statFilter !== 'total' && (
+        <div className="stats-filter-bar" style={{ marginBottom: 16 }}>
+          <span>{statItems.find(s => s.key === statFilter)?.label} — {t('mondash.showing', displayMonitors.length)}</span>
+          <button className="stats-filter-clear" onClick={() => setStatFilter(null)}>{t('app.clearFilter')}</button>
+        </div>
+      )}
+
+      {!loading && monitors.length > 0 && (
         <div className="upt-toolbar" style={{ justifyContent: 'flex-end', marginBottom: '14px', gap: 8 }}>
           {hasTeamOptions && (
             <SearchableSelect value={teamFilter} onChange={setTeamFilter} options={teamOptions} />
+          )}
+          {hasGroupOptions && (
+            <SearchableSelect value={groupFilter} onChange={setGroupFilter} options={groupFilterOptions} searchThreshold={2} />
           )}
           <input className="upt-search" type="text"
             placeholder={t('port.searchPlaceholder')}
@@ -250,13 +363,13 @@ export default function PortMonitorPage({ systemRole, teamId, teamName }) {
               {displayMonitors.map(m => (
                 <tr
                   key={m.id}
-                  className={`mon-row${!m.active ? ' mon-row-inactive' : ''}`}
+                  className={`mon-row${!m.active ? ' mon-row-inactive' : ''}${m.active_alarm ? ' mon-row--alarm' : ''}`}
                   onClick={() => openModal(m)}
                 >
                   <td className="mon-cell-mono">{m.host}</td>
                   <td>{m.team_name || '—'}</td>
                   <td className="mon-cell-num">{m.port}</td>
-                  <td>{statusBadge(m.status)}</td>
+                  <td>{statusBadge(m.status)}{alarmBadge(m)}</td>
                   <td className="mon-cell-num">{m.response_ms != null ? `${m.response_ms}ms` : '—'}</td>
                   <td className="mon-cell-time">{m.checked_at ? formatDate(m.checked_at) : '—'}</td>
                   <td className="mon-cell-actions" onClick={e => e.stopPropagation()}>
@@ -292,22 +405,22 @@ export default function PortMonitorPage({ systemRole, teamId, teamName }) {
             </div>
             <div className="upt-modal-divider" />
             <div className="upt-modal-summary">
-              <div className="upt-modal-metric">
+              <div className="upt-modal-metric" title={t('port.sumUptimeHint')}>
                 <span className="upt-modal-metric-val">
                   {summary.total > 0 ? `%${Math.round((summary.total - summary.down) * 1000 / summary.total) / 10}` : '—'}
                 </span>
                 <span className="upt-modal-metric-lbl">{t('port.sumUptime')}</span>
               </div>
-              <div className="upt-modal-metric">
+              <div className="upt-modal-metric" title={t('port.sumTotalHint')}>
                 <span className="upt-modal-metric-val">{summary.total}</span>
                 <span className="upt-modal-metric-lbl">{t('port.sumTotal')}</span>
               </div>
-              <div className="upt-modal-metric">
+              <div className="upt-modal-metric" title={t('port.sumIncidentsHint')}>
                 <span className="upt-modal-metric-val">{summary.down}</span>
                 <span className="upt-modal-metric-lbl">{t('port.sumIncidents')}</span>
               </div>
               {selected.response_ms != null && (
-                <div className="upt-modal-metric">
+                <div className="upt-modal-metric" title={t('port.responseMsHint')}>
                   <span className="upt-modal-metric-val">{selected.response_ms}ms</span>
                   <span className="upt-modal-metric-lbl">{t('port.responseMs')}</span>
                 </div>
@@ -338,46 +451,86 @@ export default function PortMonitorPage({ systemRole, teamId, teamName }) {
               )}
             </div>
             <div className="upt-modal-divider" />
-            <div className="upt-modal-section-title">{t('port.history')}</div>
-            <div className="upt-range-btns">
-              {[1, 7, 15, 30].map(d => (
-                <button key={d} type="button"
-                  className={`btn btn-sm ${rangeDays === d ? 'btn-primary' : 'btn-secondary'}`}
-                  onClick={() => selectRange(selected.id, d)}>{t(`port.range${d}d`)}</button>
-              ))}
+            <div className="modal-tabs">
+              <button className={`modal-tab${detailTab === 'control' ? ' active' : ''}`} onClick={() => setDetailTab('control')}>{t('port.tabControl')}</button>
+              <button className={`modal-tab${detailTab === 'alerts' ? ' active' : ''}`} onClick={() => setDetailTab('alerts')}>{t('port.tabAlerts')}</button>
+              <button className={`modal-tab${detailTab === 'chart' ? ' active' : ''}`} onClick={() => setDetailTab('chart')}>{t('port.tabChart')}</button>
+              <button className={`modal-tab${detailTab === 'notes' ? ' active' : ''}`} onClick={() => setDetailTab('notes')}>{t('port.tabGuide')}</button>
             </div>
-            {historyLoading ? (
-              <div className="upt-modal-loading">...</div>
-            ) : history.length === 0 ? (
-              <div className="upt-modal-loading">{t('uptime.noData')}</div>
-            ) : (
-              <div className="upt-rt-list">
-                <div className="upt-rt-grid upt-rt-head">
-                  <span>{t('port.colTime')}</span>
-                  <span>{t('port.colStatus')}</span>
-                  <span>{t('port.colResponse')}</span>
-                  <span>{t('port.colDetail')}</span>
-                </div>
-                {history.slice(0, 200).map((c, i) => (
-                  <div key={i} className="upt-rt-grid">
-                    <span className="upt-rt-time">{formatDate(c.checkedAt || c.checked_at)}</span>
-                    <span className={c.open ? 'upt-rt-up' : 'upt-rt-down'}>
-                      {c.open ? t('port.statusOpen') : t('port.statusClosed')}
-                    </span>
-                    <span className="upt-rt-ms">
-                      {(c.responseMs ?? c.response_ms) != null ? `${c.responseMs ?? c.response_ms}ms` : '—'}
-                    </span>
-                    {c.error
-                      ? <span className="upt-rt-error">{c.error}</span>
-                      : c.open
-                        ? <span className="upt-rt-up">{t('port.detailOk')}</span>
-                        : <span className="upt-rt-ms">—</span>}
-                  </div>
+
+            {detailTab === 'control' && (<>
+              <div className="upt-range-btns">
+                {[1, 7, 15, 30].map(d => (
+                  <button key={d} type="button"
+                    className={`btn btn-sm ${rangeDays === d ? 'btn-primary' : 'btn-secondary'}`}
+                    onClick={() => selectRange(selected.id, d)}>{t(`port.range${d}d`)}</button>
                 ))}
-                {history.length > 200 && (
-                  <div className="upt-modal-loading">{t('port.historyCapped')}</div>
-                )}
               </div>
+              {historyLoading ? (
+                <div className="upt-modal-loading">...</div>
+              ) : history.length === 0 ? (
+                <div className="upt-modal-loading">{t('uptime.noData')}</div>
+              ) : (
+                <div className="upt-rt-list">
+                  <div className="upt-rt-grid upt-rt-head">
+                    <span>{t('port.colTime')}</span>
+                    <span>{t('port.colStatus')}</span>
+                    <span>{t('port.colResponse')}</span>
+                    <span>{t('port.colDetail')}</span>
+                  </div>
+                  {pagedHistory.map((c, i) => (
+                    <div key={i} className="upt-rt-grid">
+                      <span className="upt-rt-time">{formatDate(c.checkedAt || c.checked_at)}</span>
+                      <span className={c.open ? 'upt-rt-up' : 'upt-rt-down'}>
+                        {c.open ? t('port.statusOpen') : t('port.statusClosed')}
+                      </span>
+                      <span className="upt-rt-ms">
+                        {(c.responseMs ?? c.response_ms) != null ? `${c.responseMs ?? c.response_ms}ms` : '—'}
+                      </span>
+                      {c.error
+                        ? <span className="upt-rt-error">{c.error}</span>
+                        : c.open
+                          ? <span className="upt-rt-up">{t('port.detailOk')}</span>
+                          : <span className="upt-rt-ms">—</span>}
+                    </div>
+                  ))}
+                  {history.length > 0 && (
+                    <div className="dns-history-pagination" style={{ marginTop: 10 }}>
+                      <div className="dash-page-sizer">
+                        <span className="dash-page-sizer-label">{t('app.perPage')}</span>
+                        {[50, 100, 200].map(n => (
+                          <button key={n} type="button" className={`dash-size-btn${historyPageSize === n ? ' active' : ''}`}
+                            onClick={() => { setHistoryPageSize(n); setHistoryPage(0) }}>{n}</button>
+                        ))}
+                      </div>
+                      {histTotalPages > 1 && (
+                        <div className="dash-page-nav">
+                          <button type="button" className="page-btn" disabled={histSafePage <= 0} onClick={() => setHistoryPage(0)}>«</button>
+                          <button type="button" className="page-btn" disabled={histSafePage <= 0} onClick={() => setHistoryPage(histSafePage - 1)}>{t('app.prevPage')}</button>
+                          <span className="dash-page-info-mini">{histSafePage + 1} / {histTotalPages}</span>
+                          <button type="button" className="page-btn" disabled={histSafePage >= histTotalPages - 1} onClick={() => setHistoryPage(histSafePage + 1)}>{t('app.nextPage')}</button>
+                          <button type="button" className="page-btn" disabled={histSafePage >= histTotalPages - 1} onClick={() => setHistoryPage(histTotalPages - 1)}>»</button>
+                        </div>
+                      )}
+                      <span className="dash-page-info">{t('dns.pageInfo', histStart + 1, histEnd, history.length)}</span>
+                    </div>
+                  )}
+                </div>
+              )}
+            </>)}
+
+            {detailTab === 'alerts' && <AlertHistory domain={selected.host} />}
+
+            {detailTab === 'chart' && (
+              <Suspense fallback={<div className="upt-modal-loading">…</div>}>
+                <ResponseTimeChart monitorId={selected.id} kind="port" />
+              </Suspense>
+            )}
+
+            {detailTab === 'notes' && (
+              <Suspense fallback={<div className="upt-modal-loading">…</div>}>
+                <MonitorNotes type="PORT" target={`${selected.host}:${selected.port}`} />
+              </Suspense>
             )}
           </div>
         </div>,
@@ -434,6 +587,17 @@ export default function PortMonitorPage({ systemRole, teamId, teamName }) {
                 </select></label>
               <label><span>{t('port.timeout')}</span>
                 <input type="number" value={form.timeoutMs} onChange={e => setForm(f => ({ ...f, timeoutMs: Number(e.target.value) }))} /></label>
+              <label><span>{t('port.confirmAttempts')}</span>
+                <input type="number" min="0" max="10" value={form.confirmAttempts} onChange={e => setForm(f => ({ ...f, confirmAttempts: Number(e.target.value) }))} /></label>
+              <label><span>{t('port.confirmInterval')}</span>
+                <input type="number" min="10" max="600" value={form.confirmIntervalSeconds} onChange={e => setForm(f => ({ ...f, confirmIntervalSeconds: Number(e.target.value) }))} /></label>
+              <label><span>{t('port.recoveryChecks')}</span>
+                <input type="number" min="1" max="20" value={form.recoveryChecks} onChange={e => setForm(f => ({ ...f, recoveryChecks: Number(e.target.value) }))} /></label>
+              <label><span>{t('port.recoveryInterval')}</span>
+                <input type="number" min="10" max="600" value={form.recoveryIntervalSeconds} onChange={e => setForm(f => ({ ...f, recoveryIntervalSeconds: Number(e.target.value) }))} /></label>
+              <div className="full-width" style={{ fontSize: '.8em', color: 'var(--text-muted)', marginTop: -2, lineHeight: 1.5 }}>
+                ⓘ {t('port.confirmHint')}
+              </div>
               <label className="checkbox-label">
                 <input type="checkbox" checked={form.active} onChange={e => setForm(f => ({ ...f, active: e.target.checked }))} />{t('port.active')}</label>
             </div>

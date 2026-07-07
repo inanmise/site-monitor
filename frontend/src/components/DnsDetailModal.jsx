@@ -1,9 +1,13 @@
-import { useState, useEffect, Fragment } from 'react'
+import { useState, useEffect, Fragment, lazy, Suspense } from 'react'
 import { createPortal } from 'react-dom'
 import { api, formatDate } from '../api/client'
 import { useT } from '../i18n/index.jsx'
 import { X, Activity, Clock, Server, FileText, Globe } from 'lucide-react'
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, ReferenceLine } from 'recharts'
+import AlertHistory from './admin/AlertHistory'
+import MonitorNotes from './MonitorNotes.jsx'
+// Süre grafiği artık paylaşımlı ResponseTimeChart (ping/keyword/port ile aynı: 90g/özel aralık + avg/min-max/p95).
+const ResponseTimeChart = lazy(() => import('./ResponseTimeChart.jsx'))
 
 function ChartTooltip({ active, payload, t }) {
   if (!active || !payload || !payload.length) return null
@@ -29,7 +33,7 @@ const RECORD_TYPES = ['A', 'AAAA', 'CNAME', 'MX', 'TXT', 'NS']
 const RANGE_OPTIONS = [
   { days: 1,  labelKey: 'dns.last1d'  },
   { days: 7,  labelKey: 'dns.last7d'  },
-  { days: 10, labelKey: 'dns.last10d' },
+  { days: 15, labelKey: 'dns.last15d' },
   { days: 30, labelKey: 'dns.last30d' },
 ]
 
@@ -55,11 +59,13 @@ export default function DnsDetailModal({ monitor, onClose }) {
   const [rangeDays, setRangeDays] = useState(1)
   const [historyPage, setHistoryPage] = useState(0)
   const [historyPageSize, setHistoryPageSize] = useState(50)
+  const [detailTab, setDetailTab] = useState('control')   // üst tab: control | alerts | chart | notes
 
   // Details — bir kez yüklenir, monitor değişene kadar tutulur
   useEffect(() => {
     if (!monitor) return
     setLoading(true)
+    setDetailTab('control')
     if (monitor.record_type && RECORD_TYPES.includes(monitor.record_type)) {
       setActiveTab(monitor.record_type)
     }
@@ -110,38 +116,29 @@ export default function DnsDetailModal({ monitor, onClose }) {
           </button>
         </div>
 
-        {loading ? (
+        <div className="dns-modal-summary">
+          {live?.success
+            ? <span className="dns-status-ok">✓ SUCCESS</span>
+            : <span className="dns-status-err">✗ {live?.error || 'ERROR'}</span>}
+          <span className="dns-summary-metric" title={t('dns.responseMs')}><Activity size={13} /> {live?.response_ms != null ? `${live.response_ms}ms` : '—'}</span>
+          <span className="dns-summary-metric" title={t('dns.ttl')}><Clock size={13} /> {live?.ttl != null ? `${live.ttl}s` : '—'}</span>
+          <span className="dns-summary-metric" title={t('dns.recordType')}><Server size={13} /> {monitor.record_type}</span>
+        </div>
+
+        <div className="modal-tabs">
+          <button className={`modal-tab${detailTab === 'control' ? ' active' : ''}`} onClick={() => setDetailTab('control')}>{t('dns.tabControl')}</button>
+          <button className={`modal-tab${detailTab === 'alerts' ? ' active' : ''}`} onClick={() => setDetailTab('alerts')}>{t('dns.tabAlerts')}</button>
+          <button className={`modal-tab${detailTab === 'chart' ? ' active' : ''}`} onClick={() => setDetailTab('chart')}>{t('dns.tabChart')}</button>
+          <button className={`modal-tab${detailTab === 'notes' ? ' active' : ''}`} onClick={() => setDetailTab('notes')}>{t('dns.tabGuide')}</button>
+        </div>
+
+        {detailTab === 'alerts' && <AlertHistory domain={monitor.domain} />}
+        {detailTab === 'notes' && <MonitorNotes type="DNS" target={monitor.domain} />}
+
+        {detailTab === 'control' && (loading ? (
           <div className="dns-modal-loading">{t('dns.loadingDetails')}</div>
         ) : (
           <div className="dns-modal-body">
-            {/* Metric Bar */}
-            <div className="dns-metric-bar">
-              <div className="dns-metric-item">
-                <Clock size={14} />
-                <span className="dns-metric-label">{t('dns.ttl')}</span>
-                <span className="dns-metric-value">
-                  {live?.ttl != null ? `${live.ttl}s` : '—'}
-                </span>
-              </div>
-              <div className="dns-metric-item">
-                <Activity size={14} />
-                <span className="dns-metric-label">{t('dns.responseMs')}</span>
-                <span className="dns-metric-value">
-                  {live?.response_ms != null ? `${live.response_ms}ms` : '—'}
-                </span>
-              </div>
-              <div className="dns-metric-item">
-                <Server size={14} />
-                <span className="dns-metric-label">{t('dns.recordType')}</span>
-                <span className="dns-metric-value">{monitor.record_type}</span>
-              </div>
-              {live?.success ? (
-                <span className="dns-status-ok">✓ SUCCESS</span>
-              ) : (
-                <span className="dns-status-err">✗ {live?.error || 'ERROR'}</span>
-              )}
-            </div>
-
             {/* Record type tabs */}
             <div className="dns-section">
               <h4 className="dns-section-title">{t('dns.recordTypes')}</h4>
@@ -211,71 +208,6 @@ export default function DnsDetailModal({ monitor, onClose }) {
                 </dl>
               </div>
             )}
-
-            {/* Response time trend chart */}
-            {(() => {
-              const chartData = history.slice().reverse().map(h => ({
-                ts: new Date(h.checked_at || h.checkedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-                ms: h.response_ms,
-                ttl: h.ttl,
-                changed: h.changed,
-                rotated: h.rotated,
-              })).filter(p => p.ms != null)
-              if (chartData.length < 2) return null
-              // p50/p95: görünür aralıktaki yanıt sürelerinden (gecikme dağılımı özeti).
-              const msVals = chartData.map(p => p.ms).slice().sort((a, b) => a - b)
-              const pct = (arr, p) => arr.length ? arr[Math.min(arr.length - 1, Math.floor((p / 100) * arr.length))] : null
-              const p50 = pct(msVals, 50)
-              const p95 = pct(msVals, 95)
-              const slowThr = details?.slow_threshold_ms
-              return (
-                <div className="dns-section">
-                  <h4 className="dns-section-title">
-                    <Activity size={14} /> {t('dns.responseTrend')}
-                    <span className="dns-range-hint">· {t(activeRangeOption.labelKey)}</span>
-                  </h4>
-                  <div className="dns-latency-stats">
-                    <span><b>{t('dns.p50')}:</b> {p50}ms</span>
-                    <span><b>{t('dns.p95')}:</b> {p95}ms</span>
-                    {slowThr != null && (
-                      <span className="dns-latency-thr"><b>{t('dns.slowThreshold')}:</b> {slowThr}ms</span>
-                    )}
-                  </div>
-                  <div className="dns-chart-wrap">
-                    <ResponsiveContainer width="100%" height={200}>
-                      <LineChart data={chartData} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
-                        <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
-                        <XAxis
-                          dataKey="ts"
-                          tick={{ fontSize: 11, fill: 'var(--text-light)' }}
-                          stroke="var(--border)"
-                        />
-                        <YAxis
-                          tick={{ fontSize: 11, fill: 'var(--text-light)' }}
-                          stroke="var(--border)"
-                          width={48}
-                          tickFormatter={(v) => `${v}ms`}
-                        />
-                        <Tooltip content={<ChartTooltip t={t} />} />
-                        {slowThr != null && (
-                          <ReferenceLine y={slowThr} stroke="#dc2626" strokeDasharray="4 3"
-                            label={{ value: t('dns.slowThreshold'), position: 'insideTopRight', fontSize: 10, fill: '#dc2626' }} />
-                        )}
-                        <Line
-                          type="monotone"
-                          dataKey="ms"
-                          stroke="#2563eb"
-                          strokeWidth={2}
-                          dot={{ r: 3, fill: '#2563eb' }}
-                          activeDot={{ r: 5 }}
-                          isAnimationActive={false}
-                        />
-                      </LineChart>
-                    </ResponsiveContainer>
-                  </div>
-                </div>
-              )
-            })()}
 
             {/* Recent history */}
             <div className="dns-section">
@@ -402,6 +334,14 @@ export default function DnsDetailModal({ monitor, onClose }) {
                 </div>
               )}
             </div>
+          </div>
+        ))}
+
+        {detailTab === 'chart' && (
+          <div className="dns-modal-body">
+            <Suspense fallback={<div className="dns-modal-loading">{t('dns.loadingDetails')}</div>}>
+              <ResponseTimeChart monitorId={monitor.id} kind="dns" />
+            </Suspense>
           </div>
         )}
       </div>
