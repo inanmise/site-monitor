@@ -111,6 +111,14 @@ export default function SystemHealth({ systemRole, globalAdmin = false, preFilte
   const seenRunning  = useRef(false)
   const [msg, setMsg]                 = useState(null)
   const [modalChart, setModalChart]   = useState(null)
+  const [httpExpOpen, setHttpExpOpen] = useState(false)
+  // HTTP İstek Gezgini modali — Escape ile kapat (ChartModal deseni).
+  useEffect(() => {
+    if (!httpExpOpen) return
+    const onKey = e => { if (e.key === 'Escape') setHttpExpOpen(false) }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [httpExpOpen])
   const [smtpModal, setSmtpModal]     = useState(false)
   const [smtpLogs, setSmtpLogs]       = useState(null)
   const [smtpLoading, setSmtpLoading] = useState(false)
@@ -958,38 +966,24 @@ export default function SystemHealth({ systemRole, globalAdmin = false, preFilte
               unit=""
               color="#4f9cf9"
               data={(httpMetrics.history ?? []).map(b => ({ ts: b.ts, value: b.count }))}
-              onClick={() => setModalChart({
-                label: t('http.reqPerMin'), unit: '', color: '#4f9cf9',
-                data: (httpMetrics.history ?? []).map(b => ({ ts: b.ts, value: b.count })),
-              })}
+              onClick={() => setHttpExpOpen(true)}
             />
             <MiniChart
               label={t('http.avgDuration')}
               unit=" ms"
               color="#f59e0b"
               data={(httpMetrics.history ?? []).map(b => ({ ts: b.ts, value: b.avg_ms }))}
-              onClick={() => setModalChart({
-                label: t('http.avgDuration'), unit: ' ms', color: '#f59e0b',
-                data: (httpMetrics.history ?? []).map(b => ({ ts: b.ts, value: b.avg_ms })),
-              })}
+              onClick={() => setHttpExpOpen(true)}
             />
             <MiniChart
               label={t('http.errorsPerMin')}
               unit=""
               color="#ef4444"
               data={(httpMetrics.history ?? []).map(b => ({ ts: b.ts, value: b.errors }))}
-              onClick={() => setModalChart({
-                label: t('http.errorsPerMin'), unit: '', color: '#ef4444',
-                data: (httpMetrics.history ?? []).map(b => ({ ts: b.ts, value: b.errors })),
-              })}
+              onClick={() => setHttpExpOpen(true)}
             />
           </div>
 
-          {/* Kalıcı, Grafana benzeri HTTP metrik gezgini — endpoint + zaman aralığı + p95/p99 */}
-          <h3 className="metrics-title" style={{ marginTop: 20 }}>{t('http.exp.title')}</h3>
-          <Suspense fallback={<div className="upt-modal-loading">…</div>}>
-            <HttpMetricsExplorer />
-          </Suspense>
         </div>
           )}
         </div>
@@ -1604,6 +1598,18 @@ export default function SystemHealth({ systemRole, globalAdmin = false, preFilte
       <p className="sys-refresh-note">↻ {t('sys.autoRefresh')}</p>
 
       <ChartModal chart={modalChart} onClose={() => setModalChart(null)} />
+
+      {httpExpOpen && (
+        <div className="chart-modal-overlay" onClick={e => { if (e.target === e.currentTarget) setHttpExpOpen(false) }}>
+          <div className="chart-modal chart-modal--wide" role="dialog" aria-modal="true">
+            <div className="chart-modal-hdr">
+              <h2 className="chart-modal-title">{t('http.exp.title')}</h2>
+              <button className="chart-modal-close" onClick={() => setHttpExpOpen(false)} aria-label="Kapat">✕</button>
+            </div>
+            <Suspense fallback={<div className="upt-modal-loading">…</div>}><HttpMetricsExplorer /></Suspense>
+          </div>
+        </div>
+      )}
 
       {/* Isı haritası hücresi → o hafta-günü/saatteki girişler */}
       {heatCell && (() => {
