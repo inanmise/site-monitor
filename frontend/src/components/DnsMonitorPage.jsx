@@ -404,7 +404,7 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName }) {
                   <td className="dns-cell-time">{m.checked_at ? formatDate(m.checked_at) : '—'}</td>
                   <td className="dns-cell-actions" onClick={e => e.stopPropagation()}>
                     {canManageRow(m) && (
-                      <button className="btn btn-sm dns-btn-check" disabled={checking === m.id}
+                      <button className="btn btn-sm mon-btn-check" disabled={checking === m.id}
                         onClick={() => checkNow(m)} title={t('dns.check')}>
                         <Play size={12} />
                       </button>

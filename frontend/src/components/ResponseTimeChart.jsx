@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import {
-  ResponsiveContainer, ComposedChart, Area, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
+  ResponsiveContainer, ComposedChart, Area, Line, XAxis, YAxis, CartesianGrid, Tooltip,
 } from 'recharts'
 import { api, formatDate } from '../api/client'
 import { useT } from '../i18n/index.jsx'
@@ -64,6 +64,7 @@ export default function ResponseTimeChart({ monitorId, kind }) {
   const [pickTo, setPickTo] = useState(() => new Date())
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(false)
+  const [hidden, setHidden] = useState(() => new Set())   // tıklanabilir legend: izole/gizle (gezgin deseni)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -95,6 +96,22 @@ export default function ResponseTimeChart({ monitorId, kind }) {
   const hasData = chartData.some(d => d.avg != null)
   const tickEvery = Math.max(0, Math.floor(chartData.length / 8))
 
+  // Tıklanabilir legend — HttpMetricsExplorer deseni: ilk tık izole (yalnız bunu), sonraki ekle/çıkar, hepsi gizli → hepsi.
+  const SERIES = [
+    { key: 'band',       name: t('chart.minmax'),     color: '#93c5fd' },
+    { key: 'avg',        name: t('chart.avg'),        color: '#2563eb' },
+    { key: 'p95',        name: t('chart.p95'),        color: '#9333ea' },
+    ...(isPing ? [{ key: 'loss', name: t('chart.packetLoss'), color: '#ea580c' }] : []),
+    { key: 'downMarker', name: t('chart.down'),       color: '#dc2626' },
+  ]
+  const toggleSeries = (key) => setHidden(prev => {
+    const allKeys = SERIES.map(s => s.key)
+    if (allKeys.every(k => !prev.has(k))) return new Set(allKeys.filter(k => k !== key))   // ilk tık → izole
+    const next = new Set(prev)
+    if (next.has(key)) next.delete(key); else next.add(key)
+    return allKeys.every(k => next.has(k)) ? new Set() : next                              // hepsi gizli → hepsini göster
+  })
+
   return (
     <div>
       <div className="upt-range-btns" style={{ flexWrap: 'wrap' }}>
@@ -122,6 +139,7 @@ export default function ResponseTimeChart({ monitorId, kind }) {
       ) : !hasData ? (
         <div className="upt-modal-loading">{t('chart.noData')}</div>
       ) : (
+        <>
         <ResponsiveContainer width="100%" height={300}>
           <ComposedChart data={chartData} margin={{ top: 10, right: isPing ? 8 : 12, left: 0, bottom: 0 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
@@ -134,22 +152,31 @@ export default function ResponseTimeChart({ monitorId, kind }) {
                 stroke="var(--border)" width={34} tickFormatter={(v) => `${v}%`} />
             )}
             <Tooltip content={<ChartTooltip t={t} isPing={isPing} />} />
-            <Legend wrapperStyle={{ fontSize: '.78em' }} />
-            <Area yAxisId="ms" type="monotone" dataKey="band" name={t('chart.minmax')}
+            <Area yAxisId="ms" type="monotone" dataKey="band" name={t('chart.minmax')} hide={hidden.has('band')}
               fill="#bfdbfe" fillOpacity={0.45} stroke="none" isAnimationActive={false} connectNulls />
-            <Line yAxisId="ms" type="monotone" dataKey="avg" name={t('chart.avg')}
+            <Line yAxisId="ms" type="monotone" dataKey="avg" name={t('chart.avg')} hide={hidden.has('avg')}
               stroke="#2563eb" strokeWidth={2} dot={false} isAnimationActive={false} connectNulls />
-            <Line yAxisId="ms" type="monotone" dataKey="p95" name={t('chart.p95')}
+            <Line yAxisId="ms" type="monotone" dataKey="p95" name={t('chart.p95')} hide={hidden.has('p95')}
               stroke="#9333ea" strokeWidth={1.5} strokeDasharray="4 3" dot={false} isAnimationActive={false} connectNulls />
             {isPing && (
-              <Line yAxisId="loss" type="monotone" dataKey="loss" name={t('chart.packetLoss')}
+              <Line yAxisId="loss" type="monotone" dataKey="loss" name={t('chart.packetLoss')} hide={hidden.has('loss')}
                 stroke="#ea580c" strokeWidth={1.5} dot={false} isAnimationActive={false} connectNulls />
             )}
-            <Line yAxisId="ms" dataKey="downMarker" name={t('chart.down')} stroke="transparent"
+            <Line yAxisId="ms" dataKey="downMarker" name={t('chart.down')} stroke="transparent" hide={hidden.has('downMarker')}
               dot={{ r: 4, fill: '#dc2626', stroke: '#fff', strokeWidth: 1 }} isAnimationActive={false}
               legendType="circle" connectNulls={false} />
           </ComposedChart>
         </ResponsiveContainer>
+        <div className="hme-legend">
+          {SERIES.map(s => (
+            <button key={s.key} type="button" title={t('chart.legendTip')}
+              className={`hme-legend-item${hidden.has(s.key) ? ' hme-legend-off' : ''}`}
+              onClick={() => toggleSeries(s.key)}>
+              <span className="hme-legend-dot" style={{ background: s.color }} />{s.name}
+            </button>
+          ))}
+        </div>
+        </>
       )}
     </div>
   )

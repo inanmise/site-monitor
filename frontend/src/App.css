@@ -4246,7 +4246,7 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .trp-trigger:hover { border-color: var(--primary); }
 .trp-label { font-weight: 600; }
 /* Portal ile body'ye render edilir + fixed konumlandırılır (top/left/width inline) → overflow'lu atalara takılıp kırpılmaz. */
-.trp-pop { position: fixed; z-index: 1000; display: flex; gap: 0; background: var(--bg-card, #fff); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 12px 34px rgba(0,0,0,.22); overflow: hidden; }
+.trp-pop { position: fixed; z-index: 3000; display: flex; gap: 0; background: var(--bg-card, #fff); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 12px 34px rgba(0,0,0,.22); overflow: hidden; }
 .trp-col { padding: 14px 16px; flex: 1 1 0; min-width: 0; }
 .trp-col-abs { border-right: 1px solid var(--border); }
 .trp-col-title { font-weight: 700; font-size: .85em; margin-bottom: 10px; color: var(--text); }
@@ -4295,6 +4295,7 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
   gap: 16px;
   box-shadow: 0 20px 60px rgba(0,0,0,.25);
 }
+.chart-modal--wide { width: min(1080px, 94vw); }   /* HTTP İstek Gezgini modali — geniş */
 .chart-modal-hdr {
   display: flex;
   align-items: center;
@@ -7180,7 +7181,6 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 [data-theme="dark"] .dns-rotated-badge { background: rgba(245,158,11,.18); color: #fbbf24; }
 [data-theme="dark"] .dns-nochange-badge { background: rgba(34,197,94,.18); color: #4ade80; }
 
-.dns-btn-check { background: var(--success, #28a745); color: #fff; border: none; }
 .dns-btn-edit  { background: var(--primary);             color: #fff; border: none; }
 .dns-btn-del   { background: var(--danger, #dc2626);     color: #fff; border: none; }
 .dns-standalone-badge { display: inline-block; background: #e0f2fe; color: #0369a1; padding: 1px 6px; border-radius: 3px; font-size: .68em; font-weight: 700; margin-left: 6px; vertical-align: middle; letter-spacing: .02em; }
