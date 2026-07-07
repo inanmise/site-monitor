@@ -116,7 +116,8 @@ public class DnsCheckerService {
         Map<String, Object> result = new LinkedHashMap<>();
         try {
             int type = typeOf(recordType);
-            Name name = Name.fromString(domain.endsWith(".") ? domain : domain + ".");
+            String host = toHostname(domain);
+            Name name = Name.fromString(host + ".");
             Record question = Record.newRecord(name, type, DClass.IN);
             Message query = Message.newQuery(question);
             int timeoutMs = appSettings.getInt("cert.monitor.dns.query-timeout-ms", 2000);
@@ -220,7 +221,8 @@ public class DnsCheckerService {
      * so {@code response_ms} measures the actual network round-trip.
      */
     private Message sendQuery(String domain, int type) throws Exception {
-        Name name = Name.fromString(domain.endsWith(".") ? domain : domain + ".");
+        String host = toHostname(domain);
+        Name name = Name.fromString(host + ".");
         Record question = Record.newRecord(name, type, DClass.IN);
         Message query = Message.newQuery(question);
         // ExtendedResolver: OS/nslookup gibi TÜM sistem DNS sunucularini sirayla dener (primary timeout →
@@ -251,6 +253,37 @@ public class DnsCheckerService {
 
     private static String rdataAsString(Record r) {
         return r.rdataToString();
+    }
+
+    /**
+     * DNS sorgusundan ÖNCE domain'i çıplak hostname'e indirger: URL şeması (https://), userinfo (@),
+     * path (/…), sorgu/fragment (?#), port (:443) ve trailing-dot ayıklanır, küçültülür.
+     * "https://www.akbank.com/basvuru/Juzdan/" → "www.akbank.com". Zaten çıplak host ise değişmez.
+     * URL-formunda saklanan monitorlerin sahte NXDOMAIN üretmesini önler; saklanan domain'e dokunmaz.
+     */
+    public static String toHostname(String raw) {
+        if (raw == null) return null;
+        String s = raw.trim();
+        if (s.isEmpty()) return s;
+        int scheme = s.indexOf("://");
+        if (scheme >= 0) s = s.substring(scheme + 3);          // şema at
+        int at = s.indexOf('@');
+        if (at >= 0) s = s.substring(at + 1);                  // userinfo at
+        int cut = s.length();                                  // path / query / fragment kes
+        for (char c : new char[]{'/', '?', '#'}) {
+            int i = s.indexOf(c);
+            if (i >= 0 && i < cut) cut = i;
+        }
+        s = s.substring(0, cut);
+        if (s.startsWith("[")) {                               // IPv6 literal: [::1]:53 → [::1]
+            int rb = s.indexOf(']');
+            if (rb >= 0) s = s.substring(0, rb + 1);
+        } else {
+            int colon = s.lastIndexOf(':');                    // port at
+            if (colon >= 0) s = s.substring(0, colon);
+        }
+        if (s.endsWith(".")) s = s.substring(0, s.length() - 1);
+        return s.toLowerCase(Locale.ROOT);
     }
 
     /**

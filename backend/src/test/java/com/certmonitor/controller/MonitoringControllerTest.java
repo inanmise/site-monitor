@@ -121,6 +121,48 @@ class MonitoringControllerTest {
     }
 
     @Test
+    @DisplayName("POST /dns/test: çözümler ama KAYIT OLUŞTURMAZ; response_ms eşiği aşınca slow=true")
+    void testDns_runsWithoutSaving() throws Exception {
+        when(dnsChecker.check(eq("x.com"), eq("A"))).thenReturn(
+                java.util.Map.of("success", true, "values", List.of("1.2.3.4"), "ttl", 300L, "response_ms", 2000L));
+
+        mvc.perform(post("/api/monitoring/dns/test").session(session("USER"))
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("{\"domain\":\"x.com\",\"recordType\":\"A\",\"slowThresholdMs\":1500}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.success").value(true))
+                .andExpect(jsonPath("$.data.slow").value(true))
+                .andExpect(jsonPath("$.data.values[0]").value("1.2.3.4"));
+
+        org.mockito.Mockito.verify(dnsMonitorRepo, org.mockito.Mockito.never()).save(any());
+        org.mockito.Mockito.verify(dnsRecordRepo, org.mockito.Mockito.never()).save(any());
+    }
+
+    @Test
+    @DisplayName("GET /dns: domain'de açık DNS alarmı varsa active_alarm=true + en yüksek seviye (CRITICAL)")
+    void listDns_marksActiveAlarm() throws Exception {
+        when(inventoryRepo.findByActiveTrueOrderByDomainAsc()).thenReturn(List.of(inv("a.com")));
+        when(dnsMonitorRepo.findAll()).thenReturn(List.of());
+        when(dnsRecordRepo.findLatestPerMonitor()).thenReturn(List.of());
+        when(dnsMonitorRepo.findByStandaloneTrueAndActiveTrue()).thenReturn(List.of());
+        com.certmonitor.model.AlertEvent slow = openDnsEvent("a.com", com.certmonitor.service.EscalationService.TYPE_DNS_SLOW, "HIGH");
+        com.certmonitor.model.AlertEvent fail = openDnsEvent("a.com", com.certmonitor.service.EscalationService.TYPE_DNS_FAILURE, "CRITICAL");
+        when(alertEventRepo.findOpenByDomainIn(anyCollection())).thenReturn(List.of(slow, fail));
+
+        mvc.perform(get("/api/monitoring/dns").session(session("USER")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].active_alarm").value(true))
+                .andExpect(jsonPath("$.data[0].alarm_level").value("CRITICAL"));   // SLOW+FAILURE → en severe
+    }
+
+    private static com.certmonitor.model.AlertEvent openDnsEvent(String domain, String type, String level) {
+        com.certmonitor.model.AlertEvent e = new com.certmonitor.model.AlertEvent();
+        e.setDomain(domain); e.setAlertType(type); e.setAlertLevel(level);
+        e.setResolved(false); e.setAcknowledged(false);
+        return e;
+    }
+
+    @Test
     @DisplayName("uptimeOverview: kontrol kaydı yoksa boş veri, %100 değil null uptime — hata vermez")
     void uptimeOverview_empty() throws Exception {
         when(latestCheckRepo.findAllByOrderByDomainAsc()).thenReturn(List.of());
@@ -229,6 +271,21 @@ class MonitoringControllerTest {
     }
 
     @Test
+    @DisplayName("POST /port: confirm/recovery alanları taşınır + standalone=true (ping/keyword alarm paritesi)")
+    void createPort_confirmRecovery_standalone() throws Exception {
+        when(portMonitorRepo.findFirstByHostAndPortOrderByIdAsc(anyString(), anyInt())).thenReturn(Optional.empty());
+        when(portMonitorRepo.save(any(com.certmonitor.model.PortMonitor.class)))
+                .thenAnswer(a -> { com.certmonitor.model.PortMonitor p = a.getArgument(0); p.setId(12L); return p; });
+        mvc.perform(post("/api/monitoring/port").session(session("ADMIN"))
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                .content("{\"host\":\"svc.local\",\"port\":9000,\"confirmAttempts\":5,\"recoveryChecks\":2}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.confirm_attempts").value(5))
+                .andExpect(jsonPath("$.data.recovery_checks").value(2))
+                .andExpect(jsonPath("$.data.standalone").value(true));
+    }
+
+    @Test
     @DisplayName("POST /port/test: kaydetmeden kontrol çalıştırır; sonuç + condition_met döner, kayıt OLUŞMAZ")
     void testPort_runsCheckWithoutSaving() throws Exception {
         when(portChecker.check(eq("svc.local"), eq(8080), anyInt(), eq("HTTP"), any(), eq("2xx")))
@@ -305,6 +362,54 @@ class MonitoringControllerTest {
                 .andExpect(jsonPath("$.data.series[0].down").value(1))
                 .andExpect(jsonPath("$.data.series[0].avg").value(20))
                 .andExpect(jsonPath("$.data.series[0].loss").value(50));
+    }
+
+    @Test
+    @DisplayName("GET /port/{id}/response-series: kovalar avg/min/max/p95/down döner (open=up bayrağı)")
+    void portResponseSeries_buckets() throws Exception {
+        when(portMonitorRepo.existsById(7L)).thenReturn(true);
+        // Aynı saat kovasında 3 kayıt (100/200/300 ms), biri down (open=false)
+        List<Object[]> rows = List.of(
+                new Object[]{ "2026-06-24T10:05:00", 100L, true },
+                new Object[]{ "2026-06-24T10:25:00", 300L, true },
+                new Object[]{ "2026-06-24T10:45:00", 200L, false });
+        when(portCheckRepo.responseSeriesRaw(eq(7L), anyString(), anyString(), anyInt())).thenReturn(rows);
+
+        mvc.perform(get("/api/monitoring/port/7/response-series?days=7").session(session("USER")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.bucket").value("hour"))
+                .andExpect(jsonPath("$.data.series[0].count").value(3))
+                .andExpect(jsonPath("$.data.series[0].down").value(1))
+                .andExpect(jsonPath("$.data.series[0].avg").value(200))
+                .andExpect(jsonPath("$.data.series[0].min").value(100))
+                .andExpect(jsonPath("$.data.series[0].max").value(300))
+                .andExpect(jsonPath("$.data.series[0].p95").value(300));
+    }
+
+    @Test
+    @DisplayName("GET /port/{id}/response-series: monitör yok → 404")
+    void portResponseSeries_notFound() throws Exception {
+        when(portMonitorRepo.existsById(999L)).thenReturn(false);
+        mvc.perform(get("/api/monitoring/port/999/response-series?days=7").session(session("USER")))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    @DisplayName("GET /dns/{id}/response-series: kovalar avg/down döner (value boş=down, süre null istatistiğe girmez)")
+    void dnsResponseSeries_buckets() throws Exception {
+        when(dnsMonitorRepo.existsById(3L)).thenReturn(true);
+        List<Object[]> rows = List.of(
+                new Object[]{ "2026-06-24T10:05:00", 20L, true },
+                new Object[]{ "2026-06-24T10:25:00", 60L, true },
+                new Object[]{ "2026-06-24T10:45:00", null, false });   // çözümleme başarısız → down, süre null
+        when(dnsRecordRepo.responseSeriesRaw(eq(3L), anyString(), anyString(), anyInt())).thenReturn(rows);
+
+        mvc.perform(get("/api/monitoring/dns/3/response-series?days=7").session(session("USER")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.bucket").value("hour"))
+                .andExpect(jsonPath("$.data.series[0].count").value(3))
+                .andExpect(jsonPath("$.data.series[0].down").value(1))
+                .andExpect(jsonPath("$.data.series[0].avg").value(40));
     }
 
     @Test

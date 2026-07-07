@@ -424,6 +424,42 @@ public class EscalationService {
         return orphanDomains.size();
     }
 
+    /** Öksüz keyword alarmı temizliği — hiçbir keyword monitör URL'ine karşılık gelmeyen açık KEYWORD
+     *  alarmlarını sessizce kapatır (url rename/silme sonrası recovery'nin asla kapatamadığı askıda alarm).
+     *  {@code resolveOrphanedPingAlerts} ile birebir; kimlik = url. */
+    public int resolveOrphanedKeywordAlerts(Set<String> existingUrls) {
+        if (existingUrls == null) return 0;
+        Set<String> orphanDomains = new HashSet<>();
+        for (AlertEvent e : alertEventRepo.findAllOpenOrderBySeverity()) {
+            if (!TYPE_KEYWORD.equals(e.getAlertType())) continue;
+            if (e.getDomain() == null || existingUrls.contains(e.getDomain())) continue;  // eşleşen monitör var → dokunma
+            orphanDomains.add(e.getDomain());
+        }
+        for (String d : orphanDomains) {
+            resolveOpenAlertsSilently(d, Set.of(TYPE_KEYWORD), "Sistem (öksüz alarm — eşleşen keyword izlemesi yok)");
+        }
+        if (!orphanDomains.isEmpty()) log.info("🧹 Öksüz keyword alarmı temizlendi: {} domain {}", orphanDomains.size(), orphanDomains);
+        return orphanDomains.size();
+    }
+
+    /** Öksüz port alarmı temizliği — hiçbir port monitör host'una karşılık gelmeyen açık PORT_DOWN
+     *  alarmlarını sessizce kapatır. Host birden çok port monitörünce paylaşılıyorsa host kümesinde
+     *  kalır → alarm kapatılmaz (yalnız o host'un HİÇ monitörü kalmayınca öksüz). Kimlik = host. */
+    public int resolveOrphanedPortAlerts(Set<String> existingHosts) {
+        if (existingHosts == null) return 0;
+        Set<String> orphanDomains = new HashSet<>();
+        for (AlertEvent e : alertEventRepo.findAllOpenOrderBySeverity()) {
+            if (!TYPE_PORT_DOWN.equals(e.getAlertType())) continue;
+            if (e.getDomain() == null || existingHosts.contains(e.getDomain())) continue;  // eşleşen monitör var → dokunma
+            orphanDomains.add(e.getDomain());
+        }
+        for (String d : orphanDomains) {
+            resolveOpenAlertsSilently(d, Set.of(TYPE_PORT_DOWN), "Sistem (öksüz alarm — eşleşen port izlemesi yok)");
+        }
+        if (!orphanDomains.isEmpty()) log.info("🧹 Öksüz port alarmı temizlendi: {} domain {}", orphanDomains.size(), orphanDomains);
+        return orphanDomains.size();
+    }
+
     /**
      * MonitoringOutageService teyit zinciri tamamlandığında (ya da kesinti
      * sürerken her sweep'te / DNS_CHANGED'de anında) çağırır. processResults'un

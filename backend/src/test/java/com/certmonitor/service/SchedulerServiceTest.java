@@ -239,6 +239,8 @@ class SchedulerServiceTest {
 
         // 2) Regresyon: başarısız sorgu → DnsChange YOK, kayıt changed=false
         org.mockito.Mockito.reset(monitoringOutageService, dnsRecordRepo);
+        // İki AYRI sweep'i simüle et: checkDue son-kontrol durumunu temizle (aksi halde 2. çağrı aynı 60s içinde atlanır).
+        ((java.util.Map<?, ?>) org.springframework.test.util.ReflectionTestUtils.getField(scheduler, "lastMonitorCheckAt")).clear();
         when(dnsCheckerService.check("x.example.com", "A"))
                 .thenReturn(Map.of("success", false, "error", "no answer"));
 

@@ -35,7 +35,7 @@ public class MonitorNotesController {
 
     private static final DateTimeFormatter ISO =
             DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
-    private static final Set<String> TYPES = Set.of("KEYWORD", "PING");
+    private static final Set<String> TYPES = Set.of("KEYWORD", "PING", "DNS", "PORT");
     private static final int MAX = 5000;
 
     private final MonitorGuideRepository guideRepo;

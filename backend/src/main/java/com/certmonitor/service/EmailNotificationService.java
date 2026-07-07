@@ -1227,6 +1227,14 @@ public class EmailNotificationService {
         List<Map<String, Object>> attempts = (ctx != null && ctx.get("confirm_attempts") instanceof List<?> l)
                 ? (List<Map<String, Object>>) l : List.of();
 
+        // E-posta CTA: port/dns alarmında monitör detay deep-link'i (?tab=&monitor=<id>);
+        // accessibility (uptime) monitör-id taşımaz → CTA boş kalır.
+        String outageTab = "PORT_DOWN".equals(alertType) ? "port" : "DNS_FAILURE".equals(alertType) ? "dns" : null;
+        String ctaHtml = (outageTab != null && !monitorCtaUrl(outageTab, ctx).isBlank())
+                ? "<div style='text-align:center;margin-bottom:20px'>"
+                  + ctaButton(monitorCtaUrl(outageTab, ctx), "Monitörü Aç &rarr;", "#1e293b") + "</div>"
+                : "";
+
         // ── Hero — kesinti bildirimi ──
         String hero = "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0'"
             + " style='margin:20px 0;border-radius:14px;overflow:hidden;border:2px solid #fecaca'>"
@@ -1347,6 +1355,8 @@ public class EmailNotificationService {
             + "ℹ Sorun düzeldiğinde bu alarm otomatik kapatılır ve çözüm e-postası gönderilir. "
             + "Alarmı CertMonitor &rarr; Uyarılar &rarr; Alarm Geçmişi ekranından onaylayabilir veya kapatabilirsiniz."
             + "</div>"
+
+            + ctaHtml
 
             // Footer
             + "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0'><tr>"

@@ -3,7 +3,7 @@ import { api, formatDate } from '../api/client'
 import { useT } from '../i18n/index.jsx'
 import { useToast } from './ui/Toast.jsx'
 import MarkdownEditor from './ui/MarkdownEditor.jsx'
-import { BookOpen, Plus, Pencil, Trash2, Save } from 'lucide-react'
+import { BookOpen, Plus, Pencil, Trash2, Save, ChevronRight, ChevronDown } from 'lucide-react'
 
 /**
  * Hedef-bazlı (type = KEYWORD|PING, target = url/host) "Rehber & Notlar":
@@ -144,22 +144,7 @@ export default function MonitorNotes({ type, target }) {
         {notes.length === 0 && !adding && <div className="mnote-empty">{t('mnote.notesEmpty')}</div>}
 
         {notes.map(n => (
-          <div key={n.id} className="mnote-card">
-            <div className="mnote-card-hdr">
-              <span className="mnote-meta">
-                {n.author_name || n.author_username} · {fmt(n.created_at)}
-                {n.updated_at ? ` · ${t('mnote.edited')}` : ''}
-              </span>
-              <span className="mnote-card-actions">
-                <button className="btn btn-sm btn-secondary" title={t('mnote.edit')} onClick={() => startEdit(n)}><Pencil size={12} /></button>
-                <button className="btn btn-sm btn-danger" title={t('mnote.delete')} onClick={() => del(n)}><Trash2 size={12} /></button>
-              </span>
-            </div>
-            <NoteRow label={t('mnote.fProblem')} value={n.problem} />
-            <NoteRow label={t('mnote.fAction')} value={n.action_taken} />
-            <NoteRow label={t('mnote.fRoot')} value={n.root_cause} />
-            <NoteRow label={t('mnote.fRefs')} value={n.refs} />
-          </div>
+          <NoteCard key={n.id} n={n} onEdit={startEdit} onDelete={del} />
         ))}
       </div>
     </div>
@@ -181,6 +166,42 @@ function NoteRow({ label, value }) {
     <div className="mnote-row">
       <div className="mnote-row-label">{label}</div>
       <div className="mnote-md"><MarkdownEditor value={value} editable={false} /></div>
+    </div>
+  )
+}
+
+// Tek not — akordiyon: varsayılan kapalı; başlıkta problem özeti + yazar·tarih, tıklayınca alanlar açılır.
+// Düzenle/Sil başlıkta hep görünür (stopPropagation → toggle'ı tetiklemez).
+function NoteCard({ n, onEdit, onDelete }) {
+  const t = useT()
+  const [open, setOpen] = useState(false)
+  const toggle = () => setOpen(o => !o)
+  return (
+    <div className={`mnote-card${open ? ' open' : ''}`}>
+      <div className="mnote-card-hdr" role="button" tabIndex={0} aria-expanded={open}
+        onClick={toggle}
+        onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle() } }}>
+        <span className="mnote-card-toggle">{open ? <ChevronDown size={15} /> : <ChevronRight size={15} />}</span>
+        <span className="mnote-card-summary">
+          <span className="mnote-card-title">{n.problem || t('mnote.fProblem')}</span>
+          <span className="mnote-meta">
+            {n.author_name || n.author_username} · {fmt(n.created_at)}
+            {n.updated_at ? ` · ${t('mnote.edited')}` : ''}
+          </span>
+        </span>
+        <span className="mnote-card-actions" onClick={e => e.stopPropagation()}>
+          <button className="btn btn-sm btn-secondary" title={t('mnote.edit')} onClick={() => onEdit(n)}><Pencil size={12} /></button>
+          <button className="btn btn-sm btn-danger" title={t('mnote.delete')} onClick={() => onDelete(n)}><Trash2 size={12} /></button>
+        </span>
+      </div>
+      {open && (
+        <div className="mnote-card-body">
+          <NoteRow label={t('mnote.fProblem')} value={n.problem} />
+          <NoteRow label={t('mnote.fAction')} value={n.action_taken} />
+          <NoteRow label={t('mnote.fRoot')} value={n.root_cause} />
+          <NoteRow label={t('mnote.fRefs')} value={n.refs} />
+        </div>
+      )}
     </div>
   )
 }

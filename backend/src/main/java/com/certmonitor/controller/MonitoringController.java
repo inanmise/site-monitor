@@ -81,7 +81,8 @@ public class MonitoringController {
             "keyword", Map.of("intervalSeconds", appSettings.getInt("cert.monitor.keyword.default-interval-seconds", 60),
                               "timeoutMs",        appSettings.getInt("cert.monitor.keyword.default-timeout-ms", 10000)),
             "port",    Map.of("intervalSeconds", appSettings.getInt("cert.monitor.port.default-interval-seconds", 60),
-                              "timeoutMs",        appSettings.getInt("cert.monitor.port.default-timeout-ms", 5000))
+                              "timeoutMs",        appSettings.getInt("cert.monitor.port.default-timeout-ms", 5000)),
+            "dns",     Map.of("intervalSeconds", appSettings.getInt("cert.monitor.dns.default-interval-seconds", 300))
         ));
     }
 
@@ -145,6 +146,10 @@ public class MonitoringController {
 
     private static final Set<String> KW_OPERATORS = Set.of("GTE", "LTE", "EQ", "GT", "LT");
     private static final Set<String> DNS_RECORD_TYPES = Set.of("A", "AAAA", "CNAME", "MX", "TXT", "NS");
+    /** Aktif-alarm rozeti + domain-rename temizliği için DNS alarm tipleri. */
+    private static final Set<String> DNS_ALERT_TYPES = Set.of(
+            EscalationService.TYPE_DNS_FAILURE, EscalationService.TYPE_DNS_CHANGED, EscalationService.TYPE_DNS_SLOW,
+            EscalationService.TYPE_DNS_UNEXPECTED, EscalationService.TYPE_DNS_INCONSISTENT);
 
     /** Keyword adet koşulunu (operator + matchCount) body'den uygular; legacy 'condition' desteklenir;
      *  alertCondition (NOT NULL) operatörden türetilir. */
@@ -152,6 +157,14 @@ public class MonitoringController {
     private static int clampAttempts(int v) { return Math.max(0, Math.min(10, v)); }   // 0 = immediate (teyitsiz)
     private static int clampInterval(int v) { return Math.max(10, Math.min(600, v)); }
     private static int clampRecovery(int v) { return Math.max(1, Math.min(20, v)); }   // 1 = ilk up'ta kapat
+    /** DNS_SLOW per-monitor eşiği (ms) — boş/geçersiz = null (global kullanılır); makul aralığa (100..60000) kırpılır. */
+    private static Integer clampSlow(Object o) {
+        if (o == null || o.toString().isBlank()) return null;
+        try {
+            int v = o instanceof Number n ? n.intValue() : Integer.parseInt(o.toString().trim());
+            return Math.max(100, Math.min(60000, v));
+        } catch (Exception e) { return null; }
+    }
 
     /** Port kontrol tipi — gecerli degilse TCP'ye duser. */
     private static final Set<String> PORT_TYPES = Set.of("TCP", "TLS", "HTTP", "BANNER", "UDP");
@@ -428,6 +441,7 @@ public class MonitoringController {
         // Tüm monitörleri tek sorguda yükle, host:port ile indeksle (en küçük id = findFirst...OrderByIdAsc).
         Map<String, PortMonitor> monitorByKey = new HashMap<>();
         for (PortMonitor m : portMonitorRepo.findAll()) {
+            if (Boolean.TRUE.equals(m.getStandalone())) continue;   // standalone'lar envantere bağlı değil — ayrı işlenir
             monitorByKey.merge(m.getHost() + ":" + m.getPort(), m, (a, b) -> a.getId() <= b.getId() ? a : b);
         }
 
@@ -460,12 +474,24 @@ public class MonitoringController {
 
         Map<String, String> teamMap = certificateService.domainTeamNameMap();
         Map<Long, String> teamById = teamNameMap();
+        List<PortMonitor> standaloneMonitors = portMonitorRepo.findByStandaloneTrueAndActiveTrue();
+        // Açık PORT_DOWN alarmları host→AlertEvent (envanter + standalone host'ları) — liste rozeti, tek sorgu.
+        Set<String> alarmHosts = new HashSet<>();
+        for (PortMonitor m : monitorByKey.values()) alarmHosts.add(m.getHost());
+        for (PortMonitor m : standaloneMonitors) if (m.getHost() != null) alarmHosts.add(m.getHost());
+        Map<String, AlertEvent> portAlarms = openAlarmsByDomain(alarmHosts, EscalationService.TYPE_PORT_DOWN);
         List<Map<String, Object>> result = new ArrayList<>();
         for (CertificateInventory inv : inventory) {
             int invPort = inv.getPort() != null ? inv.getPort() : 443;
             PortMonitor monitor = monitorByKey.get(inv.getDomain() + ":" + invPort);
             PortCheck latest = monitor.getId() != null ? latestByMonitor.get(monitor.getId()) : null;
-            result.add(enrichPort(monitor, latest, teamMap, teamById));
+            result.add(enrichPort(monitor, latest, teamMap, teamById, portAlarms.get(monitor.getHost())));
+        }
+        // Standalone (envanterden bağımsız) port monitörleri — envanter döngüsünde yok; takım görüşüne göre ekle.
+        for (PortMonitor m : standaloneMonitors) {
+            if (!SessionScope.canView(session, m.getTeamId())) continue;
+            PortCheck latest = m.getId() != null ? latestByMonitor.get(m.getId()) : null;
+            result.add(enrichPort(m, latest, teamMap, teamById, portAlarms.get(m.getHost())));
         }
         return ok(result);
     }
@@ -494,14 +520,20 @@ public class MonitoringController {
         m.setExpect(blank(body.get("expect")) ? null : body.get("expect").toString().trim());
         m.setSendData(blank(body.get("sendData")) ? null : body.get("sendData").toString());
         m.setActive(true);
+        m.setStandalone(true);          // kullanıcı-eklediği → envanterden bağımsız; her zaman listelenir + kontrol edilir
         m.setTeamId(teamId);
         if (body.containsKey("groupName")) m.setGroupName(blank(body.get("groupName")) ? null : body.get("groupName").toString().trim());
         if (body.get("intervalSeconds") != null) m.setIntervalSeconds(((Number) body.get("intervalSeconds")).intValue());
         if (body.get("timeoutMs")       != null) m.setTimeoutMs(((Number) body.get("timeoutMs")).intValue());
+        if (body.get("confirmAttempts") != null)         m.setConfirmAttempts(clampAttempts(((Number) body.get("confirmAttempts")).intValue()));
+        if (body.get("confirmIntervalSeconds") != null)  m.setConfirmIntervalSeconds(clampInterval(((Number) body.get("confirmIntervalSeconds")).intValue()));
+        if (body.get("recoveryChecks") != null)          m.setRecoveryChecks(clampRecovery(((Number) body.get("recoveryChecks")).intValue()));
+        if (body.get("recoveryIntervalSeconds") != null) m.setRecoveryIntervalSeconds(clampInterval(((Number) body.get("recoveryIntervalSeconds")).intValue()));
         m.setCreatedAt(now);
         m.setUpdatedAt(now);
         PortMonitor saved = portMonitorRepo.save(m);
-        return ok(enrichPort(saved, null, certificateService.domainTeamNameMap(), teamNameMap()));
+        return ok(enrichPort(saved, null, certificateService.domainTeamNameMap(), teamNameMap(),
+                alertEventRepo.findOpenAlert(saved.getHost(), EscalationService.TYPE_PORT_DOWN).orElse(null)));
     }
 
     @PutMapping("/port/{id}")
@@ -520,10 +552,15 @@ public class MonitoringController {
             if (body.containsKey("groupName")) m.setGroupName(blank(body.get("groupName")) ? null : body.get("groupName").toString().trim());
             if (body.get("intervalSeconds") != null) m.setIntervalSeconds(((Number) body.get("intervalSeconds")).intValue());
             if (body.get("timeoutMs")       != null) m.setTimeoutMs(((Number) body.get("timeoutMs")).intValue());
+            if (body.get("confirmAttempts") != null)         m.setConfirmAttempts(clampAttempts(((Number) body.get("confirmAttempts")).intValue()));
+            if (body.get("confirmIntervalSeconds") != null)  m.setConfirmIntervalSeconds(clampInterval(((Number) body.get("confirmIntervalSeconds")).intValue()));
+            if (body.get("recoveryChecks") != null)          m.setRecoveryChecks(clampRecovery(((Number) body.get("recoveryChecks")).intValue()));
+            if (body.get("recoveryIntervalSeconds") != null) m.setRecoveryIntervalSeconds(clampInterval(((Number) body.get("recoveryIntervalSeconds")).intValue()));
             m.setUpdatedAt(ISO.format(Instant.now()));
             PortMonitor saved = portMonitorRepo.save(m);
             return ok(enrichPort(saved, portCheckRepo.findTopByMonitorIdOrderByCheckedAtDesc(id).orElse(null),
-                    certificateService.domainTeamNameMap(), teamNameMap()));
+                    certificateService.domainTeamNameMap(), teamNameMap(),
+                    alertEventRepo.findOpenAlert(saved.getHost(), EscalationService.TYPE_PORT_DOWN).orElse(null)));
         }).orElse(notFound("Port monitor not found"));
     }
 
@@ -577,7 +614,8 @@ public class MonitoringController {
             check.setError((String) r.get("error"));
             check.setCheckedAt(now);
             portCheckRepo.save(check);
-            return ok(enrichPort(m, check, certificateService.domainTeamNameMap(), teamNameMap()));
+            return ok(enrichPort(m, check, certificateService.domainTeamNameMap(), teamNameMap(),
+                    alertEventRepo.findOpenAlert(m.getHost(), EscalationService.TYPE_PORT_DOWN).orElse(null)));
         }).orElse(notFound("Port monitor not found"));
     }
 
@@ -607,7 +645,7 @@ public class MonitoringController {
         return ok(out);
     }
 
-    private Map<String, Object> enrichPort(PortMonitor m, PortCheck latest, Map<String, String> teamMap, Map<Long, String> teamById) {
+    private Map<String, Object> enrichPort(PortMonitor m, PortCheck latest, Map<String, String> teamMap, Map<Long, String> teamById, AlertEvent openAlarm) {
         Map<String, Object> item = new LinkedHashMap<>();
         item.put("id",              m.getId());
         item.put("name",            m.getName());
@@ -623,8 +661,16 @@ public class MonitoringController {
         item.put("active",          m.getActive());
         item.put("interval_seconds",m.getIntervalSeconds());
         item.put("timeout_ms",      m.getTimeoutMs());
+        item.put("confirm_attempts",          m.getConfirmAttempts());
+        item.put("confirm_interval_seconds",  m.getConfirmIntervalSeconds());
+        item.put("recovery_checks",           m.getRecoveryChecks());
+        item.put("recovery_interval_seconds", m.getRecoveryIntervalSeconds());
+        item.put("standalone",      m.getStandalone());
         item.put("created_at",      m.getCreatedAt());
         item.put("updated_at",      m.getUpdatedAt());
+        item.put("active_alarm",       openAlarm != null);
+        item.put("alarm_level",        openAlarm != null ? openAlarm.getAlertLevel() : null);
+        item.put("alarm_acknowledged", openAlarm != null ? openAlarm.getAcknowledged() : null);
         if (latest != null) {
             item.put("status",      latest.getOpen() ? "open" : "closed");
             item.put("response_ms", latest.getResponseMs());
@@ -679,17 +725,23 @@ public class MonitoringController {
 
         Map<String, String> teamMap = certificateService.domainTeamNameMap();
         Map<Long, String> teamById = teamNameMap();
+        List<DnsMonitor> standaloneMonitors = dnsMonitorRepo.findByStandaloneTrueAndActiveTrue();
+        // Açık DNS alarmlarını tek sorguda çek → satırlarda aktif-alarm rozeti (envanter + standalone domainleri).
+        Set<String> alarmDomains = new HashSet<>();
+        for (CertificateInventory inv : inventory) alarmDomains.add(inv.getDomain());
+        for (DnsMonitor m : standaloneMonitors) if (m.getDomain() != null) alarmDomains.add(m.getDomain());
+        Map<String, AlertEvent> dnsAlarms = openDnsAlarmsByDomain(alarmDomains);
         List<Map<String, Object>> result = new ArrayList<>();
         for (CertificateInventory inv : inventory) {
             DnsMonitor monitor = monitorByDomain.get(inv.getDomain());
             DnsRecord latest = monitor.getId() != null ? latestByMonitor.get(monitor.getId()) : null;
-            result.add(enrichDns(monitor, latest, teamMap, teamById));
+            result.add(enrichDns(monitor, latest, teamMap, teamById, dnsAlarms.get(inv.getDomain())));
         }
         // Standalone (sertifikadan bağımsız) monitörler — envanter döngüsünde yok; takım görüş kapsamına göre ekle.
-        for (DnsMonitor m : dnsMonitorRepo.findByStandaloneTrueAndActiveTrue()) {
+        for (DnsMonitor m : standaloneMonitors) {
             if (!SessionScope.canView(session, m.getTeamId())) continue;
             DnsRecord latest = m.getId() != null ? latestByMonitor.get(m.getId()) : null;
-            result.add(enrichDns(m, latest, teamMap, teamById));
+            result.add(enrichDns(m, latest, teamMap, teamById, dnsAlarms.get(m.getDomain())));
         }
         return ok(result);
     }
@@ -709,7 +761,7 @@ public class MonitoringController {
         if (dup.isPresent()) {
             return ok(enrichDns(dup.get(),
                     dnsRecordRepo.findTopByMonitorIdOrderByCheckedAtDesc(dup.get().getId()).orElse(null),
-                    certificateService.domainTeamNameMap(), teamNameMap()));
+                    certificateService.domainTeamNameMap(), teamNameMap(), openDnsAlarm(dup.get().getDomain())));
         }
         String now = ISO.format(Instant.now());
         DnsMonitor m = new DnsMonitor();
@@ -722,11 +774,13 @@ public class MonitoringController {
         Object ev = body.get("expectedValue");          // beklenen-değer kilidi (opsiyonel)
         m.setExpectedValue(ev != null && !ev.toString().isBlank() ? ev.toString().trim() : null);
         m.setPropagationCheck(Boolean.TRUE.equals(body.get("propagationCheck")));   // çoklu-resolver tutarlılık (opt-in)
+        m.setSlowThresholdMs(clampSlow(body.get("slowThresholdMs")));               // per-monitor yavaş eşiği (boş=global)
+        if (body.containsKey("groupName")) m.setGroupName(blank(body.get("groupName")) ? null : body.get("groupName").toString().trim());   // mantıksal grup (serbest-form)
         if (body.get("intervalSeconds") != null) m.setIntervalSeconds(((Number) body.get("intervalSeconds")).intValue());
         m.setCreatedAt(now);
         m.setUpdatedAt(now);
         DnsMonitor saved = dnsMonitorRepo.save(m);
-        return ok(enrichDns(saved, null, certificateService.domainTeamNameMap(), teamNameMap()));
+        return ok(enrichDns(saved, null, certificateService.domainTeamNameMap(), teamNameMap(), openDnsAlarm(saved.getDomain())));
     }
 
     @PutMapping("/dns/{id}")
@@ -740,7 +794,22 @@ public class MonitoringController {
                 requireAdmin(session);
             }
             if (body.get("name")            != null) m.setName((String) body.get("name"));
-            if (body.get("domain")          != null) m.setDomain((String) body.get("domain"));
+            if (body.get("domain") != null) {
+                String newDomain = ((String) body.get("domain")).trim();
+                if (m.getDomain() != null && !m.getDomain().equalsIgnoreCase(newDomain)) {
+                    String finalType = body.get("recordType") != null
+                            ? ((String) body.get("recordType")).trim().toUpperCase() : m.getRecordType();
+                    // (domain, kayıt tipi) mükerrer guard — yalnız standalone (envanter-türevinde domain envanterle bağlı)
+                    if (Boolean.TRUE.equals(m.getStandalone())
+                            && dnsMonitorRepo.findFirstByDomainAndRecordTypeAndStandaloneTrue(newDomain, finalType)
+                                 .filter(x -> !x.getId().equals(id)).isPresent())
+                        return badRequest("Bu (domain, kayıt tipi) için zaten bir monitör var");
+                    // Domain DEĞİŞTİ → eski domain'in açık DNS alarmlarını sessizce kapat: aksi halde recovery yeni
+                    // domain'e döner, eski-domain alarmı öksüz kalır ve asla resolve edilmez (takılı alarm).
+                    escalationService.resolveOpenAlertsSilently(m.getDomain(), DNS_ALERT_TYPES, "Sistem (domain değişti)");
+                }
+                m.setDomain(newDomain);
+            }
             if (body.get("recordType")      != null) m.setRecordType(((String) body.get("recordType")).toUpperCase());
             if (body.get("active")          != null) m.setActive((Boolean) body.get("active"));
             if (body.get("intervalSeconds") != null) m.setIntervalSeconds(((Number) body.get("intervalSeconds")).intValue());
@@ -752,10 +821,13 @@ public class MonitoringController {
             }
             if (body.containsKey("propagationCheck"))   // çoklu-resolver tutarlılık (opt-in)
                 m.setPropagationCheck(Boolean.TRUE.equals(body.get("propagationCheck")));
+            if (body.containsKey("slowThresholdMs"))    // per-monitor yavaş eşiği (boş=global)
+                m.setSlowThresholdMs(clampSlow(body.get("slowThresholdMs")));
+            if (body.containsKey("groupName")) m.setGroupName(blank(body.get("groupName")) ? null : body.get("groupName").toString().trim());
             m.setUpdatedAt(ISO.format(Instant.now()));
             DnsMonitor saved = dnsMonitorRepo.save(m);
             return ok(enrichDns(saved, dnsRecordRepo.findTopByMonitorIdOrderByCheckedAtDesc(id).orElse(null),
-                    certificateService.domainTeamNameMap(), teamNameMap()));
+                    certificateService.domainTeamNameMap(), teamNameMap(), openDnsAlarm(saved.getDomain())));
         }).orElse(notFound("DNS monitor not found"));
     }
 
@@ -821,7 +893,7 @@ public class MonitoringController {
             record.setResponseMs(r.get("response_ms") instanceof Number rn ? rn.longValue() : null);
             dnsRecordRepo.save(record);
 
-            return ok(enrichDns(m, record, certificateService.domainTeamNameMap(), teamNameMap()));
+            return ok(enrichDns(m, record, certificateService.domainTeamNameMap(), teamNameMap(), openDnsAlarm(m.getDomain())));
         }).orElse(notFound("DNS monitor not found"));
     }
 
@@ -830,14 +902,16 @@ public class MonitoringController {
     public ResponseEntity<Map<String, Object>> dnsDetails(@PathVariable Long id) {
         return dnsMonitorRepo.findById(id).map(m -> {
             Map<String, Object> data = new LinkedHashMap<>(dnsChecker.enrichedQuery(m.getDomain()));
-            data.put("monitor", enrichDns(m, dnsRecordRepo.findTopByMonitorIdOrderByCheckedAtDesc(m.getId()).orElse(null), certificateService.domainTeamNameMap(), teamNameMap()));
-            data.put("slow_threshold_ms", appSettings.getInt("cert.monitor.dns.slow-threshold-ms", 1500));   // latency grafiği eşik çizgisi
+            data.put("monitor", enrichDns(m, dnsRecordRepo.findTopByMonitorIdOrderByCheckedAtDesc(m.getId()).orElse(null), certificateService.domainTeamNameMap(), teamNameMap(), openDnsAlarm(m.getDomain())));
+            data.put("slow_threshold_ms", m.getSlowThresholdMs() != null ? m.getSlowThresholdMs()
+                    : appSettings.getInt("cert.monitor.dns.slow-threshold-ms", 1500));   // per-monitor ?? global — grafik eşik çizgisi
             return ResponseEntity.ok(Map.of("success", true, "data", data));
         }).orElse(notFound("DNS monitor not found"));
     }
 
     private Map<String, Object> enrichDns(DnsMonitor m, DnsRecord latest,
-                                          Map<String, String> teamMap, Map<Long, String> teamById) {
+                                          Map<String, String> teamMap, Map<Long, String> teamById,
+                                          AlertEvent openAlarm) {
         Map<String, Object> item = new LinkedHashMap<>();
         boolean standalone = Boolean.TRUE.equals(m.getStandalone());
         item.put("id",              m.getId());
@@ -847,6 +921,7 @@ public class MonitoringController {
         item.put("team_id",         m.getTeamId());
         item.put("expected_value",  m.getExpectedValue());
         item.put("propagation_check", Boolean.TRUE.equals(m.getPropagationCheck()));
+        item.put("group_name",      m.getGroupName());
         // Standalone monitör takımını teamId'den çöz (envantere bağlı değil); envanter-türevi domain→envanter eşlemesinden.
         item.put("team_name",       standalone && m.getTeamId() != null
                 ? teamById.get(m.getTeamId()) : teamMap.get(m.getDomain()));
@@ -855,6 +930,10 @@ public class MonitoringController {
         item.put("interval_seconds",m.getIntervalSeconds());
         item.put("created_at",      m.getCreatedAt());
         item.put("updated_at",      m.getUpdatedAt());
+        item.put("slow_threshold_ms",  m.getSlowThresholdMs());     // null = global eşik
+        item.put("active_alarm",       openAlarm != null);
+        item.put("alarm_level",        openAlarm != null ? openAlarm.getAlertLevel() : null);
+        item.put("alarm_acknowledged", openAlarm != null ? openAlarm.getAcknowledged() : null);
         if (latest != null) {
             item.put("value",        latest.getValue());
             item.put("changed",      latest.getChanged());
@@ -1064,6 +1143,40 @@ public class MonitoringController {
         return ok(out);
     }
 
+    /**
+     * Ad-hoc DNS testi — kaydetmeden, formdaki domain/recordType ile bir kez çözümler; değer/ttl/response_ms,
+     * yavaş mı (eşik) ve beklenen-değere göre beklenmeyen değer var mı döndürür. "Test" butonu kullanır.
+     * URL girilirse toHostname ile çıplak host ayıklanır (P0). KAYIT OLUŞTURMAZ.
+     */
+    @PostMapping("/dns/test")
+    public ResponseEntity<Map<String, Object>> testDns(@RequestBody Map<String, Object> body, HttpSession session) {
+        permissionService.require(session, "monitoring.crud", "edit");
+        if (blank(body.get("domain"))) return badRequest("domain zorunlu");
+        String domain = body.get("domain").toString().trim();
+        String recordType = body.get("recordType") != null ? body.get("recordType").toString().trim().toUpperCase() : "A";
+        if (!DNS_RECORD_TYPES.contains(recordType)) return badRequest("Geçersiz DNS kayıt tipi: " + recordType);
+        Map<String, Object> r = dnsChecker.check(domain, recordType);
+        @SuppressWarnings("unchecked")
+        List<String> values = (List<String>) r.getOrDefault("values", List.of());
+        boolean success = Boolean.TRUE.equals(r.get("success"));
+        long responseMs = r.get("response_ms") instanceof Number rn ? rn.longValue() : 0L;
+        Integer slowThr = clampSlow(body.get("slowThresholdMs"));
+        int effSlow = slowThr != null ? slowThr : appSettings.getInt("cert.monitor.dns.slow-threshold-ms", 1500);
+        Object ev = body.get("expectedValue");
+        List<String> unexpected = success
+                ? DnsCheckerService.unexpectedValues(ev != null ? ev.toString() : null, values) : List.of();
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("success",     success);
+        out.put("host",        DnsCheckerService.toHostname(domain));   // çözümlenen çıplak host (URL girildiyse ayıklanmış)
+        out.put("values",      values);
+        out.put("ttl",         r.get("ttl"));
+        out.put("response_ms", responseMs);
+        out.put("slow",        success && responseMs > effSlow);
+        out.put("unexpected",  unexpected);
+        out.put("error",       r.get("error"));
+        return ok(out);
+    }
+
     // ── Yanıt-süresi / RTT grafiği (detay modalı "Süre Grafiği" sekmesi) ─────
     private static final int SERIES_RAW_CAP = 50_000;   // heap koruması (tek-pod): 200k→50k; grafik p95 için yeterli
     private static final DateTimeFormatter LDT = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss");
@@ -1088,6 +1201,28 @@ public class MonitoringController {
         String[] range = resolveRange(from, to, days);
         return ok(buildResponseSeries(pingCheckRepo.responseSeriesRaw(id, range[0], range[1], SERIES_RAW_CAP),
                 range[0], range[1], true));
+    }
+
+    @GetMapping("/port/{id}/response-series")
+    public ResponseEntity<Map<String, Object>> portResponseSeries(@PathVariable Long id,
+            @RequestParam(required = false) String from, @RequestParam(required = false) String to,
+            @RequestParam(defaultValue = "30") int days, HttpSession session) {
+        permissionService.require(session, "monitoring.read", "view");
+        if (!portMonitorRepo.existsById(id)) return notFound("Port monitor not found");
+        String[] range = resolveRange(from, to, days);
+        return ok(buildResponseSeries(portCheckRepo.responseSeriesRaw(id, range[0], range[1], SERIES_RAW_CAP),
+                range[0], range[1], false));   // withLoss=false — port'ta paket kaybı yok
+    }
+
+    @GetMapping("/dns/{id}/response-series")
+    public ResponseEntity<Map<String, Object>> dnsResponseSeries(@PathVariable Long id,
+            @RequestParam(required = false) String from, @RequestParam(required = false) String to,
+            @RequestParam(defaultValue = "30") int days, HttpSession session) {
+        permissionService.require(session, "monitoring.read", "view");
+        if (!dnsMonitorRepo.existsById(id)) return notFound("DNS monitor not found");
+        String[] range = resolveRange(from, to, days);
+        return ok(buildResponseSeries(dnsRecordRepo.responseSeriesRaw(id, range[0], range[1], SERIES_RAW_CAP),
+                range[0], range[1], false));   // withLoss=false — DNS'te paket kaybı yok
     }
 
     /** from/to verilmişse onları (to normalize), yoksa son `days` günü kullan. */
@@ -1410,5 +1545,26 @@ public class MonitoringController {
         return alertEventRepo.findOpenByDomainIn(domains).stream()
                 .filter(e -> alertType.equals(e.getAlertType()))
                 .collect(Collectors.toMap(AlertEvent::getDomain, e -> e, (a, b) -> a));
+    }
+
+    /** DNS: açık (resolved=false) alarmları domain→AlertEvent (en YÜKSEK seviye) map'ine indir — tüm DNS tipleri.
+     *  Bir domainde birden çok açık DNS alarmı olabilir (ör. SLOW+CHANGED); rozet için en severe olan seçilir. */
+    private Map<String, AlertEvent> openDnsAlarmsByDomain(java.util.Collection<String> domains) {
+        if (domains == null || domains.isEmpty()) return Map.of();
+        return alertEventRepo.findOpenByDomainIn(domains).stream()
+                .filter(e -> DNS_ALERT_TYPES.contains(e.getAlertType()))
+                .collect(Collectors.toMap(AlertEvent::getDomain, e -> e, (a, b) -> sev(a) >= sev(b) ? a : b));
+    }
+
+    /** Tek domain için açık DNS alarmlarından en yüksek seviyeli (rozet/enrich için). */
+    private AlertEvent openDnsAlarm(String domain) {
+        if (domain == null) return null;
+        return alertEventRepo.findByDomainAndAlertTypeInAndResolvedFalse(domain, DNS_ALERT_TYPES).stream()
+                .max(java.util.Comparator.comparingInt(MonitoringController::sev)).orElse(null);
+    }
+
+    private static int sev(AlertEvent e) {
+        if (e == null || e.getAlertLevel() == null) return 0;
+        return switch (e.getAlertLevel()) { case "CRITICAL" -> 3; case "HIGH" -> 2; case "WARNING" -> 1; default -> 0; };
     }
 }

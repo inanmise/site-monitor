@@ -50,6 +50,8 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
   const [testing, setTesting] = useState(false)
   const [testResult, setTestResult] = useState(null)
   const [detailTab, setDetailTab] = useState('control')
+  const [historyPage, setHistoryPage] = useState(0)
+  const [historyPageSize, setHistoryPageSize] = useState(50)
   const [search, setSearch] = useState('')
   const [teamFilter, setTeamFilter] = useState('all')
   const [groupFilter, setGroupFilter] = useState('all')
@@ -110,8 +112,8 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
     }
     setHistoryLoading(false)
   }
-  function selectRange(id, days) { setRangeDays(days); loadHistory(id, days) }
-  function openDetail(m) { setSelected(m); setHistory([]); setDetailTab('control'); loadHistory(m.id, rangeDays) }
+  function selectRange(id, days) { setRangeDays(days); setHistoryPage(0); loadHistory(id, days) }
+  function openDetail(m) { setSelected(m); setHistory([]); setHistoryPage(0); setDetailTab('control'); loadHistory(m.id, rangeDays) }
   function closeDetail() { setSelected(null); setHistory([]) }
 
   function openNew() {
@@ -258,6 +260,13 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
     { key: 'unacked', Icon: BellDot,         label: t('keyword.dashUnacked'), value: counts.unacked, cls: 'warning'  },
   ]
   const onStatClick = (key) => setStatFilter(k => k === key ? null : key)
+
+  // Geçmiş sayfalaması (DNS ile aynı 50/100/200)
+  const histTotalPages = Math.max(1, Math.ceil(history.length / historyPageSize))
+  const histSafePage = Math.min(historyPage, histTotalPages - 1)
+  const histStart = histSafePage * historyPageSize
+  const histEnd = Math.min(histStart + historyPageSize, history.length)
+  const pagedHistory = history.slice(histStart, histEnd)
   const toggleStats = () => { if (statsVisible) setStatFilter(null); setStatsVisible(v => !v) }
 
   function cardClass(m) {
@@ -427,12 +436,12 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
             </div>
             <div className="upt-modal-divider" />
             <div className="upt-modal-summary">
-              <div className="upt-modal-metric">
+              <div className="upt-modal-metric" title={t('keyword.sumOkHint')}>
                 <span className="upt-modal-metric-val">{summary.total > 0 ? `%${Math.round((summary.total - summary.down) * 1000 / summary.total) / 10}` : '—'}</span>
                 <span className="upt-modal-metric-lbl">{t('keyword.sumOk')}</span>
               </div>
-              <div className="upt-modal-metric"><span className="upt-modal-metric-val">{summary.total}</span><span className="upt-modal-metric-lbl">{t('keyword.sumTotal')}</span></div>
-              <div className="upt-modal-metric"><span className="upt-modal-metric-val">{summary.down}</span><span className="upt-modal-metric-lbl">{t('keyword.sumIncidents')}</span></div>
+              <div className="upt-modal-metric" title={t('keyword.sumTotalHint')}><span className="upt-modal-metric-val">{summary.total}</span><span className="upt-modal-metric-lbl">{t('keyword.sumTotal')}</span></div>
+              <div className="upt-modal-metric" title={t('keyword.sumIncidentsHint')}><span className="upt-modal-metric-val">{summary.down}</span><span className="upt-modal-metric-lbl">{t('keyword.sumIncidents')}</span></div>
               <div className="upt-modal-metric"><span className="upt-modal-metric-val">{selected.keyword}</span><span className="upt-modal-metric-lbl">{t('keyword.keyword')}</span></div>
               {selected.http_status != null && <div className="upt-modal-metric"><span className="upt-modal-metric-val">{selected.http_status}</span><span className="upt-modal-metric-lbl">HTTP</span></div>}
               {selected.checked_at && <div className="upt-modal-metric"><span className="upt-modal-metric-val upt-modal-metric-time">{formatDateSec(selected.checked_at)}</span><span className="upt-modal-metric-lbl">{t('keyword.lastCheck')}</span></div>}
@@ -474,7 +483,7 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
                   <div className="upt-rt-grid upt-rt-head">
                     <span>{t('keyword.colTime')}</span><span>{t('keyword.colStatus')}</span><span>HTTP</span><span>{t('keyword.colDetail')}</span>
                   </div>
-                  {history.slice(0, 200).map((c, i) => {
+                  {pagedHistory.map((c, i) => {
                     const occ = c.occurrences != null ? c.occurrences : (c.found ? '≥1' : 0)
                     const cmp = `${OP_SYM[selected.operator] || '≥'}${selected.match_count ?? 1}`
                     return (
@@ -491,6 +500,27 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
                       </div>
                     )
                   })}
+                  {history.length > 0 && (
+                    <div className="dns-history-pagination" style={{ marginTop: 10 }}>
+                      <div className="dash-page-sizer">
+                        <span className="dash-page-sizer-label">{t('app.perPage')}</span>
+                        {[50, 100, 200].map(n => (
+                          <button key={n} type="button" className={`dash-size-btn${historyPageSize === n ? ' active' : ''}`}
+                            onClick={() => { setHistoryPageSize(n); setHistoryPage(0) }}>{n}</button>
+                        ))}
+                      </div>
+                      {histTotalPages > 1 && (
+                        <div className="dash-page-nav">
+                          <button type="button" className="page-btn" disabled={histSafePage <= 0} onClick={() => setHistoryPage(0)}>«</button>
+                          <button type="button" className="page-btn" disabled={histSafePage <= 0} onClick={() => setHistoryPage(histSafePage - 1)}>{t('app.prevPage')}</button>
+                          <span className="dash-page-info-mini">{histSafePage + 1} / {histTotalPages}</span>
+                          <button type="button" className="page-btn" disabled={histSafePage >= histTotalPages - 1} onClick={() => setHistoryPage(histSafePage + 1)}>{t('app.nextPage')}</button>
+                          <button type="button" className="page-btn" disabled={histSafePage >= histTotalPages - 1} onClick={() => setHistoryPage(histTotalPages - 1)}>»</button>
+                        </div>
+                      )}
+                      <span className="dash-page-info">{t('dns.pageInfo', histStart + 1, histEnd, history.length)}</span>
+                    </div>
+                  )}
                 </div>
               )}
             </>)}

@@ -67,12 +67,13 @@ export default function ResponseTimeChart({ monitorId, kind }) {
 
   const load = useCallback(async () => {
     setLoading(true)
-    const fetcher = isPing ? api.monitoring.getPingResponseSeries : api.monitoring.getKeywordResponseSeries
+    const fetcher = { ping: api.monitoring.getPingResponseSeries, keyword: api.monitoring.getKeywordResponseSeries,
+      port: api.monitoring.getPortResponseSeries, dns: api.monitoring.getDnsResponseSeries }[kind] ?? api.monitoring.getKeywordResponseSeries
     const params = custom ? { from: custom.from, to: custom.to } : { days: PRESETS.find(p => p.key === preset)?.days ?? 30 }
     const res = await fetcher(monitorId, params)
     setData(res?.success ? res.data : null)
     setLoading(false)
-  }, [monitorId, isPing, preset, custom])
+  }, [monitorId, kind, preset, custom])
 
   useEffect(() => { load() }, [load])
 

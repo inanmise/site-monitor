@@ -110,7 +110,8 @@ public class MonitoringOutageService {
     /** Başarılı sorguda tespit edilen gerçek DNS kayıt değişikliği (CHANGED).
      *  teamId: standalone monitör için takım (alarmı doğru takıma yönlendirir); envanter-türevinde null. */
     public record DnsChange(String domain, String recordType,
-                            String previousValue, String newValue, String detectedAt, Long teamId) {}
+                            String previousValue, String newValue, String detectedAt, Long teamId,
+                            Supplier<Map<String, Object>> recheck) {}
 
     /** Teyit re-check'leri için küçük daemon havuzu — eşzamanlı çok-domain DOWN'da
      *  teyit zincirleri paralel ilerlesin (tek-thread'de seri kuyruk → alarm gecikmesi).
@@ -227,11 +228,10 @@ public class MonitoringOutageService {
     }
 
     /**
-     * DNS sweep girişi: çözümleme hataları teyitli makineden geçer;
-     * kayıt değişiklikleri teyitsiz anında YÜKSEK alarm üretir (başarılı
-     * sorgudan pozitif gözlem — bulk bastırma da uygulanmaz). Ayrıca açık
-     * unacked DNS_CHANGED alarmlarının günlük re-alert kadansını yönetir
-     * (sonraki sweep'ler changed=false görür, kadansın sahibi burasıdır).
+     * DNS sweep girişi: çözümleme hataları + kayıt DEĞİŞİKLİKLERİ teyitli makineden geçer (3× ardışık
+     * doğrulama; değer baseline'a dönerse "geçici dalgalanma" → iptal). DNS_CHANGED teyit sonrası YÜKSEK
+     * alarm açar ama handleSweepResults'a girmediğinden OTOMATİK KAPANMAZ (manuel kapanır). Ayrıca açık
+     * unacked DNS_CHANGED alarmlarının günlük re-alert kadansını yönetir (sonraki sweep'ler changed=false görür).
      */
     public void handleDnsSweep(List<SweepItem> failureItems, List<SweepItem> slowItems,
                                List<DnsChange> changes,
@@ -246,9 +246,11 @@ public class MonitoringOutageService {
         if (changes != null) {
             for (DnsChange c : changes) {
                 changedThisSweep.add(c.domain());
-                withLock(EscalationService.TYPE_DNS_CHANGED, c.domain(), () ->
-                        escalationService.processConfirmedOutage(c.domain(),
-                                EscalationService.TYPE_DNS_CHANGED, "HIGH", changeCtx(c)));
+                // DNS_CHANGED artık 3× teyitli (diğer DNS alarmları gibi): startConfirmation zinciri;
+                // recheck baseline'a dönerse "geçici dalgalanma" → iptal. Teyit sonrası processConfirmedOutage
+                // (HIGH) açar; handleSweepResults'a girmez → OTOMATİK KAPANMAZ (manuel). changeCtx old/new_values taşır.
+                startConfirmation(new SweepItem(EscalationService.TYPE_DNS_CHANGED,
+                        c.domain(), c.recordType(), false, "changed", changeCtx(c), c.recheck()));
             }
         }
 

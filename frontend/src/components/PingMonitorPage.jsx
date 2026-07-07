@@ -54,6 +54,8 @@ export default function PingMonitorPage({ systemRole, teamId, teamName }) {
   const [statsVisible, setStatsVisible] = useState(false)
   const [secondsSince, setSecondsSince] = useState(0)
   const [detailTab, setDetailTab] = useState('control')
+  const [historyPage, setHistoryPage] = useState(0)
+  const [historyPageSize, setHistoryPageSize] = useState(50)
   const countdownRef = useRef(null)
   const deepLinkDone = useRef(false)
 
@@ -111,8 +113,8 @@ export default function PingMonitorPage({ systemRole, teamId, teamName }) {
     }
     setHistoryLoading(false)
   }
-  function selectRange(id, days) { setRangeDays(days); loadHistory(id, days) }
-  function openDetail(m) { setSelected(m); setHistory([]); setDetailTab('control'); loadHistory(m.id, rangeDays) }
+  function selectRange(id, days) { setRangeDays(days); setHistoryPage(0); loadHistory(id, days) }
+  function openDetail(m) { setSelected(m); setHistory([]); setHistoryPage(0); setDetailTab('control'); loadHistory(m.id, rangeDays) }
   function closeDetail() { setSelected(null); setHistory([]) }
 
   function openNew() {
@@ -251,6 +253,13 @@ export default function PingMonitorPage({ systemRole, teamId, teamName }) {
     { key: 'paused',  Icon: PauseCircle,     label: t('ping.dashPaused'),  value: counts.paused,  cls: 'paused'   },
   ]
   const onStatClick = (key) => setStatFilter(k => k === key ? null : key)
+
+  // Geçmiş sayfalaması (DNS ile aynı 50/100/200)
+  const histTotalPages = Math.max(1, Math.ceil(history.length / historyPageSize))
+  const histSafePage = Math.min(historyPage, histTotalPages - 1)
+  const histStart = histSafePage * historyPageSize
+  const histEnd = Math.min(histStart + historyPageSize, history.length)
+  const pagedHistory = history.slice(histStart, histEnd)
   const toggleStats = () => { if (statsVisible) setStatFilter(null); setStatsVisible(v => !v) }
 
   function cardClass(m) {
@@ -430,7 +439,7 @@ export default function PingMonitorPage({ systemRole, teamId, teamName }) {
                   <div className="upt-rt-grid upt-rt-head">
                     <span>{t('ping.colTime')}</span><span>{t('ping.colStatus')}</span><span>{t('ping.rtt')}</span><span>{t('ping.colDetail')}</span>
                   </div>
-                  {history.slice(0, 200).map((c, i) => (
+                  {pagedHistory.map((c, i) => (
                     <div key={`${c.checkedAt || c.checked_at || ''}#${i}`} className="upt-rt-grid">
                       <span className="upt-rt-time">{formatDateSec(c.checkedAt || c.checked_at)}</span>
                       <span className={c.up ? 'upt-rt-up' : 'upt-rt-down'}>{c.up ? t('ping.statusUp') : t('ping.statusDown')}</span>
@@ -439,6 +448,27 @@ export default function PingMonitorPage({ systemRole, teamId, teamName }) {
                         : <span className="upt-rt-ms">{(c.packetLoss ?? c.packet_loss) != null ? `%${c.packetLoss ?? c.packet_loss}` : '—'}</span>}
                     </div>
                   ))}
+                  {history.length > 0 && (
+                    <div className="dns-history-pagination" style={{ marginTop: 10 }}>
+                      <div className="dash-page-sizer">
+                        <span className="dash-page-sizer-label">{t('app.perPage')}</span>
+                        {[50, 100, 200].map(n => (
+                          <button key={n} type="button" className={`dash-size-btn${historyPageSize === n ? ' active' : ''}`}
+                            onClick={() => { setHistoryPageSize(n); setHistoryPage(0) }}>{n}</button>
+                        ))}
+                      </div>
+                      {histTotalPages > 1 && (
+                        <div className="dash-page-nav">
+                          <button type="button" className="page-btn" disabled={histSafePage <= 0} onClick={() => setHistoryPage(0)}>«</button>
+                          <button type="button" className="page-btn" disabled={histSafePage <= 0} onClick={() => setHistoryPage(histSafePage - 1)}>{t('app.prevPage')}</button>
+                          <span className="dash-page-info-mini">{histSafePage + 1} / {histTotalPages}</span>
+                          <button type="button" className="page-btn" disabled={histSafePage >= histTotalPages - 1} onClick={() => setHistoryPage(histSafePage + 1)}>{t('app.nextPage')}</button>
+                          <button type="button" className="page-btn" disabled={histSafePage >= histTotalPages - 1} onClick={() => setHistoryPage(histTotalPages - 1)}>»</button>
+                        </div>
+                      )}
+                      <span className="dash-page-info">{t('dns.pageInfo', histStart + 1, histEnd, history.length)}</span>
+                    </div>
+                  )}
                 </div>
               )}
             </>)}

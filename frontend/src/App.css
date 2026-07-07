@@ -5674,8 +5674,14 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .mnote-field textarea { width: 100%; resize: vertical; font: inherit; font-size: 13px; padding: 7px 9px; border: 1px solid var(--border, #cbd5e1); border-radius: 6px; box-sizing: border-box; }
 .mnote-md-hint { font-size: 11.5px; color: var(--text-muted, #94a3b8); margin: -2px 0 8px; }
 .mnote-card { border: 1px solid var(--border, #e2e8f0); border-radius: 8px; padding: 10px 13px; margin-bottom: 10px; }
-.mnote-card-hdr { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 6px; }
+.mnote-card-hdr { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 6px; cursor: pointer; user-select: none; }
 .mnote-card-actions { display: inline-flex; gap: 6px; }
+.mnote-card-toggle { display: inline-flex; align-items: center; flex-shrink: 0; color: var(--text-muted, #64748b); }
+.mnote-card-summary { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.mnote-card-title { font-size: 13px; font-weight: 600; color: var(--text, #1e293b); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mnote-card-summary .mnote-meta { margin-top: 0; }
+.mnote-card-hdr:hover .mnote-card-title { color: var(--primary, #6366f1); }
+.mnote-card.open > .mnote-card-hdr { margin-bottom: 8px; }
 .mnote-row { margin: 6px 0; }
 .mnote-row-label { font-size: 11.5px; font-weight: 700; letter-spacing: .02em; text-transform: uppercase; color: var(--text-muted, #64748b); margin-bottom: 2px; }
 [data-theme="dark"] .mnote-guide,
@@ -5931,6 +5937,12 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .mon-row:hover { background: var(--hover); }
 .mon-row-selected { background: rgba(59,130,246,.06); }
 .mon-row-inactive { opacity: .55; }
+.mon-row--alarm > td { background: rgba(220, 38, 38, .06); }
+.mon-row--alarm:hover > td { background: rgba(220, 38, 38, .11); }
+
+/* DNS detay modali — tab-üstü kalıcı özet satırı (tüm sekmelerde görünür; ping/keyword/port paritesi) */
+.dns-modal-summary { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; padding: 2px 2px 12px; font-size: 13px; }
+.dns-summary-metric { display: inline-flex; align-items: center; gap: 5px; color: var(--text-muted); }
 
 .mon-badge { padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 700; }
 .mon-badge-up      { background: #e8f5e9; color: #2e7d32; }

@@ -52,6 +52,27 @@ public class PortMonitor {
     @Column(name = "timeout_ms")
     private Integer timeoutMs = 5000;
 
+    /** true = kullanıcının Port sayfasından eklediği, sertifika envanterine bağlı OLMAYAN monitör.
+     *  Envanter-skip'i baypas eder (her zaman listelenir + kontrol edilir). null/false = envanter-türevi. */
+    @Column(name = "standalone")
+    private Boolean standalone = false;
+
+    /** Per-monitor teyit: alarm öncesi doğrulama denemesi sayısı (varsayılan 3) — ping/keyword ile aynı. */
+    @Column(name = "confirm_attempts")
+    private Integer confirmAttempts = 3;
+
+    /** Per-monitor teyit: denemeler arası saniye (varsayılan 30). */
+    @Column(name = "confirm_interval_seconds")
+    private Integer confirmIntervalSeconds = 30;
+
+    /** Recovery period: alarmın otomatik kapanması için gereken ardışık başarılı kontrol sayısı (varsayılan 3). */
+    @Column(name = "recovery_checks")
+    private Integer recoveryChecks = 3;
+
+    /** Recovery aktif re-check aralığı (sn): set ise recovery aktif döngüyle yürür; null → pasif. */
+    @Column(name = "recovery_interval_seconds")
+    private Integer recoveryIntervalSeconds = 30;
+
     @Column(name = "created_at")
     private String createdAt;
 

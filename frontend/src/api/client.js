@@ -527,6 +527,12 @@ export const api = {
       ).toString()
       return request(`/monitoring/port/${id}/history${q ? `?${q}` : ''}`)
     },
+    getPortResponseSeries: (id, { from, to, days } = {}) => {
+      const q = new URLSearchParams(
+        Object.fromEntries(Object.entries({ from, to, days }).filter(([, v]) => v != null && v !== '')),
+      ).toString()
+      return request(`/monitoring/port/${id}/response-series${q ? `?${q}` : ''}`)
+    },
 
     // DNS
     getDnsMonitors:    () => request('/monitoring/dns'),
@@ -535,7 +541,14 @@ export const api = {
     deleteDnsMonitor:  (id) => request(`/monitoring/dns/${id}`, { method: 'DELETE' }),
     triggerDnsCheck:   (id) => request(`/monitoring/dns/${id}/check`, { method: 'POST' }),
     getDnsHistory:     (id, days = 7) => request(`/monitoring/dns/${id}/history?days=${days}`),
+    getDnsResponseSeries: (id, { from, to, days } = {}) => {
+      const q = new URLSearchParams(
+        Object.fromEntries(Object.entries({ from, to, days }).filter(([, v]) => v != null && v !== '')),
+      ).toString()
+      return request(`/monitoring/dns/${id}/response-series${q ? `?${q}` : ''}`)
+    },
     getDnsDetails:     (id) => request(`/monitoring/dns/${id}/details`),
+    testDnsMonitor:    (data) => request('/monitoring/dns/test', { method: 'POST', body: JSON.stringify(data) }),
 
     // Keyword
     getKeywordMonitors:   () => request('/monitoring/keyword'),
