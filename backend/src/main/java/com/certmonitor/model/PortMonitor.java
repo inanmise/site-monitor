@@ -47,7 +47,7 @@ public class PortMonitor {
     private String groupName;
 
     @Column(name = "interval_seconds")
-    private Integer intervalSeconds = 60;
+    private Integer intervalSeconds = 300;
 
     @Column(name = "timeout_ms")
     private Integer timeoutMs = 5000;

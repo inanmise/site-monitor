@@ -20,7 +20,7 @@ const INTERVALS = [
 const REFRESH_INTERVAL = 60
 const PORT_TYPES = ['TCP', 'TLS', 'HTTP', 'BANNER', 'UDP']
 const emptyForm = { name: '', host: '', port: '', protocol: 'TCP', expect: '', sendData: '', teamId: '', groupName: '',
-  intervalSeconds: 60, timeoutMs: 5000,
+  intervalSeconds: 300, timeoutMs: 5000,
   confirmAttempts: 3, confirmIntervalSeconds: 30, recoveryChecks: 3, recoveryIntervalSeconds: 30, active: true }
 
 export default function PortMonitorPage({ systemRole, teamId, teamName }) {
@@ -137,10 +137,13 @@ export default function PortMonitorPage({ systemRole, teamId, teamName }) {
     setModal('new')
   }
   function openEdit(m) {
+    // Envanter-türevi monitörde team_id null olabilir; liste team_name'i (domain→takım) gösterir →
+    // edit'te o takımı önseç (aksi halde "takımsız" görünür), team_name'i teams'ten eşleştirerek.
+    const derivedTeam = m.team_id == null && m.team_name ? teams.find(tm => tm.name === m.team_name) : null
     setForm({ name: m.name || '', host: m.host || '', port: m.port ?? '', protocol: m.protocol || 'TCP',
       expect: m.expect || '', sendData: m.send_data || '',
-      teamId: m.team_id != null ? String(m.team_id) : '', groupName: m.group_name || '',
-      intervalSeconds: m.interval_seconds ?? 60, timeoutMs: m.timeout_ms ?? 5000,
+      teamId: m.team_id != null ? String(m.team_id) : (derivedTeam ? String(derivedTeam.id) : ''), groupName: m.group_name || '',
+      intervalSeconds: m.interval_seconds ?? 300, timeoutMs: m.timeout_ms ?? 5000,
       confirmAttempts: m.confirm_attempts ?? 3, confirmIntervalSeconds: m.confirm_interval_seconds ?? 30,
       recoveryChecks: m.recovery_checks ?? 3, recoveryIntervalSeconds: m.recovery_interval_seconds ?? 30,
       active: m.active !== false })
