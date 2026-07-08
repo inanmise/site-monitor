@@ -80,7 +80,7 @@ public class MonitoringController {
                               "timeoutMs",        appSettings.getInt("cert.monitor.ping.default-timeout-ms", 5000)),
             "keyword", Map.of("intervalSeconds", appSettings.getInt("cert.monitor.keyword.default-interval-seconds", 60),
                               "timeoutMs",        appSettings.getInt("cert.monitor.keyword.default-timeout-ms", 10000)),
-            "port",    Map.of("intervalSeconds", appSettings.getInt("cert.monitor.port.default-interval-seconds", 60),
+            "port",    Map.of("intervalSeconds", appSettings.getInt("cert.monitor.port.default-interval-seconds", 300),
                               "timeoutMs",        appSettings.getInt("cert.monitor.port.default-timeout-ms", 5000)),
             "dns",     Map.of("intervalSeconds", appSettings.getInt("cert.monitor.dns.default-interval-seconds", 300))
         ));
@@ -457,7 +457,7 @@ public class MonitoringController {
                 m.setPort(invPort);
                 m.setProtocol("TCP");
                 m.setActive(true);
-                m.setIntervalSeconds(60);
+                m.setIntervalSeconds(300);
                 m.setTimeoutMs(5000);
                 m.setCreatedAt(now);
                 m.setUpdatedAt(now);
