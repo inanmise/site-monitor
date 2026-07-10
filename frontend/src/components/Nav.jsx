@@ -41,6 +41,8 @@ export default function Nav({ activeTab, onTabChange, username, teamName, system
       labelKey: 'nav.groupMonitoring',
       tabs: [
         { id: 'uptime', Icon: Wifi,     labelKey: 'nav.uptime', show: true },
+        { id: 'http',    Icon: Globe,    labelKey: 'nav.http',    show: true },
+        { id: 'domain',  Icon: CalendarDays, labelKey: 'nav.domainmon', show: true },
         { id: 'port',   Icon: Network,  labelKey: 'nav.port',   show: true },
         { id: 'dns',     Icon: Search,   labelKey: 'nav.dns',     show: true },
         { id: 'keyword', Icon: Target,   labelKey: 'nav.keyword', show: true },

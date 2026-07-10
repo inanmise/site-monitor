@@ -73,6 +73,26 @@ public class PortMonitor {
     @Column(name = "recovery_interval_seconds")
     private Integer recoveryIntervalSeconds = 30;
 
+    /** Serbest etiketler — virgülle ayrılmış (organizasyon/filtreleme). */
+    @Column(columnDefinition = "TEXT")
+    private String tags;
+
+    /** E-posta bildirimi açık mı (varsayılan true). SMS/Voice/Push UI'da devre dışı. */
+    @Column(name = "notify_email")
+    private Boolean notifyEmail = true;
+
+    /** Yavaş yanıt alarmı açık mı: açıksa response_ms eşiği aşılınca PORT_SLOW. */
+    @Column(name = "slow_response_enabled")
+    private Boolean slowResponseEnabled = false;
+
+    /** Yavaş yanıt eşiği (ms). */
+    @Column(name = "slow_threshold_ms")
+    private Integer slowThresholdMs = 3000;
+
+    /** "auto" | "v4" | "v6" — soket bağlantısı IP sürümü kısıtı (Ping ile aynı model). */
+    @Column(name = "ip_version", nullable = false)
+    private String ipVersion = "auto";
+
     @Column(name = "created_at")
     private String createdAt;
 

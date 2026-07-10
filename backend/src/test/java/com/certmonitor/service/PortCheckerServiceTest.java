@@ -87,6 +87,34 @@ class PortCheckerServiceTest {
     }
 
     @Test
+    @DisplayName("check ipVersion=v4: IPv4 literaline bağlanır (open) + response_ms")
+    void check_ipVersionV4_connects() throws IOException {
+        try (ServerSocket server = new ServerSocket(0)) {
+            Map<String, Object> r = service.check("127.0.0.1", server.getLocalPort(), 1000, "TCP", null, null, "v4");
+            assertThat(r.get("open")).isEqualTo(true);
+            assertThat(r.get("response_ms")).isInstanceOf(Long.class);
+        }
+    }
+
+    @Test
+    @DisplayName("check ipVersion=v6: yalnız-IPv4 hedefte aile bulunamaz → open=false + error")
+    void check_ipVersionV6_noV6Address_returnsDown() {
+        // 192.0.2.1 (IANA TEST-NET-1) yalnız IPv4 literali → v6 çözümlemesi başarısız (No IPv6 address)
+        Map<String, Object> r = service.check("192.0.2.1", 443, 300, "TCP", null, null, "v6");
+        assertThat(r.get("open")).isEqualTo(false);
+        assertThat(r).containsKey("error");
+    }
+
+    @Test
+    @DisplayName("check ipVersion=auto: mevcut davranışı korur (açık portta open)")
+    void check_ipVersionAuto_unchanged() throws IOException {
+        try (ServerSocket server = new ServerSocket(0)) {
+            Map<String, Object> r = service.check("127.0.0.1", server.getLocalPort(), 1000, "TCP", null, null, "auto");
+            assertThat(r.get("open")).isEqualTo(true);
+        }
+    }
+
+    @Test
     @DisplayName("httpStatusMatches: bos->2xx/3xx, tam, sinif (2xx), aralik (200-399), coklu")
     void httpStatusMatches_patterns() {
         assertThat(PortCheckerService.httpStatusMatches(200, null)).isTrue();

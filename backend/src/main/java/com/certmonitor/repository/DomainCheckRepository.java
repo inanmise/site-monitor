@@ -1,0 +1,31 @@
+package com.certmonitor.repository;
+
+import com.certmonitor.model.DomainCheck;
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
+
+import java.util.List;
+import java.util.Optional;
+
+public interface DomainCheckRepository extends JpaRepository<DomainCheck, Long> {
+    List<DomainCheck> findByMonitorIdOrderByCheckedAtDesc(Long monitorId);
+    Optional<DomainCheck> findTopByMonitorIdOrderByCheckedAtDesc(Long monitorId);
+
+    /** Son BAŞARILI kontrol (kaynak NONE değil) — değişiklik tespiti bunun registrar/NS/status'una karşı çalışır. */
+    Optional<DomainCheck> findTopByMonitorIdAndSourceNotOrderByCheckedAtDesc(Long monitorId, String source);
+
+    /** History detay listesi — SQL-LIMIT'li: en yeni :limit satır. */
+    @Query("SELECT r FROM DomainCheck r WHERE r.monitorId = :id ORDER BY r.checkedAt DESC LIMIT :limit")
+    List<DomainCheck> findRecentByMonitorId(@Param("id") Long id, @Param("limit") int limit);
+
+    @Query("SELECT r FROM DomainCheck r WHERE r.monitorId = :id AND r.checkedAt >= :since ORDER BY r.checkedAt DESC LIMIT :limit")
+    List<DomainCheck> findRecentByMonitorIdSince(@Param("id") Long id, @Param("since") String since, @Param("limit") int limit);
+
+    /** Her monitör için en güncel kontrol — tek toplu sorgu (N+1 önleme). */
+    @Query("SELECT r FROM DomainCheck r WHERE r.id IN "
+         + "(SELECT MAX(r2.id) FROM DomainCheck r2 GROUP BY r2.monitorId)")
+    List<DomainCheck> findLatestPerMonitor();
+
+    long countByMonitorIdAndCheckedAtGreaterThanEqual(Long monitorId, String since);
+}

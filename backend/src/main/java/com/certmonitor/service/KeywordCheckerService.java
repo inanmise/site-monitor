@@ -63,14 +63,20 @@ public class KeywordCheckerService {
         return CompletableFuture.completedFuture(check(url, keyword, timeoutMs));
     }
 
-    /** Geriye uyum: özel header'sız. */
+    /** Geriye uyum: özel header'sız, case-insensitive. */
     public Map<String, Object> check(String url, String keyword, int timeoutMs) {
-        return check(url, keyword, timeoutMs, null);
+        return check(url, keyword, timeoutMs, null, false);
     }
 
-    /** {"found", "http_status", "response_ms", "snippet"?, "error"?} döner. Cache busting: URL'deki
-     *  {timestamp} → güncel Unix saniye; customHeaders ("Name: Value" satırları, ör. Cache-Control: no-cache). */
+    /** Geriye uyum: case-insensitive. */
     public Map<String, Object> check(String url, String keyword, int timeoutMs, String customHeaders) {
+        return check(url, keyword, timeoutMs, customHeaders, false);
+    }
+
+    /** {"found", "http_status", "response_ms", "snippet"?, "error"?} döner. {@code caseSensitive}=true ise
+     *  büyük/küçük harf DUYARLI eşleşme. Cache busting: URL'deki {timestamp} → güncel Unix saniye;
+     *  customHeaders ("Name: Value" satırları, ör. Cache-Control: no-cache). */
+    public Map<String, Object> check(String url, String keyword, int timeoutMs, String customHeaders, boolean caseSensitive) {
         long start = System.currentTimeMillis();
         Map<String, Object> result = new LinkedHashMap<>();
         try {
@@ -87,8 +93,8 @@ public class KeywordCheckerService {
             }
             long ms = System.currentTimeMillis() - start;
             String body = new String(bytes, StandardCharsets.UTF_8);
-            String hay = body.toLowerCase(Locale.ROOT);
-            String needle = keyword != null ? keyword.toLowerCase(Locale.ROOT) : "";
+            String hay = caseSensitive ? body : body.toLowerCase(Locale.ROOT);
+            String needle = keyword == null ? "" : (caseSensitive ? keyword : keyword.toLowerCase(Locale.ROOT));
             int count = 0;
             if (!needle.isEmpty()) {
                 int from = 0, idx;

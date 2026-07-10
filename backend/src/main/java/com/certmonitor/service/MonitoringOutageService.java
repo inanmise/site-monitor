@@ -417,7 +417,8 @@ public class MonitoringOutageService {
 
     private boolean alertEnabled(String alertType) {
         return switch (alertType) {
-            case EscalationService.TYPE_PORT_DOWN   ->
+            case EscalationService.TYPE_PORT_DOWN,
+                 EscalationService.TYPE_PORT_SLOW   ->
                     appSettings.getBoolean("cert.monitor.port.alert-enabled", portAlertEnabled);
             case EscalationService.TYPE_DNS_FAILURE,
                  EscalationService.TYPE_DNS_CHANGED,
@@ -425,10 +426,22 @@ public class MonitoringOutageService {
                  EscalationService.TYPE_DNS_UNEXPECTED,
                  EscalationService.TYPE_DNS_INCONSISTENT ->
                     appSettings.getBoolean("cert.monitor.dns.alert-enabled", dnsAlertEnabled);
-            case EscalationService.TYPE_KEYWORD     ->
+            case EscalationService.TYPE_KEYWORD,
+                 EscalationService.TYPE_KEYWORD_SLOW,
+                 EscalationService.TYPE_KEYWORD_SSL,
+                 EscalationService.TYPE_KEYWORD_DOMAIN_EXPIRY ->
                     appSettings.getBoolean("cert.monitor.keyword.alert-enabled", keywordAlertEnabled);
             case EscalationService.TYPE_PING_DOWN   ->
                     appSettings.getBoolean("cert.monitor.ping.alert-enabled", pingAlertEnabled);
+            case EscalationService.TYPE_HTTP_DOWN,
+                 EscalationService.TYPE_HTTP_SSL,
+                 EscalationService.TYPE_DOMAIN_EXPIRY ->
+                    appSettings.getBoolean("cert.monitor.http.alert-enabled", true);
+            case EscalationService.TYPE_DOMAINMON_EXPIRY,
+                 EscalationService.TYPE_DOMAINMON_UNKNOWN,
+                 EscalationService.TYPE_DOMAINMON_STATUS,
+                 EscalationService.TYPE_DOMAINMON_CHANGED ->
+                    appSettings.getBoolean("cert.monitor.domain.alert-enabled", true);
             default                                 ->
                     appSettings.getBoolean("cert.monitor.uptime.alert-enabled", uptimeAlertEnabled);
         };
@@ -438,7 +451,12 @@ public class MonitoringOutageService {
         return (EscalationService.TYPE_DNS_CHANGED.equals(alertType)
                 || EscalationService.TYPE_DNS_SLOW.equals(alertType)
                 || EscalationService.TYPE_DNS_UNEXPECTED.equals(alertType)
-                || EscalationService.TYPE_DNS_INCONSISTENT.equals(alertType)) ? "HIGH" : "CRITICAL";
+                || EscalationService.TYPE_DNS_INCONSISTENT.equals(alertType)
+                || EscalationService.TYPE_HTTP_SSL.equals(alertType)
+                || EscalationService.TYPE_DOMAIN_EXPIRY.equals(alertType)
+                || EscalationService.isKeywordAux(alertType)
+                || EscalationService.TYPE_PORT_SLOW.equals(alertType)
+                || EscalationService.isDomainMon(alertType)) ? "HIGH" : "CRITICAL";
     }
 
     private Map<String, Object> sweepContext(SweepItem item) {

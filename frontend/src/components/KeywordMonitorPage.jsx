@@ -4,8 +4,10 @@ import { api, formatDateSec } from '../api/client'
 import { useT } from '../i18n/index.jsx'
 import { useToast } from './ui/Toast.jsx'
 import SearchableSelect from './ui/SearchableSelect.jsx'
+import TagInput from './ui/TagInput.jsx'
 import { Play, Pencil, X, RefreshCw, Plus, Trash2, Target, Users, Layers, FlaskConical, Check, AlertTriangle,
-  LayoutDashboard, CheckCircle2, TriangleAlert, ServerCrash, Siren, BellDot, BarChart3, ChevronDown } from 'lucide-react'
+  LayoutDashboard, CheckCircle2, TriangleAlert, ServerCrash, Siren, BellDot, BarChart3, ChevronDown, ShieldCheck,
+  Mail, MessageSquare, Phone, Smartphone } from 'lucide-react'
 import AlertHistory from './admin/AlertHistory.jsx'
 import MonitorStatsBar from './MonitorStatsBar.jsx'
 // recharts ağır — yalnız "Süre Grafiği" sekmesi açılınca yüklensin (eager bundle'a girmesin).
@@ -13,14 +15,30 @@ const ResponseTimeChart = lazy(() => import('./ResponseTimeChart.jsx'))
 const MonitorNotes = lazy(() => import('./MonitorNotes.jsx'))
 
 const INTERVALS = [
-  { value: 30,  labelKey: 'ping.interval30s' },
-  { value: 60,  labelKey: 'ping.interval1m'  },
-  { value: 300, labelKey: 'ping.interval5m'  },
-  { value: 900, labelKey: 'ping.interval15m' },
+  { value: 30,    labelKey: 'keyword.iv30s' },
+  { value: 60,    labelKey: 'keyword.iv1m'  },
+  { value: 300,   labelKey: 'keyword.iv5m'  },
+  { value: 600,   labelKey: 'keyword.iv10m' },
+  { value: 900,   labelKey: 'keyword.iv15m' },
+  { value: 1800,  labelKey: 'keyword.iv30m' },
+  { value: 3600,  labelKey: 'keyword.iv1h'  },
+  { value: 43200, labelKey: 'keyword.iv12h' },
+  { value: 86400, labelKey: 'keyword.iv24h' },
 ]
+const intervalIdx = (secs) => {
+  const i = INTERVALS.findIndex(o => o.value === secs)
+  if (i >= 0) return i
+  let best = 0, bd = Infinity
+  INTERVALS.forEach((o, j) => { const d = Math.abs(o.value - secs); if (d < bd) { bd = d; best = j } })
+  return best
+}
 const REFRESH_INTERVAL = 60
 const OP_SYM = { GTE: '≥', LTE: '≤', EQ: '=', GT: '>', LT: '<' }
 const emptyForm = { name: '', url: '', keyword: '', operator: 'GTE', matchCount: 1, groupName: '', teamId: '',
+  caseSensitive: false, tags: '', notifyEmail: true,
+  checkSslErrors: false, sslExpiryReminders: false, domainExpiryReminders: false,
+  sslReminderDays: '30,14,7', domainReminderDays: '30,14,7',
+  slowResponseEnabled: false, slowThresholdMs: 3000,
   intervalSeconds: 60, timeoutMs: 10000, confirmAttempts: 3, confirmIntervalSeconds: 30, recoveryChecks: 3, recoveryIntervalSeconds: 30, customHeaders: '', active: true }
 
 export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
@@ -45,6 +63,7 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
   const [form, setForm] = useState(emptyForm)
   const [defaults, setDefaults] = useState(null)   // per-tip varsayılan aralık/timeout (Kontrol Sıklığı ayarı)
   const [showCacheHelp, setShowCacheHelp] = useState(false)   // cache busting açıklama modal'ı
+  const [advOpen, setAdvOpen] = useState(false)               // "Gelişmiş ayarlar" accordion
   const [saving, setSaving] = useState(false)
   const [checking, setChecking] = useState(null)
   const [testing, setTesting] = useState(false)
@@ -120,7 +139,8 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
     setTestResult(null)
     setForm({ ...emptyForm, teamId: isAdmin ? '' : (myTeam ?? ''),
       intervalSeconds: defaults?.intervalSeconds ?? emptyForm.intervalSeconds,
-      timeoutMs: defaults?.timeoutMs ?? emptyForm.timeoutMs })
+      timeoutMs: defaults?.timeoutMs ?? emptyForm.timeoutMs,
+      slowThresholdMs: defaults?.slowThresholdMs ?? emptyForm.slowThresholdMs })
     setModal('new')
   }
   function openEdit(m) {
@@ -128,6 +148,10 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
     setForm({ name: m.name || '', url: m.url || '', keyword: m.keyword || '',
       operator: m.operator || 'GTE', matchCount: m.match_count ?? 1, groupName: m.group_name || '',
       teamId: m.team_id != null ? String(m.team_id) : '',
+      caseSensitive: !!m.case_sensitive, tags: m.tags || '', notifyEmail: m.notify_email !== false,
+      checkSslErrors: !!m.check_ssl_errors, sslExpiryReminders: !!m.ssl_expiry_reminders, domainExpiryReminders: !!m.domain_expiry_reminders,
+      sslReminderDays: m.ssl_reminder_days || '30,14,7', domainReminderDays: m.domain_reminder_days || '30,14,7',
+      slowResponseEnabled: !!m.slow_response_enabled, slowThresholdMs: m.slow_threshold_ms ?? 3000,
       intervalSeconds: m.interval_seconds ?? 60, timeoutMs: m.timeout_ms ?? 10000,
       confirmAttempts: m.confirm_attempts ?? 3, confirmIntervalSeconds: m.confirm_interval_seconds ?? 30, recoveryChecks: m.recovery_checks ?? 3, recoveryIntervalSeconds: m.recovery_interval_seconds ?? 30, customHeaders: m.custom_headers || '',
       active: m.active !== false })
@@ -142,7 +166,7 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
     const res = await api.monitoring.testKeyword({
       url: form.url.trim(), keyword: form.keyword, operator: form.operator,
       matchCount: Number(form.matchCount), timeoutMs: Number(form.timeoutMs),
-      customHeaders: form.customHeaders?.trim() || null,
+      customHeaders: form.customHeaders?.trim() || null, caseSensitive: form.caseSensitive,
     })
     setTestResult(res?.success ? res.data : { error: res?.error || t('keyword.testError') })
     setTesting(false)
@@ -155,6 +179,10 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
       name: (form.name || form.url).trim(), url: form.url.trim(), keyword: form.keyword,
       operator: form.operator, matchCount: Number(form.matchCount),
       groupName: form.groupName?.trim() || null, teamId: form.teamId === '' ? null : Number(form.teamId),
+      caseSensitive: form.caseSensitive, tags: form.tags?.trim() || null, notifyEmail: form.notifyEmail,
+      checkSslErrors: form.checkSslErrors, sslExpiryReminders: form.sslExpiryReminders, domainExpiryReminders: form.domainExpiryReminders,
+      sslReminderDays: form.sslReminderDays?.trim() || '30,14,7', domainReminderDays: form.domainReminderDays?.trim() || '30,14,7',
+      slowResponseEnabled: form.slowResponseEnabled, slowThresholdMs: Number(form.slowThresholdMs),
       intervalSeconds: Number(form.intervalSeconds), timeoutMs: Number(form.timeoutMs),
       confirmAttempts: Number(form.confirmAttempts), confirmIntervalSeconds: Number(form.confirmIntervalSeconds), recoveryChecks: Number(form.recoveryChecks), recoveryIntervalSeconds: Number(form.recoveryIntervalSeconds),
       customHeaders: form.customHeaders?.trim() || null,
@@ -311,6 +339,11 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
       default:    return n <= 1 ? `${k} sayfada hiç bulunmazsa` : `${k} sayfada ${n} kezden az bulunursa`   // GTE
     }
   }
+
+  const selectedTeamLabel = isAdmin
+    ? (teams.find(tm => String(tm.id) === String(form.teamId))?.name || t('keyword.noTeam'))
+    : (teamName || t('keyword.noTeam'))
+  const ivIdx = intervalIdx(Number(form.intervalSeconds))
 
   return (
     <div className="upt-page">
@@ -547,11 +580,14 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
       {modal && createPortal(
         <div className="modal-overlay">
           <div className="modal-box" onClick={e => e.stopPropagation()} style={{ maxWidth: 720, width: '92vw', maxHeight: '90vh', overflowY: 'auto' }}>
-            <div className="modal-icon-hdr modal-icon-hdr--port">
+            <div className="modal-icon-hdr modal-icon-hdr--keyword">
               <div className="modal-icon-hdr-badge"><Target size={20} /></div>
               <h3>{modal === 'new' ? t('keyword.modalNew') : t('keyword.modalEdit')}</h3>
             </div>
-            <div className="form-grid">
+
+            <div className="kw-type-banner"><Target size={16} /><span>{t('keyword.typeInfo')}</span></div>
+
+            <div className="form-grid form-grid--top">
               <label className="full-width"><span>{t('keyword.url')} <span className="req-star">*</span></span>
                 <input value={form.url} placeholder="https://example.com" onChange={e => setForm(f => ({ ...f, url: e.target.value }))} /></label>
               <label className="full-width"><span>{t('keyword.customHeaders')}{' '}
@@ -574,34 +610,119 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
               </div>
               <label><span>{t('keyword.keyword')} <span className="req-star">*</span></span>
                 <input value={form.keyword} placeholder="SUCCESS" onChange={e => setForm(f => ({ ...f, keyword: e.target.value }))} /></label>
-              <label><span>{t('keyword.group')}</span>
-                <SearchableSelect value={form.groupName} onChange={v => setForm(f => ({ ...f, groupName: v }))}
-                  options={[{ value: '', label: t('keyword.noGroup') }, ...groupSelectOptions]}
-                  creatable onCreate={() => {}} searchThreshold={2} placeholder={t('keyword.noGroup')} /></label>
+              <label className="checkbox-label">
+                <input type="checkbox" checked={form.caseSensitive} onChange={e => setForm(f => ({ ...f, caseSensitive: e.target.checked }))} />{t('keyword.caseSensitive')}</label>
               <label><span>{t('keyword.name')}</span>
                 <input value={form.name} placeholder={form.url} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} /></label>
               <label><span>{t('keyword.team')}</span>
                 {isAdmin
                   ? <SearchableSelect value={form.teamId} onChange={v => setForm(f => ({ ...f, teamId: v }))} options={teamSelectOptions} searchThreshold={2} />
                   : <input value={teamName || t('keyword.noTeam')} disabled />}</label>
-              <label><span>{t('keyword.interval')}</span>
-                <select value={form.intervalSeconds} onChange={e => setForm(f => ({ ...f, intervalSeconds: Number(e.target.value) }))}>
-                  {INTERVALS.map(o => <option key={o.value} value={o.value}>{t(o.labelKey)}</option>)}
-                </select></label>
-              <label><span>{t('keyword.timeout')}</span>
-                <input type="number" value={form.timeoutMs} onChange={e => setForm(f => ({ ...f, timeoutMs: Number(e.target.value) }))} /></label>
-              <label><span>{t('keyword.confirmAttempts')}</span>
-                <input type="number" min="0" max="10" value={form.confirmAttempts} onChange={e => setForm(f => ({ ...f, confirmAttempts: Number(e.target.value) }))} /></label>
-              <label><span>{t('keyword.confirmInterval')}</span>
-                <input type="number" min="10" max="600" value={form.confirmIntervalSeconds} onChange={e => setForm(f => ({ ...f, confirmIntervalSeconds: Number(e.target.value) }))} /></label>
-              <label><span>{t('keyword.recoveryChecks')}</span>
-                <input type="number" min="1" max="20" value={form.recoveryChecks} onChange={e => setForm(f => ({ ...f, recoveryChecks: Number(e.target.value) }))} /></label>
-              <label><span>{t('keyword.recoveryInterval')}</span>
-                <input type="number" min="10" max="600" value={form.recoveryIntervalSeconds} onChange={e => setForm(f => ({ ...f, recoveryIntervalSeconds: Number(e.target.value) }))} /></label>
-              <label className="checkbox-label">
-                <input type="checkbox" checked={form.active} onChange={e => setForm(f => ({ ...f, active: e.target.checked }))} />{t('keyword.active')}</label>
-              <div className="full-width" style={{ fontSize: '.8em', color: 'var(--text-muted)', marginTop: -2, lineHeight: 1.5 }}>
-                ⓘ {t('keyword.confirmHint')}
+              <label className="full-width"><span>{t('keyword.group')}</span>
+                <SearchableSelect value={form.groupName} onChange={v => setForm(f => ({ ...f, groupName: v }))}
+                  options={[{ value: '', label: t('keyword.noGroup') }, ...groupSelectOptions]}
+                  creatable onCreate={() => {}} searchThreshold={2} placeholder={t('keyword.noGroup')} /></label>
+
+              {/* Etiketler */}
+              <div className="full-width kw-tags-block">
+                <div className="kw-block-title">{t('keyword.tagsTitle')}</div>
+                <div className="field-hint" style={{ marginBottom: 6 }}>{t('keyword.tagsHint')}</div>
+                <TagInput value={form.tags} onChange={v => setForm(f => ({ ...f, tags: v }))} placeholder={t('keyword.tagsPlaceholder')} />
+              </div>
+
+              {/* Bildirimler */}
+              <div className="full-width kw-notify-section">
+                <div className="kw-block-title">{t('keyword.notifyTitle')}</div>
+                <div className="field-hint" style={{ marginBottom: 8 }}>{t('keyword.notifyInfo').replace('{0}', selectedTeamLabel)}</div>
+                <div className="kw-channels">
+                  <label className="kw-channel">
+                    <input type="checkbox" checked={form.notifyEmail} onChange={e => setForm(f => ({ ...f, notifyEmail: e.target.checked }))} />
+                    <Mail size={14} /><span>{t('keyword.chEmail')}</span>
+                    <span className="kw-ch-target">{selectedTeamLabel}</span>
+                  </label>
+                  <label className="kw-channel kw-channel--disabled" title={t('keyword.soonHint')}>
+                    <input type="checkbox" disabled /><MessageSquare size={14} /><span>{t('keyword.chSms')}</span><span className="kw-ch-soon">{t('keyword.soon')}</span></label>
+                  <label className="kw-channel kw-channel--disabled" title={t('keyword.soonHint')}>
+                    <input type="checkbox" disabled /><Phone size={14} /><span>{t('keyword.chVoice')}</span><span className="kw-ch-soon">{t('keyword.soon')}</span></label>
+                  <label className="kw-channel kw-channel--disabled" title={t('keyword.soonHint')}>
+                    <input type="checkbox" disabled /><Smartphone size={14} /><span>{t('keyword.chPush')}</span><span className="kw-ch-soon">{t('keyword.soon')}</span></label>
+                </div>
+              </div>
+
+              {/* Kontrol aralığı — kaydırmalı çubuk */}
+              <div className="full-width kw-interval-block">
+                <div className="kw-block-title">{t('keyword.intervalTitle')}</div>
+                <div className="field-hint" style={{ marginBottom: 8 }}>{t('keyword.intervalEvery').replace('{0}', t(INTERVALS[ivIdx].labelKey))}</div>
+                <input type="range" className="kw-interval-slider" min={0} max={INTERVALS.length - 1} step={1}
+                  value={ivIdx} onChange={e => setForm(f => ({ ...f, intervalSeconds: INTERVALS[Number(e.target.value)].value }))} />
+                <div className="kw-interval-ticks">
+                  {INTERVALS.map((o, j) => (
+                    <span key={o.value} className={`kw-interval-tick${j === ivIdx ? ' active' : ''}`}>{t(o.labelKey)}</span>
+                  ))}
+                </div>
+              </div>
+
+              {/* SSL + Domain kontrolleri */}
+              <div className="full-width kw-ssl-section">
+                <div className="kw-block-title"><ShieldCheck size={15} style={{ verticalAlign: '-2px', marginRight: 5 }} />{t('keyword.sslSectionTitle')}</div>
+                <label className="checkbox-label">
+                  <input type="checkbox" checked={form.checkSslErrors} onChange={e => setForm(f => ({ ...f, checkSslErrors: e.target.checked }))} />{t('keyword.checkSslErrors')}</label>
+                <label className="checkbox-label">
+                  <input type="checkbox" checked={form.sslExpiryReminders} onChange={e => setForm(f => ({ ...f, sslExpiryReminders: e.target.checked }))} />{t('keyword.sslExpiryReminders')}</label>
+                {form.sslExpiryReminders && (
+                  <div className="kw-days-row">
+                    <span>{t('keyword.reminderDays')}</span>
+                    <input value={form.sslReminderDays} placeholder="30,14,7" onChange={e => setForm(f => ({ ...f, sslReminderDays: e.target.value }))} />
+                  </div>
+                )}
+                <label className="checkbox-label">
+                  <input type="checkbox" checked={form.domainExpiryReminders} onChange={e => setForm(f => ({ ...f, domainExpiryReminders: e.target.checked }))} />{t('keyword.domainExpiryReminders')}</label>
+                {form.domainExpiryReminders && (
+                  <div className="kw-days-row">
+                    <span>{t('keyword.reminderDays')}</span>
+                    <input value={form.domainReminderDays} placeholder="30,14,7" onChange={e => setForm(f => ({ ...f, domainReminderDays: e.target.value }))} />
+                  </div>
+                )}
+                <div className="field-hint">{t('keyword.whoisHint')}</div>
+              </div>
+
+              {/* Gelişmiş ayarlar — açılır/kapanır */}
+              <div className="full-width kw-adv">
+                <button type="button" className="kw-adv-toggle" onClick={() => setAdvOpen(o => !o)}>
+                  <ChevronDown size={16} className={`kw-adv-chevron${advOpen ? ' open' : ''}`} />
+                  <span>{t('keyword.advanced')}</span>
+                </button>
+                {advOpen && (
+                  <div className="kw-adv-body">
+                    <div className="kw-block-title">{t('keyword.timeoutTitle')}</div>
+                    <div className="field-hint" style={{ marginBottom: 8 }}>{t('keyword.timeoutEvery').replace('{0}', Math.min(60, Math.max(1, Math.round(Number(form.timeoutMs) / 1000))))}</div>
+                    <input type="range" className="kw-interval-slider" min={1} max={60} step={1}
+                      value={Math.min(60, Math.max(1, Math.round(Number(form.timeoutMs) / 1000)))}
+                      onChange={e => setForm(f => ({ ...f, timeoutMs: Number(e.target.value) * 1000 }))} />
+                    <label className="checkbox-label" style={{ marginTop: 12 }}>
+                      <input type="checkbox" checked={form.slowResponseEnabled} onChange={e => setForm(f => ({ ...f, slowResponseEnabled: e.target.checked }))} />{t('keyword.slowEnable')}</label>
+                    {form.slowResponseEnabled && (
+                      <div className="kw-days-row">
+                        <span>{t('keyword.slowThreshold')}</span>
+                        <input type="number" min="100" step="100" value={form.slowThresholdMs} onChange={e => setForm(f => ({ ...f, slowThresholdMs: Number(e.target.value) }))} />
+                      </div>
+                    )}
+                    <div className="field-hint" style={{ marginBottom: 4 }}>{t('keyword.slowHint')}</div>
+                    <div className="kw-adv-grid">
+                      <label><span>{t('keyword.confirmAttempts')}</span>
+                        <input type="number" min="0" max="10" value={form.confirmAttempts} onChange={e => setForm(f => ({ ...f, confirmAttempts: Number(e.target.value) }))} /></label>
+                      <label><span>{t('keyword.confirmInterval')}</span>
+                        <input type="number" min="10" max="600" value={form.confirmIntervalSeconds} onChange={e => setForm(f => ({ ...f, confirmIntervalSeconds: Number(e.target.value) }))} /></label>
+                      <label><span>{t('keyword.recoveryChecks')}</span>
+                        <input type="number" min="1" max="20" value={form.recoveryChecks} onChange={e => setForm(f => ({ ...f, recoveryChecks: Number(e.target.value) }))} /></label>
+                      <label><span>{t('keyword.recoveryInterval')}</span>
+                        <input type="number" min="10" max="600" value={form.recoveryIntervalSeconds} onChange={e => setForm(f => ({ ...f, recoveryIntervalSeconds: Number(e.target.value) }))} /></label>
+                    </div>
+                    <label className="checkbox-label" style={{ marginTop: 10 }}>
+                      <input type="checkbox" checked={form.active} onChange={e => setForm(f => ({ ...f, active: e.target.checked }))} />{t('keyword.active')}</label>
+                    <div className="field-hint" style={{ marginTop: 6 }}>ⓘ {t('keyword.confirmHint')}</div>
+                  </div>
+                )}
               </div>
             </div>
             {testResult && (
@@ -644,7 +765,7 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
       {showCacheHelp && createPortal(
         <div className="modal-overlay" onClick={() => setShowCacheHelp(false)}>
           <div className="modal-box" onClick={e => e.stopPropagation()} style={{ maxWidth: 560 }}>
-            <div className="modal-icon-hdr modal-icon-hdr--port">
+            <div className="modal-icon-hdr modal-icon-hdr--keyword">
               <div className="modal-icon-hdr-badge"><Target size={20} /></div>
               <h3>{t('keyword.cacheBustTitle')}</h3>
             </div>

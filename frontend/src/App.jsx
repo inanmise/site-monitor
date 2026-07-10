@@ -28,6 +28,8 @@ import UptimePage from './components/UptimePage'
 import PortMonitorPage from './components/PortMonitorPage'
 import DnsMonitorPage from './components/DnsMonitorPage'
 import KeywordMonitorPage from './components/KeywordMonitorPage'
+import HttpMonitorPage from './components/HttpMonitorPage'
+import DomainMonitorPage from './components/DomainMonitorPage'
 import PingMonitorPage from './components/PingMonitorPage'
 import ErrorBoundary from './components/ErrorBoundary.jsx'
 
@@ -66,7 +68,7 @@ function formatDurationShort(ms) {
 const VALID_TABS = new Set([
   'dashboard', 'all', 'domains', 'forecast', 'renewal', 'renewal-guide',
   'warnings', 'alerthistory', 'stats', 'weakalgo', 'weeklyreports', 'incident-history',
-  'health', 'uptime', 'port', 'dns', 'keyword', 'ping', 'activity', 'myactivity', 'system',
+  'health', 'uptime', 'http', 'domain', 'port', 'dns', 'keyword', 'ping', 'activity', 'myactivity', 'system',
   'admin', 'permissions', 'sqlplayground', 'help', 'settings',
 ])
 function initialTabFromUrl() {
@@ -1064,6 +1066,8 @@ export default function App() {
 
             {tab === 'help'     && <HelpPage />}
             {tab === 'uptime'   && <UptimePage   systemRole={systemRole} />}
+            {tab === 'http'     && <HttpMonitorPage systemRole={systemRole} teamId={teamId} teamName={teamName} />}
+            {tab === 'domain'   && <DomainMonitorPage systemRole={systemRole} teamId={teamId} teamName={teamName} />}
             {tab === 'port'     && <PortMonitorPage systemRole={systemRole} teamId={teamId} teamName={teamName} />}
             {tab === 'dns'      && <DnsMonitorPage  systemRole={systemRole} teamId={teamId} teamName={teamName} />}
             {tab === 'keyword'  && <KeywordMonitorPage systemRole={systemRole} teamId={teamId} teamName={teamName} />}

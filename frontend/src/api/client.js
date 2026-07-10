@@ -570,6 +570,40 @@ export const api = {
       return request(`/monitoring/keyword/${id}/history${q ? `?${q}` : ''}`)
     },
 
+    // HTTP / Website
+    getHttpMonitors:   () => request('/monitoring/http'),
+    createHttpMonitor: (data) => request('/monitoring/http', { method: 'POST', body: JSON.stringify(data) }),
+    updateHttpMonitor: (id, data) => request(`/monitoring/http/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+    deleteHttpMonitor: (id) => request(`/monitoring/http/${id}`, { method: 'DELETE' }),
+    triggerHttpCheck:  (id) => request(`/monitoring/http/${id}/check`, { method: 'POST' }),
+    testHttp:          (data) => request('/monitoring/http/test', { method: 'POST', body: JSON.stringify(data) }),
+    getHttpResponseSeries: (id, { from, to, days } = {}) => {
+      const q = new URLSearchParams(
+        Object.fromEntries(Object.entries({ from, to, days }).filter(([, v]) => v != null && v !== '')),
+      ).toString()
+      return request(`/monitoring/http/${id}/response-series${q ? `?${q}` : ''}`)
+    },
+    getHttpHistory:    (id, { days, limit } = {}) => {
+      const q = new URLSearchParams(
+        Object.fromEntries(Object.entries({ days, limit }).filter(([, v]) => v != null && v !== '')),
+      ).toString()
+      return request(`/monitoring/http/${id}/history${q ? `?${q}` : ''}`)
+    },
+
+    // Domain (alan adı süre bitişi)
+    getDomainMonitors:   () => request('/monitoring/domain'),
+    createDomainMonitor: (data) => request('/monitoring/domain', { method: 'POST', body: JSON.stringify(data) }),
+    updateDomainMonitor: (id, data) => request(`/monitoring/domain/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+    deleteDomainMonitor: (id) => request(`/monitoring/domain/${id}`, { method: 'DELETE' }),
+    triggerDomainCheck:  (id) => request(`/monitoring/domain/${id}/check`, { method: 'POST' }),
+    testDomain:          (data) => request('/monitoring/domain/test', { method: 'POST', body: JSON.stringify(data) }),
+    getDomainHistory:    (id, { days, limit } = {}) => {
+      const q = new URLSearchParams(
+        Object.fromEntries(Object.entries({ days, limit }).filter(([, v]) => v != null && v !== '')),
+      ).toString()
+      return request(`/monitoring/domain/${id}/history${q ? `?${q}` : ''}`)
+    },
+
     // Ping
     getPingMonitors:   () => request('/monitoring/ping'),
     monitorDefaults: () => request('/monitoring/defaults'),

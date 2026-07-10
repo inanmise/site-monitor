@@ -25,6 +25,12 @@ import com.certmonitor.model.KeywordMonitor;
 import com.certmonitor.model.PingMonitor;
 import com.certmonitor.model.KeywordResult;
 import com.certmonitor.model.PingCheck;
+import com.certmonitor.model.HttpMonitor;
+import com.certmonitor.model.HttpCheck;
+import com.certmonitor.repository.HttpMonitorRepository;
+import com.certmonitor.repository.HttpCheckRepository;
+import com.certmonitor.model.DomainMonitor;
+import com.certmonitor.repository.DomainMonitorRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -95,6 +101,14 @@ public class SchedulerService {
     private final PingCheckerService pingCheckerService;
     private final PingMonitorRepository pingMonitorRepo;
     private final PingCheckRepository pingCheckRepo;
+
+    private final HttpCheckerService httpCheckerService;
+    private final HttpMonitorRepository httpMonitorRepo;
+    private final HttpCheckRepository httpCheckRepo;
+    private final RdapDomainExpiryService rdapDomainExpiryService;
+
+    private final DomainMonitorRepository domainMonitorRepo;
+    private final DomainCheckerService domainCheckerService;
 
     private final NetworkOutageEventRepository networkOutageRepo;
 
@@ -1124,6 +1138,7 @@ public class SchedulerService {
                 .map(CertificateInventory::getDomain).collect(Collectors.toSet());
         int checked = 0, skipped = 0;
         List<MonitoringOutageService.SweepItem> sweep = new ArrayList<>();
+        List<MonitoringOutageService.SweepItem> slowSweep = new ArrayList<>();
         for (PortMonitor m : monitors) {
             if (!Boolean.TRUE.equals(m.getStandalone()) && !activeDomains.contains(m.getHost())) { skipped++; continue; }   // standalone → envanter-skip baypas
             if (!checkDue("port", m.getId(), m.getIntervalSeconds())) continue;   // aralığı dolmadı → bu sweep'te atla
@@ -1146,6 +1161,27 @@ public class SchedulerService {
                         "up".equals(r.get("status")), (String) r.get("error"),
                         ctx,
                         () -> recheckPort(m)));
+                // PORT_SLOW: yanıt süresi eşiği (opsiyonel; kapalı/ölçülemedi/erişim-hatası → sentetik up = lingering kurtar)
+                Map<String, Object> slowCtx = new LinkedHashMap<>();
+                slowCtx.put("port", m.getPort());
+                slowCtx.put("protocol", m.getProtocol() != null ? m.getProtocol() : "TCP");
+                slowCtx.put("monitor_id", m.getId());
+                slowCtx.put("monitor_confirm_attempts", m.getConfirmAttempts());
+                slowCtx.put("monitor_confirm_interval_ms", m.getConfirmIntervalSeconds() != null ? m.getConfirmIntervalSeconds() * 1000L : null);
+                slowCtx.put("monitor_recovery_checks", m.getRecoveryChecks());
+                slowCtx.put("monitor_recovery_interval_ms", m.getRecoveryIntervalSeconds() != null ? m.getRecoveryIntervalSeconds() * 1000L : null);
+                if (m.getTeamId() != null) slowCtx.put("team_id", m.getTeamId());
+                int slowTh = m.getSlowThresholdMs() != null ? m.getSlowThresholdMs() : 3000;
+                slowCtx.put("threshold_ms", slowTh);
+                Long respMs = r.get("response_ms") instanceof Number rn ? rn.longValue() : null;
+                if (respMs != null) slowCtx.put("response_ms", respMs);
+                boolean slowDown = Boolean.TRUE.equals(m.getSlowResponseEnabled())
+                        && r.get("error") == null && respMs != null && respMs > slowTh;
+                slowSweep.add(new MonitoringOutageService.SweepItem(
+                        EscalationService.TYPE_PORT_SLOW, m.getHost(),
+                        respMs != null ? respMs + " ms" : "slow",
+                        !slowDown, null,
+                        slowCtx, () -> evalPortSlow(m)));
                 checked++;
             } catch (Exception e) {
                 log.warn("Port check failed for {}:{}: {}", m.getHost(), m.getPort(), e.getMessage());
@@ -1156,6 +1192,11 @@ public class SchedulerService {
             monitoringOutageService.handleSweepResults(EscalationService.TYPE_PORT_DOWN, sweep);
         } catch (Exception e) {
             log.warn("Port outage processing failed: {}", e.getMessage(), e);
+        }
+        try {
+            monitoringOutageService.handleSweepResults(EscalationService.TYPE_PORT_SLOW, slowSweep);
+        } catch (Exception e) {
+            log.warn("Port slow outage processing failed: {}", e.getMessage());
         }
         log.debug("Port checks complete: {} monitors ({} skipped — not in active inventory)", checked, skipped);
     }
@@ -1179,6 +1220,22 @@ public class SchedulerService {
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("status", open ? "up" : "down");
         out.put("error", r.get("error"));
+        out.put("response_ms", r.get("response_ms"));   // slow sweep + alarm metriği için (recheckPort şimdiye dek düşürüyordu)
+        return out;
+    }
+
+    /** Yavaş yanıt yeniden-ölçümü (PORT_SLOW confirm/recovery re-check'i) — taze check, PortCheck PERSIST ETMEZ.
+     *  {"status":"up"|"down","response_ms"?,"threshold_ms"} döner. slowResponseEnabled kapalı/erişim-hatası/kapalı port → up. */
+    private Map<String, Object> evalPortSlow(PortMonitor m) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        int th = m.getSlowThresholdMs() != null ? m.getSlowThresholdMs() : 3000;
+        out.put("threshold_ms", th);
+        if (!Boolean.TRUE.equals(m.getSlowResponseEnabled())) { out.put("status", "up"); return out; }
+        Map<String, Object> r = portCheckerService.check(m);
+        Long ms = r.get("response_ms") instanceof Number n ? n.longValue() : null;
+        if (ms != null) out.put("response_ms", ms);
+        boolean slow = r.get("error") == null && Boolean.TRUE.equals(r.get("open")) && ms != null && ms > th;
+        out.put("status", slow ? "down" : "up");
         return out;
     }
 
@@ -1213,6 +1270,7 @@ public class SchedulerService {
         if (monitors.isEmpty()) return;
         int checked = 0;
         List<MonitoringOutageService.SweepItem> sweep = new ArrayList<>();
+        List<MonitoringOutageService.SweepItem> slowSweep = new ArrayList<>();
         for (KeywordMonitor m : monitors) {
             if (!checkDue("keyword", m.getId(), m.getIntervalSeconds())) continue;   // aralığı dolmadı → bu sweep'te atla
             try {
@@ -1239,6 +1297,26 @@ public class SchedulerService {
                         kw.length() > 40 ? kw.substring(0, 40) : kw,
                         "up".equals(r.get("status")), (String) r.get("error"),
                         ctx, () -> recheckKeyword(m)));
+                // KEYWORD_SLOW: yanıt süresi eşiği (opsiyonel; kapalı/ölçülemedi/HTTP-hatası → sentetik up = lingering kurtar)
+                Map<String, Object> slowCtx = new LinkedHashMap<>();
+                slowCtx.put("url", m.getUrl());
+                slowCtx.put("monitor_id", m.getId());
+                slowCtx.put("monitor_confirm_attempts", m.getConfirmAttempts());
+                slowCtx.put("monitor_confirm_interval_ms", m.getConfirmIntervalSeconds() != null ? m.getConfirmIntervalSeconds() * 1000L : null);
+                slowCtx.put("monitor_recovery_checks", m.getRecoveryChecks());
+                slowCtx.put("monitor_recovery_interval_ms", m.getRecoveryIntervalSeconds() != null ? m.getRecoveryIntervalSeconds() * 1000L : null);
+                if (m.getTeamId() != null) slowCtx.put("team_id", m.getTeamId());
+                int slowTh = m.getSlowThresholdMs() != null ? m.getSlowThresholdMs() : 3000;
+                slowCtx.put("threshold_ms", slowTh);
+                Long respMs = r.get("response_ms") instanceof Number rn ? rn.longValue() : null;
+                if (respMs != null) slowCtx.put("response_ms", respMs);
+                boolean slowDown = Boolean.TRUE.equals(m.getSlowResponseEnabled())
+                        && r.get("error") == null && respMs != null && respMs > slowTh;
+                slowSweep.add(new MonitoringOutageService.SweepItem(
+                        EscalationService.TYPE_KEYWORD_SLOW, m.getUrl(),
+                        respMs != null ? respMs + " ms" : "slow",
+                        !slowDown, null,
+                        slowCtx, () -> evalKeywordSlow(m)));
                 checked++;
             } catch (Exception e) {
                 log.warn("Keyword check failed for {}: {}", m.getUrl(), e.getMessage());
@@ -1249,6 +1327,11 @@ public class SchedulerService {
         } catch (Exception e) {
             log.warn("Keyword outage processing failed: {}", e.getMessage(), e);
         }
+        try {
+            monitoringOutageService.handleSweepResults(EscalationService.TYPE_KEYWORD_SLOW, slowSweep);
+        } catch (Exception e) {
+            log.warn("Keyword slow outage processing failed: {}", e.getMessage());
+        }
         log.debug("Keyword checks complete: {} monitors", checked);
     }
 
@@ -1256,7 +1339,8 @@ public class SchedulerService {
      *  HTTP hatası → ok=false (down). {"status","error"} döner. */
     private Map<String, Object> recheckKeyword(KeywordMonitor m) {
         int timeout = m.getTimeoutMs() != null ? m.getTimeoutMs() : 10000;
-        Map<String, Object> r = keywordCheckerService.check(m.getUrl(), m.getKeyword(), timeout, m.getCustomHeaders());
+        Map<String, Object> r = keywordCheckerService.check(m.getUrl(), m.getKeyword(), timeout, m.getCustomHeaders(),
+                Boolean.TRUE.equals(m.getCaseSensitive()));
         boolean found = Boolean.TRUE.equals(r.getOrDefault("found", false));
         int count = r.get("count") instanceof Number cn ? cn.intValue() : (found ? 1 : 0);
         int threshold = m.getMatchCount() != null ? m.getMatchCount() : 1;
@@ -1285,6 +1369,486 @@ public class SchedulerService {
         out.put("response_ms", r.get("response_ms"));
         out.put("snippet", r.get("snippet"));
         out.put("occurrences", count);
+        return out;
+    }
+
+    // ── HTTP / Website monitor sweep (serbest-form; envanter filtresi YOK) ────────
+    @Scheduled(fixedDelayString = "${cert.monitor.http.interval-ms:30000}", initialDelayString = "75000")
+    public void runHttpChecks() {
+        if (!appSettings.getBoolean("cert.monitor.http.alert-enabled", true)) return;   // izleme duraklatıldı → kontrol+alarm yok
+        if (!tryAcquireSchedulerLock("http-sweep", sweepLockTtlMinutes)) {
+            log.debug("HTTP sweep — lock başka instance'da, atlanıyor");
+            return;
+        }
+        try {
+            runHttpChecksLocked();
+        } finally {
+            releaseSchedulerLock("http-sweep");
+        }
+    }
+
+    /** Tüm-tur kilit içinde çalışan gerçek HTTP uptime sweep gövdesi (bkz. runHttpChecks). */
+    private void runHttpChecksLocked() {
+        List<HttpMonitor> monitors = httpMonitorRepo.findByActiveTrue();
+        // Öksüz HTTP alarmı temizliği: url rename/silme sonrası recovery'nin kapatamadığı açık alarm (keyword/ping ile paritede).
+        try {
+            java.util.Set<String> existingUrls = httpMonitorRepo.findAll().stream()
+                    .map(HttpMonitor::getUrl).filter(java.util.Objects::nonNull)
+                    .collect(java.util.stream.Collectors.toSet());
+            escalationService.resolveOrphanedHttpAlerts(existingUrls);
+        } catch (Exception e) {
+            log.warn("Öksüz HTTP alarmı temizliği başarısız: {}", e.getMessage());
+        }
+        if (monitors.isEmpty()) return;
+        int checked = 0;
+        List<MonitoringOutageService.SweepItem> sweep = new ArrayList<>();
+        for (HttpMonitor m : monitors) {
+            if (!checkDue("http", m.getId(), m.getIntervalSeconds())) continue;   // aralığı dolmadı → bu sweep'te atla
+            try {
+                Map<String, Object> r = recheckHttp(m);
+                Map<String, Object> ctx = new LinkedHashMap<>();
+                ctx.put("url", m.getUrl());
+                ctx.put("monitor_id", m.getId());
+                ctx.put("monitor_confirm_attempts", m.getConfirmAttempts());
+                ctx.put("monitor_confirm_interval_ms", m.getConfirmIntervalSeconds() != null ? m.getConfirmIntervalSeconds() * 1000L : null);
+                ctx.put("monitor_recovery_checks", m.getRecoveryChecks());
+                ctx.put("monitor_recovery_interval_ms", m.getRecoveryIntervalSeconds() != null ? m.getRecoveryIntervalSeconds() * 1000L : null);
+                if (m.getTeamId() != null) ctx.put("team_id", m.getTeamId());
+                if (r.get("http_status") != null) ctx.put("http_status", r.get("http_status"));
+                if (r.get("response_ms") != null) ctx.put("response_ms", r.get("response_ms"));
+                sweep.add(new MonitoringOutageService.SweepItem(
+                        EscalationService.TYPE_HTTP_DOWN, m.getUrl(),
+                        m.getMethod() != null ? m.getMethod() : "GET",
+                        "up".equals(r.get("status")), (String) r.get("error"),
+                        ctx, () -> recheckHttp(m)));
+                checked++;
+            } catch (Exception e) {
+                log.warn("HTTP check failed for {}: {}", m.getUrl(), e.getMessage());
+            }
+        }
+        try {
+            monitoringOutageService.handleSweepResults(EscalationService.TYPE_HTTP_DOWN, sweep);
+        } catch (Exception e) {
+            log.warn("HTTP outage processing failed: {}", e.getMessage(), e);
+        }
+        log.debug("HTTP checks complete: {} monitors", checked);
+    }
+
+    /** HTTP uptime check + http_checks persist'i. {"status","error","http_status","response_ms"} döner. */
+    private Map<String, Object> recheckHttp(HttpMonitor m) {
+        int timeout = m.getTimeoutMs() != null ? m.getTimeoutMs() : 10000;
+        Map<String, Object> r = httpCheckerService.check(m.getUrl(), m.getMethod(), m.getExpectedStatus(),
+                timeout, Boolean.TRUE.equals(m.getVerifySsl()), !Boolean.FALSE.equals(m.getFollowRedirects()));
+        boolean ok = Boolean.TRUE.equals(r.get("ok"));
+        try {
+            HttpCheck res = new HttpCheck();
+            res.setMonitorId(m.getId());
+            res.setOk(ok);
+            res.setHttpStatus(r.get("http_status") instanceof Number n ? n.intValue() : null);
+            res.setResponseMs(r.get("response_ms") instanceof Number n ? n.longValue() : null);
+            res.setError((String) r.get("error"));
+            res.setCheckedAt(ISO.format(Instant.now()));
+            httpCheckRepo.save(res);
+        } catch (Exception e) {
+            log.warn("HTTP kaydı yazılamadı: {} — {}", m.getUrl(), e.getMessage());
+        }
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("status", ok ? "up" : "down");
+        out.put("error", r.get("error"));
+        out.put("http_status", r.get("http_status"));
+        out.put("response_ms", r.get("response_ms"));
+        return out;
+    }
+
+    // ── HTTP SSL + Domain (WHOIS/RDAP) yavaş sweep'i — sıcak uptime döngüsünden AYRI (tek-pod perf) ──
+    @Scheduled(fixedDelayString = "${cert.monitor.http.ssl-domain-interval-ms:86400000}", initialDelayString = "120000")
+    public void runHttpSslDomainChecks() {
+        if (!appSettings.getBoolean("cert.monitor.http.alert-enabled", true)) return;
+        if (!tryAcquireSchedulerLock("http-ssl-domain-sweep", sweepLockTtlMinutes)) {
+            log.debug("HTTP SSL/Domain sweep — lock başka instance'da, atlanıyor");
+            return;
+        }
+        try {
+            runHttpSslDomainChecksLocked();
+        } finally {
+            releaseSchedulerLock("http-ssl-domain-sweep");
+        }
+    }
+
+    /** Yavaş döngü: SSL (cert checker) + Domain (RDAP) değerlendirir; her ikisi de teyitsiz eşik durumu.
+     *  Toggle kapalıysa lingering alarmı kurtarmak için sentetik "up" gönderilir. */
+    private void runHttpSslDomainChecksLocked() {
+        List<HttpMonitor> monitors = httpMonitorRepo.findByActiveTrue();
+        if (monitors.isEmpty()) return;
+        List<MonitoringOutageService.SweepItem> sslSweep = new ArrayList<>();
+        List<MonitoringOutageService.SweepItem> domainSweep = new ArrayList<>();
+        for (HttpMonitor m : monitors) {
+            try {
+                if (Boolean.TRUE.equals(m.getCheckSslErrors()) || Boolean.TRUE.equals(m.getSslExpiryReminders())) {
+                    Map<String, Object> ev = evalHttpSsl(m);
+                    Map<String, Object> ctx = sslDomainCtx(m);
+                    if (ev.get("ssl_days_remaining") != null) ctx.put("ssl_days_remaining", ev.get("ssl_days_remaining"));
+                    if (ev.get("detail") != null) ctx.put("detail", ev.get("detail"));
+                    sslSweep.add(new MonitoringOutageService.SweepItem(
+                            EscalationService.TYPE_HTTP_SSL, m.getUrl(),
+                            String.valueOf(ev.getOrDefault("detail", "SSL")),
+                            "up".equals(ev.get("status")), (String) ev.get("error"),
+                            ctx, () -> evalHttpSsl(m)));
+                } else {
+                    sslSweep.add(upItem(EscalationService.TYPE_HTTP_SSL, m, "SSL"));   // toggle kapalı → lingering alarmı kurtar
+                }
+                if (Boolean.TRUE.equals(m.getDomainExpiryReminders())) {
+                    Map<String, Object> ev = evalHttpDomain(m);
+                    Map<String, Object> ctx = sslDomainCtx(m);
+                    if (ev.get("domain") != null) ctx.put("domain", ev.get("domain"));
+                    if (ev.get("domain_days_remaining") != null) ctx.put("domain_days_remaining", ev.get("domain_days_remaining"));
+                    domainSweep.add(new MonitoringOutageService.SweepItem(
+                            EscalationService.TYPE_DOMAIN_EXPIRY, m.getUrl(),
+                            String.valueOf(ev.getOrDefault("domain", "domain")),
+                            "up".equals(ev.get("status")), (String) ev.get("error"),
+                            ctx, () -> evalHttpDomain(m)));
+                } else {
+                    domainSweep.add(upItem(EscalationService.TYPE_DOMAIN_EXPIRY, m, "domain"));
+                }
+            } catch (Exception e) {
+                log.warn("HTTP SSL/Domain check failed for {}: {}", m.getUrl(), e.getMessage());
+            }
+        }
+        try { monitoringOutageService.handleSweepResults(EscalationService.TYPE_HTTP_SSL, sslSweep); }
+        catch (Exception e) { log.warn("HTTP SSL outage processing failed: {}", e.getMessage()); }
+        try { monitoringOutageService.handleSweepResults(EscalationService.TYPE_DOMAIN_EXPIRY, domainSweep); }
+        catch (Exception e) { log.warn("Domain expiry outage processing failed: {}", e.getMessage()); }
+        log.debug("HTTP SSL/Domain checks complete: {} monitors", monitors.size());
+    }
+
+    /** SSL/Domain sweep'i için ortak ctx — eşik durumu (teyitsiz/anında) + takım yönlendirme. */
+    private Map<String, Object> sslDomainCtx(HttpMonitor m) {
+        Map<String, Object> ctx = new LinkedHashMap<>();
+        ctx.put("url", m.getUrl());
+        ctx.put("monitor_id", m.getId());
+        ctx.put("monitor_confirm_attempts", 0);   // eşik durumu — re-check churn'ü yok, anında
+        ctx.put("monitor_recovery_checks", 1);
+        if (m.getTeamId() != null) ctx.put("team_id", m.getTeamId());
+        return ctx;
+    }
+
+    /** Toggle kapalı monitör için sentetik "up" SweepItem (lingering alarm kurtarma). */
+    private MonitoringOutageService.SweepItem upItem(String type, HttpMonitor m, String detail) {
+        return new MonitoringOutageService.SweepItem(type, m.getUrl(), detail, true, null,
+                sslDomainCtx(m), SchedulerService::upStatus);
+    }
+
+    private static Map<String, Object> upStatus() {
+        Map<String, Object> u = new LinkedHashMap<>();
+        u.put("status", "up");
+        return u;
+    }
+
+    /** HTTP monitörünün URL host'u için TLS sertifika değerlendirmesi (checkSslErrors + sslExpiryReminders).
+     *  {"status":"up"|"down","error"?,"ssl_days_remaining"?,"detail"?} döner. */
+    private Map<String, Object> evalHttpSsl(HttpMonitor m) {
+        String host = RdapDomainExpiryService.extractHost(m.getUrl());
+        Map<String, Object> out = new LinkedHashMap<>();
+        if (host == null || host.isBlank()) { out.put("status", "up"); return out; }   // host yok → alarm yok
+        Map<String, Object> cr = checkerService.check(host, 443, false, null);
+        String status = String.valueOf(cr.get("status"));                     // valid | warning | error
+        String chain = String.valueOf(cr.getOrDefault("chain_status", ""));
+        Integer days = cr.get("days_remaining") instanceof Number n ? n.intValue() : null;
+        boolean problem = false;
+        String detail = null;
+        if (Boolean.TRUE.equals(m.getCheckSslErrors())) {
+            if ("error".equals(status))       { problem = true; detail = "TLS erişim/doğrulama hatası"; }
+            else if ("BROKEN".equals(chain))  { problem = true; detail = "Sertifika zinciri bozuk"; }
+            else if ("REVOKED".equals(chain)) { problem = true; detail = "Sertifika iptal edilmiş"; }
+        }
+        if (!problem && Boolean.TRUE.equals(m.getSslExpiryReminders()) && days != null) {
+            int threshold = maxDays(m.getSslReminderDays(), 30);
+            if (days <= threshold) { problem = true; detail = "Sertifika bitişine " + days + " gün"; }
+        }
+        out.put("status", problem ? "down" : "up");
+        if (days != null) out.put("ssl_days_remaining", days);
+        if (detail != null) out.put("detail", detail);
+        if ("error".equals(status)) out.put("error", cr.get("error"));
+        return out;
+    }
+
+    /** HTTP monitörünün domain'i için registrar (WHOIS/RDAP) bitiş değerlendirmesi (domainExpiryReminders).
+     *  {"status":"up"|"down","error"?,"domain"?,"domain_days_remaining"?} döner. days null (unknown) → alarm yok. */
+    private Map<String, Object> evalHttpDomain(HttpMonitor m) {
+        Map<String, Object> rd = rdapDomainExpiryService.check(m.getUrl());
+        Integer days = rd.get("days_remaining") instanceof Number n ? n.intValue() : null;
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("domain", rd.get("domain"));
+        boolean problem = false;
+        if (days != null) {
+            int threshold = maxDays(m.getDomainReminderDays(), 30);
+            problem = days <= threshold;
+            out.put("domain_days_remaining", days);
+        }
+        out.put("status", problem ? "down" : "up");   // days null (unknown) → up (alarm yok)
+        return out;
+    }
+
+    /** CSV gün eşiklerinden en büyüğü ("30,14,7" → 30); parse edilemezse fallback. */
+    private static int maxDays(String csv, int fallback) {
+        if (csv == null || csv.isBlank()) return fallback;
+        int max = -1;
+        for (String p : csv.split(",")) {
+            try { max = Math.max(max, Integer.parseInt(p.trim())); } catch (NumberFormatException ignore) {}
+        }
+        return max > 0 ? max : fallback;
+    }
+
+    /** Yavaş yanıt yeniden-ölçümü (KEYWORD_SLOW confirm/recovery re-check'i) — taze fetch, KeywordResult PERSIST ETMEZ.
+     *  {"status":"up"|"down","response_ms"?,"threshold_ms"} döner. slowResponseEnabled kapalı/HTTP-hatası → up. */
+    private Map<String, Object> evalKeywordSlow(KeywordMonitor m) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        int th = m.getSlowThresholdMs() != null ? m.getSlowThresholdMs() : 3000;
+        out.put("threshold_ms", th);
+        if (!Boolean.TRUE.equals(m.getSlowResponseEnabled())) { out.put("status", "up"); return out; }
+        int timeout = m.getTimeoutMs() != null ? m.getTimeoutMs() : 10000;
+        Map<String, Object> r = keywordCheckerService.check(m.getUrl(), m.getKeyword(), timeout, m.getCustomHeaders(),
+                Boolean.TRUE.equals(m.getCaseSensitive()));
+        Long ms = r.get("response_ms") instanceof Number n ? n.longValue() : null;
+        if (ms != null) out.put("response_ms", ms);
+        boolean slow = r.get("error") == null && ms != null && ms > th;   // HTTP hatası → yavaşlık değerlendirilemez → up
+        out.put("status", slow ? "down" : "up");
+        return out;
+    }
+
+    // ── Keyword SSL + Domain yavaş sweep'i — HTTP'den AYRI tiplerle (KEYWORD_SSL / KEYWORD_DOMAIN_EXPIRY) ──
+    @Scheduled(fixedDelayString = "${cert.monitor.keyword.ssl-domain-interval-ms:86400000}", initialDelayString = "150000")
+    public void runKeywordSslDomainChecks() {
+        if (!appSettings.getBoolean("cert.monitor.keyword.alert-enabled", true)) return;
+        if (!tryAcquireSchedulerLock("keyword-ssl-domain-sweep", sweepLockTtlMinutes)) {
+            log.debug("Keyword SSL/Domain sweep — lock başka instance'da, atlanıyor");
+            return;
+        }
+        try {
+            runKeywordSslDomainChecksLocked();
+        } finally {
+            releaseSchedulerLock("keyword-ssl-domain-sweep");
+        }
+    }
+
+    /** Keyword monitörleri için yavaş SSL+Domain döngüsü — runHttpSslDomainChecksLocked aynası, AYRI alarm tipleriyle. */
+    private void runKeywordSslDomainChecksLocked() {
+        List<KeywordMonitor> monitors = keywordMonitorRepo.findByActiveTrue();
+        if (monitors.isEmpty()) return;
+        List<MonitoringOutageService.SweepItem> sslSweep = new ArrayList<>();
+        List<MonitoringOutageService.SweepItem> domainSweep = new ArrayList<>();
+        for (KeywordMonitor m : monitors) {
+            try {
+                if (Boolean.TRUE.equals(m.getCheckSslErrors()) || Boolean.TRUE.equals(m.getSslExpiryReminders())) {
+                    Map<String, Object> ev = evalKeywordSsl(m);
+                    Map<String, Object> ctx = keywordSslDomainCtx(m);
+                    if (ev.get("ssl_days_remaining") != null) ctx.put("ssl_days_remaining", ev.get("ssl_days_remaining"));
+                    if (ev.get("detail") != null) ctx.put("detail", ev.get("detail"));
+                    sslSweep.add(new MonitoringOutageService.SweepItem(
+                            EscalationService.TYPE_KEYWORD_SSL, m.getUrl(),
+                            String.valueOf(ev.getOrDefault("detail", "SSL")),
+                            "up".equals(ev.get("status")), (String) ev.get("error"),
+                            ctx, () -> evalKeywordSsl(m)));
+                } else {
+                    sslSweep.add(upItemKeyword(EscalationService.TYPE_KEYWORD_SSL, m, "SSL"));   // toggle kapalı → lingering kurtar
+                }
+                if (Boolean.TRUE.equals(m.getDomainExpiryReminders())) {
+                    Map<String, Object> ev = evalKeywordDomain(m);
+                    Map<String, Object> ctx = keywordSslDomainCtx(m);
+                    if (ev.get("domain") != null) ctx.put("domain", ev.get("domain"));
+                    if (ev.get("domain_days_remaining") != null) ctx.put("domain_days_remaining", ev.get("domain_days_remaining"));
+                    domainSweep.add(new MonitoringOutageService.SweepItem(
+                            EscalationService.TYPE_KEYWORD_DOMAIN_EXPIRY, m.getUrl(),
+                            String.valueOf(ev.getOrDefault("domain", "domain")),
+                            "up".equals(ev.get("status")), (String) ev.get("error"),
+                            ctx, () -> evalKeywordDomain(m)));
+                } else {
+                    domainSweep.add(upItemKeyword(EscalationService.TYPE_KEYWORD_DOMAIN_EXPIRY, m, "domain"));
+                }
+            } catch (Exception e) {
+                log.warn("Keyword SSL/Domain check failed for {}: {}", m.getUrl(), e.getMessage());
+            }
+        }
+        try { monitoringOutageService.handleSweepResults(EscalationService.TYPE_KEYWORD_SSL, sslSweep); }
+        catch (Exception e) { log.warn("Keyword SSL outage processing failed: {}", e.getMessage()); }
+        try { monitoringOutageService.handleSweepResults(EscalationService.TYPE_KEYWORD_DOMAIN_EXPIRY, domainSweep); }
+        catch (Exception e) { log.warn("Keyword domain expiry outage processing failed: {}", e.getMessage()); }
+        log.debug("Keyword SSL/Domain checks complete: {} monitors", monitors.size());
+    }
+
+    /** Keyword SSL/Domain sweep ortak ctx — eşik durumu (teyitsiz/anında) + takım yönlendirme. */
+    private Map<String, Object> keywordSslDomainCtx(KeywordMonitor m) {
+        Map<String, Object> ctx = new LinkedHashMap<>();
+        ctx.put("url", m.getUrl());
+        ctx.put("monitor_id", m.getId());
+        ctx.put("monitor_confirm_attempts", 0);   // eşik durumu — re-check churn'ü yok, anında
+        ctx.put("monitor_recovery_checks", 1);
+        if (m.getTeamId() != null) ctx.put("team_id", m.getTeamId());
+        return ctx;
+    }
+
+    /** Toggle kapalı keyword monitörü için sentetik "up" SweepItem (lingering alarm kurtarma). */
+    private MonitoringOutageService.SweepItem upItemKeyword(String type, KeywordMonitor m, String detail) {
+        return new MonitoringOutageService.SweepItem(type, m.getUrl(), detail, true, null,
+                keywordSslDomainCtx(m), SchedulerService::upStatus);
+    }
+
+    /** Keyword monitörünün URL host'u için TLS sertifika değerlendirmesi — evalHttpSsl aynası. */
+    private Map<String, Object> evalKeywordSsl(KeywordMonitor m) {
+        String host = RdapDomainExpiryService.extractHost(m.getUrl());
+        Map<String, Object> out = new LinkedHashMap<>();
+        if (host == null || host.isBlank()) { out.put("status", "up"); return out; }   // host yok → alarm yok
+        Map<String, Object> cr = checkerService.check(host, 443, false, null);
+        String status = String.valueOf(cr.get("status"));                     // valid | warning | error
+        String chain = String.valueOf(cr.getOrDefault("chain_status", ""));
+        Integer days = cr.get("days_remaining") instanceof Number n ? n.intValue() : null;
+        boolean problem = false;
+        String detail = null;
+        if (Boolean.TRUE.equals(m.getCheckSslErrors())) {
+            if ("error".equals(status))       { problem = true; detail = "TLS erişim/doğrulama hatası"; }
+            else if ("BROKEN".equals(chain))  { problem = true; detail = "Sertifika zinciri bozuk"; }
+            else if ("REVOKED".equals(chain)) { problem = true; detail = "Sertifika iptal edilmiş"; }
+        }
+        if (!problem && Boolean.TRUE.equals(m.getSslExpiryReminders()) && days != null) {
+            int threshold = maxDays(m.getSslReminderDays(), 30);
+            if (days <= threshold) { problem = true; detail = "Sertifika bitişine " + days + " gün"; }
+        }
+        out.put("status", problem ? "down" : "up");
+        if (days != null) out.put("ssl_days_remaining", days);
+        if (detail != null) out.put("detail", detail);
+        if ("error".equals(status)) out.put("error", cr.get("error"));
+        return out;
+    }
+
+    /** Keyword monitörünün domain'i için registrar (WHOIS/RDAP) bitiş değerlendirmesi — evalHttpDomain aynası. */
+    private Map<String, Object> evalKeywordDomain(KeywordMonitor m) {
+        Map<String, Object> rd = rdapDomainExpiryService.check(m.getUrl());
+        Integer days = rd.get("days_remaining") instanceof Number n ? n.intValue() : null;
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("domain", rd.get("domain"));
+        boolean problem = false;
+        if (days != null) {
+            int threshold = maxDays(m.getDomainReminderDays(), 30);
+            problem = days <= threshold;
+            out.put("domain_days_remaining", days);
+        }
+        out.put("status", problem ? "down" : "up");   // days null (unknown) → up (alarm yok)
+        return out;
+    }
+
+    // ── Domain (alan adı) süre-bitişi sweep'i — günlük + jitter; RDAP/WHOIS (DomainCheckerService) ──
+    @Scheduled(fixedDelayString = "${cert.monitor.domain.interval-ms:3600000}", initialDelayString = "90000")
+    public void runDomainChecks() {
+        if (!appSettings.getBoolean("cert.monitor.domain.alert-enabled", true)) return;
+        if (!tryAcquireSchedulerLock("domain-sweep", sweepLockTtlMinutes)) {
+            log.debug("Domain sweep — lock başka instance'da, atlanıyor");
+            return;
+        }
+        try {
+            runDomainChecksLocked();
+        } finally {
+            releaseSchedulerLock("domain-sweep");
+        }
+    }
+
+    /** Domain izleme her tip için AYRI sweep üretir: UNKNOWN / EXPIRY / STATUS(EPP) / CHANGED. */
+    private void runDomainChecksLocked() {
+        List<DomainMonitor> monitors = domainMonitorRepo.findByActiveTrue();
+        try {
+            java.util.Set<String> existing = domainMonitorRepo.findAll().stream()
+                    .map(DomainMonitor::getDomain).filter(java.util.Objects::nonNull)
+                    .collect(java.util.stream.Collectors.toSet());
+            escalationService.resolveOrphanedDomainMonAlerts(existing);
+        } catch (Exception e) {
+            log.warn("Öksüz domain alarmı temizliği başarısız: {}", e.getMessage());
+        }
+        if (monitors.isEmpty()) return;
+        List<MonitoringOutageService.SweepItem> expirySweep = new ArrayList<>();
+        List<MonitoringOutageService.SweepItem> unknownSweep = new ArrayList<>();
+        List<MonitoringOutageService.SweepItem> statusSweep = new ArrayList<>();
+        List<MonitoringOutageService.SweepItem> changedSweep = new ArrayList<>();
+        int checked = 0;
+        for (DomainMonitor m : monitors) {
+            if (!checkDue("domain", m.getId(), jitteredInterval(m.getIntervalSeconds()))) continue;
+            try {
+                Map<String, Object> r = domainCheckerService.check(m);   // DomainCheck persist eder
+                checked++;
+                String status = String.valueOf(r.get("status"));
+                Integer days = r.get("days_remaining") instanceof Number n ? n.intValue() : null;
+                boolean eppCritical = Boolean.TRUE.equals(r.get("epp_critical"));
+                boolean eppWarn = Boolean.TRUE.equals(r.get("epp_warn"));
+                boolean changed = Boolean.TRUE.equals(r.get("changed"));
+                int warn = m.getWarningDays() != null ? m.getWarningDays() : 30;
+                int crit = m.getCriticalDays() != null ? m.getCriticalDays() : 7;
+
+                // UNKNOWN — "veri yok" kendi başına alarm (körlük)
+                unknownSweep.add(domainItem(EscalationService.TYPE_DOMAINMON_UNKNOWN, m, r, !"UNKNOWN".equals(status), "WARNING"));
+                // EXPIRY — gün eşiği
+                boolean expiryDown = days != null && days <= warn;
+                String expiryLevel = (days != null && (days < 0 || days <= crit)) ? "CRITICAL" : "HIGH";
+                expirySweep.add(domainItem(EscalationService.TYPE_DOMAINMON_EXPIRY, m, r, !expiryDown, expiryLevel));
+                // STATUS — EPP kodları
+                statusSweep.add(domainItem(EscalationService.TYPE_DOMAINMON_STATUS, m, r,
+                        !(eppCritical || eppWarn), eppCritical ? "CRITICAL" : "HIGH"));
+                // CHANGED — yalnız değişimde (up gönderilmez → manuel ack'e kadar açık; hijack sinyali)
+                if (changed) changedSweep.add(domainItem(EscalationService.TYPE_DOMAINMON_CHANGED, m, r, false, "HIGH"));
+            } catch (Exception e) {
+                log.warn("Domain check failed for {}: {}", m.getDomain(), e.getMessage());
+            }
+        }
+        handleDomainSweep(EscalationService.TYPE_DOMAINMON_UNKNOWN, unknownSweep);
+        handleDomainSweep(EscalationService.TYPE_DOMAINMON_EXPIRY, expirySweep);
+        handleDomainSweep(EscalationService.TYPE_DOMAINMON_STATUS, statusSweep);
+        handleDomainSweep(EscalationService.TYPE_DOMAINMON_CHANGED, changedSweep);
+        log.debug("Domain checks complete: {} monitors", checked);
+    }
+
+    private void handleDomainSweep(String type, List<MonitoringOutageService.SweepItem> sweep) {
+        try { monitoringOutageService.handleSweepResults(type, sweep); }
+        catch (Exception e) { log.warn("Domain outage processing failed [{}]: {}", type, e.getMessage()); }
+    }
+
+    /** Günlük kontrolleri güne yayan jitter — istenen aralıktan rastgele (≤6 saat veya ¼) daha erken due yapar. */
+    private static int jitteredInterval(Integer intervalSeconds) {
+        int base = intervalSeconds != null ? intervalSeconds : 86400;
+        int maxJitter = Math.min(base / 4, 6 * 3600);
+        if (maxJitter <= 0) return base;
+        return base - java.util.concurrent.ThreadLocalRandom.current().nextInt(maxJitter + 1);
+    }
+
+    private MonitoringOutageService.SweepItem domainItem(String type, DomainMonitor m, Map<String, Object> r, boolean up, String level) {
+        Map<String, Object> ctx = new LinkedHashMap<>();
+        ctx.put("domain", m.getDomain());
+        ctx.put("monitor_id", m.getId());
+        ctx.put("alert_level", level);
+        ctx.put("monitor_confirm_attempts", 0);   // eşik durumu — anında alarm (teyit zinciri yok)
+        ctx.put("monitor_recovery_checks", 1);
+        if (m.getTeamId() != null) ctx.put("team_id", m.getTeamId());
+        if (r.get("days_remaining") != null) ctx.put("days", r.get("days_remaining"));
+        if (r.get("expiry_date") != null) ctx.put("expiry_date", r.get("expiry_date"));
+        if (r.get("registrar") != null) ctx.put("registrar", r.get("registrar"));
+        if (r.get("status_codes") instanceof List<?> l && !l.isEmpty())
+            ctx.put("status_codes", l.stream().map(String::valueOf).collect(java.util.stream.Collectors.joining(", ")));
+        if (r.get("change_detail") != null) ctx.put("change_detail", r.get("change_detail"));
+        if (r.get("error") != null) ctx.put("last_error", r.get("error"));
+        return new MonitoringOutageService.SweepItem(type, m.getDomain(), m.getDomain(),
+                up, (String) r.get("error"), ctx, () -> recheckDomainFor(m, type));
+    }
+
+    private Map<String, Object> recheckDomainFor(DomainMonitor m, String type) {
+        Map<String, Object> r = domainCheckerService.check(m);
+        String status = String.valueOf(r.get("status"));
+        Integer days = r.get("days_remaining") instanceof Number n ? n.intValue() : null;
+        int warn = m.getWarningDays() != null ? m.getWarningDays() : 30;
+        boolean up = switch (type) {
+            case EscalationService.TYPE_DOMAINMON_UNKNOWN -> !"UNKNOWN".equals(status);
+            case EscalationService.TYPE_DOMAINMON_EXPIRY  -> !(days != null && days <= warn);
+            case EscalationService.TYPE_DOMAINMON_STATUS  -> !(Boolean.TRUE.equals(r.get("epp_critical")) || Boolean.TRUE.equals(r.get("epp_warn")));
+            default -> true;
+        };
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("status", up ? "up" : "down");
+        out.put("error", r.get("error"));
         return out;
     }
 

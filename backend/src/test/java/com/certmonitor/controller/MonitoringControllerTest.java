@@ -55,6 +55,13 @@ class MonitoringControllerTest {
     @MockitoBean PingMonitorRepository pingMonitorRepo;
     @MockitoBean PingCheckRepository pingCheckRepo;
     @MockitoBean com.certmonitor.service.PingCheckerService pingChecker;
+    @MockitoBean HttpMonitorRepository httpMonitorRepo;
+    @MockitoBean HttpCheckRepository httpCheckRepo;
+    @MockitoBean com.certmonitor.service.HttpCheckerService httpChecker;
+    @MockitoBean DomainMonitorRepository domainMonitorRepo;
+    @MockitoBean DomainCheckRepository domainCheckRepo;
+    @MockitoBean com.certmonitor.service.DomainCheckerService domainChecker;
+    @MockitoBean com.certmonitor.service.PublicSuffixService publicSuffixService;
     @MockitoBean TeamRepository teamRepo;
     @MockitoBean com.certmonitor.service.EscalationService escalationService;
     @MockitoBean com.certmonitor.service.AppSettingsService appSettings;
@@ -288,7 +295,7 @@ class MonitoringControllerTest {
     @Test
     @DisplayName("POST /port/test: kaydetmeden kontrol çalıştırır; sonuç + condition_met döner, kayıt OLUŞMAZ")
     void testPort_runsCheckWithoutSaving() throws Exception {
-        when(portChecker.check(eq("svc.local"), eq(8080), anyInt(), eq("HTTP"), any(), eq("2xx")))
+        when(portChecker.check(eq("svc.local"), eq(8080), anyInt(), eq("HTTP"), any(), eq("2xx"), anyString()))
                 .thenReturn(java.util.Map.of("open", true, "response_ms", 12L, "detail", "HTTP 200"));
         mvc.perform(post("/api/monitoring/port/test").session(session("ADMIN"))
                 .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
@@ -307,7 +314,7 @@ class MonitoringControllerTest {
     void testKeyword_returnsResult() throws Exception {
         java.util.Map<String, Object> cr = new java.util.HashMap<>();
         cr.put("count", 5); cr.put("http_status", 200); cr.put("response_ms", 12L);
-        when(keywordChecker.check(eq("https://x.example.com"), eq("akbank"), anyInt(), any())).thenReturn(cr);
+        when(keywordChecker.check(eq("https://x.example.com"), eq("akbank"), anyInt(), any(), anyBoolean())).thenReturn(cr);
 
         mvc.perform(post("/api/monitoring/keyword/test").session(session("USER"))
                 .contentType("application/json")
