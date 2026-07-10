@@ -4,6 +4,7 @@ import { api, formatDateSec } from '../api/client'
 import { useT } from '../i18n/index.jsx'
 import { useToast } from './ui/Toast.jsx'
 import SearchableSelect from './ui/SearchableSelect.jsx'
+import MaintenanceBadge from './ui/MaintenanceBadge.jsx'
 import { Play, Pencil, X, RefreshCw, Plus, Trash2, Radio, Users, Layers, FlaskConical, Check, AlertTriangle,
   LayoutDashboard, CheckCircle2, WifiOff, Siren, BellDot, PauseCircle, BarChart3, ChevronDown } from 'lucide-react'
 import AlertHistory from './admin/AlertHistory.jsx'
@@ -352,7 +353,7 @@ export default function PingMonitorPage({ systemRole, teamId, teamName }) {
               onClick={() => openDetail(m)}>
               <div className="upt-card-top">
                 {statusBadge(m)}
-                {alarmBadge(m)}
+                {alarmBadge(m)}<MaintenanceBadge target={m.host} />
                 <span className="upt-port-tag">{m.ip_version && m.ip_version !== 'auto' ? m.ip_version.toUpperCase() : 'ICMP'}</span>
               </div>
               <div className="upt-card-domain" title={m.host}>{m.host}</div>

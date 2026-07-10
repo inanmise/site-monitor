@@ -10,6 +10,7 @@ import java.util.Optional;
 
 public interface PingMonitorRepository extends JpaRepository<PingMonitor, Long> {
     List<PingMonitor> findByActiveTrue();
+    long countByActiveTrue();
     List<PingMonitor> findAllByOrderByNameAsc();
     Optional<PingMonitor> findFirstByHostOrderByIdAsc(String host);
 

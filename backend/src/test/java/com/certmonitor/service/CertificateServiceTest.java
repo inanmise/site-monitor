@@ -34,6 +34,7 @@ class CertificateServiceTest {
     @Mock CertificateCheckRepository checkRepo;
     @Mock LatestCheckRepository latestRepo;
     @Mock CertificateCheckerService checkerService;
+    @Mock MaintenanceService maintenanceService;
     @Mock CertificateInventoryRepository inventoryRepo;
     @Mock TeamRepository teamRepo;
     @Mock AlertThresholdRepository alertThresholdRepo;
@@ -42,7 +43,7 @@ class CertificateServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new CertificateService(checkRepo, latestRepo, checkerService,
+        service = new CertificateService(checkRepo, latestRepo, checkerService, maintenanceService,
                 inventoryRepo, new ObjectMapper(), teamRepo, alertThresholdRepo);
         when(checkerService.serializeSan(any())).thenReturn("[]");
         when(checkerService.deserializeSan(any())).thenReturn(Collections.emptyList());

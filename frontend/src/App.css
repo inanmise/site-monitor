@@ -1644,6 +1644,17 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .http-interval-tick:first-child { text-align: left; }
 .http-interval-tick:last-child { text-align: right; }
 
+/* ── Alarm Fırtınası (alert storm) ayarları — "Alert Settings" ──────────────── */
+.storm-beta { display: inline-block; margin-left: 8px; padding: 1px 8px; border-radius: 10px; font-size: .58em;
+  font-weight: 800; letter-spacing: .08em; vertical-align: middle; background: #7c3aed; color: #fff; }
+.storm-threshold-row { display: flex; gap: 10px; align-items: center; margin-top: 6px; flex-wrap: wrap; }
+.storm-num { width: 110px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px;
+  background: var(--input-bg); color: var(--input-text, var(--text)); font-size: .95em; }
+.storm-unit { padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px;
+  background: var(--input-bg); color: var(--input-text, var(--text)); font-size: .95em; cursor: pointer; }
+.storm-slider-wrap { display: flex; align-items: center; gap: 14px; max-width: 460px; margin-top: 4px; }
+.storm-slider-value { white-space: nowrap; font-weight: 700; color: #2563eb; min-width: 84px; }
+
 /* ── Keyword / İçerik monitör formu (yeşil aksan — HTTP formunun klonu) ─────── */
 .modal-icon-hdr--keyword .modal-icon-hdr-badge { background: linear-gradient(135deg, #16a34a, #22c55e); color: #fff; }
 .kw-type-banner { display: flex; align-items: flex-start; gap: 9px; margin: 0 0 18px; padding: 10px 13px;
@@ -1733,6 +1744,122 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .port-adv-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 14px; margin-top: 8px; }
 .port-adv-grid label { display: flex; flex-direction: column; gap: 4px; font-size: .84em; font-weight: 600; color: var(--text, #1e293b); }
 .port-adv-grid label input { padding: 7px 9px; border: 1px solid var(--border); border-radius: 5px; font-size: .95em; }
+
+/* ── Incidents Overview ekranı (.inc-*) ────────────────────────────────────── */
+.inc-page { max-width: 100%; }
+/* Kapatılabilir bilgi banner'ı (indigo) */
+.inc-banner { display: flex; align-items: center; gap: 12px; margin: 0 0 16px; padding: 12px 16px;
+  border-radius: 10px; background: linear-gradient(135deg, #4f46e5, #4338ca); color: #fff; }
+.inc-banner > svg { flex-shrink: 0; opacity: .95; }
+.inc-banner-text { display: flex; flex-direction: column; gap: 2px; line-height: 1.4; }
+.inc-banner-text strong { font-size: .95em; }
+.inc-banner-text span { font-size: .84em; opacity: .9; }
+.inc-banner-close { margin-left: auto; background: rgba(255,255,255,.15); border: none; color: #fff;
+  border-radius: 6px; padding: 5px; cursor: pointer; display: inline-flex; }
+.inc-banner-close:hover { background: rgba(255,255,255,.28); }
+/* Filtreler */
+.inc-filters { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 10px; }
+.inc-filters .filter-input, .inc-filters .filter-select { min-width: 150px; }
+.inc-filters .inc-date { min-width: 130px; }
+/* Root-cause pill'leri */
+.inc-pills { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 14px; }
+.inc-pill { display: inline-flex; align-items: center; gap: 6px; padding: 4px 11px; border: 1px solid var(--border);
+  border-radius: 16px; background: var(--bg-card, #fff); color: var(--text-muted); font-size: .82em; font-weight: 600; cursor: pointer; }
+.inc-pill:hover { border-color: #6366f1; color: var(--text, #1e293b); }
+.inc-pill.is-active { background: #4f46e5; border-color: #4f46e5; color: #fff; }
+.inc-pill-count { font-size: .9em; opacity: .85; background: rgba(100,116,139,.16); padding: 0 6px; border-radius: 8px; }
+.inc-pill.is-active .inc-pill-count { background: rgba(255,255,255,.22); }
+/* Tablo */
+.inc-table th.inc-th-sort { cursor: pointer; white-space: nowrap; user-select: none; }
+.inc-table th.inc-th-sort:hover { color: #4f46e5; }
+.inc-table th.inc-th-actions, .inc-table td.inc-th-actions { text-align: right; width: 60px; }
+.inc-row-ongoing { background: rgba(220,38,38,.04); }
+.inc-del-btn { background: none; border: none; color: var(--text-muted); cursor: pointer; padding: 4px; border-radius: 5px; display: inline-flex; }
+.inc-del-btn:hover { color: #dc2626; background: rgba(220,38,38,.1); }
+/* Status hücresi */
+.inc-status { display: inline-flex; align-items: center; gap: 6px; font-weight: 700; font-size: .86em; white-space: nowrap; }
+.inc-status--ongoing { color: #dc2626; }
+.inc-status--resolved { color: #16a34a; }
+.inc-dot { width: 9px; height: 9px; border-radius: 50%; background: #dc2626; box-shadow: 0 0 0 3px rgba(220,38,38,.18);
+  animation: incpulse 1.6s ease-in-out infinite; }
+@keyframes incpulse { 0%, 100% { opacity: 1; } 50% { opacity: .45; } }
+/* Monitor hücresi */
+.inc-mon-name { color: var(--text, #1e293b); word-break: break-word; }
+.inc-mon-link { color: #4f46e5; font-weight: 600; text-decoration: none; display: inline-flex; align-items: center; gap: 4px; word-break: break-word; }
+.inc-mon-link:hover { text-decoration: underline; }
+.inc-mon-link svg { opacity: .6; }
+/* Root-cause badge */
+.inc-rc { display: inline-flex; align-items: center; gap: 8px; }
+.inc-rc-code { color: #fff; font-weight: 700; font-size: .72em; letter-spacing: .02em; padding: 2px 7px; border-radius: 5px; white-space: nowrap; }
+.inc-rc-label { font-size: .86em; color: var(--text, #1e293b); }
+/* Comments + started + duration */
+.inc-comments-btn { display: inline-flex; align-items: center; gap: 5px; background: none; border: none;
+  color: var(--text-muted); font-size: .84em; cursor: pointer; padding: 2px 0; }
+.inc-comments-btn:hover { color: #4f46e5; }
+.inc-started { white-space: nowrap; font-size: .82em; color: var(--text-muted); }
+.inc-duration { white-space: nowrap; font-variant-numeric: tabular-nums; font-size: .86em; }
+/* Boş durum (dostane) */
+.inc-empty { text-align: center; padding: 56px 20px; }
+.inc-empty-art { width: 96px; height: 96px; margin: 0 auto 18px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
+  background: radial-gradient(circle at 50% 40%, rgba(79,70,229,.18), rgba(79,70,229,.05)); color: #4f46e5; }
+.inc-empty-title { font-size: 1.5em; font-weight: 800; margin: 0 0 8px;
+  background: linear-gradient(90deg, #16a34a, #22c55e); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.inc-empty-text { color: var(--text-muted); max-width: 440px; margin: 0 auto; line-height: 1.55; font-size: .95em; }
+/* Yorum modalı */
+.inc-cmt-sub { font-size: .86em; color: var(--text-muted); margin: -4px 2px 10px; word-break: break-word; }
+.inc-cmt-list { max-height: 340px; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; margin-bottom: 12px; }
+.inc-cmt-empty { text-align: center; color: var(--text-muted); padding: 24px; font-size: .9em; }
+.inc-cmt { border: 1px solid var(--border); border-radius: 8px; padding: 9px 11px; background: rgba(148,163,184,.06); }
+.inc-cmt-head { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+.inc-cmt-author { font-weight: 700; font-size: .82em; color: var(--text, #1e293b); }
+.inc-cmt-time { font-size: .74em; color: var(--text-muted); }
+.inc-cmt-del { margin-left: auto; background: none; border: none; color: var(--text-muted); cursor: pointer; padding: 2px; display: inline-flex; }
+.inc-cmt-del:hover { color: #dc2626; }
+.inc-cmt-body { font-size: .88em; line-height: 1.5; color: var(--text, #1e293b); white-space: pre-wrap; word-break: break-word; }
+.inc-cmt-add { display: flex; flex-direction: column; gap: 8px; margin-bottom: 8px; }
+.inc-cmt-add textarea { width: 100%; padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px; font: inherit; font-size: .9em; resize: vertical; }
+.inc-cmt-add .btn { align-self: flex-end; }
+
+/* ── Maintenance Windows (.mw-*) ────────────────────────────────────────────── */
+.mw-page { max-width: 100%; }
+/* "Under maintenance" rozeti (amber) */
+.mw-badge { display: inline-flex; align-items: center; gap: 4px; font-size: .68em; font-weight: 700; text-transform: uppercase;
+  letter-spacing: .03em; color: #b45309; background: rgba(245,158,11,.16); padding: 2px 7px; border-radius: 10px; white-space: nowrap; }
+/* Boş durum (dostane) */
+.mw-empty { text-align: center; padding: 56px 20px; }
+.mw-empty-art { width: 96px; height: 96px; margin: 0 auto 18px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
+  background: radial-gradient(circle at 50% 40%, rgba(245,158,11,.18), rgba(245,158,11,.05)); color: #d97706; }
+.mw-empty-title { font-size: 1.5em; font-weight: 800; margin: 0 0 8px; color: var(--text, #1e293b); }
+.mw-empty-text { color: var(--text-muted); max-width: 460px; margin: 0 auto 18px; line-height: 1.55; font-size: .95em; }
+/* Tablo */
+.mw-table th.mw-th-actions, .mw-table td.mw-th-actions { text-align: right; white-space: nowrap; }
+.mw-row-active { background: rgba(22,163,74,.05); }
+.mw-name { font-weight: 600; color: var(--text, #1e293b); word-break: break-word; }
+.mw-desc { font-size: .8em; color: var(--text-muted); margin-top: 2px; }
+.mw-all { font-weight: 700; color: #d97706; }
+.mw-sched, .mw-next { font-size: .84em; color: var(--text-muted); white-space: nowrap; }
+.mw-act { background: none; border: none; color: var(--text-muted); cursor: pointer; padding: 4px; border-radius: 5px; display: inline-flex; margin-left: 2px; }
+.mw-act:hover { color: var(--text, #1e293b); background: rgba(148,163,184,.15); }
+.mw-act-danger:hover { color: #dc2626; background: rgba(220,38,38,.1); }
+/* Status rozetleri */
+.mw-status { display: inline-flex; align-items: center; font-size: .75em; font-weight: 700; padding: 2px 9px; border-radius: 11px; white-space: nowrap; }
+.mw-status--active    { color: #15803d; background: rgba(22,163,74,.15); }
+.mw-status--upcoming  { color: #2563eb; background: rgba(37,99,235,.13); }
+.mw-status--completed { color: #64748b; background: rgba(100,116,139,.15); }
+.mw-status--paused    { color: #b45309; background: rgba(245,158,11,.16); }
+/* Modal blokları */
+.mw-block { grid-column: 1 / -1; padding: 12px 14px; border: 1px solid var(--border); border-radius: 9px; background: rgba(148,163,184,.06); }
+.mw-block-title { font-weight: 700; font-size: .9em; margin-bottom: 6px; color: var(--text, #1e293b); }
+.mw-selectall { margin-top: 6px; background: none; border: none; color: #2563eb; font-size: .82em; font-weight: 600; cursor: pointer; padding: 0; }
+.mw-selectall:hover { text-decoration: underline; }
+/* Haftalık gün seçici */
+.mw-dow { display: flex; flex-wrap: wrap; gap: 6px; }
+.mw-dow-btn { padding: 5px 11px; border: 1px solid var(--border); border-radius: 7px; background: var(--bg-card, #fff); color: var(--text-muted);
+  font-size: .82em; font-weight: 600; cursor: pointer; }
+.mw-dow-btn.active { background: #d97706; border-color: #d97706; color: #fff; }
+/* Özet */
+.mw-summary { grid-column: 1 / -1; font-size: .84em; color: var(--text-muted); background: rgba(148,163,184,.08); border-radius: 7px; padding: 8px 11px; line-height: 1.5; }
+.mw-summary span { font-weight: 700; color: var(--text, #1e293b); }
 
 /* ── Domain (alan adı) izleme ─────────────────────────────────────────────── */
 .modal-icon-hdr--domain .modal-icon-hdr-badge { background: linear-gradient(135deg, #7c3aed, #4f46e5); color: #fff; }

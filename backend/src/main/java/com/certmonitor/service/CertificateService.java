@@ -36,6 +36,7 @@ public class CertificateService {
     private final CertificateCheckRepository checkRepo;
     private final LatestCheckRepository latestRepo;
     private final CertificateCheckerService checkerService;
+    private final MaintenanceService maintenanceService;
     private final CertificateInventoryRepository inventoryRepo;
     private final ObjectMapper objectMapper;
     private final TeamRepository teamRepo;
@@ -111,6 +112,7 @@ public class CertificateService {
             check.setCheckedAt((String) result.get("checked_at"));
             check.setCreatedAt(now);
             check.setErrorClass((String) result.get("error_class"));
+            check.setMaintenance(maintenanceService.isUnderMaintenance(domain));   // bakımdaysa dashboard uptime %'den hariç
             checkRepo.save(check);
         } catch (Exception e) {
             log.warn("Could not save check history for {} (run_id={}): {}", domain, result.get("run_id"), e.getMessage());

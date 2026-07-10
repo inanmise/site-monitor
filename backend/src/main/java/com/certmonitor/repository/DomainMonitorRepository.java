@@ -10,6 +10,7 @@ import java.util.Optional;
 
 public interface DomainMonitorRepository extends JpaRepository<DomainMonitor, Long> {
     List<DomainMonitor> findByActiveTrue();
+    long countByActiveTrue();
     List<DomainMonitor> findAllByOrderByNameAsc();
     Optional<DomainMonitor> findFirstByDomainOrderByIdAsc(String domain);
 

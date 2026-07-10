@@ -4,6 +4,7 @@ import { api, formatDateSec } from '../api/client'
 import { useT } from '../i18n/index.jsx'
 import { useToast } from './ui/Toast.jsx'
 import SearchableSelect from './ui/SearchableSelect.jsx'
+import MaintenanceBadge from './ui/MaintenanceBadge.jsx'
 import TagInput from './ui/TagInput.jsx'
 import { Play, Pencil, X, RefreshCw, Plus, Trash2, Target, Users, Layers, FlaskConical, Check, AlertTriangle,
   LayoutDashboard, CheckCircle2, TriangleAlert, ServerCrash, Siren, BellDot, BarChart3, ChevronDown, ShieldCheck,
@@ -404,7 +405,7 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
               onClick={() => openDetail(m)}>
               <div className="upt-card-top">
                 {statusBadge(m)}
-                {alarmBadge(m)}
+                {alarmBadge(m)}<MaintenanceBadge target={m.url} />
                 <span className="upt-port-tag">
                   {(OP_SYM[m.operator] || '≥') + (m.match_count ?? 1)} kez
                 </span>

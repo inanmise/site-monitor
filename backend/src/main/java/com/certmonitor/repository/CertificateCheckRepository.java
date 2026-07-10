@@ -24,7 +24,7 @@ public interface CertificateCheckRepository extends JpaRepository<CertificateChe
     /** Domain başına özet: [domain, toplam, hata_sayısı] — cutoff'tan beri.
      *  uptime/overview için tablo-başı-döngü (domain × tüm-tablo) yerine tek gruplu sorgu. */
     @Query("SELECT c.domain, COUNT(c), SUM(CASE WHEN c.status = 'error' THEN 1L ELSE 0L END) "
-         + "FROM CertificateCheck c WHERE c.checkedAt >= :cutoff GROUP BY c.domain")
+         + "FROM CertificateCheck c WHERE c.checkedAt >= :cutoff AND (c.maintenance = false OR c.maintenance IS NULL) GROUP BY c.domain")
     List<Object[]> aggregateStatusCountsSince(@Param("cutoff") String cutoff);
 
     @Query("SELECT c FROM CertificateCheck c WHERE c.domain = :domain AND c.checkedAt >= :from AND c.checkedAt <= :to ORDER BY c.checkedAt DESC LIMIT :limit")

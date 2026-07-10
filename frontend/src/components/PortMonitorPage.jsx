@@ -4,6 +4,7 @@ import { api, formatDate } from '../api/client'
 import { useT } from '../i18n/index.jsx'
 import { useToast } from './ui/Toast.jsx'
 import SearchableSelect from './ui/SearchableSelect.jsx'
+import MaintenanceBadge from './ui/MaintenanceBadge.jsx'
 import TagInput from './ui/TagInput.jsx'
 import { Play, Pencil, X, RefreshCw, Plug, Plus, Trash2, FlaskConical, AlertTriangle, Network, Check, Pause, BarChart3, ChevronDown, BellDot,
   Mail, MessageSquare, Phone, Smartphone } from 'lucide-react'
@@ -399,7 +400,7 @@ export default function PortMonitorPage({ systemRole, teamId, teamName }) {
                   <td className="mon-cell-mono">{m.host}</td>
                   <td>{m.team_name || '—'}</td>
                   <td className="mon-cell-num">{m.port}</td>
-                  <td>{statusBadge(m.status)}{alarmBadge(m)}</td>
+                  <td>{statusBadge(m.status)}{alarmBadge(m)}<MaintenanceBadge target={m.host} /></td>
                   <td className="mon-cell-num">{m.response_ms != null ? `${m.response_ms}ms` : '—'}</td>
                   <td className="mon-cell-time">{m.checked_at ? formatDate(m.checked_at) : '—'}</td>
                   <td className="mon-cell-actions" onClick={e => e.stopPropagation()}>

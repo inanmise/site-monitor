@@ -506,6 +506,40 @@ export const api = {
     updateMonitorNote: (id, data) => request(`/monitoring/notes/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
     deleteMonitorNote: (id) => request(`/monitoring/notes/${id}`, { method: 'DELETE' }),
 
+    // Incidents Overview (AlertEvent tabanlı — tüm monitörlerin olayları)
+    incidents: {
+      list: (params = {}) => {
+        const q = new URLSearchParams()
+        for (const k of ['status', 'rootCause', 'q', 'since', 'until', 'sort', 'dir', 'page', 'size']) {
+          if (params[k] != null && params[k] !== '') q.set(k, params[k])
+        }
+        const qs = q.toString()
+        return request(`/monitoring/incidents${qs ? '?' + qs : ''}`)
+      },
+      comments:      (id) => request(`/monitoring/incidents/${id}/comments`),
+      addComment:    (id, body) => request(`/monitoring/incidents/${id}/comments`, { method: 'POST', body: JSON.stringify({ body }) }),
+      deleteComment: (commentId) => request(`/monitoring/incidents/comments/${commentId}`, { method: 'DELETE' }),
+      remove:        (id) => request(`/monitoring/incidents/${id}`, { method: 'DELETE' }),
+    },
+
+    // Maintenance Windows (bakım penceresi)
+    maintenance: {
+      list:   () => request('/monitoring/maintenance'),
+      active: () => request('/monitoring/maintenance/active'),
+      create: (data) => request('/monitoring/maintenance', { method: 'POST', body: JSON.stringify(data) }),
+      update: (id, data) => request(`/monitoring/maintenance/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+      remove: (id) => request(`/monitoring/maintenance/${id}`, { method: 'DELETE' }),
+      pause:  (id) => request(`/monitoring/maintenance/${id}/pause`, { method: 'POST' }),
+      resume: (id) => request(`/monitoring/maintenance/${id}/resume`, { method: 'POST' }),
+      quick:  (data) => request('/monitoring/maintenance/quick', { method: 'POST', body: JSON.stringify(data) }),
+    },
+
+    // Alarm fırtınası (alert storm) ayarları — "Alert Settings" bölümü
+    storm: {
+      getSettings:  () => request('/monitoring/storm/settings'),
+      saveSettings: (data) => request('/monitoring/storm/settings', { method: 'PUT', body: JSON.stringify(data) }),
+    },
+
     // Uptime
     getUptimeOverview:    () => request('/monitoring/uptime/overview'),
     getUptimeHistory:     (domain, hours = 24) => request(`/monitoring/uptime/${encodeURIComponent(domain)}/history?hours=${hours}`),

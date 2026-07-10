@@ -8,6 +8,7 @@ import java.util.Optional;
 
 public interface KeywordMonitorRepository extends JpaRepository<KeywordMonitor, Long> {
     List<KeywordMonitor> findByActiveTrue();
+    long countByActiveTrue();
     List<KeywordMonitor> findAllByOrderByNameAsc();
     Optional<KeywordMonitor> findFirstByUrlAndKeywordOrderByIdAsc(String url, String keyword);
 }

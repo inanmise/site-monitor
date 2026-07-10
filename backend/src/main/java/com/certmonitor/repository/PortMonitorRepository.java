@@ -9,6 +9,8 @@ import java.util.Optional;
 public interface PortMonitorRepository extends JpaRepository<PortMonitor, Long> {
     List<PortMonitor> findByActiveTrue();
     List<PortMonitor> findByStandaloneTrueAndActiveTrue();
+    /** Storm denominatörü — cert-türevi (envanter) satırları çift saymamak için yalnız standalone aktifler. */
+    long countByStandaloneTrueAndActiveTrue();
     List<PortMonitor> findAllByOrderByNameAsc();
     Optional<PortMonitor> findFirstByHostAndPortOrderByIdAsc(String host, int port);
 }
