@@ -4,22 +4,37 @@ import { api, formatDate } from '../api/client'
 import { useT } from '../i18n/index.jsx'
 import { useToast } from './ui/Toast.jsx'
 import SearchableSelect from './ui/SearchableSelect.jsx'
-import { Play, Pencil, X, RefreshCw, Plug, Plus, Trash2, FlaskConical, AlertTriangle, Network, Check, Pause, BarChart3, ChevronDown, BellDot } from 'lucide-react'
+import TagInput from './ui/TagInput.jsx'
+import { Play, Pencil, X, RefreshCw, Plug, Plus, Trash2, FlaskConical, AlertTriangle, Network, Check, Pause, BarChart3, ChevronDown, BellDot,
+  Mail, MessageSquare, Phone, Smartphone } from 'lucide-react'
 import AlertHistory from './admin/AlertHistory.jsx'
 import MonitorStatsBar from './MonitorStatsBar.jsx'
 const ResponseTimeChart = lazy(() => import('./ResponseTimeChart.jsx'))
 const MonitorNotes = lazy(() => import('./MonitorNotes.jsx'))
 
 const INTERVALS = [
-  { value: 30,  labelKey: 'ping.interval30s' },
-  { value: 60,  labelKey: 'ping.interval1m'  },
-  { value: 300, labelKey: 'ping.interval5m'  },
-  { value: 900, labelKey: 'ping.interval15m' },
+  { value: 30,    labelKey: 'port.iv30s' },
+  { value: 60,    labelKey: 'port.iv1m'  },
+  { value: 300,   labelKey: 'port.iv5m'  },
+  { value: 600,   labelKey: 'port.iv10m' },
+  { value: 900,   labelKey: 'port.iv15m' },
+  { value: 1800,  labelKey: 'port.iv30m' },
+  { value: 3600,  labelKey: 'port.iv1h'  },
+  { value: 43200, labelKey: 'port.iv12h' },
+  { value: 86400, labelKey: 'port.iv24h' },
 ]
+const intervalIdx = (secs) => {
+  const i = INTERVALS.findIndex(o => o.value === secs)
+  if (i >= 0) return i
+  let best = 0, bd = Infinity
+  INTERVALS.forEach((o, j) => { const d = Math.abs(o.value - secs); if (d < bd) { bd = d; best = j } })
+  return best
+}
 
 const REFRESH_INTERVAL = 60
 const PORT_TYPES = ['TCP', 'TLS', 'HTTP', 'BANNER', 'UDP']
 const emptyForm = { name: '', host: '', port: '', protocol: 'TCP', expect: '', sendData: '', teamId: '', groupName: '',
+  tags: '', notifyEmail: true, ipVersion: 'auto', slowResponseEnabled: false, slowThresholdMs: 3000,
   intervalSeconds: 300, timeoutMs: 5000,
   confirmAttempts: 3, confirmIntervalSeconds: 30, recoveryChecks: 3, recoveryIntervalSeconds: 30, active: true }
 
@@ -47,6 +62,7 @@ export default function PortMonitorPage({ systemRole, teamId, teamName }) {
   const [summary, setSummary] = useState({ total: 0, down: 0 })
   const [modal, setModal] = useState(null)
   const [form, setForm] = useState(emptyForm)
+  const [advOpen, setAdvOpen] = useState(false)               // "Gelişmiş ayarlar" accordion
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState(null)
   const [testing, setTesting] = useState(false)
@@ -133,7 +149,8 @@ export default function PortMonitorPage({ systemRole, teamId, teamName }) {
   function openNew() {
     setForm({ ...emptyForm, teamId: isAdmin ? '' : (myTeam ?? ''),
       intervalSeconds: defaults?.intervalSeconds ?? emptyForm.intervalSeconds,
-      timeoutMs: defaults?.timeoutMs ?? emptyForm.timeoutMs })
+      timeoutMs: defaults?.timeoutMs ?? emptyForm.timeoutMs,
+      slowThresholdMs: defaults?.slowThresholdMs ?? emptyForm.slowThresholdMs })
     setModal('new')
   }
   function openEdit(m) {
@@ -143,6 +160,8 @@ export default function PortMonitorPage({ systemRole, teamId, teamName }) {
     setForm({ name: m.name || '', host: m.host || '', port: m.port ?? '', protocol: m.protocol || 'TCP',
       expect: m.expect || '', sendData: m.send_data || '',
       teamId: m.team_id != null ? String(m.team_id) : (derivedTeam ? String(derivedTeam.id) : ''), groupName: m.group_name || '',
+      tags: m.tags || '', notifyEmail: m.notify_email !== false, ipVersion: m.ip_version || 'auto',
+      slowResponseEnabled: !!m.slow_response_enabled, slowThresholdMs: m.slow_threshold_ms ?? 3000,
       intervalSeconds: m.interval_seconds ?? 300, timeoutMs: m.timeout_ms ?? 5000,
       confirmAttempts: m.confirm_attempts ?? 3, confirmIntervalSeconds: m.confirm_interval_seconds ?? 30,
       recoveryChecks: m.recovery_checks ?? 3, recoveryIntervalSeconds: m.recovery_interval_seconds ?? 30,
@@ -159,6 +178,8 @@ export default function PortMonitorPage({ systemRole, teamId, teamName }) {
       protocol: form.protocol?.trim() || 'TCP',
       expect: form.expect?.trim() || null, sendData: form.sendData || null,
       teamId: form.teamId === '' ? null : Number(form.teamId), groupName: form.groupName?.trim() || null,
+      tags: form.tags?.trim() || null, notifyEmail: form.notifyEmail, ipVersion: form.ipVersion,
+      slowResponseEnabled: form.slowResponseEnabled, slowThresholdMs: Number(form.slowThresholdMs),
       intervalSeconds: Number(form.intervalSeconds), timeoutMs: Number(form.timeoutMs),
       confirmAttempts: Number(form.confirmAttempts), confirmIntervalSeconds: Number(form.confirmIntervalSeconds),
       recoveryChecks: Number(form.recoveryChecks), recoveryIntervalSeconds: Number(form.recoveryIntervalSeconds),
@@ -180,6 +201,7 @@ export default function PortMonitorPage({ systemRole, teamId, teamName }) {
     const res = await api.monitoring.testPortMonitor({
       host: form.host.trim(), port: Number(form.port), protocol: form.protocol,
       expect: form.expect?.trim() || null, sendData: form.sendData || null, timeoutMs: Number(form.timeoutMs),
+      ipVersion: form.ipVersion,
     })
     setTestResult(res?.success ? res.data : { error: res?.error || t('port.testError') })
     setTesting(false)
@@ -290,6 +312,11 @@ export default function PortMonitorPage({ systemRole, teamId, teamName }) {
     return <span className={`upt-alarm-ico${m.alarm_acknowledged ? '' : ' pulse'}`}
       style={{ color: alarmLevelColor(m.alarm_level) }} title={title}><AlertTriangle size={14} /></span>
   }
+
+  const selectedTeamLabel = isAdmin
+    ? (teams.find(tm => String(tm.id) === String(form.teamId))?.name || t('app.noTeam'))
+    : (teamName || t('app.noTeam'))
+  const ivIdx = intervalIdx(Number(form.intervalSeconds))
 
   return (
     <div className="mon-page">
@@ -548,7 +575,10 @@ export default function PortMonitorPage({ systemRole, teamId, teamName }) {
               <div className="modal-icon-hdr-badge"><Plug size={20} /></div>
               <h3>{modal === 'new' ? t('port.modalAdd') : t('port.modalEdit')}</h3>
             </div>
-            <div className="form-grid">
+
+            <div className="port-type-banner"><Plug size={16} /><span>{t('port.typeInfo')}</span></div>
+
+            <div className="form-grid form-grid--top">
               <label><span>{t('port.host')} <span className="req-star">*</span></span>
                 <input value={form.host} placeholder="1.2.3.4 / host.example.com"
                   onChange={e => setForm(f => ({ ...f, host: e.target.value }))} /></label>
@@ -584,25 +614,88 @@ export default function PortMonitorPage({ systemRole, teamId, teamName }) {
                 <SearchableSelect value={form.groupName} onChange={v => setForm(f => ({ ...f, groupName: v }))}
                   options={[{ value: '', label: t('port.noGroup') }, ...groupSelectOptions]}
                   creatable onCreate={() => {}} searchThreshold={2} placeholder={t('port.noGroup')} /></label>
-              <label><span>{t('port.interval')}</span>
-                <select value={form.intervalSeconds} onChange={e => setForm(f => ({ ...f, intervalSeconds: Number(e.target.value) }))}>
-                  {INTERVALS.map(o => <option key={o.value} value={o.value}>{t(o.labelKey)}</option>)}
-                </select></label>
-              <label><span>{t('port.timeout')}</span>
-                <input type="number" value={form.timeoutMs} onChange={e => setForm(f => ({ ...f, timeoutMs: Number(e.target.value) }))} /></label>
-              <label><span>{t('port.confirmAttempts')}</span>
-                <input type="number" min="0" max="10" value={form.confirmAttempts} onChange={e => setForm(f => ({ ...f, confirmAttempts: Number(e.target.value) }))} /></label>
-              <label><span>{t('port.confirmInterval')}</span>
-                <input type="number" min="10" max="600" value={form.confirmIntervalSeconds} onChange={e => setForm(f => ({ ...f, confirmIntervalSeconds: Number(e.target.value) }))} /></label>
-              <label><span>{t('port.recoveryChecks')}</span>
-                <input type="number" min="1" max="20" value={form.recoveryChecks} onChange={e => setForm(f => ({ ...f, recoveryChecks: Number(e.target.value) }))} /></label>
-              <label><span>{t('port.recoveryInterval')}</span>
-                <input type="number" min="10" max="600" value={form.recoveryIntervalSeconds} onChange={e => setForm(f => ({ ...f, recoveryIntervalSeconds: Number(e.target.value) }))} /></label>
-              <div className="full-width" style={{ fontSize: '.8em', color: 'var(--text-muted)', marginTop: -2, lineHeight: 1.5 }}>
-                ⓘ {t('port.confirmHint')}
+              {/* Etiketler */}
+              <div className="full-width port-tags-block">
+                <div className="port-block-title">{t('port.tagsTitle')}</div>
+                <div className="field-hint" style={{ marginBottom: 6 }}>{t('port.tagsHint')}</div>
+                <TagInput value={form.tags} onChange={v => setForm(f => ({ ...f, tags: v }))} placeholder={t('port.tagsPlaceholder')} />
               </div>
-              <label className="checkbox-label">
-                <input type="checkbox" checked={form.active} onChange={e => setForm(f => ({ ...f, active: e.target.checked }))} />{t('port.active')}</label>
+
+              {/* Bildirimler */}
+              <div className="full-width port-notify-section">
+                <div className="port-block-title">{t('port.notifyTitle')}</div>
+                <div className="field-hint" style={{ marginBottom: 8 }}>{t('port.notifyInfo').replace('{0}', selectedTeamLabel)}</div>
+                <div className="port-channels">
+                  <label className="port-channel">
+                    <input type="checkbox" checked={form.notifyEmail} onChange={e => setForm(f => ({ ...f, notifyEmail: e.target.checked }))} />
+                    <Mail size={14} /><span>{t('port.chEmail')}</span>
+                    <span className="port-ch-target">{selectedTeamLabel}</span>
+                  </label>
+                  <label className="port-channel port-channel--disabled" title={t('port.soonHint')}>
+                    <input type="checkbox" disabled /><MessageSquare size={14} /><span>{t('port.chSms')}</span><span className="port-ch-soon">{t('port.soon')}</span></label>
+                  <label className="port-channel port-channel--disabled" title={t('port.soonHint')}>
+                    <input type="checkbox" disabled /><Phone size={14} /><span>{t('port.chVoice')}</span><span className="port-ch-soon">{t('port.soon')}</span></label>
+                  <label className="port-channel port-channel--disabled" title={t('port.soonHint')}>
+                    <input type="checkbox" disabled /><Smartphone size={14} /><span>{t('port.chPush')}</span><span className="port-ch-soon">{t('port.soon')}</span></label>
+                </div>
+              </div>
+
+              {/* Kontrol aralığı — kaydırmalı çubuk */}
+              <div className="full-width port-interval-block">
+                <div className="port-block-title">{t('port.intervalTitle')}</div>
+                <div className="field-hint" style={{ marginBottom: 8 }}>{t('port.intervalEvery').replace('{0}', t(INTERVALS[ivIdx].labelKey))}</div>
+                <input type="range" className="port-interval-slider" min={0} max={INTERVALS.length - 1} step={1}
+                  value={ivIdx} onChange={e => setForm(f => ({ ...f, intervalSeconds: INTERVALS[Number(e.target.value)].value }))} />
+                <div className="port-interval-ticks">
+                  {INTERVALS.map((o, j) => (
+                    <span key={o.value} className={`port-interval-tick${j === ivIdx ? ' active' : ''}`}>{t(o.labelKey)}</span>
+                  ))}
+                </div>
+              </div>
+
+              {/* IP sürümü */}
+              <label><span>{t('port.ipVersion')}</span>
+                <SearchableSelect value={form.ipVersion} onChange={v => setForm(f => ({ ...f, ipVersion: v }))}
+                  options={[{ value: 'auto', label: t('port.ipAuto') }, { value: 'v4', label: 'IPv4' }, { value: 'v6', label: 'IPv6' }]} /></label>
+
+              {/* Gelişmiş ayarlar — açılır/kapanır */}
+              <div className="full-width port-adv">
+                <button type="button" className="port-adv-toggle" onClick={() => setAdvOpen(o => !o)}>
+                  <ChevronDown size={16} className={`port-adv-chevron${advOpen ? ' open' : ''}`} />
+                  <span>{t('port.advanced')}</span>
+                </button>
+                {advOpen && (
+                  <div className="port-adv-body">
+                    <div className="port-block-title">{t('port.timeoutTitle')}</div>
+                    <div className="field-hint" style={{ marginBottom: 8 }}>{t('port.timeoutEvery').replace('{0}', Math.min(60, Math.max(1, Math.round(Number(form.timeoutMs) / 1000))))}</div>
+                    <input type="range" className="port-interval-slider" min={1} max={60} step={1}
+                      value={Math.min(60, Math.max(1, Math.round(Number(form.timeoutMs) / 1000)))}
+                      onChange={e => setForm(f => ({ ...f, timeoutMs: Number(e.target.value) * 1000 }))} />
+                    <label className="checkbox-label" style={{ marginTop: 12 }}>
+                      <input type="checkbox" checked={form.slowResponseEnabled} onChange={e => setForm(f => ({ ...f, slowResponseEnabled: e.target.checked }))} />{t('port.slowEnable')}</label>
+                    {form.slowResponseEnabled && (
+                      <div className="port-days-row">
+                        <span>{t('port.slowThreshold')}</span>
+                        <input type="number" min="100" step="100" value={form.slowThresholdMs} onChange={e => setForm(f => ({ ...f, slowThresholdMs: Number(e.target.value) }))} />
+                      </div>
+                    )}
+                    <div className="field-hint" style={{ marginBottom: 4 }}>{t('port.slowHint')}</div>
+                    <div className="port-adv-grid">
+                      <label><span>{t('port.confirmAttempts')}</span>
+                        <input type="number" min="0" max="10" value={form.confirmAttempts} onChange={e => setForm(f => ({ ...f, confirmAttempts: Number(e.target.value) }))} /></label>
+                      <label><span>{t('port.confirmInterval')}</span>
+                        <input type="number" min="10" max="600" value={form.confirmIntervalSeconds} onChange={e => setForm(f => ({ ...f, confirmIntervalSeconds: Number(e.target.value) }))} /></label>
+                      <label><span>{t('port.recoveryChecks')}</span>
+                        <input type="number" min="1" max="20" value={form.recoveryChecks} onChange={e => setForm(f => ({ ...f, recoveryChecks: Number(e.target.value) }))} /></label>
+                      <label><span>{t('port.recoveryInterval')}</span>
+                        <input type="number" min="10" max="600" value={form.recoveryIntervalSeconds} onChange={e => setForm(f => ({ ...f, recoveryIntervalSeconds: Number(e.target.value) }))} /></label>
+                    </div>
+                    <label className="checkbox-label" style={{ marginTop: 10 }}>
+                      <input type="checkbox" checked={form.active} onChange={e => setForm(f => ({ ...f, active: e.target.checked }))} />{t('port.active')}</label>
+                    <div className="field-hint" style={{ marginTop: 6 }}>ⓘ {t('port.confirmHint')}</div>
+                  </div>
+                )}
+              </div>
             </div>
             {testResult && (testResult.open === undefined && testResult.error
               ? <div className="mon-modal-error">{testResult.error}</div>

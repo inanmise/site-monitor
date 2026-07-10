@@ -13,6 +13,9 @@ import com.certmonitor.repository.KeywordMonitorRepository;
 import com.certmonitor.repository.KeywordResultRepository;
 import com.certmonitor.repository.PingMonitorRepository;
 import com.certmonitor.repository.PingCheckRepository;
+import com.certmonitor.repository.HttpMonitorRepository;
+import com.certmonitor.repository.HttpCheckRepository;
+import com.certmonitor.repository.DomainMonitorRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -81,6 +84,12 @@ class SchedulerServiceTest {
     @Mock PingCheckerService pingCheckerService;
     @Mock PingMonitorRepository pingMonitorRepo;
     @Mock PingCheckRepository pingCheckRepo;
+    @Mock HttpCheckerService httpCheckerService;
+    @Mock HttpMonitorRepository httpMonitorRepo;
+    @Mock HttpCheckRepository httpCheckRepo;
+    @Mock RdapDomainExpiryService rdapDomainExpiryService;
+    @Mock DomainMonitorRepository domainMonitorRepo;
+    @Mock DomainCheckerService domainCheckerService;
     @Mock NetworkOutageEventRepository networkOutageRepo;
     @Mock WeeklyReportReminderService weeklyReportReminderService;
     @Mock WeeklyAvailabilityReportService weeklyAvailabilityReportService;
@@ -101,6 +110,8 @@ class SchedulerServiceTest {
                 uptimeHttpCheckerService, uptimeCheckRepo, monitoringOutageService,
                 keywordCheckerService, keywordMonitorRepo, keywordResultRepo,
                 pingCheckerService, pingMonitorRepo, pingCheckRepo,
+                httpCheckerService, httpMonitorRepo, httpCheckRepo, rdapDomainExpiryService,
+                domainMonitorRepo, domainCheckerService,
                 networkOutageRepo,
                 weeklyReportReminderService, weeklyAvailabilityReportService, incidentService, appSettings);
         ReflectionTestUtils.setField(scheduler, "certCheckExecutor", certCheckExecutor);

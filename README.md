@@ -1,29 +1,58 @@
 # SSL/TLS Sertifika İzleme Sistemi
 
-Kurumunuzdaki SSL/TLS sertifikalarını, port erişilebilirliğini, HTTP/S çalışma süresini ve DNS kayıtlarını merkezi olarak izleyen, uyarı veren ve yöneten tam kapsamlı sistem.
+Kurumunuzdaki SSL/TLS sertifikalarını, TCP/TLS port erişilebilirliğini, HTTP/S çalışma süresini, DNS kayıtlarını, ICMP ping erişilebilirliğini ve HTTP içerik (keyword) doğrulamasını merkezi olarak izleyen; çok-seviyeli alarm, olay yönetimi ve raporlama sunan tam kapsamlı sistem.
 
 ## Özellikler
 
+### Sertifika İzleme
 - **Otomatik Sertifika Kontrolü** — Yapılandırılabilir cron ile tüm envanteri tarar (varsayılan: her saat)
 - **Çok Seviyeli Uyarı** — WARNING (30g) / HIGH (15g) / CRITICAL (7g) eşikleri, Admin Panel'den ayarlanabilir
-- **Port İzleme** — TCP port erişilebilirlik kontrolü, gecikme ölçümü ve geçmiş grafiği
-- **HTTP/S Uptime İzleme** — HTTP durum kodu, yanıt süresi ve SSL bilgisi takibi
-- **DNS İzleme** — A/AAAA/CNAME/MX/TXT kayıt değişikliği tespiti
-- **Zincir Doğrulama** — Eksik veya geçersiz sertifika zinciri tespiti (BouncyCastle)
+- **Zincir Doğrulama** — Eksik/geçersiz sertifika zinciri tespiti (BouncyCastle)
 - **İptal Kontrolü** — OCSP öncelikli, CRL yedekli iptal doğrulaması
 - **Parmak İzi & Konu Sabitleme** — Sertifika değişimini otomatik tespit eder
-- **Kullanıcı & Takım Yönetimi** — Çok kullanıcılı, rol tabanlı erişim (USER / AUDIT / ADMIN); takım bazlı envanter sahipliği
-- **Eskalasyon Kişileri** — Org rol bazlı kişiler (PO, TECH, MANAGER, CLEVEL); e-posta + Teams/Slack webhook
-- **Uyarı Yaşam Döngüsü** — Onayla, yeniden bildir, çöz; tam bildirim geçmişi
-- **Sertifika Notları** — Domain başına dahili not ekleme
-- **Denetim Günlüğü** — Tüm yönetici işlemleri (envanter, kullanıcı, takım) zaman damgalı kayıt
-- **Sistem Sağlığı** — Heartbeat, SMTP istatistikleri, DB latency, tarama istatistikleri, HTTP metrikler
-- **Zayıf Algoritma Raporu** — MD5/SHA1 imzalı veya kısa anahtar kullanan sertifikaların tespiti
-- **Web Dashboard** — React SPA, koyu/açık mod, Türkçe/İngilizce
-- **Admin Paneli** — Envanter, eşikler, kullanıcılar, takımlar, kişiler, uyarı geçmişi, denetim
+- **Zayıf Algoritma Raporu** — MD5/SHA1 imzalı veya kısa anahtarlı sertifikaların tespiti
+- **Yenileme Tavsiyeleri** — Yakında dolacak sertifikalar için öneri listesi
+
+### İzleme Tipleri (Monitoring)
+- **Port İzleme** — TCP / TLS / HTTP / BANNER / UDP kontrol tipleri; gecikme ölçümü, geçmiş & süre grafiği
+- **HTTP/S Uptime** — HTTP durum kodu, yanıt süresi ve SSL bilgisi takibi
+- **DNS İzleme** — A/AAAA/CNAME/MX/TXT/NS; değişiklik/rotasyon tespiti, beklenen-değer kilidi, çoklu-resolver tutarlılık (propagation), yavaş-çözümleme (slow) alarmı
+- **Ping (ICMP)** — Host erişilebilirliği, RTT ve paket kaybı (konteynerde non-root ICMP)
+- **Keyword (İçerik)** — HTTP içerik / anahtar-kelime doğrulaması (occurrence + operatör koşulu)
+- **HTTP / Website** — URL uptime (durum kodu pattern / yönlendirme takibi / gecikme) + opsiyonel per-monitör SSL & domain-expiry hatırlatmaları
+- **Domain (Alan Adı) Süre Bitişi** — Registrar kayıt bitişi: **RDAP** birincil (IANA bootstrap ile TLD→sunucu, proxy-aware, rdap.org fallback) + **WHOIS/43** fallback (env-gated, `.tr`/nic.tr parser dahil); registrar, EPP status kodları, nameserver; **4-seviyeli OK/WARNING/CRITICAL/UNKNOWN**; değişiklik tespiti (registrar/NS/status → hijack sinyali) + DNS çapraz doğrulama; Public Suffix List ile eTLD+1, IDN → punycode
+- **Ortak İzleme Özellikleri** — Monitör-başına alarm hassasiyeti (Nx teyit / Nx kurtarma), mantıksal gruplar, takım bazlı sahiplik & filtreleme, tıkla-filtreli özet dashboard'ları, 4-sekmeli detay (Kontrol / Alarm Geçmişi / Süre Grafiği / Rehber & Notlar), tıkla-izole legend'lı süre grafikleri, izleme-başına Rehber & Notlar; alarm e-postasından detaya deep-link
+
+> **Domain lifecycle & UNKNOWN — neden UNKNOWN de alarmdır:** Bir alan adı yaşam döngüsü
+> *registered → active → (yenilenmezse) autoRenewPeriod → redemptionPeriod → pendingDelete → released*
+> evrelerinden geçer. `redemptionPeriod`/`pendingDelete`/`serverHold`/`clientHold` EPP kodları anında **CRITICAL** üretir.
+> RDAP/WHOIS yanıt vermezse veya bitiş tarihi ayrıştırılamazsa durum **UNKNOWN** olur ve **ayrı bir alarm** çıkar —
+> *"veri yok ≠ sorun yok"* (körlük gizli risktir; erişim/proxy/TLD desteği doğrulanmalıdır). `.tr` gibi RDAP'siz TLD'ler
+> kurumsal DMZ proxy'sinden WHOIS/43 geçemediğinde UNKNOWN kalır (port-43 egress gerekir); RDAP'lı TLD'ler proxy üzerinden çözülür.
+
+### Alarm & Bildirim
+- **Alarm Yaşam Döngüsü** — Teyit (Nx tekrar), otomatik kurtarma, onayla, yeniden bildir, çöz; tam bildirim geçmişi
+- **Eskalasyon Kişileri** — Org rol bazlı (PO, TECH, MANAGER, CLEVEL); e-posta + Teams/Slack webhook
+- **Outlook-uyumlu E-posta** — VML/MSO-güvenli HTML alarm & çözüm e-postaları, monitör detayına deep-link CTA
+- **Olay (Incident) Yönetimi** — Olay kaydı, geçmişi ve görselleri
+
+### Yönetim & Raporlama
+- **Kullanıcı & Takım Yönetimi** — Rol tabanlı (USER / AUDIT / ADMIN) + ince-taneli izinler; takım bazlı envanter & izleme sahipliği
+- **Haftalık Erişilebilirlik Raporları** — Otomatik haftalık uptime/erişilebilirlik özetleri (e-posta + görsel)
+- **Denetim Günlüğü** — Tüm yönetici işlemleri zaman damgalı
+- **Rehber & Notlar / Bağlantılar** — İzleme-başına rehber + yapılandırılmış not günlüğü; kurumsal yardım bağlantıları
+- **LDAP Entegrasyonu** — Opsiyonel dizin kimlik doğrulama
+
+### Sistem & Operasyon
+- **Sistem Sağlığı** — Heartbeat, SMTP istatistikleri, DB latency, tarama istatistikleri, JVM/CPU metrikleri
+- **HTTP İstek Gezgini (kalıcı seri)** — Per-endpoint istek/hata/gecikme (p95/p99) zaman serileri; takvim + tıkla-izole legend
+- **SQL Playground** — Salt-okunur SQL keşif arayüzü (admin)
+- **Giriş Isı Haritası & GeoIP Anomali** — Saat/gün bazlı giriş yoğunluğu; ofis-dışı / coğrafi-hız anomali tespiti
+- **Ağ Tanılama** — curl / dig / traceroute / openssl derin tanılama araçları (pod içi)
+- **Prometheus Metrikleri** — `/api/admin/system/metrics`
 - **REST API** — Harici sistemlerle entegrasyon
-- **Prometheus Metrikleri** — `/api/admin/system/metrics` endpoint
-- **Docker & Helm** — Üretim ortamına hazır konteyner ve Kubernetes desteği
+- **Web Dashboard** — React SPA, koyu/açık tema, Türkçe/İngilizce
+- **Docker & Helm** — Üretime hazır konteyner (non-root, salt-okunur FS) + Kubernetes/Helm
 
 ## Teknoloji Yığını
 
@@ -32,10 +61,12 @@ Kurumunuzdaki SSL/TLS sertifikalarını, port erişilebilirliğini, HTTP/S çal�
 | Backend | Java 25, Spring Boot 4.1.0, Spring Data JPA |
 | Veritabanı | PostgreSQL |
 | Sertifika | BouncyCastle (OCSP, CRL, zincir doğrulama) |
-| Frontend | React 18.3.1, Vite 5, lucide-react |
-| Konteyner | Docker (çok aşamalı), Docker Compose |
+| DNS | dnsjava (çok-resolver sorgu, SOA/NS) |
+| Frontend | React 18.3, Vite 5, recharts, react-markdown, lucide-react |
+| Test | JUnit 5 + Mockito (backend), Vitest + Testing Library (frontend) |
+| Konteyner | Docker çok-aşamalı (Node 20 → Maven 3.9/Temurin 25 → **Temurin 25 JRE** Alpine, non-root UID 1000) |
 | K8s | Helm chart (sürüm `VERSION` dosyasından) |
-| CI/CD | GitHub Actions (Node.js 24 runtime) |
+| CI/CD | GitHub Actions — release: sürüm bump → Docker/GHCR + Trivy tarama → Helm push → git tag → GitHub Release → develop back-merge |
 
 ## Proje Yapısı
 
@@ -43,27 +74,33 @@ Kurumunuzdaki SSL/TLS sertifikalarını, port erişilebilirliğini, HTTP/S çal�
 cert-monitor/
 ├── backend/
 │   └── src/main/java/com/certmonitor/
-│       ├── controller/          # REST API (Certificate, Admin, Auth, Monitoring, Audit, System)
-│       ├── service/             # İş mantığı (Checker, Escalation, Scheduler, PortChecker, DnsChecker…)
+│       ├── controller/          # REST API (Certificate, Auth, Admin, Monitoring, MonitorNotes,
+│       │                        #   Incident, WeeklyReport, System, SqlPlayground, Permission, Ldap…)
+│       ├── service/             # İş mantığı (CertificateChecker, Scheduler, MonitoringOutage,
+│       │                        #   Escalation, EmailNotification, Ping/Keyword/Dns/PortChecker,
+│       │                        #   WeeklyReport, HttpMetricsQuery, Permission…)
 │       ├── model/               # JPA entity'leri
 │       ├── repository/          # Spring Data repository'leri
 │       └── config/              # WebConfig, GlobalExceptionHandler, AuthInterceptor
 ├── frontend/
 │   └── src/
-│       ├── components/          # React bileşenleri (Nav, StatsPanel, CertificatesTable, CertificateModal…)
-│       ├── components/admin/    # Admin paneli (Inventory, Thresholds, Contacts, AlertHistory,
-│       │                        #   UserManager, TeamManager, AuditLogViewer, SystemHealth,
+│       ├── components/          # İzleme sayfaları (Ping/Keyword/Port/DnsMonitorPage, DnsDetailModal),
+│       │                        #   paylaşımlı (ResponseTimeChart, MonitorStatsBar, MonitorNotes),
+│       │                        #   sertifika (CertificatesTable, CertificateModal, StatsPanel…)
+│       ├── components/admin/    # Admin (Inventory, Thresholds, Contacts, AlertHistory, UserManager,
+│       │                        #   TeamManager, PermissionMatrix, AuditLogViewer, SystemHealth,
+│       │                        #   HttpMetricsExplorer, ChartModal, LoginHeatmap, SqlPlayground,
 │       │                        #   WeakAlgorithmReport)
-│       ├── components/ui/       # Yeniden kullanılabilir bileşenler (SearchableSelect, Dialog,
-│       │                        #   DateTimeRangePicker, CertMonitorLogo)
-│       ├── pages/               # ExpiryForecastPage
+│       ├── components/ui/       # Yeniden kullanılabilir (SearchableSelect, Dialog, TimeRangePicker,
+│       │                        #   DateTimeRangePicker, MarkdownEditor, CertMonitorLogo)
+│       ├── pages/               # ExpiryForecastPage, WeeklyReportsPage, IncidentHistoryPage, HelpPage
 │       ├── api/client.js        # API istemcisi
-│       └── i18n/                # Çok dil & tema yönetimi
+│       └── i18n/                # Çok dil (TR/EN) & tema yönetimi
 ├── helm/cert-monitor/           # Helm chart + ortam değerleri
 │   └── environments/            # master.yaml, develop.yaml, release.yaml
 ├── scripts/                     # build-image.sh / build-image.ps1
 ├── .github/workflows/           # ci.yml, docker-build.yml, release.yml
-├── Dockerfile                   # Çok aşamalı build (Node → Maven → JRE 21)
+├── Dockerfile                   # Çok aşamalı build (Node 20 → Maven 3.9/Temurin 25 → Temurin 25 JRE)
 ├── docker-compose.yml
 └── sertifikaListesi.txt         # Dosya tabanlı domain listesi (isteğe bağlı)
 ```
@@ -205,12 +242,11 @@ Giriş yaptıktan sonra:
 
 1. **Dashboard** — Özet istatistikler ve sertifika kartları
 2. **Tüm Sertifikalar** — Sayfalanmış, filtrelenebilir tablo
-3. **Port İzleme** — TCP port durumu ve geçmişi
-4. **Uptime** — HTTP/S erişilebilirlik ve SSL süresi takibi
-5. **DNS** — DNS kayıt değişikliği izleme
-6. **Yenileme Tavsiyeleri** — Yakında dolacak sertifikalar için öneri listesi
-7. **Aktivite** — Son kontrol ve işlem günlüğü
-8. **Admin** — Envanter, kullanıcılar, takımlar, eşikler, eskalasyon kişileri, uyarılar, denetim, sistem sağlığı
+3. **HTTP / Domain / Port / Ping / Keyword / DNS / Uptime İzleme** — Her tip için liste + tıkla-filtreli özet dashboard + detay modali (Kontrol / Alarm Geçmişi / Süre Grafiği / Rehber & Notlar)
+4. **Yenileme Tavsiyeleri** — Yakında dolacak sertifikalar için öneri listesi
+5. **Olaylar & Haftalık Raporlar** — Olay (incident) geçmişi ve haftalık erişilebilirlik raporları
+6. **Aktivite** — Son kontrol ve işlem günlüğü
+7. **Admin** — Envanter, kullanıcılar, takımlar, izinler, eşikler, eskalasyon kişileri, uyarılar, denetim, sistem sağlığı, SQL playground
 
 Herhangi bir sertifikaya tıklayarak detaylar, uyarı geçmişi ve notlar görüntülenebilir.
 
@@ -306,24 +342,50 @@ Tüm istekler HTTP Basic Auth veya oturum çerezi gerektirir.
 
 ### İzleme (Monitoring)
 
+Dört serbest izleme tipi (`port`, `ping`, `keyword`, `dns`) ortak bir REST desenini paylaşır — aşağıda `{type}` ∈ `port | ping | keyword | dns`:
+
+| Metot | Endpoint | Açıklama |
+|-------|----------|----------|
+| GET | `/api/monitoring/{type}` | Monitör listesi (grup & takım alanlarıyla) |
+| POST | `/api/monitoring/{type}` | Monitör ekle |
+| PUT | `/api/monitoring/{type}/{id}` | Monitör güncelle (monitör-başına alarm hassasiyeti dahil) |
+| DELETE | `/api/monitoring/{type}/{id}` | Monitör sil |
+| POST | `/api/monitoring/{type}/{id}/check` | Hemen kontrol et |
+| GET | `/api/monitoring/{type}/{id}/history` | Kontrol geçmişi |
+| GET | `/api/monitoring/{type}/{id}/response-series` | Süre grafiği serisi (avg / p95 / min-max; ping'de paket kaybı) |
+| POST | `/api/monitoring/{type}/test` | Kaydetmeden anlık test |
+| GET | `/api/monitoring/dns/{id}/details` | DNS çözümleme detayı (resolver başına) |
+| GET | `/api/monitoring/defaults` | Yeni monitör varsayılanları (kontrol aralığı, alarm eşikleri) |
+
+**HTTP/S Uptime** (sertifika envanteri üzerinden):
+
 | Metot | Endpoint | Açıklama |
 |-------|----------|----------|
 | GET | `/api/monitoring/uptime/overview` | Tüm domain'lerin uptime özeti |
 | GET | `/api/monitoring/uptime/{domain}/history` | Uptime geçmişi |
 | GET | `/api/monitoring/uptime/{domain}/http-history` | HTTP kontrol geçmişi |
 | GET | `/api/monitoring/uptime/{domain}/ssl-history` | SSL kontrol geçmişi |
-| GET | `/api/monitoring/port` | Port monitör listesi |
-| POST | `/api/monitoring/port` | Port monitör ekle |
-| PUT | `/api/monitoring/port/{id}` | Port monitör güncelle |
-| DELETE | `/api/monitoring/port/{id}` | Port monitör sil |
-| GET | `/api/monitoring/port/{id}/history` | Port kontrol geçmişi |
-| POST | `/api/monitoring/port/{id}/check` | Port'u hemen kontrol et |
-| GET | `/api/monitoring/dns` | DNS monitör listesi |
-| POST | `/api/monitoring/dns` | DNS monitör ekle |
-| PUT | `/api/monitoring/dns/{id}` | DNS monitör güncelle |
-| DELETE | `/api/monitoring/dns/{id}` | DNS monitör sil |
-| GET | `/api/monitoring/dns/{id}/history` | DNS değişim geçmişi |
-| POST | `/api/monitoring/dns/{id}/check` | DNS'i hemen kontrol et |
+
+**Domain (Alan Adı Süre Bitişi)** (`/api/monitoring/domain` — RDAP/WHOIS, latency yok → response-series yok):
+
+| Metot | Endpoint | Açıklama |
+|-------|----------|----------|
+| GET | `/api/monitoring/domain` | Domain monitör listesi (durum / kalan gün / registrar / EPP) |
+| POST | `/api/monitoring/domain` | Domain monitör ekle (URL/subdomain → PSL ile registrable'a indirger) |
+| PUT / DELETE | `/api/monitoring/domain/{id}` | Güncelle / sil |
+| POST | `/api/monitoring/domain/{id}/check` | Hemen kontrol et (RDAP → WHOIS fallback) |
+| GET | `/api/monitoring/domain/{id}/history` | Kontrol geçmişi (trend + değişiklik tespiti) |
+| POST | `/api/monitoring/domain/test` | Kaydetmeden anlık sorgu |
+
+**Rehber & Notlar** (`/api/monitoring/notes`):
+
+| Metot | Endpoint | Açıklama |
+|-------|----------|----------|
+| GET | `/api/monitoring/notes?type={type}&target={target}` | İzleme rehberi + not günlüğü |
+| PUT | `/api/monitoring/notes/guide` | Rehber içeriğini kaydet |
+| POST | `/api/monitoring/notes` | Not ekle |
+| PUT | `/api/monitoring/notes/{id}` | Not güncelle |
+| DELETE | `/api/monitoring/notes/{id}` | Not sil |
 
 ### Denetim & Sistem
 
@@ -336,9 +398,28 @@ Tüm istekler HTTP Basic Auth veya oturum çerezi gerektirir.
 | GET | `/api/admin/system/smtp-logs` | SMTP gönderim geçmişi |
 | GET | `/api/admin/system/db-stats` | PostgreSQL tablo istatistikleri |
 | GET | `/api/admin/system/metrics` | Prometheus metrikleri |
-| GET | `/api/admin/system/http-metrics` | HTTP istek metrikleri |
+| GET | `/api/admin/system/http-metrics` | HTTP istek metrikleri (anlık) |
+| GET | `/api/admin/system/http-metrics/endpoints` | Kalıcı seri için endpoint listesi |
+| GET | `/api/admin/system/http-metrics/series` | Kalıcı per-endpoint istek/hata/gecikme (p95/p99) serisi |
+| GET | `/api/admin/system/heartbeat-timeline` | Heartbeat zaman çizelgesi |
 | POST | `/api/admin/system/heartbeat` | Heartbeat kaydı |
 | DELETE | `/api/admin/system/scheduler-lock` | Zamanlayıcı kilidini serbest bırak |
+
+### Diğer Modüller
+
+| Taban Yol | Modül |
+|-----------|-------|
+| `/api/incidents` | Olay (incident) kaydı, geçmişi ve görselleri |
+| `/api/weekly-reports` | Haftalık erişilebilirlik raporları & alıcıları |
+| `/api/guide-links` | Kurumsal yardım / rehber bağlantıları |
+| `/api/users` | Kullanıcı dizini (arama, self-servis) |
+| `/api/admin/permissions` | İnce-taneli izin matrisi |
+| `/api/admin/general` | Genel uygulama ayarları (base-URL vb.) |
+| `/api/admin/smtp` | SMTP yapılandırması & test |
+| `/api/admin/ldap` | LDAP dizin entegrasyonu |
+| `/api/admin/sql` | Salt-okunur SQL playground |
+| `/api/admin/database` | Veritabanı tablo bilgisi |
+| `/api/admin/secret-tools` | Ağ tanılama araçları (curl / dig / traceroute / openssl) |
 
 ### Auth
 
@@ -398,9 +479,31 @@ PostgreSQL kullanılır. Bağlantı `DB_URL` ortam değişkeniyle yapılandırı
 | `uptime_checks` | HTTP/S uptime kontrol geçmişi |
 | `dns_monitors` | İzlenen DNS kayıtları |
 | `dns_records` | DNS değişim geçmişi |
-| `audit_logs` | Yönetici işlem günlüğü |
-| `system_heartbeats` | Sistem canlılık kayıtları |
+| `audit_log` | Yönetici işlem günlüğü |
+| `system_heartbeat` | Sistem canlılık kayıtları |
 | `remember_me_tokens` | "Beni hatırla" oturum token'ları |
+| `password_history` | Parola geçmişi (yeniden kullanım engeli) |
+| `permission_grants` | İnce-taneli izin atamaları |
+| `ping_monitors` | İzlenen ICMP ping hedefleri |
+| `ping_checks` | Ping kontrol geçmişi (RTT, paket kaybı) |
+| `keyword_monitors` | İzlenen HTTP içerik / keyword kuralları |
+| `keyword_results` | Keyword kontrol geçmişi |
+| `http_monitors` | İzlenen HTTP/Website monitörleri |
+| `http_checks` | HTTP uptime kontrol geçmişi |
+| `domain_monitors` | İzlenen alan adları (registrable domain + eşikler) |
+| `domain_checks` | Alan adı kontrol geçmişi (RDAP/WHOIS: expiry, registrar, EPP, NS) |
+| `monitor_guide` | İzleme-başına rehber içeriği |
+| `monitor_notes` | İzleme-başına not günlüğü |
+| `guide_links` | Kurumsal yardım / rehber bağlantıları |
+| `http_metric_minute` | Dakikalık kalıcı HTTP istek/gecikme metrikleri |
+| `incident_images` | Olay (incident) görselleri |
+| `weekly_reports` | Haftalık erişilebilirlik raporları |
+| `weekly_report_mails` | Haftalık rapor e-posta alıcıları |
+| `weekly_report_images` | Haftalık rapor görselleri |
+| `weekly_availability_log` | Haftalık erişilebilirlik ham günlüğü |
+| `diagnostic_runs` | Ağ tanılama çalıştırma geçmişi |
+| `ldap_settings` | LDAP dizin yapılandırması |
+| `smtp_settings` | SMTP yapılandırması |
 
 ## Kubernetes Dağıtımı
 
@@ -481,4 +584,4 @@ Dahili kullanım için tasarlanmıştır.
 
 ---
 
-**Sürüm:** 15.0.0 — Son Güncelleme: 24 Mayıs 2026
+**Sürüm:** 19.44.1 — Son Güncelleme: 8 Temmuz 2026

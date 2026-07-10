@@ -41,24 +41,31 @@ public class PortCheckerService {
         return check(host, port, timeoutMs, "TCP", null, null);
     }
 
-    /** Monitor tipine göre kontrol. */
+    /** Monitor tipine göre kontrol (IP sürümü dahil). */
     public Map<String, Object> check(PortMonitor m) {
         return check(m.getHost(), m.getPort(),
                 m.getTimeoutMs() != null ? m.getTimeoutMs() : 5000,
-                m.getProtocol(), m.getSendData(), m.getExpect());
+                m.getProtocol(), m.getSendData(), m.getExpect(),
+                m.getIpVersion());
     }
 
+    /** Geriye uyum: IP sürümü belirtilmeden (auto). */
     public Map<String, Object> check(String host, int port, int timeoutMs, String type, String send, String expect) {
+        return check(host, port, timeoutMs, type, send, expect, "auto");
+    }
+
+    public Map<String, Object> check(String host, int port, int timeoutMs, String type, String send, String expect, String ipVersion) {
         String t = type != null ? type.trim().toUpperCase() : "TCP";
         long start = System.currentTimeMillis();
         Map<String, Object> result = new LinkedHashMap<>();
         try {
+            InetAddress addr = resolveFamily(host, ipVersion);   // null → varsayılan çözümleme (auto)
             switch (t) {
-                case "TLS"    -> doTls(host, port, timeoutMs, result);
-                case "HTTP"   -> doHttp(host, port, timeoutMs, send, expect, result);
-                case "BANNER" -> doBanner(host, port, timeoutMs, send, expect, result);
-                case "UDP"    -> doUdp(host, port, timeoutMs, send, result);
-                default        -> doTcp(host, port, timeoutMs, result);
+                case "TLS"    -> doTls(addr, host, port, timeoutMs, result);
+                case "HTTP"   -> doHttp(addr, host, port, timeoutMs, send, expect, result);
+                case "BANNER" -> doBanner(addr, host, port, timeoutMs, send, expect, result);
+                case "UDP"    -> doUdp(addr, host, port, timeoutMs, send, result);
+                default        -> doTcp(addr, host, port, timeoutMs, result);
             }
             if (Boolean.TRUE.equals(result.get("open")) && result.get("response_ms") == null) {
                 result.put("response_ms", System.currentTimeMillis() - start);
@@ -73,16 +80,16 @@ public class PortCheckerService {
         return result;
     }
 
-    private void doTcp(String host, int port, int timeoutMs, Map<String, Object> result) throws Exception {
+    private void doTcp(InetAddress addr, String host, int port, int timeoutMs, Map<String, Object> result) throws Exception {
         try (Socket s = new Socket()) {
-            s.connect(new InetSocketAddress(host, port), timeoutMs);
+            s.connect(sockAddr(addr, host, port), timeoutMs);
             result.put("open", true);
         }
     }
 
-    private void doTls(String host, int port, int timeoutMs, Map<String, Object> result) throws Exception {
+    private void doTls(InetAddress addr, String host, int port, int timeoutMs, Map<String, Object> result) throws Exception {
         try (Socket raw = new Socket()) {
-            raw.connect(new InetSocketAddress(host, port), timeoutMs);
+            raw.connect(sockAddr(addr, host, port), timeoutMs);
             SSLSocketFactory f = trustAllContext().getSocketFactory();
             try (SSLSocket ssl = (SSLSocket) f.createSocket(raw, host, port, true)) {
                 ssl.setSoTimeout(timeoutMs);
@@ -98,11 +105,12 @@ public class PortCheckerService {
         }
     }
 
-    private void doHttp(String host, int port, int timeoutMs, String path, String expect, Map<String, Object> result) throws Exception {
+    private void doHttp(InetAddress addr, String host, int port, int timeoutMs, String path, String expect, Map<String, Object> result) throws Exception {
         boolean https = port == 443 || port == 8443;
         String p = (path != null && !path.isBlank()) ? path.trim() : "/";
         if (!p.startsWith("/")) p = "/" + p;
-        URL url = URI.create((https ? "https" : "http") + "://" + host + ":" + port + p).toURL();
+        String connectHost = addr != null ? urlHost(addr) : host;
+        URL url = URI.create((https ? "https" : "http") + "://" + connectHost + ":" + port + p).toURL();
         HttpURLConnection conn = (HttpURLConnection) url.openConnection();
         if (conn instanceof HttpsURLConnection hc) {
             hc.setSSLSocketFactory(trustAllContext().getSocketFactory());
@@ -113,6 +121,7 @@ public class PortCheckerService {
         conn.setInstanceFollowRedirects(false);
         conn.setRequestMethod("GET");
         conn.setRequestProperty("User-Agent", "CertMonitor-PortCheck");
+        if (addr != null) conn.setRequestProperty("Host", (port == 80 || port == 443) ? host : host + ":" + port);   // IP'ye bağlan, vhost adı doğru kalsın
         int code;
         try {
             code = conn.getResponseCode();
@@ -126,9 +135,9 @@ public class PortCheckerService {
                 + (expect != null && !expect.isBlank() ? " (beklenen: " + expect.trim() + ")" : ""));
     }
 
-    private void doBanner(String host, int port, int timeoutMs, String send, String expect, Map<String, Object> result) throws Exception {
+    private void doBanner(InetAddress addr, String host, int port, int timeoutMs, String send, String expect, Map<String, Object> result) throws Exception {
         try (Socket s = new Socket()) {
-            s.connect(new InetSocketAddress(host, port), timeoutMs);
+            s.connect(sockAddr(addr, host, port), timeoutMs);
             s.setSoTimeout(timeoutMs);
             if (send != null && !send.isEmpty()) {
                 OutputStream os = s.getOutputStream();
@@ -148,13 +157,13 @@ public class PortCheckerService {
         }
     }
 
-    private void doUdp(String host, int port, int timeoutMs, String send, Map<String, Object> result) throws Exception {
+    private void doUdp(InetAddress addr, String host, int port, int timeoutMs, String send, Map<String, Object> result) throws Exception {
         try (DatagramSocket ds = new DatagramSocket()) {
             ds.setSoTimeout(timeoutMs);
             byte[] payload = (send != null && !send.isEmpty())
                     ? unescape(send).getBytes(StandardCharsets.ISO_8859_1) : new byte[]{0};
-            InetAddress addr = InetAddress.getByName(host);
-            ds.send(new DatagramPacket(payload, payload.length, addr, port));
+            InetAddress target = addr != null ? addr : InetAddress.getByName(host);
+            ds.send(new DatagramPacket(payload, payload.length, target, port));
             byte[] buf = new byte[2048];
             try {
                 ds.receive(new DatagramPacket(buf, buf.length));
@@ -192,6 +201,29 @@ public class PortCheckerService {
 
     private static String unescape(String s) {
         return s.replace("\\r", "\r").replace("\\n", "\n").replace("\\t", "\t");
+    }
+
+    /** ipVersion v4/v6 → host'un o aileye ait ilk adresi; auto/null → null (JVM varsayılan çözümlemesi korunur). */
+    private static InetAddress resolveFamily(String host, String ipVersion) throws UnknownHostException {
+        if (ipVersion == null || ipVersion.isBlank() || "auto".equalsIgnoreCase(ipVersion)) return null;
+        boolean wantV6 = "v6".equalsIgnoreCase(ipVersion);
+        for (InetAddress a : InetAddress.getAllByName(host)) {
+            if (wantV6 ? a instanceof Inet6Address : a instanceof Inet4Address) return a;
+        }
+        throw new UnknownHostException("No IP" + (wantV6 ? "v6" : "v4") + " address for " + host);
+    }
+
+    /** addr set ise onunla (aile-kısıtlı), değilse host adıyla (varsayılan) soket adresi. */
+    private static InetSocketAddress sockAddr(InetAddress addr, String host, int port) {
+        return addr != null ? new InetSocketAddress(addr, port) : new InetSocketAddress(host, port);
+    }
+
+    /** URL için IP literali (v6 köşeli parantez + zone-id kırpma). */
+    private static String urlHost(InetAddress addr) {
+        String ip = addr.getHostAddress();
+        int z = ip.indexOf('%');
+        if (z >= 0) ip = ip.substring(0, z);
+        return addr instanceof Inet6Address ? "[" + ip + "]" : ip;
     }
 
     private static SSLContext trustAllContext() throws Exception {

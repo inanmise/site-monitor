@@ -36,6 +36,18 @@ public final class AppSettingsCatalog {
         new Setting("cert.monitor.dns.resolvers",                "monitoring", Type.CSV),
         new Setting("cert.monitor.keyword.alert-enabled",        "monitoring", Type.BOOL),
         new Setting("cert.monitor.ping.alert-enabled",           "monitoring", Type.BOOL),
+        new Setting("cert.monitor.http.alert-enabled",           "monitoring", Type.BOOL),
+        new Setting("cert.monitor.http.rdap-base-url",           "monitoring", Type.STRING),
+        // Alan adı (domain) süre-bitişi izleme — RDAP (proxy-aware) + env-gated WHOIS.
+        new Setting("cert.monitor.domain.alert-enabled",         "monitoring", Type.BOOL),
+        new Setting("cert.monitor.domain.rdap-bootstrap-url",    "monitoring", Type.STRING),
+        new Setting("cert.monitor.domain.rdap-fallback-url",     "monitoring", Type.STRING),
+        new Setting("cert.monitor.domain.whois-enabled",         "monitoring", Type.BOOL),
+        new Setting("cert.monitor.domain.whois-servers",         "monitoring", Type.CSV),
+        new Setting("cert.monitor.domain.whois-timeout-ms",      "monitoring", Type.INT),
+        new Setting("cert.monitor.domain.default-warning-days",  "monitoring", Type.INT),
+        new Setting("cert.monitor.domain.default-critical-days", "monitoring", Type.INT),
+        new Setting("cert.monitor.domain.default-thresholds",    "monitoring", Type.STRING),
         new Setting("cert.monitor.expiry.alert-enabled",         "monitoring", Type.BOOL),
         // DNS yavaş/timeout alarmı (DNS_SLOW) tunable'ları — canlı.
         new Setting("cert.monitor.dns.slow-threshold-ms",        "monitoring", Type.INT),
@@ -48,9 +60,14 @@ public final class AppSettingsCatalog {
         new Setting("cert.monitor.ping.default-interval-seconds",    "frequency", Type.INT),
         new Setting("cert.monitor.keyword.default-interval-seconds", "frequency", Type.INT),
         new Setting("cert.monitor.port.default-interval-seconds",    "frequency", Type.INT),
+        new Setting("cert.monitor.http.default-interval-seconds",    "frequency", Type.INT),
+        new Setting("cert.monitor.domain.default-interval-seconds",  "frequency", Type.INT),
         new Setting("cert.monitor.ping.default-timeout-ms",          "frequency", Type.INT),
         new Setting("cert.monitor.keyword.default-timeout-ms",       "frequency", Type.INT),
+        new Setting("cert.monitor.keyword.default-slow-ms",          "frequency", Type.INT),
         new Setting("cert.monitor.port.default-timeout-ms",          "frequency", Type.INT),
+        new Setting("cert.monitor.port.default-slow-ms",             "frequency", Type.INT),
+        new Setting("cert.monitor.http.default-timeout-ms",          "frequency", Type.INT),
         // Haftalık erişilebilirlik e-postası (Pazartesi 10:00) aç/kapa — canlı.
         new Setting("cert.monitor.weekly-availability.enabled",  "monitoring", Type.BOOL),
         // Kurumsal/iç kök+ara CA paketi (PEM) — bu CA ile imzalı host'lar TRUSTED sayılır.

@@ -95,6 +95,27 @@ class KeywordCheckerServiceTest {
     }
 
     @Test
+    @DisplayName("check: caseSensitive=true büyük/küçük harf DUYARLI sayar; false duyarsız")
+    void check_caseSensitive() throws IOException {
+        HttpServer server = serve("<p>SUCCESS ok success done</p>");   // 'SUCCESS' 1, 'success' 1
+        try {
+            String url = "http://127.0.0.1:" + server.getAddress().getPort() + "/";
+            KeywordCheckerService svc = newChecker();
+            // Duyarsız (varsayılan): SUCCESS + success → 2
+            Map<String, Object> insensitive = svc.check(url, "success", 3000, null, false);
+            assertThat(insensitive.get("count")).isEqualTo(2);
+            // Duyarlı: yalnız küçük 'success' → 1
+            Map<String, Object> sensitiveLower = svc.check(url, "success", 3000, null, true);
+            assertThat(sensitiveLower.get("count")).isEqualTo(1);
+            // Duyarlı: yalnız büyük 'SUCCESS' → 1
+            Map<String, Object> sensitiveUpper = svc.check(url, "SUCCESS", 3000, null, true);
+            assertThat(sensitiveUpper.get("count")).isEqualTo(1);
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
     @DisplayName("check: bağlantı reddi → found=false, count=0, error döner")
     void check_connectionError() {
         Map<String, Object> r = newChecker().check("http://127.0.0.1:1/", "x", 500);

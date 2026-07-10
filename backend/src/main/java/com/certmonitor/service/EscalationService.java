@@ -69,6 +69,9 @@ public class EscalationService {
     /** Port kesintisi alarmı — port sweep'i tarafından yönetilir. */
     public static final String TYPE_PORT_DOWN = "PORT_DOWN";
 
+    /** Port yavaş yanıt alarmı — port sweep'i tarafından yönetilir (PORT_DOWN'dan AYRI; aynı envanter-yönlendirmesi). */
+    public static final String TYPE_PORT_SLOW = "PORT_SLOW";
+
     /** DNS çözümleme hatası alarmı — DNS sweep'i tarafından yönetilir. */
     public static final String TYPE_DNS_FAILURE = "DNS_FAILURE";
 
@@ -90,15 +93,44 @@ public class EscalationService {
     /** Keyword monitor alarmı — keyword sweep'i tarafından yönetilir. */
     public static final String TYPE_KEYWORD = "KEYWORD";
 
+    /** Keyword monitör yan alarmları (yavaş yanıt / URL host'unun SSL / domain bitişi) — HTTP tiplerinden AYRI. */
+    public static final String TYPE_KEYWORD_SLOW = "KEYWORD_SLOW";
+    public static final String TYPE_KEYWORD_SSL = "KEYWORD_SSL";
+    public static final String TYPE_KEYWORD_DOMAIN_EXPIRY = "KEYWORD_DOMAIN_EXPIRY";
+    public static boolean isKeywordAux(String t) {
+        return TYPE_KEYWORD_SLOW.equals(t) || TYPE_KEYWORD_SSL.equals(t) || TYPE_KEYWORD_DOMAIN_EXPIRY.equals(t);
+    }
+
     /** Ping (ICMP) kesintisi alarmı — ping sweep'i tarafından yönetilir. */
     public static final String TYPE_PING_DOWN = "PING_DOWN";
+
+    /** HTTP/Website erişilebilirlik kesintisi alarmı — HTTP sweep'i tarafından yönetilir. */
+    public static final String TYPE_HTTP_DOWN = "HTTP_DOWN";
+
+    /** HTTP monitörü TLS sertifika hatası/bitişi alarmı — yavaş SSL döngüsü tarafından yönetilir. */
+    public static final String TYPE_HTTP_SSL = "HTTP_SSL";
+
+    /** Domain (registrar/WHOIS) kayıt bitişi alarmı — yavaş domain döngüsü tarafından yönetilir. */
+    public static final String TYPE_DOMAIN_EXPIRY = "DOMAIN_EXPIRY";
+
+    /** Bağımsız Domain izleme tipi alarmları (DOMAINMON_* — HTTP'nin DOMAIN_EXPIRY'sinden AYRI, domain-anahtarlı). */
+    public static final String TYPE_DOMAINMON_EXPIRY  = "DOMAINMON_EXPIRY";
+    public static final String TYPE_DOMAINMON_UNKNOWN = "DOMAINMON_UNKNOWN";
+    public static final String TYPE_DOMAINMON_STATUS  = "DOMAINMON_STATUS";
+    public static final String TYPE_DOMAINMON_CHANGED = "DOMAINMON_CHANGED";
+    public static boolean isDomainMon(String t) {
+        return TYPE_DOMAINMON_EXPIRY.equals(t) || TYPE_DOMAINMON_UNKNOWN.equals(t)
+            || TYPE_DOMAINMON_STATUS.equals(t) || TYPE_DOMAINMON_CHANGED.equals(t);
+    }
 
     /** İzleme kaynaklı alarm tipleri — kadanslarının sahibi ilgili sweep'lerdir;
      *  cert sweep'inin auto-resolve'u ve startup catch-up bunlara dokunmaz. */
     public static final Set<String> MONITORING_ALERT_TYPES =
             Set.of(TYPE_ACCESSIBILITY, TYPE_PORT_DOWN, TYPE_DNS_FAILURE, TYPE_DNS_CHANGED,
                    TYPE_DNS_SLOW, TYPE_DNS_UNEXPECTED, TYPE_DNS_INCONSISTENT,
-                   TYPE_KEYWORD, TYPE_PING_DOWN);
+                   TYPE_KEYWORD, TYPE_PING_DOWN, TYPE_HTTP_DOWN, TYPE_HTTP_SSL, TYPE_DOMAIN_EXPIRY,
+                   TYPE_DOMAINMON_EXPIRY, TYPE_DOMAINMON_UNKNOWN, TYPE_DOMAINMON_STATUS, TYPE_DOMAINMON_CHANGED,
+                   TYPE_KEYWORD_SLOW, TYPE_KEYWORD_SSL, TYPE_KEYWORD_DOMAIN_EXPIRY, TYPE_PORT_SLOW);
 
     /** Sertifika kaynaklı alarm tipleri — cert sweep'inin auto-resolve kapsamı.
      *  İzleme tipleri bilinçli olarak DIŞINDA: sertifika kontrolünün düzelmesi
@@ -431,14 +463,52 @@ public class EscalationService {
         if (existingUrls == null) return 0;
         Set<String> orphanDomains = new HashSet<>();
         for (AlertEvent e : alertEventRepo.findAllOpenOrderBySeverity()) {
-            if (!TYPE_KEYWORD.equals(e.getAlertType())) continue;
+            if (!TYPE_KEYWORD.equals(e.getAlertType()) && !isKeywordAux(e.getAlertType())) continue;
             if (e.getDomain() == null || existingUrls.contains(e.getDomain())) continue;  // eşleşen monitör var → dokunma
             orphanDomains.add(e.getDomain());
         }
         for (String d : orphanDomains) {
-            resolveOpenAlertsSilently(d, Set.of(TYPE_KEYWORD), "Sistem (öksüz alarm — eşleşen keyword izlemesi yok)");
+            resolveOpenAlertsSilently(d, Set.of(TYPE_KEYWORD, TYPE_KEYWORD_SLOW, TYPE_KEYWORD_SSL, TYPE_KEYWORD_DOMAIN_EXPIRY),
+                    "Sistem (öksüz alarm — eşleşen keyword izlemesi yok)");
         }
         if (!orphanDomains.isEmpty()) log.info("🧹 Öksüz keyword alarmı temizlendi: {} domain {}", orphanDomains.size(), orphanDomains);
+        return orphanDomains.size();
+    }
+
+    /** Öksüz HTTP alarmı temizliği — hiçbir HTTP monitör URL'sine karşılık gelmeyen açık
+     *  HTTP_DOWN/HTTP_SSL/DOMAIN_EXPIRY alarmlarını sessizce kapatır (url rename/silme sonrası). Kimlik = url. */
+    public int resolveOrphanedHttpAlerts(Set<String> existingUrls) {
+        if (existingUrls == null) return 0;
+        Set<String> orphanDomains = new HashSet<>();
+        for (AlertEvent e : alertEventRepo.findAllOpenOrderBySeverity()) {
+            if (!TYPE_HTTP_DOWN.equals(e.getAlertType()) && !TYPE_HTTP_SSL.equals(e.getAlertType())
+                    && !TYPE_DOMAIN_EXPIRY.equals(e.getAlertType())) continue;
+            if (e.getDomain() == null || existingUrls.contains(e.getDomain())) continue;  // eşleşen monitör var → dokunma
+            orphanDomains.add(e.getDomain());
+        }
+        for (String d : orphanDomains) {
+            resolveOpenAlertsSilently(d, Set.of(TYPE_HTTP_DOWN, TYPE_HTTP_SSL, TYPE_DOMAIN_EXPIRY),
+                    "Sistem (öksüz alarm — eşleşen HTTP izlemesi yok)");
+        }
+        if (!orphanDomains.isEmpty()) log.info("🧹 Öksüz HTTP alarmı temizlendi: {} domain {}", orphanDomains.size(), orphanDomains);
+        return orphanDomains.size();
+    }
+
+    /** Öksüz Domain-izleme alarmı temizliği — hiçbir domain monitörüne karşılık gelmeyen açık
+     *  DOMAINMON_* alarmlarını sessizce kapatır (domain rename/silme sonrası). Kimlik = kayıtlı domain. */
+    public int resolveOrphanedDomainMonAlerts(Set<String> existingDomains) {
+        if (existingDomains == null) return 0;
+        Set<String> orphanDomains = new HashSet<>();
+        for (AlertEvent e : alertEventRepo.findAllOpenOrderBySeverity()) {
+            if (!isDomainMon(e.getAlertType())) continue;
+            if (e.getDomain() == null || existingDomains.contains(e.getDomain())) continue;
+            orphanDomains.add(e.getDomain());
+        }
+        for (String d : orphanDomains) {
+            resolveOpenAlertsSilently(d, Set.of(TYPE_DOMAINMON_EXPIRY, TYPE_DOMAINMON_UNKNOWN, TYPE_DOMAINMON_STATUS, TYPE_DOMAINMON_CHANGED),
+                    "Sistem (öksüz alarm — eşleşen domain izlemesi yok)");
+        }
+        if (!orphanDomains.isEmpty()) log.info("🧹 Öksüz Domain alarmı temizlendi: {} domain {}", orphanDomains.size(), orphanDomains);
         return orphanDomains.size();
     }
 
@@ -449,12 +519,12 @@ public class EscalationService {
         if (existingHosts == null) return 0;
         Set<String> orphanDomains = new HashSet<>();
         for (AlertEvent e : alertEventRepo.findAllOpenOrderBySeverity()) {
-            if (!TYPE_PORT_DOWN.equals(e.getAlertType())) continue;
+            if (!TYPE_PORT_DOWN.equals(e.getAlertType()) && !TYPE_PORT_SLOW.equals(e.getAlertType())) continue;
             if (e.getDomain() == null || existingHosts.contains(e.getDomain())) continue;  // eşleşen monitör var → dokunma
             orphanDomains.add(e.getDomain());
         }
         for (String d : orphanDomains) {
-            resolveOpenAlertsSilently(d, Set.of(TYPE_PORT_DOWN), "Sistem (öksüz alarm — eşleşen port izlemesi yok)");
+            resolveOpenAlertsSilently(d, Set.of(TYPE_PORT_DOWN, TYPE_PORT_SLOW), "Sistem (öksüz alarm — eşleşen port izlemesi yok)");
         }
         if (!orphanDomains.isEmpty()) log.info("🧹 Öksüz port alarmı temizlendi: {} domain {}", orphanDomains.size(), orphanDomains);
         return orphanDomains.size();
@@ -468,6 +538,8 @@ public class EscalationService {
      */
     public void processConfirmedOutage(String domain, String alertType, String alertLevel,
                                        Map<String, Object> outageContext) {
+        // Sweep ctx'i açık bir alert_level taşıyorsa onu kullan (domain izlemesi değişken şiddet — WARNING/CRITICAL).
+        if (outageContext != null && outageContext.get("alert_level") instanceof String lvl && !lvl.isBlank()) alertLevel = lvl;
         // Serbest-form izleme (keyword/ping) takımı outageContext.team_id'den gelir
         // (envantere bağlı değil); uptime/port/dns ise domain→envanter eşlemesinden.
         Long domainTeamId, ugTeamId;
@@ -480,8 +552,10 @@ public class EscalationService {
             domainTeamId = inventoryOpt.map(com.certmonitor.model.CertificateInventory::getTeamId).orElse(null);
             ugTeamId     = inventoryOpt.map(com.certmonitor.model.CertificateInventory::getUgTeamId).orElse(null);
         }
-        // Serbest-form izleme (keyword/ping) alarmı YALNIZ takıma gider — müdür/eskalasyon kontağı eklenmez.
-        boolean teamOnly = TYPE_KEYWORD.equals(alertType) || TYPE_PING_DOWN.equals(alertType);
+        // Serbest-form izleme (keyword/ping/http) alarmı YALNIZ takıma gider — müdür/eskalasyon kontağı eklenmez.
+        boolean teamOnly = TYPE_KEYWORD.equals(alertType) || TYPE_PING_DOWN.equals(alertType)
+                || TYPE_HTTP_DOWN.equals(alertType) || TYPE_HTTP_SSL.equals(alertType) || TYPE_DOMAIN_EXPIRY.equals(alertType)
+                || isDomainMon(alertType) || isKeywordAux(alertType);
 
         String message = monitoringMessage(domain, alertType, alertLevel, outageContext);
         Optional<AlertEvent> existing = alertEventRepo.findOpenAlert(domain, alertType);
@@ -538,6 +612,16 @@ public class EscalationService {
                             " portuna erişilemiyor. Ardışık doğrulama denemeleri başarısız oldu. " +
                             "Port yeniden açıldığında alarm otomatik kapanacaktır.";
                 }
+            }
+            case TYPE_PORT_SLOW -> {
+                Object port = ctx.get("port");
+                Object proto = ctx.getOrDefault("protocol", "TCP");
+                Object ms = ctx.get("response_ms");
+                Object th = ctx.get("threshold_ms");
+                return "YÜKSEK: " + domain + " üzerindeki " + port + "/" + proto +
+                        " portu yanıt süresi eşiğini aştı" +
+                        (ms != null ? " — " + ms + " ms" : "") + (th != null ? " (eşik " + th + " ms)" : "") + ". " +
+                        "Yanıt süresi eşiğin altına indiğinde alarm otomatik kapanır.";
             }
             case TYPE_DNS_FAILURE -> {
                 Object rt = ctx.get("record_type");
@@ -603,6 +687,29 @@ public class EscalationService {
                             "Koşul yeniden sağlandığında alarm otomatik kapanacaktır.";
                 }
             }
+            case TYPE_KEYWORD_SLOW -> {
+                Object url = ctx.getOrDefault("url", domain);
+                Object ms = ctx.get("response_ms");
+                Object th = ctx.get("threshold_ms");
+                return "YÜKSEK: " + url + " içerik izlemesinde yanıt süresi eşiği aşıldı" +
+                        (ms != null ? " — " + ms + " ms" : "") + (th != null ? " (eşik " + th + " ms)" : "") + ". " +
+                        "Yanıt süresi eşiğin altına indiğinde alarm otomatik kapanır.";
+            }
+            case TYPE_KEYWORD_SSL -> {
+                Object url = ctx.getOrDefault("url", domain);
+                Object days = ctx.get("ssl_days_remaining");
+                Object detail = ctx.get("detail");
+                return "YÜKSEK: " + url + " içerik izlemesi host'unun TLS sertifikasında sorun" +
+                        (days != null ? " — bitişe " + days + " gün" : (detail != null ? " — " + detail : "")) + ". " +
+                        "Sertifika yenilendiğinde/düzeldiğinde alarm otomatik kapanır.";
+            }
+            case TYPE_KEYWORD_DOMAIN_EXPIRY -> {
+                Object dom = ctx.getOrDefault("domain", domain);
+                Object days = ctx.get("domain_days_remaining");
+                return "YÜKSEK: " + dom + " (içerik izlemesi) domain kaydının süresi" +
+                        (days != null ? " " + days + " gün içinde doluyor" : " dolmak üzere") + ". " +
+                        "Kayıt yenilendiğinde alarm otomatik kapanır.";
+            }
             case TYPE_PING_DOWN -> {
                 Object host = ctx.get("host");
                 if (host != null) {
@@ -610,6 +717,59 @@ public class EscalationService {
                             "Ardışık doğrulama denemeleri başarısız oldu. " +
                             "Host yeniden yanıt verdiğinde alarm otomatik kapanacaktır.";
                 }
+            }
+            case TYPE_HTTP_DOWN -> {
+                Object url = ctx.getOrDefault("url", domain);
+                Object status = ctx.get("http_status");
+                return "KRİTİK: " + url + " adresine HTTP isteği başarısız" +
+                        (status != null ? " (durum " + status + ")" : "") + ". " +
+                        "Ardışık doğrulama denemeleri başarısız oldu. " +
+                        "Erişim geri geldiğinde alarm otomatik kapanacaktır.";
+            }
+            case TYPE_HTTP_SSL -> {
+                Object url = ctx.getOrDefault("url", domain);
+                Object days = ctx.get("ssl_days_remaining");
+                Object detail = ctx.get("detail");
+                return "YÜKSEK: " + url + " için TLS sertifikası sorunu" +
+                        (days != null ? " — bitişe " + days + " gün" : (detail != null ? " — " + detail : "")) + ". " +
+                        "Sertifika yenilendiğinde/düzeldiğinde alarm otomatik kapanır.";
+            }
+            case TYPE_DOMAIN_EXPIRY -> {
+                Object dom = ctx.getOrDefault("domain", domain);
+                Object days = ctx.get("domain_days_remaining");
+                return "YÜKSEK: " + dom + " domain kaydının (registrar) süresi" +
+                        (days != null ? " " + days + " gün içinde doluyor" : " dolmak üzere") + ". " +
+                        "Kayıt yenilendiğinde alarm otomatik kapanır.";
+            }
+            case TYPE_DOMAINMON_EXPIRY -> {
+                Object dom = ctx.getOrDefault("domain", domain);
+                Object days = ctx.get("days");
+                Object exp = ctx.get("expiry_date");
+                Object reg = ctx.get("registrar");
+                return ("CRITICAL".equals(alertLevel) ? "KRİTİK" : "YÜKSEK") + ": " + dom + " alan adının kaydı" +
+                        (days != null ? " " + days + " gün içinde doluyor" : " dolmak üzere") +
+                        (exp != null ? " (bitiş: " + exp + ")" : "") + (reg != null ? ", registrar: " + reg : "") +
+                        ". Önerilen aksiyon: registrar üzerinden yenileyin. Yenilenince alarm otomatik kapanır.";
+            }
+            case TYPE_DOMAINMON_UNKNOWN -> {
+                Object dom = ctx.getOrDefault("domain", domain);
+                Object err = ctx.get("last_error");
+                return "UYARI: " + dom + " alan adının kayıt bilgisi ALINAMADI (RDAP/WHOIS yanıt vermedi ya da tarih ayrıştırılamadı)" +
+                        (err != null ? " — " + err : "") + ". \"Veri yok\" bir sorun DEĞİL ama körlük yaratır: " +
+                        "erişim/proxy/TLD desteğini doğrulayın. Veri gelince alarm otomatik kapanır.";
+            }
+            case TYPE_DOMAINMON_STATUS -> {
+                Object dom = ctx.getOrDefault("domain", domain);
+                Object codes = ctx.get("status_codes");
+                return ("CRITICAL".equals(alertLevel) ? "KRİTİK" : "YÜKSEK") + ": " + dom + " alan adında dikkat gerektiren EPP durum kodları: " +
+                        (codes != null && !codes.toString().isBlank() ? codes : "—") + ". redemptionPeriod/pendingDelete/hold → derhal müdahale; " +
+                        "transfer kilidi (clientTransferProhibited) yoksa etkinleştirin.";
+            }
+            case TYPE_DOMAINMON_CHANGED -> {
+                Object dom = ctx.getOrDefault("domain", domain);
+                Object det = ctx.get("change_detail");
+                return "YÜKSEK: " + dom + " alan adının kayıt bilgisinde DEĞİŞİKLİK tespit edildi" + (det != null ? " — " + det : "") +
+                        ". Olası istenmeyen transfer/hijack — doğrulayın. Bu alarm otomatik kapanmaz; inceleyip onaylayın.";
             }
             default -> { /* ACCESSIBILITY → buildMessage */ }
         }
@@ -690,8 +850,10 @@ public class EscalationService {
 
     private void sendResolutionNotification(AlertEvent event, String resolvedBy, String trigger) {
         try {
-            // Keyword/Ping çözüm bildirimi YALNIZ takıma gider; takım AlertEvent.teamId'den (envanter değil).
-            boolean teamOnly = TYPE_KEYWORD.equals(event.getAlertType()) || TYPE_PING_DOWN.equals(event.getAlertType());
+            // Keyword/Ping/HTTP çözüm bildirimi YALNIZ takıma gider; takım AlertEvent.teamId'den (envanter değil).
+            boolean teamOnly = TYPE_KEYWORD.equals(event.getAlertType()) || TYPE_PING_DOWN.equals(event.getAlertType())
+                    || TYPE_HTTP_DOWN.equals(event.getAlertType()) || TYPE_HTTP_SSL.equals(event.getAlertType()) || TYPE_DOMAIN_EXPIRY.equals(event.getAlertType())
+                    || isDomainMon(event.getAlertType()) || isKeywordAux(event.getAlertType());
             Long domainTeamId, ugTeamId;
             List<EscalationContact> contacts;
             if (teamOnly) {
@@ -728,13 +890,24 @@ public class EscalationService {
                 case "CHAIN_BROKEN"     -> "Zincir Sorunu";
                 case TYPE_ACCESSIBILITY -> "Erişim Kesintisi";
                 case TYPE_PORT_DOWN     -> "Port Kesintisi";
+                case TYPE_PORT_SLOW     -> "Port Yavaş Yanıt";
                 case TYPE_DNS_FAILURE   -> "DNS Çözümleme Hatası";
                 case TYPE_DNS_SLOW      -> "DNS Yavaş/Timeout";
                 case TYPE_DNS_UNEXPECTED -> "DNS Beklenmeyen Değer";
                 case TYPE_DNS_INCONSISTENT -> "DNS Tutarsızlığı";
                 case TYPE_DNS_CHANGED   -> "DNS Değişikliği";
                 case TYPE_KEYWORD       -> "İçerik Doğrulama";
+                case TYPE_KEYWORD_SLOW  -> "İçerik Yavaş Yanıt";
+                case TYPE_KEYWORD_SSL   -> "İçerik SSL Sorunu";
+                case TYPE_KEYWORD_DOMAIN_EXPIRY -> "İçerik Domain Bitişi";
                 case TYPE_PING_DOWN     -> "Erişilebilirlik (Ping)";
+                case TYPE_HTTP_DOWN     -> "HTTP/Website Erişilemez";
+                case TYPE_HTTP_SSL      -> "SSL Sertifika Sorunu";
+                case TYPE_DOMAIN_EXPIRY -> "Domain Süre Bitişi";
+                case TYPE_DOMAINMON_EXPIRY  -> "Alan Adı Süre Bitişi";
+                case TYPE_DOMAINMON_UNKNOWN -> "Alan Adı Veri Yok";
+                case TYPE_DOMAINMON_STATUS  -> "Alan Adı Durum Kodu";
+                case TYPE_DOMAINMON_CHANGED -> "Alan Adı Değişikliği";
                 default                 -> "Sertifika Süre Bitişi";
             };
             String subject = "[CertMonitor ✅ ÇÖZÜLDÜ] " + event.getDomain()
@@ -871,13 +1044,24 @@ public class EscalationService {
             case "CHAIN_BROKEN"     -> "Zincir Sorunu";
             case TYPE_ACCESSIBILITY -> "Erişim Kesintisi";
             case TYPE_PORT_DOWN     -> "Port Kesintisi";
+            case TYPE_PORT_SLOW     -> "Port Yavaş Yanıt";
             case TYPE_DNS_FAILURE   -> "DNS Çözümleme Hatası";
             case TYPE_DNS_SLOW      -> "DNS Yavaş/Timeout";
             case TYPE_DNS_UNEXPECTED -> "DNS Beklenmeyen Değer";
             case TYPE_DNS_INCONSISTENT -> "DNS Tutarsızlığı";
             case TYPE_DNS_CHANGED   -> "DNS Değişikliği";
             case TYPE_KEYWORD       -> "İçerik Doğrulama";
+            case TYPE_KEYWORD_SLOW  -> "İçerik Yavaş Yanıt";
+            case TYPE_KEYWORD_SSL   -> "İçerik SSL Sorunu";
+            case TYPE_KEYWORD_DOMAIN_EXPIRY -> "İçerik Domain Bitişi";
             case TYPE_PING_DOWN     -> "Erişilebilirlik (Ping)";
+            case TYPE_HTTP_DOWN     -> "HTTP/Website Erişilemez";
+            case TYPE_HTTP_SSL      -> "SSL Sertifika Sorunu";
+            case TYPE_DOMAIN_EXPIRY -> "Domain Süre Bitişi";
+            case TYPE_DOMAINMON_EXPIRY  -> "Alan Adı Süre Bitişi";
+            case TYPE_DOMAINMON_UNKNOWN -> "Alan Adı Veri Yok";
+            case TYPE_DOMAINMON_STATUS  -> "Alan Adı Durum Kodu";
+            case TYPE_DOMAINMON_CHANGED -> "Alan Adı Değişikliği";
             default                 -> daysRemaining != null ? "Sertifika Süre Bitişi (" + daysRemaining + " gün kaldı)" : "Sertifika Süre Bitişi";
         };
         String subject = subjectPrefix + "[CertMonitor " + levelTr + "] " + domain + " — " + typeTr;
@@ -1023,6 +1207,8 @@ public class EscalationService {
             case TYPE_PORT_DOWN -> "KRİTİK: " + domain +
                     " üzerinde izlenen porta erişilemiyor. Ardışık doğrulama denemeleri başarısız oldu. " +
                     "Port yeniden açıldığında alarm otomatik kapanacaktır.";
+            case TYPE_PORT_SLOW -> "YÜKSEK: " + domain +
+                    " üzerinde izlenen port yanıt süresi eşiğini aştı (yavaş). Yanıt hızlandığında alarm otomatik kapanır.";
             case TYPE_DNS_FAILURE -> "KRİTİK: " + domain +
                     " için DNS sorgusu çözümlenemiyor. Ardışık doğrulama denemeleri başarısız oldu. " +
                     "Çözümleme düzeldiğinde alarm otomatik kapanacaktır.";
@@ -1044,6 +1230,25 @@ public class EscalationService {
                     " için yenilenmiş bir sertifika mevcut ancak uç nokta eski sertifikayı sunmaya devam ediyor.";
             case "CHAIN_BROKEN" -> "ZİNCİR SORUNU: " + domain +
                     " sertifika zincirindeki bir ara veya kök CA sertifikası süresi dolmuş ya da geçersiz.";
+            case TYPE_HTTP_DOWN -> "KRİTİK: " + domain +
+                    " adresine HTTP isteği başarısız — site erişilemez durumda. " +
+                    "Erişim geri geldiğinde alarm otomatik kapanacaktır.";
+            case TYPE_HTTP_SSL -> "YÜKSEK: " + domain +
+                    " için TLS sertifikası hata veriyor ya da süresi dolmak üzere. " +
+                    "Sertifika düzeldiğinde alarm otomatik kapanır.";
+            case TYPE_DOMAIN_EXPIRY -> "YÜKSEK: " + domain +
+                    " domain kaydının (registrar) süresi dolmak üzere. Kayıt yenilendiğinde alarm otomatik kapanır.";
+            case TYPE_KEYWORD_SLOW -> "YÜKSEK: " + domain +
+                    " içerik izlemesinde yanıt süresi eşiği aşıldı (yavaş). Yanıt hızlandığında alarm otomatik kapanır.";
+            case TYPE_KEYWORD_SSL -> "YÜKSEK: " + domain +
+                    " içerik izlemesi host'unun TLS sertifikası hata veriyor ya da süresi dolmak üzere. " +
+                    "Sertifika düzeldiğinde alarm otomatik kapanır.";
+            case TYPE_KEYWORD_DOMAIN_EXPIRY -> "YÜKSEK: " + domain +
+                    " (içerik izlemesi) domain kaydının süresi dolmak üzere. Kayıt yenilendiğinde alarm otomatik kapanır.";
+            case TYPE_DOMAINMON_EXPIRY -> "YÜKSEK: " + domain + " alan adının kaydı dolmak üzere. Registrar üzerinden yenileyin.";
+            case TYPE_DOMAINMON_UNKNOWN -> "UYARI: " + domain + " alan adının kayıt bilgisi alınamadı (veri yok). Erişim/TLD desteğini doğrulayın.";
+            case TYPE_DOMAINMON_STATUS -> "YÜKSEK: " + domain + " alan adında dikkat gerektiren EPP durum kodları var.";
+            case TYPE_DOMAINMON_CHANGED -> "YÜKSEK: " + domain + " alan adının kayıt bilgisi değişti (olası hijack). İnceleyip onaylayın.";
             default -> {
                 String lvl = switch (alertLevel != null ? alertLevel : "") {
                     case "CRITICAL" -> "KRİTİK";

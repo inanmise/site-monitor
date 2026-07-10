@@ -82,6 +82,46 @@ public class KeywordMonitor {
     @Column(name = "custom_headers", columnDefinition = "TEXT")
     private String customHeaders;
 
+    /** Büyük/küçük harf DUYARLI eşleşme (varsayılan false = duyarsız). */
+    @Column(name = "case_sensitive")
+    private Boolean caseSensitive = false;
+
+    /** Serbest etiketler — virgülle ayrılmış (organizasyon/filtreleme). */
+    @Column(columnDefinition = "TEXT")
+    private String tags;
+
+    /** E-posta bildirimi açık mı (varsayılan true). SMS/Voice/Push UI'da devre dışı. */
+    @Column(name = "notify_email")
+    private Boolean notifyEmail = true;
+
+    /** Yavaş yanıt alarmı açık mı: açıksa response_ms eşiği aşılınca KEYWORD_SLOW. */
+    @Column(name = "slow_response_enabled")
+    private Boolean slowResponseEnabled = false;
+
+    /** Yavaş yanıt eşiği (ms). */
+    @Column(name = "slow_threshold_ms")
+    private Integer slowThresholdMs = 3000;
+
+    /** SSL hata kontrolü (URL host'unun TLS zinciri/geçerliliği) — yavaş döngü → KEYWORD_SSL. */
+    @Column(name = "check_ssl_errors")
+    private Boolean checkSslErrors = false;
+
+    /** SSL son-kullanım hatırlatması — KEYWORD_SSL. */
+    @Column(name = "ssl_expiry_reminders")
+    private Boolean sslExpiryReminders = false;
+
+    /** Domain (registrar/WHOIS) son-kullanım hatırlatması — KEYWORD_DOMAIN_EXPIRY. */
+    @Column(name = "domain_expiry_reminders")
+    private Boolean domainExpiryReminders = false;
+
+    /** SSL bitişi öncesi hatırlatma gün eşikleri (CSV). */
+    @Column(name = "ssl_reminder_days")
+    private String sslReminderDays = "30,14,7";
+
+    /** Domain bitişi öncesi hatırlatma gün eşikleri (CSV). */
+    @Column(name = "domain_reminder_days")
+    private String domainReminderDays = "30,14,7";
+
     @Column(name = "created_at")
     private String createdAt;
 

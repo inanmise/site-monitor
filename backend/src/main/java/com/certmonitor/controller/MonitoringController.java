@@ -7,6 +7,9 @@ import com.certmonitor.service.DnsCheckerService;
 import com.certmonitor.service.PortCheckerService;
 import com.certmonitor.service.KeywordCheckerService;
 import com.certmonitor.service.PingCheckerService;
+import com.certmonitor.service.HttpCheckerService;
+import com.certmonitor.service.DomainCheckerService;
+import com.certmonitor.service.PublicSuffixService;
 import com.certmonitor.service.AppSettingsService;
 import com.certmonitor.service.EscalationService;
 import com.certmonitor.service.PermissionService;
@@ -52,6 +55,15 @@ public class MonitoringController {
     private final PingCheckRepository pingCheckRepo;
     private final PingCheckerService pingChecker;
 
+    private final HttpMonitorRepository httpMonitorRepo;
+    private final HttpCheckRepository httpCheckRepo;
+    private final HttpCheckerService httpChecker;
+
+    private final DomainMonitorRepository domainMonitorRepo;
+    private final DomainCheckRepository domainCheckRepo;
+    private final DomainCheckerService domainChecker;
+    private final PublicSuffixService publicSuffixService;
+
     private final TeamRepository teamRepo;
     private final AlertEventRepository alertEventRepo;
 
@@ -79,10 +91,19 @@ public class MonitoringController {
             "ping",    Map.of("intervalSeconds", appSettings.getInt("cert.monitor.ping.default-interval-seconds", 60),
                               "timeoutMs",        appSettings.getInt("cert.monitor.ping.default-timeout-ms", 5000)),
             "keyword", Map.of("intervalSeconds", appSettings.getInt("cert.monitor.keyword.default-interval-seconds", 60),
-                              "timeoutMs",        appSettings.getInt("cert.monitor.keyword.default-timeout-ms", 10000)),
+                              "timeoutMs",        appSettings.getInt("cert.monitor.keyword.default-timeout-ms", 10000),
+                              "slowThresholdMs",  appSettings.getInt("cert.monitor.keyword.default-slow-ms", 3000),
+                              "caseSensitive",    false),
             "port",    Map.of("intervalSeconds", appSettings.getInt("cert.monitor.port.default-interval-seconds", 300),
-                              "timeoutMs",        appSettings.getInt("cert.monitor.port.default-timeout-ms", 5000)),
-            "dns",     Map.of("intervalSeconds", appSettings.getInt("cert.monitor.dns.default-interval-seconds", 300))
+                              "timeoutMs",        appSettings.getInt("cert.monitor.port.default-timeout-ms", 5000),
+                              "slowThresholdMs",  appSettings.getInt("cert.monitor.port.default-slow-ms", 3000)),
+            "dns",     Map.of("intervalSeconds", appSettings.getInt("cert.monitor.dns.default-interval-seconds", 300)),
+            "http",    Map.of("intervalSeconds", appSettings.getInt("cert.monitor.http.default-interval-seconds", 300),
+                              "timeoutMs",        appSettings.getInt("cert.monitor.http.default-timeout-ms", 10000)),
+            "domain",  Map.of("intervalSeconds", appSettings.getInt("cert.monitor.domain.default-interval-seconds", 86400),
+                              "warningDays",      appSettings.getInt("cert.monitor.domain.default-warning-days", 30),
+                              "criticalDays",     appSettings.getInt("cert.monitor.domain.default-critical-days", 7),
+                              "thresholds",       appSettings.getString("cert.monitor.domain.default-thresholds", "60,30,14,7,3,1"))
         ));
     }
 
@@ -172,6 +193,14 @@ public class MonitoringController {
         if (o == null) return "TCP";
         String s = o.toString().trim().toUpperCase();
         return PORT_TYPES.contains(s) ? s : "TCP";
+    }
+
+    /** HTTP metodu — geçerli değilse GET'e düşer. */
+    private static final Set<String> HTTP_METHODS = Set.of("GET", "HEAD", "POST");
+    private static String normalizeHttpMethod(Object o) {
+        if (o == null) return "GET";
+        String s = o.toString().trim().toUpperCase();
+        return HTTP_METHODS.contains(s) ? s : "GET";
     }
 
     private void applyKeywordCondition(KeywordMonitor m, Map<String, Object> body) {
@@ -529,6 +558,7 @@ public class MonitoringController {
         if (body.get("confirmIntervalSeconds") != null)  m.setConfirmIntervalSeconds(clampInterval(((Number) body.get("confirmIntervalSeconds")).intValue()));
         if (body.get("recoveryChecks") != null)          m.setRecoveryChecks(clampRecovery(((Number) body.get("recoveryChecks")).intValue()));
         if (body.get("recoveryIntervalSeconds") != null) m.setRecoveryIntervalSeconds(clampInterval(((Number) body.get("recoveryIntervalSeconds")).intValue()));
+        applyPortFeatureFields(m, body);
         m.setCreatedAt(now);
         m.setUpdatedAt(now);
         PortMonitor saved = portMonitorRepo.save(m);
@@ -543,7 +573,11 @@ public class MonitoringController {
             if (!canOperateTeam(session, m.getTeamId())) return forbidden("Bu izleme üzerinde yetkiniz yok");
             if (body.get("name")            != null) m.setName((String) body.get("name"));
             if (body.get("host")            != null) m.setHost(((String) body.get("host")).trim());
-            if (body.get("port")            != null) m.setPort(((Number) body.get("port")).intValue());
+            if (body.get("port")            != null) {
+                int np = ((Number) body.get("port")).intValue();
+                if (np < 1 || np > 65535) return badRequest("port 1-65535 aralığında olmalı");
+                m.setPort(np);
+            }
             if (body.get("protocol")        != null) m.setProtocol(normalizePortType(body.get("protocol")));
             if (body.containsKey("expect"))    m.setExpect(blank(body.get("expect")) ? null : body.get("expect").toString().trim());
             if (body.containsKey("sendData"))  m.setSendData(blank(body.get("sendData")) ? null : body.get("sendData").toString());
@@ -556,6 +590,7 @@ public class MonitoringController {
             if (body.get("confirmIntervalSeconds") != null)  m.setConfirmIntervalSeconds(clampInterval(((Number) body.get("confirmIntervalSeconds")).intValue()));
             if (body.get("recoveryChecks") != null)          m.setRecoveryChecks(clampRecovery(((Number) body.get("recoveryChecks")).intValue()));
             if (body.get("recoveryIntervalSeconds") != null) m.setRecoveryIntervalSeconds(clampInterval(((Number) body.get("recoveryIntervalSeconds")).intValue()));
+            applyPortFeatureFields(m, body);
             m.setUpdatedAt(ISO.format(Instant.now()));
             PortMonitor saved = portMonitorRepo.save(m);
             return ok(enrichPort(saved, portCheckRepo.findTopByMonitorIdOrderByCheckedAtDesc(id).orElse(null),
@@ -633,7 +668,9 @@ public class MonitoringController {
         String type = normalizePortType(body.get("protocol"));
         String send = blank(body.get("sendData")) ? null : body.get("sendData").toString();
         String expect = blank(body.get("expect")) ? null : body.get("expect").toString().trim();
-        Map<String, Object> r = portChecker.check(host, port, timeoutMs, type, send, expect);
+        String ipVersion = body.get("ipVersion") != null && java.util.Set.of("v4", "v6", "auto").contains(body.get("ipVersion").toString())
+                ? body.get("ipVersion").toString() : "auto";
+        Map<String, Object> r = portChecker.check(host, port, timeoutMs, type, send, expect, ipVersion);
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("type",          type);
         out.put("open",          Boolean.TRUE.equals(r.get("open")));   // kontrol gecti mi (acik/eslesti)
@@ -665,6 +702,11 @@ public class MonitoringController {
         item.put("confirm_interval_seconds",  m.getConfirmIntervalSeconds());
         item.put("recovery_checks",           m.getRecoveryChecks());
         item.put("recovery_interval_seconds", m.getRecoveryIntervalSeconds());
+        item.put("tags",                      m.getTags());
+        item.put("notify_email",              m.getNotifyEmail());
+        item.put("slow_response_enabled",     m.getSlowResponseEnabled());
+        item.put("slow_threshold_ms",         m.getSlowThresholdMs());
+        item.put("ip_version",                m.getIpVersion());
         item.put("standalone",      m.getStandalone());
         item.put("created_at",      m.getCreatedAt());
         item.put("updated_at",      m.getUpdatedAt());
@@ -683,6 +725,18 @@ public class MonitoringController {
             item.put("error",       null);
         }
         return item;
+    }
+
+    /** Ortak: port feature alanlarını (tags/notifyEmail/slow-response/ipVersion) body'den uygular. */
+    private void applyPortFeatureFields(PortMonitor m, Map<String, Object> body) {
+        if (body.containsKey("tags")) m.setTags(blank(body.get("tags")) ? null : body.get("tags").toString().trim());
+        if (body.get("notifyEmail")         instanceof Boolean b) m.setNotifyEmail(b);
+        if (body.get("slowResponseEnabled") instanceof Boolean b) m.setSlowResponseEnabled(b);
+        if (body.get("slowThresholdMs")     instanceof Number n)  m.setSlowThresholdMs(Math.max(1, n.intValue()));
+        if (body.get("ipVersion") != null) {
+            String v = body.get("ipVersion").toString().trim();
+            m.setIpVersion(java.util.Set.of("v4", "v6", "auto").contains(v) ? v : "auto");
+        }
     }
 
     // ── DNS Monitors ──────────────────────────────────────────────────────────
@@ -992,6 +1046,7 @@ public class MonitoringController {
         if (body.get("confirmIntervalSeconds") != null) m.setConfirmIntervalSeconds(clampInterval(((Number) body.get("confirmIntervalSeconds")).intValue()));
         if (body.get("recoveryChecks") != null)         m.setRecoveryChecks(clampRecovery(((Number) body.get("recoveryChecks")).intValue()));
         if (body.get("recoveryIntervalSeconds") != null) m.setRecoveryIntervalSeconds(clampInterval(((Number) body.get("recoveryIntervalSeconds")).intValue()));
+        applyKeywordFeatureFields(m, body);
         m.setCreatedAt(now);
         m.setUpdatedAt(now);
         KeywordMonitor saved = keywordMonitorRepo.save(m);
@@ -1017,6 +1072,7 @@ public class MonitoringController {
             if (body.get("confirmIntervalSeconds") != null) m.setConfirmIntervalSeconds(clampInterval(((Number) body.get("confirmIntervalSeconds")).intValue()));
             if (body.get("recoveryChecks") != null)         m.setRecoveryChecks(clampRecovery(((Number) body.get("recoveryChecks")).intValue()));
             if (body.get("recoveryIntervalSeconds") != null) m.setRecoveryIntervalSeconds(clampInterval(((Number) body.get("recoveryIntervalSeconds")).intValue()));
+            applyKeywordFeatureFields(m, body);
             m.setUpdatedAt(ISO.format(Instant.now()));
             KeywordMonitor saved = keywordMonitorRepo.save(m);
             return ok(enrichKeyword(saved, keywordResultRepo.findTopByMonitorIdOrderByCheckedAtDesc(id).orElse(null), teamNameMap(),
@@ -1067,7 +1123,7 @@ public class MonitoringController {
         return keywordMonitorRepo.findById(id).map(m -> {
             if (!canOperateTeam(session, m.getTeamId())) throw new SecurityException("Bu takımın izlemesini çalıştıramazsınız");
             Map<String, Object> r = keywordChecker.check(m.getUrl(), m.getKeyword(),
-                    m.getTimeoutMs() != null ? m.getTimeoutMs() : 10000, m.getCustomHeaders());
+                    m.getTimeoutMs() != null ? m.getTimeoutMs() : 10000, m.getCustomHeaders(), Boolean.TRUE.equals(m.getCaseSensitive()));
             boolean found = Boolean.TRUE.equals(r.getOrDefault("found", false));
             int count = r.get("count") instanceof Number cn ? cn.intValue() : (found ? 1 : 0);
             int threshold = m.getMatchCount() != null ? m.getMatchCount() : 1;
@@ -1103,7 +1159,8 @@ public class MonitoringController {
         int threshold = body.get("matchCount") instanceof Number mn ? mn.intValue() : 1;
         int timeoutMs = body.get("timeoutMs") instanceof Number tn ? tn.intValue() : 10000;
         String customHeaders = body.get("customHeaders") != null ? body.get("customHeaders").toString() : null;
-        Map<String, Object> r = keywordChecker.check(url, keyword, timeoutMs, customHeaders);
+        boolean caseSensitive = Boolean.TRUE.equals(body.get("caseSensitive"));
+        Map<String, Object> r = keywordChecker.check(url, keyword, timeoutMs, customHeaders, caseSensitive);
         int count = r.get("count") instanceof Number cn ? cn.intValue() : 0;
         boolean met = r.get("error") == null && KeywordCheckerService.evaluate(count, op, threshold);
         Map<String, Object> out = new LinkedHashMap<>();
@@ -1329,6 +1386,16 @@ public class MonitoringController {
         item.put("recovery_checks",           m.getRecoveryChecks());
         item.put("recovery_interval_seconds", m.getRecoveryIntervalSeconds());
         item.put("custom_headers",            m.getCustomHeaders());
+        item.put("case_sensitive",            m.getCaseSensitive());
+        item.put("tags",                      m.getTags());
+        item.put("notify_email",              m.getNotifyEmail());
+        item.put("slow_response_enabled",     m.getSlowResponseEnabled());
+        item.put("slow_threshold_ms",         m.getSlowThresholdMs());
+        item.put("check_ssl_errors",          m.getCheckSslErrors());
+        item.put("ssl_expiry_reminders",      m.getSslExpiryReminders());
+        item.put("domain_expiry_reminders",   m.getDomainExpiryReminders());
+        item.put("ssl_reminder_days",         m.getSslReminderDays());
+        item.put("domain_reminder_days",      m.getDomainReminderDays());
         item.put("active_alarm",       openAlarm != null);
         item.put("alarm_level",        openAlarm != null ? openAlarm.getAlertLevel() : null);
         item.put("alarm_acknowledged", openAlarm != null ? openAlarm.getAcknowledged() : null);
@@ -1348,6 +1415,427 @@ public class MonitoringController {
             item.put("response_ms", null); item.put("snippet", null); item.put("error", null); item.put("checked_at", null);
         }
         return item;
+    }
+
+    /** Ortak: keyword feature alanlarını (caseSensitive/tags/notify/slow/SSL-Domain toggle'ları + gün eşikleri) body'den uygular. */
+    private void applyKeywordFeatureFields(KeywordMonitor m, Map<String, Object> body) {
+        if (body.get("caseSensitive")         instanceof Boolean b) m.setCaseSensitive(b);
+        if (body.containsKey("tags")) m.setTags(blank(body.get("tags")) ? null : body.get("tags").toString().trim());
+        if (body.get("notifyEmail")           instanceof Boolean b) m.setNotifyEmail(b);
+        if (body.get("slowResponseEnabled")   instanceof Boolean b) m.setSlowResponseEnabled(b);
+        if (body.get("slowThresholdMs")       instanceof Number n)  m.setSlowThresholdMs(Math.max(1, n.intValue()));
+        if (body.get("checkSslErrors")        instanceof Boolean b) m.setCheckSslErrors(b);
+        if (body.get("sslExpiryReminders")    instanceof Boolean b) m.setSslExpiryReminders(b);
+        if (body.get("domainExpiryReminders") instanceof Boolean b) m.setDomainExpiryReminders(b);
+        if (!blank(body.get("sslReminderDays")))    m.setSslReminderDays(body.get("sslReminderDays").toString().trim());
+        if (!blank(body.get("domainReminderDays"))) m.setDomainReminderDays(body.get("domainReminderDays").toString().trim());
+    }
+
+    // ── HTTP / Website Monitors (serbest-form) ────────────────────────────────
+
+    @GetMapping("/http")
+    public ResponseEntity<Map<String, Object>> listHttp(HttpSession session) {
+        permissionService.require(session, "monitoring.read", "view");
+        Map<Long, HttpCheck> latest = httpCheckRepo.findLatestPerMonitor().stream()
+                .filter(c -> c.getMonitorId() != null)
+                .collect(Collectors.toMap(HttpCheck::getMonitorId, c -> c, (a, b) -> a));
+        Map<Long, String> teams = teamNameMap();
+        List<HttpMonitor> monitors = httpMonitorRepo.findAllByOrderByNameAsc();
+        Map<String, AlertEvent> alarms = openAlarmsByDomain(
+                monitors.stream().map(HttpMonitor::getUrl).collect(Collectors.toSet()),
+                EscalationService.TYPE_HTTP_DOWN);
+        List<Map<String, Object>> result = monitors.stream()
+                .map(m -> enrichHttp(m, latest.get(m.getId()), teams, alarms.get(m.getUrl()))).toList();
+        return ok(result);
+    }
+
+    @PostMapping("/http")
+    public ResponseEntity<Map<String, Object>> createHttp(@RequestBody Map<String, Object> body, HttpSession session) {
+        permissionService.require(session, "monitoring.crud", "edit");
+        if (blank(body.get("url"))) return badRequest("url zorunlu");
+        Long teamId = resolveWriteTeam(session, body);
+        if (teamId == null && !SessionScope.isGlobalAdmin(session)) return badRequest("Bir takıma atanmamışsınız; izleme oluşturulamıyor");
+        String url = body.get("url").toString().trim();
+        if (httpMonitorRepo.existsDuplicate(url, teamId, null))
+            return badRequest("Bu URL bu takımda zaten izleniyor; mükerrer HTTP monitörü oluşturulamaz.");
+        String now = ISO.format(Instant.now());
+        HttpMonitor m = new HttpMonitor();
+        m.setName(blank(body.get("name")) ? url : body.get("name").toString());
+        m.setUrl(url);
+        m.setMethod(normalizeHttpMethod(body.get("method")));
+        if (!blank(body.get("expectedStatus"))) m.setExpectedStatus(body.get("expectedStatus").toString().trim());
+        if (body.get("followRedirects") instanceof Boolean b) m.setFollowRedirects(b);
+        if (body.get("verifySsl")       instanceof Boolean b) m.setVerifySsl(b);
+        if (body.containsKey("groupName")) m.setGroupName(blank(body.get("groupName")) ? null : body.get("groupName").toString().trim());
+        m.setTeamId(teamId);
+        m.setActive(true);
+        if (body.get("intervalSeconds") != null) m.setIntervalSeconds(((Number) body.get("intervalSeconds")).intValue());
+        if (body.get("timeoutMs")       != null) m.setTimeoutMs(((Number) body.get("timeoutMs")).intValue());
+        if (body.get("confirmAttempts") != null)        m.setConfirmAttempts(clampAttempts(((Number) body.get("confirmAttempts")).intValue()));
+        if (body.get("confirmIntervalSeconds") != null) m.setConfirmIntervalSeconds(clampInterval(((Number) body.get("confirmIntervalSeconds")).intValue()));
+        if (body.get("recoveryChecks") != null)         m.setRecoveryChecks(clampRecovery(((Number) body.get("recoveryChecks")).intValue()));
+        if (body.get("recoveryIntervalSeconds") != null) m.setRecoveryIntervalSeconds(clampInterval(((Number) body.get("recoveryIntervalSeconds")).intValue()));
+        applyHttpFeatureFields(m, body);
+        m.setCreatedAt(now);
+        m.setUpdatedAt(now);
+        HttpMonitor saved = httpMonitorRepo.save(m);
+        return ok(enrichHttp(saved, null, teamNameMap(), null));
+    }
+
+    @PutMapping("/http/{id}")
+    public ResponseEntity<Map<String, Object>> updateHttp(@PathVariable Long id, @RequestBody Map<String, Object> body, HttpSession session) {
+        permissionService.require(session, "monitoring.crud", "edit");
+        return httpMonitorRepo.findById(id).map(m -> {
+            if (!canOperateTeam(session, m.getTeamId())) throw new SecurityException("Bu takımın izlemesini düzenleyemezsiniz");
+            if (body.get("name")            != null) m.setName((String) body.get("name"));
+            if (body.get("url")             != null) m.setUrl(body.get("url").toString().trim());
+            if (body.get("method")          != null) m.setMethod(normalizeHttpMethod(body.get("method")));
+            if (!blank(body.get("expectedStatus"))) m.setExpectedStatus(body.get("expectedStatus").toString().trim());
+            if (body.get("followRedirects") instanceof Boolean b) m.setFollowRedirects(b);
+            if (body.get("verifySsl")       instanceof Boolean b) m.setVerifySsl(b);
+            if (body.containsKey("groupName"))       m.setGroupName(blank(body.get("groupName")) ? null : body.get("groupName").toString().trim());
+            if (body.containsKey("teamId"))          m.setTeamId(resolveTeamChange(session, m.getTeamId(), body.get("teamId")));
+            if (body.get("active")          instanceof Boolean b) m.setActive(b);
+            if (body.get("intervalSeconds") != null) m.setIntervalSeconds(((Number) body.get("intervalSeconds")).intValue());
+            if (body.get("timeoutMs")       != null) m.setTimeoutMs(((Number) body.get("timeoutMs")).intValue());
+            if (body.get("confirmAttempts") != null)        m.setConfirmAttempts(clampAttempts(((Number) body.get("confirmAttempts")).intValue()));
+            if (body.get("confirmIntervalSeconds") != null) m.setConfirmIntervalSeconds(clampInterval(((Number) body.get("confirmIntervalSeconds")).intValue()));
+            if (body.get("recoveryChecks") != null)         m.setRecoveryChecks(clampRecovery(((Number) body.get("recoveryChecks")).intValue()));
+            if (body.get("recoveryIntervalSeconds") != null) m.setRecoveryIntervalSeconds(clampInterval(((Number) body.get("recoveryIntervalSeconds")).intValue()));
+            applyHttpFeatureFields(m, body);
+            m.setUpdatedAt(ISO.format(Instant.now()));
+            HttpMonitor saved = httpMonitorRepo.save(m);
+            return ok(enrichHttp(saved, httpCheckRepo.findTopByMonitorIdOrderByCheckedAtDesc(id).orElse(null), teamNameMap(),
+                    alertEventRepo.findOpenAlert(saved.getUrl(), EscalationService.TYPE_HTTP_DOWN).orElse(null)));
+        }).orElse(notFound("HTTP monitor not found"));
+    }
+
+    @DeleteMapping("/http/{id}")
+    public ResponseEntity<Map<String, Object>> deleteHttp(@PathVariable Long id, HttpSession session) {
+        permissionService.require(session, "monitoring.crud", "edit");
+        return httpMonitorRepo.findById(id).map(m -> {
+            if (!SessionScope.canManage(session, m.getTeamId())) throw new SecurityException("Silme yetkisi yok (yalnız takım yöneticisi/ADMIN)");
+            escalationService.resolveOpenAlertsSilently(m.getUrl(),
+                    Set.of(EscalationService.TYPE_HTTP_DOWN, EscalationService.TYPE_HTTP_SSL, EscalationService.TYPE_DOMAIN_EXPIRY),
+                    "Sistem (izleme silindi)");
+            httpMonitorRepo.delete(m);
+            return ok(Map.of("deleted", true));
+        }).orElse(notFound("HTTP monitor not found"));
+    }
+
+    @GetMapping("/http/{id}/history")
+    public ResponseEntity<Map<String, Object>> httpHistory(@PathVariable Long id,
+            @RequestParam(required = false) Integer days,
+            @RequestParam(defaultValue = "100") int limit) {
+        List<HttpCheck> checks;
+        long total, down;
+        if (days != null && days > 0) {
+            String cutoff = ISO.format(Instant.now().minus(days, ChronoUnit.DAYS));
+            checks = httpCheckRepo.findRecentByMonitorIdSince(id, cutoff, 500);
+            total = httpCheckRepo.countByMonitorIdAndCheckedAtGreaterThanEqual(id, cutoff);
+            down  = httpCheckRepo.countByMonitorIdAndOkFalseAndCheckedAtGreaterThanEqual(id, cutoff);
+        } else {
+            int cap = Math.max(1, Math.min(limit, 10_000));
+            checks = httpCheckRepo.findRecentByMonitorId(id, cap);
+            total = checks.size();
+            down  = checks.stream().filter(c -> !Boolean.TRUE.equals(c.getOk())).count();
+        }
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("checks", checks);
+        out.put("total", total);
+        out.put("down", down);
+        return ok(out);
+    }
+
+    @PostMapping("/http/{id}/check")
+    public ResponseEntity<Map<String, Object>> triggerHttp(@PathVariable Long id, HttpSession session) {
+        permissionService.require(session, "monitoring.trigger", "execute");
+        return httpMonitorRepo.findById(id).map(m -> {
+            if (!canOperateTeam(session, m.getTeamId())) throw new SecurityException("Bu takımın izlemesini çalıştıramazsınız");
+            Map<String, Object> r = httpChecker.check(m.getUrl(), m.getMethod(), m.getExpectedStatus(),
+                    m.getTimeoutMs() != null ? m.getTimeoutMs() : 10000,
+                    Boolean.TRUE.equals(m.getVerifySsl()), !Boolean.FALSE.equals(m.getFollowRedirects()));
+            HttpCheck res = new HttpCheck();
+            res.setMonitorId(m.getId());
+            res.setOk(Boolean.TRUE.equals(r.get("ok")));
+            res.setHttpStatus(r.get("http_status") instanceof Number n ? n.intValue() : null);
+            res.setResponseMs(r.get("response_ms") instanceof Number n ? n.longValue() : null);
+            res.setError((String) r.get("error"));
+            res.setCheckedAt(ISO.format(Instant.now()));
+            httpCheckRepo.save(res);
+            return ok(enrichHttp(m, res, teamNameMap(),
+                    alertEventRepo.findOpenAlert(m.getUrl(), EscalationService.TYPE_HTTP_DOWN).orElse(null)));
+        }).orElse(notFound("HTTP monitor not found"));
+    }
+
+    /** Ad-hoc HTTP testi — kaydetmeden, formdaki url/method/expectedStatus ile bir kez istek atar. */
+    @PostMapping("/http/test")
+    public ResponseEntity<Map<String, Object>> testHttp(@RequestBody Map<String, Object> body, HttpSession session) {
+        permissionService.require(session, "monitoring.crud", "edit");
+        String url = body.get("url") != null ? body.get("url").toString().trim() : "";
+        if (url.isEmpty()) return badRequest("url zorunlu");
+        String method = normalizeHttpMethod(body.get("method"));
+        String expected = !blank(body.get("expectedStatus")) ? body.get("expectedStatus").toString().trim() : "200-399";
+        int timeoutMs = body.get("timeoutMs") instanceof Number tn ? tn.intValue() : 10000;
+        boolean verifySsl = Boolean.TRUE.equals(body.get("verifySsl"));
+        boolean followRedirects = !Boolean.FALSE.equals(body.get("followRedirects"));
+        Map<String, Object> r = httpChecker.check(url, method, expected, timeoutMs, verifySsl, followRedirects);
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("http_status",     r.get("http_status"));
+        out.put("response_ms",     r.get("response_ms"));
+        out.put("condition_met",   Boolean.TRUE.equals(r.get("ok")));
+        out.put("expected_status", expected);
+        out.put("error",           r.get("error"));
+        return ok(out);
+    }
+
+    @GetMapping("/http/{id}/response-series")
+    public ResponseEntity<Map<String, Object>> httpResponseSeries(@PathVariable Long id,
+            @RequestParam(required = false) String from, @RequestParam(required = false) String to,
+            @RequestParam(defaultValue = "30") int days, HttpSession session) {
+        permissionService.require(session, "monitoring.read", "view");
+        if (!httpMonitorRepo.existsById(id)) return notFound("HTTP monitor not found");
+        String[] range = resolveRange(from, to, days);
+        return ok(buildResponseSeries(httpCheckRepo.responseSeriesRaw(id, range[0], range[1], SERIES_RAW_CAP),
+                range[0], range[1], false));
+    }
+
+    /** Ortak: HTTP feature alanlarını (tags, notify, SSL/Domain toggle'ları + gün eşikleri) body'den uygular. */
+    private void applyHttpFeatureFields(HttpMonitor m, Map<String, Object> body) {
+        if (body.containsKey("tags")) m.setTags(blank(body.get("tags")) ? null : body.get("tags").toString().trim());
+        if (body.get("notifyEmail")           instanceof Boolean b) m.setNotifyEmail(b);
+        if (body.get("checkSslErrors")        instanceof Boolean b) m.setCheckSslErrors(b);
+        if (body.get("sslExpiryReminders")    instanceof Boolean b) m.setSslExpiryReminders(b);
+        if (body.get("domainExpiryReminders") instanceof Boolean b) m.setDomainExpiryReminders(b);
+        if (!blank(body.get("sslReminderDays")))    m.setSslReminderDays(body.get("sslReminderDays").toString().trim());
+        if (!blank(body.get("domainReminderDays"))) m.setDomainReminderDays(body.get("domainReminderDays").toString().trim());
+    }
+
+    private Map<String, Object> enrichHttp(HttpMonitor m, HttpCheck latest, Map<Long, String> teams, AlertEvent openAlarm) {
+        Map<String, Object> item = new LinkedHashMap<>();
+        item.put("id",               m.getId());
+        item.put("name",             m.getName());
+        item.put("url",              m.getUrl());
+        item.put("method",           m.getMethod());
+        item.put("expected_status",  m.getExpectedStatus());
+        item.put("follow_redirects", m.getFollowRedirects());
+        item.put("verify_ssl",       m.getVerifySsl());
+        item.put("group_name",       m.getGroupName());
+        item.put("team_id",          m.getTeamId());
+        item.put("team_name",        m.getTeamId() != null ? teams.get(m.getTeamId()) : null);
+        item.put("active",           m.getActive());
+        item.put("interval_seconds", m.getIntervalSeconds());
+        item.put("timeout_ms",       m.getTimeoutMs());
+        item.put("confirm_attempts",         m.getConfirmAttempts());
+        item.put("confirm_interval_seconds", m.getConfirmIntervalSeconds());
+        item.put("recovery_checks",           m.getRecoveryChecks());
+        item.put("recovery_interval_seconds", m.getRecoveryIntervalSeconds());
+        item.put("tags",                      m.getTags());
+        item.put("notify_email",              m.getNotifyEmail());
+        item.put("check_ssl_errors",          m.getCheckSslErrors());
+        item.put("ssl_expiry_reminders",      m.getSslExpiryReminders());
+        item.put("domain_expiry_reminders",   m.getDomainExpiryReminders());
+        item.put("ssl_reminder_days",         m.getSslReminderDays());
+        item.put("domain_reminder_days",      m.getDomainReminderDays());
+        item.put("active_alarm",       openAlarm != null);
+        item.put("alarm_level",        openAlarm != null ? openAlarm.getAlertLevel() : null);
+        item.put("alarm_acknowledged", openAlarm != null ? openAlarm.getAcknowledged() : null);
+        if (latest != null) {
+            item.put("status",      latest.getError() != null ? "error" : (Boolean.TRUE.equals(latest.getOk()) ? "up" : "down"));
+            item.put("ok",          latest.getOk());
+            item.put("http_status", latest.getHttpStatus());
+            item.put("response_ms", latest.getResponseMs());
+            item.put("error",       latest.getError());
+            item.put("checked_at",  latest.getCheckedAt());
+        } else {
+            item.put("status", "unknown");
+            item.put("ok", null); item.put("http_status", null);
+            item.put("response_ms", null); item.put("error", null); item.put("checked_at", null);
+        }
+        return item;
+    }
+
+    // ── Domain (Alan Adı) Monitors (serbest-form) ─────────────────────────────
+
+    @GetMapping("/domain")
+    public ResponseEntity<Map<String, Object>> listDomain(HttpSession session) {
+        permissionService.require(session, "monitoring.read", "view");
+        Map<Long, DomainCheck> latest = domainCheckRepo.findLatestPerMonitor().stream()
+                .filter(c -> c.getMonitorId() != null)
+                .collect(Collectors.toMap(DomainCheck::getMonitorId, c -> c, (a, b) -> a));
+        Map<Long, String> teams = teamNameMap();
+        Map<String, AlertEvent> alarms = new HashMap<>();   // domain başına en şiddetli açık DOMAINMON_* alarmı
+        for (AlertEvent e : alertEventRepo.findAllOpenOrderBySeverity()) {
+            if (EscalationService.isDomainMon(e.getAlertType()) && e.getDomain() != null) alarms.putIfAbsent(e.getDomain(), e);
+        }
+        List<Map<String, Object>> result = domainMonitorRepo.findAllByOrderByNameAsc().stream()
+                .map(m -> enrichDomain(m, latest.get(m.getId()), teams, alarms.get(m.getDomain()))).toList();
+        return ok(result);
+    }
+
+    @PostMapping("/domain")
+    public ResponseEntity<Map<String, Object>> createDomain(@RequestBody Map<String, Object> body, HttpSession session) {
+        permissionService.require(session, "monitoring.crud", "edit");
+        if (blank(body.get("domain"))) return badRequest("domain zorunlu");
+        String reg = publicSuffixService.registrableDomain(body.get("domain").toString());
+        if (reg == null || reg.isBlank()) return badRequest("Geçersiz/çözümlenemeyen alan adı");
+        Long teamId = resolveWriteTeam(session, body);
+        if (teamId == null && !SessionScope.isGlobalAdmin(session)) return badRequest("Bir takıma atanmamışsınız; izleme oluşturulamıyor");
+        if (domainMonitorRepo.existsDuplicate(reg, teamId, null))
+            return badRequest("Bu alan adı bu takımda zaten izleniyor.");
+        String now = ISO.format(Instant.now());
+        DomainMonitor m = new DomainMonitor();
+        m.setName(blank(body.get("name")) ? reg : body.get("name").toString());
+        m.setDomain(reg);
+        if (body.containsKey("groupName")) m.setGroupName(blank(body.get("groupName")) ? null : body.get("groupName").toString().trim());
+        m.setTeamId(teamId);
+        m.setActive(true);
+        applyDomainFields(m, body);
+        m.setCreatedAt(now);
+        m.setUpdatedAt(now);
+        DomainMonitor saved = domainMonitorRepo.save(m);
+        return ok(enrichDomain(saved, null, teamNameMap(), null));
+    }
+
+    @PutMapping("/domain/{id}")
+    public ResponseEntity<Map<String, Object>> updateDomain(@PathVariable Long id, @RequestBody Map<String, Object> body, HttpSession session) {
+        permissionService.require(session, "monitoring.crud", "edit");
+        return domainMonitorRepo.findById(id).map(m -> {
+            if (!canOperateTeam(session, m.getTeamId())) throw new SecurityException("Bu takımın izlemesini düzenleyemezsiniz");
+            if (body.get("name") != null) m.setName((String) body.get("name"));
+            if (!blank(body.get("domain"))) {
+                String reg = publicSuffixService.registrableDomain(body.get("domain").toString());
+                if (reg != null && !reg.isBlank()) m.setDomain(reg);
+            }
+            if (body.containsKey("groupName")) m.setGroupName(blank(body.get("groupName")) ? null : body.get("groupName").toString().trim());
+            if (body.containsKey("teamId")) m.setTeamId(resolveTeamChange(session, m.getTeamId(), body.get("teamId")));
+            if (body.get("active") instanceof Boolean b) m.setActive(b);
+            applyDomainFields(m, body);
+            m.setUpdatedAt(ISO.format(Instant.now()));
+            DomainMonitor saved = domainMonitorRepo.save(m);
+            return ok(enrichDomain(saved, domainCheckRepo.findTopByMonitorIdOrderByCheckedAtDesc(id).orElse(null),
+                    teamNameMap(), openDomainMonAlarm(saved.getDomain())));
+        }).orElse(notFound("Domain monitor not found"));
+    }
+
+    @DeleteMapping("/domain/{id}")
+    public ResponseEntity<Map<String, Object>> deleteDomain(@PathVariable Long id, HttpSession session) {
+        permissionService.require(session, "monitoring.crud", "edit");
+        return domainMonitorRepo.findById(id).map(m -> {
+            if (!SessionScope.canManage(session, m.getTeamId())) throw new SecurityException("Silme yetkisi yok (yalnız takım yöneticisi/ADMIN)");
+            escalationService.resolveOpenAlertsSilently(m.getDomain(),
+                    Set.of(EscalationService.TYPE_DOMAINMON_EXPIRY, EscalationService.TYPE_DOMAINMON_UNKNOWN,
+                           EscalationService.TYPE_DOMAINMON_STATUS, EscalationService.TYPE_DOMAINMON_CHANGED),
+                    "Sistem (izleme silindi)");
+            domainMonitorRepo.delete(m);
+            return ok(Map.of("deleted", true));
+        }).orElse(notFound("Domain monitor not found"));
+    }
+
+    @GetMapping("/domain/{id}/history")
+    public ResponseEntity<Map<String, Object>> domainHistory(@PathVariable Long id,
+            @RequestParam(required = false) Integer days, @RequestParam(defaultValue = "100") int limit) {
+        List<DomainCheck> checks;
+        long total;
+        if (days != null && days > 0) {
+            String cutoff = ISO.format(Instant.now().minus(days, ChronoUnit.DAYS));
+            checks = domainCheckRepo.findRecentByMonitorIdSince(id, cutoff, 500);
+            total = domainCheckRepo.countByMonitorIdAndCheckedAtGreaterThanEqual(id, cutoff);
+        } else {
+            int cap = Math.max(1, Math.min(limit, 10_000));
+            checks = domainCheckRepo.findRecentByMonitorId(id, cap);
+            total = checks.size();
+        }
+        long problems = checks.stream().filter(c -> !"OK".equals(c.getStatus())).count();
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("checks", checks);
+        out.put("total", total);
+        out.put("down", problems);
+        return ok(out);
+    }
+
+    @PostMapping("/domain/{id}/check")
+    public ResponseEntity<Map<String, Object>> triggerDomain(@PathVariable Long id, HttpSession session) {
+        permissionService.require(session, "monitoring.trigger", "execute");
+        return domainMonitorRepo.findById(id).map(m -> {
+            if (!canOperateTeam(session, m.getTeamId())) throw new SecurityException("Bu takımın izlemesini çalıştıramazsınız");
+            domainChecker.check(m);   // DomainCheck persist eder
+            return ok(enrichDomain(m, domainCheckRepo.findTopByMonitorIdOrderByCheckedAtDesc(id).orElse(null),
+                    teamNameMap(), openDomainMonAlarm(m.getDomain())));
+        }).orElse(notFound("Domain monitor not found"));
+    }
+
+    /** Ad-hoc domain testi — kaydetmeden RDAP/WHOIS ile bir kez sorgular (persist YOK). */
+    @PostMapping("/domain/test")
+    public ResponseEntity<Map<String, Object>> testDomain(@RequestBody Map<String, Object> body, HttpSession session) {
+        permissionService.require(session, "monitoring.crud", "edit");
+        if (blank(body.get("domain"))) return badRequest("domain zorunlu");
+        int warn = body.get("warningDays") instanceof Number n ? n.intValue() : 30;
+        int crit = body.get("criticalDays") instanceof Number n ? n.intValue() : 7;
+        return ok(domainChecker.test(body.get("domain").toString(), warn, crit));
+    }
+
+    /** Domain form alanlarını (thresholds/warning/critical/interval) body'den uygular. */
+    private void applyDomainFields(DomainMonitor m, Map<String, Object> body) {
+        if (!blank(body.get("thresholdsCsv"))) m.setThresholdsCsv(body.get("thresholdsCsv").toString().trim());
+        if (body.get("warningDays") instanceof Number n) m.setWarningDays(Math.max(1, n.intValue()));
+        if (body.get("criticalDays") instanceof Number n) m.setCriticalDays(Math.max(1, n.intValue()));
+        if (body.get("intervalSeconds") instanceof Number n) m.setIntervalSeconds(Math.max(3600, n.intValue()));
+    }
+
+    private AlertEvent openDomainMonAlarm(String domain) {
+        for (String t : List.of(EscalationService.TYPE_DOMAINMON_EXPIRY, EscalationService.TYPE_DOMAINMON_UNKNOWN,
+                EscalationService.TYPE_DOMAINMON_STATUS, EscalationService.TYPE_DOMAINMON_CHANGED)) {
+            var a = alertEventRepo.findOpenAlert(domain, t);
+            if (a.isPresent()) return a.get();
+        }
+        return null;
+    }
+
+    private Map<String, Object> enrichDomain(DomainMonitor m, DomainCheck latest, Map<Long, String> teams, AlertEvent openAlarm) {
+        Map<String, Object> item = new LinkedHashMap<>();
+        item.put("id",               m.getId());
+        item.put("name",             m.getName());
+        item.put("domain",           m.getDomain());
+        item.put("group_name",       m.getGroupName());
+        item.put("team_id",          m.getTeamId());
+        item.put("team_name",        m.getTeamId() != null ? teams.get(m.getTeamId()) : null);
+        item.put("active",           m.getActive());
+        item.put("interval_seconds", m.getIntervalSeconds());
+        item.put("thresholds_csv",   m.getThresholdsCsv());
+        item.put("warning_days",     m.getWarningDays());
+        item.put("critical_days",    m.getCriticalDays());
+        item.put("active_alarm",       openAlarm != null);
+        item.put("alarm_level",        openAlarm != null ? openAlarm.getAlertLevel() : null);
+        item.put("alarm_acknowledged", openAlarm != null ? openAlarm.getAcknowledged() : null);
+        if (latest != null) {
+            item.put("status",            latest.getStatus());
+            item.put("source",            latest.getSource());
+            item.put("days_remaining",    latest.getDaysRemaining());
+            item.put("expiry_date",       latest.getExpiryDate());
+            item.put("registration_date", latest.getRegistrationDate());
+            item.put("last_changed",      latest.getLastChanged());
+            item.put("registrar",         latest.getRegistrar());
+            item.put("status_codes",      csvList(latest.getStatusCodes()));
+            item.put("nameservers",       csvList(latest.getNameservers()));
+            item.put("ns_resolves",       latest.getNsResolves());
+            item.put("changed",           latest.getChanged());
+            item.put("error",             latest.getError());
+            item.put("checked_at",        latest.getCheckedAt());
+        } else {
+            item.put("status", "UNKNOWN"); item.put("source", null); item.put("days_remaining", null);
+            item.put("expiry_date", null); item.put("registration_date", null); item.put("last_changed", null);
+            item.put("registrar", null); item.put("status_codes", List.of()); item.put("nameservers", List.of());
+            item.put("ns_resolves", null); item.put("changed", false); item.put("error", null); item.put("checked_at", null);
+        }
+        return item;
+    }
+
+    private static List<String> csvList(String csv) {
+        if (csv == null || csv.isBlank()) return List.of();
+        List<String> out = new ArrayList<>();
+        for (String s : csv.split(",")) { s = s.trim(); if (!s.isEmpty()) out.add(s); }
+        return out;
     }
 
     // ── Ping Monitors (serbest-form) ──────────────────────────────────────────

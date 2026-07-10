@@ -1,0 +1,246 @@
+package com.certmonitor.service;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import jakarta.annotation.PostConstruct;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Service;
+
+import java.net.InetSocketAddress;
+import java.net.ProxySelector;
+import java.net.URI;
+import java.net.URLEncoder;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
+import java.time.Duration;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+
+/**
+ * Proxy-aware RDAP istemcisi (alan adı süre bitişi + registrar + EPP status + nameserver).
+ * IANA bootstrap (data.iana.org/rdap/dns.json) ile TLD→RDAP sunucusu bulunur; bulunamazsa/hata olursa
+ * rdap.org aggregator'a düşer. Kurumsal DMZ proxy'si {@code cert.monitor.proxy.*} ile onurlandırılır
+ * (HTTPS CONNECT tüneli — {@code java.net.http.HttpClient} otomatik). 429 → exponential backoff.
+ *
+ * Dönen ham bilgi (tarihler String; days/status HESAPLAMASI DomainCheckerService'te merkezileşir):
+ * {@code {source:"RDAP", expiry_date?, registration_date?, last_changed?, registrar?, status_codes:List,
+ * nameservers:List, error?}}. Hata/veri yok → {@code error} dolu, source "NONE".
+ */
+@Slf4j
+@Service
+public class RdapDomainClient {
+
+    private final AppSettingsService appSettings;
+    private final PublicSuffixService psl;
+
+    public RdapDomainClient(AppSettingsService appSettings, PublicSuffixService psl) {
+        this.appSettings = appSettings;
+        this.psl = psl;
+    }
+
+    @Value("${cert.monitor.proxy.host:}")     private String proxyHost;
+    @Value("${cert.monitor.proxy.port:0}")    private int    proxyPort;
+    @Value("${cert.monitor.proxy.no-proxy:}") private String noProxyList;
+
+    private final ObjectMapper mapper = new ObjectMapper();
+    private HttpClient direct;
+    private HttpClient proxied;
+
+    private static final long BOOTSTRAP_TTL_MS = 24L * 60 * 60 * 1000L;
+    private volatile Map<String, String> bootstrap;   // tld -> rdap base (trailing '/')
+    private volatile long bootstrapFetchedAt;
+
+    @PostConstruct
+    public void init() {
+        Duration ct = Duration.ofSeconds(5);
+        direct = HttpClient.newBuilder().connectTimeout(ct).followRedirects(HttpClient.Redirect.NORMAL).build();
+        if (proxyHost != null && !proxyHost.isBlank() && proxyPort > 0) {
+            proxied = HttpClient.newBuilder().connectTimeout(ct).followRedirects(HttpClient.Redirect.NORMAL)
+                    .proxy(ProxySelector.of(new InetSocketAddress(proxyHost, proxyPort))).build();
+            log.info("RDAP istemcisi proxy üzerinden: {}:{}", proxyHost, proxyPort);
+        } else {
+            proxied = direct;
+        }
+    }
+
+    private HttpClient clientFor(String host) {
+        if (proxied == direct) return direct;
+        return shouldBypass(host) ? direct : proxied;
+    }
+
+    private boolean shouldBypass(String host) {
+        if (noProxyList == null || noProxyList.isBlank() || host == null) return false;
+        String h = host.toLowerCase(Locale.ROOT);
+        for (String raw : noProxyList.split(",")) {
+            String e = raw.trim().toLowerCase(Locale.ROOT);
+            if (e.isEmpty()) continue;
+            if (e.startsWith(".")) e = e.substring(1);
+            if (h.equals(e) || h.endsWith("." + e)) return true;
+        }
+        return false;
+    }
+
+    /** Kayıtlı domain için RDAP sorgusu. registrableDomain zaten eTLD+1 (PSL) olmalı. */
+    public Map<String, Object> lookup(String registrableDomain) {
+        if (registrableDomain == null || registrableDomain.isBlank()) return err("invalid domain");
+        String tld = psl.tldOf(registrableDomain);
+        Map<String, Object> res = null;
+
+        String base = bootstrapBase(tld);   // IANA bootstrap
+        if (base != null) res = tryRdap(base + "domain/" + enc(registrableDomain), registrableDomain);
+
+        if (res == null || res.get("error") != null) {   // rdap.org aggregator fallback
+            String fb = appSettings.getString("cert.monitor.domain.rdap-fallback-url", "https://rdap.org/domain/");
+            Map<String, Object> res2 = tryRdap(fb + enc(registrableDomain), registrableDomain);
+            if (res2.get("error") == null) res = res2;
+            else if (res == null) res = res2;
+        }
+        return res != null ? res : err("no rdap");
+    }
+
+    /** Tek bir RDAP URL'sini dener; 429 → exponential backoff, geçici hata → 1 retry. */
+    private Map<String, Object> tryRdap(String url, String domain) {
+        String host; try { host = URI.create(url).getHost(); } catch (Exception e) { return err("bad url"); }
+        int attempts = 0; long backoff = 1000;
+        while (true) {
+            try {
+                HttpRequest req = HttpRequest.newBuilder()
+                        .uri(URI.create(url))
+                        .timeout(Duration.ofSeconds(6))
+                        .header("Accept", "application/rdap+json")
+                        .header("User-Agent", "CertMonitor-DomainMonitor/1.0")
+                        .GET().build();
+                HttpResponse<String> resp = clientFor(host).send(req, HttpResponse.BodyHandlers.ofString());
+                int sc = resp.statusCode();
+                if (sc == 429 && attempts < 2) { attempts++; sleep(backoff); backoff *= 2; continue; }
+                if (sc != 200) return err("rdap http " + sc);
+                return parse(resp.body(), domain);
+            } catch (Exception e) {
+                if (attempts < 1) { attempts++; sleep(backoff); backoff *= 2; continue; }
+                log.debug("RDAP {} başarısız: {}", domain, e.getMessage());
+                return err(e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName());
+            }
+        }
+    }
+
+    private Map<String, Object> parse(String body, String domain) {
+        try {
+            JsonNode root = mapper.readTree(body);
+            String expiry = null, registration = null, lastChanged = null;
+            JsonNode events = root.get("events");
+            if (events != null && events.isArray()) {
+                for (JsonNode ev : events) {
+                    String a = ev.path("eventAction").asText("");
+                    String d = ev.path("eventDate").asText(null);
+                    if ("expiration".equalsIgnoreCase(a)) expiry = d;
+                    else if ("registration".equalsIgnoreCase(a)) registration = d;
+                    else if ("last changed".equalsIgnoreCase(a)) lastChanged = d;
+                }
+            }
+            List<String> status = new ArrayList<>();
+            JsonNode st = root.get("status");
+            if (st != null && st.isArray()) for (JsonNode s : st) status.add(s.asText());
+            List<String> ns = new ArrayList<>();
+            JsonNode nsArr = root.get("nameservers");
+            if (nsArr != null && nsArr.isArray()) for (JsonNode n : nsArr) {
+                String name = n.path("ldhName").asText(null);
+                if (name != null && !name.isBlank()) ns.add(name.toLowerCase(Locale.ROOT));
+            }
+            String registrar = extractRegistrar(root);
+
+            Map<String, Object> out = new LinkedHashMap<>();
+            out.put("source", "RDAP");
+            out.put("expiry_date", expiry);
+            out.put("registration_date", registration);
+            out.put("last_changed", lastChanged);
+            out.put("registrar", registrar);
+            out.put("status_codes", status);
+            out.put("nameservers", ns);
+            return out;
+        } catch (Exception e) {
+            return err("rdap parse: " + e.getMessage());
+        }
+    }
+
+    /** entities[] içinde roles=registrar olanın vCard "fn" değerini çıkarır. */
+    private static String extractRegistrar(JsonNode root) {
+        JsonNode entities = root.get("entities");
+        if (entities == null || !entities.isArray()) return null;
+        for (JsonNode ent : entities) {
+            JsonNode roles = ent.get("roles");
+            boolean isReg = false;
+            if (roles != null && roles.isArray()) for (JsonNode r : roles) if ("registrar".equalsIgnoreCase(r.asText())) isReg = true;
+            if (!isReg) continue;
+            JsonNode vcard = ent.get("vcardArray");
+            if (vcard != null && vcard.isArray() && vcard.size() > 1 && vcard.get(1).isArray()) {
+                for (JsonNode item : vcard.get(1)) {
+                    if (item.isArray() && item.size() >= 4 && "fn".equalsIgnoreCase(item.get(0).asText())) {
+                        String fn = item.get(3).asText(null);
+                        if (fn != null && !fn.isBlank()) return fn;
+                    }
+                }
+            }
+            String handle = ent.path("handle").asText(null);
+            if (handle != null && !handle.isBlank()) return handle;
+        }
+        return null;
+    }
+
+    /** IANA bootstrap'tan TLD'nin RDAP base URL'si (trailing '/'), yoksa null. Registry 24s cache'li. */
+    private String bootstrapBase(String tld) {
+        if (tld == null) return null;
+        Map<String, String> b = bootstrap;
+        if (b == null || (System.currentTimeMillis() - bootstrapFetchedAt) > BOOTSTRAP_TTL_MS) {
+            b = fetchBootstrap();
+            if (b != null) { bootstrap = b; bootstrapFetchedAt = System.currentTimeMillis(); }
+        }
+        return b != null ? b.get(tld) : null;
+    }
+
+    private Map<String, String> fetchBootstrap() {
+        String url = appSettings.getString("cert.monitor.domain.rdap-bootstrap-url", "https://data.iana.org/rdap/dns.json");
+        try {
+            String host = URI.create(url).getHost();
+            HttpRequest req = HttpRequest.newBuilder().uri(URI.create(url)).timeout(Duration.ofSeconds(8))
+                    .header("User-Agent", "CertMonitor-DomainMonitor/1.0").GET().build();
+            HttpResponse<String> resp = clientFor(host).send(req, HttpResponse.BodyHandlers.ofString());
+            if (resp.statusCode() != 200) { log.warn("IANA RDAP bootstrap http {}", resp.statusCode()); return bootstrap; }
+            JsonNode root = mapper.readTree(resp.body());
+            JsonNode services = root.get("services");
+            Map<String, String> map = new ConcurrentHashMap<>();
+            if (services != null && services.isArray()) {
+                for (JsonNode svc : services) {
+                    if (!svc.isArray() || svc.size() < 2) continue;
+                    JsonNode tlds = svc.get(0), urls = svc.get(1);
+                    if (!urls.isArray() || urls.isEmpty()) continue;
+                    String base = urls.get(0).asText();
+                    if (!base.endsWith("/")) base = base + "/";
+                    for (JsonNode t : tlds) map.put(t.asText().toLowerCase(Locale.ROOT), base);
+                }
+            }
+            log.info("IANA RDAP bootstrap yüklendi: {} TLD", map.size());
+            return map;
+        } catch (Exception e) {
+            log.warn("IANA RDAP bootstrap alınamadı ({}), rdap.org fallback kullanılacak: {}", url, e.getMessage());
+            return bootstrap;   // eski cache (varsa) korunur; yoksa null → doğrudan fallback
+        }
+    }
+
+    private static Map<String, Object> err(String msg) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("source", "NONE");
+        out.put("error", msg != null ? msg : "unknown");
+        return out;
+    }
+
+    private static String enc(String s) { return URLEncoder.encode(s, StandardCharsets.UTF_8); }
+
+    private static void sleep(long ms) { try { Thread.sleep(ms); } catch (InterruptedException e) { Thread.currentThread().interrupt(); } }
+}
