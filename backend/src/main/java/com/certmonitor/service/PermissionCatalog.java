@@ -67,6 +67,11 @@ public final class PermissionCatalog {
         r("incidents.manage", "incidents", EDIT),
         r("incidents.delete", "incidents", EXECUTE, Set.of(EXECUTE)),
 
+        // ── Bakım Pencereleri (Maintenance Windows) ──
+        r("maintenance.view",   "maintenance", VIEW),
+        r("maintenance.manage", "maintenance", EDIT),
+        r("maintenance.delete", "maintenance", EXECUTE, Set.of(EXECUTE)),
+
         // ── Yönetim Araçları (kritik) ─────────────────────────────────────
         r("diagnostics.run",        "tools", EXECUTE, Set.of(EXECUTE)),
         r("diagnostics.history",    "tools", VIEW),
@@ -162,6 +167,7 @@ public final class PermissionCatalog {
             // tanılama geçmişini görür (canlı tarama admin-only kalır)
             "weekly_reports.read", "weekly_reports.crud", "weekly_reports.approve",
             "incidents.view", "incidents.manage", "incidents.delete",
+            "maintenance.view", "maintenance.manage", "maintenance.delete",
             "diagnostics.history"
         );
         for (Resource r : ALL) putAll(map, r, allowed.contains(r.key));
@@ -194,7 +200,8 @@ public final class PermissionCatalog {
             "weekly_reports.read", "weekly_reports.crud",
             // Olay geçmişi: USER kendi takımı için olay girer/düzenler (incidents.manage);
             // silme yetkisi (incidents.delete) yalnız TEAM_ADMIN/ADMIN'de
-            "incidents.view", "incidents.manage"
+            "incidents.view", "incidents.manage",
+            "maintenance.view"
         );
         for (Resource r : ALL) putAll(map, r, allowed.contains(r.key));
         for (Resource r : INTERNAL) putAll(map, r, false);

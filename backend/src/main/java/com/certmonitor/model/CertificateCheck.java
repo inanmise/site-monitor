@@ -77,4 +77,8 @@ public class CertificateCheck {
     /** Error classification tag: DNS, NETWORK, SSL, CERT, UNKNOWN — null for non-error checks. */
     @Column(length = 32)
     private String errorClass;
+
+    /** Kontrol anında domain bakım penceresindeyse true — dashboard uptime % hesabından hariç tutulur. */
+    @Column
+    private Boolean maintenance = false;
 }

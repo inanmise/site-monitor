@@ -9,6 +9,8 @@ import java.util.Optional;
 public interface DnsMonitorRepository extends JpaRepository<DnsMonitor, Long> {
     List<DnsMonitor> findByActiveTrue();
     List<DnsMonitor> findAllByOrderByNameAsc();
+    /** Storm denominatörü — cert-türevi (envanter) satırları çift saymamak için yalnız standalone aktifler. */
+    long countByStandaloneTrueAndActiveTrue();
     Optional<DnsMonitor> findFirstByDomainOrderByIdAsc(String domain);
     List<DnsMonitor> findByStandaloneTrueAndActiveTrue();
     Optional<DnsMonitor> findFirstByDomainAndRecordTypeAndStandaloneTrue(String domain, String recordType);

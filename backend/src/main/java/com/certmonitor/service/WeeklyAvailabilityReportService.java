@@ -341,6 +341,8 @@ public class WeeklyAvailabilityReportService {
     // ── Hesaplama ───────────────────────────────────────────────────────────────
 
     AvailabilityRow computeRow(String domain, List<UptimeCheck> ordered, Instant windowEnd, Integer certDays) {
+        // Bakım penceresindeki (maintenance=true) kontroller uptime %'den + kesinti hesabından hariç tutulur.
+        ordered = ordered.stream().filter(c -> !Boolean.TRUE.equals(c.getMaintenance())).toList();
         int total = ordered.size();
         if (total == 0) {
             return new AvailabilityRow(domain, null, 0, 0, 0, null, null, certDays);

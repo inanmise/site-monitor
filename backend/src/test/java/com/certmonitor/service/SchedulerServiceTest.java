@@ -61,6 +61,7 @@ class SchedulerServiceTest {
     @Mock CertificateService certService;
     @Mock EmailNotificationService emailService;
     @Mock EscalationService escalationService;
+    @Mock MaintenanceService maintenanceService;
     @Mock CertificateInventoryRepository inventoryRepo;
     @Mock LatestCheckRepository latestCheckRepo;
     @Mock AlertThresholdRepository thresholdRepo;
@@ -102,7 +103,7 @@ class SchedulerServiceTest {
     @BeforeEach
     void setUp() {
         scheduler = new SchedulerService(
-                checkerService, certService, emailService, escalationService,
+                checkerService, certService, emailService, escalationService, maintenanceService,
                 inventoryRepo, latestCheckRepo, thresholdRepo, jdbcTemplate,
                 userService, permissionService, dataSource, eventPublisher,
                 portCheckerService, portMonitorRepo, portCheckRepo,

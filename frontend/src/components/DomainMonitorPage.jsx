@@ -4,6 +4,7 @@ import { api, formatDateSec } from '../api/client'
 import { useT } from '../i18n/index.jsx'
 import { useToast } from './ui/Toast.jsx'
 import SearchableSelect from './ui/SearchableSelect.jsx'
+import MaintenanceBadge from './ui/MaintenanceBadge.jsx'
 import { Play, Pencil, X, RefreshCw, Plus, Trash2, CalendarClock, Users, Layers, FlaskConical, Check, AlertTriangle,
   LayoutDashboard, CheckCircle2, TriangleAlert, HelpCircle, ShieldAlert, Building2, Activity, BarChart3, ChevronDown, Calendar } from 'lucide-react'
 import AlertHistory from './admin/AlertHistory.jsx'
@@ -354,7 +355,7 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName }) {
               onClick={() => openDetail(m)}>
               <div className="upt-card-top">
                 {statusBadge(m)}
-                {alarmBadge(m)}
+                {alarmBadge(m)}<MaintenanceBadge target={m.domain} />
                 {m.changed && <span className="dom-changed-ico" title={t('dom.changedTip')}><Activity size={13} /></span>}
                 {m.source && <span className="upt-port-tag">{m.source}</span>}
               </div>

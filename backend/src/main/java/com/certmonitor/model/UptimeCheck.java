@@ -32,4 +32,8 @@ public class UptimeCheck {
 
     @Column(name = "checked_at")
     private String checkedAt;   // ISO-8601
+
+    /** Kontrol anında domain bakım penceresindeyse true — uptime % / availability hesabından hariç tutulur. */
+    @Column
+    private Boolean maintenance = false;
 }

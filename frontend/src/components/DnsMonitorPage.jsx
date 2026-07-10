@@ -6,6 +6,7 @@ import { Play, Pencil, Trash2, Plus, ChevronDown, Globe, Info, Network, AlertTri
 import DnsDetailModal from './DnsDetailModal.jsx'
 import MonitorStatsBar from './MonitorStatsBar.jsx'
 import SearchableSelect from './ui/SearchableSelect.jsx'
+import MaintenanceBadge from './ui/MaintenanceBadge.jsx'
 
 const RECORD_TYPES = ['A', 'AAAA', 'CNAME', 'MX', 'TXT', 'NS']
 
@@ -375,7 +376,7 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName }) {
                   onClick={() => setDetailMonitor(m)}
                 >
                   <td className="dns-cell-mono">
-                    {alarmBadge(m)}
+                    {alarmBadge(m)}<MaintenanceBadge target={m.domain} />
                     <strong>{m.domain}</strong>
                     {m.standalone && (
                       <span className="dns-standalone-badge" title={t('dns.standaloneHint')}>{t('dns.standalone')}</span>

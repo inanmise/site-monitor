@@ -11,7 +11,8 @@ import lombok.NoArgsConstructor;
         @Index(name = "idx_ae_domain",           columnList = "domain"),
         @Index(name = "idx_ae_resolved",         columnList = "resolved"),
         @Index(name = "idx_ae_alert_level",      columnList = "alertLevel"),
-        @Index(name = "idx_ae_domain_type_open", columnList = "domain,alertType,resolved")
+        @Index(name = "idx_ae_domain_type_open", columnList = "domain,alertType,resolved"),
+        @Index(name = "idx_ae_storm_id",         columnList = "stormId")
     }
 )
 @Data
@@ -64,6 +65,15 @@ public class AlertEvent {
 
     private String createdAt;
     private String lastReAlertAt;
+
+    /** Alarm fırtınası (storm) bağı — bu incident bir toplu storm'un parçasıysa storm id'si; değilse null.
+     *  Set edildiğinde bireysel bildirim bastırılır (toplu alarm/recovery storm üzerinden gider). */
+    private Long stormId;
+
+    /** Monitörün grubu (group_name) — per-group storm scoping için oluşturulurken damgalanır (yalnız
+     *  per-group modu açıkken StormService tarafından çözülür); cert-envanteri/grupsuz izlemede null. */
+    @Column(name = "group_name")
+    private String groupName;
 
     // ── Transient enrichment (populated by AdminController, not persisted) ──
     @Transient private String  syTeamName;

@@ -70,6 +70,12 @@ public final class AppSettingsCatalog {
         new Setting("cert.monitor.http.default-timeout-ms",          "frequency", Type.INT),
         // Haftalık erişilebilirlik e-postası (Pazartesi 10:00) aç/kapa — canlı.
         new Setting("cert.monitor.weekly-availability.enabled",  "monitoring", Type.BOOL),
+        // Alarm fırtınası (alert storm) — çok monitör birden düşünce bireysel alarmları TEK toplu bildirime indirger.
+        new Setting("cert.monitor.storm.enabled",                "storm",      Type.BOOL),
+        new Setting("cert.monitor.storm.threshold-unit",         "storm",      Type.ENUM, List.of("COUNT", "PERCENT")),
+        new Setting("cert.monitor.storm.threshold-value",        "storm",      Type.INT),
+        new Setting("cert.monitor.storm.window-minutes",         "storm",      Type.INT),
+        new Setting("cert.monitor.storm.per-group",              "storm",      Type.BOOL),
         // Kurumsal/iç kök+ara CA paketi (PEM) — bu CA ile imzalı host'lar TRUSTED sayılır.
         // TrustEvaluator okuma anında okur (canlı reload). Boş = yalnız public CA'lar (cacerts).
         new Setting("cert.monitor.trust.ca-bundle-pem",          "security",   Type.TEXT),

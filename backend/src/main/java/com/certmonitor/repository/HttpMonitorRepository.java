@@ -10,6 +10,7 @@ import java.util.Optional;
 
 public interface HttpMonitorRepository extends JpaRepository<HttpMonitor, Long> {
     List<HttpMonitor> findByActiveTrue();
+    long countByActiveTrue();
     List<HttpMonitor> findAllByOrderByNameAsc();
     Optional<HttpMonitor> findFirstByUrlOrderByIdAsc(String url);
 

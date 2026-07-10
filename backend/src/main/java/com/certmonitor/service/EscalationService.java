@@ -45,6 +45,8 @@ public class EscalationService {
     private final LatestCheckRepository latestCheckRepo;
     private final TeamRepository teamRepo;
     private final SmtpSettingsService smtpSettings;
+    private final MaintenanceService maintenanceService;
+    private final StormService stormService;
 
     // Self-injection (@Lazy avoids circular dep) — needed to invoke @Async methods via proxy
     @Autowired @Lazy
@@ -137,6 +139,11 @@ public class EscalationService {
      *  site erişiminin/portun/DNS'in düzeldiği anlamına gelmez (ve tersi). */
     public static final Set<String> CERT_ALERT_TYPES =
             Set.of("EXPIRY", "CHAIN_BROKEN", "REVOKED", "MISMATCH");
+
+    /** "Erişilemez/çöktü" (DOWN) alarm tipleri — alarm fırtınası (storm) toplaması YALNIZ bunları sayar.
+     *  Slow/SSL/expiry/changed/domainmon/cert bilinçli DIŞINDA (bunlar kesinti değildir). */
+    public static final Set<String> DOWN_ALERT_TYPES =
+            Set.of(TYPE_ACCESSIBILITY, TYPE_HTTP_DOWN, TYPE_PORT_DOWN, TYPE_PING_DOWN, TYPE_DNS_FAILURE, TYPE_KEYWORD);
 
     public void processResults(List<Map<String, Object>> results) {
         AlertThreshold threshold = thresholdRepo.findFirstByActiveTrue()
@@ -398,12 +405,23 @@ public class EscalationService {
     }
 
     private void resolveOpenAlertsForDomain(String domain, Collection<String> types) {
+        // Bakım penceresinde recovery: alarm kapanır ama çözüm e-postası GÖNDERİLMEZ (tam sessizlik).
+        if (maintenanceService.isUnderMaintenance(domain)) {
+            resolveOpenAlertsSilently(domain, types, "Sistem (bakım penceresi — sessiz kapanış)");
+            return;
+        }
         List<AlertEvent> openAlerts = alertEventRepo.findByDomainAndAlertTypeInAndResolvedFalse(domain, types);
         for (AlertEvent event : openAlerts) {
             event.setResolved(true);
             event.setResolvedAt(now());
             event.setResolvedBy("system");
             AlertEvent saved = alertEventRepo.save(event);
+            // Storm üyesi + storm hâlâ aktif → bireysel çözüm e-postası GÖNDERME
+            // (TEK toplu recovery, fırtına dağıldığında storm sweep'inden gider). Incident yine kapandı.
+            if (saved.getStormId() != null && stormService.isActive(saved.getStormId())) {
+                log.info("✅ Alarm çözüldü (storm üyesi — bireysel çözüm maili yok): {} [{}]", domain, event.getAlertType());
+                continue;
+            }
             self.sendResolutionNotificationAsync(saved, "Sistem (otomatik)", "RESOLUTION");
             log.info("✅ Alarm çözüldü: {} [{}] — sorun giderildi, otomatik kapatıldı",
                     domain, event.getAlertType());
@@ -538,6 +556,12 @@ public class EscalationService {
      */
     public void processConfirmedOutage(String domain, String alertType, String alertLevel,
                                        Map<String, Object> outageContext) {
+        // Bakım penceresi: atanan monitör bakımdaysa alarm AÇILMAZ + hiçbir kanaldan bildirim gitmez
+        // (açılış + günlük re-alert + DNS_CHANGED hepsi bu tek noktadan geçer; save + sendCombinedAlert'ten ÖNCE).
+        if (maintenanceService.isUnderMaintenance(domain)) {
+            log.debug("🔧 Bakım penceresi aktif — alarm/bildirim bastırıldı: {} [{}]", domain, alertType);
+            return;
+        }
         // Sweep ctx'i açık bir alert_level taşıyorsa onu kullan (domain izlemesi değişken şiddet — WARNING/CRITICAL).
         if (outageContext != null && outageContext.get("alert_level") instanceof String lvl && !lvl.isBlank()) alertLevel = lvl;
         // Serbest-form izleme (keyword/ping) takımı outageContext.team_id'den gelir
@@ -566,19 +590,36 @@ public class EscalationService {
             event.setContextJson(snapshotContext(outageContext));   // çözüldü mailinde keyword/koşul detayı için
             event = alertEventRepo.save(event);
 
-            List<EscalationContact> contacts = teamOnly ? List.of() : getContactsForLevel(alertLevel, domainTeamId);
-            sendCombinedAlert(domainTeamId, ugTeamId, contacts, domain, alertLevel, alertType,
-                    message, "", event.getId(), "INITIAL", null, outageContext);
+            // Alarm fırtınası hunisi (bakım + ≥%50 geçitlerinin ALTINDA): eşik+pencere aşıldıysa bireysel
+            // bildirim bastırılır → TEK toplu alarm storm üzerinden gider. Storm KAPALI / eşik altı ise
+            // SEND_INDIVIDUAL (sıfır gecikme, bugünkü davranış). stormId/groupName evaluate'te event'e
+            // damgalanır; aşağıdaki save onu kalıcılaştırır.
+            StormService.StormAction stormAction = stormService.evaluate(event, outageContext);
+            if (stormAction == StormService.StormAction.SUPPRESSED) {
+                event.setLastReAlertAt(now());
+                alertEventRepo.save(event);
+                log.info("🌩 İzleme alarmı storm'a eklendi (bireysel bildirim yok): {} [{}] → storm #{}",
+                        domain, alertType, event.getStormId());
+            } else {
+                List<EscalationContact> contacts = teamOnly ? List.of() : getContactsForLevel(alertLevel, domainTeamId);
+                sendCombinedAlert(domainTeamId, ugTeamId, contacts, domain, alertLevel, alertType,
+                        message, "", event.getId(), "INITIAL", null, outageContext);
 
-            event.setNotifiedContacts(serializeContacts(contacts));
-            event.setLastReAlertAt(now());
-            alertEventRepo.save(event);
-            log.warn("🔴 İzleme alarmı oluşturuldu: {} [{}] {} — takım bilgilendirildi",
-                    domain, alertType,
-                    outageContext != null ? outageContext.getOrDefault("detail", "") : "");
+                event.setNotifiedContacts(serializeContacts(contacts));
+                event.setLastReAlertAt(now());
+                alertEventRepo.save(event);
+                log.warn("🔴 İzleme alarmı oluşturuldu: {} [{}] {} — takım bilgilendirildi",
+                        domain, alertType,
+                        outageContext != null ? outageContext.getOrDefault("detail", "") : "");
+            }
 
         } else if (!existing.get().getAcknowledged()) {
             AlertEvent event = existing.get();
+            // Storm üyesi + storm hâlâ aktif → bireysel günlük re-alert YOK (toplu re-alert storm sweep'inden gider).
+            if (event.getStormId() != null && stormService.isActive(event.getStormId())) {
+                log.debug("İzleme alarmı storm üyesi — bireysel re-alert atlandı: {} [{}]", domain, alertType);
+                return;
+            }
             String lastAlertTime = event.getLastReAlertAt() != null
                     ? event.getLastReAlertAt() : event.getCreatedAt();
             if (!isSameUtcDay(lastAlertTime, now())) {
@@ -1280,7 +1321,8 @@ public class EscalationService {
         if (ctx == null) return null;
         Map<String, Object> snap = new LinkedHashMap<>();
         for (String k : List.of("keyword", "operator", "match_count", "occurrences",
-                                 "url", "host", "ip_version", "monitor_id", "condition")) {
+                                 "url", "host", "ip_version", "monitor_id", "condition",
+                                 "http_status", "last_error", "response_ms", "threshold_ms", "port", "protocol")) {
             if (ctx.get(k) != null) snap.put(k, ctx.get(k));
         }
         if (snap.isEmpty()) return null;

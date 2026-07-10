@@ -39,6 +39,8 @@ class EscalationServiceTest {
     @Mock com.certmonitor.repository.LatestCheckRepository latestCheckRepo;
     @Mock com.certmonitor.repository.TeamRepository teamRepo;
     @Mock SmtpSettingsService smtpSettings;
+    @Mock MaintenanceService maintenanceService;
+    @Mock StormService stormService;
 
     private EscalationService service;
     private static final DateTimeFormatter ISO =
@@ -47,7 +49,7 @@ class EscalationServiceTest {
     @BeforeEach
     void setUp() {
         service = new EscalationService(alertEventRepo, thresholdRepo, contactRepo,
-                inventoryRepo, emailService, webhookService, new ObjectMapper(), notificationLogRepo, latestCheckRepo, teamRepo, smtpSettings);
+                inventoryRepo, emailService, webhookService, new ObjectMapper(), notificationLogRepo, latestCheckRepo, teamRepo, smtpSettings, maintenanceService, stormService);
 
         // Self-injection bypass for @Async dispatch in tests (runs synchronously)
         ReflectionTestUtils.setField(service, "self", service);

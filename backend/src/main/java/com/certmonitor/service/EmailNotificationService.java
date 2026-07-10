@@ -1511,6 +1511,181 @@ public class EmailNotificationService {
             + "</body></html>";
     }
 
+    // ── Alarm Fırtınası (Alert Storm) — çok monitör birden düştüğünde TEK toplu bildirim ──
+    // Outlook-safe: td+bgcolor (div bg değil), solid hex, LIGHT_SCHEME_META, mso font fallback, ctaButton VML.
+
+    /** CANLI base-url'den olay (incidents) ekranına deep-link — reminder/approve/incident ile AYNI kaynak. */
+    private String stormCtaUrl() {
+        String url = appSettings.getString("cert.monitor.app.base-url", appBaseUrl);
+        String base = (url != null && !url.isBlank()) ? url.replaceAll("/+$", "") : "";
+        return base.isEmpty() ? "" : base + "/?tab=incidents";
+    }
+
+    private String stormTargetRows(List<String> targets, int truncatedExtra, String zebra) {
+        StringBuilder sb = new StringBuilder();
+        for (String t : targets) {
+            sb.append("<tr><td bgcolor='").append(zebra).append("' style='background-color:").append(zebra)
+              .append(";padding:8px 14px;font-size:13px;color:#1c1917;border-top:1px solid #f1f5f9;word-break:break-all'>")
+              .append("🔴 ").append(escHtml(t)).append("</td></tr>");
+        }
+        if (truncatedExtra > 0) {
+            sb.append("<tr><td bgcolor='").append(zebra).append("' style='background-color:").append(zebra)
+              .append(";padding:8px 14px;font-size:12px;color:#64748b;border-top:1px solid #f1f5f9;font-style:italic'>")
+              .append("+ ").append(truncatedExtra).append(" monitör daha…</td></tr>");
+        }
+        return sb.toString();
+    }
+
+    /**
+     * Toplu alarm fırtınası e-postası — {@code monitorCount} monitör birden erişilemez.
+     * StormService promotion (INITIAL) + günlük toplu re-alert (DAILY_REALERT) bunu kullanır.
+     */
+    public String buildStormAlertHtml(int monitorCount, String scopeLabel, String rootCauseLabel,
+                                      String startedAt, List<String> sampleTargets, int truncatedExtra) {
+        String generatedAt = LocalDateTime.now(IST).format(DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm"));
+        String red = "#dc2626";
+        String ctaUrl = stormCtaUrl();
+        String cta = (!ctaUrl.isBlank())
+            ? "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' style='margin:4px 0 18px'><tr><td align='center'>"
+              + ctaButton(ctaUrl, "Olayları Aç &rarr;", "#1e293b") + "</td></tr></table>"
+            : "";
+
+        String infoRows = tableRow2col("🌐 Kapsam",       escHtml(scopeLabel))
+            + tableRow2col("🧭 Ortak Kök-Neden", escHtml(rootCauseLabel))
+            + tableRow2col("🕐 Başlangıç",       fmtOrDash(formatIstanbul(startedAt)))
+            + "<tr style='border-top:1px solid #e2e8f0'>"
+            + "<td width='1%' bgcolor='#fef2f2' style='background-color:#fef2f2;padding:9px 13px;font-size:12px;color:#64748b;white-space:nowrap'>📉 Etkilenen Monitör</td>"
+            + "<td bgcolor='#fef2f2' style='background-color:#fef2f2;padding:9px 13px;font-size:16px;font-weight:800;color:" + red + "'>" + monitorCount + "</td>"
+            + "</tr>";
+
+        String listSection =
+            "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' style='margin-bottom:16px;border:1px solid #e2e8f0;border-radius:10px;overflow:hidden'>"
+            + "<tr><td bgcolor='#1e293b' style='background-color:#1e293b;padding:9px 14px;font-size:11px;font-weight:700;letter-spacing:.1em;color:#94a3b8'>ETKİLENEN MONİTÖRLER</td></tr>"
+            + stormTargetRows(sampleTargets, truncatedExtra, "#ffffff")
+            + "</table>";
+
+        String css = "<style>"
+            + "body,table,td{-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%}"
+            + "@media only screen and (max-width:620px){"
+            + ".em-card{border-radius:0!important;width:100%!important}.em-body{padding:14px!important}"
+            + "}"
+            + "</style>";
+
+        return "<!DOCTYPE html><html lang='tr'>"
+            + "<head><meta charset='UTF-8'>"
+            + "<meta name='viewport' content='width=device-width,initial-scale=1,maximum-scale=1'>"
+            + LIGHT_SCHEME_META
+            + "<!--[if mso]><style>*{font-family:Arial,Helvetica,sans-serif !important}</style><![endif]-->"
+            + css + "</head>"
+            + "<body style='margin:0;padding:0;background-color:#f1f5f9;font-family:\"Segoe UI\",Tahoma,Arial,sans-serif'>"
+            + "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' bgcolor='#f1f5f9'"
+            + " style='background-color:#f1f5f9'><tr><td align='center' style='padding:24px 10px'>"
+            + "<table role='presentation' class='em-card' width='640' cellpadding='0' cellspacing='0' border='0' bgcolor='#ffffff'"
+            + " style='width:640px;max-width:640px;background-color:#ffffff;border-radius:14px;overflow:hidden;box-shadow:0 8px 32px rgba(0,0,0,.15)'>"
+            // Top bar
+            + "<tr><td bgcolor='" + red + "' style='background-color:" + red + ";padding:22px 24px'>"
+            + "<div style='color:#ffe4e6;font-size:11px;font-weight:700;letter-spacing:.12em'>CertMonitor — İzleme</div>"
+            + "<div style='color:#ffffff;font-size:22px;font-weight:900;margin-top:10px;line-height:1.25'>🌩 ALARM FIRTINASI</div>"
+            + "<div style='color:#ffe4e6;font-size:15px;font-weight:700;margin-top:8px'>KRİTİK &nbsp;&#183;&nbsp; " + monitorCount + " monitör birden erişilemez</div>"
+            + "</td></tr>"
+            // Body
+            + "<tr><td class='em-body' bgcolor='#ffffff' style='background-color:#ffffff;padding:22px 24px'>"
+            + "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' style='border-radius:10px;overflow:hidden;margin-bottom:16px'><tr>"
+            + "<td width='5' bgcolor='" + red + "' style='background-color:" + red + ";width:5px;font-size:0;line-height:0'>&nbsp;</td>"
+            + "<td bgcolor='#fffbeb' style='background-color:#fffbeb;padding:14px 18px;color:#1c1917;font-size:14px;line-height:1.7'>"
+            + "Kısa bir zaman penceresinde çok sayıda monitör birden erişilemez oldu — olası paylaşılan sunucu / ağ / veri merkezi kesintisi. "
+            + "Bireysel alarmlar bu TEK toplu bildirimde gruplandı; sorunlar giderildikçe tek bir toplu \"çözüldü\" e-postası gönderilecektir."
+            + "</td></tr></table>"
+            + "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' style='margin-bottom:16px;border:1px solid #e2e8f0;border-radius:10px;overflow:hidden'>"
+            + "<tr><td colspan='2' bgcolor='#334155' style='background-color:#334155;padding:9px 14px;font-size:11px;font-weight:700;letter-spacing:.1em;color:#cbd5e1'>FIRTINA ÖZETİ</td></tr>"
+            + infoRows + "</table>"
+            + listSection
+            + cta
+            + "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0'><tr>"
+            + "<td style='border-top:1px solid #f1f5f9;padding-top:12px;font-size:11px;color:#94a3b8'>CertMonitor</td>"
+            + "<td align='right' style='border-top:1px solid #f1f5f9;padding-top:12px;font-size:11px;color:#94a3b8'>Bildirim: " + generatedAt + "</td>"
+            + "</tr></table>"
+            + "</td></tr></table></td></tr></table></body></html>";
+    }
+
+    /** Toplu alarm fırtınası ÇÖZÜLDÜ e-postası — fırtına sona erdi, {@code recoveredCount} monitör kurtarıldı. */
+    public String buildStormRecoveryHtml(int recoveredCount, int stillDownCount, String scopeLabel,
+                                         String startedAt, String resolvedAt,
+                                         List<String> sampleTargets, int truncatedExtra) {
+        String generatedAt = LocalDateTime.now(IST).format(DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm"));
+        String green = "#16a34a";
+        String duration = formatOutageDuration(startedAt, resolvedAt);
+        String ctaUrl = stormCtaUrl();
+        String cta = (!ctaUrl.isBlank())
+            ? "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' style='margin:4px 0 18px'><tr><td align='center'>"
+              + ctaButton(ctaUrl, "Olayları Aç &rarr;", "#15803d") + "</td></tr></table>"
+            : "";
+
+        String infoRows = tableRow2col("🌐 Kapsam",         escHtml(scopeLabel))
+            + tableRow2col("📅 Başlangıç",     fmtOrDash(formatIstanbul(startedAt)))
+            + tableRow2col("🕐 Çözülme",       fmtOrDash(formatIstanbul(resolvedAt)))
+            + "<tr style='border-top:1px solid #e2e8f0'>"
+            + "<td width='1%' bgcolor='#f0fdf4' style='background-color:#f0fdf4;padding:9px 13px;font-size:12px;color:#64748b;white-space:nowrap'>⏱ Toplam Süre</td>"
+            + "<td bgcolor='#f0fdf4' style='background-color:#f0fdf4;padding:9px 13px;font-size:14px;font-weight:800;color:" + green + "'>" + duration + "</td>"
+            + "</tr>"
+            + tableRow2col("✅ Kurtarılan",    recoveredCount + " monitör")
+            + (stillDownCount > 0 ? tableRow2col("⚠ Hâlâ İzlemede", stillDownCount + " monitör (bireysel alarma döndü)") : "");
+
+        String listSection =
+            "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' style='margin-bottom:16px;border:1px solid #bbf7d0;border-radius:10px;overflow:hidden'>"
+            + "<tr><td bgcolor='#15803d' style='background-color:#15803d;padding:9px 14px;font-size:11px;font-weight:700;letter-spacing:.1em;color:#dcfce7'>&#10003; KURTARILAN MONİTÖRLER</td></tr>"
+            + stormRecoveredRows(sampleTargets, truncatedExtra)
+            + "</table>";
+
+        String css = "<style>"
+            + "body,table,td{-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%}"
+            + "@media only screen and (max-width:620px){"
+            + ".em-card{border-radius:0!important;width:100%!important}.em-body{padding:14px!important}"
+            + "}"
+            + "</style>";
+
+        return "<!DOCTYPE html><html lang='tr'>"
+            + "<head><meta charset='UTF-8'>"
+            + "<meta name='viewport' content='width=device-width,initial-scale=1,maximum-scale=1'>"
+            + LIGHT_SCHEME_META
+            + "<!--[if mso]><style>*{font-family:Arial,Helvetica,sans-serif !important}</style><![endif]-->"
+            + css + "</head>"
+            + "<body style='margin:0;padding:0;background-color:#eef2f6;font-family:\"Segoe UI\",Tahoma,Arial,sans-serif'>"
+            + "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' bgcolor='#eef2f6'"
+            + " style='background-color:#eef2f6'><tr><td align='center' style='padding:24px 10px'>"
+            + "<table role='presentation' class='em-card' width='640' cellpadding='0' cellspacing='0' border='0' bgcolor='#ffffff'"
+            + " style='width:640px;max-width:640px;background-color:#ffffff;border-radius:14px;overflow:hidden;box-shadow:0 8px 32px rgba(0,0,0,.15)'>"
+            + "<tr><td bgcolor='" + green + "' style='background-color:" + green + ";padding:22px 24px'>"
+            + "<div style='color:#dcfce7;font-size:11px;font-weight:700;letter-spacing:.12em'>CertMonitor — İzleme</div>"
+            + "<div style='color:#ffffff;font-size:22px;font-weight:900;margin-top:10px;line-height:1.25'>✅ ALARM FIRTINASI SONA ERDİ</div>"
+            + "<div style='color:#dcfce7;font-size:15px;font-weight:700;margin-top:8px'>" + recoveredCount + " monitör kurtarıldı</div>"
+            + "</td></tr>"
+            + "<tr><td class='em-body' bgcolor='#ffffff' style='background-color:#ffffff;padding:22px 24px'>"
+            + "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' style='margin-bottom:16px;border:1px solid #e2e8f0;border-radius:10px;overflow:hidden'>"
+            + "<tr><td colspan='2' bgcolor='#334155' style='background-color:#334155;padding:9px 14px;font-size:11px;font-weight:700;letter-spacing:.1em;color:#cbd5e1'>FIRTINA ÖZETİ</td></tr>"
+            + infoRows + "</table>"
+            + listSection
+            + cta
+            + "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0'><tr>"
+            + "<td style='border-top:1px solid #f1f5f9;padding-top:12px;font-size:11px;color:#94a3b8'>CertMonitor</td>"
+            + "<td align='right' style='border-top:1px solid #f1f5f9;padding-top:12px;font-size:11px;color:#94a3b8'>Bildirim: " + generatedAt + "</td>"
+            + "</tr></table>"
+            + "</td></tr></table></td></tr></table></body></html>";
+    }
+
+    private String stormRecoveredRows(List<String> targets, int truncatedExtra) {
+        StringBuilder sb = new StringBuilder();
+        for (String t : targets) {
+            sb.append("<tr><td bgcolor='#ffffff' style='background-color:#ffffff;padding:8px 14px;font-size:13px;color:#1c1917;border-top:1px solid #f1f5f9;word-break:break-all'>")
+              .append("&#10003; ").append(escHtml(t)).append("</td></tr>");
+        }
+        if (truncatedExtra > 0) {
+            sb.append("<tr><td bgcolor='#ffffff' style='background-color:#ffffff;padding:8px 14px;font-size:12px;color:#64748b;border-top:1px solid #f1f5f9;font-style:italic'>")
+              .append("+ ").append(truncatedExtra).append(" monitör daha…</td></tr>");
+        }
+        return sb.toString();
+    }
+
     // ── Keyword / Ping izleme — kendine ÖZGÜ executive alarm + çözüm şablonları ──
     // Cert/expiry şablonuyla hiçbir alan paylaşmaz; ortak yalnız kart/CSS iskeleti (aşağıdaki frame helper'ları).
 

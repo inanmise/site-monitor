@@ -6,7 +6,7 @@ import {
   LayoutDashboard, AlertTriangle, FileText,
   RefreshCw, ClipboardList, Settings, User, Globe, LogOut, Lock,
   Sun, Moon, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Server, Activity, ShieldAlert, BarChart3, Bell, BookOpen,
-  Wifi, Network, Search, TrendingDown, Database, UserCheck, ShieldCheck, CalendarDays, ListChecks, Target, Radio,
+  Wifi, Network, Search, TrendingDown, Database, UserCheck, ShieldCheck, CalendarDays, ListChecks, Target, Radio, Siren, Wrench,
 } from 'lucide-react'
 import CertMonitorLogo from './ui/CertMonitorLogo.jsx'
 
@@ -53,6 +53,8 @@ export default function Nav({ activeTab, onTabChange, username, teamName, system
       labelKey: 'nav.groupAlerts',
       tabs: [
         { id: 'warnings',     Icon: AlertTriangle, labelKey: 'nav.warnings',     show: true },
+        { id: 'incidents',    Icon: Siren,         labelKey: 'nav.incidents',    show: true },
+        { id: 'maintenance',  Icon: Wrench,        labelKey: 'nav.maintenance',  show: true },
         { id: 'alerthistory', Icon: Bell,          labelKey: 'nav.alertHistory', show: true },
       ],
     },

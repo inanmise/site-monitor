@@ -39,6 +39,8 @@ const AdminPanel = lazy(() => import('./components/admin/AdminPanel'))
 const AdminSettings = lazy(() => import('./components/admin/AdminSettings'))
 const PermissionMatrix = lazy(() => import('./components/admin/PermissionMatrix'))
 const AlertHistory = lazy(() => import('./components/admin/AlertHistory'))
+const IncidentsPage = lazy(() => import('./components/IncidentsPage'))
+const MaintenanceWindowsPage = lazy(() => import('./components/MaintenanceWindowsPage'))
 const InventoryManager = lazy(() => import('./components/admin/InventoryManager'))
 const AuditLogViewer = lazy(() => import('./components/admin/AuditLogViewer'))
 const WeakAlgorithmReport = lazy(() => import('./components/admin/WeakAlgorithmReport'))
@@ -67,7 +69,7 @@ function formatDurationShort(ms) {
 // Mail/derin-link ile gelen ?tab= değeri — yalnız bilinen sekme anahtarları kabul edilir.
 const VALID_TABS = new Set([
   'dashboard', 'all', 'domains', 'forecast', 'renewal', 'renewal-guide',
-  'warnings', 'alerthistory', 'stats', 'weakalgo', 'weeklyreports', 'incident-history',
+  'warnings', 'incidents', 'maintenance', 'alerthistory', 'stats', 'weakalgo', 'weeklyreports', 'incident-history',
   'health', 'uptime', 'http', 'domain', 'port', 'dns', 'keyword', 'ping', 'activity', 'myactivity', 'system',
   'admin', 'permissions', 'sqlplayground', 'help', 'settings',
 ])
@@ -984,6 +986,18 @@ export default function App() {
               <div className="tab-content active">
                 <h2>{t('app.alertHistoryTitle')}</h2>
                 <AlertHistory />
+              </div>
+            )}
+
+            {tab === 'incidents' && (
+              <div className="tab-content active">
+                <IncidentsPage systemRole={systemRole} teamId={teamId} teamName={teamName} />
+              </div>
+            )}
+
+            {tab === 'maintenance' && (
+              <div className="tab-content active">
+                <MaintenanceWindowsPage systemRole={systemRole} teamId={teamId} teamName={teamName} />
               </div>
             )}
 

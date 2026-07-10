@@ -18,7 +18,7 @@ public interface UptimeCheckRepository extends JpaRepository<UptimeCheck, Long> 
      *  domain başına [total, upCount] agregasyonu — httpOk = upCount == total. GROUP BY yalnız ≥1
      *  satırlı domain'i döner. idx_uc_domain_port_checked üzerinden. */
     @Query("SELECT u.domain, COUNT(u), SUM(CASE WHEN u.status = 'up' THEN 1 ELSE 0 END) "
-         + "FROM UptimeCheck u WHERE u.checkedAt >= :since GROUP BY u.domain")
+         + "FROM UptimeCheck u WHERE u.checkedAt >= :since AND (u.maintenance = false OR u.maintenance IS NULL) GROUP BY u.domain")
     List<Object[]> aggregateHttpOkSince(@Param("since") String since);
 
     /** Her (domain,port) için en güncel uptime kontrolü — overview'da domain başına
