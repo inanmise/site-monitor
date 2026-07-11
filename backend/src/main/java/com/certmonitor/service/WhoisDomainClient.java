@@ -108,6 +108,39 @@ public class WhoisDomainClient {
         }
     }
 
+    /** Tanılama adımı (Alan Adı Tanılama aracı): TCP/43 soketini dener, latency + hata sınıfı (CONNECT_TIMEOUT
+     *  → port-43 egress kapalı olabilir) + varsa parse edilen expiry/registrar döner. lookup() mantığını yeniden kullanır. */
+    public Map<String, Object> diagnose(String registrableDomain) {
+        Map<String, Object> step = new LinkedHashMap<>();
+        step.put("step", "WHOIS");
+        if (!enabled()) { step.put("status", "skip"); step.put("detail", "WHOIS kapalı (cert.monitor.domain.whois-enabled=false)"); return step; }
+        if (registrableDomain == null || registrableDomain.isBlank()) { step.put("status", "fail"); step.put("error_class", "UNKNOWN"); step.put("error", "invalid domain"); return step; }
+        String tld = psl.tldOf(registrableDomain);
+        String server = serverFor(tld);
+        if (server == null) { step.put("status", "fail"); step.put("error_class", "NO_SERVER"); step.put("detail", "." + tld + " için WHOIS sunucusu yok"); return step; }
+        step.put("detail", "@" + server + ":43");
+        long t0 = System.currentTimeMillis();
+        try {
+            String raw = query(server, registrableDomain);
+            step.put("elapsed_ms", System.currentTimeMillis() - t0);
+            if (raw == null || raw.isBlank()) { step.put("status", "fail"); step.put("error_class", "EMPTY"); step.put("error", "boş WHOIS yanıtı"); return step; }
+            Map<String, Object> info = parsers.getOrDefault(tld, defaultParser).parse(raw);
+            Object expiry = info.get("expiry_date");
+            if (expiry == null) { step.put("status", "fail"); step.put("error_class", "NO_EXPIRY"); step.put("detail", "yanıtta süre bitişi ayrıştırılamadı"); return step; }
+            step.put("status", "ok");
+            step.put("expiry_date", expiry);
+            step.put("registrar", info.get("registrar"));
+            step.put("detail", "expiry: " + expiry);
+            return step;
+        } catch (Exception e) {
+            step.put("elapsed_ms", System.currentTimeMillis() - t0);
+            step.put("status", "fail");
+            step.put("error_class", DiagnosticErrorClassifier.classify(e));
+            step.put("error", e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName());
+            return step;
+        }
+    }
+
     private static Map<String, Object> err(String msg) {
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("source", "NONE");

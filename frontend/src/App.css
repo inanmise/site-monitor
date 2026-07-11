@@ -8796,3 +8796,35 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 
 [data-theme="dark"] .ldap-lookup-error { background: #2d1519; color: #f87171; }
 
+/* ── Alan Adı Süre Bitişi Tanılama (Domain Expiry Diagnostics) ── */
+.dexp-header { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+.dexp-header h3 { margin: 0; font-size: 1.05em; }
+.dexp-desc { color: var(--text-muted, #64748b); font-size: .9em; margin: 0 0 14px; line-height: 1.5; }
+.dexp-input-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.dexp-input-row .filter-input { flex: 1; min-width: 200px; }
+.dexp-result { margin-top: 16px; }
+.dexp-summary { display: flex; gap: 18px; align-items: center; flex-wrap: wrap;
+  padding: 14px 16px; border: 1px solid var(--border, #e5e7eb); border-radius: 10px; margin-bottom: 14px; }
+.dexp-summary-main { text-align: center; min-width: 92px; }
+.dexp-summary-days { font-size: 2em; font-weight: 700; line-height: 1; }
+.dexp-summary-lbl { font-size: .78em; color: var(--text-muted, #64748b); margin-top: 2px; }
+.dexp-summary-grid { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; margin: 0; font-size: .88em; flex: 1; min-width: 220px; }
+.dexp-summary-grid dt { color: var(--text-muted, #64748b); white-space: nowrap; }
+.dexp-summary-grid dd { margin: 0; word-break: break-word; }
+.dexp-steps { display: flex; flex-direction: column; gap: 8px; }
+.dexp-step { display: flex; gap: 10px; padding: 10px 12px; border: 1px solid var(--border, #e5e7eb); border-radius: 8px; }
+.dexp-step--ok   { border-left: 3px solid #16a34a; }
+.dexp-step--fail { border-left: 3px solid #dc2626; }
+.dexp-step--skip { border-left: 3px solid #cbd5e1; opacity: .75; }
+.dexp-step-icon { flex-shrink: 0; margin-top: 1px; }
+.dexp-ok { color: #16a34a; } .dexp-err { color: #dc2626; } .dexp-skip { color: #94a3b8; }
+.dexp-step-body { flex: 1; min-width: 0; }
+.dexp-step-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.dexp-step-code { font-size: .72em; }
+.dexp-step-http, .dexp-step-ms { font-size: .78em; color: var(--text-muted, #64748b); }
+.dexp-step-detail { font-size: .84em; color: var(--text-muted, #64748b); margin-top: 3px; word-break: break-word; }
+.dexp-step-error { font-size: .82em; color: #b91c1c; margin-top: 3px; word-break: break-word; font-family: Consolas, monospace; }
+.dexp-step-hint { font-size: .84em; color: var(--text, #334155); background: #fef3c7; border-radius: 6px; padding: 5px 8px; margin-top: 5px; }
+[data-theme="dark"] .dexp-step-hint { background: #3a2f0a; color: #fde68a; }
+[data-theme="dark"] .dexp-step-error { color: #f87171; }
+

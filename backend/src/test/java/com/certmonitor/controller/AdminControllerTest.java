@@ -109,6 +109,12 @@ class AdminControllerTest {
     com.certmonitor.service.DiagnosticHistoryService diagnosticHistoryService;
 
     @MockitoBean
+    com.certmonitor.service.DomainExpiryDiagnosticsService domainExpiryDiagnosticsService;
+
+    @MockitoBean
+    com.certmonitor.service.PublicSuffixService publicSuffixService;
+
+    @MockitoBean
     com.certmonitor.service.ClientIpResolver clientIpResolver;
 
     @MockitoBean

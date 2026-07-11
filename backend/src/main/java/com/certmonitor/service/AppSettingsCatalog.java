@@ -45,6 +45,7 @@ public final class AppSettingsCatalog {
         new Setting("cert.monitor.domain.whois-enabled",         "monitoring", Type.BOOL),
         new Setting("cert.monitor.domain.whois-servers",         "monitoring", Type.CSV),
         new Setting("cert.monitor.domain.whois-timeout-ms",      "monitoring", Type.INT),
+        new Setting("cert.monitor.domain.rdap-timeout-ms",       "monitoring", Type.INT),
         new Setting("cert.monitor.domain.default-warning-days",  "monitoring", Type.INT),
         new Setting("cert.monitor.domain.default-critical-days", "monitoring", Type.INT),
         new Setting("cert.monitor.domain.default-thresholds",    "monitoring", Type.STRING),

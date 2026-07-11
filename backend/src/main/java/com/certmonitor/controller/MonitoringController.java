@@ -1781,6 +1781,12 @@ public class MonitoringController {
         if (body.get("warningDays") instanceof Number n) m.setWarningDays(Math.max(1, n.intValue()));
         if (body.get("criticalDays") instanceof Number n) m.setCriticalDays(Math.max(1, n.intValue()));
         if (body.get("intervalSeconds") instanceof Number n) m.setIntervalSeconds(Math.max(3600, n.intValue()));
+        // RDAP kontrol timeout'u (ms) — boş/null = global ayar; girilirse 1–30 sn'ye kısılır.
+        if (body.containsKey("checkTimeoutMs")) {
+            Object v = body.get("checkTimeoutMs");
+            if (v == null || (v instanceof String s && s.isBlank())) m.setCheckTimeoutMs(null);
+            else if (v instanceof Number n) m.setCheckTimeoutMs(Math.max(1000, Math.min(30000, n.intValue())));
+        }
     }
 
     private AlertEvent openDomainMonAlarm(String domain) {
@@ -1802,6 +1808,7 @@ public class MonitoringController {
         item.put("team_name",        m.getTeamId() != null ? teams.get(m.getTeamId()) : null);
         item.put("active",           m.getActive());
         item.put("interval_seconds", m.getIntervalSeconds());
+        item.put("check_timeout_ms", m.getCheckTimeoutMs());
         item.put("thresholds_csv",   m.getThresholdsCsv());
         item.put("warning_days",     m.getWarningDays());
         item.put("critical_days",    m.getCriticalDays());

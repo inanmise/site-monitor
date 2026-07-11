@@ -45,6 +45,11 @@ public class DomainMonitor {
     @Column(name = "interval_seconds")
     private Integer intervalSeconds = 86400;
 
+    /** RDAP istek timeout'u (ms) — bu monitör için override. null = global ayar
+     *  ({@code cert.monitor.domain.rdap-timeout-ms}, vars. 6000) kullanılır. */
+    @Column(name = "check_timeout_ms")
+    private Integer checkTimeoutMs;
+
     /** Hatırlatma gün eşikleri (CSV, bitişe kala) — bilgi/rapor amaçlı; varsayılan 60/30/14/7/3/1. */
     @Column(name = "thresholds_csv")
     private String thresholdsCsv = "60,30,14,7,3,1";

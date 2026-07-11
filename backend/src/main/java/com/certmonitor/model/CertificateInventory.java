@@ -98,6 +98,16 @@ public class CertificateInventory {
     private String createdAt;
     private String updatedAt;
 
+    // ── Alan adı (registrar) süre bitişi — Alan Adı Tanılama aracıyla doldurulur (TLS sertifika bitişinden AYRI). ──
+    @Column(name = "domain_expiry", columnDefinition = "TEXT")
+    private String domainExpiry;
+
+    @Column(name = "domain_registrar", columnDefinition = "TEXT")
+    private String domainRegistrar;
+
+    @Column(name = "domain_expiry_checked_at", columnDefinition = "TEXT")
+    private String domainExpiryCheckedAt;
+
     // ── Liste yanıtı için takım isimleri (DB'de tutulmaz; listInventory doldurur) ──
     // USER rolünde frontend tüm takım listesini çekemediğinden (kendi takımıyla
     // filtreli) isimler burada sunucuda çözülür → her rolde SY/UG takım adı görünür.

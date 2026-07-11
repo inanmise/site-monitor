@@ -6,12 +6,14 @@ import com.certmonitor.service.AuditService;
 import com.certmonitor.service.ClientIpResolver;
 import com.certmonitor.service.ConnectionDiagnosticsService;
 import com.certmonitor.service.DiagnosticHistoryService;
+import com.certmonitor.service.DomainExpiryDiagnosticsService;
 import com.certmonitor.service.EmailNotificationService;
 import com.certmonitor.service.EscalationService;
 import com.certmonitor.service.HstsDiagnosticsService;
 import com.certmonitor.service.NetworkDiagnosticsService;
 import com.certmonitor.service.OpensslDiagnosticsService;
 import com.certmonitor.service.PermissionService;
+import com.certmonitor.service.PublicSuffixService;
 import com.certmonitor.service.UserService;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpSession;
@@ -22,14 +24,18 @@ import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Deque;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -39,6 +45,7 @@ import java.util.Map;
 import java.util.NoSuchElementException;
 import java.util.Objects;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 @Slf4j
 @RestController
@@ -66,12 +73,20 @@ public class AdminController {
     private final NetworkDiagnosticsService networkDiagnosticsService;
     private final HstsDiagnosticsService hstsDiagnosticsService;
     private final DiagnosticHistoryService diagnosticHistoryService;
+    private final DomainExpiryDiagnosticsService domainExpiryDiagnosticsService;
+    private final PublicSuffixService publicSuffixService;
     private final ClientIpResolver clientIpResolver;
 
     private final PermissionService permissionService;
 
     private static final DateTimeFormatter ISO =
             DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
+
+    /** Alan Adı Tanılama için basit kullanıcı-başı sliding-window (10/dk) — registry'leri dövmemek için.
+     *  Tek-pod prod'da bellek-içi yeterli. Key = user id (yoksa client IP). */
+    private final Map<String, Deque<Long>> domainDiagRate = new ConcurrentHashMap<>();
+    private static final int  DOMAIN_DIAG_MAX_PER_MIN = 10;
+    private static final long DOMAIN_DIAG_WINDOW_MS = 60_000L;
 
     // ── Inventory ─────────────────────────────────────────────────────────────
 
@@ -412,6 +427,78 @@ public class AdminController {
                 actor(session), userIdFromSession(session), teamId(session), clientIp(request),
                 ok, "HSTS: " + verdict, data);
         return ok(Map.of("data", data));
+    }
+
+    /** Alan adı (registrar) süre bitişi tanılaması — RDAP/WHOIS zincirini adım adım koşar ve
+     *  proxy/PKIX/port-43 sorunlarını görünür kılar. Başarılı sonuç eşleşen envanter satırlarına yazılır. */
+    @PostMapping("/diagnostics/domain-expiry")
+    public ResponseEntity<Map<String, Object>> runDomainExpiryDiagnostics(
+            @RequestBody Map<String, Object> body, HttpSession session, HttpServletRequest request) {
+        String domain = body.get("domain") != null ? body.get("domain").toString().trim() : null;
+        validateDomain(domain);
+        requireAdminOrMonitoredDomain(session, domain);
+        requirePerm(session, "diagnostics.run", "execute");
+        // Kullanıcı-başı hız sınırı (10/dk) — RDAP/WHOIS registry'lerini dövmemek için.
+        Long uid = userIdFromSession(session);
+        checkDomainDiagRate(uid != null ? "u" + uid : "ip" + clientIp(request));
+
+        Map<String, Object> data = domainExpiryDiagnosticsService.diagnose(domain);
+        String source = String.valueOf(data.get("source"));
+        boolean ok = !"FAILED".equals(source) && data.get("expiry_date") != null;
+
+        auditService.recordAction("DIAGNOSTICS_DOMAIN_EXPIRY", session, request,
+                "DOMAIN", domain, "{}");
+        diagnosticHistoryService.record(domain, null, "DOMAIN_EXPIRY",
+                actor(session), userIdFromSession(session), teamId(session), clientIp(request),
+                ok, "DOMAIN_EXPIRY: " + source, data);
+
+        // Başarılı → taze süre bitişini eşleşen envanter satır(lar)ına yaz (best-effort; hata diagnostic'i bozmaz).
+        if (ok) {
+            data.put("persisted", persistDomainExpiryToInventory(
+                    String.valueOf(data.get("registrable")),
+                    (String) data.get("expiry_date"),
+                    (String) data.get("registrar")));
+        }
+        return ok(Map.of("data", data));
+    }
+
+    /** Süre bitişini registrable domain'i eşleşen aktif envanter satırlarına yazar; güncellenen satır sayısını döner. */
+    private int persistDomainExpiryToInventory(String registrable, String expiry, String registrar) {
+        if (registrable == null || registrable.isBlank() || expiry == null) return 0;
+        try {
+            String now = now();
+            int updated = 0;
+            for (CertificateInventory ci : inventoryRepo.findByActiveTrueOrderByDomainAsc()) {
+                if (ci.getDeletedAt() != null) continue;
+                String rowReg = publicSuffixService.registrableDomain(ci.getDomain());
+                if (rowReg != null && rowReg.equalsIgnoreCase(registrable)) {
+                    ci.setDomainExpiry(expiry);
+                    ci.setDomainRegistrar(registrar);
+                    ci.setDomainExpiryCheckedAt(now);
+                    inventoryRepo.save(ci);
+                    updated++;
+                }
+            }
+            if (updated > 0) log.info("Domain-expiry envantere yazıldı: {} → {} satır (expiry={})", registrable, updated, expiry);
+            return updated;
+        } catch (Exception e) {
+            log.warn("Domain-expiry envantere yazılamadı ({}): {}", registrable, e.getMessage());
+            return 0;
+        }
+    }
+
+    /** Sliding-window hız sınırı; aşılırsa 429 TOO_MANY_REQUESTS fırlatır. */
+    private void checkDomainDiagRate(String key) {
+        long now = System.currentTimeMillis();
+        Deque<Long> dq = domainDiagRate.computeIfAbsent(key, k -> new ArrayDeque<>());
+        synchronized (dq) {
+            while (!dq.isEmpty() && now - dq.peekFirst() > DOMAIN_DIAG_WINDOW_MS) dq.pollFirst();
+            if (dq.size() >= DOMAIN_DIAG_MAX_PER_MIN) {
+                throw new ResponseStatusException(HttpStatus.TOO_MANY_REQUESTS,
+                        "Çok fazla tanılama isteği — dakikada en fazla " + DOMAIN_DIAG_MAX_PER_MIN + ". Lütfen bekleyin.");
+            }
+            dq.addLast(now);
+        }
     }
 
     /** Domain tanılama geçmişi listesi (resultJson hariç özet). */
