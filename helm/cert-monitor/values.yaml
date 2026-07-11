@@ -100,6 +100,13 @@ config:
   # don't get tunneled through the proxy unnecessarily.
   noProxy: ""              # e.g. ".corp.com,.corp.local,10.0.0.0/8"
 
+  # ── Domain-expiry WHOIS ───────────────────────────────────────────────────
+  # RDAP (443, proxy-aware) is the primary domain-expiry source. Raw port-43
+  # WHOIS can't traverse a 443/80-only egress proxy, so behind a corporate proxy
+  # it only wastes ~6s per domain before timing out → default off here. RDAP-only
+  # is sufficient; still live-toggleable from Genel Ayarlar (cert.monitor.domain.whois-enabled).
+  whoisEnabled: "false"
+
 # Sensitive values — provide via --set or external secret manager
 # Do NOT commit real values here
 secret:

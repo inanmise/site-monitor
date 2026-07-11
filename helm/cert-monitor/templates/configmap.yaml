@@ -46,3 +46,5 @@ data:
   # Haftalık erişilebilirlik e-postası (sertifika sahibi takıma) — Pazartesi 10:00 Europe/Istanbul
   WEEKLY_AVAIL_ENABLED: {{ .Values.config.weeklyAvailEnabled | quote }}
   WEEKLY_AVAIL_CRON: {{ .Values.config.weeklyAvailCron | quote }}
+  # WHOIS (port-43) kurumsal 443/80 egress proxy'sini geçemez → prod'da kapalı; RDAP (proxy-aware) tek kaynak.
+  DOMAIN_WHOIS_ENABLED: {{ .Values.config.whoisEnabled | quote }}

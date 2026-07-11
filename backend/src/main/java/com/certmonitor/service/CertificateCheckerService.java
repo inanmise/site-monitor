@@ -561,7 +561,7 @@ public class CertificateCheckerService {
         if (useProxy) {
             log.warn("[cert-proxy] step={} FAILED domain={}:{} proxy={}:{} resolvedIps={} elapsed={}ms errType={} errMsg={}",
                     stage, domain, port, proxyHost, proxyPort, resolvedIps, elapsed,
-                    e.getClass().getSimpleName(), e.getMessage(), e);
+                    e.getClass().getSimpleName(), e.getMessage());
         } else {
             log.warn("Certificate check {}: domain={}:{} resolvedIps={} elapsed={}ms err={}",
                     stage, domain, port, resolvedIps, elapsed, e.getMessage());
