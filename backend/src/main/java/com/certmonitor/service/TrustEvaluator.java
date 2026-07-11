@@ -4,12 +4,14 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
+import javax.net.ssl.SSLContext;
 import javax.net.ssl.TrustManager;
 import javax.net.ssl.TrustManagerFactory;
 import javax.net.ssl.X509TrustManager;
 import java.io.ByteArrayInputStream;
 import java.nio.charset.StandardCharsets;
 import java.security.KeyStore;
+import java.security.SecureRandom;
 import java.security.cert.Certificate;
 import java.security.cert.CertificateException;
 import java.security.cert.CertificateFactory;
@@ -76,6 +78,46 @@ public class TrustEvaluator {
             }
         }
         return new TrustResult(false, reason != null ? reason : "untrusted");
+    }
+
+    /**
+     * Outbound HTTPS için delege TrustManager: sunucu zincirini önce JVM cacerts, olmazsa admin'in
+     * Genel Ayarlar'da girdiği kurumsal CA paketiyle (canlı reload) doğrular; hiçbiri güvenmezse
+     * CertificateException fırlatır (el sıkışma reddedilir). Hostname doğrulaması ayrıdır (java.net.http
+     * HttpClient zincir güveninden bağımsız yapar) → korunur.
+     */
+    public X509TrustManager compositeTrustManager() {
+        return new X509TrustManager() {
+            public void checkServerTrusted(X509Certificate[] chain, String authType) throws CertificateException {
+                CertificateException first = null;
+                if (defaultTm != null) {
+                    try { defaultTm.checkServerTrusted(chain, authType); return; }
+                    catch (CertificateException e) { first = e; }
+                }
+                X509TrustManager extra = currentExtraTm();   // canlı-reload'lu kurumsal CA paketi
+                if (extra != null) { extra.checkServerTrusted(chain, authType); return; }
+                throw (first != null) ? first : new CertificateException("no trust managers");
+            }
+            public void checkClientTrusted(X509Certificate[] chain, String authType) throws CertificateException {
+                throw new CertificateException("outbound-only");
+            }
+            public X509Certificate[] getAcceptedIssuers() {
+                return defaultTm != null ? defaultTm.getAcceptedIssuers() : new X509Certificate[0];
+            }
+        };
+    }
+
+    /** {@link #compositeTrustManager()} ile başlatılmış outbound TLS SSLContext; kurulamazsa null
+     *  (çağıran {@code if (ssl != null) b.sslContext(ssl)} ile varsayılan güvene düşer). */
+    public SSLContext outboundSslContext() {
+        try {
+            SSLContext ctx = SSLContext.getInstance("TLS");
+            ctx.init(null, new TrustManager[]{ compositeTrustManager() }, new SecureRandom());
+            return ctx;
+        } catch (Exception e) {
+            log.warn("Outbound SSLContext kurulamadı, varsayılan güven kullanılacak: {}", e.getMessage());
+            return null;
+        }
     }
 
     /** PEM değiştiyse extra TM'i yeniden kur; bozuk PEM'i tolere et (yalnız default truststore). */

@@ -3,6 +3,7 @@ package com.certmonitor.model;
 import jakarta.persistence.*;
 import lombok.Data;
 import lombok.NoArgsConstructor;
+import org.hibernate.annotations.ColumnDefault;
 
 @Entity
 @Table(name = "port_monitors")
@@ -91,6 +92,7 @@ public class PortMonitor {
 
     /** "auto" | "v4" | "v6" — soket bağlantısı IP sürümü kısıtı (Ping ile aynı model). */
     @Column(name = "ip_version", nullable = false)
+    @ColumnDefault("'auto'")   // ddl-auto ADD COLUMN'a DEFAULT ekler → mevcut satırlı tabloda "not null" boot hatası olmaz
     private String ipVersion = "auto";
 
     @Column(name = "created_at")

@@ -2,10 +2,12 @@ package com.certmonitor.service;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
+import javax.net.ssl.SSLContext;
 import java.net.URI;
 import java.net.URLEncoder;
 import java.net.http.HttpClient;
@@ -39,15 +41,25 @@ import java.util.concurrent.ConcurrentHashMap;
 public class RdapDomainExpiryService {
 
     private final AppSettingsService appSettings;
+    private final TrustEvaluator trustEvaluator;
 
     private static final long CACHE_TTL_MS = 12 * 60 * 60 * 1000L;   // 12 saat
     private final ObjectMapper mapper = new ObjectMapper();
     private final Map<String, Cached> cache = new ConcurrentHashMap<>();
 
-    private final HttpClient http = HttpClient.newBuilder()
-            .connectTimeout(Duration.ofSeconds(5))
-            .followRedirects(HttpClient.Redirect.NORMAL)
-            .build();
+    private HttpClient http;
+
+    // Kurumsal MITM-proxy'nin yeniden imzaladığı RDAP sertifikası → cacerts + admin kurumsal CA paketiyle
+    // doğrula (TrustEvaluator, canlı reload; RdapDomainClient ile aynı). @PostConstruct: injected bean hazır olur.
+    @PostConstruct
+    void init() {
+        SSLContext ssl = trustEvaluator.outboundSslContext();
+        HttpClient.Builder b = HttpClient.newBuilder()
+                .connectTimeout(Duration.ofSeconds(5))
+                .followRedirects(HttpClient.Redirect.NORMAL);
+        if (ssl != null) b.sslContext(ssl);
+        this.http = b.build();
+    }
 
     /** İki-seviyeli public ekler (eTLD+1 çıkarımı için; tam PSL değil, yaygın olanlar + .tr). */
     private static final Set<String> TWO_LEVEL_TLDS = Set.of(

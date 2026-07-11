@@ -18,7 +18,7 @@
     cert-monitor-error.log  — ERROR only, 90-day retention
     cert-monitor-audit.log  — security / admin audit trail, 365-day retention
 -->
-<configuration scan="true" scanPeriod="60 seconds">
+<configuration>
 
   <!-- Register Spring Boot's %clr() colour macro so it's available even before
        SpringApplication.run() completes (e.g. during @SpringBootTest context init). -->

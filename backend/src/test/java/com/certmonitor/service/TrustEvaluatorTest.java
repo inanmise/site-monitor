@@ -17,10 +17,13 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 
+import javax.net.ssl.SSLContext;
+import javax.net.ssl.X509TrustManager;
 import java.math.BigInteger;
 import java.security.KeyPair;
 import java.security.KeyPairGenerator;
 import java.security.Security;
+import java.security.cert.CertificateException;
 import java.security.cert.X509Certificate;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
@@ -28,6 +31,8 @@ import java.util.Base64;
 import java.util.Date;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.when;
@@ -115,5 +120,30 @@ class TrustEvaluatorTest {
 
         assertThat(ev.evaluate(new X509Certificate[0]).trusted()).isFalse();
         assertThat(ev.evaluate(null).trusted()).isFalse();
+    }
+
+    // ── outbound HTTPS TrustManager (RDAP; kurumsal MITM-proxy re-signed cert) ────────────
+
+    @Test
+    @DisplayName("outbound: CA paketi YOK → self-signed/iç-CA sunucu zinciri reddedilir (fırlatır)")
+    void outbound_noBundle_rejectsSelfSigned() {
+        when(appSettings.getString(eq(TrustEvaluator.CA_BUNDLE_KEY), anyString())).thenReturn("");
+        TrustEvaluator ev = new TrustEvaluator(appSettings);
+
+        assertThat(ev.outboundSslContext()).isNotNull();   // SSLContext kurulabilir
+        X509TrustManager tm = ev.compositeTrustManager();
+        assertThatThrownBy(() -> tm.checkServerTrusted(new X509Certificate[]{ selfSigned }, "RSA"))
+                .isInstanceOf(CertificateException.class);
+    }
+
+    @Test
+    @DisplayName("outbound: admin CA paketi zincirin CA'sını içerince → kabul (fırlatmaz)")
+    void outbound_bundleWithCa_acceptsSelfSigned() {
+        when(appSettings.getString(eq(TrustEvaluator.CA_BUNDLE_KEY), anyString())).thenReturn(selfSignedPem);
+        TrustEvaluator ev = new TrustEvaluator(appSettings);
+        X509TrustManager tm = ev.compositeTrustManager();
+
+        assertThatCode(() -> tm.checkServerTrusted(new X509Certificate[]{ selfSigned }, "RSA"))
+                .doesNotThrowAnyException();
     }
 }

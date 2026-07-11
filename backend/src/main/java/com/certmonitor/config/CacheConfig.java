@@ -47,11 +47,11 @@ public class CacheConfig {
     public CacheManager cacheManager() {
         CaffeineCacheManager mgr = new CaffeineCacheManager();
         // Varsayılan spec: isimli-özel olmayan tüm cache'ler 60 sn / 1000 (eski davranış).
-        mgr.setCaffeine(Caffeine.newBuilder().maximumSize(MAX_SIZE).expireAfterWrite(DEFAULT_TTL));
+        mgr.setCaffeine(Caffeine.newBuilder().recordStats().maximumSize(MAX_SIZE).expireAfterWrite(DEFAULT_TTL));
         // Cert dashboard cache'leri: uzun TTL (yenileme aralığıyla hizalı).
         for (String name : LONG_TTL_CACHES) {
             mgr.registerCustomCache(name,
-                    Caffeine.newBuilder().maximumSize(MAX_SIZE).expireAfterWrite(LONG_TTL).build());
+                    Caffeine.newBuilder().recordStats().maximumSize(MAX_SIZE).expireAfterWrite(LONG_TTL).build());
         }
         return mgr;
     }

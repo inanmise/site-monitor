@@ -104,9 +104,20 @@ export default function App() {
   const [tab, setTab] = useState('dashboard')
   const [pendingAddDomain, setPendingAddDomain] = useState(false)  // dashboard "domain ekle" → envantere geç + add modal
   const [wrResetNonce, setWrResetNonce] = useState(0)
-  // Weekly Reports sekmesi zaten açıkken menüye tekrar tıklanınca açık raporu listeye döndür
+  // Weekly Reports sekmesi zaten açıkken menüye tekrar tıklanınca açık raporu listeye döndür.
+  // Ayrıca sekme değişince tarayıcı geçmişine kayıt bırak (pushState) → Geri/İleri düğmeleri
+  // sekmeler arası gezinir. Bayat derin-link parametrelerini (monitor/domain/incident) URL'den temizle.
   const handleTabChange = (id) => {
     if (id === 'weeklyreports' && tab === 'weeklyreports') setWrResetNonce((n) => n + 1)
+    if (id !== tab) {
+      try {
+        const url = new URL(window.location.href)
+        url.searchParams.set('tab', id)
+        url.searchParams.delete('monitor'); url.searchParams.delete('domain'); url.searchParams.delete('incident')
+        const qs = url.searchParams.toString()
+        window.history.pushState({ tab: id }, '', url.pathname + (qs ? `?${qs}` : '') + url.hash)
+      } catch { /* history yoksay */ }
+    }
     setTab(id)
   }
   const [certs, setCerts] = useState([])
@@ -174,6 +185,23 @@ export default function App() {
       }
       setAuthChecked(true)
     }).catch(() => setAuthChecked(true))
+  }, [])
+
+  // Tarayıcı Geri/İleri (popstate): URL'deki ?tab= / ?domain='e göre görünümü geri yükle.
+  // handleTabChange pushState ile geçmiş kaydı bıraktığından buradaki dinleyici o kayıtları uygular.
+  // Not: burada setTab (handleTabChange değil) — popstate sırasında yeni geçmiş kaydı ekleME.
+  useEffect(() => {
+    const onPop = () => {
+      try {
+        const p = new URLSearchParams(window.location.search)
+        const nextTab = p.get('tab')
+        setTab(nextTab && VALID_TABS.has(nextTab) ? nextTab : 'dashboard')
+        const d = p.get('domain')
+        if (d) setSearch(d)
+      } catch { /* yoksay */ }
+    }
+    window.addEventListener('popstate', onPop)
+    return () => window.removeEventListener('popstate', onPop)
   }, [])
 
   useEffect(() => {
@@ -495,7 +523,7 @@ export default function App() {
     const next = statsFilter === key ? null : key
     setStatsFilter(next)
     setDashPage(1)
-    setTab('dashboard')
+    handleTabChange('dashboard')
   }
 
   const STATUS_FILTER_FN = {
@@ -738,7 +766,7 @@ export default function App() {
                   )}
                   {(systemRole === 'ADMIN' || systemRole === 'TEAM_ADMIN') && (
                     <button type="button" className="btn btn-success sort-bar-add-domain"
-                            onClick={() => { setPendingAddDomain(true); setTab('domains') }}>
+                            onClick={() => { setPendingAddDomain(true); handleTabChange('domains') }}>
                       {t('inv.addBtn')}
                     </button>
                   )}
@@ -779,7 +807,7 @@ export default function App() {
                           hasSilentAlert={silentAlertDomains.has(cert.domain)}
                           hasMailFailure={mailFailureDomains.has(cert.domain)}
                           onMailFailureClick={() => {
-                            setTab('health')
+                            handleTabChange('health')
                             setSmtpPreFilterDomain(cert.domain)
                             setOpenSmtpModalOnLoad(true)
                           }}
@@ -842,7 +870,7 @@ export default function App() {
                 <h2>{t('app.statsTitle')}</h2>
                 <StatsView certs={certs} teamStats={teamStats} onRowClick={(d) => setModalCert(certs.find(c => c.domain === d) ?? null)}
                   canAddDomain={systemRole === 'ADMIN' || systemRole === 'TEAM_ADMIN'}
-                  onAddDomain={() => { setPendingAddDomain(true); setTab('domains') }} />
+                  onAddDomain={() => { setPendingAddDomain(true); handleTabChange('domains') }} />
               </div>
             )}
 
@@ -861,7 +889,7 @@ export default function App() {
                         hasSilentAlert={silentAlertDomains.has(cert.domain)}
                         hasMailFailure={mailFailureDomains.has(cert.domain)}
                         onMailFailureClick={() => {
-                          setTab('admin')
+                          handleTabChange('admin')
                           setAdminInitialTab('health')
                           setSmtpPreFilterDomain(cert.domain)
                           setOpenSmtpModalOnLoad(true)

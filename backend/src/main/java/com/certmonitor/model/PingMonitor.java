@@ -3,6 +3,7 @@ package com.certmonitor.model;
 import jakarta.persistence.*;
 import lombok.Data;
 import lombok.NoArgsConstructor;
+import org.hibernate.annotations.ColumnDefault;
 
 /**
  * Serbest-form ICMP ping izleme monitörü: bir host'a (IPv4/IPv6) ping atılır;
@@ -26,6 +27,7 @@ public class PingMonitor {
 
     /** "auto" | "v4" | "v6" — ping komutu IP sürümü kısıtı. */
     @Column(name = "ip_version", nullable = false)
+    @ColumnDefault("'auto'")   // ddl-auto ADD COLUMN'a DEFAULT ekler → mevcut satırlı tabloda "not null" boot hatası olmaz
     private String ipVersion = "auto";
 
     /** Mantıksal grup (ör. "X Sistemleri") — filtreleme/gruplama; serbest-form. */
