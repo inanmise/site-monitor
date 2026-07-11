@@ -7,6 +7,7 @@ import SecretTools from './SecretTools'
 import DatabaseInfo from './DatabaseInfo'
 import WeeklyAvailabilitySettings from './WeeklyAvailabilitySettings'
 import StormSettings from './StormSettings'
+import DomainDiagnostics from './DomainDiagnostics'
 
 // Left-menu sections. More land in later phases.
 const SECTIONS = [
@@ -15,6 +16,7 @@ const SECTIONS = [
   { id: 'weeklyavail', labelKey: 'settings.navWeeklyAvail' },
   { id: 'storm', labelKey: 'settings.navStorm' },
   { id: 'ldap', labelKey: 'settings.navLdap' },
+  { id: 'domaindiag', labelKey: 'settings.navDomainDiag' },
   { id: 'database', labelKey: 'settings.navDatabase' },
   { id: 'secrets', labelKey: 'settings.navSecrets' },
 ]
@@ -44,6 +46,7 @@ export default function AdminSettings() {
         {active === 'weeklyavail' && <WeeklyAvailabilitySettings />}
         {active === 'storm' && <StormSettings />}
         {active === 'ldap' && <LdapSettings />}
+        {active === 'domaindiag' && <DomainDiagnostics />}
         {active === 'database' && <DatabaseInfo />}
         {active === 'secrets' && <SecretTools />}
       </section>

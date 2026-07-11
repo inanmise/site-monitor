@@ -310,6 +310,10 @@ public class SchedulerService {
         patch("ALTER TABLE certificate_inventory ADD COLUMN team_id INTEGER");
         patch("ALTER TABLE certificate_inventory ADD COLUMN use_proxy BOOLEAN DEFAULT false");
         patch("ALTER TABLE certificate_inventory ADD COLUMN tls_mode TEXT");
+        // Alan adı (registrar) süre bitişi — Alan Adı Tanılama aracı eşleşen envanter satırlarına yazar (TLS sertifika bitişinden ayrı).
+        patch("ALTER TABLE certificate_inventory ADD COLUMN domain_expiry TEXT");
+        patch("ALTER TABLE certificate_inventory ADD COLUMN domain_registrar TEXT");
+        patch("ALTER TABLE certificate_inventory ADD COLUMN domain_expiry_checked_at TEXT");
         patch("ALTER TABLE latest_checks ADD COLUMN via TEXT");
         patch("ALTER TABLE latest_checks ADD COLUMN tls_mode_used TEXT");
         patch("ALTER TABLE app_users ADD COLUMN role_locked BOOLEAN DEFAULT false");
@@ -357,6 +361,7 @@ public class SchedulerService {
         patch("CREATE TABLE IF NOT EXISTS dns_monitors (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, domain TEXT NOT NULL, record_type TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1, interval_seconds INTEGER NOT NULL DEFAULT 300, created_at TEXT, updated_at TEXT)");
         patch("CREATE TABLE IF NOT EXISTS dns_records (id INTEGER PRIMARY KEY AUTOINCREMENT, monitor_id INTEGER NOT NULL, record_type TEXT, value TEXT, changed INTEGER NOT NULL DEFAULT 0, previous_value TEXT, checked_at TEXT)");
         patch("ALTER TABLE dns_monitors ADD COLUMN slow_threshold_ms INTEGER");   // per-monitor DNS_SLOW eşiği; null=global (ddl-auto zaten ekler — güvenlik ağı)
+        patch("ALTER TABLE domain_monitors ADD COLUMN check_timeout_ms INTEGER"); // per-monitor RDAP timeout (ms); null=global (ddl-auto zaten ekler — güvenlik ağı)
 
         // ── Performans index'leri (sıcak sorgu yolları) — idempotent, PG IF NOT EXISTS ──
         // Tablolar bu noktada Hibernate ddl-auto=update ile oluşmuş durumda.

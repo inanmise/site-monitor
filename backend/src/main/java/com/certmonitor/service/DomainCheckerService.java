@@ -50,15 +50,15 @@ public class DomainCheckerService {
     /** İzleme/manuel kontrol — kontrol + persist + değişiklik tespiti. */
     public Map<String, Object> check(DomainMonitor m) {
         return evaluate(m.getDomain(), m.getWarningDays() != null ? m.getWarningDays() : 30,
-                m.getCriticalDays() != null ? m.getCriticalDays() : 7, m.getId());
+                m.getCriticalDays() != null ? m.getCriticalDays() : 7, m.getId(), m.getCheckTimeoutMs());
     }
 
     /** Test (kaydetmeden) — persist yok, değişiklik tespiti yok. */
     public Map<String, Object> test(String domainInput, int warningDays, int criticalDays) {
-        return evaluate(domainInput, warningDays, criticalDays, null);
+        return evaluate(domainInput, warningDays, criticalDays, null, null);
     }
 
-    private Map<String, Object> evaluate(String input, int warningDays, int criticalDays, Long monitorId) {
+    private Map<String, Object> evaluate(String input, int warningDays, int criticalDays, Long monitorId, Integer timeoutMs) {
         String checkedAt = ISO.format(Instant.now());
         String reg = psl.registrableDomain(input);
         if (reg == null || reg.isBlank()) {
@@ -67,8 +67,8 @@ public class DomainCheckerService {
             return out;
         }
 
-        // RDAP birincil → gerekirse WHOIS fallback
-        Map<String, Object> info = rdap.lookup(reg);
+        // RDAP birincil → gerekirse WHOIS fallback (monitör başına timeout override'ı ile)
+        Map<String, Object> info = rdap.lookup(reg, timeoutMs);
         if ((info.get("error") != null || info.get("expiry_date") == null) && whois.enabled()) {
             Map<String, Object> w = whois.lookup(reg);
             if (w.get("expiry_date") != null && w.get("error") == null) info = w;

@@ -550,6 +550,9 @@ public class EmailNotificationService {
         if ("DNS_CHANGED".equals(alertType)) {
             return buildRichDnsChangedAlertHtml(message, domain, certContext);
         }
+        if (isDomainAlertType(alertType) && domain != null) {
+            return buildRichDomainAlertHtml(message, domain, level, alertType, daysRemaining, certContext);
+        }
         return (domain != null)
                 ? buildRichAlertHtml(subject, message, domain, level, alertType, daysRemaining, certContext)
                 : buildSimpleAlertHtml(subject, message);
@@ -569,8 +572,107 @@ public class EmailNotificationService {
                 || "DNS_CHANGED".equals(alertType)) {
             return buildRichMonitoringResolvedHtml(domain, alertType, resolvedBy, resolvedAt, createdAt);
         }
+        if (isDomainAlertType(alertType) && domain != null) {
+            return buildRichDomainResolvedHtml(domain, alertType, daysRemaining, resolvedBy, resolvedAt, createdAt, certContext);
+        }
         return buildRichResolvedHtml(domain, alertType, alertLevel,
                 daysRemaining, resolvedBy, resolvedAt, createdAt, certContext);
+    }
+
+    /** Alan adı (registrar süre bitişi / veri yok / EPP durum / değişiklik) alarmları — sertifika alanları
+     *  (issuer/subject/fingerprint) YOK; RDAP/WHOIS bağlamı (expiry/registrar/EPP kodları/sebep) ile. */
+    static boolean isDomainAlertType(String alertType) {
+        return alertType != null
+                && (alertType.startsWith("DOMAINMON_") || "DOMAIN_EXPIRY".equals(alertType));
+    }
+
+    /** Alan adı alarm tipi → hero etiketi (Türkçe). */
+    private static String domainTypeLabel(String alertType) {
+        if (alertType == null) return "ALAN ADI UYARISI";
+        return switch (alertType) {
+            case "DOMAINMON_UNKNOWN" -> "ALAN ADI VERİ YOK";
+            case "DOMAINMON_EXPIRY", "DOMAIN_EXPIRY" -> "ALAN ADI SÜRE BİTİŞİ";
+            case "DOMAINMON_STATUS"  -> "ALAN ADI DURUM KODU UYARISI";
+            case "DOMAINMON_CHANGED" -> "ALAN ADI DEĞİŞİKLİĞİ";
+            default -> "ALAN ADI UYARISI";
+        };
+    }
+
+    private static String domCtx(Map<String, Object> ctx, String key) {
+        if (ctx == null) return null;
+        Object v = ctx.get(key);
+        return (v == null || String.valueOf(v).isBlank()) ? null : String.valueOf(v);
+    }
+
+    /** Alan adı alarmı e-postası — sertifika şablonu yerine RDAP/WHOIS bağlamına uygun içerik. */
+    private String buildRichDomainAlertHtml(String message, String domain, String level,
+                                            String alertType, Integer daysRemaining, Map<String, Object> ctx) {
+        boolean critical = "CRITICAL".equalsIgnoreCase(level);
+        String accent = critical ? "#b91c1c" : "#b45309";      // kırmızı (CRITICAL) / kehribar (WARNING)
+        String label = domainTypeLabel(alertType);
+        String days = daysRemaining != null ? String.valueOf(daysRemaining) : domCtx(ctx, "days");
+        String expiry = domCtx(ctx, "expiry_date");
+        String registrar = domCtx(ctx, "registrar");
+        String statusCodes = domCtx(ctx, "status_codes");
+        String changeDetail = domCtx(ctx, "change_detail");
+        String lastError = domCtx(ctx, "last_error");
+
+        StringBuilder rows = new StringBuilder();
+        rows.append(adminRow("Alan Adı", "<strong>" + escHtml(domain) + "</strong>"));
+        if (days != null)         rows.append(adminRow("Kalan Gün", escHtml(days)));
+        if (expiry != null)       rows.append(adminRow("Bitiş Tarihi", escHtml(expiry)));
+        if (registrar != null)    rows.append(adminRow("Registrar", escHtml(registrar)));
+        if (statusCodes != null)  rows.append(adminRow("EPP Durum Kodları", escHtml(statusCodes)));
+        if (changeDetail != null) rows.append(adminRow("Değişiklik", escHtml(changeDetail)));
+        if (lastError != null)    rows.append(adminRow("Sebep", escHtml(lastError)));
+
+        String body = message == null ? "" : escHtml(message).replace("\n", "<br>");
+
+        return simpleFrameOpen(640)
+                // Hero rozeti — bgcolor'lı TD (Outlook-güvenli), div-bg değil.
+                + "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' style='border-collapse:collapse;margin:0 0 16px'>"
+                + "<tr><td bgcolor='" + accent + "' style='background-color:" + accent + ";color:#ffffff;padding:14px 16px;border-radius:8px;font-size:16px;font-weight:700;text-align:center'>"
+                + "🌐 " + label + "</td></tr></table>"
+                + "<h2 style='color:#111827;margin:0 0 6px;font-size:20px'>" + escHtml(domain) + "</h2>"
+                + "<p style='font-size:12px;color:#6b7280;margin:0 0 14px'>CertMonitor — Alan Adı İzleme</p>"
+                + (body.isBlank() ? "" : "<p style='font-size:14px;line-height:1.55;margin:0 0 14px'>" + body + "</p>")
+                + "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' style='border-collapse:collapse;margin:8px 0 4px;font-size:13px'>"
+                + rows
+                + "</table>"
+                + "<hr style='border:none;border-top:1px solid #e5e7eb;margin:22px 0 12px' />"
+                + "<p style='font-size:11px;color:#9ca3af;margin:0'>CertMonitor — Alan Adı (Domain) Süre Bitişi İzleme</p>"
+                + simpleFrameClose();
+    }
+
+    /** Alan adı alarmı "Çözüldü" e-postası. */
+    private String buildRichDomainResolvedHtml(String domain, String alertType, Integer daysRemaining,
+                                               String resolvedBy, String resolvedAt, String createdAt,
+                                               Map<String, Object> ctx) {
+        String registrar = domCtx(ctx, "registrar");
+        String expiry = domCtx(ctx, "expiry_date");
+        String days = daysRemaining != null ? String.valueOf(daysRemaining) : domCtx(ctx, "days");
+
+        StringBuilder rows = new StringBuilder();
+        rows.append(adminRow("Alan Adı", "<strong>" + escHtml(domain) + "</strong>"));
+        if (days != null)      rows.append(adminRow("Kalan Gün", escHtml(days)));
+        if (expiry != null)    rows.append(adminRow("Bitiş Tarihi", escHtml(expiry)));
+        if (registrar != null) rows.append(adminRow("Registrar", escHtml(registrar)));
+        if (createdAt != null)  rows.append(adminRow("Başlangıç", formatIso(createdAt)));
+        if (resolvedAt != null) rows.append(adminRow("Çözülme", formatIso(resolvedAt)));
+        if (resolvedBy != null && !resolvedBy.isBlank()) rows.append(adminRow("Çözen", escHtml(resolvedBy)));
+
+        return simpleFrameOpen(640)
+                + "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' style='border-collapse:collapse;margin:0 0 16px'>"
+                + "<tr><td bgcolor='#15803d' style='background-color:#15803d;color:#ffffff;padding:14px 16px;border-radius:8px;font-size:16px;font-weight:700;text-align:center'>"
+                + "✅ ALAN ADI UYARISI ÇÖZÜLDÜ</td></tr></table>"
+                + "<h2 style='color:#111827;margin:0 0 6px;font-size:20px'>" + escHtml(domain) + "</h2>"
+                + "<p style='font-size:12px;color:#6b7280;margin:0 0 14px'>CertMonitor — Alan Adı İzleme</p>"
+                + "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' style='border-collapse:collapse;margin:8px 0 4px;font-size:13px'>"
+                + rows
+                + "</table>"
+                + "<hr style='border:none;border-top:1px solid #e5e7eb;margin:22px 0 12px' />"
+                + "<p style='font-size:11px;color:#9ca3af;margin:0'>CertMonitor — Alan Adı (Domain) Süre Bitişi İzleme</p>"
+                + simpleFrameClose();
     }
 
     // ── HTML builders ────────────────────────────────────────────────────────

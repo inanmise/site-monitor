@@ -303,6 +303,10 @@ export const api = {
     runHstsDiagnostics: (domain, port = 443) => request('/admin/diagnostics/hsts', {
       method: 'POST', body: JSON.stringify({ domain, port }),
     }),
+    // Alan adı (registrar) süre bitişi tanılaması — adım adım RDAP/WHOIS trace.
+    runDomainExpiryDiagnostics: (domain) => request('/admin/diagnostics/domain-expiry', {
+      method: 'POST', body: JSON.stringify({ domain }),
+    }),
     diagHistory: (domain) => request(`/admin/diagnostics/history?domain=${encodeURIComponent(domain)}`),
     diagHistoryDetail: (id) => request(`/admin/diagnostics/history/${id}`),
     clientIpDebug: () => request('/admin/client-ip-debug'),

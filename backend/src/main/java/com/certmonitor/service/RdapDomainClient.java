@@ -113,26 +113,41 @@ public class RdapDomainClient {
         return false;
     }
 
-    /** Kayıtlı domain için RDAP sorgusu. registrableDomain zaten eTLD+1 (PSL) olmalı. */
+    /** Kayıtlı domain için RDAP sorgusu (global timeout). registrableDomain zaten eTLD+1 (PSL) olmalı. */
     public Map<String, Object> lookup(String registrableDomain) {
+        return lookup(registrableDomain, null);
+    }
+
+    /** Kayıtlı domain için RDAP sorgusu; {@code timeoutMsOverride} null ise global ayar
+     *  ({@code cert.monitor.domain.rdap-timeout-ms}, vars. 6000) kullanılır (monitör başına override). */
+    public Map<String, Object> lookup(String registrableDomain, Integer timeoutMsOverride) {
         if (registrableDomain == null || registrableDomain.isBlank()) return err("invalid domain");
+        int timeoutMs = resolveRdapTimeoutMs(timeoutMsOverride);
         String tld = psl.tldOf(registrableDomain);
         Map<String, Object> res = null;
 
         boolean viaFallback = false;
 
         String base = bootstrapBase(tld);   // IANA bootstrap
-        if (base != null) res = tryRdap(base + "domain/" + enc(registrableDomain), registrableDomain);
+        if (base != null) res = tryRdap(base + "domain/" + enc(registrableDomain), registrableDomain, timeoutMs);
 
         if (res == null || res.get("error") != null) {   // rdap.org aggregator fallback
             String fb = appSettings.getString("cert.monitor.domain.rdap-fallback-url", "https://rdap.org/domain/");
-            Map<String, Object> res2 = tryRdap(fb + enc(registrableDomain), registrableDomain);
+            Map<String, Object> res2 = tryRdap(fb + enc(registrableDomain), registrableDomain, timeoutMs);
             if (res2.get("error") == null) { res = res2; viaFallback = true; }
             else if (res == null) res = res2;
         }
         if (res == null) res = err("no rdap");
         recordOutcome(res, viaFallback);
         return res;
+    }
+
+    /** RDAP istek timeout'u (ms): monitör override'ı yoksa global ayar; 1–30 sn'ye kısılır. */
+    private int resolveRdapTimeoutMs(Integer override) {
+        int ms = (override != null && override > 0)
+                ? override
+                : appSettings.getInt("cert.monitor.domain.rdap-timeout-ms", 6000);
+        return Math.max(1000, Math.min(ms, 30000));
     }
 
     /** Son lookup sonucunu durum kartı için kaydet (başarı/hata + kaynak: primary vs fallback). */
@@ -175,14 +190,14 @@ public class RdapDomainClient {
     }
 
     /** Tek bir RDAP URL'sini dener; 429 → exponential backoff, geçici hata → 1 retry. */
-    private Map<String, Object> tryRdap(String url, String domain) {
+    private Map<String, Object> tryRdap(String url, String domain, int timeoutMs) {
         String host; try { host = URI.create(url).getHost(); } catch (Exception e) { return err("bad url"); }
         int attempts = 0; long backoff = 1000;
         while (true) {
             try {
                 HttpRequest req = HttpRequest.newBuilder()
                         .uri(URI.create(url))
-                        .timeout(Duration.ofSeconds(6))
+                        .timeout(Duration.ofMillis(timeoutMs))
                         .header("Accept", "application/rdap+json")
                         .header("User-Agent", "CertMonitor-DomainMonitor/1.0")
                         .GET().build();
@@ -289,19 +304,7 @@ public class RdapDomainClient {
                     .header("User-Agent", "CertMonitor-DomainMonitor/1.0").GET().build();
             HttpResponse<String> resp = clientFor(host).send(req, HttpResponse.BodyHandlers.ofString());
             if (resp.statusCode() != 200) { log.warn("IANA RDAP bootstrap http {}", resp.statusCode()); return null; }
-            JsonNode root = mapper.readTree(resp.body());
-            JsonNode services = root.get("services");
-            Map<String, String> map = new ConcurrentHashMap<>();
-            if (services != null && services.isArray()) {
-                for (JsonNode svc : services) {
-                    if (!svc.isArray() || svc.size() < 2) continue;
-                    JsonNode tlds = svc.get(0), urls = svc.get(1);
-                    if (!urls.isArray() || urls.isEmpty()) continue;
-                    String base = urls.get(0).asText();
-                    if (!base.endsWith("/")) base = base + "/";
-                    for (JsonNode t : tlds) map.put(t.asText().toLowerCase(Locale.ROOT), base);
-                }
-            }
+            Map<String, String> map = parseBootstrap(resp.body());
             log.info("IANA RDAP bootstrap yüklendi: {} TLD", map.size());
             bootstrapLoaded = true;
             bootstrapTldCount = map.size();
@@ -310,6 +313,132 @@ public class RdapDomainClient {
             log.warn("IANA RDAP bootstrap alınamadı ({}), rdap.org fallback kullanılacak: {}", url, e.getMessage());
             return null;   // başarısız → çağıran eski cache'i (varsa) korur; yoksa doğrudan fallback
         }
+    }
+
+    /** IANA bootstrap JSON gövdesini tld→registry-base (trailing '/') haritasına çevirir (fetchBootstrap + diagnoseSteps paylaşır). */
+    private Map<String, String> parseBootstrap(String body) throws Exception {
+        JsonNode root = mapper.readTree(body);
+        JsonNode services = root.get("services");
+        Map<String, String> map = new ConcurrentHashMap<>();
+        if (services != null && services.isArray()) {
+            for (JsonNode svc : services) {
+                if (!svc.isArray() || svc.size() < 2) continue;
+                JsonNode tlds = svc.get(0), urls = svc.get(1);
+                if (!urls.isArray() || urls.isEmpty()) continue;
+                String base = urls.get(0).asText();
+                if (!base.endsWith("/")) base = base + "/";
+                for (JsonNode t : tlds) map.put(t.asText().toLowerCase(Locale.ROOT), base);
+            }
+        }
+        return map;
+    }
+
+    // ── Tanılama (Alan Adı Tanılama aracı) — lookup mantığını kopyalamaz; aynı proxy-aware client'ları,
+    //    TrustEvaluator SSLContext'ini, parse() ve bootstrap'ı kullanır, her adımın status/latency/hata sınıfını yakalar. ──
+
+    /** RDAP zincirini adım adım koşar (bootstrap → registry → rdap.org). Retry YOK — gerçek davranışı gösterir.
+     *  Döner: {@code {steps:[...], source, expiry_date?, registrar?}}. */
+    public Map<String, Object> diagnoseSteps(String registrableDomain, Integer timeoutMsOverride) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        List<Map<String, Object>> steps = new ArrayList<>();
+        out.put("steps", steps);
+        out.put("source", "FAILED");
+        if (registrableDomain == null || registrableDomain.isBlank()) return out;
+        int timeoutMs = resolveRdapTimeoutMs(timeoutMsOverride);
+        String tld = psl.tldOf(registrableDomain);
+
+        // 1) IANA bootstrap
+        String bootstrapUrl = appSettings.getString("cert.monitor.domain.rdap-bootstrap-url", "https://data.iana.org/rdap/dns.json");
+        Map<String, Object> bs = httpProbe("IANA_BOOTSTRAP", bootstrapUrl, timeoutMs);
+        String registryBase = null;
+        if ("ok".equals(bs.get("status"))) {
+            try {
+                Map<String, String> map = parseBootstrap((String) bs.get("_body"));
+                registryBase = map.get(tld);
+                bs.put("detail", registryBase != null ? ("registry: " + registryBase) : ("TLD ." + tld + " bootstrap listesinde yok"));
+            } catch (Exception e) { bs.put("detail", "bootstrap parse hatası: " + e.getMessage()); }
+        }
+        bs.remove("_body");
+        steps.add(bs);
+
+        // 2) Registry RDAP sorgusu
+        Map<String, Object> parsed = null;
+        if (registryBase != null) {
+            Map<String, Object> rq = httpProbe("RDAP_REGISTRY", registryBase + "domain/" + enc(registrableDomain), timeoutMs);
+            parsed = finishRdapStep(rq, registrableDomain);
+            steps.add(rq);
+            if (parsed != null && parsed.get("expiry_date") != null) out.put("source", "RDAP_REGISTRY");
+        } else {
+            steps.add(skipStep("RDAP_REGISTRY", "bootstrap registry adresi bulunamadı"));
+        }
+
+        // 3) rdap.org fallback (registry expiry vermediyse)
+        if (parsed == null || parsed.get("expiry_date") == null) {
+            String fb = appSettings.getString("cert.monitor.domain.rdap-fallback-url", "https://rdap.org/domain/");
+            Map<String, Object> rq = httpProbe("RDAP_ORG", fb + enc(registrableDomain), timeoutMs);
+            Map<String, Object> p2 = finishRdapStep(rq, registrableDomain);
+            steps.add(rq);
+            if (p2 != null && p2.get("expiry_date") != null) { parsed = p2; out.put("source", "RDAP_ORG"); }
+        } else {
+            steps.add(skipStep("RDAP_ORG", "registry başarılı — atlandı"));
+        }
+
+        if (parsed != null && parsed.get("expiry_date") != null) {
+            out.put("expiry_date", parsed.get("expiry_date"));
+            out.put("registrar", parsed.get("registrar"));
+        }
+        return out;
+    }
+
+    /** RDAP adımını sonuçlandır: ok ise gövdeyi parse et; expiry yok/parse hatası ise adımı fail'e çevir. Parsed'ı döner (expiry varsa). */
+    private Map<String, Object> finishRdapStep(Map<String, Object> step, String domain) {
+        Object bodyObj = step.remove("_body");
+        if (!"ok".equals(step.get("status")) || bodyObj == null) return null;
+        Map<String, Object> p = parse((String) bodyObj, domain);
+        if (p.get("error") != null) {
+            step.put("status", "fail"); step.put("error_class", "PARSE"); step.put("error", String.valueOf(p.get("error")));
+            return null;
+        }
+        if (p.get("expiry_date") == null) {
+            step.put("status", "fail"); step.put("error_class", "NO_EXPIRY"); step.put("detail", "yanıtta expiration eventi yok");
+            return null;
+        }
+        step.put("detail", "expiry: " + p.get("expiry_date"));
+        return p;
+    }
+
+    /** Tek HTTP GET (retry YOK); status/latency/http_status/error_class + gövde (_body, sonra silinir) yakalar. */
+    private Map<String, Object> httpProbe(String stepName, String url, int timeoutMs) {
+        Map<String, Object> step = new LinkedHashMap<>();
+        step.put("step", stepName);
+        long t0 = System.currentTimeMillis();
+        try {
+            String host = URI.create(url).getHost();
+            HttpRequest req = HttpRequest.newBuilder().uri(URI.create(url)).timeout(Duration.ofMillis(timeoutMs))
+                    .header("Accept", "application/rdap+json")
+                    .header("User-Agent", "CertMonitor-DomainMonitor/1.0").GET().build();
+            HttpResponse<String> resp = clientFor(host).send(req, HttpResponse.BodyHandlers.ofString());
+            step.put("elapsed_ms", System.currentTimeMillis() - t0);
+            step.put("http_status", resp.statusCode());
+            if (resp.statusCode() == 200) { step.put("status", "ok"); step.put("_body", resp.body()); }
+            else {
+                step.put("status", "fail");
+                step.put("error_class", DiagnosticErrorClassifier.httpStatus(resp.statusCode()));
+                step.put("error", "HTTP " + resp.statusCode());
+            }
+        } catch (Exception e) {
+            step.put("elapsed_ms", System.currentTimeMillis() - t0);
+            step.put("status", "fail");
+            step.put("error_class", DiagnosticErrorClassifier.classify(e));
+            step.put("error", e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName());
+        }
+        return step;
+    }
+
+    private static Map<String, Object> skipStep(String stepName, String detail) {
+        Map<String, Object> s = new LinkedHashMap<>();
+        s.put("step", stepName); s.put("status", "skip"); s.put("detail", detail);
+        return s;
     }
 
     private static Map<String, Object> err(String msg) {

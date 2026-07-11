@@ -9,6 +9,7 @@ import { Play, Pencil, X, RefreshCw, Plus, Trash2, CalendarClock, Users, Layers,
   LayoutDashboard, CheckCircle2, TriangleAlert, HelpCircle, ShieldAlert, Building2, Activity, BarChart3, ChevronDown, Calendar } from 'lucide-react'
 import AlertHistory from './admin/AlertHistory.jsx'
 import MonitorStatsBar from './MonitorStatsBar.jsx'
+import DomainExpiryTrace from './DomainExpiryTrace.jsx'
 const MonitorNotes = lazy(() => import('./MonitorNotes.jsx'))
 
 const REFRESH_INTERVAL = 60
@@ -16,6 +17,7 @@ const SORTS = ['days_asc', 'days_desc', 'name']
 const emptyForm = {
   name: '', domain: '', groupName: '', teamId: '',
   thresholdsCsv: '60,30,14,7,3,1', warningDays: 30, criticalDays: 7, intervalSeconds: 86400, active: true,
+  checkTimeoutMs: '',
 }
 
 /** Bitiş tarihi gösterimi — hem WHOIS date-only ("2029-10-26") hem RDAP datetime ("...Z") güvenli. */
@@ -52,6 +54,7 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName }) {
   const [testing, setTesting] = useState(false)
   const [testResult, setTestResult] = useState(null)
   const [detailTab, setDetailTab] = useState('control')
+  const [diag, setDiag] = useState(null)   // Sorun Tanıla modalı: { domain, loading?, data?, error? }
   const [search, setSearch] = useState('')
   const [teamFilter, setTeamFilter] = useState('all')
   const [groupFilter, setGroupFilter] = useState('all')
@@ -128,7 +131,8 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName }) {
       teamId: m.team_id != null ? String(m.team_id) : '',
       thresholdsCsv: m.thresholds_csv || '60,30,14,7,3,1',
       warningDays: m.warning_days ?? 30, criticalDays: m.critical_days ?? 7,
-      intervalSeconds: m.interval_seconds ?? 86400, active: m.active !== false })
+      intervalSeconds: m.interval_seconds ?? 86400, active: m.active !== false,
+      checkTimeoutMs: m.check_timeout_ms ?? '' })
     setModal(m)
   }
   function closeEdit() { setModal(null); setTestResult(null) }
@@ -152,6 +156,7 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName }) {
       thresholdsCsv: form.thresholdsCsv?.trim() || '60,30,14,7,3,1',
       warningDays: Number(form.warningDays), criticalDays: Number(form.criticalDays),
       intervalSeconds: Number(form.intervalSeconds), active: form.active,
+      checkTimeoutMs: form.checkTimeoutMs === '' || form.checkTimeoutMs == null ? null : Number(form.checkTimeoutMs),
     }
     const res = modal === 'new'
       ? await api.monitoring.createDomainMonitor(payload)
@@ -177,6 +182,16 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName }) {
       if (selected?.id === m.id) { setSelected(res.data); loadHistory(m.id, rangeDays) }
     }
     setChecking(null)
+  }
+
+  async function diagnose(m) {
+    setDiag({ domain: m.domain, loading: true })
+    try {
+      const res = await api.admin.runDomainExpiryDiagnostics(m.domain)
+      setDiag(res?.success ? { domain: m.domain, data: res.data } : { domain: m.domain, error: res?.error || t('dexp.error') })
+    } catch (e) {
+      setDiag({ domain: m.domain, error: e?.message || t('dexp.error') })
+    }
   }
 
   const teamOptions = useMemo(() => {
@@ -434,6 +449,13 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName }) {
             </div>
 
             {detailTab === 'control' && (<>
+              {isAdmin && (
+                <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8 }}>
+                  <button type="button" className="btn btn-sm btn-secondary" onClick={() => diagnose(selected)}>
+                    <ShieldAlert size={13} />{t('dexp.diagnose')}
+                  </button>
+                </div>
+              )}
               <div className="upt-range-btns">
                 {[7, 30, 90, 365].map(d => (
                   <button key={d} type="button" className={`btn btn-sm ${rangeDays === d ? 'btn-primary' : 'btn-secondary'}`}
@@ -478,6 +500,25 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName }) {
         document.body
       )}
 
+      {/* ── Sorun Tanıla (Alan Adı Süre Bitişi Tanılama) Modal ── */}
+      {diag && createPortal(
+        <div className="modal-overlay" onClick={() => setDiag(null)}>
+          <div className="modal-box" onClick={e => e.stopPropagation()} style={{ maxWidth: 660, width: '92vw', maxHeight: '90vh', overflowY: 'auto' }}>
+            <div className="modal-icon-hdr modal-icon-hdr--domain">
+              <div className="modal-icon-hdr-badge"><ShieldAlert size={20} /></div>
+              <h3>{t('dexp.diagnose')} — {diag.domain}</h3>
+            </div>
+            {diag.loading && <div className="upt-modal-loading">… {t('dexp.running')}</div>}
+            {diag.error && <div className="alert-msg alert-msg--err">{diag.error}</div>}
+            {diag.data && <DomainExpiryTrace data={diag.data} />}
+            <div className="modal-actions">
+              <button className="btn btn-secondary" onClick={() => setDiag(null)}>{t('dom.cancel')}</button>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
+
       {/* ── Create / Edit Modal ── */}
       {modal && createPortal(
         <div className="modal-overlay">
@@ -512,6 +553,11 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName }) {
                 <input type="number" min="1" value={form.criticalDays} onChange={e => setForm(f => ({ ...f, criticalDays: Number(e.target.value) }))} /></label>
               <label className="full-width"><span>{t('dom.thresholds')}</span>
                 <input value={form.thresholdsCsv} placeholder="60,30,14,7,3,1" onChange={e => setForm(f => ({ ...f, thresholdsCsv: e.target.value }))} /></label>
+              <label className="full-width"><span>{t('dom.checkTimeout')}</span>
+                <input type="number" min="1000" max="30000" step="500" value={form.checkTimeoutMs}
+                  placeholder={t('dom.checkTimeoutPh')}
+                  onChange={e => setForm(f => ({ ...f, checkTimeoutMs: e.target.value }))} /></label>
+              <div className="full-width field-hint" style={{ marginTop: -6 }}>{t('dom.checkTimeoutHint')}</div>
               <label className="checkbox-label">
                 <input type="checkbox" checked={form.active} onChange={e => setForm(f => ({ ...f, active: e.target.checked }))} />{t('dom.active')}</label>
               <div className="full-width field-hint">{t('dom.unknownHint')}</div>

@@ -120,7 +120,15 @@ public class IncidentsController {
         Map<String, Object> dto = new LinkedHashMap<>();
         dto.put("id",            e.getId());
         dto.put("status",        Boolean.TRUE.equals(e.getResolved()) ? "resolved" : "ongoing");
-        dto.put("monitor",       monitors.getOrDefault(e.getId(), Map.of("name", e.getDomain(), "type", "cert", "tab", "dashboard")));
+        Map<String, Object> monitor = monitors.get(e.getId());
+        if (monitor == null) {
+            // Map.of null değer kabul etmez → domain null olan olaylarda NPE olmasın diye null-güvenli varsayılan.
+            monitor = new LinkedHashMap<>();
+            monitor.put("name", e.getDomain());
+            monitor.put("type", "cert");
+            monitor.put("tab", "dashboard");
+        }
+        dto.put("monitor",       monitor);
         dto.put("root_cause",    rootCause(e.getAlertType(), ctx));
         dto.put("comment_count", counts.getOrDefault(e.getId(), 0L));
         dto.put("alert_type",    e.getAlertType());

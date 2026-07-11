@@ -14,6 +14,7 @@ import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.lenient;
@@ -52,28 +53,28 @@ class DomainCheckerServiceTest {
     @Test
     @DisplayName("uzak bitiş + transfer kilidi → OK")
     void ok() {
-        when(rdap.lookup("example.com")).thenReturn(rdapOk(LocalDate.now().plusDays(200).toString(), List.of("client transfer prohibited")));
+        when(rdap.lookup(eq("example.com"), any())).thenReturn(rdapOk(LocalDate.now().plusDays(200).toString(), List.of("client transfer prohibited")));
         assertThat(svc.test("example.com", 30, 7).get("status")).isEqualTo("OK");
     }
 
     @Test
     @DisplayName("kritik eşiğe yakın bitiş → CRITICAL")
     void critical() {
-        when(rdap.lookup("example.com")).thenReturn(rdapOk(LocalDate.now().plusDays(3).toString(), List.of("client transfer prohibited")));
+        when(rdap.lookup(eq("example.com"), any())).thenReturn(rdapOk(LocalDate.now().plusDays(3).toString(), List.of("client transfer prohibited")));
         assertThat(svc.test("example.com", 30, 7).get("status")).isEqualTo("CRITICAL");
     }
 
     @Test
     @DisplayName("uyarı eşiği içinde → WARNING")
     void warning() {
-        when(rdap.lookup("example.com")).thenReturn(rdapOk(LocalDate.now().plusDays(20).toString(), List.of("client transfer prohibited")));
+        when(rdap.lookup(eq("example.com"), any())).thenReturn(rdapOk(LocalDate.now().plusDays(20).toString(), List.of("client transfer prohibited")));
         assertThat(svc.test("example.com", 30, 7).get("status")).isEqualTo("WARNING");
     }
 
     @Test
     @DisplayName("redemptionPeriod EPP → anında CRITICAL (bitiş uzak olsa da)")
     void redemptionPeriod() {
-        when(rdap.lookup("example.com")).thenReturn(rdapOk(LocalDate.now().plusDays(200).toString(), List.of("redemption period")));
+        when(rdap.lookup(eq("example.com"), any())).thenReturn(rdapOk(LocalDate.now().plusDays(200).toString(), List.of("redemption period")));
         Map<String, Object> r = svc.test("example.com", 30, 7);
         assertThat(r.get("status")).isEqualTo("CRITICAL");
         assertThat(r.get("epp_critical")).isEqualTo(true);
@@ -85,14 +86,14 @@ class DomainCheckerServiceTest {
         Map<String, Object> none = new HashMap<>();
         none.put("source", "NONE");
         none.put("error", "rdap http 404");
-        when(rdap.lookup("example.com")).thenReturn(none);
+        when(rdap.lookup(eq("example.com"), any())).thenReturn(none);
         assertThat(svc.test("example.com", 30, 7).get("status")).isEqualTo("UNKNOWN");
     }
 
     @Test
     @DisplayName("tarih ayrıştırılamıyor → UNKNOWN (veri yok ≠ sorun yok)")
     void unknownUnparseableDate() {
-        when(rdap.lookup("example.com")).thenReturn(rdapOk("not-a-date", List.of()));
+        when(rdap.lookup(eq("example.com"), any())).thenReturn(rdapOk("not-a-date", List.of()));
         assertThat(svc.test("example.com", 30, 7).get("status")).isEqualTo("UNKNOWN");
     }
 
