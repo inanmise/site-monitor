@@ -81,12 +81,22 @@ export default function IncidentsPage({ systemRole }) {
     load()
   }
 
+  // Olay → kaynağına git: monitör alarmı ise ilgili monitör sekmesi + odak (?monitor=);
+  // cert alarmı (monitor_id yok) ise pano, o domaine filtreli (?domain=). Böylece "nerede kontrol ediliyor" belli olur.
+  function incidentHref(inc) {
+    const m = inc.monitor
+    if (m?.monitor_id != null && m?.tab) return `?tab=${encodeURIComponent(m.tab)}&monitor=${encodeURIComponent(m.monitor_id)}`
+    const dom = inc.domain || m?.name || ''
+    return `?tab=${encodeURIComponent(m?.tab || 'dashboard')}${dom ? `&domain=${encodeURIComponent(dom)}` : ''}`
+  }
+  function goToIncident(inc) { window.location.assign(incidentHref(inc)) }
+
   function monitorCell(m) {
     if (!m) return <span className="inc-mon-name">—</span>
     const name = m.name || '—'
     if (m.monitor_id != null && m.tab) {
       const href = `?tab=${encodeURIComponent(m.tab)}&monitor=${encodeURIComponent(m.monitor_id)}`
-      return <a className="inc-mon-link" href={href} title={name}>{name} <ExternalLink size={11} /></a>
+      return <a className="inc-mon-link" href={href} title={name} onClick={e => e.stopPropagation()}>{name} <ExternalLink size={11} /></a>
     }
     return <span className="inc-mon-name" title={name}>{name}</span>
   }
@@ -189,7 +199,12 @@ export default function IncidentsPage({ systemRole }) {
               </thead>
               <tbody>
                 {rows.map(inc => (
-                  <tr key={inc.id} className={inc.status === 'ongoing' ? 'inc-row-ongoing' : ''}>
+                  <tr key={inc.id}
+                    className={`inc-row-link${inc.status === 'ongoing' ? ' inc-row-ongoing' : ''}`}
+                    onClick={() => goToIncident(inc)}
+                    role="link" tabIndex={0}
+                    onKeyDown={e => { if (e.key === 'Enter') goToIncident(inc) }}
+                    title={t('incov.openDetail')}>
                     <td>
                       {inc.status === 'ongoing'
                         ? <span className="inc-status inc-status--ongoing"><span className="inc-dot" />{t('incov.ongoing')}</span>
@@ -198,15 +213,22 @@ export default function IncidentsPage({ systemRole }) {
                     <td>{monitorCell(inc.monitor)}</td>
                     <td>{rootCauseCell(inc.root_cause)}</td>
                     <td>
-                      <button className="inc-comments-btn" onClick={() => setCommentsFor(inc)}>
+                      <button className="inc-comments-btn" onClick={e => { e.stopPropagation(); setCommentsFor(inc) }}>
                         <MessageSquare size={13} />{t('incov.comments', inc.comment_count ?? 0)}
                       </button>
                     </td>
                     <td className="inc-started" title={inc.started_at}>{formatIncidentTime(inc.started_at)}</td>
-                    <td className="inc-duration">{formatDuration(durationMs(inc.started_at, inc.resolved_at, nowMs), t)}</td>
+                    <td className="inc-duration">
+                      {formatDuration(durationMs(inc.started_at, inc.resolved_at, nowMs), t)}
+                      {inc.status === 'resolved' && inc.resolved_at && (
+                        <span className="inc-resolved-at" title={inc.resolved_at}>
+                          {t('incov.resolvedAt')} {formatIncidentTime(inc.resolved_at)}
+                        </span>
+                      )}
+                    </td>
                     <td className="inc-th-actions">
                       {isAdmin && (
-                        <button className="inc-del-btn" title={t('incov.delete')} onClick={() => del(inc)}><Trash2 size={13} /></button>
+                        <button className="inc-del-btn" title={t('incov.delete')} onClick={e => { e.stopPropagation(); del(inc) }}><Trash2 size={13} /></button>
                       )}
                     </td>
                   </tr>
