@@ -1789,6 +1789,9 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .inc-table th.inc-th-sort:hover { color: #4f46e5; }
 .inc-table th.inc-th-actions, .inc-table td.inc-th-actions { text-align: right; width: 60px; }
 .inc-row-ongoing { background: rgba(220,38,38,.04); }
+.inc-row-link { cursor: pointer; transition: background .12s; }
+.inc-row-link:hover { background: rgba(99,102,241,.08); }
+.inc-row-link:focus-visible { outline: 2px solid #4f46e5; outline-offset: -2px; }
 .inc-del-btn { background: none; border: none; color: var(--text-muted); cursor: pointer; padding: 4px; border-radius: 5px; display: inline-flex; }
 .inc-del-btn:hover { color: #dc2626; background: rgba(220,38,38,.1); }
 /* Status hücresi */
@@ -1813,6 +1816,7 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .inc-comments-btn:hover { color: #4f46e5; }
 .inc-started { white-space: nowrap; font-size: .82em; color: var(--text-muted); }
 .inc-duration { white-space: nowrap; font-variant-numeric: tabular-nums; font-size: .86em; }
+.inc-resolved-at { display: block; margin-top: 2px; font-size: .82em; color: var(--text-muted); white-space: nowrap; }
 /* Boş durum (dostane) */
 .inc-empty { text-align: center; padding: 56px 20px; }
 .inc-empty-art { width: 96px; height: 96px; margin: 0 auto 18px; border-radius: 50%; display: flex; align-items: center; justify-content: center;

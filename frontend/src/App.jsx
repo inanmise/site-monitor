@@ -166,6 +166,11 @@ export default function App() {
         // Mail "tıklayınız" linki: ?tab=weeklyreports → doğrudan ilgili sekme
         const dl = initialTabFromUrl()
         if (dl) setTab(dl)
+        // Olay satırına tıklama (cert alarmı): ?domain=<d> → panoyu o domaine filtrele
+        try {
+          const fd = new URLSearchParams(window.location.search).get('domain')
+          if (fd) setSearch(fd)
+        } catch { /* yoksay */ }
       }
       setAuthChecked(true)
     }).catch(() => setAuthChecked(true))
