@@ -33,9 +33,23 @@ public class ExtendedHealthService {
     private final SystemHeartbeatRepository heartbeatRepo;
     private final AlertEventRepository alertEventRepo;
     private final JdbcTemplate jdbcTemplate;
+    private final RdapDomainClient rdapDomainClient;
     @org.springframework.context.annotation.Lazy
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private SchedulerService schedulerService;
+
+    /** Domain-expiry veri kaynağı (RDAP) durumu — Sistem Sağlığı kartı için. */
+    public Map<String, Object> getDomainExpirySourceStatus() {
+        try {
+            return rdapDomainClient.getSourceStatus();
+        } catch (Exception e) {
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("source", "NONE");
+            m.put("alarm", true);
+            m.put("reason", e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName());
+            return m;
+        }
+    }
 
     public Map<String, Object> getNetworkStatus() {
         Map<String, Object> m = new LinkedHashMap<>();

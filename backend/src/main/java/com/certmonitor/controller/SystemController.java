@@ -49,6 +49,7 @@ public class SystemController {
         data.put("db_ms",     extendedHealthService.measureDbResponseMs());
         data.put("heartbeat", extendedHealthService.getHeartbeatStatus());
         data.put("network",   extendedHealthService.getNetworkStatus());
+        data.put("domain_expiry", extendedHealthService.getDomainExpirySourceStatus());
         return ok(Map.of("data", data));
     }
 
