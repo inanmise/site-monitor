@@ -367,25 +367,35 @@ public class WeeklyAvailabilityReportService {
         int outageCount = 0;
         long totalDownMs = 0, longestMs = 0;
         boolean inDown = false;
+        boolean outagePaused = false;   // down iken bakıma girdi, henüz kurtarılmadı — bkz. M2-COUNT
         Instant downStart = null;
-        // Kesinti blokları TÜM satırlar üzerinde yürünür; bir bakım satırı, sürmekte olan bir kesintiyi
-        // (yalnız bakım-öncesi süreyi sayarak) KAPATIR ve atlanır → bakım süresi downMin/longest'e girmez (M2).
+        // Kesinti blokları TÜM satırlar üzerinde yürünür. Bir bakım satırı, sürmekte olan kesintinin
+        // SÜRESİNİ dondurur (bakım dakikaları downMin/longest'e girmez, M2) ama kesintiyi KAPATMAZ:
+        // bakımdan sonra hâlâ down ise bu AYNI kesintinin devamıdır, yeni bir kesinti değil (M2-COUNT).
+        // Yalnız araya gerçek bir kurtarma (up) girdiğinde kesinti biter → sonraki down yeni kesintidir.
         for (UptimeCheck c : ordered) {
             Instant t = parse(c.getCheckedAt());
             if (Boolean.TRUE.equals(c.getMaintenance())) {
+                if (inDown) {   // süreyi bakım başında dondur; kesinti kimliğini koru (kapatma)
+                    long d = durationMs(downStart, t);
+                    totalDownMs += d; longestMs = Math.max(longestMs, d);
+                    inDown = false; downStart = null; outagePaused = true;
+                }
+                continue;   // bakım süresi kesintiye sayılmaz
+            }
+            if (!isUp(c)) {
+                if (!inDown) {
+                    inDown = true; downStart = t;
+                    if (outagePaused) outagePaused = false;   // bakım sonrası devam → aynı kesinti, TEKRAR sayma
+                    else outageCount++;                       // yeni kesinti
+                }
+            } else {   // up örneği — sürmekte/beklemekte olan kesinti (varsa) çözüldü
                 if (inDown) {
                     long d = durationMs(downStart, t);
                     totalDownMs += d; longestMs = Math.max(longestMs, d);
                     inDown = false; downStart = null;
                 }
-                continue;   // bakım süresi kesintiye sayılmaz
-            }
-            if (!isUp(c)) {
-                if (!inDown) { inDown = true; outageCount++; downStart = t; }
-            } else if (inDown) {
-                long d = durationMs(downStart, t);
-                totalDownMs += d; longestMs = Math.max(longestMs, d);
-                inDown = false; downStart = null;
+                outagePaused = false;   // bakımda beklerken kurtarma geldi → kesinti kapandı
             }
         }
         if (inDown) { // pencere sonuna kadar sürüyor

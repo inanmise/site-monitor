@@ -915,6 +915,74 @@ class AdminControllerTest {
                 .andExpect(jsonPath("$.success").value(true));
     }
 
+    // ── Bulk alert actions ────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("POST /api/admin/alerts/bulk resolve → processed count + resolve called per id")
+    void bulkAlert_resolve_returns200() throws Exception {
+        AlertEvent ev = new AlertEvent(); ev.setId(1L); ev.setResolved(true);
+        when(escalationService.resolve(anyLong(), any())).thenReturn(ev);
+
+        mvc.perform(post("/api/admin/alerts/bulk").session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"action\":\"resolve\",\"ids\":[1,2]}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.data.processed").value(2))
+                .andExpect(jsonPath("$.data.skipped").value(0))
+                .andExpect(jsonPath("$.data.failed").value(0));
+
+        org.mockito.Mockito.verify(escalationService).resolve(eq(1L), any());
+        org.mockito.Mockito.verify(escalationService).resolve(eq(2L), any());
+    }
+
+    @Test
+    @DisplayName("POST /api/admin/alerts/bulk acknowledge → acknowledge called per id")
+    void bulkAlert_acknowledge_returns200() throws Exception {
+        AlertEvent ev = new AlertEvent(); ev.setId(3L);
+        when(escalationService.acknowledge(anyLong(), any())).thenReturn(ev);
+
+        mvc.perform(post("/api/admin/alerts/bulk").session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"action\":\"acknowledge\",\"ids\":[3]}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.processed").value(1));
+        org.mockito.Mockito.verify(escalationService).acknowledge(eq(3L), any());
+    }
+
+    @Test
+    @DisplayName("POST /api/admin/alerts/bulk one failing id → counted as failed, batch continues")
+    void bulkAlert_partialFailure_counted() throws Exception {
+        AlertEvent ev = new AlertEvent(); ev.setId(1L); ev.setResolved(true);
+        when(escalationService.resolve(eq(1L), any())).thenReturn(ev);
+        when(escalationService.resolve(eq(2L), any())).thenThrow(new java.util.NoSuchElementException("gone"));
+
+        mvc.perform(post("/api/admin/alerts/bulk").session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"action\":\"resolve\",\"ids\":[1,2]}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.processed").value(1))
+                .andExpect(jsonPath("$.data.failed").value(1));
+    }
+
+    @Test
+    @DisplayName("POST /api/admin/alerts/bulk invalid action → 400")
+    void bulkAlert_invalidAction_returns400() throws Exception {
+        mvc.perform(post("/api/admin/alerts/bulk").session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"action\":\"frobnicate\",\"ids\":[1]}"))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    @DisplayName("POST /api/admin/alerts/bulk empty ids → 400")
+    void bulkAlert_emptyIds_returns400() throws Exception {
+        mvc.perform(post("/api/admin/alerts/bulk").session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"action\":\"resolve\",\"ids\":[]}"))
+                .andExpect(status().isBadRequest());
+    }
+
     @Test
     @DisplayName("GET /api/admin/alerts/{id}/notifications returns 200 with log list")
     void getAlertNotifications_authenticated_returns200() throws Exception {

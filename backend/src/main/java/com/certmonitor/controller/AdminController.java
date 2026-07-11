@@ -983,6 +983,54 @@ public class AdminController {
         return ok(Map.of("data", escalationService.reNotify(id), "message", "Notification triggered"));
     }
 
+    /** Toplu alarm işlemi (Alarm Geçmişi çoklu seçim): acknowledge | resolve | re-notify.
+     *  Kapsam-dışı (IDOR) ya da hatalı id'ler atlanır/sayılır, batch durmaz. Bkz. /inventory/bulk deseni.
+     *  Not: @Transactional DEĞİL — her escalationService çağrısı kendi tx'ini + yan etkisini (mail) yönetir. */
+    @PostMapping("/alerts/bulk")
+    public ResponseEntity<Map<String, Object>> bulkAlertAction(
+            @RequestBody Map<String, Object> body, HttpSession session, HttpServletRequest request) {
+        requirePerm(session, "alerts.actions", "execute");
+        String action = body.get("action") != null ? body.get("action").toString().trim().toLowerCase() : "";
+        if (!Set.of("acknowledge", "resolve", "re-notify").contains(action)) {
+            throw new IllegalArgumentException("action must be one of: acknowledge, resolve, re-notify");
+        }
+        LinkedHashSet<Long> ids = new LinkedHashSet<>();
+        if (body.get("ids") instanceof List<?> raw) {
+            for (Object o : raw) { Long id = toLong(o); if (id != null) ids.add(id); }
+        }
+        if (ids.isEmpty()) throw new IllegalArgumentException("No ids provided");
+
+        String by = resolveDisplayName(session);
+        int processed = 0, skipped = 0, failed = 0;
+        for (Long id : ids) {
+            if (!isAlertInScope(session, id)) { skipped++; continue; }   // kapsam-dışı → atla (fırlatma yok)
+            try {
+                switch (action) {
+                    case "acknowledge" -> escalationService.acknowledge(id, by);
+                    case "resolve"     -> escalationService.resolve(id, by);
+                    case "re-notify"   -> escalationService.reNotify(id);
+                }
+                processed++;
+            } catch (Exception e) {
+                failed++;   // bulunamadı / zaten kapalı / bildirim hatası — say ama batch'i durdurma
+                log.warn("Bulk alert '{}' failed for id={}: {}", action, id, e.getMessage());
+            }
+        }
+        String auditAction = switch (action) {
+            case "acknowledge" -> "ALERT_BULK_ACKNOWLEDGE";
+            case "resolve"     -> "ALERT_BULK_RESOLVE";
+            default             -> "ALERT_BULK_RENOTIFY";
+        };
+        auditService.recordAction(auditAction, session, request, "ALERT_EVENT",
+                processed + " alert",
+                "{\"processed\":" + processed + ",\"skipped\":" + skipped + ",\"failed\":" + failed + "}");
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("processed", processed);
+        data.put("skipped", skipped);
+        data.put("failed", failed);
+        return ok(Map.of("data", data, "message", "Bulk " + action + " complete"));
+    }
+
     @GetMapping("/alerts/{id}/notifications")
     public ResponseEntity<Map<String, Object>> getAlertNotifications(
             @PathVariable Long id, HttpSession session) {
@@ -1015,6 +1063,17 @@ public class AdminController {
                 .orElseThrow(() -> new NoSuchElementException("Alert not found: " + id));
         if (v != null) for (Long t : alertTeamIds(ev)) if (v.contains(t)) return;
         throw new SecurityException("Bu alarm sizin takım(lar)ınıza ait değil");
+    }
+
+    /** requireAlertScope'un fırlatmayan sürümü — toplu işlemde kapsam-dışı/eksik id'yi atlamak için. */
+    private boolean isAlertInScope(HttpSession session, Long id) {
+        if (SessionScope.isGlobalViewer(session)) return true;
+        List<Long> v = SessionScope.viewTeamIds(session);
+        if (v == null) return false;
+        AlertEvent ev = alertEventRepo.findById(id).orElse(null);
+        if (ev == null) return false;
+        for (Long t : alertTeamIds(ev)) if (v.contains(t)) return true;
+        return false;
     }
 
     // ── Teams (ADMIN only) ────────────────────────────────────────────────────

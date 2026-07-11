@@ -130,6 +130,43 @@ class WeeklyAvailabilityReportServiceTest {
     }
 
     @Test
+    @DisplayName("computeRow: bakımı köprüleyen TEK kesinti tek sayılır (M2-COUNT); bakım dakikaları yine hariç")
+    void computeRow_outageBridgingMaintenanceCountedOnce() {
+        List<UptimeCheck> checks = List.of(
+                uc("down", null, "2026-06-15T10:00:00"),
+                uc("down", null, "2026-06-15T10:02:00"),
+                ucMaint("down", "2026-06-15T10:05:00"),      // bakım kesintiyi böler ama KAPATMAZ
+                ucMaint("down", "2026-06-15T10:30:00"),
+                uc("down", null, "2026-06-15T10:55:00"),      // bakımdan SONRA hâlâ down → aynı kesinti
+                uc("down", null, "2026-06-15T10:58:00"),
+                uc("up",   100L, "2026-06-15T11:00:00"));
+        Instant windowEnd = Instant.parse("2026-06-15T11:05:00Z");
+
+        AvailabilityRow r = service.computeRow("x", checks, windowEnd, null);
+
+        // Tek sürekli kesinti (bakımla bölünmüş) → 1 sayılır, 2 DEĞİL. (M2-COUNT öncesi kod 2 sayardı.)
+        assertThat(r.outageCount()).isEqualTo(1);
+        // Süre: 10:00→10:05 (5dk) + 10:55→11:00 (5dk) = 10dk; aradaki 50dk bakım HARİÇ.
+        assertThat(r.downtimeMinutes()).isEqualTo(10);
+    }
+
+    @Test
+    @DisplayName("computeRow: bakım + araya GERÇEK kurtarma (up) → 2 ayrı kesinti sayılır")
+    void computeRow_recoveryBetweenMaintenanceCountsTwo() {
+        List<UptimeCheck> checks = List.of(
+                uc("down", null, "2026-06-15T10:00:00"),
+                ucMaint("down", "2026-06-15T10:05:00"),      // bakım (kesintiyi böler)
+                uc("up",   100L, "2026-06-15T10:30:00"),      // GERÇEK kurtarma → kesinti kapanır
+                uc("up",   100L, "2026-06-15T10:35:00"),
+                uc("down", null, "2026-06-15T10:40:00"),      // yeni kesinti (araya kurtarma girdi)
+                uc("up",   100L, "2026-06-15T10:45:00"));
+        Instant windowEnd = Instant.parse("2026-06-15T10:50:00Z");
+
+        AvailabilityRow r = service.computeRow("x", checks, windowEnd, null);
+        assertThat(r.outageCount()).isEqualTo(2);   // kurtarma araya girdiği için köprüleme YOK
+    }
+
+    @Test
     @DisplayName("computeRow: veri yoksa availability null (ortalamaya katılmaz)")
     void computeRow_noData() {
         AvailabilityRow r = service.computeRow("x", List.of(), Instant.now(), null);

@@ -153,7 +153,7 @@ public interface AlertEventRepository extends JpaRepository<AlertEvent, Long> {
                AND (:since IS NULL OR e.createdAt >= :since)
                AND (:until IS NULL OR e.createdAt <= :until)
                AND (:alertType IS NULL OR e.alertType = :alertType)
-               AND (:q IS NULL OR LOWER(e.domain) LIKE LOWER(CONCAT('%', :q, '%')))
+               AND (:q IS NULL OR LOWER(e.domain) LIKE LOWER(CONCAT('%', CAST(:q AS string), '%')))
                AND (:scoped = FALSE OR e.teamId IN :scope OR EXISTS (
                        SELECT 1 FROM CertificateInventory i
                         WHERE i.domain = e.domain
@@ -175,7 +175,7 @@ public interface AlertEventRepository extends JpaRepository<AlertEvent, Long> {
              WHERE (:resolved IS NULL OR e.resolved = :resolved)
                AND (:since IS NULL OR e.createdAt >= :since)
                AND (:until IS NULL OR e.createdAt <= :until)
-               AND (:q IS NULL OR LOWER(e.domain) LIKE LOWER(CONCAT('%', :q, '%')))
+               AND (:q IS NULL OR LOWER(e.domain) LIKE LOWER(CONCAT('%', CAST(:q AS string), '%')))
                AND (:scoped = FALSE OR e.teamId IN :scope OR EXISTS (
                        SELECT 1 FROM CertificateInventory i
                         WHERE i.domain = e.domain
