@@ -7,6 +7,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
+import javax.net.ssl.SSLContext;
 import java.net.InetSocketAddress;
 import java.net.ProxySelector;
 import java.net.URI;
@@ -39,10 +40,12 @@ public class RdapDomainClient {
 
     private final AppSettingsService appSettings;
     private final PublicSuffixService psl;
+    private final TrustEvaluator trustEvaluator;
 
-    public RdapDomainClient(AppSettingsService appSettings, PublicSuffixService psl) {
+    public RdapDomainClient(AppSettingsService appSettings, PublicSuffixService psl, TrustEvaluator trustEvaluator) {
         this.appSettings = appSettings;
         this.psl = psl;
+        this.trustEvaluator = trustEvaluator;
     }
 
     @Value("${cert.monitor.proxy.host:}")     private String proxyHost;
@@ -60,14 +63,24 @@ public class RdapDomainClient {
     @PostConstruct
     public void init() {
         Duration ct = Duration.ofSeconds(5);
-        direct = HttpClient.newBuilder().connectTimeout(ct).followRedirects(HttpClient.Redirect.NORMAL).build();
+        // Kurumsal TLS-araya-giren proxy, RDAP sunucusunun sertifikasını cacerts'te olmayan bir iç Root CA ile
+        // yeniden imzalar → varsayılan güven "PKIX path building failed" ile patlar. Çözüm: cacerts + admin'in
+        // Genel Ayarlar'da girdiği kurumsal CA paketiyle doğrulayan SSLContext (TrustEvaluator, canlı reload).
+        SSLContext ssl = trustEvaluator.outboundSslContext();
+        direct = newClient(ct, null, ssl);
         if (proxyHost != null && !proxyHost.isBlank() && proxyPort > 0) {
-            proxied = HttpClient.newBuilder().connectTimeout(ct).followRedirects(HttpClient.Redirect.NORMAL)
-                    .proxy(ProxySelector.of(new InetSocketAddress(proxyHost, proxyPort))).build();
+            proxied = newClient(ct, ProxySelector.of(new InetSocketAddress(proxyHost, proxyPort)), ssl);
             log.info("RDAP istemcisi proxy üzerinden: {}:{}", proxyHost, proxyPort);
         } else {
             proxied = direct;
         }
+    }
+
+    private static HttpClient newClient(Duration ct, ProxySelector proxy, SSLContext ssl) {
+        HttpClient.Builder b = HttpClient.newBuilder().connectTimeout(ct).followRedirects(HttpClient.Redirect.NORMAL);
+        if (proxy != null) b.proxy(proxy);
+        if (ssl != null) b.sslContext(ssl);
+        return b.build();
     }
 
     private HttpClient clientFor(String host) {
