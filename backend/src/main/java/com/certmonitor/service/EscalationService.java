@@ -23,6 +23,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
+import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
@@ -61,6 +62,9 @@ public class EscalationService {
 
     private static final DateTimeFormatter ISO =
             DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
+    /** Sabit-genişlik ISO string'i LocalDateTime'a geri ayrıştırmak için (re-alert kadans matematiği). */
+    private static final DateTimeFormatter LDT =
+            DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss");
 
     private static final Map<String, Integer> LEVEL_ORDER = Map.of(
             "WARNING", 1, "HIGH", 2, "CRITICAL", 3);
@@ -148,6 +152,7 @@ public class EscalationService {
     public void processResults(List<Map<String, Object>> results) {
         AlertThreshold threshold = thresholdRepo.findFirstByActiveTrue()
                 .orElseGet(this::defaultThreshold);
+        int reAlertIv = threshold.getReAlertIntervalHours() != null ? threshold.getReAlertIntervalHours() : 24;
 
         // ── BATCH ÖN YÜKLEME (N+1 önleme) ──────────────────────────────────
         // Sweep'te 1000 result × 2 query = 2000 round-trip yerine: 2 query toplam.
@@ -229,7 +234,7 @@ public class EscalationService {
                 } else if (!event.getAcknowledged()) {
                     String lastAlertTime = event.getLastReAlertAt() != null
                             ? event.getLastReAlertAt() : event.getCreatedAt();
-                    if (!isSameUtcDay(lastAlertTime, now())) {
+                    if (reAlertDue(lastAlertTime, now(), reAlertIv)) {
                         List<EscalationContact> contacts = getContactsForLevel(alertLevel, domainTeamId);
                         sendCombinedAlert(domainTeamId, ugTeamId, contacts, domain, alertLevel, alertType,
                                 "[RE-ALERT] " + message, "[RE-ALERT] ",
@@ -334,7 +339,7 @@ public class EscalationService {
     }
 
     public void catchUpMissedDailyAlerts() {
-        String todayUtc = now().substring(0, 10);
+        int reAlertIv = reAlertIntervalHours();
         List<AlertEvent> openAlerts = alertEventRepo
                 .findByResolvedFalseAndAcknowledgedFalseOrderByCreatedAtDesc();
         // N+1 önleme: re-alert adayı domain'lerin inventory + latest_check'ini TEK sorguda topla
@@ -358,8 +363,8 @@ public class EscalationService {
             if (MONITORING_ALERT_TYPES.contains(event.getAlertType())) continue;
             String lastAlertTime = event.getLastReAlertAt() != null
                     ? event.getLastReAlertAt() : event.getCreatedAt();
-            if (isSameUtcDay(lastAlertTime, todayUtc)) {
-                log.debug("Catch-up: {} already notified today, skipping", event.getDomain());
+            if (!reAlertDue(lastAlertTime, now(), reAlertIv)) {
+                log.debug("Catch-up: {} re-alert interval not elapsed, skipping", event.getDomain());
                 continue;
             }
             var inventoryOpt  = Optional.ofNullable(invByDomain.get(event.getDomain()));
@@ -395,6 +400,12 @@ public class EscalationService {
     public AlertEvent resolve(Long eventId, String resolvedBy) {
         AlertEvent event = alertEventRepo.findById(eventId)
                 .orElseThrow(() -> new NoSuchElementException("Alert not found: " + eventId));
+        // İdempotent: zaten çözülmüş bir alarmı yeniden çözme — çift "çözüldü" e-postası gönderme ve
+        // resolvedAt/resolvedBy'ı ezme (çift tık / manuel-çözüm ile oto-recovery yarışı). reNotify'ın aynası.
+        if (Boolean.TRUE.equals(event.getResolved())) {
+            log.debug("Alarm zaten çözülmüş, tekrar çözülmüyor (idempotent): {} [{}]", event.getDomain(), event.getAlertType());
+            return event;
+        }
         String by = resolvedBy != null && !resolvedBy.isBlank() ? resolvedBy : "admin";
         event.setResolved(true);
         event.setResolvedAt(now());
@@ -622,7 +633,7 @@ public class EscalationService {
             }
             String lastAlertTime = event.getLastReAlertAt() != null
                     ? event.getLastReAlertAt() : event.getCreatedAt();
-            if (!isSameUtcDay(lastAlertTime, now())) {
+            if (reAlertDue(lastAlertTime, now(), reAlertIntervalHours())) {
                 List<EscalationContact> contacts = teamOnly ? List.of() : getContactsForLevel(alertLevel, domainTeamId);
                 sendCombinedAlert(domainTeamId, ugTeamId, contacts, domain, alertLevel, alertType,
                         "[RE-ALERT] " + message, "[RE-ALERT] ",
@@ -1355,13 +1366,27 @@ public class EscalationService {
         return t;
     }
 
-    /** ISO string'lerin UTC tarih kısımlarını (yyyy-MM-dd) karşılaştırır. */
-    private boolean isSameUtcDay(String iso1, String iso2) {
+    /**
+     * Re-alert kadans kararı (saf/test edilebilir): son alarmdan bu yana >= intervalHours saat geçti mi?
+     * Eski davranış "farklı UTC takvim günü" idi → 23:59'da açılan bir alarm 00:00'da hemen tekrar alarmlıyordu,
+     * ve admin'in {@code reAlertIntervalHours} ayarı hiç okunmuyordu. Artık rolling-saat penceresi (M10).
+     */
+    static boolean reAlertDue(String lastAlertIso, String nowIso, int intervalHours) {
+        int iv = Math.max(1, intervalHours);
         try {
-            return iso1.substring(0, 10).equals(iso2.substring(0, 10));
+            LocalDateTime last = LocalDateTime.parse(lastAlertIso, LDT);
+            LocalDateTime now  = LocalDateTime.parse(nowIso, LDT);
+            return !now.isBefore(last.plusHours(iv));
         } catch (Exception e) {
-            return false;
+            return true;   // ayrıştırılamazsa re-alert'e izin ver (bayat alarmın süresiz susmasını önle)
         }
+    }
+
+    /** Aktif eşikteki re-alert aralığı (saat). Ayar okunmadığı için "ölü"ydü; M10 canlandırır. Yoksa 24. */
+    private int reAlertIntervalHours() {
+        return thresholdRepo.findFirstByActiveTrue()
+                .map(t -> t.getReAlertIntervalHours() != null ? t.getReAlertIntervalHours() : 24)
+                .orElse(24);
     }
 
     private int levelValue(String level) {

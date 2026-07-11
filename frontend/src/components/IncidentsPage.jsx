@@ -29,20 +29,27 @@ export default function IncidentsPage({ systemRole }) {
     try { return localStorage.getItem(BANNER_KEY) !== 'true' } catch { return true }
   })
   const searchRef = useRef(null)
+  const reqIdRef = useRef(0)
 
   const load = useCallback(async () => {
+    const myId = ++reqIdRef.current
     setLoading(true)
     const res = await api.monitoring.incidents.list({
       status: filters.status === 'all' ? '' : filters.status,
       rootCause: filters.rootCause, q: filters.q, since: filters.since, until: filters.until,
       sort: sort.by || undefined, dir: sort.dir, page, size,
     })
+    if (myId !== reqIdRef.current) return   // yalnız EN SON isteğin yanıtını uygula — bayat yanıt grid'i ezmesin (M4)
     if (res?.success) { setRows(res.data ?? []); setTotal(res.total ?? 0); setTypeCounts(res.type_counts ?? {}) }
     setLoading(false)
   }, [filters, sort, page, size])
 
   useEffect(() => { load() }, [load])
-  useEffect(() => { setPage(0) }, [filters, size])
+
+  // Filtre/boyut değişince sayfayı 1'e al — page ile AYNI güncellemede (ayrı effect + çift yükleme/bayat-yarış yerine, M4).
+  const patchFilters = useCallback((patch) => { setFilters(f => ({ ...f, ...patch })); setPage(0) }, [])
+  const resetFilters = useCallback(() => { setFilters({ status: 'all', rootCause: '', q: '', since: '', until: '' }); setPage(0) }, [])
+  const changeSize   = useCallback((n) => { setSize(n); setPage(0) }, [])
   // Ongoing süreleri canlı tutmak için 1sn tick (yalnız ongoing satır varsa).
   useEffect(() => {
     if (!rows.some(r => r.status === 'ongoing')) return
@@ -67,10 +74,10 @@ export default function IncidentsPage({ systemRole }) {
   }, [typeCounts])
 
   async function del(inc) {
-    if (!window.confirm(t('inc.deleteConfirm'))) return
+    if (!window.confirm(t('incov.deleteConfirm'))) return
     const res = await api.monitoring.incidents.remove(inc.id)
-    if (!res?.success) { toast.error(res?.error || t('inc.deleteError')); return }
-    toast.success(t('inc.deleted'))
+    if (!res?.success) { toast.error(res?.error || t('incov.deleteError')); return }
+    toast.success(t('incov.deleted'))
     load()
   }
 
@@ -101,11 +108,11 @@ export default function IncidentsPage({ systemRole }) {
     <div className="inc-page">
       <div className="upt-header">
         <div>
-          <h2 className="upt-title"><Siren size={20} style={{ verticalAlign: '-4px', marginRight: 6 }} />{t('inc.title')}</h2>
-          <p className="upt-subtitle">{t('inc.subtitle')}</p>
+          <h2 className="upt-title"><Siren size={20} style={{ verticalAlign: '-4px', marginRight: 6 }} />{t('incov.title')}</h2>
+          <p className="upt-subtitle">{t('incov.subtitle')}</p>
         </div>
         <div className="upt-header-right">
-          <button className="btn btn-sm upt-refresh-btn" onClick={load}><RefreshCw size={14} />{t('inc.refresh')}</button>
+          <button className="btn btn-sm upt-refresh-btn" onClick={load}><RefreshCw size={14} />{t('incov.refresh')}</button>
         </div>
       </div>
 
@@ -113,31 +120,31 @@ export default function IncidentsPage({ systemRole }) {
         <div className="inc-banner" role="note">
           <Info size={18} />
           <div className="inc-banner-text">
-            <strong>{t('inc.bannerTitle')}</strong>
-            <span>{t('inc.bannerText')}</span>
+            <strong>{t('incov.bannerTitle')}</strong>
+            <span>{t('incov.bannerText')}</span>
           </div>
-          <button className="inc-banner-close" onClick={dismissBanner} title={t('inc.dismiss')} aria-label={t('inc.dismiss')}><X size={16} /></button>
+          <button className="inc-banner-close" onClick={dismissBanner} title={t('incov.dismiss')} aria-label={t('incov.dismiss')}><X size={16} /></button>
         </div>
       )}
 
       {/* Filtreler */}
       <div className="inc-filters">
-        <select className="filter-select" value={filters.status} onChange={e => setFilters(f => ({ ...f, status: e.target.value }))}>
-          <option value="all">{t('inc.statusAll')}</option>
-          <option value="ongoing">{t('inc.ongoing')}</option>
-          <option value="resolved">{t('inc.resolved')}</option>
+        <select className="filter-select" value={filters.status} onChange={e => patchFilters({ status: e.target.value })}>
+          <option value="all">{t('incov.statusAll')}</option>
+          <option value="ongoing">{t('incov.ongoing')}</option>
+          <option value="resolved">{t('incov.resolved')}</option>
         </select>
-        <input ref={searchRef} className="filter-input" type="text" placeholder={t('inc.searchPlaceholder')}
+        <input ref={searchRef} className="filter-input" type="text" placeholder={t('incov.searchPlaceholder')}
           defaultValue={filters.q}
-          onKeyDown={e => { if (e.key === 'Enter') setFilters(f => ({ ...f, q: e.target.value.trim() })) }}
-          onBlur={e => setFilters(f => ({ ...f, q: e.target.value.trim() }))} />
-        <input className="filter-input inc-date" type="date" value={filters.since} title={t('inc.since')}
-          onChange={e => setFilters(f => ({ ...f, since: e.target.value }))} />
-        <input className="filter-input inc-date" type="date" value={filters.until} title={t('inc.until')}
-          onChange={e => setFilters(f => ({ ...f, until: e.target.value }))} />
+          onKeyDown={e => { if (e.key === 'Enter') patchFilters({ q: e.target.value.trim() }) }}
+          onBlur={e => { const v = e.target.value.trim(); if (v !== filters.q) patchFilters({ q: v }) }} />
+        <input className="filter-input inc-date" type="date" value={filters.since} title={t('incov.since')}
+          onChange={e => patchFilters({ since: e.target.value })} />
+        <input className="filter-input inc-date" type="date" value={filters.until} title={t('incov.until')}
+          onChange={e => patchFilters({ until: e.target.value })} />
         {hasFilters && (
-          <button className="btn btn-sm btn-secondary" onClick={() => { setFilters({ status: 'all', rootCause: '', q: '', since: '', until: '' }); if (searchRef.current) searchRef.current.value = '' }}>
-            {t('inc.clearFilters')}
+          <button className="btn btn-sm btn-secondary" onClick={() => { resetFilters(); if (searchRef.current) searchRef.current.value = '' }}>
+            {t('incov.clearFilters')}
           </button>
         )}
       </div>
@@ -145,13 +152,13 @@ export default function IncidentsPage({ systemRole }) {
       {/* Root-cause pill'leri */}
       {pills.length > 0 && (
         <div className="inc-pills">
-          <button className={`inc-pill${!filters.rootCause ? ' is-active' : ''}`} onClick={() => setFilters(f => ({ ...f, rootCause: '' }))}>
-            {t('inc.allCauses')} <span className="inc-pill-count">{total}</span>
+          <button className={`inc-pill${!filters.rootCause ? ' is-active' : ''}`} onClick={() => patchFilters({ rootCause: '' })}>
+            {t('incov.allCauses')} <span className="inc-pill-count">{total}</span>
           </button>
           {pills.map(([type, count]) => (
             <button key={type} className={`inc-pill${filters.rootCause === type ? ' is-active' : ''}`}
-              onClick={() => setFilters(f => ({ ...f, rootCause: f.rootCause === type ? '' : type }))}>
-              {t(`inc.type.${type}`) !== `inc.type.${type}` ? t(`inc.type.${type}`) : type} <span className="inc-pill-count">{count}</span>
+              onClick={() => patchFilters({ rootCause: filters.rootCause === type ? '' : type })}>
+              {t(`incov.type.${type}`) !== `incov.type.${type}` ? t(`incov.type.${type}`) : type} <span className="inc-pill-count">{count}</span>
             </button>
           ))}
         </div>
@@ -162,8 +169,8 @@ export default function IncidentsPage({ systemRole }) {
       ) : rows.length === 0 ? (
         <div className="inc-empty">
           <div className="inc-empty-art"><Siren size={54} /></div>
-          <h3 className="inc-empty-title">{t('inc.emptyTitle')}</h3>
-          <p className="inc-empty-text">{hasFilters ? t('inc.emptyFiltered') : t('inc.emptyText')}</p>
+          <h3 className="inc-empty-title">{t('incov.emptyTitle')}</h3>
+          <p className="inc-empty-text">{hasFilters ? t('incov.emptyFiltered') : t('incov.emptyText')}</p>
         </div>
       ) : (
         <>
@@ -171,13 +178,13 @@ export default function IncidentsPage({ systemRole }) {
             <table className="admin-table inc-table">
               <thead>
                 <tr>
-                  <th className="inc-th-sort" onClick={() => toggleSort('status')}>{t('inc.colStatus')} {sortIcon('status')}</th>
-                  <th>{t('inc.colMonitor')}</th>
-                  <th className="inc-th-sort" onClick={() => toggleSort('rootCause')}>{t('inc.colRootCause')} {sortIcon('rootCause')}</th>
-                  <th>{t('inc.colComments')}</th>
-                  <th className="inc-th-sort" onClick={() => toggleSort('started')}>{t('inc.colStarted')} {sortIcon('started')}</th>
-                  <th>{t('inc.colDuration')}</th>
-                  <th className="inc-th-actions">{t('inc.colActions')}</th>
+                  <th className="inc-th-sort" onClick={() => toggleSort('status')}>{t('incov.colStatus')} {sortIcon('status')}</th>
+                  <th>{t('incov.colMonitor')}</th>
+                  <th className="inc-th-sort" onClick={() => toggleSort('rootCause')}>{t('incov.colRootCause')} {sortIcon('rootCause')}</th>
+                  <th>{t('incov.colComments')}</th>
+                  <th className="inc-th-sort" onClick={() => toggleSort('started')}>{t('incov.colStarted')} {sortIcon('started')}</th>
+                  <th>{t('incov.colDuration')}</th>
+                  <th className="inc-th-actions">{t('incov.colActions')}</th>
                 </tr>
               </thead>
               <tbody>
@@ -185,21 +192,21 @@ export default function IncidentsPage({ systemRole }) {
                   <tr key={inc.id} className={inc.status === 'ongoing' ? 'inc-row-ongoing' : ''}>
                     <td>
                       {inc.status === 'ongoing'
-                        ? <span className="inc-status inc-status--ongoing"><span className="inc-dot" />{t('inc.ongoing')}</span>
-                        : <span className="inc-status inc-status--resolved"><CheckCircle2 size={14} />{t('inc.resolved')}</span>}
+                        ? <span className="inc-status inc-status--ongoing"><span className="inc-dot" />{t('incov.ongoing')}</span>
+                        : <span className="inc-status inc-status--resolved"><CheckCircle2 size={14} />{t('incov.resolved')}</span>}
                     </td>
                     <td>{monitorCell(inc.monitor)}</td>
                     <td>{rootCauseCell(inc.root_cause)}</td>
                     <td>
                       <button className="inc-comments-btn" onClick={() => setCommentsFor(inc)}>
-                        <MessageSquare size={13} />{t('inc.comments', inc.comment_count ?? 0)}
+                        <MessageSquare size={13} />{t('incov.comments', inc.comment_count ?? 0)}
                       </button>
                     </td>
                     <td className="inc-started" title={inc.started_at}>{formatIncidentTime(inc.started_at)}</td>
                     <td className="inc-duration">{formatDuration(durationMs(inc.started_at, inc.resolved_at, nowMs), t)}</td>
                     <td className="inc-th-actions">
                       {isAdmin && (
-                        <button className="inc-del-btn" title={t('inc.delete')} onClick={() => del(inc)}><Trash2 size={13} /></button>
+                        <button className="inc-del-btn" title={t('incov.delete')} onClick={() => del(inc)}><Trash2 size={13} /></button>
                       )}
                     </td>
                   </tr>
@@ -210,15 +217,15 @@ export default function IncidentsPage({ systemRole }) {
 
           <div className="alh-pagination" style={{ marginTop: 10 }}>
             <div className="alh-page-size">
-              <span>{t('inc.perPage')}</span>
+              <span>{t('incov.perPage')}</span>
               {[10, 20, 50].map(n => (
-                <button key={n} className={`alh-size-btn${size === n ? ' is-active' : ''}`} onClick={() => setSize(n)}>{n}</button>
+                <button key={n} className={`alh-size-btn${size === n ? ' is-active' : ''}`} onClick={() => changeSize(n)}>{n}</button>
               ))}
             </div>
-            <div className="alh-page-info">{t('inc.pageOf', page + 1, totalPages)} · {total} {t('inc.records')}</div>
+            <div className="alh-page-info">{t('incov.pageOf', page + 1, totalPages)} · {total} {t('incov.records')}</div>
             <div className="alh-page-nav">
-              <button disabled={page === 0} onClick={() => setPage(p => p - 1)}><ChevronLeft size={13} /> {t('inc.prev')}</button>
-              <button disabled={page + 1 >= totalPages} onClick={() => setPage(p => p + 1)}>{t('inc.next')} <ChevronRight size={13} /></button>
+              <button disabled={page === 0} onClick={() => setPage(p => p - 1)}><ChevronLeft size={13} /> {t('incov.prev')}</button>
+              <button disabled={page + 1 >= totalPages} onClick={() => setPage(p => p + 1)}>{t('incov.next')} <ChevronRight size={13} /></button>
             </div>
           </div>
         </>
@@ -258,12 +265,12 @@ function CommentThread({ incident, onClose, onChanged }) {
     setSaving(true)
     const res = await api.monitoring.incidents.addComment(incident.id, text)
     setSaving(false)
-    if (!res?.success) { toast.error(res?.error || t('inc.commentError')); return }
+    if (!res?.success) { toast.error(res?.error || t('incov.commentError')); return }
     setBody(''); onChanged?.(1); load()
   }
   async function remove(id) {
     const res = await api.monitoring.incidents.deleteComment(id)
-    if (!res?.success) { toast.error(res?.error || t('inc.commentError')); return }
+    if (!res?.success) { toast.error(res?.error || t('incov.commentError')); return }
     onChanged?.(-1); load()
   }
 
@@ -272,19 +279,19 @@ function CommentThread({ incident, onClose, onChanged }) {
       <div className="modal-box inc-cmt-modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 560, width: '92vw' }}>
         <div className="modal-icon-hdr modal-icon-hdr--port">
           <div className="modal-icon-hdr-badge"><MessageSquare size={20} /></div>
-          <h3>{t('inc.commentsTitle')}</h3>
+          <h3>{t('incov.commentsTitle')}</h3>
         </div>
         <div className="inc-cmt-sub">{incident.monitor?.name || incident.domain}</div>
 
         <div className="inc-cmt-list">
           {loading ? <div className="loading">…</div>
-            : comments.length === 0 ? <div className="inc-cmt-empty">{t('inc.noComments')}</div>
+            : comments.length === 0 ? <div className="inc-cmt-empty">{t('incov.noComments')}</div>
             : comments.map(c => (
               <div key={c.id} className="inc-cmt">
                 <div className="inc-cmt-head">
                   <span className="inc-cmt-author">{c.author_name || c.author_username || '—'}</span>
                   <span className="inc-cmt-time">{formatIncidentTime(c.created_at)}</span>
-                  <button className="inc-cmt-del" title={t('inc.delete')} onClick={() => remove(c.id)}><Trash2 size={12} /></button>
+                  <button className="inc-cmt-del" title={t('incov.delete')} onClick={() => remove(c.id)}><Trash2 size={12} /></button>
                 </div>
                 <div className="inc-cmt-body">{c.body}</div>
               </div>
@@ -292,12 +299,12 @@ function CommentThread({ incident, onClose, onChanged }) {
         </div>
 
         <div className="inc-cmt-add">
-          <textarea rows={2} value={body} placeholder={t('inc.commentPlaceholder')}
+          <textarea rows={2} value={body} placeholder={t('incov.commentPlaceholder')}
             onChange={e => setBody(e.target.value)} />
-          <button className="btn btn-primary" disabled={saving || !body.trim()} onClick={add}><Send size={14} />{t('inc.addComment')}</button>
+          <button className="btn btn-primary" disabled={saving || !body.trim()} onClick={add}><Send size={14} />{t('incov.addComment')}</button>
         </div>
         <div className="modal-actions">
-          <button className="btn btn-secondary" onClick={onClose}>{t('inc.close')}</button>
+          <button className="btn btn-secondary" onClick={onClose}>{t('incov.close')}</button>
         </div>
       </div>
     </div>

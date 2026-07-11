@@ -205,11 +205,10 @@ class EscalationServiceTest {
     @DisplayName("Unacknowledged alert past re-alert interval fires re-alert")
     void processResults_unacknowledgedPastInterval_reAlerts() {
         String domain = "renotify.example.com";
-        // Use yesterday's noon UTC — always a different calendar day regardless of when the test runs
-        String yesterdayNoon = ISO.format(Instant.now().minus(1, ChronoUnit.DAYS)
-                .truncatedTo(ChronoUnit.DAYS).plus(12, ChronoUnit.HOURS));
+        // Son alarm 25 saat önce (>24s re-alert aralığı) — rolling-saat penceresinde deterministik re-alert (M10).
+        String pastInterval = ISO.format(Instant.now().minus(25, ChronoUnit.HOURS));
         AlertEvent existing = existingOpenAlert(domain, "EXPIRY", "WARNING", false);
-        existing.setLastReAlertAt(yesterdayNoon);
+        existing.setLastReAlertAt(pastInterval);
         when(alertEventRepo.findOpenByDomainIn(anyCollection())).thenReturn(List.of(existing));
         when(alertEventRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
         when(contactRepo.findByMinAlertLevelAndActiveTrue("WARNING"))
@@ -384,6 +383,40 @@ class EscalationServiceTest {
         AlertEvent result = service.resolve(4L, "   "); // blank
 
         assertThat(result.getResolvedBy()).isEqualTo("admin");
+    }
+
+    @Test
+    @DisplayName("resolve is idempotent — a second resolve does not re-save or clobber resolve metadata (L1)")
+    void resolve_idempotent_secondCallNoOp() {
+        AlertEvent event = existingOpenAlert("dup.example.com", "EXPIRY", "WARNING", false);
+        event.setId(7L);
+        when(alertEventRepo.findById(7L)).thenReturn(Optional.of(event));
+        when(alertEventRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(latestCheckRepo.findById("dup.example.com")).thenReturn(Optional.empty());
+
+        service.resolve(7L, "user-a");                 // resolves + saves (+ async notify)
+        String firstResolvedAt = event.getResolvedAt();
+        service.resolve(7L, "user-b");                 // already resolved → idempotent no-op
+
+        // Before the fix the second call saves again + clobbers resolvedBy to "user-b".
+        verify(alertEventRepo, times(1)).save(any());
+        assertThat(event.getResolvedBy()).isEqualTo("user-a");
+        assertThat(event.getResolvedAt()).isEqualTo(firstResolvedAt);
+    }
+
+    @Test
+    @DisplayName("reAlertDue honors the interval-hours knob and does not fire across the UTC-midnight boundary (M10)")
+    void reAlertDue_honorsHoursKnobAndMidnightBoundary() {
+        // Near-midnight edge: 90s apart across midnight, 24h interval → NOT due
+        // (old calendar-day logic wrongly re-alerted seconds after the initial alert).
+        assertThat(EscalationService.reAlertDue("2026-07-04T23:59:00", "2026-07-05T00:00:30", 24)).isFalse();
+        // Exactly 24h later → due.
+        assertThat(EscalationService.reAlertDue("2026-07-04T23:59:00", "2026-07-05T23:59:00", 24)).isTrue();
+        // Admin knob honored: 12h interval → 11h elapsed NOT due, 13h elapsed due (previously the knob was ignored).
+        assertThat(EscalationService.reAlertDue("2026-07-04T10:00:00", "2026-07-04T21:00:00", 12)).isFalse();
+        assertThat(EscalationService.reAlertDue("2026-07-04T10:00:00", "2026-07-04T23:00:00", 12)).isTrue();
+        // Unparseable timestamp → safe: allow re-alert (don't silence a stale alert forever).
+        assertThat(EscalationService.reAlertDue("bad", "2026-07-05T00:00:00", 24)).isTrue();
     }
 
     @Test

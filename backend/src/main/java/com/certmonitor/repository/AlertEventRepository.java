@@ -7,6 +7,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.Collection;
 import java.util.List;
@@ -15,7 +16,15 @@ import java.util.Optional;
 public interface AlertEventRepository extends JpaRepository<AlertEvent, Long> {
 
     @Query("SELECT e FROM AlertEvent e WHERE e.domain = :domain AND e.alertType = :alertType AND e.resolved = false ORDER BY e.createdAt DESC")
-    Optional<AlertEvent> findOpenAlert(String domain, String alertType);
+    List<AlertEvent> findOpenAlerts(String domain, String alertType);
+
+    /** En güncel açık alarm. Aynı (domain, alertType) için BİRDEN ÇOK açık alarm bulunursa (legacy veri veya
+     *  withLock'ı aşan bir yarış) tekil-Optional sorgusu {@code IncorrectResultSizeDataAccessException} atıp
+     *  o domain'in alarmlarını sessizce düşürürdü; bu List tabanlı sürüm en yenisini (createdAt DESC) döner. */
+    default Optional<AlertEvent> findOpenAlert(String domain, String alertType) {
+        List<AlertEvent> rows = findOpenAlerts(domain, alertType);
+        return rows.isEmpty() ? Optional.empty() : Optional.of(rows.get(0));
+    }
 
     /** Batch lookup — sweep'te N domain için N query yerine tek sorgu. */
     @Query("SELECT e FROM AlertEvent e WHERE e.resolved = false AND e.domain IN :domains")
@@ -51,6 +60,19 @@ public interface AlertEventRepository extends JpaRepository<AlertEvent, Long> {
 
     /** Hâlâ down (açık) storm üyeleri — çözülme/histerezis değerlendirmesi + toggle-off geri-bağlama için. */
     List<AlertEvent> findByStormIdAndResolvedFalse(Long stormId);
+
+    /** Storm bağı (KOŞULLU, atomik) — yalnız HÂLÂ AÇIK + bağsız satırı bağlar. linkPeers'ın full-entity save'i
+     *  eşzamanlı bir recovery ile çözülmüş bir incident'i diriltebiliyordu; bu koşullu UPDATE onu önler (M6). */
+    @Transactional
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("UPDATE AlertEvent e SET e.stormId = :stormId WHERE e.id = :id AND e.resolved = false AND e.stormId IS NULL")
+    int linkToStormIfOpen(@Param("id") Long id, @Param("stormId") Long stormId);
+
+    /** Storm bağını kaldır — yalnız hâlâ AÇIK satırda (çözülmüş üyeyi full-save ile diriltmeden). */
+    @Transactional
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("UPDATE AlertEvent e SET e.stormId = null WHERE e.id = :id AND e.resolved = false")
+    int unlinkFromStorm(@Param("id") Long id);
 
     @Query("""
             SELECT a FROM AlertEvent a

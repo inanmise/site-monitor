@@ -145,9 +145,15 @@ public class StormService {
 
             // 2) Pencere-içi açık DOWN eş sayısı ≥ eşik mi → terfi; değilse normal bireysel (sıfır gecikme).
             String since = windowSince();
-            List<AlertEvent> peers = perGroup
+            List<AlertEvent> peers = new ArrayList<>(perGroup
                     ? alertEventRepo.findOpenDownSinceInGroup(EscalationService.DOWN_ALERT_TYPES, since, scopeKey)
-                    : alertEventRepo.findOpenDownSince(EscalationService.DOWN_ALERT_TYPES, since);
+                    : alertEventRepo.findOpenDownSince(EscalationService.DOWN_ALERT_TYPES, since));
+            // Tetikleyen event, tanımı gereği scope'ta açık bir DOWN'dır; ancak per-group modda group_name'i henüz
+            // commit edilmemiş olabileceğinden sorgu onu HARİÇ tutabilir → eşik off-by-one'ı (per-group N+1 gerektirirdi).
+            // Sayıma ve üye listesine mutlaka dahil et (M1). linkPeers zaten skipId ile onu atlar (çağıran kaydeder).
+            if (event.getId() == null || peers.stream().noneMatch(p -> event.getId().equals(p.getId()))) {
+                peers.add(event);
+            }
             int threshold = computeThreshold();
             if (peers.size() < threshold) return StormAction.SEND_INDIVIDUAL;
 
@@ -231,7 +237,8 @@ public class StormService {
         }
         // Aktif storm sürüyor → günlük toplu re-alert (aynı-UTC-gün kuralı, bireysel re-alert'in aynası)
         String last = storm.getLastReAlertAt() != null ? storm.getLastReAlertAt() : storm.getCreatedAt();
-        if (last == null || !isSameUtcDay(last, now())) {
+        // Storm günlük toplu re-alert — rolling 24 saat (23:59'da açılıp 00:00'da tekrar alarmlama edge'i, M10 ile tutarlı).
+        if (last == null || EscalationService.reAlertDue(last, now(), 24)) {
             List<AlertEvent> stillDown = members.stream()
                     .filter(m -> !Boolean.TRUE.equals(m.getResolved())).toList();
             sendStormAlert(storm, stillDown, "DAILY_REALERT");
@@ -250,8 +257,7 @@ public class StormService {
 
         // Hâlâ-down üyeleri storm'dan çöz → sonraki sweep BİREYSEL alarmlar (hiçbir şey sessizce kaybolmaz).
         for (AlertEvent e : stillDown) {
-            e.setStormId(null);
-            alertEventRepo.save(e);
+            alertEventRepo.unlinkFromStorm(e.getId());   // koşullu — çözülmüş üyeyi diriltmeden bağı kaldır (M6)
         }
         storm.setResolved(true);
         storm.setResolvedAt(now());
@@ -265,8 +271,7 @@ public class StormService {
     /** Toggle KAPALI iken aktif storm'u zarifçe dağıt: üyeleri geri-bağla (bireysele dön), sessiz kapat. */
     private void disband(AlertStorm storm) {
         for (AlertEvent e : alertEventRepo.findByStormIdAndResolvedFalse(storm.getId())) {
-            e.setStormId(null);
-            alertEventRepo.save(e);   // sonraki sweep'te bireysel re-alert (lastReAlertAt eski → tetiklenir)
+            alertEventRepo.unlinkFromStorm(e.getId());   // koşullu geri-bağlama (M6); sonraki sweep bireysel re-alert
         }
         storm.setResolved(true);
         storm.setResolvedAt(now());
@@ -337,8 +342,7 @@ public class StormService {
         for (AlertEvent p : peers) {
             if (Objects.equals(p.getId(), skipId)) continue;                 // mevcut event → çağıran kaydeder
             if (Objects.equals(p.getStormId(), stormId)) continue;           // zaten bağlı
-            p.setStormId(stormId);
-            alertEventRepo.save(p);
+            alertEventRepo.linkToStormIfOpen(p.getId(), stormId);            // koşullu — çözülmüş peer'ı diriltmez (M6)
         }
     }
 
@@ -568,11 +572,6 @@ public class StormService {
         Object v = ctx != null ? ctx.get(key) : null;
         if (v instanceof Number n) return n.intValue();
         try { return v != null ? Integer.parseInt(v.toString()) : null; } catch (Exception e) { return null; }
-    }
-
-    private boolean isSameUtcDay(String iso1, String iso2) {
-        try { return iso1.substring(0, 10).equals(iso2.substring(0, 10)); }
-        catch (Exception e) { return false; }
     }
 
     private String now() { return ISO.format(Instant.now()); }

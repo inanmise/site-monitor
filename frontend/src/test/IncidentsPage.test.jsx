@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, waitFor } from './test-utils.jsx'
+import { render, screen, waitFor, fireEvent } from './test-utils.jsx'
 import IncidentsPage from '../components/IncidentsPage.jsx'
 
 vi.mock('../api/client', () => ({
@@ -51,5 +51,32 @@ describe('IncidentsPage', () => {
     render(<IncidentsPage systemRole="ADMIN" />)
     await waitFor(() => expect(api.monitoring.incidents.list).toHaveBeenCalled())
     expect(await screen.findByTitle(/delete|sil/i)).toBeInTheDocument()
+  })
+
+  it('başlık "Olaylar/Incidents" — Olay Geçmişi ile i18n çakışması yok (H1)', async () => {
+    api.monitoring.incidents.list.mockResolvedValue({ success: true, data: [], total: 0, type_counts: {} })
+    render(<IncidentsPage systemRole="ADMIN" />)
+    await waitFor(() => expect(api.monitoring.incidents.list).toHaveBeenCalled())
+    // Başlık incov.title'dan gelir; DUPLICATE inc.title (IncidentHistoryPage: "Olay & Hata Geçmişi") EZMEZ.
+    expect(await screen.findByText(/^Olaylar$|^Incidents$/)).toBeInTheDocument()
+    expect(screen.queryByText(/Olay & Hata Geçmişi|Incident & Error History/)).not.toBeInTheDocument()
+  })
+
+  it('sayfa 2 iken filtre değişince TEK yükleme (page 0) yapar — çift-fetch/bayat yarış yok (M4)', async () => {
+    // total>size + satır var → tablo + sayfalama (prev/next) render olsun
+    api.monitoring.incidents.list.mockResolvedValue({ success: true, data: [incident], total: 100, type_counts: { HTTP_DOWN: 1 } })
+    render(<IncidentsPage systemRole="ADMIN" />)
+    await waitFor(() => expect(api.monitoring.incidents.list).toHaveBeenCalled())
+
+    fireEvent.click(await screen.findByRole('button', { name: /sonraki|next/i }))   // → page 1
+    await waitFor(() => expect(api.monitoring.incidents.list)
+      .toHaveBeenLastCalledWith(expect.objectContaining({ page: 1 })))
+
+    api.monitoring.incidents.list.mockClear()
+    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'ongoing' } })   // filtre değişti
+
+    // Eski kod: load(page 1, bayat) + setPage(0) → load(page 0) = 2 çağrı. Düzeltmede: TEK çağrı, page 0.
+    await waitFor(() => expect(api.monitoring.incidents.list).toHaveBeenCalledTimes(1))
+    expect(api.monitoring.incidents.list).toHaveBeenCalledWith(expect.objectContaining({ page: 0, status: 'ongoing' }))
   })
 })
