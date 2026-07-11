@@ -64,6 +64,7 @@ public class MaintenanceController {
         if (blank(body.get("startAt"))) throw new IllegalArgumentException("Başlangıç zamanı zorunlu");
         MaintenanceWindow w = new MaintenanceWindow();
         applyFields(w, body);
+        validateWindow(w);
         w.setActive(true);
         w.setCreatedAt(now());
         w.setUpdatedAt(now());
@@ -81,6 +82,7 @@ public class MaintenanceController {
         permissionService.require(session, "maintenance.manage", "edit");
         MaintenanceWindow w = require(id);
         applyFields(w, body);
+        validateWindow(w);
         w.setUpdatedAt(now());
         MaintenanceWindow saved = repo.save(w);
         maintenanceService.refresh();
@@ -162,6 +164,38 @@ public class MaintenanceController {
         }
         if (body.containsKey("daysOfWeek")) w.setDaysOfWeek(csvDays(body.get("daysOfWeek")));
         if (body.get("dayOfMonth") instanceof Number n) w.setDayOfMonth(n.intValue());
+    }
+
+    /**
+     * Sunucu-tarafı doğrulama (M9) — sessizce inert (hiç tetiklenmeyen) bir bakım penceresini önler:
+     * ayrıştırılamayan startAt (occurrence engine null döner → hiç aktif olmaz) ve gün seçilmemiş WEEKLY
+     * (hiçbir güne uymaz → hiç tetiklenmez). Geçersizse IllegalArgumentException → 400.
+     */
+    static void validateWindow(MaintenanceWindow w) {
+        if (parseIso(w.getStartAt()) == null)
+            throw new IllegalArgumentException("Geçersiz başlangıç zamanı (örn. 2026-01-01T23:00:00)");
+        String rec = w.getRecurrence() == null ? "NONE" : w.getRecurrence();
+        if ("WEEKLY".equals(rec) && !hasAnyDayOfWeek(w.getDaysOfWeek()))
+            throw new IllegalArgumentException("Haftalık bakım için en az bir gün seçin");
+    }
+
+    private static boolean hasAnyDayOfWeek(String csv) {
+        if (csv == null || csv.isBlank()) return false;
+        for (String p : csv.split(",")) {
+            try { int d = Integer.parseInt(p.trim()); if (d >= 1 && d <= 7) return true; }
+            catch (NumberFormatException ignore) { /* atla */ }
+        }
+        return false;
+    }
+
+    /** MaintenanceService.parse ile AYNI kabul: "yyyy-MM-ddTHH:mm:ss" veya Z/offset'li ISO; aksi halde null. */
+    private static java.time.Instant parseIso(String iso) {
+        if (iso == null || iso.isBlank()) return null;
+        try {
+            String s = iso.trim();
+            if (s.endsWith("Z") || s.matches(".*[+-]\\d\\d:?\\d\\d$")) return java.time.Instant.parse(s);
+            return java.time.LocalDateTime.parse(s).toInstant(java.time.ZoneOffset.UTC);
+        } catch (Exception e) { return null; }
     }
 
     private Map<String, Object> dto(MaintenanceWindow w, Instant now) {

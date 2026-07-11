@@ -99,6 +99,10 @@ export default function MaintenanceWindowsPage({ systemRole }) {
     if (!form.name.trim()) { toast.error(t('mw.nameRequired')); return }
     if (!form.startAt) { toast.error(t('mw.startRequired')); return }
     if (!form.allMonitors && form.targets.length === 0) { toast.error(t('mw.targetsRequired')); return }
+    // Sessizce inert (hiç tetiklenmeyen) pencereyi önle (M9)
+    if (!(Number(form.durationMinutes) >= 1)) { toast.error(t('mw.durationRequired')); return }
+    if (form.recurrence === 'WEEKLY' && form.daysOfWeek.length === 0) { toast.error(t('mw.weekdayRequired')); return }
+    if (form.recurrence === 'MONTHLY' && !(Number(form.dayOfMonth) >= 1 && Number(form.dayOfMonth) <= 31)) { toast.error(t('mw.dayOfMonthRequired')); return }
     setSaving(true)
     const payload = {
       name: form.name.trim(), description: form.description?.trim() || null, allMonitors: form.allMonitors,

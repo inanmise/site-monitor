@@ -12,6 +12,7 @@ import { useDialog } from './components/ui/Dialog.jsx'
 import { useT } from './i18n/index.jsx'
 import SearchableSelect from './components/ui/SearchableSelect.jsx'
 import Login from './pages/Login'
+import Landing from './pages/Landing'
 import Nav from './components/Nav'
 import StatsPanel from './components/StatsPanel'
 import StatsView from './components/StatsView'
@@ -92,6 +93,7 @@ export default function App() {
   const [teamId, setTeamId] = useState(null)
   const [teamName, setTeamName] = useState(null)
   const [authChecked, setAuthChecked] = useState(false)
+  const [showLogin, setShowLogin] = useState(false)   // public landing → "Giriş Yap" ile Login'i açar
   const [tab, setTab] = useState('dashboard')
   const [pendingAddDomain, setPendingAddDomain] = useState(false)  // dashboard "domain ekle" → envantere geç + add modal
   const [wrResetNonce, setWrResetNonce] = useState(0)
@@ -441,7 +443,9 @@ export default function App() {
   }, [user])
 
   if (!authChecked) return <div className="loading" style={{ marginTop: 80, textAlign: 'center' }}>{t('app.loading')}</div>
-  if (!user) return <Login onLogin={handleLogin} />
+  if (!user) return showLogin
+    ? <Login onLogin={handleLogin} onBack={() => setShowLogin(false)} />
+    : <Landing onGetStarted={() => setShowLogin(true)} />
   if (mustChangePwd) {
     // User was auto-reset by an admin — block all of the app until they
     // pick a new password. PasswordChangeModal in forced-change mode hides

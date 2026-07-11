@@ -235,6 +235,36 @@ class StormServiceTest {
         verify(emailService, times(1)).buildStormAlertHtml(anyInt(), any(), any(), any(), any(), anyInt());
     }
 
+    @Test
+    @DisplayName("Per-group storm counts the triggering monitor — no off-by-one (M1)")
+    void evaluate_perGroup_countsTriggeringMonitor() {
+        when(appSettings.getBoolean(eq(StormService.KEY_ENABLED), anyBoolean())).thenReturn(true);
+        when(appSettings.getBoolean(eq(StormService.KEY_PER_GROUP), anyBoolean())).thenReturn(true);   // per-group ON
+        when(appSettings.getString(eq(StormService.KEY_UNIT), anyString())).thenReturn("COUNT");
+        when(appSettings.getInt(eq(StormService.KEY_VALUE), anyInt())).thenReturn(2);    // eşik 2
+        when(appSettings.getInt(eq(StormService.KEY_WINDOW), anyInt())).thenReturn(5);
+        // Grup çözümü: HTTP monitör "G" grubunda.
+        com.certmonitor.model.HttpMonitor mon = new com.certmonitor.model.HttpMonitor();
+        mon.setGroupName("G");
+        when(httpRepo.findFirstByUrlOrderByIdAsc(anyString())).thenReturn(Optional.of(mon));
+
+        AlertStorm created = storm(400L);
+        created.setScopeKey("G");
+        when(stormRepo.findByScopeKeyAndResolvedFalse("G"))
+                .thenReturn(Optional.empty()).thenReturn(Optional.of(created));
+        // DB, tetikleyenin group_name'i henüz commit edilmediğinden onu HARİÇ döner (yalnız 1 diğer üye).
+        when(alertEventRepo.findOpenDownSinceInGroup(anyCollection(), anyString(), eq("G")))
+                .thenReturn(List.of(down(2, EscalationService.TYPE_HTTP_DOWN, 7L)));
+        when(jdbcTemplate.update(startsWith("INSERT INTO alert_storms"), any(), any(), any(), any(), any(), any()))
+                .thenReturn(1);
+
+        AlertEvent current = down(1, EscalationService.TYPE_HTTP_DOWN, 7L);
+        // Sorgu 1 üye döner, eşik 2. Off-by-one hatasında (tetikleyen sayılmaz) SEND_INDIVIDUAL olurdu.
+        assertThat(storm.evaluate(current, null)).isEqualTo(StormService.StormAction.SUPPRESSED);
+        assertThat(current.getStormId()).isEqualTo(400L);
+        assertThat(current.getGroupName()).isEqualTo("G");
+    }
+
     private AlertStorm storm(long id) {
         AlertStorm s = new AlertStorm();
         s.setId(id);

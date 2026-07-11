@@ -341,20 +341,20 @@ public class WeeklyAvailabilityReportService {
     // ── Hesaplama ───────────────────────────────────────────────────────────────
 
     AvailabilityRow computeRow(String domain, List<UptimeCheck> ordered, Instant windowEnd, Integer certDays) {
-        // Bakım penceresindeki (maintenance=true) kontroller uptime %'den + kesinti hesabından hariç tutulur.
-        ordered = ordered.stream().filter(c -> !Boolean.TRUE.equals(c.getMaintenance())).toList();
-        int total = ordered.size();
+        // Bakım (maintenance=true) satırları uptime %'sinden + yanıt sürelerinden HARİÇ tutulur (nonMaint).
+        List<UptimeCheck> nonMaint = ordered.stream().filter(c -> !Boolean.TRUE.equals(c.getMaintenance())).toList();
+        int total = nonMaint.size();
         if (total == 0) {
             return new AvailabilityRow(domain, null, 0, 0, 0, null, null, certDays);
         }
-        long up = ordered.stream().filter(WeeklyAvailabilityReportService::isUp).count();
+        long up = nonMaint.stream().filter(WeeklyAvailabilityReportService::isUp).count();
         // 2 ondalık hassasiyet; hiç down örnek varsa (up<total) asla 100.00 gösterme — yuvarlama
         // tek bir kesinti örneğini (örn. 2015/2016 = %99.95) yanıltıcı şekilde %100'e çekmesin.
         double pct = Math.round(up * 10000.0 / total) / 100.0;
         if (pct >= 100.0 && up < total) pct = 99.99;
 
-        // Yanıt süreleri (yalnız up + responseMs dolu)
-        List<Long> resp = ordered.stream()
+        // Yanıt süreleri (yalnız up + responseMs dolu) — bakım hariç
+        List<Long> resp = nonMaint.stream()
                 .filter(WeeklyAvailabilityReportService::isUp)
                 .map(UptimeCheck::getResponseMs)
                 .filter(Objects::nonNull)
@@ -368,8 +368,18 @@ public class WeeklyAvailabilityReportService {
         long totalDownMs = 0, longestMs = 0;
         boolean inDown = false;
         Instant downStart = null;
+        // Kesinti blokları TÜM satırlar üzerinde yürünür; bir bakım satırı, sürmekte olan bir kesintiyi
+        // (yalnız bakım-öncesi süreyi sayarak) KAPATIR ve atlanır → bakım süresi downMin/longest'e girmez (M2).
         for (UptimeCheck c : ordered) {
             Instant t = parse(c.getCheckedAt());
+            if (Boolean.TRUE.equals(c.getMaintenance())) {
+                if (inDown) {
+                    long d = durationMs(downStart, t);
+                    totalDownMs += d; longestMs = Math.max(longestMs, d);
+                    inDown = false; downStart = null;
+                }
+                continue;   // bakım süresi kesintiye sayılmaz
+            }
             if (!isUp(c)) {
                 if (!inDown) { inDown = true; outageCount++; downStart = t; }
             } else if (inDown) {

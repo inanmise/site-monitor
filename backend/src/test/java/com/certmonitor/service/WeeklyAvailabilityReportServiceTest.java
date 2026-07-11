@@ -64,6 +64,12 @@ class WeeklyAvailabilityReportServiceTest {
         return c;
     }
 
+    private UptimeCheck ucMaint(String status, String checkedAt) {
+        UptimeCheck c = uc(status, null, checkedAt);
+        c.setMaintenance(true);
+        return c;
+    }
+
     @Test
     @DisplayName("computeRow: availability %, kesinti sayısı/süresi, ort/p95")
     void computeRow_basic() {
@@ -100,6 +106,27 @@ class WeeklyAvailabilityReportServiceTest {
         assertThat(r.outageCount()).isEqualTo(1);
         assertThat(r.downtimeMinutes()).isEqualTo(8);        // 00:02 → 00:10 (pencere sonu)
         assertThat(r.availabilityPct()).isEqualTo(33.33);    // 1 up / 3 (2 ondalık)
+    }
+
+    @Test
+    @DisplayName("computeRow: bakım süresi downtime dakikalarına SAYILMAZ (yalnız %'den değil) (M2)")
+    void computeRow_maintenanceExcludedFromDowntime() {
+        List<UptimeCheck> checks = List.of(
+                uc("down", null, "2026-06-15T10:00:00"),
+                ucMaint("down", "2026-06-15T10:05:00"),      // bakım başladı
+                ucMaint("down", "2026-06-15T10:30:00"),
+                ucMaint("down", "2026-06-15T10:55:00"),      // bakım penceresi
+                uc("up",   100L, "2026-06-15T11:00:00"));
+        Instant windowEnd = Instant.parse("2026-06-15T11:05:00Z");
+
+        AvailabilityRow r = service.computeRow("x", checks, windowEnd, null);
+
+        // Kesinti yalnız 10:00 → 10:05 = 5 dk (bakımdaki 50 dk HARİÇ). Hatalı kod 10:00 → 11:00 = 60 dk sayardı.
+        assertThat(r.downtimeMinutes()).isEqualTo(5);
+        assertThat(r.longestOutageMinutes()).isEqualTo(5);
+        // % yalnız bakım-dışı örneklerden: 1 up / 2 = %50.
+        assertThat(r.availabilityPct()).isEqualTo(50.0);
+        assertThat(r.outageCount()).isEqualTo(1);
     }
 
     @Test

@@ -87,6 +87,26 @@ class MaintenanceControllerTest {
     }
 
     @Test
+    @DisplayName("POST /maintenance: ayrıştırılamayan startAt → 400 (sessiz-inert pencereyi önler) (M9)")
+    void create_malformedStart_400() throws Exception {
+        mvc.perform(post("/api/monitoring/maintenance").session(session())
+                        .contentType("application/json")
+                        .content("{\"name\":\"X\",\"startAt\":\"not-a-date\",\"durationMinutes\":60,\"recurrence\":\"NONE\"}"))
+                .andExpect(status().isBadRequest());
+        verify(repo, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("POST /maintenance: WEEKLY ama gün seçilmemiş → 400 (hiç tetiklenmeyen pencereyi önler) (M9)")
+    void create_weeklyNoDays_400() throws Exception {
+        mvc.perform(post("/api/monitoring/maintenance").session(session())
+                        .contentType("application/json")
+                        .content("{\"name\":\"X\",\"startAt\":\"2026-01-01T10:00:00\",\"durationMinutes\":60,\"recurrence\":\"WEEKLY\",\"daysOfWeek\":\"\"}"))
+                .andExpect(status().isBadRequest());
+        verify(repo, never()).save(any());
+    }
+
+    @Test
     @DisplayName("POST /maintenance/quick: ad-hoc pencere oluşturur")
     void quick() throws Exception {
         when(repo.save(any(MaintenanceWindow.class))).thenAnswer(inv -> { MaintenanceWindow w = inv.getArgument(0); w.setId(3L); return w; });
