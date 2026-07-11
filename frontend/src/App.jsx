@@ -12,7 +12,6 @@ import { useDialog } from './components/ui/Dialog.jsx'
 import { useT } from './i18n/index.jsx'
 import SearchableSelect from './components/ui/SearchableSelect.jsx'
 import Login from './pages/Login'
-import Landing from './pages/Landing'
 import Nav from './components/Nav'
 import StatsPanel from './components/StatsPanel'
 import StatsView from './components/StatsView'
@@ -57,6 +56,13 @@ const ExpiryForecastPage = lazy(() => import('./pages/ExpiryForecastPage'))
 const INACTIVITY_MS   = Number(import.meta.env.VITE_INACTIVITY_MS   ?? 300_000)
 const WARN_BEFORE_MS  = Number(import.meta.env.VITE_WARN_BEFORE_MS  ?? 60_000)
 
+// Oturum düşünce client.js hard reload ile /?session=expired'a yönlendirir → giriş formunda
+// "oturum süresi doldu" bildirimi göstermek için bu bayrağı okuruz (AUTH-1).
+function initialSessionExpired() {
+  try { return new URLSearchParams(window.location.search).get('session') === 'expired' }
+  catch { return false }
+}
+
 function formatDurationShort(ms) {
   if (ms == null || ms < 0) return '—'
   const s = Math.floor(ms / 1000)
@@ -93,7 +99,8 @@ export default function App() {
   const [teamId, setTeamId] = useState(null)
   const [teamName, setTeamName] = useState(null)
   const [authChecked, setAuthChecked] = useState(false)
-  const [showLogin, setShowLogin] = useState(false)   // public landing → "Giriş Yap" ile Login'i açar
+  // Oturum düşüşünde (401 → /?session=expired) giriş formunda "oturum süresi doldu" bildirimi göster (AUTH-1).
+  const [sessionExpiredNotice, setSessionExpiredNotice] = useState(initialSessionExpired)
   const [tab, setTab] = useState('dashboard')
   const [pendingAddDomain, setPendingAddDomain] = useState(false)  // dashboard "domain ekle" → envantere geç + add modal
   const [wrResetNonce, setWrResetNonce] = useState(0)
@@ -176,6 +183,7 @@ export default function App() {
       setTeamId(null)
       setTeamName(null)
       setInactivityWarning(false)
+      setSessionExpiredNotice(false)   // varsa "oturum süresi doldu" bildirimini temizle
     }
 
     const resetTimer = () => {
@@ -322,6 +330,7 @@ export default function App() {
     setTeamName(null)
     setInactivityWarning(false)
     setRefreshing(false)
+    setSessionExpiredNotice(false)   // varsa "oturum süresi doldu" bildirimini temizle
   }
 
   // "Şimdi Kontrol Et": her domain'i sırayla yeniden kontrol eder; başlangıç/bitiş/süre ölçüp
@@ -443,9 +452,7 @@ export default function App() {
   }, [user])
 
   if (!authChecked) return <div className="loading" style={{ marginTop: 80, textAlign: 'center' }}>{t('app.loading')}</div>
-  if (!user) return showLogin
-    ? <Login onLogin={handleLogin} onBack={() => setShowLogin(false)} />
-    : <Landing onGetStarted={() => setShowLogin(true)} />
+  if (!user) return <Login onLogin={handleLogin} sessionExpired={sessionExpiredNotice} />
   if (mustChangePwd) {
     // User was auto-reset by an admin — block all of the app until they
     // pick a new password. PasswordChangeModal in forced-change mode hides

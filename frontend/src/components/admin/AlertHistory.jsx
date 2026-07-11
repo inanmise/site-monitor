@@ -282,6 +282,8 @@ export default function AlertHistory({ domain = null }) {
   const [notifying,    setNotifying]    = useState(null)
   const [typeFilter,   setTypeFilter]   = useState('')   // '' = tüm tipler
   const [typeCounts,   setTypeCounts]   = useState({})
+  const [selected,     setSelected]     = useState(() => new Set())   // toplu seçim (yalnız açık sekme)
+  const [bulkBusy,     setBulkBusy]     = useState(false)
 
   const levelLabel = {
     WARNING: t('alh.level.warning'), HIGH: t('alh.level.high'), CRITICAL: t('alh.level.critical'),
@@ -353,6 +355,8 @@ export default function AlertHistory({ domain = null }) {
 
   useEffect(() => { load() }, [load])
   useEffect(() => { setPage(0) }, [tab, pageSize, closedFrom, closedTo, typeFilter])
+  // Liste bağlamı değişince seçim sıfırlansın (sekme/sayfa/filtre) — bayat id'ler seçili kalmasın
+  useEffect(() => { setSelected(new Set()) }, [tab, page, pageSize, closedFrom, closedTo, typeFilter, domain])
 
   function applyQuickRange(days) {
     const now = new Date()
@@ -409,6 +413,43 @@ export default function AlertHistory({ domain = null }) {
       load()
     } else {
       toast.error(res?.error || 'Error')
+    }
+  }
+
+  // ── Toplu seçim + toplu işlem (yalnız açık sekme) ──
+  const toggleSelect = (id) => setSelected(s => {
+    const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n
+  })
+  const allSelected = alerts.length > 0 && alerts.every(a => selected.has(a.id))
+  const toggleSelectAll = () => setSelected(() => allSelected ? new Set() : new Set(alerts.map(a => a.id)))
+
+  async function bulkAction(action) {
+    const ids = [...selected]
+    if (ids.length === 0) return
+    const meta = {
+      acknowledge: { title: t('alh.bulk.ackTitle'),      msg: t('alh.bulk.ackMsg', ids.length),      variant: 'warning', confirm: t('alh.ack') },
+      resolve:     { title: t('alh.bulk.resolveTitle'),  msg: t('alh.bulk.resolveMsg', ids.length),  variant: 'success', confirm: t('alh.resolve') },
+      're-notify': { title: t('alh.bulk.renotifyTitle'), msg: t('alh.bulk.renotifyMsg', ids.length), variant: 'warning', confirm: t('alh.renotify') },
+    }[action]
+    const confirmed = await showConfirm({
+      title: meta.title, message: meta.msg, variant: meta.variant,
+      confirmText: meta.confirm, cancelText: t('alh.resolveDialog.cancel'),
+    })
+    if (!confirmed) return
+    setBulkBusy(true)
+    let res
+    try { res = await api.admin.bulkAlertAction(action, ids) }
+    finally { setBulkBusy(false) }
+    if (res?.success) {
+      const { processed = 0, skipped = 0, failed = 0 } = res.data ?? {}
+      let msg = t('alh.bulk.done', processed)
+      if (skipped) msg += ' · ' + t('alh.bulk.skipped', skipped)
+      if (failed)  msg += ' · ' + t('alh.bulk.failed', failed)
+      if (failed) toast.error(msg); else toast.success(msg)
+      setSelected(new Set())
+      load()
+    } else {
+      toast.error(res?.error || t('alh.resolveError'))
     }
   }
 
@@ -535,6 +576,28 @@ export default function AlertHistory({ domain = null }) {
       )}
 
       {isOpen && alerts.length > 0 && (
+        <div className="alh-bulk-bar">
+          <label className="alh-bulk-all">
+            <input
+              type="checkbox"
+              checked={allSelected}
+              ref={el => { if (el) el.indeterminate = selected.size > 0 && !allSelected }}
+              onChange={toggleSelectAll}
+            />
+            <span>{selected.size > 0 ? t('alh.bulk.selected', selected.size) : t('alh.bulk.selectAll')}</span>
+          </label>
+          {selected.size > 0 && (
+            <div className="alh-bulk-actions">
+              <button className="btn btn-secondary btn-sm-p" disabled={bulkBusy} onClick={() => bulkAction('acknowledge')}>{t('alh.ack')}</button>
+              <button className="btn btn-warning btn-sm-p"   disabled={bulkBusy} onClick={() => bulkAction('re-notify')}>{t('alh.renotify')}</button>
+              <button className="btn btn-primary btn-sm-p"   disabled={bulkBusy} onClick={() => bulkAction('resolve')}>{t('alh.resolve')}</button>
+              <button className="btn btn-secondary btn-sm-p" disabled={bulkBusy} onClick={() => setSelected(new Set())}>{t('alh.bulk.clear')}</button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {isOpen && alerts.length > 0 && (
         <div className="alert-list">
           {alerts.map(a => {
             const notifiedList = parseContacts(a.notified_contacts)
@@ -542,6 +605,13 @@ export default function AlertHistory({ domain = null }) {
               <div key={a.id} className={`alert-card alert-${a.alert_level?.toLowerCase()}`}>
 
                 <div className="alert-card-header">
+                  <input
+                    type="checkbox"
+                    className="alh-card-check"
+                    checked={selected.has(a.id)}
+                    onChange={() => toggleSelect(a.id)}
+                    aria-label={t('alh.bulk.selectOne')}
+                  />
                   <span className="alert-level-badge" style={{ background: levelColor[a.alert_level] }}>
                     {levelLabel[a.alert_level] || a.alert_level}
                   </span>

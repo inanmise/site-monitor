@@ -1,12 +1,12 @@
 import { useState, useEffect } from 'react'
 import { api } from '../api/client'
 import { useT, useLanguage } from '../i18n/index.jsx'
-import { ShieldAlert, ShieldCheck, Lock, Globe, Bell, BarChart3, RefreshCw, X, ArrowLeft } from 'lucide-react'
+import { ShieldAlert, ShieldCheck, Lock, Globe, Bell, BarChart3, RefreshCw, X } from 'lucide-react'
 import CertMonitorLogo from '../components/ui/CertMonitorLogo.jsx'
 
 const STORAGE_KEY = 'cert-monitor-remembered-user'
 
-export default function Login({ onLogin, onBack }) {
+export default function Login({ onLogin, sessionExpired = false }) {
   const t = useT()
   const { lang, toggle: toggleLang } = useLanguage()
   const saved = localStorage.getItem(STORAGE_KEY)
@@ -171,10 +171,12 @@ export default function Login({ onLogin, onBack }) {
       <div className="lp-right">
         <div className="lp-form-wrap">
 
-          {onBack && (
-            <button type="button" className="lp-back" onClick={onBack}>
-              <ArrowLeft size={14} /> {t('landing.backHome')}
-            </button>
+          {/* Oturum düştüğünde (401 → hard reload) gösterilen bilgi bildirimi (AUTH-1) */}
+          {sessionExpired && (
+            <div className="lp-notice" role="status" aria-live="polite">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="16" height="16"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+              {t('login.sessionExpired')}
+            </div>
           )}
 
           {/* Üst açıklama */}

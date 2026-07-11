@@ -382,6 +382,10 @@ export const api = {
     }),
     resolveAlert:     (id) => request(`/admin/alerts/${id}/resolve`,     { method: 'POST' }),
     reNotifyAlert: (id) => request(`/admin/alerts/${id}/re-notify`, { method: 'POST' }),
+    // Toplu işlem: action ∈ {acknowledge, resolve, re-notify}, ids = alarm id listesi
+    bulkAlertAction: (action, ids) => request('/admin/alerts/bulk', {
+      method: 'POST', body: JSON.stringify({ action, ids }),
+    }),
     getAlertNotifications: (id) => request(`/admin/alerts/${id}/notifications`),
 
     // Teams

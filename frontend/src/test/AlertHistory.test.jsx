@@ -10,6 +10,7 @@ vi.mock('../api/client', () => ({
       acknowledgeAlert: vi.fn(),
       resolveAlert:     vi.fn(),
       reNotifyAlert:    vi.fn(),
+      bulkAlertAction:  vi.fn(),
     },
   },
 }))
@@ -95,5 +96,30 @@ describe('AlertHistory closed-alert details', () => {
     await waitFor(() => expect(api.admin.getAlerts).toHaveBeenCalled())
     await waitFor(() => expect(screen.getByText('foo.example.com')).toBeDefined())
     expect(screen.queryByText(/alarm gönderilemedi|could not be sent/i)).toBeNull()
+  })
+
+  it('open tab: selecting an alert reveals the bulk action bar with a count and the three actions', async () => {
+    api.admin.getAlerts.mockResolvedValue({
+      success: true,
+      data: [{ ...closedAlert, id: 201, resolved: false, acknowledged: false }],
+      total: 1, page: 0, size: 20,
+    })
+    render(<AlertHistory />)
+    await waitFor(() => expect(screen.getByText('foo.example.com')).toBeDefined())
+
+    // Nothing selected yet → "select all" label; no bulk-action buttons rendered
+    expect(screen.getByText(/tümünü seç|select all/i)).toBeDefined()
+    expect(document.querySelector('.alh-bulk-actions')).toBeNull()
+
+    // Select the alert via its per-card checkbox
+    fireEvent.click(screen.getByLabelText(/bu alarmı seç|select this alert/i))
+
+    // Bulk bar now shows the count + all three actions
+    await waitFor(() => expect(screen.getByText(/1 seçili|1 selected/i)).toBeDefined())
+    const bar = document.querySelector('.alh-bulk-actions')
+    expect(bar).not.toBeNull()
+    expect(bar.textContent).toMatch(/onayla|acknowledge/i)
+    expect(bar.textContent).toMatch(/tekrar bildir|re-notify/i)
+    expect(bar.textContent).toMatch(/çözüldü|resolved/i)
   })
 })

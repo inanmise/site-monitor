@@ -92,4 +92,16 @@ describe('Login', () => {
     await waitFor(() => expect(onLogin).toHaveBeenCalled())
     expect(localStorage.getItem('cert-monitor-remembered-user')).toBe('remember-user')
   })
+
+  it('shows a session-expired notice when sessionExpired is set (AUTH-1)', () => {
+    render(<Login onLogin={() => {}} sessionExpired />)
+    expect(screen.getByText(/session has expired/i)).toBeDefined()
+    // the normal login form is still available beneath the notice
+    expect(screen.getByLabelText(/username/i)).toBeDefined()
+  })
+
+  it('does not show the session-expired notice by default', () => {
+    render(<Login onLogin={() => {}} />)
+    expect(screen.queryByText(/session has expired/i)).toBeNull()
+  })
 })
