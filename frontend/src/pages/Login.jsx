@@ -1,12 +1,12 @@
 import { useState, useEffect } from 'react'
 import { api } from '../api/client'
 import { useT, useLanguage } from '../i18n/index.jsx'
-import { ShieldAlert, ShieldCheck, Lock, Globe, Bell, BarChart3, RefreshCw, X } from 'lucide-react'
+import { ShieldAlert, ShieldCheck, Lock, Globe, Bell, BarChart3, RefreshCw, X, ArrowLeft } from 'lucide-react'
 import CertMonitorLogo from '../components/ui/CertMonitorLogo.jsx'
 
 const STORAGE_KEY = 'cert-monitor-remembered-user'
 
-export default function Login({ onLogin }) {
+export default function Login({ onLogin, onBack }) {
   const t = useT()
   const { lang, toggle: toggleLang } = useLanguage()
   const saved = localStorage.getItem(STORAGE_KEY)
@@ -170,6 +170,12 @@ export default function Login({ onLogin }) {
       {/* ── Sağ panel: giriş formu ── */}
       <div className="lp-right">
         <div className="lp-form-wrap">
+
+          {onBack && (
+            <button type="button" className="lp-back" onClick={onBack}>
+              <ArrowLeft size={14} /> {t('landing.backHome')}
+            </button>
+          )}
 
           {/* Üst açıklama */}
           <div className="lp-intro">
