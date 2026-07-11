@@ -17,6 +17,7 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -57,8 +58,20 @@ public class RdapDomainClient {
     private HttpClient proxied;
 
     private static final long BOOTSTRAP_TTL_MS = 24L * 60 * 60 * 1000L;
+    /** Negatif-cache: bootstrap fetch'i (başarılı/başarısız fark etmez) en fazla bu sıklıkta dene.
+     *  İlk açılışta bootstrap başarısızsa HER domain lookup'ının 8s timeout'u tekrar tekrar yemesini önler. */
+    private static final long BOOTSTRAP_RETRY_MS = 5L * 60 * 1000L;
     private volatile Map<String, String> bootstrap;   // tld -> rdap base (trailing '/')
-    private volatile long bootstrapFetchedAt;
+    private volatile long bootstrapFetchedAt;         // son BAŞARILI fetch
+    private volatile long bootstrapAttemptedAt;       // son DENEME (başarılı/başarısız) — negatif-cache
+
+    // ── Veri kaynağı durum izleme (Sistem Sağlığı kartı için) ──────────────────
+    private volatile Instant lastSuccessAt;
+    private volatile Instant lastErrorAt;
+    private volatile String  lastReason;
+    private volatile boolean lastUsedFallback;
+    private volatile boolean bootstrapLoaded;
+    private volatile int     bootstrapTldCount;
 
     @PostConstruct
     public void init() {
@@ -106,16 +119,59 @@ public class RdapDomainClient {
         String tld = psl.tldOf(registrableDomain);
         Map<String, Object> res = null;
 
+        boolean viaFallback = false;
+
         String base = bootstrapBase(tld);   // IANA bootstrap
         if (base != null) res = tryRdap(base + "domain/" + enc(registrableDomain), registrableDomain);
 
         if (res == null || res.get("error") != null) {   // rdap.org aggregator fallback
             String fb = appSettings.getString("cert.monitor.domain.rdap-fallback-url", "https://rdap.org/domain/");
             Map<String, Object> res2 = tryRdap(fb + enc(registrableDomain), registrableDomain);
-            if (res2.get("error") == null) res = res2;
+            if (res2.get("error") == null) { res = res2; viaFallback = true; }
             else if (res == null) res = res2;
         }
-        return res != null ? res : err("no rdap");
+        if (res == null) res = err("no rdap");
+        recordOutcome(res, viaFallback);
+        return res;
+    }
+
+    /** Son lookup sonucunu durum kartı için kaydet (başarı/hata + kaynak: primary vs fallback). */
+    private void recordOutcome(Map<String, Object> res, boolean viaFallback) {
+        if (res.get("error") == null) {
+            lastSuccessAt = Instant.now();
+            lastUsedFallback = viaFallback;
+            lastReason = null;
+        } else {
+            lastErrorAt = Instant.now();
+            lastReason = String.valueOf(res.get("error"));
+        }
+    }
+
+    /**
+     * Domain-expiry veri kaynağının anlık durumu (Sistem Sağlığı kartı).
+     * source: RDAP (birincil OK) / FALLBACK (rdap.org ile OK, birincil bozuk) / NONE (son sorgu başarısız) / IDLE (henüz sorgu yok).
+     */
+    public Map<String, Object> getSourceStatus() {
+        Map<String, Object> m = new LinkedHashMap<>();
+        Instant ok = lastSuccessAt, er = lastErrorAt;
+        boolean lastWasSuccess = ok != null && (er == null || ok.isAfter(er));
+        String source; boolean alarm;
+        if (lastWasSuccess) {
+            source = lastUsedFallback ? "FALLBACK" : "RDAP";
+            alarm  = lastUsedFallback;               // fallback çalışıyor ama birincil/bootstrap bozuk → uyarı
+        } else if (er != null) {
+            source = "NONE"; alarm = true;           // son sorgu başarısız
+        } else {
+            source = "IDLE"; alarm = false;          // henüz sorgu koşmadı
+        }
+        m.put("source", source);
+        m.put("alarm", alarm);
+        m.put("reason", lastWasSuccess ? null : lastReason);
+        m.put("last_success", ok != null ? ok.toString() : null);
+        m.put("last_error", er != null ? er.toString() : null);
+        m.put("bootstrap_loaded", bootstrapLoaded);
+        m.put("bootstrap_tld_count", bootstrapTldCount);
+        return m;
     }
 
     /** Tek bir RDAP URL'sini dener; 429 → exponential backoff, geçici hata → 1 retry. */
@@ -206,25 +262,33 @@ public class RdapDomainClient {
         return null;
     }
 
-    /** IANA bootstrap'tan TLD'nin RDAP base URL'si (trailing '/'), yoksa null. Registry 24s cache'li. */
+    /** IANA bootstrap'tan TLD'nin RDAP base URL'si (trailing '/'), yoksa null. Registry 24s cache'li;
+     *  başarısızlıkta 5dk negatif-cache ile her lookup'ta yeniden fetch edilmez (8s timeout storm'u önlenir). */
     private String bootstrapBase(String tld) {
         if (tld == null) return null;
         Map<String, String> b = bootstrap;
-        if (b == null || (System.currentTimeMillis() - bootstrapFetchedAt) > BOOTSTRAP_TTL_MS) {
-            b = fetchBootstrap();
-            if (b != null) { bootstrap = b; bootstrapFetchedAt = System.currentTimeMillis(); }
+        long now = System.currentTimeMillis();
+        boolean fresh = b != null && (now - bootstrapFetchedAt) <= BOOTSTRAP_TTL_MS;
+        if (!fresh && (now - bootstrapAttemptedAt) >= BOOTSTRAP_RETRY_MS) {
+            Map<String, String> fetched = fetchBootstrap();          // bootstrapAttemptedAt'i set eder
+            if (fetched != null && !fetched.isEmpty()) {
+                bootstrap = fetched; bootstrapFetchedAt = now; b = fetched;
+            } else {
+                b = bootstrap;   // fetch başarısız → eski cache (varsa) korunur, yoksa null (fallback'e düşer)
+            }
         }
         return b != null ? b.get(tld) : null;
     }
 
     private Map<String, String> fetchBootstrap() {
+        bootstrapAttemptedAt = System.currentTimeMillis();   // negatif-cache: başarı/başarısızlık fark etmez
         String url = appSettings.getString("cert.monitor.domain.rdap-bootstrap-url", "https://data.iana.org/rdap/dns.json");
         try {
             String host = URI.create(url).getHost();
             HttpRequest req = HttpRequest.newBuilder().uri(URI.create(url)).timeout(Duration.ofSeconds(8))
                     .header("User-Agent", "CertMonitor-DomainMonitor/1.0").GET().build();
             HttpResponse<String> resp = clientFor(host).send(req, HttpResponse.BodyHandlers.ofString());
-            if (resp.statusCode() != 200) { log.warn("IANA RDAP bootstrap http {}", resp.statusCode()); return bootstrap; }
+            if (resp.statusCode() != 200) { log.warn("IANA RDAP bootstrap http {}", resp.statusCode()); return null; }
             JsonNode root = mapper.readTree(resp.body());
             JsonNode services = root.get("services");
             Map<String, String> map = new ConcurrentHashMap<>();
@@ -239,10 +303,12 @@ public class RdapDomainClient {
                 }
             }
             log.info("IANA RDAP bootstrap yüklendi: {} TLD", map.size());
+            bootstrapLoaded = true;
+            bootstrapTldCount = map.size();
             return map;
         } catch (Exception e) {
             log.warn("IANA RDAP bootstrap alınamadı ({}), rdap.org fallback kullanılacak: {}", url, e.getMessage());
-            return bootstrap;   // eski cache (varsa) korunur; yoksa null → doğrudan fallback
+            return null;   // başarısız → çağıran eski cache'i (varsa) korur; yoksa doğrudan fallback
         }
     }
 

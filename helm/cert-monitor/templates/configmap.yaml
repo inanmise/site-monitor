@@ -48,3 +48,9 @@ data:
   WEEKLY_AVAIL_CRON: {{ .Values.config.weeklyAvailCron | quote }}
   # WHOIS (port-43) kurumsal 443/80 egress proxy'sini geçemez → prod'da kapalı; RDAP (proxy-aware) tek kaynak.
   DOMAIN_WHOIS_ENABLED: {{ .Values.config.whoisEnabled | quote }}
+  # Kurumsal SSL-araya-giren proxy'nin kök/ara CA paketi (PEM). TrustEvaluator bunu cacerts'e EK
+  # trust anchor olarak kullanır → RDAP/outbound HTTPS PKIX ile doğrulanır (trust-all YOK). Boş =
+  # yalnız public CA'lar. CA rotasyonunda bu value'yu güncelle (bkz. domain-expiry runbook).
+  {{- if .Values.config.caBundlePem }}
+  TRUST_CA_BUNDLE_PEM: {{ .Values.config.caBundlePem | quote }}
+  {{- end }}

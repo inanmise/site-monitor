@@ -373,8 +373,17 @@ export default function SystemHealth({ systemRole, globalAdmin = false, preFilte
   }
 
   const { scheduler, lock, pool, executor_pool, memory, scan, scan_alarm, smtp, heartbeat,
-          weekly_availability: weeklyAvail } = health || {}
+          domain_expiry: domainExpiry, weekly_availability: weeklyAvail } = health || {}
   const isRunning = scheduler?.running
+
+  // Domain-expiry (RDAP) veri kaynağı durumu
+  const domSource = domainExpiry?.source || 'IDLE'
+  const domBadgeClass = domSource === 'RDAP' ? 'sys-badge-free'
+    : domSource === 'FALLBACK' ? 'sys-badge-warn'
+    : domSource === 'NONE' ? 'sys-badge-locked' : 'sys-badge-idle'
+  const domSourceLabel = domSource === 'RDAP' ? t('health.domSrcRdap')
+    : domSource === 'FALLBACK' ? t('health.domSrcFallback')
+    : domSource === 'NONE' ? t('health.domSrcNone') : t('health.domSrcIdle')
 
   // Haftalık erişilebilirlik scheduler durumu
   const waEnabled = weeklyAvail?.enabled
@@ -393,6 +402,7 @@ export default function SystemHealth({ systemRole, globalAdmin = false, preFilte
   if (smtpHasAlarm) alarms.push(t('health.smtpAlarmFor', t(`health.smtpPeriod${smtpPeriod}`)))
   if (heartbeat?.alarm) alarms.push(t('health.hbAlarm'))
   if (health?.network?.alarm) alarms.push(t('health.networkAlarm'))
+  if (domainExpiry?.alarm) alarms.push(t('health.domAlarm'))
 
   const hbMinutes = heartbeat?.minutes_since ?? -1
   const hbOk = hbMinutes >= 0 && hbMinutes <= 15
@@ -911,6 +921,38 @@ export default function SystemHealth({ systemRole, globalAdmin = false, preFilte
                 style={{ width: `${Math.min(100, ((executor_pool.queue_size ?? 0) / Math.max(1, executor_pool.queue_capacity ?? 1)) * 100)}%` }}
               />
             </div>
+          </div>
+        )}
+
+        {/* Domain-expiry (RDAP) source card */}
+        {domainExpiry && (
+          <div className={`sys-card${domainExpiry.alarm ? ' sys-card-alarm' : ''}`}>
+            <div className="sys-card-header">
+              <div className="hb-title-row">
+                <Globe size={18} className={domSource === 'RDAP' ? 'sys-ok-text' : domSource === 'NONE' ? 'sys-err-text' : 'sys-warn-text'} aria-hidden="true" />
+                <h3>{t('health.domTitle')}</h3>
+              </div>
+              <span className={`sys-badge ${domBadgeClass}`}>
+                {domSource === 'RDAP' ? '✓' : domSource === 'NONE' ? '✕' : domSource === 'FALLBACK' ? '⚠' : '–'}
+              </span>
+            </div>
+            {domainExpiry.alarm && (
+              <div className="health-card-alarm-msg">{t('health.domAlarm')}</div>
+            )}
+            <dl className="sys-dl">
+              <dt>{t('health.domSource')}</dt>
+              <dd className={domSource === 'RDAP' ? 'sys-ok-text' : domSource === 'NONE' ? 'sys-err-text' : 'sys-warn-text'}>
+                {domSourceLabel}
+              </dd>
+              <dt>{t('health.domLastOk')}</dt>
+              <dd>{domainExpiry.last_success ? formatDate(domainExpiry.last_success) : t('sys.never')}</dd>
+              {domainExpiry.reason && (
+                <>
+                  <dt>{t('health.domReason')}</dt>
+                  <dd className="sys-err-text">{domainExpiry.reason}</dd>
+                </>
+              )}
+            </dl>
           </div>
         )}
 

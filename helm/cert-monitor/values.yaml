@@ -107,6 +107,21 @@ config:
   # is sufficient; still live-toggleable from Genel Ayarlar (cert.monitor.domain.whois-enabled).
   whoisEnabled: "false"
 
+  # ── Corporate SSL-inspection CA bundle ────────────────────────────────────
+  # PEM (root + intermediate certs) of the forward proxy's MITM re-signing CA.
+  # TrustEvaluator adds these as trust anchors ALONGSIDE the JVM cacerts (never
+  # trust-all), so outbound RDAP/HTTPS through an SSL-inspecting proxy validates
+  # via PKIX instead of failing "unable to find valid certification path".
+  # Empty = public CAs only. Genel Ayarlar (cert.monitor.trust.ca-bundle-pem)
+  # can override live. To rotate: capture the new chain
+  #   openssl s_client -connect data.iana.org:443 -proxy <proxy:port> -showcerts
+  # paste the PEM below (as a multiline block) and `helm upgrade`. See runbook.
+  caBundlePem: ""
+  #   caBundlePem: |
+  #     -----BEGIN CERTIFICATE-----
+  #     ...corporate root CA...
+  #     -----END CERTIFICATE-----
+
 # Sensitive values — provide via --set or external secret manager
 # Do NOT commit real values here
 secret:
