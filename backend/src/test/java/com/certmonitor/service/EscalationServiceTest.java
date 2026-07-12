@@ -90,7 +90,7 @@ class EscalationServiceTest {
         assertThat(saved.getAlertType()).isEqualTo("EXPIRY");
         assertThat(saved.getAcknowledged()).isFalse();
         assertThat(saved.getResolved()).isFalse();
-        verify(emailService).sendAlert(any(String[].class), contains("UYARI"), anyString(), any(), any(), any(), any(), any());
+        verify(emailService).sendAlert(any(String[].class), contains("[CertMonitor] ORTA · " + domain), anyString(), any(), any(), any(), any(), any());
     }
 
     @Test
@@ -637,7 +637,7 @@ class EscalationServiceTest {
 
         assertThat(result.get("status")).isEqualTo("queued");
         verify(emailService).sendAlert(any(String[].class),
-                contains("[RE-ALERT] [CertMonitor YÜKSEK] high.example.com"),
+                contains("[RE-ALERT] [CertMonitor] YÜKSEK · high.example.com"),
                 anyString(), any(), any(), any(), any(), any());
     }
 
@@ -728,7 +728,7 @@ class EscalationServiceTest {
 
         // Mail yalnız takım/UYARI alıcısına; müdür alıcı listesinde yok, seviye UYARI
         ArgumentCaptor<String[]> toCap = ArgumentCaptor.forClass(String[].class);
-        verify(emailService).sendAlert(toCap.capture(), contains("UYARI"), anyString(),
+        verify(emailService).sendAlert(toCap.capture(), contains("[CertMonitor] ORTA · " + domain), anyString(),
                 eq(domain), eq("WARNING"), eq("EXPIRY"), isNull(), any());
         assertThat(toCap.getValue()).containsExactly("takim@test.com");
         assertThat(toCap.getValue()).doesNotContain("mudur@test.com");
@@ -908,7 +908,7 @@ class EscalationServiceTest {
         assertThat(saved.getAlertType()).isEqualTo("ACCESSIBILITY");
         assertThat(saved.getAlertLevel()).isEqualTo("CRITICAL");
         assertThat(saved.getDaysRemaining()).isNull();
-        verify(emailService).sendAlert(any(String[].class), contains("Erişim Kesintisi"),
+        verify(emailService).sendAlert(any(String[].class), contains("Erişim kesintisi"),
                 anyString(), eq(domain), eq("CRITICAL"), eq("ACCESSIBILITY"), isNull(), any());
     }
 
@@ -1003,7 +1003,7 @@ class EscalationServiceTest {
         assertThat(captor.getAllValues().get(0).getAlertType()).isEqualTo("PORT_DOWN");
         assertThat(captor.getAllValues().get(0).getAlertLevel()).isEqualTo("CRITICAL");
         assertThat(captor.getAllValues().get(0).getMessage()).contains("8443/TCP");
-        verify(emailService).sendAlert(any(String[].class), contains("Port Kesintisi"),
+        verify(emailService).sendAlert(any(String[].class), contains("Port kesintisi"),
                 anyString(), eq(domain), eq("CRITICAL"), eq("PORT_DOWN"), isNull(), any());
     }
 

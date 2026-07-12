@@ -1084,11 +1084,12 @@ public class EscalationService {
             return List.of();
         }
 
-        // 2. Subject
+        // 2. Subject — "[CertMonitor] SEVERITY · domain · özet" (executive format; EmailTemplateBuilder ile aynı severity etiketi)
         String levelTr = switch (level != null ? level : "") {
-            case "CRITICAL" -> "KRİTİK";
-            case "HIGH"     -> "YÜKSEK";
-            default         -> "UYARI";
+            case "CRITICAL"   -> "KRİTİK";
+            case "HIGH"       -> "YÜKSEK";
+            case "INFO", "LOW" -> "BİLGİ";
+            default           -> "ORTA";
         };
         String typeTr = switch (alertType != null ? alertType : "") {
             case "REVOKED"          -> "İptal Edildi";
@@ -1116,7 +1117,21 @@ public class EscalationService {
             case TYPE_DOMAINMON_CHANGED -> "Alan Adı Değişikliği";
             default                 -> daysRemaining != null ? "Sertifika Süre Bitişi (" + daysRemaining + " gün kaldı)" : "Sertifika Süre Bitişi";
         };
-        String subject = subjectPrefix + "[CertMonitor " + levelTr + "] " + domain + " — " + typeTr;
+        // Konu için doğal-dil özet (typeTr'e göre daha okunur); expiry tiplerinde gün ifadesi.
+        String summaryTr = switch (alertType != null ? alertType : "") {
+            case TYPE_DOMAINMON_EXPIRY, TYPE_DOMAIN_EXPIRY -> daysRemaining != null ? "Alan adı " + daysRemaining + " gün içinde doluyor" : "Alan adı süre bitişi";
+            case TYPE_DOMAINMON_UNKNOWN -> "Alan adı kayıt verisi alınamadı";
+            case TYPE_DOMAINMON_STATUS  -> "Alan adı durum kodu uyarısı";
+            case TYPE_DOMAINMON_CHANGED -> "Alan adı kaydı değişti";
+            case TYPE_ACCESSIBILITY -> "Erişim kesintisi";
+            case TYPE_PORT_DOWN     -> "Port kesintisi";
+            case TYPE_HTTP_DOWN     -> "HTTP/Website erişilemez";
+            default -> (alertType == null || alertType.isBlank() || "REVOKED".equals(alertType)
+                        || "MISMATCH".equals(alertType) || "CHAIN_BROKEN".equals(alertType))
+                    ? (daysRemaining != null ? "Sertifika " + daysRemaining + " gün içinde doluyor" : "Sertifika süre bitişi")
+                    : typeTr;
+        };
+        String subject = subjectPrefix + "[CertMonitor] " + levelTr + " · " + domain + " · " + summaryTr;
 
         // 3. Tek email — tüm alıcılara
         String[] toArr     = allEmails.toArray(new String[0]);
