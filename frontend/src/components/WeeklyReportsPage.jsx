@@ -320,6 +320,7 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
   const [content, setContent] = useState(null)    // parsed content_json
   const [kpis, setKpis] = useState(null)          // executive KPI şeridi (GET /{id}/kpis) — canlı, read-only
   const [kpisLoading, setKpisLoading] = useState(false)
+  const [summaryOpen, setSummaryOpen] = useState(false)  // 01·Özet akordeonu — varsayılan KAPALI
   const [managerMissing, setManagerMissing] = useState(false)
   const [channelTab, setChannelTab] = useState(0)
   const [dirty, setDirty] = useState(false)
@@ -1235,14 +1236,21 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
             </div>
           </div>
 
-          {/* ── 01 · Özet — executive brief (yönetici paragrafı + sağlık skoru + aksiyonlar) ── */}
-          <WeeklySummaryBrief kpis={kpis} t={t} lang={lang} />
-
-          {/* ── Executive KPI şeridi (canlı) ── */}
-          <WeeklyKpiStrip kpis={kpis} loading={kpisLoading} t={t} />
-
-          {/* ── Üst aksiyon barı (sticky) ── */}
+          {/* ── Üst aksiyon barı (sticky) — özet akordeonunun ÜSTÜNDE ── */}
           <div className="modal-actions wr-actions wr-actions-top">{actionButtons}</div>
+
+          {/* ── 01 · Özet — executive brief + KPI şeridi, akordeon (varsayılan kapalı; yazdırırken açık) ── */}
+          <div className="wr-accordion">
+            <button type="button" className="wr-accordion-hdr" onClick={() => setSummaryOpen((o) => !o)}
+              aria-expanded={summaryOpen}>
+              <span className="wr-accordion-title">{t('wr.sumSection')}</span>
+              <ChevronDown size={16} className={`wr-accordion-chev${summaryOpen ? ' open' : ''}`} />
+            </button>
+            <div className={`wr-accordion-body${summaryOpen ? ' open' : ''}`}>
+              <WeeklySummaryBrief kpis={kpis} t={t} lang={lang} />
+              <WeeklyKpiStrip kpis={kpis} loading={kpisLoading} t={t} />
+            </div>
+          </div>
 
           {/* ── İade notu / müdür uyarısı ── */}
           {report.reject_note && report.status !== 'APPROVED' && (
