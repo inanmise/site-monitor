@@ -38,4 +38,11 @@ public interface PortCheckRepository extends JpaRepository<PortCheck, Long> {
          + "ORDER BY pc.checkedAt DESC LIMIT :limit")
     List<Object[]> responseSeriesRaw(@Param("id") Long id, @Param("from") String from,
                                      @Param("to") String to, @Param("limit") int limit);
+
+    /** Haftalık izleme özeti: [monitorId, toplam, BAŞARILI] — ids ∩ [from,to]; başarı = open=true. */
+    @Query("SELECT pc.monitorId, COUNT(pc), SUM(CASE WHEN pc.open = true THEN 1L ELSE 0L END) "
+         + "FROM PortCheck pc WHERE pc.monitorId IN :ids AND pc.checkedAt >= :from AND pc.checkedAt <= :to "
+         + "GROUP BY pc.monitorId")
+    List<Object[]> weeklyStatsByMonitor(@Param("ids") java.util.Collection<Long> ids,
+                                        @Param("from") String from, @Param("to") String to);
 }

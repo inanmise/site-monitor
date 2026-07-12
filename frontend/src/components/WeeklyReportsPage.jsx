@@ -9,6 +9,7 @@ import {
 import UserBadge from './ui/UserBadge.jsx'
 import WeeklyKpiStrip from './WeeklyKpiStrip.jsx'
 import WeeklySummaryBrief from './WeeklySummaryBrief.jsx'
+import WeeklyMonitoringStrip from './WeeklyMonitoringStrip.jsx'
 import { api, formatDate } from '../api/client'
 import { useT, useLanguage } from '../i18n/index.jsx'
 import { useTheme } from '../i18n/theme.jsx'
@@ -321,6 +322,8 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
   const [kpis, setKpis] = useState(null)          // executive KPI şeridi (GET /{id}/kpis) — canlı, read-only
   const [kpisLoading, setKpisLoading] = useState(false)
   const [summaryOpen, setSummaryOpen] = useState(false)  // 01·Özet akordeonu — varsayılan KAPALI
+  const [monStats, setMonStats] = useState(null)         // İzleme göstergeleri (lazy, akordeon açılınca)
+  const [monLoading, setMonLoading] = useState(false)
   const [managerMissing, setManagerMissing] = useState(false)
   const [channelTab, setChannelTab] = useState(0)
   const [dirty, setDirty] = useState(false)
@@ -509,6 +512,20 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
       .finally(() => { if (alive) setKpisLoading(false) })
     return () => { alive = false }
   }, [report?.id])
+
+  // İzleme göstergeleri — AĞIR 7-tür toplama; yalnız akordeon İLK açıldığında çekilir (tek pod'u koru). Rapor değişince sıfırla.
+  useEffect(() => { setMonStats(null) }, [report?.id])
+  useEffect(() => {
+    const rid = report?.id
+    if (!summaryOpen || !rid || monStats || monLoading) return
+    let alive = true
+    setMonLoading(true)
+    api.weeklyReports.monitoringStats(rid)
+      .then((r) => { if (alive && r?.success) setMonStats(r.data) })
+      .catch(() => {})
+      .finally(() => { if (alive) setMonLoading(false) })
+    return () => { alive = false }
+  }, [summaryOpen, report?.id]) // eslint-disable-line react-hooks/exhaustive-deps
 
   function patch(path, value) {
     setContent((prev) => {
@@ -1249,6 +1266,7 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
             <div className={`wr-accordion-body${summaryOpen ? ' open' : ''}`}>
               <WeeklySummaryBrief kpis={kpis} t={t} lang={lang} />
               <WeeklyKpiStrip kpis={kpis} loading={kpisLoading} t={t} />
+              <WeeklyMonitoringStrip stats={monStats} loading={monLoading} t={t} />
             </div>
           </div>
 

@@ -48,6 +48,7 @@ class WeeklyReportServiceTest {
     @Mock AppSettingsService appSettings;
     @Mock PermissionService permissionService;
     @Mock WeeklyReportKpiService kpiService;
+    @Mock MonitoringWeeklyStatsService monitoringStatsService;
 
     private WeeklyReportService service;
 
@@ -60,7 +61,7 @@ class WeeklyReportServiceTest {
     @BeforeEach
     void setUp() {
         service = new WeeklyReportService(reportRepo, imageRepo, mailRepo, teamRepo, userRepo,
-                contactRepo, emailService, new ObjectMapper(), appSettings, permissionService, kpiService);
+                contactRepo, emailService, new ObjectMapper(), appSettings, permissionService, kpiService, monitoringStatsService);
         ReflectionTestUtils.setField(service, "imageMaxBytes", 2L * 1024 * 1024);
         // TEAM_ADMIN'in haftalık rapor onay yetkisi artık matris üzerinden (varsayılan true).
         when(permissionService.allows("TEAM_ADMIN", "weekly_reports.approve", "execute")).thenReturn(true);

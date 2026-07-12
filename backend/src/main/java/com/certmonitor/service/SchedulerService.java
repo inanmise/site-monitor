@@ -413,6 +413,11 @@ public class SchedulerService {
         // index'ler entity'de var; composite range sorgusunu (responseSeriesRaw) hızlandırır.
         patch("CREATE INDEX IF NOT EXISTS idx_kwr_monitor_checked ON keyword_results(monitor_id, checked_at)");
         patch("CREATE INDEX IF NOT EXISTS idx_pingc_monitor_checked ON ping_checks(monitor_id, checked_at)");
+        // Haftalık izleme göstergeleri (MonitoringWeeklyStatsService) — pencere-içi gruplu COUNT için (monitor_id, checked_at).
+        patch("CREATE INDEX IF NOT EXISTS idx_portc_monitor_checked ON port_checks(monitor_id, checked_at)");
+        patch("CREATE INDEX IF NOT EXISTS idx_dnsr_monitor_checked ON dns_records(monitor_id, checked_at)");
+        patch("CREATE INDEX IF NOT EXISTS idx_dc_monitor_checked ON domain_checks(monitor_id, checked_at)");
+        patch("CREATE INDEX IF NOT EXISTS idx_hc_monitor_checked ON http_checks(monitor_id, checked_at)");
         // remember_me_tokens: saatlik expired-token temizliği (DELETE WHERE expires_at < ?).
         patch("CREATE INDEX IF NOT EXISTS idx_rmt_expires ON remember_me_tokens(expires_at)");
         // Genel Ayarlar (runtime config override'ları) — tablo ddl-auto ile oluşur; unique key güvenlik ağı.

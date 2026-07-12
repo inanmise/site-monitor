@@ -33,4 +33,11 @@ public interface HttpCheckRepository extends JpaRepository<HttpCheck, Long> {
          + "ORDER BY r.checkedAt DESC LIMIT :limit")
     List<Object[]> responseSeriesRaw(@Param("id") Long id, @Param("from") String from,
                                      @Param("to") String to, @Param("limit") int limit);
+
+    /** Haftalık izleme özeti: [monitorId, toplam, BAŞARILI, ort_yanıt_ms] — ids ∩ [from,to]; başarı = ok=true. */
+    @Query("SELECT r.monitorId, COUNT(r), SUM(CASE WHEN r.ok = true THEN 1L ELSE 0L END), AVG(r.responseMs) "
+         + "FROM HttpCheck r WHERE r.monitorId IN :ids AND r.checkedAt >= :from AND r.checkedAt <= :to "
+         + "GROUP BY r.monitorId")
+    List<Object[]> weeklyStatsByMonitor(@Param("ids") java.util.Collection<Long> ids,
+                                        @Param("from") String from, @Param("to") String to);
 }

@@ -244,6 +244,7 @@ export const api = {
     },
     get: (id) => request(`/weekly-reports/${id}`),
     kpis: (id) => request(`/weekly-reports/${id}/kpis`),
+    monitoringStats: (id) => request(`/weekly-reports/${id}/monitoring-stats`),
     years: (teamId) => request(`/weekly-reports/years${teamId ? '?teamId=' + teamId : ''}`),
     mails: (id) => request(`/weekly-reports/${id}/mails`),
     create: (payload) => request('/weekly-reports', {
