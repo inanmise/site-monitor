@@ -33,7 +33,6 @@ export default function DomainRegistrationTab({ monitor }) {
   const [loading, setLoading] = useState(true)
   const [stale, setStale] = useState(false)          // live başarısız → DB'deki son bilgi gösteriliyor
   const [err, setErr] = useState(null)
-  const [history, setHistory] = useState([])
 
   const load = useCallback(async (live = true) => {
     if (!id) return
@@ -56,10 +55,6 @@ export default function DomainRegistrationTab({ monitor }) {
   }, [id, t])
 
   useEffect(() => { load(true) }, [load])
-  useEffect(() => {
-    if (!id) return
-    api.monitoring.getDomainHistory(id, { days: 90 }).then(r => { if (r?.success) setHistory(r.data?.checks ?? []) }).catch(() => {})
-  }, [id])
 
   if (loading && !reg) return <div className="upt-modal-loading"><Loader2 size={16} className="spin" /> {t('dreg.loading')}</div>
   if (err && !reg) return <div className="alert-msg alert-msg--err">{err}</div>
@@ -128,32 +123,7 @@ export default function DomainRegistrationTab({ monitor }) {
           : d.dnssec === 'unsigned' ? <><ShieldOff size={15} className="dreg-muted" /> {t('dreg.dnssecUnsigned')}</>
           : <span className="dreg-empty">{t('dreg.dnssecUnknown')}</span>}
       </div>
-
-      {/* Kontrol Geçmişi */}
-      <div className="dreg-section-hdr" style={{ marginTop: 18 }}>{t('dreg.history')}</div>
-      {history.length ? (
-        <div className="admin-table-wrap">
-          <table className="admin-table dreg-hist">
-            <thead><tr>
-              <th>{t('dreg.hTime')}</th><th>{t('dreg.hSource')}</th><th>{t('dreg.hRegistrar')}</th>
-              <th>{t('dreg.hExpiry')}</th><th>{t('dreg.hDays')}</th><th>{t('dreg.hIps')}</th><th>{t('dreg.hStatus')}</th>
-            </tr></thead>
-            <tbody>
-              {history.map((c, i) => (
-                <tr key={`${c.checkedAt || c.checked_at || ''}#${i}`} className={c.changed ? 'dreg-hist-changed' : ''}>
-                  <td>{formatDateSec(c.checkedAt || c.checked_at)}</td>
-                  <td>{c.source || '—'}</td>
-                  <td title={c.registrar}>{c.registrar || '—'}</td>
-                  <td>{fmtDateHuman(c.expiryDate || c.expiry_date)}</td>
-                  <td style={{ color: daysColor(c.daysRemaining ?? c.days_remaining), fontWeight: 600 }}>{c.daysRemaining ?? c.days_remaining ?? '—'}</td>
-                  <td>{csv(c.resolvedIps || c.resolved_ips).join(', ') || '—'}</td>
-                  <td>{c.status || '—'}{c.changed ? ' ⚑' : ''}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      ) : <div className="dreg-empty">{t('dreg.noHistory')}</div>}
+      {/* Kontrol Geçmişi buradan kaldırıldı — "Kontrol" sekmesindeki geçmiş tablosuyla aynıydı (tekrar). */}
     </div>
   )
 }

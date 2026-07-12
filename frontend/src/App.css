@@ -1890,7 +1890,7 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .dom-epp-chip { font-size: .68em; font-weight: 600; padding: 1px 7px; border-radius: 10px; white-space: nowrap;
   background: rgba(124,58,237,.1); color: #6d28d9; border: 1px solid rgba(124,58,237,.28); }
 [data-theme="dark"] .dom-epp-chip { color: #c4b5fd; }
-.dom-rt-grid { grid-template-columns: 1.4fr .7fr 1fr .55fr .9fr 1.4fr; }
+.dom-rt-grid { grid-template-columns: 1.3fr .6fr .9fr .5fr .85fr 1.2fr 1.1fr; }
 .dom-st { font-weight: 600; }
 .dom-st--up { color: #15803d; }
 .dom-st--warn { color: #b45309; }

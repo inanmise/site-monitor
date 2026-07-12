@@ -471,12 +471,13 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName }) {
                 <div className="upt-rt-list">
                   <div className="upt-rt-grid dom-rt-grid upt-rt-head">
                     <span>{t('dom.colTime')}</span><span>{t('dom.colSource')}</span><span>{t('dom.colExpiry')}</span>
-                    <span>{t('dom.daysLeft')}</span><span>{t('dom.colStatus')}</span><span>{t('dom.registrar')}</span>
+                    <span>{t('dom.daysLeft')}</span><span>{t('dom.colStatus')}</span><span>{t('dom.registrar')}</span><span>{t('dom.colIps')}</span>
                   </div>
                   {history.map((c, i) => {
                     const cDays = c.days_remaining ?? c.daysRemaining
                     const cExp = c.expiry_date || c.expiryDate
                     const cAt = c.checked_at || c.checkedAt
+                    const cIps = (Array.isArray(c.resolved_ips) ? c.resolved_ips : String(c.resolved_ips ?? c.resolvedIps ?? '').split(',')).map(s => String(s).trim()).filter(Boolean)
                     return (
                     <div key={`${cAt || ''}#${i}`} className="upt-rt-grid dom-rt-grid">
                       <span className="upt-rt-time">{formatDateSec(cAt)}</span>
@@ -485,6 +486,7 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName }) {
                       <span style={{ color: daysColor(cDays), fontWeight: 600 }}>{cDays ?? '—'}</span>
                       <span className={`dom-st dom-st--${statusCls(c.status)}`}>{statusLabel(c.status)}{c.changed ? ' ⚑' : ''}</span>
                       <span title={c.registrar} style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{c.registrar || (c.error ? c.error : '—')}</span>
+                      <span title={cIps.join(', ')} style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{cIps.length ? cIps.join(', ') : '—'}</span>
                     </div>
                     )
                   })}
