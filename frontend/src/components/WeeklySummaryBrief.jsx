@@ -41,7 +41,8 @@ function ActionList({ items, t }) {
 
 /**
  * Executive özet — 01 · Özet bloğu. Sol: yönetici paragrafı; sağ: sağlık skoru (dairesel gösterge + delta);
- * altında iki kolon (Aksiyon Gerektirenler / Önümüzdeki 14 Gün). `kpis.summary` yoksa (eski/veri-yok) hiç render etmez.
+ * altında Aksiyon Gerektirenler kolonu + (kayıt varsa) Önümüzdeki 30 Gün kolonu — lookahead boşsa o kolon
+ * hiç render edilmez (kullanıcı isteği). `kpis.summary` yoksa (eski/veri-yok) hiç render etmez.
  */
 export default function WeeklySummaryBrief({ kpis, t, lang }) {
   const s = kpis?.summary
@@ -53,6 +54,7 @@ export default function WeeklySummaryBrief({ kpis, t, lang }) {
   const delta = score.delta
   const managerText = s.manager_text ?? s.managerText ?? {}
   const paragraph = managerText[lang === 'en' ? 'en' : 'tr'] || managerText.tr || ''
+  const lookahead = s.lookahead ?? s.lookahead14
 
   return (
     <div className="wr-sum">
@@ -76,10 +78,12 @@ export default function WeeklySummaryBrief({ kpis, t, lang }) {
           <div className="wr-sum-col-hdr"><ShieldAlert size={14} /> {t('wr.sumActions')}</div>
           <ActionList items={s.actions} t={t} />
         </div>
-        <div className="wr-sum-col">
-          <div className="wr-sum-col-hdr"><CalendarClock size={14} /> {t('wr.sumLookahead')}</div>
-          <ActionList items={s.lookahead ?? s.lookahead14} t={t} />
-        </div>
+        {lookahead && lookahead.length > 0 && (
+          <div className="wr-sum-col">
+            <div className="wr-sum-col-hdr"><CalendarClock size={14} /> {t('wr.sumLookahead')}</div>
+            <ActionList items={lookahead} t={t} />
+          </div>
+        )}
       </div>
     </div>
   )

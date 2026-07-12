@@ -1026,20 +1026,41 @@ public class WeeklyReportService {
         }
     }
 
-    /** ISO hafta etiketi: "2026-W24 (8–12 Haziran 2026)" — Pzt–Cum aralığı. */
+    /** ISO hafta etiketi: "2026-W28 (6–12 Temmuz 2026)" — Pzt–Paz (tam hafta) aralığı. */
     public static String computeWeekLabel(int year, int weekNo) {
         LocalDate monday = LocalDate.of(year, 1, 4)
                 .with(WeekFields.ISO.weekOfWeekBasedYear(), weekNo)
                 .with(DayOfWeek.MONDAY);
-        LocalDate friday = monday.plusDays(4);
+        LocalDate sunday = monday.plusDays(6);
         String[] months = {"Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran",
                            "Temmuz", "Ağustos", "Eylül", "Ekim", "Kasım", "Aralık"};
-        String range = monday.getMonthValue() == friday.getMonthValue()
-                ? monday.getDayOfMonth() + "–" + friday.getDayOfMonth() + " "
-                  + months[friday.getMonthValue() - 1] + " " + friday.getYear()
+        String range = monday.getMonthValue() == sunday.getMonthValue()
+                ? monday.getDayOfMonth() + "–" + sunday.getDayOfMonth() + " "
+                  + months[sunday.getMonthValue() - 1] + " " + sunday.getYear()
                 : monday.getDayOfMonth() + " " + months[monday.getMonthValue() - 1] + " – "
-                  + friday.getDayOfMonth() + " " + months[friday.getMonthValue() - 1] + " " + friday.getYear();
+                  + sunday.getDayOfMonth() + " " + months[sunday.getMonthValue() - 1] + " " + sunday.getYear();
         return year + "-W" + (weekNo < 10 ? "0" + weekNo : weekNo) + " (" + range + ")";
+    }
+
+    /**
+     * week_label denormalize cache'i tam-hafta (Pzt–Paz) aralığına geçince eski Pzt–Cum etiketlerini
+     * yeniden hesaplayıp DEĞİŞENLERİ kaydeder — mevcut raporlar da yeni gösterime uyar. Idempotent:
+     * ilk açılıştan sonra hepsi eşleşir → yazma yok. Başarısızlık raporu engellemez (best-effort).
+     */
+    @org.springframework.transaction.annotation.Transactional
+    @org.springframework.context.event.EventListener(org.springframework.boot.context.event.ApplicationReadyEvent.class)
+    public void backfillWeekLabels() {
+        try {
+            int fixed = 0;
+            for (WeeklyReport r : reportRepo.findAll()) {
+                if (r.getReportYear() == null || r.getWeekNo() == null) continue;
+                String want = computeWeekLabel(r.getReportYear(), r.getWeekNo());
+                if (!want.equals(r.getWeekLabel())) { r.setWeekLabel(want); reportRepo.save(r); fixed++; }
+            }
+            if (fixed > 0) log.info("Weekly report week_label backfill: {} etiket Pzt–Paz'a güncellendi", fixed);
+        } catch (Exception e) {
+            log.warn("Weekly report week_label backfill failed: {}", e.getMessage());
+        }
     }
 
     /** Şablon kopyalama: kanal id/ad + takip URL'leri korunur; sayılar

@@ -46,9 +46,19 @@ describe('WeeklySummaryBrief', () => {
     expect(getByText('EN paragraph text.')).toBeTruthy()
   })
 
-  it('boş kolon → tek "Kayıt yok" (lookahead boş)', () => {
-    const { getAllByText } = render(<WeeklySummaryBrief kpis={{ summary }} t={t} lang="tr" />)
-    expect(getAllByText('Kayıt yok').length).toBe(1)
+  it('lookahead boş → "Önümüzdeki 30 Gün" kolonu hiç render edilmez (Kayıt yok göstermez)', () => {
+    const { queryByText, container } = render(<WeeklySummaryBrief kpis={{ summary }} t={t} lang="tr" />)
+    expect(container.querySelectorAll('.wr-sum-col').length).toBe(1)   // yalnız Aksiyonlar kolonu
+    expect(queryByText('Kayıt yok')).toBeNull()                        // lookahead gizli, actions dolu → hiç "Kayıt yok" yok
+    expect(queryByText('14 Gün')).toBeNull()                           // lookahead başlığı da yok
+  })
+
+  it('lookahead dolu → "Önümüzdeki 30 Gün" kolonu + satırlar render edilir', () => {
+    const withLook = { ...summary, lookahead: [{ name: 'soon.com', type: 'cert', tier: 3, days_left: 20, has_open_alarm: false }] }
+    const { container, getByText } = render(<WeeklySummaryBrief kpis={{ summary: withLook }} t={t} lang="tr" />)
+    expect(container.querySelectorAll('.wr-sum-col').length).toBe(2)   // Aksiyonlar + Önümüzdeki 30 Gün
+    expect(getByText('soon.com')).toBeTruthy()
+    expect(getByText('14 Gün')).toBeTruthy()                           // lookahead başlığı (stub etiketi)
   })
 
   it('band → skor rengi (amber token)', () => {

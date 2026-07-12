@@ -4,12 +4,11 @@ import WeeklyMonitoringStrip from '../components/WeeklyMonitoringStrip.jsx'
 
 const t = (key, ...a) => {
   const m = {
-    'wr.monTitle': 'İzleme', 'wr.monTypeCert': 'Sertifika', 'wr.monTypeHttp': 'HTTP', 'wr.monTypeDomain': 'Alan Adı',
+    'wr.monTitle': 'İzleme Göstergeleri', 'wr.monTypeCert': 'Sertifika', 'wr.monTypeHttp': 'HTTP', 'wr.monTypeDomain': 'Alan Adı',
     'wr.monTypePing': 'Ping', 'wr.monTypePort': 'Port', 'wr.monTypeDns': 'DNS', 'wr.monTypeKeyword': 'Keyword',
-    'wr.monActive': `${a[0]} izleme`, 'wr.monChecks': `${a[0]} kontrol`,
-    'wr.monAlarms': `${a[0]} açıldı · ${a[1]} çözüldü · ${a[2]} açık`,
-    'wr.monAvgResp': `ort. ${a[0]} ms`, 'wr.monExpiring30': `≤30: ${a[0]}`,
-    'wr.monClosedPorts': `kapalı: ${a[0]}`, 'wr.monChanges': `değişim: ${a[0]}`,
+    'wr.monLblActive': 'İzleme', 'wr.monLblChecks': 'Kontrol', 'wr.monLblOpened': 'Açılan',
+    'wr.monLblResolved': 'Çözülen', 'wr.monLblOpen': 'Açık',
+    'wr.monExtraExpiring': '≤30 gün', 'wr.monExtraResp': 'Ort. Yanıt', 'wr.monExtraClosed': 'Kapalı Port', 'wr.monExtraChanges': 'Değişim',
     'wr.monTop3': 'En Sorunlu 3', 'wr.monAlarmsShort': `${a[0]} alarm`, 'wr.monNoMonitors': 'İzleme yok',
   }
   return m[key] ?? key
@@ -42,16 +41,18 @@ describe('WeeklyMonitoringStrip', () => {
     expect(getByText('a.com')).toBeTruthy()                               // http top-3
   })
 
-  it('sub-lines: izleme/kontrol + türe-özgü ekstra (http ms, cert ≤30)', () => {
-    const { getByText } = render(<WeeklyMonitoringStrip stats={stats} t={t} />)
-    expect(getByText('5 izleme')).toBeTruthy()
-    expect(getByText('100 kontrol')).toBeTruthy()
-    expect(getByText('ort. 180 ms')).toBeTruthy()
-    expect(getByText('≤30: 3')).toBeTruthy()
+  it('metrik satırları: büyük oran + hizalı etiket/değer + türe-özgü ekstra (http ms, cert ≤30 gün)', () => {
+    const { getByText, getAllByText } = render(<WeeklyMonitoringStrip stats={stats} t={t} />)
+    expect(getByText('99.8')).toBeTruthy()                       // cert erişim oranı (büyük sayı)
+    expect(getByText('180 ms')).toBeTruthy()                     // http ort. yanıt ekstrası (birimli)
+    expect(getByText('Ort. Yanıt')).toBeTruthy()                 // http ekstra etiketi (yalnız http/ping)
+    expect(getAllByText('≤30 gün').length).toBeGreaterThan(0)    // cert + domain ekstra etiketi
+    expect(getAllByText('İzleme').length).toBeGreaterThan(0)     // aktif-izleme metrik etiketi (kartlarda tekrar)
+    expect(getAllByText('Açık').length).toBeGreaterThan(0)       // açık-alarm metrik etiketi
   })
 
   it('loading + veri yok → yükleniyor göstergesi', () => {
     const { container } = render(<WeeklyMonitoringStrip stats={null} loading={true} t={t} />)
-    expect(container.querySelector('.wr-mon-strip--loading')).toBeTruthy()
+    expect(container.querySelector('.wr-mon--loading')).toBeTruthy()
   })
 })

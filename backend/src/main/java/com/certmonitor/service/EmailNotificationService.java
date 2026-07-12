@@ -3243,9 +3243,11 @@ public class EmailNotificationService {
             + "</td>"
             + "<td valign='top' style='font-size:14px;line-height:1.7;color:#334155'>" + para + "</td>"
             + "</tr></table>";
+        // Önümüzdeki 30 Gün: kayıt yoksa bölüm hiç eklenmez (kullanıcı isteği) — Aksiyon tablosu ise boşken "Kayıt yok" gösterir.
+        List<Map<String, Object>> lookahead = (List<Map<String, Object>>) k.get("lookahead");
         return head
             + summaryActionTable("Aksiyon Gerektirenler", (List<Map<String, Object>>) k.get("actions"))
-            + summaryActionTable("Önümüzdeki 30 Gün", (List<Map<String, Object>>) k.get("lookahead"));
+            + (lookahead == null || lookahead.isEmpty() ? "" : summaryActionTable("Önümüzdeki 30 Gün", lookahead));
     }
 
     /** Özet aksiyon/14-gün tablosu — td/bgcolor tier şeridi, sağa hizalı gün (Outlook-safe). Boş → "Kayıt yok". */

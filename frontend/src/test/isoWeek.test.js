@@ -15,28 +15,28 @@ describe('isoWeekInfo', () => {
 })
 
 describe('isoWeekRange', () => {
-  it('returns Monday–Friday of the ISO week', () => {
-    const { monday, friday } = isoWeekRange(2026, 24)
+  it('returns Monday–Sunday of the ISO week (full week)', () => {
+    const { monday, sunday } = isoWeekRange(2026, 24)
     expect(monday.toISOString().slice(0, 10)).toBe('2026-06-08')
-    expect(friday.toISOString().slice(0, 10)).toBe('2026-06-12')
+    expect(sunday.toISOString().slice(0, 10)).toBe('2026-06-14')
   })
 })
 
 describe('formatWeekRange', () => {
   it('formats a same-month week (TR backend computeWeekLabel parity)', () => {
-    expect(formatWeekRange(2026, 24, 'tr')).toBe('8–12 Haziran 2026')
+    expect(formatWeekRange(2026, 24, 'tr')).toBe('8–14 Haziran 2026')
   })
 
   it('formats a month-crossing week', () => {
-    expect(formatWeekRange(2026, 27, 'tr')).toBe('29 Haziran – 3 Temmuz 2026')
+    expect(formatWeekRange(2026, 27, 'tr')).toBe('29 Haziran – 5 Temmuz 2026')
   })
 
   it('formats a year-crossing week with both years', () => {
-    expect(formatWeekRange(2026, 1, 'tr')).toBe('29 Aralık 2025 – 2 Ocak 2026')
+    expect(formatWeekRange(2026, 1, 'tr')).toBe('29 Aralık 2025 – 4 Ocak 2026')
   })
 
   it('uses English month names for lang=en', () => {
-    expect(formatWeekRange(2026, 24, 'en')).toBe('8–12 June 2026')
+    expect(formatWeekRange(2026, 24, 'en')).toBe('8–14 June 2026')
   })
 
   it('returns em dash for invalid input', () => {

@@ -1,14 +1,14 @@
 import { ShieldCheck, Globe, Activity, Radio, Network, Server, Search } from 'lucide-react'
 
-/** Tür → {ikon, etiket anahtarı, türe-özgü ekstra metrik anahtarı + birimi}. */
+/** Tür → {ikon, etiket anahtarı, türe-özgü ekstra metrik etiketi + birimi}. */
 const TYPE_META = {
-  cert:    { icon: ShieldCheck, labelKey: 'wr.monTypeCert',    extraKey: 'wr.monExpiring30',  extraUnit: 'count' },
-  domain:  { icon: Globe,       labelKey: 'wr.monTypeDomain',  extraKey: 'wr.monExpiring30',  extraUnit: 'count' },
-  http:    { icon: Activity,    labelKey: 'wr.monTypeHttp',    extraKey: 'wr.monAvgResp',     extraUnit: 'ms' },
-  ping:    { icon: Radio,       labelKey: 'wr.monTypePing',    extraKey: 'wr.monAvgResp',     extraUnit: 'ms' },
-  port:    { icon: Network,     labelKey: 'wr.monTypePort',    extraKey: 'wr.monClosedPorts', extraUnit: 'count' },
-  dns:     { icon: Server,      labelKey: 'wr.monTypeDns',     extraKey: 'wr.monChanges',     extraUnit: 'count' },
-  keyword: { icon: Search,      labelKey: 'wr.monTypeKeyword', extraKey: null,                extraUnit: null },
+  cert:    { icon: ShieldCheck, labelKey: 'wr.monTypeCert',    extraLabel: 'wr.monExtraExpiring', extraUnit: 'count' },
+  domain:  { icon: Globe,       labelKey: 'wr.monTypeDomain',  extraLabel: 'wr.monExtraExpiring', extraUnit: 'count' },
+  http:    { icon: Activity,    labelKey: 'wr.monTypeHttp',    extraLabel: 'wr.monExtraResp',     extraUnit: 'ms' },
+  ping:    { icon: Radio,       labelKey: 'wr.monTypePing',    extraLabel: 'wr.monExtraResp',     extraUnit: 'ms' },
+  port:    { icon: Network,     labelKey: 'wr.monTypePort',    extraLabel: 'wr.monExtraClosed',   extraUnit: 'count' },
+  dns:     { icon: Server,      labelKey: 'wr.monTypeDns',     extraLabel: 'wr.monExtraChanges',  extraUnit: 'count' },
+  keyword: { icon: Search,      labelKey: 'wr.monTypeKeyword', extraLabel: null,                  extraUnit: null },
 }
 const ORDER = ['cert', 'domain', 'http', 'ping', 'port', 'dns', 'keyword']
 
@@ -31,12 +31,21 @@ function norm(x) {
 /** Erişim oranı bandı — ≥99.5 yeşil, ≥97 amber, altı kırmızı; null → nötr. */
 function rateBand(r) { return r == null ? 'na' : r >= 99.5 ? 'good' : r >= 97 ? 'amber' : 'bad' }
 
+function Metric({ label, value, danger }) {
+  return (
+    <div className="wr-mon-metric">
+      <span className="wr-mon-metric-lbl">{label}</span>
+      <span className={`wr-mon-metric-val${danger ? ' danger' : ''}`}>{value}</span>
+    </div>
+  )
+}
+
 /**
- * İzleme Göstergeleri (04 · İzleme) — izleme türü bazında haftalık kart grid'i.
- * `monitoringStats.types` snake_case okur; veri yoksa (kart) "İzleme yok"; stats null → hiç render etmez.
+ * İzleme Göstergeleri (04 · İzleme) — izleme türü bazında haftalık kart grid'i; KPI şeridiyle uyumlu executive görünüm
+ * (dikişsiz grid, uppercase etiket, büyük hafif erişim oranı, hizalı etiket/değer satırları). Kart-başına "İzleme yok".
  */
 export default function WeeklyMonitoringStrip({ stats, loading, t }) {
-  if (loading && !stats) return <div className="wr-mon-strip wr-mon-strip--loading">…</div>
+  if (loading && !stats) return <div className="wr-mon wr-mon--loading">…</div>
   if (!stats?.types) return null
   const byType = {}
   stats.types.forEach((x) => { byType[x.type] = norm(x) })
@@ -50,25 +59,29 @@ export default function WeeklyMonitoringStrip({ stats, loading, t }) {
           const meta = TYPE_META[k]
           const Icon = meta.icon
           const empty = s.active === 0 && s.checks === 0
+          const band = rateBand(s.rate)
           return (
-            <div key={k} className="wr-mon-card">
-              <div className="wr-mon-card-top"><Icon size={15} className="wr-mon-icon" /><span className="wr-mon-card-name">{t(meta.labelKey)}</span></div>
+            <div key={k} className="wr-mon-card" data-band={band}>
+              <div className="wr-mon-card-top"><Icon size={14} className="wr-mon-icon" /><span className="wr-mon-card-name">{t(meta.labelKey)}</span></div>
               {empty ? (
                 <div className="wr-mon-empty">{t('wr.monNoMonitors')}</div>
               ) : (
                 <>
-                  <div className={`wr-mon-rate wr-mon-rate--${rateBand(s.rate)}`}>
-                    {s.rate != null ? `${s.rate.toFixed(1)}%` : '—'}
+                  <div className={`wr-mon-rate wr-mon-rate--${band}`}>
+                    <span className="wr-mon-rate-num">{s.rate != null ? s.rate.toFixed(1) : '—'}</span>
+                    {s.rate != null && <span className="wr-mon-rate-pct">%</span>}
                     {s.rateDelta != null && s.rateDelta !== 0 && (
                       <span className={`wr-mon-delta ${s.rateDelta > 0 ? 'up' : 'down'}`}>{s.rateDelta > 0 ? '▲' : '▼'} {Math.abs(s.rateDelta).toFixed(1)}</span>
                     )}
                   </div>
-                  <div className="wr-mon-lines">
-                    <span>{t('wr.monActive', s.active)}</span>
-                    <span>{t('wr.monChecks', s.checks)}</span>
-                    <span>{t('wr.monAlarms', s.opened, s.resolved, s.open)}</span>
-                    {meta.extraKey && s.extra != null && (
-                      <span>{t(meta.extraKey, meta.extraUnit === 'ms' ? Math.round(s.extra) : Math.round(s.extra))}</span>
+                  <div className="wr-mon-metrics">
+                    <Metric label={t('wr.monLblActive')} value={s.active} />
+                    <Metric label={t('wr.monLblChecks')} value={s.checks} />
+                    <Metric label={t('wr.monLblOpened')} value={s.opened} />
+                    <Metric label={t('wr.monLblResolved')} value={s.resolved} />
+                    <Metric label={t('wr.monLblOpen')} value={s.open} danger={s.open > 0} />
+                    {meta.extraLabel && s.extra != null && (
+                      <Metric label={t(meta.extraLabel)} value={meta.extraUnit === 'ms' ? `${Math.round(s.extra)} ms` : Math.round(s.extra)} />
                     )}
                   </div>
                   {s.top3.length > 0 && (
