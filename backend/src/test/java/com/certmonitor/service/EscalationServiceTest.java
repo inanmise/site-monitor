@@ -742,6 +742,41 @@ class EscalationServiceTest {
         assertThat(ctxCap.getValue()).containsKey("expiry_date");
     }
 
+    @Test
+    @DisplayName("reNotify: KRİTİK DOMAINMON_EXPIRY → takım + MÜDÜR birlikte (kullanıcı politikası: müdür yalnız kritikte)")
+    void reNotify_domainMon_critical_includesTeamAndManager() {
+        AlertEvent event = existingOpenAlert("kritik.example.com", EscalationService.TYPE_DOMAINMON_EXPIRY, "CRITICAL", false);
+        event.setId(202L);
+        event.setTeamId(7L);
+        event.setDaysRemaining(3);
+        when(alertEventRepo.findById(202L)).thenReturn(Optional.of(event));
+        when(alertEventRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        com.certmonitor.model.Team team = new com.certmonitor.model.Team();
+        team.setId(7L); team.setName("SY-Dijital"); team.setEmail("dijitalsy@akbank.com");
+        when(teamRepo.findById(7L)).thenReturn(Optional.of(team));
+        // KRİTİK seviye eskalasyon kontağı (müdür) — kritik domainde EKLENİR
+        when(contactRepo.findByTeamIdAndActiveTrueOrderByRoleAsc(7L))
+                .thenReturn(List.of(contact("mudur@akbank.com", "MANAGER", "CRITICAL")));
+
+        com.certmonitor.model.DomainMonitor mon = new com.certmonitor.model.DomainMonitor();
+        mon.setId(55L); mon.setDomain("kritik.example.com"); mon.setTeamId(7L);
+        when(domainMonitorRepo.findFirstByDomainOrderByIdAsc("kritik.example.com")).thenReturn(Optional.of(mon));
+        com.certmonitor.model.DomainCheck dc = new com.certmonitor.model.DomainCheck();
+        dc.setMonitorId(55L); dc.setDaysRemaining(3); dc.setRegistrar("GoDaddy.com, LLC"); dc.setSource("RDAP");
+        when(domainCheckRepo.findTopByMonitorIdOrderByCheckedAtDesc(55L)).thenReturn(Optional.of(dc));
+
+        Map<String, Object> result = service.reNotify(202L);
+
+        assertThat(result.get("contacts_queued")).isEqualTo(1);       // müdür kontağı dahil
+        assertThat(result.get("recipients_queued")).isEqualTo(2);     // takım + müdür
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<String[]> toCap = ArgumentCaptor.forClass(String[].class);
+        verify(emailService).sendAlert(toCap.capture(), contains("[RE-ALERT]"), anyString(),
+                eq("kritik.example.com"), any(), any(), any(), any());
+        assertThat(toCap.getValue()).containsExactlyInAnyOrder("dijitalsy@akbank.com", "mudur@akbank.com");
+    }
+
     // ── Sertifikaya erişilemezlik (ağ/firewall) → UYARI + müdür hariç ───────────
     // Kullanıcı kuralı: sertifika bilgileri ağ/firewall kaynaklı alınamadığında alarm
     // KRİTİK değil UYARI olmalı ve müdür (HIGH/CRITICAL kontağı) bilgilendirilmemeli.
