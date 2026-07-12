@@ -4,9 +4,10 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import {
   Plus, Save, Send, CheckCircle, Undo2, Eye, Trash2, RefreshCcw, ArrowLeft, Menu, History, FilePenLine,
-  HelpCircle, ChevronDown, Bell, Mail, ArrowRightLeft,
+  HelpCircle, ChevronDown, Bell, Mail, ArrowRightLeft, Printer,
 } from 'lucide-react'
 import UserBadge from './ui/UserBadge.jsx'
+import WeeklyKpiStrip from './WeeklyKpiStrip.jsx'
 import { api, formatDate } from '../api/client'
 import { useT, useLanguage } from '../i18n/index.jsx'
 import { useTheme } from '../i18n/theme.jsx'
@@ -17,13 +18,6 @@ import WeekDatePicker from './ui/WeekDatePicker.jsx'
 import { clipboardToMarkdownTable } from '../utils/pasteTable'
 import { downscaleImage } from '../utils/imageDownscale'
 import { isoWeekInfo, isEditableWeek, formatWeekRange } from '../utils/isoWeek'
-
-const STATUS_COLOR = {
-  DRAFT: '#6b7280',
-  PENDING_APPROVAL: '#d97706',
-  APPROVED: '#16a34a',
-  REJECTED: '#dc2626',
-}
 
 /** Oturum kesintisi yedekleri için localStorage anahtar öneki. */
 const DRAFT_BACKUP_PREFIX = 'wr.draft.'
@@ -323,6 +317,8 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
   const [sendingReminder, setSendingReminder] = useState(false)
   const [report, setReport] = useState(null)      // full report (GET /{id})
   const [content, setContent] = useState(null)    // parsed content_json
+  const [kpis, setKpis] = useState(null)          // executive KPI şeridi (GET /{id}/kpis) — canlı, read-only
+  const [kpisLoading, setKpisLoading] = useState(false)
   const [managerMissing, setManagerMissing] = useState(false)
   const [channelTab, setChannelTab] = useState(0)
   const [dirty, setDirty] = useState(false)
@@ -498,6 +494,19 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
   }
 
   useEffect(() => { loadReport(selectedId) }, [selectedId, loadReport])
+
+  // Executive KPI şeridi — rapor açıldığında canlı çekilir (durum makinesinden bağımsız, read-only).
+  useEffect(() => {
+    const rid = report?.id
+    if (!rid) { setKpis(null); return }
+    let alive = true
+    setKpisLoading(true)
+    api.weeklyReports.kpis(rid)
+      .then((r) => { if (alive && r?.success) setKpis(r.data) })
+      .catch(() => {})
+      .finally(() => { if (alive) setKpisLoading(false) })
+    return () => { alive = false }
+  }, [report?.id])
 
   function patch(path, value) {
     setContent((prev) => {
@@ -926,12 +935,7 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
     const label = status === 'APPROVED'
       ? (sentAt ? t('wr.statusSent') : t('wr.statusApproved'))
       : t(`wr.status${status === 'PENDING_APPROVAL' ? 'Pending' : status.charAt(0) + status.slice(1).toLowerCase()}`)
-    return (
-      <span style={{
-        background: STATUS_COLOR[status] || '#6b7280', color: '#fff',
-        padding: '3px 10px', borderRadius: 12, fontSize: '.78em', fontWeight: 700,
-      }}>{label}</span>
-    )
+    return <span className={`wr-status-badge wr-status--${status}`}>{label}</span>
   }
 
   const i1 = content?.item1 ?? {}
@@ -950,6 +954,9 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
       )}
       <button className="btn btn-secondary" onClick={openPreview} disabled={busy}>
         <Eye size={14} /> {t('wr.preview')}
+      </button>
+      <button className="btn btn-secondary wr-print-btn" onClick={() => window.print()} disabled={busy}>
+        <Printer size={14} /> {t('wr.print')}
       </button>
       {editable && !conflict && (
         <button className="btn btn-primary" onClick={() => save()} disabled={busy || !dirty}>
@@ -1205,23 +1212,30 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
 
       {report && content && (
         <>
-          {/* ── Durum satırı ── */}
-          <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', marginBottom: 14 }}>
-            <strong style={{ fontSize: '1.05em' }}>{report.week_label}</strong>
-            {statusBadge(report.status, report.sent_at)}
-            {report.sent_at && <span style={{ fontSize: '.8em', color: 'var(--text-light)' }}>
-              {t('wr.sentAt')} {formatDate(report.sent_at)}
-            </span>}
-            <span style={{ fontSize: '.8em', color: 'var(--text-light)' }}>
-              {t('wr.lastEdit')} {report.updated_by} · {formatDate(report.updated_at)}
-            </span>
-            {lastAutoSave && (
-              <span style={{ fontSize: '.8em', color: '#16a34a', fontWeight: 600 }}>
-                ✓ {t('wr.autoSaved')} {lastAutoSave.toLocaleTimeString(
-                  lang === 'en' ? 'en-GB' : 'tr-TR', { hour: '2-digit', minute: '2-digit' })}
-              </span>
-            )}
+          {/* ── Executive brief başlığı — takım + ISO hafta / durum + onaylayan ── */}
+          <div className="wr-brief">
+            <div className="wr-brief-left">
+              <div className="wr-brief-team">
+                {isAdmin ? (teams.find((tm) => tm.id === report.team_id)?.name ?? teamName ?? report.team_id) : (teamName ?? report.team_id)}
+              </div>
+              <div className="wr-brief-week">{report.week_label}</div>
+            </div>
+            <div className="wr-brief-right">
+              {statusBadge(report.status, report.sent_at)}
+              {report.approved_by && (
+                <span className="wr-brief-meta">{t('wr.approvedByAt', report.approved_by, formatDate(report.approved_at))}</span>
+              )}
+              {report.sent_at && <span className="wr-brief-meta">{t('wr.sentAt')} {formatDate(report.sent_at)}</span>}
+              <span className="wr-brief-meta">{t('wr.lastEdit')} {report.updated_by} · {formatDate(report.updated_at)}</span>
+              {lastAutoSave && (
+                <span className="wr-autosave">✓ {t('wr.autoSaved')} {lastAutoSave.toLocaleTimeString(
+                  lang === 'en' ? 'en-GB' : 'tr-TR', { hour: '2-digit', minute: '2-digit' })}</span>
+              )}
+            </div>
           </div>
+
+          {/* ── Executive KPI şeridi (canlı) ── */}
+          <WeeklyKpiStrip kpis={kpis} loading={kpisLoading} t={t} />
 
           {/* ── Üst aksiyon barı (sticky) ── */}
           <div className="modal-actions wr-actions wr-actions-top">{actionButtons}</div>

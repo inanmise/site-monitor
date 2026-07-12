@@ -3,6 +3,7 @@ package com.certmonitor.controller;
 import com.certmonitor.model.WeeklyReport;
 import com.certmonitor.model.WeeklyReportImage;
 import com.certmonitor.service.AuditService;
+import com.certmonitor.service.WeeklyReportKpiService;
 import com.certmonitor.service.WeeklyReportReminderService;
 import com.certmonitor.service.WeeklyReportService;
 import com.certmonitor.service.WeeklyReportService.Actor;
@@ -36,6 +37,7 @@ public class WeeklyReportController {
     private final WeeklyReportService service;
     private final WeeklyReportReminderService reminderService;
     private final AuditService auditService;
+    private final WeeklyReportKpiService kpiService;
 
     private static final DateTimeFormatter ISO =
             DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
@@ -98,6 +100,15 @@ public class WeeklyReportController {
                 ? Map.of("name", r.getEditingBy(), "heartbeat_at", r.getEditingHeartbeat())
                 : null);
         return ok(Map.of("data", data));
+    }
+
+    /** Executive KPI şeridi — canlı cert/alarm/uptime (bu hafta + önceki hafta + son 8 hafta trendi).
+     *  YALNIZ-OKUMA; durum makinesine/token akışına dokunmaz. Ağır toplama olduğundan {@code get}'e katılmaz,
+     *  rapor görünümü tarafından ayrıca lazy çekilir. */
+    @GetMapping("/{id}/kpis")
+    public ResponseEntity<Map<String, Object>> kpis(@PathVariable Long id, HttpSession session) {
+        WeeklyReport r = service.get(id, actor(session));   // yetki + yükleme (get ile aynı)
+        return ok(Map.of("data", kpiService.compute(r.getTeamId(), r.getReportYear(), r.getWeekNo())));
     }
 
     // ── Düzenleme kilidi ──────────────────────────────────────────────────────
@@ -329,23 +340,35 @@ public class WeeklyReportController {
         }
     }
 
+    /** Login'siz onay sayfası — executive tasarım (lacivert bant + ENTERPRISE wordmark + durum şeridi + footer).
+     *  {@code accent} = duruma göre renk (yeşil/gri/kırmızı): ince şerit + buton. Rota/mantık/token akışı DEĞİŞMEZ. */
     private ResponseEntity<String> htmlPage(String title, String bodyHtml, String accent) {
         String html = "<!DOCTYPE html><html lang='tr'><head><meta charset='UTF-8'>"
             + "<meta name='viewport' content='width=device-width,initial-scale=1'>"
             + "<title>" + esc(title) + " — CertMonitor</title>"
-            + "<style>body{margin:0;background:#f3f4f6;font-family:'Segoe UI',Arial,sans-serif;color:#1e293b}"
-            + ".card{max-width:460px;margin:48px auto;background:#fff;border-radius:14px;overflow:hidden;"
-            + "box-shadow:0 6px 28px rgba(0,0,0,.12)}"
-            + ".hd{background:" + accent + ";color:#fff;padding:20px 26px}"
-            + ".hd .b{font-size:11px;font-weight:700;letter-spacing:.1em;opacity:.85}"
-            + ".hd .t{font-size:20px;font-weight:800;margin-top:4px}"
-            + ".bd{padding:26px}.wk{font-weight:700;font-size:15px;margin-bottom:6px}"
-            + ".msg{font-size:14px;line-height:1.7;color:#334155}"
-            + ".btn{display:inline-block;margin-top:18px;background:" + accent + ";color:#fff;border:none;"
-            + "border-radius:8px;padding:13px 28px;font-size:15px;font-weight:800;cursor:pointer}"
+            + "<style>"
+            + "body{margin:0;background:#eef1f4;font-family:'Segoe UI',-apple-system,Arial,sans-serif;color:#1F2937;-webkit-font-smoothing:antialiased}"
+            + ".card{max-width:480px;margin:56px auto;background:#fff;border-radius:14px;overflow:hidden;"
+            + "box-shadow:0 10px 40px rgba(15,27,45,.14);border:1px solid #E5E8EC}"
+            + ".hd{background:#0F1B2D;color:#fff;padding:22px 28px}"
+            + ".wm{font-size:16px;font-weight:800;letter-spacing:-.01em}"
+            + ".ent{font-size:9px;font-weight:700;letter-spacing:.16em;color:#93a4bd;border:1px solid #33415a;"
+            + "border-radius:4px;padding:2px 6px;margin-left:8px;vertical-align:middle}"
+            + ".kick{font-size:11px;font-weight:700;letter-spacing:.1em;color:#93a4bd;margin-top:14px;text-transform:uppercase}"
+            + ".t{font-size:21px;font-weight:800;margin-top:3px}"
+            + ".strip{height:4px;background:" + accent + "}"
+            + ".bd{padding:26px 28px}.wk{font-weight:700;font-size:15px;color:#0F1B2D;margin-bottom:8px}"
+            + ".msg{font-size:14px;line-height:1.7;color:#475569}"
+            + ".btn{display:inline-block;margin-top:20px;background:" + accent + ";color:#fff;border:none;"
+            + "border-radius:8px;padding:13px 30px;font-size:15px;font-weight:800;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.12)}"
+            + ".ft{padding:14px 28px;border-top:1px solid #E5E8EC;font-size:11px;color:#94a3b8;text-align:center}"
             + "</style></head><body><div class='card'>"
-            + "<div class='hd'><div class='b'>CertMonitor — Haftalık Rapor</div><div class='t'>" + esc(title) + "</div></div>"
-            + "<div class='bd'>" + bodyHtml + "</div></div></body></html>";
+            + "<div class='hd'><span class='wm'>CertMonitor</span><span class='ent'>ENTERPRISE</span>"
+            + "<div class='kick'>Haftalık Rapor Onayı</div><div class='t'>" + esc(title) + "</div></div>"
+            + "<div class='strip'></div>"
+            + "<div class='bd'>" + bodyHtml + "</div>"
+            + "<div class='ft'>CertMonitor — Akbank Sertifika &amp; İzleme Platformu</div>"
+            + "</div></body></html>";
         return ResponseEntity.ok().contentType(MediaType.valueOf("text/html;charset=UTF-8")).body(html);
     }
 

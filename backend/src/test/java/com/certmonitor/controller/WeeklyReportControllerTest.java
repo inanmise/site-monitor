@@ -40,6 +40,7 @@ class WeeklyReportControllerTest {
     @MockitoBean WeeklyReportService service;
     @MockitoBean com.certmonitor.service.WeeklyReportReminderService reminderService;
     @MockitoBean AuditService auditService;
+    @MockitoBean com.certmonitor.service.WeeklyReportKpiService kpiService;
 
     private static WeeklyReport report(Long id, Long teamId, String status) {
         WeeklyReport r = new WeeklyReport();
