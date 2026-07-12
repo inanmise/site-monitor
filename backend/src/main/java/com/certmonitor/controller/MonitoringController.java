@@ -1776,6 +1776,23 @@ public class MonitoringController {
         }).orElse(notFound("Domain monitor not found"));
     }
 
+    /** Domain Kaydı (registration) — DB'deki son bilgi; {@code live=true} ise anlık RDAP/WHOIS sorgusu
+     *  (persist + alarm değerlendirmesi). Registrar+IANA ID, tarihler, nameserver, IP+hostname, EPP durum, DNSSEC. */
+    @GetMapping("/domain/{id}/registration")
+    public ResponseEntity<Map<String, Object>> domainRegistration(@PathVariable Long id,
+            @RequestParam(defaultValue = "false") boolean live, HttpSession session) {
+        permissionService.require(session, "domain.registration.view", "view");
+        return domainMonitorRepo.findById(id).map(m -> {
+            if (live) {
+                Map<String, Object> r = domainChecker.check(m);   // taze RDAP/WHOIS + persist
+                try { schedulerService.evaluateDomainAlarmsNow(m, r); }
+                catch (Exception e) { log.warn("Registration live alarm değerlendirmesi başarısız: {} — {}", m.getDomain(), e.getMessage()); }
+            }
+            return ok(enrichDomain(m, domainCheckRepo.findTopByMonitorIdOrderByCheckedAtDesc(id).orElse(null),
+                    teamNameMap(), openDomainMonAlarm(m.getDomain())));
+        }).orElse(notFound("Domain monitor not found"));
+    }
+
     /** Ad-hoc domain testi — kaydetmeden RDAP/WHOIS ile bir kez sorgular (persist YOK). */
     @PostMapping("/domain/test")
     public ResponseEntity<Map<String, Object>> testDomain(@RequestBody Map<String, Object> body, HttpSession session) {
@@ -1834,8 +1851,12 @@ public class MonitoringController {
             item.put("registration_date", latest.getRegistrationDate());
             item.put("last_changed",      latest.getLastChanged());
             item.put("registrar",         latest.getRegistrar());
+            item.put("registrar_iana_id", latest.getRegistrarIanaId());
+            item.put("dnssec",            latest.getDnssec());
             item.put("status_codes",      csvList(latest.getStatusCodes()));
             item.put("nameservers",       csvList(latest.getNameservers()));
+            item.put("resolved_ips",      csvList(latest.getResolvedIps()));
+            item.put("hostnames",         csvList(latest.getHostnames()));
             item.put("ns_resolves",       latest.getNsResolves());
             item.put("changed",           latest.getChanged());
             item.put("error",             latest.getError());
@@ -1843,7 +1864,9 @@ public class MonitoringController {
         } else {
             item.put("status", "UNKNOWN"); item.put("source", null); item.put("days_remaining", null);
             item.put("expiry_date", null); item.put("registration_date", null); item.put("last_changed", null);
-            item.put("registrar", null); item.put("status_codes", List.of()); item.put("nameservers", List.of());
+            item.put("registrar", null); item.put("registrar_iana_id", null); item.put("dnssec", null);
+            item.put("status_codes", List.of()); item.put("nameservers", List.of());
+            item.put("resolved_ips", List.of()); item.put("hostnames", List.of());
             item.put("ns_resolves", null); item.put("changed", false); item.put("error", null); item.put("checked_at", null);
         }
         return item;

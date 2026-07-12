@@ -245,6 +245,12 @@ public class RdapDomainClient {
             out.put("registration_date", registration);
             out.put("last_changed", lastChanged);
             out.put("registrar", registrar);
+            out.put("registrar_iana_id", extractRegistrarIanaId(root));
+            // DNSSEC — RDAP secureDNS.delegationSigned (varsa)
+            JsonNode sd = root.get("secureDNS");
+            if (sd != null && sd.has("delegationSigned")) {
+                out.put("dnssec", sd.get("delegationSigned").asBoolean() ? "signed" : "unsigned");
+            }
             out.put("status_codes", status);
             out.put("nameservers", ns);
             return out;
@@ -273,6 +279,27 @@ public class RdapDomainClient {
             }
             String handle = ent.path("handle").asText(null);
             if (handle != null && !handle.isBlank()) return handle;
+        }
+        return null;
+    }
+
+    /** entities[] içinde roles=registrar olanın publicIds "IANA Registrar ID" identifier'ını çıkarır. */
+    private static String extractRegistrarIanaId(JsonNode root) {
+        JsonNode entities = root.get("entities");
+        if (entities == null || !entities.isArray()) return null;
+        for (JsonNode ent : entities) {
+            JsonNode roles = ent.get("roles");
+            boolean isReg = false;
+            if (roles != null && roles.isArray()) for (JsonNode r : roles) if ("registrar".equalsIgnoreCase(r.asText())) isReg = true;
+            if (!isReg) continue;
+            JsonNode pubIds = ent.get("publicIds");
+            if (pubIds != null && pubIds.isArray()) for (JsonNode p : pubIds) {
+                String type = p.path("type").asText("");
+                if (type.toLowerCase(Locale.ROOT).contains("iana")) {
+                    String id = p.path("identifier").asText(null);
+                    if (id != null && !id.isBlank()) return id;
+                }
+            }
         }
         return null;
     }

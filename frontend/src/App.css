@@ -8831,3 +8831,30 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 [data-theme="dark"] .dexp-step-hint { background: #3a2f0a; color: #fde68a; }
 [data-theme="dark"] .dexp-step-error { color: #f87171; }
 
+/* ── Domain Kaydı (registration) sekmesi ── */
+.dreg { padding: 4px 2px 2px; }
+.dreg-toolbar { display: flex; align-items: center; margin-bottom: 8px; min-height: 26px; }
+.dreg-stale { font-size: .8em; color: #b45309; background: #fef3c7; padding: 3px 8px; border-radius: 6px; }
+[data-theme="dark"] .dreg-stale { background: #3a2f0a; color: #fde68a; }
+.dreg-section-hdr { display: flex; align-items: center; gap: 6px; font-size: .72em; font-weight: 700; text-transform: uppercase;
+  letter-spacing: .06em; color: var(--text-muted, #64748b); margin: 14px 0 6px; }
+.dreg-dl { display: grid; grid-template-columns: 35% 1fr; gap: 5px 12px; margin: 0; font-size: .9em; }
+.dreg-dl dt { color: var(--text-muted, #64748b); font-size: .92em; }
+.dreg-dl dd { margin: 0; word-break: break-word; color: var(--text, #1f2937); }
+.dreg-date { color: var(--text-muted, #64748b); margin-left: 4px; }
+.dreg-list { margin: 0; padding-left: 18px; font-size: .9em; font-family: Consolas, "Courier New", monospace; }
+.dreg-list li { margin: 2px 0; }
+.dreg-iptable { border-collapse: collapse; font-size: .88em; }
+.dreg-iptable td { padding: 3px 14px 3px 0; }
+.dreg-ip { font-family: Consolas, "Courier New", monospace; font-weight: 600; }
+.dreg-host { color: var(--text-muted, #64748b); }
+.dreg-epp { display: flex; flex-wrap: wrap; gap: 6px; }
+.dreg-epp-pill { font-size: .78em; background: var(--surface-2, #f1f5f9); color: var(--text-muted, #475569);
+  border: 1px solid var(--border, #e5e7eb); border-radius: 999px; padding: 2px 9px; cursor: help; }
+.dreg-dnssec { display: flex; align-items: center; gap: 6px; font-size: .9em; }
+.dreg-ok { color: #15803d; } .dreg-muted { color: #94a3b8; }
+.dreg-empty { color: var(--text-muted, #94a3b8); font-size: .9em; }
+.dreg-hist { font-size: .82em; }
+.dreg-hist-changed { background: #fff7ed; }
+[data-theme="dark"] .dreg-hist-changed { background: #2a1e0a; }
+

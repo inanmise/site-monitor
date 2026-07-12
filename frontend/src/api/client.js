@@ -649,6 +649,9 @@ export const api = {
       ).toString()
       return request(`/monitoring/domain/${id}/history${q ? `?${q}` : ''}`)
     },
+    // Domain Kaydı (registration) — DB'deki son bilgi; live=true → anlık RDAP sorgusu.
+    getDomainRegistration: (id, { live } = {}) =>
+      request(`/monitoring/domain/${id}/registration${live ? '?live=true' : ''}`),
 
     // Ping
     getPingMonitors:   () => request('/monitoring/ping'),

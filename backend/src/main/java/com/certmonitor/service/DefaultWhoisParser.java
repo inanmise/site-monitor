@@ -21,6 +21,13 @@ public class DefaultWhoisParser implements WhoisParser {
                 "Registrar", "Sponsoring Registrar", "Registrar Name"));
         out.put("status_codes", WhoisParser.allFirstTokens(raw, "Domain Status", "Status", "status"));
         out.put("nameservers", WhoisParser.allFirstTokens(raw, "Name Server", "Nameserver", "nserver", "Name servers"));
+        // DNSSEC — "DNSSEC: signedDelegation" / "unsigned" / "yes" / "no"
+        String dnssecRaw = WhoisParser.firstValue(raw, "DNSSEC", "dnssec");
+        if (dnssecRaw != null && !dnssecRaw.isBlank()) {
+            String d = dnssecRaw.toLowerCase(java.util.Locale.ROOT);
+            if (d.contains("unsign") || d.equals("no")) out.put("dnssec", "unsigned");
+            else if (d.contains("sign") || d.equals("yes")) out.put("dnssec", "signed");
+        }
         return out;
     }
 }

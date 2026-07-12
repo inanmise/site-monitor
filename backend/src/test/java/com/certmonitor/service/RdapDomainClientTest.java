@@ -25,7 +25,8 @@ class RdapDomainClientTest {
           "events":[{"eventAction":"registration","eventDate":"1995-08-14T04:00:00Z"},
                     {"eventAction":"expiration","eventDate":"2026-08-13T04:00:00Z"}],
           "status":["client transfer prohibited","redemption period"],
-          "entities":[{"roles":["registrar"],"vcardArray":["vcard",[["version",{},"text","4.0"],["fn",{},"text","MarkMonitor Inc."]]]}],
+          "secureDNS":{"delegationSigned":true},
+          "entities":[{"roles":["registrar"],"publicIds":[{"type":"IANA Registrar ID","identifier":"292"}],"vcardArray":["vcard",[["version",{},"text","4.0"],["fn",{},"text","MarkMonitor Inc."]]]}],
           "nameservers":[{"ldhName":"a.iana-servers.net"},{"ldhName":"b.iana-servers.net"}] }
         """;
 
@@ -66,5 +67,13 @@ class RdapDomainClientTest {
         assertThat(r.get("registrar")).isEqualTo("MarkMonitor Inc.");
         assertThat((List<String>) r.get("status_codes")).contains("redemption period", "client transfer prohibited");
         assertThat((List<String>) r.get("nameservers")).contains("a.iana-servers.net", "b.iana-servers.net");
+    }
+
+    @Test
+    @DisplayName("lookup: registrar IANA ID (publicIds) + DNSSEC (secureDNS.delegationSigned)")
+    void lookupRegistrationFields() {
+        Map<String, Object> r = client.lookup("example.com");
+        assertThat(r.get("registrar_iana_id")).isEqualTo("292");
+        assertThat(r.get("dnssec")).isEqualTo("signed");
     }
 }
