@@ -8,6 +8,7 @@ import {
 } from 'lucide-react'
 import UserBadge from './ui/UserBadge.jsx'
 import WeeklyKpiStrip from './WeeklyKpiStrip.jsx'
+import WeeklySummaryBrief from './WeeklySummaryBrief.jsx'
 import { api, formatDate } from '../api/client'
 import { useT, useLanguage } from '../i18n/index.jsx'
 import { useTheme } from '../i18n/theme.jsx'
@@ -1233,6 +1234,9 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
               )}
             </div>
           </div>
+
+          {/* ── 01 · Özet — executive brief (yönetici paragrafı + sağlık skoru + aksiyonlar) ── */}
+          <WeeklySummaryBrief kpis={kpis} t={t} lang={lang} />
 
           {/* ── Executive KPI şeridi (canlı) ── */}
           <WeeklyKpiStrip kpis={kpis} loading={kpisLoading} t={t} />

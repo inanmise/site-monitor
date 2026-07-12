@@ -37,6 +37,8 @@ class WeeklyReportKpiServiceTest {
     @Mock CertificateInventoryRepository inventoryRepo;
     @Mock LatestCheckRepository latestCheckRepo;
     @Mock WeeklyAvailabilityReportService availabilityService;
+    @Mock WeeklyScoreCalculator scoreCalculator;
+    @Mock com.certmonitor.repository.TeamRepository teamRepo;
 
     @InjectMocks WeeklyReportKpiService service;
 
@@ -91,6 +93,9 @@ class WeeklyReportKpiServiceTest {
         // Uptime: mevcut haftada %99.5.
         when(availabilityService.weeklyUptime(eq(teamId), any()))
                 .thenReturn(new EmailNotificationService.AvailabilitySummary(2, 2, 99.5, "a", 100.0, "b", 99.0, 0, null));
+        // Özet yolu (buildSummary): açık-alarm domain sorgusu — boş sayfa (NPE önleme).
+        when(alertEventRepo.findFiltered(any(), any(), any(), any(), any(), any(), any(), anyBoolean(), anyList(), any()))
+                .thenReturn(org.springframework.data.domain.Page.empty());
 
         WeeklyReportKpiService.WeeklyReportKpis k = service.compute(teamId, 2026, 28);
 
@@ -125,5 +130,72 @@ class WeeklyReportKpiServiceTest {
         assertThat(k.current().alarmsOpened()).isZero();
         assertThat(k.current().uptimePct()).isNull();
         assertThat(k.trend8w()).isEmpty();
+        assertThat(k.summary()).isNull();   // teamId null → özet yok
+    }
+
+    @Test
+    @DisplayName("summary: aksiyonlar tier ASC → gün ASC; açık-alarm domaini işaretli; type=cert; paragraf tr+en")
+    void compute_summary_actionsOrdered() {
+        long teamId = 9L;
+        when(inventoryRepo.findByTeamIdInAndActiveTrueOrderByDomainAsc(List.of(teamId)))
+                .thenReturn(List.of(inv("d.com", null)));
+        when(latestCheckRepo.findByDomainIn(anyList())).thenReturn(List.of());
+        when(latestCheckRepo.findWeakAlgorithmCandidates()).thenReturn(List.of());
+        when(certificateService.getStatsForTeams(List.of(teamId)))
+                .thenReturn(Map.of("total_certificates", 3, "expiring_in_7_days", 0));
+        stubWindow();
+        // tier2/5g, tier1/40g, tier1/10g → beklenen sıra: tier1/10, tier1/40, tier2/5
+        when(certificateService.getAllLatestForTeams(List.of(teamId))).thenReturn(List.of(
+                certDto("t2.com", 2, 5), certDto("t1b.com", 1, 40), certDto("t1a.com", 1, 10)));
+        when(alertEventRepo.findFiltered(any(), any(), any(), any(), any(), any(), any(), anyBoolean(), anyList(), any()))
+                .thenReturn(new org.springframework.data.domain.PageImpl<>(List.of(alertOn("t1a.com"))));
+
+        WeeklyReportKpiService.WeeklyReportKpis k = service.compute(teamId, 2026, 28);
+
+        assertThat(k.summary()).isNotNull();
+        assertThat(k.summary().actions()).extracting(WeeklyReportKpiService.ActionItem::name)
+                .containsExactly("t1a.com", "t1b.com", "t2.com");
+        assertThat(k.summary().actions().get(0).hasOpenAlarm()).isTrue();
+        assertThat(k.summary().actions().get(0).type()).isEqualTo("cert");
+        assertThat(k.summary().managerText()).containsKeys("tr", "en");
+        assertThat(k.summary().score()).isNotNull();
+    }
+
+    @Test
+    @DisplayName("summary: 8 haftadan eski rapor → null (frontend gizler, backfill yok)")
+    void compute_oldWeek_summaryNull() {
+        long teamId = 9L;
+        when(inventoryRepo.findByTeamIdInAndActiveTrueOrderByDomainAsc(List.of(teamId)))
+                .thenReturn(List.of(inv("d.com", null)));
+        when(latestCheckRepo.findByDomainIn(anyList())).thenReturn(List.of());
+        when(certificateService.getStatsForTeams(List.of(teamId))).thenReturn(Map.of());
+        stubWindow();
+        LocalDate old = LocalDate.now(java.time.ZoneId.of("Europe/Istanbul")).minusWeeks(20);
+        int y = old.get(WeekFields.ISO.weekBasedYear());
+        int wk = old.get(WeekFields.ISO.weekOfWeekBasedYear());
+
+        WeeklyReportKpiService.WeeklyReportKpis k = service.compute(teamId, y, wk);
+        assertThat(k.summary()).isNull();
+    }
+
+    private void stubWindow() {
+        when(availabilityService.windowForMonday(any(LocalDate.class))).thenAnswer(i -> {
+            LocalDate m = i.getArgument(0);
+            return new WeeklyAvailabilityReportService.Window(
+                    m + "T00:00:00", m.plusDays(6) + "T23:59:59",
+                    m.plusDays(6).atTime(23, 59, 59).atZone(ZoneOffset.UTC).toInstant(),
+                    m.get(WeekFields.ISO.weekBasedYear()), m.get(WeekFields.ISO.weekOfWeekBasedYear()),
+                    "Hafta " + m.get(WeekFields.ISO.weekOfWeekBasedYear()));
+        });
+    }
+    private com.certmonitor.dto.CertificateDto certDto(String domain, Integer tier, Integer days) {
+        com.certmonitor.dto.CertificateDto d = new com.certmonitor.dto.CertificateDto();
+        d.setDomain(domain); d.setTier(tier); d.setDaysRemaining(days);
+        return d;
+    }
+    private com.certmonitor.model.AlertEvent alertOn(String domain) {
+        com.certmonitor.model.AlertEvent e = new com.certmonitor.model.AlertEvent();
+        e.setDomain(domain);
+        return e;
     }
 }

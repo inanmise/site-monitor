@@ -140,6 +140,53 @@ public interface AlertEventRepository extends JpaRepository<AlertEvent, Long> {
             @Param("scoped") boolean scoped,
             @Param("scope") List<Long> scope);
 
+    // ── Executive haftalık özet (WeeklyReportKpiService) — alertLevel-bazlı sayımlar ──
+    //    (findFiltered/countFilteredByType alertType'a göre filtreler, alertLevel'a göre DEĞİL.)
+    //    Her sorgu, findFiltered'daki takım-kapsam EXISTS yüklemini taşır (teamId + domain→envanter SY/UG).
+
+    /** Verilen seviyede {@code asOf} anı itibarıyla AÇIK alarm sayısı (createdAt ≤ asOf, o an çözülmemiş) — takım kapsamlı.
+     *  As-of semantiği geçmiş hafta için de yeniden hesaplanabilir → skor hafta-üstü delta'sı gerçek olur. */
+    @Query("""
+            SELECT COUNT(e) FROM AlertEvent e
+            WHERE e.alertLevel = :level
+              AND e.createdAt <= :asOf
+              AND (e.resolvedAt IS NULL OR e.resolvedAt > :asOf)
+              AND (:scoped = FALSE OR e.teamId IN :scope OR EXISTS (
+                      SELECT 1 FROM CertificateInventory i
+                       WHERE i.domain = e.domain
+                         AND (i.teamId IN :scope OR i.ugTeamId IN :scope)))
+            """)
+    long countOpenByLevelAsOf(@Param("level") String level, @Param("asOf") String asOf,
+                              @Param("scoped") boolean scoped, @Param("scope") List<Long> scope);
+
+    /** Verilen seviyede, pencerede AÇILAN alarm sayısı (createdAt ∈ [since, until]) — takım kapsamlı. */
+    @Query("""
+            SELECT COUNT(e) FROM AlertEvent e
+            WHERE e.alertLevel = :level
+              AND e.createdAt >= :since AND e.createdAt <= :until
+              AND (:scoped = FALSE OR e.teamId IN :scope OR EXISTS (
+                      SELECT 1 FROM CertificateInventory i
+                       WHERE i.domain = e.domain
+                         AND (i.teamId IN :scope OR i.ugTeamId IN :scope)))
+            """)
+    long countByLevelOpenedBetween(@Param("level") String level, @Param("since") String since,
+                                   @Param("until") String until, @Param("scoped") boolean scoped,
+                                   @Param("scope") List<Long> scope);
+
+    /** Verilen seviyede, pencerede ÇÖZÜLEN alarm sayısı (resolved, resolvedAt ∈ [since, until]) — takım kapsamlı. */
+    @Query("""
+            SELECT COUNT(e) FROM AlertEvent e
+            WHERE e.alertLevel = :level AND e.resolved = true
+              AND e.resolvedAt >= :since AND e.resolvedAt <= :until
+              AND (:scoped = FALSE OR e.teamId IN :scope OR EXISTS (
+                      SELECT 1 FROM CertificateInventory i
+                       WHERE i.domain = e.domain
+                         AND (i.teamId IN :scope OR i.ugTeamId IN :scope)))
+            """)
+    long countByLevelResolvedBetween(@Param("level") String level, @Param("since") String since,
+                                     @Param("until") String until, @Param("scoped") boolean scoped,
+                                     @Param("scope") List<Long> scope);
+
     /** Domain rename: alarm geçmişini yeni domain'e taşı.
      *  Caller'da @Transactional zorunlu. */
     @Modifying

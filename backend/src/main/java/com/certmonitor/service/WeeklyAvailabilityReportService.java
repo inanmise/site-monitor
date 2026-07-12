@@ -204,10 +204,17 @@ public class WeeklyAvailabilityReportService {
     /** KPI: verilen pencerede takımın (SY team_id) ortalama uptime %'i + özeti — buildTeamReport'un hesap çekirdeği,
      *  HTML/alıcı üretmeden (KPI şeridi + hafta-üstü delta için). Uptime kaynağı = HTTP uptime_checks (port/DNS hariç). */
     public AvailabilitySummary weeklyUptime(Long teamId, Window w) {
+        return weeklyUptime(teamId, w, null);
+    }
+
+    /** {@code tierOnly} verilirse yalnız o tier'daki (CertificateInventory.tier) domainler dahil — sağlık skoru
+     *  tier-1 uptime'ı için. null → tüm aktif domainler. computeRow/summarize çekirdeği aynen kullanılır. */
+    public AvailabilitySummary weeklyUptime(Long teamId, Window w, Integer tierOnly) {
         List<CertificateInventory> domains =
                 inventoryRepo.findByTeamIdAndActiveTrueAndDeletedAtIsNullOrderByDomainAsc(teamId);
         List<AvailabilityRow> rows = new ArrayList<>();
         for (CertificateInventory inv : domains) {
+            if (tierOnly != null && !tierOnly.equals(inv.getTier())) continue;
             int port = inv.getPort() != null ? inv.getPort() : 443;
             List<UptimeCheck> checks = uptimeCheckRepo
                     .findByDomainAndPortAndCheckedAtBetweenOrderByCheckedAtAsc(inv.getDomain(), port, w.fromUtc(), w.toUtc());
