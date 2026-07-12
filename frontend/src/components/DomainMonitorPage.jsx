@@ -329,6 +329,7 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName }) {
             <li>{t('dom.how4')}</li>
             <li>{t('dom.how5')}</li>
             <li>{t('dom.how6')}</li>
+            <li>{t('dom.how7')}</li>
           </ul>
         )}
       </div>
