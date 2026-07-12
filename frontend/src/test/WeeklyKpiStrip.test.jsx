@@ -13,10 +13,11 @@ const t = (key, ...a) => {
   return m[key] ?? key
 }
 
+// Backend snake_case (spring.jackson SNAKE_CASE) — bileşen bu formatı okumalı.
 const kpis = {
-  current: { totalCerts: 10, expiringInWindow: 5, renewedInWindow: 2, alarmsOpened: 4, criticalCerts: 3, criticalDomains: 1, uptimePct: 99.5, weekLabel: '28. Hafta' },
-  previous: { totalCerts: 10, expiringInWindow: 3, renewedInWindow: 1, alarmsOpened: 6, criticalCerts: 3, criticalDomains: 1, uptimePct: 99.0, weekLabel: '27. Hafta' },
-  trend8w: Array.from({ length: 8 }, (_, i) => ({ year: 2026, week: 21 + i, weekLabel: `${21 + i}`, alarmsOpened: i, expiring: 8 - i })),
+  current: { total_certs: 10, expiring_in_window: 5, renewed_in_window: 2, alarms_opened: 4, critical_certs: 3, critical_domains: 1, uptime_pct: 99.5, week_label: '28. Hafta' },
+  previous: { total_certs: 10, expiring_in_window: 3, renewed_in_window: 1, alarms_opened: 6, critical_certs: 3, critical_domains: 1, uptime_pct: 99.0, week_label: '27. Hafta' },
+  trend8w: Array.from({ length: 8 }, (_, i) => ({ year: 2026, week: 21 + i, week_label: `${21 + i}`, alarms_opened: i, expiring: 8 - i })),
 }
 
 describe('WeeklyKpiStrip', () => {
