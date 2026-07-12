@@ -2428,13 +2428,25 @@ public class EmailNotificationService {
                 imageWidths, approverName, approvedAtIso, sentAtIso, null);
     }
 
-    /** {@code approveCtaUrl} doluysa (PO onay-bekleyen maili): rapor içeriğinin üstüne ve
-     *  altına "Raporu onayla" CTA bloğu eklenir; PO raporu görüp maildeki linkten onaylar. */
+    /** approveCtaUrl'süz, KPI özetsiz uyumluluk overload'u. */
     public String buildWeeklyReportHtml(String teamName, String weekLabel, String managerName,
                                         String contentJson, boolean forEmail,
                                         Map<Long, Integer> imageWidths,
                                         String approverName, String approvedAtIso, String sentAtIso,
                                         String approveCtaUrl) {
+        return buildWeeklyReportHtml(teamName, weekLabel, managerName, contentJson, forEmail,
+                imageWidths, approverName, approvedAtIso, sentAtIso, approveCtaUrl, null);
+    }
+
+    /** {@code approveCtaUrl} doluysa (PO onay-bekleyen maili): rapor içeriğinin üstüne ve altına "Raporu onayla"
+     *  CTA bloğu eklenir. {@code kpiSummary} doluysa hero altında canlı KPI özet satırı (toplam/dolan/alarm/kritik/uptime)
+     *  gösterilir — WeeklyReportKpiService'ten (read-only). */
+    @SuppressWarnings("unchecked")
+    public String buildWeeklyReportHtml(String teamName, String weekLabel, String managerName,
+                                        String contentJson, boolean forEmail,
+                                        Map<Long, Integer> imageWidths,
+                                        String approverName, String approvedAtIso, String sentAtIso,
+                                        String approveCtaUrl, Map<String, Object> kpiSummary) {
         String generatedAt = ZonedDateTime.now(IST).format(DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm"));
         // Footer sağ sütun — onay bilgisi (varsa) + oluşturma zamanı; hepsi Europe/Istanbul
         StringBuilder footerRight = new StringBuilder();
@@ -2571,6 +2583,8 @@ public class EmailNotificationService {
             + "<p style='font-size:14px;color:#334155;line-height:1.7;margin:0 0 18px'>"
             + escHtml(teamName) + " ekibi olarak <strong>" + escHtml(weekLabel)
             + "</strong> haftası raporumuzu aşağıda paylaşıyoruz.</p>"
+
+            + weeklyKpiBlock(kpiSummary)
 
             + approveCtaBlock(approveCtaUrl)
 
@@ -3146,6 +3160,25 @@ public class EmailNotificationService {
         return "<table role='presentation' border='0' cellspacing='0' cellpadding='0' width='100%'"
             + " style='width:100%;border-collapse:collapse;margin:0 0 10px'><tr>"
             + tds + "</tr></table>";
+    }
+
+    /** Haftalık rapor e-postası hero KPI özeti — canlı cert/alarm/uptime (WeeklyReportKpiService.current).
+     *  Anahtarlar: total_certs, expiring, alarms, critical, uptime_pct. null/boş → hiç gösterilmez. */
+    private String weeklyKpiBlock(Map<String, Object> k) {
+        if (k == null || k.isEmpty()) return "";
+        Object up = k.get("uptime_pct");
+        String uptime = up instanceof Number n ? String.format(java.util.Locale.US, "%.2f%%", n.doubleValue()) : "—";
+        return "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' style='margin:0 0 16px'>"
+            + "<tr><td style='font-size:11px;font-weight:700;letter-spacing:.08em;color:#64748b;"
+            + "padding-bottom:8px;text-transform:uppercase'>Haftalık Özet</td></tr>"
+            + "<tr><td>"
+            + numChipRow(
+                numChip("Toplam Sertifika", k.get("total_certs"), "#334155"),
+                numChip("Bu Hafta Dolan",   k.get("expiring"),    "#d97706"),
+                numChip("Açılan Alarm",     k.get("alarms"),      "#dc2626"),
+                numChip("Kritik ≤7",   k.get("critical"),    "#ea580c"),
+                numChip("Uptime",           uptime,               "#16a34a"))
+            + "</td></tr></table>";
     }
 
     /** Hex rengi beyazla harmanlar (ratio=renk payı) → düz açık ton. 8-haneli
