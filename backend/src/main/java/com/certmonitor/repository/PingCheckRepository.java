@@ -35,4 +35,11 @@ public interface PingCheckRepository extends JpaRepository<PingCheck, Long> {
          + "ORDER BY c.checkedAt DESC LIMIT :limit")
     List<Object[]> responseSeriesRaw(@Param("id") Long id, @Param("from") String from,
                                      @Param("to") String to, @Param("limit") int limit);
+
+    /** Haftalık izleme özeti: [monitorId, toplam, BAŞARILI, ort_rtt_ms] — ids ∩ [from,to]; başarı = up=true. */
+    @Query("SELECT c.monitorId, COUNT(c), SUM(CASE WHEN c.up = true THEN 1L ELSE 0L END), AVG(c.rttMs) "
+         + "FROM PingCheck c WHERE c.monitorId IN :ids AND c.checkedAt >= :from AND c.checkedAt <= :to "
+         + "GROUP BY c.monitorId")
+    List<Object[]> weeklyStatsByMonitor(@Param("ids") java.util.Collection<Long> ids,
+                                        @Param("from") String from, @Param("to") String to);
 }

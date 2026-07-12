@@ -64,6 +64,7 @@ public class WeeklyReportService {
     private final AppSettingsService appSettings;
     private final PermissionService permissionService;
     private final WeeklyReportKpiService kpiService;   // e-posta hero KPI özeti (read-only, durum makinesinden bağımsız)
+    private final MonitoringWeeklyStatsService monitoringStatsService;   // e-posta izleme göstergeleri (read-only)
 
     /** static resetTemplate için paylaşılan, thread-safe mapper — her çağrıda
      *  yeni ObjectMapper kurma maliyetini önler (Jackson 3 mapper'ları yeniden
@@ -705,6 +706,25 @@ public class WeeklyReportService {
                 m.put("manager_text", s.managerText() != null ? s.managerText().getOrDefault("tr", "") : "");
                 m.put("actions",   actionMaps(s.actions()));
                 m.put("lookahead", actionMaps(s.lookahead()));
+            }
+            // İzleme göstergeleri — tür başına tek satır (tür/aktif/erişim%/açılan alarm)
+            try {
+                MonitoringWeeklyStatsService.MonitoringStats mon =
+                        monitoringStatsService.compute(r.getTeamId(), r.getReportYear(), r.getWeekNo());
+                if (mon != null) {
+                    List<Map<String, Object>> rows = new java.util.ArrayList<>();
+                    for (MonitoringWeeklyStatsService.TypeStats ts : mon.types()) {
+                        Map<String, Object> row = new java.util.LinkedHashMap<>();
+                        row.put("type", ts.type());
+                        row.put("active", ts.activeMonitors());
+                        row.put("success_pct", ts.successRate());
+                        row.put("alarms", ts.alarmsOpened());
+                        rows.add(row);
+                    }
+                    m.put("monitoring", rows);
+                }
+            } catch (Exception e) {
+                log.warn("Haftalık rapor e-posta izleme özeti hesaplanamadı: report={} — {}", r.getId(), e.getMessage());
             }
             return m;
         } catch (Exception e) {

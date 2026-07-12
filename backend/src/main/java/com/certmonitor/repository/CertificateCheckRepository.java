@@ -27,6 +27,13 @@ public interface CertificateCheckRepository extends JpaRepository<CertificateChe
          + "FROM CertificateCheck c WHERE c.checkedAt >= :cutoff AND (c.maintenance = false OR c.maintenance IS NULL) GROUP BY c.domain")
     List<Object[]> aggregateStatusCountsSince(@Param("cutoff") String cutoff);
 
+    /** Haftalık izleme özeti: [domain, toplam, BAŞARILI] — domains ∩ [from,to]; başarı = status<>'error' (bakım hariç). */
+    @Query("SELECT c.domain, COUNT(c), SUM(CASE WHEN c.status <> 'error' THEN 1L ELSE 0L END) "
+         + "FROM CertificateCheck c WHERE c.domain IN :domains AND c.checkedAt >= :from AND c.checkedAt <= :to "
+         + "AND (c.maintenance = false OR c.maintenance IS NULL) GROUP BY c.domain")
+    List<Object[]> weeklyStatsByDomain(@Param("domains") java.util.Collection<String> domains,
+                                       @Param("from") String from, @Param("to") String to);
+
     @Query("SELECT c FROM CertificateCheck c WHERE c.domain = :domain AND c.checkedAt >= :from AND c.checkedAt <= :to ORDER BY c.checkedAt DESC LIMIT :limit")
     List<CertificateCheck> findByDomainAndDateRange(
         @Param("domain") String domain,

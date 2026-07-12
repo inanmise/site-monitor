@@ -28,4 +28,11 @@ public interface DomainCheckRepository extends JpaRepository<DomainCheck, Long> 
     List<DomainCheck> findLatestPerMonitor();
 
     long countByMonitorIdAndCheckedAtGreaterThanEqual(Long monitorId, String since);
+
+    /** Haftalık izleme özeti: [monitorId, toplam, BAŞARILI] — ids ∩ [from,to]; başarı = source<>'NONE' (sorgu başarılı). */
+    @Query("SELECT r.monitorId, COUNT(r), SUM(CASE WHEN r.source <> 'NONE' THEN 1L ELSE 0L END) "
+         + "FROM DomainCheck r WHERE r.monitorId IN :ids AND r.checkedAt >= :from AND r.checkedAt <= :to "
+         + "GROUP BY r.monitorId")
+    List<Object[]> weeklyStatsByMonitor(@Param("ids") java.util.Collection<Long> ids,
+                                        @Param("from") String from, @Param("to") String to);
 }

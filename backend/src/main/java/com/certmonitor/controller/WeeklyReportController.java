@@ -3,6 +3,7 @@ package com.certmonitor.controller;
 import com.certmonitor.model.WeeklyReport;
 import com.certmonitor.model.WeeklyReportImage;
 import com.certmonitor.service.AuditService;
+import com.certmonitor.service.MonitoringWeeklyStatsService;
 import com.certmonitor.service.WeeklyReportKpiService;
 import com.certmonitor.service.WeeklyReportReminderService;
 import com.certmonitor.service.WeeklyReportService;
@@ -38,6 +39,7 @@ public class WeeklyReportController {
     private final WeeklyReportReminderService reminderService;
     private final AuditService auditService;
     private final WeeklyReportKpiService kpiService;
+    private final MonitoringWeeklyStatsService monitoringStatsService;
 
     private static final DateTimeFormatter ISO =
             DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
@@ -109,6 +111,14 @@ public class WeeklyReportController {
     public ResponseEntity<Map<String, Object>> kpis(@PathVariable Long id, HttpSession session) {
         WeeklyReport r = service.get(id, actor(session));   // yetki + yükleme (get ile aynı)
         return ok(Map.of("data", kpiService.compute(r.getTeamId(), r.getReportYear(), r.getWeekNo())));
+    }
+
+    /** İzleme türü bazında haftalık göstergeler — AYRI (lazy) endpoint: ağır 7-tür toplama yalnız akordeon
+     *  açılınca çalışsın; eager report-open yolunu (tek pod) hafif tutar. YALNIZ-OKUMA, durum makinesine dokunmaz. */
+    @GetMapping("/{id}/monitoring-stats")
+    public ResponseEntity<Map<String, Object>> monitoringStats(@PathVariable Long id, HttpSession session) {
+        WeeklyReport r = service.get(id, actor(session));
+        return ok(Map.of("data", monitoringStatsService.compute(r.getTeamId(), r.getReportYear(), r.getWeekNo())));
     }
 
     // ── Düzenleme kilidi ──────────────────────────────────────────────────────

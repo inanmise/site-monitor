@@ -3184,8 +3184,45 @@ public class EmailNotificationService {
     /** Özet + KPI şeridini "Haftalık Özet ve Göstergeler" başlıklı rapor bölümüne sarar (ekrandaki akordeonla tutarlı).
      *  İçerik yoksa (eski/veri-yok) boş bölüm ÇİZMEZ. */
     private String weeklyOverviewSection(Map<String, Object> kpiSummary, String accent) {
-        String body = weeklySummaryBlock(kpiSummary) + weeklyKpiBlock(kpiSummary);
+        String body = weeklySummaryBlock(kpiSummary) + weeklyKpiBlock(kpiSummary) + weeklyMonitoringBlock(kpiSummary);
         return body.isBlank() ? "" : reportSection("Haftalık Özet ve Göstergeler", body, accent);
+    }
+
+    /** İzleme göstergeleri — tür başına tek satır (tür · izleme · erişim% · sorun), Outlook-safe.
+     *  Anahtar: monitoring (List&lt;Map&gt;: type/active/success_pct/alarms). İzlemesi 0 olan tür satırı gizlenir; hiç yoksa boş. */
+    @SuppressWarnings("unchecked")
+    private String weeklyMonitoringBlock(Map<String, Object> k) {
+        Object mon = k == null ? null : k.get("monitoring");
+        if (!(mon instanceof List<?> list) || list.isEmpty()) return "";
+        Map<String, String> labels = Map.of("cert", "Sertifika", "domain", "Alan Adı", "http", "HTTP/Website",
+                "ping", "Ping", "port", "Port", "dns", "DNS", "keyword", "Keyword");
+        StringBuilder rows = new StringBuilder();
+        for (Object o : list) {
+            if (!(o instanceof Map<?, ?> row)) continue;
+            int active = row.get("active") instanceof Number n ? n.intValue() : 0;
+            if (active == 0) continue;
+            String label = labels.getOrDefault(String.valueOf(row.get("type")), String.valueOf(row.get("type")));
+            Object rate = row.get("success_pct");
+            String rateStr = rate instanceof Number rn ? String.format(java.util.Locale.US, "%.1f%%", rn.doubleValue()) : "—";
+            int alarms = row.get("alarms") instanceof Number an ? an.intValue() : 0;
+            String alarmColor = alarms > 0 ? "#dc2626" : "#64748b";
+            rows.append("<tr>")
+              .append("<td style='padding:5px 8px;font-size:13px;color:#334155;border-bottom:1px solid #eef1f4'>").append(escHtml(label)).append("</td>")
+              .append("<td align='right' style='padding:5px 8px;font-size:13px;color:#334155;border-bottom:1px solid #eef1f4'>").append(active).append("</td>")
+              .append("<td align='right' style='padding:5px 8px;font-size:13px;font-weight:700;color:#334155;border-bottom:1px solid #eef1f4'>").append(rateStr).append("</td>")
+              .append("<td align='right' style='padding:5px 8px;font-size:13px;font-weight:700;color:").append(alarmColor).append(";border-bottom:1px solid #eef1f4'>").append(alarms).append("</td>")
+              .append("</tr>");
+        }
+        if (rows.length() == 0) return "";
+        String head = "<div style='font-size:10px;font-weight:700;letter-spacing:.08em;color:#64748b;text-transform:uppercase;margin:12px 0 4px'>İzleme Göstergeleri</div>";
+        String th = "<tr>"
+              + "<td style='padding:5px 8px;font-size:11px;font-weight:700;color:#94a3b8;text-transform:uppercase;border-bottom:1px solid #e5e8ec'>Tür</td>"
+              + "<td align='right' style='padding:5px 8px;font-size:11px;font-weight:700;color:#94a3b8;text-transform:uppercase;border-bottom:1px solid #e5e8ec'>İzleme</td>"
+              + "<td align='right' style='padding:5px 8px;font-size:11px;font-weight:700;color:#94a3b8;text-transform:uppercase;border-bottom:1px solid #e5e8ec'>Erişim</td>"
+              + "<td align='right' style='padding:5px 8px;font-size:11px;font-weight:700;color:#94a3b8;text-transform:uppercase;border-bottom:1px solid #e5e8ec'>Sorun</td>"
+              + "</tr>";
+        return head + "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' style='margin:0 0 12px;border-collapse:collapse'>"
+                + th + rows + "</table>";
     }
 
     /** Executive özet bloğu (e-posta) — sağlık skoru + yönetici paragrafı + iki kompakt tablo (aksiyon, 30 gün).

@@ -8730,6 +8730,31 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .wr-accordion-body.open { display: block; }
 .wr-accordion-body > .wr-kpi-strip:last-child { margin-bottom: 6px; }
 
+/* İzleme Göstergeleri (04 · İzleme) — izleme türü bazında kart grid'i */
+.wr-mon { margin-top: 18px; }
+.wr-mon-strip--loading { color: var(--text-light); padding: 14px; text-align: center; }
+.wr-mon-title { font-size: .68rem; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; color: var(--text-light); margin-bottom: 10px; }
+.wr-mon-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 12px; }
+.wr-mon-card { background: var(--bg-card); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; }
+.wr-mon-card-top { display: flex; align-items: center; gap: 7px; }
+.wr-mon-icon { color: var(--text-light); }
+.wr-mon-card-name { font-size: .8rem; font-weight: 700; color: var(--text); }
+.wr-mon-rate { font-size: 1.8rem; font-weight: 300; line-height: 1; display: flex; align-items: baseline; gap: 8px; }
+.wr-mon-rate--good { color: var(--ok, #16a34a); }
+.wr-mon-rate--amber { color: var(--severity-warn, #d97706); }
+.wr-mon-rate--bad { color: var(--danger, #dc3545); }
+.wr-mon-rate--na { color: var(--text-light); }
+.wr-mon-delta { font-size: .72rem; font-weight: 700; }
+.wr-mon-delta.up { color: var(--ok, #16a34a); }
+.wr-mon-delta.down { color: var(--danger, #dc3545); }
+.wr-mon-lines { display: flex; flex-direction: column; gap: 2px; font-size: .74rem; color: var(--text-light); }
+.wr-mon-empty { font-size: .8rem; color: var(--text-light); padding: 6px 0; }
+.wr-mon-top { border-top: 1px solid var(--border); padding-top: 6px; }
+.wr-mon-top-hdr { font-size: .6rem; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--text-light); margin-bottom: 4px; }
+.wr-mon-top-row { display: flex; justify-content: space-between; gap: 8px; font-size: .74rem; padding: 1px 0; }
+.wr-mon-top-name { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wr-mon-top-val { color: var(--text-light); font-weight: 600; white-space: nowrap; }
+
 /* Bölüm başlığı — ince ayraç çizgisi (executive hiyerarşi) */
 .wr-editor .show-section-header { border-bottom: 1px solid var(--border); }
 
@@ -8741,7 +8766,7 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
   .wr-editor { box-shadow: none !important; border: none !important; padding: 0 !important; }
   .wr-accordion-body { display: block !important; }   /* yazdırırken özet daima açık */
   .wr-accordion-chev { display: none !important; }
-  .wr-kpi-strip, .wr-sum, .wr-sum-row { break-inside: avoid; }
+  .wr-kpi-strip, .wr-sum, .wr-sum-row, .wr-mon-card { break-inside: avoid; }
   .wr-editor .show-section-header { break-before: page; break-after: avoid; }
   .wr-editor .wr-brief + .wr-kpi-strip, .wr-editor .show-section-header:first-of-type { break-before: avoid; }
   body { background: #fff !important; }
