@@ -8,6 +8,7 @@ import MaintenanceBadge from './ui/MaintenanceBadge.jsx'
 import { Play, Pencil, X, RefreshCw, Plus, Trash2, CalendarClock, Users, Layers, FlaskConical, Check, AlertTriangle,
   LayoutDashboard, CheckCircle2, TriangleAlert, HelpCircle, ShieldAlert, Building2, Activity, BarChart3, ChevronDown, Calendar } from 'lucide-react'
 import AlertHistory from './admin/AlertHistory.jsx'
+import DomainRegistrationTab from './DomainRegistrationTab.jsx'
 import MonitorStatsBar from './MonitorStatsBar.jsx'
 import DomainExpiryTrace from './DomainExpiryTrace.jsx'
 const MonitorNotes = lazy(() => import('./MonitorNotes.jsx'))
@@ -445,6 +446,7 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName }) {
             <div className="upt-modal-divider" />
             <div className="modal-tabs">
               <button className={`modal-tab${detailTab === 'control' ? ' active' : ''}`} onClick={() => setDetailTab('control')}>{t('dom.tabControl')}</button>
+              <button className={`modal-tab${detailTab === 'registration' ? ' active' : ''}`} onClick={() => setDetailTab('registration')}>{t('dom.tabRegistration')}</button>
               <button className={`modal-tab${detailTab === 'alerts' ? ' active' : ''}`} onClick={() => setDetailTab('alerts')}>{t('dom.tabAlerts')}</button>
               <button className={`modal-tab${detailTab === 'notes' ? ' active' : ''}`} onClick={() => setDetailTab('notes')}>{t('dom.tabGuide')}</button>
             </div>
@@ -490,6 +492,7 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName }) {
               )}
             </>)}
 
+            {detailTab === 'registration' && <DomainRegistrationTab monitor={selected} />}
             {detailTab === 'alerts' && <AlertHistory domain={selected.domain} />}
             {detailTab === 'notes' && (
               <Suspense fallback={<div className="upt-modal-loading">…</div>}>

@@ -101,6 +101,12 @@ public class DomainCheckerService {
         Boolean nsResolves = null;
         try { nsResolves = Boolean.TRUE.equals(dns.check(reg, "NS").get("success")); } catch (Exception ignore) {}
 
+        // A/AAAA çözümlenen IP'ler + reverse-DNS (best-effort — Domain Kaydı görünümü)
+        List<String> resolvedIps = new ArrayList<>();
+        try { resolvedIps.addAll(asList(dns.check(reg, "A").get("values"))); } catch (Exception ignore) {}
+        try { resolvedIps.addAll(asList(dns.check(reg, "AAAA").get("values"))); } catch (Exception ignore) {}
+        List<String> hostnames = reverseDns(resolvedIps);
+
         // Değişiklik tespiti (yalnız persisted + veri var)
         boolean changed = false;
         String changeDetail = null;
@@ -126,8 +132,12 @@ public class DomainCheckerService {
         out.put("registration_date", info.get("registration_date"));
         out.put("last_changed", info.get("last_changed"));
         out.put("registrar", registrar);
+        out.put("registrar_iana_id", info.get("registrar_iana_id"));
+        out.put("dnssec", info.get("dnssec"));
         out.put("status_codes", statusCodes);
         out.put("nameservers", nameservers);
+        out.put("resolved_ips", resolvedIps);
+        out.put("hostnames", hostnames);
         out.put("ns_resolves", nsResolves);
         out.put("changed", changed);
         out.put("change_detail", changeDetail);
@@ -152,8 +162,12 @@ public class DomainCheckerService {
             dc.setRegistrationDate((String) out.get("registration_date"));
             dc.setLastChanged((String) out.get("last_changed"));
             dc.setRegistrar((String) out.get("registrar"));
+            dc.setRegistrarIanaId((String) out.get("registrar_iana_id"));
+            dc.setDnssec((String) out.get("dnssec"));
             dc.setStatusCodes(join(asList(out.get("status_codes"))));
             dc.setNameservers(join(asList(out.get("nameservers"))));
+            dc.setResolvedIps(join(asList(out.get("resolved_ips"))));
+            dc.setHostnames(join(asList(out.get("hostnames"))));
             dc.setNsResolves((Boolean) out.get("ns_resolves"));
             dc.setChanged(changed);
             dc.setRawSummary(summary(out));
@@ -163,6 +177,21 @@ public class DomainCheckerService {
         } catch (Exception e) {
             log.warn("Domain kaydı yazılamadı: {} — {}", out.get("domain"), e.getMessage());
         }
+    }
+
+    /** Çözülen IP'ler için reverse-DNS (PTR) — best-effort, en fazla ilk 8 IP; PTR yoksa (host==ip) atlanır. */
+    private static List<String> reverseDns(List<String> ips) {
+        List<String> out = new ArrayList<>();
+        int n = 0;
+        for (String ip : ips) {
+            if (ip == null || ip.isBlank()) continue;
+            if (n++ >= 8) break;
+            try {
+                String host = java.net.InetAddress.getByName(ip).getCanonicalHostName();
+                if (host != null && !host.equalsIgnoreCase(ip)) out.add(host.toLowerCase(java.util.Locale.ROOT));
+            } catch (Exception ignore) {}
+        }
+        return out;
     }
 
     private Map<String, Object> unknownResult(String domain, String error, String checkedAt) {

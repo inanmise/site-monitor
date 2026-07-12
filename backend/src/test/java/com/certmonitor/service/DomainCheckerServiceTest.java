@@ -38,6 +38,9 @@ class DomainCheckerServiceTest {
         svc = new DomainCheckerService(psl, rdap, whois, dns, checkRepo);
         lenient().when(whois.enabled()).thenReturn(false);
         lenient().when(dns.check(anyString(), eq("NS"))).thenReturn(Map.of("success", true));
+        // A/AAAA çözümü (Domain Kaydı): varsayılan boş → çoğu test reverse-DNS PTR beklemesine takılmasın (hız).
+        lenient().when(dns.check(anyString(), eq("A"))).thenReturn(Map.of("values", List.of()));
+        lenient().when(dns.check(anyString(), eq("AAAA"))).thenReturn(Map.of("values", List.of()));
     }
 
     private Map<String, Object> rdapOk(String expiry, List<String> status) {
@@ -78,6 +81,21 @@ class DomainCheckerServiceTest {
         Map<String, Object> r = svc.test("example.com", 30, 7);
         assertThat(r.get("status")).isEqualTo("CRITICAL");
         assertThat(r.get("epp_critical")).isEqualTo(true);
+    }
+
+    @Test
+    @DisplayName("registration alanları out'a akar: registrar_iana_id, dnssec, resolved_ips")
+    @SuppressWarnings("unchecked")
+    void registrationFieldsFlowThrough() {
+        Map<String, Object> info = rdapOk(LocalDate.now().plusDays(200).toString(), List.of("client transfer prohibited"));
+        info.put("registrar_iana_id", "292");
+        info.put("dnssec", "signed");
+        when(rdap.lookup(eq("example.com"), any())).thenReturn(info);
+        when(dns.check(anyString(), eq("A"))).thenReturn(Map.of("values", List.of("192.0.2.1")));   // TEST-NET-1 (RFC5737)
+        Map<String, Object> r = svc.test("example.com", 30, 7);
+        assertThat(r.get("registrar_iana_id")).isEqualTo("292");
+        assertThat(r.get("dnssec")).isEqualTo("signed");
+        assertThat((List<String>) r.get("resolved_ips")).contains("192.0.2.1");
     }
 
     @Test

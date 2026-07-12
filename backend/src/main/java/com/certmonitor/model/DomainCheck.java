@@ -42,6 +42,13 @@ public class DomainCheck {
 
     private String registrar;
 
+    /** Registrar'ın IANA ID'si (RDAP entity.publicIds "IANA Registrar ID"). */
+    @Column(name = "registrar_iana_id")
+    private String registrarIanaId;
+
+    /** DNSSEC durumu: "signed" | "unsigned" | null (bilinmiyor). RDAP secureDNS.delegationSigned / WHOIS DNSSEC satırı. */
+    private String dnssec;
+
     /** EPP status kodları (virgülle) — redemptionPeriod, clientTransferProhibited vb. */
     @Column(name = "status_codes", columnDefinition = "TEXT")
     private String statusCodes;
@@ -49,6 +56,14 @@ public class DomainCheck {
     /** Nameserver'lar (virgülle). */
     @Column(columnDefinition = "TEXT")
     private String nameservers;
+
+    /** Domain'in A/AAAA'dan çözülen IP adresleri (virgülle). */
+    @Column(name = "resolved_ips", columnDefinition = "TEXT")
+    private String resolvedIps;
+
+    /** Çözülen IP'lerin reverse-DNS (PTR) host adları (virgülle). */
+    @Column(columnDefinition = "TEXT")
+    private String hostnames;
 
     /** DNS çapraz doğrulama: domain'in NS kayıtları çözülüyor mu. */
     @Column(name = "ns_resolves")

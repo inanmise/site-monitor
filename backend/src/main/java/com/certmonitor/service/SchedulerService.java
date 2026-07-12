@@ -362,6 +362,11 @@ public class SchedulerService {
         patch("CREATE TABLE IF NOT EXISTS dns_records (id INTEGER PRIMARY KEY AUTOINCREMENT, monitor_id INTEGER NOT NULL, record_type TEXT, value TEXT, changed INTEGER NOT NULL DEFAULT 0, previous_value TEXT, checked_at TEXT)");
         patch("ALTER TABLE dns_monitors ADD COLUMN slow_threshold_ms INTEGER");   // per-monitor DNS_SLOW eşiği; null=global (ddl-auto zaten ekler — güvenlik ağı)
         patch("ALTER TABLE domain_monitors ADD COLUMN check_timeout_ms INTEGER"); // per-monitor RDAP timeout (ms); null=global (ddl-auto zaten ekler — güvenlik ağı)
+        // Domain Kaydı (registration) — RDAP/WHOIS'ten ek alanlar (ddl-auto eski DB'yi backfill etmez → güvenlik ağı).
+        patch("ALTER TABLE domain_checks ADD COLUMN registrar_iana_id TEXT");
+        patch("ALTER TABLE domain_checks ADD COLUMN dnssec TEXT");
+        patch("ALTER TABLE domain_checks ADD COLUMN resolved_ips TEXT");
+        patch("ALTER TABLE domain_checks ADD COLUMN hostnames TEXT");
 
         // ── Performans index'leri (sıcak sorgu yolları) — idempotent, PG IF NOT EXISTS ──
         // Tablolar bu noktada Hibernate ddl-auto=update ile oluşmuş durumda.
