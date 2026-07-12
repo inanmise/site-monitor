@@ -30,7 +30,9 @@ import com.certmonitor.model.HttpCheck;
 import com.certmonitor.repository.HttpMonitorRepository;
 import com.certmonitor.repository.HttpCheckRepository;
 import com.certmonitor.model.DomainMonitor;
+import com.certmonitor.model.DomainCheck;
 import com.certmonitor.repository.DomainMonitorRepository;
+import com.certmonitor.repository.DomainCheckRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -109,6 +111,7 @@ public class SchedulerService {
     private final RdapDomainExpiryService rdapDomainExpiryService;
 
     private final DomainMonitorRepository domainMonitorRepo;
+    private final DomainCheckRepository domainCheckRepo;
     private final DomainCheckerService domainCheckerService;
 
     private final NetworkOutageEventRepository networkOutageRepo;
@@ -1793,6 +1796,60 @@ public class SchedulerService {
         }
     }
 
+    // ── Kritik domain ikinci günlük kontrolü — YALNIZ son kontrolünde eşik-altı (days_remaining ≤ threshold) aktif domainler ──
+    //    Amaç: kritik bir domain gün içinde YENİLENİRSE (bitiş uzarsa) açık DOMAINMON_EXPIRY alarmı ertesi sabahki
+    //    sweep'i beklemeden aynı gün (16:00) otomatik kapansın; durum taze kalsın.
+    //    Ayrı scheduler_lock anahtarı ("domain-critical-sweep") ile HA'da tek pod çalışır — günlük "domain-sweep" ile çakışmaz.
+    //    evaluateDomainAlarmsNow reAlert dedupe'unu koruduğundan HÂLÂ kritik domain için İKİNCİ bir bildirim ÜRETMEZ:
+    //    yalnız durumu günceller / yenilenmişse alarmı kapatır.
+    @Scheduled(cron = "${cert.monitor.domain.critical-check-cron:0 0 16 * * *}", zone = "Europe/Istanbul")
+    public void runCriticalDomainChecks() {
+        if (!appSettings.getBoolean("cert.monitor.domain.alert-enabled", true)) return;            // domain izleme duraklatıldı → hiç kontrol yok
+        if (!appSettings.getBoolean("cert.monitor.domain.critical-check-enabled", true)) return;   // ikinci kontrol ops kill-switch
+        if (!tryAcquireSchedulerLock("domain-critical-sweep", sweepLockTtlMinutes)) {
+            log.debug("Kritik domain sweep — lock başka instance'da, atlanıyor");
+            return;
+        }
+        try {
+            runCriticalDomainChecksLocked();
+        } finally {
+            releaseSchedulerLock("domain-critical-sweep");
+        }
+    }
+
+    /** Son kontrolünde days_remaining ≤ eşik olan aktif domainleri ikinci kez kontrol eder.
+     *  RDAP dostu: günlük sweep ile AYNI sıralı akış (paralellik yok; RdapDomainClient 429-retry içeride).
+     *  Her domain için yeni bir domain_checks satırı yazılır (aynı gün 2 satır — beklenen, dedupe yok). */
+    private void runCriticalDomainChecksLocked() {
+        int threshold = appSettings.getInt("cert.monitor.domain.critical-check-threshold-days", 7);
+        // Son kontrol days_remaining ≤ eşik olan monitör id'leri (tek toplu sorgu — N+1 yok)
+        java.util.Set<Long> criticalIds = domainCheckRepo.findLatestPerMonitor().stream()
+                .filter(c -> c.getMonitorId() != null && c.getDaysRemaining() != null && c.getDaysRemaining() <= threshold)
+                .map(DomainCheck::getMonitorId)
+                .collect(java.util.stream.Collectors.toSet());
+        if (criticalIds.isEmpty()) {
+            log.debug("Kritik domain ikinci kontrolü: eşik (≤{}g) altında domain yok", threshold);
+            return;
+        }
+        List<DomainMonitor> monitors = domainMonitorRepo.findByActiveTrue().stream()
+                .filter(m -> criticalIds.contains(m.getId()))
+                .toList();
+        int checked = 0, renewed = 0;
+        for (DomainMonitor m : monitors) {
+            try {
+                Map<String, Object> r = domainCheckerService.check(m);   // yeni domain_checks satırı persist eder
+                evaluateDomainAlarmsNow(m, r);                           // yenilendiyse EXPIRY alarmı kapanır; hâlâ kritikse reAlert dedupe → yeni bildirim YOK
+                Integer days = r.get("days_remaining") instanceof Number n ? n.intValue() : null;
+                int warn = m.getWarningDays() != null ? m.getWarningDays() : 30;
+                if (days != null && days > warn) renewed++;
+                checked++;
+            } catch (Exception e) {
+                log.warn("Kritik domain kontrolü başarısız: {} — {}", m.getDomain(), e.getMessage());
+            }
+        }
+        log.info("Kritik domain ikinci kontrolü tamam: {} domain (eşik ≤{}g), {} yenilenmiş", checked, threshold, renewed);
+    }
+
     /** Domain izleme her tip için AYRI sweep üretir: UNKNOWN / EXPIRY / STATUS(EPP) / CHANGED. */
     private void runDomainChecksLocked() {
         List<DomainMonitor> monitors = domainMonitorRepo.findByActiveTrue();
@@ -1844,9 +1901,10 @@ public class SchedulerService {
 
         // UNKNOWN — "veri yok" kendi başına alarm (körlük)
         unknownSweep.add(domainItem(EscalationService.TYPE_DOMAINMON_UNKNOWN, m, r, !"UNKNOWN".equals(status), "WARNING"));
-        // EXPIRY — gün eşiği
+        // EXPIRY — gün eşiği. Seviye kartın DURUMU ile HİZALI olmalı (DomainCheckerService: days≤crit→CRITICAL,
+        // crit<days≤warn→WARNING); aksi halde 25 günlük (WARNING durumundaki) bir monitör mailde "YÜKSEK" görünür.
         boolean expiryDown = days != null && days <= warn;
-        String expiryLevel = (days != null && (days < 0 || days <= crit)) ? "CRITICAL" : "HIGH";
+        String expiryLevel = (days != null && (days < 0 || days <= crit)) ? "CRITICAL" : "WARNING";
         expirySweep.add(domainItem(EscalationService.TYPE_DOMAINMON_EXPIRY, m, r, !expiryDown, expiryLevel));
         // STATUS — EPP kodları
         statusSweep.add(domainItem(EscalationService.TYPE_DOMAINMON_STATUS, m, r,

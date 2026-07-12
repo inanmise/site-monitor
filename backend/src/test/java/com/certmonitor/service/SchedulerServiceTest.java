@@ -16,6 +16,7 @@ import com.certmonitor.repository.PingCheckRepository;
 import com.certmonitor.repository.HttpMonitorRepository;
 import com.certmonitor.repository.HttpCheckRepository;
 import com.certmonitor.repository.DomainMonitorRepository;
+import com.certmonitor.repository.DomainCheckRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -47,6 +48,8 @@ import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 
 /**
  * Baseline coverage for SchedulerService. The service has a 16-dependency
@@ -90,6 +93,7 @@ class SchedulerServiceTest {
     @Mock HttpCheckRepository httpCheckRepo;
     @Mock RdapDomainExpiryService rdapDomainExpiryService;
     @Mock DomainMonitorRepository domainMonitorRepo;
+    @Mock DomainCheckRepository domainCheckRepo;
     @Mock DomainCheckerService domainCheckerService;
     @Mock NetworkOutageEventRepository networkOutageRepo;
     @Mock WeeklyReportReminderService weeklyReportReminderService;
@@ -112,7 +116,7 @@ class SchedulerServiceTest {
                 keywordCheckerService, keywordMonitorRepo, keywordResultRepo,
                 pingCheckerService, pingMonitorRepo, pingCheckRepo,
                 httpCheckerService, httpMonitorRepo, httpCheckRepo, rdapDomainExpiryService,
-                domainMonitorRepo, domainCheckerService,
+                domainMonitorRepo, domainCheckRepo, domainCheckerService,
                 networkOutageRepo,
                 weeklyReportReminderService, weeklyAvailabilityReportService, incidentService, appSettings);
         ReflectionTestUtils.setField(scheduler, "certCheckExecutor", certCheckExecutor);
@@ -358,6 +362,81 @@ class SchedulerServiceTest {
         assertThat(it.up()).isFalse();   // resolver'lar arası tutarsız → down
         assertThat(it.ctxExtra().get("team_id")).isEqualTo(2L);
         assertThat(it.ctxExtra().get("resolver_detail")).asString().contains("8.8.8.8");
+    }
+
+    // ── Kritik domain İKİNCİ günlük kontrolü (runCriticalDomainChecks) ─────────
+
+    private com.certmonitor.model.DomainCheck latestCheck(long monitorId, Integer days) {
+        com.certmonitor.model.DomainCheck c = new com.certmonitor.model.DomainCheck();
+        c.setMonitorId(monitorId); c.setDaysRemaining(days);
+        return c;
+    }
+    private com.certmonitor.model.DomainMonitor activeDomain(long id, String domain, Long teamId) {
+        com.certmonitor.model.DomainMonitor m = new com.certmonitor.model.DomainMonitor();
+        m.setId(id); m.setDomain(domain); m.setTeamId(teamId); m.setActive(true);
+        return m;
+    }
+    private Map<String, Object> checkResult(String status, int days) {
+        Map<String, Object> r = new java.util.HashMap<>();
+        r.put("status", status); r.put("days_remaining", days);
+        return r;
+    }
+
+    @Test
+    @DisplayName("runCriticalDomainChecks: son kontrol days > eşik → domain SEÇİLMEZ (ikinci kontrol yok)")
+    void runCriticalDomainChecks_aboveThreshold_notSelected() {
+        // Eşik 7 (varsayılan). 25 günlük domain WARNING ama KRİTİK değil → ikinci kontrole girmez.
+        when(domainCheckRepo.findLatestPerMonitor()).thenReturn(List.of(latestCheck(1L, 25)));
+
+        scheduler.runCriticalDomainChecks();
+
+        verify(domainMonitorRepo, never()).findByActiveTrue();   // aday yok → aktif liste bile çekilmez
+        verify(domainCheckerService, never()).check(any());
+    }
+
+    @Test
+    @DisplayName("runCriticalDomainChecks: son kontrol days ≤ eşik → domain SEÇİLİR (yeniden kontrol + alarm değerlendir)")
+    void runCriticalDomainChecks_belowThreshold_selectedAndRechecked() {
+        when(domainCheckRepo.findLatestPerMonitor())
+                .thenReturn(List.of(latestCheck(1L, 5), latestCheck(2L, 25)));   // yalnız #1 kritik
+        com.certmonitor.model.DomainMonitor crit = activeDomain(1L, "crit.example.com", 7L);
+        com.certmonitor.model.DomainMonitor safe = activeDomain(2L, "safe.example.com", 7L);
+        when(domainMonitorRepo.findByActiveTrue()).thenReturn(List.of(crit, safe));
+        when(domainCheckerService.check(crit)).thenReturn(checkResult("CRITICAL", 5));
+
+        scheduler.runCriticalDomainChecks();
+
+        verify(domainCheckerService, times(1)).check(crit);
+        verify(domainCheckerService, never()).check(safe);       // eşik üstü → dokunulmaz
+        // evaluateDomainAlarmsNow çalıştı (dedupe AYNI pipeline'da → ikinci bildirim üretmez, yalnız değerlendirir)
+        verify(monitoringOutageService).handleSweepResults(eq(EscalationService.TYPE_DOMAINMON_EXPIRY), anyList());
+    }
+
+    @Test
+    @DisplayName("runCriticalDomainChecks: kritik domain gün içinde YENİLENDİ → EXPIRY sweep item up=true (alarm kapanır)")
+    void runCriticalDomainChecks_renewal_expiryItemUp() {
+        when(domainCheckRepo.findLatestPerMonitor()).thenReturn(List.of(latestCheck(1L, 3)));
+        com.certmonitor.model.DomainMonitor m = activeDomain(1L, "renewed.example.com", 7L);
+        when(domainMonitorRepo.findByActiveTrue()).thenReturn(List.of(m));
+        when(domainCheckerService.check(m)).thenReturn(checkResult("OK", 400));   // yenilenmiş → warn(30) üstü → up
+
+        scheduler.runCriticalDomainChecks();
+
+        @SuppressWarnings("unchecked")
+        org.mockito.ArgumentCaptor<List<MonitoringOutageService.SweepItem>> cap =
+                org.mockito.ArgumentCaptor.forClass(List.class);
+        verify(monitoringOutageService).handleSweepResults(eq(EscalationService.TYPE_DOMAINMON_EXPIRY), cap.capture());
+        assertThat(cap.getValue()).hasSize(1);
+        assertThat(cap.getValue().get(0).up()).isTrue();          // yenilenme = recovery → açık alarm kapanır
+    }
+
+    @Test
+    @DisplayName("runCriticalDomainChecks: critical-check-enabled=false → hiç çalışmaz")
+    void runCriticalDomainChecks_disabled_noop() {
+        when(appSettings.getBoolean("cert.monitor.domain.critical-check-enabled", true)).thenReturn(false);
+        scheduler.runCriticalDomainChecks();
+        verify(domainCheckRepo, never()).findLatestPerMonitor();
+        verify(domainCheckerService, never()).check(any());
     }
 
     @Test

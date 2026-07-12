@@ -48,6 +48,9 @@ public class EscalationService {
     private final SmtpSettingsService smtpSettings;
     private final MaintenanceService maintenanceService;
     private final StormService stormService;
+    // Domain monitör alarmlarının resend/çözüm mailine EN GÜNCEL kayıt bağlamını (bitiş/registrar/EPP) kurmak için.
+    private final com.certmonitor.repository.DomainMonitorRepository domainMonitorRepo;
+    private final com.certmonitor.repository.DomainCheckRepository domainCheckRepo;
 
     // Self-injection (@Lazy avoids circular dep) — needed to invoke @Async methods via proxy
     @Autowired @Lazy
@@ -277,10 +280,22 @@ public class EscalationService {
             throw new IllegalStateException("Alert is already resolved");
         }
 
-        var inventoryOpt  = inventoryRepo.findByDomain(event.getDomain());
-        Long domainTeamId = inventoryOpt.map(com.certmonitor.model.CertificateInventory::getTeamId).orElse(null);
-        Long ugTeamId     = inventoryOpt.map(com.certmonitor.model.CertificateInventory::getUgTeamId).orElse(null);
-        List<EscalationContact> contacts = getContactsForLevel(event.getAlertLevel(), domainTeamId);
+        // Alıcı çözümü çözüm/ilk-alarm bildirimiyle AYNI olmalı: domain/keyword/ping/http alarmları YALNIZ takıma
+        // gider (müdür/global kontak eklenmez) ve takım cert envanterinden DEĞİL AlertEvent.teamId'den bulunur —
+        // aksi halde standalone domain monitörü (cert envanterinde yoktur) yanlışlıkla global müdür kontağına düşer.
+        boolean teamOnly = isTeamOnly(event.getAlertType());
+        Long domainTeamId, ugTeamId;
+        List<EscalationContact> contacts;
+        if (teamOnly) {
+            domainTeamId = event.getTeamId();
+            ugTeamId = null;
+            contacts = List.of();
+        } else {
+            var inventoryOpt = inventoryRepo.findByDomain(event.getDomain());
+            domainTeamId = inventoryOpt.map(com.certmonitor.model.CertificateInventory::getTeamId).orElse(null);
+            ugTeamId     = inventoryOpt.map(com.certmonitor.model.CertificateInventory::getUgTeamId).orElse(null);
+            contacts = getContactsForLevel(event.getAlertLevel(), domainTeamId);
+        }
 
         // Quick DB write — commits before async dispatch
         event.setNotifiedContacts(serializeContacts(contacts));
@@ -321,12 +336,16 @@ public class EscalationService {
                               List<EscalationContact> contacts, String domain,
                               String alertLevel, String alertType, Integer daysRemainingFallback) {
         try {
-            // İzleme alarmlarında sertifika context'i alakasızdır — builder'lar
-            // null-toleranslı, mail kind'e özgü şablondan üretilir.
-            Map<String, Object> certContext = MONITORING_ALERT_TYPES.contains(alertType)
-                    ? null
-                    : latestCheckRepo.findById(domain)
-                        .map(this::latestToCertContext).orElse(null);
+            // İçerik bağlamı (mail detay tablosu): domain monitörü → EN GÜNCEL domain_checks (bitiş/registrar/EPP);
+            // diğer serbest-form izleme → yok (tipe özel şablon); sertifika → latest_check. Aksi halde resend maili boş kalır.
+            Map<String, Object> certContext;
+            if (isDomainMon(alertType)) {
+                certContext = reconstructDomainContext(domain);
+            } else if (MONITORING_ALERT_TYPES.contains(alertType)) {
+                certContext = null;
+            } else {
+                certContext = latestCheckRepo.findById(domain).map(this::latestToCertContext).orElse(null);
+            }
             Integer freshDays     = certContext != null ? toInt(certContext.get("days_remaining")) : null;
             Integer effectiveDays = freshDays != null ? freshDays : daysRemainingFallback;
             String  freshMessage  = buildMessage(domain, alertType, alertLevel, effectiveDays);
@@ -587,10 +606,8 @@ public class EscalationService {
             domainTeamId = inventoryOpt.map(com.certmonitor.model.CertificateInventory::getTeamId).orElse(null);
             ugTeamId     = inventoryOpt.map(com.certmonitor.model.CertificateInventory::getUgTeamId).orElse(null);
         }
-        // Serbest-form izleme (keyword/ping/http) alarmı YALNIZ takıma gider — müdür/eskalasyon kontağı eklenmez.
-        boolean teamOnly = TYPE_KEYWORD.equals(alertType) || TYPE_PING_DOWN.equals(alertType)
-                || TYPE_HTTP_DOWN.equals(alertType) || TYPE_HTTP_SSL.equals(alertType) || TYPE_DOMAIN_EXPIRY.equals(alertType)
-                || isDomainMon(alertType) || isKeywordAux(alertType);
+        // Serbest-form izleme (keyword/ping/http) + domain alarmı YALNIZ takıma gider — müdür/eskalasyon kontağı eklenmez.
+        boolean teamOnly = isTeamOnly(alertType);
 
         String message = monitoringMessage(domain, alertType, alertLevel, outageContext);
         Optional<AlertEvent> existing = alertEventRepo.findOpenAlert(domain, alertType);
@@ -902,10 +919,8 @@ public class EscalationService {
 
     private void sendResolutionNotification(AlertEvent event, String resolvedBy, String trigger) {
         try {
-            // Keyword/Ping/HTTP çözüm bildirimi YALNIZ takıma gider; takım AlertEvent.teamId'den (envanter değil).
-            boolean teamOnly = TYPE_KEYWORD.equals(event.getAlertType()) || TYPE_PING_DOWN.equals(event.getAlertType())
-                    || TYPE_HTTP_DOWN.equals(event.getAlertType()) || TYPE_HTTP_SSL.equals(event.getAlertType()) || TYPE_DOMAIN_EXPIRY.equals(event.getAlertType())
-                    || isDomainMon(event.getAlertType()) || isKeywordAux(event.getAlertType());
+            // Keyword/Ping/HTTP + domain çözüm bildirimi YALNIZ takıma gider; takım AlertEvent.teamId'den (envanter değil).
+            boolean teamOnly = isTeamOnly(event.getAlertType());
             Long domainTeamId, ugTeamId;
             List<EscalationContact> contacts;
             if (teamOnly) {
@@ -967,7 +982,9 @@ public class EscalationService {
             // İzleme çözüm mailleri süreyi createdAt→resolvedAt'ten hesaplar;
             // sertifika context'i alakasız olduğundan geçilmez.
             Map<String, Object> certContext;
-            if (teamOnly) {                 // keyword/ping — alarm anı snapshot'ından detay (keyword/koşul)
+            if (isDomainMon(event.getAlertType())) {   // domain → en güncel kayıt (yenilenmiş bitiş/registrar)
+                certContext = reconstructDomainContext(event.getDomain());
+            } else if (teamOnly) {          // keyword/ping — alarm anı snapshot'ından detay (keyword/koşul)
                 certContext = deserializeContext(event.getContextJson());
             } else if (MONITORING_ALERT_TYPES.contains(event.getAlertType())) {
                 certContext = null;
@@ -1359,6 +1376,36 @@ public class EscalationService {
     private Map<String, Object> deserializeContext(String json) {
         if (json == null || json.isBlank()) return null;
         try { return objectMapper.readValue(json, Map.class); } catch (Exception e) { return null; }
+    }
+
+    /** Bu alarm tipi YALNIZ takıma mı gider (müdür/global eskalasyon kontağı eklenmez)?
+     *  Serbest-form izleme (keyword/ping/http) + domain monitör alarmları takım-özeldir. */
+    private static boolean isTeamOnly(String alertType) {
+        return TYPE_KEYWORD.equals(alertType) || TYPE_PING_DOWN.equals(alertType)
+                || TYPE_HTTP_DOWN.equals(alertType) || TYPE_HTTP_SSL.equals(alertType) || TYPE_DOMAIN_EXPIRY.equals(alertType)
+                || isDomainMon(alertType) || isKeywordAux(alertType);
+    }
+
+    /** Domain monitör alarmı (DOMAINMON_*) için e-posta detay bağlamını EN GÜNCEL DomainCheck'ten kurar.
+     *  Manuel resend + çözüm bildirimi zengin içerik (bitiş tarihi/registrar/kaynak/EPP kodları) göstersin diye:
+     *  latestCheckRepo SERTİFİKA verisidir, domain monitörü orada yoktur → doğru kaynak domain_checks tablosudur. */
+    private Map<String, Object> reconstructDomainContext(String domain) {
+        if (domain == null) return null;
+        var monitorOpt = domainMonitorRepo.findFirstByDomainOrderByIdAsc(domain);
+        if (monitorOpt.isEmpty()) return null;
+        var monitor = monitorOpt.get();
+        var checkOpt = domainCheckRepo.findTopByMonitorIdOrderByCheckedAtDesc(monitor.getId());
+        if (checkOpt.isEmpty()) return null;
+        var c = checkOpt.get();
+        Map<String, Object> ctx = new LinkedHashMap<>();
+        ctx.put("domain", domain);
+        if (monitor.getTeamId() != null) ctx.put("team_id", monitor.getTeamId());
+        if (c.getDaysRemaining() != null) { ctx.put("days", c.getDaysRemaining()); ctx.put("days_remaining", c.getDaysRemaining()); }
+        if (c.getExpiryDate() != null)  ctx.put("expiry_date", c.getExpiryDate());
+        if (c.getRegistrar() != null)   ctx.put("registrar", c.getRegistrar());
+        if (c.getSource() != null)      ctx.put("source", c.getSource());
+        if (c.getStatusCodes() != null && !c.getStatusCodes().isBlank()) ctx.put("status_codes", c.getStatusCodes());
+        return ctx;
     }
 
     private String serializeContacts(List<EscalationContact> contacts) {
