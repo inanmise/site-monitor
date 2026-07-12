@@ -19,7 +19,7 @@ const summary = {
     { name: 't1a.com', type: 'cert', tier: 1, days_left: 10, has_open_alarm: true },
     { name: 'reg.com', type: 'domain', tier: 2, days_left: 5, has_open_alarm: false },
   ],
-  lookahead14: [],
+  lookahead: [],
 }
 
 describe('WeeklySummaryBrief', () => {

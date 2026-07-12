@@ -704,7 +704,7 @@ public class WeeklyReportService {
                 if (s.score() != null) { m.put("score", s.score().value()); m.put("score_band", s.score().band()); }
                 m.put("manager_text", s.managerText() != null ? s.managerText().getOrDefault("tr", "") : "");
                 m.put("actions",   actionMaps(s.actions()));
-                m.put("lookahead", actionMaps(s.lookahead14()));
+                m.put("lookahead", actionMaps(s.lookahead()));
             }
             return m;
         } catch (Exception e) {

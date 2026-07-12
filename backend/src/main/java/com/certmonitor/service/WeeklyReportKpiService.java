@@ -78,9 +78,9 @@ public class WeeklyReportKpiService {
     /** Sparkline noktası (son 8 hafta). */
     public record WeekPoint(int year, int week, String weekLabel, int alarmsOpened, int expiring) {}
 
-    /** Executive özet: yönetici paragrafı (tr/en) + sağlık skoru + Aksiyon Gerektirenler + 14 gün ileriye bakış. */
+    /** Executive özet: yönetici paragrafı (tr/en) + sağlık skoru + Aksiyon Gerektirenler + 30 gün ileriye bakış. */
     public record SummaryBlock(Map<String, String> managerText, ScoreBlock score,
-                               List<ActionItem> actions, List<ActionItem> lookahead14) {}
+                               List<ActionItem> actions, List<ActionItem> lookahead) {}
 
     /** Haftalık sağlık skoru + önceki haftaya delta + bant (green/amber/red). */
     public record ScoreBlock(int value, Integer delta, String band) {}
@@ -272,16 +272,16 @@ public class WeeklyReportKpiService {
         return items.stream().sorted(ACTION_ORDER).limit(5).toList();
     }
 
-    /** İleriye bakış: rapor haftasının bitiminden itibaren 14 gün içinde dolan cert + domain (aynı satır/sıralama). */
+    /** İleriye bakış: rapor haftasının bitiminden itibaren 30 gün içinde dolan cert + domain (aynı satır/sıralama). */
     private List<ActionItem> buildLookahead(LocalDate baseMonday, List<CertificateInventory> inv,
                                             List<CertificateDto> teamCerts, String teamName, Set<String> openAlarmDomains) {
         Instant weekEnd = availabilityService.windowForMonday(baseMonday).windowEnd();
-        Instant plus14 = weekEnd.plus(14, ChronoUnit.DAYS);
+        Instant plus30 = weekEnd.plus(30, ChronoUnit.DAYS);
         LocalDate today = LocalDate.now(IST);
         List<ActionItem> items = new ArrayList<>();
         for (CertificateDto c : teamCerts) {
             Instant na = parseInstant(c.getNotAfter());
-            if (na != null && !na.isBefore(weekEnd) && !na.isAfter(plus14))
+            if (na != null && !na.isBefore(weekEnd) && !na.isAfter(plus30))
                 items.add(new ActionItem(c.getDomain(), "cert", c.getTier(), c.getDaysRemaining(),
                         teamName, openAlarmDomains.contains(c.getDomain())));
         }
@@ -289,11 +289,11 @@ public class WeeklyReportKpiService {
             LocalDate exp = parseDate(ci.getDomainExpiry());
             if (exp == null) continue;
             Instant expI = exp.atStartOfDay(ZoneOffset.UTC).toInstant();
-            if (!expI.isBefore(weekEnd) && !expI.isAfter(plus14))
+            if (!expI.isBefore(weekEnd) && !expI.isAfter(plus30))
                 items.add(new ActionItem(ci.getDomain(), "domain", ci.getTier(),
                         (int) ChronoUnit.DAYS.between(today, exp), teamName, openAlarmDomains.contains(ci.getDomain())));
         }
-        return items.stream().sorted(ACTION_ORDER).limit(8).toList();
+        return items.stream().sorted(ACTION_ORDER).limit(10).toList();
     }
 
     /** Deterministik yönetici paragrafı (tr + en) — şablon + veri (LLM yok; raporun UI diline göre frontend seçer). */

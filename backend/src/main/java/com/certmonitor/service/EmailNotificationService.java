@@ -2584,8 +2584,7 @@ public class EmailNotificationService {
             + escHtml(teamName) + " ekibi olarak <strong>" + escHtml(weekLabel)
             + "</strong> haftası raporumuzu aşağıda paylaşıyoruz.</p>"
 
-            + weeklySummaryBlock(kpiSummary)
-            + weeklyKpiBlock(kpiSummary)
+            + weeklyOverviewSection(kpiSummary, accent)
 
             + approveCtaBlock(approveCtaUrl)
 
@@ -3182,7 +3181,14 @@ public class EmailNotificationService {
             + "</td></tr></table>";
     }
 
-    /** Executive özet bloğu (e-posta) — sağlık skoru + yönetici paragrafı + iki kompakt tablo (aksiyon, 14 gün).
+    /** Özet + KPI şeridini "Haftalık Özet ve Göstergeler" başlıklı rapor bölümüne sarar (ekrandaki akordeonla tutarlı).
+     *  İçerik yoksa (eski/veri-yok) boş bölüm ÇİZMEZ. */
+    private String weeklyOverviewSection(Map<String, Object> kpiSummary, String accent) {
+        String body = weeklySummaryBlock(kpiSummary) + weeklyKpiBlock(kpiSummary);
+        return body.isBlank() ? "" : reportSection("Haftalık Özet ve Göstergeler", body, accent);
+    }
+
+    /** Executive özet bloğu (e-posta) — sağlık skoru + yönetici paragrafı + iki kompakt tablo (aksiyon, 30 gün).
      *  Anahtarlar: score/score_band/manager_text/actions/lookahead. Skor yoksa (eski/veri-yok) → boş. Outlook-safe. */
     @SuppressWarnings("unchecked")
     private String weeklySummaryBlock(Map<String, Object> k) {
@@ -3202,7 +3208,7 @@ public class EmailNotificationService {
             + "</tr></table>";
         return head
             + summaryActionTable("Aksiyon Gerektirenler", (List<Map<String, Object>>) k.get("actions"))
-            + summaryActionTable("Önümüzdeki 14 Gün", (List<Map<String, Object>>) k.get("lookahead"));
+            + summaryActionTable("Önümüzdeki 30 Gün", (List<Map<String, Object>>) k.get("lookahead"));
     }
 
     /** Özet aksiyon/14-gün tablosu — td/bgcolor tier şeridi, sağa hizalı gün (Outlook-safe). Boş → "Kayıt yok". */
