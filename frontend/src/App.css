@@ -8715,6 +8715,21 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .wr-sum-alarm { color: var(--danger, #dc3545); font-size: .7rem; }
 .wr-sum-empty { font-size: .82rem; color: var(--text-light); padding: 8px 10px; }
 
+/* 01 · Özet akordeonu — özet + KPI şeridini saran, varsayılan KAPALI bölüm (butonlar üstünde) */
+.wr-accordion { border: 1px solid var(--border); border-radius: 10px; margin-bottom: 16px; overflow: hidden; }
+.wr-accordion-hdr {
+  display: flex; align-items: center; justify-content: space-between; width: 100%;
+  padding: 12px 16px; background: var(--bg-card); border: none; cursor: pointer; text-align: left;
+  font-size: .72rem; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; color: var(--text-light);
+}
+.wr-accordion-hdr:hover { background: var(--bg-hover); }
+.wr-accordion-title { display: inline-flex; align-items: center; gap: 8px; }
+.wr-accordion-chev { transition: transform .18s ease; color: var(--text-light); flex: 0 0 auto; }
+.wr-accordion-chev.open { transform: rotate(180deg); }
+.wr-accordion-body { display: none; padding: 16px 16px 4px; border-top: 1px solid var(--border); }
+.wr-accordion-body.open { display: block; }
+.wr-accordion-body > .wr-kpi-strip:last-child { margin-bottom: 6px; }
+
 /* Bölüm başlığı — ince ayraç çizgisi (executive hiyerarşi) */
 .wr-editor .show-section-header { border-bottom: 1px solid var(--border); }
 
@@ -8724,6 +8739,8 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
   .wr-reminder-trigger, .wr-bulk-bar, .wr-help, .inactivity-warning { display: none !important; }
   .app-layout, .app-main, .wr-editor { display: block !important; margin: 0 !important; }
   .wr-editor { box-shadow: none !important; border: none !important; padding: 0 !important; }
+  .wr-accordion-body { display: block !important; }   /* yazdırırken özet daima açık */
+  .wr-accordion-chev { display: none !important; }
   .wr-kpi-strip, .wr-sum, .wr-sum-row { break-inside: avoid; }
   .wr-editor .show-section-header { break-before: page; break-after: avoid; }
   .wr-editor .wr-brief + .wr-kpi-strip, .wr-editor .show-section-header:first-of-type { break-before: avoid; }
