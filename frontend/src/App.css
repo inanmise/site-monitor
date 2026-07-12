@@ -8634,6 +8634,64 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 }
 .wr-hint { font-size: .75em; color: var(--text-light); margin-top: 4px; }
 
+/* ── Executive rapor sunumu — brief başlık + KPI şeridi + sparkline (tümü tema token'ı, hardcode hex yok) ── */
+.wr-brief {
+  display: flex; justify-content: space-between; align-items: flex-start; gap: 16px;
+  flex-wrap: wrap; padding-bottom: 14px; margin-bottom: 16px;
+  border-bottom: 1px solid var(--border);
+}
+.wr-brief-team { font-size: .72rem; font-weight: 700; letter-spacing: .09em; text-transform: uppercase; color: var(--text-light); }
+.wr-brief-week { font-size: 1.15rem; font-weight: 700; color: var(--text); margin-top: 2px; }
+.wr-brief-right { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; justify-content: flex-end; }
+.wr-brief-meta { font-size: .76rem; color: var(--text-light); }
+.wr-autosave { font-size: .76rem; font-weight: 600; color: var(--ok, #16a34a); }
+
+/* Durum rozeti — outline, token'lı (dolgu yerine ince çerçeve + renkli metin) */
+.wr-status-badge {
+  display: inline-block; padding: 3px 11px; border-radius: 999px;
+  font-size: .72rem; font-weight: 700; letter-spacing: .03em;
+  border: 1px solid currentColor; background: transparent;
+}
+.wr-status--DRAFT { color: var(--text-light, #6b7280); }
+.wr-status--PENDING_APPROVAL { color: var(--severity-warn, #d97706); }
+.wr-status--APPROVED { color: var(--ok, #16a34a); }
+.wr-status--REJECTED { color: var(--danger, #dc2626); }
+
+/* KPI şeridi — 1px ayraçlı grid; kutu-gölgesi/gradient yok */
+.wr-kpi-strip {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 1px; background: var(--border); border: 1px solid var(--border);
+  border-radius: 10px; overflow: hidden; margin-bottom: 22px;
+}
+.wr-kpi-strip--loading { display: block; background: var(--bg-card); color: var(--text-light); padding: 18px; text-align: center; }
+.wr-kpi { background: var(--bg-card); padding: 14px 16px; display: flex; flex-direction: column; gap: 6px; }
+.wr-kpi-top { display: flex; align-items: center; gap: 6px; }
+.wr-kpi-icon { color: var(--text-light); }
+.wr-kpi-label { font-size: .68rem; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--text-light); }
+.wr-kpi-val { font-size: 2.5rem; font-weight: 300; line-height: 1; color: var(--text); }
+.wr-kpi-foot { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-height: 20px; }
+.wr-kpi-delta { font-size: .74rem; font-weight: 700; white-space: nowrap; }
+.wr-kpi-delta--good { color: var(--ok, #16a34a); }
+.wr-kpi-delta--bad { color: var(--danger, #dc3545); }
+.wr-kpi-sub { font-size: .72rem; color: var(--text-light); }
+.wr-kpi-spark { margin-left: auto; display: inline-flex; }
+.spark { display: block; }
+
+/* Bölüm başlığı — ince ayraç çizgisi (executive hiyerarşi) */
+.wr-editor .show-section-header { border-bottom: 1px solid var(--border); }
+
+/* Yazdır / PDF — A4 tek geçiş: sidebar + aksiyon barları + butonlar gizli, bölüm başlarında sayfa kesme */
+@media print {
+  .sb, .wr-actions, .wr-actions-top, .wr-print-btn, .wr-menu-wrap,
+  .wr-reminder-trigger, .wr-bulk-bar, .wr-help, .inactivity-warning { display: none !important; }
+  .app-layout, .app-main, .wr-editor { display: block !important; margin: 0 !important; }
+  .wr-editor { box-shadow: none !important; border: none !important; padding: 0 !important; }
+  .wr-kpi-strip { break-inside: avoid; }
+  .wr-editor .show-section-header { break-before: page; break-after: avoid; }
+  .wr-editor .wr-brief + .wr-kpi-strip, .wr-editor .show-section-header:first-of-type { break-before: avoid; }
+  body { background: #fff !important; }
+}
+
 /* Haftalık Raporlar filtre barı — kontroller etiketli kompakt sütunlar halinde
    YAN YANA durur (ss-wrap'in global width:100%'i burada daraltılır). */
 .wr-filters { display: flex; align-items: flex-end; gap: 10px; flex-wrap: wrap; }

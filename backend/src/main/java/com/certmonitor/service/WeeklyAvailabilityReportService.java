@@ -181,6 +181,42 @@ public class WeeklyAvailabilityReportService {
         return opts;
     }
 
+    // ── KPI şeridi (WeeklyReportKpiService) için — belirli ISO (yıl, hafta) penceresi + takım uptime%'i ──
+
+    /** Belirli bir ISO (yıl, hafta)'nın Pazartesi'si. LocalDate.of(y,1,4) daima ISO 1. haftadadır → yıl sınırı normalize olur. */
+    public static LocalDate mondayOfIsoWeek(int isoYear, int isoWeek) {
+        return LocalDate.of(isoYear, 1, 4)
+                .with(WeekFields.ISO.weekOfWeekBasedYear(), isoWeek)
+                .with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY));
+    }
+
+    /** Verilen Pazartesi'den TAM hafta penceresi (Pzt 00:00 – Paz 23:59:59, Europe/Istanbul → UTC ISO sınırlar);
+     *  sınırlar {@code uptime_checks.checked_at} / {@code alert_events.created_at} string formatıyla hizalı. */
+    public Window windowForMonday(LocalDate monday) {
+        LocalDate sunday = monday.plusDays(6);
+        Instant from = monday.atStartOfDay(IST).toInstant();
+        Instant end = sunday.atTime(23, 59, 59).atZone(IST).toInstant();
+        int year = monday.get(WeekFields.ISO.weekBasedYear());
+        int week = monday.get(WeekFields.ISO.weekOfWeekBasedYear());
+        return new Window(UTC_ISO.format(from), UTC_ISO.format(end), end, year, week, weekRangeLabel(monday, sunday));
+    }
+
+    /** KPI: verilen pencerede takımın (SY team_id) ortalama uptime %'i + özeti — buildTeamReport'un hesap çekirdeği,
+     *  HTML/alıcı üretmeden (KPI şeridi + hafta-üstü delta için). Uptime kaynağı = HTTP uptime_checks (port/DNS hariç). */
+    public AvailabilitySummary weeklyUptime(Long teamId, Window w) {
+        List<CertificateInventory> domains =
+                inventoryRepo.findByTeamIdAndActiveTrueAndDeletedAtIsNullOrderByDomainAsc(teamId);
+        List<AvailabilityRow> rows = new ArrayList<>();
+        for (CertificateInventory inv : domains) {
+            int port = inv.getPort() != null ? inv.getPort() : 443;
+            List<UptimeCheck> checks = uptimeCheckRepo
+                    .findByDomainAndPortAndCheckedAtBetweenOrderByCheckedAtAsc(inv.getDomain(), port, w.fromUtc(), w.toUtc());
+            Integer certDays = latestCheckRepo.findById(inv.getDomain()).map(LatestCheck::getDaysRemaining).orElse(null);
+            rows.add(computeRow(inv.getDomain(), checks, w.windowEnd(), certDays));
+        }
+        return summarize(rows);
+    }
+
     /** "15–21 Haziran 2026" / "29 Haziran – 5 Temmuz 2026" / "29 Aralık 2025 – 4 Ocak 2026" (Pzt–Paz, dahil). */
     static String weekRangeLabel(LocalDate from, LocalDate to) {
         String mFrom = MONTHS_TR[from.getMonthValue() - 1];
