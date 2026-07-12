@@ -56,9 +56,11 @@ class EmailNotificationServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new EmailNotificationService(settingsService, smtpMailService, notificationLogRepo, appSettings);
-        when(settingsService.getOrDefaults()).thenReturn(settings(false));
         when(appSettings.getString(eq("cert.monitor.app.base-url"), any())).thenAnswer(inv -> inv.getArgument(1));
+        EmailTemplateBuilder templateBuilder = new EmailTemplateBuilder(appSettings);
+        ReflectionTestUtils.setField(templateBuilder, "appBaseUrl", "http://localhost:5173");
+        service = new EmailNotificationService(settingsService, smtpMailService, notificationLogRepo, appSettings, templateBuilder);
+        when(settingsService.getOrDefaults()).thenReturn(settings(false));
 
         mailLogger = (Logger) LoggerFactory.getLogger("com.certmonitor.mail");
         classLogger = (Logger) LoggerFactory.getLogger(EmailNotificationService.class);
@@ -161,43 +163,47 @@ class EmailNotificationServiceTest {
     }
 
     @Test
-    @DisplayName("EXPIRY alarm HTML: domain + 'gün sonra geçerliliği sona eriyor' kahramanı")
-    void buildAlertEmailHtml_expiry_containsDaysHero() {
+    @DisplayName("EXPIRY alarm HTML (executive): domain + hero gün + sertifika detay satırları + Sertifika İzleme footer")
+    void buildAlertEmailHtml_expiry_executive() {
         String html = service.buildAlertEmailHtml(
-                "[CertMonitor UYARI] x.com — 25 gün kaldı", "msg",
+                "[CertMonitor] ORTA · x.com · Sertifika 25 gün içinde doluyor", "msg",
                 "x.com", "WARNING", "EXPIRY", 25, certCtx());
         assertThat(html).contains("x.com");
-        assertThat(html).contains("25 gün sonra geçerliliği sona eriyor");
+        assertThat(html).contains(">25<");                       // 56px hero metrik
+        assertThat(html).contains("Veren Kurum (CA)").contains("Test CA");
+        assertThat(html).contains("Sertifika İzleme");           // footer alt-sistem
+        assertThat(html).contains("#0F1B2D");                    // koyu-lacivert üst bant (turuncu banner YOK)
+        assertThat(html).doesNotContain("SÜRE BITIŞI TESPİT");   // eski turuncu hero yok
     }
 
     @Test
-    @DisplayName("REVOKED alarm HTML: domain + 'İptal' içerir")
-    void buildAlertEmailHtml_revoked_containsRevokedLabel() {
+    @DisplayName("REVOKED alarm HTML (executive): KRİTİK rozet + domain")
+    void buildAlertEmailHtml_revoked_executive() {
         String html = service.buildAlertEmailHtml(
-                "[CertMonitor KRİTİK] x.com — iptal", "msg",
+                "[CertMonitor] KRİTİK · x.com · sertifika iptal", "Sertifika iptal edildi",
                 "x.com", "CRITICAL", "REVOKED", null, certCtx());
-        assertThat(html).contains("x.com");
-        assertThat(html).contains("İptal");
+        assertThat(html).contains("x.com").contains("KRİTİK").contains("#C0392B");
     }
 
     @Test
-    @DisplayName("MISMATCH alarm HTML: 'Dağıtım Eksik' içerir")
-    void buildAlertEmailHtml_mismatch_containsLabel() {
+    @DisplayName("MISMATCH alarm HTML (executive): YÜKSEK rozet")
+    void buildAlertEmailHtml_mismatch_executive() {
         String html = service.buildAlertEmailHtml(
-                "[CertMonitor] x.com — dağıtım", "msg",
+                "[CertMonitor] YÜKSEK · x.com · dağıtım", "Dağıtım eksik",
                 "x.com", "HIGH", "MISMATCH", null, certCtx());
-        assertThat(html).contains("x.com");
-        assertThat(html).contains("Dağıtım Eksik");
+        assertThat(html).contains("x.com").contains("YÜKSEK").contains("#D68910");
     }
 
     @Test
-    @DisplayName("CHAIN_BROKEN alarm HTML: 'Zincir Sorunu' içerir")
-    void buildAlertEmailHtml_chainBroken_containsLabel() {
+    @DisplayName("XSS: domain/registrar user-controlled → HTML escape edilir")
+    void buildAlertEmailHtml_escapesUserInput() {
+        Map<String, Object> ctx = certCtx();
+        ctx.put("registrar", "<script>alert(1)</script>");
         String html = service.buildAlertEmailHtml(
-                "[CertMonitor] x.com — zincir", "msg",
-                "x.com", "HIGH", "CHAIN_BROKEN", null, certCtx());
-        assertThat(html).contains("x.com");
-        assertThat(html).contains("Zincir Sorunu");
+                "s", "m", "evil\"><img src=x>.com", "HIGH", "DOMAINMON_EXPIRY", 10, ctx);
+        assertThat(html).doesNotContain("<script>alert(1)</script>");
+        assertThat(html).doesNotContain("<img src=x>");
+        assertThat(html).contains("&lt;script&gt;");
     }
 
     // ── Haftalık rapor: onay-bekleyen (CTA) + iade builder'ları ────────────────
@@ -750,15 +756,15 @@ class EmailNotificationServiceTest {
     }
 
     @Test
-    @DisplayName("buildResolutionEmailHtml: çözülme/oluşturma tarihleri IST'ye çevrilir (sertifika)")
+    @DisplayName("buildResolutionEmailHtml (executive): sertifika çözüldü — çözülme tarihi IST insan-okur (+3)")
     void resolutionHtml_localTime() {
         String html = service.buildResolutionEmailHtml(
                 "example.com", "EXPIRY", "WARNING", 12,
                 "system", "2026-06-18T07:15:00", "2026-06-17T22:00:00", null);
 
-        assertThat(html).contains("18.06.2026 10:15");          // resolvedAt 07:15 UTC → 10:15 IST
-        assertThat(html).contains("18.06.2026 01:00");          // createdAt 17 22:00 UTC → 18 01:00 IST
-        assertThat(html).doesNotContain("18.06.2026 07:15");    // ham UTC sızmamalı
+        assertThat(html).contains("example.com").contains("ÇÖZÜLDÜ");
+        assertThat(html).contains("18 Haziran 2026 10:15");     // resolvedAt 07:15 UTC → 10:15 IST (+3)
+        assertThat(html).doesNotContain("07:15");               // ham UTC sızmamalı
     }
 
     // ── Mail TRACE logging + hata stack izi (com.certmonitor.mail) ────────────────

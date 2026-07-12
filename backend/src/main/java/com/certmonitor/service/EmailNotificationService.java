@@ -49,6 +49,7 @@ public class EmailNotificationService {
      *  bildirim loguna geri-yazmak için (subject ile eşleştirilir). */
     private final com.certmonitor.repository.NotificationLogRepository notificationLogRepo;
     private final AppSettingsService appSettings;
+    private final EmailTemplateBuilder templateBuilder;   // executive-premium alarm şablonu (tek merkez)
 
     /** Uygulama dış adresi — e-posta CTA deep-link'leri için. Spring @Value enjekte eder;
      *  birim testte (manuel new) initializer değeri kullanılır. */
@@ -124,7 +125,8 @@ public class EmailNotificationService {
             applyFrom(helper);
             helper.setSubject(subject);
             String html = buildAlertEmailHtml(subject, message, domain, level, alertType, daysRemaining, certContext);
-            helper.setText(html, true);
+            String text = buildAlertEmailText(subject, message, domain, level, alertType, daysRemaining, certContext);
+            helper.setText(text, html);   // multipart/alternative (plain + HTML)
             return doSend(to, msg, 1);
         } catch (Exception e) {
             log.error("✗ E-posta hazırlanamadı: TO={} | HATA={}", to, e.getMessage(), e);
@@ -145,8 +147,9 @@ public class EmailNotificationService {
             helper.setTo(toAddresses);
             applyFrom(helper);
             helper.setSubject(subject);
-            helper.setText(buildAlertEmailHtml(subject, message, domain, level,
-                    alertType, daysRemaining, certContext), true);
+            helper.setText(
+                    buildAlertEmailText(subject, message, domain, level, alertType, daysRemaining, certContext),
+                    buildAlertEmailHtml(subject, message, domain, level, alertType, daysRemaining, certContext));
             return doSend(Arrays.toString(toAddresses), msg, 1);
         } catch (Exception e) {
             log.error("✗ E-posta hazırlanamadı: TO={} | HATA={}", Arrays.toString(toAddresses), e.getMessage(), e);
@@ -168,8 +171,10 @@ public class EmailNotificationService {
             helper.setTo(toAddresses);
             applyFrom(helper);
             helper.setSubject(subject);
-            helper.setText(buildResolutionEmailHtml(domain, alertType, alertLevel,
-                    daysRemaining, resolvedBy, resolvedAt, createdAt, certContext), true);
+            helper.setText(
+                    buildResolutionEmailText(domain, alertType, resolvedBy, resolvedAt),
+                    buildResolutionEmailHtml(domain, alertType, alertLevel,
+                            daysRemaining, resolvedBy, resolvedAt, createdAt, certContext));
             return doSend(Arrays.toString(toAddresses), msg, 1);
         } catch (Exception e) {
             log.error("✗ Çözüm e-postası hazırlanamadı: TO={} | HATA={}", Arrays.toString(toAddresses), e.getMessage(), e);
@@ -334,8 +339,10 @@ public class EmailNotificationService {
             helper.setTo(to);
             applyFrom(helper);
             helper.setSubject(subject);
-            helper.setText(buildResolutionEmailHtml(domain, alertType, alertLevel,
-                    daysRemaining, resolvedBy, resolvedAt, createdAt, certContext), true);
+            helper.setText(
+                    buildResolutionEmailText(domain, alertType, resolvedBy, resolvedAt),
+                    buildResolutionEmailHtml(domain, alertType, alertLevel,
+                            daysRemaining, resolvedBy, resolvedAt, createdAt, certContext));
             return doSend(to, msg, 1);
         } catch (Exception e) {
             log.error("✗ Çözüm e-postası hazırlanamadı: TO={} | HATA={}", to, e.getMessage(), e);
@@ -535,46 +542,61 @@ public class EmailNotificationService {
     private static final java.util.Set<String> MONITORING_OUTAGE_TYPES =
             java.util.Set.of("ACCESSIBILITY", "PORT_DOWN", "DNS_FAILURE");
 
+    /** Süre-bitişi ailesi (alan adı + sertifika) executive-premium şablondan (EmailTemplateBuilder) geçer;
+     *  izleme-kesintisi tipleri (uptime/port/dns/keyword/ping/dns-changed) tip-özel zengin şablonlarını korur. */
     public String buildAlertEmailHtml(String subject, String message,
                                        String domain, String level, String alertType,
                                        Integer daysRemaining, Map<String, Object> certContext) {
         if (alertType != null && MONITORING_OUTAGE_TYPES.contains(alertType)) {
             return buildRichMonitoringOutageAlertHtml(message, domain, alertType, certContext);
         }
-        if ("KEYWORD".equals(alertType)) {
-            return buildRichKeywordAlertHtml(message, domain, level, certContext);
-        }
-        if ("PING_DOWN".equals(alertType)) {
-            return buildRichPingAlertHtml(message, domain, level, certContext);
-        }
-        if ("DNS_CHANGED".equals(alertType)) {
-            return buildRichDnsChangedAlertHtml(message, domain, certContext);
-        }
-        if (isDomainAlertType(alertType) && domain != null) {
-            return buildRichDomainAlertHtml(message, domain, level, alertType, daysRemaining, certContext);
-        }
-        return (domain != null)
-                ? buildRichAlertHtml(subject, message, domain, level, alertType, daysRemaining, certContext)
-                : buildSimpleAlertHtml(subject, message);
+        if ("KEYWORD".equals(alertType)) return buildRichKeywordAlertHtml(message, domain, level, certContext);
+        if ("PING_DOWN".equals(alertType)) return buildRichPingAlertHtml(message, domain, level, certContext);
+        if ("DNS_CHANGED".equals(alertType)) return buildRichDnsChangedAlertHtml(message, domain, certContext);
+        if (domain == null) return buildSimpleAlertHtml(subject, message);
+        // Kalan hepsi = süre-bitişi ailesi (DOMAINMON_*, DOMAIN_EXPIRY, sertifika EXPIRY/REVOKED/MISMATCH/CHAIN) → executive
+        return templateBuilder.buildHtml(new EmailTemplateBuilder.AlertMail(
+                alertType, level, domain, message, daysRemaining, certContext, teamNameOf(certContext)));
+    }
+
+    /** Alarm e-postasının plain-text (multipart) alternatifi. */
+    public String buildAlertEmailText(String subject, String message,
+                                      String domain, String level, String alertType,
+                                      Integer daysRemaining, Map<String, Object> certContext) {
+        return templateBuilder.buildText(new EmailTemplateBuilder.AlertMail(
+                alertType, level, domain, message, daysRemaining, certContext, teamNameOf(certContext)));
     }
 
     public String buildResolutionEmailHtml(String domain, String alertType, String alertLevel,
                                             Integer daysRemaining, String resolvedBy,
                                             String resolvedAt, String createdAt,
                                             Map<String, Object> certContext) {
-        if ("KEYWORD".equals(alertType)) {
-            return buildRichKeywordResolvedHtml(domain, certContext, resolvedBy, resolvedAt, createdAt);
-        }
-        if ("PING_DOWN".equals(alertType)) {
-            return buildRichPingResolvedHtml(domain, certContext, resolvedBy, resolvedAt, createdAt);
-        }
-        if ((alertType != null && MONITORING_OUTAGE_TYPES.contains(alertType))
-                || "DNS_CHANGED".equals(alertType)) {
+        if ("KEYWORD".equals(alertType)) return buildRichKeywordResolvedHtml(domain, certContext, resolvedBy, resolvedAt, createdAt);
+        if ("PING_DOWN".equals(alertType)) return buildRichPingResolvedHtml(domain, certContext, resolvedBy, resolvedAt, createdAt);
+        if ((alertType != null && MONITORING_OUTAGE_TYPES.contains(alertType)) || "DNS_CHANGED".equals(alertType)) {
             return buildRichMonitoringResolvedHtml(domain, alertType, resolvedBy, resolvedAt, createdAt);
         }
-        if (isDomainAlertType(alertType) && domain != null) {
-            return buildRichDomainResolvedHtml(domain, alertType, daysRemaining, resolvedBy, resolvedAt, createdAt, certContext);
-        }
+        // domain + sertifika → executive "çözüldü"
+        return templateBuilder.buildResolvedHtml(domain, alertType, resolvedBy, resolvedAt);
+    }
+
+    /** Çözüm e-postasının plain-text (multipart) alternatifi. */
+    public String buildResolutionEmailText(String domain, String alertType, String resolvedBy, String resolvedAt) {
+        return templateBuilder.buildResolvedText(domain, alertType, resolvedBy, resolvedAt);
+    }
+
+    private static String teamNameOf(Map<String, Object> ctx) {
+        if (ctx == null) return null;
+        Object v = ctx.get("team_name");
+        return v == null ? null : String.valueOf(v);
+    }
+
+    /** @deprecated Eski tip-özel şablonlar EmailTemplateBuilder ile değiştirildi; referans için tutuldu. */
+    @Deprecated
+    private String legacyResolution(String domain, String alertType, String alertLevel,
+                                    Integer daysRemaining, String resolvedBy,
+                                    String resolvedAt, String createdAt,
+                                    Map<String, Object> certContext) {
         return buildRichResolvedHtml(domain, alertType, alertLevel,
                 daysRemaining, resolvedBy, resolvedAt, createdAt, certContext);
     }
