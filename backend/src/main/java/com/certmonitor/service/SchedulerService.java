@@ -1810,25 +1810,7 @@ public class SchedulerService {
             try {
                 Map<String, Object> r = domainCheckerService.check(m);   // DomainCheck persist eder
                 checked++;
-                String status = String.valueOf(r.get("status"));
-                Integer days = r.get("days_remaining") instanceof Number n ? n.intValue() : null;
-                boolean eppCritical = Boolean.TRUE.equals(r.get("epp_critical"));
-                boolean eppWarn = Boolean.TRUE.equals(r.get("epp_warn"));
-                boolean changed = Boolean.TRUE.equals(r.get("changed"));
-                int warn = m.getWarningDays() != null ? m.getWarningDays() : 30;
-                int crit = m.getCriticalDays() != null ? m.getCriticalDays() : 7;
-
-                // UNKNOWN — "veri yok" kendi başına alarm (körlük)
-                unknownSweep.add(domainItem(EscalationService.TYPE_DOMAINMON_UNKNOWN, m, r, !"UNKNOWN".equals(status), "WARNING"));
-                // EXPIRY — gün eşiği
-                boolean expiryDown = days != null && days <= warn;
-                String expiryLevel = (days != null && (days < 0 || days <= crit)) ? "CRITICAL" : "HIGH";
-                expirySweep.add(domainItem(EscalationService.TYPE_DOMAINMON_EXPIRY, m, r, !expiryDown, expiryLevel));
-                // STATUS — EPP kodları
-                statusSweep.add(domainItem(EscalationService.TYPE_DOMAINMON_STATUS, m, r,
-                        !(eppCritical || eppWarn), eppCritical ? "CRITICAL" : "HIGH"));
-                // CHANGED — yalnız değişimde (up gönderilmez → manuel ack'e kadar açık; hijack sinyali)
-                if (changed) changedSweep.add(domainItem(EscalationService.TYPE_DOMAINMON_CHANGED, m, r, false, "HIGH"));
+                addDomainSweepItems(m, r, unknownSweep, expirySweep, statusSweep, changedSweep);
             } catch (Exception e) {
                 log.warn("Domain check failed for {}: {}", m.getDomain(), e.getMessage());
             }
@@ -1838,6 +1820,52 @@ public class SchedulerService {
         handleDomainSweep(EscalationService.TYPE_DOMAINMON_STATUS, statusSweep);
         handleDomainSweep(EscalationService.TYPE_DOMAINMON_CHANGED, changedSweep);
         log.debug("Domain checks complete: {} monitors", checked);
+    }
+
+    /** Tek domain kontrol sonucundan 4 tipin (UNKNOWN/EXPIRY/STATUS/CHANGED) sweep item'larını üretir.
+     *  Sweep döngüsü ve manuel "Şimdi Kontrol Et" (evaluateDomainAlarmsNow) AYNI mantığı paylaşsın diye ayrıldı. */
+    private void addDomainSweepItems(DomainMonitor m, Map<String, Object> r,
+            List<MonitoringOutageService.SweepItem> unknownSweep,
+            List<MonitoringOutageService.SweepItem> expirySweep,
+            List<MonitoringOutageService.SweepItem> statusSweep,
+            List<MonitoringOutageService.SweepItem> changedSweep) {
+        String status = String.valueOf(r.get("status"));
+        Integer days = r.get("days_remaining") instanceof Number n ? n.intValue() : null;
+        boolean eppCritical = Boolean.TRUE.equals(r.get("epp_critical"));
+        boolean eppWarn = Boolean.TRUE.equals(r.get("epp_warn"));
+        boolean changed = Boolean.TRUE.equals(r.get("changed"));
+        int warn = m.getWarningDays() != null ? m.getWarningDays() : 30;
+        int crit = m.getCriticalDays() != null ? m.getCriticalDays() : 7;
+
+        // UNKNOWN — "veri yok" kendi başına alarm (körlük)
+        unknownSweep.add(domainItem(EscalationService.TYPE_DOMAINMON_UNKNOWN, m, r, !"UNKNOWN".equals(status), "WARNING"));
+        // EXPIRY — gün eşiği
+        boolean expiryDown = days != null && days <= warn;
+        String expiryLevel = (days != null && (days < 0 || days <= crit)) ? "CRITICAL" : "HIGH";
+        expirySweep.add(domainItem(EscalationService.TYPE_DOMAINMON_EXPIRY, m, r, !expiryDown, expiryLevel));
+        // STATUS — EPP kodları
+        statusSweep.add(domainItem(EscalationService.TYPE_DOMAINMON_STATUS, m, r,
+                !(eppCritical || eppWarn), eppCritical ? "CRITICAL" : "HIGH"));
+        // CHANGED — yalnız değişimde (up gönderilmez → manuel ack'e kadar açık; hijack sinyali)
+        if (changed) changedSweep.add(domainItem(EscalationService.TYPE_DOMAINMON_CHANGED, m, r, false, "HIGH"));
+    }
+
+    /**
+     * Manuel "Şimdi Kontrol Et" sonrası TEK domain için alarm değerlendirmesi — günlük sweep ile AYNI mantık.
+     * Neden gerekli: sweep her domaini {@code checkDue} ile ~günde 1 kez işler; kullanıcı bir domaini elle kontrol
+     * edip WARNING/CRITICAL/UNKNOWN görürse alarm/e-posta günlük slota kadar gecikmesin, ANINDA üretilsin.
+     * {@code r} = domainCheckerService.check(m) sonucu (aynı sonuç tekrar kontrol edilmez).
+     */
+    public void evaluateDomainAlarmsNow(DomainMonitor m, Map<String, Object> r) {
+        if (m == null || r == null) return;
+        if (!appSettings.getBoolean("cert.monitor.domain.alert-enabled", true)) return;
+        List<MonitoringOutageService.SweepItem> unknown = new ArrayList<>(), expiry = new ArrayList<>(),
+                status = new ArrayList<>(), changed = new ArrayList<>();
+        addDomainSweepItems(m, r, unknown, expiry, status, changed);
+        handleDomainSweep(EscalationService.TYPE_DOMAINMON_UNKNOWN, unknown);
+        handleDomainSweep(EscalationService.TYPE_DOMAINMON_EXPIRY, expiry);
+        handleDomainSweep(EscalationService.TYPE_DOMAINMON_STATUS, status);
+        handleDomainSweep(EscalationService.TYPE_DOMAINMON_CHANGED, changed);
     }
 
     private void handleDomainSweep(String type, List<MonitoringOutageService.SweepItem> sweep) {
