@@ -63,6 +63,7 @@ public class WeeklyReportService {
     private final ObjectMapper objectMapper;
     private final AppSettingsService appSettings;
     private final PermissionService permissionService;
+    private final WeeklyReportKpiService kpiService;   // e-posta hero KPI özeti (read-only, durum makinesinden bağımsız)
 
     /** static resetTemplate için paylaşılan, thread-safe mapper — her çağrıda
      *  yeni ObjectMapper kurma maliyetini önler (Jackson 3 mapper'ları yeniden
@@ -383,7 +384,7 @@ public class WeeklyReportService {
         String poHtml = emailService.buildWeeklyReportHtml(
                 teamName, r.getWeekLabel(), resolvePoDisplayName(r.getTeamId()),
                 r.getContentJson(), true, imageDisplayWidths(inline),
-                null, null, null, approveUrl(token));
+                null, null, null, approveUrl(token), emailKpiSummary(r));
         String poMail;
         if (poEmails.isEmpty()) {
             poMail = "SKIPPED_NO_CONTACT";
@@ -620,7 +621,7 @@ public class WeeklyReportService {
         String approvedAt = r.getApprovedAt() != null ? r.getApprovedAt() : now();
         String html = emailService.buildWeeklyReportHtml(
                 teamName, r.getWeekLabel(), managerName, r.getContentJson(), true,
-                imageDisplayWidths(inline), approver, approvedAt, now());
+                imageDisplayWidths(inline), approver, approvedAt, now(), null, emailKpiSummary(r));
 
         String subject = "[" + teamName + "] Haftalık Rapor — " + r.getWeekLabel();
         String mailStatus = emailService.sendHtml(to, cc, subject, html, inline);
@@ -681,7 +682,26 @@ public class WeeklyReportService {
         // DRAFT'ta alanlar null → ilgili satırlar gizlenir.
         return emailService.buildWeeklyReportHtml(teamName, r.getWeekLabel(), managerName,
                 r.getContentJson(), false, null,
-                r.getApprovedBy(), r.getApprovedAt(), r.getSentAt());
+                r.getApprovedBy(), r.getApprovedAt(), r.getSentAt(), null, emailKpiSummary(r));
+    }
+
+    /** E-posta hero KPI özeti — WeeklyReportKpiService.current'ten sade map (builder anahtarları:
+     *  total_certs / expiring / alarms / critical / uptime_pct). Hesap hatası → null (mail yine gider). */
+    private Map<String, Object> emailKpiSummary(WeeklyReport r) {
+        try {
+            WeeklyReportKpiService.KpiSet c =
+                    kpiService.compute(r.getTeamId(), r.getReportYear(), r.getWeekNo()).current();
+            Map<String, Object> m = new java.util.LinkedHashMap<>();
+            m.put("total_certs", c.totalCerts());
+            m.put("expiring",    c.expiringInWindow());
+            m.put("alarms",      c.alarmsOpened());
+            m.put("critical",    c.criticalCerts() + c.criticalDomains());
+            m.put("uptime_pct",  c.uptimePct());
+            return m;
+        } catch (Exception e) {
+            log.warn("Haftalık rapor e-posta KPI özeti hesaplanamadı: report={} — {}", r.getId(), e.getMessage());
+            return null;
+        }
     }
 
     // ── Görseller ─────────────────────────────────────────────────────────────
