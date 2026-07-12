@@ -280,16 +280,18 @@ public class EscalationService {
             throw new IllegalStateException("Alert is already resolved");
         }
 
-        // Alıcı çözümü çözüm/ilk-alarm bildirimiyle AYNI olmalı: domain/keyword/ping/http alarmları YALNIZ takıma
-        // gider (müdür/global kontak eklenmez) ve takım cert envanterinden DEĞİL AlertEvent.teamId'den bulunur —
-        // aksi halde standalone domain monitörü (cert envanterinde yoktur) yanlışlıkla global müdür kontağına düşer.
-        boolean teamOnly = isTeamOnly(event.getAlertType());
+        // Alıcı çözümü çözüm/ilk-alarm bildirimiyle AYNI olmalı: standalone izleme (domain/keyword/ping/http) takımı
+        // cert envanterinden DEĞİL AlertEvent.teamId'den bulunur (aksi halde envanterde olmayan domain monitörü global
+        // müdüre düşer). KRİTİK domain alarmında müdür (eskalasyon kontağı) da eklenir; diğer standalone → yalnız takım.
+        boolean standalone = isStandaloneMon(event.getAlertType());
         Long domainTeamId, ugTeamId;
         List<EscalationContact> contacts;
-        if (teamOnly) {
+        if (standalone) {
             domainTeamId = event.getTeamId();
             ugTeamId = null;
-            contacts = List.of();
+            contacts = includeManagerContacts(event.getAlertType(), event.getAlertLevel())
+                    ? getContactsForLevel(event.getAlertLevel(), domainTeamId)
+                    : List.of();
         } else {
             var inventoryOpt = inventoryRepo.findByDomain(event.getDomain());
             domainTeamId = inventoryOpt.map(com.certmonitor.model.CertificateInventory::getTeamId).orElse(null);
@@ -606,8 +608,8 @@ public class EscalationService {
             domainTeamId = inventoryOpt.map(com.certmonitor.model.CertificateInventory::getTeamId).orElse(null);
             ugTeamId     = inventoryOpt.map(com.certmonitor.model.CertificateInventory::getUgTeamId).orElse(null);
         }
-        // Serbest-form izleme (keyword/ping/http) + domain alarmı YALNIZ takıma gider — müdür/eskalasyon kontağı eklenmez.
-        boolean teamOnly = isTeamOnly(alertType);
+        // Standalone izleme (keyword/ping/http/domain) takım-özeldir; AMA KRİTİK domain alarmında müdür de eklenir.
+        boolean teamOnly = isStandaloneMon(alertType) && !includeManagerContacts(alertType, alertLevel);
 
         String message = monitoringMessage(domain, alertType, alertLevel, outageContext);
         Optional<AlertEvent> existing = alertEventRepo.findOpenAlert(domain, alertType);
@@ -919,14 +921,17 @@ public class EscalationService {
 
     private void sendResolutionNotification(AlertEvent event, String resolvedBy, String trigger) {
         try {
-            // Keyword/Ping/HTTP + domain çözüm bildirimi YALNIZ takıma gider; takım AlertEvent.teamId'den (envanter değil).
-            boolean teamOnly = isTeamOnly(event.getAlertType());
+            // Çözüm bildirimi alarmla AYNI alıcılara gitmeli: standalone izleme takımı AlertEvent.teamId'den (envanter
+            // değil); KRİTİK domain alarmında müdür de dahildi → çözümü de alır. Diğer standalone → yalnız takım.
+            boolean standalone = isStandaloneMon(event.getAlertType());
             Long domainTeamId, ugTeamId;
             List<EscalationContact> contacts;
-            if (teamOnly) {
+            if (standalone) {
                 domainTeamId = event.getTeamId();
                 ugTeamId = null;
-                contacts = List.of();
+                contacts = includeManagerContacts(event.getAlertType(), event.getAlertLevel())
+                        ? getContactsForLevel(event.getAlertLevel(), domainTeamId)
+                        : List.of();
             } else {
                 var inventoryOpt = inventoryRepo.findByDomain(event.getDomain());
                 domainTeamId = inventoryOpt.map(com.certmonitor.model.CertificateInventory::getTeamId).orElse(null);
@@ -984,7 +989,7 @@ public class EscalationService {
             Map<String, Object> certContext;
             if (isDomainMon(event.getAlertType())) {   // domain → en güncel kayıt (yenilenmiş bitiş/registrar)
                 certContext = reconstructDomainContext(event.getDomain());
-            } else if (teamOnly) {          // keyword/ping — alarm anı snapshot'ından detay (keyword/koşul)
+            } else if (standalone) {        // keyword/ping — alarm anı snapshot'ından detay (keyword/koşul)
                 certContext = deserializeContext(event.getContextJson());
             } else if (MONITORING_ALERT_TYPES.contains(event.getAlertType())) {
                 certContext = null;
@@ -1378,12 +1383,19 @@ public class EscalationService {
         try { return objectMapper.readValue(json, Map.class); } catch (Exception e) { return null; }
     }
 
-    /** Bu alarm tipi YALNIZ takıma mı gider (müdür/global eskalasyon kontağı eklenmez)?
-     *  Serbest-form izleme (keyword/ping/http) + domain monitör alarmları takım-özeldir. */
-    private static boolean isTeamOnly(String alertType) {
+    /** Takımı cert envanterinden DEĞİL AlertEvent.teamId'den (alarm anında damgalanan) bulunan standalone izleme tipi mi?
+     *  Serbest-form izleme (keyword/ping/http) + domain monitör alarmları böyledir. */
+    private static boolean isStandaloneMon(String alertType) {
         return TYPE_KEYWORD.equals(alertType) || TYPE_PING_DOWN.equals(alertType)
                 || TYPE_HTTP_DOWN.equals(alertType) || TYPE_HTTP_SSL.equals(alertType) || TYPE_DOMAIN_EXPIRY.equals(alertType)
                 || isDomainMon(alertType) || isKeywordAux(alertType);
+    }
+
+    /** Domain süre-bitişi alarmında müdür (eskalasyon kontağı) da eklensin mi? Kullanıcı politikası:
+     *  YALNIZ KRİTİK domain alarmında müdür bilgilendirilir; ORTA/WARNING'de yalnız takım. Diğer standalone
+     *  izleme (keyword/ping/http) her zaman yalnız takım. */
+    private static boolean includeManagerContacts(String alertType, String level) {
+        return (isDomainMon(alertType) || TYPE_DOMAIN_EXPIRY.equals(alertType)) && "CRITICAL".equals(level);
     }
 
     /** Domain monitör alarmı (DOMAINMON_*) için e-posta detay bağlamını EN GÜNCEL DomainCheck'ten kurar.
