@@ -78,7 +78,7 @@ export default function WeeklySummaryBrief({ kpis, t, lang }) {
         </div>
         <div className="wr-sum-col">
           <div className="wr-sum-col-hdr"><CalendarClock size={14} /> {t('wr.sumLookahead')}</div>
-          <ActionList items={s.lookahead14} t={t} />
+          <ActionList items={s.lookahead ?? s.lookahead14} t={t} />
         </div>
       </div>
     </div>
