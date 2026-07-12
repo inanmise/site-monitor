@@ -8825,6 +8825,9 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .dexp-step-detail { font-size: .84em; color: var(--text-muted, #64748b); margin-top: 3px; word-break: break-word; }
 .dexp-step-error { font-size: .82em; color: #b91c1c; margin-top: 3px; word-break: break-word; font-family: Consolas, monospace; }
 .dexp-step-hint { font-size: .84em; color: var(--text, #334155); background: #fef3c7; border-radius: 6px; padding: 5px 8px; margin-top: 5px; }
+.dexp-pem { width: 100%; box-sizing: border-box; font-family: Consolas, "Courier New", monospace; font-size: 11px;
+  line-height: 1.35; padding: 10px; border: 1px solid var(--border, #e5e7eb); border-radius: 8px;
+  background: var(--surface-2, #f8fafc); color: var(--text, #334155); resize: vertical; white-space: pre; overflow: auto; }
 [data-theme="dark"] .dexp-step-hint { background: #3a2f0a; color: #fde68a; }
 [data-theme="dark"] .dexp-step-error { color: #f87171; }
 
