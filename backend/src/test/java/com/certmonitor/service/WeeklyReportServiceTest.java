@@ -163,11 +163,11 @@ class WeeklyReportServiceTest {
     }
 
     @Test
-    @DisplayName("computeWeekLabel: ISO hafta Pzt–Cum aralığı üretir")
+    @DisplayName("computeWeekLabel: ISO hafta Pzt–Paz (tam hafta) aralığı üretir")
     void computeWeekLabel_isoWeek() {
-        // 2026-W24: 8–12 Haziran 2026 (Pzt 8 Haziran)
+        // 2026-W24: 8–14 Haziran 2026 (Pzt 8 – Paz 14 Haziran)
         assertThat(WeeklyReportService.computeWeekLabel(2026, 24))
-                .isEqualTo("2026-W24 (8–12 Haziran 2026)");
+                .isEqualTo("2026-W24 (8–14 Haziran 2026)");
     }
 
     @Test

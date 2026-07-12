@@ -8730,26 +8730,37 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .wr-accordion-body.open { display: block; }
 .wr-accordion-body > .wr-kpi-strip:last-child { margin-bottom: 6px; }
 
-/* İzleme Göstergeleri (04 · İzleme) — izleme türü bazında kart grid'i */
-.wr-mon { margin-top: 18px; }
-.wr-mon-strip--loading { color: var(--text-light); padding: 14px; text-align: center; }
+/* İzleme Göstergeleri (04 · İzleme) — izleme türü bazında kart grid'i; KPI şeridiyle uyumlu executive görünüm
+   (dikişsiz 1px-ayraç grid, uppercase etiket, büyük hafif band-renkli erişim oranı, hizalı etiket/değer satırları) */
+.wr-mon { margin-top: 22px; }
+.wr-mon--loading { color: var(--text-light); padding: 14px; text-align: center; }
 .wr-mon-title { font-size: .68rem; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; color: var(--text-light); margin-bottom: 10px; }
-.wr-mon-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 12px; }
-.wr-mon-card { background: var(--bg-card); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; }
+.wr-mon-grid {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 1px; background: var(--border); border: 1px solid var(--border);
+  border-radius: 10px; overflow: hidden;
+}
+.wr-mon-card { background: var(--bg-card); padding: 14px 16px; display: flex; flex-direction: column; gap: 10px; }
 .wr-mon-card-top { display: flex; align-items: center; gap: 7px; }
-.wr-mon-icon { color: var(--text-light); }
-.wr-mon-card-name { font-size: .8rem; font-weight: 700; color: var(--text); }
-.wr-mon-rate { font-size: 1.8rem; font-weight: 300; line-height: 1; display: flex; align-items: baseline; gap: 8px; }
-.wr-mon-rate--good { color: var(--ok, #16a34a); }
-.wr-mon-rate--amber { color: var(--severity-warn, #d97706); }
-.wr-mon-rate--bad { color: var(--danger, #dc3545); }
-.wr-mon-rate--na { color: var(--text-light); }
+.wr-mon-icon { color: var(--text-light); flex: 0 0 auto; }
+.wr-mon-card-name { font-size: .68rem; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--text-light); }
+.wr-mon-rate { font-size: 2.3rem; font-weight: 300; line-height: 1; display: flex; align-items: baseline; gap: 6px; }
+.wr-mon-rate-pct { font-size: .95rem; font-weight: 400; color: var(--text-light); }
+.wr-mon-rate--good .wr-mon-rate-num { color: var(--ok, #16a34a); }
+.wr-mon-rate--amber .wr-mon-rate-num { color: var(--severity-warn, #d97706); }
+.wr-mon-rate--bad .wr-mon-rate-num { color: var(--danger, #dc3545); }
+.wr-mon-rate--na .wr-mon-rate-num { color: var(--text-light); }
 .wr-mon-delta { font-size: .72rem; font-weight: 700; }
 .wr-mon-delta.up { color: var(--ok, #16a34a); }
 .wr-mon-delta.down { color: var(--danger, #dc3545); }
-.wr-mon-lines { display: flex; flex-direction: column; gap: 2px; font-size: .74rem; color: var(--text-light); }
-.wr-mon-empty { font-size: .8rem; color: var(--text-light); padding: 6px 0; }
-.wr-mon-top { border-top: 1px solid var(--border); padding-top: 6px; }
+.wr-mon-metrics { display: flex; flex-direction: column; }
+.wr-mon-metric { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; padding: 4px 0; border-bottom: 1px solid var(--border); }
+.wr-mon-metric:last-child { border-bottom: none; }
+.wr-mon-metric-lbl { font-size: .63rem; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--text-light); }
+.wr-mon-metric-val { font-size: .82rem; font-weight: 700; color: var(--text); white-space: nowrap; }
+.wr-mon-metric-val.danger { color: var(--danger, #dc3545); }
+.wr-mon-empty { font-size: .78rem; color: var(--text-light); padding: 10px 0; }
+.wr-mon-top { border-top: 1px solid var(--border); padding-top: 8px; }
 .wr-mon-top-hdr { font-size: .6rem; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--text-light); margin-bottom: 4px; }
 .wr-mon-top-row { display: flex; justify-content: space-between; gap: 8px; font-size: .74rem; padding: 1px 0; }
 .wr-mon-top-name { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

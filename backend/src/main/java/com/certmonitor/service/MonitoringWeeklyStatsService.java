@@ -2,7 +2,9 @@ package com.certmonitor.service;
 
 import com.certmonitor.model.AlertEvent;
 import com.certmonitor.model.CertificateInventory;
+import com.certmonitor.model.DnsMonitor;
 import com.certmonitor.model.DomainCheck;
+import com.certmonitor.model.PortMonitor;
 import com.certmonitor.repository.*;
 import com.certmonitor.service.WeeklyAvailabilityReportService.Window;
 import lombok.RequiredArgsConstructor;
@@ -158,16 +160,36 @@ public class MonitoringWeeklyStatsService {
     }
 
     private TypeStats portType(Ctx c) {
-        List<MonRef> mons = portMonitorRepo.findByActiveTrue().stream()
-                .filter(m -> c.teamId().equals(m.getTeamId()))
-                .map(m -> new MonRef(m.getId(), nz(m.getName(), m.getHost() + ":" + m.getPort()), m.getCreatedAt())).toList();
+        // Port monitörleri DNS gibi çift-kaynaklı: STANDALONE (teamId) + ENVANTER-TÜREVİ (teamId null, host=envanter domain'i).
+        // Envanter-türevi olanlar takıma domain→envanter eşlemesinden bağlıdır; host:port başına tek (ekranın merge'i gibi).
+        Set<String> teamDomains = teamInventoryDomains(c.teamId());
+        Map<String, PortMonitor> invByKey = new HashMap<>();
+        List<MonRef> mons = new ArrayList<>();
+        for (PortMonitor m : portMonitorRepo.findByActiveTrue()) {
+            if (Boolean.TRUE.equals(m.getStandalone())) {
+                if (c.teamId().equals(m.getTeamId())) mons.add(new MonRef(m.getId(), nz(m.getName(), m.getHost() + ":" + m.getPort()), m.getCreatedAt()));
+            } else if (teamDomains.contains(m.getHost())) {
+                invByKey.merge(m.getHost() + ":" + m.getPort(), m, (a, b) -> a.getId() <= b.getId() ? a : b);
+            }
+        }
+        for (PortMonitor m : invByKey.values()) mons.add(new MonRef(m.getId(), nz(m.getName(), m.getHost() + ":" + m.getPort()), m.getCreatedAt()));
         return monitorIdType("port", mons, c, (idl, from, to) -> portCheckRepo.weeklyStatsByMonitor(idl, from, to), ExtraMode.CLOSED_COUNT, null);
     }
 
     private TypeStats dnsType(Ctx c) {
-        List<MonRef> mons = dnsMonitorRepo.findByActiveTrue().stream()
-                .filter(m -> c.teamId().equals(m.getTeamId()))
-                .map(m -> new MonRef(m.getId(), nz(m.getName(), m.getDomain()), m.getCreatedAt())).toList();
+        // DNS monitörleri çift-kaynaklı: STANDALONE (teamId) + ENVANTER-TÜREVİ (teamId null, domain=envanter domain'i).
+        // Envanter-türevi olanlar takıma domain→envanter eşlemesinden bağlıdır; domain başına tek (ekranın merge'i gibi).
+        Set<String> teamDomains = teamInventoryDomains(c.teamId());
+        Map<String, DnsMonitor> invByDomain = new HashMap<>();
+        List<MonRef> mons = new ArrayList<>();
+        for (DnsMonitor m : dnsMonitorRepo.findByActiveTrue()) {
+            if (Boolean.TRUE.equals(m.getStandalone())) {
+                if (c.teamId().equals(m.getTeamId())) mons.add(new MonRef(m.getId(), nz(m.getName(), m.getDomain()), m.getCreatedAt()));
+            } else if (teamDomains.contains(m.getDomain())) {
+                invByDomain.merge(m.getDomain(), m, (a, b) -> a.getId() <= b.getId() ? a : b);
+            }
+        }
+        for (DnsMonitor m : invByDomain.values()) mons.add(new MonRef(m.getId(), nz(m.getName(), m.getDomain()), m.getCreatedAt()));
         return monitorIdType("dns", mons, c, (idl, from, to) -> dnsRecordRepo.weeklyStatsByMonitor(idl, from, to), ExtraMode.CHANGED_SUM, null);
     }
 
@@ -240,6 +262,14 @@ public class MonitoringWeeklyStatsService {
     }
 
     // ── Yardımcılar ──────────────────────────────────────────────────────────
+
+    /** Takımın aktif envanter domain'leri — envanter-türevi DNS/Port monitörlerinin takım aidiyeti bu kümeden. */
+    private Set<String> teamInventoryDomains(Long teamId) {
+        Set<String> s = new java.util.HashSet<>();
+        for (CertificateInventory inv : inventoryRepo.findByTeamIdInAndActiveTrueOrderByDomainAsc(List.of(teamId)))
+            if (inv.getDomain() != null) s.add(inv.getDomain());
+        return s;
+    }
 
     private Map<String, Integer> perDomainOpened(Long teamId, Window w) {
         Map<String, Integer> m = new HashMap<>();

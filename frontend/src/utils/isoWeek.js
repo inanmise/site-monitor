@@ -20,34 +20,34 @@ export function isoWeekInfo(d = new Date()) {
   return { year: date.getUTCFullYear(), week }
 }
 
-/** ISO (yıl, hafta) → Pzt ve Cum tarihleri (UTC). */
+/** ISO (yıl, hafta) → Pzt ve Paz tarihleri (UTC) — tam hafta (7 gün). */
 export function isoWeekRange(year, week) {
   const jan4 = new Date(Date.UTC(year, 0, 4))
   const day = jan4.getUTCDay() || 7
   const monday = new Date(jan4)
   monday.setUTCDate(jan4.getUTCDate() - (day - 1) + (week - 1) * 7)
-  const friday = new Date(monday)
-  friday.setUTCDate(monday.getUTCDate() + 4)
-  return { monday, friday }
+  const sunday = new Date(monday)
+  sunday.setUTCDate(monday.getUTCDate() + 6)
+  return { monday, sunday }
 }
 
-/** "8–12 Haziran 2026", ay aşımında "29 Haziran – 3 Temmuz 2026",
- *  yıl aşımında iki taraf da tam yazılır. Geçersiz girişte '—'. */
+/** "6–12 Temmuz 2026", ay aşımında "29 Haziran – 5 Temmuz 2026",
+ *  yıl aşımında iki taraf da tam yazılır. Geçersiz girişte '—'. Pzt–Paz tam hafta. */
 export function formatWeekRange(year, week, lang = 'tr') {
   if (!year || !week || week < 1 || week > 53) return '—'
   const m = MONTHS[lang] ?? MONTHS.tr
-  const { monday, friday } = isoWeekRange(year, week)
+  const { monday, sunday } = isoWeekRange(year, week)
   const dM = monday.getUTCDate()
-  const dF = friday.getUTCDate()
+  const dS = sunday.getUTCDate()
   const moM = m[monday.getUTCMonth()]
-  const moF = m[friday.getUTCMonth()]
-  if (monday.getUTCFullYear() !== friday.getUTCFullYear()) {
-    return `${dM} ${moM} ${monday.getUTCFullYear()} – ${dF} ${moF} ${friday.getUTCFullYear()}`
+  const moS = m[sunday.getUTCMonth()]
+  if (monday.getUTCFullYear() !== sunday.getUTCFullYear()) {
+    return `${dM} ${moM} ${monday.getUTCFullYear()} – ${dS} ${moS} ${sunday.getUTCFullYear()}`
   }
-  if (monday.getUTCMonth() === friday.getUTCMonth()) {
-    return `${dM}–${dF} ${moF} ${friday.getUTCFullYear()}`
+  if (monday.getUTCMonth() === sunday.getUTCMonth()) {
+    return `${dM}–${dS} ${moS} ${sunday.getUTCFullYear()}`
   }
-  return `${dM} ${moM} – ${dF} ${moF} ${friday.getUTCFullYear()}`
+  return `${dM} ${moM} – ${dS} ${moS} ${sunday.getUTCFullYear()}`
 }
 
 /** Takvim ay ızgarası: Pazartesi başlangıçlı hafta satırları. Her satır

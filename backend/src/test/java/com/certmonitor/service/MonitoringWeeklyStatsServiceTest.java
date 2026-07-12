@@ -1,6 +1,9 @@
 package com.certmonitor.service;
 
+import com.certmonitor.model.CertificateInventory;
+import com.certmonitor.model.DnsMonitor;
 import com.certmonitor.model.HttpMonitor;
+import com.certmonitor.model.PortMonitor;
 import com.certmonitor.repository.*;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -61,6 +64,26 @@ class MonitoringWeeklyStatsServiceTest {
         return m;
     }
 
+    private DnsMonitor dns(long id, String domain, Long teamId, boolean standalone) {
+        DnsMonitor m = new DnsMonitor();
+        m.setId(id); m.setName(domain); m.setDomain(domain); m.setRecordType("A");
+        m.setTeamId(teamId); m.setStandalone(standalone); m.setActive(true); m.setCreatedAt("2020-01-01T00:00:00Z");
+        return m;
+    }
+
+    private PortMonitor port(long id, String host, int portNo, Long teamId, boolean standalone) {
+        PortMonitor m = new PortMonitor();
+        m.setId(id); m.setName(host); m.setHost(host); m.setPort(portNo);
+        m.setTeamId(teamId); m.setStandalone(standalone); m.setActive(true); m.setCreatedAt("2020-01-01T00:00:00Z");
+        return m;
+    }
+
+    private CertificateInventory inv(String domain) {
+        CertificateInventory ci = new CertificateInventory();
+        ci.setDomain(domain);
+        return ci;
+    }
+
     private void stubWindows() {
         when(availabilityService.windowForMonday(any(LocalDate.class))).thenAnswer(i -> {
             LocalDate m = i.getArgument(0);
@@ -112,6 +135,39 @@ class MonitoringWeeklyStatsServiceTest {
         assertThat(port.alarmsOpened()).isEqualTo(2);      // PORT_DOWN port'a düşer, http'ye değil
         assertThat(port.successRate()).isNull();           // 0 kontrol → oran null (sıfıra bölme yok)
         assertThat(port.activeMonitors()).isZero();
+    }
+
+    @Test
+    @DisplayName("compute: DNS/Port ENVANTER-TÜREVİ monitörler (teamId=null) takım envanter domain'inden kapsanır")
+    void compute_dnsPortInventoryDerivedScoping() {
+        long teamId = 7L;
+        stubWindows();
+        // Takım envanteri: x.com, y.com — envanter-türevi (teamId=null) monitörlerin takım aidiyeti bu kümeden.
+        when(inventoryRepo.findByTeamIdInAndActiveTrueOrderByDomainAsc(anyList()))
+                .thenReturn(List.of(inv("x.com"), inv("y.com")));
+        // DNS: envanter-türevi x.com (teamId=null) + standalone s.com (teamId=7) + envanter-türevi z.com (BAŞKA takım → hariç).
+        when(dnsMonitorRepo.findByActiveTrue()).thenReturn(List.of(
+                dns(10, "x.com", null, false), dns(11, "s.com", teamId, true), dns(12, "z.com", null, false)));
+        when(dnsRecordRepo.weeklyStatsByMonitor(anyList(), any(), any())).thenAnswer(i ->
+                curFrom.equals(i.getArgument(1))
+                        ? rows(new Object[]{10L, 20L, 20L, 0L}, new Object[]{11L, 10L, 9L, 1L})
+                        : rows());
+        // Port: envanter-türevi x.com:443 (teamId=null) + standalone (teamId=7) + envanter-türevi z.com:443 (BAŞKA takım → hariç).
+        when(portMonitorRepo.findByActiveTrue()).thenReturn(List.of(
+                port(20, "x.com", 443, null, false), port(21, "host", 22, teamId, true), port(22, "z.com", 443, null, false)));
+        when(portCheckRepo.weeklyStatsByMonitor(anyList(), any(), any())).thenAnswer(i ->
+                curFrom.equals(i.getArgument(1))
+                        ? rows(new Object[]{20L, 30L, 30L}, new Object[]{21L, 10L, 8L})
+                        : rows());
+
+        var stats = service.compute(teamId, 2026, 28);
+        assertThat(stats).isNotNull();
+        var dns = stats.types().stream().filter(t -> t.type().equals("dns")).findFirst().orElseThrow();
+        assertThat(dns.activeMonitors()).isEqualTo(2);   // x.com (envanter-türevi) + s.com (standalone); z.com hariç
+        assertThat(dns.totalChecks()).isEqualTo(30);     // 20 + 10
+        var port = stats.types().stream().filter(t -> t.type().equals("port")).findFirst().orElseThrow();
+        assertThat(port.activeMonitors()).isEqualTo(2);  // x.com:443 (envanter-türevi) + standalone; z.com:443 hariç
+        assertThat(port.totalChecks()).isEqualTo(40);    // 30 + 10
     }
 
     @Test
