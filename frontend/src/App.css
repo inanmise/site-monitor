@@ -8677,6 +8677,44 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .wr-kpi-spark { margin-left: auto; display: inline-flex; }
 .spark { display: block; }
 
+/* ── 01 · Özet — executive brief (yönetici paragrafı + sağlık skoru + aksiyon kolonları) ── */
+.wr-sum { margin-bottom: 20px; }
+.wr-sum-hdr {
+  display: flex; gap: 24px; align-items: center; flex-wrap: wrap;
+  padding-bottom: 18px; margin-bottom: 18px; border-bottom: 1px solid var(--border);
+}
+.wr-sum-para { flex: 1 1 340px; font-size: 16px; line-height: 1.8; color: var(--text); }
+.wr-sum-score { display: flex; flex-direction: column; align-items: center; gap: 4px; min-width: 120px; }
+.wr-sum-gauge { position: relative; width: 96px; height: 96px; display: flex; align-items: center; justify-content: center; }
+.wr-gauge { position: absolute; inset: 0; }
+.wr-sum-score-num { font-size: 40px; font-weight: 300; line-height: 1; }
+.wr-sum-delta { font-size: .82rem; font-weight: 700; }
+.wr-sum-delta--up { color: var(--ok, #16a34a); }
+.wr-sum-delta--down { color: var(--danger, #dc3545); }
+.wr-sum-score-lbl { font-size: .66rem; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; color: var(--text-light); }
+
+.wr-sum-cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 20px; }
+.wr-sum-col-hdr {
+  display: flex; align-items: center; gap: 6px; margin-bottom: 8px;
+  font-size: .68rem; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; color: var(--text-light);
+}
+.wr-sum-list { display: flex; flex-direction: column; }
+.wr-sum-row {
+  display: flex; align-items: center; gap: 10px; padding: 7px 10px;
+  border-bottom: 1px solid var(--border); border-left: 4px solid transparent;
+}
+.wr-sum-row:last-child { border-bottom: none; }
+/* Kritiklik sol şeridi (renk dolgusu değil): tier1 kırmızı → tier4 gri */
+.wr-sum-tier1 { border-left-color: var(--danger, #dc3545); }
+.wr-sum-tier2 { border-left-color: var(--severity-warn, #d97706); }
+.wr-sum-tier3 { border-left-color: var(--primary, #007bff); }
+.wr-sum-tier4 { border-left-color: var(--text-light, #94a3b8); }
+.wr-sum-name { flex: 1 1 auto; font-size: .86rem; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wr-sum-type { font-size: .64rem; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--text-light); }
+.wr-sum-days { font-size: .82rem; font-weight: 600; color: var(--text); white-space: nowrap; }
+.wr-sum-alarm { color: var(--danger, #dc3545); font-size: .7rem; }
+.wr-sum-empty { font-size: .82rem; color: var(--text-light); padding: 8px 10px; }
+
 /* Bölüm başlığı — ince ayraç çizgisi (executive hiyerarşi) */
 .wr-editor .show-section-header { border-bottom: 1px solid var(--border); }
 
@@ -8686,7 +8724,7 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
   .wr-reminder-trigger, .wr-bulk-bar, .wr-help, .inactivity-warning { display: none !important; }
   .app-layout, .app-main, .wr-editor { display: block !important; margin: 0 !important; }
   .wr-editor { box-shadow: none !important; border: none !important; padding: 0 !important; }
-  .wr-kpi-strip { break-inside: avoid; }
+  .wr-kpi-strip, .wr-sum, .wr-sum-row { break-inside: avoid; }
   .wr-editor .show-section-header { break-before: page; break-after: avoid; }
   .wr-editor .wr-brief + .wr-kpi-strip, .wr-editor .show-section-header:first-of-type { break-before: avoid; }
   body { background: #fff !important; }

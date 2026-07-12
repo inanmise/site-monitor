@@ -2584,6 +2584,7 @@ public class EmailNotificationService {
             + escHtml(teamName) + " ekibi olarak <strong>" + escHtml(weekLabel)
             + "</strong> haftası raporumuzu aşağıda paylaşıyoruz.</p>"
 
+            + weeklySummaryBlock(kpiSummary)
             + weeklyKpiBlock(kpiSummary)
 
             + approveCtaBlock(approveCtaUrl)
@@ -3179,6 +3180,58 @@ public class EmailNotificationService {
                 numChip("Kritik ≤7",   k.get("critical"),    "#ea580c"),
                 numChip("Uptime",           uptime,               "#16a34a"))
             + "</td></tr></table>";
+    }
+
+    /** Executive özet bloğu (e-posta) — sağlık skoru + yönetici paragrafı + iki kompakt tablo (aksiyon, 14 gün).
+     *  Anahtarlar: score/score_band/manager_text/actions/lookahead. Skor yoksa (eski/veri-yok) → boş. Outlook-safe. */
+    @SuppressWarnings("unchecked")
+    private String weeklySummaryBlock(Map<String, Object> k) {
+        if (k == null || k.get("score") == null) return "";
+        int score = ((Number) k.get("score")).intValue();
+        String band = String.valueOf(k.getOrDefault("score_band", "red"));
+        String bandColor = "green".equals(band) ? "#16a34a" : "amber".equals(band) ? "#d97706" : "#dc2626";
+        String para = escHtml(String.valueOf(k.getOrDefault("manager_text", "")));
+        String head =
+            "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' style='margin:0 0 14px'><tr>"
+            + "<td valign='top' width='120' style='padding:0 16px 0 0;white-space:nowrap'>"
+            + "<div style='font-size:34px;font-weight:800;color:" + bandColor + ";line-height:1'>" + score
+            + "<span style='font-size:15px;color:#94a3b8'>/100</span></div>"
+            + "<div style='font-size:10px;font-weight:700;letter-spacing:.08em;color:#94a3b8;text-transform:uppercase;margin-top:2px'>Haftalık Sağlık Skoru</div>"
+            + "</td>"
+            + "<td valign='top' style='font-size:14px;line-height:1.7;color:#334155'>" + para + "</td>"
+            + "</tr></table>";
+        return head
+            + summaryActionTable("Aksiyon Gerektirenler", (List<Map<String, Object>>) k.get("actions"))
+            + summaryActionTable("Önümüzdeki 14 Gün", (List<Map<String, Object>>) k.get("lookahead"));
+    }
+
+    /** Özet aksiyon/14-gün tablosu — td/bgcolor tier şeridi, sağa hizalı gün (Outlook-safe). Boş → "Kayıt yok". */
+    private String summaryActionTable(String title, List<Map<String, Object>> items) {
+        String hdr = "<div style='font-size:10px;font-weight:700;letter-spacing:.08em;color:#64748b;"
+                + "text-transform:uppercase;margin:8px 0 4px'>" + escHtml(title) + "</div>";
+        if (items == null || items.isEmpty()) {
+            return hdr + "<div style='font-size:13px;color:#94a3b8;margin-bottom:10px'>Kayıt yok</div>";
+        }
+        StringBuilder sb = new StringBuilder(hdr);
+        sb.append("<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' style='margin:0 0 12px;border-collapse:collapse'>");
+        for (Map<String, Object> a : items) {
+            String stripe = tierColor(a.get("tier"));
+            String type = "domain".equals(a.get("type")) ? "Domain" : "Sertifika";
+            Object days = a.get("days_left");
+            sb.append("<tr>")
+              .append("<td width='4' bgcolor='").append(stripe).append("' style='background-color:").append(stripe)
+              .append(";width:4px;font-size:0;line-height:0'>&nbsp;</td>")
+              .append("<td style='padding:6px 10px;font-size:13px;color:#334155;border-bottom:1px solid #eef1f4'>")
+              .append(escHtml(String.valueOf(a.get("name")))).append(" <span style='color:#94a3b8;font-size:11px'>").append(type).append("</span></td>")
+              .append("<td align='right' style='padding:6px 10px;font-size:13px;font-weight:700;color:#334155;border-bottom:1px solid #eef1f4;white-space:nowrap'>")
+              .append(days != null ? days + " gün" : "—").append("</td></tr>");
+        }
+        return sb.append("</table>").toString();
+    }
+
+    private static String tierColor(Object tier) {
+        int t = tier instanceof Number n ? n.intValue() : 0;
+        return switch (t) { case 1 -> "#dc2626"; case 2 -> "#d97706"; case 3 -> "#2563eb"; default -> "#94a3b8"; };
     }
 
     /** Hex rengi beyazla harmanlar (ratio=renk payı) → düz açık ton. 8-haneli

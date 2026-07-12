@@ -1,0 +1,58 @@
+import { describe, it, expect } from 'vitest'
+import { render } from './test-utils.jsx'
+import WeeklySummaryBrief from '../components/WeeklySummaryBrief.jsx'
+
+const t = (key, ...a) => {
+  const m = {
+    'wr.sumScore': 'Skor', 'wr.sumActions': 'Aksiyonlar', 'wr.sumLookahead': '14 Gün',
+    'wr.sumNoRecords': 'Kayıt yok', 'wr.sumTypeCert': 'Sertifika', 'wr.sumTypeDomain': 'Domain',
+    'wr.sumDaysLeft': `${a[0]} gün`, 'wr.sumHasAlarm': 'Açık alarm',
+  }
+  return m[key] ?? key
+}
+
+// Backend snake_case (SNAKE_CASE) — bileşen bu formatı okumalı.
+const summary = {
+  manager_text: { tr: 'TR paragraf metni.', en: 'EN paragraph text.' },
+  score: { value: 74, delta: 6, band: 'amber' },
+  actions: [
+    { name: 't1a.com', type: 'cert', tier: 1, days_left: 10, has_open_alarm: true },
+    { name: 'reg.com', type: 'domain', tier: 2, days_left: 5, has_open_alarm: false },
+  ],
+  lookahead14: [],
+}
+
+describe('WeeklySummaryBrief', () => {
+  it('summary yoksa hiçbir şey render etmez (eski rapor gizli)', () => {
+    const { container } = render(<WeeklySummaryBrief kpis={{ summary: null }} t={t} lang="tr" />)
+    expect(container.querySelector('.wr-sum')).toBeNull()
+  })
+
+  it('paragraf + skor + dairesel gösterge + aksiyon satırları (tier şeridi/tip/gün/alarm)', () => {
+    const { container, getByText } = render(<WeeklySummaryBrief kpis={{ summary }} t={t} lang="tr" />)
+    expect(getByText('TR paragraf metni.')).toBeTruthy()
+    expect(getByText('74')).toBeTruthy()
+    expect(container.querySelector('svg.wr-gauge')).toBeTruthy()
+    expect(container.querySelectorAll('.wr-sum-row').length).toBe(2)
+    expect(container.querySelector('.wr-sum-tier1')).toBeTruthy()
+    expect(getByText('Sertifika')).toBeTruthy()
+    expect(getByText('10 gün')).toBeTruthy()
+    expect(container.querySelector('.wr-sum-alarm')).toBeTruthy()      // açık-alarm işareti
+    expect(container.querySelector('.wr-sum-delta--up')).toBeTruthy()  // skor arttı → yeşil ok
+  })
+
+  it('EN dilinde EN paragrafı seçilir', () => {
+    const { getByText } = render(<WeeklySummaryBrief kpis={{ summary }} t={t} lang="en" />)
+    expect(getByText('EN paragraph text.')).toBeTruthy()
+  })
+
+  it('boş kolon → tek "Kayıt yok" (lookahead boş)', () => {
+    const { getAllByText } = render(<WeeklySummaryBrief kpis={{ summary }} t={t} lang="tr" />)
+    expect(getAllByText('Kayıt yok').length).toBe(1)
+  })
+
+  it('band → skor rengi (amber token)', () => {
+    const { container } = render(<WeeklySummaryBrief kpis={{ summary }} t={t} lang="tr" />)
+    expect(container.querySelector('.wr-sum-score-num').getAttribute('style')).toContain('severity-warn')
+  })
+})

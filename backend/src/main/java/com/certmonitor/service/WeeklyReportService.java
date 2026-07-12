@@ -685,23 +685,44 @@ public class WeeklyReportService {
                 r.getApprovedBy(), r.getApprovedAt(), r.getSentAt(), null, emailKpiSummary(r));
     }
 
-    /** E-posta hero KPI özeti — WeeklyReportKpiService.current'ten sade map (builder anahtarları:
-     *  total_certs / expiring / alarms / critical / uptime_pct). Hesap hatası → null (mail yine gider). */
+    /** E-posta hero KPI + executive özet map'i — WeeklyReportKpiService'ten (KPI chip'leri + varsa sağlık skoru,
+     *  yönetici paragrafı, aksiyon/14-gün tabloları). Tek map; weeklyKpiBlock + weeklySummaryBlock ayrı anahtar okur.
+     *  Hesap hatası → null (mail yine gider). */
     private Map<String, Object> emailKpiSummary(WeeklyReport r) {
         try {
-            WeeklyReportKpiService.KpiSet c =
-                    kpiService.compute(r.getTeamId(), r.getReportYear(), r.getWeekNo()).current();
+            WeeklyReportKpiService.WeeklyReportKpis k =
+                    kpiService.compute(r.getTeamId(), r.getReportYear(), r.getWeekNo());
+            WeeklyReportKpiService.KpiSet c = k.current();
             Map<String, Object> m = new java.util.LinkedHashMap<>();
             m.put("total_certs", c.totalCerts());
             m.put("expiring",    c.expiringInWindow());
             m.put("alarms",      c.alarmsOpened());
             m.put("critical",    c.criticalCerts() + c.criticalDomains());
             m.put("uptime_pct",  c.uptimePct());
+            WeeklyReportKpiService.SummaryBlock s = k.summary();
+            if (s != null) {
+                if (s.score() != null) { m.put("score", s.score().value()); m.put("score_band", s.score().band()); }
+                m.put("manager_text", s.managerText() != null ? s.managerText().getOrDefault("tr", "") : "");
+                m.put("actions",   actionMaps(s.actions()));
+                m.put("lookahead", actionMaps(s.lookahead14()));
+            }
             return m;
         } catch (Exception e) {
             log.warn("Haftalık rapor e-posta KPI özeti hesaplanamadı: report={} — {}", r.getId(), e.getMessage());
             return null;
         }
+    }
+
+    /** ActionItem listesi → e-posta builder'ının okuduğu sade map listesi. */
+    private static List<Map<String, Object>> actionMaps(List<WeeklyReportKpiService.ActionItem> items) {
+        List<Map<String, Object>> out = new java.util.ArrayList<>();
+        if (items != null) for (WeeklyReportKpiService.ActionItem a : items) {
+            Map<String, Object> m = new java.util.LinkedHashMap<>();
+            m.put("name", a.name()); m.put("type", a.type()); m.put("tier", a.tier());
+            m.put("days_left", a.daysLeft()); m.put("has_open_alarm", a.hasOpenAlarm());
+            out.add(m);
+        }
+        return out;
     }
 
     // ── Görseller ─────────────────────────────────────────────────────────────

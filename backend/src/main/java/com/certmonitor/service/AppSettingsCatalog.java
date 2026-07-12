@@ -71,6 +71,11 @@ public final class AppSettingsCatalog {
         new Setting("cert.monitor.http.default-timeout-ms",          "frequency", Type.INT),
         // Haftalık erişilebilirlik e-postası (Pazartesi 10:00) aç/kapa — canlı.
         new Setting("cert.monitor.weekly-availability.enabled",  "monitoring", Type.BOOL),
+        // Haftalık rapor sağlık skoru ağırlıkları (executive özet) — WeeklyScoreCalculator canlı okur.
+        new Setting("cert.monitor.weekly.score.weight-critical",  "weekly", Type.DOUBLE),
+        new Setting("cert.monitor.weekly.score.weight-expiring",  "weekly", Type.DOUBLE),
+        new Setting("cert.monitor.weekly.score.weight-weak-algo", "weekly", Type.DOUBLE),
+        new Setting("cert.monitor.weekly.score.weight-uptime",    "weekly", Type.DOUBLE),
         // Alarm fırtınası (alert storm) — çok monitör birden düşünce bireysel alarmları TEK toplu bildirime indirger.
         new Setting("cert.monitor.storm.enabled",                "storm",      Type.BOOL),
         new Setting("cert.monitor.storm.threshold-unit",         "storm",      Type.ENUM, List.of("COUNT", "PERCENT")),
