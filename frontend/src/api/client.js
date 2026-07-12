@@ -307,6 +307,10 @@ export const api = {
     runDomainExpiryDiagnostics: (domain) => request('/admin/diagnostics/domain-expiry', {
       method: 'POST', body: JSON.stringify({ domain }),
     }),
+    // Proxy'nin sunduğu CA zincirini yakala → yapıştırılmaya hazır PEM (varsayılan host: data.iana.org).
+    captureProxyCaChain: (host) => request('/admin/diagnostics/proxy-ca-chain', {
+      method: 'POST', body: JSON.stringify(host ? { host } : {}),
+    }),
     diagHistory: (domain) => request(`/admin/diagnostics/history?domain=${encodeURIComponent(domain)}`),
     diagHistoryDetail: (id) => request(`/admin/diagnostics/history/${id}`),
     clientIpDebug: () => request('/admin/client-ip-debug'),

@@ -13,6 +13,7 @@ import com.certmonitor.service.HstsDiagnosticsService;
 import com.certmonitor.service.NetworkDiagnosticsService;
 import com.certmonitor.service.OpensslDiagnosticsService;
 import com.certmonitor.service.PermissionService;
+import com.certmonitor.service.ProxyCaExportService;
 import com.certmonitor.service.PublicSuffixService;
 import com.certmonitor.service.UserService;
 import jakarta.servlet.http.HttpServletRequest;
@@ -74,6 +75,7 @@ public class AdminController {
     private final HstsDiagnosticsService hstsDiagnosticsService;
     private final DiagnosticHistoryService diagnosticHistoryService;
     private final DomainExpiryDiagnosticsService domainExpiryDiagnosticsService;
+    private final ProxyCaExportService proxyCaExportService;
     private final PublicSuffixService publicSuffixService;
     private final ClientIpResolver clientIpResolver;
 
@@ -459,6 +461,31 @@ public class AdminController {
                     (String) data.get("expiry_date"),
                     (String) data.get("registrar")));
         }
+        return ok(Map.of("data", data));
+    }
+
+    /** Kurumsal SSL-inspection proxy'sinin sunduğu CA zincirini yakalar ve "Güvenilir CA paketi (PEM)"
+     *  alanına yapıştırılmaya hazır PEM olarak döner. Pod içinden çalışır → CA'yı UI'dan almayı sağlar. */
+    @PostMapping("/diagnostics/proxy-ca-chain")
+    public ResponseEntity<Map<String, Object>> captureProxyCaChain(
+            @RequestBody(required = false) Map<String, Object> body, HttpSession session, HttpServletRequest request) {
+        requirePerm(session, "diagnostics.run", "execute");
+        Long uid = userIdFromSession(session);
+        checkDomainDiagRate(uid != null ? "u" + uid : "ip" + clientIp(request));
+
+        String host = (body != null && body.get("host") != null && !body.get("host").toString().isBlank())
+                ? body.get("host").toString().trim() : "data.iana.org";
+        validateDomain(host);
+        Long portRaw = body != null ? toLong(body.get("port")) : null;
+        int port = portRaw != null ? portRaw.intValue() : 443;
+        if (port < 1 || port > 65535) throw new IllegalArgumentException("Port must be between 1 and 65535");
+
+        Map<String, Object> data = proxyCaExportService.capture(host, port);
+        boolean ok = Boolean.TRUE.equals(data.get("ok"));
+        auditService.recordAction("DIAGNOSTICS_PROXY_CA_CHAIN", session, request, "DOMAIN", host, "{\"port\":" + port + "}");
+        diagnosticHistoryService.record(host, port, "PROXY_CA_CHAIN",
+                actor(session), userIdFromSession(session), teamId(session), clientIp(request),
+                ok, "PROXY_CA_CHAIN: " + (ok ? data.get("ca_count") + " CA" : data.get("error_class")), data);
         return ok(Map.of("data", data));
     }
 

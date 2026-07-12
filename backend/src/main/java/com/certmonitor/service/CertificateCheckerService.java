@@ -587,6 +587,32 @@ public class CertificateCheckerService {
         return false;
     }
 
+    /**
+     * Tanılama / CA dışa-aktarma: {@code host:port}'a PROXY üzerinden (kurumsal SSL-inspection yolu) TLS
+     * el sıkışması yapıp SUNUCUNUN SUNDUĞU zinciri döner. Güven ZORLANMAZ — {@code TRUST_ALL_FACTORY} ile
+     * yalnız OKUMA (openssl {@code s_client -showcerts} eşdeğeri, aynı desen sertifika çekiminde kullanılır);
+     * dönen zincir yalnız incelenip PEM olarak dışa aktarılır, hiçbir veri akışı için kullanılmaz.
+     * Proxy yapılandırılmamışsa IOException. Bu, "kurumsal CA paketini nereden alacağım" sorusunu UI'dan çözer.
+     */
+    public X509Certificate[] captureProxyChain(String host, int port) throws IOException {
+        if (proxyHost == null || proxyHost.isBlank() || proxyPort <= 0) {
+            throw new IOException("Proxy yapılandırılmamış (cert.monitor.proxy.host/port boş) — CA zinciri yalnız proxy üzerinden yakalanır");
+        }
+        int timeoutSec = 8;
+        SSLSocket socket = openViaProxy(TRUST_ALL_FACTORY, host, port, timeoutSec);
+        try (socket) {
+            socket.setSoTimeout(timeoutSec * 1000);
+            SSLParameters params = socket.getSSLParameters();
+            params.setServerNames(Collections.singletonList(new SNIHostName(host)));
+            socket.setSSLParameters(params);
+            socket.startHandshake();
+            Certificate[] peer = socket.getSession().getPeerCertificates();
+            X509Certificate[] out = new X509Certificate[peer.length];
+            for (int i = 0; i < peer.length; i++) out[i] = (X509Certificate) peer[i];
+            return out;
+        }
+    }
+
     /** Open raw TCP to proxy, send HTTP CONNECT, then wrap with SSL.
      *
      *  Emits step-by-step INFO logs under the "[cert-proxy]" prefix so a
