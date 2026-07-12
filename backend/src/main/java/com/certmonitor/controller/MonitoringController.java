@@ -12,6 +12,7 @@ import com.certmonitor.service.DomainCheckerService;
 import com.certmonitor.service.PublicSuffixService;
 import com.certmonitor.service.AppSettingsService;
 import com.certmonitor.service.EscalationService;
+import com.certmonitor.service.SchedulerService;
 import com.certmonitor.service.PermissionService;
 import jakarta.servlet.http.HttpSession;
 import lombok.RequiredArgsConstructor;
@@ -72,6 +73,12 @@ public class MonitoringController {
     private final PermissionService permissionService;
     private final EscalationService escalationService;
     private final AppSettingsService appSettings;
+
+    /** Manuel domain "Şimdi Kontrol Et" sonrası alarm değerlendirmesi için (sweep ile aynı mantık).
+     *  @Lazy: SchedulerService ağır bean; olası wiring döngüsünü kır (ExtendedHealthService ile aynı desen). */
+    @org.springframework.context.annotation.Lazy
+    @org.springframework.beans.factory.annotation.Autowired
+    private SchedulerService schedulerService;
 
     private static final DateTimeFormatter ISO =
             DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
@@ -1759,7 +1766,11 @@ public class MonitoringController {
         permissionService.require(session, "monitoring.trigger", "execute");
         return domainMonitorRepo.findById(id).map(m -> {
             if (!canOperateTeam(session, m.getTeamId())) throw new SecurityException("Bu takımın izlemesini çalıştıramazsınız");
-            domainChecker.check(m);   // DomainCheck persist eder
+            Map<String, Object> r = domainChecker.check(m);   // DomainCheck persist eder
+            // Manuel kontrol de alarm üretsin/çözsün (sweep'in günlük checkDue geciktirmesini bekleme):
+            // WARNING/CRITICAL/UNKNOWN görülürse alarm + e-posta anında; düzeldiyse açık alarm kapanır.
+            try { schedulerService.evaluateDomainAlarmsNow(m, r); }
+            catch (Exception e) { log.warn("Manuel domain alarm değerlendirmesi başarısız: {} — {}", m.getDomain(), e.getMessage()); }
             return ok(enrichDomain(m, domainCheckRepo.findTopByMonitorIdOrderByCheckedAtDesc(id).orElse(null),
                     teamNameMap(), openDomainMonAlarm(m.getDomain())));
         }).orElse(notFound("Domain monitor not found"));
