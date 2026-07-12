@@ -500,25 +500,6 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName }) {
         document.body
       )}
 
-      {/* ── Sorun Tanıla (Alan Adı Süre Bitişi Tanılama) Modal ── */}
-      {diag && createPortal(
-        <div className="modal-overlay" onClick={() => setDiag(null)}>
-          <div className="modal-box" onClick={e => e.stopPropagation()} style={{ maxWidth: 660, width: '92vw', maxHeight: '90vh', overflowY: 'auto' }}>
-            <div className="modal-icon-hdr modal-icon-hdr--domain">
-              <div className="modal-icon-hdr-badge"><ShieldAlert size={20} /></div>
-              <h3>{t('dexp.diagnose')} — {diag.domain}</h3>
-            </div>
-            {diag.loading && <div className="upt-modal-loading">… {t('dexp.running')}</div>}
-            {diag.error && <div className="alert-msg alert-msg--err">{diag.error}</div>}
-            {diag.data && <DomainExpiryTrace data={diag.data} />}
-            <div className="modal-actions">
-              <button className="btn btn-secondary" onClick={() => setDiag(null)}>{t('dom.cancel')}</button>
-            </div>
-          </div>
-        </div>,
-        document.body
-      )}
-
       {/* ── Create / Edit Modal ── */}
       {modal && createPortal(
         <div className="modal-overlay">
@@ -575,7 +556,7 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName }) {
                 <span>
                   <strong>{statusLabel(testResult.status)}</strong>
                   {testResult.days_remaining != null && <> — {testResult.days_remaining} {t('dom.daysLeft')}</>}
-                  {testResult.expiry_date && <> · {formatDate(testResult.expiry_date)}</>}
+                  {testResult.expiry_date && <> · {fmtExpiry(testResult.expiry_date)}</>}
                   {testResult.registrar && <> · {testResult.registrar}</>}
                   {testResult.source && testResult.source !== 'NONE' && <> · {testResult.source}</>}
                   {(testResult.error || testResult.status === 'UNKNOWN') && <> · {testResult.error || t('dom.noData')}</>}
@@ -583,12 +564,38 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName }) {
               </div>
             )}
             <div className="modal-actions">
-              <button className="btn btn-secondary" style={{ marginRight: 'auto' }} onClick={runTest} disabled={testing || !form.domain.trim()}>
-                <FlaskConical size={14} />{testing ? t('dom.testing') : t('dom.test')}
-              </button>
+              <span style={{ display: 'flex', gap: 8, marginRight: 'auto' }}>
+                <button className="btn btn-secondary" onClick={runTest} disabled={testing || !form.domain.trim()}>
+                  <FlaskConical size={14} />{testing ? t('dom.testing') : t('dom.test')}
+                </button>
+                {isAdmin && (
+                  <button className="btn btn-secondary" onClick={() => diagnose({ domain: form.domain.trim() })} disabled={!form.domain.trim()}>
+                    <ShieldAlert size={14} />{t('dexp.diagnose')}
+                  </button>
+                )}
+              </span>
               {modal !== 'new' && canDeleteRow(modal) && <button className="btn btn-danger" onClick={del}><Trash2 size={14} />{t('dom.delete')}</button>}
               <button className="btn btn-secondary" onClick={closeEdit}>{t('dom.cancel')}</button>
               <button className="btn btn-primary" onClick={save} disabled={saving || !form.domain.trim()}>{saving ? '...' : t('dom.save')}</button>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {/* ── Sorun Tanıla (Alan Adı Süre Bitişi Tanılama) Modal — en son portal: diğer modalların ÜSTÜNde durur ── */}
+      {diag && createPortal(
+        <div className="modal-overlay" onClick={() => setDiag(null)}>
+          <div className="modal-box" onClick={e => e.stopPropagation()} style={{ maxWidth: 660, width: '92vw', maxHeight: '90vh', overflowY: 'auto' }}>
+            <div className="modal-icon-hdr modal-icon-hdr--domain">
+              <div className="modal-icon-hdr-badge"><ShieldAlert size={20} /></div>
+              <h3>{t('dexp.diagnose')} — {diag.domain}</h3>
+            </div>
+            {diag.loading && <div className="upt-modal-loading">… {t('dexp.running')}</div>}
+            {diag.error && <div className="alert-msg alert-msg--err">{diag.error}</div>}
+            {diag.data && <DomainExpiryTrace data={diag.data} />}
+            <div className="modal-actions">
+              <button className="btn btn-secondary" onClick={() => setDiag(null)}>{t('dom.cancel')}</button>
             </div>
           </div>
         </div>,
