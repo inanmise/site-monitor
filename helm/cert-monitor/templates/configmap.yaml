@@ -48,6 +48,12 @@ data:
   WEEKLY_AVAIL_CRON: {{ .Values.config.weeklyAvailCron | quote }}
   # WHOIS (port-43) kurumsal 443/80 egress proxy'sini geçemez → prod'da kapalı; RDAP (proxy-aware) tek kaynak.
   DOMAIN_WHOIS_ENABLED: {{ .Values.config.whoisEnabled | quote }}
+  # Kritik domain İKİNCİ günlük kontrolü — yalnız son kontrolünde days_remaining ≤ eşik olan aktif domainleri
+  # ayrı slotta (Europe/Istanbul) tekrar sorgular; gün içinde yenilenen domainin açık alarmı aynı gün kapanır.
+  # Günlük re-alert dedupe korunur → ekstra bildirim ÜRETMEZ. Kapatmak için enabled=false.
+  DOMAIN_CRITICAL_CHECK_ENABLED: {{ .Values.config.domainCriticalCheckEnabled | quote }}
+  DOMAIN_CRITICAL_CHECK_CRON: {{ .Values.config.domainCriticalCheckCron | quote }}
+  DOMAIN_CRITICAL_CHECK_THRESHOLD_DAYS: {{ .Values.config.domainCriticalCheckThresholdDays | quote }}
   # Kurumsal SSL-araya-giren proxy'nin kök/ara CA paketi (PEM). TrustEvaluator bunu cacerts'e EK
   # trust anchor olarak kullanır → RDAP/outbound HTTPS PKIX ile doğrulanır (trust-all YOK). Boş =
   # yalnız public CA'lar. CA rotasyonunda bu value'yu güncelle (bkz. domain-expiry runbook).

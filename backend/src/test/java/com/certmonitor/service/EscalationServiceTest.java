@@ -41,6 +41,8 @@ class EscalationServiceTest {
     @Mock SmtpSettingsService smtpSettings;
     @Mock MaintenanceService maintenanceService;
     @Mock StormService stormService;
+    @Mock com.certmonitor.repository.DomainMonitorRepository domainMonitorRepo;
+    @Mock com.certmonitor.repository.DomainCheckRepository domainCheckRepo;
 
     private EscalationService service;
     private static final DateTimeFormatter ISO =
@@ -49,7 +51,8 @@ class EscalationServiceTest {
     @BeforeEach
     void setUp() {
         service = new EscalationService(alertEventRepo, thresholdRepo, contactRepo,
-                inventoryRepo, emailService, webhookService, new ObjectMapper(), notificationLogRepo, latestCheckRepo, teamRepo, smtpSettings, maintenanceService, stormService);
+                inventoryRepo, emailService, webhookService, new ObjectMapper(), notificationLogRepo, latestCheckRepo, teamRepo, smtpSettings, maintenanceService, stormService,
+                domainMonitorRepo, domainCheckRepo);
 
         // Self-injection bypass for @Async dispatch in tests (runs synchronously)
         ReflectionTestUtils.setField(service, "self", service);
@@ -688,6 +691,55 @@ class EscalationServiceTest {
         // Mail actually sent (combined alert with team email as TO)
         verify(emailService).sendAlert(any(String[].class), anyString(), anyString(),
                 eq("teamonly.example.com"), any(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("reNotify: DOMAINMON_EXPIRY → TAKIMA gider (event.teamId), müdür/global kontak EKLENMEZ + içerik domain_checks'ten zengin")
+    void reNotify_domainMon_routesToTeamNotManager_withRichContent() {
+        // Manuel resend hatası: domain monitörü cert envanterinde YOK → eski kod takımı kaybedip global müdüre düşüyordu.
+        AlertEvent event = existingOpenAlert("kartfree.com", EscalationService.TYPE_DOMAINMON_EXPIRY, "WARNING", false);
+        event.setId(201L);
+        event.setTeamId(7L);            // domain monitörünün takımı (ilk alarmda damgalanmıştı)
+        event.setDaysRemaining(25);
+        when(alertEventRepo.findById(201L)).thenReturn(Optional.of(event));
+        when(alertEventRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        // Takım e-postası (collectTeamEmails → teamRepo)
+        com.certmonitor.model.Team team = new com.certmonitor.model.Team();
+        team.setId(7L); team.setName("SY-Dijital"); team.setEmail("dijitalsy@akbank.com");
+        when(teamRepo.findById(7L)).thenReturn(Optional.of(team));
+
+        // GLOBAL müdür kontağı MEVCUT — eski hatalı davranışta buna düşerdi; teamOnly ile ARTIK eklenmemeli.
+        when(contactRepo.findByMinAlertLevelAndActiveTrue("WARNING"))
+                .thenReturn(List.of(contact("mudur@akbank.com", "MANAGER", "WARNING")));
+
+        // İçerik bağlamı — EN GÜNCEL DomainCheck (registrar/bitiş/EPP → zengin mail)
+        com.certmonitor.model.DomainMonitor mon = new com.certmonitor.model.DomainMonitor();
+        mon.setId(55L); mon.setDomain("kartfree.com"); mon.setTeamId(7L);
+        when(domainMonitorRepo.findFirstByDomainOrderByIdAsc("kartfree.com")).thenReturn(Optional.of(mon));
+        com.certmonitor.model.DomainCheck dc = new com.certmonitor.model.DomainCheck();
+        dc.setMonitorId(55L); dc.setDaysRemaining(25); dc.setExpiryDate("2026-08-06T12:37:46Z");
+        dc.setRegistrar("GoDaddy.com, LLC"); dc.setSource("RDAP");
+        dc.setStatusCodes("client transfer prohibited, client delete prohibited");
+        when(domainCheckRepo.findTopByMonitorIdOrderByCheckedAtDesc(55L)).thenReturn(Optional.of(dc));
+
+        Map<String, Object> result = service.reNotify(201L);
+
+        // Takıma gitti, müdür yok → 1 alıcı, 0 kontak
+        assertThat(result.get("recipients_queued")).isEqualTo(1);
+        assertThat(result.get("contacts_queued")).isEqualTo(0);
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<String[]> toCap = ArgumentCaptor.forClass(String[].class);
+        @SuppressWarnings({"unchecked", "rawtypes"})
+        ArgumentCaptor<Map> ctxCap = ArgumentCaptor.forClass(Map.class);
+        verify(emailService).sendAlert(toCap.capture(), contains("[RE-ALERT]"), anyString(),
+                eq("kartfree.com"), any(), any(), any(), ctxCap.capture());
+        // TO = SADECE takım e-postası; müdür DEĞİL
+        assertThat(toCap.getValue()).containsExactly("dijitalsy@akbank.com");
+        // İçerik zengin — registrar + bitiş bağlamı geçti (detay tablosu dolu)
+        assertThat(ctxCap.getValue()).containsEntry("registrar", "GoDaddy.com, LLC");
+        assertThat(ctxCap.getValue()).containsKey("expiry_date");
     }
 
     // ── Sertifikaya erişilemezlik (ağ/firewall) → UYARI + müdür hariç ───────────

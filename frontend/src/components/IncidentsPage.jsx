@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { api } from '../api/client'
-import { useT } from '../i18n/index.jsx'
+import { useT, useDateLocale } from '../i18n/index.jsx'
 import { useToast } from './ui/Toast.jsx'
 import { rcMeta, durationMs, formatDuration, formatIncidentTime } from '../utils/incidentMeta.js'
 import { Siren, RefreshCw, Trash2, MessageSquare, X, ExternalLink, ChevronLeft, ChevronRight,
@@ -12,6 +12,7 @@ const SORTABLE = { started: 'started', status: 'status', severity: 'severity', r
 
 export default function IncidentsPage({ systemRole }) {
   const t = useT()
+  const dateLocale = useDateLocale()
   const toast = useToast()
   const isAdmin = systemRole === 'ADMIN'
 
@@ -217,12 +218,12 @@ export default function IncidentsPage({ systemRole }) {
                         <MessageSquare size={13} />{t('incov.comments', inc.comment_count ?? 0)}
                       </button>
                     </td>
-                    <td className="inc-started" title={inc.started_at}>{formatIncidentTime(inc.started_at)}</td>
+                    <td className="inc-started" title={inc.started_at}>{formatIncidentTime(inc.started_at, dateLocale)}</td>
                     <td className="inc-duration">
                       {formatDuration(durationMs(inc.started_at, inc.resolved_at, nowMs), t)}
                       {inc.status === 'resolved' && inc.resolved_at && (
                         <span className="inc-resolved-at" title={inc.resolved_at}>
-                          {t('incov.resolvedAt')} {formatIncidentTime(inc.resolved_at)}
+                          {t('incov.resolvedAt')} {formatIncidentTime(inc.resolved_at, dateLocale)}
                         </span>
                       )}
                     </td>
@@ -267,6 +268,7 @@ export default function IncidentsPage({ systemRole }) {
 // ── Yorum dizisi modalı ──────────────────────────────────────────────────────
 function CommentThread({ incident, onClose, onChanged }) {
   const t = useT()
+  const dateLocale = useDateLocale()
   const toast = useToast()
   const [comments, setComments] = useState([])
   const [loading, setLoading] = useState(true)
@@ -312,7 +314,7 @@ function CommentThread({ incident, onClose, onChanged }) {
               <div key={c.id} className="inc-cmt">
                 <div className="inc-cmt-head">
                   <span className="inc-cmt-author">{c.author_name || c.author_username || '—'}</span>
-                  <span className="inc-cmt-time">{formatIncidentTime(c.created_at)}</span>
+                  <span className="inc-cmt-time">{formatIncidentTime(c.created_at, dateLocale)}</span>
                   <button className="inc-cmt-del" title={t('incov.delete')} onClick={() => remove(c.id)}><Trash2 size={12} /></button>
                 </div>
                 <div className="inc-cmt-body">{c.body}</div>

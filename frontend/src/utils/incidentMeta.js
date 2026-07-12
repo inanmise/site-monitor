@@ -52,12 +52,14 @@ export function formatDuration(ms, t) {
   return `${d} ${t('incov.unit.day')}${h % 24 ? ' ' + (h % 24) + ' ' + t('incov.unit.hour') : ''}`
 }
 
-// Tam yerel timestamp + timezone (ör. "16 May 2023 14:44:23 GMT+3").
-export function formatIncidentTime(s) {
+// Tam yerel timestamp + timezone (ör. "16 Ağu 2023 14:44:23 GMT+3").
+// locale: uygulama dilinden ('tr-TR'/'en-GB', useDateLocale). undefined bırakılırsa çalışma-ortamı
+// dili kullanılır → İngilizce Windows'ta "Jul 12" gibi görünür; bu yüzden çağıran locale geçmeli.
+export function formatIncidentTime(s, locale = 'tr-TR') {
   const d = parseUtc(s)
   if (!d) return '—'
   try {
-    return d.toLocaleString(undefined, {
+    return d.toLocaleString(locale, {
       year: 'numeric', month: 'short', day: '2-digit',
       hour: '2-digit', minute: '2-digit', second: '2-digit',
       timeZoneName: 'short', hour12: false,

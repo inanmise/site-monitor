@@ -107,6 +107,15 @@ config:
   # is sufficient; still live-toggleable from Genel Ayarlar (cert.monitor.domain.whois-enabled).
   whoisEnabled: "false"
 
+  # ── Critical-domain second daily check ────────────────────────────────────
+  # Re-checks ONLY active domains whose last check days_remaining ≤ threshold, at a
+  # separate daily slot (Europe/Istanbul) using a dedicated scheduler_lock key. Purpose:
+  # a same-day renewal auto-closes its open DOMAINMON_EXPIRY alarm without waiting for
+  # tomorrow's sweep. Daily re-alert dedupe is preserved → produces NO extra notification.
+  domainCriticalCheckEnabled: "true"
+  domainCriticalCheckCron: "0 0 16 * * *"
+  domainCriticalCheckThresholdDays: "7"
+
   # ── Corporate SSL-inspection CA bundle ────────────────────────────────────
   # PEM (root + intermediate certs) of the forward proxy's MITM re-signing CA.
   # TrustEvaluator adds these as trust anchors ALONGSIDE the JVM cacerts (never
