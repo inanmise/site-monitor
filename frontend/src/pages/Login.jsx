@@ -1,8 +1,7 @@
 import { useState, useEffect } from 'react'
 import { api } from '../api/client'
 import { useT, useLanguage } from '../i18n/index.jsx'
-import { ShieldAlert, ShieldCheck, Lock, Globe, Bell, BarChart3, RefreshCw, X } from 'lucide-react'
-import CertMonitorLogo from '../components/ui/CertMonitorLogo.jsx'
+import { ShieldAlert, ShieldCheck, Lock, Globe, Activity, Radio, Network, Server, Search, Gauge, Bell, AlertTriangle, FileText, Wrench, X } from 'lucide-react'
 
 const STORAGE_KEY = 'cert-monitor-remembered-user'
 
@@ -26,12 +25,23 @@ export default function Login({ onLogin, sessionExpired = false }) {
     return () => clearTimeout(id)
   }, [lockout])
 
-  const FEATURES = [
-    { Icon: ShieldCheck, key: 'login.feat1' },
-    { Icon: Bell,        key: 'login.feat2' },
-    { Icon: Globe,       key: 'login.feat3' },
-    { Icon: RefreshCw,   key: 'login.feat4' },
-    { Icon: BarChart3,   key: 'login.feat5' },
+  // Bento kutuları — izleme türleri (flagship: Sertifika geniş + yeşil vurgu). tint = kategori ikon rengi.
+  const CAPS = [
+    { Icon: ShieldCheck, key: 'login.capCert',    desc: 'login.capCertDesc',    tint: '#4ade80', flag: true, wide: true },
+    { Icon: Server,      key: 'login.capDns',     desc: 'login.capDnsDesc',     tint: '#60a5fa' },
+    { Icon: Activity,    key: 'login.capHttp',    desc: 'login.capHttpDesc',    tint: '#f59e0b' },
+    { Icon: Network,     key: 'login.capPort',    desc: 'login.capPortDesc',    tint: '#a78bfa' },
+    { Icon: Radio,       key: 'login.capPing',    desc: 'login.capPingDesc',    tint: '#22d3ee' },
+    { Icon: Globe,       key: 'login.capDomain',  desc: 'login.capDomainDesc',  tint: '#34d399' },
+    { Icon: Search,      key: 'login.capKeyword', desc: 'login.capKeywordDesc', tint: '#f472b6' },
+    { Icon: Gauge,       key: 'login.capUptime',  desc: 'login.capUptimeDesc',  tint: '#818cf8' },
+  ]
+  // Operasyon grubu — izleme dışı yetenekler (kompakt çipler).
+  const OPS = [
+    { Icon: Bell,          key: 'login.opsAlarm' },
+    { Icon: AlertTriangle, key: 'login.opsIncident' },
+    { Icon: FileText,      key: 'login.opsReport' },
+    { Icon: Wrench,        key: 'login.opsMaintenance' },
   ]
 
   useEffect(() => {
@@ -110,61 +120,79 @@ export default function Login({ onLogin, sessionExpired = false }) {
   return (
     <div className="lp-root">
 
-      {/* ── Sol panel: marka & özellikler ── */}
+      {/* ── Sol panel: executive marka & mesaj ── */}
       <div className="lp-left">
+        {/* Dekoratif konsantrik halkalar — içeriğin arkasında */}
+        <svg className="lp-bg" viewBox="0 0 520 900" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
+          <g>
+            <circle cx="470" cy="150" r="70" />
+            <circle cx="470" cy="150" r="150" />
+            <circle cx="470" cy="150" r="240" />
+            <circle cx="470" cy="150" r="340" />
+            <circle cx="470" cy="150" r="450" />
+            <circle cx="470" cy="150" r="570" />
+          </g>
+        </svg>
+        <span className="lp-accent-dot" title="System operational" />
+
         <div className="lp-left-inner">
-          <div className="lp-brand">
-            <div className="lp-brand-logo-row">
-              <CertMonitorLogo variant="login" className="lp-logo-svg" />
-              <span className="lp-blink-dot" title="System operational" />
-            </div>
-            <div className="lp-brand-headline">
-              <span className="lp-meet">{t('login.meet')}</span>
-              <h1 className="lp-brand-name">CertMonitor</h1>
-            </div>
-            <p className="lp-brand-tagline">{t('login.leftTagline')}</p>
+          {/* Üst: wordmark + ENTERPRISE rozeti */}
+          <div className="lp-top">
+            <span className="lp-wordmark">CertMonitor</span>
+            <span className="lp-badge">ENTERPRISE</span>
           </div>
 
-          <ul className="lp-features">
-            {FEATURES.map(({ Icon, key }) => (
-              <li key={key} className="lp-feature-item">
-                <span className="lp-feature-icon"><Icon size={16} /></span>
-                <span>{t(key)}</span>
-              </li>
-            ))}
-          </ul>
-
-          <div className="lp-social-proof">
-            <span className="lp-social-stat"><strong>500+</strong> {t('login.domainsMonitored')}</span>
-            <span className="lp-social-divider">·</span>
-            <span className="lp-social-stat"><strong>99.9%</strong> {t('login.uptime')}</span>
+          {/* Orta: mesaj + izleme yetenekleri (bento) + operasyon grubu (çipler) */}
+          <div className="lp-center">
+            <h1 className="lp-headline">{t('login.leftHeadline')}</h1>
+            <div className="lp-caps-title">{t('login.capsTitle')}</div>
+            <div className="lp-bento">
+              {CAPS.map(({ Icon, key, desc, tint, flag, wide }, i) => (
+                <div
+                  key={key}
+                  className={`lp-tile${flag ? ' lp-tile--flag' : ''}${wide ? ' lp-tile--wide' : ''}`}
+                  style={{ '--tile-tint': tint, animationDelay: `${i * 55}ms` }}
+                >
+                  {flag && <span className="lp-tile-live" />}
+                  <Icon size={18} className="lp-tile-icon" />
+                  <span className="lp-tile-label">{t(key)}</span>
+                  <span className="lp-tile-desc">{t(desc)}</span>
+                </div>
+              ))}
+            </div>
+            <div className="lp-caps-title">{t('login.opsTitle')}</div>
+            <div className="lp-ops">
+              {OPS.map(({ Icon, key }, i) => (
+                <span key={key} className="lp-chip" style={{ animationDelay: `${(CAPS.length + i) * 55}ms` }}>
+                  <Icon size={14} />
+                  {t(key)}
+                </span>
+              ))}
+            </div>
           </div>
 
-          <div className="lp-left-footer">
-            <div className="lp-footer-info">
-              <span className="lp-enterprise-badge">ENTERPRISE</span>
-              <span>v{__APP_VERSION__} &nbsp;·&nbsp; &copy; {new Date().getFullYear()} CertMonitor</span>
+          {/* Alt: hero istatistikler + footer */}
+          <div className="lp-bottom">
+            <div className="lp-stats">
+              <div className="lp-stat">
+                <span className="lp-stat-num">500+</span>
+                <span className="lp-stat-lbl">{t('login.domainsMonitored')}</span>
+              </div>
+              <span className="lp-stat-sep" />
+              <div className="lp-stat">
+                <span className="lp-stat-num">99.9%</span>
+                <span className="lp-stat-lbl">{t('login.uptime')}</span>
+              </div>
             </div>
-            <button type="button" className="lp-lang-btn" onClick={toggleLang}>
-              <Globe size={13} />
-              {lang === 'tr' ? 'English' : 'Türkçe'}
-            </button>
+            <div className="lp-footer">
+              <span className="lp-footer-meta">v{__APP_VERSION__} &nbsp;·&nbsp; &copy; {new Date().getFullYear()} CertMonitor</span>
+              <button type="button" className="lp-lang-btn" onClick={toggleLang}>
+                <Globe size={13} />
+                {lang === 'tr' ? 'English' : 'Türkçe'}
+              </button>
+            </div>
           </div>
         </div>
-
-        <div className="lp-left-bottom">
-          <p className="lp-left-bottom-text">{t('login.footerTagline')}</p>
-          <div className="lp-left-bottom-features">
-            <span>🔒 {t('login.ftSSL')}</span>
-            <span>🌐 {t('login.ftPorts')}</span>
-            <span>⚡ {t('login.ftAlerts')}</span>
-            <span>🔄 {t('login.ftCron')}</span>
-          </div>
-        </div>
-
-        <div className="lp-deco lp-deco-1" />
-        <div className="lp-deco lp-deco-2" />
-        <div className="lp-deco lp-deco-3" />
       </div>
 
       {/* ── Sağ panel: giriş formu ── */}
