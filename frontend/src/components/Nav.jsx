@@ -32,6 +32,8 @@ export default function Nav({ activeTab, onTabChange, username, teamName, system
       tabs: [
         { id: 'all',           Icon: FileText,     labelKey: 'nav.all',           show: true },
         { id: 'domains',       Icon: Globe,        labelKey: 'nav.domains',       show: true },
+        // Durum İzleme yalnız sertifika envanteri domainlerini izler (/uptime/overview → inventoryRepo) → Sertifikalar grubunda.
+        { id: 'uptime',        Icon: Wifi,         labelKey: 'nav.uptime',        show: true },
         { id: 'forecast',      Icon: TrendingDown, labelKey: 'nav.forecast',      show: true },
         { id: 'renewal',       Icon: RefreshCw,    labelKey: 'nav.renewal',       show: true },
         { id: 'renewal-guide', Icon: BookOpen,     labelKey: 'nav.renewalGuide',  show: true },
@@ -40,7 +42,6 @@ export default function Nav({ activeTab, onTabChange, username, teamName, system
     {
       labelKey: 'nav.groupMonitoring',
       tabs: [
-        { id: 'uptime', Icon: Wifi,     labelKey: 'nav.uptime', show: true },
         { id: 'http',    Icon: Globe,    labelKey: 'nav.http',    show: true },
         { id: 'domain',  Icon: CalendarDays, labelKey: 'nav.domainmon', show: true },
         { id: 'port',   Icon: Network,  labelKey: 'nav.port',   show: true },

@@ -193,6 +193,13 @@ public interface AlertEventRepository extends JpaRepository<AlertEvent, Long> {
     @Query("UPDATE AlertEvent e SET e.domain = :newDomain WHERE e.domain = :oldDomain")
     int renameDomain(@Param("oldDomain") String oldDomain, @Param("newDomain") String newDomain);
 
+    /** Denormalize grup adı kopyasını bir TAKIM için yeniden adlandır (İzleme Grupları rename ile senkron). @Transactional zorunlu. */
+    @Modifying
+    @Query("UPDATE AlertEvent e SET e.groupName = :newName WHERE e.groupName = :oldName "
+         + "AND ((:teamId IS NULL AND e.teamId IS NULL) OR e.teamId = :teamId) AND e.alertType IN :alertTypes")
+    int renameGroupForTeamAndTypes(@Param("teamId") Long teamId, @Param("oldName") String oldName,
+                                   @Param("newName") String newName, @Param("alertTypes") java.util.Collection<String> alertTypes);
+
     // ── Incidents Overview ekranı — findFiltered'dan AYRI: q, domain üzerinde LIKE (monitör adı/host araması) ──
     @Query("""
             SELECT e FROM AlertEvent e

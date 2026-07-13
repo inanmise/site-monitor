@@ -53,6 +53,7 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName }) {
   const [detailMonitor, setDetailMonitor] = useState(null)
   const [modal, setModal] = useState(null)
   const [form, setForm] = useState(emptyForm)
+  const [teamGroups, setTeamGroups] = useState([])   // form takımı+türüne göre grup önerileri (sızıntısız, server-scoped)
   const [saving, setSaving] = useState(false)
   const [checking, setChecking] = useState(null)
   const [deleting, setDeleting] = useState(null)
@@ -91,6 +92,14 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName }) {
     if (!isAdmin) return
     api.admin.getTeams().then(r => { if (r?.success) setTeams(r.data || []) })
   }, [isAdmin])
+
+  // Form açıkken seçili takımın + bu türün gruplarını sunucudan getir (başka takım sızmaz).
+  useEffect(() => {
+    if (!modal || form.teamId === '' || form.teamId == null) { setTeamGroups([]); return }
+    let alive = true
+    api.monitoring.listGroups(form.teamId, 'dns').then(r => { if (alive && r?.success) setTeamGroups(r.data || []) })
+    return () => { alive = false }
+  }, [modal, form.teamId])
 
   // Yeni monitör için varsayılan kontrol aralığı (Genel Ayarlar → Kontrol Sıklığı).
   useEffect(() => {
@@ -140,6 +149,10 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName }) {
   function closeEditModal() { setModal(null); setTestResult(null) }
 
   async function save() {
+    // Takım alanı yalnız yeni/standalone'da görünür ve zorunlu; envanter-türevi düzenlemede takım envanterden gelir.
+    if ((modal === 'new' || modal?.standalone) && (form.teamId === '' || form.teamId == null)) {
+      toast.error(t('mon.teamRequired')); return
+    }
     setSaving(true)
     const isNew = modal === 'new'
     const payload = {
@@ -224,7 +237,8 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName }) {
   const groupMonitors = isAdmin ? monitors : monitors.filter(m => myTeam != null && String(m.team_id) === myTeam)
   const groupNames = [...new Set(groupMonitors.map(m => m.group_name).filter(Boolean))].sort((a, b) => a.localeCompare(b))
   const hasGroupOptions = groupNames.length > 0
-  const groupSelectOptions = groupNames.map(g => ({ value: g, label: g }))
+  // Form içi grup dropdown'ı takım+tür kapsamlı endpoint'ten (liste filtresi değil): admin başka takımın grubunu görmez.
+  const groupSelectOptions = teamGroups.map(g => ({ value: g.name, label: g.name }))
   const groupFilterOptions = [{ value: 'all', label: t('dns.allGroups') },
     ...groupNames.map(g => ({ value: g, label: g })),
     ...(groupMonitors.some(m => !m.group_name) ? [{ value: '__none__', label: t('dns.noGroup') }] : [])]
@@ -455,7 +469,7 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName }) {
               </label>
               {(modal === 'new' || modal.standalone) && (
                 <label>
-                  <span>{t('dns.team')}</span>
+                  <span>{t('dns.team')} <span className="req-star">*</span></span>
                   {isAdmin
                     ? <SearchableSelect
                         value={form.teamId}
@@ -582,7 +596,7 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName }) {
               <button
                 className="btn btn-primary"
                 onClick={save}
-                disabled={saving || !form.recordType || !form.domain.trim()}
+                disabled={saving || !form.recordType || !form.domain.trim() || ((modal === 'new' || modal?.standalone) && !form.teamId)}
               >
                 {saving ? t('dns.saving') : t('dns.save')}
               </button>

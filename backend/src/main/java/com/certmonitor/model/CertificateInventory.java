@@ -62,6 +62,10 @@ public class CertificateInventory {
     @Column(name = "ug_team_id")
     private Long ugTeamId;
 
+    /** Mantıksal grup (ör. "X Sistemleri") — takım-bazlı; monitoring_groups registry'sine bağlı. */
+    @Column(name = "group_name")
+    private String groupName;
+
     // ── Operasyonel boolean alanlar ───────────────────────────────────────────
     @Column(name = "external_vendor")    private Boolean externalVendor;
     @Column(name = "action_required")    private Boolean actionRequired;

@@ -53,6 +53,8 @@ public final class PermissionCatalog {
         r("monitoring.crud",       "monitoring", EDIT),
         r("monitoring.trigger",    "monitoring", EXECUTE),
         r("domain.registration.view", "monitoring", VIEW),   // Domain Kaydı sekmesi (registrar/IANA/DNSSEC/IP/EPP)
+        r("monitoring.group", "monitoring", VIEW),           // İzleme Grupları — görüntüleme (takım-scope)
+        r("monitoring.group", "monitoring", EDIT),           // İzleme Grupları — yeniden adlandırma (takım-scope)
 
         // ── Loglar & Raporlar ─────────────────────────────────────────────
         r("audit_log.read",     "logs", VIEW),
@@ -163,7 +165,7 @@ public final class PermissionCatalog {
             // global admin/AUDIT erişebilir (requireAuditAccess); TEAM_ADMIN'e verilmez.
             "weak_algo.read",
             // monitoring.crud/trigger: kendi takımı için keyword/ping izleme oluştur/düzenle/çalıştır
-            "monitoring.read", "monitoring.crud", "monitoring.trigger", "domain.registration.view",
+            "monitoring.read", "monitoring.crud", "monitoring.trigger", "domain.registration.view", "monitoring.group",
             // Haftalık raporlar: takım yöneticisi okur/düzenler ve onaylayabilir;
             // tanılama geçmişini görür (canlı tarama admin-only kalır)
             "weekly_reports.read", "weekly_reports.crud", "weekly_reports.approve",
@@ -193,7 +195,7 @@ public final class PermissionCatalog {
             "system_health.read",
             // monitoring.crud/trigger: USER kendi takımı için keyword/ping izleme oluşturur/düzenler/çalıştırır
             // (silme canManage ile TEAM_ADMIN/ADMIN'de; Port/DNS yazma requireAdmin ile admin-only kalır)
-            "monitoring.read", "monitoring.crud", "monitoring.trigger", "domain.registration.view",
+            "monitoring.read", "monitoring.crud", "monitoring.trigger", "domain.registration.view", "monitoring.group",
             // audit_log.read: sistem-geneli denetim → yalnız admin/AUDIT (requireAuditAccess)
             "weak_algo.read",
             // Haftalık raporlar: USER kendi takımının raporunu yazar/düzenler

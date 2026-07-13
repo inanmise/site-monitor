@@ -10,6 +10,7 @@ import com.certmonitor.service.DomainExpiryDiagnosticsService;
 import com.certmonitor.service.EmailNotificationService;
 import com.certmonitor.service.EscalationService;
 import com.certmonitor.service.HstsDiagnosticsService;
+import com.certmonitor.service.MonitoringGroupService;
 import com.certmonitor.service.NetworkDiagnosticsService;
 import com.certmonitor.service.OpensslDiagnosticsService;
 import com.certmonitor.service.PermissionService;
@@ -80,6 +81,7 @@ public class AdminController {
     private final ClientIpResolver clientIpResolver;
 
     private final PermissionService permissionService;
+    private final MonitoringGroupService monitoringGroupService;
 
     private static final DateTimeFormatter ISO =
             DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
@@ -173,6 +175,7 @@ public class AdminController {
             throw new IllegalArgumentException("Port must be between 1 and 65535");
         if (item.getActive() == null) item.setActive(true);
         item.setTlsMode(normalizeTlsMode(item.getTlsMode()));
+        item.setGroupName(monitoringGroupService.getOrCreate(item.getTeamId(), "cert", item.getGroupName(), actor(session)));
         CertificateInventory saved = inventoryRepo.save(item);
         auditService.recordAction("DOMAIN_ADD", session, request,
                 "CERTIFICATE", saved.getDomain(),
@@ -251,6 +254,7 @@ public class AdminController {
         existing.setPurchasedBy(item.getPurchasedBy());
         existing.setChangeDescription(item.getChangeDescription());
         existing.setTier(item.getTier());
+        existing.setGroupName(monitoringGroupService.getOrCreate(existing.getTeamId(), "cert", item.getGroupName(), actor(session)));
         existing.setUpdatedAt(now());
         CertificateInventory saved = inventoryRepo.save(existing);
 

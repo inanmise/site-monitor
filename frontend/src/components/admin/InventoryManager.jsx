@@ -14,7 +14,7 @@ import { exportInventoryCsv, exportInventoryPdf } from '../../utils/exportInvent
 
 const EMPTY = {
   domain: '', port: 443, owner: '', description: '', active: true,
-  team_id: '', tier: null,
+  team_id: '', group_name: '', tier: null,
   external_vendor: false, action_required: false, openshift: false,
   ssl_pinning: false, internal_cert: false, jks_keystore: false,
   server_update: false, netscaler: false, waf_enabled: false,
@@ -57,6 +57,7 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
   const [showScrollHint, setShowScrollHint] = useState(false)
   const [transferTeamId, setTransferTeamId]     = useState('')
   const [form, setForm]               = useState(EMPTY)
+  const [teamGroups, setTeamGroups]   = useState([])   // seçili takımın "cert" grupları (sızıntısız, server-scoped)
   const [saving, setSaving]           = useState(false)
   const [msg, setMsg]                 = useState(null)
   const [statusFilter, setStatusFilter] = useState('default')
@@ -176,6 +177,14 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
   // Filtre değişince seçimi temizle (görünmeyen satırlar seçili kalmasın)
   useEffect(() => { setSelected(new Set()) }, [statusFilter])
 
+  // Form açıkken seçili takımın "cert" gruplarını sunucudan getir (başka takım sızmaz).
+  useEffect(() => {
+    if (!modal || !form.team_id) { setTeamGroups([]); return }
+    let alive = true
+    api.monitoring.listGroups(form.team_id, 'cert').then(r => { if (alive && r?.success) setTeamGroups(r.data || []) })
+    return () => { alive = false }
+  }, [modal, form.team_id])
+
   async function bulkAction(action) {
     const ids = [...selected]
     if (ids.length === 0) return
@@ -281,6 +290,7 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
       description:        form.description,
       active:             form.active,
       team_id:            form.team_id ? Number(form.team_id) : null,
+      group_name:         form.group_name?.trim() || null,
       ug_team_id:         null,   // tek takım modeli — UG ayrımı kaldırıldı
       external_vendor:    form.external_vendor,
       action_required:    form.action_required,
@@ -632,6 +642,23 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
                   options={[
                     { value: '', label: t('inv.selectTeam') },
                     ...teams.map(team => ({ value: team.id, label: team.name })),
+                  ]}
+                />
+              </label>
+
+              <label>
+                {t('inv.formGroup')}
+                <SearchableSelect
+                  value={form.group_name}
+                  onChange={v => f('group_name', v)}
+                  placeholder={t('inv.noGroup')}
+                  disabled={!canManage || !form.team_id}
+                  creatable
+                  onCreate={() => {}}
+                  searchThreshold={2}
+                  options={[
+                    { value: '', label: t('inv.noGroup') },
+                    ...teamGroups.map(g => ({ value: g.name, label: g.name })),
                   ]}
                 />
               </label>

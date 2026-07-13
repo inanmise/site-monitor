@@ -6,6 +6,7 @@ vi.mock('../api/client', () => ({
   formatDate: (s) => s ?? '',
   api: {
     monitoring: {
+      listGroups:       vi.fn(() => Promise.resolve({ success: true, data: [] })),
       getDnsMonitors:   vi.fn(),
       getDnsDetails:    vi.fn(),
       getDnsHistory:    vi.fn(),

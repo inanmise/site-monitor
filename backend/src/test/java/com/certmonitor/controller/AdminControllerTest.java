@@ -29,6 +29,7 @@ import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
@@ -122,6 +123,9 @@ class AdminControllerTest {
 
     @MockitoBean
     com.certmonitor.service.PermissionService permissionService;
+
+    @MockitoBean
+    com.certmonitor.service.MonitoringGroupService monitoringGroupService;
 
     @BeforeEach
     void setup() {

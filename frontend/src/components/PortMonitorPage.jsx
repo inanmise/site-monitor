@@ -63,6 +63,7 @@ export default function PortMonitorPage({ systemRole, teamId, teamName }) {
   const [summary, setSummary] = useState({ total: 0, down: 0 })
   const [modal, setModal] = useState(null)
   const [form, setForm] = useState(emptyForm)
+  const [teamGroups, setTeamGroups] = useState([])   // form takımı+türüne göre grup önerileri (sızıntısız, server-scoped)
   const [advOpen, setAdvOpen] = useState(false)               // "Gelişmiş ayarlar" accordion
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState(null)
@@ -90,6 +91,14 @@ export default function PortMonitorPage({ systemRole, teamId, teamName }) {
     const interval = setInterval(load, REFRESH_INTERVAL * 1000)
     return () => clearInterval(interval)
   }, [load])
+
+  // Form açıkken seçili takımın + bu türün gruplarını sunucudan getir (başka takım sızmaz).
+  useEffect(() => {
+    if (!modal || form.teamId === '' || form.teamId == null) { setTeamGroups([]); return }
+    let alive = true
+    api.monitoring.listGroups(form.teamId, 'port').then(r => { if (alive && r?.success) setTeamGroups(r.data || []) })
+    return () => { alive = false }
+  }, [modal, form.teamId])
 
   useEffect(() => {
     countdownRef.current = setInterval(() => setSecondsSince(s => s + 1), 1000)
@@ -173,6 +182,7 @@ export default function PortMonitorPage({ systemRole, teamId, teamName }) {
 
   async function save() {
     if (!form.host.trim() || !form.port) { setSaveError(t('port.hostRequired')); return }
+    if (form.teamId === '' || form.teamId == null) { toast.error(t('mon.teamRequired')); return }
     setSaving(true); setSaveError(null)
     const payload = {
       name: (form.name || form.host).trim(), host: form.host.trim(), port: Number(form.port),
@@ -244,7 +254,8 @@ export default function PortMonitorPage({ systemRole, teamId, teamName }) {
     ...teams.map(tm => ({ value: String(tm.id), label: tm.name }))], [teams, t])
   const groupNames = useMemo(
     () => [...new Set(monitors.map(m => m.group_name).filter(Boolean))].sort((a, b) => a.localeCompare(b)), [monitors])
-  const groupSelectOptions = useMemo(() => groupNames.map(g => ({ value: g, label: g })), [groupNames])
+  // Form içi grup dropdown'ı takım+tür kapsamlı endpoint'ten (liste filtresi değil): admin başka takımın grubunu görmez.
+  const groupSelectOptions = useMemo(() => teamGroups.map(g => ({ value: g.name, label: g.name })), [teamGroups])
   const hasGroupOptions = groupNames.length > 0
   const groupFilterOptions = [{ value: 'all', label: t('port.allGroups') },
     ...groupNames.map(g => ({ value: g, label: g })),
@@ -607,7 +618,7 @@ export default function PortMonitorPage({ systemRole, teamId, teamName }) {
                   ⓘ {t(`port.typeHint.${form.protocol}`)}
                 </div>
               )}
-              <label><span>{t('port.team')}</span>
+              <label><span>{t('port.team')} <span className="req-star">*</span></span>
                 {isAdmin
                   ? <SearchableSelect value={form.teamId} onChange={v => setForm(f => ({ ...f, teamId: v }))} options={teamSelectOptions} searchThreshold={2} />
                   : <input value={teamName || t('app.noTeam')} disabled />}</label>
@@ -722,7 +733,7 @@ export default function PortMonitorPage({ systemRole, teamId, teamName }) {
                 )}
               </div>
               <button className="btn btn-secondary" onClick={closeEdit}>{t('port.cancel')}</button>
-              <button className="btn btn-primary" onClick={save} disabled={saving || !form.host.trim() || !form.port}>{saving ? '...' : t('port.save')}</button>
+              <button className="btn btn-primary" onClick={save} disabled={saving || !form.host.trim() || !form.port || !form.teamId}>{saving ? '...' : t('port.save')}</button>
             </div>
           </div>
         </div>,

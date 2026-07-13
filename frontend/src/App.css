@@ -1579,6 +1579,15 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .btn-del { background: #ffebee; color: #c62828; }
 .fingerprint-cell { font-family: monospace; font-size: .8em; }
 
+/* İzleme Grupları (Ayarlar) — arama + tür rozetleri + satır-içi yeniden adlandırma */
+.grp-search { width: 100%; max-width: 320px; padding: 7px 10px; margin-bottom: 12px; border: 1px solid var(--border); border-radius: 6px; background: var(--input-bg); color: var(--input-text); font-size: .9em; }
+.grp-name { font-weight: 600; color: var(--text); }
+.grp-badges { display: flex; flex-wrap: wrap; gap: 6px; }
+.grp-type-badge { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 10px; font-size: .76em; font-weight: 600; background: var(--bg-hover); color: var(--text-light); border: 1px solid var(--border); }
+.grp-type-badge b { color: var(--text); font-weight: 700; }
+.grp-actions { white-space: nowrap; text-align: right; }
+.grp-input { width: 100%; padding: 6px 10px; border: 1px solid var(--primary); border-radius: 6px; background: var(--input-bg); color: var(--input-text); font-size: .92em; }
+
 .badge { display: inline-block; padding: 3px 8px; border-radius: 10px; font-size: .78em; font-weight: 700; }
 .badge-ok { background: #d4edda; color: #155724; }
 .badge-err { background: #f8d7da; color: #721c24; }

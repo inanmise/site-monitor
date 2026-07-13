@@ -40,6 +40,7 @@ class MonitoringControllerTest {
     @MockitoBean CertificateInventoryRepository inventoryRepo;
     @MockitoBean CertificateCheckRepository certCheckRepo;
     @MockitoBean UptimeCheckRepository uptimeCheckRepo;
+    @MockitoBean com.certmonitor.service.MonitoringGroupService monitoringGroupService;
     @MockitoBean PortMonitorRepository portMonitorRepo;
     @MockitoBean PortCheckRepository portCheckRepo;
     @MockitoBean PortCheckerService portChecker;
@@ -73,6 +74,9 @@ class MonitoringControllerTest {
         when(certificateService.domainTeamNameMap()).thenReturn(java.util.Map.of());
         // teamNameMap() artık CertificateService.teamNamesById()'e (cache'li) delege ediyor.
         when(certificateService.teamNamesById()).thenReturn(java.util.Map.of());
+        // Grup get-or-create artık merkezi servise gidiyor; testte ham adı (kanonik) geri döndür.
+        when(monitoringGroupService.getOrCreateFor(any(), any(), any(), any()))
+                .thenAnswer(i -> i.getArgument(2));
     }
 
     private MockHttpSession session(String role) {
@@ -270,7 +274,7 @@ class MonitoringControllerTest {
                 .thenAnswer(a -> { com.certmonitor.model.PortMonitor p = a.getArgument(0); p.setId(9L); return p; });
         mvc.perform(post("/api/monitoring/port").session(session("ADMIN"))
                 .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
-                .content("{\"host\":\"svc.local\",\"port\":8080,\"protocol\":\"http\",\"expect\":\"2xx\",\"sendData\":\"/health\"}"))
+                .content("{\"host\":\"svc.local\",\"port\":8080,\"teamId\":3,\"protocol\":\"http\",\"expect\":\"2xx\",\"sendData\":\"/health\"}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.protocol").value("HTTP"))
                 .andExpect(jsonPath("$.data.expect").value("2xx"))
@@ -285,7 +289,7 @@ class MonitoringControllerTest {
                 .thenAnswer(a -> { com.certmonitor.model.PortMonitor p = a.getArgument(0); p.setId(12L); return p; });
         mvc.perform(post("/api/monitoring/port").session(session("ADMIN"))
                 .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
-                .content("{\"host\":\"svc.local\",\"port\":9000,\"confirmAttempts\":5,\"recoveryChecks\":2}"))
+                .content("{\"host\":\"svc.local\",\"port\":9000,\"teamId\":3,\"confirmAttempts\":5,\"recoveryChecks\":2}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.confirm_attempts").value(5))
                 .andExpect(jsonPath("$.data.recovery_checks").value(2))

@@ -2,6 +2,9 @@ package com.certmonitor.repository;
 
 import com.certmonitor.model.CertificateInventory;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
 import java.util.Collection;
 import java.util.List;
@@ -35,4 +38,14 @@ public interface CertificateInventoryRepository extends JpaRepository<Certificat
     List<CertificateInventory> findByTeamIdAndActiveTrueAndDeletedAtIsNullOrderByDomainAsc(Long teamId);
     boolean existsByTeamIdAndActiveTrueAndDeletedAtIsNull(Long teamId);
     boolean existsByUgTeamIdAndActiveTrueAndDeletedAtIsNull(Long ugTeamId);
+
+    // ── İzleme grupları (cert = 7. tür) ────────────────────────────────────────
+    /** [teamId, grup adı, sayı] — takım-bazlı; silinmemiş kayıtlar; DB-side GROUP BY. */
+    @Query("SELECT c.teamId, c.groupName, COUNT(c) FROM CertificateInventory c WHERE c.groupName IS NOT NULL AND c.groupName <> '' AND c.deletedAt IS NULL GROUP BY c.teamId, c.groupName")
+    List<Object[]> groupCountsByTeam();
+
+    /** Bir TAKIMIN grup adını yeniden adlandır. Caller'da @Transactional zorunlu. */
+    @Modifying
+    @Query("UPDATE CertificateInventory c SET c.groupName = :newName WHERE c.groupName = :oldName AND ((:teamId IS NULL AND c.teamId IS NULL) OR c.teamId = :teamId)")
+    int renameGroupForTeam(@Param("teamId") Long teamId, @Param("oldName") String oldName, @Param("newName") String newName);
 }
