@@ -22,13 +22,16 @@ import org.mockito.quality.Strictness;
 import org.springframework.mock.web.MockHttpSession;
 
 import java.util.List;
+import java.util.NoSuchElementException;
 import java.util.Optional;
+import org.springframework.dao.DataIntegrityViolationException;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.contains;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -49,6 +52,7 @@ class MonitoringGroupServiceTest {
     @Mock DomainMonitorRepository domainRepo;
     @Mock AlertEventRepository alertEventRepo;
     @Mock TeamRepository teamRepo;
+    @Mock AuditService auditService;
 
     @InjectMocks MonitoringGroupService service;
 
@@ -114,5 +118,116 @@ class MonitoringGroupServiceTest {
         var out = service.listForScope(List.of(2L), null, null);
         assertThat(out).extracting(MonitoringGroupService.GroupInfo::teamId).containsExactly(2L);
         verify(groupRepo, never()).findAllByOrderByTeamIdAscTypeAscNameAsc();   // admin-only sorgu çağrılmaz
+    }
+
+    // ── getOrCreate kenar durumları ─────────────────────────────────────────────
+    @Test
+    void getOrCreate_nullOrBlankName_returnsNull_noWrite() {
+        assertThat(service.getOrCreate(1L, "dns", null, "u")).isNull();
+        assertThat(service.getOrCreate(1L, "dns", "   ", "u")).isNull();
+        verify(groupRepo, never()).save(any());
+    }
+
+    @Test
+    void getOrCreate_nullTeam_passthroughTrimmed_noRegistryWrite() {
+        assertThat(service.getOrCreate(null, "dns", "  X ", "u")).isEqualTo("X");   // takım zorunlu kuralı çağıran uçta
+        verify(groupRepo, never()).findByTeamIdAndTypeAndNameLower(any(), anyString(), anyString());
+        verify(groupRepo, never()).save(any());
+    }
+
+    @Test
+    void getOrCreate_raceOnSave_refetchesCanonical() {
+        when(groupRepo.findByTeamIdAndTypeAndNameLower(1L, "dns", "deneme"))
+                .thenReturn(Optional.empty())                                 // ilk kontrol: yok
+                .thenReturn(Optional.of(grp(7, 1, "dns", "Deneme")));         // eşzamanlı create sonrası: var
+        when(groupRepo.save(any())).thenThrow(new DataIntegrityViolationException("dup"));
+        assertThat(service.getOrCreate(1L, "dns", "deneme", "u")).isEqualTo("Deneme");
+    }
+
+    @Test
+    void getOrCreateFor_derivesTypeFromEntityClass() {
+        when(groupRepo.findByTeamIdAndTypeAndNameLower(1L, "ping", "g")).thenReturn(Optional.of(grp(3, 1, "ping", "G")));
+        assertThat(service.getOrCreateFor(new com.certmonitor.model.PingMonitor(), 1L, "g", "u")).isEqualTo("G");
+        verify(groupRepo).findByTeamIdAndTypeAndNameLower(1L, "ping", "g");   // "ping" türü nesne sınıfından çıkarıldı
+    }
+
+    // ── rename kenar durumları ──────────────────────────────────────────────────
+    @Test
+    void rename_notFound_throwsNoSuchElement() {
+        when(groupRepo.findById(9L)).thenReturn(Optional.empty());
+        assertThatThrownBy(() -> service.rename(9L, "x", adminSession())).isInstanceOf(NoSuchElementException.class);
+    }
+
+    @Test
+    void rename_blankNewName_throws400() {
+        when(groupRepo.findById(5L)).thenReturn(Optional.of(grp(5, 1, "dns", "old")));
+        assertThatThrownBy(() -> service.rename(5L, "   ", adminSession())).isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void rename_sameName_noOpReturnsZero_noCascadeNoAudit() {
+        when(groupRepo.findById(5L)).thenReturn(Optional.of(grp(5, 1, "dns", "same")));
+        assertThat(service.rename(5L, "same", adminSession())).isZero();
+        verify(dnsRepo, never()).renameGroupForTeam(anyLong(), anyString(), anyString());
+        verify(auditService, never()).recordAction(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void rename_httpType_cascadesOnlyHttp() {
+        when(groupRepo.findById(6L)).thenReturn(Optional.of(grp(6, 1, "http", "old")));
+        when(groupRepo.findByTeamIdAndTypeAndNameLower(1L, "http", "new")).thenReturn(Optional.empty());
+        when(httpRepo.renameGroupForTeam(1L, "old", "new")).thenReturn(3);
+        assertThat(service.rename(6L, "new", adminSession())).isEqualTo(3);
+        verify(httpRepo).renameGroupForTeam(1L, "old", "new");
+        verify(dnsRepo, never()).renameGroupForTeam(anyLong(), anyString(), anyString());   // yalnız o tür
+    }
+
+    @Test
+    void rename_ownTeamNonAdmin_allowed() {
+        when(groupRepo.findById(5L)).thenReturn(Optional.of(grp(5, 2, "dns", "old")));   // takım 2 = kullanıcının takımı
+        when(groupRepo.findByTeamIdAndTypeAndNameLower(2L, "dns", "new")).thenReturn(Optional.empty());
+        when(dnsRepo.renameGroupForTeam(2L, "old", "new")).thenReturn(1);
+        assertThat(service.rename(5L, "new", otherTeamUser())).isEqualTo(1);   // ownTeam (canManage değil) → izinli
+    }
+
+    @Test
+    void rename_writesAudit_onSuccess() {
+        when(groupRepo.findById(5L)).thenReturn(Optional.of(grp(5, 1, "dns", "old")));
+        when(groupRepo.findByTeamIdAndTypeAndNameLower(1L, "dns", "new")).thenReturn(Optional.empty());
+        when(dnsRepo.renameGroupForTeam(1L, "old", "new")).thenReturn(2);
+        service.rename(5L, "new", adminSession());
+        verify(auditService).recordAction(eq("MONITOR_GROUP_RENAME"), any(), any(), any(), any(),
+                eq("MONITOR_GROUP"), eq("5"), contains("\"old\":\"old\""), any(), any(), any());
+    }
+
+    // ── listForScope kapsam varyantları ─────────────────────────────────────────
+    @Test
+    void listForScope_admin_usesFindAll() {
+        when(groupRepo.findAllByOrderByTeamIdAscTypeAscNameAsc()).thenReturn(List.of(grp(1, 1, "dns", "x")));
+        var out = service.listForScope(null, null, null);   // viewTeamIds null = global admin
+        assertThat(out).hasSize(1);
+        verify(groupRepo).findAllByOrderByTeamIdAscTypeAscNameAsc();
+    }
+
+    @Test
+    void listForScope_emptyScope_returnsEmpty_noQueries() {
+        assertThat(service.listForScope(List.of(), null, null)).isEmpty();   // hiçbir takım kapsamı → kısa devre
+        verify(groupRepo, never()).findAllByOrderByTeamIdAscTypeAscNameAsc();
+        verify(certRepo, never()).groupCountsByTeam();
+        verify(teamRepo, never()).findAll();
+    }
+
+    @Test
+    void listForScope_aggregatesCountsAndTeamName() {
+        when(groupRepo.findByTeamIdInOrderByTeamIdAscTypeAscNameAsc(List.of(1L)))
+                .thenReturn(List.of(grp(1, 1, "dns", "deneme")));
+        when(dnsRepo.groupCountsByTeam()).thenReturn(List.<Object[]>of(new Object[]{1L, "deneme", 4L}));
+        when(teamRepo.findAll()).thenReturn(List.of(team(1, "T1")));
+        var out = service.listForScope(List.of(1L), null, null);
+        assertThat(out).singleElement().satisfies(g -> {
+            assertThat(g.name()).isEqualTo("deneme");
+            assertThat(g.count()).isEqualTo(4);
+            assertThat(g.teamName()).isEqualTo("T1");
+        });
     }
 }

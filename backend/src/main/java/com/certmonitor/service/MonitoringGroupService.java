@@ -66,6 +66,7 @@ public class MonitoringGroupService {
     private final DomainMonitorRepository domainRepo;
     private final AlertEventRepository alertEventRepo;
     private final TeamRepository teamRepo;
+    private final AuditService auditService;   // rename → audit_log (MONITOR_GROUP_RENAME, eski→yeni)
 
     public record GroupInfo(Long id, Long teamId, String teamName, String type, String name, int count) {}
 
@@ -190,7 +191,30 @@ public class MonitoringGroupService {
         Set<String> alertTypes = TYPE_ALERTS.getOrDefault(type, Set.of());
         if (!alertTypes.isEmpty()) alertEventRepo.renameGroupForTeamAndTypes(teamId, oldName, newName, alertTypes);
         log.info("Monitoring group renamed: team={} type={} id={} '{}' → '{}' (records={})", teamId, type, groupId, oldName, newName, affected);
+        // Denetim izi: kim, hangi grubu, eski→yeni (audit_log). IP/UA yok (servis katmanı, request bağımsız).
+        auditService.recordAction(
+                "MONITOR_GROUP_RENAME",
+                strAttr(session, "username"), longAttr(session, "userId"), longAttr(session, "teamId"),
+                strAttr(session, "systemRole"), "MONITOR_GROUP", String.valueOf(groupId),
+                auditDetail(teamId, type, oldName, newName, affected),
+                null, null, session.getId());
         return affected;
+    }
+
+    private static String strAttr(HttpSession session, String key) {
+        Object raw = session.getAttribute(key);
+        return raw != null ? raw.toString() : null;
+    }
+    private static Long longAttr(HttpSession session, String key) {
+        Object raw = session.getAttribute(key);
+        return raw instanceof Number n ? n.longValue() : (raw != null ? Long.valueOf(raw.toString()) : null);
+    }
+    private static String auditDetail(Long teamId, String type, String oldName, String newName, int affected) {
+        return "{\"team_id\":" + teamId + ",\"type\":\"" + esc(type) + "\",\"old\":\"" + esc(oldName)
+                + "\",\"new\":\"" + esc(newName) + "\",\"affected\":" + affected + "}";
+    }
+    private static String esc(String s) {
+        return s == null ? "" : s.replace("\\", "\\\\").replace("\"", "\\\"");
     }
 
     /** YALNIZ verilen türün monitör/envanter tablosunda grup adını değiştirir. */

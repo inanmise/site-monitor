@@ -22,6 +22,8 @@ import java.util.List;
 import java.util.Optional;
 
 import static org.mockito.ArgumentMatchers.*;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
@@ -509,5 +511,93 @@ class MonitoringControllerTest {
                 .andExpect(jsonPath("$.data[0].active_alarm").value(true))
                 .andExpect(jsonPath("$.data[0].alarm_level").value("HIGH"))
                 .andExpect(jsonPath("$.data[0].alarm_acknowledged").value(true));
+    }
+
+    // ── /groups endpoint'leri: liste + rename hata eşlemesi (GlobalExceptionHandler) ──
+
+    @Test
+    @DisplayName("GET /groups: kapsam-filtreli liste (team_name + type + count) döner")
+    void listGroups_returnsScopedList() throws Exception {
+        when(monitoringGroupService.listForScope(any(), any(), any())).thenReturn(List.of(
+                new com.certmonitor.service.MonitoringGroupService.GroupInfo(1L, 3L, "SY-A", "dns", "deneme", 4)));
+        mvc.perform(get("/api/monitoring/groups").session(session("ADMIN")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].name").value("deneme"))
+                .andExpect(jsonPath("$.data[0].type").value("dns"))
+                .andExpect(jsonPath("$.data[0].team_name").value("SY-A"))
+                .andExpect(jsonPath("$.data[0].count").value(4));
+    }
+
+    @Test
+    @DisplayName("PUT /groups/{id}: başarılı rename → affected döner")
+    void renameGroup_success_returnsAffected() throws Exception {
+        when(monitoringGroupService.rename(eq(5L), eq("yeni"), any())).thenReturn(7);
+        mvc.perform(put("/api/monitoring/groups/5").session(session("ADMIN"))
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                .content("{\"new_name\":\"yeni\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.affected").value(7));
+    }
+
+    @Test
+    @DisplayName("PUT /groups/{id}: aynı takım+türde ad çakışması (IllegalStateException) → 409")
+    void renameGroup_conflict_returns409() throws Exception {
+        when(monitoringGroupService.rename(anyLong(), anyString(), any()))
+                .thenThrow(new IllegalStateException("zaten var"));
+        mvc.perform(put("/api/monitoring/groups/5").session(session("ADMIN"))
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                .content("{\"new_name\":\"taken\"}"))
+                .andExpect(status().isConflict());
+    }
+
+    @Test
+    @DisplayName("PUT /groups/{id}: başka takımın grubu (SecurityException) → 403")
+    void renameGroup_otherTeam_returns403() throws Exception {
+        when(monitoringGroupService.rename(anyLong(), anyString(), any()))
+                .thenThrow(new SecurityException("yetki yok"));
+        mvc.perform(put("/api/monitoring/groups/5").session(session("USER"))
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                .content("{\"new_name\":\"x\"}"))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    @DisplayName("PUT /groups/{id}: boş yeni ad (IllegalArgumentException) → 400")
+    void renameGroup_blank_returns400() throws Exception {
+        when(monitoringGroupService.rename(anyLong(), anyString(), any()))
+                .thenThrow(new IllegalArgumentException("boş olamaz"));
+        mvc.perform(put("/api/monitoring/groups/5").session(session("ADMIN"))
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                .content("{\"new_name\":\"\"}"))
+                .andExpect(status().isBadRequest());
+    }
+
+    // ── BUG1 regresyon kilidi: teamsiz create → 400 (global admin bypass'ı kaldırıldı) ──
+    @Test
+    @DisplayName("POST create: teamId'siz → 400 global admin dahil (http/ping/keyword/domain) + kayıt oluşmaz")
+    void teamlessCreate_rejected400_forFixedTypes() throws Exception {
+        when(publicSuffixService.registrableDomain(anyString())).thenReturn("example.org");
+        var admin = session("ADMIN");   // global admin: viewTeamIds set edilmemiş → isGlobalAdmin=true (eski bypass senaryosu)
+        mvc.perform(post("/api/monitoring/http").session(admin)
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                .content("{\"url\":\"https://x.example.com\"}"))
+                .andExpect(status().isBadRequest());
+        mvc.perform(post("/api/monitoring/ping").session(admin)
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                .content("{\"host\":\"1.2.3.4\"}"))
+                .andExpect(status().isBadRequest());
+        mvc.perform(post("/api/monitoring/keyword").session(admin)
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                .content("{\"url\":\"https://x.example.com\",\"keyword\":\"akbank\"}"))
+                .andExpect(status().isBadRequest());
+        mvc.perform(post("/api/monitoring/domain").session(admin)
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                .content("{\"domain\":\"example.org\"}"))
+                .andExpect(status().isBadRequest());
+        // Takımsız hiçbir kayıt oluşmamalı.
+        verify(httpMonitorRepo, never()).save(any());
+        verify(pingMonitorRepo, never()).save(any());
+        verify(keywordMonitorRepo, never()).save(any());
+        verify(domainMonitorRepo, never()).save(any());
     }
 }
