@@ -2584,9 +2584,11 @@ public class EmailNotificationService {
             + escHtml(teamName) + " ekibi olarak <strong>" + escHtml(weekLabel)
             + "</strong> haftası raporumuzu aşağıda paylaşıyoruz.</p>"
 
-            + weeklyOverviewSection(kpiSummary, accent)
-
+            // Onay CTA — hitabın hemen ardında, rapor içeriğinin ÜSTÜNDE (PO kaydırmadan görsün);
+            // gövde ortasında (özet ile bölümler arasında) kalmasın.
             + approveCtaBlock(approveCtaUrl)
+
+            + weeklyOverviewSection(kpiSummary, accent)
 
             + reportSection("1. Proaktif Servis İyileştirme Kayıtları", item1Body, accent)
             + reportSection("2. Aşım Yaşanan Olay / Problem ve Açık Postmortem Kayıtları", item2Body, accent)
