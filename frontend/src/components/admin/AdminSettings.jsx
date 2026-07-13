@@ -3,6 +3,7 @@ import { useT } from '../../i18n/index.jsx'
 import SmtpSettings from './SmtpSettings'
 import LdapSettings from './LdapSettings'
 import GeneralSettings from './GeneralSettings'
+import MonitorGroups from './MonitorGroups'
 import SecretTools from './SecretTools'
 import DatabaseInfo from './DatabaseInfo'
 import WeeklyAvailabilitySettings from './WeeklyAvailabilitySettings'
@@ -12,6 +13,7 @@ import DomainDiagnostics from './DomainDiagnostics'
 // Left-menu sections. More land in later phases.
 const SECTIONS = [
   { id: 'general', labelKey: 'settings.navGeneral' },
+  { id: 'monitorgroups', labelKey: 'settings.navMonitorGroups' },
   { id: 'smtp', labelKey: 'settings.navSmtp' },
   { id: 'weeklyavail', labelKey: 'settings.navWeeklyAvail' },
   { id: 'storm', labelKey: 'settings.navStorm' },
@@ -42,6 +44,7 @@ export default function AdminSettings() {
 
       <section className="settings-pane">
         {active === 'general' && <GeneralSettings />}
+        {active === 'monitorgroups' && <MonitorGroups />}
         {active === 'smtp' && <SmtpSettings />}
         {active === 'weeklyavail' && <WeeklyAvailabilitySettings />}
         {active === 'storm' && <StormSettings />}

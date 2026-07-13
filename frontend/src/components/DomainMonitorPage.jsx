@@ -49,6 +49,7 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName }) {
   const [rangeDays, setRangeDays] = useState(30)
   const [modal, setModal] = useState(null)          // 'new' | monitor | null
   const [form, setForm] = useState(emptyForm)
+  const [teamGroups, setTeamGroups] = useState([])   // form takımı+türüne göre grup önerileri (sızıntısız, server-scoped)
   const [defaults, setDefaults] = useState(null)
   const [saving, setSaving] = useState(false)
   const [checking, setChecking] = useState(null)
@@ -78,6 +79,14 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName }) {
     const i = setInterval(load, REFRESH_INTERVAL * 1000)
     return () => clearInterval(i)
   }, [load])
+
+  // Form açıkken seçili takımın + bu türün gruplarını sunucudan getir (başka takım sızmaz).
+  useEffect(() => {
+    if (!modal || form.teamId === '' || form.teamId == null) { setTeamGroups([]); return }
+    let alive = true
+    api.monitoring.listGroups(form.teamId, 'domain').then(r => { if (alive && r?.success) setTeamGroups(r.data || []) })
+    return () => { alive = false }
+  }, [modal, form.teamId])
 
   useEffect(() => {
     countdownRef.current = setInterval(() => setSecondsSince(s => s + 1), 1000)
@@ -150,6 +159,7 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName }) {
 
   async function save() {
     if (!form.domain.trim()) return
+    if (form.teamId === '' || form.teamId == null) { toast.error(t('mon.teamRequired')); return }
     setSaving(true)
     const payload = {
       name: (form.name || form.domain).trim(), domain: form.domain.trim(),
@@ -217,7 +227,8 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName }) {
     ...groupNames.map(g => ({ value: g, label: g })),
     ...(groupMonitors.some(m => !m.group_name) ? [{ value: '__none__', label: t('dom.noGroup') }] : [])],
     [groupNames, groupMonitors, t])
-  const groupSelectOptions = useMemo(() => groupNames.map(g => ({ value: g, label: g })), [groupNames])
+  // Form içi grup dropdown'ı takım+tür kapsamlı endpoint'ten (liste filtresi değil): admin başka takımın grubunu görmez.
+  const groupSelectOptions = useMemo(() => teamGroups.map(g => ({ value: g.name, label: g.name })), [teamGroups])
   const sortOptions = useMemo(() => SORTS.map(s => ({ value: s, label: t('dom.sort_' + s) })), [t])
 
   const scoped = useMemo(() => monitors.filter(m => {
@@ -524,7 +535,7 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName }) {
 
               <label><span>{t('dom.name')}</span>
                 <input value={form.name} placeholder={form.domain} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} /></label>
-              <label><span>{t('dom.team')}</span>
+              <label><span>{t('dom.team')} <span className="req-star">*</span></span>
                 {isAdmin
                   ? <SearchableSelect value={form.teamId} onChange={v => setForm(f => ({ ...f, teamId: v }))} options={teamSelectOptions} searchThreshold={2} />
                   : <input value={teamName || t('dom.noTeam')} disabled />}</label>
@@ -582,7 +593,7 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName }) {
               </span>
               {modal !== 'new' && canDeleteRow(modal) && <button className="btn btn-danger" onClick={del}><Trash2 size={14} />{t('dom.delete')}</button>}
               <button className="btn btn-secondary" onClick={closeEdit}>{t('dom.cancel')}</button>
-              <button className="btn btn-primary" onClick={save} disabled={saving || !form.domain.trim()}>{saving ? '...' : t('dom.save')}</button>
+              <button className="btn btn-primary" onClick={save} disabled={saving || !form.domain.trim() || !form.teamId}>{saving ? '...' : t('dom.save')}</button>
             </div>
           </div>
         </div>,

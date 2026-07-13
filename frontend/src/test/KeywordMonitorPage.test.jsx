@@ -9,6 +9,7 @@ vi.mock('../api/client', () => ({
   formatDateSec: (s) => s ?? '',
   api: {
     monitoring: {
+      listGroups:           vi.fn(() => Promise.resolve({ success: true, data: [] })),
       getKeywordMonitors:   vi.fn(),
       getKeywordHistory:    vi.fn(),
       createKeywordMonitor: vi.fn(),

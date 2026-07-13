@@ -14,6 +14,7 @@ import com.certmonitor.service.AppSettingsService;
 import com.certmonitor.service.EscalationService;
 import com.certmonitor.service.SchedulerService;
 import com.certmonitor.service.PermissionService;
+import com.certmonitor.service.MonitoringGroupService;
 import jakarta.servlet.http.HttpSession;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -39,6 +40,7 @@ public class MonitoringController {
     private final CertificateInventoryRepository inventoryRepo;
     private final CertificateCheckRepository certCheckRepo;
     private final UptimeCheckRepository uptimeCheckRepo;
+    private final MonitoringGroupService monitoringGroupService;
 
     private final PortMonitorRepository portMonitorRepo;
     private final PortCheckRepository portCheckRepo;
@@ -151,9 +153,16 @@ public class MonitoringController {
      *  bir takıma taşıyabilir — yetkisiz/null hedef yok sayılır (mevcut takım korunur). */
     private Long resolveTeamChange(HttpSession session, Long current, Object requestedRaw) {
         Long requested = requestedRaw instanceof Number n ? n.longValue() : null;
-        if (SessionScope.isGlobalAdmin(session)) return requested;
+        // Takım ZORUNLU: admin bile null'a çekemez → null gelirse mevcut takım korunur.
+        if (SessionScope.isGlobalAdmin(session)) return requested != null ? requested : current;
         if (requested != null && canOperateTeam(session, requested)) return requested;
         return current;
+    }
+
+    /** Grup createdBy / audit için oturum kullanıcı adı. */
+    private static String actor(HttpSession session) {
+        Object u = session != null ? session.getAttribute("username") : null;
+        return u != null ? u.toString() : "system";
     }
 
     private ResponseEntity<Map<String, Object>> notFound(String msg) {
@@ -170,6 +179,29 @@ public class MonitoringController {
 
     private static boolean blank(Object o) {
         return o == null || o.toString().isBlank();
+    }
+
+    // ── İzleme Grupları — TAKIM + izleme TÜRÜ bazlı; kullanıcı yalnız KENDİ takım(lar)ının gruplarını görür/rename eder ──
+
+    /** Kapsam-filtreli grup listesi (form autocomplete + yönetim). teamId/type ile daraltılır — server-side team filtresi. */
+    @GetMapping("/groups")
+    public ResponseEntity<Map<String, Object>> listGroups(
+            @RequestParam(required = false) Long teamId, @RequestParam(required = false) String type, HttpSession session) {
+        permissionService.require(session, "monitoring.group", "view");
+        List<Long> scope = SessionScope.viewTeamIds(session);   // null = global admin (tüm takımlar)
+        if (teamId != null && !SessionScope.isGlobalViewer(session) && (scope == null || !scope.contains(teamId)))
+            return forbidden("Bu takımın gruplarını görme yetkiniz yok");
+        return ok(monitoringGroupService.listForScope(scope, teamId, blank(type) ? null : type.trim()));
+    }
+
+    /** Bir grubu (registry id) yeniden adlandırır — yalnız o türün monitörleri + o türün alarm geçmişi (takım-scope). */
+    @PutMapping("/groups/{id}")
+    public ResponseEntity<Map<String, Object>> renameGroup(
+            @PathVariable Long id, @RequestBody Map<String, Object> body, HttpSession session) {
+        permissionService.require(session, "monitoring.group", "edit");
+        String newName = body.get("new_name") == null ? "" : body.get("new_name").toString();
+        int affected = monitoringGroupService.rename(id, newName, session);   // 403/409/400 GlobalExceptionHandler'dan
+        return ok(Map.of("affected", affected));
     }
 
     private static final Set<String> KW_OPERATORS = Set.of("GTE", "LTE", "EQ", "GT", "LT");
@@ -490,6 +522,7 @@ public class MonitoringController {
                 PortMonitor m = new PortMonitor();
                 m.setName(inv.getDomain());
                 m.setHost(inv.getDomain());
+                m.setTeamId(inv.getTeamId());   // envanter-türevi: takım envanter domain'inden (takım zorunlu)
                 m.setPort(invPort);
                 m.setProtocol("TCP");
                 m.setActive(true);
@@ -545,8 +578,8 @@ public class MonitoringController {
                 .filter(ex -> Boolean.TRUE.equals(ex.getActive())).isPresent())
             return badRequest("Bu host:port zaten izleniyor");
         Long teamId = resolveWriteTeam(session, body);
-        if (teamId == null && !SessionScope.isGlobalAdmin(session))
-            return badRequest("Bir takıma atanmamışsınız; izleme oluşturulamıyor");
+        if (teamId == null)
+            return badRequest("Takım seçimi zorunludur; izleme oluşturulamıyor.");
         String now = ISO.format(Instant.now());
         PortMonitor m = new PortMonitor();
         m.setName(blank(body.get("name")) ? host : body.get("name").toString().trim());
@@ -558,7 +591,7 @@ public class MonitoringController {
         m.setActive(true);
         m.setStandalone(true);          // kullanıcı-eklediği → envanterden bağımsız; her zaman listelenir + kontrol edilir
         m.setTeamId(teamId);
-        if (body.containsKey("groupName")) m.setGroupName(blank(body.get("groupName")) ? null : body.get("groupName").toString().trim());
+        if (body.containsKey("groupName")) m.setGroupName(monitoringGroupService.getOrCreateFor(m, teamId, body.get("groupName") == null ? null : body.get("groupName").toString(), actor(session)));
         if (body.get("intervalSeconds") != null) m.setIntervalSeconds(((Number) body.get("intervalSeconds")).intValue());
         if (body.get("timeoutMs")       != null) m.setTimeoutMs(((Number) body.get("timeoutMs")).intValue());
         if (body.get("confirmAttempts") != null)         m.setConfirmAttempts(clampAttempts(((Number) body.get("confirmAttempts")).intValue()));
@@ -590,7 +623,7 @@ public class MonitoringController {
             if (body.containsKey("sendData"))  m.setSendData(blank(body.get("sendData")) ? null : body.get("sendData").toString());
             if (body.get("active")          != null) m.setActive((Boolean) body.get("active"));
             if (body.containsKey("teamId"))    m.setTeamId(resolveTeamChange(session, m.getTeamId(), body.get("teamId")));
-            if (body.containsKey("groupName")) m.setGroupName(blank(body.get("groupName")) ? null : body.get("groupName").toString().trim());
+            if (body.containsKey("groupName")) m.setGroupName(monitoringGroupService.getOrCreateFor(m, m.getTeamId(), body.get("groupName") == null ? null : body.get("groupName").toString(), actor(session)));
             if (body.get("intervalSeconds") != null) m.setIntervalSeconds(((Number) body.get("intervalSeconds")).intValue());
             if (body.get("timeoutMs")       != null) m.setTimeoutMs(((Number) body.get("timeoutMs")).intValue());
             if (body.get("confirmAttempts") != null)         m.setConfirmAttempts(clampAttempts(((Number) body.get("confirmAttempts")).intValue()));
@@ -768,6 +801,7 @@ public class MonitoringController {
                 DnsMonitor m = new DnsMonitor();
                 m.setName(inv.getDomain());
                 m.setDomain(inv.getDomain());
+                m.setTeamId(inv.getTeamId());   // envanter-türevi: takım envanter domain'inden (takım zorunlu)
                 m.setRecordType("A");
                 m.setActive(true);
                 m.setIntervalSeconds(300);
@@ -831,12 +865,15 @@ public class MonitoringController {
         m.setRecordType(recordType);
         m.setActive(true);
         m.setStandalone(true);                          // sertifikadan bağımsız → envanter-skip'i baypas eder
-        m.setTeamId(resolveWriteTeam(session, body));   // alarm yönlendirme + liste kapsamı için takım
+        Long teamId = resolveWriteTeam(session, body);
+        if (teamId == null)
+            return badRequest("Takım seçimi zorunludur; izleme oluşturulamıyor.");
+        m.setTeamId(teamId);   // alarm yönlendirme + liste kapsamı için takım
         Object ev = body.get("expectedValue");          // beklenen-değer kilidi (opsiyonel)
         m.setExpectedValue(ev != null && !ev.toString().isBlank() ? ev.toString().trim() : null);
         m.setPropagationCheck(Boolean.TRUE.equals(body.get("propagationCheck")));   // çoklu-resolver tutarlılık (opt-in)
         m.setSlowThresholdMs(clampSlow(body.get("slowThresholdMs")));               // per-monitor yavaş eşiği (boş=global)
-        if (body.containsKey("groupName")) m.setGroupName(blank(body.get("groupName")) ? null : body.get("groupName").toString().trim());   // mantıksal grup (serbest-form)
+        if (body.containsKey("groupName")) m.setGroupName(monitoringGroupService.getOrCreateFor(m, teamId, body.get("groupName") == null ? null : body.get("groupName").toString(), actor(session)));   // mantıksal grup (serbest-form)
         if (body.get("intervalSeconds") != null) m.setIntervalSeconds(((Number) body.get("intervalSeconds")).intValue());
         m.setCreatedAt(now);
         m.setUpdatedAt(now);
@@ -884,7 +921,7 @@ public class MonitoringController {
                 m.setPropagationCheck(Boolean.TRUE.equals(body.get("propagationCheck")));
             if (body.containsKey("slowThresholdMs"))    // per-monitor yavaş eşiği (boş=global)
                 m.setSlowThresholdMs(clampSlow(body.get("slowThresholdMs")));
-            if (body.containsKey("groupName")) m.setGroupName(blank(body.get("groupName")) ? null : body.get("groupName").toString().trim());
+            if (body.containsKey("groupName")) m.setGroupName(monitoringGroupService.getOrCreateFor(m, m.getTeamId(), body.get("groupName") == null ? null : body.get("groupName").toString(), actor(session)));
             m.setUpdatedAt(ISO.format(Instant.now()));
             DnsMonitor saved = dnsMonitorRepo.save(m);
             return ok(enrichDns(saved, dnsRecordRepo.findTopByMonitorIdOrderByCheckedAtDesc(id).orElse(null),
@@ -1044,7 +1081,7 @@ public class MonitoringController {
         m.setKeyword((String) body.get("keyword"));
         if (body.get("customHeaders") != null) m.setCustomHeaders((String) body.get("customHeaders"));
         applyKeywordCondition(m, body);
-        if (body.containsKey("groupName")) m.setGroupName(blank(body.get("groupName")) ? null : body.get("groupName").toString().trim());
+        if (body.containsKey("groupName")) m.setGroupName(monitoringGroupService.getOrCreateFor(m, teamId, body.get("groupName") == null ? null : body.get("groupName").toString(), actor(session)));
         m.setTeamId(teamId);
         m.setActive(true);
         if (body.get("intervalSeconds") != null) m.setIntervalSeconds(((Number) body.get("intervalSeconds")).intValue());
@@ -1070,7 +1107,7 @@ public class MonitoringController {
             if (body.get("keyword")         != null) m.setKeyword((String) body.get("keyword"));
             if (body.containsKey("customHeaders"))    m.setCustomHeaders((String) body.get("customHeaders"));
             if (body.get("operator") != null || body.get("matchCount") != null || body.get("condition") != null) applyKeywordCondition(m, body);
-            if (body.containsKey("groupName"))       m.setGroupName(blank(body.get("groupName")) ? null : body.get("groupName").toString().trim());
+            if (body.containsKey("groupName"))       m.setGroupName(monitoringGroupService.getOrCreateFor(m, m.getTeamId(), body.get("groupName") == null ? null : body.get("groupName").toString(), actor(session)));
             if (body.containsKey("teamId"))          m.setTeamId(resolveTeamChange(session, m.getTeamId(), body.get("teamId")));
             if (body.get("active")          != null) m.setActive((Boolean) body.get("active"));
             if (body.get("intervalSeconds") != null) m.setIntervalSeconds(((Number) body.get("intervalSeconds")).intValue());
@@ -1473,7 +1510,7 @@ public class MonitoringController {
         if (!blank(body.get("expectedStatus"))) m.setExpectedStatus(body.get("expectedStatus").toString().trim());
         if (body.get("followRedirects") instanceof Boolean b) m.setFollowRedirects(b);
         if (body.get("verifySsl")       instanceof Boolean b) m.setVerifySsl(b);
-        if (body.containsKey("groupName")) m.setGroupName(blank(body.get("groupName")) ? null : body.get("groupName").toString().trim());
+        if (body.containsKey("groupName")) m.setGroupName(monitoringGroupService.getOrCreateFor(m, teamId, body.get("groupName") == null ? null : body.get("groupName").toString(), actor(session)));
         m.setTeamId(teamId);
         m.setActive(true);
         if (body.get("intervalSeconds") != null) m.setIntervalSeconds(((Number) body.get("intervalSeconds")).intValue());
@@ -1500,7 +1537,7 @@ public class MonitoringController {
             if (!blank(body.get("expectedStatus"))) m.setExpectedStatus(body.get("expectedStatus").toString().trim());
             if (body.get("followRedirects") instanceof Boolean b) m.setFollowRedirects(b);
             if (body.get("verifySsl")       instanceof Boolean b) m.setVerifySsl(b);
-            if (body.containsKey("groupName"))       m.setGroupName(blank(body.get("groupName")) ? null : body.get("groupName").toString().trim());
+            if (body.containsKey("groupName"))       m.setGroupName(monitoringGroupService.getOrCreateFor(m, m.getTeamId(), body.get("groupName") == null ? null : body.get("groupName").toString(), actor(session)));
             if (body.containsKey("teamId"))          m.setTeamId(resolveTeamChange(session, m.getTeamId(), body.get("teamId")));
             if (body.get("active")          instanceof Boolean b) m.setActive(b);
             if (body.get("intervalSeconds") != null) m.setIntervalSeconds(((Number) body.get("intervalSeconds")).intValue());
@@ -1694,7 +1731,7 @@ public class MonitoringController {
         DomainMonitor m = new DomainMonitor();
         m.setName(blank(body.get("name")) ? reg : body.get("name").toString());
         m.setDomain(reg);
-        if (body.containsKey("groupName")) m.setGroupName(blank(body.get("groupName")) ? null : body.get("groupName").toString().trim());
+        if (body.containsKey("groupName")) m.setGroupName(monitoringGroupService.getOrCreateFor(m, teamId, body.get("groupName") == null ? null : body.get("groupName").toString(), actor(session)));
         m.setTeamId(teamId);
         m.setActive(true);
         applyDomainFields(m, body);
@@ -1714,7 +1751,7 @@ public class MonitoringController {
                 String reg = publicSuffixService.registrableDomain(body.get("domain").toString());
                 if (reg != null && !reg.isBlank()) m.setDomain(reg);
             }
-            if (body.containsKey("groupName")) m.setGroupName(blank(body.get("groupName")) ? null : body.get("groupName").toString().trim());
+            if (body.containsKey("groupName")) m.setGroupName(monitoringGroupService.getOrCreateFor(m, m.getTeamId(), body.get("groupName") == null ? null : body.get("groupName").toString(), actor(session)));
             if (body.containsKey("teamId")) m.setTeamId(resolveTeamChange(session, m.getTeamId(), body.get("teamId")));
             if (body.get("active") instanceof Boolean b) m.setActive(b);
             applyDomainFields(m, body);
@@ -1912,7 +1949,7 @@ public class MonitoringController {
         m.setHost(host);
         String ipv = body.get("ipVersion") != null ? body.get("ipVersion").toString() : "auto";
         m.setIpVersion(Set.of("v4", "v6", "auto").contains(ipv) ? ipv : "auto");
-        if (body.containsKey("groupName")) m.setGroupName(blank(body.get("groupName")) ? null : body.get("groupName").toString().trim());
+        if (body.containsKey("groupName")) m.setGroupName(monitoringGroupService.getOrCreateFor(m, teamId, body.get("groupName") == null ? null : body.get("groupName").toString(), actor(session)));
         m.setTeamId(teamId);
         m.setActive(true);
         if (body.get("intervalSeconds") != null) m.setIntervalSeconds(((Number) body.get("intervalSeconds")).intValue());
@@ -1950,7 +1987,7 @@ public class MonitoringController {
                 m.setHost(newHost);
             }
             if (body.get("ipVersion")       != null) { String v = body.get("ipVersion").toString(); m.setIpVersion(Set.of("v4","v6","auto").contains(v) ? v : "auto"); }
-            if (body.containsKey("groupName"))       m.setGroupName(blank(body.get("groupName")) ? null : body.get("groupName").toString().trim());
+            if (body.containsKey("groupName"))       m.setGroupName(monitoringGroupService.getOrCreateFor(m, m.getTeamId(), body.get("groupName") == null ? null : body.get("groupName").toString(), actor(session)));
             if (body.containsKey("teamId"))          m.setTeamId(resolveTeamChange(session, m.getTeamId(), body.get("teamId")));
             if (body.get("active")          != null) m.setActive((Boolean) body.get("active"));
             if (body.get("intervalSeconds") != null) m.setIntervalSeconds(((Number) body.get("intervalSeconds")).intValue());

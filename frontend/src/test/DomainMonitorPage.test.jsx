@@ -7,6 +7,7 @@ vi.mock('../api/client', () => ({
   formatDateSec: (s) => s ?? '',
   api: {
     monitoring: {
+      listGroups:          vi.fn(() => Promise.resolve({ success: true, data: [] })),
       getDomainMonitors:   vi.fn(),
       getDomainHistory:    vi.fn(),
       createDomainMonitor: vi.fn(),
@@ -53,12 +54,20 @@ describe('DomainMonitorPage', () => {
 
   it('alan adı girip kaydet → createDomainMonitor doğru payload ile çağrılır', async () => {
     api.monitoring.createDomainMonitor.mockResolvedValue({ success: true, data: {} })
-    render(<DomainMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
+    render(<DomainMonitorPage systemRole="USER" teamId={5} teamName="SY-A" />)   // USER → takım otomatik dolar (zorunlu takım)
     await waitFor(() => expect(api.monitoring.getDomainMonitors).toHaveBeenCalled())
     fireEvent.click(screen.getByRole('button', { name: /new monitor|yeni monitör/i }))
     fireEvent.change(screen.getByPlaceholderText('example.com'), { target: { value: 'example.org' } })
     fireEvent.click(screen.getByRole('button', { name: /^save$|^kaydet$/i }))
     await waitFor(() => expect(api.monitoring.createDomainMonitor).toHaveBeenCalled())
     expect(api.monitoring.createDomainMonitor.mock.calls[0][0].domain).toBe('example.org')
+  })
+
+  it('ADMIN: takım seçilmeden Kaydet devre dışı (zorunlu takım)', async () => {
+    render(<DomainMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
+    await waitFor(() => expect(api.monitoring.getDomainMonitors).toHaveBeenCalled())
+    fireEvent.click(screen.getByRole('button', { name: /new monitor|yeni monitör/i }))
+    fireEvent.change(screen.getByPlaceholderText('example.com'), { target: { value: 'example.org' } })
+    expect(screen.getByRole('button', { name: /^save$|^kaydet$/i })).toBeDisabled()   // takım yok → engellendi
   })
 })

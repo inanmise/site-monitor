@@ -43,6 +43,7 @@ export default function PingMonitorPage({ systemRole, teamId, teamName }) {
   const [summary, setSummary] = useState({ total: 0, down: 0 })
   const [modal, setModal] = useState(null)
   const [form, setForm] = useState(emptyForm)
+  const [teamGroups, setTeamGroups] = useState([])   // form takımı+türüne göre grup önerileri (sızıntısız, server-scoped)
   const [defaults, setDefaults] = useState(null)   // per-tip varsayılan aralık/timeout (Kontrol Sıklığı ayarı)
   const [saving, setSaving] = useState(false)
   const [checking, setChecking] = useState(null)
@@ -62,6 +63,14 @@ export default function PingMonitorPage({ systemRole, teamId, teamName }) {
 
   // Modal her açıldığında/değiştiğinde önceki test sonucunu temizle.
   useEffect(() => { setTestResult(null) }, [modal])
+
+  // Form açıkken seçili takımın + bu türün gruplarını sunucudan getir (başka takım sızmaz).
+  useEffect(() => {
+    if (!modal || form.teamId === '' || form.teamId == null) { setTeamGroups([]); return }
+    let alive = true
+    api.monitoring.listGroups(form.teamId, 'ping').then(r => { if (alive && r?.success) setTeamGroups(r.data || []) })
+    return () => { alive = false }
+  }, [modal, form.teamId])
 
   const load = useCallback(async () => {
     const res = await api.monitoring.getPingMonitors()
@@ -136,6 +145,7 @@ export default function PingMonitorPage({ systemRole, teamId, teamName }) {
 
   async function save() {
     if (!form.host.trim()) return
+    if (form.teamId === '' || form.teamId == null) { toast.error(t('mon.teamRequired')); return }
     setSaving(true)
     const payload = {
       name: (form.name || form.host).trim(), host: form.host.trim(), ipVersion: form.ipVersion,
@@ -207,7 +217,8 @@ export default function PingMonitorPage({ systemRole, teamId, teamName }) {
     ...groupNames.map(g => ({ value: g, label: g })),
     ...(groupMonitors.some(m => !m.group_name) ? [{ value: '__none__', label: t('ping.noGroup') }] : [])],
     [groupNames, groupMonitors, t])
-  const groupSelectOptions = useMemo(() => groupNames.map(g => ({ value: g, label: g })), [groupNames])
+  // Form içi grup dropdown'ı takım+tür kapsamlı endpoint'ten (liste filtresi değil): admin başka takımın grubunu görmez.
+  const groupSelectOptions = useMemo(() => teamGroups.map(g => ({ value: g.name, label: g.name })), [teamGroups])
 
   const scoped = useMemo(() => monitors.filter(m => {
     if (teamFilter !== 'all') {
@@ -511,7 +522,7 @@ export default function PingMonitorPage({ systemRole, teamId, teamName }) {
                 <input type="number" min="1" max="10" value={form.packetCount} onChange={e => setForm(f => ({ ...f, packetCount: Number(e.target.value) }))} /></label>
               <label><span>{t('ping.name')}</span>
                 <input value={form.name} placeholder={form.host} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} /></label>
-              <label><span>{t('ping.team')}</span>
+              <label><span>{t('ping.team')} <span className="req-star">*</span></span>
                 {isAdmin
                   ? <SearchableSelect value={form.teamId} onChange={v => setForm(f => ({ ...f, teamId: v }))} options={teamSelectOptions} searchThreshold={2} />
                   : <input value={teamName || t('ping.noTeam')} disabled />}</label>
@@ -572,7 +583,7 @@ export default function PingMonitorPage({ systemRole, teamId, teamName }) {
                 {modal !== 'new' && canDeleteRow(modal) && <button className="btn btn-danger" onClick={del}><Trash2 size={14} />{t('ping.delete')}</button>}
               </div>
               <button className="btn btn-secondary" onClick={closeEdit}>{t('ping.cancel')}</button>
-              <button className="btn btn-primary" onClick={save} disabled={saving || !form.host.trim() || !!dupHost}>{saving ? '...' : t('ping.save')}</button>
+              <button className="btn btn-primary" onClick={save} disabled={saving || !form.host.trim() || !form.teamId || !!dupHost}>{saving ? '...' : t('ping.save')}</button>
             </div>
           </div>
         </div>,

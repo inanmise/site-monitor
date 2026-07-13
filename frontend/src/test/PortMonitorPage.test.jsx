@@ -6,6 +6,7 @@ vi.mock('../api/client', () => ({
   formatDate: (s) => s ?? '',
   api: {
     monitoring: {
+      listGroups:        vi.fn(() => Promise.resolve({ success: true, data: [] })),
       getPortMonitors:   vi.fn(),
       getPortHistory:    vi.fn(),
       getPortResponseSeries: vi.fn(),
@@ -50,7 +51,7 @@ describe('PortMonitorPage', () => {
 
   it('host+port girip kaydet → createPortMonitor doğru payload ile çağrılır', async () => {
     api.monitoring.createPortMonitor.mockResolvedValue({ success: true, data: {} })
-    render(<PortMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
+    render(<PortMonitorPage systemRole="TEAM_ADMIN" teamId={5} teamName="SY-A" />)   // Port ekleme TEAM_ADMIN+; takım otomatik dolar (zorunlu takım)
     await waitFor(() => expect(api.monitoring.getPortMonitors).toHaveBeenCalled())
     fireEvent.click(screen.getByRole('button', { name: /new monitor|yeni monitor/i }))
     fireEvent.change(screen.getByPlaceholderText(/1\.2\.3\.4/), { target: { value: 'mail.example.com' } })

@@ -7,6 +7,7 @@ vi.mock('../api/client', () => ({
   formatDateSec: (s) => s ?? '',
   api: {
     monitoring: {
+      listGroups:        vi.fn(() => Promise.resolve({ success: true, data: [] })),
       getPingMonitors:   vi.fn(),
       getPingHistory:    vi.fn(),
       createPingMonitor: vi.fn(),

@@ -321,6 +321,7 @@ export const api = {
     getGeneralSettings: () => request('/admin/general/settings'),
     saveGeneralSettings: (dto) => request('/admin/general/settings', { method: 'PUT', body: JSON.stringify(dto) }),
 
+
     // Anahtar çözümleme aracı — verilen CERT_MONITOR_SECRET_KEY ile şifreli alanları çöz
     secretToolsInfo: () => request('/admin/secret-tools/info'),
     decryptSecrets: (key) => request('/admin/secret-tools/decrypt', { method: 'POST', body: JSON.stringify({ key }) }),
@@ -511,6 +512,15 @@ export const api = {
   // ── Monitoring ───────────────────────────────────────────────────────────
 
   monitoring: {
+    // İzleme Grupları (TAKIM + izleme TÜRÜ bazlı) — autocomplete + yeniden adlandırma; server-side takım filtresi
+    listGroups: (teamId, type) => {
+      const p = new URLSearchParams()
+      if (teamId != null && teamId !== '') p.set('teamId', teamId)
+      if (type) p.set('type', type)
+      const q = p.toString()
+      return request('/monitoring/groups' + (q ? '?' + q : ''))
+    },
+    renameGroup: (id, newName) => request('/monitoring/groups/' + id, { method: 'PUT', body: JSON.stringify({ new_name: newName }) }),
     // Monitor guide + notes (hedef-bazlı: type = KEYWORD|PING, target = url/host)
     getMonitorNotes: (type, target) =>
       request(`/monitoring/notes?type=${encodeURIComponent(type)}&target=${encodeURIComponent(target)}`),

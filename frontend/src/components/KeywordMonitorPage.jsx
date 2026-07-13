@@ -62,6 +62,7 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
   const [summary, setSummary] = useState({ total: 0, down: 0 })
   const [modal, setModal] = useState(null)          // 'new' | monitor | null
   const [form, setForm] = useState(emptyForm)
+  const [teamGroups, setTeamGroups] = useState([])   // form takımı+türüne göre grup önerileri (sızıntısız, server-scoped)
   const [defaults, setDefaults] = useState(null)   // per-tip varsayılan aralık/timeout (Kontrol Sıklığı ayarı)
   const [showCacheHelp, setShowCacheHelp] = useState(false)   // cache busting açıklama modal'ı
   const [advOpen, setAdvOpen] = useState(false)               // "Gelişmiş ayarlar" accordion
@@ -92,6 +93,14 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
     const i = setInterval(load, REFRESH_INTERVAL * 1000)
     return () => clearInterval(i)
   }, [load])
+
+  // Form açıkken seçili takımın + bu türün gruplarını sunucudan getir (başka takım sızmaz).
+  useEffect(() => {
+    if (!modal || form.teamId === '' || form.teamId == null) { setTeamGroups([]); return }
+    let alive = true
+    api.monitoring.listGroups(form.teamId, 'keyword').then(r => { if (alive && r?.success) setTeamGroups(r.data || []) })
+    return () => { alive = false }
+  }, [modal, form.teamId])
 
   useEffect(() => {
     countdownRef.current = setInterval(() => setSecondsSince(s => s + 1), 1000)
@@ -175,6 +184,7 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
 
   async function save() {
     if (!form.url.trim() || !form.keyword.trim()) return
+    if (form.teamId === '' || form.teamId == null) { toast.error(t('mon.teamRequired')); return }
     setSaving(true)
     const payload = {
       name: (form.name || form.url).trim(), url: form.url.trim(), keyword: form.keyword,
@@ -241,7 +251,8 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
     ...groupNames.map(g => ({ value: g, label: g })),
     ...(groupMonitors.some(m => !m.group_name) ? [{ value: '__none__', label: t('keyword.noGroup') }] : [])],
     [groupNames, groupMonitors, t])
-  const groupSelectOptions = useMemo(() => groupNames.map(g => ({ value: g, label: g })), [groupNames])
+  // Form içi grup dropdown'ı takım+tür kapsamlı endpoint'ten (liste filtresi değil): admin başka takımın grubunu görmez.
+  const groupSelectOptions = useMemo(() => teamGroups.map(g => ({ value: g.name, label: g.name })), [teamGroups])
 
   const scoped = useMemo(() => monitors.filter(m => {
     if (teamFilter !== 'all') {
@@ -615,7 +626,7 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
                 <input type="checkbox" checked={form.caseSensitive} onChange={e => setForm(f => ({ ...f, caseSensitive: e.target.checked }))} />{t('keyword.caseSensitive')}</label>
               <label><span>{t('keyword.name')}</span>
                 <input value={form.name} placeholder={form.url} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} /></label>
-              <label><span>{t('keyword.team')}</span>
+              <label><span>{t('keyword.team')} <span className="req-star">*</span></span>
                 {isAdmin
                   ? <SearchableSelect value={form.teamId} onChange={v => setForm(f => ({ ...f, teamId: v }))} options={teamSelectOptions} searchThreshold={2} />
                   : <input value={teamName || t('keyword.noTeam')} disabled />}</label>
@@ -756,7 +767,7 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
               </button>
               {modal !== 'new' && canDeleteRow(modal) && <button className="btn btn-danger" onClick={del}><Trash2 size={14} />{t('keyword.delete')}</button>}
               <button className="btn btn-secondary" onClick={closeEdit}>{t('keyword.cancel')}</button>
-              <button className="btn btn-primary" onClick={save} disabled={saving || !form.url.trim() || !form.keyword.trim()}>{saving ? '...' : t('keyword.save')}</button>
+              <button className="btn btn-primary" onClick={save} disabled={saving || !form.url.trim() || !form.keyword.trim() || !form.teamId}>{saving ? '...' : t('keyword.save')}</button>
             </div>
           </div>
         </div>,
