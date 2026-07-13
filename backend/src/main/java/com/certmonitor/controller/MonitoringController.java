@@ -1073,7 +1073,7 @@ public class MonitoringController {
         permissionService.require(session, "monitoring.crud", "edit");
         if (blank(body.get("url")) || blank(body.get("keyword"))) return badRequest("url ve keyword zorunlu");
         Long teamId = resolveWriteTeam(session, body);
-        if (teamId == null && !SessionScope.isGlobalAdmin(session)) return badRequest("Bir takıma atanmamışsınız; izleme oluşturulamıyor");
+        if (teamId == null) return badRequest("Takım seçimi zorunludur; izleme oluşturulamıyor.");
         String now = ISO.format(Instant.now());
         KeywordMonitor m = new KeywordMonitor();
         m.setName((String) body.get("name"));
@@ -1498,7 +1498,7 @@ public class MonitoringController {
         permissionService.require(session, "monitoring.crud", "edit");
         if (blank(body.get("url"))) return badRequest("url zorunlu");
         Long teamId = resolveWriteTeam(session, body);
-        if (teamId == null && !SessionScope.isGlobalAdmin(session)) return badRequest("Bir takıma atanmamışsınız; izleme oluşturulamıyor");
+        if (teamId == null) return badRequest("Takım seçimi zorunludur; izleme oluşturulamıyor.");
         String url = body.get("url").toString().trim();
         if (httpMonitorRepo.existsDuplicate(url, teamId, null))
             return badRequest("Bu URL bu takımda zaten izleniyor; mükerrer HTTP monitörü oluşturulamaz.");
@@ -1724,7 +1724,7 @@ public class MonitoringController {
         String reg = publicSuffixService.registrableDomain(body.get("domain").toString());
         if (reg == null || reg.isBlank()) return badRequest("Geçersiz/çözümlenemeyen alan adı");
         Long teamId = resolveWriteTeam(session, body);
-        if (teamId == null && !SessionScope.isGlobalAdmin(session)) return badRequest("Bir takıma atanmamışsınız; izleme oluşturulamıyor");
+        if (teamId == null) return badRequest("Takım seçimi zorunludur; izleme oluşturulamıyor.");
         if (domainMonitorRepo.existsDuplicate(reg, teamId, null))
             return badRequest("Bu alan adı bu takımda zaten izleniyor.");
         String now = ISO.format(Instant.now());
@@ -1939,7 +1939,7 @@ public class MonitoringController {
         permissionService.require(session, "monitoring.crud", "edit");
         if (blank(body.get("host"))) return badRequest("host zorunlu");
         Long teamId = resolveWriteTeam(session, body);
-        if (teamId == null && !SessionScope.isGlobalAdmin(session)) return badRequest("Bir takıma atanmamışsınız; izleme oluşturulamıyor");
+        if (teamId == null) return badRequest("Takım seçimi zorunludur; izleme oluşturulamıyor.");
         String host = ((String) body.get("host")).trim();
         if (pingMonitorRepo.existsDuplicate(host, teamId, null))
             return badRequest("Bu host bu takımda zaten izleniyor; mükerrer ping monitörü oluşturulamaz.");
