@@ -133,7 +133,7 @@ export default function Login({ onLogin, sessionExpired = false }) {
             <circle cx="470" cy="150" r="570" />
           </g>
         </svg>
-        <span className="lp-accent-dot" title="System operational" />
+        <span className="lp-accent-dot" aria-hidden="true" />
 
         <div className="lp-left-inner">
           {/* Üst: wordmark + ENTERPRISE rozeti */}

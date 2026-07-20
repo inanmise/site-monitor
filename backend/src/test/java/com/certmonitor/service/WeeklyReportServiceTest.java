@@ -171,6 +171,17 @@ class WeeklyReportServiceTest {
     }
 
     @Test
+    @DisplayName("computeWeekLabel: ay geçişinde tek yıl, yıl geçişinde iki yıl da yazılır (frontend formatWeekRange ile aynı)")
+    void computeWeekLabel_monthAndYearBoundary() {
+        // Aynı yıl, ay geçişi: yalnız bitiş yılı
+        assertThat(WeeklyReportService.computeWeekLabel(2026, 27))
+                .isEqualTo("2026-W27 (29 Haziran – 5 Temmuz 2026)");
+        // Yıl geçişi (2026-W01 Pzt'si 29 Aralık 2025): başlangıç günü kendi yılını da taşımalı
+        assertThat(WeeklyReportService.computeWeekLabel(2026, 1))
+                .isEqualTo("2026-W01 (29 Aralık 2025 – 4 Ocak 2026)");
+    }
+
+    @Test
     @DisplayName("years: USER kendi takımına zorlanır; içinde bulunulan yıl listede yoksa eklenir")
     void years_scopingAndCurrentYear() {
         int current = LocalDate.now().get(WeekFields.ISO.weekBasedYear());

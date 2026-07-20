@@ -46,6 +46,6 @@ public interface CertificateInventoryRepository extends JpaRepository<Certificat
 
     /** Bir TAKIMIN grup adını yeniden adlandır. Caller'da @Transactional zorunlu. */
     @Modifying
-    @Query("UPDATE CertificateInventory c SET c.groupName = :newName WHERE c.groupName = :oldName AND ((:teamId IS NULL AND c.teamId IS NULL) OR c.teamId = :teamId)")
+    @Query("UPDATE CertificateInventory c SET c.groupName = :newName WHERE LOWER(c.groupName) = LOWER(:oldName) AND ((:teamId IS NULL AND c.teamId IS NULL) OR c.teamId = :teamId)")
     int renameGroupForTeam(@Param("teamId") Long teamId, @Param("oldName") String oldName, @Param("newName") String newName);
 }

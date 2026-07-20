@@ -18,7 +18,10 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Instant;
 import java.time.ZoneOffset;
@@ -67,6 +70,7 @@ public class MonitoringGroupService {
     private final AlertEventRepository alertEventRepo;
     private final TeamRepository teamRepo;
     private final AuditService auditService;   // rename → audit_log (MONITOR_GROUP_RENAME, eski→yeni)
+    private final PlatformTransactionManager txManager;   // getOrCreate insert'i REQUIRES_NEW ile izole eder
 
     public record GroupInfo(Long id, Long teamId, String teamName, String type, String name, int count) {}
 
@@ -88,8 +92,12 @@ public class MonitoringGroupService {
         g.setNameLower(lower);
         g.setCreatedBy(actor);
         g.setCreatedAt(ISO.format(Instant.now()));
+        // Insert REQUIRES_NEW'da: yarış kaybeden tarafta DIV yalnız iç transaction'ı bozar; dış transaction
+        // rollback-only olmaz, refetch temiz döner (aksi halde commit'te UnexpectedRollbackException → 500).
+        TransactionTemplate reqNew = new TransactionTemplate(txManager);
+        reqNew.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
         try {
-            return groupRepo.save(g).getName();
+            return reqNew.execute(st -> groupRepo.saveAndFlush(g).getName());
         } catch (DataIntegrityViolationException race) {   // eşzamanlı oluşturma → mevcut kanonik ad
             return groupRepo.findByTeamIdAndTypeAndNameLower(teamId, type, lower).map(MonitoringGroup::getName).orElse(name);
         }
@@ -132,26 +140,48 @@ public class MonitoringGroupService {
         }
         if (typeFilter != null) groups = groups.stream().filter(g -> typeFilter.equals(g.getType())).toList();
 
-        Map<String, Integer> counts = new HashMap<>();   // "type#teamId#name" → count
-        countInto(counts, "cert",    certRepo.groupCountsByTeam());
-        countInto(counts, "http",    httpRepo.groupCountsByTeam());
-        countInto(counts, "ping",    pingRepo.groupCountsByTeam());
-        countInto(counts, "port",    portRepo.groupCountsByTeam());
-        countInto(counts, "dns",     dnsRepo.groupCountsByTeam());
-        countInto(counts, "keyword", keywordRepo.groupCountsByTeam());
-        countInto(counts, "domain",  domainRepo.groupCountsByTeam());
+        Map<String, Integer> counts = new HashMap<>();   // "type#teamId#nameLower" → count
+        if (typeFilter != null) {
+            countInto(counts, typeFilter, groupCountRows(typeFilter));   // sıcak yol (form autocomplete): yalnız o türün tablosu
+        } else {
+            countInto(counts, "cert",    certRepo.groupCountsByTeam());
+            countInto(counts, "http",    httpRepo.groupCountsByTeam());
+            countInto(counts, "ping",    pingRepo.groupCountsByTeam());
+            countInto(counts, "port",    portRepo.groupCountsByTeam());
+            countInto(counts, "dns",     dnsRepo.groupCountsByTeam());
+            countInto(counts, "keyword", keywordRepo.groupCountsByTeam());
+            countInto(counts, "domain",  domainRepo.groupCountsByTeam());
+        }
 
         Map<Long, String> teamNames = new HashMap<>();
-        for (Team tm : teamRepo.findAll()) teamNames.put(tm.getId(), tm.getName());
+        if (teamFilter != null) {
+            teamRepo.findById(teamFilter).ifPresent(tm -> teamNames.put(tm.getId(), tm.getName()));
+        } else {
+            for (Team tm : teamRepo.findAll()) teamNames.put(tm.getId(), tm.getName());
+        }
 
         List<GroupInfo> out = new ArrayList<>();
         for (MonitoringGroup g : groups) {
-            int c = counts.getOrDefault(g.getType() + "#" + g.getTeamId() + "#" + g.getName(), 0);
+            int c = counts.getOrDefault(g.getType() + "#" + g.getTeamId() + "#" + g.getNameLower(), 0);
             out.add(new GroupInfo(g.getId(), g.getTeamId(), teamNames.get(g.getTeamId()), g.getType(), g.getName(), c));
         }
         return out;
     }
 
+    private List<Object[]> groupCountRows(String type) {
+        return switch (type) {
+            case "cert"    -> certRepo.groupCountsByTeam();
+            case "http"    -> httpRepo.groupCountsByTeam();
+            case "ping"    -> pingRepo.groupCountsByTeam();
+            case "port"    -> portRepo.groupCountsByTeam();
+            case "dns"     -> dnsRepo.groupCountsByTeam();
+            case "keyword" -> keywordRepo.groupCountsByTeam();
+            case "domain"  -> domainRepo.groupCountsByTeam();
+            default        -> List.of();
+        };
+    }
+
+    /** Monitör tablolarındaki farklı casing'ler tek grupta toplansın diye nameLower ile anahtarlar (registry case-insensitive). */
     private static void countInto(Map<String, Integer> acc, String type, List<Object[]> rows) {
         for (Object[] r : rows) {
             if (r[0] == null || r[1] == null) continue;
@@ -160,7 +190,7 @@ public class MonitoringGroupService {
             String name = r[1].toString();
             if (name.isBlank()) continue;
             int count = r[2] instanceof Number n ? n.intValue() : 0;
-            acc.merge(type + "#" + teamId + "#" + name, count, Integer::sum);
+            acc.merge(type + "#" + teamId + "#" + name.toLowerCase(Locale.ROOT), count, Integer::sum);
         }
     }
 
@@ -186,7 +216,11 @@ public class MonitoringGroupService {
 
         g.setName(newName);
         g.setNameLower(lower);
-        groupRepo.save(g);
+        try {
+            groupRepo.saveAndFlush(g);   // unique index'e eşzamanlı rename çarparsa 500 değil 409 dönsün
+        } catch (DataIntegrityViolationException dup) {
+            throw new IllegalStateException("Bu takım + izleme türünde '" + newName + "' adlı grup zaten var.");
+        }
         int affected = cascadeRename(type, teamId, oldName, newName);
         Set<String> alertTypes = TYPE_ALERTS.getOrDefault(type, Set.of());
         if (!alertTypes.isEmpty()) alertEventRepo.renameGroupForTeamAndTypes(teamId, oldName, newName, alertTypes);

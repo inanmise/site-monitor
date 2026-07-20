@@ -53,6 +53,7 @@ class MonitoringGroupServiceTest {
     @Mock AlertEventRepository alertEventRepo;
     @Mock TeamRepository teamRepo;
     @Mock AuditService auditService;
+    @Mock org.springframework.transaction.PlatformTransactionManager txManager;
 
     @InjectMocks MonitoringGroupService service;
 
@@ -74,7 +75,7 @@ class MonitoringGroupServiceTest {
     @Test
     void getOrCreate_createsCanonical_trimmed() {
         when(groupRepo.findByTeamIdAndTypeAndNameLower(1L, "dns", "deneme")).thenReturn(Optional.empty());
-        when(groupRepo.save(any())).thenAnswer(i -> i.getArgument(0));
+        when(groupRepo.saveAndFlush(any())).thenAnswer(i -> i.getArgument(0));
         assertThat(service.getOrCreate(1L, "dns", "  Deneme ", "u")).isEqualTo("Deneme");
     }
 
@@ -82,7 +83,7 @@ class MonitoringGroupServiceTest {
     void getOrCreate_caseInsensitiveDedup_returnsExistingCanonical() {
         when(groupRepo.findByTeamIdAndTypeAndNameLower(1L, "dns", "deneme")).thenReturn(Optional.of(grp(7, 1, "dns", "Deneme")));
         assertThat(service.getOrCreate(1L, "dns", "DENEME", "u")).isEqualTo("Deneme");
-        verify(groupRepo, never()).save(any());
+        verify(groupRepo, never()).saveAndFlush(any());
     }
 
     @Test
@@ -125,14 +126,14 @@ class MonitoringGroupServiceTest {
     void getOrCreate_nullOrBlankName_returnsNull_noWrite() {
         assertThat(service.getOrCreate(1L, "dns", null, "u")).isNull();
         assertThat(service.getOrCreate(1L, "dns", "   ", "u")).isNull();
-        verify(groupRepo, never()).save(any());
+        verify(groupRepo, never()).saveAndFlush(any());
     }
 
     @Test
     void getOrCreate_nullTeam_passthroughTrimmed_noRegistryWrite() {
         assertThat(service.getOrCreate(null, "dns", "  X ", "u")).isEqualTo("X");   // takım zorunlu kuralı çağıran uçta
         verify(groupRepo, never()).findByTeamIdAndTypeAndNameLower(any(), anyString(), anyString());
-        verify(groupRepo, never()).save(any());
+        verify(groupRepo, never()).saveAndFlush(any());
     }
 
     @Test
@@ -140,7 +141,7 @@ class MonitoringGroupServiceTest {
         when(groupRepo.findByTeamIdAndTypeAndNameLower(1L, "dns", "deneme"))
                 .thenReturn(Optional.empty())                                 // ilk kontrol: yok
                 .thenReturn(Optional.of(grp(7, 1, "dns", "Deneme")));         // eşzamanlı create sonrası: var
-        when(groupRepo.save(any())).thenThrow(new DataIntegrityViolationException("dup"));
+        when(groupRepo.saveAndFlush(any())).thenThrow(new DataIntegrityViolationException("dup"));
         assertThat(service.getOrCreate(1L, "dns", "deneme", "u")).isEqualTo("Deneme");
     }
 
@@ -229,5 +230,45 @@ class MonitoringGroupServiceTest {
             assertThat(g.count()).isEqualTo(4);
             assertThat(g.teamName()).isEqualTo("T1");
         });
+    }
+
+    @Test
+    void listForScope_countMergesCasingVariants() {
+        // Monitör tablosunda "Prod"(2) + "prod"(3) → registry'deki tek "Prod" grubunda count 5 görünmeli
+        when(groupRepo.findByTeamIdInOrderByTeamIdAscTypeAscNameAsc(List.of(1L)))
+                .thenReturn(List.of(grp(1, 1, "dns", "Prod")));
+        when(dnsRepo.groupCountsByTeam()).thenReturn(List.<Object[]>of(
+                new Object[]{1L, "Prod", 2L}, new Object[]{1L, "prod", 3L}));
+        when(teamRepo.findAll()).thenReturn(List.of(team(1, "T1")));
+        var out = service.listForScope(List.of(1L), null, null);
+        assertThat(out).singleElement().satisfies(g -> assertThat(g.count()).isEqualTo(5));
+    }
+
+    @Test
+    void listForScope_typeFilter_scansOnlyThatTypeTable_andSingleTeamLookup() {
+        // Sıcak yol (form autocomplete): teamId+type verildiğinde 7 tablo taraması ve findAll yapılmamalı
+        when(groupRepo.findByTeamIdAndTypeOrderByNameAsc(1L, "dns")).thenReturn(List.of(grp(1, 1, "dns", "x")));
+        when(dnsRepo.groupCountsByTeam()).thenReturn(List.of());
+        when(teamRepo.findById(1L)).thenReturn(Optional.of(team(1, "T1")));
+        var out = service.listForScope(List.of(1L), 1L, "dns");
+        assertThat(out).hasSize(1);
+        verify(dnsRepo).groupCountsByTeam();
+        verify(certRepo,    never()).groupCountsByTeam();
+        verify(httpRepo,    never()).groupCountsByTeam();
+        verify(pingRepo,    never()).groupCountsByTeam();
+        verify(portRepo,    never()).groupCountsByTeam();
+        verify(keywordRepo, never()).groupCountsByTeam();
+        verify(domainRepo,  never()).groupCountsByTeam();
+        verify(teamRepo,    never()).findAll();
+    }
+
+    @Test
+    void rename_uniqueIndexRace_throws409NotRaw() {
+        // TOCTOU: ön-kontrol geçse de saveAndFlush unique index'e çarparsa 500 değil 409 (IllegalStateException)
+        when(groupRepo.findById(5L)).thenReturn(Optional.of(grp(5, 1, "dns", "old")));
+        when(groupRepo.findByTeamIdAndTypeAndNameLower(1L, "dns", "new")).thenReturn(Optional.empty());
+        when(groupRepo.saveAndFlush(any())).thenThrow(new DataIntegrityViolationException("dup"));
+        assertThatThrownBy(() -> service.rename(5L, "new", adminSession())).isInstanceOf(IllegalStateException.class);
+        verify(dnsRepo, never()).renameGroupForTeam(anyLong(), anyString(), anyString());
     }
 }

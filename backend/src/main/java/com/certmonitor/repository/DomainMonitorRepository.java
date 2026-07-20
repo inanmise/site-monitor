@@ -27,6 +27,6 @@ public interface DomainMonitorRepository extends JpaRepository<DomainMonitor, Lo
 
     /** Bir TAKIMIN grup adını yeniden adlandır (yalnız o takımın monitörleri). Caller'da @Transactional zorunlu. */
     @Modifying
-    @Query("UPDATE DomainMonitor m SET m.groupName = :newName WHERE m.groupName = :oldName AND ((:teamId IS NULL AND m.teamId IS NULL) OR m.teamId = :teamId)")
+    @Query("UPDATE DomainMonitor m SET m.groupName = :newName WHERE LOWER(m.groupName) = LOWER(:oldName) AND ((:teamId IS NULL AND m.teamId IS NULL) OR m.teamId = :teamId)")
     int renameGroupForTeam(@Param("teamId") Long teamId, @Param("oldName") String oldName, @Param("newName") String newName);
 }
