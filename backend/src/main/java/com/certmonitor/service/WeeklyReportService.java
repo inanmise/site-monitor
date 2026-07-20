@@ -1037,7 +1037,8 @@ public class WeeklyReportService {
         String range = monday.getMonthValue() == sunday.getMonthValue()
                 ? monday.getDayOfMonth() + "–" + sunday.getDayOfMonth() + " "
                   + months[sunday.getMonthValue() - 1] + " " + sunday.getYear()
-                : monday.getDayOfMonth() + " " + months[monday.getMonthValue() - 1] + " – "
+                : monday.getDayOfMonth() + " " + months[monday.getMonthValue() - 1]
+                  + (monday.getYear() != sunday.getYear() ? " " + monday.getYear() : "") + " – "
                   + sunday.getDayOfMonth() + " " + months[sunday.getMonthValue() - 1] + " " + sunday.getYear();
         return year + "-W" + (weekNo < 10 ? "0" + weekNo : weekNo) + " (" + range + ")";
     }

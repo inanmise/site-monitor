@@ -195,7 +195,7 @@ public interface AlertEventRepository extends JpaRepository<AlertEvent, Long> {
 
     /** Denormalize grup adı kopyasını bir TAKIM için yeniden adlandır (İzleme Grupları rename ile senkron). @Transactional zorunlu. */
     @Modifying
-    @Query("UPDATE AlertEvent e SET e.groupName = :newName WHERE e.groupName = :oldName "
+    @Query("UPDATE AlertEvent e SET e.groupName = :newName WHERE LOWER(e.groupName) = LOWER(:oldName) "
          + "AND ((:teamId IS NULL AND e.teamId IS NULL) OR e.teamId = :teamId) AND e.alertType IN :alertTypes")
     int renameGroupForTeamAndTypes(@Param("teamId") Long teamId, @Param("oldName") String oldName,
                                    @Param("newName") String newName, @Param("alertTypes") java.util.Collection<String> alertTypes);

@@ -123,7 +123,7 @@ public class WeeklyReportKpiService {
         return new WeeklyReportKpis(current, previous, trend, summary);
     }
 
-    /** Executive özet — yönetici paragrafı (tr/en) + sağlık skoru(+delta) + aksiyonlar + 14 gün ileriye bakış.
+    /** Executive özet — yönetici paragrafı (tr/en) + sağlık skoru(+delta) + aksiyonlar + 30 gün ileriye bakış.
      *  Veri yoksa (envanter boş) veya rapor çok eskiyse null (frontend gizler; backfill yapılmaz). */
     private SummaryBlock buildSummary(Long teamId, LocalDate baseMonday, List<CertificateInventory> inv, KpiSet current) {
         LocalDate currentMonday = LocalDate.now(IST).with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY));

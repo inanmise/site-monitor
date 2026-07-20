@@ -100,10 +100,31 @@ public class MonitoringGroupBackfill {
             Long teamId = r[0] instanceof Number num ? num.longValue() : null;
             String name = r[1] == null ? null : r[1].toString();
             if (teamId == null || name == null || name.isBlank()) continue;
-            groupService.getOrCreate(teamId, type, name, "backfill");
+            String canonical = groupService.getOrCreate(teamId, type, name, "backfill");
+            // Casing varyantlarını kanonik ada eşitle ("prod" → "Prod"): registry case-insensitive tekilleştirdiği
+            // için farklı casing'li monitör satırları count/rename dışında görünmez kalırdı.
+            if (canonical != null && !canonical.equals(name)) {
+                int fixed = renameRows(type, teamId, name, canonical);
+                if (fixed > 0) log.info("Monitoring group backfill: team={} type={} '{}' → '{}' ({} satır kanonik casing'e çekildi)",
+                        teamId, type, name, canonical, fixed);
+            }
             n++;
         }
         return n;
+    }
+
+    /** YALNIZ verilen türün tablosunda grup adını kanonik casing'e çeker (rename sorguları case-insensitive eşleşir). */
+    private int renameRows(String type, Long teamId, String oldName, String newName) {
+        return switch (type) {
+            case "cert"    -> inventoryRepo.renameGroupForTeam(teamId, oldName, newName);
+            case "http"    -> httpRepo.renameGroupForTeam(teamId, oldName, newName);
+            case "ping"    -> pingRepo.renameGroupForTeam(teamId, oldName, newName);
+            case "port"    -> portRepo.renameGroupForTeam(teamId, oldName, newName);
+            case "dns"     -> dnsRepo.renameGroupForTeam(teamId, oldName, newName);
+            case "keyword" -> keywordRepo.renameGroupForTeam(teamId, oldName, newName);
+            case "domain"  -> domainRepo.renameGroupForTeam(teamId, oldName, newName);
+            default        -> 0;
+        };
     }
 
     /** URL/host'tan ana makineyi çıkarır (şema/port/path olmadan). */

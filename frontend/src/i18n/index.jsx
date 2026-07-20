@@ -218,10 +218,6 @@ export const TR = {
   'grp.renameError':        'Yeniden adlandırma başarısız',
   'grp.empty':              'Henüz grup tanımlı değil.',
   'grp.emptyNameError':     'Yeni ad boş olamaz',
-  'grp.mergeTitle':         'Grupları birleştir?',
-  'grp.mergeMsg':           "'{0}' adında bir grup zaten var. İki grup birleştirilecek. Devam edilsin mi?",
-  'grp.mergeConfirm':       'Birleştir',
-  'grp.mergeCancel':        'Vazgeç',
 
   // ── Alarm Fırtınası (alert storm) ayarları — "Alert Settings" (yalnız admin) ──
   'storm.title':          'Alarm Fırtınası Koruması',
@@ -3496,10 +3492,6 @@ export const EN = {
   'grp.renameError':        'Rename failed',
   'grp.empty':              'No groups defined yet.',
   'grp.emptyNameError':     'New name cannot be empty',
-  'grp.mergeTitle':         'Merge groups?',
-  'grp.mergeMsg':           "A group named '{0}' already exists. The two groups will be merged. Continue?",
-  'grp.mergeConfirm':       'Merge',
-  'grp.mergeCancel':        'Cancel',
 
   // ── Alert Storm settings — "Alert Settings" (admin only) ──
   'storm.title':          'Alert Storm Protection',
