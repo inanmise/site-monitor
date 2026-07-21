@@ -1,6 +1,7 @@
 package com.certmonitor.service;
 
 import jakarta.annotation.PostConstruct;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
@@ -24,13 +25,17 @@ import java.util.Map;
  * Gövde okunmaz (yalnız durum kodu; {@link HttpResponse.BodyHandlers#discarding()}) → düşük maliyet.
  *
  * {@code verifySsl=false} (varsayılan) → trust-all SSL (yalnız erişilebilirlik; iç-CA/self-signed dahil);
- * {@code verifySsl=true} → varsayılan trust (TLS hatası bağlantı hatası olarak down sayılır).
+ * {@code verifySsl=true} → JVM cacerts VEYA Genel Ayarlar kurumsal CA paketi ({@link TrustEvaluator},
+ * canlı reload) ile doğrulama; TLS hatası bağlantı hatası olarak down sayılır.
  * Yönlendirme takibi client düzeyinde olduğundan (java.net.http) 4 istemci ön-kurulur:
  * {trustAll, strict} × {redirect NORMAL, NEVER}.
  */
 @Slf4j
 @Service
+@RequiredArgsConstructor
 public class HttpCheckerService {
+
+    private final TrustEvaluator trustEvaluator;
 
     private HttpClient trustAllFollow;
     private HttpClient trustAllNoFollow;
@@ -50,10 +55,13 @@ public class HttpCheckerService {
         } catch (Exception e) {
             log.warn("HTTP checker trust-all SSL kurulamadı, varsayılan kullanılacak: {}", e.getMessage());
         }
+        // Strict: cacerts VEYA kurumsal CA paketi; kompozit TM ayarı her handshake'te canlı okur,
+        // client'ın bir kez kurulması reload'u engellemez. null dönerse varsayılan güvene düşülür.
+        SSLContext strict = trustEvaluator.outboundSslContext();
         trustAllFollow   = build(trustAll, HttpClient.Redirect.NORMAL);
         trustAllNoFollow = build(trustAll, HttpClient.Redirect.NEVER);
-        strictFollow     = build(null,     HttpClient.Redirect.NORMAL);
-        strictNoFollow   = build(null,     HttpClient.Redirect.NEVER);
+        strictFollow     = build(strict,   HttpClient.Redirect.NORMAL);
+        strictNoFollow   = build(strict,   HttpClient.Redirect.NEVER);
     }
 
     private HttpClient build(SSLContext ssl, HttpClient.Redirect redirect) {
