@@ -2003,8 +2003,12 @@ public class SchedulerService {
         if (r.get("days_remaining") != null) ctx.put("days", r.get("days_remaining"));
         if (r.get("expiry_date") != null) ctx.put("expiry_date", r.get("expiry_date"));
         if (r.get("registrar") != null) ctx.put("registrar", r.get("registrar"));
+        if (r.get("source") != null) ctx.put("source", r.get("source"));
         if (r.get("status_codes") instanceof List<?> l && !l.isEmpty())
             ctx.put("status_codes", l.stream().map(String::valueOf).collect(java.util.stream.Collectors.joining(", ")));
+        if (r.get("nameservers") instanceof List<?> ns && !ns.isEmpty())
+            ctx.put("nameservers", ns.stream().map(String::valueOf).collect(java.util.stream.Collectors.joining(", ")));
+        ctx.put("checked_at", r.get("checked_at") != null ? r.get("checked_at") : ISO.format(Instant.now()));
         if (r.get("change_detail") != null) ctx.put("change_detail", r.get("change_detail"));
         if (r.get("error") != null) ctx.put("last_error", r.get("error"));
         return new MonitoringOutageService.SweepItem(type, m.getDomain(), m.getDomain(),

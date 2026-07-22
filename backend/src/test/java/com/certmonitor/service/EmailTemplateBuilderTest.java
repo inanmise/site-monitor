@@ -18,7 +18,8 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.when;
 
-/** Executive alarm şablonu: severity seçimi, alan doldurma, XSS-escape, plain-text fallback. */
+/** Executive alarm şablonu: aciliyet skalası, hero sayaç, progress bar, timeline, EPP açıklamaları,
+ *  aksiyon adımları, XSS-escape, plain-text paritesi. */
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
 class EmailTemplateBuilderTest {
@@ -44,22 +45,35 @@ class EmailTemplateBuilderTest {
     }
 
     @Test
-    @DisplayName("severity: etiket + renk seçimi (KRİTİK/YÜKSEK/ORTA/BİLGİ)")
+    @DisplayName("severity etiketleri (KRİTİK/YÜKSEK/ORTA/BİLGİ) korunur; rozet metninde görünür")
     void severity() {
         assertThat(EmailTemplateBuilder.severityLabel("CRITICAL")).isEqualTo("KRİTİK");
         assertThat(EmailTemplateBuilder.severityLabel("HIGH")).isEqualTo("YÜKSEK");
         assertThat(EmailTemplateBuilder.severityLabel("WARNING")).isEqualTo("ORTA");
         assertThat(EmailTemplateBuilder.severityLabel("INFO")).isEqualTo("BİLGİ");
-        assertThat(b.buildHtml(domainMail("CRITICAL", 3))).contains("#C0392B").contains("KRİTİK");
-        assertThat(b.buildHtml(domainMail("HIGH", 25))).contains("#D68910").contains("YÜKSEK");
-        assertThat(b.buildHtml(domainMail("WARNING", 45))).contains("#2874A6").contains("ORTA");
+        assertThat(b.buildHtml(domainMail("CRITICAL", 3))).contains("KRİTİK");
+        assertThat(b.buildHtml(domainMail("HIGH", 25))).contains("YÜKSEK");
     }
 
     @Test
-    @DisplayName("alan doldurma: domain, 56px hero gün, registrar, EPP pill, footer alt-sistem, CTA, 640px, lacivert header")
+    @DisplayName("aciliyet skalası: renk kalan günden gelir (35 yeşil, 20 amber, 10 turuncu, 5 kırmızı, 2 koyu+ACİL)")
+    void urgencyColors() {
+        assertThat(b.buildHtml(domainMail("HIGH", 35))).contains("#1E8449");
+        assertThat(b.buildHtml(domainMail("HIGH", 20))).contains("#D68910");
+        assertThat(b.buildHtml(domainMail("HIGH", 10))).contains("#CA6F1E");
+        assertThat(b.buildHtml(domainMail("HIGH", 5))).contains("#C0392B");
+        String urgent = b.buildHtml(domainMail("HIGH", 2));
+        assertThat(urgent).contains("#7B241C").contains("ACİL");
+        // Gün yoksa severity fallback
+        assertThat(EmailTemplateBuilder.urgencyColor(null, "CRITICAL")).isEqualTo("#C0392B");
+        assertThat(EmailTemplateBuilder.urgencyColor(null, "WARNING")).isEqualTo("#2874A6");
+    }
+
+    @Test
+    @DisplayName("alan doldurma: domain, 72px hero sayaç, registrar, footer alt-sistem, CTA, 640px, lacivert header")
     void fields() {
         String html = b.buildHtml(domainMail("HIGH", 25));
-        assertThat(html).contains("kartfree.com").contains(">25<").contains("gün kaldı");
+        assertThat(html).contains("kartfree.com").contains(">25<").contains("GÜN<br>KALDI").contains("font-size:72px");
         assertThat(html).contains("GoDaddy.com, LLC");
         assertThat(html).contains("client transfer prohibited");
         assertThat(html).contains("Alan Adı İzleme");        // footer alt-sistem
@@ -67,6 +81,56 @@ class EmailTemplateBuilderTest {
         assertThat(html).contains("#0F1B2D");                // koyu-lacivert üst bant
         assertThat(html).contains("width='640'");            // 640px kart
         assertThat(html).contains("Görüntüle");              // CTA (apostrof HTML'de &#39; olarak escape'li)
+        assertThat(html).contains("color-scheme");           // light-only meta
+    }
+
+    @Test
+    @DisplayName("progress bar: 15 gün → ~%17 dolu td + 'Bitişe 15 gün · Son tarih'; gün yoksa bar yok + tip etiketi")
+    void progressBar() {
+        String html = b.buildHtml(domainMail("HIGH", 15));
+        assertThat(html).contains("width='17%'").contains("Bitişe 15 gün").contains("Son tarih:");
+        var noDays = new EmailTemplateBuilder.AlertMail("DOMAINMON_STATUS", "HIGH", "kartfree.com",
+                "durum kodu uyarısı", null, new LinkedHashMap<>(), null);
+        String html2 = b.buildHtml(noDays);
+        assertThat(html2).doesNotContain("Bitişe ").contains("ALAN ADI DURUM UYARISI");
+    }
+
+    @Test
+    @DisplayName("timeline: İlk Alarm → Bu Hatırlatma (#N) → Son Kontrol → BİTİŞ; veri yoksa render edilmez")
+    void timeline() {
+        var m = domainMail("HIGH", 15);
+        m.ctx().put("first_alert_at", "2026-07-16T20:04:00Z");
+        m.ctx().put("realert_count", 2);
+        m.ctx().put("checked_at", "2026-07-21T13:50:00Z");
+        String html = b.buildHtml(m);
+        assertThat(html).contains("İlk Alarm").contains("Bu Hatırlatma (#2)").contains("Son Kontrol").contains("BİTİŞ");
+        // Yalnız bitiş tarihi varken (tek nokta) timeline çizilmez
+        String bare = b.buildHtml(domainMail("HIGH", 15));
+        assertThat(bare).doesNotContain("İlk Alarm").doesNotContain("BİTİŞ");
+    }
+
+    @Test
+    @DisplayName("EPP: pill + Türkçe açıklama HTML'de; plain-text'te ', ' ayraçlı + parantezli açıklama (bitişik DEĞİL)")
+    void eppDescriptions() {
+        String html = b.buildHtml(domainMail("HIGH", 25));
+        assertThat(html).contains("Transfer kilidi aktif (registrar)").contains("Silme kilidi aktif (registrar)");
+        String text = b.buildText(domainMail("HIGH", 25));
+        assertThat(text).contains("client transfer prohibited (Transfer kilidi aktif");
+        assertThat(text).contains(", client delete prohibited (");             // ayraç regresyon guard'ı
+        assertThat(text).doesNotContain("prohibitedclient");                    // eski bitişik yazım hatası
+    }
+
+    @Test
+    @DisplayName("aksiyon planı: registrar adlı numaralı adımlar; ≤7 gün 'Bugün aksiyon alın' uyarısı")
+    void actionSteps() {
+        String html = b.buildHtml(domainMail("HIGH", 25));
+        assertThat(html).contains("Registrar paneline giriş yapın (GoDaddy.com, LLC)")
+                        .contains("en az 1 yıl yenileyin").contains("Auto-renew");
+        assertThat(html).doesNotContain("Bugün aksiyon alın");
+        String urgent = b.buildHtml(domainMail("HIGH", 5));
+        assertThat(urgent).contains("Bugün aksiyon alın");
+        String text = b.buildText(domainMail("HIGH", 25));
+        assertThat(text).contains("1. Registrar paneline giriş yapın").contains("2. Alan adını en az 1 yıl yenileyin");
     }
 
     @Test
@@ -84,18 +148,37 @@ class EmailTemplateBuilderTest {
     }
 
     @Test
-    @DisplayName("plain-text fallback: HTML etiketi yok, temel alanlar + CTA URL var")
+    @DisplayName("plain-text paritesi: HTML yok; sayaç, pencere satırı, adımlar, CTA URL var")
     void plainText() {
         String text = b.buildText(domainMail("HIGH", 25));
         assertThat(text).doesNotContain("<").doesNotContain(">");
-        assertThat(text).contains("[CertMonitor]").contains("YÜKSEK").contains("kartfree.com");
+        assertThat(text).contains("[CertMonitor] 25 GÜN KALDI").contains("kartfree.com");
+        assertThat(text).contains("Bitişe 25 gün / 90 günlük pencere");
         assertThat(text).contains("GoDaddy.com, LLC");
+        assertThat(text).contains("Önerilen Aksiyon:");
         assertThat(text).contains("http://cm.local/?tab=domain&domain=kartfree.com");
+        // ≤3 gün → ACİL öneki
+        assertThat(b.buildText(domainMail("CRITICAL", 2))).contains("ACİL 2 GÜN KALDI");
     }
 
     @Test
-    @DisplayName("insan-okur tarih: UTC ISO → Europe/Istanbul (+3)")
+    @DisplayName("sertifika dalı: CN + kısaltılmış SHA-256 parmak izi render edilir")
+    void certRows() {
+        Map<String, Object> ctx = new LinkedHashMap<>();
+        ctx.put("not_after", "2026-08-06T12:37:46Z");
+        ctx.put("issuer_cn", "Akbank Internal CA");
+        ctx.put("subject", "CN=app.akbank.com");
+        ctx.put("fingerprint", "AB12CD34EF56AB12CD34EF56AB12CD34EF56AB12CD34EF56AB12CD34EF56AB12");
+        var m = new EmailTemplateBuilder.AlertMail("EXPIRY", "HIGH", "app.akbank.com", "özet", 25, ctx, null);
+        String html = b.buildHtml(m);
+        assertThat(html).contains("Akbank Internal CA").contains("CN=app.akbank.com")
+                        .contains("SHA-256 Parmak İzi").contains("AB12CD34…");
+    }
+
+    @Test
+    @DisplayName("insan-okur tarih: UTC ISO → Europe/Istanbul (+3); kısa format timeline için")
     void humanDate() {
         assertThat(EmailTemplateBuilder.formatHuman("2026-08-06T12:37:46Z")).contains("6 Ağustos 2026 15:37").contains("(GMT+3)");
+        assertThat(EmailTemplateBuilder.formatShort("2026-08-06T12:37:46Z")).contains("6").contains("Ağu");
     }
 }

@@ -93,7 +93,8 @@ class EscalationServiceTest {
         assertThat(saved.getAlertType()).isEqualTo("EXPIRY");
         assertThat(saved.getAcknowledged()).isFalse();
         assertThat(saved.getResolved()).isFalse();
-        verify(emailService).sendAlert(any(String[].class), contains("[CertMonitor] ORTA · " + domain), anyString(), any(), any(), any(), any(), any());
+        // Süre-bitişi ailesinde subject severity yerine kalan günü taşır
+        verify(emailService).sendAlert(any(String[].class), contains("[CertMonitor] 25 GÜN KALDI · " + domain), anyString(), any(), any(), any(), any(), any());
     }
 
     @Test
@@ -111,8 +112,8 @@ class EscalationServiceTest {
 
         service.processResults(List.of(expiryResult(domain, 5, true)));
 
-        // 3 contacts notified
-        verify(emailService, times(1)).sendAlert(any(String[].class), contains("KRİTİK"), anyString(), any(), any(), any(), any(), any());
+        // 3 contacts notified — subject süre-bitişinde kalan günü taşır
+        verify(emailService, times(1)).sendAlert(any(String[].class), contains("5 GÜN KALDI"), anyString(), any(), any(), any(), any(), any());
     }
 
     @Test
@@ -199,7 +200,7 @@ class EscalationServiceTest {
         AlertEvent saved = captor.getValue();
         assertThat(saved.getAlertLevel()).isEqualTo("HIGH");
         assertThat(saved.getAcknowledged()).isFalse();
-        verify(emailService).sendAlert(any(String[].class), contains("YÜKSEK"), anyString(), any(), any(), any(), any(), any());
+        verify(emailService).sendAlert(any(String[].class), contains("10 GÜN KALDI"), anyString(), any(), any(), any(), any(), any());
     }
 
     // ── processResults: re-alert ──────────────────────────────────────────────
@@ -640,7 +641,7 @@ class EscalationServiceTest {
 
         assertThat(result.get("status")).isEqualTo("queued");
         verify(emailService).sendAlert(any(String[].class),
-                contains("[RE-ALERT] [CertMonitor] YÜKSEK · high.example.com"),
+                contains("[RE-ALERT] [CertMonitor] 10 GÜN KALDI · high.example.com"),
                 anyString(), any(), any(), any(), any(), any());
     }
 

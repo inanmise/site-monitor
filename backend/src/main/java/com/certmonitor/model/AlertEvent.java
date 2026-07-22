@@ -66,6 +66,10 @@ public class AlertEvent {
     private String createdAt;
     private String lastReAlertAt;
 
+    /** Kaç kez re-alert gönderildi (ilk alarm hariç) — e-postadaki "Bu Hatırlatma (#N)" için. */
+    @Column(name = "realert_count")
+    private Integer realertCount = 0;
+
     /** Alarm fırtınası (storm) bağı — bu incident bir toplu storm'un parçasıysa storm id'si; değilse null.
      *  Set edildiğinde bireysel bildirim bastırılır (toplu alarm/recovery storm üzerinden gider). */
     private Long stormId;
