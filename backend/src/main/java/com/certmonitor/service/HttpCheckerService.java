@@ -25,8 +25,10 @@ import java.util.Map;
  * Gövde okunmaz (yalnız durum kodu; {@link HttpResponse.BodyHandlers#discarding()}) → düşük maliyet.
  *
  * {@code verifySsl=false} (varsayılan) → trust-all SSL (yalnız erişilebilirlik; iç-CA/self-signed dahil);
- * {@code verifySsl=true} → JVM cacerts VEYA Genel Ayarlar kurumsal CA paketi ({@link TrustEvaluator},
- * canlı reload) ile doğrulama; TLS hatası bağlantı hatası olarak down sayılır.
+ * {@code verifySsl=true} → JVM cacerts VEYA Genel Ayarlar kurumsal CA paketi VEYA host'un otomatik
+ * pinlenmiş CA'sı ({@link TrustEvaluator}, {@link CaAutoPinService}; canlı reload) ile doğrulama;
+ * TLS hatası bağlantı hatası olarak down sayılır. PKIX güven hatasında auto-pin açıksa CA sunucudan
+ * çekilip pinlenir ve kontrol BİR kez tekrarlanır (sonuçta {@code repinned=true}).
  * Yönlendirme takibi client düzeyinde olduğundan (java.net.http) 4 istemci ön-kurulur:
  * {trustAll, strict} × {redirect NORMAL, NEVER}.
  */
@@ -36,6 +38,7 @@ import java.util.Map;
 public class HttpCheckerService {
 
     private final TrustEvaluator trustEvaluator;
+    private final CaAutoPinService caAutoPinService;
 
     private HttpClient trustAllFollow;
     private HttpClient trustAllNoFollow;
@@ -55,9 +58,10 @@ public class HttpCheckerService {
         } catch (Exception e) {
             log.warn("HTTP checker trust-all SSL kurulamadı, varsayılan kullanılacak: {}", e.getMessage());
         }
-        // Strict: cacerts VEYA kurumsal CA paketi; kompozit TM ayarı her handshake'te canlı okur,
-        // client'ın bir kez kurulması reload'u engellemez. null dönerse varsayılan güvene düşülür.
-        SSLContext strict = trustEvaluator.outboundSslContext();
+        // Strict: cacerts VEYA kurumsal CA paketi VEYA host'un pinlenmiş CA'sı; TM ayar/pin'i her
+        // handshake'te canlı okur, client'ın bir kez kurulması reload'u engellemez. null → varsayılan güven.
+        SSLContext strict = trustEvaluator.pinAwareOutboundSslContext(
+                caAutoPinService::trustManagerForHost, caAutoPinService::recordTrustFailure);
         trustAllFollow   = build(trustAll, HttpClient.Redirect.NORMAL);
         trustAllNoFollow = build(trustAll, HttpClient.Redirect.NEVER);
         strictFollow     = build(strict,   HttpClient.Redirect.NORMAL);
@@ -77,11 +81,66 @@ public class HttpCheckerService {
         return followRedirects ? trustAllFollow : trustAllNoFollow;
     }
 
-    /** {"http_status", "response_ms", "ok", "error"?} döner. */
+    /** Bir deneme sonucu + yakalanan hata (trust-failure sınıflandırması için). */
+    private record Attempt(Map<String, Object> result, Exception cause) {}
+
+    /**
+     * {"http_status", "response_ms", "ok", "error"?, "repinned"?} döner. Strict (verifySsl=true) https
+     * kontrolü PKIX güven hatasıyla düşerse ve auto-pin açıksa: hedef host (+ handshake'te reddedilen
+     * redirect hedefleri) sunucudan pinlenir ve kontrol BİR kez tekrarlanır — rekürsiyon yok.
+     */
     public Map<String, Object> check(String url, String method, String expectedStatus,
                                      int timeoutMs, boolean verifySsl, boolean followRedirects) {
+        Attempt a1 = doCheck(url, method, expectedStatus, timeoutMs, verifySsl, followRedirects);
+        if (Boolean.TRUE.equals(a1.result().get("ok")) || !verifySsl
+                || !isTrustFailure(a1.cause()) || !caAutoPinService.isEnabled()) {
+            return a1.result();
+        }
+        boolean pinned = false;
+        try {
+            URI uri = URI.create(url.trim());
+            if ("https".equalsIgnoreCase(uri.getScheme()) && uri.getHost() != null) {
+                int port = uri.getPort() == -1 ? 443 : uri.getPort();
+                pinned = caAutoPinService.pinFromServer(uri.getHost(), port, "http-check");
+            }
+        } catch (Exception e) {
+            log.debug("Auto-pin URL parse failed for {}: {}", url, e.getMessage());
+        }
+        // Redirect hedefi farklı bir host'ta reddedilmiş olabilir — TM'in kaydettiği hedefleri de pinle.
+        for (String hp : caAutoPinService.drainRecentTrustFailures()) {
+            int idx = hp.lastIndexOf(':');
+            if (idx <= 0) continue;
+            try {
+                pinned |= caAutoPinService.pinFromServer(
+                        hp.substring(0, idx), Integer.parseInt(hp.substring(idx + 1)), "http-check");
+            } catch (NumberFormatException ignore) { /* bozuk anahtar — atla */ }
+        }
+        if (!pinned) return a1.result();
+        Attempt a2 = doCheck(url, method, expectedStatus, timeoutMs, verifySsl, followRedirects);
+        a2.result().put("repinned", true);
+        return a2.result();
+    }
+
+    /** Cause zincirinde PKIX/güven-yolu hatası var mı? Hostname mismatch HARİÇ (pin çözmez). */
+    static boolean isTrustFailure(Throwable t) {
+        for (Throwable cur = t; cur != null; cur = cur.getCause() == cur ? null : cur.getCause()) {
+            String msg = cur.getMessage();
+            if (msg != null && msg.contains("No subject alternative")) return false;
+            if (cur instanceof java.security.cert.CertPathBuilderException
+                    || cur instanceof java.security.cert.CertPathValidatorException
+                    || "ValidatorException".equals(cur.getClass().getSimpleName())) return true;
+            if (msg != null && (msg.contains("PKIX") || msg.contains("unable to find valid certification path"))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private Attempt doCheck(String url, String method, String expectedStatus,
+                            int timeoutMs, boolean verifySsl, boolean followRedirects) {
         long start = System.currentTimeMillis();
         Map<String, Object> result = new LinkedHashMap<>();
+        Exception failure = null;
         try {
             String m = method == null ? "GET" : method.trim().toUpperCase(Locale.ROOT);
             HttpRequest.Builder rb = HttpRequest.newBuilder()
@@ -101,13 +160,14 @@ public class HttpCheckerService {
             result.put("response_ms", ms);
             result.put("ok", matchesStatus(status, expectedStatus));
         } catch (Exception e) {
+            failure = e;
             result.put("http_status", null);
             result.put("response_ms", System.currentTimeMillis() - start);
             result.put("ok", false);
             result.put("error", e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName());
             log.debug("HTTP check failed for {}: {}", url, e.getMessage());
         }
-        return result;
+        return new Attempt(result, failure);
     }
 
     /**

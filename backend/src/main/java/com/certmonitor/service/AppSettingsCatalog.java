@@ -85,6 +85,9 @@ public final class AppSettingsCatalog {
         // Kurumsal/iç kök+ara CA paketi (PEM) — bu CA ile imzalı host'lar TRUSTED sayılır.
         // TrustEvaluator okuma anında okur (canlı reload). Boş = yalnız public CA'lar (cacerts).
         new Setting("cert.monitor.trust.ca-bundle-pem",          "security",   Type.TEXT),
+        // CA otomatik sabitleme (TOFU) — PKIX hatasında CA sunucudan çekilip host bazında pinlenir,
+        // rotasyon/bitişte otomatik yenilenir (CaAutoPinService). Yalnız HTTP uptime strict yolu.
+        new Setting("cert.monitor.trust.auto-pin.enabled",       "security",   Type.BOOL),
         new Setting("logging.level.com.certmonitor",             "logging",    Type.ENUM,
                     List.of("TRACE", "DEBUG", "INFO", "WARN", "ERROR")),
         // Yalnız mail gönderim logger'ı — uygulama geneli TRACE'e geçmeden ekrandan mail
