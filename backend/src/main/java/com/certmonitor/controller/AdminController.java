@@ -159,7 +159,7 @@ public class AdminController {
             @Valid @RequestBody CertificateInventory item, HttpSession session, HttpServletRequest request) {
         requireAdminOrTeamAdmin(session);
         requirePerm(session, "inventory.crud", "edit");
-        validateDomain(item.getDomain());
+        item.setDomain(validateDomain(item.getDomain()));   // URL yapıştırılırsa host'a normalize edilir
         if (item.getTeamId() == null) {
             throw new IllegalArgumentException("A team must be selected for the certificate");
         }
@@ -346,7 +346,7 @@ public class AdminController {
     public ResponseEntity<Map<String, Object>> runDiagnostics(
             @RequestBody Map<String, Object> body, HttpSession session, HttpServletRequest request) {
         String domain = body.get("domain") != null ? body.get("domain").toString().trim() : null;
-        validateDomain(domain);
+        domain = validateDomain(domain);
         requireAdminOrMonitoredDomain(session, domain);
         requirePerm(session, "diagnostics.run", "execute");
         Long portRaw = toLong(body.get("port"));
@@ -370,7 +370,7 @@ public class AdminController {
     public ResponseEntity<Map<String, Object>> runOpensslDiagnostics(
             @RequestBody Map<String, Object> body, HttpSession session, HttpServletRequest request) {
         String domain = body.get("domain") != null ? body.get("domain").toString().trim() : null;
-        validateDomain(domain);
+        domain = validateDomain(domain);
         requireAdminOrMonitoredDomain(session, domain);
         requirePerm(session, "diagnostics.run", "execute");
         Long portRaw = toLong(body.get("port"));
@@ -392,7 +392,7 @@ public class AdminController {
     public ResponseEntity<Map<String, Object>> runNetworkDiagnostics(
             @RequestBody Map<String, Object> body, HttpSession session, HttpServletRequest request) {
         String domain = body.get("domain") != null ? body.get("domain").toString().trim() : null;
-        validateDomain(domain);
+        domain = validateDomain(domain);
         requireAdminOrMonitoredDomain(session, domain);
         requirePerm(session, "diagnostics.run", "execute");
         Long portRaw = toLong(body.get("port"));
@@ -417,7 +417,7 @@ public class AdminController {
     public ResponseEntity<Map<String, Object>> runHstsDiagnostics(
             @RequestBody Map<String, Object> body, HttpSession session, HttpServletRequest request) {
         String domain = body.get("domain") != null ? body.get("domain").toString().trim() : null;
-        validateDomain(domain);
+        domain = validateDomain(domain);
         requireAdminOrMonitoredDomain(session, domain);
         requirePerm(session, "diagnostics.run", "execute");
         Long portRaw = toLong(body.get("port"));
@@ -441,7 +441,7 @@ public class AdminController {
     public ResponseEntity<Map<String, Object>> runDomainExpiryDiagnostics(
             @RequestBody Map<String, Object> body, HttpSession session, HttpServletRequest request) {
         String domain = body.get("domain") != null ? body.get("domain").toString().trim() : null;
-        validateDomain(domain);
+        domain = validateDomain(domain);
         requireAdminOrMonitoredDomain(session, domain);
         requirePerm(session, "diagnostics.run", "execute");
         // Kullanıcı-başı hız sınırı (10/dk) — RDAP/WHOIS registry'lerini dövmemek için.
@@ -479,7 +479,7 @@ public class AdminController {
 
         String host = (body != null && body.get("host") != null && !body.get("host").toString().isBlank())
                 ? body.get("host").toString().trim() : "data.iana.org";
-        validateDomain(host);
+        host = validateDomain(host);
         Long portRaw = body != null ? toLong(body.get("port")) : null;
         int port = portRaw != null ? portRaw.intValue() : 443;
         if (port < 1 || port > 65535) throw new IllegalArgumentException("Port must be between 1 and 65535");
@@ -536,7 +536,7 @@ public class AdminController {
     @GetMapping("/diagnostics/history")
     public ResponseEntity<Map<String, Object>> diagnosticsHistory(
             @RequestParam String domain, HttpSession session) {
-        validateDomain(domain);
+        domain = validateDomain(domain);
         requireAdminOrMonitoredDomain(session, domain);
         requirePerm(session, "diagnostics.history", "view");
         List<Map<String, Object>> data = diagnosticHistoryService.history(domain).stream()
@@ -1844,15 +1844,23 @@ public class AdminController {
         return ISO.format(Instant.now());
     }
 
-    private void validateDomain(String domain) {
+    /** Girdiyi önce normalize eder (URL yapıştırılabilsin: şema/path/port/userinfo soyulur —
+     *  https://www.wingscard.com.tr/ → www.wingscard.com.tr), sonra host formatını doğrular.
+     *  Subdomain KORUNUR (host-düzeyi diagnostics için); registrable'a indirgeme (PSL) yalnız
+     *  domain-expiry akışının kendi içinde yapılır. Normalize edilmiş host döner. */
+    private static String validateDomain(String domain) {
         if (domain == null || domain.isBlank())
             throw new IllegalArgumentException("Domain cannot be blank");
-        if (domain.length() > 253)
+        String host = com.certmonitor.service.PublicSuffixService.extractHost(domain);
+        if (host == null || host.isBlank())
+            throw new IllegalArgumentException("Domain cannot be blank");
+        if (host.length() > 253)
             throw new IllegalArgumentException("Domain name too long");
-        if (!domain.matches("^(?:[a-zA-Z0-9](?:[a-zA-Z0-9\\-]{0,61}[a-zA-Z0-9])?\\.)+[a-zA-Z]{2,}$")
-                && !domain.matches("^[a-zA-Z0-9\\-]{1,63}$")) {
+        if (!host.matches("^(?:[a-zA-Z0-9](?:[a-zA-Z0-9\\-]{0,61}[a-zA-Z0-9])?\\.)+[a-zA-Z]{2,}$")
+                && !host.matches("^[a-zA-Z0-9\\-]{1,63}$")) {
             throw new IllegalArgumentException("Invalid domain format: " + domain);
         }
+        return host;
     }
 
     private Long toLong(Object v) {

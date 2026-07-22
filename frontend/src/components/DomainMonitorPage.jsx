@@ -21,6 +21,14 @@ const emptyForm = {
   checkTimeoutMs: '',
 }
 
+/** URL yapıştırılmış girdiyi host'a indirger: https://www.x.com.tr/path → www.x.com.tr
+ *  (şema/path/query/userinfo/port soyulur). Backend otoritedir; bu yalnız anlık UX normalizasyonu. */
+function normalizeDomainInput(s) {
+  if (!s) return ''
+  return s.trim().replace(/^[a-z][a-z0-9+.-]*:\/\//i, '').split(/[/?#]/)[0]
+    .split('@').pop().split(':')[0].replace(/\.$/, '').toLowerCase()
+}
+
 /** Bitiş tarihi gösterimi — hem WHOIS date-only ("2029-10-26") hem RDAP datetime ("...Z") güvenli. */
 function fmtExpiry(iso) {
   if (!iso) return '—'
@@ -151,7 +159,7 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName }) {
     if (!form.domain.trim()) return
     setTesting(true); setTestResult(null)
     const res = await api.monitoring.testDomain({
-      domain: form.domain.trim(), warningDays: Number(form.warningDays), criticalDays: Number(form.criticalDays),
+      domain: normalizeDomainInput(form.domain), warningDays: Number(form.warningDays), criticalDays: Number(form.criticalDays),
     })
     setTestResult(res?.success ? res.data : { error: res?.error || t('dom.testError'), status: 'UNKNOWN' })
     setTesting(false)
@@ -162,7 +170,8 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName }) {
     if (form.teamId === '' || form.teamId == null) { toast.error(t('mon.teamRequired')); return }
     setSaving(true)
     const payload = {
-      name: (form.name || form.domain).trim(), domain: form.domain.trim(),
+      // Serbest metin isimler korunur (backend URL'li isimleri host'a indirger); boşsa normalize domain.
+      name: form.name.trim() || normalizeDomainInput(form.domain), domain: normalizeDomainInput(form.domain),
       groupName: form.groupName?.trim() || null, teamId: form.teamId === '' ? null : Number(form.teamId),
       thresholdsCsv: form.thresholdsCsv?.trim() || '60,30,14,7,3,1',
       warningDays: Number(form.warningDays), criticalDays: Number(form.criticalDays),
@@ -530,7 +539,8 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName }) {
 
             <div className="form-grid form-grid--top">
               <label className="full-width"><span>{t('dom.domain')} <span className="req-star">*</span></span>
-                <input value={form.domain} placeholder="example.com" autoFocus onChange={e => setForm(f => ({ ...f, domain: e.target.value }))} /></label>
+                <input value={form.domain} placeholder="example.com" autoFocus onChange={e => setForm(f => ({ ...f, domain: e.target.value }))}
+                  onBlur={e => { const n = normalizeDomainInput(e.target.value); if (n !== e.target.value) setForm(f => ({ ...f, domain: n })) }} /></label>
               <div className="full-width field-hint" style={{ marginTop: -6 }}>{t('dom.domainHint')}</div>
 
               <label><span>{t('dom.name')}</span>
@@ -586,7 +596,7 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName }) {
                   <FlaskConical size={14} />{testing ? t('dom.testing') : t('dom.test')}
                 </button>
                 {isAdmin && (
-                  <button className="btn btn-secondary" onClick={() => diagnose({ domain: form.domain.trim() })} disabled={!form.domain.trim()}>
+                  <button className="btn btn-secondary" onClick={() => diagnose({ domain: normalizeDomainInput(form.domain) })} disabled={!form.domain.trim()}>
                     <ShieldAlert size={14} />{t('dexp.diagnose')}
                   </button>
                 )}
