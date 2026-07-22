@@ -244,6 +244,7 @@ public class EscalationService {
                                 event.getId(), "DAILY_REALERT", daysRemaining, result);
 
                         event.setLastReAlertAt(now());
+                        event.setRealertCount((event.getRealertCount() == null ? 0 : event.getRealertCount()) + 1);
                         event.setDaysRemaining(daysRemaining);
                         event.setMessage(message);
                         alertEventRepo.save(event);
@@ -402,6 +403,7 @@ public class EscalationService {
                     "[RE-ALERT] " + freshMessage, "[RE-ALERT] ",
                     event.getId(), "DAILY_REALERT", effectiveDays, certContext);
             event.setLastReAlertAt(now());
+            event.setRealertCount((event.getRealertCount() == null ? 0 : event.getRealertCount()) + 1);
             event.setDaysRemaining(effectiveDays);
             alertEventRepo.save(event);
             sent++;
@@ -659,6 +661,7 @@ public class EscalationService {
                         event.getId(), "DAILY_REALERT", null, outageContext);
 
                 event.setLastReAlertAt(now());
+                event.setRealertCount((event.getRealertCount() == null ? 0 : event.getRealertCount()) + 1);
                 event.setMessage(message);
                 alertEventRepo.save(event);
                 log.info("İzleme re-alert gönderildi: {} [{}] — önceki gün: {}",
@@ -1106,6 +1109,23 @@ public class EscalationService {
             return List.of();
         }
 
+        // 1.5. ctx zenginleştirme — şablonun timeline/takım satırları için (mevcut anahtarlar EZİLMEZ).
+        // realert_count: sayaç call-site'ta gönderim SONRASI artırıldığından, bu mailin numarası
+        // DAILY_REALERT tetiklemesinde saklanan değerin +1'idir.
+        Map<String, Object> enrichedCtx = new LinkedHashMap<>();
+        if (certContext != null) enrichedCtx.putAll(certContext);
+        String teamNames = collectTeamNames(syTeamId, ugTeamId);
+        if (teamNames != null && !teamNames.isBlank()) enrichedCtx.putIfAbsent("team_name", teamNames);
+        if (alertEventId != null) {
+            alertEventRepo.findById(alertEventId).ifPresent(ev -> {
+                if (ev.getCreatedAt() != null) enrichedCtx.putIfAbsent("first_alert_at", ev.getCreatedAt());
+                int shown = (ev.getRealertCount() == null ? 0 : ev.getRealertCount())
+                        + ("DAILY_REALERT".equals(trigger) ? 1 : 0);
+                if (shown > 0) enrichedCtx.putIfAbsent("realert_count", shown);
+            });
+        }
+        certContext = enrichedCtx;
+
         // 2. Subject — "[CertMonitor] SEVERITY · domain · özet" (executive format; EmailTemplateBuilder ile aynı severity etiketi)
         String levelTr = switch (level != null ? level : "") {
             case "CRITICAL"   -> "KRİTİK";
@@ -1153,7 +1173,10 @@ public class EscalationService {
                     ? (daysRemaining != null ? "Sertifika " + daysRemaining + " gün içinde doluyor" : "Sertifika süre bitişi")
                     : typeTr;
         };
-        String subject = subjectPrefix + "[CertMonitor] " + levelTr + " · " + domain + " · " + summaryTr;
+        // Süre-bitişi ailesinde severity yerine kalan gün öne çıkar: "15 GÜN KALDI" / "ACİL 2 GÜN KALDI".
+        String daysSeg = daysRemaining == null ? levelTr
+                : (daysRemaining <= 3 ? "ACİL " + daysRemaining + " GÜN KALDI" : daysRemaining + " GÜN KALDI");
+        String subject = subjectPrefix + "[CertMonitor] " + daysSeg + " · " + domain + " · " + summaryTr;
 
         // 3. Tek email — tüm alıcılara
         String[] toArr     = allEmails.toArray(new String[0]);
@@ -1162,8 +1185,7 @@ public class EscalationService {
         String emailStatus = emailService.sendAlert(
                 toArr, subject, message, domain, level, alertType, daysRemaining, certContext);
 
-        // 4. Email log — tek kayıt
-        String teamNames = collectTeamNames(syTeamId, ugTeamId);
+        // 4. Email log — tek kayıt (teamNames yukarıda ctx zenginleştirmesinde hesaplandı)
         saveLog(alertEventId, teamNames, String.join(", ", allEmails), subject, htmlBody, emailStatus, "SKIPPED", trigger);
 
         // 5. Webhook — kontaklara ayrı ayrı
@@ -1416,8 +1438,20 @@ public class EscalationService {
         if (c.getExpiryDate() != null)  ctx.put("expiry_date", c.getExpiryDate());
         if (c.getRegistrar() != null)   ctx.put("registrar", c.getRegistrar());
         if (c.getSource() != null)      ctx.put("source", c.getSource());
-        if (c.getStatusCodes() != null && !c.getStatusCodes().isBlank()) ctx.put("status_codes", c.getStatusCodes());
+        // DB'de "," ile bitişik saklanır — şablon/plain-text için ", " normalize edilir.
+        if (c.getStatusCodes() != null && !c.getStatusCodes().isBlank())
+            ctx.put("status_codes", normalizeCsv(c.getStatusCodes()));
+        if (c.getNameservers() != null && !c.getNameservers().isBlank())
+            ctx.put("nameservers", normalizeCsv(c.getNameservers()));
+        if (c.getCheckedAt() != null)   ctx.put("checked_at", c.getCheckedAt());
         return ctx;
+    }
+
+    /** "a,b" / "a, b" karışık CSV'yi ", " ayraçlı normalize eder. */
+    private static String normalizeCsv(String csv) {
+        return java.util.Arrays.stream(csv.split(","))
+                .map(String::trim).filter(s -> !s.isEmpty())
+                .collect(Collectors.joining(", "));
     }
 
     private String serializeContacts(List<EscalationContact> contacts) {
