@@ -388,6 +388,7 @@ export const TR = {
   'general.lbl.logging.level.com.certmonitor':             'Log Seviyesi',
   'general.lbl.logging.level.com.certmonitor.mail':        'Mail Log Seviyesi (TRACE = mail gönderim tanılaması)',
   'general.lbl.cert.monitor.trust.ca-bundle-pem':          'Güvenilir CA paketi (PEM) — kurumsal/iç kök+ara CA',
+  'general.lbl.cert.monitor.trust.auto-pin.enabled':       'CA otomatik sabitleme (TOFU) — güvenilmeyen CA ilk görüşte host bazında sabitlenir, rotasyonda otomatik yenilenir',
 
   'ldap.title':        'LDAP / Active Directory',
   'ldap.desc':         'Kullanıcıları kurumsal dizininize karşı doğrulayın. Buradaki değişiklikler yeniden başlatma gerektirmeden anında geçerli olur.',
@@ -3662,6 +3663,7 @@ export const EN = {
   'general.lbl.logging.level.com.certmonitor':             'Log Level',
   'general.lbl.logging.level.com.certmonitor.mail':        'Mail Log Level (TRACE = mail delivery diagnostics)',
   'general.lbl.cert.monitor.trust.ca-bundle-pem':          'Trusted CA bundle (PEM) — corporate/internal root+intermediate CAs',
+  'general.lbl.cert.monitor.trust.auto-pin.enabled':       'Auto-pin CA (TOFU) — untrusted CAs are pinned per host on first sight and re-pinned automatically on rotation',
 
   'ldap.title':        'LDAP / Active Directory',
   'ldap.desc':         'Authenticate users against your corporate directory. Changes here take effect immediately — no restart needed.',

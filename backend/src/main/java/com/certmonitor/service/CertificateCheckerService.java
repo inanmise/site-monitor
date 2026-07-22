@@ -594,6 +594,27 @@ public class CertificateCheckerService {
      * dönen zincir yalnız incelenip PEM olarak dışa aktarılır, hiçbir veri akışı için kullanılmaz.
      * Proxy yapılandırılmamışsa IOException. Bu, "kurumsal CA paketini nereden alacağım" sorusunu UI'dan çözer.
      */
+    /**
+     * {@code host:port}'a DOĞRUDAN TLS el sıkışması yapıp sunucunun sunduğu zinciri döner (leaf-first).
+     * Güven ZORLANMAZ — {@code TRUST_ALL_FACTORY} ile yalnız okuma; CA auto-pin ({@code CaAutoPinService})
+     * bu zincirden CA'ları alır. {@link #captureProxyChain}'in direct eşleniği.
+     */
+    public X509Certificate[] captureDirectChain(String host, int port, int timeoutSec) throws IOException {
+        SSLSocket socket = (SSLSocket) TRUST_ALL_FACTORY.createSocket();
+        try (socket) {
+            socket.connect(new InetSocketAddress(host, port), timeoutSec * 1000);
+            socket.setSoTimeout(timeoutSec * 1000);
+            SSLParameters params = socket.getSSLParameters();
+            params.setServerNames(Collections.singletonList(new SNIHostName(host)));
+            socket.setSSLParameters(params);
+            socket.startHandshake();
+            Certificate[] peer = socket.getSession().getPeerCertificates();
+            X509Certificate[] out = new X509Certificate[peer.length];
+            for (int i = 0; i < peer.length; i++) out[i] = (X509Certificate) peer[i];
+            return out;
+        }
+    }
+
     public X509Certificate[] captureProxyChain(String host, int port) throws IOException {
         if (proxyHost == null || proxyHost.isBlank() || proxyPort <= 0) {
             throw new IOException("Proxy yapılandırılmamış (cert.monitor.proxy.host/port boş) — CA zinciri yalnız proxy üzerinden yakalanır");

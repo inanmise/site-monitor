@@ -131,6 +131,11 @@ public class SchedulerService {
     @Qualifier("certCheckExecutor")
     private org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor certCheckExecutor;
 
+    /** Alan enjeksiyonu bilinçli: constructor'ı (ve SchedulerServiceTest kurulumunu) büyütmemek için
+     *  certCheckExecutor ile aynı desen. */
+    @Autowired
+    private CaAutoPinService caAutoPinService;
+
     @Value("${cert.monitor.username:user}")
     private String adminUsername;
 
@@ -637,6 +642,29 @@ public class SchedulerService {
      * Tüm zaman serisi tablolarında checked_at index'li → DELETE verimli.
      * Bulk DELETE → tek transaction, kısa süreli.
      */
+    /**
+     * Gece 03:20 — bitişine ≤7 gün kalan (veya geçmiş) otomatik pinlenmiş CA'ları sunucudan yeniden
+     * çekip gerekiyorsa döndürür ({@link CaAutoPinService#refreshExpiringPins}). PKIX trust anchor
+     * geçerliliğini kontrol etmediğinden süresi dolan pin handshake'i düşürmeyebilir — proaktif
+     * yenileme asıl mekanizmadır; kontrol-anı lazy re-pin yedektir.
+     */
+    @Scheduled(cron = "${cert.monitor.trust.auto-pin.refresh-cron:0 20 3 * * *}", zone = "Europe/Istanbul")
+    public void runCaPinRefresh() {
+        if (!caAutoPinService.isEnabled()) return;
+        if (!tryAcquireSchedulerLock("ca-pin-refresh", sweepLockTtlMinutes)) {
+            log.debug("CA pin refresh skipped — lock held by another instance");
+            return;
+        }
+        try {
+            int rotated = caAutoPinService.refreshExpiringPins();
+            if (rotated > 0) log.info("CA pin refresh: {} pin yenilendi", rotated);
+        } catch (Exception e) {
+            log.warn("CA pin refresh failed: {}", e.getMessage());
+        } finally {
+            releaseSchedulerLock("ca-pin-refresh");
+        }
+    }
+
     @Scheduled(cron = "${cert.monitor.scheduler.cleanup-cron:0 30 3 * * *}")
     public void cleanupOldLogs() {
         try {
