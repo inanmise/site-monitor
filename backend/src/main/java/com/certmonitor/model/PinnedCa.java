@@ -6,8 +6,8 @@ import lombok.NoArgsConstructor;
 
 /**
  * Otomatik sabitlenen (auto-pin / TOFU) CA kaydı — host:port başına, sunucunun sunduğu zincirden
- * alınan CA sertifikaları (PEM, birleştirilmiş). Yalnız HTTP uptime strict TLS yolunda güven
- * kaynağıdır; sertifika trust_status raporu ve RDAP bu pinlere BAKMAZ. Rotasyon kimliği
+ * alınan CA sertifikaları (PEM, birleştirilmiş). HTTP uptime strict TLS yolu ve RDAP çıkışı için
+ * güven kaynağıdır; sertifika trust_status raporu bu pinlere BAKMAZ. Rotasyon kimliği
  * fingerprintSha256 üzerinden izlenir; süre yenilemesi notAfter (pinlenen sertifikaların MIN'i)
  * ile zamanlanır (PKIX trust anchor'ın geçerliliğini kontrol etmez → proaktif yenileme şart).
  */

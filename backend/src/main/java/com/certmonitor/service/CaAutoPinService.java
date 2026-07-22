@@ -25,13 +25,14 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * CA otomatik sabitleme (auto-pin / TOFU): HTTP monitörünün strict TLS kontrolü PKIX güven hatası
- * verdiğinde sunucunun zinciri trust-all soketle çekilir, CA'ları host:port başına DB'ye pinlenir
- * ve kontrol bir kez tekrarlanır; pin süresi dolunca / sunucu yeni CA'ya geçince otomatik yeniden
- * pinlenir ({@code SchedulerService.runCaPinRefresh} + hata anında lazy re-pin). Admin onayı yoktur —
- * her pin/rotasyon audit-log'a yazılır (CA_PINNED / CA_ROTATED). Bilinçli TOFU: hostname doğrulaması
- * ve geçerlilik kontrolleri delege TM'lerde aynen çalışır; pinler YALNIZ HTTP uptime strict yolunu
- * etkiler (sertifika trust_status raporu ve RDAP pinlere bakmaz).
+ * CA otomatik sabitleme (auto-pin / TOFU): strict TLS kontrolü PKIX güven hatası verdiğinde
+ * sunucunun zinciri trust-all soketle (direct; olmuyorsa kurumsal proxy üzerinden) çekilir, CA'ları
+ * host:port başına DB'ye pinlenir ve istek bir kez tekrarlanır; pin süresi dolunca / sunucu yeni
+ * CA'ya geçince otomatik yeniden pinlenir ({@code SchedulerService.runCaPinRefresh} + hata anında
+ * lazy re-pin). Admin onayı yoktur — her pin/rotasyon audit-log'a yazılır (CA_PINNED / CA_ROTATED).
+ * Bilinçli TOFU: hostname doğrulaması ve geçerlilik kontrolleri delege TM'lerde aynen çalışır.
+ * Kapsam: HTTP uptime strict yolu + RDAP çıkışı ({@code RdapDomainClient} — kurumsal SSL-inspection
+ * proxy CA'sı elle bundle girmeden kendiliğinden pinlenir); sertifika trust_status raporu pinlere BAKMAZ.
  */
 @Slf4j
 @Service
@@ -111,7 +112,14 @@ public class CaAutoPinService {
         Object lock = hostLocks.computeIfAbsent(key, k -> new Object());
         synchronized (lock) {
             try {
-                X509Certificate[] chain = certificateCheckerService.captureDirectChain(host, port, FETCH_TIMEOUT_SEC);
+                X509Certificate[] chain;
+                try {
+                    chain = certificateCheckerService.captureDirectChain(host, port, FETCH_TIMEOUT_SEC);
+                } catch (Exception direct) {
+                    // Direct egress kapalı ortam (RDAP kurumsal proxy'den çıkar) → zinciri proxy üzerinden
+                    // yakala; proxy de yapılandırılmamışsa IOException dış catch'e düşer (WARN + false).
+                    chain = certificateCheckerService.captureProxyChain(host, port);
+                }
                 if (chain == null || chain.length == 0) return false;
                 // CA'lar = leaf hariç tümü; sunucu yalnız leaf sunuyorsa (self-signed/eksik zincir) leaf'in kendisi.
                 X509Certificate[] toPin = chain.length > 1 ? Arrays.copyOfRange(chain, 1, chain.length) : chain;
@@ -194,6 +202,22 @@ public class CaAutoPinService {
             if (pinFromServer(p.getHost(), p.getPort(), "scheduled-refresh")) rotated++;
         }
         return rotated;
+    }
+
+    /** Cause zincirinde PKIX/güven-yolu hatası var mı? Hostname mismatch HARİÇ (pin çözmez).
+     *  HTTP monitör strict yolu ve RDAP çıkışı aynı sınıflandırmayı paylaşır. */
+    public static boolean isTrustFailure(Throwable t) {
+        for (Throwable cur = t; cur != null; cur = cur.getCause() == cur ? null : cur.getCause()) {
+            String msg = cur.getMessage();
+            if (msg != null && msg.contains("No subject alternative")) return false;
+            if (cur instanceof java.security.cert.CertPathBuilderException
+                    || cur instanceof java.security.cert.CertPathValidatorException
+                    || "ValidatorException".equals(cur.getClass().getSimpleName())) return true;
+            if (msg != null && (msg.contains("PKIX") || msg.contains("unable to find valid certification path"))) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /** Pin yazımı (URL host) ve lookup ({@code SSLEngine.getPeerHost()}) AYNI normalize'ı kullanmalı. */

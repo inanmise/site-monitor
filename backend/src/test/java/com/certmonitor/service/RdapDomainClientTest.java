@@ -49,7 +49,8 @@ class RdapDomainClientTest {
         when(appSettings.getString(anyString(), anyString())).thenReturn(base);
         PublicSuffixService psl = new PublicSuffixService();
         psl.load();
-        client = new RdapDomainClient(appSettings, psl, new TrustEvaluator(appSettings));   // @Value proxy alanları null/0 → direct client
+        client = new RdapDomainClient(appSettings, psl, new TrustEvaluator(appSettings),
+                org.mockito.Mockito.mock(CaAutoPinService.class));   // @Value proxy alanları null/0 → direct client
         client.init();
     }
 
