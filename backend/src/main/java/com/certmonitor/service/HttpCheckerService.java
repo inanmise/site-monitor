@@ -121,19 +121,9 @@ public class HttpCheckerService {
         return a2.result();
     }
 
-    /** Cause zincirinde PKIX/güven-yolu hatası var mı? Hostname mismatch HARİÇ (pin çözmez). */
+    /** Cause zincirinde PKIX/güven-yolu hatası var mı? (Kanonik sınıflandırma CaAutoPinService'te.) */
     static boolean isTrustFailure(Throwable t) {
-        for (Throwable cur = t; cur != null; cur = cur.getCause() == cur ? null : cur.getCause()) {
-            String msg = cur.getMessage();
-            if (msg != null && msg.contains("No subject alternative")) return false;
-            if (cur instanceof java.security.cert.CertPathBuilderException
-                    || cur instanceof java.security.cert.CertPathValidatorException
-                    || "ValidatorException".equals(cur.getClass().getSimpleName())) return true;
-            if (msg != null && (msg.contains("PKIX") || msg.contains("unable to find valid certification path"))) {
-                return true;
-            }
-        }
-        return false;
+        return CaAutoPinService.isTrustFailure(t);
     }
 
     private Attempt doCheck(String url, String method, String expectedStatus,

@@ -42,11 +42,14 @@ public class RdapDomainClient {
     private final AppSettingsService appSettings;
     private final PublicSuffixService psl;
     private final TrustEvaluator trustEvaluator;
+    private final CaAutoPinService caAutoPinService;
 
-    public RdapDomainClient(AppSettingsService appSettings, PublicSuffixService psl, TrustEvaluator trustEvaluator) {
+    public RdapDomainClient(AppSettingsService appSettings, PublicSuffixService psl,
+                            TrustEvaluator trustEvaluator, CaAutoPinService caAutoPinService) {
         this.appSettings = appSettings;
         this.psl = psl;
         this.trustEvaluator = trustEvaluator;
+        this.caAutoPinService = caAutoPinService;
     }
 
     @Value("${cert.monitor.proxy.host:}")     private String proxyHost;
@@ -77,9 +80,11 @@ public class RdapDomainClient {
     public void init() {
         Duration ct = Duration.ofSeconds(5);
         // Kurumsal TLS-araya-giren proxy, RDAP sunucusunun sertifikasını cacerts'te olmayan bir iç Root CA ile
-        // yeniden imzalar → varsayılan güven "PKIX path building failed" ile patlar. Çözüm: cacerts + admin'in
-        // Genel Ayarlar'da girdiği kurumsal CA paketiyle doğrulayan SSLContext (TrustEvaluator, canlı reload).
-        SSLContext ssl = trustEvaluator.outboundSslContext();
+        // yeniden imzalar → varsayılan güven "PKIX path building failed" ile patlar. Güven sırası: cacerts →
+        // admin kurumsal CA paketi (canlı reload) → host'un OTOMATİK pinlenmiş CA'sı (CaAutoPinService, TOFU) —
+        // PKIX hatasında send() proxy CA'sını kendisi çekip pinler; elle bundle girmek gerekmez.
+        SSLContext ssl = trustEvaluator.pinAwareOutboundSslContext(
+                caAutoPinService::trustManagerForHost, caAutoPinService::recordTrustFailure);
         direct = newClient(ct, null, ssl);
         if (proxyHost != null && !proxyHost.isBlank() && proxyPort > 0) {
             proxied = newClient(ct, ProxySelector.of(new InetSocketAddress(proxyHost, proxyPort)), ssl);
@@ -99,6 +104,22 @@ public class RdapDomainClient {
     private HttpClient clientFor(String host) {
         if (proxied == direct) return direct;
         return shouldBypass(host) ? direct : proxied;
+    }
+
+    /** HTTP GET — PKIX güven hatasında hedef host'un CA'sı otomatik pinlenir (direct; olmuyorsa proxy
+     *  üzerinden yakalanır) ve istek BİR kez tekrarlanır. pinFromServer rate-limit'li olduğundan
+     *  döngü riski yok; pin edilemezse orijinal hata fırlar. */
+    private HttpResponse<String> send(HttpRequest req, String host) throws Exception {
+        try {
+            return clientFor(host).send(req, HttpResponse.BodyHandlers.ofString());
+        } catch (Exception e) {
+            int port = req.uri().getPort() == -1 ? 443 : req.uri().getPort();
+            if (CaAutoPinService.isTrustFailure(e) && caAutoPinService.pinFromServer(host, port, "rdap")) {
+                log.info("RDAP auto-pin sonrası tekrar deneniyor: {}", host);
+                return clientFor(host).send(req, HttpResponse.BodyHandlers.ofString());
+            }
+            throw e;
+        }
     }
 
     private boolean shouldBypass(String host) {
@@ -201,7 +222,7 @@ public class RdapDomainClient {
                         .header("Accept", "application/rdap+json")
                         .header("User-Agent", "CertMonitor-DomainMonitor/1.0")
                         .GET().build();
-                HttpResponse<String> resp = clientFor(host).send(req, HttpResponse.BodyHandlers.ofString());
+                HttpResponse<String> resp = send(req, host);
                 int sc = resp.statusCode();
                 if (sc == 429 && attempts < 2) { attempts++; sleep(backoff); backoff *= 2; continue; }
                 if (sc != 200) return err("rdap http " + sc);
@@ -329,7 +350,7 @@ public class RdapDomainClient {
             String host = URI.create(url).getHost();
             HttpRequest req = HttpRequest.newBuilder().uri(URI.create(url)).timeout(Duration.ofSeconds(8))
                     .header("User-Agent", "CertMonitor-DomainMonitor/1.0").GET().build();
-            HttpResponse<String> resp = clientFor(host).send(req, HttpResponse.BodyHandlers.ofString());
+            HttpResponse<String> resp = send(req, host);
             if (resp.statusCode() != 200) { log.warn("IANA RDAP bootstrap http {}", resp.statusCode()); return null; }
             Map<String, String> map = parseBootstrap(resp.body());
             log.info("IANA RDAP bootstrap yüklendi: {} TLD", map.size());
@@ -444,7 +465,7 @@ public class RdapDomainClient {
             HttpRequest req = HttpRequest.newBuilder().uri(URI.create(url)).timeout(Duration.ofMillis(timeoutMs))
                     .header("Accept", "application/rdap+json")
                     .header("User-Agent", "CertMonitor-DomainMonitor/1.0").GET().build();
-            HttpResponse<String> resp = clientFor(host).send(req, HttpResponse.BodyHandlers.ofString());
+            HttpResponse<String> resp = send(req, host);   // PKIX → auto-pin + tek retry (tanılama da kendini onarır)
             step.put("elapsed_ms", System.currentTimeMillis() - t0);
             step.put("http_status", resp.statusCode());
             if (resp.statusCode() == 200) { step.put("status", "ok"); step.put("_body", resp.body()); }

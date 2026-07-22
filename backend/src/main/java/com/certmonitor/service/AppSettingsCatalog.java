@@ -86,7 +86,7 @@ public final class AppSettingsCatalog {
         // TrustEvaluator okuma anında okur (canlı reload). Boş = yalnız public CA'lar (cacerts).
         new Setting("cert.monitor.trust.ca-bundle-pem",          "security",   Type.TEXT),
         // CA otomatik sabitleme (TOFU) — PKIX hatasında CA sunucudan çekilip host bazında pinlenir,
-        // rotasyon/bitişte otomatik yenilenir (CaAutoPinService). Yalnız HTTP uptime strict yolu.
+        // rotasyon/bitişte otomatik yenilenir (CaAutoPinService). Kapsam: HTTP uptime strict + RDAP çıkışı.
         new Setting("cert.monitor.trust.auto-pin.enabled",       "security",   Type.BOOL),
         new Setting("logging.level.com.certmonitor",             "logging",    Type.ENUM,
                     List.of("TRACE", "DEBUG", "INFO", "WARN", "ERROR")),

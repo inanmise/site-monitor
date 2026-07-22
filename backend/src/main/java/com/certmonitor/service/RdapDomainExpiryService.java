@@ -42,6 +42,7 @@ public class RdapDomainExpiryService {
 
     private final AppSettingsService appSettings;
     private final TrustEvaluator trustEvaluator;
+    private final CaAutoPinService caAutoPinService;
 
     private static final long CACHE_TTL_MS = 12 * 60 * 60 * 1000L;   // 12 saat
     private final ObjectMapper mapper = new ObjectMapper();
@@ -49,11 +50,13 @@ public class RdapDomainExpiryService {
 
     private HttpClient http;
 
-    // Kurumsal MITM-proxy'nin yeniden imzaladığı RDAP sertifikası → cacerts + admin kurumsal CA paketiyle
-    // doğrula (TrustEvaluator, canlı reload; RdapDomainClient ile aynı). @PostConstruct: injected bean hazır olur.
+    // Kurumsal MITM-proxy'nin yeniden imzaladığı RDAP sertifikası → cacerts + admin kurumsal CA paketi +
+    // otomatik pinlenmiş CA (CaAutoPinService; RdapDomainClient ile aynı hedef hostlar — iana/rdap.org —
+    // olduğundan pinler oradan gelir, burada ayrıca pin tetikleyici gerekmez). @PostConstruct: bean hazır olur.
     @PostConstruct
     void init() {
-        SSLContext ssl = trustEvaluator.outboundSslContext();
+        SSLContext ssl = trustEvaluator.pinAwareOutboundSslContext(
+                caAutoPinService::trustManagerForHost, caAutoPinService::recordTrustFailure);
         HttpClient.Builder b = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(5))
                 .followRedirects(HttpClient.Redirect.NORMAL);

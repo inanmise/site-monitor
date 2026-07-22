@@ -168,6 +168,44 @@ class CaAutoPinServiceTest {
     }
 
     @Test
+    @DisplayName("direct zincir çekimi başarısız → proxy üzerinden yakalanıp pinlenir (RDAP/egress-kapalı ortam)")
+    void directFails_proxyFallback_pins() throws Exception {
+        when(certChecker.captureDirectChain(anyString(), anyInt(), anyInt()))
+                .thenThrow(new java.io.IOException("connect timed out"));
+        when(certChecker.captureProxyChain(anyString(), anyInt()))
+                .thenReturn(new X509Certificate[]{ leaf, ca });
+
+        assertThat(newService().pinFromServer("data.iana.org", 443, "rdap")).isTrue();
+        assertThat(store.get("data.iana.org:443")).isNotNull();
+        verify(certChecker).captureProxyChain("data.iana.org", 443);
+    }
+
+    @Test
+    @DisplayName("direct VE proxy başarısız → pin edilmez, hata yutulur (false)")
+    void bothCaptureFail_returnsFalse() throws Exception {
+        when(certChecker.captureDirectChain(anyString(), anyInt(), anyInt()))
+                .thenThrow(new java.io.IOException("connect timed out"));
+        when(certChecker.captureProxyChain(anyString(), anyInt()))
+                .thenThrow(new java.io.IOException("Proxy yapılandırılmamış"));
+
+        assertThat(newService().pinFromServer("data.iana.org", 443, "rdap")).isFalse();
+        assertThat(store).isEmpty();
+    }
+
+    @Test
+    @DisplayName("isTrustFailure: PKIX/CertPath → true; hostname mismatch ve sıradan IO → false")
+    void isTrustFailure_classification() {
+        assertThat(CaAutoPinService.isTrustFailure(new javax.net.ssl.SSLHandshakeException(
+                "PKIX path building failed: unable to find valid certification path to requested target"))).isTrue();
+        assertThat(CaAutoPinService.isTrustFailure(new RuntimeException(
+                new java.security.cert.CertPathBuilderException("no path")))).isTrue();
+        assertThat(CaAutoPinService.isTrustFailure(new javax.net.ssl.SSLHandshakeException(
+                "No subject alternative names matching IP address 127.0.0.1 found"))).isFalse();
+        assertThat(CaAutoPinService.isTrustFailure(new java.net.ConnectException("connect timed out"))).isFalse();
+        assertThat(CaAutoPinService.isTrustFailure(null)).isFalse();
+    }
+
+    @Test
     @DisplayName("normalizeHost: büyük harf, boşluk, IPv6 köşeli parantez")
     void normalizeHost_cases() {
         assertThat(CaAutoPinService.normalizeHost(" LocalHost ")).isEqualTo("localhost");
