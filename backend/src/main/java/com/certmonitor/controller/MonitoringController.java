@@ -1729,7 +1729,7 @@ public class MonitoringController {
             return badRequest("Bu alan adı bu takımda zaten izleniyor.");
         String now = ISO.format(Instant.now());
         DomainMonitor m = new DomainMonitor();
-        m.setName(blank(body.get("name")) ? reg : body.get("name").toString());
+        m.setName(blank(body.get("name")) ? reg : normalizeMonitorName(body.get("name").toString()));
         m.setDomain(reg);
         if (body.containsKey("groupName")) m.setGroupName(monitoringGroupService.getOrCreateFor(m, teamId, body.get("groupName") == null ? null : body.get("groupName").toString(), actor(session)));
         m.setTeamId(teamId);
@@ -1746,7 +1746,7 @@ public class MonitoringController {
         permissionService.require(session, "monitoring.crud", "edit");
         return domainMonitorRepo.findById(id).map(m -> {
             if (!canOperateTeam(session, m.getTeamId())) throw new SecurityException("Bu takımın izlemesini düzenleyemezsiniz");
-            if (body.get("name") != null) m.setName((String) body.get("name"));
+            if (body.get("name") != null) m.setName(normalizeMonitorName((String) body.get("name")));
             if (!blank(body.get("domain"))) {
                 String reg = publicSuffixService.registrableDomain(body.get("domain").toString());
                 if (reg != null && !reg.isBlank()) m.setDomain(reg);
@@ -1760,6 +1760,18 @@ public class MonitoringController {
             return ok(enrichDomain(saved, domainCheckRepo.findTopByMonitorIdOrderByCheckedAtDesc(id).orElse(null),
                     teamNameMap(), openDomainMonAlarm(saved.getDomain())));
         }).orElse(notFound("Domain monitor not found"));
+    }
+
+    /** İsim alanına URL yapıştırılmışsa host'a indirger (https://www.x.com.tr/ → www.x.com.tr);
+     *  kullanıcının bilinçli verdiği serbest metin isimler dokunulmadan (trim'lenerek) korunur. */
+    static String normalizeMonitorName(String name) {
+        if (name == null) return null;
+        String t = name.trim();
+        if (t.contains("://") || t.contains("/")) {
+            String host = com.certmonitor.service.PublicSuffixService.extractHost(t);
+            if (host != null && !host.isBlank()) return host;
+        }
+        return t;
     }
 
     @DeleteMapping("/domain/{id}")

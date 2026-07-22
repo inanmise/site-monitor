@@ -600,4 +600,21 @@ class MonitoringControllerTest {
         verify(keywordMonitorRepo, never()).save(any());
         verify(domainMonitorRepo, never()).save(any());
     }
+
+    // ── İsim normalizasyonu: URL yapıştırılmış isimler host'a iner, serbest metin korunur ──
+    @Test
+    @DisplayName("normalizeMonitorName: URL → host; serbest metin dokunulmaz; trim uygulanır")
+    void normalizeMonitorName_urlToHost_freeTextKept() {
+        org.assertj.core.api.Assertions.assertThat(
+                MonitoringController.normalizeMonitorName("https://www.wingscard.com.tr/"))
+                .isEqualTo("www.wingscard.com.tr");
+        org.assertj.core.api.Assertions.assertThat(
+                MonitoringController.normalizeMonitorName("http://x.example.com/path?q=1"))
+                .isEqualTo("x.example.com");
+        org.assertj.core.api.Assertions.assertThat(
+                MonitoringController.normalizeMonitorName("  Wings Kart Sitesi  "))
+                .isEqualTo("Wings Kart Sitesi");
+        org.assertj.core.api.Assertions.assertThat(
+                MonitoringController.normalizeMonitorName(null)).isNull();
+    }
 }

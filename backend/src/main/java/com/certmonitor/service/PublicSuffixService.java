@@ -108,8 +108,9 @@ public class PublicSuffixService {
         return out;
     }
 
-    /** URL veya host'tan çıplak host'u ayıklar (şema/userinfo/path/port/trailing-dot atılır). */
-    static String extractHost(String hostOrUrl) {
+    /** URL veya host'tan çıplak host'u ayıklar (şema/userinfo/path/port/trailing-dot atılır).
+     *  Saf string işlemi — AdminController giriş normalizasyonu (diagnostics/envanter) da kullanır. */
+    public static String extractHost(String hostOrUrl) {
         if (hostOrUrl == null) return null;
         String s = hostOrUrl.trim();
         if (s.isEmpty()) return null;

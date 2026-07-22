@@ -422,6 +422,22 @@ class AdminControllerTest {
     }
 
     @Test
+    @DisplayName("POST /api/admin/diagnostics/domain-expiry: URL formatlı girdi host'a normalize edilip kabul edilir")
+    void runDomainExpiryDiagnostics_urlInput_normalizedAccepted() throws Exception {
+        when(domainExpiryDiagnosticsService.diagnose("www.wingscard.com.tr"))
+                .thenReturn(Map.of("domain", "wingscard.com.tr", "steps", List.of()));
+
+        mvc.perform(post("/api/admin/diagnostics/domain-expiry")
+                        .session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"domain\":\"https://www.wingscard.com.tr/\"}"))
+                .andExpect(status().isOk());
+
+        // Şema/path soyuldu, subdomain korundu (registrable indirgeme servis içinde yapılır)
+        verify(domainExpiryDiagnosticsService).diagnose("www.wingscard.com.tr");
+    }
+
+    @Test
     @DisplayName("POST /api/admin/diagnostics/openssl as ADMIN returns probe; USER 403")
     void runOpenssl_adminAndUser() throws Exception {
         when(opensslDiagnosticsService.probe("example.com", 443)).thenReturn(Map.of(
