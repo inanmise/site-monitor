@@ -37,6 +37,7 @@ import ErrorBoundary from './components/ErrorBoundary.jsx'
 // açılınca yüklenir. Hepsi aşağıdaki tek <Suspense> sınırı altında render edilir.
 const AdminPanel = lazy(() => import('./components/admin/AdminPanel'))
 const AdminSettings = lazy(() => import('./components/admin/AdminSettings'))
+const LoginIssueReports = lazy(() => import('./components/admin/LoginIssueReports'))
 const PermissionMatrix = lazy(() => import('./components/admin/PermissionMatrix'))
 const AlertHistory = lazy(() => import('./components/admin/AlertHistory'))
 const IncidentsPage = lazy(() => import('./components/IncidentsPage'))
@@ -1096,6 +1097,12 @@ export default function App() {
             {tab === 'incident-history' && (
               <div className="tab-content active">
                 <IncidentHistoryPage />
+              </div>
+            )}
+
+            {tab === 'login-issues' && (
+              <div className="tab-content active">
+                <LoginIssueReports />
               </div>
             )}
 

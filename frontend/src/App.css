@@ -1230,8 +1230,9 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
   display: flex;
   align-items: center;
   justify-content: center;
-  background: linear-gradient(180deg, #0D1926 0%, #0B1520 100%);
-  border-left: 1px solid var(--edge);
+  /* Boş/kenar alanlar beyaz; giriş paneli (.lp-form-wrap) koyu kalır */
+  background: #ffffff;
+  border-left: 1px solid #e5e8ec;
   padding: 48px 40px;
 }
 /* Üst kenarda tek satırlık bronz ışık çizgisi */
@@ -1242,12 +1243,18 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
   height: 1px;
   background: linear-gradient(90deg, transparent, rgba(201,168,106,.55), transparent);
 }
+/* Kullanıcı adı/şifre paneli — koyu (dark) kart; beyaz zemin üzerinde yüzer */
 .lp-form-wrap {
   width: 100%;
   max-width: 400px;
   display: flex;
   flex-direction: column;
   gap: 28px;
+  background: linear-gradient(180deg, #0D1926 0%, #0B1520 100%);
+  padding: 40px 36px;
+  border-radius: 18px;
+  border: 1px solid var(--edge);
+  box-shadow: 0 24px 64px rgba(11, 21, 32, .28);
 }
 
 /* Intro block */

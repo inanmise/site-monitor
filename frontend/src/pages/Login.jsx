@@ -34,19 +34,24 @@ export default function Login({ onLogin, sessionExpired = false }) {
   // Kullanıcı adı ZORUNLU; hata mesajı + ekran görüntüsü (png/jpeg, küçültülüp inline gömülür) opsiyonel.
   const [helpOpen, setHelpOpen] = useState(false)
   const [helpUser, setHelpUser] = useState('')
+  const [helpEmail, setHelpEmail] = useState('')
   const [helpErrorText, setHelpErrorText] = useState('')
   const [helpMsg, setHelpMsg] = useState('')
   const [helpShots, setHelpShots] = useState([])    // data-URL dizisi (≤5) — önizleme + payload
   const [helpSending, setHelpSending] = useState(false)
   const [helpSent, setHelpSent] = useState(false)
-  const [helpErr, setHelpErr] = useState('')
+  const [helpRef, setHelpRef] = useState('')        // başarıda dönen referans no (LIR-...)
+  const [helpErr, setHelpErr] = useState('')        // kullanıcıya gösterilen NET sebep
+  const [helpErrDetail, setHelpErrDetail] = useState('')   // "Detay gör" ile açılan teknik hata
+  const [helpErrShowDetail, setHelpErrShowDetail] = useState(false)
   const shotRef = useRef(null)
 
   const MAX_SHOTS = 5
+  const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/
 
   function openHelp() {
     setHelpUser(username.trim())
-    setHelpErrorText(''); setHelpMsg(''); setHelpShots([]); setHelpErr(''); setHelpSent(false)
+    setHelpEmail(''); setHelpErrorText(''); setHelpMsg(''); setHelpShots([]); setHelpErr(''); setHelpSent(false); setHelpRef('')
     setHelpOpen(true)
   }
   function closeHelp() { setHelpOpen(false) }
@@ -87,21 +92,38 @@ export default function Login({ onLogin, sessionExpired = false }) {
     setHelpErr('')
   }
 
+  // Sonuçtan kullanıcıya NET sebep üret (ağ / oran / kapalı / sunucu / validasyon).
+  function helpReason(r) {
+    if (!r) return t('login.helpError')
+    if (r.networkError) return t('login.helpErrNetwork')
+    if (r.status === 429) return t('login.helpErrRate')
+    if (r.status === 404) return t('login.helpErrDisabled')
+    if (r.status >= 500) return t('login.helpErrServer')
+    return r.error || t('login.helpError')   // 400 validasyon → sunucunun döndüğü mesaj
+  }
+  // "Detay gör" ile açılan teknik satır: NETWORK / HTTP kodu / sunucu mesajı.
+  function helpDetail(r) {
+    if (!r) return ''
+    const parts = []
+    if (r.networkError) parts.push('NETWORK')
+    if (r.status) parts.push('HTTP ' + r.status)
+    if (r.error) parts.push(r.error)
+    return parts.join(' · ')
+  }
+
   async function sendHelp() {
     if (!helpUser.trim() || !helpMsg.trim() || helpSending) return
-    setHelpSending(true); setHelpErr('')
-    try {
-      const r = await api.sendLoginHelp({
-        username: helpUser.trim(),
-        errorText: helpErrorText.trim(),
-        message: helpMsg.trim(),
-        images: helpShots,
-      })
-      if (r?.success) setHelpSent(true)
-      else setHelpErr(r?.error || t('login.helpError'))
-    } catch {
-      setHelpErr(t('login.helpError'))
-    }
+    if (!EMAIL_RE.test(helpEmail.trim())) { setHelpErr(t('login.helpEmailInvalid')); setHelpErrDetail(''); return }
+    setHelpSending(true); setHelpErr(''); setHelpErrDetail(''); setHelpErrShowDetail(false)
+    const r = await api.sendLoginHelp({
+      username: helpUser.trim(),
+      email: helpEmail.trim(),
+      errorText: helpErrorText.trim(),
+      message: helpMsg.trim(),
+      images: helpShots,
+    })
+    if (r?.success) { setHelpRef(r.reference || ''); setHelpSent(true) }
+    else { setHelpErr(helpReason(r)); setHelpErrDetail(helpDetail(r)) }
     setHelpSending(false)
   }
 
@@ -473,7 +495,10 @@ export default function Login({ onLogin, sessionExpired = false }) {
                 </div>
                 {helpSent ? (
                   <div className="lp-field" style={{ gap: 14, alignItems: 'center', textAlign: 'center', padding: '14px 0' }}>
-                    <p className="lp-help" role="status" style={{ margin: 0 }}>{t('login.helpSent')}</p>
+                    <p className="lp-help" role="status" style={{ margin: 0 }}>
+                      {helpRef ? t('login.helpSentRef').replace('{0}', helpRef) : t('login.helpSent')}
+                    </p>
+                    {helpRef && <div className="lp-label" style={{ fontSize: '1.1rem', letterSpacing: '.04em' }}>{helpRef}</div>}
                     <button type="button" className="lp-btn lp-btn--ghost" style={{ marginTop: 0 }} onClick={closeHelp}>
                       {t('login.helpClose')}
                     </button>
@@ -485,6 +510,13 @@ export default function Login({ onLogin, sessionExpired = false }) {
                       <input id="lp-help-user" className="lp-input" type="text" maxLength={100}
                         value={helpUser} onChange={(e) => setHelpUser(e.target.value)} />
                       {!helpUser.trim() && <span className="lp-help" style={{ textAlign: 'left', margin: 0 }}>{t('login.helpUsernameReq')}</span>}
+                    </div>
+                    <div className="lp-field">
+                      <label className="lp-label" htmlFor="lp-help-email">{t('login.helpEmail')} *</label>
+                      <input id="lp-help-email" className="lp-input" type="email" maxLength={255}
+                        value={helpEmail} placeholder={t('login.helpEmailPlaceholder')}
+                        onChange={(e) => setHelpEmail(e.target.value)} />
+                      {!helpEmail.trim() && <span className="lp-help" style={{ textAlign: 'left', margin: 0 }}>{t('login.helpEmailReq')}</span>}
                     </div>
                     <div className="lp-field">
                       <label className="lp-label" htmlFor="lp-help-errtext">{t('login.helpErrorText')}</label>
@@ -526,9 +558,26 @@ export default function Login({ onLogin, sessionExpired = false }) {
                       )}
                       <span className="lp-help" style={{ textAlign: 'left', margin: 0 }}>{t('login.helpShotHint')}</span>
                     </div>
-                    {helpErr && <div className="lp-error" role="alert">{helpErr}</div>}
+                    {helpErr && (
+                      <div className="lp-error" role="alert">
+                        <div>{helpErr}</div>
+                        {helpErrDetail && (
+                          <>
+                            <button type="button" className="lp-help-link" style={{ marginTop: 6 }}
+                              onClick={() => setHelpErrShowDetail((v) => !v)}>
+                              {helpErrShowDetail ? t('login.helpErrDetailHide') : t('login.helpErrDetailShow')}
+                            </button>
+                            {helpErrShowDetail && (
+                              <div style={{ marginTop: 6, fontFamily: 'monospace', fontSize: 12, opacity: .85, wordBreak: 'break-word' }}>
+                                {helpErrDetail}
+                              </div>
+                            )}
+                          </>
+                        )}
+                      </div>
+                    )}
                     <button type="button" className="lp-btn" onClick={sendHelp}
-                      disabled={helpSending || !helpUser.trim() || !helpMsg.trim()}>
+                      disabled={helpSending || !helpUser.trim() || !EMAIL_RE.test(helpEmail.trim()) || !helpMsg.trim()}>
                       {helpSending
                         ? <><span className="lp-spinner" /> {t('login.helpSending')}</>
                         : t('login.helpSend')}

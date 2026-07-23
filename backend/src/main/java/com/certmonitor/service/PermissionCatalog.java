@@ -75,6 +75,10 @@ public final class PermissionCatalog {
         r("maintenance.manage", "maintenance", EDIT),
         r("maintenance.delete", "maintenance", EXECUTE, Set.of(EXECUTE)),
 
+        // ── Login Sorun Bildirimleri (admin triyaj; kendi grubu) ──
+        r("issues.login-reports", "issues", VIEW),   // listeleme/görüntüleme
+        r("issues.login-reports", "issues", EDIT),   // durum değiştirme (İşleme Al / Çözümlendi / Yeniden Aç)
+
         // ── Yönetim Araçları (kritik) ─────────────────────────────────────
         r("diagnostics.run",        "tools", EXECUTE, Set.of(EXECUTE)),
         r("diagnostics.history",    "tools", VIEW),

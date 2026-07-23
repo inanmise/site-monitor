@@ -151,7 +151,28 @@ export const api = {
   getPublicStats: () => request('/public-stats'),
 
   // Login "sorun bildir" — PUBLIC; sistem yöneticisi e-postasına iletilir (IP rate-limit'li).
-  sendLoginHelp: (dto) => request('/login-help', { method: 'POST', body: JSON.stringify(dto) }),
+  // Zengin sonuç döner: {success, status, reference?, error?, networkError?} — modal, sebebi +
+  // "Detay gör" ile teknik hatayı (HTTP kodu/sunucu mesajı/ağ istisnası) gösterebilsin.
+  sendLoginHelp: async (dto) => {
+    try {
+      const res = await fetch(`${BASE}/login-help`, {
+        method: 'POST', credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(dto),
+      })
+      let data = null
+      try { data = await res.json() } catch { /* gövde JSON değil (proxy HTML hata sayfası vb.) */ }
+      return {
+        success: !!(data && data.success),
+        status: res.status,
+        reference: data?.reference,
+        error: data?.error,
+      }
+    } catch (e) {
+      // Ağ hatası (sunucuya ulaşılamadı / yeniden başlatma / CORS) — status yok.
+      return { success: false, status: 0, networkError: true, error: String(e?.message || e?.name || e) }
+    }
+  },
 
   // Hafif oturum geçerlilik yoklaması — süpersede ise 401 → request() otomatik /?session=expired.
   sessionPing: () => request('/session/ping', { timeoutMs: DEFAULT_TIMEOUT_MS }),
@@ -334,6 +355,19 @@ export const api = {
     // Branding (beyaz etiket) — login/uygulama kimliği + duyuru şeridi
     getBrandingSettings: () => request('/admin/branding/settings'),
     saveBrandingSettings: (dto) => request('/admin/branding/settings', { method: 'PUT', body: JSON.stringify(dto) }),
+
+    // Login Sorun Bildirimleri — admin triyaj (listele/detay/durum)
+    getLoginIssues: (params = {}) => {
+      const qs = new URLSearchParams()
+      if (params.status) qs.set('status', params.status)
+      if (params.page != null) qs.set('page', params.page)
+      if (params.size != null) qs.set('size', params.size)
+      const q = qs.toString()
+      return request(`/admin/login-issues${q ? '?' + q : ''}`)
+    },
+    getLoginIssue: (id) => request(`/admin/login-issues/${id}`),
+    updateLoginIssueStatus: (id, dto) =>
+      request(`/admin/login-issues/${id}/status`, { method: 'PUT', body: JSON.stringify(dto) }),
 
 
     // Anahtar çözümleme aracı — verilen CERT_MONITOR_SECRET_KEY ile şifreli alanları çöz

@@ -1,0 +1,68 @@
+import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { render, screen, fireEvent, waitFor } from './test-utils'
+
+const sampleRow = {
+  id: 5, refCode: 'LIR-2026-000005', username: 'N12345', messageSummary: 'Cannot login',
+  ipAddress: '1.2.3.4', reportedAt: '2026-07-23T10:00:00', status: 'OPEN', imageCount: 2,
+}
+const sampleDetail = {
+  id: 5, refCode: 'LIR-2026-000005', username: 'N12345', errorText: 'HTTP 423',
+  message: 'Cannot login at all', ipAddress: '1.2.3.4', userAgent: 'curl/8', status: 'OPEN',
+  reportedAt: '2026-07-23T10:00:00', resolvedBy: null, resolvedAt: null, resolutionNote: null,
+  imageCount: 2, images: ['data:image/png;base64,AAAA', 'data:image/png;base64,BBBB'],
+}
+
+vi.mock('../api/client', () => ({
+  api: {
+    admin: {
+      getLoginIssues: vi.fn(async () => ({
+        success: true, data: [sampleRow], total: 1, counts: { OPEN: 1, IN_PROGRESS: 0, RESOLVED: 0 },
+      })),
+      getLoginIssue: vi.fn(async () => ({ success: true, data: sampleDetail })),
+      updateLoginIssueStatus: vi.fn(async () => ({
+        success: true, data: { ...sampleDetail, status: 'RESOLVED', resolutionNote: 'done', resolvedBy: 'admin' },
+      })),
+    },
+  },
+}))
+import { api } from '../api/client'
+import LoginIssueReports from '../components/admin/LoginIssueReports.jsx'
+
+describe('LoginIssueReports', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  it('sayaçları ve tabloyu yükler', async () => {
+    render(<LoginIssueReports />)
+    expect(await screen.findByText('Issue Reports')).toBeInTheDocument()
+    expect(screen.getByText('LIR-2026-000005')).toBeInTheDocument()
+    expect(api.admin.getLoginIssues).toHaveBeenCalled()
+  })
+
+  it('satıra tıklayınca detay modalı açılır ve 2 resmi gösterir', async () => {
+    render(<LoginIssueReports />)
+    fireEvent.click(await screen.findByText('LIR-2026-000005'))
+    await waitFor(() => expect(api.admin.getLoginIssue).toHaveBeenCalledWith(5))
+    expect(await screen.findByText('Cannot login at all')).toBeInTheDocument()
+    expect(document.querySelectorAll('.modal-box img').length).toBe(2)
+  })
+
+  it('çözüm notu olmadan Resolve → api çağrılmaz', async () => {
+    render(<LoginIssueReports />)
+    fireEvent.click(await screen.findByText('LIR-2026-000005'))
+    await screen.findByText('Cannot login at all')
+    fireEvent.click(screen.getByRole('button', { name: 'Resolve' }))
+    expect(api.admin.updateLoginIssueStatus).not.toHaveBeenCalled()
+  })
+
+  it('not ile Resolve → updateLoginIssueStatus doğru payload ile çağrılır', async () => {
+    render(<LoginIssueReports />)
+    fireEvent.click(await screen.findByText('LIR-2026-000005'))
+    await screen.findByText('Cannot login at all')
+    const ta = document.querySelector('.modal-box textarea')
+    fireEvent.change(ta, { target: { value: 'reset the account' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Resolve' }))
+    await waitFor(() => expect(api.admin.updateLoginIssueStatus).toHaveBeenCalledWith(5, {
+      status: 'RESOLVED', resolutionNote: 'reset the account',
+    }))
+  })
+})

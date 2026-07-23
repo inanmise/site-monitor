@@ -5,6 +5,8 @@ import com.certmonitor.service.AuditService;
 import com.certmonitor.service.ClientIpResolver;
 import com.certmonitor.service.EmailNotificationService;
 import com.certmonitor.service.EmailNotificationService.InlineImage;
+import com.certmonitor.service.LoginIssueService;
+import com.certmonitor.service.LoginIssueService.ParsedImage;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -34,6 +36,11 @@ import java.util.regex.Pattern;
  * ({@code cert.monitor.system-admin.email}, canlı okunur) Outlook-güvenli mail olarak gider;
  * ekran görüntüsü varsa maile CID inline gömülür.
  *
+ * <p>E-postaya EK olarak her bildirim resimleriyle birlikte DB'ye ({@link LoginIssueService}) yazılır;
+ * yalnız yetkili adminler /api/admin/login-issues ekranından görüntüleyip çözer. DB kaydı e-posta
+ * durumundan bağımsızdır (mail hatası kaydı engellemez). {@code cert.monitor.login-issues.enabled}
+ * kapalıysa endpoint 404 döner.
+ *
  * <p>Kimliksiz yazma endpoint'i olduğundan kötüye kullanım önlemleri: IP başına saatte 3 bildirim
  * (sliding window, boyut sınırlı map), alan uzunluk sınırları (username zorunlu ≤100, errorText
  * ≤2000, message zorunlu ≤5000), görsel yalnız png/jpeg data-URL + decode ≤1MB (SVG kabul edilmez —
@@ -51,8 +58,12 @@ public class LoginHelpController {
     private static final int MAX_PER_WINDOW = 3;
     private static final long WINDOW_MS = 60 * 60_000L;   // 1 saat
     private static final int MAX_USERNAME = 100;
+    private static final int MAX_EMAIL = 255;
     private static final int MAX_ERROR_TEXT = 2000;
     private static final int MAX_MESSAGE = 5000;
+
+    /** Basit e-posta biçim kontrolü (kimliksiz kullanıcı girişi — kesin RFC değil, makul filtre). */
+    private static final Pattern EMAIL = Pattern.compile("^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$");
     private static final int MAX_IMAGE_BYTES = 1024 * 1024;   // 1MB (decode) — görsel başına
     private static final int MAX_IMAGES = 5;                  // en fazla 5 ekran görüntüsü
     private static final int MAX_MAP_ENTRIES = 10_000;
@@ -65,17 +76,26 @@ public class LoginHelpController {
     private final EmailNotificationService emailService;
     private final AuditService auditService;
     private final ClientIpResolver clientIpResolver;
+    private final LoginIssueService loginIssueService;
 
     private final Map<String, Deque<Long>> rate = new ConcurrentHashMap<>();
 
     @PostMapping("/api/login-help")
     public ResponseEntity<Map<String, Object>> report(
             @RequestBody Map<String, Object> body, HttpServletRequest request) {
+        // Özellik kapalıysa endpoint yok gibi davran (login link'i değişmez; gönderim 404 alır).
+        if (!appSettings.getBoolean("cert.monitor.login-issues.enabled", true)) {
+            return err(HttpStatus.NOT_FOUND, "Bu özellik devre dışı");
+        }
         String username  = str(body.get("username"));
+        String email     = str(body.get("email"));
         String errorText = str(body.get("errorText"));
         String message   = str(body.get("message"));
 
         if (username.isBlank()) return err(HttpStatus.BAD_REQUEST, "Kullanıcı adı zorunludur");
+        if (email.isBlank())    return err(HttpStatus.BAD_REQUEST, "E-posta adresi zorunludur");
+        if (!EMAIL.matcher(email).matches() || email.length() > MAX_EMAIL)
+            return err(HttpStatus.BAD_REQUEST, "Geçerli bir e-posta adresi giriniz");
         if (message.isBlank())  return err(HttpStatus.BAD_REQUEST, "Açıklama boş olamaz");
         if (username.length() > MAX_USERNAME || errorText.length() > MAX_ERROR_TEXT
                 || message.length() > MAX_MESSAGE) {
@@ -94,13 +114,15 @@ public class LoginHelpController {
             return err(HttpStatus.BAD_REQUEST, "En fazla " + MAX_IMAGES + " ekran görüntüsü ekleyebilirsiniz");
         }
 
-        List<InlineImage> images = new ArrayList<>();
+        List<InlineImage> images = new ArrayList<>();          // e-posta CID inline
+        List<ParsedImage> parsed = new ArrayList<>();          // DB kalıcılık (base64 TEXT)
         int idx = 0;
         for (String dataUrl : dataUrls) {
             Matcher m = IMAGE_DATA_URL.matcher(dataUrl);
             if (!m.matches()) {
                 return err(HttpStatus.BAD_REQUEST, "Görseller yalnız PNG veya JPEG olabilir");
             }
+            String cleanB64 = m.group(2).replaceAll("\\s", "");
             byte[] bytes;
             try {
                 bytes = Base64.getMimeDecoder().decode(m.group(2));
@@ -110,7 +132,9 @@ public class LoginHelpController {
             if (bytes.length > MAX_IMAGE_BYTES) {
                 return err(HttpStatus.BAD_REQUEST, "Her görsel en fazla 1MB olabilir");
             }
-            images.add(new InlineImage("shot" + idx++, bytes, "image/" + m.group(1)));
+            String mime = "image/" + m.group(1);
+            images.add(new InlineImage("shot" + idx++, bytes, mime));
+            parsed.add(new ParsedImage(mime, cleanB64));
         }
 
         String ip = clientIpResolver.resolve(request);
@@ -119,29 +143,48 @@ public class LoginHelpController {
                     "Çok fazla bildirim gönderildi — lütfen daha sonra tekrar deneyin.");
         }
 
-        String adminEmail = appSettings.getString("cert.monitor.system-admin.email", "");
         String userAgent = request.getHeader("User-Agent");
         String now = ISO.format(Instant.now());
+
+        // DB kalıcılık — BİRİNCİL kayıt (admin ekranı bunun üzerinden çalışır). Mail'den bağımsız.
+        com.certmonitor.model.LoginIssueReport report =
+                loginIssueService.save(username, email, errorText, message, parsed, ip, userAgent, now);
+        String refCode = LoginIssueService.refCode(report);
+
+        // Best-effort admin bilgilendirme maili (hata kaydı engellemez).
+        String adminEmail = appSettings.getString("cert.monitor.system-admin.email", "");
         if (adminEmail != null && !adminEmail.isBlank()) {
-            String status = emailService.sendLoginIssueReport(
-                    adminEmail, username, errorText, message, images, ip, userAgent, now);
-            log.info("Login sorun bildirimi: user='{}' ip={} images={} → {} ({})",
-                    username, ip, images.size(), adminEmail, status);
+            try {
+                String status = emailService.sendLoginIssueReport(
+                        adminEmail, refCode, username, errorText, message, images, ip, userAgent, now);
+                log.info("Login sorun bildirimi {}: user='{}' ip={} images={} → {} ({})",
+                        refCode, username, ip, images.size(), adminEmail, status);
+            } catch (Exception e) {
+                log.warn("Login sorun bildirimi {} admin maili gönderilemedi (kayıt saklandı): {}",
+                        refCode, e.getMessage());
+            }
         } else {
-            log.warn("Login sorun bildirimi geldi ama system-admin.email boş — mail gönderilemedi (user='{}' ip={})",
-                    username, ip);
+            log.info("Login sorun bildirimi {} kaydedildi; system-admin.email boş — admin maili atlandı (user='{}' ip={})",
+                    refCode, username, ip);
+        }
+        // Best-effort: bildiren kişiye admin'e gidenle BENZER içerik (hata mesajı + görseller) + referans no.
+        try {
+            emailService.sendLoginIssueAck(email, refCode, username, errorText, message, images, now);
+        } catch (Exception e) {
+            log.warn("Login sorun bildirimi {} bildiren onay maili gönderilemedi: {}", refCode, e.getMessage());
         }
         auditService.recordAction("LOGIN_HELP_REPORT",
                 username, null, null, null,
                 "LOGIN", ip,
-                "{\"messageChars\":" + message.length() + ",\"errorChars\":" + errorText.length()
-                        + ",\"images\":" + images.size() + "}",
+                "{\"ref\":\"" + refCode + "\",\"messageChars\":" + message.length()
+                        + ",\"errorChars\":" + errorText.length() + ",\"images\":" + images.size() + "}",
                 ip, userAgent, null);
 
-        // Jenerik yanıt — admin e-postasının varlığı/SMTP sonucu dışarı sızdırılmaz.
+        // Referans numarası kullanıcıya döner (durum takibi için); SMTP/admin durumu sızdırılmaz.
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("success", true);
         out.put("message", "Bildiriminiz alındı");
+        out.put("reference", refCode);
         out.put("timestamp", now);
         return ResponseEntity.ok(out);
     }

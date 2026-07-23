@@ -1,0 +1,185 @@
+package com.certmonitor.controller;
+
+import com.certmonitor.model.LoginIssueReport;
+import com.certmonitor.model.LoginIssueReportImage;
+import com.certmonitor.service.AppSettingsService;
+import com.certmonitor.service.AuditService;
+import com.certmonitor.service.EmailNotificationService;
+import com.certmonitor.service.LoginIssueService;
+import com.certmonitor.service.PermissionService;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpSession;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.domain.Page;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.*;
+
+import java.time.Instant;
+import java.time.ZoneOffset;
+import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+
+/**
+ * Admin-only Login Sorun Bildirimleri yönetimi. Yalnız {@code issues.login-reports} izni olan
+ * (veya bootstrap admin) kullanıcılar listeler/görüntüler/durum değiştirir. Kayıtlar public
+ * /api/login-help akışından {@link LoginIssueService} ile yazılır. Her durum değişikliği audit'lenir.
+ */
+@Slf4j
+@RestController
+@RequestMapping("/api/admin/login-issues")
+@RequiredArgsConstructor
+public class LoginIssueController {
+
+    private static final DateTimeFormatter ISO =
+            DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
+    private static final String PERM = "issues.login-reports";
+
+    private final LoginIssueService loginIssueService;
+    private final PermissionService permissionService;
+    private final AuditService auditService;
+    private final EmailNotificationService emailService;
+    private final AppSettingsService appSettings;
+
+    @GetMapping
+    public ResponseEntity<Map<String, Object>> list(
+            @RequestParam(required = false) String status,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size,
+            HttpSession session) {
+        requireAccess(session, "view");
+        Page<LoginIssueReport> p = loginIssueService.list(status, page, size);
+        List<Map<String, Object>> data = new ArrayList<>();
+        for (LoginIssueReport r : p.getContent()) data.add(toListItem(r));
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("data", data);
+        body.put("total", p.getTotalElements());
+        body.put("page", p.getNumber());
+        body.put("size", p.getSize());
+        body.put("counts", loginIssueService.counts());
+        return ok(body);
+    }
+
+    @GetMapping("/{id}")
+    public ResponseEntity<Map<String, Object>> detail(@PathVariable Long id, HttpSession session) {
+        requireAccess(session, "view");
+        return loginIssueService.get(id)
+                .map(r -> ok(Map.of("data", toDetail(r))))
+                .orElseGet(this::notFound);
+    }
+
+    @PutMapping("/{id}/status")
+    public ResponseEntity<Map<String, Object>> updateStatus(
+            @PathVariable Long id, @RequestBody Map<String, Object> body,
+            HttpSession session, HttpServletRequest request) {
+        requireAccess(session, "edit");
+        if (loginIssueService.get(id).isEmpty()) return notFound();
+        String newStatus = str(body.get("status"));
+        String note = str(body.get("resolutionNote"));
+        LoginIssueReport updated;
+        try {
+            updated = loginIssueService.updateStatus(id, newStatus, note, actor(session));
+        } catch (IllegalArgumentException e) {
+            return err(HttpStatus.BAD_REQUEST, e.getMessage());
+        }
+        auditService.recordAction("LOGIN_ISSUE_STATUS_CHANGE", session, request,
+                "LOGIN_ISSUE", String.valueOf(id),
+                "{\"status\":\"" + updated.getStatus() + "\"}");
+        // Çözümlendiğinde "çözüldü" bildirimi HEM bildirene (To) HEM sistem yöneticisine (CC) gider
+        // (karşılıklı bilgilendirme). Best-effort; hata akışı kırmaz.
+        if (LoginIssueService.RESOLVED.equals(updated.getStatus())) {
+            try {
+                String adminEmail = appSettings.getString("cert.monitor.system-admin.email", "");
+                emailService.sendLoginIssueResolved(updated.getReporterEmail(), adminEmail,
+                        LoginIssueService.refCode(updated), updated.getResolutionNote(), updated.getResolvedAt());
+            } catch (Exception e) {
+                log.warn("Login issue {} çözüldü bildirimi gönderilemedi: {}",
+                        LoginIssueService.refCode(updated), e.getMessage());
+            }
+        }
+        return ok(Map.of("data", toDetail(updated), "message", "Durum güncellendi"));
+    }
+
+    // ── helpers ──────────────────────────────────────────────────────────────
+
+    /** Bootstrap admin (login'de set edilen bayrak) her zaman erişir; aksi halde matris izni. */
+    private void requireAccess(HttpSession session, String action) {
+        if (Boolean.TRUE.equals(session != null ? session.getAttribute("bootstrapAdmin") : null)) return;
+        permissionService.require(session, PERM, action);
+    }
+
+    /** Liste satırı — resimler taşınmaz (hafif); yalnız metadata + özet. */
+    private Map<String, Object> toListItem(LoginIssueReport r) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("id", r.getId());
+        m.put("refCode", LoginIssueService.refCode(r));
+        m.put("username", r.getUsername());
+        m.put("messageSummary", summarize(r.getMessage()));
+        m.put("ipAddress", r.getIpAddress());
+        m.put("reportedAt", r.getReportedAt());
+        m.put("status", r.getStatus());
+        m.put("imageCount", r.getImageCount());
+        return m;
+    }
+
+    /** Detay — tam alanlar + resimler (data-URL). */
+    private Map<String, Object> toDetail(LoginIssueReport r) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("id", r.getId());
+        m.put("refCode", LoginIssueService.refCode(r));
+        m.put("username", r.getUsername());
+        m.put("reporterEmail", r.getReporterEmail());
+        m.put("errorText", r.getErrorText());
+        m.put("message", r.getMessage());
+        m.put("ipAddress", r.getIpAddress());
+        m.put("userAgent", r.getUserAgent());
+        m.put("status", r.getStatus());
+        m.put("reportedAt", r.getReportedAt());
+        m.put("resolvedBy", r.getResolvedBy());
+        m.put("resolvedAt", r.getResolvedAt());
+        m.put("resolutionNote", r.getResolutionNote());
+        m.put("imageCount", r.getImageCount());
+        List<String> imgs = new ArrayList<>();
+        for (LoginIssueReportImage img : loginIssueService.images(r.getId())) {
+            imgs.add("data:" + img.getContentType() + ";base64," + img.getDataBase64());
+        }
+        m.put("images", imgs);
+        return m;
+    }
+
+    private static String summarize(String msg) {
+        if (msg == null) return "";
+        String s = msg.strip().replaceAll("\\s+", " ");
+        return s.length() > 80 ? s.substring(0, 80) + "…" : s;
+    }
+
+    private static String str(Object o) { return o == null ? "" : o.toString().strip(); }
+
+    private String actor(HttpSession session) {
+        Object u = session != null ? session.getAttribute("username") : null;
+        return u != null ? u.toString() : "anonymous";
+    }
+
+    private ResponseEntity<Map<String, Object>> ok(Map<String, Object> body) {
+        Map<String, Object> response = new LinkedHashMap<>(body);
+        response.put("success", true);
+        response.put("timestamp", ISO.format(Instant.now()));
+        return ResponseEntity.ok(response);
+    }
+
+    private ResponseEntity<Map<String, Object>> notFound() {
+        return err(HttpStatus.NOT_FOUND, "Kayıt bulunamadı");
+    }
+
+    private ResponseEntity<Map<String, Object>> err(HttpStatus status, String msg) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("success", false);
+        out.put("error", msg);
+        out.put("timestamp", ISO.format(Instant.now()));
+        return ResponseEntity.status(status).body(out);
+    }
+}
