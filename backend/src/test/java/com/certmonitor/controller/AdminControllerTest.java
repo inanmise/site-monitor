@@ -127,6 +127,9 @@ class AdminControllerTest {
     @MockitoBean
     com.certmonitor.service.MonitoringGroupService monitoringGroupService;
 
+    @MockitoBean
+    com.certmonitor.service.SchedulerService schedulerService;
+
     @BeforeEach
     void setup() {
         when(userService.listTeams()).thenReturn(java.util.Collections.emptyList());

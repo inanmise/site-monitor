@@ -136,7 +136,11 @@ public class WebConfig implements WebMvcConfigurer {
                 //   çağırır → React mount olamaz → BEYAZ EKRAN. (prod'da cache.period set değil,
                 //   bu yüzden framework Cache-Control yazmaz; buradaki header otoritedir.)
                 String uri = req.getRequestURI();
-                if (uri.startsWith("/api/")) {
+                if (uri.equals("/api/branding") || uri.equals("/api/public-stats")) {
+                    // Public login-sayfası endpoint'leri (branding + hero istatistikleri) — 60 sn
+                    // cache'lenebilir; canlı değişim en geç 1 dk'da yansır (ETag yok/gerekmiyor).
+                    res.setHeader("Cache-Control", "public, max-age=60");
+                } else if (uri.startsWith("/api/")) {
                     res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
                     res.setHeader("Pragma", "no-cache");
                 } else if (uri.startsWith("/assets/")) {

@@ -1,6 +1,15 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
+// "Sisli Ege" sağ panel tipografisi — self-host (@fontsource, CDN yok); yalnız login yükler.
+// Ağırlık CSS'leri woff2 + latin/latin-ext subset'lerini unicode-range ile içerir (TR glifleri dahil).
+import '@fontsource/cinzel/400.css'
+import '@fontsource/cinzel/500.css'
+import '@fontsource/josefin-sans/300.css'
+import '@fontsource/josefin-sans/400.css'
+import '@fontsource/josefin-sans/600.css'
 import { api } from '../api/client'
 import { useT, useLanguage } from '../i18n/index.jsx'
+import { useBranding } from '../contexts/BrandingProvider.jsx'
+import { downscaleImage } from '../utils/imageDownscale.js'
 import { ShieldAlert, ShieldCheck, Lock, Globe, Activity, Radio, Network, Server, Search, Gauge, Bell, AlertTriangle, FileText, Wrench, X } from 'lucide-react'
 
 const STORAGE_KEY = 'cert-monitor-remembered-user'
@@ -8,6 +17,8 @@ const STORAGE_KEY = 'cert-monitor-remembered-user'
 export default function Login({ onLogin, sessionExpired = false }) {
   const t = useT()
   const { lang, toggle: toggleLang } = useLanguage()
+  // Branding (beyaz etiket): dolu değer varsa onu, boşsa i18n varsayılanını kullan (auth ÖNCESİ public).
+  const { get: brand, branding } = useBranding()
   const saved = localStorage.getItem(STORAGE_KEY)
   const [username, setUsername] = useState(saved || '')
   const [password, setPassword] = useState('')
@@ -18,6 +29,92 @@ export default function Login({ onLogin, sessionExpired = false }) {
   const [lockout, setLockout]           = useState(0)    // seconds remaining
   const [permanentLock, setPermanentLock] = useState(false) // admin must unlock
   const [confirmActiveSession, setConfirmActiveSession] = useState(false) // başka yerde aktif oturum onayı
+  const [stats, setStats] = useState(null)   // hero istatistikleri — gerçek veriden (public endpoint)
+  // "Sorun bildir" pop-up'ı — sistem yöneticisine mail (public endpoint, IP rate-limit'li).
+  // Kullanıcı adı ZORUNLU; hata mesajı + ekran görüntüsü (png/jpeg, küçültülüp inline gömülür) opsiyonel.
+  const [helpOpen, setHelpOpen] = useState(false)
+  const [helpUser, setHelpUser] = useState('')
+  const [helpErrorText, setHelpErrorText] = useState('')
+  const [helpMsg, setHelpMsg] = useState('')
+  const [helpShots, setHelpShots] = useState([])    // data-URL dizisi (≤5) — önizleme + payload
+  const [helpSending, setHelpSending] = useState(false)
+  const [helpSent, setHelpSent] = useState(false)
+  const [helpErr, setHelpErr] = useState('')
+  const shotRef = useRef(null)
+
+  const MAX_SHOTS = 5
+
+  function openHelp() {
+    setHelpUser(username.trim())
+    setHelpErrorText(''); setHelpMsg(''); setHelpShots([]); setHelpErr(''); setHelpSent(false)
+    setHelpOpen(true)
+  }
+  function closeHelp() { setHelpOpen(false) }
+
+  useEffect(() => {
+    if (!helpOpen) return
+    const onKey = (e) => { if (e.key === 'Escape') closeHelp() }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [helpOpen])
+
+  async function onShotChosen(e) {
+    const files = Array.from(e.target.files || [])
+    e.target.value = ''
+    if (!files.length) return
+    setHelpErr('')
+    const room = MAX_SHOTS - helpShots.length
+    if (room <= 0) { setHelpErr(t('login.helpShotMaxErr').replace('{n}', String(MAX_SHOTS))); return }
+    const picked = files.slice(0, room)
+    if (files.length > room) setHelpErr(t('login.helpShotMaxErr').replace('{n}', String(MAX_SHOTS)))
+    const added = []
+    for (const file of picked) {
+      if (!['image/png', 'image/jpeg'].includes(file.type)) { setHelpErr(t('login.helpShotTypeErr')); continue }
+      const processed = await downscaleImage(file, { maxDim: 1600, targetBytes: 400 * 1024 })
+      if (processed.size > 1024 * 1024) { setHelpErr(t('login.helpShotSizeErr')); continue }
+      const dataUrl = await new Promise((res) => {
+        const reader = new FileReader()
+        reader.onload = () => res(String(reader.result))
+        reader.readAsDataURL(processed)
+      })
+      added.push(dataUrl)
+    }
+    if (added.length) setHelpShots((prev) => [...prev, ...added].slice(0, MAX_SHOTS))
+  }
+
+  function removeShot(idx) {
+    setHelpShots((prev) => prev.filter((_, i) => i !== idx))
+    setHelpErr('')
+  }
+
+  async function sendHelp() {
+    if (!helpUser.trim() || !helpMsg.trim() || helpSending) return
+    setHelpSending(true); setHelpErr('')
+    try {
+      const r = await api.sendLoginHelp({
+        username: helpUser.trim(),
+        errorText: helpErrorText.trim(),
+        message: helpMsg.trim(),
+        images: helpShots,
+      })
+      if (r?.success) setHelpSent(true)
+      else setHelpErr(r?.error || t('login.helpError'))
+    } catch {
+      setHelpErr(t('login.helpError'))
+    }
+    setHelpSending(false)
+  }
+
+  useEffect(() => {
+    let alive = true
+    ;(async () => {
+      try {
+        const r = await api.getPublicStats?.()
+        if (alive && r?.success) setStats(r.data)
+      } catch { /* istatistiksiz de login çalışır */ }
+    })()
+    return () => { alive = false }
+  }, [])
 
   useEffect(() => {
     if (lockout <= 0) return
@@ -138,7 +235,7 @@ export default function Login({ onLogin, sessionExpired = false }) {
         <div className="lp-left-inner">
           {/* Üst: wordmark + ENTERPRISE rozeti */}
           <div className="lp-top">
-            <span className="lp-wordmark">CertMonitor</span>
+            <span className="lp-wordmark">{brand('app_name', 'CertMonitor')}</span>
             <span className="lp-badge">ENTERPRISE</span>
           </div>
 
@@ -173,19 +270,26 @@ export default function Login({ onLogin, sessionExpired = false }) {
 
           {/* Alt: hero istatistikler + footer */}
           <div className="lp-bottom">
+            {/* Hero istatistikleri — sabit pazarlama değeri değil, /api/public-stats'tan gerçek veri. */}
             <div className="lp-stats">
               <div className="lp-stat">
-                <span className="lp-stat-num">500+</span>
+                <span className="lp-stat-num">
+                  {stats?.monitored_targets != null ? String(stats.monitored_targets) : '—'}
+                </span>
                 <span className="lp-stat-lbl">{t('login.domainsMonitored')}</span>
               </div>
               <span className="lp-stat-sep" />
               <div className="lp-stat">
-                <span className="lp-stat-num">99.9%</span>
+                <span className="lp-stat-num">
+                  {stats?.availability_pct != null ? `${stats.availability_pct}%` : '—'}
+                </span>
                 <span className="lp-stat-lbl">{t('login.uptime')}</span>
               </div>
             </div>
             <div className="lp-footer">
-              <span className="lp-footer-meta">v{__APP_VERSION__} &nbsp;·&nbsp; &copy; {new Date().getFullYear()} CertMonitor</span>
+              <span className="lp-footer-meta">
+                {brand('footer_text', `v${__APP_VERSION__} · © ${new Date().getFullYear()} ${brand('app_name', 'CertMonitor')}`)}
+              </span>
               <button type="button" className="lp-lang-btn" onClick={toggleLang}>
                 <Globe size={13} />
                 {lang === 'tr' ? 'English' : 'Türkçe'}
@@ -207,14 +311,18 @@ export default function Login({ onLogin, sessionExpired = false }) {
             </div>
           )}
 
-          {/* Üst açıklama */}
+          {/* Üst açıklama (branding override'lı) */}
           <div className="lp-intro">
+            {branding.logo_data && (
+              <img src={branding.logo_data} alt={brand('app_name', 'CertMonitor')}
+                   style={{ maxHeight: 40, maxWidth: 200, marginBottom: 10 }} />
+            )}
             <div className="lp-intro-badge">
               <Lock size={13} />
               <span>{t('login.secureBadge')}</span>
             </div>
-            <h2 className="lp-intro-title">{t('login.heading')}</h2>
-            <p className="lp-intro-desc">{t('login.desc')}</p>
+            <h2 className="lp-intro-title">{brand('login_title', t('login.heading'))}</h2>
+            <p className="lp-intro-desc">{brand('login_subtitle', t('login.desc'))}</p>
           </div>
 
           {/* Başka yerde aktif oturum — onay ekranı */}
@@ -276,7 +384,7 @@ export default function Login({ onLogin, sessionExpired = false }) {
             /* Normal giriş formu */
             <form onSubmit={handleSubmit} className="lp-form">
               <div className="lp-field">
-                <label className="lp-label" htmlFor="lp-user">{t('login.username')}</label>
+                <label className="lp-label" htmlFor="lp-user">{brand('username_label', t('login.username'))}</label>
                 <input
                   id="lp-user"
                   className="lp-input"
@@ -337,7 +445,7 @@ export default function Login({ onLogin, sessionExpired = false }) {
               <button type="submit" className="lp-btn" disabled={loading}>
                 {loading
                   ? <><span className="lp-spinner" /> {t('login.loading')}</>
-                  : <><Lock size={16} /> {t('login.submit')}</>
+                  : <><Lock size={16} /> {brand('signin_label', t('login.submit'))}</>
                 }
               </button>
 
@@ -345,7 +453,91 @@ export default function Login({ onLogin, sessionExpired = false }) {
             </form>
           )}
 
-          <p className="lp-help">{t('login.help')}</p>
+          {/* Yardım: sorun bildirimi — tıklanınca pop-up açılır, sistem yöneticisine mail gider */}
+          <p className="lp-help">
+            {t('login.helpText')}{' '}
+            <button type="button" className="lp-help-link" onClick={openHelp}>
+              {t('login.helpLink')}
+            </button>
+          </p>
+          {/* position:fixed overlay — .lp-root İÇİNDE render edilir ki Odyssey CSS değişkenleri çözülsün */}
+          {helpOpen && (
+            <div className="lp-modal-overlay" onClick={closeHelp}>
+              <div className="lp-modal" role="dialog" aria-modal="true"
+                   aria-label={t('login.helpTitle')} onClick={(e) => e.stopPropagation()}>
+                <div className="lp-modal-head">
+                  <h3 className="lp-modal-title">{t('login.helpTitle')}</h3>
+                  <button type="button" className="lp-modal-close" aria-label="close" onClick={closeHelp}>
+                    <X size={16} />
+                  </button>
+                </div>
+                {helpSent ? (
+                  <div className="lp-field" style={{ gap: 14, alignItems: 'center', textAlign: 'center', padding: '14px 0' }}>
+                    <p className="lp-help" role="status" style={{ margin: 0 }}>{t('login.helpSent')}</p>
+                    <button type="button" className="lp-btn lp-btn--ghost" style={{ marginTop: 0 }} onClick={closeHelp}>
+                      {t('login.helpClose')}
+                    </button>
+                  </div>
+                ) : (
+                  <>
+                    <div className="lp-field">
+                      <label className="lp-label" htmlFor="lp-help-user">{t('login.helpUsername')} *</label>
+                      <input id="lp-help-user" className="lp-input" type="text" maxLength={100}
+                        value={helpUser} onChange={(e) => setHelpUser(e.target.value)} />
+                      {!helpUser.trim() && <span className="lp-help" style={{ textAlign: 'left', margin: 0 }}>{t('login.helpUsernameReq')}</span>}
+                    </div>
+                    <div className="lp-field">
+                      <label className="lp-label" htmlFor="lp-help-errtext">{t('login.helpErrorText')}</label>
+                      <textarea id="lp-help-errtext" className="lp-input" rows={2} maxLength={2000}
+                        value={helpErrorText} placeholder={t('login.helpErrorTextPlaceholder')}
+                        onChange={(e) => setHelpErrorText(e.target.value)} />
+                    </div>
+                    <div className="lp-field">
+                      <label className="lp-label" htmlFor="lp-help-msg">{t('login.helpDesc')} *</label>
+                      <textarea id="lp-help-msg" className="lp-input" rows={7} maxLength={5000}
+                        style={{ resize: 'vertical', minHeight: 120 }}
+                        value={helpMsg} placeholder={t('login.helpMsgPlaceholder')}
+                        onChange={(e) => setHelpMsg(e.target.value)} />
+                      <span className="lp-char-count">{helpMsg.length}/5000</span>
+                    </div>
+                    <div className="lp-field">
+                      <label className="lp-label">
+                        {t('login.helpShot')}
+                        <span className="lp-char-count" style={{ position: 'static', marginLeft: 8 }}>{helpShots.length}/{MAX_SHOTS}</span>
+                      </label>
+                      <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+                        <button type="button" className="lp-btn lp-btn--ghost" style={{ width: 'auto', marginTop: 0, padding: '9px 16px' }}
+                          onClick={() => shotRef.current?.click()} disabled={helpShots.length >= MAX_SHOTS}>
+                          {t('login.helpShotChoose')}
+                        </button>
+                        <input ref={shotRef} type="file" accept="image/png,image/jpeg" multiple
+                          style={{ display: 'none' }} onChange={onShotChosen} />
+                      </div>
+                      {helpShots.length > 0 && (
+                        <div className="lp-shot-grid">
+                          {helpShots.map((src, i) => (
+                            <div className="lp-shot-item" key={i}>
+                              <img src={src} alt={`screenshot ${i + 1}`} className="lp-shot-thumb" />
+                              <button type="button" className="lp-shot-x" aria-label={t('login.helpShotRemove')}
+                                title={t('login.helpShotRemove')} onClick={() => removeShot(i)}>×</button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      <span className="lp-help" style={{ textAlign: 'left', margin: 0 }}>{t('login.helpShotHint')}</span>
+                    </div>
+                    {helpErr && <div className="lp-error" role="alert">{helpErr}</div>}
+                    <button type="button" className="lp-btn" onClick={sendHelp}
+                      disabled={helpSending || !helpUser.trim() || !helpMsg.trim()}>
+                      {helpSending
+                        ? <><span className="lp-spinner" /> {t('login.helpSending')}</>
+                        : t('login.helpSend')}
+                    </button>
+                  </>
+                )}
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </div>

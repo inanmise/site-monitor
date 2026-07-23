@@ -254,4 +254,46 @@ class UserServiceSessionTest {
         verify(userRepo).save(captor.capture());
         assertThat(captor.getValue().getLastSeenAt()).isNotNull();
     }
+
+    // ── F2/F3 (CPU denetimi): supersede TTL cache + touch debounce ────────────
+
+    @Test
+    @DisplayName("F2: TTL içinde ikinci supersede kontrolü DB'ye gitmez; sonuç cache'ten aynı")
+    void supersede_cachedWithinTtl_singleSelect() {
+        ReflectionTestUtils.setField(service, "supersedeCacheMs", 5_000L);
+        when(userRepo.findActiveSessionIdByUsername("ALICE")).thenReturn(Optional.of("NEWSID"));
+
+        assertThat(service.isSessionSuperseded("ALICE", "OLDSID")).isTrue();
+        assertThat(service.isSessionSuperseded("ALICE", "OLDSID")).isTrue();
+        assertThat(service.isSessionSuperseded("ALICE", "NEWSID")).isFalse();   // cache'ten karşılaştırma
+
+        verify(userRepo, times(1)).findActiveSessionIdByUsername("ALICE");
+    }
+
+    @Test
+    @DisplayName("F2: recordActiveSession/terminateActiveSession cache'i evict eder → sonraki kontrol DB'den")
+    void supersede_evictedOnSessionMutation() {
+        ReflectionTestUtils.setField(service, "supersedeCacheMs", 5_000L);
+        when(userRepo.findActiveSessionIdByUsername("ALICE")).thenReturn(Optional.of("SID1"));
+        when(userRepo.findByUsername("ALICE")).thenReturn(Optional.of(user("ALICE", "SID1")));
+
+        service.isSessionSuperseded("ALICE", "SID1");        // cache dolar
+        service.terminateActiveSession("ALICE");             // evict
+        service.isSessionSuperseded("ALICE", "SID1");        // yeniden DB
+
+        verify(userRepo, times(2)).findActiveSessionIdByUsername("ALICE");
+    }
+
+    @Test
+    @DisplayName("F3: aynı kullanıcı+oturum için hızlı ardışık ping'lerde UPDATE 1 kez; farklı oturum yazar")
+    void touch_debounced_perSession() {
+        ReflectionTestUtils.setField(service, "touchDebounceMs", 60_000L);
+
+        service.touchActiveSession("alice", "S1");
+        service.touchActiveSession("alice", "S1");   // debounce penceresi içinde → yazma yok
+        service.touchActiveSession("alice", "S2");   // farklı oturum → yazar
+
+        verify(userRepo, times(1)).touchLastSeen(eq("alice"), eq("S1"), any());
+        verify(userRepo, times(1)).touchLastSeen(eq("alice"), eq("S2"), any());
+    }
 }

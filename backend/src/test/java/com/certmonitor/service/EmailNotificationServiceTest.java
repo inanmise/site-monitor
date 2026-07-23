@@ -767,6 +767,31 @@ class EmailNotificationServiceTest {
         assertThat(html).doesNotContain("07:15");               // ham UTC sızmamalı
     }
 
+    @Test
+    @DisplayName("buildResolutionEmailHtml (domain çözüldü): yenilenen bitiş tarihi + kalan gün + registrar bağlamı gösterilir")
+    void resolutionHtml_domainEnriched() {
+        Map<String, Object> ctx = new HashMap<>();
+        ctx.put("domain", "kartfree.com");
+        ctx.put("expiry_date", "2027-08-06T00:00:00");
+        ctx.put("days_remaining", 365);
+        ctx.put("registrar", "GoDaddy.com, LLC");
+        ctx.put("status_codes", "clientTransferProhibited");
+        String html = service.buildResolutionEmailHtml(
+                "kartfree.com", "DOMAINMON_EXPIRY", "INFO", 365,
+                "Sistem (otomatik)", "2026-07-23T14:58:00", "2026-07-20T09:00:00", ctx);
+
+        assertThat(html).contains("ÇÖZÜLDÜ");
+        assertThat(html).contains("Ağustos 2027");         // yenilenen bitiş tarihi (insan-okur)
+        assertThat(html).contains("365 gün");              // kalan süre
+        assertThat(html).contains("GoDaddy.com, LLC");     // registrar
+        assertThat(html).contains("clientTransferProhibited"); // EPP kodu pill
+
+        String text = service.buildResolutionEmailText(
+                "kartfree.com", "DOMAINMON_EXPIRY", "Sistem (otomatik)", "2026-07-23T14:58:00",
+                "2026-07-20T09:00:00", ctx);
+        assertThat(text).contains("Yeni Bitiş Tarihi").contains("Ağustos 2027").contains("365 gün");
+    }
+
     // ── Mail TRACE logging + hata stack izi (com.certmonitor.mail) ────────────────
 
     @Test

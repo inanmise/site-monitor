@@ -81,7 +81,7 @@ config:
   startupCheckDelayMs: "60000"
   # stdout/stderr UTF-8: container locale ASCII olsa bile logback dışı çıktılar da
   # (ör. System.out) Türkçe karakterleri bozmadan yazsın (mojibake savunması).
-  javaOpts: "-XX:MaxRAMPercentage=75.0 -XX:MinRAMPercentage=50.0 -Xss512k -XX:+ExitOnOutOfMemoryError -Dstdout.encoding=UTF-8 -Dstderr.encoding=UTF-8 -Dfile.encoding=UTF-8"
+  javaOpts: "-XX:MaxRAMPercentage=75.0 -XX:MinRAMPercentage=50.0 -Xss512k -XX:+ExitOnOutOfMemoryError -Dstdout.encoding=UTF-8 -Dstderr.encoding=UTF-8 -Dfile.encoding=UTF-8 -Djdk.httpclient.allowRestrictedHeaders=host"
 
   # Spring Session storage. Default "jdbc" persists sessions to spring_session /
   # spring_session_attributes tables so users stay logged in across pod restarts.

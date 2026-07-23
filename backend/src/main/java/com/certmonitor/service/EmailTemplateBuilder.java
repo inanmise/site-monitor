@@ -281,15 +281,71 @@ public class EmailTemplateBuilder {
         return sb.toString();
     }
 
-    // ── Çözüldü (resolved) — sade, INFO/yeşil ────────────────────────────────
+    // ── Çözüldü (resolved) — executive, INFO/yeşil + zengin bağlam ────────────
     public String buildResolvedHtml(String domain, String alertType, String resolvedBy, String resolvedAt) {
+        return buildResolvedHtml(domain, alertType, resolvedBy, resolvedAt, null, null);
+    }
+
+    /**
+     * Çözüm e-postası — alan adı/sertifika bağlamıyla zenginleştirilir: yenilenen bitiş tarihi,
+     * kalan süre, registrar/CA, veri kaynağı, EPP durum kodları, ad sunucuları ve alarm süresi.
+     * {@code ctx} {@link EscalationService#reconstructDomainContext} (domain) veya cert snapshot'ından gelir;
+     * boş geçilirse eski sade davranış korunur.
+     */
+    public String buildResolvedHtml(String domain, String alertType, String resolvedBy, String resolvedAt,
+                                    String createdAt, Map<String, Object> ctx) {
         String d = esc(domain);
         String cta = appSettings.getString("cert.monitor.app.base-url", appBaseUrl);
         String href = cta + "/?tab=" + tabFor(alertType) + (domain != null ? "&domain=" + urlenc(domain) : "");
+
+        boolean domainType = isDomain(alertType);
+        String expiryIso = ctx == null ? null
+                : firstNonNull(strCtx(ctx, "expiry_date"), strCtx(ctx, "not_after"));
+        String daysRem = ctx == null ? null
+                : firstNonNull(strCtx(ctx, "days_remaining"), strCtx(ctx, "days"));
+
+        // Yeni bitiş tarihini öne çıkaran vurgu şeridi (varsa) — "yeni expire ne oldu?" sorusuna doğrudan yanıt.
+        String hero = "";
+        if (expiryIso != null) {
+            String expiryHuman = formatHuman(expiryIso);
+            String daysChip = (daysRem != null)
+                    ? "<span style='display:inline-block;margin-left:8px;background:" + PILL_BG + ";color:" + PILL_INK + ";border-radius:999px;padding:2px 10px;font-size:12px;font-weight:700'>" + esc(daysRem) + " gün kaldı</span>"
+                    : "";
+            hero = "<tr><td style='padding:4px 30px 4px'>"
+                    + "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' style='border-radius:10px;overflow:hidden'><tr>"
+                    + "<td width='5' bgcolor='" + C_INFO + "' style='background-color:" + C_INFO + ";width:5px;font-size:0;line-height:0'>&nbsp;</td>"
+                    + "<td bgcolor='#F0FBF6' style='background-color:#F0FBF6;padding:14px 18px'>"
+                    + "<div style='font-size:11px;font-weight:700;letter-spacing:.08em;color:" + C_INFO + ";margin-bottom:4px'>"
+                    + (domainType ? "🔄 YENİ BİTİŞ TARİHİ" : "🔄 GÜNCEL BİTİŞ TARİHİ") + "</div>"
+                    + "<div style='font-size:18px;font-weight:800;color:" + INK + "'>" + esc(expiryHuman) + daysChip + "</div>"
+                    + "</td></tr></table></td></tr>";
+        }
+
         StringBuilder rows = new StringBuilder();
         rows.append(row("Alan Adı", "<strong>" + d + "</strong>"));
+        if (ctx != null) {
+            if (expiryIso != null)
+                rows.append(row(domainType ? "Yeni Bitiş Tarihi" : "Bitiş Tarihi", esc(formatHuman(expiryIso))));
+            if (daysRem != null) rows.append(row("Kalan Süre", esc(daysRem) + " gün"));
+            if (domainType) {
+                String reg = strCtx(ctx, "registrar");
+                if (reg != null) rows.append(row("Kayıt Kuruluşu", esc(reg)));
+                String src = strCtx(ctx, "source");
+                if (src != null) rows.append(row("Veri Kaynağı", esc(src)));
+                String epp = strCtx(ctx, "status_codes");
+                if (epp != null && !epp.isBlank()) rows.append(row("EPP Durum Kodları", eppPills(epp)));
+                String ns = strCtx(ctx, "nameservers");
+                if (ns != null) rows.append(row("Ad Sunucuları", esc(ns)));
+            } else {
+                String ca = firstNonNull(strCtx(ctx, "issuer_cn"), strCtx(ctx, "issuer"));
+                if (ca != null) rows.append(row("Veren Kurum (CA)", esc(ca)));
+            }
+        }
+        String durHuman = durationHuman(createdAt, resolvedAt);
+        if (durHuman != null) rows.append(row("Alarm Süresi", esc(durHuman)));
         if (resolvedAt != null) rows.append(row("Çözülme", esc(formatHuman(resolvedAt))));
-        if (resolvedBy != null && !resolvedBy.isBlank()) rows.append(row("Çözen", esc(resolvedBy)));
+        rows.append(row("Çözen", esc(resolvedBy != null && !resolvedBy.isBlank() ? resolvedBy : "Sistem (otomatik)")));
+
         return "<!DOCTYPE html><html lang='tr' xmlns:v='urn:schemas-microsoft-com:vml' xmlns:o='urn:schemas-microsoft-com:office:office'>"
                 + "<head><meta charset='UTF-8'><meta name='viewport' content='width=device-width,initial-scale=1'>" + LIGHT_SCHEME_META
                 + "<!--[if mso]><style>table,td,div,p,a{font-family:'Segoe UI',Arial,sans-serif!important}</style><![endif]--></head>"
@@ -304,7 +360,8 @@ public class EmailTemplateBuilder {
                 + "<tr><td style='padding:26px 30px 8px'>"
                 + "<table role='presentation' cellpadding='0' cellspacing='0' border='0'><tr><td bgcolor='" + C_INFO + "' style='background-color:" + C_INFO + ";border-radius:4px;padding:4px 10px;font-size:11px;font-weight:700;letter-spacing:.08em;color:#FFFFFF'>ÇÖZÜLDÜ</td></tr></table>"
                 + "<div style='font-size:22px;font-weight:700;color:" + INK + ";margin:16px 0 4px'>" + d + "</div>"
-                + "<div style='font-size:14px;color:" + MUTED + "'>Alarm otomatik olarak kapandı.</div></td></tr>"
+                + "<div style='font-size:14px;color:" + MUTED + "'>" + esc(resolvedHeadline(alertType, expiryIso != null)) + "</div></td></tr>"
+                + hero
                 + "<tr><td style='padding:8px 30px 4px'><table role='presentation' width='100%' style='border-collapse:collapse'>" + rows + "</table></td></tr>"
                 + "<tr><td style='padding:18px 30px 24px'>" + ctaButton(href, "CertMonitor'de Görüntüle", C_INFO)
                 + "<div style='border-top:1px solid " + LINE + ";margin-top:18px;padding-top:12px;font-size:11px;color:#9AA3AF'>Bu e-posta CertMonitor tarafından otomatik gönderilmiştir.</div></td></tr>"
@@ -312,9 +369,59 @@ public class EmailTemplateBuilder {
     }
 
     public String buildResolvedText(String domain, String alertType, String resolvedBy, String resolvedAt) {
-        return "[CertMonitor] ÇÖZÜLDÜ · " + nz(domain) + "\nAlarm otomatik olarak kapandı."
-                + (resolvedAt != null ? "\nÇözülme: " + formatHuman(resolvedAt) : "")
-                + (resolvedBy != null && !resolvedBy.isBlank() ? "\nÇözen: " + resolvedBy : "");
+        return buildResolvedText(domain, alertType, resolvedBy, resolvedAt, null, null);
+    }
+
+    public String buildResolvedText(String domain, String alertType, String resolvedBy, String resolvedAt,
+                                    String createdAt, Map<String, Object> ctx) {
+        boolean domainType = isDomain(alertType);
+        String expiryIso = ctx == null ? null : firstNonNull(strCtx(ctx, "expiry_date"), strCtx(ctx, "not_after"));
+        String daysRem = ctx == null ? null : firstNonNull(strCtx(ctx, "days_remaining"), strCtx(ctx, "days"));
+        StringBuilder sb = new StringBuilder("[CertMonitor] ÇÖZÜLDÜ · " + nz(domain) + "\n"
+                + resolvedHeadline(alertType, expiryIso != null));
+        if (expiryIso != null)
+            sb.append("\n").append(domainType ? "Yeni Bitiş Tarihi: " : "Bitiş Tarihi: ").append(formatHuman(expiryIso));
+        if (daysRem != null) sb.append("\nKalan Süre: ").append(daysRem).append(" gün");
+        if (ctx != null && domainType) {
+            String reg = strCtx(ctx, "registrar"); if (reg != null) sb.append("\nKayıt Kuruluşu: ").append(reg);
+            String epp = strCtx(ctx, "status_codes"); if (epp != null && !epp.isBlank()) sb.append("\nEPP Durum Kodları: ").append(eppText(epp));
+        }
+        String durHuman = durationHuman(createdAt, resolvedAt);
+        if (durHuman != null) sb.append("\nAlarm Süresi: ").append(durHuman);
+        if (resolvedAt != null) sb.append("\nÇözülme: ").append(formatHuman(resolvedAt));
+        sb.append("\nÇözen: ").append(resolvedBy != null && !resolvedBy.isBlank() ? resolvedBy : "Sistem (otomatik)");
+        return sb.toString();
+    }
+
+    /** Çözüm alt başlığı — yenileme bağlamı varsa daha açıklayıcı. */
+    private static String resolvedHeadline(String alertType, boolean hasExpiry) {
+        if (isDomain(alertType))
+            return hasExpiry ? "Alan adı yenilendi, alarm otomatik olarak kapandı." : "Alarm otomatik olarak kapandı.";
+        if (isCert(alertType))
+            return hasExpiry ? "Sertifika yenilendi, alarm otomatik olarak kapandı." : "Alarm otomatik olarak kapandı.";
+        return "Alarm otomatik olarak kapandı.";
+    }
+
+    /** createdAt→resolvedAt insan-okur süre ("2 gün 4 saat" / "35 dakika"); ayrıştırılamazsa null. */
+    static String durationHuman(String createdAtIso, String resolvedAtIso) {
+        if (createdAtIso == null || resolvedAtIso == null) return null;
+        try {
+            java.time.Instant a = parseInstant(createdAtIso), b = parseInstant(resolvedAtIso);
+            if (a == null || b == null) return null;
+            long sec = java.time.Duration.between(a, b).getSeconds();
+            if (sec < 0) return null;
+            long dys = sec / 86400, hrs = (sec % 86400) / 3600, mins = (sec % 3600) / 60;
+            if (dys > 0) return dys + " gün" + (hrs > 0 ? " " + hrs + " saat" : "");
+            if (hrs > 0) return hrs + " saat" + (mins > 0 ? " " + mins + " dakika" : "");
+            return Math.max(1, mins) + " dakika";
+        } catch (Exception e) { return null; }
+    }
+
+    private static java.time.Instant parseInstant(String iso) {
+        try { return java.time.Instant.parse(iso); } catch (Exception ignore) {}
+        try { return java.time.LocalDateTime.parse(iso.trim().replace(' ', 'T'))
+                .atZone(java.time.ZoneOffset.UTC).toInstant(); } catch (Exception ignore) {}
+        return null;
     }
 
     // ── Progress bar (Outlook-güvenli: iki td, width% + bgcolor) ─────────────

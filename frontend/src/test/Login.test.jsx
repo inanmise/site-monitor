@@ -7,6 +7,9 @@ import Login from '../pages/Login.jsx'
 vi.mock('../api/client', () => ({
   api: {
     login: vi.fn(),
+    // Hero istatistikleri artık gerçek veriden (public endpoint) — testte sabit mock.
+    getPublicStats: vi.fn(async () => ({ success: true, data: { monitored_targets: 512, availability_pct: 99.9 } })),
+    sendLoginHelp: vi.fn(async () => ({ success: true })),
   },
 }))
 
@@ -105,7 +108,7 @@ describe('Login', () => {
     expect(screen.queryByText(/session has expired/i)).toBeNull()
   })
 
-  it('renders the executive left panel: wordmark, badge, headline, capability bento (8 tiles), hero stats, rings + pulse', () => {
+  it('renders the executive left panel: wordmark, badge, headline, capability bento (8 tiles), hero stats, rings + pulse', async () => {
     const { container } = render(<Login onLogin={() => {}} />)
     // Üst bölge: wordmark + ENTERPRISE rozeti
     expect(container.querySelector('.lp-wordmark')?.textContent).toBe('CertMonitor')
@@ -123,9 +126,9 @@ describe('Login', () => {
     // Operasyon grubu — 4 çip (Alarm/Olay/Rapor/Bakım)
     expect(container.querySelectorAll('.lp-chip')).toHaveLength(4)
     expect(screen.getByText('Weekly Report')).toBeDefined()
-    // Alt bölge: hero istatistikler (hardcoded)
-    expect(screen.getByText('500+')).toBeDefined()
-    expect(screen.getByText('99.9%')).toBeDefined()
+    // Alt bölge: hero istatistikler — public endpoint'ten gerçek veri (mock: 512 / 99.9%)
+    expect(await screen.findByText('512')).toBeDefined()
+    expect(await screen.findByText('99.9%')).toBeDefined()
     // Dekoratif konsantrik halkalar (SVG) + nabız noktası
     expect(container.querySelector('.lp-bg')).not.toBeNull()
     expect(container.querySelector('.lp-accent-dot')).not.toBeNull()
@@ -135,5 +138,30 @@ describe('Login', () => {
     expect(screen.queryByText(/Meet CertMonitor/i)).toBeNull()
     expect(container.querySelector('.lp-feature')).toBeNull()
     expect(container.querySelector('.lp-blink-dot')).toBeNull()
+  })
+
+  it('sorun bildir: pop-up açılır; kullanıcı adı zorunlu; dolu formla sendLoginHelp payload\'ı gider; teşekkür görünür', async () => {
+    const { api } = await import('../api/client')
+    const { within } = await import('./test-utils.jsx')
+    render(<Login onLogin={() => {}} />)
+
+    fireEvent.click(screen.getByRole('button', { name: /report it to the system administrator/i }))
+    const dialog = await screen.findByRole('dialog')
+
+    // Kullanıcı adı boş → gönder pasif + zorunluluk uyarısı
+    const sendBtn = within(dialog).getByRole('button', { name: /^send report$/i })
+    expect(sendBtn.disabled).toBe(true)
+    expect(within(dialog).getByText(/username is required/i)).toBeDefined()
+
+    fireEvent.change(within(dialog).getByLabelText(/username/i), { target: { value: 'N12345' } })
+    fireEvent.change(within(dialog).getByPlaceholderText(/paste the error message/i), { target: { value: 'HTTP 423 Locked' } })
+    fireEvent.change(within(dialog).getByPlaceholderText(/describe the issue in detail/i), { target: { value: 'My account is locked' } })
+    expect(sendBtn.disabled).toBe(false)
+
+    fireEvent.click(sendBtn)
+    await waitFor(() => expect(api.sendLoginHelp).toHaveBeenCalledWith({
+      username: 'N12345', errorText: 'HTTP 423 Locked', message: 'My account is locked', images: [],
+    }))
+    expect(await within(dialog).findByRole('status')).toBeDefined()
   })
 })

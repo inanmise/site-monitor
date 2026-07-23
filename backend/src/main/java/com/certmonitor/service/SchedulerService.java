@@ -692,6 +692,29 @@ public class SchedulerService {
             log.info("Nightly cleanup done: audit={}, notif={}, sql={}, uptime={}, cert={}, port={}, keyword={}, ping={}, dns={}, httpMetrics={} "
                     + "(log cutoffs: {} / {} / {}; ts cutoff: {}; http retention: {}d)",
                     a, n, s, u, c, p, kw, pg, d, h, auditCutoff, notifCutoff, sqlCutoff, tsCutoff, httpRetDays);
+
+            // ── Bellek/veri büyümesi denetimi (2026-07) ile eklenen retention'lar — daha önce HİÇ
+            //    temizlenmeyen tablolar: http_checks (30 sn kadanslı, en hızlı büyüyen), system_heartbeat
+            //    (dakikada 1), domain_checks (saatlik; baseline satırları korunur), diagnostic_runs,
+            //    çözülmüş alert_events (açık/ack'li alarmlar ASLA silinmez). ──
+            int hc = safeDelete("DELETE FROM http_checks WHERE checked_at < ?", tsCutoff);
+            String hbCutoff = ISO.format(Instant.now().minus(30, ChronoUnit.DAYS));
+            // recorded_at TIMESTAMP kolonudur (diğer tablolardaki ISO String değil) → parametreyi cast'le.
+            int hb = safeDelete("DELETE FROM system_heartbeat WHERE recorded_at < CAST(? AS timestamp)", hbCutoff);
+            // domain_checks: değişiklik tespiti son source<>'NONE' satırı, resend/çözüm maili son satırı
+            // baseline alır → her monitör için ikisi de korunur (dns_records guard deseni).
+            int dcn = safeDelete("DELETE FROM domain_checks WHERE checked_at < ? "
+                    + "AND id NOT IN (SELECT MAX(id) FROM domain_checks GROUP BY monitor_id) "
+                    + "AND id NOT IN (SELECT MAX(id) FROM domain_checks WHERE source <> 'NONE' GROUP BY monitor_id)", tsCutoff);
+            String diagCutoff = ISO.format(Instant.now().minus(90, ChronoUnit.DAYS));
+            int dg = safeDelete("DELETE FROM diagnostic_runs WHERE executed_at < ?", diagCutoff);
+            String aeCutoff = ISO.format(Instant.now().minus(365, ChronoUnit.DAYS));
+            int ae = safeDelete("DELETE FROM alert_events WHERE resolved = true AND resolved_at < ?", aeCutoff);
+            // In-memory: silinen monitörlerin checkDue anahtarları birikmesin (uzun uptime sızıntısı).
+            int pruned = pruneMonitorCheckState(collectLiveMonitorKeys());
+            log.info("Nightly cleanup (retention v2): httpChecks={}, heartbeat={}, domainChecks={}, diagRuns={}, resolvedAlerts={}, checkStateKeysPruned={} "
+                    + "(hb cutoff: {}; diag cutoff: {}; alert cutoff: {})",
+                    hc, hb, dcn, dg, ae, pruned, hbCutoff, diagCutoff, aeCutoff);
         } catch (Exception e) {
             log.warn("Nightly cleanup failed: {}", e.getMessage());
         }
@@ -1122,6 +1145,92 @@ public class SchedulerService {
 
     /** Per-monitör kontrol sıklığı kapısı: monitör son kontrolünden bu yana intervalSeconds dolmadıysa bu
      *  sweep'te ATLA (gerçek "check frequency"). True dönerse "şimdi kontrol edildi" olarak işaretler. */
+    /** checkDue() durum map'inden canlı monitör setinde OLMAYAN anahtarları atar; atılan sayıyı döner.
+     *  Silinen monitörlerin "type:id" anahtarları aksi halde süresiz birikirdi (uzun uptime sızıntısı). */
+    int pruneMonitorCheckState(java.util.Set<String> liveKeys) {
+        int before = lastMonitorCheckAt.size();
+        lastMonitorCheckAt.keySet().retainAll(liveKeys);
+        return before - lastMonitorCheckAt.size();
+    }
+
+    /** Tüm monitör tiplerinin canlı "type:id" anahtarları (checkDue ile aynı format). Gecelik maliyet önemsiz. */
+    private java.util.Set<String> collectLiveMonitorKeys() {
+        java.util.Set<String> live = new java.util.HashSet<>();
+        portMonitorRepo.findAll().forEach(m -> live.add("port:" + m.getId()));
+        keywordMonitorRepo.findAll().forEach(m -> live.add("keyword:" + m.getId()));
+        httpMonitorRepo.findAll().forEach(m -> live.add("http:" + m.getId()));
+        domainMonitorRepo.findAll().forEach(m -> live.add("domain:" + m.getId()));
+        pingMonitorRepo.findAll().forEach(m -> live.add("ping:" + m.getId()));
+        dnsMonitorRepo.findAll().forEach(m -> live.add("dns:" + m.getId()));
+        return live;
+    }
+
+    /** Ağ kontrolünü certCheckExecutor'a (20/50, kuyruk 1000) gönderir; dönen Supplier.get() join eder
+     *  ve CompletionException'ı soyar → mevcut per-monitör catch blokları orijinal hatayı aynen görür.
+     *  4-thread'lik scheduling pool'u monitör sayısıyla büyüyen bloklu ağ I/O'suyla doymasın (F1, CPU
+     *  denetimi). Kuyruk dolarsa CallerRunsPolicy task'ı sweep thread'inde koşturur → sweep bugünkü
+     *  sıralı davranışa kendiliğinden geri düşer (backpressure); RejectedExecutionException imkânsız. */
+    private <R> java.util.function.Supplier<R> startNetworkCheck(java.util.function.Supplier<R> task) {
+        if (certCheckExecutor == null) return task;   // savunma (test/bootstrap)
+        java.util.concurrent.CompletableFuture<R> f =
+                java.util.concurrent.CompletableFuture.supplyAsync(task, certCheckExecutor);
+        return () -> {
+            try {
+                return f.join();
+            } catch (java.util.concurrent.CompletionException ce) {
+                Throwable c = ce.getCause() != null ? ce.getCause() : ce;
+                if (c instanceof RuntimeException re) throw re;
+                if (c instanceof Error err) throw err;
+                throw new RuntimeException(c);
+            }
+        };
+    }
+
+    /** Öksüz-alarm temizliği (monitör findAll + TÜM açık alarm taraması) her 30 sn'lik sweep'te
+     *  koşmasın: amacı rename/silme sonrası takılı alarmları kapatmak — 5 dk kadans fazlasıyla
+     *  yeterli (F5). İlk çağrı her zaman due (restart sonrası hemen temizlik). */
+    private final java.util.concurrent.ConcurrentHashMap<String, Long> lastOrphanCleanupAt =
+            new java.util.concurrent.ConcurrentHashMap<>();
+
+    @Value("${cert.monitor.orphan-cleanup-interval-ms:300000}")
+    private long orphanCleanupIntervalMs;
+
+    private boolean orphanCleanupDue(String type) {
+        long now = System.currentTimeMillis();
+        Long last = lastOrphanCleanupAt.get(type);
+        if (last != null && now - last < orphanCleanupIntervalMs) return false;
+        lastOrphanCleanupAt.put(type, now);
+        return true;
+    }
+
+    /** Manuel tetik (UI "şimdi kontrol et"): raw Thread yerine certCheckExecutor'a atılır (F4);
+     *  runCheck içindeki scheduler kilidi mükerrer tetikleri no-op'lar. */
+    public void triggerManualCheck() {
+        certCheckExecutor.execute(this::runCheck);
+    }
+
+    /**
+     * Yeni envanter eklenince ANINDA tek-domain sertifika kontrolü (async, certCheckExecutor).
+     * latest_checks satırı saniyeler içinde oluşur → kalem Genel Bakış'ta gecikmeden görünür ve
+     * sonraki kontrollere dahil olur (aksi halde yalnız 5-dk stale sweep / saatlik sweep yakalıyordu).
+     * Hata yutulur — envanter ekleme akışını asla kırmaz.
+     */
+    public void checkSingleDomainAsync(String domain, int port, boolean forceProxy, String tlsMode) {
+        if (certCheckExecutor == null || domain == null || domain.isBlank()) return;
+        int p = port > 0 ? port : 443;
+        certCheckExecutor.execute(() -> {
+            try {
+                Map<String, Object> result = new java.util.LinkedHashMap<>(checkerService.check(domain, p, forceProxy, tlsMode));
+                result.put("run_id", "inventory-add");
+                certService.saveResult(result);
+                certService.evictAllCaches();
+                log.info("Yeni envanter anında kontrol edildi: {}:{}", domain, p);
+            } catch (Exception e) {
+                log.warn("Yeni envanter anında kontrol başarısız {}: {}", domain, e.getMessage());
+            }
+        });
+    }
+
     private boolean checkDue(String type, Long id, Integer intervalSeconds) {
         if (id == null) return true;
         int sec = intervalSeconds != null && intervalSeconds > 0 ? intervalSeconds : 60;
@@ -1155,10 +1264,17 @@ public class SchedulerService {
         List<CertificateInventory> active = inventoryRepo.findByActiveTrueOrderByDomainAsc();
         if (active.isEmpty()) return;
         List<MonitoringOutageService.SweepItem> sweep = new ArrayList<>();
+        // Faz 1: ağ kontrolleri certCheckExecutor'da paralel başlar (F1); Faz 2: sonuçlar sıralı işlenir.
+        List<Map.Entry<CertificateInventory, java.util.function.Supplier<Map<String, Object>>>> started = new ArrayList<>();
         for (CertificateInventory inv : active) {
             int port = inv.getPort() != null ? inv.getPort() : 443;
+            started.add(Map.entry(inv, startNetworkCheck(() -> recheckUptime(inv.getDomain(), port))));
+        }
+        for (var entry : started) {
+            CertificateInventory inv = entry.getKey();
+            int port = inv.getPort() != null ? inv.getPort() : 443;
             try {
-                Map<String, Object> r = recheckUptime(inv.getDomain(), port);
+                Map<String, Object> r = entry.getValue().get();
                 sweep.add(new MonitoringOutageService.SweepItem(
                         EscalationService.TYPE_ACCESSIBILITY, inv.getDomain(), String.valueOf(port),
                         "up".equals(r.get("status")), (String) r.get("error"),
@@ -1217,7 +1333,7 @@ public class SchedulerService {
     private void runPortChecksLocked() {
         List<PortMonitor> monitors = portMonitorRepo.findByActiveTrue();
         // Öksüz port alarmı temizliği: host rename/silme sonrası recovery'nin kapatamadığı açık PORT_DOWN alarmı (ping ile paritede).
-        try {
+        if (orphanCleanupDue("port")) try {
             java.util.Set<String> existingHosts = portMonitorRepo.findAll().stream()
                     .map(PortMonitor::getHost).filter(java.util.Objects::nonNull)
                     .collect(java.util.stream.Collectors.toSet());
@@ -1232,11 +1348,18 @@ public class SchedulerService {
         int checked = 0, skipped = 0;
         List<MonitoringOutageService.SweepItem> sweep = new ArrayList<>();
         List<MonitoringOutageService.SweepItem> slowSweep = new ArrayList<>();
+        // Faz 1: gating sweep thread'inde; ağ kontrolü certCheckExecutor'da paralel başlar (F1).
+        List<Map.Entry<PortMonitor, java.util.function.Supplier<Map<String, Object>>>> started = new ArrayList<>();
         for (PortMonitor m : monitors) {
             if (!Boolean.TRUE.equals(m.getStandalone()) && !activeDomains.contains(m.getHost())) { skipped++; continue; }   // standalone → envanter-skip baypas
             if (!checkDue("port", m.getId(), m.getIntervalSeconds())) continue;   // aralığı dolmadı → bu sweep'te atla
+            started.add(Map.entry(m, startNetworkCheck(() -> recheckPort(m))));
+        }
+        // Faz 2: sonuçlar sweep thread'inde SIRALI işlenir — item/alarm semantiği birebir korunur.
+        for (var entry : started) {
+            PortMonitor m = entry.getKey();
             try {
-                Map<String, Object> r = recheckPort(m);
+                Map<String, Object> r = entry.getValue().get();
                 // ctxExtra: port/protocol + per-monitor teyit/recovery override'ları (ping/keyword ile aynı → tunable + aktif recovery)
                 Map<String, Object> ctx = new LinkedHashMap<>();
                 ctx.put("port", m.getPort());
@@ -1352,7 +1475,7 @@ public class SchedulerService {
     private void runKeywordChecksLocked() {
         List<KeywordMonitor> monitors = keywordMonitorRepo.findByActiveTrue();
         // Öksüz keyword alarmı temizliği: url rename/silme sonrası recovery'nin kapatamadığı açık KEYWORD alarmı (ping ile paritede).
-        try {
+        if (orphanCleanupDue("keyword")) try {
             java.util.Set<String> existingUrls = keywordMonitorRepo.findAll().stream()
                     .map(KeywordMonitor::getUrl).filter(java.util.Objects::nonNull)
                     .collect(java.util.stream.Collectors.toSet());
@@ -1364,10 +1487,17 @@ public class SchedulerService {
         int checked = 0;
         List<MonitoringOutageService.SweepItem> sweep = new ArrayList<>();
         List<MonitoringOutageService.SweepItem> slowSweep = new ArrayList<>();
+        // Faz 1: gating sweep thread'inde; ağ kontrolü certCheckExecutor'da paralel başlar (F1).
+        List<Map.Entry<KeywordMonitor, java.util.function.Supplier<Map<String, Object>>>> started = new ArrayList<>();
         for (KeywordMonitor m : monitors) {
             if (!checkDue("keyword", m.getId(), m.getIntervalSeconds())) continue;   // aralığı dolmadı → bu sweep'te atla
+            started.add(Map.entry(m, startNetworkCheck(() -> recheckKeyword(m))));
+        }
+        // Faz 2: sonuçlar sweep thread'inde SIRALI işlenir.
+        for (var entry : started) {
+            KeywordMonitor m = entry.getKey();
             try {
-                Map<String, Object> r = recheckKeyword(m);
+                Map<String, Object> r = entry.getValue().get();
                 Map<String, Object> ctx = new LinkedHashMap<>();
                 ctx.put("url", m.getUrl());
                 ctx.put("keyword", m.getKeyword());
@@ -1484,7 +1614,7 @@ public class SchedulerService {
     private void runHttpChecksLocked() {
         List<HttpMonitor> monitors = httpMonitorRepo.findByActiveTrue();
         // Öksüz HTTP alarmı temizliği: url rename/silme sonrası recovery'nin kapatamadığı açık alarm (keyword/ping ile paritede).
-        try {
+        if (orphanCleanupDue("http")) try {
             java.util.Set<String> existingUrls = httpMonitorRepo.findAll().stream()
                     .map(HttpMonitor::getUrl).filter(java.util.Objects::nonNull)
                     .collect(java.util.stream.Collectors.toSet());
@@ -1495,10 +1625,17 @@ public class SchedulerService {
         if (monitors.isEmpty()) return;
         int checked = 0;
         List<MonitoringOutageService.SweepItem> sweep = new ArrayList<>();
+        // Faz 1: gating sweep thread'inde; ağ kontrolü certCheckExecutor'da paralel başlar (F1).
+        List<Map.Entry<HttpMonitor, java.util.function.Supplier<Map<String, Object>>>> started = new ArrayList<>();
         for (HttpMonitor m : monitors) {
             if (!checkDue("http", m.getId(), m.getIntervalSeconds())) continue;   // aralığı dolmadı → bu sweep'te atla
+            started.add(Map.entry(m, startNetworkCheck(() -> recheckHttp(m))));
+        }
+        // Faz 2: sonuçlar sweep thread'inde SIRALI işlenir.
+        for (var entry : started) {
+            HttpMonitor m = entry.getKey();
             try {
-                Map<String, Object> r = recheckHttp(m);
+                Map<String, Object> r = entry.getValue().get();
                 Map<String, Object> ctx = new LinkedHashMap<>();
                 ctx.put("url", m.getUrl());
                 ctx.put("monitor_id", m.getId());
@@ -1575,10 +1712,19 @@ public class SchedulerService {
         if (monitors.isEmpty()) return;
         List<MonitoringOutageService.SweepItem> sslSweep = new ArrayList<>();
         List<MonitoringOutageService.SweepItem> domainSweep = new ArrayList<>();
+        // Faz 1: SSL değerlendirmesi paralel başlar (F1); Domain (RDAP) SIRALI kalır (registry-dostu —
+        // domain sweep'lerindeki bilinçli seri akışla aynı gerekçe). Toggle kapalıysa task başlatılmaz.
+        List<java.util.AbstractMap.SimpleEntry<HttpMonitor, java.util.function.Supplier<Map<String, Object>>>> started = new ArrayList<>();
         for (HttpMonitor m : monitors) {
+            boolean sslOn = Boolean.TRUE.equals(m.getCheckSslErrors()) || Boolean.TRUE.equals(m.getSslExpiryReminders());
+            started.add(new java.util.AbstractMap.SimpleEntry<>(m, sslOn ? startNetworkCheck(() -> evalHttpSsl(m)) : null));
+        }
+        // Faz 2: sıralı işleme — SSL exception'ı o monitörün domain eval'ini bugünkü gibi atlatır (tek try).
+        for (var entry : started) {
+            HttpMonitor m = entry.getKey();
             try {
-                if (Boolean.TRUE.equals(m.getCheckSslErrors()) || Boolean.TRUE.equals(m.getSslExpiryReminders())) {
-                    Map<String, Object> ev = evalHttpSsl(m);
+                if (entry.getValue() != null) {
+                    Map<String, Object> ev = entry.getValue().get();
                     Map<String, Object> ctx = sslDomainCtx(m);
                     if (ev.get("ssl_days_remaining") != null) ctx.put("ssl_days_remaining", ev.get("ssl_days_remaining"));
                     if (ev.get("detail") != null) ctx.put("detail", ev.get("detail"));
@@ -1730,10 +1876,18 @@ public class SchedulerService {
         if (monitors.isEmpty()) return;
         List<MonitoringOutageService.SweepItem> sslSweep = new ArrayList<>();
         List<MonitoringOutageService.SweepItem> domainSweep = new ArrayList<>();
+        // Faz 1: SSL değerlendirmesi paralel başlar (F1); Domain (RDAP) SIRALI kalır (registry-dostu).
+        List<java.util.AbstractMap.SimpleEntry<KeywordMonitor, java.util.function.Supplier<Map<String, Object>>>> started = new ArrayList<>();
         for (KeywordMonitor m : monitors) {
+            boolean sslOn = Boolean.TRUE.equals(m.getCheckSslErrors()) || Boolean.TRUE.equals(m.getSslExpiryReminders());
+            started.add(new java.util.AbstractMap.SimpleEntry<>(m, sslOn ? startNetworkCheck(() -> evalKeywordSsl(m)) : null));
+        }
+        // Faz 2: sıralı işleme — SSL exception'ı o monitörün domain eval'ini bugünkü gibi atlatır (tek try).
+        for (var entry : started) {
+            KeywordMonitor m = entry.getKey();
             try {
-                if (Boolean.TRUE.equals(m.getCheckSslErrors()) || Boolean.TRUE.equals(m.getSslExpiryReminders())) {
-                    Map<String, Object> ev = evalKeywordSsl(m);
+                if (entry.getValue() != null) {
+                    Map<String, Object> ev = entry.getValue().get();
                     Map<String, Object> ctx = keywordSslDomainCtx(m);
                     if (ev.get("ssl_days_remaining") != null) ctx.put("ssl_days_remaining", ev.get("ssl_days_remaining"));
                     if (ev.get("detail") != null) ctx.put("detail", ev.get("detail"));
@@ -2053,7 +2207,7 @@ public class SchedulerService {
         List<PingMonitor> monitors = pingMonitorRepo.findByActiveTrue();
         // Öksüz ping alarmı temizliği: host rename/silme sonrası recovery'nin asla kapatamadığı açık
         // PING_DOWN alarmlarını kapat (aktif+pasif TÜM mevcut host'lara göre). Aktif izleme yoksa da çalışır.
-        try {
+        if (orphanCleanupDue("ping")) try {
             java.util.Set<String> existingHosts = pingMonitorRepo.findAll().stream()
                     .map(PingMonitor::getHost).filter(java.util.Objects::nonNull)
                     .collect(java.util.stream.Collectors.toSet());
@@ -2064,10 +2218,17 @@ public class SchedulerService {
         if (monitors.isEmpty()) return;
         int checked = 0;
         List<MonitoringOutageService.SweepItem> sweep = new ArrayList<>();
+        // Faz 1: gating sweep thread'inde; ağ kontrolü certCheckExecutor'da paralel başlar (F1).
+        List<Map.Entry<PingMonitor, java.util.function.Supplier<Map<String, Object>>>> started = new ArrayList<>();
         for (PingMonitor m : monitors) {
             if (!checkDue("ping", m.getId(), m.getIntervalSeconds())) continue;   // aralığı dolmadı → bu sweep'te atla
+            started.add(Map.entry(m, startNetworkCheck(() -> recheckPing(m))));
+        }
+        // Faz 2: sonuçlar sweep thread'inde SIRALI işlenir.
+        for (var entry : started) {
+            PingMonitor m = entry.getKey();
             try {
-                Map<String, Object> r = recheckPing(m);
+                Map<String, Object> r = entry.getValue().get();
                 Map<String, Object> ctx = new LinkedHashMap<>();
                 ctx.put("host", m.getHost());
                 ctx.put("ip_version", m.getIpVersion());
@@ -2162,12 +2323,28 @@ public class SchedulerService {
         List<String> dnsResolvers = java.util.Arrays.stream(
                         appSettings.getString("cert.monitor.dns.resolvers", "8.8.8.8,1.1.1.1,9.9.9.9").split(","))
                 .map(String::trim).filter(s -> !s.isEmpty()).toList();
+        // Faz 1: gating sweep thread'inde; ana DNS sorgusu + (opt-in) propagation sorgusu monitör başına
+        // iki bağımsız task olarak certCheckExecutor'da paralel başlar (F1).
+        record DnsStarted(DnsMonitor m,
+                          java.util.function.Supplier<Map<String, Object>> main,
+                          java.util.function.Supplier<Map<String, Object>> prop) {}
+        List<DnsStarted> started = new ArrayList<>();
         for (DnsMonitor m : monitors) {
             // Standalone monitör (DNS sayfasından eklenen, sertifikadan bağımsız) envanter-skip'i baypas eder.
             if (!Boolean.TRUE.equals(m.getStandalone()) && !activeDomains.contains(m.getDomain())) { skipped++; continue; }
             if (!checkDue("dns", m.getId(), m.getIntervalSeconds())) continue;   // aralığı dolmadı → bu sweep'te atla (port/ping/keyword ile paritede)
+            var main = startNetworkCheck(() -> dnsCheckerService.check(m.getDomain(), m.getRecordType()));
+            var prop = (Boolean.TRUE.equals(m.getPropagationCheck()) && dnsResolvers.size() >= 2)
+                    ? startNetworkCheck(() -> dnsCheckerService.checkPropagation(m.getDomain(), m.getRecordType(), dnsResolvers))
+                    : null;
+            started.add(new DnsStarted(m, main, prop));
+        }
+        // Faz 2: sonuçlar sweep thread'inde SIRALI işlenir — prevOk okuma/DnsRecord save/değişiklik
+        // tespiti/item kurulumu birebir korunur; iki ayrı try/catch aynen (ana warn, propagation debug).
+        for (DnsStarted st : started) {
+            DnsMonitor m = st.m();
             try {
-                Map<String, Object> r = dnsCheckerService.check(m.getDomain(), m.getRecordType());
+                Map<String, Object> r = st.main().get();
                 boolean success = Boolean.TRUE.equals(r.get("success"));
                 @SuppressWarnings("unchecked")
                 List<String> values = (List<String>) r.getOrDefault("values", List.of());
@@ -2257,9 +2434,9 @@ public class SchedulerService {
             }
             // Çoklu-resolver tutarlılık (propagation) — OPT-IN: yalnız propagationCheck açık monitörlerde.
             // Domain'i her public resolver'a AYRI sorar; cevaplar farklıysa DNS_INCONSISTENT (teyitli; oto-kapanır).
-            if (Boolean.TRUE.equals(m.getPropagationCheck()) && dnsResolvers.size() >= 2) {
+            if (st.prop() != null) {
                 try {
-                    Map<String, Object> prop = dnsCheckerService.checkPropagation(m.getDomain(), m.getRecordType(), dnsResolvers);
+                    Map<String, Object> prop = st.prop().get();
                     boolean inconsistent = Boolean.TRUE.equals(prop.get("inconsistent"));
                     @SuppressWarnings("unchecked")
                     Map<String, String> perResolver = (Map<String, String>) prop.getOrDefault("per_resolver", Map.of());

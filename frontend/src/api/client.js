@@ -143,6 +143,16 @@ export const api = {
 
   getMe: () => request('/me', { timeoutMs: DEFAULT_TIMEOUT_MS }),
 
+  // Branding (beyaz etiket) — PUBLIC, auth gerekmez (login sayfası açılışta çeker).
+  // fresh=true: kaydet sonrası çağrı — 60 sn'lik Cache-Control'ü query ile bust'la (anında yansıma).
+  getBranding: (fresh = false) => request('/branding' + (fresh ? `?_=${Date.now()}` : '')),
+
+  // Login hero istatistikleri — PUBLIC (izlenen hedef adedi + 7g erişilebilirlik %).
+  getPublicStats: () => request('/public-stats'),
+
+  // Login "sorun bildir" — PUBLIC; sistem yöneticisi e-postasına iletilir (IP rate-limit'li).
+  sendLoginHelp: (dto) => request('/login-help', { method: 'POST', body: JSON.stringify(dto) }),
+
   // Hafif oturum geçerlilik yoklaması — süpersede ise 401 → request() otomatik /?session=expired.
   sessionPing: () => request('/session/ping', { timeoutMs: DEFAULT_TIMEOUT_MS }),
 
@@ -320,6 +330,10 @@ export const api = {
     // Genel Ayarlar — küratörlü runtime config (admin-only Settings page)
     getGeneralSettings: () => request('/admin/general/settings'),
     saveGeneralSettings: (dto) => request('/admin/general/settings', { method: 'PUT', body: JSON.stringify(dto) }),
+
+    // Branding (beyaz etiket) — login/uygulama kimliği + duyuru şeridi
+    getBrandingSettings: () => request('/admin/branding/settings'),
+    saveBrandingSettings: (dto) => request('/admin/branding/settings', { method: 'PUT', body: JSON.stringify(dto) }),
 
 
     // Anahtar çözümleme aracı — verilen CERT_MONITOR_SECRET_KEY ile şifreli alanları çöz

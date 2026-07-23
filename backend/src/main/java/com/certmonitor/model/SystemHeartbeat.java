@@ -8,7 +8,8 @@ import lombok.AllArgsConstructor;
 import java.time.LocalDateTime;
 
 @Entity
-@Table(name = "system_heartbeat")
+@Table(name = "system_heartbeat",
+       indexes = @Index(name = "idx_shb_recorded_at", columnList = "recordedAt"))
 @Data
 @NoArgsConstructor
 @AllArgsConstructor

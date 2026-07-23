@@ -81,15 +81,13 @@ public class PortCheckerService {
     }
 
     private void doTcp(InetAddress addr, String host, int port, int timeoutMs, Map<String, Object> result) throws Exception {
-        try (Socket s = new Socket()) {
-            s.connect(sockAddr(addr, host, port), timeoutMs);
+        try (Socket s = connectAny(addr, host, port, timeoutMs)) {
             result.put("open", true);
         }
     }
 
     private void doTls(InetAddress addr, String host, int port, int timeoutMs, Map<String, Object> result) throws Exception {
-        try (Socket raw = new Socket()) {
-            raw.connect(sockAddr(addr, host, port), timeoutMs);
+        try (Socket raw = connectAny(addr, host, port, timeoutMs)) {
             SSLSocketFactory f = trustAllContext().getSocketFactory();
             try (SSLSocket ssl = (SSLSocket) f.createSocket(raw, host, port, true)) {
                 ssl.setSoTimeout(timeoutMs);
@@ -136,8 +134,7 @@ public class PortCheckerService {
     }
 
     private void doBanner(InetAddress addr, String host, int port, int timeoutMs, String send, String expect, Map<String, Object> result) throws Exception {
-        try (Socket s = new Socket()) {
-            s.connect(sockAddr(addr, host, port), timeoutMs);
+        try (Socket s = connectAny(addr, host, port, timeoutMs)) {
             s.setSoTimeout(timeoutMs);
             if (send != null && !send.isEmpty()) {
                 OutputStream os = s.getOutputStream();
@@ -213,9 +210,17 @@ public class PortCheckerService {
         throw new UnknownHostException("No IP" + (wantV6 ? "v6" : "v4") + " address for " + host);
     }
 
-    /** addr set ise onunla (aile-kısıtlı), değilse host adıyla (varsayılan) soket adresi. */
-    private static InetSocketAddress sockAddr(InetAddress addr, String host, int port) {
-        return addr != null ? new InetSocketAddress(addr, port) : new InetSocketAddress(host, port);
+    /**
+     * addr set ise onunla (aile-kısıtlı) tek bağlantı; değilse (auto) çok-A: çözümlenen tüm IP'leri
+     * sırayla dene, ilk TCP kabul edene bağlan (split-VIP host'ta yanlış IP'ye düşüp refused olmasın).
+     */
+    private static Socket connectAny(InetAddress addr, String host, int port, int timeoutMs) throws java.io.IOException {
+        if (addr != null) {
+            Socket s = new Socket();
+            s.connect(new InetSocketAddress(addr, port), timeoutMs);
+            return s;
+        }
+        return NetworkResolver.connectFirstReachable(host, port, timeoutMs);
     }
 
     /** URL için IP literali (v6 köşeli parantez + zone-id kırpma). */

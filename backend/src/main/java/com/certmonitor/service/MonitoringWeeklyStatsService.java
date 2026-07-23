@@ -82,6 +82,11 @@ public class MonitoringWeeklyStatsService {
 
     private enum ExtraMode { NONE, AVG_MS, CHANGED_SUM, CLOSED_COUNT, EXTERNAL }
 
+    /** F6 (CPU denetimi): her istekte ~15 gruplu/scan sorgu (domain_checks GROUP-BY dahil) koşuyordu —
+     *  Caffeine 300 sn cache (LONG_TTL_CACHES): geçmiş haftalar statik, güncel hafta 5 dk bayatlık tolere eder.
+     *  Kardinalite: takım × ≤MAX_WEEKS_AGO hafta → küçük. */
+    @org.springframework.cache.annotation.Cacheable(cacheNames = "monitoring-weekly-stats",
+            key = "#teamId + ':' + #isoYear + ':' + #weekNo", unless = "#result == null")
     @Transactional(readOnly = true)
     public MonitoringStats compute(Long teamId, int isoYear, int weekNo) {
         LocalDate baseMonday = WeeklyAvailabilityReportService.mondayOfIsoWeek(isoYear, weekNo);

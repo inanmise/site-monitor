@@ -300,13 +300,12 @@ public class CertificateCheckerService {
                     useProxy ? "proxy(" + proxyHost + ":" + proxyPort + ")" : "direct",
                     opts.tlsMode(), resolvedIps);
             if (useProxy) stage = "proxy-connect";
+            // Çok-A: hostname yerine çözümlenen IP'leri sırayla dene (split-VIP host'larda
+            // yarısı yanlış IP'ye düşüp Connection refused almasın). SNI aşağıda domain'e set edilir.
             SSLSocket socket = useProxy
                     ? openViaProxy(factory, domain, port, timeoutSec)
-                    : (SSLSocket) factory.createSocket();
+                    : connectFirstReachable(factory, domain, port, timeoutSec, resolvedIps);
             try (socket) {
-                if (!useProxy) {
-                    socket.connect(new InetSocketAddress(domain, port), timeoutSec * 1000);
-                }
                 captureRoute(route, socket);
                 socket.setSoTimeout(timeoutSec * 1000);
 
@@ -536,6 +535,36 @@ public class CertificateCheckerService {
     private static Map<String, Object> withRoute(Map<String, Object> r, Map<String, Object> route) {
         r.putAll(route);
         return r;
+    }
+
+    /**
+     * Çok-A "happy-eyeballs": çözümlenen IP'leri sırayla dener, ilk TCP kabul eden IP'ye bağlı
+     * SSLSocket döndürür (handshake henüz yapılmaz — SNI/parametreler çağıran tarafından set edilir).
+     * Bağlantı hataları (refused/timeout) bir sonraki IP'ye geçer; handshake hataları buraya girmez
+     * (her VIP aynı sertifikayı sunar → IP değiştirmek anlamsız). Tek-A/IP-literal/çözümleme-hatası
+     * eski davranışı korur (hostname ile bağlan → doğal ConnectException/UnknownHostException).
+     */
+    private SSLSocket connectFirstReachable(SSLSocketFactory factory, String domain, int port,
+                                            int timeoutSec, List<String> resolvedIps) throws IOException {
+        int timeoutMs = timeoutSec * 1000;
+        if (resolvedIps == null || resolvedIps.isEmpty()) {
+            SSLSocket s = (SSLSocket) factory.createSocket();
+            s.connect(new InetSocketAddress(domain, port), timeoutMs);
+            return s;
+        }
+        IOException last = null;
+        for (String ip : resolvedIps) {
+            SSLSocket s = (SSLSocket) factory.createSocket();
+            try {
+                s.connect(new InetSocketAddress(java.net.InetAddress.getByName(ip), port), timeoutMs);
+                return s;
+            } catch (IOException e) {
+                last = e;
+                try { s.close(); } catch (IOException ignore) { /* zaten kapandı */ }
+            }
+        }
+        throw last != null ? last
+                : new java.net.ConnectException("Çözümlenen hiçbir adrese bağlanılamadı: " + domain + ":" + port);
     }
 
     /** Resolve all A/AAAA records via the system resolver — the same path the

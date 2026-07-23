@@ -88,6 +88,7 @@ public final class PermissionCatalog {
         r("settings.smtp",     "settings", EDIT, Set.of(EDIT)),
         r("settings.ldap",     "settings", EDIT, Set.of(EDIT)),
         r("settings.general",  "settings", EDIT),
+        r("settings.branding", "settings", EDIT),
         r("settings.database", "settings", VIEW),
         r("settings.secrets",  "settings", EXECUTE, Set.of(EXECUTE))
     );

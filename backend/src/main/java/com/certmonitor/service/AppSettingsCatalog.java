@@ -88,6 +88,23 @@ public final class AppSettingsCatalog {
         // CA otomatik sabitleme (TOFU) — PKIX hatasında CA sunucudan çekilip host bazında pinlenir,
         // rotasyon/bitişte otomatik yenilenir (CaAutoPinService). Kapsam: HTTP uptime strict + RDAP çıkışı.
         new Setting("cert.monitor.trust.auto-pin.enabled",       "security",   Type.BOOL),
+        // ── Branding (beyaz etiket) — BrandingController üzerinden yönetilir; /api/branding public okur.
+        //    Boş değer = varsayılan CertMonitor kimliği. banner-version otomatik yönetilir (UI'da gizli).
+        new Setting("cert.monitor.branding.app-name",            "branding",   Type.STRING),
+        new Setting("cert.monitor.branding.tab-title",           "branding",   Type.STRING),
+        new Setting("cert.monitor.branding.login-title",         "branding",   Type.STRING),
+        new Setting("cert.monitor.branding.login-subtitle",      "branding",   Type.STRING),
+        new Setting("cert.monitor.branding.signin-label",        "branding",   Type.STRING),
+        new Setting("cert.monitor.branding.username-label",      "branding",   Type.STRING),
+        new Setting("cert.monitor.branding.footer-text",         "branding",   Type.STRING),
+        new Setting("cert.monitor.branding.primary-color",       "branding",   Type.STRING),
+        new Setting("cert.monitor.branding.logo-data",           "branding",   Type.TEXT),
+        new Setting("cert.monitor.branding.banner-enabled",      "branding",   Type.BOOL),
+        new Setting("cert.monitor.branding.banner-text",         "branding",   Type.STRING),
+        new Setting("cert.monitor.branding.banner-link",         "branding",   Type.STRING),
+        new Setting("cert.monitor.branding.banner-link-label",   "branding",   Type.STRING),
+        new Setting("cert.monitor.branding.banner-tone",         "branding",   Type.ENUM, List.of("INFO", "WARNING", "CRITICAL")),
+        new Setting("cert.monitor.branding.banner-version",      "branding",   Type.INT),
         new Setting("logging.level.com.certmonitor",             "logging",    Type.ENUM,
                     List.of("TRACE", "DEBUG", "INFO", "WARN", "ERROR")),
         // Yalnız mail gönderim logger'ı — uygulama geneli TRACE'e geçmeden ekrandan mail

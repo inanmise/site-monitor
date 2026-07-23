@@ -73,6 +73,24 @@ public class UserService {
     @Value("${cert.monitor.session.active-window-seconds:120}")
     private long activeWindowSeconds;
 
+    /** Supersede kontrolü her /api isteğinde koşar (AuthInterceptor) — istek başına DB SELECT'i
+     *  bu kadar kısa TTL'le debounce edilir (F2, CPU denetimi). Tek pod'da force-login/kick anında
+     *  evict edildiğinden gecikme yalnız TTL kadardır. */
+    @Value("${cert.monitor.session.supersede-cache-ms:5000}")
+    private long supersedeCacheMs;
+
+    /** Ping başına lastSeenAt UPDATE'i debounce penceresi (F3). 60+15 sn < 120 sn tazelik penceresi →
+     *  login-onayı/aktif sayım etkilenmez. */
+    @Value("${cert.monitor.session.touch-debounce-ms:60000}")
+    private long touchDebounceMs;
+
+    private record ActiveSidEntry(String sid, long atMs) {}
+    private static final int SESSION_MAP_MAX = 10_000;   // sert üst sınır (CaAutoPinService cap deseni)
+    private final java.util.concurrent.ConcurrentHashMap<String, ActiveSidEntry> activeSessionCache =
+            new java.util.concurrent.ConcurrentHashMap<>();
+    private final java.util.concurrent.ConcurrentHashMap<String, Long> lastTouchAtMs =
+            new java.util.concurrent.ConcurrentHashMap<>();
+
     /** Returns how many failures are needed to trigger the next lockout for this account. */
     public int failuresNeededForLevel(Integer failedBlockCount) {
         int level = (failedBlockCount == null ? 0 : failedBlockCount);
@@ -127,6 +145,7 @@ public class UserService {
             u.setLastSeenAt(ISO.format(Instant.now()));   // login = taze etkinlik
             userRepo.save(u);
         });
+        activeSessionCache.remove(normalizeUsername(username));   // yeni login anında etkisin (F2 evict)
     }
 
     /** Oturum ping'i (frontend ~15 sn): kullanıcının güncel oturumunun lastSeenAt'ini tazeler.
@@ -134,6 +153,13 @@ public class UserService {
     @Transactional
     public void touchActiveSession(String username, String sessionId) {
         if (username == null || sessionId == null) return;
+        // F3: ping başına UPDATE debounce'u — 60 sn'de en fazla 1 yazma (60+15 < 120 sn tazelik penceresi).
+        String key = normalizeUsername(username) + ":" + sessionId;
+        long now = System.currentTimeMillis();
+        Long last = lastTouchAtMs.get(key);
+        if (last != null && now - last < touchDebounceMs) return;
+        if (lastTouchAtMs.size() > SESSION_MAP_MAX) lastTouchAtMs.clear();
+        lastTouchAtMs.put(key, now);
         userRepo.touchLastSeen(username, sessionId, ISO.format(Instant.now()));
     }
 
@@ -155,8 +181,18 @@ public class UserService {
      *  oturum kapatılmalı. Kayıt yoksa (null, deploy öncesi eski oturumlar) veya eşleşiyorsa false → zorlama yok. */
     public boolean isSessionSuperseded(String username, String sessionId) {
         if (username == null || sessionId == null) return false;
-        // Sıcak yol: tam entity + EAGER teamIds join yerine tek-kolon projeksiyon (bkz. repo).
-        String active = userRepo.findActiveSessionIdByUsername(username).orElse(null);
+        String key = normalizeUsername(username);
+        long now = System.currentTimeMillis();
+        ActiveSidEntry e = activeSessionCache.get(key);
+        String active;
+        if (e != null && now - e.atMs() < supersedeCacheMs) {
+            active = e.sid();   // taze cache — DB'ye gitme (istek başına SELECT debounce'u, F2)
+        } else {
+            // Sıcak yol: tam entity + EAGER teamIds join yerine tek-kolon projeksiyon (bkz. repo).
+            active = userRepo.findActiveSessionIdByUsername(username).orElse(null);
+            if (activeSessionCache.size() > SESSION_MAP_MAX) activeSessionCache.clear();
+            activeSessionCache.put(key, new ActiveSidEntry(active, now));   // null sid de cache'lenir
+        }
         return active != null && !active.equals(sessionId);
     }
 
@@ -170,12 +206,14 @@ public class UserService {
                 userRepo.save(u);
             }
         });
+        activeSessionCache.remove(normalizeUsername(username));   // F2 evict
     }
 
     /** Açılışta: tüm stale activeSessionId kayıtlarını temizler (in-memory oturumlar restart'ı yaşamaz).
      *  Temizlenen satır sayısını döner. */
     @Transactional
     public int clearAllActiveSessions() {
+        activeSessionCache.clear();   // F2 evict (açılış temizliği)
         return userRepo.clearAllActiveSessions();
     }
 
@@ -190,6 +228,7 @@ public class UserService {
             u.setActiveSessionId(SESSION_TERMINATED_PREFIX + UUID.randomUUID());
             userRepo.save(u);
         });
+        activeSessionCache.remove(normalizeUsername(username));   // kick anında etkisin (F2 evict)
     }
 
     public Optional<Team> findTeamById(Long id) {
