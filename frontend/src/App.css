@@ -1,7 +1,9 @@
 * { margin: 0; padding: 0; box-sizing: border-box; }
 
 :root {
-  --primary: #007bff;
+  /* Branding (beyaz etiket): BrandingProvider primary-color ayarını --brand-primary olarak
+     :root'a yazar; boşsa varsayılan mavi. (#2563eb hardcode'ları kapsam dışı — bilinçli.) */
+  --primary: var(--brand-primary, #007bff);
   --success: #28a745;
   --warning: #ffc107;
   --danger: #dc3545;
@@ -1077,6 +1079,21 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .lp-root {
   display: flex;
   min-height: 100vh;
+  /* ── "Sisli Ege" (The Odyssey) paleti — YALNIZ SAĞ PANEL kuralları tüketir; sol panel
+     mevcut --lp-* token'larıyla aynen kalır. Kural: --red yalnız kalıcı-kilit ekranında. ── */
+  --sea-deep: #0B1520;
+  --sea-fog: #14273A;
+  --panel: #101E2C;
+  --edge: rgba(148,180,207,.14);
+  --mist: #DEE8F0;
+  --mist-dim: #8CA3B6;
+  --bone: #C9A86A;
+  --steel: #5B87AD;
+  --laurel: #4E9B7A;
+  --amber: #C98A3D;
+  --red: #D14A33;
+  --font-display: 'Cinzel', 'Times New Roman', serif;
+  --font-inscription: 'Josefin Sans', 'Segoe UI', sans-serif;
 }
 
 /* Left panel — executive (tipografi öncelikli, üç dikey bölge) */
@@ -1206,13 +1223,24 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 }
 
 /* Right panel */
+/* Sağ panel — sisli Ege: her temada koyu (bilinçli tek görünüm; dark override'ı yok). */
 .lp-right {
+  position: relative;
   flex: 1;
   display: flex;
   align-items: center;
   justify-content: center;
-  background: #fff;
+  background: linear-gradient(180deg, #0D1926 0%, #0B1520 100%);
+  border-left: 1px solid var(--edge);
   padding: 48px 40px;
+}
+/* Üst kenarda tek satırlık bronz ışık çizgisi */
+.lp-right::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(201,168,106,.55), transparent);
 }
 .lp-form-wrap {
   width: 100%;
@@ -1228,27 +1256,31 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  background: #eff6ff;
-  color: #1d6fbf;
-  font-size: .75rem;
-  font-weight: 600;
-  padding: 5px 12px;
+  background: transparent;
+  color: var(--laurel);
+  font-family: var(--font-inscription);
+  font-size: .68rem;
+  font-weight: 400;
+  text-transform: uppercase;
+  padding: 5px 14px;
   border-radius: 20px;
-  border: 1px solid #bfdbfe;
+  border: 1px solid rgba(78,155,122,.4);
   width: fit-content;
-  letter-spacing: 0.3px;
+  letter-spacing: .34em;
 }
 .lp-intro-title {
-  font-size: 1.65rem;
-  font-weight: 800;
-  color: #0f172a;
+  font-family: var(--font-display);
+  font-size: 1.45rem;
+  font-weight: 500;
+  text-transform: uppercase;
+  color: var(--mist);
   margin: 0;
-  letter-spacing: -0.4px;
-  line-height: 1.2;
+  letter-spacing: .16em;
+  line-height: 1.3;
 }
 .lp-intro-desc {
   font-size: .9rem;
-  color: #64748b;
+  color: var(--mist-dim);
   line-height: 1.6;
   margin: 0;
 }
@@ -1256,25 +1288,32 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 /* Form */
 .lp-form { display: flex; flex-direction: column; gap: 18px; }
 .lp-field { display: flex; flex-direction: column; gap: 7px; }
-.lp-label { font-size: .875rem; font-weight: 600; color: #1e293b; }
+.lp-label {
+  font-family: var(--font-inscription);
+  font-size: .72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .32em;
+  color: var(--mist-dim);
+}
 
 .lp-input {
   width: 100%;
   padding: 12px 16px;
-  border: 1.5px solid #e2e8f0;
+  border: 1px solid var(--edge);
   border-radius: 10px;
   font-size: .95rem;
-  color: #1e293b;
-  background: #f8fafc;
+  color: var(--mist);
+  background: rgba(16,30,44,.85);
   transition: border-color .18s, box-shadow .18s, background .18s;
   outline: none;
 }
 .lp-input:focus {
-  border-color: #3b82f6;
-  background: #fff;
-  box-shadow: 0 0 0 3.5px rgba(59,130,246,0.14);
+  border-color: rgba(201,168,106,.55);
+  background: rgba(16,30,44,.95);
+  box-shadow: 0 0 0 3.5px rgba(201,168,106,.12);
 }
-.lp-input::placeholder { color: #94a3b8; }
+.lp-input::placeholder { color: rgba(140,163,182,.55); }
 
 /* Password wrapper */
 .lp-pass-wrap { position: relative; }
@@ -1287,12 +1326,12 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
   background: none;
   border: none;
   cursor: pointer;
-  color: #94a3b8;
+  color: var(--mist-dim);
   padding: 4px;
   line-height: 0;
   transition: color .15s;
 }
-.lp-eye:hover { color: #475569; }
+.lp-eye:hover { color: var(--mist); }
 
 /* Remember me */
 .lp-remember {
@@ -1305,34 +1344,34 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 }
 .lp-remember input[type="checkbox"] {
   width: 16px; height: 16px;
-  accent-color: #3b82f6;
+  accent-color: var(--bone);
   cursor: pointer;
   flex-shrink: 0;
 }
-.lp-remember span { font-size: .85rem; color: #64748b; }
-.lp-remember em { font-style: normal; color: #94a3b8; }
+.lp-remember span { font-size: .85rem; color: var(--mist-dim); }
+.lp-remember em { font-style: normal; color: rgba(140,163,182,.7); }
 
-/* Error */
+/* Error — normal akışta kırmızı YOK (palet kuralı); hata amber tonlu anlatılır. */
 .lp-error {
   display: flex;
   align-items: center;
   gap: 8px;
-  background: #fef2f2;
-  color: #b91c1c;
-  border: 1px solid #fecaca;
+  background: rgba(201,138,61,.10);
+  color: #E0B478;
+  border: 1px solid rgba(201,138,61,.35);
   border-radius: 8px;
   padding: 10px 14px;
   font-size: .875rem;
 }
 
-/* Session-expired info notice (AUTH-1) — amber, distinct from the red error banner */
+/* Session-expired info notice (AUTH-1) — steel tonlu (bilgi; amber hata bandından ayrışır) */
 .lp-notice {
   display: flex;
   align-items: center;
   gap: 8px;
-  background: #fffbeb;
-  color: #92400e;
-  border: 1px solid #fde68a;
+  background: rgba(91,135,173,.12);
+  color: #A9C4DB;
+  border: 1px solid rgba(91,135,173,.4);
   border-radius: 8px;
   padding: 10px 14px;
   font-size: .875rem;
@@ -1349,25 +1388,29 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
   padding: 8px 0 4px;
   gap: 0;
 }
+/* Varsayılan blocked görünümü (aktif-oturum onayı ekranı) — bronz vurgu */
 .lp-blocked-icon {
   width: 72px; height: 72px;
   border-radius: 50%;
-  background: linear-gradient(135deg, #fff7ed, #ffedd5);
-  border: 2px solid #fed7aa;
+  background: rgba(201,168,106,.10);
+  border: 2px solid rgba(201,168,106,.35);
   display: flex; align-items: center; justify-content: center;
-  color: #ea580c;
+  color: var(--bone);
   margin-bottom: 20px;
   flex-shrink: 0;
 }
 .lp-blocked-title {
-  font-size: 1.2rem;
-  font-weight: 700;
-  color: #c2410c;
+  font-family: var(--font-display);
+  font-size: 1.05rem;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: .1em;
+  color: var(--bone);
   margin: 0 0 10px;
 }
 .lp-blocked-desc {
   font-size: .875rem;
-  color: #64748b;
+  color: var(--mist-dim);
   margin: 0 0 14px;
   line-height: 1.55;
 }
@@ -1379,67 +1422,78 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 }
 .lp-blocked-reasons li {
   font-size: .8rem;
-  color: #78716c;
-  background: #fafaf9;
-  border: 1px solid #e7e5e4;
+  color: var(--mist-dim);
+  background: rgba(16,30,44,.72);
+  border: 1px solid var(--edge);
   border-radius: 6px;
   padding: 6px 12px;
   display: flex; align-items: center; gap: 8px;
 }
 .lp-blocked-reasons li::before {
   content: '•';
-  color: #ea580c;
+  color: var(--amber);
   font-weight: 700;
 }
+/* Geçici kilit (rate-limit) ekranı — amber; :has ile ayrışır (timer yalnız o ekranda).
+   :has desteklemeyen eski tarayıcıda bronz kalır (zarif düşüş). */
+.lp-blocked:has(.lp-blocked-timer) .lp-blocked-icon {
+  background: rgba(201,138,61,.10);
+  border-color: rgba(201,138,61,.4);
+  color: var(--amber);
+}
+.lp-blocked:has(.lp-blocked-timer) .lp-blocked-title { color: var(--amber); }
 .lp-blocked-timer {
   display: flex; flex-direction: column; align-items: center;
-  background: linear-gradient(135deg, #fff7ed, #ffedd5);
-  border: 2px solid #fed7aa;
+  background: rgba(201,138,61,.10);
+  border: 2px solid rgba(201,138,61,.4);
   border-radius: 16px;
   padding: 16px 48px;
   margin-bottom: 18px;
 }
 .lp-blocked-count {
+  font-family: var(--font-display);
   font-size: 3rem;
-  font-weight: 800;
-  color: #ea580c;
+  font-weight: 500;
+  color: var(--amber);
   line-height: 1;
   font-variant-numeric: tabular-nums;
-  letter-spacing: -2px;
 }
 .lp-blocked-unit {
-  font-size: .75rem;
-  color: #9a3412;
-  margin-top: 4px;
-  font-weight: 500;
+  font-family: var(--font-inscription);
+  font-size: .68rem;
+  text-transform: uppercase;
+  letter-spacing: .3em;
+  color: var(--amber);
+  margin-top: 6px;
+  font-weight: 400;
 }
 .lp-blocked-hint {
   font-size: .8rem;
-  color: #78716c;
+  color: var(--mist-dim);
   margin: 0 0 16px;
   line-height: 1.5;
 }
 .lp-blocked-help {
   font-size: .8rem;
-  color: #94a3b8;
+  color: var(--mist-dim);
   margin: 0;
   padding-top: 16px;
-  border-top: 1px solid #f1f5f9;
+  border-top: 1px solid var(--edge);
   width: 100%;
 }
 
-/* Permanent lock variant */
-.lp-blocked--permanent .lp-blocked-icon { background: linear-gradient(135deg,#fff1f2,#ffe4e6); border-color: #fecdd3; color: #dc2626; }
-.lp-blocked--permanent .lp-blocked-title { color: #991b1b; }
+/* Kalıcı kilit — paletteki TEK kırmızı kullanım */
+.lp-blocked--permanent .lp-blocked-icon { background: rgba(209,74,51,.10); border-color: rgba(209,74,51,.4); color: var(--red); }
+.lp-blocked--permanent .lp-blocked-title { color: var(--red); }
 .lp-blocked-perm-badge {
   display: flex; align-items: center; gap: 8px;
-  background: #fef2f2; border: 1.5px solid #fecaca;
-  color: #b91c1c; border-radius: 8px;
+  background: rgba(209,74,51,.10); border: 1.5px solid rgba(209,74,51,.4);
+  color: #E08A78; border-radius: 8px;
   padding: 10px 20px; font-size: .85rem; font-weight: 600;
   margin-bottom: 18px;
 }
 
-/* Submit button */
+/* Submit button — bronz (Odyssey birincil vurgu) */
 .lp-btn {
   display: flex;
   align-items: center;
@@ -1447,46 +1501,49 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
   gap: 8px;
   width: 100%;
   padding: 13px;
-  background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);
-  color: #fff;
+  background: linear-gradient(180deg, #D5B47A 0%, #C9A86A 100%);
+  color: #14273A;
   border: none;
   border-radius: 10px;
-  font-size: 1rem;
+  font-family: var(--font-inscription);
+  font-size: .85rem;
   font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .34em;
+  text-indent: .34em;   /* letter-spacing'in son harf sonrası boşluğunu dengele (optik ortalama) */
   cursor: pointer;
-  transition: opacity .18s, transform .12s, box-shadow .18s;
-  box-shadow: 0 4px 16px rgba(37,99,235,0.32);
-  letter-spacing: 0.2px;
+  transition: filter .18s, transform .12s, box-shadow .18s;
+  box-shadow: 0 4px 18px rgba(201,168,106,.22);
 }
 .lp-btn:hover:not(:disabled) {
-  opacity: .93;
+  filter: brightness(1.07);
   transform: translateY(-1px);
-  box-shadow: 0 6px 22px rgba(37,99,235,0.4);
+  box-shadow: 0 6px 24px rgba(201,168,106,.3);
 }
 .lp-btn:active:not(:disabled) { transform: translateY(0); }
 .lp-btn:disabled { opacity: .65; cursor: not-allowed; }
 
-/* İkincil (ghost) aksiyon — örn. "Başka yerde aktif oturum" onayında net "Hayır/Vazgeç".
-   Login kartı beyaz zeminlidir → koyu metin + görünür gri çerçeve (mavi birincil butona kontrast). */
+/* İkincil (ghost) aksiyon — koyu zemin + --edge çerçeve (bronz birincil butona kontrast). */
 .lp-btn--ghost {
-  background: #fff;
-  color: #475569;
-  border: 1px solid #cbd5e1;
+  background: rgba(16,30,44,.6);
+  color: var(--mist);
+  border: 1px solid var(--edge);
   box-shadow: none;
   margin-top: 8px;
 }
 .lp-btn--ghost:hover:not(:disabled) {
-  background: #f1f5f9;
-  border-color: #94a3b8;
-  color: #1e293b;
+  background: rgba(16,30,44,.9);
+  border-color: rgba(148,180,207,.3);
+  color: var(--mist);
   box-shadow: none;
+  filter: none;
 }
 
-/* Spinner */
+/* Spinner — bronz zeminde görünür koyu lacivert */
 .lp-spinner {
   width: 16px; height: 16px;
-  border: 2px solid rgba(255,255,255,0.35);
-  border-top-color: #fff;
+  border: 2px solid rgba(20,39,58,.35);
+  border-top-color: #14273A;
   border-radius: 50%;
   animation: lp-spin .7s linear infinite;
   flex-shrink: 0;
@@ -1518,22 +1575,136 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 /* Help text */
 .lp-help {
   font-size: .8rem;
-  color: #94a3b8;
+  color: var(--mist-dim);
   text-align: center;
   margin-top: -8px;
 }
+/* "Sorun bildir" pop-up'ı — Odyssey diliyle (koyu panel + bronz vurgu; blur yok) */
+.lp-modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  background: rgba(11,21,32,.82);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+.lp-modal {
+  position: relative;
+  width: 100%;
+  max-width: 520px;
+  max-height: calc(100vh - 40px);
+  overflow-y: auto;
+  background: var(--panel, #101E2C);
+  border: 1px solid var(--edge, rgba(148,180,207,.14));
+  border-radius: 14px;
+  padding: 22px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.lp-modal::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(201,168,106,.55), transparent);
+}
+.lp-modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.lp-modal-title {
+  font-family: var(--font-display, serif);
+  font-size: 1rem;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: .14em;
+  color: var(--mist, #DEE8F0);
+  margin: 0;
+}
+.lp-modal-close {
+  background: none;
+  border: 1px solid var(--edge, rgba(148,180,207,.14));
+  border-radius: 8px;
+  padding: 5px 7px;
+  line-height: 0;
+  cursor: pointer;
+  color: var(--mist-dim, #8CA3B6);
+  transition: color .15s, border-color .15s;
+}
+.lp-modal-close:hover { color: var(--mist, #DEE8F0); border-color: rgba(148,180,207,.3); }
+.lp-char-count {
+  align-self: flex-end;
+  font-size: .7rem;
+  color: var(--mist-dim, #8CA3B6);
+  font-variant-numeric: tabular-nums;
+}
+.lp-shot-thumb {
+  max-height: 56px;
+  max-width: 120px;
+  border: 1px solid var(--edge, rgba(148,180,207,.14));
+  border-radius: 6px;
+  object-fit: contain;
+  display: block;
+}
 
+/* Çoklu ekran görüntüsü ızgarası (≤5) — küçük thumbnail + köşede kaldır */
+.lp-shot-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 8px 0 2px;
+}
+.lp-shot-item {
+  position: relative;
+  display: inline-block;
+}
+.lp-shot-x {
+  position: absolute;
+  top: -7px;
+  right: -7px;
+  width: 20px;
+  height: 20px;
+  line-height: 18px;
+  text-align: center;
+  border-radius: 50%;
+  border: 1px solid var(--edge, rgba(148,180,207,.14));
+  background: var(--panel, #101E2C);
+  color: var(--mist, #DEE8F0);
+  font-size: 15px;
+  cursor: pointer;
+  padding: 0;
+}
+.lp-shot-x:hover { color: var(--bone, #C9A86A); }
+
+/* "Sorun bildir" bağlantısı — bronz vurgu (palet kuralı) */
+.lp-help-link {
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  color: var(--bone);
+  font-size: .8rem;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.lp-help-link:hover { filter: brightness(1.15); }
+
+/* LDAP bilgi kutusu — steel tonlu (her temada aynı; ayrı dark kuralı gerekmez) */
 .lp-ldap-hint {
   margin: 14px 0 0;
   padding: 9px 12px;
   font-size: .82rem;
-  color: #1d6fbf;
-  background: #eff6ff;
-  border: 1px solid #dbeafe;
+  color: #A9C4DB;
+  background: rgba(91,135,173,.12);
+  border: 1px solid rgba(91,135,173,.35);
   border-radius: 6px;
   text-align: center;
 }
-[data-theme="dark"] .lp-ldap-hint { color: #93c5fd; background: #0c2238; border-color: #1e3a5f; }
 
 /* Responsive — <768px: sol panel banner'a yığılır (mevcut davranış); halkalar/nokta/özellikler gizli */
 @media (max-width: 768px) {
@@ -3383,35 +3554,8 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 [data-theme="dark"] .admin-table th { background: #1a2940; }
 [data-theme="dark"] .admin-table tr:hover td { background: var(--bg-hover); }
 
-/* Login */
-[data-theme="dark"] .lp-right { background: #0f172a; }
-[data-theme="dark"] .lp-intro-title { color: #f1f5f9; }
-[data-theme="dark"] .lp-intro-desc { color: #94a3b8; }
-[data-theme="dark"] .lp-intro-badge { background: rgba(30,58,138,0.4); border-color: rgba(59,130,246,0.3); color: #93c5fd; }
-[data-theme="dark"] .lp-label { color: #cbd5e1; }
-[data-theme="dark"] .lp-input { background: #1e293b; border-color: #334155; color: #f1f5f9; }
-[data-theme="dark"] .lp-input:focus { background: #263348; border-color: #3b82f6; }
-[data-theme="dark"] .lp-input::placeholder { color: #475569; }
-[data-theme="dark"] .lp-remember span { color: #94a3b8; }
-[data-theme="dark"] .lp-remember em { color: #475569; }
-[data-theme="dark"] .lp-error { background: #1c0a0a; border-color: #7f1d1d; color: #fca5a5; }
-[data-theme="dark"] .lp-notice { background: #1c1608; border-color: #92400e; color: #fbbf24; }
-[data-theme="dark"] .lp-blocked-icon { background: linear-gradient(135deg,#1c1008,#271608); border-color: #92400e; color: #fb923c; }
-[data-theme="dark"] .lp-blocked-title { color: #fb923c; }
-[data-theme="dark"] .lp-blocked-desc { color: #94a3b8; }
-[data-theme="dark"] .lp-blocked-reasons li { background: #1e1b18; border-color: #292524; color: #a8a29e; }
-[data-theme="dark"] .lp-blocked-reasons li::before { color: #fb923c; }
-[data-theme="dark"] .lp-blocked-timer { background: linear-gradient(135deg,#1c1008,#271608); border-color: #92400e; }
-[data-theme="dark"] .lp-blocked-count { color: #fb923c; }
-[data-theme="dark"] .lp-blocked-unit { color: #fdba74; }
-[data-theme="dark"] .lp-blocked-hint { color: #78716c; }
-[data-theme="dark"] .lp-blocked-help { color: #475569; border-top-color: #1e293b; }
-[data-theme="dark"] .lp-blocked--permanent .lp-blocked-icon { background: linear-gradient(135deg,#200a0a,#2d0808); border-color: #7f1d1d; color: #f87171; }
-[data-theme="dark"] .lp-blocked--permanent .lp-blocked-title { color: #f87171; }
-[data-theme="dark"] .lp-blocked-perm-badge { background: #1c0a0a; border-color: #7f1d1d; color: #fca5a5; }
-[data-theme="dark"] .lp-eye { color: #475569; }
-[data-theme="dark"] .lp-eye:hover { color: #94a3b8; }
-[data-theme="dark"] .lp-help { color: #475569; }
+/* Login — sağ panel "sisli Ege" tasarımıyla HER temada aynı bilinçli koyu görünümde;
+   eski [data-theme="dark"] .lp-* override'ları kaldırıldı (yeni stili eziyorlardı). */
 
 /* Inputs, selects */
 [data-theme="dark"] input:not([type="checkbox"]),

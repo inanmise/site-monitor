@@ -37,7 +37,10 @@ public class CacheConfig {
             List.of("cert-latest", "cert-stats", "cert-warnings", "renewal-advice", "teamNames",
                     // failure-domains: 7 günlük notification_logs taraması, dashboard'da 5 dk'da bir
                     // 100 kullanıcı çağırıyor → 300 sn TTL ile tur başına 1 tarama (bkz. ExtendedHealthService).
-                    "failure-domains");
+                    "failure-domains",
+                    // monitoring-weekly-stats: istek başına ~15 gruplu/scan sorgu (domain_checks GROUP-BY
+                    // dahil) → 300 sn TTL; geçmiş haftalar statik (bkz. MonitoringWeeklyStatsService, F6).
+                    "monitoring-weekly-stats");
 
     private static final Duration LONG_TTL    = Duration.ofSeconds(300);
     private static final Duration DEFAULT_TTL = Duration.ofSeconds(60);

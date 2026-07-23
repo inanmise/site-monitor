@@ -6,19 +6,25 @@ import { DialogProvider } from './components/ui/Dialog.jsx'
 import { ToastProvider } from './components/ui/Toast.jsx'
 import { LangProvider } from './i18n/index.jsx'
 import { ThemeProvider } from './i18n/theme.jsx'
+import { BrandingProvider } from './contexts/BrandingProvider.jsx'
+import AnnouncementBanner from './components/AnnouncementBanner.jsx'
 import './App.css'
 
 ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>
     <ThemeProvider>
       <LangProvider>
-        <ToastProvider>
-          <DialogProvider>
-            <ErrorBoundary>
-              <App />
-            </ErrorBoundary>
-          </DialogProvider>
-        </ToastProvider>
+        {/* Branding App'in ÜSTÜNDE: login sayfası da markalanır (public /api/branding, auth öncesi). */}
+        <BrandingProvider>
+          <ToastProvider>
+            <DialogProvider>
+              <ErrorBoundary>
+                <AnnouncementBanner />
+                <App />
+              </ErrorBoundary>
+            </DialogProvider>
+          </ToastProvider>
+        </BrandingProvider>
       </LangProvider>
     </ThemeProvider>
   </React.StrictMode>

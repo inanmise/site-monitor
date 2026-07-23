@@ -120,12 +120,33 @@ class SchedulerServiceTest {
                 networkOutageRepo,
                 weeklyReportReminderService, weeklyAvailabilityReportService, incidentService, appSettings);
         ReflectionTestUtils.setField(scheduler, "certCheckExecutor", certCheckExecutor);
+        // startNetworkCheck: mock executor task'ı düşürürse join asılı kalır → inline koştur (deterministik).
+        lenient().doAnswer(inv -> { inv.getArgument(0, Runnable.class).run(); return null; })
+                .when(certCheckExecutor).execute(any(Runnable.class));
+        // @Value alanı manuel kurulumda 0 kalır → gerçek varsayılanla doldur (orphan gate testi için).
+        ReflectionTestUtils.setField(scheduler, "orphanCleanupIntervalMs", 300_000L);
         lenient().when(inventoryRepo.countByActiveTrue()).thenReturn(0L);
         // AppSettings: override yok → fallback (ikinci argüman) döner
         lenient().when(appSettings.getInt(anyString(), anyInt())).thenAnswer(i -> i.getArgument(1));
         lenient().when(appSettings.getDouble(anyString(), anyDouble())).thenAnswer(i -> i.getArgument(1));
         lenient().when(appSettings.getString(anyString(), any())).thenAnswer(i -> i.getArgument(1));
         lenient().when(appSettings.getBoolean(anyString(), anyBoolean())).thenAnswer(i -> i.getArgument(1));
+    }
+
+    @Test
+    @DisplayName("pruneMonitorCheckState: canlı sette olmayan 'type:id' anahtarları atılır, olanlar kalır")
+    @SuppressWarnings("unchecked")
+    void pruneMonitorCheckState_removesStaleKeys() {
+        var map = (java.util.concurrent.ConcurrentHashMap<String, Long>)
+                ReflectionTestUtils.getField(scheduler, "lastMonitorCheckAt");
+        map.put("http:1", 1L);
+        map.put("http:2", 2L);      // silinmiş monitör — canlı sette yok
+        map.put("domain:5", 3L);
+
+        int pruned = scheduler.pruneMonitorCheckState(java.util.Set.of("http:1", "domain:5"));
+
+        assertThat(pruned).isEqualTo(1);
+        assertThat(map).containsOnlyKeys("http:1", "domain:5");
     }
 
     @Test
@@ -174,6 +195,50 @@ class SchedulerServiceTest {
                 .when(monitoringOutageService).handleSweepResults(anyString(), anyList());
 
         assertThatCode(() -> scheduler.runUptimeChecks()).doesNotThrowAnyException();
+    }
+
+    @Test
+    @DisplayName("F1 paralel sweep: ilk monitörün check exception'ı ikincinin item üretmesini engellemez")
+    void portSweep_firstCheckThrows_secondStillProcessed() {
+        com.certmonitor.model.PortMonitor a = new com.certmonitor.model.PortMonitor();
+        a.setId(11L); a.setHost("a.example.com"); a.setPort(80); a.setProtocol("TCP"); a.setStandalone(true);
+        com.certmonitor.model.PortMonitor b = new com.certmonitor.model.PortMonitor();
+        b.setId(12L); b.setHost("b.example.com"); b.setPort(81); b.setProtocol("TCP"); b.setStandalone(true);
+        when(portMonitorRepo.findByActiveTrue()).thenReturn(List.of(a, b));
+        when(inventoryRepo.findByActiveTrueOrderByDomainAsc()).thenReturn(List.of());
+        when(portCheckerService.check(a)).thenThrow(new RuntimeException("conn boom"));
+        when(portCheckerService.check(b)).thenReturn(Map.of("open", true, "response_ms", 5L));
+
+        assertThatCode(() -> scheduler.runPortChecks()).doesNotThrowAnyException();
+
+        org.mockito.ArgumentCaptor<List<MonitoringOutageService.SweepItem>> captor =
+                org.mockito.ArgumentCaptor.forClass(List.class);
+        verify(monitoringOutageService).handleSweepResults(eq(EscalationService.TYPE_PORT_DOWN), captor.capture());
+        assertThat(captor.getValue()).hasSize(1);
+        assertThat(captor.getValue().get(0).domain()).isEqualTo("b.example.com");
+    }
+
+    @Test
+    @DisplayName("F5: öksüz-alarm temizliği art arda sweep'lerde yalnız 1 kez koşar (5 dk gate)")
+    void orphanCleanup_gatedAcrossSweeps() {
+        when(portMonitorRepo.findByActiveTrue()).thenReturn(List.of());
+        when(portMonitorRepo.findAll()).thenReturn(List.of());
+
+        scheduler.runPortChecks();
+        scheduler.runPortChecks();
+
+        verify(escalationService, org.mockito.Mockito.times(1)).resolveOrphanedPortAlerts(any());
+    }
+
+    @Test
+    @DisplayName("F4: triggerManualCheck raw Thread yerine certCheckExecutor'a atar")
+    void triggerManualCheck_usesExecutor() {
+        // Bu testte inline stub'ı devre dışı bırak — runCheck'in kendisi koşmasın, yalnız submit doğrulansın.
+        org.mockito.Mockito.doAnswer(inv -> null).when(certCheckExecutor).execute(any(Runnable.class));
+
+        scheduler.triggerManualCheck();
+
+        verify(certCheckExecutor).execute(any(Runnable.class));
     }
 
     @Test

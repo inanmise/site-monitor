@@ -45,6 +45,7 @@ public class RdapDomainExpiryService {
     private final CaAutoPinService caAutoPinService;
 
     private static final long CACHE_TTL_MS = 12 * 60 * 60 * 1000L;   // 12 saat
+    private static final int  MAX_CACHE_ENTRIES = 5_000;             // sert üst sınır (heap koruması)
     private final ObjectMapper mapper = new ObjectMapper();
     private final Map<String, Cached> cache = new ConcurrentHashMap<>();
 
@@ -80,9 +81,15 @@ public class RdapDomainExpiryService {
         if (domain == null || domain.isBlank()) return unknown(hostOrUrl, "invalid domain");
 
         Cached c = cache.get(domain);
-        if (c != null && (System.currentTimeMillis() - c.fetchedAtMs) < CACHE_TTL_MS) return c.result;
+        if (c != null) {
+            if ((System.currentTimeMillis() - c.fetchedAtMs) < CACHE_TTL_MS) return c.result;
+            cache.remove(domain);   // süresi dolan girdi bekletilmez (kaldırılan monitörlerin anahtarları birikmesin)
+        }
 
         Map<String, Object> res = query(domain);
+        // GeoIpService deseni: sert üst sınır — heap büyümesine karşı basit self-heal (nadiren tetiklenir,
+        // cache sweep'lerle hızla yeniden dolar). Uzun uptime'da monitör churn'ü sınırsız anahtar bırakmasın.
+        if (cache.size() >= MAX_CACHE_ENTRIES) cache.clear();
         cache.put(domain, new Cached(res, System.currentTimeMillis()));
         return res;
     }

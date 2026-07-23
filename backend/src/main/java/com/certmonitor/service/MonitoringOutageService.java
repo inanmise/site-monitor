@@ -291,11 +291,19 @@ public class MonitoringOutageService {
     }
 
     /** Aktif recovery aralığı (ms): per-monitor recoveryIntervalSeconds (ctxExtra monitor_recovery_interval_ms)
-     *  varsa onu döner; yoksa null (→ pasif recovery). Yalnız keyword/ping sweep'lerinde set edilir. */
+     *  varsa onu döner; yoksa null (→ pasif recovery). Keyword/ping/port sweep'lerinde set edilir.
+     *  ACCESSIBILITY (envanter-kaynaklı uptime) için per-monitor override yoksa AKTİF recovery varsayılanı
+     *  uygulanır — pasif "3 ardışık temiz 5-dk sweep" gereksinimi flapping host'ta asla tamamlanmıyordu
+     *  (her down-sweep sayacı sıfırlıyordu). Aktif döngü (Port'un çalışan yolu) sweep-sınırı dalgalanmasına
+     *  dayanıklıdır; erişim döndüğünde alarm ~recoveryChecks×interval içinde kapanır. */
     private Long recoveryIntervalMsFor(List<SweepItem> items) {
         for (SweepItem it : items) {
             Object v = it.ctxExtra() != null ? it.ctxExtra().get("monitor_recovery_interval_ms") : null;
             if (v instanceof Number n && n.longValue() > 0) return n.longValue();
+        }
+        if (!items.isEmpty() && EscalationService.TYPE_ACCESSIBILITY.equals(items.get(0).alertType())) {
+            int ms = appSettings.getInt("cert.monitor.uptime.recovery-interval-ms", 30000);
+            return ms > 0 ? (long) ms : null;
         }
         return null;
     }

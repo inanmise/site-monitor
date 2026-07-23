@@ -81,10 +81,11 @@ export default function GeneralSettings() {
     return <div className="admin-section"><Loader2 className="spin" size={20} /> {t('settings.loading')}</div>
   }
 
-  // grupları ilk görülme sırasına göre koru
+  // grupları ilk görülme sırasına göre koru (branding'in kendi sayfası var — burada gösterme)
   const order = []
   const byGroup = {}
   for (const it of items) {
+    if (it.group === 'branding') continue
     if (!byGroup[it.group]) { byGroup[it.group] = []; order.push(it.group) }
     byGroup[it.group].push(it)
   }

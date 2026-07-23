@@ -26,7 +26,13 @@ public class AuthInterceptor implements HandlerInterceptor {
             "/api/login", "/api/logout",
             // Haftalık rapor e-posta onayı — PO login'siz, token ile onaylar (token = yetki).
             "/api/weekly-reports/approve-link",
-            "/api/weekly-reports/approve-link/confirm");
+            "/api/weekly-reports/approve-link/confirm",
+            // Branding (beyaz etiket) — login sayfası auth ÖNCESİ logo/başlık/renk okur; hassas veri yok.
+            "/api/branding",
+            // Login hero istatistikleri — yalnız iki toplam sayı (hedef adedi + erişilebilirlik %), detay yok.
+            "/api/public-stats",
+            // Login "sorun bildir" — kullanıcı giremediği için auth'suz; IP rate-limit + uzunluk sınırı içeride.
+            "/api/login-help");
 
     /** Endpoints a user with mustChangePassword=true is still allowed to call. */
     private static final Set<String> FORCED_CHANGE_WHITELIST = Set.of(

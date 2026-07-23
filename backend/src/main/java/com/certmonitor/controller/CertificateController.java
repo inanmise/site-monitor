@@ -139,7 +139,7 @@ public class CertificateController {
     public ResponseEntity<Map<String, Object>> runScheduler(HttpSession session) {
         requireAdmin(session);
         permissionService.require(session, "scheduler.run", "execute");
-        new Thread(schedulerService::runCheck).start();
+        schedulerService.triggerManualCheck();   // raw Thread yerine havuz (F4, CPU denetimi)
         return ok(Map.of("success", true, "message", "Check started", "timestamp", now()));
     }
 

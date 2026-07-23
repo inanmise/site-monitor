@@ -9,10 +9,12 @@ import DatabaseInfo from './DatabaseInfo'
 import WeeklyAvailabilitySettings from './WeeklyAvailabilitySettings'
 import StormSettings from './StormSettings'
 import DomainDiagnostics from './DomainDiagnostics'
+import BrandingSettings from './BrandingSettings'
 
 // Left-menu sections. More land in later phases.
 const SECTIONS = [
   { id: 'general', labelKey: 'settings.navGeneral' },
+  { id: 'branding', labelKey: 'settings.navBranding' },
   { id: 'monitorgroups', labelKey: 'settings.navMonitorGroups' },
   { id: 'smtp', labelKey: 'settings.navSmtp' },
   { id: 'weeklyavail', labelKey: 'settings.navWeeklyAvail' },
@@ -44,6 +46,7 @@ export default function AdminSettings() {
 
       <section className="settings-pane">
         {active === 'general' && <GeneralSettings />}
+        {active === 'branding' && <BrandingSettings />}
         {active === 'monitorgroups' && <MonitorGroups />}
         {active === 'smtp' && <SmtpSettings />}
         {active === 'weeklyavail' && <WeeklyAvailabilitySettings />}

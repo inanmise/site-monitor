@@ -11,6 +11,7 @@ import com.certmonitor.service.EmailNotificationService;
 import com.certmonitor.service.EscalationService;
 import com.certmonitor.service.HstsDiagnosticsService;
 import com.certmonitor.service.MonitoringGroupService;
+import com.certmonitor.service.SchedulerService;
 import com.certmonitor.service.NetworkDiagnosticsService;
 import com.certmonitor.service.OpensslDiagnosticsService;
 import com.certmonitor.service.PermissionService;
@@ -82,6 +83,7 @@ public class AdminController {
 
     private final PermissionService permissionService;
     private final MonitoringGroupService monitoringGroupService;
+    private final SchedulerService schedulerService;
 
     private static final DateTimeFormatter ISO =
             DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
@@ -180,6 +182,11 @@ public class AdminController {
         auditService.recordAction("DOMAIN_ADD", session, request,
                 "CERTIFICATE", saved.getDomain(),
                 "{\"port\":" + saved.getPort() + ",\"teamId\":" + saved.getTeamId() + "}");
+        // Anında tek-domain kontrol (async): latest_checks satırı hemen oluşsun → Genel Bakış'ta
+        // gecikmeden görünür ve kontrollere dahil olur (5-dk stale sweep'i beklemeden).
+        schedulerService.checkSingleDomainAsync(saved.getDomain(),
+                saved.getPort() != null ? saved.getPort() : 443,
+                Boolean.TRUE.equals(saved.getUseProxy()), saved.getTlsMode());
         return ok(Map.of("data", saved, "message", "Domain added to inventory"));
     }
 
@@ -521,6 +528,7 @@ public class AdminController {
     /** Sliding-window hız sınırı; aşılırsa 429 TOO_MANY_REQUESTS fırlatır. */
     private void checkDomainDiagRate(String key) {
         long now = System.currentTimeMillis();
+        pruneDomainDiagRate(now);
         Deque<Long> dq = domainDiagRate.computeIfAbsent(key, k -> new ArrayDeque<>());
         synchronized (dq) {
             while (!dq.isEmpty() && now - dq.peekFirst() > DOMAIN_DIAG_WINDOW_MS) dq.pollFirst();
@@ -530,6 +538,21 @@ public class AdminController {
             }
             dq.addLast(now);
         }
+    }
+
+    /** Uzun uptime'da map anahtarları birikmesin: penceresi boşalan anahtarları at
+     *  (AuthController.pruneRateLimitState deseni); aşırı durumda sert clear() backstop'u
+     *  (CaAutoPinService cap deseni). Yalnız eşik aşıldığında çalışır — sıcak yolda maliyetsiz. */
+    private void pruneDomainDiagRate(long now) {
+        if (domainDiagRate.size() <= 1_000) return;
+        domainDiagRate.entrySet().removeIf(e -> {
+            Deque<Long> dq = e.getValue();
+            synchronized (dq) {
+                while (!dq.isEmpty() && now - dq.peekFirst() > DOMAIN_DIAG_WINDOW_MS) dq.pollFirst();
+                return dq.isEmpty();
+            }
+        });
+        if (domainDiagRate.size() > 10_000) domainDiagRate.clear();
     }
 
     /** Domain tanılama geçmişi listesi (resultJson hariç özet). */

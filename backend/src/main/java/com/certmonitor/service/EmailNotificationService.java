@@ -172,7 +172,7 @@ public class EmailNotificationService {
             applyFrom(helper);
             helper.setSubject(subject);
             helper.setText(
-                    buildResolutionEmailText(domain, alertType, resolvedBy, resolvedAt),
+                    buildResolutionEmailText(domain, alertType, resolvedBy, resolvedAt, createdAt, certContext),
                     buildResolutionEmailHtml(domain, alertType, alertLevel,
                             daysRemaining, resolvedBy, resolvedAt, createdAt, certContext));
             return doSend(Arrays.toString(toAddresses), msg, 1);
@@ -340,7 +340,7 @@ public class EmailNotificationService {
             applyFrom(helper);
             helper.setSubject(subject);
             helper.setText(
-                    buildResolutionEmailText(domain, alertType, resolvedBy, resolvedAt),
+                    buildResolutionEmailText(domain, alertType, resolvedBy, resolvedAt, createdAt, certContext),
                     buildResolutionEmailHtml(domain, alertType, alertLevel,
                             daysRemaining, resolvedBy, resolvedAt, createdAt, certContext));
             return doSend(to, msg, 1);
@@ -463,6 +463,62 @@ public class EmailNotificationService {
         }
     }
 
+    /** Login sayfasından "sorun bildir" — Genel Ayarlar'daki Sistem Yöneticisi E-postası'na gider.
+     *  Kimliksiz (public) akıştan geldiği için içerik tamamen escape'lenir; alıcı sabittir.
+     *  Ekran görüntüleri (≤5) CID inline gömülür ({@link #sendHtml}). */
+    public String sendLoginIssueReport(String to, String username, String errorText, String message,
+                                       List<InlineImage> images,
+                                       String clientIp, String userAgent, String reportedAt) {
+        List<InlineImage> inline = images != null ? images : List.of();
+        String html = buildLoginIssueHtml(username, errorText, message, inline, clientIp, userAgent, reportedAt);
+        return sendHtml(new String[]{ to }, null,
+                "[CertMonitor] 🛟 Giriş Sorunu Bildirimi" +
+                        (username != null && !username.isBlank() ? " — " + username : ""),
+                html, inline);
+    }
+
+    private String buildLoginIssueHtml(String username, String errorText, String message,
+                                       List<InlineImage> images,
+                                       String clientIp, String userAgent, String reportedAt) {
+        StringBuilder sb = new StringBuilder(simpleFrameOpen(640));
+        sb.append("<h2 style='color:#b45309;margin:0 0 12px;font-size:20px'>🛟 Giriş Sorunu Bildirimi</h2>")
+          .append("<p style='margin:0 0 14px'>Bir kullanıcı login sayfasından giriş sorunu bildirdi:</p>")
+          .append("<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' style='border-collapse:collapse;font-size:14px'>")
+          .append(adminRow("Kullanıcı Adı", "<strong>" + escHtml(username) + "</strong>"))
+          .append(adminRow("Bildirim Zamanı", escHtml(formatIso(reportedAt))))
+          .append(adminRow("IP Adresi", escHtml(clientIp != null ? clientIp : "—")))
+          .append(adminRow("Tarayıcı", escHtml(userAgent != null ? userAgent : "—")))
+          .append("</table>");
+        if (errorText != null && !errorText.isBlank()) {
+            sb.append("<div style='margin:16px 0 0;padding:12px 14px;border:1px solid #e5e7eb;border-radius:8px'>")
+              .append("<div style='font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:#6b7280;margin:0 0 6px'>Alınan Hata Mesajı</div>")
+              .append("<div style='font-family:Consolas,\"Courier New\",monospace;font-size:13px;line-height:1.5;white-space:pre-wrap'>")
+              .append(escHtml(errorText)).append("</div></div>");
+        }
+        sb.append("<div style='margin:16px 0 0;padding:12px 14px;border:1px solid #e5e7eb;border-radius:8px'>")
+          .append("<div style='font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:#6b7280;margin:0 0 6px'>Kullanıcının Açıklaması</div>")
+          .append("<div style='font-size:14px;line-height:1.6;white-space:pre-wrap'>").append(escHtml(message)).append("</div>")
+          .append("</div>");
+        if (images != null && !images.isEmpty()) {
+            sb.append("<div style='margin:16px 0 0'>")
+              .append("<div style='font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:#6b7280;margin:0 0 6px'>Ekran Görüntüleri (")
+              .append(images.size()).append(")</div>");
+            int i = 1;
+            for (InlineImage img : images) {
+                sb.append("<div style='margin:0 0 10px'>")
+                  .append("<div style='font-size:11px;color:#9ca3af;margin:0 0 4px'>Görsel ").append(i++).append("</div>")
+                  .append("<img src='cid:").append(escHtml(img.cid()))
+                  .append("' alt='Ekran görüntüsü ").append(i - 1)
+                  .append("' width='592' style='max-width:100%;width:592px;height:auto;border:1px solid #e5e7eb;border-radius:8px;display:block' />")
+                  .append("</div>");
+            }
+            sb.append("</div>");
+        }
+        sb.append("<p style='font-size:13px;color:#64748b;margin:16px 0 0'>Bu bildirim login sayfasındaki \"sorun bildir\" bağlantısından, kimlik doğrulaması yapılmadan gönderilmiştir — içeriği buna göre değerlendirin.</p>")
+          .append(simpleFrameClose());
+        return sb.toString();
+    }
+
     /** Admin bilgi tablosu satırı — etiket hücresi bgcolor'lı (Outlook-güvenli), değer hücresi düz. */
     private String adminRow(String label, String value) {
         return "<tr>"
@@ -576,13 +632,19 @@ public class EmailNotificationService {
         if ((alertType != null && MONITORING_OUTAGE_TYPES.contains(alertType)) || "DNS_CHANGED".equals(alertType)) {
             return buildRichMonitoringResolvedHtml(domain, alertType, resolvedBy, resolvedAt, createdAt);
         }
-        // domain + sertifika → executive "çözüldü"
-        return templateBuilder.buildResolvedHtml(domain, alertType, resolvedBy, resolvedAt);
+        // domain + sertifika → executive "çözüldü" (yenilenen bitiş/registrar bağlamıyla zenginleştirilir)
+        return templateBuilder.buildResolvedHtml(domain, alertType, resolvedBy, resolvedAt, createdAt, certContext);
     }
 
     /** Çözüm e-postasının plain-text (multipart) alternatifi. */
     public String buildResolutionEmailText(String domain, String alertType, String resolvedBy, String resolvedAt) {
         return templateBuilder.buildResolvedText(domain, alertType, resolvedBy, resolvedAt);
+    }
+
+    /** Çözüm plain-text — alan/sertifika bağlamıyla zenginleştirilmiş sürüm. */
+    public String buildResolutionEmailText(String domain, String alertType, String resolvedBy, String resolvedAt,
+                                           String createdAt, Map<String, Object> certContext) {
+        return templateBuilder.buildResolvedText(domain, alertType, resolvedBy, resolvedAt, createdAt, certContext);
     }
 
     private static String teamNameOf(Map<String, Object> ctx) {

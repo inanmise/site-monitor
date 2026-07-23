@@ -9,11 +9,13 @@ import {
   Wifi, Network, Search, TrendingDown, Database, UserCheck, ShieldCheck, CalendarDays, ListChecks, Target, Radio, Siren, Wrench,
 } from 'lucide-react'
 import CertMonitorLogo from './ui/CertMonitorLogo.jsx'
+import { useBranding } from '../contexts/BrandingProvider.jsx'
 
 export default function Nav({ activeTab, onTabChange, username, teamName, systemRole, globalAdmin, onLogout, onChangePassword }) {
   const t = useT()
   const { toggle } = useLanguage()
   const { theme, toggle: toggleTheme } = useTheme()
+  const { get: brand, branding } = useBranding()
   const isAdmin     = systemRole === 'ADMIN'
   const isTeamAdmin = systemRole === 'TEAM_ADMIN'
   const isAudit     = systemRole === 'AUDIT'
@@ -165,18 +167,35 @@ export default function Nav({ activeTab, onTabChange, username, teamName, system
   return (
     <aside className={`sb${open ? '' : ' sb-closed'}`}>
 
-      {/* ── Logo area ── */}
+      {/* ── Logo area (branding: kurum logosu/adı doluysa onlar) ── */}
       <div className="sb-head">
-        <div className="sb-brand">
-          <span className="sb-logo"><CertMonitorLogo variant="icon" size={26} /></span>
-          {open && (
-            <div className="sb-brand-text">
-              <span className="sb-brand-name">CertMonitor</span>
-              <span className="sb-brand-sub">ENTERPRISE</span>
-              <span className="sb-brand-version">v{__APP_VERSION__}</span>
-            </div>
-          )}
-        </div>
+        {branding.logo_data ? (
+          /* Özel logo (genelde geniş wordmark) dar ikon yuvasına sığmaz → DİKEY istif:
+             logo üstte tek başına, ad/rozet/versiyon altında. Daraltılmış sidebar'da yalnız
+             küçük ölçekli logo gösterilir. */
+          <div className="sb-brand" style={{ flexDirection: 'column', alignItems: 'flex-start', gap: 6, minWidth: 0 }}>
+            <img src={branding.logo_data} alt={brand('app_name', 'CertMonitor')}
+                 style={{ height: 24, maxWidth: open ? 150 : 34, objectFit: 'contain', objectPosition: 'left' }} />
+            {open && (
+              <div className="sb-brand-text">
+                <span className="sb-brand-name">{brand('app_name', 'CertMonitor')}</span>
+                <span className="sb-brand-sub">ENTERPRISE</span>
+                <span className="sb-brand-version">v{__APP_VERSION__}</span>
+              </div>
+            )}
+          </div>
+        ) : (
+          <div className="sb-brand">
+            <span className="sb-logo"><CertMonitorLogo variant="icon" size={26} /></span>
+            {open && (
+              <div className="sb-brand-text">
+                <span className="sb-brand-name">{brand('app_name', 'CertMonitor')}</span>
+                <span className="sb-brand-sub">ENTERPRISE</span>
+                <span className="sb-brand-version">v{__APP_VERSION__}</span>
+              </div>
+            )}
+          </div>
+        )}
         <button className="sb-toggle" onClick={toggleSidebar} title={open ? t('nav.collapse') : t('nav.expand')}>
           {open ? <ChevronLeft size={14} /> : <ChevronRight size={14} />}
         </button>
