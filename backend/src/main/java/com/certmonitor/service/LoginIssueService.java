@@ -1,0 +1,147 @@
+package com.certmonitor.service;
+
+import com.certmonitor.model.LoginIssueReport;
+import com.certmonitor.model.LoginIssueReportImage;
+import com.certmonitor.repository.LoginIssueReportImageRepository;
+import com.certmonitor.repository.LoginIssueReportRepository;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.time.Duration;
+import java.time.Instant;
+import java.time.ZoneOffset;
+import java.time.format.DateTimeFormatter;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
+
+/**
+ * Login "sorun bildir" kayıtlarının kalıcılığı + durum akışı (OPEN → IN_PROGRESS → RESOLVED,
+ * ve yanlış-kapatma geri alma RESOLVED → OPEN). Public akış {@code save} çağırır; admin ekranı
+ * list/detail/counts/updateStatus kullanır. İş kuralları burada (test edilebilir).
+ */
+@Slf4j
+@Service
+@RequiredArgsConstructor
+public class LoginIssueService {
+
+    public static final String OPEN = "OPEN";
+    public static final String IN_PROGRESS = "IN_PROGRESS";
+    public static final String RESOLVED = "RESOLVED";
+    private static final Set<String> STATUSES = Set.of(OPEN, IN_PROGRESS, RESOLVED);
+    private static final int MAX_NOTE = 2000;
+
+    private static final DateTimeFormatter ISO =
+            DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
+
+    private final LoginIssueReportRepository reportRepo;
+    private final LoginIssueReportImageRepository imageRepo;
+
+    /** Ayrıştırılmış görsel — data-URL prefix'i çıkarılmış ham base64. */
+    public record ParsedImage(String contentType, String base64) {}
+
+    /** Public "sorun bildir" akışından kalıcı kayıt (resimlerle). Kaydedilen entity döner (refCode için). */
+    @Transactional
+    public LoginIssueReport save(String username, String reporterEmail, String errorText, String message,
+                                 List<ParsedImage> images, String ip, String userAgent, String reportedAt) {
+        LoginIssueReport r = new LoginIssueReport();
+        r.setReportedAt(reportedAt != null && !reportedAt.isBlank() ? reportedAt : nowIso());
+        r.setUsername(trimTo(username, 100));
+        r.setReporterEmail(trimTo(reporterEmail, 255));
+        r.setErrorText(blankToNull(errorText));
+        r.setMessage(message);
+        r.setIpAddress(trimTo(ip, 50));
+        r.setUserAgent(blankToNull(userAgent));
+        r.setStatus(OPEN);
+        r.setImageCount(images != null ? images.size() : 0);
+        LoginIssueReport saved = reportRepo.save(r);
+        if (images != null) {
+            for (ParsedImage img : images) {
+                LoginIssueReportImage e = new LoginIssueReportImage();
+                e.setReportId(saved.getId());
+                e.setContentType(img.contentType());
+                e.setDataBase64(img.base64());
+                imageRepo.save(e);
+            }
+        }
+        return saved;
+    }
+
+    @Transactional(readOnly = true)
+    public Page<LoginIssueReport> list(String status, int page, int size) {
+        // NOT: Set.of(...).contains(null) NPE atar → önce null kontrolü (status yoksa "tümü").
+        String st = (status != null && STATUSES.contains(status)) ? status : null;
+        Pageable pageable = PageRequest.of(Math.max(0, page), clampSize(size));
+        return reportRepo.findFiltered(st, null, null, pageable);
+    }
+
+    @Transactional(readOnly = true)
+    public Optional<LoginIssueReport> get(Long id) { return reportRepo.findById(id); }
+
+    @Transactional(readOnly = true)
+    public List<LoginIssueReportImage> images(Long reportId) {
+        return imageRepo.findByReportIdOrderByIdAsc(reportId);
+    }
+
+    /** Son 30 gün durum sayaçları (OPEN/IN_PROGRESS/RESOLVED; eksik durumlar 0). */
+    @Transactional(readOnly = true)
+    public Map<String, Long> counts() {
+        String since = ISO.format(Instant.now().minus(Duration.ofDays(30)));
+        Map<String, Long> out = new LinkedHashMap<>();
+        out.put(OPEN, 0L); out.put(IN_PROGRESS, 0L); out.put(RESOLVED, 0L);
+        for (Object[] row : reportRepo.countByStatus(since, null)) {
+            String st = (String) row[0];
+            if (st != null && out.containsKey(st)) out.put(st, ((Number) row[1]).longValue());
+        }
+        return out;
+    }
+
+    /**
+     * Durum güncelle. RESOLVED'a çekerken {@code resolutionNote} zorunlu (aksi halde
+     * IllegalArgumentException → controller 400). OPEN/IN_PROGRESS'e dönünce çözüm alanları temizlenir.
+     */
+    @Transactional
+    public LoginIssueReport updateStatus(Long id, String newStatus, String resolutionNote, String actor) {
+        if (!STATUSES.contains(newStatus)) throw new IllegalArgumentException("Geçersiz durum: " + newStatus);
+        LoginIssueReport r = reportRepo.findById(id)
+                .orElseThrow(() -> new IllegalArgumentException("Kayıt bulunamadı: " + id));
+        if (RESOLVED.equals(newStatus)) {
+            if (resolutionNote == null || resolutionNote.isBlank())
+                throw new IllegalArgumentException("Çözüm notu zorunludur");
+            r.setResolutionNote(trimTo(resolutionNote, MAX_NOTE));
+            r.setResolvedBy(actor);
+            r.setResolvedAt(nowIso());
+        } else {
+            // OPEN / IN_PROGRESS (yeniden aç) — çözüm alanlarını temizle
+            r.setResolvedBy(null);
+            r.setResolvedAt(null);
+            if (OPEN.equals(newStatus)) r.setResolutionNote(null);
+        }
+        r.setStatus(newStatus);
+        r.setUpdatedAt(nowIso());
+        return reportRepo.save(r);
+    }
+
+    /** Admin gösterim referans kodu: {@code LIR-<yıl>-<6 hane id>}. */
+    public static String refCode(LoginIssueReport r) {
+        String year = (r.getReportedAt() != null && r.getReportedAt().length() >= 4)
+                ? r.getReportedAt().substring(0, 4) : "0000";
+        return String.format("LIR-%s-%06d", year, r.getId() != null ? r.getId() : 0L);
+    }
+
+    private static String nowIso() { return ISO.format(Instant.now()); }
+    private static int clampSize(int size) { return size <= 0 ? 20 : Math.min(size, 200); }
+    private static String blankToNull(String s) { return (s == null || s.isBlank()) ? null : s; }
+    private static String trimTo(String s, int max) {
+        if (s == null) return null;
+        String t = s.strip();
+        return t.length() > max ? t.substring(0, max) : t;
+    }
+}

@@ -27,6 +27,7 @@ public final class AppSettingsCatalog {
         new Setting("cert.monitor.app.base-url",                 "general",    Type.STRING),
         new Setting("cert.monitor.system-admin.email",           "general",    Type.STRING),
         new Setting("cert.monitor.cors.allowed-origins",         "general",    Type.CSV),
+        new Setting("cert.monitor.login-issues.enabled",         "general",    Type.BOOL),
         new Setting("cert.monitor.network.error-rate-threshold", "outage",     Type.DOUBLE),
         new Setting("cert.monitor.network.min-errors",           "outage",     Type.INT),
         new Setting("cert.monitor.scheduler.stale-minutes",      "scheduler",  Type.INT),

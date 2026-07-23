@@ -148,20 +148,48 @@ describe('Login', () => {
     fireEvent.click(screen.getByRole('button', { name: /report it to the system administrator/i }))
     const dialog = await screen.findByRole('dialog')
 
-    // Kullanıcı adı boş → gönder pasif + zorunluluk uyarısı
+    // Kullanıcı adı + email boş → gönder pasif + zorunluluk uyarıları
     const sendBtn = within(dialog).getByRole('button', { name: /^send report$/i })
     expect(sendBtn.disabled).toBe(true)
     expect(within(dialog).getByText(/username is required/i)).toBeDefined()
+    expect(within(dialog).getByText(/email is required/i)).toBeDefined()
 
     fireEvent.change(within(dialog).getByLabelText(/username/i), { target: { value: 'N12345' } })
     fireEvent.change(within(dialog).getByPlaceholderText(/paste the error message/i), { target: { value: 'HTTP 423 Locked' } })
     fireEvent.change(within(dialog).getByPlaceholderText(/describe the issue in detail/i), { target: { value: 'My account is locked' } })
+    // email zorunlu — hâlâ pasif
+    expect(sendBtn.disabled).toBe(true)
+    fireEvent.change(within(dialog).getByLabelText(/your email/i), { target: { value: 'user@akbank.com' } })
     expect(sendBtn.disabled).toBe(false)
 
+    api.sendLoginHelp.mockResolvedValueOnce({ success: true, reference: 'LIR-2026-000042' })
     fireEvent.click(sendBtn)
     await waitFor(() => expect(api.sendLoginHelp).toHaveBeenCalledWith({
-      username: 'N12345', errorText: 'HTTP 423 Locked', message: 'My account is locked', images: [],
+      username: 'N12345', email: 'user@akbank.com', errorText: 'HTTP 423 Locked',
+      message: 'My account is locked', images: [],
     }))
-    expect(await within(dialog).findByRole('status')).toBeDefined()
+    // Başarı ekranında referans numarası görünür (mesaj + vurgulu kod)
+    expect((await within(dialog).findAllByText(/LIR-2026-000042/)).length).toBeGreaterThan(0)
+  })
+
+  it('sorun bildir: 429 → net oran mesajı gösterilir; "Detay gör" teknik hatayı açar', async () => {
+    const { api } = await import('../api/client')
+    const { within } = await import('./test-utils.jsx')
+    api.sendLoginHelp.mockResolvedValueOnce({
+      success: false, status: 429, error: 'Çok fazla bildirim gönderildi — lütfen daha sonra tekrar deneyin.',
+    })
+    render(<Login onLogin={() => {}} />)
+    fireEvent.click(screen.getByRole('button', { name: /report it to the system administrator/i }))
+    const dialog = await screen.findByRole('dialog')
+    fireEvent.change(within(dialog).getByLabelText(/username/i), { target: { value: 'N1' } })
+    fireEvent.change(within(dialog).getByLabelText(/your email/i), { target: { value: 'u@x.com' } })
+    fireEvent.change(within(dialog).getByPlaceholderText(/describe the issue in detail/i), { target: { value: 'x' } })
+    fireEvent.click(within(dialog).getByRole('button', { name: /^send report$/i }))
+
+    // Net sebep (oran limiti) — HTTP kodu değil, kullanıcı-dostu açıklama
+    expect(await within(dialog).findByText(/too many reports/i)).toBeInTheDocument()
+    // "Detay gör" → teknik hata (HTTP 429 + sunucu mesajı)
+    fireEvent.click(within(dialog).getByRole('button', { name: /show details/i }))
+    expect(within(dialog).getByText(/HTTP 429/)).toBeInTheDocument()
   })
 })

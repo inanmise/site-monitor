@@ -6,16 +6,18 @@ import {
   LayoutDashboard, AlertTriangle, FileText,
   RefreshCw, ClipboardList, Settings, User, Globe, LogOut, Lock,
   Sun, Moon, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Server, Activity, ShieldAlert, BarChart3, Bell, BookOpen,
-  Wifi, Network, Search, TrendingDown, Database, UserCheck, ShieldCheck, CalendarDays, ListChecks, Target, Radio, Siren, Wrench,
+  Wifi, Network, Search, TrendingDown, Database, UserCheck, ShieldCheck, CalendarDays, ListChecks, Target, Radio, Siren, Wrench, LifeBuoy,
 } from 'lucide-react'
 import CertMonitorLogo from './ui/CertMonitorLogo.jsx'
 import { useBranding } from '../contexts/BrandingProvider.jsx'
+import { usePermissions } from '../contexts/PermissionsProvider.jsx'
 
 export default function Nav({ activeTab, onTabChange, username, teamName, systemRole, globalAdmin, onLogout, onChangePassword }) {
   const t = useT()
   const { toggle } = useLanguage()
   const { theme, toggle: toggleTheme } = useTheme()
   const { get: brand, branding } = useBranding()
+  const { canView } = usePermissions()
   const isAdmin     = systemRole === 'ADMIN'
   const isTeamAdmin = systemRole === 'TEAM_ADMIN'
   const isAudit     = systemRole === 'AUDIT'
@@ -85,6 +87,8 @@ export default function Nav({ activeTab, onTabChange, username, teamName, system
         { id: 'health',        Icon: Activity,    labelKey: 'nav.health',        show: true    },
         { id: 'permissions',   Icon: ShieldCheck, labelKey: 'nav.permissions',   show: isGlobalAdmin },
         { id: 'sqlplayground', Icon: Database,    labelKey: 'nav.sqlPlayground', show: isGlobalAdmin },
+        // Login Sorun Bildirimleri — yalnız issues.login-reports/view izniyle (Yardım'ın hemen üstünde)
+        { id: 'login-issues',  Icon: LifeBuoy,    labelKey: 'nav.loginIssues',   show: canView('issues.login-reports') },
       ],
     },
     {

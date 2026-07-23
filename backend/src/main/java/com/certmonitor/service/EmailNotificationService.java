@@ -466,29 +466,77 @@ public class EmailNotificationService {
     /** Login sayfasından "sorun bildir" — Genel Ayarlar'daki Sistem Yöneticisi E-postası'na gider.
      *  Kimliksiz (public) akıştan geldiği için içerik tamamen escape'lenir; alıcı sabittir.
      *  Ekran görüntüleri (≤5) CID inline gömülür ({@link #sendHtml}). */
-    public String sendLoginIssueReport(String to, String username, String errorText, String message,
+    public String sendLoginIssueReport(String to, String refCode, String username, String errorText, String message,
                                        List<InlineImage> images,
                                        String clientIp, String userAgent, String reportedAt) {
         List<InlineImage> inline = images != null ? images : List.of();
-        String html = buildLoginIssueHtml(username, errorText, message, inline, clientIp, userAgent, reportedAt);
+        String html = buildLoginIssueHtml(refCode, username, errorText, message, inline, clientIp, userAgent, reportedAt, false);
         return sendHtml(new String[]{ to }, null,
-                "[CertMonitor] 🛟 Giriş Sorunu Bildirimi" +
-                        (username != null && !username.isBlank() ? " — " + username : ""),
+                "[CertMonitor] 🛟 Giriş Sorunu Bildirimi — " + refCode +
+                        (username != null && !username.isBlank() ? " · " + username : ""),
                 html, inline);
     }
 
-    private String buildLoginIssueHtml(String username, String errorText, String message,
+    /** Bildiren kişiye "alındı" onayı — admin'e gidenle BENZER içerik (hata mesajı + görseller) +
+     *  referans numarası. Best-effort (asla fırlatmaz). */
+    public String sendLoginIssueAck(String to, String refCode, String username, String errorText, String message,
+                                    List<InlineImage> images, String reportedAt) {
+        if (to == null || to.isBlank()) return "SKIPPED_NO_RECIPIENT";
+        List<InlineImage> inline = images != null ? images : List.of();
+        String html = buildLoginIssueHtml(refCode, username, errorText, message, inline, null, null, reportedAt, true);
+        return sendHtml(new String[]{ to }, null, "[CertMonitor] Sorun bildiriminiz alındı — " + refCode, html, inline);
+    }
+
+    /** "Çözüldü" bildirimi — hem bildiren kişiye (To) hem sistem yöneticisine (CC) gider. Best-effort. */
+    public String sendLoginIssueResolved(String reporterEmail, String adminEmail, String refCode,
+                                         String resolutionNote, String resolvedAt) {
+        String to = (reporterEmail != null && !reporterEmail.isBlank()) ? reporterEmail : null;
+        String cc = (adminEmail != null && !adminEmail.isBlank()) ? adminEmail : null;
+        if (to == null && cc == null) return "SKIPPED_NO_RECIPIENT";
+        // Alıcı yalnız admin ise onu To yap (boş To olmasın).
+        String[] toArr = to != null ? new String[]{ to } : new String[]{ cc };
+        String[] ccArr = (to != null && cc != null) ? new String[]{ cc } : null;
+        String noteBlock = (resolutionNote != null && !resolutionNote.isBlank())
+                ? "<div style='margin:16px 0 0;padding:12px 14px;border:1px solid #e5e7eb;border-radius:8px'>"
+                  + "<div style='font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:#6b7280;margin:0 0 6px'>Çözüm Notu</div>"
+                  + "<div style='font-size:14px;line-height:1.6;white-space:pre-wrap'>" + escHtml(resolutionNote) + "</div></div>"
+                : "";
+        String html = simpleFrameOpen(600)
+                + "<h2 style='color:#15803d;margin:0 0 12px;font-size:20px'>✅ Sorun çözümlendi</h2>"
+                + "<p style='margin:0 0 14px'><strong>" + escHtml(refCode) + "</strong> referans numaralı giriş sorunu bildirimi çözümlenmiştir.</p>"
+                + "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' style='border-collapse:collapse;font-size:14px'>"
+                + adminRow("Referans Numarası", "<strong>" + escHtml(refCode) + "</strong>")
+                + adminRow("Çözülme Zamanı", escHtml(formatIso(resolvedAt)))
+                + "</table>"
+                + noteBlock
+                + "<p style='font-size:13px;color:#64748b;margin:16px 0 0'>Sorun devam ediyorsa lütfen tekrar bildiriniz. Bu e-posta otomatik gönderilmiştir.</p>"
+                + simpleFrameClose();
+        return sendHtml(toArr, ccArr, "[CertMonitor] ✅ Giriş sorunu çözümlendi — " + refCode, html, List.of());
+    }
+
+    /** Login sorun bildirimi HTML'i — admin (forReporter=false: IP/UA + kimliksiz uyarısı) ve bildiren
+     *  (forReporter=true: takip metni, IP/UA gizli) için ortak; her ikisinde referans no + hata + görseller. */
+    private String buildLoginIssueHtml(String refCode, String username, String errorText, String message,
                                        List<InlineImage> images,
-                                       String clientIp, String userAgent, String reportedAt) {
+                                       String clientIp, String userAgent, String reportedAt, boolean forReporter) {
         StringBuilder sb = new StringBuilder(simpleFrameOpen(640));
-        sb.append("<h2 style='color:#b45309;margin:0 0 12px;font-size:20px'>🛟 Giriş Sorunu Bildirimi</h2>")
-          .append("<p style='margin:0 0 14px'>Bir kullanıcı login sayfasından giriş sorunu bildirdi:</p>")
-          .append("<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' style='border-collapse:collapse;font-size:14px'>")
+        if (forReporter) {
+            sb.append("<h2 style='color:#15803d;margin:0 0 12px;font-size:20px'>✅ Sorun bildiriminiz alındı</h2>")
+              .append("<p style='margin:0 0 14px'>Bildiriminiz kaydedildi. Aşağıdaki referans numarasıyla durumu takip edebilir, "
+                      + "bizimle iletişimde bu numarayı belirtebilirsiniz. Sorun çözüldüğünde bu e-posta adresine bilgi verilecektir.</p>");
+        } else {
+            sb.append("<h2 style='color:#b45309;margin:0 0 12px;font-size:20px'>🛟 Giriş Sorunu Bildirimi</h2>")
+              .append("<p style='margin:0 0 14px'>Bir kullanıcı login sayfasından giriş sorunu bildirdi:</p>");
+        }
+        sb.append("<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' style='border-collapse:collapse;font-size:14px'>")
+          .append(adminRow("Referans Numarası", "<strong>" + escHtml(refCode) + "</strong>"))
           .append(adminRow("Kullanıcı Adı", "<strong>" + escHtml(username) + "</strong>"))
-          .append(adminRow("Bildirim Zamanı", escHtml(formatIso(reportedAt))))
-          .append(adminRow("IP Adresi", escHtml(clientIp != null ? clientIp : "—")))
-          .append(adminRow("Tarayıcı", escHtml(userAgent != null ? userAgent : "—")))
-          .append("</table>");
+          .append(adminRow("Bildirim Zamanı", escHtml(formatIso(reportedAt))));
+        if (!forReporter) {
+            sb.append(adminRow("IP Adresi", escHtml(clientIp != null ? clientIp : "—")))
+              .append(adminRow("Tarayıcı", escHtml(userAgent != null ? userAgent : "—")));
+        }
+        sb.append("</table>");
         if (errorText != null && !errorText.isBlank()) {
             sb.append("<div style='margin:16px 0 0;padding:12px 14px;border:1px solid #e5e7eb;border-radius:8px'>")
               .append("<div style='font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:#6b7280;margin:0 0 6px'>Alınan Hata Mesajı</div>")
@@ -496,7 +544,8 @@ public class EmailNotificationService {
               .append(escHtml(errorText)).append("</div></div>");
         }
         sb.append("<div style='margin:16px 0 0;padding:12px 14px;border:1px solid #e5e7eb;border-radius:8px'>")
-          .append("<div style='font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:#6b7280;margin:0 0 6px'>Kullanıcının Açıklaması</div>")
+          .append("<div style='font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:#6b7280;margin:0 0 6px'>")
+          .append(forReporter ? "İlettiğiniz Açıklama" : "Kullanıcının Açıklaması").append("</div>")
           .append("<div style='font-size:14px;line-height:1.6;white-space:pre-wrap'>").append(escHtml(message)).append("</div>")
           .append("</div>");
         if (images != null && !images.isEmpty()) {
@@ -514,7 +563,11 @@ public class EmailNotificationService {
             }
             sb.append("</div>");
         }
-        sb.append("<p style='font-size:13px;color:#64748b;margin:16px 0 0'>Bu bildirim login sayfasındaki \"sorun bildir\" bağlantısından, kimlik doğrulaması yapılmadan gönderilmiştir — içeriği buna göre değerlendirin.</p>")
+        sb.append("<p style='font-size:13px;color:#64748b;margin:16px 0 0'>")
+          .append(forReporter
+                  ? "Bu e-posta CertMonitor tarafından otomatik gönderilmiştir. Yanıtlamayınız."
+                  : "Bu bildirim login sayfasındaki \"sorun bildir\" bağlantısından, kimlik doğrulaması yapılmadan gönderilmiştir — içeriği buna göre değerlendirin.")
+          .append("</p>")
           .append(simpleFrameClose());
         return sb.toString();
     }
