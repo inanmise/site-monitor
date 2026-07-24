@@ -76,8 +76,8 @@ class LoginIssueServiceTest {
     }
 
     @Test
-    @DisplayName("Yeniden Aç (RESOLVED→OPEN) → çözüm alanları temizlenir")
-    void reopen_clearsResolutionFields() {
+    @DisplayName("Yeniden Aç (RESOLVED→OPEN): çözüm sahipliği (resolvedBy/At) temizlenir, not KORUNUR (çalışma notu)")
+    void reopen_clearsOwnershipKeepsNote() {
         LoginIssueReport r = report(5L, "RESOLVED");
         r.setResolvedBy("admin"); r.setResolvedAt("2026-07-23T11:00:00"); r.setResolutionNote("done");
         when(reportRepo.findById(5L)).thenReturn(Optional.of(r));
@@ -86,21 +86,25 @@ class LoginIssueServiceTest {
         assertThat(out.getStatus()).isEqualTo("OPEN");
         assertThat(out.getResolvedBy()).isNull();
         assertThat(out.getResolvedAt()).isNull();
-        assertThat(out.getResolutionNote()).isNull();
+        assertThat(out.getResolutionNote()).isEqualTo("done");   // not kaybolmaz (kalıcı çalışma notu)
     }
 
     @Test
-    @DisplayName("RESOLVED→IN_PROGRESS → çözüm alanları (not dahil) tümüyle temizlenir (bayat not kalmaz)")
-    void resolvedToInProgress_clearsStaleNote() {
-        LoginIssueReport r = report(5L, "RESOLVED");
-        r.setResolvedBy("admin"); r.setResolvedAt("2026-07-23T11:00:00"); r.setResolutionNote("eski çözüm notu");
+    @DisplayName("İşleme Al (→IN_PROGRESS): not KALICI — verilmezse mevcut korunur, verilirse güncellenir; resolvedBy/At temizlenir")
+    void inProgress_keepsOrUpdatesNote() {
+        LoginIssueReport r = report(5L, "OPEN");
+        r.setResolutionNote("triyaj notu");
         when(reportRepo.findById(5L)).thenReturn(Optional.of(r));
         when(reportRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        // (a) not verilmeden İşleme Al → mevcut not kaybolmaz (kullanıcının yazdığı not korunur)
         LoginIssueReport out = service.updateStatus(5L, "IN_PROGRESS", null, "admin2");
         assertThat(out.getStatus()).isEqualTo("IN_PROGRESS");
+        assertThat(out.getResolutionNote()).isEqualTo("triyaj notu");
         assertThat(out.getResolvedBy()).isNull();
         assertThat(out.getResolvedAt()).isNull();
-        assertThat(out.getResolutionNote()).isNull();   // eskiden yalnız OPEN'da temizleniyordu → bayat kalıyordu
+        // (b) yeni (boş olmayan) not verilerek → not güncellenir
+        LoginIssueReport out2 = service.updateStatus(5L, "IN_PROGRESS", "yeni çalışma notu", "admin2");
+        assertThat(out2.getResolutionNote()).isEqualTo("yeni çalışma notu");
     }
 
     @Test

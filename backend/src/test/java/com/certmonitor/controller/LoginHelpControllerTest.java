@@ -4,9 +4,9 @@ import com.certmonitor.model.LoginIssueReport;
 import com.certmonitor.service.AppSettingsService;
 import com.certmonitor.service.AuditService;
 import com.certmonitor.service.ClientIpResolver;
-import com.certmonitor.service.EmailNotificationService;
 import com.certmonitor.service.EmailNotificationService.InlineImage;
 import com.certmonitor.service.HttpMetricsService;
+import com.certmonitor.service.LoginIssueMailService;
 import com.certmonitor.service.LoginIssueService;
 import com.certmonitor.service.RememberMeService;
 import com.certmonitor.service.UserService;
@@ -24,6 +24,7 @@ import java.util.List;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
@@ -42,7 +43,7 @@ class LoginHelpControllerTest {
     @Autowired MockMvc mvc;
 
     @MockitoBean AppSettingsService appSettings;
-    @MockitoBean EmailNotificationService emailService;
+    @MockitoBean LoginIssueMailService loginIssueMailService;
     @MockitoBean AuditService auditService;
     @MockitoBean ClientIpResolver clientIpResolver;
     @MockitoBean LoginIssueService loginIssueService;
@@ -61,10 +62,6 @@ class LoginHelpControllerTest {
         saved.setId(42L); saved.setReportedAt("2026-07-24T09:00:00");
         when(loginIssueService.save(anyString(), anyString(), anyString(), anyString(),
                 any(), anyString(), any(), anyString())).thenReturn(saved);
-        when(emailService.sendLoginIssueReport(anyString(), anyString(), anyString(), anyString(), anyString(),
-                any(), anyString(), any(), anyString())).thenReturn("SENT");
-        when(emailService.sendLoginIssueAck(anyString(), anyString(), anyString(), anyString(), anyString(),
-                any(), anyString())).thenReturn("SENT");
     }
 
     @Test
@@ -86,14 +83,14 @@ class LoginHelpControllerTest {
                 argThat((List<LoginIssueService.ParsedImage> imgs) ->
                         imgs != null && imgs.size() == 1 && "image/png".equals(imgs.get(0).contentType())),
                 eq("10.1.2.3"), any(), anyString());
-        // Mailler ASYNC (loginIssueMailExecutor) gönderilir → async sarmalayıcılar doğrulanır.
-        verify(emailService).sendLoginIssueReportAsync(eq("admin@akbank.com"), eq("LIR-2026-000042"), eq("N12345"),
+        // Mailler ASYNC + loglu (loginIssueMailService.dispatch*) — reportId=42, refCode, alıcı, görsel eşleşir.
+        verify(loginIssueMailService).dispatchReport(eq(42L), eq("LIR-2026-000042"), eq("admin@akbank.com"), eq("N12345"),
                 eq("HTTP 423 Locked"), eq("Hesabım kilitlendi, giriş yapamıyorum"),
                 argThat((List<InlineImage> imgs) -> imgs != null && imgs.size() == 1
                         && imgs.get(0).data().length == 6 && "image/png".equals(imgs.get(0).contentType())),
                 eq("10.1.2.3"), any(), anyString());
         // Bildiren kişiye ACK — admin'e gidenle benzer (hata + görsel) + referans no.
-        verify(emailService).sendLoginIssueAckAsync(eq(EMAIL), eq("LIR-2026-000042"), eq("N12345"),
+        verify(loginIssueMailService).dispatchAck(eq(42L), eq("LIR-2026-000042"), eq(EMAIL), eq("N12345"),
                 eq("HTTP 423 Locked"), eq("Hesabım kilitlendi, giriş yapamıyorum"),
                 argThat((List<InlineImage> imgs) -> imgs != null && imgs.size() == 1), anyString());
         verify(auditService).recordAction(eq("LOGIN_HELP_REPORT"), eq("N12345"),
@@ -113,7 +110,7 @@ class LoginHelpControllerTest {
                                 + "\"data:image/png;base64," + a + "\",\"data:image/jpeg;base64," + b + "\"]}"))
                 .andExpect(status().isOk());
 
-        verify(emailService).sendLoginIssueReportAsync(anyString(), anyString(), eq("N1"), anyString(), anyString(),
+        verify(loginIssueMailService).dispatchReport(anyLong(), anyString(), anyString(), eq("N1"), anyString(), anyString(),
                 argThat((List<InlineImage> imgs) -> imgs != null && imgs.size() == 2
                         && imgs.get(0).data().length == 3 && "image/png".equals(imgs.get(0).contentType())
                         && imgs.get(1).data().length == 2 && "image/jpeg".equals(imgs.get(1).contentType())),
@@ -185,8 +182,8 @@ class LoginHelpControllerTest {
                 .andExpect(jsonPath("$.success").value(true));
         verify(loginIssueService).save(eq("N2"), eq(EMAIL), anyString(), anyString(),
                 any(), anyString(), any(), anyString());
-        verify(emailService, never()).sendLoginIssueReportAsync(anyString(), anyString(), anyString(),
-                anyString(), anyString(), any(), anyString(), any(), anyString());
+        verify(loginIssueMailService, never()).dispatchReport(anyLong(), anyString(), anyString(),
+                anyString(), anyString(), anyString(), any(), anyString(), any(), anyString());
     }
 
     @Test

@@ -717,12 +717,21 @@ public class SchedulerService {
             int lii = safeDelete("DELETE FROM login_issue_report_images WHERE report_id IN "
                     + "(SELECT id FROM login_issue_reports WHERE status = 'RESOLVED' AND resolved_at < ?)", liCutoff);
             int lir = safeDelete("DELETE FROM login_issue_reports WHERE status = 'RESOLVED' AND resolved_at < ?", liCutoff);
+            // Öksüz mail geçmişi: raporu artık olmayan (retention veya elle silinen) login_issue_mail_logs
+            // satırları temizlenir → mail logları raporuyla birlikte ölür. Parametresiz DELETE (safeDelete tek param).
+            int lim;
+            try {
+                lim = jdbcTemplate.update("DELETE FROM login_issue_mail_logs WHERE report_id NOT IN (SELECT id FROM login_issue_reports)");
+            } catch (Exception e) {
+                log.warn("Cleanup login_issue_mail_logs failed: {}", e.getMessage());
+                lim = -1;
+            }
             // In-memory: silinen monitörlerin checkDue anahtarları birikmesin (uzun uptime sızıntısı).
             int pruned = pruneMonitorCheckState(collectLiveMonitorKeys());
             log.info("Nightly cleanup (retention v2): httpChecks={}, heartbeat={}, domainChecks={}, diagRuns={}, resolvedAlerts={}, "
-                    + "loginIssues={}, loginIssueImages={}, checkStateKeysPruned={} "
+                    + "loginIssues={}, loginIssueImages={}, loginIssueMailLogs={}, checkStateKeysPruned={} "
                     + "(hb cutoff: {}; diag cutoff: {}; alert cutoff: {}; loginIssue cutoff: {})",
-                    hc, hb, dcn, dg, ae, lir, lii, pruned, hbCutoff, diagCutoff, aeCutoff, liCutoff);
+                    hc, hb, dcn, dg, ae, lir, lii, lim, pruned, hbCutoff, diagCutoff, aeCutoff, liCutoff);
         } catch (Exception e) {
             log.warn("Nightly cleanup failed: {}", e.getMessage());
         }

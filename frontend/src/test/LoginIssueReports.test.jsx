@@ -10,6 +10,10 @@ const sampleDetail = {
   message: 'Cannot login at all', ipAddress: '1.2.3.4', userAgent: 'curl/8', status: 'OPEN',
   reportedAt: '2026-07-23T10:00:00', resolvedBy: null, resolvedAt: null, resolutionNote: null,
   imageCount: 2, images: ['data:image/png;base64,AAAA', 'data:image/png;base64,BBBB'],
+  mailHistory: [
+    { mailType: 'REPORT_ADMIN', to: 'admin@akbank.com', cc: null, status: 'SENT', error: null, forced: true, sentAt: '2026-07-23T10:00:05' },
+    { mailType: 'REPORTER_ACK', to: 'user@akbank.com', cc: null, status: 'FAILED: 550', error: 'FAILED: 550 mailbox unavailable', forced: false, sentAt: '2026-07-23T10:00:06' },
+  ],
 }
 
 vi.mock('../api/client', () => ({
@@ -78,5 +82,40 @@ describe('LoginIssueReports', () => {
     await waitFor(() => expect(api.admin.updateLoginIssueStatus).toHaveBeenCalledWith(5, {
       status: 'RESOLVED', resolutionNote: 'reset the account',
     }))
+  })
+
+  it('İşleme Al → yazılan not payloadda gönderilir (kaybolmaz)', async () => {
+    render(<LoginIssueReports />)
+    fireEvent.click(await screen.findByText('LIR-2026-000005'))
+    await screen.findByText('Cannot login at all')
+    const ta = document.querySelector('.modal-box textarea')
+    fireEvent.change(ta, { target: { value: 'kullanıcıyla iletişime geçildi' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Take In Progress' }))
+    await waitFor(() => expect(api.admin.updateLoginIssueStatus).toHaveBeenCalledWith(5, {
+      status: 'IN_PROGRESS', resolutionNote: 'kullanıcıyla iletişime geçildi',
+    }))
+  })
+
+  it('detay açılınca mevcut not textarea\'ya önyüklenir', async () => {
+    api.admin.getLoginIssue.mockResolvedValueOnce({
+      success: true, data: { ...sampleDetail, status: 'IN_PROGRESS', resolutionNote: 'mevcut çalışma notu' },
+    })
+    render(<LoginIssueReports />)
+    fireEvent.click(await screen.findByText('LIR-2026-000005'))
+    await screen.findByText('Cannot login at all')
+    const ta = document.querySelector('.modal-box textarea')
+    expect(ta.value).toBe('mevcut çalışma notu')
+  })
+
+  it('mail geçmişi paneli: gönderilen mailleri tür + durumla listeler', async () => {
+    render(<LoginIssueReports />)
+    fireEvent.click(await screen.findByText('LIR-2026-000005'))
+    await screen.findByText('Cannot login at all')
+    expect(screen.getByText('Sent Emails')).toBeInTheDocument()
+    expect(screen.getByText('Admin notification')).toBeInTheDocument()
+    expect(screen.getByText('Reporter acknowledgment')).toBeInTheDocument()
+    expect(screen.getByText('Sent')).toBeInTheDocument()          // SENT → rozet
+    expect(screen.getByText('Failed')).toBeInTheDocument()        // FAILED → rozet
+    expect(screen.getByText(/550 mailbox unavailable/)).toBeInTheDocument()  // hata satırı
   })
 })

@@ -3,8 +3,8 @@ package com.certmonitor.controller;
 import com.certmonitor.service.AppSettingsService;
 import com.certmonitor.service.AuditService;
 import com.certmonitor.service.ClientIpResolver;
-import com.certmonitor.service.EmailNotificationService;
 import com.certmonitor.service.EmailNotificationService.InlineImage;
+import com.certmonitor.service.LoginIssueMailService;
 import com.certmonitor.service.LoginIssueService;
 import com.certmonitor.service.LoginIssueService.ParsedImage;
 import jakarta.servlet.http.HttpServletRequest;
@@ -76,7 +76,7 @@ public class LoginHelpController {
             Pattern.compile("^data:image/(png|jpeg);base64,([A-Za-z0-9+/=\\s]+)$");
 
     private final AppSettingsService appSettings;
-    private final EmailNotificationService emailService;
+    private final LoginIssueMailService loginIssueMailService;
     private final AuditService auditService;
     private final ClientIpResolver clientIpResolver;
     private final LoginIssueService loginIssueService;
@@ -161,26 +161,20 @@ public class LoginHelpController {
                 loginIssueService.save(username, email, errorText, message, parsed, ip, userAgent, now);
         String refCode = LoginIssueService.refCode(report);
 
-        // Bilgilendirme mailleri ASYNC (loginIssueMailExecutor) — request thread'ini bloklamaz; best-effort.
+        // Bilgilendirme mailleri ASYNC (loginIssueMailService) — request thread'ini bloklamaz; her gönderim
+        // login_issue_mail_logs'a yazılır (admin ekranındaki mail geçmişi). DB kaydı birincil.
+        Long reportId = report.getId();
         String adminEmail = appSettings.getString("cert.monitor.system-admin.email", "");
         if (adminEmail != null && !adminEmail.isBlank()) {
             log.info("Login sorun bildirimi {} kaydedildi: user='{}' ip={} images={} → admin maili kuyruğa alındı ({})",
                     refCode, username, ip, images.size(), adminEmail);
-            try {
-                emailService.sendLoginIssueReportAsync(adminEmail, refCode, username, errorText, message, images, ip, userAgent, now);
-            } catch (Exception e) {
-                log.warn("Login sorun bildirimi {} admin maili kuyruğa alınamadı: {}", refCode, e.getMessage());
-            }
+            loginIssueMailService.dispatchReport(reportId, refCode, adminEmail, username, errorText, message, images, ip, userAgent, now);
         } else {
             log.info("Login sorun bildirimi {} kaydedildi; system-admin.email boş — admin maili atlandı (user='{}' ip={})",
                     refCode, username, ip);
         }
-        // Bildiren kişiye "alındı" onayı (benzer içerik + referans no) — ASYNC, best-effort.
-        try {
-            emailService.sendLoginIssueAckAsync(email, refCode, username, errorText, message, images, now);
-        } catch (Exception e) {
-            log.warn("Login sorun bildirimi {} bildiren onay maili kuyruğa alınamadı: {}", refCode, e.getMessage());
-        }
+        // Bildiren kişiye "alındı" onayı (benzer içerik + referans no) — ASYNC, best-effort + loglanır.
+        loginIssueMailService.dispatchAck(reportId, refCode, email, username, errorText, message, images, now);
         // Best-effort audit — kayıt zaten commit'lendi + referans verildi; audit-insert hatası
         // kullanıcıya 500 döndürüp gereksiz resubmit'e yol açmasın (mailler gibi swallow).
         try {

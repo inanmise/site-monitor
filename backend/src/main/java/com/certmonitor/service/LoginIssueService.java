@@ -119,11 +119,14 @@ public class LoginIssueService {
             r.setResolvedBy(actor);
             r.setResolvedAt(nowIso());
         } else {
-            // OPEN / IN_PROGRESS (yeniden aç) — çözüm alanlarını TÜMÜYLE temizle. Not'u yalnız OPEN'da
-            // silmek RESOLVED→IN_PROGRESS'te "çözüm notu var ama çözen yok" tutarsız kaydı bırakıyordu.
+            // OPEN / IN_PROGRESS — çözüm SAHİPLİĞİNİ (resolvedBy/At) temizle, ama notu kalıcı çalışma notu
+            // olarak KORU: yeni (boş olmayan) not sağlanmışsa güncelle, sağlanmamışsa mevcut notu bırak.
+            // Böylece "İşleme Al"da yazılan not kaybolmaz ve yeniden açmada eski not korunur.
             r.setResolvedBy(null);
             r.setResolvedAt(null);
-            r.setResolutionNote(null);
+            if (resolutionNote != null && !resolutionNote.isBlank()) {
+                r.setResolutionNote(trimTo(resolutionNote, MAX_NOTE));
+            }
         }
         r.setStatus(newStatus);
         r.setUpdatedAt(nowIso());
