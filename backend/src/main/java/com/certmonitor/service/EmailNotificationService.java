@@ -473,11 +473,12 @@ public class EmailNotificationService {
     /** Login sayfasından "sorun bildir" — Genel Ayarlar'daki Sistem Yöneticisi E-postası'na gider.
      *  Kimliksiz (public) akıştan geldiği için içerik tamamen escape'lenir; alıcı sabittir.
      *  Ekran görüntüleri (≤5) CID inline gömülür ({@link #sendHtml}). */
-    public LoginIssueMailResult sendLoginIssueReport(String to, String refCode, String username, String errorText, String message,
+    public LoginIssueMailResult sendLoginIssueReport(String to, String refCode, String username, String reporterEmail,
+                                       String errorText, String message,
                                        List<InlineImage> images,
                                        String clientIp, String userAgent, String reportedAt, boolean force) {
         List<InlineImage> inline = images != null ? images : List.of();
-        String html = buildLoginIssueHtml(refCode, username, errorText, message, inline, clientIp, userAgent, reportedAt, false);
+        String html = buildLoginIssueHtml(refCode, username, reporterEmail, errorText, message, inline, clientIp, userAgent, reportedAt, false);
         String subject = "[CertMonitor] 🛟 Giriş Sorunu Bildirimi — " + refCode +
                 (username != null && !username.isBlank() ? " · " + username : "");
         String status = sendHtml(new String[]{ to }, null, subject, html, inline, force);
@@ -490,7 +491,8 @@ public class EmailNotificationService {
                                     List<InlineImage> images, String reportedAt, boolean force) {
         if (to == null || to.isBlank()) return new LoginIssueMailResult("SKIPPED_NO_RECIPIENT", currentFrom(), null, null);
         List<InlineImage> inline = images != null ? images : List.of();
-        String html = buildLoginIssueHtml(refCode, username, errorText, message, inline, null, null, reportedAt, true);
+        // forReporter=true → e-posta satırı gösterilmez (kişi kendi adresini bilir); yine de tutarlılık için geçilir.
+        String html = buildLoginIssueHtml(refCode, username, to, errorText, message, inline, null, null, reportedAt, true);
         String subject = "[CertMonitor] Sorun bildiriminiz alındı — " + refCode;
         String status = sendHtml(new String[]{ to }, null, subject, html, inline, force);
         return new LoginIssueMailResult(status, currentFrom(), subject, html);
@@ -516,8 +518,11 @@ public class EmailNotificationService {
           .append("</strong> referans numaralı giriş sorunu bildirimi çözümlenmiştir.</p>")
           .append("<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' style='border-collapse:collapse;font-size:14px'>")
           .append(adminRow("Referans Numarası", "<strong>" + escHtml(refCode) + "</strong>"))
-          .append(adminRow("Kullanıcı Adı", "<strong>" + escHtml(username != null && !username.isBlank() ? username : "—") + "</strong>"))
-          .append(adminRow("Bildirim Zamanı", escHtml(formatIso(reportedAt))))
+          .append(adminRow("Kullanıcı Adı", "<strong>" + escHtml(username != null && !username.isBlank() ? username : "—") + "</strong>"));
+        if (reporterEmail != null && !reporterEmail.isBlank()) {
+            sb.append(adminRow("E-posta", escHtml(reporterEmail)));
+        }
+        sb.append(adminRow("Bildirim Zamanı", escHtml(formatIso(reportedAt))))
           .append(adminRow("Çözülme Zamanı", escHtml(formatIso(resolvedAt))))
           .append("</table>");
         // Orijinal sorun — alınan hata mesajı (varsa) + iletilen açıklama.
@@ -568,7 +573,7 @@ public class EmailNotificationService {
 
     /** Login sorun bildirimi HTML'i — admin (forReporter=false: IP/UA + kimliksiz uyarısı) ve bildiren
      *  (forReporter=true: takip metni, IP/UA gizli) için ortak; her ikisinde referans no + hata + görseller. */
-    private String buildLoginIssueHtml(String refCode, String username, String errorText, String message,
+    private String buildLoginIssueHtml(String refCode, String username, String reporterEmail, String errorText, String message,
                                        List<InlineImage> images,
                                        String clientIp, String userAgent, String reportedAt, boolean forReporter) {
         StringBuilder sb = new StringBuilder(simpleFrameOpen(640));
@@ -582,8 +587,12 @@ public class EmailNotificationService {
         }
         sb.append("<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' style='border-collapse:collapse;font-size:14px'>")
           .append(adminRow("Referans Numarası", "<strong>" + escHtml(refCode) + "</strong>"))
-          .append(adminRow("Kullanıcı Adı", "<strong>" + escHtml(username) + "</strong>"))
-          .append(adminRow("Bildirim Zamanı", escHtml(formatIso(reportedAt))));
+          .append(adminRow("Kullanıcı Adı", "<strong>" + escHtml(username) + "</strong>"));
+        // Bildirenin e-posta adresi — admin varyantında göster (yöneticinin iletişim için ihtiyacı var).
+        if (!forReporter && reporterEmail != null && !reporterEmail.isBlank()) {
+            sb.append(adminRow("E-posta", escHtml(reporterEmail)));
+        }
+        sb.append(adminRow("Bildirim Zamanı", escHtml(formatIso(reportedAt))));
         if (!forReporter) {
             sb.append(adminRow("IP Adresi", escHtml(clientIp != null ? clientIp : "—")))
               .append(adminRow("Tarayıcı", escHtml(userAgent != null ? userAgent : "—")));

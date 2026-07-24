@@ -360,6 +360,9 @@ export const api = {
     getLoginIssues: (params = {}) => {
       const qs = new URLSearchParams()
       if (params.status) qs.set('status', params.status)
+      if (params.q) qs.set('q', params.q)
+      if (params.since) qs.set('since', params.since)
+      if (params.until) qs.set('until', params.until)
       if (params.page != null) qs.set('page', params.page)
       if (params.size != null) qs.set('size', params.size)
       const q = qs.toString()

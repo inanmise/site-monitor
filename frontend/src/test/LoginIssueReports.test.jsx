@@ -3,7 +3,8 @@ import { render, screen, fireEvent, waitFor } from './test-utils'
 
 const sampleRow = {
   id: 5, refCode: 'LIR-2026-000005', username: 'N12345', messageSummary: 'Cannot login',
-  ipAddress: '1.2.3.4', reportedAt: '2026-07-23T10:00:00', status: 'OPEN', imageCount: 2,
+  ipAddress: '1.2.3.4', reportedAt: '2026-07-23T10:00:00', resolvedAt: '2026-07-23T12:00:00',
+  status: 'RESOLVED', imageCount: 2,
 }
 const sampleDetail = {
   id: 5, refCode: 'LIR-2026-000005', username: 'N12345', errorText: 'HTTP 423',
@@ -11,7 +12,7 @@ const sampleDetail = {
   reportedAt: '2026-07-23T10:00:00', resolvedBy: null, resolvedAt: null, resolutionNote: null,
   imageCount: 2, images: ['data:image/png;base64,AAAA', 'data:image/png;base64,BBBB'],
   mailHistory: [
-    { mailType: 'REPORT_ADMIN', from: 'noreply@certmonitor', to: 'admin@akbank.com', cc: null, subject: 'Konu R', body: '<p>rapor govdesi</p>', status: 'SENT', error: null, forced: true, sentAt: '2026-07-23T10:00:05' },
+    { mailType: 'REPORT_ADMIN', from: 'noreply@certmonitor', to: 'admin@akbank.com', cc: null, subject: 'Konu R', body: "<p>rapor govdesi</p><img src='cid:shot0'>", status: 'SENT', error: null, forced: true, sentAt: '2026-07-23T10:00:05' },
     { mailType: 'REPORTER_ACK', from: 'noreply@certmonitor', to: 'user@akbank.com', cc: null, subject: 'Konu A', body: '<p>onay govdesi</p>', status: 'FAILED: 550', error: 'FAILED: 550 mailbox unavailable', forced: false, sentAt: '2026-07-23T10:00:06' },
   ],
 }
@@ -121,7 +122,7 @@ describe('LoginIssueReports', () => {
     expect(screen.getAllByText('2026-07-23 13:00').length).toBeGreaterThan(0)
   })
 
-  it('mail satırına tıklayınca gönderen + konu + gövde (iframe) görünür', async () => {
+  it('mail satırına tıklayınca gönderen + konu + gövde (iframe); cid görsel data-URL ile gösterilir', async () => {
     render(<LoginIssueReports />)
     fireEvent.click(await screen.findByText('LIR-2026-000005'))
     await screen.findByText('Cannot login at all')
@@ -130,6 +131,37 @@ describe('LoginIssueReports', () => {
     expect(screen.getAllByText('noreply@certmonitor').length).toBeGreaterThan(0)  // Gönderen
     const iframe = document.querySelector('iframe[title="mail-0"]')
     expect(iframe).not.toBeNull()
-    expect(iframe.getAttribute('srcdoc')).toContain('rapor govdesi')             // gövde
+    const srcdoc = iframe.getAttribute('srcdoc')
+    expect(srcdoc).toContain('rapor govdesi')                        // gövde
+    expect(srcdoc).toContain('data:image/png;base64,AAAA')          // cid:shot0 → images[0] data-URL
+    expect(srcdoc).not.toContain('cid:shot0')                       // kırık cid referansı kalmaz
+  })
+
+  it('ana tabloda "Çözülme Tarihi" kolonu — resolvedAt yerel saatle gösterilir', async () => {
+    render(<LoginIssueReports />)
+    await screen.findByText('LIR-2026-000005')
+    // 12:00 UTC → Europe/Istanbul 15:00 (yeni "Çözülme Tarihi" kolonu; benzersiz değer)
+    expect(screen.getByText('2026-07-23 15:00')).toBeInTheDocument()
+  })
+
+  it('arama: metin girince getLoginIssues q ile çağrılır', async () => {
+    render(<LoginIssueReports />)
+    await screen.findByText('LIR-2026-000005')
+    const search = screen.getByPlaceholderText(/search error/i)
+    fireEvent.change(search, { target: { value: 'locked' } })
+    await waitFor(() => expect(api.admin.getLoginIssues).toHaveBeenCalledWith(
+      expect.objectContaining({ q: 'locked' })))
+  })
+
+  it('sayfalama: total > size → sonraki sayfa getLoginIssues page:1 ile çağrılır', async () => {
+    api.admin.getLoginIssues.mockResolvedValue({
+      success: true, data: [sampleRow], total: 45, counts: { OPEN: 0, IN_PROGRESS: 0, RESOLVED: 45 },
+    })
+    render(<LoginIssueReports />)
+    await screen.findByText('LIR-2026-000005')
+    const next = await screen.findByRole('button', { name: /next/i })
+    fireEvent.click(next)
+    await waitFor(() => expect(api.admin.getLoginIssues).toHaveBeenCalledWith(
+      expect.objectContaining({ page: 1 })))
   })
 })

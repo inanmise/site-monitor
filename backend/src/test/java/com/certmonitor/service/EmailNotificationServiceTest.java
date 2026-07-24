@@ -911,24 +911,26 @@ class EmailNotificationServiceTest {
         EmailNotificationService.InlineImage img =
                 new EmailNotificationService.InlineImage("shot0", new byte[]{1, 2, 3}, "image/png");
         String html = org.springframework.test.util.ReflectionTestUtils.invokeMethod(service, "buildLoginIssueHtml",
-                "LIR-2026-000042", "N<script>", "HTTP 423 <b>x</b>", "mesaj & <tag>",
+                "LIR-2026-000042", "N<script>", "reporter@akbank.com", "HTTP 423 <b>x</b>", "mesaj & <tag>",
                 java.util.List.of(img), "10.1.2.3", "curl/8", "2026-07-24T09:00:00", false);
 
         assertThat(html).contains("LIR-2026-000042");
         assertThat(html).contains("N&lt;script&gt;").doesNotContain("N<script>");   // XSS: kullanıcı değeri escape'li
         assertThat(html).contains("cid:shot0");                                      // görsel inline referansı
         assertThat(html).contains("10.1.2.3").contains("curl/8");                    // admin varyantı IP/UA gösterir
+        assertThat(html).contains("reporter@akbank.com");                            // admin varyantı bildiren e-postasını gösterir
     }
 
     @Test
     @DisplayName("Bildiren onay (ACK) HTML'i: referans var; IP/UA satırı GİZLİ (forReporter)")
     void loginIssueAck_htmlHidesIpUa() {
         String html = org.springframework.test.util.ReflectionTestUtils.invokeMethod(service, "buildLoginIssueHtml",
-                "LIR-2026-000042", "N1", "HTTP 423", "mesaj",
+                "LIR-2026-000042", "N1", "reporter@akbank.com", "HTTP 423", "mesaj",
                 java.util.List.of(), null, null, "2026-07-24T09:00:00", true);
 
         assertThat(html).contains("LIR-2026-000042");
         assertThat(html).doesNotContain("IP Adresi").doesNotContain("Tarayıcı");   // bildirene IP/UA satırı yok
+        assertThat(html).doesNotContain("reporter@akbank.com");                    // bildirene kendi e-postası satırı gösterilmez
     }
 
     @Test

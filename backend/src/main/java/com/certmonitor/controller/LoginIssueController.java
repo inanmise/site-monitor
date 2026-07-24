@@ -53,11 +53,14 @@ public class LoginIssueController {
     @GetMapping
     public ResponseEntity<Map<String, Object>> list(
             @RequestParam(required = false) String status,
+            @RequestParam(required = false) String q,        // hata mesajı / açıklama / kullanıcı içinde arama
+            @RequestParam(required = false) String since,    // bildirim tarihi >= (ISO UTC)
+            @RequestParam(required = false) String until,    // bildirim tarihi <= (ISO UTC)
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "20") int size,
             HttpSession session) {
         requireAccess(session, "view");
-        Page<LoginIssueReport> p = loginIssueService.list(status, page, size);
+        Page<LoginIssueReport> p = loginIssueService.list(status, q, since, until, page, size);
         List<Map<String, Object>> data = new ArrayList<>();
         for (LoginIssueReport r : p.getContent()) data.add(toListItem(r));
         Map<String, Object> body = new LinkedHashMap<>();
@@ -65,7 +68,7 @@ public class LoginIssueController {
         body.put("total", p.getTotalElements());
         body.put("page", p.getNumber());
         body.put("size", p.getSize());
-        body.put("counts", loginIssueService.counts());
+        body.put("counts", loginIssueService.counts(since, until));   // kartlar liste tarih penceresiyle uyumlu
         return ok(body);
     }
 
@@ -139,6 +142,8 @@ public class LoginIssueController {
         m.put("messageSummary", summarize(r.getMessage()));
         m.put("ipAddress", r.getIpAddress());
         m.put("reportedAt", r.getReportedAt());
+        m.put("resolvedAt", r.getResolvedAt());   // ana tabloda "Çözülme Tarihi" kolonu için
+        m.put("resolvedBy", r.getResolvedBy());
         m.put("status", r.getStatus());
         m.put("imageCount", r.getImageCount());
         return m;

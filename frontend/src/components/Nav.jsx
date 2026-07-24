@@ -183,7 +183,6 @@ export default function Nav({ activeTab, onTabChange, username, teamName, system
             {open && (
               <div className="sb-brand-text">
                 <span className="sb-brand-name">{brand('app_name', 'CertMonitor')}</span>
-                <span className="sb-brand-sub">ENTERPRISE</span>
                 <span className="sb-brand-version">v{__APP_VERSION__}</span>
               </div>
             )}
@@ -194,7 +193,6 @@ export default function Nav({ activeTab, onTabChange, username, teamName, system
             {open && (
               <div className="sb-brand-text">
                 <span className="sb-brand-name">{brand('app_name', 'CertMonitor')}</span>
-                <span className="sb-brand-sub">ENTERPRISE</span>
                 <span className="sb-brand-version">v{__APP_VERSION__}</span>
               </div>
             )}

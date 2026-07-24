@@ -65,8 +65,8 @@ class LoginIssueControllerTest {
 
     @Test
     void list_returnsCountsAndData() throws Exception {
-        when(loginIssueService.list(any(), anyInt(), anyInt())).thenReturn(Page.empty());
-        when(loginIssueService.counts()).thenReturn(Map.of("OPEN", 2L, "IN_PROGRESS", 1L, "RESOLVED", 0L));
+        when(loginIssueService.list(any(), any(), any(), any(), anyInt(), anyInt())).thenReturn(Page.empty());
+        when(loginIssueService.counts(any(), any())).thenReturn(Map.of("OPEN", 2L, "IN_PROGRESS", 1L, "RESOLVED", 0L));
         mvc.perform(get("/api/admin/login-issues").session(authed()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success").value(true))
@@ -136,22 +136,27 @@ class LoginIssueControllerTest {
     @Test
     void list_mapsRealRow_refCodeSummaryImageCount() throws Exception {
         LoginIssueReport r = new LoginIssueReport();
-        r.setId(7L); r.setReportedAt("2026-07-24T09:00:00"); r.setStatus("OPEN");
+        r.setId(7L); r.setReportedAt("2026-07-24T09:00:00"); r.setStatus("RESOLVED");
         r.setUsername("N77"); r.setIpAddress("1.2.3.4"); r.setImageCount(2);
+        r.setResolvedAt("2026-07-24T11:30:00"); r.setResolvedBy("admin");   // liste satırında çözülme tarihi
         // 80+ karakter + iç boşluklar → özet 80'de kırpılır, "\s+" tek boşluğa iner, "…" eklenir.
         r.setMessage("Satır1\n\n  çok    boşluklu   ve uzun bir mesaj " + "x".repeat(90));
-        when(loginIssueService.list(any(), anyInt(), anyInt()))
+        when(loginIssueService.list(any(), any(), any(), any(), anyInt(), anyInt()))
                 .thenReturn(new org.springframework.data.domain.PageImpl<>(List.of(r)));
-        when(loginIssueService.counts()).thenReturn(Map.of("OPEN", 1L, "IN_PROGRESS", 0L, "RESOLVED", 0L));
+        when(loginIssueService.counts(any(), any())).thenReturn(Map.of("OPEN", 1L, "IN_PROGRESS", 0L, "RESOLVED", 0L));
 
-        mvc.perform(get("/api/admin/login-issues").session(authed()))
+        mvc.perform(get("/api/admin/login-issues?q=locked&since=2026-07-01T00:00:00&status=RESOLVED").session(authed()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data[0].refCode").value("LIR-2026-000007"))
                 .andExpect(jsonPath("$.data[0].username").value("N77"))
                 .andExpect(jsonPath("$.data[0].imageCount").value(2))
+                .andExpect(jsonPath("$.data[0].resolvedAt").value("2026-07-24T11:30:00"))
                 .andExpect(jsonPath("$.data[0].messageSummary", org.hamcrest.Matchers.endsWith("…")))
                 .andExpect(jsonPath("$.data[0].messageSummary", org.hamcrest.Matchers.not(org.hamcrest.Matchers.containsString("\n"))))
                 .andExpect(jsonPath("$.total").value(1));
+
+        // q/since/status request param'ları servise iletilir.
+        verify(loginIssueService).list(eq("RESOLVED"), eq("locked"), eq("2026-07-01T00:00:00"), any(), anyInt(), anyInt());
     }
 
     @Test
