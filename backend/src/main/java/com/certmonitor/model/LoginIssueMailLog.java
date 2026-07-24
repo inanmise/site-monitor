@@ -45,6 +45,18 @@ public class LoginIssueMailLog {
     @Column(columnDefinition = "TEXT")
     private String cc;
 
+    /** Gönderen (from) adresi — DB SMTP ayarlarından. */
+    @Column(length = 255)
+    private String emailFrom;
+
+    /** Mail konusu (referans no içerir). */
+    @Column(columnDefinition = "TEXT")
+    private String subject;
+
+    /** Gönderilen mailin HTML gövdesi (alıcının gördüğüyle aynı; ekran görüntüleri cid ile ayrıdır). */
+    @Column(columnDefinition = "TEXT")
+    private String bodyHtml;
+
     /** EmailNotificationService dönüş değeri (SENT / FAILED:… / SKIPPED_*). */
     @Column(length = 100)
     private String status;

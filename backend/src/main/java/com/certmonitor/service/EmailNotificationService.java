@@ -463,36 +463,45 @@ public class EmailNotificationService {
         }
     }
 
+    /** Login-issue mail gönderim sonucu — {@code status} (SENT/FAILED/SKIPPED_*) + geçmişe yazılacak
+     *  {@code from}/{@code subject}/{@code bodyHtml}. Alıcının gördüğü mailin aynısı ({@code bodyHtml}). */
+    public record LoginIssueMailResult(String status, String from, String subject, String bodyHtml) {}
+
+    /** Gönderen (from) adresi — DB SMTP ayarlarından; login-issue geçmişinde "kimden" için. */
+    public String senderAddress() { return currentFrom(); }
+
     /** Login sayfasından "sorun bildir" — Genel Ayarlar'daki Sistem Yöneticisi E-postası'na gider.
      *  Kimliksiz (public) akıştan geldiği için içerik tamamen escape'lenir; alıcı sabittir.
      *  Ekran görüntüleri (≤5) CID inline gömülür ({@link #sendHtml}). */
-    public String sendLoginIssueReport(String to, String refCode, String username, String errorText, String message,
+    public LoginIssueMailResult sendLoginIssueReport(String to, String refCode, String username, String errorText, String message,
                                        List<InlineImage> images,
                                        String clientIp, String userAgent, String reportedAt, boolean force) {
         List<InlineImage> inline = images != null ? images : List.of();
         String html = buildLoginIssueHtml(refCode, username, errorText, message, inline, clientIp, userAgent, reportedAt, false);
-        return sendHtml(new String[]{ to }, null,
-                "[CertMonitor] 🛟 Giriş Sorunu Bildirimi — " + refCode +
-                        (username != null && !username.isBlank() ? " · " + username : ""),
-                html, inline, force);
+        String subject = "[CertMonitor] 🛟 Giriş Sorunu Bildirimi — " + refCode +
+                (username != null && !username.isBlank() ? " · " + username : "");
+        String status = sendHtml(new String[]{ to }, null, subject, html, inline, force);
+        return new LoginIssueMailResult(status, currentFrom(), subject, html);
     }
 
     /** Bildiren kişiye "alındı" onayı — admin'e gidenle BENZER içerik (hata mesajı + görseller) +
      *  referans numarası. Best-effort (asla fırlatmaz). */
-    public String sendLoginIssueAck(String to, String refCode, String username, String errorText, String message,
+    public LoginIssueMailResult sendLoginIssueAck(String to, String refCode, String username, String errorText, String message,
                                     List<InlineImage> images, String reportedAt, boolean force) {
-        if (to == null || to.isBlank()) return "SKIPPED_NO_RECIPIENT";
+        if (to == null || to.isBlank()) return new LoginIssueMailResult("SKIPPED_NO_RECIPIENT", currentFrom(), null, null);
         List<InlineImage> inline = images != null ? images : List.of();
         String html = buildLoginIssueHtml(refCode, username, errorText, message, inline, null, null, reportedAt, true);
-        return sendHtml(new String[]{ to }, null, "[CertMonitor] Sorun bildiriminiz alındı — " + refCode, html, inline, force);
+        String subject = "[CertMonitor] Sorun bildiriminiz alındı — " + refCode;
+        String status = sendHtml(new String[]{ to }, null, subject, html, inline, force);
+        return new LoginIssueMailResult(status, currentFrom(), subject, html);
     }
 
     /** "Çözüldü" bildirimi — hem bildiren kişiye (To) hem sistem yöneticisine (CC) gider. Best-effort. */
-    public String sendLoginIssueResolved(String reporterEmail, String adminEmail, String refCode,
+    public LoginIssueMailResult sendLoginIssueResolved(String reporterEmail, String adminEmail, String refCode,
                                          String resolutionNote, String resolvedAt, boolean force) {
         String to = (reporterEmail != null && !reporterEmail.isBlank()) ? reporterEmail : null;
         String cc = (adminEmail != null && !adminEmail.isBlank()) ? adminEmail : null;
-        if (to == null && cc == null) return "SKIPPED_NO_RECIPIENT";
+        if (to == null && cc == null) return new LoginIssueMailResult("SKIPPED_NO_RECIPIENT", currentFrom(), null, null);
         // Alıcı yalnız admin ise onu To yap (boş To olmasın).
         String[] toArr = to != null ? new String[]{ to } : new String[]{ cc };
         String[] ccArr = (to != null && cc != null) ? new String[]{ cc } : null;
@@ -511,7 +520,9 @@ public class EmailNotificationService {
                 + noteBlock
                 + "<p style='font-size:13px;color:#64748b;margin:16px 0 0'>Sorun devam ediyorsa lütfen tekrar bildiriniz. Bu e-posta otomatik gönderilmiştir.</p>"
                 + simpleFrameClose();
-        return sendHtml(toArr, ccArr, "[CertMonitor] ✅ Giriş sorunu çözümlendi — " + refCode, html, List.of(), force);
+        String subject = "[CertMonitor] ✅ Giriş sorunu çözümlendi — " + refCode;
+        String status = sendHtml(toArr, ccArr, subject, html, List.of(), force);
+        return new LoginIssueMailResult(status, currentFrom(), subject, html);
     }
 
     // NOT: login-issue mailleri artık LoginIssueMailService üzerinden ASYNC gönderilir + login_issue_mail_logs'a

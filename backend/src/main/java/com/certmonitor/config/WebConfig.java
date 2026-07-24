@@ -154,6 +154,9 @@ public class WebConfig implements WebMvcConfigurer {
                         "default-src 'self'; script-src 'self' 'unsafe-inline'; " +
                         "style-src 'self' 'unsafe-inline'; img-src 'self' data:; " +
                         "connect-src 'self'; font-src 'self'; frame-ancestors 'none'; " +
+                        // frame-src 'self': Sorun Bildirimleri mail geçmişindeki sandbox'lı srcdoc iframe
+                        // (gönderilen mailin gövdesi) güvenilir şekilde render olsun (default-src fallback'ine bırakma).
+                        "frame-src 'self'; " +
                         "base-uri 'self'; form-action 'self'");
                 // ── Cache politikası (SPA) ──────────────────────────────────────
                 // API yanıtları hiç cache'lenmez.

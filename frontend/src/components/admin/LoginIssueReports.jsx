@@ -10,7 +10,14 @@ const STATUS_BADGE = { OPEN: 'badge badge-warn', IN_PROGRESS: 'badge badge-warn'
 
 function fmtDate(iso) {
   if (!iso) return '—'
-  return iso.replace('T', ' ').slice(0, 16)
+  // Saklanan zamanlar ISO UTC (Z'siz) — Europe/Istanbul yerel saatine çevir (YYYY-MM-DD HH:mm).
+  const hasTz = /[zZ]$|[+-]\d\d:?\d\d$/.test(iso)
+  const d = new Date(hasTz ? iso : iso + 'Z')
+  if (isNaN(d.getTime())) return iso.replace('T', ' ').slice(0, 16)
+  return d.toLocaleString('sv-SE', {
+    timeZone: 'Europe/Istanbul',
+    year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',
+  })
 }
 
 /**
@@ -31,6 +38,7 @@ export default function LoginIssueReports() {
   const [note, setNote] = useState('')
   const [busy, setBusy] = useState(false)
   const [zoom, setZoom] = useState(null)       // büyütülen ekran görüntüsü (data-URL) — uygulama-içi lightbox
+  const [openMail, setOpenMail] = useState(null) // açık mail satırı (gönderen/konu/gövde) — index
 
   const load = useCallback(async () => {
     if (!allowView) { setRows([]); return }   // izin yoksa 403 fetch + toast tetikleme
@@ -43,6 +51,7 @@ export default function LoginIssueReports() {
   useEffect(() => { load() }, [load])
 
   async function openDetail(id) {
+    setOpenMail(null)
     const res = await api.admin.getLoginIssue(id)
     if (res?.success) { setDetail(res.data); setNote(res.data.resolutionNote || '') }  // mevcut notu önyükle (kaybolmasın)
     else toast.error(res?.error || t('settings.loadError'))
@@ -195,7 +204,12 @@ export default function LoginIssueReports() {
             {/* Gönderilen e-postalar — kime/ne zaman/hangi tür + teslim durumu (mail geçmişi). */}
             <div style={{ marginTop: 14 }}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
-                <div style={{ fontWeight: 700, fontSize: '.9em' }}>{t('loginIssues.mailHistory')}</div>
+                <div style={{ fontWeight: 700, fontSize: '.9em' }}>
+                  {t('loginIssues.mailHistory')}
+                  {detail.mailHistory && detail.mailHistory.length > 0 &&
+                    <span style={{ fontWeight: 400, fontSize: 11, color: 'var(--text-light,#64748b)', marginLeft: 8 }}>
+                      {t('loginIssues.mailRowHint')}</span>}
+                </div>
                 <button className="btn btn-secondary btn-sm-p" onClick={() => openDetail(detail.id)}>{t('loginIssues.mailRefresh')}</button>
               </div>
               {(!detail.mailHistory || detail.mailHistory.length === 0) ? (
@@ -214,9 +228,10 @@ export default function LoginIssueReports() {
                     <tbody>
                       {detail.mailHistory.map((ml, i) => {
                         const info = mailStatusInfo(ml.status, t)
-                        return (
-                          <tr key={i}>
-                            <td>{mailTypeLabel(ml.mailType, t)}</td>
+                        const open = openMail === i
+                        const rows = [
+                          <tr key={i} onClick={() => setOpenMail(open ? null : i)} style={{ cursor: 'pointer' }}>
+                            <td>{open ? '▾ ' : '▸ '}{mailTypeLabel(ml.mailType, t)}</td>
                             <td style={{ wordBreak: 'break-all' }}>
                               {ml.to || '—'}
                               {ml.cc ? <div style={{ fontSize: 11, color: 'var(--text-light,#64748b)' }}>CC: {ml.cc}</div> : null}
@@ -229,8 +244,26 @@ export default function LoginIssueReports() {
                               {ml.error ? <div style={{ fontSize: 11, color: '#b91c1c', marginTop: 2, wordBreak: 'break-word' }}>{ml.error}</div> : null}
                             </td>
                             <td style={{ whiteSpace: 'nowrap' }}>{fmtDate(ml.sentAt)}</td>
-                          </tr>
-                        )
+                          </tr>,
+                        ]
+                        if (open) {
+                          rows.push(
+                            <tr key={i + '-content'}>
+                              <td colSpan={4} style={{ background: 'var(--bg,#f8fafc)' }}>
+                                <div style={{ fontSize: 12, marginBottom: 4 }}><b>{t('loginIssues.mailFrom')}:</b> {ml.from || '—'}</div>
+                                <div style={{ fontSize: 12, marginBottom: 6 }}><b>{t('loginIssues.mailSubject')}:</b> {ml.subject || '—'}</div>
+                                {ml.body ? (
+                                  <iframe title={`mail-${i}`} sandbox="" srcDoc={ml.body}
+                                    style={{ width: '100%', height: 340, border: '1px solid var(--border,#e5e7eb)',
+                                      borderRadius: 6, background: '#fff' }} />
+                                ) : (
+                                  <div className="hint">{t('loginIssues.mailNoContent')}</div>
+                                )}
+                              </td>
+                            </tr>
+                          )
+                        }
+                        return rows
                       })}
                     </tbody>
                   </table>
