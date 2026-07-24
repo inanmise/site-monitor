@@ -113,6 +113,9 @@ class AdminControllerTest {
     com.certmonitor.service.DomainExpiryDiagnosticsService domainExpiryDiagnosticsService;
 
     @MockitoBean
+    com.certmonitor.service.DomainExpiryRefreshService domainExpiryRefreshService;
+
+    @MockitoBean
     com.certmonitor.service.ProxyCaExportService proxyCaExportService;
 
     @MockitoBean

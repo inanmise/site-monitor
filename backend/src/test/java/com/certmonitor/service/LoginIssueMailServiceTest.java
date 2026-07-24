@@ -81,13 +81,16 @@ class LoginIssueMailServiceTest {
     @DisplayName("dispatchResolved: config force=false → force=false geçilir; RESOLVED log (bildiren To, admin CC)")
     void dispatchResolved_forceFalseFromConfig_recipientArrangement() {
         when(appSettings.getBoolean(eq("cert.monitor.login-issues.force-email"), anyBoolean())).thenReturn(false);
-        when(emailService.sendLoginIssueResolved(anyString(), anyString(), anyString(), anyString(), anyString(), anyBoolean()))
+        when(emailService.sendLoginIssueResolved(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), anyBoolean()))
                 .thenReturn(new EmailNotificationService.LoginIssueMailResult("SKIPPED_DISABLED", "noreply@cm", "Konu C", "<html>c</html>"));
 
-        service.dispatchResolved(9L, "LIR-2026-000009", "reporter@x.com", "admin@x.com", "not", "2026-07-24T10:00:00");
+        service.dispatchResolved(9L, "LIR-2026-000009", "reporter@x.com", "admin@x.com",
+                "N9", "err", "msg", "2026-07-24T08:00:00", "not", "2026-07-24T10:00:00", java.util.List.of());
 
-        verify(emailService).sendLoginIssueResolved(eq("reporter@x.com"), eq("admin@x.com"),
-                eq("LIR-2026-000009"), eq("not"), eq("2026-07-24T10:00:00"), eq(false));
+        // Zenginleştirilmiş içerik geçilir (username/errorText/message/reportedAt/images) + force=false.
+        verify(emailService).sendLoginIssueResolved(eq("reporter@x.com"), eq("admin@x.com"), eq("LIR-2026-000009"),
+                eq("N9"), eq("err"), eq("msg"), eq("2026-07-24T08:00:00"), eq("not"), eq("2026-07-24T10:00:00"),
+                any(), eq(false));
 
         LoginIssueMailLog m = capturedLog();
         assertThat(m.getMailType()).isEqualTo(LoginIssueMailService.RESOLVED);
@@ -100,10 +103,11 @@ class LoginIssueMailServiceTest {
     @Test
     @DisplayName("dispatchResolved: bildiren yoksa admin To olur (CC boş)")
     void dispatchResolved_noReporter_adminBecomesTo() {
-        when(emailService.sendLoginIssueResolved(any(), anyString(), anyString(), any(), anyString(), anyBoolean()))
+        when(emailService.sendLoginIssueResolved(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), anyBoolean()))
                 .thenReturn(new EmailNotificationService.LoginIssueMailResult("SENT", "noreply@cm", "Konu C", "<html>c</html>"));
 
-        service.dispatchResolved(10L, "LIR-2026-000010", null, "admin@x.com", null, "2026-07-24T10:00:00");
+        service.dispatchResolved(10L, "LIR-2026-000010", null, "admin@x.com",
+                "N10", null, "msg", "2026-07-24T08:00:00", null, "2026-07-24T10:00:00", java.util.List.of());
 
         LoginIssueMailLog m = capturedLog();
         assertThat(m.getRecipientTo()).isEqualTo("admin@x.com");

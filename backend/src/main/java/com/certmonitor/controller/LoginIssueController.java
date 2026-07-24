@@ -6,6 +6,7 @@ import com.certmonitor.model.LoginIssueReportImage;
 import com.certmonitor.repository.LoginIssueMailLogRepository;
 import com.certmonitor.service.AppSettingsService;
 import com.certmonitor.service.AuditService;
+import com.certmonitor.service.EmailNotificationService.InlineImage;
 import com.certmonitor.service.LoginIssueMailService;
 import com.certmonitor.service.LoginIssueService;
 import com.certmonitor.service.PermissionService;
@@ -22,6 +23,7 @@ import java.time.Instant;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -101,9 +103,21 @@ public class LoginIssueController {
         // (karşılıklı bilgilendirme). Best-effort; hata akışı kırmaz.
         if (LoginIssueService.RESOLVED.equals(updated.getStatus())) {
             String adminEmail = appSettings.getString("cert.monitor.system-admin.email", "");
-            // ASYNC gönderim + login_issue_mail_logs kaydı (mail geçmişi). Bildiren To, admin CC.
+            // Bildirimin ekran görüntülerini çözümlendi mailine yeniden ekle (CID inline; bozuk görsel atlanır).
+            List<InlineImage> images = new ArrayList<>();
+            int idx = 0;
+            for (LoginIssueReportImage img : loginIssueService.images(updated.getId())) {
+                try {
+                    byte[] bytes = Base64.getMimeDecoder().decode(img.getDataBase64());
+                    images.add(new InlineImage("shot" + idx++, bytes, img.getContentType()));
+                } catch (Exception ignore) { /* bozuk görsel → atla */ }
+            }
+            // ASYNC gönderim + login_issue_mail_logs kaydı (mail geçmişi). Zenginleştirilmiş içerik:
+            // bildirim zamanı + orijinal sorun (hata + açıklama) + ekran görüntüleri + çözüm notu. Bildiren To, admin CC.
             loginIssueMailService.dispatchResolved(updated.getId(), LoginIssueService.refCode(updated),
-                    updated.getReporterEmail(), adminEmail, updated.getResolutionNote(), updated.getResolvedAt());
+                    updated.getReporterEmail(), adminEmail, updated.getUsername(), updated.getErrorText(),
+                    updated.getMessage(), updated.getReportedAt(), updated.getResolutionNote(),
+                    updated.getResolvedAt(), images);
         }
         return ok(Map.of("data", toDetail(updated), "message", "Durum güncellendi"));
     }

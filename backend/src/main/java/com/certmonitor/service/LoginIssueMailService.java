@@ -69,13 +69,16 @@ public class LoginIssueMailService {
         saveLog(reportId, refCode, REPORTER_ACK, reporterTo, null, res, force);
     }
 
-    /** "Çözüldü" bildirimi — bildiren (To) + sistem yöneticisi (CC). */
+    /** "Çözüldü" bildirimi — bildiren (To) + sistem yöneticisi (CC). Zenginleştirilmiş içerik:
+     *  bildirim zamanı + orijinal sorun (hata + açıklama) + ekran görüntüleri + çözüm notu. */
     @Async("loginIssueMailExecutor")
     public void dispatchResolved(Long reportId, String refCode, String reporterEmail, String adminEmail,
-                                 String resolutionNote, String resolvedAt) {
+                                 String username, String errorText, String message, String reportedAt,
+                                 String resolutionNote, String resolvedAt, List<InlineImage> images) {
         boolean force = forceEmail();
         LoginIssueMailResult res = send(() -> emailService.sendLoginIssueResolved(
-                reporterEmail, adminEmail, refCode, resolutionNote, resolvedAt, force));
+                reporterEmail, adminEmail, refCode, username, errorText, message, reportedAt,
+                resolutionNote, resolvedAt, images, force));
         // Alıcı düzenini gönderim mantığıyla aynen logla (bildiren yoksa admin To olur).
         boolean hasReporter = reporterEmail != null && !reporterEmail.isBlank();
         boolean hasAdmin = adminEmail != null && !adminEmail.isBlank();

@@ -7,6 +7,7 @@ import com.certmonitor.service.ClientIpResolver;
 import com.certmonitor.service.ConnectionDiagnosticsService;
 import com.certmonitor.service.DiagnosticHistoryService;
 import com.certmonitor.service.DomainExpiryDiagnosticsService;
+import com.certmonitor.service.DomainExpiryRefreshService;
 import com.certmonitor.service.EmailNotificationService;
 import com.certmonitor.service.EscalationService;
 import com.certmonitor.service.HstsDiagnosticsService;
@@ -77,6 +78,7 @@ public class AdminController {
     private final HstsDiagnosticsService hstsDiagnosticsService;
     private final DiagnosticHistoryService diagnosticHistoryService;
     private final DomainExpiryDiagnosticsService domainExpiryDiagnosticsService;
+    private final DomainExpiryRefreshService domainExpiryRefreshService;
     private final ProxyCaExportService proxyCaExportService;
     private final PublicSuffixService publicSuffixService;
     private final ClientIpResolver clientIpResolver;
@@ -500,29 +502,10 @@ public class AdminController {
         return ok(Map.of("data", data));
     }
 
-    /** Süre bitişini registrable domain'i eşleşen aktif envanter satırlarına yazar; güncellenen satır sayısını döner. */
+    /** Süre bitişini registrable domain'i eşleşen aktif envanter satırlarına yazar; güncellenen satır sayısını döner.
+     *  Tek kaynak {@link DomainExpiryRefreshService#persistToInventory} (zamanlı tazeleme de aynı yolu kullanır). */
     private int persistDomainExpiryToInventory(String registrable, String expiry, String registrar) {
-        if (registrable == null || registrable.isBlank() || expiry == null) return 0;
-        try {
-            String now = now();
-            int updated = 0;
-            for (CertificateInventory ci : inventoryRepo.findByActiveTrueOrderByDomainAsc()) {
-                if (ci.getDeletedAt() != null) continue;
-                String rowReg = publicSuffixService.registrableDomain(ci.getDomain());
-                if (rowReg != null && rowReg.equalsIgnoreCase(registrable)) {
-                    ci.setDomainExpiry(expiry);
-                    ci.setDomainRegistrar(registrar);
-                    ci.setDomainExpiryCheckedAt(now);
-                    inventoryRepo.save(ci);
-                    updated++;
-                }
-            }
-            if (updated > 0) log.info("Domain-expiry envantere yazıldı: {} → {} satır (expiry={})", registrable, updated, expiry);
-            return updated;
-        } catch (Exception e) {
-            log.warn("Domain-expiry envantere yazılamadı ({}): {}", registrable, e.getMessage());
-            return 0;
-        }
+        return domainExpiryRefreshService.persistToInventory(registrable, expiry, registrar);
     }
 
     /** Sliding-window hız sınırı; aşılırsa 429 TOO_MANY_REQUESTS fırlatır. */

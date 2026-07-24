@@ -101,6 +101,7 @@ class SchedulerServiceTest {
     @Mock IncidentService incidentService;
     @Mock AppSettingsService appSettings;
     @Mock ThreadPoolTaskExecutor certCheckExecutor;
+    @Mock DomainExpiryRefreshService domainExpiryRefreshService;
 
     SchedulerService scheduler;
 
@@ -120,6 +121,7 @@ class SchedulerServiceTest {
                 networkOutageRepo,
                 weeklyReportReminderService, weeklyAvailabilityReportService, incidentService, appSettings);
         ReflectionTestUtils.setField(scheduler, "certCheckExecutor", certCheckExecutor);
+        ReflectionTestUtils.setField(scheduler, "domainExpiryRefreshService", domainExpiryRefreshService);
         // startNetworkCheck: mock executor task'ı düşürürse join asılı kalır → inline koştur (deterministik).
         lenient().doAnswer(inv -> { inv.getArgument(0, Runnable.class).run(); return null; })
                 .when(certCheckExecutor).execute(any(Runnable.class));
@@ -537,6 +539,14 @@ class SchedulerServiceTest {
         scheduler.forceReleaseLock();
 
         verify(jdbcTemplate).update(contains("DELETE FROM scheduler_lock"), any(Object[].class));
+    }
+
+    @Test
+    @DisplayName("runDomainExpiryRefresh: kilit alınır (degrade-true) → DomainExpiryRefreshService.refreshAll çağrılır")
+    void runDomainExpiryRefresh_callsRefresh() {
+        when(domainExpiryRefreshService.refreshAll()).thenReturn(3);
+        scheduler.runDomainExpiryRefresh();
+        verify(domainExpiryRefreshService).refreshAll();
     }
 
     @Test
