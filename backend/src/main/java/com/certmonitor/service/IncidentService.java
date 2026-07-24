@@ -96,11 +96,12 @@ public class IncidentService {
         List<Long> scopeList = (scope != null && !scope.isEmpty()) ? scope : List.of(-1L); // boş kapsam → hiçbir şey eşleşmez
         String s = blankToNull(since), u = blankToNull(until);
 
-        // Günlük trend — olay zamanını UTC'den Europe/Istanbul'a çevirip YEREL güne göre grupla
+        // Günlük trend — olay zamanını UTC'den Europe/Istanbul'a çevirip YEREL güne göre grupla + ÖNEM kırılımı
         // (tabloda saatler IST gösterildiğinden; ham UTC günü gece-yarısı kayıtlarını bir önceki güne kaydırırdı).
         java.time.ZoneId ist = java.time.ZoneId.of("Europe/Istanbul");
-        TreeMap<String, Long> dayCounts = new TreeMap<>();
-        for (String oa : repo.occurredAtInRange(s, u, scoped, scopeList)) {
+        TreeMap<String, long[]> dayBuckets = new TreeMap<>();   // gün → [critical, high, medium, low, total]
+        for (Object[] row : repo.occurredAtSeverityInRange(s, u, scoped, scopeList)) {
+            String oa = (String) row[0];
             if (oa == null || oa.length() < 10) continue;
             String day;
             try {
@@ -109,10 +110,19 @@ public class IncidentService {
             } catch (Exception ex) {
                 day = oa.substring(0, 10);   // ayrıştırılamazsa ham UTC günü
             }
-            dayCounts.merge(day, 1L, Long::sum);
+            long[] b = dayBuckets.computeIfAbsent(day, k -> new long[5]);
+            int idx = severityIndex((String) row[1]);
+            if (idx >= 0) b[idx]++;
+            b[4]++;
         }
         List<Map<String, Object>> daily = new ArrayList<>();
-        dayCounts.forEach((d, c) -> daily.add(Map.of("day", d, "count", c)));
+        dayBuckets.forEach((d, b) -> {
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("day", d);
+            m.put("count", b[4]);
+            m.put("critical", b[0]); m.put("high", b[1]); m.put("medium", b[2]); m.put("low", b[3]);
+            daily.add(m);
+        });
 
         Map<String, Long> bySeverity = toCountMap(repo.countBySeverity(s, u, scoped, scopeList));
         Map<String, Long> byStatus   = toCountMap(repo.countByStatus(s, u, scoped, scopeList));
@@ -372,6 +382,18 @@ public class IncidentService {
     }
 
     private static String blankToNull(String s) { return (s == null || s.isBlank()) ? null : s; }
+
+    /** Önem → günlük trend kova indeksi (CRITICAL=0, HIGH=1, MEDIUM=2, LOW=3; bilinmeyen=-1). */
+    private static int severityIndex(String sev) {
+        if (sev == null) return -1;
+        switch (sev) {
+            case "CRITICAL": return 0;
+            case "HIGH":     return 1;
+            case "MEDIUM":   return 2;
+            case "LOW":      return 3;
+            default:         return -1;
+        }
+    }
 
     private static Map<String, Long> toCountMap(List<Object[]> rows) {
         Map<String, Long> m = new LinkedHashMap<>();

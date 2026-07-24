@@ -8,11 +8,41 @@ import { RefreshCcw, Plus, ChevronLeft, ChevronRight, ChevronDown, Pencil, Trash
 import MarkdownEditor from './ui/MarkdownEditor.jsx'
 import DateTimeField from './ui/DateTimeField.jsx'
 import SearchableSelect from './ui/SearchableSelect.jsx'
+import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RTooltip, Legend, Cell } from 'recharts'
 
 const SEVERITIES = ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW']
 const STATUSES   = ['OPEN', 'INVESTIGATING', 'MITIGATED', 'RESOLVED']
 const CATEGORIES = ['DATABASE', 'NETWORK', 'CERTIFICATE', 'APPLICATION', 'INFRASTRUCTURE', 'OTHER']
 const SEV_COLOR  = { CRITICAL: '#dc2626', HIGH: '#ea580c', MEDIUM: '#d97706', LOW: '#16a34a' }
+// Günlük trend yığılmış çubukları — alttan üste LOW→CRITICAL (kritik en üstte, en belirgin).
+const SEV_BARS = [
+  { key: 'low', color: SEV_COLOR.LOW, label: 'inc.sevLOW' },
+  { key: 'medium', color: SEV_COLOR.MEDIUM, label: 'inc.sevMEDIUM' },
+  { key: 'high', color: SEV_COLOR.HIGH, label: 'inc.sevHIGH' },
+  { key: 'critical', color: SEV_COLOR.CRITICAL, label: 'inc.sevCRITICAL' },
+]
+
+// Günlük trend tooltip'i — temalı; gün + sıfır-olmayan önem kırılımı + toplam.
+function TrendTooltip({ active, payload, label, t }) {
+  if (!active || !payload || !payload.length) return null
+  const p = payload[0]?.payload || {}
+  const day = String(p.day || label || '')
+  const dstr = day.length >= 10 ? `${day.slice(8, 10)}.${day.slice(5, 7)}.${day.slice(0, 4)}` : day
+  const rows = [['CRITICAL', p.critical], ['HIGH', p.high], ['MEDIUM', p.medium], ['LOW', p.low]].filter(([, v]) => v > 0)
+  return (
+    <div style={{ background: 'var(--bg-card,#fff)', border: '1px solid var(--border)', borderRadius: 8,
+      padding: '7px 10px', fontSize: '.8em', boxShadow: '0 4px 16px rgba(0,0,0,.14)' }}>
+      <div style={{ fontWeight: 700, marginBottom: rows.length ? 3 : 0 }}>{dstr}</div>
+      {rows.map(([k, v]) => (
+        <div key={k} style={{ display: 'flex', alignItems: 'center', gap: 6, lineHeight: 1.5 }}>
+          <span style={{ width: 8, height: 8, borderRadius: 2, background: SEV_COLOR[k], flexShrink: 0 }} />
+          <span>{t('inc.sev' + k)}: <b>{v}</b></span>
+        </div>
+      ))}
+      <div style={{ marginTop: 3, color: 'var(--text-light)' }}>{t('inc.trendTotal')}: <b>{p.count || 0}</b></div>
+    </div>
+  )
+}
 
 // Filtre tarih sınırını YEREL gün → UTC ISO'ya çevirir. Kayıtlar UTC saklanır, formatDate
 // tarayıcı yerel saatine göre gösterir; bu yüzden "17 Haz" seçimi yerel 17 Haz 00:00–23:59:59'a,
@@ -345,13 +375,21 @@ export default function IncidentHistoryPage() {
   // Çok geniş/garip aralıkta (>120 gün) doldurma yapma; yalnız veri günlerini sırala (devasa grafik olmasın).
   // NOT: useMemo bir HOOK → koşullu erken dönüşün (allowView) ÜSTÜNDE, tüm render'larda koşulsuz çağrılmalı.
   const dailyChart = useMemo(() => {
-    const byDay = new Map((trendDaily || []).map(d => [String(d.day).slice(0, 10), Number(d.count) || 0]))
+    const byDay = new Map((trendDaily || []).map(d => [String(d.day).slice(0, 10), d]))
     const out = []
     const today = new Date()
     for (let i = trendDays - 1; i >= 0; i--) {
       const dt = new Date(today.getTime() - i * 86400000)
       const key = `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`
-      out.push({ day: key, count: byDay.get(key) || 0 })
+      const d = byDay.get(key)
+      out.push({
+        day: key,
+        count: Number(d?.count) || 0,
+        critical: Number(d?.critical) || 0,
+        high: Number(d?.high) || 0,
+        medium: Number(d?.medium) || 0,
+        low: Number(d?.low) || 0,
+      })
     }
     return out
   }, [trendDaily, trendDays])
@@ -360,6 +398,13 @@ export default function IncidentHistoryPage() {
 
   const totalPages = Math.max(1, Math.ceil(total / size))
   const setF = (k, v) => setFilters(f => ({ ...f, [k]: v }))
+  // Trend çubuğuna tıkla → o günü listede filtrele (since=until=gün); aynı güne tekrar tıkla → temizle.
+  const toggleDay = (day) => {
+    if (!day) return
+    setFilters(f => (f.since === day && f.until === day)
+      ? { ...f, since: '', until: '' }
+      : { ...f, since: day, until: day })
+  }
 
   // Özet kartları filtre görevi görür — tarih penceresini (since/until) korur, diğer
   // boyut filtrelerini sıfırlar, kartın boyutunu uygular. Aktif kart tekrar tıklanırsa kalkar.
@@ -454,7 +499,6 @@ export default function IncidentHistoryPage() {
   const sum = trends?.summary || {}
   const bySev = trends?.by_severity || {}
   const byStatus = trends?.by_status || {}
-  const maxDay = dailyChart.reduce((m, d) => Math.max(m, d.count), 0) || 1
 
   return (
     <div className="admin-section">
@@ -538,26 +582,33 @@ export default function IncidentHistoryPage() {
               ))}
             </span>
           </div>
-          <div style={{ display: 'flex', alignItems: 'flex-end', gap: 3, height: 92, padding: '4px 0',
-                        justifyContent: dailyChart.length < 12 ? 'flex-start' : 'stretch', overflowX: 'auto' }}>
-            {dailyChart.map((d, i) => {
-              const step = Math.max(1, Math.ceil(dailyChart.length / 14))
-              const showLbl = dailyChart.length <= 14 || i % step === 0
-              const dm = d.day.slice(8, 10) + '.' + d.day.slice(5, 7)   // DD.MM
-              const h = d.count > 0 ? Math.max(8, (d.count / maxDay) * 60) : 2
-              return (
-                <div key={d.day} title={`${d.day}: ${d.count}`}
-                     style={{ flex: '1 1 0', maxWidth: 40, minWidth: 6, display: 'flex',
-                              flexDirection: 'column', alignItems: 'center', gap: 2 }}>
-                  <span style={{ fontSize: '.62rem', fontWeight: 700, lineHeight: 1,
-                                 color: d.count > 0 ? '#11557a' : 'transparent' }}>{d.count || ''}</span>
-                  <div style={{ width: '100%', background: d.count > 0 ? '#11557a' : '#e2e8f0',
-                                borderRadius: '3px 3px 0 0', height: `${h}px` }} />
-                  <span style={{ fontSize: '.58rem', color: 'var(--text-muted)', lineHeight: 1.1,
-                                 whiteSpace: 'nowrap' }}>{showLbl ? dm : ''}</span>
-                </div>
-              )
-            })}
+          <div style={{ marginTop: 4 }}>
+            <ResponsiveContainer width="100%" height={170}>
+              <BarChart data={dailyChart} margin={{ top: 12, right: 8, bottom: 0, left: -18 }} barCategoryGap="16%">
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
+                <XAxis dataKey="day" tickFormatter={(d) => d.slice(8, 10) + '.' + d.slice(5, 7)}
+                  tick={{ fill: 'var(--text-light)', fontSize: 10 }} tickLine={false}
+                  axisLine={{ stroke: 'var(--border)' }} minTickGap={10}
+                  interval={Math.max(0, Math.floor(dailyChart.length / 10))} />
+                <YAxis allowDecimals={false} tick={{ fill: 'var(--text-light)', fontSize: 10 }}
+                  width={26} tickLine={false} axisLine={false} />
+                <RTooltip content={<TrendTooltip t={t} />} cursor={{ fill: 'var(--primary)', fillOpacity: 0.08 }} />
+                <Legend wrapperStyle={{ fontSize: '.78em' }} />
+                {SEV_BARS.map((sv, si) => (
+                  <Bar key={sv.key} dataKey={sv.key} stackId="s" name={t(sv.label)} fill={sv.color}
+                    isAnimationActive={false} cursor="pointer"
+                    radius={si === SEV_BARS.length - 1 ? [3, 3, 0, 0] : 0}
+                    onClick={(bar) => toggleDay(bar?.day ?? bar?.payload?.day)}>
+                    {dailyChart.map((d) => {
+                      const isSel = filters.since === d.day && filters.until === d.day
+                      const anySel = filters.since && filters.since === filters.until
+                      return <Cell key={d.day} fillOpacity={anySel && !isSel ? 0.28 : 1} />
+                    })}
+                  </Bar>
+                ))}
+              </BarChart>
+            </ResponsiveContainer>
+            <div style={{ fontSize: '.72em', color: 'var(--text-muted)', marginTop: 2 }}>{t('inc.trendClickHint')}</div>
           </div>
         </div>
       )}

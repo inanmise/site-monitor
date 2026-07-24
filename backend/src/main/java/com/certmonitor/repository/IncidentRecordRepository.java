@@ -59,6 +59,17 @@ public interface IncidentRecordRepository extends JpaRepository<IncidentRecord, 
     List<String> occurredAtInRange(@Param("since") String since, @Param("until") String until,
                                    @Param("scoped") boolean scoped, @Param("scope") List<Long> scope);
 
+    /** Aralıktaki olayların (occurredAt, severity) çiftleri — günlük trendde ÖNEM kırılımı için; yerel-gün
+     *  gruplaması serviste yapılır (occurredAtInRange ile aynı; yalnız severity de seçilir). */
+    @Query("""
+            SELECT i.occurredAt, i.severity FROM IncidentRecord i
+             WHERE (:since IS NULL OR i.occurredAt >= :since)
+               AND (:until IS NULL OR i.occurredAt <= :until)
+               AND (:scoped = FALSE OR i.teamId IN :scope OR i.createdByTeamId IN :scope)
+            """)
+    List<Object[]> occurredAtSeverityInRange(@Param("since") String since, @Param("until") String until,
+                                             @Param("scoped") boolean scoped, @Param("scope") List<Long> scope);
+
     @Query("""
             SELECT i.severity, COUNT(i) FROM IncidentRecord i
              WHERE (:since IS NULL OR i.occurredAt >= :since)
