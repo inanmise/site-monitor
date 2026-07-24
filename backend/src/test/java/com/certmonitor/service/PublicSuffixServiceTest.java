@@ -30,6 +30,9 @@ class PublicSuffixServiceTest {
     void trSecondLevel() {
         assertThat(psl.registrableDomain("www.akbank.com.tr")).isEqualTo("akbank.com.tr");
         assertThat(psl.registrableDomain("portal.dev.firma.org.tr")).isEqualTo("firma.org.tr");
+        // Kullanıcı tam URL yapıştırırsa da domain kısmı çıkarılmalı (şema + www + trailing slash).
+        assertThat(psl.registrableDomain("https://www.wingscard.com.tr/")).isEqualTo("wingscard.com.tr");
+        assertThat(psl.tldOf("https://www.wingscard.com.tr/")).isEqualTo("tr");
     }
 
     @Test

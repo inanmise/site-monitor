@@ -10,6 +10,14 @@ const STEP_LABEL = {
   WHOIS: 'dexp.stepWhois',
 }
 
+// .tr WHOIS kaynak anahtarı → gösterim etiketi (cevabın nereden geldiği)
+const PROVIDER_LABEL = {
+  isimtescil: 'isimtescil.net',
+  trabis: 'TRABIS · trabis.gov.tr',
+  trabis43: 'TRABIS · whois :43',
+}
+const providerLabel = (p) => (p ? (PROVIDER_LABEL[p] || p) : null)
+
 // Hata sınıfı → Türkçe ipucu i18n anahtarı
 const ERR_HINT = {
   PKIX_TRUST: 'dexp.hintPkix',
@@ -51,7 +59,13 @@ export default function DomainExpiryTrace({ data }) {
         <dl className="dexp-summary-grid">
           <dt>{t('dexp.expiry')}</dt><dd>{data.expiry_date || '—'}</dd>
           <dt>{t('dexp.registrar')}</dt><dd>{data.registrar || '—'}</dd>
-          <dt>{t('dexp.source')}</dt><dd><span className={sourceBadgeClass(data.source)}>{data.source || '—'}</span></dd>
+          <dt>{t('dexp.source')}</dt>
+          <dd>
+            <span className={sourceBadgeClass(data.source)}>{data.source || '—'}</span>
+            {providerLabel(data.whois_provider) && (
+              <span style={{ marginLeft: 6, color: 'var(--text-light)', fontSize: '.85em' }}>· {providerLabel(data.whois_provider)}</span>
+            )}
+          </dd>
           <dt>{t('dexp.registrable')}</dt><dd>{data.registrable || '—'}{data.tld ? ` · .${data.tld}` : ''}</dd>
           {data.persisted != null && data.persisted > 0 && (
             <><dt>{t('dexp.persisted')}</dt><dd>{t('dexp.persistedN').replace('{0}', data.persisted)}</dd></>
@@ -77,6 +91,7 @@ export default function DomainExpiryTrace({ data }) {
               <div className="dexp-step-body">
                 <div className="dexp-step-head">
                   <strong>{label}</strong>
+                  {s.provider && <span className="badge badge-ok dexp-step-code">{providerLabel(s.provider)}</span>}
                   {s.error_class && <span className="badge badge-err dexp-step-code">{s.error_class}</span>}
                   {s.http_status != null && <span className="dexp-step-http">HTTP {s.http_status}</span>}
                   {s.elapsed_ms != null && <span className="dexp-step-ms">{s.elapsed_ms} ms</span>}

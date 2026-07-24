@@ -51,6 +51,7 @@ public final class AppSettingsCatalog {
         new Setting("cert.monitor.domain.tr-web-whois-providers", "monitoring", Type.CSV),
         new Setting("cert.monitor.domain.isimtescil-whois-url",   "monitoring", Type.STRING),
         new Setting("cert.monitor.domain.trabis-whois-url",       "monitoring", Type.STRING),
+        new Setting("cert.monitor.domain.trabis-whois43-host",    "monitoring", Type.STRING),
         new Setting("cert.monitor.domain.rdap-timeout-ms",       "monitoring", Type.INT),
         new Setting("cert.monitor.domain.default-warning-days",  "monitoring", Type.INT),
         new Setting("cert.monitor.domain.default-critical-days", "monitoring", Type.INT),
