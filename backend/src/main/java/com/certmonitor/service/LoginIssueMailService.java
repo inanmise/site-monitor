@@ -48,13 +48,13 @@ public class LoginIssueMailService {
         return appSettings.getBoolean("cert.monitor.login-issues.force-email", true);
     }
 
-    /** Sistem yöneticisine bildirim (public "sorun bildir" akışı). */
+    /** Sistem yöneticisine bildirim (public "sorun bildir" akışı). {@code reporterEmail} → mailde "E-posta" satırı. */
     @Async("loginIssueMailExecutor")
-    public void dispatchReport(Long reportId, String refCode, String adminTo, String username, String errorText,
+    public void dispatchReport(Long reportId, String refCode, String adminTo, String reporterEmail, String username, String errorText,
                                String message, List<InlineImage> images, String clientIp, String userAgent, String reportedAt) {
         boolean force = forceEmail();
         LoginIssueMailResult res = send(() -> emailService.sendLoginIssueReport(
-                adminTo, refCode, username, errorText, message, images, clientIp, userAgent, reportedAt, force));
+                adminTo, refCode, username, reporterEmail, errorText, message, images, clientIp, userAgent, reportedAt, force));
         log.info("Login sorun bildirimi {} admin maili → {} ({})", refCode, adminTo, res.status());
         saveLog(reportId, refCode, REPORT_ADMIN, adminTo, null, res, force);
     }

@@ -168,7 +168,7 @@ public class LoginHelpController {
         if (adminEmail != null && !adminEmail.isBlank()) {
             log.info("Login sorun bildirimi {} kaydedildi: user='{}' ip={} images={} → admin maili kuyruğa alındı ({})",
                     refCode, username, ip, images.size(), adminEmail);
-            loginIssueMailService.dispatchReport(reportId, refCode, adminEmail, username, errorText, message, images, ip, userAgent, now);
+            loginIssueMailService.dispatchReport(reportId, refCode, adminEmail, email, username, errorText, message, images, ip, userAgent, now);
         } else {
             log.info("Login sorun bildirimi {} kaydedildi; system-admin.email boş — admin maili atlandı (user='{}' ip={})",
                     refCode, username, ip);

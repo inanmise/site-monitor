@@ -12,7 +12,6 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
@@ -75,11 +74,13 @@ public class LoginIssueService {
     }
 
     @Transactional(readOnly = true)
-    public Page<LoginIssueReport> list(String status, int page, int size) {
+    public Page<LoginIssueReport> list(String status, String q, String since, String until, int page, int size) {
         // NOT: Set.of(...).contains(null) NPE atar → önce null kontrolü (status yoksa "tümü").
         String st = (status != null && STATUSES.contains(status)) ? status : null;
+        // q → "%küçükharf%" (message + errorText + username LIKE); boş → null (filtre kapalı). IncidentService deseni.
+        String like = (q != null && !q.isBlank()) ? "%" + q.trim().toLowerCase() + "%" : null;
         Pageable pageable = PageRequest.of(Math.max(0, page), clampSize(size));
-        return reportRepo.findFiltered(st, null, null, pageable);
+        return reportRepo.findFiltered(st, like, blankToNull(since), blankToNull(until), pageable);
     }
 
     @Transactional(readOnly = true)
@@ -90,13 +91,13 @@ public class LoginIssueService {
         return imageRepo.findByReportIdOrderByIdAsc(reportId);
     }
 
-    /** Son 30 gün durum sayaçları (OPEN/IN_PROGRESS/RESOLVED; eksik durumlar 0). */
+    /** Durum sayaçları (OPEN/IN_PROGRESS/RESOLVED; eksik durumlar 0) — opsiyonel tarih aralığında.
+     *  Aralık verilmezse (null) tüm-zaman → liste penceresiyle uyumlu (kart/satır sayısı tutarlı). */
     @Transactional(readOnly = true)
-    public Map<String, Long> counts() {
-        String since = ISO.format(Instant.now().minus(Duration.ofDays(30)));
+    public Map<String, Long> counts(String since, String until) {
         Map<String, Long> out = new LinkedHashMap<>();
         out.put(OPEN, 0L); out.put(IN_PROGRESS, 0L); out.put(RESOLVED, 0L);
-        for (Object[] row : reportRepo.countByStatus(since, null)) {
+        for (Object[] row : reportRepo.countByStatus(blankToNull(since), blankToNull(until))) {
             String st = (String) row[0];
             if (st != null && out.containsKey(st)) out.put(st, ((Number) row[1]).longValue());
         }

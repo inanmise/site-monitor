@@ -1,9 +1,10 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Loader2 } from 'lucide-react'
+import { Loader2, ChevronLeft, ChevronRight } from 'lucide-react'
 import { api } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
 import { useToast } from '../ui/Toast.jsx'
 import { usePermissions } from '../../contexts/PermissionsProvider.jsx'
+import DateTimeField from '../ui/DateTimeField.jsx'
 
 // Durum → rozet sınıfı (kırmızı YOK — sistem alarmlarına saklı). OPEN/IN_PROGRESS amber, RESOLVED yeşil.
 const STATUS_BADGE = { OPEN: 'badge badge-warn', IN_PROGRESS: 'badge badge-warn', RESOLVED: 'badge badge-ok' }
@@ -20,6 +21,18 @@ function fmtDate(iso) {
   })
 }
 
+// Filtre tarih sınırını YEREL gün → UTC ISO'ya çevirir (kayıtlar UTC saklanır; reportedAt >= since / <= until
+// String karşılaştırması). endOfDay=true → günün sonu (23:59:59). IncidentHistoryPage ile aynı yardımcı.
+function localDayToUtcIso(dateStr, endOfDay) {
+  if (!dateStr) return undefined
+  const [y, m, d] = dateStr.slice(0, 10).split('-').map(Number)
+  if (!y || !m || !d) return undefined
+  const dt = new Date(y, m - 1, d, endOfDay ? 23 : 0, endOfDay ? 59 : 0, endOfDay ? 59 : 0)
+  const p = (n) => String(n).padStart(2, '0')
+  return `${dt.getUTCFullYear()}-${p(dt.getUTCMonth() + 1)}-${p(dt.getUTCDate())}` +
+         `T${p(dt.getUTCHours())}:${p(dt.getUTCMinutes())}:${p(dt.getUTCSeconds())}`
+}
+
 /**
  * Login Sorun Bildirimleri — admin triyaj ekranı. Public /api/login-help akışından DB'ye yazılan
  * kayıtları listeler; İşleme Al / Çözümlendi (zorunlu not) / Yeniden Aç durum akışını yönetir.
@@ -34,6 +47,12 @@ export default function LoginIssueReports() {
   const [rows, setRows] = useState(null)       // null = yükleniyor
   const [counts, setCounts] = useState({ OPEN: 0, IN_PROGRESS: 0, RESOLVED: 0 })
   const [statusFilter, setStatusFilter] = useState('OPEN')  // '' = tümü
+  const [q, setQ] = useState('')               // hata mesajı / açıklama / kullanıcı içinde arama
+  const [since, setSince] = useState('')       // bildirim tarihi >= (yerel gün)
+  const [until, setUntil] = useState('')       // bildirim tarihi <= (yerel gün)
+  const [page, setPage] = useState(0)
+  const [size, setSize] = useState(20)
+  const [total, setTotal] = useState(0)
   const [detail, setDetail] = useState(null)   // seçili kaydın tam detayı
   const [note, setNote] = useState('')
   const [busy, setBusy] = useState(false)
@@ -42,13 +61,21 @@ export default function LoginIssueReports() {
 
   const load = useCallback(async () => {
     if (!allowView) { setRows([]); return }   // izin yoksa 403 fetch + toast tetikleme
-    const res = await api.admin.getLoginIssues({ status: statusFilter || undefined, size: 100 })
-    if (res?.success) { setRows(res.data || []); setCounts(res.counts || counts) }
+    const res = await api.admin.getLoginIssues({
+      status: statusFilter || undefined,
+      q: q.trim() || undefined,
+      since: localDayToUtcIso(since, false),
+      until: localDayToUtcIso(until, true),
+      page, size,
+    })
+    if (res?.success) { setRows(res.data || []); setTotal(res.total || 0); setCounts(res.counts || counts) }
     else toast.error(res?.error || t('settings.loadError'))
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [statusFilter, allowView])
+  }, [statusFilter, q, since, until, page, size, allowView])
 
   useEffect(() => { load() }, [load])
+  // Filtre/boyut değişince ilk sayfaya dön (page load'ı tekrar tetikler; zaten 0 ise load dep'lerden fırlar).
+  useEffect(() => { setPage(0) }, [statusFilter, q, since, until, size])
 
   async function openDetail(id) {
     setOpenMail(null)
@@ -114,6 +141,22 @@ export default function LoginIssueReports() {
           onClick={() => setStatusFilter('')}>{t('loginIssues.filterAll')}</button>
       </div>
 
+      {/* Arama (hata mesajı / açıklama / kullanıcı) + bildirim tarihi aralığı */}
+      <div className="inv-stats-pills" style={{ marginBottom: 12, gap: 8, alignItems: 'center' }}>
+        <input className="filter-input" placeholder={t('loginIssues.searchPlaceholder')} value={q}
+          onChange={(e) => setQ(e.target.value)} style={{ minWidth: 220 }} />
+        <span className="inc-date-pair">
+          <span className="inc-date-lbl">{t('loginIssues.dateFrom')}</span>
+          <DateTimeField dateOnly clearable className="dtf-inline" placeholder={t('loginIssues.dateFrom')}
+            value={since} onChange={(v) => setSince(v || '')} />
+        </span>
+        <span className="inc-date-pair">
+          <span className="inc-date-lbl">{t('loginIssues.dateTo')}</span>
+          <DateTimeField dateOnly clearable className="dtf-inline" placeholder={t('loginIssues.dateTo')}
+            value={until} onChange={(v) => setUntil(v || '')} />
+        </span>
+      </div>
+
       {rows.length === 0 ? (
         <div className="empty-state">{t('loginIssues.empty')}</div>
       ) : (
@@ -125,7 +168,8 @@ export default function LoginIssueReports() {
                 <th>{t('loginIssues.colMessage')}</th>
                 <th>{t('loginIssues.colUser')}</th>
                 <th>{t('loginIssues.colIp')}</th>
-                <th>{t('loginIssues.colDate')}</th>
+                <th>{t('loginIssues.colReportedAt')}</th>
+                <th>{t('loginIssues.colResolvedAt')}</th>
                 <th>{t('loginIssues.colImages')}</th>
                 <th>{t('loginIssues.colStatus')}</th>
               </tr>
@@ -137,13 +181,31 @@ export default function LoginIssueReports() {
                   <td>{r.messageSummary}</td>
                   <td>{r.username || '—'}</td>
                   <td>{r.ipAddress || '—'}</td>
-                  <td>{fmtDate(r.reportedAt)}</td>
+                  <td style={{ whiteSpace: 'nowrap' }}>{fmtDate(r.reportedAt)}</td>
+                  <td style={{ whiteSpace: 'nowrap' }}>{fmtDate(r.resolvedAt)}</td>
                   <td>{r.imageCount > 0 ? r.imageCount : '—'}</td>
                   <td><span className={STATUS_BADGE[r.status] || 'badge'}>{t('loginIssues.status' + statusPascal(r.status))}</span></td>
                 </tr>
               ))}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {/* Sayfalama — AlertHistory/IncidentHistory ile aynı .alh-* deseni (paylaşılan CSS). */}
+      {total > 0 && (
+        <div className="alh-pagination" style={{ marginTop: 10 }}>
+          <div className="alh-page-size">
+            <span>{t('inc.perPage')}</span>
+            {[10, 20, 50].map((n) => (
+              <button key={n} className={`alh-size-btn${size === n ? ' is-active' : ''}`} onClick={() => setSize(n)}>{n}</button>
+            ))}
+          </div>
+          <div className="alh-page-info">{t('inc.pageOf', page + 1, Math.max(1, Math.ceil(total / size)))} · {total} {t('inc.records')}</div>
+          <div className="alh-page-nav">
+            <button disabled={page === 0} onClick={() => setPage((p) => p - 1)}><ChevronLeft size={13} /> {t('inc.prev')}</button>
+            <button disabled={page + 1 >= Math.max(1, Math.ceil(total / size))} onClick={() => setPage((p) => p + 1)}>{t('inc.next')} <ChevronRight size={13} /></button>
+          </div>
         </div>
       )}
 
@@ -160,7 +222,7 @@ export default function LoginIssueReports() {
               alignItems: 'baseline', margin: '4px 0 14px' }}>
               <b>{t('loginIssues.colUser')}</b><span>{detail.username || '—'}</span>
               <b>{t('loginIssues.colEmail')}</b><span>{detail.reporterEmail || '—'}</span>
-              <b>{t('loginIssues.colDate')}</b><span>{fmtDate(detail.reportedAt)}</span>
+              <b>{t('loginIssues.colReportedAt')}</b><span>{fmtDate(detail.reportedAt)}</span>
               <b>{t('loginIssues.colIp')}</b><span>{detail.ipAddress || '—'}</span>
             </div>
 
@@ -253,7 +315,7 @@ export default function LoginIssueReports() {
                                 <div style={{ fontSize: 12, marginBottom: 4 }}><b>{t('loginIssues.mailFrom')}:</b> {ml.from || '—'}</div>
                                 <div style={{ fontSize: 12, marginBottom: 6 }}><b>{t('loginIssues.mailSubject')}:</b> {ml.subject || '—'}</div>
                                 {ml.body ? (
-                                  <iframe title={`mail-${i}`} sandbox="" srcDoc={ml.body}
+                                  <iframe title={`mail-${i}`} sandbox="" srcDoc={mailBodyWithImages(ml.body, detail.images)}
                                     style={{ width: '100%', height: 340, border: '1px solid var(--border,#e5e7eb)',
                                       borderRadius: 6, background: '#fff' }} />
                                 ) : (
@@ -344,4 +406,14 @@ function mailTypeLabel(type, t) {
   if (type === 'REPORTER_ACK') return t('loginIssues.mailTypeAck')
   if (type === 'RESOLVED') return t('loginIssues.mailTypeResolved')
   return type || '—'
+}
+
+// Mail gövdesindeki cid:shotN görsel referanslarını raporun kayıtlı data-URL'leriyle değiştirir — böylece
+// uygulama-içi önizleme iframe'inde ekran görüntüleri görünür (cid: yalnız gerçek mail istemcisinde çözülür).
+function mailBodyWithImages(body, images) {
+  if (!body || !images || images.length === 0) return body
+  return body.replace(/src=(['"])cid:shot(\d+)\1/gi, (m, quote, idx) => {
+    const url = images[Number(idx)]
+    return url ? `src=${quote}${url}${quote}` : m
+  })
 }

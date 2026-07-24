@@ -83,8 +83,8 @@ class LoginHelpControllerTest {
                 argThat((List<LoginIssueService.ParsedImage> imgs) ->
                         imgs != null && imgs.size() == 1 && "image/png".equals(imgs.get(0).contentType())),
                 eq("10.1.2.3"), any(), anyString());
-        // Mailler ASYNC + loglu (loginIssueMailService.dispatch*) — reportId=42, refCode, alıcı, görsel eşleşir.
-        verify(loginIssueMailService).dispatchReport(eq(42L), eq("LIR-2026-000042"), eq("admin@akbank.com"), eq("N12345"),
+        // Mailler ASYNC + loglu (loginIssueMailService.dispatch*) — reportId=42, refCode, admin-alıcı, bildiren-e-postası, görsel.
+        verify(loginIssueMailService).dispatchReport(eq(42L), eq("LIR-2026-000042"), eq("admin@akbank.com"), eq(EMAIL), eq("N12345"),
                 eq("HTTP 423 Locked"), eq("Hesabım kilitlendi, giriş yapamıyorum"),
                 argThat((List<InlineImage> imgs) -> imgs != null && imgs.size() == 1
                         && imgs.get(0).data().length == 6 && "image/png".equals(imgs.get(0).contentType())),
@@ -110,7 +110,7 @@ class LoginHelpControllerTest {
                                 + "\"data:image/png;base64," + a + "\",\"data:image/jpeg;base64," + b + "\"]}"))
                 .andExpect(status().isOk());
 
-        verify(loginIssueMailService).dispatchReport(anyLong(), anyString(), anyString(), eq("N1"), anyString(), anyString(),
+        verify(loginIssueMailService).dispatchReport(anyLong(), anyString(), anyString(), anyString(), eq("N1"), anyString(), anyString(),
                 argThat((List<InlineImage> imgs) -> imgs != null && imgs.size() == 2
                         && imgs.get(0).data().length == 3 && "image/png".equals(imgs.get(0).contentType())
                         && imgs.get(1).data().length == 2 && "image/jpeg".equals(imgs.get(1).contentType())),
@@ -183,7 +183,7 @@ class LoginHelpControllerTest {
         verify(loginIssueService).save(eq("N2"), eq(EMAIL), anyString(), anyString(),
                 any(), anyString(), any(), anyString());
         verify(loginIssueMailService, never()).dispatchReport(anyLong(), anyString(), anyString(),
-                anyString(), anyString(), anyString(), any(), anyString(), any(), anyString());
+                anyString(), anyString(), anyString(), anyString(), any(), anyString(), any(), anyString());
     }
 
     @Test

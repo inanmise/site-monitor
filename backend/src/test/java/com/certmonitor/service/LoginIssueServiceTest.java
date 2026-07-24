@@ -16,6 +16,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -115,23 +116,29 @@ class LoginIssueServiceTest {
     }
 
     @Test
-    @DisplayName("counts: eksik durumlar 0 ile doldurulur")
+    @DisplayName("counts: eksik durumlar 0 ile doldurulur; since/until geçirilir")
     void counts_fillsMissingWithZero() {
-        when(reportRepo.countByStatus(anyString(), isNull()))
+        when(reportRepo.countByStatus(any(), any()))
                 .thenReturn(List.of(new Object[]{"OPEN", 3L}, new Object[]{"RESOLVED", 5L}));
-        Map<String, Long> c = service.counts();
+        Map<String, Long> c = service.counts(null, null);
         assertThat(c.get("OPEN")).isEqualTo(3L);
         assertThat(c.get("IN_PROGRESS")).isEqualTo(0L);
         assertThat(c.get("RESOLVED")).isEqualTo(5L);
     }
 
     @Test
-    @DisplayName("list(null) — filtre yok — NPE atmaz, findFiltered'a null status geçer")
-    void list_nullStatus_noNpe() {
-        when(reportRepo.findFiltered(isNull(), any(), any(), any()))
+    @DisplayName("list: q '%küçükharf%'e sarılır (message/errorText/username); status null'a düşer; NPE yok")
+    void list_wrapsQueryAndNullStatus() {
+        when(reportRepo.findFiltered(any(), any(), any(), any(), any()))
                 .thenReturn(org.springframework.data.domain.Page.empty());
-        assertThat(service.list(null, 0, 20)).isNotNull();
-        assertThat(service.list("BOGUS", 0, 20)).isNotNull();   // geçersiz status da null'a düşer
+        assertThat(service.list(null, null, null, null, 0, 20)).isNotNull();
+        assertThat(service.list("BOGUS", "  ", null, null, 0, 20)).isNotNull();   // geçersiz status + boş q → null
+        service.list("OPEN", "  Locked ", "2026-07-01T00:00:00", "2026-07-31T23:59:59", 1, 50);
+        // status geçer; q → "%locked%"; since/until iletilir
+        verify(reportRepo).findFiltered(eq("OPEN"), eq("%locked%"),
+                eq("2026-07-01T00:00:00"), eq("2026-07-31T23:59:59"), any());
+        // İlk iki çağrı (null + BOGUS/boş-q) status ve q'yu null'a düşürür → NPE atmadan çalıştı (isNotNull).
+        verify(reportRepo, times(2)).findFiltered(isNull(), isNull(), isNull(), isNull(), any());
     }
 
     @Test

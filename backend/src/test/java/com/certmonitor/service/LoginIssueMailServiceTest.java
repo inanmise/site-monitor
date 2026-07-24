@@ -38,14 +38,15 @@ class LoginIssueMailServiceTest {
     @Test
     @DisplayName("dispatchReport: force=true geçilir; SENT durumlu REPORT_ADMIN log satırı yazılır")
     void dispatchReport_forcedAndLogsSent() {
-        when(emailService.sendLoginIssueReport(anyString(), anyString(), anyString(), anyString(), anyString(),
+        when(emailService.sendLoginIssueReport(anyString(), anyString(), anyString(), anyString(), anyString(), anyString(),
                 any(), anyString(), anyString(), anyString(), anyBoolean()))
                 .thenReturn(new EmailNotificationService.LoginIssueMailResult("SENT", "noreply@cm", "Konu R", "<html>r</html>"));
 
-        service.dispatchReport(42L, "LIR-2026-000042", "admin@x.com", "N1", "err", "msg",
+        service.dispatchReport(42L, "LIR-2026-000042", "admin@x.com", "reporter@x.com", "N1", "err", "msg",
                 List.of(), "1.2.3.4", "UA", "2026-07-24T09:00:00");
 
-        verify(emailService).sendLoginIssueReport(eq("admin@x.com"), eq("LIR-2026-000042"), eq("N1"),
+        // Alıcı admin (to), bildiren e-postası (reporterEmail) mailde "E-posta" satırı için geçirilir.
+        verify(emailService).sendLoginIssueReport(eq("admin@x.com"), eq("LIR-2026-000042"), eq("N1"), eq("reporter@x.com"),
                 eq("err"), eq("msg"), any(), eq("1.2.3.4"), eq("UA"), anyString(), eq(true));
 
         LoginIssueMailLog m = capturedLog();
