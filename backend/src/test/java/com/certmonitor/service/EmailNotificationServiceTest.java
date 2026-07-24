@@ -939,8 +939,9 @@ class EmailNotificationServiceTest {
         doNothing().when(spySender).send(any(MimeMessage.class));
         when(smtpMailService.currentSender()).thenReturn(spySender);
 
-        service.sendLoginIssueResolved("reporter@akbank.com", "admin@akbank.com",
-                "LIR-2026-000009", "hesap açıldı", "2026-07-24T10:00:00", false);
+        service.sendLoginIssueResolved("reporter@akbank.com", "admin@akbank.com", "LIR-2026-000009",
+                "N9", "HTTP 423", "giriş yok", "2026-07-24T08:00:00",
+                "hesap açıldı", "2026-07-24T10:00:00", java.util.List.of(), false);
         org.mockito.ArgumentCaptor<MimeMessage> cap = org.mockito.ArgumentCaptor.forClass(MimeMessage.class);
         verify(spySender).send(cap.capture());
         MimeMessage msg = cap.getValue();
@@ -953,10 +954,36 @@ class EmailNotificationServiceTest {
         // Bildiren yok → admin To olur (boş To olmasın).
         reset(spySender);
         doNothing().when(spySender).send(any(MimeMessage.class));
-        service.sendLoginIssueResolved(null, "admin@akbank.com", "LIR-2026-000010", null, "2026-07-24T10:00:00", false);
+        service.sendLoginIssueResolved(null, "admin@akbank.com", "LIR-2026-000010",
+                "N10", null, "msg", "2026-07-24T08:00:00", null, "2026-07-24T10:00:00", java.util.List.of(), false);
         org.mockito.ArgumentCaptor<MimeMessage> cap2 = org.mockito.ArgumentCaptor.forClass(MimeMessage.class);
         verify(spySender).send(cap2.capture());
         assertThat(java.util.Arrays.toString(cap2.getValue().getRecipients(jakarta.mail.Message.RecipientType.TO)))
                 .contains("admin@akbank.com");
+    }
+
+    @Test
+    @DisplayName("Çözüldü maili ZENGİN: yeşil başlık + bildirim zamanı + hata + açıklama + cid görsel + çözüm notu")
+    void loginIssueResolved_enrichedBody() {
+        when(settingsService.getOrDefaults()).thenReturn(settingsEnabledFull());
+        JavaMailSenderImpl spySender = spy(new JavaMailSenderImpl());
+        doNothing().when(spySender).send(any(MimeMessage.class));
+        when(smtpMailService.currentSender()).thenReturn(spySender);
+
+        EmailNotificationService.InlineImage img =
+                new EmailNotificationService.InlineImage("shot0", new byte[]{1, 2, 3}, "image/png");
+        EmailNotificationService.LoginIssueMailResult res = service.sendLoginIssueResolved(
+                "reporter@akbank.com", "admin@akbank.com", "LIR-2026-000009",
+                "N9", "HTTP 423 <b>x</b>", "giriş yapamıyorum", "2026-07-24T08:00:00",
+                "hesap açıldı", "2026-07-24T10:00:00", java.util.List.of(img), false);
+
+        assertThat(res.status()).isEqualTo("SENT");
+        String html = res.bodyHtml();
+        assertThat(html).contains("✅ Sorun çözümlendi");                  // yeşil başlık korundu
+        assertThat(html).contains("Bildirim Zamanı");                      // reportedAt satırı eklendi
+        assertThat(html).contains("HTTP 423 &lt;b&gt;x&lt;/b&gt;").doesNotContain("HTTP 423 <b>x</b>");  // hata escape'li
+        assertThat(html).contains("giriş yapamıyorum");                    // iletilen açıklama
+        assertThat(html).contains("cid:shot0");                            // ekran görüntüsü (CID)
+        assertThat(html).contains("hesap açıldı");                         // çözüm notu
     }
 }

@@ -496,32 +496,70 @@ public class EmailNotificationService {
         return new LoginIssueMailResult(status, currentFrom(), subject, html);
     }
 
-    /** "Çözüldü" bildirimi — hem bildiren kişiye (To) hem sistem yöneticisine (CC) gider. Best-effort. */
+    /** "Çözüldü" bildirimi — hem bildiren kişiye (To) hem sistem yöneticisine (CC) gider. Best-effort.
+     *  Zenginleştirilmiş: bildirim zamanı + orijinal sorun (hata + açıklama) + ekran görüntüleri (CID) +
+     *  çözüm notu, yeşil "çözümlendi" başlığıyla. */
     public LoginIssueMailResult sendLoginIssueResolved(String reporterEmail, String adminEmail, String refCode,
-                                         String resolutionNote, String resolvedAt, boolean force) {
+                                         String username, String errorText, String message, String reportedAt,
+                                         String resolutionNote, String resolvedAt, List<InlineImage> images, boolean force) {
         String to = (reporterEmail != null && !reporterEmail.isBlank()) ? reporterEmail : null;
         String cc = (adminEmail != null && !adminEmail.isBlank()) ? adminEmail : null;
         if (to == null && cc == null) return new LoginIssueMailResult("SKIPPED_NO_RECIPIENT", currentFrom(), null, null);
         // Alıcı yalnız admin ise onu To yap (boş To olmasın).
         String[] toArr = to != null ? new String[]{ to } : new String[]{ cc };
         String[] ccArr = (to != null && cc != null) ? new String[]{ cc } : null;
-        String noteBlock = (resolutionNote != null && !resolutionNote.isBlank())
-                ? "<div style='margin:16px 0 0;padding:12px 14px;border:1px solid #e5e7eb;border-radius:8px'>"
-                  + "<div style='font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:#6b7280;margin:0 0 6px'>Çözüm Notu</div>"
-                  + "<div style='font-size:14px;line-height:1.6;white-space:pre-wrap'>" + escHtml(resolutionNote) + "</div></div>"
-                : "";
-        String html = simpleFrameOpen(600)
-                + "<h2 style='color:#15803d;margin:0 0 12px;font-size:20px'>✅ Sorun çözümlendi</h2>"
-                + "<p style='margin:0 0 14px'><strong>" + escHtml(refCode) + "</strong> referans numaralı giriş sorunu bildirimi çözümlenmiştir.</p>"
-                + "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' style='border-collapse:collapse;font-size:14px'>"
-                + adminRow("Referans Numarası", "<strong>" + escHtml(refCode) + "</strong>")
-                + adminRow("Çözülme Zamanı", escHtml(formatIso(resolvedAt)))
-                + "</table>"
-                + noteBlock
-                + "<p style='font-size:13px;color:#64748b;margin:16px 0 0'>Sorun devam ediyorsa lütfen tekrar bildiriniz. Bu e-posta otomatik gönderilmiştir.</p>"
-                + simpleFrameClose();
+        List<InlineImage> inline = images != null ? images : List.of();
+
+        StringBuilder sb = new StringBuilder(simpleFrameOpen(640));
+        sb.append("<h2 style='color:#15803d;margin:0 0 12px;font-size:20px'>✅ Sorun çözümlendi</h2>")
+          .append("<p style='margin:0 0 14px'><strong>").append(escHtml(refCode))
+          .append("</strong> referans numaralı giriş sorunu bildirimi çözümlenmiştir.</p>")
+          .append("<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' style='border-collapse:collapse;font-size:14px'>")
+          .append(adminRow("Referans Numarası", "<strong>" + escHtml(refCode) + "</strong>"))
+          .append(adminRow("Kullanıcı Adı", "<strong>" + escHtml(username != null && !username.isBlank() ? username : "—") + "</strong>"))
+          .append(adminRow("Bildirim Zamanı", escHtml(formatIso(reportedAt))))
+          .append(adminRow("Çözülme Zamanı", escHtml(formatIso(resolvedAt))))
+          .append("</table>");
+        // Orijinal sorun — alınan hata mesajı (varsa) + iletilen açıklama.
+        if (errorText != null && !errorText.isBlank()) {
+            sb.append("<div style='margin:16px 0 0;padding:12px 14px;border:1px solid #e5e7eb;border-radius:8px'>")
+              .append("<div style='font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:#6b7280;margin:0 0 6px'>Alınan Hata Mesajı</div>")
+              .append("<div style='font-family:Consolas,\"Courier New\",monospace;font-size:13px;line-height:1.5;white-space:pre-wrap'>")
+              .append(escHtml(errorText)).append("</div></div>");
+        }
+        if (message != null && !message.isBlank()) {
+            sb.append("<div style='margin:16px 0 0;padding:12px 14px;border:1px solid #e5e7eb;border-radius:8px'>")
+              .append("<div style='font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:#6b7280;margin:0 0 6px'>İletilen Açıklama</div>")
+              .append("<div style='font-size:14px;line-height:1.6;white-space:pre-wrap'>").append(escHtml(message)).append("</div></div>");
+        }
+        // Ekran görüntüleri (CID inline) — bildirimdekiyle aynı, çözümlendi mailine de eklenir.
+        if (!inline.isEmpty()) {
+            sb.append("<div style='margin:16px 0 0'>")
+              .append("<div style='font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:#6b7280;margin:0 0 6px'>Ekran Görüntüleri (")
+              .append(inline.size()).append(")</div>");
+            int i = 1;
+            for (InlineImage img : inline) {
+                sb.append("<div style='margin:0 0 10px'>")
+                  .append("<div style='font-size:11px;color:#9ca3af;margin:0 0 4px'>Görsel ").append(i++).append("</div>")
+                  .append("<img src='cid:").append(escHtml(img.cid()))
+                  .append("' alt='Ekran görüntüsü ").append(i - 1)
+                  .append("' width='592' style='max-width:100%;width:592px;height:auto;border:1px solid #e5e7eb;border-radius:8px;display:block' />")
+                  .append("</div>");
+            }
+            sb.append("</div>");
+        }
+        // Çözüm notu.
+        if (resolutionNote != null && !resolutionNote.isBlank()) {
+            sb.append("<div style='margin:16px 0 0;padding:12px 14px;border:1px solid #e5e7eb;border-radius:8px'>")
+              .append("<div style='font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:#6b7280;margin:0 0 6px'>Çözüm Notu</div>")
+              .append("<div style='font-size:14px;line-height:1.6;white-space:pre-wrap'>").append(escHtml(resolutionNote)).append("</div></div>");
+        }
+        sb.append("<p style='font-size:13px;color:#64748b;margin:16px 0 0'>Sorun devam ediyorsa lütfen tekrar bildiriniz. Bu e-posta otomatik gönderilmiştir.</p>")
+          .append(simpleFrameClose());
+
+        String html = sb.toString();
         String subject = "[CertMonitor] ✅ Giriş sorunu çözümlendi — " + refCode;
-        String status = sendHtml(toArr, ccArr, subject, html, List.of(), force);
+        String status = sendHtml(toArr, ccArr, subject, html, inline, force);
         return new LoginIssueMailResult(status, currentFrom(), subject, html);
     }
 

@@ -118,9 +118,12 @@ class LoginIssueControllerTest {
         mvc.perform(put("/api/admin/login-issues/9/status").session(authed())
                         .contentType(MediaType.APPLICATION_JSON).content("{\"status\":\"RESOLVED\",\"resolutionNote\":\"Hesap açıldı\"}"))
                 .andExpect(status().isOk());
-        // Çözüldü maili ASYNC + loglu (loginIssueMailService.dispatchResolved): reportId, refCode, reporter, admin, note.
+        // Çözüldü maili ASYNC + loglu (dispatchResolved): reportId, refCode, reporter, admin + zenginleştirilmiş
+        // içerik (username/errorText/message/reportedAt null/eq), çözüm notu, çözülme zamanı, görseller.
         verify(loginIssueMailService).dispatchResolved(eq(9L), eq("LIR-2026-000009"),
-                eq("reporter@akbank.com"), eq("admin@akbank.com"), eq("Hesap açıldı"), eq("2026-07-24T10:00:00"));
+                eq("reporter@akbank.com"), eq("admin@akbank.com"),
+                any(), any(), any(), eq("2026-07-24T09:00:00"),
+                eq("Hesap açıldı"), eq("2026-07-24T10:00:00"), any());
     }
 
     @Test

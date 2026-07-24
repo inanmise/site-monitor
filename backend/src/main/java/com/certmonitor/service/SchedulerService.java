@@ -136,6 +136,10 @@ public class SchedulerService {
     @Autowired
     private CaAutoPinService caAutoPinService;
 
+    /** Aynı gerekçeyle alan enjeksiyonu — envanter domain-expiry cache'ini günlük tazeleyen servis. */
+    @Autowired
+    private DomainExpiryRefreshService domainExpiryRefreshService;
+
     @Value("${cert.monitor.username:user}")
     private String adminUsername;
 
@@ -662,6 +666,29 @@ public class SchedulerService {
             log.warn("CA pin refresh failed: {}", e.getMessage());
         } finally {
             releaseSchedulerLock("ca-pin-refresh");
+        }
+    }
+
+    /**
+     * Günlük 04:15 IST — envanterin {@code domain_expiry} cache'ini RDAP/WHOIS'ten tazeler
+     * ({@link DomainExpiryRefreshService#refreshAll}). Bu kolon eskiden yalnız elle "Alan Adı Tanılama"
+     * ile yazılıyordu; haftalık rapor onu okuduğundan domain yenilenince bayat kalıyordu. Cuma ~09:00
+     * raporundan önce çalışır → rapor güncel gün sayısını gösterir. HA: yalnız bir pod çalıştırır.
+     */
+    @Scheduled(cron = "${cert.monitor.scheduler.domain-expiry-refresh-cron:0 15 4 * * *}", zone = "Europe/Istanbul")
+    public void runDomainExpiryRefresh() {
+        if (!appSettings.getBoolean("cert.monitor.scheduler.domain-expiry-refresh.enabled", true)) return;
+        if (!tryAcquireSchedulerLock("domain-expiry-refresh", sweepLockTtlMinutes)) {
+            log.debug("Domain-expiry refresh skipped — lock held by another instance");
+            return;
+        }
+        try {
+            int n = domainExpiryRefreshService.refreshAll();
+            if (n > 0) log.info("Domain-expiry refresh: {} registrable domain tazelendi", n);
+        } catch (Exception e) {
+            log.warn("Domain-expiry refresh failed: {}", e.getMessage());
+        } finally {
+            releaseSchedulerLock("domain-expiry-refresh");
         }
     }
 
