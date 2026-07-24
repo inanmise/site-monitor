@@ -529,6 +529,20 @@ class EmailNotificationServiceTest {
         assertThat(result).isEqualTo("SKIPPED_DISABLED");
     }
 
+    @Test
+    @DisplayName("sendHtml force=true → mail devre dışıyken bile SKIP etmez, gönderime gider (login-issue mute bypass)")
+    void sendHtml_forced_bypassesDisabled() {
+        // settingsService varsayılan olarak disabled (setUp'ta settings(false)); force=true isEnabled kısa-devresini atlar.
+        JavaMailSenderImpl spySender = spy(new JavaMailSenderImpl());
+        doNothing().when(spySender).send(any(MimeMessage.class));
+        when(smtpMailService.currentSender()).thenReturn(spySender);
+
+        String result = service.sendHtml(new String[]{"to@test.com"}, null, "Konu", "<html/>", null, true);
+
+        assertThat(result).isEqualTo("SENT");
+        verify(spySender).send(any(MimeMessage.class));
+    }
+
     // ── HTML content ────────────────────────────────────────────────────────────
 
     @Test
@@ -926,7 +940,7 @@ class EmailNotificationServiceTest {
         when(smtpMailService.currentSender()).thenReturn(spySender);
 
         service.sendLoginIssueResolved("reporter@akbank.com", "admin@akbank.com",
-                "LIR-2026-000009", "hesap açıldı", "2026-07-24T10:00:00");
+                "LIR-2026-000009", "hesap açıldı", "2026-07-24T10:00:00", false);
         org.mockito.ArgumentCaptor<MimeMessage> cap = org.mockito.ArgumentCaptor.forClass(MimeMessage.class);
         verify(spySender).send(cap.capture());
         MimeMessage msg = cap.getValue();
@@ -939,7 +953,7 @@ class EmailNotificationServiceTest {
         // Bildiren yok → admin To olur (boş To olmasın).
         reset(spySender);
         doNothing().when(spySender).send(any(MimeMessage.class));
-        service.sendLoginIssueResolved(null, "admin@akbank.com", "LIR-2026-000010", null, "2026-07-24T10:00:00");
+        service.sendLoginIssueResolved(null, "admin@akbank.com", "LIR-2026-000010", null, "2026-07-24T10:00:00", false);
         org.mockito.ArgumentCaptor<MimeMessage> cap2 = org.mockito.ArgumentCaptor.forClass(MimeMessage.class);
         verify(spySender).send(cap2.capture());
         assertThat(java.util.Arrays.toString(cap2.getValue().getRecipients(jakarta.mail.Message.RecipientType.TO)))

@@ -1,10 +1,12 @@
 package com.certmonitor.controller;
 
+import com.certmonitor.model.LoginIssueMailLog;
 import com.certmonitor.model.LoginIssueReport;
 import com.certmonitor.model.LoginIssueReportImage;
+import com.certmonitor.repository.LoginIssueMailLogRepository;
 import com.certmonitor.service.AuditService;
-import com.certmonitor.service.EmailNotificationService;
 import com.certmonitor.service.HttpMetricsService;
+import com.certmonitor.service.LoginIssueMailService;
 import com.certmonitor.service.LoginIssueService;
 import com.certmonitor.service.PermissionService;
 import com.certmonitor.service.RememberMeService;
@@ -44,7 +46,8 @@ class LoginIssueControllerTest {
     @MockitoBean LoginIssueService loginIssueService;
     @MockitoBean PermissionService permissionService;
     @MockitoBean AuditService auditService;
-    @MockitoBean EmailNotificationService emailService;
+    @MockitoBean LoginIssueMailService loginIssueMailService;
+    @MockitoBean LoginIssueMailLogRepository mailLogRepo;
     @MockitoBean com.certmonitor.service.AppSettingsService appSettings;
     // AuthInterceptor bağımlılıkları:
     @MockitoBean RememberMeService rememberMeService;
@@ -115,9 +118,9 @@ class LoginIssueControllerTest {
         mvc.perform(put("/api/admin/login-issues/9/status").session(authed())
                         .contentType(MediaType.APPLICATION_JSON).content("{\"status\":\"RESOLVED\",\"resolutionNote\":\"Hesap açıldı\"}"))
                 .andExpect(status().isOk());
-        // Hem bildirene (To) hem sistem yöneticisine (CC/admin) gider — ASYNC (loginIssueMailExecutor).
-        verify(emailService).sendLoginIssueResolvedAsync(eq("reporter@akbank.com"), eq("admin@akbank.com"),
-                eq("LIR-2026-000009"), eq("Hesap açıldı"), eq("2026-07-24T10:00:00"));
+        // Çözüldü maili ASYNC + loglu (loginIssueMailService.dispatchResolved): reportId, refCode, reporter, admin, note.
+        verify(loginIssueMailService).dispatchResolved(eq(9L), eq("LIR-2026-000009"),
+                eq("reporter@akbank.com"), eq("admin@akbank.com"), eq("Hesap açıldı"), eq("2026-07-24T10:00:00"));
     }
 
     @Test
@@ -163,5 +166,25 @@ class LoginIssueControllerTest {
                 .andExpect(jsonPath("$.data.refCode").value("LIR-2026-000005"))
                 .andExpect(jsonPath("$.data.images[0]").value("data:image/png;base64,AAAA"))
                 .andExpect(jsonPath("$.data.images[1]").value("data:image/jpeg;base64,BBBB"));
+    }
+
+    @Test
+    void detail_includesMailHistory() throws Exception {
+        LoginIssueReport r = new LoginIssueReport();
+        r.setId(9L); r.setReportedAt("2026-07-24T09:00:00"); r.setStatus("RESOLVED");
+        r.setUsername("N9"); r.setMessage("giriş yok");
+        when(loginIssueService.get(9L)).thenReturn(Optional.of(r));
+        LoginIssueMailLog m = new LoginIssueMailLog();
+        m.setMailType("RESOLVED"); m.setRecipientTo("reporter@akbank.com"); m.setCc("admin@akbank.com");
+        m.setStatus("SENT"); m.setForced(true); m.setSentAt("2026-07-24T10:00:00");
+        when(mailLogRepo.findByReportIdOrderByIdAsc(9L)).thenReturn(List.of(m));
+
+        mvc.perform(get("/api/admin/login-issues/9").session(authed()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.mailHistory[0].mailType").value("RESOLVED"))
+                .andExpect(jsonPath("$.data.mailHistory[0].to").value("reporter@akbank.com"))
+                .andExpect(jsonPath("$.data.mailHistory[0].cc").value("admin@akbank.com"))
+                .andExpect(jsonPath("$.data.mailHistory[0].status").value("SENT"))
+                .andExpect(jsonPath("$.data.mailHistory[0].forced").value(true));
     }
 }

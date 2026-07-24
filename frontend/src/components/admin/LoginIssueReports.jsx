@@ -43,9 +43,8 @@ export default function LoginIssueReports() {
   useEffect(() => { load() }, [load])
 
   async function openDetail(id) {
-    setNote('')
     const res = await api.admin.getLoginIssue(id)
-    if (res?.success) setDetail(res.data)
+    if (res?.success) { setDetail(res.data); setNote(res.data.resolutionNote || '') }  // mevcut notu önyükle (kaybolmasın)
     else toast.error(res?.error || t('settings.loadError'))
   }
 
@@ -53,15 +52,16 @@ export default function LoginIssueReports() {
     if (!detail) return
     if (newStatus === 'RESOLVED' && !note.trim()) { toast.error(t('loginIssues.noteRequired')); return }
     setBusy(true)
+    // Not her durumda gönderilir (İşleme Al'da da) — kalıcı çalışma notu; boşsa backend mevcut notu korur.
     const res = await api.admin.updateLoginIssueStatus(detail.id, {
       status: newStatus,
-      resolutionNote: newStatus === 'RESOLVED' ? note.trim() : undefined,
+      resolutionNote: note.trim() || undefined,
     })
     setBusy(false)
     if (res?.success) {
       toast.success(t('loginIssues.statusUpdated'))
       setDetail(res.data)
-      setNote('')
+      setNote(res.data.resolutionNote || '')
       load()
     } else {
       toast.error(res?.error || t('loginIssues.statusError'))
@@ -192,6 +192,52 @@ export default function LoginIssueReports() {
               </div>
             )}
 
+            {/* Gönderilen e-postalar — kime/ne zaman/hangi tür + teslim durumu (mail geçmişi). */}
+            <div style={{ marginTop: 14 }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+                <div style={{ fontWeight: 700, fontSize: '.9em' }}>{t('loginIssues.mailHistory')}</div>
+                <button className="btn btn-secondary btn-sm-p" onClick={() => openDetail(detail.id)}>{t('loginIssues.mailRefresh')}</button>
+              </div>
+              {(!detail.mailHistory || detail.mailHistory.length === 0) ? (
+                <div className="hint">{t('loginIssues.mailNone')}</div>
+              ) : (
+                <div className="admin-table-wrap">
+                  <table className="admin-table">
+                    <thead>
+                      <tr>
+                        <th>{t('loginIssues.mailColType')}</th>
+                        <th>{t('loginIssues.mailColTo')}</th>
+                        <th>{t('loginIssues.mailColStatus')}</th>
+                        <th>{t('loginIssues.mailColWhen')}</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {detail.mailHistory.map((ml, i) => {
+                        const info = mailStatusInfo(ml.status, t)
+                        return (
+                          <tr key={i}>
+                            <td>{mailTypeLabel(ml.mailType, t)}</td>
+                            <td style={{ wordBreak: 'break-all' }}>
+                              {ml.to || '—'}
+                              {ml.cc ? <div style={{ fontSize: 11, color: 'var(--text-light,#64748b)' }}>CC: {ml.cc}</div> : null}
+                            </td>
+                            <td>
+                              <span style={{ display: 'inline-block', padding: '1px 8px', borderRadius: 999,
+                                fontSize: 12, fontWeight: 600, background: info.bg, color: info.color }}>{info.label}</span>
+                              {ml.forced ? <span title={t('loginIssues.mailForcedHint')}
+                                style={{ marginLeft: 6, fontSize: 11, color: 'var(--text-light,#64748b)' }}>⚡</span> : null}
+                              {ml.error ? <div style={{ fontSize: 11, color: '#b91c1c', marginTop: 2, wordBreak: 'break-word' }}>{ml.error}</div> : null}
+                            </td>
+                            <td style={{ whiteSpace: 'nowrap' }}>{fmtDate(ml.sentAt)}</td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+
             {detail.status === 'RESOLVED' && (
               <div className="threshold-field" style={{ marginTop: 8 }}>
                 <label>{t('loginIssues.resolutionNote')}</label>
@@ -248,4 +294,21 @@ function statusPascal(s) {
   if (s === 'IN_PROGRESS') return 'InProgress'
   if (s === 'RESOLVED') return 'Resolved'
   return 'Open'
+}
+
+// Mail durum rozeti — SENT yeşil, FAILED kırmızı, SKIPPED/QUEUED nötr/amber. Inline stil (global CSS'e bağlı değil).
+function mailStatusInfo(status, t) {
+  const s = status || ''
+  if (s === 'SENT') return { label: t('loginIssues.mailSent'), bg: '#dcfce7', color: '#15803d' }
+  if (s.startsWith('FAILED')) return { label: t('loginIssues.mailFailed'), bg: '#fee2e2', color: '#b91c1c' }
+  if (s.startsWith('SKIPPED')) return { label: t('loginIssues.mailSkipped'), bg: '#f3f4f6', color: '#6b7280' }
+  if (s.startsWith('QUEUED')) return { label: t('loginIssues.mailQueued'), bg: '#fef3c7', color: '#b45309' }
+  return { label: s || '—', bg: '#f3f4f6', color: '#6b7280' }
+}
+
+function mailTypeLabel(type, t) {
+  if (type === 'REPORT_ADMIN') return t('loginIssues.mailTypeReport')
+  if (type === 'REPORTER_ACK') return t('loginIssues.mailTypeAck')
+  if (type === 'RESOLVED') return t('loginIssues.mailTypeResolved')
+  return type || '—'
 }

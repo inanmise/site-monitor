@@ -1,10 +1,12 @@
 package com.certmonitor.controller;
 
+import com.certmonitor.model.LoginIssueMailLog;
 import com.certmonitor.model.LoginIssueReport;
 import com.certmonitor.model.LoginIssueReportImage;
+import com.certmonitor.repository.LoginIssueMailLogRepository;
 import com.certmonitor.service.AppSettingsService;
 import com.certmonitor.service.AuditService;
-import com.certmonitor.service.EmailNotificationService;
+import com.certmonitor.service.LoginIssueMailService;
 import com.certmonitor.service.LoginIssueService;
 import com.certmonitor.service.PermissionService;
 import jakarta.servlet.http.HttpServletRequest;
@@ -42,7 +44,8 @@ public class LoginIssueController {
     private final LoginIssueService loginIssueService;
     private final PermissionService permissionService;
     private final AuditService auditService;
-    private final EmailNotificationService emailService;
+    private final LoginIssueMailService loginIssueMailService;
+    private final LoginIssueMailLogRepository mailLogRepo;
     private final AppSettingsService appSettings;
 
     @GetMapping
@@ -97,14 +100,10 @@ public class LoginIssueController {
         // Çözümlendiğinde "çözüldü" bildirimi HEM bildirene (To) HEM sistem yöneticisine (CC) gider
         // (karşılıklı bilgilendirme). Best-effort; hata akışı kırmaz.
         if (LoginIssueService.RESOLVED.equals(updated.getStatus())) {
-            try {
-                String adminEmail = appSettings.getString("cert.monitor.system-admin.email", "");
-                emailService.sendLoginIssueResolvedAsync(updated.getReporterEmail(), adminEmail,
-                        LoginIssueService.refCode(updated), updated.getResolutionNote(), updated.getResolvedAt());
-            } catch (Exception e) {
-                log.warn("Login issue {} çözüldü bildirimi kuyruğa alınamadı: {}",
-                        LoginIssueService.refCode(updated), e.getMessage());
-            }
+            String adminEmail = appSettings.getString("cert.monitor.system-admin.email", "");
+            // ASYNC gönderim + login_issue_mail_logs kaydı (mail geçmişi). Bildiren To, admin CC.
+            loginIssueMailService.dispatchResolved(updated.getId(), LoginIssueService.refCode(updated),
+                    updated.getReporterEmail(), adminEmail, updated.getResolutionNote(), updated.getResolvedAt());
         }
         return ok(Map.of("data", toDetail(updated), "message", "Durum güncellendi"));
     }
@@ -153,6 +152,20 @@ public class LoginIssueController {
             imgs.add("data:" + img.getContentType() + ";base64," + img.getDataBase64());
         }
         m.put("images", imgs);
+        // Gönderilen e-postalar (mail geçmişi) — kime/ne zaman/hangi tür + teslim durumu.
+        List<Map<String, Object>> mails = new ArrayList<>();
+        for (LoginIssueMailLog ml : mailLogRepo.findByReportIdOrderByIdAsc(r.getId())) {
+            Map<String, Object> mm = new LinkedHashMap<>();
+            mm.put("mailType", ml.getMailType());
+            mm.put("to", ml.getRecipientTo());
+            mm.put("cc", ml.getCc());
+            mm.put("status", ml.getStatus());
+            mm.put("error", ml.getErrorMessage());
+            mm.put("forced", ml.isForced());
+            mm.put("sentAt", ml.getSentAt());
+            mails.add(mm);
+        }
+        m.put("mailHistory", mails);
         return m;
     }
 
