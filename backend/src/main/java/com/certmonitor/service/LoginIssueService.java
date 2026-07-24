@@ -119,10 +119,11 @@ public class LoginIssueService {
             r.setResolvedBy(actor);
             r.setResolvedAt(nowIso());
         } else {
-            // OPEN / IN_PROGRESS (yeniden aç) — çözüm alanlarını temizle
+            // OPEN / IN_PROGRESS (yeniden aç) — çözüm alanlarını TÜMÜYLE temizle. Not'u yalnız OPEN'da
+            // silmek RESOLVED→IN_PROGRESS'te "çözüm notu var ama çözen yok" tutarsız kaydı bırakıyordu.
             r.setResolvedBy(null);
             r.setResolvedAt(null);
-            if (OPEN.equals(newStatus)) r.setResolutionNote(null);
+            r.setResolutionNote(null);
         }
         r.setStatus(newStatus);
         r.setUpdatedAt(nowIso());

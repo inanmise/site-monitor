@@ -106,6 +106,35 @@ public class WebConfig implements WebMvcConfigurer {
         registry.addInterceptor(httpMetricsInterceptor).addPathPatterns("/api/**");
     }
 
+    /** Public /api/login-help gövde üst sınırı — 5 görsel × ~1.4MB base64 + JSON overhead ≈ 7MB → 8MB rahat tavan. */
+    private static final long LOGIN_HELP_MAX_BODY_BYTES = 8L * 1024 * 1024;
+
+    /**
+     * Kimliksiz /api/login-help endpoint'ine dev JSON gövdesi gönderilip Jackson'ın onu belleğe alması
+     * (heap/OOM) engellenir. Content-Length ile kaba, O(1) kontrol; yalnız o path'te çalışır (shouldNotFilter).
+     * Chunked-without-length nadir → asıl decode koruması controller'daki base64 uzunluk sınırı + rate-limit.
+     */
+    @Bean
+    public OncePerRequestFilter loginHelpBodyLimitFilter() {
+        return new OncePerRequestFilter() {
+            @Override
+            protected boolean shouldNotFilter(HttpServletRequest request) {
+                return !"/api/login-help".equals(request.getServletPath());
+            }
+            @Override
+            protected void doFilterInternal(HttpServletRequest req, HttpServletResponse res, FilterChain chain)
+                    throws ServletException, IOException {
+                if (req.getContentLengthLong() > LOGIN_HELP_MAX_BODY_BYTES) {
+                    res.setStatus(HttpServletResponse.SC_REQUEST_ENTITY_TOO_LARGE); // 413
+                    res.setContentType("application/json;charset=UTF-8");
+                    res.getWriter().write("{\"success\":false,\"error\":\"İçerik boyutu çok büyük\"}");
+                    return;
+                }
+                chain.doFilter(req, res);
+            }
+        };
+    }
+
     @Bean
     public OncePerRequestFilter securityHeadersFilter() {
         return new OncePerRequestFilter() {
@@ -164,6 +193,25 @@ public class WebConfig implements WebMvcConfigurer {
         // (scheduler) thread'inde çalıştır. Böylece büyük ölçekte (1000 domain) tarama geri-basınçla
         // yavaşlar ama kullanıcı isteklerini aç bırakacak kadar thread açmaz + RejectedExecutionException
         // riski biter. Bu sayede max havuz güvenle küçültülebilir (values.yaml executorMaxSize).
+        executor.setRejectedExecutionHandler(new java.util.concurrent.ThreadPoolExecutor.CallerRunsPolicy());
+        executor.initialize();
+        return executor;
+    }
+
+    /**
+     * Public "sorun bildir" (login-help) akışının SMTP gönderimleri için AYRI küçük havuz.
+     * Amaç: kimliksiz public POST'un 2-3 senkron mail gönderimi (a) request thread'ini bloklamasın
+     * (burst'te Tomcat worker tükenmesi), (b) izleme kritik {@code certCheckExecutor} havuzunu ÇALMASIN.
+     * Volüm zaten IP başına 3/saat rate-limit ile sınırlı → küçük havuz + kuyruk yeter; aşırı burst'te
+     * CallerRunsPolicy geri-basınç uygular (mail yine de best-effort, DB kaydı birincil).
+     */
+    @Bean(name = "loginIssueMailExecutor")
+    public ThreadPoolTaskExecutor loginIssueMailExecutor() {
+        ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
+        executor.setCorePoolSize(2);
+        executor.setMaxPoolSize(4);
+        executor.setQueueCapacity(100);
+        executor.setThreadNamePrefix("login-mail-");
         executor.setRejectedExecutionHandler(new java.util.concurrent.ThreadPoolExecutor.CallerRunsPolicy());
         executor.initialize();
         return executor;

@@ -11,6 +11,7 @@ import org.commonmark.renderer.html.HtmlRenderer;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.ByteArrayResource;
 import org.springframework.mail.javamail.MimeMessageHelper;
+import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 
 import jakarta.annotation.PreDestroy;
@@ -512,6 +513,42 @@ public class EmailNotificationService {
                 + "<p style='font-size:13px;color:#64748b;margin:16px 0 0'>Sorun devam ediyorsa lütfen tekrar bildiriniz. Bu e-posta otomatik gönderilmiştir.</p>"
                 + simpleFrameClose();
         return sendHtml(toArr, ccArr, "[CertMonitor] ✅ Giriş sorunu çözümlendi — " + refCode, html, List.of());
+    }
+
+    // ── Async sarmalayıcılar (loginIssueMailExecutor) ────────────────────────────────────────────
+    // Public "sorun bildir" akışının SMTP gönderimleri request thread'ini bloklamasın (burst'te Tomcat
+    // worker tükenmesi) ve cert-check havuzunu çalmasın. DB kaydı birincil; mail best-effort (asla fırlatmaz).
+    // @Async proxy'nin devreye girmesi için bu metodlar DIŞ bean'den (controller) çağrılır.
+
+    @Async("loginIssueMailExecutor")
+    public void sendLoginIssueReportAsync(String to, String refCode, String username, String errorText, String message,
+                                          List<InlineImage> images, String clientIp, String userAgent, String reportedAt) {
+        try {
+            String status = sendLoginIssueReport(to, refCode, username, errorText, message, images, clientIp, userAgent, reportedAt);
+            log.info("Login sorun bildirimi {} admin maili → {} ({})", refCode, to, status);
+        } catch (Exception e) {
+            log.warn("Login sorun bildirimi {} admin maili gönderilemedi (kayıt saklandı): {}", refCode, e.getMessage());
+        }
+    }
+
+    @Async("loginIssueMailExecutor")
+    public void sendLoginIssueAckAsync(String to, String refCode, String username, String errorText, String message,
+                                       List<InlineImage> images, String reportedAt) {
+        try {
+            sendLoginIssueAck(to, refCode, username, errorText, message, images, reportedAt);
+        } catch (Exception e) {
+            log.warn("Login sorun bildirimi {} bildiren onay maili gönderilemedi: {}", refCode, e.getMessage());
+        }
+    }
+
+    @Async("loginIssueMailExecutor")
+    public void sendLoginIssueResolvedAsync(String reporterEmail, String adminEmail, String refCode,
+                                            String resolutionNote, String resolvedAt) {
+        try {
+            sendLoginIssueResolved(reporterEmail, adminEmail, refCode, resolutionNote, resolvedAt);
+        } catch (Exception e) {
+            log.warn("Login issue {} çözüldü bildirimi gönderilemedi: {}", refCode, e.getMessage());
+        }
     }
 
     /** Login sorun bildirimi HTML'i — admin (forReporter=false: IP/UA + kimliksiz uyarısı) ve bildiren

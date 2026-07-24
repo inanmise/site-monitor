@@ -65,6 +65,9 @@ public class LoginHelpController {
     /** Basit e-posta biçim kontrolü (kimliksiz kullanıcı girişi — kesin RFC değil, makul filtre). */
     private static final Pattern EMAIL = Pattern.compile("^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$");
     private static final int MAX_IMAGE_BYTES = 1024 * 1024;   // 1MB (decode) — görsel başına
+    /** Base64 metnini DECODE ETMEDEN önce kaba uzunluk sınırı (dev boyutlu string decode → heap spike engeli).
+     *  1MB ikili ≈ 1.4M base64 karakter; boşluk payıyla 2×MAX_IMAGE_BYTES fazlasıyla yeterli. */
+    private static final int MAX_IMAGE_B64_CHARS = MAX_IMAGE_BYTES * 2;
     private static final int MAX_IMAGES = 5;                  // en fazla 5 ekran görüntüsü
     private static final int MAX_MAP_ENTRIES = 10_000;
 
@@ -102,6 +105,15 @@ public class LoginHelpController {
             return err(HttpStatus.BAD_REQUEST, "Alan uzunluk sınırı aşıldı");
         }
 
+        // Rate-limit'i PAHALI görsel decode'undan ÖNCE uygula: kimliksiz çağıran throttle'a takılmadan
+        // ≤5×~1MB base64 decode ettirip heap şişirmesin. Ucuz alan doğrulaması yukarıda kaldı (boş form
+        // token harcamaz); ip aşağıda kayıt/mail/audit için de kullanılır.
+        String ip = clientIpResolver.resolve(request);
+        if (!allow(ip)) {
+            return err(HttpStatus.TOO_MANY_REQUESTS,
+                    "Çok fazla bildirim gönderildi — lütfen daha sonra tekrar deneyin.");
+        }
+
         // Görseller: yeni istemci `images` dizisi gönderir; tekil `image` alanı geriye dönük desteklenir.
         List<String> dataUrls = new ArrayList<>();
         Object imagesRaw = body.get("images");
@@ -122,10 +134,14 @@ public class LoginHelpController {
             if (!m.matches()) {
                 return err(HttpStatus.BAD_REQUEST, "Görseller yalnız PNG veya JPEG olabilir");
             }
-            String cleanB64 = m.group(2).replaceAll("\\s", "");
+            String rawB64 = m.group(2);
+            if (rawB64.length() > MAX_IMAGE_B64_CHARS) {   // DECODE ETMEDEN önce sınırla (heap koruması)
+                return err(HttpStatus.BAD_REQUEST, "Her görsel en fazla 1MB olabilir");
+            }
+            String cleanB64 = rawB64.replaceAll("\\s", "");
             byte[] bytes;
             try {
-                bytes = Base64.getMimeDecoder().decode(m.group(2));
+                bytes = Base64.getMimeDecoder().decode(rawB64);
             } catch (IllegalArgumentException e) {
                 return err(HttpStatus.BAD_REQUEST, "Görsel içeriği çözümlenemedi");
             }
@@ -137,12 +153,6 @@ public class LoginHelpController {
             parsed.add(new ParsedImage(mime, cleanB64));
         }
 
-        String ip = clientIpResolver.resolve(request);
-        if (!allow(ip)) {
-            return err(HttpStatus.TOO_MANY_REQUESTS,
-                    "Çok fazla bildirim gönderildi — lütfen daha sonra tekrar deneyin.");
-        }
-
         String userAgent = request.getHeader("User-Agent");
         String now = ISO.format(Instant.now());
 
@@ -151,34 +161,38 @@ public class LoginHelpController {
                 loginIssueService.save(username, email, errorText, message, parsed, ip, userAgent, now);
         String refCode = LoginIssueService.refCode(report);
 
-        // Best-effort admin bilgilendirme maili (hata kaydı engellemez).
+        // Bilgilendirme mailleri ASYNC (loginIssueMailExecutor) — request thread'ini bloklamaz; best-effort.
         String adminEmail = appSettings.getString("cert.monitor.system-admin.email", "");
         if (adminEmail != null && !adminEmail.isBlank()) {
+            log.info("Login sorun bildirimi {} kaydedildi: user='{}' ip={} images={} → admin maili kuyruğa alındı ({})",
+                    refCode, username, ip, images.size(), adminEmail);
             try {
-                String status = emailService.sendLoginIssueReport(
-                        adminEmail, refCode, username, errorText, message, images, ip, userAgent, now);
-                log.info("Login sorun bildirimi {}: user='{}' ip={} images={} → {} ({})",
-                        refCode, username, ip, images.size(), adminEmail, status);
+                emailService.sendLoginIssueReportAsync(adminEmail, refCode, username, errorText, message, images, ip, userAgent, now);
             } catch (Exception e) {
-                log.warn("Login sorun bildirimi {} admin maili gönderilemedi (kayıt saklandı): {}",
-                        refCode, e.getMessage());
+                log.warn("Login sorun bildirimi {} admin maili kuyruğa alınamadı: {}", refCode, e.getMessage());
             }
         } else {
             log.info("Login sorun bildirimi {} kaydedildi; system-admin.email boş — admin maili atlandı (user='{}' ip={})",
                     refCode, username, ip);
         }
-        // Best-effort: bildiren kişiye admin'e gidenle BENZER içerik (hata mesajı + görseller) + referans no.
+        // Bildiren kişiye "alındı" onayı (benzer içerik + referans no) — ASYNC, best-effort.
         try {
-            emailService.sendLoginIssueAck(email, refCode, username, errorText, message, images, now);
+            emailService.sendLoginIssueAckAsync(email, refCode, username, errorText, message, images, now);
         } catch (Exception e) {
-            log.warn("Login sorun bildirimi {} bildiren onay maili gönderilemedi: {}", refCode, e.getMessage());
+            log.warn("Login sorun bildirimi {} bildiren onay maili kuyruğa alınamadı: {}", refCode, e.getMessage());
         }
-        auditService.recordAction("LOGIN_HELP_REPORT",
-                username, null, null, null,
-                "LOGIN", ip,
-                "{\"ref\":\"" + refCode + "\",\"messageChars\":" + message.length()
-                        + ",\"errorChars\":" + errorText.length() + ",\"images\":" + images.size() + "}",
-                ip, userAgent, null);
+        // Best-effort audit — kayıt zaten commit'lendi + referans verildi; audit-insert hatası
+        // kullanıcıya 500 döndürüp gereksiz resubmit'e yol açmasın (mailler gibi swallow).
+        try {
+            auditService.recordAction("LOGIN_HELP_REPORT",
+                    username, null, null, null,
+                    "LOGIN", ip,
+                    "{\"ref\":\"" + refCode + "\",\"messageChars\":" + message.length()
+                            + ",\"errorChars\":" + errorText.length() + ",\"images\":" + images.size() + "}",
+                    ip, userAgent, null);
+        } catch (Exception e) {
+            log.warn("Login sorun bildirimi {} audit kaydı yazılamadı (kayıt saklandı): {}", refCode, e.getMessage());
+        }
 
         // Referans numarası kullanıcıya döner (durum takibi için); SMTP/admin durumu sızdırılmaz.
         Map<String, Object> out = new LinkedHashMap<>();

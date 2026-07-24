@@ -79,7 +79,7 @@ const VALID_TABS = new Set([
   'dashboard', 'all', 'domains', 'forecast', 'renewal', 'renewal-guide',
   'warnings', 'incidents', 'maintenance', 'alerthistory', 'stats', 'weakalgo', 'weeklyreports', 'incident-history',
   'health', 'uptime', 'http', 'domain', 'port', 'dns', 'keyword', 'ping', 'activity', 'myactivity', 'system',
-  'admin', 'permissions', 'sqlplayground', 'help', 'settings',
+  'admin', 'permissions', 'sqlplayground', 'login-issues', 'help', 'settings',
 ])
 function initialTabFromUrl() {
   try {

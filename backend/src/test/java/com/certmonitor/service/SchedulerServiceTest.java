@@ -540,6 +540,17 @@ class SchedulerServiceTest {
     }
 
     @Test
+    @DisplayName("cleanupOldLogs: login_issue retention — yalnız RESOLVED, önce görseller (FK) sonra kayıtlar")
+    void cleanupOldLogs_prunesResolvedLoginIssues() {
+        scheduler.cleanupOldLogs();
+
+        // FK sırası: önce görseller (RESOLVED alt-sorgu), sonra kayıtlar; ikisi de yalnız RESOLVED.
+        verify(jdbcTemplate).update(contains("DELETE FROM login_issue_report_images"), any(Object[].class));
+        verify(jdbcTemplate).update(
+                contains("DELETE FROM login_issue_reports WHERE status = 'RESOLVED'"), any(Object[].class));
+    }
+
+    @Test
     @DisplayName("getShutdownSnapshot() returns running/instance/last_run keys")
     void getShutdownSnapshot_keysPresent() {
         Map<String, Object> snap = scheduler.getShutdownSnapshot();

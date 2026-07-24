@@ -552,11 +552,17 @@ public class CertificateCheckerService {
             s.connect(new InetSocketAddress(domain, port), timeoutMs);
             return s;
         }
+        // Tek-A: tam timeout, tek deneme. Çok-A: ilk NetworkResolver.MAX_A_ATTEMPTS IP + IP başına connect'i
+        // CONNECT_CAP_MS'e clamp (K ölü IP × tam timeout thread-parkını önle; tek-A yolu değişmez).
+        boolean multi = resolvedIps.size() > 1;
+        int limit = multi ? Math.min(resolvedIps.size(), NetworkResolver.MAX_A_ATTEMPTS) : 1;
+        int perAttemptMs = multi ? Math.min(timeoutMs, NetworkResolver.CONNECT_CAP_MS) : timeoutMs;
         IOException last = null;
-        for (String ip : resolvedIps) {
+        for (int i = 0; i < limit; i++) {
+            String ip = resolvedIps.get(i);
             SSLSocket s = (SSLSocket) factory.createSocket();
             try {
-                s.connect(new InetSocketAddress(java.net.InetAddress.getByName(ip), port), timeoutMs);
+                s.connect(new InetSocketAddress(java.net.InetAddress.getByName(ip), port), perAttemptMs);
                 return s;
             } catch (IOException e) {
                 last = e;

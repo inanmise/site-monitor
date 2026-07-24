@@ -86,13 +86,14 @@ class LoginHelpControllerTest {
                 argThat((List<LoginIssueService.ParsedImage> imgs) ->
                         imgs != null && imgs.size() == 1 && "image/png".equals(imgs.get(0).contentType())),
                 eq("10.1.2.3"), any(), anyString());
-        verify(emailService).sendLoginIssueReport(eq("admin@akbank.com"), eq("LIR-2026-000042"), eq("N12345"),
+        // Mailler ASYNC (loginIssueMailExecutor) gönderilir → async sarmalayıcılar doğrulanır.
+        verify(emailService).sendLoginIssueReportAsync(eq("admin@akbank.com"), eq("LIR-2026-000042"), eq("N12345"),
                 eq("HTTP 423 Locked"), eq("Hesabım kilitlendi, giriş yapamıyorum"),
                 argThat((List<InlineImage> imgs) -> imgs != null && imgs.size() == 1
                         && imgs.get(0).data().length == 6 && "image/png".equals(imgs.get(0).contentType())),
                 eq("10.1.2.3"), any(), anyString());
         // Bildiren kişiye ACK — admin'e gidenle benzer (hata + görsel) + referans no.
-        verify(emailService).sendLoginIssueAck(eq(EMAIL), eq("LIR-2026-000042"), eq("N12345"),
+        verify(emailService).sendLoginIssueAckAsync(eq(EMAIL), eq("LIR-2026-000042"), eq("N12345"),
                 eq("HTTP 423 Locked"), eq("Hesabım kilitlendi, giriş yapamıyorum"),
                 argThat((List<InlineImage> imgs) -> imgs != null && imgs.size() == 1), anyString());
         verify(auditService).recordAction(eq("LOGIN_HELP_REPORT"), eq("N12345"),
@@ -112,7 +113,7 @@ class LoginHelpControllerTest {
                                 + "\"data:image/png;base64," + a + "\",\"data:image/jpeg;base64," + b + "\"]}"))
                 .andExpect(status().isOk());
 
-        verify(emailService).sendLoginIssueReport(anyString(), anyString(), eq("N1"), anyString(), anyString(),
+        verify(emailService).sendLoginIssueReportAsync(anyString(), anyString(), eq("N1"), anyString(), anyString(),
                 argThat((List<InlineImage> imgs) -> imgs != null && imgs.size() == 2
                         && imgs.get(0).data().length == 3 && "image/png".equals(imgs.get(0).contentType())
                         && imgs.get(1).data().length == 2 && "image/jpeg".equals(imgs.get(1).contentType())),
@@ -184,8 +185,37 @@ class LoginHelpControllerTest {
                 .andExpect(jsonPath("$.success").value(true));
         verify(loginIssueService).save(eq("N2"), eq(EMAIL), anyString(), anyString(),
                 any(), anyString(), any(), anyString());
-        verify(emailService, never()).sendLoginIssueReport(anyString(), anyString(), anyString(),
+        verify(emailService, never()).sendLoginIssueReportAsync(anyString(), anyString(), anyString(),
                 anyString(), anyString(), any(), anyString(), any(), anyString());
+    }
+
+    @Test
+    @DisplayName("Özellik kapalı (login-issues.enabled=false) → 404; kayıt/mail gitmez")
+    void report_featureDisabled_404() throws Exception {
+        when(appSettings.getBoolean(eq("cert.monitor.login-issues.enabled"), anyBoolean())).thenReturn(false);
+        mvc.perform(post("/api/login-help")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"username\":\"N1\",\"email\":\"" + EMAIL + "\",\"message\":\"deneme\"}"))
+                .andExpect(status().isNotFound());
+        verify(loginIssueService, never()).save(anyString(), anyString(), anyString(), anyString(),
+                any(), anyString(), any(), anyString());
+    }
+
+    @Test
+    @DisplayName("Rate-limit görsel doğrulamasından ÖNCE: 3 geçerli sonra geçersiz görselli 4. istek → 400 değil 429")
+    void report_rateLimitBeforeImageValidation_429() throws Exception {
+        when(clientIpResolver.resolve(any())).thenReturn("10.8.8.8");
+        String ok = "{\"username\":\"N1\",\"email\":\"" + EMAIL + "\",\"message\":\"deneme\"}";
+        for (int i = 0; i < 3; i++) {
+            mvc.perform(post("/api/login-help").contentType(MediaType.APPLICATION_JSON).content(ok))
+                    .andExpect(status().isOk());
+        }
+        // 4. istek geçersiz (SVG) görsel içeriyor; görsel doğrulaması 400 döndürürdü. Rate-limit ÖNCE
+        // çalıştığından decode'a hiç ulaşılmadan 429 dönmeli (kimliksiz decode amplifikasyonu engellenir).
+        String withSvg = "{\"username\":\"N1\",\"email\":\"" + EMAIL + "\",\"message\":\"x\","
+                + "\"image\":\"data:image/svg+xml;base64,PHN2Zz4=\"}";
+        mvc.perform(post("/api/login-help").contentType(MediaType.APPLICATION_JSON).content(withSvg))
+                .andExpect(status().isTooManyRequests());
     }
 
     private void expect400(String body) throws Exception {

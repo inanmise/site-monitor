@@ -3,6 +3,7 @@ import { Loader2 } from 'lucide-react'
 import { api } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
 import { useToast } from '../ui/Toast.jsx'
+import { usePermissions } from '../../contexts/PermissionsProvider.jsx'
 
 // Durum → rozet sınıfı (kırmızı YOK — sistem alarmlarına saklı). OPEN/IN_PROGRESS amber, RESOLVED yeşil.
 const STATUS_BADGE = { OPEN: 'badge badge-warn', IN_PROGRESS: 'badge badge-warn', RESOLVED: 'badge badge-ok' }
@@ -20,6 +21,8 @@ function fmtDate(iso) {
 export default function LoginIssueReports() {
   const t = useT()
   const toast = useToast()
+  const { canView } = usePermissions()
+  const allowView = canView('issues.login-reports')  // izinsiz erişimde (bayat nav state) kalıcı spinner yerine temiz mesaj
 
   const [rows, setRows] = useState(null)       // null = yükleniyor
   const [counts, setCounts] = useState({ OPEN: 0, IN_PROGRESS: 0, RESOLVED: 0 })
@@ -30,11 +33,12 @@ export default function LoginIssueReports() {
   const [zoom, setZoom] = useState(null)       // büyütülen ekran görüntüsü (data-URL) — uygulama-içi lightbox
 
   const load = useCallback(async () => {
+    if (!allowView) { setRows([]); return }   // izin yoksa 403 fetch + toast tetikleme
     const res = await api.admin.getLoginIssues({ status: statusFilter || undefined, size: 100 })
     if (res?.success) { setRows(res.data || []); setCounts(res.counts || counts) }
     else toast.error(res?.error || t('settings.loadError'))
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [statusFilter])
+  }, [statusFilter, allowView])
 
   useEffect(() => { load() }, [load])
 
@@ -64,6 +68,9 @@ export default function LoginIssueReports() {
     }
   }
 
+  if (!allowView) {
+    return <div className="admin-section"><div className="empty-state">{t('loginIssues.noAccess')}</div></div>
+  }
   if (!rows) {
     return <div className="admin-section"><Loader2 className="spin" size={20} /> {t('settings.loading')}</div>
   }

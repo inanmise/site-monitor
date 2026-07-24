@@ -1,6 +1,7 @@
 package com.certmonitor.controller;
 
 import com.certmonitor.model.LoginIssueReport;
+import com.certmonitor.model.LoginIssueReportImage;
 import com.certmonitor.service.AuditService;
 import com.certmonitor.service.EmailNotificationService;
 import com.certmonitor.service.HttpMetricsService;
@@ -114,8 +115,8 @@ class LoginIssueControllerTest {
         mvc.perform(put("/api/admin/login-issues/9/status").session(authed())
                         .contentType(MediaType.APPLICATION_JSON).content("{\"status\":\"RESOLVED\",\"resolutionNote\":\"Hesap açıldı\"}"))
                 .andExpect(status().isOk());
-        // Hem bildirene (To) hem sistem yöneticisine (CC/admin) gider.
-        verify(emailService).sendLoginIssueResolved(eq("reporter@akbank.com"), eq("admin@akbank.com"),
+        // Hem bildirene (To) hem sistem yöneticisine (CC/admin) gider — ASYNC (loginIssueMailExecutor).
+        verify(emailService).sendLoginIssueResolvedAsync(eq("reporter@akbank.com"), eq("admin@akbank.com"),
                 eq("LIR-2026-000009"), eq("Hesap açıldı"), eq("2026-07-24T10:00:00"));
     }
 
@@ -124,5 +125,43 @@ class LoginIssueControllerTest {
         when(loginIssueService.get(999L)).thenReturn(Optional.empty());
         mvc.perform(get("/api/admin/login-issues/999").session(authed()))
                 .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void list_mapsRealRow_refCodeSummaryImageCount() throws Exception {
+        LoginIssueReport r = new LoginIssueReport();
+        r.setId(7L); r.setReportedAt("2026-07-24T09:00:00"); r.setStatus("OPEN");
+        r.setUsername("N77"); r.setIpAddress("1.2.3.4"); r.setImageCount(2);
+        // 80+ karakter + iç boşluklar → özet 80'de kırpılır, "\s+" tek boşluğa iner, "…" eklenir.
+        r.setMessage("Satır1\n\n  çok    boşluklu   ve uzun bir mesaj " + "x".repeat(90));
+        when(loginIssueService.list(any(), anyInt(), anyInt()))
+                .thenReturn(new org.springframework.data.domain.PageImpl<>(List.of(r)));
+        when(loginIssueService.counts()).thenReturn(Map.of("OPEN", 1L, "IN_PROGRESS", 0L, "RESOLVED", 0L));
+
+        mvc.perform(get("/api/admin/login-issues").session(authed()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].refCode").value("LIR-2026-000007"))
+                .andExpect(jsonPath("$.data[0].username").value("N77"))
+                .andExpect(jsonPath("$.data[0].imageCount").value(2))
+                .andExpect(jsonPath("$.data[0].messageSummary", org.hamcrest.Matchers.endsWith("…")))
+                .andExpect(jsonPath("$.data[0].messageSummary", org.hamcrest.Matchers.not(org.hamcrest.Matchers.containsString("\n"))))
+                .andExpect(jsonPath("$.total").value(1));
+    }
+
+    @Test
+    void detail_serialisesImagesAsDataUrls() throws Exception {
+        LoginIssueReport r = new LoginIssueReport();
+        r.setId(5L); r.setReportedAt("2026-07-24T09:00:00"); r.setStatus("OPEN");
+        r.setUsername("N5"); r.setMessage("giriş yapamıyorum"); r.setImageCount(2);
+        when(loginIssueService.get(5L)).thenReturn(Optional.of(r));
+        LoginIssueReportImage i1 = new LoginIssueReportImage(); i1.setContentType("image/png");  i1.setDataBase64("AAAA");
+        LoginIssueReportImage i2 = new LoginIssueReportImage(); i2.setContentType("image/jpeg"); i2.setDataBase64("BBBB");
+        when(loginIssueService.images(5L)).thenReturn(List.of(i1, i2));
+
+        mvc.perform(get("/api/admin/login-issues/5").session(authed()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.refCode").value("LIR-2026-000005"))
+                .andExpect(jsonPath("$.data.images[0]").value("data:image/png;base64,AAAA"))
+                .andExpect(jsonPath("$.data.images[1]").value("data:image/jpeg;base64,BBBB"));
     }
 }

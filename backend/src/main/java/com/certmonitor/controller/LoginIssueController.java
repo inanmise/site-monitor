@@ -86,18 +86,23 @@ public class LoginIssueController {
         } catch (IllegalArgumentException e) {
             return err(HttpStatus.BAD_REQUEST, e.getMessage());
         }
-        auditService.recordAction("LOGIN_ISSUE_STATUS_CHANGE", session, request,
-                "LOGIN_ISSUE", String.valueOf(id),
-                "{\"status\":\"" + updated.getStatus() + "\"}");
+        // Best-effort audit — durum değişikliği zaten commit'lendi; audit hatası 500'e yol açmasın.
+        try {
+            auditService.recordAction("LOGIN_ISSUE_STATUS_CHANGE", session, request,
+                    "LOGIN_ISSUE", String.valueOf(id),
+                    "{\"status\":\"" + updated.getStatus() + "\"}");
+        } catch (Exception e) {
+            log.warn("Login issue {} durum değişikliği audit kaydı yazılamadı: {}", id, e.getMessage());
+        }
         // Çözümlendiğinde "çözüldü" bildirimi HEM bildirene (To) HEM sistem yöneticisine (CC) gider
         // (karşılıklı bilgilendirme). Best-effort; hata akışı kırmaz.
         if (LoginIssueService.RESOLVED.equals(updated.getStatus())) {
             try {
                 String adminEmail = appSettings.getString("cert.monitor.system-admin.email", "");
-                emailService.sendLoginIssueResolved(updated.getReporterEmail(), adminEmail,
+                emailService.sendLoginIssueResolvedAsync(updated.getReporterEmail(), adminEmail,
                         LoginIssueService.refCode(updated), updated.getResolutionNote(), updated.getResolvedAt());
             } catch (Exception e) {
-                log.warn("Login issue {} çözüldü bildirimi gönderilemedi: {}",
+                log.warn("Login issue {} çözüldü bildirimi kuyruğa alınamadı: {}",
                         LoginIssueService.refCode(updated), e.getMessage());
             }
         }
