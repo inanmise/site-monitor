@@ -29,6 +29,7 @@ public class WhoisDomainClient {
 
     private final AppSettingsService appSettings;
     private final PublicSuffixService psl;
+    private final TrWebWhoisClient trWebWhois;
 
     private final Map<String, WhoisParser> parsers = Map.of("tr", new TrWhoisParser());
     private final WhoisParser defaultParser = new DefaultWhoisParser();
@@ -52,9 +53,19 @@ public class WhoisDomainClient {
 
     /** Kayıtlı domain için WHOIS sorgusu (env-gated). RDAP ile aynı Map şeklini döner (+ source=WHOIS). */
     public Map<String, Object> lookup(String registrableDomain) {
-        if (!enabled()) return err("whois disabled");
         if (registrableDomain == null || registrableDomain.isBlank()) return err("invalid domain");
         String tld = psl.tldOf(registrableDomain);
+        // .tr → HTTPS web-whois (port-43 kapalı). Kendi flag'i; socket whois-enabled'dan bağımsız.
+        if ("tr".equals(tld) && trWebWhois.enabled()) {
+            String raw = trWebWhois.fetchRaw(registrableDomain);
+            if (raw == null || raw.isBlank()) return err("tr web-whois: boş/erişilemedi");
+            Map<String, Object> info = parsers.get("tr").parse(raw);
+            info.put("source", "WHOIS");
+            if (info.get("expiry_date") == null) info.put("error", "tr web-whois: no expiry parsed");
+            info.put("raw", raw.length() > 1500 ? raw.substring(0, 1500) : raw);
+            return info;
+        }
+        if (!enabled()) return err("whois disabled");
         String server = serverFor(tld);
         if (server == null) return err("no whois server for ." + tld);
         String raw;
@@ -113,9 +124,11 @@ public class WhoisDomainClient {
     public Map<String, Object> diagnose(String registrableDomain) {
         Map<String, Object> step = new LinkedHashMap<>();
         step.put("step", "WHOIS");
-        if (!enabled()) { step.put("status", "skip"); step.put("detail", "WHOIS kapalı (cert.monitor.domain.whois-enabled=false)"); return step; }
         if (registrableDomain == null || registrableDomain.isBlank()) { step.put("status", "fail"); step.put("error_class", "UNKNOWN"); step.put("error", "invalid domain"); return step; }
         String tld = psl.tldOf(registrableDomain);
+        // .tr → HTTPS web-whois adımı (port-43 kapalı). Kendi flag'i; socket whois-enabled'dan bağımsız.
+        if ("tr".equals(tld) && trWebWhois.enabled()) return diagnoseTrWeb(registrableDomain, step);
+        if (!enabled()) { step.put("status", "skip"); step.put("detail", "WHOIS kapalı (cert.monitor.domain.whois-enabled=false)"); return step; }
         String server = serverFor(tld);
         if (server == null) { step.put("status", "fail"); step.put("error_class", "NO_SERVER"); step.put("detail", "." + tld + " için WHOIS sunucusu yok"); return step; }
         step.put("detail", "@" + server + ":43");
@@ -131,6 +144,37 @@ public class WhoisDomainClient {
             step.put("expiry_date", expiry);
             step.put("registrar", info.get("registrar"));
             step.put("detail", "expiry: " + expiry);
+            return step;
+        } catch (Exception e) {
+            step.put("elapsed_ms", System.currentTimeMillis() - t0);
+            step.put("status", "fail");
+            step.put("error_class", DiagnosticErrorClassifier.classify(e));
+            step.put("error", e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName());
+            return step;
+        }
+    }
+
+    /** .tr web-whois tanılama adımı (HTTPS; isimtescil/trabis). fetchRaw ağ hatalarını yutar → boş=EMPTY. */
+    private Map<String, Object> diagnoseTrWeb(String reg, Map<String, Object> step) {
+        step.put("detail", "TRABIS web-whois (HTTPS)");
+        long t0 = System.currentTimeMillis();
+        try {
+            String raw = trWebWhois.fetchRaw(reg);
+            step.put("elapsed_ms", System.currentTimeMillis() - t0);
+            if (raw == null || raw.isBlank()) {
+                step.put("status", "fail"); step.put("error_class", "EMPTY");
+                step.put("detail", "TRABIS web-whois boş/erişilemedi"); return step;
+            }
+            Map<String, Object> info = parsers.get("tr").parse(raw);
+            Object expiry = info.get("expiry_date");
+            if (expiry == null) {
+                step.put("status", "fail"); step.put("error_class", "NO_EXPIRY");
+                step.put("detail", "yanıtta süre bitişi ayrıştırılamadı"); return step;
+            }
+            step.put("status", "ok");
+            step.put("expiry_date", expiry);
+            step.put("registrar", info.get("registrar"));
+            step.put("detail", "expiry: " + expiry + " (TRABIS web)");
             return step;
         } catch (Exception e) {
             step.put("elapsed_ms", System.currentTimeMillis() - t0);

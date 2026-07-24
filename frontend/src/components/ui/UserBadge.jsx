@@ -26,7 +26,7 @@ export function initialsOf(name, username) {
  */
 export default function UserBadge({
   username, email, userId, displayName, count,
-  size = 'md', showUsername = true, inline = false, systemLabel,
+  size = 'md', showUsername = true, inline = false, systemLabel, nameOnly = false,
 }) {
   const dir = useUserDirectory()
   const [imgErr, setImgErr] = useState(false)
@@ -39,7 +39,9 @@ export default function UserBadge({
   const resolved = needLookup ? (dir.lookup(username) || dir.lookupByEmail(email)) : null
   const id = userId != null ? userId : resolved?.id
   const ident = username || email
-  const name = displayName || resolved?.display_name || ident
+  const rawName = displayName || resolved?.display_name || ident
+  // nameOnly: sondaki parantezli eki ("(… Bölümü)" gibi departman/başlık) çıkar → yalnız ad-soyad.
+  const name = nameOnly && typeof rawName === 'string' ? rawName.replace(/\s*\([^)]*\)\s*$/, '') : rawName
   const px = size === 'sm' ? 20 : 26
   const fs = size === 'sm' ? 9 : 11
 

@@ -46,6 +46,11 @@ public final class AppSettingsCatalog {
         new Setting("cert.monitor.domain.whois-enabled",         "monitoring", Type.BOOL),
         new Setting("cert.monitor.domain.whois-servers",         "monitoring", Type.CSV),
         new Setting("cert.monitor.domain.whois-timeout-ms",      "monitoring", Type.INT),
+        // .tr (TRABIS) HTTPS web-whois — port-43 kapalı ortamda .tr süre bitişini almanın tek yolu (proxy'den geçer).
+        new Setting("cert.monitor.domain.tr-web-whois-enabled",   "monitoring", Type.BOOL),
+        new Setting("cert.monitor.domain.tr-web-whois-providers", "monitoring", Type.CSV),
+        new Setting("cert.monitor.domain.isimtescil-whois-url",   "monitoring", Type.STRING),
+        new Setting("cert.monitor.domain.trabis-whois-url",       "monitoring", Type.STRING),
         new Setting("cert.monitor.domain.rdap-timeout-ms",       "monitoring", Type.INT),
         new Setting("cert.monitor.domain.default-warning-days",  "monitoring", Type.INT),
         new Setting("cert.monitor.domain.default-critical-days", "monitoring", Type.INT),

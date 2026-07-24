@@ -55,6 +55,17 @@ const OUTDENT_ICON = (
 )
 
 /** Bayt → okunur boyut (≥1MB ise MB, aksi KB). */
+// Oluşturan/Son Düzenleme/Onaylayan hücresi — kişi (yalnız ad-soyad) üstte, tarih HER ZAMAN alt satırda + koyu.
+function actorCell(username, dateIso) {
+  if (!username) return '—'
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 2, alignItems: 'flex-start' }}>
+      <UserBadge username={username} inline size="sm" nameOnly />
+      <span style={{ color: 'var(--text)', fontWeight: 600, fontSize: '.85em' }}>{formatDate(dateIso)}</span>
+    </div>
+  )
+}
+
 function fmtFileSize(bytes) {
   if (bytes == null) return '—'
   return bytes >= 1024 * 1024
@@ -1168,9 +1179,9 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
                         </div>
                       )}
                     </td>
-                    <td>{r.created_by ? <><UserBadge username={r.created_by} inline size="sm" /> · {formatDate(r.created_at)}</> : '—'}</td>
-                    <td>{r.updated_by ? <><UserBadge username={r.updated_by} inline size="sm" /> · {formatDate(r.updated_at)}</> : '—'}</td>
-                    <td>{r.approved_by ? <><UserBadge username={r.approved_by} inline size="sm" /> · {formatDate(r.approved_at)}</> : '—'}</td>
+                    <td>{actorCell(r.created_by, r.created_at)}</td>
+                    <td>{actorCell(r.updated_by, r.updated_at)}</td>
+                    <td>{actorCell(r.approved_by, r.approved_at)}</td>
                     <td>{r.sent_at ? formatDate(r.sent_at) : '—'}</td>
                     <td onClick={(e) => e.stopPropagation()}>
                       <div className="wr-menu-wrap">

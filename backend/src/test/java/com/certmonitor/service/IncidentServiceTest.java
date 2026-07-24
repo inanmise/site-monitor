@@ -197,6 +197,14 @@ class IncidentServiceTest {
         @SuppressWarnings("unchecked")
         var daily = (java.util.List<Map<String, Object>>) tr.get("daily");
         assertThat(daily).hasSize(2); // 06-14 ve 06-15
+        // Günlük ÖNEM kırılımı (çubuk grafiği yığılmış renkler için) — 06-14: 1 critical + 1 high, 06-15: 1 critical
+        assertThat(daily.get(0).get("day")).isEqualTo("2026-06-14");
+        assertThat(((Number) daily.get(0).get("count")).longValue()).isEqualTo(2L);
+        assertThat(((Number) daily.get(0).get("critical")).longValue()).isEqualTo(1L);
+        assertThat(((Number) daily.get(0).get("high")).longValue()).isEqualTo(1L);
+        assertThat(((Number) daily.get(0).get("medium")).longValue()).isEqualTo(0L);
+        assertThat(daily.get(1).get("day")).isEqualTo("2026-06-15");
+        assertThat(((Number) daily.get(1).get("critical")).longValue()).isEqualTo(1L);
 
         @SuppressWarnings("unchecked")
         var bySev = (Map<String, Long>) tr.get("by_severity");
