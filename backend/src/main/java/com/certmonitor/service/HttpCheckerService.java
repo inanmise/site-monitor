@@ -26,7 +26,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -59,7 +58,22 @@ public class HttpCheckerService {
     // Çok-A pin yolu için saklanan SSLContext'ler (paylaşılan client'larla aynı güven) + per-host pinned client cache.
     private SSLContext trustAllCtx;
     private SSLContext strictCtx;
-    private final Map<String, HttpClient> pinnedClients = new ConcurrentHashMap<>();
+    // Per-host pinned client cache — SINIRLI LRU. Her JDK HttpClient kendi selector-thread + connection
+    // pool + FD tutar; sınırsız ConcurrentHashMap 200-1000 domainde yüzlerce-1000+ resident client →
+    // thread/FD/heap sızıntısıydı. Erişim-sıralı LinkedHashMap; kapasiteyi aşınca en eski client KAPATILIR
+    // (JDK 21+ HttpClient AutoCloseable). Erişim synchronized (LinkedHashMap thread-safe değil + LRU mutasyonu).
+    private static final int MAX_PINNED_CLIENTS = 64;
+    private final Map<String, HttpClient> pinnedClients =
+            new LinkedHashMap<>(16, 0.75f, true) {
+                @Override
+                protected boolean removeEldestEntry(Map.Entry<String, HttpClient> eldest) {
+                    if (size() > MAX_PINNED_CLIENTS) {
+                        try { eldest.getValue().close(); } catch (Exception ignore) { /* best-effort */ }
+                        return true;
+                    }
+                    return false;
+                }
+            };
 
     private static final Pattern CN_PATTERN = Pattern.compile("CN=([^,]+)", Pattern.CASE_INSENSITIVE);
 
@@ -242,17 +256,31 @@ public class HttpCheckerService {
         SSLContext ctx = verifySsl ? strictCtx : trustAllCtx;
         if (ctx == null) return null;
         String key = host + "|" + verifySsl + "|" + followRedirects;
-        return pinnedClients.computeIfAbsent(key, k -> {
-            SSLParameters sp = ctx.getDefaultSSLParameters();
-            sp.setServerNames(List.of(new SNIHostName(host)));
-            sp.setEndpointIdentificationAlgorithm(null);
-            return HttpClient.newBuilder()
-                    .connectTimeout(Duration.ofSeconds(10))
-                    .followRedirects(followRedirects ? HttpClient.Redirect.NORMAL : HttpClient.Redirect.NEVER)
-                    .sslContext(ctx)
-                    .sslParameters(sp)
-                    .build();
-        });
+        // synchronized: LinkedHashMap (LRU) thread-safe değil; computeIfAbsent + removeEldestEntry atomik olmalı.
+        synchronized (pinnedClients) {
+            return pinnedClients.computeIfAbsent(key, k -> {
+                SSLParameters sp = ctx.getDefaultSSLParameters();
+                sp.setServerNames(List.of(new SNIHostName(host)));
+                sp.setEndpointIdentificationAlgorithm(null);
+                return HttpClient.newBuilder()
+                        .connectTimeout(Duration.ofSeconds(10))
+                        .followRedirects(followRedirects ? HttpClient.Redirect.NORMAL : HttpClient.Redirect.NEVER)
+                        .sslContext(ctx)
+                        .sslParameters(sp)
+                        .build();
+            });
+        }
+    }
+
+    /** Kapanışta pinned client'ları serbest bırak (selector-thread + FD). Best-effort; paylaşılan 4 client JVM ile gider. */
+    @jakarta.annotation.PreDestroy
+    public void closePinnedClients() {
+        synchronized (pinnedClients) {
+            for (HttpClient c : pinnedClients.values()) {
+                try { c.close(); } catch (Exception ignore) { /* best-effort */ }
+            }
+            pinnedClients.clear();
+        }
     }
 
     /** baseUri'nin host'unu IP-literaline çevirir (şema/port/path/query korunur). */

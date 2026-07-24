@@ -90,6 +90,20 @@ class LoginIssueServiceTest {
     }
 
     @Test
+    @DisplayName("RESOLVED→IN_PROGRESS → çözüm alanları (not dahil) tümüyle temizlenir (bayat not kalmaz)")
+    void resolvedToInProgress_clearsStaleNote() {
+        LoginIssueReport r = report(5L, "RESOLVED");
+        r.setResolvedBy("admin"); r.setResolvedAt("2026-07-23T11:00:00"); r.setResolutionNote("eski çözüm notu");
+        when(reportRepo.findById(5L)).thenReturn(Optional.of(r));
+        when(reportRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        LoginIssueReport out = service.updateStatus(5L, "IN_PROGRESS", null, "admin2");
+        assertThat(out.getStatus()).isEqualTo("IN_PROGRESS");
+        assertThat(out.getResolvedBy()).isNull();
+        assertThat(out.getResolvedAt()).isNull();
+        assertThat(out.getResolutionNote()).isNull();   // eskiden yalnız OPEN'da temizleniyordu → bayat kalıyordu
+    }
+
+    @Test
     @DisplayName("Geçersiz durum → IllegalArgumentException")
     void invalidStatus_throws() {
         assertThatThrownBy(() -> service.updateStatus(5L, "BOGUS", null, "x"))

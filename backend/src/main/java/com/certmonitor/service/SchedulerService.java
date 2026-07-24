@@ -710,11 +710,19 @@ public class SchedulerService {
             int dg = safeDelete("DELETE FROM diagnostic_runs WHERE executed_at < ?", diagCutoff);
             String aeCutoff = ISO.format(Instant.now().minus(365, ChronoUnit.DAYS));
             int ae = safeDelete("DELETE FROM alert_events WHERE resolved = true AND resolved_at < ?", aeCutoff);
+            // login_issue_reports/images: public "sorun bildir" akışı yazıyordu ama HİÇBİR batch temizlemiyordu
+            // (base64 görsel TEXT ≤5×~1MB → asıl DB büyümesi burada). Yalnız ÇÖZÜLMÜŞ (RESOLVED) + 365g'den
+            // eski kayıtları sil; açık/işlemdeki bildirimler ASLA silinmez. FK sırası: önce görseller.
+            String liCutoff = ISO.format(Instant.now().minus(365, ChronoUnit.DAYS));
+            int lii = safeDelete("DELETE FROM login_issue_report_images WHERE report_id IN "
+                    + "(SELECT id FROM login_issue_reports WHERE status = 'RESOLVED' AND resolved_at < ?)", liCutoff);
+            int lir = safeDelete("DELETE FROM login_issue_reports WHERE status = 'RESOLVED' AND resolved_at < ?", liCutoff);
             // In-memory: silinen monitörlerin checkDue anahtarları birikmesin (uzun uptime sızıntısı).
             int pruned = pruneMonitorCheckState(collectLiveMonitorKeys());
-            log.info("Nightly cleanup (retention v2): httpChecks={}, heartbeat={}, domainChecks={}, diagRuns={}, resolvedAlerts={}, checkStateKeysPruned={} "
-                    + "(hb cutoff: {}; diag cutoff: {}; alert cutoff: {})",
-                    hc, hb, dcn, dg, ae, pruned, hbCutoff, diagCutoff, aeCutoff);
+            log.info("Nightly cleanup (retention v2): httpChecks={}, heartbeat={}, domainChecks={}, diagRuns={}, resolvedAlerts={}, "
+                    + "loginIssues={}, loginIssueImages={}, checkStateKeysPruned={} "
+                    + "(hb cutoff: {}; diag cutoff: {}; alert cutoff: {}; loginIssue cutoff: {})",
+                    hc, hb, dcn, dg, ae, lir, lii, pruned, hbCutoff, diagCutoff, aeCutoff, liCutoff);
         } catch (Exception e) {
             log.warn("Nightly cleanup failed: {}", e.getMessage());
         }

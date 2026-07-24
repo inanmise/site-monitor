@@ -24,6 +24,11 @@ import java.util.List;
  */
 public final class NetworkResolver {
 
+    /** Çok-A amplifikasyon sınırı: en fazla ilk N IP denenir (K ölü IP × timeout thread-parkını önler). */
+    public static final int MAX_A_ATTEMPTS = 6;
+    /** Çok-A yolunda IP başına connect üst sınırı (HttpCheckerService probe'u ile aynı desen). */
+    public static final int CONNECT_CAP_MS = 4000;
+
     private NetworkResolver() {}
 
     /** Host'un tüm A/AAAA adresleri; çözümleme hatasında boş liste. IP-literal için tek elemanlı. */
@@ -54,11 +59,17 @@ public final class NetworkResolver {
             s.connect(new InetSocketAddress(host, port), timeoutMs);
             return s;
         }
+        // Tek-A: eski davranış (tam timeout, tek deneme). Çok-A: ilk MAX_A_ATTEMPTS IP + IP başına
+        // connect'i CONNECT_CAP_MS'e clamp (çok-A amplifikasyonu; tek-A hiç etkilenmez → false-down riski yok).
+        boolean multi = addrs.size() > 1;
+        int limit = multi ? Math.min(addrs.size(), MAX_A_ATTEMPTS) : 1;
+        int perAttemptMs = multi ? Math.min(timeoutMs, CONNECT_CAP_MS) : timeoutMs;
         IOException last = null;
-        for (InetAddress addr : addrs) {
+        for (int i = 0; i < limit; i++) {
+            InetAddress addr = addrs.get(i);
             Socket s = new Socket();
             try {
-                s.connect(new InetSocketAddress(addr, port), timeoutMs);
+                s.connect(new InetSocketAddress(addr, port), perAttemptMs);
                 return s;
             } catch (IOException e) {
                 last = e;
@@ -74,9 +85,15 @@ public final class NetworkResolver {
      * Yalnız erişilebilirlik yoklaması (probe) yapar, döndürdüğü soketi hemen kapatır.
      */
     public static InetAddress firstReachable(List<InetAddress> addrs, int port, int timeoutMs) {
-        for (InetAddress addr : addrs) {
+        if (addrs == null || addrs.isEmpty()) return null;
+        // Çok-A: ilk MAX_A_ATTEMPTS IP + IP başına CONNECT_CAP_MS clamp (amplifikasyon sınırı); tek-A tam timeout.
+        boolean multi = addrs.size() > 1;
+        int limit = multi ? Math.min(addrs.size(), MAX_A_ATTEMPTS) : addrs.size();
+        int perAttemptMs = multi ? Math.min(timeoutMs, CONNECT_CAP_MS) : timeoutMs;
+        for (int i = 0; i < limit; i++) {
+            InetAddress addr = addrs.get(i);
             try (Socket s = new Socket()) {
-                s.connect(new InetSocketAddress(addr, port), timeoutMs);
+                s.connect(new InetSocketAddress(addr, port), perAttemptMs);
                 return addr;
             } catch (IOException ignore) { /* bu IP kapalı — sıradakini dene */ }
         }

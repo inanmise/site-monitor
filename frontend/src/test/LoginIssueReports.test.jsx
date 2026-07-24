@@ -25,11 +25,25 @@ vi.mock('../api/client', () => ({
     },
   },
 }))
+
+// Bileşen artık issues.login-reports/view iznine göre kendini gate'liyor (izinsiz → temiz mesaj, spinner değil).
+// Test provider sarmıyor → canView'i hoisted bayrakla kontrol et (varsayılan true; noAccess testinde false).
+const perm = vi.hoisted(() => ({ allow: true }))
+vi.mock('../contexts/PermissionsProvider.jsx', () => ({
+  usePermissions: () => ({ canView: () => perm.allow, canEdit: () => perm.allow, canExecute: () => perm.allow, perms: {}, refresh: () => {} }),
+}))
 import { api } from '../api/client'
 import LoginIssueReports from '../components/admin/LoginIssueReports.jsx'
 
 describe('LoginIssueReports', () => {
-  beforeEach(() => vi.clearAllMocks())
+  beforeEach(() => { vi.clearAllMocks(); perm.allow = true })
+
+  it('izin yoksa: temiz "yetkiniz yok" mesajı + getLoginIssues çağrılmaz (kalıcı spinner yok)', async () => {
+    perm.allow = false
+    render(<LoginIssueReports />)
+    expect(await screen.findByText(/permission to view this page/i)).toBeInTheDocument()
+    expect(api.admin.getLoginIssues).not.toHaveBeenCalled()
+  })
 
   it('sayaçları ve tabloyu yükler', async () => {
     render(<LoginIssueReports />)

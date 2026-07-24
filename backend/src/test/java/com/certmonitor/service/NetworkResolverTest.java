@@ -61,4 +61,25 @@ class NetworkResolverTest {
             assertThat(NetworkResolver.firstReachable(addrs, closed, 1000)).isNull();
         }
     }
+
+    @Test
+    void firstReachable_multiAddress_skipsUnreachable_returnsOpen() throws Exception {
+        try (ServerSocket server = new ServerSocket(0, 1, InetAddress.getByName("127.0.0.1"))) {
+            int open = server.getLocalPort();
+            InetAddress dead = InetAddress.getByName("192.0.2.1");   // RFC 5737 TEST-NET-1 — yönlenmez
+            InetAddress live = InetAddress.getByName("127.0.0.1");
+            // Çok-A (size>1) yol: ilk ulaşılamaz IP atlanır, ikinci (açık) döner (happy-eyeballs korunur).
+            assertThat(NetworkResolver.firstReachable(List.of(dead, live), open, 400)).isEqualTo(live);
+        }
+    }
+
+    @Test
+    void firstReachable_multiAddress_allClosed_capped_returnsNull() throws Exception {
+        int closed;
+        try (ServerSocket tmp = new ServerSocket(0)) { closed = tmp.getLocalPort(); }
+        InetAddress lo = InetAddress.getByName("127.0.0.1");
+        // 8 adres, cap=MAX_A_ATTEMPTS(6): hepsi kapalı → null; cap sayesinde sınırlı denemede biter (thread-park engeli).
+        List<InetAddress> many = java.util.Collections.nCopies(8, lo);
+        assertThat(NetworkResolver.firstReachable(many, closed, 300)).isNull();
+    }
 }

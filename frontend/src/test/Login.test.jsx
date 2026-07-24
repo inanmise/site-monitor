@@ -192,4 +192,34 @@ describe('Login', () => {
     fireEvent.click(within(dialog).getByRole('button', { name: /show details/i }))
     expect(within(dialog).getByText(/HTTP 429/)).toBeInTheDocument()
   })
+
+  it('sorun bildir: ağ hatası → net "sunucuya ulaşılamadı" mesajı gösterilir', async () => {
+    const { api } = await import('../api/client')
+    const { within } = await import('./test-utils.jsx')
+    api.sendLoginHelp.mockResolvedValueOnce({ success: false, networkError: true, error: 'Failed to fetch' })
+    render(<Login onLogin={() => {}} />)
+    fireEvent.click(screen.getByRole('button', { name: /report it to the system administrator/i }))
+    const dialog = await screen.findByRole('dialog')
+    fireEvent.change(within(dialog).getByLabelText(/username/i), { target: { value: 'N1' } })
+    fireEvent.change(within(dialog).getByLabelText(/your email/i), { target: { value: 'u@x.com' } })
+    fireEvent.change(within(dialog).getByPlaceholderText(/describe the issue in detail/i), { target: { value: 'x' } })
+    fireEvent.click(within(dialog).getByRole('button', { name: /^send report$/i }))
+
+    expect(await within(dialog).findByText(/could not reach the server/i)).toBeInTheDocument()
+  })
+
+  it('sorun bildir: 500 → net "sunucu hatası" mesajı gösterilir', async () => {
+    const { api } = await import('../api/client')
+    const { within } = await import('./test-utils.jsx')
+    api.sendLoginHelp.mockResolvedValueOnce({ success: false, status: 500, error: 'Internal Server Error' })
+    render(<Login onLogin={() => {}} />)
+    fireEvent.click(screen.getByRole('button', { name: /report it to the system administrator/i }))
+    const dialog = await screen.findByRole('dialog')
+    fireEvent.change(within(dialog).getByLabelText(/username/i), { target: { value: 'N1' } })
+    fireEvent.change(within(dialog).getByLabelText(/your email/i), { target: { value: 'u@x.com' } })
+    fireEvent.change(within(dialog).getByPlaceholderText(/describe the issue in detail/i), { target: { value: 'x' } })
+    fireEvent.click(within(dialog).getByRole('button', { name: /^send report$/i }))
+
+    expect(await within(dialog).findByText(/a server error occurred/i)).toBeInTheDocument()
+  })
 })
