@@ -57,11 +57,13 @@ public class WhoisDomainClient {
         String tld = psl.tldOf(registrableDomain);
         // .tr → HTTPS web-whois (port-43 kapalı). Kendi flag'i; socket whois-enabled'dan bağımsız.
         if ("tr".equals(tld) && trWebWhois.enabled()) {
-            String raw = trWebWhois.fetchRaw(registrableDomain);
-            if (raw == null || raw.isBlank()) return err("tr web-whois: boş/erişilemedi");
+            TrWebWhoisClient.Fetched f = trWebWhois.fetch(registrableDomain);
+            if (f == null || f.raw() == null || f.raw().isBlank()) return err("tr whois: boş/erişilemedi");
+            String raw = f.raw();
             Map<String, Object> info = parsers.get("tr").parse(raw);
             info.put("source", "WHOIS");
-            if (info.get("expiry_date") == null) info.put("error", "tr web-whois: no expiry parsed");
+            info.put("whois_provider", f.provider());   // hangi kaynak yanıtladı (isimtescil/trabis/trabis43)
+            if (info.get("expiry_date") == null) info.put("error", "tr whois: no expiry parsed");
             info.put("raw", raw.length() > 1500 ? raw.substring(0, 1500) : raw);
             return info;
         }
@@ -154,18 +156,19 @@ public class WhoisDomainClient {
         }
     }
 
-    /** .tr web-whois tanılama adımı (HTTPS; isimtescil/trabis). fetchRaw ağ hatalarını yutar → boş=EMPTY. */
+    /** .tr whois tanılama adımı (kaynak zinciri isimtescil→trabis→trabis43). fetch ağ hatalarını yutar → boş=EMPTY.
+     *  Kazanan kaynağı {@code provider} olarak yazar → domain sorgulama kartı gösterir. */
     private Map<String, Object> diagnoseTrWeb(String reg, Map<String, Object> step) {
-        step.put("detail", "TRABIS web-whois (HTTPS)");
+        step.put("detail", "TRABIS whois (isimtescil → trabis web → :43)");
         long t0 = System.currentTimeMillis();
         try {
-            String raw = trWebWhois.fetchRaw(reg);
+            TrWebWhoisClient.Fetched f = trWebWhois.fetch(reg);
             step.put("elapsed_ms", System.currentTimeMillis() - t0);
-            if (raw == null || raw.isBlank()) {
+            if (f == null || f.raw() == null || f.raw().isBlank()) {
                 step.put("status", "fail"); step.put("error_class", "EMPTY");
-                step.put("detail", "TRABIS web-whois boş/erişilemedi"); return step;
+                step.put("detail", "TRABIS whois boş/erişilemedi (isimtescil/trabis/:43)"); return step;
             }
-            Map<String, Object> info = parsers.get("tr").parse(raw);
+            Map<String, Object> info = parsers.get("tr").parse(f.raw());
             Object expiry = info.get("expiry_date");
             if (expiry == null) {
                 step.put("status", "fail"); step.put("error_class", "NO_EXPIRY");
@@ -174,7 +177,8 @@ public class WhoisDomainClient {
             step.put("status", "ok");
             step.put("expiry_date", expiry);
             step.put("registrar", info.get("registrar"));
-            step.put("detail", "expiry: " + expiry + " (TRABIS web)");
+            step.put("provider", f.provider());   // isimtescil / trabis / trabis43
+            step.put("detail", "expiry: " + expiry);
             return step;
         } catch (Exception e) {
             step.put("elapsed_ms", System.currentTimeMillis() - t0);

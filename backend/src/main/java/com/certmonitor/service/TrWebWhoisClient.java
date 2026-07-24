@@ -7,10 +7,13 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import javax.net.ssl.SSLContext;
+import java.io.InputStream;
+import java.io.OutputStream;
 import java.net.CookieManager;
 import java.net.CookiePolicy;
 import java.net.InetSocketAddress;
 import java.net.ProxySelector;
+import java.net.Socket;
 import java.net.URI;
 import java.net.URLEncoder;
 import java.net.http.HttpClient;
@@ -23,20 +26,20 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * .tr (TRABIS) alan adı WHOIS'ini <b>HTTPS web-whois</b> üzerinden çeker. Ham TCP/43 WHOIS'i kurumsal
- * egress'te kapalı olduğu için ({@link WhoisDomainClient} soketi CONNECT_TIMEOUT) .tr süre bitişini almanın
- * tek çalışan yolu budur — ve HTTPS/443, kurumsal proxy'den geçer.
- *
- * <p>Sağlayıcılar sırayla denenir ({@code cert.monitor.domain.tr-web-whois-providers}, vars. "isimtescil,trabis");
- * ilk parse edilebilir yanıt kazanır:
+ * .tr (TRABIS) alan adı WHOIS'ini çeker. Kaynaklar {@code cert.monitor.domain.tr-web-whois-providers} sırasına
+ * göre denenir (vars. "isimtescil,trabis,trabis43"); ilk parse edilebilir yanıt kazanır ve HANGİ kaynağın
+ * yanıtladığı {@link Fetched#provider()} ile döner (domain sorgulama kartı bunu gösterir):
  * <ul>
- *   <li><b>isimtescil</b> — düz {@code GET ...?domainname=<d>} (token/oturum yok; Akbank domain'lerinin registrar'ı İHS).</li>
- *   <li><b>trabis</b> — resmi BTK: {@code GET /whois} (gizli Laravel {@code _token} + oturum çerezi) →
+ *   <li><b>isimtescil</b> — HTTPS düz {@code GET ...?domainname=<d>} (token/oturum yok; Akbank domain'lerinin registrar'ı İHS).</li>
+ *   <li><b>trabis</b> — HTTPS resmi BTK: {@code GET /whois} (gizli Laravel {@code _token} + oturum çerezi) →
  *       {@code POST /search-domain} → 302 → sonuç sayfası.</li>
+ *   <li><b>trabis43</b> — ham TCP/43 WHOIS ({@code whois.trabis.gov.tr}); kurumsal egress'te genelde kapalı
+ *       (CONNECT_TIMEOUT) — son çare, port-43 açık ortamda çalışır.</li>
  * </ul>
- * Her iki sayfadan da ham WHOIS bloğu {@link #extractWhois} ile çıkarılıp aynı {@link TrWhoisParser}'a verilir
- * (port-43 ile birebir aynı metin formatı). Kurumsal MITM proxy'nin yeniden imzaladığı sertifika
- * {@link CaAutoPinService} (TOFU) ile pinlenir — {@link RdapDomainClient} ile aynı güven zinciri (trust-all YOK).
+ * Üç kaynak da <b>birebir aynı</b> WHOIS metnini döndürür (doğrulandı); yalnız taşıma farklı. HTML yanıtlar
+ * {@link #extractWhois} ile temizlenir, üçü de aynı {@link TrWhoisParser}'a verilir. HTTPS için kurumsal MITM
+ * proxy'nin yeniden imzaladığı sertifika {@link CaAutoPinService} (TOFU) ile pinlenir — {@link RdapDomainClient}
+ * ile aynı güven zinciri (trust-all YOK). HTTPS/443 kurumsal proxy'den geçer; port-43 geçmez.
  */
 @Slf4j
 @Service
@@ -70,30 +73,41 @@ public class TrWebWhoisClient {
         return appSettings.getBoolean("cert.monitor.domain.tr-web-whois-enabled", true);
     }
 
+    /** Ham WHOIS metni + onu döndüren kaynağın anahtarı (isimtescil / trabis / trabis43). */
+    public record Fetched(String raw, String provider) {}
+
     /**
-     * Kayıt edilebilir .tr domain'i için ham WHOIS metnini döner (sağlayıcılar sırayla denenir; ilk
-     * parse edilebilir yanıt kazanır). Hiçbiri sonuç vermezse {@code null}. Ağ hataları yutulur (log.debug).
+     * Kayıt edilebilir .tr domain'i için WHOIS'i çeker (sağlayıcılar sırayla; ilk parse edilebilir kazanır).
+     * Kazanan kaynağın anahtarını da taşır ({@link Fetched#provider()}). Hiçbiri sonuç vermezse {@code null}.
+     * Ağ hataları yutulur (log.debug).
      */
-    public String fetchRaw(String registrableDomain) {
+    public Fetched fetch(String registrableDomain) {
         if (!enabled() || registrableDomain == null || registrableDomain.isBlank()) return null;
-        for (String p : appSettings.getCsv("cert.monitor.domain.tr-web-whois-providers", "isimtescil,trabis")) {
+        for (String p : appSettings.getCsv("cert.monitor.domain.tr-web-whois-providers", "isimtescil,trabis,trabis43")) {
             String provider = p.trim().toLowerCase(Locale.ROOT);
             if (provider.isEmpty()) continue;
             try {
                 String raw = switch (provider) {
                     case "isimtescil" -> fetchIsimtescil(registrableDomain);
                     case "trabis"     -> fetchTrabis(registrableDomain);
+                    case "trabis43"   -> fetchTrabis43(registrableDomain);
                     default           -> null;
                 };
                 if (raw != null && raw.toLowerCase(Locale.ROOT).contains("domain name")) {
-                    log.debug(".tr web-whois {} → OK ({})", provider, registrableDomain);
-                    return raw;
+                    log.debug(".tr whois {} → OK ({})", provider, registrableDomain);
+                    return new Fetched(raw, provider);
                 }
             } catch (Exception e) {
-                log.debug(".tr web-whois {} başarısız ({}): {}", provider, registrableDomain, e.getMessage());
+                log.debug(".tr whois {} başarısız ({}): {}", provider, registrableDomain, e.getMessage());
             }
         }
         return null;
+    }
+
+    /** {@link #fetch} — yalnız ham metin (kaynak gerekmeyen çağrılar için). */
+    public String fetchRaw(String registrableDomain) {
+        Fetched f = fetch(registrableDomain);
+        return f == null ? null : f.raw();
     }
 
     // ── Sağlayıcılar ───────────────────────────────────────────────────────────
@@ -141,6 +155,30 @@ public class TrWebWhoisClient {
             return null;
         }
         return extractWhois(html);
+    }
+
+    /** Ham TCP/43 WHOIS ({@code whois.trabis.gov.tr}) — proxy'siz doğrudan soket. Kurumsal egress'te 43 kapalıysa
+     *  CONNECT_TIMEOUT ile düşer (son çare). Port-43 açık ortamda HTTPS ile birebir aynı metni döndürür. */
+    private String fetchTrabis43(String domain) throws Exception {
+        String host = appSettings.getString("cert.monitor.domain.trabis-whois43-host", "whois.trabis.gov.tr");
+        int timeoutMs = (int) timeout().toMillis();
+        try (Socket sock = new Socket()) {
+            sock.connect(new InetSocketAddress(host, 43), timeoutMs);
+            sock.setSoTimeout(timeoutMs);
+            OutputStream os = sock.getOutputStream();
+            os.write((domain + "\r\n").getBytes(StandardCharsets.US_ASCII));
+            os.flush();
+            StringBuilder sb = new StringBuilder();
+            try (InputStream is = sock.getInputStream()) {
+                byte[] buf = new byte[4096];
+                int n, total = 0;
+                while ((n = is.read(buf)) != -1 && total < 200_000) {
+                    sb.append(new String(buf, 0, n, StandardCharsets.UTF_8));
+                    total += n;
+                }
+            }
+            return extractWhois(sb.toString());   // BOM/başlık kırpar; "** Domain Name:"'den itibaren temiz blok
+        }
     }
 
     // ── HTTP altyapısı (proxy + otomatik CA-pin, RdapDomainClient ile aynı desen) ──

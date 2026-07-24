@@ -67,6 +67,7 @@ public class DomainExpiryDiagnosticsService {
         String source = String.valueOf(rdapResult.getOrDefault("source", "FAILED"));
         String expiry = (String) rdapResult.get("expiry_date");
         String registrar = (String) rdapResult.get("registrar");
+        String whoisProvider = null;   // .tr WHOIS'i hangi kaynak yanıtladı (isimtescil/trabis/trabis43)
 
         // 5) WHOIS fallback — yalnız RDAP süre bitişi vermediyse
         if (expiry == null) {
@@ -75,6 +76,7 @@ public class DomainExpiryDiagnosticsService {
             if ("ok".equals(whoisStep.get("status")) && whoisStep.get("expiry_date") != null) {
                 expiry = String.valueOf(whoisStep.get("expiry_date"));
                 if (whoisStep.get("registrar") != null) registrar = String.valueOf(whoisStep.get("registrar"));
+                if (whoisStep.get("provider") != null) whoisProvider = String.valueOf(whoisStep.get("provider"));
                 source = "WHOIS";
             }
         } else {
@@ -91,6 +93,7 @@ public class DomainExpiryDiagnosticsService {
         out.put("expiry_date", expiry);
         out.put("days_remaining", days);
         out.put("registrar", registrar);
+        out.put("whois_provider", whoisProvider);   // kart "kaynak" satırında gösterir (null → RDAP/gösterilmez)
         long elapsed = System.currentTimeMillis() - t0;
         out.put("elapsed_ms", elapsed);
 
