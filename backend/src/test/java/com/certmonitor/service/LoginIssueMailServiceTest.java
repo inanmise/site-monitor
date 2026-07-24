@@ -39,7 +39,8 @@ class LoginIssueMailServiceTest {
     @DisplayName("dispatchReport: force=true geçilir; SENT durumlu REPORT_ADMIN log satırı yazılır")
     void dispatchReport_forcedAndLogsSent() {
         when(emailService.sendLoginIssueReport(anyString(), anyString(), anyString(), anyString(), anyString(),
-                any(), anyString(), anyString(), anyString(), anyBoolean())).thenReturn("SENT");
+                any(), anyString(), anyString(), anyString(), anyBoolean()))
+                .thenReturn(new EmailNotificationService.LoginIssueMailResult("SENT", "noreply@cm", "Konu R", "<html>r</html>"));
 
         service.dispatchReport(42L, "LIR-2026-000042", "admin@x.com", "N1", "err", "msg",
                 List.of(), "1.2.3.4", "UA", "2026-07-24T09:00:00");
@@ -53,6 +54,9 @@ class LoginIssueMailServiceTest {
         assertThat(m.getMailType()).isEqualTo(LoginIssueMailService.REPORT_ADMIN);
         assertThat(m.getRecipientTo()).isEqualTo("admin@x.com");
         assertThat(m.getStatus()).isEqualTo("SENT");
+        assertThat(m.getEmailFrom()).isEqualTo("noreply@cm");     // kimden
+        assertThat(m.getSubject()).isEqualTo("Konu R");           // konu
+        assertThat(m.getBodyHtml()).isEqualTo("<html>r</html>");  // içerik
         assertThat(m.isForced()).isTrue();
         assertThat(m.getErrorMessage()).isNull();
         assertThat(m.getSentAt()).isNotBlank();
@@ -78,7 +82,7 @@ class LoginIssueMailServiceTest {
     void dispatchResolved_forceFalseFromConfig_recipientArrangement() {
         when(appSettings.getBoolean(eq("cert.monitor.login-issues.force-email"), anyBoolean())).thenReturn(false);
         when(emailService.sendLoginIssueResolved(anyString(), anyString(), anyString(), anyString(), anyString(), anyBoolean()))
-                .thenReturn("SKIPPED_DISABLED");
+                .thenReturn(new EmailNotificationService.LoginIssueMailResult("SKIPPED_DISABLED", "noreply@cm", "Konu C", "<html>c</html>"));
 
         service.dispatchResolved(9L, "LIR-2026-000009", "reporter@x.com", "admin@x.com", "not", "2026-07-24T10:00:00");
 
@@ -97,7 +101,7 @@ class LoginIssueMailServiceTest {
     @DisplayName("dispatchResolved: bildiren yoksa admin To olur (CC boş)")
     void dispatchResolved_noReporter_adminBecomesTo() {
         when(emailService.sendLoginIssueResolved(any(), anyString(), anyString(), any(), anyString(), anyBoolean()))
-                .thenReturn("SENT");
+                .thenReturn(new EmailNotificationService.LoginIssueMailResult("SENT", "noreply@cm", "Konu C", "<html>c</html>"));
 
         service.dispatchResolved(10L, "LIR-2026-000010", null, "admin@x.com", null, "2026-07-24T10:00:00");
 

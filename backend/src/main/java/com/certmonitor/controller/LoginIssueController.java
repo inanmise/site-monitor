@@ -157,8 +157,11 @@ public class LoginIssueController {
         for (LoginIssueMailLog ml : mailLogRepo.findByReportIdOrderByIdAsc(r.getId())) {
             Map<String, Object> mm = new LinkedHashMap<>();
             mm.put("mailType", ml.getMailType());
+            mm.put("from", ml.getEmailFrom());
             mm.put("to", ml.getRecipientTo());
             mm.put("cc", ml.getCc());
+            mm.put("subject", ml.getSubject());
+            mm.put("body", ml.getBodyHtml());
             mm.put("status", ml.getStatus());
             mm.put("error", ml.getErrorMessage());
             mm.put("forced", ml.isForced());

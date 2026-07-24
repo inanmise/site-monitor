@@ -3,6 +3,7 @@ package com.certmonitor.service;
 import com.certmonitor.model.LoginIssueMailLog;
 import com.certmonitor.repository.LoginIssueMailLogRepository;
 import com.certmonitor.service.EmailNotificationService.InlineImage;
+import com.certmonitor.service.EmailNotificationService.LoginIssueMailResult;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Async;
@@ -52,10 +53,10 @@ public class LoginIssueMailService {
     public void dispatchReport(Long reportId, String refCode, String adminTo, String username, String errorText,
                                String message, List<InlineImage> images, String clientIp, String userAgent, String reportedAt) {
         boolean force = forceEmail();
-        String status = send(() -> emailService.sendLoginIssueReport(
+        LoginIssueMailResult res = send(() -> emailService.sendLoginIssueReport(
                 adminTo, refCode, username, errorText, message, images, clientIp, userAgent, reportedAt, force));
-        log.info("Login sorun bildirimi {} admin maili → {} ({})", refCode, adminTo, status);
-        saveLog(reportId, refCode, REPORT_ADMIN, adminTo, null, status, force);
+        log.info("Login sorun bildirimi {} admin maili → {} ({})", refCode, adminTo, res.status());
+        saveLog(reportId, refCode, REPORT_ADMIN, adminTo, null, res, force);
     }
 
     /** Bildirene "alındı" onayı. */
@@ -63,9 +64,9 @@ public class LoginIssueMailService {
     public void dispatchAck(Long reportId, String refCode, String reporterTo, String username, String errorText,
                             String message, List<InlineImage> images, String reportedAt) {
         boolean force = forceEmail();
-        String status = send(() -> emailService.sendLoginIssueAck(
+        LoginIssueMailResult res = send(() -> emailService.sendLoginIssueAck(
                 reporterTo, refCode, username, errorText, message, images, reportedAt, force));
-        saveLog(reportId, refCode, REPORTER_ACK, reporterTo, null, status, force);
+        saveLog(reportId, refCode, REPORTER_ACK, reporterTo, null, res, force);
     }
 
     /** "Çözüldü" bildirimi — bildiren (To) + sistem yöneticisi (CC). */
@@ -73,32 +74,33 @@ public class LoginIssueMailService {
     public void dispatchResolved(Long reportId, String refCode, String reporterEmail, String adminEmail,
                                  String resolutionNote, String resolvedAt) {
         boolean force = forceEmail();
-        String status = send(() -> emailService.sendLoginIssueResolved(
+        LoginIssueMailResult res = send(() -> emailService.sendLoginIssueResolved(
                 reporterEmail, adminEmail, refCode, resolutionNote, resolvedAt, force));
         // Alıcı düzenini gönderim mantığıyla aynen logla (bildiren yoksa admin To olur).
         boolean hasReporter = reporterEmail != null && !reporterEmail.isBlank();
         boolean hasAdmin = adminEmail != null && !adminEmail.isBlank();
         String to = hasReporter ? reporterEmail : (hasAdmin ? adminEmail : null);
         String cc = (hasReporter && hasAdmin) ? adminEmail : null;
-        log.info("Login issue {} çözüldü maili → to={} cc={} ({})", refCode, to, cc, status);
-        saveLog(reportId, refCode, RESOLVED, to, cc, status, force);
+        log.info("Login issue {} çözüldü maili → to={} cc={} ({})", refCode, to, cc, res.status());
+        saveLog(reportId, refCode, RESOLVED, to, cc, res, force);
     }
 
     // ── helpers ──────────────────────────────────────────────────────────────
 
-    private interface Send { String run(); }
+    private interface Send { LoginIssueMailResult run(); }
 
-    private String send(Send s) {
+    private LoginIssueMailResult send(Send s) {
         try {
             return s.run();
         } catch (Exception e) {
-            return "FAILED: " + e.getMessage();
+            return new LoginIssueMailResult("FAILED: " + e.getMessage(), emailService.senderAddress(), null, null);
         }
     }
 
     private void saveLog(Long reportId, String refCode, String mailType, String to, String cc,
-                         String status, boolean forced) {
+                         LoginIssueMailResult res, boolean forced) {
         try {
+            String status = res != null ? res.status() : null;
             LoginIssueMailLog m = new LoginIssueMailLog();
             m.setReportId(reportId);
             m.setRefCode(refCode);
@@ -108,6 +110,9 @@ public class LoginIssueMailService {
             boolean failed = status != null && status.startsWith("FAILED");
             m.setStatus(trimTo(status, 100));
             m.setErrorMessage(failed ? status : null);
+            m.setEmailFrom(res != null ? trimTo(res.from(), 255) : null);
+            m.setSubject(res != null ? res.subject() : null);
+            m.setBodyHtml(res != null ? res.bodyHtml() : null);
             m.setForced(forced);
             m.setSentAt(ISO.format(Instant.now()));
             mailLogRepo.save(m);
