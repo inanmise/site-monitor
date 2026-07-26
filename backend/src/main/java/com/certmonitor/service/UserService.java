@@ -59,10 +59,10 @@ public class UserService {
     @Value("${cert.monitor.lockout.failures-needed:5,3,2,1}")
     private List<Integer> lockoutFailuresNeeded;
 
-    @Value("${cert.monitor.password.min-length:6}")
+    @Value("${cert.monitor.password.min-length:12}")
     private int passwordMinLength;
 
-    @Value("${cert.monitor.password.max-length:10}")
+    @Value("${cert.monitor.password.max-length:128}")
     private int passwordMaxLength;
 
     @Value("${cert.monitor.password.history-count:3}")
