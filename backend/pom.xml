@@ -21,7 +21,7 @@
         <!-- Spring Boot 4.1.0'ın yönettiği Lombok JDK 25 javac'ını desteklemiyordu
              (annotation processor çalışmıyor → "cannot find symbol" üretilen getter/setter'larda).
              1.18.42 JDK 11-25 destekler. -->
-        <lombok.version>1.18.42</lombok.version>
+        <lombok.version>1.18.46</lombok.version>
     </properties>
 
     <dependencies>
@@ -62,28 +62,28 @@
         <dependency>
             <groupId>org.bouncycastle</groupId>
             <artifactId>bcprov-jdk18on</artifactId>
-            <version>1.81</version>
+            <version>1.85</version>
         </dependency>
         <dependency>
             <groupId>org.bouncycastle</groupId>
             <artifactId>bcpkix-jdk18on</artifactId>
-            <version>1.81</version>
+            <version>1.85</version>
         </dependency>
         <!-- CommonMark — haftalık rapor markdown'ını mail HTML'ine çevirir -->
         <dependency>
             <groupId>org.commonmark</groupId>
             <artifactId>commonmark</artifactId>
-            <version>0.24.0</version>
+            <version>0.29.0</version>
         </dependency>
         <dependency>
             <groupId>org.commonmark</groupId>
             <artifactId>commonmark-ext-gfm-tables</artifactId>
-            <version>0.24.0</version>
+            <version>0.29.0</version>
         </dependency>
         <dependency>
             <groupId>org.commonmark</groupId>
             <artifactId>commonmark-ext-task-list-items</artifactId>
-            <version>0.24.0</version>
+            <version>0.29.0</version>
         </dependency>
         <!-- PostgreSQL for production (Kubernetes) -->
         <dependency>
@@ -114,7 +114,7 @@
         <dependency>
             <groupId>dnsjava</groupId>
             <artifactId>dnsjava</artifactId>
-            <version>3.6.2</version>
+            <version>3.6.5</version>
         </dependency>
         <!-- Test -->
         <dependency>
@@ -176,7 +176,7 @@
             <plugin>
                 <groupId>org.jacoco</groupId>
                 <artifactId>jacoco-maven-plugin</artifactId>
-                <version>0.8.14</version>
+                <version>0.8.15</version>
                 <executions>
                     <execution>
                         <id>prepare-agent</id>
