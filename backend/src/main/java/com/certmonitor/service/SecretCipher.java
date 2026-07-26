@@ -39,6 +39,14 @@ public class SecretCipher {
     @Value("${cert.monitor.secret-key:}")
     private String configuredKey;
 
+    @Value("${spring.profiles.active:}")
+    private String activeProfiles;
+
+    private boolean isProd() {
+        return activeProfiles != null && java.util.Arrays.stream(activeProfiles.split(","))
+                .map(String::trim).anyMatch(p -> p.equalsIgnoreCase("prod"));
+    }
+
     /** true = gerçek bir CERT_MONITOR_SECRET_KEY ayarlı; false = güvensiz DEV varsayılanı kullanılıyor.
      *  UI, gerçek parola kaydetmeden önce admin'i uyarmak için bunu kullanır. */
     public boolean isKeyConfigured() {
@@ -55,7 +63,15 @@ public class SecretCipher {
     void init() {
         this.keyConfigured = !(configuredKey == null || configuredKey.isBlank());
         String material = keyConfigured ? configuredKey : DEV_DEFAULT;
-        if (material.equals(DEV_DEFAULT)) {
+        boolean insecure = material.equals(DEV_DEFAULT);   // ayarlanmamış YA DA açıkça dev-default'a set edilmiş
+        if (insecure && isProd()) {
+            // Fail-fast: prod'da gömülü public dev anahtarına düşmek = at-rest LDAP/SMTP parolaları kaynak-kod
+            // anahtarıyla şifrelenir (etkin düz metin). Operatörü zorla: startup'ı durdur.
+            throw new IllegalStateException("cert.monitor.secret-key (CERT_MONITOR_SECRET_KEY) prod profilinde "
+                    + "ZORUNLU — güvensiz gömülü DEV anahtarına düşülemez. K8s secret'ta stabil bir anahtar ayarlayın.");
+        }
+        if (insecure) {
+            this.keyConfigured = false;   // dev-default (UI uyarısı doğru kalsın)
             log.warn("SecretCipher: cert.monitor.secret-key not set — using insecure DEV default. "
                     + "Set CERT_MONITOR_SECRET_KEY (stable across pods) before storing real secrets.");
         }

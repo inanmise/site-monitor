@@ -123,6 +123,11 @@ public class MonitoringController {
         }
     }
 
+    // Read-scope guard for history endpoints — takım-kapsamlı görüntüleme (BOLA/IDOR önler). İzin yoksa 403 gövdesi, aksi null.
+    private ResponseEntity<Map<String, Object>> denyIfNotViewable(HttpSession session, Long teamId) {
+        return SessionScope.canView(session, teamId) ? null : forbidden("Bu izlemeyi görüntüleme yetkiniz yok");
+    }
+
     /** Oturum sahibinin kendi takımı (session "teamId"). */
     private static Long sessionTeamId(HttpSession session) {
         Object v = session != null ? session.getAttribute("teamId") : null;
@@ -656,9 +661,13 @@ public class MonitoringController {
     }
 
     @GetMapping("/port/{id}/history")
-    public ResponseEntity<Map<String, Object>> portHistory(@PathVariable Long id,
+    public ResponseEntity<Map<String, Object>> portHistory(@PathVariable Long id, HttpSession session,
             @RequestParam(required = false) Integer days,
             @RequestParam(defaultValue = "100") int limit) {
+        PortMonitor mon = portMonitorRepo.findById(id).orElse(null);
+        if (mon == null) return notFound("Port monitor not found");
+        var deny = denyIfNotViewable(session, mon.getTeamId());
+        if (deny != null) return deny;
         List<PortCheck> checks;
         long total, down;
         if (days != null && days > 0) {
@@ -952,9 +961,13 @@ public class MonitoringController {
     }
 
     @GetMapping("/dns/{id}/history")
-    public ResponseEntity<Map<String, Object>> dnsHistory(@PathVariable Long id,
+    public ResponseEntity<Map<String, Object>> dnsHistory(@PathVariable Long id, HttpSession session,
             @RequestParam(required = false) Integer days,
             @RequestParam(defaultValue = "5000") int limit) {
+        DnsMonitor mon = dnsMonitorRepo.findById(id).orElse(null);
+        if (mon == null) return notFound("DNS monitor not found");
+        var deny = denyIfNotViewable(session, mon.getTeamId());
+        if (deny != null) return deny;
         int cap = Math.max(1, Math.min(limit, 10_000));
         List<DnsRecord> records;
         if (days != null && days > 0) {
@@ -1143,9 +1156,13 @@ public class MonitoringController {
     }
 
     @GetMapping("/keyword/{id}/history")
-    public ResponseEntity<Map<String, Object>> keywordHistory(@PathVariable Long id,
+    public ResponseEntity<Map<String, Object>> keywordHistory(@PathVariable Long id, HttpSession session,
             @RequestParam(required = false) Integer days,
             @RequestParam(defaultValue = "100") int limit) {
+        KeywordMonitor mon = keywordMonitorRepo.findById(id).orElse(null);
+        if (mon == null) return notFound("Keyword monitor not found");
+        var deny = denyIfNotViewable(session, mon.getTeamId());
+        if (deny != null) return deny;
         List<KeywordResult> checks;
         long total, down;
         if (days != null && days > 0) {
@@ -1573,9 +1590,13 @@ public class MonitoringController {
     }
 
     @GetMapping("/http/{id}/history")
-    public ResponseEntity<Map<String, Object>> httpHistory(@PathVariable Long id,
+    public ResponseEntity<Map<String, Object>> httpHistory(@PathVariable Long id, HttpSession session,
             @RequestParam(required = false) Integer days,
             @RequestParam(defaultValue = "100") int limit) {
+        HttpMonitor mon = httpMonitorRepo.findById(id).orElse(null);
+        if (mon == null) return notFound("HTTP monitor not found");
+        var deny = denyIfNotViewable(session, mon.getTeamId());
+        if (deny != null) return deny;
         List<HttpCheck> checks;
         long total, down;
         if (days != null && days > 0) {
@@ -1794,8 +1815,12 @@ public class MonitoringController {
     }
 
     @GetMapping("/domain/{id}/history")
-    public ResponseEntity<Map<String, Object>> domainHistory(@PathVariable Long id,
+    public ResponseEntity<Map<String, Object>> domainHistory(@PathVariable Long id, HttpSession session,
             @RequestParam(required = false) Integer days, @RequestParam(defaultValue = "100") int limit) {
+        DomainMonitor mon = domainMonitorRepo.findById(id).orElse(null);
+        if (mon == null) return notFound("Domain monitor not found");
+        var deny = denyIfNotViewable(session, mon.getTeamId());
+        if (deny != null) return deny;
         List<DomainCheck> checks;
         long total;
         if (days != null && days > 0) {
@@ -2036,9 +2061,13 @@ public class MonitoringController {
     }
 
     @GetMapping("/ping/{id}/history")
-    public ResponseEntity<Map<String, Object>> pingHistory(@PathVariable Long id,
+    public ResponseEntity<Map<String, Object>> pingHistory(@PathVariable Long id, HttpSession session,
             @RequestParam(required = false) Integer days,
             @RequestParam(defaultValue = "100") int limit) {
+        PingMonitor mon = pingMonitorRepo.findById(id).orElse(null);
+        if (mon == null) return notFound("Ping monitor not found");
+        var deny = denyIfNotViewable(session, mon.getTeamId());
+        if (deny != null) return deny;
         List<PingCheck> checks;
         long total, down;
         if (days != null && days > 0) {

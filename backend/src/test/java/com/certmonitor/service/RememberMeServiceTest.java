@@ -65,13 +65,22 @@ class RememberMeServiceTest {
         assertThat(captor.getValue().getExpiresAt()).isGreaterThan(Instant.now().getEpochSecond());
     }
 
+    @Test
+    @DisplayName("generateToken: DB'de ham token DEĞİL SHA-256 hash saklanır (dönen ham token cookie'ye gider)")
+    void generateToken_storesHashNotRaw() {
+        ArgumentCaptor<RememberMeToken> captor = ArgumentCaptor.forClass(RememberMeToken.class);
+        String raw = service.generateToken("alice");
+        verify(repo).save(captor.capture());
+        assertThat(captor.getValue().getToken()).isEqualTo(RememberMeService.sha256(raw)).isNotEqualTo(raw);
+    }
+
     // ── validate ──────────────────────────────────────────────────────────────
 
     @Test
     @DisplayName("validate: known, non-expired token → returns username")
     void validate_knownNonExpiredToken_returnsUsername() {
         RememberMeToken t = token("my-token", "alice", Instant.now().getEpochSecond() + 600);
-        when(repo.findByToken("my-token")).thenReturn(Optional.of(t));
+        when(repo.findByToken(RememberMeService.sha256("my-token"))).thenReturn(Optional.of(t));   // DB'de hash saklanır
 
         Optional<String> result = service.validate("my-token");
         assertThat(result).contains("alice");
@@ -81,7 +90,7 @@ class RememberMeServiceTest {
     @DisplayName("validate: expired token → empty")
     void validate_expiredToken_returnsEmpty() {
         RememberMeToken t = token("old-token", "alice", Instant.now().getEpochSecond() - 1);
-        when(repo.findByToken("old-token")).thenReturn(Optional.of(t));
+        when(repo.findByToken(RememberMeService.sha256("old-token"))).thenReturn(Optional.of(t));
 
         assertThat(service.validate("old-token")).isEmpty();
     }
@@ -113,7 +122,7 @@ class RememberMeServiceTest {
     @DisplayName("invalidate: known token → calls deleteByToken")
     void invalidate_knownToken_callsDeleteByToken() {
         service.invalidate("tok-123");
-        verify(repo).deleteByToken("tok-123");
+        verify(repo).deleteByToken(RememberMeService.sha256("tok-123"));
     }
 
     @Test

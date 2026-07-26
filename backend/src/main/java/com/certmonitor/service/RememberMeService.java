@@ -25,9 +25,9 @@ public class RememberMeService {
     private final RememberMeTokenRepository repo;
 
     public String generateToken(String username) {
-        String token = UUID.randomUUID().toString();
+        String token = UUID.randomUUID().toString();   // ham token yalnız cookie'de; DB'de SHA-256 hash'i saklanır
         RememberMeToken entity = new RememberMeToken();
-        entity.setToken(token);
+        entity.setToken(sha256(token));
         entity.setUsername(username);
         entity.setExpiresAt(Instant.now().getEpochSecond() + ttlSeconds);
         repo.save(entity);
@@ -37,14 +37,25 @@ public class RememberMeService {
 
     public Optional<String> validate(String token) {
         if (token == null || token.isBlank()) return Optional.empty();
-        return repo.findByToken(token)
+        return repo.findByToken(sha256(token))
                 .filter(t -> Instant.now().getEpochSecond() < t.getExpiresAt())
                 .map(RememberMeToken::getUsername);
     }
 
     public void invalidate(String token) {
         if (token != null && !token.isBlank()) {
-            repo.deleteByToken(token);
+            repo.deleteByToken(sha256(token));
+        }
+    }
+
+    /** Bearer token'ı DB'de düz saklamamak için SHA-256 (Base64). DB-read/backup ile cookie replay'i engeller (CWE-522). */
+    static String sha256(String token) {
+        try {
+            byte[] d = java.security.MessageDigest.getInstance("SHA-256")
+                    .digest(token.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            return java.util.Base64.getEncoder().encodeToString(d);
+        } catch (Exception e) {
+            throw new IllegalStateException("remember-me hash failed", e);
         }
     }
 
