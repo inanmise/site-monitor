@@ -1,0 +1,51 @@
+name: Security — OWASP Dependency-Check (SCA)
+
+# Ağır (NVD indirmesi) → release yoluna KOYMAZ; haftalık + elle tetik. Rapor artifact olarak yüklenir.
+# HIGH+ CVE bulunca adım kırmızı olur (failBuildOnCVSS=7) ama workflow devam eder (continue-on-error) → rapor kalır.
+on:
+  schedule:
+    - cron: "0 6 * * 1"   # her Pazartesi 06:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: depcheck-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  dependency-check:
+    name: Backend SCA (OWASP)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Set up Java 25
+        uses: actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95 # v5
+        with:
+          java-version: "25"
+          distribution: temurin
+          cache: maven
+
+      - name: OWASP Dependency-Check (fail on CVSS>=7)
+        id: depcheck
+        continue-on-error: true
+        working-directory: backend
+        env:
+          NVD_API_KEY: ${{ secrets.NVD_API_KEY }}   # opsiyonel; NVD hız limiti için (yoksa yavaş ama çalışır)
+        run: mvn -B -Psecurity dependency-check:check
+
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: dependency-check-report
+          path: backend/target/dependency-check-report.*
+          retention-days: 30
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "OWASP Dependency-Check bitti (adım sonucu: ${{ steps.depcheck.outcome }})." >> "$GITHUB_STEP_SUMMARY"
+          echo "HIGH+ CVE varsa 'depcheck' adımı kırmızıdır; ayrıntı için report artifact'ına bakın." >> "$GITHUB_STEP_SUMMARY"
