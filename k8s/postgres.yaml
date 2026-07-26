@@ -33,10 +33,17 @@ spec:
     spec:
       securityContext:
         runAsUser: 999
+        runAsNonRoot: true
         fsGroup: 999
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: postgres
           image: postgres:16-alpine
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
           ports:
             - containerPort: 5432
           env:

@@ -38,9 +38,11 @@ jobs:
           VERSION="${{ steps.version.outputs.value }}"
           REGISTRY="${{ env.REGISTRY }}"
           IMAGE="${{ env.IMAGE_NAME }}"
-          GIT_SHA="${{ github.sha }}"
+          # Güvenlik (CWE-94): attacker-influenceable metadata'yı run: içine GHA-expression ile GÖMME;
+          # GitHub'ın built-in env değişkenlerini kullan (shell'e enjekte edilmez).
+          GIT_SHA="$GITHUB_SHA"
           SHORT_SHA="${GIT_SHA:0:7}"
-          BRANCH="${{ github.ref_name }}"
+          BRANCH="$GITHUB_REF_NAME"
 
           case "$BRANCH" in
             main)

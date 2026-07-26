@@ -1,0 +1,57 @@
+# NetworkPolicy — lateral-movement sınırlama (CWE-923).
+#
+# NOT: cert-monitor giden bağlantılarında KEYFİ host:port'a çıkar (izleme aracı → RDAP/OCSP/SMTP/HTTP/port
+# monitörleri). Bu yüzden app pod'una EGRESS kısıtı UYGULANMAZ (izlemeyi bozar); SSRF app düzeyinde SsrfGuard
+# ile ele alınır. Buradaki yüksek-değer + güvenli politika: Postgres'e erişimi YALNIZ app pod'una kısıtlamak.
+
+---
+# 1) Postgres: ingress yalnız cert-monitor app pod'larından :5432 (başka hiçbir pod DB'ye ulaşamaz).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: postgres-allow-app-only
+spec:
+  podSelector:
+    matchLabels:
+      app: postgres
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: cert-monitor
+      ports:
+        - protocol: TCP
+          port: 5432
+
+---
+# 2) (OPSİYONEL — cluster'a göre ayarlayın) App pod ingress: yalnız ingress-controller + Prometheus.
+#    Ingress-controller'ın namespace/label'ı cluster'a göre değişir (nginx/OpenShift router) → uncomment edip
+#    doğru namespaceSelector/podSelector ile doldurun. Yanlış selector INBOUND trafiği keser, dikkat.
+# apiVersion: networking.k8s.io/v1
+# kind: NetworkPolicy
+# metadata:
+#   name: cert-monitor-ingress
+# spec:
+#   podSelector:
+#     matchLabels:
+#       app: cert-monitor
+#   policyTypes:
+#     - Ingress
+#   ingress:
+#     - from:
+#         - namespaceSelector:
+#             matchLabels:
+#               kubernetes.io/metadata.name: ingress-nginx   # ← cluster'ınızın ingress ns'i
+#       ports:
+#         - protocol: TCP
+#           port: 8080
+#     # Prometheus /metrics scrape (monitoring ns) → /metrics cluster-only olur:
+#     - from:
+#         - namespaceSelector:
+#             matchLabels:
+#               kubernetes.io/metadata.name: monitoring
+#       ports:
+#         - protocol: TCP
+#           port: 8080
