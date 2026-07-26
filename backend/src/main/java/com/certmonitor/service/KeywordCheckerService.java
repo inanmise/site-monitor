@@ -1,6 +1,7 @@
 package com.certmonitor.service;
 
 import jakarta.annotation.PostConstruct;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
@@ -30,11 +31,13 @@ import java.util.concurrent.CompletableFuture;
  */
 @Slf4j
 @Service
+@RequiredArgsConstructor
 public class KeywordCheckerService {
 
     /** Yanıt gövdesi okuma tavanı (OOM koruması) — keyword aramaya fazlasıyla yeter. */
     private static final int MAX_BODY_BYTES = 2_000_000;
 
+    private final SsrfGuard ssrfGuard;
     private HttpClient httpClient;
 
     /** İç-CA / self-signed HTTPS sitelerini de izleyebilmek için trust-all
@@ -79,6 +82,15 @@ public class KeywordCheckerService {
     public Map<String, Object> check(String url, String keyword, int timeoutMs, String customHeaders, boolean caseSensitive) {
         long start = System.currentTimeMillis();
         Map<String, Object> result = new LinkedHashMap<>();
+        // SSRF: hedef host'u istekten önce doğrula (metadata/loopback/link-local blok; iç ağ ayara bağlı).
+        try {
+            String host = URI.create(applyTimestamp(url)).getHost();
+            if (host != null) ssrfGuard.validate(host);
+        } catch (SsrfGuard.BlockedException be) {
+            result.put("found", false);
+            result.put("error", be.getMessage());
+            return result;
+        } catch (Exception ignore) { /* URL parse hatası → aşağıdaki normal akış ele alır */ }
         try {
             HttpRequest.Builder rb = HttpRequest.newBuilder()
                     .uri(URI.create(applyTimestamp(url)))

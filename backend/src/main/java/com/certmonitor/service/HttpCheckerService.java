@@ -49,6 +49,7 @@ public class HttpCheckerService {
 
     private final TrustEvaluator trustEvaluator;
     private final CaAutoPinService caAutoPinService;
+    private final SsrfGuard ssrfGuard;
 
     private HttpClient trustAllFollow;
     private HttpClient trustAllNoFollow;
@@ -125,6 +126,14 @@ public class HttpCheckerService {
      */
     public Map<String, Object> check(String url, String method, String expectedStatus,
                                      int timeoutMs, boolean verifySsl, boolean followRedirects) {
+        // SSRF: hedef host'u istekten önce doğrula (metadata/loopback/link-local blok; iç ağ ayara bağlı).
+        String blocked = ssrfBlockReason(url);
+        if (blocked != null) {
+            Map<String, Object> r = new LinkedHashMap<>();
+            r.put("ok", false);
+            r.put("error", blocked);
+            return r;
+        }
         Attempt a1 = doCheck(url, method, expectedStatus, timeoutMs, verifySsl, followRedirects);
         if (Boolean.TRUE.equals(a1.result().get("ok")) || !verifySsl
                 || !isTrustFailure(a1.cause()) || !caAutoPinService.isEnabled()) {
@@ -158,6 +167,22 @@ public class HttpCheckerService {
     /** Cause zincirinde PKIX/güven-yolu hatası var mı? (Kanonik sınıflandırma CaAutoPinService'te.) */
     static boolean isTrustFailure(Throwable t) {
         return CaAutoPinService.isTrustFailure(t);
+    }
+
+    /** SSRF: URL host'u çözülüp doğrulanır → engelliyse neden, değilse null. Parse hatası/relatif URL → null
+     *  (doCheck normal hata yolunda ele alır). Not: HttpClient isteği yeniden çözer → dar DNS-rebind kalıntısı. */
+    private String ssrfBlockReason(String url) {
+        if (url == null || url.isBlank()) return null;
+        try {
+            String host = URI.create(url.trim()).getHost();
+            if (host == null) return null;
+            ssrfGuard.validate(host);
+            return null;
+        } catch (SsrfGuard.BlockedException be) {
+            return be.getMessage();
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     private Attempt doCheck(String url, String method, String expectedStatus,
