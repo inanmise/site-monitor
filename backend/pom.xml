@@ -191,4 +191,37 @@
             </plugin>
         </plugins>
     </build>
+
+    <profiles>
+        <!-- Güvenlik: OWASP Dependency-Check (SCA). Varsayılan build'e girmez (NVD indirmesi ağır);
+             on-demand `mvn -Psecurity verify` veya haftalık dependency-check.yml workflow'u çalıştırır.
+             NVD hız limiti için NVD_API_KEY env/property verilebilir. -->
+        <profile>
+            <id>security</id>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.owasp</groupId>
+                        <artifactId>dependency-check-maven</artifactId>
+                        <version>12.1.0</version>
+                        <configuration>
+                            <failBuildOnCVSS>7</failBuildOnCVSS>
+                            <nvdApiKey>${env.NVD_API_KEY}</nvdApiKey>
+                            <formats>
+                                <format>HTML</format>
+                                <format>SARIF</format>
+                            </formats>
+                            <!-- Sadece derleme/runtime bağımlılıkları; test scope'u dışla. -->
+                            <skipTestScope>true</skipTestScope>
+                        </configuration>
+                        <executions>
+                            <execution>
+                                <goals><goal>check</goal></goals>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+    </profiles>
 </project>

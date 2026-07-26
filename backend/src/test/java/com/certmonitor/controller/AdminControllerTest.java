@@ -80,6 +80,9 @@ class AdminControllerTest {
     AuditService auditService;
 
     @MockitoBean
+    com.certmonitor.service.SsrfGuard ssrfGuard;
+
+    @MockitoBean
     CertificateNoteRepository noteRepo;
 
     @MockitoBean

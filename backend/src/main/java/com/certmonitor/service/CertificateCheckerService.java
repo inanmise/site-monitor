@@ -39,6 +39,7 @@ public class CertificateCheckerService {
     private final DnsCheckerService dnsCheckerService;
     private final ObjectMapper objectMapper;
     private final TrustEvaluator trustEvaluator;
+    private final SsrfGuard ssrfGuard;
 
     @Value("${cert.monitor.check-timeout-seconds:6}")
     private int timeoutSeconds;
@@ -157,6 +158,12 @@ public class CertificateCheckerService {
     }
 
     public Map<String, Object> check(String domain, int port, boolean forceProxy, String tlsModeOverride) {
+        // SSRF: hedef host'u bağlanmadan önce doğrula (cloud-metadata/loopback/link-local blok; iç ağ ayara bağlı).
+        try {
+            ssrfGuard.validate(domain);
+        } catch (SsrfGuard.BlockedException be) {
+            return errorWithClass(domain, be.getMessage(), "BLOCKED");
+        }
         CheckOptions opts = resolveOptions(forceProxy, tlsModeOverride, domain);
         Map<String, Object> result = tryCheckOnce(domain, port, opts);
 

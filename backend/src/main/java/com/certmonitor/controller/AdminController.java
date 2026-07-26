@@ -15,6 +15,7 @@ import com.certmonitor.service.MonitoringGroupService;
 import com.certmonitor.service.SchedulerService;
 import com.certmonitor.service.NetworkDiagnosticsService;
 import com.certmonitor.service.OpensslDiagnosticsService;
+import com.certmonitor.service.SsrfGuard;
 import com.certmonitor.service.PermissionService;
 import com.certmonitor.service.ProxyCaExportService;
 import com.certmonitor.service.PublicSuffixService;
@@ -74,6 +75,7 @@ public class AdminController {
     private final EmailNotificationService emailNotificationService;
     private final ConnectionDiagnosticsService diagnosticsService;
     private final OpensslDiagnosticsService opensslDiagnosticsService;
+    private final SsrfGuard ssrfGuard;
     private final NetworkDiagnosticsService networkDiagnosticsService;
     private final HstsDiagnosticsService hstsDiagnosticsService;
     private final DiagnosticHistoryService diagnosticHistoryService;
@@ -355,7 +357,7 @@ public class AdminController {
     public ResponseEntity<Map<String, Object>> runDiagnostics(
             @RequestBody Map<String, Object> body, HttpSession session, HttpServletRequest request) {
         String domain = body.get("domain") != null ? body.get("domain").toString().trim() : null;
-        domain = validateDomain(domain);
+        domain = validateDiagTarget(domain);
         requireAdminOrMonitoredDomain(session, domain);
         requirePerm(session, "diagnostics.run", "execute");
         Long portRaw = toLong(body.get("port"));
@@ -379,7 +381,7 @@ public class AdminController {
     public ResponseEntity<Map<String, Object>> runOpensslDiagnostics(
             @RequestBody Map<String, Object> body, HttpSession session, HttpServletRequest request) {
         String domain = body.get("domain") != null ? body.get("domain").toString().trim() : null;
-        domain = validateDomain(domain);
+        domain = validateDiagTarget(domain);
         requireAdminOrMonitoredDomain(session, domain);
         requirePerm(session, "diagnostics.run", "execute");
         Long portRaw = toLong(body.get("port"));
@@ -401,7 +403,7 @@ public class AdminController {
     public ResponseEntity<Map<String, Object>> runNetworkDiagnostics(
             @RequestBody Map<String, Object> body, HttpSession session, HttpServletRequest request) {
         String domain = body.get("domain") != null ? body.get("domain").toString().trim() : null;
-        domain = validateDomain(domain);
+        domain = validateDiagTarget(domain);
         requireAdminOrMonitoredDomain(session, domain);
         requirePerm(session, "diagnostics.run", "execute");
         Long portRaw = toLong(body.get("port"));
@@ -426,7 +428,7 @@ public class AdminController {
     public ResponseEntity<Map<String, Object>> runHstsDiagnostics(
             @RequestBody Map<String, Object> body, HttpSession session, HttpServletRequest request) {
         String domain = body.get("domain") != null ? body.get("domain").toString().trim() : null;
-        domain = validateDomain(domain);
+        domain = validateDiagTarget(domain);
         requireAdminOrMonitoredDomain(session, domain);
         requirePerm(session, "diagnostics.run", "execute");
         Long portRaw = toLong(body.get("port"));
@@ -450,7 +452,7 @@ public class AdminController {
     public ResponseEntity<Map<String, Object>> runDomainExpiryDiagnostics(
             @RequestBody Map<String, Object> body, HttpSession session, HttpServletRequest request) {
         String domain = body.get("domain") != null ? body.get("domain").toString().trim() : null;
-        domain = validateDomain(domain);
+        domain = validateDiagTarget(domain);
         requireAdminOrMonitoredDomain(session, domain);
         requirePerm(session, "diagnostics.run", "execute");
         // Kullanıcı-başı hız sınırı (10/dk) — RDAP/WHOIS registry'lerini dövmemek için.
@@ -488,7 +490,7 @@ public class AdminController {
 
         String host = (body != null && body.get("host") != null && !body.get("host").toString().isBlank())
                 ? body.get("host").toString().trim() : "data.iana.org";
-        host = validateDomain(host);
+        host = validateDiagTarget(host);
         Long portRaw = body != null ? toLong(body.get("port")) : null;
         int port = portRaw != null ? portRaw.intValue() : 443;
         if (port < 1 || port > 65535) throw new IllegalArgumentException("Port must be between 1 and 65535");
@@ -1865,6 +1867,19 @@ public class AdminController {
         if (!host.matches("^(?:[a-zA-Z0-9](?:[a-zA-Z0-9\\-]{0,61}[a-zA-Z0-9])?\\.)+[a-zA-Z]{2,}$")
                 && !host.matches("^[a-zA-Z0-9\\-]{1,63}$")) {
             throw new IllegalArgumentException("Invalid domain format: " + domain);
+        }
+        return host;
+    }
+
+    /** Tanılama hedefi doğrulaması (bağlanan uçlar için): validateDomain + SSRF (SsrfGuard). Çözülen IP
+     *  cloud-metadata/loopback/link-local ise (localhost/tek-etiket dahil) reddedilir; iç/site-local host'lar
+     *  allow-internal-targets (vars. açık) ile izinli kalır → iç Akbank host'ları tanılanabilir. */
+    private String validateDiagTarget(String domain) {
+        String host = validateDomain(domain);
+        try {
+            ssrfGuard.validate(host);
+        } catch (SsrfGuard.BlockedException be) {
+            throw new IllegalArgumentException("İzin verilmeyen tanılama hedefi: " + be.getMessage());
         }
         return host;
     }
