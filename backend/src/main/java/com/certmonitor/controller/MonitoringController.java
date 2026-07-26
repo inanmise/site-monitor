@@ -1895,6 +1895,7 @@ public class MonitoringController {
         if (latest != null) {
             item.put("status",            latest.getStatus());
             item.put("source",            latest.getSource());
+            item.put("whois_provider",    latest.getWhoisProvider());
             item.put("days_remaining",    latest.getDaysRemaining());
             item.put("expiry_date",       latest.getExpiryDate());
             item.put("registration_date", latest.getRegistrationDate());
@@ -1911,7 +1912,7 @@ public class MonitoringController {
             item.put("error",             latest.getError());
             item.put("checked_at",        latest.getCheckedAt());
         } else {
-            item.put("status", "UNKNOWN"); item.put("source", null); item.put("days_remaining", null);
+            item.put("status", "UNKNOWN"); item.put("source", null); item.put("whois_provider", null); item.put("days_remaining", null);
             item.put("expiry_date", null); item.put("registration_date", null); item.put("last_changed", null);
             item.put("registrar", null); item.put("registrar_iana_id", null); item.put("dnssec", null);
             item.put("status_codes", List.of()); item.put("nameservers", List.of());

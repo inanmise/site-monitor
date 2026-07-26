@@ -24,6 +24,10 @@ public class DomainCheck {
     /** Veri kaynağı: RDAP | WHOIS | NONE (sorgu başarısız). */
     private String source;
 
+    /** source=WHOIS iken .tr yanıtını HANGİ kaynak verdi: isimtescil | trabis | trabis43 (kart bunu gösterir). */
+    @Column(name = "whois_provider")
+    private String whoisProvider;
+
     /** 4-seviyeli durum: OK | WARNING | CRITICAL | UNKNOWN. */
     @Column(nullable = false)
     private String status = "UNKNOWN";
