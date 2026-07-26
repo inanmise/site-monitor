@@ -10,6 +10,8 @@ import java.nio.charset.StandardCharsets;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 class KeywordCheckerServiceTest {
 
@@ -57,7 +59,11 @@ class KeywordCheckerServiceTest {
     }
 
     private static KeywordCheckerService newChecker() {
-        KeywordCheckerService svc = new KeywordCheckerService();
+        // Test 127.0.0.1'e bağlanır → SsrfGuard izin verici (loopback + iç ağ). Metadata/link-local yine bloklu.
+        AppSettingsService s = mock(AppSettingsService.class);
+        when(s.getBoolean("cert.monitor.monitoring.allow-loopback-targets", false)).thenReturn(true);
+        when(s.getBoolean("cert.monitor.monitoring.allow-internal-targets", true)).thenReturn(true);
+        KeywordCheckerService svc = new KeywordCheckerService(new SsrfGuard(s));
         svc.init();   // @PostConstruct — HttpClient kur
         return svc;
     }

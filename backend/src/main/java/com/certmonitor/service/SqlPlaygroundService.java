@@ -35,6 +35,15 @@ public class SqlPlaygroundService {
       + "refresh|security|policy|function|procedure|trigger)\\b",
         Pattern.CASE_INSENSITIVE);
 
+    /** Tehlikeli fonksiyonlar/objeler — SELECT ile çağrılabilir ama sunucu dosyası okuma / iç-ağ bağlantısı /
+     *  large-object / backend kontrolü sağlar (CWE-89/CWE-269). SELECT-only + FORBIDDEN yakalamaz → ayrıca engelle. */
+    private static final Pattern FORBIDDEN_FUNCTIONS = Pattern.compile(
+        "\\b(pg_read_file|pg_read_binary_file|pg_stat_file|pg_ls_dir|pg_ls_logdir|pg_ls_waldir|pg_ls_tmpdir|"
+      + "pg_ls_archive_statusdir|pg_read_server_files|lo_import|lo_export|lo_get|lo_put|lo_from_bytea|"
+      + "dblink|dblink_connect|dblink_exec|dblink_send_query|postgres_fdw|pg_sleep|pg_sleep_for|"
+      + "pg_terminate_backend|pg_cancel_backend|pg_reload_conf|set_config)\\b",
+        Pattern.CASE_INSENSITIVE);
+
     private static final Pattern STARTS_WITH_SELECT_OR_WITH =
         Pattern.compile("^\\s*(select|with)\\b", Pattern.CASE_INSENSITIVE);
 
@@ -125,6 +134,9 @@ public class SqlPlaygroundService {
         }
         if (FORBIDDEN.matcher(sql).find()) {
             throw new IllegalArgumentException("Yazma/DDL ifadeleri yasak (sadece okuma)");
+        }
+        if (FORBIDDEN_FUNCTIONS.matcher(sql).find()) {
+            throw new IllegalArgumentException("Sunucu dosyası/iç-ağ/large-object/backend fonksiyonları yasak");
         }
     }
 

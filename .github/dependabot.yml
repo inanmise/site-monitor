@@ -27,3 +27,9 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+
+  # Docker base image'leri (Dockerfile FROM — floating tag → güncel/digest PR'ları)
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "weekly"

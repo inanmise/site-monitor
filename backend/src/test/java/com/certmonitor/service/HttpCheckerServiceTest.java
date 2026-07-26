@@ -127,7 +127,10 @@ class HttpCheckerServiceTest {
 
         AuditService audit = mock(AuditService.class);
         CaAutoPinService pinService = new CaAutoPinService(certChecker, repo, settings, audit);
-        HttpCheckerService svc = new HttpCheckerService(new TrustEvaluator(settings), pinService);
+        // Test 127.0.0.1'e bağlanır → SsrfGuard'ı izin verici kur (loopback + iç ağ). Metadata/link-local yine bloklu.
+        when(settings.getBoolean("cert.monitor.monitoring.allow-loopback-targets", false)).thenReturn(true);
+        when(settings.getBoolean("cert.monitor.monitoring.allow-internal-targets", true)).thenReturn(true);
+        HttpCheckerService svc = new HttpCheckerService(new TrustEvaluator(settings), pinService, new SsrfGuard(settings));
         svc.init();
         return new Fixture(svc, repo, audit, store);
     }
