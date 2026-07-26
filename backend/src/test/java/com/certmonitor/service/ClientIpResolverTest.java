@@ -51,6 +51,26 @@ class ClientIpResolverTest {
     }
 
     @Test
+    void negativeIndexPicksTrustedHopFromRight() {
+        // İstemci en sol XFF'i spoof edebilir; -1 = en sağ = güvenilir proxy'nin eklediği değer.
+        ClientIpResolver r = resolver(new String[]{"X-Forwarded-For"}, -1);
+        MockHttpServletRequest req = new MockHttpServletRequest();
+        req.addHeader("X-Forwarded-For", "1.2.3.4, 10.0.0.9");
+        req.setRemoteAddr("10.0.0.9");
+        assertThat(r.resolve(req)).isEqualTo("10.0.0.9");
+    }
+
+    @Test
+    void outOfBoundsIndexFallsBackToRemoteAddr() {
+        // Saldırgan kısa/spoof XFF gönderirse sınır-dışı index spoof'a düşmemeli → remoteAddr.
+        ClientIpResolver r = resolver(new String[]{"X-Forwarded-For"}, 5);
+        MockHttpServletRequest req = new MockHttpServletRequest();
+        req.addHeader("X-Forwarded-For", "1.2.3.4");
+        req.setRemoteAddr("10.0.0.9");
+        assertThat(r.resolve(req)).isEqualTo("10.0.0.9");
+    }
+
+    @Test
     void nullRequestReturnsUnknown() {
         assertThat(resolver(new String[]{"X-Forwarded-For"}, 0).resolve(null)).isEqualTo("unknown");
     }
