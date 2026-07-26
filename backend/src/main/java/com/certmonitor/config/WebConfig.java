@@ -75,6 +75,9 @@ public class WebConfig implements WebMvcConfigurer {
                 List<String> origins = (s != null)
                         ? s.getCsv("cert.monitor.cors.allowed-origins", allowedOrigins)
                         : csv(allowedOrigins);
+                // Güvenlik (CWE-942): allowCredentials=true ile "*" origin birlikte OLAMAZ. Yanlış-config'te
+                // wildcard'ı ele → credentials'lı istekler tüm origin'lere açılmaz (fail-safe: CORS kapanır).
+                origins = origins.stream().map(String::trim).filter(o -> !o.isEmpty() && !"*".equals(o)).toList();
                 if (origins.isEmpty()) return null;
                 CorsConfiguration c = new CorsConfiguration();
                 c.setAllowedOrigins(origins);

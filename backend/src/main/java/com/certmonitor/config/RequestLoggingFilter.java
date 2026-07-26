@@ -167,6 +167,8 @@ public class RequestLoggingFilter extends OncePerRequestFilter {
             String value = SENSITIVE_HEADERS.contains(name.toLowerCase())
                     ? MASK
                     : req.getHeader(name);
+            // Log injection (CWE-117): header değerindeki CR/LF'i temizle (sahte log satırı enjekte edilmesin).
+            if (value != null) value = value.replaceAll("[\\r\\n]", " ");
             map.put(name, value);
         }
         return map.toString();
