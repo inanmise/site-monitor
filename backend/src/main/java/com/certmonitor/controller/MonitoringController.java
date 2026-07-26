@@ -573,6 +573,7 @@ public class MonitoringController {
         String host = body.get("host").toString().trim();
         int port = ((Number) body.get("port")).intValue();
         if (port < 1 || port > 65535) return badRequest("port 1-65535 aralığında olmalı");
+        if (!blank(body.get("sendData"))) requireAdmin(session);   // ham payload → yalnız admin (iç-servis SSRF payload'u)
         // Aynı host:port zaten AKTİF izleniyorsa tekrar ekleme (otomatik :443 kayıtlarıyla çakışmayı da önler).
         if (portMonitorRepo.findFirstByHostAndPortOrderByIdAsc(host, port)
                 .filter(ex -> Boolean.TRUE.equals(ex.getActive())).isPresent())
@@ -620,7 +621,10 @@ public class MonitoringController {
             }
             if (body.get("protocol")        != null) m.setProtocol(normalizePortType(body.get("protocol")));
             if (body.containsKey("expect"))    m.setExpect(blank(body.get("expect")) ? null : body.get("expect").toString().trim());
-            if (body.containsKey("sendData"))  m.setSendData(blank(body.get("sendData")) ? null : body.get("sendData").toString());
+            if (body.containsKey("sendData")) {
+                if (!blank(body.get("sendData"))) requireAdmin(session);   // ham payload → yalnız admin (iç-servis SSRF payload'u)
+                m.setSendData(blank(body.get("sendData")) ? null : body.get("sendData").toString());
+            }
             if (body.get("active")          != null) m.setActive((Boolean) body.get("active"));
             if (body.containsKey("teamId"))    m.setTeamId(resolveTeamChange(session, m.getTeamId(), body.get("teamId")));
             if (body.containsKey("groupName")) m.setGroupName(monitoringGroupService.getOrCreateFor(m, m.getTeamId(), body.get("groupName") == null ? null : body.get("groupName").toString(), actor(session)));
@@ -707,6 +711,7 @@ public class MonitoringController {
         int timeoutMs = body.get("timeoutMs") instanceof Number tn ? tn.intValue() : 5000;
         String type = normalizePortType(body.get("protocol"));
         String send = blank(body.get("sendData")) ? null : body.get("sendData").toString();
+        if (send != null) requireAdmin(session);   // ham payload (BANNER/UDP arbitrary bayt) → yalnız admin (iç-servis SSRF payload'u)
         String expect = blank(body.get("expect")) ? null : body.get("expect").toString().trim();
         String ipVersion = body.get("ipVersion") != null && java.util.Set.of("v4", "v6", "auto").contains(body.get("ipVersion").toString())
                 ? body.get("ipVersion").toString() : "auto";

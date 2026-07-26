@@ -1,6 +1,7 @@
 package com.certmonitor.service;
 
 import com.certmonitor.model.PortMonitor;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
@@ -29,7 +30,10 @@ import java.util.concurrent.CompletableFuture;
  */
 @Slf4j
 @Service
+@RequiredArgsConstructor
 public class PortCheckerService {
+
+    private final SsrfGuard ssrfGuard;
 
     @Async("certCheckExecutor")
     public CompletableFuture<Map<String, Object>> checkAsync(String host, int port, int timeoutMs) {
@@ -58,14 +62,25 @@ public class PortCheckerService {
         String t = type != null ? type.trim().toUpperCase() : "TCP";
         long start = System.currentTimeMillis();
         Map<String, Object> result = new LinkedHashMap<>();
+        // SSRF: hedefi bağlanmadan ÖNCE doğrula (cloud-metadata/loopback/link-local blok; iç ağ ayara bağlı).
+        // Doğrulanan IP'lere bağlanılır → DNS-rebind kapanır.
+        List<InetAddress> vetted;
         try {
-            InetAddress addr = resolveFamily(host, ipVersion);   // null → varsayılan çözümleme (auto)
+            vetted = ssrfGuard.validate(host);
+        } catch (SsrfGuard.BlockedException be) {
+            result.put("open", false);
+            result.put("response_ms", null);
+            result.put("error", be.getMessage());
+            return result;
+        }
+        try {
+            InetAddress addr = resolveFamily(vetted, ipVersion);   // vetted'i aileye göre süz; null → auto (çok-A)
             switch (t) {
-                case "TLS"    -> doTls(addr, host, port, timeoutMs, result);
+                case "TLS"    -> doTls(addr, vetted, host, port, timeoutMs, result);
                 case "HTTP"   -> doHttp(addr, host, port, timeoutMs, send, expect, result);
-                case "BANNER" -> doBanner(addr, host, port, timeoutMs, send, expect, result);
-                case "UDP"    -> doUdp(addr, host, port, timeoutMs, send, result);
-                default        -> doTcp(addr, host, port, timeoutMs, result);
+                case "BANNER" -> doBanner(addr, vetted, port, timeoutMs, send, expect, result);
+                case "UDP"    -> doUdp(addr, vetted, port, timeoutMs, send, result);
+                default        -> doTcp(addr, vetted, port, timeoutMs, result);
             }
             if (Boolean.TRUE.equals(result.get("open")) && result.get("response_ms") == null) {
                 result.put("response_ms", System.currentTimeMillis() - start);
@@ -80,14 +95,14 @@ public class PortCheckerService {
         return result;
     }
 
-    private void doTcp(InetAddress addr, String host, int port, int timeoutMs, Map<String, Object> result) throws Exception {
-        try (Socket s = connectAny(addr, host, port, timeoutMs)) {
+    private void doTcp(InetAddress addr, List<InetAddress> vetted, int port, int timeoutMs, Map<String, Object> result) throws Exception {
+        try (Socket s = connectAny(addr, vetted, port, timeoutMs)) {
             result.put("open", true);
         }
     }
 
-    private void doTls(InetAddress addr, String host, int port, int timeoutMs, Map<String, Object> result) throws Exception {
-        try (Socket raw = connectAny(addr, host, port, timeoutMs)) {
+    private void doTls(InetAddress addr, List<InetAddress> vetted, String host, int port, int timeoutMs, Map<String, Object> result) throws Exception {
+        try (Socket raw = connectAny(addr, vetted, port, timeoutMs)) {
             SSLSocketFactory f = trustAllContext().getSocketFactory();
             try (SSLSocket ssl = (SSLSocket) f.createSocket(raw, host, port, true)) {
                 ssl.setSoTimeout(timeoutMs);
@@ -133,8 +148,8 @@ public class PortCheckerService {
                 + (expect != null && !expect.isBlank() ? " (beklenen: " + expect.trim() + ")" : ""));
     }
 
-    private void doBanner(InetAddress addr, String host, int port, int timeoutMs, String send, String expect, Map<String, Object> result) throws Exception {
-        try (Socket s = connectAny(addr, host, port, timeoutMs)) {
+    private void doBanner(InetAddress addr, List<InetAddress> vetted, int port, int timeoutMs, String send, String expect, Map<String, Object> result) throws Exception {
+        try (Socket s = connectAny(addr, vetted, port, timeoutMs)) {
             s.setSoTimeout(timeoutMs);
             if (send != null && !send.isEmpty()) {
                 OutputStream os = s.getOutputStream();
@@ -154,12 +169,12 @@ public class PortCheckerService {
         }
     }
 
-    private void doUdp(InetAddress addr, String host, int port, int timeoutMs, String send, Map<String, Object> result) throws Exception {
+    private void doUdp(InetAddress addr, List<InetAddress> vetted, int port, int timeoutMs, String send, Map<String, Object> result) throws Exception {
         try (DatagramSocket ds = new DatagramSocket()) {
             ds.setSoTimeout(timeoutMs);
             byte[] payload = (send != null && !send.isEmpty())
                     ? unescape(send).getBytes(StandardCharsets.ISO_8859_1) : new byte[]{0};
-            InetAddress target = addr != null ? addr : InetAddress.getByName(host);
+            InetAddress target = addr != null ? addr : vetted.get(0);   // doğrulanan IP'ye gönder (rebind kapalı)
             ds.send(new DatagramPacket(payload, payload.length, target, port));
             byte[] buf = new byte[2048];
             try {
@@ -200,27 +215,28 @@ public class PortCheckerService {
         return s.replace("\\r", "\r").replace("\\n", "\n").replace("\\t", "\t");
     }
 
-    /** ipVersion v4/v6 → host'un o aileye ait ilk adresi; auto/null → null (JVM varsayılan çözümlemesi korunur). */
-    private static InetAddress resolveFamily(String host, String ipVersion) throws UnknownHostException {
+    /** ipVersion v4/v6 → doğrulanan adresler içinden o aileye ait ilki; auto/null → null (çok-A yolu korunur).
+     *  SsrfGuard'ın döndürdüğü listeyi süzer (yeniden çözmez → rebind kapalı). */
+    private static InetAddress resolveFamily(List<InetAddress> vetted, String ipVersion) throws UnknownHostException {
         if (ipVersion == null || ipVersion.isBlank() || "auto".equalsIgnoreCase(ipVersion)) return null;
         boolean wantV6 = "v6".equalsIgnoreCase(ipVersion);
-        for (InetAddress a : InetAddress.getAllByName(host)) {
+        for (InetAddress a : vetted) {
             if (wantV6 ? a instanceof Inet6Address : a instanceof Inet4Address) return a;
         }
-        throw new UnknownHostException("No IP" + (wantV6 ? "v6" : "v4") + " address for " + host);
+        throw new UnknownHostException("No IP" + (wantV6 ? "v6" : "v4") + " address");
     }
 
     /**
-     * addr set ise onunla (aile-kısıtlı) tek bağlantı; değilse (auto) çok-A: çözümlenen tüm IP'leri
-     * sırayla dene, ilk TCP kabul edene bağlan (split-VIP host'ta yanlış IP'ye düşüp refused olmasın).
+     * addr set ise onunla (aile-kısıtlı) tek bağlantı; değilse (auto) çok-A: DOĞRULANAN IP'leri sırayla dene,
+     * ilk TCP kabul edene bağlan (split-VIP host'ta yanlış IP'ye düşüp refused olmasın; SsrfGuard sonrası rebind yok).
      */
-    private static Socket connectAny(InetAddress addr, String host, int port, int timeoutMs) throws java.io.IOException {
+    private static Socket connectAny(InetAddress addr, List<InetAddress> vetted, int port, int timeoutMs) throws java.io.IOException {
         if (addr != null) {
             Socket s = new Socket();
             s.connect(new InetSocketAddress(addr, port), timeoutMs);
             return s;
         }
-        return NetworkResolver.connectFirstReachable(host, port, timeoutMs);
+        return NetworkResolver.connectFirstReachable(vetted, port, timeoutMs);
     }
 
     /** URL için IP literali (v6 köşeli parantez + zone-id kırpma). */

@@ -9,6 +9,8 @@ import java.net.ServerSocket;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 /**
  * Unit tests for {@link PortCheckerService}.
@@ -20,7 +22,15 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 class PortCheckerServiceTest {
 
-    private final PortCheckerService service = new PortCheckerService();
+    // Testler 127.0.0.1'e bağlanır → guard'ı izin verici kur (loopback + iç ağ açık). Metadata/link-local yine bloklu.
+    private static PortCheckerService permissiveService() {
+        AppSettingsService s = mock(AppSettingsService.class);
+        when(s.getBoolean("cert.monitor.monitoring.allow-internal-targets", true)).thenReturn(true);
+        when(s.getBoolean("cert.monitor.monitoring.allow-loopback-targets", false)).thenReturn(true);
+        return new PortCheckerService(new SsrfGuard(s));
+    }
+
+    private final PortCheckerService service = permissiveService();
 
     @Test
     @DisplayName("check returns the open contract for a listening port")

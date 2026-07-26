@@ -33,6 +33,9 @@ public final class AppSettingsCatalog {
         new Setting("cert.monitor.scheduler.stale-minutes",      "scheduler",  Type.INT),
         new Setting("cert.monitor.uptime.alert-enabled",         "monitoring", Type.BOOL),
         new Setting("cert.monitor.port.alert-enabled",           "monitoring", Type.BOOL),
+        // SSRF koruması — giden izleme/tanılama hedefleri (SsrfGuard). Metadata/loopback/link-local her zaman blok.
+        new Setting("cert.monitor.monitoring.allow-internal-targets", "monitoring", Type.BOOL),
+        new Setting("cert.monitor.monitoring.allow-loopback-targets", "monitoring", Type.BOOL),
         new Setting("cert.monitor.dns.alert-enabled",            "monitoring", Type.BOOL),
         new Setting("cert.monitor.dns.resolvers",                "monitoring", Type.CSV),
         new Setting("cert.monitor.keyword.alert-enabled",        "monitoring", Type.BOOL),
