@@ -1,0 +1,29 @@
+# Dependabot — haftalık bağımlılık güncelleme PR'ları (CI ile doğrulanır → riskli major bumplar güvenle gelir).
+# SCA gate: ci.yml `npm audit --audit-level=high` + (opsiyonel) OWASP dependency-check.
+version: 2
+updates:
+  # Backend (Maven)
+  - package-ecosystem: "maven"
+    directory: "/backend"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 10
+    groups:
+      maven-minor-patch:
+        update-types: ["minor", "patch"]
+
+  # Frontend (npm)
+  - package-ecosystem: "npm"
+    directory: "/frontend"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 10
+    groups:
+      npm-minor-patch:
+        update-types: ["minor", "patch"]
+
+  # GitHub Actions (SHA-pinned → dependabot pin'leri günceller)
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"

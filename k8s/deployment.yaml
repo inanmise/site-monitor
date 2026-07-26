@@ -31,6 +31,8 @@ spec:
         runAsNonRoot: true
         runAsUser: 1000
         fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: cert-monitor
           image: cert-monitor:1.0.0  # Replace with your registry image

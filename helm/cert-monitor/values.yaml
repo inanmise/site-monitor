@@ -7,7 +7,8 @@ replicaCount: 1
 
 image:
   repository: ghcr.io/inanmise/certmonitor
-  tag: "latest"
+  # Boş → Chart.AppVersion'a düşer (reproducible/rollback-safe; "latest" değil). Env overlay'leri override eder.
+  tag: ""
   pullPolicy: Always
 
 nameOverride: ""
@@ -213,6 +214,8 @@ podSecurityContext:
   runAsNonRoot: true
   runAsUser: 1000
   fsGroup: 1000
+  seccompProfile:
+    type: RuntimeDefault
   # Ping monitor (ICMP) için non-root unprivileged ICMP soketi. K8s "safe" sysctl —
   # CAP_NET_RAW gerektirmez. fsGroup (1000) ping_group_range içinde olunca iputils
   # ping non-root çalışır. Cluster PodSecurity policy'si safe sysctl'lere izin
