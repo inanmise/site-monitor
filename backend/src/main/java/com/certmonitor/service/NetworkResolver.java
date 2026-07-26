@@ -81,6 +81,30 @@ public final class NetworkResolver {
     }
 
     /**
+     * ÖNCEDEN çözülmüş/doğrulanmış adres listesine sırayla bağlanır (yeniden çözmez → SsrfGuard sonrası
+     * DNS-rebind kapanır). İlk TCP kabul edene bağlı Socket döndürür (çağıran kapatır); hepsi başarısızsa fırlatır.
+     */
+    public static Socket connectFirstReachable(List<InetAddress> addrs, int port, int timeoutMs) throws IOException {
+        if (addrs == null || addrs.isEmpty())
+            throw new ConnectException("boş adres listesi");
+        boolean multi = addrs.size() > 1;
+        int limit = multi ? Math.min(addrs.size(), MAX_A_ATTEMPTS) : 1;
+        int perAttemptMs = multi ? Math.min(timeoutMs, CONNECT_CAP_MS) : timeoutMs;
+        IOException last = null;
+        for (int i = 0; i < limit; i++) {
+            Socket s = new Socket();
+            try {
+                s.connect(new InetSocketAddress(addrs.get(i), port), perAttemptMs);
+                return s;
+            } catch (IOException e) {
+                last = e;
+                try { s.close(); } catch (IOException ignore) { /* zaten kapandı */ }
+            }
+        }
+        throw last != null ? last : new ConnectException("çözümlenen hiçbir adrese bağlanılamadı:" + port);
+    }
+
+    /**
      * Çözümlenen adresler içinde hedef porta TCP kabul eden ilk adresi döndürür; yoksa null.
      * Yalnız erişilebilirlik yoklaması (probe) yapar, döndürdüğü soketi hemen kapatır.
      */
