@@ -126,6 +126,7 @@ public class DomainCheckerService {
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("domain", reg);
         out.put("source", source);
+        out.put("whois_provider", info.get("whois_provider"));   // .tr web-whois'te hangi kaynak (isimtescil/trabis/trabis43)
         out.put("status", status);
         out.put("days_remaining", days);
         out.put("expiry_date", expiry);
@@ -156,6 +157,7 @@ public class DomainCheckerService {
             DomainCheck dc = new DomainCheck();
             dc.setMonitorId(monitorId);
             dc.setSource((String) out.get("source"));
+            dc.setWhoisProvider((String) out.get("whois_provider"));
             dc.setStatus((String) out.get("status"));
             dc.setDaysRemaining((Integer) out.get("days_remaining"));
             dc.setExpiryDate((String) out.get("expiry_date"));

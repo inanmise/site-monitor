@@ -38,6 +38,15 @@ function fmtExpiry(iso) {
     : d.toLocaleDateString('tr-TR', { year: 'numeric', month: '2-digit', day: '2-digit' })
 }
 
+/** .tr WHOIS kaynak anahtarı → okunur etiket (cevabı hangi kaynak verdi). */
+const WHOIS_PROVIDER_LABEL = { isimtescil: 'isimtescil.net', trabis: 'trabis.gov.tr', trabis43: 'whois:43' }
+/** Kaynak rozeti metni: WHOIS ise ve sağlayıcı biliniyorsa "WHOIS · isimtescil.net", değilse ham kaynak. */
+function sourceTag(source, provider) {
+  if (!source) return null
+  const p = provider && WHOIS_PROVIDER_LABEL[provider]
+  return (source === 'WHOIS' && p) ? `WHOIS · ${p}` : source
+}
+
 export default function DomainMonitorPage({ systemRole, teamId, teamName }) {
   const t = useT()
   const toast = useToast()
@@ -394,7 +403,7 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName }) {
                 {statusBadge(m)}
                 {alarmBadge(m)}<MaintenanceBadge target={m.domain} />
                 {m.changed && <span className="dom-changed-ico" title={t('dom.changedTip')}><Activity size={13} /></span>}
-                {m.source && <span className="upt-port-tag">{m.source}</span>}
+                {m.source && <span className="upt-port-tag" title={m.whois_provider ? t('dom.sourceVia') : undefined}>{sourceTag(m.source, m.whois_provider)}</span>}
               </div>
               <div className="upt-card-domain" title={m.domain}>{m.domain}</div>
               {m.registrar && (
@@ -454,7 +463,7 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName }) {
               <div className="upt-modal-metric"><span className="upt-modal-metric-val" style={{ color: daysColor(selected.days_remaining) }}>{selected.days_remaining ?? '—'}</span><span className="upt-modal-metric-lbl">{t('dom.daysLeft')}</span></div>
               <div className="upt-modal-metric"><span className="upt-modal-metric-val">{fmtExpiry(selected.expiry_date)}</span><span className="upt-modal-metric-lbl">{t('dom.expiry')}</span></div>
               <div className="upt-modal-metric"><span className="upt-modal-metric-val" style={{ fontSize: '.8em' }}>{selected.registrar || '—'}</span><span className="upt-modal-metric-lbl">{t('dom.registrar')}</span></div>
-              <div className="upt-modal-metric"><span className="upt-modal-metric-val">{selected.source || '—'}</span><span className="upt-modal-metric-lbl">{t('dom.source')}</span></div>
+              <div className="upt-modal-metric"><span className="upt-modal-metric-val" style={{ fontSize: '.8em' }}>{sourceTag(selected.source, selected.whois_provider) || '—'}</span><span className="upt-modal-metric-lbl">{t('dom.source')}</span></div>
               <div className="upt-modal-metric"><span className={selected.ns_resolves === false ? 'kw-off' : 'kw-on'}>{selected.ns_resolves == null ? '—' : selected.ns_resolves ? t('dom.on') : t('dom.off')}</span><span className="upt-modal-metric-lbl">{t('dom.nsResolves')}</span></div>
               {selected.checked_at && <div className="upt-modal-metric"><span className="upt-modal-metric-val upt-modal-metric-time">{formatDateSec(selected.checked_at)}</span><span className="upt-modal-metric-lbl">{t('dom.lastCheck')}</span></div>}
             </div>
@@ -501,7 +510,7 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName }) {
                     return (
                     <div key={`${cAt || ''}#${i}`} className="upt-rt-grid dom-rt-grid">
                       <span className="upt-rt-time">{formatDateSec(cAt)}</span>
-                      <span>{c.source || '—'}</span>
+                      <span>{sourceTag(c.source, c.whois_provider || c.whoisProvider) || '—'}</span>
                       <span>{fmtExpiry(cExp)}</span>
                       <span style={{ color: daysColor(cDays), fontWeight: 600 }}>{cDays ?? '—'}</span>
                       <span className={`dom-st dom-st--${statusCls(c.status)}`}>{statusLabel(c.status)}{c.changed ? ' ⚑' : ''}</span>
