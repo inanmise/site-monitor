@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { api, formatDate } from '../api/client'
 import { useT } from '../i18n/index.jsx'
+import { useVisibleInterval } from '../hooks/useVisibleInterval'
 import { useToast } from './ui/Toast.jsx'
 import { Play, Pencil, Trash2, Plus, ChevronDown, Globe, Info, Network, AlertTriangle, FlaskConical, Check, Layers, RefreshCw, Pause, BarChart3, BellDot, ArrowLeftRight } from 'lucide-react'
 import DnsDetailModal from './DnsDetailModal.jsx'
@@ -67,7 +68,6 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName }) {
   const [secondsSince, setSecondsSince] = useState(0)
   const [statFilter, setStatFilter] = useState(null)
   const [statsVisible, setStatsVisible] = useState(false)
-  const countdownRef = useRef(null)
   const deepLinkDone = useRef(false)
 
   const load = useCallback(async () => {
@@ -77,16 +77,8 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName }) {
     setSecondsSince(0)
   }, [])
 
-  useEffect(() => {
-    load()
-    const interval = setInterval(load, REFRESH_INTERVAL * 1000)
-    return () => clearInterval(interval)
-  }, [load])
-
-  useEffect(() => {
-    countdownRef.current = setInterval(() => setSecondsSince(s => s + 1), 1000)
-    return () => clearInterval(countdownRef.current)
-  }, [])
+  useVisibleInterval(load, REFRESH_INTERVAL * 1000)   // gizli sekmede polling durur
+  useVisibleInterval(() => setSecondsSince(s => s + 1), 1000, false)   // countdown da durur
 
   useEffect(() => {
     if (!isAdmin) return

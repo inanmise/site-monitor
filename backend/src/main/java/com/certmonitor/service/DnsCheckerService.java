@@ -229,9 +229,24 @@ public class DnsCheckerService {
         // fallback). Per-query timeout canli yapilandirilabilir; toplam response_ms timeout gecikmesini
         // yansitir → DNS_SLOW tespiti buna dayanir.
         int timeoutMs = appSettings.getInt("cert.monitor.dns.query-timeout-ms", 2000);
-        Resolver resolver = new ExtendedResolver();
+        Resolver resolver = systemResolver();
         resolver.setTimeout(Duration.ofMillis(Math.max(500, timeoutMs)));
         return resolver.send(query);
+    }
+
+    private volatile Resolver sharedSystemResolver;
+
+    /** ExtendedResolver'ı BİR KEZ kur (leak analizi #4) — her sorguda sistem DNS config'ini okumak CPU churn'dü.
+     *  dnsjava send() eşzamanlı-güvenli; setTimeout çağıranların hepsi aynı ayar değerini yazar (benign race). */
+    private Resolver systemResolver() throws java.net.UnknownHostException {
+        Resolver r = sharedSystemResolver;
+        if (r == null) {
+            synchronized (this) {
+                r = sharedSystemResolver;
+                if (r == null) { r = new ExtendedResolver(); sharedSystemResolver = r; }
+            }
+        }
+        return r;
     }
 
     private static int typeOf(String recordType) {

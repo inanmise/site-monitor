@@ -75,7 +75,8 @@ public class ExtendedHealthService {
 
     // ── Heartbeat ─────────────────────────────────────────────────────────────
 
-    @Scheduled(fixedRate = 60_000, initialDelay = 5_000)
+    // fixedDelay (fixedRate değil): DB yavaşlarsa çalışmalar üst üste binmesin (leak analizi #5).
+    @Scheduled(fixedDelay = 60_000, initialDelay = 5_000)
     public void recordHeartbeat() {
         try {
             SystemHeartbeat hb = new SystemHeartbeat();

@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef, useMemo, lazy, Suspense } fro
 import { createPortal } from 'react-dom'
 import { api, formatDateSec } from '../api/client'
 import { useT } from '../i18n/index.jsx'
+import { useVisibleInterval } from '../hooks/useVisibleInterval'
 import { useToast } from './ui/Toast.jsx'
 import SearchableSelect from './ui/SearchableSelect.jsx'
 import MaintenanceBadge from './ui/MaintenanceBadge.jsx'
@@ -58,7 +59,6 @@ export default function PingMonitorPage({ systemRole, teamId, teamName }) {
   const [detailTab, setDetailTab] = useState('control')
   const [historyPage, setHistoryPage] = useState(0)
   const [historyPageSize, setHistoryPageSize] = useState(50)
-  const countdownRef = useRef(null)
   const deepLinkDone = useRef(false)
 
   // Modal her açıldığında/değiştiğinde önceki test sonucunu temizle.
@@ -78,16 +78,8 @@ export default function PingMonitorPage({ systemRole, teamId, teamName }) {
     setLoading(false); setSecondsSince(0)
   }, [])
 
-  useEffect(() => {
-    load()
-    const i = setInterval(load, REFRESH_INTERVAL * 1000)
-    return () => clearInterval(i)
-  }, [load])
-
-  useEffect(() => {
-    countdownRef.current = setInterval(() => setSecondsSince(s => s + 1), 1000)
-    return () => clearInterval(countdownRef.current)
-  }, [])
+  useVisibleInterval(load, REFRESH_INTERVAL * 1000)   // gizli sekmede polling durur
+  useVisibleInterval(() => setSecondsSince(s => s + 1), 1000, false)   // countdown da durur
 
   useEffect(() => {
     if (!isAdmin) return

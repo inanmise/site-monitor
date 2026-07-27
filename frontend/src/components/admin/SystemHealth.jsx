@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useMemo, useRef, Fragment, lazy, Suspense } from 'react'
 import { api, formatDate, formatDateSec } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
+import { useVisibleInterval } from '../../hooks/useVisibleInterval'
 import { CheckCircle, XCircle, MinusCircle, HelpCircle, Mail, ChevronRight, Check, Loader2, Server, Database, Globe, Cpu, ChevronDown, Users, LogIn, ShieldAlert, UserCheck } from 'lucide-react'
 import MiniChart from './MiniChart'
 import ChartModal from './ChartModal'
@@ -184,14 +185,8 @@ export default function SystemHealth({ systemRole, globalAdmin = false, preFilte
     setLoading(false)
   }, [canViewUserActivity])
 
-  useEffect(() => {
-    load()
-    const id = setInterval(load, 30000)
-    return () => {
-      clearInterval(id)
-      if (fastPollRef.current) clearInterval(fastPollRef.current)
-    }
-  }, [load])
+  useVisibleInterval(load, 30000)   // gizli sekmede polling durur
+  useEffect(() => () => { if (fastPollRef.current) clearInterval(fastPollRef.current) }, [])   // scan fast-poll temizliği
 
   // Giriş trendi: seçilen aralık/gün için esnek seriyi çek. Tarih seçiliyse o günün saatlik
   // dağılımı (00:00–24:00); değilse son N gün (1g→saatlik, 7g/30g→günlük). UTC ISO gönderilir.
