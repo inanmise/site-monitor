@@ -28,8 +28,9 @@ k6 run -e BASE_URL=http://localhost:8080 ./perf/k6-smoke.js
 
 | Category | Status | Where |
 |----------|--------|-------|
-| **Unit** | ~290 backend tests (JUnit), 90+ frontend tests (Vitest). Service coverage 61%; component coverage 20%. | `backend/src/test/`, `frontend/src/test/` |
-| **Integration** | One `@SpringBootTest` (SqlSamplesIntegrationTest). More planned in Phase 2. | `backend/src/test/.../util/` |
+| **Unit** | **~1426 backend tests** (JUnit 5 + Mockito + AssertJ), **282 frontend tests** (Vitest). Backend line coverage **~66%** (enforced floor, see below); frontend line coverage **~48%**. | `backend/src/test/`, `frontend/src/test/` |
+| **Integration** | `@DataJpaTest` slices (H2 in PostgreSQL-compat mode) for repositories, `@WebMvcTest` slices for controllers, one full `@SpringBootTest` (`SqlSamplesIntegrationTest`). Real-PostgreSQL Testcontainers under an opt-in `it` Maven profile is **planned** (targeted at native/`@Query` repos). | `backend/src/test/` |
+| **Network isolation (TLS/HTTPS)** | This is a monitoring app that opens outbound TLS/HTTPS connections on schedules — **no test ever touches a real external host.** Certificate/handshake behaviour is exercised against a **local self-signed HTTPS server** (`com.sun.net.httpserver.HttpsServer`) with certs generated at runtime via BouncyCastle at precise `notAfter` offsets (`HttpCheckerServiceTest`, `HstsDiagnosticsServiceTest`, `CertificateCheckerServiceTest`); expiry-day math is verified by feeding those certs through the real parse path. SSRF policy is unit-tested directly (`SsrfGuardTest`). | `backend/src/test/.../service/` |
 | **Sanity / Smoke** | `scripts/smoke.ps1` hits `/health`, login gate, and a small list of APIs. Run after every deploy. | `scripts/smoke.ps1` |
 | **Regression** | Built up organically — every bug fix lands with a test that pins the behaviour. Examples: `SchedulerServiceTest`'s outage detection paths, `EscalationServiceTest`'s daily-realert dedupe. | Throughout the suite |
 | **User Acceptance (UAT)** | **Not yet automated.** Phase 3 plans a Cucumber BDD framework so business analysts can express acceptance scenarios in Gherkin. | — |
@@ -42,8 +43,8 @@ k6 run -e BASE_URL=http://localhost:8080 ./perf/k6-smoke.js
 ## CI gates (`.github/workflows/`)
 
 - **`ci.yml`** — runs on every push to `develop`, `main`, `release/**` and on PRs to those branches.
-  - Backend job: `mvn -B clean verify` (runs all JUnit tests via Surefire). Test reports and Jacoco coverage uploaded as artifacts.
-  - Frontend job: `npm ci` → `npm run lint --if-present` → **`npm run test --silent -- --run`** → `npm run build` → `npm audit` (non-blocking).
+  - Backend job: `mvn -B clean verify` — runs all JUnit tests via Surefire **and enforces the JaCoCo coverage gate** (`jacoco:check`, bound to `verify`). Test reports and JaCoCo coverage uploaded as artifacts.
+  - Frontend job: `npm ci` → `npm run lint --if-present` → **`npm run test:coverage`** (enforces the Vitest coverage thresholds) → `npm run build` → `npm audit` (non-blocking).
   - Helm lint job: chart linted against each environment values file.
 - **`docker-build.yml`** — builds and pushes the multi-arch image, then runs **Trivy** against the produced image for HIGH/CRITICAL CVEs (currently report-only).
 - **`release.yml`** — semver bump from conventional commit prefix (`feat:` → minor, `fix:` → patch, `BREAKING CHANGE` → major) and Helm chart publish. Does not gate on tests; trusts `ci.yml`.
@@ -54,12 +55,28 @@ k6 run -e BASE_URL=http://localhost:8080 ./perf/k6-smoke.js
 - **Frontend:** Put the file next to the component in `src/test/` with a `.test.jsx` suffix. Always render through `test-utils.jsx`'s `render()` so the i18n and theme providers are wired up. Mock the api client through `vi.mock('../api/client', ...)`; never let a real fetch escape into the test runner.
 - **i18n keys:** Add to BOTH `TR` and `EN` in `src/i18n/index.jsx`. The parity test will fail loudly if one is missing.
 
-## Coverage targets (aspirational)
+## Coverage gates (enforced, not aspirational)
 
-| Area | Today | Phase 1 (this PR) | Phase 2 goal |
-|------|-------|-------------------|--------------|
-| Backend service line coverage | unknown | reported via Jacoco | ≥ 75% |
-| Frontend component coverage | ~20% | reported via Vitest | ≥ 60% |
+Strategy: **measure → floor just below current → ratchet up.** Floors are set just under the measured level so
+they catch regressions today, and are raised as new tests land. They are **not** aspirational targets — a build
+that dips below fails.
+
+**Backend (`backend/pom.xml`, `jacoco:check` on `verify`):**
+- Bundle floor: **line ≥ 0.63, instruction ≥ 0.61** (measured today: line 65.9%, instruction 63.4%).
+- Per-class floors on the risk-critical cert/alarm classes (measured line today → floor):
+  `SsrfGuard` 100%→0.95 · `MonitoringOutageService` 82%→0.80 · `EscalationService` 63%→0.62 ·
+  `DomainCheckerService` 56%→0.55 · `RdapDomainExpiryService` 46%→0.45 · `CertificateCheckerService` 43%→0.42.
+  These classes carry large network/proxy/RDAP-HTTP branches that are not unit-testable, so their floors track
+  **real coverage**, not a blanket ≥90% — raise each as integration coverage grows.
+
+**Frontend (`frontend/vite.config.js`, `test.coverage.thresholds`):**
+- Global floor: **statements/lines ≥ 45, branches ≥ 55, functions ≥ 26** (measured: 47.6 / 59.8 / 28.7).
+- Per-file lock: `src/utils/incidentMeta.js` at **100%** lines/functions/statements (fully covered; regression = red).
+
+| Area | Today (measured) | Enforced floor | Direction |
+|------|------------------|----------------|-----------|
+| Backend line coverage | ~66% | ≥ 63% bundle + per-class | ratchet toward 75% |
+| Frontend line coverage | ~48% | ≥ 45% | ratchet toward 60% |
 | Critical-path E2E | none | none | login + cert lifecycle |
 | A11y violations on dashboard | none | none | 0 serious / 0 critical |
 

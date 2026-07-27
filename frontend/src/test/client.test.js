@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { api, formatDate } from '../api/client.js'
+import { api, formatDate, formatDateSec, formatTime, formatDateOnly } from '../api/client.js'
 
 // ── fetch mock helpers ────────────────────────────────────────────────────────
 
@@ -471,5 +471,48 @@ describe('formatDate', () => {
     expect(result).not.toBe('N/A')
     expect(typeof result).toBe('string')
     expect(result.length).toBeGreaterThan(0)
+  })
+})
+
+// ── formatDateSec / formatTime / formatDateOnly ───────────────────────────────
+// Boş girdi sentinel'i (N/A veya —) + geçerli ISO'da sentinel-olmayan string döndüğü doğrulanır.
+// (Locale/timezone'a bağlı KESİN çıktı iddia edilmez — CI ile makine arası kaymayı önlemek için.)
+
+describe('formatDateSec', () => {
+  it('boş girdi → N/A', () => {
+    expect(formatDateSec(null)).toBe('N/A')
+    expect(formatDateSec('')).toBe('N/A')
+  })
+  it('geçerli ISO → saniye içeren, sentinel-olmayan string', () => {
+    const r = formatDateSec('2025-01-15T12:00:30')
+    expect(r).not.toBe('N/A')
+    expect(typeof r).toBe('string')
+    expect(r.length).toBeGreaterThan(0)
+  })
+})
+
+describe('formatTime', () => {
+  it('boş girdi → —', () => {
+    expect(formatTime(null)).toBe('—')
+    expect(formatTime('')).toBe('—')
+  })
+  it('geçerli ISO → sentinel-olmayan string', () => {
+    const r = formatTime('2025-01-15T12:00:30')
+    expect(r).not.toBe('—')
+    expect(typeof r).toBe('string')
+    expect(r.length).toBeGreaterThan(0)
+  })
+})
+
+describe('formatDateOnly', () => {
+  it('boş girdi → —', () => {
+    expect(formatDateOnly(null)).toBe('—')
+    expect(formatDateOnly('')).toBe('—')
+  })
+  it('geçerli ISO → sentinel-olmayan string', () => {
+    const r = formatDateOnly('2025-01-15T12:00:30')
+    expect(r).not.toBe('—')
+    expect(typeof r).toBe('string')
+    expect(r.length).toBeGreaterThan(0)
   })
 })
