@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef, useMemo, lazy, Suspense } fro
 import { createPortal } from 'react-dom'
 import { api, formatDateSec } from '../api/client'
 import { useT } from '../i18n/index.jsx'
+import { useVisibleInterval } from '../hooks/useVisibleInterval'
 import { useToast } from './ui/Toast.jsx'
 import SearchableSelect from './ui/SearchableSelect.jsx'
 import MaintenanceBadge from './ui/MaintenanceBadge.jsx'
@@ -82,7 +83,6 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName }) {
   const [statFilter, setStatFilter] = useState(null)
   const [statsVisible, setStatsVisible] = useState(false)
   const [secondsSince, setSecondsSince] = useState(0)
-  const countdownRef = useRef(null)
   const deepLinkDone = useRef(false)
 
   const load = useCallback(async () => {
@@ -91,11 +91,7 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName }) {
     setLoading(false); setSecondsSince(0)
   }, [])
 
-  useEffect(() => {
-    load()
-    const i = setInterval(load, REFRESH_INTERVAL * 1000)
-    return () => clearInterval(i)
-  }, [load])
+  useVisibleInterval(load, REFRESH_INTERVAL * 1000)   // görünürlük-farkındalıklı: gizli sekmede polling durur
 
   // Form açıkken seçili takımın + bu türün gruplarını sunucudan getir (başka takım sızmaz).
   useEffect(() => {
@@ -105,10 +101,7 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName }) {
     return () => { alive = false }
   }, [modal, form.teamId])
 
-  useEffect(() => {
-    countdownRef.current = setInterval(() => setSecondsSince(s => s + 1), 1000)
-    return () => clearInterval(countdownRef.current)
-  }, [])
+  useVisibleInterval(() => setSecondsSince(s => s + 1), 1000, false)   // countdown da gizli sekmede durur
 
   useEffect(() => {
     if (!isAdmin) return

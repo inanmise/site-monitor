@@ -753,12 +753,17 @@ public class SchedulerService {
                 log.warn("Cleanup login_issue_mail_logs failed: {}", e.getMessage());
                 lim = -1;
             }
+            // weekly_report_images: en büyük satırlar (base64 görsel ≤8MB). Rapor metni/metadata KORUNUR;
+            // yalnız çok eski görseller silinir (muhafazakâr, yapılandırılabilir; vars. 730g/2yıl → sürpriz silme yok).
+            int wriRetDays = Math.max(30, appSettings.getInt("cert.monitor.weekly-report.image-retention-days", 730));
+            String wriCutoff = ISO.format(Instant.now().minus(wriRetDays, ChronoUnit.DAYS));
+            int wri = safeDelete("DELETE FROM weekly_report_images WHERE created_at < ?", wriCutoff);
             // In-memory: silinen monitörlerin checkDue anahtarları birikmesin (uzun uptime sızıntısı).
             int pruned = pruneMonitorCheckState(collectLiveMonitorKeys());
             log.info("Nightly cleanup (retention v2): httpChecks={}, heartbeat={}, domainChecks={}, diagRuns={}, resolvedAlerts={}, "
-                    + "loginIssues={}, loginIssueImages={}, loginIssueMailLogs={}, checkStateKeysPruned={} "
-                    + "(hb cutoff: {}; diag cutoff: {}; alert cutoff: {}; loginIssue cutoff: {})",
-                    hc, hb, dcn, dg, ae, lir, lii, lim, pruned, hbCutoff, diagCutoff, aeCutoff, liCutoff);
+                    + "loginIssues={}, loginIssueImages={}, loginIssueMailLogs={}, weeklyReportImages={}, checkStateKeysPruned={} "
+                    + "(hb cutoff: {}; diag cutoff: {}; alert cutoff: {}; loginIssue cutoff: {}; wReportImg retention: {}d)",
+                    hc, hb, dcn, dg, ae, lir, lii, lim, wri, pruned, hbCutoff, diagCutoff, aeCutoff, liCutoff, wriRetDays);
         } catch (Exception e) {
             log.warn("Nightly cleanup failed: {}", e.getMessage());
         }

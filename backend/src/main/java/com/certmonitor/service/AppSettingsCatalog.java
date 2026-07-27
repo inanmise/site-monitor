@@ -67,6 +67,8 @@ public final class AppSettingsCatalog {
         new Setting("cert.monitor.dns.slow-confirm-interval-ms", "monitoring", Type.INT),
         // HTTP metrik kalıcı serisi — gün-bazlı saklama (Sistem Sağlığı HTTP paneli + gece temizlik).
         new Setting("cert.monitor.metrics.http.retention-days",  "monitoring", Type.INT),
+        // Haftalık rapor görselleri (base64 ≤8MB/satır) — bu günden eski görseller gece temizlenir (rapor metni korunur).
+        new Setting("cert.monitor.weekly-report.image-retention-days", "monitoring", Type.INT),
         // Kontrol sıklığı + request timeout — per-tip VARSAYILAN (yeni monitör oluştururken kullanılır).
         new Setting("cert.monitor.ping.default-interval-seconds",    "frequency", Type.INT),
         new Setting("cert.monitor.keyword.default-interval-seconds", "frequency", Type.INT),

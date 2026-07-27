@@ -103,7 +103,7 @@ public class PortCheckerService {
 
     private void doTls(InetAddress addr, List<InetAddress> vetted, String host, int port, int timeoutMs, Map<String, Object> result) throws Exception {
         try (Socket raw = connectAny(addr, vetted, port, timeoutMs)) {
-            SSLSocketFactory f = trustAllContext().getSocketFactory();
+            SSLSocketFactory f = TRUST_ALL_FACTORY;
             try (SSLSocket ssl = (SSLSocket) f.createSocket(raw, host, port, true)) {
                 ssl.setSoTimeout(timeoutMs);
                 try {
@@ -126,7 +126,7 @@ public class PortCheckerService {
         URL url = URI.create((https ? "https" : "http") + "://" + connectHost + ":" + port + p).toURL();
         HttpURLConnection conn = (HttpURLConnection) url.openConnection();
         if (conn instanceof HttpsURLConnection hc) {
-            hc.setSSLSocketFactory(trustAllContext().getSocketFactory());
+            hc.setSSLSocketFactory(TRUST_ALL_FACTORY);
             hc.setHostnameVerifier((h, s) -> true);
         }
         conn.setConnectTimeout(timeoutMs);
@@ -247,13 +247,21 @@ public class PortCheckerService {
         return addr instanceof Inet6Address ? "[" + ip + "]" : ip;
     }
 
-    private static SSLContext trustAllContext() throws Exception {
-        SSLContext ctx = SSLContext.getInstance("TLS");
-        ctx.init(null, new TrustManager[]{ new X509TrustManager() {
-            public void checkClientTrusted(X509Certificate[] c, String a) { }
-            public void checkServerTrusted(X509Certificate[] c, String a) { }
-            public X509Certificate[] getAcceptedIssuers() { return new X509Certificate[0]; }
-        }}, new SecureRandom());
-        return ctx;
+    /** Trust-all SSLSocketFactory'yi BİR KEZ kur (leak analizi #3) — her check'te SSLContext.init (SecureRandom
+     *  reseed + provider init) pahalı CPU churn'dü; erişilebilirlik probu için trust-all zaten kasıtlı. */
+    private static final SSLSocketFactory TRUST_ALL_FACTORY = buildTrustAllFactory();
+
+    private static SSLSocketFactory buildTrustAllFactory() {
+        try {
+            SSLContext ctx = SSLContext.getInstance("TLS");
+            ctx.init(null, new TrustManager[]{ new X509TrustManager() {
+                public void checkClientTrusted(X509Certificate[] c, String a) { }
+                public void checkServerTrusted(X509Certificate[] c, String a) { }
+                public X509Certificate[] getAcceptedIssuers() { return new X509Certificate[0]; }
+            }}, new SecureRandom());
+            return ctx.getSocketFactory();
+        } catch (Exception e) {
+            return (SSLSocketFactory) SSLSocketFactory.getDefault();
+        }
     }
 }

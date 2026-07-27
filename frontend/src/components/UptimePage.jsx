@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { createPortal } from 'react-dom'
 import { api, formatDate } from '../api/client'
 import { useT } from '../i18n/index.jsx'
+import { useVisibleInterval } from '../hooks/useVisibleInterval'
 import { RefreshCw, X, AlertCircle, CheckCircle, Users } from 'lucide-react'
 import DateTimeRangePicker from './ui/DateTimeRangePicker.jsx'
 import DiagnosticsModal from './admin/DiagnosticsModal.jsx'
@@ -33,7 +34,6 @@ export default function UptimePage({ systemRole }) {
   const [dateTo, setDateTo]             = useState(() => new Date())
   const [secondsSince, setSecondsSince] = useState(0)
   const lastFetched = useRef(null)
-  const countdownRef = useRef(null)
 
   const fetchOverview = useCallback(async () => {
     const res = await api.monitoring.getUptimeOverview()
@@ -45,18 +45,8 @@ export default function UptimePage({ systemRole }) {
     setLoading(false)
   }, [])
 
-  useEffect(() => {
-    fetchOverview()
-    const interval = setInterval(fetchOverview, REFRESH_INTERVAL * 1000)
-    return () => clearInterval(interval)
-  }, [fetchOverview])
-
-  useEffect(() => {
-    countdownRef.current = setInterval(() => {
-      setSecondsSince(s => s + 1)
-    }, 1000)
-    return () => clearInterval(countdownRef.current)
-  }, [])
+  useVisibleInterval(fetchOverview, REFRESH_INTERVAL * 1000)   // gizli sekmede polling durur
+  useVisibleInterval(() => setSecondsSince(s => s + 1), 1000, false)   // countdown da durur
 
   async function loadHttpHistory(item, from, to) {
     setHttpLoading(true)

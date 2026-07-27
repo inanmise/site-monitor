@@ -1,6 +1,7 @@
 package com.certmonitor.service;
 
 import jakarta.annotation.PostConstruct;
+import jakarta.annotation.PreDestroy;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -58,6 +59,10 @@ public class TrWebWhoisClient {
 
     private SSLContext ssl;
     private ProxySelector proxySelector;   // null → doğrudan (proxy yok)
+    // Paylaşılan, cookie'siz client'lar (NORMAL redirect) — isimtescil GET yolu bunları yeniden kullanır
+    // (per-call HttpClient = selector-thread/pool churn; leak analizi #1). Proxy yoksa proxiedClient == directClient.
+    private HttpClient directClient;
+    private HttpClient proxiedClient;
 
     @PostConstruct
     void init() {
@@ -67,6 +72,14 @@ public class TrWebWhoisClient {
             this.proxySelector = ProxySelector.of(new InetSocketAddress(proxyHost, proxyPort));
             log.info(".tr web-whois istemcisi proxy üzerinden: {}:{}", proxyHost, proxyPort);
         }
+        this.directClient  = newClient(null, HttpClient.Redirect.NORMAL, false);
+        this.proxiedClient = (proxySelector != null) ? newClient(null, HttpClient.Redirect.NORMAL, true) : directClient;
+    }
+
+    @PreDestroy
+    void close() {
+        if (directClient != null) directClient.close();
+        if (proxiedClient != null && proxiedClient != directClient) proxiedClient.close();
     }
 
     public boolean enabled() {
@@ -116,7 +129,7 @@ public class TrWebWhoisClient {
     private String fetchIsimtescil(String domain) throws Exception {
         String base = appSettings.getString("cert.monitor.domain.isimtescil-whois-url", "https://www.isimtescil.net/whois");
         URI uri = URI.create(base + (base.contains("?") ? "&" : "?") + "domainname=" + enc(domain));
-        HttpClient client = newClient(null, HttpClient.Redirect.NORMAL, hostOf(uri));
+        HttpClient client = sharedClient(hostOf(uri));   // paylaşılan (cookie gerekmez) — per-call client YOK
         HttpResponse<String> resp = send(client, get(uri), hostOf(uri));
         return resp.statusCode() == 200 ? extractWhois(resp.body()) : null;
     }
@@ -125,36 +138,38 @@ public class TrWebWhoisClient {
     private String fetchTrabis(String domain) throws Exception {
         String base = trimTrailingSlash(appSettings.getString("cert.monitor.domain.trabis-whois-url", "https://www.trabis.gov.tr"));
         String host = hostOf(URI.create(base));
+        boolean useProxy = proxySelector != null && !shouldBypass(host);
         // Domain başına taze oturum (çerez/token desync'i engeller); 302 elle takip edilir (POST redirect quirk'ünden kaçın).
-        HttpClient client = newClient(new CookieManager(null, CookiePolicy.ACCEPT_ALL), HttpClient.Redirect.NEVER, host);
+        // try-with-resources: taze client GC beklemeden anında kapatılır → selector-thread/pool churn'ü önler (leak #1).
+        try (HttpClient client = newClient(new CookieManager(null, CookiePolicy.ACCEPT_ALL), HttpClient.Redirect.NEVER, useProxy)) {
+            HttpResponse<String> form = send(client, get(URI.create(base + "/whois")), host);
+            if (form.statusCode() != 200) return null;
+            String token = extractToken(form.body());
+            if (token == null) return null;
 
-        HttpResponse<String> form = send(client, get(URI.create(base + "/whois")), host);
-        if (form.statusCode() != 200) return null;
-        String token = extractToken(form.body());
-        if (token == null) return null;
+            String body = "domain=" + enc(domain) + "&_token=" + enc(token);
+            HttpRequest post = HttpRequest.newBuilder()
+                    .uri(URI.create(base + "/search-domain")).timeout(timeout())
+                    .header("User-Agent", UA)
+                    .header("Content-Type", "application/x-www-form-urlencoded")
+                    .header("Referer", base + "/whois")
+                    .POST(HttpRequest.BodyPublishers.ofString(body)).build();
+            HttpResponse<String> resp = send(client, post, host);
 
-        String body = "domain=" + enc(domain) + "&_token=" + enc(token);
-        HttpRequest post = HttpRequest.newBuilder()
-                .uri(URI.create(base + "/search-domain")).timeout(timeout())
-                .header("User-Agent", UA)
-                .header("Content-Type", "application/x-www-form-urlencoded")
-                .header("Referer", base + "/whois")
-                .POST(HttpRequest.BodyPublishers.ofString(body)).build();
-        HttpResponse<String> resp = send(client, post, host);
-
-        String html;
-        if (resp.statusCode() / 100 == 3) {                       // 302 → sonuç sayfası (aynı çerezle)
-            String loc = resp.headers().firstValue("location").orElse(base + "/whois");
-            URI locUri = URI.create(loc);
-            if (!locUri.isAbsolute()) locUri = URI.create(base).resolve(loc);
-            HttpResponse<String> res = send(client, get(locUri), host);
-            html = res.statusCode() == 200 ? res.body() : null;
-        } else if (resp.statusCode() == 200) {
-            html = resp.body();
-        } else {
-            return null;
+            String html;
+            if (resp.statusCode() / 100 == 3) {                       // 302 → sonuç sayfası (aynı çerezle)
+                String loc = resp.headers().firstValue("location").orElse(base + "/whois");
+                URI locUri = URI.create(loc);
+                if (!locUri.isAbsolute()) locUri = URI.create(base).resolve(loc);
+                HttpResponse<String> res = send(client, get(locUri), host);
+                html = res.statusCode() == 200 ? res.body() : null;
+            } else if (resp.statusCode() == 200) {
+                html = resp.body();
+            } else {
+                return null;
+            }
+            return extractWhois(html);
         }
-        return extractWhois(html);
     }
 
     /** Ham TCP/43 WHOIS ({@code whois.trabis.gov.tr}) — proxy'siz doğrudan soket. Kurumsal egress'te 43 kapalıysa
@@ -183,11 +198,16 @@ public class TrWebWhoisClient {
 
     // ── HTTP altyapısı (proxy + otomatik CA-pin, RdapDomainClient ile aynı desen) ──
 
-    private HttpClient newClient(CookieManager cookies, HttpClient.Redirect redirect, String host) {
+    /** Paylaşılan (cookie'siz) client'ı host'a göre seç — proxy varsa ve host bypass listesinde değilse proxied. */
+    private HttpClient sharedClient(String host) {
+        return (proxySelector != null && !shouldBypass(host)) ? proxiedClient : directClient;
+    }
+
+    private HttpClient newClient(CookieManager cookies, HttpClient.Redirect redirect, boolean useProxy) {
         HttpClient.Builder b = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(5))
                 .followRedirects(redirect);
-        if (proxySelector != null && !shouldBypass(host)) b.proxy(proxySelector);
+        if (proxySelector != null && useProxy) b.proxy(proxySelector);
         if (ssl != null) b.sslContext(ssl);
         if (cookies != null) b.cookieHandler(cookies);
         return b.build();

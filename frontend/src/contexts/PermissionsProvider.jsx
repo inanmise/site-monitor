@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useState, useCallback } from 'react'
 import { api } from '../api/client'
+import { useVisibleInterval } from '../hooks/useVisibleInterval'
 
 const PermissionsContext = createContext(null)
 
@@ -17,12 +18,8 @@ export function PermissionsProvider({ children, user }) {
     if (res?.success) setPerms(res.data || {})
   }, [user])
 
-  useEffect(() => {
-    refresh()
-    if (!user) return
-    const t = setInterval(refresh, 60_000)
-    return () => clearInterval(t)
-  }, [refresh, user])
+  useEffect(() => { refresh() }, [refresh])   // ilk + user değişince (user yoksa perms temizlenir)
+  useVisibleInterval(refresh, user ? 60_000 : 0, false)   // periyodik (yalnız user varken), gizli sekmede durur
 
   return (
     <PermissionsContext.Provider value={{ perms, refresh }}>
