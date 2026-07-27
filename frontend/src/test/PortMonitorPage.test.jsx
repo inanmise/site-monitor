@@ -74,7 +74,9 @@ describe('PortMonitorPage', () => {
     expect(screen.getByRole('button', { name: /response chart|süre grafiği/i })).toBeInTheDocument()
     // Rehber & Notlar sekmesi → MonitorNotes type=PORT, target=host:port
     fireEvent.click(screen.getByRole('button', { name: /guide & notes|rehber & notlar/i }))
-    // MonitorNotes lazy import + mount → getMonitorNotes(type, target); dinamik import ilk seferde yavaş olabilir.
-    await waitFor(() => expect(api.monitoring.getMonitorNotes).toHaveBeenCalledWith('PORT', '10.0.0.1:25'), { timeout: 5000 })
+    // MonitorNotes lazy import + mount → getMonitorNotes(type, target). Dinamik import (React.lazy) tam-suite
+    // paralel worker'larda CPU çekişmesi altında ilk seferde 5sn'yi aşabiliyordu (izole koşuda hep geçer) → flaky.
+    // Kök: test mantığı değil, dinamik-import gecikmesi; gerçekçi tavan (10sn) çekişme altında da güvenli.
+    await waitFor(() => expect(api.monitoring.getMonitorNotes).toHaveBeenCalledWith('PORT', '10.0.0.1:25'), { timeout: 10000 })
   })
 })

@@ -7,6 +7,8 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.mockito.*;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
@@ -903,6 +905,65 @@ class EscalationServiceTest {
         assertThat(captor.getAllValues().get(0).getAlertLevel()).isEqualTo("CRITICAL");
     }
 
+    // ── determineAlertType önceliği (REVOKED > MISMATCH > CHAIN_BROKEN > EXPIRY) ────
+
+    @Test
+    @DisplayName("determineAlertType: REVOKED+MISMATCH+CHAIN_BROKEN hepsi set → REVOKED önceliği (+CRITICAL)")
+    void determineAlertType_allDefectsSet_revokedTakesPriority() {
+        String domain = "multi-defect.example.com";
+        when(contactRepo.findByActiveTrueOrderByRoleAsc()).thenReturn(List.of());
+        when(alertEventRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        Map<String, Object> result = new LinkedHashMap<>(Map.of(
+                "domain", domain, "status", "valid", "warning", false, "days_remaining", 90,
+                "revocation_status", "REVOKED", "deployment_status", "INCOMPLETE", "chain_status", "BROKEN"));
+
+        service.processResults(List.of(result));
+
+        ArgumentCaptor<AlertEvent> captor = ArgumentCaptor.forClass(AlertEvent.class);
+        verify(alertEventRepo, atLeast(1)).save(captor.capture());
+        assertThat(captor.getAllValues().get(0).getAlertType()).isEqualTo("REVOKED");
+        assertThat(captor.getAllValues().get(0).getAlertLevel()).isEqualTo("CRITICAL");
+    }
+
+    @Test
+    @DisplayName("determineAlertType: revoke YOK, MISMATCH+CHAIN_BROKEN set → MISMATCH önceliği (chain'in üstünde)")
+    void determineAlertType_mismatchAndChainBroken_mismatchTakesPriority() {
+        String domain = "mismatch-over-chain.example.com";
+        when(contactRepo.findByActiveTrueOrderByRoleAsc()).thenReturn(List.of());
+        when(alertEventRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        Map<String, Object> result = new LinkedHashMap<>(Map.of(
+                "domain", domain, "status", "valid", "warning", false, "days_remaining", 90,
+                "revocation_status", "VALID", "deployment_status", "INCOMPLETE", "chain_status", "BROKEN"));
+
+        service.processResults(List.of(result));
+
+        ArgumentCaptor<AlertEvent> captor = ArgumentCaptor.forClass(AlertEvent.class);
+        verify(alertEventRepo, atLeast(1)).save(captor.capture());
+        assertThat(captor.getAllValues().get(0).getAlertType()).isEqualTo("MISMATCH");
+    }
+
+    // ── determineAlertLevel tam-eşik merdiveni (<= kenarları; critical=7 high=15 warning=30) ──
+
+    @ParameterizedTest(name = "gün={0} → {1}")
+    @CsvSource({
+            "7,  CRITICAL",   // days == criticalDays → CRITICAL
+            "8,  HIGH",       // > critical, <= high → HIGH
+            "15, HIGH",       // days == highDays → HIGH
+            "16, WARNING",    // > high, <= warning → WARNING
+            "30, WARNING"     // days == warningDays → WARNING
+    })
+    @DisplayName("determineAlertLevel: gün eşik merdiveninde doğru seviyeye düşer (<= kenarları)")
+    void determineAlertLevel_thresholdLadder_exactBoundaries(int days, String expectedLevel) {
+        String domain = "ladder-" + days + ".example.com";
+        when(alertEventRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        service.processResults(List.of(expiryResult(domain, days, true)));
+
+        ArgumentCaptor<AlertEvent> captor = ArgumentCaptor.forClass(AlertEvent.class);
+        verify(alertEventRepo, atLeast(1)).save(captor.capture());
+        assertThat(captor.getAllValues().get(0).getAlertLevel()).isEqualTo(expectedLevel);
+    }
+
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     // ── ACCESSIBILITY (erişim kesintisi) alarmları ─────────────────────────────
@@ -976,6 +1037,18 @@ class EscalationServiceTest {
         assertThat(saved.getTeamId()).isEqualTo(9L);
         assertThat(saved.getContextJson()).isNotNull();
         assertThat(saved.getContextJson()).contains("akbank");   // snapshot → çözüldü mailinde kelime detayı
+    }
+
+    @Test
+    @DisplayName("processConfirmedOutage: domain bakım penceresinde → alarm AÇILMAZ + hiçbir kanaldan bildirim gitmez")
+    void processConfirmedOutage_underMaintenance_suppressesAlertAndNotification() {
+        String domain = "under-maintenance.example.com";
+        when(maintenanceService.isUnderMaintenance(domain)).thenReturn(true);
+
+        service.processConfirmedOutage(domain, "ACCESSIBILITY", "CRITICAL", outageCtx());
+
+        verify(alertEventRepo, never()).save(any());
+        verifyNoInteractions(emailService, webhookService);
     }
 
     @Test

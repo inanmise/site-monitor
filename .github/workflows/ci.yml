@@ -108,8 +108,9 @@ jobs:
       - name: Lint
         run: npm run lint --if-present
 
-      - name: Test
-        run: npm run test --silent -- --run
+      # Kapsam eşiğini zorlayan koşu (vite.config.js test.coverage.thresholds) — taban altında FAIL eder.
+      - name: Test (with coverage gate)
+        run: npm run test:coverage
 
       - name: Build
         run: npm run build

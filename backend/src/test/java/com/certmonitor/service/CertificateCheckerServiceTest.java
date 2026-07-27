@@ -10,6 +10,22 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
 
+import org.bouncycastle.asn1.x500.X500Name;
+import org.bouncycastle.asn1.x509.Extension;
+import org.bouncycastle.asn1.x509.GeneralName;
+import org.bouncycastle.asn1.x509.GeneralNames;
+import org.bouncycastle.cert.jcajce.JcaX509CertificateConverter;
+import org.bouncycastle.cert.jcajce.JcaX509v3CertificateBuilder;
+import org.bouncycastle.operator.ContentSigner;
+import org.bouncycastle.operator.jcajce.JcaContentSignerBuilder;
+
+import java.math.BigInteger;
+import java.security.KeyPair;
+import java.security.KeyPairGenerator;
+import java.security.cert.X509Certificate;
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
+import java.util.Date;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -419,5 +435,82 @@ class CertificateCheckerServiceTest {
 
         Map<String, Object> okResult = ok();
         assertThat(service.isTransientError(okResult)).isFalse();
+    }
+
+    // ── Sertifika süre-bitişi matematiği (parseLeafCert: days_remaining + warning eşiği) ──────────
+    // Çekirdek izleme kararı: kaç gün kaldı ve uyarı eşiğinde mi. notAfter'ı runtime'da üretilen
+    // (BouncyCastle) gerçek X509 üstünde kesin ofsetlere koyup private parseLeafCert'i reflection'la
+    // çağırır — ağ/handshake yok, deterministik. warningDays test içinde 30'a sabitlenir.
+
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> parseLeaf(X509Certificate cert) {
+        ReflectionTestUtils.setField(service, "warningDays", 30);
+        return (Map<String, Object>) ReflectionTestUtils.invokeMethod(service, "parseLeafCert", cert, "leaf.example.com");
+    }
+
+    @Test
+    @DisplayName("parseLeafCert: bitişe çok var (warningDays+5) → uyarı yok, status=valid")
+    void parseLeafCert_farFuture_noWarning() {
+        Map<String, Object> r = parseLeaf(certExpiringInHours(35L * 24 + 12));   // 35 gün
+        assertThat(r.get("days_remaining")).isEqualTo(35);
+        assertThat(r.get("warning")).isEqualTo(false);
+        assertThat(r.get("status")).isEqualTo("valid");
+    }
+
+    @Test
+    @DisplayName("parseLeafCert: gün == warningDays+1 → hâlâ valid (eşik <= sınırının dışı)")
+    void parseLeafCert_daysEqualsWarningDaysPlusOne_isValid() {
+        Map<String, Object> r = parseLeaf(certExpiringInHours(31L * 24 + 12));   // 31 gün
+        assertThat(r.get("days_remaining")).isEqualTo(31);
+        assertThat(r.get("warning")).isEqualTo(false);
+        assertThat(r.get("status")).isEqualTo("valid");
+    }
+
+    @Test
+    @DisplayName("parseLeafCert: gün == warningDays → uyarı (days<=warningDays kenarı)")
+    void parseLeafCert_daysEqualsWarningDays_isWarning() {
+        Map<String, Object> r = parseLeaf(certExpiringInHours(30L * 24 + 12));   // 30 gün
+        assertThat(r.get("days_remaining")).isEqualTo(30);
+        assertThat(r.get("warning")).isEqualTo(true);
+        assertThat(r.get("status")).isEqualTo("warning");
+    }
+
+    @Test
+    @DisplayName("parseLeafCert: bugün doluyor (24 saatten az kaldı) → days=0 + uyarı")
+    void parseLeafCert_expiresToday_zeroDaysWarning() {
+        Map<String, Object> r = parseLeaf(certExpiringInHours(12));             // ~12 saat
+        assertThat(r.get("days_remaining")).isEqualTo(0);
+        assertThat(r.get("warning")).isEqualTo(true);
+        assertThat(r.get("status")).isEqualTo("warning");
+    }
+
+    @Test
+    @DisplayName("parseLeafCert: zaten süresi geçmiş → days negatif + uyarı")
+    void parseLeafCert_alreadyExpired_negativeDaysWarning() {
+        Map<String, Object> r = parseLeaf(certExpiringInHours(-5L * 24));       // 5 gün önce doldu
+        assertThat((Integer) r.get("days_remaining")).isNegative();
+        assertThat(r.get("warning")).isEqualTo(true);
+        assertThat(r.get("status")).isEqualTo("warning");
+    }
+
+    /** notAfter = now + {hoursFromNow} saat olan, runtime'da üretilmiş self-signed X509 (SAN=leaf.example.com). */
+    private static X509Certificate certExpiringInHours(long hoursFromNow) {
+        try {
+            KeyPairGenerator kpg = KeyPairGenerator.getInstance("RSA");
+            kpg.initialize(2048);
+            KeyPair kp = kpg.generateKeyPair();
+            X500Name name = new X500Name("CN=leaf.example.com, O=CertMonitor Test");
+            Instant now = Instant.now();
+            JcaX509v3CertificateBuilder builder = new JcaX509v3CertificateBuilder(
+                    name, BigInteger.valueOf(System.nanoTime()),
+                    Date.from(now.minus(365, ChronoUnit.DAYS)), Date.from(now.plus(hoursFromNow, ChronoUnit.HOURS)),
+                    name, kp.getPublic());
+            builder.addExtension(Extension.subjectAlternativeName, false,
+                    new GeneralNames(new GeneralName(GeneralName.dNSName, "leaf.example.com")));
+            ContentSigner signer = new JcaContentSignerBuilder("SHA256withRSA").build(kp.getPrivate());
+            return new JcaX509CertificateConverter().getCertificate(builder.build(signer));
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
     }
 }

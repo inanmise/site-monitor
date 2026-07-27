@@ -187,6 +187,60 @@
                         <phase>test</phase>
                         <goals><goal>report</goal></goals>
                     </execution>
+                    <!-- Kapsam eşiği (regresyon kilidi). `verify` fazına bağlı → `mvn test` yalnız rapor üretir,
+                         `mvn verify` (ve CI) eşiği ZORLAR. Karar: "ölç→taban→kademeli" — eşikler mevcut ölçülen
+                         seviyenin hemen ALTINA konur (yeni testler geldikçe YUKARI çekilir). Kritik sertifika/alarm
+                         sınıflarının çoğu ağ/proxy/RDAP-HTTP dalları içerdiğinden birim-testle %90'a çıkamaz;
+                         bu yüzden hedef değil GERÇEK taban bağlanır (bugünkü değerler yorumda). -->
+                    <execution>
+                        <id>check</id>
+                        <phase>verify</phase>
+                        <goals><goal>check</goal></goals>
+                        <configuration>
+                            <haltOnFailure>true</haltOnFailure>
+                            <rules>
+                                <!-- Genel taban (bugün: satır %65.9, komut %63.4). -->
+                                <rule>
+                                    <element>BUNDLE</element>
+                                    <limits>
+                                        <limit><counter>LINE</counter><value>COVEREDRATIO</value><minimum>0.63</minimum></limit>
+                                        <limit><counter>INSTRUCTION</counter><value>COVEREDRATIO</value><minimum>0.61</minimum></limit>
+                                    </limits>
+                                </rule>
+                                <!-- Kritik sertifika/alarm sınıfları — her biri kendi tabanında (kademeli yukarı çekilir). -->
+                                <rule>
+                                    <element>CLASS</element>
+                                    <includes><include>com.certmonitor.service.SsrfGuard</include></includes>
+                                    <limits><limit><counter>LINE</counter><value>COVEREDRATIO</value><minimum>0.95</minimum></limit></limits>
+                                </rule>
+                                <rule>
+                                    <element>CLASS</element>
+                                    <includes><include>com.certmonitor.service.MonitoringOutageService</include></includes>
+                                    <limits><limit><counter>LINE</counter><value>COVEREDRATIO</value><minimum>0.80</minimum></limit></limits>
+                                </rule>
+                                <rule>
+                                    <element>CLASS</element>
+                                    <includes><include>com.certmonitor.service.EscalationService</include></includes>
+                                    <limits><limit><counter>LINE</counter><value>COVEREDRATIO</value><minimum>0.62</minimum></limit></limits>
+                                </rule>
+                                <rule>
+                                    <element>CLASS</element>
+                                    <includes><include>com.certmonitor.service.DomainCheckerService</include></includes>
+                                    <limits><limit><counter>LINE</counter><value>COVEREDRATIO</value><minimum>0.55</minimum></limit></limits>
+                                </rule>
+                                <rule>
+                                    <element>CLASS</element>
+                                    <includes><include>com.certmonitor.service.RdapDomainExpiryService</include></includes>
+                                    <limits><limit><counter>LINE</counter><value>COVEREDRATIO</value><minimum>0.45</minimum></limit></limits>
+                                </rule>
+                                <rule>
+                                    <element>CLASS</element>
+                                    <includes><include>com.certmonitor.service.CertificateCheckerService</include></includes>
+                                    <limits><limit><counter>LINE</counter><value>COVEREDRATIO</value><minimum>0.42</minimum></limit></limits>
+                                </rule>
+                            </rules>
+                        </configuration>
+                    </execution>
                 </executions>
             </plugin>
         </plugins>

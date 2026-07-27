@@ -39,7 +39,20 @@ class SsrfGuardTest {
     }
 
     @Test
-    @DisplayName("validate: metadata/loopback/boş reddedilir; public + (açıkken) iç ağ izinli")
+    @DisplayName("blockReason: IPv6 loopback/any-local/link-local/cloud-metadata/multicast")
+    void blockReason_ipv6() throws Exception {
+        // loopback ::1 / any-local :: → allow-loopback'e bağlı
+        assertThat(SsrfGuard.blockReason(ip("::1"), true, false)).isNotNull();
+        assertThat(SsrfGuard.blockReason(ip("::1"), true, true)).isNull();
+        assertThat(SsrfGuard.blockReason(ip("::"), true, false)).isNotNull();
+        // link-local fe80:: / cloud-metadata fd00:ec2::254 / multicast ff02::1 → HER ZAMAN blok (allow'lar açık olsa bile)
+        assertThat(SsrfGuard.blockReason(ip("fe80::1"), true, true)).isNotNull();
+        assertThat(SsrfGuard.blockReason(ip("fd00:ec2::254"), true, true)).isNotNull();
+        assertThat(SsrfGuard.blockReason(ip("ff02::1"), true, true)).isNotNull();
+    }
+
+    @Test
+    @DisplayName("validate: metadata/loopback/boş/çözülemeyen reddedilir; public + (açıkken) iç ağ izinli")
     void validate_endToEnd() {
         AppSettingsService s = mock(AppSettingsService.class);
         when(s.getBoolean("cert.monitor.monitoring.allow-internal-targets", true)).thenReturn(true);
@@ -49,6 +62,8 @@ class SsrfGuardTest {
         assertThatThrownBy(() -> g.validate("169.254.169.254")).isInstanceOf(SsrfGuard.BlockedException.class);
         assertThatThrownBy(() -> g.validate("127.0.0.1")).isInstanceOf(SsrfGuard.BlockedException.class);
         assertThatThrownBy(() -> g.validate("")).isInstanceOf(SsrfGuard.BlockedException.class);
+        // çözülemeyen host → UnknownHostException → BlockedException (fail-safe)
+        assertThatThrownBy(() -> g.validate("no-such-host-xyz123.invalid")).isInstanceOf(SsrfGuard.BlockedException.class);
         assertThatCode(() -> g.validate("10.1.2.3")).doesNotThrowAnyException();   // iç ağ açık
         assertThat(g.validate("8.8.8.8")).isNotEmpty();
     }
