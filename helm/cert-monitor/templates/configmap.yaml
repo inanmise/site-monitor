@@ -20,6 +20,8 @@ data:
   {{- end }}
   DB_POOL_MAX: {{ .Values.config.dbPoolMax | quote }}
   CERT_MONITOR_EMAIL_ENABLED: {{ .Values.config.emailEnabled | quote }}
+  FAILED_LOGIN_ALERT_ENABLED: {{ .Values.config.failedLoginAlertEnabled | default "true" | quote }}
+  FAILED_LOGIN_ALERT_RECIPIENTS: {{ .Values.config.failedLoginAlertRecipients | default "" | quote }}
   SPRING_MAIL_HOST: {{ .Values.config.smtpHost | quote }}
   SPRING_MAIL_PORT: {{ .Values.config.smtpPort | quote }}
   SPRING_MAIL_SMTP_AUTH: {{ .Values.config.smtpAuth | quote }}

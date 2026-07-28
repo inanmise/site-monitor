@@ -95,6 +95,18 @@ class AuditServiceTest {
     }
 
     @Test
+    @DisplayName("failed login → failure_reason makine-kodu önekiyle başlar (BAD_PASSWORD / UNKNOWN_USER)")
+    void recordLogin_failure_prefixesMachineCode() {
+        AuditLog bad = service.recordLogin("alice", 1L, 2L, "USER",
+                "1.2.3.4", "Mozilla/5.0", "sess1", false, "BAD_PASSWORD", null, 5);
+        assertThat(bad.getFailureReason()).startsWith("BAD_PASSWORD:");
+
+        AuditLog unknown = service.recordLogin("ghost", null, null, null,
+                "1.2.3.4", "Mozilla/5.0", null, false, "UNKNOWN_USER", null, 5);
+        assertThat(unknown.getFailureReason()).startsWith("UNKNOWN_USER:");
+    }
+
+    @Test
     @DisplayName("unknown IP on successful login → UNUSUAL_IP flag added")
     void recordLogin_unusualIp_addsUnusualIpFlag() {
         when(auditLogRepo.existsSuccessfulLoginFromIp(eq("alice"), any())).thenReturn(false);

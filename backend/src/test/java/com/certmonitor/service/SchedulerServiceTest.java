@@ -94,6 +94,7 @@ class SchedulerServiceTest {
     @Mock RdapDomainExpiryService rdapDomainExpiryService;
     @Mock ActivityLogService activityLog;
     @Mock AuditService auditService;
+    @Mock FailedLoginAnomalyIncidentService failedLoginAnomalyIncidentService;
     @Mock DomainMonitorRepository domainMonitorRepo;
     @Mock DomainCheckRepository domainCheckRepo;
     @Mock DomainCheckerService domainCheckerService;
@@ -119,6 +120,7 @@ class SchedulerServiceTest {
                 keywordCheckerService, keywordMonitorRepo, keywordResultRepo,
                 pingCheckerService, pingMonitorRepo, pingCheckRepo,
                 httpCheckerService, httpMonitorRepo, httpCheckRepo, rdapDomainExpiryService, activityLog, auditService,
+                failedLoginAnomalyIncidentService,
                 domainMonitorRepo, domainCheckRepo, domainCheckerService,
                 networkOutageRepo,
                 weeklyReportReminderService, weeklyAvailabilityReportService, incidentService, appSettings);

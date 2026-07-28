@@ -1881,6 +1881,24 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 /* ── Alarm Fırtınası (alert storm) ayarları — "Alert Settings" ──────────────── */
 .storm-beta { display: inline-block; margin-left: 8px; padding: 1px 8px; border-radius: 10px; font-size: .58em;
   font-weight: 800; letter-spacing: .08em; vertical-align: middle; background: #7c3aed; color: #fff; }
+/* ── Login Anomali ayarları ── */
+.la-input-wide { width: 100%; max-width: 460px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px;
+  background: var(--input-bg); color: var(--input-text, var(--text)); font-size: .95em; }
+.la-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin-top: 8px; max-width: 720px; }
+.la-field { display: flex; flex-direction: column; gap: 4px; font-size: .85em; color: var(--text-light); }
+.la-field input { padding: 7px 10px; border: 1px solid var(--border); border-radius: 8px;
+  background: var(--input-bg); color: var(--input-text, var(--text)); font-size: .95em; }
+.la-test-row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 6px; }
+.la-incidents { width: 100%; max-width: 720px; border-collapse: collapse; font-size: .85em; margin-top: 6px; }
+.la-incidents th { text-align: left; padding: 6px 10px; color: var(--text-light); border-bottom: 1px solid var(--border); font-weight: 600; }
+.la-incidents td { padding: 6px 10px; border-bottom: 1px solid var(--border); }
+.la-rules { font-family: Consolas, "Courier New", monospace; font-size: .9em; word-break: break-all; }
+.la-badge { padding: 2px 8px; border-radius: 10px; font-size: .82em; font-weight: 600; }
+.la-badge.ok { background: rgba(22,163,74,.14); color: #16a34a; }
+.la-badge.active { background: rgba(220,38,38,.14); color: #dc2626; }
+[data-theme="dark"] .la-badge.ok { color: #86efac; }
+[data-theme="dark"] .la-badge.active { color: #fca5a5; }
+
 .storm-threshold-row { display: flex; gap: 10px; align-items: center; margin-top: 6px; flex-wrap: wrap; }
 .storm-num { width: 110px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px;
   background: var(--input-bg); color: var(--input-text, var(--text)); font-size: .95em; }

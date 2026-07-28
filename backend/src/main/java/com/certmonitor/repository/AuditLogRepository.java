@@ -60,6 +60,31 @@ public interface AuditLogRepository extends Repository<AuditLog, Long> {
     @Query("SELECT COUNT(a) FROM AuditLog a WHERE a.eventType = 'LOGIN_FAILED' AND a.eventTime > :since")
     long countFailedLoginsSince(@Param("since") String since);
 
+    // ── Başarısız-login anomali detektörü için toplu (aggregate) sorgular — hepsi salt-okunur ──
+    /** Verilen (from, to] penceresindeki toplam başarısız login (taban/karşılaştırma için). */
+    @Query("SELECT COUNT(a) FROM AuditLog a WHERE a.eventType = 'LOGIN_FAILED' AND a.eventTime > :from AND a.eventTime <= :to")
+    long countFailedLoginsBetween(@Param("from") String from, @Param("to") String to);
+
+    /** Hesap-bazlı: pencere içinde en çok hedeflenen kullanıcılar (actor, count) — desc. */
+    @Query("SELECT a.actor, COUNT(a) FROM AuditLog a WHERE a.eventType = 'LOGIN_FAILED' AND a.actor IS NOT NULL AND a.eventTime > :since GROUP BY a.actor ORDER BY COUNT(a) DESC")
+    List<Object[]> countFailedByActorSince(@Param("since") String since);
+
+    /** IP-bazlı: pencere içinde en aktif kaynak IP'ler (ip, count) — desc (brute force). */
+    @Query("SELECT a.ipAddress, COUNT(a) FROM AuditLog a WHERE a.eventType = 'LOGIN_FAILED' AND a.ipAddress IS NOT NULL AND a.eventTime > :since GROUP BY a.ipAddress ORDER BY COUNT(a) DESC")
+    List<Object[]> countFailedByIpSince(@Param("since") String since);
+
+    /** IP başına FARKLI kullanıcı sayısı (ip, distinctUsers) — desc (credential stuffing / user enumeration). */
+    @Query("SELECT a.ipAddress, COUNT(DISTINCT a.actor) FROM AuditLog a WHERE a.eventType = 'LOGIN_FAILED' AND a.ipAddress IS NOT NULL AND a.actor IS NOT NULL AND a.eventTime > :since GROUP BY a.ipAddress ORDER BY COUNT(DISTINCT a.actor) DESC")
+    List<Object[]> countDistinctUsersPerIpSince(@Param("since") String since);
+
+    /** Hesap başına FARKLI IP sayısı (actor, distinctIps) — desc (dağıtık saldırı). */
+    @Query("SELECT a.actor, COUNT(DISTINCT a.ipAddress) FROM AuditLog a WHERE a.eventType = 'LOGIN_FAILED' AND a.actor IS NOT NULL AND a.ipAddress IS NOT NULL AND a.eventTime > :since GROUP BY a.actor ORDER BY COUNT(DISTINCT a.ipAddress) DESC")
+    List<Object[]> countDistinctIpsPerActorSince(@Param("since") String since);
+
+    /** Failure-reason önekine (makine kodu) göre sayım — satır çekmeden dağılım (BAD_PASSWORD:%, UNKNOWN_USER:% …). */
+    @Query("SELECT COUNT(a) FROM AuditLog a WHERE a.eventType = 'LOGIN_FAILED' AND a.failureReason LIKE :like AND a.eventTime > :from AND a.eventTime <= :to")
+    long countFailedByReasonLikeBetween(@Param("like") String like, @Param("from") String from, @Param("to") String to);
+
     @Query("SELECT a FROM AuditLog a WHERE a.eventType IN :types AND a.eventTime >= :since ORDER BY a.eventTime ASC")
     List<AuditLog> findLoginEventsSince(@Param("types") List<String> types, @Param("since") String since);
 

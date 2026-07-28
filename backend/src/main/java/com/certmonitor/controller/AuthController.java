@@ -220,20 +220,25 @@ public class AuthController {
         // 3. Failed — record attempt, check for BRUTE_FORCE, apply progressive lockout
         recordFailedAttempt(clientIp);
         log.warn("Failed login attempt: IP={}, username={}", clientIp, username);
-        // Look up user's lockout context: window start (countSince) and required failures for this level
+        // Look up user's lockout context: window start (countSince) and required failures for this level.
+        // Ayrıca bilinmeyen-kullanıcı ile yanlış-parolayı denetim kaydı için ayır (yalnız audit'te —
+        // istemciye DÖNÜLMEZ, kullanıcı enumeration sızmaz). Boş kullanıcı adı da UNKNOWN_USER sayılır.
         String lastLockoutAt = null;
         int failuresNeeded = 5;
+        boolean userExists = false;
         if (!username.isBlank()) {
             var failedUser = userService.findByUsername(username);
             if (failedUser.isPresent()) {
+                userExists = true;
                 var u = failedUser.get();
                 lastLockoutAt = u.getLastLockoutAt();
                 failuresNeeded = userService.failuresNeededForLevel(u.getFailedBlockCount());
             }
         }
+        String reasonCode = userExists ? "BAD_PASSWORD" : "UNKNOWN_USER";
         com.certmonitor.model.AuditLog logged = auditService.recordLogin(
                 username, null, null, null, clientIp,
-                request.getHeader("User-Agent"), null, false, "Invalid credentials",
+                request.getHeader("User-Agent"), null, false, reasonCode,
                 lastLockoutAt, failuresNeeded);
 
         if (!username.isBlank() && logged.getAnomalyFlags() != null
