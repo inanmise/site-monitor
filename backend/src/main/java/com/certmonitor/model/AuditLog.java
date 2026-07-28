@@ -10,7 +10,11 @@ import lombok.NoArgsConstructor;
     @Index(name = "idx_audit_event_time", columnList = "event_time"),
     @Index(name = "idx_audit_event_type", columnList = "event_type"),
     @Index(name = "idx_audit_ip",         columnList = "ip_address"),
-    @Index(name = "idx_audit_outcome",    columnList = "outcome")
+    @Index(name = "idx_audit_outcome",    columnList = "outcome"),
+    @Index(name = "idx_audit_actor_id",   columnList = "actor_id"),
+    @Index(name = "idx_audit_resource",   columnList = "resource_type, resource_id"),
+    @Index(name = "idx_audit_correlation", columnList = "correlation_id"),
+    @Index(name = "idx_audit_seq",        columnList = "seq")
 })
 @Data
 @NoArgsConstructor
@@ -19,6 +23,19 @@ public class AuditLog {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
+
+    // ── Tamper-evident hash chain (AuditService.persist yazar; append-only) ──────
+    /** Monoton sıra numarası — zincir sırası (id insert-sırası olsa da ayrı, açık sıra alanı). */
+    @Column(name = "seq")
+    private Long seq;
+
+    /** Bu kaydın SHA-256 hash'i = hash(değişmez çekirdek alanlar + prev_hash). Geo/PTR alanları HARİÇ. */
+    @Column(name = "row_hash", length = 64)
+    private String rowHash;
+
+    /** Bir önceki kaydın row_hash'i (zincir bağı). İlk kayıtta null/GENESIS. */
+    @Column(name = "prev_hash", length = 64)
+    private String prevHash;
 
     @Column(name = "event_type", nullable = false, length = 50)
     private String eventType;
@@ -64,6 +81,15 @@ public class AuditLog {
 
     @Column(name = "detail", columnDefinition = "TEXT")
     private String detail;
+
+    /** Yapısal before/after diff (JSON: {"alan":{"from":x,"to":y}}) — güncelleme eylemlerinde.
+     *  Hassas alanlar (parola/token/secret) AuditDiff tarafından *** maskelenir. */
+    @Column(name = "changes", columnDefinition = "TEXT")
+    private String changes;
+
+    /** İsteğe özgü korelasyon kimliği (CorrelationIdFilter) — ilişkili olayları bağlar. */
+    @Column(name = "correlation_id", length = 40)
+    private String correlationId;
 
     @Column(name = "outcome", length = 20)
     private String outcome;

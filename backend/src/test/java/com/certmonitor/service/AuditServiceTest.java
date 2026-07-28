@@ -13,8 +13,13 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 import org.springframework.test.util.ReflectionTestUtils;
+import org.junit.jupiter.api.io.TempDir;
 
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.Collections;
+import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
@@ -230,5 +235,52 @@ class AuditServiceTest {
         HttpServletRequest req = mock(HttpServletRequest.class);
         when(req.getHeader("User-Agent")).thenReturn("Mozilla/5.0");
         assertThat(service.resolveUa(req)).isEqualTo("Mozilla/5.0");
+    }
+
+    // ── persist güvenilirliği (best-effort + fallback) ────────────────────────────
+
+    @Test
+    @DisplayName("persist fallback: repo.save patlarsa kayıt fallback dosyaya yazılır, istisna FIRLATILMAZ")
+    void persist_dbFailure_writesFallbackFileNoThrow(@TempDir Path tmp) throws IOException {
+        Path fb = tmp.resolve("audit-fallback.jsonl");
+        ReflectionTestUtils.setField(service, "fallbackFile", fb.toString());
+        when(auditLogRepo.findTopByOrderBySeqDesc()).thenReturn(Optional.empty());
+        doThrow(new RuntimeException("db down")).when(auditLogRepo).save(any());   // doThrow: mevcut answer'ı tetiklemez
+
+        assertThatCode(() -> service.recordSystemEvent("SYSTEM_STARTUP", "SYSTEM", "app", "boot"))
+                .doesNotThrowAnyException();
+
+        assertThat(Files.exists(fb)).isTrue();
+        assertThat(Files.readString(fb)).contains("SYSTEM_STARTUP");
+    }
+
+    @Test
+    @DisplayName("recordSecurityEvent → outcome=BLOCKED, oturumsuzsa actor=anonymous")
+    void recordSecurityEvent_blockedAnonymous() {
+        HttpServletRequest req = mock(HttpServletRequest.class);
+        when(req.getHeader("X-Forwarded-For")).thenReturn(null);
+        when(req.getRemoteAddr()).thenReturn("9.9.9.9");
+        ArgumentCaptor<AuditLog> cap = ArgumentCaptor.forClass(AuditLog.class);
+
+        service.recordSecurityEvent("ACCESS_DENIED", req, null, "ENDPOINT", "GET /api/admin/audit", "Audit access required");
+
+        verify(auditLogRepo).save(cap.capture());
+        AuditLog e = cap.getValue();
+        assertThat(e.getEventType()).isEqualTo("ACCESS_DENIED");
+        assertThat(e.getOutcome()).isEqualTo("BLOCKED");
+        assertThat(e.getActor()).isEqualTo("anonymous");
+        assertThat(e.getResourceId()).isEqualTo("GET /api/admin/audit");
+        assertThat(e.getRowHash()).isNotBlank();
+    }
+
+    @Test
+    @DisplayName("recordSystemEvent → actor=SYSTEM, outcome=SUCCESS")
+    void recordSystemEvent_systemActor() {
+        ArgumentCaptor<AuditLog> cap = ArgumentCaptor.forClass(AuditLog.class);
+        service.recordSystemEvent("SCHEMA_PATCH", "SYSTEM", "db", "patch");
+        verify(auditLogRepo).save(cap.capture());
+        assertThat(cap.getValue().getActor()).isEqualTo("SYSTEM");
+        assertThat(cap.getValue().getOutcome()).isEqualTo("SUCCESS");
+        assertThat(cap.getValue().getRowHash()).isNotBlank();   // zincir hash set edildi
     }
 }

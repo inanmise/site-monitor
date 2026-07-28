@@ -38,13 +38,14 @@ class CertificateServiceTest {
     @Mock CertificateInventoryRepository inventoryRepo;
     @Mock TeamRepository teamRepo;
     @Mock AlertThresholdRepository alertThresholdRepo;
+    @Mock ActivityLogService activityLog;
 
     private CertificateService service;
 
     @BeforeEach
     void setUp() {
         service = new CertificateService(checkRepo, latestRepo, checkerService, maintenanceService,
-                inventoryRepo, new ObjectMapper(), teamRepo, alertThresholdRepo);
+                inventoryRepo, new ObjectMapper(), teamRepo, alertThresholdRepo, activityLog);
         when(checkerService.serializeSan(any())).thenReturn("[]");
         when(checkerService.deserializeSan(any())).thenReturn(Collections.emptyList());
         when(alertThresholdRepo.findFirstByActiveTrue()).thenReturn(Optional.empty());

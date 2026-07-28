@@ -69,6 +69,9 @@ class CertificateControllerTest {
     @MockitoBean
     com.certmonitor.service.PermissionService permissionService;
 
+    @MockitoBean
+    com.certmonitor.service.AuditService auditService;
+
     // ── Auth guard ────────────────────────────────────────────────────────────
 
     @Test
@@ -218,37 +221,8 @@ class CertificateControllerTest {
                 .andExpect(jsonPath("$.data").isArray());
     }
 
-    @Test
-    @DisplayName("GET /api/activity returns 200 with run list (default 24h)")
-    void getActivityLog_authenticated_returns200() throws Exception {
-        when(certService.getActivityLog(24, null)).thenReturn(Collections.emptyList());
-
-        mvc.perform(get("/api/activity").session(authSession()))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.success").value(true))
-                .andExpect(jsonPath("$.data").isArray());
-    }
-
-    @Test
-    @DisplayName("GET /api/activity?hours=6 passes correct hours param")
-    void getActivityLog_customHours() throws Exception {
-        when(certService.getActivityLog(6, null)).thenReturn(List.of(
-                Map.of("run_id", "abc123", "run_time", "2026-05-16T10:00:00",
-                        "total", 5, "ok", 4, "warning", 1, "error", 0, "entries", List.of())
-        ));
-
-        mvc.perform(get("/api/activity?hours=6").session(authSession()))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data[0].run_id").value("abc123"))
-                .andExpect(jsonPath("$.data[0].total").value(5));
-    }
-
-    @Test
-    @DisplayName("GET /api/activity without session returns 401")
-    void getActivityLog_unauthenticated_returns401() throws Exception {
-        mvc.perform(get("/api/activity"))
-                .andExpect(status().isUnauthorized());
-    }
+    // NOT: eski /api/activity (yalnız sertifika) testleri kaldırıldı — endpoint yeni birleşik
+    // ActivityController'a taşındı (bkz. ActivityControllerTest: izolasyon + sayfalama).
 
     @Test
     @DisplayName("GET /api/certificates/list returns 200 with paginated data")

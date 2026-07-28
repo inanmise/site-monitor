@@ -42,6 +42,7 @@ class GuideLinkControllerTest {
     @MockitoBean com.certmonitor.repository.AppUserRepository userRepo;
     @MockitoBean AuthController authController;
     @MockitoBean com.certmonitor.service.PermissionService permissionService;
+    @MockitoBean com.certmonitor.service.AuditService auditService;
 
     @Test
     @DisplayName("GET /api/guide-links without session returns 401")

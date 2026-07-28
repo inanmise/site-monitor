@@ -4,6 +4,9 @@ import com.certmonitor.model.*;
 import com.certmonitor.repository.*;
 import com.certmonitor.service.CertificateService;
 import com.certmonitor.service.DnsCheckerService;
+import com.certmonitor.service.ActivityLogService;
+import com.certmonitor.service.AuditDiff;
+import com.certmonitor.service.AuditService;
 import com.certmonitor.service.PortCheckerService;
 import com.certmonitor.service.KeywordCheckerService;
 import com.certmonitor.service.PingCheckerService;
@@ -66,6 +69,15 @@ public class MonitoringController {
     private final DomainCheckRepository domainCheckRepo;
     private final DomainCheckerService domainChecker;
     private final PublicSuffixService publicSuffixService;
+    private final ActivityLogService activityLog;   // birleşik aktivite akışı (yaşam döngüsü olayları, best-effort)
+    private final AuditService auditService;         // denetim (kim ne yaptı) — kurcalanamaz kayıt
+
+    /** İzleme güncellemelerinde before/after diff için snapshot alınacak alanlar (tür-üstü superset; olmayan getter → null, gürültü yaratmaz). */
+    private static final String[] MON_FIELDS = {
+        "name", "host", "port", "url", "domain", "recordType", "keyword", "expectedValue", "expect",
+        "expectedStatus", "method", "matchOperator", "matchCount", "active", "teamId", "groupName",
+        "intervalSeconds", "timeoutMs", "warningDays", "criticalDays", "protocol", "verifySsl", "followRedirects"
+    };
 
     private final TeamRepository teamRepo;
     private final AlertEventRepository alertEventRepo;
@@ -608,6 +620,9 @@ public class MonitoringController {
         m.setCreatedAt(now);
         m.setUpdatedAt(now);
         PortMonitor saved = portMonitorRepo.save(m);
+        activityLog.recordLifecycle(ActivityLogService.PORT, saved.getId(), saved.getName(),
+                saved.getHost() + ":" + saved.getPort(), teamId, "CREATED", actor(session));
+        auditService.recordAction("MONITOR_CREATE", session, "PORT_MONITOR", String.valueOf(saved.getId()), saved.getName(), null);
         return ok(enrichPort(saved, null, certificateService.domainTeamNameMap(), teamNameMap(),
                 alertEventRepo.findOpenAlert(saved.getHost(), EscalationService.TYPE_PORT_DOWN).orElse(null)));
     }
@@ -615,6 +630,7 @@ public class MonitoringController {
     @PutMapping("/port/{id}")
     public ResponseEntity<Map<String, Object>> updatePort(@PathVariable Long id, @RequestBody Map<String, Object> body, HttpSession session) {
         permissionService.require(session, "monitoring.crud", "edit");
+        java.util.Map<String, Object> _before = portMonitorRepo.findById(id).map(x -> AuditDiff.snapshot(x, MON_FIELDS)).orElse(null);
         return portMonitorRepo.findById(id).map(m -> {
             if (!canOperateTeam(session, m.getTeamId())) return forbidden("Bu izleme üzerinde yetkiniz yok");
             if (body.get("name")            != null) m.setName((String) body.get("name"));
@@ -642,6 +658,8 @@ public class MonitoringController {
             applyPortFeatureFields(m, body);
             m.setUpdatedAt(ISO.format(Instant.now()));
             PortMonitor saved = portMonitorRepo.save(m);
+            auditService.recordAction("MONITOR_UPDATE", session, "PORT_MONITOR", String.valueOf(saved.getId()), saved.getName(),
+                    AuditDiff.diff(_before, AuditDiff.snapshot(saved, MON_FIELDS)));
             return ok(enrichPort(saved, portCheckRepo.findTopByMonitorIdOrderByCheckedAtDesc(id).orElse(null),
                     certificateService.domainTeamNameMap(), teamNameMap(),
                     alertEventRepo.findOpenAlert(saved.getHost(), EscalationService.TYPE_PORT_DOWN).orElse(null)));
@@ -656,6 +674,9 @@ public class MonitoringController {
             m.setActive(false);
             m.setUpdatedAt(ISO.format(Instant.now()));
             portMonitorRepo.save(m);
+            activityLog.recordLifecycle(ActivityLogService.PORT, m.getId(), m.getName(),
+                    m.getHost() + ":" + m.getPort(), m.getTeamId(), "DELETED", actor(session));
+            auditService.recordAction("MONITOR_DELETE", session, "PORT_MONITOR", String.valueOf(m.getId()), m.getName(), null);
             return ok(Map.of("deleted", true));
         }).orElse(notFound("Port monitor not found"));
     }
@@ -702,6 +723,7 @@ public class MonitoringController {
             check.setError((String) r.get("error"));
             check.setCheckedAt(now);
             portCheckRepo.save(check);
+            auditService.recordAction("MONITOR_TRIGGER", session, "PORT_MONITOR", String.valueOf(m.getId()), m.getName(), null);
             return ok(enrichPort(m, check, certificateService.domainTeamNameMap(), teamNameMap(),
                     alertEventRepo.findOpenAlert(m.getHost(), EscalationService.TYPE_PORT_DOWN).orElse(null)));
         }).orElse(notFound("Port monitor not found"));
@@ -892,12 +914,16 @@ public class MonitoringController {
         m.setCreatedAt(now);
         m.setUpdatedAt(now);
         DnsMonitor saved = dnsMonitorRepo.save(m);
+        activityLog.recordLifecycle(ActivityLogService.DNS, saved.getId(), saved.getName(),
+                saved.getDomain() + " " + saved.getRecordType(), saved.getTeamId(), "CREATED", actor(session));
+        auditService.recordAction("MONITOR_CREATE", session, "DNS_MONITOR", String.valueOf(saved.getId()), saved.getName(), null);
         return ok(enrichDns(saved, null, certificateService.domainTeamNameMap(), teamNameMap(), openDnsAlarm(saved.getDomain())));
     }
 
     @PutMapping("/dns/{id}")
     public ResponseEntity<Map<String, Object>> updateDns(@PathVariable Long id, @RequestBody Map<String, Object> body, HttpSession session) {
         permissionService.require(session, "monitoring.crud", "edit");
+        java.util.Map<String, Object> _before = dnsMonitorRepo.findById(id).map(x -> AuditDiff.snapshot(x, MON_FIELDS)).orElse(null);
         return dnsMonitorRepo.findById(id).map(m -> {
             // Envanter-türevi monitör admin gerektirir; standalone'u sorumlu takımı yönetebilir.
             if (Boolean.TRUE.equals(m.getStandalone())) {
@@ -938,6 +964,8 @@ public class MonitoringController {
             if (body.containsKey("groupName")) m.setGroupName(monitoringGroupService.getOrCreateFor(m, m.getTeamId(), body.get("groupName") == null ? null : body.get("groupName").toString(), actor(session)));
             m.setUpdatedAt(ISO.format(Instant.now()));
             DnsMonitor saved = dnsMonitorRepo.save(m);
+            auditService.recordAction("MONITOR_UPDATE", session, "DNS_MONITOR", String.valueOf(saved.getId()), saved.getName(),
+                    AuditDiff.diff(_before, AuditDiff.snapshot(saved, MON_FIELDS)));
             return ok(enrichDns(saved, dnsRecordRepo.findTopByMonitorIdOrderByCheckedAtDesc(id).orElse(null),
                     certificateService.domainTeamNameMap(), teamNameMap(), openDnsAlarm(saved.getDomain())));
         }).orElse(notFound("DNS monitor not found"));
@@ -956,6 +984,9 @@ public class MonitoringController {
                 m.setUpdatedAt(ISO.format(Instant.now()));
                 dnsMonitorRepo.save(m);
             }
+            activityLog.recordLifecycle(ActivityLogService.DNS, m.getId(), m.getName(),
+                    m.getDomain() + " " + m.getRecordType(), m.getTeamId(), "DELETED", actor(session));
+            auditService.recordAction("MONITOR_DELETE", session, "DNS_MONITOR", String.valueOf(m.getId()), m.getName(), null);
             return ok(Map.of("deleted", true));
         }).orElse(notFound("DNS monitor not found"));
     }
@@ -1008,7 +1039,7 @@ public class MonitoringController {
             record.setTtl(r.get("ttl") instanceof Number n ? n.longValue() : null);
             record.setResponseMs(r.get("response_ms") instanceof Number rn ? rn.longValue() : null);
             dnsRecordRepo.save(record);
-
+            auditService.recordAction("MONITOR_TRIGGER", session, "DNS_MONITOR", String.valueOf(m.getId()), m.getName(), null);
             return ok(enrichDns(m, record, certificateService.domainTeamNameMap(), teamNameMap(), openDnsAlarm(m.getDomain())));
         }).orElse(notFound("DNS monitor not found"));
     }
@@ -1112,12 +1143,16 @@ public class MonitoringController {
         m.setCreatedAt(now);
         m.setUpdatedAt(now);
         KeywordMonitor saved = keywordMonitorRepo.save(m);
+        activityLog.recordLifecycle(ActivityLogService.KEYWORD, saved.getId(), saved.getName(),
+                saved.getUrl(), saved.getTeamId(), "CREATED", actor(session));
+        auditService.recordAction("MONITOR_CREATE", session, "KEYWORD_MONITOR", String.valueOf(saved.getId()), saved.getName(), null);
         return ok(enrichKeyword(saved, null, teamNameMap(), null));
     }
 
     @PutMapping("/keyword/{id}")
     public ResponseEntity<Map<String, Object>> updateKeyword(@PathVariable Long id, @RequestBody Map<String, Object> body, HttpSession session) {
         permissionService.require(session, "monitoring.crud", "edit");
+        java.util.Map<String, Object> _before = keywordMonitorRepo.findById(id).map(x -> AuditDiff.snapshot(x, MON_FIELDS)).orElse(null);
         return keywordMonitorRepo.findById(id).map(m -> {
             if (!canOperateTeam(session, m.getTeamId())) throw new SecurityException("Bu takımın izlemesini düzenleyemezsiniz");
             if (body.get("name")            != null) m.setName((String) body.get("name"));
@@ -1137,6 +1172,8 @@ public class MonitoringController {
             applyKeywordFeatureFields(m, body);
             m.setUpdatedAt(ISO.format(Instant.now()));
             KeywordMonitor saved = keywordMonitorRepo.save(m);
+            auditService.recordAction("MONITOR_UPDATE", session, "KEYWORD_MONITOR", String.valueOf(saved.getId()), saved.getName(),
+                    AuditDiff.diff(_before, AuditDiff.snapshot(saved, MON_FIELDS)));
             return ok(enrichKeyword(saved, keywordResultRepo.findTopByMonitorIdOrderByCheckedAtDesc(id).orElse(null), teamNameMap(),
                     alertEventRepo.findOpenAlert(saved.getUrl(), EscalationService.TYPE_KEYWORD).orElse(null)));
         }).orElse(notFound("Keyword monitor not found"));
@@ -1151,6 +1188,9 @@ public class MonitoringController {
             escalationService.resolveOpenAlertsSilently(m.getUrl(),
                     Set.of(EscalationService.TYPE_KEYWORD), "Sistem (izleme silindi)");
             keywordMonitorRepo.delete(m);   // hard delete — "Sil" listeden kaldırır ("Aktif" toggle ayrı)
+            activityLog.recordLifecycle(ActivityLogService.KEYWORD, m.getId(), m.getName(),
+                    m.getUrl(), m.getTeamId(), "DELETED", actor(session));
+            auditService.recordAction("MONITOR_DELETE", session, "KEYWORD_MONITOR", String.valueOf(m.getId()), m.getName(), null);
             return ok(Map.of("deleted", true));
         }).orElse(notFound("Keyword monitor not found"));
     }
@@ -1205,6 +1245,7 @@ public class MonitoringController {
             res.setError((String) r.get("error"));
             res.setCheckedAt(ISO.format(Instant.now()));
             keywordResultRepo.save(res);
+            auditService.recordAction("MONITOR_TRIGGER", session, "KEYWORD_MONITOR", String.valueOf(m.getId()), m.getName(), null);
             return ok(enrichKeyword(m, res, teamNameMap(),
                     alertEventRepo.findOpenAlert(m.getUrl(), EscalationService.TYPE_KEYWORD).orElse(null)));
         }).orElse(notFound("Keyword monitor not found"));
@@ -1545,12 +1586,16 @@ public class MonitoringController {
         m.setCreatedAt(now);
         m.setUpdatedAt(now);
         HttpMonitor saved = httpMonitorRepo.save(m);
+        activityLog.recordLifecycle(ActivityLogService.HTTP, saved.getId(), saved.getName(),
+                saved.getUrl(), saved.getTeamId(), "CREATED", actor(session));
+        auditService.recordAction("MONITOR_CREATE", session, "HTTP_MONITOR", String.valueOf(saved.getId()), saved.getName(), null);
         return ok(enrichHttp(saved, null, teamNameMap(), null));
     }
 
     @PutMapping("/http/{id}")
     public ResponseEntity<Map<String, Object>> updateHttp(@PathVariable Long id, @RequestBody Map<String, Object> body, HttpSession session) {
         permissionService.require(session, "monitoring.crud", "edit");
+        java.util.Map<String, Object> _before = httpMonitorRepo.findById(id).map(x -> AuditDiff.snapshot(x, MON_FIELDS)).orElse(null);
         return httpMonitorRepo.findById(id).map(m -> {
             if (!canOperateTeam(session, m.getTeamId())) throw new SecurityException("Bu takımın izlemesini düzenleyemezsiniz");
             if (body.get("name")            != null) m.setName((String) body.get("name"));
@@ -1571,6 +1616,8 @@ public class MonitoringController {
             applyHttpFeatureFields(m, body);
             m.setUpdatedAt(ISO.format(Instant.now()));
             HttpMonitor saved = httpMonitorRepo.save(m);
+            auditService.recordAction("MONITOR_UPDATE", session, "HTTP_MONITOR", String.valueOf(saved.getId()), saved.getName(),
+                    AuditDiff.diff(_before, AuditDiff.snapshot(saved, MON_FIELDS)));
             return ok(enrichHttp(saved, httpCheckRepo.findTopByMonitorIdOrderByCheckedAtDesc(id).orElse(null), teamNameMap(),
                     alertEventRepo.findOpenAlert(saved.getUrl(), EscalationService.TYPE_HTTP_DOWN).orElse(null)));
         }).orElse(notFound("HTTP monitor not found"));
@@ -1585,6 +1632,9 @@ public class MonitoringController {
                     Set.of(EscalationService.TYPE_HTTP_DOWN, EscalationService.TYPE_HTTP_SSL, EscalationService.TYPE_DOMAIN_EXPIRY),
                     "Sistem (izleme silindi)");
             httpMonitorRepo.delete(m);
+            activityLog.recordLifecycle(ActivityLogService.HTTP, m.getId(), m.getName(),
+                    m.getUrl(), m.getTeamId(), "DELETED", actor(session));
+            auditService.recordAction("MONITOR_DELETE", session, "HTTP_MONITOR", String.valueOf(m.getId()), m.getName(), null);
             return ok(Map.of("deleted", true));
         }).orElse(notFound("HTTP monitor not found"));
     }
@@ -1633,6 +1683,7 @@ public class MonitoringController {
             res.setError((String) r.get("error"));
             res.setCheckedAt(ISO.format(Instant.now()));
             httpCheckRepo.save(res);
+            auditService.recordAction("MONITOR_TRIGGER", session, "HTTP_MONITOR", String.valueOf(m.getId()), m.getName(), null);
             return ok(enrichHttp(m, res, teamNameMap(),
                     alertEventRepo.findOpenAlert(m.getUrl(), EscalationService.TYPE_HTTP_DOWN).orElse(null)));
         }).orElse(notFound("HTTP monitor not found"));
@@ -1764,12 +1815,16 @@ public class MonitoringController {
         m.setCreatedAt(now);
         m.setUpdatedAt(now);
         DomainMonitor saved = domainMonitorRepo.save(m);
+        activityLog.recordLifecycle(ActivityLogService.DOMAIN, saved.getId(), saved.getName(),
+                saved.getDomain(), saved.getTeamId(), "CREATED", actor(session));
+        auditService.recordAction("MONITOR_CREATE", session, "DOMAIN_MONITOR", String.valueOf(saved.getId()), saved.getName(), null);
         return ok(enrichDomain(saved, null, teamNameMap(), null));
     }
 
     @PutMapping("/domain/{id}")
     public ResponseEntity<Map<String, Object>> updateDomain(@PathVariable Long id, @RequestBody Map<String, Object> body, HttpSession session) {
         permissionService.require(session, "monitoring.crud", "edit");
+        java.util.Map<String, Object> _before = domainMonitorRepo.findById(id).map(x -> AuditDiff.snapshot(x, MON_FIELDS)).orElse(null);
         return domainMonitorRepo.findById(id).map(m -> {
             if (!canOperateTeam(session, m.getTeamId())) throw new SecurityException("Bu takımın izlemesini düzenleyemezsiniz");
             if (body.get("name") != null) m.setName(normalizeMonitorName((String) body.get("name")));
@@ -1783,6 +1838,8 @@ public class MonitoringController {
             applyDomainFields(m, body);
             m.setUpdatedAt(ISO.format(Instant.now()));
             DomainMonitor saved = domainMonitorRepo.save(m);
+            auditService.recordAction("MONITOR_UPDATE", session, "DOMAIN_MONITOR", String.valueOf(saved.getId()), saved.getName(),
+                    AuditDiff.diff(_before, AuditDiff.snapshot(saved, MON_FIELDS)));
             return ok(enrichDomain(saved, domainCheckRepo.findTopByMonitorIdOrderByCheckedAtDesc(id).orElse(null),
                     teamNameMap(), openDomainMonAlarm(saved.getDomain())));
         }).orElse(notFound("Domain monitor not found"));
@@ -1810,6 +1867,9 @@ public class MonitoringController {
                            EscalationService.TYPE_DOMAINMON_STATUS, EscalationService.TYPE_DOMAINMON_CHANGED),
                     "Sistem (izleme silindi)");
             domainMonitorRepo.delete(m);
+            activityLog.recordLifecycle(ActivityLogService.DOMAIN, m.getId(), m.getName(),
+                    m.getDomain(), m.getTeamId(), "DELETED", actor(session));
+            auditService.recordAction("MONITOR_DELETE", session, "DOMAIN_MONITOR", String.valueOf(m.getId()), m.getName(), null);
             return ok(Map.of("deleted", true));
         }).orElse(notFound("Domain monitor not found"));
     }
@@ -1850,6 +1910,7 @@ public class MonitoringController {
             // WARNING/CRITICAL/UNKNOWN görülürse alarm + e-posta anında; düzeldiyse açık alarm kapanır.
             try { schedulerService.evaluateDomainAlarmsNow(m, r); }
             catch (Exception e) { log.warn("Manuel domain alarm değerlendirmesi başarısız: {} — {}", m.getDomain(), e.getMessage()); }
+            auditService.recordAction("MONITOR_TRIGGER", session, "DOMAIN_MONITOR", String.valueOf(m.getId()), m.getName(), null);
             return ok(enrichDomain(m, domainCheckRepo.findTopByMonitorIdOrderByCheckedAtDesc(id).orElse(null),
                     teamNameMap(), openDomainMonAlarm(m.getDomain())));
         }).orElse(notFound("Domain monitor not found"));
@@ -2005,12 +2066,16 @@ public class MonitoringController {
         m.setCreatedAt(now);
         m.setUpdatedAt(now);
         PingMonitor saved = pingMonitorRepo.save(m);
+        activityLog.recordLifecycle(ActivityLogService.PING, saved.getId(), saved.getName(),
+                saved.getHost(), saved.getTeamId(), "CREATED", actor(session));
+        auditService.recordAction("MONITOR_CREATE", session, "PING_MONITOR", String.valueOf(saved.getId()), saved.getName(), null);
         return ok(enrichPing(saved, null, teamNameMap(), null));
     }
 
     @PutMapping("/ping/{id}")
     public ResponseEntity<Map<String, Object>> updatePing(@PathVariable Long id, @RequestBody Map<String, Object> body, HttpSession session) {
         permissionService.require(session, "monitoring.crud", "edit");
+        java.util.Map<String, Object> _before = pingMonitorRepo.findById(id).map(x -> AuditDiff.snapshot(x, MON_FIELDS)).orElse(null);
         return pingMonitorRepo.findById(id).map(m -> {
             if (!canOperateTeam(session, m.getTeamId())) throw new SecurityException("Bu takımın izlemesini düzenleyemezsiniz");
             // Mükerrer guard: nihai host + takım ile (kendisi hariç) — host mutasyonu/alarm yan etkisinden ÖNCE.
@@ -2042,6 +2107,8 @@ public class MonitoringController {
             if (body.get("recoveryIntervalSeconds") != null) m.setRecoveryIntervalSeconds(clampInterval(((Number) body.get("recoveryIntervalSeconds")).intValue()));
             m.setUpdatedAt(ISO.format(Instant.now()));
             PingMonitor saved = pingMonitorRepo.save(m);
+            auditService.recordAction("MONITOR_UPDATE", session, "PING_MONITOR", String.valueOf(saved.getId()), saved.getName(),
+                    AuditDiff.diff(_before, AuditDiff.snapshot(saved, MON_FIELDS)));
             return ok(enrichPing(saved, pingCheckRepo.findTopByMonitorIdOrderByCheckedAtDesc(id).orElse(null), teamNameMap(),
                     alertEventRepo.findOpenAlert(saved.getHost(), EscalationService.TYPE_PING_DOWN).orElse(null)));
         }).orElse(notFound("Ping monitor not found"));
@@ -2056,6 +2123,9 @@ public class MonitoringController {
             escalationService.resolveOpenAlertsSilently(m.getHost(),
                     Set.of(EscalationService.TYPE_PING_DOWN), "Sistem (izleme silindi)");
             pingMonitorRepo.delete(m);   // hard delete — "Sil" listeden kaldırır ("Aktif" toggle ayrı)
+            activityLog.recordLifecycle(ActivityLogService.PING, m.getId(), m.getName(),
+                    m.getHost(), m.getTeamId(), "DELETED", actor(session));
+            auditService.recordAction("MONITOR_DELETE", session, "PING_MONITOR", String.valueOf(m.getId()), m.getName(), null);
             return ok(Map.of("deleted", true));
         }).orElse(notFound("Ping monitor not found"));
     }
@@ -2104,6 +2174,7 @@ public class MonitoringController {
             check.setError((String) r.get("error"));
             check.setCheckedAt(ISO.format(Instant.now()));
             pingCheckRepo.save(check);
+            auditService.recordAction("MONITOR_TRIGGER", session, "PING_MONITOR", String.valueOf(m.getId()), m.getName(), null);
             return ok(enrichPing(m, check, teamNameMap(),
                     alertEventRepo.findOpenAlert(m.getHost(), EscalationService.TYPE_PING_DOWN).orElse(null)));
         }).orElse(notFound("Ping monitor not found"));

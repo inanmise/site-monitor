@@ -20,7 +20,13 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class GlobalExceptionHandlerTest {
 
-    private final GlobalExceptionHandler handler = new GlobalExceptionHandler();
+    private final GlobalExceptionHandler handler = newHandler();
+
+    @SuppressWarnings("unchecked")
+    private static GlobalExceptionHandler newHandler() {
+        // AuditService opsiyonel (ObjectProvider); mock getIfAvailable() → null → güvenlik olayı atlanır.
+        return new GlobalExceptionHandler(Mockito.mock(org.springframework.beans.factory.ObjectProvider.class));
+    }
 
     @Test
     @DisplayName("NoSuchElementException → 404 + error mesajı")
@@ -67,7 +73,7 @@ class GlobalExceptionHandlerTest {
     @Test
     @DisplayName("SecurityException → 403")
     void forbidden() {
-        ResponseEntity<Map<String, Object>> r = handler.handleForbidden(new SecurityException("yetkisiz"));
+        ResponseEntity<Map<String, Object>> r = handler.handleForbidden(new SecurityException("yetkisiz"), null);
         assertEquals(403, r.getStatusCode().value());
     }
 

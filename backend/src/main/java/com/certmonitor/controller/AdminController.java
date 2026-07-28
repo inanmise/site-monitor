@@ -2,6 +2,7 @@ package com.certmonitor.controller;
 
 import com.certmonitor.model.*;
 import com.certmonitor.repository.*;
+import com.certmonitor.service.AuditDiff;
 import com.certmonitor.service.AuditService;
 import com.certmonitor.service.ClientIpResolver;
 import com.certmonitor.service.ConnectionDiagnosticsService;
@@ -844,7 +845,9 @@ public class AdminController {
         requireAdmin(session);
         requirePerm(session, "thresholds.edit", "edit");
         t.setId(null);
-        return ok(Map.of("data", thresholdRepo.save(t)));
+        AlertThreshold saved = thresholdRepo.save(t);
+        auditService.recordAction("THRESHOLD_CREATE", session, "ALERT_THRESHOLD", String.valueOf(saved.getId()), saved.getName(), null);
+        return ok(Map.of("data", saved));
     }
 
     @PutMapping("/thresholds/{id}")
@@ -854,6 +857,8 @@ public class AdminController {
         requirePerm(session, "thresholds.edit", "edit");
         AlertThreshold existing = thresholdRepo.findById(id)
                 .orElseThrow(() -> new NoSuchElementException("Threshold not found: " + id));
+        java.util.Map<String, Object> _before = AuditDiff.snapshot(existing,
+                "name", "warningDays", "highDays", "criticalDays", "reAlertIntervalHours", "active");
         existing.setName(t.getName() != null ? t.getName() : existing.getName());
         existing.setWarningDays(t.getWarningDays() != null ? t.getWarningDays() : existing.getWarningDays());
         existing.setHighDays(t.getHighDays() != null ? t.getHighDays() : existing.getHighDays());
@@ -861,7 +866,11 @@ public class AdminController {
         existing.setReAlertIntervalHours(t.getReAlertIntervalHours() != null
                 ? t.getReAlertIntervalHours() : existing.getReAlertIntervalHours());
         existing.setActive(t.getActive() != null ? t.getActive() : existing.getActive());
-        return ok(Map.of("data", thresholdRepo.save(existing)));
+        AlertThreshold saved = thresholdRepo.save(existing);
+        auditService.recordAction("THRESHOLD_UPDATE", session, "ALERT_THRESHOLD", String.valueOf(id), saved.getName(),
+                AuditDiff.diff(_before, AuditDiff.snapshot(saved,
+                        "name", "warningDays", "highDays", "criticalDays", "reAlertIntervalHours", "active")));
+        return ok(Map.of("data", saved));
     }
 
     // ── Escalation Contacts ───────────────────────────────────────────────────
@@ -913,7 +922,9 @@ public class AdminController {
         if (contact.getTeamId() == null) {
             userService.listTeams().stream().findFirst().ifPresent(t -> contact.setTeamId(t.getId()));
         }
-        return ok(Map.of("data", contactRepo.save(contact)));
+        EscalationContact saved = contactRepo.save(contact);
+        auditService.recordAction("CONTACT_CREATE", session, "ESCALATION_CONTACT", String.valueOf(saved.getId()), saved.getName(), null);
+        return ok(Map.of("data", saved));
     }
 
     @PutMapping("/contacts/{id}")
@@ -923,8 +934,13 @@ public class AdminController {
                 .orElseThrow(() -> new NoSuchElementException("Contact not found: " + id));
         requireTeamScopedAdmin(session, existing.getTeamId());
         requirePerm(session, "contacts.crud", "edit");
+        String[] cf = {"name", "email", "role", "minAlertLevel", "webhookType", "active", "teamId", "userId"};
+        java.util.Map<String, Object> _before = AuditDiff.snapshot(existing, cf);
         applyContactFields(existing, body, session);
-        return ok(Map.of("data", contactRepo.save(existing)));
+        EscalationContact saved = contactRepo.save(existing);
+        auditService.recordAction("CONTACT_UPDATE", session, "ESCALATION_CONTACT", String.valueOf(id), saved.getName(),
+                AuditDiff.diff(_before, AuditDiff.snapshot(saved, cf)));
+        return ok(Map.of("data", saved));
     }
 
     private void applyContactFields(EscalationContact c, Map<String, Object> body, HttpSession session) {
@@ -965,6 +981,7 @@ public class AdminController {
         requireTeamScopedAdmin(session, existing.getTeamId());
         requirePerm(session, "contacts.crud", "edit");
         contactRepo.deleteById(id);
+        auditService.recordAction("CONTACT_DELETE", session, "ESCALATION_CONTACT", String.valueOf(id), existing.getName(), null);
         return ok(Map.of("message", "Deleted"));
     }
 
@@ -1245,6 +1262,7 @@ public class AdminController {
                 (String) body.get("description"),
                 body.get("active") instanceof Boolean ? (Boolean) body.get("active") : null,
                 toLong(body.get("leader_id")));
+        auditService.recordAction("TEAM_UPDATE", session, "TEAM", id.toString(), team.getName(), AuditDiff.diff(null, body));
         return ok(Map.of("data", team));
     }
 
@@ -1376,6 +1394,8 @@ public class AdminController {
                 .orElseThrow(() -> new NoSuchElementException("User not found: " + id));
         requireTeamScopedAdmin(session, target.getTeamId());
         requirePerm(session, "users.crud", "edit");
+        final String[] _uf = {"systemRole", "teamId", "teamIds", "active", "orgRole", "displayName", "email", "employeeId", "managerId"};
+        java.util.Map<String, Object> _before = AuditDiff.snapshot(target, _uf);
         String requestedRole = (String) body.get("system_role");
         // null = takımlara dokunma (kısmi güncelleme); team_ids veya team_id verilirse (boş dahil) set et.
         List<Long> requestedTeams =
@@ -1430,6 +1450,8 @@ public class AdminController {
         // AD-mirrored profil alanları (ad/soyad/ünvan/telefon/departman/seviye/müdürlük/müdür sicili)
         userService.applyProfileFields(user, body);
         user = userRepo.save(user);
+        auditService.recordAction("USER_UPDATE", session, "USER", id.toString(), user.getUsername(),
+                AuditDiff.diff(_before, AuditDiff.snapshot(user, _uf)));
         return ok(Map.of("data", user));
     }
 

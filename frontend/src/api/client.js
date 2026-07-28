@@ -203,7 +203,20 @@ export const api = {
 
   getRenewalAdvice: () => request('/renewal-advice'),
 
-  getActivityLog: (hours = 24) => request(`/activity?hours=${hours}`),
+  // Birleşik aktivite akışı (Kayıtlar → Aktivite) — sayfalı/filtreli/takım-izole. Boş filtreler düşürülür.
+  getActivity: (params = {}) => {
+    const qs = new URLSearchParams()
+    Object.entries(params).forEach(([k, v]) => { if (v !== undefined && v !== null && v !== '') qs.append(k, v) })
+    const s = qs.toString()
+    return request(`/activity${s ? `?${s}` : ''}`)
+  },
+  getActivityDetail: (id) => request(`/activity/${id}`),
+  getActivitySummary: (params = {}) => {
+    const qs = new URLSearchParams()
+    Object.entries(params).forEach(([k, v]) => { if (v !== undefined && v !== null && v !== '') qs.append(k, v) })
+    const s = qs.toString()
+    return request(`/activity/summary${s ? `?${s}` : ''}`)
+  },
 
   getSilentAlertDomains: () => request('/alerts/silent-domains'),
 
@@ -512,6 +525,20 @@ export const api = {
       return request(`/admin/audit?${q}`)
     },
     getAuditStats: () => request('/admin/audit/stats'),
+    getAuditIntegrity: () => request('/admin/audit/integrity'),
+    getAuditResourceHistory: (type, id, limit = 100) =>
+      request(`/admin/audit/resource/${encodeURIComponent(type)}/${encodeURIComponent(id)}?limit=${limit}`),
+    getAuditActorHistory: (actorId, limit = 100) => request(`/admin/audit/actor/${actorId}?limit=${limit}`),
+    getAuditCorrelated: (cid) => request(`/admin/audit/correlation/${encodeURIComponent(cid)}`),
+    // Filtreli dışa aktarma URL'i (tarayıcı indirir; işlem sunucuda AUDIT_EXPORT olarak denetlenir).
+    auditExportUrl: (format, params) => {
+      const q = new URLSearchParams(
+        Object.fromEntries(
+          Object.entries({ ...params, format }).filter(([, v]) => v !== '' && v != null && v !== false)
+        )
+      ).toString()
+      return `${BASE}/admin/audit/export?${q}`
+    },
 
     // Permission matrix
     getPermissionMatrix: () => request('/admin/permissions'),

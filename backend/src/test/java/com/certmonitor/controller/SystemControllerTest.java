@@ -16,6 +16,9 @@ import org.springframework.test.web.servlet.MockMvc;
 import java.util.Map;
 
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.verify;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
@@ -60,6 +63,9 @@ class SystemControllerTest {
 
     @MockitoBean
     com.certmonitor.service.WeeklyAvailabilityReportService weeklyAvailabilityReportService;
+
+    @MockitoBean
+    com.certmonitor.service.AuditService auditService;
 
     @BeforeEach
     void setup() {
@@ -175,6 +181,8 @@ class SystemControllerTest {
                         .content("{\"username\":\"bob\"}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success").value(true));
+        // DENETİM: oturum sonlandırma SESSION_TERMINATE olarak kaydedilir (3. arg String → belirsizlik yok)
+        verify(auditService).recordAction(eq("SESSION_TERMINATE"), any(), eq("USER"), eq("bob"), any(), any());
     }
 
     @Test

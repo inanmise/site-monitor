@@ -37,6 +37,8 @@ class MonitoringControllerTest {
     @MockitoBean UserService userService;
     @MockitoBean AuthController authController;
     @MockitoBean com.certmonitor.service.HttpMetricsService httpMetricsService;
+    @MockitoBean com.certmonitor.service.ActivityLogService activityLog;
+    @MockitoBean com.certmonitor.service.AuditService auditService;
 
     @MockitoBean LatestCheckRepository latestCheckRepo;
     @MockitoBean CertificateInventoryRepository inventoryRepo;
@@ -243,6 +245,20 @@ class MonitoringControllerTest {
                 .andExpect(jsonPath("$.data.port").value(25))
                 .andExpect(jsonPath("$.data.team_id").value(3))
                 .andExpect(jsonPath("$.data.group_name").value("mail"));
+    }
+
+    @Test
+    @DisplayName("DENETİM: port oluşturma MONITOR_CREATE audit kaydı üretir (kim ne yaptı)")
+    void createPort_writesAuditRecord() throws Exception {
+        when(portMonitorRepo.findFirstByHostAndPortOrderByIdAsc(anyString(), anyInt())).thenReturn(Optional.empty());
+        when(portMonitorRepo.save(any(com.certmonitor.model.PortMonitor.class)))
+                .thenAnswer(a -> { com.certmonitor.model.PortMonitor p = a.getArgument(0); p.setId(7L); return p; });
+        mvc.perform(post("/api/monitoring/port").session(session("ADMIN"))
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                .content("{\"host\":\"1.2.3.4\",\"port\":25,\"teamId\":3}"))
+                .andExpect(status().isOk());
+        // 3. arg String literal → belirsizlik yok (request-overload'ın 3. parametresi HttpServletRequest).
+        verify(auditService).recordAction(eq("MONITOR_CREATE"), any(), eq("PORT_MONITOR"), eq("7"), any(), any());
     }
 
     @Test

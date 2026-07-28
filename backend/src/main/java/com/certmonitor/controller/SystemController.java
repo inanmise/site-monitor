@@ -1,5 +1,6 @@
 package com.certmonitor.controller;
 
+import com.certmonitor.service.AuditService;
 import com.certmonitor.service.DbAnalyticsService;
 import com.certmonitor.service.ExtendedHealthService;
 import com.certmonitor.service.HttpMetricsQueryService;
@@ -38,6 +39,7 @@ public class SystemController {
     private final RememberMeService     rememberMeService;
     private final PermissionService permissionService;
     private final WeeklyAvailabilityReportService weeklyAvailabilityReportService;
+    private final AuditService auditService;
 
     private static final DateTimeFormatter ISO =
             DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
@@ -125,6 +127,7 @@ public class SystemController {
         requireAdmin(session);   // sistem-geneli yıkıcı işlem → admin-only (defense-in-depth)
         permissionService.require(session, "system_health.scheduler_lock", "execute"); // dedike + sensitive (matriste görünür)
         schedulerService.forceReleaseLock();
+        auditService.recordAction("SCHEDULER_LOCK_RELEASE", session, "SCHEDULER", "lock", null, null);
         return ok(Map.of("message", "Scheduler lock released"));
     }
 
@@ -176,6 +179,7 @@ public class SystemController {
         }
         userService.terminateActiveSession(username);
         rememberMeService.invalidateAllForUser(username);
+        auditService.recordAction("SESSION_TERMINATE", session, "USER", username, username, null);
         return ok(Map.of("username", username));
     }
 
@@ -186,6 +190,7 @@ public class SystemController {
         requireAdmin(session);
         permissionService.require(session, "system_health.actions", "execute");
         var result = weeklyAvailabilityReportService.sendWeeklyReports(true);
+        auditService.recordAction("WEEKLY_AVAILABILITY_RUN", session, "REPORT", "weekly-availability", null, null);
         return ok(Map.of("data", result));
     }
 
@@ -230,6 +235,8 @@ public class SystemController {
         try {
             String status = weeklyAvailabilityReportService.sendTest(teamId, email);
             boolean ok = status == null || !status.startsWith("FAILED");
+            auditService.recordAction("WEEKLY_AVAILABILITY_TEST", session, "REPORT", String.valueOf(teamId),
+                    "test → " + email, null);
             return ResponseEntity.ok(Map.of("success", ok, "data", Map.of("status", status == null ? "" : status),
                     "message", status == null ? "" : status, "timestamp", now()));
         } catch (IllegalArgumentException e) {
@@ -274,6 +281,8 @@ public class SystemController {
         boolean enabled = body != null && Boolean.parseBoolean(String.valueOf(body.get("enabled")));
         String actor = session != null ? (String) session.getAttribute("username") : null;
         weeklyAvailabilityReportService.setEnabled(enabled, actor != null ? actor : "admin");
+        auditService.recordAction("WEEKLY_AVAILABILITY_TOGGLE", session, "REPORT", "weekly-availability",
+                enabled ? "enabled" : "disabled", null);
         return ok(Map.of("data", Map.of("enabled", enabled)));
     }
 

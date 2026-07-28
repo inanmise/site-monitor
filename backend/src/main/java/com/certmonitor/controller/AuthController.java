@@ -239,6 +239,11 @@ public class AuthController {
         if (!username.isBlank() && logged.getAnomalyFlags() != null
                 && logged.getAnomalyFlags().contains("BRUTE_FORCE")) {
             UserService.LockoutStatus ls = userService.applyProgressiveLockout(username);
+            // Hesap kilit GEÇİŞİ — ayrık denetim olayı (altında yatan failed-login zaten kaydedildi).
+            auditService.recordAction("ACCOUNT_LOCKED", username, null, null, null, "USER", username,
+                    ls.permanent() ? "{\"lock\":\"permanent\"}"
+                            : "{\"lock\":\"temporary\",\"seconds\":" + ls.secondsRemaining() + "}",
+                    auditService.resolveIp(request), auditService.resolveUa(request), null);
             if (ls.permanent()) {
                 return ResponseEntity.status(423).body(Map.of(
                     "success", false, "locked", true,

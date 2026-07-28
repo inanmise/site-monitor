@@ -41,6 +41,7 @@ public class CertificateService {
     private final ObjectMapper objectMapper;
     private final TeamRepository teamRepo;
     private final AlertThresholdRepository alertThresholdRepo;
+    private final ActivityLogService activityLog;   // birleşik aktivite akışı (best-effort)
 
     private static final DateTimeFormatter ISO =
             DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
@@ -160,6 +161,12 @@ public class CertificateService {
         } catch (Exception e) {
             log.error("Failed to update latest_checks for {} — dashboard entry skipped: {}", domain, e.getMessage(), e);
         }
+
+        // Birleşik aktivite akışı (best-effort). teamId envanterden türetilir (manuel /check "manual" run_id taşır).
+        Long teamId = inventoryRepo.findByDomain(domain).map(CertificateInventory::getTeamId).orElse(null);
+        boolean manual = "manual".equals(result.get("run_id"));
+        activityLog.recordCheck(ActivityLogService.CERT, null, domain, domain,
+                teamId, manual, manual ? null : "scheduler", result);
     }
 
     private String determineDeploymentStatus(String domain, String servedFingerprint) {

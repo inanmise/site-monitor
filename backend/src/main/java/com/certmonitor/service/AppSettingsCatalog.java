@@ -69,6 +69,11 @@ public final class AppSettingsCatalog {
         new Setting("cert.monitor.metrics.http.retention-days",  "monitoring", Type.INT),
         // Haftalık rapor görselleri (base64 ≤8MB/satır) — bu günden eski görseller gece temizlenir (rapor metni korunur).
         new Setting("cert.monitor.weekly-report.image-retention-days", "monitoring", Type.INT),
+        // Birleşik aktivite akışı (Kayıtlar → Aktivite) kayıt saklama süresi — bu günden eski aktiviteler gece temizlenir.
+        new Setting("cert.monitor.activity.retention-days",           "monitoring", Type.INT),
+        // Denetim (audit) kayıt saklama süresi (gün) + silmeden önce JSONL arşiv üretimi (append-only + arşiv).
+        new Setting("cert.monitor.audit.retention-days",             "monitoring", Type.INT),
+        new Setting("cert.monitor.audit.archive-enabled",            "monitoring", Type.BOOL),
         // Kontrol sıklığı + request timeout — per-tip VARSAYILAN (yeni monitör oluştururken kullanılır).
         new Setting("cert.monitor.ping.default-interval-seconds",    "frequency", Type.INT),
         new Setting("cert.monitor.keyword.default-interval-seconds", "frequency", Type.INT),

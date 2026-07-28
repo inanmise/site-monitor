@@ -1,6 +1,10 @@
 package com.certmonitor.config;
 
+import com.certmonitor.service.AuditService;
+import jakarta.servlet.http.HttpServletRequest;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.dao.TransientDataAccessException;
@@ -20,7 +24,11 @@ import java.util.NoSuchElementException;
 
 @Slf4j
 @RestControllerAdvice
+@RequiredArgsConstructor
 public class GlobalExceptionHandler {
+
+    /** Opsiyonel — @WebMvcTest slice'ları AuditService bean'i sağlamayabilir; yoksa güvenlik olayı sessizce atlanır. */
+    private final ObjectProvider<AuditService> auditServiceProvider;
 
     @ExceptionHandler(NoSuchElementException.class)
     public ResponseEntity<Map<String, Object>> handleNotFound(NoSuchElementException e) {
@@ -45,11 +53,25 @@ public class GlobalExceptionHandler {
                 .body(Map.of("success", false, "error", e.getMessage()));
     }
 
-    /** Access denied — non-admin trying to reach admin-only endpoint. */
+    /** Access denied — yetkisiz/oturumsuz/IDOR erişim denemesi. GÜVENLİK OLAYI olarak denetlenir (BLOCKED). */
     @ExceptionHandler(SecurityException.class)
-    public ResponseEntity<Map<String, Object>> handleForbidden(SecurityException e) {
+    public ResponseEntity<Map<String, Object>> handleForbidden(SecurityException e, HttpServletRequest request) {
+        String msg = e.getMessage() != null ? e.getMessage() : "Erişim reddedildi";
+        String lower = msg.toLowerCase();
+        String eventType = (lower.contains("authentication") || lower.contains("kimlik") || lower.contains("oturum"))
+                ? "AUTH_REQUIRED" : "ACCESS_DENIED";
+        try {
+            AuditService audit = auditServiceProvider.getIfAvailable();
+            if (audit != null) {
+                audit.recordSecurityEvent(eventType, request,
+                        request != null ? request.getSession(false) : null,
+                        "ENDPOINT",
+                        request != null ? (request.getMethod() + " " + request.getRequestURI()) : null,
+                        msg);
+            }
+        } catch (Exception ignored) { /* denetim yazımı isteği asla düşürmez */ }
         return ResponseEntity.status(403)
-                .body(Map.of("success", false, "error", e.getMessage()));
+                .body(Map.of("success", false, "error", msg));
     }
 
     /** DB unique-constraint çakışması (örn. domain rename'de aynı isim). */
