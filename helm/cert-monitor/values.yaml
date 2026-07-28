@@ -60,6 +60,10 @@ config:
   # Boş bırakılırsa otomatik "https://<ingress.host>" kullanılır (route ile tutarlı) —
   # genelde elle set etmeye gerek yok. Gerekirse tam URL ver: "https://cert-monitor.example.com".
   appBaseUrl: ""
+  # Başarısız-login anomali uyarısı — eşikler/cooldown admin UI'dan (Ayarlar → Login Anomali) canlı
+  # ayarlanır; bunlar yalnız başlangıç varsayılanı. Alıcı boşsa SYSTEM_ADMIN_EMAIL'e düşer.
+  failedLoginAlertEnabled: "true"
+  failedLoginAlertRecipients: ""
   # Loglardaki gerçek client IP'si için forwarding başlık sırası (ilk dolu olanın leftmost değeri).
   # Proxy/LB arkasında doğru başlık ortama göre değişir → /api/admin/client-ip-debug ile bulup
   # buraya yaz (ör. "X-Real-IP" veya "X-Forwarded-For"). Birden çok: "X-Real-IP,X-Forwarded-For".

@@ -463,6 +463,173 @@ public class EmailNotificationService {
         }
     }
 
+    // ── System admin — başarısız-login anomali uyarısı ────────────────────────
+
+    /** Anomali uyarısı — çoklu alıcı; Outlook-safe. {@code triggerLabel} = INITIAL/ESCALATION/… (mail üstü). */
+    public String sendSystemAdminLoginAnomalyAlert(String[] recipients,
+            FailedLoginAnomalyService.AnomalyReport r, String triggerLabel) {
+        if (!isEnabled()) {
+            log.info("⚠ Email devre dışı — login anomaly alert atlanıyor");
+            return "SKIPPED_DISABLED";
+        }
+        if (recipients == null || recipients.length == 0) {
+            log.warn("Login anomaly alert alıcısı yok — atlanıyor");
+            return "SKIPPED_NO_RECIPIENT";
+        }
+        try {
+            MimeMessage msg = currentSender().createMimeMessage();
+            MimeMessageHelper helper = new MimeMessageHelper(msg, true, "UTF-8");
+            helper.setTo(recipients);
+            applyFrom(helper);
+            int ruleCount = (r.hits() == null) ? 0 : r.hits().size();
+            helper.setSubject("[CertMonitor] ⚠ Anomali: " + r.total() + " başarısız login / "
+                    + r.windowMinutes() + "dk — " + ruleCount + " kural tetiklendi");
+            helper.setText(buildLoginAnomalyHtml(r, triggerLabel), true);
+            return doSend(String.join(",", recipients), msg, 1);
+        } catch (Exception e) {
+            log.error("✗ Login anomaly alert hazırlanamadı: HATA={}", e.getMessage(), e);
+            return "FAILED: " + e.getMessage();
+        }
+    }
+
+    /** "Durum normale döndü" uyarısı. */
+    public String sendSystemAdminLoginAnomalyResolved(String[] recipients,
+            String openedAt, String resolvedAt, long peakTotal) {
+        if (!isEnabled()) return "SKIPPED_DISABLED";
+        if (recipients == null || recipients.length == 0) return "SKIPPED_NO_RECIPIENT";
+        try {
+            MimeMessage msg = currentSender().createMimeMessage();
+            MimeMessageHelper helper = new MimeMessageHelper(msg, true, "UTF-8");
+            helper.setTo(recipients);
+            applyFrom(helper);
+            helper.setSubject("[CertMonitor] ✅ Login anomalisi normale döndü");
+            helper.setText(buildLoginAnomalyResolvedHtml(openedAt, resolvedAt, peakTotal), true);
+            return doSend(String.join(",", recipients), msg, 1);
+        } catch (Exception e) {
+            log.error("✗ Login anomaly resolved hazırlanamadı: HATA={}", e.getMessage(), e);
+            return "FAILED: " + e.getMessage();
+        }
+    }
+
+    private String buildLoginAnomalyHtml(FailedLoginAnomalyService.AnomalyReport r, String triggerLabel) {
+        StringBuilder sb = new StringBuilder(simpleFrameOpen(640));
+        sb.append("<h2 style='color:#dc2626;margin:0 0 4px;font-size:20px'>⚠ Başarısız login anomalisi</h2>");
+        if (triggerLabel != null && !triggerLabel.isBlank())
+            sb.append("<p style='margin:0 0 14px;color:#64748b;font-size:12px;text-transform:uppercase;letter-spacing:.05em'>")
+              .append(escHtml(triggerLabel)).append("</p>");
+
+        sb.append("<table role='presentation' cellpadding='0' cellspacing='0' border='0' style='border-collapse:collapse;margin:0 0 16px;font-size:14px'>");
+        sb.append(adminRow("Zaman penceresi", escHtml(r.windowStart()) + " → " + escHtml(r.windowEnd()) + " (UTC)"));
+        sb.append(adminRow("Toplam başarısız login", String.valueOf(r.total())));
+        sb.append(adminRow("Önceki dönem ort.", r.baselineAvgPerWindow() + " / " + r.windowMinutes() + " dk pencere"));
+        sb.append("</table>");
+
+        int n = (r.hits() == null) ? 0 : r.hits().size();
+        sb.append(laSectionTitle("Tetiklenen kurallar (" + n + ")"));
+        sb.append("<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' style='border-collapse:collapse;margin:0 0 16px;font-size:13px'>");
+        sb.append("<tr>").append(laTh("Kural")).append(laTh("Eşik")).append(laTh("Gerçekleşen")).append("</tr>");
+        if (r.hits() != null) for (FailedLoginAnomalyService.RuleHit h : r.hits()) {
+            sb.append("<tr>")
+              .append("<td style='padding:6px 10px;border:1px solid #e5e7eb'>").append(escHtml(laRuleLabel(h.code())))
+              .append("<br><span style='color:#94a3b8;font-size:11px'>").append(escHtml(h.detail())).append("</span></td>")
+              .append("<td style='padding:6px 10px;border:1px solid #e5e7eb'>≥ ").append(h.threshold()).append("</td>")
+              .append("<td style='padding:6px 10px;border:1px solid #e5e7eb;font-weight:700;color:#dc2626'>").append(h.actual()).append("</td>")
+              .append("</tr>");
+        }
+        sb.append("</table>");
+
+        sb.append(laKvSection("En çok hedeflenen hesaplar", r.topAccounts(), "deneme"));
+        sb.append(laKvSection("En aktif kaynak IP'ler", r.topIps(), "deneme"));
+        sb.append(laKvSection("IP → farklı kullanıcı (credential stuffing)", r.stuffingIps(), "kullanıcı"));
+        sb.append(laReasonSection(r.reasonDistribution()));
+
+        String cta = loginAnomalyCtaUrl(r.windowStart());
+        if (!cta.isEmpty())
+            sb.append("<div style='margin:18px 0 4px'>").append(ctaButton(cta, "Denetim kaydını aç", "#dc2626")).append("</div>");
+
+        sb.append(simpleFrameClose());
+        return sb.toString();
+    }
+
+    private String buildLoginAnomalyResolvedHtml(String openedAt, String resolvedAt, long peakTotal) {
+        return simpleFrameOpen(560)
+            + "<h2 style='color:#16a34a;margin:0 0 12px;font-size:20px'>✅ Login anomalisi normale döndü</h2>"
+            + "<p style='margin:0 0 10px'>Takip eden kontrolde başarısız-login hacmi eşiklerin altına indi.</p>"
+            + "<table role='presentation' cellpadding='0' cellspacing='0' border='0' style='border-collapse:collapse;margin:8px 0;font-size:14px'>"
+            + adminRow("Başlangıç", escHtml(openedAt) + " (UTC)")
+            + adminRow("Çözülme", escHtml(resolvedAt) + " (UTC)")
+            + adminRow("Zirve hacim", String.valueOf(peakTotal))
+            + "</table>"
+            + simpleFrameClose();
+    }
+
+    private String laSectionTitle(String t) {
+        return "<div style='font-size:12px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:#64748b;margin:0 0 6px'>"
+                + escHtml(t) + "</div>";
+    }
+
+    private String laTh(String t) {
+        return "<td bgcolor='#f8fafc' style='background-color:#f8fafc;padding:6px 10px;font-weight:600;border:1px solid #e5e7eb'>"
+                + escHtml(t) + "</td>";
+    }
+
+    private String laKvSection(String title, java.util.List<FailedLoginAnomalyService.KV> items, String unit) {
+        if (items == null || items.isEmpty()) return "";
+        StringBuilder sb = new StringBuilder(laSectionTitle(title));
+        sb.append("<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' style='border-collapse:collapse;margin:0 0 16px;font-size:13px'>");
+        int i = 0;
+        for (FailedLoginAnomalyService.KV kv : items) {
+            if (i++ >= 5) break;
+            String zebra = (i % 2 == 0) ? "#f8fafc" : "#ffffff";
+            sb.append("<tr><td bgcolor='").append(zebra).append("' style='background-color:").append(zebra)
+              .append(";padding:6px 10px;border-top:1px solid #f1f5f9;word-break:break-all'>").append(escHtml(kv.key()))
+              .append("</td><td bgcolor='").append(zebra).append("' style='background-color:").append(zebra)
+              .append(";padding:6px 10px;border-top:1px solid #f1f5f9;text-align:right;font-weight:600'>")
+              .append(kv.count()).append(' ').append(escHtml(unit)).append("</td></tr>");
+        }
+        sb.append("</table>");
+        return sb.toString();
+    }
+
+    private String laReasonSection(java.util.Map<String, Long> dist) {
+        if (dist == null || dist.isEmpty()) return "";
+        StringBuilder sb = new StringBuilder(laSectionTitle("Başarısızlık nedeni dağılımı"));
+        sb.append("<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' style='border-collapse:collapse;margin:0 0 16px;font-size:13px'>");
+        int i = 0;
+        for (java.util.Map.Entry<String, Long> e : dist.entrySet()) {
+            String zebra = (++i % 2 == 0) ? "#f8fafc" : "#ffffff";
+            sb.append("<tr><td bgcolor='").append(zebra).append("' style='background-color:").append(zebra)
+              .append(";padding:6px 10px;border-top:1px solid #f1f5f9'>").append(escHtml(e.getKey()))
+              .append("</td><td bgcolor='").append(zebra).append("' style='background-color:").append(zebra)
+              .append(";padding:6px 10px;border-top:1px solid #f1f5f9;text-align:right;font-weight:600'>")
+              .append(e.getValue()).append("</td></tr>");
+        }
+        sb.append("</table>");
+        return sb.toString();
+    }
+
+    private static String laRuleLabel(String code) {
+        if (code == null) return "";
+        return switch (code) {
+            case "GLOBAL_VOLUME"          -> "Genel hacim";
+            case "ACCOUNT_TARGETED"       -> "Hesap odaklı";
+            case "IP_BRUTE_FORCE"         -> "IP brute force";
+            case "IP_CREDENTIAL_STUFFING" -> "Credential stuffing";
+            case "DISTRIBUTED"            -> "Dağıtık saldırı";
+            case "RELATIVE_SPIKE"         -> "Görece sıçrama";
+            default                       -> code;
+        };
+    }
+
+    /** CANLI base-url'den Denetim (audit) ekranına başarısız-login filtresiyle deep-link. */
+    private String loginAnomalyCtaUrl(String windowStart) {
+        String url = appSettings.getString("cert.monitor.app.base-url", appBaseUrl);
+        String base = (url != null && !url.isBlank()) ? url.replaceAll("/+$", "") : "";
+        if (base.isEmpty()) return "";
+        String since = java.net.URLEncoder.encode(windowStart == null ? "" : windowStart, java.nio.charset.StandardCharsets.UTF_8);
+        return base + "/?tab=system&a_eventType=LOGIN_FAILED&a_since=" + since;
+    }
+
     /** Login-issue mail gönderim sonucu — {@code status} (SENT/FAILED/SKIPPED_*) + geçmişe yazılacak
      *  {@code from}/{@code subject}/{@code bodyHtml}. Alıcının gördüğü mailin aynısı ({@code bodyHtml}). */
     public record LoginIssueMailResult(String status, String from, String subject, String bodyHtml) {}

@@ -111,6 +111,52 @@ class AuditLogRepositoryTest {
         assertThat(rows).allMatch(x -> x.getActorId() == 1L);
     }
 
+    private static AuditLog fl(long seq, String time, String actor, String ip, String reason) {
+        AuditLog x = new AuditLog();
+        x.setSeq(seq);
+        x.setEventTime(time);
+        x.setEventType("LOGIN_FAILED");
+        x.setActor(actor);
+        x.setIpAddress(ip);
+        x.setFailureReason(reason);
+        x.setOutcome("FAILURE");
+        return x;
+    }
+
+    @Test
+    @DisplayName("anomali toplu sorguları: hesap/IP/distinct-user/distinct-IP/reason-önek")
+    void anomalyAggregates() {
+        repo.save(fl(10, "2026-07-28T09:00:00", "alice", "1.1.1.1", "BAD_PASSWORD: attempt #1/5"));
+        repo.save(fl(11, "2026-07-28T09:01:00", "alice", "1.1.1.1", "BAD_PASSWORD: attempt #2/5"));
+        repo.save(fl(12, "2026-07-28T09:02:00", "alice", "2.2.2.2", "BAD_PASSWORD: attempt #3/5"));
+        repo.save(fl(13, "2026-07-28T09:03:00", "bob",   "1.1.1.1", "UNKNOWN_USER: attempt #1/5"));
+        repo.save(fl(14, "2026-07-28T09:04:00", "carol", "1.1.1.1", "UNKNOWN_USER: attempt #1/5"));
+
+        String since = "2026-07-28T00:00:00";
+        String now   = "2026-07-28T23:59:59";
+
+        assertThat(repo.countFailedLoginsBetween(since, now)).isEqualTo(5);
+
+        List<Object[]> byActor = repo.countFailedByActorSince(since);
+        assertThat(byActor.get(0)[0]).isEqualTo("alice");
+        assertThat(((Number) byActor.get(0)[1]).longValue()).isEqualTo(3);
+
+        List<Object[]> byIp = repo.countFailedByIpSince(since);
+        assertThat(byIp.get(0)[0]).isEqualTo("1.1.1.1");
+        assertThat(((Number) byIp.get(0)[1]).longValue()).isEqualTo(4);
+
+        List<Object[]> stuffing = repo.countDistinctUsersPerIpSince(since);
+        assertThat(stuffing.get(0)[0]).isEqualTo("1.1.1.1");
+        assertThat(((Number) stuffing.get(0)[1]).longValue()).isEqualTo(3);   // alice, bob, carol
+
+        List<Object[]> distributed = repo.countDistinctIpsPerActorSince(since);
+        assertThat(distributed.get(0)[0]).isEqualTo("alice");
+        assertThat(((Number) distributed.get(0)[1]).longValue()).isEqualTo(2);   // 1.1.1.1, 2.2.2.2
+
+        assertThat(repo.countFailedByReasonLikeBetween("BAD_PASSWORD:%", since, now)).isEqualTo(3);
+        assertThat(repo.countFailedByReasonLikeBetween("UNKNOWN_USER:%", since, now)).isEqualTo(2);
+    }
+
     @Test
     @DisplayName("günlük yoğunluk: countByDaySince → gün başına gruplar, tarihe göre artan")
     void countByDay() {

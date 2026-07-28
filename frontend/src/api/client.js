@@ -409,6 +409,17 @@ export const api = {
       method: 'POST', body: JSON.stringify({ recipient }),
     }),
 
+    // Başarısız-login anomali uyarısı (Ayarlar → Login Anomali sayfası)
+    getLoginAnomalySettings: () => request('/admin/login-anomaly/settings'),
+    saveLoginAnomalySettings: (dto) => request('/admin/login-anomaly/settings', {
+      method: 'PUT', body: JSON.stringify(dto),
+    }),
+    testLoginAnomalyEmail: (recipient) => request('/admin/login-anomaly/test-email', {
+      method: 'POST', body: JSON.stringify({ recipient }),
+    }),
+    getLoginAnomalyIncidents: (page = 0, size = 20) =>
+      request(`/admin/login-anomaly/incidents?page=${page}&size=${size}`),
+
     // Haftalık erişilebilirlik e-postası (Ayarlar → Haftalık E-posta sayfası)
     getWeeklyAvailStatus: () => request('/admin/system/weekly-availability/status'),
     getWeeklyAvailPreview: (teamId, weekOffset) =>

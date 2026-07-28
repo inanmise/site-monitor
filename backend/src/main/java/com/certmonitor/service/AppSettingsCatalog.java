@@ -127,7 +127,25 @@ public final class AppSettingsCatalog {
         // Yalnız mail gönderim logger'ı — uygulama geneli TRACE'e geçmeden ekrandan mail
         // TRACE'i aç/kapat. Boş = com.certmonitor (LOG_LEVEL) ile aynı.
         new Setting("logging.level.com.certmonitor.mail",        "logging",    Type.ENUM,
-                    List.of("TRACE", "DEBUG", "INFO", "WARN", "ERROR"))
+                    List.of("TRACE", "DEBUG", "INFO", "WARN", "ERROR")),
+        // ── Başarısız-login anomali tespiti + sistem-admin e-posta uyarısı (katmanlı kurallar) ──
+        //    Detektör audit_log'u tarar; her kural bağımsız + canlı eşiklerle. (scan-ms başlangıçta
+        //    okunur — @Scheduled fixedDelay — bu yüzden katalogda değil, yalnız application.properties.)
+        new Setting("cert.monitor.failed-login.enabled",                          "login-anomaly", Type.BOOL),
+        new Setting("cert.monitor.failed-login.window-minutes",                   "login-anomaly", Type.INT),
+        new Setting("cert.monitor.failed-login.threshold-total",                  "login-anomaly", Type.INT),
+        new Setting("cert.monitor.failed-login.threshold-per-account",            "login-anomaly", Type.INT),
+        new Setting("cert.monitor.failed-login.threshold-per-ip",                 "login-anomaly", Type.INT),
+        new Setting("cert.monitor.failed-login.threshold-distinct-users-per-ip",  "login-anomaly", Type.INT),
+        new Setting("cert.monitor.failed-login.threshold-distinct-ips-per-account","login-anomaly", Type.INT),
+        new Setting("cert.monitor.failed-login.relative-multiplier",              "login-anomaly", Type.DOUBLE),
+        new Setting("cert.monitor.failed-login.baseline-hours",                   "login-anomaly", Type.INT),
+        new Setting("cert.monitor.failed-login.relative-floor",                   "login-anomaly", Type.INT),
+        new Setting("cert.monitor.failed-login.catchup-cap-minutes",              "login-anomaly", Type.INT),
+        new Setting("cert.monitor.failed-login.cooldown-minutes",                 "login-anomaly", Type.INT),
+        new Setting("cert.monitor.failed-login.resolved-email-enabled",           "login-anomaly", Type.BOOL),
+        new Setting("cert.monitor.failed-login.alert-recipients",                 "login-anomaly", Type.CSV),
+        new Setting("cert.monitor.failed-login.retention-days",                   "login-anomaly", Type.INT)
     );
 
     public static Setting byKey(String key) {

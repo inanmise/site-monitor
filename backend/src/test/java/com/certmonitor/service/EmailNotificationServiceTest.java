@@ -5,6 +5,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
@@ -149,6 +150,75 @@ class EmailNotificationServiceTest {
 
         assertThat(result).isEqualTo("SKIPPED_DISABLED");
         verify(smtpMailService, never()).currentSender();
+    }
+
+    // ── Başarısız-login anomali admin uyarısı ─────────────────────────────────
+
+    private FailedLoginAnomalyService.AnomalyReport sampleAnomalyReport() {
+        var hits = java.util.List.of(
+                new FailedLoginAnomalyService.RuleHit("GLOBAL_VOLUME", 47, 20, "47 başarısız login"),
+                new FailedLoginAnomalyService.RuleHit("ACCOUNT_TARGETED", 12, 5, "'alice'"));
+        var topAccounts = java.util.List.of(
+                new FailedLoginAnomalyService.KV("alice", 12), new FailedLoginAnomalyService.KV("bob", 8));
+        var topIps = java.util.List.of(new FailedLoginAnomalyService.KV("1.2.3.4", 30));
+        var stuffing = java.util.List.of(new FailedLoginAnomalyService.KV("1.2.3.4", 7));
+        var reasons = new java.util.LinkedHashMap<String, Long>();
+        reasons.put("BAD_PASSWORD", 30L);
+        reasons.put("UNKNOWN_USER", 17L);
+        return new FailedLoginAnomalyService.AnomalyReport(
+                "2026-07-28T10:00:00", "2026-07-28T10:10:00", 10, 47, 3,
+                hits, topAccounts, topIps, stuffing, java.util.List.of(), reasons);
+    }
+
+    private static String extractText(jakarta.mail.Part part) throws Exception {
+        Object c = part.getContent();
+        if (c instanceof String s) return s;
+        if (c instanceof jakarta.mail.Multipart mp) {
+            StringBuilder sb = new StringBuilder();
+            for (int i = 0; i < mp.getCount(); i++) sb.append(extractText(mp.getBodyPart(i)));
+            return sb.toString();
+        }
+        return String.valueOf(c);
+    }
+
+    @Test
+    @DisplayName("login anomaly alert: email kapalı → SKIPPED_DISABLED")
+    void loginAnomalyAlert_disabled_skipped() {
+        String r = service.sendSystemAdminLoginAnomalyAlert(new String[]{"ops@x"}, sampleAnomalyReport(), "INITIAL");
+        assertThat(r).isEqualTo("SKIPPED_DISABLED");
+        verify(smtpMailService, never()).currentSender();
+    }
+
+    @Test
+    @DisplayName("login anomaly alert: alıcı yok → SKIPPED_NO_RECIPIENT")
+    void loginAnomalyAlert_noRecipient_skipped() {
+        when(settingsService.getOrDefaults()).thenReturn(settingsEnabledFull());
+        String r = service.sendSystemAdminLoginAnomalyAlert(new String[0], sampleAnomalyReport(), "INITIAL");
+        assertThat(r).isEqualTo("SKIPPED_NO_RECIPIENT");
+    }
+
+    @Test
+    @DisplayName("login anomaly alert: etkin → gönderilir; konu+gövde doğru, parola/hassas veri YOK")
+    void loginAnomalyAlert_enabled_correctSubjectAndBody_noSensitive() throws Exception {
+        when(settingsService.getOrDefaults()).thenReturn(settingsEnabledFull());
+        JavaMailSenderImpl spySender = spy(new JavaMailSenderImpl());
+        doNothing().when(spySender).send(any(MimeMessage.class));
+        when(smtpMailService.currentSender()).thenReturn(spySender);
+
+        String r = service.sendSystemAdminLoginAnomalyAlert(
+                new String[]{"ops@x", "sec@x"}, sampleAnomalyReport(), "INITIAL");
+        assertThat(r).isEqualTo("SENT");
+
+        ArgumentCaptor<MimeMessage> cap = ArgumentCaptor.forClass(MimeMessage.class);
+        verify(spySender).send(cap.capture());
+        MimeMessage msg = cap.getValue();
+        // Konu: ciddiyet + özet
+        assertThat(msg.getSubject()).contains("Anomali").contains("47").contains("2 kural");
+        // Gövde: kural etiketleri + top hesap/IP
+        String body = extractText(msg);
+        assertThat(body).contains("Genel hacim").contains("Hesap odaklı").contains("alice").contains("1.2.3.4");
+        // Hassas veri (parola düz metni) ASLA yok
+        assertThat(body).doesNotContain("P@ssw0rd").doesNotContainIgnoringCase("parola:");
     }
 
     // ── Sertifika alarm tipleri (EXPIRY/REVOKED/MISMATCH/CHAIN_BROKEN) ─────────

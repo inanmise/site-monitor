@@ -8,6 +8,7 @@ import SecretTools from './SecretTools'
 import DatabaseInfo from './DatabaseInfo'
 import WeeklyAvailabilitySettings from './WeeklyAvailabilitySettings'
 import StormSettings from './StormSettings'
+import LoginAnomalySettings from './LoginAnomalySettings'
 import DomainDiagnostics from './DomainDiagnostics'
 import BrandingSettings from './BrandingSettings'
 
@@ -19,6 +20,7 @@ const SECTIONS = [
   { id: 'smtp', labelKey: 'settings.navSmtp' },
   { id: 'weeklyavail', labelKey: 'settings.navWeeklyAvail' },
   { id: 'storm', labelKey: 'settings.navStorm' },
+  { id: 'loginanomaly', labelKey: 'settings.navLoginAnomaly' },
   { id: 'ldap', labelKey: 'settings.navLdap' },
   { id: 'domaindiag', labelKey: 'settings.navDomainDiag' },
   { id: 'database', labelKey: 'settings.navDatabase' },
@@ -51,6 +53,7 @@ export default function AdminSettings() {
         {active === 'smtp' && <SmtpSettings />}
         {active === 'weeklyavail' && <WeeklyAvailabilitySettings />}
         {active === 'storm' && <StormSettings />}
+        {active === 'loginanomaly' && <LoginAnomalySettings />}
         {active === 'ldap' && <LdapSettings />}
         {active === 'domaindiag' && <DomainDiagnostics />}
         {active === 'database' && <DatabaseInfo />}

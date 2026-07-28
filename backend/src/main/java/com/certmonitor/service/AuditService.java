@@ -206,6 +206,10 @@ public class AuditService {
         }
 
         if (!success && actor != null && !actor.isBlank()) {
+            // failureReason burada MAKİNE-OKUR kod önekidir (BAD_PASSWORD / UNKNOWN_USER /
+            // TEMP_PASSWORD_EXPIRED …). Depolanan failure_reason "<KOD>: <insan metni>" olur →
+            // anomali detektörü öneki parse eder (failure-reason dağılımı + enumeration sinyali).
+            String code = (failureReason != null && !failureReason.isBlank()) ? failureReason : "LOGIN_FAILED";
             String tenMinAgo = ISO.format(Instant.now().minusSeconds(bruteForceWindowSeconds));
             String since = (countSince != null && countSince.compareTo(tenMinAgo) > 0) ? countSince : tenMinAgo;
             long prevFails = auditLogRepo.countRecentFailedLogins(actor, since);
@@ -213,11 +217,11 @@ public class AuditService {
             if (prevFails >= failuresNeeded - 1) {
                 anomalies.add("BRUTE_FORCE");
                 entry.setFailureReason(
-                    "Brute force: attempt #" + attemptNum + "/" + failuresNeeded + " for '" + actor + "'");
+                    code + ": brute-force attempt #" + attemptNum + "/" + failuresNeeded + " for '" + actor + "'");
                 log.warn("Brute force detected: user='{}' attempt={}/{} IP={}", actor, attemptNum, failuresNeeded, ipAddress);
             } else {
                 entry.setFailureReason(
-                    "Invalid credentials — attempt #" + attemptNum + "/" + failuresNeeded + " for '" + actor + "'");
+                    code + ": attempt #" + attemptNum + "/" + failuresNeeded + " for '" + actor + "'");
             }
         } else {
             entry.setFailureReason(failureReason);
