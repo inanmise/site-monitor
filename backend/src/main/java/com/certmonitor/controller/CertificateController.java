@@ -7,6 +7,7 @@ import com.certmonitor.repository.AlertEventRepository;
 import com.certmonitor.repository.CertificateInventoryRepository;
 import com.certmonitor.repository.NetworkOutageEventRepository;
 import org.springframework.data.domain.PageRequest;
+import com.certmonitor.service.AuditService;
 import com.certmonitor.service.CertificateCheckerService;
 import com.certmonitor.service.CertificateService;
 import com.certmonitor.service.ExtendedHealthService;
@@ -39,6 +40,7 @@ public class CertificateController {
     private final NetworkOutageEventRepository networkOutageRepo;
     private final ExtendedHealthService extendedHealthService;
     private final PermissionService permissionService;
+    private final AuditService auditService;
 
     private static final DateTimeFormatter ISO =
             DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
@@ -109,11 +111,8 @@ public class CertificateController {
         return ok(Map.of("success", true, "data", result, "timestamp", now()));
     }
 
-    @GetMapping("/activity")
-    public ResponseEntity<Map<String, Object>> getActivityLog(
-            @RequestParam(defaultValue = "24") int hours, HttpSession session) {
-        return ok(Map.of("success", true, "data", certService.getActivityLog(hours, SessionScope.viewTeamIds(session)), "timestamp", now()));
-    }
+    // NOT: eski /api/activity (yalnız sertifika, run-id gruplu) → yeni birleşik ActivityController devraldı
+    // (tüm izleme türleri, sayfalı/filtreli, takım-izole). certService.getActivityLog artık kullanılmıyor.
 
     @GetMapping("/stats")
     public ResponseEntity<Map<String, Object>> getStats(HttpSession session) {
@@ -140,6 +139,7 @@ public class CertificateController {
         requireAdmin(session);
         permissionService.require(session, "scheduler.run", "execute");
         schedulerService.triggerManualCheck();   // raw Thread yerine havuz (F4, CPU denetimi)
+        auditService.recordAction("SCHEDULER_RUN", session, "SCHEDULER", "certificate-sweep", null, null);
         return ok(Map.of("success", true, "message", "Check started", "timestamp", now()));
     }
 

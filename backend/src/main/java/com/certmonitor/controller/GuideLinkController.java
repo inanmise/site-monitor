@@ -2,6 +2,8 @@ package com.certmonitor.controller;
 
 import com.certmonitor.model.GuideLink;
 import com.certmonitor.repository.GuideLinkRepository;
+import com.certmonitor.service.AuditDiff;
+import com.certmonitor.service.AuditService;
 import com.certmonitor.service.PermissionService;
 import jakarta.servlet.http.HttpSession;
 import lombok.RequiredArgsConstructor;
@@ -23,6 +25,7 @@ public class GuideLinkController {
 
     private final GuideLinkRepository repo;
     private final PermissionService permissionService;
+    private final AuditService auditService;
 
     @GetMapping
     public ResponseEntity<Map<String, Object>> list(HttpSession session) {
@@ -44,6 +47,7 @@ public class GuideLinkController {
         GuideLink saved = repo.save(body);
         log.info("Guide link created id={} category={} title={} by={}",
                 saved.getId(), saved.getCategory(), saved.getTitle(), actor(session));
+        auditService.recordAction("GUIDE_LINK_CREATE", session, "GUIDE_LINK", String.valueOf(saved.getId()), saved.getTitle(), null);
         return ok(Map.of("data", saved));
     }
 
@@ -55,6 +59,8 @@ public class GuideLinkController {
         validate(body);
         GuideLink existing = repo.findById(id)
                 .orElseThrow(() -> new NoSuchElementException("Guide link not found: " + id));
+        String[] gf = {"category", "title", "url", "description", "sortOrder"};
+        java.util.Map<String, Object> _before = AuditDiff.snapshot(existing, gf);
         existing.setCategory(body.getCategory());
         existing.setTitle(body.getTitle());
         existing.setUrl(body.getUrl());
@@ -63,6 +69,8 @@ public class GuideLinkController {
         existing.setUpdatedAt(Instant.now());
         GuideLink saved = repo.save(existing);
         log.info("Guide link updated id={} by={}", saved.getId(), actor(session));
+        auditService.recordAction("GUIDE_LINK_UPDATE", session, "GUIDE_LINK", String.valueOf(saved.getId()), saved.getTitle(),
+                AuditDiff.diff(_before, AuditDiff.snapshot(saved, gf)));
         return ok(Map.of("data", saved));
     }
 
@@ -75,6 +83,7 @@ public class GuideLinkController {
         }
         repo.deleteById(id);
         log.info("Guide link deleted id={} by={}", id, actor(session));
+        auditService.recordAction("GUIDE_LINK_DELETE", session, "GUIDE_LINK", String.valueOf(id), null, null);
         return ok(Map.of("message", "Deleted"));
     }
 

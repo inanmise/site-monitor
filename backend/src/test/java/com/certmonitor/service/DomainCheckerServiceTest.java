@@ -31,6 +31,7 @@ class DomainCheckerServiceTest {
     @Mock WhoisDomainClient whois;
     @Mock DnsCheckerService dns;
     @Mock DomainCheckRepository checkRepo;
+    @Mock ActivityLogService activityLog;
 
     DomainCheckerService svc;
 
@@ -38,7 +39,7 @@ class DomainCheckerServiceTest {
     void setup() {
         PublicSuffixService psl = new PublicSuffixService();
         psl.load();
-        svc = new DomainCheckerService(psl, rdap, whois, dns, checkRepo);
+        svc = new DomainCheckerService(psl, rdap, whois, dns, checkRepo, activityLog);
         lenient().when(whois.enabled()).thenReturn(false);
         lenient().when(dns.check(anyString(), eq("NS"))).thenReturn(Map.of("success", true));
         // A/AAAA çözümü (Domain Kaydı): varsayılan boş → çoğu test reverse-DNS PTR beklemesine takılmasın (hız).

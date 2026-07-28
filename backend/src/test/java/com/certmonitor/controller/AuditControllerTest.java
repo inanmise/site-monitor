@@ -22,6 +22,9 @@ import java.util.List;
 
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.verify;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpSession;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
@@ -40,6 +43,7 @@ class AuditControllerTest {
     @MockitoBean CertificateInventoryRepository inventoryRepo;
     @MockitoBean TeamRepository teamRepo;
     @MockitoBean com.certmonitor.service.PermissionService permissionService;
+    @MockitoBean com.certmonitor.service.AuditService auditService;
 
     private MockHttpSession session(String role) {
         MockHttpSession s = new MockHttpSession();
@@ -62,7 +66,7 @@ class AuditControllerTest {
     @Test
     @DisplayName("listAudit: AUDIT 200 + sayfalı sonuç; USER 403")
     void listAudit_access() throws Exception {
-        when(auditLogRepo.findFiltered(any(), any(), any(), any(), any(), anyBoolean(), any()))
+        when(auditLogRepo.findAdvanced(any(), any(), anyBoolean(), any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any()))
                 .thenReturn(new PageImpl<>(List.of(new AuditLog()), PageRequest.of(0, 50), 1));
 
         mvc.perform(get("/api/admin/audit").session(session("AUDIT")))
@@ -71,6 +75,49 @@ class AuditControllerTest {
 
         mvc.perform(get("/api/admin/audit").session(session("USER")))
                 .andExpect(status().isForbidden());
+    }
+
+    @Test
+    @DisplayName("resourceHistory: AUDIT 200 + kayıt sayısı; USER 403 (izolasyon)")
+    void resourceHistory_access() throws Exception {
+        when(auditLogRepo.findByResourceTypeAndResourceIdOrderByEventTimeDesc(eq("PORT_MONITOR"), eq("7"), any()))
+                .thenReturn(List.of(new AuditLog()));
+        mvc.perform(get("/api/admin/audit/resource/PORT_MONITOR/7").session(session("AUDIT")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.total").value(1));
+        mvc.perform(get("/api/admin/audit/resource/PORT_MONITOR/7").session(session("USER")))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    @DisplayName("actorHistory: AUDIT 200 (bir kullanıcının tüm eylemleri)")
+    void actorHistory_ok() throws Exception {
+        when(auditLogRepo.findByActorIdOrderByEventTimeDesc(eq(5L), any())).thenReturn(List.of(new AuditLog()));
+        mvc.perform(get("/api/admin/audit/actor/5").session(session("AUDIT")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.total").value(1));
+    }
+
+    @Test
+    @DisplayName("integrity: verifyChain sonucu (ok + checked) döner")
+    void integrity_ok() throws Exception {
+        when(auditService.verifyChain())
+                .thenReturn(new com.certmonitor.service.AuditService.ChainVerification(true, null, null, 42));
+        mvc.perform(get("/api/admin/audit/integrity").session(session("ADMIN")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.ok").value(true))
+                .andExpect(jsonPath("$.data.checked").value(42));
+    }
+
+    @Test
+    @DisplayName("export: CSV döner + dışa aktarma İŞLEMİ AUDIT_EXPORT olarak denetlenir (denetimin denetimi)")
+    void export_selfAudited() throws Exception {
+        when(auditLogRepo.findAdvanced(any(), any(), anyBoolean(), any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any()))
+                .thenReturn(new PageImpl<>(List.of(new AuditLog()), PageRequest.of(0, 1), 1));
+        mvc.perform(get("/api/admin/audit/export?format=csv").session(session("AUDIT")))
+                .andExpect(status().isOk());
+        verify(auditService).recordAction(eq("AUDIT_EXPORT"), any(HttpSession.class), any(HttpServletRequest.class),
+                eq("AUDIT_LOG"), eq("export"), contains("csv"));
     }
 
     @Test

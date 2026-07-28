@@ -38,6 +38,7 @@ public class DomainCheckerService {
     private final WhoisDomainClient whois;
     private final DnsCheckerService dns;
     private final DomainCheckRepository checkRepo;
+    private final ActivityLogService activityLog;   // birleşik aktivite akışı (best-effort)
 
     private static final DateTimeFormatter ISO =
             DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
@@ -49,8 +50,11 @@ public class DomainCheckerService {
 
     /** İzleme/manuel kontrol — kontrol + persist + değişiklik tespiti. */
     public Map<String, Object> check(DomainMonitor m) {
-        return evaluate(m.getDomain(), m.getWarningDays() != null ? m.getWarningDays() : 30,
+        Map<String, Object> r = evaluate(m.getDomain(), m.getWarningDays() != null ? m.getWarningDays() : 30,
                 m.getCriticalDays() != null ? m.getCriticalDays() : 7, m.getId(), m.getCheckTimeoutMs());
+        activityLog.recordCheck(ActivityLogService.DOMAIN, m.getId(), m.getName(),
+                m.getDomain(), m.getTeamId(), false, "scheduler", r);
+        return r;
     }
 
     /** Test (kaydetmeden) — persist yok, değişiklik tespiti yok. */

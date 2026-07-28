@@ -109,6 +109,8 @@ public class SchedulerService {
     private final HttpMonitorRepository httpMonitorRepo;
     private final HttpCheckRepository httpCheckRepo;
     private final RdapDomainExpiryService rdapDomainExpiryService;
+    private final ActivityLogService activityLog;   // birleşik aktivite akışı (best-effort)
+    private final AuditService auditService;         // sistem olayları (schema-patch, retention-purge)
 
     private final DomainMonitorRepository domainMonitorRepo;
     private final DomainCheckRepository domainCheckRepo;
@@ -234,6 +236,7 @@ public class SchedulerService {
         AvailabilityChangeEvent.publish(eventPublisher, this, ReadinessState.REFUSING_TRAFFIC);
         try {
             applySchemaPatches();
+            auditService.recordSystemEvent("SCHEMA_PATCH", "SYSTEM", "db", "başlangıç şema yamaları uygulandı");
             userService.ensureBootstrapped(adminUsername, adminPassword);
             // In-memory oturumlar restart'ta silinir ama DB'deki activeSessionId kalır → aksi halde
             // "Aktif Oturum" sayımı şişer ve restart sonrası ilk login'de gerçekte canlı oturum
@@ -695,11 +698,18 @@ public class SchedulerService {
     @Scheduled(cron = "${cert.monitor.scheduler.cleanup-cron:0 30 3 * * *}")
     public void cleanupOldLogs() {
         try {
-            String auditCutoff = ISO.format(Instant.now().minus(180, ChronoUnit.DAYS));
+            // Denetim: yapılandırılabilir retention (vars. 365g); silmeden ÖNCE JSONL arşiv (append-only + arşiv).
+            int auditRetDays = Math.max(30, appSettings.getInt("cert.monitor.audit.retention-days", 365));
+            String auditCutoff = ISO.format(Instant.now().minus(auditRetDays, ChronoUnit.DAYS));
             String notifCutoff = ISO.format(Instant.now().minus(90,  ChronoUnit.DAYS));
             String sqlCutoff   = ISO.format(Instant.now().minus(30,  ChronoUnit.DAYS));
             String tsCutoff    = ISO.format(Instant.now().minus(180, ChronoUnit.DAYS)); // zaman serisi
+            int archived = archiveAuditBeforePurge(auditCutoff);
             int a = safeDelete("DELETE FROM audit_log          WHERE event_time  < ?", auditCutoff);
+            if (a > 0) log.info("Audit retention: {} kayıt silindi (>{}g), {} arşivlendi", a, auditRetDays, archived);
+            // Retention/purge job'ın kendisi de denetlenir (silme sonrası → yeni zincir ucuna yazılır).
+            auditService.recordSystemEvent("AUDIT_RETENTION_PURGE", "AUDIT_LOG", "cleanup",
+                    "{\"deleted\":" + a + ",\"archived\":" + archived + ",\"retention_days\":" + auditRetDays + "}");
             int n = safeDelete("DELETE FROM notification_logs  WHERE sent_at     < ?", notifCutoff);
             int s = safeDelete("DELETE FROM sql_query_history  WHERE executed_at < ?", sqlCutoff);
             int u = safeDelete("DELETE FROM uptime_checks      WHERE checked_at  < ?", tsCutoff);
@@ -758,6 +768,12 @@ public class SchedulerService {
             int wriRetDays = Math.max(30, appSettings.getInt("cert.monitor.weekly-report.image-retention-days", 730));
             String wriCutoff = ISO.format(Instant.now().minus(wriRetDays, ChronoUnit.DAYS));
             int wri = safeDelete("DELETE FROM weekly_report_images WHERE created_at < ?", wriCutoff);
+            // Birleşik aktivite akışı (activity_log) — her kontrol +1 satır yazar (en hızlı büyüyen seri);
+            // yapılandırılabilir retention (canlı ayar; vars. 90g) üstünü sil.
+            int actRetDays = Math.max(1, appSettings.getInt("cert.monitor.activity.retention-days", 90));
+            String actCutoff = ISO.format(Instant.now().minus(actRetDays, ChronoUnit.DAYS));
+            int act = safeDelete("DELETE FROM activity_log WHERE activity_time < ?", actCutoff);
+            log.info("Nightly cleanup: activityLog={} (retention {}d, cutoff {})", act, actRetDays, actCutoff);
             // In-memory: silinen monitörlerin checkDue anahtarları birikmesin (uzun uptime sızıntısı).
             int pruned = pruneMonitorCheckState(collectLiveMonitorKeys());
             log.info("Nightly cleanup (retention v2): httpChecks={}, heartbeat={}, domainChecks={}, diagRuns={}, resolvedAlerts={}, "
@@ -775,6 +791,42 @@ public class SchedulerService {
         } catch (Exception e) {
             log.warn("Cleanup '{}' failed: {}", sql, e.getMessage());
             return -1;
+        }
+    }
+
+    /** Denetim kayıtlarını silmeden ÖNCE tarihli JSONL arşive yazar (append-only + arşiv gerekliliği).
+     *  archive-enabled kapalıysa/hata olursa 0 döner (silme yine de yapılır; en kötü ihtimalle arşivsiz). */
+    private int archiveAuditBeforePurge(String cutoff) {
+        try {
+            if (!appSettings.getBoolean("cert.monitor.audit.archive-enabled", true)) return 0;
+            List<java.util.Map<String, Object>> rows =
+                    jdbcTemplate.queryForList("SELECT * FROM audit_log WHERE event_time < ? ORDER BY seq ASC", cutoff);
+            if (rows.isEmpty()) return 0;
+            String dir = appSettings.getString("cert.monitor.audit.archive-dir", "logs/audit-archive");
+            java.nio.file.Path p = java.nio.file.Path.of(dir, "audit-" + cutoff.substring(0, 10) + ".jsonl");
+            if (p.getParent() != null) java.nio.file.Files.createDirectories(p.getParent());
+            StringBuilder sb = new StringBuilder();
+            for (java.util.Map<String, Object> r : rows) {
+                sb.append('{');
+                boolean first = true;
+                for (var e : r.entrySet()) {
+                    if (!first) sb.append(',');
+                    first = false;
+                    sb.append('"').append(e.getKey()).append("\":");
+                    Object v = e.getValue();
+                    if (v == null) sb.append("null");
+                    else if (v instanceof Number || v instanceof Boolean) sb.append(v);
+                    else sb.append('"').append(v.toString().replace("\\", "\\\\").replace("\"", "\\\"")
+                            .replace("\n", " ").replace("\r", " ")).append('"');
+                }
+                sb.append("}").append(System.lineSeparator());
+            }
+            java.nio.file.Files.writeString(p, sb.toString(), java.nio.charset.StandardCharsets.UTF_8,
+                    java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.APPEND);
+            return rows.size();
+        } catch (Exception e) {
+            log.warn("Audit arşivleme başarısız (silme yine yapılacak): {}", e.getMessage());
+            return 0;
         }
     }
 
@@ -1324,6 +1376,8 @@ public class SchedulerService {
             int port = inv.getPort() != null ? inv.getPort() : 443;
             try {
                 Map<String, Object> r = entry.getValue().get();
+                activityLog.recordCheck(ActivityLogService.UPTIME, null, inv.getDomain(),
+                        inv.getDomain() + ":" + port, inv.getTeamId(), false, "scheduler", r);
                 sweep.add(new MonitoringOutageService.SweepItem(
                         EscalationService.TYPE_ACCESSIBILITY, inv.getDomain(), String.valueOf(port),
                         "up".equals(r.get("status")), (String) r.get("error"),
@@ -1482,6 +1536,8 @@ public class SchedulerService {
         } catch (Exception e) {
             log.warn("Port kaydı yazılamadı: {}:{} — {}", m.getHost(), m.getPort(), e.getMessage());
         }
+        activityLog.recordCheck(ActivityLogService.PORT, m.getId(), m.getName(),
+                m.getHost() + ":" + m.getPort(), m.getTeamId(), false, "scheduler", r);
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("status", open ? "up" : "down");
         out.put("error", r.get("error"));
@@ -1634,6 +1690,9 @@ public class SchedulerService {
         } catch (Exception e) {
             log.warn("Keyword kaydı yazılamadı: {} — {}", m.getUrl(), e.getMessage());
         }
+        r.put("ok", ok);   // aktivite özeti için sağlıklı-mı bayrağı (found + adet koşulu)
+        activityLog.recordCheck(ActivityLogService.KEYWORD, m.getId(), m.getName(),
+                m.getUrl(), m.getTeamId(), false, "scheduler", r);
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("status", ok ? "up" : "down");
         out.put("error", r.get("error"));
@@ -1731,6 +1790,8 @@ public class SchedulerService {
         } catch (Exception e) {
             log.warn("HTTP kaydı yazılamadı: {} — {}", m.getUrl(), e.getMessage());
         }
+        activityLog.recordCheck(ActivityLogService.HTTP, m.getId(), m.getName(),
+                m.getUrl(), m.getTeamId(), false, "scheduler", r);
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("status", ok ? "up" : "down");
         out.put("error", r.get("error"));
@@ -2327,6 +2388,8 @@ public class SchedulerService {
         } catch (Exception e) {
             log.warn("Ping kaydı yazılamadı: {} — {}", m.getHost(), e.getMessage());
         }
+        activityLog.recordCheck(ActivityLogService.PING, m.getId(), m.getName(),
+                m.getHost(), m.getTeamId(), false, "scheduler", r);
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("status", (up || na) ? "up" : "down");
         out.put("error", r.get("error"));
@@ -2423,6 +2486,8 @@ public class SchedulerService {
                 record.setTtl(r.get("ttl") instanceof Number tn ? tn.longValue() : null);
                 record.setResponseMs(r.get("response_ms") instanceof Number rn ? rn.longValue() : null);
                 dnsRecordRepo.save(record);
+                activityLog.recordCheck(ActivityLogService.DNS, m.getId(), m.getName(),
+                        m.getDomain() + " " + m.getRecordType(), m.getTeamId(), false, "scheduler", r);
 
                 Map<String, Object> failCtx = new LinkedHashMap<>();
                 failCtx.put("record_type", m.getRecordType());

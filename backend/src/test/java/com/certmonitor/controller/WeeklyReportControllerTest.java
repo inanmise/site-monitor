@@ -271,7 +271,7 @@ class WeeklyReportControllerTest {
                 .andExpect(jsonPath("$.message").value("Deleted"));
 
         org.mockito.Mockito.verify(auditService).recordAction(
-                eq("WEEKLY_REPORT_DELETE"), any(), any(),
+                eq("WEEKLY_REPORT_DELETE"), any(), any(jakarta.servlet.http.HttpServletRequest.class),
                 eq("WEEKLY_REPORT"), eq("5"), contains("2026-W24"));
     }
 
@@ -308,7 +308,7 @@ class WeeklyReportControllerTest {
                 .andExpect(jsonPath("$.data.status").value("DRAFT"));
 
         org.mockito.Mockito.verify(auditService).recordAction(
-                eq("WEEKLY_REPORT_REOPEN"), any(), any(),
+                eq("WEEKLY_REPORT_REOPEN"), any(), any(jakarta.servlet.http.HttpServletRequest.class),
                 eq("WEEKLY_REPORT"), eq("5"), contains("2026-W24"));
     }
 
@@ -334,7 +334,7 @@ class WeeklyReportControllerTest {
                 .andExpect(jsonPath("$.mail_status").value("SENT"));
 
         org.mockito.Mockito.verify(auditService).recordAction(
-                eq("WEEKLY_REPORT_RESEND"), any(), any(),
+                eq("WEEKLY_REPORT_RESEND"), any(), any(jakarta.servlet.http.HttpServletRequest.class),
                 eq("WEEKLY_REPORT"), eq("5"), contains("SENT"));
     }
 
@@ -371,7 +371,7 @@ class WeeklyReportControllerTest {
 
         org.mockito.Mockito.verify(reminderService).sendFridayReminders();
         org.mockito.Mockito.verify(auditService).recordAction(
-                eq("WEEKLY_REPORT_REMINDER_TRIGGER"), any(), any(),
+                eq("WEEKLY_REPORT_REMINDER_TRIGGER"), any(), any(jakarta.servlet.http.HttpServletRequest.class),
                 eq("WEEKLY_REPORT"), eq("-"), contains("\"sent\":2"));
     }
 }
