@@ -620,71 +620,7 @@ public class CertificateService {
         return result;
     }
 
-    /**
-     * Returns check runs from the last {@code hours} hours, newest first.
-     * When teamId is non-null only runs containing that team's domains are included.
-     */
-    /** Aktivite log için en fazla bu kadar kontrol satırı belleğe alınır (OOM koruması). */
-    private static final int ACTIVITY_LOG_MAX_ROWS = 20_000;
-
-    public List<Map<String, Object>> getActivityLog(int hours, java.util.Collection<Long> teamIds) {
-        String cutoff = ISO.format(Instant.now().minus(hours, ChronoUnit.HOURS));
-        List<CertificateCheck> checks = checkRepo.findByCheckedAtAfterLimited(cutoff, ACTIVITY_LOG_MAX_ROWS);
-
-        if (teamIds != null) {
-            Set<String> teamDomains = getTeamDomains(teamIds);
-            checks = checks.stream().filter(c -> teamDomains.contains(c.getDomain())).collect(Collectors.toList());
-        }
-
-        // Group by runId preserving DESC order (newest run first)
-        LinkedHashMap<String, List<CertificateCheck>> grouped = new LinkedHashMap<>();
-        for (CertificateCheck c : checks) {
-            String key = c.getRunId() != null ? c.getRunId() : "unknown";
-            grouped.computeIfAbsent(key, k -> new ArrayList<>()).add(c);
-        }
-
-        List<Map<String, Object>> runs = new ArrayList<>();
-        for (Map.Entry<String, List<CertificateCheck>> entry : grouped.entrySet()) {
-            List<CertificateCheck> batch = entry.getValue();
-
-            long errCount  = batch.stream().filter(c -> "error".equals(c.getStatus())).count();
-            long warnCount = batch.stream().filter(c -> Boolean.TRUE.equals(c.getWarning())
-                                                        && !"error".equals(c.getStatus())).count();
-            long okCount   = batch.size() - errCount - warnCount;
-
-            // Run start time = earliest checkedAt in the batch
-            String runTime = batch.stream()
-                    .map(CertificateCheck::getCheckedAt)
-                    .filter(Objects::nonNull)
-                    .min(Comparator.naturalOrder())
-                    .orElse("");
-
-            List<Map<String, Object>> entries = batch.stream()
-                    .sorted(Comparator.comparing(c -> c.getDomain().toLowerCase()))
-                    .map(c -> {
-                        Map<String, Object> e = new LinkedHashMap<>();
-                        e.put("domain",         c.getDomain());
-                        e.put("status",         c.getStatus());
-                        e.put("warning",        c.getWarning());
-                        e.put("days_remaining", c.getDaysRemaining());
-                        e.put("not_after",      c.getNotAfter());
-                        e.put("error",          c.getError());
-                        e.put("checked_at",     c.getCheckedAt());
-                        return e;
-                    }).toList();
-
-            Map<String, Object> run = new LinkedHashMap<>();
-            run.put("run_id",  entry.getKey());
-            run.put("run_time", runTime);
-            run.put("total",   batch.size());
-            run.put("ok",      okCount);
-            run.put("warning", warnCount);
-            run.put("error",   errCount);
-            run.put("entries", entries);
-            runs.add(run);
-        }
-        return runs;
-    }
+    // (getActivityLog kaldırıldı — birleşik activity_log / ActivityController onun yerini aldı; ölü koddu.)
 
     public List<Map<String, Object>> getRenewalAdviceForTeams(java.util.Collection<Long> teamIds) {
         if (teamIds == null) return getRenewalAdvice();

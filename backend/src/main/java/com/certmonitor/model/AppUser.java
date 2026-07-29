@@ -111,6 +111,9 @@ public class AppUser {
     @ElementCollection(fetch = FetchType.EAGER)
     @CollectionTable(name = "app_user_teams", joinColumns = @JoinColumn(name = "user_id"))
     @Column(name = "team_id")
+    // findAll() liste yollarında (UserDirectory, UserActivity) her satır için ayrı koleksiyon
+    // fetch'i (N+1) yerine tek IN-sorgusuyla toplu getir.
+    @org.hibernate.annotations.BatchSize(size = 100)
     private Set<Long> teamIds = new LinkedHashSet<>();
 
     @Column(nullable = false)

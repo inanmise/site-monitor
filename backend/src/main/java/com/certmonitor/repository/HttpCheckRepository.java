@@ -20,8 +20,10 @@ public interface HttpCheckRepository extends JpaRepository<HttpCheck, Long> {
     List<HttpCheck> findRecentByMonitorIdSince(@Param("id") Long id, @Param("since") String since, @Param("limit") int limit);
 
     /** Her monitör için en güncel kontrol — tek toplu sorgu (N+1 önleme). */
-    @Query("SELECT r FROM HttpCheck r WHERE r.id IN "
-         + "(SELECT MAX(r2.id) FROM HttpCheck r2 GROUP BY r2.monitorId)")
+    // LATERAL join: monitör başına tek index-seek (full-scan yerine).
+    @Query(value = "SELECT c.* FROM http_monitors m CROSS JOIN LATERAL "
+         + "(SELECT * FROM http_checks r WHERE r.monitor_id = m.id ORDER BY r.checked_at DESC LIMIT 1) c",
+           nativeQuery = true)
     List<HttpCheck> findLatestPerMonitor();
 
     long countByMonitorIdAndCheckedAtGreaterThanEqual(Long monitorId, String since);

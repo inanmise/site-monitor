@@ -145,7 +145,15 @@ public final class AppSettingsCatalog {
         new Setting("cert.monitor.failed-login.cooldown-minutes",                 "login-anomaly", Type.INT),
         new Setting("cert.monitor.failed-login.resolved-email-enabled",           "login-anomaly", Type.BOOL),
         new Setting("cert.monitor.failed-login.alert-recipients",                 "login-anomaly", Type.CSV),
-        new Setting("cert.monitor.failed-login.retention-days",                   "login-anomaly", Type.INT)
+        new Setting("cert.monitor.failed-login.retention-days",                   "login-anomaly", Type.INT),
+        // ── DB ölçek/retention (gece temizlik) — büyük tabloda batch'li silme + eksik-tablo retention ──
+        new Setting("cert.monitor.retention.purge-batch-size",        "retention", Type.INT),
+        new Setting("cert.monitor.network-outage.retention-days",     "retention", Type.INT),
+        new Setting("cert.monitor.incident.retention-days",           "retention", Type.INT),
+        new Setting("cert.monitor.audit.archive-retention-days",      "retention", Type.INT),
+        new Setting("cert.monitor.rollup.lookback-days",              "retention", Type.INT),
+        new Setting("cert.monitor.rollup.retention-days",             "retention", Type.INT),
+        new Setting("cert.monitor.db.growth-warn-rows",               "retention", Type.INT)
     );
 
     public static Setting byKey(String key) {

@@ -19,9 +19,12 @@ public interface PortCheckRepository extends JpaRepository<PortCheck, Long> {
     @Query("SELECT pc FROM PortCheck pc WHERE pc.monitorId = :id AND pc.checkedAt >= :since ORDER BY pc.checkedAt DESC LIMIT :limit")
     List<PortCheck> findRecentByMonitorIdSince(@Param("id") Long id, @Param("since") String since, @Param("limit") int limit);
 
-    /** Her monitör için en güncel kontrol — port listesinde monitör başına sorgu yerine tek toplu sorgu. */
-    @Query("SELECT pc FROM PortCheck pc WHERE pc.id IN "
-         + "(SELECT MAX(pc2.id) FROM PortCheck pc2 GROUP BY pc2.monitorId)")
+    /** Her monitör için en güncel kontrol. Eski "id IN (SELECT MAX(id) GROUP BY monitor_id)" ve
+     *  DISTINCT ON TÜM tabloyu tarıyordu (898k satırda ~3.5 sn). LATERAL join küçük monitör tablosunu
+     *  gezip her monitör için (monitor_id, checked_at) index'iyle tek backward-seek yapar → ~0.2 ms. */
+    @Query(value = "SELECT c.* FROM port_monitors m CROSS JOIN LATERAL "
+         + "(SELECT * FROM port_checks pc WHERE pc.monitor_id = m.id ORDER BY pc.checked_at DESC LIMIT 1) c",
+           nativeQuery = true)
     List<PortCheck> findLatestPerMonitor();
     List<PortCheck> findByMonitorIdAndCheckedAtGreaterThanEqualOrderByCheckedAtAsc(Long monitorId, String since);
 

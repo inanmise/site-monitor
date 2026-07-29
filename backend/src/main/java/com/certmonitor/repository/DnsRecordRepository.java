@@ -21,8 +21,10 @@ public interface DnsRecordRepository extends JpaRepository<DnsRecord, Long> {
     List<DnsRecord> findRecentByMonitorIdSince(@Param("id") Long id, @Param("since") String since, @Param("limit") int limit);
 
     /** Her monitör için en güncel kayıt — DNS listesinde monitör başına sorgu yerine tek toplu sorgu. */
-    @Query("SELECT r FROM DnsRecord r WHERE r.id IN "
-         + "(SELECT MAX(r2.id) FROM DnsRecord r2 GROUP BY r2.monitorId)")
+    // LATERAL join: monitör başına tek index-seek (full-scan yerine).
+    @Query(value = "SELECT c.* FROM dns_monitors m CROSS JOIN LATERAL "
+         + "(SELECT * FROM dns_records r WHERE r.monitor_id = m.id ORDER BY r.checked_at DESC LIMIT 1) c",
+           nativeQuery = true)
     List<DnsRecord> findLatestPerMonitor();
     List<DnsRecord> findByMonitorIdAndCheckedAtGreaterThanEqualOrderByCheckedAtAsc(Long monitorId, String since);
     List<DnsRecord> findByMonitorIdAndCheckedAtGreaterThanEqualOrderByCheckedAtDesc(Long monitorId, String since);

@@ -140,6 +140,25 @@ class SchedulerServiceTest {
     }
 
     @Test
+    @DisplayName("safeDeleteBatched: batch<size dönene dek döngü, sonra ANALYZE (toplam doğru)")
+    void safeDeleteBatched_loopsUntilDrainedThenAnalyze() {
+        // batch = getInt(purge-batch-size, 10000) → 10000 (fallback). Dilimler: 10000, 10000, 3000 → dur.
+        when(jdbcTemplate.update(anyString(), (Object[]) any())).thenReturn(10000, 10000, 3000);
+        int total = scheduler.safeDeleteBatched("port_checks", "checked_at < ?", "2020-01-01T00:00:00");
+        assertThat(total).isEqualTo(23000);
+        verify(jdbcTemplate, times(3)).update(anyString(), (Object[]) any());
+        verify(jdbcTemplate).execute("ANALYZE port_checks");
+    }
+
+    @Test
+    @DisplayName("rollupDailyStats: 5 tip (port/ping/keyword/http/uptime) için upsert çalıştırır")
+    void rollupDailyStats_runsAllTypes() {
+        when(jdbcTemplate.update(anyString(), anyString(), anyString())).thenReturn(3);
+        scheduler.rollupDailyStats();
+        verify(jdbcTemplate, times(5)).update(anyString(), anyString(), anyString());   // 5 monitör tipi (sql, from, to)
+    }
+
+    @Test
     @DisplayName("pruneMonitorCheckState: canlı sette olmayan 'type:id' anahtarları atılır, olanlar kalır")
     @SuppressWarnings("unchecked")
     void pruneMonitorCheckState_removesStaleKeys() {

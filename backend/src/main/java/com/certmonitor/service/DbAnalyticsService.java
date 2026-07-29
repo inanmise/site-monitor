@@ -65,7 +65,9 @@ public class DbAnalyticsService {
         }
     }
 
-    /** Tek payload — frontend tek çağrı yapar; days = pencere (1/7/30). */
+    /** Tek payload — frontend tek çağrı yapar; days = pencere (1/7/30).
+     *  60 sn cache (pencereye göre): pg_stat çağrıları + sql_query_history taraması her açılışta değil. */
+    @org.springframework.cache.annotation.Cacheable("db-analytics-overview")
     public Map<String, Object> getOverview(int days) {
         int win = days <= 1 ? 1 : days >= 30 ? 30 : 7;
         String since = ISO.format(Instant.now().minusSeconds((long) win * DAY));

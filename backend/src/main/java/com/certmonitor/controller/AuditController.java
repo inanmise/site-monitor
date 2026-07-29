@@ -159,35 +159,9 @@ public class AuditController {
         requireAuditAccess(session);
         permissionService.require(session, "audit_log.read", "view");
 
-        String last24h = ISO.format(Instant.now().minusSeconds(86_400));
-        String last7d  = ISO.format(Instant.now().minusSeconds(7 * 86_400L));
-        String last14d = ISO.format(Instant.now().minusSeconds(14 * 86_400L));
-
-        Map<String, Object> stats = new LinkedHashMap<>();
-        stats.put("total_24h",        auditLogRepo.countEventsSince(last24h));
-        stats.put("anomalies_24h",    auditLogRepo.countAnomaliesSince(last24h));
-        stats.put("failed_logins_24h",auditLogRepo.countFailedLoginsSince(last24h));
-        stats.put("total_7d",         auditLogRepo.countEventsSince(last7d));
-        stats.put("anomalies_7d",     auditLogRepo.countAnomaliesSince(last7d));
-        stats.put("failed_logins_7d", auditLogRepo.countFailedLoginsSince(last7d));
-        // Dağılımlar (özet panel + grafikler)
-        stats.put("by_event_type_7d", toKvList(auditLogRepo.countByEventTypeSince(last7d)));
-        stats.put("by_outcome_7d",    toKvList(auditLogRepo.countByOutcomeSince(last7d)));
-        stats.put("top_actors_7d",    toKvList(auditLogRepo.topActorsSince(last7d, PageRequest.of(0, 10))));
-        stats.put("by_day_14d",       toKvList(auditLogRepo.countByDaySince(last14d)));
-
-        return ok(Map.of("data", stats));
-    }
-
-    private static List<Map<String, Object>> toKvList(List<Object[]> rows) {
-        List<Map<String, Object>> out = new ArrayList<>();
-        for (Object[] r : rows) {
-            Map<String, Object> m = new LinkedHashMap<>();
-            m.put("key", r[0] == null ? "" : r[0].toString());
-            m.put("count", ((Number) r[1]).longValue());
-            out.add(m);
-        }
-        return out;
+        // Stat üretimi AuditService.buildStats()'a taşındı (60 sn Caffeine cache — audit_log
+        // ölçeklenince her açılışta 10 aggregate çalıştırmamak için). Auth burada kalır, cache'lenmez.
+        return ok(Map.of("data", auditService.buildStats()));
     }
 
     @GetMapping("/audit/weak-algorithms")

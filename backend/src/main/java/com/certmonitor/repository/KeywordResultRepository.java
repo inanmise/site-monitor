@@ -21,8 +21,10 @@ public interface KeywordResultRepository extends JpaRepository<KeywordResult, Lo
     List<KeywordResult> findRecentByMonitorIdSince(@Param("id") Long id, @Param("since") String since, @Param("limit") int limit);
 
     /** Her monitör için en güncel kontrol — tek toplu sorgu (N+1 önleme). */
-    @Query("SELECT r FROM KeywordResult r WHERE r.id IN "
-         + "(SELECT MAX(r2.id) FROM KeywordResult r2 GROUP BY r2.monitorId)")
+    // LATERAL join: monitör başına tek index-seek (full-scan yerine).
+    @Query(value = "SELECT c.* FROM keyword_monitors m CROSS JOIN LATERAL "
+         + "(SELECT * FROM keyword_results r WHERE r.monitor_id = m.id ORDER BY r.checked_at DESC LIMIT 1) c",
+           nativeQuery = true)
     List<KeywordResult> findLatestPerMonitor();
 
     List<KeywordResult> findByMonitorIdAndCheckedAtGreaterThanEqualOrderByCheckedAtDesc(Long monitorId, String since);

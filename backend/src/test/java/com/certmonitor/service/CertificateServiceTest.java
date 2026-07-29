@@ -472,24 +472,7 @@ class CertificateServiceTest {
         verify(checkRepo).findTopByDomainOrderByCheckedAtDesc("example.com", 30);
     }
 
-    // ── getActivityLog ────────────────────────────────────────────────────────
-
-    @Test
-    @DisplayName("getActivityLog groups checks by runId")
-    void getActivityLog_groupsByRunId() {
-        CertificateCheck c1 = check("run-1", "a.com", "valid");
-        CertificateCheck c2 = check("run-1", "b.com", "valid");
-        CertificateCheck c3 = check("run-2", "c.com", "error");
-        CertificateCheck c4 = check("run-2", "d.com", "valid");
-        when(checkRepo.findByCheckedAtAfterLimited(any(), anyInt())).thenReturn(List.of(c1, c2, c3, c4));
-
-        List<Map<String, Object>> runs = service.getActivityLog(24, null);
-
-        assertThat(runs).hasSize(2);
-        // Each run group has its runId
-        List<String> runIds = runs.stream().map(r -> (String) r.get("run_id")).toList();
-        assertThat(runIds).containsExactlyInAnyOrder("run-1", "run-2");
-    }
+    // (getActivityLog testi kaldırıldı — metot ölü koddu, silindi.)
 
     // ── getRenewalAdviceForTeam ───────────────────────────────────────────────
 
