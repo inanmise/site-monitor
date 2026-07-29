@@ -25,7 +25,7 @@ import java.util.Map;
 public class ActivityLogService {
 
     public static final String CERT = "CERT", UPTIME = "UPTIME", HTTP = "HTTP", PORT = "PORT",
-            PING = "PING", DNS = "DNS", KEYWORD = "KEYWORD", DOMAIN = "DOMAIN";
+            PING = "PING", DNS = "DNS", KEYWORD = "KEYWORD", DOMAIN = "DOMAIN", PAGE = "PAGE";
 
     private static final DateTimeFormatter ISO =
             DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
@@ -119,6 +119,17 @@ public class ActivityLogService {
                 boolean success = truthy(r.get("success"));
                 a.setResultStatus(success ? "SUCCESS" : (error != null ? errStatus(errorClass) : "ERROR"));
                 a.setResultSummary((success ? "ok" : "fail") + (ms != null ? " · " + ms + "ms" : ""));
+            }
+            case PAGE -> {
+                String status = str(r.get("status"));   // OK | DEGRADED | DOWN
+                Integer broken = asInt(r.get("broken_resources"));
+                Integer mixed = asInt(r.get("mixed_content_count"));
+                a.setResultStatus("DOWN".equalsIgnoreCase(status) ? (error != null ? errStatus(errorClass) : "ERROR")
+                        : ("DEGRADED".equalsIgnoreCase(status) ? "WARNING" : "SUCCESS"));
+                String detail = ("DOWN".equalsIgnoreCase(status))
+                        ? "yüklenemedi"
+                        : ((broken != null ? broken : 0) + " kırık" + (mixed != null && mixed > 0 ? " · " + mixed + " mixed" : ""));
+                a.setResultSummary(detail + (ms != null ? " · " + ms + "ms" : ""));
             }
             default -> a.setResultStatus(error != null ? "ERROR" : "SUCCESS");
         }

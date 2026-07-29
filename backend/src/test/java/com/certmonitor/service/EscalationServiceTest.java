@@ -1040,6 +1040,62 @@ class EscalationServiceTest {
     }
 
     @Test
+    @DisplayName("processConfirmedOutage PAGE_DOWN → CRITICAL, subject 'Sayfa Yüklenemiyor'")
+    void processConfirmedOutage_pageDown_critical() {
+        String domain = "https://page.example.com/";
+        Map<String, Object> ctx = new LinkedHashMap<>();
+        ctx.put("team_id", 7L);
+        ctx.put("url", domain);
+        ctx.put("http_status", 500);
+        ctx.put("first_failure_at", "2026-06-24T00:00:00");
+        when(alertEventRepo.findOpenAlert(domain, EscalationService.TYPE_PAGE_DOWN)).thenReturn(Optional.empty());
+        when(alertEventRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        service.processConfirmedOutage(domain, EscalationService.TYPE_PAGE_DOWN, "CRITICAL", ctx);
+
+        ArgumentCaptor<AlertEvent> cap = ArgumentCaptor.forClass(AlertEvent.class);
+        verify(alertEventRepo, atLeast(1)).save(cap.capture());
+        AlertEvent saved = cap.getAllValues().get(0);
+        assertThat(saved.getAlertType()).isEqualTo(EscalationService.TYPE_PAGE_DOWN);
+        assertThat(saved.getAlertLevel()).isEqualTo("CRITICAL");
+        assertThat(saved.getTeamId()).isEqualTo(7L);
+    }
+
+    @Test
+    @DisplayName("processConfirmedOutage PAGE_INTEGRITY → HIGH, bütünlük detayı mesajda")
+    void processConfirmedOutage_pageIntegrity_high() {
+        String domain = "https://page2.example.com/";
+        Map<String, Object> ctx = new LinkedHashMap<>();
+        ctx.put("team_id", 8L);
+        ctx.put("url", domain);
+        ctx.put("detail", "3 kırık, 1 mixed content");
+        ctx.put("first_failure_at", "2026-06-24T00:00:00");
+        when(alertEventRepo.findOpenAlert(domain, EscalationService.TYPE_PAGE_INTEGRITY)).thenReturn(Optional.empty());
+        when(alertEventRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        service.processConfirmedOutage(domain, EscalationService.TYPE_PAGE_INTEGRITY, "HIGH", ctx);
+
+        ArgumentCaptor<AlertEvent> cap = ArgumentCaptor.forClass(AlertEvent.class);
+        verify(alertEventRepo, atLeast(1)).save(cap.capture());
+        assertThat(cap.getAllValues().get(0).getAlertType()).isEqualTo(EscalationService.TYPE_PAGE_INTEGRITY);
+        assertThat(cap.getAllValues().get(0).getAlertLevel()).isEqualTo("HIGH");
+    }
+
+    @Test
+    @DisplayName("resolveOrphanedPageAlerts: eşleşen monitörü olmayan açık PAGE alarmını öksüz sayar")
+    void resolveOrphanedPageAlerts_closesOrphans() {
+        AlertEvent orphan = new AlertEvent();
+        orphan.setDomain("https://gone.example.com/");
+        orphan.setAlertType(EscalationService.TYPE_PAGE_DOWN);
+        orphan.setResolved(false); orphan.setAcknowledged(false);
+        when(alertEventRepo.findAllOpenOrderBySeverity()).thenReturn(List.of(orphan));
+
+        int n = service.resolveOrphanedPageAlerts(java.util.Set.of("https://live.example.com/"));
+
+        assertThat(n).isEqualTo(1);   // gone.example.com hiçbir mevcut URL'ye karşılık gelmiyor → öksüz
+    }
+
+    @Test
     @DisplayName("processConfirmedOutage: domain bakım penceresinde → alarm AÇILMAZ + hiçbir kanaldan bildirim gitmez")
     void processConfirmedOutage_underMaintenance_suppressesAlertAndNotification() {
         String domain = "under-maintenance.example.com";

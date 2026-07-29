@@ -717,6 +717,32 @@ export const api = {
       return request(`/monitoring/keyword/${id}/history${q ? `?${q}` : ''}`)
     },
 
+    // Page Integrity (Sayfa Bütünlüğü) — 9. tür
+    getPageMonitors:   () => request('/monitoring/page'),
+    createPageMonitor: (data) => request('/monitoring/page', { method: 'POST', body: JSON.stringify(data) }),
+    updatePageMonitor: (id, data) => request(`/monitoring/page/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+    deletePageMonitor: (id) => request(`/monitoring/page/${id}`, { method: 'DELETE' }),
+    triggerPageCheck:  (id) => request(`/monitoring/page/${id}/check`, { method: 'POST' }),
+    testPage:          (data) => request('/monitoring/page/test', { method: 'POST', body: JSON.stringify(data) }),
+    getPageResponseSeries: (id, { from, to, days } = {}) => {
+      const q = new URLSearchParams(
+        Object.fromEntries(Object.entries({ from, to, days }).filter(([, v]) => v != null && v !== '')),
+      ).toString()
+      return request(`/monitoring/page/${id}/response-series${q ? `?${q}` : ''}`)
+    },
+    getPageHistory:    (id, { days, limit } = {}) => {
+      const q = new URLSearchParams(
+        Object.fromEntries(Object.entries({ days, limit }).filter(([, v]) => v != null && v !== '')),
+      ).toString()
+      return request(`/monitoring/page/${id}/history${q ? `?${q}` : ''}`)
+    },
+    getPageIssues:     (id, { issueType, days, limit } = {}) => {
+      const q = new URLSearchParams(
+        Object.fromEntries(Object.entries({ issueType, days, limit }).filter(([, v]) => v != null && v !== '')),
+      ).toString()
+      return request(`/monitoring/page/${id}/issues${q ? `?${q}` : ''}`)
+    },
+
     // HTTP / Website
     getHttpMonitors:   () => request('/monitoring/http'),
     createHttpMonitor: (data) => request('/monitoring/http', { method: 'POST', body: JSON.stringify(data) }),

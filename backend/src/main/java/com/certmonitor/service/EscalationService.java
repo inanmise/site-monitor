@@ -132,6 +132,15 @@ public class EscalationService {
             || TYPE_DOMAINMON_STATUS.equals(t) || TYPE_DOMAINMON_CHANGED.equals(t);
     }
 
+    /** Sayfa-bütünlüğü (9. tür) alarmları: DOWN = ana sayfa alınamıyor (CRITICAL); INTEGRITY = kırık kaynak /
+     *  mixed content (DEGRADED, HIGH). İkisi de Page sweep'i tarafından, ayrı confirmation/recovery yaşam
+     *  döngüleriyle yönetilir (KEYWORD'ün çok-alarm-tipli deseniyle aynı). */
+    public static final String TYPE_PAGE_DOWN = "PAGE_DOWN";
+    public static final String TYPE_PAGE_INTEGRITY = "PAGE_INTEGRITY";
+    public static boolean isPage(String t) {
+        return TYPE_PAGE_DOWN.equals(t) || TYPE_PAGE_INTEGRITY.equals(t);
+    }
+
     /** İzleme kaynaklı alarm tipleri — kadanslarının sahibi ilgili sweep'lerdir;
      *  cert sweep'inin auto-resolve'u ve startup catch-up bunlara dokunmaz. */
     public static final Set<String> MONITORING_ALERT_TYPES =
@@ -139,7 +148,8 @@ public class EscalationService {
                    TYPE_DNS_SLOW, TYPE_DNS_UNEXPECTED, TYPE_DNS_INCONSISTENT,
                    TYPE_KEYWORD, TYPE_PING_DOWN, TYPE_HTTP_DOWN, TYPE_HTTP_SSL, TYPE_DOMAIN_EXPIRY,
                    TYPE_DOMAINMON_EXPIRY, TYPE_DOMAINMON_UNKNOWN, TYPE_DOMAINMON_STATUS, TYPE_DOMAINMON_CHANGED,
-                   TYPE_KEYWORD_SLOW, TYPE_KEYWORD_SSL, TYPE_KEYWORD_DOMAIN_EXPIRY, TYPE_PORT_SLOW);
+                   TYPE_KEYWORD_SLOW, TYPE_KEYWORD_SSL, TYPE_KEYWORD_DOMAIN_EXPIRY, TYPE_PORT_SLOW,
+                   TYPE_PAGE_DOWN, TYPE_PAGE_INTEGRITY);
 
     /** Sertifika kaynaklı alarm tipleri — cert sweep'inin auto-resolve kapsamı.
      *  İzleme tipleri bilinçli olarak DIŞINDA: sertifika kontrolünün düzelmesi
@@ -150,7 +160,8 @@ public class EscalationService {
     /** "Erişilemez/çöktü" (DOWN) alarm tipleri — alarm fırtınası (storm) toplaması YALNIZ bunları sayar.
      *  Slow/SSL/expiry/changed/domainmon/cert bilinçli DIŞINDA (bunlar kesinti değildir). */
     public static final Set<String> DOWN_ALERT_TYPES =
-            Set.of(TYPE_ACCESSIBILITY, TYPE_HTTP_DOWN, TYPE_PORT_DOWN, TYPE_PING_DOWN, TYPE_DNS_FAILURE, TYPE_KEYWORD);
+            Set.of(TYPE_ACCESSIBILITY, TYPE_HTTP_DOWN, TYPE_PORT_DOWN, TYPE_PING_DOWN, TYPE_DNS_FAILURE, TYPE_KEYWORD,
+                   TYPE_PAGE_DOWN);
 
     public void processResults(List<Map<String, Object>> results) {
         AlertThreshold threshold = thresholdRepo.findFirstByActiveTrue()
@@ -546,6 +557,24 @@ public class EscalationService {
         return orphanDomains.size();
     }
 
+    /** Öksüz sayfa-bütünlüğü alarmı temizliği — hiçbir page monitör URL'sine karşılık gelmeyen açık
+     *  PAGE_DOWN/PAGE_INTEGRITY alarmlarını sessizce kapatır (url rename/silme sonrası). Kimlik = url. */
+    public int resolveOrphanedPageAlerts(Set<String> existingUrls) {
+        if (existingUrls == null) return 0;
+        Set<String> orphanDomains = new HashSet<>();
+        for (AlertEvent e : alertEventRepo.findAllOpenOrderBySeverity()) {
+            if (!isPage(e.getAlertType())) continue;
+            if (e.getDomain() == null || existingUrls.contains(e.getDomain())) continue;  // eşleşen monitör var → dokunma
+            orphanDomains.add(e.getDomain());
+        }
+        for (String d : orphanDomains) {
+            resolveOpenAlertsSilently(d, Set.of(TYPE_PAGE_DOWN, TYPE_PAGE_INTEGRITY),
+                    "Sistem (öksüz alarm — eşleşen sayfa izlemesi yok)");
+        }
+        if (!orphanDomains.isEmpty()) log.info("🧹 Öksüz sayfa alarmı temizlendi: {} domain {}", orphanDomains.size(), orphanDomains);
+        return orphanDomains.size();
+    }
+
     /** Öksüz Domain-izleme alarmı temizliği — hiçbir domain monitörüne karşılık gelmeyen açık
      *  DOMAINMON_* alarmlarını sessizce kapatır (domain rename/silme sonrası). Kimlik = kayıtlı domain. */
     public int resolveOrphanedDomainMonAlerts(Set<String> existingDomains) {
@@ -808,6 +837,21 @@ public class EscalationService {
                         (days != null ? " — bitişe " + days + " gün" : (detail != null ? " — " + detail : "")) + ". " +
                         "Sertifika yenilendiğinde/düzeldiğinde alarm otomatik kapanır.";
             }
+            case TYPE_PAGE_DOWN -> {
+                Object url = ctx.getOrDefault("url", domain);
+                Object status = ctx.get("http_status");
+                return "KRİTİK: " + url + " sayfası yüklenemiyor" +
+                        (status != null ? " (durum " + status + ")" : "") + ". " +
+                        "Ardışık doğrulama denemeleri başarısız oldu. " +
+                        "Sayfa yeniden yüklendiğinde alarm otomatik kapanacaktır.";
+            }
+            case TYPE_PAGE_INTEGRITY -> {
+                Object url = ctx.getOrDefault("url", domain);
+                Object detail = ctx.get("detail");
+                return "YÜKSEK: " + url + " sayfasında bütünlük sorunu tespit edildi" +
+                        (detail != null ? " — " + detail : " (kırık kaynak / mixed content)") + ". " +
+                        "Sorunlu kaynaklar giderildiğinde alarm otomatik kapanır.";
+            }
             case TYPE_DOMAIN_EXPIRY -> {
                 Object dom = ctx.getOrDefault("domain", domain);
                 Object days = ctx.get("domain_days_remaining");
@@ -978,6 +1022,8 @@ public class EscalationService {
                 case TYPE_PING_DOWN     -> "Erişilebilirlik (Ping)";
                 case TYPE_HTTP_DOWN     -> "HTTP/Website Erişilemez";
                 case TYPE_HTTP_SSL      -> "SSL Sertifika Sorunu";
+                case TYPE_PAGE_DOWN     -> "Sayfa Yüklenemiyor";
+                case TYPE_PAGE_INTEGRITY -> "Sayfa Bütünlüğü";
                 case TYPE_DOMAIN_EXPIRY -> "Domain Süre Bitişi";
                 case TYPE_DOMAINMON_EXPIRY  -> "Alan Adı Süre Bitişi";
                 case TYPE_DOMAINMON_UNKNOWN -> "Alan Adı Veri Yok";
@@ -1152,6 +1198,8 @@ public class EscalationService {
             case TYPE_PING_DOWN     -> "Erişilebilirlik (Ping)";
             case TYPE_HTTP_DOWN     -> "HTTP/Website Erişilemez";
             case TYPE_HTTP_SSL      -> "SSL Sertifika Sorunu";
+            case TYPE_PAGE_DOWN     -> "Sayfa Yüklenemiyor";
+            case TYPE_PAGE_INTEGRITY -> "Sayfa Bütünlüğü Sorunu";
             case TYPE_DOMAIN_EXPIRY -> "Domain Süre Bitişi";
             case TYPE_DOMAINMON_EXPIRY  -> "Alan Adı Süre Bitişi";
             case TYPE_DOMAINMON_UNKNOWN -> "Alan Adı Veri Yok";
@@ -1162,6 +1210,8 @@ public class EscalationService {
         // Konu için doğal-dil özet (typeTr'e göre daha okunur); expiry tiplerinde gün ifadesi.
         String summaryTr = switch (alertType != null ? alertType : "") {
             case TYPE_DOMAINMON_EXPIRY, TYPE_DOMAIN_EXPIRY -> daysRemaining != null ? "Alan adı " + daysRemaining + " gün içinde doluyor" : "Alan adı süre bitişi";
+            case TYPE_PAGE_DOWN     -> "Sayfa yüklenemiyor";
+            case TYPE_PAGE_INTEGRITY -> "Sayfada kırık kaynak / mixed content";
             case TYPE_DOMAINMON_UNKNOWN -> "Alan adı kayıt verisi alınamadı";
             case TYPE_DOMAINMON_STATUS  -> "Alan adı durum kodu uyarısı";
             case TYPE_DOMAINMON_CHANGED -> "Alan adı kaydı değişti";
@@ -1344,6 +1394,12 @@ public class EscalationService {
             case TYPE_HTTP_DOWN -> "KRİTİK: " + domain +
                     " adresine HTTP isteği başarısız — site erişilemez durumda. " +
                     "Erişim geri geldiğinde alarm otomatik kapanacaktır.";
+            case TYPE_PAGE_DOWN -> "KRİTİK: " + domain +
+                    " sayfası yüklenemiyor — ana içerik alınamadı. " +
+                    "Sayfa yeniden yüklendiğinde alarm otomatik kapanacaktır.";
+            case TYPE_PAGE_INTEGRITY -> "YÜKSEK: " + domain +
+                    " sayfasında bütünlük sorunu (kırık kaynak / mixed content) tespit edildi. " +
+                    "Sorunlu kaynaklar giderildiğinde alarm otomatik kapanır.";
             case TYPE_HTTP_SSL -> "YÜKSEK: " + domain +
                     " için TLS sertifikası hata veriyor ya da süresi dolmak üzere. " +
                     "Sertifika düzeldiğinde alarm otomatik kapanır.";
@@ -1410,7 +1466,7 @@ public class EscalationService {
     private static boolean isStandaloneMon(String alertType) {
         return TYPE_KEYWORD.equals(alertType) || TYPE_PING_DOWN.equals(alertType)
                 || TYPE_HTTP_DOWN.equals(alertType) || TYPE_HTTP_SSL.equals(alertType) || TYPE_DOMAIN_EXPIRY.equals(alertType)
-                || isDomainMon(alertType) || isKeywordAux(alertType);
+                || isDomainMon(alertType) || isKeywordAux(alertType) || isPage(alertType);
     }
 
     /** Domain süre-bitişi alarmında müdür (eskalasyon kontağı) da eklensin mi? Kullanıcı politikası:
