@@ -17,9 +17,7 @@ public interface CertificateCheckRepository extends JpaRepository<CertificateChe
     @Query("SELECT c FROM CertificateCheck c WHERE c.checkedAt >= :cutoff ORDER BY c.checkedAt DESC")
     List<CertificateCheck> findByCheckedAtAfter(@Param("cutoff") String cutoff);
 
-    /** Aynı sorgu, satır tavanıyla (OOM koruması) — en yeni :limit kayıt. */
-    @Query("SELECT c FROM CertificateCheck c WHERE c.checkedAt >= :cutoff ORDER BY c.checkedAt DESC LIMIT :limit")
-    List<CertificateCheck> findByCheckedAtAfterLimited(@Param("cutoff") String cutoff, @Param("limit") int limit);
+    // (findByCheckedAtAfterLimited + aktivite projeksiyonu kaldırıldı — getActivityRlog ölü koddu, silindi.)
 
     /** Domain başına özet: [domain, toplam, hata_sayısı] — cutoff'tan beri.
      *  uptime/overview için tablo-başı-döngü (domain × tüm-tablo) yerine tek gruplu sorgu. */

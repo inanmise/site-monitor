@@ -465,6 +465,19 @@ public class SchedulerService {
         // Pencere-içi açık DOWN eş sayımı (StormService.evaluate) — resolved + alert_type + created_at aralığı.
         patch("CREATE INDEX IF NOT EXISTS idx_ae_storm_scan ON alert_events(resolved, alert_type, created_at)");
         patch("CREATE INDEX IF NOT EXISTS idx_ae_storm_id ON alert_events(storm_id)");
+        // ── Büyüme/performans index'leri (DB ölçek pass 2026-07) ──
+        // Haftalık KPI + incident kapanış aralığı: resolved_at range (countByLevelResolvedBetween).
+        patch("CREATE INDEX IF NOT EXISTS idx_ae_resolved_at ON alert_events(resolved_at)");
+        // Denetim konsolu: event_type filtresi + event_time sıralı/range (findAdvanced) — tek-kolon yerine bileşik.
+        patch("CREATE INDEX IF NOT EXISTS idx_audit_type_time ON audit_log(event_type, event_time)");
+        // ── Yüksek-yazımlı tablolarda daha AGRESİF autovacuum — büyük tabloda varsayılan %20 ölü-tuple
+        //    eşiği çok seyrek vacuum + şişme (bloat) demek; %2 scale + sabit eşikle sık, küçük vacuum/analyze.
+        //    Postgres'e özgü; H2'de patch() sessiz atlar. Dış prod DB'de de çalışır (ALTER TABLE). Idempotent. ──
+        for (String t : new String[]{"port_checks", "ping_checks", "keyword_results", "http_checks",
+                "uptime_checks", "dns_records", "certificate_checks", "activity_log", "audit_log", "notification_logs"}) {
+            patch("ALTER TABLE " + t + " SET (autovacuum_vacuum_scale_factor = 0.02, autovacuum_vacuum_threshold = 5000, "
+                + "autovacuum_analyze_scale_factor = 0.02, autovacuum_analyze_threshold = 5000)");
+        }
         // USER artık kendi takımı için olay girer/düzenler — eski sistem-default'u (false) güncelle.
         // Yalnız sistem tarafından tohumlanmış (admin'in elle kapatmadığı) satırı çevirir; silme (incidents.delete)
         // TEAM_ADMIN/ADMIN'de kalır (seedMissingDefaults yeni resource'u doğru tohumlar).
@@ -534,6 +547,23 @@ public class SchedulerService {
                 last_scan_at VARCHAR(40)
             )
             """);
+
+        // ── Faz 5 (DB ölçek): günlük ROLLUP tablosu — ham kontrol serileri kısa retention'la silinse de
+        //    uzun-dönem trend (günlük up/total + yanıt süresi) burada kalır. Birleşik: monitor_key =
+        //    monitor_id (port/ping/keyword/http) veya domain (uptime). JdbcTemplate ile yazılır/okunur. ──
+        patch("""
+            CREATE TABLE IF NOT EXISTS monitor_check_daily(
+                monitor_type VARCHAR(16) NOT NULL,
+                monitor_key VARCHAR(255) NOT NULL,
+                day VARCHAR(10) NOT NULL,
+                total_checks BIGINT DEFAULT 0,
+                up_checks BIGINT DEFAULT 0,
+                avg_response_ms INTEGER,
+                max_response_ms INTEGER,
+                PRIMARY KEY (monitor_type, monitor_key, day)
+            )
+            """);
+        patch("CREATE INDEX IF NOT EXISTS idx_mcd_type_key_day ON monitor_check_daily(monitor_type, monitor_key, day)");
 
         // İzleme grubu registry'si (takım + izleme TÜRÜ bazlı grup adları) — ddl-auto entity'yi de oluşturur; bu
         // güvenlik ağı + case-insensitive UNIQUE(team_id, type, name_lower) hem PG hem H2'de (name_lower app'te lower).
@@ -726,6 +756,13 @@ public class SchedulerService {
     @Scheduled(cron = "${cert.monitor.scheduler.cleanup-cron:0 30 3 * * *}")
     public void cleanupOldLogs() {
         try {
+            // ÖNCE rollup (ham kontrol serilerini günlük özete al) — SONRA purge. Böylece ham kısa
+            // retention'la silinse de uzun-dönem trend monitor_check_daily'de korunur.
+            rollupDailyStats();
+            // monitor_check_daily kendi retention'ı (vars. 730g/2yıl) — trend uzun tutulur.
+            int mcdRetDays = Math.max(90, appSettings.getInt("cert.monitor.rollup.retention-days", 730));
+            safeDelete("DELETE FROM monitor_check_daily WHERE day < ?",
+                    ISO.format(Instant.now().minus(mcdRetDays, ChronoUnit.DAYS)).substring(0, 10));
             // Denetim: yapılandırılabilir retention (vars. 365g); silmeden ÖNCE JSONL arşiv (append-only + arşiv).
             int auditRetDays = Math.max(30, appSettings.getInt("cert.monitor.audit.retention-days", 365));
             String auditCutoff = ISO.format(Instant.now().minus(auditRetDays, ChronoUnit.DAYS));
@@ -733,20 +770,20 @@ public class SchedulerService {
             String sqlCutoff   = ISO.format(Instant.now().minus(30,  ChronoUnit.DAYS));
             String tsCutoff    = ISO.format(Instant.now().minus(180, ChronoUnit.DAYS)); // zaman serisi
             int archived = archiveAuditBeforePurge(auditCutoff);
-            int a = safeDelete("DELETE FROM audit_log          WHERE event_time  < ?", auditCutoff);
+            int a = safeDeleteBatched("audit_log", "event_time < ?", auditCutoff);
             if (a > 0) log.info("Audit retention: {} kayıt silindi (>{}g), {} arşivlendi", a, auditRetDays, archived);
             // Retention/purge job'ın kendisi de denetlenir (silme sonrası → yeni zincir ucuna yazılır).
             auditService.recordSystemEvent("AUDIT_RETENTION_PURGE", "AUDIT_LOG", "cleanup",
                     "{\"deleted\":" + a + ",\"archived\":" + archived + ",\"retention_days\":" + auditRetDays + "}");
-            int n = safeDelete("DELETE FROM notification_logs  WHERE sent_at     < ?", notifCutoff);
+            int n = safeDeleteBatched("notification_logs", "sent_at < ?", notifCutoff);
             int s = safeDelete("DELETE FROM sql_query_history  WHERE executed_at < ?", sqlCutoff);
-            int u = safeDelete("DELETE FROM uptime_checks      WHERE checked_at  < ?", tsCutoff);
-            int c = safeDelete("DELETE FROM certificate_checks WHERE checked_at  < ?", tsCutoff);
-            int p = safeDelete("DELETE FROM port_checks        WHERE checked_at  < ?", tsCutoff);
-            // keyword_results / ping_checks: 30 sn sweep kadansında en hızlı büyüyen izleme serileri;
-            // önceden HİÇ temizlenmiyordu (sınırsız büyüme). 180 gün üstünü sil (diğer serilerle aynı).
-            int kw = safeDelete("DELETE FROM keyword_results    WHERE checked_at  < ?", tsCutoff);
-            int pg = safeDelete("DELETE FROM ping_checks        WHERE checked_at  < ?", tsCutoff);
+            // Yüksek-hacimli izleme serileri → BATCH'li silme (tek dev DELETE + bloat yerine 10k'lık dilim + ANALYZE).
+            int u = safeDeleteBatched("uptime_checks", "checked_at < ?", tsCutoff);
+            int c = safeDeleteBatched("certificate_checks", "checked_at < ?", tsCutoff);
+            int p = safeDeleteBatched("port_checks", "checked_at < ?", tsCutoff);
+            // keyword_results / ping_checks: 30 sn sweep kadansında en hızlı büyüyen izleme serileri.
+            int kw = safeDeleteBatched("keyword_results", "checked_at < ?", tsCutoff);
+            int pg = safeDeleteBatched("ping_checks", "checked_at < ?", tsCutoff);
             // dns_records: her monitör için en yeni satırı koru (baseline) → guard'lı sil.
             int d = safeDelete("DELETE FROM dns_records WHERE checked_at < ? "
                     + "AND id NOT IN (SELECT MAX(id) FROM dns_records GROUP BY monitor_id)", tsCutoff);
@@ -767,7 +804,7 @@ public class SchedulerService {
             //    temizlenmeyen tablolar: http_checks (30 sn kadanslı, en hızlı büyüyen), system_heartbeat
             //    (dakikada 1), domain_checks (saatlik; baseline satırları korunur), diagnostic_runs,
             //    çözülmüş alert_events (açık/ack'li alarmlar ASLA silinmez). ──
-            int hc = safeDelete("DELETE FROM http_checks WHERE checked_at < ?", tsCutoff);
+            int hc = safeDeleteBatched("http_checks", "checked_at < ?", tsCutoff);
             String hbCutoff = ISO.format(Instant.now().minus(30, ChronoUnit.DAYS));
             // recorded_at TIMESTAMP kolonudur (diğer tablolardaki ISO String değil) → parametreyi cast'le.
             int hb = safeDelete("DELETE FROM system_heartbeat WHERE recorded_at < CAST(? AS timestamp)", hbCutoff);
@@ -805,8 +842,25 @@ public class SchedulerService {
             // yapılandırılabilir retention (canlı ayar; vars. 90g) üstünü sil.
             int actRetDays = Math.max(1, appSettings.getInt("cert.monitor.activity.retention-days", 90));
             String actCutoff = ISO.format(Instant.now().minus(actRetDays, ChronoUnit.DAYS));
-            int act = safeDelete("DELETE FROM activity_log WHERE activity_time < ?", actCutoff);
+            int act = safeDeleteBatched("activity_log", "activity_time < ?", actCutoff);
             log.info("Nightly cleanup: activityLog={} (retention {}d, cutoff {})", act, actRetDays, actCutoff);
+
+            // ── Faz 4 (DB ölçek): eksik retention + arşiv rotasyonu ──
+            // network_outage_events: nadir ama hiç temizlenmiyordu → config retention (vars. 365g).
+            int noRetDays = Math.max(30, appSettings.getInt("cert.monitor.network-outage.retention-days", 365));
+            int noev = safeDelete("DELETE FROM network_outage_events WHERE detected_at < ?",
+                    ISO.format(Instant.now().minus(noRetDays, ChronoUnit.DAYS)));
+            // incident_records: kullanıcı kayıtları — VARSAYILAN KAPALI (retention-days=0 → hiç silinmez);
+            // >0 verilirse yalnız o günden eski RESOLVED olaylar silinir (açık olaylar asla).
+            int incRetDays = appSettings.getInt("cert.monitor.incident.retention-days", 0);
+            int inc = incRetDays <= 0 ? 0 : safeDelete(
+                    "DELETE FROM incident_records WHERE status = 'RESOLVED' AND occurred_at < ?",
+                    ISO.format(Instant.now().minus(incRetDays, ChronoUnit.DAYS)));
+            // Denetim JSONL arşiv dosyaları (logs/audit-archive/*.jsonl) — N günden eskiyse sil (disk sınırı).
+            int arcRetDays = Math.max(30, appSettings.getInt("cert.monitor.audit.archive-retention-days", 365));
+            int arc = rotateAuditArchive(arcRetDays);
+            log.info("Nightly cleanup (Faz4): networkOutages={}, incidents={}, auditArchiveFilesDeleted={} "
+                    + "(netOutage {}d, incident {}d, archive {}d)", noev, inc, arc, noRetDays, incRetDays, arcRetDays);
             // In-memory: silinen monitörlerin checkDue anahtarları birikmesin (uzun uptime sızıntısı).
             int pruned = pruneMonitorCheckState(collectLiveMonitorKeys());
             log.info("Nightly cleanup (retention v2): httpChecks={}, heartbeat={}, domainChecks={}, diagRuns={}, resolvedAlerts={}, "
@@ -825,6 +879,115 @@ public class SchedulerService {
             log.warn("Cleanup '{}' failed: {}", sql, e.getMessage());
             return -1;
         }
+    }
+
+    /**
+     * Büyük tabloda PARÇA PARÇA silme: tek dev DELETE yerine {@code LIMIT batch}'lik dilimler
+     * (0 dönene dek), sonunda ANALYZE. Milyonlarca satırda tek DELETE uzun bir transaction + büyük
+     * ölü-tuple (bloat) yaratır ve WAL'i şişirir; batch'ler kısa transaction'larla ilerler, autovacuum
+     * arada temizler. {@code table}/{@code whereClause} yalnız KOD-kontrollü (SQL-injection yok);
+     * {@code whereClause} tek {@code ?} (cutoff) taşır (ör. "checked_at < ?").
+     */
+    int safeDeleteBatched(String table, String whereClause, String cutoff) {
+        int batch = Math.max(1000, appSettings.getInt("cert.monitor.retention.purge-batch-size", 10000));
+        long start = System.currentTimeMillis();
+        int total = 0;
+        try {
+            String sql = "DELETE FROM " + table + " WHERE id IN "
+                    + "(SELECT id FROM " + table + " WHERE " + whereClause + " LIMIT " + batch + ")";
+            while (true) {
+                int n = jdbcTemplate.update(sql, cutoff);
+                total += n;
+                if (n < batch) break;                                   // son dilim
+                if (System.currentTimeMillis() - start > 600_000) {     // güvenlik üst sınırı (10 dk)
+                    log.warn("Batched delete on {} 10dk'yı aştı, {} satırda durduruldu (kalan sonraki gece)", table, total);
+                    break;
+                }
+            }
+            if (total > 0) {
+                try { jdbcTemplate.execute("ANALYZE " + table); } catch (Exception ignore) { /* ANALYZE best-effort */ }
+            }
+            return total;
+        } catch (Exception e) {
+            log.warn("Batched cleanup '{}' failed: {}", table, e.getMessage());
+            return -1;
+        }
+    }
+
+    /** Denetim arşiv dosyalarını (logs/audit-archive/*.jsonl) N günden eskiyse sil — bugün disk sınırsız. */
+    private int rotateAuditArchive(int retentionDays) {
+        try {
+            String dir = appSettings.getString("cert.monitor.audit.archive-dir", "logs/audit-archive");
+            java.nio.file.Path p = java.nio.file.Path.of(dir);
+            if (!java.nio.file.Files.isDirectory(p)) return 0;
+            long cutoffMs = System.currentTimeMillis() - retentionDays * 86_400_000L;
+            int deleted = 0;
+            try (var stream = java.nio.file.Files.list(p)) {
+                for (java.nio.file.Path f : stream.filter(x -> x.toString().endsWith(".jsonl")).toList()) {
+                    if (java.nio.file.Files.getLastModifiedTime(f).toMillis() < cutoffMs) {
+                        java.nio.file.Files.deleteIfExists(f);
+                        deleted++;
+                    }
+                }
+            }
+            return deleted;
+        } catch (Exception e) {
+            log.warn("Audit arşiv rotasyonu başarısız: {}", e.getMessage());
+            return -1;
+        }
+    }
+
+    /**
+     * Günlük ROLLUP: son {@code lookback-days} TAMAMLANMIŞ günü ham kontrol serilerinden
+     * {@code monitor_check_daily}'ye aggregate eder (idempotent upsert → gün tekrar hesaplanınca üzerine
+     * yazar; kısa app-kapalılığı boşluklarını da self-heal eder). Purge'den ÖNCE çağrılır → ham silinse
+     * de trend kalır. Postgres native (ON CONFLICT); H2'de patch/test bunu çalıştırmaz.
+     */
+    void rollupDailyStats() {
+        try {
+            int lookback = Math.max(1, appSettings.getInt("cert.monitor.rollup.lookback-days", 3));
+            Instant todayStartI = Instant.now().truncatedTo(ChronoUnit.DAYS);
+            String to   = ISO.format(todayStartI);                                  // bugünün başı (dahil değil)
+            String from = ISO.format(todayStartI.minus(lookback, ChronoUnit.DAYS)); // son N tam gün
+            int p  = rollupUpsert("PORT",    "port_checks",     "open", "response_ms", from, to);
+            int pg = rollupUpsert("PING",    "ping_checks",     "up",   "rtt_ms",      from, to);
+            int k  = rollupUpsert("KEYWORD", "keyword_results", "ok",   "response_ms", from, to);
+            int h  = rollupUpsert("HTTP",    "http_checks",     "ok",   "response_ms", from, to);
+            int u  = rollupUptime(from, to);
+            log.info("Daily rollup: port={}, ping={}, keyword={}, http={}, uptime={} ({} → {})", p, pg, k, h, u, from, to);
+        } catch (Exception e) {
+            log.warn("Daily rollup failed: {}", e.getMessage());
+        }
+    }
+
+    // monitor_id-anahtarlı tipler (boolean up-kolonu). table/upCol/respCol yalnız KOD-kontrollü (injection yok).
+    private int rollupUpsert(String type, String table, String upCol, String respCol, String from, String to) {
+        String sql = "INSERT INTO monitor_check_daily (monitor_type, monitor_key, day, total_checks, up_checks, avg_response_ms, max_response_ms) "
+            + "SELECT '" + type + "', CAST(monitor_id AS varchar), substr(checked_at,1,10), "
+            + "count(*), sum(CASE WHEN " + upCol + " THEN 1 ELSE 0 END), "
+            + "round(avg(" + respCol + "))::int, max(" + respCol + ") "
+            + "FROM " + table + " WHERE checked_at >= ? AND checked_at < ? "
+            + "GROUP BY monitor_id, substr(checked_at,1,10) "
+            + "ON CONFLICT (monitor_type, monitor_key, day) DO UPDATE SET "
+            + "total_checks = EXCLUDED.total_checks, up_checks = EXCLUDED.up_checks, "
+            + "avg_response_ms = EXCLUDED.avg_response_ms, max_response_ms = EXCLUDED.max_response_ms";
+        try { return jdbcTemplate.update(sql, from, to); }
+        catch (Exception e) { log.warn("Rollup {} failed: {}", type, e.getMessage()); return -1; }
+    }
+
+    // Uptime: domain-anahtarlı, up = status='up', maintenance hariç.
+    private int rollupUptime(String from, String to) {
+        String sql = "INSERT INTO monitor_check_daily (monitor_type, monitor_key, day, total_checks, up_checks, avg_response_ms, max_response_ms) "
+            + "SELECT 'UPTIME', domain, substr(checked_at,1,10), "
+            + "count(*), sum(CASE WHEN status = 'up' THEN 1 ELSE 0 END), "
+            + "round(avg(response_ms))::int, max(response_ms) "
+            + "FROM uptime_checks WHERE checked_at >= ? AND checked_at < ? AND (maintenance = false OR maintenance IS NULL) "
+            + "GROUP BY domain, substr(checked_at,1,10) "
+            + "ON CONFLICT (monitor_type, monitor_key, day) DO UPDATE SET "
+            + "total_checks = EXCLUDED.total_checks, up_checks = EXCLUDED.up_checks, "
+            + "avg_response_ms = EXCLUDED.avg_response_ms, max_response_ms = EXCLUDED.max_response_ms";
+        try { return jdbcTemplate.update(sql, from, to); }
+        catch (Exception e) { log.warn("Rollup UPTIME failed: {}", e.getMessage()); return -1; }
     }
 
     /** Denetim kayıtlarını silmeden ÖNCE tarihli JSONL arşive yazar (append-only + arşiv gerekliliği).

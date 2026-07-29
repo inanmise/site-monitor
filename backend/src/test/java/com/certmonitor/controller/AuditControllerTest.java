@@ -123,6 +123,12 @@ class AuditControllerTest {
     @Test
     @DisplayName("auditStats: ADMIN 200 + istatistik anahtarları")
     void auditStats_ok() throws Exception {
+        // /audit/stats artık AuditService.buildStats()'ı (60 sn cache) çağırır — slice'ta mock.
+        java.util.Map<String, Object> stats = new java.util.LinkedHashMap<>();
+        stats.put("total_24h", 5L);
+        stats.put("total_7d", 10L);
+        when(auditService.buildStats()).thenReturn(stats);
+
         mvc.perform(get("/api/admin/audit/stats").session(session("ADMIN")))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.total_24h").exists())

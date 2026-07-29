@@ -9,7 +9,7 @@ spec:
     - ReadWriteOnce
   resources:
     requests:
-      storage: 10Gi
+      storage: 20Gi   # 10Gi düşüktü — büyüme projeksiyonu (activity_log + 30sn serileri) için 20Gi başlangıç
   storageClassName: standard   # Replace with your storage class
 
 ---
@@ -46,6 +46,25 @@ spec:
               drop: ["ALL"]
           ports:
             - containerPort: 5432
+          # ── Sunucu ayarları (stok postgres:16-alpine varsayılanları çok küçük: shared_buffers=128MB,
+          #    work_mem=4MB, pg_stat_statements yok). Entrypoint '-' ile başlayan arg'lara 'postgres'
+          #    ekler → `postgres -c ...`. Değerler 2Gi bellek limitine göre (shared_buffers ~%25). ──
+          args:
+            - "-c"
+            - "shared_buffers=512MB"
+            - "-c"
+            - "effective_cache_size=1536MB"
+            - "-c"
+            - "work_mem=16MB"
+            - "-c"
+            - "maintenance_work_mem=128MB"
+            - "-c"
+            - "shared_preload_libraries=pg_stat_statements"
+            - "-c"
+            - "pg_stat_statements.track=top"
+            - "-c"
+            # pool(25) × replica; app master overlay 3 replika = 75 + admin/monitoring → 150 headroom.
+            - "max_connections=150"
           env:
             - name: POSTGRES_DB
               value: certmonitor
@@ -60,11 +79,12 @@ spec:
               value: /var/lib/postgresql/data/pgdata
           resources:
             requests:
-              memory: "256Mi"
-              cpu: "100m"
+              memory: "1Gi"
+              cpu: "250m"
             limits:
-              memory: "512Mi"
-              cpu: "500m"
+              # 512Mi çok düşüktü (shared_buffers 128MB ~%25'i). shared_buffers=512MB için ≥2Gi gerekir.
+              memory: "2Gi"
+              cpu: "1000m"
           volumeMounts:
             - name: postgres-storage
               mountPath: /var/lib/postgresql/data

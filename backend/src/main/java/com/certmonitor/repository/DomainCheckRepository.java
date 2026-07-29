@@ -23,8 +23,10 @@ public interface DomainCheckRepository extends JpaRepository<DomainCheck, Long> 
     List<DomainCheck> findRecentByMonitorIdSince(@Param("id") Long id, @Param("since") String since, @Param("limit") int limit);
 
     /** Her monitör için en güncel kontrol — tek toplu sorgu (N+1 önleme). */
-    @Query("SELECT r FROM DomainCheck r WHERE r.id IN "
-         + "(SELECT MAX(r2.id) FROM DomainCheck r2 GROUP BY r2.monitorId)")
+    // LATERAL join: monitör başına tek index-seek (full-scan yerine).
+    @Query(value = "SELECT c.* FROM domain_monitors m CROSS JOIN LATERAL "
+         + "(SELECT * FROM domain_checks r WHERE r.monitor_id = m.id ORDER BY r.checked_at DESC LIMIT 1) c",
+           nativeQuery = true)
     List<DomainCheck> findLatestPerMonitor();
 
     long countByMonitorIdAndCheckedAtGreaterThanEqual(Long monitorId, String since);

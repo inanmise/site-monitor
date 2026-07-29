@@ -60,7 +60,10 @@ public class UserActivityService {
 
     private enum Gran { DAY, HOUR, MINUTE }
 
-    /** Tek payload — frontend tek çağrı yapar, mevcut 30 sn yenilemeye bağlanır. */
+    /** Tek payload — frontend tek çağrı yapar, mevcut 30 sn yenilemeye bağlanır.
+     *  60 sn cache: 7 günlük audit login penceresini + Java-tarafı agregasyonu her ~30sn açılışta
+     *  yeniden çalıştırmaz (audit_log ölçeklenince önemli). Auth SystemController'da kalır. */
+    @org.springframework.cache.annotation.Cacheable("user-activity-overview")
     public Map<String, Object> getOverview() {
         String since7d = ISO.format(Instant.now().minusSeconds(7 * DAY_SECONDS));
         List<AuditLog> window = auditLogRepo.findLoginEventsSince(LOGIN_TYPES, since7d);
