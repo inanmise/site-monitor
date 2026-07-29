@@ -755,6 +755,13 @@ public class SchedulerService {
 
     @Scheduled(cron = "${cert.monitor.scheduler.cleanup-cron:0 30 3 * * *}")
     public void cleanupOldLogs() {
+        // HA: prod çok-replikalı (master overlay 3 pod). Kilit olmadan 3 pod aynı anda batch-DELETE +
+        // rollup ON CONFLICT koşar → kilit çekişmesi/deadlock riski + 3× boşa iş. Yalnız BİR pod çalışsın.
+        // TTL 60dk: batch silme (tablo başına 10dk cap) tüm tabloları için normal gecede fazlasıyla yeter.
+        if (!tryAcquireSchedulerLock("nightly-cleanup", 60)) {
+            log.debug("Gece temizlik/rollup — lock başka pod'da, atlanıyor");
+            return;
+        }
         try {
             // ÖNCE rollup (ham kontrol serilerini günlük özete al) — SONRA purge. Böylece ham kısa
             // retention'la silinse de uzun-dönem trend monitor_check_daily'de korunur.
@@ -869,6 +876,8 @@ public class SchedulerService {
                     hc, hb, dcn, dg, ae, lir, lii, lim, wri, pruned, hbCutoff, diagCutoff, aeCutoff, liCutoff, wriRetDays);
         } catch (Exception e) {
             log.warn("Nightly cleanup failed: {}", e.getMessage());
+        } finally {
+            releaseSchedulerLock("nightly-cleanup");
         }
     }
 
