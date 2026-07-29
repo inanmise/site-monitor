@@ -105,6 +105,10 @@ class SchedulerServiceTest {
     @Mock AppSettingsService appSettings;
     @Mock ThreadPoolTaskExecutor certCheckExecutor;
     @Mock DomainExpiryRefreshService domainExpiryRefreshService;
+    @Mock PageCheckerService pageCheckerService;
+    @Mock com.certmonitor.repository.PageMonitorRepository pageMonitorRepo;
+    @Mock com.certmonitor.repository.PageCheckRepository pageCheckRepo;
+    @Mock com.certmonitor.repository.PageResourceIssueRepository pageResourceIssueRepo;
 
     SchedulerService scheduler;
 
@@ -126,6 +130,10 @@ class SchedulerServiceTest {
                 weeklyReportReminderService, weeklyAvailabilityReportService, incidentService, appSettings);
         ReflectionTestUtils.setField(scheduler, "certCheckExecutor", certCheckExecutor);
         ReflectionTestUtils.setField(scheduler, "domainExpiryRefreshService", domainExpiryRefreshService);
+        ReflectionTestUtils.setField(scheduler, "pageCheckerService", pageCheckerService);
+        ReflectionTestUtils.setField(scheduler, "pageMonitorRepo", pageMonitorRepo);
+        ReflectionTestUtils.setField(scheduler, "pageCheckRepo", pageCheckRepo);
+        ReflectionTestUtils.setField(scheduler, "pageResourceIssueRepo", pageResourceIssueRepo);
         // startNetworkCheck: mock executor task'ı düşürürse join asılı kalır → inline koştur (deterministik).
         lenient().doAnswer(inv -> { inv.getArgument(0, Runnable.class).run(); return null; })
                 .when(certCheckExecutor).execute(any(Runnable.class));
@@ -151,11 +159,11 @@ class SchedulerServiceTest {
     }
 
     @Test
-    @DisplayName("rollupDailyStats: 5 tip (port/ping/keyword/http/uptime) için upsert çalıştırır")
+    @DisplayName("rollupDailyStats: 6 tip (port/ping/keyword/http/page/uptime) için upsert çalıştırır")
     void rollupDailyStats_runsAllTypes() {
         when(jdbcTemplate.update(anyString(), anyString(), anyString())).thenReturn(3);
         scheduler.rollupDailyStats();
-        verify(jdbcTemplate, times(5)).update(anyString(), anyString(), anyString());   // 5 monitör tipi (sql, from, to)
+        verify(jdbcTemplate, times(6)).update(anyString(), anyString(), anyString());   // 6 monitör tipi (sql, from, to)
     }
 
     @Test

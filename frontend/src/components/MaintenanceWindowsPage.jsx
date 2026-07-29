@@ -18,6 +18,7 @@ const MON_TYPES = [
   ['port', 'getPortMonitors', m => m.host],
   ['keyword', 'getKeywordMonitors', m => m.url],
   ['ping', 'getPingMonitors', m => m.host],
+  ['page', 'getPageMonitors', m => m.url],
   ['dns', 'getDnsMonitors', m => m.domain],
   ['domain', 'getDomainMonitors', m => m.domain],
   ['cert', 'getUptimeOverview', m => m.domain],

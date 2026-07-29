@@ -11,6 +11,8 @@ uygulanan mekanizmaları ve işletme (ops) adımlarını özetler.
 | `activity_log` | her kontrol tipi için +1 satır | ~30–100M (baskın) | retention 90g (config) + rollup |
 | `port_checks`/`ping_checks`/`keyword_results` | 30sn sweep, 60sn/monitör | ~26M/tablo | retention 180g + rollup + batch purge |
 | `http_checks`/`uptime_checks`/`dns_records` | 5dk | ~5M | aynı |
+| `page_checks` | sayfa-bütünlüğü kontrol özeti | monitör×sıklık | retention 180g (config) + rollup |
+| `page_resource_issues` | yalnız SORUNLU kaynaklar (kontrol başına 0–N) | değişken (bozuk sitede yüksek) | retention 90g + batch purge (FK: önce çocuk) |
 | `audit_log` | auth/güvenlik olayları | trafik | retention 365g + JSONL arşiv |
 
 Uzun-dönem trend `monitor_check_daily` rollup tablosunda korunur → ham veri kısa retention'la silinebilir.

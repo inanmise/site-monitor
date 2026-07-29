@@ -76,6 +76,11 @@ public class StormService {
     private final DnsMonitorRepository dnsRepo;
     private final DomainMonitorRepository domainRepo;
 
+    /** 9. tür (sayfa-bütünlüğü) — @RequiredArgsConstructor'ı (ve StormServiceTest'in elle çağrısını)
+     *  büyütmemek için alan enjeksiyonu (SchedulerService ile aynı desen). */
+    @org.springframework.beans.factory.annotation.Autowired
+    private com.certmonitor.repository.PageMonitorRepository pageRepo;
+
     public enum StormAction {
         /** Storm devrede değil / eşik altı → bireysel alarm gönder (bugünkü davranış, sıfır gecikme). */
         SEND_INDIVIDUAL,
@@ -310,7 +315,8 @@ public class StormService {
                     + pingRepo.countByActiveTrue()
                     + domainRepo.countByActiveTrue()
                     + portRepo.countByStandaloneTrueAndActiveTrue()   // cert-türevi satırları çift saymamak için standalone
-                    + dnsRepo.countByStandaloneTrueAndActiveTrue();
+                    + dnsRepo.countByStandaloneTrueAndActiveTrue()
+                    + (pageRepo != null ? pageRepo.countByActiveTrue() : 0);   // 9. tür (field-inject; test'te null → 0)
         } catch (Exception e) {
             return cachedTotal > 0 ? cachedTotal : 0;
         }
@@ -369,6 +375,8 @@ public class StormService {
             return switch (event.getAlertType()) {
                 case EscalationService.TYPE_HTTP_DOWN ->
                         httpRepo.findFirstByUrlOrderByIdAsc(d).map(m -> m.getGroupName()).orElse(null);
+                case EscalationService.TYPE_PAGE_DOWN, EscalationService.TYPE_PAGE_INTEGRITY ->
+                        pageRepo != null ? pageRepo.findFirstByUrlOrderByIdAsc(d).map(m -> m.getGroupName()).orElse(null) : null;
                 case EscalationService.TYPE_PING_DOWN ->
                         pingRepo.findFirstByHostOrderByIdAsc(d).map(m -> m.getGroupName()).orElse(null);
                 case EscalationService.TYPE_DNS_FAILURE ->

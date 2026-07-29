@@ -76,7 +76,8 @@ public class MonitoringController {
     private static final String[] MON_FIELDS = {
         "name", "host", "port", "url", "domain", "recordType", "keyword", "expectedValue", "expect",
         "expectedStatus", "method", "matchOperator", "matchCount", "active", "teamId", "groupName",
-        "intervalSeconds", "timeoutMs", "warningDays", "criticalDays", "protocol", "verifySsl", "followRedirects"
+        "intervalSeconds", "timeoutMs", "warningDays", "criticalDays", "protocol", "verifySsl", "followRedirects",
+        "mode", "crawlDepth", "crawlMaxPages", "excludePatterns", "slowResourceMs", "alertThirdParty", "resourceConcurrency"
     };
 
     private final TeamRepository teamRepo;
@@ -93,6 +94,16 @@ public class MonitoringController {
     @org.springframework.context.annotation.Lazy
     @org.springframework.beans.factory.annotation.Autowired
     private SchedulerService schedulerService;
+
+    /** Sayfa-bütünlüğü (9. tür) — @RequiredArgsConstructor'ı büyütmemek için alan enjeksiyonu (schedulerService deseni). */
+    @org.springframework.beans.factory.annotation.Autowired
+    private com.certmonitor.repository.PageMonitorRepository pageMonitorRepo;
+    @org.springframework.beans.factory.annotation.Autowired
+    private com.certmonitor.repository.PageCheckRepository pageCheckRepo;
+    @org.springframework.beans.factory.annotation.Autowired
+    private com.certmonitor.repository.PageResourceIssueRepository pageResourceIssueRepo;
+    @org.springframework.beans.factory.annotation.Autowired
+    private com.certmonitor.service.PageCheckerService pageChecker;
 
     private static final DateTimeFormatter ISO =
             DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
@@ -124,7 +135,13 @@ public class MonitoringController {
             "domain",  Map.of("intervalSeconds", appSettings.getInt("cert.monitor.domain.default-interval-seconds", 86400),
                               "warningDays",      appSettings.getInt("cert.monitor.domain.default-warning-days", 30),
                               "criticalDays",     appSettings.getInt("cert.monitor.domain.default-critical-days", 7),
-                              "thresholds",       appSettings.getString("cert.monitor.domain.default-thresholds", "60,30,14,7,3,1"))
+                              "thresholds",       appSettings.getString("cert.monitor.domain.default-thresholds", "60,30,14,7,3,1")),
+            "page",    Map.of("intervalSeconds",     appSettings.getInt("cert.monitor.page.default-interval-seconds", 300),
+                              "timeoutMs",           appSettings.getInt("cert.monitor.page.default-timeout-ms", 10000),
+                              "slowResourceMs",      appSettings.getInt("cert.monitor.page.default-slow-ms", 2000),
+                              "resourceConcurrency", appSettings.getInt("cert.monitor.page.resource-concurrency", 5),
+                              "crawlDepth",          appSettings.getInt("cert.monitor.page.default-crawl-depth", 2),
+                              "crawlMaxPages",       appSettings.getInt("cert.monitor.page.default-crawl-max-pages", 50))
         ));
     }
 
@@ -1772,6 +1789,262 @@ public class MonitoringController {
             item.put("status", "unknown");
             item.put("ok", null); item.put("http_status", null);
             item.put("response_ms", null); item.put("error", null); item.put("checked_at", null);
+        }
+        return item;
+    }
+
+    // ── Sayfa Bütünlüğü (Page Integrity) Monitors — 9. tür (serbest-form) ─────
+    @GetMapping("/page")
+    public ResponseEntity<Map<String, Object>> listPage(HttpSession session) {
+        permissionService.require(session, "monitoring.read", "view");
+        Map<Long, com.certmonitor.model.PageCheck> latest = pageCheckRepo.findLatestPerMonitor().stream()
+                .filter(c -> c.getMonitorId() != null)
+                .collect(Collectors.toMap(com.certmonitor.model.PageCheck::getMonitorId, c -> c, (a, b) -> a));
+        Map<Long, String> teams = teamNameMap();
+        List<com.certmonitor.model.PageMonitor> monitors = pageMonitorRepo.findAllByOrderByNameAsc();
+        Set<String> urls = monitors.stream().map(com.certmonitor.model.PageMonitor::getUrl).collect(Collectors.toSet());
+        Map<String, AlertEvent> down = openAlarmsByDomain(urls, EscalationService.TYPE_PAGE_DOWN);
+        Map<String, AlertEvent> integ = openAlarmsByDomain(urls, EscalationService.TYPE_PAGE_INTEGRITY);
+        List<Map<String, Object>> result = monitors.stream()
+                .map(m -> enrichPage(m, latest.get(m.getId()), teams,
+                        down.getOrDefault(m.getUrl(), integ.get(m.getUrl())))).toList();
+        return ok(result);
+    }
+
+    @PostMapping("/page")
+    public ResponseEntity<Map<String, Object>> createPage(@RequestBody Map<String, Object> body, HttpSession session) {
+        permissionService.require(session, "monitoring.crud", "edit");
+        if (blank(body.get("url"))) return badRequest("url zorunlu");
+        Long teamId = resolveWriteTeam(session, body);
+        if (teamId == null) return badRequest("Takım seçimi zorunludur; izleme oluşturulamıyor.");
+        String url = body.get("url").toString().trim();
+        if (pageMonitorRepo.existsDuplicate(url, teamId, null))
+            return badRequest("Bu URL bu takımda zaten izleniyor; mükerrer sayfa monitörü oluşturulamaz.");
+        String now = ISO.format(Instant.now());
+        com.certmonitor.model.PageMonitor m = new com.certmonitor.model.PageMonitor();
+        m.setName(blank(body.get("name")) ? url : body.get("name").toString());
+        m.setUrl(url);
+        m.setTeamId(teamId);
+        m.setActive(true);
+        if (body.containsKey("groupName")) m.setGroupName(monitoringGroupService.getOrCreateFor(m, teamId, body.get("groupName") == null ? null : body.get("groupName").toString(), actor(session)));
+        if (body.get("intervalSeconds") != null) m.setIntervalSeconds(((Number) body.get("intervalSeconds")).intValue());
+        if (body.get("timeoutMs")       != null) m.setTimeoutMs(((Number) body.get("timeoutMs")).intValue());
+        if (body.get("confirmAttempts") != null)         m.setConfirmAttempts(clampAttempts(((Number) body.get("confirmAttempts")).intValue()));
+        if (body.get("confirmIntervalSeconds") != null)  m.setConfirmIntervalSeconds(clampInterval(((Number) body.get("confirmIntervalSeconds")).intValue()));
+        if (body.get("recoveryChecks") != null)          m.setRecoveryChecks(clampRecovery(((Number) body.get("recoveryChecks")).intValue()));
+        if (body.get("recoveryIntervalSeconds") != null) m.setRecoveryIntervalSeconds(clampInterval(((Number) body.get("recoveryIntervalSeconds")).intValue()));
+        applyPageFeatureFields(m, body);
+        m.setCreatedAt(now);
+        m.setUpdatedAt(now);
+        com.certmonitor.model.PageMonitor saved = pageMonitorRepo.save(m);
+        activityLog.recordLifecycle(ActivityLogService.PAGE, saved.getId(), saved.getName(),
+                saved.getUrl(), saved.getTeamId(), "CREATED", actor(session));
+        auditService.recordAction("MONITOR_CREATE", session, "PAGE_MONITOR", String.valueOf(saved.getId()), saved.getName(), null);
+        return ok(enrichPage(saved, null, teamNameMap(), null));
+    }
+
+    @PutMapping("/page/{id}")
+    public ResponseEntity<Map<String, Object>> updatePage(@PathVariable Long id, @RequestBody Map<String, Object> body, HttpSession session) {
+        permissionService.require(session, "monitoring.crud", "edit");
+        java.util.Map<String, Object> _before = pageMonitorRepo.findById(id).map(x -> AuditDiff.snapshot(x, MON_FIELDS)).orElse(null);
+        return pageMonitorRepo.findById(id).map(m -> {
+            if (!canOperateTeam(session, m.getTeamId())) throw new SecurityException("Bu takımın izlemesini düzenleyemezsiniz");
+            if (body.get("name")            != null) m.setName((String) body.get("name"));
+            if (body.get("url")             != null) m.setUrl(body.get("url").toString().trim());
+            if (body.containsKey("groupName"))       m.setGroupName(monitoringGroupService.getOrCreateFor(m, m.getTeamId(), body.get("groupName") == null ? null : body.get("groupName").toString(), actor(session)));
+            if (body.containsKey("teamId"))          m.setTeamId(resolveTeamChange(session, m.getTeamId(), body.get("teamId")));
+            if (body.get("active")          instanceof Boolean b) m.setActive(b);
+            if (body.get("intervalSeconds") != null) m.setIntervalSeconds(((Number) body.get("intervalSeconds")).intValue());
+            if (body.get("timeoutMs")       != null) m.setTimeoutMs(((Number) body.get("timeoutMs")).intValue());
+            if (body.get("confirmAttempts") != null)         m.setConfirmAttempts(clampAttempts(((Number) body.get("confirmAttempts")).intValue()));
+            if (body.get("confirmIntervalSeconds") != null)  m.setConfirmIntervalSeconds(clampInterval(((Number) body.get("confirmIntervalSeconds")).intValue()));
+            if (body.get("recoveryChecks") != null)          m.setRecoveryChecks(clampRecovery(((Number) body.get("recoveryChecks")).intValue()));
+            if (body.get("recoveryIntervalSeconds") != null) m.setRecoveryIntervalSeconds(clampInterval(((Number) body.get("recoveryIntervalSeconds")).intValue()));
+            applyPageFeatureFields(m, body);
+            m.setUpdatedAt(ISO.format(Instant.now()));
+            com.certmonitor.model.PageMonitor saved = pageMonitorRepo.save(m);
+            auditService.recordAction("MONITOR_UPDATE", session, "PAGE_MONITOR", String.valueOf(saved.getId()), saved.getName(),
+                    AuditDiff.diff(_before, AuditDiff.snapshot(saved, MON_FIELDS)));
+            return ok(enrichPage(saved, pageCheckRepo.findTopByMonitorIdOrderByCheckedAtDesc(id).orElse(null), teamNameMap(),
+                    alertEventRepo.findOpenAlert(saved.getUrl(), EscalationService.TYPE_PAGE_DOWN)
+                            .or(() -> alertEventRepo.findOpenAlert(saved.getUrl(), EscalationService.TYPE_PAGE_INTEGRITY)).orElse(null)));
+        }).orElse(notFound("Sayfa monitörü bulunamadı"));
+    }
+
+    @DeleteMapping("/page/{id}")
+    public ResponseEntity<Map<String, Object>> deletePage(@PathVariable Long id, HttpSession session) {
+        permissionService.require(session, "monitoring.crud", "edit");
+        return pageMonitorRepo.findById(id).map(m -> {
+            if (!SessionScope.canManage(session, m.getTeamId())) throw new SecurityException("Silme yetkisi yok (yalnız takım yöneticisi/ADMIN)");
+            escalationService.resolveOpenAlertsSilently(m.getUrl(),
+                    Set.of(EscalationService.TYPE_PAGE_DOWN, EscalationService.TYPE_PAGE_INTEGRITY),
+                    "Sistem (izleme silindi)");
+            pageMonitorRepo.delete(m);
+            activityLog.recordLifecycle(ActivityLogService.PAGE, m.getId(), m.getName(),
+                    m.getUrl(), m.getTeamId(), "DELETED", actor(session));
+            auditService.recordAction("MONITOR_DELETE", session, "PAGE_MONITOR", String.valueOf(m.getId()), m.getName(), null);
+            return ok(Map.of("deleted", true));
+        }).orElse(notFound("Sayfa monitörü bulunamadı"));
+    }
+
+    @GetMapping("/page/{id}/history")
+    public ResponseEntity<Map<String, Object>> pageHistory(@PathVariable Long id, HttpSession session,
+            @RequestParam(required = false) Integer days, @RequestParam(defaultValue = "100") int limit) {
+        com.certmonitor.model.PageMonitor mon = pageMonitorRepo.findById(id).orElse(null);
+        if (mon == null) return notFound("Sayfa monitörü bulunamadı");
+        var deny = denyIfNotViewable(session, mon.getTeamId());
+        if (deny != null) return deny;
+        List<com.certmonitor.model.PageCheck> checks;
+        long total, down;
+        if (days != null && days > 0) {
+            String cutoff = ISO.format(Instant.now().minus(days, ChronoUnit.DAYS));
+            checks = pageCheckRepo.findRecentByMonitorIdSince(id, cutoff, 500);
+            total = pageCheckRepo.countByMonitorIdAndCheckedAtGreaterThanEqual(id, cutoff);
+            down  = pageCheckRepo.countByMonitorIdAndOkFalseAndCheckedAtGreaterThanEqual(id, cutoff);
+        } else {
+            int cap = Math.max(1, Math.min(limit, 10_000));
+            checks = pageCheckRepo.findRecentByMonitorId(id, cap);
+            total = checks.size();
+            down  = checks.stream().filter(c -> !Boolean.TRUE.equals(c.getOk())).count();
+        }
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("checks", checks);
+        out.put("total", total);
+        out.put("down", down);
+        return ok(out);
+    }
+
+    /** Son (veya belirtilen) kontrolün sorunlu-kaynak listesi — filtre: issueType, tarih; SQL-LIMIT'li. */
+    @GetMapping("/page/{id}/issues")
+    public ResponseEntity<Map<String, Object>> pageIssues(@PathVariable Long id, HttpSession session,
+            @RequestParam(required = false) String issueType, @RequestParam(required = false) Integer days,
+            @RequestParam(defaultValue = "500") int limit) {
+        com.certmonitor.model.PageMonitor mon = pageMonitorRepo.findById(id).orElse(null);
+        if (mon == null) return notFound("Sayfa monitörü bulunamadı");
+        var deny = denyIfNotViewable(session, mon.getTeamId());
+        if (deny != null) return deny;
+        String since = (days != null && days > 0) ? ISO.format(Instant.now().minus(days, ChronoUnit.DAYS)) : null;
+        String type = blank(issueType) ? null : issueType.toString().trim().toUpperCase();
+        int cap = Math.max(1, Math.min(limit, 5000));
+        return ok(pageResourceIssueRepo.findFiltered(id, type, since, cap));
+    }
+
+    @PostMapping("/page/{id}/check")
+    public ResponseEntity<Map<String, Object>> triggerPage(@PathVariable Long id, HttpSession session) {
+        permissionService.require(session, "monitoring.trigger", "execute");
+        return pageMonitorRepo.findById(id).map(m -> {
+            if (!canOperateTeam(session, m.getTeamId())) throw new SecurityException("Bu takımın izlemesini çalıştıramazsınız");
+            schedulerService.triggerPageCheck(m);   // tam kontrol + persist (page_checks + issues + activity)
+            auditService.recordAction("MONITOR_TRIGGER", session, "PAGE_MONITOR", String.valueOf(m.getId()), m.getName(), null);
+            return ok(enrichPage(m, pageCheckRepo.findTopByMonitorIdOrderByCheckedAtDesc(id).orElse(null), teamNameMap(),
+                    alertEventRepo.findOpenAlert(m.getUrl(), EscalationService.TYPE_PAGE_DOWN)
+                            .or(() -> alertEventRepo.findOpenAlert(m.getUrl(), EscalationService.TYPE_PAGE_INTEGRITY)).orElse(null)));
+        }).orElse(notFound("Sayfa monitörü bulunamadı"));
+    }
+
+    /** Ad-hoc sayfa testi — kaydetmeden, formdaki url ile tek SINGLE_PAGE bütünlük kontrolü. */
+    @PostMapping("/page/test")
+    public ResponseEntity<Map<String, Object>> testPage(@RequestBody Map<String, Object> body, HttpSession session) {
+        permissionService.require(session, "monitoring.crud", "edit");
+        String url = body.get("url") != null ? body.get("url").toString().trim() : "";
+        if (url.isEmpty()) return badRequest("url zorunlu");
+        int timeoutMs = body.get("timeoutMs") instanceof Number tn ? tn.intValue() : 10000;
+        com.certmonitor.service.PageCheckerService.PageCheckResult r = pageChecker.test(url, timeoutMs);
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("status",              r.status());
+        out.put("main_reachable",      r.mainReachable());
+        out.put("http_status",         r.httpStatus());
+        out.put("response_ms",         r.responseMs());
+        out.put("total_resources",     r.totalResources());
+        out.put("broken_resources",    r.brokenResources());
+        out.put("mixed_content_count", r.mixedContentCount());
+        out.put("error",               r.error());
+        List<Map<String, Object>> issues = new ArrayList<>();
+        for (var i : r.issues()) {
+            Map<String, Object> im = new LinkedHashMap<>();
+            im.put("resource_url", i.resourceUrl()); im.put("resource_type", i.resourceType());
+            im.put("issue_type", i.issueType()); im.put("first_party", i.firstParty());
+            im.put("http_status", i.httpStatus()); im.put("duration_ms", i.durationMs());
+            issues.add(im);
+        }
+        out.put("issues", issues);
+        return ok(out);
+    }
+
+    @GetMapping("/page/{id}/response-series")
+    public ResponseEntity<Map<String, Object>> pageResponseSeries(@PathVariable Long id,
+            @RequestParam(required = false) String from, @RequestParam(required = false) String to,
+            @RequestParam(defaultValue = "30") int days, HttpSession session) {
+        permissionService.require(session, "monitoring.read", "view");
+        if (!pageMonitorRepo.existsById(id)) return notFound("Sayfa monitörü bulunamadı");
+        String[] range = resolveRange(from, to, days);
+        // Seri değeri = kırık kaynak sayısı (buildResponseSeries yeniden kullanılır; frontend "kırık kaynak" etiketler).
+        return ok(buildResponseSeries(pageCheckRepo.responseSeriesRaw(id, range[0], range[1], SERIES_RAW_CAP),
+                range[0], range[1], false));
+    }
+
+    /** Ortak: sayfa-özel alanları (mode, crawl derinlik/limit, exclude, slow, alertThirdParty, concurrency,
+     *  tags, notifyEmail) body'den clamp'li uygular. */
+    private void applyPageFeatureFields(com.certmonitor.model.PageMonitor m, Map<String, Object> body) {
+        if (!blank(body.get("mode"))) {
+            String mode = body.get("mode").toString().trim().toUpperCase();
+            m.setMode("SITE_CRAWL".equals(mode) ? "SITE_CRAWL" : "SINGLE_PAGE");
+        }
+        if (body.get("crawlDepth")    instanceof Number n) m.setCrawlDepth(Math.max(0, Math.min(5, n.intValue())));
+        if (body.get("crawlMaxPages") instanceof Number n) m.setCrawlMaxPages(Math.max(1, Math.min(500, n.intValue())));
+        if (body.containsKey("excludePatterns")) m.setExcludePatterns(blank(body.get("excludePatterns")) ? null : body.get("excludePatterns").toString());
+        if (body.get("slowResourceMs") instanceof Number n) m.setSlowResourceMs(Math.max(100, n.intValue()));
+        if (body.get("alertThirdParty") instanceof Boolean b) m.setAlertThirdParty(b);
+        if (body.get("resourceConcurrency") instanceof Number n) m.setResourceConcurrency(Math.max(1, Math.min(20, n.intValue())));
+        if (body.containsKey("tags")) m.setTags(blank(body.get("tags")) ? null : body.get("tags").toString().trim());
+        if (body.get("notifyEmail") instanceof Boolean b) m.setNotifyEmail(b);
+    }
+
+    private Map<String, Object> enrichPage(com.certmonitor.model.PageMonitor m, com.certmonitor.model.PageCheck latest,
+                                           Map<Long, String> teams, AlertEvent openAlarm) {
+        Map<String, Object> item = new LinkedHashMap<>();
+        item.put("id",                   m.getId());
+        item.put("name",                 m.getName());
+        item.put("url",                  m.getUrl());
+        item.put("mode",                 m.getMode());
+        item.put("crawl_depth",          m.getCrawlDepth());
+        item.put("crawl_max_pages",      m.getCrawlMaxPages());
+        item.put("exclude_patterns",     m.getExcludePatterns());
+        item.put("slow_resource_ms",     m.getSlowResourceMs());
+        item.put("alert_third_party",    m.getAlertThirdParty());
+        item.put("resource_concurrency", m.getResourceConcurrency());
+        item.put("group_name",           m.getGroupName());
+        item.put("team_id",              m.getTeamId());
+        item.put("team_name",            m.getTeamId() != null ? teams.get(m.getTeamId()) : null);
+        item.put("active",               m.getActive());
+        item.put("interval_seconds",     m.getIntervalSeconds());
+        item.put("timeout_ms",           m.getTimeoutMs());
+        item.put("confirm_attempts",         m.getConfirmAttempts());
+        item.put("confirm_interval_seconds", m.getConfirmIntervalSeconds());
+        item.put("recovery_checks",           m.getRecoveryChecks());
+        item.put("recovery_interval_seconds", m.getRecoveryIntervalSeconds());
+        item.put("tags",                      m.getTags());
+        item.put("notify_email",              m.getNotifyEmail());
+        item.put("active_alarm",       openAlarm != null);
+        item.put("alarm_level",        openAlarm != null ? openAlarm.getAlertLevel() : null);
+        item.put("alarm_acknowledged", openAlarm != null ? openAlarm.getAcknowledged() : null);
+        if (latest != null) {
+            item.put("status",              latest.getStatus());   // OK | DEGRADED | DOWN
+            item.put("ok",                  latest.getOk());
+            item.put("http_status",         latest.getHttpStatus());
+            item.put("response_ms",         latest.getResponseMs());
+            item.put("total_resources",     latest.getTotalResources());
+            item.put("broken_resources",    latest.getBrokenResources());
+            item.put("mixed_content_count", latest.getMixedContentCount());
+            item.put("pages_crawled",       latest.getPagesCrawled());
+            item.put("error",               latest.getError());
+            item.put("checked_at",          latest.getCheckedAt());
+        } else {
+            item.put("status", "unknown");
+            item.put("ok", null); item.put("http_status", null); item.put("response_ms", null);
+            item.put("total_resources", null); item.put("broken_resources", null);
+            item.put("mixed_content_count", null); item.put("pages_crawled", null);
+            item.put("error", null); item.put("checked_at", null);
         }
         return item;
     }

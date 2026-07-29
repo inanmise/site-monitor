@@ -72,6 +72,13 @@ class MonitoringControllerTest {
     @MockitoBean com.certmonitor.service.AppSettingsService appSettings;
     @MockitoBean AlertEventRepository alertEventRepo;
 
+    // 9. tür (sayfa-bütünlüğü) — controller alan-enjekte eder → @WebMvcTest slice'ında mock zorunlu.
+    @MockitoBean com.certmonitor.service.SchedulerService schedulerService;
+    @MockitoBean PageMonitorRepository pageMonitorRepo;
+    @MockitoBean PageCheckRepository pageCheckRepo;
+    @MockitoBean PageResourceIssueRepository pageResourceIssueRepo;
+    @MockitoBean com.certmonitor.service.PageCheckerService pageChecker;
+
     @BeforeEach
     void stubTeamMap() {
         // İzleme uçları artık domain→takım map'ini buradan alıyor; boş map yeterli (team_name=null).
@@ -175,6 +182,58 @@ class MonitoringControllerTest {
         e.setDomain(domain); e.setAlertType(type); e.setAlertLevel(level);
         e.setResolved(false); e.setAcknowledged(false);
         return e;
+    }
+
+    private MockHttpSession sessionWithTeam(String role, Long teamId) {
+        MockHttpSession s = session(role);
+        s.setAttribute("teamId", teamId);
+        return s;
+    }
+
+    private static com.certmonitor.model.PageMonitor pageMon(Long id, String url, Long teamId) {
+        com.certmonitor.model.PageMonitor m = new com.certmonitor.model.PageMonitor();
+        m.setId(id); m.setName(url); m.setUrl(url); m.setTeamId(teamId); m.setActive(true);
+        return m;
+    }
+
+    // ── 9. tür: Sayfa Bütünlüğü ────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("GET /page: açık PAGE_DOWN alarmı → active_alarm=true + seviye; kontrolsüz monitör status=unknown")
+    void listPage_marksAlarm() throws Exception {
+        when(pageCheckRepo.findLatestPerMonitor()).thenReturn(List.of());
+        when(pageMonitorRepo.findAllByOrderByNameAsc()).thenReturn(List.of(pageMon(1L, "https://x.com", 1L)));
+        com.certmonitor.model.AlertEvent down = openDnsEvent("https://x.com",
+                com.certmonitor.service.EscalationService.TYPE_PAGE_DOWN, "CRITICAL");
+        when(alertEventRepo.findOpenByDomainIn(anyCollection())).thenReturn(List.of(down));
+
+        mvc.perform(get("/api/monitoring/page").session(session("USER")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].active_alarm").value(true))
+                .andExpect(jsonPath("$.data[0].alarm_level").value("CRITICAL"))
+                .andExpect(jsonPath("$.data[0].status").value("unknown"));
+    }
+
+    @Test
+    @DisplayName("POST /page: takımsız kullanıcı takım çözemez → 400 (takım zorunlu), kayıt yok")
+    void createPage_requiresTeam() throws Exception {
+        mvc.perform(post("/api/monitoring/page").session(session("USER"))
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("{\"url\":\"https://x.com\"}"))
+                .andExpect(status().isBadRequest());
+        org.mockito.Mockito.verify(pageMonitorRepo, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("PUT /page/{id}: BAŞKA takımın monitörünü düzenleme → 403 (IDOR guard), kayıt yok")
+    void updatePage_foreignTeam_forbidden() throws Exception {
+        when(pageMonitorRepo.findById(5L)).thenReturn(Optional.of(pageMon(5L, "https://x.com", 2L)));
+
+        mvc.perform(put("/api/monitoring/page/5").session(sessionWithTeam("USER", 1L))
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"hack\"}"))
+                .andExpect(status().isForbidden());
+        org.mockito.Mockito.verify(pageMonitorRepo, never()).save(any());
     }
 
     @Test

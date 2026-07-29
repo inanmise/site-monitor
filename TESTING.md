@@ -68,6 +68,10 @@ that dips below fails.
   `DomainCheckerService` 56%→0.55 · `RdapDomainExpiryService` 46%→0.45 · `CertificateCheckerService` 43%→0.42.
   These classes carry large network/proxy/RDAP-HTTP branches that are not unit-testable, so their floors track
   **real coverage**, not a blanket ≥90% — raise each as integration coverage grows.
+- `PageCheckerService` (9. tür, Sayfa Bütünlüğü) `PageCheckerServiceTest` ile YEREL bir HTTP sunucusuna karşı test
+  edilir (dış siteye bağımlılık yok): OK / DEGRADED / DOWN, redirect zinciri, HEAD→405→GET, hariç-tutma, SSRF (metadata
+  kaynağı bloklanır), SITE_CRAWL derinlik + robots.txt. `MonitoringControllerTest` `/page` sahiplik izolasyonunu (IDOR)
+  ve takım-zorunluluğunu kapsar.
 
 **Frontend (`frontend/vite.config.js`, `test.coverage.thresholds`):**
 - Global floor: **statements/lines ≥ 45, branches ≥ 55, functions ≥ 26** (measured: 47.6 / 59.8 / 28.7).

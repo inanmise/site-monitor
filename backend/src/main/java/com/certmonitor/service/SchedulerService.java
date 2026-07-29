@@ -8,6 +8,8 @@ import com.certmonitor.model.PortCheck;
 import com.certmonitor.model.PortMonitor;
 import com.certmonitor.model.UptimeCheck;
 import com.certmonitor.model.NetworkOutageEvent;
+import com.certmonitor.model.PageCheck;
+import com.certmonitor.model.PageResourceIssue;
 import com.certmonitor.repository.AlertThresholdRepository;
 import com.certmonitor.repository.CertificateInventoryRepository;
 import com.certmonitor.repository.DnsMonitorRepository;
@@ -142,6 +144,16 @@ public class SchedulerService {
     /** Aynı gerekçeyle alan enjeksiyonu — envanter domain-expiry cache'ini günlük tazeleyen servis. */
     @Autowired
     private DomainExpiryRefreshService domainExpiryRefreshService;
+
+    /** Sayfa-bütünlüğü (9. tür) — constructor'ı/testini büyütmemek için alan enjeksiyonu (aynı desen). */
+    @Autowired
+    private PageCheckerService pageCheckerService;
+    @Autowired
+    private com.certmonitor.repository.PageMonitorRepository pageMonitorRepo;
+    @Autowired
+    private com.certmonitor.repository.PageCheckRepository pageCheckRepo;
+    @Autowired
+    private com.certmonitor.repository.PageResourceIssueRepository pageResourceIssueRepo;
 
     @Value("${cert.monitor.username:user}")
     private String adminUsername;
@@ -470,11 +482,16 @@ public class SchedulerService {
         patch("CREATE INDEX IF NOT EXISTS idx_ae_resolved_at ON alert_events(resolved_at)");
         // Denetim konsolu: event_type filtresi + event_time sıralı/range (findAdvanced) — tek-kolon yerine bileşik.
         patch("CREATE INDEX IF NOT EXISTS idx_audit_type_time ON audit_log(event_type, event_time)");
+        // Sayfa-bütünlüğü (9. tür) — LATERAL en-güncel + sorun listesi + purge güvenlik-ağı index'leri (ddl-auto ile de gelir).
+        patch("CREATE INDEX IF NOT EXISTS idx_pc_monitor_checked ON page_checks(monitor_id, checked_at)");
+        patch("CREATE INDEX IF NOT EXISTS idx_pri_monitor_checked ON page_resource_issues(monitor_id, checked_at)");
+        patch("CREATE INDEX IF NOT EXISTS idx_pri_check ON page_resource_issues(check_id)");
         // ── Yüksek-yazımlı tablolarda daha AGRESİF autovacuum — büyük tabloda varsayılan %20 ölü-tuple
         //    eşiği çok seyrek vacuum + şişme (bloat) demek; %2 scale + sabit eşikle sık, küçük vacuum/analyze.
         //    Postgres'e özgü; H2'de patch() sessiz atlar. Dış prod DB'de de çalışır (ALTER TABLE). Idempotent. ──
         for (String t : new String[]{"port_checks", "ping_checks", "keyword_results", "http_checks",
-                "uptime_checks", "dns_records", "certificate_checks", "activity_log", "audit_log", "notification_logs"}) {
+                "uptime_checks", "dns_records", "certificate_checks", "activity_log", "audit_log", "notification_logs",
+                "page_checks", "page_resource_issues"}) {
             patch("ALTER TABLE " + t + " SET (autovacuum_vacuum_scale_factor = 0.02, autovacuum_vacuum_threshold = 5000, "
                 + "autovacuum_analyze_scale_factor = 0.02, autovacuum_analyze_threshold = 5000)");
         }
@@ -816,6 +833,15 @@ public class SchedulerService {
             //    (dakikada 1), domain_checks (saatlik; baseline satırları korunur), diagnostic_runs,
             //    çözülmüş alert_events (açık/ack'li alarmlar ASLA silinmez). ──
             int hc = safeDeleteBatched("http_checks", "checked_at < ?", tsCutoff);
+            // Sayfa-bütünlüğü (9. tür) — en hızlı büyüyen adaylar. FK sırası: önce çocuk (issues), sonra ana (checks).
+            int priRetDays = Math.max(1, appSettings.getInt("cert.monitor.metrics.page-issues.retention-days", 90));
+            String priCutoff = ISO.format(Instant.now().minus(priRetDays, ChronoUnit.DAYS));
+            int priDel = safeDeleteBatched("page_resource_issues", "checked_at < ?", priCutoff);
+            int pcRetDays = Math.max(1, appSettings.getInt("cert.monitor.metrics.page.retention-days", 180));
+            String pcCutoff = ISO.format(Instant.now().minus(pcRetDays, ChronoUnit.DAYS));
+            int pcDel = safeDeleteBatched("page_checks", "checked_at < ?", pcCutoff);
+            if (priDel > 0 || pcDel > 0) log.info("Page retention: {} resource-issue + {} check silindi (issues>{}g, checks>{}g)",
+                    priDel, pcDel, priRetDays, pcRetDays);
             String hbCutoff = ISO.format(Instant.now().minus(30, ChronoUnit.DAYS));
             // recorded_at TIMESTAMP kolonudur (diğer tablolardaki ISO String değil) → parametreyi cast'le.
             int hb = safeDelete("DELETE FROM system_heartbeat WHERE recorded_at < CAST(? AS timestamp)", hbCutoff);
@@ -966,8 +992,9 @@ public class SchedulerService {
             int pg = rollupUpsert("PING",    "ping_checks",     "up",   "rtt_ms",      from, to);
             int k  = rollupUpsert("KEYWORD", "keyword_results", "ok",   "response_ms", from, to);
             int h  = rollupUpsert("HTTP",    "http_checks",     "ok",   "response_ms", from, to);
+            int pi = rollupUpsert("PAGE",    "page_checks",     "ok",   "response_ms", from, to);
             int u  = rollupUptime(from, to);
-            log.info("Daily rollup: port={}, ping={}, keyword={}, http={}, uptime={} ({} → {})", p, pg, k, h, u, from, to);
+            log.info("Daily rollup: port={}, ping={}, keyword={}, http={}, page={}, uptime={} ({} → {})", p, pg, k, h, pi, u, from, to);
         } catch (Exception e) {
             log.warn("Daily rollup failed: {}", e.getMessage());
         }
@@ -1493,6 +1520,7 @@ public class SchedulerService {
         domainMonitorRepo.findAll().forEach(m -> live.add("domain:" + m.getId()));
         pingMonitorRepo.findAll().forEach(m -> live.add("ping:" + m.getId()));
         dnsMonitorRepo.findAll().forEach(m -> live.add("dns:" + m.getId()));
+        pageMonitorRepo.findAll().forEach(m -> live.add("page:" + m.getId()));
         return live;
     }
 
@@ -2028,6 +2056,220 @@ public class SchedulerService {
         out.put("http_status", r.get("http_status"));
         out.put("response_ms", r.get("response_ms"));
         return out;
+    }
+
+    // ── Sayfa Bütünlüğü (9. tür) sweep — sık: her monitörün ANA sayfası (SINGLE_PAGE) ────────────────
+    @Scheduled(fixedDelayString = "${cert.monitor.page.interval-ms:60000}", initialDelayString = "90000")
+    public void runPageChecks() {
+        if (!appSettings.getBoolean("cert.monitor.page.alert-enabled", true)) return;
+        if (!tryAcquireSchedulerLock("page-sweep", sweepLockTtlMinutes)) {
+            log.debug("Page sweep — lock başka instance'da, atlanıyor");
+            return;
+        }
+        try { runPageChecksLocked(); }
+        finally { releaseSchedulerLock("page-sweep"); }
+    }
+
+    private void runPageChecksLocked() {
+        List<com.certmonitor.model.PageMonitor> monitors = pageMonitorRepo.findByActiveTrue();
+        if (orphanCleanupDue("page")) try {
+            java.util.Set<String> existingUrls = pageMonitorRepo.findAll().stream()
+                    .map(com.certmonitor.model.PageMonitor::getUrl).filter(java.util.Objects::nonNull)
+                    .collect(java.util.stream.Collectors.toSet());
+            escalationService.resolveOrphanedPageAlerts(existingUrls);
+        } catch (Exception e) {
+            log.warn("Öksüz sayfa alarmı temizliği başarısız: {}", e.getMessage());
+        }
+        if (monitors.isEmpty()) return;
+        int checked = 0;
+        // İki bağımsız alarm tipi: DOWN (ana sayfa alınamıyor) + INTEGRITY (kaynak/mixed sorunu).
+        List<MonitoringOutageService.SweepItem> downSweep = new ArrayList<>();
+        List<MonitoringOutageService.SweepItem> integritySweep = new ArrayList<>();
+        List<Map.Entry<com.certmonitor.model.PageMonitor, java.util.function.Supplier<Map<String, Object>>>> started = new ArrayList<>();
+        for (com.certmonitor.model.PageMonitor m : monitors) {
+            if (!checkDue("page", m.getId(), m.getIntervalSeconds())) continue;
+            // Sık sweep her zaman ANA sayfayı (SINGLE_PAGE) kontrol eder; derin crawl ayrı günlük akışta.
+            started.add(Map.entry(m, startNetworkCheck(() -> recheckPage(m, false, "SINGLE_PAGE"))));
+        }
+        for (var entry : started) {
+            com.certmonitor.model.PageMonitor m = entry.getKey();
+            try {
+                Map<String, Object> r = entry.getValue().get();
+                addPageSweepItems(m, r, downSweep, integritySweep);
+                checked++;
+            } catch (Exception e) {
+                log.warn("Page check failed for {}: {}", m.getUrl(), e.getMessage());
+            }
+        }
+        try { monitoringOutageService.handleSweepResults(EscalationService.TYPE_PAGE_DOWN, downSweep); }
+        catch (Exception e) { log.warn("Page DOWN outage processing failed: {}", e.getMessage(), e); }
+        try { monitoringOutageService.handleSweepResults(EscalationService.TYPE_PAGE_INTEGRITY, integritySweep); }
+        catch (Exception e) { log.warn("Page INTEGRITY outage processing failed: {}", e.getMessage(), e); }
+        log.debug("Page checks complete: {} monitors", checked);
+    }
+
+    // ── Sayfa Bütünlüğü — DERİN CRAWL: seyrek (günlük), tek site anda, düşük öncelik ──────────────────
+    @Scheduled(fixedDelayString = "${cert.monitor.page.crawl-interval-ms:86400000}", initialDelayString = "150000")
+    public void runPageCrawls() {
+        if (!appSettings.getBoolean("cert.monitor.page.alert-enabled", true)) return;
+        if (!tryAcquireSchedulerLock("page-crawl", sweepLockTtlMinutes)) {
+            log.debug("Page crawl — lock başka instance'da, atlanıyor");
+            return;
+        }
+        try {
+            List<com.certmonitor.model.PageMonitor> crawlers = pageMonitorRepo.findByActiveTrue().stream()
+                    .filter(m -> "SITE_CRAWL".equalsIgnoreCase(m.getMode())).toList();
+            if (crawlers.isEmpty()) return;
+            List<MonitoringOutageService.SweepItem> downSweep = new ArrayList<>();
+            List<MonitoringOutageService.SweepItem> integritySweep = new ArrayList<>();
+            // Tek site anda: SIRALI (fan-out YOK) — tek-pod yük + nezaket.
+            for (com.certmonitor.model.PageMonitor m : crawlers) {
+                try {
+                    Map<String, Object> r = recheckPage(m, false, "SITE_CRAWL");
+                    addPageSweepItems(m, r, downSweep, integritySweep);
+                } catch (Exception e) {
+                    log.warn("Page crawl failed for {}: {}", m.getUrl(), e.getMessage());
+                }
+            }
+            try { monitoringOutageService.handleSweepResults(EscalationService.TYPE_PAGE_DOWN, downSweep); }
+            catch (Exception e) { log.warn("Page crawl DOWN processing failed: {}", e.getMessage(), e); }
+            try { monitoringOutageService.handleSweepResults(EscalationService.TYPE_PAGE_INTEGRITY, integritySweep); }
+            catch (Exception e) { log.warn("Page crawl INTEGRITY processing failed: {}", e.getMessage(), e); }
+            log.debug("Page crawl complete: {} sites", crawlers.size());
+        } finally {
+            releaseSchedulerLock("page-crawl");
+        }
+    }
+
+    /** Bir page kontrol sonucundan iki SweepItem (DOWN + INTEGRITY) üretip ilgili listelere ekler. */
+    private void addPageSweepItems(com.certmonitor.model.PageMonitor m, Map<String, Object> r,
+                                   List<MonitoringOutageService.SweepItem> downSweep,
+                                   List<MonitoringOutageService.SweepItem> integritySweep) {
+        Map<String, Object> ctx = new LinkedHashMap<>();
+        ctx.put("url", m.getUrl());
+        ctx.put("monitor_id", m.getId());
+        ctx.put("monitor_confirm_attempts", m.getConfirmAttempts());
+        ctx.put("monitor_confirm_interval_ms", m.getConfirmIntervalSeconds() != null ? m.getConfirmIntervalSeconds() * 1000L : null);
+        ctx.put("monitor_recovery_checks", m.getRecoveryChecks());
+        ctx.put("monitor_recovery_interval_ms", m.getRecoveryIntervalSeconds() != null ? m.getRecoveryIntervalSeconds() * 1000L : null);
+        if (m.getTeamId() != null) ctx.put("team_id", m.getTeamId());
+        boolean mainUp = Boolean.TRUE.equals(r.get("main_up"));
+        boolean integrityUp = Boolean.TRUE.equals(r.get("integrity_up"));
+        String err = (String) r.get("error");
+        downSweep.add(new MonitoringOutageService.SweepItem(
+                EscalationService.TYPE_PAGE_DOWN, m.getUrl(), "sayfa",
+                mainUp, err, new LinkedHashMap<>(ctx),
+                () -> { Map<String, Object> p = recheckPage(m, false, "SINGLE_PAGE");
+                        return Map.of("status", Boolean.TRUE.equals(p.get("main_up")) ? "up" : "down"); }));
+        Map<String, Object> integ = new LinkedHashMap<>(ctx);
+        integ.put("detail", pageIntegrityDetail(r));
+        integritySweep.add(new MonitoringOutageService.SweepItem(
+                EscalationService.TYPE_PAGE_INTEGRITY, m.getUrl(), pageIntegrityDetail(r),
+                integrityUp, integrityUp ? null : pageIntegrityDetail(r), integ,
+                () -> { Map<String, Object> p = recheckPage(m, false, "SINGLE_PAGE");
+                        return Map.of("status", Boolean.TRUE.equals(p.get("integrity_up")) ? "up" : "down"); }));
+    }
+
+    private static String pageIntegrityDetail(Map<String, Object> r) {
+        Object broken = r.getOrDefault("broken_resources", 0);
+        Object mixed = r.getOrDefault("mixed_content_count", 0);
+        return broken + " kırık, " + mixed + " mixed content";
+    }
+
+    /**
+     * Bir sayfa-bütünlüğü kontrolü: motoru çalıştırır, page_checks + page_resource_issues + activity_log yazar.
+     * {@code effectiveMode} sık sweep'te "SINGLE_PAGE", günlük crawl'da "SITE_CRAWL" (m.mode'u geçersiz kılar).
+     * Döner: {status, main_up, integrity_up, error, http_status, response_ms, broken_resources, mixed_content_count}.
+     */
+    private Map<String, Object> recheckPage(com.certmonitor.model.PageMonitor m, boolean manual, String effectiveMode) {
+        int timeout = m.getTimeoutMs() != null ? m.getTimeoutMs() : 10000;
+        int slow = m.getSlowResourceMs() != null ? m.getSlowResourceMs() : 2000;
+        int conc = m.getResourceConcurrency() != null ? m.getResourceConcurrency() : 5;
+        PageCheckerService.PageCheckResult res = pageCheckerService.check(
+                m.getUrl(), effectiveMode, timeout, slow, conc,
+                m.getExcludePatterns(),
+                m.getCrawlDepth() != null ? m.getCrawlDepth() : 2,
+                m.getCrawlMaxPages() != null ? m.getCrawlMaxPages() : 50);
+
+        // Alarm-uygun bütünlük sorunu: mixed content VEYA birinci-taraf kırık VEYA (alertThirdParty ise 3.taraf kırık).
+        int firstPartyBroken = 0, thirdPartyBroken = 0;
+        for (PageCheckerService.ResourceIssue i : res.issues()) {
+            if ("BROKEN".equals(i.issueType()) || "TIMEOUT".equals(i.issueType())) {
+                if (i.firstParty()) firstPartyBroken++; else thirdPartyBroken++;
+            }
+        }
+        boolean alertThird = Boolean.TRUE.equals(m.getAlertThirdParty());
+        boolean alarmWorthy = res.mixedContentCount() > 0 || firstPartyBroken > 0 || (alertThird && thirdPartyBroken > 0);
+        boolean mainUp = res.mainReachable();
+        boolean integrityUp = !mainUp || !alarmWorthy;   // ana sayfa down iken ayrı bütünlük alarmı üretme
+
+        String ts = ISO.format(Instant.now());
+        try {
+            PageCheck pc = new PageCheck();
+            pc.setMonitorId(m.getId());
+            pc.setOk(mainUp && !alarmWorthy);
+            pc.setStatus(res.status());
+            pc.setHttpStatus(res.httpStatus());
+            pc.setResponseMs(res.responseMs());
+            pc.setTotalResources(res.totalResources());
+            pc.setBrokenResources(res.brokenResources());
+            pc.setMixedContentCount(res.mixedContentCount());
+            pc.setPagesCrawled(res.pagesCrawled());
+            pc.setContentHash(res.contentHash());
+            pc.setBodyBytes(res.bodyBytes());
+            pc.setError(res.error());
+            pc.setCheckedAt(ts);
+            pageCheckRepo.save(pc);
+            if (!res.issues().isEmpty()) {
+                List<PageResourceIssue> rows = new ArrayList<>();
+                for (PageCheckerService.ResourceIssue i : res.issues()) {
+                    PageResourceIssue row = new PageResourceIssue();
+                    row.setCheckId(pc.getId());
+                    row.setMonitorId(m.getId());
+                    row.setResourceUrl(i.resourceUrl());
+                    row.setResourceType(i.resourceType());
+                    row.setSourcePage(i.sourcePage());
+                    row.setIssueType(i.issueType());
+                    row.setFirstParty(i.firstParty());
+                    row.setHttpStatus(i.httpStatus());
+                    row.setDurationMs(i.durationMs());
+                    row.setCheckedAt(ts);
+                    rows.add(row);
+                }
+                pageResourceIssueRepo.saveAll(rows);
+            }
+        } catch (Exception e) {
+            log.warn("Sayfa kaydı yazılamadı: {} — {}", m.getUrl(), e.getMessage());
+        }
+
+        Map<String, Object> activity = new LinkedHashMap<>();
+        activity.put("status", res.status());
+        activity.put("ok", mainUp && !alarmWorthy);
+        activity.put("http_status", res.httpStatus());
+        activity.put("response_ms", res.responseMs());
+        activity.put("total_resources", res.totalResources());
+        activity.put("broken_resources", res.brokenResources());
+        activity.put("mixed_content_count", res.mixedContentCount());
+        activity.put("pages_crawled", res.pagesCrawled());
+        if (res.error() != null) activity.put("error", res.error());
+        activityLog.recordCheck(ActivityLogService.PAGE, m.getId(), m.getName(),
+                m.getUrl(), m.getTeamId(), manual, manual ? "manual" : "scheduler", activity);
+
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("status", res.status());
+        out.put("main_up", mainUp);
+        out.put("integrity_up", integrityUp);
+        out.put("error", res.error());
+        out.put("http_status", res.httpStatus());
+        out.put("response_ms", res.responseMs());
+        out.put("broken_resources", res.brokenResources());
+        out.put("mixed_content_count", res.mixedContentCount());
+        return out;
+    }
+
+    /** Manuel tetik (controller) — monitörün kendi modunda tam kontrol + persist. */
+    public Map<String, Object> triggerPageCheck(com.certmonitor.model.PageMonitor m) {
+        return recheckPage(m, true, m.getMode() != null ? m.getMode() : "SINGLE_PAGE");
     }
 
     // ── HTTP SSL + Domain (WHOIS/RDAP) yavaş sweep'i — sıcak uptime döngüsünden AYRI (tek-pod perf) ──

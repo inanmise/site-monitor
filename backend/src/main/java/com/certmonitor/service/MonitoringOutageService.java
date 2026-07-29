@@ -445,6 +445,9 @@ public class MonitoringOutageService {
                  EscalationService.TYPE_HTTP_SSL,
                  EscalationService.TYPE_DOMAIN_EXPIRY ->
                     appSettings.getBoolean("cert.monitor.http.alert-enabled", true);
+            case EscalationService.TYPE_PAGE_DOWN,
+                 EscalationService.TYPE_PAGE_INTEGRITY ->
+                    appSettings.getBoolean("cert.monitor.page.alert-enabled", true);
             case EscalationService.TYPE_DOMAINMON_EXPIRY,
                  EscalationService.TYPE_DOMAINMON_UNKNOWN,
                  EscalationService.TYPE_DOMAINMON_STATUS,
@@ -464,6 +467,7 @@ public class MonitoringOutageService {
                 || EscalationService.TYPE_DOMAIN_EXPIRY.equals(alertType)
                 || EscalationService.isKeywordAux(alertType)
                 || EscalationService.TYPE_PORT_SLOW.equals(alertType)
+                || EscalationService.TYPE_PAGE_INTEGRITY.equals(alertType)
                 || EscalationService.isDomainMon(alertType)) ? "HIGH" : "CRITICAL";
     }
 

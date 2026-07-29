@@ -42,6 +42,13 @@ public final class AppSettingsCatalog {
         new Setting("cert.monitor.ping.alert-enabled",           "monitoring", Type.BOOL),
         new Setting("cert.monitor.http.alert-enabled",           "monitoring", Type.BOOL),
         new Setting("cert.monitor.http.rdap-base-url",           "monitoring", Type.STRING),
+        // Sayfa Bütünlüğü (9. tür) — alarm aç/kapa + kaynak-doğrulama eşzamanlılığı (nezaket + tek-pod yük).
+        new Setting("cert.monitor.page.alert-enabled",           "monitoring", Type.BOOL),
+        new Setting("cert.monitor.page.resource-concurrency",    "monitoring", Type.INT),
+        new Setting("cert.monitor.page.user-agent",              "monitoring", Type.STRING),
+        // Sayfa-bütünlüğü check/issue serisi — gün-bazlı saklama (gece batch-purge).
+        new Setting("cert.monitor.metrics.page.retention-days",       "monitoring", Type.INT),
+        new Setting("cert.monitor.metrics.page-issues.retention-days","monitoring", Type.INT),
         // Alan adı (domain) süre-bitişi izleme — RDAP (proxy-aware) + env-gated WHOIS.
         new Setting("cert.monitor.domain.alert-enabled",         "monitoring", Type.BOOL),
         new Setting("cert.monitor.domain.rdap-bootstrap-url",    "monitoring", Type.STRING),
@@ -86,6 +93,11 @@ public final class AppSettingsCatalog {
         new Setting("cert.monitor.port.default-timeout-ms",          "frequency", Type.INT),
         new Setting("cert.monitor.port.default-slow-ms",             "frequency", Type.INT),
         new Setting("cert.monitor.http.default-timeout-ms",          "frequency", Type.INT),
+        new Setting("cert.monitor.page.default-interval-seconds",     "frequency", Type.INT),
+        new Setting("cert.monitor.page.default-timeout-ms",           "frequency", Type.INT),
+        new Setting("cert.monitor.page.default-slow-ms",              "frequency", Type.INT),
+        new Setting("cert.monitor.page.default-crawl-depth",          "frequency", Type.INT),
+        new Setting("cert.monitor.page.default-crawl-max-pages",      "frequency", Type.INT),
         // Haftalık erişilebilirlik e-postası (Pazartesi 10:00) aç/kapa — canlı.
         new Setting("cert.monitor.weekly-availability.enabled",  "monitoring", Type.BOOL),
         // Haftalık rapor sağlık skoru ağırlıkları (executive özet) — WeeklyScoreCalculator canlı okur.

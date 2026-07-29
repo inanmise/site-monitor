@@ -31,6 +31,7 @@ import KeywordMonitorPage from './components/KeywordMonitorPage'
 import HttpMonitorPage from './components/HttpMonitorPage'
 import DomainMonitorPage from './components/DomainMonitorPage'
 import PingMonitorPage from './components/PingMonitorPage'
+import PageMonitorPage from './components/PageMonitorPage'
 import ErrorBoundary from './components/ErrorBoundary.jsx'
 
 // Ağır/seyrek admin & rapor sekmeleri — lazy (kod-bölme): ilk yük küçülür, sekme
@@ -78,7 +79,7 @@ function formatDurationShort(ms) {
 const VALID_TABS = new Set([
   'dashboard', 'all', 'domains', 'forecast', 'renewal', 'renewal-guide',
   'warnings', 'incidents', 'maintenance', 'alerthistory', 'stats', 'weakalgo', 'weeklyreports', 'incident-history',
-  'health', 'uptime', 'http', 'domain', 'port', 'dns', 'keyword', 'ping', 'activity', 'myactivity', 'system',
+  'health', 'uptime', 'http', 'domain', 'port', 'dns', 'keyword', 'ping', 'page', 'activity', 'myactivity', 'system',
   'admin', 'permissions', 'sqlplayground', 'login-issues', 'help', 'settings',
 ])
 function initialTabFromUrl() {
@@ -1137,6 +1138,7 @@ export default function App() {
             {tab === 'dns'      && <DnsMonitorPage  systemRole={systemRole} teamId={teamId} teamName={teamName} />}
             {tab === 'keyword'  && <KeywordMonitorPage systemRole={systemRole} teamId={teamId} teamName={teamName} />}
             {tab === 'ping'     && <PingMonitorPage systemRole={systemRole} teamId={teamId} teamName={teamName} />}
+            {tab === 'page'     && <PageMonitorPage systemRole={systemRole} teamId={teamId} teamName={teamName} />}
             {tab === 'forecast' && <ExpiryForecastPage onSelectDomain={(d) => setModalCert(certs.find(c => c.domain === d) ?? { domain: d })} />}
             </Suspense>
            </ErrorBoundary>

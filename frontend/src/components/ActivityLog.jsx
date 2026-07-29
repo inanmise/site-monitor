@@ -3,7 +3,7 @@ import { api, formatDateSec } from '../api/client'
 import { useT } from '../i18n/index.jsx'
 import { useVisibleInterval } from '../hooks/useVisibleInterval.js'
 import {
-  Shield, Activity, Globe, Server, Radio, Share2, Search, CalendarClock,
+  Shield, Activity, Globe, Server, Radio, Share2, Search, CalendarClock, ScanSearch,
   CheckCircle, AlertTriangle, XCircle, HelpCircle, ChevronDown, ChevronRight,
   Download, X, RefreshCw, Clock, User,
 } from 'lucide-react'
@@ -18,6 +18,7 @@ const TYPES = [
   { key: 'PING',    Icon: Radio,         color: '#0891b2' },
   { key: 'DNS',     Icon: Share2,        color: '#6d28d9' },
   { key: 'KEYWORD', Icon: Search,        color: '#d97706' },
+  { key: 'PAGE',    Icon: ScanSearch,    color: '#0d9488' },
 ]
 const TYPE_MAP = Object.fromEntries(TYPES.map((t) => [t.key, t]))
 

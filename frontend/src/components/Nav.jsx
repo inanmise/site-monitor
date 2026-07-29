@@ -6,7 +6,7 @@ import {
   LayoutDashboard, AlertTriangle, FileText,
   RefreshCw, ClipboardList, Settings, User, Globe, LogOut, Lock,
   Sun, Moon, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Server, Activity, ShieldAlert, BarChart3, Bell, BookOpen,
-  Wifi, Network, Search, TrendingDown, Database, UserCheck, ShieldCheck, CalendarDays, ListChecks, Target, Radio, Siren, Wrench, LifeBuoy,
+  Wifi, Network, Search, TrendingDown, Database, UserCheck, ShieldCheck, CalendarDays, ListChecks, Target, Radio, Siren, Wrench, LifeBuoy, ScanSearch,
 } from 'lucide-react'
 import CertMonitorLogo from './ui/CertMonitorLogo.jsx'
 import { useBranding } from '../contexts/BrandingProvider.jsx'
@@ -52,6 +52,7 @@ export default function Nav({ activeTab, onTabChange, username, teamName, system
         { id: 'dns',     Icon: Search,   labelKey: 'nav.dns',     show: true },
         { id: 'keyword', Icon: Target,   labelKey: 'nav.keyword', show: true },
         { id: 'ping',    Icon: Radio,    labelKey: 'nav.ping',    show: true },
+        { id: 'page',    Icon: ScanSearch, labelKey: 'nav.page',  show: true },
       ],
     },
     {
