@@ -48,6 +48,11 @@ COPY --from=frontend-build --chown=appuser:appgroup /app/frontend/dist ./fronten
 
 USER appuser
 
+# Konteyner locale'ini UTF-8 yap: JVM native/console encoding'i C.UTF-8'e sabitlenir → logback-DIŞI
+# stdout/stderr yolları da UTF-8 olur (Türkçe karakterler kubectl/aggregator'da mojibake olmaz).
+ENV LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8
+
 EXPOSE 8080
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
@@ -56,4 +61,4 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
 # JAVA_OPTS is injected at runtime (ConfigMap / env var).
 # -XX:+UseContainerSupport is always on so the JVM reads cgroup limits.
 # Shell-form ENTRYPOINT is required to expand $JAVA_OPTS.
-ENTRYPOINT ["sh", "-c", "exec java -XX:+UseContainerSupport $JAVA_OPTS -Djava.security.egd=file:/dev/./urandom -jar app.jar"]
+ENTRYPOINT ["sh", "-c", "exec java -XX:+UseContainerSupport -Dstdout.encoding=UTF-8 -Dstderr.encoding=UTF-8 -Dfile.encoding=UTF-8 $JAVA_OPTS -Djava.security.egd=file:/dev/./urandom -jar app.jar"]

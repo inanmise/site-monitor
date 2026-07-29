@@ -256,6 +256,30 @@ class SchedulerServiceTest {
     }
 
     @Test
+    @DisplayName("warnOnOrphanedRecords: öksüz kaydı SAYAR ama atamaz — mutasyon yok, rastgele takım seçilmez")
+    void warnOnOrphanedRecords_countsOnly_noAutoAssign() {
+        when(jdbcTemplate.queryForObject(contains("certificate_inventory"), eq(Long.class))).thenReturn(2L);
+        when(jdbcTemplate.queryForObject(contains("escalation_contacts"), eq(Long.class))).thenReturn(1L);
+
+        ReflectionTestUtils.invokeMethod(scheduler, "warnOnOrphanedRecords");
+
+        // Salt-okunur: hiçbir "ilk takım seç" (listTeams) veya team_id UPDATE'i çalışmaz.
+        verify(userService, never()).listTeams();
+        verify(jdbcTemplate, never()).update(contains("SET team_id"), any(Object[].class));
+    }
+
+    @Test
+    @DisplayName("warnOnOrphanedRecords: öksüz yokken de hiçbir mutasyon yapmaz (sessiz)")
+    void warnOnOrphanedRecords_zero_noMutation() {
+        when(jdbcTemplate.queryForObject(anyString(), eq(Long.class))).thenReturn(0L);
+
+        ReflectionTestUtils.invokeMethod(scheduler, "warnOnOrphanedRecords");
+
+        verify(userService, never()).listTeams();
+        verify(jdbcTemplate, never()).update(contains("SET team_id"), any(Object[].class));
+    }
+
+    @Test
     @DisplayName("F4: triggerManualCheck raw Thread yerine certCheckExecutor'a atar")
     void triggerManualCheck_usesExecutor() {
         // Bu testte inline stub'ı devre dışı bırak — runCheck'in kendisi koşmasın, yalnız submit doğrulansın.
