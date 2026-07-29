@@ -253,7 +253,7 @@ public class SchedulerService {
             try { incidentService.seedOptions(); } // olay modülü varsayılan kanalları (idempotent)
             catch (Exception e) { log.warn("Incident option seed failed: {}", e.getMessage()); }
             ensureDefaultThreshold();
-            assignOrphanedCertsToDefaultTeam();
+            warnOnOrphanedRecords();
             clearStaleLocksForThisHost();
             restoreOutageStateFromDb();
         } finally {
@@ -581,24 +581,28 @@ public class SchedulerService {
         patch("CREATE UNIQUE INDEX IF NOT EXISTS ux_mon_groups_team_type_lname ON monitoring_groups(team_id, type, name_lower)");
     }
 
-    /** Assigns any certs/contacts without a team to the first (default) team. */
-    private void assignOrphanedCertsToDefaultTeam() {
+    /**
+     * Takımsız (team_id IS NULL) sertifika/kontak varsa yalnız UYARIR — bunlar takım-kapsamlı ekranlarda
+     * görünmez. Eskiden bu kayıtlar rastgele "ilk" takıma OTOMATİK atanıyordu (özel bir "varsayılan takım"
+     * yoktu; yanlış takıma atama + her açılışta yanıltıcı log riski). Artık atama YOK — yalnız görünürlük
+     * uyarısı; öksüz kaydı admin bilinçli olarak elle atar. Salt-okunur (mutasyon yapmaz).
+     */
+    private void warnOnOrphanedRecords() {
         try {
-            userService.listTeams().stream().findFirst().ifPresent(defaultTeam -> {
-                Long tid = defaultTeam.getId();
-                try {
-                    jdbcTemplate.update(
-                        "UPDATE certificate_inventory SET team_id = ? WHERE team_id IS NULL", tid);
-                    jdbcTemplate.update(
-                        "UPDATE escalation_contacts SET team_id = ? WHERE team_id IS NULL", tid);
-                    log.info("Assigned orphaned certs/contacts to default team '{}' (id={})",
-                            defaultTeam.getName(), tid);
-                } catch (Exception e) {
-                    log.warn("Could not assign orphaned records to default team: {}", e.getMessage());
-                }
-            });
+            Long certs = jdbcTemplate.queryForObject(
+                    "SELECT count(*) FROM certificate_inventory WHERE team_id IS NULL", Long.class);
+            Long contacts = jdbcTemplate.queryForObject(
+                    "SELECT count(*) FROM escalation_contacts WHERE team_id IS NULL", Long.class);
+            long c = certs != null ? certs : 0L;
+            long k = contacts != null ? contacts : 0L;
+            if (c + k > 0) {
+                log.warn("{} takımsız sertifika + {} takımsız kontak var — takım-kapsamlı ekranlarda görünmezler; "
+                        + "elle takım atayın.", c, k);
+            } else {
+                log.debug("Öksüz (takımsız) kayıt yok.");
+            }
         } catch (Exception e) {
-            log.warn("assignOrphanedCertsToDefaultTeam failed: {}", e.getMessage());
+            log.warn("warnOnOrphanedRecords failed: {}", e.getMessage());
         }
     }
 
