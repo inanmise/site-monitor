@@ -83,3 +83,40 @@ ama prod overlay (`helm/.../environments/master.yaml`) `replicaCount: 3` → 3×
 `/metrics` (Prometheus) üzerinde `db_table_rows{table=...}` ve `db_table_bytes{table=...}` gauge'ları
 tablo büyümesini izler; büyüme projeksiyon eşiğini aşarsa log WARN üretilir (bkz. Micrometer metrikleri).
 `Sistem Sağlığı → Veritabanı` ekranı (DbAnalyticsService) tablo boyutlarını + en yavaş sorguları gösterir.
+
+## 6. Deployment — prod'a çıkış checklist
+
+Kod tarafı geriye-uyumlu/eklemelidir (yeni tablolar idempotent patch'le oluşur, retention kısaltma
+opt-in'dir, gece temizlik/rollup dağıtık-kilitlidir → çok-pod'da tek pod çalışır). Yine de aşağıdaki
+**ops adımları OTOMATİK UYGULANMAZ** — dış/yönetilen prod DB'de elle yapılmalıdır.
+
+### DEPLOY ÖNCESİ (zorunlu)
+1. **Index'leri CONCURRENTLY oluştur.** Yeni index'ler startup'ta `applySchemaPatches` ile düz
+   (tabloyu KİLİTLEYEN) `CREATE INDEX` çalıştırır; büyük `audit_log`/`alert_events`'te pod açılışını
+   kilitler/geciktirir. Deploy'dan önce:
+   ```
+   psql -h <prod-host> -U certmonitor -d certmonitor -v ON_ERROR_STOP=1 -f scripts/perf-indexes.sql
+   ```
+   Böylece startup patch'i no-op olur. (Taze/küçük DB'de gerek yok.)
+2. **Bağlantı matematiğini doğrula.** Prod 3 replika × Hikari pool 25 = **75 bağlantı**.
+   `max_connections ≥ 75 + admin/monitoring headroom` (≥100, tercihen 150) olduğunu teyit et; değilse
+   pod'lar bağlantı bulamaz. (Bkz. §3 bağlantı matematiği.)
+3. **(Önerilen) Dış DB sunucu tuning'i** uygula (§3): `shared_buffers` ~RAM %25, `effective_cache_size`
+   ~RAM %75, `work_mem` 16–32MB, `maintenance_work_mem` 128–256MB.
+4. **(Opsiyonel) `pg_stat_statements` preload** (`shared_preload_libraries`) — `db-health.sql` bölüm 4
+   (en yavaş sorgular) için. Uygulama başlangıçta `CREATE EXTENSION`'ı best-effort dener.
+
+> Not: `k8s/postgres.yaml` tuning'i yalnız **self-hosted** k8s Postgres içindir; prod Helm dış-DB
+> kullanır (`postgresql.enabled=false`), oraya gitmez.
+
+### DEPLOY SONRASI (smoke doğrulama)
+- Monitör-liste sayfaları açılıyor (LATERAL en-güncel sorguları) + Denetim/Aktivite ekranları.
+- `/metrics` içinde `db_table_rows{table=...}` gauge'ları görünüyor.
+- İlk gece (03:30) `cleanupOldLogs` logu: yalnız **tek pod** "Nightly cleanup" yazar (diğerleri
+  "lock başka pod'da, atlanıyor"); rollup satırı `monitor_check_daily`'yi dolduruyor.
+- `psql -f scripts/db-health.sql` ile tablo boyutları/bloat/en yavaş sorgular gözden geçir.
+
+### ROLLUP DOĞRULANDIKTAN SONRA (opsiyonel, ops kararı)
+Rollup birkaç gün prod'da doğru veri ürettikten sonra, ham kontrol serisi retention'ı config'ten
+kısaltılabilir (ör. 180g → 30–45g) — uzun-dönem trend `monitor_check_daily`'de kalır. Sıra:
+önce rollup birikir, **sonra** ham kısaltılır (trend kaybı olmaz).
