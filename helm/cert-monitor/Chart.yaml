@@ -16,8 +16,7 @@ sources:
 maintainers:
   - name: inanmise
     email: erdi.inanmis@gmail.com
-dependencies:
-  - name: postgresql
-    version: "18.x.x"
-    repository: https://charts.bitnami.com/bitnami
-    condition: postgresql.enabled
+# Bundled Bitnami postgresql subchart KALDIRILDI: hiçbir ortam onu enable etmiyordu
+# (postgresql.enabled=false her yerde; prod dış/yönetilen DB, self-hosted için k8s/postgres.yaml var)
+# ve Bitnami'nin legacy Helm repo'su (charts.bitnami.com/bitnami) kullanımdan kalkıp CI'da
+# "helm dep update" adımını timeout'a düşürüyordu. Gerekirse ileride OCI kaynağıyla geri eklenebilir.
