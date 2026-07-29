@@ -39,6 +39,15 @@ export function durationMs(startedAt, resolvedAt, nowMs) {
   return end ? end.getTime() - start.getTime() : null
 }
 
+// Otomatik "Süre (dk)": olayın gerçek toplam süresi = OLUŞ → çözülme farkı (tam dakika).
+// Tespit değil oluş tabanlı (tespit gecikmesi süreden düşmemeli). Geçersiz/negatif/eksik → null.
+export function autoDurationMinutes(occurredAt, resolvedAt) {
+  if (!occurredAt || !resolvedAt) return null
+  const ms = durationMs(occurredAt, resolvedAt)
+  if (ms == null || ms < 0) return null
+  return Math.round(ms / 60000)
+}
+
 // Süre (ms) → insan-okur ("45 sn", "5 dk", "2 sa 3 dk", "3 g 4 sa"). Birimler i18n (t) ile.
 export function formatDuration(ms, t) {
   if (ms == null || ms < 0) return '—'

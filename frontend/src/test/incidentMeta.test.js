@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { parseUtc, durationMs, formatDuration, rcMeta, RC_META } from '../utils/incidentMeta.js'
+import { parseUtc, durationMs, formatDuration, autoDurationMinutes, rcMeta, RC_META } from '../utils/incidentMeta.js'
 
 // Saf tarih/süre yardımcıları — olay (incident) kartlarındaki "ne kadar sürdü" + kök-neden rengi.
 // parseUtc her iki tarafı aynı biçimde UTC'ye çevirdiği için süre farkı timezone'dan bağımsızdır.
@@ -34,6 +34,27 @@ describe('durationMs', () => {
   it('start yok / geçersiz → null', () => {
     expect(durationMs(null, null, Date.now())).toBeNull()
     expect(durationMs('garbage', null, Date.now())).toBeNull()
+  })
+})
+
+describe('autoDurationMinutes', () => {
+  it('OLUŞ → çözülme farkı, tam dakika (tespit değil)', () => {
+    // oluş 10:00, çözülme 10:50 → 50 dk (tespit 10:20 hesaba KARIŞMAZ)
+    expect(autoDurationMinutes('2026-01-15T10:00:00', '2026-01-15T10:50:00')).toBe(50)
+  })
+
+  it('saniye → en yakın dakikaya yuvarlar', () => {
+    expect(autoDurationMinutes('2026-01-15T10:00:00', '2026-01-15T10:02:40')).toBe(3)   // 2dk40sn → 3
+  })
+
+  it('çözülme < oluş (negatif) → null', () => {
+    expect(autoDurationMinutes('2026-01-15T10:50:00', '2026-01-15T10:00:00')).toBeNull()
+  })
+
+  it('oluş veya çözülme eksik → null', () => {
+    expect(autoDurationMinutes('', '2026-01-15T10:50:00')).toBeNull()
+    expect(autoDurationMinutes('2026-01-15T10:00:00', null)).toBeNull()
+    expect(autoDurationMinutes(null, null)).toBeNull()
   })
 })
 

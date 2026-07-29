@@ -8,6 +8,7 @@ import { RefreshCcw, Plus, ChevronLeft, ChevronRight, ChevronDown, Pencil, Trash
 import MarkdownEditor from './ui/MarkdownEditor.jsx'
 import DateTimeField from './ui/DateTimeField.jsx'
 import SearchableSelect from './ui/SearchableSelect.jsx'
+import { autoDurationMinutes } from '../utils/incidentMeta.js'
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RTooltip, Legend, Cell } from 'recharts'
 
 const SEVERITIES = ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW']
@@ -764,16 +765,16 @@ function IncidentModal({ modal, setModal, save, remove, saving, allowManage, all
   if (f.team_id != null && f.team_id !== '' && !teams.some(tm => String(tm.id) === String(f.team_id)))
     teamOptions.push({ value: String(f.team_id), label: f.team_name || ('#' + f.team_id) })
 
-  // Süre (dk) otomatik: tespit ↔ çözülme farkı (ikisi de geçerli ve resolved >= detected ise).
-  // İkisi de aynı UTC string formatında olduğundan yerel parse'ta offset sadeleşir → fark doğru.
+  // Süre (dk) otomatik: olayın gerçek toplam süresi = OLUŞ ↔ çözülme farkı (tespit DEĞİL —
+  // tespit gecikmesi süreden düşmemeli). autoDurationMinutes UTC-güvenli parse + negatif/eksik → null.
   useEffect(() => {
-    if (!editing || !f.detected_at || !f.resolved_at) return
-    const diff = Math.round((new Date(f.resolved_at).getTime() - new Date(f.detected_at).getTime()) / 60000)
-    if (!Number.isFinite(diff) || diff < 0) return
+    if (!editing || !f.occurred_at || !f.resolved_at) return
+    const diff = autoDurationMinutes(f.occurred_at, f.resolved_at)
+    if (diff == null) return
     if (String(f.duration_minutes ?? '') !== String(diff)) {
       setModal(m => ({ ...m, form: { ...m.form, duration_minutes: diff } }))
     }
-  }, [f.detected_at, f.resolved_at, editing]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [f.occurred_at, f.resolved_at, editing]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Görsel isim tekilleştirme — aynı incident içinde (4 markdown alanı genelinde) aynı görsel
   // adı tekrar ederse "ad (2).uzantı" üretir. İçerik farklı iki "capture.jpg" ikisi de yüklenir,
@@ -840,10 +841,10 @@ function IncidentModal({ modal, setModal, save, remove, saving, allowManage, all
             options={channelCodeOpts} onChange={v => set('channel_code', v)}
             onCreate={v => onAddOption('CHANNEL_CODE', v)} onDelete={v => onDeleteOption('CHANNEL_CODE', v)} />
           <DateInput label={t('inc.fDetectedAt')} value={f.detected_at} disabled={!editing} onChange={v => set('detected_at', v)} />
-          <DateInput label={t('inc.fResolvedAt')} value={f.resolved_at} disabled={!editing} min={f.detected_at} onChange={v => set('resolved_at', v)} />
+          <DateInput label={t('inc.fResolvedAt')} value={f.resolved_at} disabled={!editing} min={f.detected_at || f.occurred_at} onChange={v => set('resolved_at', v)} />
           <TextInput label={t('inc.fErrorBudget')} type="number" value={f.error_budget_burn_pct} disabled={!editing} onChange={v => set('error_budget_burn_pct', v)} />
           <TextInput label={t('inc.fDuration')} type="number" value={f.duration_minutes}
-            disabled={!editing || (!!f.detected_at && !!f.resolved_at)}
+            disabled={!editing || (!!f.occurred_at && !!f.resolved_at)}
             onChange={v => set('duration_minutes', v)} />
           <CheckInput label={t('inc.fSla')} checked={f.sla_breached} disabled={!editing} onChange={v => set('sla_breached', v)} />
           <TextInput label={t('inc.fAffected')} full value={f.affected_services} disabled={!editing} onChange={v => set('affected_services', v)} />
