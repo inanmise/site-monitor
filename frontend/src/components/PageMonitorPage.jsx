@@ -39,7 +39,7 @@ const RES_ICON = { IMG: Image, CSS: FileCode, JS: FileCode, LINK: Link2, IFRAME:
 const PAGE_ISSUE_COLS = '1fr 0.9fr 2.1fr 0.75fr 0.5fr 0.55fr'
 const emptyForm = { name: '', url: '', groupName: '', teamId: '', tags: '', notifyEmail: true,
   mode: 'SINGLE_PAGE', crawlDepth: 2, crawlMaxPages: 50, excludePatterns: '', slowResourceMs: 2000,
-  alertThirdParty: false, alertMixedContent: true, resourceConcurrency: 5,
+  alertThirdParty: false, alertMixedContent: true, alertTimeout: true, resourceConcurrency: 5,
   intervalSeconds: 300, timeoutMs: 10000, confirmAttempts: 3, confirmIntervalSeconds: 30,
   recoveryChecks: 3, recoveryIntervalSeconds: 30, active: true }
 
@@ -166,7 +166,7 @@ export default function PageMonitorPage({ systemRole, teamId, teamName }) {
       tags: m.tags || '', notifyEmail: m.notify_email !== false,
       mode: m.mode || 'SINGLE_PAGE', crawlDepth: m.crawl_depth ?? 2, crawlMaxPages: m.crawl_max_pages ?? 50,
       excludePatterns: m.exclude_patterns || '', slowResourceMs: m.slow_resource_ms ?? 2000,
-      alertThirdParty: !!m.alert_third_party, alertMixedContent: m.alert_mixed_content !== false, resourceConcurrency: m.resource_concurrency ?? 5,
+      alertThirdParty: !!m.alert_third_party, alertMixedContent: m.alert_mixed_content !== false, alertTimeout: m.alert_timeout !== false, resourceConcurrency: m.resource_concurrency ?? 5,
       intervalSeconds: m.interval_seconds ?? 300, timeoutMs: m.timeout_ms ?? 10000,
       confirmAttempts: m.confirm_attempts ?? 3, confirmIntervalSeconds: m.confirm_interval_seconds ?? 30,
       recoveryChecks: m.recovery_checks ?? 3, recoveryIntervalSeconds: m.recovery_interval_seconds ?? 30,
@@ -193,7 +193,7 @@ export default function PageMonitorPage({ systemRole, teamId, teamName }) {
       tags: form.tags?.trim() || null, notifyEmail: form.notifyEmail,
       mode: form.mode, crawlDepth: Number(form.crawlDepth), crawlMaxPages: Number(form.crawlMaxPages),
       excludePatterns: form.excludePatterns?.trim() || null, slowResourceMs: Number(form.slowResourceMs),
-      alertThirdParty: form.alertThirdParty, alertMixedContent: form.alertMixedContent, resourceConcurrency: Number(form.resourceConcurrency),
+      alertThirdParty: form.alertThirdParty, alertMixedContent: form.alertMixedContent, alertTimeout: form.alertTimeout, resourceConcurrency: Number(form.resourceConcurrency),
       intervalSeconds: Number(form.intervalSeconds), timeoutMs: Number(form.timeoutMs),
       confirmAttempts: Number(form.confirmAttempts), confirmIntervalSeconds: Number(form.confirmIntervalSeconds),
       recoveryChecks: Number(form.recoveryChecks), recoveryIntervalSeconds: Number(form.recoveryIntervalSeconds),
@@ -334,7 +334,7 @@ export default function PageMonitorPage({ systemRole, teamId, teamName }) {
     ? (teams.find(tm => String(tm.id) === String(form.teamId))?.name || t('page.noTeam'))
     : (teamName || t('page.noTeam'))
   const ivIdx = intervalIdx(Number(form.intervalSeconds))
-  const issueFilters = ['all', 'BROKEN', 'BLOCKED', 'MIXED_CONTENT', 'SLOW', 'firstParty']
+  const issueFilters = ['all', 'BROKEN', 'TIMEOUT', 'BLOCKED', 'MIXED_CONTENT', 'SLOW', 'firstParty']
 
   return (
     <div className="upt-page">
@@ -367,6 +367,7 @@ export default function PageMonitorPage({ systemRole, teamId, teamName }) {
           <ul className="dom-info-body">
             <li>{t('page.how1')}</li>
             <li>{t('page.how2')}</li>
+            <li>{t('page.how2b')}</li>
             <li>{t('page.how3')}</li>
             <li>{t('page.how4')}</li>
             <li>{t('page.how5')}</li>
@@ -503,7 +504,7 @@ export default function PageMonitorPage({ systemRole, teamId, teamName }) {
                   {issues.map((r, i) => {
                     const RI = RES_ICON[r.resource_type] || Link2
                     const issueColor = r.issue_type === 'MIXED_CONTENT' ? '#b45309' : r.issue_type === 'SLOW' ? '#0369a1'
-                      : r.issue_type === 'BLOCKED' ? '#78716c' : '#b91c1c'   // BLOCKED nötr gri (kırık değil, belirsiz)
+                      : r.issue_type === 'BLOCKED' ? '#78716c' : r.issue_type === 'TIMEOUT' ? '#a16207' : '#b91c1c'   // BLOCKED/TIMEOUT nötr (kesin kırık değil)
                     // Kontrol zamanı değişince görsel ayraç — hangi kaynağın hangi kontrolde bulunduğunu ayrıştırır.
                     const runBoundary = i > 0 && (issues[i - 1].checked_at !== r.checked_at)
                     return (
@@ -623,6 +624,10 @@ export default function PageMonitorPage({ systemRole, teamId, teamName }) {
               <label className="checkbox-label full-width">
                 <input type="checkbox" checked={form.alertMixedContent} onChange={e => setForm(f => ({ ...f, alertMixedContent: e.target.checked }))} />{t('page.alertMixedContent')}</label>
               <div className="full-width field-hint">{t('page.alertMixedContentHint')}</div>
+
+              <label className="checkbox-label full-width">
+                <input type="checkbox" checked={form.alertTimeout} onChange={e => setForm(f => ({ ...f, alertTimeout: e.target.checked }))} />{t('page.alertTimeout')}</label>
+              <div className="full-width field-hint">{t('page.alertTimeoutHint')}</div>
 
               {/* Etiketler */}
               <div className="full-width kw-tags-block">
