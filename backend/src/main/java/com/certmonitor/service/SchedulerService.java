@@ -2200,28 +2200,42 @@ public class SchedulerService {
 
         // Alarm-uygunluk YALNIZ e-posta geçidi (tabloda her sorun görünür). countsForAlarm: BLOCKED/SLOW hiç,
         // LINK yalnız 404/410 (dış link 5xx/timeout alarm üretmez — Q1), yüklenen alt-kaynak broken/timeout.
-        boolean anyFirstAlarm = false, anyThirdAlarm = false, anyMixedAlarm = false;
+        // TIMEOUT, MIXED_CONTENT gibi AYRI kovaya alınır → monitör başına alertTimeout toggle'ı ile geçitlenir.
+        boolean anyFirstAlarm = false, anyThirdAlarm = false, anyMixedAlarm = false, anyTimeoutAlarm = false;
+        int timeoutCount = 0;
         for (PageCheckerService.ResourceIssue i : res.issues()) {
+            if ("TIMEOUT".equals(i.issueType())) timeoutCount++;
             if (!PageCheckerService.countsForAlarm(i.issueType(), i.resourceType(), i.httpStatus())) continue;
             if ("MIXED_CONTENT".equals(i.issueType())) { anyMixedAlarm = true; continue; }
+            if ("TIMEOUT".equals(i.issueType()))       { anyTimeoutAlarm = true; continue; }
             if (i.firstParty()) anyFirstAlarm = true; else anyThirdAlarm = true;
         }
         boolean alertThird = Boolean.TRUE.equals(m.getAlertThirdParty());
         boolean alertMixed = !Boolean.FALSE.equals(m.getAlertMixedContent());   // varsayılan true (mevcut davranış)
-        boolean alarmWorthy = (alertMixed && anyMixedAlarm) || anyFirstAlarm || (alertThird && anyThirdAlarm);
+        boolean alertTimeout = !Boolean.FALSE.equals(m.getAlertTimeout());       // varsayılan true (mevcut davranış)
+        boolean alarmWorthy = (alertMixed && anyMixedAlarm) || (alertTimeout && anyTimeoutAlarm)
+                            || anyFirstAlarm || (alertThird && anyThirdAlarm);
         boolean mainUp = res.mainReachable();
         boolean integrityUp = !mainUp || !alarmWorthy;   // ana sayfa down iken ayrı bütünlük alarmı üretme
+
+        // Toggle KAPALI iken timeout'ları KIRIK sayacından ve "Bozulmuş" durumundan düş (tabloda yine görünürler).
+        int brokenCount = res.brokenResources();
+        String pageStatus = res.status();
+        if (!alertTimeout && timeoutCount > 0) {
+            brokenCount = Math.max(0, brokenCount - timeoutCount);
+            if (mainUp && brokenCount == 0 && res.mixedContentCount() == 0) pageStatus = "OK";
+        }
 
         String ts = ISO.format(Instant.now());
         try {
             PageCheck pc = new PageCheck();
             pc.setMonitorId(m.getId());
             pc.setOk(mainUp && !alarmWorthy);
-            pc.setStatus(res.status());
+            pc.setStatus(pageStatus);
             pc.setHttpStatus(res.httpStatus());
             pc.setResponseMs(res.responseMs());
             pc.setTotalResources(res.totalResources());
-            pc.setBrokenResources(res.brokenResources());
+            pc.setBrokenResources(brokenCount);
             pc.setMixedContentCount(res.mixedContentCount());
             pc.setPagesCrawled(res.pagesCrawled());
             pc.setContentHash(res.contentHash());
@@ -2252,12 +2266,12 @@ public class SchedulerService {
         }
 
         Map<String, Object> activity = new LinkedHashMap<>();
-        activity.put("status", res.status());
+        activity.put("status", pageStatus);
         activity.put("ok", mainUp && !alarmWorthy);
         activity.put("http_status", res.httpStatus());
         activity.put("response_ms", res.responseMs());
         activity.put("total_resources", res.totalResources());
-        activity.put("broken_resources", res.brokenResources());
+        activity.put("broken_resources", brokenCount);
         activity.put("mixed_content_count", res.mixedContentCount());
         activity.put("pages_crawled", res.pagesCrawled());
         if (res.error() != null) activity.put("error", res.error());
@@ -2265,11 +2279,14 @@ public class SchedulerService {
                 m.getUrl(), m.getTeamId(), manual, manual ? "manual" : "scheduler", activity);
 
         // E-posta "Sorunlu Kaynaklar" bölümü için ilk ~8 sorunun kısa listesi (tür · URL · HTTP).
+        // Toggle KAPALI iken timeout satırları alarm maili "Sorunlu Kaynaklar" listesinde öne çıkmasın.
+        List<PageCheckerService.ResourceIssue> shownIssues = alertTimeout ? res.issues()
+                : res.issues().stream().filter(i -> !"TIMEOUT".equals(i.issueType())).toList();
         String problemList = null;
-        if (!res.issues().isEmpty()) {
+        if (!shownIssues.isEmpty()) {
             StringBuilder probs = new StringBuilder();
-            int shown = 0, total = res.issues().size();
-            for (PageCheckerService.ResourceIssue i : res.issues()) {
+            int shown = 0, total = shownIssues.size();
+            for (PageCheckerService.ResourceIssue i : shownIssues) {
                 if (shown >= 8) { probs.append("… +").append(total - shown).append(" daha"); break; }
                 probs.append(i.issueType()).append(" · ").append(i.resourceUrl());
                 if (i.httpStatus() != null) probs.append(" (HTTP ").append(i.httpStatus()).append(')');
@@ -2280,13 +2297,13 @@ public class SchedulerService {
         }
 
         Map<String, Object> out = new LinkedHashMap<>();
-        out.put("status", res.status());
+        out.put("status", pageStatus);
         out.put("main_up", mainUp);
         out.put("integrity_up", integrityUp);
         out.put("error", res.error());
         out.put("http_status", res.httpStatus());
         out.put("response_ms", res.responseMs());
-        out.put("broken_resources", res.brokenResources());
+        out.put("broken_resources", brokenCount);
         out.put("mixed_content_count", res.mixedContentCount());
         if (problemList != null) out.put("problem_resources", problemList);
         return out;

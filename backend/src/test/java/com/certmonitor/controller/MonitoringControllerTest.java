@@ -265,7 +265,23 @@ class MonitoringControllerTest {
                         .content("{\"url\":\"https://x.com\",\"teamId\":1,\"alertMixedContent\":false}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.alert_mixed_content").value(false))
-                .andExpect(jsonPath("$.data.alert_third_party").value(false));   // varsayılan false
+                .andExpect(jsonPath("$.data.alert_third_party").value(false))    // varsayılan false
+                .andExpect(jsonPath("$.data.alert_timeout").value(true));        // varsayılan true (mevcut davranış)
+    }
+
+    @Test
+    @DisplayName("POST /page: alertTimeout=false kaydedilir + enrich'te alert_timeout=false döner")
+    void createPage_persistsAlertTimeout() throws Exception {
+        when(pageMonitorRepo.existsDuplicate(anyString(), any(), any())).thenReturn(false);
+        when(pageMonitorRepo.save(any())).thenAnswer(i -> {
+            com.certmonitor.model.PageMonitor m = i.getArgument(0); m.setId(1L); return m; });
+
+        mvc.perform(post("/api/monitoring/page").session(session("ADMIN"))
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("{\"url\":\"https://x.com\",\"teamId\":1,\"alertTimeout\":false}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.alert_timeout").value(false))
+                .andExpect(jsonPath("$.data.alert_mixed_content").value(true));  // varsayılan true
     }
 
     @Test

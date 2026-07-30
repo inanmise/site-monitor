@@ -59,6 +59,12 @@ public class PageMonitor {
     @Column(name = "alert_mixed_content")
     private Boolean alertMixedContent = true;
 
+    /** Zaman aşımına uğrayan kaynaklar izlensin/kırık sayılsın mı (varsayılan true → mevcut davranış).
+     *  Kapalıyken timeout'lar KIRIK sayacına ve "Bozulmuş" durumuna GİRMEZ, alarm/e-posta üretmez; yine sorun
+     *  tablosunda "Zaman aşımı" olarak görünür. NULL (eski satır) → !FALSE.equals = true (default AÇIK). */
+    @Column(name = "alert_timeout")
+    private Boolean alertTimeout = true;
+
     /** Kaynak doğrulamada eşzamanlı istek sınırı (nezaket + tek-pod yük; varsayılan 5, clamp'li). */
     @Column(name = "resource_concurrency")
     private Integer resourceConcurrency = 5;
