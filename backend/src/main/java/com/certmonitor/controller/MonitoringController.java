@@ -77,7 +77,7 @@ public class MonitoringController {
         "name", "host", "port", "url", "domain", "recordType", "keyword", "expectedValue", "expect",
         "expectedStatus", "method", "matchOperator", "matchCount", "active", "teamId", "groupName",
         "intervalSeconds", "timeoutMs", "warningDays", "criticalDays", "protocol", "verifySsl", "followRedirects",
-        "mode", "crawlDepth", "crawlMaxPages", "excludePatterns", "slowResourceMs", "alertThirdParty", "resourceConcurrency"
+        "mode", "crawlDepth", "crawlMaxPages", "excludePatterns", "slowResourceMs", "alertThirdParty", "alertMixedContent", "resourceConcurrency"
     };
 
     private final TeamRepository teamRepo;
@@ -2026,6 +2026,7 @@ public class MonitoringController {
         if (body.containsKey("excludePatterns")) m.setExcludePatterns(blank(body.get("excludePatterns")) ? null : body.get("excludePatterns").toString());
         if (body.get("slowResourceMs") instanceof Number n) m.setSlowResourceMs(Math.max(100, n.intValue()));
         if (body.get("alertThirdParty") instanceof Boolean b) m.setAlertThirdParty(b);
+        if (body.get("alertMixedContent") instanceof Boolean b) m.setAlertMixedContent(b);
         if (body.get("resourceConcurrency") instanceof Number n) m.setResourceConcurrency(Math.max(1, Math.min(20, n.intValue())));
         if (body.containsKey("tags")) m.setTags(blank(body.get("tags")) ? null : body.get("tags").toString().trim());
         if (body.get("notifyEmail") instanceof Boolean b) m.setNotifyEmail(b);
@@ -2043,6 +2044,7 @@ public class MonitoringController {
         item.put("exclude_patterns",     m.getExcludePatterns());
         item.put("slow_resource_ms",     m.getSlowResourceMs());
         item.put("alert_third_party",    m.getAlertThirdParty());
+        item.put("alert_mixed_content",  m.getAlertMixedContent());
         item.put("resource_concurrency", m.getResourceConcurrency());
         item.put("group_name",           m.getGroupName());
         item.put("team_id",              m.getTeamId());

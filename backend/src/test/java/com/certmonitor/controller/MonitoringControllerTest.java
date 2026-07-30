@@ -254,6 +254,21 @@ class MonitoringControllerTest {
     }
 
     @Test
+    @DisplayName("POST /page: alertMixedContent=false kaydedilir + enrich'te alert_mixed_content=false döner")
+    void createPage_persistsAlertMixedContent() throws Exception {
+        when(pageMonitorRepo.existsDuplicate(anyString(), any(), any())).thenReturn(false);
+        when(pageMonitorRepo.save(any())).thenAnswer(i -> {
+            com.certmonitor.model.PageMonitor m = i.getArgument(0); m.setId(1L); return m; });
+
+        mvc.perform(post("/api/monitoring/page").session(session("ADMIN"))
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("{\"url\":\"https://x.com\",\"teamId\":1,\"alertMixedContent\":false}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.alert_mixed_content").value(false))
+                .andExpect(jsonPath("$.data.alert_third_party").value(false));   // varsayılan false
+    }
+
+    @Test
     @DisplayName("POST /page: takımsız kullanıcı takım çözemez → 400 (takım zorunlu), kayıt yok")
     void createPage_requiresTeam() throws Exception {
         mvc.perform(post("/api/monitoring/page").session(session("USER"))

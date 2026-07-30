@@ -50,10 +50,14 @@ public class PageMonitor {
     @Column(name = "slow_resource_ms")
     private Integer slowResourceMs = 2000;
 
-    /** Üçüncü-taraf (dış origin) kaynak kırıkları da alarm üretsin mi (varsayılan false → yalnız birinci-taraf).
-     *  Mixed content bu ayardan bağımsız her zaman alarm üretir. */
+    /** Üçüncü-taraf (dış origin) kaynak kırıkları da alarm üretsin mi (varsayılan false → yalnız birinci-taraf). */
     @Column(name = "alert_third_party")
     private Boolean alertThirdParty = false;
+
+    /** Mixed content (HTTPS sayfada http:// kaynak) alarm üretsin mi (varsayılan true → mevcut davranış).
+     *  Kapalıyken mixed content YİNE tespit edilir + sorun tablosunda görünür ama DEGRADED alarmı/e-postası üretmez. */
+    @Column(name = "alert_mixed_content")
+    private Boolean alertMixedContent = true;
 
     /** Kaynak doğrulamada eşzamanlı istek sınırı (nezaket + tek-pod yük; varsayılan 5, clamp'li). */
     @Column(name = "resource_concurrency")
