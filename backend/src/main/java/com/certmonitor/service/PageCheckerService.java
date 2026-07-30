@@ -60,10 +60,15 @@ public class PageCheckerService {
     private static final int MAX_TOTAL_RESOURCES = 1500;
     /** Manuel redirect zinciri üst sınırı. */
     private static final int MAX_REDIRECTS = 5;
-    private static final String UA = "CertMonitor-PageCheck/1.0";
+    /** Tarayıcı-uyumlu varsayılan UA (Mozilla-prefix → naif WAF/UA filtreleri 403/406 üretmez; kimlik + iletişim
+     *  korunur). Admin {@code cert.monitor.page.user-agent} ile override edebilir (F4). */
+    private static final String DEFAULT_UA = "Mozilla/5.0 (compatible; CertMonitor-PageCheck/1.0; +https://certmonitor)";
+    /** robots.txt User-agent eşleşmesi için sabit bot token'ı (UA browser-y olsa da robots bunu tanır). */
+    private static final String BOT_TOKEN = "certmonitor-pagecheck";
 
     private final SsrfGuard ssrfGuard;
     private final PublicSuffixService publicSuffixService;
+    private final AppSettingsService appSettings;   // page.user-agent canlı okuma (F4)
     private HttpClient httpClient;
     /** Kaynak doğrulama fan-out'u için sanal-thread executor (I/O-bound; concurrency Semaphore ile sınırlanır). */
     private ExecutorService resourceExecutor;
@@ -264,9 +269,30 @@ public class PageCheckerService {
         for (Element el : doc.select(css)) {
             String abs = el.absUrl(attr);
             if (abs == null || abs.isBlank()) abs = el.attr(attr);   // parse edilemezse ham değer (mixed/broken tespiti için)
+            abs = normalizeUrl(abs);
             if (abs.isBlank()) continue;
             out.putIfAbsent(abs, new Resource(abs, type, src));
         }
+    }
+
+    /** HTML'den gelen URL'de URI.create'i PATLATAN kodlanmamış ASCII karakterleri (boşluk " < > | { } ^ \ [ ] `)
+     *  yüzde-kodlar — tarayıcı da böyle yapar; aksi halde host çözülemez → yanlış "kırık" (akbank
+     *  'urune davet-main.jpg' vakası + tracking URL'lerindeki [ | ). '%' ve non-ASCII'ye DOKUNMAZ (Java non-ASCII'yi
+     *  tolere eder; zaten-kodlanmış %XX bozulmaz). */
+    private static final String URL_UNSAFE = " \"<>|{}^`\\[]";
+    static String normalizeUrl(String url) {
+        if (url == null) return "";
+        boolean needs = false;
+        for (int i = 0; i < url.length(); i++) if (URL_UNSAFE.indexOf(url.charAt(i)) >= 0) { needs = true; break; }
+        if (!needs) return url;
+        StringBuilder sb = new StringBuilder(url.length() + 12);
+        for (int i = 0; i < url.length(); i++) {
+            char c = url.charAt(i);
+            if (URL_UNSAFE.indexOf(c) >= 0) sb.append('%').append(Character.forDigit((c >> 4) & 0xF, 16))
+                    .append(Character.forDigit(c & 0xF, 16));
+            else sb.append(c);
+        }
+        return sb.toString();
     }
 
     /** srcset: "url 1x, url2 2w" listesindeki her aday URL. */
@@ -275,7 +301,7 @@ public class PageCheckerService {
             for (String cand : el.attr("srcset").split(",")) {
                 String u = cand.trim().split("\\s+")[0];
                 if (u.isBlank()) continue;
-                String abs = el.root().baseUri().isBlank() ? u : resolve(el.baseUri(), u);
+                String abs = normalizeUrl(el.root().baseUri().isBlank() ? u : resolve(el.baseUri(), u));
                 out.putIfAbsent(abs, new Resource(abs, "IMG", src));
             }
         }
@@ -317,11 +343,43 @@ public class PageCheckerService {
         return issues;
     }
 
+    /** Mixed content: HTTPS sayfada http:// ile YÜKLENEN alt-kaynak (img/css/js/iframe/font/favicon). a[href]
+     *  HYPERLINK'i (LINK) navigasyon hedefidir — tarayıcı mixed-content uyarısı üretmez → HARİÇ (false-positive önleme). */
+    static boolean isMixedContent(boolean pageHttps, String resourceType, String url) {
+        return pageHttps && !"LINK".equals(resourceType) && url.toLowerCase(Locale.ROOT).startsWith("http://");
+    }
+
+    /** >=400 durum kodu sınıflandırması (F2): kesin-yok/sunucu-hatası mı yoksa belirsiz/erişim/geçici mi.
+     *  404/410 → BROKEN (kesin yok); 5xx (503 HARİÇ) → BROKEN (sunucu hatası); 401/403/429/451/503 + diğer tüm
+     *  4xx (400/405/406…) → BLOCKED (WAF bot-blok / rate-limit / geçici — tarayıcıda/oturumda yüklenebilir). */
+    static String classifyStatus(int status) {
+        if (status == 404 || status == 410) return "BROKEN";
+        if (status >= 500 && status != 503) return "BROKEN";
+        return "BLOCKED";
+    }
+
+    /** Bir sorunun DEGRADED ALARMINA (e-posta) sayılıp sayılmadığı. Sorunlar TABLODA/sayaçta her zaman görünür;
+     *  bu YALNIZ alarm/e-posta geçididir. Q2: BLOCKED/SLOW hiç alarm üretmez. Q1: LINK (a[href]) yalnız kesin-yok
+     *  (404/410) alarm — dış linkin 5xx/timeout/belirsiz durumu alarm üretmez. Yüklenen alt-kaynak: broken/timeout alarm.
+     *  MIXED_CONTENT → true (mixed toggle ayrıca SchedulerService'te uygulanır). */
+    static boolean countsForAlarm(String issueType, String resourceType, Integer httpStatus) {
+        if (issueType == null) return false;
+        switch (issueType) {
+            case "MIXED_CONTENT": return true;
+            case "BLOCKED": case "SLOW": return false;
+            case "BROKEN": case "TIMEOUT":
+                if ("LINK".equals(resourceType))
+                    return httpStatus != null && (httpStatus == 404 || httpStatus == 410);
+                return true;
+            default: return false;
+        }
+    }
+
     /** Bir kaynağı doğrula → sorun varsa {@link ResourceIssue}, sağlıklıysa null. */
     private ResourceIssue verifyOne(Resource r, boolean pageHttps, String rootHost, int timeoutMs, int slowMs) {
         boolean firstParty = sameSite(hostOf(r.url()), rootHost);
-        // Mixed content: https sayfada http:// kaynak — istek atmadan işaretle (headline sorun).
-        if (pageHttps && r.url().toLowerCase(Locale.ROOT).startsWith("http://")) {
+        // Mixed content: https sayfada http:// YÜKLENEN kaynak — istek atmadan işaretle (headline sorun). LINK hariç.
+        if (isMixedContent(pageHttps, r.type(), r.url())) {
             return new ResourceIssue(r.url(), r.type(), r.sourcePage(), "MIXED_CONTENT", firstParty, null, null);
         }
         FetchResult res = verifyWithRetry(r.url(), timeoutMs);
@@ -334,7 +392,7 @@ public class PageCheckerService {
             return new ResourceIssue(r.url(), r.type(), r.sourcePage(), type, firstParty, null, res.durationMs());
         }
         if (res.status() >= 400) {
-            return new ResourceIssue(r.url(), r.type(), r.sourcePage(), "BROKEN", firstParty, res.status(), res.durationMs());
+            return new ResourceIssue(r.url(), r.type(), r.sourcePage(), classifyStatus(res.status()), firstParty, res.status(), res.durationMs());
         }
         if (res.durationMs() > slowMs) {
             return new ResourceIssue(r.url(), r.type(), r.sourcePage(), "SLOW", firstParty, res.status(), res.durationMs());
@@ -355,8 +413,11 @@ public class PageCheckerService {
     private FetchResult verifyOnce(String url, int timeoutMs) {
         FetchResult head = fetchFollowing(url, "HEAD", false, timeoutMs);
         if (head.blocked()) return head;
-        if (head.status() == 405 || head.status() == 501 || head.status() == 0) {
-            return fetchFollowing(url, "GET", false, timeoutMs);   // HEAD desteklenmiyor → GET
+        // HEAD çoğu WAF/CDN/ASP.NET(.aspx) sunucusunda YANLIŞ ele alınır (405/501 değil; 400/403/404/500 dönebilir
+        // ama aynı kaynak GET'te 200'dür). Bu yüzden HEAD transport hatası (0) VEYA herhangi bir >=400 dönerse
+        // GET ile TEYİT et — GET de kötüyse gerçekten kırık, GET iyiyse sağlıklı (false-positive önleme).
+        if (head.status() == 0 || head.status() >= 400) {
+            return fetchFollowing(url, "GET", false, timeoutMs);
         }
         return head;
     }
@@ -381,7 +442,10 @@ public class PageCheckerService {
                 HttpRequest.Builder rb = HttpRequest.newBuilder()
                         .uri(URI.create(current))
                         .timeout(Duration.ofMillis(Math.max(1000, timeoutMs)))
-                        .header("User-Agent", UA);
+                        // Tarayıcı-benzeri header seti (F4): katı sunucular Accept/Accept-Language yoksa 406/403 döner.
+                        .header("User-Agent", userAgent())
+                        .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8")
+                        .header("Accept-Language", "tr,en;q=0.9");
                 HttpRequest req = "HEAD".equals(method)
                         ? rb.method("HEAD", HttpRequest.BodyPublishers.noBody()).build()
                         : rb.GET().build();
@@ -425,8 +489,8 @@ public class PageCheckerService {
                 if (l.isEmpty()) continue;
                 String low = l.toLowerCase(Locale.ROOT);
                 if (low.startsWith("user-agent:")) {
-                    String ua = l.substring(11).trim();
-                    applies = "*".equals(ua) || UA.toLowerCase(Locale.ROOT).startsWith(ua.toLowerCase(Locale.ROOT));
+                    String ua = l.substring(11).trim().toLowerCase(Locale.ROOT);
+                    applies = "*".equals(ua) || ua.contains("certmonitor") || BOT_TOKEN.startsWith(ua);
                 } else if (applies && low.startsWith("disallow:")) {
                     String path = l.substring(9).trim();
                     if (!path.isEmpty()) disallow.add(path);
@@ -528,6 +592,12 @@ public class PageCheckerService {
 
     /** Log-forging önleme (L4): loglanan URL/host'taki CR/LF'yi boşlukla değiştir (flat-file satır enjeksiyonu). */
     private static String sanitize(String s) { return s == null ? null : s.replace('\n', ' ').replace('\r', ' '); }
+
+    /** İstek User-Agent'ı — canlı config (F4); boş/null ise tarayıcı-uyumlu varsayılan. */
+    private String userAgent() {
+        String ua = appSettings.getString("cert.monitor.page.user-agent", DEFAULT_UA);
+        return (ua == null || ua.isBlank()) ? DEFAULT_UA : ua;
+    }
 
     private static String originOf(String url) {
         try {
