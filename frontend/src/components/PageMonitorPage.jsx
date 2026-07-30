@@ -9,7 +9,7 @@ import MaintenanceBadge from './ui/MaintenanceBadge.jsx'
 import TagInput from './ui/TagInput.jsx'
 import { Play, Pencil, X, RefreshCw, Plus, Trash2, ScanSearch, Users, Layers, FlaskConical, Check, AlertTriangle,
   LayoutDashboard, CheckCircle2, TriangleAlert, ServerCrash, Siren, BellDot, BarChart3, ChevronDown,
-  Image, FileCode, Link2, Frame, Type, ShieldAlert, Download } from 'lucide-react'
+  Image, FileCode, Link2, Frame, Type, ShieldAlert, Download, HelpCircle } from 'lucide-react'
 import AlertHistory from './admin/AlertHistory.jsx'
 import MonitorStatsBar from './MonitorStatsBar.jsx'
 const ResponseTimeChart = lazy(() => import('./ResponseTimeChart.jsx'))
@@ -35,6 +35,8 @@ const intervalIdx = (secs) => {
 const REFRESH_INTERVAL = 60
 // Sorun türü → ikon (kaynak tür ikonlarıyla birlikte tabloda gösterilir).
 const RES_ICON = { IMG: Image, CSS: FileCode, JS: FileCode, LINK: Link2, IFRAME: Frame, FONT: Type, FAVICON: Image }
+// Sorun tablosu kolon şablonu: Zaman | Tür | Kaynak | Sorun | HTTP | Süre.
+const PAGE_ISSUE_COLS = '1fr 0.9fr 2.1fr 0.75fr 0.5fr 0.55fr'
 const emptyForm = { name: '', url: '', groupName: '', teamId: '', tags: '', notifyEmail: true,
   mode: 'SINGLE_PAGE', crawlDepth: 2, crawlMaxPages: 50, excludePatterns: '', slowResourceMs: 2000,
   alertThirdParty: false, resourceConcurrency: 5,
@@ -78,6 +80,7 @@ export default function PageMonitorPage({ systemRole, teamId, teamName }) {
   const [statFilter, setStatFilter] = useState(null)
   const [statsVisible, setStatsVisible] = useState(false)
   const [secondsSince, setSecondsSince] = useState(0)
+  const [infoOpen, setInfoOpen] = useState(false)
   const deepLinkDone = useRef(false)
 
   const load = useCallback(async () => {
@@ -355,6 +358,24 @@ export default function PageMonitorPage({ systemRole, teamId, teamName }) {
         </div>
       </div>
 
+      <div className="dom-info">
+        <button type="button" className="dom-info-toggle" onClick={() => setInfoOpen(o => !o)}>
+          <HelpCircle size={15} /><span>{t('page.howTitle')}</span>
+          <ChevronDown size={15} className={`dom-info-chev${infoOpen ? ' open' : ''}`} />
+        </button>
+        {infoOpen && (
+          <ul className="dom-info-body">
+            <li>{t('page.how1')}</li>
+            <li>{t('page.how2')}</li>
+            <li>{t('page.how3')}</li>
+            <li>{t('page.how4')}</li>
+            <li>{t('page.how5')}</li>
+            <li>{t('page.how6')}</li>
+            <li>{t('page.how7')}</li>
+          </ul>
+        )}
+      </div>
+
       {!loading && monitors.length > 0 && (
         <div className="stats-collapse-bar" onClick={toggleStats}
           title={statsVisible ? t('app.collapseStats') : t('app.expandStats')}>
@@ -476,14 +497,18 @@ export default function PageMonitorPage({ systemRole, teamId, teamName }) {
                 <div className="upt-modal-loading">{t('page.noIssues')}</div>
               ) : (
                 <div className="upt-rt-list">
-                  <div className="upt-rt-grid upt-rt-head" style={{ gridTemplateColumns: '1.1fr 2.4fr 0.8fr 0.6fr 0.6fr' }}>
-                    <span>{t('page.colType')}</span><span>{t('page.colResource')}</span><span>{t('page.colIssue')}</span><span>HTTP</span><span>{t('page.colDuration')}</span>
+                  <div className="upt-rt-grid upt-rt-head" style={{ gridTemplateColumns: PAGE_ISSUE_COLS }}>
+                    <span>{t('page.colTime')}</span><span>{t('page.colType')}</span><span>{t('page.colResource')}</span><span>{t('page.colIssue')}</span><span>HTTP</span><span>{t('page.colDuration')}</span>
                   </div>
                   {issues.map((r, i) => {
                     const RI = RES_ICON[r.resource_type] || Link2
                     const issueColor = r.issue_type === 'MIXED_CONTENT' ? '#b45309' : r.issue_type === 'SLOW' ? '#0369a1' : '#b91c1c'
+                    // Kontrol zamanı değişince görsel ayraç — hangi kaynağın hangi kontrolde bulunduğunu ayrıştırır.
+                    const runBoundary = i > 0 && (issues[i - 1].checked_at !== r.checked_at)
                     return (
-                      <div key={`${r.id || ''}#${i}`} className="upt-rt-grid" style={{ gridTemplateColumns: '1.1fr 2.4fr 0.8fr 0.6fr 0.6fr' }}>
+                      <div key={`${r.id || ''}#${i}`} className="upt-rt-grid" style={{ gridTemplateColumns: PAGE_ISSUE_COLS,
+                        ...(runBoundary ? { borderTop: '2px solid var(--border, #cbd5e1)' } : {}) }}>
+                        <span className="upt-rt-time">{r.checked_at ? formatDateSec(r.checked_at) : '—'}</span>
                         <span style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
                           <RI size={13} />{r.resource_type}{!r.first_party && <span title={t('page.thirdParty')} style={{ color: 'var(--text-muted)' }}>·3P</span>}
                         </span>
