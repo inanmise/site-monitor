@@ -40,8 +40,10 @@ class PageCheckerServiceTest {
         SsrfGuard guard = new SsrfGuard(settings);
         PublicSuffixService psl = new PublicSuffixService();
         psl.load();   // PSL kuralları (registrableDomain — 1./3.-taraf + crawl kapsamı)
+        // page.user-agent: config yok → DEFAULT_UA (getString fallback = 2. arg)
+        lenient().when(settings.getString(anyString(), org.mockito.ArgumentMatchers.any())).thenAnswer(i -> i.getArgument(1));
 
-        checker = new PageCheckerService(guard, psl);
+        checker = new PageCheckerService(guard, psl, settings);
         checker.init();
 
         server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
@@ -175,6 +177,76 @@ class PageCheckerServiceTest {
         assertThat(after - before).isLessThan(40);   // 8000 kaynak-isteği sonrası platform-thread stabil (sızıntı yok)
     }
 
+    @Test
+    @DisplayName("Mixed content YALNIZ yüklenen alt-kaynaklar için; a[href] hyperlink (LINK) HARİÇ (false-positive önleme)")
+    void isMixedContent_excludesHyperlinks() {
+        // https sayfada http:// yüklenen alt-kaynak → mixed content
+        assertThat(PageCheckerService.isMixedContent(true, "IMG", "http://x.example/y.png")).isTrue();
+        assertThat(PageCheckerService.isMixedContent(true, "CSS", "http://x.example/a.css")).isTrue();
+        // a[href] hyperlink → mixed content DEĞİL (navigasyon hedefi; tarayıcı uyarı üretmez) — google.com bug'ı
+        assertThat(PageCheckerService.isMixedContent(true, "LINK", "http://www.google.com.tr/intl/tr/services/")).isFalse();
+        // http sayfada / https kaynakta mixed yok
+        assertThat(PageCheckerService.isMixedContent(false, "IMG", "http://x.example/y.png")).isFalse();
+        assertThat(PageCheckerService.isMixedContent(true, "IMG", "https://x.example/y.png")).isFalse();
+    }
+
+    @Test
+    @DisplayName("HEAD 404 ama GET 200 dönen kaynak (ASP.NET/.aspx) → GET ile teyit, KIRIK sayılmaz (akbank gayrimenkulsatis bug'ı)")
+    void headBadGetOk_notBroken() {
+        var r = checker.check(base + "/headbad", "SINGLE_PAGE", 5000, 2000, 5, null, 2, 50, 60);
+        assertThat(r.status()).isEqualTo("OK");
+        assertThat(r.issues()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("URL'de kodlanmamış BOŞLUK olan kaynak %20'ye kodlanır → yüklenir, KIRIK sayılmaz (akbank urune davet bug'ı)")
+    void spacedResourceUrl_encodedNotBroken() {
+        var r = checker.check(base + "/spaceimg", "SINGLE_PAGE", 5000, 2000, 5, null, 2, 50, 60);
+        assertThat(r.status()).isEqualTo("OK");
+        assertThat(r.issues()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("F1: URI-illegal ASCII karakterler ( [ ] | boşluk) %XX'e kodlanır; zaten-kodlu/non-ASCII bozulmaz")
+    void normalizeUrl_encodesUnsafeAscii() {
+        assertThat(PageCheckerService.normalizeUrl("http://x/a b.png")).isEqualTo("http://x/a%20b.png");
+        assertThat(PageCheckerService.normalizeUrl("http://x/a[b].png")).isEqualTo("http://x/a%5bb%5d.png");
+        assertThat(PageCheckerService.normalizeUrl("http://x/a|b.js")).isEqualTo("http://x/a%7cb.js");
+        assertThat(PageCheckerService.normalizeUrl("http://x/ok%20done.png")).isEqualTo("http://x/ok%20done.png");
+        assertThat(PageCheckerService.normalizeUrl("http://x/temiz.png")).isEqualTo("http://x/temiz.png");
+    }
+
+    @Test
+    @DisplayName("F2: durum sınıflandırma (404/5xx→BROKEN, 401/403/429/503/4xx→BLOCKED) + alarm geçidi")
+    void classifyStatus_and_countsForAlarm() {
+        assertThat(PageCheckerService.classifyStatus(404)).isEqualTo("BROKEN");
+        assertThat(PageCheckerService.classifyStatus(410)).isEqualTo("BROKEN");
+        assertThat(PageCheckerService.classifyStatus(500)).isEqualTo("BROKEN");
+        assertThat(PageCheckerService.classifyStatus(504)).isEqualTo("BROKEN");
+        assertThat(PageCheckerService.classifyStatus(503)).isEqualTo("BLOCKED");   // geçici
+        assertThat(PageCheckerService.classifyStatus(403)).isEqualTo("BLOCKED");
+        assertThat(PageCheckerService.classifyStatus(429)).isEqualTo("BLOCKED");
+        assertThat(PageCheckerService.classifyStatus(400)).isEqualTo("BLOCKED");
+        // Alarm geçidi (Q1/Q2)
+        assertThat(PageCheckerService.countsForAlarm("BROKEN", "IMG", 404)).isTrue();    // alt-kaynak
+        assertThat(PageCheckerService.countsForAlarm("BROKEN", "LINK", 404)).isTrue();   // link kesin-yok
+        assertThat(PageCheckerService.countsForAlarm("BROKEN", "LINK", 500)).isFalse();  // dış link 5xx → alarm YOK
+        assertThat(PageCheckerService.countsForAlarm("TIMEOUT", "LINK", null)).isFalse();// dış link timeout → alarm YOK
+        assertThat(PageCheckerService.countsForAlarm("TIMEOUT", "IMG", null)).isTrue();  // alt-kaynak timeout
+        assertThat(PageCheckerService.countsForAlarm("BLOCKED", "IMG", 403)).isFalse();  // blocked → alarm YOK
+        assertThat(PageCheckerService.countsForAlarm("SLOW", "IMG", 200)).isFalse();
+        assertThat(PageCheckerService.countsForAlarm("MIXED_CONTENT", "IMG", null)).isTrue();
+    }
+
+    @Test
+    @DisplayName("403 dönen kaynak → BROKEN değil BLOCKED (broken sayacına girmez → OK, alarm üretmez)")
+    void forbiddenResource_classifiedBlocked() {
+        var r = checker.check(base + "/forbiddenpage", "SINGLE_PAGE", 5000, 2000, 5, null, 2, 50, 60);
+        assertThat(r.status()).isEqualTo("OK");            // BLOCKED broken sayacına girmez
+        assertThat(r.brokenResources()).isZero();
+        assertThat(r.issues()).anySatisfy(i -> assertThat(i.issueType()).isEqualTo("BLOCKED"));
+    }
+
     // ── Test sunucusu ─────────────────────────────────────────────────────────
     private void wireHandlers() {
         // Sağlıklı sayfa + kaynakları
@@ -221,6 +293,18 @@ class PageCheckerServiceTest {
         heavy.append("</body></html>");
         html("/heavy", heavy.toString());
         server.createContext("/asset", ex -> respond(ex, 200, "x"));   // /asset/* → 200
+
+        // HEAD 404 / GET 200 (ASP.NET/.aspx benzeri yanlış HEAD davranışı)
+        html("/headbad", "<html><body><img src='/head404get200'></body></html>");
+        server.createContext("/head404get200", ex -> {
+            if ("HEAD".equals(ex.getRequestMethod())) respond(ex, 404, "");
+            else respond(ex, 200, "ok");
+        });
+        // Kodlanmamış boşluk içeren img src (/asset zaten 200 döner; motor %20'ye kodlar)
+        html("/spaceimg", "<html><body><img src='/asset/a b.png'></body></html>");
+        // 403 dönen kaynak → BLOCKED (kırık değil)
+        html("/forbiddenpage", "<html><body><img src='/forbidden'></body></html>");
+        server.createContext("/forbidden", ex -> respond(ex, 403, "no"));
 
         // Crawl: kök → /site/a, /site/b (site içi); robots.txt /site/b'yi engeller
         html("/site", "<html><body><a href='/site/a'>a</a><a href='/site/b'>b</a></body></html>");

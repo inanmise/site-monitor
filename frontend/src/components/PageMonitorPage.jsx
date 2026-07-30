@@ -334,7 +334,7 @@ export default function PageMonitorPage({ systemRole, teamId, teamName }) {
     ? (teams.find(tm => String(tm.id) === String(form.teamId))?.name || t('page.noTeam'))
     : (teamName || t('page.noTeam'))
   const ivIdx = intervalIdx(Number(form.intervalSeconds))
-  const issueFilters = ['all', 'BROKEN', 'MIXED_CONTENT', 'SLOW', 'firstParty']
+  const issueFilters = ['all', 'BROKEN', 'BLOCKED', 'MIXED_CONTENT', 'SLOW', 'firstParty']
 
   return (
     <div className="upt-page">
@@ -502,7 +502,8 @@ export default function PageMonitorPage({ systemRole, teamId, teamName }) {
                   </div>
                   {issues.map((r, i) => {
                     const RI = RES_ICON[r.resource_type] || Link2
-                    const issueColor = r.issue_type === 'MIXED_CONTENT' ? '#b45309' : r.issue_type === 'SLOW' ? '#0369a1' : '#b91c1c'
+                    const issueColor = r.issue_type === 'MIXED_CONTENT' ? '#b45309' : r.issue_type === 'SLOW' ? '#0369a1'
+                      : r.issue_type === 'BLOCKED' ? '#78716c' : '#b91c1c'   // BLOCKED nötr gri (kırık değil, belirsiz)
                     // Kontrol zamanı değişince görsel ayraç — hangi kaynağın hangi kontrolde bulunduğunu ayrıştırır.
                     const runBoundary = i > 0 && (issues[i - 1].checked_at !== r.checked_at)
                     return (

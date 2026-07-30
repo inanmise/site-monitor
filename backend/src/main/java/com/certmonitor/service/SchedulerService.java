@@ -2198,16 +2198,17 @@ public class SchedulerService {
                 m.getCrawlMaxPages() != null ? m.getCrawlMaxPages() : 50,
                 maxCheckSec);
 
-        // Alarm-uygun bütünlük sorunu: mixed content VEYA birinci-taraf kırık VEYA (alertThirdParty ise 3.taraf kırık).
-        int firstPartyBroken = 0, thirdPartyBroken = 0;
+        // Alarm-uygunluk YALNIZ e-posta geçidi (tabloda her sorun görünür). countsForAlarm: BLOCKED/SLOW hiç,
+        // LINK yalnız 404/410 (dış link 5xx/timeout alarm üretmez — Q1), yüklenen alt-kaynak broken/timeout.
+        boolean anyFirstAlarm = false, anyThirdAlarm = false, anyMixedAlarm = false;
         for (PageCheckerService.ResourceIssue i : res.issues()) {
-            if ("BROKEN".equals(i.issueType()) || "TIMEOUT".equals(i.issueType())) {
-                if (i.firstParty()) firstPartyBroken++; else thirdPartyBroken++;
-            }
+            if (!PageCheckerService.countsForAlarm(i.issueType(), i.resourceType(), i.httpStatus())) continue;
+            if ("MIXED_CONTENT".equals(i.issueType())) { anyMixedAlarm = true; continue; }
+            if (i.firstParty()) anyFirstAlarm = true; else anyThirdAlarm = true;
         }
         boolean alertThird = Boolean.TRUE.equals(m.getAlertThirdParty());
         boolean alertMixed = !Boolean.FALSE.equals(m.getAlertMixedContent());   // varsayılan true (mevcut davranış)
-        boolean alarmWorthy = (alertMixed && res.mixedContentCount() > 0) || firstPartyBroken > 0 || (alertThird && thirdPartyBroken > 0);
+        boolean alarmWorthy = (alertMixed && anyMixedAlarm) || anyFirstAlarm || (alertThird && anyThirdAlarm);
         boolean mainUp = res.mainReachable();
         boolean integrityUp = !mainUp || !alarmWorthy;   // ana sayfa down iken ayrı bütünlük alarmı üretme
 
