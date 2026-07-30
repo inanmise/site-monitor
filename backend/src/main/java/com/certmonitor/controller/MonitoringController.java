@@ -105,6 +105,9 @@ public class MonitoringController {
     @org.springframework.beans.factory.annotation.Autowired
     private com.certmonitor.service.PageCheckerService pageChecker;
 
+    /** Manuel sayfa-kontrol tetikleri için per-monitör cooldown zamanı (H1c rate-limit; in-memory, monitör sayısıyla sınırlı). */
+    private final java.util.concurrent.ConcurrentHashMap<Long, Long> pageManualTriggerAt = new java.util.concurrent.ConcurrentHashMap<>();
+
     private static final DateTimeFormatter ISO =
             DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
 
@@ -1125,7 +1128,9 @@ public class MonitoringController {
                 .filter(r -> r.getMonitorId() != null)
                 .collect(Collectors.toMap(KeywordResult::getMonitorId, r -> r, (a, b) -> a));
         Map<Long, String> teams = teamNameMap();
-        List<KeywordMonitor> monitors = keywordMonitorRepo.findAllByOrderByNameAsc();
+        // IDOR (H2): yalnız görüntülenebilir takımların monitörleri (global admin → hepsi).
+        List<KeywordMonitor> monitors = keywordMonitorRepo.findAllByOrderByNameAsc().stream()
+                .filter(m -> SessionScope.canView(session, m.getTeamId())).toList();
         Map<String, AlertEvent> alarms = openAlarmsByDomain(
                 monitors.stream().map(KeywordMonitor::getUrl).collect(Collectors.toSet()),
                 EscalationService.TYPE_KEYWORD);
@@ -1367,7 +1372,10 @@ public class MonitoringController {
             @RequestParam(required = false) String from, @RequestParam(required = false) String to,
             @RequestParam(defaultValue = "30") int days, HttpSession session) {
         permissionService.require(session, "monitoring.read", "view");
-        if (!keywordMonitorRepo.existsById(id)) return notFound("Keyword monitor not found");
+        KeywordMonitor kmon = keywordMonitorRepo.findById(id).orElse(null);
+        if (kmon == null) return notFound("Keyword monitor not found");
+        var deny = denyIfNotViewable(session, kmon.getTeamId());   // IDOR (H3)
+        if (deny != null) return deny;
         String[] range = resolveRange(from, to, days);
         return ok(buildResponseSeries(keywordResultRepo.responseSeriesRaw(id, range[0], range[1], SERIES_RAW_CAP),
                 range[0], range[1], false));
@@ -1378,7 +1386,10 @@ public class MonitoringController {
             @RequestParam(required = false) String from, @RequestParam(required = false) String to,
             @RequestParam(defaultValue = "30") int days, HttpSession session) {
         permissionService.require(session, "monitoring.read", "view");
-        if (!pingMonitorRepo.existsById(id)) return notFound("Ping monitor not found");
+        PingMonitor pmon = pingMonitorRepo.findById(id).orElse(null);
+        if (pmon == null) return notFound("Ping monitor not found");
+        var deny = denyIfNotViewable(session, pmon.getTeamId());   // IDOR (H3)
+        if (deny != null) return deny;
         String[] range = resolveRange(from, to, days);
         return ok(buildResponseSeries(pingCheckRepo.responseSeriesRaw(id, range[0], range[1], SERIES_RAW_CAP),
                 range[0], range[1], true));
@@ -1564,7 +1575,9 @@ public class MonitoringController {
                 .filter(c -> c.getMonitorId() != null)
                 .collect(Collectors.toMap(HttpCheck::getMonitorId, c -> c, (a, b) -> a));
         Map<Long, String> teams = teamNameMap();
-        List<HttpMonitor> monitors = httpMonitorRepo.findAllByOrderByNameAsc();
+        // IDOR (H2): yalnız görüntülenebilir takımların monitörleri (global admin → hepsi).
+        List<HttpMonitor> monitors = httpMonitorRepo.findAllByOrderByNameAsc().stream()
+                .filter(m -> SessionScope.canView(session, m.getTeamId())).toList();
         Map<String, AlertEvent> alarms = openAlarmsByDomain(
                 monitors.stream().map(HttpMonitor::getUrl).collect(Collectors.toSet()),
                 EscalationService.TYPE_HTTP_DOWN);
@@ -1732,7 +1745,10 @@ public class MonitoringController {
             @RequestParam(required = false) String from, @RequestParam(required = false) String to,
             @RequestParam(defaultValue = "30") int days, HttpSession session) {
         permissionService.require(session, "monitoring.read", "view");
-        if (!httpMonitorRepo.existsById(id)) return notFound("HTTP monitor not found");
+        HttpMonitor hmon = httpMonitorRepo.findById(id).orElse(null);
+        if (hmon == null) return notFound("HTTP monitor not found");
+        var deny = denyIfNotViewable(session, hmon.getTeamId());   // IDOR (H3)
+        if (deny != null) return deny;
         String[] range = resolveRange(from, to, days);
         return ok(buildResponseSeries(httpCheckRepo.responseSeriesRaw(id, range[0], range[1], SERIES_RAW_CAP),
                 range[0], range[1], false));
@@ -1801,7 +1817,9 @@ public class MonitoringController {
                 .filter(c -> c.getMonitorId() != null)
                 .collect(Collectors.toMap(com.certmonitor.model.PageCheck::getMonitorId, c -> c, (a, b) -> a));
         Map<Long, String> teams = teamNameMap();
-        List<com.certmonitor.model.PageMonitor> monitors = pageMonitorRepo.findAllByOrderByNameAsc();
+        // IDOR (H2): yalnız oturumun görüntüleyebildiği takımların monitörleri (global admin → hepsi).
+        List<com.certmonitor.model.PageMonitor> monitors = pageMonitorRepo.findAllByOrderByNameAsc().stream()
+                .filter(m -> SessionScope.canView(session, m.getTeamId())).toList();
         Set<String> urls = monitors.stream().map(com.certmonitor.model.PageMonitor::getUrl).collect(Collectors.toSet());
         Map<String, AlertEvent> down = openAlarmsByDomain(urls, EscalationService.TYPE_PAGE_DOWN);
         Map<String, AlertEvent> integ = openAlarmsByDomain(urls, EscalationService.TYPE_PAGE_INTEGRITY);
@@ -1914,7 +1932,8 @@ public class MonitoringController {
         return ok(out);
     }
 
-    /** Son (veya belirtilen) kontrolün sorunlu-kaynak listesi — filtre: issueType, tarih; SQL-LIMIT'li. */
+    /** Sorunlu-kaynak listesi — pencere içindeki ÇOK kontrolü (yalnız son değil) checked_at DESC + SQL-LIMIT'li
+     *  döndürür; frontend'deki "Zaman" kolonu + kontrol-arası ayraç bunları ayrıştırır. Filtre: issueType, tarih. */
     @GetMapping("/page/{id}/issues")
     public ResponseEntity<Map<String, Object>> pageIssues(@PathVariable Long id, HttpSession session,
             @RequestParam(required = false) String issueType, @RequestParam(required = false) Integer days,
@@ -1934,6 +1953,15 @@ public class MonitoringController {
         permissionService.require(session, "monitoring.trigger", "execute");
         return pageMonitorRepo.findById(id).map(m -> {
             if (!canOperateTeam(session, m.getTeamId())) throw new SecurityException("Bu takımın izlemesini çalıştıramazsınız");
+            // H1c: per-monitör cooldown — sayfa kontrolü (main + N kaynak) pahalıdır; art arda tetik request-thread'i tüketmesin.
+            long nowMs = System.currentTimeMillis();
+            long cooldownMs = appSettings.getInt("cert.monitor.page.manual-cooldown-seconds", 20) * 1000L;
+            Long prev = pageManualTriggerAt.get(id);
+            if (prev != null && nowMs - prev < cooldownMs) {
+                return ResponseEntity.status(429).body(Map.<String, Object>of("success", false,
+                        "error", "Bu monitör için çok sık manuel kontrol; " + (cooldownMs / 1000) + " sn bekleyin."));
+            }
+            pageManualTriggerAt.put(id, nowMs);
             schedulerService.triggerPageCheck(m);   // tam kontrol + persist (page_checks + issues + activity)
             auditService.recordAction("MONITOR_TRIGGER", session, "PAGE_MONITOR", String.valueOf(m.getId()), m.getName(), null);
             return ok(enrichPage(m, pageCheckRepo.findTopByMonitorIdOrderByCheckedAtDesc(id).orElse(null), teamNameMap(),
@@ -1976,7 +2004,10 @@ public class MonitoringController {
             @RequestParam(required = false) String from, @RequestParam(required = false) String to,
             @RequestParam(defaultValue = "30") int days, HttpSession session) {
         permissionService.require(session, "monitoring.read", "view");
-        if (!pageMonitorRepo.existsById(id)) return notFound("Sayfa monitörü bulunamadı");
+        com.certmonitor.model.PageMonitor mon = pageMonitorRepo.findById(id).orElse(null);
+        if (mon == null) return notFound("Sayfa monitörü bulunamadı");
+        var deny = denyIfNotViewable(session, mon.getTeamId());   // IDOR (H3): başka takımın serisi okunamaz
+        if (deny != null) return deny;
         String[] range = resolveRange(from, to, days);
         // Seri değeri = kırık kaynak sayısı (buildResponseSeries yeniden kullanılır; frontend "kırık kaynak" etiketler).
         return ok(buildResponseSeries(pageCheckRepo.responseSeriesRaw(id, range[0], range[1], SERIES_RAW_CAP),
@@ -2062,7 +2093,9 @@ public class MonitoringController {
         for (AlertEvent e : alertEventRepo.findAllOpenOrderBySeverity()) {
             if (EscalationService.isDomainMon(e.getAlertType()) && e.getDomain() != null) alarms.putIfAbsent(e.getDomain(), e);
         }
+        // IDOR (H2): yalnız görüntülenebilir takımların monitörleri (global admin → hepsi).
         List<Map<String, Object>> result = domainMonitorRepo.findAllByOrderByNameAsc().stream()
+                .filter(m -> SessionScope.canView(session, m.getTeamId()))
                 .map(m -> enrichDomain(m, latest.get(m.getId()), teams, alarms.get(m.getDomain()))).toList();
         return ok(result);
     }
@@ -2302,7 +2335,9 @@ public class MonitoringController {
                 .filter(c -> c.getMonitorId() != null)
                 .collect(Collectors.toMap(PingCheck::getMonitorId, c -> c, (a, b) -> a));
         Map<Long, String> teams = teamNameMap();
-        List<PingMonitor> monitors = pingMonitorRepo.findAllByOrderByNameAsc();
+        // IDOR (H2): yalnız görüntülenebilir takımların monitörleri (global admin → hepsi).
+        List<PingMonitor> monitors = pingMonitorRepo.findAllByOrderByNameAsc().stream()
+                .filter(m -> SessionScope.canView(session, m.getTeamId())).toList();
         Map<String, AlertEvent> alarms = openAlarmsByDomain(
                 monitors.stream().map(PingMonitor::getHost).collect(Collectors.toSet()),
                 EscalationService.TYPE_PING_DOWN);

@@ -513,7 +513,8 @@ export default function PageMonitorPage({ systemRole, teamId, teamName }) {
                           <RI size={13} />{r.resource_type}{!r.first_party && <span title={t('page.thirdParty')} style={{ color: 'var(--text-muted)' }}>·3P</span>}
                         </span>
                         <span style={{ wordBreak: 'break-all' }} title={r.source_page ? `${t('page.foundOn')}: ${r.source_page}` : ''}>
-                          {r.source_page && r.source_page !== r.resource_url
+                          {/* href guard (L3): yalnız http(s) source_page linklenir — javascript:/data: vb. şema tıklanabilir XSS'i engellenir */}
+                          {r.source_page && r.source_page !== r.resource_url && /^https?:\/\//i.test(r.source_page)
                             ? <a href={r.source_page} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()} style={{ color: 'inherit' }}>{r.resource_url}</a>
                             : r.resource_url}
                         </span>

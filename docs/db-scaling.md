@@ -122,3 +122,32 @@ opt-in'dir, gece temizlik/rollup dağıtık-kilitlidir → çok-pod'da tek pod �
 Rollup birkaç gün prod'da doğru veri ürettikten sonra, ham kontrol serisi retention'ı config'ten
 kısaltılabilir (ör. 180g → 30–45g) — uzun-dönem trend `monitor_check_daily`'de kalır. Sıra:
 önce rollup birikir, **sonra** ham kısaltılır (trend kaybı olmaz).
+
+## 7. Sayfa Bütünlüğü (Page Integrity) — güvenlik/perf notları (2026-07 inceleme)
+
+**Sorgu planı kanıtı (sentetik 1M `page_checks` + 1.5M `page_resource_issues`, EXPLAIN ANALYZE):**
+tüm sıcak sorgular **index-scan** (fact tablolarda seq-scan YOK):
+- `findLatestPerMonitor` (LATERAL, monitör-başı en güncel) → ~**0.2 ms**
+- `pageIssues`/`findFiltered` (monitor_id + checked_at DESC, LIMIT 500) → ~**1.3 ms**
+- `responseSeriesRaw` (page_checks aralık, LIMIT 5000) → ~**14 ms**
+Composite index'ler (`idx_pc_monitor_checked`, `idx_pri_monitor_checked`) + tek-kolon `checked_at`
+index'leri birlikte kullanılıyor; az monitör (2) senaryosunda planner tek-kolon checked_at'ı seçse de
+gerçek çok-monitörlü kardinalitede composite seçilir. Sentetik veri sonrası temizlendi + VACUUM.
+
+**Yük sınırları (kod):** kontrol başına wall-clock deadline (`cert.monitor.page.max-check-seconds`, vars.
+120sn), tek sayfa ≤500 kaynak, crawl geneli ≤1500 kaynak (bellek + INSERT patlaması önleme), manuel tetik
+per-monitör cooldown (`page.manual-cooldown-seconds`, vars. 20sn) + DAİMA SINGLE_PAGE (inline crawl yok).
+Kaynak doğrulama sanal-thread executor + Semaphore ile sınırlı → 400-kaynak × tekrarlı kontrolde platform
+thread stabil (E20 testi). `page_*` yazımları IDENTITY id kullanır → Hibernate JDBC batch kapalı; global
+kaynak capi bunu telafi eder.
+
+**Güvenlik residual — DNS-rebinding (Medium, bilinçli kabul):** `SsrfGuard.validate()` her hop'ta çözülen
+IP'leri döndürür ama `PageCheckerService` istekleri host ADIYLA atar → HttpClient bağımsız yeniden çözer
+(TOCTOU penceresi). Metadata/loopback/link-local HER ZAMAN bloklu + JVM pozitif-DNS cache pratik riski
+azaltır. IP-pinning (NetworkResolver/rewriteHostToIp) HTTPS SNI karmaşası nedeniyle uygulanmadı.
+**Ops:** JVM `networkaddress.cache.ttl`'i **0'a çekmeyin** (varsayılan pozitif-cache rebinding penceresini kapatır).
+
+**IDOR düzeltmesi (2026-07):** serbest-form monitör listeleri (page/http/keyword/domain/ping) + response-series
+uçları artık `SessionScope.canView` ile takım-kapsamlı. Port/DNS dual-source (teamId=null envanter-türevi)
+olduğundan `canView(null)` kırılganlığıyla o iki tür KAPSAM DIŞI bırakıldı — ayrı bir dual-source-farkında
+düzeltme gerektirir (açık kalan iş).
