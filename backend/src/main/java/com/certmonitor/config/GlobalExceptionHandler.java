@@ -15,6 +15,7 @@ import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.context.request.async.AsyncRequestNotUsableException;
 import org.springframework.web.server.ResponseStatusException;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
 
@@ -145,14 +146,48 @@ public class GlobalExceptionHandler {
                         "error", "Veritabanına şu anda ulaşılamıyor, lütfen birazdan tekrar deneyin"));
     }
 
+    /** İstemci yanıt tamamlanmadan bağlantıyı kapattı/reset etti (sekme kapatma, proxy/LB reset, oturum devralma).
+     *  Sunucu hatası DEĞİL — yanıt zaten yazılamaz; ERROR + 500 denemesi yalnızca gürültü (yanlış alarm). void →
+     *  Spring hiçbir gövde yazmaz; iz DEBUG'da kalır. (Logdaki tam tip: flushBuffer sırasında Connection reset.) */
+    @ExceptionHandler(AsyncRequestNotUsableException.class)
+    public void handleClientDisconnect(AsyncRequestNotUsableException e) {
+        log.debug("İstemci bağlantıyı erken kapattı (yanıt yazılamadı): {}", e.toString());
+    }
+
     /**
      * Son çare: handler eşleşmeyen her şey burada yakalanır.
      * Stack trace UI'ye sızmasın — kullanıcıya jenerik mesaj, log'a tam hata.
      */
     @ExceptionHandler(Exception.class)
     public ResponseEntity<Map<String, Object>> handleGeneric(Exception e) {
+        // Senkron istemci-kopması (ClientAbortException / broken pipe) async-wrapper olmadan buraya düşebilir →
+        // ERROR/500 üretme (bağlantı ölü); DEBUG + gövde yazma (null = "handled, gövde yok").
+        if (isClientAbort(e)) {
+            log.debug("İstemci bağlantıyı erken kapattı (yanıt yazılamadı): {}", e.toString());
+            return null;
+        }
         log.error("Beklenmeyen sunucu hatası: {}", e.toString(), e);
         return ResponseEntity.status(500)
                 .body(Map.of("success", false, "error", "Sunucu hatası"));
+    }
+
+    /** İstisna zincirinde istemci-kopması var mı — Tomcat'e import bağımlılığı olmadan (sınıf-adı + IOException
+     *  mesajı ile). ClientAbortException / AsyncRequestNotUsableException / "broken pipe" / "connection reset". */
+    static boolean isClientAbort(Throwable t) {
+        for (Throwable c = t; c != null; c = c.getCause()) {
+            String cn = c.getClass().getName();
+            if (cn.equals("org.apache.catalina.connector.ClientAbortException")
+                    || cn.equals("org.springframework.web.context.request.async.AsyncRequestNotUsableException")) {
+                return true;
+            }
+            if (c instanceof java.io.IOException && c.getMessage() != null) {
+                String m = c.getMessage().toLowerCase();
+                if (m.contains("broken pipe") || m.contains("connection reset") || m.contains("reset by peer")) {
+                    return true;
+                }
+            }
+            if (c.getCause() == c) break;   // kendine-referanslı zincirde sonsuz döngü önle
+        }
+        return false;
     }
 }

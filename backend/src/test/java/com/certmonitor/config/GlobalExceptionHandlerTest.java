@@ -157,4 +157,31 @@ class GlobalExceptionHandlerTest {
         // Stack trace / internal mesaj kullanıcıya gitmemeli
         assertFalse(((String) r.getBody().get("error")).contains("SecretField"));
     }
+
+    @Test
+    @DisplayName("AsyncRequestNotUsableException (istemci koptu) → sessiz (void, ERROR/500 yok)")
+    void clientDisconnect_silent() {
+        assertDoesNotThrow(() -> handler.handleClientDisconnect(
+                new org.springframework.web.context.request.async.AsyncRequestNotUsableException("client gone")));
+    }
+
+    @Test
+    @DisplayName("isClientAbort: broken pipe / connection reset / ClientAbort/Async → true; normal → false")
+    void isClientAbort_detection() {
+        assertTrue(GlobalExceptionHandler.isClientAbort(new java.io.IOException("Broken pipe")));
+        assertTrue(GlobalExceptionHandler.isClientAbort(
+                new RuntimeException(new java.io.IOException("Connection reset by peer"))));
+        assertTrue(GlobalExceptionHandler.isClientAbort(
+                new org.springframework.web.context.request.async.AsyncRequestNotUsableException("x")));
+        assertFalse(GlobalExceptionHandler.isClientAbort(new RuntimeException("normal iş hatası")));
+        assertFalse(GlobalExceptionHandler.isClientAbort(new java.io.IOException("disk dolu")));
+    }
+
+    @Test
+    @DisplayName("handleGeneric: senkron istemci-kopması (broken pipe) → null (ERROR/500 YOK)")
+    void generic_clientAbort_returnsNull() {
+        ResponseEntity<Map<String, Object>> r = handler.handleGeneric(
+                new RuntimeException(new java.io.IOException("Broken pipe")));
+        assertNull(r);   // gövde yazılmaz — bağlantı ölü
+    }
 }
