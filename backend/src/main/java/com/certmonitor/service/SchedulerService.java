@@ -2206,7 +2206,8 @@ public class SchedulerService {
             }
         }
         boolean alertThird = Boolean.TRUE.equals(m.getAlertThirdParty());
-        boolean alarmWorthy = res.mixedContentCount() > 0 || firstPartyBroken > 0 || (alertThird && thirdPartyBroken > 0);
+        boolean alertMixed = !Boolean.FALSE.equals(m.getAlertMixedContent());   // varsayılan true (mevcut davranış)
+        boolean alarmWorthy = (alertMixed && res.mixedContentCount() > 0) || firstPartyBroken > 0 || (alertThird && thirdPartyBroken > 0);
         boolean mainUp = res.mainReachable();
         boolean integrityUp = !mainUp || !alarmWorthy;   // ana sayfa down iken ayrı bütünlük alarmı üretme
 

@@ -39,7 +39,7 @@ const RES_ICON = { IMG: Image, CSS: FileCode, JS: FileCode, LINK: Link2, IFRAME:
 const PAGE_ISSUE_COLS = '1fr 0.9fr 2.1fr 0.75fr 0.5fr 0.55fr'
 const emptyForm = { name: '', url: '', groupName: '', teamId: '', tags: '', notifyEmail: true,
   mode: 'SINGLE_PAGE', crawlDepth: 2, crawlMaxPages: 50, excludePatterns: '', slowResourceMs: 2000,
-  alertThirdParty: false, resourceConcurrency: 5,
+  alertThirdParty: false, alertMixedContent: true, resourceConcurrency: 5,
   intervalSeconds: 300, timeoutMs: 10000, confirmAttempts: 3, confirmIntervalSeconds: 30,
   recoveryChecks: 3, recoveryIntervalSeconds: 30, active: true }
 
@@ -166,7 +166,7 @@ export default function PageMonitorPage({ systemRole, teamId, teamName }) {
       tags: m.tags || '', notifyEmail: m.notify_email !== false,
       mode: m.mode || 'SINGLE_PAGE', crawlDepth: m.crawl_depth ?? 2, crawlMaxPages: m.crawl_max_pages ?? 50,
       excludePatterns: m.exclude_patterns || '', slowResourceMs: m.slow_resource_ms ?? 2000,
-      alertThirdParty: !!m.alert_third_party, resourceConcurrency: m.resource_concurrency ?? 5,
+      alertThirdParty: !!m.alert_third_party, alertMixedContent: m.alert_mixed_content !== false, resourceConcurrency: m.resource_concurrency ?? 5,
       intervalSeconds: m.interval_seconds ?? 300, timeoutMs: m.timeout_ms ?? 10000,
       confirmAttempts: m.confirm_attempts ?? 3, confirmIntervalSeconds: m.confirm_interval_seconds ?? 30,
       recoveryChecks: m.recovery_checks ?? 3, recoveryIntervalSeconds: m.recovery_interval_seconds ?? 30,
@@ -193,7 +193,7 @@ export default function PageMonitorPage({ systemRole, teamId, teamName }) {
       tags: form.tags?.trim() || null, notifyEmail: form.notifyEmail,
       mode: form.mode, crawlDepth: Number(form.crawlDepth), crawlMaxPages: Number(form.crawlMaxPages),
       excludePatterns: form.excludePatterns?.trim() || null, slowResourceMs: Number(form.slowResourceMs),
-      alertThirdParty: form.alertThirdParty, resourceConcurrency: Number(form.resourceConcurrency),
+      alertThirdParty: form.alertThirdParty, alertMixedContent: form.alertMixedContent, resourceConcurrency: Number(form.resourceConcurrency),
       intervalSeconds: Number(form.intervalSeconds), timeoutMs: Number(form.timeoutMs),
       confirmAttempts: Number(form.confirmAttempts), confirmIntervalSeconds: Number(form.confirmIntervalSeconds),
       recoveryChecks: Number(form.recoveryChecks), recoveryIntervalSeconds: Number(form.recoveryIntervalSeconds),
@@ -618,6 +618,10 @@ export default function PageMonitorPage({ systemRole, teamId, teamName }) {
               <label className="checkbox-label full-width">
                 <input type="checkbox" checked={form.alertThirdParty} onChange={e => setForm(f => ({ ...f, alertThirdParty: e.target.checked }))} />{t('page.alertThirdParty')}</label>
               <div className="full-width field-hint">{t('page.alertThirdPartyHint')}</div>
+
+              <label className="checkbox-label full-width">
+                <input type="checkbox" checked={form.alertMixedContent} onChange={e => setForm(f => ({ ...f, alertMixedContent: e.target.checked }))} />{t('page.alertMixedContent')}</label>
+              <div className="full-width field-hint">{t('page.alertMixedContentHint')}</div>
 
               {/* Etiketler */}
               <div className="full-width kw-tags-block">
