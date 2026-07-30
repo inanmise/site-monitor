@@ -9,6 +9,7 @@ import MarkdownEditor from './ui/MarkdownEditor.jsx'
 import DateTimeField from './ui/DateTimeField.jsx'
 import SearchableSelect from './ui/SearchableSelect.jsx'
 import { autoDurationMinutes } from '../utils/incidentMeta.js'
+import { mailPreviewSrcDoc, MAIL_PREVIEW_SANDBOX } from '../utils/mailPreview.js'
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RTooltip, Legend, Cell } from 'recharts'
 
 const SEVERITIES = ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW']
@@ -884,7 +885,7 @@ function IncidentModal({ modal, setModal, save, remove, saving, allowManage, all
         <div className="modal-box modal-wide" onClick={e => e.stopPropagation()}
           style={{ maxWidth: 820, height: '85vh', display: 'flex', flexDirection: 'column' }}>
           <h3>{t('inc.previewTitle')}</h3>
-          <iframe title="mail-preview" srcDoc={previewHtml} sandbox="allow-same-origin"
+          <iframe title="mail-preview" srcDoc={mailPreviewSrcDoc(previewHtml)} sandbox={MAIL_PREVIEW_SANDBOX}
             style={{ flex: 1, border: '1px solid var(--border)', borderRadius: 8, background: '#f4f6f8' }} />
           <div className="modal-actions">
             <button className="btn btn-secondary" onClick={() => setPreviewHtml(null)}>{t('inc.cancel')}</button>

@@ -4,6 +4,7 @@ import { api, formatDate } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
 import { useToast } from '../ui/Toast.jsx'
 import SearchableSelect from '../ui/SearchableSelect.jsx'
+import { mailPreviewSrcDoc, MAIL_PREVIEW_SANDBOX } from '../../utils/mailPreview.js'
 
 export default function WeeklyAvailabilitySettings() {
   const t = useT()
@@ -320,7 +321,7 @@ export default function WeeklyAvailabilitySettings() {
               {viewer.cc && <> · <strong>CC:</strong> {viewer.cc}</>}
             </p>
             <iframe className="nl-message-iframe" title="weekly-availability-viewer"
-              srcDoc={viewer.html} sandbox="allow-same-origin" style={{ minHeight: 460 }} />
+              srcDoc={mailPreviewSrcDoc(viewer.html)} sandbox={MAIL_PREVIEW_SANDBOX} style={{ minHeight: 460 }} />
           </div>
         </div>
       )}

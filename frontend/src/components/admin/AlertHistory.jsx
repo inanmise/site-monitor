@@ -4,6 +4,7 @@ import { useDialog } from '../ui/Dialog.jsx'
 import { useToast } from '../ui/Toast.jsx'
 import { useT, useDateLocale } from '../../i18n/index.jsx'
 import UserBadge from '../ui/UserBadge.jsx'
+import { mailPreviewSrcDoc, MAIL_PREVIEW_SANDBOX } from '../../utils/mailPreview.js'
 import {
   Check, ShieldAlert, TrendingUp, RefreshCcw, Bell, CheckCircle, AlertCircle,
   ChevronUp, ChevronDown, ChevronLeft, ChevronRight, Mail, MailX, Clock, Users, Calendar,
@@ -157,8 +158,8 @@ function NotifLogCard({ log: l }) {
             {l.message && l.message.trimStart().startsWith('<') ? (
               <iframe
                 className="nl-message-iframe"
-                srcDoc={l.message}
-                sandbox=""
+                srcDoc={mailPreviewSrcDoc(l.message)}
+                sandbox={MAIL_PREVIEW_SANDBOX}
                 title={l.subject}
               />
             ) : (
