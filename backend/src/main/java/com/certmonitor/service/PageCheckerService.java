@@ -54,13 +54,16 @@ public class PageCheckerService {
 
     /** Ana sayfa gövde okuma tavanı (OOM koruması + hash için yeterli). */
     private static final int MAX_BODY_BYTES = 2_000_000;
-    /** Tek kontrolde doğrulanacak azami (tekil) kaynak — tek-pod yük koruması; aşılırsa WARN + kırpılır. */
+    /** Tek SAYFANIN doğrulanacak azami (tekil) kaynağı — tek-pod yük koruması; aşılırsa WARN + kırpılır. */
     private static final int MAX_RESOURCES_PER_CHECK = 500;
+    /** Bir CRAWL genelinde toplam doğrulanacak azami kaynak — bellek + DB-insert patlamasını sınırlar (M2). */
+    private static final int MAX_TOTAL_RESOURCES = 1500;
     /** Manuel redirect zinciri üst sınırı. */
     private static final int MAX_REDIRECTS = 5;
     private static final String UA = "CertMonitor-PageCheck/1.0";
 
     private final SsrfGuard ssrfGuard;
+    private final PublicSuffixService publicSuffixService;
     private HttpClient httpClient;
     /** Kaynak doğrulama fan-out'u için sanal-thread executor (I/O-bound; concurrency Semaphore ile sınırlanır). */
     private ExecutorService resourceExecutor;
@@ -103,25 +106,27 @@ public class PageCheckerService {
 
     // ── Giriş noktaları ──────────────────────────────────────────────────────
 
-    /** SINGLE_PAGE veya SITE_CRAWL — moda göre yönlendirir. */
+    /** SINGLE_PAGE veya SITE_CRAWL — moda göre yönlendirir. {@code maxCheckSeconds} tüm kontrol için wall-clock
+     *  üst sınırı (yavaş/yanıt-vermeyen hedefin scheduler/request thread'ini süresiz tutmasını engeller — H1/M1). */
     public PageCheckResult check(String url, String mode, int timeoutMs, int slowMs, int concurrency,
-                                 String excludePatterns, int crawlDepth, int crawlMaxPages) {
-        List<Pattern> excludes = compileExcludes(excludePatterns);
+                                 String excludePatterns, int crawlDepth, int crawlMaxPages, int maxCheckSeconds) {
+        Excludes excludes = compileExcludes(excludePatterns);
+        long deadline = System.currentTimeMillis() + Math.max(5, maxCheckSeconds) * 1000L;
         if ("SITE_CRAWL".equalsIgnoreCase(mode)) {
             return crawlSite(url, timeoutMs, slowMs, clampConcurrency(concurrency), excludes,
-                    Math.max(0, crawlDepth), Math.max(1, crawlMaxPages));
+                    Math.max(0, crawlDepth), Math.max(1, crawlMaxPages), deadline);
         }
-        return checkSinglePage(url, timeoutMs, slowMs, clampConcurrency(concurrency), excludes);
+        return checkSinglePage(url, timeoutMs, slowMs, clampConcurrency(concurrency), excludes, deadline);
     }
 
-    /** Kaydetmeden canlı test için basit sarmalayıcı (SINGLE_PAGE, varsayılan eşikler). */
+    /** Kaydetmeden canlı test için basit sarmalayıcı (SINGLE_PAGE, varsayılan eşikler + 60sn deadline). */
     public PageCheckResult test(String url, int timeoutMs) {
-        return checkSinglePage(url, timeoutMs, 2000, 5, List.of());
+        return checkSinglePage(url, timeoutMs, 2000, 5, Excludes.EMPTY, System.currentTimeMillis() + 60_000L);
     }
 
     // ── SINGLE_PAGE ──────────────────────────────────────────────────────────
     private PageCheckResult checkSinglePage(String url, int timeoutMs, int slowMs, int concurrency,
-                                            List<Pattern> excludes) {
+                                            Excludes excludes, long deadline) {
         long start = System.currentTimeMillis();
         String rootHost = hostOf(url);
         FetchResult main = fetchFollowing(url, "GET", true, timeoutMs);
@@ -133,9 +138,8 @@ public class PageCheckerService {
                     0, 0, 0, 1, null, null, err, List.of());
         }
         boolean pageHttps = url.toLowerCase(Locale.ROOT).startsWith("https://");
-        String body = new String(main.body(), StandardCharsets.UTF_8);
-        List<Resource> resources = inventory(body, url, url, rootHost, excludes);
-        List<ResourceIssue> issues = verifyAll(resources, pageHttps, rootHost, timeoutMs, slowMs, concurrency);
+        List<Resource> resources = inventory(main.body(), url, url, rootHost, excludes);
+        List<ResourceIssue> issues = verifyAll(resources, pageHttps, rootHost, timeoutMs, slowMs, concurrency, deadline);
         long ms = System.currentTimeMillis() - start;
         return summarize(issues, resources.size(), 1, main.status(), ms, sha256(main.body()),
                 (long) main.body().length);
@@ -143,7 +147,7 @@ public class PageCheckerService {
 
     // ── SITE_CRAWL ───────────────────────────────────────────────────────────
     private PageCheckResult crawlSite(String url, int timeoutMs, int slowMs, int concurrency,
-                                      List<Pattern> excludes, int maxDepth, int maxPages) {
+                                      Excludes excludes, int maxDepth, int maxPages, long deadline) {
         long start = System.currentTimeMillis();
         String rootHost = hostOf(url);
         boolean pageHttps = url.toLowerCase(Locale.ROOT).startsWith("https://");
@@ -169,13 +173,16 @@ public class PageCheckerService {
         String rootHash = sha256(first.body());
         long rootBytes = first.body().length;
         int pagesCrawled = 0, totalResources = 0;
+        boolean capped = false;
 
-        while (!queue.isEmpty() && pagesCrawled < maxPages) {
+        // Deadline (H1/M1) VE global kaynak capi (M2) — hangisi önce dolarsa crawl durur.
+        while (!queue.isEmpty() && pagesCrawled < maxPages && System.currentTimeMillis() < deadline) {
+            if (totalResources >= MAX_TOTAL_RESOURCES) { capped = true; break; }
             String[] node = queue.poll();
             String pageUrl = node[0];
             int depth = Integer.parseInt(node[1]);
             if (visited.contains(pageUrl) || depth > maxDepth) continue;
-            if (isExcluded(pageUrl, excludes) || isDisallowed(pageUrl, disallow)) continue;
+            if (excludes.matches(pageUrl) || isDisallowed(pageUrl, disallow)) continue;
             visited.add(pageUrl);
 
             FetchResult pr = pageUrl.equals(url) ? first : fetchFollowing(pageUrl, "GET", true, timeoutMs);
@@ -184,31 +191,33 @@ public class PageCheckerService {
                 continue;
             }
             pagesCrawled++;
-            String pageBody = new String(pr.body(), StandardCharsets.UTF_8);
-            List<Resource> resources = inventory(pageBody, pageUrl, pageUrl, rootHost, excludes);
+            List<Resource> resources = inventory(pr.body(), pageUrl, pageUrl, rootHost, excludes);
 
-            // Bu sayfadaki kaynakları (site genelinde tekil) doğrula
+            // Bu sayfadaki kaynakları (site genelinde tekil) doğrula — global cap'e kadar
             List<Resource> fresh = new ArrayList<>();
             for (Resource r : resources) {
+                if (totalResources + fresh.size() >= MAX_TOTAL_RESOURCES) { capped = true; break; }
                 if (verified.add(r.url())) fresh.add(r);
             }
             totalResources += fresh.size();
-            allIssues.addAll(verifyAll(fresh, pageHttps, rootHost, timeoutMs, slowMs, concurrency));
+            allIssues.addAll(verifyAll(fresh, pageHttps, rootHost, timeoutMs, slowMs, concurrency, deadline));
 
             // Same-origin a[href] linkleri kuyruğa (derinlik+1)
             if (depth < maxDepth) {
                 for (Resource r : resources) {
                     if (!"LINK".equals(r.type())) continue;
-                    if (!sameSite(hostOf(r.url()), rootHost)) continue;   // yalnız site içi
+                    if (!sameSite(hostOf(r.url()), rootHost)) continue;   // yalnız site içi (PSL: aynı kayıtlı domain)
                     String norm = stripFragment(r.url());
-                    if (!visited.contains(norm) && !isExcluded(norm, excludes) && !isDisallowed(norm, disallow)) {
+                    if (norm.equalsIgnoreCase(pageUrl)) continue;   // kendine link (self/fragment) — atla
+                    if (!visited.contains(norm) && !excludes.matches(norm) && !isDisallowed(norm, disallow)) {
                         queue.add(new String[]{ norm, String.valueOf(depth + 1) });
                     }
                 }
             }
         }
-        if (!queue.isEmpty()) log.debug("Crawl {} — {} sayfa limitine ulaşıldı, {} kuyrukta bırakıldı",
-                url, maxPages, queue.size());
+        if (capped) log.warn("Crawl {} — {} toplam-kaynak capine ulaşıldı, kalan atlandı", sanitize(url), MAX_TOTAL_RESOURCES);
+        else if (System.currentTimeMillis() >= deadline) log.warn("Crawl {} — deadline'a ulaşıldı, kısmi sonuç", sanitize(url));
+        else if (!queue.isEmpty()) log.debug("Crawl {} — {} sayfa limiti, {} kuyrukta bırakıldı", sanitize(url), maxPages, queue.size());
 
         long ms = System.currentTimeMillis() - start;
         return summarize(allIssues, totalResources, Math.max(1, pagesCrawled), first.status(), ms, rootHash, rootBytes);
@@ -217,9 +226,17 @@ public class PageCheckerService {
     // ── Kaynak envanteri (jsoup) ─────────────────────────────────────────────
     private record Resource(String url, String type, String sourcePage) {}
 
-    private List<Resource> inventory(String html, String baseUrl, String sourcePage, String rootHost,
-                                     List<Pattern> excludes) {
-        Document doc = Jsoup.parse(html, baseUrl);
+    private List<Resource> inventory(byte[] bytes, String baseUrl, String sourcePage, String rootHost,
+                                     Excludes excludes) {
+        Document doc;
+        try {
+            // Bayt-stream + null charset → jsoup <meta charset>/BOM'dan charset'i otomatik tespit eder (L1);
+            // parse hatasında (bozuk/dev HTML) boş envanter (L2 — controller'a exception sızmaz).
+            doc = Jsoup.parse(new java.io.ByteArrayInputStream(bytes), null, baseUrl);
+        } catch (Exception e) {
+            log.debug("HTML parse edilemedi {}: {}", sanitize(sourcePage), e.getMessage());
+            return List.of();
+        }
         LinkedHashMap<String, Resource> out = new LinkedHashMap<>();   // absUrl → Resource (dedup, sıra korunur)
         addAll(out, doc, "img[src]", "src", "IMG", sourcePage);
         addSrcset(out, doc, sourcePage);
@@ -231,10 +248,12 @@ public class PageCheckerService {
         addAll(out, doc, "a[href]", "href", "LINK", sourcePage);
         List<Resource> list = new ArrayList<>();
         for (Resource r : out.values()) {
-            if (!isHttp(r.url()) || isExcluded(r.url(), excludes)) continue;
+            if (!isHttp(r.url()) || excludes.matches(r.url())) continue;
+            // Sayfanın kendisine çözülen link (a[href="#x"], href="") — gereksiz self-request (L7)
+            if ("LINK".equals(r.type()) && stripFragment(r.url()).equalsIgnoreCase(sourcePage)) continue;
             list.add(r);
             if (list.size() >= MAX_RESOURCES_PER_CHECK) {
-                log.warn("Sayfa {} — {} kaynak limitine ulaşıldı, kalanlar atlandı", sourcePage, MAX_RESOURCES_PER_CHECK);
+                log.warn("Sayfa {} — {} kaynak limitine ulaşıldı, kalanlar atlandı", sanitize(sourcePage), MAX_RESOURCES_PER_CHECK);
                 break;
             }
         }
@@ -264,12 +283,13 @@ public class PageCheckerService {
 
     // ── Kaynak doğrulama ─────────────────────────────────────────────────────
     private List<ResourceIssue> verifyAll(List<Resource> resources, boolean pageHttps, String rootHost,
-                                          int timeoutMs, int slowMs, int concurrency) {
+                                          int timeoutMs, int slowMs, int concurrency, long deadline) {
         if (resources.isEmpty()) return List.of();
         Semaphore gate = new Semaphore(concurrency);
         List<CompletableFuture<ResourceIssue>> futures = new ArrayList<>();
         for (Resource r : resources) {
             futures.add(CompletableFuture.supplyAsync(() -> {
+                if (System.currentTimeMillis() > deadline) return null;   // deadline geçti → çalıştırma
                 try {
                     gate.acquire();
                     try { return verifyOne(r, pageHttps, rootHost, timeoutMs, slowMs); }
@@ -282,8 +302,17 @@ public class PageCheckerService {
         }
         List<ResourceIssue> issues = new ArrayList<>();
         for (CompletableFuture<ResourceIssue> f : futures) {
-            ResourceIssue i = f.join();
-            if (i != null) issues.add(i);
+            long remaining = deadline - System.currentTimeMillis();
+            if (remaining <= 0) break;   // deadline doldu → kalanları bırak (kısmi ama tutarlı sonuç)
+            try {
+                // Deadline'ı aşan join YAPMA — kalan future'lar sanal-thread'te düşer (her fetch'in kendi timeout'u var).
+                ResourceIssue i = f.get(remaining, java.util.concurrent.TimeUnit.MILLISECONDS);
+                if (i != null) issues.add(i);
+            } catch (java.util.concurrent.TimeoutException te) {
+                break;   // deadline'a takıldı → kısmi sonuç
+            } catch (Exception e) {
+                /* bu future hata verdi (ExecutionException) → bu kaynağı atla, devam et */
+            }
         }
         return issues;
     }
@@ -317,11 +346,10 @@ public class PageCheckerService {
     private FetchResult verifyWithRetry(String url, int timeoutMs) {
         FetchResult r = verifyOnce(url, timeoutMs);
         boolean bad = r.blocked() || r.status() == 0 || r.status() >= 400;
-        if (r.blocked() || !bad) return r;
+        if (r.blocked() || !bad) return r;   // engellendi ya da zaten iyi → retry yok
         try { Thread.sleep(300); } catch (InterruptedException e) { Thread.currentThread().interrupt(); return r; }
-        FetchResult retry = verifyOnce(url, timeoutMs);
-        // retry düzeldiyse onu, hâlâ kötüyse ilk sonucu döndür (false-positive önleme)
-        return (!retry.blocked() && retry.status() != 0 && retry.status() < 400) ? retry : retry;
+        // Retry: en son gözlemi döndür (geçici takılma düzelmişse iyi sonuç kazanır; hâlâ kötüyse yine kırık sayılır).
+        return verifyOnce(url, timeoutMs);
     }
 
     private FetchResult verifyOnce(String url, int timeoutMs) {
@@ -342,6 +370,10 @@ public class PageCheckerService {
                 String host = hostOf(current);
                 try {
                     if (host == null) throw new SsrfGuard.BlockedException("geçersiz URL: " + current);
+                    // SSRF (her hop). NOT (M4 residual): validate() çözülen IP'leri döndürür ama HttpClient host'u
+                    // yeniden çözer → TOCTOU/DNS-rebind penceresi. Metadata/loopback/link-local HER ZAMAN bloklu +
+                    // JVM pozitif-DNS cache pratik riski azaltır; IP-pinning (NetworkResolver) bilinçli uygulanmadı
+                    // (HTTPS SNI karmaşası + kaynak-başı maliyet). Ops: networkaddress.cache.ttl'i 0'a çekmeyin.
                     ssrfGuard.validate(host);
                 } catch (SsrfGuard.BlockedException be) {
                     return new FetchResult(0, System.currentTimeMillis() - start, null, be.getMessage(), true);
@@ -400,7 +432,7 @@ public class PageCheckerService {
                     if (!path.isEmpty()) disallow.add(path);
                 }
             }
-        } catch (Exception e) { log.debug("robots.txt okunamadı {}: {}", url, e.getMessage()); }
+        } catch (Exception e) { log.debug("robots.txt okunamadı {}: {}", sanitize(url), e.getMessage()); }
         return disallow;
     }
 
@@ -415,7 +447,7 @@ public class PageCheckerService {
                 String loc = m.group(1).trim();
                 if (isHttp(loc) && sameSite(hostOf(loc), rootHost)) seeds.add(stripFragment(loc));
             }
-        } catch (Exception e) { log.debug("sitemap.xml okunamadı {}: {}", url, e.getMessage()); }
+        } catch (Exception e) { log.debug("sitemap.xml okunamadı {}: {}", sanitize(url), e.getMessage()); }
         return seeds;
     }
 
@@ -433,26 +465,46 @@ public class PageCheckerService {
 
     private static int clampConcurrency(int c) { return Math.max(1, Math.min(20, c)); }
 
-    private List<Pattern> compileExcludes(String raw) {
-        if (raw == null || raw.isBlank()) return List.of();
-        List<Pattern> out = new ArrayList<>();
+    /** PER-CHECK hariç-tutma eşleştiricisi (regex + literal). Singleton serviste paylaşımlı alan YOK → thread-safe:
+     *  her {@code check()} kendi immutable örneğini taşır. */
+    private record Excludes(List<Pattern> regex, List<String> literals) {
+        static final Excludes EMPTY = new Excludes(List.of(), List.of());
+        boolean matches(String url) {
+            String low = url.toLowerCase(Locale.ROOT);
+            for (String lit : literals) if (!lit.isEmpty() && low.contains(lit)) return true;
+            for (Pattern p : regex) if (p.matcher(url).matches()) return true;
+            return false;
+        }
+    }
+
+    /** Hariç-tutma desenleri: her satır bir glob. `Pattern.quote` regex-injection'ı ve ÜSTEL ReDoS'u önler
+     *  (iç içe niceleyici üretilemez). M3: çok sayıda '*' → çok sayıda ardışık `.*` polinom backtracking'e yol
+     *  açabilir → satır başına `*` ≤ MAX_STARS, uzunluk ≤ MAX_LEN; aşan/`*`'sız desen regex yerine literal
+     *  substring (contains) ile eşleştirilir (backtracking imkânsız). Satır sayısı da caplenir. */
+    private static final int EXCLUDE_MAX_LINES = 50, EXCLUDE_MAX_LEN = 200, EXCLUDE_MAX_STARS = 6;
+    private Excludes compileExcludes(String raw) {
+        if (raw == null || raw.isBlank()) return Excludes.EMPTY;
+        List<Pattern> regex = new ArrayList<>();
+        List<String> literals = new ArrayList<>();
+        int lines = 0;
         for (String line : raw.split("\\r?\\n")) {
             String p = line.trim();
             if (p.isEmpty()) continue;
-            // Glob → regex (yalnız '*'); geçersizse literal substring'e düş.
+            if (++lines > EXCLUDE_MAX_LINES) { log.warn("Hariç-tutma: {} satır capine ulaşıldı, kalan yok sayıldı", EXCLUDE_MAX_LINES); break; }
+            if (p.length() > EXCLUDE_MAX_LEN) p = p.substring(0, EXCLUDE_MAX_LEN);
+            int stars = (int) p.chars().filter(c -> c == '*').count();
+            // '*'sız (literal contains) VEYA çok '*'lı (ReDoS riski) → literal substring eşleşmesi (regex değil).
+            if (stars == 0 || stars > EXCLUDE_MAX_STARS) {
+                literals.add(p.replace("*", "").toLowerCase(Locale.ROOT));
+                continue;
+            }
             try {
-                String rx = ".*" + Pattern.quote(p).replace("*", "\\E.*\\Q") + ".*";
-                out.add(Pattern.compile(rx));
+                regex.add(Pattern.compile(".*" + Pattern.quote(p).replace("*", "\\E.*\\Q") + ".*"));
             } catch (Exception e) {
-                out.add(Pattern.compile(".*" + Pattern.quote(p) + ".*"));
+                literals.add(p.replace("*", "").toLowerCase(Locale.ROOT));
             }
         }
-        return out;
-    }
-
-    private boolean isExcluded(String url, List<Pattern> excludes) {
-        for (Pattern p : excludes) if (p.matcher(url).matches()) return true;
-        return false;
+        return new Excludes(regex, literals);
     }
 
     private boolean isDisallowed(String url, Set<String> disallow) {
@@ -474,6 +526,9 @@ public class PageCheckerService {
         try { return URI.create(url).getHost(); } catch (Exception e) { return null; }
     }
 
+    /** Log-forging önleme (L4): loglanan URL/host'taki CR/LF'yi boşlukla değiştir (flat-file satır enjeksiyonu). */
+    private static String sanitize(String s) { return s == null ? null : s.replace('\n', ' ').replace('\r', ' '); }
+
     private static String originOf(String url) {
         try {
             URI u = URI.create(url);
@@ -491,18 +546,16 @@ public class PageCheckerService {
         return h >= 0 ? url.substring(0, h) : url;
     }
 
-    /** Birinci-taraf: aynı host ya da aynı apex domain (www/cdn alt-alanları dahil). */
-    private static boolean sameSite(String host, String rootHost) {
+    /** Birinci-taraf: aynı host ya da aynı KAYITLI DOMAIN (eTLD+1, PSL). www/cdn alt-alanları dahil.
+     *  PSL şart: naif "son 2 etiket" .com.tr/.co.uk gibi çok-etiketli suffix'lerde a.com.tr ile b.com.tr'yi
+     *  yanlışlıkla aynı-site sayar → crawl kapsam kaçışı + 3.-taraf'ın 1.-taraf sanılması (yanlış alarm). */
+    private boolean sameSite(String host, String rootHost) {
         if (host == null || rootHost == null) return false;
         if (host.equalsIgnoreCase(rootHost)) return true;
-        String a = apex(host), b = apex(rootHost);
-        return !a.isEmpty() && a.equalsIgnoreCase(b);
-    }
-
-    /** Naif apex: son iki etiket (alarm politikası için yeterli; PSL değil). */
-    private static String apex(String host) {
-        String[] p = host.split("\\.");
-        return p.length >= 2 ? p[p.length - 2] + "." + p[p.length - 1] : host;
+        String a = publicSuffixService.registrableDomain(host);
+        String b = publicSuffixService.registrableDomain(rootHost);
+        if (a != null && b != null) return a.equalsIgnoreCase(b);
+        return false;   // PSL çözemezse (salt-suffix vb.) host eşitliği yukarıda kontrol edildi → farklı say
     }
 
     private static String sha256(byte[] data) {

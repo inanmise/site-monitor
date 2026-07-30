@@ -46,6 +46,8 @@ public final class AppSettingsCatalog {
         new Setting("cert.monitor.page.alert-enabled",           "monitoring", Type.BOOL),
         new Setting("cert.monitor.page.resource-concurrency",    "monitoring", Type.INT),
         new Setting("cert.monitor.page.user-agent",              "monitoring", Type.STRING),
+        new Setting("cert.monitor.page.max-check-seconds",       "monitoring", Type.INT),
+        new Setting("cert.monitor.page.manual-cooldown-seconds", "monitoring", Type.INT),
         // Sayfa-bütünlüğü check/issue serisi — gün-bazlı saklama (gece batch-purge).
         new Setting("cert.monitor.metrics.page.retention-days",       "monitoring", Type.INT),
         new Setting("cert.monitor.metrics.page-issues.retention-days","monitoring", Type.INT),

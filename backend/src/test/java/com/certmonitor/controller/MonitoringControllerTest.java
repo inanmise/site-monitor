@@ -207,11 +207,50 @@ class MonitoringControllerTest {
                 com.certmonitor.service.EscalationService.TYPE_PAGE_DOWN, "CRITICAL");
         when(alertEventRepo.findOpenByDomainIn(anyCollection())).thenReturn(List.of(down));
 
-        mvc.perform(get("/api/monitoring/page").session(session("USER")))
+        // ADMIN (global görücü) → tüm takımları görür (H2 filtresi global admin'i etkilemez).
+        mvc.perform(get("/api/monitoring/page").session(session("ADMIN")))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data[0].active_alarm").value(true))
                 .andExpect(jsonPath("$.data[0].alarm_level").value("CRITICAL"))
                 .andExpect(jsonPath("$.data[0].status").value("unknown"));
+    }
+
+    @Test
+    @DisplayName("H2 IDOR: GET /page yalnız görüntülenebilir takımın monitörünü döndürür (başka takım sızmaz)")
+    void listPage_scopesToViewableTeams() throws Exception {
+        when(pageCheckRepo.findLatestPerMonitor()).thenReturn(List.of());
+        when(pageMonitorRepo.findAllByOrderByNameAsc()).thenReturn(List.of(
+                pageMon(1L, "https://a.com", 1L), pageMon(2L, "https://b.com", 2L)));
+        when(alertEventRepo.findOpenByDomainIn(anyCollection())).thenReturn(List.of());
+        MockHttpSession s = session("USER");
+        s.setAttribute("viewTeamIds", java.util.List.of(1L));   // yalnız takım 1'i görebilir
+
+        mvc.perform(get("/api/monitoring/page").session(s))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.length()").value(1))
+                .andExpect(jsonPath("$.data[0].url").value("https://a.com"));   // takım 2 (b.com) SIZMAZ
+    }
+
+    @Test
+    @DisplayName("H3 IDOR: GET /page/{id}/response-series başka takımda 403")
+    void pageResponseSeries_foreignTeam_forbidden() throws Exception {
+        when(pageMonitorRepo.findById(9L)).thenReturn(Optional.of(pageMon(9L, "https://x.com", 2L)));
+        MockHttpSession s = session("USER");
+        s.setAttribute("viewTeamIds", java.util.List.of(1L));   // takım 2'yi göremez
+
+        mvc.perform(get("/api/monitoring/page/9/response-series").session(s))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    @DisplayName("H1c: POST /page/{id}/check per-monitör cooldown içinde ikinci tetik → 429")
+    void triggerPage_cooldownReturns429() throws Exception {
+        when(appSettings.getInt(eq("cert.monitor.page.manual-cooldown-seconds"), anyInt())).thenReturn(20);
+        when(pageMonitorRepo.findById(3L)).thenReturn(Optional.of(pageMon(3L, "https://x.com", 1L)));
+        MockHttpSession s = session("ADMIN");
+
+        mvc.perform(post("/api/monitoring/page/3/check").session(s)).andExpect(status().isOk());
+        mvc.perform(post("/api/monitoring/page/3/check").session(s)).andExpect(status().isTooManyRequests());
     }
 
     @Test
@@ -417,7 +456,8 @@ class MonitoringControllerTest {
     @Test
     @DisplayName("GET /keyword/{id}/response-series: kovalar avg/min/max/p95/down döner")
     void keywordResponseSeries_buckets() throws Exception {
-        when(keywordMonitorRepo.existsById(5L)).thenReturn(true);
+        com.certmonitor.model.KeywordMonitor km = new com.certmonitor.model.KeywordMonitor(); km.setId(5L);
+        when(keywordMonitorRepo.findById(5L)).thenReturn(Optional.of(km));   // IDOR guard artık findById + denyIfNotViewable
         // Aynı saat kovasında 3 kayıt (100/200/300 ms), biri down (ok=false)
         List<Object[]> rows = List.of(
                 new Object[]{ "2026-06-24T10:05:00", 100L, true },
@@ -425,7 +465,7 @@ class MonitoringControllerTest {
                 new Object[]{ "2026-06-24T10:45:00", 200L, false });
         when(keywordResultRepo.responseSeriesRaw(eq(5L), anyString(), anyString(), anyInt())).thenReturn(rows);
 
-        mvc.perform(get("/api/monitoring/keyword/5/response-series?days=7").session(session("USER")))
+        mvc.perform(get("/api/monitoring/keyword/5/response-series?days=7").session(session("ADMIN")))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.bucket").value("hour"))
                 .andExpect(jsonPath("$.data.series[0].count").value(3))
@@ -439,13 +479,14 @@ class MonitoringControllerTest {
     @Test
     @DisplayName("GET /ping/{id}/response-series: RTT ortalaması + paket kaybı + down")
     void pingResponseSeries_withLoss() throws Exception {
-        when(pingMonitorRepo.existsById(9L)).thenReturn(true);
+        com.certmonitor.model.PingMonitor pm = new com.certmonitor.model.PingMonitor(); pm.setId(9L);
+        when(pingMonitorRepo.findById(9L)).thenReturn(Optional.of(pm));   // IDOR guard artık findById + denyIfNotViewable
         List<Object[]> rows = List.of(
                 new Object[]{ "2026-06-24T10:05:00", 10L, true,  0 },
                 new Object[]{ "2026-06-24T10:25:00", 30L, false, 100 });
         when(pingCheckRepo.responseSeriesRaw(eq(9L), anyString(), anyString(), anyInt())).thenReturn(rows);
 
-        mvc.perform(get("/api/monitoring/ping/9/response-series?days=7").session(session("USER")))
+        mvc.perform(get("/api/monitoring/ping/9/response-series?days=7").session(session("ADMIN")))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.series[0].down").value(1))
                 .andExpect(jsonPath("$.data.series[0].avg").value(20))
@@ -546,7 +587,7 @@ class MonitoringControllerTest {
         ev.setAlertLevel("CRITICAL"); ev.setAcknowledged(false); ev.setResolved(false);
         when(alertEventRepo.findOpenByDomainIn(anyCollection())).thenReturn(List.of(ev));
 
-        mvc.perform(get("/api/monitoring/ping").session(session("USER")))
+        mvc.perform(get("/api/monitoring/ping").session(session("ADMIN")))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data[0].host").value("alarm.example.com"))
                 .andExpect(jsonPath("$.data[0].active_alarm").value(true))
@@ -563,7 +604,7 @@ class MonitoringControllerTest {
         when(pingCheckRepo.findLatestPerMonitor()).thenReturn(List.of());
         when(alertEventRepo.findOpenByDomainIn(anyCollection())).thenReturn(List.of());
 
-        mvc.perform(get("/api/monitoring/ping").session(session("USER")))
+        mvc.perform(get("/api/monitoring/ping").session(session("ADMIN")))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data[0].active_alarm").value(false));
     }
@@ -581,7 +622,7 @@ class MonitoringControllerTest {
         ev.setAlertLevel("HIGH"); ev.setAcknowledged(true); ev.setResolved(false);
         when(alertEventRepo.findOpenByDomainIn(anyCollection())).thenReturn(List.of(ev));
 
-        mvc.perform(get("/api/monitoring/keyword").session(session("USER")))
+        mvc.perform(get("/api/monitoring/keyword").session(session("ADMIN")))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data[0].active_alarm").value(true))
                 .andExpect(jsonPath("$.data[0].alarm_level").value("HIGH"))

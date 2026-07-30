@@ -2190,11 +2190,13 @@ public class SchedulerService {
         int timeout = m.getTimeoutMs() != null ? m.getTimeoutMs() : 10000;
         int slow = m.getSlowResourceMs() != null ? m.getSlowResourceMs() : 2000;
         int conc = m.getResourceConcurrency() != null ? m.getResourceConcurrency() : 5;
+        int maxCheckSec = appSettings.getInt("cert.monitor.page.max-check-seconds", 120);   // wall-clock üst sınır (H1/M1)
         PageCheckerService.PageCheckResult res = pageCheckerService.check(
                 m.getUrl(), effectiveMode, timeout, slow, conc,
                 m.getExcludePatterns(),
                 m.getCrawlDepth() != null ? m.getCrawlDepth() : 2,
-                m.getCrawlMaxPages() != null ? m.getCrawlMaxPages() : 50);
+                m.getCrawlMaxPages() != null ? m.getCrawlMaxPages() : 50,
+                maxCheckSec);
 
         // Alarm-uygun bütünlük sorunu: mixed content VEYA birinci-taraf kırık VEYA (alertThirdParty ise 3.taraf kırık).
         int firstPartyBroken = 0, thirdPartyBroken = 0;
@@ -2288,9 +2290,10 @@ public class SchedulerService {
         return out;
     }
 
-    /** Manuel tetik (controller) — monitörün kendi modunda tam kontrol + persist. */
+    /** Manuel tetik (controller) — H1: DAİMA SINGLE_PAGE. Inline SITE_CRAWL request thread'ini dakikalarca
+     *  tutup Tomcat worker'larını tüketebilir; derin crawl yalnız günlük runPageCrawls akışında koşar. */
     public Map<String, Object> triggerPageCheck(com.certmonitor.model.PageMonitor m) {
-        return recheckPage(m, true, m.getMode() != null ? m.getMode() : "SINGLE_PAGE");
+        return recheckPage(m, true, "SINGLE_PAGE");
     }
 
     // ── HTTP SSL + Domain (WHOIS/RDAP) yavaş sweep'i — sıcak uptime döngüsünden AYRI (tek-pod perf) ──
