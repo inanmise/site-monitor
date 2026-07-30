@@ -134,6 +134,29 @@ class EmailTemplateBuilderTest {
     }
 
     @Test
+    @DisplayName("PAGE_INTEGRITY: sayfa aksiyon adımları + sorunlu kaynak listesi; sertifika (CA/PKI) içeriği SIZMAZ")
+    void pageIntegrity_actionsAndResources_noCertLeak() {
+        Map<String, Object> ctx = new LinkedHashMap<>();
+        ctx.put("url", "https://www.akbank.com/");
+        ctx.put("page_status", "DEGRADED");
+        ctx.put("broken_resources", 3);
+        ctx.put("mixed_content_count", 0);
+        ctx.put("problem_resources", "BROKEN · https://www.akbank.com/x.png (HTTP 404)\nBROKEN · https://www.akbank.com/a.css (HTTP 404)");
+        var m = new EmailTemplateBuilder.AlertMail("PAGE_INTEGRITY", "HIGH", "https://www.akbank.com/",
+                "Sayfada bütünlük sorunu.", null, ctx, "DijitalSY");
+        String html = b.buildHtml(m);
+        // Sayfa-özel aksiyon + kaynak listesi görünür
+        assertThat(html).contains("Sayfa Bütünlüğü İzleme")
+                        .contains("Sorunlu Kaynaklar")
+                        .contains("x.png")
+                        .contains("Bozulmuş");
+        // Sertifika aksiyonları ASLA sızmamalı (asıl bug)
+        assertThat(html).doesNotContain("CA/PKI").doesNotContain("yeni sertifika talep");
+        String text = b.buildText(m);
+        assertThat(text).contains("Sorunlu Kaynaklar").doesNotContain("CA/PKI");
+    }
+
+    @Test
     @DisplayName("XSS: domain + registrar (user-controlled) HTML escape edilir")
     void escape() {
         Map<String, Object> ctx = new LinkedHashMap<>();

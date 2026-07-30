@@ -119,7 +119,14 @@ public class EmailTemplateBuilder {
     private static boolean isDomain(String t) {
         return t != null && (t.startsWith("DOMAINMON_") || "DOMAIN_EXPIRY".equals(t));
     }
+    private static boolean isPage(String t) { return "PAGE_DOWN".equals(t) || "PAGE_INTEGRITY".equals(t); }
     private static boolean isCert(String t) { return tabFor(t).equals("dashboard"); }
+
+    /** Sayfa-bütünlüğü durum kodu → Türkçe etiket. */
+    private static String pageStatusTr(String s) {
+        if (s == null) return null;
+        return switch (s) { case "OK" -> "Sağlıklı"; case "DEGRADED" -> "Bozulmuş"; case "DOWN" -> "Erişilemez"; default -> s; };
+    }
 
     /** alertType → SPA deep-link tab (CTA butonu). */
     private static String tabFor(String t) {
@@ -130,6 +137,7 @@ public class EmailTemplateBuilder {
         if (t.startsWith("DNS_")) return "dns";
         if ("KEYWORD".equals(t)) return "keyword";
         if ("PING_DOWN".equals(t)) return "ping";
+        if (isPage(t)) return "page";
         return "dashboard";   // sertifika
     }
 
@@ -507,6 +515,14 @@ public class EmailTemplateBuilder {
             if (fp != null) out.add(new Row("SHA-256 Parmak İzi",
                     "<span style='font-family:Consolas,Menlo,monospace;font-size:12px'>" + esc(shortFp(fp)) + "</span>", shortFp(fp)));
             addIf(out, "Kalan Gün", m.daysRemaining() != null ? String.valueOf(m.daysRemaining()) : null);
+        } else if (isPage(m.alertType())) {   // sayfa bütünlüğü
+            addIf(out, "Durum", pageStatusTr(strCtx(c, "page_status")));
+            addIf(out, "Kırık Kaynak", strCtx(c, "broken_resources"));
+            addIf(out, "Mixed Content", strCtx(c, "mixed_content_count"));
+            String probs = strCtx(c, "problem_resources");
+            if (probs != null) out.add(new Row("Sorunlu Kaynaklar", esc(probs).replace("\n", "<br>"), probs));
+            addIf(out, "Hata", firstNonNull(strCtx(c, "error"), strCtx(c, "last_error")));
+            addIf(out, "Son Kontrol", strCtx(c, "checked_at") != null ? formatHuman(strCtx(c, "checked_at")) : null);
         } else {   // uptime/port/dns/keyword/ping/network
             addIf(out, "Detay", firstNonNull(strCtx(c, "detail"), strCtx(c, "port"), strCtx(c, "record_type")));
             addIf(out, "Hata", firstNonNull(strCtx(c, "error"), strCtx(c, "last_error")));
@@ -537,6 +553,14 @@ public class EmailTemplateBuilder {
                     "Auto-renew (otomatik yenileme) özelliğini açın",
                     "Yenileme sonrası CertMonitor'ün otomatik doğrulamasını bekleyin — alarm kendiliğinden kapanır");
         }
+        if (isPage(m.alertType())) {
+            if ("PAGE_DOWN".equals(m.alertType()))
+                return List.of("Sayfanın erişilebilirliğini kontrol edin (sunucu/uygulama/ağ). Sayfa yeniden yüklenince alarm otomatik kapanır.");
+            return List.of(
+                    "Yukarıdaki \"Sorunlu Kaynaklar\" listesindeki kırık link/resim/CSS/JS veya mixed content'i inceleyin",
+                    "İlgili içerik/dağıtım ekibiyle kaynağı düzeltin (kaldırılmış varlık, yanlış yol, http→https)",
+                    "CertMonitor'ün sonraki kontrolünü bekleyin — sorunlar giderilince alarm kendiliğinden kapanır");
+        }
         if (isCert(m.alertType())) {
             return List.of(
                     "CA/PKI ekibinden yeni sertifika talep edin",
@@ -559,6 +583,7 @@ public class EmailTemplateBuilder {
         if (t != null && t.startsWith("DNS_")) return "DNS İzleme";
         if ("KEYWORD".equals(t)) return "Keyword İzleme";
         if ("PING_DOWN".equals(t)) return "Ping İzleme";
+        if (isPage(t)) return "Sayfa Bütünlüğü İzleme";
         return "Sertifika İzleme";
     }
 

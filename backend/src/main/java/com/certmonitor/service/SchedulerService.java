@@ -2153,6 +2153,11 @@ public class SchedulerService {
         ctx.put("monitor_recovery_checks", m.getRecoveryChecks());
         ctx.put("monitor_recovery_interval_ms", m.getRecoveryIntervalSeconds() != null ? m.getRecoveryIntervalSeconds() * 1000L : null);
         if (m.getTeamId() != null) ctx.put("team_id", m.getTeamId());
+        // E-posta detay bölümü için sayfa-özel bağlam (EmailTemplateBuilder isPage dalı okur).
+        ctx.put("page_status", r.get("status"));
+        if (r.get("broken_resources") != null) ctx.put("broken_resources", r.get("broken_resources"));
+        if (r.get("mixed_content_count") != null) ctx.put("mixed_content_count", r.get("mixed_content_count"));
+        if (r.get("problem_resources") != null) ctx.put("problem_resources", r.get("problem_resources"));
         boolean mainUp = Boolean.TRUE.equals(r.get("main_up"));
         boolean integrityUp = Boolean.TRUE.equals(r.get("integrity_up"));
         String err = (String) r.get("error");
@@ -2255,6 +2260,21 @@ public class SchedulerService {
         activityLog.recordCheck(ActivityLogService.PAGE, m.getId(), m.getName(),
                 m.getUrl(), m.getTeamId(), manual, manual ? "manual" : "scheduler", activity);
 
+        // E-posta "Sorunlu Kaynaklar" bölümü için ilk ~8 sorunun kısa listesi (tür · URL · HTTP).
+        String problemList = null;
+        if (!res.issues().isEmpty()) {
+            StringBuilder probs = new StringBuilder();
+            int shown = 0, total = res.issues().size();
+            for (PageCheckerService.ResourceIssue i : res.issues()) {
+                if (shown >= 8) { probs.append("… +").append(total - shown).append(" daha"); break; }
+                probs.append(i.issueType()).append(" · ").append(i.resourceUrl());
+                if (i.httpStatus() != null) probs.append(" (HTTP ").append(i.httpStatus()).append(')');
+                probs.append('\n');
+                shown++;
+            }
+            problemList = probs.toString().trim();
+        }
+
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("status", res.status());
         out.put("main_up", mainUp);
@@ -2264,6 +2284,7 @@ public class SchedulerService {
         out.put("response_ms", res.responseMs());
         out.put("broken_resources", res.brokenResources());
         out.put("mixed_content_count", res.mixedContentCount());
+        if (problemList != null) out.put("problem_resources", problemList);
         return out;
     }
 
