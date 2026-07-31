@@ -120,6 +120,7 @@ public class EmailTemplateBuilder {
         return t != null && (t.startsWith("DOMAINMON_") || "DOMAIN_EXPIRY".equals(t));
     }
     private static boolean isPage(String t) { return "PAGE_DOWN".equals(t) || "PAGE_INTEGRITY".equals(t); }
+    private static boolean isScripted(String t) { return "SCRIPTED_FAIL".equals(t); }
     private static boolean isCert(String t) { return tabFor(t).equals("dashboard"); }
 
     /** Sayfa-bütünlüğü durum kodu → Türkçe etiket. */
@@ -138,6 +139,7 @@ public class EmailTemplateBuilder {
         if ("KEYWORD".equals(t)) return "keyword";
         if ("PING_DOWN".equals(t)) return "ping";
         if (isPage(t)) return "page";
+        if (isScripted(t)) return "scripted";
         return "dashboard";   // sertifika
     }
 
@@ -304,6 +306,12 @@ public class EmailTemplateBuilder {
      */
     public String buildResolvedHtml(String domain, String alertType, String resolvedBy, String resolvedAt,
                                     String createdAt, Map<String, Object> ctx) {
+        return buildResolvedHtml(domain, alertType, resolvedBy, resolvedAt, createdAt, ctx, null);
+    }
+
+    /** teamNames verilirse "Neden bu e-postayı aldınız?" alıcı-şeffaflık bloğu eklenir (recovery şeffaflığı). */
+    public String buildResolvedHtml(String domain, String alertType, String resolvedBy, String resolvedAt,
+                                    String createdAt, Map<String, Object> ctx, String teamNames) {
         String d = esc(domain);
         String cta = appSettings.getString("cert.monitor.app.base-url", appBaseUrl);
         String href = cta + "/?tab=" + tabFor(alertType) + (domain != null ? "&domain=" + urlenc(domain) : "");
@@ -373,6 +381,7 @@ public class EmailTemplateBuilder {
                 + "<div style='font-size:14px;color:" + MUTED + "'>" + esc(resolvedHeadline(alertType, expiryIso != null)) + "</div></td></tr>"
                 + hero
                 + "<tr><td style='padding:8px 30px 4px'><table role='presentation' width='100%' style='border-collapse:collapse'>" + rows + "</table></td></tr>"
+                + whyReceivingBlock(teamNames)
                 + "<tr><td style='padding:18px 30px 24px'>" + ctaButton(href, "CertMonitor'de Görüntüle", C_INFO)
                 + "<div style='border-top:1px solid " + LINE + ";margin-top:18px;padding-top:12px;font-size:11px;color:#9AA3AF'>Bu e-posta CertMonitor tarafından otomatik gönderilmiştir.</div></td></tr>"
                 + "</table></td></tr></table></body></html>";
@@ -534,6 +543,18 @@ public class EmailTemplateBuilder {
             }
             addIf(out, "Hata", firstNonNull(strCtx(c, "error"), strCtx(c, "last_error")));
             addIf(out, "Son Kontrol", strCtx(c, "checked_at") != null ? formatHuman(strCtx(c, "checked_at")) : null);
+        } else if (isScripted(m.alertType())) {   // senaryo (k6)
+            addIf(out, "Sonuç", strCtx(c, "scripted_status"));
+            addIf(out, "Doğrulama", confirmationText(c));
+            String failed = strCtx(c, "failed_checks");
+            if (failed != null) out.add(new Row("Başarısız Check'ler", "<ul style='margin:0;padding-left:18px'>"
+                    + java.util.Arrays.stream(failed.split("\n")).filter(s -> !s.isBlank())
+                        .map(s -> "<li>" + esc(s) + "</li>").reduce("", String::concat) + "</ul>", failed));
+            String tail = strCtx(c, "output_tail");
+            if (tail != null) out.add(new Row("Son Çıktı (maskeli)",
+                    "<pre style='margin:0;font-family:Consolas,Menlo,monospace;font-size:12px;white-space:pre-wrap;word-break:break-word;background:" + SOFT + ";padding:10px;border-radius:6px;color:" + INK + "'>"
+                            + esc(tail.length() > 2000 ? tail.substring(tail.length() - 2000) : tail) + "</pre>", tail));
+            addIf(out, "Son Kontrol", strCtx(c, "checked_at") != null ? formatHuman(strCtx(c, "checked_at")) : null);
         } else {   // uptime/port/dns/keyword/ping/network
             addIf(out, "Detay", firstNonNull(strCtx(c, "detail"), strCtx(c, "port"), strCtx(c, "record_type")));
             addIf(out, "Hata", firstNonNull(strCtx(c, "error"), strCtx(c, "last_error")));
@@ -572,6 +593,12 @@ public class EmailTemplateBuilder {
                     "İlgili içerik/dağıtım ekibiyle kaynağı düzeltin (kaldırılmış varlık, yanlış yol, http→https)",
                     "CertMonitor'ün sonraki kontrolünü bekleyin — sorunlar giderilince alarm kendiliğinden kapanır");
         }
+        if (isScripted(m.alertType())) {
+            return List.of(
+                    "Yukarıdaki \"Başarısız Check'ler\" listesini ve maskeli çıktıyı inceleyin (hangi adım başarısız oldu)",
+                    "İlgili servisi/akışı (login, API zinciri, token/claim) kontrol edin; gerekirse izleme servis hesabının kimlik bilgilerini doğrulayın",
+                    "CertMonitor'ün sonraki çalıştırmasını bekleyin — senaryo yeniden geçince alarm kendiliğinden kapanır");
+        }
         if (isCert(m.alertType())) {
             return List.of(
                     "CA/PKI ekibinden yeni sertifika talep edin",
@@ -595,6 +622,7 @@ public class EmailTemplateBuilder {
         if ("KEYWORD".equals(t)) return "Keyword İzleme";
         if ("PING_DOWN".equals(t)) return "Ping İzleme";
         if (isPage(t)) return "Sayfa Bütünlüğü İzleme";
+        if (isScripted(t)) return "Senaryo İzleme";
         return "Sertifika İzleme";
     }
 

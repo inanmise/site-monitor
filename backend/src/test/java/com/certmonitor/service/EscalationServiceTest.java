@@ -36,6 +36,7 @@ class EscalationServiceTest {
     @Mock EscalationContactRepository contactRepo;
     @Mock com.certmonitor.repository.CertificateInventoryRepository inventoryRepo;
     @Mock EmailNotificationService emailService;
+    @Mock WeeklyAvailabilityReportService weeklyAvailability;
     @Mock WebhookService webhookService;
     @Mock NotificationLogRepository notificationLogRepo;
     @Mock com.certmonitor.repository.LatestCheckRepository latestCheckRepo;
@@ -53,7 +54,7 @@ class EscalationServiceTest {
     @BeforeEach
     void setUp() {
         service = new EscalationService(alertEventRepo, thresholdRepo, contactRepo,
-                inventoryRepo, emailService, webhookService, new ObjectMapper(), notificationLogRepo, latestCheckRepo, teamRepo, smtpSettings, maintenanceService, stormService,
+                inventoryRepo, emailService, weeklyAvailability, webhookService, new ObjectMapper(), notificationLogRepo, latestCheckRepo, teamRepo, smtpSettings, maintenanceService, stormService,
                 domainMonitorRepo, domainCheckRepo);
 
         // Self-injection bypass for @Async dispatch in tests (runs synchronously)
@@ -375,7 +376,7 @@ class EscalationServiceTest {
         verify(emailService).sendResolutionAlert(
                 any(String[].class), contains("ÇÖZÜLDÜ"),
                 eq("notify.example.com"), eq("EXPIRY"), eq("WARNING"),
-                any(), eq("test-user"), any(), any(), isNull());
+                any(), eq("test-user"), any(), any(), isNull(), any(), any());
     }
 
     @Test
@@ -541,7 +542,7 @@ class EscalationServiceTest {
 
         verify(emailService).sendResolutionAlert(
                 any(String[].class), contains("ÇÖZÜLDÜ"),
-                eq(domain), any(), any(), any(), eq("Sistem (otomatik)"), any(), any(), isNull());
+                eq(domain), any(), any(), any(), eq("Sistem (otomatik)"), any(), any(), isNull(), any(), any());
     }
 
     // ── Webhook ───────────────────────────────────────────────────────────────
@@ -1079,6 +1080,42 @@ class EscalationServiceTest {
         verify(alertEventRepo, atLeast(1)).save(cap.capture());
         assertThat(cap.getAllValues().get(0).getAlertType()).isEqualTo(EscalationService.TYPE_PAGE_INTEGRITY);
         assertThat(cap.getAllValues().get(0).getAlertLevel()).isEqualTo("HIGH");
+    }
+
+    @Test
+    @DisplayName("processConfirmedOutage SCRIPTED_FAIL → CRITICAL, senaryo detayı mesajda")
+    void processConfirmedOutage_scriptedFail_critical() {
+        String name = "OIDC Login Akışı";
+        Map<String, Object> ctx = new LinkedHashMap<>();
+        ctx.put("team_id", 8L);
+        ctx.put("name", name);
+        ctx.put("detail", "FAIL — 2✓/1✗");
+        ctx.put("failed_checks", "token exchange 200");
+        ctx.put("first_failure_at", "2026-06-24T00:00:00");
+        when(alertEventRepo.findOpenAlert(name, EscalationService.TYPE_SCRIPTED_FAIL)).thenReturn(Optional.empty());
+        when(alertEventRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        service.processConfirmedOutage(name, EscalationService.TYPE_SCRIPTED_FAIL, "CRITICAL", ctx);
+
+        ArgumentCaptor<AlertEvent> cap = ArgumentCaptor.forClass(AlertEvent.class);
+        verify(alertEventRepo, atLeast(1)).save(cap.capture());
+        assertThat(cap.getAllValues().get(0).getAlertType()).isEqualTo(EscalationService.TYPE_SCRIPTED_FAIL);
+        assertThat(cap.getAllValues().get(0).getAlertLevel()).isEqualTo("CRITICAL");
+        assertThat(EscalationService.isScripted(EscalationService.TYPE_SCRIPTED_FAIL)).isTrue();
+    }
+
+    @Test
+    @DisplayName("resolveOrphanedScriptedAlerts: eşleşmeyen senaryo adının açık alarmı sessizce kapanır")
+    void resolveOrphanedScriptedAlerts_closesOrphans() {
+        AlertEvent open = new AlertEvent();
+        open.setAlertType(EscalationService.TYPE_SCRIPTED_FAIL);
+        open.setDomain("Silinmiş Senaryo");
+        when(alertEventRepo.findAllOpenOrderBySeverity()).thenReturn(java.util.List.of(open));
+        when(alertEventRepo.findOpenAlert(anyString(), anyString())).thenReturn(Optional.empty());
+
+        int closed = service.resolveOrphanedScriptedAlerts(java.util.Set.of("Yaşayan Senaryo"));
+        assertThat(closed).isEqualTo(1);
+        assertThat(service.resolveOrphanedScriptedAlerts(null)).isZero();
     }
 
     @Test

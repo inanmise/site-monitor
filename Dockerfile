@@ -1,3 +1,8 @@
+# k6 binary (Senaryo İzleme / 10. tür) — sürüm-sabitli. `--from`'da değişken genişletme buildx'te desteklenmez;
+# bu yüzden global-scope ARG + named stage kullanılır (yalnız binary'yi kopyalamak için ara imaj).
+ARG K6_VERSION=0.49.0
+FROM grafana/k6:${K6_VERSION} AS k6-bin
+
 # ── Stage 1: React build ─────────────────────────────
 FROM node:20-alpine AS frontend-build
 WORKDIR /app/frontend
@@ -29,6 +34,9 @@ RUN apk add --no-cache curl bash bind-tools busybox-extras less openssl iproute2
 ARG VERSION=1.0.0
 ARG BUILD_DATE
 ARG GIT_COMMIT
+# Senaryo İzleme (10. tür): sabitlenmiş sürümlü k6 binary'si — yukarıdaki named stage'den kopyalanır (alpine/musl
+# uyumlu statik binary). Her kontrolde kısa ömürlü sandboxlu alt süreç olarak çalışır.
+COPY --from=k6-bin /usr/bin/k6 /usr/bin/k6
 
 LABEL org.opencontainers.image.title="CertMonitor" \
       org.opencontainers.image.description="SSL/TLS Certificate Monitoring System" \

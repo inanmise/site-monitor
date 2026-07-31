@@ -78,6 +78,11 @@ class MonitoringControllerTest {
     @MockitoBean PageCheckRepository pageCheckRepo;
     @MockitoBean PageResourceIssueRepository pageResourceIssueRepo;
     @MockitoBean com.certmonitor.service.PageCheckerService pageChecker;
+    // 10. tür (senaryo/k6) — aynı desen: controller alan-enjekte eder → mock zorunlu.
+    @MockitoBean com.certmonitor.repository.ScriptedMonitorRepository scriptedMonitorRepo;
+    @MockitoBean com.certmonitor.repository.ScriptedCheckRepository scriptedCheckRepo;
+    @MockitoBean com.certmonitor.service.ScriptedCheckerService scriptedChecker;
+    @MockitoBean com.certmonitor.service.SecretCipher secretCipher;
 
     @BeforeEach
     void stubTeamMap() {

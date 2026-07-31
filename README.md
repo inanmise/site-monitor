@@ -21,6 +21,8 @@ Kurumunuzdaki SSL/TLS sertifikalarını, TCP/TLS port erişilebilirliğini, HTTP
 - **Keyword (İçerik)** — HTTP içerik / anahtar-kelime doğrulaması (occurrence + operatör koşulu)
 - **HTTP / Website** — URL uptime (durum kodu pattern / yönlendirme takibi / gecikme) + opsiyonel per-monitör SSL & domain-expiry hatırlatmaları
 - **Domain (Alan Adı) Süre Bitişi** — Registrar kayıt bitişi: **RDAP** birincil (IANA bootstrap ile TLD→sunucu, proxy-aware, rdap.org fallback) + **WHOIS/43** fallback (env-gated, `.tr`/nic.tr parser dahil); registrar, EPP status kodları, nameserver; **4-seviyeli OK/WARNING/CRITICAL/UNKNOWN**; değişiklik tespiti (registrar/NS/status → hijack sinyali) + DNS çapraz doğrulama; Public Suffix List ile eTLD+1, IDN → punycode
+- **Sayfa Bütünlüğü** — İzlenen sayfanın kod seviyesinde sağlıklı yüklendiğini doğrular (kırık link/kaynak, mixed content, zaman aşımı, içerik anomalisi); Tek Sayfa + Site Tarama modları
+- **Senaryo İzleme (k6)** — Kullanıcı tanımlı **k6** scriptlerini periyodik tek-iterasyon çalıştırarak çok adımlı akışları (OIDC/Keycloak login, API zincirleri) uçtan uca izler; k6 imaja gömülü binary olarak, her kontrolde kısa ömürlü **sandboxlu alt süreç** koşar (`--blacklist-ip` ile iç ağ/metadata engellenir, SIGTERM→SIGKILL, temp temizliği); env değişkenleri (secret'lar şifreli), hazır şablonlar, "Test Çalıştır"; sonuç PASS/FAIL/ERROR/TIMEOUT
 - **Ortak İzleme Özellikleri** — Monitör-başına alarm hassasiyeti (Nx teyit / Nx kurtarma), mantıksal gruplar, takım bazlı sahiplik & filtreleme, tıkla-filtreli özet dashboard'ları, 4-sekmeli detay (Kontrol / Alarm Geçmişi / Süre Grafiği / Rehber & Notlar), tıkla-izole legend'lı süre grafikleri, izleme-başına Rehber & Notlar; alarm e-postasından detaya deep-link
 
 > **Domain lifecycle & UNKNOWN — neden UNKNOWN de alarmdır:** Bir alan adı yaşam döngüsü
@@ -219,6 +221,33 @@ grupları, Ortam …).
   kapalı, insan-okunur çerçeveli metin).
 - **Kapatma** — `STARTUP_CONFIG_LOG=false`.
 - DB'ye erişilemeyen bir açılışta blok yine basılır; DB-bağımlı bölümler `okunamadı` der (açılış engellenmez).
+
+### Senaryo İzleme (Scripted Check / k6)
+
+Kullanıcı tanımlı k6 scriptleri periyodik olarak **tek iterasyon** çalıştırılır ve sonucuna göre sağlık kararı üretilir
+(PASS/FAIL/ERROR/TIMEOUT). k6 kütüphane olarak gömülmez; imaja eklenmiş sürümlü binary her kontrolde **kısa ömürlü,
+sıkı sandboxlu bir alt süreç** olarak koşar (Grafana Synthetic Monitoring deseni).
+
+- **k6 binary'si:** Docker imajına `K6_VERSION` build-arg'ıyla `grafana/k6` imajından kopyalanır. Yerel geliştirmede
+  k6 kurulu değilse tür ekranda **"devre dışı — k6 bulunamadı"** görünür; uygulama normal açılır.
+- **Güvenlik:** her URL/hedef `--blacklist-ip` ile iç ağ (RFC1918), loopback, link-local ve cloud-metadata
+  (169.254.169.254) adreslerine engellenir (kural seti `SsrfGuard` ile tek kaynak); timeout'ta SIGTERM→SIGKILL
+  (zombie süreç yok); geçici script/özet dosyaları her durumda silinir; secret env değerleri çıktıda maskelenir.
+- **Yetki:** senaryo oluşturma/düzenleme/silme yalnız **ADMIN + TEAM_ADMIN (PO)** (`monitoring.scripted` izni) —
+  k6 keyfi kod çalıştırmaktır. Görüntüleme/sonuç okuma sahiplik kurallarına tabidir.
+- **Gizli değerler:** parola/token gibi değerleri script gövdesine YAZMAYIN; **ortam değişkeni (secret)** olarak
+  tanımlayın (`SecretCipher` ile şifreli saklanır, ekrana/API'ye asla düz metin dönmez) ve script'te `__ENV` üzerinden
+  kullanın. Kaydederken script gövdesi desen taramasından geçer (`SCRIPTED_HARDCODED_SECRET_POLICY=WARN|BLOCK`).
+- **⚠ İzleme için ayrı bir SERVİS HESABI kullanın** (OIDC/login senaryolarında) — gerçek bir kullanıcı hesabıyla
+  izleme yapmayın (hesap kilitlenmesi, MFA, denetim gürültüsü riski).
+
+**OIDC/Keycloak örneği (hazır şablon):** auth endpoint → login formu submit → redirect/code → token exchange →
+claim doğrulama; credential'lar `__ENV.USERNAME` / `__ENV.PASSWORD` (secret) üzerinden. Form'daki "Şablon" seçicisinden
+yüklenir. Ayrıca basit API zinciri (POST→GET) ve form-login şablonları mevcuttur.
+
+Config anahtarları (admin UI'dan canlı): `cert.monitor.scripted.{enabled,pool-size,default-timeout-seconds,
+max-timeout-seconds,output-tail-bytes,manual-cooldown-seconds,k6-bin,hardcoded-secret-policy}`,
+`cert.monitor.metrics.scripted.retention-days`. Micrometer: `scripted.k6.active`, `scripted.k6.queued`.
 
 ### Zamanlayıcı Ayarı
 

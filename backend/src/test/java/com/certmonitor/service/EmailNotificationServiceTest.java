@@ -443,6 +443,31 @@ class EmailNotificationServiceTest {
                 .contains("Alarm Süresi").contains("YÜKSEK");
     }
 
+    @Test
+    @DisplayName("Recovery mail: teamNames → şeffaflık bloğu + uptime özet kartı (24s/7g uptime% + kesinti)")
+    void resolved_whyBlockAndUptimeCard() {
+        var uptime = new EmailNotificationService.UptimeSummary(99.95, 1, 99.80, 3);
+        String html = service.buildResolutionEmailHtml(
+                "down.example.com", "ACCESSIBILITY", "CRITICAL", null,
+                "Sistem (otomatik)", "2026-06-11T12:14:00", "2026-06-11T10:00:00", null,
+                "SY-Dijital", uptime);
+        assertThat(html)
+                .contains("Neden bu e-postayı aldınız?").contains("SY-Dijital")
+                .contains("ERİŞİLEBİLİRLİK ÖZETİ").contains("99.95% uptime").contains("99.80% uptime")
+                .contains("1 kesinti");
+    }
+
+    @Test
+    @DisplayName("Recovery mail: uptime=null → erişilebilirlik kartı YOK; teamNames=null → jenerik şeffaflık ifadesi")
+    void resolved_noUptimeCard_genericTeam() {
+        String html = service.buildResolutionEmailHtml(
+                "down.example.com", "ACCESSIBILITY", "CRITICAL", null,
+                "Sistem (otomatik)", "2026-06-11T12:14:00", "2026-06-11T10:00:00", null,
+                null, null);
+        assertThat(html).doesNotContain("ERİŞİLEBİLİRLİK ÖZETİ")
+                .contains("Neden bu e-postayı aldınız?").contains("ilgili izleme grubuna");
+    }
+
     // ── Haftalık rapor mailleri ─────────────────────────────────────────────────
 
     private static final String WR_CONTENT = """

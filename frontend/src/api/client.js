@@ -743,6 +743,26 @@ export const api = {
       return request(`/monitoring/page/${id}/issues${q ? `?${q}` : ''}`)
     },
 
+    // Senaryo İzleme (Scripted Check / k6) — 10. tür
+    getScriptedMonitors:   () => request('/monitoring/scripted'),
+    createScriptedMonitor: (data) => request('/monitoring/scripted', { method: 'POST', body: JSON.stringify(data) }),
+    updateScriptedMonitor: (id, data) => request(`/monitoring/scripted/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+    deleteScriptedMonitor: (id) => request(`/monitoring/scripted/${id}`, { method: 'DELETE' }),
+    triggerScriptedCheck:  (id) => request(`/monitoring/scripted/${id}/check`, { method: 'POST' }),
+    testScripted:          (data) => request('/monitoring/scripted/test', { method: 'POST', body: JSON.stringify(data) }),
+    getScriptedHistory:    (id, { days, limit } = {}) => {
+      const q = new URLSearchParams(
+        Object.fromEntries(Object.entries({ days, limit }).filter(([, v]) => v != null && v !== '')),
+      ).toString()
+      return request(`/monitoring/scripted/${id}/history${q ? `?${q}` : ''}`)
+    },
+    getScriptedResponseSeries: (id, { from, to, days } = {}) => {
+      const q = new URLSearchParams(
+        Object.fromEntries(Object.entries({ from, to, days }).filter(([, v]) => v != null && v !== '')),
+      ).toString()
+      return request(`/monitoring/scripted/${id}/response-series${q ? `?${q}` : ''}`)
+    },
+
     // HTTP / Website
     getHttpMonitors:   () => request('/monitoring/http'),
     createHttpMonitor: (data) => request('/monitoring/http', { method: 'POST', body: JSON.stringify(data) }),

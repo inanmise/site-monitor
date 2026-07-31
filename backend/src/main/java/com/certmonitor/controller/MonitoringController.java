@@ -104,9 +104,18 @@ public class MonitoringController {
     private com.certmonitor.repository.PageResourceIssueRepository pageResourceIssueRepo;
     @org.springframework.beans.factory.annotation.Autowired
     private com.certmonitor.service.PageCheckerService pageChecker;
+    @org.springframework.beans.factory.annotation.Autowired
+    private com.certmonitor.repository.ScriptedMonitorRepository scriptedMonitorRepo;
+    @org.springframework.beans.factory.annotation.Autowired
+    private com.certmonitor.repository.ScriptedCheckRepository scriptedCheckRepo;
+    @org.springframework.beans.factory.annotation.Autowired
+    private com.certmonitor.service.ScriptedCheckerService scriptedChecker;
+    @org.springframework.beans.factory.annotation.Autowired
+    private com.certmonitor.service.SecretCipher secretCipher;
 
     /** Manuel sayfa-kontrol tetikleri için per-monitör cooldown zamanı (H1c rate-limit; in-memory, monitör sayısıyla sınırlı). */
     private final java.util.concurrent.ConcurrentHashMap<Long, Long> pageManualTriggerAt = new java.util.concurrent.ConcurrentHashMap<>();
+    private final java.util.concurrent.ConcurrentHashMap<Long, Long> scriptedManualTriggerAt = new java.util.concurrent.ConcurrentHashMap<>();
 
     private static final DateTimeFormatter ISO =
             DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
@@ -2080,6 +2089,338 @@ public class MonitoringController {
             item.put("total_resources", null); item.put("broken_resources", null);
             item.put("mixed_content_count", null); item.put("pages_crawled", null);
             item.put("error", null); item.put("checked_at", null);
+        }
+        return item;
+    }
+
+    // ── Senaryo İzleme (Scripted Check / k6) — 10. tür (serbest-form) ──────────
+    private static final com.fasterxml.jackson.databind.ObjectMapper SCRIPTED_MAPPER = new com.fasterxml.jackson.databind.ObjectMapper();
+
+    @GetMapping("/scripted")
+    public ResponseEntity<Map<String, Object>> listScripted(HttpSession session) {
+        permissionService.require(session, "monitoring.read", "view");
+        Map<Long, com.certmonitor.model.ScriptedCheck> latest = scriptedCheckRepo.findLatestPerMonitor().stream()
+                .filter(c -> c.getMonitorId() != null)
+                .collect(Collectors.toMap(com.certmonitor.model.ScriptedCheck::getMonitorId, c -> c, (a, b) -> a));
+        Map<Long, String> teams = teamNameMap();
+        List<com.certmonitor.model.ScriptedMonitor> monitors = scriptedMonitorRepo.findAllByOrderByNameAsc().stream()
+                .filter(m -> SessionScope.canView(session, m.getTeamId())).toList();
+        Set<String> names = monitors.stream().map(com.certmonitor.model.ScriptedMonitor::getName).collect(Collectors.toSet());
+        Map<String, AlertEvent> open = openAlarmsByDomain(names, EscalationService.TYPE_SCRIPTED_FAIL);
+        List<Map<String, Object>> result = monitors.stream()
+                .map(m -> enrichScripted(m, latest.get(m.getId()), teams, open.get(m.getName()))).toList();
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("monitors", result);
+        out.put("k6_available", scriptedChecker.isAvailable());
+        out.put("k6_version", scriptedChecker.version());
+        boolean canManage = permissionService.allows((String) session.getAttribute("systemRole"), "monitoring.scripted", "edit");
+        out.put("can_manage", canManage);
+        return ok(out);
+    }
+
+    @PostMapping("/scripted")
+    public ResponseEntity<Map<String, Object>> createScripted(@RequestBody Map<String, Object> body, HttpSession session) {
+        permissionService.require(session, "monitoring.scripted", "edit");   // ADMIN + TEAM_ADMIN (PO) — k6 = keyfi kod
+        if (blank(body.get("name"))) return badRequest("ad zorunlu");
+        Long teamId = resolveWriteTeam(session, body);
+        if (teamId == null) return badRequest("Takım seçimi zorunludur; izleme oluşturulamıyor.");
+        String name = body.get("name").toString().trim();
+        if (scriptedMonitorRepo.existsDuplicate(name, teamId, null))
+            return badRequest("Bu ad bu takımda zaten kullanılıyor; mükerrer senaryo oluşturulamaz.");
+        String scanErr = scanScriptOrError(body.get("script"));
+        if (scanErr != null) return badRequest(scanErr);
+        String now = ISO.format(Instant.now());
+        com.certmonitor.model.ScriptedMonitor m = new com.certmonitor.model.ScriptedMonitor();
+        m.setName(name);
+        m.setTeamId(teamId);
+        m.setActive(true);
+        if (body.containsKey("groupName")) m.setGroupName(monitoringGroupService.getOrCreateFor(m, teamId, body.get("groupName") == null ? null : body.get("groupName").toString(), actor(session)));
+        if (body.get("intervalSeconds") != null) m.setIntervalSeconds(((Number) body.get("intervalSeconds")).intValue());
+        if (body.get("confirmAttempts") != null)         m.setConfirmAttempts(clampAttempts(((Number) body.get("confirmAttempts")).intValue()));
+        if (body.get("confirmIntervalSeconds") != null)  m.setConfirmIntervalSeconds(clampInterval(((Number) body.get("confirmIntervalSeconds")).intValue()));
+        if (body.get("recoveryChecks") != null)          m.setRecoveryChecks(clampRecovery(((Number) body.get("recoveryChecks")).intValue()));
+        if (body.get("recoveryIntervalSeconds") != null) m.setRecoveryIntervalSeconds(clampInterval(((Number) body.get("recoveryIntervalSeconds")).intValue()));
+        applyScriptedFields(m, body, null);
+        m.setCreatedAt(now);
+        m.setUpdatedAt(now);
+        com.certmonitor.model.ScriptedMonitor saved = scriptedMonitorRepo.save(m);
+        activityLog.recordLifecycle(ActivityLogService.SCRIPTED, saved.getId(), saved.getName(), saved.getName(), saved.getTeamId(), "CREATED", actor(session));
+        auditService.recordAction("MONITOR_CREATE", session, "SCRIPTED_MONITOR", String.valueOf(saved.getId()), saved.getName(),
+                AuditDiff.diff(null, AuditDiff.snapshot(saved, SCRIPTED_FIELDS)));
+        return ok(enrichScripted(saved, null, teamNameMap(), null));
+    }
+
+    @PutMapping("/scripted/{id}")
+    public ResponseEntity<Map<String, Object>> updateScripted(@PathVariable Long id, @RequestBody Map<String, Object> body, HttpSession session) {
+        permissionService.require(session, "monitoring.scripted", "edit");
+        java.util.Map<String, Object> _before = scriptedMonitorRepo.findById(id).map(x -> AuditDiff.snapshot(x, SCRIPTED_FIELDS)).orElse(null);
+        String scanErr = scanScriptOrError(body.get("script"));
+        if (scanErr != null) return badRequest(scanErr);
+        return scriptedMonitorRepo.findById(id).map(m -> {
+            if (!canOperateTeam(session, m.getTeamId())) throw new SecurityException("Bu takımın izlemesini düzenleyemezsiniz");
+            if (body.get("name")   != null) m.setName(body.get("name").toString().trim());
+            if (body.containsKey("groupName")) m.setGroupName(monitoringGroupService.getOrCreateFor(m, m.getTeamId(), body.get("groupName") == null ? null : body.get("groupName").toString(), actor(session)));
+            if (body.containsKey("teamId"))    m.setTeamId(resolveTeamChange(session, m.getTeamId(), body.get("teamId")));
+            if (body.get("active") instanceof Boolean b) m.setActive(b);
+            if (body.get("intervalSeconds") != null) m.setIntervalSeconds(((Number) body.get("intervalSeconds")).intValue());
+            if (body.get("confirmAttempts") != null)         m.setConfirmAttempts(clampAttempts(((Number) body.get("confirmAttempts")).intValue()));
+            if (body.get("confirmIntervalSeconds") != null)  m.setConfirmIntervalSeconds(clampInterval(((Number) body.get("confirmIntervalSeconds")).intValue()));
+            if (body.get("recoveryChecks") != null)          m.setRecoveryChecks(clampRecovery(((Number) body.get("recoveryChecks")).intValue()));
+            if (body.get("recoveryIntervalSeconds") != null) m.setRecoveryIntervalSeconds(clampInterval(((Number) body.get("recoveryIntervalSeconds")).intValue()));
+            applyScriptedFields(m, body, m.getEnvJson());
+            m.setUpdatedAt(ISO.format(Instant.now()));
+            com.certmonitor.model.ScriptedMonitor saved = scriptedMonitorRepo.save(m);
+            auditService.recordAction("MONITOR_UPDATE", session, "SCRIPTED_MONITOR", String.valueOf(saved.getId()), saved.getName(),
+                    AuditDiff.diff(_before, AuditDiff.snapshot(saved, SCRIPTED_FIELDS)));
+            return ok(enrichScripted(saved, scriptedCheckRepo.findTopByMonitorIdOrderByCheckedAtDesc(id).orElse(null), teamNameMap(),
+                    alertEventRepo.findOpenAlert(saved.getName(), EscalationService.TYPE_SCRIPTED_FAIL).orElse(null)));
+        }).orElse(notFound("Senaryo monitörü bulunamadı"));
+    }
+
+    @DeleteMapping("/scripted/{id}")
+    public ResponseEntity<Map<String, Object>> deleteScripted(@PathVariable Long id, HttpSession session) {
+        permissionService.require(session, "monitoring.scripted", "edit");
+        return scriptedMonitorRepo.findById(id).map(m -> {
+            if (!SessionScope.canManage(session, m.getTeamId())) throw new SecurityException("Silme yetkisi yok (yalnız takım yöneticisi/ADMIN)");
+            escalationService.resolveOpenAlertsSilently(m.getName(), Set.of(EscalationService.TYPE_SCRIPTED_FAIL), "Sistem (izleme silindi)");
+            scriptedMonitorRepo.delete(m);
+            activityLog.recordLifecycle(ActivityLogService.SCRIPTED, m.getId(), m.getName(), m.getName(), m.getTeamId(), "DELETED", actor(session));
+            auditService.recordAction("MONITOR_DELETE", session, "SCRIPTED_MONITOR", String.valueOf(m.getId()), m.getName(), null);
+            return ok(Map.of("deleted", true));
+        }).orElse(notFound("Senaryo monitörü bulunamadı"));
+    }
+
+    @GetMapping("/scripted/{id}/history")
+    public ResponseEntity<Map<String, Object>> scriptedHistory(@PathVariable Long id, HttpSession session,
+            @RequestParam(required = false) Integer days, @RequestParam(defaultValue = "100") int limit) {
+        com.certmonitor.model.ScriptedMonitor mon = scriptedMonitorRepo.findById(id).orElse(null);
+        if (mon == null) return notFound("Senaryo monitörü bulunamadı");
+        var deny = denyIfNotViewable(session, mon.getTeamId());
+        if (deny != null) return deny;
+        List<com.certmonitor.model.ScriptedCheck> checks;
+        long total, down;
+        if (days != null && days > 0) {
+            String cutoff = ISO.format(Instant.now().minus(days, ChronoUnit.DAYS));
+            checks = scriptedCheckRepo.findRecentByMonitorIdSince(id, cutoff, 500);
+            total = scriptedCheckRepo.countByMonitorIdAndCheckedAtGreaterThanEqual(id, cutoff);
+            down  = scriptedCheckRepo.countByMonitorIdAndOkFalseAndCheckedAtGreaterThanEqual(id, cutoff);
+        } else {
+            int cap = Math.max(1, Math.min(limit, 10_000));
+            checks = scriptedCheckRepo.findRecentByMonitorId(id, cap);
+            total = checks.size();
+            down  = checks.stream().filter(c -> !Boolean.TRUE.equals(c.getOk())).count();
+        }
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("checks", checks);
+        out.put("total", total);
+        out.put("down", down);
+        return ok(out);
+    }
+
+    @PostMapping("/scripted/{id}/check")
+    public ResponseEntity<Map<String, Object>> triggerScripted(@PathVariable Long id, HttpSession session) {
+        permissionService.require(session, "monitoring.scripted", "execute");
+        return scriptedMonitorRepo.findById(id).map(m -> {
+            if (!canOperateTeam(session, m.getTeamId())) throw new SecurityException("Bu takımın izlemesini çalıştıramazsınız");
+            long nowMs = System.currentTimeMillis();
+            long cooldownMs = appSettings.getInt("cert.monitor.scripted.manual-cooldown-seconds", 20) * 1000L;
+            Long prev = scriptedManualTriggerAt.get(id);
+            if (prev != null && nowMs - prev < cooldownMs) {
+                return ResponseEntity.status(429).body(Map.<String, Object>of("success", false,
+                        "error", "Bu monitör için çok sık manuel çalıştırma; " + (cooldownMs / 1000) + " sn bekleyin."));
+            }
+            scriptedManualTriggerAt.put(id, nowMs);
+            schedulerService.triggerScriptedCheck(m);
+            auditService.recordAction("MONITOR_TRIGGER", session, "SCRIPTED_MONITOR", String.valueOf(m.getId()), m.getName(), null);
+            return ok(enrichScripted(m, scriptedCheckRepo.findTopByMonitorIdOrderByCheckedAtDesc(id).orElse(null), teamNameMap(),
+                    alertEventRepo.findOpenAlert(m.getName(), EscalationService.TYPE_SCRIPTED_FAIL).orElse(null)));
+        }).orElse(notFound("Senaryo monitörü bulunamadı"));
+    }
+
+    /** Ad-hoc test — kaydetmeden, formdaki script + env ile tek çalıştırma; sonucu + (maskeli) çıktıyı döndürür. */
+    @PostMapping("/scripted/test")
+    public ResponseEntity<Map<String, Object>> testScripted(@RequestBody Map<String, Object> body, HttpSession session) {
+        permissionService.require(session, "monitoring.scripted", "execute");
+        if (!scriptedChecker.isAvailable())
+            return badRequest("k6 bulunamadı — Senaryo İzleme devre dışı (bu ortamda k6 binary'si yok).");
+        String script = body.get("script") != null ? body.get("script").toString() : "";
+        if (script.isBlank()) return badRequest("script zorunlu");
+        Integer timeout = body.get("timeoutSeconds") instanceof Number tn ? tn.intValue() : null;
+        // Test env: frontend ham gönderir (secret değerler düz; henüz şifreli değil) → checker.test decrypt=false ile alır.
+        String envJson = testEnvJson(body.get("env"));
+        auditService.recordAction("MONITOR_TRIGGER", session, "SCRIPTED_MONITOR", "test", "ad-hoc test", null);
+        com.certmonitor.service.ScriptedCheckerService.ScriptedResult r = scriptedChecker.test(script, envJson, timeout);
+        return ok(scriptedResultMap(r));
+    }
+
+    @GetMapping("/scripted/{id}/response-series")
+    public ResponseEntity<Map<String, Object>> scriptedResponseSeries(@PathVariable Long id,
+            @RequestParam(required = false) String from, @RequestParam(required = false) String to,
+            @RequestParam(defaultValue = "30") int days, HttpSession session) {
+        permissionService.require(session, "monitoring.read", "view");
+        com.certmonitor.model.ScriptedMonitor mon = scriptedMonitorRepo.findById(id).orElse(null);
+        if (mon == null) return notFound("Senaryo monitörü bulunamadı");
+        var deny = denyIfNotViewable(session, mon.getTeamId());
+        if (deny != null) return deny;
+        String[] range = resolveRange(from, to, days);
+        return ok(Map.of("series", scriptedCheckRepo.responseSeriesRaw(id, range[0], range[1], 2000)));
+    }
+
+    // ── Senaryo yardımcıları ──────────────────────────────────────────────────
+
+    private static final String[] SCRIPTED_FIELDS = {
+            "name", "description", "script", "timeoutSeconds", "intervalSeconds",
+            "confirmAttempts", "recoveryChecks", "active", "groupName", "notifyEmail" };
+
+    /** Script gövde desen taraması → BLOCK politikasında hit varsa hata mesajı, aksi halde null (WARN sadece bilgi). */
+    private String scanScriptOrError(Object script) {
+        if (script == null) return null;
+        List<String> hits = com.certmonitor.service.ScriptedCheckerService.scanHardcodedSecrets(script.toString());
+        if (hits.isEmpty()) return null;
+        String policy = appSettings.getString("cert.monitor.scripted.hardcoded-secret-policy", "WARN");
+        if ("BLOCK".equalsIgnoreCase(policy))
+            return "Script gövdesinde sabit-kodlu gizli değer tespit edildi (" + String.join(", ", hits)
+                    + "). Bunları ortam değişkeni (secret) olarak tanımlayın ve script'te __ENV üzerinden kullanın.";
+        return null;   // WARN: kaydı engelleme (frontend uyarısı gösterir)
+    }
+
+    private void applyScriptedFields(com.certmonitor.model.ScriptedMonitor m, Map<String, Object> body, String existingEnvJson) {
+        if (body.containsKey("description")) m.setDescription(blank(body.get("description")) ? null : body.get("description").toString());
+        if (body.get("script") != null) m.setScript(body.get("script").toString());
+        if (body.get("timeoutSeconds") instanceof Number n)
+            m.setTimeoutSeconds(Math.max(5, Math.min(180, n.intValue())));
+        if (body.containsKey("tags")) m.setTags(blank(body.get("tags")) ? null : body.get("tags").toString().trim());
+        if (body.get("notifyEmail") instanceof Boolean b) m.setNotifyEmail(b);
+        if (body.containsKey("env")) m.setEnvJson(buildEnvJson(existingEnvJson, body.get("env")));
+    }
+
+    /** Gelen env dizisini kalıcı JSON'a çevirir: secret değerler şifrelenir; secret değeri boş gelirse eski enc korunur. */
+    private String buildEnvJson(String existingJson, Object incoming) {
+        Map<String, String> existingSecrets = new LinkedHashMap<>();
+        try {
+            if (existingJson != null && !existingJson.isBlank()) {
+                com.fasterxml.jackson.databind.JsonNode arr = SCRIPTED_MAPPER.readTree(existingJson);
+                if (arr.isArray()) for (var n : arr)
+                    if (n.path("secret").asBoolean(false)) existingSecrets.put(n.path("name").asText(""), n.path("value").asText(""));
+            }
+        } catch (Exception ignored) { }
+        List<Map<String, Object>> out = new ArrayList<>();
+        if (incoming instanceof List<?> list) {
+            for (Object o : list) {
+                if (!(o instanceof Map<?, ?> e)) continue;
+                Object nm = e.get("name");
+                if (nm == null || nm.toString().isBlank()) continue;
+                String name = nm.toString().trim();
+                boolean secret = Boolean.TRUE.equals(e.get("secret")) || "true".equals(String.valueOf(e.get("secret")));
+                Object val = e.get("value");
+                String stored;
+                if (secret) {
+                    if (val != null && !val.toString().isBlank()) stored = secretCipher.encrypt(val.toString());
+                    else stored = existingSecrets.getOrDefault(name, "");   // değer değişmedi → eski enc'i koru
+                } else {
+                    stored = val == null ? "" : val.toString();
+                }
+                Map<String, Object> row = new LinkedHashMap<>();
+                row.put("name", name); row.put("value", stored == null ? "" : stored); row.put("secret", secret);
+                out.add(row);
+            }
+        }
+        try { return SCRIPTED_MAPPER.writeValueAsString(out); } catch (Exception e) { return "[]"; }
+    }
+
+    /** Test env (ham, şifresiz) → checker.test'in beklediği envJson (secret değerleri düz saklanır, decrypt=false). */
+    private String testEnvJson(Object incoming) {
+        List<Map<String, Object>> out = new ArrayList<>();
+        if (incoming instanceof List<?> list) {
+            for (Object o : list) {
+                if (!(o instanceof Map<?, ?> e)) continue;
+                Object nm = e.get("name");
+                if (nm == null || nm.toString().isBlank()) continue;
+                Map<String, Object> row = new LinkedHashMap<>();
+                row.put("name", nm.toString().trim());
+                row.put("value", e.get("value") == null ? "" : e.get("value").toString());
+                row.put("secret", false);   // test yolunda çözme yapılmaz
+                out.add(row);
+            }
+        }
+        try { return SCRIPTED_MAPPER.writeValueAsString(out); } catch (Exception e) { return "[]"; }
+    }
+
+    private Map<String, Object> scriptedResultMap(com.certmonitor.service.ScriptedCheckerService.ScriptedResult r) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("status", r.status());
+        out.put("ok", r.ok());
+        out.put("duration_ms", r.durationMs());
+        out.put("exit_code", r.exitCode());
+        out.put("checks_passed", r.checksPassed());
+        out.put("checks_failed", r.checksFailed());
+        out.put("iteration_ms", r.iterationMs());
+        out.put("http_req_avg_ms", r.httpReqAvgMs());
+        out.put("http_req_p95_ms", r.httpReqP95Ms());
+        out.put("checks_json", r.checksJson());
+        out.put("output_tail", r.outputTail());
+        out.put("error", r.error());
+        return out;
+    }
+
+    /** env'i ekrana güvenli çevirir: secret → {name,secret:true,value_set}; non-secret → {name,secret:false,value}. */
+    private List<Map<String, Object>> envForClient(String envJson) {
+        List<Map<String, Object>> out = new ArrayList<>();
+        if (envJson == null || envJson.isBlank()) return out;
+        try {
+            com.fasterxml.jackson.databind.JsonNode arr = SCRIPTED_MAPPER.readTree(envJson);
+            if (arr.isArray()) for (var n : arr) {
+                Map<String, Object> row = new LinkedHashMap<>();
+                String name = n.path("name").asText("");
+                boolean secret = n.path("secret").asBoolean(false);
+                row.put("name", name);
+                row.put("secret", secret);
+                if (secret) row.put("value_set", !n.path("value").asText("").isBlank());
+                else row.put("value", n.path("value").asText(""));
+                out.add(row);
+            }
+        } catch (Exception ignored) { }
+        return out;
+    }
+
+    private Map<String, Object> enrichScripted(com.certmonitor.model.ScriptedMonitor m, com.certmonitor.model.ScriptedCheck latest,
+                                               Map<Long, String> teams, AlertEvent openAlarm) {
+        Map<String, Object> item = new LinkedHashMap<>();
+        item.put("id",   m.getId());
+        item.put("name", m.getName());
+        item.put("description", m.getDescription());
+        item.put("script", m.getScript());
+        item.put("env", envForClient(m.getEnvJson()));
+        item.put("timeout_seconds", m.getTimeoutSeconds());
+        item.put("group_name", m.getGroupName());
+        item.put("team_id", m.getTeamId());
+        item.put("team_name", m.getTeamId() != null ? teams.get(m.getTeamId()) : null);
+        item.put("active", m.getActive());
+        item.put("interval_seconds", m.getIntervalSeconds());
+        item.put("confirm_attempts", m.getConfirmAttempts());
+        item.put("confirm_interval_seconds", m.getConfirmIntervalSeconds());
+        item.put("recovery_checks", m.getRecoveryChecks());
+        item.put("recovery_interval_seconds", m.getRecoveryIntervalSeconds());
+        item.put("tags", m.getTags());
+        item.put("notify_email", m.getNotifyEmail());
+        item.put("active_alarm", openAlarm != null);
+        item.put("alarm_level", openAlarm != null ? openAlarm.getAlertLevel() : null);
+        item.put("alarm_acknowledged", openAlarm != null ? openAlarm.getAcknowledged() : null);
+        if (latest != null) {
+            item.put("status", latest.getStatus());      // PASS | FAIL | ERROR | TIMEOUT
+            item.put("ok", latest.getOk());
+            item.put("duration_ms", latest.getDurationMs());
+            item.put("exit_code", latest.getExitCode());
+            item.put("checks_passed", latest.getChecksPassed());
+            item.put("checks_failed", latest.getChecksFailed());
+            item.put("http_req_avg_ms", latest.getHttpReqAvgMs());
+            item.put("checks_json", latest.getChecksJson());
+            item.put("output_tail", latest.getOutputTail());
+            item.put("error", latest.getError());
+            item.put("checked_at", latest.getCheckedAt());
+        } else {
+            item.put("status", "unknown");
+            item.put("ok", null); item.put("duration_ms", null); item.put("checked_at", null);
         }
         return item;
     }

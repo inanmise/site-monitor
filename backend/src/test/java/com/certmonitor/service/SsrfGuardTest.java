@@ -77,4 +77,29 @@ class SsrfGuardTest {
         SsrfGuard g = new SsrfGuard(s);
         assertThatThrownBy(() -> g.validate("192.168.10.10")).isInstanceOf(SsrfGuard.BlockedException.class);
     }
+
+    @org.junit.jupiter.api.Test
+    @org.junit.jupiter.api.DisplayName("blacklistCidrs: metadata/multicast/link-local her zaman; loopback+RFC1918 toggle'a göre")
+    void blacklistCidrs_honorsToggles() {
+        // Varsayılan: internal AÇIK (RFC1918 listede YOK), loopback KAPALI (listede VAR)
+        var def = SsrfGuard.blacklistCidrs(true, false);
+        assertThat(def).contains("169.254.169.254/32", "fd00:ec2::254/128", "224.0.0.0/4", "169.254.0.0/16", "fe80::/10", "127.0.0.0/8");
+        assertThat(def).doesNotContain("10.0.0.0/8");   // internal AÇIK → RFC1918 bloklanmaz
+
+        // internal KAPALI + loopback AÇIK
+        var strict = SsrfGuard.blacklistCidrs(false, true);
+        assertThat(strict).contains("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "fc00::/7");
+        assertThat(strict).doesNotContain("127.0.0.0/8");   // loopback AÇIK → bloklanmaz
+        assertThat(strict).contains("169.254.169.254/32");  // metadata her zaman
+    }
+
+    @org.junit.jupiter.api.Test
+    @org.junit.jupiter.api.DisplayName("blacklistCidrs() instance: canlı ayarları okur")
+    void blacklistCidrs_instanceReadsSettings() {
+        AppSettingsService s = mock(AppSettingsService.class);
+        when(s.getBoolean("cert.monitor.monitoring.allow-internal-targets", true)).thenReturn(false);
+        when(s.getBoolean("cert.monitor.monitoring.allow-loopback-targets", false)).thenReturn(true);
+        var cidrs = new SsrfGuard(s).blacklistCidrs();
+        assertThat(cidrs).contains("10.0.0.0/8").doesNotContain("127.0.0.0/8");
+    }
 }

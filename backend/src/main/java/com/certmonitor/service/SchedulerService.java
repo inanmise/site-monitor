@@ -155,6 +155,14 @@ public class SchedulerService {
     @Autowired
     private com.certmonitor.repository.PageResourceIssueRepository pageResourceIssueRepo;
 
+    /** Senaryo İzleme (10. tür) — alan enjeksiyonu (aynı desen). */
+    @Autowired
+    private ScriptedCheckerService scriptedCheckerService;
+    @Autowired
+    private com.certmonitor.repository.ScriptedMonitorRepository scriptedMonitorRepo;
+    @Autowired
+    private com.certmonitor.repository.ScriptedCheckRepository scriptedCheckRepo;
+
     @Value("${cert.monitor.username:user}")
     private String adminUsername;
 
@@ -486,12 +494,13 @@ public class SchedulerService {
         patch("CREATE INDEX IF NOT EXISTS idx_pc_monitor_checked ON page_checks(monitor_id, checked_at)");
         patch("CREATE INDEX IF NOT EXISTS idx_pri_monitor_checked ON page_resource_issues(monitor_id, checked_at)");
         patch("CREATE INDEX IF NOT EXISTS idx_pri_check ON page_resource_issues(check_id)");
+        patch("CREATE INDEX IF NOT EXISTS idx_sc_monitor_checked ON scripted_checks(monitor_id, checked_at)");
         // ── Yüksek-yazımlı tablolarda daha AGRESİF autovacuum — büyük tabloda varsayılan %20 ölü-tuple
         //    eşiği çok seyrek vacuum + şişme (bloat) demek; %2 scale + sabit eşikle sık, küçük vacuum/analyze.
         //    Postgres'e özgü; H2'de patch() sessiz atlar. Dış prod DB'de de çalışır (ALTER TABLE). Idempotent. ──
         for (String t : new String[]{"port_checks", "ping_checks", "keyword_results", "http_checks",
                 "uptime_checks", "dns_records", "certificate_checks", "activity_log", "audit_log", "notification_logs",
-                "page_checks", "page_resource_issues"}) {
+                "page_checks", "page_resource_issues", "scripted_checks"}) {
             patch("ALTER TABLE " + t + " SET (autovacuum_vacuum_scale_factor = 0.02, autovacuum_vacuum_threshold = 5000, "
                 + "autovacuum_analyze_scale_factor = 0.02, autovacuum_analyze_threshold = 5000)");
         }
@@ -842,6 +851,10 @@ public class SchedulerService {
             int pcDel = safeDeleteBatched("page_checks", "checked_at < ?", pcCutoff);
             if (priDel > 0 || pcDel > 0) log.info("Page retention: {} resource-issue + {} check silindi (issues>{}g, checks>{}g)",
                     priDel, pcDel, priRetDays, pcRetDays);
+            // Senaryo İzleme (10. tür) — scripted_checks saklama.
+            int scRetDays = Math.max(1, appSettings.getInt("cert.monitor.metrics.scripted.retention-days", 180));
+            int scDel = safeDeleteBatched("scripted_checks", "checked_at < ?", ISO.format(Instant.now().minus(scRetDays, ChronoUnit.DAYS)));
+            if (scDel > 0) log.info("Scripted retention: {} check silindi (>{}g)", scDel, scRetDays);
             String hbCutoff = ISO.format(Instant.now().minus(30, ChronoUnit.DAYS));
             // recorded_at TIMESTAMP kolonudur (diğer tablolardaki ISO String değil) → parametreyi cast'le.
             int hb = safeDelete("DELETE FROM system_heartbeat WHERE recorded_at < CAST(? AS timestamp)", hbCutoff);
@@ -993,8 +1006,9 @@ public class SchedulerService {
             int k  = rollupUpsert("KEYWORD", "keyword_results", "ok",   "response_ms", from, to);
             int h  = rollupUpsert("HTTP",    "http_checks",     "ok",   "response_ms", from, to);
             int pi = rollupUpsert("PAGE",    "page_checks",     "ok",   "response_ms", from, to);
+            int sc = rollupUpsert("SCRIPTED", "scripted_checks", "ok",  "duration_ms", from, to);
             int u  = rollupUptime(from, to);
-            log.info("Daily rollup: port={}, ping={}, keyword={}, http={}, page={}, uptime={} ({} → {})", p, pg, k, h, pi, u, from, to);
+            log.info("Daily rollup: port={}, ping={}, keyword={}, http={}, page={}, scripted={}, uptime={} ({} → {})", p, pg, k, h, pi, sc, u, from, to);
         } catch (Exception e) {
             log.warn("Daily rollup failed: {}", e.getMessage());
         }
@@ -1521,6 +1535,7 @@ public class SchedulerService {
         pingMonitorRepo.findAll().forEach(m -> live.add("ping:" + m.getId()));
         dnsMonitorRepo.findAll().forEach(m -> live.add("dns:" + m.getId()));
         pageMonitorRepo.findAll().forEach(m -> live.add("page:" + m.getId()));
+        scriptedMonitorRepo.findAll().forEach(m -> live.add("scripted:" + m.getId()));
         return live;
     }
 
@@ -2327,6 +2342,159 @@ public class SchedulerService {
      *  tutup Tomcat worker'larını tüketebilir; derin crawl yalnız günlük runPageCrawls akışında koşar. */
     public Map<String, Object> triggerPageCheck(com.certmonitor.model.PageMonitor m) {
         return recheckPage(m, true, "SINGLE_PAGE");
+    }
+
+    // ── Senaryo İzleme (10. tür) — k6 alt süreç sweep'i (bounded executor, scheduler'ı bloklamaz) ──────
+    @Scheduled(fixedDelayString = "${cert.monitor.scripted.interval-ms:60000}", initialDelayString = "95000")
+    public void runScriptedChecks() {
+        if (!appSettings.getBoolean("cert.monitor.scripted.enabled", true)) return;
+        if (!scriptedCheckerService.isAvailable()) return;   // k6 binary yok → türü sessizce atla
+        if (!tryAcquireSchedulerLock("scripted-sweep", sweepLockTtlMinutes)) {
+            log.debug("Scripted sweep — lock başka instance'da, atlanıyor");
+            return;
+        }
+        try { runScriptedChecksLocked(); }
+        finally { releaseSchedulerLock("scripted-sweep"); }
+    }
+
+    private void runScriptedChecksLocked() {
+        List<com.certmonitor.model.ScriptedMonitor> monitors = scriptedMonitorRepo.findByActiveTrue();
+        if (orphanCleanupDue("scripted")) try {
+            java.util.Set<String> names = scriptedMonitorRepo.findAll().stream()
+                    .map(com.certmonitor.model.ScriptedMonitor::getName).filter(java.util.Objects::nonNull)
+                    .collect(java.util.stream.Collectors.toSet());
+            escalationService.resolveOrphanedScriptedAlerts(names);
+        } catch (Exception e) {
+            log.warn("Öksüz senaryo alarmı temizliği başarısız: {}", e.getMessage());
+        }
+        if (monitors.isEmpty()) return;
+        // k6 süreçleri checker'ın SINIRLI havuzunda koşar; submit() ayrı executor'a atar → scheduler bloklanmaz.
+        List<Map.Entry<com.certmonitor.model.ScriptedMonitor, java.util.concurrent.Future<ScriptedCheckerService.ScriptedResult>>> started = new ArrayList<>();
+        for (com.certmonitor.model.ScriptedMonitor m : monitors) {
+            if (!checkDue("scripted", m.getId(), m.getIntervalSeconds())) continue;
+            started.add(Map.entry(m, scriptedCheckerService.submit(m)));
+        }
+        int checked = 0;
+        List<MonitoringOutageService.SweepItem> sweep = new ArrayList<>();
+        for (var entry : started) {
+            com.certmonitor.model.ScriptedMonitor m = entry.getKey();
+            try {
+                ScriptedCheckerService.ScriptedResult res = entry.getValue().get(200, java.util.concurrent.TimeUnit.SECONDS);
+                Map<String, Object> r = persistScripted(m, res, false);
+                addScriptedSweepItems(m, r, sweep);
+                checked++;
+            } catch (Exception e) {
+                log.warn("Scripted check failed for {}: {}", m.getName(), e.getMessage());
+            }
+        }
+        try { monitoringOutageService.handleSweepResults(EscalationService.TYPE_SCRIPTED_FAIL, sweep); }
+        catch (Exception e) { log.warn("Scripted outage processing failed: {}", e.getMessage(), e); }
+        log.debug("Scripted checks complete: {} monitors", checked);
+    }
+
+    /** Bir senaryo kontrol sonucundan SweepItem üretir (tek alarm tipi: SCRIPTED_FAIL, up=PASS). */
+    private void addScriptedSweepItems(com.certmonitor.model.ScriptedMonitor m, Map<String, Object> r,
+                                       List<MonitoringOutageService.SweepItem> sweep) {
+        Map<String, Object> ctx = new LinkedHashMap<>();
+        ctx.put("name", m.getName());
+        ctx.put("monitor_id", m.getId());
+        ctx.put("monitor_confirm_attempts", m.getConfirmAttempts());
+        ctx.put("monitor_confirm_interval_ms", m.getConfirmIntervalSeconds() != null ? m.getConfirmIntervalSeconds() * 1000L : null);
+        ctx.put("monitor_recovery_checks", m.getRecoveryChecks());
+        ctx.put("monitor_recovery_interval_ms", m.getRecoveryIntervalSeconds() != null ? m.getRecoveryIntervalSeconds() * 1000L : null);
+        if (m.getTeamId() != null) ctx.put("team_id", m.getTeamId());
+        ctx.put("scripted_status", r.get("status"));
+        if (r.get("checks_failed") != null) ctx.put("checks_failed", r.get("checks_failed"));
+        if (r.get("output_tail") != null) ctx.put("output_tail", r.get("output_tail"));
+        if (r.get("failed_checks") != null) ctx.put("failed_checks", r.get("failed_checks"));
+        boolean up = Boolean.TRUE.equals(r.get("up"));
+        String detail = (String) r.get("detail");
+        sweep.add(new MonitoringOutageService.SweepItem(
+                EscalationService.TYPE_SCRIPTED_FAIL, m.getName(), detail,
+                up, up ? null : detail, new LinkedHashMap<>(ctx),
+                () -> { Map<String, Object> p = recheckScripted(m, false);
+                        return Map.of("status", Boolean.TRUE.equals(p.get("up")) ? "up" : "down"); }));
+    }
+
+    /** k6'yı çalıştır + ScriptedCheck yaz + activity + out map. (Manuel tetik + SweepItem recheck lambda kullanır.) */
+    public Map<String, Object> recheckScripted(com.certmonitor.model.ScriptedMonitor m, boolean manual) {
+        return persistScripted(m, scriptedCheckerService.run(m), manual);
+    }
+
+    private Map<String, Object> persistScripted(com.certmonitor.model.ScriptedMonitor m,
+                                                ScriptedCheckerService.ScriptedResult res, boolean manual) {
+        boolean up = res.ok();
+        String ts = ISO.format(java.time.Instant.now());
+        try {
+            com.certmonitor.model.ScriptedCheck c = new com.certmonitor.model.ScriptedCheck();
+            c.setMonitorId(m.getId());
+            c.setOk(up);
+            c.setStatus(res.status());
+            c.setDurationMs(res.durationMs());
+            c.setExitCode(res.exitCode());
+            c.setChecksPassed(res.checksPassed());
+            c.setChecksFailed(res.checksFailed());
+            c.setIterationMs(res.iterationMs());
+            c.setHttpReqAvgMs(res.httpReqAvgMs());
+            c.setHttpReqP95Ms(res.httpReqP95Ms());
+            c.setChecksJson(res.checksJson());
+            c.setOutputTail(res.outputTail());
+            c.setError(res.error());
+            c.setCheckedAt(ts);
+            scriptedCheckRepo.save(c);
+        } catch (Exception e) {
+            log.warn("Senaryo kaydı yazılamadı: {} — {}", m.getName(), e.getMessage());
+        }
+
+        Map<String, Object> activity = new LinkedHashMap<>();
+        activity.put("status", res.status());
+        activity.put("ok", up);
+        activity.put("checks_passed", res.checksPassed());
+        activity.put("checks_failed", res.checksFailed());
+        activity.put("response_ms", res.durationMs());
+        if (res.error() != null) activity.put("error", res.error());
+        activityLog.recordCheck(ActivityLogService.SCRIPTED, m.getId(), m.getName(), m.getName(),
+                m.getTeamId(), manual, manual ? "manual" : "scheduler", activity);
+
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("status", res.status());
+        out.put("up", up);
+        out.put("error", res.error());
+        out.put("detail", scriptedDetail(res));
+        out.put("response_ms", res.durationMs());
+        if (res.checksFailed() != null) out.put("checks_failed", res.checksFailed());
+        if (res.outputTail() != null) out.put("output_tail", res.outputTail());
+        out.put("failed_checks", failedCheckNames(res.checksJson()));
+        return out;
+    }
+
+    /** "FAIL — 3✓/1✗" gibi kısa insan-okur özet. */
+    private static String scriptedDetail(ScriptedCheckerService.ScriptedResult res) {
+        StringBuilder sb = new StringBuilder(res.status());
+        if (res.checksPassed() != null || res.checksFailed() != null)
+            sb.append(" — ").append(res.checksPassed() != null ? res.checksPassed() : 0).append("✓/")
+              .append(res.checksFailed() != null ? res.checksFailed() : 0).append("✗");
+        if (res.error() != null && res.checksFailed() == null) sb.append(" — ").append(res.error());
+        return sb.toString();
+    }
+
+    private static final com.fasterxml.jackson.databind.ObjectMapper SCRIPTED_JSON = new com.fasterxml.jackson.databind.ObjectMapper();
+
+    /** checksJson'dan başarısız check adları (mail "başarısız check listesi" için). */
+    private String failedCheckNames(String checksJson) {
+        if (checksJson == null || checksJson.isBlank()) return null;
+        try {
+            com.fasterxml.jackson.databind.JsonNode arr = SCRIPTED_JSON.readTree(checksJson);
+            List<String> failed = new ArrayList<>();
+            if (arr.isArray()) for (com.fasterxml.jackson.databind.JsonNode n : arr)
+                if (!n.path("passed").asBoolean(true)) failed.add(n.path("name").asText(""));
+            return failed.isEmpty() ? null : String.join("\n", failed);
+        } catch (Exception e) { return null; }
+    }
+
+    /** Manuel tetik (controller). */
+    public Map<String, Object> triggerScriptedCheck(com.certmonitor.model.ScriptedMonitor m) {
+        return recheckScripted(m, true);
     }
 
     // ── HTTP SSL + Domain (WHOIS/RDAP) yavaş sweep'i — sıcak uptime döngüsünden AYRI (tek-pod perf) ──

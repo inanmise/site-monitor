@@ -25,7 +25,7 @@ import java.util.Map;
 public class ActivityLogService {
 
     public static final String CERT = "CERT", UPTIME = "UPTIME", HTTP = "HTTP", PORT = "PORT",
-            PING = "PING", DNS = "DNS", KEYWORD = "KEYWORD", DOMAIN = "DOMAIN", PAGE = "PAGE";
+            PING = "PING", DNS = "DNS", KEYWORD = "KEYWORD", DOMAIN = "DOMAIN", PAGE = "PAGE", SCRIPTED = "SCRIPTED";
 
     private static final DateTimeFormatter ISO =
             DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
@@ -129,6 +129,19 @@ public class ActivityLogService {
                 String detail = ("DOWN".equalsIgnoreCase(status))
                         ? "yüklenemedi"
                         : ((broken != null ? broken : 0) + " kırık" + (mixed != null && mixed > 0 ? " · " + mixed + " mixed" : ""));
+                a.setResultSummary(detail + (ms != null ? " · " + ms + "ms" : ""));
+            }
+            case SCRIPTED -> {
+                String status = str(r.get("status"));   // PASS | FAIL | ERROR | TIMEOUT
+                a.setResultStatus(switch (status == null ? "" : status.toUpperCase()) {
+                    case "PASS" -> "SUCCESS";
+                    case "FAIL" -> "WARNING";
+                    case "TIMEOUT" -> "TIMEOUT";
+                    default -> "ERROR";
+                });
+                Integer cp = asInt(r.get("checks_passed"));
+                Integer cf = asInt(r.get("checks_failed"));
+                String detail = safe(status) + (cp != null || cf != null ? " · " + (cp != null ? cp : 0) + "✓/" + (cf != null ? cf : 0) + "✗" : "");
                 a.setResultSummary(detail + (ms != null ? " · " + ms + "ms" : ""));
             }
             default -> a.setResultStatus(error != null ? "ERROR" : "SUCCESS");

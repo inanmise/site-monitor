@@ -161,6 +161,15 @@ public class EmailNotificationService {
                                       String domain, String alertType, String alertLevel,
                                       Integer daysRemaining, String resolvedBy, String resolvedAt,
                                       String createdAt, Map<String, Object> certContext) {
+        return sendResolutionAlert(toAddresses, subject, domain, alertType, alertLevel, daysRemaining,
+                resolvedBy, resolvedAt, createdAt, certContext, null, null);
+    }
+
+    public String sendResolutionAlert(String[] toAddresses, String subject,
+                                      String domain, String alertType, String alertLevel,
+                                      Integer daysRemaining, String resolvedBy, String resolvedAt,
+                                      String createdAt, Map<String, Object> certContext,
+                                      String teamNames, UptimeSummary uptime) {
         if (!isEnabled()) {
             log.info("⚠ Email devre dışı — çözüm bildirimi: TO={}", Arrays.toString(toAddresses));
             return "SKIPPED_DISABLED";
@@ -174,7 +183,7 @@ public class EmailNotificationService {
             helper.setText(
                     buildResolutionEmailText(domain, alertType, resolvedBy, resolvedAt, createdAt, certContext),
                     buildResolutionEmailHtml(domain, alertType, alertLevel,
-                            daysRemaining, resolvedBy, resolvedAt, createdAt, certContext));
+                            daysRemaining, resolvedBy, resolvedAt, createdAt, certContext, teamNames, uptime));
             return doSend(Arrays.toString(toAddresses), msg, 1);
         } catch (Exception e) {
             log.error("✗ Çözüm e-postası hazırlanamadı: TO={} | HATA={}", Arrays.toString(toAddresses), e.getMessage(), e);
@@ -908,13 +917,23 @@ public class EmailNotificationService {
                                             Integer daysRemaining, String resolvedBy,
                                             String resolvedAt, String createdAt,
                                             Map<String, Object> certContext) {
-        if ("KEYWORD".equals(alertType)) return buildRichKeywordResolvedHtml(domain, certContext, resolvedBy, resolvedAt, createdAt);
-        if ("PING_DOWN".equals(alertType)) return buildRichPingResolvedHtml(domain, certContext, resolvedBy, resolvedAt, createdAt);
+        return buildResolutionEmailHtml(domain, alertType, alertLevel, daysRemaining, resolvedBy,
+                resolvedAt, createdAt, certContext, null, null);
+    }
+
+    /** Şeffaflık bloğu (teamNames) + erişilebilirlik özeti (uptime, yalnız HTTP uptime tiplerinde) ile zenginleştirilmiş. */
+    public String buildResolutionEmailHtml(String domain, String alertType, String alertLevel,
+                                            Integer daysRemaining, String resolvedBy,
+                                            String resolvedAt, String createdAt,
+                                            Map<String, Object> certContext,
+                                            String teamNames, UptimeSummary uptime) {
+        if ("KEYWORD".equals(alertType)) return buildRichKeywordResolvedHtml(domain, certContext, resolvedBy, resolvedAt, createdAt, teamNames, uptime);
+        if ("PING_DOWN".equals(alertType)) return buildRichPingResolvedHtml(domain, certContext, resolvedBy, resolvedAt, createdAt, teamNames, uptime);
         if ((alertType != null && MONITORING_OUTAGE_TYPES.contains(alertType)) || "DNS_CHANGED".equals(alertType)) {
-            return buildRichMonitoringResolvedHtml(domain, alertType, resolvedBy, resolvedAt, createdAt);
+            return buildRichMonitoringResolvedHtml(domain, alertType, resolvedBy, resolvedAt, createdAt, teamNames, uptime);
         }
         // domain + sertifika → executive "çözüldü" (yenilenen bitiş/registrar bağlamıyla zenginleştirilir)
-        return templateBuilder.buildResolvedHtml(domain, alertType, resolvedBy, resolvedAt, createdAt, certContext);
+        return templateBuilder.buildResolvedHtml(domain, alertType, resolvedBy, resolvedAt, createdAt, certContext, teamNames);
     }
 
     /** Çözüm e-postasının plain-text (multipart) alternatifi. */
@@ -1841,7 +1860,8 @@ public class EmailNotificationService {
 
     /** İzleme çözüm maili — süre createdAt→resolvedAt'ten hesaplanır; etiketler tipe göre. */
     private String buildRichMonitoringResolvedHtml(String domain, String alertType, String resolvedBy,
-                                                   String resolvedAt, String createdAt) {
+                                                   String resolvedAt, String createdAt,
+                                                   String teamNames, UptimeSummary uptime) {
         String generatedAt = LocalDateTime.now(IST).format(DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm"));
         String green = "#16a34a";
         String by = resolvedBy != null && !resolvedBy.isBlank() ? resolvedBy : "Sistem (otomatik)";
@@ -1967,6 +1987,11 @@ public class EmailNotificationService {
             + (dnsChanged ? "Alarm süresi: " : "Toplam kesinti süresi: ")
             + "<strong>" + duration + "</strong>."
             + "</td></tr></table></td></tr>"
+
+            // ── Erişilebilirlik özeti (son 24s/7g) — yalnız HTTP uptime verisi olan tiplerde ──
+            + uptimeSummaryRow(uptime)
+            // ── "Neden bu e-postayı aldınız?" — alıcı şeffaflığı ──
+            + whyReceivingRow(teamNames)
 
             // ── Footer ──
             + "<tr><td bgcolor='#ffffff' style='background-color:#ffffff;padding:0 24px 18px'>"
@@ -2368,7 +2393,8 @@ public class EmailNotificationService {
     /** Ortak executive çözüm (yeşil) kartı — keyword/ping kimliğiyle. */
     private String monitoringTypedResolved(String domain, String kicker, String heroLine,
             String typeTrLabel, String emoji, String detailRows, String ctaUrl,
-            String resolvedBy, String resolvedAt, String createdAt) {
+            String resolvedBy, String resolvedAt, String createdAt,
+            String teamNames, UptimeSummary uptime) {
         String generatedAt = LocalDateTime.now(IST).format(DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm"));
         String green = "#16a34a";
         String by = resolvedBy != null && !resolvedBy.isBlank() ? resolvedBy : "Sistem (otomatik)";
@@ -2436,6 +2462,8 @@ public class EmailNotificationService {
             + "<td bgcolor='#f0fdf4' style='background-color:#f0fdf4;padding:14px 18px;color:#14532d;font-size:14px;line-height:1.7'>"
             + "<div style='font-size:11px;font-weight:700;letter-spacing:.08em;color:" + green + ";margin-bottom:6px'>BİLGİ</div>"
             + "<strong>" + escHtml(domain) + "</strong> için açık olan <strong>" + typeTrLabel + "</strong> alarmı kapatıldı. Toplam kesinti süresi: <strong>" + duration + "</strong>.</td></tr></table>"
+            + uptimeSummaryBlock(uptime)
+            + whyReceivingBlock(teamNames)
             + cta
             + "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0'><tr>"
             + "<td style='border-top:1px solid #f1f5f9;padding-top:12px;font-size:11px;color:#94a3b8'>CertMonitor</td>"
@@ -2443,7 +2471,8 @@ public class EmailNotificationService {
             + "</td></tr></table></td></tr></table></td></tr></table></body></html>";
     }
 
-    private String buildRichKeywordResolvedHtml(String url, Map<String, Object> ctx, String resolvedBy, String resolvedAt, String createdAt) {
+    private String buildRichKeywordResolvedHtml(String url, Map<String, Object> ctx, String resolvedBy, String resolvedAt,
+                                                String createdAt, String teamNames, UptimeSummary uptime) {
         StringBuilder d = new StringBuilder();
         if (ctx != null) {
             String kw = ctxStr(ctx, "keyword");
@@ -2456,10 +2485,11 @@ public class EmailNotificationService {
         }
         return monitoringTypedResolved(url, "CertMonitor — İçerik (Keyword) İzleme",
                 "İçerik Doğrulaması Yeniden Başarılı", "İçerik Doğrulama", "🔎",
-                d.toString(), monitorCtaUrl("keyword", ctx), resolvedBy, resolvedAt, createdAt);
+                d.toString(), monitorCtaUrl("keyword", ctx), resolvedBy, resolvedAt, createdAt, teamNames, uptime);
     }
 
-    private String buildRichPingResolvedHtml(String host, Map<String, Object> ctx, String resolvedBy, String resolvedAt, String createdAt) {
+    private String buildRichPingResolvedHtml(String host, Map<String, Object> ctx, String resolvedBy, String resolvedAt,
+                                             String createdAt, String teamNames, UptimeSummary uptime) {
         StringBuilder d = new StringBuilder();
         if (ctx != null) {
             String ipv = ctxStr(ctx, "ip_version");
@@ -2468,7 +2498,7 @@ public class EmailNotificationService {
         }
         return monitoringTypedResolved(host, "CertMonitor — Ping (ICMP) İzleme",
                 "Host Yeniden Yanıt Veriyor", "Erişilebilirlik (Ping)", "🖥️",
-                d.toString(), monitorCtaUrl("ping", ctx), resolvedBy, resolvedAt, createdAt);
+                d.toString(), monitorCtaUrl("ping", ctx), resolvedBy, resolvedAt, createdAt, teamNames, uptime);
     }
 
     /**
@@ -3104,6 +3134,8 @@ public class EmailNotificationService {
     public record AvailabilityRow(String domain, Double availabilityPct,
                                   int outageCount, long downtimeMinutes, long longestOutageMinutes,
                                   Long avgMs, Long p95Ms, Integer certDaysRemaining) {}
+    /** Recovery e-postası erişilebilirlik özeti (son 24s / 7g). pct null → veri yok, kart basılmaz. */
+    public record UptimeSummary(Double pct24h, int outages24h, Double pct7d, int outages7d) {}
     public record AvailabilitySummary(int domainCount, int withDataCount, Double avgAvailabilityPct,
                                       String bestDomain, Double bestPct, String worstDomain, Double worstPct,
                                       int downDomainCount, Integer nearestCertDays) {}
@@ -3713,6 +3745,48 @@ public class EmailNotificationService {
         String words = formatOutageDuration(createdAt, resolvedAt);
         String clock = formatOutageClock(createdAt, resolvedAt);
         return (clock == null || "—".equals(words)) ? words : words + " · " + clock;
+    }
+
+    // ── Recovery-mail zenginleştirme yardımcıları (iç tablo + iki bağlam sarmalayıcısı) ──
+
+    /** "Neden bu e-postayı aldınız?" iç tablosu (alıcı şeffaflığı; Outlook-güvenli). */
+    private String whyReceivingInner(String teamNames) {
+        String phrase = (teamNames != null && !teamNames.isBlank())
+                ? "<strong>" + escHtml(teamNames) + "</strong> ekibine" : "ilgili izleme grubuna";
+        return "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' bgcolor='#f8fafc' style='background-color:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;mso-table-lspace:0pt;mso-table-rspace:0pt'><tr><td style='padding:12px 16px'>"
+            + "<div style='font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#64748b;margin-bottom:5px'>Neden bu e-postayı aldınız?</div>"
+            + "<div style='font-size:13px;line-height:1.55;color:#1f2937'>Bu bildirim " + phrase
+            + " tanımlı bir izleme için gönderildi. CertMonitor otomatik bir izleme sistemidir; bildirim tercihleri için sistem yöneticinize başvurun.</div>"
+            + "</td></tr></table>";
+    }
+
+    /** Erişilebilirlik özeti iç tablosu (son 24s/7g uptime% + kesinti sayısı). Veri yoksa boş. */
+    private String uptimeSummaryInner(UptimeSummary u) {
+        if (u == null || u.pct24h() == null) return "";
+        String p24 = String.format(java.util.Locale.US, "%.2f", u.pct24h());
+        String p7 = u.pct7d() != null ? String.format(java.util.Locale.US, "%.2f", u.pct7d()) : "—";
+        return "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' style='border:1px solid #e2e8f0;border-radius:10px;overflow:hidden;mso-table-lspace:0pt;mso-table-rspace:0pt'>"
+            + "<tr><td colspan='2' bgcolor='#334155' style='background-color:#334155;padding:9px 14px;font-size:11px;font-weight:700;letter-spacing:.1em;color:#94a3b8'>ERİŞİLEBİLİRLİK ÖZETİ</td></tr>"
+            + tableRow2col("📈 Son 24 saat", p24 + "% uptime · " + u.outages24h() + " kesinti")
+            + tableRow2col("🗓 Son 7 gün", p7 + "% uptime · " + u.outages7d() + " kesinti")
+            + "</table>";
+    }
+
+    /** Row-bağlam (em-card <tr> dizisi) sarmalayıcıları — buildRichMonitoringResolvedHtml için. */
+    private String uptimeSummaryRow(UptimeSummary u) {
+        String inner = uptimeSummaryInner(u);
+        return inner.isEmpty() ? "" : "<tr><td bgcolor='#ffffff' style='background-color:#ffffff;padding:0 24px 14px'>" + inner + "</td></tr>";
+    }
+    private String whyReceivingRow(String teamNames) {
+        return "<tr><td bgcolor='#ffffff' style='background-color:#ffffff;padding:0 24px 18px'>" + whyReceivingInner(teamNames) + "</td></tr>";
+    }
+    /** Block-bağlam (tek gövde <td>'si içinde ardışık tablolar) — monitoringTypedResolved için (alt boşluklu). */
+    private String uptimeSummaryBlock(UptimeSummary u) {
+        String inner = uptimeSummaryInner(u);
+        return inner.isEmpty() ? "" : "<div style='margin:0 0 14px'>" + inner + "</div>";
+    }
+    private String whyReceivingBlock(String teamNames) {
+        return "<div style='margin:0 0 14px'>" + whyReceivingInner(teamNames) + "</div>";
     }
 
     private static String escHtml(String s) {

@@ -81,6 +81,10 @@ public class StormService {
     @org.springframework.beans.factory.annotation.Autowired
     private com.certmonitor.repository.PageMonitorRepository pageRepo;
 
+    /** 10. tür (senaryo) — alan enjeksiyonu (constructor/test büyütmemek için; pageRepo ile aynı desen). */
+    @org.springframework.beans.factory.annotation.Autowired
+    private com.certmonitor.repository.ScriptedMonitorRepository scriptedRepo;
+
     public enum StormAction {
         /** Storm devrede değil / eşik altı → bireysel alarm gönder (bugünkü davranış, sıfır gecikme). */
         SEND_INDIVIDUAL,
@@ -377,6 +381,8 @@ public class StormService {
                         httpRepo.findFirstByUrlOrderByIdAsc(d).map(m -> m.getGroupName()).orElse(null);
                 case EscalationService.TYPE_PAGE_DOWN, EscalationService.TYPE_PAGE_INTEGRITY ->
                         pageRepo != null ? pageRepo.findFirstByUrlOrderByIdAsc(d).map(m -> m.getGroupName()).orElse(null) : null;
+                case EscalationService.TYPE_SCRIPTED_FAIL ->
+                        scriptedRepo != null ? scriptedRepo.findFirstByNameOrderByIdAsc(d).map(m -> m.getGroupName()).orElse(null) : null;
                 case EscalationService.TYPE_PING_DOWN ->
                         pingRepo.findFirstByHostOrderByIdAsc(d).map(m -> m.getGroupName()).orElse(null);
                 case EscalationService.TYPE_DNS_FAILURE ->

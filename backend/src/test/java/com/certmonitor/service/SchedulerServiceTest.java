@@ -109,6 +109,9 @@ class SchedulerServiceTest {
     @Mock com.certmonitor.repository.PageMonitorRepository pageMonitorRepo;
     @Mock com.certmonitor.repository.PageCheckRepository pageCheckRepo;
     @Mock com.certmonitor.repository.PageResourceIssueRepository pageResourceIssueRepo;
+    @Mock com.certmonitor.service.ScriptedCheckerService scriptedCheckerService;
+    @Mock com.certmonitor.repository.ScriptedMonitorRepository scriptedMonitorRepo;
+    @Mock com.certmonitor.repository.ScriptedCheckRepository scriptedCheckRepo;
 
     SchedulerService scheduler;
 
@@ -134,6 +137,9 @@ class SchedulerServiceTest {
         ReflectionTestUtils.setField(scheduler, "pageMonitorRepo", pageMonitorRepo);
         ReflectionTestUtils.setField(scheduler, "pageCheckRepo", pageCheckRepo);
         ReflectionTestUtils.setField(scheduler, "pageResourceIssueRepo", pageResourceIssueRepo);
+        ReflectionTestUtils.setField(scheduler, "scriptedCheckerService", scriptedCheckerService);
+        ReflectionTestUtils.setField(scheduler, "scriptedMonitorRepo", scriptedMonitorRepo);
+        ReflectionTestUtils.setField(scheduler, "scriptedCheckRepo", scriptedCheckRepo);
         // startNetworkCheck: mock executor task'ı düşürürse join asılı kalır → inline koştur (deterministik).
         lenient().doAnswer(inv -> { inv.getArgument(0, Runnable.class).run(); return null; })
                 .when(certCheckExecutor).execute(any(Runnable.class));
@@ -159,11 +165,11 @@ class SchedulerServiceTest {
     }
 
     @Test
-    @DisplayName("rollupDailyStats: 6 tip (port/ping/keyword/http/page/uptime) için upsert çalıştırır")
+    @DisplayName("rollupDailyStats: 7 tip (port/ping/keyword/http/page/scripted/uptime) için upsert çalıştırır")
     void rollupDailyStats_runsAllTypes() {
         when(jdbcTemplate.update(anyString(), anyString(), anyString())).thenReturn(3);
         scheduler.rollupDailyStats();
-        verify(jdbcTemplate, times(6)).update(anyString(), anyString(), anyString());   // 6 monitör tipi (sql, from, to)
+        verify(jdbcTemplate, times(7)).update(anyString(), anyString(), anyString());   // 7 monitör tipi (sql, from, to)
     }
 
     @Test
