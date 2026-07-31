@@ -336,7 +336,7 @@ class EmailNotificationServiceTest {
     }
 
     @Test
-    @DisplayName("Accessibility resolved HTML contains outage duration and green accent")
+    @DisplayName("Accessibility resolved HTML: yeşil aksan + Türkçe süre + StatusCake tarzı kompakt saat + tutarlı etiket + kesinti aralığı")
     void buildResolutionEmailHtml_accessibility_containsDuration() {
         String html = service.buildResolutionEmailHtml(
                 "down.example.com", "ACCESSIBILITY", "CRITICAL", null,
@@ -345,6 +345,21 @@ class EmailNotificationServiceTest {
         assertThat(html).contains("#16a34a");
         assertThat(html).contains("Erişim Yeniden Sağlandı");
         assertThat(html).contains("2 saat 14 dakika");
+        assertThat(html).contains("002:14:00");                 // kompakt saat (HHH:MM:SS)
+        assertThat(html).contains("Toplam Kesinti Süresi");      // tutarlı etiket
+        assertThat(html).contains("Kesinti Başlangıcı")          // net başlangıç→bitiş çifti
+                        .contains("Yeniden Ulaşılabilir");
+    }
+
+    @Test
+    @DisplayName("formatOutageClock: HHH:MM:SS (saniye dahil, <1dk, çok saatli); geçersiz → yok")
+    void formatOutageClock_zeroPadded() throws Exception {
+        var m = EmailNotificationService.class.getDeclaredMethod("formatOutageClock", String.class, String.class);
+        m.setAccessible(true);
+        assertThat(m.invoke(service, "2026-06-11T10:00:00", "2026-06-11T10:05:25")).isEqualTo("000:05:25");
+        assertThat(m.invoke(service, "2026-06-11T10:00:00", "2026-06-11T10:00:40")).isEqualTo("000:00:40");
+        assertThat(m.invoke(service, "2026-06-11T10:00:00", "2026-06-13T11:02:03")).isEqualTo("049:02:03");
+        assertThat(m.invoke(service, "bozuk", "2026-06-11T10:05:25")).isNull();
     }
 
     @Test

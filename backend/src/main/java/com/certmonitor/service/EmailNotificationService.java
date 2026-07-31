@@ -1845,7 +1845,7 @@ public class EmailNotificationService {
         String generatedAt = LocalDateTime.now(IST).format(DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm"));
         String green = "#16a34a";
         String by = resolvedBy != null && !resolvedBy.isBlank() ? resolvedBy : "Sistem (otomatik)";
-        String duration = formatOutageDuration(createdAt, resolvedAt);
+        String duration = outageDurationDisplay(createdAt, resolvedAt);
         boolean dnsChanged = "DNS_CHANGED".equals(alertType);
 
         String kicker = switch (alertType != null ? alertType : "") {
@@ -1867,11 +1867,14 @@ public class EmailNotificationService {
         };
         String levelTrLabel = dnsChanged ? "YÜKSEK" : "KRİTİK";
         String levelColor   = dnsChanged ? "#9333ea" : "#dc2626";
-        String durationLabel = dnsChanged ? "⏱ Alarm Süresi" : "⏱ Toplam Kesinti";
+        String durationLabel = dnsChanged ? "⏱ Alarm Süresi" : "⏱ Toplam Kesinti Süresi";
+        // Kesinti başlangıç→bitiş net çifti (StatusCake gibi); DNS-changed'de "alarm" terminolojisi korunur.
+        String startLabel = dnsChanged ? "📅 Alarm Başlangıcı" : "🔻 Kesinti Başlangıcı";
+        String endLabel   = dnsChanged ? "🕐 Çözülme Zamanı"    : "🔺 Yeniden Ulaşılabilir";
 
-        String resolverRows = tableRow2col("👤 Çözen",            escHtml(by))
-            + tableRow2col("🕐 Çözülme Zamanı",     fmtOrDash(formatIstanbul(resolvedAt)))
-            + tableRow2col("📅 Alarm Başlangıcı",   fmtOrDash(formatIstanbul(createdAt)));
+        String resolverRows = tableRow2col("👤 Çözen",     escHtml(by))
+            + tableRow2col(endLabel,   fmtOrDash(formatIstanbul(resolvedAt)))
+            + tableRow2col(startLabel, fmtOrDash(formatIstanbul(createdAt)));
 
         String outageRows = tableRow2col("🌐 Alan Adı",   escHtml(domain))
             + tableRow2col("⚠ Alarm Tipi",  typeTrLabel)
@@ -2369,7 +2372,7 @@ public class EmailNotificationService {
         String generatedAt = LocalDateTime.now(IST).format(DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm"));
         String green = "#16a34a";
         String by = resolvedBy != null && !resolvedBy.isBlank() ? resolvedBy : "Sistem (otomatik)";
-        String duration = formatOutageDuration(createdAt, resolvedAt);
+        String duration = outageDurationDisplay(createdAt, resolvedAt);
         String detailSection = (detailRows != null && !detailRows.isBlank())
             ? "<table width='100%' cellpadding='0' cellspacing='0' border='0' style='margin-bottom:16px;border:1px solid #e2e8f0;border-radius:10px;overflow:hidden'>"
               + "<tr><td bgcolor='#1f3864' style='background-color:#1f3864;padding:9px 14px;font-size:11px;font-weight:700;letter-spacing:.1em;color:#cbd5e1'>ÇÖZÜLEN ALARM DETAYI</td></tr>"
@@ -2381,14 +2384,14 @@ public class EmailNotificationService {
             : "";
 
         String resolverRows = tableRow2col("👤 Çözen", escHtml(by))
-            + tableRow2col("🕐 Çözülme Zamanı", fmtOrDash(formatIstanbul(resolvedAt)))
-            + tableRow2col("📅 Alarm Başlangıcı", fmtOrDash(formatIstanbul(createdAt)));
+            + tableRow2col("🔺 Yeniden Ulaşılabilir", fmtOrDash(formatIstanbul(resolvedAt)))
+            + tableRow2col("🔻 Kesinti Başlangıcı", fmtOrDash(formatIstanbul(createdAt)));
         String outageRows = tableRow2col("🌐 İzlenen", escHtml(domain))
             + tableRow2col("⚠ Alarm Tipi", typeTrLabel)
             + "<tr style='border-top:1px solid #e2e8f0'><td width='1%' style='padding:9px 13px;font-size:12px;color:#64748b;white-space:nowrap'>🔴 Seviye</td>"
             + "<td style='padding:9px 13px;font-size:14px;font-weight:700;color:#dc2626'>KRİTİK</td></tr>"
             // Vurgu satırı: <tr background> Outlook'ta beyaza düşer → her td'ye bgcolor (kardeş buildRichMonitoringResolvedHtml deseni)
-            + "<tr style='border-top:1px solid #e2e8f0'><td width='1%' bgcolor='#f0fdf4' style='background-color:#f0fdf4;padding:9px 13px;font-size:12px;color:#64748b;white-space:nowrap'>⏱ Toplam Kesinti</td>"
+            + "<tr style='border-top:1px solid #e2e8f0'><td width='1%' bgcolor='#f0fdf4' style='background-color:#f0fdf4;padding:9px 13px;font-size:12px;color:#64748b;white-space:nowrap'>⏱ Toplam Kesinti Süresi</td>"
             + "<td bgcolor='#f0fdf4' style='background-color:#f0fdf4;padding:9px 13px;font-size:14px;font-weight:800;color:" + green + "'>" + duration + "</td></tr>";
 
         // Tek-kolon (alt alta) — Outlook'ta yan-yana kolonlar kayıyordu; tam genişlik bölümler kaymaz.
@@ -3690,6 +3693,26 @@ public class EmailNotificationService {
         } catch (Exception e) {
             return "—";
         }
+    }
+
+    /** Kesinti süresini StatusCake tarzı kompakt saat biçiminde döner: {@code HHH:MM:SS} (ör. 000:05:25). null → yok. */
+    private String formatOutageClock(String createdAt, String resolvedAt) {
+        try {
+            DateTimeFormatter f = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss");
+            long secs = java.time.Duration.between(
+                    LocalDateTime.parse(createdAt, f), LocalDateTime.parse(resolvedAt, f)).getSeconds();
+            if (secs < 0) secs = 0;
+            return String.format("%03d:%02d:%02d", secs / 3600, (secs % 3600) / 60, secs % 60);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /** Okunur Türkçe süre + kompakt saat: "5 dakika · 000:05:25". Saat üretilemezse yalnız metin. */
+    private String outageDurationDisplay(String createdAt, String resolvedAt) {
+        String words = formatOutageDuration(createdAt, resolvedAt);
+        String clock = formatOutageClock(createdAt, resolvedAt);
+        return (clock == null || "—".equals(words)) ? words : words + " · " + clock;
     }
 
     private static String escHtml(String s) {

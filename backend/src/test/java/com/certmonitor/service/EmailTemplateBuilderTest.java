@@ -45,6 +45,22 @@ class EmailTemplateBuilderTest {
     }
 
     @Test
+    @DisplayName("Alarm maili: 'Neden bu e-postayı aldınız?' şeffaflık bloğu + takım adı görünür")
+    void alarm_whyReceivingBlock() {
+        String html = b.buildHtml(domainMail("HIGH", 20));
+        assertThat(html).contains("Neden bu e-postayı aldınız?").contains("SY-Dijital")
+                        .contains("yöneticinize başvurun");
+    }
+
+    @Test
+    @DisplayName("whyReceivingBlock: takım varsa adı; yoksa jenerik ifade (çökme yok)")
+    void whyReceivingBlock_teamOrGeneric() {
+        assertThat(EmailTemplateBuilder.whyReceivingBlock("SY-Dijital")).contains("SY-Dijital").contains("ekibine");
+        assertThat(EmailTemplateBuilder.whyReceivingBlock(null)).contains("Neden bu e-postayı aldınız?")
+                .doesNotContain("null");
+    }
+
+    @Test
     @DisplayName("severity etiketleri (KRİTİK/YÜKSEK/ORTA/BİLGİ) korunur; rozet metninde görünür")
     void severity() {
         assertThat(EmailTemplateBuilder.severityLabel("CRITICAL")).isEqualTo("KRİTİK");
@@ -141,7 +157,8 @@ class EmailTemplateBuilderTest {
         ctx.put("page_status", "DEGRADED");
         ctx.put("broken_resources", 3);
         ctx.put("mixed_content_count", 0);
-        ctx.put("problem_resources", "BROKEN · https://www.akbank.com/x.png (HTTP 404)\nBROKEN · https://www.akbank.com/a.css (HTTP 404)");
+        ctx.put("problem_rows", "BROKEN\thttps://www.akbank.com/x.png\t404\nBROKEN\thttps://www.akbank.com/a.css\t404");
+        ctx.put("problem_total", 2);
         var m = new EmailTemplateBuilder.AlertMail("PAGE_INTEGRITY", "HIGH", "https://www.akbank.com/",
                 "Sayfada bütünlük sorunu.", null, ctx, "DijitalSY");
         String html = b.buildHtml(m);
@@ -154,6 +171,39 @@ class EmailTemplateBuilderTest {
         assertThat(html).doesNotContain("CA/PKI").doesNotContain("yeni sertifika talep");
         String text = b.buildText(m);
         assertThat(text).contains("Sorunlu Kaynaklar").doesNotContain("CA/PKI");
+    }
+
+    @Test
+    @DisplayName("PAGE_INTEGRITY: Mod + Alarm Kapsamı + Doğrulama satırları; sorunlu kaynak ≤10 (overflow); HATA=null gizli")
+    void pageIntegrity_enrichedRows_maxTenAndNoNull() {
+        Map<String, Object> ctx = new LinkedHashMap<>();
+        ctx.put("url", "https://www.akbank.com/");
+        ctx.put("page_status", "DEGRADED");
+        ctx.put("page_mode", "SITE_CRAWL");
+        ctx.put("broken_resources", 12);
+        ctx.put("mixed_content_count", 0);
+        ctx.put("alert_third_party", false);
+        ctx.put("alert_mixed_content", true);
+        ctx.put("alert_timeout", true);
+        ctx.put("monitor_confirm_attempts", 3);
+        ctx.put("monitor_confirm_interval_ms", 30000L);
+        ctx.put("error", "null");   // ctx'e sızan literal "null" → HATA satırı GÖRÜNMEMELİ
+        StringBuilder rows = new StringBuilder();
+        for (int i = 1; i <= 10; i++) rows.append("TIMEOUT\thttps://cdn.example.com/asset-").append(i).append(".js\t\n");
+        ctx.put("problem_rows", rows.toString().trim());   // 10 satır gösterilir
+        ctx.put("problem_total", 12);                       // toplam 12 → "2 kaynak daha"
+        var m = new EmailTemplateBuilder.AlertMail("PAGE_INTEGRITY", "HIGH", "https://www.akbank.com/",
+                "Sayfada bütünlük sorunu.", null, ctx, "DijitalSY");
+        String html = b.buildHtml(m);
+        assertThat(html)
+                .contains("Site Tarama")                       // Mod
+                .contains("Alarm Kapsamı").contains("Zaman aşımı: İzleniyor")
+                .contains("Doğrulama").contains("3 ardışık kontrolde")
+                .contains("asset-10.js")                        // 10. gösterilir
+                .doesNotContain("asset-11.js")                  // 11. gösterilmez (≤10)
+                .contains("toplam 12");                         // overflow özeti
+        // "HATA = null" ARTIK YOK (strCtx literal "null"'ı yok sayar) — "Hata" satır etiketi hiç basılmaz
+        assertThat(html).doesNotContain(">null<").doesNotContain("Hata");
     }
 
     @Test

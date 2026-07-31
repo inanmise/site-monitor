@@ -2155,9 +2155,15 @@ public class SchedulerService {
         if (m.getTeamId() != null) ctx.put("team_id", m.getTeamId());
         // E-posta detay bölümü için sayfa-özel bağlam (EmailTemplateBuilder isPage dalı okur).
         ctx.put("page_status", r.get("status"));
+        ctx.put("page_mode", m.getMode());                                     // SINGLE_PAGE | SITE_CRAWL
+        ctx.put("alert_third_party",   Boolean.TRUE.equals(m.getAlertThirdParty()));
+        ctx.put("alert_mixed_content", !Boolean.FALSE.equals(m.getAlertMixedContent()));
+        ctx.put("alert_timeout",       !Boolean.FALSE.equals(m.getAlertTimeout()));
         if (r.get("broken_resources") != null) ctx.put("broken_resources", r.get("broken_resources"));
         if (r.get("mixed_content_count") != null) ctx.put("mixed_content_count", r.get("mixed_content_count"));
         if (r.get("problem_resources") != null) ctx.put("problem_resources", r.get("problem_resources"));
+        if (r.get("problem_rows") != null)  ctx.put("problem_rows",  r.get("problem_rows"));
+        if (r.get("problem_total") != null) ctx.put("problem_total", r.get("problem_total"));
         boolean mainUp = Boolean.TRUE.equals(r.get("main_up"));
         boolean integrityUp = Boolean.TRUE.equals(r.get("integrity_up"));
         String err = (String) r.get("error");
@@ -2278,22 +2284,29 @@ public class SchedulerService {
         activityLog.recordCheck(ActivityLogService.PAGE, m.getId(), m.getName(),
                 m.getUrl(), m.getTeamId(), manual, manual ? "manual" : "scheduler", activity);
 
-        // E-posta "Sorunlu Kaynaklar" bölümü için ilk ~8 sorunun kısa listesi (tür · URL · HTTP).
-        // Toggle KAPALI iken timeout satırları alarm maili "Sorunlu Kaynaklar" listesinde öne çıkmasın.
+        // E-posta "Sorunlu Kaynaklar" bölümü için ilk ≤10 sorun. Toggle KAPALI iken timeout satırları listede öne
+        // çıkmasın (shownIssues'ten çıkar). İki biçim: problem_resources (okunaklı, geriye-uyum) + problem_rows
+        // (tab-delimited "tür\tURL\tHTTP" — EmailTemplateBuilder hizalı tablo kurar; tab URL'de asla geçmez).
         List<PageCheckerService.ResourceIssue> shownIssues = alertTimeout ? res.issues()
                 : res.issues().stream().filter(i -> !"TIMEOUT".equals(i.issueType())).toList();
-        String problemList = null;
+        final int PROBLEM_LIMIT = 10;
+        String problemList = null, problemRows = null;
+        int problemTotal = shownIssues.size();
         if (!shownIssues.isEmpty()) {
             StringBuilder probs = new StringBuilder();
-            int shown = 0, total = shownIssues.size();
+            StringBuilder rows = new StringBuilder();
+            int shown = 0;
             for (PageCheckerService.ResourceIssue i : shownIssues) {
-                if (shown >= 8) { probs.append("… +").append(total - shown).append(" daha"); break; }
+                if (shown >= PROBLEM_LIMIT) { probs.append("… +").append(problemTotal - shown).append(" daha"); break; }
+                String http = i.httpStatus() != null ? String.valueOf(i.httpStatus()) : "";
                 probs.append(i.issueType()).append(" · ").append(i.resourceUrl());
-                if (i.httpStatus() != null) probs.append(" (HTTP ").append(i.httpStatus()).append(')');
+                if (!http.isEmpty()) probs.append(" (HTTP ").append(http).append(')');
                 probs.append('\n');
+                rows.append(i.issueType()).append('\t').append(i.resourceUrl()).append('\t').append(http).append('\n');
                 shown++;
             }
             problemList = probs.toString().trim();
+            problemRows = rows.toString().trim();
         }
 
         Map<String, Object> out = new LinkedHashMap<>();
@@ -2306,6 +2319,7 @@ public class SchedulerService {
         out.put("broken_resources", brokenCount);
         out.put("mixed_content_count", res.mixedContentCount());
         if (problemList != null) out.put("problem_resources", problemList);
+        if (problemRows != null) { out.put("problem_rows", problemRows); out.put("problem_total", problemTotal); }
         return out;
     }
 
