@@ -2124,6 +2124,7 @@ public class MonitoringController {
         if (blank(body.get("name"))) return badRequest("ad zorunlu");
         Long teamId = resolveWriteTeam(session, body);
         if (teamId == null) return badRequest("Takım seçimi zorunludur; izleme oluşturulamıyor.");
+        if (blank(body.get("groupName"))) return badRequest("Grup seçimi zorunludur; izleme oluşturulamıyor.");
         String name = body.get("name").toString().trim();
         if (scriptedMonitorRepo.existsDuplicate(name, teamId, null))
             return badRequest("Bu ad bu takımda zaten kullanılıyor; mükerrer senaryo oluşturulamaz.");
@@ -2158,6 +2159,7 @@ public class MonitoringController {
         if (scanErr != null) return badRequest(scanErr);
         return scriptedMonitorRepo.findById(id).map(m -> {
             if (!canOperateTeam(session, m.getTeamId())) throw new SecurityException("Bu takımın izlemesini düzenleyemezsiniz");
+            if (body.containsKey("groupName") && blank(body.get("groupName"))) return badRequest("Grup seçimi zorunludur.");
             if (body.get("name")   != null) m.setName(body.get("name").toString().trim());
             if (body.containsKey("groupName")) m.setGroupName(monitoringGroupService.getOrCreateFor(m, m.getTeamId(), body.get("groupName") == null ? null : body.get("groupName").toString(), actor(session)));
             if (body.containsKey("teamId"))    m.setTeamId(resolveTeamChange(session, m.getTeamId(), body.get("teamId")));
