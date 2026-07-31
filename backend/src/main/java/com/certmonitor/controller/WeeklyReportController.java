@@ -325,10 +325,18 @@ public class WeeklyReportController {
         }
         String body =
             "<div class='wk'>" + team + " · " + week + "</div>"
-            + "<p class='msg'>Bu haftalık raporu onaylamak üzeresiniz. Onayladığınızda rapor müdüre otomatik iletilecek.</p>"
+            + "<p class='msg'>Bu haftalık raporu onaylayabilir ya da düzeltme için ekibe iade edebilirsiniz. "
+            + "Onayladığınızda rapor müdüre otomatik iletilir; iade ettiğinizde ekibe (opsiyonel) notunuzla bilgi gider.</p>"
             + "<form method='post' action='/api/weekly-reports/approve-link/confirm'>"
             + "<input type='hidden' name='token' value='" + esc(token) + "'>"
             + "<button type='submit' class='btn'>✅ Raporu Onayla</button>"
+            + "</form>"
+            + "<div class='sep'>— veya —</div>"
+            + "<form method='post' action='/api/weekly-reports/approve-link/reject'>"
+            + "<input type='hidden' name='token' value='" + esc(token) + "'>"
+            + "<div class='alt'>İade nedeni (opsiyonel)</div>"
+            + "<textarea name='reason' rows='3' class='ta' placeholder='Ekibe iletilecek kısa düzeltme notu…'></textarea>"
+            + "<button type='submit' class='btn2'>↩ İade Et</button>"
             + "</form>";
         return htmlPage("Haftalık Rapor Onayı", body, "#15803d");
     }
@@ -347,6 +355,24 @@ public class WeeklyReportController {
         } catch (Exception e) {
             String msg = e.getMessage() != null ? e.getMessage() : "Onay işlemi başarısız.";
             return htmlPage("Onay Başarısız", "<p class='msg'>" + esc(msg) + "</p>", "#dc2626");
+        }
+    }
+
+    /** İade Et butonu POST eder → token ile iade (opsiyonel neden). Rapor DRAFT'a döner, ekibe iade-maili gider. */
+    @PostMapping(value = "/approve-link/reject", produces = MediaType.TEXT_HTML_VALUE)
+    public ResponseEntity<String> approveLinkReject(@RequestParam(required = false) String token,
+                                                    @RequestParam(required = false) String reason) {
+        try {
+            Map<String, Object> res = service.rejectViaToken(token, reason);
+            String mail = String.valueOf(res.get("mail_status"));
+            String note = (mail != null && (mail.startsWith("SENT") || mail.equals("QUEUED_RETRY")))
+                ? "İade bilgisi ve notunuz ekibe e-posta ile iletildi."
+                : "Rapor iade edildi; ekip bilgilendirme e-postası gönderilemedi/atlandı (" + esc(mail) + ").";
+            return htmlPage("İade Edildi",
+                "<p class='msg'><strong>Rapor iade edildi.</strong><br>" + note + "</p>", "#d97706");
+        } catch (Exception e) {
+            String msg = e.getMessage() != null ? e.getMessage() : "İade işlemi başarısız.";
+            return htmlPage("İade Başarısız", "<p class='msg'>" + esc(msg) + "</p>", "#dc2626");
         }
     }
 
@@ -371,6 +397,13 @@ public class WeeklyReportController {
             + ".msg{font-size:14px;line-height:1.7;color:#475569}"
             + ".btn{display:inline-block;margin-top:20px;background:" + accent + ";color:#fff;border:none;"
             + "border-radius:8px;padding:13px 30px;font-size:15px;font-weight:800;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.12)}"
+            + ".sep{margin:22px 0 4px;text-align:center;font-size:12px;font-weight:700;letter-spacing:.06em;color:#94a3b8}"
+            + ".alt{margin-top:12px;font-size:12px;font-weight:700;color:#64748b}"
+            + ".ta{display:block;width:100%;box-sizing:border-box;margin-top:6px;border:1px solid #E5E8EC;border-radius:8px;"
+            + "padding:10px 12px;font-size:14px;font-family:inherit;color:#1F2937;resize:vertical}"
+            + ".ta:focus{outline:none;border-color:#d97706}"
+            + ".btn2{display:inline-block;margin-top:12px;background:#fff;color:#b45309;border:1px solid #f59e0b;"
+            + "border-radius:8px;padding:11px 26px;font-size:14px;font-weight:800;cursor:pointer}"
             + ".ft{padding:14px 28px;border-top:1px solid #E5E8EC;font-size:11px;color:#94a3b8;text-align:center}"
             + "</style></head><body><div class='card'>"
             + "<div class='hd'><span class='wm'>CertMonitor</span><span class='ent'>ENTERPRISE</span>"

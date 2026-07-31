@@ -493,6 +493,56 @@ public class WeeklyReportService {
         return out;
     }
 
+    /** E-posta magic-link ile İADE — {@link #approveViaToken} token akışını, {@link #reject} mutasyon/mail desenini
+     *  birleştirir. Token = yetki (requireCanApprove YOK). Session reject'ten farkı: <b>açıklama OPSİYONEL</b>. */
+    @Transactional
+    public Map<String, Object> rejectViaToken(String token, String note) {
+        if (token == null || token.isBlank()) throw new IllegalArgumentException("Geçersiz iade bağlantısı");
+        WeeklyReport r = reportRepo.findByApprovalToken(token.trim())
+                .orElseThrow(() -> new IllegalArgumentException("İade bağlantısı geçersiz veya kullanılmış"));
+        if (tokenExpired(r)) throw new IllegalStateException("Bağlantının süresi dolmuş");
+        if (!"PENDING_APPROVAL".equals(r.getStatus())) {
+            throw new IllegalStateException("APPROVED".equals(r.getStatus())
+                    ? "Bu rapor zaten onaylanmış" : "Rapor onay bekleme durumunda değil");
+        }
+        String rejecter = resolvePoDisplayName(r.getTeamId());
+        Actor actor = new Actor(null, "email-approval", rejecter, r.getTeamId(), "ADMIN");
+        String finalNote = (note != null && !note.isBlank()) ? note.trim() : "İade edildi — neden belirtilmedi (e-posta ile)";
+
+        r.setStatus("REJECTED");
+        r.setVersion(r.getVersion() + 1);
+        clearApprovalToken(r);
+        r.setRejectNote(finalNote);
+        r.setRejectedBy(rejecter);
+        r.setRejectedAt(now());
+        r.setUpdatedBy(rejecter);
+        r.setUpdatedAt(now());
+        reportRepo.save(r);
+
+        Team team = teamRepo.findById(r.getTeamId()).orElse(null);
+        String teamName = team != null ? team.getName() : "Takım";
+        String teamEmail = team != null && team.getEmail() != null && !team.getEmail().isBlank()
+                ? team.getEmail().trim() : null;
+        String rjSubject = "[CertMonitor] " + teamName + " — " + r.getWeekLabel() + " raporu iade edildi";
+        String rjHtml = emailService.buildWeeklyReportRejectedHtml(teamName, r.getWeekLabel(), finalNote, rejecter);
+        String rjStatus;
+        if (teamEmail != null) {
+            rjStatus = emailService.sendHtml(new String[]{teamEmail}, null, rjSubject, rjHtml, null);
+        } else {
+            rjStatus = "SKIPPED_NO_CONTACT";
+            log.warn("İade maili atlanıyor — takım email'i yok: team={} report={}", teamName, r.getId());
+        }
+        recordMail(r, "REJECT_TEAM", teamEmail != null ? List.of(teamEmail) : List.of(),
+                null, rjSubject, rjHtml, rjStatus, actor);
+        log.info("Haftalık rapor e-posta linki ile İADE edildi: id={} team={} by={} mail={}",
+                r.getId(), r.getTeamId(), rejecter, rjStatus);
+
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("data", r);
+        out.put("mail_status", rjStatus);
+        return out;
+    }
+
     private boolean tokenExpired(WeeklyReport r) {
         if (r.getApprovalTokenExpiresAt() == null) return true;
         try {

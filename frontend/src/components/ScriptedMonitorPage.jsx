@@ -23,7 +23,7 @@ const REFRESH = 60
 const emptyForm = {
   name: '', description: '', groupName: '', teamId: '', tags: '', notifyEmail: true,
   intervalSeconds: 300, timeoutSeconds: 60, confirmAttempts: 3, confirmIntervalSeconds: 30,
-  recoveryChecks: 3, recoveryIntervalSeconds: 30, active: true, script: '', env: [],
+  recoveryChecks: 3, recoveryIntervalSeconds: 30, active: true, script: '', env: [], template: '',
 }
 
 const STATUS_COLOR = { PASS: '#16a34a', FAIL: '#d97706', ERROR: '#dc2626', TIMEOUT: '#b45309', unknown: '#9ca3af' }
@@ -196,9 +196,11 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
           ⚠ {t('scripted.k6Disabled')}
         </div>}
 
-      <div className="upt-toolbar">
-        <input className="input" placeholder={t('scripted.searchPlaceholder')} value={search} onChange={e => setSearch(e.target.value)} />
-      </div>
+      {!loading && monitors.length > 0 &&
+        <div className="upt-toolbar" style={{ justifyContent: 'flex-end' }}>
+          <input className="upt-search" type="text" placeholder={t('scripted.searchPlaceholder')}
+            value={search} onChange={e => setSearch(e.target.value)} />
+        </div>}
 
       {loading ? <div className="empty">{t('scripted.loading')}</div>
         : scoped.length === 0 ? <div className="empty">{t('scripted.none')}</div>
@@ -278,7 +280,12 @@ function EditModal({ t, lang, form, setForm, modal, saving, testing, testResult,
           {/* Şablon seçici */}
           <div className="full-width">
             <div className="block-title">{t('scripted.template')}</div>
-            <select className="input" defaultValue="" onChange={e => { if (e.target.value) applyTemplate(e.target.value) }}>
+            <select className="input" value={form.template || ''} onChange={e => {
+              const v = e.target.value
+              setForm(f => ({ ...f, template: v }))
+              if (v) applyTemplate(v)
+              else setForm(f => ({ ...f, script: '', env: [] }))   // "Bir şablon seçin" → script + env temizlenir
+            }}>
               <option value="">{t('scripted.templatePick')}</option>
               {SCRIPTED_TEMPLATES.map(tp => <option key={tp.id} value={tp.id}>{tp.name[lang] || tp.name.en}</option>)}
             </select>
@@ -294,21 +301,24 @@ function EditModal({ t, lang, form, setForm, modal, saving, testing, testResult,
           {/* Env değişkenleri */}
           <div className="full-width">
             <div className="block-title">{t('scripted.env')}</div>
-            {form.env.map((e, i) => (
-              <div key={i} className="env-row" style={{ display: 'flex', gap: 8, marginBottom: 6, alignItems: 'center' }}>
-                <input className="input" style={{ flex: 1 }} placeholder={t('scripted.envName')} value={e.name}
-                  onChange={ev => setEnvRow(i, { name: ev.target.value })} />
-                <input className="input" style={{ flex: 2 }} type={e.secret ? 'password' : 'text'} autoComplete="new-password"
-                  placeholder={e.secret ? (e.value_set ? t('scripted.envSecretSet') : t('scripted.envSecretEmpty')) : t('scripted.envValue')}
-                  value={e.value} onChange={ev => setEnvRow(i, { value: ev.target.value })} />
-                <label className="checkbox-label" style={{ whiteSpace: 'nowrap' }}>
-                  <input type="checkbox" checked={e.secret} onChange={ev => setEnvRow(i, { secret: ev.target.checked, value: '' })} />
-                  {e.secret ? <EyeOff size={13} /> : <Eye size={13} />} {t('scripted.envSecret')}
-                </label>
-                <button className="btn btn-xs" onClick={() => delEnvRow(i)}><Trash2 size={13} /></button>
-              </div>
-            ))}
-            <button className="btn btn-secondary btn-sm" onClick={addEnvRow}><Plus size={13} /> {t('scripted.envAdd')}</button>
+            {form.env.length > 0 &&
+              <div className="env-list">
+                {form.env.map((e, i) => (
+                  <div key={i} className="env-row">
+                    <input className="input env-name" placeholder={t('scripted.envName')} value={e.name}
+                      onChange={ev => setEnvRow(i, { name: ev.target.value })} />
+                    <input className="input env-val" type={e.secret ? 'password' : 'text'} autoComplete="new-password"
+                      placeholder={e.secret ? (e.value_set ? t('scripted.envSecretSet') : t('scripted.envSecretEmpty')) : t('scripted.envValue')}
+                      value={e.value} onChange={ev => setEnvRow(i, { value: ev.target.value })} />
+                    <label className="checkbox-label env-secret" title={t('scripted.envSecret')}>
+                      <input type="checkbox" checked={e.secret} onChange={ev => setEnvRow(i, { secret: ev.target.checked, value: '' })} />
+                      {e.secret ? <EyeOff size={14} /> : <Eye size={14} />} {t('scripted.envSecret')}
+                    </label>
+                    <button type="button" className="icon-btn env-del" title={t('scripted.delete')} onClick={() => delEnvRow(i)}><Trash2 size={15} /></button>
+                  </div>
+                ))}
+              </div>}
+            <button type="button" className="btn btn-secondary btn-sm env-add" onClick={addEnvRow}><Plus size={13} /> {t('scripted.envAdd')}</button>
             <span className="field-hint">{t('scripted.envHint')}</span>
           </div>
 

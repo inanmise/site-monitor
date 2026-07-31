@@ -1830,6 +1830,34 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .form-grid label { display: flex; flex-direction: column; gap: 5px; font-size: .88em; font-weight: 600; }
 .form-grid label input, .form-grid label select { padding: 9px 10px; border: 1px solid var(--border); border-radius: 4px; font-size: .95em; }
 .form-grid .full-width { grid-column: 1 / -1; }
+/* Genel form-control sınıfı — Senaryo İzleme modalı .input kullanıyor ama sınıf
+   tanımsızdı; label DIŞINDAKİ alanlar (Ortam Değişkenleri AD/değer) tarayıcı
+   varsayılanında kalıyordu. Üstteki Ad/Açıklama alanlarıyla birebir aynı görünüm. */
+.input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 9px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--input-bg);
+  color: var(--input-text);
+  font-family: inherit;
+  font-size: .95em;
+  transition: border-color .15s, box-shadow .15s;
+}
+.input:focus { outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px rgba(59,130,246,.15); }
+.input::placeholder { color: var(--text-light); opacity: .85; }
+.input:disabled { background: var(--bg-surface); color: var(--text-light); cursor: not-allowed; }
+/* Ortam Değişkenleri satırları (Senaryo İzleme) — AD/değer + Gizli + sil, hizalı ve tutarlı. */
+.env-list { display: flex; flex-direction: column; gap: 8px; margin: 4px 0 10px; }
+.env-row { display: flex; gap: 8px; align-items: center; }
+.env-row .env-name { flex: 1 1 0; min-width: 0; }
+.env-row .env-val  { flex: 2 1 0; min-width: 0; }
+.env-secret { flex-shrink: 0; font-size: .82em; font-weight: 600; color: var(--text-light); white-space: nowrap; }
+.env-secret input[type="checkbox"] { margin: 0; }
+.env-del { flex-shrink: 0; }
+.env-del:hover { color: #dc2626; border-color: #dc2626; background: rgba(220,38,38,.07); }
+.env-add { margin-top: 2px; }
 /* Üstten hizalama — bir alanda input ALTINDA field-hint olunca (örn. DNS edit'te
    read-only domain), end-hizalama komşu input'u aşağı kaydırır; start ile inputlar üstte hizalı kalır. */
 .form-grid--top { align-items: start; }
@@ -5358,6 +5386,32 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
   margin-bottom: 16px;
   flex-shrink: 0;
 }
+/* Senaryo İzleme modal başlık satırı: başlık solda, kapatma (X) butonu sağda.
+   (.modal-head / .icon-btn eskiden tanımsızdı → X başlığın altına sola düşüyordu.) */
+.modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 24px 28px 14px;
+  flex-shrink: 0;
+}
+.modal-head h3 { margin: 0; font-size: 1.2em; font-weight: 700; }
+.icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-light);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background .15s, color .15s, border-color .15s;
+}
+.icon-btn:hover { background: var(--bg-surface); color: var(--text); border-color: var(--text-light); }
 .modal-box.modal-wide > .form-grid {
   padding: 0 28px;
   overflow-y: auto;

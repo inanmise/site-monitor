@@ -4,6 +4,27 @@
 
 export const SCRIPTED_TEMPLATES = [
   {
+    id: 'smoke-health',
+    name: { tr: 'Sistem sağlık kontrolü (smoke)', en: 'System health check (smoke)' },
+    desc: {
+      tr: 'k6 / Senaryo İzleme uçtan uca çalışıyor mu — env GEREKTİRMEZ; public k6 test sitesine GET atar. "Test Çalıştır" ile sistemin çalıştığını hızlıca gözlemlemek için.',
+      en: 'Is k6 / Scripted Check working end to end — NO env needed; GETs the public k6 test site. Use "Test Run" to quickly observe the system is working.',
+    },
+    env: [],
+    script: `import http from 'k6/http';
+import { check } from 'k6';
+
+// Env gerektirmez — k6/Senaryo İzleme'nin uçtan uca çalıştığını doğrulayan basit smoke testi.
+export default function () {
+  const r = http.get('https://test.k6.io');
+  check(r, {
+    'status 200': (res) => res.status === 200,
+    'gövde var': (res) => (res.body || '').length > 0,
+  });
+}
+`,
+  },
+  {
     id: 'oidc-keycloak',
     name: { tr: 'OIDC / Keycloak login akışı', en: 'OIDC / Keycloak login flow' },
     desc: {
