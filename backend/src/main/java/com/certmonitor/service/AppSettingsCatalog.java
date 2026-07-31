@@ -51,6 +51,16 @@ public final class AppSettingsCatalog {
         // Sayfa-bütünlüğü check/issue serisi — gün-bazlı saklama (gece batch-purge).
         new Setting("cert.monitor.metrics.page.retention-days",       "monitoring", Type.INT),
         new Setting("cert.monitor.metrics.page-issues.retention-days","monitoring", Type.INT),
+        // Senaryo İzleme (10. tür) — k6 alt süreç havuzu, timeout tavanları, çıktı/güvenlik + saklama.
+        new Setting("cert.monitor.scripted.enabled",                 "scripted", Type.BOOL),
+        new Setting("cert.monitor.scripted.pool-size",               "scripted", Type.INT),
+        new Setting("cert.monitor.scripted.default-timeout-seconds", "scripted", Type.INT),
+        new Setting("cert.monitor.scripted.max-timeout-seconds",     "scripted", Type.INT),
+        new Setting("cert.monitor.scripted.output-tail-bytes",       "scripted", Type.INT),
+        new Setting("cert.monitor.scripted.manual-cooldown-seconds", "scripted", Type.INT),
+        new Setting("cert.monitor.scripted.k6-bin",                  "scripted", Type.STRING),
+        new Setting("cert.monitor.scripted.hardcoded-secret-policy", "scripted", Type.ENUM, java.util.List.of("WARN", "BLOCK")),
+        new Setting("cert.monitor.metrics.scripted.retention-days",  "scripted", Type.INT),
         // Alan adı (domain) süre-bitişi izleme — RDAP (proxy-aware) + env-gated WHOIS.
         new Setting("cert.monitor.domain.alert-enabled",         "monitoring", Type.BOOL),
         new Setting("cert.monitor.domain.rdap-bootstrap-url",    "monitoring", Type.STRING),

@@ -165,12 +165,14 @@ secret:
 # eşzamanlılık + cache + büyük-okuma tamponları; OOM=tam kesinti). request'ler garanti kapasite için
 # yükseltildi (eski 512Mi/500m node over-commit + CFS throttling'e açıktı).
 # AKSİYON: node'un bu pod'a 4 CPU / 3Gi verebildiğini doğrula.
+# Senaryo İzleme (10. tür): her kontrolde kısa ömürlü k6 alt süreci JVM RSS'inin ÜSTÜNE bellek ekler
+# (havuz varsayılan 2 eşzamanlı × ~50-150Mi). Bu yük için memory limit 3Gi→3.5Gi, request 1.5→1.75Gi yükseltildi.
 resources:
   requests:
-    memory: "1536Mi"
+    memory: "1792Mi"
     cpu: "1500m"
   limits:
-    memory: "3072Mi"
+    memory: "3584Mi"
     cpu: "4000m"
 
 # Kubernetes/OpenShift sağlık probe'ları — Spring Boot Actuator grupları:

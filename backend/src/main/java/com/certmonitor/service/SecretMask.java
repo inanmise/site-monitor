@@ -45,6 +45,20 @@ public final class SecretMask {
         return s.isBlank() ? "(ayarsız)" : s;
     }
 
+    /**
+     * Metin GÖVDESİNDE bilinen secret DEĞERLERİNİ maskeler — k6 stdout/stderr için (bu sınıf normalde anahtar-adı
+     * maskeler; bu ise değer-tabanlı). Çok kısa değerler (≤3 karakter) atlanır (yanlış-pozitif/gürültü).
+     */
+    public static String maskValues(String text, java.util.Collection<String> secretValues) {
+        if (text == null || text.isEmpty() || secretValues == null) return text;
+        String out = text;
+        for (String v : secretValues) {
+            if (v == null || v.length() < 4) continue;
+            out = out.replace(v, MASK);
+        }
+        return out;
+    }
+
     /** JDBC URL'e gömülü kimlik bilgilerini maskeler; host/port/db görünür kalır. */
     public static String maskJdbcUrl(String url) {
         if (url == null || url.isBlank()) return "(ayarsız)";

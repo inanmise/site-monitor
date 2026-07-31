@@ -52,6 +52,8 @@ public final class PermissionCatalog {
         r("monitoring.read",       "monitoring", VIEW),
         r("monitoring.crud",       "monitoring", EDIT),
         r("monitoring.trigger",    "monitoring", EXECUTE),
+        // Senaryo İzleme (k6) — keyfi kod çalıştırma → hassas; yalnız ADMIN + TEAM_ADMIN (PO). EDIT=CRUD, EXECUTE=çalıştır/test.
+        new Resource("monitoring.scripted", "monitoring", List.of(EDIT, EXECUTE), Set.of(EDIT, EXECUTE)),
         r("domain.registration.view", "monitoring", VIEW),   // Domain Kaydı sekmesi (registrar/IANA/DNSSEC/IP/EPP)
         r("monitoring.group", "monitoring", VIEW),           // İzleme Grupları — görüntüleme (takım-scope)
         r("monitoring.group", "monitoring", EDIT),           // İzleme Grupları — yeniden adlandırma (takım-scope)
@@ -170,7 +172,8 @@ public final class PermissionCatalog {
             // global admin/AUDIT erişebilir (requireAuditAccess); TEAM_ADMIN'e verilmez.
             "weak_algo.read",
             // monitoring.crud/trigger: kendi takımı için keyword/ping izleme oluştur/düzenle/çalıştır
-            "monitoring.read", "monitoring.crud", "monitoring.trigger", "domain.registration.view", "monitoring.group",
+            // monitoring.scripted: PO/TEAM_ADMIN kendi takımı için k6 senaryosu yazar/çalıştırır (USER'a AÇILMAZ)
+            "monitoring.read", "monitoring.crud", "monitoring.trigger", "monitoring.scripted", "domain.registration.view", "monitoring.group",
             // Haftalık raporlar: takım yöneticisi okur/düzenler ve onaylayabilir;
             // tanılama geçmişini görür (canlı tarama admin-only kalır)
             "weekly_reports.read", "weekly_reports.crud", "weekly_reports.approve",

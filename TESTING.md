@@ -116,4 +116,17 @@ that dips below fails.
 3. For frontend, the Vitest output is inline in the log. Re-run locally with `npm run test:watch` to iterate.
 4. For Trivy or `npm audit` regressions, decide: is this an actual CVE that needs a dependency bump, or a false positive that needs an allowlist? Don't suppress without writing down the reasoning.
 
+## Senaryo İzleme (k6) testleri
+
+Karar mantığı, k6 özet-JSON ayrıştırma, secret maskeleme (`SecretMask.maskValues`), `--blacklist-ip` CIDR üretimi
+(`SsrfGuard.blacklistCidrs`) ve sabit-kodlu-secret taraması **birim testlerle** (k6 gerektirmez) kapsanır:
+`ScriptedCheckerServiceTest`, `SecretMaskTest`, `SsrfGuardTest`. Controller yetkisi (`monitoring.scripted` →
+ADMIN/TEAM_ADMIN; USER 403) `MonitoringControllerTest`'te doğrulanır.
+
+**Gerçek k6 ile entegrasyon (opsiyonel — CI imajında k6 binary'si olduğunda):** k6 kurulu bir ortamda
+`ScriptedCheckerService` bir yerel HTTP sunucusuna karşı çalıştırılarak PASS / FAIL (check kasıtlı başarısız) /
+ERROR (sentaks hatası) / TIMEOUT (sleep — sürecin öldüğü + temp dosyaların silindiği doğrulanır) senaryoları ve
+`--blacklist-ip`'in iç ağ isteğini engellediği test edilir. k6 yoksa `ScriptedCheckerService.isAvailable()` false döner
+ve bu testler anlamlı şekilde **atlanır** (`org.junit.jupiter.api.Assumptions.assumeTrue(...)`), açılış/derleme bozulmaz.
+
 If you change anything that would invalidate this document, update it in the same commit.

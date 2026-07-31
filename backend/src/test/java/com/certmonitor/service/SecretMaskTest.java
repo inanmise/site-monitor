@@ -42,6 +42,16 @@ class SecretMaskTest {
     }
 
     @Test
+    @DisplayName("maskValues: bilinen secret DEĞERLERİ gövdede maskelenir; kısa değerler atlanır")
+    void maskValues_body() {
+        String out = "login OK user=svc-mon token=s3cr3t-value-xyz done";
+        String masked = SecretMask.maskValues(out, java.util.List.of("s3cr3t-value-xyz", "ab"));
+        assertThat(masked).contains(SecretMask.MASK).doesNotContain("s3cr3t-value-xyz");
+        assertThat(SecretMask.maskValues(out, null)).isEqualTo(out);   // secretValues null → değişmez
+        assertThat(SecretMask.maskValues("x ab y", java.util.List.of("ab"))).isEqualTo("x ab y"); // ≤3 krk atlanır
+    }
+
+    @Test
     @DisplayName("maskJdbcUrl: gömülü user:pass ve query kimlik ayıklanır; host/port/db görünür kalır")
     void maskJdbcUrl_extractsCredentials() {
         String a = SecretMask.maskJdbcUrl("jdbc:postgresql://certuser:s3cr3t@db-host:5432/certmonitor");

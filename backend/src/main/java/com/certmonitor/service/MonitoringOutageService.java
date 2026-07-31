@@ -448,6 +448,8 @@ public class MonitoringOutageService {
             case EscalationService.TYPE_PAGE_DOWN,
                  EscalationService.TYPE_PAGE_INTEGRITY ->
                     appSettings.getBoolean("cert.monitor.page.alert-enabled", true);
+            case EscalationService.TYPE_SCRIPTED_FAIL ->
+                    appSettings.getBoolean("cert.monitor.scripted.enabled", true);
             case EscalationService.TYPE_DOMAINMON_EXPIRY,
                  EscalationService.TYPE_DOMAINMON_UNKNOWN,
                  EscalationService.TYPE_DOMAINMON_STATUS,

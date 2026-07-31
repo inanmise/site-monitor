@@ -76,4 +76,38 @@ public class SsrfGuard {
     static boolean isUniqueLocalV6(InetAddress ip) {
         return ip instanceof Inet6Address && (ip.getAddress()[0] & 0xFE) == 0xFC;
     }
+
+    /**
+     * {@link #blockReason} politikasının CIDR karşılığı — k6 {@code --blacklist-ip} için tek kaynak. Metadata +
+     * multicast + link-local HER ZAMAN; loopback yalnız {@code allowLoopback=false}; RFC1918+ULA yalnız
+     * {@code allowInternal=false}. (k6 kendi DNS çözümünü yapar; bu yüzden aralık kuralları verilir.)
+     */
+    public List<String> blacklistCidrs() {
+        boolean allowInternal = appSettings.getBoolean("cert.monitor.monitoring.allow-internal-targets", true);
+        boolean allowLoopback = appSettings.getBoolean("cert.monitor.monitoring.allow-loopback-targets", false);
+        return blacklistCidrs(allowInternal, allowLoopback);
+    }
+
+    /** Saf/statik — ağsız test edilebilir. */
+    static List<String> blacklistCidrs(boolean allowInternal, boolean allowLoopback) {
+        java.util.List<String> c = new java.util.ArrayList<>();
+        // Her zaman: cloud-metadata + multicast + link-local
+        c.add("169.254.169.254/32");
+        c.add("fd00:ec2::254/128");
+        c.add("224.0.0.0/4");
+        c.add("ff00::/8");
+        c.add("169.254.0.0/16");
+        c.add("fe80::/10");
+        if (!allowLoopback) {
+            c.add("127.0.0.0/8");
+            c.add("::1/128");
+        }
+        if (!allowInternal) {
+            c.add("10.0.0.0/8");
+            c.add("172.16.0.0/12");
+            c.add("192.168.0.0/16");
+            c.add("fc00::/7");
+        }
+        return c;
+    }
 }

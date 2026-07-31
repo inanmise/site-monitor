@@ -29,6 +29,10 @@ RUN apk add --no-cache curl bash bind-tools busybox-extras less openssl iproute2
 ARG VERSION=1.0.0
 ARG BUILD_DATE
 ARG GIT_COMMIT
+# Senaryo İzleme (10. tür): sabitlenmiş sürümlü k6 binary'si — grafana/k6 imajından kopyalanır (alpine/musl uyumlu,
+# statik binary). Her kontrolde kısa ömürlü sandboxlu alt süreç olarak çalışır. Sürümü build-arg ile pinle.
+ARG K6_VERSION=0.49.0
+COPY --from=grafana/k6:${K6_VERSION} /usr/bin/k6 /usr/bin/k6
 
 LABEL org.opencontainers.image.title="CertMonitor" \
       org.opencontainers.image.description="SSL/TLS Certificate Monitoring System" \
