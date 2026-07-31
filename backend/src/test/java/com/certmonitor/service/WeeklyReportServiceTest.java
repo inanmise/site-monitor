@@ -884,6 +884,67 @@ class WeeklyReportServiceTest {
     }
 
     @Test
+    @DisplayName("rejectViaToken: geçerli token PENDING raporu iade eder + not + iade-maili + token temizlenir")
+    void rejectViaToken_valid_rejects() {
+        WeeklyReport r = report(5L, 2L, "PENDING_APPROVAL");
+        r.setApprovalToken("T1"); r.setApprovalTokenExpiresAt(tokenTime(86400));
+        when(reportRepo.findByApprovalToken("T1")).thenReturn(Optional.of(r));
+
+        Map<String, Object> out = service.rejectViaToken("T1", "Madde 4 eksik");
+
+        assertThat(r.getStatus()).isEqualTo("REJECTED");
+        assertThat(r.getRejectNote()).contains("Madde 4 eksik");
+        assertThat(r.getApprovalToken()).isNull();
+        assertThat(out.get("mail_status")).isNotNull();
+        verify(emailService).sendHtml(eq(new String[]{"takim@test.com"}), isNull(),
+                contains("iade edildi"), anyString(), isNull());
+        verify(emailService).buildWeeklyReportRejectedHtml(eq("DijitalSY"), anyString(),
+                contains("Madde 4 eksik"), anyString());
+    }
+
+    @Test
+    @DisplayName("rejectViaToken: açıklama OPSİYONEL — boş not → varsayılan iade notu")
+    void rejectViaToken_blankNote_usesDefault() {
+        WeeklyReport r = report(5L, 2L, "PENDING_APPROVAL");
+        r.setApprovalToken("T1"); r.setApprovalTokenExpiresAt(tokenTime(86400));
+        when(reportRepo.findByApprovalToken("T1")).thenReturn(Optional.of(r));
+
+        service.rejectViaToken("T1", "   ");
+
+        assertThat(r.getStatus()).isEqualTo("REJECTED");
+        assertThat(r.getRejectNote()).contains("neden belirtilmedi");
+    }
+
+    @Test
+    @DisplayName("rejectViaToken: süresi geçmiş token reddedilir, durum değişmez")
+    void rejectViaToken_expired_throws() {
+        WeeklyReport r = report(5L, 2L, "PENDING_APPROVAL");
+        r.setApprovalToken("T1"); r.setApprovalTokenExpiresAt(tokenTime(-86400));
+        when(reportRepo.findByApprovalToken("T1")).thenReturn(Optional.of(r));
+        assertThatThrownBy(() -> service.rejectViaToken("T1", "x"))
+                .isInstanceOf(IllegalStateException.class);
+        assertThat(r.getStatus()).isEqualTo("PENDING_APPROVAL");
+    }
+
+    @Test
+    @DisplayName("rejectViaToken: bilinmeyen token reddedilir")
+    void rejectViaToken_unknown_throws() {
+        when(reportRepo.findByApprovalToken("X")).thenReturn(Optional.empty());
+        assertThatThrownBy(() -> service.rejectViaToken("X", null))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    @DisplayName("rejectViaToken: zaten onaylanmış raporda hata")
+    void rejectViaToken_alreadyApproved_throws() {
+        WeeklyReport r = report(5L, 2L, "APPROVED");
+        r.setApprovalToken("T1"); r.setApprovalTokenExpiresAt(tokenTime(86400));
+        when(reportRepo.findByApprovalToken("T1")).thenReturn(Optional.of(r));
+        assertThatThrownBy(() -> service.rejectViaToken("T1", "x"))
+                .isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
     @DisplayName("approvalTokenStatus: geçerli PENDING → valid=true + özet")
     void approvalTokenStatus_valid() {
         WeeklyReport r = report(5L, 2L, "PENDING_APPROVAL");

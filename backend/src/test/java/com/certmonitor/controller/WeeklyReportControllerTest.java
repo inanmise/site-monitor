@@ -20,6 +20,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.NoSuchElementException;
 
+import static org.hamcrest.Matchers.containsString;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
@@ -373,5 +374,46 @@ class WeeklyReportControllerTest {
         org.mockito.Mockito.verify(auditService).recordAction(
                 eq("WEEKLY_REPORT_REMINDER_TRIGGER"), any(), any(jakarta.servlet.http.HttpServletRequest.class),
                 eq("WEEKLY_REPORT"), eq("-"), contains("\"sent\":2"));
+    }
+
+    // ── Magic-link onay sayfası: Onayla + İade Et (opsiyonel neden) ───────────
+
+    @Test
+    @DisplayName("GET /approve-link geçerli token → sayfada hem Onayla hem İade Et (name='reason' textarea) var")
+    void approveLinkPage_valid_hasApproveAndReject() throws Exception {
+        when(service.approvalTokenStatus("T1")).thenReturn(Map.of(
+                "valid", true, "team_name", "DijitalSY", "week_label", "2026-W24"));
+
+        mvc.perform(get("/api/weekly-reports/approve-link").param("token", "T1"))
+                .andExpect(status().isOk())
+                .andExpect(content().string(containsString("Raporu Onayla")))
+                .andExpect(content().string(containsString("İade Et")))
+                .andExpect(content().string(containsString("name='reason'")))
+                .andExpect(content().string(containsString("approve-link/reject")));
+    }
+
+    @Test
+    @DisplayName("POST /approve-link/reject → service.rejectViaToken çağrılır + İade Edildi HTML")
+    void approveLinkReject_success() throws Exception {
+        when(service.rejectViaToken(eq("T1"), eq("Madde 4 eksik")))
+                .thenReturn(Map.of("data", report(5L, 2L, "REJECTED"), "mail_status", "SENT"));
+
+        mvc.perform(post("/api/weekly-reports/approve-link/reject")
+                        .param("token", "T1").param("reason", "Madde 4 eksik"))
+                .andExpect(status().isOk())
+                .andExpect(content().string(containsString("iade edildi")));
+
+        org.mockito.Mockito.verify(service).rejectViaToken("T1", "Madde 4 eksik");
+    }
+
+    @Test
+    @DisplayName("POST /approve-link/reject geçersiz token → İade Başarısız HTML (200 sayfa)")
+    void approveLinkReject_invalidToken() throws Exception {
+        when(service.rejectViaToken(any(), any()))
+                .thenThrow(new IllegalArgumentException("İade bağlantısı geçersiz veya kullanılmış"));
+
+        mvc.perform(post("/api/weekly-reports/approve-link/reject").param("token", "X"))
+                .andExpect(status().isOk())
+                .andExpect(content().string(containsString("geçersiz")));
     }
 }
