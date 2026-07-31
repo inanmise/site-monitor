@@ -9,6 +9,17 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- **Başlangıç "Etkin Konfigürasyon" logu (StartupLogger genişletme).** Uygulama açılışta çalıştığı TÜM etkin ayarları
+  (varsayılan / `application.properties` / env-JVM override / DB `app_settings`·SMTP·LDAP birleşik NİHAİ değer) tek
+  okunabilir `INFO` bloğu halinde loglar — kategorilere ayrılmış, her satırda kaynak etiketi (`[default]`/`[config]`/
+  `[env]`/`[db]`/`[runtime]`). `ApplicationReadyEvent` + `@Order(HIGHEST_PRECEDENCE)` (zamanlanmış işlerden önce).
+  - **Merkezî maskeleme** `SecretMask` (yeni, tek kara-liste; `AuditDiff` de buradan besleniyor): parola/secret/token/
+    anahtar (`*****`), JDBC URL'e gömülü kimlik ayıklama, segment-farkında eşleşme (`keyword`/`keepalive` yanlış-pozitif
+    değil). Şifreli secret'lar asla çözülmez — yalnız `password_set` / `secret-key configured` durumu.
+  - **JSON modu** (`STARTUP_CONFIG_LOG_JSON=true`, varsayılan kapalı) log-toplama için; `STARTUP_CONFIG_LOG=false` ile
+    kapatılabilir. DB erişilemez açılışta blok yine basılır (DB-bağımlı bölümler "okunamadı"). Gerçek uygulama sürümü
+    kök `VERSION` dosyasından (`AppVersion`).
+  - **Config:** `cert.monitor.version` (`APP_VERSION`), `cert.monitor.startup.config-log.enabled/json`.
 - **Sayfa Bütünlüğü İzleme (Page Integrity Monitor) — 9. izleme türü.** Bir web sayfasının KOD SEVİYESİNDE
   sağlıklı yüklendiğini doğrular: jsoup ile HTML kaynak envanteri (img/CSS/JS/link/iframe/font/favicon) çıkarılır,
   her kaynak sınırlı eşzamanlılıkla doğrulanır (önce HEAD, desteklenmiyorsa GET) ve kırık kaynak / mixed content /
@@ -28,6 +39,17 @@ Versioning follows [Semantic Versioning](https://semver.org/).
     Logu ve haftalık rapor ekosistemine otomatik dahil. Tüm metinler TR + EN.
   - **Config:** `cert.monitor.page.*` (alert-enabled, interval/crawl-interval, resource-concurrency, retention,
     user-agent, per-tip form varsayılanları) — admin UI'dan canlı. `org.jsoup:jsoup` bağımlılığı eklendi.
+
+### Changed
+- **Sayfa Bütünlüğü alarm maili yeniden düzenlendi.** "Sorunlu Kaynaklar" artık hizalı, ≤10 satır, karışmayan
+  URL'ler içeren Outlook-güvenli tablo (tür etiketi + kısaltılmış URL + HTTP, `… ve N kaynak daha` özeti). Maile
+  **Mod** (Tek Sayfa/Site Tarama), **Alarm Kapsamı** (üçüncü-taraf/mixed/zaman-aşımı politikası) ve **Doğrulama**
+  (N ardışık kontrolde üretildi) satırları eklendi. "HATA=null" gösterimi düzeltildi (`strCtx` literal "null"/"undefined"
+  değerlerini yok sayar).
+- **Alarm/recovery e-postaları — StatusCake esintili iyileştirmeler.** Alarm mailine **"Neden bu e-postayı aldınız?"**
+  alıcı-şeffaflık bloğu (bildirimin hangi takıma tanımlı olduğu; anti-phishing/güven). Recovery maillerinde kesinti
+  süresi StatusCake tarzı kompakt saatle (`HHH:MM:SS`, ör. `000:05:25`) Türkçe metnin yanında; tutarlı **"Toplam
+  Kesinti Süresi"** etiketi; net **Kesinti Başlangıcı → Yeniden Ulaşılabilir** aralığı.
 
 ---
 

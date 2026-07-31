@@ -198,6 +198,28 @@ Tüm ayarlar ortam değişkeni ile yönetilir. Varsayılanlar `application.prope
 
 Üretim ortamı için ek ayarlar `application-prod.properties` dosyasında (`spring.profiles.active=prod`).
 
+### Başlangıç Konfigürasyon Logu
+
+Uygulama her açılışta, çalıştığı **etkin (nihai) konfigürasyonun tamamını** tek bir okunabilir `INFO` bloğu halinde
+loglar — operatör pod logundan uygulamanın o anki davranışını tek bakışta görebilsin diye. Blok, tüm ayar kaynaklarını
+(varsayılan / `application.properties` / ortam değişkeni-JVM override / DB'deki `app_settings`·SMTP·LDAP) birleştirip
+**nihai değeri** basar; kategorilere ayrılır (Uygulama, Sunucu, Veritabanı, Zamanlayıcı, Güvenlik, SMTP, LDAP, Katalog
+grupları, Ortam …).
+
+- **Kaynak etiketleri** — her satırın yanında değerin nereden geldiği yazar:
+  - `[default]` — ayarlanmamış, gömülü varsayılanla çalışıyor
+  - `[config]` — bir `application*.properties` dosyasında literal set edilmiş
+  - `[env]` — ortam değişkeni / JVM `-D` parametresi ile override edilmiş
+  - `[db]` — admin ekranından (DB) override edilmiş
+  - `[runtime]` / `[file]` — çalışma anında hesaplanan (JVM/OS) ya da `VERSION` dosyası
+- **Secret maskeleme** — parola/secret/token/anahtar türü değerler `*****` olarak basılır; JDBC URL'e gömülü kimlik
+  bilgileri ayıklanır; şifreli saklanan secret'lar (SMTP/LDAP parolası) **asla çözülmez**, yalnız `password_set=true/false`
+  bilgisi verilir. `cert.monitor.secret-key` için yalnız "configured / not-set" durumu gösterilir.
+- **JSON modu** — log-toplama sistemleri için: `STARTUP_CONFIG_LOG_JSON=true` → aynı içerik tek satır JSON (varsayılan
+  kapalı, insan-okunur çerçeveli metin).
+- **Kapatma** — `STARTUP_CONFIG_LOG=false`.
+- DB'ye erişilemeyen bir açılışta blok yine basılır; DB-bağımlı bölümler `okunamadı` der (açılış engellenmez).
+
 ### Zamanlayıcı Ayarı
 
 `SCHEDULER_CRON` ortam değişkeni ile ya da `application.properties` içinde:
