@@ -9,6 +9,25 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- **Senaryo İzleme (Scripted Check / k6) — 10. izleme türü.** Kullanıcı tanımlı k6 scriptleri periyodik olarak tek
+  iterasyon çalıştırılır (`--vus 1 --iterations 1`) ve sonucuna göre sağlık kararı üretilir (PASS/FAIL/ERROR/TIMEOUT) —
+  çok adımlı akışların (OIDC/Keycloak login, API zincirleri) uçtan uca izlenmesi. k6 GÖMÜLMEZ; imaja `K6_VERSION`
+  build-arg'ıyla eklenen binary her kontrolde **kısa ömürlü, sandboxlu alt süreç** olarak koşar (`ProcessProbe` —
+  SIGTERM→SIGKILL, çıktı-sınırlı; temp dosyalar her durumda silinir).
+  - **Güvenlik:** `SsrfGuard.blacklistCidrs()` → k6 `--blacklist-ip` (iç ağ/loopback/link-local/cloud-metadata engeli,
+    tek kaynak); env secret'ları `SecretCipher` ile şifreli saklanır (API/ekranda asla düz metin — yalnız `value_set`);
+    çıktı `SecretMask.maskValues` ile maskelenir; script gövdesi sabit-kodlu-secret taraması (`hardcoded-secret-policy`).
+  - **Yetki:** yeni `monitoring.scripted` izni (EDIT+EXECUTE) — varsayılan **ADMIN + TEAM_ADMIN (PO)**; USER/AUDIT'e açılmaz.
+  - **Alarm:** tek tip `SCRIPTED_FAIL` (N ardışık başarısızlık → CRITICAL); mevcut confirmation/recovery + Storm +
+    MaintenanceWindow + EscalationService/Email + ActivityLog zincirinden geçer (PAGE deseniyle aynı). E-postada senaryo
+    adı + başarısız check listesi + maskeli çıktı kuyruğu. Micrometer: `scripted.k6.active`/`queued`.
+  - **Frontend:** yeni "Senaryo İzleme" sekmesi; JS syntax-highlight editör (react-simple-code-editor + prismjs),
+    env-secret (write-only) yönetimi, hazır şablonlar (OIDC/Keycloak, API zinciri, form-login), "Test Çalıştır", detay
+    ekranında check-bazlı geçti/kaldı + maskeli stdout/stderr. Tüm metinler TR + EN.
+  - **Config/infra:** `cert.monitor.scripted.*` (pool-size, timeout tavanları, output-tail, retention, k6-bin,
+    hardcoded-secret-policy) + startup config-log; Dockerfile'a `COPY --from=grafana/k6`; helm/compose bellek limiti
+    k6 süreç yüküne göre yükseltildi; `.env.example` + `CERT_MONITOR_SECRET_KEY`. Yeni tablolar `scripted_monitors` /
+    `scripted_checks` (LATERAL latest, gün-bazlı retention + gece purge + günlük rollup).
 - **Başlangıç "Etkin Konfigürasyon" logu (StartupLogger genişletme).** Uygulama açılışta çalıştığı TÜM etkin ayarları
   (varsayılan / `application.properties` / env-JVM override / DB `app_settings`·SMTP·LDAP birleşik NİHAİ değer) tek
   okunabilir `INFO` bloğu halinde loglar — kategorilere ayrılmış, her satırda kaynak etiketi (`[default]`/`[config]`/
@@ -50,6 +69,10 @@ Versioning follows [Semantic Versioning](https://semver.org/).
   alıcı-şeffaflık bloğu (bildirimin hangi takıma tanımlı olduğu; anti-phishing/güven). Recovery maillerinde kesinti
   süresi StatusCake tarzı kompakt saatle (`HHH:MM:SS`, ör. `000:05:25`) Türkçe metnin yanında; tutarlı **"Toplam
   Kesinti Süresi"** etiketi; net **Kesinti Başlangıcı → Yeniden Ulaşılabilir** aralığı.
+- **Recovery e-postaları — şeffaflık bloğu + erişilebilirlik özeti.** "Neden bu e-postayı aldınız?" bloğu artık
+  RECOVERY (çözüldü) maillerine de eklendi (`teamNames` tüm çözüm-builder'larına geçirildi). ACCESSIBILITY
+  recovery'sinde **son 24s/7g uptime% + kesinti sayısı** özet kartı (`WeeklyAvailabilityReportService.availabilityLastHours`
+  yeniden kullanımı; döngüsel bağımlılık olmadan EscalationService katmanında). Uptime verisi olmayan tiplerde kart atlanır.
 
 ---
 

@@ -224,6 +224,20 @@ public class WeeklyAvailabilityReportService {
         return summarize(rows);
     }
 
+    /** Tek domain için son {@code hours} saatteki erişilebilirlik satırı (recovery e-postası özeti). Kaynak = HTTP
+     *  uptime_checks (port/DNS hariç); örnek yoksa availabilityPct=null döner. computeRow çekirdeği aynen kullanılır
+     *  (bakım-farkında). EscalationService bunu çağırır → döngüsel bağımlılık yok (WeeklyAvail EscalationService'e bağlı değil). */
+    public AvailabilityRow availabilityLastHours(String domain, long hours) {
+        Instant now = Instant.now();
+        String fromUtc = UTC_ISO.format(now.minus(Duration.ofHours(hours)));
+        String toUtc = UTC_ISO.format(now);
+        int port = inventoryRepo.findByDomain(domain).map(CertificateInventory::getPort).orElse(443);
+        List<UptimeCheck> checks = uptimeCheckRepo
+                .findByDomainAndPortAndCheckedAtBetweenOrderByCheckedAtAsc(domain, port, fromUtc, toUtc);
+        Integer certDays = latestCheckRepo.findById(domain).map(LatestCheck::getDaysRemaining).orElse(null);
+        return computeRow(domain, checks, now, certDays);
+    }
+
     /** "15–21 Haziran 2026" / "29 Haziran – 5 Temmuz 2026" / "29 Aralık 2025 – 4 Ocak 2026" (Pzt–Paz, dahil). */
     static String weekRangeLabel(LocalDate from, LocalDate to) {
         String mFrom = MONTHS_TR[from.getMonthValue() - 1];

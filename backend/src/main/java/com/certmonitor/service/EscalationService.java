@@ -40,6 +40,7 @@ public class EscalationService {
     private final EscalationContactRepository contactRepo;
     private final CertificateInventoryRepository inventoryRepo;
     private final EmailNotificationService emailService;
+    private final WeeklyAvailabilityReportService weeklyAvailability;   // recovery uptime özeti (döngü yok)
     private final WebhookService webhookService;
     private final ObjectMapper objectMapper;
     private final NotificationLogRepository notificationLogRepo;
@@ -141,6 +142,10 @@ public class EscalationService {
         return TYPE_PAGE_DOWN.equals(t) || TYPE_PAGE_INTEGRITY.equals(t);
     }
 
+    /** Senaryo İzleme (k6) — tek sağlık boyutu: PASS değilse başarısız. */
+    public static final String TYPE_SCRIPTED_FAIL = "SCRIPTED_FAIL";
+    public static boolean isScripted(String t) { return TYPE_SCRIPTED_FAIL.equals(t); }
+
     /** İzleme kaynaklı alarm tipleri — kadanslarının sahibi ilgili sweep'lerdir;
      *  cert sweep'inin auto-resolve'u ve startup catch-up bunlara dokunmaz. */
     public static final Set<String> MONITORING_ALERT_TYPES =
@@ -149,7 +154,7 @@ public class EscalationService {
                    TYPE_KEYWORD, TYPE_PING_DOWN, TYPE_HTTP_DOWN, TYPE_HTTP_SSL, TYPE_DOMAIN_EXPIRY,
                    TYPE_DOMAINMON_EXPIRY, TYPE_DOMAINMON_UNKNOWN, TYPE_DOMAINMON_STATUS, TYPE_DOMAINMON_CHANGED,
                    TYPE_KEYWORD_SLOW, TYPE_KEYWORD_SSL, TYPE_KEYWORD_DOMAIN_EXPIRY, TYPE_PORT_SLOW,
-                   TYPE_PAGE_DOWN, TYPE_PAGE_INTEGRITY);
+                   TYPE_PAGE_DOWN, TYPE_PAGE_INTEGRITY, TYPE_SCRIPTED_FAIL);
 
     /** Sertifika kaynaklı alarm tipleri — cert sweep'inin auto-resolve kapsamı.
      *  İzleme tipleri bilinçli olarak DIŞINDA: sertifika kontrolünün düzelmesi
@@ -161,7 +166,7 @@ public class EscalationService {
      *  Slow/SSL/expiry/changed/domainmon/cert bilinçli DIŞINDA (bunlar kesinti değildir). */
     public static final Set<String> DOWN_ALERT_TYPES =
             Set.of(TYPE_ACCESSIBILITY, TYPE_HTTP_DOWN, TYPE_PORT_DOWN, TYPE_PING_DOWN, TYPE_DNS_FAILURE, TYPE_KEYWORD,
-                   TYPE_PAGE_DOWN);
+                   TYPE_PAGE_DOWN, TYPE_SCRIPTED_FAIL);
 
     public void processResults(List<Map<String, Object>> results) {
         AlertThreshold threshold = thresholdRepo.findFirstByActiveTrue()
@@ -575,6 +580,23 @@ public class EscalationService {
         return orphanDomains.size();
     }
 
+    /** Öksüz senaryo alarmı temizliği — hiçbir senaryo monitörüne karşılık gelmeyen açık SCRIPTED_FAIL
+     *  alarmlarını sessizce kapatır (ad rename/silme sonrası). Kimlik = senaryo adı. */
+    public int resolveOrphanedScriptedAlerts(Set<String> existingNames) {
+        if (existingNames == null) return 0;
+        Set<String> orphans = new HashSet<>();
+        for (AlertEvent e : alertEventRepo.findAllOpenOrderBySeverity()) {
+            if (!isScripted(e.getAlertType())) continue;
+            if (e.getDomain() == null || existingNames.contains(e.getDomain())) continue;
+            orphans.add(e.getDomain());
+        }
+        for (String d : orphans) {
+            resolveOpenAlertsSilently(d, Set.of(TYPE_SCRIPTED_FAIL), "Sistem (öksüz alarm — eşleşen senaryo izlemesi yok)");
+        }
+        if (!orphans.isEmpty()) log.info("🧹 Öksüz senaryo alarmı temizlendi: {} senaryo {}", orphans.size(), orphans);
+        return orphans.size();
+    }
+
     /** Öksüz Domain-izleme alarmı temizliği — hiçbir domain monitörüne karşılık gelmeyen açık
      *  DOMAINMON_* alarmlarını sessizce kapatır (domain rename/silme sonrası). Kimlik = kayıtlı domain. */
     public int resolveOrphanedDomainMonAlerts(Set<String> existingDomains) {
@@ -852,6 +874,12 @@ public class EscalationService {
                         (detail != null ? " — " + detail : " (kırık kaynak / mixed content)") + ". " +
                         "Sorunlu kaynaklar giderildiğinde alarm otomatik kapanır.";
             }
+            case TYPE_SCRIPTED_FAIL -> {
+                Object detail = ctx.get("detail");
+                return "KRİTİK: " + domain + " senaryosu başarısız" +
+                        (detail != null ? " — " + detail : "") + ". " +
+                        "Ardışık doğrulama denemeleri başarısız oldu. Senaryo yeniden geçtiğinde alarm otomatik kapanır.";
+            }
             case TYPE_DOMAIN_EXPIRY -> {
                 Object dom = ctx.getOrDefault("domain", domain);
                 Object days = ctx.get("domain_days_remaining");
@@ -1024,6 +1052,7 @@ public class EscalationService {
                 case TYPE_HTTP_SSL      -> "SSL Sertifika Sorunu";
                 case TYPE_PAGE_DOWN     -> "Sayfa Yüklenemiyor";
                 case TYPE_PAGE_INTEGRITY -> "Sayfa Bütünlüğü";
+                case TYPE_SCRIPTED_FAIL -> "Senaryo İzleme";
                 case TYPE_DOMAIN_EXPIRY -> "Domain Süre Bitişi";
                 case TYPE_DOMAINMON_EXPIRY  -> "Alan Adı Süre Bitişi";
                 case TYPE_DOMAINMON_UNKNOWN -> "Alan Adı Veri Yok";
@@ -1045,16 +1074,28 @@ public class EscalationService {
             } else {
                 certContext = latestCheckRepo.findById(event.getDomain()).map(this::latestToCertContext).orElse(null);
             }
+            String teamNames = collectTeamNames(domainTeamId, ugTeamId);
+            // Recovery erişilebilirlik özeti — yalnız HTTP uptime örneği olan tipte (ACCESSIBILITY); veri yoksa null.
+            EmailNotificationService.UptimeSummary uptime = null;
+            if (TYPE_ACCESSIBILITY.equals(event.getAlertType())) {
+                try {
+                    EmailNotificationService.AvailabilityRow r24 = weeklyAvailability.availabilityLastHours(event.getDomain(), 24);
+                    if (r24.availabilityPct() != null) {
+                        EmailNotificationService.AvailabilityRow r7 = weeklyAvailability.availabilityLastHours(event.getDomain(), 24L * 7);
+                        uptime = new EmailNotificationService.UptimeSummary(
+                                r24.availabilityPct(), r24.outageCount(), r7.availabilityPct(), r7.outageCount());
+                    }
+                } catch (Exception ignore) { /* özet üretilemezse mail yine gönderilir */ }
+            }
             String htmlBody = emailService.buildResolutionEmailHtml(
                     event.getDomain(), event.getAlertType(), event.getAlertLevel(),
                     event.getDaysRemaining(), resolvedBy, event.getResolvedAt(),
-                    event.getCreatedAt(), certContext);
+                    event.getCreatedAt(), certContext, teamNames, uptime);
             String status = emailService.sendResolutionAlert(
                     allEmails.toArray(new String[0]), subject,
                     event.getDomain(), event.getAlertType(), event.getAlertLevel(),
                     event.getDaysRemaining(), resolvedBy, event.getResolvedAt(),
-                    event.getCreatedAt(), certContext);
-            String teamNames = collectTeamNames(domainTeamId, ugTeamId);
+                    event.getCreatedAt(), certContext, teamNames, uptime);
             saveLog(event.getId(), teamNames, String.join(", ", allEmails), subject, htmlBody, status, "SKIPPED", trigger);
             log.info("Çözüm bildirimi → [{}] status={}", String.join(", ", allEmails), status);
         } catch (Exception e) {
@@ -1200,6 +1241,7 @@ public class EscalationService {
             case TYPE_HTTP_SSL      -> "SSL Sertifika Sorunu";
             case TYPE_PAGE_DOWN     -> "Sayfa Yüklenemiyor";
             case TYPE_PAGE_INTEGRITY -> "Sayfa Bütünlüğü Sorunu";
+            case TYPE_SCRIPTED_FAIL -> "Senaryo Başarısız";
             case TYPE_DOMAIN_EXPIRY -> "Domain Süre Bitişi";
             case TYPE_DOMAINMON_EXPIRY  -> "Alan Adı Süre Bitişi";
             case TYPE_DOMAINMON_UNKNOWN -> "Alan Adı Veri Yok";
@@ -1212,6 +1254,7 @@ public class EscalationService {
             case TYPE_DOMAINMON_EXPIRY, TYPE_DOMAIN_EXPIRY -> daysRemaining != null ? "Alan adı " + daysRemaining + " gün içinde doluyor" : "Alan adı süre bitişi";
             case TYPE_PAGE_DOWN     -> "Sayfa yüklenemiyor";
             case TYPE_PAGE_INTEGRITY -> "Sayfada kırık kaynak / mixed content";
+            case TYPE_SCRIPTED_FAIL -> "Senaryo (k6) başarısız";
             case TYPE_DOMAINMON_UNKNOWN -> "Alan adı kayıt verisi alınamadı";
             case TYPE_DOMAINMON_STATUS  -> "Alan adı durum kodu uyarısı";
             case TYPE_DOMAINMON_CHANGED -> "Alan adı kaydı değişti";
@@ -1400,6 +1443,9 @@ public class EscalationService {
             case TYPE_PAGE_INTEGRITY -> "YÜKSEK: " + domain +
                     " sayfasında bütünlük sorunu (kırık kaynak / mixed content) tespit edildi. " +
                     "Sorunlu kaynaklar giderildiğinde alarm otomatik kapanır.";
+            case TYPE_SCRIPTED_FAIL -> "KRİTİK: " + domain +
+                    " senaryosu (k6) başarısız — ardışık doğrulama denemeleri geçmedi. " +
+                    "Senaryo yeniden geçtiğinde alarm otomatik kapanacaktır.";
             case TYPE_HTTP_SSL -> "YÜKSEK: " + domain +
                     " için TLS sertifikası hata veriyor ya da süresi dolmak üzere. " +
                     "Sertifika düzeldiğinde alarm otomatik kapanır.";
@@ -1466,7 +1512,7 @@ public class EscalationService {
     private static boolean isStandaloneMon(String alertType) {
         return TYPE_KEYWORD.equals(alertType) || TYPE_PING_DOWN.equals(alertType)
                 || TYPE_HTTP_DOWN.equals(alertType) || TYPE_HTTP_SSL.equals(alertType) || TYPE_DOMAIN_EXPIRY.equals(alertType)
-                || isDomainMon(alertType) || isKeywordAux(alertType) || isPage(alertType);
+                || isDomainMon(alertType) || isKeywordAux(alertType) || isPage(alertType) || isScripted(alertType);
     }
 
     /** Domain süre-bitişi alarmında müdür (eskalasyon kontağı) da eklensin mi? Kullanıcı politikası:
