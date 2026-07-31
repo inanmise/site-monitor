@@ -4,7 +4,6 @@ import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
-import java.util.regex.Pattern;
 
 /**
  * Denetim before/after diff üretici + hassas-alan maskeleyici. Çıktı: {@code {"alan":{"from":x,"to":y}}} JSON.
@@ -15,9 +14,6 @@ public final class AuditDiff {
 
     private AuditDiff() {}
 
-    /** Anahtar adı bunlardan birini içeriyorsa (case-insensitive) değeri maskelenir. */
-    private static final Pattern SENSITIVE =
-            Pattern.compile("pass|secret|token|apikey|api[_-]?key|credential|private[_-]?key|pwd", Pattern.CASE_INSENSITIVE);
     public static final String MASK = "***";
 
     /** İki durum haritasını karşılaştırır; yalnız değişen alanları JSON diff olarak döner. Fark yoksa {@code null}. */
@@ -46,8 +42,9 @@ public final class AuditDiff {
         return first ? null : sb.toString();
     }
 
+    /** Hassaslık kararı merkezî {@link SecretMask}'ten alınır (tek kara-liste); audit çıktısı {@link #MASK} kullanır. */
     public static boolean isSensitive(String key) {
-        return key != null && SENSITIVE.matcher(key).find();
+        return SecretMask.isSensitive(key);
     }
 
     /** Bir entity'nin verilen alanlarını (getter/isX ile) haritaya çeker — güncelleme öncesi/sonrası snapshot. */

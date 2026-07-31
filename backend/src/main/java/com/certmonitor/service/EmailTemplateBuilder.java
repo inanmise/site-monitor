@@ -242,6 +242,8 @@ public class EmailTemplateBuilder {
         }
         sb.append(ctaButton(href, "CertMonitor'de Görüntüle", color))
           .append("</td></tr></table></td></tr>")
+          // "Neden bu e-postayı aldınız?" — alıcı şeffaflığı (StatusCake "Why am I seeing this email" esini)
+          .append(whyReceivingBlock(m.teamName()))
           // Footer
           .append("<tr><td style='padding:22px 30px 24px'>")
           .append("<div style='border-top:1px solid ").append(LINE).append(";padding-top:12px;font-size:11px;line-height:1.6;color:#9AA3AF'>")
@@ -517,10 +519,19 @@ public class EmailTemplateBuilder {
             addIf(out, "Kalan Gün", m.daysRemaining() != null ? String.valueOf(m.daysRemaining()) : null);
         } else if (isPage(m.alertType())) {   // sayfa bütünlüğü
             addIf(out, "Durum", pageStatusTr(strCtx(c, "page_status")));
+            addIf(out, "Mod", pageModeTr(strCtx(c, "page_mode")));
             addIf(out, "Kırık Kaynak", strCtx(c, "broken_resources"));
             addIf(out, "Mixed Content", strCtx(c, "mixed_content_count"));
-            String probs = strCtx(c, "problem_resources");
-            if (probs != null) out.add(new Row("Sorunlu Kaynaklar", esc(probs).replace("\n", "<br>"), probs));
+            addIf(out, "Alarm Kapsamı", alarmScopeText(c));       // bu monitör hangi sorunlarda alarm üretir
+            addIf(out, "Doğrulama", confirmationText(c));         // N ardışık kontrolde doğrulandıktan sonra
+            String rowsTsv = strCtx(c, "problem_rows");
+            if (rowsTsv != null) {
+                out.add(new Row("Sorunlu Kaynaklar", pageIssuesHtml(rowsTsv, intCtx(c, "problem_total")),
+                        pageIssuesText(rowsTsv, intCtx(c, "problem_total"))));
+            } else {
+                String probs = strCtx(c, "problem_resources");   // geriye-uyum
+                if (probs != null) out.add(new Row("Sorunlu Kaynaklar", esc(probs).replace("\n", "<br>"), probs));
+            }
             addIf(out, "Hata", firstNonNull(strCtx(c, "error"), strCtx(c, "last_error")));
             addIf(out, "Son Kontrol", strCtx(c, "checked_at") != null ? formatHuman(strCtx(c, "checked_at")) : null);
         } else {   // uptime/port/dns/keyword/ping/network
@@ -587,6 +598,19 @@ public class EmailTemplateBuilder {
         return "Sertifika İzleme";
     }
 
+    /** "Neden bu e-postayı aldınız?" — alıcı şeffaflık bloğu (Outlook-güvenli). Dış link YOK (banka). */
+    static String whyReceivingBlock(String teamName) {
+        String team = (teamName != null && !teamName.isBlank()) ? esc(teamName) : "ilgili izleme grubuna";
+        String teamPhrase = (teamName != null && !teamName.isBlank()) ? "<strong>" + team + "</strong> ekibine" : team;
+        return "<tr><td style='padding:6px 30px 0'>"
+                + "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' bgcolor='" + SOFT + "' style='background-color:" + SOFT + ";border:1px solid " + LINE + ";border-radius:8px'>"
+                + "<tr><td style='padding:12px 16px'>"
+                + "<div style='font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:" + MUTED + ";margin-bottom:5px'>Neden bu e-postayı aldınız?</div>"
+                + "<div style='font-size:13px;line-height:1.55;color:" + INK + "'>Bu bildirim " + teamPhrase
+                + " tanımlı bir izleme için gönderildi. CertMonitor otomatik bir izleme sistemidir; bildirim tercihleri için sistem yöneticinize başvurun.</div>"
+                + "</td></tr></table></td></tr>";
+    }
+
     // ── Küçük render yardımcıları ────────────────────────────────────────────
     private static String row(String label, String valueHtml) {
         return "<tr>"
@@ -644,10 +668,120 @@ public class EmailTemplateBuilder {
     private static String strCtx(Map<String, Object> c, String k) {
         if (c == null) return null;
         Object v = c.get(k);
-        return (v == null || String.valueOf(v).isBlank()) ? null : String.valueOf(v);
+        if (v == null) return null;
+        String s = String.valueOf(v);
+        // Literal "null"/"undefined" (ctx serileştirmesinden sızabilir) → yok say; hiçbir meşru değer bu değildir.
+        return (s.isBlank() || "null".equalsIgnoreCase(s) || "undefined".equalsIgnoreCase(s)) ? null : s;
     }
     private static String firstNonNull(String... vs) { for (String v : vs) if (v != null && !v.isBlank()) return v; return null; }
     private static String nz(String s) { return s == null ? "" : s; }
+
+    // ── Sayfa Bütünlüğü alarm-detay yardımcıları ─────────────────────────────
+    private static Integer intCtx(Map<String, Object> c, String k) {
+        Object v = c == null ? null : c.get(k);
+        if (v instanceof Number n) return n.intValue();
+        try { return v == null ? null : Integer.valueOf(String.valueOf(v).trim()); } catch (Exception e) { return null; }
+    }
+    private static Long longCtx(Map<String, Object> c, String k) {
+        Object v = c == null ? null : c.get(k);
+        if (v instanceof Number n) return n.longValue();
+        try { return v == null ? null : Long.valueOf(String.valueOf(v).trim()); } catch (Exception e) { return null; }
+    }
+    private static boolean boolCtx(Map<String, Object> c, String k) {
+        Object v = c == null ? null : c.get(k);
+        return v instanceof Boolean b ? b : "true".equalsIgnoreCase(String.valueOf(v));
+    }
+
+    private static String pageModeTr(String mode) {
+        if (mode == null) return null;
+        return "SITE_CRAWL".equalsIgnoreCase(mode) ? "Site Tarama" : "Tek Sayfa";
+    }
+
+    /** Bu monitörün hangi sorunlarda alarm ürettiğini özetler (3rd-party / mixed / timeout ayarları). */
+    private static String alarmScopeText(Map<String, Object> c) {
+        if (c == null || (!c.containsKey("alert_third_party") && !c.containsKey("alert_mixed_content")
+                && !c.containsKey("alert_timeout"))) return null;
+        return "Üçüncü-taraf kırıkları: " + (boolCtx(c, "alert_third_party") ? "Evet" : "Hayır")
+             + " · Mixed content: " + (boolCtx(c, "alert_mixed_content") ? "Evet" : "Hayır")
+             + " · Zaman aşımı: " + (boolCtx(c, "alert_timeout") ? "İzleniyor" : "İzlenmiyor");
+    }
+
+    /** "N ardışık kontrolde doğrulandıktan sonra üretildi (~Xsn arayla)" — tek-seferlik takılma yanlış-pozitif üretmez. */
+    private static String confirmationText(Map<String, Object> c) {
+        Integer att = intCtx(c, "monitor_confirm_attempts");
+        if (att == null || att < 1) return null;
+        String base = att + " ardışık kontrolde doğrulandıktan sonra üretildi";
+        Long ims = longCtx(c, "monitor_confirm_interval_ms");
+        if (ims != null && ims > 0) base += " (~" + Math.round(ims / 1000.0) + " sn arayla)";
+        return base;
+    }
+
+    private static String pageIssueTypeLabel(String t) {
+        return switch (t == null ? "" : t) {
+            case "TIMEOUT" -> "Zaman aşımı";
+            case "BROKEN" -> "Kırık";
+            case "MIXED_CONTENT" -> "Mixed";
+            case "BLOCKED" -> "Belirsiz";
+            case "SLOW" -> "Yavaş";
+            default -> t == null ? "" : t;
+        };
+    }
+    private static String pageIssueTypeColor(String t) {
+        return switch (t == null ? "" : t) {
+            case "TIMEOUT" -> "#A16207";
+            case "MIXED_CONTENT" -> "#B45309";
+            case "SLOW" -> "#0369A1";
+            case "BLOCKED" -> "#78716C";
+            default -> "#B91C1C";   // BROKEN
+        };
+    }
+    private static String truncUrl(String url) {
+        if (url == null) return "";
+        return url.length() > 100 ? url.substring(0, 99) + "…" : url;
+    }
+
+    /** Sorunlu kaynaklar — Outlook-güvenli iç tablo: her satır tür etiketi + kısaltılmış URL (+HTTP), ≤10 satır. */
+    private static String pageIssuesHtml(String tsv, Integer total) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' style='border-collapse:collapse'>");
+        int shown = 0;
+        for (String line : tsv.split("\n")) {
+            if (line.isBlank()) continue;
+            String[] p = line.split("\t", -1);
+            String type = p.length > 0 ? p[0] : "";
+            String url  = p.length > 1 ? p[1] : "";
+            String http = p.length > 2 ? p[2] : "";
+            sb.append("<tr>")
+              .append("<td valign='top' style='padding:5px 10px 5px 0;font-size:11px;font-weight:700;color:")
+              .append(pageIssueTypeColor(type)).append(";white-space:nowrap'>").append(esc(pageIssueTypeLabel(type))).append("</td>")
+              .append("<td valign='top' style='padding:5px 0;font-size:12px;line-height:1.45;color:").append(INK)
+              .append(";font-family:Consolas,Menlo,monospace;word-break:break-all'>").append(esc(truncUrl(url)));
+            if (!http.isBlank()) sb.append("<span style='color:").append(MUTED).append("'> · HTTP ").append(esc(http)).append("</span>");
+            sb.append("</td></tr>");
+            shown++;
+        }
+        if (total != null && total > shown) {
+            sb.append("<tr><td colspan='2' style='padding:7px 0 0;font-size:12px;font-style:italic;color:").append(MUTED)
+              .append("'>… ve ").append(total - shown).append(" kaynak daha (toplam ").append(total).append(")</td></tr>");
+        }
+        sb.append("</table>");
+        return sb.toString();
+    }
+    /** Sorunlu kaynakların plain-text karşılığı. */
+    private static String pageIssuesText(String tsv, Integer total) {
+        StringBuilder sb = new StringBuilder();
+        int shown = 0;
+        for (String line : tsv.split("\n")) {
+            if (line.isBlank()) continue;
+            String[] p = line.split("\t", -1);
+            sb.append(pageIssueTypeLabel(p.length > 0 ? p[0] : "")).append(" · ").append(p.length > 1 ? p[1] : "");
+            if (p.length > 2 && !p[2].isBlank()) sb.append(" (HTTP ").append(p[2]).append(')');
+            sb.append('\n');
+            shown++;
+        }
+        if (total != null && total > shown) sb.append("… ve ").append(total - shown).append(" kaynak daha (toplam ").append(total).append(')');
+        return sb.toString().trim();
+    }
     private static String shortFp(String fp) {
         String f = fp.replace(":", "").trim();
         return f.length() > 20 ? f.substring(0, 8) + "…" + f.substring(f.length() - 8) : f;
