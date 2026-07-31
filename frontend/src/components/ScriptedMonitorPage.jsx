@@ -4,6 +4,7 @@ import { api, formatDateSec } from '../api/client'
 import { useT, useLanguage } from '../i18n/index.jsx'
 import { useToast } from './ui/Toast.jsx'
 import CodeEditor from './ui/CodeEditor.jsx'
+import SearchableSelect from './ui/SearchableSelect.jsx'
 import { SCRIPTED_TEMPLATES } from './scriptedTemplates.js'
 import { FlaskConical, Play, Plus, Trash2, X, RefreshCw, Download, Eye, EyeOff } from 'lucide-react'
 
@@ -71,6 +72,11 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
     return monitors.filter(m => !q || (m.name || '').toLowerCase().includes(q) || (m.group_name || '').toLowerCase().includes(q))
   }, [monitors, search])
 
+  // Grup seçenekleri — mevcut senaryoların gruplarından türetilir (creatable: yeni grup da yazılabilir).
+  const groupOptions = useMemo(
+    () => [...new Set(monitors.map(m => m.group_name).filter(Boolean))].sort((a, b) => a.localeCompare(b)).map(g => ({ value: g, label: g })),
+    [monitors])
+
   function openNew() {
     setForm({ ...emptyForm, teamId: isAdmin ? '' : (teamId ?? '') })
     setTestResult(null); setModal({})
@@ -116,7 +122,8 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
 
   async function save() {
     if (!form.name.trim()) { toast.error(t('scripted.nameRequired')); return }
-    if (isAdmin && (form.teamId === '' || form.teamId == null)) { toast.error(t('mon.teamRequired')); return }
+    if (form.teamId === '' || form.teamId == null) { toast.error(t('mon.teamRequired')); return }
+    if (!form.groupName.trim()) { toast.error(t('scripted.groupRequired')); return }
     setSaving(true)
     const payload = {
       name: form.name.trim(), description: form.description?.trim() || null,
@@ -230,14 +237,14 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
             ))}
           </div>}
 
-      {modal && createPortal(<EditModal {...{ t, lang, form, setForm, modal, saving, testing, testResult, save, del, closeEdit, runTest, isAdmin, teamOptions, teamName, setEnvRow, addEnvRow, delEnvRow, applyTemplate, intervalIdx }} />, document.body)}
+      {modal && createPortal(<EditModal {...{ t, lang, form, setForm, modal, saving, testing, testResult, save, del, closeEdit, runTest, isAdmin, teamOptions, teamName, groupOptions, setEnvRow, addEnvRow, delEnvRow, applyTemplate, intervalIdx }} />, document.body)}
       {selected && createPortal(<DetailModal {...{ t, selected, setSelected, history, selCheck, setSelCheck, exportCsv, checkNow, k6 }} />, document.body)}
     </div>
   )
 }
 
 // ── Create/Edit modal ────────────────────────────────────────────────────────
-function EditModal({ t, lang, form, setForm, modal, saving, testing, testResult, save, del, closeEdit, runTest, isAdmin, teamOptions, teamName, setEnvRow, addEnvRow, delEnvRow, applyTemplate, intervalIdx }) {
+function EditModal({ t, lang, form, setForm, modal, saving, testing, testResult, save, del, closeEdit, runTest, isAdmin, teamOptions, teamName, groupOptions, setEnvRow, addEnvRow, delEnvRow, applyTemplate, intervalIdx }) {
   const ivIdx = intervalIdx(Number(form.intervalSeconds))
   return (
     <div className="modal-overlay" onClick={closeEdit}>
@@ -253,13 +260,20 @@ function EditModal({ t, lang, form, setForm, modal, saving, testing, testResult,
             <input className="input" value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} /></label>
 
           {isAdmin &&
-            <label>{t('scripted.team')}
+            <label>{t('scripted.team')} <span className="req-star">*</span>
               <select className="input" value={form.teamId} onChange={e => setForm(f => ({ ...f, teamId: e.target.value }))}>
                 <option value="">{t('scripted.selectTeam')}</option>
                 {teamOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
               </select></label>}
-          <label>{t('scripted.group')}
-            <input className="input" value={form.groupName} onChange={e => setForm(f => ({ ...f, groupName: e.target.value }))} /></label>
+          <label>{t('scripted.group')} <span className="req-star">*</span>
+            <SearchableSelect
+              value={form.groupName}
+              onChange={v => setForm(f => ({ ...f, groupName: v }))}
+              options={groupOptions}
+              creatable
+              onCreate={() => {}}
+              searchThreshold={2}
+              placeholder={t('scripted.groupPick')} /></label>
 
           <label>{t('scripted.interval')}
             <input type="range" min="0" max={INTERVALS.length - 1} value={ivIdx}
