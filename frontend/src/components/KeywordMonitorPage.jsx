@@ -4,6 +4,8 @@ import { api, formatDateSec } from '../api/client'
 import { useT } from '../i18n/index.jsx'
 import { useVisibleInterval } from '../hooks/useVisibleInterval'
 import { useToast } from './ui/Toast.jsx'
+import MonitorHowBox from './ui/MonitorHowBox.jsx'
+import MonitorGuideButton from './ui/MonitorGuideButton.jsx'
 import SearchableSelect from './ui/SearchableSelect.jsx'
 import MaintenanceBadge from './ui/MaintenanceBadge.jsx'
 import TagInput from './ui/TagInput.jsx'
@@ -364,6 +366,7 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
           <button className="btn btn-sm upt-refresh-btn" onClick={load}>
             <RefreshCw size={14} />{t('keyword.refresh')}
           </button>
+          <MonitorGuideButton type="keyword" />
           {canWrite && (
             <button className="btn btn-sm btn-primary" onClick={openNew}>
               <Plus size={14} />{t('keyword.addMonitor')}
@@ -371,6 +374,8 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
           )}
         </div>
       </div>
+
+      <MonitorHowBox bullets={[t('keyword.how1'), t('keyword.how2'), t('keyword.how3')]} />
 
       {!loading && monitors.length > 0 && (
         <div className="stats-collapse-bar" onClick={toggleStats}

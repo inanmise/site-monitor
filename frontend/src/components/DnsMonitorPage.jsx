@@ -3,6 +3,8 @@ import { api, formatDate } from '../api/client'
 import { useT } from '../i18n/index.jsx'
 import { useVisibleInterval } from '../hooks/useVisibleInterval'
 import { useToast } from './ui/Toast.jsx'
+import MonitorHowBox from './ui/MonitorHowBox.jsx'
+import MonitorGuideButton from './ui/MonitorGuideButton.jsx'
 import { Play, Pencil, Trash2, Plus, ChevronDown, Globe, Info, Network, AlertTriangle, FlaskConical, Check, Layers, RefreshCw, Pause, BarChart3, BellDot, ArrowLeftRight } from 'lucide-react'
 import DnsDetailModal from './DnsDetailModal.jsx'
 import MonitorStatsBar from './MonitorStatsBar.jsx'
@@ -287,6 +289,7 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName }) {
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginLeft: 'auto' }}>
           <span className="upt-last-check">{t('dns.autoRefresh').replace('{0}', Math.max(0, REFRESH_INTERVAL - secondsSince))}</span>
           <button className="btn btn-sm upt-refresh-btn" onClick={load}><RefreshCw size={14} />{t('dns.refreshBtn')}</button>
+          <MonitorGuideButton type="dns" />
           {canWrite && (
             <button className="btn btn-sm btn-primary" onClick={openNew}>
               <Plus size={14} />{t('dns.addMonitor')}
@@ -294,6 +297,8 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName }) {
           )}
         </div>
       </div>
+
+      <MonitorHowBox bullets={[t('dns.how1'), t('dns.how2'), t('dns.how3'), t('dns.how4')]} />
 
       {!loading && monitors.length > 0 && (
         <div className="stats-collapse-bar" onClick={toggleStats}

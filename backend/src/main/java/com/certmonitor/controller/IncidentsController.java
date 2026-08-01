@@ -48,6 +48,8 @@ public class IncidentsController {
     private final PingMonitorRepository pingMonitorRepo;
     private final DnsMonitorRepository dnsMonitorRepo;
     private final DomainMonitorRepository domainMonitorRepo;
+    private final PageMonitorRepository pageMonitorRepo;
+    private final ScriptedMonitorRepository scriptedMonitorRepo;
     private final CertificateInventoryRepository inventoryRepo;
     private final PermissionService permissionService;
     private final AuditService auditService;
@@ -166,6 +168,9 @@ public class IncidentsController {
         else if (type.startsWith("DNS_"))         { code = "DNS";  cat = "dns"; }
         else if (type.startsWith("DOMAINMON_"))   { code = "DOMAIN"; cat = "domain"; }
         else if ("REVOKED".equals(type) || "MISMATCH".equals(type) || "CHAIN_BROKEN".equals(type)) { code = type; cat = "cert"; }
+        else if ("SCRIPTED_FAIL".equals(type))    { code = "SCENARIO";  cat = "down"; }
+        else if ("PAGE_DOWN".equals(type))        { code = "DOWN";      cat = "down"; }
+        else if ("PAGE_INTEGRITY".equals(type))   { code = "INTEGRITY"; cat = "content"; }
         else { code = type; cat = "unknown"; }
         return Map.of("code", code, "category", cat);
     }
@@ -182,6 +187,8 @@ public class IncidentsController {
         if (fams.contains("ping"))    idx.put("ping",    index(pingMonitorRepo.findAll(),    m -> m.getHost(),   m -> m.getName(), m -> m.getId()));
         if (fams.contains("dns"))     idx.put("dns",     index(dnsMonitorRepo.findAll(),     m -> m.getDomain(), m -> m.getName(), m -> m.getId()));
         if (fams.contains("domain"))  idx.put("domain",  index(domainMonitorRepo.findAll(),  m -> m.getDomain(), m -> m.getName(), m -> m.getId()));
+        if (fams.contains("page"))     idx.put("page",     index(pageMonitorRepo.findAll(),     m -> m.getUrl(),  m -> m.getName(), m -> m.getId()));
+        if (fams.contains("scripted")) idx.put("scripted", index(scriptedMonitorRepo.findAll(), m -> m.getName(), m -> m.getName(), m -> m.getId()));
         for (AlertEvent e : events) {
             String fam = family(e.getAlertType());
             Object[] ref = idx.containsKey(fam) ? idx.get(fam).get(e.getDomain()) : null;
@@ -211,6 +218,8 @@ public class IncidentsController {
         if (type.startsWith("PING"))      return "ping";
         if (type.startsWith("DNS_"))      return "dns";
         if (type.startsWith("DOMAINMON_"))return "domain";
+        if (type.startsWith("PAGE_"))     return "page";
+        if (type.startsWith("SCRIPTED_")) return "scripted";
         if ("HTTP_DOWN".equals(type) || "HTTP_SSL".equals(type) || "DOMAIN_EXPIRY".equals(type)) return "http";
         return "cert";   // EXPIRY / CHAIN_BROKEN / REVOKED / MISMATCH / ACCESSIBILITY
     }
@@ -219,6 +228,7 @@ public class IncidentsController {
         return switch (fam) {
             case "http" -> "http"; case "port" -> "port"; case "keyword" -> "keyword";
             case "ping" -> "ping"; case "dns" -> "dns";  case "domain" -> "domain";
+            case "page" -> "page"; case "scripted" -> "scripted";
             default -> "dashboard";
         };
     }

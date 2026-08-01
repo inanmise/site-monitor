@@ -3,6 +3,8 @@ import { createPortal } from 'react-dom'
 import { api, formatDateSec } from '../api/client'
 import { useT, useLanguage } from '../i18n/index.jsx'
 import { useToast } from './ui/Toast.jsx'
+import MonitorHowBox from './ui/MonitorHowBox.jsx'
+import MonitorGuideButton from './ui/MonitorGuideButton.jsx'
 import CodeEditor from './ui/CodeEditor.jsx'
 import SearchableSelect from './ui/SearchableSelect.jsx'
 import { SCRIPTED_TEMPLATES } from './scriptedTemplates.js'
@@ -193,10 +195,13 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
         </div>
         <div className="upt-header-right">
           <button className="btn btn-secondary btn-sm" onClick={load}><RefreshCw size={14} /> {t('scripted.refresh')}</button>
+          <MonitorGuideButton type="scripted" />
           {k6.canManage && k6.available &&
             <button className="btn btn-primary btn-sm" onClick={openNew}><Plus size={14} /> {t('scripted.addMonitor')}</button>}
         </div>
       </div>
+
+      <MonitorHowBox bullets={[t('scripted.how1'), t('scripted.how2'), t('scripted.how3'), t('scripted.how4')]} />
 
       {!k6.available &&
         <div className="banner banner-warn" style={{ margin: '10px 0', padding: '12px 16px', border: '1px solid #f59e0b', borderRadius: 8, background: '#fffbeb', color: '#92400e' }}>
