@@ -6,6 +6,8 @@ import { useVisibleInterval } from '../hooks/useVisibleInterval'
 import { useToast } from './ui/Toast.jsx'
 import SearchableSelect from './ui/SearchableSelect.jsx'
 import MaintenanceBadge from './ui/MaintenanceBadge.jsx'
+import MonitorHowBox from './ui/MonitorHowBox.jsx'
+import MonitorGuideButton from './ui/MonitorGuideButton.jsx'
 import { Play, Pencil, X, RefreshCw, Plus, Trash2, CalendarClock, Users, Layers, FlaskConical, Check, AlertTriangle,
   LayoutDashboard, CheckCircle2, TriangleAlert, HelpCircle, ShieldAlert, Building2, Activity, BarChart3, ChevronDown, Calendar } from 'lucide-react'
 import AlertHistory from './admin/AlertHistory.jsx'
@@ -79,7 +81,6 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName }) {
   const [teamFilter, setTeamFilter] = useState('all')
   const [groupFilter, setGroupFilter] = useState('all')
   const [sortBy, setSortBy] = useState('days_asc')
-  const [infoOpen, setInfoOpen] = useState(false)
   const [statFilter, setStatFilter] = useState(null)
   const [statsVisible, setStatsVisible] = useState(false)
   const [secondsSince, setSecondsSince] = useState(0)
@@ -335,27 +336,12 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName }) {
         <div className="upt-header-right">
           <span className="upt-last-check">{t('dom.autoRefresh').replace('{0}', Math.max(0, REFRESH_INTERVAL - secondsSince))}</span>
           <button className="btn btn-sm upt-refresh-btn" onClick={load}><RefreshCw size={14} />{t('dom.refresh')}</button>
+          <MonitorGuideButton type="domain" />
           {canWrite && <button className="btn btn-sm btn-primary" onClick={openNew}><Plus size={14} />{t('dom.addMonitor')}</button>}
         </div>
       </div>
 
-      <div className="dom-info">
-        <button type="button" className="dom-info-toggle" onClick={() => setInfoOpen(o => !o)}>
-          <HelpCircle size={15} /><span>{t('dom.howTitle')}</span>
-          <ChevronDown size={15} className={`dom-info-chev${infoOpen ? ' open' : ''}`} />
-        </button>
-        {infoOpen && (
-          <ul className="dom-info-body">
-            <li>{t('dom.how1')}</li>
-            <li>{t('dom.how2')}</li>
-            <li>{t('dom.how3')}</li>
-            <li>{t('dom.how4')}</li>
-            <li>{t('dom.how5')}</li>
-            <li>{t('dom.how6')}</li>
-            <li>{t('dom.how7')}</li>
-          </ul>
-        )}
-      </div>
+      <MonitorHowBox bullets={[t('dom.how1'), t('dom.how2'), t('dom.how3'), t('dom.how4'), t('dom.how5'), t('dom.how6'), t('dom.how7')]} />
 
       {!loading && monitors.length > 0 && (
         <div className="stats-collapse-bar" onClick={toggleStats}

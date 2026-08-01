@@ -37,6 +37,8 @@ class IncidentsControllerTest {
     @MockitoBean PingMonitorRepository pingMonitorRepo;
     @MockitoBean DnsMonitorRepository dnsMonitorRepo;
     @MockitoBean DomainMonitorRepository domainMonitorRepo;
+    @MockitoBean PageMonitorRepository pageMonitorRepo;
+    @MockitoBean ScriptedMonitorRepository scriptedMonitorRepo;
     @MockitoBean CertificateInventoryRepository inventoryRepo;
     @MockitoBean PermissionService permissionService;
     @MockitoBean AuditService auditService;
@@ -64,6 +66,38 @@ class IncidentsControllerTest {
         e.setCreatedAt("2026-07-10T10:00:00");
         e.setContextJson("{\"http_status\":500}");
         return e;
+    }
+
+    @Test
+    @DisplayName("GET /incidents: en yeni türler entegre — SCRIPTED_FAIL→SCENARIO/down/tab=scripted, PAGE_INTEGRITY→INTEGRITY/content/tab=page (unknown/cert'e düşmez)")
+    void list_mapsNewestMonitorTypes() throws Exception {
+        AlertEvent scripted = new AlertEvent();
+        scripted.setId(2L); scripted.setDomain("Login akışı"); scripted.setAlertType("SCRIPTED_FAIL");
+        scripted.setAlertLevel("CRITICAL"); scripted.setResolved(false); scripted.setCreatedAt("2026-07-10T10:00:00");
+        AlertEvent pageInt = new AlertEvent();
+        pageInt.setId(3L); pageInt.setDomain("https://x/campaign"); pageInt.setAlertType("PAGE_INTEGRITY");
+        pageInt.setAlertLevel("WARNING"); pageInt.setResolved(false); pageInt.setCreatedAt("2026-07-10T11:00:00");
+        when(alertEventRepo.findIncidents(any(), any(), any(), any(), any(), anyBoolean(), any(), any()))
+                .thenReturn(new PageImpl<>(List.of(scripted, pageInt)));
+        when(alertEventRepo.countIncidentsByType(any(), any(), any(), any(), anyBoolean(), any())).thenReturn(List.of());
+        when(commentRepo.countByAlertIds(any())).thenReturn(List.of());
+        com.certmonitor.model.ScriptedMonitor sm = new com.certmonitor.model.ScriptedMonitor();
+        sm.setId(20L); sm.setName("Login akışı");
+        when(scriptedMonitorRepo.findAll()).thenReturn(List.of(sm));
+        com.certmonitor.model.PageMonitor pm = new com.certmonitor.model.PageMonitor();
+        pm.setId(30L); pm.setName("Kampanya"); pm.setUrl("https://x/campaign");
+        when(pageMonitorRepo.findAll()).thenReturn(List.of(pm));
+
+        mvc.perform(get("/api/monitoring/incidents").session(session("ADMIN")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].root_cause.code").value("SCENARIO"))
+                .andExpect(jsonPath("$.data[0].root_cause.category").value("down"))
+                .andExpect(jsonPath("$.data[0].monitor.tab").value("scripted"))
+                .andExpect(jsonPath("$.data[0].monitor.monitor_id").value(20))
+                .andExpect(jsonPath("$.data[1].root_cause.code").value("INTEGRITY"))
+                .andExpect(jsonPath("$.data[1].root_cause.category").value("content"))
+                .andExpect(jsonPath("$.data[1].monitor.tab").value("page"))
+                .andExpect(jsonPath("$.data[1].monitor.monitor_id").value(30));
     }
 
     @Test

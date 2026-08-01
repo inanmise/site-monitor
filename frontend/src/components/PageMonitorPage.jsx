@@ -6,10 +6,12 @@ import { useVisibleInterval } from '../hooks/useVisibleInterval'
 import { useToast } from './ui/Toast.jsx'
 import SearchableSelect from './ui/SearchableSelect.jsx'
 import MaintenanceBadge from './ui/MaintenanceBadge.jsx'
+import MonitorHowBox from './ui/MonitorHowBox.jsx'
+import MonitorGuideButton from './ui/MonitorGuideButton.jsx'
 import TagInput from './ui/TagInput.jsx'
 import { Play, Pencil, X, RefreshCw, Plus, Trash2, ScanSearch, Users, Layers, FlaskConical, Check, AlertTriangle,
   LayoutDashboard, CheckCircle2, TriangleAlert, ServerCrash, Siren, BellDot, BarChart3, ChevronDown,
-  Image, FileCode, Link2, Frame, Type, ShieldAlert, Download, HelpCircle } from 'lucide-react'
+  Image, FileCode, Link2, Frame, Type, ShieldAlert, Download } from 'lucide-react'
 import AlertHistory from './admin/AlertHistory.jsx'
 import MonitorStatsBar from './MonitorStatsBar.jsx'
 const ResponseTimeChart = lazy(() => import('./ResponseTimeChart.jsx'))
@@ -80,7 +82,6 @@ export default function PageMonitorPage({ systemRole, teamId, teamName }) {
   const [statFilter, setStatFilter] = useState(null)
   const [statsVisible, setStatsVisible] = useState(false)
   const [secondsSince, setSecondsSince] = useState(0)
-  const [infoOpen, setInfoOpen] = useState(false)
   const deepLinkDone = useRef(false)
 
   const load = useCallback(async () => {
@@ -350,6 +351,7 @@ export default function PageMonitorPage({ systemRole, teamId, teamName }) {
           <button className="btn btn-sm upt-refresh-btn" onClick={load}>
             <RefreshCw size={14} />{t('page.refresh')}
           </button>
+          <MonitorGuideButton type="page" />
           {canWrite && (
             <button className="btn btn-sm btn-primary" onClick={openNew}>
               <Plus size={14} />{t('page.addMonitor')}
@@ -358,24 +360,7 @@ export default function PageMonitorPage({ systemRole, teamId, teamName }) {
         </div>
       </div>
 
-      <div className="dom-info">
-        <button type="button" className="dom-info-toggle" onClick={() => setInfoOpen(o => !o)}>
-          <HelpCircle size={15} /><span>{t('page.howTitle')}</span>
-          <ChevronDown size={15} className={`dom-info-chev${infoOpen ? ' open' : ''}`} />
-        </button>
-        {infoOpen && (
-          <ul className="dom-info-body">
-            <li>{t('page.how1')}</li>
-            <li>{t('page.how2')}</li>
-            <li>{t('page.how2b')}</li>
-            <li>{t('page.how3')}</li>
-            <li>{t('page.how4')}</li>
-            <li>{t('page.how5')}</li>
-            <li>{t('page.how6')}</li>
-            <li>{t('page.how7')}</li>
-          </ul>
-        )}
-      </div>
+      <MonitorHowBox bullets={[t('page.how1'), t('page.how2'), t('page.how2b'), t('page.how3'), t('page.how4'), t('page.how5'), t('page.how6'), t('page.how7')]} />
 
       {!loading && monitors.length > 0 && (
         <div className="stats-collapse-bar" onClick={toggleStats}

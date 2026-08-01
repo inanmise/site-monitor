@@ -2168,13 +2168,19 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .dom-hero-expiry { margin-top: 6px; display: inline-flex; align-items: center; gap: 5px; font-size: .82em; font-weight: 600; color: var(--text-muted); }
 .dom-hero-expiry svg { color: #9ca3af; flex-shrink: 0; }
 /* "Nasıl çalışır?" bilgi paneli */
-.dom-info { border: 1px solid var(--border); border-radius: 9px; margin-bottom: 14px; background: rgba(124,58,237,.05); overflow: hidden; }
-.dom-info-toggle { display: flex; align-items: center; gap: 8px; width: 100%; padding: 9px 13px; background: none; border: none; cursor: pointer; font-size: .86em; font-weight: 600; color: var(--text); }
-.dom-info-toggle > svg:first-child { color: #7c3aed; flex-shrink: 0; }
-.dom-info-chev { margin-left: auto; transition: transform .18s; color: var(--text-muted); }
-.dom-info-chev.open { transform: rotate(180deg); }
-.dom-info-body { margin: 0; padding: 2px 16px 12px 34px; font-size: .82em; line-height: 1.6; color: var(--text-muted); }
-.dom-info-body li { margin: 3px 0; }
+/* "Bu izleme nasıl ve nereden yapılıyor?" — her izleme türünde standart bilgi kutusu (MonitorHowBox). */
+.mhow { border: 1px solid var(--border); border-radius: 9px; margin-bottom: 14px; background: rgba(124,58,237,.05); overflow: hidden; }
+.mhow-toggle { display: flex; align-items: center; gap: 8px; width: 100%; padding: 9px 13px; background: none; border: none; cursor: pointer; font-size: .86em; font-weight: 600; color: var(--text); }
+.mhow-toggle > svg:first-child { color: #7c3aed; flex-shrink: 0; }
+.mhow-chev { margin-left: auto; transition: transform .18s; color: var(--text-muted); }
+.mhow-chev.open { transform: rotate(180deg); }
+.mhow-body { margin: 0; padding: 2px 16px 12px 34px; font-size: .82em; line-height: 1.6; color: var(--text-muted); }
+.mhow-body li { margin: 3px 0; }
+/* "Yeni monitör nasıl doldurulur?" rehber butonu + modal (MonitorGuideButton). */
+.mguide-btn > svg { color: #7c3aed; }
+.mguide-modal { max-width: 820px; }
+.mguide-body { padding: 8px 28px 24px; overflow-y: auto; flex: 1 1 auto; min-height: 0; }
+.mguide-body .show-markdown { font-size: .9em; line-height: 1.6; }
 
 .modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--border); }
 .alert-msg { background: #d4edda; color: #155724; padding: 10px 14px; border-radius: 5px; margin-bottom: 12px; font-size: .9em; }

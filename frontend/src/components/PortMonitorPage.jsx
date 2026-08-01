@@ -4,6 +4,8 @@ import { api, formatDate } from '../api/client'
 import { useT } from '../i18n/index.jsx'
 import { useVisibleInterval } from '../hooks/useVisibleInterval'
 import { useToast } from './ui/Toast.jsx'
+import MonitorHowBox from './ui/MonitorHowBox.jsx'
+import MonitorGuideButton from './ui/MonitorGuideButton.jsx'
 import SearchableSelect from './ui/SearchableSelect.jsx'
 import MaintenanceBadge from './ui/MaintenanceBadge.jsx'
 import TagInput from './ui/TagInput.jsx'
@@ -337,6 +339,7 @@ export default function PortMonitorPage({ systemRole, teamId, teamName }) {
           <button className="btn btn-sm upt-refresh-btn" onClick={load}>
             <RefreshCw size={14} />{t('port.refresh')}
           </button>
+          <MonitorGuideButton type="port" />
           {canWrite && (
             <button className="btn btn-sm btn-primary" onClick={openNew}>
               <Plus size={14} />{t('port.addMonitor')}
@@ -344,6 +347,8 @@ export default function PortMonitorPage({ systemRole, teamId, teamName }) {
           )}
         </div>
       </div>
+
+      <MonitorHowBox bullets={[t('port.how1'), t('port.how2'), t('port.how3')]} />
 
       {!loading && monitors.length > 0 && (
         <div className="stats-collapse-bar" onClick={toggleStats}

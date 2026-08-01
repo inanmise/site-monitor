@@ -4,6 +4,8 @@ import { api, formatDateSec } from '../api/client'
 import { useT } from '../i18n/index.jsx'
 import { useVisibleInterval } from '../hooks/useVisibleInterval'
 import { useToast } from './ui/Toast.jsx'
+import MonitorHowBox from './ui/MonitorHowBox.jsx'
+import MonitorGuideButton from './ui/MonitorGuideButton.jsx'
 import SearchableSelect from './ui/SearchableSelect.jsx'
 import MaintenanceBadge from './ui/MaintenanceBadge.jsx'
 import TagInput from './ui/TagInput.jsx'
@@ -332,6 +334,7 @@ export default function HttpMonitorPage({ systemRole, teamId, teamName }) {
           <button className="btn btn-sm upt-refresh-btn" onClick={load}>
             <RefreshCw size={14} />{t('http.refresh')}
           </button>
+          <MonitorGuideButton type="http" />
           {canWrite && (
             <button className="btn btn-sm btn-primary" onClick={openNew}>
               <Plus size={14} />{t('http.addMonitor')}
@@ -339,6 +342,8 @@ export default function HttpMonitorPage({ systemRole, teamId, teamName }) {
           )}
         </div>
       </div>
+
+      <MonitorHowBox bullets={[t('http.how1'), t('http.how2'), t('http.how3'), t('http.how4')]} />
 
       {!loading && monitors.length > 0 && (
         <div className="stats-collapse-bar" onClick={toggleStats}
