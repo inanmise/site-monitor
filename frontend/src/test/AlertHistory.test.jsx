@@ -10,6 +10,7 @@ vi.mock('../api/client', () => ({
       acknowledgeAlert: vi.fn(),
       resolveAlert:     vi.fn(),
       reNotifyAlert:    vi.fn(),
+      previewReNotify:  vi.fn(),
       bulkAlertAction:  vi.fn(),
     },
   },
@@ -121,5 +122,47 @@ describe('AlertHistory closed-alert details', () => {
     expect(bar.textContent).toMatch(/onayla|acknowledge/i)
     expect(bar.textContent).toMatch(/tekrar bildir|re-notify/i)
     expect(bar.textContent).toMatch(/çözüldü|resolved/i)
+  })
+
+  it('Tekrar Bildir: önizleme pop-up\'ı alıcıları listeler; biri çıkarılınca excludeEmails ile gönderir', async () => {
+    api.admin.getAlerts.mockResolvedValue({
+      success: true,
+      data: [{ ...closedAlert, id: 301, resolved: false, acknowledged: false }],
+      total: 1, page: 0, size: 20,
+    })
+    api.admin.previewReNotify.mockResolvedValue({
+      success: true,
+      data: { alert_id: 301, recipients: [
+        { email: 'dijitalsy@akbank.com', name: 'SY-Dijital', role: null, kind: 'TEAM' },
+        { email: 'mudur@akbank.com', name: 'Cenk Çil', role: 'MANAGER', kind: 'CONTACT' },
+      ] },
+    })
+    api.admin.reNotifyAlert.mockResolvedValue({ success: true, data: { recipients_queued: 1 } })
+
+    render(<AlertHistory />)
+    await waitFor(() => expect(screen.getByText('foo.example.com')).toBeDefined())
+
+    // Karttaki tekil "Tekrar Bildir" butonu → önce ÖNİZLEME çağrılır, gönderim YAPILMAZ
+    const card = document.querySelector('.alert-card')   // açık sekme kart sınıfı
+    fireEvent.click(Array.from(card.querySelectorAll('.alert-actions button'))
+      .find(b => /tekrar bildir|re-notify/i.test(b.textContent)))
+    await waitFor(() => expect(api.admin.previewReNotify).toHaveBeenCalledWith(301))
+    expect(api.admin.reNotifyAlert).not.toHaveBeenCalled()
+
+    // Pop-up iki alıcıyı listeler
+    await screen.findByText(/alıcıları onayla|confirm recipients/i)
+    expect(screen.getByText('dijitalsy@akbank.com')).toBeDefined()
+    expect(screen.getByText('mudur@akbank.com')).toBeDefined()
+    expect(screen.getByText(/2 alıcı seçili|2 recipients selected/i)).toBeDefined()
+
+    // Müdürü listeden çıkar → Gönder → excludeEmails taşınır
+    const modal = document.querySelector('.nl-modal')
+    const mudurRow = Array.from(modal.querySelectorAll('label'))
+      .find(l => l.textContent.includes('mudur@akbank.com'))
+    fireEvent.click(mudurRow.querySelector('input[type=checkbox]'))
+    expect(screen.getByText(/1 alıcı seçili|1 recipients selected/i)).toBeDefined()
+    fireEvent.click(screen.getByRole('button', { name: /^gönder$|^send$/i }))
+    await waitFor(() => expect(api.admin.reNotifyAlert)
+      .toHaveBeenCalledWith(301, { excludeEmails: ['mudur@akbank.com'] }))
   })
 })

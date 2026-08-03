@@ -372,6 +372,34 @@ public class DnsCheckerService {
     }
 
     /**
+     * DNS_CHANGED alarm/re-alert ctx'i: son changed kayıttan eski/yeni değerler. Hem günlük otomatik
+     * re-alert (MonitoringOutageService) hem MANUEL "Tekrar Bildir" (EscalationService) BUNU kullanır —
+     * manuel yol daha önce ctx'siz gidip maili boş ESKİ/YENİ kutularıyla gönderiyordu (2026-08-03 bug'ı).
+     * Kayıt yoksa boş map döner (çağıran generic mesaja düşer).
+     */
+    public static Map<String, Object> changeCtxOf(com.certmonitor.model.DnsRecord r) {
+        if (r == null) return Map.of();
+        Map<String, Object> ctx = new LinkedHashMap<>();
+        ctx.put("record_type", r.getRecordType());
+        ctx.put("old_values", splitLines(r.getPreviousValue()));
+        ctx.put("new_values", splitLines(r.getValue()));
+        ctx.put("changed_at", r.getCheckedAt());
+        return ctx;
+    }
+
+    /** Domain'in son changed=true kaydı (yoksa/hata halinde null) — changeCtxOf ile birlikte kullanılır. */
+    public static com.certmonitor.model.DnsRecord lastChangedRecord(
+            com.certmonitor.repository.DnsRecordRepository repo, String domain) {
+        try {
+            var rows = repo.findChangedByDomain(domain, org.springframework.data.domain.PageRequest.of(0, 1));
+            return rows.isEmpty() ? null : rows.get(0);
+        } catch (Exception e) {
+            log.debug("DNS_CHANGED son değişen kayıt okunamadı: {} — {}", domain, e.getMessage());
+            return null;
+        }
+    }
+
+    /**
      * Sorguların hangi çözümleyicilere gittiğinin yapılandırma görünümü. ExtendedResolver yanıtı hangi
      * sunucunun verdiğini açıklamaz; bu yüzden per-sorgu atıf değil, sıralı sunucu zinciri raporlanır.
      */

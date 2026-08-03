@@ -267,6 +267,62 @@ function NotifyResultModal({ alertId, alertInfo, currentResult, onClose }) {
   )
 }
 
+/** "Tekrar Bildir" onay pop-up'ı: gönderim ÖNCESİ alıcı listesi; kullanıcı istemediklerini
+ *  işaretten çıkarır (çıkarılana e-posta da webhook da gitmez). Hepsi çıkarılırsa Gönder pasif. */
+function ReNotifyConfirmModal({ domain, recipients, sending, onSend, onClose }) {
+  const t = useT()
+  const [unchecked, setUnchecked] = useState(() => new Set())
+  const toggle = (email) => setUnchecked(s => {
+    const n = new Set(s); if (n.has(email)) n.delete(email); else n.add(email); return n
+  })
+  const selectedCount = recipients.length - unchecked.size
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal-box nl-modal" onClick={e => e.stopPropagation()}>
+        <h3 style={{ marginTop: 0 }}>{t('alh.renotifyModal.title')}</h3>
+        <p style={{ fontSize: '.88em', color: 'var(--text-light)' }}>{t('alh.renotifyModal.desc', domain)}</p>
+
+        {recipients.length === 0 ? (
+          <div className="nl-empty">{t('alh.renotifyModal.noRecipients')}</div>
+        ) : (
+          <div className="nl-section">
+            {recipients.map(r => (
+              <label key={r.email} className="checkbox-label nl-quick-row" style={{ width: '100%' }}>
+                <input
+                  type="checkbox"
+                  checked={!unchecked.has(r.email)}
+                  onChange={() => toggle(r.email)}
+                />
+                <strong>{r.name || r.email}</strong>
+                <span className="role-badge">{r.kind === 'TEAM' ? t('alh.renotifyModal.kindTeam') : (r.role || '')}</span>
+                <span className="nl-email">{r.email}</span>
+              </label>
+            ))}
+          </div>
+        )}
+
+        <div style={{ fontSize: '.82em', color: 'var(--text-light)', marginTop: 10 }}>
+          {t('alh.renotifyModal.selected', selectedCount)}
+        </div>
+
+        <div className="modal-actions">
+          <button className="btn btn-secondary" onClick={onClose} disabled={sending}>
+            {t('alh.renotifyModal.cancel')}
+          </button>
+          <button
+            className="btn btn-warning"
+            disabled={sending || selectedCount === 0}
+            onClick={() => onSend([...unchecked])}
+          >
+            {t('alh.renotifyModal.send')}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export default function AlertHistory({ domain = null }) {
   const t = useT()
   const { showConfirm } = useDialog()
@@ -281,6 +337,8 @@ export default function AlertHistory({ domain = null }) {
   const [loading,      setLoading]      = useState(false)
   const [notifyModal,  setNotifyModal]  = useState(null)
   const [notifying,    setNotifying]    = useState(null)
+  const [renotifyModal,   setRenotifyModal]   = useState(null)   // Tekrar Bildir onay pop-up'ı
+  const [renotifySending, setRenotifySending] = useState(false)
   const [typeFilter,   setTypeFilter]   = useState('')   // '' = tüm tipler
   const [typeCounts,   setTypeCounts]   = useState({})
   const [selected,     setSelected]     = useState(() => new Set())   // toplu seçim (yalnız açık sekme)
@@ -404,13 +462,29 @@ export default function AlertHistory({ domain = null }) {
     }
   }
 
+  // Tekrar Bildir: önce alıcı önizlemesi → onay pop-up'ı; gönderim sendReNotify ile yapılır.
   async function reNotify(id) {
     setNotifying(id)
-    const res = await api.admin.reNotifyAlert(id)
+    const res = await api.admin.previewReNotify(id)
     setNotifying(null)
+    if (res?.success) {
+      const alert = alerts.find(a => a.id === id)
+      setRenotifyModal({ alertId: id, domain: alert?.domain || '', recipients: res.data?.recipients || [] })
+    } else {
+      toast.error(res?.error || t('alh.renotifyModal.previewError'))
+    }
+  }
+
+  async function sendReNotify(excludeEmails) {
+    if (!renotifyModal) return
+    setRenotifySending(true)
+    const res = await api.admin.reNotifyAlert(renotifyModal.alertId,
+      excludeEmails.length ? { excludeEmails } : undefined)
+    setRenotifySending(false)
     if (res?.success) {
       const count = res.data?.recipients_queued ?? res.data?.contacts_queued ?? 0
       toast.success(t('alh.notifyQueued', count))
+      setRenotifyModal(null)
       load()
     } else {
       toast.error(res?.error || 'Error')
@@ -865,6 +939,15 @@ export default function AlertHistory({ domain = null }) {
           alertInfo={notifyModal.alertInfo}
           currentResult={notifyModal.result}
           onClose={() => setNotifyModal(null)}
+        />
+      )}
+      {renotifyModal && (
+        <ReNotifyConfirmModal
+          domain={renotifyModal.domain}
+          recipients={renotifyModal.recipients}
+          sending={renotifySending}
+          onSend={sendReNotify}
+          onClose={() => { if (!renotifySending) setRenotifyModal(null) }}
         />
       )}
     </div>

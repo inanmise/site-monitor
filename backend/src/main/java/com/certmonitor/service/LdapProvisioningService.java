@@ -39,6 +39,7 @@ public class LdapProvisioningService {
     private final TeamRepository teamRepo;
     private final LdapDirectoryService directory;
     private final EscalationContactRepository contactRepo;
+    private final AppSettingsService appSettings;
 
     /** Provision/refresh the authenticated user from AD; resolves team + manager. */
     @Transactional
@@ -98,7 +99,8 @@ public class LdapProvisioningService {
         if (resolveManager) {
             resolveManagerLink(u, attrs);
             // Takım↔müdür ilişkisi kurulduysa, müdürü otomatik MANAGER eskalasyon
-            // kontağı yap (min seviye HIGH) — manuel ekleme beklenmez.
+            // kontağı yap (min seviye HIGH). Varsayılan KAPALI — yalnız
+            // cert.monitor.escalation.auto-add-managers açıksa (ensure içinde canlı okunur).
             ensureManagerEscalationContact(u.getTeamId(), u.getManagerId());
         }
 
@@ -241,10 +243,13 @@ public class LdapProvisioningService {
 
     /**
      * Takımın müdürünü otomatik olarak MANAGER eskalasyon kontağı yapar (min seviye HIGH).
-     * Manuel eskalasyon eklenmesi beklenmez; aynı takım+MANAGER+e-posta kontağı zaten
-     * varsa (aktif/pasif) tekrar eklenmez (idempotent).
+     * VARSAYILAN KAPALI (cert.monitor.escalation.auto-add-managers=false): D7+ müdürler
+     * eskalasyona OTOMATİK eklenmez; Admin/Takım PO'su isterse manuel ekler. Admin ayarı
+     * açarsa eski davranış döner. Aynı takım+MANAGER+e-posta kontağı zaten varsa
+     * (aktif/pasif) tekrar eklenmez (idempotent). Mevcut kayıtlar ayar kapansa da silinmez.
      */
     private void ensureManagerEscalationContact(Long teamId, Long managerId) {
+        if (!appSettings.getBoolean("cert.monitor.escalation.auto-add-managers", false)) return;
         if (teamId == null || managerId == null) return;
         AppUser mgr = userRepo.findById(managerId).orElse(null);
         if (mgr == null || mgr.getEmail() == null || mgr.getEmail().isBlank()) return;

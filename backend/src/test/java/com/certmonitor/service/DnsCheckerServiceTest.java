@@ -244,6 +244,27 @@ class DnsCheckerServiceTest {
     }
 
     @Test
+    @DisplayName("changeCtxOf: null kayıt → boş map (çağıran generic mesaja düşer)")
+    void changeCtxOf_null_isEmpty() {
+        assertThat(DnsCheckerService.changeCtxOf(null)).isEmpty();
+    }
+
+    @Test
+    @DisplayName("changeCtxOf: çok satırlı değerler old/new_values listelerine ayrışır + changed_at taşınır")
+    void changeCtxOf_splitsValues() {
+        com.certmonitor.model.DnsRecord r = new com.certmonitor.model.DnsRecord();
+        r.setRecordType("A");
+        r.setPreviousValue("1.2.3.4\n5.6.7.8");
+        r.setValue("9.9.9.9");
+        r.setCheckedAt("2026-08-02T01:32:00");
+        Map<String, Object> ctx = DnsCheckerService.changeCtxOf(r);
+        assertThat(ctx.get("record_type")).isEqualTo("A");
+        assertThat(ctx.get("old_values")).isEqualTo(List.of("1.2.3.4", "5.6.7.8"));
+        assertThat(ctx.get("new_values")).isEqualTo(List.of("9.9.9.9"));
+        assertThat(ctx.get("changed_at")).isEqualTo("2026-08-02T01:32:00");
+    }
+
+    @Test
     @DisplayName("resolverConfigInfo: servers/source/timeout_ms anahtarları döner (şeffaflık payload'ı)")
     void resolverConfigInfo_shape() {
         Map<String, Object> info = service.resolverConfigInfo();

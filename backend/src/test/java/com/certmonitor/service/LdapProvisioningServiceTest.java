@@ -34,11 +34,14 @@ class LdapProvisioningServiceTest {
     @Mock TeamRepository teamRepo;
     @Mock LdapDirectoryService directory;
     @Mock EscalationContactRepository contactRepo;
+    @Mock AppSettingsService appSettings;
     private LdapProvisioningService service;
 
     @BeforeEach
     void setUp() {
-        service = new LdapProvisioningService(userRepo, teamRepo, directory, contactRepo);
+        service = new LdapProvisioningService(userRepo, teamRepo, directory, contactRepo, appSettings);
+        // Varsayılan davranış: otomatik müdür-kontağı ekleme KAPALI (üretim varsayılanıyla aynı).
+        when(appSettings.getBoolean(anyString(), any(Boolean.class))).thenAnswer(inv -> inv.getArgument(1));
         AtomicLong userSeq = new AtomicLong(0);
         AtomicLong teamSeq = new AtomicLong(0);
         when(userRepo.save(any(AppUser.class))).thenAnswer(inv -> {
@@ -293,8 +296,9 @@ class LdapProvisioningServiceTest {
     }
 
     @Test
-    @DisplayName("provision: takım + müdür varsa müdür otomatik MANAGER eskalasyon kontağı (HIGH) olur")
+    @DisplayName("provision: ayar AÇIKKEN takım + müdür varsa müdür otomatik MANAGER eskalasyon kontağı (HIGH) olur")
     void provision_autoCreatesManagerEscalationContact() {
+        when(appSettings.getBoolean("cert.monitor.escalation.auto-add-managers", false)).thenReturn(true);
         when(directory.groupMail(anyString())).thenReturn(Optional.of("sy@akbank.com"));
         // Müdür DB'de mevcut (employeeId=63535), e-postalı → resolveManagerLink onu bulur
         AppUser mgr = new AppUser();
@@ -322,8 +326,31 @@ class LdapProvisioningServiceTest {
     }
 
     @Test
-    @DisplayName("provision: aynı müdür zaten MANAGER kontağıysa tekrar eklenmez")
+    @DisplayName("provision: ayar KAPALIYKEN (varsayılan) müdür kontağı OLUŞMAZ; manager bağlantısı yine kurulur")
+    void provision_defaultOff_noManagerContactCreated() {
+        // appSettings varsayılanı fallback döner → false (üretim varsayılanı)
+        when(directory.groupMail(anyString())).thenReturn(Optional.of("sy@akbank.com"));
+        AppUser mgr = new AppUser();
+        mgr.setId(700L); mgr.setUsername("mgr1"); mgr.setEmployeeId("63535");
+        mgr.setActive(true); mgr.setEmail("mudur@akbank.com");
+        when(userRepo.findByEmployeeId("63535")).thenReturn(Optional.of(mgr));
+        when(userRepo.findById(700L)).thenReturn(Optional.of(mgr));
+
+        Map<String, Object> attrs = Map.of(
+                "cn", "80002", "displayName", "Üye",
+                "extensionAttribute4", "CN=63535,OU=BTPersonel,DC=aknet,DC=akb",
+                "memberOf", "CN=SY-DarkSide,OU=ScrumGroups,OU=BTPersonel,OU=Aknet,DC=aknet,DC=akb");
+
+        AppUser saved = service.provisionFromAd("uye1", "CN=uye1,DC=aknet,DC=akb", attrs);
+
+        org.mockito.Mockito.verify(contactRepo, org.mockito.Mockito.never()).save(any(EscalationContact.class));
+        assertThat(saved.getManagerId()).isEqualTo(700L);   // ilişki yine kaydedilir; yalnız kontak eklenmez
+    }
+
+    @Test
+    @DisplayName("provision: ayar AÇIKKEN aynı müdür zaten MANAGER kontağıysa tekrar eklenmez")
     void provision_skipsDuplicateManagerContact() {
+        when(appSettings.getBoolean("cert.monitor.escalation.auto-add-managers", false)).thenReturn(true);
         when(directory.groupMail(anyString())).thenReturn(Optional.of("sy@akbank.com"));
         AppUser mgr = new AppUser();
         mgr.setId(700L); mgr.setUsername("mgr1"); mgr.setEmployeeId("63535");

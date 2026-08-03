@@ -1118,12 +1118,37 @@ public class AdminController {
         return ok(Map.of("data", event, "message", "Alert resolved"));
     }
 
-    @PostMapping("/alerts/{id}/re-notify")
-    public ResponseEntity<Map<String, Object>> reNotifyAlert(
+    /** "Tekrar Bildir" onay pop-up'ı için alıcı önizlemesi — gönderim/yazma YAPMAZ.
+     *  Perm+scope çifti re-notify ile birebir aynı (önizleyebilen = gönderebilen). */
+    @GetMapping("/alerts/{id}/re-notify/preview")
+    public ResponseEntity<Map<String, Object>> previewReNotifyAlert(
             @PathVariable Long id, HttpSession session) {
         requirePerm(session, "alerts.actions", "execute");
         requireAlertScope(session, id);   // takım kapsamı (IDOR engeli)
-        return ok(Map.of("data", escalationService.reNotify(id), "message", "Notification triggered"));
+        List<Map<String, Object>> recipients = escalationService.previewReNotify(id).stream()
+                .map(r -> {
+                    Map<String, Object> m = new LinkedHashMap<String, Object>();
+                    m.put("email", r.email());
+                    m.put("name",  r.name());
+                    m.put("role",  r.role());
+                    m.put("kind",  r.kind());
+                    return m;
+                }).toList();
+        return ok(Map.of("data", Map.of("alert_id", id, "recipients", recipients)));
+    }
+
+    @PostMapping("/alerts/{id}/re-notify")
+    public ResponseEntity<Map<String, Object>> reNotifyAlert(
+            @PathVariable Long id, HttpSession session,
+            @RequestBody(required = false) Map<String, Object> body) {
+        requirePerm(session, "alerts.actions", "execute");
+        requireAlertScope(session, id);   // takım kapsamı (IDOR engeli)
+        // Onay pop-up'ından gelen opsiyonel hariç-tutma listesi (kullanıcının listeden çıkardıkları).
+        Set<String> excludes = new LinkedHashSet<>();
+        if (body != null && body.get("excludeEmails") instanceof List<?> raw) {
+            for (Object o : raw) if (o != null && !o.toString().isBlank()) excludes.add(o.toString());
+        }
+        return ok(Map.of("data", escalationService.reNotify(id, excludes), "message", "Notification triggered"));
     }
 
     /** Toplu alarm işlemi (Alarm Geçmişi çoklu seçim): acknowledge | resolve | re-notify.

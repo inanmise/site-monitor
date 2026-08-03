@@ -467,7 +467,11 @@ export const api = {
       body: JSON.stringify({ acknowledged_by: acknowledgedBy }),
     }),
     resolveAlert:     (id) => request(`/admin/alerts/${id}/resolve`,     { method: 'POST' }),
-    reNotifyAlert: (id) => request(`/admin/alerts/${id}/re-notify`, { method: 'POST' }),
+    reNotifyAlert: (id, body) => request(`/admin/alerts/${id}/re-notify`, {
+      method: 'POST', ...(body ? { body: JSON.stringify(body) } : {}),
+    }),
+    // "Tekrar Bildir" onay pop-up'ı: gönderim yapmadan alıcı listesini döner
+    previewReNotify: (id) => request(`/admin/alerts/${id}/re-notify/preview`),
     // Toplu işlem: action ∈ {acknowledge, resolve, re-notify}, ids = alarm id listesi
     bulkAlertAction: (action, ids) => request('/admin/alerts/bulk', {
       method: 'POST', body: JSON.stringify({ action, ids }),
