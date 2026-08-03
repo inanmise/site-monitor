@@ -687,7 +687,7 @@ export const api = {
     updateDnsMonitor:  (id, data) => request(`/monitoring/dns/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
     deleteDnsMonitor:  (id) => request(`/monitoring/dns/${id}`, { method: 'DELETE' }),
     triggerDnsCheck:   (id) => request(`/monitoring/dns/${id}/check`, { method: 'POST' }),
-    getDnsHistory:     (id, days = 7) => request(`/monitoring/dns/${id}/history?days=${days}`),
+    getDnsHistory:     (id, days = 7, changedOnly = false) => request(`/monitoring/dns/${id}/history?days=${days}${changedOnly ? '&changedOnly=true' : ''}`),
     getDnsResponseSeries: (id, { from, to, days } = {}) => {
       const q = new URLSearchParams(
         Object.fromEntries(Object.entries({ from, to, days }).filter(([, v]) => v != null && v !== '')),

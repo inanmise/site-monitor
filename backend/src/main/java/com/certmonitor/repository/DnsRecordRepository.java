@@ -20,6 +20,16 @@ public interface DnsRecordRepository extends JpaRepository<DnsRecord, Long> {
     @Query("SELECT r FROM DnsRecord r WHERE r.monitorId = :id AND r.checkedAt >= :since ORDER BY r.checkedAt DESC LIMIT :limit")
     List<DnsRecord> findRecentByMonitorIdSince(@Param("id") Long id, @Param("since") String since, @Param("limit") int limit);
 
+    /** "Sadece Değişenler" filtresi — changed VEYA rotated satırlar (diff taşıyanlar), SQL-LIMIT'li.
+     *  Sunucu tarafında filtrelenir ki 5000-satır cap'inde TÜM aralığın değişen kayıtları dönebilsin. */
+    @Query("SELECT r FROM DnsRecord r WHERE r.monitorId = :id AND (r.changed = true OR r.rotated = true) "
+         + "ORDER BY r.checkedAt DESC LIMIT :limit")
+    List<DnsRecord> findRecentChangedByMonitorId(@Param("id") Long id, @Param("limit") int limit);
+
+    @Query("SELECT r FROM DnsRecord r WHERE r.monitorId = :id AND r.checkedAt >= :since "
+         + "AND (r.changed = true OR r.rotated = true) ORDER BY r.checkedAt DESC LIMIT :limit")
+    List<DnsRecord> findRecentChangedByMonitorIdSince(@Param("id") Long id, @Param("since") String since, @Param("limit") int limit);
+
     /** Her monitör için en güncel kayıt — DNS listesinde monitör başına sorgu yerine tek toplu sorgu. */
     // LATERAL join: monitör başına tek index-seek (full-scan yerine).
     @Query(value = "SELECT c.* FROM dns_monitors m CROSS JOIN LATERAL "

@@ -126,13 +126,22 @@ const DNS_TR = `
 ### Diğer alanlar
 - **İsim** — Boşsa domain kullanılır. **Grup** — mevcut/yeni.
 - **Maks. çözümleme süresi (ms)** — Yanıt bunu aşarsa "yavaş" sayılır (opsiyonel; 100–60000).
-- **Beklenen değer (kilit)** — Her satıra bir değer (canlı yanıtta olmasını beklediğiniz IP/hedef). Girildiğinde, beklenen kümede OLMAYAN her canlı değer **DNS ele geçirme** olarak işaretlenir. Boş = kilit kapalı (rotasyon serbest). "Pin current" ile mevcut canlı değerleri tek tıkla doldurabilirsiniz.
+- **Beklenen değer (kilit)** — Her satıra bir değer (canlı yanıtta olmasını beklediğiniz IP/hedef). Girildiğinde, beklenen kümede OLMAYAN her canlı değer **DNS ele geçirme** olarak işaretlenir. Boş = kilit kapalı (rotasyon serbest). "Şu anki değeri sabitle" ile mevcut canlı değerleri tek tıkla doldurabilir, "Şu anki değeri listeye ekle" ile üzerine yazmadan ekleyebilirsiniz.
+- **DNS değişikliği alarmı** — Açıkken kayıt değeri değişince "DNS Değişikliği" alarmı üretilir (otomatik kapanmaz, günlük hatırlatılır). Kapatırsanız değişiklikler yalnız kontrol geçmişine yazılır. Beklenen liste doluysa ve yeni değerlerin TAMAMI listedeyse (ör. iç ↔ dış IP geçişi) alarm üretilmez.
 - **Propagation kontrolü (çoklu-resolver)** — Açıkken kayıt birden çok çözümleyicide karşılaştırılır; en az 2'si farklı değer verirse "tutarsız" işaretlenir.
 - **Aktif** — Otomatik kontrolü aç/kapat.
+
+### Sorgu nereden, nasıl yapılır?
+- Sorgular **izleme sunucusundan (pod)** dnsjava ile doğrudan atılır; ara proxy yoktur.
+- Varsayılan hedef, izleme sunucusunun **işletim sistemi DNS zinciridir**: sunucular sırayla denenir (birincil zaman aşımına uğrarsa yedeğe geçilir). Aktif zinciri detay modalındaki **"Çözümleyici Yapılandırması"** bölümünde görebilirsiniz.
+- Her kontrol **önbelleksiz taze sorgudur** — yanıt süresi gerçek gidiş-dönüştür. Sorgu zaman aşımı ayarlanabilir (varsayılan 2000 ms, \`cert.monitor.dns.query-timeout-ms\`).
+- **Propagation kontrolü** açık monitörlerde ayrıca public çözümleyiciler (varsayılan \`8.8.8.8, 1.1.1.1, 9.9.9.9\` — \`cert.monitor.dns.resolvers\` ayarı) tek tek doğrudan sorgulanır.
+- Kurum içi (split-horizon) bölgelerde OS zinciri iç DNS'e işaret ediyorsa **iç IP**, dış çözümleyiciler **dış IP** dönebilir — iki değeri de beklenen listeye ekleyerek bu gidip-gelmeyi sessizleştirin.
 
 ### İpuçları
 - **Beklenen değer** girmek, sessiz DNS değişikliği/ele geçirmeyi yakalamanın en güçlü yoludur.
 - Round-robin'de tüm değerleri beklenen kümeye ekleyin; alt-küme sapma sayılmaz.
+- İç/dış IP arasında bilinen bir geçiş varsa iki IP'yi de beklenen listeye ekleyin; "Değişti" satırları geçmişte **"beklenen değerler arasında"** rozetiyle görünür ama alarm üretmez.
 `
 
 const DNS_EN = `
@@ -149,13 +158,22 @@ Open the form with **+ New Monitor**.
 ### Other fields
 - **Name** — Falls back to domain. **Group** — existing/new.
 - **Max resolution time (ms)** — If the response exceeds this it counts as "slow" (optional; 100–60000).
-- **Expected value (lock)** — One value per line (the IP/target you expect live). When set, any live value NOT in the set is flagged as **DNS hijack**. Blank = lock off (rotation allowed). Use "Pin current" to fill the current live values in one click.
+- **Expected value (lock)** — One value per line (the IP/target you expect live). When set, any live value NOT in the set is flagged as **DNS hijack**. Blank = lock off (rotation allowed). Use "Pin current value" to fill the current live values in one click, or "Add current value to list" to append without overwriting.
+- **DNS change alarm** — When on, a "DNS Change" alarm is raised when the record value changes (does not auto-close, re-alerts daily). When off, changes are only written to the check history. If the expected list is set and ALL new values are in it (e.g. internal ↔ external IP flip), no alarm is raised.
 - **Propagation check (multi-resolver)** — On compares the record across multiple resolvers; if at least 2 differ it's marked "inconsistent".
 - **Active** — Enable/disable automatic checks.
+
+### Where and how are queries made?
+- Queries are sent **directly from the monitoring server (pod)** via dnsjava; there is no intermediate proxy.
+- The default target is the monitoring server's **OS DNS chain**: servers are tried in order (fallback on primary timeout). See the active chain in the **"Resolver Configuration"** section of the detail modal.
+- Every check is a **cache-free fresh query** — the response time is a real round-trip. Query timeout is configurable (default 2000 ms, \`cert.monitor.dns.query-timeout-ms\`).
+- Monitors with **propagation check** also query public resolvers directly, one by one (default \`8.8.8.8, 1.1.1.1, 9.9.9.9\` — the \`cert.monitor.dns.resolvers\` setting).
+- In split-horizon zones, the OS chain may return the **internal IP** while public resolvers return the **external IP** — add both to the expected list to silence that flip.
 
 ### Tips
 - Setting an **Expected value** is the strongest way to catch silent DNS changes/hijacks.
 - For round-robin add all values to the expected set; a subset is not a deviation.
+- If a known internal/external IP flip exists, add both IPs to the expected list; "Changed" rows still appear in history with the **"Within expected values"** badge but raise no alarm.
 `
 
 const KEYWORD_TR = `

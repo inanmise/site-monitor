@@ -1797,22 +1797,23 @@ public class EmailNotificationService {
             + "}"
             + "</style>";
 
-        return "<!DOCTYPE html><html lang='tr'>"
+        return "<!DOCTYPE html><html lang='tr' xmlns:v='urn:schemas-microsoft-com:vml' xmlns:o='urn:schemas-microsoft-com:office:office'>"
             + "<head><meta charset='UTF-8'>"
+            + "<meta http-equiv='X-UA-Compatible' content='IE=edge'>"
             + "<meta name='viewport' content='width=device-width,initial-scale=1,maximum-scale=1'>"
-            + "<meta name='color-scheme' content='light only'>"
-            + "<meta name='supported-color-schemes' content='light'>"
-            + "<!--[if mso]><style>*{font-family:Arial,Helvetica,sans-serif !important}</style><![endif]-->"
+            + LIGHT_SCHEME_META
+            + "<!--[if mso]><style>table,td,div,p,a{font-family:'Segoe UI',Arial,sans-serif !important}</style><![endif]-->"
             + css + "</head>"
-            + "<body style='margin:0;padding:0;background-color:#f1f5f9;font-family:\"Segoe UI\",Tahoma,Arial,sans-serif'>"
+            + "<body bgcolor='#f1f5f9' style='margin:0;padding:0;background-color:#f1f5f9;font-family:\"Segoe UI\",Tahoma,Arial,sans-serif;"
+            + "-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%'>"
 
             + "<table role='presentation' class='em-wrap' width='100%' cellpadding='0' cellspacing='0' border='0'"
-            + " bgcolor='#f1f5f9' style='background-color:#f1f5f9;mso-table-lspace:0;mso-table-rspace:0'>"
+            + " bgcolor='#f1f5f9' style='background-color:#f1f5f9;mso-table-lspace:0pt;mso-table-rspace:0pt'>"
             + "<tr><td align='center' style='padding:24px 10px'>"
 
             + "<table role='presentation' class='em-card' width='640' cellpadding='0' cellspacing='0' border='0' bgcolor='#ffffff'"
             + " style='width:640px;max-width:640px;background-color:#ffffff;border-radius:14px;overflow:hidden;"
-            + "box-shadow:0 8px 32px rgba(0,0,0,.15)'>"
+            + "border:1px solid #d7dde5'>"
 
             // ── Top bar (kırmızı) — bgcolor'lı <td> ──
             + "<tr><td bgcolor='" + red + "' style='background-color:" + red + ";padding:22px 24px'>"
@@ -1824,7 +1825,7 @@ public class EmailNotificationService {
             + "</td></tr>"
 
             // ── Body ──
-            + "<tr><td bgcolor='#ffffff' style='background-color:#ffffff;padding:22px 24px'>"
+            + "<tr><td class='em-body' bgcolor='#ffffff' style='background-color:#ffffff;padding:22px 24px'>"
             + hero
             + twoColSection
 
@@ -1934,23 +1935,23 @@ public class EmailNotificationService {
             + "}"
             + "</style>";
 
-        return "<!DOCTYPE html><html lang='tr'>"
+        return "<!DOCTYPE html><html lang='tr' xmlns:v='urn:schemas-microsoft-com:vml' xmlns:o='urn:schemas-microsoft-com:office:office'>"
             + "<head><meta charset='UTF-8'>"
+            + "<meta http-equiv='X-UA-Compatible' content='IE=edge'>"
             + "<meta name='viewport' content='width=device-width,initial-scale=1,maximum-scale=1'>"
-            + "<meta name='color-scheme' content='light only'>"
-            + "<meta name='supported-color-schemes' content='light'>"
-            + "<!--[if mso]><style>*{font-family:Arial,Helvetica,sans-serif !important}</style><![endif]-->"
+            + LIGHT_SCHEME_META
+            + "<!--[if mso]><style>table,td,div,p,a{font-family:'Segoe UI',Arial,sans-serif !important}</style><![endif]-->"
             + css + "</head>"
-            + "<body style='margin:0;padding:0;background-color:#f1f5f9;"
-            + "font-family:\"Segoe UI\",Tahoma,Arial,sans-serif'>"
+            + "<body bgcolor='#f1f5f9' style='margin:0;padding:0;background-color:#f1f5f9;"
+            + "font-family:\"Segoe UI\",Tahoma,Arial,sans-serif;-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%'>"
 
             + "<table role='presentation' class='em-wrap' width='100%' cellpadding='0' cellspacing='0' border='0'"
-            + " bgcolor='#f1f5f9' style='background-color:#f1f5f9;mso-table-lspace:0;mso-table-rspace:0'>"
+            + " bgcolor='#f1f5f9' style='background-color:#f1f5f9;mso-table-lspace:0pt;mso-table-rspace:0pt'>"
             + "<tr><td align='center' style='padding:24px 10px'>"
 
             + "<table role='presentation' class='em-card' width='640' cellpadding='0' cellspacing='0' border='0' bgcolor='#ffffff'"
             + " style='width:640px;max-width:640px;background-color:#ffffff;border-radius:14px;overflow:hidden;"
-            + "box-shadow:0 8px 32px rgba(0,0,0,.15)'>"
+            + "border:1px solid #d7dde5'>"
 
             // ── Top bar (yeşil) — bgcolor'lı <td> (Outlook-safe) ──
             + "<tr><td bgcolor='" + green + "' style='background-color:" + green + ";padding:22px 24px'>"
@@ -1962,7 +1963,7 @@ public class EmailNotificationService {
             + "</td></tr>"
 
             // ── Hero ✓ (daire = nested <td bgcolor>, div+border-radius değil) ──
-            + "<tr><td bgcolor='#ffffff' style='background-color:#ffffff;padding:22px 24px 6px'>"
+            + "<tr><td class='em-body' bgcolor='#ffffff' style='background-color:#ffffff;padding:22px 24px 6px'>"
             + "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0'><tr><td align='center'>"
             + "<table role='presentation' cellpadding='0' cellspacing='0' border='0' align='center'><tr>"
             + "<td width='80' height='80' align='center' valign='middle' bgcolor='#dcfce7'"
@@ -1974,10 +1975,10 @@ public class EmailNotificationService {
             + "</td></tr></table></td></tr>"
 
             // ── İki kolon detay ──
-            + "<tr><td bgcolor='#ffffff' style='background-color:#ffffff;padding:18px 24px 4px'>" + twoColSection + "</td></tr>"
+            + "<tr><td class='em-body' bgcolor='#ffffff' style='background-color:#ffffff;padding:18px 24px 4px'>" + twoColSection + "</td></tr>"
 
             // ── Bilgi kutusu (sol aksan-şeritli tablo — border-left div değil) ──
-            + "<tr><td bgcolor='#ffffff' style='background-color:#ffffff;padding:0 24px 22px'>"
+            + "<tr><td class='em-body' bgcolor='#ffffff' style='background-color:#ffffff;padding:0 24px 22px'>"
             + "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' style='border-radius:10px;overflow:hidden'><tr>"
             + "<td width='5' bgcolor='" + green + "' style='background-color:" + green + ";width:5px;font-size:0;line-height:0'>&nbsp;</td>"
             + "<td bgcolor='#f0fdf4' style='background-color:#f0fdf4;padding:14px 18px;color:#14532d;font-size:14px;line-height:1.7'>"

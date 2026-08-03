@@ -938,6 +938,8 @@ public class MonitoringController {
         m.setExpectedValue(ev != null && !ev.toString().isBlank() ? ev.toString().trim() : null);
         m.setPropagationCheck(Boolean.TRUE.equals(body.get("propagationCheck")));   // çoklu-resolver tutarlılık (opt-in)
         m.setSlowThresholdMs(clampSlow(body.get("slowThresholdMs")));               // per-monitor yavaş eşiği (boş=global)
+        if (body.get("dnsChangeAlertEnabled") != null)                              // DNS_CHANGED aç/kapa (null=açık)
+            m.setDnsChangeAlertEnabled(Boolean.TRUE.equals(body.get("dnsChangeAlertEnabled")));
         if (body.containsKey("groupName")) m.setGroupName(monitoringGroupService.getOrCreateFor(m, teamId, body.get("groupName") == null ? null : body.get("groupName").toString(), actor(session)));   // mantıksal grup (serbest-form)
         if (body.get("intervalSeconds") != null) m.setIntervalSeconds(((Number) body.get("intervalSeconds")).intValue());
         m.setCreatedAt(now);
@@ -990,6 +992,8 @@ public class MonitoringController {
                 m.setPropagationCheck(Boolean.TRUE.equals(body.get("propagationCheck")));
             if (body.containsKey("slowThresholdMs"))    // per-monitor yavaş eşiği (boş=global)
                 m.setSlowThresholdMs(clampSlow(body.get("slowThresholdMs")));
+            if (body.containsKey("dnsChangeAlertEnabled"))   // DNS_CHANGED aç/kapa (null=açık)
+                m.setDnsChangeAlertEnabled(Boolean.TRUE.equals(body.get("dnsChangeAlertEnabled")));
             if (body.containsKey("groupName")) m.setGroupName(monitoringGroupService.getOrCreateFor(m, m.getTeamId(), body.get("groupName") == null ? null : body.get("groupName").toString(), actor(session)));
             m.setUpdatedAt(ISO.format(Instant.now()));
             DnsMonitor saved = dnsMonitorRepo.save(m);
@@ -1023,7 +1027,8 @@ public class MonitoringController {
     @GetMapping("/dns/{id}/history")
     public ResponseEntity<Map<String, Object>> dnsHistory(@PathVariable Long id, HttpSession session,
             @RequestParam(required = false) Integer days,
-            @RequestParam(defaultValue = "5000") int limit) {
+            @RequestParam(defaultValue = "5000") int limit,
+            @RequestParam(defaultValue = "false") boolean changedOnly) {
         DnsMonitor mon = dnsMonitorRepo.findById(id).orElse(null);
         if (mon == null) return notFound("DNS monitor not found");
         var deny = denyIfNotViewable(session, mon.getTeamId());
@@ -1033,9 +1038,13 @@ public class MonitoringController {
         if (days != null && days > 0) {
             int d = Math.min(days, 90);
             String cutoff = ISO.format(Instant.now().minus(d, ChronoUnit.DAYS));
-            records = dnsRecordRepo.findRecentByMonitorIdSince(id, cutoff, cap);   // SQL-LIMIT
+            records = changedOnly
+                    ? dnsRecordRepo.findRecentChangedByMonitorIdSince(id, cutoff, cap)   // "Sadece Değişenler" (changed/rotated)
+                    : dnsRecordRepo.findRecentByMonitorIdSince(id, cutoff, cap);   // SQL-LIMIT
         } else {
-            records = dnsRecordRepo.findRecentByMonitorId(id, cap);   // SQL-LIMIT
+            records = changedOnly
+                    ? dnsRecordRepo.findRecentChangedByMonitorId(id, cap)
+                    : dnsRecordRepo.findRecentByMonitorId(id, cap);   // SQL-LIMIT
         }
         return ok(records);
     }
@@ -1081,6 +1090,15 @@ public class MonitoringController {
             data.put("monitor", enrichDns(m, dnsRecordRepo.findTopByMonitorIdOrderByCheckedAtDesc(m.getId()).orElse(null), certificateService.domainTeamNameMap(), teamNameMap(), openDnsAlarm(m.getDomain())));
             data.put("slow_threshold_ms", m.getSlowThresholdMs() != null ? m.getSlowThresholdMs()
                     : appSettings.getInt("cert.monitor.dns.slow-threshold-ms", 1500));   // per-monitor ?? global — grafik eşik çizgisi
+            // Çözümleyici şeffaflığı: sorguların hangi DNS sunucularına gittiği (OS zinciri, sıralı) +
+            // propagation modunda ayrıca sorgulanan public resolver listesi. Per-yanıt atıf mümkün değil
+            // (ExtendedResolver) — yapılandırma raporlanır.
+            Map<String, Object> resolverCfg = new LinkedHashMap<>(dnsChecker.resolverConfigInfo());
+            resolverCfg.put("propagation_enabled", Boolean.TRUE.equals(m.getPropagationCheck()));
+            resolverCfg.put("propagation_resolvers", java.util.Arrays.stream(
+                            appSettings.getString("cert.monitor.dns.resolvers", "8.8.8.8,1.1.1.1,9.9.9.9").split(","))
+                    .map(String::trim).filter(s -> !s.isEmpty()).toList());
+            data.put("resolver_config", resolverCfg);
             return ResponseEntity.ok(Map.of("success", true, "data", data));
         }).orElse(notFound("DNS monitor not found"));
     }
@@ -1097,6 +1115,7 @@ public class MonitoringController {
         item.put("team_id",         m.getTeamId());
         item.put("expected_value",  m.getExpectedValue());
         item.put("propagation_check", Boolean.TRUE.equals(m.getPropagationCheck()));
+        item.put("dns_change_alert_enabled", !Boolean.FALSE.equals(m.getDnsChangeAlertEnabled()));   // etkin değer (null=açık)
         item.put("group_name",      m.getGroupName());
         // Standalone monitör takımını teamId'den çöz (envantere bağlı değil); envanter-türevi domain→envanter eşlemesinden.
         item.put("team_name",       standalone && m.getTeamId() != null

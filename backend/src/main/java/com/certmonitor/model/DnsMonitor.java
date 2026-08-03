@@ -59,6 +59,12 @@ public class DnsMonitor {
     @Column(name = "group_name")
     private String groupName;
 
+    /** DNS_CHANGED alarmı monitör bazında açık mı? null = açık (mevcut monitörler etkilenmez;
+     *  etkin kontrol her yerde !Boolean.FALSE.equals). false = değişiklik alarmı ve günlük RE-ALERT bastırılır;
+     *  kontrol/kayıt geçmişi (changed=true satırları) değişmeden tutulmaya devam eder. */
+    @Column(name = "dns_change_alert_enabled")
+    private Boolean dnsChangeAlertEnabled;
+
     @Column(name = "created_at")
     private String createdAt;
 

@@ -3,6 +3,7 @@ package com.certmonitor.service;
 import com.certmonitor.model.AlertEvent;
 import com.certmonitor.model.DnsRecord;
 import com.certmonitor.repository.AlertEventRepository;
+import com.certmonitor.repository.DnsMonitorRepository;
 import com.certmonitor.repository.DnsRecordRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -38,6 +39,7 @@ class MonitoringOutageServiceTest {
     @Mock EscalationService escalationService;
     @Mock JdbcTemplate jdbcTemplate;
     @Mock DnsRecordRepository dnsRecordRepo;
+    @Mock DnsMonitorRepository dnsMonitorRepo;
     @Mock AppSettingsService appSettings;
 
     private MonitoringOutageService service;
@@ -56,7 +58,7 @@ class MonitoringOutageServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new MonitoringOutageService(alertEventRepo, escalationService, jdbcTemplate, dnsRecordRepo, appSettings);
+        service = new MonitoringOutageService(alertEventRepo, escalationService, jdbcTemplate, dnsRecordRepo, dnsMonitorRepo, appSettings);
         // AppSettings override yok → fallback (alan değeri) döner
         when(appSettings.getBoolean(anyString(), anyBoolean())).thenAnswer(i -> i.getArgument(1));
         ReflectionTestUtils.setField(service, "uptimeAlertEnabled", true);
@@ -222,6 +224,56 @@ class MonitoringOutageServiceTest {
         verify(escalationService).processConfirmedOutage(
                 eq("stale.example.com"), eq(EscalationService.TYPE_DNS_CHANGED), eq("HIGH"), ctx.capture());
         assertThat(ctx.getValue().get("new_values")).isEqualTo(List.of("2.2.2.2"));
+    }
+
+    @Test
+    @DisplayName("DNS_CHANGED günlük re-alert: monitörde değişiklik alarmı KAPALI → re-alert atlanır")
+    void dnsChanged_dailyReAlert_suppressedWhenAlertDisabled() {
+        AlertEvent open = openAlert("muted.example.com", EscalationService.TYPE_DNS_CHANGED);
+        when(alertEventRepo.findOpenByDomainIn(anyCollection())).thenReturn(List.of(open));
+        DnsRecord changedRow = new DnsRecord();
+        changedRow.setMonitorId(42L);
+        changedRow.setRecordType("A");
+        changedRow.setValue("2.2.2.2");
+        changedRow.setCheckedAt("2026-06-10T09:00:00");
+        when(dnsRecordRepo.findChangedByDomain(eq("muted.example.com"), any(Pageable.class)))
+                .thenReturn(List.of(changedRow));
+        com.certmonitor.model.DnsMonitor mon = new com.certmonitor.model.DnsMonitor();
+        mon.setDnsChangeAlertEnabled(false);   // monitör bazlı kapalı
+        when(dnsMonitorRepo.findById(42L)).thenReturn(java.util.Optional.of(mon));
+
+        service.handleDnsSweep(
+                List.of(item(EscalationService.TYPE_DNS_FAILURE, "muted.example.com", "A", true,
+                        Map.of("record_type", "A"), MonitoringOutageServiceTest::up)),
+                List.of(), List.of(), List.of(), List.of());
+
+        verify(escalationService, never()).processConfirmedOutage(
+                eq("muted.example.com"), eq(EscalationService.TYPE_DNS_CHANGED), anyString(), any());
+    }
+
+    @Test
+    @DisplayName("DNS_CHANGED günlük re-alert: son değişen değerler beklenen sette (iç/dış IP flip) → re-alert atlanır")
+    void dnsChanged_dailyReAlert_suppressedWhenExpectedFlip() {
+        AlertEvent open = openAlert("flip.example.com", EscalationService.TYPE_DNS_CHANGED);
+        when(alertEventRepo.findOpenByDomainIn(anyCollection())).thenReturn(List.of(open));
+        DnsRecord changedRow = new DnsRecord();
+        changedRow.setMonitorId(43L);
+        changedRow.setRecordType("A");
+        changedRow.setValue("192.168.10.249");
+        changedRow.setCheckedAt("2026-06-10T09:00:00");
+        when(dnsRecordRepo.findChangedByDomain(eq("flip.example.com"), any(Pageable.class)))
+                .thenReturn(List.of(changedRow));
+        com.certmonitor.model.DnsMonitor mon = new com.certmonitor.model.DnsMonitor();
+        mon.setExpectedValue("192.168.10.249\n217.169.196.197");   // her iki bilinen IP sabitli
+        when(dnsMonitorRepo.findById(43L)).thenReturn(java.util.Optional.of(mon));
+
+        service.handleDnsSweep(
+                List.of(item(EscalationService.TYPE_DNS_FAILURE, "flip.example.com", "A", true,
+                        Map.of("record_type", "A"), MonitoringOutageServiceTest::up)),
+                List.of(), List.of(), List.of(), List.of());
+
+        verify(escalationService, never()).processConfirmedOutage(
+                eq("flip.example.com"), eq(EscalationService.TYPE_DNS_CHANGED), anyString(), any());
     }
 
     @Test

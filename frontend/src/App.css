@@ -7780,6 +7780,9 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .dns-row { cursor: pointer; transition: background .12s; }
 .dns-row:hover { background: var(--bg-hover); }
 .dns-row-inactive { opacity: .55; }
+/* Aktif alarmı olan satır: ⚠ ikonuna ek kırmızı ton (mon-row--alarm deseni; `> td` — tr hover'ını yener). */
+.dns-row--alarm > td { background: rgba(220, 38, 38, .06); }
+.dns-row--alarm:hover > td { background: rgba(220, 38, 38, .11); }
 .dns-cell-mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 .dns-cell-value { max-width: 360px; overflow: hidden; }
 .dns-cell-num { font-variant-numeric: tabular-nums; color: var(--text-light); }
@@ -7800,9 +7803,21 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .dns-changed-badge {
   display: inline-block;
   background: #fee2e2; color: #b91c1c;
+  border: 1px solid #fca5a5;
   padding: 2px 6px; border-radius: 3px;
-  font-size: .72em; font-weight: 600;
+  font-size: .78em; font-weight: 800;
+  letter-spacing: .03em; text-transform: uppercase;
   margin-right: 6px;
+}
+/* Beklenen-set flip rozeti: Değişti'nin yanında soluk ikincil bilgi ("bilinen geçiş, alarm yok"). */
+.dns-expected-flip-badge {
+  display: inline-block;
+  background: var(--bg-surface); color: var(--text-light);
+  border: 1px dashed var(--border);
+  padding: 2px 6px; border-radius: 3px;
+  font-size: .7em; font-weight: 600;
+  margin-right: 6px;
+  cursor: help;
 }
 .dns-rotated-badge {
   display: inline-block;
@@ -7827,6 +7842,7 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .dns-standalone-badge { display: inline-block; background: #e0f2fe; color: #0369a1; padding: 1px 6px; border-radius: 3px; font-size: .68em; font-weight: 700; margin-left: 6px; vertical-align: middle; letter-spacing: .02em; }
 [data-theme="dark"] .dns-standalone-badge { background: rgba(2,132,199,.20); color: #7dd3fc; }
 .dns-expected-label { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.dns-pin-btns { display: inline-flex; gap: 6px; }
 .dns-pin-btn { background: var(--bg-surface); border: 1px solid var(--border); color: var(--primary); border-radius: 5px; padding: 2px 8px; font-size: 11px; cursor: pointer; font-weight: 600; }
 .dns-pin-btn:hover { background: var(--primary); color: #fff; }
 
@@ -8054,7 +8070,7 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
   margin: 0; padding: 0; border: none;
 }
 .dns-range-filter {
-  display: inline-flex; gap: 4px;
+  display: inline-flex; gap: 4px; flex-wrap: wrap;
   background: var(--bg-surface);
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -8129,11 +8145,32 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
   font-size: .9em;
 }
 
-.dns-history-changed { background: rgba(220,38,38,.07); }
-[data-theme="dark"] .dns-history-changed { background: rgba(220,38,38,.14); }
+/* Değişen satır: güçlü ton + sol kırmızı aksan — binlerce kayıt arasında ilk bakışta seçilmeli. */
+.dns-history-changed { background: rgba(220,38,38,.13); }
+.dns-history-changed > td:first-child { box-shadow: inset 3px 0 0 #dc2626; }
+[data-theme="dark"] .dns-history-changed { background: rgba(220,38,38,.22); }
 .dns-history-rotated { background: rgba(245,158,11,.06); }
 [data-theme="dark"] .dns-history-rotated { background: rgba(245,158,11,.12); }
 .dns-diff-row-rotated td { background: var(--bg-card); }
+/* "Sadece Değişenler" filtre segmenti ile aralık butonları arasındaki ayırıcı. */
+.dns-filter-sep { width: 1px; align-self: stretch; background: var(--border); margin: 2px 4px; }
+/* Çözümleyici zinciri: birincil → yedek ok ayracı. */
+.dns-resolver-arrow { color: var(--text-light); font-weight: 700; }
+.dns-range-btn--changed.active { background: #dc2626; }
+/* Diff bloğu başındaki tespit zamanı çipi. */
+.dns-diff-when {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-left: 3px solid #dc2626;
+  border-radius: 5px;
+  padding: 4px 10px;
+  margin-bottom: 8px;
+  font-size: .82em;
+  color: var(--text-light);
+}
+.dns-diff-when strong { color: var(--text); font-variant-numeric: tabular-nums; }
+[data-theme="dark"] .dns-diff-when { border-left-color: #fca5a5; }
 
 /* Response time trend chart */
 .dns-chart-wrap {
@@ -8222,11 +8259,11 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
   margin-bottom: 10px;
 }
 .dns-diff-col-title {
-  font-size: .72em;
-  font-weight: 700;
+  font-size: .8em;
+  font-weight: 800;
   text-transform: uppercase;
   letter-spacing: .05em;
-  color: var(--text-light);
+  color: var(--text);
   margin-bottom: 4px;
 }
 .dns-diff-pre {
@@ -8236,7 +8273,7 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
   padding: 8px 10px;
   margin: 0;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: .82em;
+  font-size: .9em;
   color: var(--text);
   white-space: pre-wrap;
   word-break: break-all;
@@ -8251,15 +8288,15 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 }
 .dns-diff-label {
   display: block;
-  font-size: .72em; font-weight: 700;
+  font-size: .8em; font-weight: 800;
   text-transform: uppercase; letter-spacing: .05em;
-  color: var(--text-light);
+  color: var(--text);
   margin-bottom: 6px;
 }
 .dns-diff-line {
   display: flex; align-items: flex-start; gap: 8px;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: .82em;
+  font-size: .9em;
   padding: 3px 8px;
   border-radius: 3px;
   margin: 2px 0;
