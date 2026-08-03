@@ -92,7 +92,7 @@ public class ScriptedCheckerService {
                 log.info("[K6] ✅ k6 bulundu — sürüm {} ({})", k6Version, k6Bin());
             } else {
                 k6Available = false; k6Version = null;
-                log.warn("[K6] ⚠ k6 bulunamadı ({}). Senaryo İzleme türü devre dışı — kontrol yürütülmez.", k6Bin());
+                log.warn("[K6] ⚠ k6 bulunamadı ({}). Sentetik İzleme türü devre dışı — kontrol yürütülmez.", k6Bin());
             }
         } catch (Exception e) {
             k6Available = false; k6Version = null;
@@ -137,7 +137,7 @@ public class ScriptedCheckerService {
     }
 
     private ScriptedResult runGuardedAfterQueue(String script, List<EnvVar> env, int timeoutSec) {
-        if (!k6Available) { queued.decrementAndGet(); return err("k6 bulunamadı — Senaryo İzleme devre dışı"); }
+        if (!k6Available) { queued.decrementAndGet(); return err("k6 bulunamadı — Sentetik İzleme devre dışı"); }
         boolean acquired = false;
         try {
             acquired = permits.tryAcquire(timeoutSec + 30L, TimeUnit.SECONDS);
@@ -289,7 +289,7 @@ public class ScriptedCheckerService {
                 out.add(new EnvVar(name, value == null ? "" : value, secret));
             }
         } catch (Exception e) {
-            log.warn("Senaryo env JSON ayrıştırılamadı: {}", e.getMessage());
+            log.warn("Sentetik izleme env JSON ayrıştırılamadı: {}", e.getMessage());
         }
         return out;
     }

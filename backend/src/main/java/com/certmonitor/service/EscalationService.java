@@ -591,7 +591,7 @@ public class EscalationService {
             orphans.add(e.getDomain());
         }
         for (String d : orphans) {
-            resolveOpenAlertsSilently(d, Set.of(TYPE_SCRIPTED_FAIL), "Sistem (öksüz alarm — eşleşen senaryo izlemesi yok)");
+            resolveOpenAlertsSilently(d, Set.of(TYPE_SCRIPTED_FAIL), "Sistem (öksüz alarm — eşleşen sentetik izleme yok)");
         }
         if (!orphans.isEmpty()) log.info("🧹 Öksüz senaryo alarmı temizlendi: {} senaryo {}", orphans.size(), orphans);
         return orphans.size();
@@ -876,9 +876,9 @@ public class EscalationService {
             }
             case TYPE_SCRIPTED_FAIL -> {
                 Object detail = ctx.get("detail");
-                return "KRİTİK: " + domain + " senaryosu başarısız" +
+                return "KRİTİK: " + domain + " sentetik testi başarısız" +
                         (detail != null ? " — " + detail : "") + ". " +
-                        "Ardışık doğrulama denemeleri başarısız oldu. Senaryo yeniden geçtiğinde alarm otomatik kapanır.";
+                        "Ardışık doğrulama denemeleri başarısız oldu. Test yeniden geçtiğinde alarm otomatik kapanır.";
             }
             case TYPE_DOMAIN_EXPIRY -> {
                 Object dom = ctx.getOrDefault("domain", domain);
@@ -1052,7 +1052,7 @@ public class EscalationService {
                 case TYPE_HTTP_SSL      -> "SSL Sertifika Sorunu";
                 case TYPE_PAGE_DOWN     -> "Sayfa Yüklenemiyor";
                 case TYPE_PAGE_INTEGRITY -> "Sayfa Bütünlüğü";
-                case TYPE_SCRIPTED_FAIL -> "Senaryo İzleme";
+                case TYPE_SCRIPTED_FAIL -> "Sentetik İzleme";
                 case TYPE_DOMAIN_EXPIRY -> "Domain Süre Bitişi";
                 case TYPE_DOMAINMON_EXPIRY  -> "Alan Adı Süre Bitişi";
                 case TYPE_DOMAINMON_UNKNOWN -> "Alan Adı Veri Yok";
@@ -1241,7 +1241,7 @@ public class EscalationService {
             case TYPE_HTTP_SSL      -> "SSL Sertifika Sorunu";
             case TYPE_PAGE_DOWN     -> "Sayfa Yüklenemiyor";
             case TYPE_PAGE_INTEGRITY -> "Sayfa Bütünlüğü Sorunu";
-            case TYPE_SCRIPTED_FAIL -> "Senaryo Başarısız";
+            case TYPE_SCRIPTED_FAIL -> "Sentetik Test Başarısız";
             case TYPE_DOMAIN_EXPIRY -> "Domain Süre Bitişi";
             case TYPE_DOMAINMON_EXPIRY  -> "Alan Adı Süre Bitişi";
             case TYPE_DOMAINMON_UNKNOWN -> "Alan Adı Veri Yok";
@@ -1254,7 +1254,7 @@ public class EscalationService {
             case TYPE_DOMAINMON_EXPIRY, TYPE_DOMAIN_EXPIRY -> daysRemaining != null ? "Alan adı " + daysRemaining + " gün içinde doluyor" : "Alan adı süre bitişi";
             case TYPE_PAGE_DOWN     -> "Sayfa yüklenemiyor";
             case TYPE_PAGE_INTEGRITY -> "Sayfada kırık kaynak / mixed content";
-            case TYPE_SCRIPTED_FAIL -> "Senaryo (k6) başarısız";
+            case TYPE_SCRIPTED_FAIL -> "Sentetik test (k6) başarısız";
             case TYPE_DOMAINMON_UNKNOWN -> "Alan adı kayıt verisi alınamadı";
             case TYPE_DOMAINMON_STATUS  -> "Alan adı durum kodu uyarısı";
             case TYPE_DOMAINMON_CHANGED -> "Alan adı kaydı değişti";
@@ -1444,8 +1444,8 @@ public class EscalationService {
                     " sayfasında bütünlük sorunu (kırık kaynak / mixed content) tespit edildi. " +
                     "Sorunlu kaynaklar giderildiğinde alarm otomatik kapanır.";
             case TYPE_SCRIPTED_FAIL -> "KRİTİK: " + domain +
-                    " senaryosu (k6) başarısız — ardışık doğrulama denemeleri geçmedi. " +
-                    "Senaryo yeniden geçtiğinde alarm otomatik kapanacaktır.";
+                    " sentetik testi (k6) başarısız — ardışık doğrulama denemeleri geçmedi. " +
+                    "Test yeniden geçtiğinde alarm otomatik kapanacaktır.";
             case TYPE_HTTP_SSL -> "YÜKSEK: " + domain +
                     " için TLS sertifikası hata veriyor ya da süresi dolmak üzere. " +
                     "Sertifika düzeldiğinde alarm otomatik kapanır.";

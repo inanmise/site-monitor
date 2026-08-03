@@ -377,11 +377,11 @@ Open the form with **+ New Monitor**.
 `
 
 const SCRIPTED_TR = `
-## Senaryo İzleme (k6) nasıl eklenir?
+## Sentetik İzleme (k6) nasıl eklenir?
 
-Çok adımlı akışları (OIDC/Keycloak login, API zincirleri) k6 script'i ile uçtan uca izler.
+Çok adımlı akışları (OIDC/Keycloak login, API zincirleri) k6 script'i ile uçtan uca sentetik olarak izler.
 
-Sağ üstteki **+ Yeni Senaryo** ile formu açın.
+Sağ üstteki **+ Yeni Monitör** ile formu açın.
 
 ### Zorunlu alanlar
 - **Ad** — Tanınır bir ad (ör. "İnternet Şubesi login akışı").
@@ -389,7 +389,7 @@ Sağ üstteki **+ Yeni Senaryo** ile formu açın.
 - **k6 Script** — Çalıştırılacak JavaScript. Bir **Şablon** seçerek başlamanız önerilir (smoke, OIDC/Keycloak, API zinciri, form login).
 
 ### Diğer alanlar
-- **Açıklama** — Senaryonun ne doğruladığına dair kısa not.
+- **Açıklama** — Sentetik testin ne doğruladığına dair kısa not.
 - **Çalıştırma sıklığı** — İki koşu arası süre (kaydırıcı; varsayılan 5 dk).
 - **Süreç timeout (sn)** — k6 koşusunun üst süresi (5–180, varsayılan 60). Aşılırsa süreç sonlandırılır ⇒ TIMEOUT.
 - **Ardışık başarısızlık eşiği** — Alarm için gereken üst üste başarısızlık (0–10, varsayılan 3).
@@ -404,11 +404,11 @@ Sağ üstteki **+ Yeni Senaryo** ile formu açın.
 `
 
 const SCRIPTED_EN = `
-## How to add a Scripted (k6) monitor
+## How to add a Synthetic (k6) monitor
 
-Monitors multi-step flows (OIDC/Keycloak login, API chains) end to end via a k6 script.
+Synthetically monitors multi-step flows (OIDC/Keycloak login, API chains) end to end via a k6 script.
 
-Open the form with **+ New Scenario** (top right).
+Open the form with **+ New Monitor** (top right).
 
 ### Required
 - **Name** — A recognizable name (e.g. "Online banking login flow").
@@ -416,7 +416,7 @@ Open the form with **+ New Scenario** (top right).
 - **k6 Script** — The JavaScript to run. Starting from a **Template** (smoke, OIDC/Keycloak, API chain, form login) is recommended.
 
 ### Other fields
-- **Description** — A short note on what the scenario validates.
+- **Description** — A short note on what the synthetic check validates.
 - **Run interval** — Time between runs (slider; default 5m).
 - **Process timeout (s)** — Max k6 run time (5–180, default 60). Exceeded ⇒ the process is killed ⇒ TIMEOUT.
 - **Consecutive-failure threshold** — Failures in a row before alerting (0–10, default 3).

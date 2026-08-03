@@ -1,4 +1,4 @@
-// Senaryo İzleme hazır k6 şablonları — form'daki "Şablon" seçicisinden yüklenir.
+// Sentetik İzleme hazır k6 şablonları — form'daki "Şablon" seçicisinden yüklenir.
 // Her şablon açıklamalı ve credential'lar __ENV üzerinden gelir (script gövdesine sabit-kod YAZILMAZ).
 // name/desc TR + EN.
 
@@ -7,14 +7,14 @@ export const SCRIPTED_TEMPLATES = [
     id: 'smoke-health',
     name: { tr: 'Sistem sağlık kontrolü (smoke)', en: 'System health check (smoke)' },
     desc: {
-      tr: 'k6 / Senaryo İzleme uçtan uca çalışıyor mu — env GEREKTİRMEZ; public k6 test sitesine GET atar. "Test Çalıştır" ile sistemin çalıştığını hızlıca gözlemlemek için.',
-      en: 'Is k6 / Scripted Check working end to end — NO env needed; GETs the public k6 test site. Use "Test Run" to quickly observe the system is working.',
+      tr: 'k6 / Sentetik İzleme uçtan uca çalışıyor mu — env GEREKTİRMEZ; public k6 test sitesine GET atar. "Test Çalıştır" ile sistemin çalıştığını hızlıca gözlemlemek için.',
+      en: 'Is k6 / Synthetic Monitoring working end to end — NO env needed; GETs the public k6 test site. Use "Test Run" to quickly observe the system is working.',
     },
     env: [],
     script: `import http from 'k6/http';
 import { check } from 'k6';
 
-// Env gerektirmez — k6/Senaryo İzleme'nin uçtan uca çalıştığını doğrulayan basit smoke testi.
+// Env gerektirmez — k6/Sentetik İzleme'nin uçtan uca çalıştığını doğrulayan basit smoke testi.
 export default function () {
   const r = http.get('https://test.k6.io');
   check(r, {

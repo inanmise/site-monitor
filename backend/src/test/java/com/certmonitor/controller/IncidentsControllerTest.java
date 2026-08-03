@@ -69,7 +69,7 @@ class IncidentsControllerTest {
     }
 
     @Test
-    @DisplayName("GET /incidents: en yeni türler entegre — SCRIPTED_FAIL→SCENARIO/down/tab=scripted, PAGE_INTEGRITY→INTEGRITY/content/tab=page (unknown/cert'e düşmez)")
+    @DisplayName("GET /incidents: en yeni türler entegre — SCRIPTED_FAIL→SYNTHETIC/down/tab=scripted, PAGE_INTEGRITY→INTEGRITY/content/tab=page (unknown/cert'e düşmez)")
     void list_mapsNewestMonitorTypes() throws Exception {
         AlertEvent scripted = new AlertEvent();
         scripted.setId(2L); scripted.setDomain("Login akışı"); scripted.setAlertType("SCRIPTED_FAIL");
@@ -90,7 +90,7 @@ class IncidentsControllerTest {
 
         mvc.perform(get("/api/monitoring/incidents").session(session("ADMIN")))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data[0].root_cause.code").value("SCENARIO"))
+                .andExpect(jsonPath("$.data[0].root_cause.code").value("SYNTHETIC"))
                 .andExpect(jsonPath("$.data[0].root_cause.category").value("down"))
                 .andExpect(jsonPath("$.data[0].monitor.tab").value("scripted"))
                 .andExpect(jsonPath("$.data[0].monitor.monitor_id").value(20))
