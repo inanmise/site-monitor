@@ -295,6 +295,22 @@ Bir sayfanın tüm kaynaklarının (görsel, CSS, JS, link, iframe, font) erişi
 - **Etiketler**, **E-posta bildirimi**, **Kontrol aralığı** (varsayılan 5 dk) — standart.
 - **Gelişmiş ayarlar** (katlanır) — Yavaş kaynak eşiği (ms, def 2000), Kaynak eşzamanlılığı (1–20, def 5), Timeout (ms), Teyit/Kurtarma denemeleri, Aktif.
 
+### "Kırık" nedir?
+- **Kırık = sayfa açılıyor ama içindeki o parça yüklenemiyor** — erişim kesintisi (DOWN) DEĞİLDİR. Sayfanın HTML'inden çıkarılan her kaynak (görsel/CSS/JS/iframe/font/link) tek tek HTTP ile doğrulanır.
+- Kırık sayılan durumlar: **404/410** (dosya kesin yok), **5xx — 503 hariç** (kaynağın sunucusu hatalı), **bağlantı hiç kurulamıyor** (DNS/TCP; süre aşımı ayrı "Zaman aşımı" etiketi alır).
+- Yanlış alarm korumaları: HEAD başarısızsa GET ile teyit + tek retry; **401/403/429/503 gibi belirsiz kodlar "Belirsiz" sayılır ve alarm ÜRETMEZ** (WAF/bot-engeli tarayıcıda sorun olmayabilir); \`a[href]\` tıklama linkleri yalnız 404/410'da alarma girer.
+- Tek kırık kaynak bile sayfayı **DEGRADED** yapar → "Sayfa Bütünlüğü Sorunu" alarmı (YÜKSEK); kaynak düzelince alarm otomatik kapanır.
+
+### Kırık görünce ne yapmalı?
+| HTTP kodu | Anlamı | Aksiyon |
+|---|---|---|
+| 404 / 410 | Dosya yok/taşınmış | Sayfadaki referansı güncelle/kaldır ya da dosyayı geri koy; deploy sonrası isim değiştiyse eski HTML cache'ini temizlet |
+| 5xx | Kaynağın sunucusu/CDN'i hatalı | Sorun sayfada değil o serviste — servisin sahibine/ops'a ilet |
+| Zaman aşımı / bağlantı yok | Sunucuya ulaşılamıyor | Ağ/firewall erişimini ve kaynak sunucusunun ayakta olduğunu kontrol ettir |
+
+- **Öncelik:** kırık **CSS/JS** sayfanın görünümünü/işlevini bozar (yüksek); kırık **görsel** kozmetiktir; kırık **iç link** kullanıcıyı 404'e götürür.
+- **Birinci/üçüncü taraf:** kendi alan adınızdaki kırık sizin deploy/CDN sorununuz; dış kaynak (·3P rozeti) sağlayıcı sorunudur — istemiyorsanız "üçüncü-taraf alarmı"nı kapalı tutun.
+
 ### İpuçları
 - 404/5xx dönen veya hiç yanıtlamayan kaynaklar tespit edilir; sorunlu kaynak detay ekranında listelenir.
 - Dış analytics/CDN kaynakları izleme noktasından erişilemeyip tarayıcıda çalışabilir; bu gürültüyü "üçüncü-taraf alarmı"nı kapalı ve "zaman aşımlarını izle"yi kapalı tutarak azaltın.
@@ -322,6 +338,22 @@ Open the form with **+ New Monitor**.
 - **Watch timeouts** — On (default) treats non-responding resources as BROKEN; off shows them only as "Timeout" in the table.
 - **Tags**, **Email notification**, **Check interval** (default 5m) — standard.
 - **Advanced settings** (collapsible) — Slow-resource threshold (ms, def 2000), Resource concurrency (1–20, def 5), Timeout (ms), Confirm/Recovery attempts, Active.
+
+### What does "Broken" mean?
+- **Broken = the page loads, but that piece inside it does not** — it is NOT an outage (DOWN). Every resource extracted from the page HTML (image/CSS/JS/iframe/font/link) is verified individually over HTTP.
+- Counted as broken: **404/410** (file definitively gone), **5xx except 503** (the resource's server is failing), **connection cannot be established at all** (DNS/TCP; a slow-to-no answer gets the separate "Timeout" label).
+- False-positive guards: failed HEAD is re-verified with GET + one retry; **ambiguous codes like 401/403/429/503 are marked "Inconclusive" and DO NOT alarm** (a WAF/bot block may work fine in a browser); \`a[href]\` hyperlinks only alarm on 404/410.
+- Even one broken resource marks the page **DEGRADED** → "Page Integrity" alarm (HIGH); the alarm closes automatically once the resource recovers.
+
+### What to do when you see Broken?
+| HTTP code | Meaning | Action |
+|---|---|---|
+| 404 / 410 | File gone/moved | Update/remove the reference on the page or restore the file; invalidate stale HTML caches if the name changed after a deploy |
+| 5xx | The resource's server/CDN is failing | The problem is in that service, not the page — escalate to its owner/ops |
+| Timeout / no connection | Server unreachable | Have network/firewall access and the resource server checked |
+
+- **Priority:** broken **CSS/JS** breaks the page's look/function (high); a broken **image** is cosmetic; a broken **internal link** sends users to a 404.
+- **First vs third party:** breakage on your own domain is your deploy/CDN problem; an external resource (·3P badge) is the provider's — keep "third-party alert" off if you don't want those.
 
 ### Tips
 - Resources returning 404/5xx or not responding are detected; the faulty resource is listed in the detail view.

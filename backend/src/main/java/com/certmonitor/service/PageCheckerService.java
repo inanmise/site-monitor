@@ -359,8 +359,10 @@ public class PageCheckerService {
     }
 
     /** Bir sorunun DEGRADED ALARMINA (e-posta) sayılıp sayılmadığı. Sorunlar TABLODA/sayaçta her zaman görünür;
-     *  bu YALNIZ alarm/e-posta geçididir. Q2: BLOCKED/SLOW hiç alarm üretmez. Q1: LINK (a[href]) yalnız kesin-yok
-     *  (404/410) alarm — dış linkin 5xx/timeout/belirsiz durumu alarm üretmez. Yüklenen alt-kaynak: broken/timeout alarm.
+     *  bu YALNIZ alarm/e-posta geçididir. Q2: BLOCKED/SLOW hiç alarm üretmez. Q1: LINK (a[href]) kesin-yok (404/410)
+     *  VEYA kesin transport hatası (httpStatus null — NXDOMAIN/bağlantı reddi; verifyOne blocked/hata yolları) alarm
+     *  sayılır (2026-08-03: ölü dış link — DNS kaydı silinmiş hedef — 3P toggle açıkken alarm üretebilsin); dış linkin
+     *  5xx/timeout/belirsiz durumu yine alarm üretmez. Yüklenen alt-kaynak: broken/timeout alarm.
      *  MIXED_CONTENT → true (mixed toggle ayrıca SchedulerService'te uygulanır). */
     static boolean countsForAlarm(String issueType, String resourceType, Integer httpStatus) {
         if (issueType == null) return false;
@@ -368,8 +370,10 @@ public class PageCheckerService {
             case "MIXED_CONTENT": return true;
             case "BLOCKED": case "SLOW": return false;
             case "BROKEN": case "TIMEOUT":
-                if ("LINK".equals(resourceType))
-                    return httpStatus != null && (httpStatus == 404 || httpStatus == 410);
+                if ("LINK".equals(resourceType)) {
+                    if ("TIMEOUT".equals(issueType)) return false;   // link timeout: belirsiz — alarm YOK
+                    return httpStatus == null || httpStatus == 404 || httpStatus == 410;
+                }
                 return true;
             default: return false;
         }

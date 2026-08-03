@@ -128,8 +128,9 @@ public class SchedulerService {
 
     private final AppSettingsService appSettings;
 
-    /** Per-monitör son kontrol zamanı (epoch ms), key "type:id". In-memory → restart'ta sıfırlanır
-     *  (ilk sweep'te hepsi due). Gerçek "check frequency": sweep, aralığı henüz dolmayan monitörü atlar. */
+    /** Per-monitör SONRAKİ VADE zamanı (epoch ms), key "type:id" — GRID semantiği (2026-08-03; ad tarihsel,
+     *  testler reflection ile bağlı). In-memory → restart'ta sıfırlanır (ilk sweep'te hepsi due). Gerçek
+     *  "check frequency": vade sabit interval adımlarıyla ilerler; sweep gecikmesi kadansa taşınmaz. */
     private final java.util.concurrent.ConcurrentHashMap<String, Long> lastMonitorCheckAt = new java.util.concurrent.ConcurrentHashMap<>();
 
     @Autowired
@@ -1606,14 +1607,30 @@ public class SchedulerService {
         });
     }
 
+    /** GRID: nextDue'yu now'u geçene dek interval adımlarıyla ilerletir (catch-up clamp — kapalılık
+     *  sonrası burst yok, tek çalıştırma + gelecekteki ilk grid noktası). Saf/statik → birim test edilir. */
+    static long nextDueAfter(long nextDue, long now, long intervalMs) {
+        while (nextDue <= now) nextDue += intervalMs;
+        return nextDue;
+    }
+
+    /** Per-monitör kontrol sıklığı kapısı — GRID semantiği (2026-08-03): map SONRAKİ VADEYİ tutar ve vade
+     *  hep sabit interval adımlarıyla ilerler. Eski davranış son FİİLÎ çalıştırmayı damgalıyordu; sweep
+     *  periyodu (fixedDelay + en yavaş kontrol) 60sn'yi aşınca 5 dk'lık monitör ~6+ dk'da bir koşuyordu.
+     *  Grid'de gecikme bir sonraki vadeye taşınmaz → uzun vadeli ortalama tam olarak intervalSeconds olur. */
     private boolean checkDue(String type, Long id, Integer intervalSeconds) {
         if (id == null) return true;
         int sec = intervalSeconds != null && intervalSeconds > 0 ? intervalSeconds : 60;
+        long intervalMs = sec * 1000L;
         long nowMs = System.currentTimeMillis();
         String key = type + ":" + id;
-        Long last = lastMonitorCheckAt.get(key);
-        if (last != null && nowMs - last < sec * 1000L) return false;
-        lastMonitorCheckAt.put(key, nowMs);
+        Long nextDue = lastMonitorCheckAt.get(key);
+        if (nextDue == null) {                                   // ilk görüş: hemen çalıştır, grid'i başlat
+            lastMonitorCheckAt.put(key, nextDueAfter(nowMs, nowMs, intervalMs));
+            return true;
+        }
+        if (nowMs < nextDue) return false;                       // vade dolmadı → bu sweep'te atla
+        lastMonitorCheckAt.put(key, nextDueAfter(nextDue, nowMs, intervalMs));
         return true;
     }
 
@@ -2209,7 +2226,7 @@ public class SchedulerService {
      * Döner: {status, main_up, integrity_up, error, http_status, response_ms, broken_resources, mixed_content_count}.
      */
     private Map<String, Object> recheckPage(com.certmonitor.model.PageMonitor m, boolean manual, String effectiveMode) {
-        int timeout = m.getTimeoutMs() != null ? m.getTimeoutMs() : 10000;
+        int timeout = m.getTimeoutMs() != null ? m.getTimeoutMs() : 4000;
         int slow = m.getSlowResourceMs() != null ? m.getSlowResourceMs() : 2000;
         int conc = m.getResourceConcurrency() != null ? m.getResourceConcurrency() : 5;
         int maxCheckSec = appSettings.getInt("cert.monitor.page.max-check-seconds", 120);   // wall-clock üst sınır (H1/M1)

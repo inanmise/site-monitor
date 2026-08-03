@@ -195,6 +195,18 @@ class SchedulerServiceTest {
     }
 
     @Test
+    @DisplayName("nextDueAfter (GRID): normal ilerleme, çok-interval catch-up tek gelecek değer, tam sınır")
+    void nextDueAfter_gridSemantics() {
+        // Normal: vade geçti → bir interval ileri
+        assertThat(SchedulerService.nextDueAfter(1000L, 1000L, 300L)).isEqualTo(1300L);   // tam sınır (nextDue==now) ilerler
+        assertThat(SchedulerService.nextDueAfter(1000L, 1100L, 300L)).isEqualTo(1300L);
+        // Catch-up: uzun kapalılık → burst YOK, gelecekteki İLK grid noktası
+        assertThat(SchedulerService.nextDueAfter(1000L, 2500L, 300L)).isEqualTo(2800L);
+        // Vade gelecekte ise değişmez
+        assertThat(SchedulerService.nextDueAfter(2000L, 1000L, 300L)).isEqualTo(2000L);
+    }
+
+    @Test
     @DisplayName("runUptimeChecks dispatches SweepItems to MonitoringOutageService")
     void runUptimeChecks_dispatchesSweep() {
         com.certmonitor.model.CertificateInventory inv = new com.certmonitor.model.CertificateInventory();

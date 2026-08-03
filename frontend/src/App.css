@@ -8156,6 +8156,81 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .dns-filter-sep { width: 1px; align-self: stretch; background: var(--border); margin: 2px 4px; }
 /* Çözümleyici zinciri: birincil → yedek ok ayracı. */
 .dns-resolver-arrow { color: var(--text-light); font-weight: 700; }
+
+/* Sayfa Bütünlüğü — hariç tutulan desenler: monospace giriş + desen sayacı + satır aksiyonu */
+.page-exclude-ta {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: .85em;
+  background: var(--bg-surface);
+  line-height: 1.5;
+}
+.page-exclude-count {
+  margin-left: 8px;
+  font-size: .78em; font-weight: 600;
+  color: var(--text-light);
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 1px 8px;
+}
+.page-exclude-btn { padding: 2px 7px; line-height: 1; }
+.page-exclude-btn:disabled { opacity: .45; cursor: not-allowed; }
+
+/* Sayfa Bütünlüğü — canlı teyit banner'ı ("Teyit denemesi X/N"), 30sn poll ile ilerler */
+.page-confirm-banner {
+  display: flex; align-items: center; gap: 8px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-left: 3px solid #d97706;
+  border-radius: 6px;
+  padding: 8px 12px;
+  margin: 8px 0;
+  font-size: .86em; font-weight: 600;
+  color: var(--text);
+}
+.page-confirm-spin { color: #d97706; animation: spin 2s linear infinite; }
+
+/* Sorunlar tablosu — tarama turu başlık bandı: her scan'in sorunları net ayrışır */
+.page-run-hdr {
+  display: flex; align-items: center; gap: 10px;
+  margin-top: 10px;
+  padding: 6px 8px;
+  background: var(--bg-surface);
+  border-top: 3px solid var(--primary);
+  font-size: 12px; font-weight: 700;
+  color: var(--text);
+}
+.page-run-hdr-count {
+  font-weight: 600; font-size: .92em;
+  color: var(--text-light);
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 1px 8px;
+}
+
+/* Alarm kapsamı rozetleri — satırın alarma dahil olup olmadığı (title = neden) */
+.page-scope-in {
+  display: inline-block;
+  background: #fee2e2; color: #b91c1c;
+  border: 1px solid #fca5a5;
+  border-radius: 3px; padding: 1px 7px;
+  font-size: .78em; font-weight: 700;
+  cursor: help;
+}
+.page-scope-out {
+  display: inline-block;
+  background: var(--bg-surface); color: var(--text-light);
+  border: 1px dashed var(--border);
+  border-radius: 3px; padding: 1px 7px;
+  font-size: .78em; font-weight: 600;
+  cursor: help;
+}
+[data-theme="dark"] .page-scope-in { background: rgba(220,38,38,.18); color: #fca5a5; }
+
+/* Sorun filtre chip'leri — birbirine yapışmasın (paylaşımlı .upt-range-btns'e dokunmadan) */
+.page-issue-filters { gap: 8px 10px; }
+.page-issue-filters .btn-sm { margin-right: 0; border-radius: 999px; }
 .dns-range-btn--changed.active { background: #dc2626; }
 /* Diff bloğu başındaki tespit zamanı çipi. */
 .dns-diff-when {

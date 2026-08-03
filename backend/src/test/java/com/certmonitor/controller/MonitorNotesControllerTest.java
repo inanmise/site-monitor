@@ -68,6 +68,17 @@ class MonitorNotesControllerTest {
     }
 
     @Test
+    @DisplayName("GET /notes: PAGE tipi geçerli → 200 (Sayfa Bütünlüğü Notlar sekmesi regresyonu)")
+    void get_pageType_returns200() throws Exception {
+        when(guideRepo.findByMonitorTypeAndTarget("PAGE", "https://x")).thenReturn(Optional.empty());
+        when(noteRepo.findByMonitorTypeAndTargetAndDeletedAtIsNullOrderByCreatedAtDesc("PAGE", "https://x"))
+                .thenReturn(List.of());
+        mvc.perform(get("/api/monitoring/notes?type=PAGE&target=https://x").session(session("ADMIN")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true));
+    }
+
+    @Test
     @DisplayName("POST /notes: geçerli → 200, not kaydedilir")
     void addNote_valid_returns200() throws Exception {
         when(noteRepo.save(any(MonitorNote.class)))

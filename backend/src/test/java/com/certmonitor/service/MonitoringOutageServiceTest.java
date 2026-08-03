@@ -347,6 +347,37 @@ class MonitoringOutageServiceTest {
     }
 
     @Test
+    @DisplayName("activeConfirmations: zincir başlarken attempt=0/total görünür; deneme koşarken X/N'e ilerler; bitince boşalır")
+    void activeConfirmations_exposesLiveState() {
+        // Recording executor: schedule ÇALIŞTIRMAZ → zincir asılı, durum gözlemlenebilir.
+        ScheduledThreadPoolExecutor recording = new ScheduledThreadPoolExecutor(1) {
+            @Override
+            public ScheduledFuture<?> schedule(Runnable command, long delay, TimeUnit unit) { return null; }
+        };
+        ReflectionTestUtils.setField(service, "confirmExecutor", recording);
+        MonitoringOutageService.SweepItem it = item(EscalationService.TYPE_PAGE_INTEGRITY,
+                "https://x.example.com/", "1 kırık", false,
+                Map.of("monitor_confirm_attempts", 3, "monitor_confirm_interval_ms", 30000L),
+                MonitoringOutageServiceTest::up);
+
+        service.startConfirmation(it);
+
+        var states = service.activeConfirmations("https://x.example.com/");
+        assertThat(states).hasSize(1);
+        assertThat(states.get(0).get("attempt")).isEqualTo(0);
+        assertThat(states.get(0).get("total_attempts")).isEqualTo(3);
+        assertThat(states.get(0).get("alert_type")).isEqualTo(EscalationService.TYPE_PAGE_INTEGRITY);
+        assertThat(states.get(0)).containsKeys("started_at", "next_attempt_at");
+        // Domain filtresi: eşleşmeyen → boş
+        assertThat(service.activeConfirmations("baska.example.com")).isEmpty();
+
+        // Deneme #1 koşarken (recheck "up" döner → zincir biter): durum önce 1/3'e ilerler, sonra temizlenir.
+        service.runConfirmAttempt(EscalationService.TYPE_PAGE_INTEGRITY + ":https://x.example.com/:1 kırık",
+                it, "2026-08-03T20:00:00", new java.util.ArrayList<>(), 1);
+        assertThat(service.activeConfirmations(null)).isEmpty();   // up → remove edildi
+    }
+
+    @Test
     @DisplayName("Bulk failure (tüm domainler down) → alarm pipeline'ı bastırılır")
     void sweep_bulkFailure_suppressed() {
         AtomicInteger calls = new AtomicInteger();
