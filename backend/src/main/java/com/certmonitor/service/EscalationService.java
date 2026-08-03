@@ -52,6 +52,8 @@ public class EscalationService {
     // Domain monitör alarmlarının resend/çözüm mailine EN GÜNCEL kayıt bağlamını (bitiş/registrar/EPP) kurmak için.
     private final com.certmonitor.repository.DomainMonitorRepository domainMonitorRepo;
     private final com.certmonitor.repository.DomainCheckRepository domainCheckRepo;
+    // DNS_CHANGED manuel re-notify'ında eski/yeni değer ctx'ini son changed kayıttan kurmak için (günlük re-alert paritesi).
+    private final com.certmonitor.repository.DnsRecordRepository dnsRecordRepo;
 
     // Self-injection (@Lazy avoids circular dep) — needed to invoke @Async methods via proxy
     @Autowired @Lazy
@@ -291,29 +293,101 @@ public class EscalationService {
      * Returns immediately so HTTP request does not hold DB connection during SMTP I/O.
      */
     public Map<String, Object> reNotify(Long alertId) {
+        return reNotify(alertId, Set.of());   // toplu (bulk) yol ve eski çağrılar — hariç tutma yok
+    }
+
+    /** Manuel re-notify hedefleri: takımlar + (varsa) eskalasyon kontakları. */
+    private record ReNotifyTargets(Long domainTeamId, Long ugTeamId, List<EscalationContact> contacts) {}
+
+    /** Onay pop-up'ında gösterilen tek alıcı satırı. kind: TEAM | CONTACT. */
+    public record ReNotifyRecipient(String email, String name, String role, String kind) {}
+
+    /**
+     * Alıcı çözümü çözüm/ilk-alarm bildirimiyle AYNI olmalı: standalone izleme (domain/keyword/ping/http) takımı
+     * cert envanterinden DEĞİL AlertEvent.teamId'den bulunur (aksi halde envanterde olmayan domain monitörü global
+     * müdüre düşer). KRİTİK domain alarmında müdür (eskalasyon kontağı) da eklenir; diğer standalone → yalnız takım.
+     * reNotify ve previewReNotify BUNU paylaşır — önizleme ile gerçek gönderim asla sapamaz.
+     */
+    private ReNotifyTargets resolveReNotifyTargets(AlertEvent event) {
+        boolean standalone = isStandaloneMon(event.getAlertType());
+        if (standalone) {
+            List<EscalationContact> contacts = includeManagerContacts(event.getAlertType(), event.getAlertLevel())
+                    ? getContactsForLevel(event.getAlertLevel(), event.getTeamId())
+                    : List.of();
+            return new ReNotifyTargets(event.getTeamId(), null, contacts);
+        }
+        var inventoryOpt = inventoryRepo.findByDomain(event.getDomain());
+        Long domainTeamId = inventoryOpt.map(com.certmonitor.model.CertificateInventory::getTeamId).orElse(null);
+        Long ugTeamId     = inventoryOpt.map(com.certmonitor.model.CertificateInventory::getUgTeamId).orElse(null);
+        return new ReNotifyTargets(domainTeamId, ugTeamId, getContactsForLevel(event.getAlertLevel(), domainTeamId));
+    }
+
+    /**
+     * "Tekrar Bildir" onay pop-up'ı için alıcı önizlemesi — sendCombinedAlert sırasıyla (önce takım
+     * e-postaları, sonra kontaklar) dedupe'lu liste döner. HİÇBİR yazma yapmaz (notifiedContacts /
+     * lastReAlertAt / log / async gönderim yok); hata semantiği reNotify ile birebir aynı.
+     */
+    public List<ReNotifyRecipient> previewReNotify(Long alertId) {
         AlertEvent event = alertEventRepo.findById(alertId)
                 .orElseThrow(() -> new NoSuchElementException("Alert not found: " + alertId));
         if (Boolean.TRUE.equals(event.getResolved())) {
             throw new IllegalStateException("Alert is already resolved");
         }
+        ReNotifyTargets targets = resolveReNotifyTargets(event);
+        List<ReNotifyRecipient> out = new ArrayList<>();
+        Set<String> seen = new HashSet<>();
+        for (String[] team : collectTeamRecipients(targets.domainTeamId(), targets.ugTeamId())) {
+            if (seen.add(team[0].toLowerCase())) out.add(new ReNotifyRecipient(team[0], team[1], null, "TEAM"));
+        }
+        for (EscalationContact c : targets.contacts()) {
+            if (c.getEmail() != null && !c.getEmail().isBlank()
+                    && seen.add(c.getEmail().trim().toLowerCase()))
+                out.add(new ReNotifyRecipient(c.getEmail().trim(), c.getName(), c.getRole(), "CONTACT"));
+        }
+        return out;
+    }
 
-        // Alıcı çözümü çözüm/ilk-alarm bildirimiyle AYNI olmalı: standalone izleme (domain/keyword/ping/http) takımı
-        // cert envanterinden DEĞİL AlertEvent.teamId'den bulunur (aksi halde envanterde olmayan domain monitörü global
-        // müdüre düşer). KRİTİK domain alarmında müdür (eskalasyon kontağı) da eklenir; diğer standalone → yalnız takım.
-        boolean standalone = isStandaloneMon(event.getAlertType());
-        Long domainTeamId, ugTeamId;
-        List<EscalationContact> contacts;
-        if (standalone) {
-            domainTeamId = event.getTeamId();
-            ugTeamId = null;
-            contacts = includeManagerContacts(event.getAlertType(), event.getAlertLevel())
-                    ? getContactsForLevel(event.getAlertLevel(), domainTeamId)
-                    : List.of();
-        } else {
-            var inventoryOpt = inventoryRepo.findByDomain(event.getDomain());
-            domainTeamId = inventoryOpt.map(com.certmonitor.model.CertificateInventory::getTeamId).orElse(null);
-            ugTeamId     = inventoryOpt.map(com.certmonitor.model.CertificateInventory::getUgTeamId).orElse(null);
-            contacts = getContactsForLevel(event.getAlertLevel(), domainTeamId);
+    /**
+     * Manuel re-notify — {@code excludeEmails}: kullanıcının onay pop-up'ında listeden çıkardığı
+     * adresler (case-insensitive). Hariç tutulan KONTAĞIN e-postası da webhook'u da gönderilmez
+     * (tek filtrelenmiş contacts listesi ikisini de besler). Send, alıcıları CANLI yeniden çözer;
+     * önizleme ile gönderim arasında EKLENEN kontak maili alır (kabul edilen yarış durumu).
+     */
+    public Map<String, Object> reNotify(Long alertId, Set<String> excludeEmails) {
+        AlertEvent event = alertEventRepo.findById(alertId)
+                .orElseThrow(() -> new NoSuchElementException("Alert not found: " + alertId));
+        if (Boolean.TRUE.equals(event.getResolved())) {
+            throw new IllegalStateException("Alert is already resolved");
+        }
+        Set<String> excluded = excludeEmails == null ? Set.of()
+                : excludeEmails.stream().filter(Objects::nonNull)
+                    .map(e -> e.trim().toLowerCase()).collect(java.util.stream.Collectors.toSet());
+
+        ReNotifyTargets targets = resolveReNotifyTargets(event);
+        Long domainTeamId = targets.domainTeamId(), ugTeamId = targets.ugTeamId();
+        // Kontak filtresi serializeContacts + webhook'tan ÖNCE — hariç tutulan kontak hiçbir kanaldan bildirilmez.
+        List<EscalationContact> contacts = targets.contacts().stream()
+                .filter(c -> c.getEmail() == null || c.getEmail().isBlank()
+                        || !excluded.contains(c.getEmail().trim().toLowerCase()))
+                .toList();
+
+        // Count actual recipients (team emails + contacts, deduped, exclusions applied) — same logic as sendCombinedAlert
+        List<String> teamEmails = collectTeamEmails(domainTeamId, ugTeamId);
+        Set<String> seen = new HashSet<>();
+        int recipientCount = 0;
+        for (String e : teamEmails) {
+            if (e != null && !e.isBlank() && !excluded.contains(e.trim().toLowerCase())
+                    && seen.add(e.toLowerCase())) recipientCount++;
+        }
+        for (EscalationContact c : contacts) {
+            if (c.getEmail() != null && !c.getEmail().isBlank()
+                    && seen.add(c.getEmail().trim().toLowerCase())) recipientCount++;
+        }
+        if (recipientCount == 0 && !excluded.isEmpty()) {
+            // Kullanıcı pop-up'ta TÜM alıcıları çıkardıysa DB'ye yazmadan reddet (→ 400).
+            // Doğal sıfır-alıcı durumu (kontak/takım maili hiç yok) ESKİ davranışında kalır:
+            // queued döner, sendCombinedAlert boş listeyle gönderimi zaten atlar.
+            throw new IllegalArgumentException("Tüm alıcılar hariç tutuldu — en az bir alıcı seçin");
         }
 
         // Quick DB write — commits before async dispatch
@@ -321,22 +395,10 @@ public class EscalationService {
         event.setLastReAlertAt(now());
         alertEventRepo.save(event);
 
-        // Count actual recipients (team emails + contacts, deduped) — same logic as sendCombinedAlert
-        List<String> teamEmails = collectTeamEmails(domainTeamId, ugTeamId);
-        Set<String> seen = new HashSet<>();
-        int recipientCount = 0;
-        for (String e : teamEmails) {
-            if (e != null && !e.isBlank() && seen.add(e.toLowerCase())) recipientCount++;
-        }
-        for (EscalationContact c : contacts) {
-            if (c.getEmail() != null && !c.getEmail().isBlank()
-                    && seen.add(c.getEmail().trim().toLowerCase())) recipientCount++;
-        }
-
         // Fire-and-forget async (self-proxy needed for @Async to engage)
         self.reNotifyAsync(event.getId(), domainTeamId, ugTeamId, contacts,
                            event.getDomain(), event.getAlertLevel(), event.getAlertType(),
-                           event.getDaysRemaining());
+                           event.getDaysRemaining(), excluded);
 
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("alert_id",          event.getId());
@@ -353,13 +415,22 @@ public class EscalationService {
     @Async("certCheckExecutor")
     public void reNotifyAsync(Long alertEventId, Long domainTeamId, Long ugTeamId,
                               List<EscalationContact> contacts, String domain,
-                              String alertLevel, String alertType, Integer daysRemainingFallback) {
+                              String alertLevel, String alertType, Integer daysRemainingFallback,
+                              Set<String> excludeEmails) {
         try {
             // İçerik bağlamı (mail detay tablosu): domain monitörü → EN GÜNCEL domain_checks (bitiş/registrar/EPP);
-            // diğer serbest-form izleme → yok (tipe özel şablon); sertifika → latest_check. Aksi halde resend maili boş kalır.
+            // DNS_CHANGED → son changed dns_records kaydından eski/yeni değerler (günlük re-alert ile aynı kaynak;
+            // yoksa mail ESKİ/YENİ kutuları boş gidiyordu — 2026-08-03 bug'ı); diğer serbest-form izleme → yok
+            // (tipe özel şablon; ctx reconstruction follow-up); sertifika → latest_check.
+            // NOT: monitörün dns_change_alert_enabled=false olması MANUEL Tekrar Bildir'i ENGELLEMEZ —
+            // bastırma yalnız otomatik günlük re-alert içindir, manuel gönderim operatör iradesidir.
             Map<String, Object> certContext;
             if (isDomainMon(alertType)) {
                 certContext = reconstructDomainContext(domain);
+            } else if (TYPE_DNS_CHANGED.equals(alertType)) {
+                certContext = DnsCheckerService.changeCtxOf(
+                        DnsCheckerService.lastChangedRecord(dnsRecordRepo, domain));
+                if (certContext.isEmpty()) certContext = null;
             } else if (MONITORING_ALERT_TYPES.contains(alertType)) {
                 certContext = null;
             } else {
@@ -367,10 +438,12 @@ public class EscalationService {
             }
             Integer freshDays     = certContext != null ? toInt(certContext.get("days_remaining")) : null;
             Integer effectiveDays = freshDays != null ? freshDays : daysRemainingFallback;
-            String  freshMessage  = buildMessage(domain, alertType, alertLevel, effectiveDays);
+            String  freshMessage  = TYPE_DNS_CHANGED.equals(alertType) && certContext != null
+                    ? monitoringMessage(domain, alertType, alertLevel, certContext)   // eski→yeni değerli zengin mesaj
+                    : buildMessage(domain, alertType, alertLevel, effectiveDays);
             sendCombinedAlert(domainTeamId, ugTeamId, contacts, domain, alertLevel, alertType,
                     freshMessage, "[RE-ALERT] ", alertEventId, "MANUAL",
-                    effectiveDays, certContext);
+                    effectiveDays, certContext, excludeEmails == null ? Set.of() : excludeEmails);
         } catch (Exception e) {
             log.error("Async reNotify failed for alertEventId={}: {}", alertEventId, e.getMessage(), e);
         }
@@ -1179,15 +1252,34 @@ public class EscalationService {
                                                           Long alertEventId, String trigger,
                                                           Integer daysRemaining,
                                                           Map<String, Object> certContext) {
-        // 1. TO listesi: takım email'leri + kontaklar (dedup)
+        // INITIAL/ESCALATION/DAILY_REALERT yolları hariç tutmasız — mevcut imza korunur.
+        return sendCombinedAlert(syTeamId, ugTeamId, contacts, domain, level, alertType, message,
+                subjectPrefix, alertEventId, trigger, daysRemaining, certContext, Set.of());
+    }
+
+    private List<Map<String, String>> sendCombinedAlert(
+                                                          Long syTeamId, Long ugTeamId,
+                                                          List<EscalationContact> contacts,
+                                                          String domain, String level,
+                                                          String alertType, String message,
+                                                          String subjectPrefix,
+                                                          Long alertEventId, String trigger,
+                                                          Integer daysRemaining,
+                                                          Map<String, Object> certContext,
+                                                          Set<String> excludeEmails) {
+        // 1. TO listesi: takım email'leri + kontaklar (dedup). excludeEmails (lowercase) — manuel
+        // re-notify onay pop-up'ında kullanıcının çıkardığı adresler; takım e-postaları burada
+        // çözüldüğünden filtre de burada uygulanır (kontaklar reNotify'da zaten filtrelenmiş gelir).
         List<String> teamEmails = collectTeamEmails(syTeamId, ugTeamId);
         Set<String> seen = new HashSet<>();
         List<String> allEmails = new ArrayList<>();
         for (String e : teamEmails) {
+            if (excludeEmails.contains(e.trim().toLowerCase())) continue;
             if (seen.add(e.toLowerCase())) allEmails.add(e);
         }
         for (EscalationContact c : contacts) {
             if (c.getEmail() != null && !c.getEmail().isBlank()
+                    && !excludeEmails.contains(c.getEmail().trim().toLowerCase())
                     && seen.add(c.getEmail().trim().toLowerCase()))
                 allEmails.add(c.getEmail().trim());
         }
@@ -1382,6 +1474,23 @@ public class EscalationService {
                 String email = team.getEmail() != null ? team.getEmail().trim() : "";
                 if (!email.isBlank() && seen.add(email.toLowerCase()))
                     result.add(email);
+            });
+        }
+        return result;
+    }
+
+    /** Önizleme için takım alıcıları: [email, takım adı] çiftleri (collectTeamEmails ile aynı sıra/dedupe). */
+    private List<String[]> collectTeamRecipients(Long syTeamId, Long ugTeamId) {
+        List<String[]> result = new ArrayList<>();
+        Set<String> seen = new HashSet<>();
+        for (Long teamId : List.of(
+                syTeamId != null ? syTeamId : -1L,
+                ugTeamId != null ? ugTeamId : -1L)) {
+            if (teamId < 0) continue;
+            teamRepo.findById(teamId).ifPresent(team -> {
+                String email = team.getEmail() != null ? team.getEmail().trim() : "";
+                if (!email.isBlank() && seen.add(email.toLowerCase()))
+                    result.add(new String[]{ email, team.getName() != null ? team.getName().trim() : "" });
             });
         }
         return result;

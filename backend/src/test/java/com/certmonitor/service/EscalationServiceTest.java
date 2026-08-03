@@ -46,6 +46,7 @@ class EscalationServiceTest {
     @Mock StormService stormService;
     @Mock com.certmonitor.repository.DomainMonitorRepository domainMonitorRepo;
     @Mock com.certmonitor.repository.DomainCheckRepository domainCheckRepo;
+    @Mock com.certmonitor.repository.DnsRecordRepository dnsRecordRepo;
 
     private EscalationService service;
     private static final DateTimeFormatter ISO =
@@ -55,7 +56,7 @@ class EscalationServiceTest {
     void setUp() {
         service = new EscalationService(alertEventRepo, thresholdRepo, contactRepo,
                 inventoryRepo, emailService, weeklyAvailability, webhookService, new ObjectMapper(), notificationLogRepo, latestCheckRepo, teamRepo, smtpSettings, maintenanceService, stormService,
-                domainMonitorRepo, domainCheckRepo);
+                domainMonitorRepo, domainCheckRepo, dnsRecordRepo);
 
         // Self-injection bypass for @Async dispatch in tests (runs synchronously)
         ReflectionTestUtils.setField(service, "self", service);
@@ -779,6 +780,149 @@ class EscalationServiceTest {
         verify(emailService).sendAlert(toCap.capture(), contains("[RE-ALERT]"), anyString(),
                 eq("kritik.example.com"), any(), any(), any(), any());
         assertThat(toCap.getValue()).containsExactlyInAnyOrder("dijitalsy@akbank.com", "mudur@akbank.com");
+    }
+
+    // ── previewReNotify + excludeEmails (Tekrar Bildir onay pop-up'ı) ────────────
+
+    @Test
+    @DisplayName("previewReNotify: takım + kontak sırasıyla döner, HİÇBİR yazma yapmaz")
+    void previewReNotify_listsRecipients_noWrites() {
+        AlertEvent event = existingOpenAlert("prev.example.com", EscalationService.TYPE_DOMAINMON_EXPIRY, "CRITICAL", false);
+        event.setId(301L); event.setTeamId(7L);
+        when(alertEventRepo.findById(301L)).thenReturn(Optional.of(event));
+        com.certmonitor.model.Team team = new com.certmonitor.model.Team();
+        team.setId(7L); team.setName("SY-Dijital"); team.setEmail("dijitalsy@akbank.com");
+        when(teamRepo.findById(7L)).thenReturn(Optional.of(team));
+        when(contactRepo.findByTeamIdAndActiveTrueOrderByRoleAsc(7L))
+                .thenReturn(List.of(contact("mudur@akbank.com", "MANAGER", "CRITICAL")));
+
+        List<EscalationService.ReNotifyRecipient> out = service.previewReNotify(301L);
+
+        assertThat(out).hasSize(2);
+        assertThat(out.get(0).email()).isEqualTo("dijitalsy@akbank.com");
+        assertThat(out.get(0).kind()).isEqualTo("TEAM");
+        assertThat(out.get(0).name()).isEqualTo("SY-Dijital");
+        assertThat(out.get(1).email()).isEqualTo("mudur@akbank.com");
+        assertThat(out.get(1).kind()).isEqualTo("CONTACT");
+        assertThat(out.get(1).role()).isEqualTo("MANAGER");
+        verify(alertEventRepo, never()).save(any());
+        verify(emailService, never()).sendAlert(any(String[].class), anyString(), anyString(),
+                any(), any(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("previewReNotify: resolved alarm → IllegalState (reNotify ile aynı semantik)")
+    void previewReNotify_resolved_throws() {
+        AlertEvent event = existingOpenAlert("done.example.com", "EXPIRY", "WARNING", false);
+        event.setId(302L); event.setResolved(true);
+        when(alertEventRepo.findById(302L)).thenReturn(Optional.of(event));
+        assertThatThrownBy(() -> service.previewReNotify(302L))
+                .isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
+    @DisplayName("reNotify(excludes): hariç tutulan kontak TO'da ve notifiedContacts'ta yok; takım maili gider")
+    void reNotify_withExcludes_dropsExcludedContact() {
+        AlertEvent event = existingOpenAlert("excl.example.com", EscalationService.TYPE_DOMAINMON_EXPIRY, "CRITICAL", false);
+        event.setId(303L); event.setTeamId(7L); event.setDaysRemaining(3);
+        when(alertEventRepo.findById(303L)).thenReturn(Optional.of(event));
+        when(alertEventRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        com.certmonitor.model.Team team = new com.certmonitor.model.Team();
+        team.setId(7L); team.setName("SY-Dijital"); team.setEmail("dijitalsy@akbank.com");
+        when(teamRepo.findById(7L)).thenReturn(Optional.of(team));
+        when(contactRepo.findByTeamIdAndActiveTrueOrderByRoleAsc(7L))
+                .thenReturn(List.of(contact("mudur@akbank.com", "MANAGER", "CRITICAL")));
+        com.certmonitor.model.DomainMonitor mon = new com.certmonitor.model.DomainMonitor();
+        mon.setId(55L); mon.setDomain("excl.example.com"); mon.setTeamId(7L);
+        when(domainMonitorRepo.findFirstByDomainOrderByIdAsc("excl.example.com")).thenReturn(Optional.of(mon));
+
+        Map<String, Object> result = service.reNotify(303L, Set.of(" MUDUR@akbank.com "));   // trim+case-insensitive
+
+        assertThat(result.get("recipients_queued")).isEqualTo(1);   // yalnız takım
+        assertThat(result.get("contacts_queued")).isEqualTo(0);
+        ArgumentCaptor<AlertEvent> evCap = ArgumentCaptor.forClass(AlertEvent.class);
+        verify(alertEventRepo, atLeast(1)).save(evCap.capture());
+        assertThat(evCap.getValue().getNotifiedContacts() == null
+                || !evCap.getValue().getNotifiedContacts().contains("mudur@akbank.com")).isTrue();
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<String[]> toCap = ArgumentCaptor.forClass(String[].class);
+        verify(emailService).sendAlert(toCap.capture(), contains("[RE-ALERT]"), anyString(),
+                eq("excl.example.com"), any(), any(), any(), any());
+        assertThat(toCap.getValue()).containsExactly("dijitalsy@akbank.com");
+    }
+
+    @Test
+    @DisplayName("reNotify(excludes): TÜM alıcılar hariç tutulursa IllegalArgument (400), yazma/gönderim yok")
+    void reNotify_allExcluded_throwsNoWrites() {
+        AlertEvent event = existingOpenAlert("allout.example.com", EscalationService.TYPE_DOMAINMON_EXPIRY, "CRITICAL", false);
+        event.setId(304L); event.setTeamId(7L);
+        when(alertEventRepo.findById(304L)).thenReturn(Optional.of(event));
+        com.certmonitor.model.Team team = new com.certmonitor.model.Team();
+        team.setId(7L); team.setName("SY-Dijital"); team.setEmail("dijitalsy@akbank.com");
+        when(teamRepo.findById(7L)).thenReturn(Optional.of(team));
+        when(contactRepo.findByTeamIdAndActiveTrueOrderByRoleAsc(7L))
+                .thenReturn(List.of(contact("mudur@akbank.com", "MANAGER", "CRITICAL")));
+
+        assertThatThrownBy(() -> service.reNotify(304L, Set.of("dijitalsy@akbank.com", "mudur@akbank.com")))
+                .isInstanceOf(IllegalArgumentException.class);
+        verify(alertEventRepo, never()).save(any());
+        verify(emailService, never()).sendAlert(any(String[].class), anyString(), anyString(),
+                any(), any(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("reNotify DNS_CHANGED: son changed kayıttan eski/yeni değerler mesaja ve ctx'e taşınır (boş kutu bug'ı)")
+    void reNotify_dnsChanged_reconstructsCtx() {
+        AlertEvent event = existingOpenAlert("www.iyigelecegeyatirim.com", EscalationService.TYPE_DNS_CHANGED, "HIGH", false);
+        event.setId(305L);
+        when(alertEventRepo.findById(305L)).thenReturn(Optional.of(event));
+        when(alertEventRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        // DNS_CHANGED standalone DEĞİL → takım cert envanterinden çözülür
+        com.certmonitor.model.CertificateInventory inv = new com.certmonitor.model.CertificateInventory();
+        inv.setTeamId(7L);
+        when(inventoryRepo.findByDomain("www.iyigelecegeyatirim.com")).thenReturn(Optional.of(inv));
+        com.certmonitor.model.Team team = new com.certmonitor.model.Team();
+        team.setId(7L); team.setName("SY-Dijital"); team.setEmail("dijitalsy@akbank.com");
+        when(teamRepo.findById(7L)).thenReturn(Optional.of(team));
+        com.certmonitor.model.DnsRecord rec = new com.certmonitor.model.DnsRecord();
+        rec.setRecordType("A"); rec.setPreviousValue("192.168.10.249"); rec.setValue("217.169.196.197");
+        rec.setCheckedAt("2026-08-02T01:32:00");
+        when(dnsRecordRepo.findChangedByDomain(eq("www.iyigelecegeyatirim.com"),
+                any(org.springframework.data.domain.Pageable.class))).thenReturn(List.of(rec));
+
+        service.reNotify(305L);
+
+        @SuppressWarnings({"unchecked", "rawtypes"})
+        ArgumentCaptor<Map> ctxCap = ArgumentCaptor.forClass(Map.class);
+        ArgumentCaptor<String> msgCap = ArgumentCaptor.forClass(String.class);
+        verify(emailService).sendAlert(any(String[].class), contains("[RE-ALERT]"), msgCap.capture(),
+                eq("www.iyigelecegeyatirim.com"), any(), any(), any(), ctxCap.capture());
+        assertThat(msgCap.getValue()).contains("192.168.10.249").contains("217.169.196.197");
+        assertThat(ctxCap.getValue()).containsEntry("old_values", List.of("192.168.10.249"));
+        assertThat(ctxCap.getValue()).containsEntry("new_values", List.of("217.169.196.197"));
+    }
+
+    @Test
+    @DisplayName("reNotify DNS_CHANGED: changed kaydı yoksa generic mesaja düşer (çökmez)")
+    void reNotify_dnsChanged_noRecord_fallsBackGeneric() {
+        AlertEvent event = existingOpenAlert("nohist.example.com", EscalationService.TYPE_DNS_CHANGED, "HIGH", false);
+        event.setId(306L);
+        when(alertEventRepo.findById(306L)).thenReturn(Optional.of(event));
+        when(alertEventRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        com.certmonitor.model.CertificateInventory inv = new com.certmonitor.model.CertificateInventory();
+        inv.setTeamId(7L);
+        when(inventoryRepo.findByDomain("nohist.example.com")).thenReturn(Optional.of(inv));
+        com.certmonitor.model.Team team = new com.certmonitor.model.Team();
+        team.setId(7L); team.setName("SY-Dijital"); team.setEmail("dijitalsy@akbank.com");
+        when(teamRepo.findById(7L)).thenReturn(Optional.of(team));
+        when(dnsRecordRepo.findChangedByDomain(anyString(),
+                any(org.springframework.data.domain.Pageable.class))).thenReturn(List.of());
+
+        Map<String, Object> result = service.reNotify(306L);
+
+        assertThat(result.get("status")).isEqualTo("queued");
+        verify(emailService).sendAlert(any(String[].class), contains("[RE-ALERT]"),
+                contains("DNS kaydı değişti"), eq("nohist.example.com"), any(), any(), any(), any());
     }
 
     // ── Sertifikaya erişilemezlik (ağ/firewall) → UYARI + müdür hariç ───────────

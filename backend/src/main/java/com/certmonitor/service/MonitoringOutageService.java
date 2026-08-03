@@ -540,26 +540,15 @@ public class MonitoringOutageService {
         return ctx;
     }
 
-    /** Açık DNS_CHANGED alarmının günlük re-alert'i için domain'in son changed kaydı (yoksa null). */
+    /** Açık DNS_CHANGED alarmının günlük re-alert'i için domain'in son changed kaydı (yoksa null).
+     *  Manuel "Tekrar Bildir" yolu (EscalationService.reNotifyAsync) ile ORTAK statik yardımcıya delege. */
     private DnsRecord lastChangedRecord(String domain) {
-        try {
-            List<DnsRecord> rows = dnsRecordRepo.findChangedByDomain(domain, PageRequest.of(0, 1));
-            return rows.isEmpty() ? null : rows.get(0);
-        } catch (Exception e) {
-            log.debug("DNS_CHANGED son değişen kayıt okunamadı: {} — {}", domain, e.getMessage());
-            return null;
-        }
+        return DnsCheckerService.lastChangedRecord(dnsRecordRepo, domain);
     }
 
     /** Son changed kaydından re-alert ctx'i kur (kayıt yoksa boş ctx — mail generic mesaja düşer). */
     private Map<String, Object> reconstructChangeCtx(DnsRecord r) {
-        if (r == null) return Map.of();
-        Map<String, Object> ctx = new LinkedHashMap<>();
-        ctx.put("record_type", r.getRecordType());
-        ctx.put("old_values", splitValues(r.getPreviousValue()));
-        ctx.put("new_values", splitValues(r.getValue()));
-        ctx.put("changed_at", r.getCheckedAt());
-        return ctx;
+        return DnsCheckerService.changeCtxOf(r);
     }
 
     private static List<String> splitValues(String joined) {
