@@ -168,7 +168,7 @@ public class IncidentsController {
         else if (type.startsWith("DNS_"))         { code = "DNS";  cat = "dns"; }
         else if (type.startsWith("DOMAINMON_"))   { code = "DOMAIN"; cat = "domain"; }
         else if ("REVOKED".equals(type) || "MISMATCH".equals(type) || "CHAIN_BROKEN".equals(type)) { code = type; cat = "cert"; }
-        else if ("SCRIPTED_FAIL".equals(type))    { code = "SCENARIO";  cat = "down"; }
+        else if ("SCRIPTED_FAIL".equals(type))    { code = "SYNTHETIC"; cat = "down"; }
         else if ("PAGE_DOWN".equals(type))        { code = "DOWN";      cat = "down"; }
         else if ("PAGE_INTEGRITY".equals(type))   { code = "INTEGRITY"; cat = "content"; }
         else { code = type; cat = "unknown"; }

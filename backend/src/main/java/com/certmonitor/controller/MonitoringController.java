@@ -2146,7 +2146,7 @@ public class MonitoringController {
         if (blank(body.get("groupName"))) return badRequest("Grup seçimi zorunludur; izleme oluşturulamıyor.");
         String name = body.get("name").toString().trim();
         if (scriptedMonitorRepo.existsDuplicate(name, teamId, null))
-            return badRequest("Bu ad bu takımda zaten kullanılıyor; mükerrer senaryo oluşturulamaz.");
+            return badRequest("Bu ad bu takımda zaten kullanılıyor; mükerrer izleme oluşturulamaz.");
         String scanErr = scanScriptOrError(body.get("script"));
         if (scanErr != null) return badRequest(scanErr);
         String now = ISO.format(Instant.now());
@@ -2195,7 +2195,7 @@ public class MonitoringController {
                     AuditDiff.diff(_before, AuditDiff.snapshot(saved, SCRIPTED_FIELDS)));
             return ok(enrichScripted(saved, scriptedCheckRepo.findTopByMonitorIdOrderByCheckedAtDesc(id).orElse(null), teamNameMap(),
                     alertEventRepo.findOpenAlert(saved.getName(), EscalationService.TYPE_SCRIPTED_FAIL).orElse(null)));
-        }).orElse(notFound("Senaryo monitörü bulunamadı"));
+        }).orElse(notFound("Sentetik izleme bulunamadı"));
     }
 
     @DeleteMapping("/scripted/{id}")
@@ -2208,14 +2208,14 @@ public class MonitoringController {
             activityLog.recordLifecycle(ActivityLogService.SCRIPTED, m.getId(), m.getName(), m.getName(), m.getTeamId(), "DELETED", actor(session));
             auditService.recordAction("MONITOR_DELETE", session, "SCRIPTED_MONITOR", String.valueOf(m.getId()), m.getName(), null);
             return ok(Map.of("deleted", true));
-        }).orElse(notFound("Senaryo monitörü bulunamadı"));
+        }).orElse(notFound("Sentetik izleme bulunamadı"));
     }
 
     @GetMapping("/scripted/{id}/history")
     public ResponseEntity<Map<String, Object>> scriptedHistory(@PathVariable Long id, HttpSession session,
             @RequestParam(required = false) Integer days, @RequestParam(defaultValue = "100") int limit) {
         com.certmonitor.model.ScriptedMonitor mon = scriptedMonitorRepo.findById(id).orElse(null);
-        if (mon == null) return notFound("Senaryo monitörü bulunamadı");
+        if (mon == null) return notFound("Sentetik izleme bulunamadı");
         var deny = denyIfNotViewable(session, mon.getTeamId());
         if (deny != null) return deny;
         List<com.certmonitor.model.ScriptedCheck> checks;
@@ -2255,7 +2255,7 @@ public class MonitoringController {
             auditService.recordAction("MONITOR_TRIGGER", session, "SCRIPTED_MONITOR", String.valueOf(m.getId()), m.getName(), null);
             return ok(enrichScripted(m, scriptedCheckRepo.findTopByMonitorIdOrderByCheckedAtDesc(id).orElse(null), teamNameMap(),
                     alertEventRepo.findOpenAlert(m.getName(), EscalationService.TYPE_SCRIPTED_FAIL).orElse(null)));
-        }).orElse(notFound("Senaryo monitörü bulunamadı"));
+        }).orElse(notFound("Sentetik izleme bulunamadı"));
     }
 
     /** Ad-hoc test — kaydetmeden, formdaki script + env ile tek çalıştırma; sonucu + (maskeli) çıktıyı döndürür. */
@@ -2263,7 +2263,7 @@ public class MonitoringController {
     public ResponseEntity<Map<String, Object>> testScripted(@RequestBody Map<String, Object> body, HttpSession session) {
         permissionService.require(session, "monitoring.scripted", "execute");
         if (!scriptedChecker.isAvailable())
-            return badRequest("k6 bulunamadı — Senaryo İzleme devre dışı (bu ortamda k6 binary'si yok).");
+            return badRequest("k6 bulunamadı — Sentetik İzleme devre dışı (bu ortamda k6 binary'si yok).");
         String script = body.get("script") != null ? body.get("script").toString() : "";
         if (script.isBlank()) return badRequest("script zorunlu");
         Integer timeout = body.get("timeoutSeconds") instanceof Number tn ? tn.intValue() : null;
@@ -2280,7 +2280,7 @@ public class MonitoringController {
             @RequestParam(defaultValue = "30") int days, HttpSession session) {
         permissionService.require(session, "monitoring.read", "view");
         com.certmonitor.model.ScriptedMonitor mon = scriptedMonitorRepo.findById(id).orElse(null);
-        if (mon == null) return notFound("Senaryo monitörü bulunamadı");
+        if (mon == null) return notFound("Sentetik izleme bulunamadı");
         var deny = denyIfNotViewable(session, mon.getTeamId());
         if (deny != null) return deny;
         String[] range = resolveRange(from, to, days);

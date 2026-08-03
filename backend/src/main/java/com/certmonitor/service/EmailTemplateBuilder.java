@@ -597,7 +597,7 @@ public class EmailTemplateBuilder {
             return List.of(
                     "Yukarıdaki \"Başarısız Check'ler\" listesini ve maskeli çıktıyı inceleyin (hangi adım başarısız oldu)",
                     "İlgili servisi/akışı (login, API zinciri, token/claim) kontrol edin; gerekirse izleme servis hesabının kimlik bilgilerini doğrulayın",
-                    "CertMonitor'ün sonraki çalıştırmasını bekleyin — senaryo yeniden geçince alarm kendiliğinden kapanır");
+                    "CertMonitor'ün sonraki çalıştırmasını bekleyin — sentetik test yeniden geçince alarm kendiliğinden kapanır");
         }
         if (isCert(m.alertType())) {
             return List.of(
@@ -622,7 +622,7 @@ public class EmailTemplateBuilder {
         if ("KEYWORD".equals(t)) return "Keyword İzleme";
         if ("PING_DOWN".equals(t)) return "Ping İzleme";
         if (isPage(t)) return "Sayfa Bütünlüğü İzleme";
-        if (isScripted(t)) return "Senaryo İzleme";
+        if (isScripted(t)) return "Sentetik İzleme";
         return "Sertifika İzleme";
     }
 

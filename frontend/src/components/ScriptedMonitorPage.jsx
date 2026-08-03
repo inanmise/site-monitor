@@ -258,7 +258,7 @@ function EditModal({ t, lang, form, setForm, modal, saving, testing, testResult,
           <h3>{modal.id ? t('scripted.modalEdit') : t('scripted.modalNew')}</h3>
           <button className="icon-btn" onClick={closeEdit}><X size={18} /></button>
         </div>
-        <div className="modal-body form-grid">
+        <div className="modal-body form-grid form-grid--top">
           <label className="full-width">{t('scripted.name')}
             <input className="input" value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} /></label>
           <label className="full-width">{t('scripted.description')}
@@ -294,7 +294,8 @@ function EditModal({ t, lang, form, setForm, modal, saving, testing, testResult,
             <span className="field-hint">{t('scripted.confirmHint')}</span></label>
           <label>{t('scripted.recoveryChecks')}
             <input className="input" type="number" min="1" max="10" value={form.recoveryChecks}
-              onChange={e => setForm(f => ({ ...f, recoveryChecks: e.target.value }))} /></label>
+              onChange={e => setForm(f => ({ ...f, recoveryChecks: e.target.value }))} />
+            <span className="field-hint">{t('scripted.recoveryHint')}</span></label>
 
           {/* Şablon seçici */}
           <div className="full-width">

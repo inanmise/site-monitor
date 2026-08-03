@@ -40,11 +40,11 @@ beforeEach(() => {
 })
 
 describe('ScriptedMonitorPage', () => {
-  it('senaryo kartını listeler + k6 sürüm/manage ile "Yeni Senaryo" görünür', async () => {
+  it('izleme kartını listeler + k6 sürüm/manage ile "Yeni Monitör" görünür', async () => {
     render(<ScriptedMonitorPage systemRole="TEAM_ADMIN" teamId={5} teamName="SY-A" />)
     await waitFor(() => expect(api.monitoring.getScriptedMonitors).toHaveBeenCalled())
     expect(await screen.findByText('OIDC Login')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /new scenario|yeni senaryo/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /new monitor|yeni monitör/i })).toBeInTheDocument()
   })
 
   it('k6 yoksa "devre dışı" banner gösterir', async () => {
@@ -57,7 +57,7 @@ describe('ScriptedMonitorPage', () => {
   it('Test Çalıştır → testScripted çağırır ve sonucu gösterir', async () => {
     render(<ScriptedMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
     await waitFor(() => expect(api.monitoring.getScriptedMonitors).toHaveBeenCalled())
-    fireEvent.click(screen.getByRole('button', { name: /new scenario|yeni senaryo/i }))
+    fireEvent.click(screen.getByRole('button', { name: /new monitor|yeni monitör/i }))
     fireEvent.change(screen.getByTestId('code-editor'), { target: { value: 'export default function(){}' } })
     fireEvent.click(screen.getByRole('button', { name: /^test run$|^test çalıştır$/i }))
     await waitFor(() => expect(api.monitoring.testScripted).toHaveBeenCalled())

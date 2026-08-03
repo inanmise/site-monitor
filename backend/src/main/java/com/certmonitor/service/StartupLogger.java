@@ -268,7 +268,7 @@ public class StartupLogger {
             case "logging" -> "Loglama";
             case "login-anomaly" -> "Login Anomali";
             case "retention" -> "Saklama (Retention)";
-            case "scripted" -> "Senaryo İzleme (k6)";
+            case "scripted" -> "Sentetik İzleme (k6)";
             default -> g;
         };
     }
