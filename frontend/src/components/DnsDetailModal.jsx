@@ -2,7 +2,7 @@ import { useState, useEffect, Fragment, lazy, Suspense } from 'react'
 import { createPortal } from 'react-dom'
 import { api, formatDate } from '../api/client'
 import { useT } from '../i18n/index.jsx'
-import { X, Activity, Clock, Server, FileText, Globe } from 'lucide-react'
+import { X, Activity, Clock, Server, FileText, Globe, Route } from 'lucide-react'
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, ReferenceLine } from 'recharts'
 import AlertHistory from './admin/AlertHistory'
 import MonitorNotes from './MonitorNotes.jsx'
@@ -48,6 +48,15 @@ function computeDiff(prev, next) {
   }
 }
 
+// Beklenen-set flip'i (backend withinExpected aynası): satırın TÜM değerleri monitörün beklenen listesindeyse
+// true — "beklenen değerler arasında" rozetiyle gösterilir. Not: geçmiş satırlar GÜNCEL beklenen sete göre değerlendirilir.
+function withinExpected(expectedJoined, valueJoined) {
+  const expected = new Set((expectedJoined || '').split('\n').map(s => s.trim()).filter(Boolean))
+  if (expected.size === 0) return false
+  const values = (valueJoined || '').split('\n').map(s => s.trim()).filter(Boolean)
+  return values.length > 0 && values.every(v => expected.has(v))
+}
+
 export default function DnsDetailModal({ monitor, onClose }) {
   const t = useT()
   const [details, setDetails] = useState(null)
@@ -57,6 +66,7 @@ export default function DnsDetailModal({ monitor, onClose }) {
     monitor?.record_type && RECORD_TYPES.includes(monitor.record_type) ? monitor.record_type : 'A'
   )
   const [rangeDays, setRangeDays] = useState(1)
+  const [changedOnly, setChangedOnly] = useState(false)   // "Sadece Değişenler" — sunucu taraflı filtre
   const [historyPage, setHistoryPage] = useState(0)
   const [historyPageSize, setHistoryPageSize] = useState(50)
   const [detailTab, setDetailTab] = useState('control')   // üst tab: control | alerts | chart | notes
@@ -75,18 +85,18 @@ export default function DnsDetailModal({ monitor, onClose }) {
     })
   }, [monitor])
 
-  // History — monitor veya rangeDays değişince yeniden yüklenir
+  // History — monitor, rangeDays veya changedOnly değişince yeniden yüklenir
   useEffect(() => {
     if (!monitor) return
-    api.monitoring.getDnsHistory(monitor.id, rangeDays).then(h => {
+    api.monitoring.getDnsHistory(monitor.id, rangeDays, changedOnly).then(h => {
       if (h?.success) setHistory(h.data || [])
     })
-  }, [monitor, rangeDays])
+  }, [monitor, rangeDays, changedOnly])
 
-  // Paging: aralık veya sayfa boyutu değişince başa dön
+  // Paging: aralık, filtre veya sayfa boyutu değişince başa dön
   useEffect(() => {
     setHistoryPage(0)
-  }, [rangeDays, historyPageSize, monitor])
+  }, [rangeDays, changedOnly, historyPageSize, monitor])
 
   const activeRangeOption = RANGE_OPTIONS.find(r => r.days === rangeDays) || RANGE_OPTIONS[0]
   const totalPages = Math.max(1, Math.ceil(history.length / historyPageSize))
@@ -191,6 +201,45 @@ export default function DnsDetailModal({ monitor, onClose }) {
               </div>
             )}
 
+            {/* Resolver şeffaflığı: sorguların hangi DNS sunucularına gittiği (yapılandırma görünümü) */}
+            {details?.resolver_config && (
+              <div className="dns-section">
+                <h4 className="dns-section-title">
+                  <Route size={14} /> {t('dns.resolverConfigTitle')}
+                </h4>
+                <dl className="dns-soa-grid">
+                  <dt>{t('dns.resolverServers')}</dt>
+                  <dd>
+                    {(details.resolver_config.servers || []).length > 0
+                      ? details.resolver_config.servers.map((s, i) => (
+                          <Fragment key={i}>
+                            {i > 0 && <span className="dns-resolver-arrow"> → </span>}
+                            <code>{s}</code>
+                          </Fragment>
+                        ))
+                      : '—'}
+                  </dd>
+                  <dt>{t('dns.resolverSource')}</dt>
+                  <dd>{t('dns.resolverSourceOs')}</dd>
+                  <dt>{t('dns.resolverTimeout')}</dt>
+                  <dd>{details.resolver_config.timeout_ms != null ? `${details.resolver_config.timeout_ms}ms` : '—'}</dd>
+                  {details.resolver_config.propagation_enabled && (
+                    <>
+                      <dt>{t('dns.resolverPropagation')}</dt>
+                      <dd>
+                        {(details.resolver_config.propagation_resolvers || []).map((s, i) => (
+                          <Fragment key={i}>
+                            {i > 0 && ', '}
+                            <code>{s}</code>
+                          </Fragment>
+                        ))}
+                      </dd>
+                    </>
+                  )}
+                </dl>
+              </div>
+            )}
+
             {/* SOA */}
             {soa?.success && (
               <div className="dns-section">
@@ -216,6 +265,21 @@ export default function DnsDetailModal({ monitor, onClose }) {
                   <Clock size={14} /> {t('dns.recentChecks')}
                 </h4>
                 <div className="dns-range-filter">
+                  <button
+                    type="button"
+                    className={`dns-range-btn${!changedOnly ? ' active' : ''}`}
+                    onClick={() => setChangedOnly(false)}
+                  >
+                    {t('dns.filterAll')}
+                  </button>
+                  <button
+                    type="button"
+                    className={`dns-range-btn dns-range-btn--changed${changedOnly ? ' active' : ''}`}
+                    onClick={() => setChangedOnly(true)}
+                  >
+                    {t('dns.filterChangedOnly')}
+                  </button>
+                  <span className="dns-filter-sep" aria-hidden="true" />
                   {RANGE_OPTIONS.map(opt => (
                     <button
                       key={opt.days}
@@ -229,7 +293,7 @@ export default function DnsDetailModal({ monitor, onClose }) {
                 </div>
               </div>
               {history.length === 0 ? (
-                <div className="dns-history-empty">{t('dns.noHistoryInRange')}</div>
+                <div className="dns-history-empty">{t(changedOnly ? 'dns.noChangesInRange' : 'dns.noHistoryInRange')}</div>
               ) : (
               <div className="dns-history-scroll">
                 <table className="dns-history-table">
@@ -249,6 +313,7 @@ export default function DnsDetailModal({ monitor, onClose }) {
                       const prevVal = h.previous_value ?? h.previousValue
                       const showDiff = (isChanged || isRotated) && prevVal && prevVal !== h.value
                       const diff = showDiff ? computeDiff(prevVal, h.value) : null
+                      const isExpectedFlip = isChanged && withinExpected(monitor.expected_value, h.value)
                       return (
                         <Fragment key={i}>
                           <tr className={isChanged ? 'dns-history-changed' : (isRotated ? 'dns-history-rotated' : '')}>
@@ -260,6 +325,7 @@ export default function DnsDetailModal({ monitor, onClose }) {
                             <td className="dns-cell-num">{h.response_ms != null ? `${h.response_ms}ms` : '—'}</td>
                             <td>
                               {isChanged && <span className="dns-changed-badge">{t('dns.changed')}</span>}
+                              {isExpectedFlip && <span className="dns-expected-flip-badge" title={t('dns.withinExpectedTitle')}>{t('dns.withinExpected')}</span>}
                               {isRotated && <span className="dns-rotated-badge" title={t('dns.rotationTitle')}>{t('dns.rotated')}</span>}
                               {!isChanged && !isRotated && <span className="dns-nochange-badge">{t('dns.noChange')}</span>}
                             </td>
@@ -267,6 +333,11 @@ export default function DnsDetailModal({ monitor, onClose }) {
                           {showDiff && diff && (
                             <tr className={isRotated ? 'dns-diff-row dns-diff-row-rotated' : 'dns-diff-row'}>
                               <td colSpan={5}>
+                                <div className="dns-diff-when">
+                                  <Clock size={13} />
+                                  <span>{t('dns.diffDetectedAt')}</span>
+                                  <strong>{formatDate(h.checked_at || h.checkedAt)}</strong>
+                                </div>
                                 <div className="dns-diff-grid">
                                   <div className="dns-diff-col">
                                     <div className="dns-diff-col-title">{t('dns.previousValue')}</div>

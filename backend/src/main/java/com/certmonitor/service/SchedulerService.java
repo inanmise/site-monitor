@@ -397,6 +397,7 @@ public class SchedulerService {
         patch("CREATE TABLE IF NOT EXISTS dns_monitors (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, domain TEXT NOT NULL, record_type TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1, interval_seconds INTEGER NOT NULL DEFAULT 300, created_at TEXT, updated_at TEXT)");
         patch("CREATE TABLE IF NOT EXISTS dns_records (id INTEGER PRIMARY KEY AUTOINCREMENT, monitor_id INTEGER NOT NULL, record_type TEXT, value TEXT, changed INTEGER NOT NULL DEFAULT 0, previous_value TEXT, checked_at TEXT)");
         patch("ALTER TABLE dns_monitors ADD COLUMN slow_threshold_ms INTEGER");   // per-monitor DNS_SLOW eşiği; null=global (ddl-auto zaten ekler — güvenlik ağı)
+        patch("ALTER TABLE dns_monitors ADD COLUMN dns_change_alert_enabled BOOLEAN"); // DNS_CHANGED alarmı aç/kapa; null=açık (ddl-auto zaten ekler — güvenlik ağı)
         patch("ALTER TABLE domain_monitors ADD COLUMN check_timeout_ms INTEGER"); // per-monitor RDAP timeout (ms); null=global (ddl-auto zaten ekler — güvenlik ağı)
         // Domain Kaydı (registration) — RDAP/WHOIS'ten ek alanlar (ddl-auto eski DB'yi backfill etmez → güvenlik ağı).
         patch("ALTER TABLE domain_checks ADD COLUMN registrar_iana_id TEXT");
@@ -3231,13 +3232,24 @@ public class SchedulerService {
                 }
 
                 if (changed) {
-                    log.warn("DNS change detected for {} {}: was='{}' now='{}'",
-                            m.getRecordType(), m.getDomain(), prevValue, valueStr);
-                    // DNS_CHANGED artık 3× teyitli: değişiklik ardışık kontrollerde kalıcıysa alarmlanır
-                    // (geçici/rotasyon baseline'a dönerse iptal). Baseline = değişiklik öncesi bilinen-iyi değer.
-                    changes.add(new MonitoringOutageService.DnsChange(
-                            m.getDomain(), m.getRecordType(), prevValue, valueStr, now, m.getTeamId(),
-                            () -> recheckDnsChanged(m, prevValue)));
+                    // Bastırma (kayıt yine changed=true saklanır; yalnız alarm hattı atlanır):
+                    //  1) monitör bazlı aç/kapa (null=açık), 2) beklenen-set flip'i — canlı değerlerin TAMAMI
+                    //  kullanıcının sabitlediği beklenen listedeyse (iç/dış IP split-horizon gidip-gelmesi).
+                    boolean changeAlertOn = !Boolean.FALSE.equals(m.getDnsChangeAlertEnabled());
+                    boolean expectedFlip  = DnsCheckerService.withinExpected(m.getExpectedValue(), values);
+                    if (changeAlertOn && !expectedFlip) {
+                        log.warn("DNS change detected for {} {}: was='{}' now='{}'",
+                                m.getRecordType(), m.getDomain(), prevValue, valueStr);
+                        // DNS_CHANGED artık 3× teyitli: değişiklik ardışık kontrollerde kalıcıysa alarmlanır
+                        // (geçici/rotasyon baseline'a dönerse iptal). Baseline = değişiklik öncesi bilinen-iyi değer.
+                        changes.add(new MonitoringOutageService.DnsChange(
+                                m.getDomain(), m.getRecordType(), prevValue, valueStr, now, m.getTeamId(),
+                                () -> recheckDnsChanged(m, prevValue)));
+                    } else {
+                        log.info("DNS change suppressed for {} {} ({}): was='{}' now='{}'",
+                                m.getRecordType(), m.getDomain(),
+                                changeAlertOn ? "expected-flip" : "alert-disabled", prevValue, valueStr);
+                    }
                 }
                 checked++;
             } catch (Exception e) {

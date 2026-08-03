@@ -198,4 +198,58 @@ class DnsCheckerServiceTest {
                 "5.5.5.5\n6.6.6.6"))
             .isEqualTo(DnsCheckerService.ChangeKind.CHANGED);
     }
+
+    // ── withinExpected — beklenen-set flip bastırma (DNS_CHANGED suppress) ───
+
+    @Test
+    @DisplayName("withinExpected: beklenen boş/null → false (kilit kapalı, alarm davranışı değişmez)")
+    void withinExpected_emptyExpected_isFalse() {
+        assertThat(DnsCheckerService.withinExpected(null, List.of("1.2.3.4"))).isFalse();
+        assertThat(DnsCheckerService.withinExpected("", List.of("1.2.3.4"))).isFalse();
+        assertThat(DnsCheckerService.withinExpected("   \n  ", List.of("1.2.3.4"))).isFalse();
+    }
+
+    @Test
+    @DisplayName("withinExpected: canlı değerlerin TAMAMI beklenen settteyse true (iç/dış IP flip'i)")
+    void withinExpected_allInSet_isTrue() {
+        String expected = "192.168.10.249\n217.169.196.197";
+        assertThat(DnsCheckerService.withinExpected(expected, List.of("192.168.10.249"))).isTrue();
+        assertThat(DnsCheckerService.withinExpected(expected, List.of("217.169.196.197"))).isTrue();
+        assertThat(DnsCheckerService.withinExpected(expected,
+                List.of("192.168.10.249", "217.169.196.197"))).isTrue();
+    }
+
+    @Test
+    @DisplayName("withinExpected: set dışında TEK değer bile varsa false (alarm devam)")
+    void withinExpected_anyOutsider_isFalse() {
+        String expected = "192.168.10.249\n217.169.196.197";
+        assertThat(DnsCheckerService.withinExpected(expected, List.of("9.9.9.9"))).isFalse();
+        assertThat(DnsCheckerService.withinExpected(expected,
+                List.of("192.168.10.249", "9.9.9.9"))).isFalse();
+    }
+
+    @Test
+    @DisplayName("withinExpected: canlı boş/null → false (boş sonuç bilinen-iyi sayılmaz)")
+    void withinExpected_emptyLive_isFalse() {
+        assertThat(DnsCheckerService.withinExpected("1.2.3.4", List.of())).isFalse();
+        assertThat(DnsCheckerService.withinExpected("1.2.3.4", null)).isFalse();
+        assertThat(DnsCheckerService.withinExpected("1.2.3.4", List.of(""))).isFalse();
+    }
+
+    @Test
+    @DisplayName("withinExpected: satır trim davranışı splitLines ile aynı (boşluklu girdi eşleşir)")
+    void withinExpected_trimsLines() {
+        assertThat(DnsCheckerService.withinExpected("  1.2.3.4  \n\n 5.6.7.8 ",
+                List.of("1.2.3.4", "5.6.7.8"))).isTrue();
+    }
+
+    @Test
+    @DisplayName("resolverConfigInfo: servers/source/timeout_ms anahtarları döner (şeffaflık payload'ı)")
+    void resolverConfigInfo_shape() {
+        Map<String, Object> info = service.resolverConfigInfo();
+        assertThat(info).containsKeys("servers", "source", "timeout_ms");
+        assertThat(info.get("servers")).isInstanceOf(List.class);
+        assertThat(info.get("source")).isEqualTo("os");
+        assertThat(info.get("timeout_ms")).isEqualTo(2000);
+    }
 }

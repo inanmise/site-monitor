@@ -32,7 +32,7 @@ const INFO_ITEMS = [
   { type: 'TTL',   descKey: 'dns.ttlExplain' },
 ]
 
-const emptyForm = { name: '', domain: '', recordType: 'A', intervalSeconds: 300, teamId: '', groupName: '', expectedValue: '', slowThresholdMs: '', propagationCheck: false, active: true }
+const emptyForm = { name: '', domain: '', recordType: 'A', intervalSeconds: 300, teamId: '', groupName: '', expectedValue: '', slowThresholdMs: '', propagationCheck: false, dnsChangeAlertEnabled: true, active: true }
 
 function truncateValue(val, max = 50) {
   if (!val) return '—'
@@ -135,6 +135,7 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName }) {
       expectedValue: m.expected_value || '',
       slowThresholdMs: m.slow_threshold_ms ?? '',
       propagationCheck: m.propagation_check === true,
+      dnsChangeAlertEnabled: m.dns_change_alert_enabled !== false,   // null/undefined = açık
       active: m.active !== false,
     })
     setTestResult(null)
@@ -157,6 +158,7 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName }) {
       slowThresholdMs: form.slowThresholdMs === '' ? null : Number(form.slowThresholdMs),
       groupName: form.groupName?.trim() || null,
       propagationCheck: !!form.propagationCheck,
+      dnsChangeAlertEnabled: !!form.dnsChangeAlertEnabled,
       active: form.active,
     }
     let res
@@ -298,7 +300,7 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName }) {
         </div>
       </div>
 
-      <MonitorHowBox bullets={[t('dns.how1'), t('dns.how2'), t('dns.how3'), t('dns.how4')]} />
+      <MonitorHowBox bullets={[t('dns.how1'), t('dns.how2'), t('dns.how3'), t('dns.how4'), t('dns.how5')]} />
 
       {!loading && monitors.length > 0 && (
         <div className="stats-collapse-bar" onClick={toggleStats}
@@ -527,10 +529,23 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName }) {
                 <span className="dns-expected-label">
                   {t('dns.expectedValue')}
                   {modal !== 'new' && modal.value && (
-                    <button type="button" className="dns-pin-btn"
-                      onClick={() => setForm(f => ({ ...f, expectedValue: modal.value }))}>
-                      {t('dns.pinCurrent')}
-                    </button>
+                    <span className="dns-pin-btns">
+                      <button type="button" className="dns-pin-btn"
+                        onClick={() => setForm(f => ({ ...f, expectedValue: modal.value }))}>
+                        {t('dns.pinCurrent')}
+                      </button>
+                      <button type="button" className="dns-pin-btn"
+                        title={t('dns.addCurrentHint')}
+                        onClick={() => setForm(f => {
+                          // Mevcut değer(ler)i listeye EKLE (replace değil) — dedupe'lu; iki bilinen IP birden sabitlenebilir.
+                          const existing = (f.expectedValue || '').split('\n').map(s => s.trim()).filter(Boolean)
+                          const incoming = (modal.value || '').split('\n').map(s => s.trim()).filter(Boolean)
+                          const merged = [...existing, ...incoming.filter(v => !existing.includes(v))]
+                          return { ...f, expectedValue: merged.join('\n') }
+                        })}>
+                        {t('dns.addCurrent')}
+                      </button>
+                    </span>
                   )}
                 </span>
                 <textarea
@@ -541,6 +556,15 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName }) {
                 />
                 <span className="field-hint">{t('dns.expectedHint')}</span>
               </label>
+              <label className="checkbox-label full-width">
+                <input
+                  type="checkbox"
+                  checked={form.dnsChangeAlertEnabled}
+                  onChange={e => setForm(f => ({ ...f, dnsChangeAlertEnabled: e.target.checked }))}
+                />
+                {t('dns.changeAlertEnabled')}
+              </label>
+              <span className="field-hint full-width">{t('dns.changeAlertHint')}</span>
               <label className="checkbox-label full-width">
                 <input
                   type="checkbox"

@@ -1,8 +1,10 @@
 package com.certmonitor.service;
 
 import com.certmonitor.model.AlertEvent;
+import com.certmonitor.model.DnsMonitor;
 import com.certmonitor.model.DnsRecord;
 import com.certmonitor.repository.AlertEventRepository;
+import com.certmonitor.repository.DnsMonitorRepository;
 import com.certmonitor.repository.DnsRecordRepository;
 import jakarta.annotation.PreDestroy;
 import lombok.RequiredArgsConstructor;
@@ -53,6 +55,7 @@ public class MonitoringOutageService {
     private final EscalationService escalationService;
     private final JdbcTemplate jdbcTemplate;
     private final DnsRecordRepository dnsRecordRepo;
+    private final DnsMonitorRepository dnsMonitorRepo;
     private final AppSettingsService appSettings;
 
     @Value("${cert.monitor.uptime.alert-enabled:true}")
@@ -263,11 +266,36 @@ public class MonitoringOutageService {
                 .filter(e -> !Boolean.TRUE.equals(e.getAcknowledged()))
                 .filter(e -> !changedThisSweep.contains(e.getDomain()))
                 .forEach(e -> {
-                    Map<String, Object> ctx = reconstructChangeCtx(e.getDomain());
+                    // Son changed kaydı BİR kez çekilir: hem monitör-bazlı bastırma kararı hem ctx için.
+                    DnsRecord lastChanged = lastChangedRecord(e.getDomain());
+                    if (dnsChangeRealertSuppressed(e.getDomain(), lastChanged)) return;
+                    Map<String, Object> ctx = reconstructChangeCtx(lastChanged);
                     withLock(EscalationService.TYPE_DNS_CHANGED, e.getDomain(), () ->
                             escalationService.processConfirmedOutage(e.getDomain(),
                                     EscalationService.TYPE_DNS_CHANGED, "HIGH", ctx));
                 });
+    }
+
+    /** Günlük DNS_CHANGED re-alert'i monitör bazında bastırılmalı mı?
+     *  (a) monitörde değişiklik alarmı kapalıysa, (b) son değişen değerlerin TAMAMI beklenen setteyse
+     *  (iç/dış IP flip'i) re-alert atılmaz. Kayıt/monitör bulunamazsa mevcut davranış korunur (re-alert atılır). */
+    private boolean dnsChangeRealertSuppressed(String domain, DnsRecord lastChanged) {
+        if (lastChanged == null) return false;
+        try {
+            DnsMonitor mon = dnsMonitorRepo.findById(lastChanged.getMonitorId()).orElse(null);
+            if (mon == null) return false;
+            if (Boolean.FALSE.equals(mon.getDnsChangeAlertEnabled())) {
+                log.info("DNS_CHANGED re-alert suppressed for {} (alert-disabled)", domain);
+                return true;
+            }
+            if (DnsCheckerService.withinExpected(mon.getExpectedValue(), splitValues(lastChanged.getValue()))) {
+                log.info("DNS_CHANGED re-alert suppressed for {} (expected-flip)", domain);
+                return true;
+            }
+        } catch (Exception ex) {
+            log.debug("DNS_CHANGED re-alert bastırma kontrolü başarısız: {} — {}", domain, ex.getMessage());
+        }
+        return false;
     }
 
     /** Per-monitor teyit override'ı (keyword/ping ctxExtra'sından) — yoksa global varsayılan. */
@@ -512,23 +540,26 @@ public class MonitoringOutageService {
         return ctx;
     }
 
-    /** Açık DNS_CHANGED alarmının günlük re-alert'i için son changed kaydından ctx kur. */
-    private Map<String, Object> reconstructChangeCtx(String domain) {
+    /** Açık DNS_CHANGED alarmının günlük re-alert'i için domain'in son changed kaydı (yoksa null). */
+    private DnsRecord lastChangedRecord(String domain) {
         try {
             List<DnsRecord> rows = dnsRecordRepo.findChangedByDomain(domain, PageRequest.of(0, 1));
-            if (!rows.isEmpty()) {
-                DnsRecord r = rows.get(0);
-                Map<String, Object> ctx = new LinkedHashMap<>();
-                ctx.put("record_type", r.getRecordType());
-                ctx.put("old_values", splitValues(r.getPreviousValue()));
-                ctx.put("new_values", splitValues(r.getValue()));
-                ctx.put("changed_at", r.getCheckedAt());
-                return ctx;
-            }
+            return rows.isEmpty() ? null : rows.get(0);
         } catch (Exception e) {
-            log.debug("DNS_CHANGED re-alert context'i kurulamadı: {} — {}", domain, e.getMessage());
+            log.debug("DNS_CHANGED son değişen kayıt okunamadı: {} — {}", domain, e.getMessage());
+            return null;
         }
-        return Map.of();
+    }
+
+    /** Son changed kaydından re-alert ctx'i kur (kayıt yoksa boş ctx — mail generic mesaja düşer). */
+    private Map<String, Object> reconstructChangeCtx(DnsRecord r) {
+        if (r == null) return Map.of();
+        Map<String, Object> ctx = new LinkedHashMap<>();
+        ctx.put("record_type", r.getRecordType());
+        ctx.put("old_values", splitValues(r.getPreviousValue()));
+        ctx.put("new_values", splitValues(r.getValue()));
+        ctx.put("changed_at", r.getCheckedAt());
+        return ctx;
     }
 
     private static List<String> splitValues(String joined) {

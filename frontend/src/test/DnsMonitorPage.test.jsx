@@ -70,4 +70,52 @@ describe('DnsMonitorPage', () => {
     fireEvent.click(screen.getByRole('button', { name: /^test$|test et/i }))
     await waitFor(() => expect(api.monitoring.testDnsMonitor).toHaveBeenCalled())
   })
+
+  it('Düzenle: DNS değişikliği alarmı checkbox\'ı varsayılan İŞARETLİ; kapatınca payload dnsChangeAlertEnabled:false taşır', async () => {
+    api.monitoring.updateDnsMonitor.mockResolvedValue({ success: true, data: {} })
+    render(<DnsMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
+    await waitFor(() => expect(api.monitoring.getDnsMonitors).toHaveBeenCalled())
+    await screen.findByText('www.akbank.com')
+
+    fireEvent.click(screen.getByTitle(/edit|düzenle/i))
+    const checkbox = screen.getByRole('checkbox', { name: /dns değişikliği alarmı|dns change alarm/i })
+    expect(checkbox.checked).toBe(true)   // dns_change_alert_enabled yok (null) → açık
+    fireEvent.click(checkbox)
+    expect(checkbox.checked).toBe(false)
+    fireEvent.click(screen.getByRole('button', { name: /kaydet|save/i }))
+    await waitFor(() => expect(api.monitoring.updateDnsMonitor).toHaveBeenCalled())
+    const payload = api.monitoring.updateDnsMonitor.mock.calls[0][1]
+    expect(payload.dnsChangeAlertEnabled).toBe(false)
+  })
+
+  it('Düzenle: dns_change_alert_enabled:false gelen monitörde checkbox İŞARETSİZ hydrate olur', async () => {
+    api.monitoring.getDnsMonitors.mockResolvedValue({ success: true, data: [
+      { ...monitor, dns_change_alert_enabled: false },
+    ] })
+    render(<DnsMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
+    await waitFor(() => expect(api.monitoring.getDnsMonitors).toHaveBeenCalled())
+    await screen.findByText('www.akbank.com')
+
+    fireEvent.click(screen.getByTitle(/edit|düzenle/i))
+    const checkbox = screen.getByRole('checkbox', { name: /dns değişikliği alarmı|dns change alarm/i })
+    expect(checkbox.checked).toBe(false)
+  })
+
+  it('Düzenle: "listeye ekle" butonu mevcut değeri beklenen listeye EKLER (üzerine yazmaz, dedupe)', async () => {
+    api.monitoring.getDnsMonitors.mockResolvedValue({ success: true, data: [
+      { ...monitor, expected_value: '217.169.196.197', value: '192.168.10.249' },
+    ] })
+    render(<DnsMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
+    await waitFor(() => expect(api.monitoring.getDnsMonitors).toHaveBeenCalled())
+    await screen.findByText('www.akbank.com')
+
+    fireEvent.click(screen.getByTitle(/edit|düzenle/i))
+    const addBtn = screen.getByRole('button', { name: /^şu anki değeri listeye ekle$|^add current value to list$/i })
+    fireEvent.click(addBtn)
+    const textarea = screen.getByPlaceholderText(/beklenen değer|expected value/i)
+    expect(textarea.value).toBe('217.169.196.197\n192.168.10.249')
+    // İkinci tık: aynı değer tekrar eklenmez (dedupe)
+    fireEvent.click(addBtn)
+    expect(textarea.value).toBe('217.169.196.197\n192.168.10.249')
+  })
 })

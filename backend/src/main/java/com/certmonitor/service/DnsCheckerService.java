@@ -358,4 +358,36 @@ public class DnsCheckerService {
         }
         return unexpected;
     }
+
+    /**
+     * Beklenen-set flip kontrolü: beklenen liste DOLU ve canlı değerlerin TAMAMI bu listenin içindeyse true.
+     * İç/dış IP arasında gidip-gelen (split-horizon) kayıtlarda DNS_CHANGED alarmını bastırmak için kullanılır;
+     * beklenen liste boşsa kilit kapalı sayılır → false (mevcut alarm davranışı değişmez).
+     */
+    public static boolean withinExpected(String expectedJoined, List<String> live) {
+        if (splitLines(expectedJoined).isEmpty()) return false;
+        if (live == null || live.isEmpty()) return false;
+        boolean anyNonEmpty = live.stream().anyMatch(v -> v != null && !v.isBlank());
+        return anyNonEmpty && unexpectedValues(expectedJoined, live).isEmpty();
+    }
+
+    /**
+     * Sorguların hangi çözümleyicilere gittiğinin yapılandırma görünümü. ExtendedResolver yanıtı hangi
+     * sunucunun verdiğini açıklamaz; bu yüzden per-sorgu atıf değil, sıralı sunucu zinciri raporlanır.
+     */
+    public Map<String, Object> resolverConfigInfo() {
+        Map<String, Object> info = new LinkedHashMap<>();
+        List<String> servers = new ArrayList<>();
+        try {
+            for (java.net.InetSocketAddress a : org.xbill.DNS.ResolverConfig.getCurrentConfig().servers()) {
+                servers.add(a.getAddress() != null ? a.getAddress().getHostAddress() : a.getHostString());
+            }
+        } catch (Exception e) {
+            log.debug("Resolver config okunamadı: {}", e.getMessage());
+        }
+        info.put("servers", servers);
+        info.put("source", "os");
+        info.put("timeout_ms", appSettings.getInt("cert.monitor.dns.query-timeout-ms", 2000));
+        return info;
+    }
 }
