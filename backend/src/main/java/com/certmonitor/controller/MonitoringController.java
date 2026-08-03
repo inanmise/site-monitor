@@ -15,6 +15,7 @@ import com.certmonitor.service.DomainCheckerService;
 import com.certmonitor.service.PublicSuffixService;
 import com.certmonitor.service.AppSettingsService;
 import com.certmonitor.service.EscalationService;
+import com.certmonitor.service.MonitoringOutageService;
 import com.certmonitor.service.SchedulerService;
 import com.certmonitor.service.PermissionService;
 import com.certmonitor.service.MonitoringGroupService;
@@ -88,6 +89,8 @@ public class MonitoringController {
     private final PermissionService permissionService;
     private final EscalationService escalationService;
     private final AppSettingsService appSettings;
+    /** Canlı teyit durumu ("Teyit denemesi X/N") — detay modalı 30sn'de bir poll eder. */
+    private final MonitoringOutageService monitoringOutageService;
 
     /** Manuel domain "Şimdi Kontrol Et" sonrası alarm değerlendirmesi için (sweep ile aynı mantık).
      *  @Lazy: SchedulerService ağır bean; olası wiring döngüsünü kır (ExtendedHealthService ile aynı desen). */
@@ -149,7 +152,7 @@ public class MonitoringController {
                               "criticalDays",     appSettings.getInt("cert.monitor.domain.default-critical-days", 7),
                               "thresholds",       appSettings.getString("cert.monitor.domain.default-thresholds", "60,30,14,7,3,1")),
             "page",    Map.of("intervalSeconds",     appSettings.getInt("cert.monitor.page.default-interval-seconds", 300),
-                              "timeoutMs",           appSettings.getInt("cert.monitor.page.default-timeout-ms", 10000),
+                              "timeoutMs",           appSettings.getInt("cert.monitor.page.default-timeout-ms", 4000),
                               "slowResourceMs",      appSettings.getInt("cert.monitor.page.default-slow-ms", 2000),
                               "resourceConcurrency", appSettings.getInt("cert.monitor.page.resource-concurrency", 5),
                               "crawlDepth",          appSettings.getInt("cert.monitor.page.default-crawl-depth", 2),
@@ -1837,6 +1840,16 @@ public class MonitoringController {
         return item;
     }
 
+    /** Canlı teyit zincirleri — "Teyit denemesi X/N" (tüm izleme türleri; domain= ile filtrelenebilir).
+     *  Detay modalları 30sn'de bir poll eder; yazma yok, in-memory durumun anlık görüntüsü. */
+    @GetMapping("/confirmations")
+    public ResponseEntity<Map<String, Object>> confirmations(
+            @RequestParam(required = false) String domain, HttpSession session) {
+        permissionService.require(session, "monitoring.read", "view");
+        return ok(monitoringOutageService.activeConfirmations(
+                domain != null && !domain.isBlank() ? domain.trim() : null));
+    }
+
     // ── Sayfa Bütünlüğü (Page Integrity) Monitors — 9. tür (serbest-form) ─────
     @GetMapping("/page")
     public ResponseEntity<Map<String, Object>> listPage(HttpSession session) {
@@ -2004,7 +2017,7 @@ public class MonitoringController {
         permissionService.require(session, "monitoring.crud", "edit");
         String url = body.get("url") != null ? body.get("url").toString().trim() : "";
         if (url.isEmpty()) return badRequest("url zorunlu");
-        int timeoutMs = body.get("timeoutMs") instanceof Number tn ? tn.intValue() : 10000;
+        int timeoutMs = body.get("timeoutMs") instanceof Number tn ? tn.intValue() : 4000;
         com.certmonitor.service.PageCheckerService.PageCheckResult r = pageChecker.test(url, timeoutMs);
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("status",              r.status());

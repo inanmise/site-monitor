@@ -126,8 +126,13 @@ public class MonitoringOutageService {
                 return t;
             });
 
-    /** "tip:domain:detail" — aynı hedef için çift teyit zinciri başlatma guard'ı. */
-    private final Set<String> inFlight = ConcurrentHashMap.newKeySet();
+    /** Aktif bir teyit zincirinin anlık durumu — UI'da "Teyit denemesi X/N" göstermek için (2026-08-03).
+     *  attempt=0: ilk deneme henüz koşmadı; nextAttemptAtMs: planlanan sonraki re-check zamanı. */
+    public record ConfirmState(String alertType, String domain, String detail,
+                               int attempt, int totalAttempts, String startedAt, long nextAttemptAtMs) {}
+
+    /** "tip:domain:detail" → ConfirmState — hem çift-zincir guard'ı hem canlı teyit durumu (activeConfirmations). */
+    private final ConcurrentHashMap<String, ConfirmState> inFlight = new ConcurrentHashMap<>();
 
     /** Recovery period: "tip:domain" → ardışık başarılı ("up") kontrol sayacı. Açık alarm,
      *  recoveryChecks kadar ardışık başarılı kontrol gelene dek KAPANMAZ; arada bir DOWN sayacı
@@ -215,7 +220,10 @@ public class MonitoringOutageService {
                     recoveryInFlight.remove(alertType + ":" + domain);
                 }
             } else if (hasOpenAlert) {
-                // Kesinti SÜRÜYOR — recovery penceresini SIFIRLA (pasif + aktif) + günlük re-alert yolu
+                // Kesinti SÜRÜYOR — recovery penceresini SIFIRLA (pasif + aktif) + günlük re-alert yolu.
+                // BİLİNÇLİ: açık alarm varken teyit zinciri (startConfirmation) YENİDEN başlatılmaz — sorun
+                // zaten teyitli ve alarmlı; sonraki sweep'ler re-alert kadansını işletir. 30sn'lik teyit
+                // re-check'leri yalnız İLK tespit → alarm açılana kadarki pencerede koşar.
                 recoveryUpCount.remove(alertType + ":" + domain);
                 recoveryInFlight.remove(alertType + ":" + domain);   // aktif recovery döngüsünü iptal et
                 SweepItem firstDown = domainItems.stream().filter(it -> !it.up()).findFirst().orElseThrow();
@@ -338,11 +346,13 @@ public class MonitoringOutageService {
 
     void startConfirmation(SweepItem item) {
         String key = item.alertType() + ":" + item.domain() + ":" + item.detail();
-        if (!inFlight.add(key)) {
+        String firstFailureAt = now();
+        ConfirmState initial = new ConfirmState(item.alertType(), item.domain(), item.detail(),
+                0, effAttempts(item), firstFailureAt, System.currentTimeMillis() + effDelayMs(item));
+        if (inFlight.putIfAbsent(key, initial) != null) {
             log.debug("Teyit zaten devam ediyor, atlanıyor: {}", key);
             return;
         }
-        String firstFailureAt = now();
         List<Map<String, Object>> attempts = new ArrayList<>(); // tek thread'li executor → senkronizasyon gereksiz
         if (effAttempts(item) <= 0) {
             // Immediate (confirmation period = 0) — DOWN tespitinde incident'ı HEMEN aç, teyit bekleme.
@@ -362,9 +372,30 @@ public class MonitoringOutageService {
                 effDelayMs(item), TimeUnit.MILLISECONDS);
     }
 
+    /** Aktif teyit zincirleri (UI: "Teyit denemesi X/N"). domainFilter null → tümü. */
+    public List<Map<String, Object>> activeConfirmations(String domainFilter) {
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (ConfirmState s : inFlight.values()) {
+            if (domainFilter != null && !domainFilter.equalsIgnoreCase(s.domain())) continue;
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("alert_type",      s.alertType());
+            m.put("domain",          s.domain());
+            m.put("detail",          s.detail());
+            m.put("attempt",         s.attempt());
+            m.put("total_attempts",  s.totalAttempts());
+            m.put("started_at",      s.startedAt());
+            m.put("next_attempt_at", ISO.format(Instant.ofEpochMilli(s.nextAttemptAtMs())));
+            out.add(m);
+        }
+        return out;
+    }
+
     void runConfirmAttempt(String key, SweepItem item, String firstFailureAt,
                            List<Map<String, Object>> attempts, int n) {
         try {
+            // Canlı durum: bu deneme koşuyor; sonraki (varsa) effDelayMs sonra — UI 30sn poll'unda "X/N" görünür.
+            inFlight.computeIfPresent(key, (k, s) -> new ConfirmState(s.alertType(), s.domain(), s.detail(),
+                    n, s.totalAttempts(), s.startedAt(), System.currentTimeMillis() + effDelayMs(item)));
             Map<String, Object> r = item.recheck().get();
             Map<String, Object> attempt = new LinkedHashMap<>();
             attempt.put("attempt", n);

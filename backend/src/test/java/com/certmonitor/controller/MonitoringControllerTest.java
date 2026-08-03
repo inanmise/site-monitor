@@ -70,6 +70,7 @@ class MonitoringControllerTest {
     @MockitoBean TeamRepository teamRepo;
     @MockitoBean com.certmonitor.service.EscalationService escalationService;
     @MockitoBean com.certmonitor.service.AppSettingsService appSettings;
+    @MockitoBean com.certmonitor.service.MonitoringOutageService monitoringOutageService;   // canlı teyit endpoint'i (2026-08-03)
     @MockitoBean AlertEventRepository alertEventRepo;
 
     // 9. tür (sayfa-bütünlüğü) — controller alan-enjekte eder → @WebMvcTest slice'ında mock zorunlu.

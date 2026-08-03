@@ -84,7 +84,7 @@ public class PageMonitor {
     private Integer intervalSeconds = 300;
 
     @Column(name = "timeout_ms")
-    private Integer timeoutMs = 10000;
+    private Integer timeoutMs = 4000;
 
     /** Per-monitor teyit: alarm öncesi doğrulama denemesi sayısı (varsayılan 3; 0 = anında). */
     @Column(name = "confirm_attempts")

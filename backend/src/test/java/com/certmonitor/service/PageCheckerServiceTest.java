@@ -231,6 +231,7 @@ class PageCheckerServiceTest {
         assertThat(PageCheckerService.countsForAlarm("BROKEN", "IMG", 404)).isTrue();    // alt-kaynak
         assertThat(PageCheckerService.countsForAlarm("BROKEN", "LINK", 404)).isTrue();   // link kesin-yok
         assertThat(PageCheckerService.countsForAlarm("BROKEN", "LINK", 500)).isFalse();  // dış link 5xx → alarm YOK
+        assertThat(PageCheckerService.countsForAlarm("BROKEN", "LINK", null)).isTrue();  // dış link KESİN transport hatası (NXDOMAIN/refused) → alarm (2026-08-03)
         assertThat(PageCheckerService.countsForAlarm("TIMEOUT", "LINK", null)).isFalse();// dış link timeout → alarm YOK
         assertThat(PageCheckerService.countsForAlarm("TIMEOUT", "IMG", null)).isTrue();  // alt-kaynak timeout
         assertThat(PageCheckerService.countsForAlarm("BLOCKED", "IMG", 403)).isFalse();  // blocked → alarm YOK

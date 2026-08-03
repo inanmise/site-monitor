@@ -686,6 +686,8 @@ export const api = {
     },
 
     // DNS
+    // Canlı teyit zincirleri ("Teyit denemesi X/N") — detay modalları 30sn'de bir poll eder
+    getConfirmations:  (domain) => request(`/monitoring/confirmations${domain ? `?domain=${encodeURIComponent(domain)}` : ''}`),
     getDnsMonitors:    () => request('/monitoring/dns'),
     createDnsMonitor:  (data) => request('/monitoring/dns', { method: 'POST', body: JSON.stringify(data) }),
     updateDnsMonitor:  (id, data) => request(`/monitoring/dns/${id}`, { method: 'PUT', body: JSON.stringify(data) }),

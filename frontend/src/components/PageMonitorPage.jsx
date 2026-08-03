@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef, useMemo, lazy, Suspense } from 'react'
+import { useState, useEffect, useCallback, useRef, useMemo, lazy, Suspense, Fragment } from 'react'
 import { createPortal } from 'react-dom'
 import { api, formatDateSec } from '../api/client'
 import { useT } from '../i18n/index.jsx'
@@ -11,7 +11,8 @@ import MonitorGuideButton from './ui/MonitorGuideButton.jsx'
 import TagInput from './ui/TagInput.jsx'
 import { Play, Pencil, X, RefreshCw, Plus, Trash2, ScanSearch, Users, Layers, FlaskConical, Check, AlertTriangle,
   LayoutDashboard, CheckCircle2, TriangleAlert, ServerCrash, Siren, BellDot, BarChart3, ChevronDown,
-  Image, FileCode, Link2, Frame, Type, ShieldAlert, Download } from 'lucide-react'
+  Image, FileCode, Link2, Frame, Type, ShieldAlert, Download, EyeOff } from 'lucide-react'
+import { useDialog } from './ui/Dialog.jsx'
 import AlertHistory from './admin/AlertHistory.jsx'
 import MonitorStatsBar from './MonitorStatsBar.jsx'
 const ResponseTimeChart = lazy(() => import('./ResponseTimeChart.jsx'))
@@ -37,17 +38,20 @@ const intervalIdx = (secs) => {
 const REFRESH_INTERVAL = 60
 // Sorun türü → ikon (kaynak tür ikonlarıyla birlikte tabloda gösterilir).
 const RES_ICON = { IMG: Image, CSS: FileCode, JS: FileCode, LINK: Link2, IFRAME: Frame, FONT: Type, FAVICON: Image }
-// Sorun tablosu kolon şablonu: Zaman | Tür | Kaynak | Sorun | HTTP | Süre.
-const PAGE_ISSUE_COLS = '1fr 0.9fr 2.1fr 0.75fr 0.5fr 0.55fr'
+// Sorun tablosu kolon şablonu: Zaman | Tür | Kaynak | Sorun | HTTP | Süre | Alarm Kapsamı | İşlem.
+const PAGE_ISSUE_COLS = '1fr 0.9fr 2fr 0.7fr 0.45fr 0.5fr 0.85fr 0.4fr'
+// Hariç desenleri check-time'da 50 satırda kırpılır (PageCheckerService.EXCLUDE_MAX_LINES) — istemci de aynı sınırı uygular.
+const EXCLUDE_MAX_LINES = 50
 const emptyForm = { name: '', url: '', groupName: '', teamId: '', tags: '', notifyEmail: true,
   mode: 'SINGLE_PAGE', crawlDepth: 2, crawlMaxPages: 50, excludePatterns: '', slowResourceMs: 2000,
   alertThirdParty: false, alertMixedContent: true, alertTimeout: true, resourceConcurrency: 5,
-  intervalSeconds: 300, timeoutMs: 10000, confirmAttempts: 3, confirmIntervalSeconds: 30,
+  intervalSeconds: 300, timeoutMs: 4000, confirmAttempts: 3, confirmIntervalSeconds: 30,
   recoveryChecks: 3, recoveryIntervalSeconds: 30, active: true }
 
 export default function PageMonitorPage({ systemRole, teamId, teamName }) {
   const t = useT()
   const toast = useToast()
+  const { showPrompt } = useDialog()
   const isAdmin = systemRole === 'ADMIN'
   const isTeamAdmin = systemRole === 'TEAM_ADMIN'
   const canWrite = isAdmin || isTeamAdmin || systemRole === 'USER'
@@ -63,6 +67,7 @@ export default function PageMonitorPage({ systemRole, teamId, teamName }) {
   const [historyLoading, setHistoryLoading] = useState(false)
   const [issues, setIssues] = useState([])
   const [issuesLoading, setIssuesLoading] = useState(false)
+  const [confirmations, setConfirmations] = useState([])   // canlı teyit zincirleri (Teyit denemesi X/N)
   const [issueFilter, setIssueFilter] = useState('all')   // all | BROKEN | MIXED_CONTENT | SLOW | firstParty
   const [rangeDays, setRangeDays] = useState(7)
   const [summary, setSummary] = useState({ total: 0, down: 0 })
@@ -124,8 +129,8 @@ export default function PageMonitorPage({ systemRole, teamId, teamName }) {
     } catch { /* yoksay */ }
   }, [monitors]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  async function loadHistory(id, days = rangeDays) {
-    setHistoryLoading(true)
+  async function loadHistory(id, days = rangeDays, silent = false) {
+    if (!silent) setHistoryLoading(true)
     const res = await api.monitoring.getPageHistory(id, { days })
     if (res?.success) {
       setHistory(res.data?.checks ?? [])
@@ -133,8 +138,8 @@ export default function PageMonitorPage({ systemRole, teamId, teamName }) {
     }
     setHistoryLoading(false)
   }
-  async function loadIssues(id, filter = issueFilter) {
-    setIssuesLoading(true)
+  async function loadIssues(id, filter = issueFilter, silent = false) {
+    if (!silent) setIssuesLoading(true)                              // silent: 30sn oto-yenilemede spinner flaşlamasın
     const issueType = (filter === 'all' || filter === 'firstParty') ? null : filter
     const res = await api.monitoring.getPageIssues(id, { issueType })
     let rows = res?.success ? (res.data ?? []) : []
@@ -143,11 +148,31 @@ export default function PageMonitorPage({ systemRole, teamId, teamName }) {
     setIssuesLoading(false)
   }
   function selectIssueFilter(id, f) { setIssueFilter(f); loadIssues(id, f) }
-  function openDetail(m) {
-    setSelected(m); setHistory([]); setIssues([]); setIssueFilter('all'); setDetailTab('issues')
-    loadIssues(m.id, 'all'); loadHistory(m.id, rangeDays)
+  async function loadConfirmations(url) {
+    const res = await api.monitoring.getConfirmations(url)
+    setConfirmations(res?.success ? (res.data ?? []) : [])
   }
-  function closeDetail() { setSelected(null); setHistory([]); setIssues([]) }
+  function openDetail(m) {
+    setSelected(m); setHistory([]); setIssues([]); setConfirmations([]); setIssueFilter('all'); setDetailTab('issues')
+    loadIssues(m.id, 'all'); loadHistory(m.id, rangeDays); loadConfirmations(m.url)
+  }
+  function closeDetail() { setSelected(null); setHistory([]); setIssues([]); setConfirmations([]) }
+
+  // Modal 30sn oto-yenileme (sessiz): sorunlar + geçmiş + canlı teyit durumu + kart metrikleri.
+  // Kullanıcı teyit denemesinin kaçıncı bacağında olduğunu buradan izler ("Teyit denemesi X/N").
+  async function refreshModal() {
+    if (!selected) return
+    const res = await api.monitoring.getPageMonitors()
+    if (res?.success) {
+      setMonitors(res.data)
+      const fresh = (res.data || []).find(x => x.id === selected.id)
+      if (fresh) setSelected(fresh)
+    }
+    loadIssues(selected.id, issueFilter, true)
+    loadHistory(selected.id, rangeDays, true)
+    loadConfirmations(selected.url)
+  }
+  useVisibleInterval(() => { if (selected) refreshModal() }, selected ? 30000 : 0, false)
 
   function openNew() {
     setTestResult(null)
@@ -168,7 +193,7 @@ export default function PageMonitorPage({ systemRole, teamId, teamName }) {
       mode: m.mode || 'SINGLE_PAGE', crawlDepth: m.crawl_depth ?? 2, crawlMaxPages: m.crawl_max_pages ?? 50,
       excludePatterns: m.exclude_patterns || '', slowResourceMs: m.slow_resource_ms ?? 2000,
       alertThirdParty: !!m.alert_third_party, alertMixedContent: m.alert_mixed_content !== false, alertTimeout: m.alert_timeout !== false, resourceConcurrency: m.resource_concurrency ?? 5,
-      intervalSeconds: m.interval_seconds ?? 300, timeoutMs: m.timeout_ms ?? 10000,
+      intervalSeconds: m.interval_seconds ?? 300, timeoutMs: m.timeout_ms ?? 4000,
       confirmAttempts: m.confirm_attempts ?? 3, confirmIntervalSeconds: m.confirm_interval_seconds ?? 30,
       recoveryChecks: m.recovery_checks ?? 3, recoveryIntervalSeconds: m.recovery_interval_seconds ?? 30,
       active: m.active !== false })
@@ -224,6 +249,67 @@ export default function PageMonitorPage({ systemRole, teamId, teamName }) {
       if (selected?.id === m.id) { setSelected(res.data); loadIssues(m.id, issueFilter); loadHistory(m.id, rangeDays) }
     }
     setChecking(null)
+  }
+
+  // ── Alarm kapsamı: GERÇEK backend geçidinin istemci aynası (SchedulerService alarmWorthy +
+  //    PageCheckerService.countsForAlarm — LINK kuralı dahil). Kullanıcı her satırın alarma dahil
+  //    edilip edilmediğini ve NEDENİNİ görür; toggle/exclude değişince kapsam da canlı değişir. ──
+  function alarmScope(r, m) {
+    if (isExcluded(m, r.resource_url)) return { inScope: false, reasonKey: 'page.scopeExcluded' }
+    if (r.issue_type === 'BLOCKED' || r.issue_type === 'SLOW') return { inScope: false, reasonKey: 'page.scopeInconclusive' }
+    if (r.issue_type === 'TIMEOUT') {
+      if (r.resource_type === 'LINK') return { inScope: false, reasonKey: 'page.scopeLinkRule' }
+      if (m.alert_timeout === false) return { inScope: false, reasonKey: 'page.scopeTimeoutOff' }
+      return { inScope: true, reasonKey: null }   // timeout kovası 3P'den bağımsız (belgeli davranış)
+    }
+    if (r.issue_type === 'MIXED_CONTENT') {
+      return m.alert_mixed_content === false
+        ? { inScope: false, reasonKey: 'page.scopeMixedOff' } : { inScope: true, reasonKey: null }
+    }
+    if (r.issue_type === 'BROKEN') {
+      if (r.resource_type === 'LINK' && r.http_status != null && r.http_status !== 404 && r.http_status !== 410)
+        return { inScope: false, reasonKey: 'page.scopeLinkRule' }   // dış link 5xx → alarm dışı; null/404/410 geçer
+      if (r.first_party) return { inScope: true, reasonKey: null }
+      return m.alert_third_party
+        ? { inScope: true, reasonKey: null } : { inScope: false, reasonKey: 'page.scopeThirdOff' }
+    }
+    return { inScope: false, reasonKey: 'page.scopeInconclusive' }
+  }
+
+  // ── Sorun satırından hariç-tutma: mevcut desen satırları + istemci tarafı contains ön-kontrolü ──
+  const excludeLines = (m) => (m?.exclude_patterns || '').split('\n').map(s => s.trim()).filter(Boolean)
+  // Backend literal kuralının aynası: yıldızsız satır = URL içinde case-insensitive contains.
+  // Joker (*) satırları istemcide değerlendirilmez (yalnız buton disable ön-kontrolü — yanlış negatif zararsız).
+  const isExcluded = (m, url) => {
+    const low = (url || '').toLowerCase()
+    return excludeLines(m).some(l => !l.includes('*') && low.includes(l.toLowerCase()))
+  }
+
+  async function addExclude(issue) {
+    if (!selected) return
+    const existing = excludeLines(selected)
+    if (existing.length >= EXCLUDE_MAX_LINES) { toast.error(t('page.excludeFull')); return }
+    // Düzenlenebilir onay: varsayılan desen = kaynak URL'i; kullanıcı kısaltabilir (ör. yalnız alan adı).
+    const pattern = await showPrompt({
+      title: t('page.excludeAddTitle'),
+      message: t('page.excludeAddMsg'),
+      defaultValue: issue.resource_url || '',
+      confirmText: t('page.excludeAdd'),
+      variant: 'warning',
+    })
+    const p = pattern?.trim()
+    if (!p) return
+    if (existing.some(l => l.toLowerCase() === p.toLowerCase())) { toast.success(t('page.excludeAdded')); return }   // dedupe
+    const merged = [...existing, p].join('\n')
+    // Partial PUT: yalnız excludePatterns — diğer alanlar backend'de containsKey korumalı, dokunulmaz.
+    const res = await api.monitoring.updatePageMonitor(selected.id, { excludePatterns: merged })
+    if (res?.success) {
+      toast.success(t('page.excludeAdded'))
+      if (res.data) setSelected(res.data)
+      load()
+    } else {
+      toast.error(res?.error || 'Error')
+    }
   }
 
   function exportIssuesCsv() {
@@ -360,7 +446,7 @@ export default function PageMonitorPage({ systemRole, teamId, teamName }) {
         </div>
       </div>
 
-      <MonitorHowBox bullets={[t('page.how1'), t('page.how2'), t('page.how2b'), t('page.how3'), t('page.how4'), t('page.how5'), t('page.how6'), t('page.how7')]} />
+      <MonitorHowBox bullets={[t('page.how1'), t('page.how2'), t('page.how2b'), t('page.how3'), t('page.how4'), t('page.how5'), t('page.how6'), t('page.how7'), t('page.how8')]} />
 
       {!loading && monitors.length > 0 && (
         <div className="stats-collapse-bar" onClick={toggleStats}
@@ -462,6 +548,14 @@ export default function PageMonitorPage({ systemRole, teamId, teamName }) {
               {selected.checked_at && <div className="upt-modal-metric"><span className="upt-modal-metric-val upt-modal-metric-time">{formatDateSec(selected.checked_at)}</span><span className="upt-modal-metric-lbl">{t('page.lastCheck')}</span></div>}
             </div>
             <div className="upt-modal-divider" />
+            {/* Canlı teyit durumu — 30sn oto-yenilemeyle ilerler; kullanıcı denemenin kaçıncı bacağında olduğunu görür. */}
+            {confirmations.filter(c => c.alert_type === 'PAGE_DOWN' || c.alert_type === 'PAGE_INTEGRITY').map((c, i) => (
+              <div key={`cf-${i}`} className="page-confirm-banner">
+                <RefreshCw size={13} className="page-confirm-spin" />
+                {t('page.confirmBanner', Math.max(1, c.attempt), c.total_attempts,
+                  c.next_attempt_at ? formatDateSec(c.next_attempt_at) : '—')}
+              </div>
+            ))}
             <div className="modal-tabs">
               <button className={`modal-tab${detailTab === 'issues' ? ' active' : ''}`} onClick={() => setDetailTab('issues')}>{t('page.tabIssues')}</button>
               <button className={`modal-tab${detailTab === 'chart' ? ' active' : ''}`} onClick={() => setDetailTab('chart')}>{t('page.tabChart')}</button>
@@ -471,7 +565,7 @@ export default function PageMonitorPage({ systemRole, teamId, teamName }) {
             </div>
 
             {detailTab === 'issues' && (<>
-              <div className="upt-range-btns" style={{ flexWrap: 'wrap' }}>
+              <div className="upt-range-btns page-issue-filters" style={{ flexWrap: 'wrap' }}>
                 {issueFilters.map(f => (
                   <button key={f} type="button" className={`btn btn-sm ${issueFilter === f ? 'btn-primary' : 'btn-secondary'}`}
                     onClick={() => selectIssueFilter(selected.id, f)}>{t(`page.filter_${f}`)}</button>
@@ -484,17 +578,25 @@ export default function PageMonitorPage({ systemRole, teamId, teamName }) {
               ) : (
                 <div className="upt-rt-list">
                   <div className="upt-rt-grid upt-rt-head" style={{ gridTemplateColumns: PAGE_ISSUE_COLS }}>
-                    <span>{t('page.colTime')}</span><span>{t('page.colType')}</span><span>{t('page.colResource')}</span><span>{t('page.colIssue')}</span><span>HTTP</span><span>{t('page.colDuration')}</span>
+                    <span>{t('page.colTime')}</span><span>{t('page.colType')}</span><span>{t('page.colResource')}</span><span>{t('page.colIssue')}</span><span>HTTP</span><span>{t('page.colDuration')}</span><span>{t('page.colScope')}</span><span>{t('page.colActions')}</span>
                   </div>
                   {issues.map((r, i) => {
                     const RI = RES_ICON[r.resource_type] || Link2
                     const issueColor = r.issue_type === 'MIXED_CONTENT' ? '#b45309' : r.issue_type === 'SLOW' ? '#0369a1'
                       : r.issue_type === 'BLOCKED' ? '#78716c' : r.issue_type === 'TIMEOUT' ? '#a16207' : '#b91c1c'   // BLOCKED/TIMEOUT nötr (kesin kırık değil)
-                    // Kontrol zamanı değişince görsel ayraç — hangi kaynağın hangi kontrolde bulunduğunu ayrıştırır.
-                    const runBoundary = i > 0 && (issues[i - 1].checked_at !== r.checked_at)
+                    const scope = alarmScope(r, selected)
+                    // Her tarama turunun (checked_at) başına belirgin başlık bandı — turlar net ayrışır.
+                    const runStart = i === 0 || (issues[i - 1].checked_at !== r.checked_at)
+                    const runCount = runStart ? issues.filter(x => x.checked_at === r.checked_at).length : 0
                     return (
-                      <div key={`${r.id || ''}#${i}`} className="upt-rt-grid" style={{ gridTemplateColumns: PAGE_ISSUE_COLS,
-                        ...(runBoundary ? { borderTop: '2px solid var(--border, #cbd5e1)' } : {}) }}>
+                      <Fragment key={`${r.id || ''}#${i}`}>
+                      {runStart && (
+                        <div className="page-run-hdr">
+                          <span>{r.checked_at ? formatDateSec(r.checked_at) : '—'}</span>
+                          <span className="page-run-hdr-count">{t('page.runHdrCount', runCount)}</span>
+                        </div>
+                      )}
+                      <div className="upt-rt-grid" style={{ gridTemplateColumns: PAGE_ISSUE_COLS }}>
                         <span className="upt-rt-time">{r.checked_at ? formatDateSec(r.checked_at) : '—'}</span>
                         <span style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
                           <RI size={13} />{r.resource_type}{!r.first_party && <span title={t('page.thirdParty')} style={{ color: 'var(--text-muted)' }}>·3P</span>}
@@ -510,7 +612,26 @@ export default function PageMonitorPage({ systemRole, teamId, teamName }) {
                         </span>
                         <span className="upt-rt-ms">{r.http_status ?? '—'}</span>
                         <span className="upt-rt-ms">{r.duration_ms != null ? r.duration_ms + 'ms' : '—'}</span>
+                        <span>
+                          <span className={scope.inScope ? 'page-scope-in' : 'page-scope-out'}
+                            title={scope.reasonKey ? t(scope.reasonKey) : t('page.scopeInTitle')}>
+                            {scope.inScope ? t('page.scopeIn') : t('page.scopeOut')}
+                          </span>
+                        </span>
+                        <span>
+                          {canManageRow(selected) && (
+                            isExcluded(selected, r.resource_url)
+                              ? <button type="button" className="btn btn-sm btn-secondary page-exclude-btn" disabled
+                                  title={t('page.excludeAlready')} aria-label={t('page.excludeAlready')}>
+                                  <EyeOff size={12} /></button>
+                              : <button type="button" className="btn btn-sm btn-secondary page-exclude-btn"
+                                  title={t('page.excludeAdd')} aria-label={t('page.excludeAdd')}
+                                  onClick={e => { e.stopPropagation(); addExclude(r) }}>
+                                  <EyeOff size={12} /></button>
+                          )}
+                        </span>
                       </div>
+                      </Fragment>
                     )
                   })}
                 </div>
@@ -597,8 +718,11 @@ export default function PageMonitorPage({ systemRole, teamId, teamName }) {
                 <label><span>{t('page.crawlMaxPages')}</span>
                   <input type="number" min="1" max="500" value={form.crawlMaxPages} onChange={e => setForm(f => ({ ...f, crawlMaxPages: Number(e.target.value) }))} /></label>
               </>)}
-              <label className="full-width"><span>{t('page.excludePatterns')}</span>
-                <textarea rows={2} value={form.excludePatterns} spellCheck={false} placeholder={t('page.excludePh')}
+              <label className="full-width"><span>{t('page.excludePatterns')}
+                {(() => { const n = (form.excludePatterns || '').split('\n').map(s => s.trim()).filter(Boolean).length
+                  return n > 0 ? <span className="page-exclude-count">{t('page.excludeCount', n)}</span> : null })()}</span>
+                <textarea rows={4} className="page-exclude-ta" value={form.excludePatterns} spellCheck={false}
+                  placeholder={t('page.excludePh')}
                   onChange={e => setForm(f => ({ ...f, excludePatterns: e.target.value }))} />
                 <span className="field-hint">{t('page.excludeHint')}</span></label>
 
