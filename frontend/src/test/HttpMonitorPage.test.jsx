@@ -45,6 +45,23 @@ describe('HttpMonitorPage', () => {
     expect(await screen.findByText('https://www.akbank.com/')).toBeInTheDocument()
   })
 
+  // ── Şemasız URL sahte alarmı (2026-08-04): giriş normalizasyonu ────────────
+  it('URL alanı: şemasız girdi https:// ile tamamlanır, http:// korunur; Kaydet normalize URL gönderir', async () => {
+    render(<HttpMonitorPage systemRole="USER" teamId={5} teamName="SY-A" />)   // USER → takım otomatik dolar
+    await waitFor(() => expect(api.monitoring.getHttpMonitors).toHaveBeenCalled())
+    fireEvent.click(screen.getByRole('button', { name: /new monitor|yeni monitör|yeni izleme/i }))
+    const url = screen.getByPlaceholderText('https://example.com')
+
+    fireEvent.change(url, { target: { value: 'http://internal.host:8080/health' } })
+    fireEvent.blur(url)
+    expect(url.value).toBe('http://internal.host:8080/health')   // bilinçli http:// tercihi korunur
+
+    fireEvent.change(url, { target: { value: 'www.axess.com.tr' } })
+    fireEvent.click(screen.getByRole('button', { name: /^save$|^kaydet$/i }))   // alandan çıkmadan kaydet
+    await waitFor(() => expect(api.monitoring.createHttpMonitor).toHaveBeenCalled())
+    expect(api.monitoring.createHttpMonitor.mock.calls[0][0].url).toBe('https://www.axess.com.tr')
+  })
+
   it('Kopyala: TÜM kullanıcı ayarları birebir kopyalanır (yalnız ad "(Kopya)" olur)', async () => {
     // Her alan varsayılandan FARKLI → bir alan formFrom'dan düşerse veya save() içinde
     // sessizce varsayılana dönerse tam-payload karşılaştırması kırılır.

@@ -13,6 +13,7 @@ import { Play, Pencil, Copy, X, RefreshCw, Plus, Trash2, ScanSearch, Users, Laye
   LayoutDashboard, CheckCircle2, TriangleAlert, ServerCrash, Siren, BellDot, BarChart3, ChevronDown,
   Image, FileCode, Link2, Frame, Type, ShieldAlert, Download, EyeOff } from 'lucide-react'
 import { duplicateName } from '../utils/duplicateName.js'
+import { normalizeUrl } from '../utils/normalizeUrl.js'
 import { useDialog } from './ui/Dialog.jsx'
 import AlertHistory from './admin/AlertHistory.jsx'
 import MonitorStatsBar from './MonitorStatsBar.jsx'
@@ -217,7 +218,7 @@ export default function PageMonitorPage({ systemRole, teamId, teamName }) {
   async function runTest() {
     if (!form.url.trim()) return
     setTesting(true); setTestResult(null)
-    const res = await api.monitoring.testPage({ url: form.url.trim(), timeoutMs: Number(form.timeoutMs) })
+    const res = await api.monitoring.testPage({ url: normalizeUrl(form.url), timeoutMs: Number(form.timeoutMs) })
     setTestResult(res?.success ? res.data : { error: res?.error || t('page.testError') })
     setTesting(false)
   }
@@ -227,7 +228,7 @@ export default function PageMonitorPage({ systemRole, teamId, teamName }) {
     if (form.teamId === '' || form.teamId == null) { toast.error(t('mon.teamRequired')); return }
     setSaving(true)
     const payload = {
-      name: (form.name || form.url).trim(), url: form.url.trim(),
+      name: (form.name || form.url).trim(), url: normalizeUrl(form.url),
       groupName: form.groupName?.trim() || null, teamId: form.teamId === '' ? null : Number(form.teamId),
       tags: form.tags?.trim() || null, notifyEmail: form.notifyEmail,
       mode: form.mode, crawlDepth: Number(form.crawlDepth), crawlMaxPages: Number(form.crawlMaxPages),
@@ -409,16 +410,18 @@ export default function PageMonitorPage({ systemRole, teamId, teamName }) {
   const onStatClick = (key) => setStatFilter(k => k === key ? null : key)
   const toggleStats = () => { if (statsVisible) setStatFilter(null); setStatsVisible(v => !v) }
 
-  const STATUS_COLOR = { OK: '#15803d', DEGRADED: '#e07b00', DOWN: '#c0392b', unknown: '#64748b' }
+  // CONFIG_ERROR: URL'de host yok (şemasız/bozuk) → kesinti DEĞİL, alarm üretmez; mor ile ayrışır.
+  const STATUS_COLOR = { OK: '#15803d', DEGRADED: '#e07b00', DOWN: '#c0392b', CONFIG_ERROR: '#7c3aed', unknown: '#64748b' }
   function cardClass(m) {
     if (m.status === 'OK') return 'upt-card--up'
     if (m.status === 'DOWN') return 'upt-card--down'
-    return 'upt-card--unknown'   // DEGRADED / unknown
+    return 'upt-card--unknown'   // DEGRADED / CONFIG_ERROR / unknown
   }
   function statusBadge(m) {
     const s = m?.status
     const label = s === 'OK' ? t('page.statusOk') : s === 'DEGRADED' ? t('page.statusDegraded')
-      : s === 'DOWN' ? t('page.statusDown') : t('page.statusUnknown')
+      : s === 'DOWN' ? t('page.statusDown') : s === 'CONFIG_ERROR' ? t('page.statusConfigError')
+      : t('page.statusUnknown')
     return <span className="upt-badge" style={{ color: STATUS_COLOR[s] || STATUS_COLOR.unknown }}>
       <span className="upt-badge-dot" style={{ background: STATUS_COLOR[s] || STATUS_COLOR.unknown }} />{label}</span>
   }
@@ -682,7 +685,8 @@ export default function PageMonitorPage({ systemRole, teamId, teamName }) {
                     <div key={`${c.checkedAt || c.checked_at || ''}#${i}`} className="upt-rt-grid" style={{ gridTemplateColumns: '150px 90px 70px 100px 1fr' }}>
                       <span className="upt-rt-time">{formatDateSec(c.checkedAt || c.checked_at)}</span>
                       <span style={{ color: STATUS_COLOR[c.status] || STATUS_COLOR.unknown, fontWeight: 600 }}>
-                        {c.status === 'OK' ? t('page.statusOk') : c.status === 'DEGRADED' ? t('page.statusDegraded') : t('page.statusDown')}</span>
+                        {c.status === 'OK' ? t('page.statusOk') : c.status === 'DEGRADED' ? t('page.statusDegraded')
+                          : c.status === 'CONFIG_ERROR' ? t('page.statusConfigError') : t('page.statusDown')}</span>
                       <span className="upt-rt-ms">{c.brokenResources ?? c.broken_resources ?? '—'}</span>
                       <span className="upt-rt-ms">{c.timeoutCount ?? c.timeout_count ?? '—'}</span>
                       <span className="upt-rt-ms">{c.mixedContentCount ?? c.mixed_content_count ?? '—'}</span>
@@ -720,7 +724,10 @@ export default function PageMonitorPage({ systemRole, teamId, teamName }) {
 
             <div className="form-grid form-grid--top">
               <label className="full-width"><span>{t('page.url')} <span className="req-star">*</span></span>
-                <input value={form.url} placeholder="https://example.com" autoFocus={!!dupSource} onChange={e => setForm(f => ({ ...f, url: e.target.value }))} /></label>
+                <input value={form.url} placeholder="https://example.com" autoFocus={!!dupSource}
+                  onChange={e => setForm(f => ({ ...f, url: e.target.value }))}
+                  onBlur={e => { const n = normalizeUrl(e.target.value); if (n !== e.target.value) setForm(f => ({ ...f, url: n })) }} /></label>
+              <div className="full-width field-hint" style={{ marginTop: -6 }}>{t('page.urlHint')}</div>
               <label><span>{t('page.name')}</span>
                 <input value={form.name} placeholder={form.url} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} /></label>
               <label><span>{t('page.team')} <span className="req-star">*</span></span>

@@ -527,6 +527,40 @@ public class SchedulerService {
                 + "WHERE match_operator IS NULL AND (alert_condition='NOT_CONTAINS' OR alert_condition IS NULL)");
         patch("UPDATE keyword_monitors SET match_operator='LTE', match_count=0 "
                 + "WHERE match_operator IS NULL AND alert_condition='CONTAINS'");
+        // Şemasız URL backfill (2026-08-04): "www.axess.com.tr" gibi kayıtlar kontrol edilemiyor
+        // (URI host=null) ve eskiden sahte "kesinti" alarmı üretiyordu. Girişte artık normalize ediliyor;
+        // burada mevcut kayıtlar bir kez düzeltilir. İdempotent: NOT LIKE '%://%' ikinci boot'ta 0 satır.
+        // (a) normalize hâli aynı takımda zaten varsa dokunma, (b) aynı şemasız url'den birden fazlaysa
+        // yalnız en küçük id normalize edilsin → mükerrer üretilmez.
+        for (String tbl : new String[]{"page_monitors", "http_monitors"}) {
+            patch("UPDATE " + tbl + " p SET url = 'https://' || p.url "
+                    + "WHERE p.url IS NOT NULL AND p.url <> '' AND p.url NOT LIKE '%://%' "
+                    + "AND NOT EXISTS (SELECT 1 FROM " + tbl + " b WHERE LOWER(b.url) = LOWER('https://' || p.url) "
+                    + "                AND ((b.team_id IS NULL AND p.team_id IS NULL) OR b.team_id = p.team_id)) "
+                    + "AND NOT EXISTS (SELECT 1 FROM " + tbl + " c WHERE c.id < p.id AND LOWER(c.url) = LOWER(p.url) "
+                    + "                AND ((c.team_id IS NULL AND p.team_id IS NULL) OR c.team_id = p.team_id))");
+        }
+        // Keyword'de aynılık anahtarı url + keyword + takım.
+        patch("UPDATE keyword_monitors p SET url = 'https://' || p.url "
+                + "WHERE p.url IS NOT NULL AND p.url <> '' AND p.url NOT LIKE '%://%' "
+                + "AND NOT EXISTS (SELECT 1 FROM keyword_monitors b WHERE LOWER(b.url) = LOWER('https://' || p.url) "
+                + "                AND LOWER(b.keyword) = LOWER(p.keyword) "
+                + "                AND ((b.team_id IS NULL AND p.team_id IS NULL) OR b.team_id = p.team_id)) "
+                + "AND NOT EXISTS (SELECT 1 FROM keyword_monitors c WHERE c.id < p.id AND LOWER(c.url) = LOWER(p.url) "
+                + "                AND LOWER(c.keyword) = LOWER(p.keyword) "
+                + "                AND ((c.team_id IS NULL AND p.team_id IS NULL) OR c.team_id = p.team_id))");
+        // Notlar/rehberler URL ile eşleşiyor (MonitorNotes target = monitör URL'i) → URL değişince öksüz
+        // kalmasınlar: yalnız gerçekten normalize edilmiş bir monitöre karşılık gelen hedefler güncellenir.
+        for (String tbl : new String[]{"monitor_notes", "monitor_guide"}) {
+            for (String[] kind : new String[][]{{"PAGE", "page_monitors"}, {"HTTP", "http_monitors"}, {"KEYWORD", "keyword_monitors"}}) {
+                patch("UPDATE " + tbl + " n SET target = 'https://' || n.target "
+                        + "WHERE n.target IS NOT NULL AND n.target NOT LIKE '%://%' AND n.monitor_type = '" + kind[0] + "' "
+                        + "AND EXISTS (SELECT 1 FROM " + kind[1] + " m WHERE LOWER(m.url) = LOWER('https://' || n.target)) "
+                        // monitor_guide'da (monitor_type,target) UNIQUE — hedef zaten varsa dokunma (kısıt ihlali olmasın)
+                        + "AND NOT EXISTS (SELECT 1 FROM " + tbl + " x WHERE x.monitor_type = n.monitor_type "
+                        + "                AND LOWER(x.target) = LOWER('https://' || n.target))");
+            }
+        }
         // Çoklu takım üyeliği (app_user_teams): tablo @ElementCollection + ddl-auto ile oluşur.
         // Join kolonu AppUser'da pinli (user_id). Mevcut tek-takımlı kullanıcıların team_id'sini
         // üyelik tablosuna backfill et (idempotent) — yoksa eski kullanıcılar üyeliksiz kalır.
@@ -1986,8 +2020,11 @@ public class SchedulerService {
         activityLog.recordCheck(ActivityLogService.KEYWORD, m.getId(), m.getName(),
                 m.getUrl(), m.getTeamId(), false, "scheduler", r);
         Map<String, Object> out = new LinkedHashMap<>();
-        out.put("status", ok ? "up" : "down");
-        out.put("error", r.get("error"));
+        // Yapılandırma hatası (URL'de host yok) kesinti DEĞİL → "up" raporlanır: alarm/teyit zinciri
+        // başlamaz, askıda alarm varsa sessizce kapanır. Kontrol kaydı + hata mesajı yine yazıldı.
+        boolean cfgError = Boolean.TRUE.equals(r.get("config_error"));
+        out.put("status", (ok || cfgError) ? "up" : "down");
+        out.put("error", cfgError ? null : r.get("error"));
         out.put("http_status", r.get("http_status"));   // alarm e-postası için zengin metrik
         out.put("response_ms", r.get("response_ms"));
         out.put("snippet", r.get("snippet"));
@@ -2085,8 +2122,11 @@ public class SchedulerService {
         activityLog.recordCheck(ActivityLogService.HTTP, m.getId(), m.getName(),
                 m.getUrl(), m.getTeamId(), false, "scheduler", r);
         Map<String, Object> out = new LinkedHashMap<>();
-        out.put("status", ok ? "up" : "down");
-        out.put("error", r.get("error"));
+        // Yapılandırma hatası (URL'de host yok) kesinti DEĞİL → "up" raporlanır: alarm/teyit zinciri
+        // başlamaz, askıda alarm varsa sessizce kapanır. Kontrol kaydı + hata mesajı yine yazıldı.
+        boolean cfgError = Boolean.TRUE.equals(r.get("config_error"));
+        out.put("status", (ok || cfgError) ? "up" : "down");
+        out.put("error", cfgError ? null : r.get("error"));
         out.put("http_status", r.get("http_status"));
         out.put("response_ms", r.get("response_ms"));
         return out;
@@ -2199,21 +2239,26 @@ public class SchedulerService {
         if (r.get("problem_resources") != null) ctx.put("problem_resources", r.get("problem_resources"));
         if (r.get("problem_rows") != null)  ctx.put("problem_rows",  r.get("problem_rows"));
         if (r.get("problem_total") != null) ctx.put("problem_total", r.get("problem_total"));
-        boolean mainUp = Boolean.TRUE.equals(r.get("main_up"));
-        boolean integrityUp = Boolean.TRUE.equals(r.get("integrity_up"));
-        String err = (String) r.get("error");
+        // Yapılandırma hatası (URL'de host yok) kesinti DEĞİL → sentetik "up" item (upItem/upItemKeyword deseni):
+        // alarm açılmaz, teyit zinciri başlamaz, askıda kalmış eski alarm varsa sessizce kapanır.
+        boolean cfgError = Boolean.TRUE.equals(r.get("config_error"));
+        boolean mainUp = cfgError || Boolean.TRUE.equals(r.get("main_up"));
+        boolean integrityUp = cfgError || Boolean.TRUE.equals(r.get("integrity_up"));
+        String err = cfgError ? null : (String) r.get("error");
         downSweep.add(new MonitoringOutageService.SweepItem(
                 EscalationService.TYPE_PAGE_DOWN, m.getUrl(), "sayfa",
                 mainUp, err, new LinkedHashMap<>(ctx),
                 () -> { Map<String, Object> p = recheckPage(m, false, "SINGLE_PAGE");
-                        return Map.of("status", Boolean.TRUE.equals(p.get("main_up")) ? "up" : "down"); }));
+                        return Map.of("status", Boolean.TRUE.equals(p.get("config_error"))
+                                || Boolean.TRUE.equals(p.get("main_up")) ? "up" : "down"); }));
         Map<String, Object> integ = new LinkedHashMap<>(ctx);
         integ.put("detail", pageIntegrityDetail(r));
         integritySweep.add(new MonitoringOutageService.SweepItem(
                 EscalationService.TYPE_PAGE_INTEGRITY, m.getUrl(), pageIntegrityDetail(r),
                 integrityUp, integrityUp ? null : pageIntegrityDetail(r), integ,
                 () -> { Map<String, Object> p = recheckPage(m, false, "SINGLE_PAGE");
-                        return Map.of("status", Boolean.TRUE.equals(p.get("integrity_up")) ? "up" : "down"); }));
+                        return Map.of("status", Boolean.TRUE.equals(p.get("config_error"))
+                                || Boolean.TRUE.equals(p.get("integrity_up")) ? "up" : "down"); }));
     }
 
     private static String pageIntegrityDetail(Map<String, Object> r) {
@@ -2349,6 +2394,9 @@ public class SchedulerService {
         out.put("status", pageStatus);
         out.put("main_up", mainUp);
         out.put("integrity_up", integrityUp);
+        // Yapılandırma hatası (şemasız/host'suz URL): kontrol kaydı + hata mesajı yazılır ama ALARM AÇILMAZ
+        // (addPageSweepItems bu bayrakla up=true üretir) — kesinti değil, düzeltmesi kullanıcı elindedir.
+        if ("CONFIG_ERROR".equals(res.status())) out.put("config_error", true);
         out.put("error", res.error());
         out.put("http_status", res.httpStatus());
         out.put("response_ms", res.responseMs());

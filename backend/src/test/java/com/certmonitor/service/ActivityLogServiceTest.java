@@ -50,6 +50,18 @@ class ActivityLogServiceTest {
     }
 
     @Test
+    @DisplayName("recordCheck PAGE: CONFIG_ERROR → ERROR (eskiden 'diğer' dalına düşüp sessizce SUCCESS olurdu)")
+    void recordCheck_pageConfigError_mapsError() {
+        Map<String, Object> r = new HashMap<>(Map.of("status", "CONFIG_ERROR",
+                "error", com.certmonitor.util.MonitorUrls.CONFIG_ERROR_MSG));
+        svc.recordCheck(ActivityLogService.PAGE, 9L, "axess", "www.axess.com.tr", 5L, false, "scheduler", r);
+
+        ActivityLog a = captureSaved();
+        assertThat(a.getResultStatus()).isEqualTo("ERROR");
+        assertThat(a.getResultSummary()).contains("yapılandırma hatası");
+    }
+
+    @Test
     @DisplayName("recordCheck CERT: status=warning + 12 gün → WARNING + daysRemaining=12")
     void recordCheck_certWarning_mapsWarning() {
         Map<String, Object> r = new HashMap<>(Map.of("status", "warning", "days_remaining", 12));

@@ -13,6 +13,7 @@ import { Play, Pencil, Copy, X, RefreshCw, Plus, Trash2, Globe, Users, Layers, F
   LayoutDashboard, CheckCircle2, TriangleAlert, ServerCrash, Siren, BellDot, BarChart3, ChevronDown, ShieldCheck,
   Mail, MessageSquare, Phone, Smartphone } from 'lucide-react'
 import { duplicateName } from '../utils/duplicateName.js'
+import { normalizeUrl } from '../utils/normalizeUrl.js'
 import AlertHistory from './admin/AlertHistory.jsx'
 import MonitorStatsBar from './MonitorStatsBar.jsx'
 const ResponseTimeChart = lazy(() => import('./ResponseTimeChart.jsx'))
@@ -179,7 +180,7 @@ export default function HttpMonitorPage({ systemRole, teamId, teamName }) {
     if (!form.url.trim()) return
     setTesting(true); setTestResult(null)
     const res = await api.monitoring.testHttp({
-      url: form.url.trim(), method: form.method, expectedStatus: form.expectedStatus?.trim() || '200-399',
+      url: normalizeUrl(form.url), method: form.method, expectedStatus: form.expectedStatus?.trim() || '200-399',
       timeoutMs: Number(form.timeoutMs), verifySsl: form.verifySsl, followRedirects: form.followRedirects,
     })
     setTestResult(res?.success ? res.data : { error: res?.error || t('http.testError') })
@@ -191,7 +192,7 @@ export default function HttpMonitorPage({ systemRole, teamId, teamName }) {
     if (form.teamId === '' || form.teamId == null) { toast.error(t('mon.teamRequired')); return }
     setSaving(true)
     const payload = {
-      name: (form.name || form.url).trim(), url: form.url.trim(), method: form.method,
+      name: (form.name || form.url).trim(), url: normalizeUrl(form.url), method: form.method,
       expectedStatus: form.expectedStatus?.trim() || '200-399', followRedirects: form.followRedirects, verifySsl: form.verifySsl,
       groupName: form.groupName?.trim() || null, teamId: form.teamId === '' ? null : Number(form.teamId), tags: form.tags?.trim() || null,
       notifyEmail: form.notifyEmail,
@@ -562,7 +563,9 @@ export default function HttpMonitorPage({ systemRole, teamId, teamName }) {
             <div className="form-grid form-grid--top">
               <label className="full-width"><span>{t('http.url')} <span className="req-star">*</span></span>
                 <input value={form.url} placeholder="https://example.com" autoFocus={!!dupSource}
-                  onChange={e => setForm(f => ({ ...f, url: e.target.value }))} /></label>
+                  onChange={e => setForm(f => ({ ...f, url: e.target.value }))}
+                  onBlur={e => { const n = normalizeUrl(e.target.value); if (n !== e.target.value) setForm(f => ({ ...f, url: n })) }} /></label>
+              <div className="full-width field-hint" style={{ marginTop: -6 }}>{t('http.urlHint')}</div>
 
               <label><span>{t('http.method')}</span>
                 <SearchableSelect value={form.method} onChange={v => setForm(f => ({ ...f, method: v }))}

@@ -912,4 +912,103 @@ class MonitoringControllerTest {
 
         verify(dnsMonitorRepo, never()).save(any());
     }
+
+    // ── Şemasız URL sahte alarmı (2026-08-04) — giriş normalizasyonu ──
+    // "www.axess.com.tr" kaydedilebiliyordu; kontrol motoru host çıkaramadığı için sonuç DOWN oluyor
+    // ve takıma KRİTİK "sayfa yüklenemiyor" e-postası gidiyordu. Artık girişte https:// ekleniyor.
+
+    @Test
+    @DisplayName("POST /page: şemasız URL https:// ile normalize edilerek kaydedilir")
+    void createPage_schemalessUrl_normalizedToHttps() throws Exception {
+        when(pageMonitorRepo.existsDuplicate(anyString(), any(), any())).thenReturn(false);
+        when(pageMonitorRepo.save(any())).thenAnswer(i -> {
+            com.certmonitor.model.PageMonitor m = i.getArgument(0); m.setId(41L); return m; });
+
+        mvc.perform(post("/api/monitoring/page").session(session("ADMIN"))
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("{\"url\":\"  www.axess.com.tr  \",\"teamId\":1}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.url").value("https://www.axess.com.tr"));
+
+        org.mockito.ArgumentCaptor<com.certmonitor.model.PageMonitor> cap =
+                org.mockito.ArgumentCaptor.forClass(com.certmonitor.model.PageMonitor.class);
+        verify(pageMonitorRepo).save(cap.capture());
+        org.assertj.core.api.Assertions.assertThat(cap.getValue().getUrl()).isEqualTo("https://www.axess.com.tr");
+    }
+
+    @Test
+    @DisplayName("POST /page: mükerrer kontrolü NORMALİZE edilmiş URL ile yapılır → 400, kayıt yok")
+    void createPage_duplicateAfterNormalize_returns400() throws Exception {
+        when(pageMonitorRepo.existsDuplicate(eq("https://www.axess.com.tr"), any(), any())).thenReturn(true);
+        mvc.perform(post("/api/monitoring/page").session(session("ADMIN"))
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("{\"url\":\"www.axess.com.tr\",\"teamId\":1}"))
+                .andExpect(status().isBadRequest());
+        verify(pageMonitorRepo, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("POST /page: host'suz URL (https://) → 400 'geçerli bir host yok', kayıt yok")
+    void createPage_hostlessUrl_returns400() throws Exception {
+        mvc.perform(post("/api/monitoring/page").session(session("ADMIN"))
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("{\"url\":\"https://\",\"teamId\":1}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value(org.hamcrest.Matchers.containsString("host yok")));
+        verify(pageMonitorRepo, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("POST /http: şemasız URL normalize edilir; http:// tercihi KORUNUR")
+    void createHttp_schemalessNormalized_httpSchemeKept() throws Exception {
+        when(httpMonitorRepo.existsDuplicate(anyString(), any(), any())).thenReturn(false);
+        when(httpMonitorRepo.save(any(com.certmonitor.model.HttpMonitor.class)))
+                .thenAnswer(a -> { com.certmonitor.model.HttpMonitor h = a.getArgument(0); h.setId(42L); return h; });
+
+        mvc.perform(post("/api/monitoring/http").session(session("ADMIN"))
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("{\"url\":\"www.axess.com.tr\",\"teamId\":3}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.url").value("https://www.axess.com.tr"));
+
+        // İç servis 443'te olmayabilir → kullanıcının açık http:// tercihi asla https'e taşınmaz.
+        mvc.perform(post("/api/monitoring/http").session(session("ADMIN"))
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("{\"url\":\"http://internal.host:8080/health\",\"teamId\":3}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.url").value("http://internal.host:8080/health"));
+    }
+
+    @Test
+    @DisplayName("POST /keyword: şemasız URL normalize edilir; {timestamp} yer tutucusu bozulmaz")
+    void createKeyword_schemalessNormalized_timestampSurvives() throws Exception {
+        when(keywordMonitorRepo.existsDuplicate(anyString(), anyString(), any(), any())).thenReturn(false);
+        when(keywordMonitorRepo.save(any(com.certmonitor.model.KeywordMonitor.class)))
+                .thenAnswer(a -> { com.certmonitor.model.KeywordMonitor k = a.getArgument(0); k.setId(43L); return k; });
+
+        mvc.perform(post("/api/monitoring/keyword").session(session("ADMIN"))
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("{\"url\":\"  x.example.com/a?t={timestamp}  \",\"keyword\":\"akbank\",\"teamId\":3}"))
+                .andExpect(status().isOk());
+
+        org.mockito.ArgumentCaptor<com.certmonitor.model.KeywordMonitor> cap =
+                org.mockito.ArgumentCaptor.forClass(com.certmonitor.model.KeywordMonitor.class);
+        verify(keywordMonitorRepo).save(cap.capture());
+        // Eskiden ham (trim'siz) kaydediliyordu; URI tabanlı doğrulama da {timestamp}'te patlardı.
+        org.assertj.core.api.Assertions.assertThat(cap.getValue().getUrl())
+                .isEqualTo("https://x.example.com/a?t={timestamp}");
+    }
+
+    @Test
+    @DisplayName("POST /page/test: checker'a NORMALİZE edilmiş URL gider (ad-hoc test de sahte hata vermez)")
+    void testPage_normalizesBeforeChecker() throws Exception {
+        when(pageChecker.test(anyString(), org.mockito.ArgumentMatchers.anyInt())).thenReturn(
+                new com.certmonitor.service.PageCheckerService.PageCheckResult(
+                        "OK", true, 200, 12L, 3, 0, 0, 0, 1, null, null, null, List.of()));
+        mvc.perform(post("/api/monitoring/page/test").session(session("ADMIN"))
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("{\"url\":\"www.axess.com.tr\"}"))
+                .andExpect(status().isOk());
+        verify(pageChecker).test(eq("https://www.axess.com.tr"), org.mockito.ArgumentMatchers.anyInt());
+    }
 }

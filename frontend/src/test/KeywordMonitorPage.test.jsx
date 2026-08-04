@@ -80,6 +80,25 @@ describe('KeywordMonitorPage', () => {
     expect(screen.getByRole('button', { name: /response chart|süre/i })).toBeInTheDocument()
   })
 
+  // ── Şemasız URL sahte alarmı (2026-08-04): giriş normalizasyonu ────────────
+  it('URL alanı: şemasız girdi https:// ile tamamlanır; {timestamp} bozulmaz; Kaydet normalize URL gönderir', async () => {
+    api.monitoring.createKeywordMonitor.mockResolvedValue({ success: true, data: {} })
+    render(<KeywordMonitorPage systemRole="USER" teamId={5} teamName="SY-A" />)   // USER → takım otomatik dolar
+    await waitFor(() => expect(api.monitoring.getKeywordMonitors).toHaveBeenCalled())
+    fireEvent.click(screen.getByRole('button', { name: /new monitor|yeni monitor|yeni monitör/i }))
+    const url = screen.getByPlaceholderText('https://example.com')
+
+    // Cache-busting yer tutucusu ayrıştırıcıyı patlatmamalı (backend URI.create kullanmıyor).
+    fireEvent.change(url, { target: { value: 'x.example.com/a?t={timestamp}' } })
+    fireEvent.blur(url)
+    expect(url.value).toBe('https://x.example.com/a?t={timestamp}')
+
+    fireEvent.change(screen.getByPlaceholderText('SUCCESS'), { target: { value: 'akbank' } })
+    fireEvent.click(screen.getByRole('button', { name: /^save$|^kaydet$/i }))
+    await waitFor(() => expect(api.monitoring.createKeywordMonitor).toHaveBeenCalled())
+    expect(api.monitoring.createKeywordMonitor.mock.calls[0][0].url).toBe('https://x.example.com/a?t={timestamp}')
+  })
+
   it('Kopyala: TÜM kullanıcı ayarları birebir kopyalanır (yalnız ad "(Kopya)" olur)', async () => {
     // Her alan varsayılandan FARKLI → bir alan formFrom'dan düşerse tam-payload karşılaştırması kırılır.
     api.monitoring.getKeywordMonitors.mockResolvedValue({ success: true, data: [{

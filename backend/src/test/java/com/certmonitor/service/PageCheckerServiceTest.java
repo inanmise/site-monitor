@@ -61,6 +61,17 @@ class PageCheckerServiceTest {
     // ── Testler ──────────────────────────────────────────────────────────────
 
     @Test
+    @DisplayName("Şemasız/host'suz URL → CONFIG_ERROR (DOWN DEĞİL): yapılandırma hatası kesinti alarmı üretmemeli")
+    void schemalessUrl_configError_notDown() {
+        var r = checker.check("www.axess.com.tr", "SINGLE_PAGE", 5000, 2000, 5, null, 2, 50, 60);
+        assertThat(r.status()).isEqualTo("CONFIG_ERROR");     // eskiden "DOWN" → sahte KRİTİK e-posta
+        assertThat(r.mainReachable()).isFalse();
+        assertThat(r.error()).isEqualTo(com.certmonitor.util.MonitorUrls.CONFIG_ERROR_MSG);
+        assertThat(r.totalResources()).isZero();              // hiç istek atılmadı
+        assertThat(checker.test("https://", 3000).status()).isEqualTo("CONFIG_ERROR");   // host'suz: ad-hoc test yolu
+    }
+
+    @Test
     @DisplayName("Sağlam sayfa: tüm kaynaklar 200 → OK, sorun yok")
     void allGood_ok() {
         var r = checker.check(base + "/ok", "SINGLE_PAGE", 5000, 2000, 5, null, 2, 50, 60);
