@@ -116,6 +116,13 @@ public class PageCheckerService {
      *  üst sınırı (yavaş/yanıt-vermeyen hedefin scheduler/request thread'ini süresiz tutmasını engeller — H1/M1). */
     public PageCheckResult check(String url, String mode, int timeoutMs, int slowMs, int concurrency,
                                  String excludePatterns, int crawlDepth, int crawlMaxPages, int maxCheckSeconds) {
+        // Yapılandırma hatası (şemasız/host'suz URL) kesinti DEĞİL: istek atılmaz, CONFIG_ERROR döner ve
+        // SchedulerService bunun için alarm açmaz. Eskiden URI.create şemasız değeri relative referans sayıp
+        // host=null verdiği için sonuç DOWN oluyor ve takıma sahte "Sayfa yüklenemiyor" e-postası gidiyordu.
+        if (!com.certmonitor.util.MonitorUrls.isCheckable(url)) {
+            return new PageCheckResult("CONFIG_ERROR", false, null, 0L, 0, 0, 0, 0, 0, null, null,
+                    com.certmonitor.util.MonitorUrls.CONFIG_ERROR_MSG, List.of());
+        }
         Excludes excludes = compileExcludes(excludePatterns);
         long deadline = System.currentTimeMillis() + Math.max(5, maxCheckSeconds) * 1000L;
         if ("SITE_CRAWL".equalsIgnoreCase(mode)) {
@@ -127,6 +134,10 @@ public class PageCheckerService {
 
     /** Kaydetmeden canlı test için basit sarmalayıcı (SINGLE_PAGE, varsayılan eşikler + 60sn deadline). */
     public PageCheckResult test(String url, int timeoutMs) {
+        if (!com.certmonitor.util.MonitorUrls.isCheckable(url)) {        // check(...) ile aynı yapılandırma geçidi
+            return new PageCheckResult("CONFIG_ERROR", false, null, 0L, 0, 0, 0, 0, 0, null, null,
+                    com.certmonitor.util.MonitorUrls.CONFIG_ERROR_MSG, List.of());
+        }
         return checkSinglePage(url, timeoutMs, 2000, 5, Excludes.EMPTY, System.currentTimeMillis() + 60_000L);
     }
 

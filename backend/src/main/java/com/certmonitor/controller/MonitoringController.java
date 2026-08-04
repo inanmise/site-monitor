@@ -19,6 +19,7 @@ import com.certmonitor.service.MonitoringOutageService;
 import com.certmonitor.service.SchedulerService;
 import com.certmonitor.service.PermissionService;
 import com.certmonitor.service.MonitoringGroupService;
+import com.certmonitor.util.MonitorUrls;
 import jakarta.servlet.http.HttpSession;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -229,6 +230,11 @@ public class MonitoringController {
     private static boolean blank(Object o) {
         return o == null || o.toString().isBlank();
     }
+
+    /** URL alan türlerde (sayfa/http/keyword) host çıkarılamayan girdi reddedilir — şemasız URL
+     *  kontrol edilemez ve eskiden sessizce "kesinti" alarmı üretiyordu (2026-08-04). */
+    private static final String INVALID_URL_MSG =
+            "Geçersiz URL: geçerli bir host yok (örn. https://example.com)";
 
     // ── İzleme Grupları — TAKIM + izleme TÜRÜ bazlı; kullanıcı yalnız KENDİ takım(lar)ının gruplarını görür/rename eder ──
 
@@ -1177,14 +1183,17 @@ public class MonitoringController {
         if (teamId == null) return badRequest("Takım seçimi zorunludur; izleme oluşturulamıyor.");
         // Mükerrer koruması (diğer türlerle aynı desen): aynılık anahtarı url + keyword + takım —
         // aynı URL'i FARKLI kelimeyle izlemek meşrudur, engellenmez.
-        String kwUrl = body.get("url").toString().trim();
+        // Şemasız URL kontrol edilemez (host çıkarılamaz) → mükerrer kontrolünden ÖNCE normalize et,
+        // aksi halde "x.com" ile mevcut "https://x.com" eşleşmez ve kayıttan sonra ikisi aynı URL olur.
+        String kwUrl = MonitorUrls.normalize(body.get("url").toString());
+        if (!MonitorUrls.isCheckable(kwUrl)) return badRequest(INVALID_URL_MSG);
         String kwWord = body.get("keyword").toString().trim();
         if (keywordMonitorRepo.existsDuplicate(kwUrl, kwWord, teamId, null))
             return badRequest("Bu URL ve anahtar kelime bu takımda zaten izleniyor; mükerrer keyword monitörü oluşturulamaz.");
         String now = ISO.format(Instant.now());
         KeywordMonitor m = new KeywordMonitor();
         m.setName((String) body.get("name"));
-        m.setUrl((String) body.get("url"));
+        m.setUrl(kwUrl);
         m.setKeyword((String) body.get("keyword"));
         if (body.get("customHeaders") != null) m.setCustomHeaders((String) body.get("customHeaders"));
         applyKeywordCondition(m, body);
@@ -1215,15 +1224,16 @@ public class MonitoringController {
         return keywordMonitorRepo.findById(id).map(m -> {
             if (!canOperateTeam(session, m.getTeamId())) throw new SecurityException("Bu takımın izlemesini düzenleyemezsiniz");
             // Edit ile mükerrere dönüşmeyi de engelle (ping PUT'undaki desen; excludeId = kendisi).
-            String intendedUrl  = body.get("url")     != null ? body.get("url").toString().trim()     : m.getUrl();
+            String intendedUrl  = body.get("url")     != null ? MonitorUrls.normalize(body.get("url").toString()) : m.getUrl();
             String intendedWord = body.get("keyword") != null ? body.get("keyword").toString().trim() : m.getKeyword();
             Long intendedTeam   = body.containsKey("teamId")
                     ? resolveTeamChange(session, m.getTeamId(), body.get("teamId")) : m.getTeamId();
+            if (body.get("url") != null && !MonitorUrls.isCheckable(intendedUrl)) return badRequest(INVALID_URL_MSG);
             if (intendedUrl != null && intendedWord != null
                     && keywordMonitorRepo.existsDuplicate(intendedUrl, intendedWord, intendedTeam, id))
                 return badRequest("Bu URL ve anahtar kelime bu takımda zaten izleniyor; mükerrer keyword monitörü oluşturulamaz.");
             if (body.get("name")            != null) m.setName((String) body.get("name"));
-            if (body.get("url")             != null) m.setUrl((String) body.get("url"));
+            if (body.get("url")             != null) m.setUrl(intendedUrl);
             if (body.get("keyword")         != null) m.setKeyword((String) body.get("keyword"));
             if (body.containsKey("customHeaders"))    m.setCustomHeaders((String) body.get("customHeaders"));
             if (body.get("operator") != null || body.get("matchCount") != null || body.get("condition") != null) applyKeywordCondition(m, body);
@@ -1325,9 +1335,10 @@ public class MonitoringController {
     @PostMapping("/keyword/test")
     public ResponseEntity<Map<String, Object>> testKeyword(@RequestBody Map<String, Object> body, HttpSession session) {
         permissionService.require(session, "monitoring.crud", "edit");
-        String url = body.get("url") != null ? body.get("url").toString().trim() : "";
+        String url = body.get("url") != null ? MonitorUrls.normalize(body.get("url").toString()) : "";
         String keyword = body.get("keyword") != null ? body.get("keyword").toString() : "";
         if (url.isEmpty() || keyword.isEmpty()) return badRequest("url ve keyword zorunlu");
+        if (!MonitorUrls.isCheckable(url)) return badRequest(INVALID_URL_MSG);
         String op = body.get("operator") != null ? body.get("operator").toString() : "GTE";
         if (!KW_OPERATORS.contains(op)) op = "GTE";
         int threshold = body.get("matchCount") instanceof Number mn ? mn.intValue() : 1;
@@ -1637,8 +1648,9 @@ public class MonitoringController {
         if (blank(body.get("url"))) return badRequest("url zorunlu");
         Long teamId = resolveWriteTeam(session, body);
         if (teamId == null) return badRequest("Takım seçimi zorunludur; izleme oluşturulamıyor.");
-        String url = body.get("url").toString().trim();
-        if (httpMonitorRepo.existsDuplicate(url, teamId, null))
+        String url = MonitorUrls.normalize(body.get("url").toString());   // şemasız girdiye https:// eklenir
+        if (!MonitorUrls.isCheckable(url)) return badRequest(INVALID_URL_MSG);
+        if (httpMonitorRepo.existsDuplicate(url, teamId, null))           // mükerrer kontrolü normalize edilmiş değerle
             return badRequest("Bu URL bu takımda zaten izleniyor; mükerrer HTTP monitörü oluşturulamaz.");
         String now = ISO.format(Instant.now());
         HttpMonitor m = new HttpMonitor();
@@ -1675,7 +1687,11 @@ public class MonitoringController {
         return httpMonitorRepo.findById(id).map(m -> {
             if (!canOperateTeam(session, m.getTeamId())) throw new SecurityException("Bu takımın izlemesini düzenleyemezsiniz");
             if (body.get("name")            != null) m.setName((String) body.get("name"));
-            if (body.get("url")             != null) m.setUrl(body.get("url").toString().trim());
+            if (body.get("url")             != null) {
+                String u = MonitorUrls.normalize(body.get("url").toString());
+                if (!MonitorUrls.isCheckable(u)) return badRequest(INVALID_URL_MSG);
+                m.setUrl(u);
+            }
             if (body.get("method")          != null) m.setMethod(normalizeHttpMethod(body.get("method")));
             if (!blank(body.get("expectedStatus"))) m.setExpectedStatus(body.get("expectedStatus").toString().trim());
             if (body.get("followRedirects") instanceof Boolean b) m.setFollowRedirects(b);
@@ -1769,8 +1785,9 @@ public class MonitoringController {
     @PostMapping("/http/test")
     public ResponseEntity<Map<String, Object>> testHttp(@RequestBody Map<String, Object> body, HttpSession session) {
         permissionService.require(session, "monitoring.crud", "edit");
-        String url = body.get("url") != null ? body.get("url").toString().trim() : "";
+        String url = body.get("url") != null ? MonitorUrls.normalize(body.get("url").toString()) : "";
         if (url.isEmpty()) return badRequest("url zorunlu");
+        if (!MonitorUrls.isCheckable(url)) return badRequest(INVALID_URL_MSG);
         String method = normalizeHttpMethod(body.get("method"));
         String expected = !blank(body.get("expectedStatus")) ? body.get("expectedStatus").toString().trim() : "200-399";
         int timeoutMs = body.get("timeoutMs") instanceof Number tn ? tn.intValue() : 10000;
@@ -1891,8 +1908,9 @@ public class MonitoringController {
         if (blank(body.get("url"))) return badRequest("url zorunlu");
         Long teamId = resolveWriteTeam(session, body);
         if (teamId == null) return badRequest("Takım seçimi zorunludur; izleme oluşturulamıyor.");
-        String url = body.get("url").toString().trim();
-        if (pageMonitorRepo.existsDuplicate(url, teamId, null))
+        String url = MonitorUrls.normalize(body.get("url").toString());   // şemasız girdiye https:// eklenir
+        if (!MonitorUrls.isCheckable(url)) return badRequest(INVALID_URL_MSG);
+        if (pageMonitorRepo.existsDuplicate(url, teamId, null))           // mükerrer kontrolü normalize edilmiş değerle
             return badRequest("Bu URL bu takımda zaten izleniyor; mükerrer sayfa monitörü oluşturulamaz.");
         String now = ISO.format(Instant.now());
         com.certmonitor.model.PageMonitor m = new com.certmonitor.model.PageMonitor();
@@ -1925,7 +1943,11 @@ public class MonitoringController {
         return pageMonitorRepo.findById(id).map(m -> {
             if (!canOperateTeam(session, m.getTeamId())) throw new SecurityException("Bu takımın izlemesini düzenleyemezsiniz");
             if (body.get("name")            != null) m.setName((String) body.get("name"));
-            if (body.get("url")             != null) m.setUrl(body.get("url").toString().trim());
+            if (body.get("url")             != null) {
+                String u = MonitorUrls.normalize(body.get("url").toString());
+                if (!MonitorUrls.isCheckable(u)) return badRequest(INVALID_URL_MSG);
+                m.setUrl(u);
+            }
             if (body.containsKey("groupName"))       m.setGroupName(monitoringGroupService.getOrCreateFor(m, m.getTeamId(), body.get("groupName") == null ? null : body.get("groupName").toString(), actor(session)));
             if (body.containsKey("teamId"))          m.setTeamId(resolveTeamChange(session, m.getTeamId(), body.get("teamId")));
             if (body.get("active")          instanceof Boolean b) m.setActive(b);
@@ -2031,8 +2053,9 @@ public class MonitoringController {
     @PostMapping("/page/test")
     public ResponseEntity<Map<String, Object>> testPage(@RequestBody Map<String, Object> body, HttpSession session) {
         permissionService.require(session, "monitoring.crud", "edit");
-        String url = body.get("url") != null ? body.get("url").toString().trim() : "";
+        String url = body.get("url") != null ? MonitorUrls.normalize(body.get("url").toString()) : "";
         if (url.isEmpty()) return badRequest("url zorunlu");
+        if (!MonitorUrls.isCheckable(url)) return badRequest(INVALID_URL_MSG);
         int timeoutMs = body.get("timeoutMs") instanceof Number tn ? tn.intValue() : 4000;
         com.certmonitor.service.PageCheckerService.PageCheckResult r = pageChecker.test(url, timeoutMs);
         Map<String, Object> out = new LinkedHashMap<>();

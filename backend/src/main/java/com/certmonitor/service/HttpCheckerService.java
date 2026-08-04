@@ -126,6 +126,15 @@ public class HttpCheckerService {
      */
     public Map<String, Object> check(String url, String method, String expectedStatus,
                                      int timeoutMs, boolean verifySsl, boolean followRedirects) {
+        // Yapılandırma hatası (şemasız/host'suz URL) kesinti DEĞİL — istek atılmaz, alarm da açılmaz
+        // (SchedulerService config_error bayrağını okur). Eskiden bu durum sahte DOWN alarmı üretiyordu.
+        if (!com.certmonitor.util.MonitorUrls.isCheckable(url)) {
+            Map<String, Object> r = new LinkedHashMap<>();
+            r.put("ok", false);
+            r.put("config_error", true);
+            r.put("error", com.certmonitor.util.MonitorUrls.CONFIG_ERROR_MSG);
+            return r;
+        }
         // SSRF: hedef host'u istekten önce doğrula (metadata/loopback/link-local blok; iç ağ ayara bağlı).
         String blocked = ssrfBlockReason(url);
         if (blocked != null) {

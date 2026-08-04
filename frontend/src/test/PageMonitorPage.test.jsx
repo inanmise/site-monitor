@@ -68,6 +68,46 @@ describe('PageMonitorPage', () => {
     expect(await screen.findByText(/degraded|bozulmuş/i)).toBeInTheDocument()
   })
 
+  // ── Şemasız URL sahte alarmı (2026-08-04): giriş normalizasyonu ────────────
+  it('URL alanı: şemasız girdi alandan çıkınca https:// ile tamamlanır, http:// korunur', async () => {
+    render(<PageMonitorPage systemRole="USER" teamId={5} teamName="SY-A" />)
+    await waitFor(() => expect(api.monitoring.getPageMonitors).toHaveBeenCalled())
+    fireEvent.click(screen.getByRole('button', { name: /new monitor|yeni izleme/i }))
+    const url = screen.getByPlaceholderText('https://example.com')
+
+    fireEvent.change(url, { target: { value: 'www.axess.com.tr' } })
+    fireEvent.blur(url)
+    expect(url.value).toBe('https://www.axess.com.tr')
+
+    // Kullanıcının bilinçli http:// tercihi https'e taşınmaz (iç servis 443'te olmayabilir).
+    fireEvent.change(url, { target: { value: 'http://internal.host:8080/health' } })
+    fireEvent.blur(url)
+    expect(url.value).toBe('http://internal.host:8080/health')
+  })
+
+  it('Kaydet: alandan çıkılmasa bile payload normalize edilmiş URL taşır', async () => {
+    api.monitoring.createPageMonitor.mockResolvedValue({ success: true, data: {} })
+    render(<PageMonitorPage systemRole="USER" teamId={5} teamName="SY-A" />)
+    await waitFor(() => expect(api.monitoring.getPageMonitors).toHaveBeenCalled())
+    fireEvent.click(screen.getByRole('button', { name: /new monitor|yeni izleme/i }))
+    fireEvent.change(screen.getByPlaceholderText('https://example.com'), { target: { value: 'www.axess.com.tr' } })
+    fireEvent.click(screen.getByRole('button', { name: /^save$|^kaydet$/i }))
+    await waitFor(() => expect(api.monitoring.createPageMonitor).toHaveBeenCalled())
+    expect(api.monitoring.createPageMonitor.mock.calls[0][0].url).toBe('https://www.axess.com.tr')
+  })
+
+  it('CONFIG_ERROR monitörü "yapılandırma hatası" rozetiyle görünür; kritik sayaca girmez', async () => {
+    api.monitoring.getPageMonitors.mockResolvedValue({ success: true, data: [
+      { ...monitor, status: 'CONFIG_ERROR', error: 'yapılandırma hatası: URL\'de geçerli bir host yok' },
+    ] })
+    const { container } = render(<PageMonitorPage systemRole="USER" teamId={5} teamName="SY-A" />)
+    await waitFor(() => expect(api.monitoring.getPageMonitors).toHaveBeenCalled())
+    await screen.findByText('https://www.akbank.com/')
+    expect(screen.getByText(/yapılandırma hatası|configuration error/i)).toBeInTheDocument()
+    // Kesinti gibi gösterilmez — kart "down" sınıfını almaz (alarm/e-posta da üretilmez).
+    expect(container.querySelector('.upt-card--down')).toBeNull()
+  })
+
   it('karta tıkla → detay modalında Sorunlar + Grafik sekmeleri; issues yüklenir', async () => {
     render(<PageMonitorPage systemRole="USER" teamId={5} teamName="SY-A" />)
     await waitFor(() => expect(api.monitoring.getPageMonitors).toHaveBeenCalled())

@@ -13,6 +13,7 @@ import { Play, Pencil, Copy, X, RefreshCw, Plus, Trash2, Target, Users, Layers, 
   LayoutDashboard, CheckCircle2, TriangleAlert, ServerCrash, Siren, BellDot, BarChart3, ChevronDown, ShieldCheck,
   Mail, MessageSquare, Phone, Smartphone } from 'lucide-react'
 import { duplicateName } from '../utils/duplicateName.js'
+import { normalizeUrl } from '../utils/normalizeUrl.js'
 import AlertHistory from './admin/AlertHistory.jsx'
 import MonitorStatsBar from './MonitorStatsBar.jsx'
 // recharts ağır — yalnız "Süre Grafiği" sekmesi açılınca yüklensin (eager bundle'a girmesin).
@@ -182,7 +183,7 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
     if (!form.url.trim() || !form.keyword.trim()) return
     setTesting(true); setTestResult(null)
     const res = await api.monitoring.testKeyword({
-      url: form.url.trim(), keyword: form.keyword, operator: form.operator,
+      url: normalizeUrl(form.url), keyword: form.keyword, operator: form.operator,
       matchCount: Number(form.matchCount), timeoutMs: Number(form.timeoutMs),
       customHeaders: form.customHeaders?.trim() || null, caseSensitive: form.caseSensitive,
     })
@@ -195,7 +196,7 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
     if (form.teamId === '' || form.teamId == null) { toast.error(t('mon.teamRequired')); return }
     setSaving(true)
     const payload = {
-      name: (form.name || form.url).trim(), url: form.url.trim(), keyword: form.keyword,
+      name: (form.name || form.url).trim(), url: normalizeUrl(form.url), keyword: form.keyword,
       operator: form.operator, matchCount: Number(form.matchCount),
       groupName: form.groupName?.trim() || null, teamId: form.teamId === '' ? null : Number(form.teamId),
       caseSensitive: form.caseSensitive, tags: form.tags?.trim() || null, notifyEmail: form.notifyEmail,
@@ -616,7 +617,10 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
 
             <div className="form-grid form-grid--top">
               <label className="full-width"><span>{t('keyword.url')} <span className="req-star">*</span></span>
-                <input value={form.url} placeholder="https://example.com" autoFocus={!!dupSource} onChange={e => setForm(f => ({ ...f, url: e.target.value }))} /></label>
+                <input value={form.url} placeholder="https://example.com" autoFocus={!!dupSource}
+                  onChange={e => setForm(f => ({ ...f, url: e.target.value }))}
+                  onBlur={e => { const n = normalizeUrl(e.target.value); if (n !== e.target.value) setForm(f => ({ ...f, url: n })) }} /></label>
+              <div className="full-width field-hint" style={{ marginTop: -6 }}>{t('keyword.urlHint')}</div>
               <label className="full-width"><span>{t('keyword.customHeaders')}{' '}
                 <button type="button" onClick={() => setShowCacheHelp(true)}
                   style={{ background: 'none', border: 'none', color: 'var(--primary, #4f46e5)', cursor: 'pointer', fontSize: '.85em', textDecoration: 'underline', padding: 0, fontWeight: 500 }}>

@@ -69,6 +69,16 @@ class KeywordCheckerServiceTest {
     }
 
     @Test
+    @DisplayName("check: şemasız URL yapılandırma hatası (config_error) — istek atılmaz, kesinti sayılmaz")
+    void check_schemalessUrl_configError() {
+        Map<String, Object> r = newChecker().check("www.axess.com.tr", "abc", 3000);
+        assertThat(r.get("config_error")).isEqualTo(true);
+        assertThat(r.get("found")).isEqualTo(false);
+        assertThat(r.get("error")).isEqualTo(com.certmonitor.util.MonitorUrls.CONFIG_ERROR_MSG);
+        assertThat(r.get("http_status")).isNull();     // hiç istek gitmedi
+    }
+
+    @Test
     @DisplayName("check: case-insensitive non-overlapping sayım + http_status + snippet")
     void check_countsAndMeta() throws IOException {
         HttpServer server = serve("<p>ABCabc abc tail</p>");   // 'abc' → 3 kez (3,6,10)

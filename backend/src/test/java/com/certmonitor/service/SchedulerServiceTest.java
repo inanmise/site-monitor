@@ -269,6 +269,85 @@ class SchedulerServiceTest {
         assertThat(captor.getValue().get(0).domain()).isEqualTo("b.example.com");
     }
 
+    // ── Yapılandırma hatası kesinti alarmı üretmemeli (2026-08-04, şemasız URL sahte alarmı) ──
+
+    @Test
+    @DisplayName("Page sweep: CONFIG_ERROR → SweepItem'lar up=true (alarm yok) ama kontrol kaydı YAZILIR")
+    @SuppressWarnings("unchecked")
+    void pageSweep_configError_noDownAlarm_butPersists() {
+        com.certmonitor.model.PageMonitor m = new com.certmonitor.model.PageMonitor();
+        m.setId(21L); m.setName("axess"); m.setUrl("www.axess.com.tr"); m.setMode("SINGLE_PAGE"); m.setActive(true);
+        when(pageMonitorRepo.findByActiveTrue()).thenReturn(List.of(m));
+        when(pageCheckerService.check(anyString(), anyString(), anyInt(), anyInt(), anyInt(), any(), anyInt(), anyInt(), anyInt()))
+                .thenReturn(new PageCheckerService.PageCheckResult("CONFIG_ERROR", false, null, 0L,
+                        0, 0, 0, 0, 0, null, null, com.certmonitor.util.MonitorUrls.CONFIG_ERROR_MSG, List.of()));
+
+        scheduler.runPageChecks();
+
+        org.mockito.ArgumentCaptor<List<MonitoringOutageService.SweepItem>> captor =
+                org.mockito.ArgumentCaptor.forClass(List.class);
+        verify(monitoringOutageService).handleSweepResults(eq(EscalationService.TYPE_PAGE_DOWN), captor.capture());
+        assertThat(captor.getValue()).hasSize(1);
+        MonitoringOutageService.SweepItem item = captor.getValue().get(0);
+        assertThat(item.up()).isTrue();        // kesinti DEĞİL → teyit zinciri başlamaz, e-posta gitmez
+        assertThat(item.error()).isNull();
+        // Bütünlük alarmı da açılmaz
+        org.mockito.ArgumentCaptor<List<MonitoringOutageService.SweepItem>> integ =
+                org.mockito.ArgumentCaptor.forClass(List.class);
+        verify(monitoringOutageService).handleSweepResults(eq(EscalationService.TYPE_PAGE_INTEGRITY), integ.capture());
+        assertThat(integ.getValue().get(0).up()).isTrue();
+
+        // Kayıt kaybolmuyor: page_checks satırı hata mesajıyla yazılır (kullanıcı sorunu görebilsin).
+        org.mockito.ArgumentCaptor<com.certmonitor.model.PageCheck> pc =
+                org.mockito.ArgumentCaptor.forClass(com.certmonitor.model.PageCheck.class);
+        verify(pageCheckRepo).save(pc.capture());
+        assertThat(pc.getValue().getStatus()).isEqualTo("CONFIG_ERROR");
+        assertThat(pc.getValue().getOk()).isFalse();
+        assertThat(pc.getValue().getError()).isEqualTo(com.certmonitor.util.MonitorUrls.CONFIG_ERROR_MSG);
+    }
+
+    @Test
+    @DisplayName("NEGATİF KONTROL — Page sweep: GERÇEK kesinti (DOWN) hâlâ up=false alarm item'ı üretir")
+    @SuppressWarnings("unchecked")
+    void pageSweep_realOutage_stillAlarms() {
+        com.certmonitor.model.PageMonitor m = new com.certmonitor.model.PageMonitor();
+        m.setId(22L); m.setName("akbank"); m.setUrl("https://www.akbank.com/"); m.setMode("SINGLE_PAGE"); m.setActive(true);
+        when(pageMonitorRepo.findByActiveTrue()).thenReturn(List.of(m));
+        when(pageCheckerService.check(anyString(), anyString(), anyInt(), anyInt(), anyInt(), any(), anyInt(), anyInt(), anyInt()))
+                .thenReturn(new PageCheckerService.PageCheckResult("DOWN", false, null, 40L,
+                        0, 0, 0, 0, 1, null, null, "ana sayfa alınamadı", List.of()));
+
+        scheduler.runPageChecks();
+
+        org.mockito.ArgumentCaptor<List<MonitoringOutageService.SweepItem>> captor =
+                org.mockito.ArgumentCaptor.forClass(List.class);
+        verify(monitoringOutageService).handleSweepResults(eq(EscalationService.TYPE_PAGE_DOWN), captor.capture());
+        MonitoringOutageService.SweepItem item = captor.getValue().get(0);
+        assertThat(item.up()).isFalse();
+        assertThat(item.error()).isEqualTo("ana sayfa alınamadı");
+    }
+
+    @Test
+    @DisplayName("HTTP sweep: config_error → up=true (alarm yok); gerçek hata hâlâ down")
+    @SuppressWarnings("unchecked")
+    void httpSweep_configError_noAlarm_realErrorStillDown() {
+        com.certmonitor.model.HttpMonitor m = new com.certmonitor.model.HttpMonitor();
+        m.setId(31L); m.setName("web"); m.setUrl("www.axess.com.tr"); m.setMethod("GET"); m.setActive(true);
+        when(httpMonitorRepo.findByActiveTrue()).thenReturn(List.of(m));
+        when(httpCheckerService.check(anyString(), any(), any(), anyInt(), anyBoolean(), anyBoolean()))
+                .thenReturn(Map.of("ok", false, "config_error", true,
+                        "error", com.certmonitor.util.MonitorUrls.CONFIG_ERROR_MSG));
+
+        scheduler.runHttpChecks();
+
+        org.mockito.ArgumentCaptor<List<MonitoringOutageService.SweepItem>> captor =
+                org.mockito.ArgumentCaptor.forClass(List.class);
+        verify(monitoringOutageService).handleSweepResults(eq(EscalationService.TYPE_HTTP_DOWN), captor.capture());
+        assertThat(captor.getValue().get(0).up()).isTrue();
+        assertThat(captor.getValue().get(0).error()).isNull();
+        verify(httpCheckRepo).save(any());          // kontrol kaydı yine yazıldı
+    }
+
     @Test
     @DisplayName("F5: öksüz-alarm temizliği art arda sweep'lerde yalnız 1 kez koşar (5 dk gate)")
     void orphanCleanup_gatedAcrossSweeps() {
