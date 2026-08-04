@@ -68,10 +68,12 @@ export default function LdapSettings() {
     }
   }
 
-  async function test() {
+  // verify=true → kayıtlı "doğrulamayı atla" ayarı DEĞİŞMEDEN sertifika doğrulaması açık denenir;
+  // yeşil dönerse ayar güvenle kapatılabilir (aksi halde tüm LDAP girişleri kırılırdı).
+  async function test(verify = false) {
     setTesting(true)
     setTestResult(null)
-    const res = await api.admin.testLdap()
+    const res = await api.admin.testLdap(verify)
     setTesting(false)
     setTestResult(res)
     if (res?.success) toast.success(res.message || t('ldap.testOk'))
@@ -143,6 +145,13 @@ export default function LdapSettings() {
             <span>{t('ldap.skipCert')}</span>
           </label>
         </div>
+        {/* Trust-all açıkken zincir+hostname hiç doğrulanmaz; bind ve kullanıcı parolaları MITM'e açık. */}
+        {form.skip_cert_verification && (
+          <div className="ldap-full field-hint field-hint--warn" style={{ marginTop: -4 }}>
+            {t('ldap.skipCertWarn')}
+            {form.ca_cert_pem ? ' ' + t('ldap.skipCertPemIgnored') : ''}
+          </div>
+        )}
         <div className="threshold-field ldap-full">
           <label>{t('ldap.caCert')}</label>
           <textarea className="ldap-textarea" rows={4} value={form.ca_cert_pem || ''}
@@ -274,9 +283,16 @@ export default function LdapSettings() {
         <button className="btn btn-primary" onClick={save} disabled={saving}>
           {saving ? <Loader2 className="spin" size={15} /> : null} {saving ? t('settings.saving') : t('settings.save')}
         </button>
-        <button className="btn btn-secondary" onClick={test} disabled={testing}>
+        <button className="btn btn-secondary" onClick={() => test(false)} disabled={testing}>
           {testing ? <Loader2 className="spin" size={15} /> : null} {t('ldap.testConnection')}
         </button>
+        {/* Ayarı kapatmadan önce doğrulamalı deneme — yeşilse "atla" güvenle kapatılabilir. */}
+        {form.skip_cert_verification && (
+          <button className="btn btn-secondary" onClick={() => test(true)} disabled={testing}
+            title={t('ldap.testVerifiedHint')}>
+            {testing ? <Loader2 className="spin" size={15} /> : null} {t('ldap.testVerified')}
+          </button>
+        )}
         {testResult && (
           <span className={`ldap-test-result ${testResult.success ? 'ok' : 'fail'}`}>
             {testResult.success ? (testResult.message || t('ldap.testOk')) : (testResult.error || t('ldap.testFail'))}

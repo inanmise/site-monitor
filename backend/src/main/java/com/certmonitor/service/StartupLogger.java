@@ -102,7 +102,8 @@ public class StartupLogger {
 
     private Section appSection() {
         List<Row> rows = new ArrayList<>();
-        rows.add(new Row("version", AppVersion.resolve(env), "file"));
+        AppVersion.Resolved v = AppVersion.resolveWithSource(env);   // gerçek kaynak: env | file | manifest
+        rows.add(new Row("version", v.version(), v.source()));
         rows.add(new Row("profiles.active", profiles(), "runtime"));
         rows.add(propRow("spring.application.name"));
         return new Section("Uygulama", rows);

@@ -218,6 +218,12 @@ public class SchedulerService {
     private static final DateTimeFormatter ISO =
             DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
 
+    /** Envanteri pasifleşip sweep'ten düşen DNS monitörünün açık alarmları (kontrol durduğu için
+     *  recovery hiç gelmez → sessizce kapatılır). MonitoringController.DNS_ALERT_TYPES ile aynı küme. */
+    private static final Set<String> DNS_SKIP_ALERT_TYPES = Set.of(
+            EscalationService.TYPE_DNS_FAILURE, EscalationService.TYPE_DNS_CHANGED, EscalationService.TYPE_DNS_SLOW,
+            EscalationService.TYPE_DNS_UNEXPECTED, EscalationService.TYPE_DNS_INCONSISTENT);
+
     /** Hostname portion of the instance ID — used to clear stale locks left by previous
      *  instances on the same machine (crash/kill without running the finally block). */
     private static final String HOSTNAME   = resolveHostname();
@@ -1761,8 +1767,9 @@ public class SchedulerService {
     /** Tüm-tur kilit içinde çalışan gerçek port sweep gövdesi (bkz. runPortChecks). */
     private void runPortChecksLocked() {
         List<PortMonitor> monitors = portMonitorRepo.findByActiveTrue();
+        boolean cleanupDue = orphanCleanupDue("port");
         // Öksüz port alarmı temizliği: host rename/silme sonrası recovery'nin kapatamadığı açık PORT_DOWN alarmı (ping ile paritede).
-        if (orphanCleanupDue("port")) try {
+        if (cleanupDue) try {
             java.util.Set<String> existingHosts = portMonitorRepo.findAll().stream()
                     .map(PortMonitor::getHost).filter(java.util.Objects::nonNull)
                     .collect(java.util.stream.Collectors.toSet());
@@ -1775,14 +1782,32 @@ public class SchedulerService {
         Set<String> activeDomains = inventoryRepo.findByActiveTrueOrderByDomainAsc().stream()
                 .map(CertificateInventory::getDomain).collect(Collectors.toSet());
         int checked = 0, skipped = 0;
+        // Envanteri pasifleşen monitör hiç kontrol edilmiyor → recovery de gelmiyor. Açık alarmı sessizce
+        // kapatılmazsa SONSUZA KADAR açık kalır (öksüz temizliği monitör satırı durduğu için dokunmaz).
+        Set<String> skippedHosts = new LinkedHashSet<>();
+        Set<String> checkableHosts = new HashSet<>();
         List<MonitoringOutageService.SweepItem> sweep = new ArrayList<>();
         List<MonitoringOutageService.SweepItem> slowSweep = new ArrayList<>();
         // Faz 1: gating sweep thread'inde; ağ kontrolü certCheckExecutor'da paralel başlar (F1).
         List<Map.Entry<PortMonitor, java.util.function.Supplier<Map<String, Object>>>> started = new ArrayList<>();
         for (PortMonitor m : monitors) {
-            if (!Boolean.TRUE.equals(m.getStandalone()) && !activeDomains.contains(m.getHost())) { skipped++; continue; }   // standalone → envanter-skip baypas
+            if (!Boolean.TRUE.equals(m.getStandalone()) && !activeDomains.contains(m.getHost())) {   // standalone → envanter-skip baypas
+                skipped++;
+                if (m.getHost() != null) skippedHosts.add(m.getHost());
+                continue;
+            }
+            if (m.getHost() != null) checkableHosts.add(m.getHost());   // checkDue ile atlanan da KONTROL EDİLEBİLİR sayılır
             if (!checkDue("port", m.getId(), m.getIntervalSeconds())) continue;   // aralığı dolmadı → bu sweep'te atla
             started.add(Map.entry(m, startNetworkCheck(() -> recheckPort(m))));
+        }
+        skippedHosts.removeAll(checkableHosts);   // aynı host'u izleyen aktif monitör varsa alarmı bırak
+        if (cleanupDue && !skippedHosts.isEmpty()) {
+            log.info("Port izlemesi envanterde aktif olmadığı için atlandı ({}): {}", skippedHosts.size(), skippedHosts);
+            for (String host : skippedHosts) {
+                escalationService.resolveOpenAlertsSilently(host,
+                        Set.of(EscalationService.TYPE_PORT_DOWN, EscalationService.TYPE_PORT_SLOW),
+                        "Sistem (envanterde aktif değil — izleme durdu)");
+            }
         }
         // Faz 2: sonuçlar sweep thread'inde SIRALI işlenir — item/alarm semantiği birebir korunur.
         for (var entry : started) {
@@ -3190,6 +3215,11 @@ public class SchedulerService {
                 .map(CertificateInventory::getDomain).collect(Collectors.toSet());
         String now = ISO.format(Instant.now());
         int checked = 0, skipped = 0;
+        boolean cleanupDue = orphanCleanupDue("dns");
+        // Envanteri pasifleşen monitör hiç kontrol edilmiyor → recovery de gelmiyor; açık alarm sessizce
+        // kapatılmazsa sonsuza kadar açık kalır (port sweep'iyle aynı desen).
+        Set<String> skippedDomains = new LinkedHashSet<>();
+        Set<String> checkableDomains = new HashSet<>();
         List<MonitoringOutageService.SweepItem> sweep = new ArrayList<>();
         List<MonitoringOutageService.SweepItem> slowSweep = new ArrayList<>();
         List<MonitoringOutageService.SweepItem> unexpectedSweep = new ArrayList<>();
@@ -3210,13 +3240,26 @@ public class SchedulerService {
         List<DnsStarted> started = new ArrayList<>();
         for (DnsMonitor m : monitors) {
             // Standalone monitör (DNS sayfasından eklenen, sertifikadan bağımsız) envanter-skip'i baypas eder.
-            if (!Boolean.TRUE.equals(m.getStandalone()) && !activeDomains.contains(m.getDomain())) { skipped++; continue; }
+            if (!Boolean.TRUE.equals(m.getStandalone()) && !activeDomains.contains(m.getDomain())) {
+                skipped++;
+                if (m.getDomain() != null) skippedDomains.add(m.getDomain());
+                continue;
+            }
+            if (m.getDomain() != null) checkableDomains.add(m.getDomain());   // checkDue ile atlanan da KONTROL EDİLEBİLİR
             if (!checkDue("dns", m.getId(), m.getIntervalSeconds())) continue;   // aralığı dolmadı → bu sweep'te atla (port/ping/keyword ile paritede)
             var main = startNetworkCheck(() -> dnsCheckerService.check(m.getDomain(), m.getRecordType()));
             var prop = (Boolean.TRUE.equals(m.getPropagationCheck()) && dnsResolvers.size() >= 2)
                     ? startNetworkCheck(() -> dnsCheckerService.checkPropagation(m.getDomain(), m.getRecordType(), dnsResolvers))
                     : null;
             started.add(new DnsStarted(m, main, prop));
+        }
+        skippedDomains.removeAll(checkableDomains);   // aynı domain'i izleyen aktif monitör varsa alarmı bırak
+        if (cleanupDue && !skippedDomains.isEmpty()) {
+            log.info("DNS izlemesi envanterde aktif olmadığı için atlandı ({}): {}", skippedDomains.size(), skippedDomains);
+            for (String domain : skippedDomains) {
+                escalationService.resolveOpenAlertsSilently(domain, DNS_SKIP_ALERT_TYPES,
+                        "Sistem (envanterde aktif değil — izleme durdu)");
+            }
         }
         // Faz 2: sonuçlar sweep thread'inde SIRALI işlenir — prevOk okuma/DnsRecord save/değişiklik
         // tespiti/item kurulumu birebir korunur; iki ayrı try/catch aynen (ana warn, propagation debug).

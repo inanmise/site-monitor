@@ -66,12 +66,16 @@ public class LdapAdminController {
                 "message", "LDAP ayarları kaydedildi (yeniden başlatma gerekmez)"));
     }
 
+    /** {@code verify=true}: kayıtlı "doğrulamayı atla" ayarı DEĞİŞMEDEN, sertifika doğrulaması açık
+     *  bir bağlantı denenir — admin ayarı kapatmadan önce güvenle sınayabilsin diye. */
     @PostMapping("/test")
-    public ResponseEntity<Map<String, Object>> testConnection(HttpSession session, HttpServletRequest request) {
+    public ResponseEntity<Map<String, Object>> testConnection(
+            @RequestParam(name = "verify", defaultValue = "false") boolean verify,
+            HttpSession session, HttpServletRequest request) {
         requireSettingsAccess(session, "settings.ldap", "edit");
-        Map<String, Object> result = directoryService.testConnection();
+        Map<String, Object> result = directoryService.testConnection(verify);
         auditService.recordAction("LDAP_TEST", session, request,
-                "LDAP", "test", "{\"success\":" + result.get("success") + "}");
+                "LDAP", "test", "{\"success\":" + result.get("success") + ",\"verify\":" + verify + "}");
         Map<String, Object> resp = new LinkedHashMap<>(result);
         resp.putIfAbsent("timestamp", now());
         return ResponseEntity.ok(resp);

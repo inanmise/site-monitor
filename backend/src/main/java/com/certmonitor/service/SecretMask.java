@@ -30,10 +30,19 @@ public final class SecretMask {
     private static final Pattern JDBC_QUERY_CRED =
             Pattern.compile("(?i)([?&](?:password|pwd|pass|user|username)=)[^&]*");
 
+    /** Hassas kelime İÇEREN ama değeri sır OLMAYAN politika anahtarları — sonek beyaz-listesi.
+     *  Örn. {@code cert.monitor.password.min-length} (12), {@code ...scripted.hardcoded-secret-policy} (WARN):
+     *  açılış logunda maskelenince güvenlik denetiminde tam da bakılan değerler görünmez oluyordu. */
+    private static final Pattern POLICY_SUFFIX = Pattern.compile(
+            "(?:^|[._-])(min_length|max_length|history_count|policy|enabled|count)$",
+            Pattern.CASE_INSENSITIVE);
+
     /** Anahtar adı hassas mı? camelCase → alt-çizgi sınırına normalize edilir; segment-farkında eşleşme. */
     public static boolean isSensitive(String key) {
         if (key == null) return false;
         String norm = key.replaceAll("([a-z0-9])([A-Z])", "$1_$2").toLowerCase(Locale.ROOT);
+        norm = norm.replace('-', '_');
+        if (POLICY_SUFFIX.matcher(norm).find()) return false;   // sır değil: sayısal/enum politika değeri
         return SUBSTR.matcher(norm).find() || SEGMENT.matcher(norm).find();
     }
 

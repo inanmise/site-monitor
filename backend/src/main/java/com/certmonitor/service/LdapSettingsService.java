@@ -69,7 +69,7 @@ public class LdapSettingsService {
         d.setEnabled(true);
         d.setUseLdaps(true);
         d.setStartTls(false);
-        d.setSkipCertVerification(true);
+        d.setSkipCertVerification(false);   // güvenli varsayılan: doğrulama AÇIK (bkz. LdapSettings)
         d.setPort(636);
         d.setUserSearchFilter("(objectclass=person)");
         d.setUserAttribute("sAMAccountName");

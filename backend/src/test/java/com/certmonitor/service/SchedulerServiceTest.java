@@ -269,6 +269,60 @@ class SchedulerServiceTest {
         assertThat(captor.getValue().get(0).domain()).isEqualTo("b.example.com");
     }
 
+    // ── Envanteri pasifleşen monitörün alarmı takılı kalmamalı (2026-08-05, prod log denetimi) ──
+
+    @Test
+    @DisplayName("Port sweep: envanteri pasif monitör atlanır VE açık alarmı sessizce kapatılır (recovery hiç gelmez)")
+    void portSweep_inventoryInactive_skippedAlarmResolved() {
+        com.certmonitor.model.PortMonitor gone = new com.certmonitor.model.PortMonitor();
+        gone.setId(41L); gone.setHost("eski.example.com"); gone.setPort(443); gone.setProtocol("TCP");
+        gone.setStandalone(false);   // envanter-türevi → envanter pasifleşince kontrol edilmez
+        when(portMonitorRepo.findByActiveTrue()).thenReturn(List.of(gone));
+        when(portMonitorRepo.findAll()).thenReturn(List.of(gone));
+        when(inventoryRepo.findByActiveTrueOrderByDomainAsc()).thenReturn(List.of());   // envanterde yok
+
+        scheduler.runPortChecks();
+
+        verify(portCheckerService, org.mockito.Mockito.never()).check(any());   // kontrol edilmiyor
+        verify(escalationService).resolveOpenAlertsSilently(eq("eski.example.com"),
+                eq(java.util.Set.of(EscalationService.TYPE_PORT_DOWN, EscalationService.TYPE_PORT_SLOW)),
+                org.mockito.ArgumentMatchers.contains("envanterde aktif değil"));
+    }
+
+    @Test
+    @DisplayName("Port sweep: aynı host'u izleyen AKTİF monitör varsa alarm kapatılmaz")
+    void portSweep_sameHostStillChecked_alarmKept() {
+        com.certmonitor.model.PortMonitor skipped = new com.certmonitor.model.PortMonitor();
+        skipped.setId(42L); skipped.setHost("paylasik.example.com"); skipped.setPort(8443); skipped.setStandalone(false);
+        com.certmonitor.model.PortMonitor live = new com.certmonitor.model.PortMonitor();
+        live.setId(43L); live.setHost("paylasik.example.com"); live.setPort(443); live.setProtocol("TCP"); live.setStandalone(true);
+        when(portMonitorRepo.findByActiveTrue()).thenReturn(List.of(skipped, live));
+        when(portMonitorRepo.findAll()).thenReturn(List.of(skipped, live));
+        when(inventoryRepo.findByActiveTrueOrderByDomainAsc()).thenReturn(List.of());
+        when(portCheckerService.check(live)).thenReturn(Map.of("open", true, "response_ms", 4L));
+
+        scheduler.runPortChecks();
+
+        verify(escalationService, org.mockito.Mockito.never())
+                .resolveOpenAlertsSilently(eq("paylasik.example.com"), org.mockito.ArgumentMatchers.anySet(), anyString());
+    }
+
+    @Test
+    @DisplayName("DNS sweep: envanteri pasif monitör atlanır VE açık DNS alarmları sessizce kapatılır")
+    void dnsSweep_inventoryInactive_skippedAlarmResolved() {
+        com.certmonitor.model.DnsMonitor gone = new com.certmonitor.model.DnsMonitor();
+        gone.setId(51L); gone.setDomain("eski.example.com"); gone.setRecordType("A"); gone.setStandalone(false);
+        when(dnsMonitorRepo.findByActiveTrue()).thenReturn(List.of(gone));
+        when(inventoryRepo.findByActiveTrueOrderByDomainAsc()).thenReturn(List.of());
+
+        scheduler.runDnsChecks();
+
+        verify(dnsCheckerService, org.mockito.Mockito.never()).check(anyString(), anyString());
+        verify(escalationService).resolveOpenAlertsSilently(eq("eski.example.com"),
+                org.mockito.ArgumentMatchers.anySet(),
+                org.mockito.ArgumentMatchers.contains("envanterde aktif değil"));
+    }
+
     // ── Yapılandırma hatası kesinti alarmı üretmemeli (2026-08-04, şemasız URL sahte alarmı) ──
 
     @Test

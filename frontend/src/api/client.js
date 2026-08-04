@@ -396,7 +396,8 @@ export const api = {
     // LDAP / Active Directory settings (admin-only Settings page)
     getLdapSettings: () => request('/admin/ldap/settings'),
     saveLdapSettings: (dto) => request('/admin/ldap/settings', { method: 'PUT', body: JSON.stringify(dto) }),
-    testLdap: () => request('/admin/ldap/test', { method: 'POST' }),
+    // verify=true: kayıtlı "doğrulamayı atla" ayarı DEĞİŞMEDEN sertifika doğrulaması açık denenir
+    testLdap: (verify = false) => request(`/admin/ldap/test${verify ? '?verify=true' : ''}`, { method: 'POST' }),
     queryLdapUser: (value, attr) => request('/admin/ldap/query-user', {
       method: 'POST', body: JSON.stringify({ value, attr }),
     }),

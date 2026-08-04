@@ -41,8 +41,10 @@ public class LdapSettings {
     @Column(name = "start_tls", nullable = false)
     private Boolean startTls = false;
 
+    /** Varsayılan KAPALI (2026-08-05): açıkken zincir + hostname hiç doğrulanmaz ve yüklü CA PEM
+     *  kullanılmaz → bind/kullanıcı parolaları MITM'e açık. Mevcut kayıtlar bu değişiklikten etkilenmez. */
     @Column(name = "skip_cert_verification", nullable = false)
-    private Boolean skipCertVerification = true;
+    private Boolean skipCertVerification = false;
 
     /** Optional internal-CA PEM bundle (used when not skipping cert verification). */
     @Column(name = "ca_cert_pem", columnDefinition = "TEXT")
