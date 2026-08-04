@@ -611,6 +611,56 @@ class MonitoringControllerTest {
                 .andExpect(jsonPath("$.data.recovery_interval_seconds").value(600)); // clampInterval(999) → 600
     }
 
+    // ── Keyword mükerrer koruması: aynılık anahtarı url + keyword + takım (ping desenin ikizi) ──
+
+    @Test
+    @DisplayName("POST /keyword: aynı URL+kelime+takım zaten varken → 400 (mükerrer engellenir, kayıt oluşmaz)")
+    void createKeyword_duplicate_returns400() throws Exception {
+        when(keywordMonitorRepo.existsDuplicate(anyString(), anyString(), any(), isNull())).thenReturn(true);
+
+        mvc.perform(post("/api/monitoring/keyword").session(session("ADMIN"))
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                .content("{\"url\":\"https://x.example.com\",\"keyword\":\"OK\",\"teamId\":3}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error", org.hamcrest.Matchers.containsString("zaten izleniyor")));
+
+        verify(keywordMonitorRepo, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("POST /keyword: aynı URL FARKLI kelime meşrudur → 200 + kayıt oluşur")
+    void createKeyword_differentKeywordSameUrl_ok() throws Exception {
+        when(keywordMonitorRepo.existsDuplicate(anyString(), anyString(), any(), isNull())).thenReturn(false);
+        when(keywordMonitorRepo.save(any(com.certmonitor.model.KeywordMonitor.class)))
+                .thenAnswer(a -> { com.certmonitor.model.KeywordMonitor k = a.getArgument(0); k.setId(12L); return k; });
+
+        mvc.perform(post("/api/monitoring/keyword").session(session("ADMIN"))
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                .content("{\"url\":\"https://x.example.com\",\"keyword\":\"BASKA\",\"teamId\":3}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.url").value("https://x.example.com"))
+                .andExpect(jsonPath("$.data.keyword").value("BASKA"));
+
+        verify(keywordMonitorRepo).save(any(com.certmonitor.model.KeywordMonitor.class));
+    }
+
+    @Test
+    @DisplayName("PUT /keyword/{id}: edit ile mükerrere dönüşme → 400 (excludeId=kendisi), kayıt güncellenmez")
+    void updateKeyword_wouldBecomeDuplicate_returns400() throws Exception {
+        com.certmonitor.model.KeywordMonitor m = new com.certmonitor.model.KeywordMonitor();
+        m.setId(8L); m.setUrl("https://a.example.com"); m.setKeyword("foo"); m.setActive(true);
+        when(keywordMonitorRepo.findById(8L)).thenReturn(Optional.of(m));
+        when(keywordMonitorRepo.existsDuplicate(anyString(), anyString(), any(), eq(8L))).thenReturn(true);
+
+        mvc.perform(put("/api/monitoring/keyword/8").session(session("ADMIN"))
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                .content("{\"url\":\"https://b.example.com\",\"keyword\":\"foo\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error", org.hamcrest.Matchers.containsString("zaten izleniyor")));
+
+        verify(keywordMonitorRepo, never()).save(any());
+    }
+
     @Test
     @DisplayName("GET /ping: açık PING_DOWN alarmı olan host → active_alarm=true + alarm_level + acknowledged")
     void listPing_withOpenAlarm_marksActiveAlarm() throws Exception {
@@ -769,5 +819,97 @@ class MonitoringControllerTest {
                 .isEqualTo("Wings Kart Sitesi");
         org.assertj.core.api.Assertions.assertThat(
                 MonitoringController.normalizeMonitorName(null)).isNull();
+    }
+
+    // ── Kopyala (duplicate) sadakati: pasif bir izlemenin kopyası da PASİF doğmalı ──
+    // Eskiden create uçları active'i yok sayıp her zaman true yazıyordu; duraklatılmış
+    // monitörün kopyası anında kontrole/alarma giriyordu (sessiz sapma).
+
+    @Test
+    @DisplayName("POST /http: gövdedeki active:false saygı görür (Kopyala: pasif kaynağın kopyası pasif doğar)")
+    void createHttp_activeFalse_respected() throws Exception {
+        when(httpMonitorRepo.existsDuplicate(anyString(), any(), any())).thenReturn(false);
+        when(httpMonitorRepo.save(any(com.certmonitor.model.HttpMonitor.class)))
+                .thenAnswer(a -> { com.certmonitor.model.HttpMonitor h = a.getArgument(0); h.setId(31L); return h; });
+        mvc.perform(post("/api/monitoring/http").session(session("ADMIN"))
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                .content("{\"url\":\"https://kopya.example.com\",\"teamId\":3,\"active\":false}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.active").value(false));
+
+        org.mockito.ArgumentCaptor<com.certmonitor.model.HttpMonitor> cap =
+                org.mockito.ArgumentCaptor.forClass(com.certmonitor.model.HttpMonitor.class);
+        verify(httpMonitorRepo).save(cap.capture());
+        org.assertj.core.api.Assertions.assertThat(cap.getValue().getActive()).isFalse();
+    }
+
+    @Test
+    @DisplayName("POST /http: active gönderilmezse varsayılan AKTİF kalır (regresyon koruması)")
+    void createHttp_activeOmitted_defaultsTrue() throws Exception {
+        when(httpMonitorRepo.existsDuplicate(anyString(), any(), any())).thenReturn(false);
+        when(httpMonitorRepo.save(any(com.certmonitor.model.HttpMonitor.class)))
+                .thenAnswer(a -> { com.certmonitor.model.HttpMonitor h = a.getArgument(0); h.setId(32L); return h; });
+        mvc.perform(post("/api/monitoring/http").session(session("ADMIN"))
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                .content("{\"url\":\"https://yeni.example.com\",\"teamId\":3}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.active").value(true));
+    }
+
+    @Test
+    @DisplayName("POST /ping: gövdedeki active:false saygı görür")
+    void createPing_activeFalse_respected() throws Exception {
+        when(pingMonitorRepo.existsDuplicate(anyString(), any(), any())).thenReturn(false);
+        when(pingMonitorRepo.save(any(com.certmonitor.model.PingMonitor.class)))
+                .thenAnswer(a -> { com.certmonitor.model.PingMonitor p = a.getArgument(0); p.setId(33L); return p; });
+        mvc.perform(post("/api/monitoring/ping").session(session("ADMIN"))
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                .content("{\"host\":\"10.0.0.9\",\"teamId\":3,\"active\":false}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.active").value(false));
+    }
+
+    @Test
+    @DisplayName("POST /scripted: gövdedeki active:false saygı görür")
+    void createScripted_activeFalse_respected() throws Exception {
+        when(scriptedMonitorRepo.existsDuplicate(anyString(), any(), any())).thenReturn(false);
+        when(scriptedMonitorRepo.save(any(com.certmonitor.model.ScriptedMonitor.class)))
+                .thenAnswer(a -> { com.certmonitor.model.ScriptedMonitor s = a.getArgument(0); s.setId(34L); return s; });
+        mvc.perform(post("/api/monitoring/scripted").session(session("ADMIN"))
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                .content("{\"name\":\"OIDC Login (Kopya)\",\"teamId\":3,\"groupName\":\"Senaryolar\","
+                        + "\"script\":\"export default function(){}\",\"active\":false}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.active").value(false));
+    }
+
+    @Test
+    @DisplayName("POST /port: gövdedeki active:false saygı görür")
+    void createPort_activeFalse_respected() throws Exception {
+        when(portMonitorRepo.findFirstByHostAndPortOrderByIdAsc(anyString(), anyInt())).thenReturn(Optional.empty());
+        when(portMonitorRepo.save(any(com.certmonitor.model.PortMonitor.class)))
+                .thenAnswer(a -> { com.certmonitor.model.PortMonitor p = a.getArgument(0); p.setId(35L); return p; });
+        mvc.perform(post("/api/monitoring/port").session(session("ADMIN"))
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                .content("{\"host\":\"svc.local\",\"port\":9090,\"teamId\":3,\"active\":false}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.active").value(false));
+    }
+
+    @Test
+    @DisplayName("POST /dns: aynı (domain, kayıt tipi) standalone varken → 400; sessiz no-op YOK, kayıt oluşmaz")
+    void createDns_duplicateDomainRecordType_returns400() throws Exception {
+        com.certmonitor.model.DnsMonitor existing = new com.certmonitor.model.DnsMonitor();
+        existing.setId(8L); existing.setDomain("www.akbank.com"); existing.setRecordType("A"); existing.setStandalone(true);
+        when(dnsMonitorRepo.findFirstByDomainAndRecordTypeAndStandaloneTrue("www.akbank.com", "A"))
+                .thenReturn(Optional.of(existing));
+
+        mvc.perform(post("/api/monitoring/dns").session(session("ADMIN"))
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                .content("{\"domain\":\"www.akbank.com\",\"recordType\":\"A\",\"teamId\":3,\"name\":\"akbank (Kopya)\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value(org.hamcrest.Matchers.containsString("zaten bir izleme var")));
+
+        verify(dnsMonitorRepo, never()).save(any());
     }
 }

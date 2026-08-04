@@ -8,8 +8,9 @@ import MonitorHowBox from './ui/MonitorHowBox.jsx'
 import MonitorGuideButton from './ui/MonitorGuideButton.jsx'
 import SearchableSelect from './ui/SearchableSelect.jsx'
 import MaintenanceBadge from './ui/MaintenanceBadge.jsx'
-import { Play, Pencil, X, RefreshCw, Plus, Trash2, Radio, Users, Layers, FlaskConical, Check, AlertTriangle,
+import { Play, Pencil, Copy, X, RefreshCw, Plus, Trash2, Radio, Users, Layers, FlaskConical, Check, AlertTriangle,
   LayoutDashboard, CheckCircle2, WifiOff, Siren, BellDot, PauseCircle, BarChart3, ChevronDown } from 'lucide-react'
+import { duplicateName } from '../utils/duplicateName.js'
 import AlertHistory from './admin/AlertHistory.jsx'
 import MonitorStatsBar from './MonitorStatsBar.jsx'
 // recharts ağır — yalnız "Süre Grafiği" sekmesi açılınca yüklensin.
@@ -45,6 +46,7 @@ export default function PingMonitorPage({ systemRole, teamId, teamName }) {
   const [rangeDays, setRangeDays] = useState(1)
   const [summary, setSummary] = useState({ total: 0, down: 0 })
   const [modal, setModal] = useState(null)
+  const [dupSource, setDupSource] = useState(null)  // Kopyala akışında kaynak monitör (rozet/ipucu için)
   const [form, setForm] = useState(emptyForm)
   const [teamGroups, setTeamGroups] = useState([])   // form takımı+türüne göre grup önerileri (sızıntısız, server-scoped)
   const [defaults, setDefaults] = useState(null)   // per-tip varsayılan aralık/timeout (Kontrol Sıklığı ayarı)
@@ -122,20 +124,33 @@ export default function PingMonitorPage({ systemRole, teamId, teamName }) {
   function closeDetail() { setSelected(null); setHistory([]) }
 
   function openNew() {
+    setDupSource(null)
     setForm({ ...emptyForm, teamId: isAdmin ? '' : (myTeam ?? ''),
       intervalSeconds: defaults?.intervalSeconds ?? emptyForm.intervalSeconds,
       timeoutMs: defaults?.timeoutMs ?? emptyForm.timeoutMs })
     setModal('new')
   }
-  function openEdit(m) {
-    setForm({ name: m.name || '', host: m.host || '', ipVersion: m.ip_version || 'auto', groupName: m.group_name || '',
+  /** Monitör (snake_case) → form state eşlemesi. Edit ve Kopyala AYNI eşlemeyi kullanır → alan kaçmaz. */
+  function formFrom(m) {
+    return { name: m.name || '', host: m.host || '', ipVersion: m.ip_version || 'auto', groupName: m.group_name || '',
       teamId: m.team_id != null ? String(m.team_id) : '', intervalSeconds: m.interval_seconds ?? 60,
       timeoutMs: m.timeout_ms ?? 5000, packetCount: m.packet_count ?? 4,
       confirmAttempts: m.confirm_attempts ?? 3, confirmIntervalSeconds: m.confirm_interval_seconds ?? 30, recoveryChecks: m.recovery_checks ?? 3, recoveryIntervalSeconds: m.recovery_interval_seconds ?? 30,
-      active: m.active !== false })
+      active: m.active !== false }
+  }
+  function openEdit(m) {
+    setDupSource(null)
+    setForm(formFrom(m))
     setModal(m)
   }
-  function closeEdit() { setModal(null) }
+  /** Kopyala: kaynağın birebir kopyası, YENİ kayıt modunda (create). Ad "(Kopya)" sonekli;
+   *  kullanıcı genelde yalnız host alanını değiştirip kaydeder. Mükerrer koruması backend'de. */
+  function openDuplicate(m) {
+    setDupSource(m)
+    setForm({ ...formFrom(m), name: duplicateName(m.name || m.host) })
+    setModal('new')
+  }
+  function closeEdit() { setModal(null); setDupSource(null) }
 
   async function save() {
     if (!form.host.trim()) return
@@ -394,6 +409,7 @@ export default function PingMonitorPage({ systemRole, teamId, teamName }) {
                   <span style={{ display: 'flex', gap: 6 }} onClick={e => e.stopPropagation()}>
                     <button className="btn btn-sm mon-btn-check" disabled={checking === m.id} onClick={() => checkNow(m)} title={t('ping.check')}><Play size={12} /></button>
                     <button className="btn btn-sm mon-btn-edit" onClick={() => openEdit(m)} title={t('ping.edit')}><Pencil size={12} /></button>
+                    <button className="btn btn-sm mon-btn-edit" onClick={() => openDuplicate(m)} title={t('mon.duplicate')} aria-label={t('mon.duplicate')}><Copy size={12} /></button>
                   </span>
                 )}
               </div>
@@ -506,11 +522,13 @@ export default function PingMonitorPage({ systemRole, teamId, teamName }) {
           <div className="modal-box" onClick={e => e.stopPropagation()} style={{ maxWidth: 720, width: '92vw', maxHeight: '90vh', overflowY: 'auto' }}>
             <div className="modal-icon-hdr modal-icon-hdr--port">
               <div className="modal-icon-hdr-badge"><Radio size={20} /></div>
-              <h3>{modal === 'new' ? t('ping.modalNew') : t('ping.modalEdit')}</h3>
+              <h3>{modal === 'new' ? t('ping.modalNew') : t('ping.modalEdit')}
+                {dupSource && <span className="mon-dup-badge">{t('mon.duplicateBadge')}</span>}</h3>
             </div>
+            {dupSource && <div className="mon-dup-hint">{t('mon.duplicateHint')}</div>}
             <div className="form-grid">
               <label className="full-width"><span>{t('ping.host')} <span className="req-star">*</span></span>
-                <input value={form.host} placeholder="1.2.3.4 / host.example.com" onChange={e => setForm(f => ({ ...f, host: e.target.value }))} />
+                <input value={form.host} placeholder="1.2.3.4 / host.example.com" autoFocus={!!dupSource} onChange={e => setForm(f => ({ ...f, host: e.target.value }))} />
                 {dupHost && <span className="field-hint field-hint--warn">{t('ping.dupHostWarn')}</span>}</label>
               <label><span>{t('ping.ipVersion')}</span>
                 <SearchableSelect value={form.ipVersion} onChange={v => setForm(f => ({ ...f, ipVersion: v }))}

@@ -9,9 +9,10 @@ import MonitorGuideButton from './ui/MonitorGuideButton.jsx'
 import SearchableSelect from './ui/SearchableSelect.jsx'
 import MaintenanceBadge from './ui/MaintenanceBadge.jsx'
 import TagInput from './ui/TagInput.jsx'
-import { Play, Pencil, X, RefreshCw, Plus, Trash2, Target, Users, Layers, FlaskConical, Check, AlertTriangle,
+import { Play, Pencil, Copy, X, RefreshCw, Plus, Trash2, Target, Users, Layers, FlaskConical, Check, AlertTriangle,
   LayoutDashboard, CheckCircle2, TriangleAlert, ServerCrash, Siren, BellDot, BarChart3, ChevronDown, ShieldCheck,
   Mail, MessageSquare, Phone, Smartphone } from 'lucide-react'
+import { duplicateName } from '../utils/duplicateName.js'
 import AlertHistory from './admin/AlertHistory.jsx'
 import MonitorStatsBar from './MonitorStatsBar.jsx'
 // recharts ağır — yalnız "Süre Grafiği" sekmesi açılınca yüklensin (eager bundle'a girmesin).
@@ -64,6 +65,7 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
   const [rangeDays, setRangeDays] = useState(1)
   const [summary, setSummary] = useState({ total: 0, down: 0 })
   const [modal, setModal] = useState(null)          // 'new' | monitor | null
+  const [dupSource, setDupSource] = useState(null)  // Kopyala akışında kaynak monitör (rozet/ipucu için)
   const [form, setForm] = useState(emptyForm)
   const [teamGroups, setTeamGroups] = useState([])   // form takımı+türüne göre grup önerileri (sızıntısız, server-scoped)
   const [defaults, setDefaults] = useState(null)   // per-tip varsayılan aralık/timeout (Kontrol Sıklığı ayarı)
@@ -141,16 +143,16 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
   function closeDetail() { setSelected(null); setHistory([]) }
 
   function openNew() {
-    setTestResult(null)
+    setTestResult(null); setDupSource(null)
     setForm({ ...emptyForm, teamId: isAdmin ? '' : (myTeam ?? ''),
       intervalSeconds: defaults?.intervalSeconds ?? emptyForm.intervalSeconds,
       timeoutMs: defaults?.timeoutMs ?? emptyForm.timeoutMs,
       slowThresholdMs: defaults?.slowThresholdMs ?? emptyForm.slowThresholdMs })
     setModal('new')
   }
-  function openEdit(m) {
-    setTestResult(null)
-    setForm({ name: m.name || '', url: m.url || '', keyword: m.keyword || '',
+  /** Monitör (snake_case) → form state eşlemesi. Edit ve Kopyala AYNI eşlemeyi kullanır → alan kaçmaz. */
+  function formFrom(m) {
+    return { name: m.name || '', url: m.url || '', keyword: m.keyword || '',
       operator: m.operator || 'GTE', matchCount: m.match_count ?? 1, groupName: m.group_name || '',
       teamId: m.team_id != null ? String(m.team_id) : '',
       caseSensitive: !!m.case_sensitive, tags: m.tags || '', notifyEmail: m.notify_email !== false,
@@ -159,10 +161,21 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
       slowResponseEnabled: !!m.slow_response_enabled, slowThresholdMs: m.slow_threshold_ms ?? 3000,
       intervalSeconds: m.interval_seconds ?? 60, timeoutMs: m.timeout_ms ?? 10000,
       confirmAttempts: m.confirm_attempts ?? 3, confirmIntervalSeconds: m.confirm_interval_seconds ?? 30, recoveryChecks: m.recovery_checks ?? 3, recoveryIntervalSeconds: m.recovery_interval_seconds ?? 30, customHeaders: m.custom_headers || '',
-      active: m.active !== false })
+      active: m.active !== false }
+  }
+  function openEdit(m) {
+    setTestResult(null); setDupSource(null)
+    setForm(formFrom(m))
     setModal(m)
   }
-  function closeEdit() { setModal(null); setTestResult(null) }
+  /** Kopyala: kaynağın birebir kopyası, YENİ kayıt modunda (create). Ad "(Kopya)" sonekli;
+   *  kullanıcı genelde yalnız URL'i değiştirip kaydeder. Mükerrer koruması backend'de. */
+  function openDuplicate(m) {
+    setTestResult(null); setDupSource(m)
+    setForm({ ...formFrom(m), name: duplicateName(m.name || m.url) })
+    setModal('new')
+  }
+  function closeEdit() { setModal(null); setTestResult(null); setDupSource(null) }
 
   // Canlı koşul testi — kaydetmeden formdaki değerlerle URL'yi çekip koşulu değerlendirir.
   async function runTest() {
@@ -458,6 +471,7 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
                   <span style={{ display: 'flex', gap: 6 }} onClick={e => e.stopPropagation()}>
                     <button className="btn btn-sm mon-btn-check" disabled={checking === m.id} onClick={() => checkNow(m)} title={t('keyword.check')}><Play size={12} /></button>
                     <button className="btn btn-sm mon-btn-edit" onClick={() => openEdit(m)} title={t('keyword.edit')}><Pencil size={12} /></button>
+                    <button className="btn btn-sm mon-btn-edit" onClick={() => openDuplicate(m)} title={t('mon.duplicate')} aria-label={t('mon.duplicate')}><Copy size={12} /></button>
                   </span>
                 )}
               </div>
@@ -592,14 +606,17 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
           <div className="modal-box" onClick={e => e.stopPropagation()} style={{ maxWidth: 720, width: '92vw', maxHeight: '90vh', overflowY: 'auto' }}>
             <div className="modal-icon-hdr modal-icon-hdr--keyword">
               <div className="modal-icon-hdr-badge"><Target size={20} /></div>
-              <h3>{modal === 'new' ? t('keyword.modalNew') : t('keyword.modalEdit')}</h3>
+              <h3>{modal === 'new' ? t('keyword.modalNew') : t('keyword.modalEdit')}
+                {dupSource && <span className="mon-dup-badge">{t('mon.duplicateBadge')}</span>}</h3>
             </div>
 
-            <div className="kw-type-banner"><Target size={16} /><span>{t('keyword.typeInfo')}</span></div>
+            {dupSource
+              ? <div className="mon-dup-hint">{t('mon.duplicateHint')}</div>
+              : <div className="kw-type-banner"><Target size={16} /><span>{t('keyword.typeInfo')}</span></div>}
 
             <div className="form-grid form-grid--top">
               <label className="full-width"><span>{t('keyword.url')} <span className="req-star">*</span></span>
-                <input value={form.url} placeholder="https://example.com" onChange={e => setForm(f => ({ ...f, url: e.target.value }))} /></label>
+                <input value={form.url} placeholder="https://example.com" autoFocus={!!dupSource} onChange={e => setForm(f => ({ ...f, url: e.target.value }))} /></label>
               <label className="full-width"><span>{t('keyword.customHeaders')}{' '}
                 <button type="button" onClick={() => setShowCacheHelp(true)}
                   style={{ background: 'none', border: 'none', color: 'var(--primary, #4f46e5)', cursor: 'pointer', fontSize: '.85em', textDecoration: 'underline', padding: 0, fontWeight: 500 }}>

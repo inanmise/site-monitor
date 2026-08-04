@@ -30,6 +30,7 @@ describe('PingMonitorPage', () => {
     vi.clearAllMocks()
     api.monitoring.getPingMonitors.mockResolvedValue({ success: true, data: [monitor] })
     api.monitoring.getPingHistory.mockResolvedValue({ success: true, data: { checks: [], total: 0, down: 0 } })
+    api.admin.getTeams.mockResolvedValue({ success: true, data: [{ id: 5, name: 'SY-A' }] })   // ADMIN akışı (Kopyala) takım listesi ister
   })
 
   it('ping kartını (host) + grup rozetini listeler', async () => {
@@ -53,6 +54,48 @@ describe('PingMonitorPage', () => {
     await waitFor(() => expect(api.monitoring.getPingHistory).toHaveBeenCalled())
     expect(screen.getByRole('button', { name: /check history|kontrol/i })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /response chart|süre/i })).toBeInTheDocument()
+  })
+
+  it('Kopyala: TÜM kullanıcı ayarları birebir kopyalanır (ad "(Kopya)", host kullanıcı tarafından değiştirilir)', async () => {
+    // Her alan varsayılandan FARKLI → bir alan formFrom'dan düşerse tam-payload karşılaştırması kırılır.
+    api.monitoring.getPingMonitors.mockResolvedValue({ success: true, data: [{
+      id: 1, name: 'GW', host: '10.0.0.1', status: 'up', checked_at: '2026-06-24T00:00:00',
+      ip_version: 'v6', group_name: 'Kurumsal', team_id: 5, team_name: 'SY-A',
+      interval_seconds: 900, timeout_ms: 7000, packet_count: 7,
+      confirm_attempts: 5, confirm_interval_seconds: 45, recovery_checks: 4, recovery_interval_seconds: 90,
+      active: false,
+    }] })
+    api.monitoring.createPingMonitor.mockResolvedValue({ success: true, data: {} })
+
+    render(<PingMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
+    await waitFor(() => expect(api.monitoring.getPingMonitors).toHaveBeenCalled())
+    await screen.findByText('10.0.0.1')
+
+    fireEvent.click(screen.getByRole('button', { name: /kopyala|duplicate/i }))
+
+    // Kopya rozeti + ipucu görünür (yeni-kayıt modu, kaynak belli)
+    expect(document.querySelector('.mon-dup-badge')).not.toBeNull()
+    expect(document.querySelector('.mon-dup-hint')).not.toBeNull()
+
+    // Ad "(Kopya)" sonekli — ad input'unun placeholder'ı form.host'tur (host değişmeden ÖNCE okunur)
+    expect(screen.getByPlaceholderText('10.0.0.1').value).toMatch(/\(Kopya\)$/)
+
+    // Ping'de aynı host+takım mükerrer sayılır (dupHost) → Kaydet host değişene dek kilitli
+    const hostInput = screen.getByPlaceholderText('1.2.3.4 / host.example.com')
+    expect(hostInput.value).toBe('10.0.0.1')
+    expect(screen.getByRole('button', { name: /^save$|^kaydet$/i })).toBeDisabled()
+    fireEvent.change(hostInput, { target: { value: '10.0.0.9' } })
+
+    fireEvent.click(screen.getByRole('button', { name: /^save$|^kaydet$/i }))
+    await waitFor(() => expect(api.monitoring.createPingMonitor).toHaveBeenCalled())
+    expect(api.monitoring.updatePingMonitor).not.toHaveBeenCalled()
+
+    expect(api.monitoring.createPingMonitor.mock.calls[0][0]).toEqual({
+      name: 'GW (Kopya)', host: '10.0.0.9', ipVersion: 'v6', groupName: 'Kurumsal', teamId: 5,
+      intervalSeconds: 900, timeoutMs: 7000, packetCount: 7,
+      confirmAttempts: 5, confirmIntervalSeconds: 45, recoveryChecks: 4, recoveryIntervalSeconds: 90,
+      active: false,   // duraklatılmış kaynağın kopyası da pasif doğar
+    })
   })
 
   it('istatistik panosu: sayımlar doğru + karta tıklayınca grid filtrelenir/temizlenir', async () => {

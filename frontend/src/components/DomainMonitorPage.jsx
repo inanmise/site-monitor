@@ -8,8 +8,9 @@ import SearchableSelect from './ui/SearchableSelect.jsx'
 import MaintenanceBadge from './ui/MaintenanceBadge.jsx'
 import MonitorHowBox from './ui/MonitorHowBox.jsx'
 import MonitorGuideButton from './ui/MonitorGuideButton.jsx'
-import { Play, Pencil, X, RefreshCw, Plus, Trash2, CalendarClock, Users, Layers, FlaskConical, Check, AlertTriangle,
+import { Play, Pencil, Copy, X, RefreshCw, Plus, Trash2, CalendarClock, Users, Layers, FlaskConical, Check, AlertTriangle,
   LayoutDashboard, CheckCircle2, TriangleAlert, HelpCircle, ShieldAlert, Building2, Activity, BarChart3, ChevronDown, Calendar } from 'lucide-react'
+import { duplicateName } from '../utils/duplicateName.js'
 import AlertHistory from './admin/AlertHistory.jsx'
 import DomainRegistrationTab from './DomainRegistrationTab.jsx'
 import MonitorStatsBar from './MonitorStatsBar.jsx'
@@ -68,6 +69,7 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName }) {
   const [historyLoading, setHistoryLoading] = useState(false)
   const [rangeDays, setRangeDays] = useState(30)
   const [modal, setModal] = useState(null)          // 'new' | monitor | null
+  const [dupSource, setDupSource] = useState(null)  // Kopyala akışında kaynak monitör (rozet/ipucu için)
   const [form, setForm] = useState(emptyForm)
   const [teamGroups, setTeamGroups] = useState([])   // form takımı+türüne göre grup önerileri (sızıntısız, server-scoped)
   const [defaults, setDefaults] = useState(null)
@@ -138,7 +140,7 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName }) {
   function closeDetail() { setSelected(null); setHistory([]) }
 
   function openNew() {
-    setTestResult(null)
+    setTestResult(null); setDupSource(null)
     setForm({ ...emptyForm, teamId: isAdmin ? '' : (myTeam ?? ''),
       intervalSeconds: defaults?.intervalSeconds ?? emptyForm.intervalSeconds,
       warningDays: defaults?.warningDays ?? emptyForm.warningDays,
@@ -146,17 +148,28 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName }) {
       thresholdsCsv: defaults?.thresholds ?? emptyForm.thresholdsCsv })
     setModal('new')
   }
-  function openEdit(m) {
-    setTestResult(null)
-    setForm({ name: m.name || '', domain: m.domain || '', groupName: m.group_name || '',
+  /** Monitör (snake_case) → form state eşlemesi. Edit ve Kopyala AYNI eşlemeyi kullanır → alan kaçmaz. */
+  function formFrom(m) {
+    return { name: m.name || '', domain: m.domain || '', groupName: m.group_name || '',
       teamId: m.team_id != null ? String(m.team_id) : '',
       thresholdsCsv: m.thresholds_csv || '60,30,14,7,3,1',
       warningDays: m.warning_days ?? 30, criticalDays: m.critical_days ?? 7,
       intervalSeconds: m.interval_seconds ?? 86400, active: m.active !== false,
-      checkTimeoutMs: m.check_timeout_ms ?? '' })
+      checkTimeoutMs: m.check_timeout_ms ?? '' }
+  }
+  function openEdit(m) {
+    setTestResult(null); setDupSource(null)
+    setForm(formFrom(m))
     setModal(m)
   }
-  function closeEdit() { setModal(null); setTestResult(null) }
+  /** Kopyala: kaynağın birebir kopyası, YENİ kayıt modunda (create). Ad "(Kopya)" sonekli;
+   *  kullanıcı genelde yalnız alan adını değiştirip kaydeder. Mükerrer koruması backend'de. */
+  function openDuplicate(m) {
+    setTestResult(null); setDupSource(m)
+    setForm({ ...formFrom(m), name: duplicateName(m.name || m.domain) })
+    setModal('new')
+  }
+  function closeEdit() { setModal(null); setTestResult(null); setDupSource(null) }
 
   async function runTest() {
     if (!form.domain.trim()) return
@@ -418,6 +431,7 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName }) {
                   <span style={{ display: 'flex', gap: 6 }} onClick={e => e.stopPropagation()}>
                     <button className="btn btn-sm mon-btn-check" disabled={checking === m.id} onClick={() => checkNow(m)} title={t('dom.check')}><Play size={12} /></button>
                     <button className="btn btn-sm mon-btn-edit" onClick={() => openEdit(m)} title={t('dom.edit')}><Pencil size={12} /></button>
+                    <button className="btn btn-sm mon-btn-edit" onClick={() => openDuplicate(m)} title={t('mon.duplicate')} aria-label={t('mon.duplicate')}><Copy size={12} /></button>
                   </span>
                 )}
               </div>
@@ -520,10 +534,13 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName }) {
           <div className="modal-box" onClick={e => e.stopPropagation()} style={{ maxWidth: 640, width: '92vw', maxHeight: '90vh', overflowY: 'auto' }}>
             <div className="modal-icon-hdr modal-icon-hdr--domain">
               <div className="modal-icon-hdr-badge"><CalendarClock size={20} /></div>
-              <h3>{modal === 'new' ? t('dom.modalNew') : t('dom.modalEdit')}</h3>
+              <h3>{modal === 'new' ? t('dom.modalNew') : t('dom.modalEdit')}
+                {dupSource && <span className="mon-dup-badge">{t('mon.duplicateBadge')}</span>}</h3>
             </div>
 
-            <div className="http-type-banner"><CalendarClock size={16} /><span>{t('dom.typeInfo')}</span></div>
+            {dupSource
+              ? <div className="mon-dup-hint">{t('mon.duplicateHint')}</div>
+              : <div className="http-type-banner"><CalendarClock size={16} /><span>{t('dom.typeInfo')}</span></div>}
 
             <div className="form-grid form-grid--top">
               <label className="full-width"><span>{t('dom.domain')} <span className="req-star">*</span></span>

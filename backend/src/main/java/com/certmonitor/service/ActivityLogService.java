@@ -123,12 +123,15 @@ public class ActivityLogService {
             case PAGE -> {
                 String status = str(r.get("status"));   // OK | DEGRADED | DOWN
                 Integer broken = asInt(r.get("broken_resources"));
+                Integer timeouts = asInt(r.get("timeout_count"));   // 2026-08-04: kırıktan ayrı sayaç
                 Integer mixed = asInt(r.get("mixed_content_count"));
                 a.setResultStatus("DOWN".equalsIgnoreCase(status) ? (error != null ? errStatus(errorClass) : "ERROR")
                         : ("DEGRADED".equalsIgnoreCase(status) ? "WARNING" : "SUCCESS"));
                 String detail = ("DOWN".equalsIgnoreCase(status))
                         ? "yüklenemedi"
-                        : ((broken != null ? broken : 0) + " kırık" + (mixed != null && mixed > 0 ? " · " + mixed + " mixed" : ""));
+                        : ((broken != null ? broken : 0) + " kırık"
+                           + (timeouts != null && timeouts > 0 ? " · " + timeouts + " zaman aşımı" : "")
+                           + (mixed != null && mixed > 0 ? " · " + mixed + " mixed" : ""));
                 a.setResultSummary(detail + (ms != null ? " · " + ms + "ms" : ""));
             }
             case SCRIPTED -> {

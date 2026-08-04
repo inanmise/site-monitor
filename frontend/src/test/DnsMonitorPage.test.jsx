@@ -101,6 +101,60 @@ describe('DnsMonitorPage', () => {
     expect(checkbox.checked).toBe(false)
   })
 
+  it('Kopyala: TÜM kullanıcı ayarları birebir kopyalanır (yalnız ad "(Kopya)" olur)', async () => {
+    // Her alan varsayılandan FARKLI → bir alan formFrom'dan düşerse tam-payload karşılaştırması kırılır.
+    api.monitoring.getDnsMonitors.mockResolvedValue({ success: true, data: [{
+      id: 1, name: 'akbank', domain: 'www.akbank.com', record_type: 'CNAME', standalone: true,
+      team_id: 5, team_name: 'SY-A', value: '1.2.3.4', ttl: 300, checked_at: '2026-07-06T00:00:00',
+      interval_seconds: 900, group_name: 'Kurumsal',
+      expected_value: '1.2.3.4\n5.6.7.8', slow_threshold_ms: 2500,
+      propagation_check: true, dns_change_alert_enabled: false, active: false,
+    }] })
+    api.monitoring.createDnsMonitor.mockResolvedValue({ success: true, data: {} })
+
+    render(<DnsMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
+    await waitFor(() => expect(api.monitoring.getDnsMonitors).toHaveBeenCalled())
+    await screen.findByText('www.akbank.com')
+
+    fireEvent.click(screen.getByRole('button', { name: /kopyala|duplicate/i }))
+
+    // Kopya rozeti + ipucu görünür (yeni-kayıt modu, kaynak belli)
+    expect(document.querySelector('.mon-dup-badge')).not.toBeNull()
+    expect(document.querySelector('.mon-dup-hint')).not.toBeNull()
+    // Ad "(Kopya)" sonekli — ad input'unun placeholder'ı form.domain'dir
+    expect(screen.getByPlaceholderText('www.akbank.com').value).toMatch(/\(Kopya\)$/)
+
+    fireEvent.click(screen.getByRole('button', { name: /^save$|^kaydet$/i }))
+    await waitFor(() => expect(api.monitoring.createDnsMonitor).toHaveBeenCalled())
+    expect(api.monitoring.updateDnsMonitor).not.toHaveBeenCalled()
+
+    expect(api.monitoring.createDnsMonitor.mock.calls[0][0]).toEqual({
+      name: 'akbank (Kopya)', domain: 'www.akbank.com', recordType: 'CNAME',
+      intervalSeconds: 900, teamId: 5, groupName: 'Kurumsal',
+      expectedValue: '1.2.3.4\n5.6.7.8', slowThresholdMs: 2500,
+      propagationCheck: true, dnsChangeAlertEnabled: false,
+      active: false,   // duraklatılmış kaynağın kopyası da pasif doğar
+    })
+  })
+
+  it('Kopyala → değiştirmeden kaydet: backend mükerrer hatası toast ile gösterilir, modal kapanmaz', async () => {
+    api.monitoring.createDnsMonitor.mockResolvedValue({
+      success: false,
+      error: 'Bu (domain, kayıt tipi) için zaten bir izleme var; mükerrer DNS monitörü oluşturulamaz.',
+    })
+    render(<DnsMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
+    await waitFor(() => expect(api.monitoring.getDnsMonitors).toHaveBeenCalled())
+    await screen.findByText('www.akbank.com')
+
+    fireEvent.click(screen.getByRole('button', { name: /kopyala|duplicate/i }))
+    fireEvent.click(screen.getByRole('button', { name: /^save$|^kaydet$/i }))
+
+    await waitFor(() => expect(api.monitoring.createDnsMonitor).toHaveBeenCalled())
+    expect(await screen.findByText(/zaten bir izleme var/i)).toBeInTheDocument()
+    // Modal açık kalır (veri kaybı yok) → Kopya rozeti hâlâ DOM'da
+    expect(document.querySelector('.mon-dup-badge')).not.toBeNull()
+  })
+
   it('Düzenle: "listeye ekle" butonu mevcut değeri beklenen listeye EKLER (üzerine yazmaz, dedupe)', async () => {
     api.monitoring.getDnsMonitors.mockResolvedValue({ success: true, data: [
       { ...monitor, expected_value: '217.169.196.197', value: '192.168.10.249' },

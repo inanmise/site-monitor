@@ -359,6 +359,45 @@ public class EmailTemplateBuilder {
                 if (ca != null) rows.append(row("Veren Kurum (CA)", esc(ca)));
             }
         }
+        // Sayfa Bütünlüğü / Sayfa Yüklenemiyor çözümü — "sorun neydi + ne çözüldü" (2026-08-04).
+        // Alarm-anı anahtarları snapshotContext'ten, resolved_* anahtarları çözüm anındaki son PageCheck'ten gelir;
+        // eski (bu sürümden önce açılmış) alarmların snapshot'ında anahtarlar yok → satırlar zarifçe atlanır.
+        // NOT: SCRIPTED_FAIL aynı şablona düşer ve aynı boşluğa sahiptir — follow-up (bkz. isScripted).
+        if (ctx != null && isPage(alertType)) {
+            rows.append(row("Çözülen Alarm",
+                    "PAGE_DOWN".equals(alertType) ? "Sayfa Yüklenemiyor" : "Sayfa Bütünlüğü"));
+            String detail = strCtx(ctx, "detail");
+            if (detail != null && !detail.isBlank()) {
+                rows.append(row("Sorun (alarm anı)", esc(detail)));
+            } else {
+                String b = strCtx(ctx, "broken_resources");
+                if (b != null) rows.append(row("Kırık Kaynak (alarm anı)", esc(b)));
+                String tmo = strCtx(ctx, "timeout_count");
+                if (tmo != null) rows.append(row("Zaman Aşımı (alarm anı)", esc(tmo)));
+                String mx = strCtx(ctx, "mixed_content_count");
+                if (mx != null) rows.append(row("Mixed Content (alarm anı)", esc(mx)));
+            }
+            if ("PAGE_DOWN".equals(alertType)) {
+                String err = strCtx(ctx, "last_error");
+                if (err != null) rows.append(row("Son Hata", esc(err.length() > 120 ? err.substring(0, 120) + "…" : err)));
+                String hs = strCtx(ctx, "http_status");
+                if (hs != null) rows.append(row("HTTP Durumu", esc(hs)));
+            }
+            String tsv = strCtx(ctx, "problem_rows");
+            if (tsv != null && !tsv.isBlank())
+                rows.append(row("Giderilen Sorunlu Kaynaklar", pageIssuesHtml(tsv, intCtx(ctx, "problem_total"))));
+            String cur = strCtx(ctx, "resolved_page_status");
+            if (cur != null) {
+                String tot  = strCtx(ctx, "resolved_total_resources");
+                String when = strCtx(ctx, "resolved_checked_at");
+                String curHtml = "OK".equals(cur)
+                        ? "<strong style='color:" + C_INFO + "'>Sağlıklı</strong>"
+                          + (tot != null ? " — " + esc(tot) + " kaynağın tümü erişilebilir" : "")
+                        : esc(pageStatusTr(cur));
+                if (when != null) curHtml += " <span style='color:" + MUTED + "'>(" + esc(formatHuman(when)) + ")</span>";
+                rows.append(row("Güncel Durum", curHtml));
+            }
+        }
         String durHuman = durationHuman(createdAt, resolvedAt);
         if (durHuman != null) rows.append(row("Alarm Süresi", esc(durHuman)));
         if (resolvedAt != null) rows.append(row("Çözülme", esc(formatHuman(resolvedAt))));
@@ -405,6 +444,21 @@ public class EmailTemplateBuilder {
             String reg = strCtx(ctx, "registrar"); if (reg != null) sb.append("\nKayıt Kuruluşu: ").append(reg);
             String epp = strCtx(ctx, "status_codes"); if (epp != null && !epp.isBlank()) sb.append("\nEPP Durum Kodları: ").append(eppText(epp));
         }
+        if (ctx != null && isPage(alertType)) {   // sayfa çözümü — HTML ile aynı bilgi (2026-08-04)
+            sb.append("\nÇözülen Alarm: ").append("PAGE_DOWN".equals(alertType) ? "Sayfa Yüklenemiyor" : "Sayfa Bütünlüğü");
+            String detail = strCtx(ctx, "detail");
+            if (detail != null && !detail.isBlank()) sb.append("\nSorun (alarm anı): ").append(detail);
+            String tsv = strCtx(ctx, "problem_rows");
+            if (tsv != null && !tsv.isBlank())
+                sb.append("\nGiderilen Sorunlu Kaynaklar:\n").append(pageIssuesText(tsv, intCtx(ctx, "problem_total")));
+            String cur = strCtx(ctx, "resolved_page_status");
+            if (cur != null) {
+                String tot = strCtx(ctx, "resolved_total_resources");
+                sb.append("\nGüncel Durum: ").append("OK".equals(cur)
+                        ? "Sağlıklı" + (tot != null ? " — " + tot + " kaynağın tümü erişilebilir" : "")
+                        : pageStatusTr(cur));
+            }
+        }
         String durHuman = durationHuman(createdAt, resolvedAt);
         if (durHuman != null) sb.append("\nAlarm Süresi: ").append(durHuman);
         if (resolvedAt != null) sb.append("\nÇözülme: ").append(formatHuman(resolvedAt));
@@ -418,6 +472,10 @@ public class EmailTemplateBuilder {
             return hasExpiry ? "Alan adı yenilendi, alarm otomatik olarak kapandı." : "Alarm otomatik olarak kapandı.";
         if (isCert(alertType))
             return hasExpiry ? "Sertifika yenilendi, alarm otomatik olarak kapandı." : "Alarm otomatik olarak kapandı.";
+        if ("PAGE_INTEGRITY".equals(alertType))
+            return "Sayfadaki bütünlük sorunu giderildi; kaynaklar yeniden sağlıklı — alarm otomatik olarak kapandı.";
+        if ("PAGE_DOWN".equals(alertType))
+            return "Sayfa yeniden yükleniyor — alarm otomatik olarak kapandı.";
         return "Alarm otomatik olarak kapandı.";
     }
 
@@ -530,6 +588,7 @@ public class EmailTemplateBuilder {
             addIf(out, "Durum", pageStatusTr(strCtx(c, "page_status")));
             addIf(out, "Mod", pageModeTr(strCtx(c, "page_mode")));
             addIf(out, "Kırık Kaynak", strCtx(c, "broken_resources"));
+            addIf(out, "Zaman Aşımı", strCtx(c, "timeout_count"));   // 2026-08-04: kırıktan ayrı sayaç
             addIf(out, "Mixed Content", strCtx(c, "mixed_content_count"));
             addIf(out, "Alarm Kapsamı", alarmScopeText(c));       // bu monitör hangi sorunlarda alarm üretir
             addIf(out, "Doğrulama", confirmationText(c));         // N ardışık kontrolde doğrulandıktan sonra

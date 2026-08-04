@@ -8,7 +8,8 @@ import MonitorGuideButton from './ui/MonitorGuideButton.jsx'
 import CodeEditor from './ui/CodeEditor.jsx'
 import SearchableSelect from './ui/SearchableSelect.jsx'
 import { SCRIPTED_TEMPLATES } from './scriptedTemplates.js'
-import { FlaskConical, Play, Plus, Trash2, X, RefreshCw, Download, Eye, EyeOff } from 'lucide-react'
+import { FlaskConical, Play, Plus, Trash2, X, RefreshCw, Download, Eye, EyeOff, Copy } from 'lucide-react'
+import { duplicateName } from '../utils/duplicateName.js'
 
 const ResponseTimeChart = lazy(() => import('./ResponseTimeChart.jsx'))
 
@@ -44,6 +45,7 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
   const [teams, setTeams] = useState([])
   const [search, setSearch] = useState('')
   const [modal, setModal] = useState(null)      // create/edit form monitor (or {} for new)
+  const [dupSource, setDupSource] = useState(null)  // Kopyala akışında kaynak monitör (rozet/ipucu için)
   const [form, setForm] = useState(emptyForm)
   const [saving, setSaving] = useState(false)
   const [testing, setTesting] = useState(false)
@@ -81,10 +83,11 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
 
   function openNew() {
     setForm({ ...emptyForm, teamId: isAdmin ? '' : (teamId ?? '') })
-    setTestResult(null); setModal({})
+    setTestResult(null); setDupSource(null); setModal({})
   }
-  function openEdit(m) {
-    setForm({
+  /** Monitör (snake_case) → form state eşlemesi. Edit ve Kopyala AYNI eşlemeyi kullanır → alan kaçmaz. */
+  function formFrom(m) {
+    return {
       name: m.name || '', description: m.description || '', groupName: m.group_name || '',
       teamId: m.team_id != null ? String(m.team_id) : '', tags: m.tags || '', notifyEmail: m.notify_email !== false,
       intervalSeconds: m.interval_seconds ?? 300, timeoutSeconds: m.timeout_seconds ?? 60,
@@ -93,10 +96,22 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
       active: m.active !== false, script: m.script || '',
       // env: secret satırlar value_set taşır (değer geri okunamaz); non-secret value taşır
       env: (m.env || []).map(e => ({ name: e.name, secret: !!e.secret, value: e.secret ? '' : (e.value || ''), value_set: !!e.value_set })),
-    })
-    setTestResult(null); setModal(m)
+    }
   }
-  function closeEdit() { setModal(null); setTestResult(null) }
+  function openEdit(m) {
+    setForm(formFrom(m))
+    setTestResult(null); setDupSource(null); setModal(m)
+  }
+  /** Kopyala: kaynağın birebir kopyası, YENİ kayıt modunda (create). Ad "(Kopya)" sonekli.
+   *  GİZLİ env değerleri geri okunamadığından kopyaya taşınamaz — value_set=false yapılır ki
+   *  kullanıcı bu satırları yeniden doldurması gerektiğini görsün. Mükerrer koruması backend'de (ad+takım). */
+  function openDuplicate(m) {
+    const base = formFrom(m)
+    setForm({ ...base, name: duplicateName(m.name),
+      env: base.env.map(e => e.secret ? { ...e, value: '', value_set: false } : e) })
+    setTestResult(null); setDupSource(m); setModal({})
+  }
+  function closeEdit() { setModal(null); setTestResult(null); setDupSource(null) }
 
   function setEnvRow(i, patch) { setForm(f => ({ ...f, env: f.env.map((e, j) => j === i ? { ...e, ...patch } : e) })) }
   function addEnvRow() { setForm(f => ({ ...f, env: [...f.env, { name: '', secret: false, value: '' }] })) }
@@ -236,31 +251,36 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
                     <span onClick={e => { e.stopPropagation() }}>
                       <button className="btn btn-xs" title={t('scripted.runNow')} onClick={e => { e.stopPropagation(); checkNow(m) }}><Play size={12} /></button>
                       <button className="btn btn-xs" title={t('scripted.edit')} onClick={e => { e.stopPropagation(); openEdit(m) }}>✎</button>
+                      <button className="btn btn-xs" title={t('mon.duplicate')} aria-label={t('mon.duplicate')}
+                        onClick={e => { e.stopPropagation(); openDuplicate(m) }}><Copy size={12} /></button>
                     </span>}
                 </div>
               </div>
             ))}
           </div>}
 
-      {modal && createPortal(<EditModal {...{ t, lang, form, setForm, modal, saving, testing, testResult, save, del, closeEdit, runTest, isAdmin, teamOptions, teamName, groupOptions, setEnvRow, addEnvRow, delEnvRow, applyTemplate, intervalIdx }} />, document.body)}
+      {modal && createPortal(<EditModal {...{ t, lang, form, setForm, modal, dupSource, saving, testing, testResult, save, del, closeEdit, runTest, isAdmin, teamOptions, teamName, groupOptions, setEnvRow, addEnvRow, delEnvRow, applyTemplate, intervalIdx }} />, document.body)}
       {selected && createPortal(<DetailModal {...{ t, selected, setSelected, history, selCheck, setSelCheck, exportCsv, checkNow, k6 }} />, document.body)}
     </div>
   )
 }
 
 // ── Create/Edit modal ────────────────────────────────────────────────────────
-function EditModal({ t, lang, form, setForm, modal, saving, testing, testResult, save, del, closeEdit, runTest, isAdmin, teamOptions, teamName, groupOptions, setEnvRow, addEnvRow, delEnvRow, applyTemplate, intervalIdx }) {
+function EditModal({ t, lang, form, setForm, modal, dupSource, saving, testing, testResult, save, del, closeEdit, runTest, isAdmin, teamOptions, teamName, groupOptions, setEnvRow, addEnvRow, delEnvRow, applyTemplate, intervalIdx }) {
   const ivIdx = intervalIdx(Number(form.intervalSeconds))
   return (
     <div className="modal-overlay" onClick={closeEdit}>
       <div className="modal-box modal-wide" style={{ maxWidth: 860, maxHeight: '92vh', overflow: 'auto' }} onClick={e => e.stopPropagation()}>
         <div className="modal-head">
-          <h3>{modal.id ? t('scripted.modalEdit') : t('scripted.modalNew')}</h3>
+          <h3>{modal.id ? t('scripted.modalEdit') : t('scripted.modalNew')}
+            {dupSource && <span className="mon-dup-badge">{t('mon.duplicateBadge')}</span>}</h3>
           <button className="icon-btn" onClick={closeEdit}><X size={18} /></button>
         </div>
+        {dupSource && <div className="mon-dup-hint">{t('mon.duplicateHint')}</div>}
         <div className="modal-body form-grid form-grid--top">
           <label className="full-width">{t('scripted.name')}
-            <input className="input" value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} /></label>
+            <input className="input" value={form.name} autoFocus={!!dupSource}
+              onChange={e => setForm(f => ({ ...f, name: e.target.value }))} /></label>
           <label className="full-width">{t('scripted.description')}
             <input className="input" value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} /></label>
 

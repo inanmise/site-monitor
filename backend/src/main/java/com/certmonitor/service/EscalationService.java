@@ -54,6 +54,8 @@ public class EscalationService {
     private final com.certmonitor.repository.DomainCheckRepository domainCheckRepo;
     // DNS_CHANGED manuel re-notify'ında eski/yeni değer ctx'ini son changed kayıttan kurmak için (günlük re-alert paritesi).
     private final com.certmonitor.repository.DnsRecordRepository dnsRecordRepo;
+    // Sayfa çözüm mailinde "güncel durum" satırı için son PageCheck (2026-08-04 — çözüm maili detayları).
+    private final com.certmonitor.repository.PageCheckRepository pageCheckRepo;
 
     // Self-injection (@Lazy avoids circular dep) — needed to invoke @Async methods via proxy
     @Autowired @Lazy
@@ -1140,8 +1142,29 @@ public class EscalationService {
             Map<String, Object> certContext;
             if (isDomainMon(event.getAlertType())) {   // domain → en güncel kayıt (yenilenmiş bitiş/registrar)
                 certContext = reconstructDomainContext(event.getDomain());
-            } else if (standalone) {        // keyword/ping — alarm anı snapshot'ından detay (keyword/koşul)
+            } else if (standalone) {        // keyword/ping/sayfa — alarm anı snapshot'ından detay
                 certContext = deserializeContext(event.getContextJson());
+                // Sayfa çözümünde CANLI güncel durum: son PageCheck → mail "ne çözüldü / şu an sağlıklı" gösterir
+                // (snapshot alarm anını, resolved_* anahtarları çözüm anını taşır; hata olursa zenginleştirme atlanır).
+                if (isPage(event.getAlertType())) {
+                    try {
+                        Long monId = certContext != null && certContext.get("monitor_id") instanceof Number n
+                                ? n.longValue() : null;
+                        if (monId != null) {
+                            var latest = pageCheckRepo.findTopByMonitorIdOrderByCheckedAtDesc(monId).orElse(null);
+                            if (latest != null) {
+                                Map<String, Object> enriched = new LinkedHashMap<>(certContext);
+                                enriched.put("resolved_page_status",     latest.getStatus());
+                                enriched.put("resolved_total_resources", latest.getTotalResources());
+                                enriched.put("resolved_broken",          latest.getBrokenResources());
+                                enriched.put("resolved_timeout",         latest.getTimeoutCount());
+                                enriched.put("resolved_mixed",           latest.getMixedContentCount());
+                                enriched.put("resolved_checked_at",      latest.getCheckedAt());
+                                certContext = enriched;
+                            }
+                        }
+                    } catch (Exception ignore) { /* zenginleştirilemezse mail yine sade hâliyle gönderilir */ }
+                }
             } else if (MONITORING_ALERT_TYPES.contains(event.getAlertType())) {
                 certContext = null;
             } else {
@@ -1597,13 +1620,19 @@ public class EscalationService {
         return e;
     }
 
-    /** Çözüldü e-postasında detay için alarm anı context'inin küçük JSON snapshot'ı. */
+    /** Çözüldü e-postasında detay için alarm anı context'inin küçük JSON snapshot'ı.
+     *  Sayfa anahtarları 2026-08-04'te eklendi ("sorun neydi" detayı için) — daha ESKİ açık alarmların
+     *  snapshot'ında yoklar; çözüm maili o durumda zarifçe sade düzene düşer. */
     private String snapshotContext(Map<String, Object> ctx) {
         if (ctx == null) return null;
         Map<String, Object> snap = new LinkedHashMap<>();
         for (String k : List.of("keyword", "operator", "match_count", "occurrences",
                                  "url", "host", "ip_version", "monitor_id", "condition",
-                                 "http_status", "last_error", "response_ms", "threshold_ms", "port", "protocol")) {
+                                 "http_status", "last_error", "response_ms", "threshold_ms", "port", "protocol",
+                                 // Sayfa Bütünlüğü (PAGE_DOWN/PAGE_INTEGRITY) — çözüm maili "sorun neydi" bloğu
+                                 "page_status", "page_mode", "broken_resources", "timeout_count",
+                                 "mixed_content_count", "total_resources",
+                                 "problem_resources", "problem_rows", "problem_total", "detail")) {
             if (ctx.get(k) != null) snap.put(k, ctx.get(k));
         }
         if (snap.isEmpty()) return null;

@@ -78,6 +78,7 @@ class PageCheckerServiceTest {
         var r = checker.check(base + "/broken", "SINGLE_PAGE", 5000, 2000, 5, null, 2, 50, 60);
         assertThat(r.status()).isEqualTo("DEGRADED");
         assertThat(r.brokenResources()).isGreaterThanOrEqualTo(1);
+        assertThat(r.timeoutResources()).isZero();   // 2026-08-04: KIRIK ve ZAMAN AŞIMI ayrı sayaçlar
         assertThat(r.issues()).anySatisfy(i -> {
             assertThat(i.issueType()).isEqualTo("BROKEN");
             assertThat(i.resourceUrl()).contains("/missing.png");
@@ -142,11 +143,12 @@ class PageCheckerServiceTest {
     @Test
     @DisplayName("H4: farklı kayıtlı-domain'deki kaynak ÜÇÜNCÜ-taraf işaretlenir (sameSite/PSL)")
     void thirdPartyResource_classified() {
-        // .invalid TLD asla çözülmez → SSRF 'çözümlenemeyen host' → BROKEN; host farklı registrable domain → 3.-taraf.
+        // Host çözülemez (TestHosts: geçersiz sözdizimi → wildcard-DNS'te bile çözülmez) → SSRF 'çözümlenemeyen
+        // host' → BROKEN; host farklı registrable domain → 3.-taraf.
         var r = checker.check(base + "/thirdparty", "SINGLE_PAGE", 5000, 2000, 5, null, 2, 50, 60);
         assertThat(r.status()).isEqualTo("DEGRADED");
         assertThat(r.issues()).anySatisfy(i -> {
-            assertThat(i.resourceUrl()).contains("nonexistent.invalid");
+            assertThat(i.resourceUrl()).contains(TestHosts.UNRESOLVABLE);
             assertThat(i.firstParty()).isFalse();   // 127.0.0.1 ile aynı-site DEĞİL
         });
     }
@@ -279,8 +281,8 @@ class PageCheckerServiceTest {
         // SSRF: link-local/metadata kaynak
         html("/ssrf", "<html><body><img src='http://169.254.169.254/x.png'></body></html>");
 
-        // Üçüncü-taraf: farklı kayıtlı-domain (asla çözülmeyen .invalid) kaynak
-        html("/thirdparty", "<html><body><img src='http://sub.nonexistent.invalid/x.png'></body></html>");
+        // Üçüncü-taraf: farklı kayıtlı-domain + çözülemeyen host (TestHosts — wildcard DNS'e dayanıklı)
+        html("/thirdparty", "<html><body><img src='http://sub." + TestHosts.UNRESOLVABLE + "/x.png'></body></html>");
 
         // Hung: ana sayfa yanıtı geciktirir (>timeout) → checker per-request timeout ile DOWN döner
         server.createContext("/hang", ex -> {

@@ -63,6 +63,40 @@ describe('DomainMonitorPage', () => {
     expect(api.monitoring.createDomainMonitor.mock.calls[0][0].domain).toBe('example.org')
   })
 
+  it('Kopyala: TÜM kullanıcı ayarları birebir kopyalanır (yalnız ad "(Kopya)" olur)', async () => {
+    // Her alan varsayılandan FARKLI → bir alan formFrom'dan düşerse tam-payload karşılaştırması kırılır.
+    api.monitoring.getDomainMonitors.mockResolvedValue({ success: true, data: [{
+      id: 1, name: 'akbank', domain: 'akbank.com.tr', status: 'OK', source: 'RDAP',
+      checked_at: '2026-07-10T00:00:00',
+      team_id: 3, team_name: 'SY-A', group_name: 'Kurumsal',
+      thresholds_csv: '90,45,10,2', warning_days: 45, critical_days: 9,
+      interval_seconds: 43200, check_timeout_ms: 12000, active: false,
+    }] })
+    api.monitoring.createDomainMonitor.mockResolvedValue({ success: true, data: {} })
+
+    render(<DomainMonitorPage systemRole="ADMIN" teamId={3} teamName="SY-A" />)
+    await waitFor(() => expect(api.monitoring.getDomainMonitors).toHaveBeenCalled())
+    await screen.findByText('akbank.com.tr')
+
+    fireEvent.click(screen.getByRole('button', { name: /kopyala|duplicate/i }))
+
+    // Kopya rozeti + ipucu görünür (yeni-kayıt modu, kaynak belli)
+    expect(document.querySelector('.mon-dup-badge')).not.toBeNull()
+    expect(document.querySelector('.mon-dup-hint')).not.toBeNull()
+    expect(screen.getByPlaceholderText('akbank.com.tr').value).toMatch(/\(Kopya\)$/)
+
+    fireEvent.click(screen.getByRole('button', { name: /^save$|^kaydet$/i }))
+    await waitFor(() => expect(api.monitoring.createDomainMonitor).toHaveBeenCalled())
+    expect(api.monitoring.updateDomainMonitor).not.toHaveBeenCalled()
+
+    expect(api.monitoring.createDomainMonitor.mock.calls[0][0]).toEqual({
+      name: 'akbank (Kopya)', domain: 'akbank.com.tr', groupName: 'Kurumsal', teamId: 3,
+      thresholdsCsv: '90,45,10,2', warningDays: 45, criticalDays: 9,
+      intervalSeconds: 43200, checkTimeoutMs: 12000,
+      active: false,   // duraklatılmış kaynağın kopyası da pasif doğar
+    })
+  })
+
   it('ADMIN: takım seçilmeden Kaydet devre dışı (zorunlu takım)', async () => {
     render(<DomainMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
     await waitFor(() => expect(api.monitoring.getDomainMonitors).toHaveBeenCalled())

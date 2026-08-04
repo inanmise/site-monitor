@@ -78,7 +78,8 @@ public class PageCheckerService {
                                 String issueType, boolean firstParty, Integer httpStatus, Long durationMs) {}
 
     public record PageCheckResult(String status, boolean mainReachable, Integer httpStatus, long responseMs,
-                                  int totalResources, int brokenResources, int mixedContentCount,
+                                  int totalResources, int brokenResources, int timeoutResources,
+                                  int mixedContentCount,
                                   int pagesCrawled, String contentHash, Long bodyBytes, String error,
                                   List<ResourceIssue> issues) {}
 
@@ -140,7 +141,7 @@ public class PageCheckerService {
             String err = main.error() != null ? main.error()
                     : (main.status() >= 400 ? "ana sayfa HTTP " + main.status() : "ana sayfa alınamadı");
             return new PageCheckResult("DOWN", false, main.status() == 0 ? null : main.status(), ms,
-                    0, 0, 0, 1, null, null, err, List.of());
+                    0, 0, 0, 0, 1, null, null, err, List.of());
         }
         boolean pageHttps = url.toLowerCase(Locale.ROOT).startsWith("https://");
         List<Resource> resources = inventory(main.body(), url, url, rootHost, excludes);
@@ -162,7 +163,7 @@ public class PageCheckerService {
         if (first.blocked() || first.body() == null || first.status() >= 400 || first.status() == 0) {
             long ms = System.currentTimeMillis() - start;
             return new PageCheckResult("DOWN", false, first.status() == 0 ? null : first.status(), ms,
-                    0, 0, 0, 0, null, null,
+                    0, 0, 0, 0, 0, null, null,
                     first.error() != null ? first.error() : "ana sayfa alınamadı", List.of());
         }
 
@@ -522,13 +523,17 @@ public class PageCheckerService {
     // ── Yardımcılar ──────────────────────────────────────────────────────────
     private PageCheckResult summarize(List<ResourceIssue> issues, int total, int pages, int httpStatus,
                                       long ms, String hash, Long bytes) {
-        int broken = 0, mixed = 0;
+        // KIRIK ve ZAMAN AŞIMI AYRI sayaçlar (2026-08-04): kesin kırık URL ile yanıt vermeyen URL
+        // aynı sayaçta toplanmaz — UI/e-posta/istatistik ayrı gösterir. DEGRADED kararı ikisini de kapsar
+        // (timeout toggle'ı kapalıysa demote SchedulerService.recheckPage'te yapılır).
+        int broken = 0, timeouts = 0, mixed = 0;
         for (ResourceIssue i : issues) {
             if ("MIXED_CONTENT".equals(i.issueType())) mixed++;
-            else if ("BROKEN".equals(i.issueType()) || "TIMEOUT".equals(i.issueType())) broken++;
+            else if ("BROKEN".equals(i.issueType())) broken++;
+            else if ("TIMEOUT".equals(i.issueType())) timeouts++;
         }
-        String status = (broken > 0 || mixed > 0) ? "DEGRADED" : "OK";
-        return new PageCheckResult(status, true, httpStatus, ms, total, broken, mixed, pages, hash, bytes, null, issues);
+        String status = (broken > 0 || timeouts > 0 || mixed > 0) ? "DEGRADED" : "OK";
+        return new PageCheckResult(status, true, httpStatus, ms, total, broken, timeouts, mixed, pages, hash, bytes, null, issues);
     }
 
     private static int clampConcurrency(int c) { return Math.max(1, Math.min(20, c)); }

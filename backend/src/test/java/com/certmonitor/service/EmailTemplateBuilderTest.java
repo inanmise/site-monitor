@@ -44,6 +44,59 @@ class EmailTemplateBuilderTest {
                 "kartfree.com alan adının kaydı " + days + " gün içinde doluyor.", days, ctx, "SY-Dijital");
     }
 
+    // ── PAGE_INTEGRITY çözüm maili — "sorun neydi + ne çözüldü" (2026-08-04) ──
+
+    private Map<String, Object> pageResolvedCtx() {
+        Map<String, Object> ctx = new LinkedHashMap<>();
+        ctx.put("url", "https://x.example.com/");
+        ctx.put("monitor_id", 55);
+        ctx.put("detail", "1 kırık, 1 zaman aşımı, 0 mixed content");
+        ctx.put("problem_rows", "LINK\thttps://dead.example.com/welcome\t\nIFRAME\thttps://gtm.example.com/ns.html\t");
+        ctx.put("problem_total", 2);
+        ctx.put("resolved_page_status", "OK");
+        ctx.put("resolved_total_resources", 135);
+        ctx.put("resolved_checked_at", "2026-08-04T09:42:00");
+        return ctx;
+    }
+
+    @Test
+    @DisplayName("PAGE_INTEGRITY çözüm HTML'i: sorun detayı + giderilen kaynaklar + güncel durum satırları")
+    void resolvedHtml_pageIntegrity_showsProblemAndCurrentState() {
+        String html = b.buildResolvedHtml("https://x.example.com/", "PAGE_INTEGRITY",
+                "Sistem (otomatik)", "2026-08-04T06:42:00", "2026-08-03T16:35:00", pageResolvedCtx(), "SY-Dijital");
+        assertThat(html)
+                .contains("Çözülen Alarm").contains("Sayfa Bütünlüğü")
+                .contains("1 kırık, 1 zaman aşımı, 0 mixed content")     // sorun neydi
+                .contains("Giderilen Sorunlu Kaynaklar")
+                .contains("dead.example.com")                             // sorunlu kaynak listesi
+                .contains("Sağlıklı")                                     // güncel durum
+                .contains("135 kaynağın tümü erişilebilir")
+                .contains("bütünlük sorunu giderildi");                   // yeni başlık satırı
+    }
+
+    @Test
+    @DisplayName("PAGE_INTEGRITY çözüm: ESKİ alarm (snapshot'sız ctx) → sade düzen bozulmaz, sayfa satırları yok")
+    void resolvedHtml_pageIntegrity_oldAlert_gracefulFallback() {
+        Map<String, Object> bare = new LinkedHashMap<>();
+        bare.put("url", "https://x.example.com/");   // eski snapshot yalnız url/monitor_id taşırdı
+        String html = b.buildResolvedHtml("https://x.example.com/", "PAGE_INTEGRITY",
+                "Sistem (otomatik)", "2026-08-04T06:42:00", "2026-08-03T16:35:00", bare, "SY-Dijital");
+        assertThat(html).contains("Alan Adı").contains("Alarm Süresi").contains("Çözen")
+                .doesNotContain("Giderilen Sorunlu Kaynaklar").doesNotContain("Güncel Durum");
+    }
+
+    @Test
+    @DisplayName("PAGE_INTEGRITY çözüm düz-metni HTML ile aynı bilgiyi taşır")
+    void resolvedText_pageIntegrity_parity() {
+        String text = b.buildResolvedText("https://x.example.com/", "PAGE_INTEGRITY",
+                "Sistem (otomatik)", "2026-08-04T06:42:00", "2026-08-03T16:35:00", pageResolvedCtx());
+        assertThat(text)
+                .contains("Sorun (alarm anı): 1 kırık, 1 zaman aşımı, 0 mixed content")
+                .contains("Giderilen Sorunlu Kaynaklar")
+                .contains("dead.example.com")
+                .contains("Güncel Durum: Sağlıklı — 135 kaynağın tümü erişilebilir");
+    }
+
     @Test
     @DisplayName("Alarm maili: 'Neden bu e-postayı aldınız?' şeffaflık bloğu + takım adı görünür")
     void alarm_whyReceivingBlock() {

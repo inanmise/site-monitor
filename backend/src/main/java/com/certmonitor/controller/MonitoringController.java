@@ -638,7 +638,8 @@ public class MonitoringController {
         m.setProtocol(normalizePortType(body.get("protocol")));
         m.setExpect(blank(body.get("expect")) ? null : body.get("expect").toString().trim());
         m.setSendData(blank(body.get("sendData")) ? null : body.get("sendData").toString());
-        m.setActive(true);
+        m.setActive(true);                                            // varsayılan: yeni izleme aktif
+        if (body.get("active") instanceof Boolean b) m.setActive(b);  // Kopyala: pasif kaynağın kopyası da pasif doğsun
         m.setStandalone(true);          // kullanıcı-eklediği → envanterden bağımsız; her zaman listelenir + kontrol edilir
         m.setTeamId(teamId);
         if (body.containsKey("groupName")) m.setGroupName(monitoringGroupService.getOrCreateFor(m, teamId, body.get("groupName") == null ? null : body.get("groupName").toString(), actor(session)));
@@ -919,19 +920,17 @@ public class MonitoringController {
         String domain = body.get("domain").toString().trim();
         String recordType = body.get("recordType").toString().trim().toUpperCase();
         if (!DNS_RECORD_TYPES.contains(recordType)) return badRequest("Geçersiz DNS kayıt tipi: " + recordType);
-        // Aynı (domain, recordType) standalone monitör zaten varsa onu dön — tekrar oluşturma.
-        var dup = dnsMonitorRepo.findFirstByDomainAndRecordTypeAndStandaloneTrue(domain, recordType);
-        if (dup.isPresent()) {
-            return ok(enrichDns(dup.get(),
-                    dnsRecordRepo.findTopByMonitorIdOrderByCheckedAtDesc(dup.get().getId()).orElse(null),
-                    certificateService.domainTeamNameMap(), teamNameMap(), openDnsAlarm(dup.get().getDomain())));
-        }
+        // Aynı (domain, recordType) standalone monitör zaten varsa hata dön; sessizce mevcut kaydı
+        // dönmek "kaydedildi" izlenimi verip Kopyala akışını fark edilmeden boşa düşürüyordu (Ping/Port ile aynı davranış).
+        if (dnsMonitorRepo.findFirstByDomainAndRecordTypeAndStandaloneTrue(domain, recordType).isPresent())
+            return badRequest("Bu (domain, kayıt tipi) için zaten bir izleme var; mükerrer DNS monitörü oluşturulamaz.");
         String now = ISO.format(Instant.now());
         DnsMonitor m = new DnsMonitor();
         m.setName(blank(body.get("name")) ? domain : body.get("name").toString().trim());
         m.setDomain(domain);
         m.setRecordType(recordType);
-        m.setActive(true);
+        m.setActive(true);                                            // varsayılan: yeni izleme aktif
+        if (body.get("active") instanceof Boolean b) m.setActive(b);  // Kopyala: pasif kaynağın kopyası da pasif doğsun
         m.setStandalone(true);                          // sertifikadan bağımsız → envanter-skip'i baypas eder
         Long teamId = resolveWriteTeam(session, body);
         if (teamId == null)
@@ -1176,6 +1175,12 @@ public class MonitoringController {
         if (blank(body.get("url")) || blank(body.get("keyword"))) return badRequest("url ve keyword zorunlu");
         Long teamId = resolveWriteTeam(session, body);
         if (teamId == null) return badRequest("Takım seçimi zorunludur; izleme oluşturulamıyor.");
+        // Mükerrer koruması (diğer türlerle aynı desen): aynılık anahtarı url + keyword + takım —
+        // aynı URL'i FARKLI kelimeyle izlemek meşrudur, engellenmez.
+        String kwUrl = body.get("url").toString().trim();
+        String kwWord = body.get("keyword").toString().trim();
+        if (keywordMonitorRepo.existsDuplicate(kwUrl, kwWord, teamId, null))
+            return badRequest("Bu URL ve anahtar kelime bu takımda zaten izleniyor; mükerrer keyword monitörü oluşturulamaz.");
         String now = ISO.format(Instant.now());
         KeywordMonitor m = new KeywordMonitor();
         m.setName((String) body.get("name"));
@@ -1185,7 +1190,8 @@ public class MonitoringController {
         applyKeywordCondition(m, body);
         if (body.containsKey("groupName")) m.setGroupName(monitoringGroupService.getOrCreateFor(m, teamId, body.get("groupName") == null ? null : body.get("groupName").toString(), actor(session)));
         m.setTeamId(teamId);
-        m.setActive(true);
+        m.setActive(true);                                            // varsayılan: yeni izleme aktif
+        if (body.get("active") instanceof Boolean b) m.setActive(b);  // Kopyala: pasif kaynağın kopyası da pasif doğsun
         if (body.get("intervalSeconds") != null) m.setIntervalSeconds(((Number) body.get("intervalSeconds")).intValue());
         if (body.get("timeoutMs")       != null) m.setTimeoutMs(((Number) body.get("timeoutMs")).intValue());
         if (body.get("confirmAttempts") != null)        m.setConfirmAttempts(clampAttempts(((Number) body.get("confirmAttempts")).intValue()));
@@ -1208,6 +1214,14 @@ public class MonitoringController {
         java.util.Map<String, Object> _before = keywordMonitorRepo.findById(id).map(x -> AuditDiff.snapshot(x, MON_FIELDS)).orElse(null);
         return keywordMonitorRepo.findById(id).map(m -> {
             if (!canOperateTeam(session, m.getTeamId())) throw new SecurityException("Bu takımın izlemesini düzenleyemezsiniz");
+            // Edit ile mükerrere dönüşmeyi de engelle (ping PUT'undaki desen; excludeId = kendisi).
+            String intendedUrl  = body.get("url")     != null ? body.get("url").toString().trim()     : m.getUrl();
+            String intendedWord = body.get("keyword") != null ? body.get("keyword").toString().trim() : m.getKeyword();
+            Long intendedTeam   = body.containsKey("teamId")
+                    ? resolveTeamChange(session, m.getTeamId(), body.get("teamId")) : m.getTeamId();
+            if (intendedUrl != null && intendedWord != null
+                    && keywordMonitorRepo.existsDuplicate(intendedUrl, intendedWord, intendedTeam, id))
+                return badRequest("Bu URL ve anahtar kelime bu takımda zaten izleniyor; mükerrer keyword monitörü oluşturulamaz.");
             if (body.get("name")            != null) m.setName((String) body.get("name"));
             if (body.get("url")             != null) m.setUrl((String) body.get("url"));
             if (body.get("keyword")         != null) m.setKeyword((String) body.get("keyword"));
@@ -1636,7 +1650,8 @@ public class MonitoringController {
         if (body.get("verifySsl")       instanceof Boolean b) m.setVerifySsl(b);
         if (body.containsKey("groupName")) m.setGroupName(monitoringGroupService.getOrCreateFor(m, teamId, body.get("groupName") == null ? null : body.get("groupName").toString(), actor(session)));
         m.setTeamId(teamId);
-        m.setActive(true);
+        m.setActive(true);                                                // varsayılan: yeni izleme aktif
+        if (body.get("active") instanceof Boolean ab) m.setActive(ab);    // Kopyala: pasif kaynağın kopyası da pasif doğsun
         if (body.get("intervalSeconds") != null) m.setIntervalSeconds(((Number) body.get("intervalSeconds")).intValue());
         if (body.get("timeoutMs")       != null) m.setTimeoutMs(((Number) body.get("timeoutMs")).intValue());
         if (body.get("confirmAttempts") != null)        m.setConfirmAttempts(clampAttempts(((Number) body.get("confirmAttempts")).intValue()));
@@ -1884,7 +1899,8 @@ public class MonitoringController {
         m.setName(blank(body.get("name")) ? url : body.get("name").toString());
         m.setUrl(url);
         m.setTeamId(teamId);
-        m.setActive(true);
+        m.setActive(true);                                            // varsayılan: yeni izleme aktif
+        if (body.get("active") instanceof Boolean b) m.setActive(b);  // Kopyala: pasif kaynağın kopyası da pasif doğsun
         if (body.containsKey("groupName")) m.setGroupName(monitoringGroupService.getOrCreateFor(m, teamId, body.get("groupName") == null ? null : body.get("groupName").toString(), actor(session)));
         if (body.get("intervalSeconds") != null) m.setIntervalSeconds(((Number) body.get("intervalSeconds")).intValue());
         if (body.get("timeoutMs")       != null) m.setTimeoutMs(((Number) body.get("timeoutMs")).intValue());
@@ -2026,6 +2042,7 @@ public class MonitoringController {
         out.put("response_ms",         r.responseMs());
         out.put("total_resources",     r.totalResources());
         out.put("broken_resources",    r.brokenResources());
+        out.put("timeout_count",       r.timeoutResources());
         out.put("mixed_content_count", r.mixedContentCount());
         out.put("error",               r.error());
         List<Map<String, Object>> issues = new ArrayList<>();
@@ -2111,6 +2128,7 @@ public class MonitoringController {
             item.put("response_ms",         latest.getResponseMs());
             item.put("total_resources",     latest.getTotalResources());
             item.put("broken_resources",    latest.getBrokenResources());
+            item.put("timeout_count",       latest.getTimeoutCount());   // null = 2026-08-04 öncesi kayıt (kırığa dahildi)
             item.put("mixed_content_count", latest.getMixedContentCount());
             item.put("pages_crawled",       latest.getPagesCrawled());
             item.put("error",               latest.getError());
@@ -2119,6 +2137,7 @@ public class MonitoringController {
             item.put("status", "unknown");
             item.put("ok", null); item.put("http_status", null); item.put("response_ms", null);
             item.put("total_resources", null); item.put("broken_resources", null);
+            item.put("timeout_count", null);
             item.put("mixed_content_count", null); item.put("pages_crawled", null);
             item.put("error", null); item.put("checked_at", null);
         }
@@ -2166,7 +2185,8 @@ public class MonitoringController {
         com.certmonitor.model.ScriptedMonitor m = new com.certmonitor.model.ScriptedMonitor();
         m.setName(name);
         m.setTeamId(teamId);
-        m.setActive(true);
+        m.setActive(true);                                            // varsayılan: yeni izleme aktif
+        if (body.get("active") instanceof Boolean b) m.setActive(b);  // Kopyala: pasif kaynağın kopyası da pasif doğsun
         if (body.containsKey("groupName")) m.setGroupName(monitoringGroupService.getOrCreateFor(m, teamId, body.get("groupName") == null ? null : body.get("groupName").toString(), actor(session)));
         if (body.get("intervalSeconds") != null) m.setIntervalSeconds(((Number) body.get("intervalSeconds")).intValue());
         if (body.get("confirmAttempts") != null)         m.setConfirmAttempts(clampAttempts(((Number) body.get("confirmAttempts")).intValue()));
@@ -2495,7 +2515,8 @@ public class MonitoringController {
         m.setDomain(reg);
         if (body.containsKey("groupName")) m.setGroupName(monitoringGroupService.getOrCreateFor(m, teamId, body.get("groupName") == null ? null : body.get("groupName").toString(), actor(session)));
         m.setTeamId(teamId);
-        m.setActive(true);
+        m.setActive(true);                                            // varsayılan: yeni izleme aktif
+        if (body.get("active") instanceof Boolean b) m.setActive(b);  // Kopyala: pasif kaynağın kopyası da pasif doğsun
         applyDomainFields(m, body);
         m.setCreatedAt(now);
         m.setUpdatedAt(now);
@@ -2742,7 +2763,8 @@ public class MonitoringController {
         m.setIpVersion(Set.of("v4", "v6", "auto").contains(ipv) ? ipv : "auto");
         if (body.containsKey("groupName")) m.setGroupName(monitoringGroupService.getOrCreateFor(m, teamId, body.get("groupName") == null ? null : body.get("groupName").toString(), actor(session)));
         m.setTeamId(teamId);
-        m.setActive(true);
+        m.setActive(true);                                            // varsayılan: yeni izleme aktif
+        if (body.get("active") instanceof Boolean b) m.setActive(b);  // Kopyala: pasif kaynağın kopyası da pasif doğsun
         if (body.get("intervalSeconds") != null) m.setIntervalSeconds(((Number) body.get("intervalSeconds")).intValue());
         if (body.get("timeoutMs")       != null) m.setTimeoutMs(((Number) body.get("timeoutMs")).intValue());
         if (body.get("packetCount")     != null) m.setPacketCount(((Number) body.get("packetCount")).intValue());
