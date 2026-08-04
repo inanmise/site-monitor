@@ -54,6 +54,56 @@ describe('ScriptedMonitorPage', () => {
     expect(await screen.findByText(/devre dışı|disabled/i)).toBeInTheDocument()
   })
 
+  it('Kopyala: TÜM kullanıcı ayarları birebir kopyalanır (ad "(Kopya)", gizli env değeri taşınmaz)', async () => {
+    // Her alan varsayılandan FARKLI → bir alan formFrom'dan düşerse tam-payload karşılaştırması kırılır.
+    api.monitoring.getScriptedMonitors.mockResolvedValue({
+      success: true,
+      data: {
+        k6_available: true, k6_version: 'v0.49.0', can_manage: true,
+        monitors: [{
+          id: 1, name: 'OIDC Login', status: 'PASS', checked_at: '2026-07-31T10:00:00',
+          description: 'Giriş senaryosu', group_name: 'Senaryolar', team_id: 5, team_name: 'SY-A',
+          tags: 'prod,kritik', notify_email: false,
+          interval_seconds: 900, timeout_seconds: 45,
+          confirm_attempts: 5, confirm_interval_seconds: 45, recovery_checks: 4, recovery_interval_seconds: 90,
+          active: false, script: 'export default function(){}',
+          // gizli env değeri şifreli saklanır → kopyaya taşınamaz (yalnız ad+secret bayrağı gider)
+          env: [{ name: 'BASE_URL', secret: false, value: 'https://x.example.com' },
+                { name: 'PASSWORD', secret: true, value_set: true }],
+        }],
+      },
+    })
+    api.admin.getTeams.mockResolvedValue({ success: true, data: [{ id: 5, name: 'SY-A' }] })
+    api.monitoring.createScriptedMonitor.mockResolvedValue({ success: true, data: {} })
+
+    render(<ScriptedMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
+    await waitFor(() => expect(api.monitoring.getScriptedMonitors).toHaveBeenCalled())
+    await screen.findByText('OIDC Login')
+
+    fireEvent.click(screen.getByRole('button', { name: /kopyala|duplicate/i }))
+
+    // Kopya rozeti + ipucu görünür (yeni-kayıt modu: modal={} → id yok)
+    expect(document.querySelector('.mon-dup-badge')).not.toBeNull()
+    expect(document.querySelector('.mon-dup-hint')).not.toBeNull()
+    expect(document.querySelector('.modal-body input.input').value).toMatch(/\(Kopya\)$/)
+    expect(screen.getByTestId('code-editor').value).toBe('export default function(){}')
+
+    fireEvent.click(screen.getByRole('button', { name: /^save$|^kaydet$/i }))
+    await waitFor(() => expect(api.monitoring.createScriptedMonitor).toHaveBeenCalled())
+    expect(api.monitoring.updateScriptedMonitor).not.toHaveBeenCalled()
+
+    expect(api.monitoring.createScriptedMonitor.mock.calls[0][0]).toEqual({
+      name: 'OIDC Login (Kopya)', description: 'Giriş senaryosu',
+      groupName: 'Senaryolar', teamId: 5, tags: 'prod,kritik', notifyEmail: false,
+      intervalSeconds: 900, timeoutSeconds: 45,
+      confirmAttempts: 5, confirmIntervalSeconds: 45, recoveryChecks: 4, recoveryIntervalSeconds: 90,
+      active: false,   // duraklatılmış kaynağın kopyası da pasif doğar
+      script: 'export default function(){}',
+      env: [{ name: 'BASE_URL', secret: false, value: 'https://x.example.com' },
+            { name: 'PASSWORD', secret: true }],   // gizli değer taşınmaz → kullanıcı yeniden girer
+    })
+  })
+
   it('Test Çalıştır → testScripted çağırır ve sonucu gösterir', async () => {
     render(<ScriptedMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
     await waitFor(() => expect(api.monitoring.getScriptedMonitors).toHaveBeenCalled())

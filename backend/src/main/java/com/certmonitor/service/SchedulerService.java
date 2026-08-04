@@ -399,6 +399,7 @@ public class SchedulerService {
         patch("CREATE TABLE IF NOT EXISTS dns_records (id INTEGER PRIMARY KEY AUTOINCREMENT, monitor_id INTEGER NOT NULL, record_type TEXT, value TEXT, changed INTEGER NOT NULL DEFAULT 0, previous_value TEXT, checked_at TEXT)");
         patch("ALTER TABLE dns_monitors ADD COLUMN slow_threshold_ms INTEGER");   // per-monitor DNS_SLOW eşiği; null=global (ddl-auto zaten ekler — güvenlik ağı)
         patch("ALTER TABLE dns_monitors ADD COLUMN dns_change_alert_enabled BOOLEAN"); // DNS_CHANGED alarmı aç/kapa; null=açık (ddl-auto zaten ekler — güvenlik ağı)
+        patch("ALTER TABLE page_checks ADD COLUMN timeout_count INTEGER");             // TIMEOUT sayacı kırıktan ayrıldı 2026-08-04 (ddl-auto zaten ekler — güvenlik ağı)
         patch("ALTER TABLE domain_monitors ADD COLUMN check_timeout_ms INTEGER"); // per-monitor RDAP timeout (ms); null=global (ddl-auto zaten ekler — güvenlik ağı)
         // Domain Kaydı (registration) — RDAP/WHOIS'ten ek alanlar (ddl-auto eski DB'yi backfill etmez → güvenlik ağı).
         patch("ALTER TABLE domain_checks ADD COLUMN registrar_iana_id TEXT");
@@ -2193,6 +2194,7 @@ public class SchedulerService {
         ctx.put("alert_mixed_content", !Boolean.FALSE.equals(m.getAlertMixedContent()));
         ctx.put("alert_timeout",       !Boolean.FALSE.equals(m.getAlertTimeout()));
         if (r.get("broken_resources") != null) ctx.put("broken_resources", r.get("broken_resources"));
+        if (r.get("timeout_count") != null) ctx.put("timeout_count", r.get("timeout_count"));
         if (r.get("mixed_content_count") != null) ctx.put("mixed_content_count", r.get("mixed_content_count"));
         if (r.get("problem_resources") != null) ctx.put("problem_resources", r.get("problem_resources"));
         if (r.get("problem_rows") != null)  ctx.put("problem_rows",  r.get("problem_rows"));
@@ -2216,8 +2218,9 @@ public class SchedulerService {
 
     private static String pageIntegrityDetail(Map<String, Object> r) {
         Object broken = r.getOrDefault("broken_resources", 0);
+        Object timeouts = r.getOrDefault("timeout_count", 0);
         Object mixed = r.getOrDefault("mixed_content_count", 0);
-        return broken + " kırık, " + mixed + " mixed content";
+        return broken + " kırık, " + timeouts + " zaman aşımı, " + mixed + " mixed content";
     }
 
     /**
@@ -2241,9 +2244,7 @@ public class SchedulerService {
         // LINK yalnız 404/410 (dış link 5xx/timeout alarm üretmez — Q1), yüklenen alt-kaynak broken/timeout.
         // TIMEOUT, MIXED_CONTENT gibi AYRI kovaya alınır → monitör başına alertTimeout toggle'ı ile geçitlenir.
         boolean anyFirstAlarm = false, anyThirdAlarm = false, anyMixedAlarm = false, anyTimeoutAlarm = false;
-        int timeoutCount = 0;
         for (PageCheckerService.ResourceIssue i : res.issues()) {
-            if ("TIMEOUT".equals(i.issueType())) timeoutCount++;
             if (!PageCheckerService.countsForAlarm(i.issueType(), i.resourceType(), i.httpStatus())) continue;
             if ("MIXED_CONTENT".equals(i.issueType())) { anyMixedAlarm = true; continue; }
             if ("TIMEOUT".equals(i.issueType()))       { anyTimeoutAlarm = true; continue; }
@@ -2257,13 +2258,13 @@ public class SchedulerService {
         boolean mainUp = res.mainReachable();
         boolean integrityUp = !mainUp || !alarmWorthy;   // ana sayfa down iken ayrı bütünlük alarmı üretme
 
-        // Toggle KAPALI iken timeout'ları KIRIK sayacından ve "Bozulmuş" durumundan düş (tabloda yine görünürler).
-        int brokenCount = res.brokenResources();
+        // KIRIK ve ZAMAN AŞIMI artık AYRI sayaçlar (2026-08-04) — çıkarma matematiği yok.
+        // Toggle KAPALI iken timeout'lar "Bozulmuş" durumundan düşer (tabloda/sayaçta yine görünürler).
+        int brokenCount  = res.brokenResources();
+        int timeoutCount = res.timeoutResources();
         String pageStatus = res.status();
-        if (!alertTimeout && timeoutCount > 0) {
-            brokenCount = Math.max(0, brokenCount - timeoutCount);
-            if (mainUp && brokenCount == 0 && res.mixedContentCount() == 0) pageStatus = "OK";
-        }
+        if (!alertTimeout && timeoutCount > 0
+                && mainUp && brokenCount == 0 && res.mixedContentCount() == 0) pageStatus = "OK";
 
         String ts = ISO.format(Instant.now());
         try {
@@ -2275,6 +2276,7 @@ public class SchedulerService {
             pc.setResponseMs(res.responseMs());
             pc.setTotalResources(res.totalResources());
             pc.setBrokenResources(brokenCount);
+            pc.setTimeoutCount(timeoutCount);
             pc.setMixedContentCount(res.mixedContentCount());
             pc.setPagesCrawled(res.pagesCrawled());
             pc.setContentHash(res.contentHash());
@@ -2311,6 +2313,7 @@ public class SchedulerService {
         activity.put("response_ms", res.responseMs());
         activity.put("total_resources", res.totalResources());
         activity.put("broken_resources", brokenCount);
+        activity.put("timeout_count", timeoutCount);
         activity.put("mixed_content_count", res.mixedContentCount());
         activity.put("pages_crawled", res.pagesCrawled());
         if (res.error() != null) activity.put("error", res.error());
@@ -2350,6 +2353,7 @@ public class SchedulerService {
         out.put("http_status", res.httpStatus());
         out.put("response_ms", res.responseMs());
         out.put("broken_resources", brokenCount);
+        out.put("timeout_count", timeoutCount);
         out.put("mixed_content_count", res.mixedContentCount());
         if (problemList != null) out.put("problem_resources", problemList);
         if (problemRows != null) { out.put("problem_rows", problemRows); out.put("problem_total", problemTotal); }

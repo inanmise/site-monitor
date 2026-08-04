@@ -28,7 +28,8 @@ class NetworkResolverTest {
     @Test
     void allAddresses_resolvesLoopback_emptyOnFailure() {
         assertThat(NetworkResolver.allAddresses("127.0.0.1")).isNotEmpty();
-        assertThat(NetworkResolver.allAddresses("nonexistent.host.invalid.example")).isEmpty();
+        // Wildcard-DNS'li ağlarda var olmayan adlar da çözülüyor → sözdizimsel olarak geçersiz ad kullan (TestHosts).
+        assertThat(NetworkResolver.allAddresses(TestHosts.UNRESOLVABLE)).isEmpty();
     }
 
     @Test

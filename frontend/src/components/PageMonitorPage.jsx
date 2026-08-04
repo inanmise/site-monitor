@@ -9,9 +9,10 @@ import MaintenanceBadge from './ui/MaintenanceBadge.jsx'
 import MonitorHowBox from './ui/MonitorHowBox.jsx'
 import MonitorGuideButton from './ui/MonitorGuideButton.jsx'
 import TagInput from './ui/TagInput.jsx'
-import { Play, Pencil, X, RefreshCw, Plus, Trash2, ScanSearch, Users, Layers, FlaskConical, Check, AlertTriangle,
+import { Play, Pencil, Copy, X, RefreshCw, Plus, Trash2, ScanSearch, Users, Layers, FlaskConical, Check, AlertTriangle,
   LayoutDashboard, CheckCircle2, TriangleAlert, ServerCrash, Siren, BellDot, BarChart3, ChevronDown,
   Image, FileCode, Link2, Frame, Type, ShieldAlert, Download, EyeOff } from 'lucide-react'
+import { duplicateName } from '../utils/duplicateName.js'
 import { useDialog } from './ui/Dialog.jsx'
 import AlertHistory from './admin/AlertHistory.jsx'
 import MonitorStatsBar from './MonitorStatsBar.jsx'
@@ -72,6 +73,7 @@ export default function PageMonitorPage({ systemRole, teamId, teamName }) {
   const [rangeDays, setRangeDays] = useState(7)
   const [summary, setSummary] = useState({ total: 0, down: 0 })
   const [modal, setModal] = useState(null)
+  const [dupSource, setDupSource] = useState(null)  // Kopyala akışında kaynak monitör (rozet/ipucu için)
   const [form, setForm] = useState(emptyForm)
   const [teamGroups, setTeamGroups] = useState([])
   const [defaults, setDefaults] = useState(null)
@@ -175,7 +177,7 @@ export default function PageMonitorPage({ systemRole, teamId, teamName }) {
   useVisibleInterval(() => { if (selected) refreshModal() }, selected ? 30000 : 0, false)
 
   function openNew() {
-    setTestResult(null)
+    setTestResult(null); setDupSource(null)
     setForm({ ...emptyForm, teamId: isAdmin ? '' : (myTeam ?? ''),
       intervalSeconds: defaults?.intervalSeconds ?? emptyForm.intervalSeconds,
       timeoutMs: defaults?.timeoutMs ?? emptyForm.timeoutMs,
@@ -185,9 +187,9 @@ export default function PageMonitorPage({ systemRole, teamId, teamName }) {
       crawlMaxPages: defaults?.crawlMaxPages ?? emptyForm.crawlMaxPages })
     setModal('new')
   }
-  function openEdit(m) {
-    setTestResult(null)
-    setForm({ name: m.name || '', url: m.url || '', groupName: m.group_name || '',
+  /** Monitör (snake_case) → form state eşlemesi. Edit ve Kopyala AYNI eşlemeyi kullanır → alan kaçmaz. */
+  function formFrom(m) {
+    return { name: m.name || '', url: m.url || '', groupName: m.group_name || '',
       teamId: m.team_id != null ? String(m.team_id) : '',
       tags: m.tags || '', notifyEmail: m.notify_email !== false,
       mode: m.mode || 'SINGLE_PAGE', crawlDepth: m.crawl_depth ?? 2, crawlMaxPages: m.crawl_max_pages ?? 50,
@@ -196,10 +198,21 @@ export default function PageMonitorPage({ systemRole, teamId, teamName }) {
       intervalSeconds: m.interval_seconds ?? 300, timeoutMs: m.timeout_ms ?? 4000,
       confirmAttempts: m.confirm_attempts ?? 3, confirmIntervalSeconds: m.confirm_interval_seconds ?? 30,
       recoveryChecks: m.recovery_checks ?? 3, recoveryIntervalSeconds: m.recovery_interval_seconds ?? 30,
-      active: m.active !== false })
+      active: m.active !== false }
+  }
+  function openEdit(m) {
+    setTestResult(null); setDupSource(null)
+    setForm(formFrom(m))
     setModal(m)
   }
-  function closeEdit() { setModal(null); setTestResult(null) }
+  /** Kopyala: kaynağın birebir kopyası, YENİ kayıt modunda (create). Ad "(Kopya)" sonekli;
+   *  kullanıcı genelde yalnız URL'i değiştirip kaydeder. Mükerrer koruması backend'de. */
+  function openDuplicate(m) {
+    setTestResult(null); setDupSource(m)
+    setForm({ ...formFrom(m), name: duplicateName(m.name || m.url) })
+    setModal('new')
+  }
+  function closeEdit() { setModal(null); setTestResult(null); setDupSource(null) }
 
   async function runTest() {
     if (!form.url.trim()) return
@@ -506,6 +519,10 @@ export default function PageMonitorPage({ systemRole, teamId, teamName }) {
                   <span className="upt-metric-lbl">{t('page.mBroken')}</span>
                 </div>
                 <div className="upt-metric">
+                  <span className="upt-metric-val">{m.timeout_count ?? '—'}</span>
+                  <span className="upt-metric-lbl">{t('page.mTimeout')}</span>
+                </div>
+                <div className="upt-metric">
                   <span className="upt-metric-val">{m.mixed_content_count ?? '—'}</span>
                   <span className="upt-metric-lbl">{t('page.mMixed')}</span>
                 </div>
@@ -520,6 +537,7 @@ export default function PageMonitorPage({ systemRole, teamId, teamName }) {
                   <span style={{ display: 'flex', gap: 6 }} onClick={e => e.stopPropagation()}>
                     <button className="btn btn-sm mon-btn-check" disabled={checking === m.id} onClick={() => checkNow(m)} title={t('page.check')}><Play size={12} /></button>
                     <button className="btn btn-sm mon-btn-edit" onClick={() => openEdit(m)} title={t('page.edit')}><Pencil size={12} /></button>
+                    <button className="btn btn-sm mon-btn-edit" onClick={() => openDuplicate(m)} title={t('mon.duplicate')} aria-label={t('mon.duplicate')}><Copy size={12} /></button>
                   </span>
                 )}
               </div>
@@ -543,6 +561,7 @@ export default function PageMonitorPage({ systemRole, teamId, teamName }) {
             <div className="upt-modal-summary">
               <div className="upt-modal-metric"><span className="upt-modal-metric-val" style={{ color: STATUS_COLOR[selected.status] }}>{t(`page.status${selected.status === 'OK' ? 'Ok' : selected.status === 'DEGRADED' ? 'Degraded' : selected.status === 'DOWN' ? 'Down' : 'Unknown'}`)}</span><span className="upt-modal-metric-lbl">{t('page.lastStatus')}</span></div>
               <div className="upt-modal-metric"><span className="upt-modal-metric-val">{selected.broken_resources ?? '—'}</span><span className="upt-modal-metric-lbl">{t('page.mBroken')}</span></div>
+              <div className="upt-modal-metric"><span className="upt-modal-metric-val">{selected.timeout_count ?? '—'}</span><span className="upt-modal-metric-lbl">{t('page.mTimeout')}</span></div>
               <div className="upt-modal-metric"><span className="upt-modal-metric-val">{selected.mixed_content_count ?? '—'}</span><span className="upt-modal-metric-lbl">{t('page.mMixed')}</span></div>
               <div className="upt-modal-metric"><span className="upt-modal-metric-val">{selected.total_resources ?? '—'}</span><span className="upt-modal-metric-lbl">{t('page.mResources')}</span></div>
               {selected.checked_at && <div className="upt-modal-metric"><span className="upt-modal-metric-val upt-modal-metric-time">{formatDateSec(selected.checked_at)}</span><span className="upt-modal-metric-lbl">{t('page.lastCheck')}</span></div>}
@@ -655,15 +674,17 @@ export default function PageMonitorPage({ systemRole, teamId, teamName }) {
                 <div className="upt-modal-loading">{t('page.noData')}</div>
               ) : (
                 <div className="upt-rt-list">
-                  <div className="upt-rt-grid upt-rt-head">
-                    <span>{t('page.colTime')}</span><span>{t('page.colStatus')}</span><span>{t('page.mBroken')}</span><span>{t('page.mMixed')}</span>
+                  {/* Kırık ve Zaman aşımı AYRI kolonlar (2026-08-04); eski kayıtlarda timeout '—' (o dönem kırığa dahildi). */}
+                  <div className="upt-rt-grid upt-rt-head" style={{ gridTemplateColumns: '150px 90px 70px 100px 1fr' }}>
+                    <span>{t('page.colTime')}</span><span>{t('page.colStatus')}</span><span>{t('page.mBroken')}</span><span>{t('page.mTimeout')}</span><span>{t('page.mMixed')}</span>
                   </div>
                   {history.map((c, i) => (
-                    <div key={`${c.checkedAt || c.checked_at || ''}#${i}`} className="upt-rt-grid">
+                    <div key={`${c.checkedAt || c.checked_at || ''}#${i}`} className="upt-rt-grid" style={{ gridTemplateColumns: '150px 90px 70px 100px 1fr' }}>
                       <span className="upt-rt-time">{formatDateSec(c.checkedAt || c.checked_at)}</span>
                       <span style={{ color: STATUS_COLOR[c.status] || STATUS_COLOR.unknown, fontWeight: 600 }}>
                         {c.status === 'OK' ? t('page.statusOk') : c.status === 'DEGRADED' ? t('page.statusDegraded') : t('page.statusDown')}</span>
                       <span className="upt-rt-ms">{c.brokenResources ?? c.broken_resources ?? '—'}</span>
+                      <span className="upt-rt-ms">{c.timeoutCount ?? c.timeout_count ?? '—'}</span>
                       <span className="upt-rt-ms">{c.mixedContentCount ?? c.mixed_content_count ?? '—'}</span>
                     </div>
                   ))}
@@ -689,14 +710,17 @@ export default function PageMonitorPage({ systemRole, teamId, teamName }) {
           <div className="modal-box" onClick={e => e.stopPropagation()} style={{ maxWidth: 720, width: '92vw', maxHeight: '90vh', overflowY: 'auto' }}>
             <div className="modal-icon-hdr modal-icon-hdr--keyword">
               <div className="modal-icon-hdr-badge"><ScanSearch size={20} /></div>
-              <h3>{modal === 'new' ? t('page.modalNew') : t('page.modalEdit')}</h3>
+              <h3>{modal === 'new' ? t('page.modalNew') : t('page.modalEdit')}
+                {dupSource && <span className="mon-dup-badge">{t('mon.duplicateBadge')}</span>}</h3>
             </div>
 
-            <div className="kw-type-banner"><ScanSearch size={16} /><span>{t('page.typeInfo')}</span></div>
+            {dupSource
+              ? <div className="mon-dup-hint">{t('mon.duplicateHint')}</div>
+              : <div className="kw-type-banner"><ScanSearch size={16} /><span>{t('page.typeInfo')}</span></div>}
 
             <div className="form-grid form-grid--top">
               <label className="full-width"><span>{t('page.url')} <span className="req-star">*</span></span>
-                <input value={form.url} placeholder="https://example.com" onChange={e => setForm(f => ({ ...f, url: e.target.value }))} /></label>
+                <input value={form.url} placeholder="https://example.com" autoFocus={!!dupSource} onChange={e => setForm(f => ({ ...f, url: e.target.value }))} /></label>
               <label><span>{t('page.name')}</span>
                 <input value={form.name} placeholder={form.url} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} /></label>
               <label><span>{t('page.team')} <span className="req-star">*</span></span>
@@ -812,7 +836,7 @@ export default function PageMonitorPage({ systemRole, teamId, teamName }) {
                   {testResult.error
                     ? <><strong>{t('page.testError')}:</strong> {testResult.error}</>
                     : <><strong>{t(`page.status${testResult.status === 'OK' ? 'Ok' : testResult.status === 'DEGRADED' ? 'Degraded' : 'Down'}`)}</strong>
-                        {' — '}{testResult.total_resources} {t('page.mResources')} · {testResult.broken_resources} {t('page.mBroken')} · {testResult.mixed_content_count} {t('page.mMixed')}
+                        {' — '}{testResult.total_resources} {t('page.mResources')} · {testResult.broken_resources} {t('page.mBroken')} · {testResult.timeout_count ?? 0} {t('page.mTimeout')} · {testResult.mixed_content_count} {t('page.mMixed')}
                         {testResult.http_status != null && <> · HTTP {testResult.http_status}</>}</>}
                 </span>
               </div>

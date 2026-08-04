@@ -63,7 +63,8 @@ class SsrfGuardTest {
         assertThatThrownBy(() -> g.validate("127.0.0.1")).isInstanceOf(SsrfGuard.BlockedException.class);
         assertThatThrownBy(() -> g.validate("")).isInstanceOf(SsrfGuard.BlockedException.class);
         // çözülemeyen host → UnknownHostException → BlockedException (fail-safe)
-        assertThatThrownBy(() -> g.validate("no-such-host-xyz123.invalid")).isInstanceOf(SsrfGuard.BlockedException.class);
+        // (wildcard-DNS'li ağlarda var olmayan adlar çözüldüğü için sözdizimsel geçersiz ad — TestHosts)
+        assertThatThrownBy(() -> g.validate(TestHosts.UNRESOLVABLE)).isInstanceOf(SsrfGuard.BlockedException.class);
         assertThatCode(() -> g.validate("10.1.2.3")).doesNotThrowAnyException();   // iç ağ açık
         assertThat(g.validate("8.8.8.8")).isNotEmpty();
     }

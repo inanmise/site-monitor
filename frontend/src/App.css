@@ -8157,6 +8157,39 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 /* Çözümleyici zinciri: birincil → yedek ok ayracı. */
 .dns-resolver-arrow { color: var(--text-light); font-weight: 700; }
 
+/* Kopyala (duplicate) akışı — modal başlığındaki "Kopya" rozeti + tek satır ipucu (tüm izleme türleri) */
+.mon-dup-badge {
+  display: inline-block;
+  margin-left: 10px;
+  padding: 2px 9px;
+  border-radius: 999px;
+  background: var(--bg-surface);
+  border: 1px solid var(--primary);
+  color: var(--primary);
+  font-size: .62em; font-weight: 800;
+  letter-spacing: .06em; text-transform: uppercase;
+  vertical-align: middle;
+}
+/* Renkli başlık (modal-icon-hdr) üzerinde beyaz varyant — okunurluk için */
+.modal-icon-hdr .mon-dup-badge {
+  background: rgba(255, 255, 255, .22);
+  border-color: rgba(255, 255, 255, .55);
+  color: #fff;
+}
+.mon-dup-hint {
+  display: flex; align-items: center; gap: 8px;
+  margin: 0 0 14px;
+  padding: 9px 14px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--primary);
+  border-radius: 6px;
+  font-size: .85em;
+  color: var(--text-light);
+}
+/* modal-head düzeninde (Sentetik İzleme) ipucu gövde padding'iyle hizalanır */
+.modal-head + .mon-dup-hint { margin: 0 28px 12px; }
+
 /* Sayfa Bütünlüğü — hariç tutulan desenler: monospace giriş + desen sayacı + satır aksiyonu */
 .page-exclude-ta {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;

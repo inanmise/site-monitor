@@ -47,6 +47,7 @@ class EscalationServiceTest {
     @Mock com.certmonitor.repository.DomainMonitorRepository domainMonitorRepo;
     @Mock com.certmonitor.repository.DomainCheckRepository domainCheckRepo;
     @Mock com.certmonitor.repository.DnsRecordRepository dnsRecordRepo;
+    @Mock com.certmonitor.repository.PageCheckRepository pageCheckRepo;
 
     private EscalationService service;
     private static final DateTimeFormatter ISO =
@@ -56,7 +57,7 @@ class EscalationServiceTest {
     void setUp() {
         service = new EscalationService(alertEventRepo, thresholdRepo, contactRepo,
                 inventoryRepo, emailService, weeklyAvailability, webhookService, new ObjectMapper(), notificationLogRepo, latestCheckRepo, teamRepo, smtpSettings, maintenanceService, stormService,
-                domainMonitorRepo, domainCheckRepo, dnsRecordRepo);
+                domainMonitorRepo, domainCheckRepo, dnsRecordRepo, pageCheckRepo);
 
         // Self-injection bypass for @Async dispatch in tests (runs synchronously)
         ReflectionTestUtils.setField(service, "self", service);
@@ -378,6 +379,40 @@ class EscalationServiceTest {
                 any(String[].class), contains("ÇÖZÜLDÜ"),
                 eq("notify.example.com"), eq("EXPIRY"), eq("WARNING"),
                 any(), eq("test-user"), any(), any(), isNull(), any(), any());
+    }
+
+    @Test
+    @DisplayName("PAGE_INTEGRITY resolve: ctx alarm-anı snapshot'ı + çözüm anı CANLI PageCheck (resolved_*) taşır")
+    void resolve_pageIntegrity_enrichesCtxWithLiveState() {
+        AlertEvent event = existingOpenAlert("https://x.example.com/", EscalationService.TYPE_PAGE_INTEGRITY, "HIGH", false);
+        event.setId(31L); event.setTeamId(7L);
+        event.setContextJson("{\"url\":\"https://x.example.com/\",\"monitor_id\":55,"
+                + "\"detail\":\"1 kırık, 1 zaman aşımı, 0 mixed content\","
+                + "\"problem_rows\":\"LINK\\thttps://dead.example.com/w\\t\",\"problem_total\":1}");
+        when(alertEventRepo.findById(31L)).thenReturn(Optional.of(event));
+        when(alertEventRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        com.certmonitor.model.Team team = new com.certmonitor.model.Team();
+        team.setId(7L); team.setName("SY-Dijital"); team.setEmail("dijitalsy@akbank.com");
+        when(teamRepo.findById(7L)).thenReturn(Optional.of(team));
+        com.certmonitor.model.PageCheck latest = new com.certmonitor.model.PageCheck();
+        latest.setMonitorId(55L); latest.setStatus("OK"); latest.setTotalResources(135);
+        latest.setBrokenResources(0); latest.setTimeoutCount(0); latest.setMixedContentCount(0);
+        latest.setCheckedAt("2026-08-04T09:42:00");
+        when(pageCheckRepo.findTopByMonitorIdOrderByCheckedAtDesc(55L)).thenReturn(Optional.of(latest));
+
+        service.resolve(31L, "test-user");
+
+        @SuppressWarnings({"unchecked", "rawtypes"})
+        ArgumentCaptor<Map> ctxCap = ArgumentCaptor.forClass(Map.class);
+        verify(emailService).sendResolutionAlert(
+                any(String[].class), contains("ÇÖZÜLDÜ"),
+                eq("https://x.example.com/"), eq(EscalationService.TYPE_PAGE_INTEGRITY), eq("HIGH"),
+                any(), eq("test-user"), any(), any(), ctxCap.capture(), any(), any());
+        Map<String, Object> ctx = ctxCap.getValue();
+        assertThat(ctx).containsEntry("detail", "1 kırık, 1 zaman aşımı, 0 mixed content");   // alarm anı
+        assertThat(ctx).containsKey("problem_rows");                                          // sorunlu kaynaklar
+        assertThat(ctx).containsEntry("resolved_page_status", "OK");                          // çözüm anı canlı
+        assertThat(ctx).containsEntry("resolved_total_resources", 135);
     }
 
     @Test

@@ -105,6 +105,46 @@ describe('PageMonitorPage', () => {
     await screen.findByText('https://a.example.com')
   })
 
+  it('Kopyala: TÜM kullanıcı ayarları birebir kopyalanır (yalnız ad "(Kopya)" olur)', async () => {
+    // Her alan varsayılandan FARKLI → bir alan formFrom'dan düşerse tam-payload karşılaştırması kırılır.
+    api.monitoring.getPageMonitors.mockResolvedValue({ success: true, data: [{
+      id: 1, name: 'Akbank', url: 'https://www.akbank.com/', status: 'DEGRADED', checked_at: '2026-06-24T00:00:00',
+      group_name: 'Kurumsal', team_id: 5, team_name: 'SY-A', tags: 'prod,kritik', notify_email: false,
+      mode: 'CRAWL', crawl_depth: 3, crawl_max_pages: 80, exclude_patterns: '/ads/\n/tracker/',
+      slow_resource_ms: 1500, alert_third_party: true, alert_mixed_content: false, alert_timeout: false,
+      resource_concurrency: 8, interval_seconds: 600, timeout_ms: 6000,
+      confirm_attempts: 5, confirm_interval_seconds: 45, recovery_checks: 4, recovery_interval_seconds: 90,
+      active: false,
+    }] })
+    api.monitoring.createPageMonitor.mockResolvedValue({ success: true, data: {} })
+
+    render(<PageMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
+    await waitFor(() => expect(api.monitoring.getPageMonitors).toHaveBeenCalled())
+    await screen.findByText('https://www.akbank.com/')
+
+    fireEvent.click(screen.getByRole('button', { name: /kopyala|duplicate/i }))
+
+    // Kopya rozeti + ipucu görünür (yeni-kayıt modu, kaynak belli)
+    expect(document.querySelector('.mon-dup-badge')).not.toBeNull()
+    expect(document.querySelector('.mon-dup-hint')).not.toBeNull()
+    expect(screen.getByPlaceholderText('https://www.akbank.com/').value).toMatch(/\(Kopya\)$/)
+    expect(document.querySelector('.page-exclude-ta').value).toBe('/ads/\n/tracker/')
+
+    fireEvent.click(screen.getByRole('button', { name: /^save$|^kaydet$/i }))
+    await waitFor(() => expect(api.monitoring.createPageMonitor).toHaveBeenCalled())
+    expect(api.monitoring.updatePageMonitor).not.toHaveBeenCalled()
+
+    expect(api.monitoring.createPageMonitor.mock.calls[0][0]).toEqual({
+      name: 'Akbank (Kopya)', url: 'https://www.akbank.com/',
+      groupName: 'Kurumsal', teamId: 5, tags: 'prod,kritik', notifyEmail: false,
+      mode: 'CRAWL', crawlDepth: 3, crawlMaxPages: 80, excludePatterns: '/ads/\n/tracker/',
+      slowResourceMs: 1500, alertThirdParty: true, alertMixedContent: false, alertTimeout: false,
+      resourceConcurrency: 8, intervalSeconds: 600, timeoutMs: 6000,
+      confirmAttempts: 5, confirmIntervalSeconds: 45, recoveryChecks: 4, recoveryIntervalSeconds: 90,
+      active: false,   // duraklatılmış kaynağın kopyası da pasif doğar
+    })
+  })
+
   // ── Sorun satırından "Hariç tut" aksiyonu ──────────────────────────────────
   const brokenIssue = {
     id: 11, monitor_id: 1, resource_url: 'https://voting.institutionalinvestor.com/welcome',

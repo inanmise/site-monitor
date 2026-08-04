@@ -9,8 +9,9 @@ import MonitorGuideButton from './ui/MonitorGuideButton.jsx'
 import SearchableSelect from './ui/SearchableSelect.jsx'
 import MaintenanceBadge from './ui/MaintenanceBadge.jsx'
 import TagInput from './ui/TagInput.jsx'
-import { Play, Pencil, X, RefreshCw, Plug, Plus, Trash2, FlaskConical, AlertTriangle, Network, Check, Pause, BarChart3, ChevronDown, BellDot,
+import { Play, Pencil, Copy, X, RefreshCw, Plug, Plus, Trash2, FlaskConical, AlertTriangle, Network, Check, Pause, BarChart3, ChevronDown, BellDot,
   Mail, MessageSquare, Phone, Smartphone } from 'lucide-react'
+import { duplicateName } from '../utils/duplicateName.js'
 import AlertHistory from './admin/AlertHistory.jsx'
 import MonitorStatsBar from './MonitorStatsBar.jsx'
 const ResponseTimeChart = lazy(() => import('./ResponseTimeChart.jsx'))
@@ -65,6 +66,7 @@ export default function PortMonitorPage({ systemRole, teamId, teamName }) {
   const [detailTab, setDetailTab] = useState('control')
   const [summary, setSummary] = useState({ total: 0, down: 0 })
   const [modal, setModal] = useState(null)
+  const [dupSource, setDupSource] = useState(null)  // Kopyala akışında kaynak monitör (rozet/ipucu için)
   const [form, setForm] = useState(emptyForm)
   const [teamGroups, setTeamGroups] = useState([])   // form takımı+türüne göre grup önerileri (sızıntısız, server-scoped)
   const [advOpen, setAdvOpen] = useState(false)               // "Gelişmiş ayarlar" accordion
@@ -152,17 +154,19 @@ export default function PortMonitorPage({ systemRole, teamId, teamName }) {
   function closeModal() { setSelected(null); setHistory([]) }
 
   function openNew() {
+    setDupSource(null)
     setForm({ ...emptyForm, teamId: isAdmin ? '' : (myTeam ?? ''),
       intervalSeconds: defaults?.intervalSeconds ?? emptyForm.intervalSeconds,
       timeoutMs: defaults?.timeoutMs ?? emptyForm.timeoutMs,
       slowThresholdMs: defaults?.slowThresholdMs ?? emptyForm.slowThresholdMs })
     setModal('new')
   }
-  function openEdit(m) {
+  /** Monitör (snake_case) → form state eşlemesi. Edit ve Kopyala AYNI eşlemeyi kullanır → alan kaçmaz. */
+  function formFrom(m) {
     // Envanter-türevi monitörde team_id null olabilir; liste team_name'i (domain→takım) gösterir →
     // edit'te o takımı önseç (aksi halde "takımsız" görünür), team_name'i teams'ten eşleştirerek.
     const derivedTeam = m.team_id == null && m.team_name ? teams.find(tm => tm.name === m.team_name) : null
-    setForm({ name: m.name || '', host: m.host || '', port: m.port ?? '', protocol: m.protocol || 'TCP',
+    return { name: m.name || '', host: m.host || '', port: m.port ?? '', protocol: m.protocol || 'TCP',
       expect: m.expect || '', sendData: m.send_data || '',
       teamId: m.team_id != null ? String(m.team_id) : (derivedTeam ? String(derivedTeam.id) : ''), groupName: m.group_name || '',
       tags: m.tags || '', notifyEmail: m.notify_email !== false, ipVersion: m.ip_version || 'auto',
@@ -170,10 +174,21 @@ export default function PortMonitorPage({ systemRole, teamId, teamName }) {
       intervalSeconds: m.interval_seconds ?? 300, timeoutMs: m.timeout_ms ?? 5000,
       confirmAttempts: m.confirm_attempts ?? 3, confirmIntervalSeconds: m.confirm_interval_seconds ?? 30,
       recoveryChecks: m.recovery_checks ?? 3, recoveryIntervalSeconds: m.recovery_interval_seconds ?? 30,
-      active: m.active !== false })
+      active: m.active !== false }
+  }
+  function openEdit(m) {
+    setDupSource(null)
+    setForm(formFrom(m))
     setModal(m)
   }
-  function closeEdit() { setModal(null) }
+  /** Kopyala: kaynağın birebir kopyası, YENİ kayıt modunda (create). Ad "(Kopya)" sonekli;
+   *  kullanıcı genelde yalnız host alanını değiştirip kaydeder. Mükerrer koruması backend'de. */
+  function openDuplicate(m) {
+    setDupSource(m)
+    setForm({ ...formFrom(m), name: duplicateName(m.name || m.host) })
+    setModal('new')
+  }
+  function closeEdit() { setModal(null); setDupSource(null) }
 
   async function save() {
     if (!form.host.trim() || !form.port) { setSaveError(t('port.hostRequired')); return }
@@ -423,6 +438,11 @@ export default function PortMonitorPage({ systemRole, teamId, teamName }) {
                         <Pencil size={12} />
                       </button>
                     )}
+                    {canManageRow(m) && (
+                      <button className="btn btn-sm mon-btn-edit" onClick={() => openDuplicate(m)} title={t('mon.duplicate')} aria-label={t('mon.duplicate')}>
+                        <Copy size={12} />
+                      </button>
+                    )}
                   </td>
                 </tr>
               ))}
@@ -583,14 +603,17 @@ export default function PortMonitorPage({ systemRole, teamId, teamName }) {
           <div className="modal-box" onClick={e => e.stopPropagation()} style={{ maxWidth: 640, width: '92vw', maxHeight: '90vh', overflowY: 'auto' }}>
             <div className="modal-icon-hdr modal-icon-hdr--port">
               <div className="modal-icon-hdr-badge"><Plug size={20} /></div>
-              <h3>{modal === 'new' ? t('port.modalAdd') : t('port.modalEdit')}</h3>
+              <h3>{modal === 'new' ? t('port.modalAdd') : t('port.modalEdit')}
+                {dupSource && <span className="mon-dup-badge">{t('mon.duplicateBadge')}</span>}</h3>
             </div>
 
-            <div className="port-type-banner"><Plug size={16} /><span>{t('port.typeInfo')}</span></div>
+            {dupSource
+              ? <div className="mon-dup-hint">{t('mon.duplicateHint')}</div>
+              : <div className="port-type-banner"><Plug size={16} /><span>{t('port.typeInfo')}</span></div>}
 
             <div className="form-grid form-grid--top">
               <label><span>{t('port.host')} <span className="req-star">*</span></span>
-                <input value={form.host} placeholder="1.2.3.4 / host.example.com"
+                <input value={form.host} placeholder="1.2.3.4 / host.example.com" autoFocus={!!dupSource}
                   onChange={e => setForm(f => ({ ...f, host: e.target.value }))} /></label>
               <label><span>{t('port.port')} <span className="req-star">*</span></span>
                 <input type="number" min="1" max="65535" value={form.port}

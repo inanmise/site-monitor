@@ -34,6 +34,7 @@ describe('KeywordMonitorPage', () => {
     vi.clearAllMocks()
     api.monitoring.getKeywordMonitors.mockResolvedValue({ success: true, data: [monitor] })
     api.monitoring.getKeywordHistory.mockResolvedValue({ success: true, data: { checks: [], total: 0, down: 0 } })
+    api.admin.getTeams.mockResolvedValue({ success: true, data: [{ id: 5, name: 'SY-A' }] })   // ADMIN akışı (Kopyala) takım listesi ister
   })
 
   it('izleme kartını (url + kelime) listeler', async () => {
@@ -77,6 +78,51 @@ describe('KeywordMonitorPage', () => {
     await waitFor(() => expect(api.monitoring.getKeywordHistory).toHaveBeenCalled())
     expect(screen.getByRole('button', { name: /check history|kontrol/i })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /response chart|süre/i })).toBeInTheDocument()
+  })
+
+  it('Kopyala: TÜM kullanıcı ayarları birebir kopyalanır (yalnız ad "(Kopya)" olur)', async () => {
+    // Her alan varsayılandan FARKLI → bir alan formFrom'dan düşerse tam-payload karşılaştırması kırılır.
+    api.monitoring.getKeywordMonitors.mockResolvedValue({ success: true, data: [{
+      id: 1, name: 'Akbank', url: 'https://www.akbank.com/', keyword: 'akbank', status: 'up',
+      checked_at: '2026-06-24T00:00:00',
+      operator: 'LTE', match_count: 4, group_name: 'Kurumsal', team_id: 5, team_name: 'SY-A',
+      case_sensitive: true, tags: 'prod,kritik', notify_email: false,
+      check_ssl_errors: true, ssl_expiry_reminders: true, domain_expiry_reminders: true,
+      ssl_reminder_days: '45,20,5', domain_reminder_days: '60,30,10',
+      slow_response_enabled: true, slow_threshold_ms: 4500,
+      interval_seconds: 900, timeout_ms: 8000,
+      confirm_attempts: 5, confirm_interval_seconds: 45, recovery_checks: 4, recovery_interval_seconds: 90,
+      custom_headers: 'X-Api-Key: abc', active: false,
+    }] })
+    api.monitoring.createKeywordMonitor.mockResolvedValue({ success: true, data: {} })
+
+    render(<KeywordMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
+    await waitFor(() => expect(api.monitoring.getKeywordMonitors).toHaveBeenCalled())
+    await screen.findByText('https://www.akbank.com/')
+
+    fireEvent.click(screen.getByRole('button', { name: /kopyala|duplicate/i }))
+
+    // Kopya rozeti + ipucu görünür (yeni-kayıt modu, kaynak belli)
+    expect(document.querySelector('.mon-dup-badge')).not.toBeNull()
+    expect(document.querySelector('.mon-dup-hint')).not.toBeNull()
+    expect(screen.getByPlaceholderText('https://www.akbank.com/').value).toMatch(/\(Kopya\)$/)
+
+    fireEvent.click(screen.getByRole('button', { name: /^save$|^kaydet$/i }))
+    await waitFor(() => expect(api.monitoring.createKeywordMonitor).toHaveBeenCalled())
+    expect(api.monitoring.updateKeywordMonitor).not.toHaveBeenCalled()
+
+    expect(api.monitoring.createKeywordMonitor.mock.calls[0][0]).toEqual({
+      name: 'Akbank (Kopya)', url: 'https://www.akbank.com/', keyword: 'akbank',
+      operator: 'LTE', matchCount: 4, groupName: 'Kurumsal', teamId: 5,
+      caseSensitive: true, tags: 'prod,kritik', notifyEmail: false,
+      checkSslErrors: true, sslExpiryReminders: true, domainExpiryReminders: true,
+      sslReminderDays: '45,20,5', domainReminderDays: '60,30,10',
+      slowResponseEnabled: true, slowThresholdMs: 4500,
+      intervalSeconds: 900, timeoutMs: 8000,
+      confirmAttempts: 5, confirmIntervalSeconds: 45, recoveryChecks: 4, recoveryIntervalSeconds: 90,
+      customHeaders: 'X-Api-Key: abc',
+      active: false,   // duraklatılmış kaynağın kopyası da pasif doğar
+    })
   })
 
   it('istatistik panosu: İhlal/Hata ayrımı + filtreleme/temizleme', async () => {

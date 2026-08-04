@@ -5,7 +5,8 @@ import { useVisibleInterval } from '../hooks/useVisibleInterval'
 import { useToast } from './ui/Toast.jsx'
 import MonitorHowBox from './ui/MonitorHowBox.jsx'
 import MonitorGuideButton from './ui/MonitorGuideButton.jsx'
-import { Play, Pencil, Trash2, Plus, ChevronDown, Globe, Info, Network, AlertTriangle, FlaskConical, Check, Layers, RefreshCw, Pause, BarChart3, BellDot, ArrowLeftRight } from 'lucide-react'
+import { Play, Pencil, Copy, Trash2, Plus, ChevronDown, Globe, Info, Network, AlertTriangle, FlaskConical, Check, Layers, RefreshCw, Pause, BarChart3, BellDot, ArrowLeftRight } from 'lucide-react'
+import { duplicateName } from '../utils/duplicateName.js'
 import DnsDetailModal from './DnsDetailModal.jsx'
 import MonitorStatsBar from './MonitorStatsBar.jsx'
 import SearchableSelect from './ui/SearchableSelect.jsx'
@@ -55,6 +56,7 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName }) {
   const [teams, setTeams] = useState([])
   const [detailMonitor, setDetailMonitor] = useState(null)
   const [modal, setModal] = useState(null)
+  const [dupSource, setDupSource] = useState(null)  // Kopyala akışında kaynak monitör (rozet/ipucu için)
   const [form, setForm] = useState(emptyForm)
   const [teamGroups, setTeamGroups] = useState([])   // form takımı+türüne göre grup önerileri (sızıntısız, server-scoped)
   const [saving, setSaving] = useState(false)
@@ -119,13 +121,15 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName }) {
     ...teams.map(tm => ({ value: String(tm.id), label: tm.name }))]
 
   function openNew() {
+    setDupSource(null)
     setForm({ ...emptyForm, teamId: isAdmin ? '' : (myTeam ?? ''),
       intervalSeconds: defaults?.intervalSeconds ?? emptyForm.intervalSeconds })
     setTestResult(null)
     setModal('new')
   }
-  function openEdit(m) {
-    setForm({
+  /** Monitör (snake_case) → form state eşlemesi. Edit ve Kopyala AYNI eşlemeyi kullanır → alan kaçmaz. */
+  function formFrom(m) {
+    return {
       name: m.name || '',
       domain: m.domain || '',
       recordType: m.record_type,
@@ -137,11 +141,23 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName }) {
       propagationCheck: m.propagation_check === true,
       dnsChangeAlertEnabled: m.dns_change_alert_enabled !== false,   // null/undefined = açık
       active: m.active !== false,
-    })
+    }
+  }
+  function openEdit(m) {
+    setDupSource(null)
+    setForm(formFrom(m))
     setTestResult(null)
     setModal(m)
   }
-  function closeEditModal() { setModal(null); setTestResult(null) }
+  /** Kopyala: kaynağın birebir kopyası, YENİ kayıt modunda (create). Ad "(Kopya)" sonekli;
+   *  kullanıcı genelde yalnız domain alanını değiştirip kaydeder. Mükerrer koruması backend'de. */
+  function openDuplicate(m) {
+    setDupSource(m)
+    setForm({ ...formFrom(m), name: duplicateName(m.name || m.domain) })
+    setTestResult(null)
+    setModal('new')
+  }
+  function closeEditModal() { setModal(null); setTestResult(null); setDupSource(null) }
 
   async function save() {
     // Takım alanı yalnız yeni/standalone'da görünür ve zorunlu; envanter-türevi düzenlemede takım envanterden gelir.
@@ -428,6 +444,12 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName }) {
                         <Pencil size={12} />
                       </button>
                     )}
+                    {canManageRow(m) && (
+                      <button className="btn btn-sm dns-btn-edit" onClick={e => { e.stopPropagation(); openDuplicate(m) }}
+                        title={t('mon.duplicate')} aria-label={t('mon.duplicate')}>
+                        <Copy size={12} />
+                      </button>
+                    )}
                     {canDeleteRow(m) && (
                       <button className="btn btn-sm dns-btn-del" disabled={deleting === m.id}
                         onClick={() => deleteMonitor(m)} title={t('dns.delete')}>
@@ -454,8 +476,10 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName }) {
               <div className="modal-icon-hdr-badge">
                 <Network size={20} />
               </div>
-              <h3>{modal === 'new' ? t('dns.modalNew') : t('dns.modalEdit')}</h3>
+              <h3>{modal === 'new' ? t('dns.modalNew') : t('dns.modalEdit')}
+                {dupSource && <span className="mon-dup-badge">{t('mon.duplicateBadge')}</span>}</h3>
             </div>
+            {dupSource && <div className="mon-dup-hint">{t('mon.duplicateHint')}</div>}
             <div className="form-grid form-grid--top">
               <label>
                 <span>{t('dns.domain')} <span className="req-star">*</span></span>
@@ -463,7 +487,7 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName }) {
                   value={form.domain}
                   onChange={e => setForm(f => ({ ...f, domain: e.target.value }))}
                   placeholder={t('dns.domainPlaceholder')}
-                  autoFocus={modal === 'new'}
+                  autoFocus={modal === 'new' || !!dupSource}
                 />
               </label>
               {(modal === 'new' || modal.standalone) && (
