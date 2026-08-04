@@ -152,7 +152,10 @@ public class SmtpMailService {
     }
 
     private String buildTestHtml(SmtpSettings s) {
-        String now = LocalDateTime.now().format(DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm"));
+        // Explicit İstanbul: konteynerde JVM saat dilimi GMT olduğu için zone'suz now() test e-postasında
+        // saati 3 saat geri gösteriyordu (diğer tüm e-postalar EmailNotificationService gibi IST kullanır).
+        String now = LocalDateTime.now(java.time.ZoneId.of("Europe/Istanbul"))
+                .format(DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm"));
         // Outlook-güvenli çerçeve: dış bgcolor tablo → ortalanmış 520px beyaz kart → padding td'de; Apple dark-mode kapalı.
         return "<!DOCTYPE html><html lang='tr'><head><meta charset='UTF-8'>"
                 + "<meta name='viewport' content='width=device-width,initial-scale=1'>"

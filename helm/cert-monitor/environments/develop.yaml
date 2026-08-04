@@ -20,6 +20,7 @@ replicaCount: 1
 
 config:
   springProfile: prod
+  logLevel: "DEBUG"         # dev: ayrıntılı iz sürme (tek replica, hacim sorun değil)
   corsAllowedOrigins: "https://cert-monitor-dev.example.com,http://localhost:5173"
   certCheckHour: "*/2"     # every 2 hours in dev
   certCheckMinute: "0"

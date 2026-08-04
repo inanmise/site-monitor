@@ -53,6 +53,9 @@ RUN mkdir -p /app/data && chown -R appuser:appgroup /app
 
 COPY --from=backend-build --chown=appuser:appgroup /app/target/*.jar app.jar
 COPY --from=frontend-build --chown=appuser:appgroup /app/frontend/dist ./frontend/dist
+# Ürün sürümü (AppVersion.resolve → /app/VERSION). Olmadığında jar manifest'ine (pom <version>, bayat)
+# düşülüyor ve pod logu yanlış sürüm raporluyordu — hangi release'in koştuğu loglardan doğrulanamıyordu.
+COPY --chown=appuser:appgroup VERSION /app/VERSION
 
 USER appuser
 

@@ -20,6 +20,7 @@ replicaCount: 2
 
 config:
   springProfile: prod
+  logLevel: "INFO"
   corsAllowedOrigins: "https://cert-monitor-staging.example.com"
   certCheckHour: "3"
   certCheckMinute: "0"

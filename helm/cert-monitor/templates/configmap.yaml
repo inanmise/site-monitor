@@ -7,6 +7,10 @@ metadata:
     {{- include "cert-monitor.labels" . | nindent 4 }}
 data:
   SPRING_PROFILES_ACTIVE: {{ .Values.config.springProfile | quote }}
+  # Log seviyesi ve @Scheduled havuzu chart'ta YOKTU → pod'a elle set edilen değer her helm upgrade'de
+  # sessizce kayboluyordu. Artık chart'tan yönetiliyor (runtime override: Ayarlar → Loglama).
+  LOG_LEVEL: {{ .Values.config.logLevel | default "INFO" | quote }}
+  SCHEDULING_POOL_SIZE: {{ .Values.config.schedulingPoolSize | default "8" | quote }}
   {{- if .Values.postgresql.enabled }}
   DB_HOST: {{ printf "%s-postgresql" .Release.Name | quote }}
   DB_PORT: "5432"

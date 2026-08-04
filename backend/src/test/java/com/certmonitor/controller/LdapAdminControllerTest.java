@@ -92,12 +92,25 @@ class LdapAdminControllerTest {
     @Test
     @DisplayName("POST /test returns the directory service result")
     void test_returnsResult() throws Exception {
-        when(directoryService.testConnection())
+        when(directoryService.testConnection(false))
                 .thenReturn(Map.of("success", true, "message", "ok"));
         mvc.perform(post("/api/admin/ldap/test").session(bootstrapAdmin()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success").value(true))
                 .andExpect(jsonPath("$.message").value("ok"));
+    }
+
+    @Test
+    @DisplayName("POST /test?verify=true: kayıtlı ayar değişmeden DOĞRULAMALI deneme yapılır")
+    void test_verifyMode_forwardsFlag() throws Exception {
+        when(directoryService.testConnection(true))
+                .thenReturn(Map.of("success", true, "message", "ok", "verified", true));
+        mvc.perform(post("/api/admin/ldap/test").param("verify", "true").session(bootstrapAdmin()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.verified").value(true));
+        org.mockito.Mockito.verify(directoryService).testConnection(true);
+        org.mockito.Mockito.verify(settingsService, org.mockito.Mockito.never())
+                .save(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
     }
 
     @Test

@@ -26,8 +26,12 @@ class SecretMaskTest {
             "cert.monitor.keyword.interval-ms", "cert.monitor.keyword.alert-enabled",
             "spring.datasource.hikari.keepalive-time", "server.port", "spring.datasource.hikari.maximum-pool-size",
             "cert.monitor.warning-days", "spring.datasource.username", "cert.monitor.username",
-            "spring.datasource.url", "host", "cert.monitor.log.timezone" })
-    @DisplayName("isSensitive: benign anahtarlar (keyword/keepalive/user/port…) MASKELENMEZ")
+            "spring.datasource.url", "host", "cert.monitor.log.timezone",
+            // Hassas kelime İÇEREN ama sır OLMAYAN politika değerleri (2026-08-05): denetimde tam da
+            // bakılan alanlar loglarda ***** görünüyordu.
+            "cert.monitor.password.min-length", "cert.monitor.password.max-length",
+            "cert.monitor.password.history-count", "cert.monitor.scripted.hardcoded-secret-policy" })
+    @DisplayName("isSensitive: benign anahtarlar (keyword/keepalive/user/port/politika…) MASKELENMEZ")
     void benign_keysOpen(String key) {
         assertThat(SecretMask.isSensitive(key)).as(key).isFalse();
         assertThat(SecretMask.mask(key, "acik-deger")).isEqualTo("acik-deger");

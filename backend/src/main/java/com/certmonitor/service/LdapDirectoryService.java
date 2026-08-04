@@ -65,10 +65,24 @@ public class LdapDirectoryService {
 
     private final LdapSettingsService settingsService;
 
+    /** Trust-all uyarısı için kısma penceresi — her bağlantıda değil, en fazla 10 dk'da bir loglanır. */
+    private static final long TRUST_ALL_WARN_INTERVAL_MS = 600_000L;
+    private final java.util.concurrent.atomic.AtomicLong lastTrustAllWarnAt =
+            new java.util.concurrent.atomic.AtomicLong(0L);
+
     // ── Public operations ────────────────────────────────────────────────────
 
     /** Binds with the service account against the current settings. */
     public Map<String, Object> testConnection() {
+        return testConnection(false);
+    }
+
+    /**
+     * Bind testi. {@code forceVerify=true} ise KAYITLI ayar değiştirilmeden sertifika doğrulaması
+     * AÇIK (yüklü CA PEM ile) denenir — admin, "sertifika doğrulamasını atla" seçeneğini kapatmadan
+     * önce bağlantının gerçekten kurulacağını görebilsin diye. Yeşilse ayar güvenle kapatılabilir.
+     */
+    public Map<String, Object> testConnection(boolean forceVerify) {
         LdapSettings s = settingsService.getOrDefaults();
         Map<String, Object> out = new LinkedHashMap<>();
         if (s.getHost() == null || s.getHost().isBlank()) {
@@ -76,8 +90,9 @@ public class LdapDirectoryService {
             out.put("error", "LDAP host yapılandırılmamış");
             return out;
         }
+        if (forceVerify) out.put("verified", true);
         long start = System.currentTimeMillis();
-        try (LdapConn conn = open(s)) {
+        try (LdapConn conn = open(s, forceVerify)) {   // forceVerify: kayıtlı ayar değişmeden doğrulama açık
             // A trivial read proves the bind + transport actually work.
             conn.ctx.getAttributes("", new String[]{"namingContexts"});
             out.put("success", true);
@@ -252,7 +267,8 @@ public class LdapDirectoryService {
     private boolean bindAs(LdapSettings s, String userDn, String password) {
         boolean startTls = Boolean.TRUE.equals(s.getStartTls());
         boolean ldaps = Boolean.TRUE.equals(s.getUseLdaps()) && !startTls;
-        boolean customTls = ldaps && needsCustomTls(s);
+        boolean skipVerify = effectiveSkipVerify(s, false);
+        boolean customTls = ldaps && needsCustomTls(s, skipVerify);
 
         Hashtable<String, Object> env = new Hashtable<>();
         env.put(Context.INITIAL_CONTEXT_FACTORY, CTX_FACTORY);
@@ -266,18 +282,18 @@ public class LdapDirectoryService {
             if (ldaps) {
                 env.put(Context.SECURITY_PROTOCOL, "ssl");
                 if (customTls) {
-                    ConfigurableSslSocketFactory.set(buildSslSocketFactory(s));
+                    ConfigurableSslSocketFactory.set(buildSslSocketFactory(s, skipVerify));
                     env.put("java.naming.ldap.factory.socket", ConfigurableSslSocketFactory.class.getName());
                 }
             }
             if (startTls) {
                 LdapContext lc = new InitialLdapContext(env, null);
                 tls = (StartTlsResponse) lc.extendedOperation(new StartTlsRequest());
-                if (Boolean.TRUE.equals(s.getSkipCertVerification())) {
+                if (skipVerify) {
                     tls.setHostnameVerifier(ACCEPT_ALL_HOSTS);
-                    tls.negotiate(buildSslSocketFactory(s));
+                    tls.negotiate(buildSslSocketFactory(s, true));
                 } else if (s.getCaCertPem() != null && !s.getCaCertPem().isBlank()) {
-                    tls.negotiate(buildSslSocketFactory(s));
+                    tls.negotiate(buildSslSocketFactory(s, false));
                 } else {
                     tls.negotiate();
                 }
@@ -321,8 +337,14 @@ public class LdapDirectoryService {
     // ── Connection handling ──────────────────────────────────────────────────
 
     private LdapConn open(LdapSettings s) throws Exception {
+        return open(s, false);
+    }
+
+    /** {@code forceVerify=true}: kayıtlı "doğrulamayı atla" ayarı GEÇİCİ olarak yok sayılır (yalnız test yolu). */
+    private LdapConn open(LdapSettings s, boolean forceVerify) throws Exception {
         boolean startTls = Boolean.TRUE.equals(s.getStartTls());
         boolean ldaps = Boolean.TRUE.equals(s.getUseLdaps()) && !startTls;
+        boolean skipVerify = effectiveSkipVerify(s, forceVerify);
 
         Hashtable<String, Object> env = new Hashtable<>();
         env.put(Context.INITIAL_CONTEXT_FACTORY, CTX_FACTORY);
@@ -330,12 +352,12 @@ public class LdapDirectoryService {
         env.put("com.sun.jndi.ldap.connect.timeout", String.valueOf(CONNECT_TIMEOUT_MS));
         env.put("com.sun.jndi.ldap.read.timeout", String.valueOf(READ_TIMEOUT_MS));
 
-        boolean customTls = ldaps && needsCustomTls(s);
+        boolean customTls = ldaps && needsCustomTls(s, skipVerify);
         try {
             if (ldaps) {
                 env.put(Context.SECURITY_PROTOCOL, "ssl");
                 if (customTls) {
-                    ConfigurableSslSocketFactory.set(buildSslSocketFactory(s));
+                    ConfigurableSslSocketFactory.set(buildSslSocketFactory(s, skipVerify));
                     env.put("java.naming.ldap.factory.socket", ConfigurableSslSocketFactory.class.getName());
                 }
             }
@@ -346,11 +368,11 @@ public class LdapDirectoryService {
                 StartTlsResponse tls = null;
                 try {
                     tls = (StartTlsResponse) ctx.extendedOperation(new StartTlsRequest());
-                    if (Boolean.TRUE.equals(s.getSkipCertVerification())) {
+                    if (skipVerify) {
                         tls.setHostnameVerifier(ACCEPT_ALL_HOSTS);
-                        tls.negotiate(buildSslSocketFactory(s));
+                        tls.negotiate(buildSslSocketFactory(s, true));
                     } else if (s.getCaCertPem() != null && !s.getCaCertPem().isBlank()) {
-                        tls.negotiate(buildSslSocketFactory(s));
+                        tls.negotiate(buildSslSocketFactory(s, false));
                     } else {
                         tls.negotiate();
                     }
@@ -400,13 +422,35 @@ public class LdapDirectoryService {
         }
     }
 
-    private static boolean needsCustomTls(LdapSettings s) {
-        return Boolean.TRUE.equals(s.getSkipCertVerification())
-                || (s.getCaCertPem() != null && !s.getCaCertPem().isBlank());
+    static boolean needsCustomTls(LdapSettings s, boolean skipVerify) {   // package-private: test görsün
+        return skipVerify || (s.getCaCertPem() != null && !s.getCaCertPem().isBlank());
     }
 
-    private SSLSocketFactory buildSslSocketFactory(LdapSettings s) throws Exception {
-        if (Boolean.TRUE.equals(s.getSkipCertVerification())) {
+    /**
+     * Geçerli "doğrulamayı atla" değeri + UYARI. Atlama açıkken sertifika zinciri ve hostname HİÇ
+     * doğrulanmaz; bind parolası ve tüm kullanıcı parolaları bu kanaldan geçtiği için LDAPS yalnız
+     * şifreleme sağlar, kimlik doğrulama sağlamaz (aktif MITM mümkün). CA PEM yüklüyse de kullanılmaz.
+     * {@code forceVerify} test yolundan gelir: kayıtlı ayarı değiştirmeden doğrulamalı deneme yapılır.
+     */
+    boolean effectiveSkipVerify(LdapSettings s, boolean forceVerify) {   // package-private: test görsün
+        boolean skip = !forceVerify && Boolean.TRUE.equals(s.getSkipCertVerification());
+        if (skip) warnTrustAllThrottled(s);
+        return skip;
+    }
+
+    private void warnTrustAllThrottled(LdapSettings s) {
+        long now = System.currentTimeMillis();
+        long last = lastTrustAllWarnAt.get();
+        if (now - last < TRUST_ALL_WARN_INTERVAL_MS || !lastTrustAllWarnAt.compareAndSet(last, now)) return;
+        boolean pemLoaded = s.getCaCertPem() != null && !s.getCaCertPem().isBlank();
+        log.warn("LDAP sertifika doğrulaması KAPALI (skip_cert_verification=true) — bind ve kullanıcı "
+                + "parolaları doğrulanmamış TLS üzerinden geçiyor{}. Yönetim → LDAP ekranından "
+                + "\"CA ile doğrulayarak test et\" yeşil dönüyorsa bu ayarı kapatın.",
+                pemLoaded ? "; yüklü CA sertifikası KULLANILMIYOR" : "");
+    }
+
+    private SSLSocketFactory buildSslSocketFactory(LdapSettings s, boolean skipVerify) throws Exception {
+        if (skipVerify) {
             SSLContext sc = SSLContext.getInstance("TLS");
             sc.init(null, new TrustManager[]{TRUST_ALL}, new SecureRandom());
             return sc.getSocketFactory();

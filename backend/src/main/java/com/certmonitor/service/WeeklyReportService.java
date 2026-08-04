@@ -28,6 +28,7 @@ import java.io.ByteArrayInputStream;
 import java.time.DayOfWeek;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.time.temporal.WeekFields;
@@ -98,6 +99,11 @@ public class WeeklyReportService {
     private static final DateTimeFormatter ISO =
             DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
 
+    /** "Bugün/bu hafta" kararları kullanıcının takvimine göre verilir. Konteynerde JVM saat dilimi GMT
+     *  olduğu için zone'suz LocalDate.now(), 00:00–03:00 arasında yıl/ISO-hafta'yı bir gün geri gösteriyordu
+     *  (kardeş servisler — WeeklyReportKpiService, MonitoringWeeklyStatsService — zaten explicit IST kullanıyor). */
+    private static final ZoneId IST = ZoneId.of("Europe/Istanbul");
+
     private static final Set<String> ALLOWED_IMAGE_TYPES =
             Set.of("image/png", "image/jpeg", "image/gif", "image/webp", "image/bmp");
 
@@ -136,7 +142,7 @@ public class WeeklyReportService {
     // ── Listeleme / okuma ─────────────────────────────────────────────────────
 
     public List<WeeklyReport> list(Long requestedTeamId, Integer year, Actor actor) {
-        int y = year != null ? year : LocalDate.now().getYear();
+        int y = year != null ? year : LocalDate.now(IST).getYear();
         Long teamId = actor.isAdmin() || actor.isAudit()
                 ? requestedTeamId
                 : actor.teamId(); // non-ADMIN kendi takımına zorlanır
@@ -152,7 +158,7 @@ public class WeeklyReportService {
      *  içinde bulunulan ISO yılı yoksa başa eklenir — dropdown boş kalmaz. */
     public List<Integer> years(Long requestedTeamId, Actor actor) {
         Long teamId = actor.isAdmin() || actor.isAudit() ? requestedTeamId : actor.teamId();
-        int current = LocalDate.now().get(WeekFields.ISO.weekBasedYear());
+        int current = LocalDate.now(IST).get(WeekFields.ISO.weekBasedYear());
         if (!actor.isAdmin() && !actor.isAudit() && teamId == null) {
             return List.of(current);
         }
@@ -970,7 +976,7 @@ public class WeeklyReportService {
     /** Rapor haftası, içinde bulunulan veya bir önceki ISO haftası mı?
      *  weekBasedYear kullanılır — yıl sınırında (1 Ocak / 53. hafta) doğru çalışır. */
     static boolean inEditWindow(int reportYear, int weekNo) {
-        LocalDate today = LocalDate.now();
+        LocalDate today = LocalDate.now(IST);
         for (LocalDate d : List.of(today, today.minusWeeks(1))) {
             if (d.get(WeekFields.ISO.weekBasedYear()) == reportYear
                     && d.get(WeekFields.ISO.weekOfWeekBasedYear()) == weekNo) {

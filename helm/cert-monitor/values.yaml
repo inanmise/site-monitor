@@ -39,6 +39,13 @@ ingress:
 # Application configuration (non-sensitive)
 config:
   springProfile: prod
+  # com.certmonitor log seviyesi. Prod'da INFO: DEBUG'ta heartbeat/sweep/per-domain satırları pod başına
+  # günde on binlerce satır üretir ve prod'da hem console hem dosya appender'ına yazılır (çift I/O).
+  # Restart'sız değiştirmek için: Yönetim → Genel Ayarlar → Loglama (DB override env'i ezer).
+  logLevel: "INFO"
+  # @Scheduled havuzu (33 zamanlanmış iş; 4'ü 30 sn'lik sweep, 4'ü 10 sn'lik ayar-cache refresh).
+  # Sayfa bütünlüğü kontrolü tek başına 120 sn sürebildiği için dar havuz cron işlerini geciktirir.
+  schedulingPoolSize: "8"
   # External PostgreSQL connection — fill these in with real values
   dbHost: "REPLACE_DB_HOST"
   dbPort: "5432"

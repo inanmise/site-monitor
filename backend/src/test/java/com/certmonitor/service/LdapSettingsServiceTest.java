@@ -40,7 +40,8 @@ class LdapSettingsServiceTest {
         assertThat(d.getEnabled()).isTrue();
         assertThat(d.getUseLdaps()).isTrue();
         assertThat(d.getStartTls()).isFalse();
-        assertThat(d.getSkipCertVerification()).isTrue();
+        // 2026-08-05: güvenli varsayılan — doğrulama AÇIK (eskiden trust-all ile geliyordu)
+        assertThat(d.getSkipCertVerification()).isFalse();
         assertThat(d.getPort()).isEqualTo(636);
         assertThat(d.getUserAttribute()).isEqualTo("sAMAccountName");
         assertThat(d.getEmailAttribute()).isEqualTo("mail");
