@@ -1,4 +1,4 @@
--- cert-monitor — sentetik performans verisi üretici (PostgreSQL)
+-- site-monitor — sentetik performans verisi üretici (PostgreSQL)
 --
 -- NE İŞE YARAR: Büyüyen bir kontrol tablosunu (port_checks) hızlıca milyonlarca satıra doldurur ki
 -- optimizasyonların (LATERAL en-güncel, index'ler, batch purge) MİLYONLARCA satırda da hızlı kaldığı

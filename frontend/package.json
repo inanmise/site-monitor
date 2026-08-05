@@ -1,5 +1,5 @@
 {
-  "name": "cert-monitor-frontend",
+  "name": "site-monitor-frontend",
   "private": true,
   "version": "6.10.0",
   "type": "module",

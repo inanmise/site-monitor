@@ -8,15 +8,15 @@
 #   ./scripts/build-image.sh --registry ghcr.io/your-org --push
 #
 # Branch → Image tag mapping:
-#   master          → cert-monitor:1.0.0, cert-monitor:latest
-#   release/v1.0.0  → cert-monitor:1.0.0-rc, cert-monitor:staging
-#   develop         → cert-monitor:develop-<sha>, cert-monitor:develop
-#   feature/*       → cert-monitor:feature-<sha>  (local only)
+#   master          → site-monitor:1.0.0, site-monitor:latest
+#   release/v1.0.0  → site-monitor:1.0.0-rc, site-monitor:staging
+#   develop         → site-monitor:develop-<sha>, site-monitor:develop
+#   feature/*       → site-monitor:feature-<sha>  (local only)
 # ─────────────────────────────────────────────────────────────────────────────
 set -euo pipefail
 
 REGISTRY="${REGISTRY:-}"
-IMAGE_NAME="cert-monitor"
+IMAGE_NAME="site-monitor"
 PUSH=false
 
 for arg in "$@"; do
@@ -38,16 +38,16 @@ TAGS=()
 case "$BRANCH" in
   master)
     TAGS+=("${VERSION}" "latest")
-    ENV_VALUES="helm/cert-monitor/environments/master.yaml"
+    ENV_VALUES="helm/site-monitor/environments/master.yaml"
     ;;
   release/*)
     RC_VERSION="${VERSION}-rc"
     TAGS+=("${RC_VERSION}" "staging")
-    ENV_VALUES="helm/cert-monitor/environments/release.yaml"
+    ENV_VALUES="helm/site-monitor/environments/release.yaml"
     ;;
   develop)
     TAGS+=("develop-${GIT_SHA}" "develop")
-    ENV_VALUES="helm/cert-monitor/environments/develop.yaml"
+    ENV_VALUES="helm/site-monitor/environments/develop.yaml"
     ;;
   *)
     SAFE_BRANCH=$(echo "$BRANCH" | tr '/' '-' | tr -cd '[:alnum:]-')
@@ -101,10 +101,10 @@ fi
 if [ -n "$ENV_VALUES" ]; then
   echo ""
   echo "Deploy to Kubernetes:"
-  echo "  helm upgrade --install cert-monitor ./helm/cert-monitor \\"
-  echo "    -f helm/cert-monitor/values.yaml \\"
+  echo "  helm upgrade --install site-monitor ./helm/site-monitor \\"
+  echo "    -f helm/site-monitor/values.yaml \\"
   echo "    -f ${ENV_VALUES} \\"
   echo "    --set image.tag=${PRIMARY_TAG} \\"
   echo "    --set image.repository=${REGISTRY:+${REGISTRY}/}${IMAGE_NAME} \\"
-  echo "    -n cert-monitor --create-namespace"
+  echo "    -n site-monitor --create-namespace"
 fi

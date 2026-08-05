@@ -1,12 +1,12 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  Cert-Monitor Logging Configuration
+  Site-Monitor Logging Configuration
   ────────────────────────────────────────────────────────────────────────────
   Runtime control via environment variable or application property:
     LOG_LEVEL = ERROR | WARN | INFO | DEBUG | TRACE   (default: see per-profile)
     LOG_DIR   = /path/to/logs                          (default: logs/)
-    LOGGING_LEVEL_COM_CERTMONITOR_MAIL = TRACE         (mail gönderim tanılaması; yalnız
-                                                        com.certmonitor.mail logger'ını TRACE'e alır,
+    LOGGING_LEVEL_COM_SITEMONITOR_MAIL = TRACE         (mail gönderim tanılaması; yalnız
+                                                        com.sitemonitor.mail logger'ını TRACE'e alır,
                                                         uygulamanın geri kalanı LOG_LEVEL'da kalır)
 
   Profiles:
@@ -14,9 +14,9 @@
     prod                        →  INFO,  async file only (no console)
 
   Log files produced (under LOG_DIR):
-    cert-monitor.log        — all levels, daily rotation, 30-day retention
-    cert-monitor-error.log  — ERROR only, 90-day retention
-    cert-monitor-audit.log  — security / admin audit trail, 365-day retention
+    site-monitor.log        — all levels, daily rotation, 30-day retention
+    site-monitor-error.log  — ERROR only, 90-day retention
+    site-monitor-audit.log  — security / admin audit trail, 365-day retention
 -->
 <configuration>
 
@@ -28,11 +28,11 @@
   <springProperty scope="context" name="LOG_DIR"
                   source="logging.file.path" defaultValue="logs"/>
   <springProperty scope="context" name="LOG_LEVEL"
-                  source="logging.level.com.certmonitor" defaultValue="INFO"/>
-  <!-- Mail tracing'i bağımsız aç/kapat: LOGGING_LEVEL_COM_CERTMONITOR_MAIL=TRACE (env) ya da
-       logging.level.com.certmonitor.mail=TRACE. Set edilmezse com.certmonitor (LOG_LEVEL) ile aynı. -->
+                  source="logging.level.com.sitemonitor" defaultValue="INFO"/>
+  <!-- Mail tracing'i bağımsız aç/kapat: LOGGING_LEVEL_COM_SITEMONITOR_MAIL=TRACE (env) ya da
+       logging.level.com.sitemonitor.mail=TRACE. Set edilmezse com.sitemonitor (LOG_LEVEL) ile aynı. -->
   <springProperty scope="context" name="MAIL_LOG_LEVEL"
-                  source="logging.level.com.certmonitor.mail"/>
+                  source="logging.level.com.sitemonitor.mail"/>
   <springProperty scope="context" name="LOG_TZ"
                   source="cert.monitor.log.timezone" defaultValue="Europe/Istanbul"/>
 
@@ -63,13 +63,13 @@
 
   <!-- Main rotating file — daily + 10 MB, 30 days, max 500 MB total -->
   <appender name="FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
-    <file>${LOG_DIR}/cert-monitor.log</file>
+    <file>${LOG_DIR}/site-monitor.log</file>
     <encoder class="ch.qos.logback.classic.encoder.PatternLayoutEncoder">
       <pattern>${PAT_FILE}</pattern>
       <charset>UTF-8</charset>
     </encoder>
     <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
-      <fileNamePattern>${LOG_DIR}/cert-monitor-%d{yyyy-MM-dd}.%i.log.gz</fileNamePattern>
+      <fileNamePattern>${LOG_DIR}/site-monitor-%d{yyyy-MM-dd}.%i.log.gz</fileNamePattern>
       <maxFileSize>10MB</maxFileSize>
       <maxHistory>30</maxHistory>
       <totalSizeCap>500MB</totalSizeCap>
@@ -78,7 +78,7 @@
 
   <!-- Error-only file — 90-day retention for post-mortem analysis -->
   <appender name="ERROR_FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
-    <file>${LOG_DIR}/cert-monitor-error.log</file>
+    <file>${LOG_DIR}/site-monitor-error.log</file>
     <filter class="ch.qos.logback.classic.filter.ThresholdFilter">
       <level>ERROR</level>
     </filter>
@@ -87,7 +87,7 @@
       <charset>UTF-8</charset>
     </encoder>
     <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
-      <fileNamePattern>${LOG_DIR}/cert-monitor-error-%d{yyyy-MM-dd}.%i.log.gz</fileNamePattern>
+      <fileNamePattern>${LOG_DIR}/site-monitor-error-%d{yyyy-MM-dd}.%i.log.gz</fileNamePattern>
       <maxFileSize>10MB</maxFileSize>
       <maxHistory>90</maxHistory>
       <totalSizeCap>200MB</totalSizeCap>
@@ -96,13 +96,13 @@
 
   <!-- Audit file — 1-year retention for compliance / security review -->
   <appender name="AUDIT_FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
-    <file>${LOG_DIR}/cert-monitor-audit.log</file>
+    <file>${LOG_DIR}/site-monitor-audit.log</file>
     <encoder class="ch.qos.logback.classic.encoder.PatternLayoutEncoder">
       <pattern>${PAT_AUDIT}</pattern>
       <charset>UTF-8</charset>
     </encoder>
     <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
-      <fileNamePattern>${LOG_DIR}/cert-monitor-audit-%d{yyyy-MM-dd}.%i.log.gz</fileNamePattern>
+      <fileNamePattern>${LOG_DIR}/site-monitor-audit-%d{yyyy-MM-dd}.%i.log.gz</fileNamePattern>
       <maxFileSize>10MB</maxFileSize>
       <maxHistory>365</maxHistory>
       <totalSizeCap>500MB</totalSizeCap>
@@ -168,21 +168,21 @@
 
   <!-- ═══════════════════════  DEVELOPMENT PROFILE  ══════════════════════
     Profiles: local | local-pg | (no active profile)
-    - com.certmonitor : LOG_LEVEL (default DEBUG)
+    - com.sitemonitor : LOG_LEVEL (default DEBUG)
     - Root            : INFO
     - Outputs         : console + file + error file (synchronous)
   ════════════════════════════════════════════════════════════════════════ -->
   <springProfile name="!prod">
-    <logger name="com.certmonitor" level="${LOG_LEVEL}" additivity="false">
+    <logger name="com.sitemonitor" level="${LOG_LEVEL}" additivity="false">
       <appender-ref ref="CONSOLE"/>
       <appender-ref ref="FILE"/>
       <appender-ref ref="ERROR_FILE"/>
     </logger>
 
-    <!-- Mail'e özel logger: kendi appender'ı yok → additivity ile parent (com.certmonitor)
-         appender'larına tek kez yazar. Default seviye com.certmonitor ile aynı (${LOG_LEVEL});
-         yalnız logging.level.com.certmonitor.mail set edilince bağımsız (örn. TRACE) olur. -->
-    <logger name="com.certmonitor.mail" level="${MAIL_LOG_LEVEL:-${LOG_LEVEL}}"/>
+    <!-- Mail'e özel logger: kendi appender'ı yok → additivity ile parent (com.sitemonitor)
+         appender'larına tek kez yazar. Default seviye com.sitemonitor ile aynı (${LOG_LEVEL});
+         yalnız logging.level.com.sitemonitor.mail set edilince bağımsız (örn. TRACE) olur. -->
+    <logger name="com.sitemonitor.mail" level="${MAIL_LOG_LEVEL:-${LOG_LEVEL}}"/>
 
     <root level="INFO">
       <appender-ref ref="CONSOLE"/>
@@ -193,21 +193,21 @@
 
   <!-- ═══════════════════════  PRODUCTION PROFILE  ═══════════════════════
     Profile: prod
-    - com.certmonitor : LOG_LEVEL (default INFO); set to ERROR for minimal output
+    - com.sitemonitor : LOG_LEVEL (default INFO); set to ERROR for minimal output
     - Root            : WARN
     - Outputs         : async file + async error file (no console — use kubectl logs)
-    - Override at runtime: LOG_LEVEL=ERROR kubectl set env deployment/cert-monitor LOG_LEVEL=ERROR
+    - Override at runtime: LOG_LEVEL=ERROR kubectl set env deployment/site-monitor LOG_LEVEL=ERROR
   ════════════════════════════════════════════════════════════════════════ -->
   <springProfile name="prod">
-    <logger name="com.certmonitor" level="${LOG_LEVEL}" additivity="false">
+    <logger name="com.sitemonitor" level="${LOG_LEVEL}" additivity="false">
       <appender-ref ref="CONSOLE"/>
       <appender-ref ref="ASYNC_FILE"/>
       <appender-ref ref="ASYNC_ERROR"/>
     </logger>
 
     <!-- Mail tracing'i uygulama-geneli TRACE'e geçmeden açmak için:
-         LOGGING_LEVEL_COM_CERTMONITOR_MAIL=TRACE (yalnız mail TRACE; gerisi LOG_LEVEL'da kalır). -->
-    <logger name="com.certmonitor.mail" level="${MAIL_LOG_LEVEL:-${LOG_LEVEL}}"/>
+         LOGGING_LEVEL_COM_SITEMONITOR_MAIL=TRACE (yalnız mail TRACE; gerisi LOG_LEVEL'da kalır). -->
+    <logger name="com.sitemonitor.mail" level="${MAIL_LOG_LEVEL:-${LOG_LEVEL}}"/>
 
     <root level="WARN">
       <appender-ref ref="CONSOLE"/>

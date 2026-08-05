@@ -1,0 +1,23 @@
+Site Monitor {{ .Chart.AppVersion }} has been deployed!
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  Release   : {{ .Release.Name }}
+  Namespace : {{ .Release.Namespace }}
+  Version   : {{ .Chart.AppVersion }}
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+{{- if .Values.ingress.enabled }}
+Application URL:
+  https://{{ .Values.ingress.host }}
+{{- else }}
+Port-forward to access locally:
+  kubectl port-forward svc/{{ include "site-monitor.fullname" . }} 8080:80 -n {{ .Release.Namespace }}
+  Then open: http://localhost:8080
+{{- end }}
+
+Health check:
+  kubectl get pods -n {{ .Release.Namespace }} -l app.kubernetes.io/name={{ include "site-monitor.name" . }}
+
+⚠  IMPORTANT: Change the default admin password immediately!
+   kubectl patch secret {{ include "site-monitor.secretName" . }} -n {{ .Release.Namespace }} \
+     --type='json' -p='[{"op":"replace","path":"/data/ADMIN_PASSWORD","value":"'$(echo -n 'NEW_PASSWORD' | base64)'"}]'

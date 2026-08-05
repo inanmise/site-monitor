@@ -16,8 +16,8 @@ Kurumsal SSL/TLS sertifikalarını otomatik izleyen, çok seviyeli uyarı veren 
 ## Proje Yapısı
 
 ```
-cert-monitor/
-├── backend/src/main/java/com/certmonitor/
+site-monitor/
+├── backend/src/main/java/com/sitemonitor/
 │   ├── controller/        # CertificateController, AdminController, AuthController
 │   ├── service/           # CertificateService, CertificateCheckerService,
 │   │                      # ChainValidationService, SchedulerService,
@@ -38,7 +38,7 @@ cert-monitor/
 │   ├── pages/             # Login
 │   ├── api/client.js      # Fetch tabanlı API istemcisi
 │   └── i18n/              # index.jsx (useT hook), theme.jsx (koyu/açık mod)
-├── helm/cert-monitor/     # Helm chart
+├── helm/site-monitor/     # Helm chart
 │   └── environments/      # master.yaml, develop.yaml, release.yaml
 ├── scripts/               # build-image.sh, build-image.ps1
 └── .github/workflows/     # ci.yml, docker-build.yml, release.yml

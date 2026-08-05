@@ -11,10 +11,10 @@
         <relativePath/>
     </parent>
 
-    <groupId>com.certmonitor</groupId>
-    <artifactId>cert-monitor</artifactId>
+    <groupId>com.sitemonitor</groupId>
+    <artifactId>site-monitor</artifactId>
     <version>7.2.0</version>
-    <name>cert-monitor</name>
+    <name>site-monitor</name>
 
     <properties>
         <java.version>25</java.version>
@@ -216,32 +216,32 @@
                                 <!-- Kritik sertifika/alarm sınıfları — her biri kendi tabanında (kademeli yukarı çekilir). -->
                                 <rule>
                                     <element>CLASS</element>
-                                    <includes><include>com.certmonitor.service.SsrfGuard</include></includes>
+                                    <includes><include>com.sitemonitor.service.SsrfGuard</include></includes>
                                     <limits><limit><counter>LINE</counter><value>COVEREDRATIO</value><minimum>0.95</minimum></limit></limits>
                                 </rule>
                                 <rule>
                                     <element>CLASS</element>
-                                    <includes><include>com.certmonitor.service.MonitoringOutageService</include></includes>
+                                    <includes><include>com.sitemonitor.service.MonitoringOutageService</include></includes>
                                     <limits><limit><counter>LINE</counter><value>COVEREDRATIO</value><minimum>0.80</minimum></limit></limits>
                                 </rule>
                                 <rule>
                                     <element>CLASS</element>
-                                    <includes><include>com.certmonitor.service.EscalationService</include></includes>
+                                    <includes><include>com.sitemonitor.service.EscalationService</include></includes>
                                     <limits><limit><counter>LINE</counter><value>COVEREDRATIO</value><minimum>0.62</minimum></limit></limits>
                                 </rule>
                                 <rule>
                                     <element>CLASS</element>
-                                    <includes><include>com.certmonitor.service.DomainCheckerService</include></includes>
+                                    <includes><include>com.sitemonitor.service.DomainCheckerService</include></includes>
                                     <limits><limit><counter>LINE</counter><value>COVEREDRATIO</value><minimum>0.53</minimum></limit></limits>
                                 </rule>
                                 <rule>
                                     <element>CLASS</element>
-                                    <includes><include>com.certmonitor.service.RdapDomainExpiryService</include></includes>
+                                    <includes><include>com.sitemonitor.service.RdapDomainExpiryService</include></includes>
                                     <limits><limit><counter>LINE</counter><value>COVEREDRATIO</value><minimum>0.45</minimum></limit></limits>
                                 </rule>
                                 <rule>
                                     <element>CLASS</element>
-                                    <includes><include>com.certmonitor.service.CertificateCheckerService</include></includes>
+                                    <includes><include>com.sitemonitor.service.CertificateCheckerService</include></includes>
                                     <limits><limit><counter>LINE</counter><value>COVEREDRATIO</value><minimum>0.42</minimum></limit></limits>
                                 </rule>
                             </rules>

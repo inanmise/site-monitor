@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { renderHook, act } from '@testing-library/react'
 import { LangProvider, useT, useLanguage } from '../i18n/index.jsx'
 
-const STORAGE_KEY = 'cert-monitor-lang'
+const STORAGE_KEY = 'site-monitor-lang'
 
 function wrapper({ children }) {
   return <LangProvider>{children}</LangProvider>

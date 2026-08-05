@@ -22,17 +22,25 @@ if (-not $jar) {
     exit 1
 }
 
+# geriye-uyum: .env'de eski CERT_MONITOR_* adlari varsa yeni SITE_MONITOR_* karsiliklarina kopyalanir
+foreach ($k in @($cfg.Keys)) {
+    if ($k -like 'CERT_MONITOR_*') {   # geriye-uyum
+        $newKey = $k -replace '^CERT_MONITOR_', 'SITE_MONITOR_'   # geriye-uyum
+        if (-not $cfg.ContainsKey($newKey)) { $cfg[$newKey] = $cfg[$k] }
+    }
+}
+
 $propMap = @{
-    CERT_MONITOR_EMAIL_ENABLED = "cert.monitor.email.enabled"
+    SITE_MONITOR_EMAIL_ENABLED = "site.monitor.email.enabled"
     SPRING_MAIL_HOST           = "spring.mail.host"
     SPRING_MAIL_PORT           = "spring.mail.port"
     SPRING_MAIL_USERNAME       = "spring.mail.username"
     SPRING_MAIL_PASSWORD       = "spring.mail.password"
-    CERT_MONITOR_EMAIL_FROM    = "cert.monitor.email.from"
-    CERT_MONITOR_USERNAME      = "cert.monitor.username"
-    CERT_MONITOR_PASSWORD      = "cert.monitor.password"
-    CORS_ALLOWED_ORIGINS       = "cert.monitor.cors.allowed-origins"
-    OPENSSL_BIN                = "cert.monitor.diagnostics.openssl-bin"
+    SITE_MONITOR_EMAIL_FROM    = "site.monitor.email.from"
+    SITE_MONITOR_USERNAME      = "site.monitor.username"
+    SITE_MONITOR_PASSWORD      = "site.monitor.password"
+    CORS_ALLOWED_ORIGINS       = "site.monitor.cors.allowed-origins"
+    OPENSSL_BIN                = "site.monitor.diagnostics.openssl-bin"
     SPRING_PROFILES_ACTIVE     = "spring.profiles.active"
     DB_HOST                    = "DB_HOST"
     DB_PORT                    = "DB_PORT"
@@ -66,7 +74,7 @@ $allArgs = $dProps + @("-jar", $jar.FullName)
 Write-Host "Starting $($jar.Name) with Zulu 25..."
 Write-Host "  Profile      : $($cfg['SPRING_PROFILES_ACTIVE'])"
 Write-Host "  DB host      : $($cfg['DB_HOST']):$($cfg['DB_PORT'])/$($cfg['DB_NAME'])"
-Write-Host "  Mail enabled : $($cfg['CERT_MONITOR_EMAIL_ENABLED'])"
+Write-Host "  Mail enabled : $($cfg['SITE_MONITOR_EMAIL_ENABLED'])"
 Write-Host ""
 
 Start-Process -FilePath $Java `

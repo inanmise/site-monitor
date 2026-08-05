@@ -1,6 +1,6 @@
 # Testing
 
-How CertMonitor is tested today, where the gaps are, and where the strategy is heading. Treat this as the source of truth — if a test or workflow disagrees, file an issue.
+How Site Monitor is tested today, where the gaps are, and where the strategy is heading. Treat this as the source of truth — if a test or workflow disagrees, file an issue.
 
 ## TL;DR — run everything locally
 

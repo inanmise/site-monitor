@@ -1,0 +1,64 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Environment: STAGING  (release/v* branch)
+# Image tag  : {VERSION}-rc  e.g. site-monitor:1.0.0-rc
+# Deploy with:
+#   helm upgrade --install site-monitor-staging ./helm/site-monitor \
+#     -f helm/site-monitor/values.yaml \
+#     -f helm/site-monitor/environments/release.yaml \
+#     --set image.tag=1.0.0-rc \
+#     --set secret.adminPassword=$STAGING_ADMIN_PASSWORD \
+#     --set secret.dbPassword=$STAGING_DB_PASSWORD \
+#     -n site-monitor-staging --create-namespace
+# ─────────────────────────────────────────────────────────────────────────────
+
+image:
+  repository: site-monitor
+  tag: "1.0.0-rc"    # overridden by CI with {version}-rc
+  pullPolicy: Always
+
+replicaCount: 2
+
+config:
+  springProfile: prod
+  logLevel: "INFO"
+  corsAllowedOrigins: "https://site-monitor-staging.example.com"
+  certCheckHour: "3"
+  certCheckMinute: "0"
+  # CPU limiti orta → executor'ı kıs (açılışta CPU açlığını önle)
+  executorCoreSize: "8"
+  executorMaxSize: "16"
+
+ingress:
+  enabled: true
+  className: nginx
+  host: site-monitor-staging.example.com
+  tls:
+    enabled: true
+    secretName: site-monitor-staging-tls
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "60"
+
+resources:
+  requests:
+    memory: "384Mi"
+    cpu: "500m"      # request sabit → HPA baseline (%CPU/request) bozulmaz
+  limits:
+    memory: "1Gi"
+    cpu: "2000m"     # soğuk-başlangıç CPU burst tavanı (1500m→2000m) → warmup'ta CFS throttling azalır
+
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 5
+  targetCPUUtilizationPercentage: 70
+  targetMemoryUtilizationPercentage: 80
+
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+
+topologySpreadConstraints:
+  enabled: true
+  maxSkew: 1
+  topologyKey: kubernetes.io/hostname

@@ -64,14 +64,14 @@ describe('usePagination', () => {
   it('persist: boyut localStorage a yazılır, yeni mountta okunur; saçma değer → varsayılan', () => {
     const { result } = renderHook(() => usePagination(items(120), { listKey: 'p1' }))
     act(() => result.current.setPageSize(100))
-    expect(localStorage.getItem('cm.pageSize.p1')).toBe('100')
+    expect(localStorage.getItem('sm.pageSize.p1')).toBe('100')
 
     const { result: r2 } = renderHook(() => usePagination(items(120), { listKey: 'p1' }))
     expect(r2.current.pageSize).toBe(100)
 
-    localStorage.setItem('cm.pageSize.p2', '999')
+    localStorage.setItem('sm.pageSize.p2', '999')
     expect(readPageSize('p2')).toBe(50)
-    localStorage.setItem('cm.pageSize.p3', 'abc')
+    localStorage.setItem('sm.pageSize.p3', 'abc')
     expect(readPageSize('p3')).toBe(50)
     writePageSize('p4', 200)
     expect(readPageSize('p4')).toBe(200)

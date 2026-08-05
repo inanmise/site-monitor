@@ -1,4 +1,4 @@
--- cert-monitor — büyüme/performans index'leri (PostgreSQL)
+-- site-monitor — büyüme/performans index'leri (PostgreSQL)
 --
 -- NE İŞE YARAR: Büyüyen tablolarda (audit_log, alert_events, *_checks …) sık kullanılan
 -- WHERE/ORDER BY kolonlarına btree index'ler. Milyonlarca satırda seq-scan yerine index-scan.

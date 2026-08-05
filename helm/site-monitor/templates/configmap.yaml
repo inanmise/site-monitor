@@ -1,0 +1,68 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "site-monitor.fullname" . }}-config
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "site-monitor.labels" . | nindent 4 }}
+data:
+  SPRING_PROFILES_ACTIVE: {{ .Values.config.springProfile | quote }}
+  # Log seviyesi ve @Scheduled havuzu chart'ta YOKTU → pod'a elle set edilen değer her helm upgrade'de
+  # sessizce kayboluyordu. Artık chart'tan yönetiliyor (runtime override: Ayarlar → Loglama).
+  LOG_LEVEL: {{ .Values.config.logLevel | default "INFO" | quote }}
+  SCHEDULING_POOL_SIZE: {{ .Values.config.schedulingPoolSize | default "8" | quote }}
+  {{- if .Values.postgresql.enabled }}
+  DB_HOST: {{ printf "%s-postgresql" .Release.Name | quote }}
+  DB_PORT: "5432"
+  DB_NAME: {{ .Values.postgresql.auth.database | quote }}
+  DB_USER: {{ .Values.postgresql.auth.username | quote }}
+  {{- else }}
+  DB_HOST: {{ .Values.config.dbHost | quote }}
+  DB_PORT: {{ .Values.config.dbPort | quote }}
+  DB_NAME: {{ .Values.config.dbName | quote }}
+  DB_USER: {{ .Values.config.dbUser | quote }}
+  {{- end }}
+  DB_POOL_MAX: {{ .Values.config.dbPoolMax | quote }}
+  SITE_MONITOR_EMAIL_ENABLED: {{ .Values.config.emailEnabled | quote }}
+  FAILED_LOGIN_ALERT_ENABLED: {{ .Values.config.failedLoginAlertEnabled | default "true" | quote }}
+  FAILED_LOGIN_ALERT_RECIPIENTS: {{ .Values.config.failedLoginAlertRecipients | default "" | quote }}
+  SPRING_MAIL_HOST: {{ .Values.config.smtpHost | quote }}
+  SPRING_MAIL_PORT: {{ .Values.config.smtpPort | quote }}
+  SPRING_MAIL_SMTP_AUTH: {{ .Values.config.smtpAuth | quote }}
+  SPRING_MAIL_SMTP_STARTTLS_ENABLE: {{ .Values.config.smtpStarttlsEnable | quote }}
+  SPRING_MAIL_SMTP_STARTTLS_REQUIRED: {{ .Values.config.smtpStarttlsRequired | quote }}
+  SPRING_MAIL_SMTP_SSL_TRUST: {{ .Values.config.smtpSslTrust | quote }}
+  CORS_ALLOWED_ORIGINS: {{ .Values.config.corsAllowedOrigins | quote }}
+  # Mail linkleri için dış adres — config.appBaseUrl boşsa ingress host'undan türetilir.
+  # Şema ingress.tls.enabled'dan gelir (tls kapalıysa http, açıksa https) → yanlış şemalı link olmaz.
+  APP_BASE_URL: {{ .Values.config.appBaseUrl | default (printf "%s://%s" (ternary "https" "http" .Values.ingress.tls.enabled) .Values.ingress.host) | quote }}
+  # Loglardaki gerçek client IP'si için forwarding başlık sırası (/api/admin/client-ip-debug ile bulunur)
+  CLIENT_IP_HEADERS: {{ .Values.config.clientIpHeaders | quote }}
+  CHECK_TIMEOUT_SECONDS: {{ .Values.config.checkTimeoutSeconds | quote }}
+  WARNING_DAYS: {{ .Values.config.warningDays | quote }}
+  PARALLEL_WORKERS: {{ .Values.config.parallelWorkers | quote }}
+  EXECUTOR_CORE_SIZE: {{ .Values.config.executorCoreSize | quote }}
+  EXECUTOR_MAX_SIZE: {{ .Values.config.executorMaxSize | quote }}
+  STARTUP_CHECK_DELAY_MS: {{ .Values.config.startupCheckDelayMs | quote }}
+  JAVA_OPTS: {{ .Values.config.javaOpts | quote }}
+  HTTP_PROXY_HOST: {{ .Values.config.httpProxyHost | quote }}
+  HTTP_PROXY_PORT: {{ .Values.config.httpProxyPort | quote }}
+  NO_PROXY:        {{ .Values.config.noProxy | quote }}
+  SPRING_SESSION_STORE_TYPE: {{ .Values.config.sessionStoreType | quote }}
+  # Haftalık erişilebilirlik e-postası (sertifika sahibi takıma) — Pazartesi 10:00 Europe/Istanbul
+  WEEKLY_AVAIL_ENABLED: {{ .Values.config.weeklyAvailEnabled | quote }}
+  WEEKLY_AVAIL_CRON: {{ .Values.config.weeklyAvailCron | quote }}
+  # WHOIS (port-43) kurumsal 443/80 egress proxy'sini geçemez → prod'da kapalı; RDAP (proxy-aware) tek kaynak.
+  DOMAIN_WHOIS_ENABLED: {{ .Values.config.whoisEnabled | quote }}
+  # Kritik domain İKİNCİ günlük kontrolü — yalnız son kontrolünde days_remaining ≤ eşik olan aktif domainleri
+  # ayrı slotta (Europe/Istanbul) tekrar sorgular; gün içinde yenilenen domainin açık alarmı aynı gün kapanır.
+  # Günlük re-alert dedupe korunur → ekstra bildirim ÜRETMEZ. Kapatmak için enabled=false.
+  DOMAIN_CRITICAL_CHECK_ENABLED: {{ .Values.config.domainCriticalCheckEnabled | quote }}
+  DOMAIN_CRITICAL_CHECK_CRON: {{ .Values.config.domainCriticalCheckCron | quote }}
+  DOMAIN_CRITICAL_CHECK_THRESHOLD_DAYS: {{ .Values.config.domainCriticalCheckThresholdDays | quote }}
+  # Kurumsal SSL-araya-giren proxy'nin kök/ara CA paketi (PEM). TrustEvaluator bunu cacerts'e EK
+  # trust anchor olarak kullanır → RDAP/outbound HTTPS PKIX ile doğrulanır (trust-all YOK). Boş =
+  # yalnız public CA'lar. CA rotasyonunda bu value'yu güncelle (bkz. domain-expiry runbook).
+  {{- if .Values.config.caBundlePem }}
+  TRUST_CA_BUNDLE_PEM: {{ .Values.config.caBundlePem | quote }}
+  {{- end }}

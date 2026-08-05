@@ -133,7 +133,7 @@ export default function SmtpSettings() {
           </div>
           <div className="threshold-field">
             <label>{t('smtp.fromName')}</label>
-            <input type="text" value={form.from_name || ''} placeholder="CertMonitor"
+            <input type="text" value={form.from_name || ''} placeholder="Site Monitör"
               onChange={(e) => set('from_name', e.target.value)} />
           </div>
         </div>
