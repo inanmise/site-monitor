@@ -7,7 +7,7 @@ import { useToast } from '../ui/Toast.jsx'
 /**
  * "Login Anomali" — başarısız-login anomali tespiti + sistem-admin e-posta uyarısı yapılandırması.
  * Katmanlı kural eşikleri, alıcılar, cooldown/resolved + "test maili gönder" + son tetiklenen incident'lar.
- * Kalıcılık cert.monitor.failed-login.* key'lerine (LoginAnomalyController → AppSettingsService) gider; CANLI.
+ * Kalıcılık site.monitor.failed-login.* key'lerine (LoginAnomalyController → AppSettingsService) gider; CANLI.
  */
 const NUM_FIELDS = [
   { key: 'threshold_total', min: 1 },

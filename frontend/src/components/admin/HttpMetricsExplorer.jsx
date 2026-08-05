@@ -9,7 +9,7 @@ import { useToast } from '../ui/Toast.jsx'
 import TimeRangePicker, { resolveRange } from '../ui/TimeRangePicker.jsx'
 import SearchableSelect from '../ui/SearchableSelect.jsx'
 
-const RETENTION_KEY = 'cert.monitor.metrics.http.retention-days'
+const RETENTION_KEY = 'site.monitor.metrics.http.retention-days'
 const pad = (n) => String(n).padStart(2, '0')
 
 // Backend ts'i Europe/Istanbul YEREL duvar-saati ("YYYY-MM-DDTHH:mm:ss", Z YOK) → olduğu gibi yerel okunur.

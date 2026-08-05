@@ -34,7 +34,7 @@
   <springProperty scope="context" name="MAIL_LOG_LEVEL"
                   source="logging.level.com.sitemonitor.mail"/>
   <springProperty scope="context" name="LOG_TZ"
-                  source="cert.monitor.log.timezone" defaultValue="Europe/Istanbul"/>
+                  source="site.monitor.log.timezone" defaultValue="Europe/Istanbul"/>
 
   <!-- ── Log patterns ────────────────────────────────────────────────────── -->
   <!--  Console: compact with highlight (works in IntelliJ / most terminals).

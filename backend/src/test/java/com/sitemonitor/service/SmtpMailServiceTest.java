@@ -36,7 +36,7 @@ class SmtpMailServiceTest {
         SmtpSettings s = new SmtpSettings();
         s.setHost(host);
         s.setPort(port);
-        s.setFromAddress("noreply@certmonitor");
+        s.setFromAddress("noreply@sitemonitor");
         s.setAuthEnabled(false);
         return s;
     }

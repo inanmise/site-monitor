@@ -300,7 +300,7 @@ ErrorBoundary      — Render hatalarında "Yenile" fallback UI
 
 ```
 certCheckExecutor     : core 20, max 50, queue 1000 (EXECUTOR_* env ile tunable)
-Kontrol timeout       : 10 saniye (cert.monitor.check-timeout-seconds)
+Kontrol timeout       : 10 saniye (site.monitor.check-timeout-seconds)
 CRL önbellek TTL      : 1 saat
 CRL önbellek boyutu   : 200 giriş (Caffeine maximumSize+expireAfterWrite)
 OCSP/CRL HTTP timeout : 5s OCSP, 10s CRL (connect+read explicit)
@@ -685,12 +685,12 @@ Her eskalasyon kişisine ayrı webhook tanımlanabilir.
 ### 9.4 E-posta Konfigürasyonu
 
 ```properties
-cert.monitor.email.enabled=true       # E-postayı etkinleştir
+site.monitor.email.enabled=true       # E-postayı etkinleştir
 SPRING_MAIL_HOST=smtp.gmail.com       # SMTP sunucu
 SPRING_MAIL_PORT=587                  # STARTTLS portu
 SPRING_MAIL_USERNAME=hesap@gmail.com  # Gönderen hesap
 SPRING_MAIL_PASSWORD=uygulama-sifresi # App Password
-cert.monitor.email.from=gönderen@adres
+site.monitor.email.from=gönderen@adres
 ```
 
 ---
@@ -1669,7 +1669,7 @@ Site Monitör, backend kapalıyken aşağıdaki davranışları gösterir:
 
 ### 13.7 Eski Log Kayıtlarının Otomatik Temizliği
 
-Her gece **03:30** (`cert.monitor.scheduler.cleanup-cron` ile özelleştirilebilir) `SchedulerService.cleanupOldLogs()` çalışır ve tabloları sınırlı tutar:
+Her gece **03:30** (`site.monitor.scheduler.cleanup-cron` ile özelleştirilebilir) `SchedulerService.cleanupOldLogs()` çalışır ve tabloları sınırlı tutar:
 
 | Tablo | Saklama Süresi | Açıklama |
 |---|---|---|
@@ -1799,20 +1799,20 @@ Birden fazla pod aynı anda tarama yapmaz. DB tabanlı kilit (TTL: 10 dk) yalnı
 
 | Parametre | Varsayılan | Açıklama |
 |---|---|---|
-| `cert.monitor.warning-days` | 30 | Uyarı başlangıç günü |
-| `cert.monitor.parallel-workers` | 20 | Eş zamanlı kontrol sayısı |
-| `cert.monitor.check-timeout-seconds` | 10 | SSL soket timeout |
-| `cert.monitor.scheduler.cron` | `0 0 * * * *` | Saatlik tarama cron |
-| `cert.monitor.scheduler.stale-minutes` | 65 | Bayat domain eşiği (dk) |
-| `cert.monitor.scheduler.lock-ttl-minutes` | 10 | Dağıtık kilit TTL |
-| `cert.monitor.cache.crl-ttl-hours` | 1 | CRL önbellek süresi |
-| `cert.monitor.cache.crl-max-size` | 200 | CRL önbellek kapasitesi |
-| `cert.monitor.password.min-length` | 4 | Minimum şifre uzunluğu |
-| `cert.monitor.alert.default-warning-days` | 30 | Uyarı gün eşiği |
-| `cert.monitor.alert.default-high-days` | 15 | Yüksek gün eşiği |
-| `cert.monitor.alert.default-critical-days` | 7 | Kritik gün eşiği |
-| `cert.monitor.alert.default-realert-hours` | 24 | Tekrar bildirim aralığı |
-| `cert.monitor.scheduler.cleanup-cron` | `0 30 3 * * *` | Gece log temizleme cron'u |
+| `site.monitor.warning-days` | 30 | Uyarı başlangıç günü |
+| `site.monitor.parallel-workers` | 20 | Eş zamanlı kontrol sayısı |
+| `site.monitor.check-timeout-seconds` | 10 | SSL soket timeout |
+| `site.monitor.scheduler.cron` | `0 0 * * * *` | Saatlik tarama cron |
+| `site.monitor.scheduler.stale-minutes` | 65 | Bayat domain eşiği (dk) |
+| `site.monitor.scheduler.lock-ttl-minutes` | 10 | Dağıtık kilit TTL |
+| `site.monitor.cache.crl-ttl-hours` | 1 | CRL önbellek süresi |
+| `site.monitor.cache.crl-max-size` | 200 | CRL önbellek kapasitesi |
+| `site.monitor.password.min-length` | 4 | Minimum şifre uzunluğu |
+| `site.monitor.alert.default-warning-days` | 30 | Uyarı gün eşiği |
+| `site.monitor.alert.default-high-days` | 15 | Yüksek gün eşiği |
+| `site.monitor.alert.default-critical-days` | 7 | Kritik gün eşiği |
+| `site.monitor.alert.default-realert-hours` | 24 | Tekrar bildirim aralığı |
+| `site.monitor.scheduler.cleanup-cron` | `0 30 3 * * *` | Gece log temizleme cron'u |
 | `EXECUTOR_CORE_SIZE` | 20 | certCheckExecutor core thread |
 | `EXECUTOR_MAX_SIZE` | 50 | certCheckExecutor max thread |
 | `EXECUTOR_QUEUE_CAPACITY` | 1000 | certCheckExecutor queue boyutu |
@@ -1840,11 +1840,11 @@ Birden fazla pod aynı anda tarama yapmaz. DB tabanlı kilit (TTL: 10 dk) yalnı
 
 | Parametre | Varsayılan | Açıklama |
 |---|---|---|
-| `cert.monitor.lockout.failures-needed` | `5,3,2,1` | Her seviyede gerekli hata |
-| `cert.monitor.lockout.durations-seconds` | `30,120,600,1800` | Her seviyede bekleme |
-| `cert.monitor.lockout.permanent-failures` | 5 | Kalıcı kilitleme için toplam |
-| `cert.monitor.remember-me.validity-seconds` | 604800 | "Beni Hatırla" süresi (7 gün) |
-| `cert.monitor.inactivity-timeout-minutes` | 5 | Hareketsizlik timeout |
+| `site.monitor.lockout.failures-needed` | `5,3,2,1` | Her seviyede gerekli hata |
+| `site.monitor.lockout.durations-seconds` | `30,120,600,1800` | Her seviyede bekleme |
+| `site.monitor.lockout.permanent-failures` | 5 | Kalıcı kilitleme için toplam |
+| `site.monitor.remember-me.validity-seconds` | 604800 | "Beni Hatırla" süresi (7 gün) |
+| `site.monitor.inactivity-timeout-minutes` | 5 | Hareketsizlik timeout |
 
 ### 16.3 E-posta Konfigürasyonu
 

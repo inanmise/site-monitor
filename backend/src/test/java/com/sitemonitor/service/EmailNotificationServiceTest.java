@@ -86,7 +86,7 @@ class EmailNotificationServiceTest {
     /** Tam SMTP ayarlı (host/auth/TLS/timeout) etkin profil — bağlam loglarını anlamlı test eder. */
     private SmtpSettings settingsEnabledFull() {
         SmtpSettings s = settings(true);
-        s.setFromAddress("noreply@certmonitor.com");
+        s.setFromAddress("noreply@sitemonitor.com");
         s.setHost("smtp.test");
         s.setPort(587);
         s.setAuthEnabled(true);
@@ -111,7 +111,7 @@ class EmailNotificationServiceTest {
     private SmtpSettings settings(boolean enabled) {
         SmtpSettings s = new SmtpSettings();
         s.setEnabled(enabled);
-        s.setFromAddress("noreply@certmonitor");
+        s.setFromAddress("noreply@sitemonitor");
         s.setFromName(null);
         s.setRetryDelayMs(90000);
         return s;

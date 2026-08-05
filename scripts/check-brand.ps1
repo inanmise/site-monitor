@@ -2,10 +2,10 @@
 # Cikti YALNIZ bilincli birakilan satirlari icermeli ("# geriye-uyum" alias'lari; CHANGELOG/docs haric).
 $root = Split-Path -Parent $PSScriptRoot
 $excludeDirs = @('\.git\', '\node_modules\', '\dist\', '\target\', '\logs\', '\data\', '\docs\')
-$excludeFiles = @('*.log', '*.gz', '*.jar', '*.pdf', 'package-lock.json', 'CHANGELOG.md', '*migrateStorageKeys*')
+$excludeFiles = @('*.log', '*.gz', '*.jar', '*.pdf', 'package-lock.json', 'CHANGELOG.md', '*migrateStorageKeys*', 'AppSettingsRenameMigrationTest.java')
 
 Get-ChildItem -Path $root -Recurse -File -Exclude $excludeFiles |
   Where-Object { $p = $_.FullName; -not ($excludeDirs | Where-Object { $p -like "*$_*" }) } |
-  Select-String -Pattern 'certmonitor|cert-monitor|cert_monitor' -CaseSensitive:$false |
+  Select-String -Pattern 'certmonitor|cert-monitor|cert_monitor|cert\.monitor' -CaseSensitive:$false |
   Where-Object { $_.Line -notmatch 'geriye-uyum' -and $_.Line -notmatch '\$\{CERT_MONITOR_' } |
   ForEach-Object { "$($_.Path):$($_.LineNumber): $($_.Line.Trim())" }

@@ -134,8 +134,8 @@ const DNS_TR = `
 ### Sorgu nereden, nasıl yapılır?
 - Sorgular **izleme sunucusundan (pod)** dnsjava ile doğrudan atılır; ara proxy yoktur.
 - Varsayılan hedef, izleme sunucusunun **işletim sistemi DNS zinciridir**: sunucular sırayla denenir (birincil zaman aşımına uğrarsa yedeğe geçilir). Aktif zinciri detay modalındaki **"Çözümleyici Yapılandırması"** bölümünde görebilirsiniz.
-- Her kontrol **önbelleksiz taze sorgudur** — yanıt süresi gerçek gidiş-dönüştür. Sorgu zaman aşımı ayarlanabilir (varsayılan 2000 ms, \`cert.monitor.dns.query-timeout-ms\`).
-- **Propagation kontrolü** açık monitörlerde ayrıca public çözümleyiciler (varsayılan \`8.8.8.8, 1.1.1.1, 9.9.9.9\` — \`cert.monitor.dns.resolvers\` ayarı) tek tek doğrudan sorgulanır.
+- Her kontrol **önbelleksiz taze sorgudur** — yanıt süresi gerçek gidiş-dönüştür. Sorgu zaman aşımı ayarlanabilir (varsayılan 2000 ms, \`site.monitor.dns.query-timeout-ms\`).
+- **Propagation kontrolü** açık monitörlerde ayrıca public çözümleyiciler (varsayılan \`8.8.8.8, 1.1.1.1, 9.9.9.9\` — \`site.monitor.dns.resolvers\` ayarı) tek tek doğrudan sorgulanır.
 - Kurum içi (split-horizon) bölgelerde OS zinciri iç DNS'e işaret ediyorsa **iç IP**, dış çözümleyiciler **dış IP** dönebilir — iki değeri de beklenen listeye ekleyerek bu gidip-gelmeyi sessizleştirin.
 
 ### İpuçları
@@ -166,8 +166,8 @@ Open the form with **+ New Monitor**.
 ### Where and how are queries made?
 - Queries are sent **directly from the monitoring server (pod)** via dnsjava; there is no intermediate proxy.
 - The default target is the monitoring server's **OS DNS chain**: servers are tried in order (fallback on primary timeout). See the active chain in the **"Resolver Configuration"** section of the detail modal.
-- Every check is a **cache-free fresh query** — the response time is a real round-trip. Query timeout is configurable (default 2000 ms, \`cert.monitor.dns.query-timeout-ms\`).
-- Monitors with **propagation check** also query public resolvers directly, one by one (default \`8.8.8.8, 1.1.1.1, 9.9.9.9\` — the \`cert.monitor.dns.resolvers\` setting).
+- Every check is a **cache-free fresh query** — the response time is a real round-trip. Query timeout is configurable (default 2000 ms, \`site.monitor.dns.query-timeout-ms\`).
+- Monitors with **propagation check** also query public resolvers directly, one by one (default \`8.8.8.8, 1.1.1.1, 9.9.9.9\` — the \`site.monitor.dns.resolvers\` setting).
 - In split-horizon zones, the OS chain may return the **internal IP** while public resolvers return the **external IP** — add both to the expected list to silence that flip.
 
 ### Tips

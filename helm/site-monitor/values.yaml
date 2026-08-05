@@ -116,7 +116,7 @@ config:
   # RDAP (443, proxy-aware) is the primary domain-expiry source. Raw port-43
   # WHOIS can't traverse a 443/80-only egress proxy, so behind a corporate proxy
   # it only wastes ~6s per domain before timing out → default off here. RDAP-only
-  # is sufficient; still live-toggleable from Genel Ayarlar (cert.monitor.domain.whois-enabled).
+  # is sufficient; still live-toggleable from Genel Ayarlar (site.monitor.domain.whois-enabled).
   whoisEnabled: "false"
 
   # ── Critical-domain second daily check ────────────────────────────────────
@@ -133,7 +133,7 @@ config:
   # TrustEvaluator adds these as trust anchors ALONGSIDE the JVM cacerts (never
   # trust-all), so outbound RDAP/HTTPS through an SSL-inspecting proxy validates
   # via PKIX instead of failing "unable to find valid certification path".
-  # Empty = public CAs only. Genel Ayarlar (cert.monitor.trust.ca-bundle-pem)
+  # Empty = public CAs only. Genel Ayarlar (site.monitor.trust.ca-bundle-pem)
   # can override live. To rotate: capture the new chain
   #   openssl s_client -connect data.iana.org:443 -proxy <proxy:port> -showcerts
   # paste the PEM below (as a multiline block) and `helm upgrade`. See runbook.
