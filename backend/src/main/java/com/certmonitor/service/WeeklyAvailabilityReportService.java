@@ -270,7 +270,7 @@ public class WeeklyAvailabilityReportService {
         AvailabilitySummary summary = summarize(rows);
         String[] to = resolveTo(team);
         String[] cc = resolveCc(team.getId(), to);
-        String subject = "[CertMonitor] " + team.getName() + " — Haftalık Erişilebilirlik (" + w.weekLabel() + ")";
+        String subject = "[Site Monitör] " + team.getName() + " — Haftalık Erişilebilirlik (" + w.weekLabel() + ")";
         String html = emailService.buildWeeklyAvailabilityHtml(team.getName(), w.weekLabel(), rows, summary);
         return new TeamReport(rows, summary, subject, html, to, cc);
     }
@@ -306,7 +306,7 @@ public class WeeklyAvailabilityReportService {
         List<CertificateInventory> domains =
                 inventoryRepo.findByTeamIdAndActiveTrueAndDeletedAtIsNullOrderByDomainAsc(teamId);
         TeamReport report = buildTeamReport(team, w, domains);
-        String subject = "[CertMonitor][TEST] " + team.getName() + " — Haftalık Erişilebilirlik (" + w.weekLabel() + ")";
+        String subject = "[Site Monitör][TEST] " + team.getName() + " — Haftalık Erişilebilirlik (" + w.weekLabel() + ")";
         String[] to = { email };
         String status = emailService.sendHtml(to, null, subject, report.html(), null);
         saveNotificationLog(team, to, null, subject, report.html(), status, "WEEKLY_AVAILABILITY_TEST");

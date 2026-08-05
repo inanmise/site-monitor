@@ -1,12 +1,21 @@
 # Changelog
 
-All notable changes to CertMonitor are documented here.
+All notable changes to Site Monitor (formerly CertMonitor) are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 Versioning follows [Semantic Versioning](https://semver.org/).
 
 ---
 
 ## [Unreleased]
+
+### Changed
+- **Ürün adı: CertMonitor → Site Monitör.** Uygulama genelinde görünen marka (giriş ekranı wordmark'ı, sekme
+  başlığı, e-posta konu/altbilgileri, haftalık raporlar, webhook kartları, yardım/whitepaper dokümanları ve
+  açılış konfigürasyon banner'ı) **Site Monitör** (EN: *Site Monitor*) oldu. Alan dili değişmedi: sertifika
+  domain terimleri (`CertificateInventory`, `/api/certificates`, DB şeması) ve API yolları aynen korunuyor.
+  `CertMonitorLogo` bileşeni `SiteMonitorLogo` olarak yeniden adlandırıldı; whitepaper PDF'leri bir sonraki
+  whitepaper güncellemesinde yeni adla yeniden üretilecek. Teknik kimliklerin (paket adı, property önekleri,
+  imaj/chart adları) geçişi ayrı adımlarda sürüyor.
 
 ### Added
 - **Paylaşılabilir URL / derin bağlantı.** İzleme sayfalarında ekranda görünen durumun tamamı artık adres

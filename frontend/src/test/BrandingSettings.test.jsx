@@ -6,8 +6,8 @@ vi.mock('../api/client', () => {
   const row = (key, type = 'STRING', value = '', def = '') =>
     ({ key: K(key), group: 'branding', type, value, default: def })
   const catalog = [
-    row('app-name', 'STRING', '', 'CertMonitor'),
-    row('tab-title', 'STRING', '', 'CertMonitor'),
+    row('app-name', 'STRING', '', 'Site Monitör'),
+    row('tab-title', 'STRING', '', 'Site Monitör'),
     row('login-title'), row('login-subtitle'), row('signin-label'),
     row('username-label'), row('footer-text'), row('primary-color'),
     row('logo-data', 'TEXT'),

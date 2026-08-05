@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-CertMonitor — full-stack SSL/TLS certificate monitoring system. Spring Boot 4.1 / Java 25 backend serves a React 18 (Vite 5) SPA; PostgreSQL is the system of record. Single deployable: the React `dist/` is served as static content from the Spring Boot jar in prod. Single VERSION file (`./VERSION`) is authoritative for both backend (`pom.xml` is currently out of sync — version comes from the file) and frontend (`vite.config.js` reads it at build time).
+Site Monitor — full-stack SSL/TLS certificate monitoring system. Spring Boot 4.1 / Java 25 backend serves a React 18 (Vite 5) SPA; PostgreSQL is the system of record. Single deployable: the React `dist/` is served as static content from the Spring Boot jar in prod. Single VERSION file (`./VERSION`) is authoritative for both backend (`pom.xml` is currently out of sync — version comes from the file) and frontend (`vite.config.js` reads it at build time).
 
 The UI is bilingual TR/EN; default language is Turkish. Most identifiers, log messages, and admin-panel strings are Turkish — keep i18n keys in sync (see `i18n-parity.test.jsx`).
 

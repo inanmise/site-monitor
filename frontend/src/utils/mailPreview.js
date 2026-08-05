@@ -1,4 +1,4 @@
-// E-posta HTML'i bir <iframe srcDoc> içinde önizlenirken, mail'deki linkler (ör. "CertMonitor'de Görüntüle"
+// E-posta HTML'i bir <iframe srcDoc> içinde önizlenirken, mail'deki linkler (ör. "Site Monitör'de Görüntüle"
 // CTA'sı) tıklanınca iframe'in KENDİSİNİ hedefe götürür. Hedef uygulama URL'i ise X-Frame-Options: DENY +
 // CSP frame-ancestors 'none' döndürdüğünden tarayıcı çerçevede göstermeyi reddeder ("refused to connect").
 //

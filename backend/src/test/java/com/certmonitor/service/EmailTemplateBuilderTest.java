@@ -278,7 +278,7 @@ class EmailTemplateBuilderTest {
     void plainText() {
         String text = b.buildText(domainMail("HIGH", 25));
         assertThat(text).doesNotContain("<").doesNotContain(">");
-        assertThat(text).contains("[CertMonitor] 25 GÜN KALDI").contains("kartfree.com");
+        assertThat(text).contains("[Site Monitör] 25 GÜN KALDI").contains("kartfree.com");
         assertThat(text).contains("Bitişe 25 gün / 90 günlük pencere");
         assertThat(text).contains("GoDaddy.com, LLC");
         assertThat(text).contains("Önerilen Aksiyon:");

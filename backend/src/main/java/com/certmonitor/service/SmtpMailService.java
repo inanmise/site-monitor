@@ -97,7 +97,7 @@ public class SmtpMailService {
             } else {
                 helper.setFrom(from);
             }
-            helper.setSubject("[CertMonitor] SMTP test e-postası");
+            helper.setSubject("[Site Monitör] SMTP test e-postası");
             helper.setText(buildTestHtml(s), true);
             sender.send(msg);
             out.put("success", true);
@@ -167,8 +167,8 @@ public class SmtpMailService {
                 + "<tr><td align='center' style='padding:24px 10px'>"
                 + "<table role='presentation' class='em-card' width='520' cellpadding='0' cellspacing='0' border='0' bgcolor='#ffffff' style='max-width:520px;width:100%;background:#ffffff;border:1px solid #e5e7eb;border-radius:12px;overflow:hidden'>"
                 + "<tr><td class='em-body' bgcolor='#ffffff' style='padding:22px'>"
-                + "<h2 style='color:#2563eb;margin:0 0 10px;font-size:20px'>CertMonitor — SMTP test</h2>"
-                + "<p style='margin:0 0 10px'>Bu, CertMonitor Ayarlar ekranından gönderilen bir SMTP test e-postasıdır.</p>"
+                + "<h2 style='color:#2563eb;margin:0 0 10px;font-size:20px'>Site Monitör — SMTP test</h2>"
+                + "<p style='margin:0 0 10px'>Bu, Site Monitör Ayarlar ekranından gönderilen bir SMTP test e-postasıdır.</p>"
                 + "<table role='presentation' cellpadding='0' cellspacing='0' border='0' style='border-collapse:collapse;font-size:13px;margin:10px 0'>"
                 + "<tr><td style='padding:3px 12px 3px 0;color:#64748b'>Sunucu:</td>"
                 + "<td style='padding:3px 0;font-weight:600'>" + esc(s.getHost()) + ":" + s.getPort() + "</td></tr>"

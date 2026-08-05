@@ -1135,7 +1135,7 @@ public class EscalationService {
                 case TYPE_DOMAINMON_CHANGED -> "Alan Adı Değişikliği";
                 default                 -> "Sertifika Süre Bitişi";
             };
-            String subject = "[CertMonitor ✅ ÇÖZÜLDÜ] " + event.getDomain()
+            String subject = "[Site Monitör ✅ ÇÖZÜLDÜ] " + event.getDomain()
                     + " — " + typeTr + " sorunu giderildi";
             // İzleme çözüm mailleri süreyi createdAt→resolvedAt'ten hesaplar;
             // sertifika context'i alakasız olduğundan geçilmez.
@@ -1328,7 +1328,7 @@ public class EscalationService {
         }
         certContext = enrichedCtx;
 
-        // 2. Subject — "[CertMonitor] SEVERITY · domain · özet" (executive format; EmailTemplateBuilder ile aynı severity etiketi)
+        // 2. Subject — "[Site Monitör] SEVERITY · domain · özet" (executive format; EmailTemplateBuilder ile aynı severity etiketi)
         String levelTr = switch (level != null ? level : "") {
             case "CRITICAL"   -> "KRİTİK";
             case "HIGH"       -> "YÜKSEK";
@@ -1384,7 +1384,7 @@ public class EscalationService {
         // Süre-bitişi ailesinde severity yerine kalan gün öne çıkar: "15 GÜN KALDI" / "ACİL 2 GÜN KALDI".
         String daysSeg = daysRemaining == null ? levelTr
                 : (daysRemaining <= 3 ? "ACİL " + daysRemaining + " GÜN KALDI" : daysRemaining + " GÜN KALDI");
-        String subject = subjectPrefix + "[CertMonitor] " + daysSeg + " · " + domain + " · " + summaryTr;
+        String subject = subjectPrefix + "[Site Monitör] " + daysSeg + " · " + domain + " · " + summaryTr;
 
         // 3. Tek email — tüm alıcılara
         String[] toArr     = allEmails.toArray(new String[0]);

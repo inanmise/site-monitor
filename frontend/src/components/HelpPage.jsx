@@ -88,7 +88,7 @@ export default function HelpPage() {
         <h2 className="help-header-title">{t('help.title')}</h2>
         <a
           href="/whitepaper.pdf"
-          download="CertMonitor-WhitePaper.pdf"
+          download="SiteMonitor-WhitePaper.pdf"
           className="btn btn-sm help-download-btn"
         >
           {t('help.download')}

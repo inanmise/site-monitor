@@ -1,5 +1,8 @@
-# CertMonitor — Kurumsal SSL/TLS Sertifika İzleme Platformu
+# Site Monitör — Kurumsal SSL/TLS Sertifika İzleme Platformu
 ## White Paper | Versiyon 18.83.x | Haziran 2026
+
+> Not: Ürün adı CertMonitor → **Site Monitör** olarak değişti. Bu belgenin PDF çıktısı
+> (`frontend/public/whitepaper.pdf`) bir sonraki whitepaper güncellemesinde yeni adla yeniden üretilecek.
 
 ---
 
@@ -27,7 +30,7 @@
 
 ## 1. Yönetici Özeti
 
-**CertMonitor**, kurumsal ortamlarda çalışan SSL/TLS sertifikalarını otomatik olarak izleyen, süresi dolmak üzere olan veya hatalı sertifikalar için sorumlu ekipleri proaktif olarak bilgilendiren, takım tabanlı sorumluluk yönetimi ve tam denetim izine sahip bir **kurumsal sertifika izleme platformudur.**
+**Site Monitör**, kurumsal ortamlarda çalışan SSL/TLS sertifikalarını otomatik olarak izleyen, süresi dolmak üzere olan veya hatalı sertifikalar için sorumlu ekipleri proaktif olarak bilgilendiren, takım tabanlı sorumluluk yönetimi ve tam denetim izine sahip bir **kurumsal sertifika izleme platformudur.**
 
 ### Temel Sorun
 
@@ -39,7 +42,7 @@ SSL/TLS sertifikalarının süresi beklenmedik anlarda dolduğunda:
 
 ### Çözüm
 
-CertMonitor bu sorunu çözmek için:
+Site Monitör bu sorunu çözmek için:
 - Tüm sertifikaları saatlik periyotlarla otomatik kontrol eder
 - Sertifika zinciri, iptal durumu ve dağıtım uyumluluğunu doğrular
 - Süre dolmadan **30 / 15 / 7 gün önce** ilgili ekiplere e-posta ve webhook bildirimi gönderir
@@ -77,7 +80,7 @@ Sertifika sürelerini Excel tablosu veya takvim hatırlatıcısıyla takip etmek
 - Sertifika zinciri ve iptal durumunu kontrol etmez
 - Gerçek zamanlı görünürlük sağlamaz
 
-### 2.3 CertMonitor'ın Sağladığı Değer
+### 2.3 Site Monitör'ün Sağladığı Değer
 
 ```
 Reaktif Yaklaşım              →  Proaktif Yaklaşım
@@ -385,7 +388,7 @@ N+1 yöntemi           : Sweep başında inventoryRepo.findByDomainIn +
 
 ### 5.3 Dağıtık Zamanlayıcı Kilidi
 
-Çok pod çalıştırıldığında yalnızca bir pod aynı anda tarama yapmalıdır. CertMonitor DB tabanlı dağıtık kilit kullanır:
+Çok pod çalıştırıldığında yalnızca bir pod aynı anda tarama yapmalıdır. Site Monitör DB tabanlı dağıtık kilit kullanır:
 
 ```
 scheduler_lock tablosu:
@@ -636,7 +639,7 @@ Her alarm e-postası zengin HTML içerikle gelir:
 ```
 ┌─────────────────────────────────────────────────────┐
 │  [Renk çubuk: UYARI=turuncu / KRİTİK=kırmızı]      │
-│  CertMonitor — Sertifika İzleme                     │
+│  Site Monitör — Sertifika İzleme                     │
 │  🌐 kurumsalinternetsubesi.akbank.com               │
 │  UYARI  ·  Son Kullanma Tarihi                      │
 ├─────────────────────────────────────────────────────┤
@@ -659,7 +662,7 @@ Her alarm e-postası zengin HTML içerikle gelir:
 │  UYARI: domain adresindeki sertifikanın süresi       │
 │  18 gün içinde doluyor.                              │
 ├─────────────────────────────────────────────────────┤
-│  CertMonitor  ·  Son kontrol: ... · Bildirim: ...   │
+│  Site Monitör  ·  Son kontrol: ... · Bildirim: ...   │
 └─────────────────────────────────────────────────────┘
 ```
 
@@ -1578,7 +1581,7 @@ Sertifika dışı erişilebilirlik izlemesi (sertifika sweep'inden bağımsız).
 
 1. E-postadaki domain bilgisine bakın
 2. Kalan gün sayısını kontrol edin
-3. **Eğer haberdar olduysanız:** CertMonitor'da ilgili alarmı **"Onayla"** → günlük tekrar bildirimler durur
+3. **Eğer haberdar olduysanız:** Site Monitör'de ilgili alarmı **"Onayla"** → günlük tekrar bildirimler durur
 4. **Sertifikayı yenileme sürecini başlatın** (CA, ekip, platform)
 5. **Yenileme tamamlandığında:** Sistemi bir sonraki taramada otomatik olarak kontrol edecektir
 6. **Sorun giderilinse:** Alarm Geçmişi'nde **"Çözüldü İşaretle"** → çözüm bildirimi gönderilir
@@ -1595,7 +1598,7 @@ Sertifika dışı erişilebilirlik izlemesi (sertifika sweep'inden bağımsız).
 ### 13.3 Sertifika Yenilendikten Sonra Ne Yapmalıyım
 
 1. Yeni sertifikayı sunucuya/platforma dağıtın
-2. CertMonitor bir sonraki saatlik taramada yeni sertifikayı tespit edecektir
+2. Site Monitör bir sonraki saatlik taramada yeni sertifikayı tespit edecektir
 3. **Dağıtım doğrulama:** Envanterde `expected_fingerprint` güncellenmişse sistem uyumluluğu kontrol edecektir
 4. Alarm Geçmişi'nde ilgili alarmı **"Çözüldü İşaretle"** ile kapatın
 5. Sistem otomatik olarak `RESOLUTION` bildirimi gönderir
@@ -1648,7 +1651,7 @@ Direktör (C-LEVEL):
 
 ### 13.6 Backend Düştüğünde Ne Olur
 
-CertMonitor, backend kapalıyken aşağıdaki davranışları gösterir:
+Site Monitör, backend kapalıyken aşağıdaki davranışları gösterir:
 
 1. **Tarama durur** — Aktif sertifika kontrolü yapılamaz
 2. **Bildirimler gönderilmez** — Scheduler çalışmadığı için DAILY_REALERT gönderilemez
@@ -1916,5 +1919,5 @@ Birden fazla pod aynı anda tarama yapmaz. DB tabanlı kilit (TTL: 10 dk) yalnı
 
 ---
 
-*Bu belge CertMonitor v18.83.x için Haziran 2026 itibarıyla hazırlanmıştır.*  
+*Bu belge Site Monitör v18.83.x için Haziran 2026 itibarıyla hazırlanmıştır.*  
 *Güncellemeler için: "raporu güncelle" komutu ile belge yenilenebilir.*

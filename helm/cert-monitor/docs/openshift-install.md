@@ -1,4 +1,4 @@
-# CertMonitor — OpenShift Installation Guide
+# Site Monitor — OpenShift Installation Guide
 
 ## Prerequisites
 
@@ -28,7 +28,7 @@ oc new-project cert-monitor-staging
 
 ## 2. Security Context Constraints (SCC)
 
-CertMonitor runs as UID **1000** with a read-only root filesystem. OpenShift's default `restricted` SCC blocks fixed UIDs on OCP < 4.11.
+Site Monitor runs as UID **1000** with a read-only root filesystem. OpenShift's default `restricted` SCC blocks fixed UIDs on OCP < 4.11.
 
 ### Option A — OCP 4.11+ (recommended)
 

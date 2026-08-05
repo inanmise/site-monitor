@@ -377,7 +377,7 @@ public class EmailNotificationService {
             MimeMessageHelper helper = new MimeMessageHelper(msg, true, "UTF-8");
             helper.setTo(toAddress);
             applyFrom(helper);
-            helper.setSubject("[CertMonitor] Şifreniz sıfırlandı — lütfen güncelleyin");
+            helper.setSubject("[Site Monitör] Şifreniz sıfırlandı — lütfen güncelleyin");
             helper.setText(buildPasswordResetHtml(username, displayName, tempPassword), true);
             return doSend(toAddress, msg, 1);
         } catch (Exception e) {
@@ -413,7 +413,7 @@ public class EmailNotificationService {
         return simpleFrameOpen(560)
             + "<h2 style='color:#4f46e5;margin:0 0 12px;font-size:20px'>Şifreniz sıfırlandı</h2>"
             + "<p style='margin:0 0 10px'>Sayın <strong>" + escHtml(name) + "</strong>,</p>"
-            + "<p style='margin:0 0 10px'>CertMonitor hesabınızın şifresi bir yönetici tarafından sıfırlandı.</p>"
+            + "<p style='margin:0 0 10px'>Site Monitör hesabınızın şifresi bir yönetici tarafından sıfırlandı.</p>"
             + "<table role='presentation' cellpadding='0' cellspacing='0' border='0' style='border-collapse:collapse;margin:14px 0;font-size:14px'>"
             + "<tr><td style='padding:4px 12px 4px 0;color:#64748b'>Kullanıcı adı:</td>"
             + "<td style='padding:4px 0;font-family:Consolas,\"Courier New\",monospace;font-weight:600'>" + escHtml(username) + "</td></tr>"
@@ -440,7 +440,7 @@ public class EmailNotificationService {
             MimeMessageHelper helper = new MimeMessageHelper(msg, true, "UTF-8");
             helper.setTo(to);
             applyFrom(helper);
-            helper.setSubject("[CertMonitor] ⚠ Ağ Erişim Sorunu Tespit Edildi");
+            helper.setSubject("[Site Monitör] ⚠ Ağ Erişim Sorunu Tespit Edildi");
             helper.setText(buildAdminNetworkAlertHtml(detectedAt, networkErrors, total,
                     errorRate, threshold), true);
             return doSend(to, msg, 1);
@@ -462,7 +462,7 @@ public class EmailNotificationService {
             MimeMessageHelper helper = new MimeMessageHelper(msg, true, "UTF-8");
             helper.setTo(to);
             applyFrom(helper);
-            helper.setSubject("[CertMonitor] ✅ Ağ Erişim Sorunu Çözüldü");
+            helper.setSubject("[Site Monitör] ✅ Ağ Erişim Sorunu Çözüldü");
             helper.setText(buildAdminNetworkResolvedHtml(detectedAt, resolvedAt, durationMs,
                     networkErrors, total, errorRate), true);
             return doSend(to, msg, 1);
@@ -491,7 +491,7 @@ public class EmailNotificationService {
             helper.setTo(recipients);
             applyFrom(helper);
             int ruleCount = (r.hits() == null) ? 0 : r.hits().size();
-            helper.setSubject("[CertMonitor] ⚠ Anomali: " + r.total() + " başarısız login / "
+            helper.setSubject("[Site Monitör] ⚠ Anomali: " + r.total() + " başarısız login / "
                     + r.windowMinutes() + "dk — " + ruleCount + " kural tetiklendi");
             helper.setText(buildLoginAnomalyHtml(r, triggerLabel), true);
             return doSend(String.join(",", recipients), msg, 1);
@@ -511,7 +511,7 @@ public class EmailNotificationService {
             MimeMessageHelper helper = new MimeMessageHelper(msg, true, "UTF-8");
             helper.setTo(recipients);
             applyFrom(helper);
-            helper.setSubject("[CertMonitor] ✅ Login anomalisi normale döndü");
+            helper.setSubject("[Site Monitör] ✅ Login anomalisi normale döndü");
             helper.setText(buildLoginAnomalyResolvedHtml(openedAt, resolvedAt, peakTotal), true);
             return doSend(String.join(",", recipients), msg, 1);
         } catch (Exception e) {
@@ -655,7 +655,7 @@ public class EmailNotificationService {
                                        String clientIp, String userAgent, String reportedAt, boolean force) {
         List<InlineImage> inline = images != null ? images : List.of();
         String html = buildLoginIssueHtml(refCode, username, reporterEmail, errorText, message, inline, clientIp, userAgent, reportedAt, false);
-        String subject = "[CertMonitor] 🛟 Giriş Sorunu Bildirimi — " + refCode +
+        String subject = "[Site Monitör] 🛟 Giriş Sorunu Bildirimi — " + refCode +
                 (username != null && !username.isBlank() ? " · " + username : "");
         String status = sendHtml(new String[]{ to }, null, subject, html, inline, force);
         return new LoginIssueMailResult(status, currentFrom(), subject, html);
@@ -669,7 +669,7 @@ public class EmailNotificationService {
         List<InlineImage> inline = images != null ? images : List.of();
         // forReporter=true → e-posta satırı gösterilmez (kişi kendi adresini bilir); yine de tutarlılık için geçilir.
         String html = buildLoginIssueHtml(refCode, username, to, errorText, message, inline, null, null, reportedAt, true);
-        String subject = "[CertMonitor] Sorun bildiriminiz alındı — " + refCode;
+        String subject = "[Site Monitör] Sorun bildiriminiz alındı — " + refCode;
         String status = sendHtml(new String[]{ to }, null, subject, html, inline, force);
         return new LoginIssueMailResult(status, currentFrom(), subject, html);
     }
@@ -739,7 +739,7 @@ public class EmailNotificationService {
           .append(simpleFrameClose());
 
         String html = sb.toString();
-        String subject = "[CertMonitor] ✅ Giriş sorunu çözümlendi — " + refCode;
+        String subject = "[Site Monitör] ✅ Giriş sorunu çözümlendi — " + refCode;
         String status = sendHtml(toArr, ccArr, subject, html, inline, force);
         return new LoginIssueMailResult(status, currentFrom(), subject, html);
     }
@@ -802,7 +802,7 @@ public class EmailNotificationService {
         }
         sb.append("<p style='font-size:13px;color:#64748b;margin:16px 0 0'>")
           .append(forReporter
-                  ? "Bu e-posta CertMonitor tarafından otomatik gönderilmiştir. Yanıtlamayınız."
+                  ? "Bu e-posta Site Monitör tarafından otomatik gönderilmiştir. Yanıtlamayınız."
                   : "Bu bildirim login sayfasındaki \"sorun bildir\" bağlantısından, kimlik doğrulaması yapılmadan gönderilmiştir — içeriği buna göre değerlendirin.")
           .append("</p>")
           .append(simpleFrameClose());
@@ -821,8 +821,8 @@ public class EmailNotificationService {
         String ratePct = String.format("%.0f%%", errorRate * 100);
         String threshPct = String.format("%.0f%%", threshold * 100);
         return simpleFrameOpen(640)
-                + "<h2 style='color:#b91c1c;margin:0 0 12px;font-size:20px'>⚠ CertMonitor — Ağ Erişim Sorunu Tespit Edildi</h2>"
-                + "<p style='font-size:14px;line-height:1.55;margin:0 0 12px'>CertMonitor host'unun bir veya daha fazla sertifika kontrolünü tamamlayamadığı tespit edildi. "
+                + "<h2 style='color:#b91c1c;margin:0 0 12px;font-size:20px'>⚠ Site Monitör — Ağ Erişim Sorunu Tespit Edildi</h2>"
+                + "<p style='font-size:14px;line-height:1.55;margin:0 0 12px'>Site Monitör host'unun bir veya daha fazla sertifika kontrolünü tamamlayamadığı tespit edildi. "
                 + "Tarama turunda <strong>" + networkErrors + " / " + total + "</strong> domain ağ-class hatasıyla düştü "
                 + "(oran: <strong>" + ratePct + "</strong>, eşik: " + threshPct + "). "
                 + "Bu, host'un outbound bağlantısında bir problem olabileceğini gösteriyor.</p>"
@@ -847,7 +847,7 @@ public class EmailNotificationService {
                 + "</ul>"
                 + "<p style='font-size:13px;color:#6b7280;margin:24px 0 0'>Ağ erişimi normale döner dönmez ayrıca bir <strong>\"Çözüldü\"</strong> e-postası alacaksınız.</p>"
                 + "<hr style='border:none;border-top:1px solid #e5e7eb;margin:24px 0 12px' />"
-                + "<p style='font-size:11px;color:#9ca3af;margin:0'>CertMonitor — System Admin Notification</p>"
+                + "<p style='font-size:11px;color:#9ca3af;margin:0'>Site Monitör — System Admin Notification</p>"
                 + simpleFrameClose();
     }
 
@@ -858,8 +858,8 @@ public class EmailNotificationService {
         String durationStr = durationMin + " dk " + durationSec + " sn";
         String ratePct = String.format("%.0f%%", errorRate * 100);
         return simpleFrameOpen(640)
-                + "<h2 style='color:#15803d;margin:0 0 12px;font-size:20px'>✅ CertMonitor — Ağ Erişim Sorunu Çözüldü</h2>"
-                + "<p style='font-size:14px;line-height:1.55;margin:0 0 12px'>CertMonitor host'unun outbound bağlantı sorunu çözüldü. "
+                + "<h2 style='color:#15803d;margin:0 0 12px;font-size:20px'>✅ Site Monitör — Ağ Erişim Sorunu Çözüldü</h2>"
+                + "<p style='font-size:14px;line-height:1.55;margin:0 0 12px'>Site Monitör host'unun outbound bağlantı sorunu çözüldü. "
                 + "Sertifika kontrolleri normal işleyişe döndü.</p>"
                 + "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' style='border-collapse:collapse;margin:16px 0;font-size:13px'>"
                 + adminRow("Tespit Zamanı", formatIso(detectedAt))
@@ -879,7 +879,7 @@ public class EmailNotificationService {
                 + "<td bgcolor='#f0fdf4' style='background-color:#f0fdf4;padding:10px 14px;font-size:13px;color:#15803d'>"
                 + "<em>Not: Outage süresince üretilebilecek sahte alarmlar bastırıldığı için ekibinize ÇÖZÜLDÜ e-posta yağmuru gönderilmedi.</em></td></tr></table>"
                 + "<hr style='border:none;border-top:1px solid #e5e7eb;margin:24px 0 12px' />"
-                + "<p style='font-size:11px;color:#9ca3af;margin:0'>CertMonitor — System Admin Notification</p>"
+                + "<p style='font-size:11px;color:#9ca3af;margin:0'>Site Monitör — System Admin Notification</p>"
                 + simpleFrameClose();
     }
 
@@ -1018,13 +1018,13 @@ public class EmailNotificationService {
                 + "<tr><td bgcolor='" + accent + "' style='background-color:" + accent + ";color:#ffffff;padding:14px 16px;border-radius:8px;font-size:16px;font-weight:700;text-align:center'>"
                 + "🌐 " + label + "</td></tr></table>"
                 + "<h2 style='color:#111827;margin:0 0 6px;font-size:20px'>" + escHtml(domain) + "</h2>"
-                + "<p style='font-size:12px;color:#6b7280;margin:0 0 14px'>CertMonitor — Alan Adı İzleme</p>"
+                + "<p style='font-size:12px;color:#6b7280;margin:0 0 14px'>Site Monitör — Alan Adı İzleme</p>"
                 + (body.isBlank() ? "" : "<p style='font-size:14px;line-height:1.55;margin:0 0 14px'>" + body + "</p>")
                 + "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' style='border-collapse:collapse;margin:8px 0 4px;font-size:13px'>"
                 + rows
                 + "</table>"
                 + "<hr style='border:none;border-top:1px solid #e5e7eb;margin:22px 0 12px' />"
-                + "<p style='font-size:11px;color:#9ca3af;margin:0'>CertMonitor — Alan Adı (Domain) Süre Bitişi İzleme</p>"
+                + "<p style='font-size:11px;color:#9ca3af;margin:0'>Site Monitör — Alan Adı (Domain) Süre Bitişi İzleme</p>"
                 + simpleFrameClose();
     }
 
@@ -1050,12 +1050,12 @@ public class EmailNotificationService {
                 + "<tr><td bgcolor='#15803d' style='background-color:#15803d;color:#ffffff;padding:14px 16px;border-radius:8px;font-size:16px;font-weight:700;text-align:center'>"
                 + "✅ ALAN ADI UYARISI ÇÖZÜLDÜ</td></tr></table>"
                 + "<h2 style='color:#111827;margin:0 0 6px;font-size:20px'>" + escHtml(domain) + "</h2>"
-                + "<p style='font-size:12px;color:#6b7280;margin:0 0 14px'>CertMonitor — Alan Adı İzleme</p>"
+                + "<p style='font-size:12px;color:#6b7280;margin:0 0 14px'>Site Monitör — Alan Adı İzleme</p>"
                 + "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' style='border-collapse:collapse;margin:8px 0 4px;font-size:13px'>"
                 + rows
                 + "</table>"
                 + "<hr style='border:none;border-top:1px solid #e5e7eb;margin:22px 0 12px' />"
-                + "<p style='font-size:11px;color:#9ca3af;margin:0'>CertMonitor — Alan Adı (Domain) Süre Bitişi İzleme</p>"
+                + "<p style='font-size:11px;color:#9ca3af;margin:0'>Site Monitör — Alan Adı (Domain) Süre Bitişi İzleme</p>"
                 + simpleFrameClose();
     }
 
@@ -1213,7 +1213,7 @@ public class EmailNotificationService {
 
             // ── Top bar — bgcolor'lı <td> ──
             + "<tr><td bgcolor='" + accentColor + "' style='background-color:" + accentColor + ";padding:22px 24px'>"
-            + "<div style='color:#ffffff;font-size:11px;font-weight:700;letter-spacing:.12em'>CertMonitor — Sertifika İzleme</div>"
+            + "<div style='color:#ffffff;font-size:11px;font-weight:700;letter-spacing:.12em'>Site Monitör — Sertifika İzleme</div>"
             + "<div class='em-domain' style='color:#fff;font-size:22px;font-weight:900;"
             + "margin-top:10px;word-break:break-all;line-height:1.25'>🌐 " + escHtml(domain) + "</div>"
             + "<div style='color:#ffffff;font-size:15px;font-weight:700;"
@@ -1235,7 +1235,7 @@ public class EmailNotificationService {
 
             // Footer
             + "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0'><tr>"
-            + "<td style='border-top:1px solid #f1f5f9;padding-top:12px;font-size:11px;color:#94a3b8'>CertMonitor</td>"
+            + "<td style='border-top:1px solid #f1f5f9;padding-top:12px;font-size:11px;color:#94a3b8'>Site Monitör</td>"
             + "<td align='right' style='border-top:1px solid #f1f5f9;padding-top:12px;font-size:11px;color:#94a3b8'>"
             + (!checkedAtDisplay.equals("—")
                 ? "<span class='em-footer-check'>" + "Son kontrol: " + checkedAtDisplay + " &nbsp;&middot;&nbsp;</span>" : "")
@@ -1484,7 +1484,7 @@ public class EmailNotificationService {
             + "<table class='em-card' width='600' cellpadding='0' cellspacing='0' border='0'"
             + " style='max-width:600px;width:100%;background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,.12)'>"
             + "<tr><td bgcolor='" + color + "' style='background-color:" + color + ";padding:20px 24px;color:#fff'>"
-            + "<div style='font-size:11px;font-weight:700;letter-spacing:.1em;color:#ffffff'>CertMonitor — Sertifika İzleme</div>"
+            + "<div style='font-size:11px;font-weight:700;letter-spacing:.1em;color:#ffffff'>Site Monitör — Sertifika İzleme</div>"
             + "<div style='font-size:18px;font-weight:800;margin-top:4px;word-break:break-word'>" + escHtml(subject) + "</div>"
             + "</td></tr>"
             + "<tr><td class='em-body' style='padding:24px'>"
@@ -1494,7 +1494,7 @@ public class EmailNotificationService {
             + escHtml(message) + "</td></tr></table>"
             + cta
             + "<div style='text-align:center;color:#94a3b8;font-size:11px;margin-top:20px;"
-            + "padding-top:16px;border-top:1px solid #f1f5f9'>CertMonitor &nbsp;·&nbsp; " + now + "</div>"
+            + "padding-top:16px;border-top:1px solid #f1f5f9'>Site Monitör &nbsp;·&nbsp; " + now + "</div>"
             + "</td></tr></table>"
             + "</td></tr></table>"
             + "</body></html>";
@@ -1676,9 +1676,9 @@ public class EmailNotificationService {
         String red = "#dc2626";
 
         String kicker = switch (alertType) {
-            case "PORT_DOWN"   -> "CertMonitor — Port İzleme";
-            case "DNS_FAILURE" -> "CertMonitor — DNS İzleme";
-            default            -> "CertMonitor — Erişilebilirlik İzleme";
+            case "PORT_DOWN"   -> "Site Monitör — Port İzleme";
+            case "DNS_FAILURE" -> "Site Monitör — DNS İzleme";
+            default            -> "Site Monitör — Erişilebilirlik İzleme";
         };
         String heroTitle = switch (alertType) {
             case "PORT_DOWN"   -> "PORT ERİŞİLEMEZ";
@@ -1840,14 +1840,14 @@ public class EmailNotificationService {
             // Otomatik kapanış notu
             + "<div style='font-size:12px;color:#64748b;line-height:1.6;margin-bottom:20px'>"
             + "ℹ Sorun düzeldiğinde bu alarm otomatik kapatılır ve çözüm e-postası gönderilir. "
-            + "Alarmı CertMonitor &rarr; Uyarılar &rarr; Alarm Geçmişi ekranından onaylayabilir veya kapatabilirsiniz."
+            + "Alarmı Site Monitör &rarr; Uyarılar &rarr; Alarm Geçmişi ekranından onaylayabilir veya kapatabilirsiniz."
             + "</div>"
 
             + ctaHtml
 
             // Footer
             + "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0'><tr>"
-            + "<td style='border-top:1px solid #f1f5f9;padding-top:12px;font-size:11px;color:#94a3b8'>CertMonitor</td>"
+            + "<td style='border-top:1px solid #f1f5f9;padding-top:12px;font-size:11px;color:#94a3b8'>Site Monitör</td>"
             + "<td align='right' style='border-top:1px solid #f1f5f9;padding-top:12px;font-size:11px;color:#94a3b8'>"
             + "Bildirim: " + generatedAt
             + "</td></tr></table>"
@@ -1870,9 +1870,9 @@ public class EmailNotificationService {
         boolean dnsChanged = "DNS_CHANGED".equals(alertType);
 
         String kicker = switch (alertType != null ? alertType : "") {
-            case "PORT_DOWN"                 -> "CertMonitor — Port İzleme";
-            case "DNS_FAILURE", "DNS_CHANGED" -> "CertMonitor — DNS İzleme";
-            default                          -> "CertMonitor — Erişilebilirlik İzleme";
+            case "PORT_DOWN"                 -> "Site Monitör — Port İzleme";
+            case "DNS_FAILURE", "DNS_CHANGED" -> "Site Monitör — DNS İzleme";
+            default                          -> "Site Monitör — Erişilebilirlik İzleme";
         };
         String heroLine = switch (alertType != null ? alertType : "") {
             case "PORT_DOWN"   -> "Port Yeniden Açıldı";
@@ -1997,7 +1997,7 @@ public class EmailNotificationService {
             // ── Footer ──
             + "<tr><td bgcolor='#ffffff' style='background-color:#ffffff;padding:0 24px 18px'>"
             + "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0'><tr>"
-            + "<td style='border-top:1px solid #f1f5f9;padding-top:12px;font-size:11px;color:#94a3b8'>CertMonitor</td>"
+            + "<td style='border-top:1px solid #f1f5f9;padding-top:12px;font-size:11px;color:#94a3b8'>Site Monitör</td>"
             + "<td align='right' style='border-top:1px solid #f1f5f9;padding-top:12px;"
             + "font-size:11px;color:#94a3b8'>Bildirim: " + generatedAt + "</td>"
             + "</tr></table></td></tr>"
@@ -2080,7 +2080,7 @@ public class EmailNotificationService {
             + " style='width:640px;max-width:640px;background-color:#ffffff;border-radius:14px;overflow:hidden;box-shadow:0 8px 32px rgba(0,0,0,.15)'>"
             // Top bar
             + "<tr><td bgcolor='" + red + "' style='background-color:" + red + ";padding:22px 24px'>"
-            + "<div style='color:#ffe4e6;font-size:11px;font-weight:700;letter-spacing:.12em'>CertMonitor — İzleme</div>"
+            + "<div style='color:#ffe4e6;font-size:11px;font-weight:700;letter-spacing:.12em'>Site Monitör — İzleme</div>"
             + "<div style='color:#ffffff;font-size:22px;font-weight:900;margin-top:10px;line-height:1.25'>🌩 ALARM FIRTINASI</div>"
             + "<div style='color:#ffe4e6;font-size:15px;font-weight:700;margin-top:8px'>KRİTİK &nbsp;&#183;&nbsp; " + monitorCount + " monitör birden erişilemez</div>"
             + "</td></tr>"
@@ -2098,7 +2098,7 @@ public class EmailNotificationService {
             + listSection
             + cta
             + "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0'><tr>"
-            + "<td style='border-top:1px solid #f1f5f9;padding-top:12px;font-size:11px;color:#94a3b8'>CertMonitor</td>"
+            + "<td style='border-top:1px solid #f1f5f9;padding-top:12px;font-size:11px;color:#94a3b8'>Site Monitör</td>"
             + "<td align='right' style='border-top:1px solid #f1f5f9;padding-top:12px;font-size:11px;color:#94a3b8'>Bildirim: " + generatedAt + "</td>"
             + "</tr></table>"
             + "</td></tr></table></td></tr></table></body></html>";
@@ -2152,7 +2152,7 @@ public class EmailNotificationService {
             + "<table role='presentation' class='em-card' width='640' cellpadding='0' cellspacing='0' border='0' bgcolor='#ffffff'"
             + " style='width:640px;max-width:640px;background-color:#ffffff;border-radius:14px;overflow:hidden;box-shadow:0 8px 32px rgba(0,0,0,.15)'>"
             + "<tr><td bgcolor='" + green + "' style='background-color:" + green + ";padding:22px 24px'>"
-            + "<div style='color:#dcfce7;font-size:11px;font-weight:700;letter-spacing:.12em'>CertMonitor — İzleme</div>"
+            + "<div style='color:#dcfce7;font-size:11px;font-weight:700;letter-spacing:.12em'>Site Monitör — İzleme</div>"
             + "<div style='color:#ffffff;font-size:22px;font-weight:900;margin-top:10px;line-height:1.25'>✅ ALARM FIRTINASI SONA ERDİ</div>"
             + "<div style='color:#dcfce7;font-size:15px;font-weight:700;margin-top:8px'>" + recoveredCount + " monitör kurtarıldı</div>"
             + "</td></tr>"
@@ -2163,7 +2163,7 @@ public class EmailNotificationService {
             + listSection
             + cta
             + "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0'><tr>"
-            + "<td style='border-top:1px solid #f1f5f9;padding-top:12px;font-size:11px;color:#94a3b8'>CertMonitor</td>"
+            + "<td style='border-top:1px solid #f1f5f9;padding-top:12px;font-size:11px;color:#94a3b8'>Site Monitör</td>"
             + "<td align='right' style='border-top:1px solid #f1f5f9;padding-top:12px;font-size:11px;color:#94a3b8'>Bildirim: " + generatedAt + "</td>"
             + "</tr></table>"
             + "</td></tr></table></td></tr></table></body></html>";
@@ -2273,7 +2273,7 @@ public class EmailNotificationService {
             + hero + twoCol + extraBox + cta
             + "<div style='font-size:12px;color:#64748b;line-height:1.6;margin-bottom:20px'>" + infoNote + "</div>"
             + "<table width='100%' cellpadding='0' cellspacing='0'><tr>"
-            + "<td style='border-top:1px solid #f1f5f9;padding-top:12px;font-size:11px;color:#94a3b8'>CertMonitor</td>"
+            + "<td style='border-top:1px solid #f1f5f9;padding-top:12px;font-size:11px;color:#94a3b8'>Site Monitör</td>"
             + "<td align='right' style='border-top:1px solid #f1f5f9;padding-top:12px;font-size:11px;color:#94a3b8'>Bildirim: " + generatedAt + "</td></tr></table>"
             + "</td></tr></table></td></tr></table></td></tr></table></body></html>";
     }
@@ -2344,7 +2344,7 @@ public class EmailNotificationService {
               + "<div style='font-size:13px;color:#1c1917;font-family:Consolas,monospace;word-break:break-word'>…" + escHtml(snippet) + "…</div></td></tr></table>"
             : "";
 
-        return monitoringTypedAlert(accent, "CertMonitor — İçerik (Keyword) İzleme", "🔎",
+        return monitoringTypedAlert(accent, "Site Monitör — İçerik (Keyword) İzleme", "🔎",
                 absent ? "İSTENMEYEN İFADE BULUNDU" : "KOŞUL SAĞLANMADI",
                 "⚠ İçerik doğrulaması başarısız", escHtml(url), "İçerik Doğrulama",
                 firstFailureAt, attemptsLabel, delayLabel, left.toString(), right, extraBox, message,
@@ -2383,7 +2383,7 @@ public class EmailNotificationService {
             + statusRow2col("Seviye", "✗ KRİTİK")
             + statusRow2col("İzleme", "✓ Devam ediyor");
 
-        return monitoringTypedAlert(accent, "CertMonitor — Ping (ICMP) İzleme", "🖥️",
+        return monitoringTypedAlert(accent, "Site Monitör — Ping (ICMP) İzleme", "🖥️",
                 na ? "ICMP KULLANILAMIYOR" : "HOST YANIT VERMİYOR",
                 "⚠ Erişilebilirlik kaybı", escHtml(host), "Erişilebilirlik (Ping)",
                 firstFailureAt, attemptsLabel, delayLabel, left.toString(), right, "", message,
@@ -2467,7 +2467,7 @@ public class EmailNotificationService {
             + whyReceivingBlock(teamNames)
             + cta
             + "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0'><tr>"
-            + "<td style='border-top:1px solid #f1f5f9;padding-top:12px;font-size:11px;color:#94a3b8'>CertMonitor</td>"
+            + "<td style='border-top:1px solid #f1f5f9;padding-top:12px;font-size:11px;color:#94a3b8'>Site Monitör</td>"
             + "<td align='right' style='border-top:1px solid #f1f5f9;padding-top:12px;font-size:11px;color:#94a3b8'>Bildirim: " + generatedAt + "</td></tr></table>"
             + "</td></tr></table></td></tr></table></td></tr></table></body></html>";
     }
@@ -2484,7 +2484,7 @@ public class EmailNotificationService {
             d.append(tableRow2col("⚙ Koşul", KeywordCheckerService.opPhrase(op, n) + " bulunmalı"));
             if (!occ.isEmpty()) d.append(tableRow2col("🔢 Alarm anı bulunan", occ + " kez"));
         }
-        return monitoringTypedResolved(url, "CertMonitor — İçerik (Keyword) İzleme",
+        return monitoringTypedResolved(url, "Site Monitör — İçerik (Keyword) İzleme",
                 "İçerik Doğrulaması Yeniden Başarılı", "İçerik Doğrulama", "🔎",
                 d.toString(), monitorCtaUrl("keyword", ctx), resolvedBy, resolvedAt, createdAt, teamNames, uptime);
     }
@@ -2497,7 +2497,7 @@ public class EmailNotificationService {
             d.append(tableRow2col("🖥️ Host", escHtml(host)));
             if (!ipv.isEmpty() && !"auto".equals(ipv)) d.append(tableRow2col("🔢 IP sürümü", escHtml(ipv.toUpperCase())));
         }
-        return monitoringTypedResolved(host, "CertMonitor — Ping (ICMP) İzleme",
+        return monitoringTypedResolved(host, "Site Monitör — Ping (ICMP) İzleme",
                 "Host Yeniden Yanıt Veriyor", "Erişilebilirlik (Ping)", "🖥️",
                 d.toString(), monitorCtaUrl("ping", ctx), resolvedBy, resolvedAt, createdAt, teamNames, uptime);
     }
@@ -2585,7 +2585,7 @@ public class EmailNotificationService {
 
             // ── Top bar (mor) — bgcolor'lı <td> ──
             + "<tr><td bgcolor='" + purple + "' style='background-color:" + purple + ";padding:22px 24px'>"
-            + "<div style='color:#ffffff;font-size:11px;font-weight:700;letter-spacing:.12em'>CertMonitor — DNS İzleme</div>"
+            + "<div style='color:#ffffff;font-size:11px;font-weight:700;letter-spacing:.12em'>Site Monitör — DNS İzleme</div>"
             + "<div class='em-domain' style='color:#fff;font-size:22px;font-weight:900;"
             + "margin-top:10px;word-break:break-all;line-height:1.25'>🔀 " + escHtml(domain)
             + (!recordType.isEmpty() ? " <span style='font-size:15px;font-weight:700'>· " + escHtml(recordType) + " kaydı</span>" : "")
@@ -2619,14 +2619,14 @@ public class EmailNotificationService {
 
             // Manuel kapanış notu
             + "<div style='font-size:12px;color:#64748b;line-height:1.6;margin-bottom:20px'>"
-            + "ℹ Bu alarm otomatik kapanmaz. Değişiklik planlı ise CertMonitor &rarr; Uyarılar &rarr; "
+            + "ℹ Bu alarm otomatik kapanmaz. Değişiklik planlı ise Site Monitör &rarr; Uyarılar &rarr; "
             + "Alarm Geçmişi ekranından alarmı onaylayın ve kapatın. Beklenmedik bir değişiklikse "
             + "(olası domain hijack / hatalı migrasyon) derhal ağ ekibiyle iletişime geçin."
             + "</div>"
 
             // Footer
             + "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0'><tr>"
-            + "<td style='border-top:1px solid #f1f5f9;padding-top:12px;font-size:11px;color:#94a3b8'>CertMonitor</td>"
+            + "<td style='border-top:1px solid #f1f5f9;padding-top:12px;font-size:11px;color:#94a3b8'>Site Monitör</td>"
             + "<td align='right' style='border-top:1px solid #f1f5f9;padding-top:12px;font-size:11px;color:#94a3b8'>"
             + "Bildirim: " + generatedAt
             + "</td></tr></table>"
@@ -2949,7 +2949,7 @@ public class EmailNotificationService {
             // ── Üst bar — div shading Outlook'ta güvenilmez; td + bgcolor attr ──
             + "<table width='100%' cellpadding='0' cellspacing='0' border='0'><tr>"
             + "<td bgcolor='" + accent + "' style='background:" + accent + ";padding:22px 24px'>"
-            + "<div style='color:#aebed8;font-size:11px;font-weight:700;letter-spacing:.12em'>CertMonitor — Haftalık Rapor</div>"
+            + "<div style='color:#aebed8;font-size:11px;font-weight:700;letter-spacing:.12em'>Site Monitör — Haftalık Rapor</div>"
             + "<div style='color:#ffffff;font-size:22px;font-weight:900;margin-top:10px;line-height:1.25'>📋 "
             + escHtml(teamName) + "</div>"
             + "<div style='color:#dbe3ef;font-size:15px;font-weight:700;margin-top:8px'>"
@@ -2983,7 +2983,7 @@ public class EmailNotificationService {
 
             // Footer
             + "<table width='100%' cellpadding='0' cellspacing='0'><tr>"
-            + "<td valign='top' style='border-top:1px solid #f1f5f9;padding-top:12px;font-size:11px;color:#94a3b8'>CertMonitor — Haftalık Rapor</td>"
+            + "<td valign='top' style='border-top:1px solid #f1f5f9;padding-top:12px;font-size:11px;color:#94a3b8'>Site Monitör — Haftalık Rapor</td>"
             + "<td align='right' valign='top' style='border-top:1px solid #f1f5f9;padding-top:12px;font-size:11px;color:#94a3b8;line-height:1.7'>"
             + footerRight + "</td></tr></table>"
 
@@ -2998,11 +2998,11 @@ public class EmailNotificationService {
     public String buildWeeklyReportSubmittedHtml(String teamName, String weekLabel, String submittedBy,
                                                  String approveUrl) {
         return buildSimpleAlertHtml(
-                "[CertMonitor] " + teamName + " — " + weekLabel + " raporu onayınızı bekliyor",
+                "[Site Monitör] " + teamName + " — " + weekLabel + " raporu onayınızı bekliyor",
                 teamName + " ekibinin " + weekLabel + " haftalık raporu "
                 + (submittedBy != null ? submittedBy : "ekip üyesi")
                 + " tarafından onayınıza sunuldu. Aşağıdaki butonla (giriş yapmadan) doğrudan "
-                + "onaylayabilir ya da CertMonitor → Raporlar → Haftalık Raporlar ekranından "
+                + "onaylayabilir ya da Site Monitör → Raporlar → Haftalık Raporlar ekranından "
                 + "inceleyip düzeltme talebiyle iade edebilirsiniz.",
                 approveUrl, "✅ Raporu onaylamak için tıklayınız →");
     }
@@ -3011,7 +3011,7 @@ public class EmailNotificationService {
     public String buildWeeklyReportRejectedHtml(String teamName, String weekLabel,
                                                 String note, String rejectedBy) {
         return buildSimpleAlertHtml(
-                "[CertMonitor] " + teamName + " — " + weekLabel + " raporu iade edildi",
+                "[Site Monitör] " + teamName + " — " + weekLabel + " raporu iade edildi",
                 weekLabel + " haftalık raporunuz "
                 + (rejectedBy != null ? rejectedBy : "PO")
                 + " tarafından düzeltme talebiyle iade edildi.\n\nDüzeltme notu: "
@@ -3109,7 +3109,7 @@ public class EmailNotificationService {
             + "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' style='margin:0 0 4px;border-radius:8px;overflow:hidden'><tr>"
             + "<td width='4' bgcolor='#dc2626' style='background-color:#dc2626;width:4px;font-size:0;line-height:0'>&nbsp;</td>"
             + "<td bgcolor='#fef2f2' style='background-color:#fef2f2;padding:10px 14px;font-size:14px;font-weight:700;color:#991b1b'>"
-            + "⏰ Son giriş <strong>bugün saat 15:00</strong> — lütfen bu haftanın raporunu Cert Monitor üzerinden zamanında giriniz.</td></tr></table>"
+            + "⏰ Son giriş <strong>bugün saat 15:00</strong> — lütfen bu haftanın raporunu Site Monitör üzerinden zamanında giriniz.</td></tr></table>"
 
             + cta
 
@@ -3117,7 +3117,7 @@ public class EmailNotificationService {
 
             // Footer
             + "<table width='100%' cellpadding='0' cellspacing='0'><tr>"
-            + "<td valign='top' style='border-top:1px solid #f1f5f9;padding-top:12px;font-size:11px;color:#94a3b8'>CertMonitor — Otomatik Hatırlatma</td>"
+            + "<td valign='top' style='border-top:1px solid #f1f5f9;padding-top:12px;font-size:11px;color:#94a3b8'>Site Monitör — Otomatik Hatırlatma</td>"
             + "<td align='right' valign='top' style='border-top:1px solid #f1f5f9;padding-top:12px;font-size:11px;color:#94a3b8;line-height:1.7'>"
             + "Oluşturuldu: " + generatedAt + "</td></tr></table>"
 
@@ -3262,7 +3262,7 @@ public class EmailNotificationService {
             + table
             // Footer
             + "<table width='100%' cellpadding='0' cellspacing='0'><tr>"
-            + "<td valign='top' style='border-top:1px solid #f1f5f9;padding-top:12px;font-size:11px;color:#94a3b8'>CertMonitor — Otomatik Haftalık Rapor</td>"
+            + "<td valign='top' style='border-top:1px solid #f1f5f9;padding-top:12px;font-size:11px;color:#94a3b8'>Site Monitör — Otomatik Haftalık Rapor</td>"
             + "<td align='right' valign='top' style='border-top:1px solid #f1f5f9;padding-top:12px;font-size:11px;color:#94a3b8'>Oluşturuldu: " + generatedAt + "</td></tr></table>"
             + "</td></tr></table>"   // em-body td + gövde tablosu
             + "</td></tr></table>"   // kart iç td + kart tablosu
@@ -3343,9 +3343,9 @@ public class EmailNotificationService {
         String title = str(inc.get("title"));
         String teamName = str(inc.get("team_name"));
         String generatedAt = ZonedDateTime.now(IST).format(DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm"));
-        String eyebrow = resolved ? "CertMonitor — Olay Çözüldü ✓"
-                       : isNew    ? "CertMonitor — Yeni Olay Bildirimi"
-                                  : "CertMonitor — Olay Güncellendi";
+        String eyebrow = resolved ? "Site Monitör — Olay Çözüldü ✓"
+                       : isNew    ? "Site Monitör — Yeni Olay Bildirimi"
+                                  : "Site Monitör — Olay Güncellendi";
 
         StringBuilder facts = new StringBuilder()
             .append(kvRow("Önem", sevBadgeText(sev)))
@@ -3418,7 +3418,7 @@ public class EmailNotificationService {
             // ── Footer ──
             + "<table width='100%' cellpadding='0' cellspacing='0'><tr>"
             + "<td valign='top' style='border-top:1px solid #f1f5f9;padding-top:12px;font-size:11px;color:#94a3b8'>"
-            + "CertMonitor — Olay & Hata Bildirimi</td>"
+            + "Site Monitör — Olay & Hata Bildirimi</td>"
             + "<td align='right' valign='top' style='border-top:1px solid #f1f5f9;padding-top:12px;font-size:11px;"
             + "color:#94a3b8'>Oluşturuldu: " + generatedAt + "</td></tr></table>"
             + "</td></tr></table></td></tr></table>"
@@ -3757,7 +3757,7 @@ public class EmailNotificationService {
         return "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' bgcolor='#f8fafc' style='background-color:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;mso-table-lspace:0pt;mso-table-rspace:0pt'><tr><td style='padding:12px 16px'>"
             + "<div style='font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#64748b;margin-bottom:5px'>Neden bu e-postayı aldınız?</div>"
             + "<div style='font-size:13px;line-height:1.55;color:#1f2937'>Bu bildirim " + phrase
-            + " tanımlı bir izleme için gönderildi. CertMonitor otomatik bir izleme sistemidir; bildirim tercihleri için sistem yöneticinize başvurun.</div>"
+            + " tanımlı bir izleme için gönderildi. Site Monitör otomatik bir izleme sistemidir; bildirim tercihleri için sistem yöneticinize başvurun.</div>"
             + "</td></tr></table>";
     }
 

@@ -184,7 +184,7 @@ class LoginIssueControllerTest {
         when(loginIssueService.get(9L)).thenReturn(Optional.of(r));
         LoginIssueMailLog m = new LoginIssueMailLog();
         m.setMailType("RESOLVED"); m.setRecipientTo("reporter@akbank.com"); m.setCc("admin@akbank.com");
-        m.setEmailFrom("noreply@certmonitor"); m.setSubject("[CertMonitor] ✅ ... LIR-2026-000009");
+        m.setEmailFrom("noreply@certmonitor"); m.setSubject("[Site Monitör] ✅ ... LIR-2026-000009");
         m.setBodyHtml("<html>çözüldü</html>");
         m.setStatus("SENT"); m.setForced(true); m.setSentAt("2026-07-24T10:00:00");
         when(mailLogRepo.findByReportIdOrderByIdAsc(9L)).thenReturn(List.of(m));
@@ -195,7 +195,7 @@ class LoginIssueControllerTest {
                 .andExpect(jsonPath("$.data.mailHistory[0].from").value("noreply@certmonitor"))
                 .andExpect(jsonPath("$.data.mailHistory[0].to").value("reporter@akbank.com"))
                 .andExpect(jsonPath("$.data.mailHistory[0].cc").value("admin@akbank.com"))
-                .andExpect(jsonPath("$.data.mailHistory[0].subject").value("[CertMonitor] ✅ ... LIR-2026-000009"))
+                .andExpect(jsonPath("$.data.mailHistory[0].subject").value("[Site Monitör] ✅ ... LIR-2026-000009"))
                 .andExpect(jsonPath("$.data.mailHistory[0].body").value("<html>çözüldü</html>"))
                 .andExpect(jsonPath("$.data.mailHistory[0].status").value("SENT"))
                 .andExpect(jsonPath("$.data.mailHistory[0].forced").value(true));

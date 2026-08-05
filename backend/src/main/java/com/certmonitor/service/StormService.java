@@ -417,7 +417,7 @@ public class StormService {
             int extra = Math.max(0, downMembers.size() - targets.size());
             String rootCauseLabel = rootCauseLabel(storm.getRootCause());
             String prefix = "DAILY_REALERT".equals(trigger) ? "[RE-ALERT] " : "";
-            String subject = prefix + "[CertMonitor 🌩 ALARM FIRTINASI] "
+            String subject = prefix + "[Site Monitör 🌩 ALARM FIRTINASI] "
                     + downMembers.size() + " monitör birden erişilemez"
                     + ("ACCOUNT".equalsIgnoreCase(storm.getScopeType()) ? "" : " — " + scopeLabel);
 
@@ -457,7 +457,7 @@ public class StormService {
             List<String> targets = sampleTargets(recovered);
             int extra = Math.max(0, recovered.size() - targets.size());
             String duration = null; // builder createdAt→resolvedAt'ten hesaplar
-            String subject = "[CertMonitor ✅ ÇÖZÜLDÜ] Alarm fırtınası sona erdi — "
+            String subject = "[Site Monitör ✅ ÇÖZÜLDÜ] Alarm fırtınası sona erdi — "
                     + recovered.size() + " monitör kurtarıldı"
                     + ("ACCOUNT".equalsIgnoreCase(storm.getScopeType()) ? "" : " — " + scopeLabel);
 

@@ -76,7 +76,7 @@ public class WeeklyReportReminderService {
                 continue;
             }
 
-            String subject = "[CertMonitor] " + team.getName() + " — Haftalık rapor hatırlatması (" + weekLabel + ")";
+            String subject = "[Site Monitör] " + team.getName() + " — Haftalık rapor hatırlatması (" + weekLabel + ")";
             String html = emailService.buildWeeklyReportReminderHtml(team.getName(), weekLabel, url);
             String status = emailService.sendHtml(new String[]{teamEmail}, null, subject, html, null);
             sent++;

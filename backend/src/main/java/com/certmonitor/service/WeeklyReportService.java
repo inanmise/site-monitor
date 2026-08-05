@@ -384,7 +384,7 @@ public class WeeklyReportService {
         String teamName = team != null ? team.getName() : "Takım";
 
         List<String> poEmails = resolvePoEmails(r.getTeamId());
-        String poSubject = "[CertMonitor] " + teamName + " — " + r.getWeekLabel() + " raporu onayınızı bekliyor";
+        String poSubject = "[Site Monitör] " + teamName + " — " + r.getWeekLabel() + " raporu onayınızı bekliyor";
         // PO mailine raporun TAMAMI gömülür + "Onayla" CTA'sı: PO maili açıp raporu görür
         // ve maildeki linkten (login'siz) onaylayabilir. Görseller inline gider.
         List<EmailNotificationService.InlineImage> inline = collectInlineImages(r);
@@ -529,7 +529,7 @@ public class WeeklyReportService {
         String teamName = team != null ? team.getName() : "Takım";
         String teamEmail = team != null && team.getEmail() != null && !team.getEmail().isBlank()
                 ? team.getEmail().trim() : null;
-        String rjSubject = "[CertMonitor] " + teamName + " — " + r.getWeekLabel() + " raporu iade edildi";
+        String rjSubject = "[Site Monitör] " + teamName + " — " + r.getWeekLabel() + " raporu iade edildi";
         String rjHtml = emailService.buildWeeklyReportRejectedHtml(teamName, r.getWeekLabel(), finalNote, rejecter);
         String rjStatus;
         if (teamEmail != null) {
@@ -713,7 +713,7 @@ public class WeeklyReportService {
         String teamName = team != null ? team.getName() : "Takım";
         String teamEmail = team != null && team.getEmail() != null && !team.getEmail().isBlank()
                 ? team.getEmail().trim() : null;
-        String rjSubject = "[CertMonitor] " + teamName + " — " + r.getWeekLabel() + " raporu iade edildi";
+        String rjSubject = "[Site Monitör] " + teamName + " — " + r.getWeekLabel() + " raporu iade edildi";
         String rjHtml = emailService.buildWeeklyReportRejectedHtml(
                 teamName, r.getWeekLabel(), note.trim(), actor.display());
         String rjStatus;

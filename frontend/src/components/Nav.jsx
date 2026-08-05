@@ -8,7 +8,7 @@ import {
   Sun, Moon, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Server, Activity, ShieldAlert, BarChart3, Bell, BookOpen,
   Wifi, Network, Search, TrendingDown, Database, UserCheck, ShieldCheck, CalendarDays, ListChecks, Target, Radio, Siren, Wrench, LifeBuoy, ScanSearch, FlaskConical,
 } from 'lucide-react'
-import CertMonitorLogo from './ui/CertMonitorLogo.jsx'
+import SiteMonitorLogo from './ui/SiteMonitorLogo.jsx'
 import { useBranding } from '../contexts/BrandingProvider.jsx'
 import { usePermissions } from '../contexts/PermissionsProvider.jsx'
 
@@ -180,21 +180,21 @@ export default function Nav({ activeTab, onTabChange, username, teamName, system
              logo üstte tek başına, ad/rozet/versiyon altında. Daraltılmış sidebar'da yalnız
              küçük ölçekli logo gösterilir. */
           <div className="sb-brand" style={{ flexDirection: 'column', alignItems: 'flex-start', gap: 6, minWidth: 0 }}>
-            <img src={branding.logo_data} alt={brand('app_name', 'CertMonitor')}
+            <img src={branding.logo_data} alt={brand('app_name', 'Site Monitör')}
                  style={{ height: 24, maxWidth: open ? 150 : 34, objectFit: 'contain', objectPosition: 'left' }} />
             {open && (
               <div className="sb-brand-text">
-                <span className="sb-brand-name">{brand('app_name', 'CertMonitor')}</span>
+                <span className="sb-brand-name">{brand('app_name', 'Site Monitör')}</span>
                 <span className="sb-brand-version">v{__APP_VERSION__}</span>
               </div>
             )}
           </div>
         ) : (
           <div className="sb-brand">
-            <span className="sb-logo"><CertMonitorLogo variant="icon" size={26} /></span>
+            <span className="sb-logo"><SiteMonitorLogo variant="icon" size={26} /></span>
             {open && (
               <div className="sb-brand-text">
-                <span className="sb-brand-name">{brand('app_name', 'CertMonitor')}</span>
+                <span className="sb-brand-name">{brand('app_name', 'Site Monitör')}</span>
                 <span className="sb-brand-version">v{__APP_VERSION__}</span>
               </div>
             )}

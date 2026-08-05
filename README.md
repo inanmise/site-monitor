@@ -94,7 +94,7 @@ cert-monitor/
 │       │                        #   HttpMetricsExplorer, ChartModal, LoginHeatmap, SqlPlayground,
 │       │                        #   WeakAlgorithmReport)
 │       ├── components/ui/       # Yeniden kullanılabilir (SearchableSelect, Dialog, TimeRangePicker,
-│       │                        #   DateTimeRangePicker, MarkdownEditor, CertMonitorLogo)
+│       │                        #   DateTimeRangePicker, MarkdownEditor, SiteMonitorLogo)
 │       ├── pages/               # ExpiryForecastPage, WeeklyReportsPage, IncidentHistoryPage, HelpPage
 │       ├── api/client.js        # API istemcisi
 │       └── i18n/                # Çok dil (TR/EN) & tema yönetimi

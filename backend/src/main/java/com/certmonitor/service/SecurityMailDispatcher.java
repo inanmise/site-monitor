@@ -40,7 +40,7 @@ public class SecurityMailDispatcher {
     @Async("loginIssueMailExecutor")
     public void dispatchAlert(String[] recipients, FailedLoginAnomalyService.AnomalyReport report,
                               String trigger, Long incidentId) {
-        String subject = "[CertMonitor] Anomali: " + report.total() + " başarısız login / "
+        String subject = "[Site Monitör] Anomali: " + report.total() + " başarısız login / "
                 + report.windowMinutes() + "dk — " + (report.hits() == null ? 0 : report.hits().size()) + " kural";
         String status;
         try {
@@ -79,7 +79,7 @@ public class SecurityMailDispatcher {
         } catch (Exception e) {
             status = "FAILED: " + e.getMessage();
         }
-        writeNotificationLog(recipients, "[CertMonitor] Login anomalisi normale döndü",
+        writeNotificationLog(recipients, "[Site Monitör] Login anomalisi normale döndü",
                 "LOGIN_ANOMALY_RESOLUTION", status, incidentId);
         safeAudit("LOGIN_ANOMALY_RESOLVED", incidentId,
                 "{\"peakTotal\":" + peakTotal + ",\"status\":\"" + status + "\"}");

@@ -132,7 +132,7 @@ class EmailNotificationServiceTest {
     @DisplayName("sendAlert (rich) returns SKIPPED_DISABLED when email is disabled")
     void sendAlert_rich_emailDisabled_returnsSkipped() {
         String result = service.sendAlert(
-                "to@test.com", "[CertMonitor UYARI] test.com — 25 gün kaldı",
+                "to@test.com", "[Site Monitör UYARI] test.com — 25 gün kaldı",
                 "Test message", "test.com", "WARNING", "EXPIRY", 25, null);
 
         assertThat(result).isEqualTo("SKIPPED_DISABLED");
@@ -144,7 +144,7 @@ class EmailNotificationServiceTest {
     void sendResolutionAlert_emailDisabled_returnsSkipped() {
         String result = service.sendResolutionAlert(
                 "to@test.com",
-                "[CertMonitor ✅ ÇÖZÜLDÜ] test.com — Sertifika Süre Bitişi sorunu giderildi",
+                "[Site Monitör ✅ ÇÖZÜLDÜ] test.com — Sertifika Süre Bitişi sorunu giderildi",
                 "test.com", "EXPIRY", "WARNING",
                 25, "john.doe", "2026-05-16T10:00:00", "2026-05-01T08:00:00", null);
 
@@ -236,7 +236,7 @@ class EmailNotificationServiceTest {
     @DisplayName("EXPIRY alarm HTML (executive): domain + hero gün + sertifika detay satırları + Sertifika İzleme footer")
     void buildAlertEmailHtml_expiry_executive() {
         String html = service.buildAlertEmailHtml(
-                "[CertMonitor] ORTA · x.com · Sertifika 25 gün içinde doluyor", "msg",
+                "[Site Monitör] ORTA · x.com · Sertifika 25 gün içinde doluyor", "msg",
                 "x.com", "WARNING", "EXPIRY", 25, certCtx());
         assertThat(html).contains("x.com");
         assertThat(html).contains(">25<");                       // 56px hero metrik
@@ -250,7 +250,7 @@ class EmailNotificationServiceTest {
     @DisplayName("REVOKED alarm HTML (executive): KRİTİK rozet + domain")
     void buildAlertEmailHtml_revoked_executive() {
         String html = service.buildAlertEmailHtml(
-                "[CertMonitor] KRİTİK · x.com · sertifika iptal", "Sertifika iptal edildi",
+                "[Site Monitör] KRİTİK · x.com · sertifika iptal", "Sertifika iptal edildi",
                 "x.com", "CRITICAL", "REVOKED", null, certCtx());
         assertThat(html).contains("x.com").contains("KRİTİK").contains("#C0392B");
     }
@@ -259,7 +259,7 @@ class EmailNotificationServiceTest {
     @DisplayName("MISMATCH alarm HTML (executive): YÜKSEK rozet")
     void buildAlertEmailHtml_mismatch_executive() {
         String html = service.buildAlertEmailHtml(
-                "[CertMonitor] YÜKSEK · x.com · dağıtım", "Dağıtım eksik",
+                "[Site Monitör] YÜKSEK · x.com · dağıtım", "Dağıtım eksik",
                 "x.com", "HIGH", "MISMATCH", null, certCtx());
         assertThat(html).contains("x.com").contains("YÜKSEK").contains("#D68910");
     }
@@ -313,7 +313,7 @@ class EmailNotificationServiceTest {
                 Map.of("attempt", 3, "checked_at", "2026-06-11T10:01:30", "status", "down", "error", "timeout")));
 
         String html = service.buildAlertEmailHtml(
-                "[CertMonitor KRİTİK] down.example.com — Erişim Kesintisi",
+                "[Site Monitör KRİTİK] down.example.com — Erişim Kesintisi",
                 "KRİTİK: down.example.com adresine erişilemiyor.",
                 "down.example.com", "CRITICAL", "ACCESSIBILITY", null, ctx);
 
@@ -373,7 +373,7 @@ class EmailNotificationServiceTest {
         ctx.put("confirm_delay_ms", 30000L);
 
         String html = service.buildAlertEmailHtml(
-                "[CertMonitor KRİTİK] down.example.com — Port Kesintisi",
+                "[Site Monitör KRİTİK] down.example.com — Port Kesintisi",
                 "KRİTİK: port kapalı", "down.example.com", "CRITICAL", "PORT_DOWN", null, ctx);
 
         assertThat(html).contains("down.example.com:8443");
@@ -733,7 +733,7 @@ class EmailNotificationServiceTest {
     @Test
     @DisplayName("doSend: 421 retry'ları tükenince QUEUED_RETRY logu FAILED'a geri-yazılır")
     void retryExhausted_writesBackFailed() throws Exception {
-        String subject = "[CertMonitor YÜKSEK] kartfree.com — DNS";
+        String subject = "[Site Monitör YÜKSEK] kartfree.com — DNS";
         when(settingsService.getOrDefaults()).thenReturn(settings(true));
         when(smtpMailService.currentSender()).thenReturn(sender);
         MimeMessage mockMsg = mock(MimeMessage.class);
@@ -758,7 +758,7 @@ class EmailNotificationServiceTest {
     @Test
     @DisplayName("doSend: 421 sonrası retry başarılı → QUEUED_RETRY logu SENT'e geri-yazılır")
     void retrySucceeds_writesBackSent() throws Exception {
-        String subject = "[CertMonitor YÜKSEK] genesys.akbank.com — DNS";
+        String subject = "[Site Monitör YÜKSEK] genesys.akbank.com — DNS";
         when(settingsService.getOrDefaults()).thenReturn(settings(true));
         when(smtpMailService.currentSender()).thenReturn(sender);
         MimeMessage mockMsg = mock(MimeMessage.class);
@@ -791,7 +791,7 @@ class EmailNotificationServiceTest {
         doNothing().when(sender).send(mockMsg);
 
         String result = service.sendAlert(
-                "to@test.com", "[CertMonitor KRİTİK] revoked.com — İptal Edildi",
+                "to@test.com", "[Site Monitör KRİTİK] revoked.com — İptal Edildi",
                 "KRİTİK: sertifika iptal edildi.", "revoked.com", "CRITICAL", "REVOKED", null,
                 Map.of("revocation_status", "REVOKED", "chain_status", "VALID",
                         "deployment_status", "OK"));
@@ -835,7 +835,7 @@ class EmailNotificationServiceTest {
         ctx.put("monitor_id", 42);
         ctx.put("http_status", 200);
         ctx.put("first_failure_at", "2026-06-23T12:00:00");
-        String html = service.buildAlertEmailHtml("[CertMonitor KRİTİK] keyword",
+        String html = service.buildAlertEmailHtml("[Site Monitör KRİTİK] keyword",
                 "KRİTİK: kelime bulunamıyor", "https://www.akbank.com/", "CRITICAL", "KEYWORD", null, ctx);
         assertThat(html).contains("İçerik (Keyword) İzleme");
         assertThat(html).contains("Aranan kelime");
@@ -857,7 +857,7 @@ class EmailNotificationServiceTest {
         ctx.put("ip_version", "v4");
         ctx.put("packet_loss", 100);
         ctx.put("first_failure_at", "2026-06-23T12:00:00");
-        String html = service.buildAlertEmailHtml("[CertMonitor KRİTİK] ping",
+        String html = service.buildAlertEmailHtml("[Site Monitör KRİTİK] ping",
                 "KRİTİK: host yanıt vermiyor", "10.0.0.1", "CRITICAL", "PING_DOWN", null, ctx);
         assertThat(html).contains("Ping (ICMP) İzleme");
         assertThat(html).contains("HOST YANIT VERMİYOR");

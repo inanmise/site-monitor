@@ -1,5 +1,5 @@
 /**
- * CertMonitor — k6 smoke load script.
+ * Site Monitor — k6 smoke load script.
  *
  * Not wired into CI (k6 needs to be installed separately on the runner). Run
  * locally or from a release runbook:
