@@ -14,7 +14,7 @@ function generateKey() {
 }
 
 /**
- * Anahtar Çözümleme (yalnız admin) — verilen aday CERT_MONITOR_SECRET_KEY ile DB'de şifreli
+ * Anahtar Çözümleme (yalnız admin) — verilen aday SITE_MONITOR_SECRET_KEY ile DB'de şifreli
  * duran alanları (SMTP/LDAP parolaları) çözüp gösterir. Doğru anahtarda plaintext, yanlışta
  * "başarısız". Plaintext varsayılan gizli; göz ikonuyla açılır.
  */
@@ -27,7 +27,7 @@ export default function SecretTools() {
   const [reveal, setReveal] = useState({})
   const [info, setInfo] = useState(null) // { dev_default_key, secret_key_set }
   const [usedKey, setUsedKey] = useState('') // son çözümlemede kullanılan anahtar (neyle çözüldü)
-  const [genKey, setGenKey] = useState('')   // üretilen aday CERT_MONITOR_SECRET_KEY
+  const [genKey, setGenKey] = useState('')   // üretilen aday SITE_MONITOR_SECRET_KEY
 
   async function copyGen() {
     if (!genKey) return
@@ -65,7 +65,7 @@ export default function SecretTools() {
         <div className="threshold-grid">
           <div className="threshold-field">
             <label><KeyRound size={13} style={{ verticalAlign: '-2px', marginRight: 4 }} />{t('secret.keyLabel')}</label>
-            <input type="password" value={key} autoComplete="off" placeholder="CERT_MONITOR_SECRET_KEY"
+            <input type="password" value={key} autoComplete="off" placeholder="SITE_MONITOR_SECRET_KEY"
               onChange={(e) => setKey(e.target.value)}
               onKeyDown={(e) => { if (e.key === 'Enter') run() }} />
             <span className="hint">{t('secret.keyHint')}</span>
@@ -78,7 +78,7 @@ export default function SecretTools() {
         </div>
       </div>
 
-      {/* Güçlü anahtar üreteci — CERT_MONITOR_SECRET_KEY için değer üret (tarayıcıda, sunucuya gitmez) */}
+      {/* Güçlü anahtar üreteci — SITE_MONITOR_SECRET_KEY için değer üret (tarayıcıda, sunucuya gitmez) */}
       <div className="admin-section">
         <h4 className="ldap-subhdr">{t('secret.genTitle')}</h4>
         <p className="section-desc">{t('secret.genDesc')}</p>

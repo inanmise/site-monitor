@@ -1,16 +1,16 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: cert-monitor
-  namespace: cert-monitor
+  name: site-monitor
+  namespace: site-monitor
   labels:
-    app: cert-monitor
+    app: site-monitor
     version: "1.0.0"
 spec:
   replicas: 3
   selector:
     matchLabels:
-      app: cert-monitor
+      app: site-monitor
   strategy:
     type: RollingUpdate
     rollingUpdate:
@@ -19,14 +19,14 @@ spec:
   template:
     metadata:
       labels:
-        app: cert-monitor
+        app: site-monitor
         version: "1.0.0"
       annotations:
         prometheus.io/scrape: "true"
         prometheus.io/port: "8080"
         prometheus.io/path: "/metrics"
     spec:
-      serviceAccountName: cert-monitor
+      serviceAccountName: site-monitor
       securityContext:
         runAsNonRoot: true
         runAsUser: 1000
@@ -34,8 +34,8 @@ spec:
         seccompProfile:
           type: RuntimeDefault
       containers:
-        - name: cert-monitor
-          image: cert-monitor:1.0.0  # Replace with your registry image
+        - name: site-monitor
+          image: site-monitor:1.0.0  # Replace with your registry image
           imagePullPolicy: Always
           ports:
             - name: http
@@ -43,9 +43,9 @@ spec:
               protocol: TCP
           envFrom:
             - configMapRef:
-                name: cert-monitor-config
+                name: site-monitor-config
             - secretRef:
-                name: cert-monitor-secret
+                name: site-monitor-secret
           # Resource limits — keep in sync with JAVA_OPTS MaxRAMPercentage.
           # limit.memory=8Gi → JVM heap ≈ 6Gi (75 %). limit.cpu=5000m → 5 cores.
           # To change limits: edit the values below AND update configmap JAVA_OPTS if needed.
@@ -99,4 +99,4 @@ spec:
           whenUnsatisfiable: DoNotSchedule
           labelSelector:
             matchLabels:
-              app: cert-monitor
+              app: site-monitor

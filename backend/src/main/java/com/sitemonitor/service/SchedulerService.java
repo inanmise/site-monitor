@@ -473,7 +473,7 @@ public class SchedulerService {
             )
             """);
         patch("CREATE UNIQUE INDEX IF NOT EXISTS ux_app_settings_key ON app_settings(setting_key)");
-        // ── Rename VERİ göçü (CertMonitor → Site Monitor): app_settings anahtar önekleri ──
+        // ── Rename VERİ göçü (CertMonitor → Site Monitor, geriye-uyum): app_settings anahtar önekleri ──
         // AppSettingsService.resolve() exact-match okur; bu göç olmadan tüm admin override'ları
         // (Genel Ayarlar ekranından yapılmış her değişiklik) yeni anahtar adlarında bulunamaz ve
         // sessizce varsayılana dönerdi. Idempotent: WHERE yalnız eski öneki bulur. Çakışma guard'ı:

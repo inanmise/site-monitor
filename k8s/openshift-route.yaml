@@ -2,15 +2,15 @@
 apiVersion: route.openshift.io/v1
 kind: Route
 metadata:
-  name: cert-monitor
-  namespace: cert-monitor
+  name: site-monitor
+  namespace: site-monitor
   labels:
-    app: cert-monitor
+    app: site-monitor
 spec:
-  host: cert-monitor.apps.your-cluster.example.com   # Replace with your route
+  host: site-monitor.apps.your-cluster.example.com   # Replace with your route
   to:
     kind: Service
-    name: cert-monitor
+    name: site-monitor
     weight: 100
   port:
     targetPort: http

@@ -94,8 +94,8 @@ Per-resource permission model layered on top of `systemRole` (`USER` / `AUDIT` /
 When you add a new boolean toggle: append to the `OPERATIONAL_FIELDS` array in `InventoryManager.jsx`, add the EMPTY default, wire it into the save payload, add the diff-builder entry in `AdminController.buildInventoryDiff`, and add the setter call in `updateInventory` — missing the setter is the most common bug (the field "saves" but disappears on reload).
 
 ### Request/response trace logging (off by default)
-`RequestLoggingFilter` (`@Order(LOWEST_PRECEDENCE - 10)`) can log every HTTP request and response with method, URI, headers, body, status, and duration. It's behind `log.isTraceEnabled()` so the default `com.certmonitor=DEBUG` level keeps it silent.
-- Enable on demand: `logging.level.com.certmonitor.config.RequestLoggingFilter=TRACE` (env or properties).
+`RequestLoggingFilter` (`@Order(LOWEST_PRECEDENCE - 10)`) can log every HTTP request and response with method, URI, headers, body, status, and duration. It's behind `log.isTraceEnabled()` so the default `com.sitemonitor=DEBUG` level keeps it silent.
+- Enable on demand: `logging.level.com.sitemonitor.config.RequestLoggingFilter=TRACE` (env or properties).
 - Sensitive values are masked with `*******` via three regex patterns (JSON body / form body / URL query) covering ~60 field-name variants — EN + TR (`password|parola|sifre`, `*_password`, `token|*_token`, `secret|api_key|client_secret`, `private_key`, `session_id|jsessionid`, `pin|otp|mfa_*|verification_code`). Sensitive headers (`authorization`, `cookie`, `x-api-key`, etc.) are masked too.
 - Skipped paths: `/health`, `/favicon.ico`, anything under `/assets/` or `/static/`, and common static extensions (`.js .css .map .png .svg .woff2 .ico`).
 - Body log is truncated at 2000 chars.
@@ -123,7 +123,7 @@ When you add a new boolean toggle: append to the `OPERATIONAL_FIELDS` array in `
 ### Configuration
 All config is `application.properties` keys overridden by env vars. Three profile files:
 - `application.properties` — defaults (dev-leaning: in-memory session, dev CORS origins, `ddl-auto=update`).
-- `application-prod.properties` — JDBC session, secure cookies, `same-site=strict`, log path `/var/log/cert-monitor`.
+- `application-prod.properties` — JDBC session, secure cookies, `same-site=strict`, log path `/var/log/site-monitor`.
 - `application-local-pg.properties` — serves pre-built `frontend/dist` from `:8080` so you can run the whole stack on a single port without Vite.
 
 `.env` is consumed by `docker-compose.yml` and `start-local.ps1`. Real values never committed — `.env.example` and `k8s/secret.example.yaml` are templates.
@@ -159,12 +159,12 @@ Services worth knowing about beyond the ones already mentioned:
 - **LDAP/AD** (`LdapSettingsService` / `LdapDirectoryService` / `LdapProvisioningService`, UI under `/api/admin/ldap`) — DB-persisted config with AES-GCM bind password and live reload (no restart); config + test-bind + attribute-viewer are live, login wiring/provisioning are later-phase. No JNDI dependency was added.
 - **Weekly reports** (`WeeklyReportService`, `WeeklyReportReminderService`, `/api/weekly-reports`) — per-team DRAFT→PENDING→APPROVED state machine on ISO weeks; Friday 09:00 Europe/Istanbul reminder cron. Public **email-token approval links** intentionally bypass login.
 - **Incidents** (`IncidentService`, `/api/incidents`) — SRE incident ledger with image attachments, trend rollups, and configurable status/priority/category options.
-- **Admin runtime settings** — `AppSettingsService` (curated key/value, catalog in `AppSettingsCatalog`, live-reloads CORS), `SmtpSettingsService`/`SmtpMailService`, `GeneralSettingsController`, `DatabaseInfoService`, and `SecretCipher`/`SecretToolsService` (AES-GCM decrypt of stored SMTP/LDAP passwords, gated by `CERT_MONITOR_SECRET_KEY`). These settings + secret-tools endpoints are bootstrap-admin only.
+- **Admin runtime settings** — `AppSettingsService` (curated key/value, catalog in `AppSettingsCatalog`, live-reloads CORS), `SmtpSettingsService`/`SmtpMailService`, `GeneralSettingsController`, `DatabaseInfoService`, and `SecretCipher`/`SecretToolsService` (AES-GCM decrypt of stored SMTP/LDAP passwords, gated by `SITE_MONITOR_SECRET_KEY`). These settings + secret-tools endpoints are bootstrap-admin only.
 - **Diagnostics** — `OpensslDiagnosticsService` / `NetworkDiagnosticsService` / `HstsDiagnosticsService` / `ConnectionDiagnosticsService`, persisted by `DiagnosticHistoryService` (`diagnostic_runs`); surfaced via the DiagnosticsModal under `/api/admin/diagnostics/*`.
 
 ### Deployment specifics
 - **K8s manifests** (`k8s/`): 3 replicas, rolling update (`maxSurge=1, maxUnavailable=0`); HPA scales 3–10 on CPU 70% / mem 80%; PDB `minAvailable=2`; topology spread by hostname (`maxSkew=1`); non-root `UID 1000`, read-only root FS, all capabilities dropped. Probes: startup (12×10s), readiness (30s delay / 10s period), liveness (60s delay / 30s period). Also includes `postgres.yaml`, `ingress.yaml`, `openshift-route.yaml`.
-- **Helm chart** (`helm/cert-monitor/`): Bitnami PostgreSQL 18.x as a chart dependency; values split per environment under `environments/` (`develop.yaml` / `release.yaml` / `master.yaml`). `develop.yaml` runs 1 replica, email OFF, 2h scan, HPA OFF — useful diff to copy from when setting up a new lower env. `postgresql.primary.extendedConfiguration` preloads `shared_preload_libraries = 'pg_stat_statements'` so the DB-wide query analytics light up (needs a `helm upgrade` + DB restart in prod; the app falls back gracefully until then).
+- **Helm chart** (`helm/site-monitor/`): Bitnami PostgreSQL 18.x as a chart dependency; values split per environment under `environments/` (`develop.yaml` / `release.yaml` / `master.yaml`). `develop.yaml` runs 1 replica, email OFF, 2h scan, HPA OFF — useful diff to copy from when setting up a new lower env. `postgresql.primary.extendedConfiguration` preloads `shared_preload_libraries = 'pg_stat_statements'` so the DB-wide query analytics light up (needs a `helm upgrade` + DB restart in prod; the app falls back gracefully until then).
 - **Dockerfile**: 3 stages — `node:20-alpine` (frontend) → `maven:3.9` (backend) → `eclipse-temurin:25-jre-alpine` (runtime). Container-aware JVM (`-XX:+UseContainerSupport`, heap ≈ 75%), in-pod debug tools (`curl bash dig`), healthcheck via `wget /health`. Final image runs as `appuser:1000`.
 - **k6 smoke** (`perf/k6-smoke.js`): 50 VU × 30s against `/health` + `/api/system/network-status`. SLA: error rate < 1%, p95 < 500 ms, 99% checks pass. Auth-gated endpoints returning `401` are treated as healthy (gate working).
 - **Local DB**: `data/` holds a SQLite file + WAL/SHM for dev runs (gitignored). Prod uses PostgreSQL exclusively.

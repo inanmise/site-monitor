@@ -17,8 +17,8 @@ cp .env.example .env
 `.env` dosyasını açın ve en az parolayı değiştirin:
 
 ```
-CERT_MONITOR_USERNAME=admin
-CERT_MONITOR_PASSWORD=guclu-parola-girin
+SITE_MONITOR_USERNAME=admin
+SITE_MONITOR_PASSWORD=guclu-parola-girin
 ```
 
 ---
@@ -83,8 +83,8 @@ chmod +x START.sh && ./START.sh
 
 | Alan | Değer |
 |------|-------|
-| Kullanıcı adı | `.env` içindeki `CERT_MONITOR_USERNAME` |
-| Parola | `.env` içindeki `CERT_MONITOR_PASSWORD` |
+| Kullanıcı adı | `.env` içindeki `SITE_MONITOR_USERNAME` |
+| Parola | `.env` içindeki `SITE_MONITOR_PASSWORD` |
 
 Varsayılan (yerel geliştirme): `user` / `changeme-local-dev`
 
@@ -145,7 +145,7 @@ cert.monitor.check.minute=0
 |-------|-------|
 | Port 8080 meşgul | `server.port=8081` ayarı |
 | Dashboard boş | "Şimdi Kontrol Et" düğmesine basın |
-| E-posta gitmiyor | `CERT_MONITOR_EMAIL_ENABLED=true`, SMTP ayarlarını kontrol edin |
+| E-posta gitmiyor | `SITE_MONITOR_EMAIL_ENABLED=true`, SMTP ayarlarını kontrol edin |
 | Sertifika okunamıyor | Ağ/güvenlik duvarı erişimini kontrol edin |
 
 ---

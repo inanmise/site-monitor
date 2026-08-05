@@ -1,15 +1,15 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "cert-monitor.fullname" . }}
+  name: {{ include "site-monitor.fullname" . }}
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "cert-monitor.labels" . | nindent 4 }}
+    {{- include "site-monitor.labels" . | nindent 4 }}
 spec:
   replicas: {{ .Values.replicaCount }}
   selector:
     matchLabels:
-      {{- include "cert-monitor.selectorLabels" . | nindent 6 }}
+      {{- include "site-monitor.selectorLabels" . | nindent 6 }}
   strategy:
     type: RollingUpdate
     rollingUpdate:
@@ -18,7 +18,7 @@ spec:
   template:
     metadata:
       labels:
-        {{- include "cert-monitor.selectorLabels" . | nindent 8 }}
+        {{- include "site-monitor.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
       annotations:
         {{- with .Values.podAnnotations }}
@@ -27,7 +27,7 @@ spec:
         checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
         checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
     spec:
-      serviceAccountName: {{ include "cert-monitor.serviceAccountName" . }}
+      serviceAccountName: {{ include "site-monitor.serviceAccountName" . }}
       {{- with .Values.podSecurityContext }}
       securityContext:
         {{- toYaml . | nindent 8 }}
@@ -57,9 +57,9 @@ spec:
                   fieldPath: status.podIP
           envFrom:
             - configMapRef:
-                name: {{ include "cert-monitor.fullname" . }}-config
+                name: {{ include "site-monitor.fullname" . }}-config
             - secretRef:
-                name: {{ include "cert-monitor.secretName" . }}
+                name: {{ include "site-monitor.secretName" . }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
           # Spring Boot Actuator probe grupları (path'ler values.yaml .Values.probes.*).
@@ -109,5 +109,5 @@ spec:
           whenUnsatisfiable: DoNotSchedule
           labelSelector:
             matchLabels:
-              {{- include "cert-monitor.selectorLabels" . | nindent 14 }}
+              {{- include "site-monitor.selectorLabels" . | nindent 14 }}
       {{- end }}

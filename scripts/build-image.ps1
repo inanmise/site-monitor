@@ -14,7 +14,7 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
-$ImageName  = "cert-monitor"
+$ImageName  = "site-monitor"
 $Branch     = & git rev-parse --abbrev-ref HEAD
 $GitSha     = & git rev-parse --short HEAD
 $BuildDate  = (Get-Date -Format "yyyy-MM-ddTHH:mm:ssZ")
@@ -27,15 +27,15 @@ $EnvValues   = ""
 switch -Wildcard ($Branch) {
     "master" {
         $Tags      = @($Version, "latest")
-        $EnvValues = "helm/cert-monitor/environments/master.yaml"
+        $EnvValues = "helm/site-monitor/environments/master.yaml"
     }
     "release/*" {
         $Tags      = @("$Version-rc", "staging")
-        $EnvValues = "helm/cert-monitor/environments/release.yaml"
+        $EnvValues = "helm/site-monitor/environments/release.yaml"
     }
     "develop" {
         $Tags      = @("develop-$GitSha", "develop")
-        $EnvValues = "helm/cert-monitor/environments/develop.yaml"
+        $EnvValues = "helm/site-monitor/environments/develop.yaml"
     }
     default {
         $SafeBranch = $Branch -replace '[/\\]', '-' -replace '[^a-zA-Z0-9-]', ''
@@ -92,10 +92,10 @@ if ($Push) {
 if ($EnvValues) {
     Write-Host ""
     Write-Host "Deploy to Kubernetes:" -ForegroundColor Yellow
-    Write-Host "  helm upgrade --install cert-monitor ./helm/cert-monitor ``"
-    Write-Host "    -f helm/cert-monitor/values.yaml ``"
+    Write-Host "  helm upgrade --install site-monitor ./helm/site-monitor ``"
+    Write-Host "    -f helm/site-monitor/values.yaml ``"
     Write-Host "    -f $EnvValues ``"
     Write-Host "    --set image.tag=$PrimaryTag ``"
     Write-Host "    --set image.repository=${Prefix}${ImageName} ``"
-    Write-Host "    -n cert-monitor --create-namespace"
+    Write-Host "    -n site-monitor --create-namespace"
 }

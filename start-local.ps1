@@ -24,8 +24,8 @@ if (-not $jar) {
 
 # geriye-uyum: .env'de eski CERT_MONITOR_* adlari varsa yeni SITE_MONITOR_* karsiliklarina kopyalanir
 foreach ($k in @($cfg.Keys)) {
-    if ($k -like 'CERT_MONITOR_*') {
-        $newKey = $k -replace '^CERT_MONITOR_', 'SITE_MONITOR_'
+    if ($k -like 'CERT_MONITOR_*') {   # geriye-uyum
+        $newKey = $k -replace '^CERT_MONITOR_', 'SITE_MONITOR_'   # geriye-uyum
         if (-not $cfg.ContainsKey($newKey)) { $cfg[$newKey] = $cfg[$k] }
     }
 }

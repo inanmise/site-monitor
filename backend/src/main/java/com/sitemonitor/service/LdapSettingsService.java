@@ -87,7 +87,7 @@ public class LdapSettingsService {
         return cached != null;
     }
 
-    /** Gerçek bir şifreleme anahtarı (CERT_MONITOR_SECRET_KEY) ayarlı mı — UI uyarısı için. */
+    /** Gerçek bir şifreleme anahtarı (SITE_MONITOR_SECRET_KEY) ayarlı mı — UI uyarısı için. */
     public boolean isSecretKeyConfigured() {
         return cipher.isKeyConfigured();
     }

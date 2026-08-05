@@ -18,7 +18,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Admin-only Settings → Anahtar Çözümleme. Verilen aday CERT_MONITOR_SECRET_KEY ile DB'de şifreli
+ * Admin-only Settings → Anahtar Çözümleme. Verilen aday SITE_MONITOR_SECRET_KEY ile DB'de şifreli
  * duran alanları (SMTP/LDAP parolaları) çözüp gösterir — anahtar kurtarma/doğrulama için. Yalnız
  * local bootstrap admin (username "admin"). Hassas: audit alınır; anahtar/plaintext loglanmaz.
  */

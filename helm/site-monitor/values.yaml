@@ -1,12 +1,12 @@
 # ─────────────────────────────────────────────────────────────────────────────
-# CertMonitor Helm Values
-# Override with: helm install cert-monitor ./helm/cert-monitor -f my-values.yaml
+# Site Monitor Helm Values
+# Override with: helm install site-monitor ./helm/site-monitor -f my-values.yaml
 # ─────────────────────────────────────────────────────────────────────────────
 
 replicaCount: 1
 
 image:
-  repository: ghcr.io/inanmise/certmonitor
+  repository: ghcr.io/inanmise/site-monitor
   # Boş → Chart.AppVersion'a düşer (reproducible/rollback-safe; "latest" değil). Env overlay'leri override eder.
   tag: ""
   pullPolicy: Always
@@ -30,7 +30,7 @@ ingress:
   host: cert-monitor.example.com
   tls:
     enabled: true
-    secretName: cert-monitor-tls
+    secretName: site-monitor-tls
   annotations:
     nginx.ingress.kubernetes.io/ssl-redirect: "true"
     nginx.ingress.kubernetes.io/proxy-read-timeout: "60"
@@ -39,7 +39,7 @@ ingress:
 # Application configuration (non-sensitive)
 config:
   springProfile: prod
-  # com.certmonitor log seviyesi. Prod'da INFO: DEBUG'ta heartbeat/sweep/per-domain satırları pod başına
+  # com.sitemonitor log seviyesi. Prod'da INFO: DEBUG'ta heartbeat/sweep/per-domain satırları pod başına
   # günde on binlerce satır üretir ve prod'da hem console hem dosya appender'ına yazılır (çift I/O).
   # Restart'sız değiştirmek için: Yönetim → Genel Ayarlar → Loglama (DB override env'i ezer).
   logLevel: "INFO"

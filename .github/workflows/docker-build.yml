@@ -14,7 +14,7 @@ concurrency:
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-  IMAGE_NAME: cert-monitor
+  IMAGE_NAME: site-monitor
   REGISTRY: ghcr.io/${{ github.repository_owner }}
 
 jobs:
@@ -48,17 +48,17 @@ jobs:
             main)
               TAGS="${REGISTRY}/${IMAGE}:${VERSION},${REGISTRY}/${IMAGE}:latest"
               PRIMARY="${VERSION}"
-              ENV_VALUES="helm/cert-monitor/environments/master.yaml"
+              ENV_VALUES="helm/site-monitor/environments/master.yaml"
               ;;
             release/*)
               TAGS="${REGISTRY}/${IMAGE}:${VERSION}-rc,${REGISTRY}/${IMAGE}:staging"
               PRIMARY="${VERSION}-rc"
-              ENV_VALUES="helm/cert-monitor/environments/release.yaml"
+              ENV_VALUES="helm/site-monitor/environments/release.yaml"
               ;;
             develop)
               TAGS="${REGISTRY}/${IMAGE}:develop-${SHORT_SHA},${REGISTRY}/${IMAGE}:develop"
               PRIMARY="develop-${SHORT_SHA}"
-              ENV_VALUES="helm/cert-monitor/environments/develop.yaml"
+              ENV_VALUES="helm/site-monitor/environments/develop.yaml"
               ;;
             *)
               SAFE=$(echo "$BRANCH" | tr '/' '-' | tr -cd '[:alnum:]-')
@@ -121,11 +121,11 @@ jobs:
             echo "" >> "$GITHUB_STEP_SUMMARY"
             echo "### Helm deploy command" >> "$GITHUB_STEP_SUMMARY"
             echo '```bash' >> "$GITHUB_STEP_SUMMARY"
-            echo "helm upgrade --install cert-monitor ./helm/cert-monitor \\" >> "$GITHUB_STEP_SUMMARY"
-            echo "  -f helm/cert-monitor/values.yaml \\" >> "$GITHUB_STEP_SUMMARY"
+            echo "helm upgrade --install site-monitor ./helm/site-monitor \\" >> "$GITHUB_STEP_SUMMARY"
+            echo "  -f helm/site-monitor/values.yaml \\" >> "$GITHUB_STEP_SUMMARY"
             echo "  -f ${{ steps.tags.outputs.env_values }} \\" >> "$GITHUB_STEP_SUMMARY"
             echo "  --set image.tag=${{ steps.tags.outputs.primary }} \\" >> "$GITHUB_STEP_SUMMARY"
             echo "  --set image.repository=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }} \\" >> "$GITHUB_STEP_SUMMARY"
-            echo "  -n cert-monitor --create-namespace" >> "$GITHUB_STEP_SUMMARY"
+            echo "  -n site-monitor --create-namespace" >> "$GITHUB_STEP_SUMMARY"
             echo '```' >> "$GITHUB_STEP_SUMMARY"
           fi

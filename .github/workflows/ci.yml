@@ -136,18 +136,18 @@ jobs:
 
       - name: Lint chart (master values)
         run: |
-          helm lint helm/cert-monitor \
-            -f helm/cert-monitor/values.yaml \
-            -f helm/cert-monitor/environments/master.yaml
+          helm lint helm/site-monitor \
+            -f helm/site-monitor/values.yaml \
+            -f helm/site-monitor/environments/master.yaml
 
       - name: Lint chart (develop values)
         run: |
-          helm lint helm/cert-monitor \
-            -f helm/cert-monitor/values.yaml \
-            -f helm/cert-monitor/environments/develop.yaml
+          helm lint helm/site-monitor \
+            -f helm/site-monitor/values.yaml \
+            -f helm/site-monitor/environments/develop.yaml
 
       - name: Lint chart (release values)
         run: |
-          helm lint helm/cert-monitor \
-            -f helm/cert-monitor/values.yaml \
-            -f helm/cert-monitor/environments/release.yaml
+          helm lint helm/site-monitor \
+            -f helm/site-monitor/values.yaml \
+            -f helm/site-monitor/environments/release.yaml

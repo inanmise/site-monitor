@@ -1,11 +1,11 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  Cert-Monitor Logging Configuration
+  Site-Monitor Logging Configuration
   ────────────────────────────────────────────────────────────────────────────
   Runtime control via environment variable or application property:
     LOG_LEVEL = ERROR | WARN | INFO | DEBUG | TRACE   (default: see per-profile)
     LOG_DIR   = /path/to/logs                          (default: logs/)
-    LOGGING_LEVEL_COM_CERTMONITOR_MAIL = TRACE         (mail gönderim tanılaması; yalnız
+    LOGGING_LEVEL_COM_SITEMONITOR_MAIL = TRACE         (mail gönderim tanılaması; yalnız
                                                         com.sitemonitor.mail logger'ını TRACE'e alır,
                                                         uygulamanın geri kalanı LOG_LEVEL'da kalır)
 
@@ -29,7 +29,7 @@
                   source="logging.file.path" defaultValue="logs"/>
   <springProperty scope="context" name="LOG_LEVEL"
                   source="logging.level.com.sitemonitor" defaultValue="INFO"/>
-  <!-- Mail tracing'i bağımsız aç/kapat: LOGGING_LEVEL_COM_CERTMONITOR_MAIL=TRACE (env) ya da
+  <!-- Mail tracing'i bağımsız aç/kapat: LOGGING_LEVEL_COM_SITEMONITOR_MAIL=TRACE (env) ya da
        logging.level.com.sitemonitor.mail=TRACE. Set edilmezse com.sitemonitor (LOG_LEVEL) ile aynı. -->
   <springProperty scope="context" name="MAIL_LOG_LEVEL"
                   source="logging.level.com.sitemonitor.mail"/>
@@ -206,7 +206,7 @@
     </logger>
 
     <!-- Mail tracing'i uygulama-geneli TRACE'e geçmeden açmak için:
-         LOGGING_LEVEL_COM_CERTMONITOR_MAIL=TRACE (yalnız mail TRACE; gerisi LOG_LEVEL'da kalır). -->
+         LOGGING_LEVEL_COM_SITEMONITOR_MAIL=TRACE (yalnız mail TRACE; gerisi LOG_LEVEL'da kalır). -->
     <logger name="com.sitemonitor.mail" level="${MAIL_LOG_LEVEL:-${LOG_LEVEL}}"/>
 
     <root level="WARN">

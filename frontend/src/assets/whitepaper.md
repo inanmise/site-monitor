@@ -328,7 +328,7 @@ N+1 yöntemi           : Sweep başında inventoryRepo.findByDomainIn +
 ```
 ┌────────────────────────────────────────────────────────────────────┐
 │                    Kubernetes Cluster (Production)                  │
-│                    Namespace: cert-monitor                          │
+│                    Namespace: site-monitor                          │
 │                                                                     │
 │  ┌──────────────────────────────────────────────────────────────┐  │
 │  │  Ingress Controller (nginx)                                  │  │
@@ -356,7 +356,7 @@ N+1 yöntemi           : Sweep başında inventoryRepo.findByDomainIn +
 │  │  Kullanıcı/DB: certmonitor/certmonitor                       │  │
 │  └──────────────────────────────────────────────────────────────┘  │
 │                                                                     │
-│  ConfigMap: cert-monitor-config  │  Secret: cert-monitor-secret     │
+│  ConfigMap: site-monitor-config  │  Secret: site-monitor-secret     │
 │  HPA: 3–10 pod  │  PDB: minAvailable=2  │  PodDisruptionBudget      │
 └────────────────────────────────────────────────────────────────────┘
            │                                          │
@@ -376,7 +376,7 @@ N+1 yöntemi           : Sweep başında inventoryRepo.findByDomainIn +
 │  Docker Compose                            │
 │                                            │
 │  ┌────────────────────────────────────┐   │
-│  │  cert-monitor:latest               │   │
+│  │  site-monitor:latest               │   │
 │  │  Port: 8080                        │   │
 │  │  Volume: ./data:/app/data          │   │
 │  │  ReadOnly FS + /tmp tmpfs          │   │
@@ -710,7 +710,7 @@ cert.monitor.email.from=gönderen@adres
 - İlk başarılı girişte kullanıcı otomatik provizyon edilir (orgRole, müdür ilişkisi, takım) — bkz. §3.1
 - Provizyon sonucu sistem rolü atanır: müdür → kapsamlı ADMIN (salt-okuma), PO → TEAM_ADMIN, diğerleri → USER (bkz. §11)
 - Yerel `admin` hesabı her zaman geçerlidir (acil erişim / bootstrap); LDAP/SMTP ayarları yalnız bu hesaba açıktır
-- Bind parolası AES-GCM ile şifreli saklanır (`CERT_MONITOR_SECRET_KEY`)
+- Bind parolası AES-GCM ile şifreli saklanır (`SITE_MONITOR_SECRET_KEY`)
 
 **"Beni Hatırla" Özelliği:**
 - 7 günlük kalıcı oturum
@@ -787,10 +787,10 @@ Stack trace ve iç hata mesajı sadece log dosyasına yazılır.
 
 ### 10.7 Hassas Alan Maskeleme (Request Logging)
 
-**RequestLoggingFilter** TRACE seviyede HTTP request/response gövdesi log'lar — default `com.certmonitor=DEBUG` seviyede SESSİZ kalır. Açmak için:
+**RequestLoggingFilter** TRACE seviyede HTTP request/response gövdesi log'lar — default `com.sitemonitor=DEBUG` seviyede SESSİZ kalır. Açmak için:
 
 ```properties
-logging.level.com.certmonitor.config.RequestLoggingFilter=TRACE
+logging.level.com.sitemonitor.config.RequestLoggingFilter=TRACE
 ```
 
 Açıldığında JSON body / form body / URL query üzerinden ~60 hassas alan otomatik `*******` ile maskelenir:
@@ -1689,7 +1689,7 @@ Her gece **03:30** (`cert.monitor.scheduler.cleanup-cron` ile özelleştirilebil
 Kurumsal ağ politikaları nedeniyle bazı domain'lerin firewall/WAF'i pod IP'sini reddeder. Bu domain'ler için:
 
 1. OpenShift Deployment YAML'ına `HTTP_PROXY_HOST=dmzproxy.aknet.akb` ve `HTTP_PROXY_PORT=8080` env vars'larını ekle.
-2. Pod yeniden başlat (`oc rollout restart deployment/cert-monitor`).
+2. Pod yeniden başlat (`oc rollout restart deployment/site-monitor`).
 3. Admin → Envanter → ilgili domain'i düzenle → **"Proxy Üzerinden Kontrol Et"** toggle'ını aç.
 4. Bir sonraki sweep'te o domain'in kontrolü proxy üzerinden gider; geri kalanlar direkt outbound olarak çalışır.
 5. Loglarda `[cert-proxy]` etiketiyle tunnel kurma adımları takip edilebilir.
@@ -1711,9 +1711,9 @@ GitHub Actions: .github/workflows/release.yml
   ├─ Frontend: npx vitest run (72 test)
   ├─ mvn package → JAR
   ├─ npm run build → dist/
-  ├─ Docker build → ghcr.io/inanmise/certmonitor:<tag>
+  ├─ Docker build → ghcr.io/inanmise/site-monitor:<tag>
   ├─ Docker push → GitHub Container Registry
-  ├─ Helm chart OCI push → ghcr.io/inanmise/certmonitor-chart
+  ├─ Helm chart OCI push → ghcr.io/inanmise/sitemonitor-chart
   ├─ VERSION dosyası güncelle
   └─ GitHub Release oluştur
 ```
@@ -1730,19 +1730,19 @@ GitHub Actions: .github/workflows/release.yml
 
 ```bash
 # Production dağıtımı
-helm upgrade --install cert-monitor ./helm/cert-monitor \
-  -f helm/cert-monitor/values.yaml \
-  -f helm/cert-monitor/environments/master.yaml \
+helm upgrade --install site-monitor ./helm/site-monitor \
+  -f helm/site-monitor/values.yaml \
+  -f helm/site-monitor/environments/master.yaml \
   --set image.tag=10.8.0 \
   --set secret.adminPassword=$ADMIN_PASSWORD \
   --set secret.dbPassword=$DB_PASSWORD \
-  -n cert-monitor --create-namespace
+  -n site-monitor --create-namespace
 ```
 
 ### 14.4 Docker Image
 
 ```
-Kayıt Defteri: ghcr.io/inanmise/certmonitor
+Kayıt Defteri: ghcr.io/inanmise/site-monitor
 Etiket formatı:
   - latest              (master son)
   - 10.8.0             (üretim versiyonu)
@@ -1832,8 +1832,8 @@ Birden fazla pod aynı anda tarama yapmaz. DB tabanlı kilit (TTL: 10 dk) yalnı
 
 | Parametre | Açıklama |
 |---|---|
-| `logging.level.com.certmonitor` | Default `DEBUG` |
-| `logging.level.com.certmonitor.config.RequestLoggingFilter` | `TRACE` ile full HTTP req/resp logging açılır (masked) |
+| `logging.level.com.sitemonitor` | Default `DEBUG` |
+| `logging.level.com.sitemonitor.config.RequestLoggingFilter` | `TRACE` ile full HTTP req/resp logging açılır (masked) |
 | `logging.level.root` | Default `INFO` |
 | `LOG_TIMEZONE` | `Europe/Istanbul` (default) |
 
@@ -1851,12 +1851,12 @@ Birden fazla pod aynı anda tarama yapmaz. DB tabanlı kilit (TTL: 10 dk) yalnı
 
 | Parametre | Açıklama |
 |---|---|
-| `CERT_MONITOR_EMAIL_ENABLED` | E-postayı etkinleştir (true/false) |
+| `SITE_MONITOR_EMAIL_ENABLED` | E-postayı etkinleştir (true/false) |
 | `SPRING_MAIL_HOST` | SMTP sunucu adresi |
 | `SPRING_MAIL_PORT` | SMTP portu (587 = STARTTLS) |
 | `SPRING_MAIL_USERNAME` | Gönderen hesap |
 | `SPRING_MAIL_PASSWORD` | SMTP şifresi / App Password |
-| `CERT_MONITOR_EMAIL_FROM` | Gönderen e-posta adresi |
+| `SITE_MONITOR_EMAIL_FROM` | Gönderen e-posta adresi |
 
 ---
 
@@ -1870,8 +1870,8 @@ Birden fazla pod aynı anda tarama yapmaz. DB tabanlı kilit (TTL: 10 dk) yalnı
 | BouncyCastle | 1.78.1 |
 | React / Vite | 18.3 / 5.4 |
 | PostgreSQL | 16-alpine |
-| Docker Image | `ghcr.io/inanmise/certmonitor` |
-| Helm Chart | `ghcr.io/inanmise/certmonitor-chart` |
+| Docker Image | `ghcr.io/inanmise/site-monitor` |
+| Helm Chart | `ghcr.io/inanmise/sitemonitor-chart` |
 | Backend Test Sayısı | 1024 |
 | Frontend Test Sayısı | 168 |
 | Desteklenen Diller | Türkçe / İngilizce |
@@ -1962,8 +1962,8 @@ ayarlanmalıdır.
 
 | Değişken | Neden | Güvensiz Default |
 |---|---|---|
-| `CERT_MONITOR_SECRET_KEY` | Saklanan LDAP/SMTP parolaları AES-GCM ile bu anahtarla şifrelenir. Boşsa dahili **dev anahtarına** düşer → sırlar kaynak koduna erişen herkesçe çözülebilir. **≥32 rastgele karakter, kalıcı.** | boş → dev anahtarı |
-| `CERT_MONITOR_USERNAME` / `CERT_MONITOR_PASSWORD` | Bootstrap admin kimliği (zayıf default). | `user` / `password` |
+| `SITE_MONITOR_SECRET_KEY` | Saklanan LDAP/SMTP parolaları AES-GCM ile bu anahtarla şifrelenir. Boşsa dahili **dev anahtarına** düşer → sırlar kaynak koduna erişen herkesçe çözülebilir. **≥32 rastgele karakter, kalıcı.** | boş → dev anahtarı |
+| `SITE_MONITOR_USERNAME` / `SITE_MONITOR_PASSWORD` | Bootstrap admin kimliği (zayıf default). | `user` / `password` |
 | `CORS_ALLOWED_ORIGINS` | Yalnız prod host(lar)ına izin ver. | `localhost:5173/3000` |
 | `COOKIE_SECURE=true` | Oturum çerezi yalnız HTTPS üzerinden (oturum çalınmasını önler). | `false` (prod profilinde `true`) |
 | `DB_PASSWORD` | PostgreSQL parolası (prod profilinde zorunlu, default yok). | — |
@@ -1974,14 +1974,14 @@ ayarlanmalıdır.
 |---|---|
 | `APP_BASE_URL=https://<host>` | E-posta linkleri (haftalık rapor, şifre sıfırlama, olay) bu adresi kullanır; yoksa localhost. |
 | `SYSTEM_ADMIN_EMAIL` | Ağ-kesinti/sistem bildirimleri buraya gider — kişisel default'u override edin. |
-| `CERT_MONITOR_EMAIL_ENABLED=true` + SMTP | E-posta kapalıyken alarm/eskalasyon/olay bildirimleri **sessizce gönderilmez**. |
+| `SITE_MONITOR_EMAIL_ENABLED=true` + SMTP | E-posta kapalıyken alarm/eskalasyon/olay bildirimleri **sessizce gönderilmez**. |
 | `SPRING_SESSION_STORE_TYPE=jdbc` | Pod restart'larında oturumlar korunur (HA). |
 | `PASSWORD_MIN_LENGTH` / `MAX_LENGTH` / `HISTORY_COUNT` | Varsayılanlar prod-uygun (12 / 64 / 5); kurumsal politikaya göre artırılabilir. |
 
 ### 18.3 Erişim & Yetki
 
 - **Bootstrap-admin geçidi:** SMTP/LDAP/Secret/DB/General ayarlarına `cert.monitor.username` ile tanımlı bootstrap
-  admin HER ZAMAN erişir (literal "admin" değil) → admin `CERT_MONITOR_USERNAME` ile yeniden adlandırılsa da
+  admin HER ZAMAN erişir (literal "admin" değil) → admin `SITE_MONITOR_USERNAME` ile yeniden adlandırılsa da
   kilitlenmez; "admin" adlı başka kullanıcı bypass alamaz.
 - **Permission Matrix:** ADMIN tüm yetkilere sahiptir (UI'da kilitli, revoke edilemez). **Yıkıcı işlemler**
   (`inventory.purge`, `system_health.terminate`, `system_health.scheduler_lock`) **sensitive** — matriste grant
@@ -1995,7 +1995,7 @@ ayarlanmalıdır.
   pod'u restart ettirmez), `readinessProbe` + `startupProbe → /health/readiness`. Uygulama açılış bootstrap'ı
   boyunca readiness'i `REFUSING_TRAFFIC` tutar → **pod yalnız gerçekten hazır olunca** Service endpoint'lerine
   girer (soğuk-başlangıçta "Ready ama ilk istekler askıda" sorunu yaşanmaz).
-- Dağıtım: `helm upgrade` ile chart (`certmonitor-chart`) + imaj güncellenir; `oc rollout status` ile doğrulanır.
+- Dağıtım: `helm upgrade` ile chart (`sitemonitor-chart`) + imaj güncellenir; `oc rollout status` ile doğrulanır.
   Soğuk-başlangıç CPU tavanı (resources.limits.cpu) warmup'ı hızlandırır.
 
 ---

@@ -18,8 +18,8 @@ public class SiteMonitorApplication {
      *  zinciri sayesinde ÇALIŞMAYA DEVAM eder; bu kontrol yalnız görünürlük için tek WARN basar
      *  ki dağıtımlar yeni adlara planlı geçebilsin. */
     private static final String[] LEGACY_ENV_VARS = {   // geriye-uyum: eski env adları
-            "CERT_MONITOR_USERNAME", "CERT_MONITOR_PASSWORD", "CERT_MONITOR_SECRET_KEY",
-            "CERT_MONITOR_EMAIL_ENABLED", "CERT_MONITOR_EMAIL_FROM",
+            "CERT_MONITOR_USERNAME", "CERT_MONITOR_PASSWORD", "CERT_MONITOR_SECRET_KEY",   // geriye-uyum
+            "CERT_MONITOR_EMAIL_ENABLED", "CERT_MONITOR_EMAIL_FROM",   // geriye-uyum
     };
 
     public static void main(String[] args) {
@@ -30,7 +30,7 @@ public class SiteMonitorApplication {
     private static void warnOnLegacyEnvNames() {
         StringBuilder found = new StringBuilder();
         for (String name : LEGACY_ENV_VARS) {
-            String newName = "SITE_MONITOR_" + name.substring("CERT_MONITOR_".length());
+            String newName = "SITE_MONITOR_" + name.substring("CERT_MONITOR_".length());   // geriye-uyum
             // Yeni ad da tanımlıysa alias zaten devre dışı — gürültü çıkarma.
             if (System.getenv(name) != null && System.getenv(newName) == null) {
                 if (found.length() > 0) found.append(", ");

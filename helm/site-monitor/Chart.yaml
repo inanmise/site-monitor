@@ -1,5 +1,5 @@
 apiVersion: v2
-name: certmonitor-chart
+name: sitemonitor-chart
 description: SSL/TLS Certificate Monitoring System with alerting, escalation, and Kubernetes-native HA support.
 type: application
 version: 19.95.0
@@ -10,9 +10,9 @@ keywords:
   - tls
   - monitoring
   - alerting
-home: https://github.com/inanmise/certmonitor
+home: https://github.com/inanmise/site-monitor
 sources:
-  - https://github.com/inanmise/certmonitor
+  - https://github.com/inanmise/site-monitor
 maintainers:
   - name: inanmise
     email: erdi.inanmis@gmail.com

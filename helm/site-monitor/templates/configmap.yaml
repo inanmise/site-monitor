@@ -1,10 +1,10 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: {{ include "cert-monitor.fullname" . }}-config
+  name: {{ include "site-monitor.fullname" . }}-config
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "cert-monitor.labels" . | nindent 4 }}
+    {{- include "site-monitor.labels" . | nindent 4 }}
 data:
   SPRING_PROFILES_ACTIVE: {{ .Values.config.springProfile | quote }}
   # Log seviyesi ve @Scheduled havuzu chart'ta YOKTU → pod'a elle set edilen değer her helm upgrade'de
@@ -23,7 +23,7 @@ data:
   DB_USER: {{ .Values.config.dbUser | quote }}
   {{- end }}
   DB_POOL_MAX: {{ .Values.config.dbPoolMax | quote }}
-  CERT_MONITOR_EMAIL_ENABLED: {{ .Values.config.emailEnabled | quote }}
+  SITE_MONITOR_EMAIL_ENABLED: {{ .Values.config.emailEnabled | quote }}
   FAILED_LOGIN_ALERT_ENABLED: {{ .Values.config.failedLoginAlertEnabled | default "true" | quote }}
   FAILED_LOGIN_ALERT_RECIPIENTS: {{ .Values.config.failedLoginAlertRecipients | default "" | quote }}
   SPRING_MAIL_HOST: {{ .Values.config.smtpHost | quote }}

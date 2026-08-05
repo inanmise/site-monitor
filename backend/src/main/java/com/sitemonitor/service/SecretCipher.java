@@ -20,7 +20,7 @@ import java.util.Base64;
  *
  * <p>Encrypted values are tagged with {@link #PREFIX} so we can tell them apart
  * from accidental plaintext. The key MUST be stable across pods in production
- * (set {@code CERT_MONITOR_SECRET_KEY} in the K8s secret) so a value encrypted
+ * (set {@code SITE_MONITOR_SECRET_KEY} in the K8s secret) so a value encrypted
  * on one node decrypts on another.
  */
 @Slf4j
@@ -31,7 +31,7 @@ public class SecretCipher {
     private static final int IV_LEN = 12;       // GCM standard nonce length
     private static final int TAG_BITS = 128;
     // geriye-uyum: DEV varsayilan anahtar DEGISTIRILMEZ — eski degerle sifrelenmis yerel secret'lar cozulemez olurdu.
-    private static final String DEV_DEFAULT = "certmonitor-dev-secret-change-me";
+    private static final String DEV_DEFAULT = "certmonitor-dev-secret-change-me";   // geriye-uyum: degistirme
 
     private final SecureRandom random = new SecureRandom();
     private SecretKeySpec key;
@@ -48,7 +48,7 @@ public class SecretCipher {
                 .map(String::trim).anyMatch(p -> p.equalsIgnoreCase("prod"));
     }
 
-    /** true = gerçek bir CERT_MONITOR_SECRET_KEY ayarlı; false = güvensiz DEV varsayılanı kullanılıyor.
+    /** true = gerçek bir SITE_MONITOR_SECRET_KEY ayarlı; false = güvensiz DEV varsayılanı kullanılıyor.
      *  UI, gerçek parola kaydetmeden önce admin'i uyarmak için bunu kullanır. */
     public boolean isKeyConfigured() {
         return keyConfigured;
@@ -68,13 +68,13 @@ public class SecretCipher {
         if (insecure && isProd()) {
             // Fail-fast: prod'da gömülü public dev anahtarına düşmek = at-rest LDAP/SMTP parolaları kaynak-kod
             // anahtarıyla şifrelenir (etkin düz metin). Operatörü zorla: startup'ı durdur.
-            throw new IllegalStateException("site.monitor.secret-key (CERT_MONITOR_SECRET_KEY) prod profilinde "
+            throw new IllegalStateException("site.monitor.secret-key (SITE_MONITOR_SECRET_KEY) prod profilinde "
                     + "ZORUNLU — güvensiz gömülü DEV anahtarına düşülemez. K8s secret'ta stabil bir anahtar ayarlayın.");
         }
         if (insecure) {
             this.keyConfigured = false;   // dev-default (UI uyarısı doğru kalsın)
             log.warn("SecretCipher: site.monitor.secret-key not set — using insecure DEV default. "
-                    + "Set CERT_MONITOR_SECRET_KEY (stable across pods) before storing real secrets.");
+                    + "Set SITE_MONITOR_SECRET_KEY (stable across pods) before storing real secrets.");
         }
         try {
             byte[] digest = MessageDigest.getInstance("SHA-256")

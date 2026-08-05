@@ -386,7 +386,7 @@ export const api = {
       request(`/admin/login-issues/${id}/status`, { method: 'PUT', body: JSON.stringify(dto) }),
 
 
-    // Anahtar çözümleme aracı — verilen CERT_MONITOR_SECRET_KEY ile şifreli alanları çöz
+    // Anahtar çözümleme aracı — verilen SITE_MONITOR_SECRET_KEY ile şifreli alanları çöz
     secretToolsInfo: () => request('/admin/secret-tools/info'),
     decryptSecrets: (key) => request('/admin/secret-tools/decrypt', { method: 'POST', body: JSON.stringify({ key }) }),
 

@@ -19,9 +19,9 @@ helm version
 ## 1. Create Project (Namespace)
 
 ```bash
-oc new-project cert-monitor
+oc new-project site-monitor
 # or for a specific environment:
-oc new-project cert-monitor-staging
+oc new-project site-monitor-staging
 ```
 
 ---
@@ -49,12 +49,12 @@ Grant `anyuid` SCC to the chart's service account:
 ```bash
 # After installing (service account is created by the chart)
 oc adm policy add-scc-to-user anyuid \
-  -z cert-monitor-certmonitor-chart \
-  -n cert-monitor
+  -z site-monitor-sitemonitor-chart \
+  -n site-monitor
 ```
 
-> The service account name follows the pattern `<release-name>-certmonitor-chart`.
-> Verify with: `oc get sa -n cert-monitor`
+> The service account name follows the pattern `<release-name>-sitemonitor-chart`.
+> Verify with: `oc get sa -n site-monitor`
 
 ### PostgreSQL subchart SCC (when `postgresql.enabled=true`)
 
@@ -62,8 +62,8 @@ Bitnami PostgreSQL also runs as a fixed UID (1001). Grant `anyuid` to its servic
 
 ```bash
 oc adm policy add-scc-to-user anyuid \
-  -z cert-monitor-postgresql \
-  -n cert-monitor
+  -z site-monitor-postgresql \
+  -n site-monitor
 ```
 
 ---
@@ -81,12 +81,12 @@ Skip Helm ingress and create a Route after install:
 # ingress:
 #   enabled: false
 
-oc expose svc/cert-monitor-certmonitor-chart -n cert-monitor
+oc expose svc/site-monitor-sitemonitor-chart -n site-monitor
 # For TLS edge termination:
-oc create route edge cert-monitor \
-  --service=cert-monitor-certmonitor-chart \
-  --hostname=cert-monitor.apps.<cluster-domain> \
-  -n cert-monitor
+oc create route edge site-monitor \
+  --service=site-monitor-sitemonitor-chart \
+  --hostname=site-monitor.apps.<cluster-domain> \
+  -n site-monitor
 ```
 
 ### Option B — NGINX Ingress Operator
@@ -104,11 +104,11 @@ Use `ingressClassName: nginx` in values (already the default).
 ## 4. Install — External PostgreSQL
 
 ```bash
-helm dep update helm/cert-monitor
+helm dep update helm/site-monitor
 
-helm upgrade --install cert-monitor ./helm/cert-monitor \
-  -f helm/cert-monitor/values.yaml \
-  -f helm/cert-monitor/environments/master.yaml \
+helm upgrade --install site-monitor ./helm/site-monitor \
+  -f helm/site-monitor/values.yaml \
+  -f helm/site-monitor/environments/master.yaml \
   -f openshift-values.yaml \
   --set image.tag=<VERSION> \
   --set config.dbHost=<POSTGRES_HOST> \
@@ -116,7 +116,7 @@ helm upgrade --install cert-monitor ./helm/cert-monitor \
   --set secret.dbPassword=<DB_PASSWORD> \
   --set secret.smtpPassword=<SMTP_PASSWORD> \
   --set ingress.enabled=false \
-  -n cert-monitor
+  -n site-monitor
 ```
 
 Minimal `openshift-values.yaml` for OCP 4.11+:
@@ -132,11 +132,11 @@ podSecurityContext:
 ## 5. Install — Bundled PostgreSQL Subchart
 
 ```bash
-helm dep update helm/cert-monitor
+helm dep update helm/site-monitor
 
-helm upgrade --install cert-monitor ./helm/cert-monitor \
-  -f helm/cert-monitor/values.yaml \
-  -f helm/cert-monitor/environments/master.yaml \
+helm upgrade --install site-monitor ./helm/site-monitor \
+  -f helm/site-monitor/values.yaml \
+  -f helm/site-monitor/environments/master.yaml \
   -f openshift-values.yaml \
   --set image.tag=<VERSION> \
   --set postgresql.enabled=true \
@@ -144,7 +144,7 @@ helm upgrade --install cert-monitor ./helm/cert-monitor \
   --set secret.adminPassword=<ADMIN_PASSWORD> \
   --set secret.smtpPassword=<SMTP_PASSWORD> \
   --set ingress.enabled=false \
-  -n cert-monitor
+  -n site-monitor
 ```
 
 Then grant SCC to the PostgreSQL service account (see §2 above).
@@ -175,17 +175,17 @@ Both default to `false`. Enable per environment via `--set` or your env values f
 
 ```bash
 # Pod status
-oc get pods -n cert-monitor
+oc get pods -n site-monitor
 
 # Application logs
-oc logs -l app.kubernetes.io/name=certmonitor-chart -n cert-monitor
+oc logs -l app.kubernetes.io/name=sitemonitor-chart -n site-monitor
 
 # Expose health check
-oc port-forward svc/cert-monitor-certmonitor-chart 8080:80 -n cert-monitor
+oc port-forward svc/site-monitor-sitemonitor-chart 8080:80 -n site-monitor
 curl http://localhost:8080/actuator/health
 
 # If using Route
-oc get route -n cert-monitor
+oc get route -n site-monitor
 curl https://<route-host>/actuator/health
 ```
 

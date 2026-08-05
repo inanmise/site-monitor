@@ -1,18 +1,18 @@
 # ─────────────────────────────────────────────────────────────────────────────
 # Environment: DEVELOPMENT  (develop branch)
-# Image tag  : develop-<git-sha>  e.g. cert-monitor:develop-a1b2c3d
+# Image tag  : develop-<git-sha>  e.g. site-monitor:develop-a1b2c3d
 # Deploy with:
-#   helm upgrade --install cert-monitor-dev ./helm/cert-monitor \
-#     -f helm/cert-monitor/values.yaml \
-#     -f helm/cert-monitor/environments/develop.yaml \
+#   helm upgrade --install site-monitor-dev ./helm/site-monitor \
+#     -f helm/site-monitor/values.yaml \
+#     -f helm/site-monitor/environments/develop.yaml \
 #     --set image.tag=develop-$(git rev-parse --short HEAD) \
 #     --set secret.adminPassword=devpassword \
 #     --set secret.dbPassword=devpassword \
-#     -n cert-monitor-dev --create-namespace
+#     -n site-monitor-dev --create-namespace
 # ─────────────────────────────────────────────────────────────────────────────
 
 image:
-  repository: cert-monitor
+  repository: site-monitor
   tag: develop     # overridden by CI with develop-<sha>
   pullPolicy: Always
 
@@ -21,7 +21,7 @@ replicaCount: 1
 config:
   springProfile: prod
   logLevel: "DEBUG"         # dev: ayrıntılı iz sürme (tek replica, hacim sorun değil)
-  corsAllowedOrigins: "https://cert-monitor-dev.example.com,http://localhost:5173"
+  corsAllowedOrigins: "https://site-monitor-dev.example.com,http://localhost:5173"
   certCheckHour: "*/2"     # every 2 hours in dev
   certCheckMinute: "0"
   emailEnabled: "false"    # emails off in dev
@@ -32,10 +32,10 @@ config:
 ingress:
   enabled: true
   className: nginx
-  host: cert-monitor-dev.example.com
+  host: site-monitor-dev.example.com
   tls:
     enabled: true
-    secretName: cert-monitor-dev-tls
+    secretName: site-monitor-dev-tls
   annotations:
     nginx.ingress.kubernetes.io/ssl-redirect: "true"
 

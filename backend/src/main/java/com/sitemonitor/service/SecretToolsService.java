@@ -13,7 +13,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Anahtar kurtarma/doğrulama aracı (yalnız admin). CERT_MONITOR_SECRET_KEY ile şifrelenmiş
+ * Anahtar kurtarma/doğrulama aracı (yalnız admin). SITE_MONITOR_SECRET_KEY ile şifrelenmiş
  * alanları (SMTP/LDAP parolaları) VERİLEN aday anahtarla çözer ve sonucu döner. Yapılandırılmış
  * anahtarı kullanmaz; doğru anahtar verildiğinde plaintext'i, yanlışta "başarısız" döner.
  */
@@ -30,7 +30,7 @@ public class SecretToolsService {
         return cipher.devDefaultKey();
     }
 
-    /** Gerçek bir CERT_MONITOR_SECRET_KEY ayarlı mı. */
+    /** Gerçek bir SITE_MONITOR_SECRET_KEY ayarlı mı. */
     public boolean isSecretKeyConfigured() {
         return cipher.isKeyConfigured();
     }

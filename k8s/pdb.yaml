@@ -1,10 +1,10 @@
 apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
-  name: cert-monitor
-  namespace: cert-monitor
+  name: site-monitor
+  namespace: site-monitor
 spec:
   minAvailable: 2
   selector:
     matchLabels:
-      app: cert-monitor
+      app: site-monitor

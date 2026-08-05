@@ -3,7 +3,7 @@ apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: postgres-pvc
-  namespace: cert-monitor
+  namespace: site-monitor
 spec:
   accessModes:
     - ReadWriteOnce
@@ -17,7 +17,7 @@ apiVersion: apps/v1
 kind: StatefulSet
 metadata:
   name: postgres
-  namespace: cert-monitor
+  namespace: site-monitor
   labels:
     app: postgres
 spec:
@@ -67,13 +67,13 @@ spec:
             - "max_connections=150"
           env:
             - name: POSTGRES_DB
-              value: certmonitor
+              value: sitemonitor
             - name: POSTGRES_USER
-              value: certmonitor
+              value: sitemonitor
             - name: POSTGRES_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: cert-monitor-secret
+                  name: site-monitor-secret
                   key: DB_PASSWORD
             - name: PGDATA
               value: /var/lib/postgresql/data/pgdata
@@ -90,12 +90,12 @@ spec:
               mountPath: /var/lib/postgresql/data
           readinessProbe:
             exec:
-              command: ["pg_isready", "-U", "certmonitor"]
+              command: ["pg_isready", "-U", "sitemonitor"]
             initialDelaySeconds: 10
             periodSeconds: 5
           livenessProbe:
             exec:
-              command: ["pg_isready", "-U", "certmonitor"]
+              command: ["pg_isready", "-U", "sitemonitor"]
             initialDelaySeconds: 30
             periodSeconds: 30
       volumes:
@@ -108,7 +108,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: postgres
-  namespace: cert-monitor
+  namespace: site-monitor
   labels:
     app: postgres
 spec:

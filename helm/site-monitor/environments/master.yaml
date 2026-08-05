@@ -1,18 +1,18 @@
 # ─────────────────────────────────────────────────────────────────────────────
 # Environment: PRODUCTION  (master branch)
-# Image tag  : {VERSION}   e.g. cert-monitor:1.0.0
+# Image tag  : {VERSION}   e.g. site-monitor:1.0.0
 # Deploy with:
-#   helm upgrade --install cert-monitor ./helm/cert-monitor \
-#     -f helm/cert-monitor/values.yaml \
-#     -f helm/cert-monitor/environments/master.yaml \
+#   helm upgrade --install site-monitor ./helm/site-monitor \
+#     -f helm/site-monitor/values.yaml \
+#     -f helm/site-monitor/environments/master.yaml \
 #     --set image.tag=1.0.0 \
 #     --set secret.adminPassword=$ADMIN_PASSWORD \
 #     --set secret.dbPassword=$DB_PASSWORD \
-#     -n cert-monitor --create-namespace
+#     -n site-monitor --create-namespace
 # ─────────────────────────────────────────────────────────────────────────────
 
 image:
-  repository: cert-monitor
+  repository: site-monitor
   tag: "1.0.0"      # overridden by CI with exact git tag
   pullPolicy: Always
 
@@ -31,7 +31,7 @@ ingress:
   host: cert-monitor.example.com
   tls:
     enabled: true
-    secretName: cert-monitor-tls
+    secretName: site-monitor-tls
   annotations:
     nginx.ingress.kubernetes.io/ssl-redirect: "true"
     nginx.ingress.kubernetes.io/proxy-read-timeout: "60"

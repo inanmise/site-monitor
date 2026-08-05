@@ -35,7 +35,7 @@ import java.util.regex.Pattern;
 public class EmailNotificationService {
 
     // Mail'e özel logger — bağımsız açılır/kapanır: logging.level.com.sitemonitor.mail=TRACE
-    // (env LOGGING_LEVEL_COM_CERTMONITOR_MAIL=TRACE). Detaylı gönderim TRACE'leri buraya gider;
+    // (env LOGGING_LEVEL_COM_SITEMONITOR_MAIL=TRACE). Detaylı gönderim TRACE'leri buraya gider;
     // operasyonel INFO/ERROR (stack dahil) mevcut @Slf4j `log` üzerinde kalır → TRACE kapalıyken
     // bile hatanın tam stack'i her zaman görünür.
     private static final Logger MAIL_LOG = LoggerFactory.getLogger("com.sitemonitor.mail");
@@ -1601,7 +1601,7 @@ public class EmailNotificationService {
             // ── Header (executive dark) ──
             + "<tr><td class='em-pad' bgcolor='" + dark + "' style='background-color:" + dark + ";padding:26px 30px'>"
             + "<div style='font-size:11px;font-weight:700;letter-spacing:.16em;color:#7c8aa0'>"
-            + "CERTMONITOR &nbsp;&#183;&nbsp; SERTİFİKA İZLEME</div>"
+            + "SİTE MONİTÖR &nbsp;&#183;&nbsp; SERTİFİKA İZLEME</div>"
             + "<table role='presentation' cellpadding='0' cellspacing='0' border='0' style='margin:14px 0 2px'><tr>"
             + "<td bgcolor='" + green + "' style='background-color:" + green + ";border-radius:6px;padding:6px 13px;"
             + "font-size:12px;font-weight:800;letter-spacing:.09em;color:#ffffff'>&#10003;&nbsp; ÇÖZÜLDÜ</td>"
@@ -1650,7 +1650,7 @@ public class EmailNotificationService {
             // ── Footer (executive dark) ──
             + "<tr><td class='em-pad' bgcolor='" + dark + "' style='background-color:" + dark + ";padding:15px 30px'>"
             + "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0'><tr>"
-            + "<td style='font-size:11px;color:#7c8aa0;font-weight:700;letter-spacing:.06em'>CERTMONITOR</td>"
+            + "<td style='font-size:11px;color:#7c8aa0;font-weight:700;letter-spacing:.06em'>SİTE MONİTÖR</td>"
             + "<td align='right' style='font-size:11px;color:#7c8aa0'>Bildirim: " + generatedAt + "</td>"
             + "</tr></table></td></tr>"
 
@@ -3089,7 +3089,7 @@ public class EmailNotificationService {
             // ── Üst bar ──
             + "<table width='100%' cellpadding='0' cellspacing='0' border='0'><tr>"
             + "<td bgcolor='" + accent + "' style='background:" + accent + ";padding:22px 24px'>"
-            + "<div style='color:#aebed8;font-size:11px;font-weight:700;letter-spacing:.12em'>CERTMONITOR — HAFTALIK RAPOR HATIRLATMASI</div>"
+            + "<div style='color:#aebed8;font-size:11px;font-weight:700;letter-spacing:.12em'>SİTE MONİTÖR — HAFTALIK RAPOR HATIRLATMASI</div>"
             + "<div style='color:#ffffff;font-size:22px;font-weight:900;margin-top:10px;line-height:1.25'>⏰ "
             + escHtml(teamName) + "</div>"
             + "<div style='color:#dbe3ef;font-size:15px;font-weight:700;margin-top:8px'>"
@@ -3246,7 +3246,7 @@ public class EmailNotificationService {
             // Üst bar
             + "<table width='100%' cellpadding='0' cellspacing='0' border='0'><tr>"
             + "<td bgcolor='" + accent + "' style='background:" + accent + ";padding:22px 24px'>"
-            + "<div style='color:#aebed8;font-size:11px;font-weight:700;letter-spacing:.12em'>CERTMONITOR — HAFTALIK ERİŞİLEBİLİRLİK</div>"
+            + "<div style='color:#aebed8;font-size:11px;font-weight:700;letter-spacing:.12em'>SİTE MONİTÖR — HAFTALIK ERİŞİLEBİLİRLİK</div>"
             + "<div style='color:#ffffff;font-size:22px;font-weight:900;margin-top:10px;line-height:1.25'>📊 " + escHtml(teamName) + "</div>"
             + "<div style='color:#dbe3ef;font-size:15px;font-weight:700;margin-top:8px'>" + escHtml(weekLabel) + "</div>"
             + "</td></tr></table>"
