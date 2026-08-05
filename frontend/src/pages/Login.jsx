@@ -12,7 +12,9 @@ import { useBranding } from '../contexts/BrandingProvider.jsx'
 import { downscaleImage } from '../utils/imageDownscale.js'
 import { ShieldAlert, ShieldCheck, Lock, Globe, Activity, Radio, Network, Server, Search, Gauge, Bell, AlertTriangle, FileText, Wrench, X } from 'lucide-react'
 
-const STORAGE_KEY = 'cert-monitor-remembered-user'
+// App.jsx logout temizliği de bu anahtarı kullanır — tek kaynak buradan export edilir.
+export const REMEMBER_KEY = 'site-monitor-remembered-user'
+const STORAGE_KEY = REMEMBER_KEY
 
 export default function Login({ onLogin, sessionExpired = false }) {
   const t = useT()

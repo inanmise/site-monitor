@@ -65,8 +65,8 @@ async function request(path, options = {}) {
     // the login form. Only force a hard reload when we previously had an
     // authenticated session (flag set by api.login on success).
     if (typeof window !== 'undefined' &&
-        sessionStorage.getItem('cm.session.active') === '1') {
-      try { sessionStorage.removeItem('cm.session.active') } catch {}
+        sessionStorage.getItem('sm.session.active') === '1') {
+      try { sessionStorage.removeItem('sm.session.active') } catch {}
       window.location.assign('/?session=expired')
     }
     return null
@@ -129,14 +129,14 @@ export const api = {
     // subsequent 401 is a *lost* session (worth a hard reload to /?session=
     // expired), not the initial unauthenticated bootstrap.
     if (r.ok && body?.success && typeof window !== 'undefined') {
-      try { sessionStorage.setItem('cm.session.active', '1') } catch {}
+      try { sessionStorage.setItem('sm.session.active', '1') } catch {}
     }
     return body
   },
 
   logout: async () => {
     if (typeof window !== 'undefined') {
-      try { sessionStorage.removeItem('cm.session.active') } catch {}
+      try { sessionStorage.removeItem('sm.session.active') } catch {}
     }
     return request('/logout', { method: 'POST' })
   },

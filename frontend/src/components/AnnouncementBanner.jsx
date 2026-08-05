@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useBranding } from '../contexts/BrandingProvider.jsx'
 
-const DISMISS_KEY = 'cm.banner.dismissedVersion'
+const DISMISS_KEY = 'sm.banner.dismissedVersion'
 
 /** Ton → renkler (mevcut tema tonlarıyla uyumlu; INFO mavi, WARNING amber, CRITICAL kırmızı). */
 const TONES = {

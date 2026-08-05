@@ -80,7 +80,7 @@ export function exportInventoryCsv(items, teams, t) {
     .map(r => r.map(csvEscape).join(','))
     .join('\r\n')
   const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' })
-  triggerDownload(blob, `cert-monitor-inventory-${dateStamp()}.csv`)
+  triggerDownload(blob, `site-monitor-inventory-${dateStamp()}.csv`)
   return rows.length
 }
 
@@ -324,6 +324,6 @@ export async function exportInventoryPdf(items, teams, t) {
     doc.setTextColor(40)
   }
 
-  doc.save(`cert-monitor-inventory-${dateStamp()}.pdf`)
+  doc.save(`site-monitor-inventory-${dateStamp()}.pdf`)
   return items.length
 }

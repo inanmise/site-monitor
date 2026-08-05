@@ -14,7 +14,7 @@ import { usePagination } from './hooks/usePagination.js'
 import PaginationBar from './components/ui/PaginationBar.jsx'
 import { useUrlQuerySync, readUrlParam, readUrlInt, PAGE_STATE_PARAMS } from './hooks/useUrlQuerySync.js'
 import SearchableSelect from './components/ui/SearchableSelect.jsx'
-import Login from './pages/Login'
+import Login, { REMEMBER_KEY } from './pages/Login'
 import Nav from './components/Nav'
 import StatsPanel from './components/StatsPanel'
 import StatsView from './components/StatsView'
@@ -179,7 +179,7 @@ export default function App() {
         // Oturum aktif bayrağı: login yalnız bu sekmede yapılmamış olabilir (cookie reauth ya da
         // başka sekmede login). Bayrağı burada da set et ki oturum sonradan düş/süpersede olunca
         // client.js 401'i yakalayıp temiz /?session=expired'a yönlendirsin ("Yüklenemedi" yerine).
-        try { sessionStorage.setItem('cm.session.active', '1') } catch { /* sessionStorage yok */ }
+        try { sessionStorage.setItem('sm.session.active', '1') } catch { /* sessionStorage yok */ }
         // Mail "tıklayınız" linki: ?tab=weeklyreports → doğrudan ilgili sekme
         const dl = initialTabFromUrl()
         if (dl) setTab(dl)
@@ -216,7 +216,7 @@ export default function App() {
     const doAutoLogout = async () => {
       clearInterval(countdownInterval.current)
       await api.logout()
-      localStorage.removeItem('cert-monitor-remembered-user')
+      localStorage.removeItem(REMEMBER_KEY)
       setUser(null)
       setSystemRole('USER')
       setTeamId(null)
@@ -362,7 +362,7 @@ export default function App() {
     clearInterval(countdownInterval.current)
     clearInterval(refreshPollRef.current)
     await api.logout()
-    localStorage.removeItem('cert-monitor-remembered-user')
+    localStorage.removeItem(REMEMBER_KEY)
     setUser(null)
     setSystemRole('USER')
     setTeamId(null)

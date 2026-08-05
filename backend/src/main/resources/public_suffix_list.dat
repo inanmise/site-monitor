@@ -1,4 +1,4 @@
-// Public Suffix List — CURATED SUBSET for cert-monitor domain-expiry (eTLD+1 extraction).
+// Public Suffix List — CURATED SUBSET for site-monitor domain-expiry (eTLD+1 extraction).
 // Format = publicsuffix.org syntax: '//' comment, plain rule, '*.' wildcard, '!' exception.
 // This is a curated subset (multi-level suffixes + notable ccTLDs). Any TLD not listed here
 // falls back to the PSL default rule '*' (public suffix = last label → registrable = last 2 labels),

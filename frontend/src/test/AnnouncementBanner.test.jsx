@@ -40,11 +40,11 @@ describe('AnnouncementBanner', () => {
     await screen.findByRole('status')
     fireEvent.click(screen.getByLabelText('close'))
     expect(screen.queryByRole('status')).not.toBeInTheDocument()
-    expect(localStorage.getItem('cm.banner.dismissedVersion')).toBe('3')
+    expect(localStorage.getItem('sm.banner.dismissedVersion')).toBe('3')
   })
 
   it('kapatılan versiyondan SONRA metin güncellenirse (versiyon artar) yeniden görünür', async () => {
-    localStorage.setItem('cm.banner.dismissedVersion', '3')   // kullanıcı v3'ü kapatmıştı
+    localStorage.setItem('sm.banner.dismissedVersion', '3')   // kullanıcı v3'ü kapatmıştı
     api.getBranding.mockResolvedValueOnce({ success: true, data: {
       banner_enabled: true, banner_text: 'Yeni duyuru', banner_version: 4 } })
     wrap()

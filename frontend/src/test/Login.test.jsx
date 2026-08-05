@@ -93,7 +93,7 @@ describe('Login', () => {
     fireEvent.submit(document.querySelector('form'))
 
     await waitFor(() => expect(onLogin).toHaveBeenCalled())
-    expect(localStorage.getItem('cert-monitor-remembered-user')).toBe('remember-user')
+    expect(localStorage.getItem('site-monitor-remembered-user')).toBe('remember-user')
   })
 
   it('shows a session-expired notice when sessionExpired is set (AUTH-1)', () => {

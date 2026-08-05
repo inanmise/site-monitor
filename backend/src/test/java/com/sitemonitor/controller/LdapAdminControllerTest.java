@@ -1,0 +1,172 @@
+package com.sitemonitor.controller;
+
+import com.sitemonitor.model.LdapSettings;
+import com.sitemonitor.service.AuditService;
+import com.sitemonitor.service.HttpMetricsService;
+import com.sitemonitor.service.LdapDirectoryService;
+import com.sitemonitor.service.LdapSettingsService;
+import com.sitemonitor.service.RememberMeService;
+import com.sitemonitor.service.UserService;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.http.MediaType;
+import org.springframework.mock.web.MockHttpSession;
+import org.springframework.test.web.servlet.MockMvc;
+
+import java.util.Map;
+
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
+
+@WebMvcTest(LdapAdminController.class)
+class LdapAdminControllerTest {
+
+    @Autowired MockMvc mvc;
+
+    @MockitoBean LdapSettingsService settingsService;
+    @MockitoBean LdapDirectoryService directoryService;
+    @MockitoBean AuditService auditService;
+    @MockitoBean com.sitemonitor.service.PermissionService permissionService;
+
+    // Beans pulled in by WebConfig / AuthInterceptor / HttpMetricsInterceptor.
+    @MockitoBean RememberMeService rememberMeService;
+    @MockitoBean UserService userService;
+    @MockitoBean AuthController authController;
+    @MockitoBean HttpMetricsService httpMetricsService;
+
+    @BeforeEach
+    void setUp() {
+        when(settingsService.getOrDefaults()).thenReturn(new LdapSettings());
+        when(settingsService.isConfigured()).thenReturn(false);
+        when(settingsService.toClientMap(any()))
+                .thenReturn(Map.of("enabled", true, "bind_password_set", false));
+        // Bootstrap admin require'ı atlar; non-bootstrap için matris izni reddini simüle et (→ 403).
+        org.mockito.Mockito.doThrow(new SecurityException("no perm")).when(permissionService)
+                .require(org.mockito.ArgumentMatchers.any(jakarta.servlet.http.HttpSession.class),
+                        org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyString());
+    }
+
+    @Test
+    @DisplayName("GET /settings unauthenticated → 401")
+    void getSettings_unauthenticated_401() throws Exception {
+        mvc.perform(get("/api/admin/ldap/settings"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    @DisplayName("GET /settings as non-bootstrap ADMIN → 403")
+    void getSettings_nonBootstrapAdmin_403() throws Exception {
+        mvc.perform(get("/api/admin/ldap/settings").session(adminRoleButNotBootstrap()))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    @DisplayName("GET /settings as bootstrap admin → 200, no bind password leaked")
+    void getSettings_bootstrapAdmin_200() throws Exception {
+        mvc.perform(get("/api/admin/ldap/settings").session(bootstrapAdmin()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.data.bind_password_set").value(false))
+                .andExpect(jsonPath("$.data.bind_password").doesNotExist());
+    }
+
+    @Test
+    @DisplayName("PUT /settings as bootstrap admin → 200 and persists")
+    void saveSettings_bootstrapAdmin_200() throws Exception {
+        when(settingsService.save(any(), eq("admin"))).thenReturn(new LdapSettings());
+        mvc.perform(put("/api/admin/ldap/settings")
+                        .session(bootstrapAdmin())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"enabled\":true,\"host\":\"h\",\"port\":3269}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true));
+    }
+
+    @Test
+    @DisplayName("POST /test returns the directory service result")
+    void test_returnsResult() throws Exception {
+        when(directoryService.testConnection(false))
+                .thenReturn(Map.of("success", true, "message", "ok"));
+        mvc.perform(post("/api/admin/ldap/test").session(bootstrapAdmin()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.message").value("ok"));
+    }
+
+    @Test
+    @DisplayName("POST /test?verify=true: kayıtlı ayar değişmeden DOĞRULAMALI deneme yapılır")
+    void test_verifyMode_forwardsFlag() throws Exception {
+        when(directoryService.testConnection(true))
+                .thenReturn(Map.of("success", true, "message", "ok", "verified", true));
+        mvc.perform(post("/api/admin/ldap/test").param("verify", "true").session(bootstrapAdmin()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.verified").value(true));
+        org.mockito.Mockito.verify(directoryService).testConnection(true);
+        org.mockito.Mockito.verify(settingsService, org.mockito.Mockito.never())
+                .save(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
+    }
+
+    @Test
+    @DisplayName("POST /query-user returns attributes on success")
+    void queryUser_success() throws Exception {
+        when(directoryService.queryUser("erdi", null))
+                .thenReturn(Map.of("found", true, "dn", "CN=Erdi"));
+        mvc.perform(post("/api/admin/ldap/query-user")
+                        .session(bootstrapAdmin())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"username\":\"erdi\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.data.found").value(true));
+    }
+
+    @Test
+    @DisplayName("POST /query-user surfaces failures inline (200, success=false)")
+    void queryUser_failureInline() throws Exception {
+        when(directoryService.queryUser("bad", null))
+                .thenThrow(new IllegalStateException("LDAP unreachable"));
+        mvc.perform(post("/api/admin/ldap/query-user")
+                        .session(bootstrapAdmin())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"username\":\"bad\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(false))
+                .andExpect(jsonPath("$.error").value("LDAP unreachable"));
+    }
+
+    @Test
+    @DisplayName("POST /query-user as non-bootstrap ADMIN → 403")
+    void queryUser_nonBootstrapAdmin_403() throws Exception {
+        mvc.perform(post("/api/admin/ldap/query-user")
+                        .session(adminRoleButNotBootstrap())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"username\":\"erdi\"}"))
+                .andExpect(status().isForbidden());
+    }
+
+    // ── session builders ─────────────────────────────────────────────────────
+
+    private MockHttpSession bootstrapAdmin() {
+        MockHttpSession s = new MockHttpSession();
+        s.setAttribute("authenticated", Boolean.TRUE);
+        s.setAttribute("username", "admin");
+        s.setAttribute("bootstrapAdmin", Boolean.TRUE);   // settings gate bayrağı (literal username yerine)
+        s.setAttribute("systemRole", "ADMIN");
+        return s;
+    }
+
+    private MockHttpSession adminRoleButNotBootstrap() {
+        MockHttpSession s = new MockHttpSession();
+        s.setAttribute("authenticated", Boolean.TRUE);
+        s.setAttribute("username", "erdi"); // ADMIN role but NOT the local bootstrap "admin"
+        s.setAttribute("systemRole", "ADMIN");
+        return s;
+    }
+}

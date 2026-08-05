@@ -1,6 +1,6 @@
 import { createContext, useContext, useState, useCallback, useEffect } from 'react'
 
-const STORAGE_KEY = 'cert-monitor-lang'
+const STORAGE_KEY = 'site-monitor-lang'
 
 // ── Dictionaries ──────────────────────────────────────────────────────────────
 
@@ -524,8 +524,8 @@ export const TR = {
   'general.lbl.cert.monitor.page.default-timeout-ms':          'Sayfa Bütünlüğü varsayılan timeout (ms)',
   'general.lbl.cert.monitor.port.default-timeout-ms':          'Port varsayılan timeout (ms)',
   'general.lbl.cert.monitor.port.default-slow-ms':             'Port varsayılan yavaş yanıt eşiği (ms)',
-  'general.lbl.logging.level.com.certmonitor':             'Log Seviyesi',
-  'general.lbl.logging.level.com.certmonitor.mail':        'Mail Log Seviyesi (TRACE = mail gönderim tanılaması)',
+  'general.lbl.logging.level.com.sitemonitor':             'Log Seviyesi',
+  'general.lbl.logging.level.com.sitemonitor.mail':        'Mail Log Seviyesi (TRACE = mail gönderim tanılaması)',
   'general.lbl.cert.monitor.trust.ca-bundle-pem':          'Güvenilir CA paketi (PEM) — kurumsal/iç kök+ara CA',
   'general.lbl.cert.monitor.trust.auto-pin.enabled':       'CA otomatik sabitleme (TOFU) — güvenilmeyen CA ilk görüşte host bazında sabitlenir, rotasyonda otomatik yenilenir',
 
@@ -3100,7 +3100,7 @@ export const TR = {
   'page.subtitle':       'İzlenen sayfanın kod seviyesinde sağlıklı yüklendiğini doğrular: kırık link/kaynak, mixed content ve içerik anomalileri.',
   'page.howTitle': 'Bu izleme nasıl ve nereden yapılıyor?',
   'page.how1': 'HTML indirme + ayrıştırma: sayfanın HTML\'i indirilir (kurumsal proxy üzerinden, 443) ve jsoup ile kaynak envanteri çıkarılır — img (src/srcset), CSS (link[stylesheet]), JS (script[src]), site içi/dışı linkler (a[href]), iframe, favicon ve preload font\'lar. Göreli adresler sayfanın URL\'ine göre mutlak hale getirilir; tekilleştirilir.',
-  'page.how2': 'Kaynak doğrulama: her kaynak sınırlı eşzamanlılıkla (nezaket + tek-pod yük koruması) kontrol edilir — önce HEAD, sunucu desteklemiyorsa (405/501) GET\'e düşülür. 404/410 ve 5xx = KIRIK, süre eşiğini aşan = YAVAŞ, yanıt hiç gelmezse (bağlantı zaman aşımı) = ZAMAN AŞIMI. Kaynak başına tek istek, tanımlayıcı User-Agent (CertMonitor-PageCheck).',
+  'page.how2': 'Kaynak doğrulama: her kaynak sınırlı eşzamanlılıkla (nezaket + tek-pod yük koruması) kontrol edilir — önce HEAD, sunucu desteklemiyorsa (405/501) GET\'e düşülür. 404/410 ve 5xx = KIRIK, süre eşiğini aşan = YAVAŞ, yanıt hiç gelmezse (bağlantı zaman aşımı) = ZAMAN AŞIMI. Kaynak başına tek istek, tanımlayıcı User-Agent (SiteMonitor-PageCheck).',
   'page.how2b': 'Zaman aşımı: izleme sunucusunun ağ noktasından erişilemeyen kaynaklar (özellikle üçüncü-taraf CDN/analytics) tarayıcıda sorunsuz yüklenebilir. Zaman aşımının KENDİ sayacı vardır — KIRIK sayacına hiçbir zaman karışmaz (kesin kırık URL ile yanıt vermeyen URL ayrı raporlanır). Monitör başına "Zaman aşımlarını izle" anahtarı (varsayılan açık) yalnız durumu/alarmı etkiler: kapalıysa zaman aşımları kartı sorunlu göstermez ve alarm üretmez; sayaçta ve sorun tablosunda yine görünürler.',
   'page.how3': 'Mixed content: HTTPS bir sayfada http:// ile yüklenen kaynak "mixed content" olarak işaretlenir — tarayıcı bunları engelleyebilir/uyarır. Mixed content için monitör başına ayrı bir "alarm üretsin" anahtarı vardır (varsayılan açık); kapatılırsa mixed content yine tespit edilip tabloda gösterilir ama alarm üretmez.',
   'page.how4': 'Birinci / üçüncü taraf ayrımı: kaynağın host\'u sayfayla aynı origin (aynı alan/alt-alan) ise birinci-taraf, dış origin ise üçüncü-taraf (·3P rozeti). Varsayılan olarak yalnız birinci-taraf kırıkları e-posta alarmı üretir (üçüncü-taraf reklam/analytics kaynakları sık kırılır ve site sahibinin kontrolünde değildir); monitör başına "üçüncü-tarafı da dahil et" açılabilir.',
@@ -4285,8 +4285,8 @@ export const EN = {
   'general.lbl.cert.monitor.page.default-timeout-ms':          'Page Integrity default timeout (ms)',
   'general.lbl.cert.monitor.port.default-timeout-ms':          'Port default timeout (ms)',
   'general.lbl.cert.monitor.port.default-slow-ms':             'Port default slow-response threshold (ms)',
-  'general.lbl.logging.level.com.certmonitor':             'Log Level',
-  'general.lbl.logging.level.com.certmonitor.mail':        'Mail Log Level (TRACE = mail delivery diagnostics)',
+  'general.lbl.logging.level.com.sitemonitor':             'Log Level',
+  'general.lbl.logging.level.com.sitemonitor.mail':        'Mail Log Level (TRACE = mail delivery diagnostics)',
   'general.lbl.cert.monitor.trust.ca-bundle-pem':          'Trusted CA bundle (PEM) — corporate/internal root+intermediate CAs',
   'general.lbl.cert.monitor.trust.auto-pin.enabled':       'Auto-pin CA (TOFU) — untrusted CAs are pinned per host on first sight and re-pinned automatically on rotation',
 
@@ -6861,7 +6861,7 @@ export const EN = {
   'page.subtitle':       'Verifies the page loads healthily at the code level: broken links/resources, mixed content and content anomalies.',
   'page.howTitle': 'How and where are these checks done?',
   'page.how1': 'HTML fetch + parse: the page HTML is downloaded (through the corporate proxy, over 443) and jsoup extracts the resource inventory — img (src/srcset), CSS (link[stylesheet]), JS (script[src]), in/out links (a[href]), iframes, favicon and preload fonts. Relative URLs are resolved against the page URL; deduplicated.',
-  'page.how2': 'Resource verification: each resource is checked with bounded concurrency (politeness + single-pod load guard) — HEAD first, falling back to GET if the server does not support it (405/501). 404/410 and 5xx = BROKEN, over the threshold = SLOW, no response at all (connection timeout) = TIMEOUT. One request per resource, identifiable User-Agent (CertMonitor-PageCheck).',
+  'page.how2': 'Resource verification: each resource is checked with bounded concurrency (politeness + single-pod load guard) — HEAD first, falling back to GET if the server does not support it (405/501). 404/410 and 5xx = BROKEN, over the threshold = SLOW, no response at all (connection timeout) = TIMEOUT. One request per resource, identifiable User-Agent (SiteMonitor-PageCheck).',
   'page.how2b': 'Timeouts: resources unreachable from the monitoring server\'s network vantage point (especially third-party CDN/analytics) may load fine in a real browser. Timeouts have their OWN counter — they never mix into the BROKEN counter (a definitively broken URL and a non-responding URL are reported separately). The per-monitor "watch timeouts" toggle (on by default) only affects status/alerting: when off, timeouts don\'t flag the page and raise no alarm; they still show in the counter and the issues table.',
   'page.how3': 'Mixed content: a resource loaded over http:// on an HTTPS page is flagged as "mixed content" — browsers may block/warn on these. There is a per-monitor "alert on mixed content" toggle (on by default); when off, mixed content is still detected and shown in the table but does not raise an alarm.',
   'page.how4': 'First / third-party split: if the resource host is the same origin as the page (same domain/subdomain) it is first-party, otherwise third-party (·3P badge). By default only first-party breakage sends an email alarm (third-party ad/analytics resources break often and are outside the site owner\'s control); "also include third-party" can be enabled per monitor.',
