@@ -3,6 +3,8 @@ import { createPortal } from 'react-dom'
 import { api } from '../api/client'
 import { useT } from '../i18n/index.jsx'
 import { useToast } from './ui/Toast.jsx'
+import { usePagination } from '../hooks/usePagination.js'
+import PaginationBar from './ui/PaginationBar.jsx'
 import MultiTeamSelect from './ui/MultiTeamSelect.jsx'
 import SearchableSelect from './ui/SearchableSelect.jsx'
 import DateTimeField from './ui/DateTimeField.jsx'
@@ -42,6 +44,7 @@ export default function MaintenanceWindowsPage({ systemRole }) {
   const canManage = systemRole === 'ADMIN' || systemRole === 'TEAM_ADMIN'
 
   const [rows, setRows] = useState([])
+  const pager = usePagination(rows, { listKey: 'maintenance-windows' })
   const [loading, setLoading] = useState(true)
   const [modal, setModal] = useState(null)          // 'new' | window | 'quick'
   const [form, setForm] = useState(emptyForm)
@@ -187,7 +190,7 @@ export default function MaintenanceWindowsPage({ systemRole }) {
               </tr>
             </thead>
             <tbody>
-              {rows.map(w => (
+              {pager.pageItems.map(w => (
                 <tr key={w.id} className={w.status === 'active' ? 'mw-row-active' : ''}>
                   <td><div className="mw-name">{w.name}</div>{w.description && <div className="mw-desc">{w.description}</div>}</td>
                   <td>{w.all_monitors ? <span className="mw-all">{t('mw.allMonitors')}</span> : (w.target_count + ' ' + t('mw.monitors'))}</td>
@@ -207,6 +210,7 @@ export default function MaintenanceWindowsPage({ systemRole }) {
               ))}
             </tbody>
           </table>
+          <PaginationBar {...pager} />
         </div>
       )}
 

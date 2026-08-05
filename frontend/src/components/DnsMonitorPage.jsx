@@ -1,7 +1,9 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { api, formatDate } from '../api/client'
 import { useT } from '../i18n/index.jsx'
 import { useVisibleInterval } from '../hooks/useVisibleInterval'
+import { usePagination } from '../hooks/usePagination.js'
+import PaginationBar from './ui/PaginationBar.jsx'
 import { useToast } from './ui/Toast.jsx'
 import MonitorHowBox from './ui/MonitorHowBox.jsx'
 import MonitorGuideButton from './ui/MonitorGuideButton.jsx'
@@ -274,7 +276,7 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName }) {
   const onStatClick = (key) => setStatFilter(k => k === key ? null : key)
   const toggleStats = () => { if (statsVisible) setStatFilter(null); setStatsVisible(v => !v) }
 
-  const filtered = monitors.filter(m => {
+  const filtered = useMemo(() => monitors.filter(m => {
     if (teamFilter !== 'all') {
       if (teamFilter === '__none__') { if (m.team_name) return false }
       else if (m.team_name !== teamFilter) return false
@@ -293,6 +295,11 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName }) {
     if (!search.trim()) return true
     const s = search.toLowerCase()
     return m.domain?.toLowerCase().includes(s) || m.record_type?.toLowerCase().includes(s)
+  }), [monitors, teamFilter, groupFilter, statFilter, search])
+
+  // Sayfalama filtrelenmiş listenin ÜZERİNE; sayaç/istatistikler tam listeden hesaplanmaya devam eder.
+  const pager = usePagination(filtered, {
+    listKey: 'dns-monitors', resetDeps: [search, teamFilter, groupFilter, statFilter],
   })
 
   return (
@@ -398,7 +405,7 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName }) {
               </tr>
             </thead>
             <tbody>
-              {filtered.map(m => (
+              {pager.pageItems.map(m => (
                 <tr
                   key={m.id}
                   className={`dns-row${!m.active ? ' dns-row-inactive' : ''}${m.active_alarm ? ' dns-row--alarm' : ''}`}
@@ -461,6 +468,7 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName }) {
               ))}
             </tbody>
           </table>
+          <PaginationBar {...pager} />
         </div>
       )}
 

@@ -113,4 +113,29 @@ describe('ScriptedMonitorPage', () => {
     await waitFor(() => expect(api.monitoring.testScripted).toHaveBeenCalled())
     expect(await screen.findByText(/820 ms/)).toBeInTheDocument()   // test-sonucu banner'ına özgü süre
   })
+
+  it('sayfalama: 120 kayıt → 50 kart + "Page 1 of 3"; Sonraki → 51.; tek sayfada nav yok', async () => {
+    localStorage.clear()
+    const many = Array.from({ length: 120 }, (_, i) => ({ id: i + 1, name: `SC-${i + 1}`, status: 'PASS', team_name: 'SY-A', checked_at: '2026-07-31T10:00:00' }))
+    api.monitoring.getScriptedMonitors.mockResolvedValue({ success: true, data: { k6_available: true, can_manage: true, monitors: many } })
+    const { container, unmount } = render(<ScriptedMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
+    await waitFor(() => expect(api.monitoring.getScriptedMonitors).toHaveBeenCalled())
+    await screen.findByText('SC-1')
+    expect(container.querySelectorAll('.mon-card')).toHaveLength(50)
+    expect(screen.getByText('Page 1 of 3')).toBeInTheDocument()
+    expect(screen.getByText('1–50 of 120 records')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Next' }))
+    await screen.findByText('SC-51')
+    expect(screen.queryByText('SC-1')).toBeNull()
+    expect(screen.getByText('51–100 of 120 records')).toBeInTheDocument()
+    unmount()
+
+    // Tek sayfa (30 kayıt): gezinme yok ama kayıt bilgisi var
+    api.monitoring.getScriptedMonitors.mockResolvedValue({ success: true, data: { k6_available: true, can_manage: true, monitors: many.slice(0, 30) } })
+    render(<ScriptedMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
+    await screen.findByText('SC-1')
+    expect(screen.getByText('1–30 of 30 records')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Next' })).toBeNull()
+  })
 })

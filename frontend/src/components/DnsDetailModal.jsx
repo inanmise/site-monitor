@@ -2,6 +2,8 @@ import { useState, useEffect, Fragment, lazy, Suspense } from 'react'
 import { createPortal } from 'react-dom'
 import { api, formatDate } from '../api/client'
 import { useT } from '../i18n/index.jsx'
+import { usePagination } from '../hooks/usePagination.js'
+import PaginationBar from './ui/PaginationBar.jsx'
 import { X, Activity, Clock, Server, FileText, Globe, Route } from 'lucide-react'
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, ReferenceLine } from 'recharts'
 import AlertHistory from './admin/AlertHistory'
@@ -67,8 +69,6 @@ export default function DnsDetailModal({ monitor, onClose }) {
   )
   const [rangeDays, setRangeDays] = useState(1)
   const [changedOnly, setChangedOnly] = useState(false)   // "Sadece Değişenler" — sunucu taraflı filtre
-  const [historyPage, setHistoryPage] = useState(0)
-  const [historyPageSize, setHistoryPageSize] = useState(50)
   const [detailTab, setDetailTab] = useState('control')   // üst tab: control | alerts | chart | notes
 
   // Details — bir kez yüklenir, monitor değişene kadar tutulur
@@ -93,17 +93,9 @@ export default function DnsDetailModal({ monitor, onClose }) {
     })
   }, [monitor, rangeDays, changedOnly])
 
-  // Paging: aralık, filtre veya sayfa boyutu değişince başa dön
-  useEffect(() => {
-    setHistoryPage(0)
-  }, [rangeDays, changedOnly, historyPageSize, monitor])
-
   const activeRangeOption = RANGE_OPTIONS.find(r => r.days === rangeDays) || RANGE_OPTIONS[0]
-  const totalPages = Math.max(1, Math.ceil(history.length / historyPageSize))
-  const safePage = Math.min(historyPage, totalPages - 1)
-  const pageStart = safePage * historyPageSize
-  const pageEnd = Math.min(pageStart + historyPageSize, history.length)
-  const pagedHistory = history.slice(pageStart, pageEnd)
+  // Sayfalama standardı: aralık/filtre/monitör değişince başa döner; boyut tercihi kalıcı.
+  const histPager = usePagination(history, { listKey: 'dns-history', resetDeps: [rangeDays, changedOnly, monitor] })
 
   if (!monitor) return null
 
@@ -307,7 +299,7 @@ export default function DnsDetailModal({ monitor, onClose }) {
                     </tr>
                   </thead>
                   <tbody>
-                    {pagedHistory.map((h, i) => {
+                    {histPager.pageItems.map((h, i) => {
                       const isChanged = h.changed
                       const isRotated = !isChanged && h.rotated
                       const prevVal = h.previous_value ?? h.previousValue
@@ -373,37 +365,7 @@ export default function DnsDetailModal({ monitor, onClose }) {
                 </table>
               </div>
               )}
-              {history.length > 0 && (
-                <div className="dns-history-pagination">
-                  <div className="dash-page-sizer">
-                    <span className="dash-page-sizer-label">{t('app.perPage')}</span>
-                    {[50, 100, 200].map(n => (
-                      <button
-                        key={n}
-                        type="button"
-                        className={`dash-size-btn${historyPageSize === n ? ' active' : ''}`}
-                        onClick={() => setHistoryPageSize(n)}
-                      >{n}</button>
-                    ))}
-                  </div>
-                  {totalPages > 1 && (
-                    <div className="dash-page-nav">
-                      <button type="button" className="page-btn" disabled={safePage <= 0}
-                        onClick={() => setHistoryPage(0)}>«</button>
-                      <button type="button" className="page-btn" disabled={safePage <= 0}
-                        onClick={() => setHistoryPage(safePage - 1)}>{t('app.prevPage')}</button>
-                      <span className="dash-page-info-mini">{safePage + 1} / {totalPages}</span>
-                      <button type="button" className="page-btn" disabled={safePage >= totalPages - 1}
-                        onClick={() => setHistoryPage(safePage + 1)}>{t('app.nextPage')}</button>
-                      <button type="button" className="page-btn" disabled={safePage >= totalPages - 1}
-                        onClick={() => setHistoryPage(totalPages - 1)}>»</button>
-                    </div>
-                  )}
-                  <span className="dash-page-info">
-                    {t('dns.pageInfo', pageStart + 1, pageEnd, history.length)}
-                  </span>
-                </div>
-              )}
+              <PaginationBar {...histPager} compact />
             </div>
           </div>
         ))}

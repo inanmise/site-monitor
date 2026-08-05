@@ -2,6 +2,8 @@ import { useState, useEffect, useCallback } from 'react'
 import { Loader2, ChevronLeft, ChevronRight } from 'lucide-react'
 import { api } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
+import PaginationBar from '../ui/PaginationBar.jsx'
+import { readPageSize, writePageSize } from '../../hooks/usePagination.js'
 import { useToast } from '../ui/Toast.jsx'
 import { usePermissions } from '../../contexts/PermissionsProvider.jsx'
 import DateTimeField from '../ui/DateTimeField.jsx'
@@ -51,7 +53,7 @@ export default function LoginIssueReports() {
   const [since, setSince] = useState('')       // bildirim tarihi >= (yerel gün)
   const [until, setUntil] = useState('')       // bildirim tarihi <= (yerel gün)
   const [page, setPage] = useState(0)
-  const [size, setSize] = useState(20)
+  const [size, setSize] = useState(() => readPageSize('login-issues'))
   const [total, setTotal] = useState(0)
   const [detail, setDetail] = useState(null)   // seçili kaydın tam detayı
   const [note, setNote] = useState('')
@@ -192,22 +194,15 @@ export default function LoginIssueReports() {
         </div>
       )}
 
-      {/* Sayfalama — AlertHistory/IncidentHistory ile aynı .alh-* deseni (paylaşılan CSS). */}
-      {total > 0 && (
-        <div className="alh-pagination" style={{ marginTop: 10 }}>
-          <div className="alh-page-size">
-            <span>{t('inc.perPage')}</span>
-            {[10, 20, 50].map((n) => (
-              <button key={n} className={`alh-size-btn${size === n ? ' is-active' : ''}`} onClick={() => setSize(n)}>{n}</button>
-            ))}
-          </div>
-          <div className="alh-page-info">{t('inc.pageOf', page + 1, Math.max(1, Math.ceil(total / size)))} · {total} {t('inc.records')}</div>
-          <div className="alh-page-nav">
-            <button disabled={page === 0} onClick={() => setPage((p) => p - 1)}><ChevronLeft size={13} /> {t('inc.prev')}</button>
-            <button disabled={page + 1 >= Math.max(1, Math.ceil(total / size))} onClick={() => setPage((p) => p + 1)}>{t('inc.next')} <ChevronRight size={13} /></button>
-          </div>
-        </div>
-      )}
+      {/* Sayfalama — standart PaginationBar */}
+      <PaginationBar
+        page={page + 1} totalPages={Math.max(1, Math.ceil(total / size))} totalItems={total}
+        rangeStart={total === 0 ? 0 : page * size + 1}
+        rangeEnd={Math.min((page + 1) * size, total)}
+        pageSize={size}
+        onPageChange={p => setPage(p - 1)}
+        onPageSizeChange={n => { setSize(n); setPage(0); writePageSize('login-issues', n) }}
+      />
 
       {detail && (
         <div className="modal-overlay" onClick={() => setDetail(null)}>

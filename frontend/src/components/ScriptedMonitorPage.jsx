@@ -10,6 +10,8 @@ import SearchableSelect from './ui/SearchableSelect.jsx'
 import { SCRIPTED_TEMPLATES } from './scriptedTemplates.js'
 import { FlaskConical, Play, Plus, Trash2, X, RefreshCw, Download, Eye, EyeOff, Copy } from 'lucide-react'
 import { duplicateName } from '../utils/duplicateName.js'
+import { usePagination } from '../hooks/usePagination.js'
+import PaginationBar from './ui/PaginationBar.jsx'
 
 const ResponseTimeChart = lazy(() => import('./ResponseTimeChart.jsx'))
 
@@ -75,6 +77,14 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
     const q = search.trim().toLowerCase()
     return monitors.filter(m => !q || (m.name || '').toLowerCase().includes(q) || (m.group_name || '').toLowerCase().includes(q))
   }, [monitors, search])
+
+  // Sayfalama filtrelenmiş listenin ÜZERİNE; sayaç/istatistikler tam listeden hesaplanmaya devam eder.
+  // DetailModal geçmişi sayfalaması — state sahibi üst bileşen (modal props ile alır).
+  const histPager = usePagination(history, { listKey: 'scripted-history' })
+
+  const pager = usePagination(scoped, {
+    listKey: 'scripted-monitors', resetDeps: [search],
+  })
 
   // Grup seçenekleri — mevcut senaryoların gruplarından türetilir (creatable: yeni grup da yazılabilir).
   const groupOptions = useMemo(
@@ -231,8 +241,8 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
 
       {loading ? <div className="empty">{t('scripted.loading')}</div>
         : scoped.length === 0 ? <div className="empty">{t('scripted.none')}</div>
-        : <div className="mon-card-grid">
-            {scoped.map(m => (
+        : <><div className="mon-card-grid">
+            {pager.pageItems.map(m => (
               <div key={m.id} className="mon-card" onClick={() => openDetail(m)} style={{ cursor: 'pointer', borderLeft: `4px solid ${STATUS_COLOR[m.status] || STATUS_COLOR.unknown}` }}>
                 <div className="mon-card-head">
                   <strong>{m.name}</strong>
@@ -257,10 +267,11 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
                 </div>
               </div>
             ))}
-          </div>}
+          </div>
+          <PaginationBar {...pager} /></>}
 
       {modal && createPortal(<EditModal {...{ t, lang, form, setForm, modal, dupSource, saving, testing, testResult, save, del, closeEdit, runTest, isAdmin, teamOptions, teamName, groupOptions, setEnvRow, addEnvRow, delEnvRow, applyTemplate, intervalIdx }} />, document.body)}
-      {selected && createPortal(<DetailModal {...{ t, selected, setSelected, history, selCheck, setSelCheck, exportCsv, checkNow, k6 }} />, document.body)}
+      {selected && createPortal(<DetailModal {...{ t, selected, setSelected, history, histPager, selCheck, setSelCheck, exportCsv, checkNow, k6 }} />, document.body)}
     </div>
   )
 }
@@ -391,7 +402,7 @@ function EditModal({ t, lang, form, setForm, modal, dupSource, saving, testing, 
 }
 
 // ── Detail modal ──────────────────────────────────────────────────────────────
-function DetailModal({ t, selected, setSelected, history, selCheck, setSelCheck, exportCsv, checkNow, k6 }) {
+function DetailModal({ t, selected, setSelected, history, histPager, selCheck, setSelCheck, exportCsv, checkNow, k6 }) {
   const last = history[0]
   let checks = []
   try { if (selCheck?.checksJson) checks = JSON.parse(selCheck.checksJson) } catch { /* ignore */ }
@@ -419,16 +430,17 @@ function DetailModal({ t, selected, setSelected, history, selCheck, setSelCheck,
               <table className="tbl">
                 <thead><tr><th>{t('scripted.colTime')}</th><th>{t('scripted.colStatus')}</th><th>{t('scripted.colDuration')}</th></tr></thead>
                 <tbody>
-                  {history.map(c => (
+                  {histPager.pageItems.map(c => (
                     <tr key={c.id} onClick={() => setSelCheck(c)} style={{ cursor: 'pointer', background: selCheck?.id === c.id ? '#eef2ff' : undefined }}>
                       <td>{formatDateSec(c.checkedAt)}</td>
                       <td><span style={{ color: STATUS_COLOR[c.status] }}>{statusLabel(t, c.status)}</span></td>
                       <td>{c.durationMs != null ? c.durationMs + ' ms' : '—'}</td>
                     </tr>
                   ))}
-                  {history.length === 0 && <tr><td colSpan={3} className="muted">{t('scripted.noHistory')}</td></tr>}
+                  {histPager.totalItems === 0 && <tr><td colSpan={3} className="muted">{t('scripted.noHistory')}</td></tr>}
                 </tbody>
               </table>
+              <PaginationBar {...histPager} compact />
             </div>
             <div style={{ flex: 1, minWidth: 300 }}>
               <div className="block-title">{t('scripted.checkDetail')}</div>

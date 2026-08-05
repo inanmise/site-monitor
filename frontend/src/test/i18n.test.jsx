@@ -37,9 +37,9 @@ describe('useT', () => {
   })
 
   it('multiple placeholders are all replaced', () => {
-    // audit.pageInfo (EN) = 'Page {0} of {1} — {2} total records'
+    // pg.range (EN) = '{0}–{1} of {2} records'
     const { result } = renderHook(() => useT(), { wrapper })
-    const out = result.current('audit.pageInfo', 1, 5, 100)
+    const out = result.current('pg.range', 1, 5, 100)
     expect(out).toContain('1')
     expect(out).toContain('5')
     expect(out).toContain('100')

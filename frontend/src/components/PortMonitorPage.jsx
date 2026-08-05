@@ -12,6 +12,8 @@ import TagInput from './ui/TagInput.jsx'
 import { Play, Pencil, Copy, X, RefreshCw, Plug, Plus, Trash2, FlaskConical, AlertTriangle, Network, Check, Pause, BarChart3, ChevronDown, BellDot,
   Mail, MessageSquare, Phone, Smartphone } from 'lucide-react'
 import { duplicateName } from '../utils/duplicateName.js'
+import { usePagination } from '../hooks/usePagination.js'
+import PaginationBar from './ui/PaginationBar.jsx'
 import AlertHistory from './admin/AlertHistory.jsx'
 import MonitorStatsBar from './MonitorStatsBar.jsx'
 const ResponseTimeChart = lazy(() => import('./ResponseTimeChart.jsx'))
@@ -61,8 +63,6 @@ export default function PortMonitorPage({ systemRole, teamId, teamName }) {
   const [history, setHistory] = useState([])
   const [historyLoading, setHistoryLoading] = useState(false)
   const [rangeDays, setRangeDays] = useState(1)
-  const [historyPage, setHistoryPage] = useState(0)
-  const [historyPageSize, setHistoryPageSize] = useState(50)
   const [detailTab, setDetailTab] = useState('control')
   const [summary, setSummary] = useState({ total: 0, down: 0 })
   const [modal, setModal] = useState(null)
@@ -141,13 +141,13 @@ export default function PortMonitorPage({ systemRole, teamId, teamName }) {
     setHistoryLoading(false)
   }
 
-  function selectRange(id, days) { setRangeDays(days); setHistoryPage(0); loadHistory(id, days) }
+  function selectRange(id, days) { setRangeDays(days); histPager.setPage(1); loadHistory(id, days) }
 
   async function openModal(m) {
     setSelected(m)
     setDetailTab('control')
     setHistory([])
-    setHistoryPage(0)
+    histPager.setPage(1)
     loadHistory(m.id, rangeDays)
   }
 
@@ -291,13 +291,10 @@ export default function PortMonitorPage({ systemRole, teamId, teamName }) {
   const toggleStats = () => { if (statsVisible) setStatFilter(null); setStatsVisible(v => !v) }
 
   // Geçmiş sayfalaması (DNS ile aynı 50/100/200)
-  const histTotalPages = Math.max(1, Math.ceil(history.length / historyPageSize))
-  const histSafePage = Math.min(historyPage, histTotalPages - 1)
-  const histStart = histSafePage * historyPageSize
-  const histEnd = Math.min(histStart + historyPageSize, history.length)
-  const pagedHistory = history.slice(histStart, histEnd)
+  // Geçmiş modalı sayfalaması — 30 sn modal yenilemesi history referansını değiştirir; sayfa korunur.
+  const histPager = usePagination(history, { listKey: 'port-history' })
 
-  const displayMonitors = monitors.filter(m => {
+  const displayMonitors = useMemo(() => monitors.filter(m => {
     if (teamFilter !== 'all') {
       if (teamFilter === '__none__') { if (m.team_name) return false }
       else if (m.team_name !== teamFilter) return false
@@ -315,6 +312,11 @@ export default function PortMonitorPage({ systemRole, teamId, teamName }) {
     }
     if (!search.trim()) return true
     return m.host.toLowerCase().includes(search.trim().toLowerCase())
+  }), [monitors, teamFilter, groupFilter, statFilter, search])
+
+  // Sayfalama filtrelenmiş listenin ÜZERİNE; sayaç/istatistikler tam listeden hesaplanmaya devam eder.
+  const pager = usePagination(displayMonitors, {
+    listKey: 'port-monitors', resetDeps: [search, teamFilter, groupFilter, statFilter],
   })
 
   function statusBadge(status) {
@@ -415,7 +417,7 @@ export default function PortMonitorPage({ systemRole, teamId, teamName }) {
               </tr>
             </thead>
             <tbody>
-              {displayMonitors.map(m => (
+              {pager.pageItems.map(m => (
                 <tr
                   key={m.id}
                   className={`mon-row${!m.active ? ' mon-row-inactive' : ''}${m.active_alarm ? ' mon-row--alarm' : ''}`}
@@ -448,6 +450,7 @@ export default function PortMonitorPage({ systemRole, teamId, teamName }) {
               ))}
             </tbody>
           </table>
+          <PaginationBar {...pager} />
         </div>
       )}
 
@@ -538,7 +541,7 @@ export default function PortMonitorPage({ systemRole, teamId, teamName }) {
                     <span>{t('port.colResponse')}</span>
                     <span>{t('port.colDetail')}</span>
                   </div>
-                  {pagedHistory.map((c, i) => (
+                  {histPager.pageItems.map((c, i) => (
                     <div key={i} className="upt-rt-grid">
                       <span className="upt-rt-time">{formatDate(c.checkedAt || c.checked_at)}</span>
                       <span className={c.open ? 'upt-rt-up' : 'upt-rt-down'}>
@@ -554,27 +557,7 @@ export default function PortMonitorPage({ systemRole, teamId, teamName }) {
                           : <span className="upt-rt-ms">—</span>}
                     </div>
                   ))}
-                  {history.length > 0 && (
-                    <div className="dns-history-pagination" style={{ marginTop: 10 }}>
-                      <div className="dash-page-sizer">
-                        <span className="dash-page-sizer-label">{t('app.perPage')}</span>
-                        {[50, 100, 200].map(n => (
-                          <button key={n} type="button" className={`dash-size-btn${historyPageSize === n ? ' active' : ''}`}
-                            onClick={() => { setHistoryPageSize(n); setHistoryPage(0) }}>{n}</button>
-                        ))}
-                      </div>
-                      {histTotalPages > 1 && (
-                        <div className="dash-page-nav">
-                          <button type="button" className="page-btn" disabled={histSafePage <= 0} onClick={() => setHistoryPage(0)}>«</button>
-                          <button type="button" className="page-btn" disabled={histSafePage <= 0} onClick={() => setHistoryPage(histSafePage - 1)}>{t('app.prevPage')}</button>
-                          <span className="dash-page-info-mini">{histSafePage + 1} / {histTotalPages}</span>
-                          <button type="button" className="page-btn" disabled={histSafePage >= histTotalPages - 1} onClick={() => setHistoryPage(histSafePage + 1)}>{t('app.nextPage')}</button>
-                          <button type="button" className="page-btn" disabled={histSafePage >= histTotalPages - 1} onClick={() => setHistoryPage(histTotalPages - 1)}>»</button>
-                        </div>
-                      )}
-                      <span className="dash-page-info">{t('dns.pageInfo', histStart + 1, histEnd, history.length)}</span>
-                    </div>
-                  )}
+                  <PaginationBar {...histPager} compact />
                 </div>
               )}
             </>)}

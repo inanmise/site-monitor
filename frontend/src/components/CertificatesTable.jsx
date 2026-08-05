@@ -2,6 +2,8 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { api, formatDate } from '../api/client'
 import { useT } from '../i18n/index.jsx'
 import SearchableSelect from './ui/SearchableSelect.jsx'
+import PaginationBar from './ui/PaginationBar.jsx'
+import { readPageSize, writePageSize } from '../hooks/usePagination.js'
 
 export default function CertificatesTable({ onRowClick }) {
   const t = useT()
@@ -19,7 +21,7 @@ export default function CertificatesTable({ onRowClick }) {
   const [certs, setCerts]           = useState([])
   const [pagination, setPagination] = useState({ current_page: 1, total: 0, total_pages: 1 })
   const [page, setPage]             = useState(1)
-  const [perPage, setPerPage]       = useState(20)
+  const [perPage, setPerPage]       = useState(() => readPageSize('certificates-table'))
   const [sortBy, setSortBy]         = useState('priority|asc')
   const [filterDomain, setFilterDomain] = useState('')
   const [filterIssuer, setFilterIssuer] = useState('')
@@ -56,7 +58,7 @@ export default function CertificatesTable({ onRowClick }) {
 
   function reset() {
     setFilterDomain(''); setFilterIssuer(''); setFilterStatus('')
-    setSortBy('priority|asc'); setPerPage(20); setPage(1)
+    setSortBy('priority|asc'); setPerPage(readPageSize('certificates-table')); setPage(1)
     setStatusDropOpen(false)
   }
 
@@ -68,7 +70,6 @@ export default function CertificatesTable({ onRowClick }) {
 
   const activeStatusLabel = t(STATUS_OPTIONS.find(o => o.value === filterStatus)?.labelKey ?? 'tbl.filterAll')
   const p         = pagination
-  const pageRange = buildPageRange(p.current_page, p.total_pages)
 
   return (
     <>
@@ -97,19 +98,6 @@ export default function CertificatesTable({ onRowClick }) {
               { value: 'days_remaining|asc',  label: t('tbl.sortDaysAsc') },
               { value: 'days_remaining|desc', label: t('tbl.sortDaysDesc') },
               { value: 'checked_at|desc',     label: t('tbl.sortChecked') },
-            ]}
-          />
-        </div>
-        <div className="filter-group">
-          <label>{t('tbl.perPage')}</label>
-          <SearchableSelect
-            value={perPage}
-            onChange={v => { setPerPage(Number(v)); setPage(1) }}
-            options={[
-              { value: 10,  label: '10' },
-              { value: 20,  label: '20' },
-              { value: 50,  label: '50' },
-              { value: 100, label: '100' },
             ]}
           />
         </div>
@@ -172,23 +160,14 @@ export default function CertificatesTable({ onRowClick }) {
         </tbody>
       </table>
 
-      <div className="pagination-controls">
-        <div className="pagination-info">
-          {t('tbl.total', p.total, p.current_page, p.total_pages)}
-        </div>
-        <div className="pagination-buttons">
-          <button className="btn btn-secondary" disabled={p.current_page <= 1}
-            onClick={() => setPage(p => p - 1)}>{t('tbl.prev')}</button>
-          <span className="page-numbers">
-            {pageRange.map((n) => (
-              <button key={n} className={`page-btn${n === p.current_page ? ' active' : ''}`}
-                disabled={n === p.current_page} onClick={() => setPage(n)}>{n}</button>
-            ))}
-          </span>
-          <button className="btn btn-secondary" disabled={p.current_page >= p.total_pages}
-            onClick={() => setPage(p => p + 1)}>{t('tbl.next')}</button>
-        </div>
-      </div>
+      <PaginationBar
+        page={p.current_page} totalPages={p.total_pages} totalItems={p.total}
+        rangeStart={p.total === 0 ? 0 : (p.current_page - 1) * perPage + 1}
+        rangeEnd={Math.min(p.current_page * perPage, p.total)}
+        pageSize={perPage}
+        onPageChange={setPage}
+        onPageSizeChange={n => { setPerPage(n); setPage(1); writePageSize('certificates-table', n) }}
+      />
     </>
   )
 }
@@ -214,9 +193,3 @@ function TableRow({ cert, onClick }) {
   )
 }
 
-function buildPageRange(current, total, max = 5) {
-  let start = Math.max(1, current - Math.floor(max / 2))
-  let end   = Math.min(total, start + max - 1)
-  if (end - start + 1 < max) start = Math.max(1, end - max + 1)
-  return Array.from({ length: end - start + 1 }, (_, i) => start + i)
-}

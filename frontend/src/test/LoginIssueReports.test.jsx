@@ -154,8 +154,9 @@ describe('LoginIssueReports', () => {
   })
 
   it('sayfalama: total > size → sonraki sayfa getLoginIssues page:1 ile çağrılır', async () => {
+    // Standart varsayılan boyut 50 (eski 20) → tek sayfada nav gizlenir; 245 kayıtla çok sayfa garanti.
     api.admin.getLoginIssues.mockResolvedValue({
-      success: true, data: [sampleRow], total: 45, counts: { OPEN: 0, IN_PROGRESS: 0, RESOLVED: 45 },
+      success: true, data: [sampleRow], total: 245, counts: { OPEN: 0, IN_PROGRESS: 0, RESOLVED: 245 },
     })
     render(<LoginIssueReports />)
     await screen.findByText('LIR-2026-000005')
