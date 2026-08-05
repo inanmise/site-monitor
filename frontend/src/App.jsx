@@ -487,22 +487,10 @@ export default function App() {
     } catch { /* yoksay */ }
   }, [user])
 
-  if (!authChecked) return <div className="loading" style={{ marginTop: 80, textAlign: 'center' }}>{t('app.loading')}</div>
-  if (!user) return <Login onLogin={handleLogin} sessionExpired={sessionExpiredNotice} />
-  if (mustChangePwd) {
-    // User was auto-reset by an admin — block all of the app until they
-    // pick a new password. PasswordChangeModal in forced-change mode hides
-    // the cancel button and ignores overlay clicks.
-    return (
-      <PasswordChangeModal
-        mode="forced-change"
-        targetUser={{ id: null, username: user }}
-        onClose={() => {}}
-        onSuccess={() => setMustChangePwd(false)}
-      />
-    )
-  }
-
+  // ── Dashboard türetme zinciri + sayfalama hook'u ──────────────────────────
+  // DİKKAT: usePagination bir HOOK — aşağıdaki koşullu erken-return'lerden (authChecked/user/mustChangePwd)
+  // ÖNCE çağrılmak zorunda; sonrasına konursa login geçişinde hook sayısı değişir ve React
+  // "Rendered more hooks" ile çöker (2026-08-05'te yaşandı). Zincir saf hesap, her render'da ucuz.
   const STAT_FILTER_FN = {
     total:      () => true,
     valid:      (c) => !c.warning && c.status !== 'error',
@@ -547,10 +535,7 @@ export default function App() {
   const statusFn = STATUS_FILTER_FN[statusFilter] ?? (() => true)
   const expiryFn = EXPIRY_FILTER_FN[expiryFilter] ?? (() => true)
 
-  // Takım filtresi seçenekleri — cert listesinden türetilir (yeni endpoint yok).
-  // NOT: düz const (useMemo DEĞİL) — bu satır erken-return'lerden (authChecked/user)
-  // sonra geldiği için hook çağrısı React kuralını ihlal eder. filtered/sorted gibi
-  // her render'da ucuzca hesaplanır.
+  // Takım filtresi seçenekleri — cert listesinden türetilir (yeni endpoint yok); her render'da ucuzca hesaplanır.
   const teamOptions = (() => {
     const names = new Set()
     let hasNone = false
@@ -600,6 +585,23 @@ export default function App() {
 
   // Sayfalama standardı: "Tümü" seçeneği kaldırıldı (binlerce kart tek seferde render edilmesin; max 200/sayfa).
   const dashPager = usePagination(sorted, { listKey: 'dashboard-certs' })
+
+  if (!authChecked) return <div className="loading" style={{ marginTop: 80, textAlign: 'center' }}>{t('app.loading')}</div>
+  if (!user) return <Login onLogin={handleLogin} sessionExpired={sessionExpiredNotice} />
+  if (mustChangePwd) {
+    // User was auto-reset by an admin — block all of the app until they
+    // pick a new password. PasswordChangeModal in forced-change mode hides
+    // the cancel button and ignores overlay clicks.
+    return (
+      <PasswordChangeModal
+        mode="forced-change"
+        targetUser={{ id: null, username: user }}
+        onClose={() => {}}
+        onSuccess={() => setMustChangePwd(false)}
+      />
+    )
+  }
+
 
   return (
     <PermissionsProvider user={user}>
