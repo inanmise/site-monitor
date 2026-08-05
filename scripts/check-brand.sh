@@ -6,9 +6,10 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
-grep -rIn -i -e certmonitor -e cert-monitor -e cert_monitor . \
+grep -rIn -i -e certmonitor -e cert-monitor -e cert_monitor -e 'cert\.monitor' . \
   --exclude-dir=.git --exclude-dir=node_modules --exclude-dir=dist \
   --exclude-dir=target --exclude-dir=logs --exclude-dir=data --exclude-dir=docs \
   --exclude='*.log' --exclude='*.gz' --exclude='*.jar' --exclude='*.pdf' \
   --exclude='package-lock.json' --exclude='CHANGELOG.md' --exclude='*migrateStorageKeys*' \
+  --exclude='AppSettingsRenameMigrationTest.java' \
   | grep -v 'geriye-uyum' | grep -v '${CERT_MONITOR_' || true

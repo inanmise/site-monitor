@@ -216,7 +216,7 @@ grupları, Ortam …).
   - `[runtime]` / `[file]` — çalışma anında hesaplanan (JVM/OS) ya da `VERSION` dosyası
 - **Secret maskeleme** — parola/secret/token/anahtar türü değerler `*****` olarak basılır; JDBC URL'e gömülü kimlik
   bilgileri ayıklanır; şifreli saklanan secret'lar (SMTP/LDAP parolası) **asla çözülmez**, yalnız `password_set=true/false`
-  bilgisi verilir. `cert.monitor.secret-key` için yalnız "configured / not-set" durumu gösterilir.
+  bilgisi verilir. `site.monitor.secret-key` için yalnız "configured / not-set" durumu gösterilir.
 - **JSON modu** — log-toplama sistemleri için: `STARTUP_CONFIG_LOG_JSON=true` → aynı içerik tek satır JSON (varsayılan
   kapalı, insan-okunur çerçeveli metin).
 - **Kapatma** — `STARTUP_CONFIG_LOG=false`.
@@ -245,16 +245,16 @@ sıkı sandboxlu bir alt süreç** olarak koşar (Grafana Synthetic Monitoring d
 claim doğrulama; credential'lar `__ENV.USERNAME` / `__ENV.PASSWORD` (secret) üzerinden. Form'daki "Şablon" seçicisinden
 yüklenir. Ayrıca basit API zinciri (POST→GET) ve form-login şablonları mevcuttur.
 
-Config anahtarları (admin UI'dan canlı): `cert.monitor.scripted.{enabled,pool-size,default-timeout-seconds,
+Config anahtarları (admin UI'dan canlı): `site.monitor.scripted.{enabled,pool-size,default-timeout-seconds,
 max-timeout-seconds,output-tail-bytes,manual-cooldown-seconds,k6-bin,hardcoded-secret-policy}`,
-`cert.monitor.metrics.scripted.retention-days`. Micrometer: `scripted.k6.active`, `scripted.k6.queued`.
+`site.monitor.metrics.scripted.retention-days`. Micrometer: `scripted.k6.active`, `scripted.k6.queued`.
 
 ### Zamanlayıcı Ayarı
 
 `SCHEDULER_CRON` ortam değişkeni ile ya da `application.properties` içinde:
 
 ```properties
-cert.monitor.scheduler.cron=0 0 2 * * *
+site.monitor.scheduler.cron=0 0 2 * * *
 ```
 
 Yukarıdaki örnek her gece 02:00'de çalıştırır. Varsayılan `0 0 * * * *` (her saat başı).

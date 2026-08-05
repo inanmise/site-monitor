@@ -91,7 +91,7 @@ export default function GeneralSettings() {
   }
 
   // APP_BASE_URL hâlâ localhost ise (sıfır kurulum) e-posta linkleri çalışmaz → uyar
-  const baseItem = items.find((i) => i.key === 'cert.monitor.app.base-url')
+  const baseItem = items.find((i) => i.key === 'site.monitor.app.base-url')
   const baseVal = baseItem ? (edited[baseItem.key] ?? baseItem.value ?? '') : ''
   const baseLocal = /localhost|127\.0\.0\.1/i.test(String(baseVal))
 

@@ -42,7 +42,7 @@ public class SmtpSettingsService {
     @Value("${spring.mail.port:587}") Integer envPort;
     @Value("${spring.mail.username:}") String envUsername;
     @Value("${spring.mail.password:}") String envPassword;
-    @Value("${site.monitor.email.from:noreply@certmonitor}") String envFrom;
+    @Value("${site.monitor.email.from:noreply@sitemonitor}") String envFrom;
     @Value("${spring.mail.properties.mail.smtp.auth:true}") boolean envAuth;
     @Value("${spring.mail.properties.mail.smtp.starttls.enable:true}") boolean envStartTlsEnable;
     @Value("${spring.mail.properties.mail.smtp.starttls.required:true}") boolean envStartTlsRequired;

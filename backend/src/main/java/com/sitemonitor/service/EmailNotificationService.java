@@ -87,7 +87,7 @@ public class EmailNotificationService {
     }
     private String currentFrom() {
         String f = smtpSettings.getOrDefaults().getFromAddress();
-        return (f != null && !f.isBlank()) ? f : "noreply@certmonitor";
+        return (f != null && !f.isBlank()) ? f : "noreply@sitemonitor";
     }
     private String currentFromName() {
         return smtpSettings.getOrDefaults().getFromName();

@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, waitFor } from './test-utils'
 
 vi.mock('../api/client', () => {
-  const K = (s) => 'cert.monitor.branding.' + s
+  const K = (s) => 'site.monitor.branding.' + s
   const row = (key, type = 'STRING', value = '', def = '') =>
     ({ key: K(key), group: 'branding', type, value, default: def })
   const catalog = [
@@ -46,7 +46,7 @@ describe('BrandingSettings', () => {
     fireEvent.change(appName, { target: { value: 'Akbank Monitor' } })
     fireEvent.click(screen.getByRole('button', { name: /save/i }))
     await waitFor(() => expect(api.admin.saveBrandingSettings).toHaveBeenCalledWith({
-      values: { 'cert.monitor.branding.app-name': 'Akbank Monitor' },
+      values: { 'site.monitor.branding.app-name': 'Akbank Monitor' },
     }))
   })
 

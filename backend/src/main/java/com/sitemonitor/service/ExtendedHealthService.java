@@ -70,7 +70,7 @@ public class ExtendedHealthService {
         return m;
     }
 
-    @Value("${site.monitor.email.from:noreply@certmonitor}")
+    @Value("${site.monitor.email.from:noreply@sitemonitor}")
     private String emailFrom;
 
     // ── Heartbeat ─────────────────────────────────────────────────────────────

@@ -7,7 +7,7 @@ import { useDialog } from '../ui/Dialog.jsx'
 import { useBranding } from '../../contexts/BrandingProvider.jsx'
 import { downscaleImage } from '../../utils/imageDownscale.js'
 
-const K = (s) => 'cert.monitor.branding.' + s
+const K = (s) => 'site.monitor.branding.' + s
 const LOGO_MAX_BYTES = 200 * 1024
 
 /**

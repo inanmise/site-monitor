@@ -6,7 +6,7 @@ import { useToast } from '../ui/Toast.jsx'
 
 /**
  * "Alert Settings" — Alarm fırtınası (alert storm) yapılandırması. Master toggle + eşik (sayı + birim)
- * + zaman penceresi (1–15 dk slider) + grup-bazlı toggle + Kaydet. Kalıcılık cert.monitor.storm.* key'lerine
+ * + zaman penceresi (1–15 dk slider) + grup-bazlı toggle + Kaydet. Kalıcılık site.monitor.storm.* key'lerine
  * (StormSettingsController → AppSettingsService) gider; değişiklik CANLI yansır. Default AÇIK.
  */
 export default function StormSettings() {

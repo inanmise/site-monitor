@@ -133,8 +133,8 @@ curl -u admin:parola http://localhost:8080/api/stats
 `application.properties` veya ortam değişkeni:
 
 ```properties
-cert.monitor.check.hour=2    # 02:00'de çalışır
-cert.monitor.check.minute=0
+site.monitor.check.hour=2    # 02:00'de çalışır
+site.monitor.check.minute=0
 ```
 
 ---

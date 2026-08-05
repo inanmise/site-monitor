@@ -12,8 +12,8 @@ const sampleDetail = {
   reportedAt: '2026-07-23T10:00:00', resolvedBy: null, resolvedAt: null, resolutionNote: null,
   imageCount: 2, images: ['data:image/png;base64,AAAA', 'data:image/png;base64,BBBB'],
   mailHistory: [
-    { mailType: 'REPORT_ADMIN', from: 'noreply@certmonitor', to: 'admin@akbank.com', cc: null, subject: 'Konu R', body: "<p>rapor govdesi</p><img src='cid:shot0'>", status: 'SENT', error: null, forced: true, sentAt: '2026-07-23T10:00:05' },
-    { mailType: 'REPORTER_ACK', from: 'noreply@certmonitor', to: 'user@akbank.com', cc: null, subject: 'Konu A', body: '<p>onay govdesi</p>', status: 'FAILED: 550', error: 'FAILED: 550 mailbox unavailable', forced: false, sentAt: '2026-07-23T10:00:06' },
+    { mailType: 'REPORT_ADMIN', from: 'noreply@sitemonitor', to: 'admin@akbank.com', cc: null, subject: 'Konu R', body: "<p>rapor govdesi</p><img src='cid:shot0'>", status: 'SENT', error: null, forced: true, sentAt: '2026-07-23T10:00:05' },
+    { mailType: 'REPORTER_ACK', from: 'noreply@sitemonitor', to: 'user@akbank.com', cc: null, subject: 'Konu A', body: '<p>onay govdesi</p>', status: 'FAILED: 550', error: 'FAILED: 550 mailbox unavailable', forced: false, sentAt: '2026-07-23T10:00:06' },
   ],
 }
 
@@ -128,7 +128,7 @@ describe('LoginIssueReports', () => {
     await screen.findByText('Cannot login at all')
     fireEvent.click(screen.getByText(/Admin notification/))
     expect(await screen.findByText('Konu R')).toBeInTheDocument()                 // Konu
-    expect(screen.getAllByText('noreply@certmonitor').length).toBeGreaterThan(0)  // Gönderen
+    expect(screen.getAllByText('noreply@sitemonitor').length).toBeGreaterThan(0)  // Gönderen
     const iframe = document.querySelector('iframe[title="mail-0"]')
     expect(iframe).not.toBeNull()
     const srcdoc = iframe.getAttribute('srcdoc')

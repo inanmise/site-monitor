@@ -52,7 +52,7 @@ class WeeklyAvailabilityReportServiceTest {
         when(appSettings.getBoolean(eq("site.monitor.weekly-availability.enabled"), anyBoolean())).thenReturn(true);
         when(emailService.sendHtml(any(), any(), any(), any(), any())).thenReturn("SENT");
         when(emailService.buildWeeklyAvailabilityHtml(any(), any(), any(), any())).thenReturn("<html></html>");
-        when(emailService.getEmailFrom()).thenReturn("noreply@certmonitor");
+        when(emailService.getEmailFrom()).thenReturn("noreply@sitemonitor");
         when(walRepo.findByTeamIdAndReportYearAndWeekNo(anyLong(), anyInt(), anyInt())).thenReturn(Optional.empty());
         when(latestCheckRepo.findById(anyString())).thenReturn(Optional.empty());
     }
