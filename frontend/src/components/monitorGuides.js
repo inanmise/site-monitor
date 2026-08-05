@@ -1,6 +1,6 @@
 // Her izleme türü için "Yeni monitör formu nasıl doldurulur?" how-to dokümanı (TR/EN markdown).
 // MonitorGuideButton bunu türe göre yükler. Yeni izleme türü eklenince buraya bir giriş ekle
-// (aynı zamanda [[cert-monitor-monitor-howbox-standard]] gereği MonitorHowBox da eklenir).
+// (aynı zamanda proje standardı gereği MonitorHowBox da eklenir).
 // İçerik MarkdownEditor (read-only) ile render edilir → başlık (##/###), **kalın**, listeler, tablo çalışır.
 // Alan adları/varsayılanları gerçek formlarla hizalıdır; form değişirse burayı da güncelle.
 

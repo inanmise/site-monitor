@@ -1,0 +1,62 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Environment: PRODUCTION  (master branch)
+# Image tag  : {VERSION}   e.g. site-monitor:1.0.0
+# Deploy with:
+#   helm upgrade --install site-monitor ./helm/site-monitor \
+#     -f helm/site-monitor/values.yaml \
+#     -f helm/site-monitor/environments/master.yaml \
+#     --set image.tag=1.0.0 \
+#     --set secret.adminPassword=$ADMIN_PASSWORD \
+#     --set secret.dbPassword=$DB_PASSWORD \
+#     -n site-monitor --create-namespace
+# ─────────────────────────────────────────────────────────────────────────────
+
+image:
+  repository: site-monitor
+  tag: "1.0.0"      # overridden by CI with exact git tag
+  pullPolicy: Always
+
+replicaCount: 3
+
+config:
+  springProfile: prod
+  logLevel: "INFO"          # prod: DEBUG pod başına on binlerce satır/gün üretir (console + dosya)
+  corsAllowedOrigins: "https://cert-monitor.example.com"
+  certCheckHour: "2"
+  certCheckMinute: "0"
+
+ingress:
+  enabled: true
+  className: nginx
+  host: cert-monitor.example.com
+  tls:
+    enabled: true
+    secretName: site-monitor-tls
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "60"
+    nginx.ingress.kubernetes.io/proxy-body-size: "1m"
+
+resources:
+  requests:
+    memory: "512Mi"
+    cpu: "500m"
+  limits:
+    memory: "1536Mi"
+    cpu: "2000m"
+
+autoscaling:
+  enabled: true
+  minReplicas: 3
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 70
+  targetMemoryUtilizationPercentage: 80
+
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 2
+
+topologySpreadConstraints:
+  enabled: true
+  maxSkew: 1
+  topologyKey: kubernetes.io/hostname

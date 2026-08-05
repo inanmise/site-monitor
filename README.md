@@ -73,9 +73,9 @@ Kurumunuzdaki SSL/TLS sertifikalarını, TCP/TLS port erişilebilirliğini, HTTP
 ## Proje Yapısı
 
 ```
-cert-monitor/
+site-monitor/
 ├── backend/
-│   └── src/main/java/com/certmonitor/
+│   └── src/main/java/com/sitemonitor/
 │       ├── controller/          # REST API (Certificate, Auth, Admin, Monitoring, MonitorNotes,
 │       │                        #   Incident, WeeklyReport, System, SqlPlayground, Permission, Ldap…)
 │       ├── service/             # İş mantığı (CertificateChecker, Scheduler, MonitoringOutage,
@@ -94,11 +94,11 @@ cert-monitor/
 │       │                        #   HttpMetricsExplorer, ChartModal, LoginHeatmap, SqlPlayground,
 │       │                        #   WeakAlgorithmReport)
 │       ├── components/ui/       # Yeniden kullanılabilir (SearchableSelect, Dialog, TimeRangePicker,
-│       │                        #   DateTimeRangePicker, MarkdownEditor, CertMonitorLogo)
+│       │                        #   DateTimeRangePicker, MarkdownEditor, SiteMonitorLogo)
 │       ├── pages/               # ExpiryForecastPage, WeeklyReportsPage, IncidentHistoryPage, HelpPage
 │       ├── api/client.js        # API istemcisi
 │       └── i18n/                # Çok dil (TR/EN) & tema yönetimi
-├── helm/cert-monitor/           # Helm chart + ortam değerleri
+├── helm/site-monitor/           # Helm chart + ortam değerleri
 │   └── environments/            # master.yaml, develop.yaml, release.yaml
 ├── scripts/                     # build-image.sh / build-image.ps1
 ├── .github/workflows/           # ci.yml, docker-build.yml, release.yml
@@ -183,12 +183,12 @@ Tüm ayarlar ortam değişkeni ile yönetilir. Varsayılanlar `application.prope
 
 | Değişken | Varsayılan | Açıklama |
 |----------|-----------|----------|
-| `CERT_MONITOR_USERNAME` | `user` | Dashboard kullanıcı adı |
-| `CERT_MONITOR_PASSWORD` | `password` | Dashboard parolası |
-| `DB_URL` | `jdbc:postgresql://localhost:5432/certmonitor` | Veritabanı bağlantı URL'i |
+| `SITE_MONITOR_USERNAME` | `user` | Dashboard kullanıcı adı |
+| `SITE_MONITOR_PASSWORD` | `password` | Dashboard parolası |
+| `DB_URL` | `jdbc:postgresql://localhost:5432/sitemonitor` | Veritabanı bağlantı URL'i |
 | `DB_POOL_MAX` | `10` | Maksimum bağlantı havuzu boyutu |
 | `CORS_ALLOWED_ORIGINS` | `http://localhost:5173,...` | İzin verilen CORS adresleri |
-| `CERT_MONITOR_EMAIL_ENABLED` | `false` | E-posta bildirimlerini etkinleştir |
+| `SITE_MONITOR_EMAIL_ENABLED` | `false` | E-posta bildirimlerini etkinleştir |
 | `SPRING_MAIL_HOST` | `smtp.gmail.com` | SMTP sunucusu |
 | `SPRING_MAIL_PORT` | `587` | SMTP portu |
 | `SPRING_MAIL_USERNAME` | — | SMTP kullanıcı adı |
@@ -509,7 +509,7 @@ curl -u user:password http://localhost:8080/api/certificates
 
 ## Veritabanı
 
-PostgreSQL kullanılır. Bağlantı `DB_URL` ortam değişkeniyle yapılandırılır (varsayılan: `jdbc:postgresql://localhost:5432/certmonitor`).
+PostgreSQL kullanılır. Bağlantı `DB_URL` ortam değişkeniyle yapılandırılır (varsayılan: `jdbc:postgresql://localhost:5432/sitemonitor`).
 
 **Tablolar:**
 
@@ -560,13 +560,13 @@ PostgreSQL kullanılır. Bağlantı `DB_URL` ortam değişkeniyle yapılandırı
 
 ```bash
 VERSION=$(cat VERSION)
-helm upgrade --install cert-monitor ./helm/cert-monitor \
-  -f helm/cert-monitor/values.yaml \
-  -f helm/cert-monitor/environments/master.yaml \
+helm upgrade --install site-monitor ./helm/site-monitor \
+  -f helm/site-monitor/values.yaml \
+  -f helm/site-monitor/environments/master.yaml \
   --set image.tag=${VERSION} \
   --set secret.adminPassword=$ADMIN_PASSWORD \
   --set secret.dbPassword=$DB_PASSWORD \
-  -n cert-monitor --create-namespace
+  -n site-monitor --create-namespace
 ```
 
 Ortam bazlı değer dosyaları:
@@ -603,7 +603,7 @@ server.port=8081
 
 1. Ağ bağlantısını ve güvenlik duvarı kurallarını kontrol edin
 2. `curl -v https://domain.com` ile doğrudan test edin
-3. Backend günlüklerini inceleyin: `docker logs cert-monitor`
+3. Backend günlüklerini inceleyin: `docker logs site-monitor`
 
 ### "Dashboard boş görünüyor"
 
@@ -613,7 +613,7 @@ server.port=8081
 
 ### "E-posta gönderilmiyor"
 
-1. `CERT_MONITOR_EMAIL_ENABLED=true` olduğunu doğrulayın
+1. `SITE_MONITOR_EMAIL_ENABLED=true` olduğunu doğrulayın
 2. SMTP kimlik bilgilerini kontrol edin
 3. Admin Paneli → Sistem Sağlığı → SMTP istatistiklerinde hata mesajını inceleyin
 

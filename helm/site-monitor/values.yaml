@@ -1,0 +1,273 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Site Monitor Helm Values
+# Override with: helm install site-monitor ./helm/site-monitor -f my-values.yaml
+# ─────────────────────────────────────────────────────────────────────────────
+
+replicaCount: 1
+
+image:
+  repository: ghcr.io/inanmise/site-monitor
+  # Boş → Chart.AppVersion'a düşer (reproducible/rollback-safe; "latest" değil). Env overlay'leri override eder.
+  tag: ""
+  pullPolicy: Always
+
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+service:
+  type: ClusterIP
+  port: 80
+  targetPort: 8080
+
+ingress:
+  enabled: true
+  className: nginx
+  host: cert-monitor.example.com
+  tls:
+    enabled: true
+    secretName: site-monitor-tls
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "60"
+    nginx.ingress.kubernetes.io/proxy-body-size: "1m"
+
+# Application configuration (non-sensitive)
+config:
+  springProfile: prod
+  # com.sitemonitor log seviyesi. Prod'da INFO: DEBUG'ta heartbeat/sweep/per-domain satırları pod başına
+  # günde on binlerce satır üretir ve prod'da hem console hem dosya appender'ına yazılır (çift I/O).
+  # Restart'sız değiştirmek için: Yönetim → Genel Ayarlar → Loglama (DB override env'i ezer).
+  logLevel: "INFO"
+  # @Scheduled havuzu (33 zamanlanmış iş; 4'ü 30 sn'lik sweep, 4'ü 10 sn'lik ayar-cache refresh).
+  # Sayfa bütünlüğü kontrolü tek başına 120 sn sürebildiği için dar havuz cron işlerini geciktirir.
+  schedulingPoolSize: "8"
+  # External PostgreSQL connection — fill these in with real values
+  dbHost: "REPLACE_DB_HOST"
+  dbPort: "5432"
+  dbName: certmonitor
+  dbUser: certmonitor
+  # Tek pod / 100 kullanıcı: 25. Tek pod → tek Postgres'e güvenli (replica çarpımı yok).
+  # AKSİYON: prod Postgres max_connections'ı doğrula; düşük tier (25-50) ise buna göre kıs.
+  # Çok-pod'a geçilirse (replica × 25) max_connections'ı aşmasın diye tekrar boyutlandır.
+  dbPoolMax: "25"
+  emailEnabled: "true"
+  smtpHost: smtp.gmail.com
+  smtpPort: "587"
+  smtpAuth: "true"
+  smtpStarttlsEnable: "true"
+  smtpStarttlsRequired: "true"
+  smtpSslTrust: "smtp.gmail.com"
+  corsAllowedOrigins: ""
+  # Uygulamanın dışarı bakan adresi (mail linkleri için, ör. haftalık rapor hatırlatması).
+  # Boş bırakılırsa otomatik "https://<ingress.host>" kullanılır (route ile tutarlı) —
+  # genelde elle set etmeye gerek yok. Gerekirse tam URL ver: "https://cert-monitor.example.com".
+  appBaseUrl: ""
+  # Başarısız-login anomali uyarısı — eşikler/cooldown admin UI'dan (Ayarlar → Login Anomali) canlı
+  # ayarlanır; bunlar yalnız başlangıç varsayılanı. Alıcı boşsa SYSTEM_ADMIN_EMAIL'e düşer.
+  failedLoginAlertEnabled: "true"
+  failedLoginAlertRecipients: ""
+  # Loglardaki gerçek client IP'si için forwarding başlık sırası (ilk dolu olanın leftmost değeri).
+  # Proxy/LB arkasında doğru başlık ortama göre değişir → /api/admin/client-ip-debug ile bulup
+  # buraya yaz (ör. "X-Real-IP" veya "X-Forwarded-For"). Birden çok: "X-Real-IP,X-Forwarded-For".
+  clientIpHeaders: "X-Forwarded-For"
+  checkTimeoutSeconds: "10"
+  warningDays: "30"
+  parallelWorkers: "20"
+  # Haftalık erişilebilirlik e-postası: sertifika sahibi takıma her Pazartesi 10:00 (Europe/Istanbul)
+  # geçen haftanın domain availability özeti. Genel Ayarlar'dan da canlı aç/kapa edilebilir.
+  weeklyAvailEnabled: "true"
+  weeklyAvailCron: "0 0 10 ? * MON"
+  # Sertifika tarama executor'ı (paralel kontrol thread'leri). CPU-sınırlı küçük
+  # ortamlarda düşür → açılışta CPU oversubscription olmasın.
+  # Tek pod: sweep TLS/OCSP kriptosu kullanıcı istekleriyle aynı çekirdekleri paylaşır. Peak thread'i
+  # 50→30'a çek (CallerRunsPolicy sayesinde taşan iş reddedilmez, caller'da koşar → güvenli).
+  executorCoreSize: "12"
+  executorMaxSize: "30"
+  # Açılışta ağır tarama + escalation catch-up bu kadar ms geciktirilir; login/BCrypt
+  # ilk dakikada CPU'yu serbest bulsun (açılışta ~1dk askıda kalma fix'i).
+  startupCheckDelayMs: "60000"
+  # stdout/stderr UTF-8: container locale ASCII olsa bile logback dışı çıktılar da
+  # (ör. System.out) Türkçe karakterleri bozmadan yazsın (mojibake savunması).
+  javaOpts: "-XX:MaxRAMPercentage=75.0 -XX:MinRAMPercentage=50.0 -Xss512k -XX:+ExitOnOutOfMemoryError -Dstdout.encoding=UTF-8 -Dstderr.encoding=UTF-8 -Dfile.encoding=UTF-8 -Djdk.httpclient.allowRestrictedHeaders=host"
+
+  # Spring Session storage. Default "jdbc" persists sessions to spring_session /
+  # spring_session_attributes tables so users stay logged in across pod restarts.
+  # Set to "none" to use the previous in-memory store (loses sessions on restart).
+  sessionStoreType: "jdbc"
+
+  # ── Egress proxy (corporate forward proxy) ────────────────────────────────
+  # Empty defaults preserve direct-connection behavior. Fill these in on
+  # environments where outbound TLS handshakes (and OCSP/CRL) must traverse a
+  # corporate forward proxy. Driven from observed prod symptoms: external
+  # akbank domains were RST-ing because the pod had no proxy configured.
+  httpProxyHost: ""        # e.g. "proxy.corp.local"
+  httpProxyPort: "0"       # e.g. "8080"
+  # Comma-separated suffix list. Suffix match: ".corp.com" covers *.corp.com.
+  # Internal domains served by private routing should appear here so they
+  # don't get tunneled through the proxy unnecessarily.
+  noProxy: ""              # e.g. ".corp.com,.corp.local,10.0.0.0/8"
+
+  # ── Domain-expiry WHOIS ───────────────────────────────────────────────────
+  # RDAP (443, proxy-aware) is the primary domain-expiry source. Raw port-43
+  # WHOIS can't traverse a 443/80-only egress proxy, so behind a corporate proxy
+  # it only wastes ~6s per domain before timing out → default off here. RDAP-only
+  # is sufficient; still live-toggleable from Genel Ayarlar (cert.monitor.domain.whois-enabled).
+  whoisEnabled: "false"
+
+  # ── Critical-domain second daily check ────────────────────────────────────
+  # Re-checks ONLY active domains whose last check days_remaining ≤ threshold, at a
+  # separate daily slot (Europe/Istanbul) using a dedicated scheduler_lock key. Purpose:
+  # a same-day renewal auto-closes its open DOMAINMON_EXPIRY alarm without waiting for
+  # tomorrow's sweep. Daily re-alert dedupe is preserved → produces NO extra notification.
+  domainCriticalCheckEnabled: "true"
+  domainCriticalCheckCron: "0 0 16 * * *"
+  domainCriticalCheckThresholdDays: "7"
+
+  # ── Corporate SSL-inspection CA bundle ────────────────────────────────────
+  # PEM (root + intermediate certs) of the forward proxy's MITM re-signing CA.
+  # TrustEvaluator adds these as trust anchors ALONGSIDE the JVM cacerts (never
+  # trust-all), so outbound RDAP/HTTPS through an SSL-inspecting proxy validates
+  # via PKIX instead of failing "unable to find valid certification path".
+  # Empty = public CAs only. Genel Ayarlar (cert.monitor.trust.ca-bundle-pem)
+  # can override live. To rotate: capture the new chain
+  #   openssl s_client -connect data.iana.org:443 -proxy <proxy:port> -showcerts
+  # paste the PEM below (as a multiline block) and `helm upgrade`. See runbook.
+  caBundlePem: ""
+  #   caBundlePem: |
+  #     -----BEGIN CERTIFICATE-----
+  #     ...corporate root CA...
+  #     -----END CERTIFICATE-----
+
+# Sensitive values — provide via --set or external secret manager
+# Do NOT commit real values here
+secret:
+  # If existingSecret is set, an existing K8s Secret is used instead of creating one
+  existingSecret: ""
+  adminUsername: "admin"
+  adminPassword: "REPLACE_ME"
+  dbPassword: "REPLACE_ME"
+  smtpUser: "certmonitor01@gmail.com"
+  smtpPassword: "REPLACE_WITH_GMAIL_APP_PASSWORD"
+  emailFrom: "certmonitor01@gmail.com"
+
+  # Symmetric key (AES-GCM) for encrypting secrets the admin saves from the UI —
+  # the LDAP bind password and SMTP password. MUST be a stable, random value that
+  # stays the SAME across pods/restarts (otherwise saved secrets can't be decrypted).
+  # If left empty the app falls back to an insecure built-in dev key — set a real
+  # value (≥32 random chars) via --set or external-secrets before production use.
+  secretKey: "REPLACE_WITH_RANDOM_SECRET_KEY"
+
+  # Corporate proxy auth (Basic). Leave empty for anonymous proxies.
+  # Inject real values via --set or external-secrets; do NOT commit them.
+  httpProxyUser: ""
+  httpProxyPass: ""
+
+# Tek pod, 100 kullanıcı + 200-1000 domain: dikey kapasite tek ölçekleme kaynağı (yatay yok).
+# CPU 2→4 çekirdek (BCrypt/TLS + scheduler + istek işleme aynı pod'da), RAM 1.5→3Gi (heap ~2.3Gi:
+# eşzamanlılık + cache + büyük-okuma tamponları; OOM=tam kesinti). request'ler garanti kapasite için
+# yükseltildi (eski 512Mi/500m node over-commit + CFS throttling'e açıktı).
+# AKSİYON: node'un bu pod'a 4 CPU / 3Gi verebildiğini doğrula.
+# Senaryo İzleme (10. tür): her kontrolde kısa ömürlü k6 alt süreci JVM RSS'inin ÜSTÜNE bellek ekler
+# (havuz varsayılan 2 eşzamanlı × ~50-150Mi). Bu yük için memory limit 3Gi→3.5Gi, request 1.5→1.75Gi yükseltildi.
+resources:
+  requests:
+    memory: "1792Mi"
+    cpu: "1500m"
+  limits:
+    memory: "3584Mi"
+    cpu: "4000m"
+
+# Kubernetes/OpenShift sağlık probe'ları — Spring Boot Actuator grupları:
+#   /health/readiness → readinessState (warmup boyunca uygulama REFUSING_TRAFFIC ile gate eder →
+#                       pod, senkron bootstrap bitene kadar Service endpoint'lerine eklenmez → ilk
+#                       tıklama soğuk instance'a düşmez/askıda kalmaz)
+#   /health/liveness  → livenessState (DB sağlığından bağımsız → DB blip'i gereksiz pod restart'ı tetiklemez)
+# startupProbe readiness grubuna bakar → app GERÇEKTEN hazır olunca tamamlanır; sonra liveness/readiness devralır.
+probes:
+  startup:
+    path: /health/readiness
+    periodSeconds: 10
+    timeoutSeconds: 3
+    failureThreshold: 30        # ~300s bootstrap bütçesi (büyük tablolarda şema patch dahil); aşılırsa pod öldürülür
+  readiness:
+    path: /health/readiness
+    initialDelaySeconds: 5
+    periodSeconds: 5
+    timeoutSeconds: 3
+    failureThreshold: 3
+  liveness:
+    path: /health/liveness
+    initialDelaySeconds: 0
+    periodSeconds: 15
+    timeoutSeconds: 5
+    failureThreshold: 6         # cömert → geçici yavaşlık restart etmesin
+
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 5
+  targetCPUUtilizationPercentage: 70
+  targetMemoryUtilizationPercentage: 80
+
+podDisruptionBudget:
+  enabled: false
+  minAvailable: 1
+
+podAnnotations:
+  prometheus.io/scrape: "true"
+  prometheus.io/port: "8080"
+  prometheus.io/path: "/metrics"
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  fsGroup: 1000
+  seccompProfile:
+    type: RuntimeDefault
+  # Ping monitor (ICMP) için non-root unprivileged ICMP soketi. K8s "safe" sysctl —
+  # CAP_NET_RAW gerektirmez. fsGroup (1000) ping_group_range içinde olunca iputils
+  # ping non-root çalışır. Cluster PodSecurity policy'si safe sysctl'lere izin
+  # vermiyorsa bu blok kaldırılabilir (ping monitor o zaman zarifçe N/A döner).
+  sysctls:
+    - name: net.ipv4.ping_group_range
+      value: "0 2147483647"
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: ["ALL"]
+
+# Node affinity / spread
+topologySpreadConstraints:
+  enabled: false
+  maxSkew: 1
+  topologyKey: kubernetes.io/hostname
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PostgreSQL subchart (Bitnami) — disabled by default
+# When enabled=true, the chart deploys a bundled PostgreSQL instance.
+# DB_HOST, DB_NAME, DB_USER are auto-resolved; set auth.password below.
+# When enabled=false (default), configure external DB via config.dbHost etc.
+# ─────────────────────────────────────────────────────────────────────────────
+postgresql:
+  enabled: false
+  auth:
+    database: certmonitor
+    username: certmonitor
+    password: ""  # required when postgresql.enabled=true
+  primary:
+    persistence:
+      enabled: true
+      size: 8Gi
+    # DB-geneli SQL istatistikleri (Sistem Sağlığı → Veritabanı analitiği) için pg_stat_statements.
+    # shared_preload_libraries restart gerektirir; uygulama açılışta CREATE EXTENSION'ı best-effort dener.
+    # Bu eklenti yoksa analitik, sql_query_history (Playground) fallback'ine düşer.
+    extendedConfiguration: |
+      shared_preload_libraries = 'pg_stat_statements'
+      pg_stat_statements.track = top

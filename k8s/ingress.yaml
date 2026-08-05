@@ -2,8 +2,8 @@
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: cert-monitor
-  namespace: cert-monitor
+  name: site-monitor
+  namespace: site-monitor
   annotations:
     nginx.ingress.kubernetes.io/ssl-redirect: "true"
     nginx.ingress.kubernetes.io/proxy-read-timeout: "60"
@@ -13,7 +13,7 @@ spec:
   tls:
     - hosts:
         - cert-monitor.example.com   # Replace with your domain
-      secretName: cert-monitor-tls
+      secretName: site-monitor-tls
   rules:
     - host: cert-monitor.example.com
       http:
@@ -22,6 +22,6 @@ spec:
             pathType: Prefix
             backend:
               service:
-                name: cert-monitor
+                name: site-monitor
                 port:
                   name: http

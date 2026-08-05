@@ -8,14 +8,14 @@ import { useEffect, useMemo, useRef, useState } from 'react'
  *   otomatik son geçerli sayfaya çekilir.
  * - Reset: resetDeps içindeki herhangi bir değer değişince sayfa 1'e döner. resetDeps'e ASLA
  *   items dizisi bağlanmaz — polling her turda yeni dizi referansı set eder, sayfa korunmalı.
- * - Kalıcılık: pageSize localStorage'a görünüm bazında yazılır (cm.pageSize.<listKey>).
+ * - Kalıcılık: pageSize localStorage'a görünüm bazında yazılır (sm.pageSize.<listKey>).
  * - 1-tabanlı sayfa numarası tek standarttır.
  */
 
 export const PAGE_SIZE_OPTIONS = [25, 50, 100, 200]
 export const DEFAULT_PAGE_SIZE = 50
 
-const LS_PREFIX = 'cm.pageSize.'
+const LS_PREFIX = 'sm.pageSize.'
 
 /** localStorage'dan kayıtlı sayfa boyutu; geçersiz/eksik → defaultSize (private mode'da try/catch). */
 export function readPageSize(listKey, defaultSize = DEFAULT_PAGE_SIZE) {

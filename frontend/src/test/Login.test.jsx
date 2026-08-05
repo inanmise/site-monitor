@@ -93,7 +93,7 @@ describe('Login', () => {
     fireEvent.submit(document.querySelector('form'))
 
     await waitFor(() => expect(onLogin).toHaveBeenCalled())
-    expect(localStorage.getItem('cert-monitor-remembered-user')).toBe('remember-user')
+    expect(localStorage.getItem('site-monitor-remembered-user')).toBe('remember-user')
   })
 
   it('shows a session-expired notice when sessionExpired is set (AUTH-1)', () => {
@@ -111,7 +111,7 @@ describe('Login', () => {
   it('renders the executive left panel: wordmark, badge, headline, capability bento (8 tiles), hero stats, rings + pulse', async () => {
     const { container } = render(<Login onLogin={() => {}} />)
     // Üst bölge: wordmark + ENTERPRISE rozeti
-    expect(container.querySelector('.lp-wordmark')?.textContent).toBe('CertMonitor')
+    expect(container.querySelector('.lp-wordmark')?.textContent).toBe('Site Monitör')
     expect(container.querySelector('.lp-badge')?.textContent).toBe('ENTERPRISE')
     // Orta bölge: başlık (EN default) + izleme yetenekleri bento ızgarası (8 kutu, flagship Sertifika)
     expect(screen.getByText(/under control on a single screen/i)).toBeDefined()
@@ -135,7 +135,7 @@ describe('Login', () => {
     // Dil düğmesi korunur (EN default → 'Türkçe' etiketi)
     expect(screen.getByText('Türkçe')).toBeDefined()
     // Eski öğeler kaldırıldı (kalkan başlığı + düz özellik listesi + eski nokta)
-    expect(screen.queryByText(/Meet CertMonitor/i)).toBeNull()
+    expect(screen.queryByText(/Meet Site Monitör/i)).toBeNull()
     expect(container.querySelector('.lp-feature')).toBeNull()
     expect(container.querySelector('.lp-blink-dot')).toBeNull()
   })

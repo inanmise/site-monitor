@@ -8,7 +8,7 @@ const BrandingContext = createContext(null)
  * markalanır, bu yüzden provider main.jsx'te App'in üstünde durur). Etkiler:
  *  - tab-title → document.title
  *  - primary-color → :root'ta --brand-primary (App.css'te --primary buna bağlı)
- * Boş değerler = varsayılan CertMonitor kimliği; tüketiciler (Login/Nav/banner) fallback uygular.
+ * Boş değerler = varsayılan Site Monitör kimliği; tüketiciler (Login/Nav/banner) fallback uygular.
  */
 export function BrandingProvider({ children }) {
   const [branding, setBranding] = useState(null)

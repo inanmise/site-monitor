@@ -127,8 +127,8 @@ jobs:
       - name: Bump version files
         run: |
           echo "${{ steps.ver.outputs.next }}" > VERSION
-          sed -i "s/^version: .*/version: ${{ steps.ver.outputs.next }}/"            helm/cert-monitor/Chart.yaml
-          sed -i "s/^appVersion: .*/appVersion: \"${{ steps.ver.outputs.next }}\"/" helm/cert-monitor/Chart.yaml
+          sed -i "s/^version: .*/version: ${{ steps.ver.outputs.next }}/"            helm/site-monitor/Chart.yaml
+          sed -i "s/^appVersion: .*/appVersion: \"${{ steps.ver.outputs.next }}\"/" helm/site-monitor/Chart.yaml
 
       - name: Configure git
         run: |
@@ -137,7 +137,7 @@ jobs:
 
       - name: Commit version bump
         run: |
-          git add VERSION helm/cert-monitor/Chart.yaml
+          git add VERSION helm/site-monitor/Chart.yaml
           git commit -m "chore(release): bump version to ${{ steps.ver.outputs.next }} [skip ci]"
 
       # ── 3. Changelog ─────────────────────────────────────────────────────
@@ -176,8 +176,8 @@ jobs:
           context: .
           push: true
           tags: |
-            ghcr.io/inanmise/certmonitor:${{ steps.ver.outputs.tag }}
-            ghcr.io/inanmise/certmonitor:latest
+            ghcr.io/${{ github.repository_owner }}/site-monitor:${{ steps.ver.outputs.tag }}
+            ghcr.io/${{ github.repository_owner }}/site-monitor:latest
           build-args: |
             VERSION=${{ steps.ver.outputs.next }}
             BUILD_DATE=${{ github.event.repository.updated_at }}
@@ -191,7 +191,7 @@ jobs:
       - name: Trivy image scan
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
-          image-ref: ghcr.io/inanmise/certmonitor:${{ steps.ver.outputs.tag }}
+          image-ref: ghcr.io/${{ github.repository_owner }}/site-monitor:${{ steps.ver.outputs.tag }}
           severity: HIGH,CRITICAL
           ignore-unfixed: true
           exit-code: '0'
@@ -204,12 +204,12 @@ jobs:
           version: v3.14.0
 
       - name: Update Helm dependencies
-        run: helm dep update helm/cert-monitor
+        run: helm dep update helm/site-monitor
 
       - name: Package and push Helm chart
         run: |
-          helm package helm/cert-monitor
-          helm push certmonitor-chart-${{ steps.ver.outputs.next }}.tgz oci://ghcr.io/inanmise
+          helm package helm/site-monitor
+          helm push sitemonitor-chart-${{ steps.ver.outputs.next }}.tgz oci://ghcr.io/${{ github.repository_owner }}
 
       # ── 6. Tag & push to main ────────────────────────────────────────────
       - name: Create and push git tag
@@ -243,19 +243,19 @@ jobs:
 
             **Helm:**
             ```sh
-            helm install certmonitor oci://ghcr.io/inanmise/certmonitor-chart --version ${{ steps.ver.outputs.next }}
+            helm install sitemonitor oci://ghcr.io/${{ github.repository_owner }}/sitemonitor-chart --version ${{ steps.ver.outputs.next }}
             ```
 
             **Docker:**
             ```sh
-            docker pull ghcr.io/inanmise/certmonitor:${{ steps.ver.outputs.tag }}
+            docker pull ghcr.io/${{ github.repository_owner }}/site-monitor:${{ steps.ver.outputs.tag }}
             ```
 
             ## What's Changed
 
             ${{ steps.changelog.outputs.log }}
 
-            **Full Changelog**: https://github.com/inanmise/certmonitor/compare/${{ steps.ver.outputs.prev_tag }}...${{ steps.ver.outputs.tag }}
+            **Full Changelog**: https://github.com/${{ github.repository }}/compare/${{ steps.ver.outputs.prev_tag }}...${{ steps.ver.outputs.tag }}
 
       # ── 9. Summary ───────────────────────────────────────────────────────
       - name: Job summary
@@ -264,11 +264,11 @@ jobs:
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "| | |" >> "$GITHUB_STEP_SUMMARY"
           echo "|---|---|" >> "$GITHUB_STEP_SUMMARY"
-          echo "| Docker | \`ghcr.io/inanmise/certmonitor:${{ steps.ver.outputs.tag }}\` |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| Helm | \`oci://ghcr.io/inanmise/certmonitor-chart:${{ steps.ver.outputs.next }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Docker | \`ghcr.io/${{ github.repository_owner }}/site-monitor:${{ steps.ver.outputs.tag }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Helm | \`oci://ghcr.io/${{ github.repository_owner }}/sitemonitor-chart:${{ steps.ver.outputs.next }}\` |" >> "$GITHUB_STEP_SUMMARY"
           echo "| Bump type | \`${{ needs.detect.outputs.bump }}\` |" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "### Helm install" >> "$GITHUB_STEP_SUMMARY"
           echo '```sh' >> "$GITHUB_STEP_SUMMARY"
-          echo "helm install certmonitor oci://ghcr.io/inanmise/certmonitor-chart --version ${{ steps.ver.outputs.next }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "helm install sitemonitor oci://ghcr.io/${{ github.repository_owner }}/sitemonitor-chart --version ${{ steps.ver.outputs.next }}" >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"

@@ -1,6 +1,6 @@
 # DB Ölçeklenebilirlik & İşletme Rehberi
 
-cert-monitor sürekli kayıt üreten bir izleme sistemidir; kontrol sonucu / log / audit / alarm
+site-monitor sürekli kayıt üreten bir izleme sistemidir; kontrol sonucu / log / audit / alarm
 tabloları append-only ve zamanla milyonlarca satıra çıkar. Bu doküman büyümeyi yönetmek için
 uygulanan mekanizmaları ve işletme (ops) adımlarını özetler.
 
@@ -70,13 +70,13 @@ ama prod overlay (`helm/.../environments/master.yaml`) `replicaCount: 3` → 3×
 - **`scripts/db-health.sql`** — en büyük tablolar, satır sayıları, ölü-tuple/bloat, kullanılmayan
   index'ler, en yavaş sorgular (pg_stat_statements), bağlantı doygunluğu, temel sunucu ayarları.
   ```
-  psql -h <host> -U certmonitor -d certmonitor -f scripts/db-health.sql
+  psql -h <host> -U sitemonitor -d sitemonitor -f scripts/db-health.sql
   ```
 - **`scripts/perf-indexes.sql`** — büyüme/performans index'leri. **Büyük prod tablolarında deploy
   ÖNCESİ `CREATE INDEX CONCURRENTLY` ile çalıştırın** (startup'ta kilit olmasın; app'in
   `IF NOT EXISTS` patch'i no-op olur):
   ```
-  psql -h <host> -U certmonitor -d certmonitor -v ON_ERROR_STOP=1 -f scripts/perf-indexes.sql
+  psql -h <host> -U sitemonitor -d sitemonitor -v ON_ERROR_STOP=1 -f scripts/perf-indexes.sql
   ```
   Yarıda kalan index INVALID kalabilir: `SELECT indexrelid::regclass FROM pg_index WHERE NOT indisvalid;`
   → `DROP INDEX CONCURRENTLY` ile atıp tekrar çalıştırın.
@@ -97,7 +97,7 @@ opt-in'dir, gece temizlik/rollup dağıtık-kilitlidir → çok-pod'da tek pod �
    (tabloyu KİLİTLEYEN) `CREATE INDEX` çalıştırır; büyük `audit_log`/`alert_events`'te pod açılışını
    kilitler/geciktirir. Deploy'dan önce:
    ```
-   psql -h <prod-host> -U certmonitor -d certmonitor -v ON_ERROR_STOP=1 -f scripts/perf-indexes.sql
+   psql -h <prod-host> -U sitemonitor -d sitemonitor -v ON_ERROR_STOP=1 -f scripts/perf-indexes.sql
    ```
    Böylece startup patch'i no-op olur. (Taze/küçük DB'de gerek yok.)
 2. **Bağlantı matematiğini doğrula.** Prod 3 replika × Hikari pool 25 = **75 bağlantı**.

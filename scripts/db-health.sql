@@ -1,4 +1,4 @@
--- cert-monitor — PostgreSQL teşhis script'i (işletme/ops)
+-- site-monitor — PostgreSQL teşhis script'i (işletme/ops)
 --
 -- NE İŞE YARAR: DB büyümesini ve yavaşlığı hızlı teşhis — en büyük tablolar, satır sayıları, ölü-tuple
 -- (bloat), kullanılmayan index'ler, en yavaş sorgular (pg_stat_statements) ve bağlantı doygunluğu.

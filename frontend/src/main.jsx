@@ -8,7 +8,12 @@ import { LangProvider } from './i18n/index.jsx'
 import { ThemeProvider } from './i18n/theme.jsx'
 import { BrandingProvider } from './contexts/BrandingProvider.jsx'
 import AnnouncementBanner from './components/AnnouncementBanner.jsx'
+import { migrateStorageKeys } from './utils/migrateStorageKeys.js'
 import './App.css'
+
+// Rename storage göçü — render'dan ÖNCE senkron: Theme/Lang provider'ları localStorage'ı
+// initializer'da okur; göç sonraya kalırsa kullanıcı tercihleri varsayılana dönmüş görünür.
+migrateStorageKeys()
 
 ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>

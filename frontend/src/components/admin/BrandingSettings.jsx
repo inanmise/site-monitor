@@ -54,7 +54,7 @@ export default function BrandingSettings() {
     }
   }
 
-  /** Tüm branding override'larını temizler → varsayılan CertMonitor kimliğine döner
+  /** Tüm branding override'larını temizler → varsayılan Site Monitör kimliğine döner
    *  (boş değer = override kaldırma; backend AppSettingsService davranışı). */
   async function resetToDefaults() {
     const ok = await showConfirm({
@@ -222,7 +222,7 @@ export default function BrandingSettings() {
           background: '#fff', display: 'flex', flexDirection: 'column', gap: 10 }}>
           {logo
             ? <img src={logo} alt="logo" style={{ maxHeight: 36, maxWidth: 180, alignSelf: 'flex-start' }} />
-            : <strong style={{ fontSize: 18 }}>{valueOf(K('app-name')) || defaultOf(K('app-name')) || 'CertMonitor'}</strong>}
+            : <strong style={{ fontSize: 18 }}>{valueOf(K('app-name')) || defaultOf(K('app-name')) || 'Site Monitör'}</strong>}
           <div style={{ fontSize: 17, fontWeight: 700 }}>
             {valueOf(K('login-title')) || t('login.heading')}
           </div>

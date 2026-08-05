@@ -38,13 +38,13 @@ ARG GIT_COMMIT
 # uyumlu statik binary). Her kontrolde kısa ömürlü sandboxlu alt süreç olarak çalışır.
 COPY --from=k6-bin /usr/bin/k6 /usr/bin/k6
 
-LABEL org.opencontainers.image.title="CertMonitor" \
+LABEL org.opencontainers.image.title="Site Monitor" \
       org.opencontainers.image.description="SSL/TLS Certificate Monitoring System" \
       org.opencontainers.image.version="${VERSION}" \
       org.opencontainers.image.created="${BUILD_DATE}" \
       org.opencontainers.image.revision="${GIT_COMMIT}" \
-      org.opencontainers.image.source="https://github.com/inanmise/certmonitor" \
-      org.opencontainers.image.vendor="CertMonitor" \
+      org.opencontainers.image.source="https://github.com/inanmise/site-monitor" \
+      org.opencontainers.image.vendor="Site Monitor" \
       org.opencontainers.image.licenses="MIT"
 
 RUN addgroup -g 1000 appgroup && adduser -u 1000 -G appgroup -s /bin/sh -D appuser

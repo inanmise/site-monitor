@@ -1,5 +1,8 @@
-# CertMonitor — Kurumsal SSL/TLS Sertifika İzleme Platformu
+# Site Monitör — Kurumsal SSL/TLS Sertifika İzleme Platformu
 ## White Paper | Versiyon 18.83.x | Haziran 2026
+
+> Not: Ürün adı CertMonitor → **Site Monitör** olarak değişti. Bu belgenin PDF çıktısı
+> (`frontend/public/whitepaper.pdf`) bir sonraki whitepaper güncellemesinde yeni adla yeniden üretilecek.
 
 ---
 
@@ -27,7 +30,7 @@
 
 ## 1. Yönetici Özeti
 
-**CertMonitor**, kurumsal ortamlarda çalışan SSL/TLS sertifikalarını otomatik olarak izleyen, süresi dolmak üzere olan veya hatalı sertifikalar için sorumlu ekipleri proaktif olarak bilgilendiren, takım tabanlı sorumluluk yönetimi ve tam denetim izine sahip bir **kurumsal sertifika izleme platformudur.**
+**Site Monitör**, kurumsal ortamlarda çalışan SSL/TLS sertifikalarını otomatik olarak izleyen, süresi dolmak üzere olan veya hatalı sertifikalar için sorumlu ekipleri proaktif olarak bilgilendiren, takım tabanlı sorumluluk yönetimi ve tam denetim izine sahip bir **kurumsal sertifika izleme platformudur.**
 
 ### Temel Sorun
 
@@ -39,7 +42,7 @@ SSL/TLS sertifikalarının süresi beklenmedik anlarda dolduğunda:
 
 ### Çözüm
 
-CertMonitor bu sorunu çözmek için:
+Site Monitör bu sorunu çözmek için:
 - Tüm sertifikaları saatlik periyotlarla otomatik kontrol eder
 - Sertifika zinciri, iptal durumu ve dağıtım uyumluluğunu doğrular
 - Süre dolmadan **30 / 15 / 7 gün önce** ilgili ekiplere e-posta ve webhook bildirimi gönderir
@@ -77,7 +80,7 @@ Sertifika sürelerini Excel tablosu veya takvim hatırlatıcısıyla takip etmek
 - Sertifika zinciri ve iptal durumunu kontrol etmez
 - Gerçek zamanlı görünürlük sağlamaz
 
-### 2.3 CertMonitor'ın Sağladığı Değer
+### 2.3 Site Monitör'ün Sağladığı Değer
 
 ```
 Reaktif Yaklaşım              →  Proaktif Yaklaşım
@@ -324,7 +327,7 @@ N+1 yöntemi           : Sweep başında inventoryRepo.findByDomainIn +
 ```
 ┌────────────────────────────────────────────────────────────────────┐
 │                    Kubernetes Cluster (Production)                  │
-│                    Namespace: cert-monitor                          │
+│                    Namespace: site-monitor                          │
 │                                                                     │
 │  ┌──────────────────────────────────────────────────────────────┐  │
 │  │  Ingress Controller (nginx)                                  │  │
@@ -352,7 +355,7 @@ N+1 yöntemi           : Sweep başında inventoryRepo.findByDomainIn +
 │  │  Kullanıcı/DB: certmonitor/certmonitor                       │  │
 │  └──────────────────────────────────────────────────────────────┘  │
 │                                                                     │
-│  ConfigMap: cert-monitor-config  │  Secret: cert-monitor-secret     │
+│  ConfigMap: site-monitor-config  │  Secret: site-monitor-secret     │
 │  HPA: 3–10 pod  │  PDB: minAvailable=2  │  PodDisruptionBudget      │
 └────────────────────────────────────────────────────────────────────┘
            │                                          │
@@ -372,7 +375,7 @@ N+1 yöntemi           : Sweep başında inventoryRepo.findByDomainIn +
 │  Docker Compose                            │
 │                                            │
 │  ┌────────────────────────────────────┐   │
-│  │  cert-monitor:latest               │   │
+│  │  site-monitor:latest               │   │
 │  │  Port: 8080                        │   │
 │  │  Volume: ./data:/app/data          │   │
 │  │  ReadOnly FS + /tmp tmpfs          │   │
@@ -385,7 +388,7 @@ N+1 yöntemi           : Sweep başında inventoryRepo.findByDomainIn +
 
 ### 5.3 Dağıtık Zamanlayıcı Kilidi
 
-Çok pod çalıştırıldığında yalnızca bir pod aynı anda tarama yapmalıdır. CertMonitor DB tabanlı dağıtık kilit kullanır:
+Çok pod çalıştırıldığında yalnızca bir pod aynı anda tarama yapmalıdır. Site Monitör DB tabanlı dağıtık kilit kullanır:
 
 ```
 scheduler_lock tablosu:
@@ -636,7 +639,7 @@ Her alarm e-postası zengin HTML içerikle gelir:
 ```
 ┌─────────────────────────────────────────────────────┐
 │  [Renk çubuk: UYARI=turuncu / KRİTİK=kırmızı]      │
-│  CertMonitor — Sertifika İzleme                     │
+│  Site Monitör — Sertifika İzleme                     │
 │  🌐 kurumsalinternetsubesi.akbank.com               │
 │  UYARI  ·  Son Kullanma Tarihi                      │
 ├─────────────────────────────────────────────────────┤
@@ -659,7 +662,7 @@ Her alarm e-postası zengin HTML içerikle gelir:
 │  UYARI: domain adresindeki sertifikanın süresi       │
 │  18 gün içinde doluyor.                              │
 ├─────────────────────────────────────────────────────┤
-│  CertMonitor  ·  Son kontrol: ... · Bildirim: ...   │
+│  Site Monitör  ·  Son kontrol: ... · Bildirim: ...   │
 └─────────────────────────────────────────────────────┘
 ```
 
@@ -706,7 +709,7 @@ cert.monitor.email.from=gönderen@adres
 - İlk başarılı girişte kullanıcı otomatik provizyon edilir (orgRole, müdür ilişkisi, takım) — bkz. §3.1
 - Provizyon sonucu sistem rolü atanır: müdür → kapsamlı ADMIN (salt-okuma), PO → TEAM_ADMIN, diğerleri → USER (bkz. §11)
 - Yerel `admin` hesabı her zaman geçerlidir (acil erişim / bootstrap); LDAP/SMTP ayarları yalnız bu hesaba açıktır
-- Bind parolası AES-GCM ile şifreli saklanır (`CERT_MONITOR_SECRET_KEY`)
+- Bind parolası AES-GCM ile şifreli saklanır (`SITE_MONITOR_SECRET_KEY`)
 
 **"Beni Hatırla" Özelliği:**
 - 7 günlük kalıcı oturum
@@ -783,10 +786,10 @@ Stack trace ve iç hata mesajı sadece log dosyasına yazılır.
 
 ### 10.7 Hassas Alan Maskeleme (Request Logging)
 
-**RequestLoggingFilter** TRACE seviyede HTTP request/response gövdesi log'lar — default `com.certmonitor=DEBUG` seviyede SESSİZ kalır. Açmak için:
+**RequestLoggingFilter** TRACE seviyede HTTP request/response gövdesi log'lar — default `com.sitemonitor=DEBUG` seviyede SESSİZ kalır. Açmak için:
 
 ```properties
-logging.level.com.certmonitor.config.RequestLoggingFilter=TRACE
+logging.level.com.sitemonitor.config.RequestLoggingFilter=TRACE
 ```
 
 Açıldığında JSON body / form body / URL query üzerinden ~60 hassas alan otomatik `*******` ile maskelenir:
@@ -1578,7 +1581,7 @@ Sertifika dışı erişilebilirlik izlemesi (sertifika sweep'inden bağımsız).
 
 1. E-postadaki domain bilgisine bakın
 2. Kalan gün sayısını kontrol edin
-3. **Eğer haberdar olduysanız:** CertMonitor'da ilgili alarmı **"Onayla"** → günlük tekrar bildirimler durur
+3. **Eğer haberdar olduysanız:** Site Monitör'de ilgili alarmı **"Onayla"** → günlük tekrar bildirimler durur
 4. **Sertifikayı yenileme sürecini başlatın** (CA, ekip, platform)
 5. **Yenileme tamamlandığında:** Sistemi bir sonraki taramada otomatik olarak kontrol edecektir
 6. **Sorun giderilinse:** Alarm Geçmişi'nde **"Çözüldü İşaretle"** → çözüm bildirimi gönderilir
@@ -1595,7 +1598,7 @@ Sertifika dışı erişilebilirlik izlemesi (sertifika sweep'inden bağımsız).
 ### 13.3 Sertifika Yenilendikten Sonra Ne Yapmalıyım
 
 1. Yeni sertifikayı sunucuya/platforma dağıtın
-2. CertMonitor bir sonraki saatlik taramada yeni sertifikayı tespit edecektir
+2. Site Monitör bir sonraki saatlik taramada yeni sertifikayı tespit edecektir
 3. **Dağıtım doğrulama:** Envanterde `expected_fingerprint` güncellenmişse sistem uyumluluğu kontrol edecektir
 4. Alarm Geçmişi'nde ilgili alarmı **"Çözüldü İşaretle"** ile kapatın
 5. Sistem otomatik olarak `RESOLUTION` bildirimi gönderir
@@ -1648,7 +1651,7 @@ Direktör (C-LEVEL):
 
 ### 13.6 Backend Düştüğünde Ne Olur
 
-CertMonitor, backend kapalıyken aşağıdaki davranışları gösterir:
+Site Monitör, backend kapalıyken aşağıdaki davranışları gösterir:
 
 1. **Tarama durur** — Aktif sertifika kontrolü yapılamaz
 2. **Bildirimler gönderilmez** — Scheduler çalışmadığı için DAILY_REALERT gönderilemez
@@ -1685,7 +1688,7 @@ Her gece **03:30** (`cert.monitor.scheduler.cleanup-cron` ile özelleştirilebil
 Kurumsal ağ politikaları nedeniyle bazı domain'lerin firewall/WAF'i pod IP'sini reddeder. Bu domain'ler için:
 
 1. OpenShift Deployment YAML'ına `HTTP_PROXY_HOST=dmzproxy.aknet.akb` ve `HTTP_PROXY_PORT=8080` env vars'larını ekle.
-2. Pod yeniden başlat (`oc rollout restart deployment/cert-monitor`).
+2. Pod yeniden başlat (`oc rollout restart deployment/site-monitor`).
 3. Admin → Envanter → ilgili domain'i düzenle → **"Proxy Üzerinden Kontrol Et"** toggle'ını aç.
 4. Bir sonraki sweep'te o domain'in kontrolü proxy üzerinden gider; geri kalanlar direkt outbound olarak çalışır.
 5. Loglarda `[cert-proxy]` etiketiyle tunnel kurma adımları takip edilebilir.
@@ -1707,9 +1710,9 @@ GitHub Actions: .github/workflows/release.yml
   ├─ Frontend: npx vitest run (72 test)
   ├─ mvn package → JAR
   ├─ npm run build → dist/
-  ├─ Docker build → ghcr.io/inanmise/certmonitor:<tag>
+  ├─ Docker build → ghcr.io/inanmise/site-monitor:<tag>
   ├─ Docker push → GitHub Container Registry
-  ├─ Helm chart OCI push → ghcr.io/inanmise/certmonitor-chart
+  ├─ Helm chart OCI push → ghcr.io/inanmise/sitemonitor-chart
   ├─ VERSION dosyası güncelle
   └─ GitHub Release oluştur
 ```
@@ -1726,19 +1729,19 @@ GitHub Actions: .github/workflows/release.yml
 
 ```bash
 # Production dağıtımı
-helm upgrade --install cert-monitor ./helm/cert-monitor \
-  -f helm/cert-monitor/values.yaml \
-  -f helm/cert-monitor/environments/master.yaml \
+helm upgrade --install site-monitor ./helm/site-monitor \
+  -f helm/site-monitor/values.yaml \
+  -f helm/site-monitor/environments/master.yaml \
   --set image.tag=10.8.0 \
   --set secret.adminPassword=$ADMIN_PASSWORD \
   --set secret.dbPassword=$DB_PASSWORD \
-  -n cert-monitor --create-namespace
+  -n site-monitor --create-namespace
 ```
 
 ### 14.4 Docker Image
 
 ```
-Kayıt Defteri: ghcr.io/inanmise/certmonitor
+Kayıt Defteri: ghcr.io/inanmise/site-monitor
 Etiket formatı:
   - latest              (master son)
   - 10.8.0             (üretim versiyonu)
@@ -1828,8 +1831,8 @@ Birden fazla pod aynı anda tarama yapmaz. DB tabanlı kilit (TTL: 10 dk) yalnı
 
 | Parametre | Açıklama |
 |---|---|
-| `logging.level.com.certmonitor` | Default `DEBUG` |
-| `logging.level.com.certmonitor.config.RequestLoggingFilter` | `TRACE` ile full HTTP req/resp logging açılır (masked) |
+| `logging.level.com.sitemonitor` | Default `DEBUG` |
+| `logging.level.com.sitemonitor.config.RequestLoggingFilter` | `TRACE` ile full HTTP req/resp logging açılır (masked) |
 | `logging.level.root` | Default `INFO` |
 | `LOG_TIMEZONE` | `Europe/Istanbul` (default) |
 
@@ -1847,12 +1850,12 @@ Birden fazla pod aynı anda tarama yapmaz. DB tabanlı kilit (TTL: 10 dk) yalnı
 
 | Parametre | Açıklama |
 |---|---|
-| `CERT_MONITOR_EMAIL_ENABLED` | E-postayı etkinleştir (true/false) |
+| `SITE_MONITOR_EMAIL_ENABLED` | E-postayı etkinleştir (true/false) |
 | `SPRING_MAIL_HOST` | SMTP sunucu adresi |
 | `SPRING_MAIL_PORT` | SMTP portu (587 = STARTTLS) |
 | `SPRING_MAIL_USERNAME` | Gönderen hesap |
 | `SPRING_MAIL_PASSWORD` | SMTP şifresi / App Password |
-| `CERT_MONITOR_EMAIL_FROM` | Gönderen e-posta adresi |
+| `SITE_MONITOR_EMAIL_FROM` | Gönderen e-posta adresi |
 
 ---
 
@@ -1866,8 +1869,8 @@ Birden fazla pod aynı anda tarama yapmaz. DB tabanlı kilit (TTL: 10 dk) yalnı
 | BouncyCastle | 1.78.1 |
 | React / Vite | 18.3 / 5.4 |
 | PostgreSQL | 16-alpine |
-| Docker Image | `ghcr.io/inanmise/certmonitor` |
-| Helm Chart | `ghcr.io/inanmise/certmonitor-chart` |
+| Docker Image | `ghcr.io/inanmise/site-monitor` |
+| Helm Chart | `ghcr.io/inanmise/sitemonitor-chart` |
 | Backend Test Sayısı | 835 |
 | Frontend Test Sayısı | 121 |
 | Desteklenen Diller | Türkçe / İngilizce |
@@ -1916,5 +1919,5 @@ Birden fazla pod aynı anda tarama yapmaz. DB tabanlı kilit (TTL: 10 dk) yalnı
 
 ---
 
-*Bu belge CertMonitor v18.83.x için Haziran 2026 itibarıyla hazırlanmıştır.*  
+*Bu belge Site Monitör v18.83.x için Haziran 2026 itibarıyla hazırlanmıştır.*  
 *Güncellemeler için: "raporu güncelle" komutu ile belge yenilenebilir.*

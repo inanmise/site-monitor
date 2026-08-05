@@ -1,11 +1,11 @@
 # NetworkPolicy — lateral-movement sınırlama (CWE-923).
 #
-# NOT: cert-monitor giden bağlantılarında KEYFİ host:port'a çıkar (izleme aracı → RDAP/OCSP/SMTP/HTTP/port
+# NOT: site-monitor giden bağlantılarında KEYFİ host:port'a çıkar (izleme aracı → RDAP/OCSP/SMTP/HTTP/port
 # monitörleri). Bu yüzden app pod'una EGRESS kısıtı UYGULANMAZ (izlemeyi bozar); SSRF app düzeyinde SsrfGuard
 # ile ele alınır. Buradaki yüksek-değer + güvenli politika: Postgres'e erişimi YALNIZ app pod'una kısıtlamak.
 
 ---
-# 1) Postgres: ingress yalnız cert-monitor app pod'larından :5432 (başka hiçbir pod DB'ye ulaşamaz).
+# 1) Postgres: ingress yalnız site-monitor app pod'larından :5432 (başka hiçbir pod DB'ye ulaşamaz).
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -20,7 +20,7 @@ spec:
     - from:
         - podSelector:
             matchLabels:
-              app: cert-monitor
+              app: site-monitor
       ports:
         - protocol: TCP
           port: 5432
@@ -32,11 +32,11 @@ spec:
 # apiVersion: networking.k8s.io/v1
 # kind: NetworkPolicy
 # metadata:
-#   name: cert-monitor-ingress
+#   name: site-monitor-ingress
 # spec:
 #   podSelector:
 #     matchLabels:
-#       app: cert-monitor
+#       app: site-monitor
 #   policyTypes:
 #     - Ingress
 #   ingress:

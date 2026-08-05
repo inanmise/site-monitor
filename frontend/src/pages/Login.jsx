@@ -12,7 +12,9 @@ import { useBranding } from '../contexts/BrandingProvider.jsx'
 import { downscaleImage } from '../utils/imageDownscale.js'
 import { ShieldAlert, ShieldCheck, Lock, Globe, Activity, Radio, Network, Server, Search, Gauge, Bell, AlertTriangle, FileText, Wrench, X } from 'lucide-react'
 
-const STORAGE_KEY = 'cert-monitor-remembered-user'
+// App.jsx logout temizliği de bu anahtarı kullanır — tek kaynak buradan export edilir.
+export const REMEMBER_KEY = 'site-monitor-remembered-user'
+const STORAGE_KEY = REMEMBER_KEY
 
 export default function Login({ onLogin, sessionExpired = false }) {
   const t = useT()
@@ -257,7 +259,7 @@ export default function Login({ onLogin, sessionExpired = false }) {
         <div className="lp-left-inner">
           {/* Üst: wordmark + ENTERPRISE rozeti */}
           <div className="lp-top">
-            <span className="lp-wordmark">{brand('app_name', 'CertMonitor')}</span>
+            <span className="lp-wordmark">{brand('app_name', 'Site Monitör')}</span>
             <span className="lp-badge">ENTERPRISE</span>
           </div>
 
@@ -310,7 +312,7 @@ export default function Login({ onLogin, sessionExpired = false }) {
             </div>
             <div className="lp-footer">
               <span className="lp-footer-meta">
-                {brand('footer_text', `v${__APP_VERSION__} · © ${new Date().getFullYear()} ${brand('app_name', 'CertMonitor')}`)}
+                {brand('footer_text', `v${__APP_VERSION__} · © ${new Date().getFullYear()} ${brand('app_name', 'Site Monitör')}`)}
               </span>
               <button type="button" className="lp-lang-btn" onClick={toggleLang}>
                 <Globe size={13} />
@@ -336,7 +338,7 @@ export default function Login({ onLogin, sessionExpired = false }) {
           {/* Üst açıklama (branding override'lı) */}
           <div className="lp-intro">
             {branding.logo_data && (
-              <img src={branding.logo_data} alt={brand('app_name', 'CertMonitor')}
+              <img src={branding.logo_data} alt={brand('app_name', 'Site Monitör')}
                    style={{ maxHeight: 40, maxWidth: 200, marginBottom: 10 }} />
             )}
             <div className="lp-intro-badge">

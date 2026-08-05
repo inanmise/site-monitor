@@ -1,0 +1,22 @@
+apiVersion: v2
+name: sitemonitor-chart
+description: SSL/TLS Certificate Monitoring System with alerting, escalation, and Kubernetes-native HA support.
+type: application
+version: 20.0.0
+appVersion: "20.0.0"
+keywords:
+  - certificate
+  - ssl
+  - tls
+  - monitoring
+  - alerting
+home: https://github.com/inanmise/site-monitor
+sources:
+  - https://github.com/inanmise/site-monitor
+maintainers:
+  - name: inanmise
+    email: erdi.inanmis@gmail.com
+# Bundled Bitnami postgresql subchart KALDIRILDI: hiçbir ortam onu enable etmiyordu
+# (postgresql.enabled=false her yerde; prod dış/yönetilen DB, self-hosted için k8s/postgres.yaml var)
+# ve Bitnami'nin legacy Helm repo'su (charts.bitnami.com/bitnami) kullanımdan kalkıp CI'da
+# "helm dep update" adımını timeout'a düşürüyordu. Gerekirse ileride OCI kaynağıyla geri eklenebilir.

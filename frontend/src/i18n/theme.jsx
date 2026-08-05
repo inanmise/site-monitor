@@ -1,6 +1,6 @@
 import { createContext, useContext, useState, useEffect, useCallback } from 'react'
 
-const STORAGE_KEY = 'cert-monitor-theme'
+const STORAGE_KEY = 'site-monitor-theme'
 
 const ThemeCtx = createContext(null)
 
