@@ -3,6 +3,8 @@ import { BarChart3, ChevronDown } from 'lucide-react'
 import { useT } from '../i18n/index.jsx'
 import { formatDate } from '../api/client'
 import SearchableSelect from './ui/SearchableSelect.jsx'
+import PaginationBar from './ui/PaginationBar.jsx'
+import { usePagination } from '../hooks/usePagination.js'
 
 // ── Tier meta ────────────────────────────────────────────────────────────────
 const TIER_META = {
@@ -101,12 +103,6 @@ function certCellStatus(c) {
   return 'valid'
 }
 
-function buildPageRange(current, total, max = 5) {
-  let start = Math.max(1, current - Math.floor(max / 2))
-  let end   = Math.min(total, start + max - 1)
-  if (end - start + 1 < max) start = Math.max(1, end - max + 1)
-  return Array.from({ length: end - start + 1 }, (_, i) => start + i)
-}
 
 function defaultPriority(c) {
   const tier = c.tier ?? 99
@@ -229,8 +225,6 @@ export default function StatsView({ certs = [], teamStats, onRowClick, onAddDoma
   const [filterIssuer, setFilterIssuer] = useState('')
   const [filterStatus, setFilterStatus] = useState('')
   const [sortBy, setSortBy]             = useState('priority|asc')
-  const [perPage, setPerPage]           = useState(20)
-  const [page, setPage]                 = useState(1)
 
   const filtered = useMemo(() => {
     let result = certs
@@ -272,17 +266,19 @@ export default function StatsView({ certs = [], teamStats, onRowClick, onAddDoma
     })
   }, [certs, tierFilter, teamFilter, statusFilter, filterDomain, filterIssuer, filterStatus, sortBy])
 
-  const totalPages = Math.max(1, Math.ceil(filtered.length / perPage))
-  const safePage   = Math.min(page, totalPages)
-  const pageItems  = filtered.slice((safePage - 1) * perPage, safePage * perPage)
+  // Sayfalama standardı: filtre/sıralama değişince hook kendisi 1. sayfaya döner.
+  const pager = usePagination(filtered, {
+    listKey: 'stats-table',
+    resetDeps: [tierFilter, teamFilter, statusFilter, filterDomain, filterIssuer, filterStatus, sortBy],
+  })
 
   function clearWidgetFilters() {
-    setTierFilter(null); setTeamFilter(null); setStatusFilter(null); setPage(1)
+    setTierFilter(null); setTeamFilter(null); setStatusFilter(null); pager.setPage(1)
   }
   function resetAll() {
     setTierFilter(null); setTeamFilter(null); setStatusFilter(null)
     setFilterDomain(''); setFilterIssuer(''); setFilterStatus('')
-    setSortBy('priority|asc'); setPerPage(20); setPage(1)
+    setSortBy('priority|asc'); pager.setPage(1)
   }
 
   const hasTableFilter  = filterDomain || filterIssuer || filterStatus
@@ -316,7 +312,7 @@ export default function StatsView({ certs = [], teamStats, onRowClick, onAddDoma
           setTeamFilter={setTeamFilter}
           statusFilter={statusFilter}
           setStatusFilter={setStatusFilter}
-          setPage={setPage}
+          setPage={pager.setPage}
         />
       )}
 
@@ -327,7 +323,7 @@ export default function StatsView({ certs = [], teamStats, onRowClick, onAddDoma
           {teamFilter && (
             <span className="sv-chip sv-chip-team">
               {teamFilter.label}
-              <button className="sv-chip-x" onClick={() => { setTeamFilter(null); setPage(1) }}>✕</button>
+              <button className="sv-chip-x" onClick={() => { setTeamFilter(null); pager.setPage(1) }}>✕</button>
             </span>
           )}
           {tierFilter !== null && (
@@ -335,13 +331,13 @@ export default function StatsView({ certs = [], teamStats, onRowClick, onAddDoma
               {tierFilter === 0
                 ? t('tier.descNone')
                 : `${TIER_META[tierFilter]?.label} — ${t(TIER_META[tierFilter]?.descKey)}`}
-              <button className="sv-chip-x" onClick={() => { setTierFilter(null); setPage(1) }}>✕</button>
+              <button className="sv-chip-x" onClick={() => { setTierFilter(null); pager.setPage(1) }}>✕</button>
             </span>
           )}
           {statusFilter && (
             <span className="sv-chip sv-chip-status">
               {t(`ts.${statusFilter}`)}
-              <button className="sv-chip-x" onClick={() => { setStatusFilter(null); setPage(1) }}>✕</button>
+              <button className="sv-chip-x" onClick={() => { setStatusFilter(null); pager.setPage(1) }}>✕</button>
             </span>
           )}
           <button className="sv-clear-all" onClick={clearWidgetFilters}>{t('app.clearFilter')}</button>
@@ -354,7 +350,7 @@ export default function StatsView({ certs = [], teamStats, onRowClick, onAddDoma
           <label>{t('tbl.domainSearch')}</label>
           <div className="sv-domain-row">
             <input className="filter-input" placeholder={t('tbl.domainPh')} value={filterDomain}
-              onChange={e => { setFilterDomain(e.target.value); setPage(1) }} />
+              onChange={e => { setFilterDomain(e.target.value); pager.setPage(1) }} />
             {canAddDomain && onAddDomain && (
               <button className="btn btn-success sv-add-domain" onClick={onAddDomain}>{t('inv.addBtn')}</button>
             )}
@@ -363,13 +359,13 @@ export default function StatsView({ certs = [], teamStats, onRowClick, onAddDoma
         <div className="filter-group">
           <label>{t('tbl.issuerSearch')}</label>
           <input className="filter-input" placeholder={t('tbl.issuerPh')} value={filterIssuer}
-            onChange={e => { setFilterIssuer(e.target.value); setPage(1) }} />
+            onChange={e => { setFilterIssuer(e.target.value); pager.setPage(1) }} />
         </div>
         <div className="filter-group">
           <label>{t('tbl.colStatus')}</label>
           <SearchableSelect
             value={filterStatus}
-            onChange={v => { setFilterStatus(v); setPage(1) }}
+            onChange={v => { setFilterStatus(v); pager.setPage(1) }}
             options={STATUS_OPTIONS.map(o => ({ value: o.value, label: t(o.labelKey) }))}
           />
         </div>
@@ -377,7 +373,7 @@ export default function StatsView({ certs = [], teamStats, onRowClick, onAddDoma
           <label>{t('tbl.sort')}</label>
           <SearchableSelect
             value={sortBy}
-            onChange={v => { setSortBy(v); setPage(1) }}
+            onChange={v => { setSortBy(v); pager.setPage(1) }}
             options={[
               { value: 'priority|asc',        label: t('tbl.sortPriority') },
               { value: 'domain|asc',          label: t('tbl.sortDomainAsc') },
@@ -387,19 +383,6 @@ export default function StatsView({ certs = [], teamStats, onRowClick, onAddDoma
               { value: 'days_remaining|asc',  label: t('tbl.sortDaysAsc') },
               { value: 'days_remaining|desc', label: t('tbl.sortDaysDesc') },
               { value: 'checked_at|desc',     label: t('tbl.sortChecked') },
-            ]}
-          />
-        </div>
-        <div className="filter-group">
-          <label>{t('tbl.perPage')}</label>
-          <SearchableSelect
-            value={perPage}
-            onChange={v => { setPerPage(Number(v)); setPage(1) }}
-            options={[
-              { value: 10,  label: '10' },
-              { value: 20,  label: '20' },
-              { value: 50,  label: '50' },
-              { value: 100, label: '100' },
             ]}
           />
         </div>
@@ -426,9 +409,9 @@ export default function StatsView({ certs = [], teamStats, onRowClick, onAddDoma
           </tr>
         </thead>
         <tbody>
-          {pageItems.length === 0 ? (
+          {pager.pageItems.length === 0 ? (
             <tr><td colSpan={9} className="loading">{t('tbl.noCerts')}</td></tr>
-          ) : pageItems.map(cert => {
+          ) : pager.pageItems.map(cert => {
             const days = cert.days_remaining
             const isCritical  = cert.status !== 'error' && days !== null && days >= 0 && days <= 30
             const statusClass = cert.status === 'error' ? 'status-error'
@@ -470,26 +453,7 @@ export default function StatsView({ certs = [], teamStats, onRowClick, onAddDoma
       </table>
 
       {/* ── Pagination ── */}
-      <div className="pagination-controls">
-        <div className="pagination-info">
-          {t('tbl.total', filtered.length, safePage, totalPages)}
-        </div>
-        <div className="pagination-buttons">
-          <button className="btn btn-secondary" disabled={safePage <= 1}
-            onClick={() => setPage(p => p - 1)}>{t('tbl.prev')}</button>
-          <span className="page-numbers">
-            {buildPageRange(safePage, totalPages).map(n => (
-              <button key={n}
-                className={`page-btn${n === safePage ? ' active' : ''}`}
-                disabled={n === safePage}
-                onClick={() => setPage(n)}
-              >{n}</button>
-            ))}
-          </span>
-          <button className="btn btn-secondary" disabled={safePage >= totalPages}
-            onClick={() => setPage(p => p + 1)}>{t('tbl.next')}</button>
-        </div>
-      </div>
+      <PaginationBar {...pager} />
     </div>
   )
 }

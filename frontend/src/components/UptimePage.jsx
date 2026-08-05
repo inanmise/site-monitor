@@ -3,13 +3,14 @@ import { createPortal } from 'react-dom'
 import { api, formatDate } from '../api/client'
 import { useT } from '../i18n/index.jsx'
 import { useVisibleInterval } from '../hooks/useVisibleInterval'
+import { usePagination } from '../hooks/usePagination.js'
+import PaginationBar from './ui/PaginationBar.jsx'
 import { RefreshCw, X, AlertCircle, CheckCircle, Users } from 'lucide-react'
 import DateTimeRangePicker from './ui/DateTimeRangePicker.jsx'
 import DiagnosticsModal from './admin/DiagnosticsModal.jsx'
 import SearchableSelect from './ui/SearchableSelect.jsx'
 
 const REFRESH_INTERVAL = 60
-const PAGE_SIZE = 12
 
 function todayStartDate() { const d = new Date(); d.setHours(0, 0, 0, 0); return d }
 function toApiStr(date)   { return date.toISOString().slice(0, 16) }
@@ -23,7 +24,6 @@ export default function UptimePage({ systemRole }) {
   const [sortKey, setSortKey]           = useState('default')
   const [search, setSearch]             = useState('')
   const [teamFilter, setTeamFilter]     = useState('all')
-  const [page, setPage]                 = useState(1)
   const [selected, setSelected]         = useState(null)
   const [diag, setDiag]                 = useState(null)   // { domain, port } → DiagnosticsModal
   const [httpHistory, setHttpHistory]   = useState([])
@@ -115,7 +115,6 @@ export default function UptimePage({ systemRole }) {
     return list
   }, [items, filterStatus, sortKey, search, teamFilter])
 
-  useEffect(() => { setPage(1) }, [filterStatus, sortKey, search, teamFilter])
 
   // Takım filtresi seçenekleri — listeden türetilir (dashboard deseni).
   const teamOptions = (() => {
@@ -129,20 +128,10 @@ export default function UptimePage({ systemRole }) {
   })()
   const hasTeamOptions = teamOptions.some(o => o.value !== 'all' && o.value !== '__none__')
 
-  const totalPages = Math.max(1, Math.ceil(displayItems.length / PAGE_SIZE))
-  const safePage   = Math.min(page, totalPages)
-  const pagedItems = displayItems.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE)
-
-  function pageNumbers(total, current) {
-    if (total <= 7) return Array.from({ length: total }, (_, i) => i + 1)
-    const pages = new Set([1, total, current, current - 1, current + 1])
-    return [...pages].filter(p => p >= 1 && p <= total).sort((a, b) => a - b)
-      .reduce((acc, p, i, arr) => {
-        if (i > 0 && p - arr[i - 1] > 1) acc.push('…')
-        acc.push(p)
-        return acc
-      }, [])
-  }
+  // Sayfalama standardı: usePagination + PaginationBar (pageNumbers artık bileşenin içinde).
+  const pager = usePagination(displayItems, {
+    listKey: 'uptime', resetDeps: [filterStatus, sortKey, search, teamFilter],
+  })
 
   function statusColor(status) {
     if (status === 'up')   return '#22c55e'
@@ -257,7 +246,7 @@ export default function UptimePage({ systemRole }) {
         <div className="loading">{t('uptime.noData')}</div>
       ) : (
         <div className="upt-grid">
-          {pagedItems.map(item => (
+          {pager.pageItems.map(item => (
             <div
               key={item.domain}
               className={`upt-card ${cardSslClass(item)}`}
@@ -337,33 +326,7 @@ export default function UptimePage({ systemRole }) {
       )}
 
       {/* ── Pagination ── */}
-      {!loading && displayItems.length > PAGE_SIZE && (
-        <div className="upt-pagination">
-          <span className="upt-page-info">
-            {t('uptime.pageInfo')
-              .replace('{0}', (safePage - 1) * PAGE_SIZE + 1)
-              .replace('{1}', Math.min(safePage * PAGE_SIZE, displayItems.length))
-              .replace('{2}', displayItems.length)}
-          </span>
-          <div className="upt-page-btns">
-            <button className="upt-page-btn" disabled={safePage === 1} onClick={() => setPage(p => p - 1)}>
-              {t('uptime.pagePrev')}
-            </button>
-            {pageNumbers(totalPages, safePage).map((p, i) =>
-              p === '…'
-                ? <span key={`ellipsis-${i}`} className="upt-page-ellipsis">…</span>
-                : <button
-                    key={p}
-                    className={`upt-page-btn${safePage === p ? ' upt-page-btn--active' : ''}`}
-                    onClick={() => setPage(p)}
-                  >{p}</button>
-            )}
-            <button className="upt-page-btn" disabled={safePage === totalPages} onClick={() => setPage(p => p + 1)}>
-              {t('uptime.pageNext')}
-            </button>
-          </div>
-        </div>
-      )}
+      {!loading && <PaginationBar {...pager} />}
 
       {/* ── Detail Modal (portal → document.body, bypasses overflow stacking context) ── */}
       {selected && createPortal(

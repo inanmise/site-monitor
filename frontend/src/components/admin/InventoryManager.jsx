@@ -6,6 +6,8 @@ import { InventoryDetails } from '../inventory/InventoryDetails.jsx'
 import { useDialog } from '../ui/Dialog.jsx'
 import { useToast } from '../ui/Toast.jsx'
 import { useT } from '../../i18n/index.jsx'
+import { usePagination } from '../../hooks/usePagination.js'
+import PaginationBar from '../ui/PaginationBar.jsx'
 import { useTheme } from '../../i18n/theme.jsx'
 import SearchableSelect from '../ui/SearchableSelect.jsx'
 import KebabMenu from '../ui/KebabMenu.jsx'
@@ -164,6 +166,9 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
   // ── Toplu seçim (yalnız silinmemiş kayıtlar seçilebilir) ──────────────────
   const [selected, setSelected] = useState(() => new Set())
   const selectableItems = useMemo(() => visibleItems.filter(i => !i.deleted_at), [visibleItems])
+
+  // Sayfalama yalnız RENDER'ı böler; "tümünü seç" filtrelenmiş tüm liste (selectableItems) üzerinde kalır.
+  const pager = usePagination(visibleItems, { listKey: 'inventory', resetDeps: [statusFilter] })
   const allOnPage = selectableItems.length > 0 && selectableItems.every(i => selected.has(i.id))
   const toggleSel = (id) => setSelected(s => {
     const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n
@@ -556,7 +561,7 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
             </tr>
           </thead>
           <tbody>
-            {visibleItems.map((item) => (
+            {pager.pageItems.map((item) => (
               <tr key={item.id} className={item.deleted_at ? 'inv-row-deleted' : ''}>
                 {canManage && (
                   <td onClick={e => e.stopPropagation()}>
@@ -603,6 +608,7 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
             ))}
           </tbody>
         </table>
+        <PaginationBar {...pager} />
       </div>
 
       {/* ── Ana Form Modalı ── */}

@@ -3,6 +3,8 @@ import { createPortal } from 'react-dom'
 import { api, formatDateSec } from '../api/client'
 import { useT } from '../i18n/index.jsx'
 import { useVisibleInterval } from '../hooks/useVisibleInterval'
+import { usePagination } from '../hooks/usePagination.js'
+import PaginationBar from './ui/PaginationBar.jsx'
 import { useToast } from './ui/Toast.jsx'
 import SearchableSelect from './ui/SearchableSelect.jsx'
 import MaintenanceBadge from './ui/MaintenanceBadge.jsx'
@@ -399,6 +401,14 @@ export default function PageMonitorPage({ systemRole, teamId, teamName }) {
     return pred ? scoped.filter(pred) : scoped
   }, [scoped, statFilter])
 
+  // Sayfalama filtrelenmiş listenin ÜZERİNE; sayaç/istatistikler tam listeden hesaplanmaya devam eder.
+  // Geçmiş modalı sayfalaması — 30 sn modal yenilemesi history referansını değiştirir; sayfa korunur.
+  const histPager = usePagination(history, { listKey: 'page-history' })
+
+  const pager = usePagination(displayMonitors, {
+    listKey: 'page-monitors', resetDeps: [search, teamFilter, groupFilter, statFilter],
+  })
+
   const statItems = [
     { key: 'total',    Icon: LayoutDashboard, label: t('page.dashTotal'),    value: counts.total,    cls: 'total'    },
     { key: 'ok',       Icon: CheckCircle2,    label: t('page.dashOk'),       value: counts.ok,       cls: 'valid'    },
@@ -495,8 +505,9 @@ export default function PageMonitorPage({ systemRole, teamId, teamName }) {
       {loading ? <div className="loading">...</div> : monitors.length === 0 ? (
         <div className="loading">{canWrite ? t('page.noMonitorsAdmin') : t('page.noMonitors')}</div>
       ) : (
+        <>
         <div className="upt-grid">
-          {displayMonitors.map(m => (
+          {pager.pageItems.map(m => (
             <div key={m.id} className={`upt-card ${cardClass(m)}${m.active_alarm ? ' upt-card--alarm' : ''}${!m.active ? ' mon-row-inactive' : ''}`}
               onClick={() => openDetail(m)}>
               <div className="upt-card-top">
@@ -547,6 +558,8 @@ export default function PageMonitorPage({ systemRole, teamId, teamName }) {
             </div>
           ))}
         </div>
+        <PaginationBar {...pager} />
+        </>
       )}
 
       {/* ── Detail Modal ── */}
@@ -681,7 +694,7 @@ export default function PageMonitorPage({ systemRole, teamId, teamName }) {
                   <div className="upt-rt-grid upt-rt-head" style={{ gridTemplateColumns: '150px 90px 70px 100px 1fr' }}>
                     <span>{t('page.colTime')}</span><span>{t('page.colStatus')}</span><span>{t('page.mBroken')}</span><span>{t('page.mTimeout')}</span><span>{t('page.mMixed')}</span>
                   </div>
-                  {history.map((c, i) => (
+                  {histPager.pageItems.map((c, i) => (
                     <div key={`${c.checkedAt || c.checked_at || ''}#${i}`} className="upt-rt-grid" style={{ gridTemplateColumns: '150px 90px 70px 100px 1fr' }}>
                       <span className="upt-rt-time">{formatDateSec(c.checkedAt || c.checked_at)}</span>
                       <span style={{ color: STATUS_COLOR[c.status] || STATUS_COLOR.unknown, fontWeight: 600 }}>
@@ -692,6 +705,7 @@ export default function PageMonitorPage({ systemRole, teamId, teamName }) {
                       <span className="upt-rt-ms">{c.mixedContentCount ?? c.mixed_content_count ?? '—'}</span>
                     </div>
                   ))}
+                  <PaginationBar {...histPager} compact />
                 </div>
               )}
             </>)}

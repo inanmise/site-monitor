@@ -1,6 +1,8 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { api, formatDate } from '../api/client'
 import { useT } from '../i18n/index.jsx'
+import PaginationBar from './ui/PaginationBar.jsx'
+import { readPageSize, writePageSize } from '../hooks/usePagination.js'
 import { usePermissions } from '../contexts/PermissionsProvider.jsx'
 import { useToast } from './ui/Toast.jsx'
 import { useDialog } from './ui/Dialog.jsx'
@@ -259,7 +261,7 @@ export default function IncidentHistoryPage() {
   const [rows, setRows]   = useState([])
   const [total, setTotal] = useState(0)
   const [page, setPage]   = useState(0)
-  const [size, setSize]   = useState(20)
+  const [size, setSize]   = useState(() => readPageSize('incident-history'))
   const [loading, setLoading] = useState(false)
   const [trends, setTrends]   = useState(null)
   const [filters, setFilters] = useState({ q: '', severity: '', category: '', status: '', channel: '', team_id: '', since: '', until: '' })
@@ -711,20 +713,15 @@ export default function IncidentHistoryPage() {
       )}
 
       {/* Sayfalama */}
-      {!loading && total > 0 && (
-        <div className="alh-pagination" style={{ marginTop: 10 }}>
-          <div className="alh-page-size">
-            <span>{t('inc.perPage')}</span>
-            {[10, 20, 50].map(n => (
-              <button key={n} className={`alh-size-btn${size === n ? ' is-active' : ''}`} onClick={() => setSize(n)}>{n}</button>
-            ))}
-          </div>
-          <div className="alh-page-info">{t('inc.pageOf', page + 1, totalPages)} · {total} {t('inc.records')}</div>
-          <div className="alh-page-nav">
-            <button disabled={page === 0} onClick={() => setPage(p => p - 1)}><ChevronLeft size={13} /> {t('inc.prev')}</button>
-            <button disabled={page + 1 >= totalPages} onClick={() => setPage(p => p + 1)}>{t('inc.next')} <ChevronRight size={13} /></button>
-          </div>
-        </div>
+      {!loading && (
+        <PaginationBar
+          page={page + 1} totalPages={totalPages} totalItems={total}
+          rangeStart={total === 0 ? 0 : page * size + 1}
+          rangeEnd={Math.min((page + 1) * size, total)}
+          pageSize={size}
+          onPageChange={p => setPage(p - 1)}
+          onPageSizeChange={n => { setSize(n); writePageSize('incident-history', n) }}
+        />
       )}
 
       {modal && <IncidentModal modal={modal} setModal={setModal} save={save} remove={remove}

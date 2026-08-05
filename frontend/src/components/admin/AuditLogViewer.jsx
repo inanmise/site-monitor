@@ -2,6 +2,8 @@ import { useState, useEffect, useCallback } from 'react'
 import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip } from 'recharts'
 import { api, formatDate } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
+import PaginationBar from '../ui/PaginationBar.jsx'
+import { readPageSize, writePageSize } from '../../hooks/usePagination.js'
 import { useVisibleInterval } from '../../hooks/useVisibleInterval.js'
 import SearchableSelect from '../ui/SearchableSelect.jsx'
 import UserBadge from '../ui/UserBadge.jsx'
@@ -228,6 +230,7 @@ export default function AuditLogViewer() {
   const [rows, setRows]           = useState([])
   const [total, setTotal]         = useState(0)
   const [page, setPage]           = useState(0)
+  const [size, setSize]           = useState(() => readPageSize('audit-log'))
   const [loading, setLoading]     = useState(false)
   const [activeCard, setActiveCard] = useState(null)
   const [filters, setFilters]     = useState(readUrlFilters)   // derin-link: URL'den başlat
@@ -306,12 +309,12 @@ export default function AuditLogViewer() {
     api.admin.getAuditStats().then(r => { if (r?.success) setStats(r.data) })
   }, [])
 
-  const loadLogs = useCallback((p = 0, f = filters) => {
+  const loadLogs = useCallback((p = 0, f = filters, sz = size) => {
     setLoading(true)
-    api.admin.getAuditLogs({ page: p, size: 50, ...f }).then(r => {
+    api.admin.getAuditLogs({ page: p, size: sz, ...f }).then(r => {
       if (r?.success) { setRows(r.data); setTotal(r.total); setPage(r.page) }
     }).finally(() => setLoading(false))
-  }, [filters])
+  }, [filters, size])
 
   useEffect(() => { loadStats(); loadLogs(0) }, [])
 
@@ -363,7 +366,7 @@ export default function AuditLogViewer() {
     setActiveCard(null); setActivePreset(null); setFilters(next); writeUrlFilters(next); loadLogs(0, next)
   }
 
-  const totalPages = Math.ceil(total / 50)
+  const totalPages = Math.ceil(total / size)
 
   return (
     <div className="audit-viewer">
@@ -664,15 +667,14 @@ export default function AuditLogViewer() {
       </div>
 
       {/* Pagination */}
-      <div className="audit-pagination">
-        <button disabled={page === 0} onClick={() => loadLogs(page - 1)}>
-          {t('app.prevPage')}
-        </button>
-        <span>{t('audit.pageInfo', page + 1, totalPages || 1, total)}</span>
-        <button disabled={page + 1 >= totalPages} onClick={() => loadLogs(page + 1)}>
-          {t('app.nextPage')}
-        </button>
-      </div>
+      <PaginationBar
+        page={page + 1} totalPages={totalPages || 1} totalItems={total}
+        rangeStart={total === 0 ? 0 : page * size + 1}
+        rangeEnd={Math.min((page + 1) * size, total)}
+        pageSize={size}
+        onPageChange={p => loadLogs(p - 1)}
+        onPageSizeChange={n => { setSize(n); writePageSize('audit-log', n); loadLogs(0, filters, n) }}
+      />
 
       {/* Kaynak geçmişi — dikey zaman-çizelgesi drawer */}
       {timeline && (

@@ -3,6 +3,8 @@ import { api, formatDate } from '../../api/client'
 import { useDialog } from '../ui/Dialog.jsx'
 import { useToast } from '../ui/Toast.jsx'
 import { useT, useDateLocale } from '../../i18n/index.jsx'
+import PaginationBar from '../ui/PaginationBar.jsx'
+import { readPageSize, writePageSize } from '../../hooks/usePagination.js'
 import UserBadge from '../ui/UserBadge.jsx'
 import { mailPreviewSrcDoc, MAIL_PREVIEW_SANDBOX } from '../../utils/mailPreview.js'
 import {
@@ -330,7 +332,7 @@ export default function AlertHistory({ domain = null }) {
   const [alerts,       setAlerts]       = useState([])
   const [tab,          setTab]          = useState('open')
   const [page,         setPage]         = useState(0)
-  const [pageSize,     setPageSize]     = useState(20)
+  const [pageSize,     setPageSize]     = useState(() => readPageSize('alert-history'))
   const [total,        setTotal]        = useState(0)
   const [closedFrom,   setClosedFrom]   = useState(null)
   const [closedTo,     setClosedTo]     = useState(null)
@@ -895,42 +897,15 @@ export default function AlertHistory({ domain = null }) {
         </div>
       )}
 
-      {!loading && total > 0 && (
-        <div className="alh-pagination">
-          <div className="alh-page-size">
-            <span>{t('alh.perPage')}</span>
-            {[10, 20, 50].map(n => (
-              <button
-                key={n}
-                type="button"
-                className={`alh-size-btn${pageSize === n ? ' is-active' : ''}`}
-                onClick={() => setPageSize(n)}
-              >
-                {n}
-              </button>
-            ))}
-          </div>
-          <div className="alh-page-info">
-            {t('alh.pageOf', page + 1, totalPages)}
-            <span className="alh-page-total"> · {total} {t('alh.alertCount')}</span>
-          </div>
-          <div className="alh-page-nav">
-            <button
-              type="button"
-              disabled={page === 0}
-              onClick={() => setPage(p => Math.max(0, p - 1))}
-            >
-              <ChevronLeft size={13} /> {t('alh.prev')}
-            </button>
-            <button
-              type="button"
-              disabled={(page + 1) >= totalPages}
-              onClick={() => setPage(p => p + 1)}
-            >
-              {t('alh.next')} <ChevronRight size={13} />
-            </button>
-          </div>
-        </div>
+      {!loading && (
+        <PaginationBar
+          page={page + 1} totalPages={totalPages} totalItems={total}
+          rangeStart={total === 0 ? 0 : page * pageSize + 1}
+          rangeEnd={Math.min((page + 1) * pageSize, total)}
+          pageSize={pageSize}
+          onPageChange={p => setPage(p - 1)}
+          onPageSizeChange={n => { setPageSize(n); writePageSize('alert-history', n) }}
+        />
       )}
 
       {notifyModal && (

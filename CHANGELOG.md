@@ -9,6 +9,16 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- **Tüm liste görünümlerinde standart sayfalama.** 8 izleme türü sayfası (HTTP/Ping/Port/DNS/Alan Adı/Kelime/Sayfa
+  Bütünlüğü/Sentetik), Uptime, Dashboard sertifika kartları, Envanter ve Bakım Pencereleri artık sayfalanıyor —
+  hiçbir görünüm 200'den fazla kaydı aynı anda render etmiyor. Tek ortak bileşen (`PaginationBar` + `usePagination`):
+  sayfa boyutları **25/50/100/200** (varsayılan 50, görünüm bazında kalıcı), «İlk/Önceki/numaralı/Sonraki/Son»
+  gezinme, "Sayfa X/Y · A–B / N kayıt" bilgisi, 10+ sayfada "Sayfaya git" girişi. Modal içi kontrol geçmişleri
+  compact varyantla sayfalı (Sayfa/Alan Adı/Sentetik'e yeni eklendi); sunucu-taraflı listeler (Tüm Sertifikalar,
+  Alarm Geçmişi, Olay Geçmişi, Denetim Kaydı, İstatistik tablosu, Kendi Kayıtlarım, Giriş Sorunları) aynı bileşene
+  taşındı ve Denetim Kaydı'nda sayfa boyutu artık seçilebilir. Filtre/arama değişiminde sayfa 1'e döner; veri
+  küçülünce sayfa otomatik düzeltilir; 60 sn'lik oto-yenileme sayfa konumunu bozmaz; `?monitor=` derin bağlantıları
+  hedef kayıt hangi sayfada olursa olsun çalışır.
 - **Senaryo İzleme (Scripted Check / k6) — 10. izleme türü.** Kullanıcı tanımlı k6 scriptleri periyodik olarak tek
   iterasyon çalıştırılır (`--vus 1 --iterations 1`) ve sonucuna göre sağlık kararı üretilir (PASS/FAIL/ERROR/TIMEOUT) —
   çok adımlı akışların (OIDC/Keycloak login, API zincirleri) uçtan uca izlenmesi. k6 GÖMÜLMEZ; imaja `K6_VERSION`

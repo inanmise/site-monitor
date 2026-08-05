@@ -3,6 +3,8 @@ import { createPortal } from 'react-dom'
 import { api, formatDateSec } from '../api/client'
 import { useT } from '../i18n/index.jsx'
 import { useVisibleInterval } from '../hooks/useVisibleInterval'
+import { usePagination } from '../hooks/usePagination.js'
+import PaginationBar from './ui/PaginationBar.jsx'
 import { useToast } from './ui/Toast.jsx'
 import SearchableSelect from './ui/SearchableSelect.jsx'
 import MaintenanceBadge from './ui/MaintenanceBadge.jsx'
@@ -301,6 +303,14 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName }) {
     return sorted
   }, [scoped, statFilter, sortBy])
 
+  // Sayfalama filtrelenmiş listenin ÜZERİNE; sayaç/istatistikler tam listeden hesaplanmaya devam eder.
+  // Geçmiş modalı sayfalaması — modal yenilemesi history referansını değiştirir; sayfa korunur.
+  const histPager = usePagination(history, { listKey: 'domain-history' })
+
+  const pager = usePagination(displayMonitors, {
+    listKey: 'domain-monitors', resetDeps: [search, teamFilter, groupFilter, statFilter, sortBy],
+  })
+
   const statItems = [
     { key: 'total',    Icon: LayoutDashboard,  label: t('dom.dashTotal'),    value: counts.total,    cls: 'total'    },
     { key: 'ok',       Icon: CheckCircle2,     label: t('dom.dashOk'),       value: counts.ok,       cls: 'valid'    },
@@ -387,8 +397,9 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName }) {
       {loading ? <div className="loading">...</div> : monitors.length === 0 ? (
         <div className="loading">{canWrite ? t('dom.noMonitorsAdmin') : t('dom.noMonitors')}</div>
       ) : (
+        <>
         <div className="upt-grid">
-          {displayMonitors.map(m => (
+          {pager.pageItems.map(m => (
             <div key={m.id} className={`upt-card upt-card--${statusCls(m.status)}${m.active_alarm ? ' upt-card--alarm' : ''}${!m.active ? ' mon-row-inactive' : ''}`}
               onClick={() => openDetail(m)}>
               <div className="upt-card-top">
@@ -438,6 +449,8 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName }) {
             </div>
           ))}
         </div>
+        <PaginationBar {...pager} />
+        </>
       )}
 
       {/* ── Detail Modal ── */}
@@ -495,7 +508,7 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName }) {
                     <span>{t('dom.colTime')}</span><span>{t('dom.colSource')}</span><span>{t('dom.colExpiry')}</span>
                     <span>{t('dom.daysLeft')}</span><span>{t('dom.colStatus')}</span><span>{t('dom.registrar')}</span><span>{t('dom.colIps')}</span>
                   </div>
-                  {history.map((c, i) => {
+                  {histPager.pageItems.map((c, i) => {
                     const cDays = c.days_remaining ?? c.daysRemaining
                     const cExp = c.expiry_date || c.expiryDate
                     const cAt = c.checked_at || c.checkedAt
@@ -512,6 +525,7 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName }) {
                     </div>
                     )
                   })}
+                  <PaginationBar {...histPager} compact />
                 </div>
               )}
             </>)}

@@ -14,6 +14,8 @@ import { Play, Pencil, Copy, X, RefreshCw, Plus, Trash2, Globe, Users, Layers, F
   Mail, MessageSquare, Phone, Smartphone } from 'lucide-react'
 import { duplicateName } from '../utils/duplicateName.js'
 import { normalizeUrl } from '../utils/normalizeUrl.js'
+import { usePagination } from '../hooks/usePagination.js'
+import PaginationBar from './ui/PaginationBar.jsx'
 import AlertHistory from './admin/AlertHistory.jsx'
 import MonitorStatsBar from './MonitorStatsBar.jsx'
 const ResponseTimeChart = lazy(() => import('./ResponseTimeChart.jsx'))
@@ -77,8 +79,6 @@ export default function HttpMonitorPage({ systemRole, teamId, teamName }) {
   const [testing, setTesting] = useState(false)
   const [testResult, setTestResult] = useState(null)
   const [detailTab, setDetailTab] = useState('control')
-  const [historyPage, setHistoryPage] = useState(0)
-  const [historyPageSize, setHistoryPageSize] = useState(50)
   const [search, setSearch] = useState('')
   const [teamFilter, setTeamFilter] = useState('all')
   const [groupFilter, setGroupFilter] = useState('all')
@@ -138,8 +138,8 @@ export default function HttpMonitorPage({ systemRole, teamId, teamName }) {
     }
     setHistoryLoading(false)
   }
-  function selectRange(id, days) { setRangeDays(days); setHistoryPage(0); loadHistory(id, days) }
-  function openDetail(m) { setSelected(m); setHistory([]); setHistoryPage(0); setDetailTab('control'); loadHistory(m.id, rangeDays) }
+  function selectRange(id, days) { setRangeDays(days); histPager.setPage(1); loadHistory(id, days) }
+  function openDetail(m) { setSelected(m); setHistory([]); histPager.setPage(1); setDetailTab('control'); loadHistory(m.id, rangeDays) }
   function closeDetail() { setSelected(null); setHistory([]) }
 
   function openNew() {
@@ -291,6 +291,11 @@ export default function HttpMonitorPage({ systemRole, teamId, teamName }) {
     return pred ? scoped.filter(pred) : scoped
   }, [scoped, statFilter])
 
+  // Sayfalama filtrelenmiş listenin ÜZERİNE; sayaç/istatistikler tam listeden hesaplanmaya devam eder.
+  const pager = usePagination(displayMonitors, {
+    listKey: 'http-monitors', resetDeps: [search, teamFilter, groupFilter, statFilter],
+  })
+
   const statItems = [
     { key: 'total',   Icon: LayoutDashboard, label: t('http.dashTotal'),   value: counts.total,   cls: 'total'    },
     { key: 'up',      Icon: CheckCircle2,    label: t('http.dashUp'),      value: counts.up,      cls: 'valid'    },
@@ -301,11 +306,8 @@ export default function HttpMonitorPage({ systemRole, teamId, teamName }) {
   ]
   const onStatClick = (key) => setStatFilter(k => k === key ? null : key)
 
-  const histTotalPages = Math.max(1, Math.ceil(history.length / historyPageSize))
-  const histSafePage = Math.min(historyPage, histTotalPages - 1)
-  const histStart = histSafePage * historyPageSize
-  const histEnd = Math.min(histStart + historyPageSize, history.length)
-  const pagedHistory = history.slice(histStart, histEnd)
+  // Geçmiş modalı sayfalaması — 30 sn modal yenilemesi history referansını değiştirir; sayfa korunur.
+  const histPager = usePagination(history, { listKey: 'http-history' })
   const toggleStats = () => { if (statsVisible) setStatFilter(null); setStatsVisible(v => !v) }
 
   function cardClass(m) {
@@ -390,8 +392,9 @@ export default function HttpMonitorPage({ systemRole, teamId, teamName }) {
       {loading ? <div className="loading">...</div> : monitors.length === 0 ? (
         <div className="loading">{canWrite ? t('http.noMonitorsAdmin') : t('http.noMonitors')}</div>
       ) : (
+        <>
         <div className="upt-grid">
-          {displayMonitors.map(m => (
+          {pager.pageItems.map(m => (
             <div key={m.id} className={`upt-card ${cardClass(m)}${m.active_alarm ? ' upt-card--alarm' : ''}${!m.active ? ' mon-row-inactive' : ''}`}
               onClick={() => openDetail(m)}>
               <div className="upt-card-top">
@@ -436,6 +439,8 @@ export default function HttpMonitorPage({ systemRole, teamId, teamName }) {
             </div>
           ))}
         </div>
+        <PaginationBar {...pager} />
+        </>
       )}
 
       {/* ── Detail Modal ── */}
@@ -493,7 +498,7 @@ export default function HttpMonitorPage({ systemRole, teamId, teamName }) {
                   <div className="upt-rt-grid upt-rt-head">
                     <span>{t('http.colTime')}</span><span>{t('http.colStatus')}</span><span>HTTP</span><span>{t('http.colDetail')}</span>
                   </div>
-                  {pagedHistory.map((c, i) => (
+                  {histPager.pageItems.map((c, i) => (
                     <div key={`${c.checkedAt || c.checked_at || ''}#${i}`} className="upt-rt-grid">
                       <span className="upt-rt-time">{formatDateSec(c.checkedAt || c.checked_at)}</span>
                       <span className={c.ok ? 'upt-rt-up' : 'upt-rt-down'}>{c.ok ? t('http.statusOk') : (c.error ? t('http.statusError') : t('http.statusDown'))}</span>
@@ -503,27 +508,7 @@ export default function HttpMonitorPage({ systemRole, teamId, teamName }) {
                         : <span className="upt-rt-ms">{(c.responseMs ?? c.response_ms) != null ? `${c.responseMs ?? c.response_ms} ms` : '—'}</span>}
                     </div>
                   ))}
-                  {history.length > 0 && (
-                    <div className="dns-history-pagination" style={{ marginTop: 10 }}>
-                      <div className="dash-page-sizer">
-                        <span className="dash-page-sizer-label">{t('app.perPage')}</span>
-                        {[50, 100, 200].map(n => (
-                          <button key={n} type="button" className={`dash-size-btn${historyPageSize === n ? ' active' : ''}`}
-                            onClick={() => { setHistoryPageSize(n); setHistoryPage(0) }}>{n}</button>
-                        ))}
-                      </div>
-                      {histTotalPages > 1 && (
-                        <div className="dash-page-nav">
-                          <button type="button" className="page-btn" disabled={histSafePage <= 0} onClick={() => setHistoryPage(0)}>«</button>
-                          <button type="button" className="page-btn" disabled={histSafePage <= 0} onClick={() => setHistoryPage(histSafePage - 1)}>{t('app.prevPage')}</button>
-                          <span className="dash-page-info-mini">{histSafePage + 1} / {histTotalPages}</span>
-                          <button type="button" className="page-btn" disabled={histSafePage >= histTotalPages - 1} onClick={() => setHistoryPage(histSafePage + 1)}>{t('app.nextPage')}</button>
-                          <button type="button" className="page-btn" disabled={histSafePage >= histTotalPages - 1} onClick={() => setHistoryPage(histTotalPages - 1)}>»</button>
-                        </div>
-                      )}
-                      <span className="dash-page-info">{t('dns.pageInfo', histStart + 1, histEnd, history.length)}</span>
-                    </div>
-                  )}
+                  <PaginationBar {...histPager} compact />
                 </div>
               )}
             </>)}

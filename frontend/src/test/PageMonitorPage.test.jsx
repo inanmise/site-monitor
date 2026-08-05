@@ -286,4 +286,29 @@ describe('PageMonitorPage', () => {
     await screen.findByText(/voting\.institutionalinvestor\.com/)
     expect(screen.queryByRole('button', { name: /hariç tut$|^exclude$|zaten hariç|already matches/i })).toBeNull()
   })
+
+  it('sayfalama: 120 kayıt → 50 kart + "Page 1 of 3"; Sonraki → 51.; tek sayfada nav yok', async () => {
+    localStorage.clear()
+    const many = Array.from({ length: 120 }, (_, i) => ({ ...monitor, id: i + 1, url: `https://m${i + 1}.example.com/` }))
+    api.monitoring.getPageMonitors.mockResolvedValue({ success: true, data: many })
+    const { container, unmount } = render(<PageMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
+    await waitFor(() => expect(api.monitoring.getPageMonitors).toHaveBeenCalled())
+    await screen.findByText('https://m1.example.com/')
+    expect(container.querySelectorAll('.upt-card')).toHaveLength(50)
+    expect(screen.getByText('Page 1 of 3')).toBeInTheDocument()
+    expect(screen.getByText('1–50 of 120 records')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Next' }))
+    await screen.findByText('https://m51.example.com/')
+    expect(screen.queryByText('https://m1.example.com/')).toBeNull()
+    expect(screen.getByText('51–100 of 120 records')).toBeInTheDocument()
+    unmount()
+
+    // Tek sayfa (30 kayıt): gezinme yok ama kayıt bilgisi var
+    api.monitoring.getPageMonitors.mockResolvedValue({ success: true, data: many.slice(0, 30) })
+    render(<PageMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
+    await screen.findByText('https://m1.example.com/')
+    expect(screen.getByText('1–30 of 30 records')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Next' })).toBeNull()
+  })
 })

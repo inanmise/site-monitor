@@ -2,6 +2,8 @@ import { useState, useEffect, useCallback } from 'react'
 import { api, formatDate } from '../api/client'
 import { useT } from '../i18n/index.jsx'
 import SearchableSelect from './ui/SearchableSelect.jsx'
+import PaginationBar from './ui/PaginationBar.jsx'
+import { readPageSize, writePageSize } from '../hooks/usePagination.js'
 
 const EVENT_TYPES = [
   'LOGIN', 'LOGIN_FAILED', 'LOGOUT',
@@ -10,7 +12,6 @@ const EVENT_TYPES = [
 ]
 const OUTCOMES = ['SUCCESS', 'FAILURE', 'BLOCKED']
 const EMPTY_FILTERS = { eventType: '', outcome: '', since: '', until: '' }
-const PAGE_SIZE = 50
 
 function eventClass(et) {
   if (!et) return ''
@@ -30,20 +31,21 @@ export default function MyAuditLog() {
   const [page, setPage] = useState(0)
   const [loading, setLoading] = useState(false)
   const [filters, setFilters] = useState(EMPTY_FILTERS)
+  const [size, setSize] = useState(() => readPageSize('my-audit'))
 
-  const loadLogs = useCallback((p = 0, f = filters) => {
+  const loadLogs = useCallback((p = 0, f = filters, sz = size) => {
     setLoading(true)
-    api.me.getMyAudit({ page: p, size: PAGE_SIZE, ...f }).then(r => {
+    api.me.getMyAudit({ page: p, size: sz, ...f }).then(r => {
       if (r?.success) { setRows(r.data || []); setTotal(r.total || 0); setPage(r.page ?? p) }
     }).finally(() => setLoading(false))
-  }, [filters])
+  }, [filters, size])
 
   useEffect(() => { loadLogs(0) }, [])
 
   function applyFilters() { loadLogs(0, filters) }
   function clearFilters() { setFilters(EMPTY_FILTERS); loadLogs(0, EMPTY_FILTERS) }
 
-  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE))
+  const totalPages = Math.max(1, Math.ceil(total / size))
 
   return (
     <div className="audit-viewer">
@@ -123,15 +125,14 @@ export default function MyAuditLog() {
         </table>
       </div>
 
-      <div className="audit-pagination">
-        <button disabled={page === 0} onClick={() => loadLogs(page - 1)}>
-          {t('app.prevPage')}
-        </button>
-        <span>{t('audit.pageInfo', page + 1, totalPages, total)}</span>
-        <button disabled={page + 1 >= totalPages} onClick={() => loadLogs(page + 1)}>
-          {t('app.nextPage')}
-        </button>
-      </div>
+      <PaginationBar
+        page={page + 1} totalPages={totalPages} totalItems={total}
+        rangeStart={total === 0 ? 0 : page * size + 1}
+        rangeEnd={Math.min((page + 1) * size, total)}
+        pageSize={size}
+        onPageChange={p => loadLogs(p - 1)}
+        onPageSizeChange={n => { setSize(n); writePageSize('my-audit', n); loadLogs(0, filters, n) }}
+      />
     </div>
   )
 }

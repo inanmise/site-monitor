@@ -10,6 +10,8 @@ const fmtDur = (ms) => (ms == null ? '' : ms < 1000 ? `${ms} ms` : `${(ms / 1000
 import { api, formatDate } from './api/client'
 import { useDialog } from './components/ui/Dialog.jsx'
 import { useT } from './i18n/index.jsx'
+import { usePagination } from './hooks/usePagination.js'
+import PaginationBar from './components/ui/PaginationBar.jsx'
 import SearchableSelect from './components/ui/SearchableSelect.jsx'
 import Login from './pages/Login'
 import Nav from './components/Nav'
@@ -149,8 +151,6 @@ export default function App() {
   const [statusFilter, setStatusFilter] = useState('all')
   const [expiryFilter, setExpiryFilter] = useState('all')
   const [teamFilter, setTeamFilter] = useState('all')
-  const [dashPage, setDashPage] = useState(1)
-  const [pageSize, setPageSize] = useState(12)
   const [activityRefreshKey, setActivityRefreshKey] = useState(0)
   const [silentAlertDomains, setSilentAlertDomains] = useState(new Set())
   const [mailFailureDomains, setMailFailureDomains] = useState(new Set())
@@ -525,7 +525,7 @@ export default function App() {
   function handleStatClick(key) {
     const next = statsFilter === key ? null : key
     setStatsFilter(next)
-    setDashPage(1)
+    dashPager.setPage(1)
     handleTabChange('dashboard')
   }
 
@@ -598,21 +598,8 @@ export default function App() {
     return (a.days_remaining ?? 999999) - (b.days_remaining ?? 999999)
   })
 
-  const totalPages = pageSize === 0 ? 1 : Math.max(1, Math.ceil(sorted.length / pageSize))
-  const safePage   = Math.min(dashPage, totalPages)
-  const pageCerts  = pageSize === 0 ? sorted : sorted.slice((safePage - 1) * pageSize, safePage * pageSize)
-
-  function getPageNumbers() {
-    if (totalPages <= 7) return Array.from({ length: totalPages }, (_, i) => i + 1)
-    const pages = new Set([1, totalPages, safePage, safePage - 1, safePage + 1].filter(p => p >= 1 && p <= totalPages))
-    const sorted_ = [...pages].sort((a, b) => a - b)
-    const result = []
-    for (let i = 0; i < sorted_.length; i++) {
-      if (i > 0 && sorted_[i] - sorted_[i - 1] > 1) result.push('...')
-      result.push(sorted_[i])
-    }
-    return result
-  }
+  // Sayfalama standardı: "Tümü" seçeneği kaldırıldı (binlerce kart tek seferde render edilmesin; max 200/sayfa).
+  const dashPager = usePagination(sorted, { listKey: 'dashboard-certs' })
 
   return (
     <PermissionsProvider user={user}>
@@ -710,7 +697,7 @@ export default function App() {
                   <label>{t('app.sortLabel')}</label>
                   <SearchableSelect
                     value={sortOrder}
-                    onChange={v => { setSortOrder(v); setDashPage(1) }}
+                    onChange={v => { setSortOrder(v); dashPager.setPage(1) }}
                     options={[
                       { value: 'default', label: t('app.sortDefault') },
                       { value: 'asc',     label: t('app.sortAsc') },
@@ -720,7 +707,7 @@ export default function App() {
                   <label>{t('app.statusLabel')}</label>
                   <SearchableSelect
                     value={statusFilter}
-                    onChange={v => { setStatusFilter(v); setDashPage(1) }}
+                    onChange={v => { setStatusFilter(v); dashPager.setPage(1) }}
                     options={[
                       { value: 'all',     label: t('app.all') },
                       { value: 'valid',   label: t('app.valid') },
@@ -731,7 +718,7 @@ export default function App() {
                   <label>{t('app.expiryLabel')}</label>
                   <SearchableSelect
                     value={expiryFilter}
-                    onChange={v => { setExpiryFilter(v); setDashPage(1) }}
+                    onChange={v => { setExpiryFilter(v); dashPager.setPage(1) }}
                     options={[
                       { value: 'all',     label: t('app.all') },
                       { value: 'expired', label: t('app.expired') },
@@ -745,7 +732,7 @@ export default function App() {
                       <label>{t('app.teamLabel')}</label>
                       <SearchableSelect
                         value={teamFilter}
-                        onChange={v => { setTeamFilter(v); setDashPage(1) }}
+                        onChange={v => { setTeamFilter(v); dashPager.setPage(1) }}
                         options={teamOptions}
                       />
                     </>
@@ -755,13 +742,13 @@ export default function App() {
                     type="text"
                     placeholder={t('app.searchPlaceholder')}
                     value={search}
-                    onChange={(e) => { setSearch(e.target.value); setDashPage(1) }}
+                    onChange={(e) => { setSearch(e.target.value); dashPager.setPage(1) }}
                   />
                   {search && (
                     <button
                       type="button"
                       className="sort-bar-search-clear"
-                      onClick={() => { setSearch(''); setDashPage(1) }}
+                      onClick={() => { setSearch(''); dashPager.setPage(1) }}
                       title={t('app.clearFilter')}
                     >
                       ✕
@@ -790,7 +777,7 @@ export default function App() {
                           setExpiryFilter('all')
                           setSearch('')
                           setSortOrder('default')
-                          setDashPage(1)
+                          dashPager.setPage(1)
                         }}
                       >
                         {t('app.clearFilter')}
@@ -805,7 +792,7 @@ export default function App() {
                 ) : (
                   <>
                     <div className="cards-container">
-                      {pageCerts.map((cert) => (
+                      {dashPager.pageItems.map((cert) => (
                         <CertificateCard key={cert.domain} cert={cert} onClick={(d) => setModalCert(certs.find(c => c.domain === d) ?? null)}
                           hasSilentAlert={silentAlertDomains.has(cert.domain)}
                           hasMailFailure={mailFailureDomains.has(cert.domain)}
@@ -817,52 +804,7 @@ export default function App() {
                           isWeak={weakAlgStats != null ? weakDomainSet.has(cert.domain) : undefined} />
                       ))}
                     </div>
-                    {(pageSize === 0 || sorted.length > pageSize) && <div className="dash-pagination">
-                      <div className="dash-page-sizer">
-                        <span className="dash-page-sizer-label">{t('app.perPage')}</span>
-                        {[10, 25, 50].map(n => (
-                          <button
-                            key={n}
-                            className={`dash-size-btn${pageSize === n ? ' active' : ''}`}
-                            onClick={() => { setPageSize(n); setDashPage(1) }}
-                          >{n}</button>
-                        ))}
-                        <button
-                          className={`dash-size-btn${pageSize === 0 ? ' active' : ''}`}
-                          onClick={() => { setPageSize(0); setDashPage(1) }}
-                        >{t('app.all')}</button>
-                      </div>
-
-                      {totalPages > 1 && (
-                        <div className="dash-page-nav">
-                          <button className="page-btn" disabled={safePage <= 1}
-                            onClick={() => setDashPage(1)}>«</button>
-                          <button className="page-btn" disabled={safePage <= 1}
-                            onClick={() => setDashPage(safePage - 1)}>{t('app.prevPage')}</button>
-
-                          {getPageNumbers().map((p, i) =>
-                            p === '...'
-                              ? <span key={`dot-${i}`} className="dash-page-dots">…</span>
-                              : <button
-                                  key={p}
-                                  className={`page-btn${safePage === p ? ' page-btn-active' : ''}`}
-                                  onClick={() => setDashPage(p)}
-                                >{p}</button>
-                          )}
-
-                          <button className="page-btn" disabled={safePage >= totalPages}
-                            onClick={() => setDashPage(safePage + 1)}>{t('app.nextPage')}</button>
-                          <button className="page-btn" disabled={safePage >= totalPages}
-                            onClick={() => setDashPage(totalPages)}>»</button>
-                        </div>
-                      )}
-
-                      <span className="dash-page-info">
-                        {pageSize === 0
-                          ? t('app.pageInfo', 1, sorted.length, sorted.length)
-                          : t('app.pageInfo', (safePage - 1) * pageSize + 1, Math.min(safePage * pageSize, sorted.length), sorted.length)}
-                      </span>
-                    </div>}
+                    <PaginationBar {...dashPager} />
                   </>
                 )}
               </div>
