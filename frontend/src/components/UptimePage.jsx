@@ -4,6 +4,8 @@ import { api, formatDate } from '../api/client'
 import { useT } from '../i18n/index.jsx'
 import { useVisibleInterval } from '../hooks/useVisibleInterval'
 import { usePagination } from '../hooks/usePagination.js'
+import { useUrlQuerySync, readUrlParam, readUrlInt } from '../hooks/useUrlQuerySync.js'
+import CopyLinkButton from './ui/CopyLinkButton.jsx'
 import PaginationBar from './ui/PaginationBar.jsx'
 import { RefreshCw, X, AlertCircle, CheckCircle, Users } from 'lucide-react'
 import DateTimeRangePicker from './ui/DateTimeRangePicker.jsx'
@@ -20,10 +22,10 @@ export default function UptimePage({ systemRole }) {
   const isAdmin = systemRole === 'ADMIN'
   const [items, setItems] = useState([])
   const [loading, setLoading] = useState(true)
-  const [filterStatus, setFilterStatus] = useState('all')
-  const [sortKey, setSortKey]           = useState('default')
-  const [search, setSearch]             = useState('')
-  const [teamFilter, setTeamFilter]     = useState('all')
+  const [filterStatus, setFilterStatus] = useState(() => readUrlParam('stat', 'all'))
+  const [sortKey, setSortKey]           = useState(() => readUrlParam('sort', 'default'))
+  const [search, setSearch]             = useState(() => readUrlParam('q', ''))
+  const [teamFilter, setTeamFilter]     = useState(() => readUrlParam('team', 'all'))
   const [selected, setSelected]         = useState(null)
   const [diag, setDiag]                 = useState(null)   // { domain, port } → DiagnosticsModal
   const [httpHistory, setHttpHistory]   = useState([])
@@ -131,6 +133,17 @@ export default function UptimePage({ systemRole }) {
   // Sayfalama standardı: usePagination + PaginationBar (pageNumbers artık bileşenin içinde).
   const pager = usePagination(displayItems, {
     listKey: 'uptime', resetDeps: [filterStatus, sortKey, search, teamFilter],
+    initialPage: readUrlInt('page', 1), initialSize: readUrlInt('ps', null),
+  })
+
+  // Paylaşılabilir URL: filtre/sıralama/arama/sayfa adres çubuğunda yaşar (varsayılanlar param üretmez).
+  useUrlQuerySync({
+    stat: filterStatus !== 'all' ? filterStatus : null,
+    sort: sortKey !== 'default' ? sortKey : null,
+    q: search.trim() || null,
+    team: teamFilter !== 'all' ? teamFilter : null,
+    page: pager.page > 1 ? pager.page : null,
+    ps: (pager.pageSize !== 50 || pager.page > 1) ? pager.pageSize : null,
   })
 
   function statusColor(status) {
@@ -208,6 +221,7 @@ export default function UptimePage({ systemRole }) {
             <RefreshCw size={14} />
             {t('uptime.refresh')}
           </button>
+          <CopyLinkButton />
         </div>
       </div>
 

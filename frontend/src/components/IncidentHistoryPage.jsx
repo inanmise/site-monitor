@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { api, formatDate } from '../api/client'
 import { useT } from '../i18n/index.jsx'
 import PaginationBar from './ui/PaginationBar.jsx'
+import { useUrlQuerySync, readUrlInt } from '../hooks/useUrlQuerySync.js'
 import { readPageSize, writePageSize } from '../hooks/usePagination.js'
 import { usePermissions } from '../contexts/PermissionsProvider.jsx'
 import { useToast } from './ui/Toast.jsx'
@@ -260,8 +261,8 @@ export default function IncidentHistoryPage() {
 
   const [rows, setRows]   = useState([])
   const [total, setTotal] = useState(0)
-  const [page, setPage]   = useState(0)
-  const [size, setSize]   = useState(() => readPageSize('incident-history'))
+  const [page, setPage]   = useState(() => readUrlInt('page', 1) - 1)
+  const [size, setSize]   = useState(() => readUrlInt('ps', null) || readPageSize('incident-history'))
   const [loading, setLoading] = useState(false)
   const [trends, setTrends]   = useState(null)
   const [filters, setFilters] = useState({ q: '', severity: '', category: '', status: '', channel: '', team_id: '', since: '', until: '' })
@@ -401,6 +402,12 @@ export default function IncidentHistoryPage() {
   if (!allowView) return <div className="empty-state">{t('inc.noAccess')}</div>
 
   const totalPages = Math.max(1, Math.ceil(total / size))
+
+  // Paylaşılabilir URL: sayfa/boyut (URL'de HEP 1-tabanlı).
+  useUrlQuerySync({
+    page: page > 0 ? page + 1 : null,
+    ps: (size !== 50 || page > 0) ? size : null,
+  })
   const setF = (k, v) => setFilters(f => ({ ...f, [k]: v }))
   // Trend çubuğuna tıkla → o günü listede filtrele (since=until=gün); aynı güne tekrar tıkla → temizle.
   const toggleDay = (day) => {

@@ -3,6 +3,7 @@ import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tool
 import { api, formatDate } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
 import PaginationBar from '../ui/PaginationBar.jsx'
+import { useUrlQuerySync, readUrlInt } from '../../hooks/useUrlQuerySync.js'
 import { readPageSize, writePageSize } from '../../hooks/usePagination.js'
 import { useVisibleInterval } from '../../hooks/useVisibleInterval.js'
 import SearchableSelect from '../ui/SearchableSelect.jsx'
@@ -230,7 +231,7 @@ export default function AuditLogViewer() {
   const [rows, setRows]           = useState([])
   const [total, setTotal]         = useState(0)
   const [page, setPage]           = useState(0)
-  const [size, setSize]           = useState(() => readPageSize('audit-log'))
+  const [size, setSize]           = useState(() => readUrlInt('ps', null) || readPageSize('audit-log'))
   const [loading, setLoading]     = useState(false)
   const [activeCard, setActiveCard] = useState(null)
   const [filters, setFilters]     = useState(readUrlFilters)   // derin-link: URL'den başlat
@@ -316,7 +317,7 @@ export default function AuditLogViewer() {
     }).finally(() => setLoading(false))
   }, [filters, size])
 
-  useEffect(() => { loadStats(); loadLogs(0) }, [])
+  useEffect(() => { loadStats(); loadLogs(readUrlInt('page', 1) - 1) }, [])
 
   // Canlı tazeleme: açıkken 15sn'de bir mevcut sayfayı + özeti yeniler (sekme gizliyken duraklar).
   useVisibleInterval(() => { loadLogs(page, filters); loadStats() }, autoRefresh ? 15000 : 0, false)
@@ -367,6 +368,12 @@ export default function AuditLogViewer() {
   }
 
   const totalPages = Math.ceil(total / size)
+
+  // Paylaşılabilir URL: sayfa/boyut (URL'de HEP 1-tabanlı). İlk yükleme page paramını dikkate alır (aşağıdaki effect).
+  useUrlQuerySync({
+    page: page > 0 ? page + 1 : null,
+    ps: (size !== 50 || page > 0) ? size : null,
+  })
 
   return (
     <div className="audit-viewer">

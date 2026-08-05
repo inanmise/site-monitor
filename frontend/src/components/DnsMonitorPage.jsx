@@ -3,6 +3,8 @@ import { api, formatDate } from '../api/client'
 import { useT } from '../i18n/index.jsx'
 import { useVisibleInterval } from '../hooks/useVisibleInterval'
 import { usePagination } from '../hooks/usePagination.js'
+import { useUrlQuerySync, readUrlParam, readUrlInt } from '../hooks/useUrlQuerySync.js'
+import CopyLinkButton from './ui/CopyLinkButton.jsx'
 import PaginationBar from './ui/PaginationBar.jsx'
 import { useToast } from './ui/Toast.jsx'
 import MonitorHowBox from './ui/MonitorHowBox.jsx'
@@ -64,15 +66,15 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName }) {
   const [saving, setSaving] = useState(false)
   const [checking, setChecking] = useState(null)
   const [deleting, setDeleting] = useState(null)
-  const [search, setSearch] = useState('')
-  const [teamFilter, setTeamFilter] = useState('all')
-  const [groupFilter, setGroupFilter] = useState('all')
+  const [search, setSearch] = useState(() => readUrlParam('q', ''))
+  const [teamFilter, setTeamFilter] = useState(() => readUrlParam('team', 'all'))
+  const [groupFilter, setGroupFilter] = useState(() => readUrlParam('group', 'all'))
   const [infoOpen, setInfoOpen] = useState(false)
   const [testResult, setTestResult] = useState(null)
   const [testing, setTesting] = useState(false)
   const [defaults, setDefaults] = useState(null)
   const [secondsSince, setSecondsSince] = useState(0)
-  const [statFilter, setStatFilter] = useState(null)
+  const [statFilter, setStatFilter] = useState(() => { const v = readUrlParam('stat', null); return v === 'total' ? null : v })
   const [statsVisible, setStatsVisible] = useState(false)
   const deepLinkDone = useRef(false)
 
@@ -113,10 +115,7 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName }) {
     if (!id) return
     const m = monitors.find(x => String(x.id) === String(id))
     if (m) setDetailMonitor(m)
-    try {
-      const u = new URL(window.location.href); u.searchParams.delete('monitor')
-      window.history.replaceState({}, '', u.pathname + u.search + u.hash)
-    } catch { /* yoksay */ }
+    // monitor paramı artık kalıcı (useUrlQuerySync yazar/siler).
   }, [monitors]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const teamSelectOptions = [{ value: '', label: t('app.noTeam') },
@@ -300,6 +299,21 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName }) {
   // Sayfalama filtrelenmiş listenin ÜZERİNE; sayaç/istatistikler tam listeden hesaplanmaya devam eder.
   const pager = usePagination(filtered, {
     listKey: 'dns-monitors', resetDeps: [search, teamFilter, groupFilter, statFilter],
+    initialPage: readUrlInt('page', 1), initialSize: readUrlInt('ps', null),
+  })
+
+  // Paylaşılabilir URL: filtre/arama/sayfa + açık detay modalı (mtab/range DnsDetailModal içinde sync'lenir).
+  useUrlQuerySync({
+    team: teamFilter === 'all' ? null : teamFilter,
+    group: groupFilter === 'all' ? null : groupFilter,
+    q: search.trim() || null,
+    stat: statFilter && statFilter !== 'total' ? statFilter : null,
+    page: pager.page > 1 ? pager.page : null,
+    ps: (pager.pageSize !== 50 || pager.page > 1) ? pager.pageSize : null,
+    monitor: detailMonitor?.id ?? null,
+    // Modal AÇIKKEN mtab/range'i DnsDetailModal yönetir (anahtarlar mapping'de olmaz → dokunulmaz);
+    // modal kapanınca burada null'a düşer ve URL'den silinir (modal unmount'ta silme yapamaz).
+    ...(detailMonitor ? {} : { mtab: null, range: null }),
   })
 
   return (
@@ -314,6 +328,7 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName }) {
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginLeft: 'auto' }}>
           <span className="upt-last-check">{t('dns.autoRefresh').replace('{0}', Math.max(0, REFRESH_INTERVAL - secondsSince))}</span>
           <button className="btn btn-sm upt-refresh-btn" onClick={load}><RefreshCw size={14} />{t('dns.refreshBtn')}</button>
+          <CopyLinkButton />
           <MonitorGuideButton type="dns" />
           {canWrite && (
             <button className="btn btn-sm btn-primary" onClick={openNew}>

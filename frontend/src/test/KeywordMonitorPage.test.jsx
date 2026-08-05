@@ -200,4 +200,57 @@ describe('KeywordMonitorPage', () => {
     expect(screen.getByText('1–30 of 30 records')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Next' })).toBeNull()
   })
+
+  // ── Paylaşılabilir URL (deep-link) senaryoları ─────────────────────────────
+  it('URL→ekran: ?group= ile mount → yalnız o grubun monitörleri render olur', async () => {
+    localStorage.clear()
+    window.history.replaceState({}, '', '/?tab=keyword&group=G2')
+    try {
+      api.monitoring.getKeywordMonitors.mockResolvedValue({ success: true, data: [
+        { ...monitor, id: 1, url: 'https://a.example.com/', group_name: 'G1' },
+        { ...monitor, id: 2, url: 'https://b.example.com/', group_name: 'G2' },
+      ] })
+      render(<KeywordMonitorPage systemRole="USER" teamId={5} teamName="SY-A" />)
+      await screen.findByText('https://b.example.com/')
+      expect(screen.queryByText('https://a.example.com/')).toBeNull()
+    } finally { window.history.replaceState({}, '', '/') }
+  })
+
+  it('ekran→URL: arama yazınca debounce sonrası q= yazılır; temizlenince silinir', async () => {
+    window.history.replaceState({}, '', '/?tab=keyword')
+    try {
+      render(<KeywordMonitorPage systemRole="USER" teamId={5} teamName="SY-A" />)
+      await screen.findByText('https://www.akbank.com/')
+      const box = screen.getByPlaceholderText(/ara|search/i)
+      fireEvent.change(box, { target: { value: 'akbank' } })
+      await waitFor(() => expect(window.location.search).toContain('q=akbank'), { timeout: 1500 })
+      fireEvent.change(box, { target: { value: '' } })
+      await waitFor(() => expect(window.location.search).not.toContain('q='), { timeout: 1500 })
+      expect(window.location.search).toContain('tab=keyword')   // eşleme-dışı param korunur
+    } finally { window.history.replaceState({}, '', '/') }
+  })
+
+  it('?page=2&ps=50 ile mount (120 kayıt) → 51–100 dilimi; ps localStorage tercihini ezer', async () => {
+    localStorage.setItem('cm.pageSize.keyword-monitors', '200')   // link alanın tercihi farklı olsun
+    window.history.replaceState({}, '', '/?tab=keyword&page=2&ps=50')
+    try {
+      const many = Array.from({ length: 120 }, (_, i) => ({ ...monitor, id: i + 1, url: `https://m${i + 1}.example.com/` }))
+      api.monitoring.getKeywordMonitors.mockResolvedValue({ success: true, data: many })
+      render(<KeywordMonitorPage systemRole="USER" teamId={5} teamName="SY-A" />)
+      await screen.findByText('https://m51.example.com/')
+      expect(screen.queryByText('https://m1.example.com/')).toBeNull()
+      expect(screen.getByText('51–100 of 120 records')).toBeInTheDocument()
+    } finally { window.history.replaceState({}, '', '/'); localStorage.clear() }
+  })
+
+  it('monitor kalıcılığı: ?monitor= modal açar ve param URL DE KALIR; kapatınca silinir', async () => {
+    window.history.replaceState({}, '', '/?tab=keyword&monitor=1')
+    try {
+      render(<KeywordMonitorPage systemRole="USER" teamId={5} teamName="SY-A" />)
+      await waitFor(() => expect(api.monitoring.getKeywordHistory).toHaveBeenCalled())   // modal açıldı
+      await waitFor(() => expect(window.location.search).toContain('monitor=1'), { timeout: 1500 })
+      fireEvent.click(document.querySelector('.upt-modal-close'))
+      await waitFor(() => expect(window.location.search).not.toContain('monitor='), { timeout: 1500 })
+    } finally { window.history.replaceState({}, '', '/') }
+  })
 })

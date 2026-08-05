@@ -797,6 +797,10 @@ export const TR = {
   'pg.pageBtn':   'Sayfa {0}',
   'pg.nav':       'Sayfalama',
 
+  // ── Paylaşılabilir URL / bağlantı kopyalama ──
+  'share.copyLink': 'Bağlantıyı kopyala',
+  'share.copied':   'Bağlantı kopyalandı — bu görünüm linkle aynen açılır',
+
   'app.warningsTitle':  'Dikkat Gerektiren Sertifikalar',
   'app.sslHourlyNote':  'SSL son-kullanma kontrolleri saatte bir yapılır; bir sertifika yenilendikten sonra ilgili alarmın otomatik kapanması (auto-resolve) 1 saate kadar sürebilir.',
   'app.noWarnings':     'Uyarı yok',
@@ -4553,6 +4557,10 @@ export const EN = {
   'pg.gotoLabel': 'Go',
   'pg.pageBtn':   'Page {0}',
   'pg.nav':       'Pagination',
+
+  // ── Shareable URL / copy link ──
+  'share.copyLink': 'Copy link',
+  'share.copied':   'Link copied — this view opens exactly as is',
 
   'app.warningsTitle':  'Certificates Requiring Attention',
   'app.sslHourlyNote':  'SSL expiry checks run hourly; after a certificate is renewed, the related alarm may take up to an hour to auto-resolve.',

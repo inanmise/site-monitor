@@ -8,6 +8,7 @@ import { useToast } from '../ui/Toast.jsx'
 import { useT } from '../../i18n/index.jsx'
 import { usePagination } from '../../hooks/usePagination.js'
 import PaginationBar from '../ui/PaginationBar.jsx'
+import { useUrlQuerySync, readUrlParam, readUrlInt } from '../../hooks/useUrlQuerySync.js'
 import { useTheme } from '../../i18n/theme.jsx'
 import SearchableSelect from '../ui/SearchableSelect.jsx'
 import KebabMenu from '../ui/KebabMenu.jsx'
@@ -62,7 +63,7 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
   const [teamGroups, setTeamGroups]   = useState([])   // seçili takımın "cert" grupları (sızıntısız, server-scoped)
   const [saving, setSaving]           = useState(false)
   const [msg, setMsg]                 = useState(null)
-  const [statusFilter, setStatusFilter] = useState('default')
+  const [statusFilter, setStatusFilter] = useState(() => readUrlParam('stat', 'default'))
   const [showItem,    setShowItem]    = useState(null)
   const [diag,        setDiag]        = useState(null)   // { domain, port } → DiagnosticsModal
   const [exportOpen,  setExportOpen]  = useState(false)
@@ -168,7 +169,17 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
   const selectableItems = useMemo(() => visibleItems.filter(i => !i.deleted_at), [visibleItems])
 
   // Sayfalama yalnız RENDER'ı böler; "tümünü seç" filtrelenmiş tüm liste (selectableItems) üzerinde kalır.
-  const pager = usePagination(visibleItems, { listKey: 'inventory', resetDeps: [statusFilter] })
+  const pager = usePagination(visibleItems, {
+    listKey: 'inventory', resetDeps: [statusFilter],
+    initialPage: readUrlInt('page', 1), initialSize: readUrlInt('ps', null),
+  })
+
+  // Paylaşılabilir URL: durum filtresi + sayfa/boyut.
+  useUrlQuerySync({
+    stat: statusFilter !== 'default' ? statusFilter : null,
+    page: pager.page > 1 ? pager.page : null,
+    ps: (pager.pageSize !== 50 || pager.page > 1) ? pager.pageSize : null,
+  })
   const allOnPage = selectableItems.length > 0 && selectableItems.every(i => selected.has(i.id))
   const toggleSel = (id) => setSelected(s => {
     const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n

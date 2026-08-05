@@ -4,6 +4,7 @@ import { useDialog } from '../ui/Dialog.jsx'
 import { useToast } from '../ui/Toast.jsx'
 import { useT, useDateLocale } from '../../i18n/index.jsx'
 import PaginationBar from '../ui/PaginationBar.jsx'
+import { useUrlQuerySync, readUrlParam, readUrlInt } from '../../hooks/useUrlQuerySync.js'
 import { readPageSize, writePageSize } from '../../hooks/usePagination.js'
 import UserBadge from '../ui/UserBadge.jsx'
 import { mailPreviewSrcDoc, MAIL_PREVIEW_SANDBOX } from '../../utils/mailPreview.js'
@@ -325,14 +326,14 @@ function ReNotifyConfirmModal({ domain, recipients, sending, onSend, onClose }) 
   )
 }
 
-export default function AlertHistory({ domain = null }) {
+export default function AlertHistory({ domain = null, urlSync = false }) {
   const t = useT()
   const { showConfirm } = useDialog()
   const toast = useToast()
   const [alerts,       setAlerts]       = useState([])
   const [tab,          setTab]          = useState('open')
-  const [page,         setPage]         = useState(0)
-  const [pageSize,     setPageSize]     = useState(() => readPageSize('alert-history'))
+  const [page,         setPage]         = useState(() => (urlSync ? readUrlInt('page', 1) - 1 : 0))
+  const [pageSize,     setPageSize]     = useState(() => (urlSync && readUrlInt('ps', null)) || readPageSize('alert-history'))
   const [total,        setTotal]        = useState(0)
   const [closedFrom,   setClosedFrom]   = useState(null)
   const [closedTo,     setClosedTo]     = useState(null)
@@ -546,6 +547,12 @@ export default function AlertHistory({ domain = null }) {
   const isOpen   = tab === 'open'
   const isClosed = tab === 'closed'
   const totalPages = Math.max(1, Math.ceil(total / pageSize))
+
+  // Paylaşılabilir URL (yalnız Alarm Geçmişi SEKMESİ — gömülü modallarda kapalı: enabled guard).
+  useUrlQuerySync({
+    page: page > 0 ? page + 1 : null,
+    ps: (pageSize !== 50 || page > 0) ? pageSize : null,
+  }, { enabled: urlSync })
 
   return (
     <div className="admin-section">

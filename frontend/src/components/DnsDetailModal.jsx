@@ -3,6 +3,8 @@ import { createPortal } from 'react-dom'
 import { api, formatDate } from '../api/client'
 import { useT } from '../i18n/index.jsx'
 import { usePagination } from '../hooks/usePagination.js'
+import { useUrlQuerySync, readUrlParam, readUrlInt } from '../hooks/useUrlQuerySync.js'
+import CopyLinkButton from './ui/CopyLinkButton.jsx'
 import PaginationBar from './ui/PaginationBar.jsx'
 import { X, Activity, Clock, Server, FileText, Globe, Route } from 'lucide-react'
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, ReferenceLine } from 'recharts'
@@ -67,15 +69,20 @@ export default function DnsDetailModal({ monitor, onClose }) {
   const [activeTab, setActiveTab] = useState(
     monitor?.record_type && RECORD_TYPES.includes(monitor.record_type) ? monitor.record_type : 'A'
   )
-  const [rangeDays, setRangeDays] = useState(1)
+  const [rangeDays, setRangeDays] = useState(() => readUrlInt('range', 1))
   const [changedOnly, setChangedOnly] = useState(false)   // "Sadece Değişenler" — sunucu taraflı filtre
-  const [detailTab, setDetailTab] = useState('control')   // üst tab: control | alerts | chart | notes
+  const [detailTab, setDetailTab] = useState(() => readUrlParam('mtab', 'control'))   // üst tab: control | alerts | chart | notes
+
+  // Paylaşılabilir URL: modal-içi konum (üst sekme + geçmiş aralığı) — varsayılanlar param üretmez.
+  useUrlQuerySync({
+    mtab: detailTab !== 'control' ? detailTab : null,
+    range: rangeDays !== 1 ? rangeDays : null,
+  })
 
   // Details — bir kez yüklenir, monitor değişene kadar tutulur
   useEffect(() => {
     if (!monitor) return
     setLoading(true)
-    setDetailTab('control')
     if (monitor.record_type && RECORD_TYPES.includes(monitor.record_type)) {
       setActiveTab(monitor.record_type)
     }
@@ -113,6 +120,7 @@ export default function DnsDetailModal({ monitor, onClose }) {
             <strong>{monitor.domain}</strong>
             <span className="dns-modal-subtitle">— {t('dns.detailTitle')}</span>
           </div>
+          <CopyLinkButton iconOnly className="btn btn-sm upt-refresh-btn" />
           <button className="dns-modal-close" onClick={onClose} aria-label={t('dns.close')}>
             <X size={18} />
           </button>
