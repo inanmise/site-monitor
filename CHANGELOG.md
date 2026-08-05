@@ -9,6 +9,14 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- **Paylaşılabilir URL / derin bağlantı.** İzleme sayfalarında ekranda görünen durumun tamamı artık adres
+  çubuğunda yaşıyor: takım/grup filtresi, arama metni, stat kartı filtresi, sıralama, sayfa/sayfa boyutu ve
+  açık detay modalı (`/?tab=keyword&group=X&q=akbank&page=2&monitor=42`). URL'i kopyalayıp paylaşan herkes
+  birebir aynı görünümü açar; varsayılan değerler param üretmez (temiz URL), yazım debounce'lu ve tarayıcı
+  geçmişini şişirmez. Her izleme sayfasına ve detay modalına tek tıkla **"Bağlantıyı Kopyala"** butonu
+  eklendi (pano + bildirim). Kapsam: 8 izleme türü + Uptime + Dashboard sertifika kartları + Olay Geçmişi +
+  Alarm Geçmişi + Denetim Kaydı + Envanter. Sekme değişince önceki sayfanın paramları otomatik temizlenir;
+  e-postalardaki eski `?monitor=` linkleri çalışmaya devam eder (artık modal açıkken URL'de kalıcı).
 - **Tüm liste görünümlerinde standart sayfalama.** 8 izleme türü sayfası (HTTP/Ping/Port/DNS/Alan Adı/Kelime/Sayfa
   Bütünlüğü/Sentetik), Uptime, Dashboard sertifika kartları, Envanter ve Bakım Pencereleri artık sayfalanıyor —
   hiçbir görünüm 200'den fazla kaydı aynı anda render etmiyor. Tek ortak bileşen (`PaginationBar` + `usePagination`):

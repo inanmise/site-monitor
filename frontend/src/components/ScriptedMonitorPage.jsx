@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo, lazy, Suspense } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef, lazy, Suspense } from 'react'
 import { createPortal } from 'react-dom'
 import { api, formatDateSec } from '../api/client'
 import { useT, useLanguage } from '../i18n/index.jsx'
@@ -11,6 +11,8 @@ import { SCRIPTED_TEMPLATES } from './scriptedTemplates.js'
 import { FlaskConical, Play, Plus, Trash2, X, RefreshCw, Download, Eye, EyeOff, Copy } from 'lucide-react'
 import { duplicateName } from '../utils/duplicateName.js'
 import { usePagination } from '../hooks/usePagination.js'
+import { useUrlQuerySync, readUrlParam, readUrlInt } from '../hooks/useUrlQuerySync.js'
+import CopyLinkButton from './ui/CopyLinkButton.jsx'
 import PaginationBar from './ui/PaginationBar.jsx'
 
 const ResponseTimeChart = lazy(() => import('./ResponseTimeChart.jsx'))
@@ -45,7 +47,7 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
   const [k6, setK6] = useState({ available: true, version: null, canManage: false })
   const [loading, setLoading] = useState(true)
   const [teams, setTeams] = useState([])
-  const [search, setSearch] = useState('')
+  const [search, setSearch] = useState(() => readUrlParam('q', ''))
   const [modal, setModal] = useState(null)      // create/edit form monitor (or {} for new)
   const [dupSource, setDupSource] = useState(null)  // Kopyala akışında kaynak monitör (rozet/ipucu için)
   const [form, setForm] = useState(emptyForm)
@@ -55,6 +57,7 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
   const [selected, setSelected] = useState(null) // detail monitor
   const [history, setHistory] = useState([])
   const [selCheck, setSelCheck] = useState(null)
+  const deepLinkDone = useRef(false)
 
   const load = useCallback(async () => {
     const res = await api.monitoring.getScriptedMonitors()
@@ -84,7 +87,26 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
 
   const pager = usePagination(scoped, {
     listKey: 'scripted-monitors', resetDeps: [search],
+    initialPage: readUrlInt('page', 1), initialSize: readUrlInt('ps', null),
   })
+
+  // Paylaşılabilir URL: arama/sayfa + açık detay modalı adres çubuğunda yaşar (varsayılanlar param üretmez).
+  useUrlQuerySync({
+    q: search.trim() || null,
+    page: pager.page > 1 ? pager.page : null,
+    ps: (pager.pageSize !== 50 || pager.page > 1) ? pager.pageSize : null,
+    monitor: selected?.id ?? null,
+  })
+
+  // Deep-link: ?monitor=<id> → detay modalını aç (bir kez) — diğer izleme türleriyle parite.
+  useEffect(() => {
+    if (deepLinkDone.current || monitors.length === 0) return
+    deepLinkDone.current = true
+    const id = readUrlParam('monitor', null)
+    if (!id) return
+    const m = monitors.find(x => String(x.id) === String(id))
+    if (m) openDetail(m)
+  }, [monitors]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Grup seçenekleri — mevcut senaryoların gruplarından türetilir (creatable: yeni grup da yazılabilir).
   const groupOptions = useMemo(
@@ -220,6 +242,7 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
         </div>
         <div className="upt-header-right">
           <button className="btn btn-secondary btn-sm" onClick={load}><RefreshCw size={14} /> {t('scripted.refresh')}</button>
+          <CopyLinkButton />
           <MonitorGuideButton type="scripted" />
           {k6.canManage && k6.available &&
             <button className="btn btn-primary btn-sm" onClick={openNew}><Plus size={14} /> {t('scripted.addMonitor')}</button>}
@@ -411,6 +434,7 @@ function DetailModal({ t, selected, setSelected, history, histPager, selCheck, s
       <div className="modal-box modal-wide" style={{ maxWidth: 900, maxHeight: '92vh', overflow: 'auto' }} onClick={e => e.stopPropagation()}>
         <div className="modal-head">
           <h3><span style={{ color: STATUS_COLOR[selected.status] || STATUS_COLOR.unknown }}>●</span> {selected.name}</h3>
+          <CopyLinkButton iconOnly className="icon-btn" />
           <button className="icon-btn" onClick={() => setSelected(null)}><X size={18} /></button>
         </div>
         <div className="modal-body">

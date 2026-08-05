@@ -161,4 +161,13 @@ describe('HttpMonitorPage', () => {
     expect(screen.getByText('1–30 of 30 records')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Next' })).toBeNull()
   })
+
+  it('eski e-posta formatı ?tab=http&monitor=1 modal açar; param artık URL DE KALIR (yeni davranış)', async () => {
+    window.history.replaceState({}, '', '/?tab=http&monitor=1')
+    try {
+      render(<HttpMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
+      expect(await screen.findByRole('button', { name: /^Checks$|^Kontrol$/ })).toBeInTheDocument()   // modal açık
+      await waitFor(() => expect(window.location.search).toContain('monitor=1'), { timeout: 1500 })
+    } finally { window.history.replaceState({}, '', '/') }
+  })
 })

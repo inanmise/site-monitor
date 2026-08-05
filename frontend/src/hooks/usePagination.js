@@ -35,18 +35,23 @@ export function writePageSize(listKey, size) {
   try { localStorage.setItem(LS_PREFIX + listKey, String(size)) } catch { /* private mode */ }
 }
 
-export function usePagination(items, { listKey, defaultSize = DEFAULT_PAGE_SIZE, resetDeps = [] } = {}) {
-  const [page, setPageRaw] = useState(1)
-  const [pageSize, setPageSizeRaw] = useState(() => readPageSize(listKey, defaultSize))
+export function usePagination(items, { listKey, defaultSize = DEFAULT_PAGE_SIZE, resetDeps = [], initialPage = 1, initialSize = null } = {}) {
+  // initialPage/initialSize: paylaşılan URL'den (?page=3&ps=100) gelen başlangıç — ps geçerli bir
+  // boyutsa localStorage tercihine BASKINDIR (link alan kişide 3. sayfa başka dilime kaymasın).
+  const [page, setPageRaw] = useState(() => (Number.isInteger(initialPage) && initialPage > 0 ? initialPage : 1))
+  const [pageSize, setPageSizeRaw] = useState(() =>
+    PAGE_SIZE_OPTIONS.includes(initialSize) ? initialSize : readPageSize(listKey, defaultSize))
 
   const totalItems = items?.length ?? 0
   const totalPages = Math.max(1, Math.ceil(totalItems / pageSize))
 
   // Clamp: state'i render sırasında değil effect'te düzelt (React kuralı); render'da safePage kullan.
-  const safePage = Math.min(page, totalPages)
+  // totalItems === 0 iken clamp YOK: veri henüz yüklenmemişken (async ilk mount) URL'den gelen
+  // initialPage'i 1'e ezerdi; boş listede zaten hiçbir şey render edilmiyor, bar da görünmüyor.
+  const safePage = totalItems === 0 ? page : Math.min(page, totalPages)
   useEffect(() => {
-    if (page > totalPages) setPageRaw(totalPages)
-  }, [page, totalPages])
+    if (totalItems > 0 && page > totalPages) setPageRaw(totalPages)
+  }, [page, totalPages, totalItems])
 
   // Reset: filtre/arama değişince sayfa 1'e döner. İlk mount'ta resetleme (sayfa zaten 1).
   const firstRun = useRef(true)

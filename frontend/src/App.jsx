@@ -12,6 +12,7 @@ import { useDialog } from './components/ui/Dialog.jsx'
 import { useT } from './i18n/index.jsx'
 import { usePagination } from './hooks/usePagination.js'
 import PaginationBar from './components/ui/PaginationBar.jsx'
+import { useUrlQuerySync, readUrlParam, readUrlInt, PAGE_STATE_PARAMS } from './hooks/useUrlQuerySync.js'
 import SearchableSelect from './components/ui/SearchableSelect.jsx'
 import Login from './pages/Login'
 import Nav from './components/Nav'
@@ -118,7 +119,9 @@ export default function App() {
       try {
         const url = new URL(window.location.href)
         url.searchParams.set('tab', id)
-        url.searchParams.delete('monitor'); url.searchParams.delete('domain'); url.searchParams.delete('incident')
+        // Sekme değişince önceki sayfanın TÜM durum paramları temizlenir (bayat filtre/sayfa/modal
+        // başka sekmeye taşınmasın) — liste useUrlQuerySync.PAGE_STATE_PARAMS'ta merkezî.
+        for (const p of PAGE_STATE_PARAMS) url.searchParams.delete(p)
         const qs = url.searchParams.toString()
         window.history.pushState({ tab: id }, '', url.pathname + (qs ? `?${qs}` : '') + url.hash)
       } catch { /* history yoksay */ }
@@ -136,7 +139,7 @@ export default function App() {
   const [statsVisible, setStatsVisible] = useState(false)
   const [selfPwdModalOpen, setSelfPwdModalOpen] = useState(false)
   const [mustChangePwd, setMustChangePwd] = useState(false)
-  const [search, setSearch] = useState('')
+  const [search, setSearch] = useState(() => readUrlParam('q', ''))
   const [sortOrder, setSortOrder] = useState('default')
   const [modalCert, setModalCert] = useState(null)
   const [caModal, setCaModal]     = useState(false)
@@ -183,7 +186,7 @@ export default function App() {
         // Olay satırına tıklama (cert alarmı): ?domain=<d> → panoyu o domaine filtrele
         try {
           const fd = new URLSearchParams(window.location.search).get('domain')
-          if (fd) setSearch(fd)
+          if (fd && !readUrlParam('q', null)) setSearch(fd)   // yeni ?q= paramı varsa o kazanır
         } catch { /* yoksay */ }
       }
       setAuthChecked(true)
@@ -584,7 +587,19 @@ export default function App() {
   })
 
   // Sayfalama standardı: "Tümü" seçeneği kaldırıldı (binlerce kart tek seferde render edilmesin; max 200/sayfa).
-  const dashPager = usePagination(sorted, { listKey: 'dashboard-certs' })
+  const dashPager = usePagination(sorted, {
+    listKey: 'dashboard-certs',
+    initialPage: readUrlInt('page', 1), initialSize: readUrlInt('ps', null),
+  })
+
+  // Paylaşılabilir URL (dashboard): arama + sayfa. enabled guard ŞART — App her sekmede mount olduğundan
+  // bu sync başka sekmedeki sayfanın q/page paramlarını ezerdi. Yazma yalnız q'ya (?domain= e-posta
+  // linkleri okunmaya devam eder ama yeni linkler q üretir).
+  useUrlQuerySync({
+    q: search.trim() || null,
+    page: dashPager.page > 1 ? dashPager.page : null,
+    ps: (dashPager.pageSize !== 50 || dashPager.page > 1) ? dashPager.pageSize : null,
+  }, { enabled: tab === 'dashboard' })
 
   if (!authChecked) return <div className="loading" style={{ marginTop: 80, textAlign: 'center' }}>{t('app.loading')}</div>
   if (!user) return <Login onLogin={handleLogin} sessionExpired={sessionExpiredNotice} />
@@ -976,7 +991,7 @@ export default function App() {
             {tab === 'alerthistory' && (
               <div className="tab-content active">
                 <h2>{t('app.alertHistoryTitle')}</h2>
-                <AlertHistory />
+                <AlertHistory urlSync />
               </div>
             )}
 

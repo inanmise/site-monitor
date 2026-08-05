@@ -14,6 +14,8 @@ import { Play, Pencil, Copy, X, RefreshCw, Plus, Trash2, Target, Users, Layers, 
   Mail, MessageSquare, Phone, Smartphone } from 'lucide-react'
 import { duplicateName } from '../utils/duplicateName.js'
 import { usePagination } from '../hooks/usePagination.js'
+import { useUrlQuerySync, readUrlParam, readUrlInt } from '../hooks/useUrlQuerySync.js'
+import CopyLinkButton from './ui/CopyLinkButton.jsx'
 import PaginationBar from './ui/PaginationBar.jsx'
 import { normalizeUrl } from '../utils/normalizeUrl.js'
 import AlertHistory from './admin/AlertHistory.jsx'
@@ -79,10 +81,10 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
   const [testing, setTesting] = useState(false)
   const [testResult, setTestResult] = useState(null)
   const [detailTab, setDetailTab] = useState('control')
-  const [search, setSearch] = useState('')
-  const [teamFilter, setTeamFilter] = useState('all')
-  const [groupFilter, setGroupFilter] = useState('all')
-  const [statFilter, setStatFilter] = useState(null)
+  const [search, setSearch] = useState(() => readUrlParam('q', ''))
+  const [teamFilter, setTeamFilter] = useState(() => readUrlParam('team', 'all'))
+  const [groupFilter, setGroupFilter] = useState(() => readUrlParam('group', 'all'))
+  const [statFilter, setStatFilter] = useState(() => { const v = readUrlParam('stat', null); return v === 'total' ? null : v })
   const [statsVisible, setStatsVisible] = useState(false)
   const [secondsSince, setSecondsSince] = useState(0)
   const deepLinkDone = useRef(false)
@@ -115,7 +117,7 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
     api.monitoring.monitorDefaults?.()?.then(r => { if (r?.success) setDefaults(r.data?.keyword) })
   }, [])
 
-  // E-posta CTA deep-link: ?monitor=<id> → ilgili monitörün detayını aç (bir kez), paramı temizle.
+  // E-posta CTA deep-link: ?monitor=<id> → ilgili monitörün detayını aç (bir kez).
   useEffect(() => {
     if (deepLinkDone.current || monitors.length === 0) return
     deepLinkDone.current = true
@@ -124,10 +126,7 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
     if (!id) return
     const m = monitors.find(x => String(x.id) === String(id))
     if (m) openDetail(m)
-    try {
-      const u = new URL(window.location.href); u.searchParams.delete('monitor')
-      window.history.replaceState({}, '', u.pathname + u.search + u.hash)
-    } catch { /* yoksay */ }
+    // monitor paramı artık kalıcı (useUrlQuerySync yazar/siler) — eski replaceState temizliği kaldırıldı.
   }, [monitors]) // eslint-disable-line react-hooks/exhaustive-deps
 
   async function loadHistory(id, days = rangeDays) {
@@ -303,6 +302,21 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
   // Sayfalama filtrelenmiş listenin ÜZERİNE; sayaç/istatistikler tam listeden hesaplanmaya devam eder.
   const pager = usePagination(displayMonitors, {
     listKey: 'keyword-monitors', resetDeps: [search, teamFilter, groupFilter, statFilter],
+    initialPage: readUrlInt('page', 1), initialSize: readUrlInt('ps', null),
+  })
+
+  // Paylaşılabilir URL: görünür durum (filtre/arama/sayfa/açık modal) adres çubuğunda yaşar;
+  // varsayılan değerler param üretmez (temiz URL). Yazım debounce'lu replaceState (useUrlQuerySync).
+  useUrlQuerySync({
+    team: teamFilter === 'all' ? null : teamFilter,
+    group: groupFilter === 'all' ? null : groupFilter,
+    q: search.trim() || null,
+    stat: statFilter && statFilter !== 'total' ? statFilter : null,
+    page: pager.page > 1 ? pager.page : null,
+    ps: (pager.pageSize !== 50 || pager.page > 1) ? pager.pageSize : null,
+    monitor: selected?.id ?? null,
+    mtab: selected && detailTab !== 'control' ? detailTab : null,
+    range: selected && rangeDays !== 1 ? rangeDays : null,
   })
 
   const statItems = [
@@ -382,6 +396,7 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
           <button className="btn btn-sm upt-refresh-btn" onClick={load}>
             <RefreshCw size={14} />{t('keyword.refresh')}
           </button>
+          <CopyLinkButton />
           <MonitorGuideButton type="keyword" />
           {canWrite && (
             <button className="btn btn-sm btn-primary" onClick={openNew}>
@@ -495,6 +510,7 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
                 {statusBadge(selected)}
                 <span className="upt-modal-domain">{selected.url}</span>
               </div>
+              <CopyLinkButton iconOnly className="btn btn-sm upt-refresh-btn" />
               <button className="upt-modal-close" onClick={closeDetail}><X size={18} /></button>
             </div>
             <div className="upt-modal-divider" />
