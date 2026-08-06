@@ -1,4 +1,5 @@
 import { formatDate } from '../api/client'
+import { drawBrandHeader } from './pdfBrand.js'
 
 const FLAG_FIELDS = [
   ['external_vendor',    'inv.formExternalVendor'],
@@ -168,9 +169,9 @@ export async function exportInventoryPdf(items, teams, t) {
   const MARGIN = 40
   let y = MARGIN
 
-  // Document title (first page)
-  doc.setFont('Roboto', 'bold').setFontSize(13)
-  doc.text(t('inv.exportTitle'), MARGIN, y); y += 16
+  // Document title (first page) — marka header'ı ortak yardımcıdan (logo + başlık; pdfBrand.js)
+  doc.setFont('Roboto', 'bold')
+  y = await drawBrandHeader(doc, t('inv.exportTitle'), MARGIN, y, { logoSize: 40, titleSize: 13 })
   doc.setFont('Roboto', 'normal').setFontSize(9).setTextColor(120)
   doc.text(
     `${formatDate(new Date().toISOString())}  •  ${t('inv.exportRowCount', items.length)}`,

@@ -8,7 +8,17 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- **Marka logosu (mor turp) uygulama genelinde.** Navbar, sekme ikonu (favicon), login, yardım,
+  yükleme ekranı, PDF dışa aktarımları ve dokümanlar — uygulama içinde logo daima nötr yeşildir
+  (marka durumla renk değiştirmez; filo sağlığı rozet/sayaçlarda). Alarm e-postaları severity'ye
+  uygun (amber/kırmızı yaprak), çözülme e-postaları "yeşile döndü" logosuyla gelir (CID inline).
+  Beyaz-etiket `logo-data` override'ı varsayılanın önüne geçebilir. Kurallar: `branding/BRAND.md`.
+
 ### Changed
+- **Marka yazımı: "Site Monitör" → "SiteMonitor".** Ürün adı tüm görünen yüzeylerde (login, navbar,
+  sekme başlığı, e-posta konu/gövdeleri, yardım/whitepaper) tek biçim "SiteMonitor" olarak birleştirildi.
+  Beyaz-etiket `app-name` override mekanizması değişmedi.
 - **Ürün adı: CertMonitor → Site Monitör.** Uygulama genelinde görünen marka (giriş ekranı wordmark'ı, sekme
   başlığı, e-posta konu/altbilgileri, haftalık raporlar, webhook kartları, yardım/whitepaper dokümanları ve
   açılış konfigürasyon banner'ı) **Site Monitör** (EN: *Site Monitor*) oldu. Alan dili değişmedi: sertifika

@@ -99,7 +99,7 @@ public class IncidentNotificationService {
         String prefix = "RESOLVED".equals(kind) ? "Olay Çözüldü"
                       : "NEW".equals(kind)      ? "Yeni Olay"
                                                 : "Olay Güncellendi";
-        String subject = "[Site Monitör] " + prefix + " — " + dto.get("title") + " (" + team.getName() + ")";
+        String subject = "[Site Monitor] " + prefix + " — " + dto.get("title") + " (" + team.getName() + ")";
 
         List<EmailNotificationService.InlineImage> inline = collectInlineImages(dto);
         String status = emailService.sendHtml(recipients.toArray(new String[0]), null, subject, html,

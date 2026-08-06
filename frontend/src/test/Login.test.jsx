@@ -110,8 +110,9 @@ describe('Login', () => {
 
   it('renders the executive left panel: wordmark, badge, tagline + subline, three pillars (Monitor/Alert/Report), hero stats, rings + pulse', async () => {
     const { container } = render(<Login onLogin={() => {}} />)
-    // Üst bölge: wordmark + ENTERPRISE rozeti
-    expect(container.querySelector('.lp-wordmark')?.textContent).toBe('Site Monitör')
+    // Üst bölge: nötr marka logosu (beyaz-etiket yokken) + wordmark + ENTERPRISE rozeti
+    expect(container.querySelector('.lp-top .brand-logo')?.getAttribute('src')).toBe('/brand/logo-ok-32.png')
+    expect(container.querySelector('.lp-wordmark')?.textContent).toBe('SiteMonitor')
     expect(container.querySelector('.lp-badge')?.textContent).toBe('ENTERPRISE')
     // Orta bölge: slogan (h1) + destek cümlesi (EN default)
     expect(container.querySelector('.lp-headline')?.textContent).toBe('Monitor Your Websites & Hosts')

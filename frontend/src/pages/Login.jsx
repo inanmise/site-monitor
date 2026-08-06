@@ -9,6 +9,7 @@ import '@fontsource/josefin-sans/600.css'
 import { api } from '../api/client'
 import { useT, useLanguage } from '../i18n/index.jsx'
 import { useBranding } from '../contexts/BrandingProvider.jsx'
+import BrandLogo from '../components/BrandLogo.jsx'
 import { downscaleImage } from '../utils/imageDownscale.js'
 import { ShieldAlert, ShieldCheck, Lock, Globe, Activity, Radio, Network, Server, Search, Gauge, Bell, BellRing, AlertTriangle, FileText, BarChart3, TrendingUp, Wrench, X } from 'lucide-react'
 
@@ -272,9 +273,10 @@ export default function Login({ onLogin, sessionExpired = false }) {
         <span className="lp-accent-dot" aria-hidden="true" />
 
         <div className="lp-left-inner">
-          {/* Üst: wordmark + ENTERPRISE rozeti */}
+          {/* Üst: nötr marka logosu (beyaz-etiket logo yoksa) + wordmark + ENTERPRISE rozeti */}
           <div className="lp-top">
-            <span className="lp-wordmark">{brand('app_name', 'Site Monitör')}</span>
+            {!branding.logo_data && <BrandLogo status="ok" size={32} />}
+            <span className="lp-wordmark">{brand('app_name', 'SiteMonitor')}</span>
             <span className="lp-badge">ENTERPRISE</span>
           </div>
 
@@ -329,7 +331,7 @@ export default function Login({ onLogin, sessionExpired = false }) {
             </div>
             <div className="lp-footer">
               <span className="lp-footer-meta">
-                {brand('footer_text', `v${__APP_VERSION__} · © ${new Date().getFullYear()} ${brand('app_name', 'Site Monitör')}`)}
+                {brand('footer_text', `v${__APP_VERSION__} · © ${new Date().getFullYear()} ${brand('app_name', 'SiteMonitor')}`)}
               </span>
               <button type="button" className="lp-lang-btn" onClick={toggleLang}>
                 <Globe size={13} />
@@ -354,9 +356,12 @@ export default function Login({ onLogin, sessionExpired = false }) {
 
           {/* Üst açıklama (branding override'lı) */}
           <div className="lp-intro">
-            {branding.logo_data && (
-              <img src={branding.logo_data} alt={brand('app_name', 'Site Monitör')}
-                   style={{ maxHeight: 40, maxWidth: 200, marginBottom: 10 }} />
+            {branding.logo_data ? (
+              <img src={branding.logo_data} alt={brand('app_name', 'SiteMonitor')}
+                   style={{ maxHeight: 40, maxWidth: 200, display: 'block', margin: '0 auto 10px' }} />
+            ) : (
+              /* Nötr marka logosu — auth öncesi durum GÖSTERİLMEZ (BRAND.md); yatayda ortalı */
+              <BrandLogo status="ok" size={96} style={{ display: 'block', margin: '0 auto 10px' }} />
             )}
             <div className="lp-intro-badge">
               <Lock size={13} />

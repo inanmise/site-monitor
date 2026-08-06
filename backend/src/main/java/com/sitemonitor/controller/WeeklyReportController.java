@@ -381,7 +381,7 @@ public class WeeklyReportController {
     private ResponseEntity<String> htmlPage(String title, String bodyHtml, String accent) {
         String html = "<!DOCTYPE html><html lang='tr'><head><meta charset='UTF-8'>"
             + "<meta name='viewport' content='width=device-width,initial-scale=1'>"
-            + "<title>" + esc(title) + " — Site Monitör</title>"
+            + "<title>" + esc(title) + " — Site Monitor</title>"
             + "<style>"
             + "body{margin:0;background:#eef1f4;font-family:'Segoe UI',-apple-system,Arial,sans-serif;color:#1F2937;-webkit-font-smoothing:antialiased}"
             + ".card{max-width:480px;margin:56px auto;background:#fff;border-radius:14px;overflow:hidden;"
@@ -406,11 +406,11 @@ public class WeeklyReportController {
             + "border-radius:8px;padding:11px 26px;font-size:14px;font-weight:800;cursor:pointer}"
             + ".ft{padding:14px 28px;border-top:1px solid #E5E8EC;font-size:11px;color:#94a3b8;text-align:center}"
             + "</style></head><body><div class='card'>"
-            + "<div class='hd'><span class='wm'>Site Monitör</span><span class='ent'>ENTERPRISE</span>"
+            + "<div class='hd'><span class='wm'>Site Monitor</span><span class='ent'>ENTERPRISE</span>"
             + "<div class='kick'>Haftalık Rapor Onayı</div><div class='t'>" + esc(title) + "</div></div>"
             + "<div class='strip'></div>"
             + "<div class='bd'>" + bodyHtml + "</div>"
-            + "<div class='ft'>Site Monitör — Akbank Sertifika &amp; İzleme Platformu</div>"
+            + "<div class='ft'>Site Monitor — Akbank Sertifika &amp; İzleme Platformu</div>"
             + "</div></body></html>";
         return ResponseEntity.ok().contentType(MediaType.valueOf("text/html;charset=UTF-8")).body(html);
     }

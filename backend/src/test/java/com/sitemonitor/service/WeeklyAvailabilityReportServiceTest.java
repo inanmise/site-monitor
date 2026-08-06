@@ -426,7 +426,7 @@ class WeeklyAvailabilityReportServiceTest {
     @Test
     @DisplayName("history: trigger'a göre listeler + alanları eşler; includeTest=false → yalnız ana trigger")
     void history_listsAndMaps() {
-        NotificationLog n = nlog(7L, "Dijital", "dijital@x.com", "po@x.com", "[Site Monitör] Dijital", "SENT", "WEEKLY_AVAILABILITY");
+        NotificationLog n = nlog(7L, "Dijital", "dijital@x.com", "po@x.com", "[SiteMonitor] Dijital", "SENT", "WEEKLY_AVAILABILITY");
         when(notificationLogRepo.findByTriggerInOrderBySentAtDesc(any(), any())).thenReturn(List.of(n));
 
         var list = service.history(50, false);

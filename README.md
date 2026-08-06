@@ -1,4 +1,8 @@
+<img src="branding/assets/logo-ok-512.png" width="200" alt="SiteMonitor logosu">
+
 # SSL/TLS Sertifika İzleme Sistemi
+
+> Marka ve logo kullanım kuralları: [branding/BRAND.md](branding/BRAND.md)
 
 Kurumunuzdaki SSL/TLS sertifikalarını, TCP/TLS port erişilebilirliğini, HTTP/S çalışma süresini, DNS kayıtlarını, ICMP ping erişilebilirliğini ve HTTP içerik (keyword) doğrulamasını merkezi olarak izleyen; çok-seviyeli alarm, olay yönetimi ve raporlama sunan tam kapsamlı sistem.
 

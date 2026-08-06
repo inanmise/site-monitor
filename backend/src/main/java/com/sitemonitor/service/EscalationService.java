@@ -1135,7 +1135,7 @@ public class EscalationService {
                 case TYPE_DOMAINMON_CHANGED -> "Alan Adı Değişikliği";
                 default                 -> "Sertifika Süre Bitişi";
             };
-            String subject = "[Site Monitör ✅ ÇÖZÜLDÜ] " + event.getDomain()
+            String subject = "[Site Monitor ✅ ÇÖZÜLDÜ] " + event.getDomain()
                     + " — " + typeTr + " sorunu giderildi";
             // İzleme çözüm mailleri süreyi createdAt→resolvedAt'ten hesaplar;
             // sertifika context'i alakasız olduğundan geçilmez.
@@ -1280,6 +1280,18 @@ public class EscalationService {
                 subjectPrefix, alertEventId, trigger, daysRemaining, certContext, Set.of());
     }
 
+    /** Subject'te görünen hedef adı: monitör adı > şema-soyulmuş adres. Çıplak http(s):// subject'e girmez. */
+    static String subjectDisplayName(Map<String, Object> ctx, String domain) {
+        if (ctx != null) {
+            Object n = ctx.get("monitor_name");
+            if (n != null && !String.valueOf(n).isBlank() && !"null".equals(String.valueOf(n))) {
+                return String.valueOf(n).trim();
+            }
+        }
+        if (domain == null) return "";
+        return domain.replaceFirst("(?i)^https?://", "").trim();
+    }
+
     private List<Map<String, String>> sendCombinedAlert(
                                                           Long syTeamId, Long ugTeamId,
                                                           List<EscalationContact> contacts,
@@ -1328,7 +1340,7 @@ public class EscalationService {
         }
         certContext = enrichedCtx;
 
-        // 2. Subject — "[Site Monitör] SEVERITY · domain · özet" (executive format; EmailTemplateBuilder ile aynı severity etiketi)
+        // 2. Subject — "[Site Monitor] SEVERITY · domain · özet" (executive format; EmailTemplateBuilder ile aynı severity etiketi)
         String levelTr = switch (level != null ? level : "") {
             case "CRITICAL"   -> "KRİTİK";
             case "HIGH"       -> "YÜKSEK";
@@ -1384,7 +1396,11 @@ public class EscalationService {
         // Süre-bitişi ailesinde severity yerine kalan gün öne çıkar: "15 GÜN KALDI" / "ACİL 2 GÜN KALDI".
         String daysSeg = daysRemaining == null ? levelTr
                 : (daysRemaining <= 3 ? "ACİL " + daysRemaining + " GÜN KALDI" : daysRemaining + " GÜN KALDI");
-        String subject = subjectPrefix + "[Site Monitör] " + daysSeg + " · " + domain + " · " + summaryTr;
+        // Subject standardı: [Site Monitor] SEVERITY · monitör ADI · kısa sorun — çıplak URL subject'e
+        // girmez (ctx.monitor_name; yoksa domain'in şema-soyulmuş hali). AlertEvent.domain (yönlendirme/
+        // dedupe anahtarı) DEĞİŞMEZ; bu yalnız görünen metin.
+        String subject = subjectPrefix + "[Site Monitor] " + daysSeg + " · "
+                + subjectDisplayName(certContext, domain) + " · " + summaryTr;
 
         // 3. Tek email — tüm alıcılara
         String[] toArr     = allEmails.toArray(new String[0]);

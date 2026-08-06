@@ -95,8 +95,8 @@ public class BrandingController {
     @GetMapping("/api/branding")
     public ResponseEntity<Map<String, Object>> publicBranding() {
         Map<String, Object> b = new LinkedHashMap<>();
-        b.put("app_name",          settingsService.getString(PREFIX + "app-name", "Site Monitör"));
-        b.put("tab_title",         settingsService.getString(PREFIX + "tab-title", "Site Monitör"));
+        b.put("app_name",          settingsService.getString(PREFIX + "app-name", "SiteMonitor"));
+        b.put("tab_title",         settingsService.getString(PREFIX + "tab-title", "SiteMonitor"));
         b.put("login_title",       settingsService.getString(PREFIX + "login-title", ""));
         b.put("login_subtitle",    settingsService.getString(PREFIX + "login-subtitle", ""));
         b.put("signin_label",      settingsService.getString(PREFIX + "signin-label", ""));

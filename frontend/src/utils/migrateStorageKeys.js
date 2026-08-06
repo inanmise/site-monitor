@@ -1,5 +1,5 @@
 /**
- * Rename storage göçü (CertMonitor → Site Monitor): eski localStorage/sessionStorage
+ * Rename storage göçü (CertMonitor → SiteMonitor): eski localStorage/sessionStorage
  * anahtarlarını yeni adlara TEK SEFERLİK taşır — kullanıcı dil/tema/beni-hatırla/sayfa-boyutu
  * tercihlerini ve oturum bayrağını kaybetmesin.
  *
