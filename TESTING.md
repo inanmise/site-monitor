@@ -28,7 +28,7 @@ k6 run -e BASE_URL=http://localhost:8080 ./perf/k6-smoke.js
 
 | Category | Status | Where |
 |----------|--------|-------|
-| **Unit** | **~1426 backend tests** (JUnit 5 + Mockito + AssertJ), **282 frontend tests** (Vitest). Backend line coverage **~66%** (enforced floor, see below); frontend line coverage **~48%**. | `backend/src/test/`, `frontend/src/test/` |
+| **Unit** | **1686 backend tests** (JUnit 5 + Mockito + AssertJ), **399 frontend tests** (Vitest). Backend line coverage **67.2%** (enforced floor, see below); frontend line coverage **57.1%**. | `backend/src/test/`, `frontend/src/test/` |
 | **Integration** | `@DataJpaTest` slices (H2 in PostgreSQL-compat mode) for repositories, `@WebMvcTest` slices for controllers, one full `@SpringBootTest` (`SqlSamplesIntegrationTest`). Real-PostgreSQL Testcontainers under an opt-in `it` Maven profile is **planned** (targeted at native/`@Query` repos). | `backend/src/test/` |
 | **Network isolation (TLS/HTTPS)** | This is a monitoring app that opens outbound TLS/HTTPS connections on schedules — **no test ever touches a real external host.** Certificate/handshake behaviour is exercised against a **local self-signed HTTPS server** (`com.sun.net.httpserver.HttpsServer`) with certs generated at runtime via BouncyCastle at precise `notAfter` offsets (`HttpCheckerServiceTest`, `HstsDiagnosticsServiceTest`, `CertificateCheckerServiceTest`); expiry-day math is verified by feeding those certs through the real parse path. SSRF policy is unit-tested directly (`SsrfGuardTest`). | `backend/src/test/.../service/` |
 | **Sanity / Smoke** | `scripts/smoke.ps1` hits `/health`, login gate, and a small list of APIs. Run after every deploy. | `scripts/smoke.ps1` |
@@ -62,7 +62,7 @@ they catch regressions today, and are raised as new tests land. They are **not**
 that dips below fails.
 
 **Backend (`backend/pom.xml`, `jacoco:check` on `verify`):**
-- Bundle floor: **line ≥ 0.63, instruction ≥ 0.61** (measured today: line 65.9%, instruction 63.4%).
+- Bundle floor: **line ≥ 0.65, instruction ≥ 0.62** (measured 2026-08-06: line 67.2%, instruction 64.6%).
 - Per-class floors on the risk-critical cert/alarm classes (measured line today → floor):
   `SsrfGuard` 100%→0.95 · `MonitoringOutageService` 82%→0.80 · `EscalationService` 63%→0.62 ·
   `DomainCheckerService` 56%→0.55 · `RdapDomainExpiryService` 46%→0.45 · `CertificateCheckerService` 43%→0.42.
@@ -74,13 +74,21 @@ that dips below fails.
   ve takım-zorunluluğunu kapsar.
 
 **Frontend (`frontend/vite.config.js`, `test.coverage.thresholds`):**
-- Global floor: **statements/lines ≥ 45, branches ≥ 55, functions ≥ 26** (measured: 47.6 / 59.8 / 28.7).
+- Global floor: **statements/lines ≥ 55, branches ≥ 60, functions ≥ 31** (measured 2026-08-06: 57.1 / 62.7 / 33.3).
 - Per-file lock: `src/utils/incidentMeta.js` at **100%** lines/functions/statements (fully covered; regression = red).
+- Guard suites: `naming-consistency.test.jsx` (rename bekçisi — eski marka/`cm.` öneki üretim ağacına giremez),
+  `i18n-used-keys.test.jsx` (kodda `t('...')` ile çağrılan her literal anahtar iki sözlükte de olmak zorunda),
+  `brand-default.test.jsx` (varsayılan turp logosu seti + override'sız render'lar korunur).
+  Backend eşleri: `NamingConsistencyTest`, `PropertiesEncodingTest` (properties'te ham non-ASCII yasak),
+  `EmailTemplateStandardTest` (Outlook-güvenli mail standardı: tek 32px lockup, 600px kart, style'sız,
+  BRAND.md §5.1) ve `EmailPreviewHarnessTest` (her mail türü × severity HTML'ini
+  `backend/target/email-previews/sonra-*.html`'e yazar — şablon değişimi gözle doğrulanır;
+  `-Demail.preview.prefix=once` ile değişiklik-öncesi çift üretilir).
 
 | Area | Today (measured) | Enforced floor | Direction |
 |------|------------------|----------------|-----------|
-| Backend line coverage | ~66% | ≥ 63% bundle + per-class | ratchet toward 75% |
-| Frontend line coverage | ~48% | ≥ 45% | ratchet toward 60% |
+| Backend line coverage | 67.2% | ≥ 65% bundle + per-class | ratchet toward 75% |
+| Frontend line coverage | 57.1% | ≥ 55% | ratchet toward 65% |
 | Critical-path E2E | none | none | login + cert lifecycle |
 | A11y violations on dashboard | none | none | 0 serious / 0 critical |
 

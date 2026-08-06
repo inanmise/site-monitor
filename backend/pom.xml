@@ -205,12 +205,12 @@
                         <configuration>
                             <haltOnFailure>true</haltOnFailure>
                             <rules>
-                                <!-- Genel taban (bugün: satır %65.9, komut %63.4). -->
+                                <!-- Genel taban (2026-08-06 ölçümü: satır %67.2, komut %64.6). -->
                                 <rule>
                                     <element>BUNDLE</element>
                                     <limits>
-                                        <limit><counter>LINE</counter><value>COVEREDRATIO</value><minimum>0.63</minimum></limit>
-                                        <limit><counter>INSTRUCTION</counter><value>COVEREDRATIO</value><minimum>0.61</minimum></limit>
+                                        <limit><counter>LINE</counter><value>COVEREDRATIO</value><minimum>0.65</minimum></limit>
+                                        <limit><counter>INSTRUCTION</counter><value>COVEREDRATIO</value><minimum>0.62</minimum></limit>
                                     </limits>
                                 </rule>
                                 <!-- Kritik sertifika/alarm sınıfları — her biri kendi tabanında (kademeli yukarı çekilir). -->
