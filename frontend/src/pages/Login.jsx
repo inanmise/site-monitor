@@ -9,8 +9,9 @@ import '@fontsource/josefin-sans/600.css'
 import { api } from '../api/client'
 import { useT, useLanguage } from '../i18n/index.jsx'
 import { useBranding } from '../contexts/BrandingProvider.jsx'
+import BrandLogo from '../components/BrandLogo.jsx'
 import { downscaleImage } from '../utils/imageDownscale.js'
-import { ShieldAlert, ShieldCheck, Lock, Globe, Activity, Radio, Network, Server, Search, Gauge, Bell, AlertTriangle, FileText, Wrench, X } from 'lucide-react'
+import { ShieldAlert, ShieldCheck, Lock, Globe, Activity, Radio, Network, Server, Search, Gauge, Bell, BellRing, AlertTriangle, FileText, BarChart3, TrendingUp, Wrench, X } from 'lucide-react'
 
 // App.jsx logout temizliği de bu anahtarı kullanır — tek kaynak buradan export edilir.
 export const REMEMBER_KEY = 'site-monitor-remembered-user'
@@ -146,23 +147,38 @@ export default function Login({ onLogin, sessionExpired = false }) {
     return () => clearTimeout(id)
   }, [lockout])
 
-  // Bento kutuları — izleme türleri (flagship: Sertifika geniş + yeşil vurgu). tint = kategori ikon rengi.
-  const CAPS = [
-    { Icon: ShieldCheck, key: 'login.capCert',    desc: 'login.capCertDesc',    tint: '#4ade80', flag: true, wide: true },
-    { Icon: Server,      key: 'login.capDns',     desc: 'login.capDnsDesc',     tint: '#60a5fa' },
-    { Icon: Activity,    key: 'login.capHttp',    desc: 'login.capHttpDesc',    tint: '#f59e0b' },
-    { Icon: Network,     key: 'login.capPort',    desc: 'login.capPortDesc',    tint: '#a78bfa' },
-    { Icon: Radio,       key: 'login.capPing',    desc: 'login.capPingDesc',    tint: '#22d3ee' },
-    { Icon: Globe,       key: 'login.capDomain',  desc: 'login.capDomainDesc',  tint: '#34d399' },
-    { Icon: Search,      key: 'login.capKeyword', desc: 'login.capKeywordDesc', tint: '#f472b6' },
-    { Icon: Gauge,       key: 'login.capUptime',  desc: 'login.capUptimeDesc',  tint: '#818cf8' },
-  ]
-  // Operasyon grubu — izleme dışı yetenekler (kompakt çipler).
-  const OPS = [
-    { Icon: Bell,          key: 'login.opsAlarm' },
-    { Icon: AlertTriangle, key: 'login.opsIncident' },
-    { Icon: FileText,      key: 'login.opsReport' },
-    { Icon: Wrench,        key: 'login.opsMaintenance' },
+  // Üç sütunlu değer önermesi — İzle / Uyar / Raporla. Her sütun: başlık + tek cümle + kompakt çipler.
+  // tint = sütun/çip vurgu rengi; flagship Sertifika çipi yeşil canlı vurgusunu korur.
+  const PILLARS = [
+    {
+      Icon: Activity, key: 'login.pillarMonitor', desc: 'login.pillarMonitorDesc', tint: '#4ade80',
+      items: [
+        { Icon: ShieldCheck, key: 'login.capCert',    desc: 'login.capCertDesc',    tint: '#4ade80', flag: true },
+        { Icon: Server,      key: 'login.capDns',     desc: 'login.capDnsDesc',     tint: '#60a5fa' },
+        { Icon: Activity,    key: 'login.capHttp',    desc: 'login.capHttpDesc',    tint: '#f59e0b' },
+        { Icon: Network,     key: 'login.capPort',    desc: 'login.capPortDesc',    tint: '#a78bfa' },
+        { Icon: Radio,       key: 'login.capPing',    desc: 'login.capPingDesc',    tint: '#22d3ee' },
+        { Icon: Globe,       key: 'login.capDomain',  desc: 'login.capDomainDesc',  tint: '#34d399' },
+        { Icon: Search,      key: 'login.capKeyword', desc: 'login.capKeywordDesc', tint: '#f472b6' },
+        { Icon: Gauge,       key: 'login.capUptime',  desc: 'login.capUptimeDesc',  tint: '#818cf8' },
+      ],
+    },
+    {
+      Icon: BellRing, key: 'login.pillarAlert', desc: 'login.pillarAlertDesc', tint: '#f59e0b',
+      items: [
+        { Icon: Bell,          key: 'login.opsAlarm',       tint: '#f59e0b' },
+        { Icon: AlertTriangle, key: 'login.opsIncident',    tint: '#f87171' },
+        { Icon: Wrench,        key: 'login.opsMaintenance', tint: '#94a3b8' },
+      ],
+    },
+    {
+      Icon: BarChart3, key: 'login.pillarReport', desc: 'login.pillarReportDesc', tint: '#60a5fa',
+      items: [
+        { Icon: FileText,   key: 'login.opsReport',   tint: '#60a5fa' },
+        { Icon: BarChart3,  key: 'login.repStats',    tint: '#22d3ee' },
+        { Icon: TrendingUp, key: 'login.repForecast', tint: '#34d399' },
+      ],
+    },
   ]
 
   useEffect(() => {
@@ -257,37 +273,40 @@ export default function Login({ onLogin, sessionExpired = false }) {
         <span className="lp-accent-dot" aria-hidden="true" />
 
         <div className="lp-left-inner">
-          {/* Üst: wordmark + ENTERPRISE rozeti */}
+          {/* Üst: nötr marka logosu (beyaz-etiket logo yoksa) + wordmark + ENTERPRISE rozeti */}
           <div className="lp-top">
-            <span className="lp-wordmark">{brand('app_name', 'Site Monitör')}</span>
+            {!branding.logo_data && <BrandLogo status="ok" size={32} />}
+            <span className="lp-wordmark">{brand('app_name', 'SiteMonitor')}</span>
             <span className="lp-badge">ENTERPRISE</span>
           </div>
 
-          {/* Orta: mesaj + izleme yetenekleri (bento) + operasyon grubu (çipler) */}
+          {/* Orta: slogan + destek cümlesi + üç sütunlu değer önermesi (İzle / Uyar / Raporla) */}
           <div className="lp-center">
-            <h1 className="lp-headline">{t('login.leftHeadline')}</h1>
-            <div className="lp-caps-title">{t('login.capsTitle')}</div>
-            <div className="lp-bento">
-              {CAPS.map(({ Icon, key, desc, tint, flag, wide }, i) => (
-                <div
-                  key={key}
-                  className={`lp-tile${flag ? ' lp-tile--flag' : ''}${wide ? ' lp-tile--wide' : ''}`}
-                  style={{ '--tile-tint': tint, animationDelay: `${i * 55}ms` }}
-                >
-                  {flag && <span className="lp-tile-live" />}
-                  <Icon size={18} className="lp-tile-icon" />
-                  <span className="lp-tile-label">{t(key)}</span>
-                  <span className="lp-tile-desc">{t(desc)}</span>
+            <h1 className="lp-headline">{t('login.tagline')}</h1>
+            <p className="lp-subline">{t('login.leftHeadline')}</p>
+            <div className="lp-pillars">
+              {PILLARS.map(({ Icon, key, desc, tint, items }, pi) => (
+                <div key={key} className="lp-pillar" style={{ '--pillar-tint': tint, animationDelay: `${pi * 90}ms` }}>
+                  <div className="lp-pillar-head">
+                    <Icon size={17} className="lp-pillar-icon" />
+                    <span className="lp-pillar-title">{t(key)}</span>
+                  </div>
+                  <p className="lp-pillar-desc">{t(desc)}</p>
+                  <div className="lp-pillar-items">
+                    {items.map(({ Icon: ItemIcon, key: ik, desc: idesc, tint: itint, flag }) => (
+                      <span
+                        key={ik}
+                        className={`lp-chip${flag ? ' lp-chip--flag' : ''}`}
+                        style={{ '--tile-tint': itint }}
+                        title={idesc ? t(idesc) : undefined}
+                      >
+                        {flag && <span className="lp-chip-live" />}
+                        <ItemIcon size={13} />
+                        {t(ik)}
+                      </span>
+                    ))}
+                  </div>
                 </div>
-              ))}
-            </div>
-            <div className="lp-caps-title">{t('login.opsTitle')}</div>
-            <div className="lp-ops">
-              {OPS.map(({ Icon, key }, i) => (
-                <span key={key} className="lp-chip" style={{ animationDelay: `${(CAPS.length + i) * 55}ms` }}>
-                  <Icon size={14} />
-                  {t(key)}
-                </span>
               ))}
             </div>
           </div>
@@ -312,7 +331,7 @@ export default function Login({ onLogin, sessionExpired = false }) {
             </div>
             <div className="lp-footer">
               <span className="lp-footer-meta">
-                {brand('footer_text', `v${__APP_VERSION__} · © ${new Date().getFullYear()} ${brand('app_name', 'Site Monitör')}`)}
+                {brand('footer_text', `v${__APP_VERSION__} · © ${new Date().getFullYear()} ${brand('app_name', 'SiteMonitor')}`)}
               </span>
               <button type="button" className="lp-lang-btn" onClick={toggleLang}>
                 <Globe size={13} />
@@ -337,9 +356,12 @@ export default function Login({ onLogin, sessionExpired = false }) {
 
           {/* Üst açıklama (branding override'lı) */}
           <div className="lp-intro">
-            {branding.logo_data && (
-              <img src={branding.logo_data} alt={brand('app_name', 'Site Monitör')}
-                   style={{ maxHeight: 40, maxWidth: 200, marginBottom: 10 }} />
+            {branding.logo_data ? (
+              <img src={branding.logo_data} alt={brand('app_name', 'SiteMonitor')}
+                   style={{ maxHeight: 40, maxWidth: 200, display: 'block', margin: '0 auto 10px' }} />
+            ) : (
+              /* Nötr marka logosu — auth öncesi durum GÖSTERİLMEZ (BRAND.md); yatayda ortalı */
+              <BrandLogo status="ok" size={96} style={{ display: 'block', margin: '0 auto 10px' }} />
             )}
             <div className="lp-intro-badge">
               <Lock size={13} />

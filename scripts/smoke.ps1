@@ -1,11 +1,11 @@
 <#
 .SYNOPSIS
-  Post-deploy smoke test for Site Monitor. Probes the most load-bearing endpoints
+  Post-deploy smoke test for SiteMonitor. Probes the most load-bearing endpoints
   to verify the app is alive, the auth gate is honoured, and the public health
   surface returns the expected shape.
 
 .PARAMETER BaseUrl
-  Root URL of the running Site Monitor instance. Defaults to http://localhost:8080.
+  Root URL of the running SiteMonitor instance. Defaults to http://localhost:8080.
 
 .PARAMETER TimeoutSeconds
   HTTP timeout for each probe. Defaults to 5 seconds.
@@ -59,7 +59,7 @@ function Test-Probe {
 }
 
 Write-Host ""
-Write-Host "Site Monitor smoke test against $BaseUrl" -ForegroundColor Cyan
+Write-Host "SiteMonitor smoke test against $BaseUrl" -ForegroundColor Cyan
 Write-Host ("=" * 70)
 
 Test-Probe -Name 'Health'                  -Url "$BaseUrl/health"                            -ExpectedStatuses 200

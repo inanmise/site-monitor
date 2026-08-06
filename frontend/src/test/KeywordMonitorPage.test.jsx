@@ -231,7 +231,7 @@ describe('KeywordMonitorPage', () => {
   })
 
   it('?page=2&ps=50 ile mount (120 kayıt) → 51–100 dilimi; ps localStorage tercihini ezer', async () => {
-    localStorage.setItem('cm.pageSize.keyword-monitors', '200')   // link alanın tercihi farklı olsun
+    localStorage.setItem('sm.pageSize.keyword-monitors', '200')   // link alanın tercihi farklı olsun
     window.history.replaceState({}, '', '/?tab=keyword&page=2&ps=50')
     try {
       const many = Array.from({ length: 120 }, (_, i) => ({ ...monitor, id: i + 1, url: `https://m${i + 1}.example.com/` }))

@@ -473,7 +473,7 @@ public class SchedulerService {
             )
             """);
         patch("CREATE UNIQUE INDEX IF NOT EXISTS ux_app_settings_key ON app_settings(setting_key)");
-        // ── Rename VERİ göçü (CertMonitor → Site Monitor, geriye-uyum): app_settings anahtar önekleri ──
+        // ── Rename VERİ göçü (CertMonitor → SiteMonitor, geriye-uyum): app_settings anahtar önekleri ──
         // AppSettingsService.resolve() exact-match okur; bu göç olmadan tüm admin override'ları
         // (Genel Ayarlar ekranından yapılmış her değişiklik) yeni anahtar adlarında bulunamaz ve
         // sessizce varsayılana dönerdi. Idempotent: WHERE yalnız eski öneki bulur. Çakışma guard'ı:
@@ -1830,6 +1830,7 @@ public class SchedulerService {
                 Map<String, Object> r = entry.getValue().get();
                 // ctxExtra: port/protocol + per-monitor teyit/recovery override'ları (ping/keyword ile aynı → tunable + aktif recovery)
                 Map<String, Object> ctx = new LinkedHashMap<>();
+                ctx.put("monitor_name", m.getName());   // subject standardı: ad > çıplak URL
                 ctx.put("port", m.getPort());
                 ctx.put("protocol", m.getProtocol() != null ? m.getProtocol() : "TCP");
                 ctx.put("monitor_id", m.getId());
@@ -1969,6 +1970,7 @@ public class SchedulerService {
             try {
                 Map<String, Object> r = entry.getValue().get();
                 Map<String, Object> ctx = new LinkedHashMap<>();
+                ctx.put("monitor_name", m.getName());   // subject standardı: ad > çıplak URL
                 ctx.put("url", m.getUrl());
                 ctx.put("keyword", m.getKeyword());
                 ctx.put("condition", m.getAlertCondition());
@@ -2113,6 +2115,7 @@ public class SchedulerService {
             try {
                 Map<String, Object> r = entry.getValue().get();
                 Map<String, Object> ctx = new LinkedHashMap<>();
+                ctx.put("monitor_name", m.getName());   // subject standardı: ad > çıplak URL
                 ctx.put("url", m.getUrl());
                 ctx.put("monitor_id", m.getId());
                 ctx.put("monitor_confirm_attempts", m.getConfirmAttempts());
@@ -2259,6 +2262,7 @@ public class SchedulerService {
                                    List<MonitoringOutageService.SweepItem> downSweep,
                                    List<MonitoringOutageService.SweepItem> integritySweep) {
         Map<String, Object> ctx = new LinkedHashMap<>();
+        ctx.put("monitor_name", m.getName());   // subject standardı: ad > çıplak URL
         ctx.put("url", m.getUrl());
         ctx.put("monitor_id", m.getId());
         ctx.put("monitor_confirm_attempts", m.getConfirmAttempts());
@@ -2679,6 +2683,7 @@ public class SchedulerService {
     /** SSL/Domain sweep'i için ortak ctx — eşik durumu (teyitsiz/anında) + takım yönlendirme. */
     private Map<String, Object> sslDomainCtx(HttpMonitor m) {
         Map<String, Object> ctx = new LinkedHashMap<>();
+        ctx.put("monitor_name", m.getName());   // subject standardı: ad > çıplak URL
         ctx.put("url", m.getUrl());
         ctx.put("monitor_id", m.getId());
         ctx.put("monitor_confirm_attempts", 0);   // eşik durumu — re-check churn'ü yok, anında
@@ -2842,6 +2847,7 @@ public class SchedulerService {
     /** Keyword SSL/Domain sweep ortak ctx — eşik durumu (teyitsiz/anında) + takım yönlendirme. */
     private Map<String, Object> keywordSslDomainCtx(KeywordMonitor m) {
         Map<String, Object> ctx = new LinkedHashMap<>();
+        ctx.put("monitor_name", m.getName());   // subject standardı: ad > çıplak URL
         ctx.put("url", m.getUrl());
         ctx.put("monitor_id", m.getId());
         ctx.put("monitor_confirm_attempts", 0);   // eşik durumu — re-check churn'ü yok, anında
@@ -3064,6 +3070,7 @@ public class SchedulerService {
 
     private MonitoringOutageService.SweepItem domainItem(String type, DomainMonitor m, Map<String, Object> r, boolean up, String level) {
         Map<String, Object> ctx = new LinkedHashMap<>();
+        ctx.put("monitor_name", m.getName());   // subject standardı: ad > çıplak URL
         ctx.put("domain", m.getDomain());
         ctx.put("monitor_id", m.getId());
         ctx.put("alert_level", level);
@@ -3146,6 +3153,7 @@ public class SchedulerService {
             try {
                 Map<String, Object> r = entry.getValue().get();
                 Map<String, Object> ctx = new LinkedHashMap<>();
+                ctx.put("monitor_name", m.getName());   // subject standardı: ad > çıplak URL
                 ctx.put("host", m.getHost());
                 ctx.put("ip_version", m.getIpVersion());
                 ctx.put("monitor_id", m.getId());

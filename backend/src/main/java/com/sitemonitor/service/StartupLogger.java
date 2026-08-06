@@ -280,7 +280,7 @@ public class StartupLogger {
         String version = AppVersion.resolve(env);
         StringBuilder sb = new StringBuilder("\n");
         String bar = "═".repeat(16);
-        sb.append(bar).append(" ETKİN KONFİGÜRASYON — Site Monitör ").append(version).append(' ').append(bar).append('\n');
+        sb.append(bar).append(" ETKİN KONFİGÜRASYON — SiteMonitor ").append(version).append(' ').append(bar).append('\n');
         sb.append("profiller=").append(profiles())
           .append("   ·   secret değerler maskeli (").append(SecretMask.MASK).append(")")
           .append("   ·   kaynak: [default]/[config]/[env]/[db]/[runtime]/[file]\n");

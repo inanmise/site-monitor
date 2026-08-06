@@ -134,7 +134,7 @@ public class LoginAnomalyController {
             n.setSentAt(ISO.format(Instant.now()));
             n.setRecipientEmail(recipient);
             n.setRecipientRole("SYSTEM_ADMIN");
-            n.setSubject("[Site Monitör] Login anomali TEST maili");
+            n.setSubject("[Site Monitor] Login anomali TEST maili");
             n.setEmailStatus(status);
             n.setTrigger("LOGIN_ANOMALY_TEST");
             n.setEmailFrom(emailService.senderAddress());

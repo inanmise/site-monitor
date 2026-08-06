@@ -94,7 +94,7 @@ class BrandingControllerTest {
         mvc.perform(get("/api/branding"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success").value(true))
-                .andExpect(jsonPath("$.data.app_name").value("Site Monitör"))
+                .andExpect(jsonPath("$.data.app_name").value("SiteMonitor"))
                 .andExpect(jsonPath("$.data.banner_enabled").value(false))
                 .andExpect(jsonPath("$.data.banner_version").value(0));
     }

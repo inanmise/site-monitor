@@ -185,11 +185,11 @@ public class EmailTemplateBuilder {
           // Dış ortalayıcı
           .append("<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' bgcolor='#EDEFF2' style='background:#EDEFF2;mso-table-lspace:0;mso-table-rspace:0'>")
           .append("<tr><td align='center' style='padding:26px 12px'>")
-          .append("<table role='presentation' width='640' cellpadding='0' cellspacing='0' border='0' bgcolor='#FFFFFF' style='width:640px;max-width:640px;background:#FFFFFF;border:1px solid ").append(LINE).append(";border-radius:10px;overflow:hidden'>")
-          // Üst bant — koyu lacivert wordmark + ENTERPRISE
-          .append("<tr><td bgcolor='").append(NAVY).append("' style='background-color:").append(NAVY).append(";padding:18px 26px'>")
+          .append("<table role='presentation' width='600' cellpadding='0' cellspacing='0' border='0' bgcolor='#FFFFFF' style='width:600px;max-width:600px;background:#FFFFFF;border:1px solid ").append(LINE).append(";border-radius:10px;overflow:hidden'>")
+          // Üst bant — logo lockup (BRAND.md §5.1: 32px logo + "Site Monitor", TEK logo) + ENTERPRISE
+          .append("<tr><td bgcolor='").append(NAVY).append("' style='background-color:").append(NAVY).append(";padding:12px 20px'>")
           .append("<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0'><tr>")
-          .append("<td align='left' style='font-size:18px;font-weight:700;letter-spacing:.02em;color:#FFFFFF'>Site Monitör</td>")
+          .append("<td align='left'>").append(BrandMailAssets.headerLockup()).append("</td>")
           .append("<td align='right' style='font-size:10px;font-weight:700;letter-spacing:.18em;color:#8DA2BF'>ENTERPRISE</td>")
           .append("</tr></table></td></tr>")
           // Aciliyet şeridi (üst çizgi)
@@ -242,14 +242,14 @@ public class EmailTemplateBuilder {
             }
             sb.append("</table>");
         }
-        sb.append(ctaButton(href, "Site Monitör'de Görüntüle", color))
+        sb.append(ctaButton(href, "Site Monitor'de Görüntüle", color))
           .append("</td></tr></table></td></tr>")
           // "Neden bu e-postayı aldınız?" — alıcı şeffaflığı (StatusCake "Why am I seeing this email" esini)
           .append(whyReceivingBlock(m.teamName()))
           // Footer
           .append("<tr><td style='padding:22px 30px 24px'>")
           .append("<div style='border-top:1px solid ").append(LINE).append(";padding-top:12px;font-size:11px;line-height:1.6;color:#9AA3AF'>")
-          .append("Bu e-posta Site Monitör ").append(esc(subsystemLabel(m.alertType()))).append(" tarafından otomatik gönderilmiştir")
+          .append("Bu e-posta Site Monitor ").append(esc(subsystemLabel(m.alertType()))).append(" tarafından otomatik gönderilmiştir")
           .append(checkedAt != null ? " · Son kontrol: " + esc(formatHuman(checkedAt)) : "")
           .append(" · Bildirim ayarları için yöneticinize başvurun.")
           .append("</div></td></tr>")
@@ -266,7 +266,7 @@ public class EmailTemplateBuilder {
         String expiryIso = firstNonNull(strCtx(m.ctx(), "expiry_date"), strCtx(m.ctx(), "not_after"));
 
         StringBuilder sb = new StringBuilder();
-        sb.append("[Site Monitör] ").append(head).append(" · ").append(nz(m.domain())).append('\n');
+        sb.append("[Site Monitor] ").append(head).append(" · ").append(nz(m.domain())).append('\n');
         sb.append(shortSummary(m)).append("\n\n");
         if (days != null) {
             sb.append("Bitişe ").append(days).append(" gün / ").append(PROGRESS_WINDOW_DAYS).append(" günlük pencere");
@@ -289,7 +289,7 @@ public class EmailTemplateBuilder {
         String cta = appSettings.getString("site.monitor.app.base-url", appBaseUrl);
         sb.append(cta).append("/?tab=").append(tabFor(m.alertType()))
           .append(m.domain() != null ? "&domain=" + urlenc(m.domain()) : "").append('\n');
-        sb.append("\n— Site Monitör ").append(subsystemLabel(m.alertType()));
+        sb.append("\n— Site Monitor ").append(subsystemLabel(m.alertType()));
         return sb.toString();
     }
 
@@ -409,9 +409,9 @@ public class EmailTemplateBuilder {
                 + "<body style='margin:0;padding:0;background:#EDEFF2;font-family:\"Segoe UI\",\"Helvetica Neue\",Arial,sans-serif;color:" + INK + "'>"
                 + "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' bgcolor='#EDEFF2' style='background:#EDEFF2'>"
                 + "<tr><td align='center' style='padding:26px 12px'>"
-                + "<table role='presentation' width='640' cellpadding='0' cellspacing='0' border='0' bgcolor='#FFFFFF' style='width:640px;max-width:640px;background:#FFFFFF;border:1px solid " + LINE + ";border-radius:10px;overflow:hidden'>"
-                + "<tr><td bgcolor='" + NAVY + "' style='background-color:" + NAVY + ";padding:18px 26px'><table role='presentation' width='100%'><tr>"
-                + "<td align='left' style='font-size:18px;font-weight:700;color:#FFFFFF'>Site Monitör</td>"
+                + "<table role='presentation' width='600' cellpadding='0' cellspacing='0' border='0' bgcolor='#FFFFFF' style='width:600px;max-width:600px;background:#FFFFFF;border:1px solid " + LINE + ";border-radius:10px;overflow:hidden'>"
+                + "<tr><td bgcolor='" + NAVY + "' style='background-color:" + NAVY + ";padding:12px 20px'><table role='presentation' width='100%'><tr>"
+                + "<td align='left'>" + BrandMailAssets.headerLockup() + "</td>"
                 + "<td align='right' style='font-size:10px;font-weight:700;letter-spacing:.18em;color:#8DA2BF'>ENTERPRISE</td></tr></table></td></tr>"
                 + "<tr><td bgcolor='" + C_INFO + "' style='background-color:" + C_INFO + ";font-size:0;line-height:0;height:4px'>&nbsp;</td></tr>"
                 + "<tr><td style='padding:26px 30px 8px'>"
@@ -421,8 +421,8 @@ public class EmailTemplateBuilder {
                 + hero
                 + "<tr><td style='padding:8px 30px 4px'><table role='presentation' width='100%' style='border-collapse:collapse'>" + rows + "</table></td></tr>"
                 + whyReceivingBlock(teamNames)
-                + "<tr><td style='padding:18px 30px 24px'>" + ctaButton(href, "Site Monitör'de Görüntüle", C_INFO)
-                + "<div style='border-top:1px solid " + LINE + ";margin-top:18px;padding-top:12px;font-size:11px;color:#9AA3AF'>Bu e-posta Site Monitör tarafından otomatik gönderilmiştir.</div></td></tr>"
+                + "<tr><td style='padding:18px 30px 24px'>" + ctaButton(href, "Site Monitor'de Görüntüle", C_INFO)
+                + "<div style='border-top:1px solid " + LINE + ";margin-top:18px;padding-top:12px;font-size:11px;color:#9AA3AF'>Bu e-posta Site Monitor tarafından otomatik gönderilmiştir.</div></td></tr>"
                 + "</table></td></tr></table></body></html>";
     }
 
@@ -435,7 +435,7 @@ public class EmailTemplateBuilder {
         boolean domainType = isDomain(alertType);
         String expiryIso = ctx == null ? null : firstNonNull(strCtx(ctx, "expiry_date"), strCtx(ctx, "not_after"));
         String daysRem = ctx == null ? null : firstNonNull(strCtx(ctx, "days_remaining"), strCtx(ctx, "days"));
-        StringBuilder sb = new StringBuilder("[Site Monitör] ÇÖZÜLDÜ · " + nz(domain) + "\n"
+        StringBuilder sb = new StringBuilder("[Site Monitor] ÇÖZÜLDÜ · " + nz(domain) + "\n"
                 + resolvedHeadline(alertType, expiryIso != null));
         if (expiryIso != null)
             sb.append("\n").append(domainType ? "Yeni Bitiş Tarihi: " : "Bitiş Tarihi: ").append(formatHuman(expiryIso));
@@ -630,7 +630,7 @@ public class EmailTemplateBuilder {
         }
         if (isDomain(m.alertType()) && m.daysRemaining() != null)
             return m.domain() + " alan adının kaydı " + m.daysRemaining() + " gün içinde doluyor.";
-        return "Site Monitör bir izleme olayı tespit etti.";
+        return "Site Monitor bir izleme olayı tespit etti.";
     }
 
     // ── Aksiyon planı ────────────────────────────────────────────────────────
@@ -642,7 +642,7 @@ public class EmailTemplateBuilder {
                     "Registrar paneline giriş yapın" + (reg != null ? " (" + reg + ")" : ""),
                     "Alan adını en az 1 yıl yenileyin",
                     "Auto-renew (otomatik yenileme) özelliğini açın",
-                    "Yenileme sonrası Site Monitör'ün otomatik doğrulamasını bekleyin — alarm kendiliğinden kapanır");
+                    "Yenileme sonrası Site Monitor'ün otomatik doğrulamasını bekleyin — alarm kendiliğinden kapanır");
         }
         if (isPage(m.alertType())) {
             if ("PAGE_DOWN".equals(m.alertType()))
@@ -650,19 +650,19 @@ public class EmailTemplateBuilder {
             return List.of(
                     "Yukarıdaki \"Sorunlu Kaynaklar\" listesindeki kırık link/resim/CSS/JS veya mixed content'i inceleyin",
                     "İlgili içerik/dağıtım ekibiyle kaynağı düzeltin (kaldırılmış varlık, yanlış yol, http→https)",
-                    "Site Monitör'ün sonraki kontrolünü bekleyin — sorunlar giderilince alarm kendiliğinden kapanır");
+                    "Site Monitor'ün sonraki kontrolünü bekleyin — sorunlar giderilince alarm kendiliğinden kapanır");
         }
         if (isScripted(m.alertType())) {
             return List.of(
                     "Yukarıdaki \"Başarısız Check'ler\" listesini ve maskeli çıktıyı inceleyin (hangi adım başarısız oldu)",
                     "İlgili servisi/akışı (login, API zinciri, token/claim) kontrol edin; gerekirse izleme servis hesabının kimlik bilgilerini doğrulayın",
-                    "Site Monitör'ün sonraki çalıştırmasını bekleyin — sentetik test yeniden geçince alarm kendiliğinden kapanır");
+                    "Site Monitor'ün sonraki çalıştırmasını bekleyin — sentetik test yeniden geçince alarm kendiliğinden kapanır");
         }
         if (isCert(m.alertType())) {
             return List.of(
                     "CA/PKI ekibinden yeni sertifika talep edin",
                     "Yeni sertifikayı ilgili sunuculara ve sistemlere dağıtın",
-                    "Site Monitör'de zincir ve geçerlilik doğrulamasını izleyin — yenilenen sertifika tespit edilince alarm kendiliğinden kapanır");
+                    "Site Monitor'de zincir ve geçerlilik doğrulamasını izleyin — yenilenen sertifika tespit edilince alarm kendiliğinden kapanır");
         }
         return List.of("Hedefin erişilebilirliğini kontrol edin. Sorun giderilince alarm otomatik kapanır.");
     }
@@ -694,7 +694,7 @@ public class EmailTemplateBuilder {
                 + "<tr><td style='padding:12px 16px'>"
                 + "<div style='font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:" + MUTED + ";margin-bottom:5px'>Neden bu e-postayı aldınız?</div>"
                 + "<div style='font-size:13px;line-height:1.55;color:" + INK + "'>Bu bildirim " + teamPhrase
-                + " tanımlı bir izleme için gönderildi. Site Monitör otomatik bir izleme sistemidir; bildirim tercihleri için sistem yöneticinize başvurun.</div>"
+                + " tanımlı bir izleme için gönderildi. Site Monitor otomatik bir izleme sistemidir; bildirim tercihleri için sistem yöneticinize başvurun.</div>"
                 + "</td></tr></table></td></tr>";
     }
 

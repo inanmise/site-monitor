@@ -57,7 +57,7 @@ public class WebhookService {
             attachment.put("color", color);
             attachment.put("title", title);
             attachment.put("text", message);
-            attachment.put("footer", "Site Monitör Enterprise");
+            attachment.put("footer", "SiteMonitor Enterprise");
 
             Map<String, Object> payload = new LinkedHashMap<>();
             payload.put("attachments", List.of(attachment));

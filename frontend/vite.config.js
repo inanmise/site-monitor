@@ -1,4 +1,5 @@
 import { defineConfig } from 'vite'
+import { coverageConfigDefaults } from 'vitest/config'
 import react from '@vitejs/plugin-react'
 import { readFileSync } from 'fs'
 import { resolve } from 'path'
@@ -18,17 +19,26 @@ export default defineConfig({
     globals: true,
     environment: 'jsdom',
     setupFiles: './src/test/setup.js',
+    // Coverage (v8) enstrümantasyonu 120-kayıt sayfalama render'larını Windows'ta 5 sn'nin
+    // üzerine itebiliyor — varsayılan 5000 timeout'u coverage koşusunda sahte kırmızı üretir.
+    testTimeout: 15000,
+    // Varsayılan exclude yalnız 'node_modules'ü tanır; kilitli-dosya geçici kopyaları
+    // (node_modules.stale gibi) paket içi .test.ts dosyalarıyla koşuyu kirletmesin.
+    exclude: ['**/node_modules*/**', '**/dist/**'],
     // Kapsam eşiği (regresyon kilidi) — `npm run test:coverage` eşik altında FAIL eder; CI zorlar.
     // Karar: "ölç→taban→kademeli" — global taban bugünkü ölçülen seviyenin hemen ALTINA konur
-    // (bugün: satır/deyim ~47.6, dal ~59.8, fonksiyon ~28.7), yeni testlerle YUKARI çekilir.
+    // (2026-08-06 ölçümü: satır/deyim 57.1, dal 62.7, fonksiyon 33.3), yeni testlerle YUKARI çekilir.
     coverage: {
       provider: 'v8',
       reporter: ['text', 'html'],
+      // Varsayılan coverage exclude'u yalnız 'node_modules'ü tanır; kilitli-dosya geçici
+      // kopyaları (node_modules.stale) "all files" taramasına girip yüzdeleri ezmesin.
+      exclude: ['**/node_modules*/**', ...coverageConfigDefaults.exclude],
       thresholds: {
-        statements: 45,
-        lines: 45,
-        branches: 55,
-        functions: 26,
+        statements: 55,
+        lines: 55,
+        branches: 60,
+        functions: 31,
         // Saf yardımcı — tam kapsandı, 100'de kilitli (regresyon = kırmızı). Dal hedefi hariç
         // (formatIncidentTime catch/locale dalları birim-testle anlamlı tetiklenmez).
         'src/utils/incidentMeta.js': { statements: 100, lines: 100, functions: 100 },

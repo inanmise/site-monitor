@@ -16,6 +16,8 @@ import { useUrlQuerySync, readUrlParam, readUrlInt, PAGE_STATE_PARAMS } from './
 import SearchableSelect from './components/ui/SearchableSelect.jsx'
 import Login, { REMEMBER_KEY } from './pages/Login'
 import Nav from './components/Nav'
+import BrandLogo from './components/BrandLogo.jsx'
+import { useStatusFavicon } from './hooks/useStatusFavicon.js'
 import StatsPanel from './components/StatsPanel'
 import StatsView from './components/StatsView'
 import CertificateCard from './components/CertificateCard'
@@ -601,7 +603,20 @@ export default function App() {
     ps: (dashPager.pageSize !== 50 || dashPager.page > 1) ? dashPager.pageSize : null,
   }, { enabled: tab === 'dashboard' })
 
-  if (!authChecked) return <div className="loading" style={{ marginTop: 80, textAlign: 'center' }}>{t('app.loading')}</div>
+  // KULLANICI KARARI (2026-08-06): marka logosu HER ZAMAN nötr yeşil ("ok") — navbar ve favicon
+  // durumla renk değiştirmez; filo sağlığı rozet/sayaçlarda ve e-posta varyantlarında anlatılır.
+  // Durum-duyarlı görünüm istenirse: deriveGlobalStatus(stats, networkStatus?.alarm) buraya bağlanır
+  // (utils/brandStatus.js + hook hazır bekliyor). Hook erken-return'lerin ÜSTÜNDE kalmalı.
+  useStatusFavicon('ok')
+
+  if (!authChecked) {
+    return (
+      <div className="loading" style={{ marginTop: 80, textAlign: 'center' }}>
+        <BrandLogo status="muted" size={64} style={{ marginBottom: 12 }} />
+        <div>{t('app.loading')}</div>
+      </div>
+    )
+  }
   if (!user) return <Login onLogin={handleLogin} sessionExpired={sessionExpiredNotice} />
   if (mustChangePwd) {
     // User was auto-reset by an admin — block all of the app until they

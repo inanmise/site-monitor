@@ -139,7 +139,7 @@ class EmailTemplateBuilderTest {
     }
 
     @Test
-    @DisplayName("alan doldurma: domain, 72px hero sayaç, registrar, footer alt-sistem, CTA, 640px, lacivert header")
+    @DisplayName("alan doldurma: domain, 72px hero sayaç, registrar, footer alt-sistem, CTA, 600px, lockup header")
     void fields() {
         String html = b.buildHtml(domainMail("HIGH", 25));
         assertThat(html).contains("kartfree.com").contains(">25<").contains("GÜN<br>KALDI").contains("font-size:72px");
@@ -148,7 +148,7 @@ class EmailTemplateBuilderTest {
         assertThat(html).contains("Alan Adı İzleme");        // footer alt-sistem
         assertThat(html).contains("tab=domain");             // CTA deep-link
         assertThat(html).contains("#0F1B2D");                // koyu-lacivert üst bant
-        assertThat(html).contains("width='640'");            // 640px kart
+        assertThat(html).contains("width='600'");            // 640px kart
         assertThat(html).contains("Görüntüle");              // CTA (apostrof HTML'de &#39; olarak escape'li)
         assertThat(html).contains("color-scheme");           // light-only meta
     }
@@ -278,7 +278,7 @@ class EmailTemplateBuilderTest {
     void plainText() {
         String text = b.buildText(domainMail("HIGH", 25));
         assertThat(text).doesNotContain("<").doesNotContain(">");
-        assertThat(text).contains("[Site Monitör] 25 GÜN KALDI").contains("kartfree.com");
+        assertThat(text).contains("[Site Monitor] 25 GÜN KALDI").contains("kartfree.com");
         assertThat(text).contains("Bitişe 25 gün / 90 günlük pencere");
         assertThat(text).contains("GoDaddy.com, LLC");
         assertThat(text).contains("Önerilen Aksiyon:");

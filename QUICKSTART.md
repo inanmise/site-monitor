@@ -1,3 +1,5 @@
+<img src="branding/assets/logo-ok-64.png" width="64" alt="SiteMonitor logosu">
+
 # SSL/TLS Sertifika İzleme Sistemi — Hızlı Başlangıç
 
 ## Gereksinimler

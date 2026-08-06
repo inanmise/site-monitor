@@ -269,6 +269,9 @@ describe('PageMonitorPage', () => {
     const already = await screen.findByRole('button', { name: /zaten hariç|already matches/i })
     expect(already).toBeDisabled()
     unmount()
+    // Derin bağlantı senkronu modal seçimini URL'e yazar (throttle'lı — yavaş/enstrümante koşuda
+    // yetişir); temizlenmezse ikinci render modalı URL'den otomatik açar → getByText çoklu eşleşir.
+    window.history.replaceState({}, '', '/')
 
     // Yönetilemeyen: USER + farklı takım → aksiyon butonu render edilmez
     vi.clearAllMocks()

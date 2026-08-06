@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { useT } from '../i18n/index.jsx'
+import BrandLogo from './BrandLogo.jsx'
 import whitepaperContent from '../assets/whitepaper.md?raw'
 
 function slugify(text) {
@@ -85,7 +86,14 @@ export default function HelpPage() {
   return (
     <div className="help-page">
       <div className="help-header">
-        <h2 className="help-header-title">{t('help.title')}</h2>
+        {/* Nötr marka logosu + sürüm (BRAND.md: Yardım/Hakkında yüzeyi) */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <BrandLogo status="ok" size={64} />
+          <div>
+            <h2 className="help-header-title" style={{ margin: 0 }}>{t('help.title')}</h2>
+            <span style={{ fontSize: 12, opacity: .65 }}>v{__APP_VERSION__}</span>
+          </div>
+        </div>
         <a
           href="/whitepaper.pdf"
           download="SiteMonitor-WhitePaper.pdf"

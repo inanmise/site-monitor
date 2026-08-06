@@ -99,7 +99,7 @@ class EscalationServiceTest {
         assertThat(saved.getAcknowledged()).isFalse();
         assertThat(saved.getResolved()).isFalse();
         // Süre-bitişi ailesinde subject severity yerine kalan günü taşır
-        verify(emailService).sendAlert(any(String[].class), contains("[Site Monitör] 25 GÜN KALDI · " + domain), anyString(), any(), any(), any(), any(), any());
+        verify(emailService).sendAlert(any(String[].class), contains("[Site Monitor] 25 GÜN KALDI · " + domain), anyString(), any(), any(), any(), any(), any());
     }
 
     @Test
@@ -666,7 +666,7 @@ class EscalationServiceTest {
     }
 
     @Test
-    @DisplayName("reNotify: HIGH alert sends [RE-ALERT] [Site Monitör YÜKSEK] subject")
+    @DisplayName("reNotify: HIGH alert sends [RE-ALERT] [SiteMonitor YÜKSEK] subject")
     void reNotify_highAlert_subjectFormat() {
         AlertEvent event = existingOpenAlert("high.example.com", "EXPIRY", "HIGH", false);
         event.setId(103L);
@@ -680,7 +680,7 @@ class EscalationServiceTest {
 
         assertThat(result.get("status")).isEqualTo("queued");
         verify(emailService).sendAlert(any(String[].class),
-                contains("[RE-ALERT] [Site Monitör] 10 GÜN KALDI · high.example.com"),
+                contains("[RE-ALERT] [Site Monitor] 10 GÜN KALDI · high.example.com"),
                 anyString(), any(), any(), any(), any(), any());
     }
 
@@ -998,7 +998,7 @@ class EscalationServiceTest {
 
         // Mail yalnız takım/UYARI alıcısına; müdür alıcı listesinde yok, seviye UYARI
         ArgumentCaptor<String[]> toCap = ArgumentCaptor.forClass(String[].class);
-        verify(emailService).sendAlert(toCap.capture(), contains("[Site Monitör] ORTA · " + domain), anyString(),
+        verify(emailService).sendAlert(toCap.capture(), contains("[Site Monitor] ORTA · " + domain), anyString(),
                 eq(domain), eq("WARNING"), eq("EXPIRY"), isNull(), any());
         assertThat(toCap.getValue()).containsExactly("takim@test.com");
         assertThat(toCap.getValue()).doesNotContain("mudur@test.com");

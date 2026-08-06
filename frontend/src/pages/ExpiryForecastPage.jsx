@@ -8,7 +8,7 @@ import {
 import { Calendar } from 'lucide-react'
 import { api } from '../api/client'
 import { useT } from '../i18n/index.jsx'
-import SiteMonitorLogo from '../components/ui/SiteMonitorLogo.jsx'
+import BrandLogo from '../components/BrandLogo.jsx'
 import CertificateCard from '../components/CertificateCard.jsx'
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
@@ -496,7 +496,7 @@ export default function ExpiryForecastPage({ onSelectDomain }) {
       {/* ── Header ── */}
       <header className="fc-header">
         <div className="fc-header-left">
-          <SiteMonitorLogo variant="icon" size={34} />
+          <BrandLogo status="ok" size={34} />
           <div>
             <div className="fc-brand-name">Certificate Monitor</div>
             <div className="fc-brand-sub">EXPIRATION INTELLIGENCE · PROD</div>

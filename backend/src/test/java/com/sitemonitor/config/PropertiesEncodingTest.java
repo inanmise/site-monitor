@@ -14,7 +14,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * Java .properties dosyaları ISO-8859-1 ile okunur; değer satırına ham UTF-8 Türkçe
- * karakter yazılırsa çalışma zamanında çift kodlanır (örn. "Site Monitör" → UI'da
+ * karakter yazılırsa çalışma zamanında çift kodlanır (örn. "SiteMonitor" → UI'da
  * "Site MonitÃ¶r"). Non-ASCII değerler \\uXXXX escape ile yazılmalı — bu test tüm
  * application*.properties dosyalarının yorum-olmayan satırlarında ham non-ASCII bayt
  * bulunmadığını doğrular (yorum satırları serbest: Spring onları hiç değerlendirmez).

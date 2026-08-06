@@ -45,3 +45,8 @@ logs/
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# Yerel/geçici — commit edilmez
+_to_delete/
+frontend/node_modules.stale/
+.claude/settings.local.json

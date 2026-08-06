@@ -76,7 +76,8 @@ public class WeeklyReportReminderService {
                 continue;
             }
 
-            String subject = "[Site Monitör] " + team.getName() + " — Haftalık rapor hatırlatması (" + weekLabel + ")";
+            String subject = "[Site Monitor] " + team.getName() + " — Haftalık rapor hatırlatması (" + weekLabel + ")";
+            // Logo şablonun başlık çubuğundan gelir; CID ekini sendHtml hunisi otomatik iliştirir.
             String html = emailService.buildWeeklyReportReminderHtml(team.getName(), weekLabel, url);
             String status = emailService.sendHtml(new String[]{teamEmail}, null, subject, html, null);
             sent++;

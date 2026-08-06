@@ -133,7 +133,7 @@ public final class AppSettingsCatalog {
         // rotasyon/bitişte otomatik yenilenir (CaAutoPinService). Kapsam: HTTP uptime strict + RDAP çıkışı.
         new Setting("site.monitor.trust.auto-pin.enabled",       "security",   Type.BOOL),
         // ── Branding (beyaz etiket) — BrandingController üzerinden yönetilir; /api/branding public okur.
-        //    Boş değer = varsayılan Site Monitör kimliği. banner-version otomatik yönetilir (UI'da gizli).
+        //    Boş değer = varsayılan SiteMonitor kimliği. banner-version otomatik yönetilir (UI'da gizli).
         new Setting("site.monitor.branding.app-name",            "branding",   Type.STRING),
         new Setting("site.monitor.branding.tab-title",           "branding",   Type.STRING),
         new Setting("site.monitor.branding.login-title",         "branding",   Type.STRING),
