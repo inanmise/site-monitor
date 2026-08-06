@@ -1,86 +1,70 @@
-# Site Monitör — Kurumsal SSL/TLS Sertifika İzleme Platformu
-## White Paper | Versiyon 18.83.x | Haziran 2026
+<img src="branding/assets/logo-ok-512.png" width="200" alt="Site Monitor logosu">
 
-> Not: Ürün adı CertMonitor → **Site Monitör** olarak değişti. Bu belgenin PDF çıktısı
-> (`frontend/public/whitepaper.pdf`) bir sonraki whitepaper güncellemesinde yeni adla yeniden üretilecek.
+<!-- ÜRETİLEN KOPYA — elle düzenlemeyin. Kaynak: frontend/src/assets/whitepaper.md ; senkron: node scripts/sync-whitepaper.mjs -->
+
+# Site Monitor — Kurumsal İzleme Platformu
+
+Sürüm `20.0.3` · Ağustos 2026 · Türkçe / English
 
 ---
 
 ## İçindekiler
 
-1. [Yönetici Özeti](#1-yönetici-özeti)
-2. [Problem Tanımı](#2-problem-tanımı)
-3. [Ürün Nedir — Ne Yapar](#3-ürün-nedir--ne-yapar)
-4. [Mimari ve Teknoloji Yığını](#4-mimari-ve-teknoloji-yığını)
+1. [Yönetici Özeti](#1-yonetici-ozeti)
+2. [Problem Tanımı](#2-problem-tanimi)
+3. [Ürün Yetenekleri](#3-urun-yetenekleri)
+4. [Mimari ve Teknoloji Yığını](#4-mimari-ve-teknoloji-yigini)
 5. [Sistem Topolojisi](#5-sistem-topolojisi)
-6. [Veritabanı Şeması](#6-veritabanı-şeması)
-7. [Sertifika Kontrol Akışı](#7-sertifika-kontrol-akışı)
-8. [Alarm ve Eskalasyon Mekanizması](#8-alarm-ve-eskalasyon-mekanizması)
+6. [Veritabanı Şeması](#6-veritabani-semasi)
+7. [Sertifika Kontrol Akışı](#7-sertifika-kontrol-akisi)
+8. [Alarm ve Eskalasyon Mekanizması](#8-alarm-ve-eskalasyon-mekanizmasi)
 9. [Bildirim Sistemi](#9-bildirim-sistemi)
-10. [Güvenlik Modeli](#10-güvenlik-modeli)
-11. [Kullanıcı Rolleri ve Yetki Matrisi](#11-kullanıcı-rolleri-ve-yetki-matrisi)
-12. [Kullanıcı Ekranları ve Aksiyonlar](#12-kullanıcı-ekranları-ve-aksiyonlar)
-13. [Operasyonel Prosedürler](#13-operasyonel-prosedürler)
-14. [Dağıtım ve DevOps](#14-dağıtım-ve-devops)
-15. [Yüksek Erişilebilirlik](#15-yüksek-erişilebilirlik)
-16. [Konfigürasyon Referansı](#16-konfigürasyon-referansı)
-17. [Sürüm ve Yayın Bilgisi](#17-sürüm-ve-yayın-bilgisi)
+10. [İzleme Türleri](#10-izleme-turleri)
+11. [Bakım Pencereleri](#11-bakim-pencereleri)
+12. [Güvenlik Modeli](#12-guvenlik-modeli)
+13. [Kullanıcı Rolleri ve Yetki Modeli](#13-kullanici-rolleri-ve-yetki-modeli)
+14. [Kullanıcı Ekranları ve Aksiyonlar](#14-kullanici-ekranlari-ve-aksiyonlar)
+15. [Operasyonel Prosedürler](#15-operasyonel-prosedurler)
+16. [Dağıtım ve DevOps](#16-dagitim-ve-devops)
+17. [Yüksek Erişilebilirlik](#17-yuksek-erisilebilirlik)
+18. [Konfigürasyon Referansı](#18-konfigurasyon-referansi)
+19. [Sürüm ve Yayın Bilgisi](#19-surum-ve-yayin-bilgisi)
+20. [Production Dağıtım ve Güvenlik Kontrol Listesi](#20-production-dagitim-ve-guvenlik-kontrol-listesi)
+21. [Terimler Sözlüğü](#21-terimler-sozlugu)
 
 ---
 
 ## 1. Yönetici Özeti
 
-**Site Monitör**, kurumsal ortamlarda çalışan SSL/TLS sertifikalarını otomatik olarak izleyen, süresi dolmak üzere olan veya hatalı sertifikalar için sorumlu ekipleri proaktif olarak bilgilendiren, takım tabanlı sorumluluk yönetimi ve tam denetim izine sahip bir **kurumsal sertifika izleme platformudur.**
+**Site Monitor**, kurumunuzun dışa ve içe dönük servislerini tek panelden izleyen bir kurumsal izleme platformudur. Çekirdeğinde SSL/TLS sertifika yaşam döngüsü yönetimi vardır; bunun çevresine HTTP/port/DNS/ping erişilebilirlik izlemesi, sayfa bütünlüğü denetimi, sentetik (k6) akış testleri ve alan adı tescil takibi eklenmiştir. Sorunları siz fark etmeden önce tespit eder, sorumlu takıma alarm üretir ve tüm süreci denetim iziyle kayıt altına alır.
 
-### Temel Sorun
+Sertifikanızın süresi beklenmedik bir anda dolduğunda müşteri trafiği kesilir, tarayıcılar güvenlik uyarısı gösterir ve düzenleyici uyum riski doğar. Site Monitor bu senaryoyu üç adımda ortadan kaldırır: envanterinizdeki her domaini saatlik olarak tarar, süre dolmadan 30 / 15 / 7 gün önce sorumlu takıma kademeli alarm üretir ve yenileme tamamlanana kadar günlük hatırlatma gönderir.
 
-SSL/TLS sertifikalarının süresi beklenmedik anlarda dolduğunda:
-- Müşteri hizmetleri kesintiye uğrar (HTTPS bağlantısı kesilir)
-- Tarayıcı güvenlik uyarıları son kullanıcıları etkiler
-- Finansal kurumlarda düzenleyici uyumsuzluk riski doğar
-- Siber saldırganlar geçersiz sertifika fırsatından yararlanabilir
-
-### Çözüm
-
-Site Monitör bu sorunu çözmek için:
-- Tüm sertifikaları saatlik periyotlarla otomatik kontrol eder
-- Sertifika zinciri, iptal durumu ve dağıtım uyumluluğunu doğrular
-- Süre dolmadan **30 / 15 / 7 gün önce** ilgili ekiplere e-posta ve webhook bildirimi gönderir
-- Sorumlulukları takım bazında yönetir (her sertifika bir takıma atanır; takımın lideri/müdürü/üyeleri ile)
-- Tüm işlemleri coğrafi konum ve tarayıcı bilgisiyle denetim kaydına yazar
-
-### Hedef Kitle
+Platformu farklı profiller farklı amaçlarla kullanır:
 
 | Kullanıcı Profili | Kullanım Amacı |
 |---|---|
-| Operasyon / Altyapı Ekipleri | Sertifikaları izleme, yenileme koordinasyonu |
-| Uygulama Geliştirme Ekipleri | Uygulama SSL sertifikalarını izleme, haftalık rapor girişi |
-| BT Güvenlik Ekibi | Denetim, zayıf algoritma tespiti, uyumluluk |
-| Yöneticiler (PO, Müdür, C-Level) | Genel durum izleme, eskalasyon bildirimleri alma, rapor onayı |
-| Sistem Yöneticileri | Platform kurulumu, yapılandırma, kullanıcı/yetki yönetimi |
+| Operasyon / Altyapı ekipleri | Sertifika ve erişilebilirlik izleme, yenileme koordinasyonu |
+| Uygulama geliştirme ekipleri | Uygulama servislerini izleme, haftalık rapor girişi |
+| BT Güvenlik ekibi | Denetim, zayıf algoritma tespiti, uyumluluk |
+| Yöneticiler (PO, Müdür, C-Level) | Genel durum izleme, eskalasyon alarmları, rapor onayı |
+| Sistem yöneticileri | Kurulum, yapılandırma, kullanıcı ve yetki yönetimi |
 
 ---
 
 ## 2. Problem Tanımı
 
+Bu bölüm, Site Monitor'ün neden var olduğunu anlatır: manuel sertifika takibinin nerede kırıldığını ve otomatik izlemenin hangi boşluğu doldurduğunu. Platformu değerlendiren yöneticiler ve süreci devralan yeni ekip üyeleri için bağlam sağlar.
+
 ### 2.1 Sertifika Yönetiminin Karmaşıklığı
 
-Modern kuruluşlar onlarca, hatta yüzlerce aktif SSL/TLS sertifikasını yönetmek durumundadır. Bu sertifikalar:
-
-- Farklı sertifika otoritelerinden (CA) temin edilebilir
-- Farklı sunucular, yük dengeleyiciler veya CDN sistemlerine dağıtılmış olabilir
-- Farklı geçerlilik sürelerine sahip olabilir (90 gün ila 2 yıl)
-- Farklı takımların sorumluluğunda bulunabilir
+Modern bir kuruluş onlarca, çoğu zaman yüzlerce aktif SSL/TLS sertifikası yönetir. Bu sertifikalar farklı sertifika otoritelerinden (CA) temin edilir, farklı sunuculara, yük dengeleyicilere ve CDN katmanlarına dağıtılır, 90 gün ile 2 yıl arasında değişen geçerlilik sürelerine sahiptir ve farklı takımların sorumluluğundadır. Tek bir gözden kaçan bitiş tarihi, müşteriye dönük bir servisin kesintisi demektir.
 
 ### 2.2 Manuel İzlemenin Yetersizliği
 
-Sertifika sürelerini Excel tablosu veya takvim hatırlatıcısıyla takip etmek:
-- İnsan hatasına açıktır
-- Organizasyon değişikliklerinde (personel rotasyonu) bilgi kaybına yol açar
-- Sertifika zinciri ve iptal durumunu kontrol etmez
-- Gerçek zamanlı görünürlük sağlamaz
+Sertifika sürelerini Excel tablosu veya takvim hatırlatıcısıyla takip etmeyi denediyseniz sonucu bilirsiniz: insan hatasına açıktır, personel rotasyonunda bilgi kaybolur, sertifika zinciri ve iptal durumu hiç kontrol edilmez ve anlık görünürlük yoktur. Sorun ancak kullanıcılar şikayet ettiğinde fark edilir.
 
-### 2.3 Site Monitör'ün Sağladığı Değer
+### 2.3 Site Monitor'ün Sağladığı Değer
 
 ```
 Reaktif Yaklaşım              →  Proaktif Yaklaşım
@@ -88,22 +72,20 @@ Reaktif Yaklaşım              →  Proaktif Yaklaşım
 Sertifika dolunca haberdar ol    30 gün öncesinden haberdar ol
 Manuel kontrol                   Otomatik saatlik tarama
 Kimin sorumlu olduğu belirsiz    Takım bazlı sorumluluk
-E-posta zinciri kaos             Yapılandırılmış eskalasyon
-Denetim izi yok                  Tam audit log
+E-posta zinciri kaosu            Yapılandırılmış eskalasyon
+Denetim izi yok                  Tam denetim kaydı
 ```
 
 ---
 
-## 3. Ürün Nedir — Ne Yapar
+## 3. Ürün Yetenekleri
 
-### 3.1 Temel Yetenekler
+Bu bölümde platformun ne yaptığını uçtan uca görürsünüz. Sertifika tarafı çekirdektir; izleme türlerinin her birinin ayrıntısını [10. İzleme Türleri](#10-izleme-turleri) bölümünde bulursunuz.
 
-**Otomatik Sertifika Taraması**
-- Envanterdeki tüm aktif domainleri saatlik olarak tarar
-- Her domain için TCP/SSL el sıkışması yaparak gerçek sertifika bilgisini alır
-- 20 paralel worker ile büyük envanterleri hızla işler
+### 3.1 Otomatik Sertifika Taraması
 
-**Kapsamlı Sertifika Analizi**
+Site Monitor, envanterdeki tüm aktif domainleri saatlik periyotta tarar. Her domain için gerçek bir TCP/SSL el sıkışması yapar — yani sunucunuzun o an gerçekten sunduğu sertifikayı görürsünüz, bir kayıt defterindeki teorik değeri değil. Paralel çalışan iş parçacığı havuzu (`certCheckExecutor`) büyük envanterleri dakikalar içinde işler.
+
 Her taramada şu bilgiler elde edilip kaydedilir:
 
 | Alan | Açıklama |
@@ -113,108 +95,81 @@ Her taramada şu bilgiler elde edilip kaydedilir:
 | Kalan gün sayısı | Anlık hesaplama |
 | SAN (Subject Alternative Names) | Tüm geçerli alan adları |
 | Parmak izi (SHA-256) | Sertifika kimliği |
-| Anahtar algoritması | RSA, EC, DSA |
-| Anahtar boyutu | 2048, 4096 bit vb. |
+| Anahtar algoritması ve boyutu | RSA, EC, DSA — 2048, 4096 bit vb. |
 | İmza algoritması | SHA-256, SHA-1 vb. |
 | Key Usage / EKU | Sertifika kullanım amaçları |
 | CA sertifikası mı | Ara/kök CA tespiti |
-| Sertifika zinciri durumu | VALID / BROKEN |
-| İptal durumu (OCSP/CRL) | VALID / REVOKED / UNDETERMINED |
-| Dağıtım durumu | OK / INCOMPLETE |
-| OCSP URL | Canlı iptal kontrolü için |
-| CRL URL | İptal listesi için |
+| Sertifika zinciri durumu | `VALID` / `BROKEN` |
+| İptal durumu (OCSP/CRL) | `VALID` / `REVOKED` / `UNDETERMINED` |
+| Dağıtım durumu | `OK` / `INCOMPLETE` |
+| OCSP / CRL URL | Canlı iptal kontrolü ve iptal listesi adresleri |
 
-**Zincir Doğrulama**
-- Yaprak sertifikadan kök CA'ya tüm zinciri analiz eder
-- Ara CA sertifikalarının kalan sürelerini hesaplar
-- Zincir kırıksa `CHAIN_BROKEN` alarmı üretir
+### 3.2 Zincir Doğrulama ve İptal Kontrolü
 
-**İptal Kontrolü**
-- Önce OCSP (Online Certificate Status Protocol) ile kontrol
-- OCSP başarısız olursa CRL (Certificate Revocation List) ile kontrol
-- CRL dosyaları 1 saat önbelleklenir (200 giriş kapasitesi)
+Yaprak sertifikadan kök CA'ya kadar tüm zincir analiz edilir; ara CA sertifikalarının kalan süreleri hesaplanır ve zincir kırıksa `CHAIN_BROKEN` alarmı üretilir. İptal kontrolünde önce OCSP (Online Certificate Status Protocol) sorgulanır; başarısız olursa CRL'e (Certificate Revocation List) düşülür. CRL yanıtları performans için 1 saat önbelleklenir (200 giriş kapasiteli Caffeine cache).
 
-**Dağıtım Uyumluluk Kontrolü**
-- Envantere kaydedilen beklenen parmak izi ile sunucudaki parmak izini karşılaştırır
-- Yeni sertifika temin edilmiş ama sunucuya dağıtılmamışsa `MISMATCH` alarmı üretir
+### 3.3 Dağıtım Uyumluluk Kontrolü
 
-**Domain Bazlı Proxy Yönlendirmesi (`use_proxy`)**
-- Çoğu kontrol DİREKT outbound bağlantı ile yapılır
-- Envanterde "Proxy Üzerinden Kontrol Et" işareti olan domain'ler için kontrol kurumsal HTTP CONNECT proxy üzerinden gönderilir
-- WAF/firewall'un pod IP'sini reddettiği özel domain'ler için tasarlanmıştır
-- OCSP / CRL fetch'leri de aynı proxy ayarını kullanır (`ChainValidationService`)
+Yeni sertifikayı temin ettiniz ama sunucuya dağıtmayı unuttunuz — klasik bir operasyon hatası. Envantere beklenen parmak izini girerseniz, Site Monitor her taramada sunucudaki gerçek parmak iziyle karşılaştırır ve uyuşmazlıkta `MISMATCH` alarmı üretir.
 
-**Kritiklik Katmanı (Tier 1–4)**
-- Her domain bir tier'a atanır: 1=Müşteri-Yüzlü Prod, 2=Dahili Prod, 3=UAT/Pre-Prod, 4=Dev/Sandbox
-- Sıralama, kriticilik rozetleri ve eskalasyon kişi seçiminde rol oynar
-- Tier=1 alarmları daha yüksek öncelikle takım yöneticilerine eskalasyon yapılır
+### 3.4 Domain Bazlı Proxy Yönlendirmesi
 
-**Sertifika Dışı İzleme**
-- DNS kaydı izleme (A/AAAA/CNAME/MX/TXT) — değişim algılama (`CHANGED` / `ROTATED` event)
-- Port izleme (TCP/UDP açık-kapalı + bağlantı süresi)
-- Uptime HTTP izleme (statü kodu + yanıt süresi)
-- Sertifika sweep'inden bağımsız scheduler entry'leri
+Kontroller varsayılan olarak doğrudan (direkt outbound) bağlantıyla yapılır. Bazı WAF/firewall yapılandırmaları izleme pod'unun IP'sini reddeder; bu durumda envanterde ilgili domainin "Proxy Üzerinden Kontrol Et" (`use_proxy`) işaretini açarsınız ve yalnız o domainin kontrolü kurumsal HTTP CONNECT proxy üzerinden gider. OCSP/CRL sorguları da aynı proxy ayarını kullanır.
 
-**Domain Yeniden Adlandırma**
-- Admin envanterde domain değiştirdiğinde geçmiş tüm kontrol verisi, alarm geçmişi ve notlar yeni domain'e atomik olarak taşınır (`@Transactional`)
-- Aynı isimde kayıt varsa 409 ile uyarı verilir (bilgi sızıntısı yok)
+### 3.5 Kritiklik Katmanı
 
-**LDAP / Active Directory Entegrasyonu**
-- Yerel hesapların yanında AD/LDAP ile kimlik doğrulama (login anında bind)
-- İlk girişte kullanıcı otomatik provizyon edilir: ünvan/`company` → orgRole (PO/MANAGER/TECH), `manager` → müdür ilişkisi, takım ataması
-- Müdür–takım ilişkisi kurulunca takıma otomatik MANAGER eskalasyon kontağı eklenir
-- Bind parolası AES-GCM ile şifrelenir; bağlantı Ayarlar ekranından test edilebilir (öznitelik görüntüleyici dahil)
+Her domain bir tier'a atanır: 1 = Müşteriye Dönük Prod, 2 = Dahili Prod, 3 = UAT/Pre-Prod, 4 = Dev/Sandbox. Tier; sıralamayı, kritiklik rozetlerini ve eskalasyon kişi seçimini etkiler — Tier 1 alarmları daha yüksek öncelikle takım yöneticilerine taşınır.
 
-**Haftalık Raporlar**
-- Takımlar haftalık operasyon raporu girer (acil/yüksek olay sayıları, açık problemler, planlı işler)
-- PO **e-posta bağlantısı üzerinden onay** verir (tek tıkla onay/iade)
-- Cuma hatırlatma ve özet e-postaları; rapor başka takıma transfer edilebilir
+### 3.6 Sertifika Dışı İzleme Ailesi
 
-**Yetki Matrisi (Permissions)**
-- Rol bazında (TEAM_ADMIN/USER/AUDIT) view/edit/execute izinleri ekrandan açılıp kapanır; ADMIN tam yetkili ve kilitlidir
-- Hassas işlemler için onay; "varsayılanlara dön" desteği
+Sertifika sweep'inden bağımsız zamanlayıcılarla çalışan dokuz izleme türü vardır: HTTP/Website, Port (TCP/UDP/TLS/BANNER), DNS, Anahtar Kelime, Ping, Sayfa Bütünlüğü, Sentetik (k6), Alan Adı tescili ve envanter domainleri için Uptime genel görünümü. Her biri kendi eşiklerine, doğrulama/kurtarma denemelerine ve alarm tiplerine sahiptir — ayrıntılar [10. İzleme Türleri](#10-izleme-turleri) bölümündedir.
 
-**SQL Playground (yalnız global admin)**
-- Salt-okuma (SELECT) sorgu konsolu; sorgu geçmişi tutulur ve gece temizlenir
+### 3.7 Alarm Yönetimi Özeti
 
-### 3.2 Alarm Yönetimi
-
-Sistem üç seviyede alarm üretir:
+Sertifika alarmları kalan güne göre üç seviyede üretilir:
 
 ```
-UYARI (WARNING)  ←── ≤ 30 gün kaldıysa
-YÜKSEK (HIGH)    ←── ≤ 15 gün kaldıysa
-KRİTİK (CRITICAL) ←── ≤ 7 gün kaldıysa (veya iptal/zincir hatası)
+WARNING  (UYARI)  ←── ≤ 30 gün kaldıysa
+HIGH     (YÜKSEK) ←── ≤ 15 gün kaldıysa
+CRITICAL (KRİTİK) ←── ≤ 7 gün kaldıysa (veya iptal / zincir hatası)
 ```
 
-Ayrıca alarm tipleri:
+Sertifika alarm tipleri:
 
 | Tip | Tetikleyici | Seviye |
 |---|---|---|
-| EXPIRY | Sertifika süresi dolmak üzere | WARNING / HIGH / CRITICAL |
-| REVOKED | Sertifika iptal edilmiş | CRITICAL |
-| CHAIN_BROKEN | Zincirde süresi dolmuş ara CA | CRITICAL |
-| MISMATCH | Dağıtım eksik | CRITICAL |
+| `EXPIRY` | Sertifika süresi dolmak üzere | WARNING / HIGH / CRITICAL |
+| `REVOKED` | Sertifika iptal edilmiş | CRITICAL |
+| `CHAIN_BROKEN` | Zincirde süresi dolmuş ara CA | CRITICAL |
+| `MISMATCH` | Dağıtım eksik | CRITICAL |
 
-### 3.3 Bildirim Sistemi
+İzleme alarmları (`ACCESSIBILITY`, `PORT_DOWN`, `DNS_FAILURE`, `DNS_CHANGED`, `DOMAINMON_*` vb.) ve alarm yaşam döngüsünün tamamı [8. Alarm ve Eskalasyon Mekanizması](#8-alarm-ve-eskalasyon-mekanizmasi) bölümünde anlatılır.
 
-- Alarm oluşunca ilgili eskalasyon kişilerine **HTML e-posta** gönderilir
-- Her gün onaylanmamış alarmlar için **günlük tekrar bildirimi** gönderilir
-- Alarm çözülünce **çözüm bildirimi** gönderilir
-- Opsiyonel **Slack / Microsoft Teams webhook** desteği
+### 3.8 Takım Tabanlı Sorumluluk
 
-### 3.4 Takım Tabanlı Sorumluluk
+Her sertifika tek bir takıma atanır. Takımın lideri (genelde PO) yönetimden sorumludur; müdür ilişkisi Active Directory'deki `manager` alanından türetilir ve müdür, takıma otomatik olarak MANAGER eskalasyon kontağı olarak eklenir. Üyeler takımın sertifikalarını görüntüler ve haftalık rapor girer. Alarmlar ve bildirimler her zaman sertifikanın atandığı takıma ve o takımın eskalasyon kişilerine yönlenir.
 
-Her sertifika **bir takıma** atanır (eski SY/UG ikili takım modeli kaldırılmıştır). Takım, kendi içinde:
-- **Takım lideri** (genelde PO): takımın yönetiminden sorumlu
-- **Müdür** (manager): AD `manager` ilişkisinden türetilir; takıma otomatik MANAGER eskalasyon kontağı olarak eklenir
-- **Üyeler**: takımın sertifikalarını görüntüler ve haftalık rapor girer
+### 3.9 Domain Yeniden Adlandırma
 
-Alarmlar ve bildirimler sertifikanın atandığı takıma ve onun eskalasyon kişilerine yönlendirilir.
+Envanterde bir domainin adını değiştirdiğinizde geçmiş tüm kontrol verisi, alarm geçmişi ve notlar yeni ada atomik olarak (`@Transactional`) taşınır. Aynı isimde kayıt varsa işlem `409` ile reddedilir; hangi kayıtla çakıştığı sızdırılmaz.
+
+### 3.10 LDAP ve Active Directory Entegrasyonu
+
+Yerel hesapların yanında AD/LDAP ile kimlik doğrulama yapabilirsiniz: giriş anında AD'ye bind edilir, ilk başarılı girişte kullanıcı otomatik provizyon edilir (ünvan → orgRole, `manager` → müdür ilişkisi, takım ataması). Müdür–takım ilişkisi kurulduğunda takıma otomatik MANAGER eskalasyon kontağı eklenir. Bind parolası AES-GCM ile şifrelenir; bağlantıyı **Ayarlar** ekranından test edebilir, bir kullanıcının AD özniteliklerini canlı görüntüleyebilirsiniz.
+
+### 3.11 Haftalık Raporlar ve Onay Akışı
+
+Takımlar her ISO haftası için operasyon raporu girer (acil/yüksek olay sayıları, açık problemler, planlı işler). Rapor taslaktan onaya gönderilir; PO doğrudan ekrandan ya da e-postadaki bağlantıdan tek tıkla onaylar veya iade eder. Cuma sabahı bekleyen raporlar için otomatik hatırlatma gider; rapor gerektiğinde başka takıma devredilebilir.
+
+### 3.12 Yetki Matrisi ve SQL Playground
+
+Rol bazında (TEAM_ADMIN / USER / AUDIT) `view` / `edit` / `execute` izinlerini **Yetkiler** ekranından açıp kapatırsınız; ADMIN tam yetkili ve kilitlidir. Hassas işlemler onay ister, "Varsayılanlara Dön" desteklenir. Global admin ayrıca salt-okuma SQL konsolu olan **SQL Playground** sekmesini kullanır; sorgu geçmişi tutulur ve gece temizlenir.
 
 ---
 
 ## 4. Mimari ve Teknoloji Yığını
+
+Site Monitor tek deploy edilebilir bir uygulamadır: React arayüzü, derlenmiş `dist/` çıktısı olarak Spring Boot jar'ının içinden servis edilir. Bu bölüm, bileşenlerin hangi teknolojilerle yazıldığını ve birbirine nasıl bağlandığını gösterir.
 
 ### 4.1 Backend
 
@@ -223,47 +178,58 @@ Alarmlar ve bildirimler sertifikanın atandığı takıma ve onun eskalasyon ki�
 | Uygulama çerçevesi | Spring Boot | 4.1.0 |
 | Dil | Java | 25 (LTS) |
 | ORM | Hibernate / JPA | Spring Data JPA (`ddl-auto=update`) |
-| Veritabanı sürücüsü | PostgreSQL JDBC | 16 |
-| Şifreleme / ASN.1 | BouncyCastle | 1.78.1 |
+| Veritabanı | PostgreSQL | JDBC sürücüsü |
+| Şifreleme / ASN.1 | BouncyCastle | 1.78.x |
 | Validation | Hibernate Validator | jakarta-validation 3.x |
 | E-posta | JavaMail (Spring Mail) | SMTP/STARTTLS |
-| JSON | Jackson (SNAKE_CASE) | 2.x |
-| HTTP güvenliği | Spring Session JDBC | Distributed sessions |
+| JSON | Jackson (SNAKE_CASE) | 3.x (`tools.jackson`) |
+| Oturum | Spring Session JDBC | Dağıtık oturum (prod) |
 | Metrikler | Micrometer + Prometheus | `/actuator/prometheus` |
-| Test | JUnit 5 + Mockito | 835 test |
-| Build | Maven | 3.9.9 |
+| Test | JUnit 5 + Mockito | Surefire + Jacoco |
+| Build | Maven | 3.9.x |
 
-**Temel Servisler:**
+Temel servisler:
 
 ```
 SchedulerService          — Zamanlayıcı, HA dağıtık kilit, startup catch-up,
-                            nightly cleanup (audit/notif/sql_query_history)
+                            gece temizliği, şema yamaları
 CertificateCheckerService — SSL/TLS soket bağlantısı, sertifika çekme, proxy tunnel
 ChainValidationService    — Zincir analizi, OCSP/CRL iptal kontrolü, proxy-aware
-CertificateService        — Sonuç kaydetme, raporlama, filtreleme, cache batch evict
-EscalationService         — Alarm işleme, eskalasyon, bildirim yönlendirme,
-                            sweep'te batch open-alert + inventory ön yükleme
-EmailNotificationService  — HTML e-posta oluşturma, async 421 retry executor
+CertificateService        — Sonuç kaydetme, raporlama, filtreleme, toplu cache evict
+EscalationService         — Alarm işleme, eskalasyon, bildirim yönlendirme
+EmailNotificationService  — HTML e-posta oluşturma, async 421 retry
 WebhookService            — Slack/Teams webhook entegrasyonu
 UserService               — Kimlik doğrulama, takım/kullanıcı CRUD, kilitleme
-AuditService              — Denetim kaydı yazma + GeoIP zenginleştirme
-GeoIpService              — IP → ülke/şehir (ip-api.com, 1h cache)
-HttpMetricsService        — Per-endpoint p50/p95/p99 latency
-ExtendedHealthService     — System Health tab arkası: heartbeat, SMTP, DB stats
-ShutdownLogger            — JVM kapanış nedenini log'a yazar
-PortCheckerService        — TCP/UDP port izleme
-DnsCheckerService         — DNS record izleme, CHANGED/ROTATED algılama
-UptimeHttpCheckerService  — HTTP uptime izleme
-SqlPlaygroundService      — Admin-only read-mostly SQL runner (audited)
+AuditService              — Denetim kaydı + GeoIP zenginleştirme (async)
+GeoIpService              — IP → ülke/şehir (ip-api.com, 1 saat cache)
+PortCheckerService        — TCP/UDP/TLS/BANNER port izleme
+DnsCheckerService         — DNS kayıt izleme, CHANGED/ROTATED algılama
+UptimeHttpCheckerService  — Envanter domainleri için HTTP uptime izleme
+HttpCheckerService        — Bağımsız HTTP/Website monitörleri
+KeywordCheckerService     — Sayfa gövdesinde metin arama
+PingCheckerService        — ICMP echo izleme
+PageCheckerService        — Sayfa bütünlüğü (kaynak) denetimi
+ScriptedCheckerService    — Sentetik k6 koşuları
+DomainCheckerService      — Alan adı tescil (RDAP/WHOIS) izleme
+MaintenanceService        — Bakım penceresi motoru (O(1) aktif-hedef cache)
+StormService              — Alarm fırtınası gruplaması
+MonitoringOutageService   — Kesinti teyit durum makinesi
+IncidentService           — Olay defteri (SRE incident ledger)
+WeeklyReportService       — Haftalık rapor durum makinesi
+SqlPlaygroundService      — Salt-okuma SQL konsolu (denetimli)
+ExtendedHealthService     — Sistem Sağlığı sekmesinin veri kaynağı
+DbAnalyticsService        — pg_stat_statements tabanlı sorgu analitiği
+UserActivityService       — Login serileri, ısı haritası, aktif oturumlar
+ShutdownLogger            — JVM kapanış nedenini loglar
 ```
 
-**Cross-Cutting Bileşenler:**
+Kesişen (cross-cutting) bileşenler:
 
 ```
-GlobalExceptionHandler    — 9 exception handler + catch-all (stack trace UI'ye sızmaz)
-RequestLoggingFilter      — TRACE seviyede full request/response (60+ alan masked)
-AuthInterceptor           — Custom session+token tabanlı auth (Spring Security YOK)
-PermissionCatalog         — Tüm kaynak-aksiyon matrisi tek kaynağında
+GlobalExceptionHandler    — Exception → kullanıcı-dostu yanıt; stack trace sızmaz
+RequestLoggingFilter      — TRACE seviyede tam istek/yanıt logu (hassas alan maskeli)
+AuthInterceptor           — Oturum + token tabanlı özel auth (Spring Security filter zinciri YOK)
+PermissionCatalog         — Tüm kaynak-aksiyon matrisinin tek kaynağı
 ```
 
 ### 4.2 Frontend
@@ -272,57 +238,40 @@ PermissionCatalog         — Tüm kaynak-aksiyon matrisi tek kaynağında
 |---|---|
 | Framework | React 18.3 |
 | Build aracı | Vite 5.4 |
-| Routing | Tab state (React Router YOK) |
-| Dil desteği | Türkçe / İngilizce (1500+ çeviri, parity test'i ile zorunlu) |
-| Tema | Açık / Koyu mod (localStorage persist) |
-| İkonlar | `lucide-react` (emoji KULLANILMAZ) |
-| Test | Vitest (121 test, 18 dosya) |
-| Hata sınırı | ErrorBoundary root + tab seviyesinde |
+| Routing | Sekme durumu, `?tab=` senkronu (React Router YOK) |
+| Dil desteği | Türkçe / İngilizce (parity testiyle zorunlu eşlik) |
+| Tema | Açık / Koyu mod (localStorage kalıcı) |
+| İkonlar | `lucide-react` (emoji kullanılmaz) |
+| Grafikler | recharts (tembel yüklenir) |
+| Test | Vitest + Testing Library |
+| Hata sınırı | ErrorBoundary — root + sekme seviyesi |
 | Responsive | Tam mobil uyumlu |
 
-**Ana Bileşenler:**
-
-```
-App.jsx            — Root, 17 tab, ErrorBoundary ile sarılı, loadData allSettled
-Dashboard          — Ana izleme ekranı, sertifika kartları
-CertificateModal   — 5 sekme: Detay, Alarmlar, Bildirimler, Güvenlik, Notlar
-AdminPanel         — Yönetim merkezi (Inventory/Users/Teams/Permissions...)
-InventoryManager   — Domain envanteri, 50+ alan + domain rename onayı
-AlertHistory       — Alarm geçmişi, onay/çözüm aksiyonları, batch notify
-SystemHealth       — JVM, DB havuzu, scheduler metrikleri (allSettled load)
-AuditLogViewer     — Güvenlik denetim kayıtları + GeoIP zenginleştirme
-WeakAlgorithmReport— Zayıf algoritma tespiti
-UptimePage / PortMonitorPage / DnsMonitorPage — Sertifika dışı izleme
-ErrorBoundary      — Render hatalarında "Yenile" fallback UI
-```
+Uygulama tek sayfalıdır: `App.jsx` içindeki sekme durumu, doğrulanmış bir anahtar listesine (`VALID_TABS`) karşı kontrol edilen `?tab=` parametresiyle senkron tutulur. Otuzun üzerinde sekme vardır; görünürlük rol bazlıdır (ör. **Yetkiler** ve **SQL Playground** yalnız global admin, **Ayarlar** yalnız bootstrap admin, **Denetim Logu** global admin veya AUDIT).
 
 ### 4.3 Eşzamanlılık ve Performans
 
 ```
-certCheckExecutor     : core 20, max 50, queue 1000 (EXECUTOR_* env ile tunable)
+certCheckExecutor     : core 20, max 50, queue 1000 (EXECUTOR_* env ile ayarlanır)
 Kontrol timeout       : 10 saniye (site.monitor.check-timeout-seconds)
-CRL önbellek TTL      : 1 saat
-CRL önbellek boyutu   : 200 giriş (Caffeine maximumSize+expireAfterWrite)
-OCSP/CRL HTTP timeout : 5s OCSP, 10s CRL (connect+read explicit)
-DB bağlantı havuzu    : 2-10 bağlantı (HikariCP), leak threshold 60s
-JVM heap              : RAM'in %75'i (K8s: 6 GB / 8 GB limitte)
-SMTP 421 retry        : Async (ScheduledExecutorService daemon, caller bloke etmez)
-Cache eviction        : Sweep BAŞINA tek seferlik batch (saveResult her satırda DEĞİL)
-N+1 yöntemi           : Sweep başında inventoryRepo.findByDomainIn +
-                        alertEventRepo.findOpenByDomainIn — loop'ta in-memory map
+CRL önbellek          : 1 saat TTL, 200 giriş (Caffeine)
+OCSP/CRL HTTP timeout : 5 sn OCSP, 10 sn CRL (connect+read)
+DB bağlantı havuzu    : 2-10 bağlantı (HikariCP), leak eşiği 60 sn
+JVM heap              : Konteyner RAM'inin ~%75'i
+SMTP 421 retry        : Asenkron (çağıran thread bloke olmaz)
+Cache eviction        : Sweep başına tek toplu işlem
+N+1 önleme            : Sweep başında batch ön yükleme, döngüde bellek-içi map
 ```
 
-**Performans Hedefleri (k6 smoke):**
-- p95 < 500 ms
-- Hata oranı < %1
-- Checks pass oranı > %99
-- 50 VU × 30 saniye yükte SLA korunur
+Performans hedefleri (k6 smoke): p95 < 500 ms, hata oranı < %1, kontrol geçiş oranı > %99 — 50 sanal kullanıcı × 30 saniye yük altında.
 
 ---
 
 ## 5. Sistem Topolojisi
 
-### 5.1 Üretim Ortamı (Kubernetes)
+Bu bölüm, platformun üretimde ve yerel geliştirmede nasıl konumlandığını gösterir. Üretimde aynı imaj birden çok replika olarak çalışır; durum taşıyan her şey (oturum, zamanlayıcı kilidi) pod ölümüne dayanacak şekilde veritabanında tutulur.
+
+### 5.1 Üretim Ortamı Kubernetes
 
 ```
 ┌────────────────────────────────────────────────────────────────────┐
@@ -331,8 +280,8 @@ N+1 yöntemi           : Sweep başında inventoryRepo.findByDomainIn +
 │                                                                     │
 │  ┌──────────────────────────────────────────────────────────────┐  │
 │  │  Ingress Controller (nginx)                                  │  │
-│  │  cert-monitor.example.com  ─── TLS termination              │  │
-│  │  Proxy timeout: 60s  │  Max body: 1MB                       │  │
+│  │  site-monitor.example.com  ─── TLS termination               │  │
+│  │  Proxy timeout: 60s  │  Max body: 1MB                        │  │
 │  └──────────────────────┬───────────────────────────────────────┘  │
 │                         ↓                                           │
 │  ┌──────────────────────────────────────────────────────────────┐  │
@@ -350,13 +299,13 @@ N+1 yöntemi           : Sweep başında inventoryRepo.findByDomainIn +
 │          └──────────────────┬┘───────────────────┘                  │
 │                             ↓                                        │
 │  ┌──────────────────────────────────────────────────────────────┐  │
-│  │  StatefulSet: PostgreSQL 16-alpine                           │  │
-│  │  PersistentVolumeClaim: 10 Gi (ReadWriteOnce)               │  │
-│  │  Kullanıcı/DB: certmonitor/certmonitor                       │  │
+│  │  StatefulSet: PostgreSQL                                     │  │
+│  │  PersistentVolumeClaim: 10 Gi (ReadWriteOnce)                │  │
+│  │  Kullanıcı/DB: <db-kullanıcısı>/<db-adı> (.env'den gelir)    │  │
 │  └──────────────────────────────────────────────────────────────┘  │
 │                                                                     │
 │  ConfigMap: site-monitor-config  │  Secret: site-monitor-secret     │
-│  HPA: 3–10 pod  │  PDB: minAvailable=2  │  PodDisruptionBudget      │
+│  HPA: 3–10 pod  │  PDB: minAvailable=2  │  Topology spread          │
 └────────────────────────────────────────────────────────────────────┘
            │                                          │
            ↓                                          ↓
@@ -368,55 +317,58 @@ N+1 yöntemi           : Sweep başında inventoryRepo.findByDomainIn +
    └───────────────┘                       └──────────────────┘
 ```
 
-### 5.2 Yerel Geliştirme (Docker Compose)
+Veritabanı kullanıcı adı ve veritabanı adı ortama özeldir; `<db-kullanıcısı>/<db-adı>` değerleri `.env` dosyasından (Kubernetes'te Secret'tan) gelir ve hiçbir zaman koda gömülmez.
+
+### 5.2 Yerel Geliştirme Docker Compose
 
 ```
 ┌────────────────────────────────────────────┐
 │  Docker Compose                            │
 │                                            │
-│  ┌────────────────────────────────────┐   │
-│  │  site-monitor:latest               │   │
-│  │  Port: 8080                        │   │
-│  │  Volume: ./data:/app/data          │   │
-│  │  ReadOnly FS + /tmp tmpfs          │   │
-│  │  Health: wget /health (30s)        │   │
-│  └────────────────────────────────────┘   │
+│  ┌────────────────────────────────────┐    │
+│  │  site-monitor:latest               │    │
+│  │  Port: 8080                        │    │
+│  │  Volume: ./data:/app/data          │    │
+│  │  ReadOnly FS + /tmp tmpfs          │    │
+│  │  Health: wget /health (30s)        │    │
+│  └────────────────────────────────────┘    │
 │                                            │
-│  Ortam: .env dosyası (DB, SMTP, Admin)    │
+│  Ortam: .env dosyası (DB, SMTP, Admin)     │
 └────────────────────────────────────────────┘
 ```
 
 ### 5.3 Dağıtık Zamanlayıcı Kilidi
 
-Çok pod çalıştırıldığında yalnızca bir pod aynı anda tarama yapmalıdır. Site Monitör DB tabanlı dağıtık kilit kullanır:
+Birden çok pod çalışırken taramayı aynı anda yalnız bir pod yapmalıdır. Site Monitor bunun için veritabanı tabanlı bir dağıtık kilit kullanır:
 
 ```
 scheduler_lock tablosu:
   name        → "cert-check"
   locked_by   → "hostname-uuid8"
-  locked_until→ "2026-05-22T09:10:00" (TTL: 10 dk)
+  locked_until→ "2026-08-06T09:10:00" (TTL: 10 dk)
 
 Akış:
-  Pod başlar → eski kilitleri temizle (aynı host)
+  Pod başlar → aynı host'un eski kilitleri temizlenir
   Tarama zamanı → INSERT INTO scheduler_lock (benzersiz kısıt)
     ├─ Başarılı → bu pod tarar
     └─ Hata (duplicate key) → başka pod tarıyor, atla
   Tarama biter → DELETE FROM scheduler_lock
 ```
 
----
+Sıkışan bir kilidi **Sistem Sağlığı** ekranından zorla serbest bırakabilirsiniz.
 
+---
 ## 6. Veritabanı Şeması
 
-Toplam **30'dan fazla tablo** bulunmaktadır (`ddl-auto=update` ile yönetilir):
+PostgreSQL sistemin tek kayıt kaynağıdır. Şema, klasik migration aracı yerine iki mekanizmayla evrilir: Hibernate `ddl-auto=update` yeni entity ve kolonları oluşturur; `SchedulerService.applySchemaPatches()` açılışta idempotent `ALTER TABLE` yamaları uygular. Otuzdan fazla tablo vardır; en önemlileri aşağıdadır.
 
 ### 6.1 Temel Tablolar
 
 | Tablo | Amaç | Kritik Alanlar |
 |---|---|---|
-| `app_users` | Kullanıcı hesapları | username, password_hash, system_role, org_role, team_id, manager_id, manager_sicil, auth_source (LOCAL/LDAP), lockout_until |
+| `app_users` | Kullanıcı hesapları | username, password_hash, system_role, org_role, team_id, manager_id, auth_source (LOCAL/LDAP), lockout_until |
 | `teams` | Takım tanımları | name, leader_id, email, active |
-| `certificate_inventory` | Domain envanteri | domain, port, team_id (ug_team_id: legacy), tier, deleted_at |
+| `certificate_inventory` | Domain envanteri | domain, port, team_id, tier, use_proxy, deleted_at |
 | `latest_checks` | Her domain için son kontrol (tek kayıt) | domain (PK), not_after, days_remaining, status, fingerprint |
 | `certificate_checks` | Tüm kontrol geçmişi | domain, run_id, checked_at, tüm sertifika alanları |
 
@@ -424,44 +376,51 @@ Toplam **30'dan fazla tablo** bulunmaktadır (`ddl-auto=update` ile yönetilir):
 
 | Tablo | Amaç | Kritik Alanlar |
 |---|---|---|
-| `alert_events` | Açık/kapalı alarm olayları | domain, alert_level, alert_type, acknowledged, resolved, last_re_alert_at |
+| `alert_events` | Açık/kapalı alarm olayları | domain, alert_level, alert_type, team_id, acknowledged, resolved, last_re_alert_at, storm_id |
 | `alert_thresholds` | Gün eşikleri konfigürasyonu | warning_days, high_days, critical_days, re_alert_interval_hours |
 | `escalation_contacts` | Bildirim alıcıları | team_id, email, role, min_alert_level, webhook_url |
 | `notification_logs` | Gönderilen tüm bildirimler | alert_event_id, recipient_email, sent_at, email_status, trigger |
+| `alert_storms` | Alarm fırtınası kayıtları | scope, aktif/kapalı durum |
 
-### 6.3 Destek Tabloları
+### 6.3 İzleme ve Destek Tabloları
 
 | Tablo | Amaç |
 |---|---|
-| `audit_log` | Tüm admin aksiyonları kayıtları |
+| `audit_log` | Tüm yönetim ve güvenlik aksiyonları |
 | `certificate_notes` | Domain bazlı notlar |
-| `alert_events` | Alarm olayları |
 | `scheduler_lock` | Dağıtık tarama kilidi |
 | `system_heartbeat` | Sistem sağlık sinyali |
-| `spring_session` | Kullanıcı oturumları (opsiyonel JDBC store) |
-| `spring_session_attributes` | Oturum özellikleri |
+| `spring_session` / `spring_session_attributes` | JDBC oturum deposu (prod) |
 | `remember_me_tokens` | "Beni Hatırla" tokenleri |
-| `permission_grants` | Rol bazlı yetki matrisi (role/resource/action/allowed) |
-| `ldap_settings` / `smtp_settings` | LDAP/AD ve SMTP yapılandırması (bind parolası AES-GCM) |
-| `weekly_report` / `weekly_report_mail` / `weekly_report_image` | Haftalık rapor, onay/iade postaları, görseller |
-| `uptime_check` / `port_monitor` / `port_check` / `dns_monitor` / `dns_record` | İzleme hedefleri ve ölçümleri |
-| `network_outage_event` | İzleme kesinti teyit olayları |
+| `permission_grants` | Rol bazlı yetki matrisi |
+| `ldap_settings` / `smtp_settings` | LDAP/AD ve SMTP yapılandırması (parolalar AES-GCM) |
+| `weekly_report` ve ilişkili tablolar | Haftalık rapor, onay/iade postaları, görseller |
+| `uptime_check` / `port_monitor` / `port_check` / `dns_monitor` / `dns_record` | Erişilebilirlik izleme hedefleri ve ölçümleri |
+| `domain_checks` | Alan adı tescil kontrolleri (append-only) |
+| `network_outage_event` | Toplu ağ kesintisi olayları |
+| `maintenance_window` kayıtları | Bakım pencereleri |
+| `diagnostic_runs` | Tanı aracı koşu geçmişi |
 | `sql_query_history` | SQL Playground sorgu geçmişi |
 | `password_history` | Parola tekrar kullanım kontrolü |
-| `guide_link` | Yardım/rehber bağlantıları |
+| `guide_link` | Değişim Rehberi bağlantıları |
+| `weekly_availability_log` | Haftalık erişilebilirlik maili idempotency kaydı |
 
 ### 6.4 Soft Delete
 
-`certificate_inventory` tablosundaki kayıtlar fiziksel olarak silinmez:
+Envanter kayıtları fiziksel olarak silinmez:
+
 ```sql
 deleted_at VARCHAR(255)  -- NULL = aktif, dolu = silinmiş
 active     BOOLEAN       -- silinince FALSE yapılır
 ```
-Bu sayede tüm geçmiş veriler korunur ve silinen sertifikalar geri yüklenebilir.
+
+Böylece tüm geçmiş veri korunur ve silinen sertifikaları "Silinenleri Göster" görünümünden geri yükleyebilirsiniz.
 
 ---
 
 ## 7. Sertifika Kontrol Akışı
+
+Bu bölüm, bir sertifikanın saatlik sweep'te başından geçenleri adım adım anlatır. Akışı bilmek, bir alarmın neden ve ne zaman üretildiğini anlamanın en kısa yoludur.
 
 ### 7.1 Tam Akış Şeması
 
@@ -469,119 +428,113 @@ Bu sayede tüm geçmiş veriler korunur ve silinen sertifikalar geri yüklenebil
 Tetikleyiciler:
   ┌─ Saatlik (cron: her saatin başı)
   ├─ Startup (backend açılışında)
-  ├─ Stale sweep (5 dk'dan fazla kontrol edilmemiş domainler)
+  ├─ Stale sweep (uzun süre kontrol edilmemiş domainler)
   └─ Manuel (admin "Şimdi Kontrol Et" butonuyla)
          │
          ▼
   SchedulerService.runCheck()
   │  ├─ DB dağıtık kilidi al (tek pod çalışır)
-  │  ├─ Envanterdeki aktif domainleri yükle (+ her domain'in use_proxy bayrağı)
+  │  ├─ Envanterdeki aktif domainleri yükle (+ use_proxy bayrağı)
   │  └─ Her domain için checkAsync(domain, port, forceProxy) başlat (paralel)
          │
          ▼
   CertificateCheckerService.check(domain, port, forceProxy)
   │  ├─ Yönlendirme kararı:
-  │  │     forceProxy AND proxy yapılandırıldı AND domain noProxy listesinde DEĞİL
-  │  │     → HTTP CONNECT tunnel kur (Authorization header opsiyonel)
-  │  │     aksi halde → direkt outbound TCP
-  │  ├─ TCP soket bağlantısı (timeout: 10s)
-  │  ├─ TLS_MODE=browser: TLS 1.2 + ALPN [h2, http/1.1] zorla (WAF/Akamai uyumu)
-  │  ├─ SSL handshake → sertifika zincirini al
-  │  ├─ Yaprak sertifikayı ayrıştır (subject, issuer, tarihler, SAN, vb.)
-  │  ├─ HSTS check (HTTP HEAD, try-finally ile leak-proof)
-  │  ├─ Kalan gün hesapla
-  │  └─ ChainValidationService.analyze() çağır
+  │  │     forceProxy AND proxy yapılandırıldı AND domain NO_PROXY'de DEĞİL
+  │  │     → HTTP CONNECT tunnel; aksi halde direkt outbound TCP
+  │  ├─ TCP soket bağlantısı (timeout: 10 sn)
+  │  ├─ TLS_MODE=browser: TLS 1.2 + ALPN [h2, http/1.1] (WAF/Akamai uyumu)
+  │  ├─ SSL el sıkışması → sertifika zinciri alınır
+  │  ├─ Yaprak sertifika ayrıştırılır (subject, issuer, tarihler, SAN...)
+  │  ├─ HSTS kontrolü (HTTP HEAD, try-finally ile bağlantı sızıntısız)
+  │  └─ ChainValidationService.analyze()
          │
          ▼
-  ChainValidationService (proxy-aware: OCSP/CRL fetch'leri proxy üzerinden)
-  │  ├─ Zincirdeki tüm sertifikaları incele
-  │  ├─ Ara CA sürelerini kontrol et → chain_status: VALID / BROKEN
-  │  ├─ SHA-256 parmak izi hesapla
-  │  └─ Revocation: OCSP (5s timeout) → CRL (10s timeout, Caffeine cached)
+  ChainValidationService (OCSP/CRL sorguları proxy-aware)
+  │  ├─ Zincirdeki tüm sertifikalar incelenir
+  │  ├─ Ara CA süreleri → chain_status: VALID / BROKEN
+  │  ├─ SHA-256 parmak izi hesaplanır
+  │  └─ İptal: OCSP (5 sn) → CRL (10 sn, Caffeine cache)
   │       └─ revocation_status: VALID / REVOKED / UNDETERMINED
          │
          ▼
   CertificateService.saveResult()
-  │  ├─ certificate_checks tablosuna geçmiş kaydı ekle
-  │  ├─ latest_checks tablosunda mevcut durumu güncelle (UPSERT)
-  │  ├─ Dağıtım kontrolü:
-  │  │   └─ Envanterdeki expected_fingerprint ≠ mevcut fingerprint → INCOMPLETE
-  │  └─ Uyarı durumunu belirle (days_remaining ≤ threshold)
+  │  ├─ certificate_checks tablosuna geçmiş kaydı
+  │  ├─ latest_checks tablosunda UPSERT
+  │  ├─ Dağıtım kontrolü: expected_fingerprint ≠ gerçek → INCOMPLETE
+  │  ├─ Bakım penceresi işareti (uptime yüzdesinden hariç tutulur)
+  │  └─ Uyarı durumu belirlenir (days_remaining ≤ eşik)
          │
          ▼
   EscalationService.processResults()
-  │  ├─ Başta TEK SEFER batch ön yükleme (N+1 önleme):
-  │  │   ├─ inventoryRepo.findByDomainIn(allDomains)  → tek query
-  │  │   └─ alertEventRepo.findOpenByDomainIn(allDomains)  → tek query
-  │  ├─ Her domain için alert tipi belirle (loop'ta DB değil, map lookup):
-  │  │   ├─ revocation_status = REVOKED → REVOKED
-  │  │   ├─ deployment_status = INCOMPLETE → MISMATCH
-  │  │   ├─ chain_status = BROKEN → CHAIN_BROKEN
-  │  │   └─ warning = true / status = error → EXPIRY
-  │  ├─ Alert seviyesi belirle (WARNING / HIGH / CRITICAL)
-  │  ├─ Mevcut açık alarm var mı?
-  │  │   ├─ Hayır → yeni AlertEvent oluştur → INITIAL bildirim gönder
-  │  │   ├─ Evet + seviye yükseldi → ESCALATION bildirimi gönder, acknowledged sıfırla
-  │  │   └─ Evet + onaylanmamış + bugün gönderilmemiş → DAILY_REALERT gönder
-  │  └─ Sorun çözüldüyse → resolved = true → RESOLUTION bildirimi gönder
+  │  ├─ Sweep başında TEK SEFER batch ön yükleme (N+1 önleme)
+  │  ├─ Her domain için alarm tipi: REVOKED → MISMATCH → CHAIN_BROKEN → EXPIRY
+  │  ├─ Alarm seviyesi: WARNING / HIGH / CRITICAL
+  │  ├─ Açık alarm var mı?
+  │  │   ├─ Hayır → yeni AlertEvent → INITIAL bildirim
+  │  │   ├─ Evet + seviye yükseldi → ESCALATION bildirimi, acknowledged sıfırlanır
+  │  │   └─ Evet + onaysız + bugün gönderilmemiş → DAILY_REALERT
+  │  └─ Sorun çözüldüyse → resolved=true → RESOLUTION bildirimi
          │
          ▼
   EmailNotificationService + WebhookService
-  │  ├─ HTML e-posta oluştur (domain, seviye, kalan gün, sertifika bilgileri)
-  │  ├─ SMTP ile gönder → email_status:
-  │  │       SENT / FAILED / SKIPPED_DISABLED / QUEUED_RETRY (421 rate-limit)
-  │  ├─ 421 ise async retry executor'da 90s sonra tekrar dene (caller bloke olmaz)
-  │  └─ Webhook varsa Slack/Teams'e gönder
+  │  ├─ HTML e-posta oluşturulur (marka logolu kart tasarımı — bkz. §9)
+  │  ├─ SMTP durumu: SENT / FAILED / SKIPPED_DISABLED / QUEUED_RETRY (421)
+  │  ├─ 421'de asenkron retry (90 sn sonra, çağıran bloke olmaz)
+  │  └─ Webhook varsa Slack/Teams'e gönderilir
          │
          ▼
-  notification_logs tablosuna kayıt
-         │
-         ▼
-  CertificateService.evictAllCaches()  — Sweep sonu TEK sefer
-  (Her saveResult'ta DEĞİL; 1000 domain'lik sweep'te 4000 evict → 4 evict)
+  notification_logs kaydı → sweep sonunda TEK toplu cache eviction
 ```
 
-### 7.2 Startup Catch-Up Mekanizması
+### 7.2 Toplu Ağ Kesintisi Algılama
 
-Backend açıldığında sertifika taraması başlamadan önce kaçırılan bildirimleri gönderir:
+Bir sweep'te başarısızlıkların en az `NETWORK_ERROR_THRESHOLD` oranı (varsayılan %50) ağ kaynaklıysa ve en az `NETWORK_MIN_ERRORS` (3) kontrol başarısız olduysa, Site Monitor bunun tekil sertifika sorunları değil bir altyapı kesintisi olduğuna karar verir: o koşunun bireysel sertifika alarmları bastırılır, tek bir `NetworkOutageEvent` açılır ve sistem yöneticisine tek e-posta gider. Bu bilinçli bir tasarımdır — kesinti anında yüzlerce yanlış alarm yerine tek doğru sinyal alırsınız.
+
+### 7.3 Yeniden Deneme Politikası
+
+Yalnızca ağ (NETWORK) sınıfı hatalar bir kez yeniden denenir (`CHECK_RETRY=true`). SSL, DNS ve sertifika hataları asla yeniden denenmez — bunlar geçici aksaklık değil, gerçek bulgulardır.
+
+### 7.4 Startup Catch-Up Mekanizması
+
+Backend herhangi bir nedenle kapalı kaldıysa, açılışta o günün kaçırılmış bildirimleri telafi edilir:
 
 ```
 runOnStartup()
-  ├─ Schema güncelleme (ALTER TABLE patch'leri)
-  ├─ Bootstrap (admin kullanıcı, default takım)
-  ├─ Default alarm eşiği oluştur
-  ├─ Eski dağıtık kilitleri temizle
+  ├─ Şema yamaları (idempotent ALTER TABLE)
+  ├─ Bootstrap (admin kullanıcı, varsayılan takım, alarm eşiği)
+  ├─ Eski dağıtık kilitlerin temizliği
   │
-  ├─ catchUpMissedDailyAlerts()  ← SYNC, ağ çağrısı yok
-  │   ├─ Tüm açık + onaylanmamış alertleri sorgula
-  │   ├─ Her alert için: lastReAlertAt bugün mü?
-  │   │   ├─ Evet → atla ("already notified today")
-  │   │   └─ Hayır → DAILY_REALERT gönder, lastReAlertAt = şimdi
+  ├─ catchUpMissedDailyAlerts()  ← SENKRON, ağ çağrısı yok
+  │   ├─ Açık + onaysız alarmlar sorgulanır
+  │   ├─ lastReAlertAt bugün değilse → DAILY_REALERT gönderilir
   │   └─ Log: "X missed notification(s) sent"
   │
-  └─ Thread(runCheck).start()   ← ASYNC, ağ taraması
+  └─ Thread(runCheck).start()   ← ASENKRON tam tarama
 ```
 
-Bu sayede backend herhangi bir nedenle kapandıysa, açılışta o günün bildirimleri anında gönderilir.
+Sonuç: pod ne kadar geç açılırsa açılsın, o günün bildirimleri kesinlikle gönderilir.
 
 ---
 
 ## 8. Alarm ve Eskalasyon Mekanizması
 
+Alarm, Site Monitor'ün kalbidir: bir sorunun tespitinden çözümüne kadar geçen sürecin kaydıdır. Bu bölümde alarm yaşam döngüsünü, kimin hangi seviyede haberdar edildiğini ve tekrar bildirimlerin nasıl bastırıldığını öğrenirsiniz.
+
 ### 8.1 Alarm Yaşam Döngüsü
 
 ```
-Sertifika sorunlu tespit edildi
+Sorun tespit edildi
          │
          ▼
  AlertEvent oluşturuldu (resolved=false, acknowledged=false)
          │
          ▼
- INITIAL bildirim → eskalasyon kişilerine e-posta
+ INITIAL bildirim → eskalasyon kişilerine e-posta / webhook
          │
          ▼
- Her gün (UTC bazlı) DAILY_REALERT → tekrar bildirim
-         │                    └─ (acknowledged=true ise durur)
+ Her gün DAILY_REALERT → tekrar bildirim
+         │            └─ (acknowledged=true ise durur)
          │
     ┌────┴────────────────────────────────────┐
     │                                         │
@@ -593,132 +546,213 @@ Günlük bildirim durur                ESCALATION bildirimi gönderilir
     └─────────────────┬───────────────────────┘
                       │
                       ▼
-           Sertifika yenilendi / sorun giderildi
+           Sorun giderildi / sertifika yenilendi
                       │
                       ▼
            resolved=true, resolvedAt, resolvedBy
            RESOLUTION bildirimi gönderilir
 ```
 
-### 8.2 Eskalasyon Matrisi
+### 8.2 Alarm Tipleri
+
+| Kaynak | Tipler |
+|---|---|
+| Sertifika sweep'i | `EXPIRY`, `REVOKED`, `CHAIN_BROKEN`, `MISMATCH` |
+| Uptime / Port / DNS izleme | `ACCESSIBILITY`, `PORT_DOWN`, `DNS_FAILURE`, `DNS_CHANGED` |
+| Keyword / Ping / HTTP / Sayfa Bütünlüğü / Sentetik | Monitör türüne özel kesinti ve bütünlük alarmları |
+| Alan adı izleme | `DOMAINMON_EXPIRY`, `DOMAINMON_UNKNOWN`, `DOMAINMON_STATUS`, `DOMAINMON_CHANGED` |
+
+İzleme alarmları `MonitoringOutageService` üzerinden gelir: alarm açılmadan önce ardışık N başarısız kontrol (doğrulama denemesi) beklenir, düzelme için de ardışık başarılı kontrol aranır. Tek seferlik dalgalanma alarm üretmez; sinyal tipleri birbirini maskelemez.
+
+### 8.3 Eskalasyon Matrisi
 
 | Alarm Seviyesi | Kalan Gün | Bildirim Alan Roller | Açıklama |
 |---|---|---|---|
-| WARNING | ≤ 30 gün | PO + TECH | İlk uyarı, planlama başlamalı |
+| WARNING | ≤ 30 gün | PO + TECH | İlk alarm, planlama başlamalı |
 | HIGH | ≤ 15 gün | PO + TECH + MANAGER | Acil yenileme gerekiyor |
-| CRITICAL | ≤ 7 gün | Tüm kişiler (+ C-LEVEL) | Kritik, derhal müdahale |
+| CRITICAL | ≤ 7 gün | Tüm kişiler (+ C-LEVEL) | Derhal müdahale |
 
-Eskalasyon kişileri takım bazında tanımlanır. Eğer bir takımın kişisi yoksa global kişilere düşer.
+Eskalasyon kişileri takım bazında tanımlanır; takımın kişisi yoksa global kişilere düşülür.
 
-### 8.3 Bildirim Tetikleyici Tipleri
+### 8.4 Alıcı Yönlendirme Kuralları
+
+Bildirimin kime gideceği alarmın kaynağına göre belirlenir ve üç yol (ilk alarm, çözülme, manuel yeniden bildirim) tutarlı çalışır:
+
+- Bağımsız izleme alarmları (keyword, ping, HTTP, alan adı, `DOMAINMON_*`) takımı `AlertEvent.teamId` alanından çözer — alarm oluşurken damgalanır. Bu monitörler sertifika envanterinde olmadığı için envanterden takım aramak sessizce global kişilere düşerdi; üç yol da bu yüzden aynı alandan okur.
+- Müdür/eskalasyon kontakları yalnız KRİTİK alan adı vade alarmına eklenir; WARNING seviyesindeki alan adı alarmları ve tüm keyword/ping/HTTP alarmları takım kişileriyle sınırlı kalır. Bu bilinçli bir ürün politikasıdır: müdür yalnız bir domain kritik biçimde vadeye yaklaştığında çağrılır.
+- Sertifika alarmları envanterdeki takımı kullanır ve seviyeye göre eskalasyon kişilerini ekler.
+
+### 8.5 Bildirim Tetikleyici Tipleri
 
 | Tetikleyici | Açıklama |
 |---|---|
-| INITIAL | İlk alarm oluştuğunda |
-| ESCALATION | Seviye yükseldiğinde (ör. WARNING → HIGH) |
-| DAILY_REALERT | Her gün, onaylanmamış alarmlar için |
-| MANUAL | Admin "Yeniden Bildir" düğmesine bastığında |
-| RESOLUTION | Sorun giderildiğinde |
-| MANUAL_RESOLVE | Admin manuel olarak çözdü işaretlediğinde |
+| `INITIAL` | İlk alarm oluştuğunda |
+| `ESCALATION` | Seviye yükseldiğinde (ör. WARNING → HIGH) |
+| `DAILY_REALERT` | Her gün, onaylanmamış alarmlar için |
+| `MANUAL` | "Yeniden Bildir" düğmesiyle |
+| `RESOLUTION` | Sorun kendiliğinden giderildiğinde |
+| `MANUAL_RESOLVE` | Alarm elle "Çözüldü" işaretlendiğinde |
 
-### 8.4 Onaylama (Acknowledge) Davranışı
+Tekrar bildirim günlük bazda tekilleştirilir: aynı alarm için aynı gün ikinci bir DAILY_REALERT gitmez.
 
-Bir alarm onaylandığında:
-- Günlük tekrar bildirimleri **durur**
-- Alert **açık** kalmaya devam eder (sorun çözülmedi, sadece görüldü)
-- Seviye yükselirse acknowledged otomatik **sıfırlanır** ve yeni bildirim gider
+### 8.6 Onaylama Davranışı
+
+Bir alarmı onayladığınızda günlük tekrar bildirimleri durur; ancak alarm açık kalmaya devam eder — sorun çözülmedi, yalnızca görüldü. Seviye yükselirse onay otomatik sıfırlanır ve yeni bildirim gider.
+
+### 8.7 Alarm Fırtınası Gruplaması
+
+Kısa bir pencerede çok sayıda monitör birden düştüğünde (ör. ortak bir ağ segmenti koptu) her monitör için ayrı e-posta almak istemezsiniz. `StormService`, doğrulanmış kesintileri izler: kapsam için aktif bir fırtına varsa yeni alarm ona eklenir, eşik aşıldığında bireysel bildirimler tek toplu bildirime terfi eder. Olay kayıtları (AlertEvent) monitör başına yazılmaya devam eder — geçmiş ve uptime yüzdesi etkilenmez; yalnız bildirim gruplanır. Fırtına dağıldığında tek toplu düzelme bildirimi gider. Özellik varsayılan açıktır (`site.monitor.storm.enabled`) ve **Ayarlar → Fırtına** bölümünden yönetilir.
+
+### 8.8 Alan Adı Vade Alarmlarında Çifte Kontrol
+
+Alan adı vade alarmının seviyesi kart durumu katmanlarını aynen izler: kalan gün kritik eşiğin altındaysa CRITICAL, uyarı eşiği ile kritik eşik arasındaysa WARNING. Ayrıca her gün saat 16:00'da (Europe/Istanbul, `DOMAIN_CRITICAL_CHECK_CRON`) ikinci bir sweep yalnız kritik eşiğe girmiş domainleri yeniden kontrol eder: aynı gün yenilenen bir domainin açık `DOMAINMON_EXPIRY` alarmı ertesi sabahı beklemeden otomatik kapanır; hâlâ kritik olan domain için günlük tekilleştirme sayesinde ikinci bir bildirim gitmez.
 
 ---
 
 ## 9. Bildirim Sistemi
 
-### 9.1 E-posta Formatı
+Alarm üretmek işin yarısıdır; doğru kişiye, okunur bir biçimde ulaştırmak diğer yarısı. Site Monitor bildirimleri markalı HTML e-posta ve Slack/Teams webhook'ları ile dağıtır; her gönderim denemesi `notification_logs` tablosuna işlenir.
 
-Her alarm e-postası zengin HTML içerikle gelir:
+### 9.1 E-posta Tasarımı
 
-```
-┌─────────────────────────────────────────────────────┐
-│  [Renk çubuk: UYARI=turuncu / KRİTİK=kırmızı]      │
-│  Site Monitör — Sertifika İzleme                     │
-│  🌐 kurumsalinternetsubesi.akbank.com               │
-│  UYARI  ·  Son Kullanma Tarihi                      │
-├─────────────────────────────────────────────────────┤
-│  ┌──────────────────────────────────────────────┐   │
-│  │    18          │  Son Kullanma Tarihi         │   │
-│  │  GÜN KALDI     │  08.06.2026 23:59 UTC        │   │
-│  │  Yenileme      │  📅 18 gün sonra sona eriyor │   │
-│  │  planlanmalı   │                              │   │
-│  └──────────────────────────────────────────────┘   │
-│                                                      │
-│  SERTİFİKA BİLGİLERİ   │  DURUM ÖZETİ              │
-│  ───────────────────────│───────────────────────    │
-│  🌐 Alan Adı: ...       │  Sertifika: ⚠ Uyarı       │
-│  📋 Sahibi: ...         │  İptal: ✓ İptal edilmedi  │
-│  🏢 Veren Kurum: ...    │  Zincir: ✓ Sağlıklı       │
-│  📅 Geçerlilik Başl.: ..│  Dağıtım: ✓ Tamamlandı    │
-│  🔑 Parmak İzi: ...     │                           │
-│                                                      │
-│  ALARM DETAYI                                        │
-│  UYARI: domain adresindeki sertifikanın süresi       │
-│  18 gün içinde doluyor.                              │
-├─────────────────────────────────────────────────────┤
-│  Site Monitör  ·  Son kontrol: ... · Bildirim: ...   │
-└─────────────────────────────────────────────────────┘
-```
+Tüm sistem e-postaları ortak, Outlook-güvenli bir kart şablonu kullanır. Kartın başlık çubuğunda 32 piksellik durum-duyarlı turp logosu ile "Site Monitor" yazı kilidi (lockup) yer alır; logo CID inline eki olarak gömülür (`cid:brand-logo`), yani harici kaynak yüklemeyen katı e-posta istemcilerinde de görünür. Genişlik/yükseklik HTML öznitelik olarak yazılır — Outlook'un Word tabanlı motoru CSS genişliğini yok saydığı için bu zorunludur. Mail başına tek logo kuralı geçerlidir: logo yalnız başlık çubuğundadır.
 
-### 9.2 Çözüm E-postası
+Logo varyantı e-postanın anlamını taşır:
 
-Sorun giderildiğinde yeşil renkte çözüm e-postası gönderilir:
-- Çözen kişi, çözülme tarihi, alarm oluşturma tarihi
-- Alarm tipi ve önceki seviye
-- Sertifika bilgileri
+| E-posta | Logo / Renk |
+|---|---|
+| CRITICAL alarm | Kırmızı yapraklı turp + kırmızı vurgu |
+| WARNING / HIGH alarm | Amber (kehribar) yapraklı turp + amber vurgu |
+| Çözülme, rapor, hatırlatma, test | Yeşil yapraklı turp + yeşil vurgu |
 
-### 9.3 Webhook Desteği
+Alarm e-postasının gövdesi büyük "kalan gün" sayacı, sertifika bilgileri (alan adı, sahibi, veren kurum, geçerlilik, parmak izi) ve durum özeti (sertifika / iptal / zincir / dağıtım) bölümlerinden oluşur. Çözülme e-postası çözen kişiyi, çözülme tarihini, alarm oluşturma tarihini ve önceki seviyeyi içerir.
+
+Alan adı izleme (`DOMAINMON_*`) e-postalarının detay tablosu her gönderimde en güncel kontrol kaydından yeniden kurulur — yeniden bildirim ve çözülme mailleri de her zaman güncel veriyi taşır.
+
+### 9.2 Webhook Desteği
 
 | Platform | Format |
 |---|---|
-| Slack | Slack Block Kit JSON formatı |
-| Microsoft Teams | Adaptive Card formatı |
+| Slack | Slack Block Kit JSON |
+| Microsoft Teams | Adaptive Card |
 
-Her eskalasyon kişisine ayrı webhook tanımlanabilir.
+Her eskalasyon kişisine ayrı webhook tanımlayabilirsiniz; gönderim sonuçları e-postayla aynı şekilde `notification_logs` tablosuna yazılır (10 sn timeout).
+
+### 9.3 Haftalık Erişilebilirlik Maili
+
+Sertifika sahibi her aktif takıma, sahip olduğu domainlerin geçen tam haftaya (Pazartesi 00:00 – Pazar 23:59, Europe/Istanbul) ait erişilebilirlik özeti yönetici özeti formatında gönderilir. Kesinti olsun olmasın gider; kesinti yaşayan domainler ayrıca vurgulanır. Gönderim `weekly_availability_log` ile idempotenttir (aynı hafta için ikinci mail gitmez) ve **Ayarlar → Haftalık Erişilebilirlik** bölümünden yapılandırılır.
 
 ### 9.4 E-posta Konfigürasyonu
 
 ```properties
 site.monitor.email.enabled=true       # E-postayı etkinleştir
-SPRING_MAIL_HOST=smtp.gmail.com       # SMTP sunucu
+SPRING_MAIL_HOST=smtp.ornek.com       # SMTP sunucu
 SPRING_MAIL_PORT=587                  # STARTTLS portu
-SPRING_MAIL_USERNAME=hesap@gmail.com  # Gönderen hesap
-SPRING_MAIL_PASSWORD=uygulama-sifresi # App Password
-site.monitor.email.from=gönderen@adres
+SPRING_MAIL_USERNAME=hesap@ornek.com  # Gönderen hesap
+SPRING_MAIL_PASSWORD=uygulama-sifresi # Uygulama parolası
+site.monitor.email.from=gonderen@adres
 ```
+
+SMTP ayarlarını çalışma anında **Ayarlar → SMTP** ekranından da yönetebilir ve test e-postası gönderebilirsiniz; kayıtlı parola AES-GCM ile şifrelenir.
+
+---
+## 10. İzleme Türleri
+
+Sertifika izlemesi "kilit sağlam mı" sorusuna cevap verir; bu bölümdeki türler "kapı açık mı, içerisi doğru mu" sorularına bakar. Her tür üst menüdeki **İzleme** grubunda kendi sekmesine sahiptir, kendi zamanlayıcısıyla çalışır ve her monitör bir takıma atanır — alarm ve raporlar o takıma gider. Yeni monitörü ilgili sekmedeki + Yeni Monitör butonuyla eklersiniz; her formun yanında o türe özel yerleşik bir nasıl-yapılır rehberi bulunur.
+
+Ortak davranışlar: kontrol aralığı 30 saniye ile 24 saat arasında seçilir; alarm öncesi ardışık başarısızlık (doğrulama denemesi, varsayılan 3) ve düzelme ilanı için ardışık başarı (kurtarma, varsayılan 3) aranır; monitörü silmeden "Aktif" anahtarıyla duraklatabilirsiniz; monitörler grup etiketiyle kümelenir (**Ayarlar → Monitör Grupları**).
+
+### 10.1 Durum İzleme Genel Bakışı
+
+**Durum İzleme** sekmesi, sertifika envanterinizdeki domainlerin HTTP erişilebilirlik fotoğrafını tek ekranda verir: durum, yanıt süresi, uptime yüzdesi ve son kontrol zamanı. Domain başına tanı penceresi açarak ağ/OpenSSL/HSTS tanı araçlarını çalıştırabilirsiniz. Bakım penceresindeki domainler uptime yüzdesi hesabından hariç tutulur, böylece planlı kesinti istatistiği bozmaz.
+
+### 10.2 HTTP Website İzleme
+
+Bir URL'nin ayakta olup olmadığını ve beklediğiniz durum kodunu dönüp dönmediğini izler. Metod (GET/HEAD/POST), beklenen durum kodu (`200`, `2xx`, `200-399` gibi kalıplar; boşsa 200–399), yönlendirme takibi ve istek zaman aşımı (varsayılan `10000` ms) ayarlanır. TLS doğrulaması varsayılan kapalıdır — yalnız erişilebilirlik ölçülür, iç-CA/self-signed sunucular sorun çıkarmaz; açarsanız geçersiz sertifika alarma dönüşür. İsteğe bağlı SSL/domain bitiş hatırlatmaları da (ör. `30,14,7` gün) tanımlanabilir.
+
+Ne zaman kullanmalı? Servisin dışarıdan ulaşılabilirliğini ve doğru cevap verdiğini garanti etmek istediğinizde. Örneğin ödeme API'nizin sağlık ucunu 1 dakikada bir `GET /health` ile izler, `200` dışına düşen üç ardışık kontrolde takımınıza alarm gönderirsiniz — müşteri fark etmeden önce siz fark edersiniz.
+
+### 10.3 Port İzleme
+
+URL'si olmayan servisleri — SMTP, veritabanı, özel TCP servisleri — host ve port üzerinden izler. Beş kontrol tipi vardır: TCP (port açık mı), TLS (el sıkışması + sertifika sunumu), HTTP(S) (durum kodu), BANNER (yanıtta alt-dizge arama, ör. `220`, `SSH-2.0`) ve UDP. Yavaş yanıt alarmı için eşik (varsayılan `3000` ms) tanımlayabilir, IP sürümünü (Otomatik/IPv4/IPv6) seçebilirsiniz.
+
+Ne zaman kullanmalı? Web dışı bir bağımlılığın çalıştığını doğrulamak istediğinizde. Örneğin kurumsal SMTP sunucunuzun 25 portunu BANNER modunda `220` bekleyerek izlersiniz: port açık ama SMTP servisi asılıysa bunu TCP kontrolü göremez, banner kontrolü görür.
+
+### 10.4 DNS İzleme
+
+Bir kaydın (A, AAAA, CNAME, MX, TXT, NS) çözülmeye devam ettiğini ve değerinin değişmediğini izler. Sorgular izleme sunucusundan dnsjava ile önbelleksiz atılır; varsayılan hedef işletim sisteminin DNS zinciridir ve sorgu zaman aşımı ayarlanabilir (`site.monitor.dns.query-timeout-ms`, varsayılan 2000 ms). Üç güçlü özellik öne çıkar:
+
+- Beklenen değer kilidi: satır başına bir değer girersiniz; canlı yanıtta beklenen kümede olmayan her değer DNS ele geçirme şüphesi olarak işaretlenir. "Şu anki değeri sabitle" mevcut yanıtı tek tıkla doldurur.
+- DNS değişikliği alarmı: kayıt değeri değişince `DNS_CHANGED` alarmı üretilir (otomatik kapanmaz, günlük hatırlatılır). Yeni değerlerin tamamı beklenen listedeyse — örneğin bilinen iç ↔ dış IP geçişi — alarm üretilmez.
+- Propagation kontrolü: kayıt birden çok public çözümleyicide (varsayılan `8.8.8.8, 1.1.1.1, 9.9.9.9` — `site.monitor.dns.resolvers`) karşılaştırılır; en az ikisi farklıysa tutarsız işaretlenir.
+
+Ne zaman kullanmalı? Bir alan adının hedefinin sessizce değişmesinin felaket olacağı yerlerde. Örneğin internet bankacılığı domaininizin A kaydını beklenen IP kilidiyle izlersiniz; bir gece kayıt bilinmeyen bir IP'ye dönerse sabah trafiği başlamadan alarm elinizdedir.
+
+### 10.5 Anahtar Kelime İzleme
+
+Bir sayfanın gövdesinde belirli bir metnin bulunup bulunmadığını — ve kaç kez geçtiğini — kontrol eder. Adet koşulu esnektir: En az / En fazla / Tam olarak / Şundan fazla / Şundan az. Büyük-küçük harf duyarlılığı seçilebilir; önbellek kırma için özel HTTP başlıkları ve URL'de `{timestamp}` yer tutucusu desteklenir. Varsayılan kontrol aralığı 1 dakikadır.
+
+Ne zaman kullanmalı? HTTP 200 dönen ama içeriği bozulmuş sayfaları yakalamak istediğinizde. Örneğin ana sayfanızda "Bakımdayız" metni için Tam olarak 0 koşulu tanımlarsınız: bakım sayfası yanlışlıkla üretimde kalırsa, durum kodu 200 olsa bile alarm alırsınız.
+
+### 10.6 Ping İzleme
+
+Bir host'a ICMP echo paketleri gönderir ve RTT ile paket kaybını ölçer. Paket sayısı (1–10, varsayılan 4), IP sürümü ve zaman aşımı (varsayılan 5000 ms) ayarlanır. Bazı ağlar ICMP'yi engeller — böyle hedeflerde Port (TCP) izlemesi daha güvenilirdir; kilitli ortamda ICMP yetkisi yoksa sonuç hata değil N/A olur.
+
+Ne zaman kullanmalı? Uygulama katmanından bağımsız, saf ağ erişilebilirliğini izlemek istediğinizde. Örneğin şube yönlendiricinizi ping ile izler, RTT grafiğindeki tırmanışı hat doygunluğunun erken işareti olarak okursunuz.
+
+### 10.7 Sayfa Bütünlüğü İzleme
+
+Sayfanın kendisi değil, içindeki parçalar için: HTML'den çıkarılan her kaynak (görsel, CSS, JS, iframe, font, link) tek tek HTTP ile doğrulanır. İki mod vardır: Tek Sayfa ve Site Tarama (derinlik 0–5, en çok 500 sayfa, hariç tutma desenleri). Kırık tanımı bilinçli olarak dardır: 404/410, 503 dışı 5xx ve hiç kurulamayan bağlantı kırıktır; 401/403/429/503 gibi belirsiz kodlar "Belirsiz" sayılır ve alarm üretmez (WAF/bot engeli tarayıcıda sorunsuz çalışabilir). Başarısız HEAD, GET ile teyit edilir ve bir kez yeniden denenir. Tek kırık kaynak bile sayfayı DEGRADED yapar ve YÜKSEK seviyeli sayfa bütünlüğü alarmı açılır; kaynak düzelince alarm otomatik kapanır. HTTPS sayfadaki `http://` kaynaklar için mixed-content alarmı varsayılan açıktır; üçüncü-taraf kaynak alarmı dış CDN gürültüsünü azaltmak için varsayılan kapalıdır.
+
+Ne zaman kullanmalı? Kampanya ve vitrin sayfalarında "sayfa açılıyor ama görseller kırık" utancını önlemek için. Örneğin yeni kampanya sayfanızı Tek Sayfa modunda izlersiniz; bir deploy sonrası ana bannerin 404 verdiğini müşteri hizmetleri değil, Site Monitor söyler.
+
+### 10.8 Sentetik İzleme k6
+
+Tek istek yetmediğinde — çok adımlı akışları (OIDC/Keycloak login, API zincirleri, form login) gerçek bir k6 script'iyle uçtan uca koşturur. Hazır şablonlardan başlarsınız; script `__ENV` üzerinden ortam değişkenleri okur. Sırları script gövdesine yazmazsınız: "Gizli" işaretli değişkenler şifreli saklanır, çıktı ve loglarda maskelenir, geri okunamaz. Koşu sonucu net sınıflanır: başarısız k6 check'i / exit 99 → FAIL, süre aşımı → TIMEOUT, diğer hatalar → ERROR, aksi halde PASS. Kaydetmeden önce "Test Çalıştır" ile script'i anında deneyebilirsiniz. İzleme için gerçek kullanıcı yerine ayrılmış bir servis hesabı kullanın.
+
+Ne zaman kullanmalı? "Login çalışıyor mu" sorusunun cevabı tek bir HTTP isteğine sığmadığında. Örneğin internet şubesi giriş akışınızı (form → OIDC yönlendirme → token → portfolio çağrısı) 5 dakikada bir sentetik koşturursunuz; zincirdeki herhangi bir halka koptuğunda hangi check'in kırıldığını k6 çıktısında görürsünüz.
+
+### 10.9 Alan Adı Tescil İzleme
+
+SSL sertifikanız kusursuz olabilir; ama alan adının tescili dolarsa domain elinizden çıkar. **Alan Adı İzleme** sekmesi bir domainin tescil bitişini (RDAP, `.tr` gibi TLD'lerde HTTPS web-whois) günde bir kontrol eder — vade seyrek değiştiği için ayrı sıklık alanı yoktur. Alt alan girseniz bile kayıtlı domaine (eTLD+1) indirgenir. Uyarı eşiği (varsayılan 30 gün), kritik eşiği (7 gün) ve hatırlatma günleri (varsayılan `60,30,14,7,3,1`) monitör başına ayarlanır.
+
+Detay penceresindeki Domain Kaydı sekmesi tescilin kimlik kartıdır: kayıt operatörü (registrar) ve IANA kimliği, önemli tarihler, ad sunucuları, çözümlenen A/AAAA IP'leri ve reverse-DNS adları, EPP durum kodları (açıklamalı) ve DNSSEC durumu. Vade sorgusu bir tanı aracıyla adım adım izlenebilir; kurumsal SSL-inspection proxy'si RDAP'ı bozarsa proxy CA zinciri yakalanıp güven deposuna eklenebilir (bkz. §14.23).
+
+Ne zaman kullanmalı? Kurumun sahip olduğu her üretim domaininde — istisnasız. Örneğin `sirketiniz.com` için varsayılan eşikleri korur, marka domainleriniz için hatırlatma listesine `90` gününü de eklersiniz; tescil yenileme bütçe onayı gerektiriyorsa 90 günlük öncü sinyal tam da bunun içindir.
 
 ---
 
-## 10. Güvenlik Modeli
+## 11. Bakım Pencereleri
 
-### 10.1 Kimlik Doğrulama
+Planlı bir kesinti sırasında alarm yağmuru hem gürültüdür hem de gerçek alarmlara karşı duyarsızlaştırır. **Bakım** sekmesi, belirli monitörleri (veya tümünü) belirli zaman aralıklarında sessize alan pencereler tanımlamanızı sağlar; operasyon ve takım yöneticileri kullanır.
 
-**Oturum Tabanlı Kimlik Doğrulama:**
-- Spring Session ile yönetilen HTTP oturumları
-- Opsiyonel JDBC Session Store (HA modunda tüm pod'larda oturum paylaşımı)
-- BCrypt ile şifrelenmiş yerel parolalar
+Bir pencere tanımlarken ad ve açıklama girer, hedefleri seçersiniz: tek tek monitörler (HTTP, port, keyword, ping, sayfa, DNS, alan adı ve envanter sertifika domainleri karışık seçilebilir) ya da "tüm monitörler". Zamanlama saat diliminde tanımlanır (varsayılan `Europe/Istanbul`): başlangıç zamanı + süre (dakika) ve tekrarlama — tek seferlik, günlük, haftalık (haftanın günleri seçilir) veya aylık (ayın günü). Tekrarlama hesabı yaz saati geçişlerine dayanıklıdır.
 
-**LDAP / Active Directory ile Kimlik Doğrulama:**
-- Ayarlardan etkinleştirilir; login anında AD'ye bind edilerek doğrulama yapılır
-- İlk başarılı girişte kullanıcı otomatik provizyon edilir (orgRole, müdür ilişkisi, takım) — bkz. §3.1
-- Provizyon sonucu sistem rolü atanır: müdür → kapsamlı ADMIN (salt-okuma), PO → TEAM_ADMIN, diğerleri → USER (bkz. §11)
-- Yerel `admin` hesabı her zaman geçerlidir (acil erişim / bootstrap); LDAP/SMTP ayarları yalnız bu hesaba açıktır
-- Bind parolası AES-GCM ile şifreli saklanır (`SITE_MONITOR_SECRET_KEY`)
+Pencere aktifken etkisi kesindir: hedef monitör için alarm açılmaz ve hiçbir kanaldan bildirim gitmez — ilk alarm, günlük hatırlatma ve DNS değişikliği dahil. Pencere içinde düzelen mevcut alarmlar sessizce kapanır (çözülme maili de gitmez — tam sessizlik). Bakımdaki kontroller uptime yüzdesi hesabından hariç tutulur, yani planlı kesinti erişilebilirlik istatistiğinizi cezalandırmaz. Aktif hedef kümesi bellek içinde tutulur ve yaklaşık 30 saniyede bir ile her kayıt değişikliğinde tazelenir; sweep yolunda pencere sorgusu O(1)'dir.
 
-**"Beni Hatırla" Özelliği:**
-- 7 günlük kalıcı oturum
-- HMAC imzalı token (DB'de saklanır)
-- Oturum açıldığında token yenilenir
+Ne zaman kullanmalı? Örneğin her Pazar 02:00–04:00 arası veritabanı bakımınız varsa haftalık bir pencere tanımlarsınız: ilgili monitörler o aralıkta susar, 04:01'de sorun devam ediyorsa normal alarm düzeni kaldığı yerden çalışır.
 
-### 10.2 Aşamalı Hesap Kilitleme
+---
 
-Brute-force saldırılarına karşı aşamalı kilitleme mekanizması:
+## 12. Güvenlik Modeli
+
+Site Monitor bir izleme aracı olduğu kadar bir kurumsal kayıt sistemidir; bu yüzden kimlik doğrulama, oturum ve denetim katmanları ilk günden tasarımın parçasıdır. Bu bölüm güvenlik denetimlerinin tamamını tek yerde toplar.
+
+### 12.1 Kimlik Doğrulama
+
+Oturum tabanlı kimlik doğrulama kullanılır: HTTP oturumları Spring Session ile yönetilir, prod profilinde JDBC deposuna yazılır (tüm pod'lar oturumu paylaşır). Yerel parolalar BCrypt ile saklanır. `/api/**` istekleri Spring Security filter zinciri yerine özel bir `AuthInterceptor` tarafından korunur; classpath'te yalnız BCrypt için `spring-security-crypto` vardır.
+
+LDAP/Active Directory doğrulaması açıldığında giriş anında AD'ye bind edilir; ilk başarılı girişte kullanıcı otomatik provizyon edilir (orgRole, müdür ilişkisi, takım). Yerel bootstrap admin hesabı her zaman geçerlidir (acil erişim); LDAP/SMTP ayarları yalnız bu hesaba açıktır. Bind parolası `SITE_MONITOR_SECRET_KEY` ile AES-GCM şifreli saklanır.
+
+"Beni Hatırla" özelliği 7 günlük kalıcı oturum sağlar: HMAC imzalı token veritabanında tutulur ve her oturum açılışında yenilenir.
+
+### 12.2 Tek Aktif Oturum
+
+Bir kullanıcı aynı anda en fazla bir canlı oturum tutar; en yeni giriş kazanır. Arayüz `/api/session/ping` ile (~15 sn) oturumu taze tutar. Başka bir cihazdan giriş yapıldığında eski oturum ilk isteğinde 401 alır ve `/?session=expired` sayfasına yönlenir. Zaten canlı bir oturum varken giriş denemesi 409 döner; onay penceresini kabul ederseniz `forceLogin=true` ile eski oturum düşürülür. Yönetici, **Sistem Sağlığı** üzerinden herhangi bir kullanıcının oturumunu zorla sonlandırabilir.
+
+### 12.3 Aşamalı Hesap Kilitleme
+
+Kaba kuvvet saldırılarına karşı kilitleme kademeli sertleşir:
 
 | Başarısız Giriş | Bekleme Süresi |
 |---|---|
@@ -726,73 +760,60 @@ Brute-force saldırılarına karşı aşamalı kilitleme mekanizması:
 | 3 ek hatalı giriş | 2 dakika |
 | 2 ek hatalı giriş | 10 dakika |
 | 1 ek hatalı giriş | 30 dakika |
-| Eşik aşılırsa | **Kalıcı kilit** (admin açar) |
+| Eşik aşılırsa | Kalıcı kilit (yalnız admin açar) |
 
-### 10.3 Hareketsizlik Timeout
+### 12.4 Hareketsizlik Zaman Aşımı
 
-- 5 dakika hareketsizlik → 60 saniyelik uyarı sayacı başlar
-- Uyarı süresi dolunca → otomatik çıkış
+5 dakika hareketsizlikten sonra 60 saniyelik uyarı sayacı başlar; süre dolunca oturum otomatik kapatılır.
 
-### 10.4 Konteyner Güvenliği
+### 12.5 Konteyner Güvenliği
 
 ```yaml
 securityContext:
-  runAsNonRoot: true          # Root olarak çalışmaz
-  runAsUser: 1000             # UID 1000
-  readOnlyRootFilesystem: true # Kök dosya sistemi salt okunur
+  runAsNonRoot: true            # Root olarak çalışmaz
+  runAsUser: 1000               # UID 1000
+  readOnlyRootFilesystem: true  # Kök dosya sistemi salt okunur
   allowPrivilegeEscalation: false
   capabilities:
-    drop: [ALL]               # Tüm Linux yetenekleri kaldırılır
+    drop: [ALL]                 # Tüm Linux yetenekleri kaldırılır
 
 # Yalnızca /tmp yazılabilir (emptyDir)
 ```
 
-### 10.5 Denetim Kaydı (Audit Log)
+### 12.6 Denetim Kaydı
 
-Her admin aksiyonu şu bilgilerle kaydedilir:
+Her giriş, çıkış ve yönetim aksiyonu şu bilgilerle kaydedilir: UTC zaman damgası, kullanıcı, istemci IP'si, coğrafi konum (ülke/şehir), tarayıcı, olay tipi (DOMAIN_ADD, USER_UPDATE, LOGIN_FAILED...), etkilenen kaynak, sonuç (SUCCESS/FAILURE) ve alan bazında eski → yeni değer farkları. Kayıtlar yalnız eklenir, değiştirilemez; gece temizliği 180 günden eskileri siler.
 
-| Alan | İçerik |
-|---|---|
-| Zaman | UTC timestamp |
-| Kullanıcı | Kullanıcı adı |
-| IP Adresi | İstemci IP'si |
-| Coğrafi Konum | Ülke / Şehir |
-| Tarayıcı | User-Agent |
-| Olay Tipi | DOMAIN_ADD, USER_UPDATE, TEAM_DELETE, vb. |
-| Kaynak | Etkilenen nesne (domain, kullanıcı adı, vb.) |
-| Sonuç | SUCCESS / FAILURE |
-| Değişiklikler | Eski değer → Yeni değer |
+Denetim kayıtları anomali bayraklarıyla zenginleştirilir: mesai dışı erişim (OFF_HOURS), alışılmadık IP (UNUSUAL_IP), coğrafi hız ihlali (GEO_VELOCITY), kaba kuvvet (BRUTE_FORCE) ve hız sınırı (RATE_LIMITED). Algılama pencereleri **Ayarlar → Login Anomali** bölümünden yönetilir; anormal başarısız giriş yoğunluğu otomatik olay kaydı da açabilir.
 
-Audit log **değiştirilemez** — yalnızca ekleme yapılır. Gece 03:30 cron'u 180 günden eski kayıtları temizler.
+### 12.7 Hata Yönetimi ve Bilgi Sızıntısı Önleme
 
-### 10.6 Hata Yönetimi ve Bilgi Sızıntısı Önleme
+`GlobalExceptionHandler` tüm yakalanmamış istisnaları karşılar ve kullanıcı-dostu Türkçe mesajla yanıt döner:
 
-**GlobalExceptionHandler** (Spring `@RestControllerAdvice`) tüm uncaught exception'ları yakalar ve TR mesajla kullanıcı-dostu yanıt döner:
-
-| Exception | HTTP Status | UI Mesaj |
+| Exception | HTTP | Arayüz Mesajı |
 |---|---|---|
-| `NoSuchElementException` | 404 | exception mesajı |
-| `IllegalStateException` | 409 | exception mesajı |
-| `IllegalArgumentException` | 400 | exception mesajı |
-| `SecurityException` | 403 | exception mesajı |
+| `NoSuchElementException` | 404 | istisna mesajı |
+| `IllegalStateException` | 409 | istisna mesajı |
+| `IllegalArgumentException` | 400 | istisna mesajı |
+| `SecurityException` | 403 | istisna mesajı |
 | `DataIntegrityViolationException` | 409 | "Bu domain envanterde zaten var" vb. |
 | `MethodArgumentNotValidException` | 400 | "Geçersiz alan(lar): X, Y" + alan listesi |
 | `HttpMessageNotReadableException` | 400 | "Geçersiz istek formatı" |
 | `MissingServletRequestParameterException` | 400 | "Eksik parametre: X" |
-| `ResponseStatusException` | passthrough | exception mesajı |
-| **Diğer her şey (catch-all)** | 500 | "Sunucu hatası" — **stack trace UI'ye SIZMAZ** |
+| `ResponseStatusException` | geçirilir | istisna mesajı |
+| Diğer her şey (catch-all) | 500 | "Sunucu hatası" — stack trace arayüze SIZMAZ |
 
-Stack trace ve iç hata mesajı sadece log dosyasına yazılır.
+Stack trace ve iç hata detayı yalnız log dosyasına yazılır.
 
-### 10.7 Hassas Alan Maskeleme (Request Logging)
+### 12.8 Hassas Alan Maskeleme
 
-**RequestLoggingFilter** TRACE seviyede HTTP request/response gövdesi log'lar — default `com.sitemonitor=DEBUG` seviyede SESSİZ kalır. Açmak için:
+`RequestLoggingFilter`, TRACE seviyesinde tüm HTTP istek/yanıt gövdesini loglayabilir; varsayılan `com.sitemonitor=DEBUG` seviyesinde sessizdir. Açmak için:
 
 ```properties
 logging.level.com.sitemonitor.config.RequestLoggingFilter=TRACE
 ```
 
-Açıldığında JSON body / form body / URL query üzerinden ~60 hassas alan otomatik `*******` ile maskelenir:
+Açıldığında JSON gövde, form gövde ve URL sorgusu üzerinden ~60 hassas alan otomatik `*******` ile maskelenir:
 
 ```
 password / passwd / pwd / pass / parola / sifre /
@@ -803,1121 +824,661 @@ session_id / jsessionid / sid /
 pin / otp / mfa_code / verification_code  (EN + TR varyantları)
 ```
 
-Sensitive HTTP headers (`Authorization`, `Cookie`, `Set-Cookie`, `X-Api-Key`, `X-Auth-Token` vb.) da maskelenir. Skip path'ler: `/health`, `/favicon.ico`, `/assets/*`, `/static/*`, static asset uzantıları.
+Hassas HTTP başlıkları (`Authorization`, `Cookie`, `Set-Cookie`, `X-Api-Key`, `X-Auth-Token` vb.) de maskelenir. `/health`, `/favicon.ico`, `/assets/*`, `/static/*` ve statik uzantılar atlanır; gövde logu 2000 karakterde kesilir.
 
-### 10.8 Frontend Hata Sınırı (ErrorBoundary)
+### 12.9 Frontend Hata Sınırı
 
-Tüm uygulama `ErrorBoundary` ile sarılıdır:
-- **Root seviye** (main.jsx) — komple white-screen önler
-- **Tab seviyesi** (App.jsx, `key={tab}` ile) — bir tab'ın render hatası diğerlerini öldürmez
+Uygulama iki katmanlı `ErrorBoundary` ile sarılıdır: kök seviye beyaz ekranı önler, sekme seviyesi bir sekmenin render hatasının diğerlerini düşürmesini engeller. Hata durumunda "Bir şey ters gitti" mesajı ve "Yenile" butonu gösterilir; tam hata konsola düşer.
 
-Hata durumunda kullanıcıya "Bir şey ters gitti / Something went wrong" + "Yenile / Reload" butonu gösterilir, console'a tam hata düşer.
+### 12.10 Girdi Doğrulama
 
-### 10.9 Input Validation
-
-Modelde `jakarta-validation` annotation'ları + controller'da `@Valid`:
+Modellerde `jakarta-validation` anotasyonları, controller'larda `@Valid` kullanılır:
 
 ```java
 @NotBlank @Pattern(...) String domain  // RFC 1123 + wildcard izinli
 @Min(1) @Max(65535)     Integer port
-@Min(1) @Max(4)         Integer tier   // 1=Müşteri-Yüzlü Prod ... 4=Dev
+@Min(1) @Max(4)         Integer tier
 ```
 
-Geçersiz body → 400 + alan listesi (stack trace yok).
+Geçersiz gövde 400 + alan listesiyle reddedilir; stack trace dönmez.
 
 ---
 
-## 11. Kullanıcı Rolleri ve Yetki Matrisi
+## 13. Kullanıcı Rolleri ve Yetki Modeli
 
-### 11.1 Sistem Rolleri
+Yetki modeli iki eksenlidir: sistem rolü ne yapabileceğinizi, takım kapsamı nerede yapabileceğinizi belirler. Kapsamlar AD ilişkilerinden türetilir; ekrandan düzenlenebilen izin matrisi ise rol varsayılanlarının üzerine ince ayar sağlar.
+
+### 13.1 Sistem Rolleri
 
 | Rol | Açıklama | Erişim Kapsamı |
 |---|---|---|
-| **ADMIN (global)** | Yerel/bootstrap admin (`admin`) | Tüm takımlar + global işlemler (yetki matrisi, SQL Playground, sistem denetimi, LDAP/SMTP ayarları) |
-| **ADMIN (müdür, kapsamlı)** | AD'den gelen, astı olan kullanıcı | Sistem rolü ADMIN'dir ama **yalnız astlarının takımlarını GÖRÜNTÜLER (salt-okunur)**; global işlemlere giremez |
-| **TEAM_ADMIN** | Genelde PO (orgRole=PO) | Liderlik ettiği takım(lar)da **görüntüleme + yönetim** (çok-takım) |
-| **USER** | Normal kullanıcı | Yalnız kendi takımı: okuma + kendi takım alarm aksiyonları + haftalık rapor girişi |
-| **AUDIT** | Denetçi | Sistem geneli **salt-okuma** + Denetim Günlüğü |
+| ADMIN (global) | Yerel/bootstrap admin | Tüm takımlar + global işlemler (yetki matrisi, SQL Playground, sistem denetimi, LDAP/SMTP ayarları) |
+| ADMIN (müdür, kapsamlı) | AD'den gelen, astı olan kullanıcı | Sistem rolü ADMIN'dir ama yalnız astlarının takımlarını salt-okuma görüntüler; global işlemlere giremez |
+| TEAM_ADMIN | Genelde PO (orgRole=PO) | Liderlik ettiği takımlarda görüntüleme + yönetim (çok-takım) |
+| USER | Normal kullanıcı | Yalnız kendi takımı: okuma + takım alarm aksiyonları + haftalık rapor girişi |
+| AUDIT | Denetçi | Sistem geneli salt-okuma + Denetim Logu |
 
-> **Kapsam (Faz 3b):** Oturuma `viewTeamIds` (okuma) ve `manageTeamIds` (yönetim) kapsamları yazılır. Global admin'de bu kapsamlar sınırsızdır (null). Müdürün kapsamı **astlarının** takımları, PO'nun kapsamı **liderlik ettiği** takımlardır — bu ilişkiler AD'den (yönetici/lider) türetilir. Bir rolün sistemRole'ü ADMIN olsa bile kapsamı doluysa **global değildir** (yetki sızıntısını önler).
+Oturuma `viewTeamIds` (okuma) ve `manageTeamIds` (yönetim) kapsamları yazılır. Global admin'de kapsamlar sınırsızdır; müdürün kapsamı astlarının takımları, PO'nun kapsamı liderlik ettiği takımlardır. Bir kullanıcının sistem rolü ADMIN olsa bile kapsamı doluysa global değildir — yetki sızıntısı bu kuralla önlenir.
 
-### 11.2 Organizasyonel Roller (orgRole)
+### 13.2 Organizasyonel Roller
 
-AD'deki `company`/ünvan bilgisinden türetilir; hem eskalasyon bildirim seviyesini hem de sistem rolünü etkiler:
+AD'deki ünvan/`company` bilgisinden türetilir; hem eskalasyon bildirim seviyesini hem sistem rolünü etkiler:
 
 | Org Rol | Eşlenen Sistem Rolü | Hangi Alarmda Bildirim Alır |
 |---|---|---|
-| **PO** (Product Owner) | TEAM_ADMIN + takım lideri | WARNING + HIGH + CRITICAL |
-| **MANAGER** (Müdür) | ADMIN (kapsamlı/salt-okuma) | HIGH + CRITICAL |
-| **TECH** | USER | WARNING + HIGH + CRITICAL |
-| **C-LEVEL** | — | CRITICAL |
+| PO (Product Owner) | TEAM_ADMIN + takım lideri | WARNING + HIGH + CRITICAL |
+| MANAGER (Müdür) | ADMIN (kapsamlı, salt-okuma) | HIGH + CRITICAL |
+| TECH | USER | WARNING + HIGH + CRITICAL |
+| C-LEVEL | — | CRITICAL |
 
-### 11.3 Takım Kapsamı ve AD İlişkileri
+### 13.3 Takım Kapsamı ve AD İlişkileri
 
-- Her sertifika **tek bir takıma** atanır (eski SY/UG ikili takım modeli kaldırılmıştır).
-- Takım–müdür ilişkisi AD provizyonunda kurulur: üyenin `manager` alanı → müdür; müdür bulununca o takıma **otomatik olarak MANAGER eskalasyon kontağı** (min. seviye HIGH) eklenir.
-- PO bir takıma atandığında, takımın lideri yoksa **otomatik takım lideri** olur (mevcut lider ezilmez).
+Her sertifika tek bir takıma atanır. Takım–müdür ilişkisi AD provizyonunda kurulur: üyenin `manager` alanı müdürü belirler; müdür bulununca o takıma otomatik MANAGER eskalasyon kontağı (minimum seviye HIGH) eklenir. PO bir takıma atandığında takımın lideri yoksa otomatik lider olur — mevcut lider ezilmez.
 
-### 11.4 Yetki Matrisi (Detaylı)
+### 13.4 Yetki Matrisi Varsayılanları
 
-Aşağıdaki varsayılanlar **Yetki (Permissions) ekranından** rol bazında düzenlenebilir (ADMIN her zaman tam yetkilidir ve kilitlidir). Müdür/PO kapsamı (hangi takımlar) AD ilişkilerinden gelir.
+Aşağıdaki varsayılanlar **Yetkiler** ekranından rol bazında düzenlenebilir (ADMIN her zaman tam yetkili ve kilitlidir):
 
 | İşlev | ADMIN | TEAM_ADMIN (PO) | USER | AUDIT |
 |---|---|---|---|---|
 | Dashboard / sertifika görüntüleme | ✓ | ✓ (kapsam) | ✓ (kendi takımı) | ✓ (tümü) |
 | "Şimdi Kontrol Et" / canlı tarama | ✓ | ✗ | ✗ | ✗ |
-| Domain Envanteri (CRUD) | ✓ | ✓ (kapsam) | ✗ (okuma) | ✗ (okuma) |
+| Sertifika Envanteri (CRUD) | ✓ | ✓ (kapsam) | ✗ (okuma) | ✗ (okuma) |
 | Alarm onay / yeniden bildir / çözüldü | ✓ | ✓ (kapsam) | ✓ (kendi takımı) | ✗ |
 | Eskalasyon kişileri (CRUD) | ✓ | ✓ (kapsam) | ✗ (okuma) | ✗ (okuma) |
 | Alarm eşikleri | ✓ | ✗ | ✗ (okuma) | ✗ (okuma) |
 | Takım / kullanıcı yönetimi | ✓ | ✓ (kapsam) | ✗ (okuma) | ✗ (okuma) |
 | Haftalık raporlar (yaz/düzenle) | ✓ | ✓ | ✓ (kendi takımı) | ✗ (okuma) |
-| Haftalık rapor **onay** | ✓ | ✓ (PO) | ✗ | ✗ |
-| İzleme (uptime/port/dns) yapılandırma | ✓ | ✗ (okuma) | ✗ (okuma) | ✗ (okuma) |
-| Denetim Günlüğü | ✓ | ✓ (kapsam) | ✗ | ✓ |
+| Haftalık rapor onayı | ✓ | ✓ (PO) | ✗ | ✗ |
+| İzleme monitörleri yapılandırma | ✓ | ✓ (kapsam) | ✗ (okuma) | ✗ (okuma) |
+| Bakım penceresi yönetimi | ✓ | ✓ | ✗ | ✗ |
+| Denetim Logu | ✓ | ✓ (kapsam) | ✗ | ✓ |
 | Yetki Matrisi / SQL Playground / Sistem Denetimi | ✓ (yalnız global) | ✗ | ✗ | ✗ |
-| LDAP / SMTP Ayarları | ✓ (yalnız `admin`) | ✗ | ✗ | ✗ |
+| LDAP / SMTP / Ayarlar | ✓ (yalnız bootstrap admin) | ✗ | ✗ | ✗ |
+
+Yıkıcı işlemler (`inventory.purge`, `system_health.terminate`, `system_health.scheduler_lock`) hassas işaretlidir: matriste bu izinleri verirken ayrıca onay istenir. Kodda yeni bir kaynak anahtarı eklendiğinde tek doğruluk kaynağı `PermissionCatalog`'dur; varsayılan izinler ilk açılışta tohumlanır, yeni sürümlerin eklediği izinler mevcut veritabanına geri doldurulur (yönetici özelleştirmeleri korunur).
 
 ---
+## 14. Kullanıcı Ekranları ve Aksiyonlar
 
-## 12. Kullanıcı Ekranları ve Aksiyonlar
+Bu bölüm arayüzün sekme sekme gezisidir. Sekmeler üst menüde gruplanır: Sertifikalar, İzleme, Raporlar, Kayıtlar ve Yönetim. İzleme sekmelerinin kavramsal ayrıntısı [10. İzleme Türleri](#10-izleme-turleri) bölümündedir; burada ekran davranışlarına odaklanılır.
 
-### 12.1 Giriş Ekranı
+### 14.1 Giriş Ekranı
 
-**Ekran:** `http://cert-monitor.example.com`
-
-**Kullanıcı Aksiyonları:**
+**Ekran:** `https://site-monitor.example.com`
 
 | Aksiyon | Açıklama |
 |---|---|
-| Kullanıcı adı + şifre gir → Giriş yap | Normal oturum açma |
-| "Beni Hatırla" işaretle | 7 günlük kalıcı oturum |
-| Hatalı giriş yap (tekrar) | Sayaç artar → kilitleme başlar |
-| Kilitlenme süresi dolunca | Yeniden deneyebilir |
-| Kalıcı kilitliyse | Mesaj gösterilir, admin müdahalesi gerekir |
+| Kullanıcı adı + parola → Giriş | Normal oturum açma (yerel veya LDAP) |
+| "Beni Hatırla" işareti | 7 günlük kalıcı oturum |
+| Hatalı giriş tekrarı | Sayaç artar → kademeli kilitleme başlar |
+| Kilit süresi dolunca | Yeniden deneyebilirsiniz |
+| Kalıcı kilit | Mesaj gösterilir, admin müdahalesi gerekir |
+| Sorun Bildir | Giriş yapamayan kullanıcı ekran görüntülü sorun kaydı bırakır (bkz. §14.20) |
+| Başka cihazda oturum varken giriş | 409 + onay penceresi → onaylarsanız eski oturum düşürülür |
 
----
+### 14.2 Genel Bakış
 
-### 12.2 Dashboard (Ana Ekran)
-
-**Ekran:** Giriş sonrası otomatik açılır
-
-**Görüntülenen Bilgiler:**
-- **İstatistik Paneli** (genişletilebilir/daraltılabilir): Toplam | Geçerli | Uyarı | Hata | 30 günde doluyor | Süresi dolmuş
-- **Sertifika Kartları**: Her sertifika için domain, kalan gün, durum rozeti, issuer, son kontrol
-
-**Kullanıcı Aksiyonları:**
+Giriş sonrası açılan ana ekrandır. Genişletilebilir istatistik paneli (Toplam / Geçerli / Uyarı / Hata / 30 günde doluyor / Süresi dolmuş) ve her sertifika için domain, kalan gün, durum rozeti, veren kurum ve son kontrol bilgisini taşıyan kartlardan oluşur.
 
 | Aksiyon | Açıklama |
 |---|---|
-| İstatistik kartına tıkla | İlgili kategoriye göre filtrele |
-| Durum filtresi (Tümü/Geçerli/Uyarı/Hata) | Sertifikaları duruma göre filtrele |
-| Süre filtresi (7/30/90 gün/Süresi dolmuş) | Yaklaşan sertifikaları göster |
-| Arama kutusuna domain/issuer yaz | Anlık filtreleme |
-| Sıralama değiştir (Öncelik/Artan/Azalan) | Kalan güne göre sırala |
-| Sayfa başına seç (10/25/50/Tümü) | Kaç sertifika gösterilsin |
-| Sertifika kartına tıkla | Detay modalını aç |
-| "Şimdi Kontrol Et" butonu (Admin) | Anlık arka plan taraması başlat |
-| Dil değiştir (TR/EN) | Arayüz dilini değiştir |
-| Tema değiştir (Açık/Koyu) | Görsel temayı değiştir |
-| 5 dakika hareketsiz kal | 60s uyarısı → otomatik çıkış |
+| İstatistik kartına tıklama | İlgili kategoriye göre filtreler |
+| Durum / süre filtresi | Duruma veya kalan güne göre daraltır |
+| Arama kutusu | Domain/issuer üzerinde anlık filtre |
+| Sıralama ve sayfa boyutu | Önceliğe veya kalan güne göre sıralar |
+| Karta tıklama | Sertifika detay penceresini açar |
+| "Şimdi Kontrol Et" (yetkili) | Anlık arka plan taraması başlatır |
+| Dil / tema değiştirme | TR/EN ve Açık/Koyu arasında geçiş |
+
+### 14.3 Sertifika Detay Penceresi
+
+Herhangi bir sertifika kartına tıkladığınızda beş sekmeli pencere açılır:
+
+- Detaylar: domain, durum, kalan gün, subject/issuer, geçerlilik aralığı, son kontrol, SAN listesi, varsa hata mesajı.
+- Alarmlar: bu sertifikanın tüm alarm olayları — tarih, seviye, tip, onay ve çözüm bilgileri.
+- Bildirimler: gönderilmiş tüm bildirimler — alıcı, konu, e-posta/webhook durumu, tetikleyici tipi.
+- Güvenlik: tam DN'ler, seri numarası, anahtar/imza algoritmaları, Key Usage / EKU, zincir-iptal-dağıtım durumları, OCSP/CRL URL'leri, SHA-256 parmak izi.
+- Notlar: sertifikaya özel serbest metin notları ekler, düzenler, silersiniz.
+
+### 14.4 İstatistikler
+
+Detaylı sertifika sayıları, Tier 1–4 dağılım pastası ve takım bazlı geçerli/uyarı/hata kırılımı. Tier dilimine veya takım satırına tıklayarak **Genel Bakış** ekranını o kesite filtreleyebilirsiniz. Kapsamlı rollerde yalnız erişebildiğiniz takımlar görünür.
+
+### 14.5 Uyarılar
+
+Yalnız `warning` veya `error` durumundaki sertifikaları gösterir; filtreleme ve sıralama **Genel Bakış** ile aynıdır. Sertifikası sorunlu olanların hızlı çalışma listesidir.
+
+### 14.6 Tüm Sertifikalar
+
+Kart yerine tablo görünümü: Domain, Issuer, Subject, Bitiş Tarihi, Kalan Gün, Durum ve Son Kontrol kolonları. Domain/Issuer/Kalan Gün/Son Kontrol kolonları sıralanabilir.
+
+### 14.7 Yenileme Önerileri
+
+Her sertifika için öncelik sıralı Türkçe aksiyon önerileri üretir: Kritik (derhal müdahale), Uyarı (yenileme planlanmalı), Bilgi (takip edilmesi gerekenler). Yenileme koordinasyonunu yürüten operasyon ekiplerinin haftalık gündem listesidir.
+
+### 14.8 Değişim Rehberi
+
+Sertifika yenileme süreçlerine dair kurumsal dokümanların ve dış bağlantıların kategorize koleksiyonudur (`guide_link`). Yenileme sırasında "hangi CA portalı, hangi iç prosedür" sorularının cevabını tek yerde tutar; bağlantıları yönetici ekler, düzenler ve sıralar.
+
+### 14.9 Vade Takvimi
+
+Sertifika vadelerinin analitik panelidir: KPI kartları (Kritik ≤7 gün / Yüksek 8–14 / Uyarı 15–30 / Toplam Aktif), günlük vade dağılım grafiği, takvim ısı haritası, takım ve durum bazlı yük dağılım pastaları ve yaklaşan süre sonları listesi. Takvimde bir güne tıklayıp o gün dolan sertifikaları görebilirsiniz. Kapasite planlaması yapan yöneticinin ekranıdır: "Kasım ayında kaç yenileme birikiyor?" sorusuna bir bakışta cevap verir.
+
+### 14.10 Sertifika Envanteri
+
+İzlenecek domainlerin kayıt defteridir. Tabloda domain+port, tier rozeti, takım, sahip, açıklama, aktiflik ve aksiyonlar (Düzenle / Devret / Sil / Geri Yükle) görünür. Global admin tüm envanteri yönetir; PO liderlik ettiği takımların kayıtlarını yönetir; müdür ve USER/AUDIT salt-okuma görür.
+
+Yeni domain eklerken beş bölümlü form doldurursunuz:
+
+- Temel Bilgiler: domain (FQDN), port (varsayılan `443`), sorumlu takım, tier, sahip, aktiflik.
+- Operasyonel Bayraklar: Dış Tedarikçi, Aksiyon Gerekli, OpenShift, SSL Pinning, Dahili Sertifika, JKS Keystore, Sunucu Güncellemesi, Netscaler, WAF Aktif, Kullanımda, EV Sertifikası, Proxy Üzerinden Kontrol Et. Bu bayraklar kontrol hattını değiştirmez (proxy hariç); envanter raporlarında ve filtrelerde görünen operasyon meta verisidir.
+- Süreç Bilgisi: satın alan kişi/birim.
+- Açıklamalar: genel açıklama + süreç notu.
+- Gelişmiş: beklenen parmak izi (SHA-256, dağıtım kontrolü için) ve beklenen subject.
+
+Silme yumuşaktır (soft delete): kayıt gizlenir ama geçmişi korunur; "Silinenleri Göster" ile geri yüklersiniz. Devret aksiyonu sertifikayı başka takıma taşır. Domain adını değiştirirseniz tüm geçmiş atomik taşınır (bkz. §3.9).
+
+### 14.11 Zayıf Algoritma Raporu
+
+SHA-1 imza, RSA-1024 gibi güvensiz algoritma kullanan sertifikaları listeler: domain, imza/anahtar algoritması, anahtar boyutu, zayıflık tipi, kritiklik, sahip, takım, bitiş tarihi. Güvenlik ekibinin uyumluluk taramalarında ilk baktığı ekrandır.
+
+### 14.12 İzleme Sekmeleri
+
+**Durum İzleme**, **HTTP / Website**, **Port İzleme**, **DNS İzleme**, **Keyword İzleme**, **Ping İzleme**, **Sayfa Bütünlüğü**, **Sentetik İzleme** ve **Alan Adı İzleme** sekmelerinin her biri aynı düzeni izler: durum/grup/takım filtreli monitör listesi, monitör kartına tıklayınca kontrol geçmişi + alarm geçmişi + süre grafiği sekmeli detay penceresi, sağ üstte + Yeni Monitör. Süre grafikleri 24 saat / 7 gün / 30 gün / 90 gün hazır aralıkları ve özel aralık seçimiyle ortalama, min/maks bandı ve p95 gösterir; kesinti aralıkları kırmızı işaretlenir, ping grafiğinde paket kaybı ikinci eksende çizilir. Monitör davranışlarının ayrıntısı için bkz. [10. İzleme Türleri](#10-izleme-turleri).
+
+### 14.13 Olaylar
+
+İzleme alarmlarından türeyen kesinti olaylarının çalışma listesi. Her satırda başlangıç zamanı, durum, önem ve kök neden sınıfı görünür; filtreleyebilir, yorum ekleyebilir, çözülen olayları kapatabilirsiniz. Bir kesintinin "kaç dakika sürdü, ne zaman kapandı" cevabı buradadır.
+
+### 14.14 Alarm Geçmişi
+
+Tüm alarm olaylarının arşivi ve aksiyon merkezi. Filtreler: yalnız açık alarmlar, domain araması, seviye, tip. Tablo kolonları: domain, seviye (renkli rozet), tip, kalan gün, oluşturma tarihi, son bildirim, durum, aksiyonlar.
+
+| Aksiyon | Etkisi |
+|---|---|
+| Onayla | "Gördüm" işareti; günlük tekrar bildirimi durur, alarm açık kalır |
+| Yeniden Bildir | Tüm eskalasyon kişilerine `MANUAL` tetikleyicili bildirim — kota yok |
+| Çözüldü İşaretle | `resolved=true`, çözen kişi kaydedilir, `RESOLUTION` bildirimi gider |
+
+Satırı genişlettiğinizde bildirim geçmişi (alıcı, konu, e-posta/webhook durumu, tetikleyici) ile onay ve çözüm bilgileri açılır.
+
+### 14.15 Haftalık Raporlar
+
+Takımların haftalık operasyon raporunu yazdığı ve PO'nun onayladığı ekran. Hafta seçimi, olay özeti bölümü (acil/yüksek olay sayıları), açık problemler ve planlı işler listesi, durum rozeti (Taslak / Gönderildi / Onaylandı / İade).
+
+Akış: raporu Gönder ile PO onayına iletirsiniz; PO'ya onay bağlantılı HTML e-posta gider ve PO ekrandan ya da e-postadaki bağlantıdan tek tıkla onaylar veya iade eder — e-posta token bağlantısı bilinçli olarak oturum açmadan çalışır. Cuma sabahı bekleyen raporlara otomatik hatırlatma gider; rapor başka takıma devredilebilir. USER kendi takımının raporunu yazar; PO liderlik ettiği takımları görür ve onaylar; global admin tümünü görür.
+
+### 14.16 Olay ve Hata Geçmişi
+
+Elle tutulan SRE olay defteridir — izlemeden bağımsız, kurumsal olay yönetimi kaydı. Her olayda önem (CRITICAL / HIGH / MEDIUM / LOW), durum (OPEN → INVESTIGATING → MITIGATED → RESOLVED), kategori (DATABASE / NETWORK / CERTIFICATE / APPLICATION / INFRASTRUCTURE / OTHER), problem tipi, etkilenen uygulama/sistemler, müşteri ve işlem adedi, markdown açıklama ve görsel ekler bulunur. Kanal/servis/hata kodu gibi açılır liste seçenekleri takıma özeldir — bir takımın eklediği değer diğerine sızmaz. Günlük trend grafiği olay yoğunluğunu gösterir; bildirim e-postaları gönderilmeden önizlenebilir.
+
+### 14.17 Aktivite Logu
+
+Her tarama koşusunun özetini listeler: çalışma zamanı, tetikleyici tipi (Manuel / Zamanlı / Bayat), kontrol edilen domain sayısı, uyarı ve hata sayıları, koşu kimliği (Run ID). Son N saat filtresiyle daraltılır. "Tarama gerçekten çalıştı mı?" sorusunun kanıt ekranıdır.
+
+### 14.18 Etkinliklerim
+
+Kendi hesabınızın denetim izi: giriş/çıkışlarınız, başarısız girişler, parola değişiklikleriniz ve yaptığınız envanter işlemleri; sonuç (SUCCESS / FAILURE / BLOCKED), tarih aralığı ve olay tipi filtreleriyle. Hesabınızda şüpheli hareket olup olmadığını yöneticiye sormadan kendiniz görürsünüz.
+
+### 14.19 Denetim Logu
+
+Global admin ve AUDIT rolüne açık, sistem genelindeki denetim kayıtları ekranı. Özet panel (24 saat / 7 gün olay ve başarısız giriş sayıları, anomali sayısı), kullanıcı / olay tipi / sonuç / yalnız-anomaliler filtreleri ve tarih, olay tipi, kullanıcı, IP, coğrafi konum, kaynak, sonuç, tarayıcı kolonlu tablo. Satırı genişlettiğinizde alan bazında eski → yeni değer farkları görünür.
+
+### 14.20 Sorun Bildirimleri
+
+Giriş ekranındaki "Sorun Bildir" akışıyla gelen kayıtların yönetim ekranı. Giriş yapamayan kullanıcı ekran görüntüsü ekleyerek kayıt bırakır; siz kayıtları OPEN → IN_PROGRESS → RESOLVED akışında yönetir, yanlış kapatılan kaydı yeniden açarsınız. Parola/kilit kaynaklı çağrı trafiğini yapılandırılmış kayda dönüştürür.
+
+### 14.21 Yönetim Paneli
+
+Yönetim işlevlerinin merkezi: envanter, kullanıcılar, takımlar, eskalasyon kişileri ve alarm eşikleri alt sekmeleri.
+
+Eskalasyon Kişileri: kullanıcı, takım, org rolü, minimum alarm seviyesi (WARNING / HIGH / CRITICAL), isteğe bağlı Slack/Teams webhook URL'si ve aktiflik ile kişi tanımlarsınız. Ekranda eskalasyon matrisi özeti gösterilir: WARNING → PO + TECH; HIGH → + MANAGER; CRITICAL → + C-LEVEL. Kişi silindiğinde geçmiş bildirim logları korunur.
+
+Alarm Eşikleri: Uyarı Günü (varsayılan 30), Yüksek Gün (15), Kritik Gün (7) ve Tekrar Bildirim Aralığı (24 saat) kartlarını satır içi düzenlersiniz.
+
+Takım Yönetimi: takımlar kart görünümünde listelenir — ad, e-posta, lider (PO), müdür ve org rol rozetli üyeler. Yeni takım eklerken ad, e-posta, isteğe bağlı lider ve açıklama girersiniz. PO atanınca lidersiz takımda otomatik lider olur (mevcut lider ezilmez); müdür ilişkisi kurulunca takıma otomatik MANAGER eskalasyon kontağı eklenir. Sertifika ataması olan takım silinemez.
+
+Kullanıcı Yönetimi: kullanıcı adı, sicil, ad soyad, e-posta, kaynak (Yerel/LDAP), sistem ve org rolü, takım, müdür, aktiflik ve kilit durumu kolonlu tablo. Aksiyonlar: yeni kullanıcı ekleme, düzenleme (kullanıcı adı hariç; AD kullanıcılarının org rol/takım/müdür alanları da düzenlenebilir), parola değiştirme (yerel hesaplar), kalıcı kilidi açma, silme. LDAP kullanıcıları ilk girişte otomatik oluşur; elle atanmış ADMIN/AUDIT sistem rolünü provizyon düşürmez.
+
+### 14.22 Yetkiler
+
+Rol bazında (TEAM_ADMIN / USER / AUDIT) `view` / `edit` / `execute` izinlerini açıp kapattığınız matris; ADMIN sütunu tam yetkili ve kilitlidir. Kaynaklar gruplara ayrılır (sertifikalar, iletişim, yönetim, alarmlar, izleme, kayıtlar, raporlar, araçlar, olaylar). Hassas işlemler için onay penceresi çıkar; "Varsayılanlara Dön" rol varsayılanlarına sıfırlar. Üstteki bilgi paneli güncel rol modelini özetler. Yalnız global admin erişir.
+
+### 14.23 Ayarlar
+
+Yalnız bootstrap admin hesabına açık, sol menülü yapılandırma merkezi. Değişiklikler canlı yansır — yeniden başlatma gerekmez:
+
+| Bölüm | İçerik |
+|---|---|
+| Genel | Küratörlü çalışma zamanı ayarları (`AppSettingsCatalog`), CORS canlı yenileme |
+| Marka | Beyaz etiket: kurum logosu, uygulama kimliği, duyuru şeridi |
+| Monitör Grupları | İzleme gruplarının yönetimi |
+| SMTP | Sunucu/port/STARTTLS, kimlik bilgileri, test e-postası |
+| Haftalık Erişilebilirlik | Haftalık erişilebilirlik maili yapılandırması |
+| Fırtına | Alarm fırtınası gruplama eşikleri ve aç/kapat |
+| Login Anomali | Anomali algılama pencereleri |
+| LDAP | Sunucu URL, base DN, bind kimliği (AES-GCM), öznitelik eşlemeleri, bağlantı testi + öznitelik görüntüleyici |
+| Domain Tanılama | Alan adı vade sorgusu adım izi, proxy CA zinciri yakalama (PEM) |
+| Veritabanı | Bağlantı ve şema bilgileri |
+| Gizli Anahtar Araçları | Saklanan SMTP/LDAP parolalarının AES-GCM araçları (`SITE_MONITOR_SECRET_KEY` ile korunur) |
+
+### 14.24 Sistem Sağlığı
+
+Platformun kendi sağlık panosudur; 30 saniyede bir otomatik yenilenir. Bölümler:
+
+- Zamanlayıcı: durum, çalışan Run ID, son/sonraki çalışma, aktif domain sayısı, instance kimliği.
+- Dağıtık kilit: kilit tutulmuş mu, kim tutuyor, bitiş zamanı; sıkışan kilidi zorla serbest bırakma.
+- Veritabanı havuzu (HikariCP): aktif/boşta/toplam bağlantı, bekleyen thread, maksimum havuz.
+- JVM bellek: kullanılan/boş/toplam/maksimum ve yüzde.
+- Tarama istatistikleri: son tarama süresi, domain/uyarı/hata sayıları, tarama bayatlık alarmı.
+- SMTP: son 30 günün başarılı/başarısız e-posta sayıları, başarı oranı, tetikleyici filtreli teslimat logları.
+- Veritabanı analitiği: `pg_stat_statements` ile DB genelinde en sık/en yavaş sorgular (eklenti yoksa playground geçmişine düşer), tablo boyutları, bağlantı durumu, saatlik/günlük zaman serileri.
+- Kullanıcı/Oturum: login zaman serisi (1g/7g/30g + özel aralık), ISO haftalık 7×24 aktivite ısı haritası, en çok giriş yapan kullanıcılar ve kaynak IP'ler (reverse-DNS adlarıyla), aktif oturum listesi ve oturum sonlandırma.
+- Tanı araçları: OpenSSL, ağ, HSTS ve bağlantı tanıları; koşu geçmişi `diagnostic_runs` tablosunda saklanır.
+
+### 14.25 SQL Playground
+
+Global admin'e özel salt-okuma SQL konsolu: yalnız `SELECT` çalışır, yazma sorguları reddedilir. Sonuç tablosu, sorgu geçmişi (gece temizlenir) ve satır detay penceresi vardır; tüm kullanım denetim kaydına işlenir. Panolarda olmayan anlık bir soruyu — "hangi takımın kaç açık alarmı var?" — rapor beklemeden cevaplarsınız.
+
+### 14.26 Yardım
+
+Bu kılavuzun kendisi: sol tarafta başlıklardan otomatik üretilen içindekiler, sağda içerik. Kılavuz uygulamayla birlikte sürümlenir ve PDF olarak indirilebilir.
 
 ---
 
-### 12.3 Sertifika Detay Modalı
+## 15. Operasyonel Prosedürler
 
-**Erişim:** Herhangi bir sertifika kartına tıkla
+Bu bölüm günlük operasyonun tarif defteridir: sık yapılan işlerin adım adım, ekran adlarıyla anlatımı.
 
-**5 Sekme:**
+### 15.1 Yeni Domain Ekleme
 
-**Sekme 1 — Detaylar**
+1. **Sertifika Envanteri** sekmesine gidin ve "Alan Ekle" butonuna tıklayın.
+2. Temel Bilgiler bölümünde domaini (ör. `api.example.com`), portu (çoğunlukla `443`), sorumlu takımı ve tier'ı girin.
+3. Operasyonel bayrakları işaretleyin ve kaydedin.
+4. Sistem domaini bir sonraki saatlik taramada kontrol eder; ilk sonuçları **Genel Bakış** ekranında görürsünüz.
 
-| Görüntülenen Bilgi |
-|---|
-| Domain adı |
-| Durum (Geçerli/Uyarı/Hata/Kritik) |
-| Kalan gün sayısı |
-| Subject (sertifika sahibi) |
-| Issuer (veren kurum) |
-| Geçerlilik başlangıcı |
-| Bitiş tarihi |
-| Son kontrol zamanı |
-| SAN (Subject Alternative Names) listesi |
-| Hata mesajı (varsa) |
+İpucu: "Şimdi Kontrol Et" ile taramayı beklemeden tetikleyebilirsiniz.
 
-**Sekme 2 — Alarmlar**
+### 15.2 Alarm Aldığınızda
 
-| Görüntülenen Bilgi |
-|---|
-| Bu sertifikaya ait tüm alarm olayları |
-| Her alarm için: tarih, seviye, tip, durum |
-| Onaylanma bilgisi (kim, ne zaman) |
-| Çözülme bilgisi (kim, ne zaman) |
+1. E-postadaki domain ve kalan gün bilgisine bakın.
+2. Konudan haberdarsanız **Alarm Geçmişi** ekranında alarmı Onaylayın — günlük tekrar bildirimleri durur.
+3. Sertifika yenileme sürecini başlatın (CA, ekip, platform).
+4. Yenileme tamamlandığında sistem bir sonraki taramada yeni sertifikayı otomatik görür.
+5. Sorun giderildiyse "Çözüldü İşaretle" ile kapatın — çözülme bildirimi gönderilir.
 
-**Sekme 3 — Bildirimler**
+Acil durumda (CRITICAL): alarmı hemen onaylayın, yenilemeyi derhal başlatın, gerekirse "Yeniden Bildir" ile üst yönetimi anında bilgilendirin, iş bitince "Çözüldü İşaretle" deyin.
 
-| Görüntülenen Bilgi |
-|---|
-| Bu domain için gönderilmiş tüm bildirimler |
-| Alıcı adı ve e-posta |
-| Gönderim zamanı |
-| Konu |
-| E-posta durumu (SENT/FAILED/SKIPPED) |
-| Webhook durumu |
-| Tetikleyici tipi |
+### 15.3 Sertifika Yenilendikten Sonra
 
-**Sekme 4 — Güvenlik Bilgisi**
+1. Yeni sertifikayı sunucuya/platforma dağıtın.
+2. Site Monitor bir sonraki saatlik taramada yeni sertifikayı tespit eder.
+3. Envanterde beklenen parmak izini güncellediyseniz dağıtım uyumluluğu da doğrulanır.
+4. **Alarm Geçmişi** ekranında ilgili alarmı "Çözüldü İşaretle" ile kapatın; `RESOLUTION` bildirimi otomatik gider.
 
-| Alan | İçerik |
-|---|---|
-| Subject DN | Tam subject distinguished name |
-| Issuer DN | Tam issuer distinguished name |
-| Seri Numarası | Hex format |
-| Anahtar Algoritması | RSA / EC / DSA |
-| Anahtar Boyutu | 2048, 4096 bit vb. |
-| İmza Algoritması | SHA-256WithRSA vb. |
-| CA Sertifikası mı | Evet/Hayır |
-| Key Usage | TLS Web Server Auth vb. |
-| Extended Key Usage | Detaylı kullanım amaçları |
-| Zincir Durumu | VALID / BROKEN |
-| İptal Durumu | VALID / REVOKED / UNDETERMINED |
-| Dağıtım Durumu | OK / INCOMPLETE |
-| OCSP URL | Canlı iptal kontrolü |
-| CRL URL | İptal listesi |
-| SHA-256 Parmak İzi | Benzersiz kimlik |
+### 15.4 Takım Kurulumu
 
-**Sekme 5 — Notlar**
+1. Kullanıcıları oluşturun: **Yönetim Paneli** → Kullanıcı Yönetimi → uygun sistem ve org rolleriyle.
+2. Takımı oluşturun: Takım Yönetimi → lider (PO) ve takım e-postası.
+3. Kullanıcıları takıma atayın: kullanıcı düzenleme penceresinden.
+4. Eskalasyon kişilerini tanımlayın: her kişi için minimum alarm seviyesi, isterseniz Slack/Teams webhook.
+5. Sertifikaları takıma atayın: **Sertifika Envanteri** → Düzenle → sorumlu takım.
 
-| Aksiyon | Açıklama |
-|---|---|
-| Not listesini görüntüle | Bu sertifikaya özel tüm notlar |
-| Yeni not ekle | Serbest metin not girişi |
-| Notu düzenle | Mevcut notu güncelle |
-| Notu sil | Onay sonrası sil |
+LDAP kullanıyorsanız 1–3 adımları büyük ölçüde kendiliğinden gerçekleşir: kullanıcı ilk girişte provizyon edilir, müdür ilişkisi ve MANAGER eskalasyon kontağı otomatik kurulur.
 
----
-
-### 12.4 İstatistikler Ekranı
-
-**Erişim:** Üst menü → İstatistikler sekmesi
-
-| Görüntülenen Bilgi |
-|---|
-| Detaylı sertifika sayıları (toplam/geçerli/uyarı/hata/süresi dolmuş) |
-| **Tier Dağılım Grafiği**: Tier 1-4 ve sınıflandırılmamış pasta grafiği |
-| **Takım Bazlı Dağılım**: Her takım için geçerli/uyarı/hata sayıları |
-| Takım kırılımı (kapsamlı rollerde yalnız erişilen takımlar) |
-
-**Aksiyonlar:**
-
-| Aksiyon | Açıklama |
-|---|---|
-| Tier grafiği dilimine tıkla | Dashboard'u o Tier'a filtrele |
-| Takım satırına tıkla | O takımın sertifikalarını filtrele |
-
----
-
-### 12.5 Uyarılar Ekranı
-
-**Erişim:** Üst menü → Uyarılar sekmesi
-
-- Sadece `warning` veya `error` durumundaki sertifikalar gösterilir
-- Aynı filtreleme ve sıralama özellikleri geçerlidir
-
----
-
-### 12.6 Tüm Sertifikalar (Tablo Görünümü)
-
-**Erişim:** Üst menü → Tüm Sertifikalar sekmesi
-
-**Kolon Başlıkları ve Sıralama:**
-
-| Kolon | Sıralanabilir |
-|---|---|
-| Domain | ✓ (A-Z / Z-A) |
-| Issuer | ✓ (A-Z / Z-A) |
-| Subject | ✗ |
-| Bitiş Tarihi | ✗ |
-| Kalan Gün | ✓ |
-| Durum | ✗ |
-| Son Kontrol | ✓ |
-
----
-
-### 12.7 Yenileme Tavsiyesi Ekranı
-
-**Erişim:** Üst menü → Yenileme Tavsiyesi sekmesi
-
-Her sertifika için öncelik sıralamalı Türkçe aksiyon önerileri:
-- **Kritik**: Derhal müdahale gerekiyor
-- **Uyarı**: Yenileme planlanmalı
-- **Bilgi**: Takip edilmesi gereken durumlar
-
----
-
-### 12.8 Domain Inventory Ekranı (Admin)
-
-**Erişim:** Admin Panel → Domain Inventory sekmesi
-
-**Tablo Görünümü:**
-
-| Kolon |
-|---|
-| Domain + Port |
-| Tier (rozet: Tier 1-4 / Sınıflandırılmamış) |
-| Takım |
-| Sahip |
-| Açıklama |
-| Aktif Durumu |
-| Aksiyonlar (Düzenle / Devret / Sil / Geri Yükle) |
-
-> **Kapsam:** Global admin tüm envanteri görür ve yönetir. PO/TEAM_ADMIN yalnız liderlik ettiği takımların domain'lerini görür+yönetir; müdür (kapsamlı ADMIN) astlarının takımlarını **salt-okuma** görür; USER/AUDIT salt-okuma.
-
-**Aksiyon: Yeni Domain Ekle**
-
-Modal 5 bölümden oluşur:
-
-**Bölüm 1 — Temel Bilgiler**
-
-| Alan | Zorunlu | Açıklama |
-|---|---|---|
-| Domain | ✓ | FQDN (ör. api.example.com) |
-| Port | ✓ | Varsayılan: 443 |
-| Takım | ✓ | Sorumlu takım (alarm/bildirim yönlendirmesi) |
-| Tier | ✗ | 1: Müşteri hizmetleri prod / 2: İç prod / 3: UAT / 4: Dev |
-| Sahip | ✗ | Sorumlu kişi/birim |
-| Aktif | ✓ | Sertifika izlensin mi |
-
-**Bölüm 2 — Operasyonel Bayraklar**
-
-| Bayrak | Açıklama |
-|---|---|
-| Dış Tedarikçi | Sertifika harici tedarikçiden mi alınıyor |
-| Aksiyon Gerekli | Bekleyen bir müdahale var mı |
-| OpenShift | OpenShift platformunda mı çalışıyor |
-| SSL Pinning | Uygulamada SSL pinning uygulanmış mı |
-| Dahili Sertifika | Kurumsal CA'dan mı verilmiş |
-| JKS Keystore | Java KeyStore kullanılıyor mu |
-| Sunucu Güncellemesi | Sunucu güncelleme bekliyor mu |
-| Netscaler | Netscaler/F5 arkasında mı |
-| WAF Aktif | Web Application Firewall aktif mi |
-| Kullanımda | Bu sertifika aktif olarak kullanılıyor mu |
-| EV Sertifikası | Extended Validation sertifikası mı |
-
-**Bölüm 3 — Süreç Bilgisi**
-
-| Alan | Açıklama |
-|---|---|
-| Satın Alan | Sertifikayı kim/hangi birim satın aldı |
-
-**Bölüm 4 — Açıklamalar**
-
-| Alan | Açıklama |
-|---|---|
-| Açıklama | Genel serbest metin açıklaması |
-| Değişiklik Açıklaması | Süreç notu (devir/yenileme süreci vb.) |
-
-**Bölüm 5 — Gelişmiş**
-
-| Alan | Açıklama |
-|---|---|
-| Beklenen Parmak İzi | SHA-256 hex — dağıtım kontrolü için |
-| Beklenen Subject | CN karşılaştırması için |
-
-**Aksiyon: Sil (Soft Delete)**
-- Sertifika fiziksel olarak silinmez
-- `deleted_at` timestamp set edilir, `active = false` yapılır
-- Tabloda varsayılan olarak gizlenir
-- Onay diyaloğu gösterilir
-
-**Aksiyon: Geri Yükle**
-- "Silinenleri Göster" toggle açılır
-- Silinen satırda "Geri Yükle" butonuna tıklanır
-- `deleted_at = null`, `active = true` yapılır
-
-**Aksiyon: Devret (Takım)**
-- Sertifikayı başka bir takıma aktar
-- Dropdown'da tüm takımlar listelenir; mevcut takım seçili gelir
-- Yalnız global admin için açık global işlemdir
-
-**Toggle: Silinenleri Göster/Gizle**
-- Silinmiş sertifikaları tabloda göster veya gizle
-
----
-
-### 12.9 Aktivite Günlüğü Ekranı
-
-**Erişim:** Üst menü → Aktivite Günlüğü sekmesi
-
-Her tarama çalışmasının özeti gösterilir:
-
-| Görüntülenen Bilgi |
-|---|
-| Çalışma zamanı |
-| Tetikleyici tipi (Manuel / Zamanlı / Güncel olmayan) |
-| Kontrol edilen domain sayısı |
-| Uyarı sayısı |
-| Hata sayısı |
-| Çalışma kimliği (Run ID) |
-
-**Filtre:** Son N saat göster (ör. son 24 saat, son 7 gün)
-
----
-
-### 12.10 Alarm Geçmişi Ekranı (Admin)
-
-**Erişim:** Admin Panel → Alarm Geçmişi sekmesi veya Üst menü
-
-**Filtreler:**
-
-| Filtre |
-|---|
-| Sadece açık alarmları göster toggle |
-| Domain arama |
-| Alarm seviyesi filtresi |
-| Alarm tipi filtresi |
-
-**Tablo Kolonları:**
-
-| Kolon | Açıklama |
-|---|---|
-| Domain | Sertifikaya ait domain |
-| Seviye | WARNING / HIGH / CRITICAL (renkli rozet) |
-| Tip | EXPIRY / REVOKED / CHAIN_BROKEN / MISMATCH |
-| Kalan Gün | Alarm anındaki kalan gün |
-| Oluşturma Tarihi | Alarm ne zaman açıldı |
-| Son Bildirim | Son DAILY_REALERT zamanı |
-| Durum | Açık / Onaylandı / Çözüldü |
-| Aksiyonlar | Onayla / Yeniden Bildir / Çözüldü İşaretle |
-
-**Aksiyon: Onayla**
-- Alarmı "gördüm, biliyorum" olarak işaretle
-- Günlük tekrar bildirimleri durur
-- Alarm açık kalmaya devam eder
-
-**Aksiyon: Yeniden Bildir**
-- Tüm eskalasyon kişilerine MANUAL tetikleyicili bildirim gönder
-- Kullanım: acil durum, sorumlu değişti, vb.
-- Kota veya aralık kısıtı yoktur
-
-**Aksiyon: Çözüldü İşaretle**
-- Sertifika yenilendi veya sorun giderildi
-- `resolved = true`, çözen kişi kaydedilir
-- RESOLUTION bildirimi tüm eskalasyon kişilerine gönderilir
-
-**Alarm Detayı (genişletilince):**
-- Bildirim geçmişi: Alıcı, konu, e-posta durumu, webhook durumu, tetikleyici tipi
-- Onay bilgisi: Kim, ne zaman onayladı
-- Çözüm bilgisi: Kim, ne zaman çözdü
-
----
-
-### 12.11 Eskalasyon Kişileri Ekranı (Admin)
-
-**Erişim:** Admin Panel → Eskalasyon Kişileri sekmesi
-
-**Aksiyon: Yeni Kişi Ekle**
-
-| Alan | Zorunlu | Açıklama |
-|---|---|---|
-| Kullanıcı | ✓ | Sistemdeki aktif kullanıcılardan seç |
-| Takım | ✗ | Hangi takımın alarmlarını alacak |
-| Organizasyonel Rol | ✗ | PO / TECH / MANAGER / C-LEVEL |
-| Minimum Alarm Seviyesi | ✓ | WARNING / HIGH / CRITICAL |
-| Webhook URL | ✗ | Slack/Teams bildirim URL'si |
-| Webhook Tipi | ✗ | SLACK / TEAMS |
-| Aktif | ✓ | Bu kişi bildirim alsın mı |
-
-**Eskalasyon Matrisi Açıklaması (ekranda gösterilir):**
+### 15.5 Eskalasyon Kişisi Şablonu
 
 ```
-WARNING → PO + Technical Team
-HIGH    → PO + Technical Team + Manager
-CRITICAL→ PO + Technical Team + Manager + C-Level
+Senaryo: Bir takım için eskalasyon ayarı
+
+PO (Ürün Sahibi):        Min Seviye WARNING → her alarmda haberdar
+Teknik Sorumlu (TECH):   Min Seviye WARNING → her alarmda haberdar
+Yönetici (MANAGER):      Min Seviye HIGH    → yüksek ve kritik alarmlar
+Direktör (C-LEVEL):      Min Seviye CRITICAL → yalnız kritik alarmlar
 ```
 
-**Aksiyon: Düzenle** — Tüm alanları güncelle  
-**Aksiyon: Sil** — Onay sonrası sil (ilişkili bildirim logları korunur)
+### 15.6 Bakım Penceresi Planlama
 
----
+1. **Bakım** sekmesinde yeni pencere oluşturun; ad ve açıklama girin.
+2. Hedefleri seçin: etkilenecek monitörler ya da "tüm monitörler".
+3. Saat dilimini, başlangıç zamanını, süreyi ve tekrarlamayı (tek seferlik / günlük / haftalık / aylık) ayarlayın.
+4. Pencere aktifken hedefler için alarm açılmaz, bildirim gitmez ve uptime yüzdesi etkilenmez; süre bitiminde izleme kaldığı yerden devam eder.
 
-### 12.12 Alarm Eşikleri Ekranı (Admin)
+### 15.7 Backend Kapalı Kaldığında
 
-**Erişim:** Admin Panel → Alarm Eşikleri sekmesi
+Backend kapalıyken tarama durur ve bildirim gönderilmez. Yeniden açıldığında startup catch-up devreye girer: o güne ait gönderilmemiş günlük bildirimler ağ çağrısı olmadan anında gönderilir, ardından tam tarama başlar. Sonuç: backend ne kadar kapalı kalırsa kalsın o günün bildirimleri — geç de olsa — kesinlikle gönderilir.
 
-**Konfigürasyon Alanları:**
+### 15.8 Eski Kayıtların Otomatik Temizliği
 
-| Alan | Varsayılan | Açıklama |
-|---|---|---|
-| Uyarı Günü (Warning Days) | 30 | Bu gün veya altında WARNING alarmı |
-| Yüksek Gün (High Days) | 15 | Bu gün veya altında HIGH alarmı |
-| Kritik Gün (Critical Days) | 7 | Bu gün veya altında CRITICAL alarmı |
-| Tekrar Bildirim Aralığı (saat) | 24 | DAILY_REALERT ne sıklıkla gider |
+Her gece 03:30'da (`site.monitor.scheduler.cleanup-cron`) temizlik işi çalışır:
 
-**Inline Düzenleme:** Karta tıkla → değeri değiştir → kaydet
-
----
-
-### 12.13 Takım Yönetimi Ekranı (Admin)
-
-**Erişim:** Admin Panel → Takım Yönetimi sekmesi
-
-**Tablo Kolonları:**
-
-Takımlar **kart görünümünde** listelenir; her kartta takım adı, e-posta, lider (PO), müdür ve üye sayısı/org rolleri gösterilir (eski SY/UG takım türü kaldırılmıştır).
-
-| Kart Bilgisi |
-|---|
-| Takım Adı |
-| E-posta |
-| Lider (PO) |
-| Müdür (AD `manager` ilişkisinden) |
-| Üyeler + org rolleri (renkli rozet) |
-| Aktif Durumu |
-| Aksiyonlar |
-
-**Aksiyon: Yeni Takım Ekle**
-
-| Alan | Zorunlu | Açıklama |
-|---|---|---|
-| Takım Adı | ✓ | Benzersiz olmalı |
-| E-posta | ✓ | Takım iletişim e-postası |
-| Lider | ✗ | Sistemdeki aktif kullanıcılardan seç (PO atanınca otomatik dolabilir) |
-| Açıklama | ✗ | Takım hakkında not |
-| Aktif | ✓ | Takım aktif mi |
-
-**Aksiyon: Düzenle** — Tüm alanları güncelle (başarılı kayıt sonrası modal 1.8s içinde kapanır)  
-**Aksiyon: Sil** — Sertifika ataması yoksa silinebilir, onay diyaloğu gösterilir  
-**Aksiyon: Üyeleri Görüntüle** — Kart üzerinden üyeler listelenir, org rolleri renkli görünür
-
-> **Otomatik lider:** Bir kullanıcı PO olarak takıma atandığında, takımın lideri yoksa otomatik lider olur; mevcut lider **ezilmez**. Müdür–takım ilişkisi kurulunca takıma otomatik MANAGER eskalasyon kontağı eklenir.
-
----
-
-### 12.14 Kullanıcı Yönetimi Ekranı (Admin)
-
-**Erişim:** Admin Panel → Kullanıcı Yönetimi sekmesi
-
-**Tablo Kolonları:**
-
-| Kolon |
-|---|
-| Kullanıcı Adı |
-| Sicil No |
-| Ad Soyad |
-| E-posta |
-| Kaynak (Yerel / LDAP) |
-| Sistem Rolü (rozet) |
-| Org Rolü (renkli rozet) |
-| Takım |
-| Müdür |
-| Aktif Durumu |
-| Kilit Durumu (🔒 kalıcı kilitliyse) |
-| Aksiyonlar |
-
-**Aksiyon: Yeni Kullanıcı Ekle**
-
-| Alan | Zorunlu | Açıklama |
-|---|---|---|
-| Kullanıcı Adı | ✓ | Benzersiz, sonradan değiştirilemez |
-| Şifre | ✓ | Min. 4 karakter (yerel hesaplar için) |
-| Ad Soyad | ✓ | Görünen ad |
-| E-posta | ✓ | İletişim e-postası |
-| Sicil No | ✗ | Kurum kimlik numarası |
-| Sistem Rolü | ✓ | USER / AUDIT / ADMIN |
-| Org Rolü | ✗ | TECH / PO / MANAGER / C-LEVEL |
-| Takım | ✓ | Hangi takıma atanacak |
-| Müdür | ✗ | Üst yönetici (kapsam/eskalasyon için) |
-| Aktif | ✓ | Hesap aktif mi |
-
-**Aksiyon: Düzenle** — Kullanıcı adı dışında tüm alanları güncelle (AD'den gelen kullanıcılarda da org rol/takım/müdür düzenlenip kaydedilebilir; bir sonraki AD girişinde provizyon yeniden uygulanabilir)  
-**Aksiyon: Şifre Değiştir** — Ayrı modal, yeni şifre girişi (yerel hesaplar)  
-**Aksiyon: Kilidi Aç** — Kalıcı kilitli hesabı serbest bırak  
-**Aksiyon: Sil** — Onay sonrası kullanıcıyı sil
-
-> **Not:** LDAP/AD kaynaklı kullanıcılar ilk girişte otomatik oluşur; org rol, müdür ve takım ilişkisi AD özniteliklerinden türetilir (bkz. §3.1, §10.1). Sistem rolü ADMIN/AUDIT için manuel atama korunur (provizyon bunu düşürmez).
-
----
-
-### 12.15 Denetim Günlüğü Ekranı (Admin / Audit)
-
-**Erişim:** Üst menü → Denetim Günlüğü sekmesi
-
-**Özet Panel:**
-
-| Metrik |
-|---|
-| Son 24 saatteki toplam olay sayısı |
-| Son 7 gündeki toplam olay sayısı |
-| Son 24 saatteki başarısız giriş sayısı |
-| Son 7 gündeki başarısız giriş sayısı |
-| Anomali sayısı |
-
-**Filtreler:**
-
-| Filtre |
-|---|
-| Kullanıcı adı |
-| Olay tipi (DOMAIN_ADD, USER_UPDATE, LOGIN_FAIL, vb.) |
-| Sonuç (SUCCESS / FAILURE) |
-| Sadece anomalileri göster |
-
-**Tablo Kolonları:**
-
-| Kolon |
-|---|
-| Tarih/Saat (UTC) |
-| Olay Tipi |
-| Kullanıcı |
-| IP Adresi |
-| Coğrafi Konum |
-| Kaynak Nesne |
-| Sonuç |
-| Tarayıcı |
-
-**Satır Genişletme:** Alan değişiklikleri (eski değer → yeni değer) gösterilir
-
----
-
-### 12.16 Sistem Sağlığı Ekranı (Admin)
-
-**Erişim:** Üst menü → Sistem Sağlığı sekmesi
-
-**Otomatik yenileme:** 30 saniyede bir
-
-**Bölümler:**
-
-**Zamanlayıcı Durumu:**
-
-| Metrik |
-|---|
-| Durum (Çalışıyor / Bekliyor) |
-| Çalışan Run ID |
-| Son çalışma zamanı |
-| Sonraki çalışma tahmini |
-| Aktif domain sayısı |
-| Instance ID |
-
-**Dağıtık Kilit Durumu:**
-
-| Metrik |
-|---|
-| Kilit tutulmuş mu |
-| Kimin tuttuğu |
-| Kilit bitiş zamanı |
-| Bu pod'un kilidi mi |
-
-**Veritabanı Bağlantı Havuzu (HikariCP):**
-
-| Metrik |
-|---|
-| Aktif bağlantılar |
-| Boşta bağlantılar |
-| Toplam bağlantılar |
-| Bekleyen iş parçacıkları |
-| Maksimum havuz boyutu |
-
-**JVM Bellek:**
-
-| Metrik |
-|---|
-| Kullanılan bellek (MB) |
-| Boşta bellek (MB) |
-| Toplam bellek (MB) |
-| Maksimum bellek (MB) |
-| Kullanım yüzdesi |
-
-**Tarama İstatistikleri:**
-
-| Metrik |
-|---|
-| Son tarama süresi (ms) |
-| Son taramadaki toplam domain sayısı |
-| Son taramadaki uyarı sayısı |
-| Son taramadaki hata sayısı |
-| Tarama alarmı (2 saatte bir tarama yoksa) |
-
-**SMTP Durumu:**
-
-| Metrik |
-|---|
-| Son 30 gündeki başarılı e-posta sayısı |
-| Son 30 gündeki başarısız e-posta sayısı |
-| Başarı oranı (%) |
-| E-posta teslimat logları (tetikleyici tipine göre filtreli) |
-
-**Admin Aksiyonları (Sistem Sağlığı ekranından):**
-
-| Aksiyon | Açıklama |
+| Tablo | Saklama Süresi |
 |---|---|
-| Kilidi Zorla Serbest Bırak | Sıkışmış scheduler kilidini temizle |
-| Manuel tarama başlat | Anlık tüm domain taraması |
+| `audit_log` | 180 gün |
+| `notification_logs` | 90 gün |
+| `sql_query_history` | 30 gün |
+
+Silme native toplu `DELETE` ile kısa transaction'da yapılır; iş başarısız olursa uygulama etkilenmez, ertesi gece yeniden denenir.
+
+### 15.9 Production Ortamında Proxy Kullanımı
+
+Bazı domainlerin WAF/firewall'u izleme pod'unun IP'sini reddedebilir. Böyle bir domain için:
+
+1. Deployment YAML'ına `HTTP_PROXY_HOST` ve `HTTP_PROXY_PORT` ortam değişkenlerini ekleyin ve pod'u yeniden başlatın.
+2. **Sertifika Envanteri** ekranında ilgili domaini düzenleyip "Proxy Üzerinden Kontrol Et" anahtarını açın.
+3. Sonraki sweep'te yalnız o domainin kontrolü proxy üzerinden gider; loglarda `[cert-proxy]` etiketiyle tunnel adımlarını izleyebilirsiniz.
+
+Uyarı: tüm pod trafiğini proxy'ye yönlendirmek diğer domainlerin kontrollerini kırar — yalnız sorun yaşayan domainleri işaretleyin.
 
 ---
 
-### 12.17 Zayıf Algoritma Raporu (Admin)
+## 16. Dağıtım ve DevOps
 
-**Erişim:** Üst menü → Zayıf Algoritma Raporu sekmesi
+Site Monitor tek imaj olarak paketlenir ve üç GitHub Actions iş akışıyla yaşar: doğrulama, imaj üretimi ve sürümleme birbirinden ayrıdır.
 
-SHA-1 imzalı, RSA-1024, RC4 gibi güvensiz algoritma kullanan sertifikaları listeler.
-
-| Görüntülenen Bilgi |
-|---|
-| Domain |
-| İmza Algoritması |
-| Anahtar Algoritması |
-| Anahtar Boyutu |
-| Zayıflık Tipi |
-| Kritiklik Seviyesi (Critical / High) |
-| Sahip |
-| Takım |
-| Bitiş Tarihi |
-| Durum |
-
-**Sıralama:** Domain / Sahip / Takım / Algoritma / Zayıflık / Bitiş / Durum
-
----
-
-### 12.18 Haftalık Raporlar Ekranı
-
-**Erişim:** Üst menü → Haftalık Raporlar
-
-Takımların haftalık operasyon raporlarını yazdığı, izlediği ve PO'nun onayladığı ekran.
-
-| Bölüm |
-|---|
-| Hafta seçimi (geçerli/geçmiş haftalar) |
-| Bölüm 1 — Olay özeti (acil / yüksek olay sayıları) |
-| Bölüm 2 — Açık olay & problemler, planlı işler (☑/☐ liste) |
-| Durum (Taslak / Gönderildi / Onaylandı / İade) |
-
-**Aksiyonlar:**
-- **Gönder** — raporu PO onayına gönderir; PO'ya HTML e-posta ile bildirim/onay bağlantısı gider
-- **PO Onayı** — PO doğrudan ekrandan veya **e-postadaki bağlantıdan tek tıkla** onaylar/iade eder
-- **Transfer** — rapor başka bir takıma devredilebilir
-- **Cuma hatırlatması** — bekleyen raporlar için otomatik hatırlatma e-postası
-
-> Kapsam: USER kendi takımının raporunu yazar; PO/TEAM_ADMIN liderlik ettiği takımların raporlarını görür ve onaylar; global admin tümünü görür.
-
----
-
-### 12.19 İzleme Ekranı (Monitoring)
-
-**Erişim:** Üst menü → İzleme
-
-Sertifika dışı erişilebilirlik izlemesi (sertifika sweep'inden bağımsız).
-
-| İzleme Tipi | Ölçülen |
-|---|---|
-| Uptime (HTTP) | Statü kodu + yanıt süresi |
-| Port (TCP/UDP) | Açık/kapalı + bağlantı süresi |
-| DNS | A/AAAA/CNAME/MX/TXT kayıt değişimi (`CHANGED` / `ROTATED`) |
-
-**Alarm tipleri:** `ACCESSIBILITY` (erişilemiyor), `PORT_DOWN`, `DNS_FAILURE`, `DNS_CHANGED`. Kesinti teyidi `MonitoringOutageService` ile birkaç ardışık başarısız kontrol sonrası verilir (tek seferlik dalgalanma alarm üretmez).
-
-> Yapılandırma (hedef ekleme/düzenleme) yalnız global admin'e açıktır; diğer roller salt-okuma görür.
-
----
-
-### 12.20 Ayarlar Ekranı (yalnız `admin`)
-
-**Erişim:** Üst menü → Ayarlar (yalnız yerel `admin` hesabı)
-
-**LDAP / Active Directory:**
-- Sunucu URL, base DN, bind DN/parolası (AES-GCM şifreli), kullanıcı/öznitelik eşlemeleri
-- **Bağlantı testi** ve **öznitelik görüntüleyici** (bir kullanıcının AD özniteliklerini canlı görüntüleme)
-
-**SMTP / E-posta:**
-- Sunucu/port/STARTTLS, kullanıcı adı/parola, gönderen adresi
-- Test e-postası gönderimi
-
----
-
-### 12.21 SQL Playground Ekranı (yalnız global admin)
-
-**Erişim:** Üst menü → SQL Playground
-
-- Salt-okuma (SELECT) sorgu konsolu — yazma sorguları reddedilir
-- Sonuç tablosu + sorgu geçmişi (gece otomatik temizlenir)
-- Yalnız global admin erişebilir (denetim altında)
-
----
-
-### 12.22 Yetki (Permissions) Ekranı (yalnız global admin)
-
-**Erişim:** Admin Panel → Yetki sekmesi
-
-- Rol bazında (TEAM_ADMIN / USER / AUDIT) **view / edit / execute** izinlerini açıp kapatan matris
-- ADMIN sütunu tam yetkili ve **kilitlidir**
-- Kaynaklar gruplara ayrılır: sertifikalar, iletişim, yönetim, alarmlar, izleme, günlükler, raporlar, araçlar
-- Hassas işlemler için onay diyaloğu; **"Varsayılanlara Dön"** ile rol varsayılanlarına sıfırlama
-- Ekranın üstündeki bilgi paneli güncel rol modelini (ADMIN / Müdür / TEAM_ADMIN-PO / USER / AUDIT ve kapsam mantığı) özetler
-
----
-
-## 13. Operasyonel Prosedürler
-
-### 13.1 Yeni Domain Nasıl Eklenir
-
-1. **Admin Panel → Domain Inventory** sekmesine git
-2. **"Alan Ekle"** butonuna tıkla
-3. **Temel Bilgiler** bölümünde:
-   - Domain adını gir (ör. `api.example.com`)
-   - Port'u gir (çoğunlukla `443`)
-   - Sorumlu Takımı seç (alarm/bildirim bu takıma yönlendirilir)
-   - Tier seç (Tier 1 = müşteriye dönük production)
-4. **Operasyonel Bayraklar** bölümünü doldu
-5. **Kaydet** butonuna bas
-6. Sistem bir sonraki saatlik taramada bu domaini kontrol edecek
-7. İlk kontrol sonuçlarını Dashboard'da görebilirsin
-
-> **İpucu:** "Şimdi Kontrol Et" butonuna basarak taramayı hemen tetikleyebilirsin.
-
----
-
-### 13.2 Alarm Aldığımda Ne Yapmalıyım
-
-**E-posta ile alarm aldıysanız:**
-
-1. E-postadaki domain bilgisine bakın
-2. Kalan gün sayısını kontrol edin
-3. **Eğer haberdar olduysanız:** Site Monitör'de ilgili alarmı **"Onayla"** → günlük tekrar bildirimler durur
-4. **Sertifikayı yenileme sürecini başlatın** (CA, ekip, platform)
-5. **Yenileme tamamlandığında:** Sistemi bir sonraki taramada otomatik olarak kontrol edecektir
-6. **Sorun giderilinse:** Alarm Geçmişi'nde **"Çözüldü İşaretle"** → çözüm bildirimi gönderilir
-
-**Acil durumda (7 gün kaldı / CRITICAL):**
-
-1. Alarmı hemen **Onayla**
-2. Sertifika yenilemeyi **derhal başlat**
-3. Gerekirse **"Yeniden Bildir"** ile üst yönetimi anında bilgilendir
-4. Yenileme ve dağıtım tamamlanınca **"Çözüldü İşaretle"**
-
----
-
-### 13.3 Sertifika Yenilendikten Sonra Ne Yapmalıyım
-
-1. Yeni sertifikayı sunucuya/platforma dağıtın
-2. Site Monitör bir sonraki saatlik taramada yeni sertifikayı tespit edecektir
-3. **Dağıtım doğrulama:** Envanterde `expected_fingerprint` güncellenmişse sistem uyumluluğu kontrol edecektir
-4. Alarm Geçmişi'nde ilgili alarmı **"Çözüldü İşaretle"** ile kapatın
-5. Sistem otomatik olarak `RESOLUTION` bildirimi gönderir
-
----
-
-### 13.4 Takım Kurulumu Nasıl Yapılır
-
-**Adım 1 — Kullanıcıları Oluştur:**
-- Admin Panel → Kullanıcı Yönetimi → Yeni Kullanıcı Ekle
-- Her kullanıcı için uygun Sistem Rolü ve Org Rolü ata
-
-**Adım 2 — Takımı Oluştur:**
-- Admin Panel → Takım Yönetimi → Yeni Takım Ekle
-- Takım liderini (PO) ata
-- Takım e-postasını gir
-
-**Adım 3 — Kullanıcıları Takıma Ata:**
-- Kullanıcı Düzenle → Takım alanını güncelle
-
-**Adım 4 — Eskalasyon Kişilerini Tanımla:**
-- Admin Panel → Eskalasyon Kişileri → Yeni Kişi Ekle
-- Her kişi için minimum alarm seviyesi seç
-- İsteğe bağlı Slack/Teams webhook ekle
-
-**Adım 5 — Sertifikaları Takıma Ata:**
-- Domain Inventory → Düzenle → Sorumlu Takımı seç
-
----
-
-### 13.5 Eskalasyon Kişisi Nasıl Tanımlanır
+### 16.1 CI/CD Hattı
 
 ```
-Senaryo: Bir takım için eskalasyon ayarla
+ci.yml (her push/PR)
+  ├─ Backend: Java 25, mvn -B clean verify (Surefire + Jacoco artefaktları)
+  ├─ Frontend: Node 24, npm ci → lint → test → build → npm audit (bilgilendirici)
+  └─ Helm lint: üç ortam values dosyasına karşı
 
-PO (Ürün Sahibi):
-  Min Seviye: WARNING → Her alarm türünde haberdar olur
+docker-build.yml
+  ├─ Çok mimarili imaj derlemesi
+  └─ Trivy güvenlik taraması (HIGH/CRITICAL, rapor modunda)
 
-Teknik Sorumlu (TECH):
-  Min Seviye: WARNING → Her alarm türünde haberdar olur
-
-Yönetici (MANAGER):
-  Min Seviye: HIGH → Yüksek ve kritik alarmları alır
-
-Direktör (C-LEVEL):
-  Min Seviye: CRITICAL → Sadece kritik alarmları alır
+release.yml (main dalı)
+  ├─ Conventional commit önekinden bump türü: feat → minor, fix → patch,
+  │  BREAKING CHANGE → major
+  ├─ VERSION dosyasını yazar, Helm chart'ı yayınlar
+  └─ Testleri tekrar KOŞMAZ — ci.yml sonucuna güvenir
 ```
 
----
+`VERSION` dosyasını ve `Chart.yaml` sürümünü elle düzenlemeyin: her sürüm `release.yml` tarafından otomatik yazılır; elle bump sonraki senkronizasyonda çakışma üretir.
 
-### 13.6 Backend Düştüğünde Ne Olur
+### 16.2 Ortam Stratejisi
 
-Site Monitör, backend kapalıyken aşağıdaki davranışları gösterir:
-
-1. **Tarama durur** — Aktif sertifika kontrolü yapılamaz
-2. **Bildirimler gönderilmez** — Scheduler çalışmadığı için DAILY_REALERT gönderilemez
-
-**Backend Yeniden Açıldığında:**
-
-1. **Startup Catch-Up** mekanizması devreye girer (ağ çağrısı olmadan, hızlı)
-2. O güne ait gönderilmemiş bildirimler anında gönderilir
-3. Ardından tam sertifika taraması başlar
-4. Güncel sertifika verileri `latest_checks` tablosuna yazılır
-
-> Sonuç: Backend kapalı kalsa bile **o günün bildirimleri kesinlikle gönderilir** — geç bile olsa açılışta telafi edilir.
-
----
-
-### 13.7 Eski Log Kayıtlarının Otomatik Temizliği
-
-Her gece **03:30** (`site.monitor.scheduler.cleanup-cron` ile özelleştirilebilir) `SchedulerService.cleanupOldLogs()` çalışır ve tabloları sınırlı tutar:
-
-| Tablo | Saklama Süresi | Açıklama |
-|---|---|---|
-| `audit_log` | 180 gün | Admin/güvenlik aksiyonları |
-| `notification_logs` | 90 gün | E-posta + webhook gönderim kayıtları |
-| `sql_query_history` | 30 gün | SQL Playground geçmişi |
-
-- Native bulk `DELETE` ile kısa transaction süresi.
-- Cleanup başarısız olursa job DEVAM ETMEZ ama uygulama çökmez — bir sonraki gece tekrar denenir.
-- Manuel tetikleme yok; pod restart'ta tek seferlik çalıştırma istenirse cron'u geçici olarak değiştir.
-
----
-
-### 13.8 Production'da Proxy Üzerinden Kontrol
-
-Kurumsal ağ politikaları nedeniyle bazı domain'lerin firewall/WAF'i pod IP'sini reddeder. Bu domain'ler için:
-
-1. OpenShift Deployment YAML'ına `HTTP_PROXY_HOST=dmzproxy.aknet.akb` ve `HTTP_PROXY_PORT=8080` env vars'larını ekle.
-2. Pod yeniden başlat (`oc rollout restart deployment/site-monitor`).
-3. Admin → Envanter → ilgili domain'i düzenle → **"Proxy Üzerinden Kontrol Et"** toggle'ını aç.
-4. Bir sonraki sweep'te o domain'in kontrolü proxy üzerinden gider; geri kalanlar direkt outbound olarak çalışır.
-5. Loglarda `[cert-proxy]` etiketiyle tunnel kurma adımları takip edilebilir.
-
-> Tüm pod outbound'unu proxy'ye yönlendirmek diğer 11/13 domain'i kırar (v18.45.1 deneyimi). Sadece sorun yaşayan domain'leri işaretle.
-
----
-
-## 14. Dağıtım ve DevOps
-
-### 14.1 CI/CD Pipeline
-
-```
-Git Push (master / develop / release-*)
-         │
-         ▼
-GitHub Actions: .github/workflows/release.yml
-  ├─ Backend: mvn test (241 test)
-  ├─ Frontend: npx vitest run (72 test)
-  ├─ mvn package → JAR
-  ├─ npm run build → dist/
-  ├─ Docker build → ghcr.io/inanmise/site-monitor:<tag>
-  ├─ Docker push → GitHub Container Registry
-  ├─ Helm chart OCI push → ghcr.io/inanmise/sitemonitor-chart
-  ├─ VERSION dosyası güncelle
-  └─ GitHub Release oluştur
-```
-
-### 14.2 Ortam Stratejisi
-
-| Dal | Ortam | Replica | Cron |
+| Values Dosyası | Ortam | Replica | Not |
 |---|---|---|---|
-| `develop` | Geliştirme | 1 | Her 2 saatte bir |
-| `release-*` | Staging | 2 (maks. 5) | Gece 03:00 UTC |
-| `master` | Production | 3 (maks. 10) | Gece 02:00 UTC |
+| `develop.yaml` | Geliştirme | 1 | E-posta kapalı, 2 saatlik tarama, HPA kapalı |
+| `release.yaml` | Staging | 2 | Ara doğrulama ortamı |
+| `master.yaml` | Production | 3 (maks. 10) | HPA + PDB aktif |
 
-### 14.3 Helm Dağıtımı
+### 16.3 Helm Dağıtımı
 
 ```bash
-# Production dağıtımı
 helm upgrade --install site-monitor ./helm/site-monitor \
   -f helm/site-monitor/values.yaml \
   -f helm/site-monitor/environments/master.yaml \
-  --set image.tag=10.8.0 \
+  --set image.tag=20.0.3 \
   --set secret.adminPassword=$ADMIN_PASSWORD \
   --set secret.dbPassword=$DB_PASSWORD \
   -n site-monitor --create-namespace
 ```
 
-### 14.4 Docker Image
+Helm chart'ı Bitnami PostgreSQL'i bağımlılık olarak içerir ve `shared_preload_libraries = 'pg_stat_statements'` ön yüklemesini yapar — Sistem Sağlığı ekranındaki veritabanı analitiği bu eklentiyle tam kapasite çalışır; eklenti yoksa uygulama zarifçe geri düşer.
+
+### 16.4 Docker İmajı
 
 ```
-Kayıt Defteri: ghcr.io/inanmise/site-monitor
-Etiket formatı:
-  - latest              (master son)
-  - 10.8.0             (üretim versiyonu)
-  - develop-a1b2c3d     (geliştirme commit)
-  - 10.8.0-rc           (staging release candidate)
+Kayıt defteri : ghcr.io/inanmise/site-monitor
+Etiketler:
+  - latest              (üretim son)
+  - 20.0.3              (üretim sürümü)
+  - develop-a1b2c3d     (geliştirme commit'i)
+  - 20.0.3-rc           (staging release candidate)
 ```
+
+İmaj üç aşamalıdır: `node:20-alpine` (frontend build) → `maven:3.9` (backend build) → `eclipse-temurin:25-jre-alpine` (çalışma zamanı). Konteyner-farkındalıklı JVM (heap ≈ RAM'in %75'i), pod içi tanı araçları (`curl`, `bash`, `dig`) ve `wget /health` sağlık kontrolü içerir; imaj `appuser:1000` olarak çalışır.
 
 ---
 
-## 15. Yüksek Erişilebilirlik
+## 17. Yüksek Erişilebilirlik
 
-### 15.1 Pod Dağıtımı
+İzleme platformunun kendisi kesintiye düşerse alarm da düşer; bu yüzden Site Monitor üretimde en az üç replika ile, sıfır kesintili güncelleme ve otomatik ölçekleme varsayımıyla çalışır.
+
+### 17.1 Pod Dağıtımı
 
 ```yaml
 replicas: 3           # Minimum 3 pod
-maxSurge: 1          # Rolling update: önce +1 pod ekle
-maxUnavailable: 0    # Sıfır kesinti güncelleme
+maxSurge: 1           # Rolling update: önce +1 pod
+maxUnavailable: 0     # Sıfır kesinti güncelleme
 
 topologySpreadConstraints:
-  maxSkew: 1         # Node'lar arası maksimum 1 pod farkı
+  maxSkew: 1          # Node'lar arası en fazla 1 pod farkı
 ```
 
-### 15.2 Pod Disruption Budget
+### 17.2 Pod Disruption Budget
 
 ```yaml
-minAvailable: 2      # Production: En az 2 pod çalışmalı
-                     # Staging: En az 1 pod çalışmalı
+minAvailable: 2      # Production: en az 2 pod ayakta
+                     # Staging: en az 1 pod
 ```
 
-### 15.3 Sağlık Kontrolleri
+### 17.3 Sağlık Kontrolleri
 
 | Tip | Endpoint | Başlama | Periyot | Başarısızlık |
 |---|---|---|---|---|
-| Startup | GET /health | - | 10s | 12 hata → restart |
-| Readiness | GET /health | 30s | 10s | 3 hata → trafik kesilir |
-| Liveness | GET /health | 60s | 30s | 3 hata → restart |
+| Startup | `/health/readiness` | — | 10 sn | 12 hata → restart |
+| Readiness | `/health/readiness` | 30 sn | 10 sn | 3 hata → trafik kesilir |
+| Liveness | `/health/liveness` | 60 sn | 30 sn | 3 hata → restart |
 
-### 15.4 Dağıtık Oturum (Opsiyonel)
+Liveness veritabanından bağımsızdır — kısa bir DB kesintisi pod'u yeniden başlatmaz. Açılış bootstrap'ı boyunca readiness `REFUSING_TRAFFIC` döner: pod ancak gerçekten hazır olduğunda Service arkasına girer, soğuk başlangıçta "hazır görünüp ilk istekleri asma" sorunu yaşanmaz.
+
+### 17.4 Dağıtık Oturum
 
 ```properties
 SPRING_SESSION_STORE_TYPE=jdbc
 ```
 
-JDBC Session aktifleştirilince tüm pod'lar kullanıcı oturumlarını paylaşır — bir pod yeniden başlasa bile kullanıcı oturumu kaybolmaz.
+JDBC oturum deposu açıkken tüm pod'lar oturumları paylaşır; bir pod yeniden başlasa bile kullanıcı oturumu kaybolmaz.
 
-### 15.5 Dağıtık Zamanlayıcı Kilidi
+### 17.5 Tek Tarayıcı Garantisi
 
-Birden fazla pod aynı anda tarama yapmaz. DB tabanlı kilit (TTL: 10 dk) yalnızca bir pod'un tarama yürütmesini sağlar.
+Dağıtık zamanlayıcı kilidi (TTL 10 dk) sayesinde kaç replika çalışırsa çalışsın taramayı aynı anda yalnız bir pod yürütür (bkz. §5.3).
 
 ---
 
-## 16. Konfigürasyon Referansı
+## 18. Konfigürasyon Referansı
 
-### 16.1 Temel Konfigürasyon
+Tüm konfigürasyon `application.properties` anahtarlarıdır ve ortam değişkenleriyle geçersiz kılınır. Gerçek değerler hiçbir zaman commit edilmez; `.env.example` ve `k8s/secret.example.yaml` şablonlarını kullanırsınız.
+
+### 18.1 Temel Konfigürasyon
 
 | Parametre | Varsayılan | Açıklama |
 |---|---|---|
 | `site.monitor.warning-days` | 30 | Uyarı başlangıç günü |
 | `site.monitor.parallel-workers` | 20 | Eş zamanlı kontrol sayısı |
-| `site.monitor.check-timeout-seconds` | 10 | SSL soket timeout |
-| `site.monitor.scheduler.cron` | `0 0 * * * *` | Saatlik tarama cron |
+| `site.monitor.check-timeout-seconds` | 10 | SSL soket zaman aşımı |
+| `site.monitor.scheduler.cron` | `0 0 * * * *` | Saatlik tarama cron'u |
 | `site.monitor.scheduler.stale-minutes` | 65 | Bayat domain eşiği (dk) |
 | `site.monitor.scheduler.lock-ttl-minutes` | 10 | Dağıtık kilit TTL |
 | `site.monitor.cache.crl-ttl-hours` | 1 | CRL önbellek süresi |
 | `site.monitor.cache.crl-max-size` | 200 | CRL önbellek kapasitesi |
-| `site.monitor.password.min-length` | 4 | Minimum şifre uzunluğu |
 | `site.monitor.alert.default-warning-days` | 30 | Uyarı gün eşiği |
 | `site.monitor.alert.default-high-days` | 15 | Yüksek gün eşiği |
 | `site.monitor.alert.default-critical-days` | 7 | Kritik gün eşiği |
 | `site.monitor.alert.default-realert-hours` | 24 | Tekrar bildirim aralığı |
-| `site.monitor.scheduler.cleanup-cron` | `0 30 3 * * *` | Gece log temizleme cron'u |
-| `EXECUTOR_CORE_SIZE` | 20 | certCheckExecutor core thread |
-| `EXECUTOR_MAX_SIZE` | 50 | certCheckExecutor max thread |
-| `EXECUTOR_QUEUE_CAPACITY` | 1000 | certCheckExecutor queue boyutu |
-| `mail.send.retry-delay-ms` | 90000 | SMTP 421 retry gecikmesi (async) |
+| `site.monitor.scheduler.cleanup-cron` | `0 30 3 * * *` | Gece temizlik cron'u |
+| `EXECUTOR_CORE_SIZE` | 20 | certCheckExecutor çekirdek thread |
+| `EXECUTOR_MAX_SIZE` | 50 | certCheckExecutor maksimum thread |
+| `EXECUTOR_QUEUE_CAPACITY` | 1000 | certCheckExecutor kuyruk boyutu |
+| `mail.send.retry-delay-ms` | 90000 | SMTP 421 asenkron retry gecikmesi |
+| `NETWORK_ERROR_THRESHOLD` | 0.50 | Toplu ağ kesintisi oranı eşiği |
+| `NETWORK_MIN_ERRORS` | 3 | Toplu kesinti için asgari hata sayısı |
+| `DOMAIN_CRITICAL_CHECK_CRON` | `0 0 16 * * *` | Kritik alan adı ikinci kontrolü |
+| `site.monitor.storm.enabled` | true | Alarm fırtınası gruplaması |
+| `site.monitor.dns.query-timeout-ms` | 2000 | DNS sorgu zaman aşımı |
+| `site.monitor.dns.resolvers` | `8.8.8.8, 1.1.1.1, 9.9.9.9` | Propagation çözümleyicileri |
 
-**Proxy / Outbound:**
-
-| Parametre / Env | Açıklama |
-|---|---|
-| `HTTP_PROXY_HOST` / `HTTP_PROXY_PORT` | Kurumsal HTTP CONNECT proxy (OCSP/CRL/use_proxy domain'ler için) |
-| `HTTP_PROXY` (URL formatı) | Alternatif: `http://user:pass@host:port` — `ChainValidationService` URL parse fallback'i |
-| `NO_PROXY` | Proxy bypass suffix listesi (virgülle ayrılmış) |
-| `TLS_MODE` | `browser` (default, ALPN+TLS1.2 zorla) veya `default` (debug) |
-
-**Log Seviyeleri (Opsiyonel):**
+Proxy / dış bağlantı:
 
 | Parametre | Açıklama |
 |---|---|
-| `logging.level.com.sitemonitor` | Default `DEBUG` |
-| `logging.level.com.sitemonitor.config.RequestLoggingFilter` | `TRACE` ile full HTTP req/resp logging açılır (masked) |
-| `logging.level.root` | Default `INFO` |
-| `LOG_TIMEZONE` | `Europe/Istanbul` (default) |
+| `HTTP_PROXY_HOST` / `HTTP_PROXY_PORT` | Kurumsal HTTP CONNECT proxy (OCSP/CRL ve `use_proxy` domainleri) |
+| `HTTP_PROXY` | Alternatif URL formatı: `http://user:pass@host:port` |
+| `NO_PROXY` | Proxy bypass sonek listesi (virgülle ayrılmış) |
+| `TLS_MODE` | `browser` (varsayılan; TLS 1.2 + ALPN) veya `default` (hata ayıklama) |
 
-### 16.2 Kilitleme Konfigürasyonu
+Log seviyeleri:
+
+| Parametre | Açıklama |
+|---|---|
+| `logging.level.com.sitemonitor` | Varsayılan `DEBUG` |
+| `logging.level.com.sitemonitor.config.RequestLoggingFilter` | `TRACE` ile tam HTTP logu (maskeli) |
+| `logging.level.root` | Varsayılan `INFO` |
+| `LOG_TIMEZONE` | Varsayılan `Europe/Istanbul` |
+
+### 18.2 Kimlik ve Kilitleme Konfigürasyonu
 
 | Parametre | Varsayılan | Açıklama |
 |---|---|---|
-| `site.monitor.lockout.failures-needed` | `5,3,2,1` | Her seviyede gerekli hata |
-| `site.monitor.lockout.durations-seconds` | `30,120,600,1800` | Her seviyede bekleme |
-| `site.monitor.lockout.permanent-failures` | 5 | Kalıcı kilitleme için toplam |
+| `site.monitor.lockout.failures-needed` | `5,3,2,1` | Her kademede gerekli hata sayısı |
+| `site.monitor.lockout.durations-seconds` | `30,120,600,1800` | Her kademede bekleme |
+| `site.monitor.lockout.permanent-failures` | 5 | Kalıcı kilit eşiği |
 | `site.monitor.remember-me.validity-seconds` | 604800 | "Beni Hatırla" süresi (7 gün) |
-| `site.monitor.inactivity-timeout-minutes` | 5 | Hareketsizlik timeout |
+| `site.monitor.inactivity-timeout-minutes` | 5 | Hareketsizlik zaman aşımı |
+| `PASSWORD_MIN_LENGTH` / `MAX_LENGTH` / `HISTORY_COUNT` | 12 / 64 / 5 | Parola politikası |
 
-### 16.3 E-posta Konfigürasyonu
+### 18.3 E-posta Konfigürasyonu
 
 | Parametre | Açıklama |
 |---|---|
 | `SITE_MONITOR_EMAIL_ENABLED` | E-postayı etkinleştir (true/false) |
-| `SPRING_MAIL_HOST` | SMTP sunucu adresi |
-| `SPRING_MAIL_PORT` | SMTP portu (587 = STARTTLS) |
-| `SPRING_MAIL_USERNAME` | Gönderen hesap |
-| `SPRING_MAIL_PASSWORD` | SMTP şifresi / App Password |
-| `SITE_MONITOR_EMAIL_FROM` | Gönderen e-posta adresi |
+| `SPRING_MAIL_HOST` / `SPRING_MAIL_PORT` | SMTP sunucu ve port (587 = STARTTLS) |
+| `SPRING_MAIL_USERNAME` / `SPRING_MAIL_PASSWORD` | Gönderen hesap kimliği |
+| `SITE_MONITOR_EMAIL_FROM` | Gönderen adres |
+| `APP_BASE_URL` | E-posta bağlantılarının taban adresi |
 
 ---
 
-## 17. Sürüm ve Yayın Bilgisi
+## 19. Sürüm ve Yayın Bilgisi
 
 | Bilgi | Değer |
 |---|---|
-| Güncel Versiyon | 18.83.x |
-| Java Versiyonu | 25 (LTS) |
+| Güncel Versiyon | 20.0.3 |
+| Belge Tarihi | Ağustos 2026 |
+| Java | 25 (LTS) |
 | Spring Boot | 4.1.0 (Spring Framework 7, Jakarta EE 11) |
-| BouncyCastle | 1.78.1 |
+| BouncyCastle | 1.78.x |
 | React / Vite | 18.3 / 5.4 |
-| PostgreSQL | 16-alpine |
-| Docker Image | `ghcr.io/inanmise/site-monitor` |
+| PostgreSQL | K8s manifesti 16-alpine; Helm chart Bitnami PostgreSQL 18.x |
+| Docker İmajı | `ghcr.io/inanmise/site-monitor` |
 | Helm Chart | `ghcr.io/inanmise/sitemonitor-chart` |
-| Backend Test Sayısı | 835 |
-| Frontend Test Sayısı | 121 |
 | Desteklenen Diller | Türkçe / İngilizce |
 | Lisans | Kurumsal kullanım |
 | Geliştirici | inanmise (erdi.inanmis@gmail.com) |
 
-### Platform Yükseltmesi — JDK 25 + Spring Boot 4.1 (Haziran 2026)
+Sürüm numarası tek `VERSION` dosyasından gelir ve conventional commit önekleriyle otomatik artar:
 
-- **Çalışma zamanı:** Java 21 → **25 (LTS)**; Spring Boot 3.3.6 → **4.1.0** (Spring Framework 7, Jakarta EE 11, Hibernate 7, Tomcat 11). JDK 25 desteği için Spring Boot major yükseltmesi zorunluydu.
-- **Jackson 2 → Jackson 3** (`tools.jackson`): SNAKE_CASE API sözleşmesi korundu (controller JSON testleriyle doğrulandı); tarih özellikleri `spring.jackson.datatype.datetime.*` altına taşındı.
-- **Test çerçevesi (SB4):** `@MockBean` → `@MockitoBean`, modüler test starter'ları (`webmvc-test`, `data-jpa-test`); `@WebMvcTest` cache döngüsü için `@EnableCaching` ayrı config'e; EMF dairesel bağımlılığı `@Lazy` ile kırıldı.
-- **Araç zinciri:** JaCoCo 0.8.14 (JDK 25 bytecode), Lombok 1.18.42 + `annotationProcessorPaths` (JDK 23+ artık classpath'ten processor keşfetmiyor); Docker/CI Eclipse Temurin 25.
-- **Doğrulama:** 835 backend + 145 frontend test JDK 25'te yeşil; performans denetiminde upgrade kaynaklı leak/bug bulunmadı (yalnız bir mapper yeniden-kullanım iyileştirmesi).
-- **Operasyonel not:** Spring Session 4 oturum şeması değişmiş olabilir → ilk deploy'da kullanıcılar bir kez yeniden login olabilir; Hibernate 7 `ddl-auto=update` ilk açılışta izlenmeli.
-
-### 18.83.x Sürüm Vurguları (Haziran 2026)
-
-- **Kimlik & Provizyon:** LDAP/Active Directory ile giriş; ilk girişte otomatik provizyon (orgRole, müdür ilişkisi, takım). Bind parolası AES-GCM şifreli; Ayarlardan bağlantı testi + öznitelik görüntüleyici.
-- **Rol modeli (Faz 3b):** Çok-takım yetki kapsamı — müdür = kapsamlı **salt-okuma** ADMIN (astlarının takımları), PO = TEAM_ADMIN (liderlik ettiği takımlar, görüntüleme+yönetim). Oturuma `viewTeamIds`/`manageTeamIds` kapsamları yazılır; global-only işlemler yalnız global admin'e açık.
-- **Tek takım modeli:** Eski SY/UG ikili takım yapısı kaldırıldı; her sertifika tek takıma atanır. Takım yönetimi kart görünümüne geçti (lider/müdür/üyeler).
-- **Haftalık Raporlar:** Takım operasyon raporları + PO **e-posta bağlantısıyla onay**, cuma hatırlatması, takımlar arası transfer.
-- **İzleme:** Uptime/port/DNS izleme + `ACCESSIBILITY`/`PORT_DOWN`/`DNS_FAILURE`/`DNS_CHANGED` alarmları; `MonitoringOutageService` ardışık-başarısızlık teyidi.
-- **Yetki Matrisi:** Rol bazlı view/edit/execute izin ekranı (ADMIN kilitli) + güncel rol modeli bilgi paneli; SQL Playground salt-okuma konsolu (yalnız global admin).
-- **Sağlamlaştırma:** Uçtan uca performans/kilit/sızıntı denetimi; backend test sayısı **539 → 829**'a çıkarıldı (e-posta/SMTP builder, LDAP, SQL, eskalasyon N+1, zayıf-algoritma kapsamı).
-
-### 18.50.x Sürüm Vurguları (Haziran 2026)
-
-- **Dayanıklılık:** `CertificateCheckerService` HSTS check'inde `HttpURLConnection` leak'i try-finally ile kapatıldı; `ChainValidationService` OCSP/CRL bağlantıları her durumda `disconnect()` çağırıyor.
-- **Hata yönetimi:** `GlobalExceptionHandler`'a 5 yeni handler + catch-all eklendi; stack trace artık UI'ye sızmıyor (500 → "Sunucu hatası").
-- **Frontend:** `ErrorBoundary` root + tab seviyesinde; `SystemHealth` + `InventoryManager` `Promise.allSettled` ile bir endpoint çökse de diğerleri yüklenir; "Yüklenemedi" banner'ı.
-- **Performans:** `EscalationService.processResults` N+1 sorunu çözüldü (sweep başında batch `findByDomainIn` + `findOpenByDomainIn`); `saveResult` cache evict'leri sweep sonuna toplandı (4000 evict → 4 evict).
-- **SMTP:** 421 rate-limit retry'ı asenkron oldu — caller thread artık 90s bloke etmiyor (`ScheduledExecutorService` daemon).
-- **Validation:** `CertificateInventory` model'inde `@NotBlank/@Pattern/@Min/@Max`; controller'da `@Valid`; geçersiz body → 400 + alan listesi.
-- **Operasyonel:** Gece 03:30 cron'u `audit_log` (180g), `notification_logs` (90g), `sql_query_history` (30g) temizler.
-- **Observability:** `RequestLoggingFilter` TRACE seviyede full HTTP log + 60+ alan masking (`*******`); opt-in env var ile aktif.
-- **Envanter:** Domain bazlı `use_proxy` bayrağı (problemli WAF/firewall domain'leri için proxy yönlendirmesi); Domain rename (`latest_checks`, `certificate_checks`, `alert_events`, `notes` atomik taşıma).
-- **Test:** Backend 530 → 539 (+9 handler test), Frontend 114 → 121 (+4 ErrorBoundary, +3 SystemHealth load-error).
-
-### Sürüm Numaralandırma
-
-| Prefix | Bump Tipi | Örnek |
+| Önek | Bump | Örnek |
 |---|---|---|
-| `feat:` | Minor | 10.7.0 → 10.8.0 |
-| `fix:` / `chore:` / `refactor:` | Patch | 10.8.0 → 10.8.1 |
-| `BREAKING CHANGE` | Major | 10.8.0 → 11.0.0 |
+| `feat:` | Minor | 20.0.x → 20.1.0 |
+| `fix:` / `chore:` / `refactor:` | Patch | 20.0.3 → 20.0.4 |
+| `BREAKING CHANGE` | Major | 20.0.x → 21.0.0 |
+
+### 19.1 Yakın Dönem Sürüm Vurguları
+
+20.x kuşağı, ürünün Site Monitor adıyla ve genişletilmiş izleme ailesiyle olgunlaştığı kuşaktır. Öne çıkanlar:
+
+- Marka ve e-posta yenilemesi: durum-duyarlı turp logosu tüm arayüzde, dinamik favicon'da ve e-postalarda; e-posta şablonları Outlook-güvenli kart tasarımına geçti (bkz. §9.1).
+- İzleme ailesi tamamlandı: HTTP/Website, Keyword, Ping, Sayfa Bütünlüğü, Sentetik (k6) ve Alan Adı tescil izlemesi; monitör detaylarında 30/90 güne kadar süre grafikleri (ortalama + min/maks bandı + p95, ping'de paket kaybı ikinci eksende), per-monitör doğrulama/kurtarma denemeleri.
+- Bakım pencereleri: DST-güvenli tekrarlama, tam sessizlik garantisi, uptime yüzdesi muafiyeti.
+- Alarm fırtınası gruplaması ve toplu ağ kesintisi bastırması ile bildirim gürültüsü kontrolü.
+- Sistem Sağlığı genişlemesi: `pg_stat_statements` tabanlı veritabanı analitiği, login zaman serileri, ISO haftalık aktivite ısı haritası, reverse-DNS'li kaynak listesi, kullanıcı rozeti (ad-soyad + avatar) tüm ekranlarda.
+- Olay modülü: problem tipi, etkilenen uygulama/sistem/müşteri-işlem adetleri, takıma özel açılır liste seçenekleri, günlük trend grafiği.
+- OpenShift sağlamlaştırması: Actuator probe grupları, açılışta readiness-gating, DB'den bağımsız liveness, warmup CPU tavanı.
+- Güvenlik: bootstrap-admin geçidi konfigüre kullanıcı adıyla (literal "admin" değil), yıkıcı işlemler için ayrık hassas yetkiler, parola politikası 12/64/5.
+
+### 19.2 Platform Yükseltmesi JDK 25 ve Spring Boot 4.1
+
+- Çalışma zamanı: Java 21 → 25 (LTS); Spring Boot 3.3 → 4.1 (Spring Framework 7, Jakarta EE 11, Hibernate 7, Tomcat 11).
+- Jackson 2 → Jackson 3 (`tools.jackson`); SNAKE_CASE API sözleşmesi controller JSON testleriyle korunarak taşındı.
+- Test çerçevesi: `@MockBean` → `@MockitoBean`, modüler test starter'ları; JaCoCo ve Lombok JDK 25 uyumlu sürümlere yükseltildi.
+- Operasyonel not: Spring Session 4 oturum şeması değişikliği nedeniyle ilk dağıtımda kullanıcılar bir kez yeniden giriş yapabilir.
+
+### 19.3 Önceki Kuşaklardan Kalıcı Kazanımlar
+
+- Kimlik ve provizyon: LDAP/AD girişi, ilk girişte otomatik provizyon, çok-takım yetki kapsamı (müdür = kapsamlı salt-okuma ADMIN, PO = TEAM_ADMIN).
+- Tek takım modeli: SY/UG ikili takım yapısı kaldırıldı; kart görünümlü takım yönetimi.
+- Haftalık raporlar, e-posta bağlantılı PO onayı, cuma hatırlatması.
+- Dayanıklılık: HTTP bağlantı sızıntıları kapatıldı, `GlobalExceptionHandler` catch-all, ErrorBoundary katmanları, `Promise.allSettled` yüklemeleri.
+- Performans: eskalasyon N+1 çözümü (sweep başında batch ön yükleme), sweep sonu tek cache eviction, asenkron SMTP 421 retry.
 
 ---
 
-*Bu belge Site Monitör v18.83.x için Haziran 2026 itibarıyla hazırlanmıştır.*  
-*Güncellemeler için: "raporu güncelle" komutu ile belge yenilenebilir.*
+## 20. Production Dağıtım ve Güvenlik Kontrol Listesi
+
+Varsayılan konfigürasyon yerel geliştirme içindir ve kasıtlı olarak güvensizdir; prod profili ve ortam değişkenleri bu varsayılanları ezmek zorundadır. Prod'a çıkmadan önce bu listeyi tamamlayın.
+
+### 20.1 Zorunlu Güvenlik Değişkenleri
+
+| Değişken | Neden | Güvensiz Varsayılan |
+|---|---|---|
+| `SITE_MONITOR_SECRET_KEY` | Saklanan LDAP/SMTP parolaları bu anahtarla AES-GCM şifrelenir. Boşsa dahili dev anahtarına düşer. En az 32 rastgele karakter, kalıcı olmalı. | boş → dev anahtarı |
+| `SITE_MONITOR_USERNAME` / `SITE_MONITOR_PASSWORD` | Bootstrap admin kimliği | `user` / `password` |
+| `CORS_ALLOWED_ORIGINS` | Yalnız prod host'larına izin verin | `localhost:5173/3000` |
+| `COOKIE_SECURE=true` | Oturum çerezi yalnız HTTPS üzerinden | `false` (prod profilinde `true`) |
+| `DB_PASSWORD` | PostgreSQL parolası (prod profilinde zorunlu) | — |
+
+### 20.2 Önerilen Ayarlar
+
+| Değişken | Açıklama |
+|---|---|
+| `APP_BASE_URL=https://<host>` | E-posta bağlantıları bu adresi kullanır; yoksa localhost üretilir |
+| `SYSTEM_ADMIN_EMAIL` | Ağ kesintisi ve sistem bildirimlerinin alıcısı |
+| `SITE_MONITOR_EMAIL_ENABLED=true` + SMTP | E-posta kapalıyken alarm bildirimleri sessizce gönderilmez |
+| `SPRING_SESSION_STORE_TYPE=jdbc` | Pod yeniden başlatmalarında oturumlar korunur |
+| `PASSWORD_MIN_LENGTH` vb. | Varsayılanlar prod uyumlu (12/64/5); kurumsal politikaya göre artırın |
+
+### 20.3 Erişim ve Yetki Kontrolleri
+
+- Bootstrap-admin geçidi: SMTP/LDAP/Secret/DB/Genel ayarlarına `site.monitor.username` ile tanımlı bootstrap admin her zaman erişir — hesap yeniden adlandırılsa da kilitlenme olmaz, "admin" adlı başka bir kullanıcı bypass alamaz.
+- Yetki matrisi: ADMIN kilitlidir ve geri alınamaz. Yıkıcı işlemler hassas işaretlidir; grant verirken onay istenir, sistem-geneli iki işlem ayrıca admin korumalıdır.
+- Varsayılan izinler ilk açılışta tohumlanır; yeni sürümlerin izinleri mevcut veritabanına geri doldurulur, yönetici özelleştirmeleri korunur.
+
+### 20.4 OpenShift ve Kubernetes Notları
+
+- Sağlık probe'ları Actuator gruplarını kullanır: liveness DB'den bağımsızdır (DB dalgalanması pod'u yeniden başlatmaz); readiness ve startup açılış bootstrap'ı bitene kadar trafiği reddeder.
+- Dağıtım `helm upgrade` ile yapılır; `oc rollout status` ile doğrulanır. Soğuk başlangıç için CPU limiti warmup'ı hızlandırır.
+- Kurumsal SSL-inspection proxy'si RDAP'ı bozuyorsa proxy CA zincirini **Ayarlar → Domain Tanılama** ile yakalayıp `site.monitor.trust.ca-bundle-pem` güven paketine ekleyin; `.tr` alan adları RDAP sunmadığından port-43 WHOIS erişimi ayrıca firewall izni gerektirir.
+
+---
+
+## 21. Terimler Sözlüğü
+
+Kılavuz boyunca terimler tek biçimde kullanılır; İngilizce arayüz metinlerindeki karşılıklar aşağıdadır.
+
+| Terim | Tanım |
+|---|---|
+| Alarm | Tespit edilen bir sorunun kayıt altına alınmış olayı (`AlertEvent`). İngilizce arayüzde "alert". Bu kılavuzda "uyarı" kelimesi yalnız WARNING seviyesinin Türkçe adı olarak geçer. |
+| Alarm seviyesi | WARNING (Uyarı) / HIGH (Yüksek) / CRITICAL (Kritik) — sorunun aciliyet derecesi. |
+| Alarm tipi | Sorunun sınıfı: `EXPIRY`, `REVOKED`, `CHAIN_BROKEN`, `MISMATCH`, `ACCESSIBILITY`, `PORT_DOWN`, `DNS_FAILURE`, `DNS_CHANGED`, `DOMAINMON_*` vb. |
+| Onaylama (acknowledge) | Alarmın görüldüğünü işaretleme; günlük tekrar bildirimini durdurur, alarmı kapatmaz. |
+| Çözülme (resolution) | Sorunun giderilmesi; alarm kapanır ve yeşil çözülme bildirimi gönderilir. |
+| Tekrar bildirim (re-alert) | Onaylanmamış açık alarm için günde bir gönderilen hatırlatma (`DAILY_REALERT`). |
+| Eskalasyon | Alarm seviyesine göre bildirim alıcılarının genişletilmesi (PO → TECH → MANAGER → C-LEVEL). |
+| Eskalasyon kontağı | Bir takımın alarmlarını alan kişi kaydı; minimum seviye ve isteğe bağlı webhook taşır. |
+| Doğrulama denemesi | Alarm açılmadan önce aranan ardışık başarısız kontrol sayısı. |
+| Kurtarma | Monitörün "düzeldi" sayılması için aranan ardışık başarılı kontrol sayısı. |
+| Alarm fırtınası (storm) | Kısa pencerede çok sayıda kesintinin tek toplu bildirime indirgenmesi. |
+| Bakım penceresi | Planlı kesinti aralığı; hedef monitörlerde alarm ve bildirim tamamen susturulur. |
+| Sweep | Zamanlayıcının tüm hedefleri dolaştığı tek tarama koşusu. |
+| Envanter | İzlenen sertifika domainlerinin kayıt defteri (`certificate_inventory`). |
+| Tier | Domain kritiklik katmanı: 1 Müşteriye Dönük Prod … 4 Dev/Sandbox. |
+| Monitör | Sertifika sweep'inden bağımsız tekil izleme hedefi (HTTP, port, DNS, keyword, ping, sayfa, sentetik, alan adı). |
+| Uptime yüzdesi | Bir hedefin başarılı kontrol oranı; bakım penceresindeki kontroller hariç tutulur. |
+| RDAP / WHOIS | Alan adı tescil bilgisinin sorgulandığı protokoller; RDAP birincil, WHOIS yedektir. |
+| OCSP / CRL | Sertifika iptal kontrol yöntemleri; OCSP birincil, CRL yedektir. |
+| Dağıtık kilit | Çok replikalı ortamda taramanın tek pod'da çalışmasını sağlayan veritabanı kilidi. |
+| Bootstrap admin | `SITE_MONITOR_USERNAME` ile tanımlı, ayarlar ekranına her zaman erişebilen yerel yönetici hesabı. |
+| Soft delete | Kaydı fiziksel silmek yerine pasifleyip gizleme; geri yüklenebilir. |
+| Provizyon | LDAP/AD kullanıcısının ilk girişte otomatik oluşturulması ve rol/takım atanması. |
+| Webhook | Slack/Teams kanallarına yapılan HTTP bildirimi. |
+| CID inline | E-posta içine gömülü görsel eki (`cid:` referansı); harici kaynak engelli istemcilerde de görünür. |
+
+---
+
+*Bu belge Site Monitor v20.0.3 için Ağustos 2026 itibarıyla hazırlanmıştır.*
