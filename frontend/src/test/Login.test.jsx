@@ -108,24 +108,32 @@ describe('Login', () => {
     expect(screen.queryByText(/session has expired/i)).toBeNull()
   })
 
-  it('renders the executive left panel: wordmark, badge, headline, capability bento (8 tiles), hero stats, rings + pulse', async () => {
+  it('renders the executive left panel: wordmark, badge, tagline + subline, three pillars (Monitor/Alert/Report), hero stats, rings + pulse', async () => {
     const { container } = render(<Login onLogin={() => {}} />)
     // Üst bölge: wordmark + ENTERPRISE rozeti
     expect(container.querySelector('.lp-wordmark')?.textContent).toBe('Site Monitör')
     expect(container.querySelector('.lp-badge')?.textContent).toBe('ENTERPRISE')
-    // Orta bölge: başlık (EN default) + izleme yetenekleri bento ızgarası (8 kutu, flagship Sertifika)
+    // Orta bölge: slogan (h1) + destek cümlesi (EN default)
+    expect(container.querySelector('.lp-headline')?.textContent).toBe('Monitor Your Websites & Hosts')
     expect(screen.getByText(/under control on a single screen/i)).toBeDefined()
-    expect(container.querySelectorAll('.lp-tile')).toHaveLength(8)
-    expect(container.querySelector('.lp-tile--flag')).not.toBeNull()
+    // Üç sütun: İzle / Uyar / Raporla — başlık + tek cümle açıklama
+    expect(container.querySelectorAll('.lp-pillar')).toHaveLength(3)
+    expect(container.querySelectorAll('.lp-pillar-desc')).toHaveLength(3)
+    expect(screen.getByText('Monitor')).toBeDefined()
+    expect(screen.getByText('Alert')).toBeDefined()
+    expect(screen.getByText('Report')).toBeDefined()
+    // İzle sütunu: 8 monitör çipi (flagship Sertifika canlı nabız noktalı), Uyar: 3, Raporla: 3 → toplam 14
+    expect(container.querySelectorAll('.lp-chip')).toHaveLength(14)
+    expect(container.querySelector('.lp-chip--flag')).not.toBeNull()
+    expect(container.querySelector('.lp-chip--flag .lp-chip-live')).not.toBeNull()
     expect(screen.getByText('DNS')).toBeDefined()
     expect(screen.getByText('HTTP/Website')).toBeDefined()
     expect(screen.getByText('Uptime')).toBeDefined()
-    // Her kutuda hover mikro-açıklama + flagship'te canlı nabız noktası
-    expect(container.querySelectorAll('.lp-tile-desc')).toHaveLength(8)
-    expect(container.querySelector('.lp-tile--flag .lp-tile-live')).not.toBeNull()
-    // Operasyon grubu — 4 çip (Alarm/Olay/Rapor/Bakım)
-    expect(container.querySelectorAll('.lp-chip')).toHaveLength(4)
     expect(screen.getByText('Weekly Report')).toBeDefined()
+    expect(screen.getByText('Response Times')).toBeDefined()
+    expect(screen.getByText('Expiry Forecast')).toBeDefined()
+    // Monitör çipleri mikro-açıklamayı title tooltip'i olarak taşır (ör. flagship Sertifika)
+    expect(container.querySelector('.lp-chip--flag')?.getAttribute('title')).toBe('SSL/TLS · chain · expiry')
     // Alt bölge: hero istatistikler — public endpoint'ten gerçek veri (mock: 512 / 99.9%)
     expect(await screen.findByText('512')).toBeDefined()
     expect(await screen.findByText('99.9%')).toBeDefined()
@@ -134,10 +142,11 @@ describe('Login', () => {
     expect(container.querySelector('.lp-accent-dot')).not.toBeNull()
     // Dil düğmesi korunur (EN default → 'Türkçe' etiketi)
     expect(screen.getByText('Türkçe')).toBeDefined()
-    // Eski öğeler kaldırıldı (kalkan başlığı + düz özellik listesi + eski nokta)
-    expect(screen.queryByText(/Meet Site Monitör/i)).toBeNull()
-    expect(container.querySelector('.lp-feature')).toBeNull()
-    expect(container.querySelector('.lp-blink-dot')).toBeNull()
+    // Eski öğeler kaldırıldı (bento ızgarası + operasyon şeridi + bölüm başlıkları)
+    expect(container.querySelector('.lp-bento')).toBeNull()
+    expect(container.querySelector('.lp-tile')).toBeNull()
+    expect(container.querySelector('.lp-ops')).toBeNull()
+    expect(container.querySelector('.lp-caps-title')).toBeNull()
   })
 
   it('sorun bildir: pop-up açılır; kullanıcı adı zorunlu; dolu formla sendLoginHelp payload\'ı gider; teşekkür görünür', async () => {
