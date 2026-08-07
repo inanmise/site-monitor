@@ -9520,3 +9520,9 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .hist-list { margin-top: 2px; }
 /* Tür-özel geçmiş grid şablonları (CheckHistoryTab gridClass) */
 .page-rt-grid { grid-template-columns: 150px 90px 70px 100px 1fr; }
+.dns-rt-grid  { grid-template-columns: 150px 1fr 64px 80px 170px; }
+.upt-uptime-rt-grid { grid-template-columns: 140px 64px 90px 1fr; }
+.dns-diff-cell { padding: 8px 10px; border-left: 3px solid var(--danger); border-radius: 4px;
+  background: color-mix(in srgb, var(--danger) 6%, transparent); margin: 4px 0 6px; }
+.dns-diff-cell.dns-diff-row-rotated { border-left-color: var(--info);
+  background: color-mix(in srgb, var(--info) 6%, transparent); }

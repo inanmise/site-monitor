@@ -19,7 +19,8 @@ export const toUtcIso = (d) => new Date(d).toISOString().slice(0, 19)
  * - İlk preset URL'deki `range` paramından okunur (eski paylaşılan linkler çalışmaya devam eder).
  */
 export function useCheckHistory({ kind, id, listKey, presets = [1, 7, 15, 30], defaultPreset = 1,
-                                  filterMode = 'fail', extraParams = null, live = true }) {
+                                  filterMode = 'fail', extraParams = null, live = true,
+                                  fixed = null /* {from: Date, to: Date} — sayfa aralığı kontrol eder (Uptime) */ }) {
   const initialRange = readUrlParam('range', null)
   const initialPreset = presets.includes(Number(initialRange)) ? Number(initialRange)
     : (initialRange === 'custom' ? 'custom' : defaultPreset)
@@ -46,6 +47,8 @@ export function useCheckHistory({ kind, id, listKey, presets = [1, 7, 15, 30], d
   const seqRef = useRef(0)                               // yarış koruması: yalnız son isteğin yanıtı işlenir
 
   const isCustom = preset === 'custom' && customFrom && customTo
+  const fixedFrom = fixed?.from ? toUtcIso(fixed.from) : null
+  const fixedTo = fixed?.to ? toUtcIso(fixed.to) : null
 
   const load = useCallback((silent = false) => {
     if (!id) return
@@ -55,7 +58,8 @@ export function useCheckHistory({ kind, id, listKey, presets = [1, 7, 15, 30], d
       status: status !== 'all' ? status : undefined,
       page: page - 1,
       size: pageSize,
-      ...(isCustom ? { from: toUtcIso(customFrom), to: toUtcIso(customTo) } : { days: preset }),
+      ...(fixedFrom ? { from: fixedFrom, to: fixedTo }
+        : isCustom ? { from: toUtcIso(customFrom), to: toUtcIso(customTo) } : { days: preset }),
       ...(extraParams || {}),
     }
     api.monitoring.getCheckHistory(kind, id, params)
@@ -67,12 +71,12 @@ export function useCheckHistory({ kind, id, listKey, presets = [1, 7, 15, 30], d
       .catch(e => { if (seq === seqRef.current) setError(String(e?.message || e)) })
       .finally(() => { if (seq === seqRef.current) setLoading(false) })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [kind, id, preset, customFrom, customTo, status, page, pageSize, JSON.stringify(extraParams)])
+  }, [kind, id, preset, customFrom, customTo, status, page, pageSize, fixedFrom, fixedTo, JSON.stringify(extraParams)])
 
   useEffect(() => { load() }, [load])
 
   // Canlı yenileme: sekme görünürken 30 sn'de bir SESSİZ tazeleme (spinner yakmadan).
-  const liveActive = live && page === 1 && preset !== 'custom'
+  const liveActive = live && page === 1 && preset !== 'custom' && !fixedFrom
   useVisibleInterval(() => load(true), liveActive ? 30000 : 0, false)
 
   // Aralık/filtre/boyut değişiminde sayfa 1'e döner — id değişimi de (başka monitör açıldı).
@@ -81,7 +85,7 @@ export function useCheckHistory({ kind, id, listKey, presets = [1, 7, 15, 30], d
     if (firstRun.current) { firstRun.current = false; return }
     setPageRaw(1)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [kind, id, preset, customFrom, customTo, status, pageSize])
+  }, [kind, id, preset, customFrom, customTo, status, pageSize, fixedFrom, fixedTo])
 
   const setPreset = (p) => { setPresetRaw(p); if (p !== 'custom') { setCustomFrom(null); setCustomTo(null) } }
   const setCustomRange = (fromDate, toDate) => {
@@ -103,10 +107,12 @@ export function useCheckHistory({ kind, id, listKey, presets = [1, 7, 15, 30], d
     status, setStatus, filterMode,
     page, setPage: setPageRaw, pageSize, setPageSize,
     liveActive, reload: load,
+    fixedMode: !!fixedFrom,
     // CSV
     csvParams: {
       status: status !== 'all' ? status : undefined,
-      ...(isCustom ? { from: toUtcIso(customFrom), to: toUtcIso(customTo) } : { days: preset }),
+      ...(fixedFrom ? { from: fixedFrom, to: fixedTo }
+        : isCustom ? { from: toUtcIso(customFrom), to: toUtcIso(customTo) } : { days: preset }),
       ...(extraParams || {}),
     },
   }

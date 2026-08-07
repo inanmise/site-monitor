@@ -4,10 +4,13 @@ import DnsDetailModal from '../components/DnsDetailModal.jsx'
 
 vi.mock('../api/client', () => ({
   formatDate: (s) => s ?? '',
+  formatDateSec: (s) => s ?? '',
+  formatDateOnly: (s) => s ?? '',
   api: {
     monitoring: {
       getDnsDetails: vi.fn(),
-      getDnsHistory: vi.fn(),
+      getCheckHistory: vi.fn(),
+      getCheckHistoryCsvUrl: vi.fn(() => '#'),
       getDnsResponseSeries: vi.fn(() => Promise.resolve({ success: true, data: [] })),
     },
     admin: {
@@ -52,23 +55,32 @@ const historyRows = [
   },
 ]
 
+const envelope = (items) => ({ success: true, data: {
+  items, counts: { total: items.length, fail: items.filter(r => r.changed || r.rotated).length },
+  buckets: [], alerts: [], range: { from: '2026-08-01T00:00:00', to: '2026-08-02T23:59:59' },
+  total: items.length, page: 0, size: 50 } })
+
 describe('DnsDetailModal', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     api.monitoring.getDnsDetails.mockResolvedValue({ success: true, data: details })
-    api.monitoring.getDnsHistory.mockResolvedValue({ success: true, data: historyRows })
+    api.monitoring.getCheckHistory.mockResolvedValue(envelope(historyRows))
   })
 
-  it('filtre butonları render olur; "Sadece Değişenler" changedOnly=true ile yeniden yükler', async () => {
+  it('filtre chip\'leri render olur; "Değişenler" status=changed ile yeniden yükler', async () => {
     render(<DnsDetailModal monitor={monitor} onClose={() => {}} />)
-    await waitFor(() => expect(api.monitoring.getDnsHistory).toHaveBeenCalledWith(7, 1, false))
+    await waitFor(() => expect(api.monitoring.getCheckHistory).toHaveBeenCalled())
+    expect(api.monitoring.getCheckHistory.mock.calls[0][0]).toBe('dns')
+    expect(api.monitoring.getCheckHistory.mock.calls[0][2].status).toBeUndefined()   // varsayılan: tümü
 
-    const changedBtn = await screen.findByRole('button', { name: /sadece değişenler|changes only/i })
-    expect(screen.getByRole('button', { name: /^tümü$|^all$/i })).not.toBeNull()
+    const changedBtn = await screen.findByRole('button', { name: /değişenler|changed/i })
 
-    api.monitoring.getDnsHistory.mockResolvedValue({ success: true, data: [historyRows[0]] })
+    api.monitoring.getCheckHistory.mockResolvedValue(envelope([historyRows[0]]))
     fireEvent.click(changedBtn)
-    await waitFor(() => expect(api.monitoring.getDnsHistory).toHaveBeenCalledWith(7, 1, true))
+    await waitFor(() => {
+      const calls = api.monitoring.getCheckHistory.mock.calls
+      expect(calls[calls.length - 1][2].status).toBe('changed')   // sunucu-taraflı filtre
+    })
   })
 
   it('Değişti satırının diff bloğunda tespit zamanı görünür', async () => {

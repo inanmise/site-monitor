@@ -9,6 +9,7 @@ import CopyLinkButton from './ui/CopyLinkButton.jsx'
 import PaginationBar from './ui/PaginationBar.jsx'
 import { RefreshCw, X, AlertCircle, CheckCircle, Users } from 'lucide-react'
 import DateTimeRangePicker from './ui/DateTimeRangePicker.jsx'
+import CheckHistoryTab from './history/CheckHistoryTab.jsx'
 import DiagnosticsModal from './admin/DiagnosticsModal.jsx'
 import SearchableSelect from './ui/SearchableSelect.jsx'
 
@@ -28,10 +29,6 @@ export default function UptimePage({ systemRole }) {
   const [teamFilter, setTeamFilter]     = useState(() => readUrlParam('team', 'all'))
   const [selected, setSelected]         = useState(null)
   const [diag, setDiag]                 = useState(null)   // { domain, port } → DiagnosticsModal
-  const [httpHistory, setHttpHistory]   = useState([])
-  const [httpLoading, setHttpLoading]   = useState(false)
-  const [sslHistory, setSslHistory]     = useState([])
-  const [sslLoading, setSslLoading]     = useState(false)
   const [dateFrom, setDateFrom]         = useState(todayStartDate)
   const [dateTo, setDateTo]             = useState(() => new Date())
   const [secondsSince, setSecondsSince] = useState(0)
@@ -50,43 +47,17 @@ export default function UptimePage({ systemRole }) {
   useVisibleInterval(fetchOverview, REFRESH_INTERVAL * 1000)   // gizli sekmede polling durur
   useVisibleInterval(() => setSecondsSince(s => s + 1), 1000, false)   // countdown da durur
 
-  async function loadHttpHistory(item, from, to) {
-    setHttpLoading(true)
-    const res = await api.monitoring.getUptimeHttpHistory(item.domain, item.port || 443, from, to)
-    setHttpHistory(res?.success ? res.data : [])
-    setHttpLoading(false)
-  }
-
-  async function loadSslHistory(item, from, to) {
-    setSslLoading(true)
-    const res = await api.monitoring.getUptimeSslHistory(item.domain, from, to)
-    setSslHistory(res?.success ? res.data : [])
-    setSslLoading(false)
-  }
-
   function openModal(item) {
-    const from = todayStartDate()
-    const to   = new Date()
     setSelected(item)
-    setHttpHistory([])
-    setSslHistory([])
-    setDateFrom(from)
-    setDateTo(to)
-    loadHttpHistory(item, toApiStr(from), toApiStr(to))
-    loadSslHistory(item, toApiStr(from), toApiStr(to))
+    setDateFrom(todayStartDate())
+    setDateTo(new Date())
   }
 
-  function closeModal() {
-    setSelected(null)
-    setHttpHistory([])
-    setSslHistory([])
-  }
+  function closeModal() { setSelected(null) }
 
   function applyDateRange(from, to) {
     setDateFrom(from)
     setDateTo(to)
-    loadHttpHistory(selected, toApiStr(from), toApiStr(to))
-    loadSslHistory(selected, toApiStr(from), toApiStr(to))
   }
 
   const STATUS_ORDER = { down: 0, unknown: 1, up: 2 }
@@ -432,54 +403,42 @@ export default function UptimePage({ systemRole }) {
 
             <div className="upt-modal-divider" />
 
-            {/* Two-column history */}
+            {/* Two-column history — paylaşılan CheckHistoryTab (tek picker iki kolonu sürer);
+                sayfalama + hata filtresi + yoğunluk şeridi Uptime'a İLK KEZ geliyor. */}
             <div className="upt-history-cols">
               <div className="upt-history-col">
                 <div className="upt-modal-section-title">{t('uptime.httpHistory')}</div>
-                {httpLoading ? (
-                  <div className="upt-modal-loading">...</div>
-                ) : httpHistory.length === 0 ? (
-                  <div className="upt-modal-loading">{t('uptime.noHttpHistory')}</div>
-                ) : (
-                  <div className="upt-rt-list">
-                    {httpHistory.map((c, i) => (
-                      <div key={i} className="upt-rt-row">
-                        <span className="upt-rt-time">{formatDate(c.checked_at)}</span>
-                        <span className={c.status === 'up' ? 'upt-rt-up' : 'upt-rt-down'}>
-                          {c.status === 'up' ? t('uptime.statusUp') : t('uptime.statusDown')}
-                        </span>
-                        {c.response_ms != null && <span className="upt-rt-ms">{c.response_ms}ms</span>}
-                        {c.error && <span className="upt-rt-error" title={c.error}>{c.error}</span>}
-                      </div>
-                    ))}
-                  </div>
-                )}
+                <CheckHistoryTab kind="uptime-http" monitorId={selected.domain} listKey="uptime-http-history"
+                  extraParams={{ port: selected.port || 443 }}
+                  range={{ from: dateFrom, to: dateTo }} onRangeChange={applyDateRange}
+                  urlSync={false} gridClass="upt-uptime-rt-grid"
+                  columns={[t('uptime.dateFrom'), t('dns.status'), 'ms', '']}
+                  renderRow={(c) => (<>
+                    <span className="upt-rt-time">{formatDate(c.checked_at)}</span>
+                    <span className={c.status === 'up' ? 'upt-rt-up' : 'upt-rt-down'}>
+                      {c.status === 'up' ? t('uptime.statusUp') : t('uptime.statusDown')}
+                    </span>
+                    <span className="upt-rt-ms">{c.response_ms != null ? `${c.response_ms}ms` : '—'}</span>
+                    {c.error ? <span className="upt-rt-error" title={c.error}>{c.error}</span> : <span />}
+                  </>)} />
               </div>
 
               <div className="upt-history-col-divider" />
 
               <div className="upt-history-col">
                 <div className="upt-modal-section-title">{t('uptime.sslHistory')}</div>
-                {sslLoading ? (
-                  <div className="upt-modal-loading">...</div>
-                ) : sslHistory.length === 0 ? (
-                  <div className="upt-modal-loading">{t('uptime.noSslHistory')}</div>
-                ) : (
-                  <div className="upt-rt-list">
-                    {sslHistory.map((c, i) => (
-                      <div key={i} className="upt-rt-row">
-                        <span className="upt-rt-time">{formatDate(c.checked_at)}</span>
-                        <span className={c.status !== 'error' ? 'upt-rt-up' : 'upt-rt-down'}>
-                          {c.status !== 'error' ? t('uptime.statusUp') : t('uptime.statusDown')}
-                        </span>
-                        {c.days_remaining != null && (
-                          <span className="upt-rt-ms">{t('uptime.sslDays').replace('{0}', c.days_remaining)}</span>
-                        )}
-                        {c.error && <span className="upt-rt-error" title={c.error}>{c.error}</span>}
-                      </div>
-                    ))}
-                  </div>
-                )}
+                <CheckHistoryTab kind="uptime-ssl" monitorId={selected.domain} listKey="uptime-ssl-history"
+                  range={{ from: dateFrom, to: dateTo }} onRangeChange={applyDateRange}
+                  urlSync={false} gridClass="upt-uptime-rt-grid"
+                  columns={[t('uptime.dateFrom'), t('dns.status'), 'SSL', '']}
+                  renderRow={(c) => (<>
+                    <span className="upt-rt-time">{formatDate(c.checked_at)}</span>
+                    <span className={c.status !== 'error' ? 'upt-rt-up' : 'upt-rt-down'}>
+                      {c.status !== 'error' ? t('uptime.statusUp') : t('uptime.statusDown')}
+                    </span>
+                    <span className="upt-rt-ms">{c.days_remaining != null ? t('uptime.sslDays').replace('{0}', c.days_remaining) : '—'}</span>
+                    {c.error ? <span className="upt-rt-error" title={c.error}>{c.error}</span> : <span />}
+                  </>)} />
               </div>
             </div>
           </div>

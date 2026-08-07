@@ -26,10 +26,13 @@ export default function CheckHistoryTab({
   extraParams = null,                        // uptime-http: { port }
   csv = true, live = true, urlSync = true,
   onCounts = null,                           // modal başlık özeti için {total, fail} bildirimi
+  range = null, onRangeChange = null,        // kontrollü aralık (Uptime: tek picker iki kolonu sürer)
 }) {
   const t = useT()
-  const h = useCheckHistory({ kind, id: monitorId, listKey, presets, defaultPreset, filterMode, extraParams, live })
+  const h = useCheckHistory({ kind, id: monitorId, listKey, presets, defaultPreset, filterMode, extraParams,
+    live: range ? false : live, fixed: range })
   const [showPicker, setShowPicker] = useState(false)
+  const fixedMode = !!range
 
   useEffect(() => { if (h.counts) onCounts?.(h.counts) },   // sayfa üstbilgisi (%OK / toplam / hata)
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -37,11 +40,11 @@ export default function CheckHistoryTab({
 
   // ── URL senkronu: range + hfrom/hto/hst (paylaşılabilir link) — modal kapanınca temizlenir ──
   useUrlQuerySync({
-    range: h.preset === defaultPreset ? null : String(h.preset),
-    hfrom: h.preset === 'custom' && h.customFrom ? h.customFrom.toISOString().slice(0, 19) : null,
-    hto:   h.preset === 'custom' && h.customTo   ? h.customTo.toISOString().slice(0, 19)   : null,
+    range: fixedMode || h.preset === defaultPreset ? null : String(h.preset),
+    hfrom: !fixedMode && h.preset === 'custom' && h.customFrom ? h.customFrom.toISOString().slice(0, 19) : null,
+    hto:   !fixedMode && h.preset === 'custom' && h.customTo   ? h.customTo.toISOString().slice(0, 19)   : null,
     hst:   h.status === 'all' ? null : h.status,
-  }, { enabled: urlSync })
+  }, { enabled: urlSync && !fixedMode })
   useEffect(() => () => {
     if (!urlSync) return
     try {   // unmount: bu bileşenin paramları URL'de kalmasın (sekme-değişimi temizliğini beklemeden)
@@ -128,8 +131,10 @@ export default function CheckHistoryTab({
   return (
     <div className="hist-root">
       <div className="hist-toolbar">
-        <SegmentedControl ariaLabel={t('hist.rangeLabel')} options={presetOptions}
-          value={h.preset} onChange={(v) => { h.setPreset(v); setShowPicker(v === 'custom') }} />
+        {!fixedMode && (
+          <SegmentedControl ariaLabel={t('hist.rangeLabel')} options={presetOptions}
+            value={h.preset} onChange={(v) => { h.setPreset(v); setShowPicker(v === 'custom') }} />
+        )}
         {filterChips}
         <span className="hist-toolbar-spacer" />
         {h.liveActive && <span className="hist-live" title={t('hist.liveHint')}><span className="hist-live-dot" />{t('hist.live')}</span>}
@@ -141,7 +146,7 @@ export default function CheckHistoryTab({
         )}
       </div>
 
-      {(h.preset === 'custom' && (showPicker || !h.customFrom)) && (
+      {!fixedMode && (h.preset === 'custom' && (showPicker || !h.customFrom)) && (
         <DateTimeRangePicker
           from={h.customFrom ?? new Date(Date.now() - 86400000)}
           to={h.customTo ?? new Date()}
@@ -152,8 +157,11 @@ export default function CheckHistoryTab({
         <div className="hist-clamp-note">{t('hist.clampedNotice', formatDateSec(clampedFrom))}</div>
       )}
 
-      <DensityStrip buckets={h.buckets} zoomed={h.preset === 'custom'}
-        onZoom={(fromIso, toIso) => { h.setCustomRange(new Date(fromIso + 'Z'), new Date(toIso + 'Z')); setShowPicker(false) }}
+      <DensityStrip buckets={h.buckets} zoomed={!fixedMode && h.preset === 'custom'}
+        onZoom={(fromIso, toIso) => {
+          if (fixedMode) { onRangeChange?.(new Date(fromIso + 'Z'), new Date(toIso + 'Z')); return }
+          h.setCustomRange(new Date(fromIso + 'Z'), new Date(toIso + 'Z')); setShowPicker(false)
+        }}
         onReset={() => h.setPreset(defaultPreset)} />
 
       {h.loading && h.items.length === 0 ? (
