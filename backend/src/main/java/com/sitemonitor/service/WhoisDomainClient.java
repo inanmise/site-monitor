@@ -51,6 +51,15 @@ public class WhoisDomainClient {
         return appSettings.getBoolean("site.monitor.domain.whois-enabled", false);
     }
 
+    /** Orkestratör (zamanlanmış tarama) gate'i İÇİN: HERHANGİ bir WHOIS kaynağı açık mı —
+     *  port-43 socket VEYA .tr web-whois. Kaynak seçimini {@link #lookup} kendi bayraklarıyla yapar.
+     *  2026-08 prod regresyonu: gate yalnız {@code enabled()}'a bakınca `DOMAIN_WHOIS_ENABLED=false`
+     *  (port-43 proxy'den geçemez — bilinçli) .tr web-whois'i de kapatıyor, .tr domainleri
+     *  zamanlanmış taramada UNKNOWN kalıyordu (Sorun Tanıla gate'siz çalıştığı için veri buluyordu). */
+    public boolean anySourceEnabled() {
+        return enabled() || trWebWhois.enabled();
+    }
+
     /** Kayıtlı domain için WHOIS sorgusu (env-gated). RDAP ile aynı Map şeklini döner (+ source=WHOIS). */
     public Map<String, Object> lookup(String registrableDomain) {
         if (registrableDomain == null || registrableDomain.isBlank()) return err("invalid domain");

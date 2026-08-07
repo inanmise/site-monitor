@@ -91,6 +91,10 @@ public class RdapDomainClient {
             log.info("RDAP istemcisi proxy üzerinden: {}:{}", proxyHost, proxyPort);
         } else {
             proxied = direct;
+            // Sessiz düşüş 2026-08 prod kesintisine yol açtı (release rename'inde HTTP_PROXY_HOST
+            // taşınmamıştı, connect timeout'un nedeni loglardan görünmüyordu) — açıkça uyar.
+            log.warn("RDAP istemcisi DOĞRUDAN çıkışta — proxy tanımsız (HTTP_PROXY_HOST boş). "
+                    + "Kurumsal ağda dış RDAP erişimi firewall'a takılabilir.");
         }
     }
 

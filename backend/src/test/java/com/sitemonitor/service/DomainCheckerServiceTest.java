@@ -58,6 +58,40 @@ class DomainCheckerServiceTest {
     }
 
     @Test
+    @DisplayName("2026-08 regresyon kilidi: RDAP yok + socket-WHOIS KAPALI + .tr web-whois AÇIK → lookup ÇAĞRILIR, veri gelir")
+    void trWebWhois_runsInScheduledFlow_whenSocketWhoisDisabled() {
+        // .tr'nin RDAP'ı yoktur; DOMAIN_WHOIS_ENABLED=false (prod chart kararı) iken gate yalnız
+        // enabled()'a bakarsa .tr web-whois hiç denenmez ve domain UNKNOWN kalır (prod'da yaşandı).
+        when(rdap.lookup(eq("wingscard.com.tr"), any()))
+                .thenReturn(Map.of("source", "NONE", "error", "no rdap for .tr"));
+        when(whois.anySourceEnabled()).thenReturn(true);   // socket=false ama tr-web=true
+        Map<String, Object> w = new HashMap<>();
+        w.put("source", "WHOIS");
+        w.put("expiry_date", LocalDate.now().plusDays(1175).toString());
+        w.put("registrar", "İHS Kurumsal");
+        when(whois.lookup("wingscard.com.tr")).thenReturn(w);
+
+        Map<String, Object> r = svc.test("wingscard.com.tr", 30, 7);
+
+        assertThat(r.get("status")).isEqualTo("OK");
+        assertThat(r.get("source")).isEqualTo("WHOIS");
+        org.mockito.Mockito.verify(whois).lookup("wingscard.com.tr");
+    }
+
+    @Test
+    @DisplayName("tüm WHOIS kaynakları kapalıyken lookup HİÇ çağrılmaz → UNKNOWN")
+    void allWhoisSourcesDisabled_lookupNeverCalled() {
+        when(rdap.lookup(eq("example.com"), any()))
+                .thenReturn(Map.of("source", "NONE", "error", "rdap fail"));
+        when(whois.anySourceEnabled()).thenReturn(false);
+
+        Map<String, Object> r = svc.test("example.com", 30, 7);
+
+        assertThat(r.get("status")).isEqualTo("UNKNOWN");
+        org.mockito.Mockito.verify(whois, org.mockito.Mockito.never()).lookup(anyString());
+    }
+
+    @Test
     @DisplayName("uzak bitiş + transfer kilidi → OK")
     void ok() {
         when(rdap.lookup(eq("example.com"), any())).thenReturn(rdapOk(LocalDate.now().plusDays(200).toString(), List.of("client transfer prohibited")));

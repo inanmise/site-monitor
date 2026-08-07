@@ -30,6 +30,28 @@ Mevcut namespace'te secret'ları **yeni env adlarıyla** (`SITE_MONITOR_USERNAME
 - `SECRET_KEY` DEĞERİ AYNI KALMALI (yalnız anahtar ADI değişiyor) — değer değişirse
   şifreli saklanan SMTP/LDAP/k6 secret'ları çözülemez.
 
+### 2.1 ⚠ ESKİ RELEASE'İN --set / ELLE VERİLMİŞ DEĞERLERİ TAŞINMAZ — kontrol listesi
+> 2026-08 prod kesintisi bu adım eksik olduğu için yaşandı: proxy değerleri yalnız eski
+> release'in `--set`'lerinde yaşıyordu; taze install'da ConfigMap boş proxy bastı →
+> RDAP/registrar sorguları firewall'da timeout aldı, Alan Adı İzleme günlerce veri çekemedi.
+
+Taze install ÖNCESİ eski release'ten dök ve karşılaştır:
+`helm get values <eski-release> -n <ns> -a > eski-values.yaml`
+
+| Değer | Values anahtarı | Env | Not |
+|---|---|---|---|
+| Outbound proxy host/port | `config.httpProxyHost/httpProxyPort` | `HTTP_PROXY_HOST/PORT` | prod'da `environments/master.yaml`'da KALICI — elle Deployment patch'i yapmayın |
+| Proxy bypass | `config.noProxy` | `NO_PROXY` | iç sonekler (akbank.com,aknet.akb,…) |
+| Proxy kimlik (varsa) | `secret.httpProxyUser/Pass` | `HTTP_PROXY_USER/PASS` | |
+| WHOIS kararı | `config.whoisEnabled` | `DOMAIN_WHOIS_ENABLED` | port-43 proxy'den geçemez → prod'da `false` doğru; `.tr` verisi web-whois'ten gelir (`tr-web-whois-enabled` varsayılan açık) |
+| Kurumsal CA paketi | `config.caBundlePem` veya DB `site.monitor.trust.ca-bundle-pem` | `TRUST_CA_BUNDLE_PEM` | SSL-inspection proxy'de RDAP PKIX için |
+| Uygulama taban URL'i | (Genel Ayarlar `site.monitor.app.base-url` — DB) | `APP_BASE_URL` | e-posta linkleri; eski host kalmasın |
+| Log seviyesi | `config.logLevel` | `LOG_LEVEL` | prod'da INFO |
+
+Doğrulama: açılış "ETKİN KONFİGÜRASYON" dökümünde `site.monitor.proxy.host` dolu ve
+`RDAP istemcisi proxy üzerinden: <host>:<port>` satırı VAR (yoksa uygulama artık açık
+WARN basar: "RDAP istemcisi DOĞRUDAN çıkışta — proxy tanımsız").
+
 ## 3. Kurulum stratejisi (infra ile seçilecek)
 **(a) Yan yana (önerilen):** aynı namespace'e `helm install site-monitor ...` → doğrulama
 sonrası eski `cert-monitor` release'i uninstall.

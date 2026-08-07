@@ -41,6 +41,15 @@ $propMap = @{
     SITE_MONITOR_PASSWORD      = "site.monitor.password"
     CORS_ALLOWED_ORIGINS       = "site.monitor.cors.allowed-origins"
     OPENSSL_BIN                = "site.monitor.diagnostics.openssl-bin"
+    # Outbound proxy + alan adı (RDAP/WHOIS) — .env'de doluysa yerel JVM'e de geçsin
+    # (2026-08: burada olmadıkları için yerelde proxy'li senaryolar test edilemiyordu).
+    HTTP_PROXY_HOST            = "site.monitor.proxy.host"
+    HTTP_PROXY_PORT            = "site.monitor.proxy.port"
+    HTTP_PROXY_USER            = "site.monitor.proxy.user"
+    HTTP_PROXY_PASS            = "site.monitor.proxy.pass"
+    NO_PROXY                   = "site.monitor.proxy.no-proxy"
+    DOMAIN_WHOIS_ENABLED       = "site.monitor.domain.whois-enabled"
+    DOMAIN_TR_WEB_WHOIS_ENABLED = "site.monitor.domain.tr-web-whois-enabled"
     SPRING_PROFILES_ACTIVE     = "spring.profiles.active"
     DB_HOST                    = "DB_HOST"
     DB_PORT                    = "DB_PORT"
@@ -63,10 +72,12 @@ foreach ($envKey in $propMap.Keys) {
     }
 }
 
-$existing = Get-Process java -ErrorAction SilentlyContinue
-if ($existing) {
-    Write-Host "Stopping existing Java process (PID $($existing.Id))..."
-    Stop-Process -Id $existing.Id -Force
+# YALNIZ :8080'i dinleyen sureci durdur — tum java'yi oldurmek VS Code jdt.ls gibi
+# ilgisiz sureclere de carpiyordu (2026-08).
+$conn8080 = Get-NetTCPConnection -LocalPort 8080 -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1
+if ($conn8080) {
+    Write-Host "Stopping process on :8080 (PID $($conn8080.OwningProcess))..."
+    Stop-Process -Id $conn8080.OwningProcess -Force
     Start-Sleep -Seconds 2
 }
 

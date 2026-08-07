@@ -71,9 +71,12 @@ public class DomainCheckerService {
             return out;
         }
 
-        // RDAP birincil → gerekirse WHOIS fallback (monitör başına timeout override'ı ile)
+        // RDAP birincil → gerekirse WHOIS fallback (monitör başına timeout override'ı ile).
+        // Gate anySourceEnabled: yalnız enabled() (port-43) kullanmak .tr web-whois'i de kapatıyordu —
+        // whois-enabled=false + tr-web-whois=true iken .tr domainleri UNKNOWN kalıyordu (2026-08 prod).
+        // lookup() .tr-dışında socket bayrağını kendi içinde yeniden denetler; port-43 kapalıysa denenmez.
         Map<String, Object> info = rdap.lookup(reg, timeoutMs);
-        if ((info.get("error") != null || info.get("expiry_date") == null) && whois.enabled()) {
+        if ((info.get("error") != null || info.get("expiry_date") == null) && whois.anySourceEnabled()) {
             Map<String, Object> w = whois.lookup(reg);
             if (w.get("expiry_date") != null && w.get("error") == null) info = w;
             else if (info.get("expiry_date") == null && w.get("expiry_date") != null) info = w;
