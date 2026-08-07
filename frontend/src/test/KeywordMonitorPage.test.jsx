@@ -5,13 +5,15 @@ import KeywordMonitorPage from '../components/KeywordMonitorPage.jsx'
 // Açıklama ifadeleri (expectPhrase/triggerPhrase) dilden bağımsız TR; butonlar
 // varsayılan dilde (en) — regex'ler iki-dilli/dil-bağımsız tutuldu.
 vi.mock('../api/client', () => ({
-  formatDate:    (s) => s ?? '',
-  formatDateSec: (s) => s ?? '',
+  formatDate:     (s) => s ?? '',
+  formatDateSec:  (s) => s ?? '',
+  formatDateOnly: (s) => s ?? '',
   api: {
     monitoring: {
       listGroups:           vi.fn(() => Promise.resolve({ success: true, data: [] })),
       getKeywordMonitors:   vi.fn(),
-      getKeywordHistory:    vi.fn(),
+      getCheckHistory:      vi.fn(),
+      getCheckHistoryCsvUrl: vi.fn(() => '#'),
       createKeywordMonitor: vi.fn(),
       updateKeywordMonitor: vi.fn(),
       deleteKeywordMonitor: vi.fn(),
@@ -33,7 +35,9 @@ describe('KeywordMonitorPage', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     api.monitoring.getKeywordMonitors.mockResolvedValue({ success: true, data: [monitor] })
-    api.monitoring.getKeywordHistory.mockResolvedValue({ success: true, data: { checks: [], total: 0, down: 0 } })
+    api.monitoring.getCheckHistory.mockResolvedValue({ success: true, data: {
+      items: [], counts: { total: 0, fail: 0 }, buckets: [], alerts: [],
+      range: { from: '2026-01-01T00:00:00', to: '2026-01-02T00:00:00' }, total: 0, page: 0, size: 50 } })
     api.admin.getTeams.mockResolvedValue({ success: true, data: [{ id: 5, name: 'SY-A' }] })   // ADMIN akışı (Kopyala) takım listesi ister
   })
 
@@ -75,7 +79,7 @@ describe('KeywordMonitorPage', () => {
     render(<KeywordMonitorPage systemRole="USER" teamId={5} teamName="SY-A" />)
     await waitFor(() => expect(api.monitoring.getKeywordMonitors).toHaveBeenCalled())
     fireEvent.click(screen.getByText('https://www.akbank.com/'))
-    await waitFor(() => expect(api.monitoring.getKeywordHistory).toHaveBeenCalled())
+    await waitFor(() => expect(api.monitoring.getCheckHistory).toHaveBeenCalled())
     expect(screen.getByRole('button', { name: /check history|kontrol/i })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /response chart|süre/i })).toBeInTheDocument()
   })
@@ -247,7 +251,7 @@ describe('KeywordMonitorPage', () => {
     window.history.replaceState({}, '', '/?tab=keyword&monitor=1')
     try {
       render(<KeywordMonitorPage systemRole="USER" teamId={5} teamName="SY-A" />)
-      await waitFor(() => expect(api.monitoring.getKeywordHistory).toHaveBeenCalled())   // modal açıldı
+      await waitFor(() => expect(api.monitoring.getCheckHistory).toHaveBeenCalled())   // modal açıldı
       await waitFor(() => expect(window.location.search).toContain('monitor=1'), { timeout: 1500 })
       fireEvent.click(document.querySelector('.upt-modal-close'))
       await waitFor(() => expect(window.location.search).not.toContain('monitor='), { timeout: 1500 })

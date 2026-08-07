@@ -4,11 +4,13 @@ import PortMonitorPage from '../components/PortMonitorPage.jsx'
 
 vi.mock('../api/client', () => ({
   formatDate: (s) => s ?? '',
+  formatDateOnly: (s) => s ?? '',
   api: {
     monitoring: {
       listGroups:        vi.fn(() => Promise.resolve({ success: true, data: [] })),
       getPortMonitors:   vi.fn(),
-      getPortHistory:    vi.fn(),
+      getCheckHistory:    vi.fn(),
+      getCheckHistoryCsvUrl: vi.fn(() => '#'),
       getPortResponseSeries: vi.fn(),
       getMonitorNotes:   vi.fn(),
       createPortMonitor: vi.fn(),
@@ -31,7 +33,9 @@ describe('PortMonitorPage', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     api.monitoring.getPortMonitors.mockResolvedValue({ success: true, data: [monitor] })
-    api.monitoring.getPortHistory.mockResolvedValue({ success: true, data: { checks: [], total: 0, down: 0 } })
+    api.monitoring.getCheckHistory.mockResolvedValue({ success: true, data: {
+      items: [], counts: { total: 0, fail: 0 }, buckets: [], alerts: [],
+      range: { from: '2026-01-01T00:00:00', to: '2026-01-02T00:00:00' }, total: 0, page: 0, size: 50 } })
     api.admin.getTeams.mockResolvedValue({ success: true, data: [{ id: 3, name: 'SY-A' }] })
   })
 

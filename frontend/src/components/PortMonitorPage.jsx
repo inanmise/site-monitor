@@ -18,6 +18,7 @@ import CopyLinkButton from './ui/CopyLinkButton.jsx'
 import PaginationBar from './ui/PaginationBar.jsx'
 import AlertHistory from './admin/AlertHistory.jsx'
 import MonitorStatsBar from './MonitorStatsBar.jsx'
+import CheckHistoryTab from './history/CheckHistoryTab.jsx'
 const ResponseTimeChart = lazy(() => import('./ResponseTimeChart.jsx'))
 const MonitorNotes = lazy(() => import('./MonitorNotes.jsx'))
 
@@ -62,11 +63,8 @@ export default function PortMonitorPage({ systemRole, teamId, teamName }) {
   const [teams, setTeams] = useState([])
   const [defaults, setDefaults] = useState(null)
   const [selected, setSelected] = useState(null)
-  const [history, setHistory] = useState([])
-  const [historyLoading, setHistoryLoading] = useState(false)
-  const [rangeDays, setRangeDays] = useState(1)
   const [detailTab, setDetailTab] = useState('control')
-  const [summary, setSummary] = useState({ total: 0, down: 0 })
+  const [summary, setSummary] = useState({ total: 0, down: 0 })   // CheckHistoryTab onCounts besler
   const [modal, setModal] = useState(null)
   const [dupSource, setDupSource] = useState(null)  // Kopyala akışında kaynak monitör (rozet/ipucu için)
   const [form, setForm] = useState(emptyForm)
@@ -130,27 +128,13 @@ export default function PortMonitorPage({ systemRole, teamId, teamName }) {
   // Modal her açıldığında önceki kaydetme hatası + test sonucunu temizle.
   useEffect(() => { setSaveError(null); setTestResult(null) }, [modal])
 
-  async function loadHistory(id, days = rangeDays) {
-    setHistoryLoading(true)
-    const res = await api.monitoring.getPortHistory(id, { days })
-    if (res?.success) {
-      setHistory(res.data?.checks ?? [])
-      setSummary({ total: res.data?.total ?? 0, down: res.data?.down ?? 0 })
-    }
-    setHistoryLoading(false)
-  }
-
-  function selectRange(id, days) { setRangeDays(days); histPager.setPage(1); loadHistory(id, days) }
-
   async function openModal(m) {
     setSelected(m)
+    setSummary({ total: 0, down: 0 })
     setDetailTab('control')
-    setHistory([])
-    histPager.setPage(1)
-    loadHistory(m.id, rangeDays)
   }
 
-  function closeModal() { setSelected(null); setHistory([]) }
+  function closeModal() { setSelected(null) }
 
   function openNew() {
     setDupSource(null)
@@ -291,7 +275,6 @@ export default function PortMonitorPage({ systemRole, teamId, teamName }) {
 
   // Geçmiş sayfalaması (DNS ile aynı 50/100/200)
   // Geçmiş modalı sayfalaması — 30 sn modal yenilemesi history referansını değiştirir; sayfa korunur.
-  const histPager = usePagination(history, { listKey: 'port-history' })
 
   const displayMonitors = useMemo(() => monitors.filter(m => {
     if (teamFilter !== 'all') {
@@ -330,7 +313,7 @@ export default function PortMonitorPage({ systemRole, teamId, teamName }) {
     ps: (pager.pageSize !== 50 || pager.page > 1) ? pager.pageSize : null,
     monitor: selected?.id ?? null,
     mtab: selected && detailTab !== 'control' ? detailTab : null,
-    range: selected && rangeDays !== 1 ? rangeDays : null,
+    // range/hfrom/hto/hst artık CheckHistoryTab'ın kendi URL senkronunda
   })
 
   function statusBadge(status) {
@@ -531,52 +514,29 @@ export default function PortMonitorPage({ systemRole, teamId, teamName }) {
             </div>
             <div className="upt-modal-divider" />
             <div className="modal-tabs">
-              <button className={`modal-tab${detailTab === 'control' ? ' active' : ''}`} onClick={() => setDetailTab('control')}>{t('port.tabControl')}</button>
+              <button className={`modal-tab${detailTab === 'control' ? ' active' : ''}`} onClick={() => setDetailTab('control')}>{t('hist.tab')}</button>
               <button className={`modal-tab${detailTab === 'alerts' ? ' active' : ''}`} onClick={() => setDetailTab('alerts')}>{t('port.tabAlerts')}</button>
               <button className={`modal-tab${detailTab === 'chart' ? ' active' : ''}`} onClick={() => setDetailTab('chart')}>{t('port.tabChart')}</button>
               <button className={`modal-tab${detailTab === 'notes' ? ' active' : ''}`} onClick={() => setDetailTab('notes')}>{t('port.tabGuide')}</button>
             </div>
 
-            {detailTab === 'control' && (<>
-              <div className="upt-range-btns">
-                {[1, 7, 15, 30].map(d => (
-                  <button key={d} type="button"
-                    className={`btn btn-sm ${rangeDays === d ? 'btn-primary' : 'btn-secondary'}`}
-                    onClick={() => selectRange(selected.id, d)}>{t(`port.range${d}d`)}</button>
-                ))}
-              </div>
-              {historyLoading ? (
-                <div className="upt-modal-loading">...</div>
-              ) : history.length === 0 ? (
-                <div className="upt-modal-loading">{t('uptime.noData')}</div>
-              ) : (
-                <div className="upt-rt-list">
-                  <div className="upt-rt-grid upt-rt-head">
-                    <span>{t('port.colTime')}</span>
-                    <span>{t('port.colStatus')}</span>
-                    <span>{t('port.colResponse')}</span>
-                    <span>{t('port.colDetail')}</span>
-                  </div>
-                  {histPager.pageItems.map((c, i) => (
-                    <div key={i} className="upt-rt-grid">
-                      <span className="upt-rt-time">{formatDate(c.checkedAt || c.checked_at)}</span>
-                      <span className={c.open ? 'upt-rt-up' : 'upt-rt-down'}>
-                        {c.open ? t('port.statusOpen') : t('port.statusClosed')}
-                      </span>
-                      <span className="upt-rt-ms">
-                        {(c.responseMs ?? c.response_ms) != null ? `${c.responseMs ?? c.response_ms}ms` : '—'}
-                      </span>
-                      {c.error
-                        ? <span className="upt-rt-error">{c.error}</span>
-                        : c.open
-                          ? <span className="upt-rt-up">{t('port.detailOk')}</span>
-                          : <span className="upt-rt-ms">—</span>}
-                    </div>
-                  ))}
-                  <PaginationBar {...histPager} compact />
-                </div>
-              )}
-            </>)}
+            {detailTab === 'control' && (
+              <CheckHistoryTab kind="port" monitorId={selected.id} listKey="port-history"
+                columns={[t('port.colTime'), t('port.colStatus'), t('port.colResponse'), t('port.colDetail')]}
+                onCounts={(c) => setSummary({ total: c.total, down: c.fail })}
+                renderRow={(c) => (<>
+                  <span className="upt-rt-time">{formatDate(c.checked_at)}</span>
+                  <span className={c.open ? 'upt-rt-up' : 'upt-rt-down'}>
+                    {c.open ? t('port.statusOpen') : t('port.statusClosed')}
+                  </span>
+                  <span className="upt-rt-ms">{c.response_ms != null ? `${c.response_ms}ms` : '—'}</span>
+                  {c.error
+                    ? <span className="upt-rt-error">{c.error}</span>
+                    : c.open
+                      ? <span className="upt-rt-up">{t('port.detailOk')}</span>
+                      : <span className="upt-rt-ms">—</span>}
+                </>)} />
+            )}
 
             {detailTab === 'alerts' && <AlertHistory domain={selected.host} />}
 

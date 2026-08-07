@@ -20,6 +20,7 @@ import CopyLinkButton from './ui/CopyLinkButton.jsx'
 import PaginationBar from './ui/PaginationBar.jsx'
 import AlertHistory from './admin/AlertHistory.jsx'
 import MonitorStatsBar from './MonitorStatsBar.jsx'
+import CheckHistoryTab from './history/CheckHistoryTab.jsx'
 // recharts ağır — yalnız "Süre Grafiği" sekmesi açılınca yüklensin.
 const ResponseTimeChart = lazy(() => import('./ResponseTimeChart.jsx'))
 const MonitorNotes = lazy(() => import('./MonitorNotes.jsx'))
@@ -77,10 +78,7 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
   const [testResult, setTestResult] = useState(null)
   const [checking, setChecking] = useState(null)
   const [selected, setSelected] = useState(null) // detail monitor
-  const [history, setHistory] = useState([])
-  const [historyLoading, setHistoryLoading] = useState(false)
-  const [rangeDays, setRangeDays] = useState(1)
-  const [summary, setSummary] = useState({ total: 0, down: 0 })
+  const [summary, setSummary] = useState({ total: 0, down: 0 })   // CheckHistoryTab onCounts besler
   const [detailTab, setDetailTab] = useState('control')
   const [selCheck, setSelCheck] = useState(null)
   const deepLinkDone = useRef(false)
@@ -127,21 +125,8 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
     if (m) openDetail(m)
   }, [monitors]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  async function loadHistory(id, days = rangeDays) {
-    setHistoryLoading(true)
-    const res = await api.monitoring.getScriptedHistory(id, { days })
-    if (res?.success) {
-      setHistory(res.data?.checks ?? [])
-      setSummary({ total: res.data?.total ?? 0, down: res.data?.down ?? 0 })
-    }
-    setHistoryLoading(false)
-  }
-  function selectRange(id, days) { setRangeDays(days); histPager.setPage(1); loadHistory(id, days) }
-  function openDetail(m) {
-    setSelected(m); setSelCheck(null); setHistory([]); histPager.setPage(1); setDetailTab('control')
-    loadHistory(m.id, rangeDays)
-  }
-  function closeDetail() { setSelected(null); setHistory([]); setSelCheck(null) }
+  function openDetail(m) { setSelected(m); setSelCheck(null); setSummary({ total: 0, down: 0 }); setDetailTab('control') }
+  function closeDetail() { setSelected(null); setSelCheck(null) }
 
   // Türetilmiş listeler memoize — 1sn countdown her saniye render tetikler.
   const teamOptions = useMemo(() => {
@@ -211,9 +196,6 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
     listKey: 'scripted-monitors', resetDeps: [search, teamFilter, groupFilter, statFilter],
     initialPage: readUrlInt('page', 1), initialSize: readUrlInt('ps', null),
   })
-  // Geçmiş modalı sayfalaması — modal yenilemesi history referansını değiştirir; sayfa korunur.
-  const histPager = usePagination(history, { listKey: 'scripted-history' })
-
   // Paylaşılabilir URL: filtre/arama/sayfa + açık detay modalı adres çubuğunda yaşar (varsayılanlar param üretmez).
   useUrlQuerySync({
     team: teamFilter === 'all' ? null : teamFilter,
@@ -224,7 +206,7 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
     ps: (pager.pageSize !== 50 || pager.page > 1) ? pager.pageSize : null,
     monitor: selected?.id ?? null,
     mtab: selected && detailTab !== 'control' ? detailTab : null,
-    range: selected && rangeDays !== 1 ? rangeDays : null,
+    // range/hfrom/hto/hst artık CheckHistoryTab'ın kendi URL senkronunda
   })
 
   const statItems = [
@@ -519,47 +501,27 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
             </div>
             <div className="upt-modal-divider" />
             <div className="modal-tabs">
-              <button className={`modal-tab${detailTab === 'control' ? ' active' : ''}`} onClick={() => setDetailTab('control')}>{t('scripted.tabControl')}</button>
+              <button className={`modal-tab${detailTab === 'control' ? ' active' : ''}`} onClick={() => setDetailTab('control')}>{t('hist.tab')}</button>
               <button className={`modal-tab${detailTab === 'alerts' ? ' active' : ''}`} onClick={() => setDetailTab('alerts')}>{t('scripted.tabAlerts')}</button>
               <button className={`modal-tab${detailTab === 'chart' ? ' active' : ''}`} onClick={() => setDetailTab('chart')}>{t('scripted.tabChart')}</button>
               <button className={`modal-tab${detailTab === 'notes' ? ' active' : ''}`} onClick={() => setDetailTab('notes')}>{t('scripted.tabGuide')}</button>
             </div>
 
             {detailTab === 'control' && (<>
-              <div className="upt-range-btns">
-                {[1, 7, 15, 30].map(d => (
-                  <button key={d} type="button" className={`btn btn-sm ${rangeDays === d ? 'btn-primary' : 'btn-secondary'}`}
-                    onClick={() => selectRange(selected.id, d)}>{t(`scripted.range${d}d`)}</button>
-                ))}
-              </div>
-              {historyLoading ? <div className="upt-modal-loading">...</div> : history.length === 0 ? (
-                <div className="upt-modal-loading">{t('scripted.noData')}</div>
-              ) : (
-                <div className="upt-rt-list">
-                  <div className="upt-rt-grid upt-rt-head">
-                    <span>{t('scripted.colTime')}</span><span>{t('scripted.colStatus')}</span><span>{t('scripted.colDuration')}</span><span>{t('scripted.colDetail')}</span>
-                  </div>
-                  {histPager.pageItems.map((c, i) => {
-                    // API snake_case döndürür; savunmacı çift-okuma (kanonik desen — 2026-08 N/A regresyonu).
-                    const checkedAt = c.checked_at ?? c.checkedAt
-                    const durationMs = c.duration_ms ?? c.durationMs
-                    const passed = c.checks_passed ?? c.checksPassed
-                    const failed = c.checks_failed ?? c.checksFailed
-                    const isSel = selCheck?.id === c.id
-                    return (
-                      <div key={`${checkedAt || ''}#${i}`} className="upt-rt-grid" onClick={() => setSelCheck(isSel ? null : c)}
-                        style={{ cursor: 'pointer', background: isSel ? 'var(--bg, #eef2ff)' : undefined }}>
-                        <span className="upt-rt-time">{formatDateSec(checkedAt)}</span>
-                        <span className={isPass(c.status) ? 'upt-rt-up' : 'upt-rt-down'}>{statusLabel(t, c.status)}</span>
-                        <span className="upt-rt-ms">{durationMs != null ? `${durationMs}ms` : '—'}</span>
-                        {c.error ? <span className="upt-rt-error" title={c.error}>{c.error}</span>
-                          : <span className="upt-rt-ms">{(passed != null || failed != null) ? `${passed ?? 0}✓/${failed ?? 0}✗` : '—'}</span>}
-                      </div>
-                    )
-                  })}
-                  <PaginationBar {...histPager} compact />
-                </div>
-              )}
+              <CheckHistoryTab kind="scripted" monitorId={selected.id} listKey="scripted-history"
+                columns={[t('scripted.colTime'), t('scripted.colStatus'), t('scripted.colDuration'), t('scripted.colDetail')]}
+                onCounts={(c) => setSummary({ total: c.total, down: c.fail })}
+                renderRow={(c) => {
+                  const isSel = selCheck?.id === c.id
+                  return (<>
+                    <span className="upt-rt-time" style={{ cursor: 'pointer' }} onClick={() => setSelCheck(isSel ? null : c)}>{formatDateSec(c.checked_at)}</span>
+                    <span className={isPass(c.status) ? 'upt-rt-up' : 'upt-rt-down'} style={{ cursor: 'pointer', fontWeight: isSel ? 700 : undefined }}
+                      onClick={() => setSelCheck(isSel ? null : c)}>{statusLabel(t, c.status)}</span>
+                    <span className="upt-rt-ms">{c.duration_ms != null ? `${c.duration_ms}ms` : '—'}</span>
+                    {c.error ? <span className="upt-rt-error" title={c.error}>{c.error}</span>
+                      : <span className="upt-rt-ms">{(c.checks_passed != null || c.checks_failed != null) ? `${c.checks_passed ?? 0}✓/${c.checks_failed ?? 0}✗` : '—'}</span>}
+                  </>)
+                }} />
               {selCheck && <CheckDetail t={t} check={selCheck} />}
             </>)}
 

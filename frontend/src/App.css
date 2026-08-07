@@ -9518,3 +9518,5 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .hist-alert-meta { color: var(--text-muted); font-weight: 400; }
 .hist-alert-time { margin-left: auto; font-size: 11px; color: var(--text-muted); white-space: nowrap; }
 .hist-list { margin-top: 2px; }
+/* Tür-özel geçmiş grid şablonları (CheckHistoryTab gridClass) */
+.page-rt-grid { grid-template-columns: 150px 90px 70px 100px 1fr; }

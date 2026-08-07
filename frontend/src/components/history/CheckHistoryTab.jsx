@@ -25,10 +25,15 @@ export default function CheckHistoryTab({
   columns = [], gridClass = '', renderRow,
   extraParams = null,                        // uptime-http: { port }
   csv = true, live = true, urlSync = true,
+  onCounts = null,                           // modal başlık özeti için {total, fail} bildirimi
 }) {
   const t = useT()
   const h = useCheckHistory({ kind, id: monitorId, listKey, presets, defaultPreset, filterMode, extraParams, live })
   const [showPicker, setShowPicker] = useState(false)
+
+  useEffect(() => { if (h.counts) onCounts?.(h.counts) },   // sayfa üstbilgisi (%OK / toplam / hata)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [h.counts?.total, h.counts?.fail])
 
   // ── URL senkronu: range + hfrom/hto/hst (paylaşılabilir link) — modal kapanınca temizlenir ──
   useUrlQuerySync({
@@ -129,7 +134,7 @@ export default function CheckHistoryTab({
         <span className="hist-toolbar-spacer" />
         {h.liveActive && <span className="hist-live" title={t('hist.liveHint')}><span className="hist-live-dot" />{t('hist.live')}</span>}
         {csv && h.total > 0 && (
-          <a className="hist-csv-btn" href={api.getCheckHistoryCsvUrl(kind, monitorId, h.csvParams)}
+          <a className="hist-csv-btn" href={api.monitoring.getCheckHistoryCsvUrl(kind, monitorId, h.csvParams)}
             download title={t('hist.exportCsvHint')}>
             <Download size={13} /> CSV
           </a>

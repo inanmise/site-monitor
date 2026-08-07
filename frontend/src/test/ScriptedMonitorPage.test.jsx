@@ -20,11 +20,13 @@ vi.mock('../api/client', () => ({
   // GERÇEK davranış pini: formatDateSec undefined/null'a 'N/A' basar — 2026-08 regresyonunda
   // test mock'u `s ?? ''` ile bunu maskelemişti ve alan-adı hatası (checkedAt vs checked_at) kaçmıştı.
   formatDateSec: (s) => (s ? `FMT:${s}` : 'N/A'),
+  formatDateOnly: (s) => s ?? '',
   formatDate: (s) => s ?? '',
   api: {
     monitoring: {
       getScriptedMonitors: vi.fn(),
-      getScriptedHistory: vi.fn(() => Promise.resolve({ success: true, data: { checks: [], total: 0, down: 0 } })),
+      getCheckHistory: vi.fn(() => Promise.resolve({ success: true, data: { items: [], counts: { total: 0, fail: 0 }, buckets: [], alerts: [], range: { from: '', to: '' }, total: 0, page: 0, size: 50 } })),
+      getCheckHistoryCsvUrl: vi.fn(() => '#'),
       createScriptedMonitor: vi.fn(() => Promise.resolve({ success: true, data: {} })),
       updateScriptedMonitor: vi.fn(),
       deleteScriptedMonitor: vi.fn(),
@@ -41,7 +43,9 @@ import { api } from '../api/client'
 
 beforeEach(() => {
   vi.clearAllMocks()
-  api.monitoring.getScriptedHistory.mockResolvedValue({ success: true, data: { checks: [], total: 0, down: 0 } })
+  api.monitoring.getCheckHistory.mockResolvedValue({ success: true, data: {
+      items: [], counts: { total: 0, fail: 0 }, buckets: [], alerts: [],
+      range: { from: '2026-01-01T00:00:00', to: '2026-01-02T00:00:00' }, total: 0, page: 0, size: 50 } })
   api.monitoring.listGroups.mockResolvedValue({ success: true, data: [] })
   api.monitoring.monitorDefaults.mockResolvedValue({ success: true, data: { scripted: { intervalSeconds: 300, timeoutSeconds: 60 } } })
   api.admin.getTeams.mockResolvedValue({ success: true, data: [] })
@@ -85,17 +89,18 @@ describe('ScriptedMonitorPage', () => {
   it('detay modalı: snake_case geçmiş satırları DOĞRU çözülür (Time≠N/A, Duration≠—) + 4 sekme', async () => {
     // 2026-08 regresyon pini: API snake_case döndürür (checked_at/duration_ms/checks_*);
     // bileşen camelCase okuyunca Time=N/A, Duration=— görünüyordu.
-    api.monitoring.getScriptedHistory.mockResolvedValue({ success: true, data: {
-      checks: [
+    api.monitoring.getCheckHistory.mockResolvedValue({ success: true, data: {
+      items: [
         { id: 11, status: 'PASS',  checked_at: '2026-08-07T09:00:00', duration_ms: 812, checks_passed: 3, checks_failed: 0 },
         { id: 12, status: 'ERROR', checked_at: '2026-08-07T08:00:00', duration_ms: null, error: 'k6 binary bulunamadı' },
       ],
-      total: 2, down: 1,
+      counts: { total: 2, fail: 1 }, buckets: [], alerts: [],
+      range: { from: '2026-08-01T00:00:00', to: '2026-08-07T23:59:59' }, total: 2, page: 0, size: 50,
     } })
     render(<ScriptedMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
     await screen.findByText('OIDC Login')
     fireEvent.click(screen.getByText('OIDC Login'))
-    await waitFor(() => expect(api.monitoring.getScriptedHistory).toHaveBeenCalled())
+    await waitFor(() => expect(api.monitoring.getCheckHistory).toHaveBeenCalled())
 
     // Zaman damgası çözüldü (N/A DEĞİL) + süre ms olarak görünür
     expect(await screen.findByText('FMT:2026-08-07T09:00:00')).toBeInTheDocument()
@@ -119,7 +124,7 @@ describe('ScriptedMonitorPage', () => {
     render(<ScriptedMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
     await screen.findByText('OIDC Login')
     fireEvent.click(screen.getByText('OIDC Login'))
-    await waitFor(() => expect(api.monitoring.getScriptedHistory).toHaveBeenCalled())
+    await waitFor(() => expect(api.monitoring.getCheckHistory).toHaveBeenCalled())
 
     fireEvent.click(screen.getByRole('button', { name: /alert history|alarm geçmişi/i }))
     expect((await screen.findByTestId('alert-history')).dataset.domain).toBe('OIDC Login')

@@ -58,7 +58,7 @@ export function useCheckHistory({ kind, id, listKey, presets = [1, 7, 15, 30], d
       ...(isCustom ? { from: toUtcIso(customFrom), to: toUtcIso(customTo) } : { days: preset }),
       ...(extraParams || {}),
     }
-    api.getCheckHistory(kind, id, params)
+    api.monitoring.getCheckHistory(kind, id, params)
       .then(r => {
         if (seq !== seqRef.current) return
         if (r?.success) { setData(r.data); setError(null) }

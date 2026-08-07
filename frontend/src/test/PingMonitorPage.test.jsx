@@ -5,11 +5,13 @@ import PingMonitorPage from '../components/PingMonitorPage.jsx'
 vi.mock('../api/client', () => ({
   formatDate: (s) => s ?? '',
   formatDateSec: (s) => s ?? '',
+  formatDateOnly: (s) => s ?? '',
   api: {
     monitoring: {
       listGroups:        vi.fn(() => Promise.resolve({ success: true, data: [] })),
       getPingMonitors:   vi.fn(),
-      getPingHistory:    vi.fn(),
+      getCheckHistory:    vi.fn(),
+      getCheckHistoryCsvUrl: vi.fn(() => '#'),
       createPingMonitor: vi.fn(),
       updatePingMonitor: vi.fn(),
       deletePingMonitor: vi.fn(),
@@ -29,7 +31,9 @@ describe('PingMonitorPage', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     api.monitoring.getPingMonitors.mockResolvedValue({ success: true, data: [monitor] })
-    api.monitoring.getPingHistory.mockResolvedValue({ success: true, data: { checks: [], total: 0, down: 0 } })
+    api.monitoring.getCheckHistory.mockResolvedValue({ success: true, data: {
+      items: [], counts: { total: 0, fail: 0 }, buckets: [], alerts: [],
+      range: { from: '2026-01-01T00:00:00', to: '2026-01-02T00:00:00' }, total: 0, page: 0, size: 50 } })
     api.admin.getTeams.mockResolvedValue({ success: true, data: [{ id: 5, name: 'SY-A' }] })   // ADMIN akışı (Kopyala) takım listesi ister
   })
 
@@ -51,7 +55,7 @@ describe('PingMonitorPage', () => {
     render(<PingMonitorPage systemRole="USER" teamId={5} teamName="SY-A" />)
     await waitFor(() => expect(api.monitoring.getPingMonitors).toHaveBeenCalled())
     fireEvent.click(screen.getByText('10.0.0.1'))
-    await waitFor(() => expect(api.monitoring.getPingHistory).toHaveBeenCalled())
+    await waitFor(() => expect(api.monitoring.getCheckHistory).toHaveBeenCalled())
     expect(screen.getByRole('button', { name: /check history|kontrol/i })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /response chart|süre/i })).toBeInTheDocument()
   })
