@@ -47,6 +47,20 @@ function recordFailure(path, status) {
 }
 export function getRecentFailures() { return [...failedRequests] }
 
+/** Kontrol Geçmişi v2 yol eşlemesi — uptime türleri domain-anahtarlıdır. */
+function historyPath(kind, id) {
+  if (kind === 'uptime-http') return `/monitoring/uptime/${encodeURIComponent(id)}/http-history`
+  if (kind === 'uptime-ssl')  return `/monitoring/uptime/${encodeURIComponent(id)}/ssl-history`
+  return `/monitoring/${kind}/${id}/history`
+}
+
+/** Boş/null paramları atarak query string üretir (mevcut get*ResponseSeries deseniyle aynı). */
+function historyQuery(params) {
+  return new URLSearchParams(
+    Object.fromEntries(Object.entries(params).filter(([, v]) => v != null && v !== '')),
+  ).toString()
+}
+
 async function request(path, options = {}) {
   // FormData gönderiminde Content-Type'ı tarayıcı belirler (multipart boundary)
   const isForm = options.body instanceof FormData
@@ -682,10 +696,20 @@ export const api = {
     // Uptime
     getUptimeOverview:    () => request('/monitoring/uptime/overview'),
     getUptimeHistory:     (domain, hours = 24) => request(`/monitoring/uptime/${encodeURIComponent(domain)}/history?hours=${hours}`),
-    getUptimeHttpHistory: (domain, port, from, to, limit = 500) =>
-      request(`/monitoring/uptime/${encodeURIComponent(domain)}/http-history?port=${port}&from=${from}&to=${to}&limit=${limit}`),
-    getUptimeSslHistory:  (domain, from, to, limit = 500) =>
-      request(`/monitoring/uptime/${encodeURIComponent(domain)}/ssl-history?from=${from}&to=${to}&limit=${limit}`),
+
+    // ── Kontrol Geçmişi v2 — TÜM türlerin tek history istemcisi (CheckHistoryTab kullanır) ──
+    // kind: keyword|ping|port|http|domain|page|scripted|dns|uptime-http|uptime-ssl
+    // (uptime türlerinde id = domain, params.port yalnız uptime-http'de anlamlı)
+    // params: { from, to, days, status, changedOnly, page (0-tabanlı), size, port }
+    getCheckHistory: (kind, id, params = {}) => {
+      const q = historyQuery(params)
+      return request(`${historyPath(kind, id)}${q ? `?${q}` : ''}`)
+    },
+    // CSV indirme <a href download> ile yapılır (session cookie same-origin) — fetch değil.
+    getCheckHistoryCsvUrl: (kind, id, params = {}) => {
+      const q = historyQuery({ ...params, format: 'csv' })
+      return `${BASE}${historyPath(kind, id)}${q ? `?${q}` : ''}`
+    },
 
     // Port
     getPortMonitors:   () => request('/monitoring/port'),
