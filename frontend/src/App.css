@@ -15,6 +15,9 @@
   --bg: #f8f9fa;
   --text: #333;
   --text-light: #666;
+  /* 103 kullanım fallback'siz var(--text-muted) bekliyordu; tanımsızken color inherit'e düşüyordu
+     (ZAMAN/HTTP kolonları hiç soluklaşmıyordu). text-light'tan bir ton daha soluk. */
+  --text-muted: #6c757d;
   --border: #ddd;
   --shadow: 0 2px 10px rgba(0,0,0,.1);
   --bg-card: #ffffff;
@@ -3473,6 +3476,7 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
   --bg: #0f172a;
   --text: #e2e8f0;
   --text-light: #94a3b8;
+  --text-muted: #7c8db0;
   --border: #334155;
   --shadow: 0 2px 12px rgba(0,0,0,.5);
   --bg-card: #1e293b;
