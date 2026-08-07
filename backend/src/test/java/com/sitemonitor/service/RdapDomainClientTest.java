@@ -77,4 +77,29 @@ class RdapDomainClientTest {
         assertThat(r.get("registrar_iana_id")).isEqualTo("292");
         assertThat(r.get("dnssec")).isEqualTo("signed");
     }
+
+    @Test
+    @DisplayName("proxy user doluysa YALNIZ proxied client'a authenticator takılır (auth'lu proxy'de 407 sessiz ölümü önlenir)")
+    void init_withProxyAuth_authenticatorOnProxiedClientOnly() {
+        String origProp = System.getProperty(ProxyAuthSupport.TUNNELING_PROP);
+        try {
+            AppSettingsService appSettings = mock(AppSettingsService.class);
+            PublicSuffixService psl = new PublicSuffixService();
+            psl.load();
+            RdapDomainClient c = new RdapDomainClient(appSettings, psl, new TrustEvaluator(appSettings),
+                    org.mockito.Mockito.mock(CaAutoPinService.class));
+            org.springframework.test.util.ReflectionTestUtils.setField(c, "proxyHost", "proxy.local");
+            org.springframework.test.util.ReflectionTestUtils.setField(c, "proxyPort", 8080);
+            org.springframework.test.util.ReflectionTestUtils.setField(c, "proxyUser", "svc-mon");
+            org.springframework.test.util.ReflectionTestUtils.setField(c, "proxyPass", "pw");
+            c.init();
+            var proxied = (java.net.http.HttpClient) org.springframework.test.util.ReflectionTestUtils.getField(c, "proxied");
+            var direct  = (java.net.http.HttpClient) org.springframework.test.util.ReflectionTestUtils.getField(c, "direct");
+            assertThat(proxied.authenticator()).isPresent();
+            assertThat(direct.authenticator()).isEmpty();   // proxy kimliği doğrudan çıkışa sızmaz
+        } finally {
+            if (origProp == null) System.clearProperty(ProxyAuthSupport.TUNNELING_PROP);
+            else System.setProperty(ProxyAuthSupport.TUNNELING_PROP, origProp);
+        }
+    }
 }

@@ -38,11 +38,15 @@ class SecretMaskTest {
     }
 
     @Test
-    @DisplayName("mask: null/boş değer → (ayarsız); hassas anahtar değeri ne olursa olsun maskeli")
+    @DisplayName("mask: null/boş değer → (ayarsız) — hassas anahtarda BİLE (boş secret dolu görünmesin, 2026-08); dolu hassas → maskeli")
     void mask_nullAndBlank() {
         assertThat(SecretMask.mask("host", null)).isEqualTo("(ayarsız)");
         assertThat(SecretMask.mask("host", "  ")).isEqualTo("(ayarsız)");
-        assertThat(SecretMask.mask("password", null)).isEqualTo(SecretMask.MASK);
+        // Boş HTTP_PROXY_PASS dökümde ***** basılınca ayarlı sanılmıştı — boş secret'in sızacak içeriği yok.
+        assertThat(SecretMask.mask("password", null)).isEqualTo("(ayarsız)");
+        assertThat(SecretMask.mask("site.monitor.proxy.pass", "")).isEqualTo("(ayarsız)");
+        assertThat(SecretMask.mask("site.monitor.proxy.pass", "  ")).isEqualTo("(ayarsız)");
+        assertThat(SecretMask.mask("site.monitor.proxy.pass", "gizli")).isEqualTo(SecretMask.MASK);
     }
 
     @Test

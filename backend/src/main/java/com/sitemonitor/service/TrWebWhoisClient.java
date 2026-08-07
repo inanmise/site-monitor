@@ -55,10 +55,13 @@ public class TrWebWhoisClient {
 
     @Value("${site.monitor.proxy.host:}")     private String proxyHost;
     @Value("${site.monitor.proxy.port:0}")    private int    proxyPort;
+    @Value("${site.monitor.proxy.user:}")     private String proxyUser;
+    @Value("${site.monitor.proxy.pass:}")     private String proxyPass;
     @Value("${site.monitor.proxy.no-proxy:}") private String noProxyList;
 
     private SSLContext ssl;
     private ProxySelector proxySelector;   // null → doğrudan (proxy yok)
+    private java.net.Authenticator proxyAuth;   // null → anonim proxy (bugünkü prod)
     // Paylaşılan, cookie'siz client'lar (NORMAL redirect) — isimtescil GET yolu bunları yeniden kullanır
     // (per-call HttpClient = selector-thread/pool churn; leak analizi #1). Proxy yoksa proxiedClient == directClient.
     private HttpClient directClient;
@@ -70,7 +73,9 @@ public class TrWebWhoisClient {
                 caAutoPinService::trustManagerForHost, caAutoPinService::recordTrustFailure);
         if (proxyHost != null && !proxyHost.isBlank() && proxyPort > 0) {
             this.proxySelector = ProxySelector.of(new InetSocketAddress(proxyHost, proxyPort));
-            log.info(".tr web-whois istemcisi proxy üzerinden: {}:{}", proxyHost, proxyPort);
+            this.proxyAuth = ProxyAuthSupport.proxyAuthenticatorOrNull(proxyUser, proxyPass, log, ".tr web-whois");
+            log.info(".tr web-whois istemcisi proxy üzerinden: {}:{} (kimlik: {})", proxyHost, proxyPort,
+                    proxyAuth != null ? "Basic/" + proxyUser : "anonim");
         } else {
             // RdapDomainClient ile aynı görünürlük kuralı (2026-08 prod: proxy'siz sessiz düşüş).
             log.warn(".tr web-whois istemcisi DOĞRUDAN çıkışta — proxy tanımsız (HTTP_PROXY_HOST boş).");
@@ -210,7 +215,10 @@ public class TrWebWhoisClient {
         HttpClient.Builder b = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(5))
                 .followRedirects(redirect);
-        if (proxySelector != null && useProxy) b.proxy(proxySelector);
+        if (proxySelector != null && useProxy) {
+            b.proxy(proxySelector);
+            if (proxyAuth != null) b.authenticator(proxyAuth);
+        }
         if (ssl != null) b.sslContext(ssl);
         if (cookies != null) b.cookieHandler(cookies);
         return b.build();

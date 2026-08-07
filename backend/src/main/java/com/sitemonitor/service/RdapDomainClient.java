@@ -54,6 +54,8 @@ public class RdapDomainClient {
 
     @Value("${site.monitor.proxy.host:}")     private String proxyHost;
     @Value("${site.monitor.proxy.port:0}")    private int    proxyPort;
+    @Value("${site.monitor.proxy.user:}")     private String proxyUser;
+    @Value("${site.monitor.proxy.pass:}")     private String proxyPass;
     @Value("${site.monitor.proxy.no-proxy:}") private String noProxyList;
 
     private final ObjectMapper mapper = new ObjectMapper();
@@ -85,10 +87,12 @@ public class RdapDomainClient {
         // PKIX hatasında send() proxy CA'sını kendisi çekip pinler; elle bundle girmek gerekmez.
         SSLContext ssl = trustEvaluator.pinAwareOutboundSslContext(
                 caAutoPinService::trustManagerForHost, caAutoPinService::recordTrustFailure);
-        direct = newClient(ct, null, ssl);
+        direct = newClient(ct, null, ssl, null);
         if (proxyHost != null && !proxyHost.isBlank() && proxyPort > 0) {
-            proxied = newClient(ct, ProxySelector.of(new InetSocketAddress(proxyHost, proxyPort)), ssl);
-            log.info("RDAP istemcisi proxy üzerinden: {}:{}", proxyHost, proxyPort);
+            java.net.Authenticator auth = ProxyAuthSupport.proxyAuthenticatorOrNull(proxyUser, proxyPass, log, "RDAP");
+            proxied = newClient(ct, ProxySelector.of(new InetSocketAddress(proxyHost, proxyPort)), ssl, auth);
+            log.info("RDAP istemcisi proxy üzerinden: {}:{} (kimlik: {})", proxyHost, proxyPort,
+                    auth != null ? "Basic/" + proxyUser : "anonim");
         } else {
             proxied = direct;
             // Sessiz düşüş 2026-08 prod kesintisine yol açtı (release rename'inde HTTP_PROXY_HOST
@@ -98,10 +102,11 @@ public class RdapDomainClient {
         }
     }
 
-    private static HttpClient newClient(Duration ct, ProxySelector proxy, SSLContext ssl) {
+    private static HttpClient newClient(Duration ct, ProxySelector proxy, SSLContext ssl, java.net.Authenticator auth) {
         HttpClient.Builder b = HttpClient.newBuilder().connectTimeout(ct).followRedirects(HttpClient.Redirect.NORMAL);
         if (proxy != null) b.proxy(proxy);
         if (ssl != null) b.sslContext(ssl);
+        if (auth != null) b.authenticator(auth);
         return b.build();
     }
 
