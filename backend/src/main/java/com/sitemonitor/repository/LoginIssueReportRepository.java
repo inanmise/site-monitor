@@ -16,16 +16,23 @@ public interface LoginIssueReportRepository extends JpaRepository<LoginIssueRepo
     @Query("""
             SELECT r FROM LoginIssueReport r
              WHERE (:status IS NULL OR r.status = :status)
+               AND (:source   IS NULL OR r.source = :source)
+               AND (:category IS NULL OR r.category = :category)
                AND (:since  IS NULL OR r.reportedAt >= :since)
                AND (:until  IS NULL OR r.reportedAt <= :until)
                AND (:q IS NULL OR LOWER(r.message) LIKE :q OR LOWER(r.errorText) LIKE :q OR LOWER(r.username) LIKE :q)
              ORDER BY r.reportedAt DESC
             """)
     Page<LoginIssueReport> findFiltered(@Param("status") String status,
+                                        @Param("source") String source,
+                                        @Param("category") String category,
                                         @Param("q") String q,
                                         @Param("since") String since,
                                         @Param("until") String until,
                                         Pageable pageable);
+
+    /** Günlük özet (digest) — verilen andan beri gelen kaynak bazlı bildirimler, en yeni önce. */
+    List<LoginIssueReport> findBySourceAndReportedAtGreaterThanEqualOrderByReportedAtDesc(String source, String since);
 
     /** Durum kırılımı (opsiyonel tarih aralığı) — sayaç kartları için. */
     @Query("""

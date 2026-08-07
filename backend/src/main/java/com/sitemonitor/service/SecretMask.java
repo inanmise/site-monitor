@@ -68,6 +68,19 @@ public final class SecretMask {
         return out;
     }
 
+    /** URL query-string'i ve serbest metin içindeki hassas parametre DEĞERLERİNİ maskeler —
+     *  sorun-bildirimi otomatik bağlamı (URL, hata metni/stack) için. Parametre ADI hassas
+     *  kalıba uyarsa (EN+TR: password/parola/sifre/token/secret/otp/pin/key...) değeri {@link #MASK} olur;
+     *  yol ve zararsız parametreler görünür kalır (tanı değeri korunur). */
+    private static final Pattern QUERY_SENSITIVE = Pattern.compile(
+            "(?i)([?&#][^=&#\\s]*(?:password|passwd|parola|sifre|şifre|secret|token|api_?key|private_?key|"
+            + "credential|session_?id|jsessionid|otp|pin|mfa|verification_?code|auth)[^=&#\\s]*=)[^&#\\s]*");
+
+    public static String maskUrlQuery(String text) {
+        if (text == null || text.isEmpty()) return text;
+        return QUERY_SENSITIVE.matcher(text).replaceAll("$1" + MASK);
+    }
+
     /** JDBC URL'e gömülü kimlik bilgilerini maskeler; host/port/db görünür kalır. */
     public static String maskJdbcUrl(String url) {
         if (url == null || url.isBlank()) return "(ayarsız)";

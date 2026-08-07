@@ -65,7 +65,7 @@ class LoginIssueControllerTest {
 
     @Test
     void list_returnsCountsAndData() throws Exception {
-        when(loginIssueService.list(any(), any(), any(), any(), anyInt(), anyInt())).thenReturn(Page.empty());
+        when(loginIssueService.list(any(), any(), any(), any(), any(), any(), anyInt(), anyInt())).thenReturn(Page.empty());
         when(loginIssueService.counts(any(), any())).thenReturn(Map.of("OPEN", 2L, "IN_PROGRESS", 1L, "RESOLVED", 0L));
         mvc.perform(get("/api/admin/login-issues").session(authed()))
                 .andExpect(status().isOk())
@@ -141,7 +141,7 @@ class LoginIssueControllerTest {
         r.setResolvedAt("2026-07-24T11:30:00"); r.setResolvedBy("admin");   // liste satırında çözülme tarihi
         // 80+ karakter + iç boşluklar → özet 80'de kırpılır, "\s+" tek boşluğa iner, "…" eklenir.
         r.setMessage("Satır1\n\n  çok    boşluklu   ve uzun bir mesaj " + "x".repeat(90));
-        when(loginIssueService.list(any(), any(), any(), any(), anyInt(), anyInt()))
+        when(loginIssueService.list(any(), any(), any(), any(), any(), any(), anyInt(), anyInt()))
                 .thenReturn(new org.springframework.data.domain.PageImpl<>(List.of(r)));
         when(loginIssueService.counts(any(), any())).thenReturn(Map.of("OPEN", 1L, "IN_PROGRESS", 0L, "RESOLVED", 0L));
 
@@ -155,8 +155,10 @@ class LoginIssueControllerTest {
                 .andExpect(jsonPath("$.data[0].messageSummary", org.hamcrest.Matchers.not(org.hamcrest.Matchers.containsString("\n"))))
                 .andExpect(jsonPath("$.total").value(1));
 
-        // q/since/status request param'ları servise iletilir.
-        verify(loginIssueService).list(eq("RESOLVED"), eq("locked"), eq("2026-07-01T00:00:00"), any(), anyInt(), anyInt());
+        // q/since/status request param'ları servise iletilir (source/category filtresi yok → null).
+        verify(loginIssueService).list(eq("RESOLVED"), org.mockito.ArgumentMatchers.isNull(),
+                org.mockito.ArgumentMatchers.isNull(), eq("locked"),
+                eq("2026-07-01T00:00:00"), any(), anyInt(), anyInt());
     }
 
     @Test

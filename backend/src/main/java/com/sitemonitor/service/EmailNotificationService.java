@@ -681,6 +681,123 @@ public class EmailNotificationService {
         return new LoginIssueMailResult(status, currentFrom(), subject, html);
     }
 
+    /** Uygulama içi ekran çökmesi (ErrorBoundary) otomatik bildirimi — Sistem Yöneticisi E-postası'na gider.
+     *  Login sorun bildiriminden farkı: kullanıcı oturum içindedir, görsel yoktur, hata metni stack trace'tir. */
+    public LoginIssueMailResult sendClientErrorReport(String to, String refCode, String username,
+                                       String errorText, String message,
+                                       String clientIp, String userAgent, String reportedAt, boolean force) {
+        StringBuilder sb = new StringBuilder(simpleFrameOpen(640));
+        sb.append("<h2 style='color:#b91c1c;margin:0 0 12px;font-size:20px'>🐞 Uygulama Hatası Bildirimi</h2>")
+          .append("<p style='margin:0 0 14px'>Uygulama içinde bir ekran hatası (çökme) yakalandı ve otomatik olarak bildirildi:</p>")
+          .append("<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' style='border-collapse:collapse;font-size:14px'>")
+          .append(adminRow("Referans Numarası", "<strong>" + escHtml(refCode) + "</strong>"))
+          .append(adminRow("Kullanıcı", "<strong>" + escHtml(username) + "</strong>"))
+          .append(adminRow("Bildirim Zamanı", escHtml(formatIso(reportedAt))))
+          .append(adminRow("IP Adresi", escHtml(clientIp != null ? clientIp : "—")))
+          .append(adminRow("Tarayıcı", escHtml(userAgent != null ? userAgent : "—")))
+          .append("</table>");
+        sb.append("<div style='margin:16px 0 0;padding:12px 14px;border:1px solid #e5e7eb;border-radius:8px'>")
+          .append("<div style='font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:#6b7280;margin:0 0 6px'>Sayfa / Bağlam</div>")
+          .append("<div style='font-size:14px;line-height:1.6;white-space:pre-wrap'>").append(escHtml(message)).append("</div></div>");
+        if (errorText != null && !errorText.isBlank()) {
+            sb.append("<div style='margin:16px 0 0;padding:12px 14px;border:1px solid #e5e7eb;border-radius:8px'>")
+              .append("<div style='font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:#6b7280;margin:0 0 6px'>Hata Ayrıntısı (Stack)</div>")
+              .append("<div style='font-family:Consolas,\"Courier New\",monospace;font-size:12px;line-height:1.5;white-space:pre-wrap;word-break:break-word'>")
+              .append(escHtml(errorText)).append("</div></div>");
+        }
+        sb.append("<p style='font-size:13px;color:#64748b;margin:16px 0 0'>Bu bildirim uygulamanın hata yakalayıcısı (ErrorBoundary) tarafından otomatik gönderilmiştir; kullanıcı ayrıca bir açıklama girmemiştir.</p>")
+          .append(simpleFrameClose());
+        String html = sb.toString();
+        String subject = "[Site Monitor] 🐞 Uygulama Hatası — " + refCode +
+                (username != null && !username.isBlank() ? " · " + username : "");
+        String status = sendHtml(new String[]{ to }, null, subject, html, List.of(), force);
+        return new LoginIssueMailResult(status, currentFrom(), subject, html);
+    }
+
+    /** Kullanıcı-tetiklemeli sorun bildirimi (USER_REPORT) — Sistem Yöneticisi'ne. Alarm DEĞİL:
+     *  nötr ton, kullanıcının açıklaması odakta; otomatik bağlam ayrı blokta. Görseller CID inline. */
+    public LoginIssueMailResult sendUserIssueReport(String to, String refCode, String username, String reporterEmail,
+                                       String category, String message, String errorText, String linkedReference,
+                                       String tabKey, String appVersion, List<InlineImage> images,
+                                       String clientIp, String userAgent, String reportedAt, boolean force) {
+        List<InlineImage> inline = images != null ? images : List.of();
+        StringBuilder sb = new StringBuilder(simpleFrameOpen(640));
+        sb.append("<h2 style='color:#1d4ed8;margin:0 0 12px;font-size:20px'>📝 Sorun Bildirimi</h2>")
+          .append("<p style='margin:0 0 14px'>Bir kullanıcı uygulama içinden sorun bildirdi:</p>")
+          .append("<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' style='border-collapse:collapse;font-size:14px'>")
+          .append(adminRow("Referans Numarası", "<strong>" + escHtml(refCode) + "</strong>"))
+          .append(adminRow("Kullanıcı", "<strong>" + escHtml(username) + "</strong>"));
+        if (reporterEmail != null && !reporterEmail.isBlank()) sb.append(adminRow("E-posta", escHtml(reporterEmail)));
+        if (category != null && !category.isBlank()) sb.append(adminRow("Önem", escHtml(labelForCategory(category))));
+        if (tabKey != null && !tabKey.isBlank()) sb.append(adminRow("Ekran/Sekme", escHtml(tabKey)));
+        if (appVersion != null && !appVersion.isBlank()) sb.append(adminRow("Uygulama Sürümü", escHtml(appVersion)));
+        if (linkedReference != null && !linkedReference.isBlank())
+            sb.append(adminRow("Bağlı Çökme Kaydı", escHtml(linkedReference)));
+        sb.append(adminRow("Bildirim Zamanı", escHtml(formatIso(reportedAt))))
+          .append(adminRow("IP Adresi", escHtml(clientIp != null ? clientIp : "—")))
+          .append(adminRow("Tarayıcı", escHtml(userAgent != null ? userAgent : "—")))
+          .append("</table>");
+        sb.append("<div style='margin:16px 0 0;padding:12px 14px;border:1px solid #e5e7eb;border-radius:8px'>")
+          .append("<div style='font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:#6b7280;margin:0 0 6px'>Kullanıcının Açıklaması</div>")
+          .append("<div style='font-size:14px;line-height:1.6;white-space:pre-wrap'>").append(escHtml(message)).append("</div></div>");
+        if (errorText != null && !errorText.isBlank()) {
+            sb.append("<div style='margin:16px 0 0;padding:12px 14px;border:1px solid #e5e7eb;border-radius:8px'>")
+              .append("<div style='font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:#6b7280;margin:0 0 6px'>Ekrandaki Hata</div>")
+              .append("<div style='font-family:Consolas,\"Courier New\",monospace;font-size:12px;line-height:1.5;white-space:pre-wrap;word-break:break-word'>")
+              .append(escHtml(errorText)).append("</div></div>");
+        }
+        if (!inline.isEmpty()) {
+            sb.append("<div style='margin:16px 0 0'>")
+              .append("<div style='font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:#6b7280;margin:0 0 6px'>Ekran Görüntüleri (")
+              .append(inline.size()).append(")</div>");
+            int i = 1;
+            for (InlineImage img : inline) {
+                sb.append("<div style='margin:0 0 10px'><img src='cid:").append(escHtml(img.cid()))
+                  .append("' alt='Ekran görüntüsü ").append(i++)
+                  .append("' width='592' style='max-width:100%;width:592px;height:auto;border:1px solid #e5e7eb;border-radius:8px;display:block' /></div>");
+            }
+            sb.append("</div>");
+        }
+        sb.append("<p style='font-size:13px;color:#64748b;margin:16px 0 0'>Ayrıntılı otomatik bağlam (tema/dil/son başarısız istekler) Yönetim &gt; Sorun Bildirimleri ekranındadır.</p>")
+          .append(simpleFrameClose());
+        String html = sb.toString();
+        String subject = "[Site Monitor] 📝 Sorun Bildirimi — " + refCode +
+                (username != null && !username.isBlank() ? " · " + username : "");
+        String status = sendHtml(new String[]{ to }, null, subject, html, inline, force);
+        return new LoginIssueMailResult(status, currentFrom(), subject, html);
+    }
+
+    private static String labelForCategory(String category) {
+        return switch (category) {
+            case "BLOCKER"    -> "Engelliyor";
+            case "ANNOYANCE"  -> "Rahatsız ediyor";
+            case "SUGGESTION" -> "Öneri";
+            default           -> category;
+        };
+    }
+
+    /** Günlük özet (digest) — {@code site.monitor.issue-reports.daily-digest} açıkken tekil mailler yerine
+     *  son 24 saatin USER_REPORT bildirimleri tek mailde. Satır başına referans + kullanıcı + özet. */
+    public LoginIssueMailResult sendIssueDigest(String to, List<Map<String, String>> items, String periodLabel, boolean force) {
+        StringBuilder sb = new StringBuilder(simpleFrameOpen(640));
+        sb.append("<h2 style='color:#1d4ed8;margin:0 0 12px;font-size:20px'>📝 Sorun Bildirimleri — Günlük Özet</h2>")
+          .append("<p style='margin:0 0 14px'>").append(escHtml(periodLabel)).append(" döneminde ")
+          .append(items.size()).append(" bildirim alındı:</p>")
+          .append("<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' style='border-collapse:collapse;font-size:13px'>");
+        for (Map<String, String> it : items) {
+            sb.append(adminRow(escHtml(it.getOrDefault("refCode", "—")),
+                    "<strong>" + escHtml(it.getOrDefault("username", "—")) + "</strong> · "
+                    + escHtml(it.getOrDefault("summary", ""))));
+        }
+        sb.append("</table>")
+          .append("<p style='font-size:13px;color:#64748b;margin:16px 0 0'>Ayrıntılar Yönetim &gt; Sorun Bildirimleri ekranındadır.</p>")
+          .append(simpleFrameClose());
+        String html = sb.toString();
+        String subject = "[Site Monitor] 📝 Sorun Bildirimleri Özeti — " + items.size() + " yeni bildirim";
+        String status = sendHtml(new String[]{ to }, null, subject, html, List.of(), force);
+        return new LoginIssueMailResult(status, currentFrom(), subject, html);
+    }
+
     /** Bildiren kişiye "alındı" onayı — admin'e gidenle BENZER içerik (hata mesajı + görseller) +
      *  referans numarası. Best-effort (asla fırlatmaz). */
     public LoginIssueMailResult sendLoginIssueAck(String to, String refCode, String username, String errorText, String message,

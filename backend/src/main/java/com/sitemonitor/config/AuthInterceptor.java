@@ -33,7 +33,10 @@ public class AuthInterceptor implements HandlerInterceptor {
             // Login hero istatistikleri — yalnız iki toplam sayı (hedef adedi + erişilebilirlik %), detay yok.
             "/api/public-stats",
             // Login "sorun bildir" — kullanıcı giremediği için auth'suz; IP rate-limit + uzunluk sınırı içeride.
-            "/api/login-help");
+            "/api/login-help",
+            // ErrorBoundary otomatik çökme bildirimi — çökme login öncesi de olabilir; oturum varsa
+            // kullanıcı adı içeride okunur. IP rate-limit + uzunluk sınırı içeride.
+            "/api/client-error-report");
 
     /** Endpoints a user with mustChangePassword=true is still allowed to call. */
     private static final Set<String> FORCED_CHANGE_WHITELIST = Set.of(

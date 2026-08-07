@@ -35,9 +35,18 @@ function localDayToUtcIso(dateStr, endOfDay) {
          `T${p(dt.getUTCHours())}:${p(dt.getUTCMinutes())}:${p(dt.getUTCSeconds())}`
 }
 
+// Kaynak → rozet etiketi/rengi. LOGIN mavi-nötr, CLIENT_ERROR amber (otomatik çökme), USER_REPORT yeşil-nötr.
+const SOURCE_STYLE = {
+  LOGIN:        { bg: '#e0e7ff', color: '#3730a3' },
+  CLIENT_ERROR: { bg: '#fef3c7', color: '#b45309' },
+  USER_REPORT:  { bg: '#dcfce7', color: '#15803d' },
+}
+
 /**
- * Login Sorun Bildirimleri — admin triyaj ekranı. Public /api/login-help akışından DB'ye yazılan
- * kayıtları listeler; İşleme Al / Çözümlendi (zorunlu not) / Yeniden Aç durum akışını yönetir.
+ * Sorun Bildirimleri — admin triyaj ekranı. ÜÇ kaynağı tek yerde toplar: login "sorun bildir"
+ * (public /api/login-help), ErrorBoundary otomatik çökme bildirimi (/api/client-error-report) ve
+ * oturum içi kullanıcı bildirimi (/api/issue-reports). İşleme Al / Çözümlendi (zorunlu not) /
+ * Yeniden Aç durum akışını yönetir; imza bazlı gruplama triyajı hızlandırır.
  * Yalnız issues.login-reports iznine sahip kullanıcıya AdminSettings'te görünür. Mevcut CSS sınıfları.
  */
 export default function LoginIssueReports() {
@@ -49,6 +58,9 @@ export default function LoginIssueReports() {
   const [rows, setRows] = useState(null)       // null = yükleniyor
   const [counts, setCounts] = useState({ OPEN: 0, IN_PROGRESS: 0, RESOLVED: 0 })
   const [statusFilter, setStatusFilter] = useState('OPEN')  // '' = tümü
+  const [sourceFilter, setSourceFilter] = useState('')      // '' = tümü | LOGIN | CLIENT_ERROR | USER_REPORT
+  const [categoryFilter, setCategoryFilter] = useState('')  // '' = tümü | BLOCKER | ANNOYANCE | SUGGESTION
+  const [grouped, setGrouped] = useState(false)             // imza bazlı gruplama (triyaj görünümü)
   const [q, setQ] = useState('')               // hata mesajı / açıklama / kullanıcı içinde arama
   const [since, setSince] = useState('')       // bildirim tarihi >= (yerel gün)
   const [until, setUntil] = useState('')       // bildirim tarihi <= (yerel gün)
@@ -65,6 +77,8 @@ export default function LoginIssueReports() {
     if (!allowView) { setRows([]); return }   // izin yoksa 403 fetch + toast tetikleme
     const res = await api.admin.getLoginIssues({
       status: statusFilter || undefined,
+      source: sourceFilter || undefined,
+      category: categoryFilter || undefined,
       q: q.trim() || undefined,
       since: localDayToUtcIso(since, false),
       until: localDayToUtcIso(until, true),
@@ -73,11 +87,11 @@ export default function LoginIssueReports() {
     if (res?.success) { setRows(res.data || []); setTotal(res.total || 0); setCounts(res.counts || counts) }
     else toast.error(res?.error || t('settings.loadError'))
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [statusFilter, q, since, until, page, size, allowView])
+  }, [statusFilter, sourceFilter, categoryFilter, q, since, until, page, size, allowView])
 
   useEffect(() => { load() }, [load])
   // Filtre/boyut değişince ilk sayfaya dön (page load'ı tekrar tetikler; zaten 0 ise load dep'lerden fırlar).
-  useEffect(() => { setPage(0) }, [statusFilter, q, since, until, size])
+  useEffect(() => { setPage(0) }, [statusFilter, sourceFilter, categoryFilter, q, since, until, size])
 
   async function openDetail(id) {
     setOpenMail(null)
@@ -138,9 +152,28 @@ export default function LoginIssueReports() {
         ))}
       </div>
 
-      <div className="ldap-actions" style={{ margin: '10px 0' }}>
+      <div className="ldap-actions" style={{ margin: '10px 0', display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' }}>
         <button className={`btn btn-secondary btn-sm-p${statusFilter === '' ? ' active' : ''}`}
           onClick={() => setStatusFilter('')}>{t('loginIssues.filterAll')}</button>
+        {/* Kaynak filtresi — üç akış tek ekranda; boş = tümü */}
+        {['', 'LOGIN', 'CLIENT_ERROR', 'USER_REPORT'].map((s) => (
+          <button key={s || 'all'}
+            className={`btn btn-secondary btn-sm-p${sourceFilter === s ? ' active' : ''}`}
+            onClick={() => setSourceFilter(s)}>
+            {t(s ? 'loginIssues.source' + sourcePascal(s) : 'loginIssues.sourceAll')}
+          </button>
+        ))}
+        <select className="filter-input" value={categoryFilter} onChange={(e) => setCategoryFilter(e.target.value)}
+          style={{ padding: '4px 8px' }} aria-label={t('issue.category')}>
+          <option value="">{t('loginIssues.categoryAll')}</option>
+          <option value="BLOCKER">{t('issue.catBlocker')}</option>
+          <option value="ANNOYANCE">{t('issue.catAnnoyance')}</option>
+          <option value="SUGGESTION">{t('issue.catSuggestion')}</option>
+        </select>
+        <button className={`btn btn-secondary btn-sm-p${grouped ? ' active' : ''}`}
+          onClick={() => setGrouped((g) => !g)} title={t('loginIssues.groupHint')}>
+          {t('loginIssues.groupBySignature')}
+        </button>
       </div>
 
       {/* Arama (hata mesajı / açıklama / kullanıcı) + bildirim tarihi aralığı */}
@@ -161,12 +194,41 @@ export default function LoginIssueReports() {
 
       {rows.length === 0 ? (
         <div className="empty-state">{t('loginIssues.empty')}</div>
+      ) : grouped ? (
+        /* İmza bazlı gruplama — aynı hata imzası kaç kullanıcıda, kaç kez (triyaj görünümü).
+           Yalnız yüklü sayfa gruplanır; geniş kapsam için sayfa boyutunu büyüt. */
+        <div className="admin-table-wrap">
+          <table className="admin-table">
+            <thead>
+              <tr>
+                <th>{t('loginIssues.colSignature')}</th>
+                <th>{t('loginIssues.colGroupCount')}</th>
+                <th>{t('loginIssues.colGroupUsers')}</th>
+                <th>{t('loginIssues.colSource')}</th>
+                <th>{t('loginIssues.colReportedAt')}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {groupBySignature(rows).map((g) => (
+                <tr key={g.sig} onClick={() => openDetail(g.latestId)} style={{ cursor: 'pointer' }}
+                    title={t('loginIssues.groupOpenHint')}>
+                  <td style={{ fontFamily: 'monospace', fontSize: 12.5, wordBreak: 'break-all' }}>{g.sig || '—'}</td>
+                  <td>{g.count}</td>
+                  <td>{g.users.join(', ')}</td>
+                  <td>{g.sources.map((s) => <SourceBadge key={s} source={s} t={t} />)}</td>
+                  <td style={{ whiteSpace: 'nowrap' }}>{fmtDate(g.latestAt)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       ) : (
         <div className="admin-table-wrap">
           <table className="admin-table">
             <thead>
               <tr>
                 <th>{t('loginIssues.colRef')}</th>
+                <th>{t('loginIssues.colSource')}</th>
                 <th>{t('loginIssues.colMessage')}</th>
                 <th>{t('loginIssues.colUser')}</th>
                 <th>{t('loginIssues.colIp')}</th>
@@ -180,7 +242,15 @@ export default function LoginIssueReports() {
               {rows.map((r) => (
                 <tr key={r.id} onClick={() => openDetail(r.id)} style={{ cursor: 'pointer' }}>
                   <td>{r.refCode}</td>
-                  <td>{r.messageSummary}</td>
+                  <td><SourceBadge source={r.source} t={t} />
+                    {r.linkedReference &&
+                      <div style={{ fontSize: 11, color: 'var(--text-light,#64748b)' }} title={t('loginIssues.linkedRefHint')}>
+                        ⇄ {r.linkedReference}</div>}
+                  </td>
+                  <td>{r.messageSummary}
+                    {r.category &&
+                      <div style={{ fontSize: 11, color: 'var(--text-light,#64748b)' }}>{categoryLabel(r.category, t)}</div>}
+                  </td>
                   <td>{r.username || '—'}</td>
                   <td>{r.ipAddress || '—'}</td>
                   <td style={{ whiteSpace: 'nowrap' }}>{fmtDate(r.reportedAt)}</td>
@@ -215,10 +285,16 @@ export default function LoginIssueReports() {
             {/* Meta — sabit 2 kolon (etiket:değer); auto-fit grid kaymasını önler */}
             <div style={{ display: 'grid', gridTemplateColumns: 'max-content 1fr', columnGap: 16, rowGap: 6,
               alignItems: 'baseline', margin: '4px 0 14px' }}>
+              <b>{t('loginIssues.colSource')}</b><span><SourceBadge source={detail.source} t={t} />
+                {detail.category && <span style={{ marginLeft: 8 }}>{categoryLabel(detail.category, t)}</span>}</span>
               <b>{t('loginIssues.colUser')}</b><span>{detail.username || '—'}</span>
               <b>{t('loginIssues.colEmail')}</b><span>{detail.reporterEmail || '—'}</span>
               <b>{t('loginIssues.colReportedAt')}</b><span>{fmtDate(detail.reportedAt)}</span>
               <b>{t('loginIssues.colIp')}</b><span>{detail.ipAddress || '—'}</span>
+              {detail.appVersion && (<><b>{t('issue.autoVersion')}</b><span>v{detail.appVersion}</span></>)}
+              {detail.tabKey && (<><b>{t('loginIssues.tabKey')}</b><span>{detail.tabKey}</span></>)}
+              {detail.screenSize && (<><b>{t('issue.autoScreen')}</b><span>{detail.screenSize}</span></>)}
+              {detail.linkedReference && (<><b>{t('loginIssues.linkedRef')}</b><span>{detail.linkedReference}</span></>)}
             </div>
 
             {detail.errorText && (
@@ -255,6 +331,17 @@ export default function LoginIssueReports() {
               <div style={{ marginTop: 10 }}>
                 <div style={{ fontWeight: 700, fontSize: '.9em', marginBottom: 4 }}>{t('loginIssues.userAgent')}</div>
                 <div style={{ fontSize: 12, color: 'var(--text-light,#64748b)', wordBreak: 'break-all' }}>{detail.userAgent}</div>
+              </div>
+            )}
+
+            {/* Otomatik toplanan bağlamın tamamı (USER_REPORT) — tema/dil/son başarısız istekler vb. */}
+            {detail.autoContextJson && (
+              <div style={{ marginTop: 10 }}>
+                <div style={{ fontWeight: 700, fontSize: '.9em', marginBottom: 4 }}>{t('loginIssues.autoContext')}</div>
+                <pre style={{ whiteSpace: 'pre-wrap', fontFamily: 'monospace', fontSize: 12, lineHeight: 1.5,
+                  background: 'var(--bg,#f8fafc)', border: '1px solid var(--border,#e5e7eb)', borderRadius: 6,
+                  padding: '8px 10px', margin: 0, maxHeight: 220, overflow: 'auto' }}>
+                  {prettyJson(detail.autoContextJson)}</pre>
               </div>
             )}
 
@@ -400,7 +487,55 @@ function mailTypeLabel(type, t) {
   if (type === 'REPORT_ADMIN') return t('loginIssues.mailTypeReport')
   if (type === 'REPORTER_ACK') return t('loginIssues.mailTypeAck')
   if (type === 'RESOLVED') return t('loginIssues.mailTypeResolved')
+  if (type === 'CLIENT_ERROR_ADMIN') return t('loginIssues.mailTypeClientError')
+  if (type === 'USER_REPORT_ADMIN') return t('loginIssues.mailTypeUserReport')
+  if (type === 'DIGEST') return t('loginIssues.mailTypeDigest')
   return type || '—'
+}
+
+function sourcePascal(s) {
+  if (s === 'CLIENT_ERROR') return 'ClientError'
+  if (s === 'USER_REPORT') return 'UserReport'
+  return 'Login'
+}
+
+function categoryLabel(c, t) {
+  if (c === 'BLOCKER') return t('issue.catBlocker')
+  if (c === 'ANNOYANCE') return t('issue.catAnnoyance')
+  if (c === 'SUGGESTION') return t('issue.catSuggestion')
+  return c || ''
+}
+
+function SourceBadge({ source, t }) {
+  const s = source || 'LOGIN'
+  const st = SOURCE_STYLE[s] || SOURCE_STYLE.LOGIN
+  return (
+    <span style={{ display: 'inline-block', padding: '1px 8px', borderRadius: 999,
+      fontSize: 12, fontWeight: 600, background: st.bg, color: st.color }}>
+      {t('loginIssues.source' + sourcePascal(s))}
+    </span>
+  )
+}
+
+/** Sayfa içi imza gruplaması — signature backend'ten gelir (LoginIssueController.signatureOf). */
+function groupBySignature(rows) {
+  const map = new Map()
+  for (const r of rows) {
+    const sig = r.signature || ''
+    if (!map.has(sig)) map.set(sig, { sig, count: 0, users: new Set(), sources: new Set(), latestAt: '', latestId: r.id })
+    const g = map.get(sig)
+    g.count++
+    if (r.username) g.users.add(r.username)
+    g.sources.add(r.source || 'LOGIN')
+    if (!g.latestAt || (r.reportedAt || '') > g.latestAt) { g.latestAt = r.reportedAt || ''; g.latestId = r.id }
+  }
+  return [...map.values()]
+    .map((g) => ({ ...g, users: [...g.users], sources: [...g.sources] }))
+    .sort((a, b) => b.count - a.count)
+}
+
+function prettyJson(s) {
+  try { return JSON.stringify(JSON.parse(s), null, 2) } catch { return s }
 }
 
 // Mail gövdesindeki cid:shotN görsel referanslarını raporun kayıtlı data-URL'leriyle değiştirir — böylece

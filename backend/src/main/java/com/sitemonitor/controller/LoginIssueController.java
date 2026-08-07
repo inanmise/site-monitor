@@ -53,6 +53,8 @@ public class LoginIssueController {
     @GetMapping
     public ResponseEntity<Map<String, Object>> list(
             @RequestParam(required = false) String status,
+            @RequestParam(required = false) String source,   // LOGIN | CLIENT_ERROR | USER_REPORT
+            @RequestParam(required = false) String category, // BLOCKER | ANNOYANCE | SUGGESTION
             @RequestParam(required = false) String q,        // hata mesajı / açıklama / kullanıcı içinde arama
             @RequestParam(required = false) String since,    // bildirim tarihi >= (ISO UTC)
             @RequestParam(required = false) String until,    // bildirim tarihi <= (ISO UTC)
@@ -60,7 +62,7 @@ public class LoginIssueController {
             @RequestParam(defaultValue = "20") int size,
             HttpSession session) {
         requireAccess(session, "view");
-        Page<LoginIssueReport> p = loginIssueService.list(status, q, since, until, page, size);
+        Page<LoginIssueReport> p = loginIssueService.list(status, source, category, q, since, until, page, size);
         List<Map<String, Object>> data = new ArrayList<>();
         for (LoginIssueReport r : p.getContent()) data.add(toListItem(r));
         Map<String, Object> body = new LinkedHashMap<>();
@@ -146,7 +148,24 @@ public class LoginIssueController {
         m.put("resolvedBy", r.getResolvedBy());
         m.put("status", r.getStatus());
         m.put("imageCount", r.getImageCount());
+        m.put("source", r.getSource());
+        m.put("category", r.getCategory());
+        m.put("linkedReference", r.getLinkedReference());
+        // İmza: hata metninin normalize ilk satırı — frontend gruplama bunu anahtar alır.
+        m.put("signature", signatureOf(r));
         return m;
+    }
+
+    /** Gruplama imzası — hata metninin ilk anlamlı satırı (sayı/hex/uuid değişkenliği normalize).
+     *  Hata metni yoksa mesaj özeti kullanılır (USER_REPORT'ta serbest metin gruplanmaz, kendi imzası olur). */
+    static String signatureOf(LoginIssueReport r) {
+        String base = r.getErrorText() != null && !r.getErrorText().isBlank()
+                ? r.getErrorText() : (r.getMessage() != null ? r.getMessage() : "");
+        String first = base.strip().split("\n", 2)[0];
+        return first.replaceAll("[0-9a-fA-F]{8}-[0-9a-fA-F-]{27,}", "<uuid>")
+                    .replaceAll("\\d+", "<n>")
+                    .toLowerCase()
+                    .strip();
     }
 
     /** Detay — tam alanlar + resimler (data-URL). */
@@ -166,6 +185,13 @@ public class LoginIssueController {
         m.put("resolvedAt", r.getResolvedAt());
         m.put("resolutionNote", r.getResolutionNote());
         m.put("imageCount", r.getImageCount());
+        m.put("source", r.getSource());
+        m.put("category", r.getCategory());
+        m.put("appVersion", r.getAppVersion());
+        m.put("screenSize", r.getScreenSize());
+        m.put("tabKey", r.getTabKey());
+        m.put("autoContextJson", r.getAutoContextJson());
+        m.put("linkedReference", r.getLinkedReference());
         List<String> imgs = new ArrayList<>();
         for (LoginIssueReportImage img : loginIssueService.images(r.getId())) {
             imgs.add("data:" + img.getContentType() + ";base64," + img.getDataBase64());

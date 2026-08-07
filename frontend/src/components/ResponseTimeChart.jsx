@@ -80,13 +80,17 @@ export default function ResponseTimeChart({ monitorId, kind }) {
   useEffect(() => { load() }, [load])
 
   const bucket = data?.bucket
-  const chartData = useMemo(() => (data?.series ?? []).map(s => ({
-    ts: s.ts,
-    label: tickLabel(s.ts, bucket),
-    avg: s.avg, min: s.min, max: s.max, p95: s.p95, count: s.count, down: s.down, loss: s.loss,
-    band: (s.min != null && s.max != null) ? [s.min, s.max] : null,
-    downMarker: s.down > 0 ? (s.avg ?? s.max ?? 0) : null,
-  })), [data, bucket])
+  // Savunma katmanı: ts'siz/bozuk kayıtlar (yanlış beslenmiş endpoint vb.) grafiği DEĞİL yalnız
+  // o kaydı düşürür — 2026-08 scripted regresyonunda ham Object[] beslemesi tüm ekranı çökertmişti.
+  const chartData = useMemo(() => (data?.series ?? [])
+    .filter(s => typeof s?.ts === 'string' && s.ts.length > 0)
+    .map(s => ({
+      ts: s.ts,
+      label: tickLabel(s.ts, bucket),
+      avg: s.avg, min: s.min, max: s.max, p95: s.p95, count: s.count, down: s.down, loss: s.loss,
+      band: (s.min != null && s.max != null) ? [s.min, s.max] : null,
+      downMarker: s.down > 0 ? (s.avg ?? s.max ?? 0) : null,
+    })), [data, bucket])
 
   function applyCustom(f, to) {
     setPickFrom(f); setPickTo(to)

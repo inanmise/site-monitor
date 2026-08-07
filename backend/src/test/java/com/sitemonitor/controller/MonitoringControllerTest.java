@@ -514,6 +514,85 @@ class MonitoringControllerTest {
     }
 
     @Test
+    @DisplayName("SÖZLEŞME: TÜM response-series endpoint'leri kova zarfı döner (ham Object[] yasak) + endpoint sayısı kilidi")
+    void responseSeries_contract_allEndpoints() throws Exception {
+        List<Object[]> raw = List.of(
+                new Object[]{ "2026-08-06T10:05:00", 100L, true  },
+                new Object[]{ "2026-08-06T10:25:00", 0L,   false });
+
+        var kw = new com.sitemonitor.model.KeywordMonitor();  kw.setId(1L);
+        var pg = new com.sitemonitor.model.PingMonitor();     pg.setId(1L);
+        var hm = new com.sitemonitor.model.HttpMonitor();     hm.setId(1L);
+        var pm = new com.sitemonitor.model.PageMonitor();     pm.setId(1L);
+        var sm = new com.sitemonitor.model.ScriptedMonitor(); sm.setId(1L);
+
+        // Tür → mock hazırlığı. YENİ monitör türü eklerken buraya bir satır ekle — aşağıdaki
+        // refleksiyon kilidi eklemeyi ZORLAR (2026-08 scripted çökmesi: kopyala-yapıştır ham dönüş).
+        java.util.Map<String, Runnable> specs = new java.util.LinkedHashMap<>();
+        specs.put("keyword",  () -> { when(keywordMonitorRepo.findById(1L)).thenReturn(Optional.of(kw));
+            when(keywordResultRepo.responseSeriesRaw(eq(1L), anyString(), anyString(), anyInt())).thenReturn(raw); });
+        specs.put("ping",     () -> { when(pingMonitorRepo.findById(1L)).thenReturn(Optional.of(pg));
+            when(pingCheckRepo.responseSeriesRaw(eq(1L), anyString(), anyString(), anyInt())).thenReturn(raw); });
+        specs.put("port",     () -> { when(portMonitorRepo.existsById(1L)).thenReturn(true);
+            when(portCheckRepo.responseSeriesRaw(eq(1L), anyString(), anyString(), anyInt())).thenReturn(raw); });
+        specs.put("dns",      () -> { when(dnsMonitorRepo.existsById(1L)).thenReturn(true);
+            when(dnsRecordRepo.responseSeriesRaw(eq(1L), anyString(), anyString(), anyInt())).thenReturn(raw); });
+        specs.put("http",     () -> { when(httpMonitorRepo.findById(1L)).thenReturn(Optional.of(hm));
+            when(httpCheckRepo.responseSeriesRaw(eq(1L), anyString(), anyString(), anyInt())).thenReturn(raw); });
+        specs.put("page",     () -> { when(pageMonitorRepo.findById(1L)).thenReturn(Optional.of(pm));
+            when(pageCheckRepo.responseSeriesRaw(eq(1L), anyString(), anyString(), anyInt())).thenReturn(raw); });
+        specs.put("scripted", () -> { when(scriptedMonitorRepo.findById(1L)).thenReturn(Optional.of(sm));
+            when(scriptedCheckRepo.responseSeriesRaw(eq(1L), anyString(), anyString(), anyInt())).thenReturn(raw); });
+
+        // KİLİT: controller'daki "/response-series" GetMapping sayısı == bu testteki tür sayısı.
+        long mappedCount = java.util.Arrays.stream(MonitoringController.class.getDeclaredMethods())
+                .map(m -> m.getAnnotation(org.springframework.web.bind.annotation.GetMapping.class))
+                .filter(java.util.Objects::nonNull)
+                .flatMap(a -> java.util.Arrays.stream(a.value()))
+                .filter(p -> p.endsWith("/response-series"))
+                .count();
+        org.junit.jupiter.api.Assertions.assertEquals(specs.size(), mappedCount,
+                "Yeni bir response-series endpoint'i eklendi ama bu sözleşme testine eklenmedi. "
+                + "Dönüşü MUTLAKA buildResponseSeries hunisinden geçir ve specs map'ine türünü ekle.");
+
+        for (var e : specs.entrySet()) {
+            e.getValue().run();
+            mvc.perform(get("/api/monitoring/" + e.getKey() + "/1/response-series?days=7").session(session("ADMIN")))
+                    .andExpect(status().isOk())
+                    // Zarf alanları var; series elemanı ham DİZİ değil, ts'li OBJE.
+                    .andExpect(jsonPath("$.data.bucket").value("hour"))
+                    .andExpect(jsonPath("$.data.unit").value("ms"))
+                    .andExpect(jsonPath("$.data.series[0].ts").isString())
+                    .andExpect(jsonPath("$.data.series[0].count").value(2))
+                    .andExpect(jsonPath("$.data.series[0].down").value(1))
+                    // (100+0)/2 — down satırın 0 ms süresi de ortalamaya katılır (mevcut davranış).
+                    .andExpect(jsonPath("$.data.series[0].avg").value(50));
+        }
+    }
+
+    @Test
+    @DisplayName("GET /scripted/{id}/response-series: ham Object[] DEĞİL, ts alanlı kova zarfı döner (2026-08 chart çökme regresyonu)")
+    void scriptedResponseSeries_goesThroughBucketBuilder() throws Exception {
+        com.sitemonitor.model.ScriptedMonitor sm = new com.sitemonitor.model.ScriptedMonitor(); sm.setId(7L);
+        when(scriptedMonitorRepo.findById(7L)).thenReturn(Optional.of(sm));
+        List<Object[]> rows = List.of(
+                new Object[]{ "2026-08-06T21:05:00", 0L,   false },   // bug senaryosu: Hata + 0 ms
+                new Object[]{ "2026-08-06T21:25:00", 340L, true  });
+        when(scriptedCheckRepo.responseSeriesRaw(eq(7L), anyString(), anyString(), anyInt())).thenReturn(rows);
+
+        mvc.perform(get("/api/monitoring/scripted/7/response-series?days=7").session(session("ADMIN")))
+                .andExpect(status().isOk())
+                // Zarf: bucket/unit/capped var; series elemanları DİZİ değil, ts'li OBJE
+                .andExpect(jsonPath("$.data.bucket").value("hour"))
+                .andExpect(jsonPath("$.data.unit").value("ms"))
+                .andExpect(jsonPath("$.data.capped").value(false))
+                .andExpect(jsonPath("$.data.series[0].ts").isString())
+                .andExpect(jsonPath("$.data.series[0].count").value(2))
+                .andExpect(jsonPath("$.data.series[0].down").value(1))
+                .andExpect(jsonPath("$.data.series[0].avg").value(170));
+    }
+
+    @Test
     @DisplayName("GET /ping/{id}/response-series: RTT ortalaması + paket kaybı + down")
     void pingResponseSeries_withLoss() throws Exception {
         com.sitemonitor.model.PingMonitor pm = new com.sitemonitor.model.PingMonitor(); pm.setId(9L);

@@ -69,4 +69,22 @@ class SecretMaskTest {
 
         assertThat(SecretMask.maskJdbcUrl(null)).isEqualTo("(ayarsız)");
     }
+
+    @Test
+    @DisplayName("maskUrlQuery: hassas query param DEĞERLERİ maskelenir (EN+TR adlar); yol ve zararsız paramlar kalır")
+    void maskUrlQuery_masksSensitiveParams() {
+        // URL içinde — token/password/parola maskelenir, tab görünür kalır
+        String a = SecretMask.maskUrlQuery("https://cm/?tab=scripted&token=GIZLI&password=S1&parola=S2&x=1");
+        assertThat(a).contains("tab=scripted").contains("x=1")
+                     .doesNotContain("GIZLI").doesNotContain("S1").doesNotContain("S2");
+
+        // Serbest metin (stack trace) içindeki URL parçası da yakalanır
+        String b = SecretMask.maskUrlQuery("Error: GET /api/x?api_key=KEY99&id=5 failed at line 3");
+        assertThat(b).doesNotContain("KEY99").contains("id=5").contains("failed at line 3");
+
+        // Hassas param yoksa metin aynen korunur; null/boş güvenli
+        assertThat(SecretMask.maskUrlQuery("https://cm/?tab=a&days=7")).isEqualTo("https://cm/?tab=a&days=7");
+        assertThat(SecretMask.maskUrlQuery(null)).isNull();
+        assertThat(SecretMask.maskUrlQuery("")).isEmpty();
+    }
 }

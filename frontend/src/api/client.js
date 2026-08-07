@@ -35,6 +35,18 @@ async function fetchWithTimeout(url, options = {}, timeoutMs = DEFAULT_TIMEOUT_M
   }
 }
 
+// Son başarısız API çağrıları (Sorun Bildir otomatik bağlamı) — yalnız yol + durum kodu + zaman.
+// Gövde/başlık ASLA saklanmaz; query string de atılır (gizlilik). Halka tampon: en yeni 5 kayıt.
+const FAILED_RING_MAX = 5
+const failedRequests = []
+function recordFailure(path, status) {
+  try {
+    failedRequests.push({ path: String(path).split('?')[0], status, at: new Date().toISOString().slice(0, 19) })
+    if (failedRequests.length > FAILED_RING_MAX) failedRequests.shift()
+  } catch { /* yoksay */ }
+}
+export function getRecentFailures() { return [...failedRequests] }
+
 async function request(path, options = {}) {
   // FormData gönderiminde Content-Type'ı tarayıcı belirler (multipart boundary)
   const isForm = options.body instanceof FormData
@@ -54,10 +66,13 @@ async function request(path, options = {}) {
     // çağıran (örn. App.jsx getMe.then) authChecked'i true yapıp login'i gösterir.
     // Diğer ağ hataları mevcut davranışı korur (reject → çağıranın .catch'i).
     if (e?.name === 'AbortError') {
+      recordFailure(path, 0)
       return { success: false, status: 0, error: 'İstek zaman aşımına uğradı — sunucu yanıt vermedi' }
     }
+    recordFailure(path, 0)
     throw e
   }
+  if (!res.ok) recordFailure(path, res.status)
   if (res.status === 401) {
     // Session expired or invalidated (typically: pod restart wiped in-memory
     // sessions). Don't redirect during the initial auth bootstrap or from the
@@ -173,6 +188,10 @@ export const api = {
       return { success: false, status: 0, networkError: true, error: String(e?.message || e?.name || e) }
     }
   },
+
+  // Oturum içi "Sorun Bildir" (USER_REPORT) — kayıt sorun-bildirimleri ekranına düşer + admin maili.
+  // Kimlik sunucuda OTURUMDAN okunur; dto yalnız kullanıcının bilebileceklerini + otomatik bağlamı taşır.
+  sendIssueReport: (dto) => request('/issue-reports', { method: 'POST', body: JSON.stringify(dto) }),
 
   // Hafif oturum geçerlilik yoklaması — süpersede ise 401 → request() otomatik /?session=expired.
   sessionPing: () => request('/session/ping', { timeoutMs: DEFAULT_TIMEOUT_MS }),
@@ -373,6 +392,8 @@ export const api = {
     getLoginIssues: (params = {}) => {
       const qs = new URLSearchParams()
       if (params.status) qs.set('status', params.status)
+      if (params.source) qs.set('source', params.source)
+      if (params.category) qs.set('category', params.category)
       if (params.q) qs.set('q', params.q)
       if (params.since) qs.set('since', params.since)
       if (params.until) qs.set('until', params.until)

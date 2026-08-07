@@ -412,6 +412,17 @@ public class SchedulerService {
         patch("ALTER TABLE domain_checks ADD COLUMN dnssec TEXT");
         patch("ALTER TABLE domain_checks ADD COLUMN resolved_ips TEXT");
         patch("ALTER TABLE domain_checks ADD COLUMN hostnames TEXT");
+        // Sorun bildirimleri genelleştirmesi (2026-08): login_issue_reports artık üç kaynağı taşır
+        // (LOGIN | CLIENT_ERROR | USER_REPORT) + otomatik bağlam alanları. Eski satırlar LOGIN'e backfill edilir.
+        patch("ALTER TABLE login_issue_reports ADD COLUMN source TEXT");
+        patch("UPDATE login_issue_reports SET source = 'LOGIN' WHERE source IS NULL");
+        patch("ALTER TABLE login_issue_reports ADD COLUMN category TEXT");
+        patch("ALTER TABLE login_issue_reports ADD COLUMN app_version TEXT");
+        patch("ALTER TABLE login_issue_reports ADD COLUMN screen_size TEXT");
+        patch("ALTER TABLE login_issue_reports ADD COLUMN tab_key TEXT");
+        patch("ALTER TABLE login_issue_reports ADD COLUMN auto_context_json TEXT");
+        patch("ALTER TABLE login_issue_reports ADD COLUMN linked_reference TEXT");
+        patch("CREATE INDEX IF NOT EXISTS idx_lir_source ON login_issue_reports(source)");
 
         // ── Performans index'leri (sıcak sorgu yolları) — idempotent, PG IF NOT EXISTS ──
         // Tablolar bu noktada Hibernate ddl-auto=update ile oluşmuş durumda.
@@ -1154,6 +1165,49 @@ public class SchedulerService {
             log.error("Haftalık rapor cuma hatırlatması başarısız: {}", e.getMessage(), e);
         } finally {
             releaseSchedulerLock("weekly-report-reminder");
+        }
+    }
+
+    // Sorun bildirimleri günlük özeti — ALAN-enjeksiyon (bilinçli): SchedulerServiceTest manuel
+    // kurucuyu kullanır; kurucu imzasını değiştirmemek için. Cron null-guard'lıdır.
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private LoginIssueMailService loginIssueMailService;
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.repository.LoginIssueReportRepository loginIssueReportRepo;
+
+    /**
+     * Her gün 09:00 Europe/Istanbul — {@code site.monitor.issue-reports.daily-digest} AÇIKKEN
+     * son 24 saatin USER_REPORT sorun bildirimlerini tek özet mailde Sistem Yöneticisi'ne gönderir
+     * (tekil mailler o modda bilinçli atlanır — IssueReportController). HA: scheduler_lock.
+     */
+    @Scheduled(cron = "${site.monitor.issue-reports.digest-cron:0 0 9 * * *}", zone = "Europe/Istanbul")
+    public void scheduledIssueReportDigest() {
+        if (!appSettings.getBoolean("site.monitor.issue-reports.daily-digest", false)) return;
+        if (loginIssueMailService == null || loginIssueReportRepo == null) return;   // manuel-kurulum güvenlik ağı
+        if (!tryAcquireSchedulerLock("issue-report-digest", lockTtlMinutes)) {
+            log.debug("Sorun bildirimi özeti — lock başka pod'da, atlanıyor");
+            return;
+        }
+        try {
+            String adminEmail = appSettings.getString("site.monitor.system-admin.email", "");
+            if (adminEmail == null || adminEmail.isBlank()) return;
+            String since = ISO.format(Instant.now().minus(24, ChronoUnit.HOURS));
+            var reports = loginIssueReportRepo
+                    .findBySourceAndReportedAtGreaterThanEqualOrderByReportedAtDesc("USER_REPORT", since);
+            if (reports.isEmpty()) return;
+            List<Map<String, String>> items = new ArrayList<>();
+            for (var r : reports) {
+                String msg = r.getMessage() != null ? r.getMessage().strip().replaceAll("\\s+", " ") : "";
+                items.add(Map.of(
+                        "refCode", LoginIssueService.refCode(r),
+                        "username", r.getUsername() != null ? r.getUsername() : "—",
+                        "summary", msg.length() > 80 ? msg.substring(0, 80) + "…" : msg));
+            }
+            loginIssueMailService.dispatchDigest(adminEmail, items, "Son 24 saat");
+        } catch (Exception e) {
+            log.error("Sorun bildirimi günlük özeti başarısız: {}", e.getMessage(), e);
+        } finally {
+            releaseSchedulerLock("issue-report-digest");
         }
     }
 
