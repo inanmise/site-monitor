@@ -28,6 +28,10 @@ public final class AppSettingsCatalog {
         new Setting("site.monitor.system-admin.email",           "general",    Type.STRING),
         new Setting("site.monitor.cors.allowed-origins",         "general",    Type.CSV),
         new Setting("site.monitor.login-issues.enabled",         "general",    Type.BOOL),
+        // ErrorBoundary otomatik çökme bildirimi (kayıt + admin maili) — varsayılan AÇIK.
+        new Setting("site.monitor.client-errors.enabled",        "general",    Type.BOOL),
+        // Sorun bildirimlerinde tekil admin maili yerine günlük özet — varsayılan KAPALI.
+        new Setting("site.monitor.issue-reports.daily-digest",   "general",    Type.BOOL),
         // Login provizyonunda müdürü otomatik MANAGER eskalasyon kontağı yapma — varsayılan KAPALI
         // (kullanıcı kararı 2026-08-03); açılırsa D7+ müdürler otomatik eklenir. Mevcut kayıtlar silinmez.
         new Setting("site.monitor.escalation.auto-add-managers", "general",    Type.BOOL),

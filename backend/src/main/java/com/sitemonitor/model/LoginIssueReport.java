@@ -5,7 +5,9 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 /**
- * Login ekranından oturumsuz gönderilen "sorun bildir" kaydı — DB ledger'ı.
+ * Genel "sorun bildirimi" kaydı — DB ledger'ı. Üç kaynaktan beslenir ({@code source}):
+ * LOGIN (login ekranı, oturumsuz), CLIENT_ERROR (ErrorBoundary otomatik çökme bildirimi),
+ * USER_REPORT (oturum içi kullanıcı-tetiklemeli bildirim; otomatik bağlam {@code autoContextJson}'da).
  * Mevcut e-posta akışına EK olarak kalıcıdır; yalnız yetkili adminler görüntüler/çözer.
  * Tüm zaman damgaları ISO-8601 UTC String (proje konvansiyonu; IncidentRecord/AuditLog ile aynı).
  * Ekran görüntüleri ayrı {@link LoginIssueReportImage} satırlarında (base64 TEXT).
@@ -69,4 +71,32 @@ public class LoginIssueReport {
     private String resolutionNote;
 
     private String updatedAt;
+
+    /** Bildirim kaynağı: LOGIN | CLIENT_ERROR | USER_REPORT. Eski satırlar patch ile LOGIN'e çekilir. */
+    @Column(length = 20)
+    private String source = "LOGIN";
+
+    /** Kullanıcının önem algısı (USER_REPORT): BLOCKER | ANNOYANCE | SUGGESTION — opsiyonel. */
+    @Column(length = 30)
+    private String category;
+
+    /** Bildirim anındaki uygulama sürümü (VERSION) — otomatik bağlam. */
+    @Column(length = 30)
+    private String appVersion;
+
+    /** Ekran boyutu ("1920x1080") — otomatik bağlam. */
+    @Column(length = 20)
+    private String screenSize;
+
+    /** Bildirim anındaki aktif sekme anahtarı (?tab=...) — otomatik bağlam. */
+    @Column(length = 50)
+    private String tabKey;
+
+    /** Otomatik toplanan bağlamın tamamı (JSON; maskelenmiş) — tema/dil/UA/son başarısız API çağrıları vb. */
+    @Column(columnDefinition = "TEXT")
+    private String autoContextJson;
+
+    /** ErrorBoundary otomatik kaydının referansı (LIR-...) — kullanıcı aynı çökmeye bağlam eklediğinde bağ kurar. */
+    @Column(length = 30)
+    private String linkedReference;
 }

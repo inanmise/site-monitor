@@ -127,18 +127,46 @@ class LoginIssueServiceTest {
     }
 
     @Test
-    @DisplayName("list: q '%küçükharf%'e sarılır (message/errorText/username); status null'a düşer; NPE yok")
+    @DisplayName("list: q '%küçükharf%'e sarılır; status/source/category geçersizse null'a düşer; NPE yok")
     void list_wrapsQueryAndNullStatus() {
-        when(reportRepo.findFiltered(any(), any(), any(), any(), any()))
+        when(reportRepo.findFiltered(any(), any(), any(), any(), any(), any(), any()))
                 .thenReturn(org.springframework.data.domain.Page.empty());
-        assertThat(service.list(null, null, null, null, 0, 20)).isNotNull();
-        assertThat(service.list("BOGUS", "  ", null, null, 0, 20)).isNotNull();   // geçersiz status + boş q → null
-        service.list("OPEN", "  Locked ", "2026-07-01T00:00:00", "2026-07-31T23:59:59", 1, 50);
-        // status geçer; q → "%locked%"; since/until iletilir
-        verify(reportRepo).findFiltered(eq("OPEN"), eq("%locked%"),
+        assertThat(service.list(null, null, null, null, null, null, 0, 20)).isNotNull();
+        // geçersiz status + geçersiz source/category + boş q → hepsi null'a düşer
+        assertThat(service.list("BOGUS", "HACK", "WRONG", "  ", null, null, 0, 20)).isNotNull();
+        service.list("OPEN", "USER_REPORT", "BLOCKER", "  Locked ", "2026-07-01T00:00:00", "2026-07-31T23:59:59", 1, 50);
+        // status/source/category geçer; q → "%locked%"; since/until iletilir
+        verify(reportRepo).findFiltered(eq("OPEN"), eq("USER_REPORT"), eq("BLOCKER"), eq("%locked%"),
                 eq("2026-07-01T00:00:00"), eq("2026-07-31T23:59:59"), any());
-        // İlk iki çağrı (null + BOGUS/boş-q) status ve q'yu null'a düşürür → NPE atmadan çalıştı (isNotNull).
-        verify(reportRepo, times(2)).findFiltered(isNull(), isNull(), isNull(), isNull(), any());
+        // İlk iki çağrı tüm filtreleri null'a düşürür → NPE atmadan çalıştı (isNotNull).
+        verify(reportRepo, times(2)).findFiltered(isNull(), isNull(), isNull(), isNull(), isNull(), isNull(), any());
+    }
+
+    @Test
+    @DisplayName("save(meta): source/category/otomatik bağlam alanları + linkedReference kaydedilir")
+    void save_withMeta_persistsSourceAndContext() {
+        when(reportRepo.save(any())).thenAnswer(inv -> { LoginIssueReport r = inv.getArgument(0); r.setId(9L); return r; });
+        LoginIssueService.ReportMeta meta = new LoginIssueService.ReportMeta(
+                "USER_REPORT", "BLOCKER", "20.1.0", "1920x1080", "scripted",
+                "{\"theme\":\"dark\"}", "LIR-2026-000077");
+        LoginIssueReport saved = service.save("N1", "u@x.com", "err", "msg", List.of(),
+                "10.0.0.1", "UA", "2026-08-06T20:00:00", meta);
+        assertThat(saved.getSource()).isEqualTo("USER_REPORT");
+        assertThat(saved.getCategory()).isEqualTo("BLOCKER");
+        assertThat(saved.getAppVersion()).isEqualTo("20.1.0");
+        assertThat(saved.getScreenSize()).isEqualTo("1920x1080");
+        assertThat(saved.getTabKey()).isEqualTo("scripted");
+        assertThat(saved.getAutoContextJson()).contains("dark");
+        assertThat(saved.getLinkedReference()).isEqualTo("LIR-2026-000077");
+    }
+
+    @Test
+    @DisplayName("save (eski imza): kaynak varsayılanı LOGIN — login-help akışı meta bilmez")
+    void save_legacySignature_defaultsToLoginSource() {
+        when(reportRepo.save(any())).thenAnswer(inv -> { LoginIssueReport r = inv.getArgument(0); r.setId(9L); return r; });
+        LoginIssueReport saved = service.save("N1", "u@x.com", null, "msg", List.of(),
+                "10.0.0.1", "UA", "2026-08-06T20:00:00");
+        assertThat(saved.getSource()).isEqualTo("LOGIN");
     }
 
     @Test

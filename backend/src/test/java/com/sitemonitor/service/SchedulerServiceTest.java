@@ -777,4 +777,40 @@ class SchedulerServiceTest {
                 .containsKey("last_run");
         assertThat(snap.get("running")).isEqualTo(false);
     }
+
+    @Test
+    @DisplayName("issueReportDigest: ayar KAPALIYKEN (varsayılan) hiçbir şey yapılmaz")
+    void issueReportDigest_disabledByDefault_noop() {
+        var mail = org.mockito.Mockito.mock(LoginIssueMailService.class);
+        var repo = org.mockito.Mockito.mock(com.sitemonitor.repository.LoginIssueReportRepository.class);
+        org.springframework.test.util.ReflectionTestUtils.setField(scheduler, "loginIssueMailService", mail);
+        org.springframework.test.util.ReflectionTestUtils.setField(scheduler, "loginIssueReportRepo", repo);
+
+        scheduler.scheduledIssueReportDigest();
+
+        org.mockito.Mockito.verifyNoInteractions(mail, repo);
+    }
+
+    @Test
+    @DisplayName("issueReportDigest: ayar AÇIK + son 24s USER_REPORT var → tek özet mail dispatch edilir")
+    void issueReportDigest_enabled_dispatchesSummary() {
+        when(appSettings.getBoolean("site.monitor.issue-reports.daily-digest", false)).thenReturn(true);
+        when(appSettings.getString("site.monitor.system-admin.email", "")).thenReturn("admin@x.com");
+        var mail = org.mockito.Mockito.mock(LoginIssueMailService.class);
+        var repo = org.mockito.Mockito.mock(com.sitemonitor.repository.LoginIssueReportRepository.class);
+        org.springframework.test.util.ReflectionTestUtils.setField(scheduler, "loginIssueMailService", mail);
+        org.springframework.test.util.ReflectionTestUtils.setField(scheduler, "loginIssueReportRepo", repo);
+        com.sitemonitor.model.LoginIssueReport r = new com.sitemonitor.model.LoginIssueReport();
+        r.setId(5L); r.setReportedAt("2026-08-07T01:00:00"); r.setUsername("N1"); r.setMessage("özet mesajı");
+        when(repo.findBySourceAndReportedAtGreaterThanEqualOrderByReportedAtDesc(eq("USER_REPORT"), anyString()))
+                .thenReturn(java.util.List.of(r));
+
+        scheduler.scheduledIssueReportDigest();
+
+        verify(mail).dispatchDigest(eq("admin@x.com"),
+                org.mockito.ArgumentMatchers.argThat((java.util.List<Map<String, String>> items) ->
+                        items.size() == 1 && "LIR-2026-000005".equals(items.get(0).get("refCode"))
+                        && "N1".equals(items.get(0).get("username"))),
+                anyString());
+    }
 }

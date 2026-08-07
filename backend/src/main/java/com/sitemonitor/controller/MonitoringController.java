@@ -2340,7 +2340,10 @@ public class MonitoringController {
         var deny = denyIfNotViewable(session, mon.getTeamId());
         if (deny != null) return deny;
         String[] range = resolveRange(from, to, days);
-        return ok(Map.of("series", scriptedCheckRepo.responseSeriesRaw(id, range[0], range[1], 2000)));
+        // Diğer 6 türle aynı huni: ham [ts, durationMs, ok] satırları buildResponseSeries'ten geçer.
+        // Ham Object[] dönüşü frontend'te s.ts=undefined yapıp ResponseTimeChart'ı çökertiyordu.
+        return ok(buildResponseSeries(scriptedCheckRepo.responseSeriesRaw(id, range[0], range[1], SERIES_RAW_CAP),
+                range[0], range[1], false));
     }
 
     // ── Senaryo yardımcıları ──────────────────────────────────────────────────

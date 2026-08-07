@@ -36,6 +36,12 @@ public class LoginIssueMailService {
     public static final String REPORT_ADMIN = "REPORT_ADMIN";
     public static final String REPORTER_ACK = "REPORTER_ACK";
     public static final String RESOLVED = "RESOLVED";
+    /** Uygulama içi çökme (ErrorBoundary) otomatik bildirimi — admin'e. */
+    public static final String CLIENT_ERROR_ADMIN = "CLIENT_ERROR_ADMIN";
+    /** Kullanıcı-tetiklemeli sorun bildirimi — admin'e. */
+    public static final String USER_REPORT_ADMIN = "USER_REPORT_ADMIN";
+    /** Günlük özet — admin'e (daily-digest açıkken). */
+    public static final String DIGEST = "DIGEST";
 
     private static final DateTimeFormatter ISO =
             DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
@@ -57,6 +63,42 @@ public class LoginIssueMailService {
                 adminTo, refCode, username, reporterEmail, errorText, message, images, clientIp, userAgent, reportedAt, force));
         log.info("Login sorun bildirimi {} admin maili → {} ({})", refCode, adminTo, res.status());
         saveLog(reportId, refCode, REPORT_ADMIN, adminTo, null, res, force);
+    }
+
+    /** Uygulama içi çökme (ErrorBoundary) otomatik bildirimi — sistem yöneticisine. Ack maili yoktur
+     *  (bildirimi kullanıcı değil uygulama gönderir); kayıt aynı sorun-bildirimi ekranına düşer. */
+    @Async("loginIssueMailExecutor")
+    public void dispatchClientError(Long reportId, String refCode, String adminTo, String username,
+                                    String errorText, String message, String clientIp, String userAgent, String reportedAt) {
+        boolean force = forceEmail();
+        LoginIssueMailResult res = send(() -> emailService.sendClientErrorReport(
+                adminTo, refCode, username, errorText, message, clientIp, userAgent, reportedAt, force));
+        log.info("Uygulama hatası bildirimi {} admin maili → {} ({})", refCode, adminTo, res.status());
+        saveLog(reportId, refCode, CLIENT_ERROR_ADMIN, adminTo, null, res, force);
+    }
+
+    /** Kullanıcı-tetiklemeli sorun bildirimi (USER_REPORT) — sistem yöneticisine. */
+    @Async("loginIssueMailExecutor")
+    public void dispatchUserReport(Long reportId, String refCode, String adminTo, String username, String reporterEmail,
+                                   String category, String message, String errorText, String linkedReference,
+                                   String tabKey, String appVersion, List<InlineImage> images,
+                                   String clientIp, String userAgent, String reportedAt) {
+        boolean force = forceEmail();
+        LoginIssueMailResult res = send(() -> emailService.sendUserIssueReport(
+                adminTo, refCode, username, reporterEmail, category, message, errorText, linkedReference,
+                tabKey, appVersion, images, clientIp, userAgent, reportedAt, force));
+        log.info("Sorun bildirimi {} admin maili → {} ({})", refCode, adminTo, res.status());
+        saveLog(reportId, refCode, USER_REPORT_ADMIN, adminTo, null, res, force);
+    }
+
+    /** Günlük özet — digest cron'undan çağrılır (SchedulerService); tekil rapor kaydına bağlı değildir. */
+    @Async("loginIssueMailExecutor")
+    public void dispatchDigest(String adminTo, List<java.util.Map<String, String>> items, String periodLabel) {
+        boolean force = forceEmail();
+        LoginIssueMailResult res = send(() -> emailService.sendIssueDigest(adminTo, items, periodLabel, force));
+        log.info("Sorun bildirimleri günlük özeti → {} ({} kayıt, {})", adminTo, items.size(), res.status());
+        // reportId=0 sentinel: digest tek kayda bağlı değil; kolon NOT NULL (soft-FK, kısıt yok).
+        saveLog(0L, "DIGEST", DIGEST, adminTo, null, res, force);
     }
 
     /** Bildirene "alındı" onayı. */

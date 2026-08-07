@@ -6,9 +6,10 @@ import {
   LayoutDashboard, AlertTriangle, FileText,
   RefreshCw, ClipboardList, Settings, User, Globe, LogOut, Lock,
   Sun, Moon, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Server, Activity, ShieldAlert, BarChart3, Bell, BookOpen,
-  Wifi, Network, Search, TrendingDown, Database, UserCheck, ShieldCheck, CalendarDays, ListChecks, Target, Radio, Siren, Wrench, LifeBuoy, ScanSearch, FlaskConical,
+  Wifi, Network, Search, TrendingDown, Database, UserCheck, ShieldCheck, CalendarDays, ListChecks, Target, Radio, Siren, Wrench, LifeBuoy, ScanSearch, FlaskConical, Bug,
 } from 'lucide-react'
 import BrandLogo from './BrandLogo.jsx'
+import IssueReportModal from './IssueReportModal.jsx'
 import { useBranding } from '../contexts/BrandingProvider.jsx'
 import { usePermissions } from '../contexts/PermissionsProvider.jsx'
 
@@ -21,6 +22,7 @@ export default function Nav({ activeTab, onTabChange, username, teamName, system
   const isAdmin     = systemRole === 'ADMIN'
   const isTeamAdmin = systemRole === 'TEAM_ADMIN'
   const isAudit     = systemRole === 'AUDIT'
+  const [issueOpen, setIssueOpen] = useState(false)   // kalıcı "Sorun Bildir" modalı
   // Faz 3b: global-only sekmeler yalnız global admin'e; scoped müdür (ADMIN) görmez.
   const isGlobalAdmin = !!globalAdmin
 
@@ -292,6 +294,17 @@ export default function Nav({ activeTab, onTabChange, username, teamName, system
           </div>,
           document.body
         )}
+        {/* Kalıcı "Sorun Bildir" girişi — çökme OLMAYAN sorunlar için (yanlış veri, yavaşlık,
+            görsel bozukluk). Çökme durumunda ErrorBoundary kendi butonunu gösterir. */}
+        <button
+          className="sb-logout"
+          onClick={() => setIssueOpen(true)}
+          title={!open ? t('nav.reportIssue') : undefined}
+        >
+          <Bug size={15} />
+          {open && <span>{t('nav.reportIssue')}</span>}
+        </button>
+        <IssueReportModal open={issueOpen} onClose={() => setIssueOpen(false)} />
         <button
           className="sb-logout"
           onClick={toggleTheme}

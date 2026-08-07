@@ -46,10 +46,23 @@ public class LoginIssueService {
     /** Ayrıştırılmış görsel — data-URL prefix'i çıkarılmış ham base64. */
     public record ParsedImage(String contentType, String base64) {}
 
-    /** Public "sorun bildir" akışından kalıcı kayıt (resimlerle). Kaydedilen entity döner (refCode için). */
+    /** Kaynak + otomatik bağlam meta'sı — LOGIN akışı için {@link #META_LOGIN} yeterli. */
+    public record ReportMeta(String source, String category, String appVersion, String screenSize,
+                             String tabKey, String autoContextJson, String linkedReference) {}
+    public static final ReportMeta META_LOGIN = new ReportMeta("LOGIN", null, null, null, null, null, null);
+
+    /** Public "sorun bildir" akışından kalıcı kayıt (resimlerle) — kaynak LOGIN. Geriye dönük imza. */
     @Transactional
     public LoginIssueReport save(String username, String reporterEmail, String errorText, String message,
                                  List<ParsedImage> images, String ip, String userAgent, String reportedAt) {
+        return save(username, reporterEmail, errorText, message, images, ip, userAgent, reportedAt, META_LOGIN);
+    }
+
+    /** Genel kayıt — tüm kaynaklar (LOGIN / CLIENT_ERROR / USER_REPORT). Kaydedilen entity döner (refCode için). */
+    @Transactional
+    public LoginIssueReport save(String username, String reporterEmail, String errorText, String message,
+                                 List<ParsedImage> images, String ip, String userAgent, String reportedAt,
+                                 ReportMeta meta) {
         LoginIssueReport r = new LoginIssueReport();
         r.setReportedAt(reportedAt != null && !reportedAt.isBlank() ? reportedAt : nowIso());
         r.setUsername(trimTo(username, 100));
@@ -60,6 +73,15 @@ public class LoginIssueService {
         r.setUserAgent(blankToNull(userAgent));
         r.setStatus(OPEN);
         r.setImageCount(images != null ? images.size() : 0);
+        if (meta != null) {
+            r.setSource(meta.source() != null ? meta.source() : "LOGIN");
+            r.setCategory(blankToNull(meta.category()));
+            r.setAppVersion(trimTo(meta.appVersion(), 30));
+            r.setScreenSize(trimTo(meta.screenSize(), 20));
+            r.setTabKey(trimTo(meta.tabKey(), 50));
+            r.setAutoContextJson(blankToNull(meta.autoContextJson()));
+            r.setLinkedReference(trimTo(meta.linkedReference(), 30));
+        }
         LoginIssueReport saved = reportRepo.save(r);
         if (images != null) {
             for (ParsedImage img : images) {
@@ -73,14 +95,22 @@ public class LoginIssueService {
         return saved;
     }
 
+    /** Geçerli kaynaklar — dışarıdan gelen filtre değeri bu kümede değilse yok sayılır. */
+    public static final Set<String> SOURCES = Set.of("LOGIN", "CLIENT_ERROR", "USER_REPORT");
+    /** Kullanıcı önem algısı seçenekleri (USER_REPORT). */
+    public static final Set<String> CATEGORIES = Set.of("BLOCKER", "ANNOYANCE", "SUGGESTION");
+
     @Transactional(readOnly = true)
-    public Page<LoginIssueReport> list(String status, String q, String since, String until, int page, int size) {
+    public Page<LoginIssueReport> list(String status, String source, String category,
+                                       String q, String since, String until, int page, int size) {
         // NOT: Set.of(...).contains(null) NPE atar → önce null kontrolü (status yoksa "tümü").
         String st = (status != null && STATUSES.contains(status)) ? status : null;
+        String src = (source != null && SOURCES.contains(source)) ? source : null;
+        String cat = (category != null && CATEGORIES.contains(category)) ? category : null;
         // q → "%küçükharf%" (message + errorText + username LIKE); boş → null (filtre kapalı). IncidentService deseni.
         String like = (q != null && !q.isBlank()) ? "%" + q.trim().toLowerCase() + "%" : null;
         Pageable pageable = PageRequest.of(Math.max(0, page), clampSize(size));
-        return reportRepo.findFiltered(st, like, blankToNull(since), blankToNull(until), pageable);
+        return reportRepo.findFiltered(st, src, cat, like, blankToNull(since), blankToNull(until), pageable);
     }
 
     @Transactional(readOnly = true)

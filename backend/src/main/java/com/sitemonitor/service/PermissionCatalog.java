@@ -77,7 +77,10 @@ public final class PermissionCatalog {
         r("maintenance.manage", "maintenance", EDIT),
         r("maintenance.delete", "maintenance", EXECUTE, Set.of(EXECUTE)),
 
-        // ── Login Sorun Bildirimleri (admin triyaj; kendi grubu) ──
+        // ── Sorun Bildirimleri (admin triyaj; kendi grubu) ──
+        // NOT: anahtar tarihsel olarak "login-reports" — ekran 2026-08'de TÜM kaynakları
+        // (LOGIN | CLIENT_ERROR | USER_REPORT) kapsayan "Sorun Bildirimleri"ne genelleştirildi.
+        // Anahtar bilinçli korunuyor: rename mevcut grant'leri kaybettirir (bootstrap seed'i yeniden koşmaz).
         r("issues.login-reports", "issues", VIEW),   // listeleme/görüntüleme
         r("issues.login-reports", "issues", EDIT),   // durum değiştirme (İşleme Al / Çözümlendi / Yeniden Aç)
 
