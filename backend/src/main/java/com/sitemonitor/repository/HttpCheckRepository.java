@@ -1,6 +1,8 @@
 package com.sitemonitor.repository;
 
 import com.sitemonitor.model.HttpCheck;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -9,6 +11,19 @@ import java.util.List;
 import java.util.Optional;
 
 public interface HttpCheckRepository extends JpaRepository<HttpCheck, Long> {
+
+    // ── Kontrol Geçmişi v2: server-side sayfalı aralık + hata filtresi + yoğunluk histogramı ──
+    Page<HttpCheck> findByMonitorIdAndCheckedAtBetween(Long monitorId, String from, String to, Pageable p);
+    Page<HttpCheck> findByMonitorIdAndOkFalseAndCheckedAtBetween(Long monitorId, String from, String to, Pageable p);
+    long countByMonitorIdAndCheckedAtBetween(Long monitorId, String from, String to);
+    long countByMonitorIdAndOkFalseAndCheckedAtBetween(Long monitorId, String from, String to);
+
+    /** Yoğunluk şeridi: [bucketKey, toplam, hata] — SUBSTRING prefix kovası (dakika 16 / saat 13 / gün 10). */
+    @Query("SELECT SUBSTRING(c.checkedAt,1,:len), COUNT(c), SUM(CASE WHEN c.ok = false THEN 1L ELSE 0L END) "
+         + "FROM HttpCheck c WHERE c.monitorId = :id AND c.checkedAt >= :from AND c.checkedAt <= :to "
+         + "GROUP BY SUBSTRING(c.checkedAt,1,:len) ORDER BY SUBSTRING(c.checkedAt,1,:len)")
+    List<Object[]> historyHistogram(@Param("id") Long id, @Param("from") String from,
+                                    @Param("to") String to, @Param("len") int len);
     List<HttpCheck> findByMonitorIdOrderByCheckedAtDesc(Long monitorId);
     Optional<HttpCheck> findTopByMonitorIdOrderByCheckedAtDesc(Long monitorId);
 

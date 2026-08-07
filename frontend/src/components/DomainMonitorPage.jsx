@@ -18,6 +18,7 @@ import { duplicateName } from '../utils/duplicateName.js'
 import AlertHistory from './admin/AlertHistory.jsx'
 import DomainRegistrationTab from './DomainRegistrationTab.jsx'
 import MonitorStatsBar from './MonitorStatsBar.jsx'
+import CheckHistoryTab from './history/CheckHistoryTab.jsx'
 import DomainExpiryTrace from './DomainExpiryTrace.jsx'
 const MonitorNotes = lazy(() => import('./MonitorNotes.jsx'))
 
@@ -69,9 +70,6 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName }) {
   const [loading, setLoading] = useState(true)
   const [teams, setTeams] = useState([])
   const [selected, setSelected] = useState(null)
-  const [history, setHistory] = useState([])
-  const [historyLoading, setHistoryLoading] = useState(false)
-  const [rangeDays, setRangeDays] = useState(30)
   const [modal, setModal] = useState(null)          // 'new' | monitor | null
   const [dupSource, setDupSource] = useState(null)  // Kopyala akışında kaynak monitör (rozet/ipucu için)
   const [form, setForm] = useState(emptyForm)
@@ -130,15 +128,8 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName }) {
     // monitor paramı artık kalıcı (useUrlQuerySync yazar/siler) — eski replaceState temizliği kaldırıldı.
   }, [monitors]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  async function loadHistory(id, days = rangeDays) {
-    setHistoryLoading(true)
-    const res = await api.monitoring.getDomainHistory(id, { days })
-    if (res?.success) setHistory(res.data?.checks ?? [])
-    setHistoryLoading(false)
-  }
-  function selectRange(id, days) { setRangeDays(days); loadHistory(id, days) }
-  function openDetail(m) { setSelected(m); setHistory([]); setDetailTab('control'); loadHistory(m.id, rangeDays) }
-  function closeDetail() { setSelected(null); setHistory([]) }
+  function openDetail(m) { setSelected(m); setDetailTab('control') }
+  function closeDetail() { setSelected(null) }
 
   function openNew() {
     setTestResult(null); setDupSource(null)
@@ -303,9 +294,6 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName }) {
   }, [scoped, statFilter, sortBy])
 
   // Sayfalama filtrelenmiş listenin ÜZERİNE; sayaç/istatistikler tam listeden hesaplanmaya devam eder.
-  // Geçmiş modalı sayfalaması — modal yenilemesi history referansını değiştirir; sayfa korunur.
-  const histPager = usePagination(history, { listKey: 'domain-history' })
-
   const pager = usePagination(displayMonitors, {
     listKey: 'domain-monitors', resetDeps: [search, teamFilter, groupFilter, statFilter, sortBy],
     initialPage: readUrlInt('page', 1), initialSize: readUrlInt('ps', null),
@@ -323,7 +311,7 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName }) {
     ps: (pager.pageSize !== 50 || pager.page > 1) ? pager.pageSize : null,
     monitor: selected?.id ?? null,
     mtab: selected && detailTab !== 'control' ? detailTab : null,
-    range: selected && rangeDays !== 30 ? rangeDays : null,
+    // range/hfrom/hto/hst artık CheckHistoryTab'ın kendi URL senkronunda
   })
 
   const statItems = [
@@ -497,7 +485,7 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName }) {
             )}
             <div className="upt-modal-divider" />
             <div className="modal-tabs">
-              <button className={`modal-tab${detailTab === 'control' ? ' active' : ''}`} onClick={() => setDetailTab('control')}>{t('dom.tabControl')}</button>
+              <button className={`modal-tab${detailTab === 'control' ? ' active' : ''}`} onClick={() => setDetailTab('control')}>{t('hist.tab')}</button>
               <button className={`modal-tab${detailTab === 'registration' ? ' active' : ''}`} onClick={() => setDetailTab('registration')}>{t('dom.tabRegistration')}</button>
               <button className={`modal-tab${detailTab === 'alerts' ? ' active' : ''}`} onClick={() => setDetailTab('alerts')}>{t('dom.tabAlerts')}</button>
               <button className={`modal-tab${detailTab === 'notes' ? ' active' : ''}`} onClick={() => setDetailTab('notes')}>{t('dom.tabGuide')}</button>
@@ -511,40 +499,23 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName }) {
                   </button>
                 </div>
               )}
-              <div className="upt-range-btns">
-                {[7, 30, 90, 365].map(d => (
-                  <button key={d} type="button" className={`btn btn-sm ${rangeDays === d ? 'btn-primary' : 'btn-secondary'}`}
-                    onClick={() => selectRange(selected.id, d)}>{t(`dom.range${d}`)}</button>
-                ))}
-              </div>
-              {historyLoading ? <div className="upt-modal-loading">...</div> : history.length === 0 ? (
-                <div className="upt-modal-loading">{t('dom.noData')}</div>
-              ) : (
-                <div className="upt-rt-list">
-                  <div className="upt-rt-grid dom-rt-grid upt-rt-head">
-                    <span>{t('dom.colTime')}</span><span>{t('dom.colSource')}</span><span>{t('dom.colExpiry')}</span>
-                    <span>{t('dom.daysLeft')}</span><span>{t('dom.colStatus')}</span><span>{t('dom.registrar')}</span><span>{t('dom.colIps')}</span>
-                  </div>
-                  {histPager.pageItems.map((c, i) => {
-                    const cDays = c.days_remaining ?? c.daysRemaining
-                    const cExp = c.expiry_date || c.expiryDate
-                    const cAt = c.checked_at || c.checkedAt
-                    const cIps = (Array.isArray(c.resolved_ips) ? c.resolved_ips : String(c.resolved_ips ?? c.resolvedIps ?? '').split(',')).map(s => String(s).trim()).filter(Boolean)
-                    return (
-                    <div key={`${cAt || ''}#${i}`} className="upt-rt-grid dom-rt-grid">
-                      <span className="upt-rt-time">{formatDateSec(cAt)}</span>
-                      <span>{sourceTag(c.source, c.whois_provider || c.whoisProvider) || '—'}</span>
-                      <span>{fmtExpiry(cExp)}</span>
-                      <span style={{ color: daysColor(cDays), fontWeight: 600 }}>{cDays ?? '—'}</span>
-                      <span className={`dom-st dom-st--${statusCls(c.status)}`}>{statusLabel(c.status)}{c.changed ? ' ⚑' : ''}</span>
-                      <span title={c.registrar} style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{c.registrar || (c.error ? c.error : '—')}</span>
-                      <span title={cIps.join(', ')} style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{cIps.length ? cIps.join(', ') : '—'}</span>
-                    </div>
-                    )
-                  })}
-                  <PaginationBar {...histPager} compact />
-                </div>
-              )}
+              <CheckHistoryTab kind="domain" monitorId={selected.id} listKey="domain-history"
+                presets={[7, 30, 90, 365]} defaultPreset={30} gridClass="dom-rt-grid"
+                columns={[t('dom.colTime'), t('dom.colSource'), t('dom.colExpiry'),
+                  t('dom.daysLeft'), t('dom.colStatus'), t('dom.registrar'), t('dom.colIps')]}
+                renderRow={(c) => {
+                  const cDays = c.days_remaining
+                  const cIps = (Array.isArray(c.resolved_ips) ? c.resolved_ips : String(c.resolved_ips ?? '').split(',')).map(s => String(s).trim()).filter(Boolean)
+                  return (<>
+                    <span className="upt-rt-time">{formatDateSec(c.checked_at)}</span>
+                    <span>{sourceTag(c.source, c.whois_provider) || '—'}</span>
+                    <span>{fmtExpiry(c.expiry_date)}</span>
+                    <span style={{ color: daysColor(cDays), fontWeight: 600 }}>{cDays ?? '—'}</span>
+                    <span className={`dom-st dom-st--${statusCls(c.status)}`}>{statusLabel(c.status)}{c.changed ? ' ⚑' : ''}</span>
+                    <span title={c.registrar} style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{c.registrar || (c.error ? c.error : '—')}</span>
+                    <span title={cIps.join(', ')} style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{cIps.length ? cIps.join(', ') : '—'}</span>
+                  </>)
+                }} />
             </>)}
 
             {detailTab === 'registration' && <DomainRegistrationTab monitor={selected} />}

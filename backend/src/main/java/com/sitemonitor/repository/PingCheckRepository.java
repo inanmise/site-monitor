@@ -1,6 +1,8 @@
 package com.sitemonitor.repository;
 
 import com.sitemonitor.model.PingCheck;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -9,6 +11,20 @@ import java.util.List;
 import java.util.Optional;
 
 public interface PingCheckRepository extends JpaRepository<PingCheck, Long> {
+
+    // ── Kontrol Geçmişi v2: server-side sayfalı aralık + hata filtresi + yoğunluk histogramı ──
+    Page<PingCheck> findByMonitorIdAndCheckedAtBetween(Long monitorId, String from, String to, Pageable p);
+    Page<PingCheck> findByMonitorIdAndUpFalseAndCheckedAtBetween(Long monitorId, String from, String to, Pageable p);
+    long countByMonitorIdAndCheckedAtBetween(Long monitorId, String from, String to);
+    long countByMonitorIdAndUpFalseAndCheckedAtBetween(Long monitorId, String from, String to);
+
+    /** Yoğunluk şeridi: [bucketKey, toplam, hata] — ISO string sözlüksel=kronolojik olduğundan
+     *  SUBSTRING prefix'i dakika(16)/saat(13)/gün(10) kovası üretir; satırlar JVM'e taşınmaz. */
+    @Query("SELECT SUBSTRING(c.checkedAt,1,:len), COUNT(c), SUM(CASE WHEN c.up = false THEN 1L ELSE 0L END) "
+         + "FROM PingCheck c WHERE c.monitorId = :id AND c.checkedAt >= :from AND c.checkedAt <= :to "
+         + "GROUP BY SUBSTRING(c.checkedAt,1,:len) ORDER BY SUBSTRING(c.checkedAt,1,:len)")
+    List<Object[]> historyHistogram(@Param("id") Long id, @Param("from") String from,
+                                    @Param("to") String to, @Param("len") int len);
     List<PingCheck> findByMonitorIdOrderByCheckedAtDesc(Long monitorId);
     Optional<PingCheck> findTopByMonitorIdOrderByCheckedAtDesc(Long monitorId);
 

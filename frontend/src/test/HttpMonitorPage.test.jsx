@@ -5,12 +5,14 @@ import HttpMonitorPage from '../components/HttpMonitorPage.jsx'
 vi.mock('../api/client', () => ({
   formatDate:    (s) => s ?? '',
   formatDateSec: (s) => s ?? '',
+  formatDateOnly: (s) => s ?? '',
   api: {
     monitoring: {
       listGroups:        vi.fn(() => Promise.resolve({ success: true, data: [] })),
       monitorDefaults:   vi.fn(() => Promise.resolve({ success: true, data: { http: {} } })),
       getHttpMonitors:   vi.fn(),
-      getHttpHistory:    vi.fn(),
+      getCheckHistory:    vi.fn(),
+      getCheckHistoryCsvUrl: vi.fn(() => '#'),
       createHttpMonitor: vi.fn(),
       updateHttpMonitor: vi.fn(),
       deleteHttpMonitor: vi.fn(),
@@ -32,7 +34,9 @@ describe('HttpMonitorPage', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     api.monitoring.getHttpMonitors.mockResolvedValue({ success: true, data: [monitor] })
-    api.monitoring.getHttpHistory.mockResolvedValue({ success: true, data: { checks: [], total: 0, down: 0 } })
+    api.monitoring.getCheckHistory.mockResolvedValue({ success: true, data: {
+      items: [], counts: { total: 0, fail: 0 }, buckets: [], alerts: [],
+      range: { from: '2026-01-01T00:00:00', to: '2026-01-02T00:00:00' }, total: 0, page: 0, size: 50 } })
     api.monitoring.listGroups.mockResolvedValue({ success: true, data: [] })
     api.monitoring.monitorDefaults.mockResolvedValue({ success: true, data: { http: {} } })
     api.admin.getTeams.mockResolvedValue({ success: true, data: [{ id: 5, name: 'SY-A' }] })
@@ -130,7 +134,7 @@ describe('HttpMonitorPage', () => {
       render(<HttpMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
       await waitFor(() => expect(api.monitoring.getHttpMonitors).toHaveBeenCalled())
       // Detay modalı listede görünürlüğe bağlı DEĞİL — ham monitors.find ile açılır.
-      expect(await screen.findByRole('button', { name: /^Checks$|^Kontrol$/ })).toBeInTheDocument()
+      expect(await screen.findByRole('button', { name: /check history|kontrol geçmişi/i })).toBeInTheDocument()
       expect(screen.getAllByText('https://m120.example.com/').length).toBeGreaterThan(0)
     } finally {
       window.history.replaceState({}, '', '/')
@@ -166,7 +170,7 @@ describe('HttpMonitorPage', () => {
     window.history.replaceState({}, '', '/?tab=http&monitor=1')
     try {
       render(<HttpMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
-      expect(await screen.findByRole('button', { name: /^Checks$|^Kontrol$/ })).toBeInTheDocument()   // modal açık
+      expect(await screen.findByRole('button', { name: /check history|kontrol geçmişi/i })).toBeInTheDocument()   // modal açık
       await waitFor(() => expect(window.location.search).toContain('monitor=1'), { timeout: 1500 })
     } finally { window.history.replaceState({}, '', '/') }
   })

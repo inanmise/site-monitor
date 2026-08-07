@@ -20,6 +20,7 @@ import CopyLinkButton from './ui/CopyLinkButton.jsx'
 import PaginationBar from './ui/PaginationBar.jsx'
 import AlertHistory from './admin/AlertHistory.jsx'
 import MonitorStatsBar from './MonitorStatsBar.jsx'
+import CheckHistoryTab from './history/CheckHistoryTab.jsx'
 const ResponseTimeChart = lazy(() => import('./ResponseTimeChart.jsx'))
 const MonitorNotes = lazy(() => import('./MonitorNotes.jsx'))
 
@@ -67,10 +68,7 @@ export default function HttpMonitorPage({ systemRole, teamId, teamName }) {
   const [loading, setLoading] = useState(true)
   const [teams, setTeams] = useState([])
   const [selected, setSelected] = useState(null)
-  const [history, setHistory] = useState([])
-  const [historyLoading, setHistoryLoading] = useState(false)
-  const [rangeDays, setRangeDays] = useState(1)
-  const [summary, setSummary] = useState({ total: 0, down: 0 })
+  const [summary, setSummary] = useState({ total: 0, down: 0 })   // CheckHistoryTab onCounts besler
   const [modal, setModal] = useState(null)          // 'new' | monitor | null
   const [dupSource, setDupSource] = useState(null)  // Kopyala akışında kaynak monitör (rozet/ipucu için)
   const [form, setForm] = useState(emptyForm)
@@ -128,18 +126,8 @@ export default function HttpMonitorPage({ systemRole, teamId, teamName }) {
     // monitor paramı artık kalıcı (useUrlQuerySync yazar/siler) — eski replaceState temizliği kaldırıldı.
   }, [monitors]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  async function loadHistory(id, days = rangeDays) {
-    setHistoryLoading(true)
-    const res = await api.monitoring.getHttpHistory(id, { days })
-    if (res?.success) {
-      setHistory(res.data?.checks ?? [])
-      setSummary({ total: res.data?.total ?? 0, down: res.data?.down ?? 0 })
-    }
-    setHistoryLoading(false)
-  }
-  function selectRange(id, days) { setRangeDays(days); histPager.setPage(1); loadHistory(id, days) }
-  function openDetail(m) { setSelected(m); setHistory([]); histPager.setPage(1); setDetailTab('control'); loadHistory(m.id, rangeDays) }
-  function closeDetail() { setSelected(null); setHistory([]) }
+  function openDetail(m) { setSelected(m); setSummary({ total: 0, down: 0 }); setDetailTab('control') }
+  function closeDetail() { setSelected(null) }
 
   function openNew() {
     setTestResult(null); setDupSource(null)
@@ -307,7 +295,7 @@ export default function HttpMonitorPage({ systemRole, teamId, teamName }) {
     ps: (pager.pageSize !== 50 || pager.page > 1) ? pager.pageSize : null,
     monitor: selected?.id ?? null,
     mtab: selected && detailTab !== 'control' ? detailTab : null,
-    range: selected && rangeDays !== 1 ? rangeDays : null,
+    // range/hfrom/hto/hst artık CheckHistoryTab'ın kendi URL senkronunda
   })
 
   const statItems = [
@@ -320,8 +308,6 @@ export default function HttpMonitorPage({ systemRole, teamId, teamName }) {
   ]
   const onStatClick = (key) => setStatFilter(k => k === key ? null : key)
 
-  // Geçmiş modalı sayfalaması — 30 sn modal yenilemesi history referansını değiştirir; sayfa korunur.
-  const histPager = usePagination(history, { listKey: 'http-history' })
   const toggleStats = () => { if (statsVisible) setStatFilter(null); setStatsVisible(v => !v) }
 
   function cardClass(m) {
@@ -494,40 +480,25 @@ export default function HttpMonitorPage({ systemRole, teamId, teamName }) {
                 <span>{[selected.check_ssl_errors && t('http.checkSslErrors'), selected.ssl_expiry_reminders && t('http.sslExpiryReminders'), selected.domain_expiry_reminders && t('http.domainExpiryReminders')].filter(Boolean).join(' · ') || t('http.none')}</span></div>
             </div>
             <div className="modal-tabs">
-              <button className={`modal-tab${detailTab === 'control' ? ' active' : ''}`} onClick={() => setDetailTab('control')}>{t('http.tabControl')}</button>
+              <button className={`modal-tab${detailTab === 'control' ? ' active' : ''}`} onClick={() => setDetailTab('control')}>{t('hist.tab')}</button>
               <button className={`modal-tab${detailTab === 'alerts' ? ' active' : ''}`} onClick={() => setDetailTab('alerts')}>{t('http.tabAlerts')}</button>
               <button className={`modal-tab${detailTab === 'chart' ? ' active' : ''}`} onClick={() => setDetailTab('chart')}>{t('http.tabChart')}</button>
               <button className={`modal-tab${detailTab === 'notes' ? ' active' : ''}`} onClick={() => setDetailTab('notes')}>{t('http.tabGuide')}</button>
             </div>
 
-            {detailTab === 'control' && (<>
-              <div className="upt-range-btns">
-                {[1, 7, 15, 30].map(d => (
-                  <button key={d} type="button" className={`btn btn-sm ${rangeDays === d ? 'btn-primary' : 'btn-secondary'}`}
-                    onClick={() => selectRange(selected.id, d)}>{t(`http.range${d}d`)}</button>
-                ))}
-              </div>
-              {historyLoading ? <div className="upt-modal-loading">...</div> : history.length === 0 ? (
-                <div className="upt-modal-loading">{t('http.noData')}</div>
-              ) : (
-                <div className="upt-rt-list">
-                  <div className="upt-rt-grid upt-rt-head">
-                    <span>{t('http.colTime')}</span><span>{t('http.colStatus')}</span><span>HTTP</span><span>{t('http.colDetail')}</span>
-                  </div>
-                  {histPager.pageItems.map((c, i) => (
-                    <div key={`${c.checkedAt || c.checked_at || ''}#${i}`} className="upt-rt-grid">
-                      <span className="upt-rt-time">{formatDateSec(c.checkedAt || c.checked_at)}</span>
-                      <span className={c.ok ? 'upt-rt-up' : 'upt-rt-down'}>{c.ok ? t('http.statusOk') : (c.error ? t('http.statusError') : t('http.statusDown'))}</span>
-                      <span className="upt-rt-ms">{c.httpStatus ?? c.http_status ?? '—'}</span>
-                      {c.error
-                        ? <span className="upt-rt-error" title={c.error}>{c.error}</span>
-                        : <span className="upt-rt-ms">{(c.responseMs ?? c.response_ms) != null ? `${c.responseMs ?? c.response_ms} ms` : '—'}</span>}
-                    </div>
-                  ))}
-                  <PaginationBar {...histPager} compact />
-                </div>
-              )}
-            </>)}
+            {detailTab === 'control' && (
+              <CheckHistoryTab kind="http" monitorId={selected.id} listKey="http-history"
+                columns={[t('http.colTime'), t('http.colStatus'), 'HTTP', t('http.colDetail')]}
+                onCounts={(c) => setSummary({ total: c.total, down: c.fail })}
+                renderRow={(c) => (<>
+                  <span className="upt-rt-time">{formatDateSec(c.checked_at)}</span>
+                  <span className={c.ok ? 'upt-rt-up' : 'upt-rt-down'}>{c.ok ? t('http.statusOk') : (c.error ? t('http.statusError') : t('http.statusDown'))}</span>
+                  <span className="upt-rt-ms">{c.http_status ?? '—'}</span>
+                  {c.error
+                    ? <span className="upt-rt-error" title={c.error}>{c.error}</span>
+                    : <span className="upt-rt-ms">{c.response_ms != null ? `${c.response_ms} ms` : '—'}</span>}
+                </>)} />
+            )}
 
             {detailTab === 'alerts' && <AlertHistory domain={selected.url} />}
 

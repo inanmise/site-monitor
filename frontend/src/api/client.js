@@ -47,6 +47,20 @@ function recordFailure(path, status) {
 }
 export function getRecentFailures() { return [...failedRequests] }
 
+/** Kontrol Geçmişi v2 yol eşlemesi — uptime türleri domain-anahtarlıdır. */
+function historyPath(kind, id) {
+  if (kind === 'uptime-http') return `/monitoring/uptime/${encodeURIComponent(id)}/http-history`
+  if (kind === 'uptime-ssl')  return `/monitoring/uptime/${encodeURIComponent(id)}/ssl-history`
+  return `/monitoring/${kind}/${id}/history`
+}
+
+/** Boş/null paramları atarak query string üretir (mevcut get*ResponseSeries deseniyle aynı). */
+function historyQuery(params) {
+  return new URLSearchParams(
+    Object.fromEntries(Object.entries(params).filter(([, v]) => v != null && v !== '')),
+  ).toString()
+}
+
 async function request(path, options = {}) {
   // FormData gönderiminde Content-Type'ı tarayıcı belirler (multipart boundary)
   const isForm = options.body instanceof FormData
@@ -682,10 +696,20 @@ export const api = {
     // Uptime
     getUptimeOverview:    () => request('/monitoring/uptime/overview'),
     getUptimeHistory:     (domain, hours = 24) => request(`/monitoring/uptime/${encodeURIComponent(domain)}/history?hours=${hours}`),
-    getUptimeHttpHistory: (domain, port, from, to, limit = 500) =>
-      request(`/monitoring/uptime/${encodeURIComponent(domain)}/http-history?port=${port}&from=${from}&to=${to}&limit=${limit}`),
-    getUptimeSslHistory:  (domain, from, to, limit = 500) =>
-      request(`/monitoring/uptime/${encodeURIComponent(domain)}/ssl-history?from=${from}&to=${to}&limit=${limit}`),
+
+    // ── Kontrol Geçmişi v2 — TÜM türlerin tek history istemcisi (CheckHistoryTab kullanır) ──
+    // kind: keyword|ping|port|http|domain|page|scripted|dns|uptime-http|uptime-ssl
+    // (uptime türlerinde id = domain, params.port yalnız uptime-http'de anlamlı)
+    // params: { from, to, days, status, changedOnly, page (0-tabanlı), size, port }
+    getCheckHistory: (kind, id, params = {}) => {
+      const q = historyQuery(params)
+      return request(`${historyPath(kind, id)}${q ? `?${q}` : ''}`)
+    },
+    // CSV indirme <a href download> ile yapılır (session cookie same-origin) — fetch değil.
+    getCheckHistoryCsvUrl: (kind, id, params = {}) => {
+      const q = historyQuery({ ...params, format: 'csv' })
+      return `${BASE}${historyPath(kind, id)}${q ? `?${q}` : ''}`
+    },
 
     // Port
     getPortMonitors:   () => request('/monitoring/port'),
@@ -694,12 +718,6 @@ export const api = {
     deletePortMonitor: (id) => request(`/monitoring/port/${id}`, { method: 'DELETE' }),
     triggerPortCheck:  (id) => request(`/monitoring/port/${id}/check`, { method: 'POST' }),
     testPortMonitor:   (data) => request('/monitoring/port/test', { method: 'POST', body: JSON.stringify(data) }),
-    getPortHistory:    (id, { days, limit } = {}) => {
-      const q = new URLSearchParams(
-        Object.fromEntries(Object.entries({ days, limit }).filter(([, v]) => v != null && v !== '')),
-      ).toString()
-      return request(`/monitoring/port/${id}/history${q ? `?${q}` : ''}`)
-    },
     getPortResponseSeries: (id, { from, to, days } = {}) => {
       const q = new URLSearchParams(
         Object.fromEntries(Object.entries({ from, to, days }).filter(([, v]) => v != null && v !== '')),
@@ -715,7 +733,6 @@ export const api = {
     updateDnsMonitor:  (id, data) => request(`/monitoring/dns/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
     deleteDnsMonitor:  (id) => request(`/monitoring/dns/${id}`, { method: 'DELETE' }),
     triggerDnsCheck:   (id) => request(`/monitoring/dns/${id}/check`, { method: 'POST' }),
-    getDnsHistory:     (id, days = 7, changedOnly = false) => request(`/monitoring/dns/${id}/history?days=${days}${changedOnly ? '&changedOnly=true' : ''}`),
     getDnsResponseSeries: (id, { from, to, days } = {}) => {
       const q = new URLSearchParams(
         Object.fromEntries(Object.entries({ from, to, days }).filter(([, v]) => v != null && v !== '')),
@@ -738,12 +755,6 @@ export const api = {
       ).toString()
       return request(`/monitoring/keyword/${id}/response-series${q ? `?${q}` : ''}`)
     },
-    getKeywordHistory:    (id, { days, limit } = {}) => {
-      const q = new URLSearchParams(
-        Object.fromEntries(Object.entries({ days, limit }).filter(([, v]) => v != null && v !== '')),
-      ).toString()
-      return request(`/monitoring/keyword/${id}/history${q ? `?${q}` : ''}`)
-    },
 
     // Page Integrity (Sayfa Bütünlüğü) — 9. tür
     getPageMonitors:   () => request('/monitoring/page'),
@@ -757,12 +768,6 @@ export const api = {
         Object.fromEntries(Object.entries({ from, to, days }).filter(([, v]) => v != null && v !== '')),
       ).toString()
       return request(`/monitoring/page/${id}/response-series${q ? `?${q}` : ''}`)
-    },
-    getPageHistory:    (id, { days, limit } = {}) => {
-      const q = new URLSearchParams(
-        Object.fromEntries(Object.entries({ days, limit }).filter(([, v]) => v != null && v !== '')),
-      ).toString()
-      return request(`/monitoring/page/${id}/history${q ? `?${q}` : ''}`)
     },
     getPageIssues:     (id, { issueType, days, limit } = {}) => {
       const q = new URLSearchParams(
@@ -778,12 +783,6 @@ export const api = {
     deleteScriptedMonitor: (id) => request(`/monitoring/scripted/${id}`, { method: 'DELETE' }),
     triggerScriptedCheck:  (id) => request(`/monitoring/scripted/${id}/check`, { method: 'POST' }),
     testScripted:          (data) => request('/monitoring/scripted/test', { method: 'POST', body: JSON.stringify(data) }),
-    getScriptedHistory:    (id, { days, limit } = {}) => {
-      const q = new URLSearchParams(
-        Object.fromEntries(Object.entries({ days, limit }).filter(([, v]) => v != null && v !== '')),
-      ).toString()
-      return request(`/monitoring/scripted/${id}/history${q ? `?${q}` : ''}`)
-    },
     getScriptedResponseSeries: (id, { from, to, days } = {}) => {
       const q = new URLSearchParams(
         Object.fromEntries(Object.entries({ from, to, days }).filter(([, v]) => v != null && v !== '')),
@@ -804,12 +803,6 @@ export const api = {
       ).toString()
       return request(`/monitoring/http/${id}/response-series${q ? `?${q}` : ''}`)
     },
-    getHttpHistory:    (id, { days, limit } = {}) => {
-      const q = new URLSearchParams(
-        Object.fromEntries(Object.entries({ days, limit }).filter(([, v]) => v != null && v !== '')),
-      ).toString()
-      return request(`/monitoring/http/${id}/history${q ? `?${q}` : ''}`)
-    },
 
     // Domain (alan adı süre bitişi)
     getDomainMonitors:   () => request('/monitoring/domain'),
@@ -818,12 +811,6 @@ export const api = {
     deleteDomainMonitor: (id) => request(`/monitoring/domain/${id}`, { method: 'DELETE' }),
     triggerDomainCheck:  (id) => request(`/monitoring/domain/${id}/check`, { method: 'POST' }),
     testDomain:          (data) => request('/monitoring/domain/test', { method: 'POST', body: JSON.stringify(data) }),
-    getDomainHistory:    (id, { days, limit } = {}) => {
-      const q = new URLSearchParams(
-        Object.fromEntries(Object.entries({ days, limit }).filter(([, v]) => v != null && v !== '')),
-      ).toString()
-      return request(`/monitoring/domain/${id}/history${q ? `?${q}` : ''}`)
-    },
     // Domain Kaydı (registration) — DB'deki son bilgi; live=true → anlık RDAP sorgusu.
     getDomainRegistration: (id, { live } = {}) =>
       request(`/monitoring/domain/${id}/registration${live ? '?live=true' : ''}`),
@@ -836,12 +823,6 @@ export const api = {
     deletePingMonitor: (id) => request(`/monitoring/ping/${id}`, { method: 'DELETE' }),
     triggerPingCheck:  (id) => request(`/monitoring/ping/${id}/check`, { method: 'POST' }),
     testPingMonitor:   (data) => request('/monitoring/ping/test', { method: 'POST', body: JSON.stringify(data) }),
-    getPingHistory:    (id, { days, limit } = {}) => {
-      const q = new URLSearchParams(
-        Object.fromEntries(Object.entries({ days, limit }).filter(([, v]) => v != null && v !== '')),
-      ).toString()
-      return request(`/monitoring/ping/${id}/history${q ? `?${q}` : ''}`)
-    },
     getPingResponseSeries: (id, { from, to, days } = {}) => {
       const q = new URLSearchParams(
         Object.fromEntries(Object.entries({ from, to, days }).filter(([, v]) => v != null && v !== '')),

@@ -1,6 +1,8 @@
 package com.sitemonitor.repository;
 
 import com.sitemonitor.model.CertificateCheck;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
@@ -9,6 +11,19 @@ import org.springframework.data.repository.query.Param;
 import java.util.List;
 
 public interface CertificateCheckRepository extends JpaRepository<CertificateCheck, Long> {
+
+    // ── Kontrol Geçmişi v2 (domain anahtarlı, SSL): sayfalı aralık + hata filtresi + histogram ──
+    Page<CertificateCheck> findByDomainAndCheckedAtBetween(String domain, String from, String to, Pageable p);
+    Page<CertificateCheck> findByDomainAndStatusAndCheckedAtBetween(String domain, String status, String from, String to, Pageable p);
+    long countByDomainAndCheckedAtBetween(String domain, String from, String to);
+    long countByDomainAndStatusAndCheckedAtBetween(String domain, String status, String from, String to);
+
+    /** Yoğunluk şeridi: [bucketKey, toplam, hata] — hata = status = 'error'. */
+    @Query("SELECT SUBSTRING(c.checkedAt,1,:len), COUNT(c), SUM(CASE WHEN c.status = 'error' THEN 1L ELSE 0L END) "
+         + "FROM CertificateCheck c WHERE c.domain = :domain AND c.checkedAt >= :from AND c.checkedAt <= :to "
+         + "GROUP BY SUBSTRING(c.checkedAt,1,:len) ORDER BY SUBSTRING(c.checkedAt,1,:len)")
+    List<Object[]> historyHistogram(@Param("domain") String domain, @Param("from") String from,
+                                    @Param("to") String to, @Param("len") int len);
 
     @Query("SELECT c FROM CertificateCheck c WHERE c.domain = :domain ORDER BY c.checkedAt DESC LIMIT :limit")
     List<CertificateCheck> findTopByDomainOrderByCheckedAtDesc(@Param("domain") String domain, @Param("limit") int limit);

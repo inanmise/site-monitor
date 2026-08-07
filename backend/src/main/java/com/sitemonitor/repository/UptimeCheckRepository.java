@@ -1,6 +1,8 @@
 package com.sitemonitor.repository;
 
 import com.sitemonitor.model.UptimeCheck;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -9,6 +11,19 @@ import java.util.List;
 import java.util.Optional;
 
 public interface UptimeCheckRepository extends JpaRepository<UptimeCheck, Long> {
+
+    // ── Kontrol Geçmişi v2 (domain+port anahtarlı): sayfalı aralık + hata filtresi + histogram ──
+    Page<UptimeCheck> findByDomainAndPortAndCheckedAtBetween(String domain, int port, String from, String to, Pageable p);
+    Page<UptimeCheck> findByDomainAndPortAndStatusNotAndCheckedAtBetween(String domain, int port, String status, String from, String to, Pageable p);
+    long countByDomainAndPortAndCheckedAtBetween(String domain, int port, String from, String to);
+    long countByDomainAndPortAndStatusNotAndCheckedAtBetween(String domain, int port, String status, String from, String to);
+
+    /** Yoğunluk şeridi: [bucketKey, toplam, hata] — hata = status <> 'up'. */
+    @Query("SELECT SUBSTRING(u.checkedAt,1,:len), COUNT(u), SUM(CASE WHEN u.status <> 'up' THEN 1L ELSE 0L END) "
+         + "FROM UptimeCheck u WHERE u.domain = :domain AND u.port = :port AND u.checkedAt >= :from AND u.checkedAt <= :to "
+         + "GROUP BY SUBSTRING(u.checkedAt,1,:len) ORDER BY SUBSTRING(u.checkedAt,1,:len)")
+    List<Object[]> historyHistogram(@Param("domain") String domain, @Param("port") int port,
+                                    @Param("from") String from, @Param("to") String to, @Param("len") int len);
     Optional<UptimeCheck> findTopByDomainAndPortOrderByIdDesc(String domain, int port);
 
     /** Tek toplu sorgu — son N saatteki tüm HTTP kontrolleri (uptime overview http_ok hesabı için). */

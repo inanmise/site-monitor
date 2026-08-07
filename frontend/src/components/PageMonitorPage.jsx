@@ -21,6 +21,7 @@ import { normalizeUrl } from '../utils/normalizeUrl.js'
 import { useDialog } from './ui/Dialog.jsx'
 import AlertHistory from './admin/AlertHistory.jsx'
 import MonitorStatsBar from './MonitorStatsBar.jsx'
+import CheckHistoryTab from './history/CheckHistoryTab.jsx'
 const ResponseTimeChart = lazy(() => import('./ResponseTimeChart.jsx'))
 const MonitorNotes = lazy(() => import('./MonitorNotes.jsx'))
 
@@ -69,14 +70,11 @@ export default function PageMonitorPage({ systemRole, teamId, teamName }) {
   const [loading, setLoading] = useState(true)
   const [teams, setTeams] = useState([])
   const [selected, setSelected] = useState(null)
-  const [history, setHistory] = useState([])
-  const [historyLoading, setHistoryLoading] = useState(false)
   const [issues, setIssues] = useState([])
   const [issuesLoading, setIssuesLoading] = useState(false)
   const [confirmations, setConfirmations] = useState([])   // canlı teyit zincirleri (Teyit denemesi X/N)
   const [issueFilter, setIssueFilter] = useState('all')   // all | BROKEN | MIXED_CONTENT | SLOW | firstParty
-  const [rangeDays, setRangeDays] = useState(7)
-  const [summary, setSummary] = useState({ total: 0, down: 0 })
+  const [summary, setSummary] = useState({ total: 0, down: 0 })   // CheckHistoryTab onCounts besler
   const [modal, setModal] = useState(null)
   const [dupSource, setDupSource] = useState(null)  // Kopyala akışında kaynak monitör (rozet/ipucu için)
   const [form, setForm] = useState(emptyForm)
@@ -133,15 +131,6 @@ export default function PageMonitorPage({ systemRole, teamId, teamName }) {
     // monitor paramı artık kalıcı (useUrlQuerySync yazar/siler) — eski replaceState temizliği kaldırıldı.
   }, [monitors]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  async function loadHistory(id, days = rangeDays, silent = false) {
-    if (!silent) setHistoryLoading(true)
-    const res = await api.monitoring.getPageHistory(id, { days })
-    if (res?.success) {
-      setHistory(res.data?.checks ?? [])
-      setSummary({ total: res.data?.total ?? 0, down: res.data?.down ?? 0 })
-    }
-    setHistoryLoading(false)
-  }
   async function loadIssues(id, filter = issueFilter, silent = false) {
     if (!silent) setIssuesLoading(true)                              // silent: 30sn oto-yenilemede spinner flaşlamasın
     const issueType = (filter === 'all' || filter === 'firstParty') ? null : filter
@@ -157,13 +146,13 @@ export default function PageMonitorPage({ systemRole, teamId, teamName }) {
     setConfirmations(res?.success ? (res.data ?? []) : [])
   }
   function openDetail(m) {
-    setSelected(m); setHistory([]); setIssues([]); setConfirmations([]); setIssueFilter('all'); setDetailTab('issues')
-    loadIssues(m.id, 'all'); loadHistory(m.id, rangeDays); loadConfirmations(m.url)
+    setSelected(m); setIssues([]); setConfirmations([]); setIssueFilter('all'); setSummary({ total: 0, down: 0 }); setDetailTab('issues')
+    loadIssues(m.id, 'all'); loadConfirmations(m.url)
   }
-  function closeDetail() { setSelected(null); setHistory([]); setIssues([]); setConfirmations([]) }
+  function closeDetail() { setSelected(null); setIssues([]); setConfirmations([]) }
 
-  // Modal 30sn oto-yenileme (sessiz): sorunlar + geçmiş + canlı teyit durumu + kart metrikleri.
-  // Kullanıcı teyit denemesinin kaçıncı bacağında olduğunu buradan izler ("Teyit denemesi X/N").
+  // Modal 30sn oto-yenileme (sessiz): sorunlar + canlı teyit durumu + kart metrikleri.
+  // (Kontrol Geçmişi kendi 30sn canlı yenilemesini CheckHistoryTab içinde yapar.)
   async function refreshModal() {
     if (!selected) return
     const res = await api.monitoring.getPageMonitors()
@@ -173,7 +162,6 @@ export default function PageMonitorPage({ systemRole, teamId, teamName }) {
       if (fresh) setSelected(fresh)
     }
     loadIssues(selected.id, issueFilter, true)
-    loadHistory(selected.id, rangeDays, true)
     loadConfirmations(selected.url)
   }
   useVisibleInterval(() => { if (selected) refreshModal() }, selected ? 30000 : 0, false)
@@ -401,9 +389,6 @@ export default function PageMonitorPage({ systemRole, teamId, teamName }) {
   }, [scoped, statFilter])
 
   // Sayfalama filtrelenmiş listenin ÜZERİNE; sayaç/istatistikler tam listeden hesaplanmaya devam eder.
-  // Geçmiş modalı sayfalaması — 30 sn modal yenilemesi history referansını değiştirir; sayfa korunur.
-  const histPager = usePagination(history, { listKey: 'page-history' })
-
   const pager = usePagination(displayMonitors, {
     listKey: 'page-monitors', resetDeps: [search, teamFilter, groupFilter, statFilter],
     initialPage: readUrlInt('page', 1), initialSize: readUrlInt('ps', null),
@@ -420,7 +405,7 @@ export default function PageMonitorPage({ systemRole, teamId, teamName }) {
     ps: (pager.pageSize !== 50 || pager.page > 1) ? pager.pageSize : null,
     monitor: selected?.id ?? null,
     mtab: selected && detailTab !== 'issues' ? detailTab : null,
-    range: selected && rangeDays !== 7 ? rangeDays : null,
+    // range/hfrom/hto/hst artık CheckHistoryTab'ın kendi URL senkronunda
   })
 
   const statItems = [
@@ -610,7 +595,7 @@ export default function PageMonitorPage({ systemRole, teamId, teamName }) {
             <div className="modal-tabs">
               <button className={`modal-tab${detailTab === 'issues' ? ' active' : ''}`} onClick={() => setDetailTab('issues')}>{t('page.tabIssues')}</button>
               <button className={`modal-tab${detailTab === 'chart' ? ' active' : ''}`} onClick={() => setDetailTab('chart')}>{t('page.tabChart')}</button>
-              <button className={`modal-tab${detailTab === 'control' ? ' active' : ''}`} onClick={() => setDetailTab('control')}>{t('page.tabHistory')}</button>
+              <button className={`modal-tab${detailTab === 'control' ? ' active' : ''}`} onClick={() => setDetailTab('control')}>{t('hist.tab')}</button>
               <button className={`modal-tab${detailTab === 'alerts' ? ' active' : ''}`} onClick={() => setDetailTab('alerts')}>{t('page.tabAlerts')}</button>
               <button className={`modal-tab${detailTab === 'notes' ? ' active' : ''}`} onClick={() => setDetailTab('notes')}>{t('page.tabNotes')}</button>
             </div>
@@ -695,36 +680,22 @@ export default function PageMonitorPage({ systemRole, teamId, teamName }) {
               </Suspense>
             )}
 
-            {detailTab === 'control' && (<>
-              <div className="upt-range-btns">
-                {[1, 7, 15, 30].map(d => (
-                  <button key={d} type="button" className={`btn btn-sm ${rangeDays === d ? 'btn-primary' : 'btn-secondary'}`}
-                    onClick={() => { setRangeDays(d); loadHistory(selected.id, d) }}>{t(`page.range${d}d`)}</button>
-                ))}
-              </div>
-              {historyLoading ? <div className="upt-modal-loading">...</div> : history.length === 0 ? (
-                <div className="upt-modal-loading">{t('page.noData')}</div>
-              ) : (
-                <div className="upt-rt-list">
-                  {/* Kırık ve Zaman aşımı AYRI kolonlar (2026-08-04); eski kayıtlarda timeout '—' (o dönem kırığa dahildi). */}
-                  <div className="upt-rt-grid upt-rt-head" style={{ gridTemplateColumns: '150px 90px 70px 100px 1fr' }}>
-                    <span>{t('page.colTime')}</span><span>{t('page.colStatus')}</span><span>{t('page.mBroken')}</span><span>{t('page.mTimeout')}</span><span>{t('page.mMixed')}</span>
-                  </div>
-                  {histPager.pageItems.map((c, i) => (
-                    <div key={`${c.checkedAt || c.checked_at || ''}#${i}`} className="upt-rt-grid" style={{ gridTemplateColumns: '150px 90px 70px 100px 1fr' }}>
-                      <span className="upt-rt-time">{formatDateSec(c.checkedAt || c.checked_at)}</span>
-                      <span style={{ color: STATUS_COLOR[c.status] || STATUS_COLOR.unknown, fontWeight: 600 }}>
-                        {c.status === 'OK' ? t('page.statusOk') : c.status === 'DEGRADED' ? t('page.statusDegraded')
-                          : c.status === 'CONFIG_ERROR' ? t('page.statusConfigError') : t('page.statusDown')}</span>
-                      <span className="upt-rt-ms">{c.brokenResources ?? c.broken_resources ?? '—'}</span>
-                      <span className="upt-rt-ms">{c.timeoutCount ?? c.timeout_count ?? '—'}</span>
-                      <span className="upt-rt-ms">{c.mixedContentCount ?? c.mixed_content_count ?? '—'}</span>
-                    </div>
-                  ))}
-                  <PaginationBar {...histPager} compact />
-                </div>
-              )}
-            </>)}
+            {detailTab === 'control' && (
+              /* Kırık ve Zaman aşımı AYRI kolonlar (2026-08-04); eski kayıtlarda timeout '—' (o dönem kırığa dahildi). */
+              <CheckHistoryTab kind="page" monitorId={selected.id} listKey="page-history"
+                defaultPreset={7} gridClass="page-rt-grid"
+                columns={[t('page.colTime'), t('page.colStatus'), t('page.mBroken'), t('page.mTimeout'), t('page.mMixed')]}
+                onCounts={(c) => setSummary({ total: c.total, down: c.fail })}
+                renderRow={(c) => (<>
+                  <span className="upt-rt-time">{formatDateSec(c.checked_at)}</span>
+                  <span style={{ color: STATUS_COLOR[c.status] || STATUS_COLOR.unknown, fontWeight: 600 }}>
+                    {c.status === 'OK' ? t('page.statusOk') : c.status === 'DEGRADED' ? t('page.statusDegraded')
+                      : c.status === 'CONFIG_ERROR' ? t('page.statusConfigError') : t('page.statusDown')}</span>
+                  <span className="upt-rt-ms">{c.broken_resources ?? '—'}</span>
+                  <span className="upt-rt-ms">{c.timeout_count ?? '—'}</span>
+                  <span className="upt-rt-ms">{c.mixed_content_count ?? '—'}</span>
+                </>)} />
+            )}
 
             {detailTab === 'alerts' && <AlertHistory domain={selected.url} />}
 
