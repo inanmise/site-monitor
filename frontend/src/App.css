@@ -6240,8 +6240,6 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .upt-history-col-divider { width: 1px; background: var(--border); align-self: stretch; margin: 0 20px; flex-shrink: 0; }
 
 .upt-rt-list { display: flex; flex-direction: column; gap: 0; max-height: 420px; overflow-y: auto; padding-right: 4px; }
-.upt-rt-row { display: flex; align-items: flex-start; gap: 10px; font-size: 12px; padding: 3px 0; border-bottom: 1px solid var(--border); }
-.upt-rt-row:last-child { border-bottom: none; }
 .upt-rt-time { color: var(--text-muted); font-family: Consolas, monospace; white-space: nowrap; }
 .upt-rt-up   { color: #22c55e; font-weight: 600; white-space: nowrap; }
 .upt-rt-down { color: #ef4444; font-weight: 600; white-space: nowrap; }
@@ -7937,99 +7935,8 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
   padding: 0;
 }
 
-/* History table */
-.dns-history-table {
-  width: 100%;
-  border-collapse: separate;
-  border-spacing: 0;
-  font-size: .85em;
-}
-.dns-history-table thead th {
-  background: var(--bg-surface);
-  text-align: left;
-  padding: 6px 10px;
-  font-size: .78em;
-  text-transform: uppercase;
-  letter-spacing: .04em;
-  color: var(--text-light);
-  border-bottom: 1px solid var(--border);
-}
-.dns-history-table tbody td {
-  padding: 6px 10px;
-  border-bottom: 1px solid var(--border);
-}
-/* Range filter (Son Sorgular + grafik için ortak) */
-.dns-section-header-with-filter {
-  display: flex; align-items: center; justify-content: space-between;
-  gap: 12px; flex-wrap: wrap;
-  margin: 0 0 10px 0;
-}
-.dns-section-header-with-filter .dns-section-title {
-  margin: 0; padding: 0; border: none;
-}
-.dns-range-filter {
-  display: inline-flex; gap: 4px; flex-wrap: wrap;
-  background: var(--bg-surface);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 3px;
-}
-.dns-range-btn {
-  background: none; border: none;
-  padding: 5px 12px;
-  border-radius: 6px;
-  font-size: .82em;
-  color: var(--text-light);
-  cursor: pointer;
-  transition: background .12s, color .12s;
-  white-space: nowrap;
-}
-.dns-range-btn:hover { background: var(--bg-hover); color: var(--text); }
-.dns-range-btn.active {
-  background: var(--primary);
-  color: #fff;
-  font-weight: 600;
-}
-.dns-range-hint {
-  color: var(--text-light);
-  font-weight: 400;
-  font-size: .85em;
-  text-transform: none;
-  letter-spacing: 0;
-  margin-left: 8px;
-}
-.dns-history-scroll {
-  max-height: 360px;
-  overflow-y: auto;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-}
-.dns-history-scroll .dns-history-table { border: none; }
-.dns-history-meta {
-  font-size: .78em;
-  color: var(--text-light);
-  margin-top: 6px;
-  text-align: right;
-}
-.dns-history-empty {
-  padding: 28px 16px;
-  text-align: center;
-  color: var(--text-light);
-  background: var(--bg-surface);
-  border: 1px dashed var(--border);
-  border-radius: 6px;
-  font-size: .9em;
-}
-
-/* Değişen satır: güçlü ton + sol kırmızı aksan — binlerce kayıt arasında ilk bakışta seçilmeli. */
-.dns-history-changed { background: rgba(220,38,38,.13); }
-.dns-history-changed > td:first-child { box-shadow: inset 3px 0 0 #dc2626; }
-[data-theme="dark"] .dns-history-changed { background: rgba(220,38,38,.22); }
-.dns-history-rotated { background: rgba(245,158,11,.06); }
-[data-theme="dark"] .dns-history-rotated { background: rgba(245,158,11,.12); }
-.dns-diff-row-rotated td { background: var(--bg-card); }
-/* "Sadece Değişenler" filtre segmenti ile aralık butonları arasındaki ayırıcı. */
-.dns-filter-sep { width: 1px; align-self: stretch; background: var(--border); margin: 2px 4px; }
+/* DNS geçmiş tablosu + dns-range-btn segmenti Kontrol Geçmişi v2 ile kalktı
+   (paylaşılan .seg-ctl/.hist-* aileleri + .dns-rt-grid kullanılıyor). */
 /* Çözümleyici zinciri: birincil → yedek ok ayracı. */
 .dns-resolver-arrow { color: var(--text-light); font-weight: 700; }
 
@@ -8140,7 +8047,6 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 /* Sorun filtre chip'leri — birbirine yapışmasın (paylaşımlı .upt-range-btns'e dokunmadan) */
 .page-issue-filters { gap: 8px 10px; }
 .page-issue-filters .btn-sm { margin-right: 0; border-radius: 999px; }
-.dns-range-btn--changed.active { background: #dc2626; }
 /* Diff bloğu başındaki tespit zamanı çipi. */
 .dns-diff-when {
   display: inline-flex; align-items: center; gap: 6px;

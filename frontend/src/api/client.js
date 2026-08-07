@@ -718,12 +718,6 @@ export const api = {
     deletePortMonitor: (id) => request(`/monitoring/port/${id}`, { method: 'DELETE' }),
     triggerPortCheck:  (id) => request(`/monitoring/port/${id}/check`, { method: 'POST' }),
     testPortMonitor:   (data) => request('/monitoring/port/test', { method: 'POST', body: JSON.stringify(data) }),
-    getPortHistory:    (id, { days, limit } = {}) => {
-      const q = new URLSearchParams(
-        Object.fromEntries(Object.entries({ days, limit }).filter(([, v]) => v != null && v !== '')),
-      ).toString()
-      return request(`/monitoring/port/${id}/history${q ? `?${q}` : ''}`)
-    },
     getPortResponseSeries: (id, { from, to, days } = {}) => {
       const q = new URLSearchParams(
         Object.fromEntries(Object.entries({ from, to, days }).filter(([, v]) => v != null && v !== '')),
@@ -739,7 +733,6 @@ export const api = {
     updateDnsMonitor:  (id, data) => request(`/monitoring/dns/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
     deleteDnsMonitor:  (id) => request(`/monitoring/dns/${id}`, { method: 'DELETE' }),
     triggerDnsCheck:   (id) => request(`/monitoring/dns/${id}/check`, { method: 'POST' }),
-    getDnsHistory:     (id, days = 7, changedOnly = false) => request(`/monitoring/dns/${id}/history?days=${days}${changedOnly ? '&changedOnly=true' : ''}`),
     getDnsResponseSeries: (id, { from, to, days } = {}) => {
       const q = new URLSearchParams(
         Object.fromEntries(Object.entries({ from, to, days }).filter(([, v]) => v != null && v !== '')),
@@ -762,12 +755,6 @@ export const api = {
       ).toString()
       return request(`/monitoring/keyword/${id}/response-series${q ? `?${q}` : ''}`)
     },
-    getKeywordHistory:    (id, { days, limit } = {}) => {
-      const q = new URLSearchParams(
-        Object.fromEntries(Object.entries({ days, limit }).filter(([, v]) => v != null && v !== '')),
-      ).toString()
-      return request(`/monitoring/keyword/${id}/history${q ? `?${q}` : ''}`)
-    },
 
     // Page Integrity (Sayfa Bütünlüğü) — 9. tür
     getPageMonitors:   () => request('/monitoring/page'),
@@ -781,12 +768,6 @@ export const api = {
         Object.fromEntries(Object.entries({ from, to, days }).filter(([, v]) => v != null && v !== '')),
       ).toString()
       return request(`/monitoring/page/${id}/response-series${q ? `?${q}` : ''}`)
-    },
-    getPageHistory:    (id, { days, limit } = {}) => {
-      const q = new URLSearchParams(
-        Object.fromEntries(Object.entries({ days, limit }).filter(([, v]) => v != null && v !== '')),
-      ).toString()
-      return request(`/monitoring/page/${id}/history${q ? `?${q}` : ''}`)
     },
     getPageIssues:     (id, { issueType, days, limit } = {}) => {
       const q = new URLSearchParams(
@@ -802,12 +783,6 @@ export const api = {
     deleteScriptedMonitor: (id) => request(`/monitoring/scripted/${id}`, { method: 'DELETE' }),
     triggerScriptedCheck:  (id) => request(`/monitoring/scripted/${id}/check`, { method: 'POST' }),
     testScripted:          (data) => request('/monitoring/scripted/test', { method: 'POST', body: JSON.stringify(data) }),
-    getScriptedHistory:    (id, { days, limit } = {}) => {
-      const q = new URLSearchParams(
-        Object.fromEntries(Object.entries({ days, limit }).filter(([, v]) => v != null && v !== '')),
-      ).toString()
-      return request(`/monitoring/scripted/${id}/history${q ? `?${q}` : ''}`)
-    },
     getScriptedResponseSeries: (id, { from, to, days } = {}) => {
       const q = new URLSearchParams(
         Object.fromEntries(Object.entries({ from, to, days }).filter(([, v]) => v != null && v !== '')),
@@ -828,12 +803,6 @@ export const api = {
       ).toString()
       return request(`/monitoring/http/${id}/response-series${q ? `?${q}` : ''}`)
     },
-    getHttpHistory:    (id, { days, limit } = {}) => {
-      const q = new URLSearchParams(
-        Object.fromEntries(Object.entries({ days, limit }).filter(([, v]) => v != null && v !== '')),
-      ).toString()
-      return request(`/monitoring/http/${id}/history${q ? `?${q}` : ''}`)
-    },
 
     // Domain (alan adı süre bitişi)
     getDomainMonitors:   () => request('/monitoring/domain'),
@@ -842,12 +811,6 @@ export const api = {
     deleteDomainMonitor: (id) => request(`/monitoring/domain/${id}`, { method: 'DELETE' }),
     triggerDomainCheck:  (id) => request(`/monitoring/domain/${id}/check`, { method: 'POST' }),
     testDomain:          (data) => request('/monitoring/domain/test', { method: 'POST', body: JSON.stringify(data) }),
-    getDomainHistory:    (id, { days, limit } = {}) => {
-      const q = new URLSearchParams(
-        Object.fromEntries(Object.entries({ days, limit }).filter(([, v]) => v != null && v !== '')),
-      ).toString()
-      return request(`/monitoring/domain/${id}/history${q ? `?${q}` : ''}`)
-    },
     // Domain Kaydı (registration) — DB'deki son bilgi; live=true → anlık RDAP sorgusu.
     getDomainRegistration: (id, { live } = {}) =>
       request(`/monitoring/domain/${id}/registration${live ? '?live=true' : ''}`),
@@ -860,12 +823,6 @@ export const api = {
     deletePingMonitor: (id) => request(`/monitoring/ping/${id}`, { method: 'DELETE' }),
     triggerPingCheck:  (id) => request(`/monitoring/ping/${id}/check`, { method: 'POST' }),
     testPingMonitor:   (data) => request('/monitoring/ping/test', { method: 'POST', body: JSON.stringify(data) }),
-    getPingHistory:    (id, { days, limit } = {}) => {
-      const q = new URLSearchParams(
-        Object.fromEntries(Object.entries({ days, limit }).filter(([, v]) => v != null && v !== '')),
-      ).toString()
-      return request(`/monitoring/ping/${id}/history${q ? `?${q}` : ''}`)
-    },
     getPingResponseSeries: (id, { from, to, days } = {}) => {
       const q = new URLSearchParams(
         Object.fromEntries(Object.entries({ from, to, days }).filter(([, v]) => v != null && v !== '')),
