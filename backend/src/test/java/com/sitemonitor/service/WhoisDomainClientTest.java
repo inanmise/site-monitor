@@ -67,6 +67,28 @@ class WhoisDomainClientTest {
     }
 
     @Test
+    @DisplayName("anySourceEnabled: socket KAPALI + .tr web-whois AÇIK → true (2026-08 prod: .tr UNKNOWN regresyonu)")
+    void anySourceEnabled_trWebOnly_isTrue() {
+        // DOMAIN_WHOIS_ENABLED=false (port-43 proxy'den geçemez — prod chart kararı) ama .tr web-whois açık:
+        // zamanlanmış tarama gate'i yine de WHOIS fallback'ine girmeli — aksi halde .tr domainleri
+        // Sorun Tanıla'da veri bulunurken planlı kontrolde UNKNOWN kalıyordu.
+        when(appSettings.getBoolean("site.monitor.domain.whois-enabled", false)).thenReturn(false);
+        when(trWebWhois.enabled()).thenReturn(true);
+        assertThat(client.anySourceEnabled()).isTrue();
+    }
+
+    @Test
+    @DisplayName("anySourceEnabled: iki kaynak da kapalı → false; yalnız socket açık → true")
+    void anySourceEnabled_reflectsBothFlags() {
+        when(appSettings.getBoolean("site.monitor.domain.whois-enabled", false)).thenReturn(false);
+        when(trWebWhois.enabled()).thenReturn(false);
+        assertThat(client.anySourceEnabled()).isFalse();
+
+        when(appSettings.getBoolean("site.monitor.domain.whois-enabled", false)).thenReturn(true);
+        assertThat(client.anySourceEnabled()).isTrue();
+    }
+
+    @Test
     @DisplayName("lookup: boş/null domain → source=NONE + hata (guard)")
     void lookup_blankDomain_returnsNoneError() {
         Map<String, Object> r = client.lookup("  ");

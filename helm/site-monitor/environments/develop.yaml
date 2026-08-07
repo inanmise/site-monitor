@@ -22,8 +22,6 @@ config:
   springProfile: prod
   logLevel: "DEBUG"         # dev: ayrıntılı iz sürme (tek replica, hacim sorun değil)
   corsAllowedOrigins: "https://site-monitor-dev.example.com,http://localhost:5173"
-  certCheckHour: "*/2"     # every 2 hours in dev
-  certCheckMinute: "0"
   emailEnabled: "false"    # emails off in dev
   # Küçük CPU → düşük paralellik (açılışta CPU oversubscription olmasın)
   executorCoreSize: "4"

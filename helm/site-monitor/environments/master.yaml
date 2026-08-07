@@ -2,13 +2,13 @@
 # Environment: PRODUCTION  (master branch)
 # Image tag  : {VERSION}   e.g. site-monitor:1.0.0
 # Deploy with:
-#   helm upgrade --install site-monitor ./helm/site-monitor \
+#   helm upgrade --install sitemonitor ./helm/site-monitor \
 #     -f helm/site-monitor/values.yaml \
 #     -f helm/site-monitor/environments/master.yaml \
 #     --set image.tag=1.0.0 \
 #     --set secret.adminPassword=$ADMIN_PASSWORD \
 #     --set secret.dbPassword=$DB_PASSWORD \
-#     -n site-monitor --create-namespace
+#     -n sitemonitor-prod
 # ─────────────────────────────────────────────────────────────────────────────
 
 image:
@@ -21,14 +21,21 @@ replicaCount: 3
 config:
   springProfile: prod
   logLevel: "INFO"          # prod: DEBUG pod başına on binlerce satır/gün üretir (console + dosya)
-  corsAllowedOrigins: "https://cert-monitor.example.com"
-  certCheckHour: "2"
-  certCheckMinute: "0"
+  corsAllowedOrigins: "https://sitemonitor.akbank.com"
+  # ── Outbound proxy (kurumsal egress) ────────────────────────────────────────
+  # 2026-08 kesintisi: bu değerler yalnız eski release'in --set'lerinde yaşıyordu; certmonitor→
+  # sitemonitor taze install'ında taşınmayınca RDAP/registrar sorguları doğrudan çıkışa düşüp
+  # firewall'da timeout aldı. KALICI kaynak burasıdır — elle Deployment patch'i yapmayın,
+  # sonraki `helm upgrade -f environments/master.yaml` onu ezer (proxy artık buradan gelir).
+  httpProxyHost: "dmzproxy.aknet.akb"
+  httpProxyPort: "8080"
+  # İç hedefler proxy tüneline girmesin (sonek eşleşmesi). Gerekirse genişletin.
+  noProxy: "akbank.com,aknet.akb,localhost,127.0.0.1"
 
 ingress:
   enabled: true
   className: nginx
-  host: cert-monitor.example.com
+  host: sitemonitor.akbank.com
   tls:
     enabled: true
     secretName: site-monitor-tls

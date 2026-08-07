@@ -71,6 +71,9 @@ public class TrWebWhoisClient {
         if (proxyHost != null && !proxyHost.isBlank() && proxyPort > 0) {
             this.proxySelector = ProxySelector.of(new InetSocketAddress(proxyHost, proxyPort));
             log.info(".tr web-whois istemcisi proxy üzerinden: {}:{}", proxyHost, proxyPort);
+        } else {
+            // RdapDomainClient ile aynı görünürlük kuralı (2026-08 prod: proxy'siz sessiz düşüş).
+            log.warn(".tr web-whois istemcisi DOĞRUDAN çıkışta — proxy tanımsız (HTTP_PROXY_HOST boş).");
         }
         this.directClient  = newClient(null, HttpClient.Redirect.NORMAL, false);
         this.proxiedClient = (proxySelector != null) ? newClient(null, HttpClient.Redirect.NORMAL, true) : directClient;

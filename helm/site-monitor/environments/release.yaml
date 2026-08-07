@@ -22,8 +22,6 @@ config:
   springProfile: prod
   logLevel: "INFO"
   corsAllowedOrigins: "https://site-monitor-staging.example.com"
-  certCheckHour: "3"
-  certCheckMinute: "0"
   # CPU limiti orta → executor'ı kıs (açılışta CPU açlığını önle)
   executorCoreSize: "8"
   executorMaxSize: "16"

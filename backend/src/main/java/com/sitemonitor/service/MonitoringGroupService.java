@@ -244,8 +244,10 @@ public class MonitoringGroupService {
         return raw != null ? raw.toString() : null;
     }
     private static Long longAttr(HttpSession session, String key) {
+        // Tek ternary'de long/Long karışımı sonucu long'a unbox'lıyordu → attribute yokken NPE (2026-08).
         Object raw = session.getAttribute(key);
-        return raw instanceof Number n ? n.longValue() : (raw != null ? Long.valueOf(raw.toString()) : null);
+        if (raw instanceof Number n) return n.longValue();
+        return raw != null ? Long.valueOf(raw.toString()) : null;
     }
     private static String auditDetail(Long teamId, String type, String oldName, String newName, int affected) {
         return "{\"team_id\":" + teamId + ",\"type\":\"" + esc(type) + "\",\"old\":\"" + esc(oldName)
