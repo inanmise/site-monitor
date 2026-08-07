@@ -112,13 +112,17 @@ public class MonitoringGroupService {
     private static String typeOf(Object m) {
         if (m == null) return "";
         return switch (m.getClass().getSimpleName()) {
-            case "HttpMonitor"    -> "http";
-            case "PingMonitor"    -> "ping";
-            case "PortMonitor"    -> "port";
-            case "DnsMonitor"     -> "dns";
-            case "KeywordMonitor" -> "keyword";
-            case "DomainMonitor"  -> "domain";
-            default               -> "";
+            case "HttpMonitor"     -> "http";
+            case "PingMonitor"     -> "ping";
+            case "PortMonitor"     -> "port";
+            case "DnsMonitor"      -> "dns";
+            case "KeywordMonitor"  -> "keyword";
+            case "DomainMonitor"   -> "domain";
+            // 2026-08: iki tür eksikti → grupları "" türüyle kaydediyordu ve form grup önerileri
+            // (listGroups(teamId, type)) boş dönüyordu. Eski ""-türlü satırlar applySchemaPatches'te backfill edilir.
+            case "PageMonitor"     -> "page";
+            case "ScriptedMonitor" -> "scripted";
+            default                -> "";
         };
     }
 

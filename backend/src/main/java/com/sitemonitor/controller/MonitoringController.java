@@ -157,7 +157,9 @@ public class MonitoringController {
                               "slowResourceMs",      appSettings.getInt("site.monitor.page.default-slow-ms", 2000),
                               "resourceConcurrency", appSettings.getInt("site.monitor.page.resource-concurrency", 5),
                               "crawlDepth",          appSettings.getInt("site.monitor.page.default-crawl-depth", 2),
-                              "crawlMaxPages",       appSettings.getInt("site.monitor.page.default-crawl-max-pages", 50))
+                              "crawlMaxPages",       appSettings.getInt("site.monitor.page.default-crawl-max-pages", 50)),
+            "scripted", Map.of("intervalSeconds", appSettings.getInt("site.monitor.scripted.default-interval-seconds", 300),
+                              "timeoutSeconds",   appSettings.getInt("site.monitor.scripted.default-timeout-seconds", 60))
         ));
     }
 
@@ -2235,7 +2237,17 @@ public class MonitoringController {
         return scriptedMonitorRepo.findById(id).map(m -> {
             if (!canOperateTeam(session, m.getTeamId())) throw new SecurityException("Bu takımın izlemesini düzenleyemezsiniz");
             if (body.containsKey("groupName") && blank(body.get("groupName"))) return badRequest("Grup seçimi zorunludur.");
+            String oldName = m.getName();
             if (body.get("name")   != null) m.setName(body.get("name").toString().trim());
+            // Rename: scripted alarm anahtarı monitör ADI (diğer türlerde gerçek hedef URL/host) — ad
+            // değişirse açık SCRIPTED_FAIL alarmının bağı kopar (delete akışı 'resolveOpenAlertsSilently'
+            // ile telafi ediyor ama rename etmiyordu). Açık alarmı yeni ada taşı.
+            if (oldName != null && !oldName.equals(m.getName())) {
+                alertEventRepo.findOpenAlert(oldName, EscalationService.TYPE_SCRIPTED_FAIL).ifPresent(a -> {
+                    a.setDomain(m.getName());
+                    alertEventRepo.save(a);
+                });
+            }
             if (body.containsKey("groupName")) m.setGroupName(monitoringGroupService.getOrCreateFor(m, m.getTeamId(), body.get("groupName") == null ? null : body.get("groupName").toString(), actor(session)));
             if (body.containsKey("teamId"))    m.setTeamId(resolveTeamChange(session, m.getTeamId(), body.get("teamId")));
             if (body.get("active") instanceof Boolean b) m.setActive(b);
@@ -2499,8 +2511,12 @@ public class MonitoringController {
             item.put("error", latest.getError());
             item.put("checked_at", latest.getCheckedAt());
         } else {
+            // "Hiç koşmadı" dalı — anahtarlar EKSİK değil NULL olmalı (keyword enrich deseni):
+            // eksik anahtar frontend'te `?? 0` ile "0✓/0✗" gibi yanıltıcı değerlere düşüyordu.
             item.put("status", "unknown");
             item.put("ok", null); item.put("duration_ms", null); item.put("checked_at", null);
+            item.put("exit_code", null); item.put("checks_passed", null); item.put("checks_failed", null);
+            item.put("error", null);
         }
         return item;
     }

@@ -423,6 +423,12 @@ public class SchedulerService {
         patch("ALTER TABLE login_issue_reports ADD COLUMN auto_context_json TEXT");
         patch("ALTER TABLE login_issue_reports ADD COLUMN linked_reference TEXT");
         patch("CREATE INDEX IF NOT EXISTS idx_lir_source ON login_issue_reports(source)");
+        // MonitoringGroupService.typeOf'ta Page/Scripted eksikti → grupları type='' ile kaydolmuştu;
+        // takım+ad eşleşmesiyle doğru türe backfill (idempotent; boş-tür satır kalmayana dek zararsız).
+        patch("UPDATE monitoring_groups g SET type='scripted' WHERE (g.type='' OR g.type IS NULL) AND EXISTS "
+                + "(SELECT 1 FROM scripted_monitors s WHERE s.group_name = g.name AND s.team_id = g.team_id)");
+        patch("UPDATE monitoring_groups g SET type='page' WHERE (g.type='' OR g.type IS NULL) AND EXISTS "
+                + "(SELECT 1 FROM page_monitors p WHERE p.group_name = g.name AND p.team_id = g.team_id)");
 
         // ── Performans index'leri (sıcak sorgu yolları) — idempotent, PG IF NOT EXISTS ──
         // Tablolar bu noktada Hibernate ddl-auto=update ile oluşmuş durumda.
