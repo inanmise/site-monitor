@@ -59,7 +59,9 @@ public class ScriptedCheckerService {
 
     // ── Sonuç + env tipleri ──────────────────────────────────────────────────
     public record EnvVar(String name, String value, boolean secret) {}
-    public record ScriptedResult(String status, boolean ok, long durationMs, Integer exitCode,
+    // durationMs Long (nullable): k6 hiç KOŞAMADIYSA (binary yok / havuz dolu / interrupt) süre yoktur —
+    // null yazılır ki UI "0 ms" gibi yanıltıcı gerçek-süre göstermesin ("—" gösterir). 2026-08 hizalaması.
+    public record ScriptedResult(String status, boolean ok, Long durationMs, Integer exitCode,
                                  Integer checksPassed, Integer checksFailed, Long iterationMs,
                                  Long httpReqAvgMs, Long httpReqP95Ms, String checksJson,
                                  String outputTail, String error) {}
@@ -212,7 +214,8 @@ public class ScriptedCheckerService {
     }
 
     private ScriptedResult err(String message) {
-        return new ScriptedResult("ERROR", false, 0, -1, null, null, null, null, null, null, null, message);
+        // durationMs=null: koşum hiç gerçekleşmedi — 0 ms "çok hızlı koştu" değil "koşamadı" demek.
+        return new ScriptedResult("ERROR", false, null, -1, null, null, null, null, null, null, null, message);
     }
 
     private static String summarizeError(String status, ProcessProbe.Result r, String output) {

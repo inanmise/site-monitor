@@ -514,6 +514,52 @@ class MonitoringControllerTest {
     }
 
     @Test
+    @DisplayName("GET /scripted: hiç koşmamış monitörde checks/exit/duration anahtarları EKSİK değil NULL (0✓/0✗ yanılgısı)")
+    void scriptedList_neverRun_returnsExplicitNullKeys() throws Exception {
+        com.sitemonitor.model.ScriptedMonitor m = new com.sitemonitor.model.ScriptedMonitor();
+        m.setId(3L); m.setName("hic-kosmadi");
+        when(scriptedMonitorRepo.findAllByOrderByNameAsc()).thenReturn(List.of(m));
+        when(scriptedCheckRepo.findLatestPerMonitor()).thenReturn(List.of());
+        when(alertEventRepo.findOpenByDomainIn(any())).thenReturn(List.of());
+        when(scriptedChecker.isAvailable()).thenReturn(true);
+
+        mvc.perform(get("/api/monitoring/scripted").session(session("ADMIN")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.monitors[0].status").value("unknown"))
+                // Anahtar VAR ve null — frontend '—' gösterir; anahtar eksik olsaydı `?? 0` "0✓/0✗" üretirdi.
+                .andExpect(jsonPath("$.data.monitors[0].duration_ms").value(org.hamcrest.Matchers.nullValue()))
+                .andExpect(jsonPath("$.data.monitors[0].checks_passed").value(org.hamcrest.Matchers.nullValue()))
+                .andExpect(jsonPath("$.data.monitors[0].checks_failed").value(org.hamcrest.Matchers.nullValue()))
+                .andExpect(jsonPath("$.data.monitors[0].exit_code").value(org.hamcrest.Matchers.nullValue()))
+                .andExpect(jsonPath("$.data.monitors[0].error").value(org.hamcrest.Matchers.nullValue()));
+    }
+
+    @Test
+    @DisplayName("PUT /scripted/{id} rename: açık SCRIPTED_FAIL alarmının domain bağı YENİ ada taşınır")
+    void scriptedRename_movesOpenAlarmToNewName() throws Exception {
+        com.sitemonitor.model.ScriptedMonitor m = new com.sitemonitor.model.ScriptedMonitor();
+        m.setId(4L); m.setName("eski-ad");
+        when(scriptedMonitorRepo.findById(4L)).thenReturn(Optional.of(m));
+        when(scriptedMonitorRepo.save(any())).thenAnswer(i -> i.getArgument(0));
+        when(scriptedCheckRepo.findTopByMonitorIdOrderByCheckedAtDesc(4L)).thenReturn(Optional.empty());
+        com.sitemonitor.model.AlertEvent open = new com.sitemonitor.model.AlertEvent();
+        open.setDomain("eski-ad"); open.setAlertType(com.sitemonitor.service.EscalationService.TYPE_SCRIPTED_FAIL);
+        when(alertEventRepo.findOpenAlert(eq("eski-ad"), eq(com.sitemonitor.service.EscalationService.TYPE_SCRIPTED_FAIL)))
+                .thenReturn(Optional.of(open));
+        when(alertEventRepo.findOpenAlert(eq("yeni-ad"), eq(com.sitemonitor.service.EscalationService.TYPE_SCRIPTED_FAIL)))
+                .thenReturn(Optional.empty());
+
+        mvc.perform(put("/api/monitoring/scripted/4").session(session("ADMIN"))
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"yeni-ad\"}"))
+                .andExpect(status().isOk());
+
+        // Alarm kaydının domain'i yeni ada çekilip kaydedildi (rename'de bağ kopmaz — delete akışının simetriği).
+        verify(alertEventRepo).save(org.mockito.ArgumentMatchers.argThat(
+                (com.sitemonitor.model.AlertEvent a) -> "yeni-ad".equals(a.getDomain())));
+    }
+
+    @Test
     @DisplayName("SÖZLEŞME: TÜM response-series endpoint'leri kova zarfı döner (ham Object[] yasak) + endpoint sayısı kilidi")
     void responseSeries_contract_allEndpoints() throws Exception {
         List<Object[]> raw = List.of(
