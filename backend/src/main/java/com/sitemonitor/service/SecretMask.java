@@ -46,12 +46,14 @@ public final class SecretMask {
         return SUBSTR.matcher(norm).find() || SEGMENT.matcher(norm).find();
     }
 
-    /** Anahtar adına göre değeri maskeler. Hassas → {@link #MASK}; değilse metin; null/boş → "(ayarsız)". */
+    /** Anahtar adına göre değeri maskeler. Hassas+dolu → {@link #MASK}; null/boş → "(ayarsız)"; değilse metin.
+     *  Boş hassas değer de "(ayarsız)" döner: boş değerin sızdıracak içeriği yoktur, ama "*****" basmak onu dolu
+     *  gösterir — 2026-08 proxy tanısında boş HTTP_PROXY_PASS dökümde ayarlı sanıldı (sessiz düşüş görünür olsun). */
     public static String mask(String key, Object value) {
-        if (isSensitive(key)) return MASK;
         if (value == null) return "(ayarsız)";
         String s = String.valueOf(value);
-        return s.isBlank() ? "(ayarsız)" : s;
+        if (s.isBlank()) return "(ayarsız)";
+        return isSensitive(key) ? MASK : s;
     }
 
     /**

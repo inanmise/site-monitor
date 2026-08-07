@@ -96,4 +96,29 @@ class TrWebWhoisClientTest {
         assertThat(TrWebWhoisClient.extractWhois("<html><body>hiç whois yok</body></html>")).isNull();
         assertThat(TrWebWhoisClient.extractWhois(null)).isNull();
     }
+
+    @Test
+    void init_withProxyAuth_authenticatorOnProxiedClientOnly() {
+        // Proxy user doluysa yalnız proxied client'a authenticator takılır (auth'lu proxy'de 407 sessiz ölümü önlenir).
+        String origProp = System.getProperty(ProxyAuthSupport.TUNNELING_PROP);
+        TrWebWhoisClient c = null;
+        try {
+            AppSettingsService appSettings = org.mockito.Mockito.mock(AppSettingsService.class);
+            c = new TrWebWhoisClient(appSettings, new TrustEvaluator(appSettings),
+                    org.mockito.Mockito.mock(CaAutoPinService.class));
+            org.springframework.test.util.ReflectionTestUtils.setField(c, "proxyHost", "proxy.local");
+            org.springframework.test.util.ReflectionTestUtils.setField(c, "proxyPort", 8080);
+            org.springframework.test.util.ReflectionTestUtils.setField(c, "proxyUser", "svc-mon");
+            org.springframework.test.util.ReflectionTestUtils.setField(c, "proxyPass", "pw");
+            c.init();
+            var proxied = (java.net.http.HttpClient) org.springframework.test.util.ReflectionTestUtils.getField(c, "proxiedClient");
+            var direct  = (java.net.http.HttpClient) org.springframework.test.util.ReflectionTestUtils.getField(c, "directClient");
+            assertThat(proxied.authenticator()).isPresent();
+            assertThat(direct.authenticator()).isEmpty();   // proxy kimliği doğrudan çıkışa sızmaz
+        } finally {
+            if (c != null) c.close();
+            if (origProp == null) System.clearProperty(ProxyAuthSupport.TUNNELING_PROP);
+            else System.setProperty(ProxyAuthSupport.TUNNELING_PROP, origProp);
+        }
+    }
 }
