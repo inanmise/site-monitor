@@ -29,6 +29,9 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 @WebMvcTest(MonitoringController.class)
+// Kontrol Geçmişi v2 zarfı (resolve/clamp/envelope) GERÇEK servisle test edilir — mock'lanırsa
+// kontrat testi mock'u test etmiş olur. Tek bağımlılığı AlertEventRepository zaten @MockitoBean.
+@org.springframework.context.annotation.Import(com.sitemonitor.service.CheckHistoryService.class)
 class MonitoringControllerTest {
 
     @Autowired MockMvc mvc;
@@ -1135,5 +1138,184 @@ class MonitoringControllerTest {
                         .content("{\"url\":\"www.axess.com.tr\"}"))
                 .andExpect(status().isOk());
         verify(pageChecker).test(eq("https://www.axess.com.tr"), org.mockito.ArgumentMatchers.anyInt());
+    }
+
+    // ═══════════ Kontrol Geçmişi v2 — kontrat + izolasyon + clamp + CSV ═══════════
+    // Zarf: items/page/size/total/counts/range/buckets/alerts. Gerçek CheckHistoryService (@Import) koşar;
+    // yeni bir izleme türü history eklerken bu kontrat setine kayıt EKLENMELİDİR.
+
+    private static <T> org.springframework.data.domain.Page<T> histPage(List<T> items, long total) {
+        return new org.springframework.data.domain.PageImpl<>(items,
+                org.springframework.data.domain.PageRequest.of(0, 50), total);
+    }
+
+    /** 10 endpoint'in tamamı için page/count/histogram stub'ları — hepsi boş ama geçerli veri döner. */
+    private void stubAllHistoryRepos() {
+        when(portCheckRepo.findByMonitorIdAndCheckedAtBetween(anyLong(), anyString(), anyString(), any())).thenReturn(histPage(List.of(), 0));
+        when(portCheckRepo.findByMonitorIdAndOpenFalseAndCheckedAtBetween(anyLong(), anyString(), anyString(), any())).thenReturn(histPage(List.of(), 0));
+        when(pingCheckRepo.findByMonitorIdAndCheckedAtBetween(anyLong(), anyString(), anyString(), any())).thenReturn(histPage(List.of(), 0));
+        when(pingCheckRepo.findByMonitorIdAndUpFalseAndCheckedAtBetween(anyLong(), anyString(), anyString(), any())).thenReturn(histPage(List.of(), 0));
+        when(keywordResultRepo.findByMonitorIdAndCheckedAtBetween(anyLong(), anyString(), anyString(), any())).thenReturn(histPage(List.of(), 0));
+        when(keywordResultRepo.findByMonitorIdAndOkFalseAndCheckedAtBetween(anyLong(), anyString(), anyString(), any())).thenReturn(histPage(List.of(), 0));
+        when(httpCheckRepo.findByMonitorIdAndCheckedAtBetween(anyLong(), anyString(), anyString(), any())).thenReturn(histPage(List.of(), 0));
+        when(httpCheckRepo.findByMonitorIdAndOkFalseAndCheckedAtBetween(anyLong(), anyString(), anyString(), any())).thenReturn(histPage(List.of(), 0));
+        when(pageCheckRepo.findByMonitorIdAndCheckedAtBetween(anyLong(), anyString(), anyString(), any())).thenReturn(histPage(List.of(), 0));
+        when(pageCheckRepo.findByMonitorIdAndOkFalseAndCheckedAtBetween(anyLong(), anyString(), anyString(), any())).thenReturn(histPage(List.of(), 0));
+        when(scriptedCheckRepo.findByMonitorIdAndCheckedAtBetween(anyLong(), anyString(), anyString(), any())).thenReturn(histPage(List.of(), 0));
+        when(scriptedCheckRepo.findByMonitorIdAndOkFalseAndCheckedAtBetween(anyLong(), anyString(), anyString(), any())).thenReturn(histPage(List.of(), 0));
+        when(domainCheckRepo.findByMonitorIdAndCheckedAtBetween(anyLong(), anyString(), anyString(), any())).thenReturn(histPage(List.of(), 0));
+        when(domainCheckRepo.findByMonitorIdAndStatusNotAndCheckedAtBetween(anyLong(), anyString(), anyString(), anyString(), any())).thenReturn(histPage(List.of(), 0));
+        when(dnsRecordRepo.findByMonitorIdAndCheckedAtBetween(anyLong(), anyString(), anyString(), any())).thenReturn(histPage(List.of(), 0));
+        when(dnsRecordRepo.findChangedByMonitorIdBetween(anyLong(), anyString(), anyString(), any())).thenReturn(histPage(List.of(), 0));
+        when(uptimeCheckRepo.findByDomainAndPortAndCheckedAtBetween(anyString(), anyInt(), anyString(), anyString(), any())).thenReturn(histPage(List.of(), 0));
+        when(uptimeCheckRepo.findByDomainAndPortAndStatusNotAndCheckedAtBetween(anyString(), anyInt(), anyString(), anyString(), anyString(), any())).thenReturn(histPage(List.of(), 0));
+        when(certCheckRepo.findByDomainAndCheckedAtBetween(anyString(), anyString(), anyString(), any())).thenReturn(histPage(List.of(), 0));
+        when(certCheckRepo.findByDomainAndStatusAndCheckedAtBetween(anyString(), anyString(), anyString(), anyString(), any())).thenReturn(histPage(List.of(), 0));
+        // count/histogram stub'ları — long dönüşleri Mockito default 0; histogramlar boş liste
+        when(portCheckRepo.historyHistogram(anyLong(), anyString(), anyString(), anyInt())).thenReturn(List.of());
+        when(pingCheckRepo.historyHistogram(anyLong(), anyString(), anyString(), anyInt())).thenReturn(List.of());
+        when(keywordResultRepo.historyHistogram(anyLong(), anyString(), anyString(), anyInt())).thenReturn(List.of());
+        when(httpCheckRepo.historyHistogram(anyLong(), anyString(), anyString(), anyInt())).thenReturn(List.of());
+        when(pageCheckRepo.historyHistogram(anyLong(), anyString(), anyString(), anyInt())).thenReturn(List.of());
+        when(scriptedCheckRepo.historyHistogram(anyLong(), anyString(), anyString(), anyInt())).thenReturn(List.of());
+        when(domainCheckRepo.historyHistogram(anyLong(), anyString(), anyString(), anyInt())).thenReturn(List.of());
+        when(dnsRecordRepo.historyHistogram(anyLong(), anyString(), anyString(), anyInt())).thenReturn(List.of());
+        when(uptimeCheckRepo.historyHistogram(anyString(), anyInt(), anyString(), anyString(), anyInt())).thenReturn(List.of());
+        when(certCheckRepo.historyHistogram(anyString(), anyString(), anyString(), anyInt())).thenReturn(List.of());
+        when(alertEventRepo.findOverlappingForHistory(anyString(), any(), anyString(), anyString())).thenReturn(List.of());
+    }
+
+    /** Monitör stub'ları — hepsi teamId=null (global ADMIN görür); anahtar alanlar dolu (alarm sorgusu koşsun). */
+    private void stubAllHistoryMonitors() {
+        var port = new com.sitemonitor.model.PortMonitor(); port.setHost("h1"); when(portMonitorRepo.findById(1L)).thenReturn(Optional.of(port));
+        var ping = new com.sitemonitor.model.PingMonitor(); ping.setHost("h2"); when(pingMonitorRepo.findById(1L)).thenReturn(Optional.of(ping));
+        var kw = new com.sitemonitor.model.KeywordMonitor(); kw.setUrl("https://k"); when(keywordMonitorRepo.findById(1L)).thenReturn(Optional.of(kw));
+        var http = new com.sitemonitor.model.HttpMonitor(); http.setUrl("https://h"); when(httpMonitorRepo.findById(1L)).thenReturn(Optional.of(http));
+        var pg = new com.sitemonitor.model.PageMonitor(); pg.setUrl("https://p"); when(pageMonitorRepo.findById(1L)).thenReturn(Optional.of(pg));
+        var sc = new com.sitemonitor.model.ScriptedMonitor(); sc.setName("s1"); when(scriptedMonitorRepo.findById(1L)).thenReturn(Optional.of(sc));
+        var dom = new com.sitemonitor.model.DomainMonitor(); dom.setDomain("d.com"); when(domainMonitorRepo.findById(1L)).thenReturn(Optional.of(dom));
+        var dns = new com.sitemonitor.model.DnsMonitor(); dns.setDomain("d.com"); when(dnsMonitorRepo.findById(1L)).thenReturn(Optional.of(dns));
+        when(inventoryRepo.findByDomain("a.com")).thenReturn(Optional.of(inv("a.com")));
+    }
+
+    private static final String[] HISTORY_URLS = {
+            "/api/monitoring/port/1/history", "/api/monitoring/ping/1/history",
+            "/api/monitoring/keyword/1/history", "/api/monitoring/http/1/history",
+            "/api/monitoring/page/1/history", "/api/monitoring/scripted/1/history",
+            "/api/monitoring/domain/1/history", "/api/monitoring/dns/1/history",
+            "/api/monitoring/uptime/a.com/http-history", "/api/monitoring/uptime/a.com/ssl-history"
+    };
+
+    @Test
+    @DisplayName("Kontrol Geçmişi v2 kontratı: 10 endpoint de tek tip zarf döner (days sugar dahil) — 500 literal'i öldü")
+    void history_contract_allEndpoints() throws Exception {
+        stubAllHistoryMonitors();
+        stubAllHistoryRepos();
+        for (String url : HISTORY_URLS) {
+            mvc.perform(get(url).param("days", "7").session(session("ADMIN")))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.items").isArray())
+                    .andExpect(jsonPath("$.data.page").value(0))
+                    .andExpect(jsonPath("$.data.size").value(50))
+                    .andExpect(jsonPath("$.data.total").isNumber())
+                    .andExpect(jsonPath("$.data.counts.total").isNumber())
+                    .andExpect(jsonPath("$.data.counts.fail").isNumber())
+                    .andExpect(jsonPath("$.data.range.from").isString())
+                    .andExpect(jsonPath("$.data.range.to").isString())
+                    .andExpect(jsonPath("$.data.buckets").isArray())
+                    .andExpect(jsonPath("$.data.alerts").isArray());
+        }
+    }
+
+    @Test
+    @DisplayName("status=fail: hata-filtreli sorgu koşar (tam liste sorgusu değil) ve total filtreli sayıdır")
+    void history_statusFail_usesFailQueryAndFilteredTotal() throws Exception {
+        stubAllHistoryMonitors();
+        stubAllHistoryRepos();
+        var failRow = new com.sitemonitor.model.PingCheck();
+        failRow.setMonitorId(1L); failRow.setUp(false); failRow.setCheckedAt("2026-08-07T10:00:00");
+        // PageImpl, offset+pageSize > total durumunda total'ı content.size()'a kırpar — tutarlı stub: 1 satır/1 toplam.
+        when(pingCheckRepo.findByMonitorIdAndUpFalseAndCheckedAtBetween(anyLong(), anyString(), anyString(), any()))
+                .thenReturn(histPage(List.of(failRow), 1));
+        when(pingCheckRepo.countByMonitorIdAndCheckedAtBetween(anyLong(), anyString(), anyString())).thenReturn(120L);
+        when(pingCheckRepo.countByMonitorIdAndUpFalseAndCheckedAtBetween(anyLong(), anyString(), anyString())).thenReturn(1L);
+
+        mvc.perform(get("/api/monitoring/ping/1/history").param("days", "7").param("status", "fail")
+                        .session(session("ADMIN")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.total").value(1))          // FİLTRELİ toplam — sayfalama bununla
+                .andExpect(jsonPath("$.data.counts.total").value(120)) // chip'ler yine TÜM aralığı gösterir
+                .andExpect(jsonPath("$.data.counts.fail").value(1))
+                .andExpect(jsonPath("$.data.items.length()").value(1));
+        verify(pingCheckRepo, never()).findByMonitorIdAndCheckedAtBetween(anyLong(), anyString(), anyString(), any());
+    }
+
+    @Test
+    @DisplayName("Takım izolasyonu: kapsam dışı takım → 403 (uptime http/ssl DAHİL — eskiden session bile yoktu)")
+    void history_teamIsolation_deniesOutOfScope() throws Exception {
+        var port = new com.sitemonitor.model.PortMonitor(); port.setHost("h1"); port.setTeamId(2L);
+        when(portMonitorRepo.findById(1L)).thenReturn(Optional.of(port));
+        CertificateInventory i = inv("a.com"); i.setTeamId(2L);
+        when(inventoryRepo.findByDomain("a.com")).thenReturn(Optional.of(i));
+
+        MockHttpSession scoped = session("USER");
+        scoped.setAttribute("viewTeamIds", List.of(1L));   // yalnız takım 1'i görür
+
+        mvc.perform(get("/api/monitoring/port/1/history").param("days", "1").session(scoped))
+                .andExpect(status().isForbidden());
+        mvc.perform(get("/api/monitoring/uptime/a.com/http-history").param("days", "1").session(scoped))
+                .andExpect(status().isForbidden());
+        mvc.perform(get("/api/monitoring/uptime/a.com/ssl-history").param("days", "1").session(scoped))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    @DisplayName("Retention clamp: DNS'te 90 günden eski from istenirse range.from kırpılmış döner (sessiz kırpma yok)")
+    void history_retentionClamp_dns() throws Exception {
+        stubAllHistoryMonitors();
+        stubAllHistoryRepos();
+        String minFrom = java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss")
+                .withZone(java.time.ZoneOffset.UTC)
+                .format(java.time.Instant.now().minus(90, java.time.temporal.ChronoUnit.DAYS));
+
+        var res = mvc.perform(get("/api/monitoring/dns/1/history")
+                        .param("from", "2020-01-01").param("to", "2026-08-07")
+                        .session(session("ADMIN")))
+                .andExpect(status().isOk())
+                .andReturn();
+        String from = com.jayway.jsonpath.JsonPath.read(res.getResponse().getContentAsString(), "$.data.range.from");
+        org.assertj.core.api.Assertions.assertThat(from).isGreaterThanOrEqualTo(minFrom.substring(0, 10));
+    }
+
+    @Test
+    @DisplayName("Domain hata sayacı DB count'tan gelir — 500'lük kesik listeden sayma bug'ı regresyon kilidi")
+    void history_domainFailCount_fromDbCount() throws Exception {
+        stubAllHistoryMonitors();
+        stubAllHistoryRepos();
+        when(domainCheckRepo.countByMonitorIdAndCheckedAtBetween(anyLong(), anyString(), anyString())).thenReturn(700L);
+        when(domainCheckRepo.countByMonitorIdAndStatusNotAndCheckedAtBetween(anyLong(), anyString(), anyString(), anyString())).thenReturn(650L);
+        mvc.perform(get("/api/monitoring/domain/1/history").param("days", "365").session(session("ADMIN")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.counts.total").value(700))
+                .andExpect(jsonPath("$.data.counts.fail").value(650));   // 500'de kesilmiyor
+    }
+
+    @Test
+    @DisplayName("format=csv: text/csv attachment akar, başlık satırı kolonları taşır")
+    void history_csv_streamsAttachment() throws Exception {
+        stubAllHistoryMonitors();
+        stubAllHistoryRepos();
+        var row = new com.sitemonitor.model.PingCheck();
+        row.setMonitorId(1L); row.setUp(true); row.setRttMs(12L); row.setCheckedAt("2026-08-07T10:00:00");
+        when(pingCheckRepo.findByMonitorIdAndCheckedAtBetween(anyLong(), anyString(), anyString(), any()))
+                .thenReturn(histPage(List.of(row), 1));
+
+        mvc.perform(get("/api/monitoring/ping/1/history")
+                        .param("days", "1").param("format", "csv").session(session("ADMIN")))
+                .andExpect(status().isOk())
+                .andExpect(header().string("Content-Disposition", org.hamcrest.Matchers.containsString("attachment")))
+                .andExpect(content().contentTypeCompatibleWith("text/csv"))
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("checked_at")))
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("2026-08-07T10:00:00")));
     }
 }

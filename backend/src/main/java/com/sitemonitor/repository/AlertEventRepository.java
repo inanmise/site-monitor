@@ -45,6 +45,17 @@ public interface AlertEventRepository extends JpaRepository<AlertEvent, Long> {
      *  uptime recovery sadece ACCESSIBILITY'yi kapatabilsin diye. */
     List<AlertEvent> findByDomainAndAlertTypeInAndResolvedFalse(String domain, Collection<String> alertTypes);
 
+    /** Kontrol Geçmişi v2: aralıkla KESİŞEN alarmlar (içinde AÇILAN veya içinde ÇÖZÜLEN) —
+     *  satır↔alarm çıkarımsal eşlemesi client'ta yapılır (check kaydında alertEventId yok, bilinçli).
+     *  createdAt/resolvedAt sabit-genişlik ISO → sözlüksel aralık. */
+    @Query("SELECT e FROM AlertEvent e WHERE e.domain = :domainKey AND e.alertType IN :types "
+         + "AND ((e.createdAt >= :from AND e.createdAt <= :to) "
+         + "  OR (e.resolvedAt IS NOT NULL AND e.resolvedAt >= :from AND e.resolvedAt <= :to)) "
+         + "ORDER BY e.createdAt DESC")
+    List<AlertEvent> findOverlappingForHistory(@Param("domainKey") String domainKey,
+                                               @Param("types") Collection<String> types,
+                                               @Param("from") String from, @Param("to") String to);
+
     // ── Alarm fırtınası (storm) sorguları ──────────────────────────────────────
     /** Pencere-içi açık DOWN incident'ler (account-wide scope) — terfi eşiği sayımı + üye geri-bağlama.
      *  idx_ae_storm_scan(resolved, alert_type, created_at) tarafından beslenir; created_at sabit-genişlik ISO → sözlüksel aralık. */

@@ -13,6 +13,26 @@ public interface DnsRecordRepository extends JpaRepository<DnsRecord, Long> {
     List<DnsRecord> findByMonitorIdOrderByCheckedAtDesc(Long monitorId);
     Optional<DnsRecord> findTopByMonitorIdOrderByCheckedAtDesc(Long monitorId);
 
+    // ── Kontrol Geçmişi v2: server-side sayfalı aralık + "Değişenler" filtresi + yoğunluk histogramı ──
+    // DNS'te ok/down yok; filtre boyutu changed VEYA rotated (mevcut changedOnly semantiği).
+    org.springframework.data.domain.Page<DnsRecord> findByMonitorIdAndCheckedAtBetween(Long monitorId, String from, String to, Pageable p);
+    @Query("SELECT r FROM DnsRecord r WHERE r.monitorId = :id AND r.checkedAt >= :from AND r.checkedAt <= :to "
+         + "AND (r.changed = true OR r.rotated = true)")
+    org.springframework.data.domain.Page<DnsRecord> findChangedByMonitorIdBetween(@Param("id") Long id,
+            @Param("from") String from, @Param("to") String to, Pageable p);
+    long countByMonitorIdAndCheckedAtBetween(Long monitorId, String from, String to);
+    @Query("SELECT COUNT(r) FROM DnsRecord r WHERE r.monitorId = :id AND r.checkedAt >= :from AND r.checkedAt <= :to "
+         + "AND (r.changed = true OR r.rotated = true)")
+    long countChangedByMonitorIdBetween(@Param("id") Long id, @Param("from") String from, @Param("to") String to);
+
+    /** Yoğunluk şeridi: [bucketKey, toplam, değişen] — SUBSTRING prefix kovası (dakika 16 / saat 13 / gün 10). */
+    @Query("SELECT SUBSTRING(r.checkedAt,1,:len), COUNT(r), "
+         + "SUM(CASE WHEN r.changed = true OR r.rotated = true THEN 1L ELSE 0L END) "
+         + "FROM DnsRecord r WHERE r.monitorId = :id AND r.checkedAt >= :from AND r.checkedAt <= :to "
+         + "GROUP BY SUBSTRING(r.checkedAt,1,:len) ORDER BY SUBSTRING(r.checkedAt,1,:len)")
+    List<Object[]> historyHistogram(@Param("id") Long id, @Param("from") String from,
+                                    @Param("to") String to, @Param("len") int len);
+
     /** History detay listesi — SQL-LIMIT'li: tüm geçmişi JVM'e çekmeden en yeni :limit satır. */
     @Query("SELECT r FROM DnsRecord r WHERE r.monitorId = :id ORDER BY r.checkedAt DESC LIMIT :limit")
     List<DnsRecord> findRecentByMonitorId(@Param("id") Long id, @Param("limit") int limit);

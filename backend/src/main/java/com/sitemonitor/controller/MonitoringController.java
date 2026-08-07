@@ -3,6 +3,8 @@ package com.sitemonitor.controller;
 import com.sitemonitor.model.*;
 import com.sitemonitor.repository.*;
 import com.sitemonitor.service.CertificateService;
+import com.sitemonitor.service.CheckHistoryService;
+import com.sitemonitor.service.CheckHistoryService.CsvColumn;
 import com.sitemonitor.service.DnsCheckerService;
 import com.sitemonitor.service.ActivityLogService;
 import com.sitemonitor.service.AuditDiff;
@@ -116,6 +118,9 @@ public class MonitoringController {
     private com.sitemonitor.service.ScriptedCheckerService scriptedChecker;
     @org.springframework.beans.factory.annotation.Autowired
     private com.sitemonitor.service.SecretCipher secretCipher;
+    /** Kontrol Geçmişi v2 ortak motoru (sayfalı aralık + filtre + histogram + alarm eşleme + CSV). */
+    @org.springframework.beans.factory.annotation.Autowired
+    private com.sitemonitor.service.CheckHistoryService checkHistoryService;
 
     /** Manuel sayfa-kontrol tetikleri için per-monitör cooldown zamanı (H1c rate-limit; in-memory, monitör sayısıyla sınırlı). */
     private final java.util.concurrent.ConcurrentHashMap<Long, Long> pageManualTriggerAt = new java.util.concurrent.ConcurrentHashMap<>();
@@ -173,6 +178,42 @@ public class MonitoringController {
     // Read-scope guard for history endpoints — takım-kapsamlı görüntüleme (BOLA/IDOR önler). İzin yoksa 403 gövdesi, aksi null.
     private ResponseEntity<Map<String, Object>> denyIfNotViewable(HttpSession session, Long teamId) {
         return SessionScope.canView(session, teamId) ? null : forbidden("Bu izlemeyi görüntüleme yetkiniz yok");
+    }
+
+    /** History aralığının anlamlı üst sınırı — SchedulerService.cleanupOldLogs saklama takvimiyle senkron
+     *  (çoğu tablo 180g sabit; dns 90'a kırpılır; page/scripted ayardan). */
+    private int historyRetentionDays(String kind) {
+        return switch (kind) {
+            case "dns"      -> 90;
+            case "page"     -> appSettings.getInt("site.monitor.metrics.page.retention-days", 180);
+            case "scripted" -> appSettings.getInt("site.monitor.metrics.scripted.retention-days", 180);
+            default         -> 180;
+        };
+    }
+
+    /** Kontrol Geçmişi v2 ortak yürütücüsü: izin + takım denetimi + resolve + (JSON zarfı | CSV akışı).
+     *  Not: history'ler artık response-series ile aynı require("monitoring.read") kapısını da taşır. */
+    private <T> ResponseEntity<?> runHistory(HttpSession session, Long teamId,
+            com.sitemonitor.service.CheckHistoryService.Source<T> src, String kind,
+            String alertKey, Set<String> alertTypes,
+            String from, String to, Integer days, String status, int page, int size, String format,
+            String csvBase, List<com.sitemonitor.service.CheckHistoryService.CsvColumn<T>> csvCols,
+            jakarta.servlet.http.HttpServletResponse response) {
+        permissionService.require(session, "monitoring.read", "view");
+        var deny = denyIfNotViewable(session, teamId);
+        if (deny != null) return deny;
+        var r = checkHistoryService.resolve(
+                new com.sitemonitor.service.CheckHistoryService.Query(from, to, days, status, page, size),
+                historyRetentionDays(kind));
+        if ("csv".equalsIgnoreCase(format)) {
+            try {
+                checkHistoryService.writeCsv(src, r, csvBase, csvCols, response);
+                return null;   // yanıt yazıldı — HttpEntityMethodProcessor null'u "tamamlandı" sayar
+            } catch (java.io.IOException e) {
+                throw new RuntimeException("CSV yazımı başarısız", e);
+            }
+        }
+        return ok(checkHistoryService.execute(src, r, alertKey, alertTypes));
     }
 
     /** Oturum sahibinin kendi takımı (session "teamId"). */
@@ -507,52 +548,89 @@ public class MonitoringController {
     // ── HTTP Uptime History ───────────────────────────────────────────────────
 
     @GetMapping("/uptime/{domain}/http-history")
-    public ResponseEntity<Map<String, Object>> uptimeHttpHistory(
-            @PathVariable String domain,
+    public ResponseEntity<?> uptimeHttpHistory(
+            @PathVariable String domain, HttpSession session,
             @RequestParam(defaultValue = "443") int port,
             @RequestParam(required = false) String from,
             @RequestParam(required = false) String to,
-            @RequestParam(defaultValue = "500") int limit) {
-
-        String fromStr = normalizeFrom(from != null ? from : ISO.format(Instant.now().minus(1, ChronoUnit.DAYS)));
-        String toStr   = normalizeTo  (to   != null ? to   : ISO.format(Instant.now()));
-
-        int cap = Math.max(1, Math.min(limit, 10_000));
-        List<UptimeCheck> checks = uptimeCheckRepo.findByDomainAndPortAndDateRange(domain, port, fromStr, toStr, cap);
-        List<Map<String, Object>> result = checks.stream().map(c -> {
-            Map<String, Object> item = new LinkedHashMap<>();
-            item.put("checked_at",  c.getCheckedAt());
-            item.put("status",      c.getStatus());
-            item.put("response_ms", c.getResponseMs());
-            item.put("error",       c.getError());
-            return item;
-        }).toList();
-        return ok(result);
+            @RequestParam(required = false) Integer days,
+            @RequestParam(defaultValue = "all") String status,
+            @RequestParam(defaultValue = "0") int page, @RequestParam(defaultValue = "50") int size,
+            @RequestParam(required = false) String format,
+            jakarta.servlet.http.HttpServletResponse response) {
+        // Eskiden session bile almıyordu (BOLA) — artık envanter takımı üzerinden görüntüleme denetimi var.
+        var deny = denyIfDomainNotViewable(session, domain);
+        if (deny != null) return deny;
+        var src = new CheckHistoryService.Source<UptimeCheck>() {
+            public org.springframework.data.domain.Page<UptimeCheck> page(String f, String t, boolean fail, org.springframework.data.domain.Pageable p) {
+                return fail ? uptimeCheckRepo.findByDomainAndPortAndStatusNotAndCheckedAtBetween(domain, port, "up", f, t, p)
+                            : uptimeCheckRepo.findByDomainAndPortAndCheckedAtBetween(domain, port, f, t, p);
+            }
+            public long total(String f, String t) { return uptimeCheckRepo.countByDomainAndPortAndCheckedAtBetween(domain, port, f, t); }
+            public long fail(String f, String t) { return uptimeCheckRepo.countByDomainAndPortAndStatusNotAndCheckedAtBetween(domain, port, "up", f, t); }
+            public List<Object[]> histogram(String f, String t, int len) { return uptimeCheckRepo.historyHistogram(domain, port, f, t, len); }
+        };
+        var r = checkHistoryService.resolve(new CheckHistoryService.Query(from, to, days, status, page, size),
+                historyRetentionDays("uptime"));
+        if ("csv".equalsIgnoreCase(format)) {
+            try {
+                checkHistoryService.writeCsv(src, r, "uptime-http-" + domain, List.of(
+                        new CsvColumn<>("checked_at", UptimeCheck::getCheckedAt),
+                        new CsvColumn<>("status", UptimeCheck::getStatus),
+                        new CsvColumn<>("response_ms", UptimeCheck::getResponseMs),
+                        new CsvColumn<>("error", UptimeCheck::getError)), response);
+                return null;
+            } catch (java.io.IOException e) { throw new RuntimeException("CSV yazımı başarısız", e); }
+        }
+        return ok(checkHistoryService.execute(src, r, domain, Set.of(EscalationService.TYPE_ACCESSIBILITY)));
     }
 
     // ── SSL Certificate History ───────────────────────────────────────────────
 
     @GetMapping("/uptime/{domain}/ssl-history")
-    public ResponseEntity<Map<String, Object>> uptimeSslHistory(
-            @PathVariable String domain,
+    public ResponseEntity<?> uptimeSslHistory(
+            @PathVariable String domain, HttpSession session,
             @RequestParam(required = false) String from,
             @RequestParam(required = false) String to,
-            @RequestParam(defaultValue = "500") int limit) {
+            @RequestParam(required = false) Integer days,
+            @RequestParam(defaultValue = "all") String status,
+            @RequestParam(defaultValue = "0") int page, @RequestParam(defaultValue = "50") int size,
+            @RequestParam(required = false) String format,
+            jakarta.servlet.http.HttpServletResponse response) {
+        var deny = denyIfDomainNotViewable(session, domain);
+        if (deny != null) return deny;
+        var src = new CheckHistoryService.Source<CertificateCheck>() {
+            public org.springframework.data.domain.Page<CertificateCheck> page(String f, String t, boolean fail, org.springframework.data.domain.Pageable p) {
+                return fail ? certCheckRepo.findByDomainAndStatusAndCheckedAtBetween(domain, "error", f, t, p)
+                            : certCheckRepo.findByDomainAndCheckedAtBetween(domain, f, t, p);
+            }
+            public long total(String f, String t) { return certCheckRepo.countByDomainAndCheckedAtBetween(domain, f, t); }
+            public long fail(String f, String t) { return certCheckRepo.countByDomainAndStatusAndCheckedAtBetween(domain, "error", f, t); }
+            public List<Object[]> histogram(String f, String t, int len) { return certCheckRepo.historyHistogram(domain, f, t, len); }
+        };
+        var r = checkHistoryService.resolve(new CheckHistoryService.Query(from, to, days, status, page, size),
+                historyRetentionDays("ssl"));
+        if ("csv".equalsIgnoreCase(format)) {
+            try {
+                checkHistoryService.writeCsv(src, r, "uptime-ssl-" + domain, List.of(
+                        new CsvColumn<>("checked_at", CertificateCheck::getCheckedAt),
+                        new CsvColumn<>("status", CertificateCheck::getStatus),
+                        new CsvColumn<>("days_remaining", CertificateCheck::getDaysRemaining),
+                        new CsvColumn<>("error", CertificateCheck::getError)), response);
+                return null;
+            } catch (java.io.IOException e) { throw new RuntimeException("CSV yazımı başarısız", e); }
+        }
+        return ok(checkHistoryService.execute(src, r, domain, EscalationService.CERT_ALERT_TYPES));
+    }
 
-        String fromStr = normalizeFrom(from != null ? from : ISO.format(Instant.now().minus(1, ChronoUnit.DAYS)));
-        String toStr   = normalizeTo  (to   != null ? to   : ISO.format(Instant.now()));
-
-        int cap = Math.max(1, Math.min(limit, 10_000));
-        List<CertificateCheck> checks = certCheckRepo.findByDomainAndDateRange(domain, fromStr, toStr, cap);
-        List<Map<String, Object>> result = checks.stream().map(c -> {
-            Map<String, Object> item = new LinkedHashMap<>();
-            item.put("checked_at",     c.getCheckedAt());
-            item.put("status",         c.getStatus());
-            item.put("days_remaining", c.getDaysRemaining());
-            item.put("error",          c.getError());
-            return item;
-        }).toList();
-        return ok(result);
+    /** Domain-anahtarlı uptime/ssl geçmişi için takım denetimi: envanter kaydının teamId VEYA ugTeamId'si
+     *  görüntülenebilir olmalı (izleme monitörlerindeki denyIfNotViewable'ın domain karşılığı). */
+    private ResponseEntity<Map<String, Object>> denyIfDomainNotViewable(HttpSession session, String domain) {
+        var inv = inventoryRepo.findByDomain(domain).orElse(null);
+        if (inv == null) return notFound("Domain envanterde bulunamadı");
+        if (SessionScope.canView(session, inv.getTeamId())) return null;
+        if (inv.getUgTeamId() != null && SessionScope.canView(session, inv.getUgTeamId())) return null;
+        return forbidden("Bu domain'in geçmişini görüntüleme yetkiniz yok");
     }
 
     // ── Port Monitors ─────────────────────────────────────────────────────────
@@ -723,31 +801,31 @@ public class MonitoringController {
     }
 
     @GetMapping("/port/{id}/history")
-    public ResponseEntity<Map<String, Object>> portHistory(@PathVariable Long id, HttpSession session,
+    public ResponseEntity<?> portHistory(@PathVariable Long id, HttpSession session,
+            @RequestParam(required = false) String from, @RequestParam(required = false) String to,
             @RequestParam(required = false) Integer days,
-            @RequestParam(defaultValue = "100") int limit) {
+            @RequestParam(defaultValue = "all") String status,
+            @RequestParam(defaultValue = "0") int page, @RequestParam(defaultValue = "50") int size,
+            @RequestParam(required = false) String format,
+            jakarta.servlet.http.HttpServletResponse response) {
         PortMonitor mon = portMonitorRepo.findById(id).orElse(null);
         if (mon == null) return notFound("Port monitor not found");
-        var deny = denyIfNotViewable(session, mon.getTeamId());
-        if (deny != null) return deny;
-        List<PortCheck> checks;
-        long total, down;
-        if (days != null && days > 0) {
-            String cutoff = ISO.format(Instant.now().minus(days, ChronoUnit.DAYS));
-            checks = portCheckRepo.findRecentByMonitorIdSince(id, cutoff, 500);   // SQL-LIMIT; özet DB count'tan
-            total = portCheckRepo.countByMonitorIdAndCheckedAtGreaterThanEqual(id, cutoff);
-            down  = portCheckRepo.countByMonitorIdAndOpenFalseAndCheckedAtGreaterThanEqual(id, cutoff);
-        } else {
-            int cap = Math.max(1, Math.min(limit, 10_000));
-            checks = portCheckRepo.findRecentByMonitorId(id, cap);   // SQL-LIMIT
-            total = checks.size();
-            down  = checks.stream().filter(c -> !Boolean.TRUE.equals(c.getOpen())).count();
-        }
-        Map<String, Object> out = new LinkedHashMap<>();
-        out.put("checks", checks);
-        out.put("total", total);
-        out.put("down", down);
-        return ok(out);
+        var src = new CheckHistoryService.Source<PortCheck>() {
+            public org.springframework.data.domain.Page<PortCheck> page(String f, String t, boolean fail, org.springframework.data.domain.Pageable p) {
+                return fail ? portCheckRepo.findByMonitorIdAndOpenFalseAndCheckedAtBetween(id, f, t, p)
+                            : portCheckRepo.findByMonitorIdAndCheckedAtBetween(id, f, t, p);
+            }
+            public long total(String f, String t) { return portCheckRepo.countByMonitorIdAndCheckedAtBetween(id, f, t); }
+            public long fail(String f, String t) { return portCheckRepo.countByMonitorIdAndOpenFalseAndCheckedAtBetween(id, f, t); }
+            public List<Object[]> histogram(String f, String t, int len) { return portCheckRepo.historyHistogram(id, f, t, len); }
+        };
+        return runHistory(session, mon.getTeamId(), src, "port",
+                mon.getHost(), Set.of(EscalationService.TYPE_PORT_DOWN, EscalationService.TYPE_PORT_SLOW),
+                from, to, days, status, page, size, format, "port-history-" + id, List.of(
+                new CsvColumn<>("checked_at", PortCheck::getCheckedAt),
+                new CsvColumn<>("open", PortCheck::getOpen),
+                new CsvColumn<>("response_ms", PortCheck::getResponseMs),
+                new CsvColumn<>("error", PortCheck::getError)), response);
     }
 
     @PostMapping("/port/{id}/check")
@@ -1035,28 +1113,38 @@ public class MonitoringController {
     }
 
     @GetMapping("/dns/{id}/history")
-    public ResponseEntity<Map<String, Object>> dnsHistory(@PathVariable Long id, HttpSession session,
+    public ResponseEntity<?> dnsHistory(@PathVariable Long id, HttpSession session,
+            @RequestParam(required = false) String from, @RequestParam(required = false) String to,
             @RequestParam(required = false) Integer days,
-            @RequestParam(defaultValue = "5000") int limit,
-            @RequestParam(defaultValue = "false") boolean changedOnly) {
+            @RequestParam(defaultValue = "all") String status,
+            @RequestParam(defaultValue = "false") boolean changedOnly,
+            @RequestParam(defaultValue = "0") int page, @RequestParam(defaultValue = "50") int size,
+            @RequestParam(required = false) String format,
+            jakarta.servlet.http.HttpServletResponse response) {
         DnsMonitor mon = dnsMonitorRepo.findById(id).orElse(null);
         if (mon == null) return notFound("DNS monitor not found");
-        var deny = denyIfNotViewable(session, mon.getTeamId());
-        if (deny != null) return deny;
-        int cap = Math.max(1, Math.min(limit, 10_000));
-        List<DnsRecord> records;
-        if (days != null && days > 0) {
-            int d = Math.min(days, 90);
-            String cutoff = ISO.format(Instant.now().minus(d, ChronoUnit.DAYS));
-            records = changedOnly
-                    ? dnsRecordRepo.findRecentChangedByMonitorIdSince(id, cutoff, cap)   // "Sadece Değişenler" (changed/rotated)
-                    : dnsRecordRepo.findRecentByMonitorIdSince(id, cutoff, cap);   // SQL-LIMIT
-        } else {
-            records = changedOnly
-                    ? dnsRecordRepo.findRecentChangedByMonitorId(id, cap)
-                    : dnsRecordRepo.findRecentByMonitorId(id, cap);   // SQL-LIMIT
-        }
-        return ok(records);
+        String effStatus = changedOnly ? "changed" : status;   // eski changedOnly paramı geriye-uyum sugar'ı
+        var src = new CheckHistoryService.Source<DnsRecord>() {
+            public org.springframework.data.domain.Page<DnsRecord> page(String f, String t, boolean fail, org.springframework.data.domain.Pageable p) {
+                return fail ? dnsRecordRepo.findChangedByMonitorIdBetween(id, f, t, p)
+                            : dnsRecordRepo.findByMonitorIdAndCheckedAtBetween(id, f, t, p);
+            }
+            public long total(String f, String t) { return dnsRecordRepo.countByMonitorIdAndCheckedAtBetween(id, f, t); }
+            public long fail(String f, String t) { return dnsRecordRepo.countChangedByMonitorIdBetween(id, f, t); }
+            public List<Object[]> histogram(String f, String t, int len) { return dnsRecordRepo.historyHistogram(id, f, t, len); }
+        };
+        return runHistory(session, mon.getTeamId(), src, "dns",
+                mon.getDomain(), Set.of(EscalationService.TYPE_DNS_FAILURE, EscalationService.TYPE_DNS_CHANGED,
+                        EscalationService.TYPE_DNS_SLOW, EscalationService.TYPE_DNS_UNEXPECTED,
+                        EscalationService.TYPE_DNS_INCONSISTENT),
+                from, to, days, effStatus, page, size, format, "dns-history-" + id, List.of(
+                new CsvColumn<>("checked_at", DnsRecord::getCheckedAt),
+                new CsvColumn<>("record_type", DnsRecord::getRecordType),
+                new CsvColumn<>("value", DnsRecord::getValue),
+                new CsvColumn<>("changed", DnsRecord::getChanged),
+                new CsvColumn<>("rotated", DnsRecord::getRotated),
+                new CsvColumn<>("ttl", DnsRecord::getTtl),
+                new CsvColumn<>("response_ms", DnsRecord::getResponseMs)), response);
     }
 
     @PostMapping("/dns/{id}/check")
@@ -1275,31 +1363,35 @@ public class MonitoringController {
     }
 
     @GetMapping("/keyword/{id}/history")
-    public ResponseEntity<Map<String, Object>> keywordHistory(@PathVariable Long id, HttpSession session,
+    public ResponseEntity<?> keywordHistory(@PathVariable Long id, HttpSession session,
+            @RequestParam(required = false) String from, @RequestParam(required = false) String to,
             @RequestParam(required = false) Integer days,
-            @RequestParam(defaultValue = "100") int limit) {
+            @RequestParam(defaultValue = "all") String status,
+            @RequestParam(defaultValue = "0") int page, @RequestParam(defaultValue = "50") int size,
+            @RequestParam(required = false) String format,
+            jakarta.servlet.http.HttpServletResponse response) {
         KeywordMonitor mon = keywordMonitorRepo.findById(id).orElse(null);
         if (mon == null) return notFound("Keyword monitor not found");
-        var deny = denyIfNotViewable(session, mon.getTeamId());
-        if (deny != null) return deny;
-        List<KeywordResult> checks;
-        long total, down;
-        if (days != null && days > 0) {
-            String cutoff = ISO.format(Instant.now().minus(days, ChronoUnit.DAYS));
-            checks = keywordResultRepo.findRecentByMonitorIdSince(id, cutoff, 500);   // SQL-LIMIT
-            total = keywordResultRepo.countByMonitorIdAndCheckedAtGreaterThanEqual(id, cutoff);
-            down  = keywordResultRepo.countByMonitorIdAndOkFalseAndCheckedAtGreaterThanEqual(id, cutoff);
-        } else {
-            int cap = Math.max(1, Math.min(limit, 10_000));
-            checks = keywordResultRepo.findRecentByMonitorId(id, cap);   // SQL-LIMIT
-            total = checks.size();
-            down  = checks.stream().filter(c -> !Boolean.TRUE.equals(c.getOk())).count();
-        }
-        Map<String, Object> out = new LinkedHashMap<>();
-        out.put("checks", checks);
-        out.put("total", total);
-        out.put("down", down);
-        return ok(out);
+        var src = new CheckHistoryService.Source<KeywordResult>() {
+            public org.springframework.data.domain.Page<KeywordResult> page(String f, String t, boolean fail, org.springframework.data.domain.Pageable p) {
+                return fail ? keywordResultRepo.findByMonitorIdAndOkFalseAndCheckedAtBetween(id, f, t, p)
+                            : keywordResultRepo.findByMonitorIdAndCheckedAtBetween(id, f, t, p);
+            }
+            public long total(String f, String t) { return keywordResultRepo.countByMonitorIdAndCheckedAtBetween(id, f, t); }
+            public long fail(String f, String t) { return keywordResultRepo.countByMonitorIdAndOkFalseAndCheckedAtBetween(id, f, t); }
+            public List<Object[]> histogram(String f, String t, int len) { return keywordResultRepo.historyHistogram(id, f, t, len); }
+        };
+        return runHistory(session, mon.getTeamId(), src, "keyword",
+                mon.getUrl(), Set.of(EscalationService.TYPE_KEYWORD, EscalationService.TYPE_KEYWORD_SLOW,
+                        EscalationService.TYPE_KEYWORD_SSL, EscalationService.TYPE_KEYWORD_DOMAIN_EXPIRY),
+                from, to, days, status, page, size, format, "keyword-history-" + id, List.of(
+                new CsvColumn<>("checked_at", KeywordResult::getCheckedAt),
+                new CsvColumn<>("ok", KeywordResult::getOk),
+                new CsvColumn<>("found", KeywordResult::getFound),
+                new CsvColumn<>("occurrences", KeywordResult::getOccurrences),
+                new CsvColumn<>("http_status", KeywordResult::getHttpStatus),
+                new CsvColumn<>("response_ms", KeywordResult::getResponseMs),
+                new CsvColumn<>("error", KeywordResult::getError)), response);
     }
 
     @PostMapping("/keyword/{id}/check")
@@ -1734,31 +1826,33 @@ public class MonitoringController {
     }
 
     @GetMapping("/http/{id}/history")
-    public ResponseEntity<Map<String, Object>> httpHistory(@PathVariable Long id, HttpSession session,
+    public ResponseEntity<?> httpHistory(@PathVariable Long id, HttpSession session,
+            @RequestParam(required = false) String from, @RequestParam(required = false) String to,
             @RequestParam(required = false) Integer days,
-            @RequestParam(defaultValue = "100") int limit) {
+            @RequestParam(defaultValue = "all") String status,
+            @RequestParam(defaultValue = "0") int page, @RequestParam(defaultValue = "50") int size,
+            @RequestParam(required = false) String format,
+            jakarta.servlet.http.HttpServletResponse response) {
         HttpMonitor mon = httpMonitorRepo.findById(id).orElse(null);
         if (mon == null) return notFound("HTTP monitor not found");
-        var deny = denyIfNotViewable(session, mon.getTeamId());
-        if (deny != null) return deny;
-        List<HttpCheck> checks;
-        long total, down;
-        if (days != null && days > 0) {
-            String cutoff = ISO.format(Instant.now().minus(days, ChronoUnit.DAYS));
-            checks = httpCheckRepo.findRecentByMonitorIdSince(id, cutoff, 500);
-            total = httpCheckRepo.countByMonitorIdAndCheckedAtGreaterThanEqual(id, cutoff);
-            down  = httpCheckRepo.countByMonitorIdAndOkFalseAndCheckedAtGreaterThanEqual(id, cutoff);
-        } else {
-            int cap = Math.max(1, Math.min(limit, 10_000));
-            checks = httpCheckRepo.findRecentByMonitorId(id, cap);
-            total = checks.size();
-            down  = checks.stream().filter(c -> !Boolean.TRUE.equals(c.getOk())).count();
-        }
-        Map<String, Object> out = new LinkedHashMap<>();
-        out.put("checks", checks);
-        out.put("total", total);
-        out.put("down", down);
-        return ok(out);
+        var src = new CheckHistoryService.Source<HttpCheck>() {
+            public org.springframework.data.domain.Page<HttpCheck> page(String f, String t, boolean fail, org.springframework.data.domain.Pageable p) {
+                return fail ? httpCheckRepo.findByMonitorIdAndOkFalseAndCheckedAtBetween(id, f, t, p)
+                            : httpCheckRepo.findByMonitorIdAndCheckedAtBetween(id, f, t, p);
+            }
+            public long total(String f, String t) { return httpCheckRepo.countByMonitorIdAndCheckedAtBetween(id, f, t); }
+            public long fail(String f, String t) { return httpCheckRepo.countByMonitorIdAndOkFalseAndCheckedAtBetween(id, f, t); }
+            public List<Object[]> histogram(String f, String t, int len) { return httpCheckRepo.historyHistogram(id, f, t, len); }
+        };
+        return runHistory(session, mon.getTeamId(), src, "http",
+                mon.getUrl(), Set.of(EscalationService.TYPE_HTTP_DOWN, EscalationService.TYPE_HTTP_SSL,
+                        EscalationService.TYPE_DOMAIN_EXPIRY),
+                from, to, days, status, page, size, format, "http-history-" + id, List.of(
+                new CsvColumn<>("checked_at", HttpCheck::getCheckedAt),
+                new CsvColumn<>("ok", HttpCheck::getOk),
+                new CsvColumn<>("http_status", HttpCheck::getHttpStatus),
+                new CsvColumn<>("response_ms", HttpCheck::getResponseMs),
+                new CsvColumn<>("error", HttpCheck::getError)), response);
     }
 
     @PostMapping("/http/{id}/check")
@@ -1987,30 +2081,37 @@ public class MonitoringController {
     }
 
     @GetMapping("/page/{id}/history")
-    public ResponseEntity<Map<String, Object>> pageHistory(@PathVariable Long id, HttpSession session,
-            @RequestParam(required = false) Integer days, @RequestParam(defaultValue = "100") int limit) {
+    public ResponseEntity<?> pageHistory(@PathVariable Long id, HttpSession session,
+            @RequestParam(required = false) String from, @RequestParam(required = false) String to,
+            @RequestParam(required = false) Integer days,
+            @RequestParam(defaultValue = "all") String status,
+            @RequestParam(defaultValue = "0") int page, @RequestParam(defaultValue = "50") int size,
+            @RequestParam(required = false) String format,
+            jakarta.servlet.http.HttpServletResponse response) {
         com.sitemonitor.model.PageMonitor mon = pageMonitorRepo.findById(id).orElse(null);
         if (mon == null) return notFound("Sayfa monitörü bulunamadı");
-        var deny = denyIfNotViewable(session, mon.getTeamId());
-        if (deny != null) return deny;
-        List<com.sitemonitor.model.PageCheck> checks;
-        long total, down;
-        if (days != null && days > 0) {
-            String cutoff = ISO.format(Instant.now().minus(days, ChronoUnit.DAYS));
-            checks = pageCheckRepo.findRecentByMonitorIdSince(id, cutoff, 500);
-            total = pageCheckRepo.countByMonitorIdAndCheckedAtGreaterThanEqual(id, cutoff);
-            down  = pageCheckRepo.countByMonitorIdAndOkFalseAndCheckedAtGreaterThanEqual(id, cutoff);
-        } else {
-            int cap = Math.max(1, Math.min(limit, 10_000));
-            checks = pageCheckRepo.findRecentByMonitorId(id, cap);
-            total = checks.size();
-            down  = checks.stream().filter(c -> !Boolean.TRUE.equals(c.getOk())).count();
-        }
-        Map<String, Object> out = new LinkedHashMap<>();
-        out.put("checks", checks);
-        out.put("total", total);
-        out.put("down", down);
-        return ok(out);
+        var src = new CheckHistoryService.Source<com.sitemonitor.model.PageCheck>() {
+            public org.springframework.data.domain.Page<com.sitemonitor.model.PageCheck> page(String f, String t, boolean fail, org.springframework.data.domain.Pageable p) {
+                return fail ? pageCheckRepo.findByMonitorIdAndOkFalseAndCheckedAtBetween(id, f, t, p)
+                            : pageCheckRepo.findByMonitorIdAndCheckedAtBetween(id, f, t, p);
+            }
+            public long total(String f, String t) { return pageCheckRepo.countByMonitorIdAndCheckedAtBetween(id, f, t); }
+            public long fail(String f, String t) { return pageCheckRepo.countByMonitorIdAndOkFalseAndCheckedAtBetween(id, f, t); }
+            public List<Object[]> histogram(String f, String t, int len) { return pageCheckRepo.historyHistogram(id, f, t, len); }
+        };
+        return runHistory(session, mon.getTeamId(), src, "page",
+                mon.getUrl(), Set.of(EscalationService.TYPE_PAGE_DOWN, EscalationService.TYPE_PAGE_INTEGRITY),
+                from, to, days, status, page, size, format, "page-history-" + id, List.of(
+                new CsvColumn<>("checked_at", com.sitemonitor.model.PageCheck::getCheckedAt),
+                new CsvColumn<>("ok", com.sitemonitor.model.PageCheck::getOk),
+                new CsvColumn<>("status", com.sitemonitor.model.PageCheck::getStatus),
+                new CsvColumn<>("http_status", com.sitemonitor.model.PageCheck::getHttpStatus),
+                new CsvColumn<>("response_ms", com.sitemonitor.model.PageCheck::getResponseMs),
+                new CsvColumn<>("total_resources", com.sitemonitor.model.PageCheck::getTotalResources),
+                new CsvColumn<>("broken_resources", com.sitemonitor.model.PageCheck::getBrokenResources),
+                new CsvColumn<>("timeout_count", com.sitemonitor.model.PageCheck::getTimeoutCount),
+                new CsvColumn<>("mixed_content_count", com.sitemonitor.model.PageCheck::getMixedContentCount),
+                new CsvColumn<>("error", com.sitemonitor.model.PageCheck::getError)), response);
     }
 
     /** Sorunlu-kaynak listesi — pencere içindeki ÇOK kontrolü (yalnız son değil) checked_at DESC + SQL-LIMIT'li
@@ -2280,30 +2381,34 @@ public class MonitoringController {
     }
 
     @GetMapping("/scripted/{id}/history")
-    public ResponseEntity<Map<String, Object>> scriptedHistory(@PathVariable Long id, HttpSession session,
-            @RequestParam(required = false) Integer days, @RequestParam(defaultValue = "100") int limit) {
+    public ResponseEntity<?> scriptedHistory(@PathVariable Long id, HttpSession session,
+            @RequestParam(required = false) String from, @RequestParam(required = false) String to,
+            @RequestParam(required = false) Integer days,
+            @RequestParam(defaultValue = "all") String status,
+            @RequestParam(defaultValue = "0") int page, @RequestParam(defaultValue = "50") int size,
+            @RequestParam(required = false) String format,
+            jakarta.servlet.http.HttpServletResponse response) {
         com.sitemonitor.model.ScriptedMonitor mon = scriptedMonitorRepo.findById(id).orElse(null);
         if (mon == null) return notFound("Sentetik izleme bulunamadı");
-        var deny = denyIfNotViewable(session, mon.getTeamId());
-        if (deny != null) return deny;
-        List<com.sitemonitor.model.ScriptedCheck> checks;
-        long total, down;
-        if (days != null && days > 0) {
-            String cutoff = ISO.format(Instant.now().minus(days, ChronoUnit.DAYS));
-            checks = scriptedCheckRepo.findRecentByMonitorIdSince(id, cutoff, 500);
-            total = scriptedCheckRepo.countByMonitorIdAndCheckedAtGreaterThanEqual(id, cutoff);
-            down  = scriptedCheckRepo.countByMonitorIdAndOkFalseAndCheckedAtGreaterThanEqual(id, cutoff);
-        } else {
-            int cap = Math.max(1, Math.min(limit, 10_000));
-            checks = scriptedCheckRepo.findRecentByMonitorId(id, cap);
-            total = checks.size();
-            down  = checks.stream().filter(c -> !Boolean.TRUE.equals(c.getOk())).count();
-        }
-        Map<String, Object> out = new LinkedHashMap<>();
-        out.put("checks", checks);
-        out.put("total", total);
-        out.put("down", down);
-        return ok(out);
+        var src = new CheckHistoryService.Source<com.sitemonitor.model.ScriptedCheck>() {
+            public org.springframework.data.domain.Page<com.sitemonitor.model.ScriptedCheck> page(String f, String t, boolean fail, org.springframework.data.domain.Pageable p) {
+                return fail ? scriptedCheckRepo.findByMonitorIdAndOkFalseAndCheckedAtBetween(id, f, t, p)
+                            : scriptedCheckRepo.findByMonitorIdAndCheckedAtBetween(id, f, t, p);
+            }
+            public long total(String f, String t) { return scriptedCheckRepo.countByMonitorIdAndCheckedAtBetween(id, f, t); }
+            public long fail(String f, String t) { return scriptedCheckRepo.countByMonitorIdAndOkFalseAndCheckedAtBetween(id, f, t); }
+            public List<Object[]> histogram(String f, String t, int len) { return scriptedCheckRepo.historyHistogram(id, f, t, len); }
+        };
+        return runHistory(session, mon.getTeamId(), src, "scripted",
+                mon.getName(), Set.of(EscalationService.TYPE_SCRIPTED_FAIL),
+                from, to, days, status, page, size, format, "scripted-history-" + id, List.of(
+                new CsvColumn<>("checked_at", com.sitemonitor.model.ScriptedCheck::getCheckedAt),
+                new CsvColumn<>("ok", com.sitemonitor.model.ScriptedCheck::getOk),
+                new CsvColumn<>("status", com.sitemonitor.model.ScriptedCheck::getStatus),
+                new CsvColumn<>("duration_ms", com.sitemonitor.model.ScriptedCheck::getDurationMs),
+                new CsvColumn<>("checks_passed", com.sitemonitor.model.ScriptedCheck::getChecksPassed),
+                new CsvColumn<>("checks_failed", com.sitemonitor.model.ScriptedCheck::getChecksFailed),
+                new CsvColumn<>("error", com.sitemonitor.model.ScriptedCheck::getError)), response);
     }
 
     @PostMapping("/scripted/{id}/check")
@@ -2623,29 +2728,36 @@ public class MonitoringController {
     }
 
     @GetMapping("/domain/{id}/history")
-    public ResponseEntity<Map<String, Object>> domainHistory(@PathVariable Long id, HttpSession session,
-            @RequestParam(required = false) Integer days, @RequestParam(defaultValue = "100") int limit) {
+    public ResponseEntity<?> domainHistory(@PathVariable Long id, HttpSession session,
+            @RequestParam(required = false) String from, @RequestParam(required = false) String to,
+            @RequestParam(required = false) Integer days,
+            @RequestParam(defaultValue = "all") String status,
+            @RequestParam(defaultValue = "0") int page, @RequestParam(defaultValue = "50") int size,
+            @RequestParam(required = false) String format,
+            jakarta.servlet.http.HttpServletResponse response) {
         DomainMonitor mon = domainMonitorRepo.findById(id).orElse(null);
         if (mon == null) return notFound("Domain monitor not found");
-        var deny = denyIfNotViewable(session, mon.getTeamId());
-        if (deny != null) return deny;
-        List<DomainCheck> checks;
-        long total;
-        if (days != null && days > 0) {
-            String cutoff = ISO.format(Instant.now().minus(days, ChronoUnit.DAYS));
-            checks = domainCheckRepo.findRecentByMonitorIdSince(id, cutoff, 500);
-            total = domainCheckRepo.countByMonitorIdAndCheckedAtGreaterThanEqual(id, cutoff);
-        } else {
-            int cap = Math.max(1, Math.min(limit, 10_000));
-            checks = domainCheckRepo.findRecentByMonitorId(id, cap);
-            total = checks.size();
-        }
-        long problems = checks.stream().filter(c -> !"OK".equals(c.getStatus())).count();
-        Map<String, Object> out = new LinkedHashMap<>();
-        out.put("checks", checks);
-        out.put("total", total);
-        out.put("down", problems);
-        return ok(out);
+        // Hata sayacı artık DB count'tan — eski sürüm 500'lük KESİK listeden sayıyordu (bug).
+        var src = new CheckHistoryService.Source<DomainCheck>() {
+            public org.springframework.data.domain.Page<DomainCheck> page(String f, String t, boolean fail, org.springframework.data.domain.Pageable p) {
+                return fail ? domainCheckRepo.findByMonitorIdAndStatusNotAndCheckedAtBetween(id, "OK", f, t, p)
+                            : domainCheckRepo.findByMonitorIdAndCheckedAtBetween(id, f, t, p);
+            }
+            public long total(String f, String t) { return domainCheckRepo.countByMonitorIdAndCheckedAtBetween(id, f, t); }
+            public long fail(String f, String t) { return domainCheckRepo.countByMonitorIdAndStatusNotAndCheckedAtBetween(id, "OK", f, t); }
+            public List<Object[]> histogram(String f, String t, int len) { return domainCheckRepo.historyHistogram(id, f, t, len); }
+        };
+        return runHistory(session, mon.getTeamId(), src, "domain",
+                mon.getDomain(), Set.of(EscalationService.TYPE_DOMAINMON_EXPIRY, EscalationService.TYPE_DOMAINMON_UNKNOWN,
+                        EscalationService.TYPE_DOMAINMON_STATUS, EscalationService.TYPE_DOMAINMON_CHANGED),
+                from, to, days, status, page, size, format, "domain-history-" + id, List.of(
+                new CsvColumn<>("checked_at", DomainCheck::getCheckedAt),
+                new CsvColumn<>("status", DomainCheck::getStatus),
+                new CsvColumn<>("days_remaining", DomainCheck::getDaysRemaining),
+                new CsvColumn<>("expiry_date", DomainCheck::getExpiryDate),
+                new CsvColumn<>("registrar", DomainCheck::getRegistrar),
+                new CsvColumn<>("source", DomainCheck::getSource),
+                new CsvColumn<>("error", DomainCheck::getError)), response);
     }
 
     @PostMapping("/domain/{id}/check")
@@ -2882,31 +2994,32 @@ public class MonitoringController {
     }
 
     @GetMapping("/ping/{id}/history")
-    public ResponseEntity<Map<String, Object>> pingHistory(@PathVariable Long id, HttpSession session,
+    public ResponseEntity<?> pingHistory(@PathVariable Long id, HttpSession session,
+            @RequestParam(required = false) String from, @RequestParam(required = false) String to,
             @RequestParam(required = false) Integer days,
-            @RequestParam(defaultValue = "100") int limit) {
+            @RequestParam(defaultValue = "all") String status,
+            @RequestParam(defaultValue = "0") int page, @RequestParam(defaultValue = "50") int size,
+            @RequestParam(required = false) String format,
+            jakarta.servlet.http.HttpServletResponse response) {
         PingMonitor mon = pingMonitorRepo.findById(id).orElse(null);
         if (mon == null) return notFound("Ping monitor not found");
-        var deny = denyIfNotViewable(session, mon.getTeamId());
-        if (deny != null) return deny;
-        List<PingCheck> checks;
-        long total, down;
-        if (days != null && days > 0) {
-            String cutoff = ISO.format(Instant.now().minus(days, ChronoUnit.DAYS));
-            checks = pingCheckRepo.findRecentByMonitorIdSince(id, cutoff, 500);   // SQL-LIMIT
-            total = pingCheckRepo.countByMonitorIdAndCheckedAtGreaterThanEqual(id, cutoff);
-            down  = pingCheckRepo.countByMonitorIdAndUpFalseAndCheckedAtGreaterThanEqual(id, cutoff);
-        } else {
-            int cap = Math.max(1, Math.min(limit, 10_000));
-            checks = pingCheckRepo.findRecentByMonitorId(id, cap);   // SQL-LIMIT
-            total = checks.size();
-            down  = checks.stream().filter(c -> !Boolean.TRUE.equals(c.getUp())).count();
-        }
-        Map<String, Object> out = new LinkedHashMap<>();
-        out.put("checks", checks);
-        out.put("total", total);
-        out.put("down", down);
-        return ok(out);
+        var src = new CheckHistoryService.Source<PingCheck>() {
+            public org.springframework.data.domain.Page<PingCheck> page(String f, String t, boolean fail, org.springframework.data.domain.Pageable p) {
+                return fail ? pingCheckRepo.findByMonitorIdAndUpFalseAndCheckedAtBetween(id, f, t, p)
+                            : pingCheckRepo.findByMonitorIdAndCheckedAtBetween(id, f, t, p);
+            }
+            public long total(String f, String t) { return pingCheckRepo.countByMonitorIdAndCheckedAtBetween(id, f, t); }
+            public long fail(String f, String t) { return pingCheckRepo.countByMonitorIdAndUpFalseAndCheckedAtBetween(id, f, t); }
+            public List<Object[]> histogram(String f, String t, int len) { return pingCheckRepo.historyHistogram(id, f, t, len); }
+        };
+        return runHistory(session, mon.getTeamId(), src, "ping",
+                mon.getHost(), Set.of(EscalationService.TYPE_PING_DOWN),
+                from, to, days, status, page, size, format, "ping-history-" + id, List.of(
+                new CsvColumn<>("checked_at", PingCheck::getCheckedAt),
+                new CsvColumn<>("up", PingCheck::getUp),
+                new CsvColumn<>("rtt_ms", PingCheck::getRttMs),
+                new CsvColumn<>("packet_loss", PingCheck::getPacketLoss),
+                new CsvColumn<>("error", PingCheck::getError)), response);
     }
 
     @PostMapping("/ping/{id}/check")
