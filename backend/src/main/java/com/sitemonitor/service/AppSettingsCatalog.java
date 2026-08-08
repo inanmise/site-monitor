@@ -186,6 +186,7 @@ public final class AppSettingsCatalog {
         new Setting("site.monitor.audit.archive-retention-days",      "retention", Type.INT),
         new Setting("site.monitor.rollup.lookback-days",              "retention", Type.INT),
         new Setting("site.monitor.rollup.retention-days",             "retention", Type.INT),
+        new Setting("site.monitor.rollup.hourly-retention-days",      "retention", Type.INT),
         new Setting("site.monitor.db.growth-warn-rows",               "retention", Type.INT),
         // ── 2026-08: eskiden koda GÖMÜLÜ olan kesimler artık ayar (RetentionCatalog ile senkron;
         //    RetentionSettingsSyncTest kilitler). Her birinin kodda bir minDays tabanı vardır. ──

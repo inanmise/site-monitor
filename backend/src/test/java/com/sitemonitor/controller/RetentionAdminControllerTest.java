@@ -41,6 +41,7 @@ class RetentionAdminControllerTest {
     @MockitoBean AppSettingsService settingsService;
     @MockitoBean AuditService auditService;
     @MockitoBean PermissionService permissionService;
+    @MockitoBean com.sitemonitor.service.SchedulerService schedulerService;
     @MockitoBean RememberMeService rememberMeService;
     @MockitoBean UserService userService;
     @MockitoBean AuthController authController;

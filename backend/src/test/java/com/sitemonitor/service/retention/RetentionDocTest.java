@@ -2,6 +2,7 @@ package com.sitemonitor.service.retention;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -32,6 +33,18 @@ class RetentionDocTest {
                 .as("Doküman katalogdan sapmış. RetentionDocGenerator.generate() çıktısıyla değiştirin "
                     + "(elle düzenlemeyin — kaynak RetentionCatalog.ALL).")
                 .isEqualTo(expected.replace("\r\n", "\n"));
+    }
+
+    /**
+     * [BAKIM ARACI] Dokümanı katalogdan yeniden üretir — normalde ATLANIR.
+     * Katalog değişince: {@code mvn.cmd test -Dtest=RetentionDocTest -Dretention.doc.write=true}
+     * (elle düzenlemek yerine bunu çalıştırın; kaynak her zaman RetentionCatalog.ALL'dır).
+     */
+    @Test
+    @EnabledIfSystemProperty(named = "retention.doc.write", matches = "true")
+    @DisplayName("[araç] Dokümanı katalogdan yeniden üretir")
+    void regenerateDoc() throws IOException {
+        Files.writeString(DOC, RetentionDocGenerator.generate(), StandardCharsets.UTF_8);
     }
 
     @Test

@@ -65,6 +65,7 @@ BDDK/iç denetim süreleri esas alınmalıdır.
 | Tablo | Süre | Taban | Ayar anahtarı | Kural | Gerekçe |
 |---|---|---|---|---|---|
 | `monitor_check_daily` | 730 gün | 90 g | `site.monitor.rollup.retention-days` | `day < ?` | Günlük özet (uptime/yanıt süresi trendi). Ham seriler kısalsa da 2 yıllık trend korunur. |
+| `monitor_check_hourly` | 365 gün | 60 g | `site.monitor.rollup.hourly-retention-days` | `hour_bucket < ?` | Saatlik özet. Ham seri kısaldığında olayın hangi SAATTE olduğu burada kalır (günlük özet bunu kaybeder). Ham serinin ~%1,7'si kadar yer kaplar. |
 | `uptime_checks` | 180 gün | 30 g | `site.monitor.series.uptime.retention-days` | `checked_at < ?` | Erişilebilirlik ham serisi. |
 | `certificate_checks` | 180 gün | 30 g | `site.monitor.series.certificate.retention-days` | `checked_at < ?` | Sertifika kontrol ham serisi. |
 | `port_checks` | 180 gün | 30 g | `site.monitor.series.port.retention-days` | `checked_at < ?` | Port kontrol ham serisi (30 sn kadans). |

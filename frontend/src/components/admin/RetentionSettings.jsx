@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   Loader2, Database, HardDrive, Trash2, Clock, PlayCircle, History, ShieldAlert,
   Lock, FileText, ChevronDown, Users, Shield, FileBox, Activity, GitCompareArrows,
+  DatabaseBackup,
 } from 'lucide-react'
 import { api, formatDateSec } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
@@ -140,6 +141,22 @@ export default function RetentionSettings() {
     else toast.error(res?.error || t('ret.actionFailed'))
   }
 
+  /** Saatlik özeti geriye doldurur. Ham seri hâlâ elde olduğu için tüm saklama penceresi tek
+   *  seferde kurtarılabilir — kısaltmadan ÖNCE çalıştırılmalı. Hiçbir satır silmez. */
+  async function backfillHourly() {
+    const ok = await showConfirm({
+      title: t('ret.backfillTitle'),
+      message: t('ret.backfillBody'),
+      confirmText: t('ret.backfillConfirm'),
+    })
+    if (!ok) return
+    setBusy('backfill')
+    const res = await api.admin.retentionBackfillHourly()
+    setBusy(null)
+    if (res?.success) { toast.success(res.message); load(true) }
+    else toast.error(res?.error || t('ret.actionFailed'))
+  }
+
   async function approve(p) {
     const note = await showPrompt({
       title: t('ret.approveTitle'),
@@ -225,6 +242,11 @@ export default function RetentionSettings() {
         <button className="btn btn-secondary" onClick={dryRun} disabled={busy != null}>
           {busy === 'dry' ? <Loader2 className="spin" size={15} /> : <PlayCircle size={15} />}
           {t('ret.dryRun')}
+        </button>
+        <button className="btn btn-secondary" onClick={backfillHourly} disabled={busy != null}
+          title={t('ret.backfillHint')}>
+          {busy === 'backfill' ? <Loader2 className="spin" size={15} /> : <DatabaseBackup size={15} />}
+          {t('ret.backfill')}
         </button>
         <button className="btn btn-danger" onClick={runNow} disabled={busy != null || holdOn}
           title={holdOn ? t('ret.holdBlocks') : undefined}>

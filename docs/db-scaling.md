@@ -23,7 +23,9 @@ uygulanan mekanizmaları ve işletme (ops) adımlarını özetler.
 > Not: FK sırası ("önce çocuk") gerçek bir veritabanı kısıtı değil, kod konvansiyonudur —
 > `RetentionCatalog.ALL` liste sırası bu sırayı taşır ve `RetentionSqlIdentityTest` doğrular.
 
-Uzun-dönem trend `monitor_check_daily` rollup tablosunda korunur → ham veri kısa retention'la silinebilir.
+Uzun-dönem trend `monitor_check_daily` (gün) ve `monitor_check_hourly` (saat) rollup tablolarında
+korunur → ham veri kısa retention'la silinebilir. Saatlik katman 2026-08'de eklendi: günlük özet
+"o gün %97,4" der ama kesintinin **saatini** kaybeder; olay incelemesi için saat çözünürlüğü şarttır.
 
 ## 2. Uygulamadaki mekanizmalar (kod)
 
@@ -32,7 +34,12 @@ Uzun-dönem trend `monitor_check_daily` rollup tablosunda korunur → ham veri k
   özetleri (`/audit/stats`) 60sn Caffeine cache'li.
 - **Batch'li purge:** gece temizlik (`SchedulerService.cleanupOldLogs`, cron `0 30 3`) yüksek-hacimli
   tabloları tek dev DELETE yerine 10k'lık dilimlerle siler + `ANALYZE` (bloat + uzun-tx önleme).
-- **Rollup:** purge'den ÖNCE son N günü `monitor_check_daily`'ye aggregate eder (idempotent upsert).
+- **Rollup:** purge'den ÖNCE son N günü `monitor_check_daily` (gün kovası) ve `monitor_check_hourly`
+  (saat kovası) tablolarına aggregate eder — aynı huni, tek fark kova genişliği (10 / 13 karakter;
+  `RollupSqlShapeTest` iki yolun ayrışmasını engeller). Upsert idempotenttir.
+- **Geriye doldurma:** `POST /api/admin/retention/backfill-hourly` (ekranda "Saatlik özeti doldur")
+  saatlik kovaları ham serilerden geriye dönük hesaplar. Böylece "rollup birikene kadar bekle"
+  ön koşulu ortadan kalkar: ham veri hâlâ eldeyken tüm pencere tek seferde kurtarılır.
 - **Per-table autovacuum:** yüksek-yazımlı tablolarda `autovacuum_vacuum_scale_factor=0.02` (varsayılan
   %20 yerine %2 ölü-tuple'da vacuum) — `applySchemaPatches`'te `ALTER TABLE` ile (dış DB'de de geçerli).
 
@@ -54,15 +61,18 @@ Retention dışında kalan ölçek anahtarları:
 | Anahtar | Varsayılan | Açıklama |
 |---|---|---|
 | `site.monitor.retention.purge-batch-size` | 10000 | Batch silme dilim boyutu (taban 1000) |
-| `site.monitor.rollup.lookback-days` | 3 | Gece kaç tam günü rollup'la |
+| `site.monitor.rollup.lookback-days` | 3 | Gece kaç tam günü rollup'la (günlük + saatlik) |
+| `site.monitor.rollup.retention-days` | 730 | Günlük özet saklama (taban 90) |
+| `site.monitor.rollup.hourly-retention-days` | 365 | Saatlik özet saklama (taban 60) |
 | `site.monitor.db.metrics-refresh-ms` | 300000 | Büyüme metriği örnekleme aralığı |
 | `site.monitor.db.growth-warn-rows` | 5000000 | Tablo satır eşiği (aşınca WARN) |
 | `site.monitor.retention.hold-enabled` | false | **Legal hold** — açıkken HİÇBİR silme yapılmaz |
 
 **Ham kontrol serisi retention'ını kısaltma:** ham seriler artık **tür bazında** ayarlanabilir
 (`site.monitor.series.<tür>.retention-days`, hepsi 180 gün varsayılan, taban 30). Kısaltmadan önce
-`monitor_check_daily` rollup'ının birkaç gün üretim verisi biriktirmiş olması gerekir — trend orada
-kalır, ham veri gider. Sıra önemli: önce rollup birikir, sonra ham kısaltılır.
+rollup katmanının ilgili pencereyi kapsıyor olması gerekir — trend orada kalır, ham veri gider.
+Beklemeye gerek yok: **"Saatlik özeti doldur"** (backfill) ham veriden geçmişi tek seferde üretir,
+sonra kısaltma yapılır. Kısaltma geri alınamaz; önce dry-run ile kaç satırın gideceği görülmelidir.
 
 ### Temizliğin kendi izlenmesi
 
@@ -143,13 +153,21 @@ opt-in'dir, gece temizlik/rollup dağıtık-kilitlidir → çok-pod'da tek pod �
 - Monitör-liste sayfaları açılıyor (LATERAL en-güncel sorguları) + Denetim/Aktivite ekranları.
 - `/metrics` içinde `db_table_rows{table=...}` gauge'ları görünüyor.
 - İlk gece (03:30) `cleanupOldLogs` logu: yalnız **tek pod** "Nightly cleanup" yazar (diğerleri
-  "lock başka pod'da, atlanıyor"); rollup satırı `monitor_check_daily`'yi dolduruyor.
+  "lock başka pod'da, atlanıyor"); rollup satırları `monitor_check_daily` ve `monitor_check_hourly`
+  tablolarını dolduruyor ("Daily rollup: ..." + "Saatlik rollup: ... kova").
 - `psql -f scripts/db-health.sql` ile tablo boyutları/bloat/en yavaş sorgular gözden geçir.
 
 ### ROLLUP DOĞRULANDIKTAN SONRA (opsiyonel, ops kararı)
-Rollup birkaç gün prod'da doğru veri ürettikten sonra, ham kontrol serisi retention'ı config'ten
-kısaltılabilir (ör. 180g → 30–45g) — uzun-dönem trend `monitor_check_daily`'de kalır. Sıra:
-önce rollup birikir, **sonra** ham kısaltılır (trend kaybı olmaz).
+Sıra: **(1)** Veri Saklama ekranından "Saatlik özeti doldur" → saatlik kovalar ham veriden geriye
+doldurulur (silme yok, tekrarı güvenli). **(2)** `monitor_check_hourly` satır sayısı/en eski kaydı
+aynı ekrandan doğrulanır. **(3)** Dry-run ile kaç ham satırın gideceği görülür. **(4)** Ham
+retention kademeli kısaltılır (ör. 180 → 90, gözlemden sonra 90 → 45).
+
+Kısaltmanın ne KORUDUĞU ve ne KAYBETTİĞİ:
+- **Korunur:** günlük/saatlik uptime oranı, ortalama ve maksimum yanıt süresi, kesintinin saati.
+- **Kaybolur:** satır düzeyinde ham kayıtlar — tekil kontrolün hata metni, HTTP kodu, CSV dışa
+  aktarımı ve Kontrol Geçmişi listesi yeni pencerenin gerisi için boş kalır.
+Bu nedenle kısaltma, olay incelemesinin pratikte ne kadar geriye gittiğine göre seçilmelidir.
 
 ## 7. Sayfa Bütünlüğü (Page Integrity) — güvenlik/perf notları (2026-07 inceleme)
 

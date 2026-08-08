@@ -670,6 +670,22 @@ public class SchedulerService {
             """);
         patch("CREATE INDEX IF NOT EXISTS idx_mcd_type_key_day ON monitor_check_daily(monitor_type, monitor_key, day)");
 
+        // ── SAATLİK rollup (2026-08): ham seri kısaltıldığında günlük özet olayın SAATİNİ kaybeder.
+        //    Aynı şema + 13 karakterlik kova (YYYY-MM-DDTHH). Maliyeti ham serinin ~%1,7'si. ──
+        patch("""
+            CREATE TABLE IF NOT EXISTS monitor_check_hourly(
+                monitor_type VARCHAR(16) NOT NULL,
+                monitor_key VARCHAR(255) NOT NULL,
+                hour_bucket VARCHAR(13) NOT NULL,
+                total_checks BIGINT DEFAULT 0,
+                up_checks BIGINT DEFAULT 0,
+                avg_response_ms INTEGER,
+                max_response_ms INTEGER,
+                PRIMARY KEY (monitor_type, monitor_key, hour_bucket)
+            )
+            """);
+        patch("CREATE INDEX IF NOT EXISTS idx_mch_type_key_hour ON monitor_check_hourly(monitor_type, monitor_key, hour_bucket)");
+
         // İzleme grubu registry'si (takım + izleme TÜRÜ bazlı grup adları) — ddl-auto entity'yi de oluşturur; bu
         // güvenlik ağı + case-insensitive UNIQUE(team_id, type, name_lower) hem PG hem H2'de (name_lower app'te lower).
         patch("""
@@ -872,9 +888,11 @@ public class SchedulerService {
             return;
         }
         try {
-            // ÖNCE rollup (ham kontrol serilerini günlük özete al) — SONRA purge. Böylece ham kısa
-            // retention'la silinse de uzun-dönem trend monitor_check_daily'de korunur.
+            // ÖNCE rollup (ham kontrol serilerini özete al) — SONRA purge. Böylece ham kısa
+            // retention'la silinse de uzun-dönem trend monitor_check_daily'de, olayın SAATİ ise
+            // monitor_check_hourly'de korunur.
             rollupDailyStats();
+            rollupHourlyStats();
 
             // Denetim arşivi: audit_log SİLİNMEDEN ÖNCE JSONL'e yazılmalı (append-only + arşiv).
             // Bu adım retention politikasının parçası değil, ön koşuludur → burada kalır.
@@ -968,34 +986,110 @@ public class SchedulerService {
         }
     }
 
+    /**
+     * SAATLİK rollup: aynı huni, kova genişliği 13 karakter ({@code YYYY-MM-DDTHH}).
+     *
+     * <p>Neden gerekli: ham seri kısaltıldığında (ör. 180g → 90g) günlük özet "o gün %97,4"
+     * demeye devam eder ama kesintinin SAATİNİ kaybeder. Saatlik kova bu boşluğu doldurur ve
+     * maliyeti ihmal edilebilir (100 monitör × 24 satır/gün ≈ ham serinin %1,7'si).
+     * Kısaltma, bu katman doğrulanmadan YAPILMAZ ({@code RollupConsistencyTest}).
+     */
+    void rollupHourlyStats() {
+        try {
+            int lookback = Math.max(1, appSettings.getInt("site.monitor.rollup.lookback-days", 3));
+            Instant todayStartI = Instant.now().truncatedTo(ChronoUnit.DAYS);
+            String to   = ISO.format(todayStartI.plus(1, ChronoUnit.DAYS));            // bugün dahil
+            String from = ISO.format(todayStartI.minus(lookback, ChronoUnit.DAYS));
+            int n = rollupAllTypes(HOURLY_TABLE, HOURLY_COL, 13, from, to);
+            log.info("Saatlik rollup: {} kova ({} → {})", n, from, to);
+        } catch (Exception e) {
+            log.warn("Saatlik rollup başarısız: {}", e.getMessage());
+        }
+    }
+
+    /**
+     * Saatlik kovaları GERİYE DÖNÜK doldurur — ham seri hâlâ elde olduğu için tüm saklama
+     * penceresi tek seferde kurtarılabilir. Bu sayede "saatlik veri birikene kadar bekle"
+     * ön koşulu ortadan kalkar: kısaltmadan önce çözünürlük zaten yedeklenmiş olur.
+     * Upsert idempotenttir → tekrar çalıştırmak güvenlidir.
+     *
+     * @param days kaç gün geriye gidilecek
+     * @return yazılan/güncellenen kova sayısı
+     */
+    public int backfillHourlyRollup(int days) {
+        int d = Math.max(1, Math.min(days, 3650));
+        String to   = ISO.format(Instant.now().plus(1, ChronoUnit.DAYS));
+        String from = ISO.format(Instant.now().minus(d, ChronoUnit.DAYS));
+        int n = rollupAllTypes(HOURLY_TABLE, HOURLY_COL, 13, from, to);
+        log.info("Saatlik rollup geriye-doldurma: {} kova ({} gün: {} → {})", n, d, from, to);
+        return n;
+    }
+
+    static final String HOURLY_TABLE = "monitor_check_hourly";
+    static final String HOURLY_COL = "hour_bucket";
+
+    /** 7 izleme türünü tek kova genişliğiyle hedef tabloya yazar; toplam satır döner. */
+    private int rollupAllTypes(String target, String bucketCol, int len, String from, String to) {
+        int total = 0;
+        total += Math.max(0, rollupInto(target, bucketCol, len, "PORT",     "port_checks",     "open", "response_ms", from, to));
+        total += Math.max(0, rollupInto(target, bucketCol, len, "PING",     "ping_checks",     "up",   "rtt_ms",      from, to));
+        total += Math.max(0, rollupInto(target, bucketCol, len, "KEYWORD",  "keyword_results", "ok",   "response_ms", from, to));
+        total += Math.max(0, rollupInto(target, bucketCol, len, "HTTP",     "http_checks",     "ok",   "response_ms", from, to));
+        total += Math.max(0, rollupInto(target, bucketCol, len, "PAGE",     "page_checks",     "ok",   "response_ms", from, to));
+        total += Math.max(0, rollupInto(target, bucketCol, len, "SCRIPTED", "scripted_checks", "ok",   "duration_ms", from, to));
+        total += Math.max(0, rollupUptimeInto(target, bucketCol, len, from, to));
+        return total;
+    }
+
     // monitor_id-anahtarlı tipler (boolean up-kolonu). table/upCol/respCol yalnız KOD-kontrollü (injection yok).
     private int rollupUpsert(String type, String table, String upCol, String respCol, String from, String to) {
-        String sql = "INSERT INTO monitor_check_daily (monitor_type, monitor_key, day, total_checks, up_checks, avg_response_ms, max_response_ms) "
-            + "SELECT '" + type + "', CAST(monitor_id AS varchar), substr(checked_at,1,10), "
+        return rollupInto("monitor_check_daily", "day", 10, type, table, upCol, respCol, from, to);
+    }
+
+    /** Ortak upsert hunisi — yalnız hedef tablo ve kova genişliği değişir (günlük 10, saatlik 13). */
+    private int rollupInto(String target, String bucketCol, int len, String type, String table,
+                           String upCol, String respCol, String from, String to) {
+        String sql = upsertSql(target, bucketCol, len, type, table, upCol, respCol);
+        try { return jdbcTemplate.update(sql, from, to); }
+        catch (Exception e) { log.warn("Rollup {} ({}) failed: {}", type, target, e.getMessage()); return -1; }
+    }
+
+    /** SQL üretimi ayrı: günlük ve saatlik yolun BİRE BİR aynı olduğunu test doğrudan kanıtlayabilsin
+     *  (tek fark hedef tablo, kova kolonu ve kova genişliği). Tablo/kolon adları yalnız KOD-kontrollü. */
+    static String upsertSql(String target, String bucketCol, int len, String type, String table,
+                            String upCol, String respCol) {
+        return "INSERT INTO " + target + " (monitor_type, monitor_key, " + bucketCol + ", total_checks, up_checks, avg_response_ms, max_response_ms) "
+            + "SELECT '" + type + "', CAST(monitor_id AS varchar), substr(checked_at,1," + len + "), "
             + "count(*), sum(CASE WHEN " + upCol + " THEN 1 ELSE 0 END), "
-            + "round(avg(" + respCol + "))::int, max(" + respCol + ") "
+            + "CAST(round(avg(" + respCol + ")) AS int), max(" + respCol + ") "
             + "FROM " + table + " WHERE checked_at >= ? AND checked_at < ? "
-            + "GROUP BY monitor_id, substr(checked_at,1,10) "
-            + "ON CONFLICT (monitor_type, monitor_key, day) DO UPDATE SET "
+            + "GROUP BY monitor_id, substr(checked_at,1," + len + ") "
+            + "ON CONFLICT (monitor_type, monitor_key, " + bucketCol + ") DO UPDATE SET "
             + "total_checks = EXCLUDED.total_checks, up_checks = EXCLUDED.up_checks, "
             + "avg_response_ms = EXCLUDED.avg_response_ms, max_response_ms = EXCLUDED.max_response_ms";
-        try { return jdbcTemplate.update(sql, from, to); }
-        catch (Exception e) { log.warn("Rollup {} failed: {}", type, e.getMessage()); return -1; }
     }
 
     // Uptime: domain-anahtarlı, up = status='up', maintenance hariç.
     private int rollupUptime(String from, String to) {
-        String sql = "INSERT INTO monitor_check_daily (monitor_type, monitor_key, day, total_checks, up_checks, avg_response_ms, max_response_ms) "
-            + "SELECT 'UPTIME', domain, substr(checked_at,1,10), "
+        return rollupUptimeInto("monitor_check_daily", "day", 10, from, to);
+    }
+
+    private int rollupUptimeInto(String target, String bucketCol, int len, String from, String to) {
+        String sql = uptimeUpsertSql(target, bucketCol, len);
+        try { return jdbcTemplate.update(sql, from, to); }
+        catch (Exception e) { log.warn("Rollup UPTIME ({}) failed: {}", target, e.getMessage()); return -1; }
+    }
+
+    static String uptimeUpsertSql(String target, String bucketCol, int len) {
+        return "INSERT INTO " + target + " (monitor_type, monitor_key, " + bucketCol + ", total_checks, up_checks, avg_response_ms, max_response_ms) "
+            + "SELECT 'UPTIME', domain, substr(checked_at,1," + len + "), "
             + "count(*), sum(CASE WHEN status = 'up' THEN 1 ELSE 0 END), "
-            + "round(avg(response_ms))::int, max(response_ms) "
+            + "CAST(round(avg(response_ms)) AS int), max(response_ms) "
             + "FROM uptime_checks WHERE checked_at >= ? AND checked_at < ? AND (maintenance = false OR maintenance IS NULL) "
-            + "GROUP BY domain, substr(checked_at,1,10) "
-            + "ON CONFLICT (monitor_type, monitor_key, day) DO UPDATE SET "
+            + "GROUP BY domain, substr(checked_at,1," + len + ") "
+            + "ON CONFLICT (monitor_type, monitor_key, " + bucketCol + ") DO UPDATE SET "
             + "total_checks = EXCLUDED.total_checks, up_checks = EXCLUDED.up_checks, "
             + "avg_response_ms = EXCLUDED.avg_response_ms, max_response_ms = EXCLUDED.max_response_ms";
-        try { return jdbcTemplate.update(sql, from, to); }
-        catch (Exception e) { log.warn("Rollup UPTIME failed: {}", e.getMessage()); return -1; }
     }
 
     /** Denetim kayıtlarını silmeden ÖNCE tarihli JSONL arşive yazar (append-only + arşiv gerekliliği).

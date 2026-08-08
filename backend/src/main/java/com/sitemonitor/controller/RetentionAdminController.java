@@ -53,6 +53,8 @@ public class RetentionAdminController {
     private final AppSettingsService settingsService;
     private final AuditService auditService;
     private final PermissionService permissionService;
+    /** Saatlik özetin geriye doldurulması için — ham seri kısaltılmadan ÖNCE çalıştırılır. */
+    private final com.sitemonitor.service.SchedulerService schedulerService;
 
     // ── Görüntüleme ──────────────────────────────────────────────────────────────
 
@@ -135,6 +137,35 @@ public class RetentionAdminController {
                 "{\"rows\":" + run.totalRows() + ",\"failed\":" + run.failedCount() + "}");
         return ok(Map.of("data", runResultToMap(run),
                 "message", run.totalRows() + " satır silindi"));
+    }
+
+    /**
+     * Saatlik özeti GERİYE DÖNÜK doldurur. Ham seri kısaltılmadan önce çalıştırılmalıdır:
+     * çalıştıktan sonra "olay hangi saatte oldu" bilgisi ham satırlar silinse de kalır.
+     * Yalnız yazar/günceller (idempotent upsert), hiçbir satır SİLMEZ — tekrar çalıştırmak güvenlidir.
+     *
+     * @param days kaç gün geriye doldurulacak (varsayılan: en uzun ham seri saklama süresi)
+     */
+    @PostMapping("/backfill-hourly")
+    public ResponseEntity<Map<String, Object>> backfillHourly(
+            @RequestParam(defaultValue = "0") int days, HttpSession session, HttpServletRequest request) {
+        requireAccess(session);
+        int d = days > 0 ? days : maxRawSeriesDays();
+        long t0 = System.currentTimeMillis();
+        int buckets = schedulerService.backfillHourlyRollup(d);
+        long ms = System.currentTimeMillis() - t0;
+        auditService.recordAction("RETENTION_ROLLUP_BACKFILL", session, request, "RETENTION", "backfill-hourly",
+                "{\"days\":" + d + ",\"buckets\":" + buckets + ",\"ms\":" + ms + "}");
+        return ok(Map.of("data", Map.of("days", d, "buckets", buckets, "duration_ms", ms),
+                "message", buckets + " saatlik kova dolduruldu (" + d + " gün)"));
+    }
+
+    /** Ham kontrol serilerinin EN UZUN saklama süresi — geriye doldurmanın doğal üst sınırı. */
+    private int maxRawSeriesDays() {
+        return RetentionCatalog.ALL.stream()
+                .filter(p -> p.id().startsWith("series-"))
+                .mapToInt(retentionService::effectiveDays)
+                .max().orElse(180);
     }
 
     /**

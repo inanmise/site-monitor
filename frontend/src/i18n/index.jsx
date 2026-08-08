@@ -320,6 +320,14 @@ export const TR = {
   'ret.kpiLastRunSub':    '{0} satır · {1} hata',
   'ret.dryRun':           'Dry-run (silmeden hesapla)',
   'ret.runNow':           'Şimdi temizle',
+  'ret.backfill':         'Saatlik özeti doldur',
+  'ret.backfillHint':     'Ham kayıtlardan saatlik özeti geriye dönük hesaplar — hiçbir satır silinmez',
+  'ret.backfillTitle':    'Saatlik özeti geriye doldur',
+  'ret.backfillBody':     'Ham kontrol kayıtlarından saatlik özet (monitor_check_hourly) yeniden hesaplanır. '
+                        + 'Bu işlem yalnız yazar/günceller, HİÇBİR satır silmez ve tekrar çalıştırılması güvenlidir. '
+                        + 'Ham saklama süresini kısaltmadan ÖNCE çalıştırın: böylece kesintinin hangi saatte '
+                        + 'olduğu bilgisi ham kayıtlar silinse de korunur. Veri hacmine göre birkaç dakika sürebilir.',
+  'ret.backfillConfirm':  'Doldur',
   'ret.history':          'Çalışma geçmişi',
   'ret.dryRunResult':     'Dry-run tamamlandı: {0} satır silinmeye aday. Hiçbir kayıt silinmedi.',
   'ret.runResult':        'Temizlik tamamlandı: {0} satır silindi ({1} ms).',
@@ -4289,6 +4297,14 @@ export const EN = {
   'ret.kpiLastRunSub':    '{0} rows · {1} errors',
   'ret.dryRun':           'Dry-run (count only)',
   'ret.runNow':           'Purge now',
+  'ret.backfill':         'Backfill hourly rollup',
+  'ret.backfillHint':     'Recomputes the hourly rollup from raw checks — deletes nothing',
+  'ret.backfillTitle':    'Backfill hourly rollup',
+  'ret.backfillBody':     'Recomputes the hourly rollup (monitor_check_hourly) from raw check rows. '
+                        + 'It only writes/updates — it deletes NOTHING and is safe to re-run. '
+                        + 'Run it BEFORE shortening raw retention so the hour an outage happened '
+                        + 'survives even after the raw rows are purged. May take a few minutes on large data.',
+  'ret.backfillConfirm':  'Backfill',
   'ret.history':          'Run history',
   'ret.dryRunResult':     'Dry-run complete: {0} rows are eligible. Nothing was deleted.',
   'ret.runResult':        'Cleanup complete: {0} rows deleted ({1} ms).',

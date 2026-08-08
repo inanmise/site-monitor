@@ -136,6 +136,18 @@ class RetentionServiceTest {
     }
 
     @Test
+    @DisplayName("Kova kolonları kendi genişliğinde kırpılır: gün 10, saat 13 karakter")
+    void bucketCutoffsAreTruncatedToColumnWidth() {
+        // Kova kolonları String'dir ve sözlüksel kıyas yapılır. Cutoff tam ISO (19 karakter) kalsaydı
+        // "2026-08-09" < "2026-08-09T03:30:00" olurdu → silinmemesi gereken GÜN silinirdi.
+        var daily = RetentionCatalog.byId("rollup-daily").orElseThrow();
+        var hourly = RetentionCatalog.byId("rollup-hourly").orElseThrow();
+
+        assertThat(service.cutoffFor(daily)).hasSize(10).matches("\\d{4}-\\d{2}-\\d{2}");
+        assertThat(service.cutoffFor(hourly)).hasSize(13).matches("\\d{4}-\\d{2}-\\d{2}T\\d{2}");
+    }
+
+    @Test
     @DisplayName("Kontrol Geçmişi kırpması katalogdan okunur (ekran ile silme aynı kaynaktan)")
     void historyRetentionComesFromCatalog() {
         when(appSettings.getInt(eq("site.monitor.series.ping.retention-days"), anyInt())).thenReturn(45);
