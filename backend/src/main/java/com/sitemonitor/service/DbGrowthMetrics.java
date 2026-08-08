@@ -25,11 +25,14 @@ import java.util.concurrent.ConcurrentHashMap;
 @RequiredArgsConstructor
 public class DbGrowthMetrics {
 
-    /** İzlenen (büyüyen) tablolar — gauge'lar bunlar için kaydedilir. */
-    private static final List<String> TABLES = List.of(
-            "activity_log", "audit_log", "port_checks", "ping_checks", "keyword_results", "http_checks",
-            "uptime_checks", "dns_records", "certificate_checks", "notification_logs", "alert_events",
-            "monitor_check_daily", "system_heartbeat");
+    /**
+     * İzlenen (büyüyen) tablolar — gauge'lar bunlar için kaydedilir. Liste artık elle tutulmuyor,
+     * {@link com.sitemonitor.service.retention.RetentionCatalog}'dan türetiliyor: bir saklama
+     * politikası eklendiği anda tablosu otomatik ölçülmeye başlar. Eskiden 13 tablo sabitti ve
+     * page_checks / scripted_checks / domain_checks gibi hızlı büyüyenler ölçüm dışıydı.
+     */
+    private static final List<String> TABLES =
+            com.sitemonitor.service.retention.RetentionCatalog.tables();
 
     private final MeterRegistry registry;
     private final JdbcTemplate jdbcTemplate;

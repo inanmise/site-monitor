@@ -399,6 +399,17 @@ export const api = {
     saveGeneralSettings: (dto) => request('/admin/general/settings', { method: 'PUT', body: JSON.stringify(dto) }),
 
     // Branding (beyaz etiket) — login/uygulama kimliği + duyuru şeridi
+    // Veri Saklama (retention) — politika matrisi, dry-run, elle temizlik, çalışma geçmişi.
+    getRetentionOverview: (estimate = false) =>
+      request(`/admin/retention/overview${estimate ? '?estimate=true' : ''}`),
+    saveRetentionSettings: (values) =>
+      request('/admin/retention/settings', { method: 'PUT', body: JSON.stringify({ values }) }),
+    retentionDryRun: () => request('/admin/retention/dry-run', { method: 'POST' }),
+    retentionRunNow: () => request('/admin/retention/run', { method: 'POST' }),
+    getRetentionRuns: (limit = 10) => request(`/admin/retention/runs?limit=${limit}`),
+    saveRetentionApproval: (policyId, note) =>
+      request('/admin/retention/approval', { method: 'PUT', body: JSON.stringify({ policy_id: policyId, note }) }),
+
     getBrandingSettings: () => request('/admin/branding/settings'),
     saveBrandingSettings: (dto) => request('/admin/branding/settings', { method: 'PUT', body: JSON.stringify(dto) }),
 

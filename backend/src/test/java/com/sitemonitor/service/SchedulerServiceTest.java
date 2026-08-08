@@ -112,6 +112,7 @@ class SchedulerServiceTest {
     @Mock com.sitemonitor.service.ScriptedCheckerService scriptedCheckerService;
     @Mock com.sitemonitor.repository.ScriptedMonitorRepository scriptedMonitorRepo;
     @Mock com.sitemonitor.repository.ScriptedCheckRepository scriptedCheckRepo;
+    @Mock com.sitemonitor.service.retention.RetentionService retentionService;
 
     SchedulerService scheduler;
 
@@ -130,7 +131,8 @@ class SchedulerServiceTest {
                 failedLoginAnomalyIncidentService,
                 domainMonitorRepo, domainCheckRepo, domainCheckerService,
                 networkOutageRepo,
-                weeklyReportReminderService, weeklyAvailabilityReportService, incidentService, appSettings);
+                weeklyReportReminderService, weeklyAvailabilityReportService, incidentService, appSettings,
+                retentionService);
         ReflectionTestUtils.setField(scheduler, "certCheckExecutor", certCheckExecutor);
         ReflectionTestUtils.setField(scheduler, "domainExpiryRefreshService", domainExpiryRefreshService);
         ReflectionTestUtils.setField(scheduler, "pageCheckerService", pageCheckerService);
@@ -153,16 +155,8 @@ class SchedulerServiceTest {
         lenient().when(appSettings.getBoolean(anyString(), anyBoolean())).thenAnswer(i -> i.getArgument(1));
     }
 
-    @Test
-    @DisplayName("safeDeleteBatched: batch<size dönene dek döngü, sonra ANALYZE (toplam doğru)")
-    void safeDeleteBatched_loopsUntilDrainedThenAnalyze() {
-        // batch = getInt(purge-batch-size, 10000) → 10000 (fallback). Dilimler: 10000, 10000, 3000 → dur.
-        when(jdbcTemplate.update(anyString(), (Object[]) any())).thenReturn(10000, 10000, 3000);
-        int total = scheduler.safeDeleteBatched("port_checks", "checked_at < ?", "2020-01-01T00:00:00");
-        assertThat(total).isEqualTo(23000);
-        verify(jdbcTemplate, times(3)).update(anyString(), (Object[]) any());
-        verify(jdbcTemplate).execute("ANALYZE port_checks");
-    }
+    // NOT: safeDeleteBatched testi RetentionServiceTest'e taşındı — dilimli silme artık
+    // RetentionService içinde, RetentionCatalog politikalarından üretiliyor (2026-08).
 
     @Test
     @DisplayName("rollupDailyStats: 7 tip (port/ping/keyword/http/page/scripted/uptime) için upsert çalıştırır")
@@ -756,14 +750,36 @@ class SchedulerServiceTest {
     }
 
     @Test
-    @DisplayName("cleanupOldLogs: login_issue retention — yalnız RESOLVED, önce görseller (FK) sonra kayıtlar")
-    void cleanupOldLogs_prunesResolvedLoginIssues() {
+    @DisplayName("cleanupOldLogs: rollup ÖNCE, sonra RetentionService — silme mantığı artık katalogda")
+    void cleanupOldLogs_delegatesToRetentionService() {
+        var empty = new com.sitemonitor.service.retention.RetentionService.RunResult(
+                1L, "2026-08-08T03:30:00", "2026-08-08T03:30:05", false, false, 0, 0, 5, java.util.List.of());
+        when(retentionService.runCleanup()).thenReturn(empty);
+        when(retentionService.holdActive()).thenReturn(false);
+        when(retentionService.cutoffFor(any())).thenReturn("2025-08-08T03:30:00");
+
         scheduler.cleanupOldLogs();
 
-        // FK sırası: önce görseller (RESOLVED alt-sorgu), sonra kayıtlar; ikisi de yalnız RESOLVED.
-        verify(jdbcTemplate).update(contains("DELETE FROM login_issue_report_images"), any(Object[].class));
-        verify(jdbcTemplate).update(
-                contains("DELETE FROM login_issue_reports WHERE status = 'RESOLVED'"), any(Object[].class));
+        // Ham seriler günlük özete alınmadan silinmemeli → rollup purge'den ÖNCE.
+        verify(jdbcTemplate, org.mockito.Mockito.atLeastOnce())
+                .update(contains("INSERT INTO monitor_check_daily"), anyString(), anyString());
+        verify(retentionService).runCleanup();
+        // Silme SQL'leri artık burada üretilmiyor.
+        verify(jdbcTemplate, never()).update(contains("DELETE FROM login_issue_reports"), any(Object[].class));
+    }
+
+    @Test
+    @DisplayName("cleanupOldLogs: legal hold açıkken denetim kaydı yazılır, arşiv rotasyonu yapılmaz")
+    void cleanupOldLogs_legalHold_auditsAndSkipsArchive() {
+        var held = new com.sitemonitor.service.retention.RetentionService.RunResult(
+                2L, "2026-08-08T03:30:00", "2026-08-08T03:30:00", false, true, 0, 0, 1, java.util.List.of());
+        when(retentionService.holdActive()).thenReturn(true);
+        when(retentionService.runCleanup()).thenReturn(held);
+
+        scheduler.cleanupOldLogs();
+
+        verify(auditService).recordSystemEvent(eq("RETENTION_HOLD_ACTIVE"), anyString(), anyString(), anyString());
+        verify(auditService, never()).recordSystemEvent(eq("AUDIT_RETENTION_PURGE"), anyString(), anyString(), anyString());
     }
 
     @Test

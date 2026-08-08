@@ -59,8 +59,9 @@ public class CheckHistoryService {
     /** Ham istek parametreleri (controller @RequestParam'larından). */
     public record Query(String from, String to, Integer days, String status, int page, int size) {}
 
-    /** Normalize + clamp edilmiş efektif sorgu. */
-    public record Range(String from, String to, boolean fail, int page, int size) {}
+    /** Normalize + clamp edilmiş efektif sorgu. {@code retentionDays} zarfa taşınır: kullanıcı
+     *  "veri şu tarihten itibaren tutuluyor" bilgisini ekranda görebilsin. */
+    public record Range(String from, String to, boolean fail, int page, int size, int retentionDays) {}
 
     /** Tür-özel veri kaynağı — controller repo metot referanslarıyla kurar. */
     public interface Source<T> {
@@ -68,6 +69,10 @@ public class CheckHistoryService {
         long total(String from, String to);
         long fail(String from, String to);
         List<Object[]> histogram(String from, String to, int prefixLen);
+
+        /** Bu monitörün EN ESKİ ve EN YENİ kaydı ([min, max]) — saklama şeffaflığı için.
+         *  Varsayılan boş: uygulamayan kaynaklarda bilgi satırı gösterilmez (bozulmaz). */
+        default List<Object[]> bounds() { return List.of(); }
     }
 
     /** CSV kolonu: başlık + satırdan değer çıkaran fonksiyon. */
@@ -94,7 +99,7 @@ public class CheckHistoryService {
         boolean fail = "fail".equalsIgnoreCase(q.status()) || "changed".equalsIgnoreCase(q.status());
         int page = Math.max(0, q.page());
         int size = Math.max(1, Math.min(q.size(), MAX_PAGE_SIZE));
-        return new Range(from, to, fail, page, size);
+        return new Range(from, to, fail, page, size, retentionDays);
     }
 
     /** Tarih/tarih-saat girdisini 19 karakterlik ISO'ya tamamlar (from ucu: günün/dakikanın başı). */
@@ -167,6 +172,20 @@ public class CheckHistoryService {
             }
         }
 
+        // Saklama şeffaflığı: bu monitörün elde TUTULAN en eski/en yeni kaydı. Histogram gibi
+        // degrade-edilebilir — patlarsa bilgi satırı gizlenir, sekme çalışmaya devam eder.
+        String oldestAt = null, newestAt = null;
+        try {
+            List<Object[]> b = src.bounds();
+            if (b != null && !b.isEmpty() && b.get(0) != null) {
+                Object[] row = b.get(0);
+                oldestAt = row.length > 0 && row[0] != null ? String.valueOf(row[0]) : null;
+                newestAt = row.length > 1 && row[1] != null ? String.valueOf(row[1]) : null;
+            }
+        } catch (Exception e) {
+            log.debug("Kontrol Geçmişi saklama sınırları okunamadı: {}", e.getMessage());
+        }
+
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("items", page.getContent());
         out.put("page", r.page());
@@ -174,6 +193,9 @@ public class CheckHistoryService {
         out.put("total", page.getTotalElements());          // FİLTRELİ toplam — pagination bunun üstünden
         out.put("counts", Map.of("total", totalAll, "fail", totalFail));
         out.put("range", Map.of("from", r.from(), "to", r.to()));
+        out.put("retention_days", r.retentionDays());
+        out.put("oldest_at", oldestAt);
+        out.put("newest_at", newestAt);
         out.put("buckets", buckets);
         out.put("alerts", alerts);
         return out;

@@ -8,12 +8,20 @@ uygulanan mekanizmaları ve işletme (ops) adımlarını özetler.
 
 | Tablo | Yazım | ~100 monitör → 1 yıl | Kontrol |
 |---|---|---|---|
-| `activity_log` | her kontrol tipi için +1 satır | ~30–100M (baskın) | retention 90g (config) + rollup |
+| `activity_log` | her kontrol tipi için +1 satır | ~30–100M (baskın) | retention 90g + rollup + batch purge |
 | `port_checks`/`ping_checks`/`keyword_results` | 30sn sweep, 60sn/monitör | ~26M/tablo | retention 180g + rollup + batch purge |
-| `http_checks`/`uptime_checks`/`dns_records` | 5dk | ~5M | aynı |
-| `page_checks` | sayfa-bütünlüğü kontrol özeti | monitör×sıklık | retention 180g (config) + rollup |
-| `page_resource_issues` | yalnız SORUNLU kaynaklar (kontrol başına 0–N) | değişken (bozuk sitede yüksek) | retention 90g + batch purge (FK: önce çocuk) |
-| `audit_log` | auth/güvenlik olayları | trafik | retention 365g + JSONL arşiv |
+| `http_checks` | 30sn sweep (monitör aralığına göre) | ~26M | retention 180g + rollup + batch purge |
+| `uptime_checks`/`dns_records`/`domain_checks` | 5dk–saatlik | ~5M | retention 180g (dns/domain baseline korunur) |
+| `scripted_checks` | k6 senaryo çıktısı (büyük TEXT) | monitör×sıklık | retention 180g + batch purge |
+| `page_checks` | sayfa-bütünlüğü kontrol özeti | monitör×sıklık | retention 180g + rollup + batch purge |
+| `page_resource_issues` | yalnız SORUNLU kaynaklar (kontrol başına 0–N) | değişken (bozuk sitede yüksek) | retention 90g + batch purge (önce çocuk) |
+| `system_heartbeat` | dakikada 1 (pod başına) | ~0.5M/pod | retention 30g |
+| `audit_log` | auth/güvenlik olayları | trafik | retention 365g + JSONL arşiv + batch purge |
+| `notification_logs` | gönderilen her bildirim | alarm hacmi | retention 90g + batch purge |
+| `incident_images`/`weekly_report_images` | BYTEA (satır başına MB'lar) | kullanım | **satır sayısı değil BOYUT** riski: 730g |
+
+> Not: FK sırası ("önce çocuk") gerçek bir veritabanı kısıtı değil, kod konvansiyonudur —
+> `RetentionCatalog.ALL` liste sırası bu sırayı taşır ve `RetentionSqlIdentityTest` doğrular.
 
 Uzun-dönem trend `monitor_check_daily` rollup tablosunda korunur → ham veri kısa retention'la silinebilir.
 
@@ -28,21 +36,41 @@ Uzun-dönem trend `monitor_check_daily` rollup tablosunda korunur → ham veri k
 - **Per-table autovacuum:** yüksek-yazımlı tablolarda `autovacuum_vacuum_scale_factor=0.02` (varsayılan
   %20 yerine %2 ölü-tuple'da vacuum) — `applySchemaPatches`'te `ALTER TABLE` ile (dış DB'de de geçerli).
 
-### Yapılandırılabilir anahtarlar (Admin → Ayarlar veya env)
+### Yapılandırılabilir anahtarlar
+
+> **Saklama süreleri artık burada listelenmiyor.** Tam politika matrisi (tablo × süre × taban ×
+> ayar anahtarı × silme kuralı × gerekçe) **katalogdan üretilen**
+> [`RETENTION_POLITIKASI.md`](RETENTION_POLITIKASI.md) dosyasındadır. Bu tablo bilinçli olarak
+> kaldırıldı: elle tutulan kopya koddan sapıyordu — 2026-08'e kadar burada **yeniden adlandırma
+> öncesindeki eski anahtar öneki** yazıyordu, oysa kod uzun süredir `site.monitor.*` okuyor;
+> dokümanı izleyen bir ops mühendisi ayarı set eder, hiçbir şey değişmez, sessizce varsayılana düşerdi.
+
+Süreleri değiştirmek için: **Ayarlar → Veri Saklama**. Değişiklik anında geçerli olur; her politikanın
+kodda tanımlı bir **taban (minDays)** değeri vardır ve altına inilemez. Kısaltma ayrıca onay diyaloğu
+ister ve `RETENTION_SETTINGS_SHORTENED` denetim olayı yazar.
+
+Retention dışında kalan ölçek anahtarları:
+
 | Anahtar | Varsayılan | Açıklama |
 |---|---|---|
-| `cert.monitor.retention.purge-batch-size` | 10000 | Batch silme dilim boyutu |
-| `cert.monitor.rollup.lookback-days` | 3 | Gece kaç tam günü rollup'la |
-| `cert.monitor.rollup.retention-days` | 730 | Rollup (trend) saklama |
-| `cert.monitor.network-outage.retention-days` | 365 | |
-| `cert.monitor.incident.retention-days` | 0 | 0 = olay kayıtları HİÇ silinmez (opt-in) |
-| `cert.monitor.audit.archive-retention-days` | 365 | JSONL arşiv dosyası rotasyonu |
-| `cert.monitor.activity.retention-days` | 90 | En hızlı seri (activity_log) |
-| `cert.monitor.{audit}.retention-days` | 365 | |
+| `site.monitor.retention.purge-batch-size` | 10000 | Batch silme dilim boyutu (taban 1000) |
+| `site.monitor.rollup.lookback-days` | 3 | Gece kaç tam günü rollup'la |
+| `site.monitor.db.metrics-refresh-ms` | 300000 | Büyüme metriği örnekleme aralığı |
+| `site.monitor.db.growth-warn-rows` | 5000000 | Tablo satır eşiği (aşınca WARN) |
+| `site.monitor.retention.hold-enabled` | false | **Legal hold** — açıkken HİÇBİR silme yapılmaz |
 
-**Ham kontrol serisi retention'ını kısaltma (rollup doğrulandıktan SONRA):** rollup birkaç gün üretim
-verisi biriktirdikten sonra, ham 180g retention `tsCutoff` config'iyle (ör. 30–45g) düşürülebilir —
-trend `monitor_check_daily`'de kalır. Sıra önemli: önce rollup birikir, sonra ham kısaltılır.
+**Ham kontrol serisi retention'ını kısaltma:** ham seriler artık **tür bazında** ayarlanabilir
+(`site.monitor.series.<tür>.retention-days`, hepsi 180 gün varsayılan, taban 30). Kısaltmadan önce
+`monitor_check_daily` rollup'ının birkaç gün üretim verisi biriktirmiş olması gerekir — trend orada
+kalır, ham veri gider. Sıra önemli: önce rollup birikir, sonra ham kısaltılır.
+
+### Temizliğin kendi izlenmesi
+
+Gece temizliği her çalışmasını `retention_run` / `retention_run_item` tablolarına yazar
+(tablo başına silinen satır, süre, hata). Bundan beslenenler:
+`Sistem Sağlığı → cleanup` sinyali ("N saattir çalışmadı" / hatalı politika),
+Prometheus metrikleri (`retention_rows_deleted_total{policy,table}`, `retention_run_duration_seconds`,
+`retention_last_success_epoch`) ve Ayarlar → Veri Saklama'daki çalışma geçmişi.
 
 ## 3. PostgreSQL sunucu ayarları
 

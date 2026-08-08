@@ -99,6 +99,8 @@ public final class PermissionCatalog {
         r("settings.general",  "settings", EDIT),
         r("settings.branding", "settings", EDIT),
         r("settings.database", "settings", VIEW),
+        // Veri Saklama: süre değiştirmek ve elle temizlik geri alınamaz veri kaybı üretebilir → yalnız ADMIN.
+        r("settings.retention", "settings", EDIT, Set.of(EDIT)),
         r("settings.secrets",  "settings", EXECUTE, Set.of(EXECUTE))
     );
 

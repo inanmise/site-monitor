@@ -104,6 +104,10 @@ export function useCheckHistory({ kind, id, listKey, presets = [1, 7, 15, 30], d
     buckets: data?.buckets ?? [],
     alerts: data?.alerts ?? [],
     range: data?.range ?? null,
+    // Saklama şeffaflığı — sunucu zarfından: veri ne kadar tutuluyor, elde en eski/en yeni kayıt.
+    retentionDays: data?.retention_days ?? null,
+    oldestAt: data?.oldest_at ?? null,
+    newestAt: data?.newest_at ?? null,
     total: data?.total ?? 0,
     loading, error,
     // durum + eylemler

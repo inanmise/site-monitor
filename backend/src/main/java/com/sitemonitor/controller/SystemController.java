@@ -52,6 +52,8 @@ public class SystemController {
         data.put("heartbeat", extendedHealthService.getHeartbeatStatus());
         data.put("network",   extendedHealthService.getNetworkStatus());
         data.put("domain_expiry", extendedHealthService.getDomainExpirySourceStatus());
+        // Gece temizliği kendi kendini izler: "N saattir çalışmadı" / hatalı politika sinyali.
+        data.put("cleanup",   extendedHealthService.getCleanupStatus());
         return ok(Map.of("data", data));
     }
 

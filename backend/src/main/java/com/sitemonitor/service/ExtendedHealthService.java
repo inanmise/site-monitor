@@ -34,6 +34,8 @@ public class ExtendedHealthService {
     private final AlertEventRepository alertEventRepo;
     private final JdbcTemplate jdbcTemplate;
     private final RdapDomainClient rdapDomainClient;
+    private final com.sitemonitor.repository.RetentionRunRepository retentionRunRepo;
+    private final AppSettingsService appSettings;
     @org.springframework.context.annotation.Lazy
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private SchedulerService schedulerService;
@@ -117,6 +119,45 @@ public class ExtendedHealthService {
             m.put("minutes_since", -1);
             m.put("alarm", true);
             m.put("recent", List.of());
+            m.put("error", e.getMessage());
+            return m;
+        }
+    }
+
+    /**
+     * Gece temizliğinin kendi sağlığı. Bir izleme ürününün kendi temizlik job'ını izlememesi
+     * ironisini kapatır: sessizce çöken bir cleanup, disk dolduğunda değil ertesi sabah bu
+     * sinyalde fark edilir. Alarm eşiği 36 saat (günlük cron + kaçırılan bir gece toleransı).
+     */
+    public Map<String, Object> getCleanupStatus() {
+        Map<String, Object> m = new LinkedHashMap<>();
+        try {
+            boolean hold = appSettings.getBoolean("site.monitor.retention.hold-enabled", false);
+            var last = retentionRunRepo.findFirstByDryRunFalseOrderByStartedAtDesc().orElse(null);
+            m.put("hold_active", hold);
+            if (last == null) {
+                m.put("last_run", null);
+                m.put("hours_since", -1);
+                // Hiç çalışmamış olmak yeni kurulumda normaldir; legal hold varken de alarm üretme.
+                m.put("alarm", false);
+                m.put("never_run", true);
+                return m;
+            }
+            long hours = ChronoUnit.HOURS.between(
+                    java.time.LocalDateTime.parse(last.getStartedAt()), LocalDateTime.now(ZoneOffset.UTC));
+            m.put("last_run", last.getStartedAt());
+            m.put("hours_since", hours);
+            m.put("total_deleted", last.getTotalDeleted());
+            m.put("failed_count", last.getFailedCount());
+            m.put("duration_ms", last.getDurationMs());
+            m.put("never_run", false);
+            m.put("alarm", !hold && (hours > 36 || last.getFailedCount() != null && last.getFailedCount() > 0));
+            return m;
+        } catch (Exception e) {
+            log.warn("getCleanupStatus failed: {}", e.getMessage());
+            m.put("last_run", null);
+            m.put("hours_since", -1);
+            m.put("alarm", false);
             m.put("error", e.getMessage());
             return m;
         }

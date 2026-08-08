@@ -69,4 +69,10 @@ public interface PortCheckRepository extends JpaRepository<PortCheck, Long> {
          + "GROUP BY pc.monitorId")
     List<Object[]> weeklyStatsByMonitor(@Param("ids") java.util.Collection<Long> ids,
                                         @Param("from") String from, @Param("to") String to);
+
+    /** Saklama seffafligi: bu izlemenin elde TUTULAN en eski ve en yeni kaydi ([min, max]).
+     *  Kullanici Kontrol Gecmisi'nde "veri su tarihten itibaren tutuluyor" bilgisini gorur.
+     *  Zaman kolonu indexli oldugundan MIN/MAX index-seek'tir (tablo taramasi yok). */
+    @Query("SELECT MIN(c.checkedAt), MAX(c.checkedAt) FROM PortCheck c WHERE c.monitorId = :id")
+    List<Object[]> historyBounds(@Param("id") Long id);
 }
