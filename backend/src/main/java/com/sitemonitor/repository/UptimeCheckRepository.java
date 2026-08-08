@@ -18,10 +18,16 @@ public interface UptimeCheckRepository extends JpaRepository<UptimeCheck, Long> 
     long countByDomainAndPortAndCheckedAtBetween(String domain, int port, String from, String to);
     long countByDomainAndPortAndStatusNotAndCheckedAtBetween(String domain, int port, String status, String from, String to);
 
-    /** Yoğunluk şeridi: [bucketKey, toplam, hata] — hata = status <> 'up'. */
-    @Query("SELECT SUBSTRING(u.checkedAt,1,:len), COUNT(u), SUM(CASE WHEN u.status <> 'up' THEN 1L ELSE 0L END) "
-         + "FROM UptimeCheck u WHERE u.domain = :domain AND u.port = :port AND u.checkedAt >= :from AND u.checkedAt <= :to "
-         + "GROUP BY SUBSTRING(u.checkedAt,1,:len) ORDER BY SUBSTRING(u.checkedAt,1,:len)")
+    /** Yoğunluk şeridi: [bucketKey, toplam, hata] — hata = status <> 'up'.
+     *  NATIVE + TÜRETİLMİŞ TABLO: JPQL'de :len SELECT/GROUP BY'da AYRI placeholder'lara bağlanıyor,
+     *  Postgres ifade eşitliğini kanıtlayamayıp 42803 atıyordu (2026-08 test ortamı). Alt sorguda
+     *  parametre TEK kez geçer; dış GROUP BY gerçek bir kolona (t.bucket) bakar → her motorda geçerli. */
+    @Query(value = "SELECT t.bucket, COUNT(*), SUM(t.fail) FROM ("
+         + "  SELECT substr(u.checked_at,1,:len) AS bucket, "
+         + "         CASE WHEN u.status <> 'up' THEN 1 ELSE 0 END AS fail "
+         + "    FROM uptime_checks u WHERE u.domain = :domain AND u.port = :port "
+         + "     AND u.checked_at >= :from AND u.checked_at <= :to"
+         + ") t GROUP BY t.bucket ORDER BY t.bucket", nativeQuery = true)
     List<Object[]> historyHistogram(@Param("domain") String domain, @Param("port") int port,
                                     @Param("from") String from, @Param("to") String to, @Param("len") int len);
     Optional<UptimeCheck> findTopByDomainAndPortOrderByIdDesc(String domain, int port);

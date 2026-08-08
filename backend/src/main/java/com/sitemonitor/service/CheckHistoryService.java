@@ -3,6 +3,7 @@ package com.sitemonitor.service;
 import com.sitemonitor.model.AlertEvent;
 import com.sitemonitor.repository.AlertEventRepository;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
@@ -40,6 +41,7 @@ import java.util.function.Function;
  *       eşlemesi client'ta (check kaydında alertEventId yok — bilinçli şema kararı).</li>
  * </ul>
  */
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class CheckHistoryService {
@@ -133,14 +135,21 @@ public class CheckHistoryService {
         long totalAll = src.total(r.from(), r.to());
         long totalFail = src.fail(r.from(), r.to());
 
+        // Histogram degrade-edilebilir: patlarsa şerit kaybolur ama liste/sayaç/alarm YAŞAR.
+        // 2026-08 test ortamı dersi: JPQL 42803 hatası tüm sekmeyi öldürmüştü — bir daha asla.
         int len = bucketPrefixLen(r.from(), r.to());
         List<Map<String, Object>> buckets = new ArrayList<>();
-        for (Object[] row : src.histogram(r.from(), r.to(), len)) {
-            Map<String, Object> b = new LinkedHashMap<>();
-            b.put("key", row[0]);
-            b.put("total", row[1]);
-            b.put("fail", row[2] == null ? 0L : row[2]);
-            buckets.add(b);
+        try {
+            for (Object[] row : src.histogram(r.from(), r.to(), len)) {
+                Map<String, Object> b = new LinkedHashMap<>();
+                b.put("key", row[0]);
+                b.put("total", row[1]);
+                b.put("fail", row[2] == null ? 0L : row[2]);
+                buckets.add(b);
+            }
+        } catch (Exception e) {
+            log.warn("Kontrol Geçmişi yoğunluk histogramı başarısız — şerit boş dönecek: {}", e.getMessage());
+            buckets.clear();
         }
 
         List<Map<String, Object>> alerts = new ArrayList<>();

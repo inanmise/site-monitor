@@ -18,10 +18,16 @@ public interface KeywordResultRepository extends JpaRepository<KeywordResult, Lo
     long countByMonitorIdAndCheckedAtBetween(Long monitorId, String from, String to);
     long countByMonitorIdAndOkFalseAndCheckedAtBetween(Long monitorId, String from, String to);
 
-    /** Yoğunluk şeridi: [bucketKey, toplam, hata] — SUBSTRING prefix kovası (dakika 16 / saat 13 / gün 10). */
-    @Query("SELECT SUBSTRING(c.checkedAt,1,:len), COUNT(c), SUM(CASE WHEN c.ok = false THEN 1L ELSE 0L END) "
-         + "FROM KeywordResult c WHERE c.monitorId = :id AND c.checkedAt >= :from AND c.checkedAt <= :to "
-         + "GROUP BY SUBSTRING(c.checkedAt,1,:len) ORDER BY SUBSTRING(c.checkedAt,1,:len)")
+    /** Yoğunluk şeridi: [bucketKey, toplam, hata] — substr prefix kovası (dakika 16 / saat 13 / gün 10).
+     *  NATIVE + TÜRETİLMİŞ TABLO: JPQL'de :len SELECT/GROUP BY'da AYRI placeholder'lara bağlanıyor,
+     *  Postgres ifade eşitliğini kanıtlayamayıp 42803 atıyordu (2026-08 test ortamı). Alt sorguda
+     *  parametre TEK kez geçer; dış GROUP BY gerçek bir kolona (t.bucket) bakar → her motorda geçerli. */
+    @Query(value = "SELECT t.bucket, COUNT(*), SUM(t.fail) FROM ("
+         + "  SELECT substr(c.checked_at,1,:len) AS bucket, "
+         + "         CASE WHEN c.ok = false THEN 1 ELSE 0 END AS fail "
+         + "    FROM keyword_results c WHERE c.monitor_id = :id "
+         + "     AND c.checked_at >= :from AND c.checked_at <= :to"
+         + ") t GROUP BY t.bucket ORDER BY t.bucket", nativeQuery = true)
     List<Object[]> historyHistogram(@Param("id") Long id, @Param("from") String from,
                                     @Param("to") String to, @Param("len") int len);
     List<KeywordResult> findByMonitorIdOrderByCheckedAtDesc(Long monitorId);

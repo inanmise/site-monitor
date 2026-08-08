@@ -25,11 +25,16 @@ public interface DnsRecordRepository extends JpaRepository<DnsRecord, Long> {
          + "AND (r.changed = true OR r.rotated = true)")
     long countChangedByMonitorIdBetween(@Param("id") Long id, @Param("from") String from, @Param("to") String to);
 
-    /** Yoğunluk şeridi: [bucketKey, toplam, değişen] — SUBSTRING prefix kovası (dakika 16 / saat 13 / gün 10). */
-    @Query("SELECT SUBSTRING(r.checkedAt,1,:len), COUNT(r), "
-         + "SUM(CASE WHEN r.changed = true OR r.rotated = true THEN 1L ELSE 0L END) "
-         + "FROM DnsRecord r WHERE r.monitorId = :id AND r.checkedAt >= :from AND r.checkedAt <= :to "
-         + "GROUP BY SUBSTRING(r.checkedAt,1,:len) ORDER BY SUBSTRING(r.checkedAt,1,:len)")
+    /** Yoğunluk şeridi: [bucketKey, toplam, değişen] — substr prefix kovası (dakika 16 / saat 13 / gün 10).
+     *  NATIVE + TÜRETİLMİŞ TABLO: JPQL'de :len SELECT/GROUP BY'da AYRI placeholder'lara bağlanıyor,
+     *  Postgres ifade eşitliğini kanıtlayamayıp 42803 atıyordu (2026-08 test ortamı). Alt sorguda
+     *  parametre TEK kez geçer; dış GROUP BY gerçek bir kolona (t.bucket) bakar → her motorda geçerli. */
+    @Query(value = "SELECT t.bucket, COUNT(*), SUM(t.fail) FROM ("
+         + "  SELECT substr(r.checked_at,1,:len) AS bucket, "
+         + "         CASE WHEN r.changed = true OR r.rotated = true THEN 1 ELSE 0 END AS fail "
+         + "    FROM dns_records r WHERE r.monitor_id = :id "
+         + "     AND r.checked_at >= :from AND r.checked_at <= :to"
+         + ") t GROUP BY t.bucket ORDER BY t.bucket", nativeQuery = true)
     List<Object[]> historyHistogram(@Param("id") Long id, @Param("from") String from,
                                     @Param("to") String to, @Param("len") int len);
 

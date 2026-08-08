@@ -106,6 +106,20 @@ describe('CheckHistoryTab', () => {
     expect(api.monitoring.getCheckHistoryCsvUrl).toHaveBeenCalled()
   })
 
+  it('Özel Aralık seçili ama tarih uygulanmadıysa istek ATILMAZ; days paramı asla "custom" olmaz', async () => {
+    renderTab()
+    await screen.findByText('2026-08-07T10:00:00')
+    const callsBefore = api.monitoring.getCheckHistory.mock.calls.length
+
+    fireEvent.click(screen.getByRole('button', { name: /özel aralık|custom range/i }))
+    // Tarih henüz uygulanmadı → yeni istek yok (eskiden days=custom gidip backend 500 veriyordu).
+    await new Promise(r => setTimeout(r, 50))
+    expect(api.monitoring.getCheckHistory.mock.calls.length).toBe(callsBefore)
+    for (const call of api.monitoring.getCheckHistory.mock.calls) {
+      expect(call[2].days).not.toBe('custom')
+    }
+  })
+
   it('server-side sayfalama: 120 kayıt / 50 → 3 sayfa; ileri gitmek page=1 ile istek atar', async () => {
     renderTab()
     await screen.findByText('2026-08-07T10:00:00')
