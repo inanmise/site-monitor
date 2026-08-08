@@ -407,6 +407,9 @@ export const api = {
     retentionDryRun: () => request('/admin/retention/dry-run', { method: 'POST' }),
     retentionRunNow: () => request('/admin/retention/run', { method: 'POST' }),
     getRetentionRuns: (limit = 10) => request(`/admin/retention/runs?limit=${limit}`),
+    /** Saklama süresi değişiklik geçmişi (kim/ne zaman/eski→yeni) — audit_log kaynaklı. */
+    getRetentionChanges: (limit = 25, policyId) =>
+      request(`/admin/retention/changes?limit=${limit}${policyId ? `&policyId=${encodeURIComponent(policyId)}` : ''}`),
     saveRetentionApproval: (policyId, note) =>
       request('/admin/retention/approval', { method: 'PUT', body: JSON.stringify({ policy_id: policyId, note }) }),
 

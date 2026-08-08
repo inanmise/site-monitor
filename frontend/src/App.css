@@ -53,10 +53,21 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
   overflow-y: auto;
 }
 
-/* ── Veri Saklama (retention) yönetim ekranı ──────────────────────────── */
-.ret-settings { max-width: 1180px; }
-.ret-kpis { margin: 4px 0 14px; }
-.ret-actions { margin-bottom: 14px; }
+/* == Veri Saklama (retention) yonetim ekrani ============================
+   Akordiyon govdesi ev standardi stats-collapse-* ile gelir; buradaki sinif
+   ailesi yalniz satir/olcum/kaydetme katmanini tanimlar. Tamami token tabanli
+   ve koyu tema karsilikli. */
+.ret-settings { max-width: 1180px; padding-bottom: 8px; }
+.ret-hero { margin-bottom: 14px; }
+.ret-hero-meta { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; color: rgba(255,255,255,.82); font-size: 13px; }
+.ret-hero-stat { font-weight: 700; font-variant-numeric: tabular-nums; }
+.ret-hero-stat em { font-style: normal; font-weight: 500; opacity: .7; font-size: .88em; }
+.ret-hero-sep { opacity: .4; }
+.ret-intro { margin-bottom: 4px; }
+.ret-kpis { margin: 12px 0 14px; }
+.ret-actions { margin: 0 0 14px; }
+.ret-loading { padding: 14px 2px; color: var(--text-muted); }
+
 .ret-hold-banner {
   display: flex; align-items: flex-start; gap: 12px;
   padding: 12px 16px; margin-bottom: 16px;
@@ -65,26 +76,139 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 }
 .ret-hold-banner strong { display: block; font-size: 13.5px; }
 .ret-hold-banner span { font-size: 12.5px; color: var(--text-muted); }
+.ret-hold-section { margin-top: 20px; }
+
+/* -- Akordiyon basligi ekleri -- */
 .ret-class-count {
   margin-left: 8px; padding: 1px 7px; border-radius: 999px;
   background: var(--border); color: var(--text-muted); font-size: 11px; font-weight: 700;
 }
-.ret-table td { vertical-align: top; }
-.ret-table-name { font-weight: 700; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .95em; }
-.ret-rule { margin-top: 2px; font-size: 11.5px; color: var(--text-muted); line-height: 1.45; max-width: 430px; }
-/* Satır sayısı dağılımı — kütüphanesiz bar (AuditLogViewer deseni). */
-.ret-bar { margin-top: 6px; height: 4px; border-radius: 3px; background: var(--border); overflow: hidden; max-width: 240px; }
-.ret-bar span { display: block; height: 100%; background: var(--primary); }
-.ret-days { display: flex; flex-direction: column; gap: 3px; }
-.ret-days input { width: 92px; }
-.ret-days .hint { font-size: 11px; color: var(--text-muted); }
-.ret-mode { font-size: 12px; font-weight: 600; color: var(--text-muted); white-space: nowrap; }
-.ret-approve {
-  display: inline-flex; align-items: center; gap: 5px; margin-top: 7px;
-  padding: 2px 8px; border: 1px dashed var(--border); border-radius: 6px;
-  background: none; color: var(--text-muted); font-size: 11px; cursor: pointer;
+.ret-dirty-badge {
+  margin-left: 8px; padding: 2px 9px; border-radius: 999px;
+  background: color-mix(in srgb, var(--warning, #f59e0b) 20%, transparent);
+  color: var(--warning, #b45309); font-size: 11px; font-weight: 800; letter-spacing: .02em;
 }
-.ret-approve:hover { border-style: solid; color: var(--text); }
+.ret-class-body { padding: 2px 0 14px; }
+.ret-class-desc { font-size: 12.5px; color: var(--text-muted); margin: 0 2px 10px; line-height: 1.5; }
+.ret-panel { padding: 2px 0 16px; }
+
+/* -- Politika satiri (CSS-grid; tablo degil) -- */
+.ret-row {
+  border: 1px solid var(--border); border-radius: 10px;
+  background: var(--bg-card); margin-bottom: 8px; overflow: hidden;
+  transition: border-color .12s, box-shadow .12s;
+}
+.ret-row:hover { border-color: color-mix(in srgb, var(--primary) 40%, var(--border)); }
+.ret-row--open { box-shadow: 0 2px 10px rgba(0,0,0,.06); }
+.ret-row--changed { border-left: 3px solid var(--warning, #f59e0b); background: color-mix(in srgb, var(--warning, #f59e0b) 5%, var(--bg-card)); }
+.ret-row-main { display: grid; grid-template-columns: 22px minmax(200px, 1.5fr) minmax(230px, auto) minmax(280px, 1.4fr); gap: 14px; align-items: center; padding: 11px 14px; }
+.ret-row-toggle { background: none; border: none; padding: 0; cursor: pointer; color: var(--text-muted); display: flex; }
+.ret-row-toggle:hover { color: var(--primary); }
+.ret-chev-open { transform: rotate(90deg); transition: transform .15s; }
+.ret-row-id { min-width: 0; }
+.ret-row-name {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  font-family: Consolas, 'Courier New', monospace; font-size: 13px; font-weight: 700; color: var(--text);
+}
+.ret-row-why { margin-top: 3px; font-size: 11.5px; color: var(--text-muted); line-height: 1.45; overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.ret-delta { padding: 1px 7px; border-radius: 5px; font-family: inherit; font-size: 11px; font-weight: 800; background: color-mix(in srgb, var(--success, #16a34a) 16%, transparent); color: var(--success, #15803d); }
+.ret-delta--down { background: color-mix(in srgb, var(--danger) 16%, transparent); color: var(--danger); }
+
+/* -- Sure kontrolu -- */
+.ret-row-ctl { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.ret-chips { display: inline-flex; gap: 3px; padding: 3px; background: var(--bg-surface); border: 1px solid var(--border); border-radius: 8px; }
+.ret-chip {
+  padding: 4px 9px; border: none; border-radius: 6px; background: none;
+  color: var(--text-muted); font-size: 11.5px; font-weight: 700; cursor: pointer;
+  font-variant-numeric: tabular-nums; transition: background .12s, color .12s;
+}
+.ret-chip:hover:not(:disabled) { color: var(--text); background: var(--bg-hover, rgba(0,0,0,.04)); }
+.ret-chip.is-active { background: var(--primary); color: #fff; box-shadow: 0 1px 3px rgba(0,0,0,.18); }
+.ret-chip:disabled { opacity: .35; cursor: not-allowed; }
+.ret-num-wrap { display: inline-flex; align-items: center; gap: 5px; }
+.ret-num {
+  width: 74px; padding: 6px 8px; border: 1px solid var(--border); border-radius: 8px;
+  background: var(--input-bg); color: var(--input-text, var(--text));
+  font-size: 12.5px; font-weight: 700; text-align: right; font-variant-numeric: tabular-nums;
+}
+.ret-num-unit { font-size: 11.5px; color: var(--text-muted); }
+.ret-mode-chip { display: inline-flex; align-items: center; gap: 5px; padding: 3px 10px; border-radius: 999px; border: 1px solid var(--border); background: var(--bg-surface); color: var(--text-muted); font-size: 11.5px; font-weight: 700; white-space: nowrap; }
+
+/* -- Olcum kumesi -- */
+.ret-metrics { display: grid; grid-template-columns: repeat(4, auto); gap: 4px 18px; align-items: end; justify-content: end; position: relative; padding-bottom: 8px; }
+.ret-metric { display: flex; flex-direction: column; align-items: flex-end; gap: 1px; min-width: 52px; }
+.ret-metric--span { min-width: 132px; }
+.ret-metric-val { font-size: 13px; font-weight: 700; color: var(--text); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.ret-metric-range { font-size: 11.5px; font-weight: 600; color: var(--text-muted); font-family: Consolas, monospace; }
+.ret-metric-lbl { font-size: 9.5px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--text-light); white-space: nowrap; }
+.ret-metric--danger .ret-metric-val { color: var(--danger); }
+.ret-bar { position: absolute; left: 0; right: 0; bottom: 0; height: 3px; border-radius: 3px; background: var(--border); overflow: hidden; }
+.ret-bar span { display: block; height: 100%; background: var(--primary); opacity: .55; }
+
+/* -- Acilan detay -- */
+.ret-row-detail { padding: 12px 16px 14px 50px; border-top: 1px dashed var(--border); background: var(--bg-surface); }
+.ret-dl { display: grid; grid-template-columns: 130px 1fr; gap: 6px 14px; margin: 0; font-size: 12px; }
+.ret-dl dt { font-weight: 700; color: var(--text-muted); }
+.ret-dl dd { margin: 0; color: var(--text); word-break: break-word; }
+.ret-rule-sql { font-family: Consolas, 'Courier New', monospace; font-size: 11.5px; color: var(--text); }
+.ret-approve {
+  display: inline-flex; align-items: center; gap: 6px; margin-top: 12px;
+  padding: 4px 10px; border: 1px dashed var(--warning, #f59e0b); border-radius: 7px;
+  background: none; color: var(--warning, #b45309); font-size: 11.5px; font-weight: 600; cursor: pointer;
+}
+.ret-approve:hover { border-style: solid; }
+.ret-approve.is-approved { border-color: var(--success, #16a34a); color: var(--success, #15803d); }
+.ret-approve-note { color: var(--text-muted); font-weight: 400; }
+
+/* -- Yapiskan gozden gecir/kaydet cubugu -- */
+.ret-sticky-bar {
+  position: sticky; bottom: 0; z-index: 60;
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  margin-top: 18px; padding: 12px 16px;
+  border: 1px solid var(--primary); border-radius: 12px;
+  background: var(--bg-card); box-shadow: 0 -4px 18px rgba(0,0,0,.10);
+}
+.ret-sticky-count { display: inline-flex; align-items: center; gap: 8px; margin-right: auto; font-size: 13px; font-weight: 700; color: var(--text); }
+.ret-sticky-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--warning, #f59e0b); box-shadow: 0 0 0 3px color-mix(in srgb, var(--warning, #f59e0b) 25%, transparent); }
+
+/* -- Gozden gecirme penceresi -- */
+.ret-review-hdr .modal-icon-hdr-badge { background: linear-gradient(135deg, #3b82f6, #1d4ed8); color: #fff; }
+.ret-review-hdr--danger .modal-icon-hdr-badge { background: linear-gradient(135deg, #ef4444, #b91c1c); }
+.ret-review-body { padding: 0 28px; overflow-y: auto; flex: 1 1 auto; min-height: 0; }
+.ret-review-warn { margin-bottom: 14px; padding: 10px 14px; border-radius: 8px; border-left: 4px solid var(--danger); background: color-mix(in srgb, var(--danger) 10%, transparent); color: var(--text); font-size: 12.5px; font-weight: 600; }
+.ret-review-table { width: 100%; min-width: 0; }
+.ret-review-table td, .ret-review-table th { vertical-align: middle; }
+.ret-review-cls { display: block; margin-top: 2px; font-size: 10px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--text-light); }
+.ret-review-arrow { color: var(--text-light); width: 22px; text-align: center; }
+.ret-review-effect { font-size: 11.5px; }
+.ret-review-effect--up { color: var(--text-muted); }
+.ret-review-effect--down { color: var(--danger); font-weight: 700; }
+.ret-review-row--down td { background: color-mix(in srgb, var(--danger) 6%, transparent); }
+.ret-review-hint { margin: 12px 0 4px; }
+
+/* -- Degisiklik gecmisi -- */
+.ret-changelog { list-style: none; margin: 0; padding: 0; }
+.ret-change { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 7px 2px; border-bottom: 1px solid var(--border); font-size: 12.5px; }
+.ret-change:last-child { border-bottom: none; }
+.ret-change-when { font-family: Consolas, monospace; font-size: 11.5px; color: var(--text-muted); white-space: nowrap; }
+.ret-change-who { font-weight: 700; color: var(--text); }
+.ret-change-table { font-family: Consolas, monospace; font-size: 11.5px; color: var(--text); }
+.ret-change-diff { display: inline-flex; align-items: center; gap: 6px; font-variant-numeric: tabular-nums; font-weight: 700; }
+.ret-change-unit { color: var(--text-muted); font-weight: 400; font-size: 11px; }
+.ret-change-detail { color: var(--text-muted); }
+.ret-change-ip { margin-left: auto; font-family: Consolas, monospace; font-size: 11px; color: var(--text-light); }
+.ret-changelog--compact .ret-change { padding: 4px 0; font-size: 11.5px; }
+
+@media (max-width: 1080px) {
+  .ret-row-main { grid-template-columns: 22px 1fr; row-gap: 10px; }
+  .ret-row-ctl, .ret-metrics { grid-column: 2; justify-content: flex-start; }
+  .ret-metrics { grid-template-columns: repeat(2, auto); justify-content: start; }
+}
+
+[data-theme="dark"] .ret-row { background: var(--bg-surface); }
+[data-theme="dark"] .ret-row-detail { background: rgba(255,255,255,.02); }
+[data-theme="dark"] .ret-chips { background: rgba(255,255,255,.04); }
+[data-theme="dark"] .ret-sticky-bar { box-shadow: 0 -4px 18px rgba(0,0,0,.5); }
 
 /* ── Duyuru şeridi (branding) ─────────────────────────────────────────────
    İçerik kolonunun üstünde YAPIŞKAN durur; sol menünün sağında kalır (.app-main
