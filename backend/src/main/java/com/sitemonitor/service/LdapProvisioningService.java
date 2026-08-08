@@ -22,10 +22,13 @@ import java.util.Optional;
  * Maps the AD attributes of a freshly-authenticated user into our AppUser/Team
  * model (Faz 3a). Called from the login flow after a successful LDAP bind.
  *
- * <p>Phase-3a role rules (safe interim): {@code company} contains "PRODUCT OWNER"
- * → orgRole=PO + systemRole=TEAM_ADMIN; everyone else (managers included) → USER.
- * Manager → scoped ADMIN and PO multi-team visibility land in Faz 3b; this phase
- * only records the relationships (managerId, mudurluk, team) so 3b can use them.
+ * <p>Rol kuralları (2026-08, güncel): ürün sahibi ({@code company} içinde "PRODUCT OWNER")
+ * ve müdür (kendisine bağlı çalışan olan) → systemRole=TEAM_ADMIN; kalan herkes → USER.
+ * LDAP HİÇ KİMSEYE sistem-geneli ADMIN vermez: hem PO hem müdür kendi takım(lar)ının
+ * yöneticisidir. ADMIN yalnız yerel bootstrap hesabında ve admin panelinden elle verilerek
+ * bulunur. orgRole ayrıca AD'den türetilir (PO > D6 MANAGER > D7 BOLUM_BASKANI > TECH).
+ * İlişkiler (managerId, mudurluk, team) her girişte tazelenir; role_locked/orgRoleLocked
+ * işaretli kullanıcılara dokunulmaz, elle yükseltilmiş ADMIN/AUDIT düşürülmez.
  */
 @Slf4j
 @Service
@@ -86,11 +89,15 @@ public class LdapProvisioningService {
         u.setUpdatedAt(now);
         u = userRepo.save(u);                              // ensure id before role/scope checks
 
-        // ── Role (Faz 3b): müdür → ADMIN; PO → TEAM_ADMIN; else USER ──
+        // ── Role: PO veya müdür → TEAM_ADMIN; else USER ──
         // A user is a müdür if provisioned via the recursive manager path (resolveManager=false)
         // OR if someone in the DB reports to them.
+        // 2026-08 kararı: LDAP artık HİÇ KİMSEYE sistem-geneli ADMIN vermez. Ürün sahibi de müdür de
+        // kendi takım(lar)ının yöneticisidir → TEAM_ADMIN (takım kapsamlı). ADMIN yalnız yerel
+        // bootstrap hesabı ve admin panelinden elle verilerek kalır. Elle verilmiş ADMIN/AUDIT
+        // applyRole tarafından korunur — bu değişiklik kimsenin mevcut yetkisini geri almaz.
         boolean isManager = !resolveManager || userRepo.existsByManagerId(u.getId());
-        applyRole(u, isManager ? "ADMIN" : (isPo ? "TEAM_ADMIN" : "USER"));
+        applyRole(u, (isPo || isManager) ? "TEAM_ADMIN" : "USER");
 
         // ── Takım(lar): memberOf (OU=ScrumGroups) → boşsa company fallback ──
         resolveTeams(u, attrs, isPo);
@@ -112,10 +119,11 @@ public class LdapProvisioningService {
      * AD'den türetilen rolü uygular. Rol admin tarafından KİLİTLENMİŞSE (role_locked) hiç dokunma —
      * manuel atanan rol (örn. USER→TEAM_ADMIN) her girişte ezilmez. Kilitsiz kullanıcılarda eski
      * davranış korunur: elle yükseltilmiş ADMIN/AUDIT düşürülmez.
+     *
+     * <p>{@code desired} artık yalnız TEAM_ADMIN veya USER olabilir — LDAP hiç kimseye ADMIN vermez.
      */
     private void applyRole(AppUser u, String desired) {
         if (Boolean.TRUE.equals(u.getRoleLocked())) return;   // admin manuel kilitledi → LDAP dokunmaz
-        if ("ADMIN".equals(desired)) { u.setSystemRole("ADMIN"); return; }
         String cur = u.getSystemRole();
         if (!"ADMIN".equals(cur) && !"AUDIT".equals(cur)) u.setSystemRole(desired);
     }

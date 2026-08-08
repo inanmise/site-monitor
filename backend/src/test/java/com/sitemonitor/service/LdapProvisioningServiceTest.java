@@ -155,18 +155,81 @@ class LdapProvisioningServiceTest {
         org.mockito.Mockito.verify(userRepo, org.mockito.Mockito.atLeastOnce()).save(cap.capture());
         AppUser manager = cap.getAllValues().stream()
                 .filter(x -> "MGR1".equals(x.getUsername())).findFirst().orElseThrow();   // normalize → BÜYÜK
-        assertThat(manager.getSystemRole()).isEqualTo("ADMIN");  // müdür = scoped ADMIN
+        assertThat(manager.getSystemRole()).isEqualTo("TEAM_ADMIN");  // müdür = takım kapsamlı yönetici
     }
 
     @Test
-    @DisplayName("Faz 3b: a user with a subordinate in DB (existsByManagerId) → ADMIN (müdür)")
-    void userWithSubordinate_becomesAdmin() {
+    @DisplayName("PO + müdür görünümü → TEAM_ADMIN; iki yol da aynı role çıkar, ADMIN yok")
+    void poWhoIsAlsoManager_staysTeamAdmin() {
+        when(userRepo.existsByManagerId(anyLong())).thenReturn(true);   // kendisine bağlı çalışan var
+        Map<String, Object> attrs = Map.of(
+                "cn", "90010", "displayName", "PO Boss", "company", "PRODUCT OWNER-SY-DarkSide");
+
+        AppUser u = service.provisionFromAd("poboss", "CN=poboss,DC=aknet,DC=akb", attrs);
+
+        assertThat(u.getOrgRole()).isEqualTo("PO");
+        assertThat(u.getSystemRole()).isEqualTo("TEAM_ADMIN");   // ADMIN'e YÜKSELMEZ
+    }
+
+    @Test
+    @DisplayName("Elle ADMIN yapılmış PO ADMIN kalır — LDAP manuel yükseltmeyi geri almaz")
+    void manuallyPromotedAdminPo_keepsAdmin() {
+        AppUser existing = new AppUser();
+        existing.setId(42L);
+        existing.setUsername("POADMIN");
+        existing.setSystemRole("ADMIN");          // admin panelinden elle verilmiş
+        existing.setRoleLocked(false);
+        when(userRepo.findByUsername("POADMIN")).thenReturn(Optional.of(existing));
+        Map<String, Object> attrs = Map.of("cn", "90011", "company", "PRODUCT OWNER");
+
+        AppUser u = service.provisionFromAd("poadmin", "CN=poadmin,DC=aknet,DC=akb", attrs);
+
+        assertThat(u.getSystemRole()).isEqualTo("ADMIN");
+        assertThat(u.getOrgRole()).isEqualTo("PO");   // org rol yine de AD'den tazelenir
+    }
+
+    @Test
+    @DisplayName("Rolü KİLİTLİ (role_locked) PO ADMIN kalır — manuel atama LDAP'tan ezilmez")
+    void roleLockedAdminPo_keepsAdmin() {
+        AppUser existing = new AppUser();
+        existing.setId(43L);
+        existing.setUsername("POLOCKED");
+        existing.setSystemRole("ADMIN");
+        existing.setRoleLocked(true);             // admin bilerek kilitledi
+        when(userRepo.findByUsername("POLOCKED")).thenReturn(Optional.of(existing));
+        Map<String, Object> attrs = Map.of("cn", "90012", "company", "PRODUCT OWNER");
+
+        AppUser u = service.provisionFromAd("polocked", "CN=polocked,DC=aknet,DC=akb", attrs);
+
+        assertThat(u.getSystemRole()).isEqualTo("ADMIN");
+        assertThat(u.getOrgRole()).isEqualTo("PO");   // org rol yine de tazelenir (orgRoleLocked ayrı)
+    }
+
+    @Test
+    @DisplayName("AUDIT (denetçi) rolündeki PO korunur — denetim rolü LDAP'tan düşürülmez")
+    void auditPo_keepsAudit() {
+        AppUser existing = new AppUser();
+        existing.setId(44L);
+        existing.setUsername("POAUDIT");
+        existing.setSystemRole("AUDIT");
+        existing.setRoleLocked(false);
+        when(userRepo.findByUsername("POAUDIT")).thenReturn(Optional.of(existing));
+        Map<String, Object> attrs = Map.of("cn", "90013", "company", "PRODUCT OWNER");
+
+        AppUser u = service.provisionFromAd("poaudit", "CN=poaudit,DC=aknet,DC=akb", attrs);
+
+        assertThat(u.getSystemRole()).isEqualTo("AUDIT");
+    }
+
+    @Test
+    @DisplayName("Bağlı çalışanı olan kullanıcı (müdür) → TEAM_ADMIN; LDAP artık ADMIN vermez")
+    void userWithSubordinate_becomesTeamAdmin() {
         when(userRepo.existsByManagerId(org.mockito.ArgumentMatchers.anyLong())).thenReturn(true);
         Map<String, Object> attrs = Map.of("cn", "90003", "displayName", "Boss");
 
         AppUser u = service.provisionFromAd("boss1", "CN=boss1,DC=aknet,DC=akb", attrs);
 
-        assertThat(u.getSystemRole()).isEqualTo("ADMIN");
+        assertThat(u.getSystemRole()).isEqualTo("TEAM_ADMIN");
     }
 
     @Test
