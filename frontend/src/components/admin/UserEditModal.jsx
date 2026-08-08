@@ -13,7 +13,7 @@ export function ModalHeaderAvatar({ userId, children }) {
   if (!userId || err) return children
   return (
     <img className="modal-icon-hdr-photo" alt=""
-      src={`/api/admin/users/${userId}/photo`} onError={() => setErr(true)} />
+      src={`/api/users/${userId}/photo`} onError={() => setErr(true)} />
   )
 }
 

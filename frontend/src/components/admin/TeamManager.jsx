@@ -58,7 +58,10 @@ function MemberAvatar({ m }) {
   }
   return (
     <div className="tm-mc-avatar-wrap">
-      <img className="tm-mc-photo" alt="" src={`/api/admin/users/${m.id}/photo`} onError={() => setErr(true)} />
+      {/* Takımlar sekmesi USER rolüne de AÇIK (AdminPanel adminOnly:false) → avatar admin'e özel
+          uçtan çekilemez: her üye için bir ACCESS_DENIED/BLOCKED denetim kaydı üretiyordu.
+          /api/users/{id}/photo tam bu iş için var (oturum açmış herkes; UserDirectoryController). */}
+      <img className="tm-mc-photo" alt="" src={`/api/users/${m.id}/photo`} onError={() => setErr(true)} />
       <span className="tm-mc-initials">{initials}</span>
     </div>
   )
