@@ -669,6 +669,8 @@ export const api = {
         const qs = q.toString()
         return request(`/monitoring/incidents${qs ? '?' + qs : ''}`)
       },
+      // Tekil olay — e-posta derin linki (?incident=<id>) sayfalı listede olmayan olayı da açabilsin.
+      get:           (id) => request(`/monitoring/incidents/${id}`),
       comments:      (id) => request(`/monitoring/incidents/${id}/comments`),
       addComment:    (id, body) => request(`/monitoring/incidents/${id}/comments`, { method: 'POST', body: JSON.stringify({ body }) }),
       deleteComment: (commentId) => request(`/monitoring/incidents/comments/${commentId}`, { method: 'DELETE' }),

@@ -378,7 +378,10 @@ class EscalationServiceTest {
         verify(emailService).sendResolutionAlert(
                 any(String[].class), contains("ÇÖZÜLDÜ"),
                 eq("notify.example.com"), eq("EXPIRY"), eq("WARNING"),
-                any(), eq("test-user"), any(), any(), isNull(), any(), any());
+                // ctx artık HER ZAMAN olay kimliğini taşır (e-postadaki olay aksiyon butonları için);
+                // eskiden bu yolda null'dı → isNull() yerine pozitif iddia.
+                any(), eq("test-user"), any(), any(),
+                argThat(m -> m != null && m.containsKey("alert_event_id")), any(), any());
     }
 
     @Test

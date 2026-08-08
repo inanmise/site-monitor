@@ -243,6 +243,7 @@ public class EmailTemplateBuilder {
             sb.append("</table>");
         }
         sb.append(ctaButton(href, "Site Monitor'de Görüntüle", color))
+          .append(incidentActions(m.ctx(), color))
           .append("</td></tr></table></td></tr>")
           // "Neden bu e-postayı aldınız?" — alıcı şeffaflığı (StatusCake "Why am I seeing this email" esini)
           .append(whyReceivingBlock(m.teamName()))
@@ -289,6 +290,8 @@ public class EmailTemplateBuilder {
         String cta = appSettings.getString("site.monitor.app.base-url", appBaseUrl);
         sb.append(cta).append("/?tab=").append(tabFor(m.alertType()))
           .append(m.domain() != null ? "&domain=" + urlenc(m.domain()) : "").append('\n');
+        // HTML/metin paritesi: olay aksiyon linkleri metin sürümde de bulunur (kimlik yoksa "").
+        sb.append(MailCta.incidentActionText(liveBaseUrl(), m.ctx() == null ? null : m.ctx().get("alert_event_id")));
         sb.append("\n— Site Monitor ").append(subsystemLabel(m.alertType()));
         return sb.toString();
     }
@@ -422,6 +425,7 @@ public class EmailTemplateBuilder {
                 + "<tr><td style='padding:8px 30px 4px'><table role='presentation' width='100%' style='border-collapse:collapse'>" + rows + "</table></td></tr>"
                 + whyReceivingBlock(teamNames)
                 + "<tr><td style='padding:18px 30px 24px'>" + ctaButton(href, "Site Monitor'de Görüntüle", C_INFO)
+                + incidentActions(ctx, C_INFO)
                 + "<div style='border-top:1px solid " + LINE + ";margin-top:18px;padding-top:12px;font-size:11px;color:#9AA3AF'>Bu e-posta Site Monitor tarafından otomatik gönderilmiştir.</div></td></tr>"
                 + "</table></td></tr></table></body></html>";
     }
@@ -463,6 +467,8 @@ public class EmailTemplateBuilder {
         if (durHuman != null) sb.append("\nAlarm Süresi: ").append(durHuman);
         if (resolvedAt != null) sb.append("\nÇözülme: ").append(formatHuman(resolvedAt));
         sb.append("\nÇözen: ").append(resolvedBy != null && !resolvedBy.isBlank() ? resolvedBy : "Sistem (otomatik)");
+        // HTML/metin paritesi: olay aksiyon linkleri (kimlik yoksa "").
+        sb.append(MailCta.incidentActionText(liveBaseUrl(), ctx == null ? null : ctx.get("alert_event_id")));
         return sb.toString();
     }
 
@@ -740,10 +746,22 @@ public class EmailTemplateBuilder {
         return code == null ? "" : code.toLowerCase(Locale.ROOT).replace(" ", "").replace("_", "").replace("-", "");
     }
 
-    /** VML/mso fallback'li bulletproof CTA butonu. */
+    /** CANLI base-url (sondaki bölü işaretleri atılmış); {@code appBaseUrl} yalnız fallback. */
+    private String liveBaseUrl() {
+        String url = appSettings.getString("site.monitor.app.base-url", appBaseUrl);
+        return (url == null || url.isBlank()) ? "" : url.replaceAll("/+$", "");
+    }
+
+    /** Olay aksiyon butonları (detay + yorum) — ctx'te alert_event_id yoksa "" (mevcut çıktı korunur). */
+    private String incidentActions(Map<String, Object> ctx, String accent) {
+        return MailCta.incidentActionRow(liveBaseUrl(), ctx == null ? null : ctx.get("alert_event_id"), accent);
+    }
+
+    /** VML/mso fallback'li bulletproof CTA butonu. Genişlik etiketten türetilir — sabit 220px
+     *  uzun Türkçe etiketlerde ("Site Monitor'de Görüntüle") Outlook'ta metni kırpıyordu. */
     private static String ctaButton(String href, String label, String color) {
         String h = esc(href);
-        return "<!--[if mso]><v:roundrect xmlns:v='urn:schemas-microsoft-com:vml' xmlns:w='urn:schemas-microsoft-com:office:word' href='" + h + "' style='height:40px;v-text-anchor:middle;width:220px' arcsize='12%' strokecolor='" + color + "' fillcolor='" + color + "'>"
+        return "<!--[if mso]><v:roundrect xmlns:v='urn:schemas-microsoft-com:vml' xmlns:w='urn:schemas-microsoft-com:office:word' href='" + h + "' style='height:40px;v-text-anchor:middle;width:" + MailCta.vmlWidth(label) + "px' arcsize='12%' strokecolor='" + color + "' fillcolor='" + color + "'>"
                 + "<w:anchorlock/><center style='color:#ffffff;font-family:Segoe UI,Arial,sans-serif;font-size:14px;font-weight:600'>" + esc(label) + "</center></v:roundrect><![endif]-->"
                 + "<!--[if !mso]><!-- --><a href='" + h + "' style='display:inline-block;background:" + color + ";color:#ffffff;text-decoration:none;font-size:14px;font-weight:600;padding:11px 22px;border-radius:6px'>" + esc(label) + "</a><!--<![endif]-->";
     }

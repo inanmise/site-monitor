@@ -98,6 +98,19 @@ class EmailTemplateStandardTest {
     }
 
     @Test
+    @DisplayName("olay aksiyon butonları eklenince de standart korunur (style/logo/genişlik kuralları)")
+    void alertTemplatesWithIncidentActionsConform() {
+        Map<String, Object> c = ctx();
+        c.put("alert_event_id", 4242L);
+        assertStandard("cert-expiry+act", service.buildAlertEmailHtml("k", "m", "example.com", "CRITICAL", "EXPIRY", 5, c), "600");
+        assertStandard("accessibility+act", service.buildAlertEmailHtml("k", "m", "https://example.com", "CRITICAL", "ACCESSIBILITY", null, c), "600");
+        assertStandard("keyword+act", service.buildAlertEmailHtml("k", "m", "https://example.com", "HIGH", "KEYWORD", null, c), "600");
+        assertStandard("ping+act", service.buildAlertEmailHtml("k", "m", "10.0.0.7", "WARNING", "PING_DOWN", null, c), "600");
+        assertStandard("dns-changed+act", service.buildAlertEmailHtml("k", "m", "example.com", "WARNING", "DNS_CHANGED", null, c), "600");
+        assertStandard("resolved-access+act", service.buildResolutionEmailHtml("https://example.com", "ACCESSIBILITY", "CRITICAL", null, "oto", "2026-08-06 12:00", "2026-08-06 08:00", c, "SY-A", null), "600");
+    }
+
+    @Test
     @DisplayName("canlı çözülme şablonları standarda uyar")
     void resolutionTemplatesConform() {
         assertStandard("resolved-cert", service.buildResolutionEmailHtml("example.com", "EXPIRY", "CRITICAL", 90, "admin", "2026-08-06 12:00", "2026-08-05 09:00", ctx(), "SY-A", null), "600");

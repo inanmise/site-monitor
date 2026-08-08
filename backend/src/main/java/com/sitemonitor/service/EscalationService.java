@@ -1170,6 +1170,9 @@ public class EscalationService {
             } else {
                 certContext = latestCheckRepo.findById(event.getDomain()).map(this::latestToCertContext).orElse(null);
             }
+            // Çözüm postasında da olay kimliği taşınır (aksiyon butonları için); ctx null olabildiği
+            // için kopya map'e sarılır — MONITORING tiplerinde yukarıda bilerek null'a çekiliyor.
+            certContext = withAlertEventId(certContext, event.getId());
             String teamNames = collectTeamNames(domainTeamId, ugTeamId);
             // Recovery erişilebilirlik özeti — yalnız HTTP uptime örneği olan tipte (ACCESSIBILITY); veri yoksa null.
             EmailNotificationService.UptimeSummary uptime = null;
@@ -1338,6 +1341,9 @@ public class EscalationService {
                 if (shown > 0) enrichedCtx.putIfAbsent("realert_count", shown);
             });
         }
+        // Olay kimliği: e-postadaki "Olay detayını görüntüle / Olaya yorum yap" derin linklerini besler.
+        // put (putIfAbsent DEĞİL): saklanmış eski bir anlık görüntüdeki bayat kimlik canlı olayı ezmesin.
+        if (alertEventId != null) enrichedCtx.put("alert_event_id", alertEventId);
         certContext = enrichedCtx;
 
         // 2. Subject — "[Site Monitor] SEVERITY · domain · özet" (executive format; EmailTemplateBuilder ile aynı severity etiketi)
@@ -1482,6 +1488,15 @@ public class EscalationService {
         } catch (Exception e) {
             log.warn("Bildirim logu kaydedilemedi: {}", e.getMessage());
         }
+    }
+
+    /** ctx'e olay kimliğini ekler (ctx null olabilir → yeni map). E-postadaki olay aksiyon
+     *  butonlarının derin linkleri bu kimlikten üretilir. */
+    private static Map<String, Object> withAlertEventId(Map<String, Object> ctx, Long id) {
+        if (id == null) return ctx;
+        Map<String, Object> m = (ctx == null) ? new LinkedHashMap<>() : new LinkedHashMap<>(ctx);
+        m.put("alert_event_id", id);
+        return m;
     }
 
     private String collectTeamNames(Long syTeamId, Long ugTeamId) {

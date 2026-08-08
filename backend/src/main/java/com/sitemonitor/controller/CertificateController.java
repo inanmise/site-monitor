@@ -93,10 +93,14 @@ public class CertificateController {
         var inv = inventoryRepo.findByDomain(domain);
         boolean forceProxy = inv.map(ci -> Boolean.TRUE.equals(ci.getUseProxy())).orElse(false);
         String tlsOverride = inv.map(ci -> ci.getTlsMode()).orElse(null);
-        Map<String, Object> result = new LinkedHashMap<>(checkerService.check(domain, 443, forceProxy, tlsOverride));
+        // Envanterdeki GERÇEK port (zamanlayıcı da böyle yapıyor); 443'e sabitlemek 8443 gibi
+        // portlardaki sertifikayı yanlış hedeften okutuyor ve UI'da yanlış port gösteriyordu.
+        int port = inv.map(ci -> ci.getPort() != null ? ci.getPort() : 443).orElse(443);
+        Map<String, Object> result = new LinkedHashMap<>(checkerService.check(domain, port, forceProxy, tlsOverride));
         result.put("run_id", "manual");
+        result.put("port", port);
         certService.saveResult(result);
-        certService.ensureInInventory(domain, 443, teamId(session));
+        certService.ensureInInventory(domain, port, teamId(session));
         // Manuel tetiklemede de cache evict gerekiyor (saveResult'tan kaldırıldı)
         certService.evictAllCaches();
         return ok(Map.of("success", true, "data", result, "timestamp", now()));

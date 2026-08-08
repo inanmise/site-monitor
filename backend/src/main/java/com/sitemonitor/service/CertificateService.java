@@ -213,11 +213,13 @@ public class CertificateService {
                 .collect(Collectors.toMap(Team::getId, Team::getName, (a, b) -> a));
         Map<String, Long> teamIdMap = new HashMap<>(activeInventory.size());
         Map<String, String> teamNameMap = new HashMap<>(activeInventory.size());
+        Map<String, Integer> portMap = new HashMap<>(activeInventory.size());
         for (CertificateInventory inv : activeInventory) {
             String d = inv.getDomain();
             if (d == null) continue;
             activeDomains.add(d);
             if (inv.getTier() != null) tierMap.put(d, inv.getTier());
+            if (inv.getPort() != null) portMap.put(d, inv.getPort());
             if (inv.getTeamId() != null) {
                 teamIdMap.put(d, inv.getTeamId());
                 String tn = teamNames.get(inv.getTeamId());
@@ -234,6 +236,7 @@ public class CertificateService {
                 .map(c -> {
                     CertificateDto dto = toDto(c);
                     dto.setTier(tierMap.get(c.getDomain()));
+                    dto.setPort(portMap.get(c.getDomain()));
                     dto.setTeamId(teamIdMap.get(c.getDomain()));
                     dto.setTeamName(teamNameMap.get(c.getDomain()));
                     dto.setAlertLevel(computeAlertLevel(dto, critDays, highDays));

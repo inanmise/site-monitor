@@ -1,12 +1,6 @@
 import { useState, useEffect, useCallback, useRef, useMemo, lazy, Suspense } from 'react'
-import { ChevronDown, BarChart3, AlertOctagon, X, Wifi, CheckCircle, Clock, RefreshCw, Loader2 } from 'lucide-react'
+import { ChevronDown, BarChart3, AlertOctagon, X, Wifi, CheckCircle, Clock, Loader2 } from 'lucide-react'
 
-// Date → "HH:mm:ss" (Şimdi Kontrol Et modalında başlangıç/bitiş saati)
-const fmtClock = (d) => (d instanceof Date
-  ? d.toTimeString().slice(0, 8) + '.' + String(d.getMilliseconds()).padStart(3, '0')   // HH:mm:ss.SSS
-  : '')
-// Geçen süre — <1 sn ise ms, değilse saniye (3 hane ms hassasiyeti).
-const fmtDur = (ms) => (ms == null ? '' : ms < 1000 ? `${ms} ms` : `${(ms / 1000).toFixed(3)} s`)
 import { api, formatDate } from './api/client'
 import { useDialog } from './components/ui/Dialog.jsx'
 import { useT } from './i18n/index.jsx'
@@ -39,6 +33,9 @@ import PingMonitorPage from './components/PingMonitorPage'
 import PageMonitorPage from './components/PageMonitorPage'
 import ScriptedMonitorPage from './components/ScriptedMonitorPage'
 import ErrorBoundary from './components/ErrorBoundary.jsx'
+import CheckRunModal from './components/check/CheckRunModal.jsx'
+import CheckTeamPicker, { NO_TEAM } from './components/check/CheckTeamPicker.jsx'
+import AnnouncementBanner from './components/AnnouncementBanner.jsx'
 
 // Ağır/seyrek admin & rapor sekmeleri — lazy (kod-bölme): ilk yük küçülür, sekme
 // açılınca yüklenir. Hepsi aşağıdaki tek <Suspense> sınırı altında render edilir.
@@ -88,6 +85,9 @@ const VALID_TABS = new Set([
   'health', 'uptime', 'http', 'domain', 'port', 'dns', 'keyword', 'ping', 'page', 'scripted', 'activity', 'myactivity', 'system',
   'admin', 'permissions', 'sqlplayground', 'login-issues', 'help', 'settings',
 ])
+/** "Şimdi Kontrol Et" + domain ekleme yalnız bu sekmelerde anlamlı (sertifika sayfaları). */
+const CERT_TABS = new Set(['dashboard', 'all', 'domains'])
+
 function initialTabFromUrl() {
   try {
     const t = new URLSearchParams(window.location.search).get('tab')
@@ -148,7 +148,8 @@ export default function App() {
   const [newDomain,    setNewDomain]    = useState('')
   const [checkLoading, setCheckLoading] = useState(false)
   const [refreshing, setRefreshing] = useState(false)
-  const [checkRun, setCheckRun] = useState(null)        // Şimdi Kontrol Et — akan ilerleme modalı (domain başına ✓ + süre)
+  const [checkRun, setCheckRun] = useState(null)        // Şimdi Kontrol Et — akan ilerleme modalı (domain başına sonuç satırı)
+  const [teamPickerOpen, setTeamPickerOpen] = useState(false)   // kontrol öncesi takım seçimi
   const [lastUpdate, setLastUpdate] = useState(null)
   const [inactivityWarning, setInactivityWarning] = useState(false)
   const [countdown, setCountdown] = useState(60)
@@ -167,7 +168,7 @@ export default function App() {
   const warnTimer = useRef(null)
   const countdownInterval = useRef(null)
   const refreshPollRef = useRef(null)
-  const chkListRef = useRef(null)
+  const checkCancelRef = useRef(false)   // "Durdur" bayrağı — döngü kalan domainlere istek atmasın
 
   useEffect(() => {
     api.getMe().then((res) => {
@@ -376,20 +377,40 @@ export default function App() {
 
   // "Şimdi Kontrol Et": her domain'i sırayla yeniden kontrol eder; başlangıç/bitiş/süre ölçüp
   // akan modala yazar (alt alta ✓ + zaman). Bittiğinde veriyi tazeler; "Kapat" ile kapanır.
-  async function handleRefresh() {
+  /**
+   * Seçili takımlardaki sertifikaları SIRAYLA kontrol eder ve her satırın SONUCUNU saklar
+   * (eskiden yanıt atılıyordu; kalan gün/bitiş/HTTP kolonları oradan geliyor).
+   * @param teamKeys seçili takım anahtarları (team_id string'i veya NO_TEAM)
+   */
+  async function handleRefresh(teamKeys, teamLabel) {
     if (refreshing) return
+    const keys = Array.isArray(teamKeys) && teamKeys.length ? teamKeys : null
+    const scoped = keys
+      ? certs.filter(c => keys.includes(c.team_id != null ? String(c.team_id) : NO_TEAM))
+      : certs
+    const domains = [...new Set(scoped.map(c => c.domain).filter(Boolean))].sort((a, b) => a.localeCompare(b))
+    if (!domains.length) return
+
     setRefreshing(true)
-    const domains = [...new Set(certs.map(c => c.domain).filter(Boolean))].sort((a, b) => a.localeCompare(b))
-    setCheckRun({ rows: [], total: domains.length, done: false })
+    checkCancelRef.current = false
+    setCheckRun({ rows: [], total: domains.length, done: false, teamLabel: teamLabel || null })
 
     for (const domain of domains) {
+      if (checkCancelRef.current) break        // "Durdur" → kalan domainlere istek atma
       const start = new Date()
       const t0 = Date.now()
-      let ok = false
-      try { const r = await api.checkDomain(domain); ok = !!r?.success } catch { ok = false }
+      let ok = false, data = null, error = null
+      try {
+        const r = await api.checkDomain(domain)
+        ok = !!r?.success
+        data = r?.data ?? null
+        if (!ok) error = r?.error || null
+      } catch (e) { ok = false; error = e?.message || null }
       const end = new Date()
-      const ms = Date.now() - t0
-      setCheckRun(cr => cr ? { ...cr, rows: [...cr.rows, { domain, start, end, ms, ok }] } : cr)
+      // Sunucunun ölçtüğü süre daha doğru (ağ gecikmesi hariç); yoksa istemci kronometresi.
+      const ms = Number.isFinite(data?.elapsed_ms) ? data.elapsed_ms : Date.now() - t0
+      if (data?.status === 'error') { ok = false; error = error || data.error }
+      setCheckRun(cr => cr ? { ...cr, rows: [...cr.rows, { domain, start, end, ms, ok, data, error }] } : cr)
     }
 
     try {
@@ -404,12 +425,6 @@ export default function App() {
     setCheckRun(cr => cr ? { ...cr, done: true } : cr)
     setRefreshing(false)
   }
-
-  // Yeni satır eklendikçe listeyi en alta kaydır (akış efekti).
-  useEffect(() => {
-    const el = chkListRef.current
-    if (el) el.scrollTop = el.scrollHeight
-  }, [checkRun?.rows.length])
 
   async function handleAddDomain() {
     if (!newDomain.trim() || checkLoading) return
@@ -431,6 +446,8 @@ export default function App() {
   }
 
   function handleLogin(userData) {
+    // Duyuru "hero"su her GERÇEK girişte bir kez görünsün (sayfa yenilemede tekrar etmesin).
+    try { sessionStorage.removeItem('sm.banner.heroShown') } catch { /* yoksay */ }
     setTab(initialTabFromUrl() || 'dashboard')
     setUser(userData.username)
     setSystemRole(userData.system_role || 'USER')
@@ -444,6 +461,13 @@ export default function App() {
     () => new Set((weakAlgStats?.data ?? []).map(d => d.domain)),
     [weakAlgStats]
   )
+
+  // domain → envanter bilgisi (takım/tier/port) — kontrol tablosu satırlarını zenginleştirir.
+  const certIndex = useMemo(() => {
+    const idx = {}
+    for (const c of certs) if (c?.domain) idx[c.domain] = { team_name: c.team_name, tier: c.tier, port: c.port }
+    return idx
+  }, [certs])
 
   const issuerStats = useMemo(() => {
     const reachable = certs.filter(c => c.status !== 'error')
@@ -617,7 +641,8 @@ export default function App() {
       </div>
     )
   }
-  if (!user) return <Login onLogin={handleLogin} sessionExpired={sessionExpiredNotice} />
+  // Login ekranında da duyuru görünür (public /api/branding) — orada sol menü yok, tam genişlik doğru.
+  if (!user) return (<><AnnouncementBanner /><Login onLogin={handleLogin} sessionExpired={sessionExpiredNotice} /></>)
   if (mustChangePwd) {
     // User was auto-reset by an admin — block all of the app until they
     // pick a new password. PasswordChangeModal in forced-change mode hides
@@ -658,23 +683,27 @@ export default function App() {
       )}
 
       <main className="app-main">
+        <AnnouncementBanner heroOnMount />
         <div className="app-body">
 
-          <div className="controls">
-            <button className="btn btn-primary" onClick={handleRefresh} disabled={refreshing}>
-              {refreshing
-                ? t('app.checkedOf', checkRun?.rows.length ?? 0, checkRun?.total ?? 0)
-                : t('app.checkNow')}
-            </button>
-            <div className="add-domain-section">
-              <input className="domain-input" type="text" placeholder={t('app.newDomainPlaceholder')}
-                value={newDomain} onChange={(e) => setNewDomain(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && handleAddDomain()} />
-              <button className="btn btn-success" onClick={handleAddDomain} disabled={checkLoading}>
-                {checkLoading ? t('app.checkingDomain') : t('app.checkBtn')}
+          {/* Kontroller yalnız SERTİFİKA sayfalarında — izleme/yönetim sekmelerinde işlevsizdi. */}
+          {CERT_TABS.has(tab) && (
+            <div className="controls">
+              <button className="btn btn-primary" onClick={() => setTeamPickerOpen(true)} disabled={refreshing}>
+                {refreshing
+                  ? t('app.checkedOf', checkRun?.rows.length ?? 0, checkRun?.total ?? 0)
+                  : t('app.checkNow')}
               </button>
+              <div className="add-domain-section">
+                <input className="domain-input" type="text" placeholder={t('app.newDomainPlaceholder')}
+                  value={newDomain} onChange={(e) => setNewDomain(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && handleAddDomain()} />
+                <button className="btn btn-success" onClick={handleAddDomain} disabled={checkLoading}>
+                  {checkLoading ? t('app.checkingDomain') : t('app.checkBtn')}
+                </button>
+              </div>
             </div>
-          </div>
+          )}
 
           {networkStatus?.alarm && !networkBannerDismissed && (
             <div className="network-outage-banner" role="alert">
@@ -1130,51 +1159,20 @@ export default function App() {
       <CertificateModal domain={modalCert?.domain} alertLevel={modalCert?.alert_level} initialData={modalCert?._preview ? modalCert : undefined} previewMode={!!modalCert?._preview} currentUser={user} currentUserRole={systemRole} onClose={() => setModalCert(null)} />
       {caModal && <CaDiversityModal certs={certs} onClose={() => setCaModal(false)} />}
 
-      {/* Şimdi Kontrol Et — akan ilerleme modalı (her domain ✓ + başlangıç/bitiş/süre) */}
-      {checkRun && (
-        <div className="modal-overlay">
-          <div className="modal-box chk-modal" onClick={e => e.stopPropagation()}>
-            <div className="modal-icon-hdr modal-icon-hdr--check">
-              <div className="modal-icon-hdr-badge"><RefreshCw size={20} /></div>
-              <h3>{t('app.checkProgressTitle')}</h3>
-              <span className="chk-count">{checkRun.rows.length}/{checkRun.total}</span>
-            </div>
-            <div className="chk-list" ref={chkListRef}>
-              <table className="chk-table">
-                <thead>
-                  <tr>
-                    <th className="chk-th-domain">{t('app.checkColDomain')}</th>
-                    <th>{t('app.checkColStart')}</th>
-                    <th>{t('app.checkColEnd')}</th>
-                    <th>{t('app.checkColDur')}</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {checkRun.rows.map((r, i) => (
-                    <tr key={i}>
-                      <td className="chk-td-domain">
-                        <span className={`chk-tick${r.ok ? '' : ' chk-tick-err'}`}>{r.ok ? '✓' : '✕'}</span>
-                        {r.domain}
-                      </td>
-                      <td className="chk-mono">{fmtClock(r.start)}</td>
-                      <td className="chk-mono">{fmtClock(r.end)}</td>
-                      <td className="chk-mono"><b>{fmtDur(r.ms)}</b></td>
-                    </tr>
-                  ))}
-                  {!checkRun.done && (
-                    <tr><td className="chk-pending" colSpan={4}>
-                      <Loader2 size={14} className="chk-spin" /> {t('app.checking')}
-                    </td></tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-            <div className="modal-actions">
-              <button className="btn btn-secondary" onClick={() => setCheckRun(null)}>{t('app.close')}</button>
-            </div>
-          </div>
-        </div>
+      {/* Şimdi Kontrol Et — önce takım seçimi, sonra akan sonuç tablosu */}
+      {teamPickerOpen && (
+        <CheckTeamPicker
+          certs={certs}
+          onClose={() => setTeamPickerOpen(false)}
+          onStart={(keys, label) => { setTeamPickerOpen(false); handleRefresh(keys, label) }}
+        />
       )}
+      <CheckRunModal
+        run={checkRun}
+        certIndex={certIndex}
+        onCancel={() => { checkCancelRef.current = true }}
+        onClose={() => { checkCancelRef.current = true; setCheckRun(null) }}
+      />
     </div>
     </UserDirectoryProvider>
     </PermissionsProvider>
