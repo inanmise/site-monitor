@@ -152,6 +152,61 @@ class BrandingControllerTest {
         }), anyString());
     }
 
+    @Test
+    @DisplayName("şerit KAPALI→AÇIK yapılınca da banner-version +1 — kapatmış kullanıcılar yeniden görsün")
+    void bannerVersion_incrementsWhenReEnabled() throws Exception {
+        when(settingsService.getBoolean(eq("site.monitor.branding.banner-enabled"), anyBoolean())).thenReturn(false);
+        when(settingsService.getInt(eq("site.monitor.branding.banner-version"), anyInt())).thenReturn(7);
+        when(settingsService.getCatalogForClient()).thenReturn(List.of());
+
+        mvc.perform(put("/api/admin/branding/settings").session(userSession("admin"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"values\":{\"site.monitor.branding.banner-enabled\":\"true\"}}"))
+                .andExpect(status().isOk());
+
+        verify(settingsService).save(argThat(body -> {
+            Map<?, ?> values = (Map<?, ?>) body.get("values");
+            return "8".equals(values.get("site.monitor.branding.banner-version"));
+        }), anyString());
+    }
+
+    @Test
+    @DisplayName("şerit zaten AÇIKken tekrar kaydetmek versiyonu ŞİŞİRMEZ")
+    void bannerVersion_notIncrementedWhenAlreadyEnabled() throws Exception {
+        when(settingsService.getBoolean(eq("site.monitor.branding.banner-enabled"), anyBoolean())).thenReturn(true);
+        when(settingsService.getString(eq("site.monitor.branding.banner-tone"), anyString())).thenReturn("INFO");
+        when(settingsService.getCatalogForClient()).thenReturn(List.of());
+
+        mvc.perform(put("/api/admin/branding/settings").session(userSession("admin"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"values\":{\"site.monitor.branding.banner-enabled\":\"true\","
+                                + "\"site.monitor.branding.banner-tone\":\"INFO\"}}"))
+                .andExpect(status().isOk());
+
+        verify(settingsService).save(argThat(body -> {
+            Map<?, ?> values = (Map<?, ?>) body.get("values");
+            return !values.containsKey("site.monitor.branding.banner-version");
+        }), anyString());
+    }
+
+    @Test
+    @DisplayName("ton değişince de banner-version +1")
+    void bannerVersion_incrementsOnToneChange() throws Exception {
+        when(settingsService.getString(eq("site.monitor.branding.banner-tone"), anyString())).thenReturn("INFO");
+        when(settingsService.getInt(eq("site.monitor.branding.banner-version"), anyInt())).thenReturn(1);
+        when(settingsService.getCatalogForClient()).thenReturn(List.of());
+
+        mvc.perform(put("/api/admin/branding/settings").session(userSession("admin"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"values\":{\"site.monitor.branding.banner-tone\":\"CRITICAL\"}}"))
+                .andExpect(status().isOk());
+
+        verify(settingsService).save(argThat(body -> {
+            Map<?, ?> values = (Map<?, ?>) body.get("values");
+            return "2".equals(values.get("site.monitor.branding.banner-version"));
+        }), anyString());
+    }
+
     private MockHttpSession userSession(String username) {
         MockHttpSession s = new MockHttpSession();
         s.setAttribute("authenticated", Boolean.TRUE);
