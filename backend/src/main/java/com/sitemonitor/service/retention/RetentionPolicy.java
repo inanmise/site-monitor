@@ -49,7 +49,9 @@ public record RetentionPolicy(
         /** Gerçek TIMESTAMP kolon → parametre CAST edilmeli (system_heartbeat). */
         TIMESTAMP,
         /** 10 karakterlik gün kolonu (monitor_check_daily.day) → cutoff ilk 10 karaktere kırpılır. */
-        DATE10
+        DATE10,
+        /** 13 karakterlik saat kovası (monitor_check_hourly.hour_bucket) → cutoff 13 karaktere kırpılır. */
+        DATE13
     }
 
     /** Silme kipi. */

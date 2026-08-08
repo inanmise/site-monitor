@@ -63,6 +63,12 @@ public final class RetentionCatalog {
                 DataClass.OPERATIONAL,
                 "Günlük özet (uptime/yanıt süresi trendi). Ham seriler kısalsa da 2 yıllık trend korunur."),
 
+        new RetentionPolicy("rollup-hourly", "monitor_check_hourly", "hour_bucket", TimeKind.DATE13,
+                "site.monitor.rollup.hourly-retention-days", 365, 60, false, "{t}", Mode.AGE, false,
+                DataClass.OPERATIONAL,
+                "Saatlik özet. Ham seri kısaldığında olayın hangi SAATTE olduğu burada kalır "
+                + "(günlük özet bunu kaybeder). Ham serinin ~%1,7'si kadar yer kaplar."),
+
         // ── Denetim ve sistem kayıtları ───────────────────────────────────────────────────────
         age("audit-log", "audit_log", "event_time", "site.monitor.audit.retention-days",
                 365, 30, true, DataClass.SECURITY_AUDIT,

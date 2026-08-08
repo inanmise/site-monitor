@@ -410,6 +410,9 @@ export const api = {
     /** Saklama süresi değişiklik geçmişi (kim/ne zaman/eski→yeni) — audit_log kaynaklı. */
     getRetentionChanges: (limit = 25, policyId) =>
       request(`/admin/retention/changes?limit=${limit}${policyId ? `&policyId=${encodeURIComponent(policyId)}` : ''}`),
+    // Saatlik özeti geriye doldur — ham seri kısaltılmadan ÖNCE çalıştırılır (yalnız yazar, silmez).
+    retentionBackfillHourly: (days = 0) =>
+      request(`/admin/retention/backfill-hourly${days > 0 ? `?days=${days}` : ''}`, { method: 'POST' }),
     saveRetentionApproval: (policyId, note) =>
       request('/admin/retention/approval', { method: 'PUT', body: JSON.stringify({ policy_id: policyId, note }) }),
 

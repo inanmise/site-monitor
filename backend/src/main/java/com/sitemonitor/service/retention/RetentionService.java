@@ -84,7 +84,11 @@ public class RetentionService {
         int days = effectiveDays(p);
         if (p.zeroMeansNever() && days <= 0) return null;
         String iso = ISO.format(Instant.now().minus(days, ChronoUnit.DAYS));
-        return p.timeKind() == RetentionPolicy.TimeKind.DATE10 ? iso.substring(0, 10) : iso;
+        return switch (p.timeKind()) {
+            case DATE10 -> iso.substring(0, 10);
+            case DATE13 -> iso.substring(0, 13);
+            default -> iso;
+        };
     }
 
     // ── Çalıştırma ───────────────────────────────────────────────────────────────
