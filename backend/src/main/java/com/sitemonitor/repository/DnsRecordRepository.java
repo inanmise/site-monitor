@@ -94,4 +94,10 @@ public interface DnsRecordRepository extends JpaRepository<DnsRecord, Long> {
          + "GROUP BY r.monitorId")
     List<Object[]> weeklyStatsByMonitor(@Param("ids") java.util.Collection<Long> ids,
                                         @Param("from") String from, @Param("to") String to);
+
+    /** Saklama seffafligi: bu izlemenin elde TUTULAN en eski ve en yeni kaydi ([min, max]).
+     *  Kullanici Kontrol Gecmisi'nde "veri su tarihten itibaren tutuluyor" bilgisini gorur.
+     *  Zaman kolonu indexli oldugundan MIN/MAX index-seek'tir (tablo taramasi yok). */
+    @Query("SELECT MIN(c.checkedAt), MAX(c.checkedAt) FROM DnsRecord c WHERE c.monitorId = :id")
+    List<Object[]> historyBounds(@Param("id") Long id);
 }

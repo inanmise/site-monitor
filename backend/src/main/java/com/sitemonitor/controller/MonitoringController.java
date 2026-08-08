@@ -92,6 +92,8 @@ public class MonitoringController {
     private final PermissionService permissionService;
     private final EscalationService escalationService;
     private final AppSettingsService appSettings;
+    /** Saklama süreleri tek kaynaktan (RetentionCatalog) — history kırpması onunla senkron. */
+    private final com.sitemonitor.service.retention.RetentionService retentionService;
     /** Canlı teyit durumu ("Teyit denemesi X/N") — detay modalı 30sn'de bir poll eder. */
     private final MonitoringOutageService monitoringOutageService;
 
@@ -180,15 +182,14 @@ public class MonitoringController {
         return SessionScope.canView(session, teamId) ? null : forbidden("Bu izlemeyi görüntüleme yetkiniz yok");
     }
 
-    /** History aralığının anlamlı üst sınırı — SchedulerService.cleanupOldLogs saklama takvimiyle senkron
-     *  (çoğu tablo 180g sabit; dns 90'a kırpılır; page/scripted ayardan). */
+    /**
+     * History aralığının üst sınırı = o türün GERÇEK saklama süresi. Artık burada sabit yok:
+     * değer {@code RetentionCatalog}'dan okunur, yani ekranın kırpması ile gece temizliğinin sildiği
+     * tek kaynaktan gelir. (Eskiden çoğu tür 180'e sabitti ve "cleanup ile elle senkron tutulur"
+     * notuyla sürüklenmeye açıktı — ayar değişince ekran eski davranmaya devam ediyordu.)
+     */
     private int historyRetentionDays(String kind) {
-        return switch (kind) {
-            case "dns"      -> 90;
-            case "page"     -> appSettings.getInt("site.monitor.metrics.page.retention-days", 180);
-            case "scripted" -> appSettings.getInt("site.monitor.metrics.scripted.retention-days", 180);
-            default         -> 180;
-        };
+        return retentionService.historyRetentionDays(kind, 180);
     }
 
     /** Eski/serbest {@code days} paramını TOLERANSLI çevirir: sayı değilse ("custom", "", "abc")
@@ -582,6 +583,7 @@ public class MonitoringController {
             public long total(String f, String t) { return uptimeCheckRepo.countByDomainAndPortAndCheckedAtBetween(domain, port, f, t); }
             public long fail(String f, String t) { return uptimeCheckRepo.countByDomainAndPortAndStatusNotAndCheckedAtBetween(domain, port, "up", f, t); }
             public List<Object[]> histogram(String f, String t, int len) { return uptimeCheckRepo.historyHistogram(domain, port, f, t, len); }
+            public List<Object[]> bounds() { return uptimeCheckRepo.historyBounds(domain, port); }
         };
         var r = checkHistoryService.resolve(new CheckHistoryService.Query(from, to, parseDaysSafe(days), status, page, size),
                 historyRetentionDays("uptime"));
@@ -620,6 +622,7 @@ public class MonitoringController {
             public long total(String f, String t) { return certCheckRepo.countByDomainAndCheckedAtBetween(domain, f, t); }
             public long fail(String f, String t) { return certCheckRepo.countByDomainAndStatusAndCheckedAtBetween(domain, "error", f, t); }
             public List<Object[]> histogram(String f, String t, int len) { return certCheckRepo.historyHistogram(domain, f, t, len); }
+            public List<Object[]> bounds() { return certCheckRepo.historyBounds(domain); }
         };
         var r = checkHistoryService.resolve(new CheckHistoryService.Query(from, to, parseDaysSafe(days), status, page, size),
                 historyRetentionDays("ssl"));
@@ -831,6 +834,7 @@ public class MonitoringController {
             public long total(String f, String t) { return portCheckRepo.countByMonitorIdAndCheckedAtBetween(id, f, t); }
             public long fail(String f, String t) { return portCheckRepo.countByMonitorIdAndOpenFalseAndCheckedAtBetween(id, f, t); }
             public List<Object[]> histogram(String f, String t, int len) { return portCheckRepo.historyHistogram(id, f, t, len); }
+            public List<Object[]> bounds() { return portCheckRepo.historyBounds(id); }
         };
         return runHistory(session, mon.getTeamId(), src, "port",
                 mon.getHost(), Set.of(EscalationService.TYPE_PORT_DOWN, EscalationService.TYPE_PORT_SLOW),
@@ -1145,6 +1149,7 @@ public class MonitoringController {
             public long total(String f, String t) { return dnsRecordRepo.countByMonitorIdAndCheckedAtBetween(id, f, t); }
             public long fail(String f, String t) { return dnsRecordRepo.countChangedByMonitorIdBetween(id, f, t); }
             public List<Object[]> histogram(String f, String t, int len) { return dnsRecordRepo.historyHistogram(id, f, t, len); }
+            public List<Object[]> bounds() { return dnsRecordRepo.historyBounds(id); }
         };
         return runHistory(session, mon.getTeamId(), src, "dns",
                 mon.getDomain(), Set.of(EscalationService.TYPE_DNS_FAILURE, EscalationService.TYPE_DNS_CHANGED,
@@ -1393,6 +1398,7 @@ public class MonitoringController {
             public long total(String f, String t) { return keywordResultRepo.countByMonitorIdAndCheckedAtBetween(id, f, t); }
             public long fail(String f, String t) { return keywordResultRepo.countByMonitorIdAndOkFalseAndCheckedAtBetween(id, f, t); }
             public List<Object[]> histogram(String f, String t, int len) { return keywordResultRepo.historyHistogram(id, f, t, len); }
+            public List<Object[]> bounds() { return keywordResultRepo.historyBounds(id); }
         };
         return runHistory(session, mon.getTeamId(), src, "keyword",
                 mon.getUrl(), Set.of(EscalationService.TYPE_KEYWORD, EscalationService.TYPE_KEYWORD_SLOW,
@@ -1856,6 +1862,7 @@ public class MonitoringController {
             public long total(String f, String t) { return httpCheckRepo.countByMonitorIdAndCheckedAtBetween(id, f, t); }
             public long fail(String f, String t) { return httpCheckRepo.countByMonitorIdAndOkFalseAndCheckedAtBetween(id, f, t); }
             public List<Object[]> histogram(String f, String t, int len) { return httpCheckRepo.historyHistogram(id, f, t, len); }
+            public List<Object[]> bounds() { return httpCheckRepo.historyBounds(id); }
         };
         return runHistory(session, mon.getTeamId(), src, "http",
                 mon.getUrl(), Set.of(EscalationService.TYPE_HTTP_DOWN, EscalationService.TYPE_HTTP_SSL,
@@ -2111,6 +2118,7 @@ public class MonitoringController {
             public long total(String f, String t) { return pageCheckRepo.countByMonitorIdAndCheckedAtBetween(id, f, t); }
             public long fail(String f, String t) { return pageCheckRepo.countByMonitorIdAndOkFalseAndCheckedAtBetween(id, f, t); }
             public List<Object[]> histogram(String f, String t, int len) { return pageCheckRepo.historyHistogram(id, f, t, len); }
+            public List<Object[]> bounds() { return pageCheckRepo.historyBounds(id); }
         };
         return runHistory(session, mon.getTeamId(), src, "page",
                 mon.getUrl(), Set.of(EscalationService.TYPE_PAGE_DOWN, EscalationService.TYPE_PAGE_INTEGRITY),
@@ -2411,6 +2419,7 @@ public class MonitoringController {
             public long total(String f, String t) { return scriptedCheckRepo.countByMonitorIdAndCheckedAtBetween(id, f, t); }
             public long fail(String f, String t) { return scriptedCheckRepo.countByMonitorIdAndOkFalseAndCheckedAtBetween(id, f, t); }
             public List<Object[]> histogram(String f, String t, int len) { return scriptedCheckRepo.historyHistogram(id, f, t, len); }
+            public List<Object[]> bounds() { return scriptedCheckRepo.historyBounds(id); }
         };
         return runHistory(session, mon.getTeamId(), src, "scripted",
                 mon.getName(), Set.of(EscalationService.TYPE_SCRIPTED_FAIL),
@@ -2759,6 +2768,7 @@ public class MonitoringController {
             public long total(String f, String t) { return domainCheckRepo.countByMonitorIdAndCheckedAtBetween(id, f, t); }
             public long fail(String f, String t) { return domainCheckRepo.countByMonitorIdAndStatusNotAndCheckedAtBetween(id, "OK", f, t); }
             public List<Object[]> histogram(String f, String t, int len) { return domainCheckRepo.historyHistogram(id, f, t, len); }
+            public List<Object[]> bounds() { return domainCheckRepo.historyBounds(id); }
         };
         return runHistory(session, mon.getTeamId(), src, "domain",
                 mon.getDomain(), Set.of(EscalationService.TYPE_DOMAINMON_EXPIRY, EscalationService.TYPE_DOMAINMON_UNKNOWN,
@@ -3024,6 +3034,7 @@ public class MonitoringController {
             public long total(String f, String t) { return pingCheckRepo.countByMonitorIdAndCheckedAtBetween(id, f, t); }
             public long fail(String f, String t) { return pingCheckRepo.countByMonitorIdAndUpFalseAndCheckedAtBetween(id, f, t); }
             public List<Object[]> histogram(String f, String t, int len) { return pingCheckRepo.historyHistogram(id, f, t, len); }
+            public List<Object[]> bounds() { return pingCheckRepo.historyBounds(id); }
         };
         return runHistory(session, mon.getTeamId(), src, "ping",
                 mon.getHost(), Set.of(EscalationService.TYPE_PING_DOWN),

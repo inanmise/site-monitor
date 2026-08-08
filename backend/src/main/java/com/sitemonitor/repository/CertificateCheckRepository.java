@@ -72,4 +72,10 @@ public interface CertificateCheckRepository extends JpaRepository<CertificateChe
     @Modifying
     @Query("DELETE FROM CertificateCheck c WHERE c.domain = :domain")
     int deleteByDomain(@Param("domain") String domain);
+
+    /** Saklama seffafligi: bu izlemenin elde TUTULAN en eski ve en yeni kaydi ([min, max]).
+     *  Kullanici Kontrol Gecmisi'nde "veri su tarihten itibaren tutuluyor" bilgisini gorur.
+     *  Zaman kolonu indexli oldugundan MIN/MAX index-seek'tir (tablo taramasi yok). */
+    @Query("SELECT MIN(c.checkedAt), MAX(c.checkedAt) FROM CertificateCheck c WHERE c.domain = :domain")
+    List<Object[]> historyBounds(@Param("domain") String domain);
 }

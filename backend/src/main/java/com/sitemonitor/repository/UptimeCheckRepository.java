@@ -65,4 +65,10 @@ public interface UptimeCheckRepository extends JpaRepository<UptimeCheck, Long> 
      *  (up→down geçiş/kesinti tespiti için). checkedAt UTC ISO string. */
     List<UptimeCheck> findByDomainAndPortAndCheckedAtBetweenOrderByCheckedAtAsc(
         String domain, Integer port, String checkedAtStart, String checkedAtEnd);
+
+    /** Saklama seffafligi: bu izlemenin elde TUTULAN en eski ve en yeni kaydi ([min, max]).
+     *  Kullanici Kontrol Gecmisi'nde "veri su tarihten itibaren tutuluyor" bilgisini gorur.
+     *  Zaman kolonu indexli oldugundan MIN/MAX index-seek'tir (tablo taramasi yok). */
+    @Query("SELECT MIN(c.checkedAt), MAX(c.checkedAt) FROM UptimeCheck c WHERE c.domain = :domain AND c.port = :port")
+    List<Object[]> historyBounds(@Param("domain") String domain, @Param("port") int port);
 }

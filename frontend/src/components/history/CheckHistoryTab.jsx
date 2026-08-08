@@ -157,6 +157,15 @@ export default function CheckHistoryTab({
         <div className="hist-clamp-note">{t('hist.clampedNotice', formatDateSec(clampedFrom))}</div>
       )}
 
+      {/* Saklama şeffaflığı: veri hangi tarihten beri tutuluyor, elde en yeni kayıt hangisi.
+          Süre Ayarlar → Veri Saklama'dan değişince bu satır anında güncellenir. */}
+      {h.oldestAt && (
+        <div className="hist-retention-note">
+          {t('hist.retentionInfo', formatDateSec(h.oldestAt), h.retentionDays ?? '—',
+             h.newestAt ? formatDateSec(h.newestAt) : '—')}
+        </div>
+      )}
+
       <DensityStrip buckets={h.buckets} zoomed={!fixedMode && h.preset === 'custom'}
         onZoom={(fromIso, toIso) => {
           if (fixedMode) { onRangeChange?.(new Date(fromIso + 'Z'), new Date(toIso + 'Z')); return }

@@ -30,12 +30,16 @@ class ExtendedHealthServiceTest {
     @Mock com.sitemonitor.repository.AlertEventRepository alertEventRepo;
     @Mock JdbcTemplate jdbcTemplate;
     @Mock RdapDomainClient rdapDomainClient;
+    @Mock com.sitemonitor.repository.RetentionRunRepository retentionRunRepo;
+    @Mock AppSettingsService appSettings;
 
     private ExtendedHealthService service;
 
     @BeforeEach
     void setUp() {
-        service = new ExtendedHealthService(notificationLogRepo, heartbeatRepo, alertEventRepo, jdbcTemplate, rdapDomainClient);
+        service = new ExtendedHealthService(notificationLogRepo, heartbeatRepo, alertEventRepo, jdbcTemplate,
+                rdapDomainClient, retentionRunRepo, appSettings);
+        lenient().when(appSettings.getBoolean(anyString(), anyBoolean())).thenAnswer(i -> i.getArgument(1));
     }
 
     // ── getHeartbeatStatus ────────────────────────────────────────────────────

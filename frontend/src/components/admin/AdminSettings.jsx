@@ -11,6 +11,7 @@ import StormSettings from './StormSettings'
 import LoginAnomalySettings from './LoginAnomalySettings'
 import DomainDiagnostics from './DomainDiagnostics'
 import BrandingSettings from './BrandingSettings'
+import RetentionSettings from './RetentionSettings'
 
 // Left-menu sections. More land in later phases.
 const SECTIONS = [
@@ -23,6 +24,7 @@ const SECTIONS = [
   { id: 'loginanomaly', labelKey: 'settings.navLoginAnomaly' },
   { id: 'ldap', labelKey: 'settings.navLdap' },
   { id: 'domaindiag', labelKey: 'settings.navDomainDiag' },
+  { id: 'retention', labelKey: 'settings.navRetention' },
   { id: 'database', labelKey: 'settings.navDatabase' },
   { id: 'secrets', labelKey: 'settings.navSecrets' },
 ]
@@ -56,6 +58,7 @@ export default function AdminSettings() {
         {active === 'loginanomaly' && <LoginAnomalySettings />}
         {active === 'ldap' && <LdapSettings />}
         {active === 'domaindiag' && <DomainDiagnostics />}
+        {active === 'retention' && <RetentionSettings />}
         {active === 'database' && <DatabaseInfo />}
         {active === 'secrets' && <SecretTools />}
       </section>

@@ -35,6 +35,8 @@ import com.sitemonitor.model.DomainMonitor;
 import com.sitemonitor.model.DomainCheck;
 import com.sitemonitor.repository.DomainMonitorRepository;
 import com.sitemonitor.repository.DomainCheckRepository;
+import com.sitemonitor.service.retention.RetentionCatalog;
+import com.sitemonitor.service.retention.RetentionService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -127,6 +129,9 @@ public class SchedulerService {
     private final IncidentService incidentService;
 
     private final AppSettingsService appSettings;
+
+    /** Gece temizliği artık bildirimsel RetentionCatalog üzerinden koşar (2026-08). */
+    private final RetentionService retentionService;
 
     /** Per-monitör SONRAKİ VADE zamanı (epoch ms), key "type:id" — GRID semantiği (2026-08-03; ad tarihsel,
      *  testler reflection ile bağlı). In-memory → restart'ta sıfırlanır (ilk sweep'te hepsi due). Gerçek
@@ -870,127 +875,41 @@ public class SchedulerService {
             // ÖNCE rollup (ham kontrol serilerini günlük özete al) — SONRA purge. Böylece ham kısa
             // retention'la silinse de uzun-dönem trend monitor_check_daily'de korunur.
             rollupDailyStats();
-            // monitor_check_daily kendi retention'ı (vars. 730g/2yıl) — trend uzun tutulur.
-            int mcdRetDays = Math.max(90, appSettings.getInt("site.monitor.rollup.retention-days", 730));
-            safeDelete("DELETE FROM monitor_check_daily WHERE day < ?",
-                    ISO.format(Instant.now().minus(mcdRetDays, ChronoUnit.DAYS)).substring(0, 10));
-            // Denetim: yapılandırılabilir retention (vars. 365g); silmeden ÖNCE JSONL arşiv (append-only + arşiv).
-            int auditRetDays = Math.max(30, appSettings.getInt("site.monitor.audit.retention-days", 365));
-            String auditCutoff = ISO.format(Instant.now().minus(auditRetDays, ChronoUnit.DAYS));
-            String notifCutoff = ISO.format(Instant.now().minus(90,  ChronoUnit.DAYS));
-            String sqlCutoff   = ISO.format(Instant.now().minus(30,  ChronoUnit.DAYS));
-            String tsCutoff    = ISO.format(Instant.now().minus(180, ChronoUnit.DAYS)); // zaman serisi
-            int archived = archiveAuditBeforePurge(auditCutoff);
-            int a = safeDeleteBatched("audit_log", "event_time < ?", auditCutoff);
-            if (a > 0) log.info("Audit retention: {} kayıt silindi (>{}g), {} arşivlendi", a, auditRetDays, archived);
-            // Retention/purge job'ın kendisi de denetlenir (silme sonrası → yeni zincir ucuna yazılır).
-            auditService.recordSystemEvent("AUDIT_RETENTION_PURGE", "AUDIT_LOG", "cleanup",
-                    "{\"deleted\":" + a + ",\"archived\":" + archived + ",\"retention_days\":" + auditRetDays + "}");
-            int n = safeDeleteBatched("notification_logs", "sent_at < ?", notifCutoff);
-            int s = safeDelete("DELETE FROM sql_query_history  WHERE executed_at < ?", sqlCutoff);
-            // Yüksek-hacimli izleme serileri → BATCH'li silme (tek dev DELETE + bloat yerine 10k'lık dilim + ANALYZE).
-            int u = safeDeleteBatched("uptime_checks", "checked_at < ?", tsCutoff);
-            int c = safeDeleteBatched("certificate_checks", "checked_at < ?", tsCutoff);
-            int p = safeDeleteBatched("port_checks", "checked_at < ?", tsCutoff);
-            // keyword_results / ping_checks: 30 sn sweep kadansında en hızlı büyüyen izleme serileri.
-            int kw = safeDeleteBatched("keyword_results", "checked_at < ?", tsCutoff);
-            int pg = safeDeleteBatched("ping_checks", "checked_at < ?", tsCutoff);
-            // dns_records: her monitör için en yeni satırı koru (baseline) → guard'lı sil.
-            int d = safeDelete("DELETE FROM dns_records WHERE checked_at < ? "
-                    + "AND id NOT IN (SELECT MAX(id) FROM dns_records GROUP BY monitor_id)", tsCutoff);
-            // HTTP metrik serisi — yapılandırılabilir gün-bazlı retention (canlı ayar; varsayılan 7).
-            int httpRetDays = Math.max(1, appSettings.getInt("site.monitor.metrics.http.retention-days", 7));
-            String httpCutoff = ISO.format(Instant.now().minus(httpRetDays, ChronoUnit.DAYS));
-            int h = safeDelete("DELETE FROM http_metric_minute WHERE bucket_minute < ?", httpCutoff);
-            // Başarısız-login anomali incident'leri — yalnız ÇÖZÜLMÜŞ olanları config retention'dan eski sil.
-            int laiRetDays = Math.max(7, appSettings.getInt("site.monitor.failed-login.retention-days", 90));
-            String laiCutoff = ISO.format(Instant.now().minus(laiRetDays, ChronoUnit.DAYS));
-            int lai = safeDelete("DELETE FROM login_anomaly_incident WHERE resolved = true AND opened_at < ?", laiCutoff);
-            if (lai > 0) log.info("Login anomaly retention: {} çözülmüş incident silindi (>{}g)", lai, laiRetDays);
-            log.info("Nightly cleanup done: audit={}, notif={}, sql={}, uptime={}, cert={}, port={}, keyword={}, ping={}, dns={}, httpMetrics={} "
-                    + "(log cutoffs: {} / {} / {}; ts cutoff: {}; http retention: {}d)",
-                    a, n, s, u, c, p, kw, pg, d, h, auditCutoff, notifCutoff, sqlCutoff, tsCutoff, httpRetDays);
 
-            // ── Bellek/veri büyümesi denetimi (2026-07) ile eklenen retention'lar — daha önce HİÇ
-            //    temizlenmeyen tablolar: http_checks (30 sn kadanslı, en hızlı büyüyen), system_heartbeat
-            //    (dakikada 1), domain_checks (saatlik; baseline satırları korunur), diagnostic_runs,
-            //    çözülmüş alert_events (açık/ack'li alarmlar ASLA silinmez). ──
-            int hc = safeDeleteBatched("http_checks", "checked_at < ?", tsCutoff);
-            // Sayfa-bütünlüğü (9. tür) — en hızlı büyüyen adaylar. FK sırası: önce çocuk (issues), sonra ana (checks).
-            int priRetDays = Math.max(1, appSettings.getInt("site.monitor.metrics.page-issues.retention-days", 90));
-            String priCutoff = ISO.format(Instant.now().minus(priRetDays, ChronoUnit.DAYS));
-            int priDel = safeDeleteBatched("page_resource_issues", "checked_at < ?", priCutoff);
-            int pcRetDays = Math.max(1, appSettings.getInt("site.monitor.metrics.page.retention-days", 180));
-            String pcCutoff = ISO.format(Instant.now().minus(pcRetDays, ChronoUnit.DAYS));
-            int pcDel = safeDeleteBatched("page_checks", "checked_at < ?", pcCutoff);
-            if (priDel > 0 || pcDel > 0) log.info("Page retention: {} resource-issue + {} check silindi (issues>{}g, checks>{}g)",
-                    priDel, pcDel, priRetDays, pcRetDays);
-            // Senaryo İzleme (10. tür) — scripted_checks saklama.
-            int scRetDays = Math.max(1, appSettings.getInt("site.monitor.metrics.scripted.retention-days", 180));
-            int scDel = safeDeleteBatched("scripted_checks", "checked_at < ?", ISO.format(Instant.now().minus(scRetDays, ChronoUnit.DAYS)));
-            if (scDel > 0) log.info("Scripted retention: {} check silindi (>{}g)", scDel, scRetDays);
-            String hbCutoff = ISO.format(Instant.now().minus(30, ChronoUnit.DAYS));
-            // recorded_at TIMESTAMP kolonudur (diğer tablolardaki ISO String değil) → parametreyi cast'le.
-            int hb = safeDelete("DELETE FROM system_heartbeat WHERE recorded_at < CAST(? AS timestamp)", hbCutoff);
-            // domain_checks: değişiklik tespiti son source<>'NONE' satırı, resend/çözüm maili son satırı
-            // baseline alır → her monitör için ikisi de korunur (dns_records guard deseni).
-            int dcn = safeDelete("DELETE FROM domain_checks WHERE checked_at < ? "
-                    + "AND id NOT IN (SELECT MAX(id) FROM domain_checks GROUP BY monitor_id) "
-                    + "AND id NOT IN (SELECT MAX(id) FROM domain_checks WHERE source <> 'NONE' GROUP BY monitor_id)", tsCutoff);
-            String diagCutoff = ISO.format(Instant.now().minus(90, ChronoUnit.DAYS));
-            int dg = safeDelete("DELETE FROM diagnostic_runs WHERE executed_at < ?", diagCutoff);
-            String aeCutoff = ISO.format(Instant.now().minus(365, ChronoUnit.DAYS));
-            int ae = safeDelete("DELETE FROM alert_events WHERE resolved = true AND resolved_at < ?", aeCutoff);
-            // login_issue_reports/images: public "sorun bildir" akışı yazıyordu ama HİÇBİR batch temizlemiyordu
-            // (base64 görsel TEXT ≤5×~1MB → asıl DB büyümesi burada). Yalnız ÇÖZÜLMÜŞ (RESOLVED) + 365g'den
-            // eski kayıtları sil; açık/işlemdeki bildirimler ASLA silinmez. FK sırası: önce görseller.
-            String liCutoff = ISO.format(Instant.now().minus(365, ChronoUnit.DAYS));
-            int lii = safeDelete("DELETE FROM login_issue_report_images WHERE report_id IN "
-                    + "(SELECT id FROM login_issue_reports WHERE status = 'RESOLVED' AND resolved_at < ?)", liCutoff);
-            int lir = safeDelete("DELETE FROM login_issue_reports WHERE status = 'RESOLVED' AND resolved_at < ?", liCutoff);
-            // Öksüz mail geçmişi: raporu artık olmayan (retention veya elle silinen) login_issue_mail_logs
-            // satırları temizlenir → mail logları raporuyla birlikte ölür. Parametresiz DELETE (safeDelete tek param).
-            int lim;
-            try {
-                lim = jdbcTemplate.update("DELETE FROM login_issue_mail_logs WHERE report_id NOT IN (SELECT id FROM login_issue_reports)");
-            } catch (Exception e) {
-                log.warn("Cleanup login_issue_mail_logs failed: {}", e.getMessage());
-                lim = -1;
+            // Denetim arşivi: audit_log SİLİNMEDEN ÖNCE JSONL'e yazılmalı (append-only + arşiv).
+            // Bu adım retention politikasının parçası değil, ön koşuludur → burada kalır.
+            boolean hold = retentionService.holdActive();
+            int archived = 0;
+            if (!hold) {
+                var auditPolicy = RetentionCatalog.byId("audit-log").orElseThrow();
+                archived = archiveAuditBeforePurge(retentionService.cutoffFor(auditPolicy));
             }
-            // weekly_report_images: en büyük satırlar (base64 görsel ≤8MB). Rapor metni/metadata KORUNUR;
-            // yalnız çok eski görseller silinir (muhafazakâr, yapılandırılabilir; vars. 730g/2yıl → sürpriz silme yok).
-            int wriRetDays = Math.max(30, appSettings.getInt("site.monitor.weekly-report.image-retention-days", 730));
-            String wriCutoff = ISO.format(Instant.now().minus(wriRetDays, ChronoUnit.DAYS));
-            int wri = safeDelete("DELETE FROM weekly_report_images WHERE created_at < ?", wriCutoff);
-            // Birleşik aktivite akışı (activity_log) — her kontrol +1 satır yazar (en hızlı büyüyen seri);
-            // yapılandırılabilir retention (canlı ayar; vars. 90g) üstünü sil.
-            int actRetDays = Math.max(1, appSettings.getInt("site.monitor.activity.retention-days", 90));
-            String actCutoff = ISO.format(Instant.now().minus(actRetDays, ChronoUnit.DAYS));
-            int act = safeDeleteBatched("activity_log", "activity_time < ?", actCutoff);
-            log.info("Nightly cleanup: activityLog={} (retention {}d, cutoff {})", act, actRetDays, actCutoff);
 
-            // ── Faz 4 (DB ölçek): eksik retention + arşiv rotasyonu ──
-            // network_outage_events: nadir ama hiç temizlenmiyordu → config retention (vars. 365g).
-            int noRetDays = Math.max(30, appSettings.getInt("site.monitor.network-outage.retention-days", 365));
-            int noev = safeDelete("DELETE FROM network_outage_events WHERE detected_at < ?",
-                    ISO.format(Instant.now().minus(noRetDays, ChronoUnit.DAYS)));
-            // incident_records: kullanıcı kayıtları — VARSAYILAN KAPALI (retention-days=0 → hiç silinmez);
-            // >0 verilirse yalnız o günden eski RESOLVED olaylar silinir (açık olaylar asla).
-            int incRetDays = appSettings.getInt("site.monitor.incident.retention-days", 0);
-            int inc = incRetDays <= 0 ? 0 : safeDelete(
-                    "DELETE FROM incident_records WHERE status = 'RESOLVED' AND occurred_at < ?",
-                    ISO.format(Instant.now().minus(incRetDays, ChronoUnit.DAYS)));
-            // Denetim JSONL arşiv dosyaları (logs/audit-archive/*.jsonl) — N günden eskiyse sil (disk sınırı).
+            // ── Asıl temizlik: bildirimsel RetentionCatalog üzerinden ──────────────────────────
+            RetentionService.RunResult run = retentionService.runCleanup();
+
+            if (run.holdActive()) {
+                auditService.recordSystemEvent("RETENTION_HOLD_ACTIVE", "RETENTION", "cleanup",
+                        "{\"skipped_policies\":" + run.items().size() + "}");
+            } else {
+                int auditDeleted = run.items().stream()
+                        .filter(i -> "audit-log".equals(i.policyId())).mapToInt(RetentionService.ItemResult::rows)
+                        .findFirst().orElse(0);
+                // Retention/purge job'ın kendisi de denetlenir (silme sonrası → yeni zincir ucuna yazılır).
+                auditService.recordSystemEvent("AUDIT_RETENTION_PURGE", "AUDIT_LOG", "cleanup",
+                        "{\"deleted\":" + auditDeleted + ",\"archived\":" + archived
+                                + ",\"total_rows\":" + run.totalRows() + ",\"failed\":" + run.failedCount() + "}");
+            }
+
+            // Denetim JSONL arşiv dosyaları (logs/audit-archive/*.jsonl) — dosya sistemi, tablo değil.
             int arcRetDays = Math.max(30, appSettings.getInt("site.monitor.audit.archive-retention-days", 365));
-            int arc = rotateAuditArchive(arcRetDays);
-            log.info("Nightly cleanup (Faz4): networkOutages={}, incidents={}, auditArchiveFilesDeleted={} "
-                    + "(netOutage {}d, incident {}d, archive {}d)", noev, inc, arc, noRetDays, incRetDays, arcRetDays);
+            int arc = hold ? 0 : rotateAuditArchive(arcRetDays);
             // In-memory: silinen monitörlerin checkDue anahtarları birikmesin (uzun uptime sızıntısı).
             int pruned = pruneMonitorCheckState(collectLiveMonitorKeys());
-            log.info("Nightly cleanup (retention v2): httpChecks={}, heartbeat={}, domainChecks={}, diagRuns={}, resolvedAlerts={}, "
-                    + "loginIssues={}, loginIssueImages={}, loginIssueMailLogs={}, weeklyReportImages={}, checkStateKeysPruned={} "
-                    + "(hb cutoff: {}; diag cutoff: {}; alert cutoff: {}; loginIssue cutoff: {}; wReportImg retention: {}d)",
-                    hc, hb, dcn, dg, ae, lir, lii, lim, wri, pruned, hbCutoff, diagCutoff, aeCutoff, liCutoff, wriRetDays);
+            log.info("Gece temizliği: {} politika, {} satır, {} hata, {} ms · arşivlenen={}, arşiv dosyası silinen={}, "
+                    + "checkState anahtarı={}{}",
+                    run.items().size(), run.totalRows(), run.failedCount(), run.durationMs(),
+                    archived, arc, pruned, run.holdActive() ? " · LEGAL HOLD AKTİF" : "");
         } catch (Exception e) {
             log.warn("Nightly cleanup failed: {}", e.getMessage());
         } finally {
@@ -998,47 +917,8 @@ public class SchedulerService {
         }
     }
 
-    private int safeDelete(String sql, String cutoff) {
-        try {
-            return jdbcTemplate.update(sql, cutoff);
-        } catch (Exception e) {
-            log.warn("Cleanup '{}' failed: {}", sql, e.getMessage());
-            return -1;
-        }
-    }
-
-    /**
-     * Büyük tabloda PARÇA PARÇA silme: tek dev DELETE yerine {@code LIMIT batch}'lik dilimler
-     * (0 dönene dek), sonunda ANALYZE. Milyonlarca satırda tek DELETE uzun bir transaction + büyük
-     * ölü-tuple (bloat) yaratır ve WAL'i şişirir; batch'ler kısa transaction'larla ilerler, autovacuum
-     * arada temizler. {@code table}/{@code whereClause} yalnız KOD-kontrollü (SQL-injection yok);
-     * {@code whereClause} tek {@code ?} (cutoff) taşır (ör. "checked_at < ?").
-     */
-    int safeDeleteBatched(String table, String whereClause, String cutoff) {
-        int batch = Math.max(1000, appSettings.getInt("site.monitor.retention.purge-batch-size", 10000));
-        long start = System.currentTimeMillis();
-        int total = 0;
-        try {
-            String sql = "DELETE FROM " + table + " WHERE id IN "
-                    + "(SELECT id FROM " + table + " WHERE " + whereClause + " LIMIT " + batch + ")";
-            while (true) {
-                int n = jdbcTemplate.update(sql, cutoff);
-                total += n;
-                if (n < batch) break;                                   // son dilim
-                if (System.currentTimeMillis() - start > 600_000) {     // güvenlik üst sınırı (10 dk)
-                    log.warn("Batched delete on {} 10dk'yı aştı, {} satırda durduruldu (kalan sonraki gece)", table, total);
-                    break;
-                }
-            }
-            if (total > 0) {
-                try { jdbcTemplate.execute("ANALYZE " + table); } catch (Exception ignore) { /* ANALYZE best-effort */ }
-            }
-            return total;
-        } catch (Exception e) {
-            log.warn("Batched cleanup '{}' failed: {}", table, e.getMessage());
-            return -1;
-        }
-    }
+    // NOT: safeDelete / safeDeleteBatched buradan KALDIRILDI (2026-08). Silme mantığı artık
+    // RetentionService içinde, RetentionCatalog'daki bildirimsel politikalardan üretiliyor.
 
     /** Denetim arşiv dosyalarını (logs/audit-archive/*.jsonl) N günden eskiyse sil — bugün disk sınırsız. */
     private int rotateAuditArchive(int retentionDays) {

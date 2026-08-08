@@ -1,5 +1,7 @@
 package com.sitemonitor.service;
 
+import com.sitemonitor.service.retention.RetentionCatalog;
+
 import java.util.List;
 
 /**
@@ -184,7 +186,33 @@ public final class AppSettingsCatalog {
         new Setting("site.monitor.audit.archive-retention-days",      "retention", Type.INT),
         new Setting("site.monitor.rollup.lookback-days",              "retention", Type.INT),
         new Setting("site.monitor.rollup.retention-days",             "retention", Type.INT),
-        new Setting("site.monitor.db.growth-warn-rows",               "retention", Type.INT)
+        new Setting("site.monitor.db.growth-warn-rows",               "retention", Type.INT),
+        // ── 2026-08: eskiden koda GÖMÜLÜ olan kesimler artık ayar (RetentionCatalog ile senkron;
+        //    RetentionSettingsSyncTest kilitler). Her birinin kodda bir minDays tabanı vardır. ──
+        new Setting(RetentionCatalog.HOLD_KEY,                        "retention", Type.BOOL),
+        new Setting("site.monitor.notification.retention-days",       "retention", Type.INT),
+        new Setting("site.monitor.sql-history.retention-days",        "retention", Type.INT),
+        new Setting("site.monitor.heartbeat.retention-days",          "retention", Type.INT),
+        new Setting("site.monitor.diagnostics.retention-days",        "retention", Type.INT),
+        new Setting("site.monitor.alert.retention-days",              "retention", Type.INT),
+        new Setting("site.monitor.login-issue.retention-days",        "retention", Type.INT),
+        new Setting("site.monitor.storm.retention-days",              "retention", Type.INT),
+        // Ham izleme serileri — tür bazında (hepsi 180g varsayılan; eski tek tsCutoff davranışı)
+        new Setting("site.monitor.series.uptime.retention-days",      "retention", Type.INT),
+        new Setting("site.monitor.series.certificate.retention-days", "retention", Type.INT),
+        new Setting("site.monitor.series.port.retention-days",        "retention", Type.INT),
+        new Setting("site.monitor.series.keyword.retention-days",     "retention", Type.INT),
+        new Setting("site.monitor.series.ping.retention-days",        "retention", Type.INT),
+        new Setting("site.monitor.series.dns.retention-days",         "retention", Type.INT),
+        new Setting("site.monitor.series.http.retention-days",        "retention", Type.INT),
+        new Setting("site.monitor.series.domain.retention-days",      "retention", Type.INT),
+        // Daha önce HİÇ temizlenmeyen tablolar
+        new Setting("site.monitor.incident.image-retention-days",     "retention", Type.INT),
+        new Setting("site.monitor.incident.draft-image-retention-days", "retention", Type.INT),
+        new Setting("site.monitor.weekly-report.mail-retention-days", "retention", Type.INT),
+        new Setting("site.monitor.weekly-availability.retention-days", "retention", Type.INT),
+        new Setting("site.monitor.cert-note-revision.retention-days", "retention", Type.INT),
+        new Setting("site.monitor.retention.run-history-retention-days", "retention", Type.INT)
     );
 
     public static Setting byKey(String key) {

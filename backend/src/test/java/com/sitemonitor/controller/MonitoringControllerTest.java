@@ -36,6 +36,8 @@ class MonitoringControllerTest {
 
     @Autowired MockMvc mvc;
 
+    /** Saklama süreleri katalogdan okunur; kontrat testinde mock yeter (varsayılan 0 → fallback kullanılır). */
+    @MockitoBean com.sitemonitor.service.retention.RetentionService retentionService;
     @MockitoBean RememberMeService rememberMeService;
     @MockitoBean UserService userService;
     @MockitoBean AuthController authController;
