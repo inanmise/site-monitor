@@ -172,6 +172,7 @@ export default function BrandingSettings() {
       <div className="admin-section">
         <h4 className="ldap-subhdr">{t('branding.banner')}</h4>
         <p className="section-desc">{t('branding.bannerDesc')}</p>
+        <p className="field-hint">{t('branding.bannerVersionHint')}</p>
         <div className="threshold-grid">
           <div className="threshold-field">
             <label>{t('branding.bannerEnabled')}</label>

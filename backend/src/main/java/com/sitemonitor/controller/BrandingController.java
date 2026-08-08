@@ -40,6 +40,8 @@ public class BrandingController {
     private static final String LOGO_KEY = PREFIX + "logo-data";
     private static final String BANNER_TEXT_KEY = PREFIX + "banner-text";
     private static final String BANNER_VERSION_KEY = PREFIX + "banner-version";
+    private static final String BANNER_ENABLED_KEY = PREFIX + "banner-enabled";
+    private static final String BANNER_TONE_KEY = PREFIX + "banner-tone";
 
     private static final int LOGO_MAX_BYTES = 200 * 1024;
     private static final Pattern LOGO_DATA_URL =
@@ -70,16 +72,16 @@ public class BrandingController {
 
         validateLogo(values.get(LOGO_KEY));
 
-        // Duyuru metni değiştiyse versiyonu otomatik artır — kullanıcı kapattıysa yeni versiyonda
-        // şerit yeniden görünür. Versiyon UI'dan yönetilmez.
-        Object newText = values.get(BANNER_TEXT_KEY);
-        if (newText != null) {
-            String current = settingsService.getString(BANNER_TEXT_KEY, "");
-            if (!String.valueOf(newText).equals(current)) {
-                int version = settingsService.getInt(BANNER_VERSION_KEY, 0);
-                values = new LinkedHashMap<>(values);
-                values.put(BANNER_VERSION_KEY, String.valueOf(version + 1));
-            }
+        // Duyuru versiyonu: kullanıcı şeridi X ile kapattığında kapattığı VERSİYON saklanır; şerit
+        // ancak versiyon artınca yeniden görünür. Bu yüzden versiyon, admin'in "bunu yeniden göster"
+        // anlamına gelen HER eyleminde artmalı:
+        //   · metin değişti  · şerit KAPALI→AÇIK yapıldı  · ton değişti
+        // Eskiden yalnız metin sayılıyordu; şeridi kapatmış kullanıcılar admin şeridi yeniden
+        // etkinleştirdiğinde onu HİÇ göremiyordu (metin değişene kadar kalıcı olarak gizli).
+        if (bannerShouldResurface(values)) {
+            int version = settingsService.getInt(BANNER_VERSION_KEY, 0);
+            values = new LinkedHashMap<>(values);
+            values.put(BANNER_VERSION_KEY, String.valueOf(version + 1));
         }
 
         settingsService.save(Map.of("values", values), actor(session));
@@ -124,6 +126,21 @@ public class BrandingController {
 
     /** Logo data-URL doğrulaması: MIME png/jpeg/svg+xml, decode ≤200KB, SVG'de aktif içerik yok.
      *  Boş/null = logoyu kaldır (override temizleme) — doğrulama atlanır. */
+    /** Bu kayıt, kapatmış kullanıcılarda şeridi yeniden gösterecek bir değişiklik içeriyor mu? */
+    private boolean bannerShouldResurface(Map<String, Object> values) {
+        Object text = values.get(BANNER_TEXT_KEY);
+        if (text != null && !String.valueOf(text).equals(settingsService.getString(BANNER_TEXT_KEY, ""))) return true;
+
+        Object tone = values.get(BANNER_TONE_KEY);
+        if (tone != null && !String.valueOf(tone).equals(settingsService.getString(BANNER_TONE_KEY, "INFO"))) return true;
+
+        // Yalnız KAPALI→AÇIK geçişi; açıkken tekrar kaydetmek versiyonu şişirmesin.
+        Object enabled = values.get(BANNER_ENABLED_KEY);
+        return enabled != null
+                && Boolean.parseBoolean(String.valueOf(enabled))
+                && !settingsService.getBoolean(BANNER_ENABLED_KEY, false);
+    }
+
     private void validateLogo(Object logoVal) {
         if (logoVal == null || String.valueOf(logoVal).isBlank()) return;
         String logo = String.valueOf(logoVal).trim();
