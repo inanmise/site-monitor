@@ -191,19 +191,32 @@ public class MonitoringController {
         };
     }
 
+    /** Eski/serbest {@code days} paramını TOLERANSLI çevirir: sayı değilse ("custom", "", "abc")
+     *  null döner → days sugar devre dışı, from/to veya varsayılan aralık kullanılır. Sıkı
+     *  {@code Integer} bağlama, "Özel Aralık" akışında days=custom gelince 500 üretiyordu (2026-08). */
+    private static Integer parseDaysSafe(String days) {
+        if (days == null || days.isBlank()) return null;
+        try {
+            int d = Integer.parseInt(days.trim());
+            return d > 0 ? d : null;
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
+
     /** Kontrol Geçmişi v2 ortak yürütücüsü: izin + takım denetimi + resolve + (JSON zarfı | CSV akışı).
      *  Not: history'ler artık response-series ile aynı require("monitoring.read") kapısını da taşır. */
     private <T> ResponseEntity<?> runHistory(HttpSession session, Long teamId,
             com.sitemonitor.service.CheckHistoryService.Source<T> src, String kind,
             String alertKey, Set<String> alertTypes,
-            String from, String to, Integer days, String status, int page, int size, String format,
+            String from, String to, String days, String status, int page, int size, String format,
             String csvBase, List<com.sitemonitor.service.CheckHistoryService.CsvColumn<T>> csvCols,
             jakarta.servlet.http.HttpServletResponse response) {
         permissionService.require(session, "monitoring.read", "view");
         var deny = denyIfNotViewable(session, teamId);
         if (deny != null) return deny;
         var r = checkHistoryService.resolve(
-                new com.sitemonitor.service.CheckHistoryService.Query(from, to, days, status, page, size),
+                new com.sitemonitor.service.CheckHistoryService.Query(from, to, parseDaysSafe(days), status, page, size),
                 historyRetentionDays(kind));
         if ("csv".equalsIgnoreCase(format)) {
             try {
@@ -553,7 +566,7 @@ public class MonitoringController {
             @RequestParam(defaultValue = "443") int port,
             @RequestParam(required = false) String from,
             @RequestParam(required = false) String to,
-            @RequestParam(required = false) Integer days,
+            @RequestParam(required = false) String days,
             @RequestParam(defaultValue = "all") String status,
             @RequestParam(defaultValue = "0") int page, @RequestParam(defaultValue = "50") int size,
             @RequestParam(required = false) String format,
@@ -570,7 +583,7 @@ public class MonitoringController {
             public long fail(String f, String t) { return uptimeCheckRepo.countByDomainAndPortAndStatusNotAndCheckedAtBetween(domain, port, "up", f, t); }
             public List<Object[]> histogram(String f, String t, int len) { return uptimeCheckRepo.historyHistogram(domain, port, f, t, len); }
         };
-        var r = checkHistoryService.resolve(new CheckHistoryService.Query(from, to, days, status, page, size),
+        var r = checkHistoryService.resolve(new CheckHistoryService.Query(from, to, parseDaysSafe(days), status, page, size),
                 historyRetentionDays("uptime"));
         if ("csv".equalsIgnoreCase(format)) {
             try {
@@ -592,7 +605,7 @@ public class MonitoringController {
             @PathVariable String domain, HttpSession session,
             @RequestParam(required = false) String from,
             @RequestParam(required = false) String to,
-            @RequestParam(required = false) Integer days,
+            @RequestParam(required = false) String days,
             @RequestParam(defaultValue = "all") String status,
             @RequestParam(defaultValue = "0") int page, @RequestParam(defaultValue = "50") int size,
             @RequestParam(required = false) String format,
@@ -608,7 +621,7 @@ public class MonitoringController {
             public long fail(String f, String t) { return certCheckRepo.countByDomainAndStatusAndCheckedAtBetween(domain, "error", f, t); }
             public List<Object[]> histogram(String f, String t, int len) { return certCheckRepo.historyHistogram(domain, f, t, len); }
         };
-        var r = checkHistoryService.resolve(new CheckHistoryService.Query(from, to, days, status, page, size),
+        var r = checkHistoryService.resolve(new CheckHistoryService.Query(from, to, parseDaysSafe(days), status, page, size),
                 historyRetentionDays("ssl"));
         if ("csv".equalsIgnoreCase(format)) {
             try {
@@ -803,7 +816,7 @@ public class MonitoringController {
     @GetMapping("/port/{id}/history")
     public ResponseEntity<?> portHistory(@PathVariable Long id, HttpSession session,
             @RequestParam(required = false) String from, @RequestParam(required = false) String to,
-            @RequestParam(required = false) Integer days,
+            @RequestParam(required = false) String days,
             @RequestParam(defaultValue = "all") String status,
             @RequestParam(defaultValue = "0") int page, @RequestParam(defaultValue = "50") int size,
             @RequestParam(required = false) String format,
@@ -1115,7 +1128,7 @@ public class MonitoringController {
     @GetMapping("/dns/{id}/history")
     public ResponseEntity<?> dnsHistory(@PathVariable Long id, HttpSession session,
             @RequestParam(required = false) String from, @RequestParam(required = false) String to,
-            @RequestParam(required = false) Integer days,
+            @RequestParam(required = false) String days,
             @RequestParam(defaultValue = "all") String status,
             @RequestParam(defaultValue = "false") boolean changedOnly,
             @RequestParam(defaultValue = "0") int page, @RequestParam(defaultValue = "50") int size,
@@ -1365,7 +1378,7 @@ public class MonitoringController {
     @GetMapping("/keyword/{id}/history")
     public ResponseEntity<?> keywordHistory(@PathVariable Long id, HttpSession session,
             @RequestParam(required = false) String from, @RequestParam(required = false) String to,
-            @RequestParam(required = false) Integer days,
+            @RequestParam(required = false) String days,
             @RequestParam(defaultValue = "all") String status,
             @RequestParam(defaultValue = "0") int page, @RequestParam(defaultValue = "50") int size,
             @RequestParam(required = false) String format,
@@ -1828,7 +1841,7 @@ public class MonitoringController {
     @GetMapping("/http/{id}/history")
     public ResponseEntity<?> httpHistory(@PathVariable Long id, HttpSession session,
             @RequestParam(required = false) String from, @RequestParam(required = false) String to,
-            @RequestParam(required = false) Integer days,
+            @RequestParam(required = false) String days,
             @RequestParam(defaultValue = "all") String status,
             @RequestParam(defaultValue = "0") int page, @RequestParam(defaultValue = "50") int size,
             @RequestParam(required = false) String format,
@@ -2083,7 +2096,7 @@ public class MonitoringController {
     @GetMapping("/page/{id}/history")
     public ResponseEntity<?> pageHistory(@PathVariable Long id, HttpSession session,
             @RequestParam(required = false) String from, @RequestParam(required = false) String to,
-            @RequestParam(required = false) Integer days,
+            @RequestParam(required = false) String days,
             @RequestParam(defaultValue = "all") String status,
             @RequestParam(defaultValue = "0") int page, @RequestParam(defaultValue = "50") int size,
             @RequestParam(required = false) String format,
@@ -2383,7 +2396,7 @@ public class MonitoringController {
     @GetMapping("/scripted/{id}/history")
     public ResponseEntity<?> scriptedHistory(@PathVariable Long id, HttpSession session,
             @RequestParam(required = false) String from, @RequestParam(required = false) String to,
-            @RequestParam(required = false) Integer days,
+            @RequestParam(required = false) String days,
             @RequestParam(defaultValue = "all") String status,
             @RequestParam(defaultValue = "0") int page, @RequestParam(defaultValue = "50") int size,
             @RequestParam(required = false) String format,
@@ -2730,7 +2743,7 @@ public class MonitoringController {
     @GetMapping("/domain/{id}/history")
     public ResponseEntity<?> domainHistory(@PathVariable Long id, HttpSession session,
             @RequestParam(required = false) String from, @RequestParam(required = false) String to,
-            @RequestParam(required = false) Integer days,
+            @RequestParam(required = false) String days,
             @RequestParam(defaultValue = "all") String status,
             @RequestParam(defaultValue = "0") int page, @RequestParam(defaultValue = "50") int size,
             @RequestParam(required = false) String format,
@@ -2996,7 +3009,7 @@ public class MonitoringController {
     @GetMapping("/ping/{id}/history")
     public ResponseEntity<?> pingHistory(@PathVariable Long id, HttpSession session,
             @RequestParam(required = false) String from, @RequestParam(required = false) String to,
-            @RequestParam(required = false) Integer days,
+            @RequestParam(required = false) String days,
             @RequestParam(defaultValue = "all") String status,
             @RequestParam(defaultValue = "0") int page, @RequestParam(defaultValue = "50") int size,
             @RequestParam(required = false) String format,

@@ -52,6 +52,9 @@ export function useCheckHistory({ kind, id, listKey, presets = [1, 7, 15, 30], d
 
   const load = useCallback((silent = false) => {
     if (!id) return
+    // "Özel Aralık" seçildi ama tarihler henüz uygulanmadı → İSTEK ATMA (picker açık; önceki
+    // veri ekranda kalır). Aksi halde days='custom' gidiyordu → backend 500 (2026-08 test ortamı).
+    if (!fixedFrom && preset === 'custom' && !isCustom) return
     const seq = ++seqRef.current
     if (!silent) setLoading(true)
     const params = {
@@ -59,7 +62,8 @@ export function useCheckHistory({ kind, id, listKey, presets = [1, 7, 15, 30], d
       page: page - 1,
       size: pageSize,
       ...(fixedFrom ? { from: fixedFrom, to: fixedTo }
-        : isCustom ? { from: toUtcIso(customFrom), to: toUtcIso(customTo) } : { days: preset }),
+        : isCustom ? { from: toUtcIso(customFrom), to: toUtcIso(customTo) }
+        : { days: Number.isFinite(Number(preset)) ? Number(preset) : undefined }),
       ...(extraParams || {}),
     }
     api.monitoring.getCheckHistory(kind, id, params)

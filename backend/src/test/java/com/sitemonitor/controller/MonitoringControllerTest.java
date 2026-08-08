@@ -1301,6 +1301,21 @@ class MonitoringControllerTest {
     }
 
     @Test
+    @DisplayName("days=custom (veya çöp değer) 500 DEĞİL 200 döner — sıkı Integer bağlama regresyonu (2026-08)")
+    void history_daysNonNumeric_toleratedNot500() throws Exception {
+        stubAllHistoryMonitors();
+        stubAllHistoryRepos();
+        // "Özel Aralık" seçilip tarih uygulanmadan gelen istek (ve eski ?range=custom linkleri)
+        // days=custom gönderiyordu → MethodArgumentTypeMismatch → 500. Artık sugar sessizce atlanır.
+        for (String bad : new String[]{ "custom", "abc", "" }) {
+            mvc.perform(get("/api/monitoring/ping/1/history").param("days", bad).session(session("ADMIN")))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.items").isArray())
+                    .andExpect(jsonPath("$.data.range.from").isString());
+        }
+    }
+
+    @Test
     @DisplayName("format=csv: text/csv attachment akar, başlık satırı kolonları taşır")
     void history_csv_streamsAttachment() throws Exception {
         stubAllHistoryMonitors();
