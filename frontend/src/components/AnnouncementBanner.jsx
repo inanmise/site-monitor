@@ -1,13 +1,18 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
+import { Info, AlertTriangle, AlertOctagon, X, ArrowUpRight } from 'lucide-react'
 import { useBranding } from '../contexts/BrandingProvider.jsx'
+import { useT } from '../i18n/index.jsx'
 
 const DISMISS_KEY = 'sm.banner.dismissedVersion'
+/** Hero (giriş sonrası öne çıkan kart) oturumda BİR kez gösterilir. */
+const HERO_KEY = 'sm.banner.heroShown'
+const HERO_MS = 1500
 
-/** Ton → renkler (mevcut tema tonlarıyla uyumlu; INFO mavi, WARNING amber, CRITICAL kırmızı). */
+/** Ton → ikon + sınıf soneki + etiket anahtarı (Dialog.jsx VARIANTS deseni). */
 const TONES = {
-  INFO:     { bg: '#eff6ff', border: '#bfdbfe', ink: '#1d4ed8' },
-  WARNING:  { bg: '#fffbeb', border: '#fde68a', ink: '#b45309' },
-  CRITICAL: { bg: '#fef2f2', border: '#fecaca', ink: '#b91c1c' },
+  INFO:     { Icon: Info,          mod: 'info',  labelKey: 'branding.toneInfo' },
+  WARNING:  { Icon: AlertTriangle, mod: 'warn',  labelKey: 'branding.toneWarning' },
+  CRITICAL: { Icon: AlertOctagon,  mod: 'crit',  labelKey: 'branding.toneCritical' },
 }
 
 function readDismissed() {
@@ -18,43 +23,71 @@ function writeDismissed(version) {
 }
 
 /**
- * Genel duyuru şeridi — tüm sayfaların (login dahil) üstünde. Kullanıcı X ile kapatabilir;
- * kapatılan VERSİYON saklanır: admin metni güncelleyince banner-version arttığından şerit
- * herkese yeniden görünür.
+ * Kurumsal duyuru şeridi — içerik kolonunun üstünde yapışkan (sol menünün SAĞINDA kalır).
+ * Kullanıcı X ile kapatabilir; kapatılan VERSİYON saklanır: admin metni güncelleyince
+ * banner-version arttığından şerit herkese yeniden görünür.
+ *
+ * {@code heroOnMount} verildiğinde (giriş anı) duyuru önce ortada bir kart olarak
+ * {@link HERO_MS} kadar durur, sonra üst şeride toplanır — oturumda yalnız bir kez.
  */
-export default function AnnouncementBanner() {
+export default function AnnouncementBanner({ heroOnMount = false }) {
   const { branding } = useBranding()
-  const [dismissed, setDismissed] = useState(readDismissed())
+  const t = useT()
+  const [dismissed, setDismissed] = useState(readDismissed)
+  const [hero, setHero] = useState(false)
 
   const enabled = branding.banner_enabled === true || branding.banner_enabled === 'true'
   const text = branding.banner_text || ''
   const version = String(branding.banner_version ?? 0)
-  if (!enabled || !text.trim() || dismissed === version) return null
+  const visible = enabled && !!text.trim() && dismissed !== version
+
+  useEffect(() => {
+    if (!heroOnMount || !visible) return
+    let shown = null
+    try { shown = sessionStorage.getItem(HERO_KEY) } catch { /* yoksay */ }
+    if (shown === version) return
+    try { sessionStorage.setItem(HERO_KEY, version) } catch { /* yoksay */ }
+    setHero(true)
+    const id = setTimeout(() => setHero(false), HERO_MS)
+    return () => clearTimeout(id)
+  }, [heroOnMount, visible, version])
+
+  if (!visible) return null
 
   const tone = TONES[branding.banner_tone] || TONES.INFO
+  const { Icon } = tone
   const link = branding.banner_link || ''
   const linkLabel = branding.banner_link_label || link
+  const close = () => { writeDismissed(version); setDismissed(version); setHero(false) }
+
+  const body = (
+    <>
+      <span className={`ann-badge ann-badge--${tone.mod}`} aria-hidden="true"><Icon size={15} /></span>
+      <span className="ann-body">
+        <span className="ann-tone">{t(tone.labelKey)}</span>
+        <span className="ann-text">{text}</span>
+      </span>
+      {link && (
+        <a className="ann-link" href={link} target="_blank" rel="noopener noreferrer">
+          {linkLabel}<ArrowUpRight size={13} />
+        </a>
+      )}
+      <button className="ann-close" aria-label="close" onClick={close}><X size={15} /></button>
+    </>
+  )
 
   return (
-    <div role="status" style={{
-      display: 'flex', alignItems: 'center', gap: 10, padding: '8px 14px',
-      background: tone.bg, borderBottom: `1px solid ${tone.border}`, color: tone.ink,
-      fontSize: 13, lineHeight: 1.4,
-    }}>
-      <span style={{ flex: 1 }}>
-        {text}
-        {link && (
-          <a href={link} target="_blank" rel="noopener noreferrer"
-             style={{ marginLeft: 8, color: tone.ink, fontWeight: 600, textDecoration: 'underline' }}>
-            {linkLabel}
-          </a>
-        )}
-      </span>
-      <button aria-label="close" onClick={() => { writeDismissed(version); setDismissed(version) }}
-              style={{ background: 'none', border: 'none', cursor: 'pointer', color: tone.ink,
-                       fontSize: 16, lineHeight: 1, padding: '0 2px' }}>
-        ×
-      </button>
-    </div>
+    <>
+      <div role="status" className={`ann-bar ann-bar--${tone.mod}${hero ? ' ann-bar--hidden' : ''}`}>
+        {body}
+      </div>
+      {hero && (
+        <div className="ann-hero-overlay" onClick={() => setHero(false)}>
+          <div className={`ann-hero ann-bar--${tone.mod}`} onClick={e => e.stopPropagation()}>
+            {body}
+          </div>
+        </div>
+      )}
+    </>
   )
 }

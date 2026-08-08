@@ -1067,7 +1067,7 @@ public class EmailNotificationService {
         if ("KEYWORD".equals(alertType)) return buildRichKeywordResolvedHtml(domain, certContext, resolvedBy, resolvedAt, createdAt, teamNames, uptime);
         if ("PING_DOWN".equals(alertType)) return buildRichPingResolvedHtml(domain, certContext, resolvedBy, resolvedAt, createdAt, teamNames, uptime);
         if ((alertType != null && MONITORING_OUTAGE_TYPES.contains(alertType)) || "DNS_CHANGED".equals(alertType)) {
-            return buildRichMonitoringResolvedHtml(domain, alertType, resolvedBy, resolvedAt, createdAt, teamNames, uptime);
+            return buildRichMonitoringResolvedHtml(domain, alertType, resolvedBy, resolvedAt, createdAt, teamNames, uptime, certContext);
         }
         // domain + sertifika → executive "çözüldü" (yenilenen bitiş/registrar bağlamıyla zenginleştirilir)
         return templateBuilder.buildResolvedHtml(domain, alertType, resolvedBy, resolvedAt, createdAt, certContext, teamNames);
@@ -1097,11 +1097,83 @@ public class EmailNotificationService {
             + "</tr>";
     }
 
-    private String tableRow2colMono(String label, String value) {
-        return "<tr style='border-top:1px solid #e2e8f0'>"
-            + "<td width='1%' style='padding:9px 13px;font-size:12px;color:#64748b;white-space:nowrap'>" + label + "</td>"
-            + "<td style='padding:9px 13px;font-size:11px;font-family:monospace;color:#475569;word-break:break-all'>" + value + "</td>"
-            + "</tr>";
+    // ── DNS ESKİ→YENİ fark tablosu ────────────────────────────────────────────
+    /** Tabloda gösterilecek en fazla değer satırı; fazlası "…ve N tane daha" ile özetlenir. */
+    private static final int DNS_MAX_VALUE_ROWS = 6;
+    /** Tek bir değerin en fazla karakteri (uzun TXT/DKIM kayıtları düzeni bozmasın). */
+    private static final int DNS_MAX_VALUE_LEN = 160;
+
+    /**
+     * ESKİ→YENİ değerleri SATIR-KİLİTLİ tek tabloda gösterir: i. eski ile i. yeni değer AYNI
+     * {@code <tr>}'de durur, aralarında yön oku. Eskiden iki BAĞIMSIZ iç tablo vardı; satır
+     * sayıları farklı olunca (2 eski → 1 yeni gibi tipik durumda) eşleşme kayıyor ve kolonlar
+     * hizasız görünüyordu. Değerler 11px gri yerine 15px kalın; silinen değer üstü çizik.
+     * Tamamen tablo tabanlı + td bgcolor + düz hex → Outlook güvenli, {@code <style>} bloğu YOK.
+     */
+    private String dnsDiffTable(List<String> oldValues, List<String> newValues, String purple) {
+        List<String> olds = oldValues == null ? List.of() : oldValues;
+        List<String> news = newValues == null ? List.of() : newValues;
+        int rows = Math.max(olds.size(), news.size());
+        int shown = Math.min(rows, DNS_MAX_VALUE_ROWS);
+
+        StringBuilder body = new StringBuilder();
+        if (rows == 0) {
+            body.append("<tr><td colspan='3' bgcolor='#f8fafc' style='background-color:#f8fafc;"
+                    + "border-top:1px solid #e2e8f0;padding:14px;font-size:13px;font-style:italic;"
+                    + "color:#64748b;text-align:center'>Değişiklik ayrıntısı bu bildirimde taşınmıyor.</td></tr>");
+        }
+        for (int i = 0; i < shown; i++) {
+            String o = i < olds.size() ? olds.get(i) : null;
+            String n = i < news.size() ? news.get(i) : null;
+            body.append("<tr>")
+                .append(dnsValueCell(o, true, "#f8fafc", olds.isEmpty() ? "kayıt yoktu" : "—"))
+                .append("<td align='center' valign='top' bgcolor='#ffffff' style='background-color:#ffffff;"
+                        + "border-top:1px solid #e2e8f0;padding:12px 2px'>"
+                        + "<span style='font-size:17px;font-weight:700;color:" + purple + "'>&#8594;</span></td>")
+                .append(dnsValueCell(n, false, "#faf5ff", news.isEmpty() ? "kayıt kalmadı" : "—"))
+                .append("</tr>");
+        }
+        if (rows > shown) {
+            body.append("<tr><td colspan='3' bgcolor='#f8fafc' style='background-color:#f8fafc;"
+                    + "border-top:1px solid #e2e8f0;padding:9px 14px;font-size:12px;font-style:italic;"
+                    + "color:#64748b;text-align:center'>…ve ").append(rows - shown).append(" tane daha</td></tr>");
+        }
+
+        return "<table width='100%' cellpadding='0' cellspacing='0' border='0'"
+            + " style='margin-bottom:16px;border:1px solid #e2e8f0;border-radius:10px;overflow:hidden;border-collapse:collapse'>"
+            + "<tr>"
+            + "<td width='46%' bgcolor='#475569' style='width:46%;background-color:#475569;padding:9px 14px;"
+            + "font-size:11px;font-weight:700;letter-spacing:.1em;color:#cbd5e1'>ESKİ DEĞERLER &#183; " + olds.size() + "</td>"
+            + "<td width='8%' bgcolor='#334155' style='width:8%;background-color:#334155'>&nbsp;</td>"
+            + "<td width='46%' bgcolor='" + purple + "' style='width:46%;background-color:" + purple + ";padding:9px 14px;"
+            + "font-size:11px;font-weight:700;letter-spacing:.1em;color:#f3e8ff'>YENİ DEĞERLER &#183; " + news.size() + "</td>"
+            + "</tr>" + body + "</table>";
+    }
+
+    /** Fark tablosunun tek değer hücresi. {@code removed=true} → solgun + üstü çizik (span'de:
+     *  Word, text-decoration'ı hücreden miras almıyor). Değer yoksa {@code emptyText} basılır. */
+    private static String dnsValueCell(String value, boolean removed, String bg, String emptyText) {
+        String color = removed ? "#64748b" : "#581c87";
+        String td = "<td valign='top' bgcolor='" + bg + "' style='background-color:" + bg + ";"
+                + "border-top:1px solid #e2e8f0;padding:12px 14px;font-family:Consolas,\"Courier New\",monospace;"
+                + "word-break:break-all;mso-line-height-rule:exactly;";
+        if (value == null || value.isBlank()) {
+            return td + "font-size:13px;font-style:italic;color:#94a3b8'>" + escHtml(emptyText) + "</td>";
+        }
+        String shown = escHtml(truncValue(value));
+        String inner = removed ? "<span style='text-decoration:line-through'>" + shown + "</span>" : shown;
+        return td + "font-size:" + dnsValueFontPx(value) + "px;font-weight:" + (removed ? "700" : "800")
+                + ";color:" + color + "'>" + inner + "</td>";
+    }
+
+    /** Çok uzun tek değeri (DKIM TXT vb.) kırpar — düzen bozulmasın. */
+    private static String truncValue(String v) {
+        return v.length() <= DNS_MAX_VALUE_LEN ? v : v.substring(0, DNS_MAX_VALUE_LEN) + "…";
+    }
+
+    /** Uzun değerlerde punto düşür (CSS medya sorgusu kullanılamıyor; Java'da hesaplanır). */
+    private static int dnsValueFontPx(String v) {
+        return v.length() > 40 ? 13 : 15;
     }
 
     private String statusRow2col(String label, String value) {
@@ -1429,6 +1501,9 @@ public class EmailNotificationService {
             + "</div>"
 
             + ctaHtml
+            // Olay aksiyonları — ctaHtml'DEN BAĞIMSIZ: ACCESSIBILITY dalında birincil CTA hiç
+            // basılmıyor (outageTab null), aksiyonlar yine de görünmeli.
+            + incidentActionsRow(ctx, "#1e293b")
 
             // Footer
             + "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0'><tr>"
@@ -1447,7 +1522,8 @@ public class EmailNotificationService {
     /** İzleme çözüm maili — süre createdAt→resolvedAt'ten hesaplanır; etiketler tipe göre. */
     private String buildRichMonitoringResolvedHtml(String domain, String alertType, String resolvedBy,
                                                    String resolvedAt, String createdAt,
-                                                   String teamNames, UptimeSummary uptime) {
+                                                   String teamNames, UptimeSummary uptime,
+                                                   Map<String, Object> ctx) {
         String generatedAt = LocalDateTime.now(IST).format(DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm"));
         String green = "#16a34a";
         String by = resolvedBy != null && !resolvedBy.isBlank() ? resolvedBy : "Sistem (otomatik)";
@@ -1569,6 +1645,8 @@ public class EmailNotificationService {
             + uptimeSummaryRow(uptime)
             // ── "Neden bu e-postayı aldınız?" — alıcı şeffaflığı ──
             + whyReceivingRow(teamNames)
+            // ── Olay aksiyonları — bu şablon ROW bağlamında (em-card <tr> dizisi) kurulduğu için sarılır ──
+            + rowWrap(incidentActionsRow(ctx, "#1f3864"))
 
             // ── Footer ──
             + "<tr><td bgcolor='#ffffff' style='background-color:#ffffff;padding:0 24px 18px'>"
@@ -1585,6 +1663,23 @@ public class EmailNotificationService {
 
     // ── Alarm Fırtınası (Alert Storm) — çok monitör birden düştüğünde TEK toplu bildirim ──
     // Outlook-safe: td+bgcolor (div bg değil), solid hex, LIGHT_SCHEME_META, mso font fallback, ctaButton VML.
+
+    /** CANLI base-url (sondaki bölü işaretleri atılmış); @Value yalnız fallback. */
+    private String liveBaseUrl() {
+        String url = appSettings.getString("site.monitor.app.base-url", appBaseUrl);
+        return (url == null || url.isBlank()) ? "" : url.replaceAll("/+$", "");
+    }
+
+    /** Olay aksiyon butonları (detay + yorum) — ctx'te alert_event_id yoksa "" (çıktı değişmez). */
+    private String incidentActionsRow(Map<String, Object> ctx, String accent) {
+        return MailCta.incidentActionRow(liveBaseUrl(), ctx == null ? null : ctx.get("alert_event_id"), accent);
+    }
+
+    /** Blok içeriği em-card <tr> dizisine sarar (row-bağlamlı şablonlar için); boşsa "" kalır. */
+    private static String rowWrap(String blockHtml) {
+        return (blockHtml == null || blockHtml.isEmpty()) ? ""
+            : "<tr><td bgcolor='#ffffff' style='background-color:#ffffff;padding:0 24px 8px'>" + blockHtml + "</td></tr>";
+    }
 
     /** CANLI base-url'den olay (incidents) ekranına deep-link — reminder/approve/incident ile AYNI kaynak. */
     private String stormCtaUrl() {
@@ -1787,7 +1882,8 @@ public class EmailNotificationService {
     private String monitoringTypedAlert(String accent, String kicker, String emoji,
             String heroTitle, String heroSub, String endpoint, String typeBadge,
             String firstFailureAt, String attemptsLabel, String delayLabel,
-            String leftRows, String rightRows, String extraBox, String message, String infoNote, String ctaUrl) {
+            String leftRows, String rightRows, String extraBox, String message, String infoNote, String ctaUrl,
+            String actionsHtml) {
         String generatedAt = LocalDateTime.now(IST).format(DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm"));
         String cta = (ctaUrl != null && !ctaUrl.isBlank())
             ? "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' style='margin:4px 0 16px'><tr><td align='center'>"
@@ -1843,7 +1939,7 @@ public class EmailNotificationService {
             + "<div style='font-size:12px;font-weight:800;letter-spacing:.07em;color:#dc2626;margin-bottom:6px'>⚠ SORUN TESPİT EDİLDİ</div>"
             + "<div style='font-size:15px;font-weight:600;color:#1c1917;line-height:1.6'>" + escHtml(message) + "</div>"
             + "</td></tr></table>"
-            + hero + twoCol + extraBox + cta
+            + hero + twoCol + extraBox + cta + actionsHtml
             + "<div style='font-size:12px;color:#64748b;line-height:1.6;margin-bottom:20px'>" + infoNote + "</div>"
             + "<table width='100%' cellpadding='0' cellspacing='0'><tr>"
             + "<td style='border-top:1px solid #f1f5f9;padding-top:12px;font-size:11px;color:#94a3b8'>Site Monitor</td>"
@@ -1922,7 +2018,7 @@ public class EmailNotificationService {
                 "⚠ İçerik doğrulaması başarısız", escHtml(url), "İçerik Doğrulama",
                 firstFailureAt, attemptsLabel, delayLabel, left.toString(), right, extraBox, message,
                 "ℹ Koşul yeniden sağlandığında bu alarm otomatik kapatılır ve çözüm e-postası gönderilir.",
-                monitorCtaUrl("keyword", ctx));
+                monitorCtaUrl("keyword", ctx), incidentActionsRow(ctx, accent));
     }
 
     /** Ping (ICMP) izleme alarmı — kurumsal lacivert, erişilebilirlik alanları. */
@@ -1961,14 +2057,14 @@ public class EmailNotificationService {
                 "⚠ Erişilebilirlik kaybı", escHtml(host), "Erişilebilirlik (Ping)",
                 firstFailureAt, attemptsLabel, delayLabel, left.toString(), right, "", message,
                 "ℹ Host yeniden yanıt verdiğinde bu alarm otomatik kapatılır ve çözüm e-postası gönderilir.",
-                monitorCtaUrl("ping", ctx));
+                monitorCtaUrl("ping", ctx), incidentActionsRow(ctx, accent));
     }
 
     /** Ortak executive çözüm (yeşil) kartı — keyword/ping kimliğiyle. */
     private String monitoringTypedResolved(String domain, String kicker, String heroLine,
             String typeTrLabel, String emoji, String detailRows, String ctaUrl,
             String resolvedBy, String resolvedAt, String createdAt,
-            String teamNames, UptimeSummary uptime) {
+            String teamNames, UptimeSummary uptime, String actionsHtml) {
         String generatedAt = LocalDateTime.now(IST).format(DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm"));
         String green = "#16a34a";
         String by = resolvedBy != null && !resolvedBy.isBlank() ? resolvedBy : "Sistem (otomatik)";
@@ -2034,7 +2130,7 @@ public class EmailNotificationService {
             + "<strong>" + escHtml(domain) + "</strong> için açık olan <strong>" + typeTrLabel + "</strong> alarmı kapatıldı. Toplam kesinti süresi: <strong>" + duration + "</strong>.</td></tr></table>"
             + uptimeSummaryBlock(uptime)
             + whyReceivingBlock(teamNames)
-            + cta
+            + cta + actionsHtml
             + "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0'><tr>"
             + "<td style='border-top:1px solid #f1f5f9;padding-top:12px;font-size:11px;color:#94a3b8'>Site Monitor</td>"
             + "<td align='right' style='border-top:1px solid #f1f5f9;padding-top:12px;font-size:11px;color:#94a3b8'>Bildirim: " + generatedAt + "</td></tr></table>"
@@ -2055,7 +2151,8 @@ public class EmailNotificationService {
         }
         return monitoringTypedResolved(url, "İÇERİK (KEYWORD) İZLEME",
                 "İçerik Doğrulaması Yeniden Başarılı", "İçerik Doğrulama", "🔎",
-                d.toString(), monitorCtaUrl("keyword", ctx), resolvedBy, resolvedAt, createdAt, teamNames, uptime);
+                d.toString(), monitorCtaUrl("keyword", ctx), resolvedBy, resolvedAt, createdAt, teamNames, uptime,
+                incidentActionsRow(ctx, "#1f3864"));
     }
 
     private String buildRichPingResolvedHtml(String host, Map<String, Object> ctx, String resolvedBy, String resolvedAt,
@@ -2068,7 +2165,8 @@ public class EmailNotificationService {
         }
         return monitoringTypedResolved(host, "PİNG (ICMP) İZLEME",
                 "Host Yeniden Yanıt Veriyor", "Erişilebilirlik (Ping)", "🖥️",
-                d.toString(), monitorCtaUrl("ping", ctx), resolvedBy, resolvedAt, createdAt, teamNames, uptime);
+                d.toString(), monitorCtaUrl("ping", ctx), resolvedBy, resolvedAt, createdAt, teamNames, uptime,
+                incidentActionsRow(ctx, "#1f3864"));
     }
 
     /**
@@ -2086,7 +2184,8 @@ public class EmailNotificationService {
         List<String> oldValues = ctxList(ctx, "old_values");
         List<String> newValues = ctxList(ctx, "new_values");
 
-        return buildDnsChangedHtmlInternal(message, domain, recordType, changedAt, oldValues, newValues, purple, generatedAt);
+        return buildDnsChangedHtmlInternal(message, domain, recordType, changedAt, oldValues, newValues, purple,
+                generatedAt, incidentActionsRow(ctx, purple));
     }
 
     @SuppressWarnings("unchecked")
@@ -2098,31 +2197,9 @@ public class EmailNotificationService {
 
     private String buildDnsChangedHtmlInternal(String message, String domain, String recordType,
                                                String changedAt, List<String> oldValues,
-                                               List<String> newValues, String purple, String generatedAt) {
-        StringBuilder oldRows = new StringBuilder();
-        if (oldValues.isEmpty()) {
-            oldRows.append(tableRow2colMono("•", "—"));
-        } else {
-            for (String v : oldValues) oldRows.append(tableRow2colMono("•", escHtml(v)));
-        }
-        StringBuilder newRows = new StringBuilder();
-        if (newValues.isEmpty()) {
-            newRows.append(tableRow2colMono("•", "—"));
-        } else {
-            for (String v : newValues) newRows.append(tableRow2colMono("•", escHtml(v)));
-        }
-
-        String twoColSection =
-            "<table width='100%' cellpadding='0' cellspacing='0' border='0' style='margin-bottom:16px'><tr>"
-            + "<td class='em-col-l' valign='top' width='50%' style='width:50%;padding-right:8px'>"
-            + "<table width='100%' cellpadding='0' cellspacing='0' border='0' style='border:1px solid #e2e8f0;border-radius:10px;overflow:hidden'>"
-            + "<tr><td bgcolor='#475569' style='background-color:#475569;padding:9px 14px;font-size:11px;font-weight:700;letter-spacing:.1em;color:#cbd5e1'>ESKİ DEĞERLER</td></tr>"
-            + oldRows + "</table></td>"
-            + "<td class='em-col-r' valign='top' width='50%' style='width:50%'>"
-            + "<table width='100%' cellpadding='0' cellspacing='0' border='0' style='border:1px solid " + purple + ";border-radius:10px;overflow:hidden'>"
-            + "<tr><td bgcolor='" + purple + "' style='background-color:" + purple + ";padding:9px 14px;font-size:11px;font-weight:700;letter-spacing:.1em;color:#f3e8ff'>YENİ DEĞERLER</td></tr>"
-            + newRows + "</table></td>"
-            + "</tr></table>";
+                                               List<String> newValues, String purple, String generatedAt,
+                                               String actionsHtml) {
+        String twoColSection = dnsDiffTable(oldValues, newValues, purple);
 
         // Outlook-güvenli standart (BRAND.md §5.1): <style> bloğu YOK, kart 600px, marka barı üstte.
         return "<!DOCTYPE html><html lang='tr'>"
@@ -2183,6 +2260,8 @@ public class EmailNotificationService {
             + "Alarm Geçmişi ekranından alarmı onaylayın ve kapatın. Beklenmedik bir değişiklikse "
             + "(olası domain hijack / hatalı migrasyon) derhal ağ ekibiyle iletişime geçin."
             + "</div>"
+
+            + actionsHtml
 
             // Footer
             + "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0'><tr>"

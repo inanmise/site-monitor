@@ -53,6 +53,67 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
   overflow-y: auto;
 }
 
+/* ── Duyuru şeridi (branding) ─────────────────────────────────────────────
+   İçerik kolonunun üstünde YAPIŞKAN durur; sol menünün sağında kalır (.app-main
+   overflow-y:auto olduğu için sticky bu kaydırma kabına göre çalışır). */
+.ann-bar {
+  position: sticky; top: 0; z-index: 150;
+  display: flex; align-items: center; gap: 12px;
+  padding: 10px 24px; font-size: 13.5px; line-height: 1.45;
+  border-bottom: 1px solid var(--ann-border); border-left: 4px solid var(--ann-accent);
+  background: var(--ann-bg); color: var(--ann-ink);
+}
+.ann-bar--hidden { visibility: hidden; }
+.ann-bar--info { --ann-bg: #eff6ff; --ann-border: #bfdbfe; --ann-ink: #1e3a8a; --ann-accent: #2563eb; }
+.ann-bar--warn { --ann-bg: #fffbeb; --ann-border: #fde68a; --ann-ink: #78350f; --ann-accent: #d97706; }
+.ann-bar--crit { --ann-bg: #fef2f2; --ann-border: #fecaca; --ann-ink: #7f1d1d; --ann-accent: #dc2626; }
+[data-theme="dark"] .ann-bar--info { --ann-bg: #172554; --ann-border: #1e40af; --ann-ink: #dbeafe; --ann-accent: #3b82f6; }
+[data-theme="dark"] .ann-bar--warn { --ann-bg: #3b2506; --ann-border: #92400e; --ann-ink: #fef3c7; --ann-accent: #f59e0b; }
+[data-theme="dark"] .ann-bar--crit { --ann-bg: #450a0a; --ann-border: #991b1b; --ann-ink: #fee2e2; --ann-accent: #ef4444; }
+.ann-badge {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 28px; height: 28px; flex: 0 0 28px; border-radius: 8px;
+  background: var(--ann-accent); color: #fff;
+}
+.ann-body { flex: 1; min-width: 0; display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.ann-tone { font-size: 10.5px; font-weight: 800; letter-spacing: .09em; text-transform: uppercase; opacity: .78; }
+.ann-text { font-weight: 500; }
+.ann-link {
+  display: inline-flex; align-items: center; gap: 4px; flex: 0 0 auto;
+  padding: 5px 11px; border-radius: 7px; border: 1px solid var(--ann-accent);
+  color: var(--ann-accent); font-size: 12.5px; font-weight: 700; text-decoration: none;
+}
+.ann-link:hover { background: var(--ann-accent); color: #fff; }
+.ann-close {
+  display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto;
+  width: 26px; height: 26px; border: none; border-radius: 7px;
+  background: none; color: var(--ann-ink); opacity: .65; cursor: pointer;
+}
+.ann-close:hover { opacity: 1; background: var(--ann-border); }
+/* Giriş sonrası "hero": duyuru kısa süre öne çıkar, sonra üst şeride toplanır. */
+.ann-hero-overlay {
+  position: fixed; inset: 0; z-index: 9998;
+  display: flex; align-items: center; justify-content: center; padding: 24px;
+  background: rgba(15, 23, 42, .5); backdrop-filter: blur(4px);
+  animation: dlg-fade .18s ease;
+}
+.ann-hero {
+  display: flex; align-items: center; gap: 14px;
+  max-width: 640px; padding: 20px 22px; font-size: 15px; line-height: 1.5;
+  border: 1px solid var(--ann-border); border-left: 5px solid var(--ann-accent); border-radius: 14px;
+  background: var(--ann-bg); color: var(--ann-ink);
+  box-shadow: 0 18px 48px rgba(15, 23, 42, .28);
+  animation: dlg-pop .22s cubic-bezier(.34, 1.56, .64, 1);
+}
+.ann-hero .ann-badge { width: 36px; height: 36px; flex-basis: 36px; border-radius: 10px; }
+.ann-hero .ann-tone { font-size: 11px; }
+@media (prefers-reduced-motion: reduce) {
+  .ann-hero-overlay, .ann-hero { animation: none; }
+}
+@media (max-width: 720px) {
+  .ann-bar { padding: 9px 14px; font-size: 13px; gap: 9px; }
+}
+
 .app-body {
   max-width: 1400px;
   padding: 20px 24px;
@@ -1801,10 +1862,51 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .chk-table tr:last-child td { border-bottom: none; }
 .chk-table th { position: sticky; top: 0; z-index: 1; background: var(--bg-card, #fff); font-size: .82em; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--text-muted); }
 [data-theme="dark"] .chk-table th { background: var(--bg-surface, #1e1e1e); }
-.chk-th-domain, .chk-td-domain { text-align: left; }
+.chk-th-domain, .chk-td-domain, .chk-th-team, .chk-td-team { text-align: left; }
 .chk-td-domain { font-weight: 600; color: var(--text); }
-.chk-tick { display: inline-flex; width: 17px; height: 17px; border-radius: 50%; background: #16a34a; color: #fff; font-size: 11px; font-weight: 800; align-items: center; justify-content: center; vertical-align: middle; margin-right: 8px; }
+.chk-domain-name { display: block; }
+/* Durum kendi kolonunda: eskiden alan adıyla aynı hücredeydi ve satırlar oynuyordu. */
+.chk-th-status, .chk-td-status { text-align: center; width: 34px; padding-left: 10px; padding-right: 4px; }
+.chk-tick { display: inline-flex; width: 17px; height: 17px; border-radius: 50%; background: #16a34a; color: #fff; font-size: 11px; font-weight: 800; align-items: center; justify-content: center; vertical-align: middle; }
 .chk-tick-err { background: #dc2626; }
+.chk-row-err td { background: rgba(220, 38, 38, .05); }
+.chk-row-msg { display: block; margin-top: 2px; font-size: .88em; font-weight: 400; color: var(--danger); white-space: normal; max-width: 320px; }
+.chk-td-team { color: var(--text-muted); font-weight: 500; max-width: 170px; overflow: hidden; text-overflow: ellipsis; }
+.chk-tier { display: inline-block; padding: 1px 6px; border-radius: 5px; font-size: .82em; font-weight: 800; letter-spacing: .02em; background: var(--border); color: var(--text-muted); }
+.chk-tier-1 { background: #fee2e2; color: #b91c1c; }
+.chk-tier-2 { background: #ffedd5; color: #c2410c; }
+.chk-tier-3 { background: #e0f2fe; color: #0369a1; }
+.chk-tier-4 { background: #f1f5f9; color: #475569; }
+[data-theme="dark"] .chk-tier-1 { background: #7f1d1d; color: #fecaca; }
+[data-theme="dark"] .chk-tier-2 { background: #7c2d12; color: #fed7aa; }
+[data-theme="dark"] .chk-tier-3 { background: #0c4a6e; color: #bae6fd; }
+[data-theme="dark"] .chk-tier-4 { background: #334155; color: #cbd5e1; }
+.chk-days { font-weight: 700; }
+.chk-d-ok       { color: #16a34a; }
+.chk-d-warn     { color: #b45309; }
+.chk-d-high     { color: #ea580c; }
+.chk-d-crit     { color: #dc2626; }
+.chk-d-expired  { color: #dc2626; text-decoration: line-through; }
+.chk-d-unknown  { color: var(--text-muted); }
+/* Özet şeridi — toplam/başarılı/hatalı/süre */
+.chk-summary { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 14px; padding: 8px 2px 10px; font-size: .82em; }
+.chk-sum-item { display: inline-flex; align-items: center; gap: 5px; font-weight: 700; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.chk-sum-ok { color: #16a34a; }
+.chk-sum-fail { color: #dc2626; }
+.chk-sum-team { margin-left: auto; font-weight: 600; max-width: 42%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Takım seçim modalı */
+.chk-team-modal { width: 420px; max-width: 92vw; }
+.chk-team-desc { font-size: .86em; color: var(--text-muted); margin: 0 0 12px; }
+.chk-team-empty { font-size: .9em; color: var(--text-muted); font-style: italic; }
+.chk-team-list { max-height: 46vh; overflow: auto; border: 1px solid var(--border); border-radius: 8px; }
+.chk-team-row { display: flex; align-items: center; gap: 10px; padding: 8px 12px; cursor: pointer; font-size: .9em; }
+.chk-team-list .chk-team-row + .chk-team-row { border-top: 1px solid var(--border); }
+.chk-team-row:hover { background: var(--bg-hover, rgba(0, 0, 0, .03)); }
+.chk-team-row input { width: auto; margin: 0; cursor: pointer; }
+.chk-team-all { font-weight: 700; padding-left: 12px; }
+.chk-team-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chk-team-count { font-variant-numeric: tabular-nums; font-weight: 700; color: var(--text-muted); font-size: .9em; }
+.chk-team-total { margin-right: auto; font-size: .86em; font-weight: 700; color: var(--text-muted); }
 .chk-mono { color: var(--text-muted); font-variant-numeric: tabular-nums; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 .chk-mono b { color: var(--text); font-weight: 700; }
 .chk-pending { text-align: left; color: var(--text-muted); font-style: italic; }
@@ -2054,6 +2156,8 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .inc-table th.inc-th-sort:hover { color: #4f46e5; }
 .inc-table th.inc-th-actions, .inc-table td.inc-th-actions { text-align: right; width: 60px; }
 .inc-row-ongoing { background: rgba(220,38,38,.04); }
+/* E-posta derin linkiyle açılan olay — kullanıcı hangi satıra geldiğini görsün. */
+.inc-row-linked td { background: rgba(99, 102, 241, .12); box-shadow: inset 3px 0 0 #4f46e5; }
 .inc-row-link { cursor: pointer; transition: background .12s; }
 .inc-row-link:hover { background: rgba(99,102,241,.08); }
 .inc-row-link:focus-visible { outline: 2px solid #4f46e5; outline-offset: -2px; }
@@ -5956,7 +6060,9 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .upt-header { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 20px; flex-wrap: wrap; gap: 12px; }
 .upt-title { font-size: 18px; font-weight: 700; color: var(--text); margin: 0 0 4px; }
 .upt-subtitle { font-size: 12px; color: var(--text-muted); margin: 0; }
-.upt-header-right { display: flex; align-items: center; gap: 12px; }
+/* margin-left:auto + flex-end: .upt-header sarmalandığında (Sentetik izlemede buton grubu en geniş
+   olduğu için alt satıra düşüyordu) tek başına kalan satır space-between yüzünden SOLA yaslanıyordu. */
+.upt-header-right { display: flex; align-items: center; gap: 12px; margin-left: auto; flex-wrap: wrap; justify-content: flex-end; }
 .upt-last-check { font-size: 12px; color: var(--text-muted); }
 .upt-refresh-btn { display: flex; align-items: center; gap: 5px; }
 

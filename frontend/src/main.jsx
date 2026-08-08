@@ -7,7 +7,6 @@ import { ToastProvider } from './components/ui/Toast.jsx'
 import { LangProvider } from './i18n/index.jsx'
 import { ThemeProvider } from './i18n/theme.jsx'
 import { BrandingProvider } from './contexts/BrandingProvider.jsx'
-import AnnouncementBanner from './components/AnnouncementBanner.jsx'
 import { migrateStorageKeys } from './utils/migrateStorageKeys.js'
 import './App.css'
 
@@ -23,8 +22,9 @@ ReactDOM.createRoot(document.getElementById('root')).render(
         <BrandingProvider>
           <ToastProvider>
             <DialogProvider>
+              {/* Duyuru şeridi App'in İÇİNDE (içerik kolonunda) render edilir — burada olduğunda
+                  tüm viewport'u kaplayıp sol menüdeki logonun üstüne çıkıyordu. */}
               <ErrorBoundary>
-                <AnnouncementBanner />
                 <App />
               </ErrorBoundary>
             </DialogProvider>

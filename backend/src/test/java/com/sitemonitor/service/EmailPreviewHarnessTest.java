@@ -16,6 +16,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -69,6 +70,18 @@ class EmailPreviewHarnessTest {
         return m;
     }
 
+    /** DNS değişiklik postası — verilen eski/yeni değerlerle (fark tablosunu gözle kontrol için). */
+    private String dnsPreview(List<String> oldValues, List<String> newValues) {
+        Map<String, Object> m = ctx("example.com", null);
+        m.put("record_type", "A");
+        m.put("changed_at", "2026-08-08T15:53:00");
+        m.put("old_values", oldValues);
+        m.put("new_values", newValues);
+        m.put("alert_event_id", 4242L);
+        return service.buildAlertEmailHtml("konu", "DNS kaydı değişti", "callcenterfacechat.akbank.com",
+                "HIGH", "DNS_CHANGED", null, m);
+    }
+
     private void write(String slug, String html) throws Exception {
         assertThat(html).isNotBlank();
         Files.writeString(outDir.resolve(prefix + "-" + slug + ".html"), html, StandardCharsets.UTF_8);
@@ -106,6 +119,25 @@ class EmailPreviewHarnessTest {
                 service.buildResolutionEmailHtml("http://localhost:8080/health- duplicate", "KEYWORD", "HIGH", null, "oto-toparlanma", "2026-08-06 12:00", "2026-08-06 09:00", ctx("http://localhost:8080/health- duplicate", "Sağlık İçerik Kontrolü"), "SY-A", null));
         write("resolved-accessibility",
                 service.buildResolutionEmailHtml("https://example.com/health", "ACCESSIBILITY", "CRITICAL", null, "oto-toparlanma", "2026-08-06 12:00", "2026-08-06 08:00", ctx("https://example.com/health", "Sağlık Ucu"), "SY-A", null));
+
+        // DNS fark tablosu — gerçek değerlerle ve kenar durumlarıyla (gözle kontrol için)
+        write("dns-changed-values", dnsPreview(List.of("172.31.129.6", "172.31.6.32"), List.of("172.31.6.19")));
+        write("dns-changed-empty-old", dnsPreview(List.of(), List.of("172.31.6.19")));
+        write("dns-changed-empty-new", dnsPreview(List.of("172.31.129.6"), List.of()));
+        write("dns-changed-many", dnsPreview(
+                List.of("10.0.0.1", "10.0.0.2", "10.0.0.3", "10.0.0.4", "10.0.0.5", "10.0.0.6", "10.0.0.7", "10.0.0.8"),
+                List.of("10.1.0.1")));
+        write("dns-changed-txt", dnsPreview(
+                List.of("v=DKIM1; k=rsa; p=" + "A".repeat(240)),
+                List.of("cname-hedefi.uzun-alan-adi.akbank.com")));
+
+        // Olay aksiyon butonlu sürümler (alert_event_id dolu)
+        Map<String, Object> act = ctx("https://example.com/health", "Sağlık Ucu");
+        act.put("alert_event_id", 4242L);
+        write("accessibility-critical-actions",
+                service.buildAlertEmailHtml("konu", "Site erişilemez", "https://example.com/health", "CRITICAL", "ACCESSIBILITY", null, act));
+        write("resolved-accessibility-actions",
+                service.buildResolutionEmailHtml("https://example.com/health", "ACCESSIBILITY", "CRITICAL", null, "oto-toparlanma", "2026-08-06 12:00", "2026-08-06 08:00", act, "SY-A", null));
 
         // Haftalık hatırlatma
         write("weekly-reminder",

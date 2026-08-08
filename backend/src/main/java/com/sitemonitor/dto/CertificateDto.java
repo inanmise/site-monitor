@@ -99,6 +99,9 @@ public class CertificateDto {
     /** Criticality tier from inventory (1–4, null = unclassified) */
     private Integer tier;
 
+    /** Envanterdeki TLS portu (443 dışı hedefler için; null = envantersiz). */
+    private Integer port;
+
     /** Sorumlu (SY) takım — envanterden (null = takımsız/envantersiz). Dashboard kart etiketi + filtre. */
     @JsonProperty("team_id")
     private Long teamId;

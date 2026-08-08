@@ -242,6 +242,20 @@ public class IncidentsController {
         return out;
     }
 
+    /**
+     * Tek olay — e-postadaki "Olay detayını görüntüle / Olaya yorum yap" derin linkleri için.
+     * Sayfalı listede olay 1. sayfada olmayabilir; bu uç doğrudan getirir. Yetki + takım
+     * izolasyonu listeyle aynı ({@code alerts.read} + {@code requireIncidentScope}).
+     */
+    @GetMapping("/{id}")
+    public ResponseEntity<Map<String, Object>> get(@PathVariable Long id, HttpSession session) {
+        permissionService.require(session, "alerts.read", "view");
+        AlertEvent ev = requireAlert(id);
+        requireIncidentScope(session, ev);
+        List<AlertEvent> one = List.of(ev);
+        return ok(Map.of("data", toDto(ev, resolveMonitors(one), commentCounts(one))));
+    }
+
     // ── Yorumlar ─────────────────────────────────────────────────────────────────
     @GetMapping("/{id}/comments")
     public ResponseEntity<Map<String, Object>> listComments(@PathVariable Long id, HttpSession session) {

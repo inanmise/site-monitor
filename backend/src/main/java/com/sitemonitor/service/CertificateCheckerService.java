@@ -453,9 +453,13 @@ public class CertificateCheckerService {
                     hc.setInstanceFollowRedirects(true);
                     hc.connect();
                     result.put("hsts", hc.getHeaderField("Strict-Transport-Security") != null);
+                    // Aynı HEAD'den HTTP durum kodu — ek istek YOK. "Şimdi Kontrol Et" tablosunda
+                    // erişilebilirlik kolonunu besler (sertifika geçerli ama uygulama 503 olabilir).
+                    result.put("http_status", hc.getResponseCode());
                 } catch (Exception e) {
                     log.debug("HSTS check failed for {}: {}", domain, e.getMessage());
                     result.put("hsts", null);
+                    result.put("http_status", null);
                 } finally {
                     if (hc != null) {
                         try { hc.disconnect(); } catch (Exception ignored) { }

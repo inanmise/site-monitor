@@ -26,6 +26,7 @@ export default function IncidentsPage({ systemRole }) {
   const [sort, setSort] = useState({ by: '', dir: 'desc' })   // by='' → sunucu varsayılanı (ongoing-first)
   const [nowMs, setNowMs] = useState(Date.now())
   const [commentsFor, setCommentsFor] = useState(null)        // açık yorum modalı için incident
+  const [highlightId, setHighlightId] = useState(null)        // e-posta derin linkiyle gelen olay
   const [bannerOpen, setBannerOpen] = useState(() => {
     try { return localStorage.getItem(BANNER_KEY) !== 'true' } catch { return true }
   })
@@ -46,6 +47,36 @@ export default function IncidentsPage({ systemRole }) {
   }, [filters, sort, page, size])
 
   useEffect(() => { load() }, [load])
+
+  // E-postadaki "Olay detayını görüntüle / Olaya yorum yap" derin linkleri:
+  // ?incident=<id>[&action=comment]. Olay sayfalı listede olmayabilir → tekil uçtan çekilir.
+  // action tüketildikten sonra URL'den silinir (PAGE_STATE_PARAMS'ta değil; kalsaydı modal
+  // her sekme geçişinde yeniden açılırdı).
+  useEffect(() => {
+    let id = null, action = null
+    try {
+      const p = new URLSearchParams(window.location.search)
+      id = p.get('incident')
+      action = p.get('action')
+    } catch { /* yoksay */ }
+    if (!id) return
+    let alive = true
+    api.monitoring.incidents.get(id).then(res => {
+      if (!alive) return
+      if (res?.success && res.data) {
+        setHighlightId(String(res.data.id))
+        if (action === 'comment') setCommentsFor(res.data)
+      } else if (res && res.success === false) {
+        toast.error(res.error || t('inc.deepLinkFail'))
+      }
+      try {
+        const url = new URL(window.location.href)
+        url.searchParams.delete('action')
+        window.history.replaceState({}, '', url)
+      } catch { /* yoksay */ }
+    })
+    return () => { alive = false }
+  }, [])   // yalnız ilk açılış — sonraki gezinmelerde param zaten temizlenmiş olur
 
   // Filtre/boyut değişince sayfayı 1'e al — page ile AYNI güncellemede (ayrı effect + çift yükleme/bayat-yarış yerine, M4).
   const patchFilters = useCallback((patch) => { setFilters(f => ({ ...f, ...patch })); setPage(0) }, [])
@@ -201,7 +232,8 @@ export default function IncidentsPage({ systemRole }) {
               <tbody>
                 {rows.map(inc => (
                   <tr key={inc.id}
-                    className={`inc-row-link${inc.status === 'ongoing' ? ' inc-row-ongoing' : ''}`}
+                    className={`inc-row-link${inc.status === 'ongoing' ? ' inc-row-ongoing' : ''}`
+                      + (highlightId === String(inc.id) ? ' inc-row-linked' : '')}
                     onClick={() => goToIncident(inc)}
                     role="link" tabIndex={0}
                     onKeyDown={e => { if (e.key === 'Enter') goToIncident(inc) }}

@@ -416,6 +416,72 @@ class EmailNotificationServiceTest {
         assertThat(html).contains("DNS KAYDI DEĞİŞTİ");
         assertThat(html).doesNotContain("otomatik kapatılır");
         assertThat(html).doesNotContain("Deneme 1");
+        // Satır-kilitli fark tablosu: max(2 eski, 1 yeni) = 2 satır → 2 yön oku; silinen değer üstü çizik.
+        assertThat(html).contains("&#8594;");
+        assertThat(html).contains("line-through");
+        assertThat(count(html, "&#8594;")).isEqualTo(2);
+        assertThat(html).contains("ESKİ DEĞERLER &#183; 2").contains("YENİ DEĞERLER &#183; 1");
+    }
+
+    private static int count(String haystack, String needle) {
+        int n = 0, i = 0;
+        while ((i = haystack.indexOf(needle, i)) >= 0) { n++; i += needle.length(); }
+        return n;
+    }
+
+    @Test
+    @DisplayName("DNS fark tablosu kenar durumları: eski yok / yeni yok / çok değer / uzun TXT")
+    void dnsChanged_valueEdgeCases() {
+        String noOld = dnsHtml(java.util.List.of(), java.util.List.of("9.9.9.9"));
+        assertThat(noOld).contains("kayıt yoktu").contains("ESKİ DEĞERLER &#183; 0");
+
+        String noNew = dnsHtml(java.util.List.of("1.2.3.4"), java.util.List.of());
+        assertThat(noNew).contains("kayıt kalmadı").contains("YENİ DEĞERLER &#183; 0");
+
+        java.util.List<String> many = new java.util.ArrayList<>();
+        for (int i = 1; i <= 9; i++) many.add("10.0.0." + i);
+        String big = dnsHtml(many, java.util.List.of("9.9.9.9"));
+        assertThat(big).contains("…ve 3 tane daha");
+        assertThat(count(big, "&#8594;")).isEqualTo(6);          // DNS_MAX_VALUE_ROWS
+
+        String longTxt = "v=DKIM1; k=rsa; p=" + "A".repeat(300);
+        String txt = dnsHtml(java.util.List.of(longTxt), java.util.List.of("kısa"));
+        assertThat(txt).contains("…");
+        assertThat(txt).doesNotContain("A".repeat(200));          // 160 karakterde kırpıldı
+    }
+
+    private String dnsHtml(java.util.List<String> oldValues, java.util.List<String> newValues) {
+        Map<String, Object> ctx = new java.util.LinkedHashMap<>();
+        ctx.put("record_type", "A");
+        ctx.put("old_values", oldValues);
+        ctx.put("new_values", newValues);
+        return service.buildAlertEmailHtml("subj", "mesaj", "changed.example.com", "HIGH", "DNS_CHANGED", null, ctx);
+    }
+
+    @Test
+    @DisplayName("Olay aksiyonları: alert_event_id varsa detay+yorum butonları basılır (alarm ve çözüm)")
+    void incidentActions_renderedWhenEventIdPresent() {
+        for (String type : new String[]{ "ACCESSIBILITY", "PORT_DOWN", "DNS_FAILURE", "KEYWORD", "PING_DOWN", "DNS_CHANGED" }) {
+            Map<String, Object> ctx = new java.util.LinkedHashMap<>();
+            ctx.put("alert_event_id", 4242L);
+            ctx.put("record_type", "A");
+            String html = service.buildAlertEmailHtml("subj", "mesaj", "x.example.com", "CRITICAL", type, null, ctx);
+            assertThat(html).as(type).contains("tab=incidents").contains("incident=4242")
+                    .contains("action=comment")
+                    .contains("Olay detayını görüntüle").contains("Olaya yorum yap");
+        }
+        Map<String, Object> ctx = new java.util.LinkedHashMap<>();
+        ctx.put("alert_event_id", 77L);
+        String resolved = service.buildResolutionEmailHtml("x.example.com", "ACCESSIBILITY", "CRITICAL", null,
+                "admin", "2026-06-11T12:00:00", "2026-06-11T10:00:00", ctx, "SY-Test", null);
+        assertThat(resolved).contains("incident=77").contains("action=comment");
+    }
+
+    @Test
+    @DisplayName("Olay aksiyonları: alert_event_id yoksa hiç basılmaz (çıktı bugünküyle aynı)")
+    void incidentActions_absentWhenNoEventId() {
+        String html = service.buildAlertEmailHtml("subj", "mesaj", "x.example.com", "CRITICAL", "ACCESSIBILITY", null, null);
+        assertThat(html).doesNotContain("action=comment").doesNotContain("BU OLAY İÇİN");
     }
 
     @Test
