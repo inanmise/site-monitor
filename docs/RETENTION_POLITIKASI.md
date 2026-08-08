@@ -27,13 +27,13 @@ BDDK/iç denetim süreleri esas alınmalıdır.
 
 | Tablo | Süre | Taban | Ayar anahtarı | Kural | Gerekçe |
 |---|---|---|---|---|---|
-| `notification_logs` | 90 gün | 30 g | `site.monitor.notification.retention-days` | `sent_at < ?` | Gönderilen bildirim geçmişi (alıcı adı/e-postası içerir). Teslimat şikâyetlerini araştırmaya yetecek süre. |
-| `diagnostic_runs` | 90 gün | 7 g | `site.monitor.diagnostics.retention-days` | `executed_at < ?` | Elle çalıştırılan tanılamalar (çalıştıran kullanıcı ve kaynak IP içerir). |
+| `notification_logs` | 365 gün | 30 g | `site.monitor.notification.retention-days` | `sent_at < ?` | Gönderilen bildirim geçmişi (alıcı adı/e-postası içerir). Kişisel veri saklama süreleri 1 yılda eşitlendi (2026-08 kullanıcı kararı) — denetimde tek bir pencere savunulur. |
+| `diagnostic_runs` | 365 gün | 7 g | `site.monitor.diagnostics.retention-days` | `executed_at < ?` | Elle çalıştırılan tanılamalar (çalıştıran kullanıcı ve kaynak IP içerir). Kişisel veri penceresiyle aynı 1 yıl (2026-08 kararı). |
 | `alert_events` | 365 gün | 90 g | `site.monitor.alert.retention-days` | `resolved = true AND resolved_at < ?` | Alarm olayları. Yalnız ÇÖZÜLMÜŞ alarmlar silinir — açık/onaylanmış alarmlar ASLA silinmez. |
 | `login_issue_report_images` | 365 gün | 90 g | `site.monitor.login-issue.retention-days` | `report_id IN (SELECT id FROM login_issue_reports WHERE status = 'RESOLVED' AND resolved_at < ?)` | Sorun bildirimi ekran görüntüleri (base64, ≤5 adet). Ebeveyn raporun yaşına göre, ondan ÖNCE silinir. |
 | `login_issue_reports` | 365 gün | 90 g | `site.monitor.login-issue.retention-days` | `status = 'RESOLVED' AND resolved_at < ?` | Kullanıcı sorun bildirimleri (e-posta, IP, serbest metin). Yalnız ÇÖZÜLMÜŞ olanlar; açık bildirimler durur. |
 | `login_issue_mail_logs` | öksüz temizliği | — | — | `report_id NOT IN (SELECT id FROM login_issue_reports)` | Bildirim mail geçmişi — raporu silinince öksüz kalır; mail kaydı raporuyla birlikte ölür. |
-| `activity_log` | 90 gün | 1 g | `site.monitor.activity.retention-days` | `activity_time < ?` | Birleşik aktivite akışı — her kontrol +1 satır (en hızlı büyüyen seri). Aktör kullanıcı adı içerir. |
+| `activity_log` | 365 gün | 1 g | `site.monitor.activity.retention-days` | `activity_time < ?` | Birleşik aktivite akışı — her kontrol +1 satır (en hızlı büyüyen seri). Aktör kullanıcı adı içerir. 2026-08 kullanıcı kararıyla 90 → 365 gün: kişisel veri pencereleri eşitlendi. DİKKAT: satır sayısı ~4 katına çıkar; büyüme Ayarlar → Veri Saklama'dan izlenmeli. |
 | `alert_comments` | öksüz temizliği | — | — | `alert_event_id NOT IN (SELECT id FROM alert_events)` | Alarm yorumları. alert_events 1 yılda siliniyor ama yorumlar kalıyordu → kalıcı öksüz. |
 | `weekly_report_mails` | 730 gün | 90 g | `site.monitor.weekly-report.mail-retention-days` | `created_at < ?` | Haftalık rapor mail geçmişi — gönderilen postanın TAM HTML gövdesini saklar (alıcı adresleriyle). |
 | `certificate_note_revisions` | 730 gün | 180 g | `site.monitor.cert-note-revision.retention-days` | `edited_at < ?` | Sertifika notu düzeltme geçmişi — her düzenlemede +1 satır, hiç silinmiyordu. Notun kendisi korunur. |
@@ -47,8 +47,8 @@ BDDK/iç denetim süreleri esas alınmalıdır.
 | Tablo | Süre | Taban | Ayar anahtarı | Kural | Gerekçe |
 |---|---|---|---|---|---|
 | `audit_log` | 365 gün | 30 g | `site.monitor.audit.retention-days` | `event_time < ?` | Kullanıcı eylem denetimi. Silmeden ÖNCE JSONL arşivi yazılır; süre uyum birimi onayına tabidir. |
-| `sql_query_history` | 30 gün | 7 g | `site.monitor.sql-history.retention-days` | `executed_at < ?` | Admin SQL çalışma alanı geçmişi (kullanıcı + serbest SQL metni). Kısa tutulur; pg_stat_statements yoksa yedek kaynak. |
-| `login_anomaly_incident` | 90 gün | 7 g | `site.monitor.failed-login.retention-days` | `resolved = true AND opened_at < ?` | Başarısız giriş anomali olayları. Yalnız ÇÖZÜLMÜŞ olanlar silinir; açık olaylar durur. |
+| `sql_query_history` | 365 gün | 7 g | `site.monitor.sql-history.retention-days` | `executed_at < ?` | Admin SQL çalışma alanı geçmişi (kullanıcı + serbest SQL metni). Denetim penceresiyle aynı 1 yıl (2026-08 kararı); hacmi düşüktür. |
+| `login_anomaly_incident` | 365 gün | 7 g | `site.monitor.failed-login.retention-days` | `resolved = true AND opened_at < ?` | Başarısız giriş anomali olayları. Yalnız ÇÖZÜLMÜŞ olanlar silinir; açık olaylar durur. Güvenlik penceresiyle aynı 1 yıl (2026-08 kararı). |
 
 ## Kullanıcı İçeriği
 

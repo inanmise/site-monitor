@@ -142,6 +142,9 @@ public interface AuditLogRepository extends Repository<AuditLog, Long> {
     /** Bir kaynağın tüm geçmişi ("bu izlemeye kim ne yaptı"). */
     List<AuditLog> findByResourceTypeAndResourceIdOrderByEventTimeDesc(String resourceType, String resourceId, Pageable pageable);
 
+    /** Bir kaynak TÜRÜNÜN tüm geçmişi (ör. tüm RETENTION_POLICY değişiklikleri). */
+    List<AuditLog> findByResourceTypeOrderByEventTimeDesc(String resourceType, Pageable pageable);
+
     /** Bir kullanıcının tüm eylemleri. */
     List<AuditLog> findByActorIdOrderByEventTimeDesc(Long actorId, Pageable pageable);
 

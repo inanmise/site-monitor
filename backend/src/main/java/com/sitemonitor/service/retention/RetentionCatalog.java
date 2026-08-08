@@ -68,11 +68,13 @@ public final class RetentionCatalog {
                 365, 30, true, DataClass.SECURITY_AUDIT,
                 "Kullanıcı eylem denetimi. Silmeden ÖNCE JSONL arşivi yazılır; süre uyum birimi onayına tabidir."),
         age("notification-logs", "notification_logs", "sent_at", "site.monitor.notification.retention-days",
-                90, 30, true, DataClass.PERSONAL,
-                "Gönderilen bildirim geçmişi (alıcı adı/e-postası içerir). Teslimat şikâyetlerini araştırmaya yetecek süre."),
+                365, 30, true, DataClass.PERSONAL,
+                "Gönderilen bildirim geçmişi (alıcı adı/e-postası içerir). Kişisel veri saklama süreleri "
+                + "1 yılda eşitlendi (2026-08 kullanıcı kararı) — denetimde tek bir pencere savunulur."),
         age("sql-query-history", "sql_query_history", "executed_at", "site.monitor.sql-history.retention-days",
-                30, 7, false, DataClass.SECURITY_AUDIT,
-                "Admin SQL çalışma alanı geçmişi (kullanıcı + serbest SQL metni). Kısa tutulur; pg_stat_statements yoksa yedek kaynak."),
+                365, 7, false, DataClass.SECURITY_AUDIT,
+                "Admin SQL çalışma alanı geçmişi (kullanıcı + serbest SQL metni). Denetim penceresiyle "
+                + "aynı 1 yıl (2026-08 kararı); hacmi düşüktür."),
 
         // ── Ham izleme serileri (tür bazında ayarlanır; eski ortak 180g davranışı korunur) ─────
         age("series-uptime", "uptime_checks", "checked_at", "site.monitor.series.uptime.retention-days",
@@ -94,8 +96,9 @@ public final class RetentionCatalog {
                 7, 1, false, DataClass.OPERATIONAL,
                 "Uygulamanın kendi HTTP metrik kovaları (dakikalık). Kısa tutulur; hacmi yüksektir."),
         guarded("login-anomaly", "login_anomaly_incident", "opened_at", "site.monitor.failed-login.retention-days",
-                90, 7, "resolved = true AND {t}", DataClass.SECURITY_AUDIT,
-                "Başarısız giriş anomali olayları. Yalnız ÇÖZÜLMÜŞ olanlar silinir; açık olaylar durur."),
+                365, 7, "resolved = true AND {t}", DataClass.SECURITY_AUDIT,
+                "Başarısız giriş anomali olayları. Yalnız ÇÖZÜLMÜŞ olanlar silinir; açık olaylar durur. "
+                + "Güvenlik penceresiyle aynı 1 yıl (2026-08 kararı)."),
         age("series-http", "http_checks", "checked_at", "site.monitor.series.http.retention-days",
                 180, 30, true, DataClass.OPERATIONAL, "HTTP kontrol ham serisi (en hızlı büyüyen serilerden)."),
 
@@ -121,8 +124,9 @@ public final class RetentionCatalog {
                 DataClass.OPERATIONAL,
                 "Alan adı kontrol serisi. İKİ baseline korunur: her monitörün en yeni satırı ve en yeni source<>'NONE' satırı."),
         age("diagnostic-runs", "diagnostic_runs", "executed_at", "site.monitor.diagnostics.retention-days",
-                90, 7, false, DataClass.PERSONAL,
-                "Elle çalıştırılan tanılamalar (çalıştıran kullanıcı ve kaynak IP içerir)."),
+                365, 7, false, DataClass.PERSONAL,
+                "Elle çalıştırılan tanılamalar (çalıştıran kullanıcı ve kaynak IP içerir). "
+                + "Kişisel veri penceresiyle aynı 1 yıl (2026-08 kararı)."),
         guarded("alert-events", "alert_events", "resolved_at", "site.monitor.alert.retention-days",
                 365, 90, "resolved = true AND {t}", DataClass.PERSONAL,
                 "Alarm olayları. Yalnız ÇÖZÜLMÜŞ alarmlar silinir — açık/onaylanmış alarmlar ASLA silinmez."),
@@ -145,8 +149,10 @@ public final class RetentionCatalog {
                 730, 30, false, DataClass.CONTENT,
                 "Haftalık rapor görselleri (BYTEA, satır başına MB'lar). Rapor METNİ korunur, yalnız çok eski görsel silinir."),
         age("activity-log", "activity_log", "activity_time", "site.monitor.activity.retention-days",
-                90, 1, true, DataClass.PERSONAL,
-                "Birleşik aktivite akışı — her kontrol +1 satır (en hızlı büyüyen seri). Aktör kullanıcı adı içerir."),
+                365, 1, true, DataClass.PERSONAL,
+                "Birleşik aktivite akışı — her kontrol +1 satır (en hızlı büyüyen seri). Aktör kullanıcı adı içerir. "
+                + "2026-08 kullanıcı kararıyla 90 → 365 gün: kişisel veri pencereleri eşitlendi. "
+                + "DİKKAT: satır sayısı ~4 katına çıkar; büyüme Ayarlar → Veri Saklama'dan izlenmeli."),
         age("network-outage", "network_outage_events", "detected_at", "site.monitor.network-outage.retention-days",
                 365, 30, false, DataClass.OPERATIONAL, "Ağ kesintisi olayları (nadir)."),
         new RetentionPolicy("incident-records", "incident_records", "occurred_at", TimeKind.ISO_STRING,

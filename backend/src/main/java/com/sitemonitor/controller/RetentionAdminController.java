@@ -1,9 +1,12 @@
 package com.sitemonitor.controller;
 
+import com.sitemonitor.model.AuditLog;
 import com.sitemonitor.model.RetentionRun;
+import com.sitemonitor.repository.AuditLogRepository;
 import com.sitemonitor.repository.RetentionRunItemRepository;
 import com.sitemonitor.repository.RetentionRunRepository;
 import com.sitemonitor.service.AppSettingsService;
+import com.sitemonitor.service.AuditDiff;
 import com.sitemonitor.service.AuditService;
 import com.sitemonitor.service.PermissionService;
 import com.sitemonitor.service.retention.RetentionCatalog;
@@ -45,6 +48,8 @@ public class RetentionAdminController {
     private final RetentionService retentionService;
     private final RetentionRunRepository runRepo;
     private final RetentionRunItemRepository itemRepo;
+    /** Değişiklik geçmişi audit_log'dan okunur (hash-zinciri korumalı, arşivlenen kaynak). */
+    private final AuditLogRepository auditLogRepo;
     private final AppSettingsService settingsService;
     private final AuditService auditService;
     private final PermissionService permissionService;
@@ -145,27 +150,52 @@ public class RetentionAdminController {
                 ? (Map<String, Object>) m : new LinkedHashMap<>();
 
         List<String> shortened = new ArrayList<>();
+        // Politika id → [eski gün, yeni gün]. Eski değer settingsService.save ÇAĞRILMADAN ÖNCE
+        // hesaplanmalı — kayıt sonrası eski değere ulaşmanın yolu yok (app_settings yalnız son
+        // yazan damgasını tutar, geçmiş tutmaz).
+        Map<String, int[]> changed = new LinkedHashMap<>();
         for (Map.Entry<String, Object> e : values.entrySet()) {
             RetentionPolicy p = RetentionCatalog.configurable().stream()
                     .filter(x -> x.settingKey().equals(e.getKey())).findFirst().orElse(null);
             if (p == null) continue;                       // hold/batch gibi anahtarlar → taban kuralı yok
-            String raw = e.getValue() == null ? "" : String.valueOf(e.getValue()).trim();
-            if (raw.isEmpty()) continue;                   // boş = override kaldır (varsayılana dön)
-            int v;
-            try { v = Integer.parseInt(raw); }
-            catch (NumberFormatException ex) { throw new IllegalArgumentException(p.settingKey() + ": sayı bekleniyor"); }
-            boolean zeroOk = p.zeroMeansNever() && v == 0;
-            if (!zeroOk && v < p.minDays()) {
-                throw new IllegalArgumentException(
-                        p.table() + " için en az " + p.minDays() + " gün girilmelidir (girilen: " + v + ")");
-            }
             int current = retentionService.effectiveDays(p);
-            if (v < current) shortened.add(p.id() + ":" + current + "→" + v);
+            String raw = e.getValue() == null ? "" : String.valueOf(e.getValue()).trim();
+            int v;
+            if (raw.isEmpty()) {
+                // Boş = override kaldır → kod varsayılanına dön. Bu da GERÇEK bir değişikliktir;
+                // eskiden sessizce atlanıyor ve denetim kaydına hiç düşmüyordu.
+                v = Math.max(p.minDays(), p.defaultDays());
+                if (p.zeroMeansNever() && p.defaultDays() == 0) v = 0;
+            } else {
+                try { v = Integer.parseInt(raw); }
+                catch (NumberFormatException ex) { throw new IllegalArgumentException(p.settingKey() + ": sayı bekleniyor"); }
+                boolean zeroOk = p.zeroMeansNever() && v == 0;
+                if (!zeroOk && v < p.minDays()) {
+                    throw new IllegalArgumentException(
+                            p.table() + " için en az " + p.minDays() + " gün girilmelidir (girilen: " + v + ")");
+                }
+            }
+            if (v != current) {
+                changed.put(p.id(), new int[]{ current, v });
+                if (v < current) shortened.add(p.id() + ":" + current + "→" + v);
+            }
         }
 
         settingsService.save(Map.of("values", values), actor(session));
+
+        // Politika BAŞINA denetim olayı: resource_id = politika id → "bu politikanın tüm geçmişi"
+        // sorgulanabilir; changes alanı {"days":{"from":X,"to":Y}} taşır ve hash-zincirine girer.
+        // Aynı kaydetmedeki satırlar correlation_id ile kendiliğinden gruplanır.
+        for (Map.Entry<String, int[]> c : changed.entrySet()) {
+            RetentionPolicy p = RetentionCatalog.byId(c.getKey()).orElseThrow();
+            int from = c.getValue()[0], to = c.getValue()[1];
+            auditService.recordAction("RETENTION_POLICY_CHANGE", session, request,
+                    "RETENTION_POLICY", p.id(),
+                    p.table() + " · " + from + "g → " + to + "g",
+                    AuditDiff.diff(Map.of("days", from), Map.of("days", to)));
+        }
         auditService.recordAction("RETENTION_SETTINGS_SAVE", session, request, "RETENTION", "settings",
-                "{\"keys\":" + values.size() + "}");
+                "{\"keys\":" + values.size() + ",\"changed\":" + changed.size() + "}");
         if (!shortened.isEmpty()) {
             // Kısaltma geri alınamaz veri kaybı üretir → ayrı, aranabilir bir denetim olayı.
             auditService.recordAction("RETENTION_SETTINGS_SHORTENED", session, request, "RETENTION", "settings",
@@ -173,8 +203,59 @@ public class RetentionAdminController {
             log.warn("Saklama süresi KISALTILDI ({}): {}", actor(session), String.join(", ", shortened));
         }
         return ok(Map.of("data", retentionService.overview(false),
+                "changed", changed.size(),
                 "message", "Saklama ayarları kaydedildi (anında geçerli)"));
     }
+
+    /**
+     * Saklama süresi değişiklik geçmişi — "kim, ne zaman, hangi politikayı, hangi değerden hangi
+     * değere çekti". Kaynak audit_log'dur (hash-zinciri korumalı, silinmeden önce arşivlenir).
+     *
+     * <p>Neden ayrı uç nokta: denetim uçları {@code audit_log.read} + global-admin/AUDIT rolü
+     * ister; bu sayfa {@code settings.retention} (ve bootstrap-admin bypass) ile açılır. İkisi
+     * ayrık olduğundan, ekranın doğrudan /api/admin/audit çağırması meşru bir retention adminine
+     * 403 döndürürdü.
+     */
+    @GetMapping("/changes")
+    public ResponseEntity<Map<String, Object>> changes(
+            @RequestParam(defaultValue = "25") int limit,
+            @RequestParam(required = false) String policyId, HttpSession session) {
+        requireAccess(session);
+        int n = Math.max(1, Math.min(limit, 200));
+        List<AuditLog> rows = (policyId == null || policyId.isBlank())
+                ? auditLogRepo.findByResourceTypeOrderByEventTimeDesc("RETENTION_POLICY", PageRequest.of(0, n))
+                : auditLogRepo.findByResourceTypeAndResourceIdOrderByEventTimeDesc(
+                        "RETENTION_POLICY", policyId, PageRequest.of(0, n));
+
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (AuditLog a : rows) {
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("policy_id", a.getResourceId());
+            m.put("table", RetentionCatalog.byId(a.getResourceId()).map(RetentionPolicy::table).orElse(null));
+            m.put("actor", a.getActor());
+            m.put("at", a.getEventTime());
+            m.put("ip", a.getIpAddress());
+            m.put("correlation_id", a.getCorrelationId());
+            m.put("detail", a.getDetail());
+            int[] fromTo = parseDaysDiff(a.getChanges());
+            m.put("from", fromTo == null ? null : fromTo[0]);
+            m.put("to", fromTo == null ? null : fromTo[1]);
+            out.add(m);
+        }
+        return ok(Map.of("data", out));
+    }
+
+    /** {@code {"days":{"from":90,"to":365}}} → [90, 365]; ayrıştırılamazsa null. */
+    static int[] parseDaysDiff(String changes) {
+        if (changes == null || changes.isBlank()) return null;
+        var m = DAYS_DIFF.matcher(changes);
+        if (!m.find()) return null;
+        try { return new int[]{ Integer.parseInt(m.group(1)), Integer.parseInt(m.group(2)) }; }
+        catch (NumberFormatException e) { return null; }
+    }
+
+    private static final java.util.regex.Pattern DAYS_DIFF = java.util.regex.Pattern.compile(
+            "\"days\"\\s*:\\s*\\{\\s*\"from\"\\s*:\\s*(-?\\d+)\\s*,\\s*\"to\"\\s*:\\s*(-?\\d+)");
 
     /** Uyum/onay bilgisi: kişisel veri içeren politikalarda süreyi kim/ne zaman onayladı. */
     @PutMapping("/approval")
@@ -187,8 +268,12 @@ public class RetentionAdminController {
         }
         String note = String.valueOf(body.getOrDefault("note", "")).trim();
         String value = note.isEmpty() ? "" : (actor(session) + "|" + ISO.format(Instant.now()) + "|" + note);
+        String before = settingsService.getString(APPROVAL_PREFIX + policyId, "");
         settingsService.save(Map.of("values", Map.of(APPROVAL_PREFIX + policyId, value)), actor(session));
-        auditService.recordAction("RETENTION_APPROVAL_SAVE", session, request, "RETENTION", policyId, "{}");
+        // Onay da denetlenir: dokümandaki "kim ne zaman onayladı" satırının kaynağı burasıdır.
+        auditService.recordAction("RETENTION_APPROVAL_SAVE", session, request, "RETENTION_POLICY", policyId,
+                note.isEmpty() ? "onay kaldırıldı" : note,
+                AuditDiff.diff(Map.of("approval", before == null ? "" : before), Map.of("approval", value)));
         return ok(Map.of("data", approvals(), "message", "Onay kaydedildi"));
     }
 
