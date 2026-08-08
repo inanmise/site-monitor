@@ -36,7 +36,8 @@ function avatarBg(seed) {
 function UserAvatar({ user }) {
   const [err, setErr] = useState(false)
   if (!err) {
-    return <img className="usr-avatar" alt="" src={`/api/admin/users/${user.id}/photo`} onError={() => setErr(true)} />
+    // Kullanıcılar sekmesi USER rolüne de açık → admin'e özel foto ucu boş yere 403 üretirdi.
+    return <img className="usr-avatar" alt="" src={`/api/users/${user.id}/photo`} onError={() => setErr(true)} />
   }
   return <span className="usr-avatar usr-avatar-fallback" style={{ background: avatarBg(user.username) }}>
     {initialsOf(user.display_name || user.username)}

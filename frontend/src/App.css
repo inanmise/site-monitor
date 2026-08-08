@@ -220,6 +220,11 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
   border-bottom: 1px solid var(--ann-border); border-left: 4px solid var(--ann-accent);
   background: var(--ann-bg); color: var(--ann-ink);
 }
+/* Uygulama içindeki şerit, altındaki içerik kolonuyla AYNI genişlikte biter (.app-body ile
+   aynı max-width) — aksi halde şerit sayfanın en sağ kenarına kadar uzayıp SSL Checker
+   satırıyla hizasız kalıyordu. Login ekranındaki şerit bu kuralın dışında: orada sol menü
+   ve içerik kolonu yok, tam genişlik doğru olan. */
+.app-main > .ann-bar { max-width: 1400px; }
 .ann-bar--hidden { visibility: hidden; }
 .ann-bar--info { --ann-bg: #eff6ff; --ann-border: #bfdbfe; --ann-ink: #1e3a8a; --ann-accent: #2563eb; }
 .ann-bar--warn { --ann-bg: #fffbeb; --ann-border: #fde68a; --ann-ink: #78350f; --ann-accent: #d97706; }
