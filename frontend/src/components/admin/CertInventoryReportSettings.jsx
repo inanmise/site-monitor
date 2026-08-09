@@ -6,10 +6,57 @@ import { useToast } from '../ui/Toast.jsx'
 import { Spinner, LoadingBlock } from '../ui/Progress.jsx'
 import { mailPreviewSrcDoc, MAIL_PREVIEW_SANDBOX } from '../../utils/mailPreview.js'
 
+const WEEKDAYS = [
+  { v: 'MON', k: 'cir.mon' }, { v: 'TUE', k: 'cir.tue' }, { v: 'WED', k: 'cir.wed' },
+  { v: 'THU', k: 'cir.thu' }, { v: 'FRI', k: 'cir.fri' }, { v: 'SAT', k: 'cir.sat' },
+  { v: 'SUN', k: 'cir.sun' },
+]
+
+/** Kullanıcı seçimlerinden Spring cron ifadesi kurar (L = ayın son X günü). */
+function buildCron(rule) {
+  const [hh = '10', mm = '00'] = String(rule.time || '10:00').split(':')
+  const h = String(Number(hh) || 0)
+  const m = String(Number(mm) || 0)
+  if (rule.kind === 'dayOfMonth') {
+    const d = Math.min(28, Math.max(1, Number(rule.day) || 1))
+    return `0 ${m} ${h} ${d} * *`
+  }
+  return `0 ${m} ${h} * * ${rule.weekday || 'FRI'}L`
+}
+
+/** Cron → kullanıcı seçimleri (ayarlar açılışında mevcut ifadeyi forma yansıtmak için). */
+function parseCron(expr) {
+  const def = { kind: 'custom', weekday: 'FRI', day: 1, time: '10:00' }
+  const p = String(expr || '').trim().split(/\s+/)
+  if (p.length !== 6 || p[0] !== '0') return def
+  const time = `${String(p[2]).padStart(2, '0')}:${String(p[1]).padStart(2, '0')}`
+  if (/^[A-Z]{3}L$/.test(p[5]) && p[3] === '*') {
+    return { kind: 'lastWeekday', weekday: p[5].slice(0, 3), day: 1, time }
+  }
+  if (/^\d+$/.test(p[3]) && p[5] === '*') {
+    return { kind: 'dayOfMonth', weekday: 'FRI', day: Number(p[3]), time }
+  }
+  return { ...def, time }
+}
+
+/** İnsan-okur zamanlama özeti (başlık satırında gösterilir). */
+function cronLabel(expr, t) {
+  const r = parseCron(expr)
+  if (r.kind === 'lastWeekday') {
+    const d = WEEKDAYS.find(w => w.v === r.weekday)
+    return t('cir.summaryLastWeekday', d ? t(d.k) : r.weekday, r.time)
+  }
+  if (r.kind === 'dayOfMonth') return t('cir.summaryDayOfMonth', r.day, r.time)
+  return expr
+}
+
 /**
- * Ayarlar → Envanter Raporu. Aylık sertifika envanteri raporunun (ayın SON CUMA günü 10:00)
- * aç/kapa anahtarı, alıcıları, sonraki çalışma zamanı, önizleme, test gönderimi ve arşivi.
- * WeeklyAvailabilitySettings deseninin aylık eşi — aynı bölümleme ve aynı CSS sınıfları.
+ * Ayarlar → Envanter Raporu. Aylık sertifika envanteri raporunun zamanlaması (canlı
+ * düzenlenebilir), otomatik alıcıları, önizlemesi, test gönderimi ve arşivi.
+ *
+ * Alıcılar ELLE girilmez: rapor, envanterde sertifika SAHİBİ olan tüm takımlara tek bir mail
+ * olarak gider ve içinde envanterin tamamı vardır. Buradaki "ek alıcılar" alanı yalnız
+ * sahiplik dışındaki adresler içindir (ör. PKI ekibi).
  */
 export default function CertInventoryReportSettings() {
   const t = useT()
@@ -18,6 +65,8 @@ export default function CertInventoryReportSettings() {
   const [status, setStatus] = useState(null)
   const [recipients, setRecipients] = useState('')
   const [cc, setCc] = useState('')
+  const [cron, setCron] = useState('')
+  const [rule, setRule] = useState({ kind: 'lastWeekday', weekday: 'FRI', day: 1, time: '10:00' })
   const [dirty, setDirty] = useState(false)
   const [saving, setSaving] = useState(false)
   const [previewing, setPreviewing] = useState(false)
@@ -32,13 +81,22 @@ export default function CertInventoryReportSettings() {
     const res = await api.admin.getCertInvReportStatus()
     if (res?.success) {
       setStatus(res.data)
-      setRecipients(res.data.recipients ?? '')
+      setRecipients(res.data.extra_recipients ?? '')
       setCc(res.data.cc ?? '')
+      setCron(res.data.cron ?? '')
+      setRule(parseCron(res.data.cron))
       setDirty(false)
     } else {
       toast.error(res?.error || t('settings.loadError'))
     }
   }, [toast, t])
+
+  /** Seçim değişince cron'u yeniden kur — kullanıcı ifadeyi elle yazmak zorunda kalmasın. */
+  function applyRule(next) {
+    setRule(next)
+    if (next.kind !== 'custom') setCron(buildCron(next))
+    setDirty(true)
+  }
 
   useEffect(() => { load() }, [load])
 
@@ -55,10 +113,18 @@ export default function CertInventoryReportSettings() {
 
   async function saveRecipients() {
     setSaving(true)
-    const res = await api.admin.saveCertInvReportSettings({ recipients, cc })
+    const res = await api.admin.saveCertInvReportSettings({ recipients, cc, cron })
     setSaving(false)
-    if (res?.success) { setStatus(res.data); setDirty(false); toast.success(t('settings.saved')) }
-    else toast.error(res?.error || t('settings.saveError'))
+    if (res?.success) {
+      setStatus(res.data)
+      setCron(res.data.cron ?? cron)
+      setRule(parseCron(res.data.cron ?? cron))
+      setDirty(false)
+      toast.success(t('settings.saved'))
+    } else {
+      // Geçersiz cron backend'de reddedilir; mesaj kullanıcıya aynen gösterilir.
+      toast.error(res?.error || t('settings.saveError'))
+    }
   }
 
   async function preview() {
@@ -108,17 +174,76 @@ export default function CertInventoryReportSettings() {
         <div className="alert-msg alert-msg--warn">{t('cir.noRecipientsNote')}</div>
       )}
 
-      {/* ── Zamanlama ── */}
+      {/* ── Zamanlama (canlı düzenlenebilir) ── */}
       <div className="wa-schedule">
         <CalendarClock size={15} />
-        <span>{t('cir.schedule')}</span>
+        <span>{t('cir.scheduleLabel', cronLabel(cron, t))}</span>
         {status.next_run && <strong>{t('cir.nextRun', status.next_run)}</strong>}
       </div>
+      <div className="cir-schedule-grid">
+        <div className="form-group">
+          <label>{t('cir.dayRule')}</label>
+          <select className="input" value={rule.kind}
+            onChange={e => applyRule({ ...rule, kind: e.target.value })}>
+            <option value="lastWeekday">{t('cir.ruleLastWeekday')}</option>
+            <option value="dayOfMonth">{t('cir.ruleDayOfMonth')}</option>
+            <option value="custom">{t('cir.ruleCustom')}</option>
+          </select>
+        </div>
+        {rule.kind === 'lastWeekday' && (
+          <div className="form-group">
+            <label>{t('cir.weekday')}</label>
+            <select className="input" value={rule.weekday}
+              onChange={e => applyRule({ ...rule, weekday: e.target.value })}>
+              {WEEKDAYS.map(d => <option key={d.v} value={d.v}>{t(d.k)}</option>)}
+            </select>
+          </div>
+        )}
+        {rule.kind === 'dayOfMonth' && (
+          <div className="form-group">
+            <label>{t('cir.dayOfMonth')}</label>
+            <input className="input" type="number" min="1" max="28" value={rule.day}
+              onChange={e => applyRule({ ...rule, day: e.target.value })} />
+            <span className="hint">{t('cir.dayOfMonthHint')}</span>
+          </div>
+        )}
+        {rule.kind !== 'custom' && (
+          <div className="form-group">
+            <label>{t('cir.time')}</label>
+            <input className="input" type="time" value={rule.time}
+              onChange={e => applyRule({ ...rule, time: e.target.value })} />
+          </div>
+        )}
+        <div className="form-group">
+          <label>{t('cir.cronExpr')}</label>
+          <input className="input" value={cron}
+            onChange={e => { setCron(e.target.value); setRule(r => ({ ...r, kind: 'custom' })); setDirty(true) }} />
+          <span className="hint">{t('cir.cronHint')}</span>
+        </div>
+      </div>
+      {status.next_runs?.length > 0 && (
+        <div className="hint">{t('cir.nextRuns')}: {status.next_runs.join(' · ')}</div>
+      )}
 
-      {/* ── Alıcılar ── */}
+      {/* ── Alıcılar: sahibi olan takımlardan OTOMATİK ── */}
+      <div className="form-group">
+        <label>{t('cir.autoRecipients')}</label>
+        <div className="cir-auto-list">
+          {(status.owner_emails ?? []).length === 0
+            ? <span className="hint">{t('cir.autoRecipientsEmpty')}</span>
+            : (status.owner_emails ?? []).map(e => <span key={e} className="cir-chip">{e}</span>)}
+        </div>
+        <span className="hint">{t('cir.autoRecipientsHint')}</span>
+      </div>
+      {(status.teams_without_email ?? []).length > 0 && (
+        <div className="alert-msg alert-msg--warn">
+          {t('cir.teamsWithoutEmail', status.teams_without_email.join(', '))}
+        </div>
+      )}
+
       <div className="form-group">
         <label>{t('cir.recipients')}</label>
-        <input className="input" value={recipients} placeholder="sertifika@akbank.com, pki@akbank.com"
+        <input className="input" value={recipients} placeholder="pki@akbank.com"
           onChange={e => { setRecipients(e.target.value); setDirty(true) }} />
         <span className="hint">{t('cir.recipientsHint')}</span>
       </div>

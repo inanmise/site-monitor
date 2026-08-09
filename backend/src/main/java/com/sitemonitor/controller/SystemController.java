@@ -364,13 +364,24 @@ public class SystemController {
             values.put(com.sitemonitor.service.report.CertificateInventoryReportService.ENABLED_KEY,
                     String.valueOf(Boolean.parseBoolean(String.valueOf(body.get("enabled")))));
         }
+        // "recipients" artık EK adreslerdir — asıl alıcılar sertifika sahibi takımlardan türetilir.
         if (body != null && body.containsKey("recipients")) {
-            values.put(com.sitemonitor.service.report.CertificateInventoryReportService.TO_KEY,
+            values.put(com.sitemonitor.service.report.CertificateInventoryReportService.EXTRA_TO_KEY,
                     String.valueOf(body.get("recipients")).trim());
         }
         if (body != null && body.containsKey("cc")) {
             values.put(com.sitemonitor.service.report.CertificateInventoryReportService.CC_KEY,
                     String.valueOf(body.get("cc")).trim());
+        }
+        // Zamanlama ayrı yoldan kaydedilir: geçersiz cron reddedilmeli (sessizce hiç çalışmayan
+        // bir tetikleyici, aylarca fark edilmeyen bir arıza olurdu).
+        if (body != null && body.containsKey("cron")) {
+            try {
+                certificateInventoryReportService.setCron(String.valueOf(body.get("cron")), who);
+            } catch (IllegalArgumentException e) {
+                return ResponseEntity.badRequest().body(Map.of(
+                        "success", false, "error", e.getMessage(), "timestamp", now()));
+            }
         }
         if (!values.isEmpty()) appSettingsService.save(Map.of("values", values), who);
         auditService.recordAction("CERT_INVENTORY_REPORT_SETTINGS", session, "REPORT", "cert-inventory-report",

@@ -1213,23 +1213,20 @@ public class SchedulerService {
     }
 
     /**
-     * AYLIK sertifika envanteri raporu — ayın SON CUMA günü 10:00 (Europe/Istanbul).
-     * Cron'daki {@code FRIL} = "ayın son cuması" (Spring CronExpression'ın L niteleyicisi);
-     * repodaki ilk L kullanımı olduğu için {@code CertInventoryReportCronTest} bunu doğrular.
-     * İdempotency servis içinde (yıl+ay kilidi) — kilit alınamasa bile çift mail gitmez.
+     * Dağıtık kilit altında iş çalıştırır — cron'u {@code @Scheduled} yerine DİNAMİK tetikleyiciyle
+     * kurulan görevler için ({@code CertInventoryReportScheduling}). Kilit başka pod'daysa iş atlanır.
      */
-    @Scheduled(cron = "${site.monitor.cert-inventory-report.cron:0 0 10 * * FRIL}", zone = "Europe/Istanbul")
-    public void scheduledCertInventoryReport() {
-        if (!tryAcquireSchedulerLock("cert-inventory-report", lockTtlMinutes)) {
-            log.debug("Aylık envanter raporu — lock başka pod'da, atlanıyor");
+    public void runWithSchedulerLock(String lockName, Runnable task) {
+        if (!tryAcquireSchedulerLock(lockName, lockTtlMinutes)) {
+            log.debug("{} — lock başka pod'da, atlanıyor", lockName);
             return;
         }
         try {
-            certificateInventoryReportService.sendMonthlyReport(false);
+            task.run();
         } catch (Exception e) {
-            log.error("Aylık envanter raporu başarısız: {}", e.getMessage(), e);
+            log.error("{} başarısız: {}", lockName, e.getMessage(), e);
         } finally {
-            releaseSchedulerLock("cert-inventory-report");
+            releaseSchedulerLock(lockName);
         }
     }
 

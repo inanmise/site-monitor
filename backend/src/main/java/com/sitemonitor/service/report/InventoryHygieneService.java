@@ -177,14 +177,16 @@ public class InventoryHygieneService {
         return iso.substring(8, 10) + "." + iso.substring(5, 7) + " " + iso.substring(11, 16);
     }
 
-    /** Aktif / pasif / silinmiş sayıları — mail KPI bandı. */
-    public Map<String, Integer> counts(List<CertificateInventory> notDeleted, int deletedCount) {
+    /**
+     * Aktif / pasif / toplam sayıları — mail KPI bandı.
+     * Silinmiş kayıtlar KAPSAM DIŞI: sahibinden aksiyon beklenmeyen satırlar raporu gürültülendirir.
+     */
+    public Map<String, Integer> counts(List<CertificateInventory> notDeleted) {
         int active = (int) notDeleted.stream().filter(r -> !Boolean.FALSE.equals(r.getActive())).count();
         Map<String, Integer> m = new LinkedHashMap<>();
         m.put("active", active);
         m.put("passive", notDeleted.size() - active);
-        m.put("deleted", deletedCount);
-        m.put("total", notDeleted.size() + deletedCount);
+        m.put("total", notDeleted.size());
         return m;
     }
 }
