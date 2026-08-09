@@ -301,6 +301,83 @@ class EmailTemplateBuilderTest {
                         .contains("SHA-256 Parmak İzi").contains("AB12CD34…");
     }
 
+    // ── Envanter bölümleri: Operasyonel Bilgiler + Değişiklik Açıklaması (2026-08) ──
+
+    private EmailTemplateBuilder.AlertMail certMail(Map<String, Object> extra) {
+        Map<String, Object> ctx = new LinkedHashMap<>();
+        ctx.put("not_after", "2026-09-09T02:59:00Z");
+        ctx.put("issuer_cn", "DigiCert EV RSA CA G2");
+        if (extra != null) ctx.putAll(extra);
+        return new EmailTemplateBuilder.AlertMail("EXPIRY", "MEDIUM", "www.akbank.com",
+                "www.akbank.com adresindeki sertifikanın süresi 30 gün içinde doluyor.", 30, ctx, "SY-Dijital Bankacilik");
+    }
+
+    @Test
+    @DisplayName("Operasyonel Bilgiler: yalnız Evet olan bayraklar çip olarak basılır")
+    void operationalFlagsSection() {
+        String html = b.buildHtml(certMail(Map.of("inv_ops", java.util.List.of("Netscaler", "WAF'ta Var", "Kullanım Durumu"))));
+
+        assertThat(html).contains("Operasyonel Bilgiler")
+                        .contains("Netscaler").contains("WAF&#39;ta Var").contains("Kullanım Durumu");
+        // Gönderilmeyen (Hayır olan) bayraklar hiç geçmemeli — liste zaten filtrelenmiş gelir.
+        assertThat(html).doesNotContain("OpenShift").doesNotContain("SSL Pinning");
+        // Çipler td bgcolor ile boyanır (Outlook kuralı), span background ile değil.
+        assertThat(html).contains("<td bgcolor='#EEF1F4'");
+    }
+
+    @Test
+    @DisplayName("Değişiklik Açıklaması: satır sonları korunur, HTML kaçırılır, Markdown yorumlanmaz")
+    void changeDescriptionSection() {
+        String desc = "1. Sertifika alım süreci IISAdmins tarafından yapılır.\n"
+                    + "2. Değişiklik planlaması Servis Yönetimi tarafından yapılır.\n"
+                    + "3. <script>alert(1)</script> & Waf da güncellenir.";
+        String html = b.buildHtml(certMail(Map.of("inv_change_desc", desc)));
+
+        assertThat(html).contains("Değişiklik Açıklaması")
+                        .contains("1. Sertifika alım süreci IISAdmins tarafından yapılır.")
+                        .contains("<br>2. Değişiklik planlaması");
+        assertThat(html).contains("&lt;script&gt;").doesNotContain("<script>");
+        assertThat(html).contains("&amp; Waf da güncellenir.");
+    }
+
+    @Test
+    @DisplayName("Envanter verisi yoksa iki bölüm de hiç render edilmez (boş kutu çıkmaz)")
+    void sectionsOmittedWhenNoInventoryData() {
+        String html = b.buildHtml(certMail(null));
+        assertThat(html).doesNotContain("Operasyonel Bilgiler").doesNotContain("Değişiklik Açıklaması");
+        // Boş dize/boş liste de bölüm açmaz.
+        String empty = b.buildHtml(certMail(Map.of("inv_ops", java.util.List.of(), "inv_change_desc", "   ")));
+        assertThat(empty).doesNotContain("Operasyonel Bilgiler").doesNotContain("Değişiklik Açıklaması");
+    }
+
+    @Test
+    @DisplayName("Uzun açıklama kırpılır ve uygulamaya yönlendirir")
+    void changeDescriptionIsTruncated() {
+        StringBuilder longDesc = new StringBuilder();
+        for (int i = 1; i <= 30; i++) longDesc.append(i).append(". Adım açıklaması\n");
+        var lines = EmailTemplateBuilder.descLines(longDesc.toString());
+
+        assertThat(lines).hasSize(13);                       // 12 satır + kırpma uyarısı
+        assertThat(lines.get(12)).contains("tamamı için Site Monitor'de görüntüleyin");
+        assertThat(b.buildHtml(certMail(Map.of("inv_change_desc", longDesc.toString()))))
+                .contains("tamamı için Site Monitor&#39;de görüntüleyin");
+    }
+
+    @Test
+    @DisplayName("Metin paritesi: iki bölüm plain-text sürümde de var")
+    void inventorySectionsInPlainText() {
+        String text = b.buildText(certMail(Map.of(
+                "inv_ops", java.util.List.of("Netscaler", "WAF'ta Var"),
+                "inv_change_desc", "1. Önce PFX alınır.\n2. Netscaler'a yüklenir.")));
+
+        assertThat(text).contains("Operasyonel Bilgiler: Netscaler, WAF'ta Var");
+        assertThat(text).contains("Değişiklik Açıklaması:")
+                        .contains("1. Önce PFX alınır.")
+                        .contains("2. Netscaler'a yüklenir.");
+        // Sıra: envanter blokları aksiyon adımlarından ÖNCE gelir (HTML ile aynı).
+        assertThat(text.indexOf("Operasyonel Bilgiler:")).isLessThan(text.indexOf("Önerilen Aksiyon:"));
+    }
+
     @Test
     @DisplayName("insan-okur tarih: UTC ISO → Europe/Istanbul (+3); kısa format timeline için")
     void humanDate() {

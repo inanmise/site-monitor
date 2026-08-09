@@ -60,6 +60,14 @@ class EmailTemplateStandardTest {
         return m;
     }
 
+    /** Sertifika envanteri zenginleştirmesi olan bağlam (EscalationService bunu üretir). */
+    private Map<String, Object> inventoryCtx() {
+        Map<String, Object> m = ctx();
+        m.put("inv_ops", java.util.List.of("Netscaler", "WAF'ta Var", "Kullanım Durumu"));
+        m.put("inv_change_desc", "1. IISAdmins PFX'i alır.\n2. Netscaler ve WAF'ta güncellenir.");
+        return m;
+    }
+
     private static int count(String s, String needle) {
         int c = 0, i = 0;
         while ((i = s.indexOf(needle, i)) >= 0) { c++; i += needle.length(); }
@@ -88,6 +96,10 @@ class EmailTemplateStandardTest {
     @DisplayName("canlı alarm şablonları (executive + zengin tip-özel) standarda uyar — 600px, tek 32px lockup, style'sız")
     void alertTemplatesConform() {
         assertStandard("cert-expiry", service.buildAlertEmailHtml("k", "m", "example.com", "CRITICAL", "EXPIRY", 5, ctx()), "600");
+        // Envanter bölümleri (operasyonel çipler + değişiklik açıklaması) eklenince de standart korunmalı:
+        // yeni <style> bloğu, dış görsel veya ikinci logo getirmemeli.
+        assertStandard("cert-expiry+inv",
+                service.buildAlertEmailHtml("k", "m", "example.com", "CRITICAL", "EXPIRY", 5, inventoryCtx()), "600");
         assertStandard("domain-expiry", service.buildAlertEmailHtml("k", "m", "example.com", "WARNING", "DOMAINMON_EXPIRY", 20, ctx()), "600");
         assertStandard("accessibility", service.buildAlertEmailHtml("k", "m", "https://example.com", "CRITICAL", "ACCESSIBILITY", null, ctx()), "600");
         assertStandard("port-down", service.buildAlertEmailHtml("k", "m", "example.com", "CRITICAL", "PORT_DOWN", null, ctx()), "600");

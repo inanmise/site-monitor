@@ -7,6 +7,7 @@ import { readPageSize, writePageSize } from '../../hooks/usePagination.js'
 import { useToast } from '../ui/Toast.jsx'
 import { usePermissions } from '../../contexts/PermissionsProvider.jsx'
 import DateTimeField from '../ui/DateTimeField.jsx'
+import { mailPreviewSrcDoc } from '../../utils/mailPreview.js'
 
 // Durum → rozet sınıfı (kırmızı YOK — sistem alarmlarına saklı). OPEN/IN_PROGRESS amber, RESOLVED yeşil.
 const STATUS_BADGE = { OPEN: 'badge badge-warn', IN_PROGRESS: 'badge badge-warn', RESOLVED: 'badge badge-ok' }
@@ -397,7 +398,8 @@ export default function LoginIssueReports() {
                                 <div style={{ fontSize: 12, marginBottom: 4 }}><b>{t('loginIssues.mailFrom')}:</b> {ml.from || '—'}</div>
                                 <div style={{ fontSize: 12, marginBottom: 6 }}><b>{t('loginIssues.mailSubject')}:</b> {ml.subject || '—'}</div>
                                 {ml.body ? (
-                                  <iframe title={`mail-${i}`} sandbox="" srcDoc={mailBodyWithImages(ml.body, detail.images)}
+                                  <iframe title={`mail-${i}`} sandbox=""
+                                    srcDoc={mailPreviewSrcDoc(mailBodyWithImages(ml.body, detail.images))}
                                     style={{ width: '100%', height: 340, border: '1px solid var(--border,#e5e7eb)',
                                       borderRadius: 6, background: '#fff' }} />
                                 ) : (
@@ -540,6 +542,7 @@ function prettyJson(s) {
 
 // Mail gövdesindeki cid:shotN görsel referanslarını raporun kayıtlı data-URL'leriyle değiştirir — böylece
 // uygulama-içi önizleme iframe'inde ekran görüntüleri görünür (cid: yalnız gerçek mail istemcisinde çözülür).
+// Çağrı sırası: önce bu rapora-özel rewrite, sonra ortak mailPreviewSrcDoc (marka logosu + <base>).
 function mailBodyWithImages(body, images) {
   if (!body || !images || images.length === 0) return body
   return body.replace(/src=(['"])cid:shot(\d+)\1/gi, (m, quote, idx) => {
