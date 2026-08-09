@@ -97,8 +97,8 @@ class InventoryExportServiceTest {
     }
 
     @Test
-    @DisplayName("PDF: açılabilir ve Türkçe karakterler gömülü fontla doğru yazılır")
-    void pdfIsReadableWithTurkishGlyphs() throws Exception {
+    @DisplayName("PDF: ekrandaki detay düzeni — bölüm başlıkları, alanlar, Türkçe glyph'ler")
+    void pdfMatchesScreenLayout() throws Exception {
         byte[] pdf = service.pdf(List.of(
                 row("www.akbank.com", 1, true),
                 row("internetsubesi.akbank.com", 2, true)), teams);
@@ -107,15 +107,39 @@ class InventoryExportServiceTest {
         try (PDDocument doc = Loader.loadPDF(pdf)) {
             assertThat(doc.getNumberOfPages()).isGreaterThanOrEqualTo(1);
             String text = new PDFTextStripper().getText(doc);
-            assertThat(text).as("PDF metni: <%s>", text).contains("Sertifika Envanteri");
-            assertThat(text).contains("www.akbank.com");
-            assertThat(text).contains("Netscaler");
-            // Gömülü Roboto olmadan yazılamayan karakterler: ç, ı, ş. sanitize() devreye girseydi
-            // "Açık" → "Acik", "Takım" → "Takim" olurdu; birebir eşleşme fontun gömüldüğünü kanıtlar.
+
+            // Ekrandaki PDF ile aynı bölümler (exportInventory.js)
+            assertThat(text).as("PDF metni: <%s>", text)
+                    .contains("Sertifika Envanteri")
+                    .contains("TEMEL BİLGİLER")
+                    .contains("OPERASYONEL BİLGİLER")
+                    .contains("DEĞİŞİKLİK AÇIKLAMASI");
+            assertThat(text).contains("www.akbank.com").contains("internetsubesi.akbank.com");
+            // ✓ Roboto'da yok → encodable() "+" ile değiştirir; önemli olan Evet/Hayır ayrımı.
+            assertThat(text).contains("Netscaler").contains("Evet").contains("Hayır");
+            assertThat(text).contains("Kritiklik Seviyesi (Tier)").contains("Satın Alan Kişi/Ekip");
+            assertThat(text).contains("Sayfa 1 / ");
+
+            // Gömülü Roboto olmadan yazılamayan karakterler: ç, ı, ş, İ. Font gömülmeseydi
+            // "Takım" → "Takim", "Bankacılık" → "Bankacilik" olurdu; birebir eşleşme kanıttır.
+            // (Bölüm başlıkları büyük harfe çevrilir, bu yüzden gövde metinleri üzerinden bakılır.)
             assertThat(text).as("Türkçe glyph kaybı — PDF metni: <%s>", text)
-                    .contains("Açık Operasyonel Bayraklar")
                     .contains("Takım")
                     .contains("SY-Dijital Bankacılık");
+        }
+    }
+
+    @Test
+    @DisplayName("PDF: 13 operasyonel bayrağın TAMAMI basılır (ekranla aynı)")
+    void pdfListsAllOperationalFlags() throws Exception {
+        byte[] pdf = service.pdf(List.of(row("flags.example.com", 1, true)), teams);
+        try (PDDocument doc = Loader.loadPDF(pdf)) {
+            String text = new PDFTextStripper().getText(doc).replaceAll("\\s+", " ");
+            for (var f : CertificateInventoryOps.ALL) {
+                // Uzun etiketler sütuna sığmayınca "…" ile kırpılır; ilk 12 karakter yeterli kanıt.
+                String head = f.label().length() > 12 ? f.label().substring(0, 12) : f.label();
+                assertThat(text).as("PDF'te eksik bayrak: %s", f.label()).contains(head);
+            }
         }
     }
 

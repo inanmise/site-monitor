@@ -58,11 +58,14 @@ public class InventoryExportService {
      * Kolon sırası ekrandaki dışa aktarımla aynı tutulur.
      */
     public byte[] csv(List<CertificateInventory> rows, Map<Long, String> teams) {
+        // Kolon adları ekrandaki dışa aktarımın TR etiketleriyle BİREBİR
+        // (frontend/src/utils/exportInventory.js → i18n inv.* anahtarları).
         List<String> header = new java.util.ArrayList<>(List.of(
-                "Domain", "Port", "Takım", "Kritiklik (Tier)", "Satın Alan", "Durum"));
+                "Domain", "Port", "Takım", "Kritiklik Seviyesi (Tier)", "Satın Alan Kişi/Ekip", "Aktif"));
         CertificateInventoryOps.ALL.forEach(f -> header.add(f.label()));
-        header.addAll(List.of("Değişiklik Açıklaması", "Beklenen Parmak İzi", "Beklenen Subject",
-                "Oluşturulma", "Güncellenme"));
+        header.addAll(List.of("Değişiklik Açıklaması",
+                "Beklenen Parmak İzi — SHA-256 hex (dağıtım uyumsuzluğu tespiti için)",
+                "Beklenen Subject", "Oluşturulma", "Güncelleme"));
 
         StringBuilder sb = new StringBuilder(4096);
         sb.append('﻿');                       // BOM — Excel'in UTF-8'i doğru açması için
@@ -101,25 +104,13 @@ public class InventoryExportService {
     // ── PDF ──────────────────────────────────────────────────────────────────
 
     /**
-     * Özet tablo PDF'i: her satır bir domain (takım, tier, durum, açık bayraklar).
-     * Domain başına detay bloğu YERİNE tablo seçildi — aylık rapor eki yüzlerce kaydı
-     * taşıyabilmeli; ekrandaki detay düzeni 200+ domainde onlarca sayfa üretirdi.
+     * PDF — EKRANDAKİ "Dışa Aktar → PDF" ile aynı domain-başına detay düzeni
+     * ({@link InventoryPdfWriter}). Kullanıcı aynı belgeyi iki yoldan alabildiği için
+     * (ekran + aylık mail eki) çıktıların farklı görünmemesi gerekir.
      */
     public byte[] pdf(List<CertificateInventory> rows, Map<Long, String> teams) {
-        try (PdfTable doc = new PdfTable("Sertifika Envanteri",
-                new String[]{ "Domain", "Takım", "Tier", "Durum", "Açık Operasyonel Bayraklar" },
-                new float[]{ 165, 105, 38, 45, 205 })) {
-            for (CertificateInventory r : rows) {
-                String flags = String.join(", ", CertificateInventoryOps.enabledLabels(r));
-                doc.row(new String[]{
-                        nz(r.getDomain()),
-                        r.getTeamId() == null ? "—" : nz(teams.get(r.getTeamId())),
-                        r.getTier() == null ? "—" : "T" + r.getTier(),
-                        Boolean.FALSE.equals(r.getActive()) ? "Pasif" : "Aktif",
-                        flags.isEmpty() ? "—" : flags,
-                });
-            }
-            return doc.finish();
+        try (InventoryPdfWriter w = new InventoryPdfWriter()) {
+            return w.write(rows, teams);
         } catch (Exception e) {
             log.error("Envanter PDF üretimi başarısız: {}", e.getMessage(), e);
             return new byte[0];        // ek olmadan gönderim sürsün — rapor tamamen düşmesin

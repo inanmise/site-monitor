@@ -2970,11 +2970,11 @@ public class EmailNotificationService {
         String generatedAt = java.time.ZonedDateTime.now(java.time.ZoneId.of("Europe/Istanbul"))
                 .format(java.time.format.DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm"));
 
+        // Silinmiş kayıtlar raporda YOK — sahibinden aksiyon beklenmeyen satırlar gürültü yapıyordu.
         String kpi = "<table width='100%' cellpadding='0' cellspacing='0' border='0'"
             + " style='margin:4px 0 18px;border-collapse:separate;border-spacing:8px 0'><tr>"
             + kpiCard("AKTİF", String.valueOf(counts.getOrDefault("active", 0)), "#16a34a", "#f0fdf4")
             + kpiCard("PASİF", String.valueOf(counts.getOrDefault("passive", 0)), "#64748b", "#f8fafc")
-            + kpiCard("SİLİNMİŞ", String.valueOf(counts.getOrDefault("deleted", 0)), "#b45309", "#fffbeb")
             + kpiCard("TOPLAM", String.valueOf(counts.getOrDefault("total", 0)), "#0f172a", "#f1f5f9")
             + "</tr></table>";
 
@@ -3031,14 +3031,19 @@ public class EmailNotificationService {
             }
         }
 
+        // Her dosya adı AYRI escape edilir; ayırıcı işaretleme escape'in DIŞINDA kalmalı —
+        // eskiden tüm birleşik metin escape edilince kullanıcı ham "</strong>, <strong>" görüyordu.
         String attachNote = (attachmentNames == null || attachmentNames.isEmpty()) ? ""
             : "<table width='100%' cellpadding='0' cellspacing='0' border='0'><tr>"
               + "<td bgcolor='#f8fafc' style='background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;"
               + "padding:12px 14px;font-size:13px;color:#334155'>"
-              + "📎 Envanterin tamamı ektedir: <strong>" + escHtml(String.join("</strong>, <strong>", attachmentNames))
-              + "</strong></td></tr></table>";
+              + "📎 Envanterin tamamı ektedir: "
+              + attachmentNames.stream().map(n -> "<strong>" + escHtml(n) + "</strong>")
+                    .collect(java.util.stream.Collectors.joining(", "))
+              + "</td></tr></table>";
 
-        String cta = ctaButton(appSettings.getString("site.monitor.app.base-url", appBaseUrl) + "/?tab=inventory",
+        // Sertifika Envanteri ekranının sekmesi "domains" (App.jsx) — "inventory" diye bir sekme yok.
+        String cta = ctaButton(appSettings.getString("site.monitor.app.base-url", appBaseUrl) + "/?tab=domains",
                 "Sertifika Envanterini Görüntüle", accent);
 
         return "<!DOCTYPE html><html lang='tr' xmlns:v='urn:schemas-microsoft-com:vml'"

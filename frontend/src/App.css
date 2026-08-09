@@ -884,6 +884,19 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .tab-content h2 { margin-bottom: 20px; color: var(--text); font-size: 1.4em; }
 .loading { text-align: center; padding: 40px; color: var(--text-light); font-size: 1.05em; grid-column: 1 / -1; }
 
+/* == Aylık envanter raporu ayarları (CertInventoryReportSettings) ========= */
+.cir-schedule-grid {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 10px 14px; margin: 8px 0 4px;
+}
+.cir-auto-list { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 2px; }
+.cir-chip {
+  display: inline-block; padding: 3px 9px; border-radius: 999px;
+  background: var(--bg-hover, #eef2f7); color: var(--text);
+  font-size: 12px; font-weight: 600;
+}
+@media (max-width: 720px) { .cir-schedule-grid { grid-template-columns: 1fr; } }
+
 /* == Progress göstergesi ailesi (components/ui/Progress.jsx) ==============
    Projedeki TEK standart: belirsiz spinner, belirli halka, native <progress> lineer çubuk,
    ve sayfa/bölüm yükleme bloğu. Erişilebilirlik sözleşmesi bileşen dosyasında yazılı.

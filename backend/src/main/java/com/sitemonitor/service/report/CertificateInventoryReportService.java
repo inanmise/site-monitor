@@ -48,8 +48,11 @@ import java.util.stream.Collectors;
 public class CertificateInventoryReportService {
 
     public static final String ENABLED_KEY = "site.monitor.cert-inventory-report.enabled";
-    public static final String TO_KEY = "site.monitor.cert-inventory-report.recipients";
+    /** Sahibi takımların ADRESLERİNE EK olarak eklenecek adresler (ör. PKI ekibi). */
+    public static final String EXTRA_TO_KEY = "site.monitor.cert-inventory-report.recipients";
     public static final String CC_KEY = "site.monitor.cert-inventory-report.cc";
+    /** Zamanlama — ayarlar sayfasından CANLI değiştirilebilir (dinamik tetikleyici okur). */
+    public static final String CRON_KEY = "site.monitor.cert-inventory-report.cron";
     /** Gövdedeki kalan süre tablosunda en fazla kaç domain listelenir (tamamı ekte). */
     private static final int MAX_TABLE_ROWS = 40;
 
@@ -61,6 +64,7 @@ public class CertificateInventoryReportService {
             "Temmuz", "Ağustos", "Eylül", "Ekim", "Kasım", "Aralık" };
 
     private final CertificateInventoryRepository inventoryRepo;
+    private final com.sitemonitor.repository.TeamRepository teamRepo;
     private final CertInventoryReportLogRepository logRepo;
     private final NotificationLogRepository notificationLogRepo;
     private final InventoryExportService exportService;
@@ -88,7 +92,56 @@ public class CertificateInventoryReportService {
         appSettings.save(Map.of("values", Map.of(ENABLED_KEY, String.valueOf(on))), actor);
     }
 
-    public String[] recipients() { return split(appSettings.getString(TO_KEY, "")); }
+    /**
+     * Alıcılar OTOMATİK: envanterde sertifika sahibi olan TÜM takımların e-posta adresleri.
+     *
+     * <p>Rapor kişiye değil, <b>sahipliğe</b> gider: 100 sertifikanın sahibi 10 takımsa, tek bir
+     * mail bu 10 takımın hepsine gider ve içinde envanterin TAMAMI vardır. Ekranda kullanıcı
+     * yalnız kendi takımının kayıtlarını görür; rapor ise bütünü paylaşır ki eksik/yanlış kayıtlar
+     * sahipleri tarafından fark edilip düzeltilsin.
+     *
+     * <p>Hem sorumlu takım (teamId) hem uygulama geliştirici takımı (ugTeamId) sahiptir.
+     * {@link #EXTRA_TO_KEY} ile elle ek adres tanımlanabilir (ör. PKI ekibi); silinmiş kayıtların
+     * takımları dahil EDİLMEZ.
+     */
+    public String[] recipients() {
+        java.util.LinkedHashSet<String> out = new java.util.LinkedHashSet<>();
+        for (String e : ownerTeamEmails()) out.add(e);
+        for (String e : split(appSettings.getString(EXTRA_TO_KEY, ""))) out.add(e);
+        return out.toArray(String[]::new);
+    }
+
+    /** Sertifika sahibi takımların e-postaları (adres tanımsız takım sessizce atlanır). */
+    public List<String> ownerTeamEmails() {
+        var teamIds = new java.util.LinkedHashSet<Long>();
+        for (CertificateInventory r : inventoryRepo.findByDeletedAtIsNullOrderByDomainAsc()) {
+            if (r.getTeamId() != null) teamIds.add(r.getTeamId());
+            if (r.getUgTeamId() != null) teamIds.add(r.getUgTeamId());
+        }
+        if (teamIds.isEmpty()) return List.of();
+        return teamRepo.findAllById(teamIds).stream()
+                .map(com.sitemonitor.model.Team::getEmail)
+                .filter(e -> e != null && !e.isBlank())
+                .map(String::trim)
+                .distinct()
+                .toList();
+    }
+
+    /** Sahibi olup e-posta adresi TANIMSIZ takımlar — ayarlar sayfasında uyarı olarak gösterilir. */
+    public List<String> ownerTeamsWithoutEmail() {
+        var teamIds = new java.util.LinkedHashSet<Long>();
+        for (CertificateInventory r : inventoryRepo.findByDeletedAtIsNullOrderByDomainAsc()) {
+            if (r.getTeamId() != null) teamIds.add(r.getTeamId());
+            if (r.getUgTeamId() != null) teamIds.add(r.getUgTeamId());
+        }
+        if (teamIds.isEmpty()) return List.of();
+        return teamRepo.findAllById(teamIds).stream()
+                .filter(t -> t.getEmail() == null || t.getEmail().isBlank())
+                .map(com.sitemonitor.model.Team::getName)
+                .filter(java.util.Objects::nonNull)
+                .toList();
+    }
+
     public String[] ccRecipients() { return split(appSettings.getString(CC_KEY, "")); }
 
     private static String[] split(String csv) {
@@ -101,10 +154,11 @@ public class CertificateInventoryReportService {
 
     /** Rapor gövdesi + ekleri (önizleme ve gönderim aynı üreticiyi kullanır → önizleme sadıktır). */
     public Built build(LocalDate reportDate) {
+        // Kapsam: SİLİNMEMİŞ kayıtlar. Silinmişler raporda hiç yer almaz — ne satır ne sayaç
+        // olarak; sahibinden bir aksiyon beklenmeyen kayıtlar raporu gürültülendiriyordu.
         List<CertificateInventory> rows = exportService.reportRows();
         Map<Long, String> teams = exportService.teamNames(rows);
-        long deleted = inventoryRepo.countByDeletedAtIsNotNull();
-        Map<String, Integer> counts = hygieneService.counts(rows, (int) deleted);
+        Map<String, Integer> counts = hygieneService.counts(rows);
 
         Map<String, CertificateDto> latest;
         try {
@@ -190,7 +244,8 @@ public class CertificateInventoryReportService {
         String[] to = recipients();
         Built built = build(today);
         if (to.length == 0) {
-            log.warn("Aylık envanter raporu: alıcı tanımlı değil ({}) — gönderilmedi", TO_KEY);
+            log.warn("Aylık envanter raporu: sertifika sahibi takımlarda e-posta adresi yok "
+                    + "ve ek alıcı ({}) tanımlı değil — gönderilmedi", EXTRA_TO_KEY);
             record(year, month, "NO_RECIPIENT", built, "");
             return new SendResult("NO_RECIPIENT", built.rowCount(), built.findingCount(), to, built.subject());
         }
@@ -226,22 +281,48 @@ public class CertificateInventoryReportService {
     public Map<String, Object> status() {
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("enabled", isEnabled());
+        m.put("owner_emails", ownerTeamEmails());                 // otomatik alıcılar (salt-okunur)
+        m.put("teams_without_email", ownerTeamsWithoutEmail());   // uyarı: bu takımlara ulaşılamıyor
+        m.put("extra_recipients", appSettings.getString(EXTRA_TO_KEY, ""));
         m.put("recipients", String.join(", ", recipients()));
         m.put("cc", String.join(", ", ccRecipients()));
-        m.put("cron", cronExpr);
+        m.put("cron", cron());
         m.put("next_run", nextRun());
+        m.put("next_runs", nextRuns(3));
         m.put("inventory_total", inventoryRepo.findByDeletedAtIsNullOrderByDomainAsc().size());
         m.put("last_run", logRepo.findFirstByStatusOrderBySentAtDesc("SENT").map(this::toMap).orElse(null));
         return m;
     }
 
-    /** Sonraki çalışma zamanı — cron'dan hesaplanır (ayın son cuması). */
+    /** CANLI cron — ayarlar sayfasından değiştirilebilir; properties yalnız ilk varsayılan. */
+    public String cron() {
+        String v = appSettings.getString(CRON_KEY, cronExpr);
+        return (v == null || v.isBlank()) ? cronExpr : v.trim();
+    }
+
+    /**
+     * Zamanlamayı kaydeder. Geçersiz ifade REDDEDİLİR — kabul edilseydi tetikleyici sessizce
+     * hiç çalışmaz ve rapor aylarca gitmezdi (fark edilmesi zor bir arıza).
+     */
+    public void setCron(String expr, String actor) {
+        String v = expr == null ? "" : expr.trim();
+        if (v.isEmpty()) throw new IllegalArgumentException("Zamanlama boş olamaz");
+        try {
+            CronExpression.parse(v);
+        } catch (Exception e) {
+            throw new IllegalArgumentException("Geçersiz zamanlama ifadesi: " + e.getMessage());
+        }
+        appSettings.save(Map.of("values", Map.of(CRON_KEY, v)), actor);
+        log.info("Aylık envanter raporu zamanlaması değişti ({}): {}", actor, v);
+    }
+
+    /** Sonraki çalışma zamanı — CANLI cron'dan hesaplanır. */
     public String nextRun() {
         try {
-            ZonedDateTime next = CronExpression.parse(cronExpr).next(ZonedDateTime.now(IST));
+            ZonedDateTime next = CronExpression.parse(cron()).next(ZonedDateTime.now(IST));
             return next == null ? null : next.format(DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm"));
         } catch (Exception e) {
-            log.warn("Cron ifadesi çözümlenemedi ({}): {}", cronExpr, e.getMessage());
+            log.warn("Cron ifadesi çözümlenemedi ({}): {}", cron(), e.getMessage());
             return null;
         }
     }

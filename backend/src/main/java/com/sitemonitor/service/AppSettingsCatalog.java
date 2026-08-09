@@ -125,6 +125,8 @@ public final class AppSettingsCatalog {
         new Setting("site.monitor.cert-inventory-report.enabled",    "monitoring", Type.BOOL),
         new Setting("site.monitor.cert-inventory-report.recipients", "monitoring", Type.STRING),
         new Setting("site.monitor.cert-inventory-report.cc",         "monitoring", Type.STRING),
+        // Zamanlama CANLI: dinamik tetikleyici her hesaplamada bunu okur (yeniden başlatma yok).
+        new Setting("site.monitor.cert-inventory-report.cron",       "monitoring", Type.STRING),
         // Haftalık rapor sağlık skoru ağırlıkları (executive özet) — WeeklyScoreCalculator canlı okur.
         new Setting("site.monitor.weekly.score.weight-critical",  "weekly", Type.DOUBLE),
         new Setting("site.monitor.weekly.score.weight-expiring",  "weekly", Type.DOUBLE),
