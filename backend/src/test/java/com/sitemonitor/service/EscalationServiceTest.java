@@ -1547,6 +1547,72 @@ class EscalationServiceTest {
         ));
     }
 
+    // ── Envanter zenginleştirmesi: operasyonel bayraklar + değişiklik açıklaması maile taşınır ──
+
+    /** reNotify ile bir alarm gönderip e-posta katmanına geçen ctx'i yakalar. */
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> capturedCtx(String domain, String alertType, CertificateInventory inv) {
+        AlertEvent event = existingOpenAlert(domain, alertType, "WARNING", false);
+        event.setId(900L);
+        event.setTeamId(7L);
+        when(alertEventRepo.findById(900L)).thenReturn(Optional.of(event));
+        when(alertEventRepo.save(any())).thenAnswer(i -> i.getArgument(0));
+        // Global kontak: envanter kaydı OLMADIĞI senaryoda da alıcı kalsın (takım envanterden geliyor).
+        when(contactRepo.findByMinAlertLevelAndActiveTrue(anyString()))
+                .thenReturn(List.of(contact("ops@example.com", "MANAGER", "WARNING")));
+        when(inventoryRepo.findByDomain(domain)).thenReturn(Optional.ofNullable(inv));
+
+        Team team = new Team();
+        team.setId(7L);
+        team.setName("SY-Dijital");
+        team.setEmail("team@example.com");
+        when(teamRepo.findById(7L)).thenReturn(Optional.of(team));
+
+        service.reNotify(900L);
+
+        ArgumentCaptor<Map<String, Object>> ctx = ArgumentCaptor.forClass(Map.class);
+        verify(emailService).sendAlert(any(String[].class), anyString(), anyString(),
+                eq(domain), any(), any(), any(), ctx.capture());
+        return ctx.getValue();
+    }
+
+    private static CertificateInventory inventoryWithOps() {
+        CertificateInventory inv = new CertificateInventory();
+        inv.setTeamId(7L);
+        inv.setNetscaler(true);
+        inv.setWafEnabled(true);
+        inv.setInUse(true);
+        inv.setOpenshift(false);      // Hayır → maile girmemeli
+        inv.setChangeDescription("1. IISAdmins PFX'i alır.\n2. Netscaler ve WAF'ta güncellenir.");
+        return inv;
+    }
+
+    @Test
+    @DisplayName("sertifika alarmı: envanterin Evet bayrakları + değişiklik açıklaması ctx'e girer")
+    void certAlertCarriesInventoryContext() {
+        Map<String, Object> ctx = capturedCtx("inv.example.com", "EXPIRY", inventoryWithOps());
+
+        assertThat(ctx.get("inv_ops")).asInstanceOf(org.assertj.core.api.InstanceOfAssertFactories.LIST)
+                .containsExactly("Netscaler", "WAF'ta Var", "Kullanım Durumu");
+        assertThat(String.valueOf(ctx.get("inv_change_desc"))).contains("IISAdmins PFX'i alır");
+    }
+
+    @Test
+    @DisplayName("sertifika DIŞI alarm: envanter bağlamı eklenmez (yalnız sertifika maili zenginleşir)")
+    void nonCertAlertHasNoInventoryContext() {
+        Map<String, Object> ctx = capturedCtx("inv2.example.com", "ACCESSIBILITY", inventoryWithOps());
+
+        assertThat(ctx).doesNotContainKeys("inv_ops", "inv_change_desc");
+    }
+
+    @Test
+    @DisplayName("envanter kaydı yoksa sertifika maili eskisi gibi üretilir (anahtar eklenmez)")
+    void certAlertWithoutInventoryRecord() {
+        Map<String, Object> ctx = capturedCtx("noinv.example.com", "EXPIRY", null);
+
+        assertThat(ctx).doesNotContainKeys("inv_ops", "inv_change_desc");
+    }
+
     private AlertEvent existingOpenAlert(String domain, String type, String level, boolean acked) {
         AlertEvent e = new AlertEvent();
         e.setDomain(domain);

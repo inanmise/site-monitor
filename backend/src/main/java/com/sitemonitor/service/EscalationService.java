@@ -1344,6 +1344,18 @@ public class EscalationService {
         // Olay kimliği: e-postadaki "Olay detayını görüntüle / Olaya yorum yap" derin linklerini besler.
         // put (putIfAbsent DEĞİL): saklanmış eski bir anlık görüntüdeki bayat kimlik canlı olayı ezmesin.
         if (alertEventId != null) enrichedCtx.put("alert_event_id", alertEventId);
+        // Envanter bağlamı — YALNIZ sertifika alarmlarında. Sertifikayı kimin nasıl yenileyeceğini
+        // belirleyen operasyonel bayraklar (Netscaler/WAF/sunucuda değiştirilecek...) ve takımın kendi
+        // yazdığı değişiklik süreci maile taşınır; alarmı alan kişi envanteri açmadan ne yapacağını görür.
+        // Ek sorgu kabul edildi: alarm maili düşük hacimlidir ve findByDomain indeksli tekil okumadır.
+        if (EmailTemplateBuilder.isCert(alertType) && domain != null) {
+            inventoryRepo.findByDomain(domain).ifPresent(inv -> {
+                List<String> ops = CertificateInventoryOps.enabledLabels(inv);
+                if (!ops.isEmpty()) enrichedCtx.putIfAbsent("inv_ops", ops);
+                String desc = inv.getChangeDescription();
+                if (desc != null && !desc.isBlank()) enrichedCtx.putIfAbsent("inv_change_desc", desc);
+            });
+        }
         certContext = enrichedCtx;
 
         // 2. Subject — "[Site Monitor] SEVERITY · domain · özet" (executive format; EmailTemplateBuilder ile aynı severity etiketi)

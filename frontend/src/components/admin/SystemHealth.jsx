@@ -11,6 +11,7 @@ import DateTimeField from '../ui/DateTimeField.jsx'
 import DateTimeRangePicker from '../ui/DateTimeRangePicker.jsx'
 
 import UserBadge from '../ui/UserBadge.jsx'   // proje-geneli ortak kullanıcı rozeti (avatar + ad-soyad)
+import { mailPreviewSrcDoc, mailLogoVariant } from '../../utils/mailPreview.js'
 const LoginActivityChart = lazy(() => import('./LoginActivityChart.jsx'))   // recharts → tembel yükle (bundle hafif)
 const HttpMetricsExplorer = lazy(() => import('./HttpMetricsExplorer.jsx'))  // recharts → tembel yükle
 
@@ -2082,7 +2083,12 @@ export default function SystemHealth({ systemRole, globalAdmin = false, preFilte
             <div className="smtp-detail-body-label">{t('health.emailDetailBody')}</div>
             <iframe
               className="smtp-detail-iframe"
-              srcDoc={selectedLog.message ?? `<p style="color:#9ca3af;font-family:sans-serif">${t('health.emailDetailNoBody')}</p>`}
+              srcDoc={mailPreviewSrcDoc(
+                selectedLog.message ?? `<p style="color:#9ca3af;font-family:sans-serif">${t('health.emailDetailNoBody')}</p>`,
+                // Bu listede alarm SEVİYESİ taşınmıyor (yalnız trigger var) → CRITICAL mailler de
+                // "warning" logosuyla önizlenir. Renk yaklaşık, logonun görünmesi kesin.
+                { logoVariant: mailLogoVariant({ trigger: selectedLog.trigger }) },
+              )}
               sandbox=""
               title={selectedLog.subject}
             />
@@ -2176,7 +2182,8 @@ export default function SystemHealth({ systemRole, globalAdmin = false, preFilte
               </div>
             </div>
             <div className="smtp-detail-body-label">{t('health.emailDetailBody')}</div>
-            <iframe className="smtp-detail-iframe" srcDoc={waLogItem.html} sandbox="" title={waLogItem.subject} />
+            {/* Haftalık erişilebilirlik raporu daima "ok" logo varyantıyla gönderilir (varsayılan). */}
+            <iframe className="smtp-detail-iframe" srcDoc={mailPreviewSrcDoc(waLogItem.html)} sandbox="" title={waLogItem.subject} />
           </div>
         </div>
       )}

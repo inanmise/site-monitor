@@ -121,7 +121,9 @@ public class EmailTemplateBuilder {
     }
     private static boolean isPage(String t) { return "PAGE_DOWN".equals(t) || "PAGE_INTEGRITY".equals(t); }
     private static boolean isScripted(String t) { return "SCRIPTED_FAIL".equals(t); }
-    private static boolean isCert(String t) { return tabFor(t).equals("dashboard"); }
+    /** Sertifika alarmı mı (EXPIRY/REVOKED/MISMATCH/CHAIN_BROKEN — "dashboard" sekmesine düşen default dal).
+     *  Paket görünürlüğü: {@code EscalationService} envanter zenginleştirmesini aynı tanıma bağlar. */
+    static boolean isCert(String t) { return tabFor(t).equals("dashboard"); }
 
     /** Sayfa-bütünlüğü durum kodu → Türkçe etiket. */
     private static String pageStatusTr(String s) {
@@ -222,6 +224,11 @@ public class EmailTemplateBuilder {
           .append("<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' style='border-collapse:collapse'>")
           .append(rows)
           .append("</table></td></tr>")
+          // Envanter bağlamı — "Önerilen Aksiyon"dan ÖNCE: okuyucu önce sertifikanın nerede durduğunu
+          // (operasyonel bayraklar) ve takımın kendi yenileme sürecini görür, sonra genel aksiyon adımlarını.
+          // CTA butonu aksiyon kartının içinde olduğu için bu bloklar ondan sonra gelemez.
+          .append(opsSection(m))
+          .append(changeDescSection(m))
           // Önerilen Aksiyon — numaralı adımlar
           .append("<tr><td style='padding:18px 30px 4px'>")
           .append("<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' bgcolor='").append(SOFT).append("' style='background-color:").append(SOFT).append(";border:1px solid ").append(LINE).append(";border-radius:8px'>")
@@ -278,6 +285,17 @@ public class EmailTemplateBuilder {
         if (tl != null) sb.append(tl).append('\n');
         sb.append('\n');
         for (Row r : detailRows(m)) sb.append(r.label()).append(": ").append(r.text()).append('\n');
+        // HTML paritesi: envanter bölümleri metin sürümde de aynı sırayla yer alır.
+        List<String> ops = opsLabels(m.ctx());
+        if (!ops.isEmpty()) sb.append("\nOperasyonel Bilgiler: ").append(String.join(", ", ops)).append('\n');
+        String desc = m.ctx() == null ? null : strCtx(m.ctx(), "inv_change_desc");
+        if (desc != null && !desc.isBlank()) {
+            List<String> lines = descLines(desc);
+            if (!lines.isEmpty()) {
+                sb.append("\nDeğişiklik Açıklaması:\n");
+                for (String line : lines) sb.append(line).append('\n');
+            }
+        }
         sb.append('\n').append("Önerilen Aksiyon:").append('\n');
         String urgent = urgentLine(m, expiryIso);
         if (urgent != null) sb.append(urgent).append('\n');
@@ -701,6 +719,97 @@ public class EmailTemplateBuilder {
                 + "<div style='font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:" + MUTED + ";margin-bottom:5px'>Neden bu e-postayı aldınız?</div>"
                 + "<div style='font-size:13px;line-height:1.55;color:" + INK + "'>Bu bildirim " + teamPhrase
                 + " tanımlı bir izleme için gönderildi. Site Monitor otomatik bir izleme sistemidir; bildirim tercihleri için sistem yöneticinize başvurun.</div>"
+                + "</td></tr></table></td></tr>";
+    }
+
+    // ── Envanter bölümleri (yalnız sertifika alarmlarında, ctx doluysa) ───────
+
+    /** Değişiklik açıklamasında gösterilecek en fazla satır ve karakter — Gmail 102KB üstünü kırpar. */
+    private static final int DESC_MAX_LINES = 12;
+    private static final int DESC_MAX_CHARS = 1200;
+    private static final String DESC_TRUNC = "… tamamı için Site Monitor'de görüntüleyin";
+
+    /** ctx'teki {@code inv_ops} listesi (yalnız "Evet" olan operasyonel bayrakların etiketleri). */
+    private static List<String> opsLabels(Map<String, Object> ctx) {
+        if (ctx == null || !(ctx.get("inv_ops") instanceof List<?> raw)) return List.of();
+        List<String> out = new ArrayList<>();
+        for (Object o : raw) {
+            if (o != null && !o.toString().isBlank()) out.add(o.toString());
+        }
+        return out;
+    }
+
+    /**
+     * OPERASYONEL BİLGİLER — envanterde "Evet" işaretli bayraklar, iki kolonlu çip ızgarası.
+     * Çipler {@code span background} değil {@code td bgcolor} ile boyanır (Outlook kuralı).
+     * Veri yoksa "" döner → boş kutu render edilmez.
+     */
+    private static String opsSection(AlertMail m) {
+        List<String> labels = opsLabels(m.ctx());
+        if (labels.isEmpty()) return "";
+        StringBuilder grid = new StringBuilder();
+        for (int i = 0; i < labels.size(); i += 2) {
+            grid.append("<tr>").append(opsChipCell(labels.get(i)));
+            grid.append(i + 1 < labels.size() ? opsChipCell(labels.get(i + 1))
+                                              : "<td width='50%' style='padding:3px 0'>&nbsp;</td>");
+            grid.append("</tr>");
+        }
+        return card("Operasyonel Bilgiler",
+                "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0'>"
+                        + grid + "</table>");
+    }
+
+    private static String opsChipCell(String label) {
+        return "<td width='50%' valign='top' style='padding:3px 6px 3px 0'>"
+                + "<table role='presentation' cellpadding='0' cellspacing='0' border='0'><tr>"
+                + "<td bgcolor='" + PILL_BG + "' style='background-color:" + PILL_BG + ";border-radius:4px;"
+                + "padding:5px 10px;font-size:12.5px;font-weight:600;color:" + PILL_INK + ";white-space:nowrap'>"
+                + "✓&nbsp;" + esc(label) + "</td></tr></table></td>";
+    }
+
+    /**
+     * DEĞİŞİKLİK AÇIKLAMASI — takımın envantere yazdığı yenileme süreci.
+     * Metin uygulamada Markdown render edilir ({@code InventoryDetails.jsx}); e-postada BİLİNÇLİ olarak
+     * yorumlanmaz: kaçırılmış düz metin + {@code <br>} en güvenli (enjeksiyon yok, Outlook'ta kırılmaz)
+     * ve zaten "1." "2." diye yazılan numaralandırma görsel olarak aynı okunur.
+     */
+    private static String changeDescSection(AlertMail m) {
+        String desc = m.ctx() == null ? null : strCtx(m.ctx(), "inv_change_desc");
+        if (desc == null || desc.isBlank()) return "";
+        List<String> lines = descLines(desc);
+        if (lines.isEmpty()) return "";
+        StringBuilder body = new StringBuilder("<div style='font-size:13.5px;line-height:1.6;color:" + INK + "'>");
+        for (int i = 0; i < lines.size(); i++) {
+            if (i > 0) body.append("<br>");
+            body.append(esc(lines.get(i)));
+        }
+        body.append("</div>");
+        return card("Değişiklik Açıklaması", body.toString());
+    }
+
+    /** Boş satırları atar, satır ve karakter tavanını uygular; kırpıldıysa son satır uyarıdır. */
+    static List<String> descLines(String desc) {
+        List<String> out = new ArrayList<>();
+        int chars = 0;
+        boolean truncated = false;
+        for (String raw : desc.split("\\R")) {
+            String line = raw.strip();
+            if (line.isEmpty()) continue;
+            if (out.size() >= DESC_MAX_LINES || chars + line.length() > DESC_MAX_CHARS) { truncated = true; break; }
+            out.add(line);
+            chars += line.length();
+        }
+        if (truncated) out.add(DESC_TRUNC);
+        return out;
+    }
+
+    /** Ortak kart iskeleti — "Önerilen Aksiyon" / "Neden bu e-postayı aldınız?" ile aynı dil. */
+    private static String card(String title, String bodyHtml) {
+        return "<tr><td style='padding:14px 30px 0'>"
+                + "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' bgcolor='" + SOFT + "' style='background-color:" + SOFT + ";border:1px solid " + LINE + ";border-radius:8px'>"
+                + "<tr><td style='padding:14px 18px'>"
+                + "<div style='font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:" + MUTED + ";margin:0 0 9px'>" + esc(title) + "</div>"
+                + bodyHtml
                 + "</td></tr></table></td></tr>";
     }
 

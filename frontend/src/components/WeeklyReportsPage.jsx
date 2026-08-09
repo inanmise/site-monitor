@@ -20,6 +20,7 @@ import WeekDatePicker from './ui/WeekDatePicker.jsx'
 import { clipboardToMarkdownTable } from '../utils/pasteTable'
 import { downscaleImage } from '../utils/imageDownscale'
 import { isoWeekInfo, isEditableWeek, formatWeekRange } from '../utils/isoWeek'
+import { mailPreviewSrcDoc } from '../utils/mailPreview.js'
 
 /** Oturum kesintisi yedekleri için localStorage anahtar öneki. */
 const DRAFT_BACKUP_PREFIX = 'wr.draft.'
@@ -1587,7 +1588,7 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
                       </button>
                       {openMailBody === m.id && (
                         // allow-same-origin: görseller oturum çerezi ile yüklenir; script yok
-                        <iframe title={`mail-${m.id}`} srcDoc={m.body_html} sandbox="allow-same-origin"
+                        <iframe title={`mail-${m.id}`} srcDoc={mailPreviewSrcDoc(m.body_html)} sandbox="allow-same-origin"
                           style={{
                             width: '100%', height: 420, marginTop: 8,
                             border: '1px solid var(--border)', borderRadius: 8, background: '#f4f6f8',
@@ -1613,7 +1614,7 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
             style={{ maxWidth: 820, height: '85vh', display: 'flex', flexDirection: 'column' }}>
             <h3>{t('wr.previewTitle')}</h3>
             {/* allow-same-origin: görsellerin oturum çerezi ile yüklenebilmesi için; script yok */}
-            <iframe title="preview" srcDoc={previewHtml} sandbox="allow-same-origin"
+            <iframe title="preview" srcDoc={mailPreviewSrcDoc(previewHtml)} sandbox="allow-same-origin"
               style={{ flex: 1, border: '1px solid var(--border)', borderRadius: 8, background: '#f4f6f8' }} />
             <div className="modal-actions">
               <button className="btn btn-secondary" onClick={() => setPreviewHtml(null)}>{t('wr.close')}</button>

@@ -7,7 +7,7 @@ import PaginationBar from '../ui/PaginationBar.jsx'
 import { useUrlQuerySync, readUrlParam, readUrlInt } from '../../hooks/useUrlQuerySync.js'
 import { readPageSize, writePageSize } from '../../hooks/usePagination.js'
 import UserBadge from '../ui/UserBadge.jsx'
-import { mailPreviewSrcDoc, MAIL_PREVIEW_SANDBOX } from '../../utils/mailPreview.js'
+import { mailPreviewSrcDoc, mailLogoVariant, MAIL_PREVIEW_SANDBOX } from '../../utils/mailPreview.js'
 import {
   Check, ShieldAlert, TrendingUp, RefreshCcw, Bell, CheckCircle, AlertCircle,
   ChevronUp, ChevronDown, ChevronLeft, ChevronRight, Mail, MailX, Clock, Users, Calendar,
@@ -81,7 +81,7 @@ function EmailStatusBadge({ status }) {
   return <span className="nl-status nl-status-muted">{status}</span>
 }
 
-function NotifLogCard({ log: l }) {
+function NotifLogCard({ log: l, alertLevel }) {
   const t = useT()
   const locale = useDateLocale()
   const [open, setOpen] = useState(false)
@@ -161,7 +161,11 @@ function NotifLogCard({ log: l }) {
             {l.message && l.message.trimStart().startsWith('<') ? (
               <iframe
                 className="nl-message-iframe"
-                srcDoc={mailPreviewSrcDoc(l.message)}
+                srcDoc={mailPreviewSrcDoc(l.message, {
+                  // Gönderimde hangi logo varyantı iliştirildiyse önizlemede de o gösterilir
+                  // (çözülme mailleri daima "ok"). Bkz. mailLogoVariant.
+                  logoVariant: mailLogoVariant({ trigger: l.trigger, level: alertLevel }),
+                })}
                 sandbox={MAIL_PREVIEW_SANDBOX}
                 title={l.subject}
               />
@@ -258,7 +262,7 @@ function NotifyResultModal({ alertId, alertInfo, currentResult, onClose }) {
           )}
 
           {!loadingHistory && history.map((l, i) => (
-            <NotifLogCard key={l.id ?? i} log={l} />
+            <NotifLogCard key={l.id ?? i} log={l} alertLevel={alertInfo?.alert_level} />
           ))}
         </div>
 

@@ -70,6 +70,23 @@ class EmailPreviewHarnessTest {
         return m;
     }
 
+    /** Envanter zenginleştirmesi olan sertifika bağlamı (EscalationService bunu üretir). */
+    private Map<String, Object> inventoryCtx() {
+        Map<String, Object> m = ctx("https://www.akbank.com", null);
+        m.put("team_name", "SY-Dijital Bankacilik");
+        m.put("not_after", "2026-09-09T02:59:00Z");
+        m.put("issuer_cn", "DigiCert EV RSA CA G2");
+        m.put("subject", "CN=www.akbank.com");
+        m.put("fingerprint", "EB0B59B1AA31C0F5C2D8E4A76B93F1D0C4A85E2739BD61FA0C8E7B4D53B8DD8C3");
+        m.put("inv_ops", List.of("Netscaler", "WAF'ta Var", "Kullanım Durumu"));
+        m.put("inv_change_desc",
+                "1. Sertifika alım süreci IISAdmins tarafından yapılır. IISAdmins PFX halindeki sertifikayı "
+                + "AdcAdmins ve Güvenlik ekibi ile paylaşır.\n"
+                + "2. Değişiklik planlaması Servis Yönetimi tarafından ilgili ekiplerle koordineli yapılır.\n"
+                + "3. Sertifika Netscaler ve Waf da güncellenir.");
+        return m;
+    }
+
     /** DNS değişiklik postası — verilen eski/yeni değerlerle (fark tablosunu gözle kontrol için). */
     private String dnsPreview(List<String> oldValues, List<String> newValues) {
         Map<String, Object> m = ctx("example.com", null);
@@ -95,6 +112,10 @@ class EmailPreviewHarnessTest {
             write("cert-expiry-" + sev.toLowerCase(),
                     service.buildAlertEmailHtml("konu", "Sertifika süresi doluyor", "example.com", sev, "EXPIRY", 5, ctx("https://example.com", null)));
         }
+        // Envanter bölümleri (operasyonel çipler + değişiklik açıklaması) — gerçek prod verisine yakın
+        write("cert-expiry-inventory",
+                service.buildAlertEmailHtml("konu", "www.akbank.com adresindeki sertifikanın süresi 30 gün içinde doluyor.",
+                        "www.akbank.com", "MEDIUM", "EXPIRY", 30, inventoryCtx()));
         write("domain-expiry-critical",
                 service.buildAlertEmailHtml("konu", "Alan adı süresi doluyor", "example.com", "CRITICAL", "DOMAINMON_EXPIRY", 3, ctx("example.com", null)));
 
