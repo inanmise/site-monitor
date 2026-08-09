@@ -473,6 +473,18 @@ export const api = {
     getLoginAnomalyIncidents: (page = 0, size = 20) =>
       request(`/admin/login-anomaly/incidents?page=${page}&size=${size}`),
 
+    // Aylık sertifika envanteri raporu (Ayarlar → Envanter Raporu) — ayın son cuması 10:00
+    getCertInvReportStatus:  () => request('/admin/system/cert-inventory-report/status'),
+    getCertInvReportPreview: () => request('/admin/system/cert-inventory-report/preview'),
+    runCertInvReport:        () => request('/admin/system/cert-inventory-report/run', { method: 'POST' }),
+    sendCertInvReportTest:   (email) => request('/admin/system/cert-inventory-report/send-test', {
+      method: 'POST', body: JSON.stringify({ email }),
+    }),
+    getCertInvReportHistory: (limit = 24) => request(`/admin/system/cert-inventory-report/history?limit=${limit}`),
+    saveCertInvReportSettings: (values) => request('/admin/system/cert-inventory-report/settings', {
+      method: 'PUT', body: JSON.stringify(values),
+    }),
+
     // Haftalık erişilebilirlik e-postası (Ayarlar → Haftalık E-posta sayfası)
     getWeeklyAvailStatus: () => request('/admin/system/weekly-availability/status'),
     getWeeklyAvailPreview: (teamId, weekOffset) =>

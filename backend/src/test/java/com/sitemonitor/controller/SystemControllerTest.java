@@ -65,6 +65,12 @@ class SystemControllerTest {
     com.sitemonitor.service.WeeklyAvailabilityReportService weeklyAvailabilityReportService;
 
     @MockitoBean
+    com.sitemonitor.service.report.CertificateInventoryReportService certificateInventoryReportService;
+
+    @MockitoBean
+    com.sitemonitor.service.AppSettingsService appSettingsService;
+
+    @MockitoBean
     com.sitemonitor.service.AuditService auditService;
 
     @BeforeEach

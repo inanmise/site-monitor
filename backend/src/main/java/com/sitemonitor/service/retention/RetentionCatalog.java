@@ -188,6 +188,11 @@ public final class RetentionCatalog {
         age("weekly-availability", "weekly_availability_log", "created_at", "site.monitor.weekly-availability.retention-days",
                 1095, 180, false, DataClass.OPERATIONAL,
                 "Haftalık erişilebilirlik gönderim kaydı (takım × hafta). 3 yıl: yıllık karşılaştırma için."),
+        age("cert-inventory-report", "cert_inventory_report_log", "created_at",
+                "site.monitor.cert-inventory-report.retention-days",
+                730, 180, false, DataClass.OPERATIONAL,
+                "Aylık envanter raporu gönderim kaydı (yıl × ay). Kaç kayıt/kaç bulgu vardı bilgisini "
+                + "taşır; hijyen trendinin yıllar arası karşılaştırması için 2 yıl."),
         age("cert-note-revisions", "certificate_note_revisions", "edited_at", "site.monitor.cert-note-revision.retention-days",
                 730, 180, false, DataClass.PERSONAL,
                 "Sertifika notu düzeltme geçmişi — her düzenlemede +1 satır, hiç silinmiyordu. Notun kendisi korunur."),
