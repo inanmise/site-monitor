@@ -15,7 +15,7 @@ import { useEffect, useRef } from 'react'
  */
 
 /** Sekme değişince App.handleTabChange'in temizlediği sayfa-durumu paramları (tek doğruluk kaynağı). */
-export const PAGE_STATE_PARAMS = ['group', 'team', 'q', 'stat', 'sort', 'page', 'ps', 'monitor', 'range', 'mtab', 'domain', 'incident']
+export const PAGE_STATE_PARAMS = ['group', 'team', 'q', 'stat', 'sort', 'page', 'ps', 'monitor', 'range', 'mtab', 'domain', 'incident', 'sec']
 
 /** Mount'ta URL'den string param okur (useState initializer'ında kullanılır — flicker yok). */
 export function readUrlParam(key, fallback = null) {

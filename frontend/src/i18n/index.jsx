@@ -1109,6 +1109,9 @@ export const TR = {
   'err.details':        'Teknik detay (hata mesajı)',
   'err.reported':       'Hata, sistem yöneticisine otomatik olarak bildirildi',
   'err.reportBtn':      'Sorun Bildir',
+  'err.reportFailed':   'Bu hata sistem yöneticisine kendiliğinden iletilemedi — lütfen "Sorun Bildir" ile gönderin.',
+  'err.copyRef':        'Referans numarasını kopyala',
+  'err.copied':         'Kopyalandı',
 
   'nav.reportIssue':    'Sorun Bildir',
 
@@ -1143,7 +1146,16 @@ export const TR = {
   'issue.screenshot':    'Ekran görüntüsü',
   'issue.msgRequired':   'Açıklama zorunludur',
   'issue.emailRequired': 'E-posta adresi zorunludur',
+  'issue.emailInvalid':  'Geçerli bir e-posta adresi girin',
   'issue.sendFail':      'Bildirim gönderilemedi — lütfen tekrar deneyin',
+  'issue.netError':      'AĞ',
+  'issue.catNone':       'Belirtmedim',
+  'issue.dropHint':      'Görselleri buraya sürükleyip bırakabilirsiniz (PNG/JPEG).',
+  'issue.imgRemove':     '{0}. ekran görüntüsünü kaldır',
+  'issue.imgZoom':       '{0}. ekran görüntüsünü büyüt',
+  'issue.imgTooMany':    'En fazla {0} görsel eklenebilir — fazlası alınmadı.',
+  'issue.imgUnsupported': '{0} dosya alınmadı: yalnız PNG ve JPEG destekleniyor.',
+  'issue.imgFailed':     '{0} dosya okunamadı ve eklenmedi.',
 
   'stat.total':      'Toplam',
   'stat.valid':      'Geçerli',
@@ -5135,6 +5147,11 @@ export const EN = {
   'err.details':        'Technical detail (error message)',
   'err.reported':       'The error was automatically reported to the system administrator',
   'err.reportBtn':      'Report a Problem',
+  // NOT: bu metin "automatically reported" alt dizisini İÇERMEMELİ — ErrorBoundary testi
+  // bildirim başarısızken o ifadenin ekranda OLMADIĞINI doğruluyor.
+  'err.reportFailed':   'We could not send this error report on your behalf — please use "Report a Problem".',
+  'err.copyRef':        'Copy reference number',
+  'err.copied':         'Copied',
 
   'nav.reportIssue':    'Report a Problem',
 
@@ -5169,7 +5186,16 @@ export const EN = {
   'issue.screenshot':    'Screenshot',
   'issue.msgRequired':   'Description is required',
   'issue.emailRequired': 'Email address is required',
+  'issue.emailInvalid':  'Enter a valid email address',
   'issue.sendFail':      'Could not send the report — please try again',
+  'issue.netError':      'NETWORK',
+  'issue.catNone':       'Not specified',
+  'issue.dropHint':      'You can drag and drop images here (PNG/JPEG).',
+  'issue.imgRemove':     'Remove screenshot {0}',
+  'issue.imgZoom':       'Enlarge screenshot {0}',
+  'issue.imgTooMany':    'At most {0} images can be attached — the rest were not added.',
+  'issue.imgUnsupported': '{0} file(s) were not added: only PNG and JPEG are supported.',
+  'issue.imgFailed':     '{0} file(s) could not be read and were not added.',
 
   'stat.total':      'Total',
   'stat.valid':      'Valid',
@@ -8058,7 +8084,30 @@ export const EN = {
 
 // ── Context ───────────────────────────────────────────────────────────────────
 
-const LangCtx = createContext(null)
+/**
+ * Context nesnesi globalThis'e SABİTLENİR. Vite HMR bu dosyayı bazen iki ayrı modül
+ * örneği olarak yükler (aynı yol, farklı `?t=` damgası); her örnek kendi createContext'ini
+ * üretirse A örneğinin Provider'ı B örneğinin useContext'inde görünmez ve tüketici null
+ * context'le karşılaşır. Tek bir paylaşılan nesne bu sınıfı tamamen kapatır.
+ *
+ * Varsayılan değer null DEĞİL, çalışan bir context. Gerekçe: hata yüzeyinin kendisi
+ * (ErrorBoundary → ErrorFallback) useT() çağırıyor. Provider yokken throw etmek —
+ * Toast/Dialog'daki desen — fallback'i patlatır ve onu yakalayacak bir üst sınır yoktur
+ * (main.jsx'te ErrorBoundary en içte), sonuç beyaz ekran olur. Bu yüzden burada
+ * UserDirectory'deki "çalışan varsayılan" deseni izleniyor: provider'sız da t() çalışır,
+ * yalnız toggle() işlevsizdir (hata ekranında dil değiştirme zaten yok).
+ */
+function storedLang() {
+  try { return localStorage.getItem(STORAGE_KEY) || 'en' } catch { return 'en' }
+}
+
+// Tek, kimliği sabit yedek nesne: hem context'in varsayılanı hem de useLanguage'in
+// provider yokken döndürdüğü değer. `lang` alanı OKUMA anında tazelenir — createContext
+// bir kez çalıştığı (globalThis'e sabitli) için burada dondurulmuş bir dil, dili sonradan
+// değiştiren bir oturumda bayat kalırdı.
+const FALLBACK_CTX = { lang: 'en', toggle: () => {}, fallback: true }
+
+const LangCtx = (globalThis.__smLangCtx ??= createContext(FALLBACK_CTX))
 
 export function LangProvider({ children }) {
   const [lang, setLang] = useState(() => localStorage.getItem(STORAGE_KEY) || 'en')
@@ -8078,8 +8127,20 @@ export function LangProvider({ children }) {
   return <LangCtx.Provider value={{ lang, toggle }}>{children}</LangCtx.Provider>
 }
 
+let warnedNoProvider = false
+
 export function useLanguage() {
-  return useContext(LangCtx)
+  const ctx = useContext(LangCtx)
+  if (!ctx || ctx.fallback) {
+    // Geliştirmede bir kez uyar: sessizce İngilizce'ye düşmek asıl hatayı gizlerdi.
+    if (import.meta.env?.DEV && !warnedNoProvider) {
+      warnedNoProvider = true
+      console.warn('[i18n] LangProvider bulunamadı — yedek sözlükle devam ediliyor.')
+    }
+    FALLBACK_CTX.lang = storedLang()
+    return FALLBACK_CTX
+  }
+  return ctx
 }
 
 export function useT() {
@@ -8087,7 +8148,10 @@ export function useT() {
   return useCallback((key, ...args) => {
     const dict = lang === 'en' ? EN : TR
     let str = dict[key] ?? key
-    args.forEach((arg, i) => { str = str.replace(`{${i}}`, String(arg ?? '')) })
+    // split/join bilinçli: String.replace string desende bile YALNIZ ilk eşleşmeyi değiştirir
+    // ve replacement içindeki $&, $1, $` dizilerini özel yorumlar — monitör adı "$&" içerirse
+    // çıktı bozulurdu. split/join her iki sınıfı da kapatır.
+    args.forEach((arg, i) => { str = str.split(`{${i}}`).join(String(arg ?? '')) })
     return str
   }, [lang])
 }

@@ -1,11 +1,12 @@
 import { Link2 } from 'lucide-react'
 import { useT } from '../../i18n/index.jsx'
 import { useToast } from './Toast.jsx'
+import { copyText } from '../../utils/copyText.js'
 
 /**
  * "Bağlantıyı Kopyala" — adres çubuğundaki URL zaten her an güncel (useUrlQuerySync);
- * bu buton yalnız kopyalar ve toast gösterir. Clipboard API yoksa/reddederse geçici
- * textarea + execCommand fallback'i dener.
+ * bu buton yalnız kopyalar ve toast gösterir. Kopyalama kademeleri utils/copyText'te
+ * (clipboard API → textarea+execCommand → başarısız); burada yalnız geri bildirim var.
  */
 export default function CopyLinkButton({ className = 'btn btn-secondary btn-sm', iconOnly = false }) {
   const t = useT()
@@ -13,23 +14,8 @@ export default function CopyLinkButton({ className = 'btn btn-secondary btn-sm',
 
   async function copy() {
     const url = window.location.href
-    try {
-      await navigator.clipboard.writeText(url)
-      toast.success(t('share.copied'))
-      return
-    } catch { /* http origin / izin yok → fallback */ }
-    try {
-      const ta = document.createElement('textarea')
-      ta.value = url
-      ta.style.position = 'fixed'
-      ta.style.opacity = '0'
-      document.body.appendChild(ta)
-      ta.select()
-      const ok = document.execCommand('copy')
-      document.body.removeChild(ta)
-      if (ok) { toast.success(t('share.copied')); return }
-    } catch { /* execCommand da yok */ }
-    toast.error(url)   // son çare: URL'i göster, kullanıcı elle kopyalar
+    if (await copyText(url)) toast.success(t('share.copied'))
+    else toast.error(url)   // son çare: URL'i göster, kullanıcı elle kopyalar
   }
 
   return (

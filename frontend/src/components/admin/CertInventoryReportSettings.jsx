@@ -1,9 +1,13 @@
 import { useState, useEffect, useCallback } from 'react'
-import { CalendarClock, Send, Eye, PlayCircle, Save, X } from 'lucide-react'
+import { CalendarClock, Send, Eye, PlayCircle, Save } from 'lucide-react'
 import { api } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
 import { useToast } from '../ui/Toast.jsx'
 import { Spinner, LoadingBlock } from '../ui/Progress.jsx'
+import AlertBanner from '../ui/AlertBanner.jsx'
+import Field from '../ui/Field.jsx'
+import StatusBlock from '../ui/StatusBlock.jsx'
+import ModalShell from '../ui/ModalShell.jsx'
 import { mailPreviewSrcDoc, MAIL_PREVIEW_SANDBOX } from '../../utils/mailPreview.js'
 
 const WEEKDAYS = [
@@ -165,69 +169,78 @@ export default function CertInventoryReportSettings() {
       <p className="section-desc">{t('cir.desc')}</p>
 
       {/* ── Ana anahtar ── */}
-      <label className="wa-toggle">
+      <label className="cir-toggle">
         <input type="checkbox" checked={!!status.enabled} onChange={e => toggleEnabled(e.target.checked)} />
         <span>{t('cir.enabled')}</span>
       </label>
-      {!status.enabled && <div className="alert-msg alert-msg--warn">{t('cir.disabledNote')}</div>}
+      {!status.enabled && <AlertBanner tone="warning">{t('cir.disabledNote')}</AlertBanner>}
       {status.enabled && noRecipients && (
-        <div className="alert-msg alert-msg--warn">{t('cir.noRecipientsNote')}</div>
+        <AlertBanner tone="warning">{t('cir.noRecipientsNote')}</AlertBanner>
       )}
 
       {/* ── Zamanlama (canlı düzenlenebilir) ── */}
-      <div className="wa-schedule">
+      <div className="cir-schedule">
         <CalendarClock size={15} />
         <span>{t('cir.scheduleLabel', cronLabel(cron, t))}</span>
         {status.next_run && <strong>{t('cir.nextRun', status.next_run)}</strong>}
       </div>
+      {/* Alanlar Field ile kuruluyor: buradaki <label>'ların hiçbiri htmlFor taşımıyor ve
+          kontrolü sarmıyordu, yani ekran okuyucu için alanların adı yoktu; ipuçları da
+          aria-describedby ile bağlı değildi. */}
       <div className="cir-schedule-grid">
-        <div className="form-group">
-          <label>{t('cir.dayRule')}</label>
-          <select className="input" value={rule.kind}
-            onChange={e => applyRule({ ...rule, kind: e.target.value })}>
-            <option value="lastWeekday">{t('cir.ruleLastWeekday')}</option>
-            <option value="dayOfMonth">{t('cir.ruleDayOfMonth')}</option>
-            <option value="custom">{t('cir.ruleCustom')}</option>
-          </select>
-        </div>
-        {rule.kind === 'lastWeekday' && (
-          <div className="form-group">
-            <label>{t('cir.weekday')}</label>
-            <select className="input" value={rule.weekday}
-              onChange={e => applyRule({ ...rule, weekday: e.target.value })}>
-              {WEEKDAYS.map(d => <option key={d.v} value={d.v}>{t(d.k)}</option>)}
+        <Field label={t('cir.dayRule')}>
+          {({ id }) => (
+            <select id={id} className="input" value={rule.kind}
+              onChange={e => applyRule({ ...rule, kind: e.target.value })}>
+              <option value="lastWeekday">{t('cir.ruleLastWeekday')}</option>
+              <option value="dayOfMonth">{t('cir.ruleDayOfMonth')}</option>
+              <option value="custom">{t('cir.ruleCustom')}</option>
             </select>
-          </div>
+          )}
+        </Field>
+        {rule.kind === 'lastWeekday' && (
+          <Field label={t('cir.weekday')}>
+            {({ id }) => (
+              <select id={id} className="input" value={rule.weekday}
+                onChange={e => applyRule({ ...rule, weekday: e.target.value })}>
+                {WEEKDAYS.map(d => <option key={d.v} value={d.v}>{t(d.k)}</option>)}
+              </select>
+            )}
+          </Field>
         )}
         {rule.kind === 'dayOfMonth' && (
-          <div className="form-group">
-            <label>{t('cir.dayOfMonth')}</label>
-            <input className="input" type="number" min="1" max="28" value={rule.day}
-              onChange={e => applyRule({ ...rule, day: e.target.value })} />
-            <span className="hint">{t('cir.dayOfMonthHint')}</span>
-          </div>
+          <Field label={t('cir.dayOfMonth')} hint={t('cir.dayOfMonthHint')}>
+            {({ id, describedBy }) => (
+              <input id={id} aria-describedby={describedBy} className="input"
+                type="number" min="1" max="28" value={rule.day}
+                onChange={e => applyRule({ ...rule, day: e.target.value })} />
+            )}
+          </Field>
         )}
         {rule.kind !== 'custom' && (
-          <div className="form-group">
-            <label>{t('cir.time')}</label>
-            <input className="input" type="time" value={rule.time}
-              onChange={e => applyRule({ ...rule, time: e.target.value })} />
-          </div>
+          <Field label={t('cir.time')}>
+            {({ id }) => (
+              <input id={id} className="input" type="time" value={rule.time}
+                onChange={e => applyRule({ ...rule, time: e.target.value })} />
+            )}
+          </Field>
         )}
-        <div className="form-group">
-          <label>{t('cir.cronExpr')}</label>
-          <input className="input" value={cron}
-            onChange={e => { setCron(e.target.value); setRule(r => ({ ...r, kind: 'custom' })); setDirty(true) }} />
-          <span className="hint">{t('cir.cronHint')}</span>
-        </div>
+        <Field label={t('cir.cronExpr')} hint={t('cir.cronHint')}>
+          {({ id, describedBy }) => (
+            <input id={id} aria-describedby={describedBy} className="input" value={cron}
+              onChange={e => { setCron(e.target.value); setRule(r => ({ ...r, kind: 'custom' })); setDirty(true) }} />
+          )}
+        </Field>
       </div>
       {status.next_runs?.length > 0 && (
         <div className="hint">{t('cir.nextRuns')}: {status.next_runs.join(' · ')}</div>
       )}
 
       {/* ── Alıcılar: sahibi olan takımlardan OTOMATİK ── */}
-      <div className="form-group">
-        <label>{t('cir.autoRecipients')}</label>
+      {/* Kontrol yok, yalnız salt-okunur liste: <label> DEĞİL düz başlık kullanılıyor
+          (kontrolsüz label ekran okuyucuda sahipsiz kalır). */}
+      <div className="form-field">
+        <span className="form-field-label">{t('cir.autoRecipients')}</span>
         {/* Takım adı + adres: kaynağın envanterdeki sahiplik olduğu bakar bakmaz anlaşılsın. */}
         <div className="cir-auto-list">
           {(status.owner_recipients ?? []).length === 0
@@ -243,22 +256,24 @@ export default function CertInventoryReportSettings() {
         <span className="hint">{t('cir.autoRecipientsHint')}</span>
       </div>
       {(status.teams_without_email ?? []).length > 0 && (
-        <div className="alert-msg alert-msg--warn">
+        <AlertBanner tone="warning">
           {t('cir.teamsWithoutEmail', status.teams_without_email.join(', '))}
-        </div>
+        </AlertBanner>
       )}
 
-      <div className="form-group">
-        <label>{t('cir.recipients')}</label>
-        <input className="input" value={recipients} placeholder="pki@akbank.com"
-          onChange={e => { setRecipients(e.target.value); setDirty(true) }} />
-        <span className="hint">{t('cir.recipientsHint')}</span>
-      </div>
-      <div className="form-group">
-        <label>{t('cir.cc')}</label>
-        <input className="input" value={cc} placeholder=""
-          onChange={e => { setCc(e.target.value); setDirty(true) }} />
-      </div>
+      <Field label={t('cir.recipients')} hint={t('cir.recipientsHint')}>
+        {({ id, describedBy }) => (
+          <input id={id} aria-describedby={describedBy} className="input"
+            value={recipients} placeholder="pki@akbank.com"
+            onChange={e => { setRecipients(e.target.value); setDirty(true) }} />
+        )}
+      </Field>
+      <Field label={t('cir.cc')}>
+        {({ id }) => (
+          <input id={id} className="input" value={cc} placeholder=""
+            onChange={e => { setCc(e.target.value); setDirty(true) }} />
+        )}
+      </Field>
       <div className="ldap-actions">
         <button className="btn btn-primary" onClick={saveRecipients} disabled={!dirty || saving} aria-busy={saving}>
           {saving ? <Spinner size={15} inline decorative /> : <Save size={15} />}
@@ -280,7 +295,7 @@ export default function CertInventoryReportSettings() {
       </div>
 
       {/* ── Test gönderimi ── */}
-      <div className="wa-test">
+      <div className="cir-test">
         <input className="input" type="email" value={testEmail} placeholder={t('cir.testPlaceholder')}
           onChange={e => setTestEmail(e.target.value)} />
         <button className="btn btn-secondary" onClick={sendTest}
@@ -291,15 +306,15 @@ export default function CertInventoryReportSettings() {
       </div>
 
       {result && (
-        <div className="alert-msg">
+        <AlertBanner tone="success">
           {t('cir.resultLine', result.rows ?? 0, result.findings ?? 0, result.status ?? '')}
-        </div>
+        </AlertBanner>
       )}
 
       {/* ── Gönderim arşivi ── */}
-      <h4 className="wa-history-title">{t('cir.historyTitle')}</h4>
+      <h4 className="cir-history-title">{t('cir.historyTitle')}</h4>
       {!history ? <LoadingBlock label={t('settings.loading')} size={16} />
-        : history.length === 0 ? <div className="empty-state">{t('cir.historyEmpty')}</div> : (
+        : history.length === 0 ? <StatusBlock title={t('cir.historyEmpty')} /> : (
         <table className="health-dbtable">
           <thead>
             <tr>
@@ -330,24 +345,21 @@ export default function CertInventoryReportSettings() {
       )}
 
       {/* ── Önizleme penceresi ── */}
-      {viewer && (
-        <div className="modal-overlay" onClick={() => setViewer(null)}>
-          <div className="modal-box modal-wide" onClick={e => e.stopPropagation()}
-            style={{ maxWidth: 900, height: '88vh', display: 'flex', flexDirection: 'column' }}>
-            <div className="modal-icon-hdr modal-icon-hdr--user">
-              <div className="modal-icon-hdr-badge"><Eye size={20} /></div>
-              <h3>{t('cir.previewTitle')}</h3>
-              <button className="modal-close-x" onClick={() => setViewer(null)} aria-label="close"><X size={16} /></button>
-            </div>
-            <iframe title="cert-inventory-preview" srcDoc={mailPreviewSrcDoc(viewer)}
-              sandbox={MAIL_PREVIEW_SANDBOX}
-              style={{ flex: 1, border: '1px solid var(--border)', borderRadius: 8, background: '#f4f6f8' }} />
-            <div className="modal-actions">
-              <button className="btn btn-secondary" onClick={() => setViewer(null)}>{t('cir.close')}</button>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* ModalShell'e taşındı: eskiden role="dialog"/Escape/odak yönetimi yoktu ve kapatma
+          butonu App.css'te HİÇ tanımlı olmayan .modal-close-x sınıfını kullanıyordu
+          (aria-label'ı da çevrilmemiş sabit "close" idi). */}
+      <ModalShell
+        open={!!viewer}
+        onClose={() => setViewer(null)}
+        title={t('cir.previewTitle')}
+        icon={Eye}
+        closeLabel={t('cir.close')}
+        size="lg"
+        footer={<button className="btn btn-secondary" onClick={() => setViewer(null)}>{t('cir.close')}</button>}
+      >
+        <iframe title="cert-inventory-preview" srcDoc={mailPreviewSrcDoc(viewer || '')}
+          sandbox={MAIL_PREVIEW_SANDBOX} className="cir-preview-frame" />
+      </ModalShell>
     </div>
   )
 }

@@ -32,22 +32,41 @@ describe('i18n parity (TR ↔ EN)', () => {
   it('placeholder counts match between TR and EN', () => {
     // If a TR key uses {0} and {1}, the EN counterpart must too (otherwise
     // formatting is silently lossy and user-visible text loses substitutions).
+    //
+    // Çokluk kümesi (multiset) karşılaştırılır, benzersiz küme DEĞİL: t() artık split/join
+    // ile TÜM tekrarları doldurduğu için TR'de iki kez, EN'de bir kez geçen bir {0} gerçek
+    // bir çeviri farkıdır (bir dilde bilgi eksik kalır). Set kullanan eski sürüm bunu
+    // yakalamıyordu.
     function placeholders(str) {
-      if (typeof str !== 'string') return new Set()
-      const matches = str.match(/\{\d+\}/g) || []
-      return new Set(matches)
+      if (typeof str !== 'string') return []
+      return (str.match(/\{\d+\}/g) || []).sort()
     }
     const mismatches = []
     for (const key of Object.keys(TR)) {
       if (!(key in EN)) continue
-      const trSet = placeholders(TR[key])
-      const enSet = placeholders(EN[key])
-      const trArr = [...trSet].sort()
-      const enArr = [...enSet].sort()
+      const trArr = placeholders(TR[key])
+      const enArr = placeholders(EN[key])
       if (trArr.join(',') !== enArr.join(',')) {
         mismatches.push(`${key}: TR=${trArr.join(',') || '(none)'} EN=${enArr.join(',') || '(none)'}`)
       }
     }
     expect(mismatches, `Placeholder mismatch:\n  ${mismatches.join('\n  ')}`).toEqual([])
+  })
+
+  it('placeholder indices are contiguous from {0}', () => {
+    // t(key, a, b) argümanları 0'dan sırayla eşlenir; metin {0} ve {2} kullanıp {1}'i
+    // atlarsa ikinci argüman sessizce kaybolur ve üçüncüsü hiç yazılmaz.
+    const bad = []
+    for (const [dictName, dict] of [['TR', TR], ['EN', EN]]) {
+      for (const [key, value] of Object.entries(dict)) {
+        if (typeof value !== 'string') continue
+        const idx = [...new Set((value.match(/\{\d+\}/g) || []).map((p) => Number(p.slice(1, -1))))]
+          .sort((a, b) => a - b)
+        if (idx.length && idx.some((n, i) => n !== i)) {
+          bad.push(`${dictName} ${key}: {${idx.join('},{')}}`)
+        }
+      }
+    }
+    expect(bad, `Non-contiguous placeholder indices:\n  ${bad.join('\n  ')}`).toEqual([])
   })
 })

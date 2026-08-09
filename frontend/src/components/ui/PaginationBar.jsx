@@ -91,7 +91,9 @@ export default function PaginationBar({
   )
 
   return (
-    <div className={`pg-bar${compact ? ' pg-bar--compact' : ''}`}>
+    // .pgn-* öneki: .pg-bar, Progress.jsx'in <ProgressBar>'ıyla AYNI seçiciydi ve App.css'te
+    // sonra tanımlandığı için onu eziyordu (her ilerleme çubuğu istenmeyen flex+margin alıyordu).
+    <div className={`pgn-bar${compact ? ' pgn-bar--compact' : ''}`}>
       <div className="pg-sizer">
         <span className="pg-sizer-label">{t('pg.perPage')}</span>
         {sizeOptions.map(n => (

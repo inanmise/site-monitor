@@ -1,5 +1,6 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { useT } from '../../i18n/index.jsx'
+import { useUrlQuerySync, readUrlParam } from '../../hooks/useUrlQuerySync.js'
 import SmtpSettings from './SmtpSettings'
 import LdapSettings from './LdapSettings'
 import GeneralSettings from './GeneralSettings'
@@ -31,26 +32,73 @@ const SECTIONS = [
   { id: 'secrets', labelKey: 'settings.navSecrets' },
 ]
 
+const DEFAULT_SECTION = 'general'
+const SECTION_IDS = new Set(SECTIONS.map((s) => s.id))
+
+/** ?sec= yalnız bilinen bölüm anahtarlarını kabul eder (App.jsx'teki VALID_TABS deseni). */
+function initialSection() {
+  const s = readUrlParam('sec')
+  return s && SECTION_IDS.has(s) ? s : DEFAULT_SECTION
+}
+
 export default function AdminSettings() {
   const t = useT()
-  const [active, setActive] = useState('general')
+  const [active, setActive] = useState(initialSection)
+  const tabRefs = useRef({})
+
+  // Derin bağlantı: /?tab=settings&sec=ldap doğrudan LDAP bölümünü açar. Varsayılan bölümde
+  // param silinir (URL temiz kalır); yazma replaceState ile — sekmelerin pushState'i bozulmaz.
+  useUrlQuerySync({ sec: active === DEFAULT_SECTION ? null : active })
+
+  /**
+   * Klavye: oklar/Home/End yalnız ODAĞI taşır, seçimi DEĞİŞTİRMEZ (manuel aktivasyon).
+   * Otomatik aktivasyon (odak = seçim) her panelin mount'ta API çağırmasına yol açardı —
+   * 13 bölümü ok tuşuyla geçmek onlarca gereksiz istek üretirdi.
+   * Yatay oklar da dinleniyor: 760px altında menü yatay diziliyor.
+   */
+  function onKeyDown(e) {
+    const idx = SECTIONS.findIndex((s) => s.id === e.currentTarget.dataset.id)
+    let next = null
+    if (e.key === 'ArrowDown' || e.key === 'ArrowRight') next = (idx + 1) % SECTIONS.length
+    else if (e.key === 'ArrowUp' || e.key === 'ArrowLeft') next = (idx - 1 + SECTIONS.length) % SECTIONS.length
+    else if (e.key === 'Home') next = 0
+    else if (e.key === 'End') next = SECTIONS.length - 1
+    if (next == null) return
+    e.preventDefault()
+    tabRefs.current[SECTIONS[next].id]?.focus()
+  }
 
   return (
     <div className="settings-layout">
-      <aside className="settings-menu">
-        <div className="settings-menu-header">{t('settings.navHeader')}</div>
-        {SECTIONS.map((s) => (
-          <button
-            key={s.id}
-            className={`settings-menu-item${active === s.id ? ' active' : ''}`}
-            onClick={() => setActive(s.id)}
-          >
-            {t(s.labelKey)}
-          </button>
-        ))}
+      <aside className="settings-menu" role="tablist" aria-orientation="vertical"
+             aria-label={t('settings.navHeader')}>
+        <div className="settings-menu-header" aria-hidden="true">{t('settings.navHeader')}</div>
+        {SECTIONS.map((s) => {
+          const selected = active === s.id
+          return (
+            <button
+              key={s.id}
+              type="button"
+              role="tab"
+              id={`settings-tab-${s.id}`}
+              data-id={s.id}
+              ref={(el) => { tabRefs.current[s.id] = el }}
+              aria-selected={selected}
+              aria-controls="settings-panel"
+              // Roving tabindex: 13 bölüm Tab sırasını doldurmasın — gruba tek Tab ile girilir.
+              tabIndex={selected ? 0 : -1}
+              className={`settings-menu-item${selected ? ' active' : ''}`}
+              onClick={() => setActive(s.id)}
+              onKeyDown={onKeyDown}
+            >
+              {t(s.labelKey)}
+            </button>
+          )
+        })}
       </aside>
 
-      <section className="settings-pane">
+      <section className="settings-pane" role="tabpanel" id="settings-panel"
+               aria-labelledby={`settings-tab-${active}`} tabIndex={0}>
         {active === 'general' && <GeneralSettings />}
         {active === 'branding' && <BrandingSettings />}
         {active === 'monitorgroups' && <MonitorGroups />}

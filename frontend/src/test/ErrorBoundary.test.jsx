@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { render, screen, fireEvent } from './test-utils.jsx'
+import { render as rawRender } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor } from './test-utils.jsx'
 import ErrorBoundary from '../components/ErrorBoundary.jsx'
 
 function Bomb() {
@@ -100,5 +101,53 @@ describe('ErrorBoundary', () => {
     expect(screen.getByText(/Something went wrong/i)).toBeDefined()
     // referans satırı yok; ekran hâlâ ayakta
     expect(screen.queryByText(/automatically reported/i)).toBeNull()
+    // ...ve kullanıcı bunu ARTIK ekrandan öğreniyor (eskiden üç sessiz catch vardı)
+    expect(await screen.findByText(/could not send this error report/i)).toBeDefined()
+  })
+
+  it('bildirim başarısızsa "Sorun Bildir" birincil eyleme yükselir', async () => {
+    fetchMock.mockRejectedValue(new Error('network down'))
+    render(<ErrorBoundary><Bomb /></ErrorBoundary>)
+    await screen.findByText(/could not send this error report/i)
+    expect(screen.getByRole('button', { name: /Report a Problem/i }).className).toContain('btn-primary')
+    expect(screen.getByRole('button', { name: /Reload/i }).className).not.toContain('btn-primary')
+  })
+
+  it('sunucu 500 dönerse de başarısız sayılır (sessizce yutulmaz)', async () => {
+    fetchMock.mockResolvedValue({ ok: false, status: 500, json: async () => ({}) })
+    render(<ErrorBoundary><Bomb /></ErrorBoundary>)
+    expect(await screen.findByText(/could not send this error report/i)).toBeDefined()
+  })
+
+  it('ekranda TEK bir alert bulunur (uyarı banner\'ı status rolünde)', async () => {
+    fetchMock.mockRejectedValue(new Error('network down'))
+    render(<ErrorBoundary><Bomb /></ErrorBoundary>)
+    await screen.findByText(/could not send this error report/i)
+    expect(screen.getAllByRole('alert').length).toBe(1)
+  })
+
+  it('referans numarası kopyalanabilir', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    Object.defineProperty(navigator, 'clipboard', { writable: true, configurable: true, value: { writeText } })
+    render(<ErrorBoundary><Bomb /></ErrorBoundary>)
+    await screen.findByText('LIR-2026-000077')
+    fireEvent.click(screen.getByRole('button', { name: /Copy reference number/i }))
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith('LIR-2026-000077'))
+  })
+
+  it('bildirim gövdesi appVersion ve screenSize taşır', () => {
+    render(<ErrorBoundary><Bomb /></ErrorBoundary>)
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body)
+    expect(body).toHaveProperty('appVersion')
+    expect(body.screenSize).toMatch(/^\d+x\d+$/)
+    // Sunucu userAgent'i HTTP başlığından okuyor — istemci beyanı gönderilmez
+    expect(body).not.toHaveProperty('userAgent')
+  })
+
+  it('LangProvider OLMADAN da fallback render olur (çökme yüzeyi kendi patlamaz)', () => {
+    // Tetikleyici olayın uçtan-uca regresyonu: HMR çift-modülünde useT() null context
+    // görüyordu; hata yüzeyi bu hook'a bağlı olduğu için throw etmek beyaz ekran demekti.
+    expect(() => rawRender(<ErrorBoundary><Bomb /></ErrorBoundary>)).not.toThrow()
+    expect(screen.getByText(/Something went wrong/i)).toBeDefined()
   })
 })
