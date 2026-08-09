@@ -2,7 +2,11 @@ import { createContext, useContext, useState, useEffect, useCallback } from 'rea
 
 const STORAGE_KEY = 'site-monitor-theme'
 
-const ThemeCtx = createContext(null)
+// Context nesnesi globalThis'e sabitlenir ve varsayılanı çalışır durumdadır —
+// gerekçesi i18n/index.jsx'teki LangCtx yorumunda (HMR çift-modülü + hata yüzeyi).
+const FALLBACK_THEME_CTX = { theme: 'light', toggle: () => {}, fallback: true }
+
+const ThemeCtx = (globalThis.__smThemeCtx ??= createContext(FALLBACK_THEME_CTX))
 
 export function ThemeProvider({ children }) {
   const [theme, setTheme] = useState(() => {
@@ -27,5 +31,5 @@ export function ThemeProvider({ children }) {
 }
 
 export function useTheme() {
-  return useContext(ThemeCtx)
+  return useContext(ThemeCtx) ?? FALLBACK_THEME_CTX
 }

@@ -2,61 +2,79 @@ import { Component, useState } from 'react'
 import { AlertOctagon, Bug } from 'lucide-react'
 import { useT } from '../i18n/index.jsx'
 import IssueReportModal from './IssueReportModal.jsx'
+import StatusBlock from './ui/StatusBlock.jsx'
+import AlertBanner from './ui/AlertBanner.jsx'
+import CopyableRef from './ui/CopyableRef.jsx'
 
-function ErrorFallback({ onReload, errorText, reportRef }) {
+/**
+ * Çökme ekranı. İki kural bu yüzeyi diğerlerinden ayırır:
+ *
+ * 1) Kendisi ASLA patlamamalı — bunu yakalayacak bir üst sınır yok (main.jsx'te ErrorBoundary
+ *    en içte), patlarsa kullanıcı beyaz ekran görür. Bu yüzden burada kullanılan her şey
+ *    provider'sız da çalışır: useT çalışan varsayılana düşer, CopyableRef toast kullanmaz.
+ * 2) DÜRÜST olmalı — otomatik bildirim gitmediyse bunu söylemeli. Eskiden üç sessiz catch
+ *    vardı ve kullanıcı "bildirildi" satırının yokluğundan durumu çıkarmak zorundaydı.
+ *
+ * Ekranda TEK bir role="alert" bulunur (kök blok). Bildirim uyarısı role="status" taşır:
+ * iki alert ekran okuyucuda araya girer, ayrıca getByRole('alert') sorguları çoğullaşırdı.
+ */
+function ErrorFallback({ onReload, errorText, reportRef, reportState }) {
   const t = useT()
   const [reportOpen, setReportOpen] = useState(false)
+  const reportFailed = reportState === 'failed'
+
   return (
-    <div
-      className="empty-state"
+    <StatusBlock
+      tone="danger"
       role="alert"
-      style={{ color: 'var(--danger)' }}
+      icon={AlertOctagon}
+      title={t('err.title')}
+      description={t('err.detail')}
+      actions={
+        <>
+          {/* Bildirim gidemediyse kullanıcının yapabileceği tek şey elle bildirmek —
+              o buton öne çıkar, yenileme ikincil kalır. */}
+          <button type="button" className={reportFailed ? 'btn' : 'btn btn-primary'} onClick={onReload}>
+            {t('err.reload')}
+          </button>
+          {/* Otomatik bildirim gittiyse bu buton AYNI kayda kullanıcı bağlamı ekler
+              (linkedReference ile bağlanır — mükerrer çökme kaydı AÇILMAZ). */}
+          <button type="button" className={reportFailed ? 'btn btn-primary' : 'btn'}
+                  onClick={() => setReportOpen(true)}>
+            <Bug size={15} style={{ marginRight: 6 }} />
+            {t('err.reportBtn')}
+          </button>
+        </>
+      }
     >
-      <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 12 }}>
-        <AlertOctagon size={36} />
-      </div>
-      <div style={{ fontSize: '1.25em', fontWeight: 600, marginBottom: 8 }}>
-        {t('err.title')}
-      </div>
-      <div style={{ marginBottom: 18, color: 'var(--text-muted, #555)' }}>
-        {t('err.detail')}
-      </div>
-      <div style={{ display: 'flex', gap: 8, justifyContent: 'center' }}>
-        <button type="button" className="btn btn-primary" onClick={onReload}>
-          {t('err.reload')}
-        </button>
-        {/* Otomatik bildirim zaten gitti; bu buton AYNI kayda kullanıcı bağlamı ekler (linkedReference
-            ile bağlanır — mükerrer çökme kaydı AÇILMAZ, ikisi yönetim ekranında yan yana görünür). */}
-        <button type="button" className="btn" onClick={() => setReportOpen(true)}>
-          <Bug size={15} style={{ marginRight: 6 }} />
-          {t('err.reportBtn')}
-        </button>
-      </div>
       <IssueReportModal open={reportOpen} onClose={() => setReportOpen(false)}
                         errorText={errorText} linkedReference={reportRef} />
-      {reportRef && (
-        // Otomatik bildirim başarılıysa referans no göster — kullanıcı "yöneticiye ilettim mi?" diye uğraşmasın.
-        <div style={{ marginTop: 14, fontSize: 13, color: 'var(--text-muted, #555)' }}>
-          {t('err.reported')} · <strong>{reportRef}</strong>
+
+      {reportState === 'sent' && (
+        // Bildirim başarılı — kullanıcı "yöneticiye ilettim mi?" diye uğraşmasın.
+        // Referans kopyalanabilir: çökmüş bir ekrandan not almanın tek pratik yolu.
+        <div className="eb-reported">
+          {t('err.reported')}
+          {reportRef && (
+            <> · <CopyableRef value={reportRef} copyLabel={t('err.copyRef')} copiedLabel={t('err.copied')} /></>
+          )}
         </div>
       )}
+
+      {reportFailed && (
+        <div className="eb-report-failed">
+          <AlertBanner tone="warning" role="status">{t('err.reportFailed')}</AlertBanner>
+        </div>
+      )}
+
       {errorText && (
         // Gerçek hata mesajı + component stack'i göster (devtools açmadan tanı) — kopyalanabilir.
-        <details style={{ marginTop: 18, textAlign: 'left', maxWidth: 720, marginInline: 'auto' }}>
-          <summary style={{ cursor: 'pointer', color: 'var(--text-muted, #555)', fontWeight: 600 }}>
-            {t('err.details')}
-          </summary>
-          <pre
-            style={{
-              marginTop: 8, padding: 12, borderRadius: 8,
-              background: 'var(--surface-2, #f5f5f5)', color: 'var(--text, #333)',
-              fontSize: 12, whiteSpace: 'pre-wrap', wordBreak: 'break-word',
-              maxHeight: 320, overflow: 'auto',
-            }}
-          >{errorText}</pre>
+        <details className="eb-details">
+          <summary className="eb-details-summary">{t('err.details')}</summary>
+          <pre className="eb-pre">{errorText}</pre>
         </details>
       )}
-    </div>
+    </StatusBlock>
   )
 }
 
@@ -78,7 +96,11 @@ const REPORT_SIGS_KEY = 'eb-reported-sigs'
 const MAX_REPORTS_PER_SESSION = 3
 
 export default class ErrorBoundary extends Component {
-  state = { hasError: false, errorText: '', reportRef: '' }
+  // reportState: 'idle' | 'sending' | 'sent' | 'failed'
+  // 'idle' = bildirim hiç denenmedi (chunk hatası, dedupe ya da oturum limiti). Kullanıcıya
+  // "bunu zaten bildirdik" demek gürültü olurdu; yalnız gerçekten denenip BAŞARISIZ olan
+  // durumda uyarı gösterilir.
+  state = { hasError: false, errorText: '', reportRef: '', reportState: 'idle' }
 
   static getDerivedStateFromError(error) {
     const msg = error?.stack || (error?.message ? `${error.name}: ${error.message}` : String(error))
@@ -118,22 +140,38 @@ export default class ErrorBoundary extends Component {
     try { sessionStorage.setItem(REPORT_SIGS_KEY, JSON.stringify([...sigs, sig])) } catch { /* yoksay */ }
     const errorText = [error?.stack || String(error), componentStack ? `\nComponent stack:${componentStack}` : '']
       .join('').slice(0, 10000)
+    this.setState({ reportState: 'sending' })
     try {
       // api/client bilinçli kullanılmıyor: 401-redirect mantığı çökme anında araya girmesin diye çıplak fetch.
       fetch('/api/client-error-report', {
         method: 'POST',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ errorText, url: window.location.href }),
+        body: JSON.stringify({
+          errorText,
+          url: window.location.href,
+          // Sunucu bu iki alanı zaten okuyor (ClientErrorController → ReportMeta) ama istemci
+          // hiç göndermiyordu, yani CLIENT_ERROR kayıtları sürüm/ekran bilgisi olmadan düşüyordu.
+          // Sözleşme değişikliği değil: uç @RequestBody Map alıyor, mevcut alanlar dolduruluyor.
+          // userAgent GÖNDERİLMEZ — sunucu onu HTTP başlığından okuyor.
+          appVersion: typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '',
+          screenSize: `${window.screen?.width || 0}x${window.screen?.height || 0}`,
+        }),
       })
         .then(r => (r.ok ? r.json() : null))
-        .then(d => { if (d?.reference) this.setState({ reportRef: d.reference }) })
-        .catch(() => { /* bildirim başarısız — fallback zaten görünüyor, sessiz geç */ })
-    } catch { /* yoksay */ }
+        .then(d => {
+          // Sunucu 4xx/5xx döndüyse d null'dır: bu da başarısızlıktır, sessizce yutulmaz.
+          if (!d) { this.setState({ reportState: 'failed' }); return }
+          this.setState({ reportState: 'sent', reportRef: d.reference || '' })
+        })
+        .catch(() => { this.setState({ reportState: 'failed' }) })
+    } catch {
+      this.setState({ reportState: 'failed' })
+    }
   }
 
   handleReload = () => {
-    this.setState({ hasError: false, errorText: '', reportRef: '' })
+    this.setState({ hasError: false, errorText: '', reportRef: '', reportState: 'idle' })
     if (typeof this.props.onReload === 'function') {
       this.props.onReload()
     } else {
@@ -143,7 +181,14 @@ export default class ErrorBoundary extends Component {
 
   render() {
     if (this.state.hasError) {
-      return <ErrorFallback onReload={this.handleReload} errorText={this.state.errorText} reportRef={this.state.reportRef} />
+      return (
+        <ErrorFallback
+          onReload={this.handleReload}
+          errorText={this.state.errorText}
+          reportRef={this.state.reportRef}
+          reportState={this.state.reportState}
+        />
+      )
     }
     return this.props.children
   }

@@ -1,8 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
-import { Bug, Camera, CheckCircle2, X } from 'lucide-react'
+import { Bug, Camera, CheckCircle2, Send, X, ZoomIn } from 'lucide-react'
 import { api, getRecentFailures } from '../api/client'
 import { useT, useLanguage } from '../i18n/index.jsx'
 import { downscaleImage } from '../utils/imageDownscale'
+import ModalShell from './ui/ModalShell.jsx'
+import AlertBanner from './ui/AlertBanner.jsx'
+import Field from './ui/Field.jsx'
+import SegmentedControl from './ui/SegmentedControl.jsx'
+import { Spinner } from './ui/Progress.jsx'
 
 /**
  * Oturum içi "Sorun Bildir" modalı — iki giriş noktasından açılır:
@@ -12,8 +17,14 @@ import { downscaleImage } from '../utils/imageDownscale'
  * Kural 1 — sistem bildiğini SORMAZ: kim/ne zaman/nerede/nasıl otomatik toplanır ve üstte READONLY
  * "otomatik eklenecekler" özeti olarak gösterilir (şeffaflık). Kullanıcıya yalnız bilinemeyecekler
  * sorulur: açıklama (zorunlu), önem (opsiyonel), ekran görüntüsü (opsiyonel) ve profilde yoksa e-posta.
+ *
+ * Kural 2 — hiçbir şey SESSİZCE düşmez: sınırı aşan, desteklenmeyen ya da okunamayan dosyalar
+ * sayılıp kullanıcıya söylenir. Eskiden fazlalıklar sessizce kırpılıyor, bozuk dosyalar boş
+ * catch'e düşüyordu; kullanıcı eklediğini sandığı görselin gitmediğini asla öğrenmiyordu.
  */
 const MAX_IMAGES = 5
+const ACCEPTED = ['image/png', 'image/jpeg']
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
 function browserLabel(ua) {
   if (!ua) return '—'
@@ -42,15 +53,20 @@ export default function IssueReportModal({ open, onClose, errorText = '', linked
   const [email, setEmail] = useState('')
   const [saveEmail, setSaveEmail] = useState(true)
   const [images, setImages] = useState([])          // data-URL listesi
+  const [imageNotice, setImageNotice] = useState('')
+  const [zoom, setZoom] = useState(null)            // büyütülen görselin indeksi
+  const [dragging, setDragging] = useState(false)
   const [sending, setSending] = useState(false)
-  const [error, setError] = useState('')
+  const [errors, setErrors] = useState({})          // alan-bazlı: { message, email }
+  const [formError, setFormError] = useState('')    // gönderim/sunucu hatası
   const [reference, setReference] = useState('')
   const fileRef = useRef(null)
 
   // Modal açılınca profili taze çek (e-posta kuralı: profilde varsa READONLY gösterilir, sorulmaz).
   useEffect(() => {
     if (!open) return
-    setMessage(''); setCategory(''); setEmail(''); setImages([]); setError(''); setReference('')
+    setMessage(''); setCategory(''); setEmail(''); setImages([]); setImageNotice('')
+    setZoom(null); setDragging(false); setErrors({}); setFormError(''); setReference('')
     api.getMe().then((res) => { if (res?.success) setMe(res) }).catch(() => {})
   }, [open])
 
@@ -65,22 +81,59 @@ export default function IssueReportModal({ open, onClose, errorText = '', linked
   const failed = getRecentFailures()
 
   async function addFiles(fileList) {
-    setError('')
-    const files = Array.from(fileList || []).slice(0, MAX_IMAGES - images.length)
+    const incoming = Array.from(fileList || [])
+    if (!incoming.length) return
+    const notices = []
+
+    // downscaleImage görsel OLMAYAN dosyayı olduğu gibi geri döndürüyor; giriş filtresi
+    // olmasa sürüklenen bir PDF sessizce data-URL olarak yüklenirdi.
+    const supported = incoming.filter((f) => ACCEPTED.includes(f.type))
+    const unsupported = incoming.length - supported.length
+    if (unsupported > 0) notices.push(t('issue.imgUnsupported', unsupported))
+
+    const room = Math.max(0, MAX_IMAGES - images.length)
+    const take = supported.slice(0, room)
+    if (supported.length > take.length) notices.push(t('issue.imgTooMany', MAX_IMAGES))
+
     const urls = []
-    for (const f of files) {
+    let unreadable = 0
+    for (const f of take) {
       try {
         const small = await downscaleImage(f)
         urls.push(await fileToDataUrl(small))
-      } catch { /* bozuk dosya → atla */ }
+      } catch { unreadable += 1 }
     }
-    setImages((prev) => [...prev, ...urls].slice(0, MAX_IMAGES))
+    if (unreadable > 0) notices.push(t('issue.imgFailed', unreadable))
+
+    if (urls.length) setImages((prev) => [...prev, ...urls].slice(0, MAX_IMAGES))
+    setImageNotice(notices.join(' '))
+  }
+
+  function removeImage(index) {
+    setImages((prev) => prev.filter((_, i) => i !== index))
+    setImageNotice('')
+  }
+
+  function onDrop(e) {
+    e.preventDefault()
+    setDragging(false)
+    addFiles(e.dataTransfer?.files)
+  }
+
+  function validate() {
+    const next = {}
+    if (!message.trim()) next.message = t('issue.msgRequired')
+    if (!profileEmail) {
+      if (!email.trim()) next.email = t('issue.emailRequired')
+      else if (!EMAIL_RE.test(email.trim())) next.email = t('issue.emailInvalid')
+    }
+    setErrors(next)
+    return Object.keys(next).length === 0
   }
 
   async function submit() {
-    setError('')
-    if (!message.trim()) { setError(t('issue.msgRequired')); return }
-    if (!profileEmail && !email.trim()) { setError(t('issue.emailRequired')); return }
+    setFormError('')
+    if (!validate()) return
     setSending(true)
     try {
       const res = await api.sendIssueReport({
@@ -102,10 +155,10 @@ export default function IssueReportModal({ open, onClose, errorText = '', linked
       if (res?.success) {
         setReference(res.reference || '')
       } else {
-        setError(res?.error || t('issue.sendFail'))
+        setFormError(res?.error || t('issue.sendFail'))
       }
     } catch {
-      setError(t('issue.sendFail'))
+      setFormError(t('issue.sendFail'))
     } finally {
       setSending(false)
     }
@@ -121,57 +174,66 @@ export default function IssueReportModal({ open, onClose, errorText = '', linked
     [t('issue.autoTheme'),   `${theme} · ${lang.toUpperCase()}`],
   ]
 
-  return (
-    <div className="modal-overlay" role="dialog" aria-modal="true" aria-label={t('issue.title')}
-         onClick={(e) => { if (e.target === e.currentTarget && !sending) onClose() }}>
-      <div className="modal-content" style={{ maxWidth: 560, padding: 24 }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
-          <h3 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
-            <Bug size={18} /> {t('issue.title')}
-          </h3>
-          <button type="button" className="btn btn-ghost" onClick={onClose} aria-label={t('issue.close')} disabled={sending}>
-            <X size={18} />
-          </button>
-        </div>
+  const footer = reference
+    ? <button type="button" className="btn btn-primary" onClick={onClose}>{t('issue.close')}</button>
+    : (
+      <>
+        <button type="button" className="btn" onClick={onClose} disabled={sending}>{t('issue.cancel')}</button>
+        <button type="button" className="btn btn-primary" onClick={submit} disabled={sending} aria-busy={sending}>
+          {sending ? <Spinner size={15} inline decorative /> : <Send size={15} />}
+          {sending ? t('issue.sending') : t('issue.submit')}
+        </button>
+      </>
+    )
 
+  return (
+    <ModalShell
+      open={open}
+      onClose={onClose}
+      busy={sending}
+      title={t('issue.title')}
+      icon={Bug}
+      closeLabel={t('issue.close')}
+      size="md"
+      footer={footer}
+    >
+      {/* Dropzone dışına bırakılan dosya tarayıcıyı o dosyaya yönlendirir ve form kaybolur;
+          modal gövdesi genelinde yutuluyor. */}
+      <div
+        className="issue-root"
+        onDragOver={(e) => e.preventDefault()}
+        onDrop={(e) => e.preventDefault()}
+      >
         {reference ? (
-          <div style={{ textAlign: 'center', padding: '24px 8px' }}>
-            <CheckCircle2 size={36} style={{ color: 'var(--ok, #16a34a)' }} />
-            <div style={{ fontSize: '1.1em', fontWeight: 600, margin: '12px 0 6px' }}>{t('issue.thanks')}</div>
-            <div style={{ color: 'var(--text-muted, #555)', marginBottom: 16 }}>
-              {t('issue.refLabel')}: <strong>{reference}</strong>
-            </div>
-            <button type="button" className="btn btn-primary" onClick={onClose}>{t('issue.close')}</button>
+          <div className="issue-done" role="status">
+            <CheckCircle2 size={36} className="issue-done-icon" aria-hidden="true" />
+            <div className="issue-done-title">{t('issue.thanks')}</div>
+            <div className="issue-done-ref">{t('issue.refLabel')}: <strong>{reference}</strong></div>
           </div>
         ) : (
           <>
             {/* Otomatik eklenecekler — READONLY şeffaflık özeti (kural 1: bunlar kullanıcıya SORULMAZ). */}
-            <div style={{ border: '1px solid var(--border, #e5e7eb)', borderRadius: 10, padding: '10px 12px', marginBottom: 14 }}>
-              <div style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.05em',
-                            color: 'var(--text-muted, #6b7280)', marginBottom: 6 }}>
-                {t('issue.autoTitle')}
-              </div>
-              <table style={{ fontSize: 12.5, lineHeight: 1.7, borderCollapse: 'collapse' }}>
+            <div className="issue-auto">
+              <div className="issue-auto-hdr">{t('issue.autoTitle')}</div>
+              <table className="issue-auto-table">
                 <tbody>
                   {autoRows.map(([k, v]) => (
                     <tr key={k}>
-                      <td style={{ color: 'var(--text-muted, #6b7280)', paddingRight: 10, whiteSpace: 'nowrap', verticalAlign: 'top' }}>{k}</td>
-                      <td style={{ wordBreak: 'break-all' }}>{v}</td>
+                      <th scope="row" className="issue-auto-k">{k}</th>
+                      <td className="issue-auto-v">{v}</td>
                     </tr>
                   ))}
                   {errorText && (
                     <tr>
-                      <td style={{ color: 'var(--text-muted, #6b7280)', paddingRight: 10, verticalAlign: 'top' }}>{t('issue.autoError')}</td>
-                      <td style={{ fontFamily: 'monospace', fontSize: 11.5, wordBreak: 'break-all' }}>
-                        {errorText.split('\n')[0].slice(0, 120)}
-                      </td>
+                      <th scope="row" className="issue-auto-k">{t('issue.autoError')}</th>
+                      <td className="issue-auto-v issue-auto-mono">{errorText.split('\n')[0].slice(0, 120)}</td>
                     </tr>
                   )}
                   {failed.length > 0 && (
                     <tr>
-                      <td style={{ color: 'var(--text-muted, #6b7280)', paddingRight: 10, verticalAlign: 'top' }}>{t('issue.autoFailedReqs')}</td>
-                      <td style={{ fontFamily: 'monospace', fontSize: 11.5 }}>
-                        {failed.map((f, i) => <div key={i}>{f.path} → {f.status || 'AĞ'}</div>)}
+                      <th scope="row" className="issue-auto-k">{t('issue.autoFailedReqs')}</th>
+                      <td className="issue-auto-v issue-auto-mono">
+                        {failed.map((f, i) => <div key={i}>{f.path} → {f.status || t('issue.netError')}</div>)}
                       </td>
                     </tr>
                   )}
@@ -180,69 +242,118 @@ export default function IssueReportModal({ open, onClose, errorText = '', linked
             </div>
 
             {/* Kullanıcıya sorulanlar — yalnız sistemin bilemeyecekleri. */}
-            <label style={{ display: 'block', fontWeight: 600, marginBottom: 6 }}>
-              {t('issue.describe')} <span className="req-star">*</span>
-            </label>
-            <textarea
-              value={message} onChange={(e) => setMessage(e.target.value)}
-              placeholder={t('issue.describePh')} rows={4}
-              style={{ width: '100%', resize: 'vertical', marginBottom: 12 }}
-            />
+            <Field label={t('issue.describe')} required error={errors.message}>
+              {({ id, describedBy, invalid }) => (
+                <textarea
+                  id={id} aria-describedby={describedBy} aria-invalid={invalid}
+                  className="input issue-textarea" rows={4}
+                  value={message} placeholder={t('issue.describePh')}
+                  onChange={(e) => setMessage(e.target.value)}
+                />
+              )}
+            </Field>
 
-            <label style={{ display: 'block', fontWeight: 600, marginBottom: 6 }}>{t('issue.category')}</label>
-            <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
-              {[['BLOCKER', t('issue.catBlocker')], ['ANNOYANCE', t('issue.catAnnoyance')], ['SUGGESTION', t('issue.catSuggestion')]].map(([val, label]) => (
-                <button key={val} type="button"
-                        className={category === val ? 'btn btn-primary' : 'btn'}
-                        onClick={() => setCategory(category === val ? '' : val)}>
-                  {label}
-                </button>
-              ))}
+            <div className="form-field">
+              <span className="form-field-label">{t('issue.category')}</span>
+              {/* SegmentedControl seçimi kaldırmaz; eski "tekrar tıkla → boşalt" davranışının
+                  yerine açık bir "Belirtmedim" seçeneği var. */}
+              <SegmentedControl
+                value={category}
+                onChange={setCategory}
+                ariaLabel={t('issue.category')}
+                options={[
+                  { value: '',           label: t('issue.catNone') },
+                  { value: 'BLOCKER',    label: t('issue.catBlocker') },
+                  { value: 'ANNOYANCE',  label: t('issue.catAnnoyance') },
+                  { value: 'SUGGESTION', label: t('issue.catSuggestion') },
+                ]}
+              />
             </div>
 
             {profileEmail ? (
-              <div style={{ fontSize: 13, color: 'var(--text-muted, #555)', marginBottom: 12 }}>
+              <div className="issue-email-known">
                 {t('issue.emailKnown')}: <strong>{profileEmail}</strong>
               </div>
             ) : (
               <>
-                <label style={{ display: 'block', fontWeight: 600, marginBottom: 6 }}>
-                  {t('issue.email')} <span className="req-star">*</span>
-                </label>
-                <input type="email" value={email} onChange={(e) => setEmail(e.target.value)}
-                       placeholder={t('issue.emailPh')} style={{ width: '100%', marginBottom: 8 }} />
-                <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, marginBottom: 12 }}>
+                <Field label={t('issue.email')} required error={errors.email}>
+                  {({ id, describedBy, invalid }) => (
+                    <input
+                      id={id} aria-describedby={describedBy} aria-invalid={invalid}
+                      type="email" className="input"
+                      value={email} placeholder={t('issue.emailPh')}
+                      onChange={(e) => setEmail(e.target.value)}
+                    />
+                  )}
+                </Field>
+                <label className="issue-checkbox">
                   <input type="checkbox" checked={saveEmail} onChange={(e) => setSaveEmail(e.target.checked)} />
                   {t('issue.emailSave')}
                 </label>
               </>
             )}
 
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16 }}>
-              <button type="button" className="btn" onClick={() => fileRef.current?.click()}
-                      disabled={images.length >= MAX_IMAGES}>
-                <Camera size={15} style={{ marginRight: 6 }} />
-                {t('issue.addImage')} ({images.length}/{MAX_IMAGES})
-              </button>
+            {/* Ekran görüntüleri: tıklayarak veya sürükleyip bırakarak. */}
+            <div
+              className={`issue-dropzone${dragging ? ' is-dragging' : ''}`}
+              onDragEnter={(e) => { e.preventDefault(); setDragging(true) }}
+              onDragOver={(e) => { e.preventDefault(); if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy' }}
+              onDragLeave={(e) => { if (e.currentTarget === e.target) setDragging(false) }}
+              onDrop={onDrop}
+            >
+              <div className="issue-dropzone-row">
+                <button type="button" className="btn btn-sm" onClick={() => fileRef.current?.click()}
+                        disabled={images.length >= MAX_IMAGES}>
+                  <Camera size={15} style={{ marginRight: 6 }} />
+                  {t('issue.addImage')} ({images.length}/{MAX_IMAGES})
+                </button>
+                <span className="hint">{t('issue.dropHint')}</span>
+              </div>
               <input ref={fileRef} type="file" accept="image/png,image/jpeg" multiple hidden
                      onChange={(e) => { addFiles(e.target.files); e.target.value = '' }} />
-              {images.map((img, i) => (
-                <img key={i} src={img} alt={`${t('issue.screenshot')} ${i + 1}`}
-                     style={{ height: 36, borderRadius: 6, border: '1px solid var(--border, #e5e7eb)' }} />
-              ))}
+              {images.length > 0 && (
+                <div className="issue-thumbs">
+                  {images.map((img, i) => (
+                    <div className="issue-thumb" key={i}>
+                      <button type="button" className="issue-thumb-open" onClick={() => setZoom(i)}
+                              aria-label={t('issue.imgZoom', i + 1)}>
+                        <img src={img} alt={`${t('issue.screenshot')} ${i + 1}`} />
+                        <ZoomIn size={13} className="issue-thumb-zoom" aria-hidden="true" />
+                      </button>
+                      <button type="button" className="issue-thumb-del" onClick={() => removeImage(i)}
+                              aria-label={t('issue.imgRemove', i + 1)}>
+                        <X size={12} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
 
-            {error && <div style={{ color: 'var(--danger, #dc2626)', fontSize: 13, marginBottom: 10 }} role="alert">{error}</div>}
+            {imageNotice && (
+              <AlertBanner tone="warning" onDismiss={() => setImageNotice('')} dismissLabel={t('issue.close')}>
+                {imageNotice}
+              </AlertBanner>
+            )}
 
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
-              <button type="button" className="btn" onClick={onClose} disabled={sending}>{t('issue.cancel')}</button>
-              <button type="button" className="btn btn-primary" onClick={submit} disabled={sending}>
-                {sending ? t('issue.sending') : t('issue.submit')}
-              </button>
-            </div>
+            {formError && <AlertBanner tone="danger" role="alert">{formError}</AlertBanner>}
           </>
         )}
+
+        {/* Görsel büyütme — iç içe kabuk: Escape ve odak iadesi kabuktan gelir. */}
+        {zoom !== null && images[zoom] && (
+          <ModalShell
+            open
+            onClose={() => setZoom(null)}
+            title={`${t('issue.screenshot')} ${zoom + 1}`}
+            closeLabel={t('issue.close')}
+            size="full"
+          >
+            <img className="issue-lightbox-img" src={images[zoom]}
+                 alt={`${t('issue.screenshot')} ${zoom + 1}`} />
+          </ModalShell>
+        )}
       </div>
-    </div>
+    </ModalShell>
   )
 }

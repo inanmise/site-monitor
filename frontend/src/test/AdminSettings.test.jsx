@@ -1,0 +1,111 @@
+import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { render, screen, fireEvent, waitFor } from './test-utils.jsx'
+
+// 13 alt bölümün TAMAMI stub'lanıyor — aksi halde her panel mount'ta gerçek API'ye gider.
+// (AdminPanel.test.jsx'teki desen.) Fabrikalar satır içi: vi.mock dosyanın en üstüne
+// hoist edilir, dışarıdaki bir yardımcıya erişemez.
+vi.mock('../components/admin/GeneralSettings', () => ({ default: () => <div data-testid="sec-general" /> }))
+vi.mock('../components/admin/BrandingSettings', () => ({ default: () => <div data-testid="sec-branding" /> }))
+vi.mock('../components/admin/MonitorGroups', () => ({ default: () => <div data-testid="sec-monitorgroups" /> }))
+vi.mock('../components/admin/SmtpSettings', () => ({ default: () => <div data-testid="sec-smtp" /> }))
+vi.mock('../components/admin/WeeklyAvailabilitySettings', () => ({ default: () => <div data-testid="sec-weeklyavail" /> }))
+vi.mock('../components/admin/CertInventoryReportSettings', () => ({ default: () => <div data-testid="sec-certinvreport" /> }))
+vi.mock('../components/admin/StormSettings', () => ({ default: () => <div data-testid="sec-storm" /> }))
+vi.mock('../components/admin/LoginAnomalySettings', () => ({ default: () => <div data-testid="sec-loginanomaly" /> }))
+vi.mock('../components/admin/LdapSettings', () => ({ default: () => <div data-testid="sec-ldap" /> }))
+vi.mock('../components/admin/DomainDiagnostics', () => ({ default: () => <div data-testid="sec-domaindiag" /> }))
+vi.mock('../components/admin/RetentionSettings', () => ({ default: () => <div data-testid="sec-retention" /> }))
+vi.mock('../components/admin/DatabaseInfo', () => ({ default: () => <div data-testid="sec-database" /> }))
+vi.mock('../components/admin/SecretTools', () => ({ default: () => <div data-testid="sec-secrets" /> }))
+// Emniyet kemeri: bir stub kaçarsa gerçek fetch yerine mock'a düşsün.
+vi.mock('../api/client', () => ({ api: {}, getRecentFailures: () => [] }))
+
+import AdminSettings from '../components/admin/AdminSettings.jsx'
+
+function setUrl(search) {
+  window.history.replaceState({}, '', search ? `/?${search}` : '/')
+}
+
+describe('AdminSettings — sekme semantiği, klavye ve derin bağlantı', () => {
+  beforeEach(() => setUrl(''))
+
+  it('ARIA sekme deseni: 13 tab, tekil aria-selected, panele bağlı', () => {
+    render(<AdminSettings />)
+    const tabs = screen.getAllByRole('tab')
+    expect(tabs).toHaveLength(13)
+    expect(tabs.filter(t => t.getAttribute('aria-selected') === 'true')).toHaveLength(1)
+
+    const panel = screen.getByRole('tabpanel')
+    const selected = tabs.find(t => t.getAttribute('aria-selected') === 'true')
+    expect(selected.getAttribute('aria-controls')).toBe(panel.id)
+    expect(panel.getAttribute('aria-labelledby')).toBe(selected.id)
+  })
+
+  it('roving tabindex: yalnız seçili sekme Tab sırasında', () => {
+    render(<AdminSettings />)
+    const tabs = screen.getAllByRole('tab')
+    expect(tabs.filter(t => t.getAttribute('tabindex') === '0')).toHaveLength(1)
+    expect(tabs.filter(t => t.getAttribute('tabindex') === '-1')).toHaveLength(12)
+  })
+
+  it('ok tuşu ODAĞI taşır ama paneli DEĞİŞTİRMEZ (manuel aktivasyon)', () => {
+    render(<AdminSettings />)
+    const tabs = screen.getAllByRole('tab')
+    tabs[0].focus()
+    fireEvent.keyDown(tabs[0], { key: 'ArrowDown' })
+
+    expect(document.activeElement).toBe(tabs[1])
+    expect(tabs[0].getAttribute('aria-selected')).toBe('true')   // seçim yerinde
+    expect(screen.getByTestId('sec-general')).toBeInTheDocument()
+    expect(screen.queryByTestId('sec-branding')).toBeNull()
+  })
+
+  it('Home/End odağı uçlara taşır, ArrowUp başta sona sarar', () => {
+    render(<AdminSettings />)
+    const tabs = screen.getAllByRole('tab')
+    tabs[0].focus()
+    fireEvent.keyDown(tabs[0], { key: 'End' })
+    expect(document.activeElement).toBe(tabs[12])
+    fireEvent.keyDown(tabs[12], { key: 'Home' })
+    expect(document.activeElement).toBe(tabs[0])
+    fireEvent.keyDown(tabs[0], { key: 'ArrowUp' })
+    expect(document.activeElement).toBe(tabs[12])
+  })
+
+  it('Enter/Space odaklı sekmeyi aktive eder', () => {
+    render(<AdminSettings />)
+    const tabs = screen.getAllByRole('tab')
+    // role="tab" olan <button> için Enter/Space zaten click üretir; sonucu doğruluyoruz.
+    fireEvent.click(tabs[8])   // ldap
+    expect(screen.getByTestId('sec-ldap')).toBeInTheDocument()
+    expect(tabs[8].getAttribute('aria-selected')).toBe('true')
+  })
+
+  it('?sec=ldap ile doğrudan LDAP bölümü açılır (derin bağlantı)', () => {
+    setUrl('tab=settings&sec=ldap')
+    render(<AdminSettings />)
+    expect(screen.getByTestId('sec-ldap')).toBeInTheDocument()
+    expect(screen.queryByTestId('sec-general')).toBeNull()
+  })
+
+  it('bilinmeyen ?sec= değeri varsayılana düşer (whitelist)', () => {
+    setUrl('sec=zzz-yok')
+    render(<AdminSettings />)
+    expect(screen.getByTestId('sec-general')).toBeInTheDocument()
+  })
+
+  it('bölüm değişince URL\'e ?sec= yazılır; varsayılana dönünce param SİLİNİR', async () => {
+    render(<AdminSettings />)
+    fireEvent.click(screen.getAllByRole('tab')[10])   // retention
+    await waitFor(() => expect(window.location.search).toContain('sec=retention'), { timeout: 2000 })
+
+    fireEvent.click(screen.getAllByRole('tab')[0])    // general = varsayılan
+    await waitFor(() => expect(window.location.search).not.toContain('sec='), { timeout: 2000 })
+  })
+
+  it('sekme geçişinde temizlenen paramlar arasında sec de var', async () => {
+    const { PAGE_STATE_PARAMS } = await import('../hooks/useUrlQuerySync.js')
+    // Aksi halde bayat bir ?sec=ldap başka sekmeye taşınırdı.
+    expect(PAGE_STATE_PARAMS).toContain('sec')
+  })
+})

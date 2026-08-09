@@ -71,7 +71,7 @@ describe('PaginationBar', () => {
 
   it('totalItems=0 → bar render edilmez; totalPages=1 → nav yok, sizer + kayıt bilgisi var', () => {
     const { container, unmount } = render(<PaginationBar {...base} totalItems={0} />)
-    expect(container.querySelector('.pg-bar')).toBeNull()
+    expect(container.querySelector('.pgn-bar')).toBeNull()
     unmount()
     render(<PaginationBar {...base} totalPages={1} page={1} totalItems={30} rangeStart={1} rangeEnd={30} />)
     expect(screen.queryByRole('button', { name: 'Previous' })).toBeNull()
@@ -81,7 +81,7 @@ describe('PaginationBar', () => {
 
   it('compact varyant: numara butonları yerine x/y göstergesi + temel kontroller', () => {
     const { container } = render(<PaginationBar {...base} compact />)
-    expect(container.querySelector('.pg-bar--compact')).not.toBeNull()
+    expect(container.querySelector('.pgn-bar--compact')).not.toBeNull()
     expect(screen.queryByRole('button', { name: 'Page 4' })).toBeNull()
     expect(screen.getByText('5 / 42')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Previous' })).toBeInTheDocument()
