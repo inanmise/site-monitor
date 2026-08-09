@@ -127,6 +127,29 @@ public class CertificateInventoryReportService {
                 .toList();
     }
 
+    /**
+     * Sahip takım → adres eşlemesi, ayarlar sayfasında gösterilmek üzere.
+     * Çıplak adres listesi "bu adresler nereye yazılı?" sorusunu doğuruyordu; takım adıyla
+     * birlikte gösterilince kaynağın envanterdeki sahiplik olduğu bakar bakmaz anlaşılır.
+     */
+    public List<Map<String, Object>> ownerTeamRecipients() {
+        var teamIds = new java.util.LinkedHashSet<Long>();
+        for (CertificateInventory r : inventoryRepo.findByDeletedAtIsNullOrderByDomainAsc()) {
+            if (r.getTeamId() != null) teamIds.add(r.getTeamId());
+            if (r.getUgTeamId() != null) teamIds.add(r.getUgTeamId());
+        }
+        if (teamIds.isEmpty()) return List.of();
+        return teamRepo.findAllById(teamIds).stream()
+                .filter(t -> t.getEmail() != null && !t.getEmail().isBlank())
+                .map(t -> {
+                    Map<String, Object> m = new LinkedHashMap<>();
+                    m.put("team", t.getName());
+                    m.put("email", t.getEmail().trim());
+                    return m;
+                })
+                .toList();
+    }
+
     /** Sahibi olup e-posta adresi TANIMSIZ takımlar — ayarlar sayfasında uyarı olarak gösterilir. */
     public List<String> ownerTeamsWithoutEmail() {
         var teamIds = new java.util.LinkedHashSet<Long>();
@@ -282,6 +305,7 @@ public class CertificateInventoryReportService {
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("enabled", isEnabled());
         m.put("owner_emails", ownerTeamEmails());                 // otomatik alıcılar (salt-okunur)
+        m.put("owner_recipients", ownerTeamRecipients());         // takım adıyla birlikte (kaynağı görünsün)
         m.put("teams_without_email", ownerTeamsWithoutEmail());   // uyarı: bu takımlara ulaşılamıyor
         m.put("extra_recipients", appSettings.getString(EXTRA_TO_KEY, ""));
         m.put("recipients", String.join(", ", recipients()));

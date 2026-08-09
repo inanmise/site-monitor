@@ -228,10 +228,17 @@ export default function CertInventoryReportSettings() {
       {/* ── Alıcılar: sahibi olan takımlardan OTOMATİK ── */}
       <div className="form-group">
         <label>{t('cir.autoRecipients')}</label>
+        {/* Takım adı + adres: kaynağın envanterdeki sahiplik olduğu bakar bakmaz anlaşılsın. */}
         <div className="cir-auto-list">
-          {(status.owner_emails ?? []).length === 0
+          {(status.owner_recipients ?? []).length === 0
             ? <span className="hint">{t('cir.autoRecipientsEmpty')}</span>
-            : (status.owner_emails ?? []).map(e => <span key={e} className="cir-chip">{e}</span>)}
+            : (status.owner_recipients ?? []).map(r => (
+                <span key={r.email} className="cir-chip">
+                  <strong className="cir-chip-team">{r.team}</strong>
+                  <span className="cir-chip-sep">·</span>
+                  {r.email}
+                </span>
+              ))}
         </div>
         <span className="hint">{t('cir.autoRecipientsHint')}</span>
       </div>
