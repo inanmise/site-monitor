@@ -20,6 +20,9 @@ public interface CertificateInventoryRepository extends JpaRepository<Certificat
     boolean existsByDomain(String domain);
     boolean existsByTeamIdAndActiveTrue(Long teamId);
     long countByActiveTrue();
+
+    /** Aylık envanter raporunun "Silinmiş" KPI'ı — soft-delete edilmiş kayıt sayısı. */
+    long countByDeletedAtIsNotNull();
     List<CertificateInventory> findByUgTeamIdAndActiveTrueOrderByDomainAsc(Long ugTeamId);
 
     // Faz 3b — çok-takım kapsamı (müdür/PO): teamId VEYA ugTeamId ∈ ids

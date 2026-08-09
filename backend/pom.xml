@@ -85,6 +85,14 @@
             <artifactId>commonmark-ext-task-list-items</artifactId>
             <version>0.24.0</version>
         </dependency>
+        <!-- Apache PDFBox — aylık sertifika envanteri raporunun PDF ekini SUNUCUDA üretir.
+             Apache-2.0 (kurumsal bağımlılık politikası için en temiz lisans); ekrandaki dışa
+             aktarım jsPDF ile tarayıcıda kalır, zamanlanmış mailde tarayıcı yok. -->
+        <dependency>
+            <groupId>org.apache.pdfbox</groupId>
+            <artifactId>pdfbox</artifactId>
+            <version>3.0.5</version>
+        </dependency>
         <!-- PostgreSQL for production (Kubernetes) -->
         <dependency>
             <groupId>org.postgresql</groupId>

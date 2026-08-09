@@ -81,6 +81,7 @@ BDDK/iç denetim süreleri esas alınmalıdır.
 | `domain_checks` | 180 gün | 30 g | `site.monitor.series.domain.retention-days` | `checked_at < ? AND id NOT IN (SELECT MAX(id) FROM domain_checks GROUP BY monitor_id) AND id NOT IN (SELECT …` | Alan adı kontrol serisi. İKİ baseline korunur: her monitörün en yeni satırı ve en yeni source<>'NONE' satırı. |
 | `network_outage_events` | 365 gün | 30 g | `site.monitor.network-outage.retention-days` | `detected_at < ?` | Ağ kesintisi olayları (nadir). |
 | `weekly_availability_log` | 1095 gün | 180 g | `site.monitor.weekly-availability.retention-days` | `created_at < ?` | Haftalık erişilebilirlik gönderim kaydı (takım × hafta). 3 yıl: yıllık karşılaştırma için. |
+| `cert_inventory_report_log` | 730 gün | 180 g | `site.monitor.cert-inventory-report.retention-days` | `created_at < ?` | Aylık envanter raporu gönderim kaydı (yıl × ay). Kaç kayıt/kaç bulgu vardı bilgisini taşır; hijyen trendinin yıllar arası karşılaştırması için 2 yıl. |
 | `alert_storms` | 365 gün | 90 g | `site.monitor.storm.retention-days` | `resolved = true AND resolved_at < ?` | Alarm fırtınası kayıtları. Yalnız çözülmüş fırtınalar silinir. |
 | `retention_run_item` | 180 gün | 30 g | `site.monitor.retention.run-history-retention-days` | `created_at < ?` | Gece temizliği çalışma detayı (tablo başına silinen satır). Ana kayıttan ÖNCE silinir. |
 | `retention_run` | 180 gün | 30 g | `site.monitor.retention.run-history-retention-days` | `started_at < ?` | Gece temizliği çalışma özeti — sağlık sinyali ve ekrandaki geçmiş buradan beslenir. |

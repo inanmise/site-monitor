@@ -7,6 +7,7 @@ import MonitorGroups from './MonitorGroups'
 import SecretTools from './SecretTools'
 import DatabaseInfo from './DatabaseInfo'
 import WeeklyAvailabilitySettings from './WeeklyAvailabilitySettings'
+import CertInventoryReportSettings from './CertInventoryReportSettings'
 import StormSettings from './StormSettings'
 import LoginAnomalySettings from './LoginAnomalySettings'
 import DomainDiagnostics from './DomainDiagnostics'
@@ -20,6 +21,7 @@ const SECTIONS = [
   { id: 'monitorgroups', labelKey: 'settings.navMonitorGroups' },
   { id: 'smtp', labelKey: 'settings.navSmtp' },
   { id: 'weeklyavail', labelKey: 'settings.navWeeklyAvail' },
+  { id: 'certinvreport', labelKey: 'settings.navCertInvReport' },
   { id: 'storm', labelKey: 'settings.navStorm' },
   { id: 'loginanomaly', labelKey: 'settings.navLoginAnomaly' },
   { id: 'ldap', labelKey: 'settings.navLdap' },
@@ -54,6 +56,7 @@ export default function AdminSettings() {
         {active === 'monitorgroups' && <MonitorGroups />}
         {active === 'smtp' && <SmtpSettings />}
         {active === 'weeklyavail' && <WeeklyAvailabilitySettings />}
+        {active === 'certinvreport' && <CertInventoryReportSettings />}
         {active === 'storm' && <StormSettings />}
         {active === 'loginanomaly' && <LoginAnomalySettings />}
         {active === 'ldap' && <LdapSettings />}

@@ -2303,8 +2303,8 @@ public class EmailNotificationService {
      * ÖNEMLİ: setText(html, true) addInline'dan ÖNCE çağrılmalıdır
      * (MimeMessageHelper related multipart sıralaması).
      */
-    /** Gönderen adres — haftalık rapor gönderim geçmişi kayıtları için. */
-    /* package */ String fromAddress() {
+    /** Gönderen adres — rapor gönderim geçmişi kayıtları için (haftalık + aylık envanter). */
+    public String fromAddress() {
         return currentFrom();
     }
 
@@ -2313,10 +2313,27 @@ public class EmailNotificationService {
         return sendHtml(to, cc, subject, html, inline, false);
     }
 
+    /**
+     * İNDİRİLEBİLİR dosya eki (inline görsel DEĞİL) — aylık envanter raporunun CSV/PDF ekleri.
+     * {@code InlineImage}'in simetriği: o gövdeye gömülür (cid:), bu ise ek olarak listelenir.
+     */
+    public record MailAttachment(String fileName, byte[] data, String contentType) { }
+
+    /** Dosya ekli HTML mail. Ek yoksa {@link #sendHtml(String[], String[], String, String, List)} ile aynıdır. */
+    public String sendHtmlWithAttachments(String[] to, String[] cc, String subject, String html,
+                                          List<InlineImage> inline, List<MailAttachment> attachments) {
+        return sendHtml(to, cc, subject, html, inline, false, attachments);
+    }
+
     /** {@code force=true}: mail mute'unu ({@code SmtpSettings.enabled=false}) atlar — login-issue gibi
      *  operasyonel bildirimler için. SMTP config eksikse gönderim yine de {@code FAILED} döner (SKIP değil). */
     public String sendHtml(String[] to, String[] cc, String subject, String html,
                            List<InlineImage> inline, boolean force) {
+        return sendHtml(to, cc, subject, html, inline, force, null);
+    }
+
+    public String sendHtml(String[] to, String[] cc, String subject, String html,
+                           List<InlineImage> inline, boolean force, List<MailAttachment> attachments) {
         if (!force && !isEnabled()) {
             log.info("⚠ Email devre dışı — TO={} CC={} | KONU={}",
                     Arrays.toString(to), Arrays.toString(cc != null ? cc : new String[0]), subject);
@@ -2342,6 +2359,13 @@ public class EmailNotificationService {
             // eki vermediyse, nötr "ok" logosu otomatik iliştirilir (15 sendHtml çağıranı tek tek
             // elden geçirmeden kırık-görsel riski kapanır).
             if (!brandAttached) BrandMailAssets.addInline(helper, html, "ok");
+            // Dosya ekleri EN SON: MimeMessageHelper sırası setText → addInline → addAttachment.
+            if (attachments != null) {
+                for (MailAttachment a : attachments) {
+                    if (a == null || a.data() == null || a.data().length == 0) continue;
+                    helper.addAttachment(a.fileName(), new ByteArrayResource(a.data()), a.contentType());
+                }
+            }
             return doSend(Arrays.toString(to), msg, 1);
         } catch (Exception e) {
             log.error("✗ HTML e-posta hazırlanamadı: TO={} | HATA={}", Arrays.toString(to), e.getMessage(), e);
@@ -2922,6 +2946,159 @@ public class EmailNotificationService {
             + "<!--[if mso]></td></tr></table><![endif]-->"
             + "</td></tr></table></body></html>";   // merkez td + dış tablo
     }
+
+    // ── Aylık sertifika envanteri raporu ─────────────────────────────────────
+
+    /** Rapor tablosunun bir satırı — kalan süre görünümü. */
+    public record InventoryReportRow(String domain, String teamName, Integer tier,
+                                     Integer daysRemaining, String notAfter, String status) { }
+
+    /** Hijyen bulgu grubu (InventoryHygieneService.Group'un mail-katmanı karşılığı). */
+    public record InventoryFindingGroup(String title, int total, List<String[]> samples, int hidden) { }
+
+    /**
+     * Aylık sertifika envanteri raporu — 850px "haftalık aile" düzeni.
+     * Sıra: marka barı → başlık → KPI bandı (Aktif/Pasif/Silinmiş/Toplam) → kalan süre tablosu
+     * → hijyen bulguları → ek notu → CTA → footer.
+     */
+    public String buildCertInventoryReportHtml(String monthLabel, Map<String, Integer> counts,
+                                               List<InventoryReportRow> rows,
+                                               List<InventoryFindingGroup> findings,
+                                               List<String> attachmentNames) {
+        String accent = "#1f3864";
+        String outerBg = "#eef2f7";
+        String generatedAt = java.time.ZonedDateTime.now(java.time.ZoneId.of("Europe/Istanbul"))
+                .format(java.time.format.DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm"));
+
+        String kpi = "<table width='100%' cellpadding='0' cellspacing='0' border='0'"
+            + " style='margin:4px 0 18px;border-collapse:separate;border-spacing:8px 0'><tr>"
+            + kpiCard("AKTİF", String.valueOf(counts.getOrDefault("active", 0)), "#16a34a", "#f0fdf4")
+            + kpiCard("PASİF", String.valueOf(counts.getOrDefault("passive", 0)), "#64748b", "#f8fafc")
+            + kpiCard("SİLİNMİŞ", String.valueOf(counts.getOrDefault("deleted", 0)), "#b45309", "#fffbeb")
+            + kpiCard("TOPLAM", String.valueOf(counts.getOrDefault("total", 0)), "#0f172a", "#f1f5f9")
+            + "</tr></table>";
+
+        StringBuilder body = new StringBuilder();
+        body.append("<tr>")
+            .append(thCell("Domain", "left")).append(thCell("Takım", "left")).append(thCell("Tier", "left"))
+            .append(thCell("Kalan Gün", "left")).append(thCell("Bitiş", "left")).append(thCell("Durum", "left"))
+            .append("</tr>");
+        for (InventoryReportRow r : rows) {
+            String color = daysColor(r.daysRemaining());
+            body.append("<tr>")
+                .append("<td style='padding:9px 13px;font-size:13px;font-weight:600;color:#0f172a'>").append(escHtml(r.domain())).append("</td>")
+                .append("<td style='padding:9px 13px;font-size:13px;color:#475569'>").append(escHtml(nzText(r.teamName()))).append("</td>")
+                .append("<td style='padding:9px 13px;font-size:13px;color:#475569;white-space:nowrap'>")
+                .append(r.tier() == null ? "—" : "T" + r.tier()).append("</td>")
+                .append("<td style='padding:9px 13px;font-size:13px;font-weight:700;color:").append(color).append(";white-space:nowrap'>")
+                .append(r.daysRemaining() == null ? "veri yok" : r.daysRemaining() + " gün").append("</td>")
+                .append("<td style='padding:9px 13px;font-size:13px;color:#475569;white-space:nowrap'>")
+                .append(escHtml(nzText(r.notAfter()))).append("</td>")
+                .append("<td style='padding:9px 13px;font-size:13px;color:#475569'>").append(escHtml(nzText(r.status()))).append("</td>")
+                .append("</tr>");
+        }
+        String table =
+            "<div style='margin:0 0 18px'>"
+            + "<table width='100%' cellpadding='0' cellspacing='0' border='0'><tr>"
+            + "<td bgcolor='" + accent + "' style='background:" + accent + ";color:#fff;border-radius:8px 8px 0 0;"
+            + "padding:9px 14px;font-size:13px;font-weight:800'>Sertifika Kalan Süreleri</td></tr></table>"
+            + "<table width='100%' cellpadding='0' cellspacing='0' border='0' style='border:1px solid #e2e8f0;"
+            + "border-top:none;border-radius:0 0 8px 8px;border-collapse:collapse'>" + body + "</table></div>";
+
+        StringBuilder hy = new StringBuilder();
+        if (findings == null || findings.isEmpty()) {
+            hy.append("<table width='100%' cellpadding='0' cellspacing='0' border='0'><tr>")
+              .append("<td bgcolor='#f0fdf4' style='background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;")
+              .append("padding:12px 14px;font-size:13px;color:#15803d;font-weight:700'>")
+              .append("✓ Envanterde eksik, hatalı veya güncel olmayan kayıt bulunmadı.</td></tr></table>");
+        } else {
+            for (InventoryFindingGroup g : findings) {
+                StringBuilder lines = new StringBuilder();
+                for (String[] s : g.samples()) {
+                    lines.append("<tr><td style='padding:6px 13px;font-size:13px;font-weight:600;color:#0f172a;")
+                         .append("border-top:1px solid #f1f5f9;white-space:nowrap'>").append(escHtml(s[0])).append("</td>")
+                         .append("<td style='padding:6px 13px;font-size:13px;color:#b45309;border-top:1px solid #f1f5f9'>")
+                         .append(escHtml(s[1])).append("</td></tr>");
+                }
+                if (g.hidden() > 0) {
+                    lines.append("<tr><td colspan='2' style='padding:6px 13px;font-size:12px;color:#94a3b8;")
+                         .append("border-top:1px solid #f1f5f9'>+").append(g.hidden())
+                         .append(" kayıt daha — tamamı ekteki dosyalarda</td></tr>");
+                }
+                hy.append(reportSection(g.title() + " (" + g.total() + ")",
+                        "<table width='100%' cellpadding='0' cellspacing='0' border='0' style='border-collapse:collapse'>"
+                        + lines + "</table>", "#b45309"));
+            }
+        }
+
+        String attachNote = (attachmentNames == null || attachmentNames.isEmpty()) ? ""
+            : "<table width='100%' cellpadding='0' cellspacing='0' border='0'><tr>"
+              + "<td bgcolor='#f8fafc' style='background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;"
+              + "padding:12px 14px;font-size:13px;color:#334155'>"
+              + "📎 Envanterin tamamı ektedir: <strong>" + escHtml(String.join("</strong>, <strong>", attachmentNames))
+              + "</strong></td></tr></table>";
+
+        String cta = ctaButton(appSettings.getString("site.monitor.app.base-url", appBaseUrl) + "/?tab=inventory",
+                "Sertifika Envanterini Görüntüle", accent);
+
+        return "<!DOCTYPE html><html lang='tr' xmlns:v='urn:schemas-microsoft-com:vml'"
+            + " xmlns:o='urn:schemas-microsoft-com:office:office'>"
+            + "<head><meta charset='UTF-8'>"
+            + "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+            + LIGHT_SCHEME_META
+            + "<meta http-equiv='X-UA-Compatible' content='IE=edge'>"
+            + "<!--[if mso]><style>table,td,div,p{font-family:'Segoe UI',Arial,sans-serif!important}</style><![endif]-->"
+            + "<style>@media only screen and (max-width:870px){"
+            + ".em-pad{padding:16px 0!important}.em-card{border-radius:0!important;width:100%!important}"
+            + ".em-body{padding:14px!important}}</style></head>"
+            + "<body bgcolor='" + outerBg + "' style='margin:0;padding:0;background:" + outerBg
+            + ";-webkit-text-size-adjust:100%;font-family:\"Segoe UI\",Tahoma,Arial,sans-serif'>"
+            + "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0'"
+            + " bgcolor='" + outerBg + "' style='background:" + outerBg + ";mso-table-lspace:0pt;mso-table-rspace:0pt'>"
+            + "<tr><td align='center' class='em-pad' bgcolor='" + outerBg + "' style='padding:24px 10px'>"
+            + "<!--[if mso]><table role='presentation' width='850' align='center' cellpadding='0' cellspacing='0' border='0'><tr><td><![endif]-->"
+            + "<table class='em-card' width='850' cellpadding='0' cellspacing='0' border='0'"
+            + " bgcolor='#ffffff' style='max-width:850px;width:100%;background:#ffffff;"
+            + "border:1px solid #d7dde5;border-radius:14px;overflow:hidden;box-shadow:0 8px 32px rgba(0,0,0,.10)'>"
+            + "<tr><td bgcolor='#ffffff' style='padding:0'>"
+            + brandBar()
+            + "<table width='100%' cellpadding='0' cellspacing='0' border='0'><tr>"
+            + "<td bgcolor='" + accent + "' style='background:" + accent + ";padding:22px 24px'>"
+            + "<div style='color:#aebed8;font-size:11px;font-weight:700;letter-spacing:.12em'>AYLIK SERTİFİKA ENVANTERİ</div>"
+            + "<div style='color:#ffffff;font-size:22px;font-weight:900;margin-top:10px;line-height:1.25'>Envanter Raporu</div>"
+            + "<div style='color:#dbe3ef;font-size:15px;font-weight:700;margin-top:8px'>" + escHtml(monthLabel) + "</div>"
+            + "</td></tr></table>"
+            + "<table width='100%' cellpadding='0' cellspacing='0' border='0' bgcolor='#ffffff'><tr>"
+            + "<td class='em-body' bgcolor='#ffffff' style='padding:22px 24px'>"
+            + "<p style='font-size:15px;color:#0f172a;margin:0 0 6px'><strong>Sayın Sertifika Ekibi,</strong></p>"
+            + "<p style='font-size:14px;color:#334155;line-height:1.7;margin:0 0 14px'>"
+            + "Aşağıda sertifika envanterinin <strong>" + escHtml(monthLabel) + "</strong> dönemi özeti yer almaktadır. "
+            + "Eksik, hatalı veya güncel olmayan kayıtlar varsa lütfen envanterden güncelleyiniz.</p>"
+            + kpi
+            + table
+            + hy
+            + attachNote
+            + "<div style='margin:18px 0 4px'>" + cta + "</div>"
+            + "<table width='100%' cellpadding='0' cellspacing='0'><tr>"
+            + "<td valign='top' style='border-top:1px solid #f1f5f9;padding-top:12px;font-size:11px;color:#94a3b8'>Site Monitor — Otomatik Aylık Envanter Raporu</td>"
+            + "<td align='right' valign='top' style='border-top:1px solid #f1f5f9;padding-top:12px;font-size:11px;color:#94a3b8'>Oluşturuldu: " + generatedAt + "</td></tr></table>"
+            + "</td></tr></table>"
+            + "</td></tr></table>"
+            + "<!--[if mso]></td></tr></table><![endif]-->"
+            + "</td></tr></table></body></html>";
+    }
+
+    /** Kalan güne göre renk — EmailTemplateBuilder.urgencyColor ile aynı skala. */
+    private static String daysColor(Integer days) {
+        if (days == null) return "#94a3b8";
+        if (days < 0) return "#7B241C";
+        if (days <= 7) return "#C0392B";
+        if (days <= 15) return "#CA6F1E";
+        if (days <= 30) return "#D68910";
+        return "#1E8449";
+    }
+
+    private static String nzText(String s) { return s == null || s.isBlank() ? "—" : s; }
 
     private String kpiCard(String label, String value, String valueColor, String bg) {
         return "<td width='25%' bgcolor='" + bg + "' style='background:" + bg + ";border:1px solid #e2e8f0;"

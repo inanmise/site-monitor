@@ -39,6 +39,8 @@ public class SystemController {
     private final RememberMeService     rememberMeService;
     private final PermissionService permissionService;
     private final WeeklyAvailabilityReportService weeklyAvailabilityReportService;
+    private final com.sitemonitor.service.report.CertificateInventoryReportService certificateInventoryReportService;
+    private final com.sitemonitor.service.AppSettingsService appSettingsService;
     private final AuditService auditService;
 
     private static final DateTimeFormatter ISO =
@@ -286,6 +288,94 @@ public class SystemController {
         auditService.recordAction("WEEKLY_AVAILABILITY_TOGGLE", session, "REPORT", "weekly-availability",
                 enabled ? "enabled" : "disabled", null);
         return ok(Map.of("data", Map.of("enabled", enabled)));
+    }
+
+    // ── Aylık sertifika envanteri raporu ──────────────────────────────────────
+    // Yetki: haftalık erişilebilirlik uçlarıyla AYNI (requireAdmin + system_health.actions).
+    // Yeni bir izin anahtarı eklenmedi — PermissionCatalog'da anahtar eklemek mevcut grant'leri
+    // yeniden seed'lemediği için ayrı bir anahtar sessizce "kimsede yok" durumuna düşerdi.
+
+    /** Admin: aylık envanter raporu durum kartı (aç/kapa, alıcılar, sonraki çalışma, son gönderim). */
+    @GetMapping("/cert-inventory-report/status")
+    public ResponseEntity<Map<String, Object>> certInventoryStatus(HttpSession session) {
+        requireAdmin(session);
+        permissionService.require(session, "system_health.actions", "execute");
+        return ok(Map.of("data", certificateInventoryReportService.status()));
+    }
+
+    /** Admin: raporu GÖNDERMEDEN önizle (gönderimle aynı üreticiden HTML). */
+    @GetMapping("/cert-inventory-report/preview")
+    public ResponseEntity<Map<String, Object>> certInventoryPreview(HttpSession session) {
+        requireAdmin(session);
+        permissionService.require(session, "system_health.actions", "execute");
+        return ok(Map.of("data", Map.of("html", certificateInventoryReportService.preview())));
+    }
+
+    /** Admin: raporu ŞİMDİ gönder (son cumayı beklemeden). force=true → idempotency atlanır. */
+    @PostMapping("/cert-inventory-report/run")
+    public ResponseEntity<Map<String, Object>> certInventoryRun(HttpSession session) {
+        requireAdmin(session);
+        permissionService.require(session, "system_health.actions", "execute");
+        var result = certificateInventoryReportService.sendMonthlyReport(true);
+        auditService.recordAction("CERT_INVENTORY_REPORT_RUN", session, "REPORT", "cert-inventory-report",
+                result.rows() + " kayıt · " + result.findings() + " bulgu", null);
+        return ok(Map.of("data", result));
+    }
+
+    /** Admin: raporu yalnız verilen test adresine gönder (aylık idempotency kaydı YAZILMAZ). */
+    @PostMapping("/cert-inventory-report/send-test")
+    public ResponseEntity<Map<String, Object>> certInventorySendTest(
+            @RequestBody Map<String, Object> body, HttpSession session) {
+        requireAdmin(session);
+        permissionService.require(session, "system_health.actions", "execute");
+        String email = body != null && body.get("email") != null ? body.get("email").toString().trim() : "";
+        if (!email.matches("^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$")) {
+            return ResponseEntity.badRequest().body(Map.of(
+                    "success", false, "error", "Geçerli bir e-posta adresi gerekli", "timestamp", now()));
+        }
+        var result = certificateInventoryReportService.sendTest(email);
+        boolean okStatus = result.status() == null || !result.status().startsWith("FAILED");
+        auditService.recordAction("CERT_INVENTORY_REPORT_TEST", session, "REPORT", "cert-inventory-report",
+                "test → " + email, null);
+        return ResponseEntity.ok(Map.of("success", okStatus, "data", result,
+                "message", result.status() == null ? "" : result.status(), "timestamp", now()));
+    }
+
+    /** Admin: aylık gönderim arşivi (yıl/ay, durum, kayıt ve bulgu sayısı). */
+    @GetMapping("/cert-inventory-report/history")
+    public ResponseEntity<Map<String, Object>> certInventoryHistory(
+            @RequestParam(defaultValue = "24") int limit, HttpSession session) {
+        requireAdmin(session);
+        permissionService.require(session, "system_health.actions", "execute");
+        return ok(Map.of("data", certificateInventoryReportService.history(limit)));
+    }
+
+    /** Admin: aylık raporu aç/kapa ve alıcıları güncelle. */
+    @PutMapping("/cert-inventory-report/settings")
+    public ResponseEntity<Map<String, Object>> certInventorySaveSettings(
+            @RequestBody Map<String, Object> body, HttpSession session) {
+        requireAdmin(session);
+        permissionService.require(session, "system_health.actions", "execute");
+        String actor = session != null ? (String) session.getAttribute("username") : null;
+        String who = actor != null ? actor : "admin";
+
+        Map<String, String> values = new java.util.LinkedHashMap<>();
+        if (body != null && body.containsKey("enabled")) {
+            values.put(com.sitemonitor.service.report.CertificateInventoryReportService.ENABLED_KEY,
+                    String.valueOf(Boolean.parseBoolean(String.valueOf(body.get("enabled")))));
+        }
+        if (body != null && body.containsKey("recipients")) {
+            values.put(com.sitemonitor.service.report.CertificateInventoryReportService.TO_KEY,
+                    String.valueOf(body.get("recipients")).trim());
+        }
+        if (body != null && body.containsKey("cc")) {
+            values.put(com.sitemonitor.service.report.CertificateInventoryReportService.CC_KEY,
+                    String.valueOf(body.get("cc")).trim());
+        }
+        if (!values.isEmpty()) appSettingsService.save(Map.of("values", values), who);
+        auditService.recordAction("CERT_INVENTORY_REPORT_SETTINGS", session, "REPORT", "cert-inventory-report",
+                String.join(", ", values.keySet()), null);
+        return ok(Map.of("data", certificateInventoryReportService.status()));
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────

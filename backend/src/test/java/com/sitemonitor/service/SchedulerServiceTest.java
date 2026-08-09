@@ -113,6 +113,7 @@ class SchedulerServiceTest {
     @Mock com.sitemonitor.repository.ScriptedMonitorRepository scriptedMonitorRepo;
     @Mock com.sitemonitor.repository.ScriptedCheckRepository scriptedCheckRepo;
     @Mock com.sitemonitor.service.retention.RetentionService retentionService;
+    @Mock com.sitemonitor.service.report.CertificateInventoryReportService certificateInventoryReportService;
 
     SchedulerService scheduler;
 
@@ -131,7 +132,8 @@ class SchedulerServiceTest {
                 failedLoginAnomalyIncidentService,
                 domainMonitorRepo, domainCheckRepo, domainCheckerService,
                 networkOutageRepo,
-                weeklyReportReminderService, weeklyAvailabilityReportService, incidentService, appSettings,
+                weeklyReportReminderService, weeklyAvailabilityReportService,
+                certificateInventoryReportService, incidentService, appSettings,
                 retentionService);
         ReflectionTestUtils.setField(scheduler, "certCheckExecutor", certCheckExecutor);
         ReflectionTestUtils.setField(scheduler, "domainExpiryRefreshService", domainExpiryRefreshService);

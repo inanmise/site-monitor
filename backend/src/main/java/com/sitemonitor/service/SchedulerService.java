@@ -125,6 +125,7 @@ public class SchedulerService {
 
     private final WeeklyReportReminderService weeklyReportReminderService;
     private final WeeklyAvailabilityReportService weeklyAvailabilityReportService;
+    private final com.sitemonitor.service.report.CertificateInventoryReportService certificateInventoryReportService;
 
     private final IncidentService incidentService;
 
@@ -1208,6 +1209,27 @@ public class SchedulerService {
             log.error("Haftalık erişilebilirlik raporu başarısız: {}", e.getMessage(), e);
         } finally {
             releaseSchedulerLock("weekly-availability");
+        }
+    }
+
+    /**
+     * AYLIK sertifika envanteri raporu — ayın SON CUMA günü 10:00 (Europe/Istanbul).
+     * Cron'daki {@code FRIL} = "ayın son cuması" (Spring CronExpression'ın L niteleyicisi);
+     * repodaki ilk L kullanımı olduğu için {@code CertInventoryReportCronTest} bunu doğrular.
+     * İdempotency servis içinde (yıl+ay kilidi) — kilit alınamasa bile çift mail gitmez.
+     */
+    @Scheduled(cron = "${site.monitor.cert-inventory-report.cron:0 0 10 * * FRIL}", zone = "Europe/Istanbul")
+    public void scheduledCertInventoryReport() {
+        if (!tryAcquireSchedulerLock("cert-inventory-report", lockTtlMinutes)) {
+            log.debug("Aylık envanter raporu — lock başka pod'da, atlanıyor");
+            return;
+        }
+        try {
+            certificateInventoryReportService.sendMonthlyReport(false);
+        } catch (Exception e) {
+            log.error("Aylık envanter raporu başarısız: {}", e.getMessage(), e);
+        } finally {
+            releaseSchedulerLock("cert-inventory-report");
         }
     }
 

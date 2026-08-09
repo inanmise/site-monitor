@@ -121,6 +121,10 @@ public final class AppSettingsCatalog {
         new Setting("site.monitor.page.default-crawl-max-pages",      "frequency", Type.INT),
         // Haftalık erişilebilirlik e-postası (Pazartesi 10:00) aç/kapa — canlı.
         new Setting("site.monitor.weekly-availability.enabled",  "monitoring", Type.BOOL),
+        // Aylık sertifika envanteri raporu (ayın son cuması 10:00) — aç/kapa + alıcılar, canlı.
+        new Setting("site.monitor.cert-inventory-report.enabled",    "monitoring", Type.BOOL),
+        new Setting("site.monitor.cert-inventory-report.recipients", "monitoring", Type.STRING),
+        new Setting("site.monitor.cert-inventory-report.cc",         "monitoring", Type.STRING),
         // Haftalık rapor sağlık skoru ağırlıkları (executive özet) — WeeklyScoreCalculator canlı okur.
         new Setting("site.monitor.weekly.score.weight-critical",  "weekly", Type.DOUBLE),
         new Setting("site.monitor.weekly.score.weight-expiring",  "weekly", Type.DOUBLE),
@@ -187,6 +191,7 @@ public final class AppSettingsCatalog {
         new Setting("site.monitor.rollup.lookback-days",              "retention", Type.INT),
         new Setting("site.monitor.rollup.retention-days",             "retention", Type.INT),
         new Setting("site.monitor.rollup.hourly-retention-days",      "retention", Type.INT),
+        new Setting("site.monitor.cert-inventory-report.retention-days", "retention", Type.INT),
         new Setting("site.monitor.db.growth-warn-rows",               "retention", Type.INT),
         // ── 2026-08: eskiden koda GÖMÜLÜ olan kesimler artık ayar (RetentionCatalog ile senkron;
         //    RetentionSettingsSyncTest kilitler). Her birinin kodda bir minDays tabanı vardır. ──
