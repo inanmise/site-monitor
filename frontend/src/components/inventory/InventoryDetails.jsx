@@ -5,6 +5,7 @@ import { Check } from 'lucide-react'
 import { api, formatDate } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
 import { useTheme } from '../../i18n/theme.jsx'
+import { INVENTORY_FLAGS } from '../../utils/inventoryFlags.js'
 
 function ShowField({ label, value, mono, full }) {
   return (
@@ -55,29 +56,18 @@ export function InventoryDetails({ record, teamMap }) {
         {/* Operasyonel Bilgiler */}
         <div className="show-section-header">{t('inv.sectionOps')}</div>
         <div className="show-yn-grid">
-          {[
-            ['inv.formExternalVendor', record.external_vendor],
-            ['inv.formActionRequired', record.action_required],
-            ['inv.formOpenshift',      record.openshift],
-            ['inv.formSslPinning',     record.ssl_pinning],
-            ['inv.formInternal',       record.internal_cert],
-            ['inv.formJksKeystore',    record.jks_keystore],
-            ['inv.formServerUpdate',   record.server_update],
-            ['inv.formNetscaler',      record.netscaler],
-            ['inv.formWafEnabled',     record.waf_enabled],
-            ['inv.formInUse',          record.in_use],
-            ['inv.formEvCert',         record.ev_certificate],
-            ['inv.formTransferredToSy',record.transferred_to_sy],
-            ['inv.formUseProxy',       record.use_proxy],
-          ].map(([key, val]) => (
-            <div key={key} className={`show-yn-cell${val ? ' is-yes' : ''}`}>
-              <span className="show-yn-label">{t(key)}</span>
-              <span className={`show-yn-badge ${val ? 'show-yn-yes' : 'show-yn-no'}`}>
-                {val && <Check size={13} strokeWidth={3} />}
-                {val ? t('inv.yes') : t('inv.no')}
-              </span>
-            </div>
-          ))}
+          {INVENTORY_FLAGS.map(({ key, labelKey }) => {
+            const val = record[key]
+            return (
+              <div key={key} className={`show-yn-cell${val ? ' is-yes' : ''}`}>
+                <span className="show-yn-label">{t(labelKey)}</span>
+                <span className={`show-yn-badge ${val ? 'show-yn-yes' : 'show-yn-no'}`}>
+                  {val && <Check size={13} strokeWidth={3} />}
+                  {val ? t('inv.yes') : t('inv.no')}
+                </span>
+              </div>
+            )
+          })}
         </div>
 
         {record.change_description && (

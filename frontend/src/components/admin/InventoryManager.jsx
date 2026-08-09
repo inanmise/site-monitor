@@ -14,14 +14,12 @@ import SearchableSelect from '../ui/SearchableSelect.jsx'
 import KebabMenu from '../ui/KebabMenu.jsx'
 import DiagnosticsModal from './DiagnosticsModal.jsx'
 import { exportInventoryCsv, exportInventoryPdf } from '../../utils/exportInventory'
+import { INVENTORY_FLAGS, emptyFlags } from '../../utils/inventoryFlags.js'
 
 const EMPTY = {
   domain: '', port: 443, owner: '', description: '', active: true,
   team_id: '', group_name: '', tier: null,
-  external_vendor: false, action_required: false, openshift: false,
-  ssl_pinning: false, internal_cert: false, jks_keystore: false,
-  server_update: false, netscaler: false, waf_enabled: false,
-  in_use: false, ev_certificate: false, transferred_to_sy: false, use_proxy: false,
+  ...emptyFlags(),          // 13 operasyonel bayrak — tek kaynak: utils/inventoryFlags.js
   tls_mode: '',
   purchased_by: '',
   change_description: '',
@@ -717,24 +715,10 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
               <SectionHeader label={t('inv.sectionOps')} />
 
               <div className="yn-grid">
-                {[
-                  ['external_vendor',  'inv.formExternalVendor'],
-                  ['action_required',  'inv.formActionRequired'],
-                  ['openshift',        'inv.formOpenshift'],
-                  ['ssl_pinning',      'inv.formSslPinning'],
-                  ['internal_cert',    'inv.formInternal'],
-                  ['jks_keystore',     'inv.formJksKeystore'],
-                  ['server_update',    'inv.formServerUpdate'],
-                  ['netscaler',        'inv.formNetscaler'],
-                  ['waf_enabled',      'inv.formWafEnabled'],
-                  ['in_use',           'inv.formInUse'],
-                  ['ev_certificate',   'inv.formEvCert'],
-                  ['transferred_to_sy','inv.formTransferredToSy'],
-                  ['use_proxy',        'inv.formUseProxy'],
-                ].map(([field, key]) => (
-                  <div key={field} className="yn-field-row">
-                    <span className="yn-field-label">{t(key)}</span>
-                    <YesNo value={form[field]} onChange={v => f(field, v)} />
+                {INVENTORY_FLAGS.map(({ key, labelKey }) => (
+                  <div key={key} className="yn-field-row">
+                    <span className="yn-field-label">{t(labelKey)}</span>
+                    <YesNo value={form[key]} onChange={v => f(key, v)} />
                   </div>
                 ))}
               </div>
