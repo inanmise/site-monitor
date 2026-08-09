@@ -14,6 +14,7 @@ import SearchableSelect from './ui/SearchableSelect.jsx'
 import { autoDurationMinutes } from '../utils/incidentMeta.js'
 import { mailPreviewSrcDoc, MAIL_PREVIEW_SANDBOX } from '../utils/mailPreview.js'
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RTooltip, Legend, Cell } from 'recharts'
+import { LoadingBlock } from './ui/Progress.jsx'
 
 const SEVERITIES = ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW']
 const STATUSES   = ['OPEN', 'INVESTIGATING', 'MITIGATED', 'RESOLVED']
@@ -676,7 +677,7 @@ export default function IncidentHistoryPage() {
       )}
 
       {/* Tablo */}
-      {loading && <div className="loading">{t('inc.loading')}</div>}
+      {loading && <LoadingBlock label={t('inc.loading')} fullWidth />}
       {!loading && rows.length === 0 && <div className="empty-state">{t('inc.noResults')}</div>}
       {!loading && rows.length > 0 && (
         <div className="admin-table-wrap">

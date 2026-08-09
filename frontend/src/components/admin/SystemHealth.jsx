@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useMemo, useRef, Fragment, lazy, Susp
 import { api, formatDate, formatDateSec } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
 import { useVisibleInterval } from '../../hooks/useVisibleInterval'
-import { CheckCircle, XCircle, MinusCircle, HelpCircle, Mail, ChevronRight, Check, Loader2, Server, Database, Globe, Cpu, ChevronDown, Users, LogIn, ShieldAlert, UserCheck } from 'lucide-react'
+import { CheckCircle, XCircle, MinusCircle, HelpCircle, Mail, ChevronRight, Check, Server, Database, Globe, Cpu, ChevronDown, Users, LogIn, ShieldAlert, UserCheck } from 'lucide-react'
 import MiniChart from './MiniChart'
 import ChartModal from './ChartModal'
 import HeartbeatHistoryModal from './HeartbeatHistoryModal'
@@ -12,6 +12,7 @@ import DateTimeRangePicker from '../ui/DateTimeRangePicker.jsx'
 
 import UserBadge from '../ui/UserBadge.jsx'   // proje-geneli ortak kullanıcı rozeti (avatar + ad-soyad)
 import { mailPreviewSrcDoc, mailLogoVariant } from '../../utils/mailPreview.js'
+import { Spinner, LoadingBlock } from '../ui/Progress.jsx'
 const LoginActivityChart = lazy(() => import('./LoginActivityChart.jsx'))   // recharts → tembel yükle (bundle hafif)
 const HttpMetricsExplorer = lazy(() => import('./HttpMetricsExplorer.jsx'))  // recharts → tembel yükle
 
@@ -365,7 +366,7 @@ export default function SystemHealth({ systemRole, globalAdmin = false, preFilte
   }
 
   if (loading && !health) {
-    return <div className="sys-loading">{t('sys.loading')}</div>
+    return <LoadingBlock label={t('sys.loading')} className="sys-loading" />
   }
 
   const { scheduler, lock, pool, executor_pool, memory, scan, scan_alarm, smtp, heartbeat,
@@ -604,12 +605,8 @@ export default function SystemHealth({ systemRole, globalAdmin = false, preFilte
           )}
           {pool ? (
             <>
-              <div className="sys-bar-wrap">
-                <div
-                  className="sys-bar-fill"
-                  style={{ width: `${pool.max_size > 0 ? Math.round((pool.active / pool.max_size) * 100) : 0}%` }}
-                />
-              </div>
+              <ProgressBar value={pool.active} max={pool.max_size} size="sm"
+                label={t('sys.poolActive')} />
               <dl className="sys-dl">
                 <dt>{t('sys.poolActive')}</dt>
                 <dd>{pool.active}</dd>
@@ -654,15 +651,10 @@ export default function SystemHealth({ systemRole, globalAdmin = false, preFilte
           </div>
           {memory ? (
             <>
-              <div className="sys-bar-wrap">
-                <div
-                  className="sys-bar-fill"
-                  style={{
-                    width: `${memory.used_pct}%`,
-                    background: memory.used_pct > 85 ? '#ef4444' : memory.used_pct > 65 ? '#f59e0b' : undefined,
-                  }}
-                />
-              </div>
+              {/* Eşik rengi CSS'e taşındı: --pg-fill token'ı ::-webkit-progress-value tarafından okunur. */}
+              <ProgressBar value={memory.used_pct} max={100} size="sm" showValue
+                label={t('sys.memUsed')}
+                className={memory.used_pct > 85 ? 'pg-bar--crit' : memory.used_pct > 65 ? 'pg-bar--warn' : ''} />
               <dl className="sys-dl">
                 <dt>{t('sys.memUsed')}</dt>
                 <dd>{memory.used_mb} MB</dd>
@@ -882,7 +874,7 @@ export default function SystemHealth({ systemRole, globalAdmin = false, preFilte
                 <span className="queue-status-ind">
                   {(executor_pool.queue_size ?? 0) === 0
                     ? <Check size={14} className="queue-status-ok" strokeWidth={3} />
-                    : <Loader2 size={14} className="queue-status-busy spin" />}
+                    : <Spinner size={14} inline decorative />}
                 </span>
               </dd>
 
@@ -892,7 +884,7 @@ export default function SystemHealth({ systemRole, globalAdmin = false, preFilte
                 <span className="queue-status-ind">
                   {(executor_pool.active_count ?? 0) === 0
                     ? <Check size={14} className="queue-status-ok" strokeWidth={3} />
-                    : <Loader2 size={14} className="queue-status-busy spin" />}
+                    : <Spinner size={14} inline decorative />}
                 </span>
               </dd>
 
@@ -911,12 +903,9 @@ export default function SystemHealth({ systemRole, globalAdmin = false, preFilte
                 </>
               )}
             </dl>
-            <div className="queue-bar-wrap" aria-hidden="true">
-              <div
-                className="queue-bar-fill"
-                style={{ width: `${Math.min(100, ((executor_pool.queue_size ?? 0) / Math.max(1, executor_pool.queue_capacity ?? 1)) * 100)}%` }}
-              />
-            </div>
+            <ProgressBar value={executor_pool.queue_size ?? 0}
+              max={Math.max(1, executor_pool.queue_capacity ?? 1)} size="sm"
+              label={t('health.queueTitle')} />
           </div>
         )}
 
@@ -1146,7 +1135,7 @@ export default function SystemHealth({ systemRole, globalAdmin = false, preFilte
                   <button key={d} type="button" className={`chart-range-btn ${dbDays === d ? 'chart-range-btn-active' : ''}`}
                     onClick={() => setDbDays(d)}>{t(`uact.range${d}d`)}</button>
                 ))}
-                {dbLoading && <Loader2 size={14} className="spin" />}
+                {dbLoading && <Spinner size={14} inline decorative />}
               </div>
 
               {/* KPI — kartlara tıkla → detay modalı (veriler dbData içinden) */}
@@ -1401,7 +1390,7 @@ export default function SystemHealth({ systemRole, globalAdmin = false, preFilte
                     placeholder={t('uact.gotoDay')} />
                   <button type="button" className={`chart-range-btn ${trendCustom ? 'chart-range-btn-active' : ''}`}
                     onClick={() => setTrendShowCustom(s => !s)}>{t('chart.custom')}</button>
-                  {trendLoading && <Loader2 size={14} className="spin" />}
+                  {trendLoading && <Spinner size={14} inline decorative />}
                 </div>
                 {trendShowCustom && (
                   <div style={{ margin: '8px 0' }}>
@@ -1644,7 +1633,7 @@ export default function SystemHealth({ systemRole, globalAdmin = false, preFilte
               <h2 className="chart-modal-title">{t('http.exp.title')}</h2>
               <button className="chart-modal-close" onClick={() => setHttpExpOpen(false)} aria-label="Kapat">✕</button>
             </div>
-            <Suspense fallback={<div className="upt-modal-loading">…</div>}><HttpMetricsExplorer /></Suspense>
+            <Suspense fallback={<LoadingBlock label={t('modal.loading')} className="upt-modal-loading" />}><HttpMetricsExplorer /></Suspense>
           </div>
         </div>
       )}
@@ -2109,7 +2098,7 @@ export default function SystemHealth({ systemRole, globalAdmin = false, preFilte
               <button type="button" className="smtp-modal-close" aria-label={t('app.dismiss')} onClick={() => setWaLogsModal(false)}>✕</button>
             </div>
             {waLogsLoading ? (
-              <div className="smtp-modal-loading">{t('sys.loading')}</div>
+              <LoadingBlock label={t('sys.loading')} className="smtp-modal-loading" />
             ) : (waLogs?.length ?? 0) === 0 ? (
               <div className="smtp-modal-empty">{t('waLogs.empty')}</div>
             ) : (
@@ -2198,7 +2187,7 @@ export default function SystemHealth({ systemRole, globalAdmin = false, preFilte
             </div>
 
             {smtpLoading ? (
-              <div className="smtp-modal-loading">{t('sys.loading')}</div>
+              <LoadingBlock label={t('sys.loading')} className="smtp-modal-loading" />
             ) : smtpLogs?.length === 0 ? (
               <div className="smtp-modal-empty">{t('health.smtpNoErrors')}</div>
             ) : (

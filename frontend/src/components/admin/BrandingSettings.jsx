@@ -1,11 +1,12 @@
 import { useState, useEffect, useRef } from 'react'
-import { Loader2, Upload, Trash2 } from 'lucide-react'
+import { Upload, Trash2 } from 'lucide-react'
 import { api } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
 import { useToast } from '../ui/Toast.jsx'
 import { useDialog } from '../ui/Dialog.jsx'
 import { useBranding } from '../../contexts/BrandingProvider.jsx'
 import { downscaleImage } from '../../utils/imageDownscale.js'
+import { Spinner } from '../ui/Progress.jsx'
 
 const K = (s) => 'site.monitor.branding.' + s
 const LOGO_MAX_BYTES = 200 * 1024
@@ -96,7 +97,7 @@ export default function BrandingSettings() {
   }
 
   if (!items) {
-    return <div className="admin-section"><Loader2 className="spin" size={20} /> {t('settings.loading')}</div>
+    return <div className="admin-section"><Spinner size={20} inline decorative /> {t('settings.loading')}</div>
   }
 
   const textField = (key, labelKey) => (

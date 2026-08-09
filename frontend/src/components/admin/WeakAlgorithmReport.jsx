@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { api, formatDate } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
 import { AlertTriangle, ShieldAlert } from 'lucide-react'
+import { LoadingBlock } from '../ui/Progress.jsx'
 
 function SeverityBadge({ severity }) {
   const cls = severity === 'CRITICAL' ? 'wa-sev-critical' : 'wa-sev-high'
@@ -27,7 +28,7 @@ export default function WeakAlgorithmReport() {
     }).finally(() => setLoading(false))
   }, [])
 
-  if (loading) return <div className="wa-loading">{t('wa.loading')}</div>
+  if (loading) return <LoadingBlock label={t('wa.loading')} className="wa-loading" />
 
   if (!data || data.total === 0) {
     return (

@@ -1,3 +1,4 @@
+import { LoadingBlock } from './ui/Progress.jsx'
 import { useState, useEffect, useCallback, useRef, useMemo, lazy, Suspense } from 'react'
 import { createPortal } from 'react-dom'
 import { api, formatDate } from '../api/client'
@@ -398,7 +399,7 @@ export default function PortMonitorPage({ systemRole, teamId, teamName }) {
         </div>
       )}
 
-      {loading ? <div className="loading">...</div> : monitors.length === 0 ? (
+      {loading ? <LoadingBlock label={t('tbl.loading')} fullWidth /> : monitors.length === 0 ? (
         <div className="mon-empty">{t('port.noMonitors')}</div>
       ) : (
         <div className="mon-table-wrap">
@@ -541,13 +542,13 @@ export default function PortMonitorPage({ systemRole, teamId, teamName }) {
             {detailTab === 'alerts' && <AlertHistory domain={selected.host} />}
 
             {detailTab === 'chart' && (
-              <Suspense fallback={<div className="upt-modal-loading">…</div>}>
+              <Suspense fallback={<LoadingBlock label={t('modal.loading')} className="upt-modal-loading" />}>
                 <ResponseTimeChart monitorId={selected.id} kind="port" />
               </Suspense>
             )}
 
             {detailTab === 'notes' && (
-              <Suspense fallback={<div className="upt-modal-loading">…</div>}>
+              <Suspense fallback={<LoadingBlock label={t('modal.loading')} className="upt-modal-loading" />}>
                 <MonitorNotes type="PORT" target={`${selected.host}:${selected.port}`} />
               </Suspense>
             )}

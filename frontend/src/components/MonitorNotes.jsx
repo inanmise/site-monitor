@@ -1,3 +1,4 @@
+import { LoadingBlock } from './ui/Progress.jsx'
 import { useState, useEffect } from 'react'
 import { api, formatDate } from '../api/client'
 import { useT } from '../i18n/index.jsx'
@@ -73,7 +74,7 @@ export default function MonitorNotes({ type, target }) {
     else toast.error(res?.error || 'Error')
   }
 
-  if (loading) return <div className="upt-modal-loading">…</div>
+  if (loading) return <LoadingBlock label={t('modal.loading')} className="upt-modal-loading" />
 
   return (
     <div className="mnote-wrap">

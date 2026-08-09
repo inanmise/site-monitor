@@ -1,7 +1,8 @@
 import { createPortal } from 'react-dom'
-import { ShieldAlert, ArrowRight, Loader2 } from 'lucide-react'
+import { ShieldAlert, ArrowRight } from 'lucide-react'
 import { useT } from '../../../i18n/index.jsx'
 import { fmtNum } from './PolicyRow.jsx'
+import { Spinner } from '../../ui/Progress.jsx'
 
 /**
  * Kaydetmeden ÖNCE "ne değişecek" özeti. Kullanıcı hangi tabloda hangi değerden hangi değere
@@ -77,7 +78,7 @@ export default function RetentionReviewModal({ changes, onCancel, onConfirm, sav
           </button>
           <button className={`btn ${danger ? 'btn-danger' : 'btn-primary'}`}
             onClick={onConfirm} disabled={saving}>
-            {saving ? <Loader2 className="spin" size={15} /> : null}
+            {saving ? <Spinner size={15} inline decorative /> : null}
             {danger ? t('ret.reviewConfirmDanger') : t('ret.reviewConfirm')}
           </button>
         </div>

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { api, formatDateOnly } from '../api/client'
 import { useT } from '../i18n/index.jsx'
 import DiagnosticsModal from './admin/DiagnosticsModal.jsx'
+import { LoadingBlock } from './ui/Progress.jsx'
 
 const PRIORITY_COLOR = { critical: '#dc3545', warning: '#fd7e14', info: '#0d6efd' }
 
@@ -24,9 +25,9 @@ export default function RenewalAdvice({ onSelectDomain }) {
     info:     t('renewal.info'),
   }
 
-  if (loading) return <div className="loading">{t('renewal.loading')}</div>
+  if (loading) return <LoadingBlock label={t('renewal.loading')} fullWidth />
   if (advice.length === 0)
-    return <div className="loading">{t('renewal.allGood')}</div>
+    return <LoadingBlock label={t('renewal.allGood')} fullWidth />
 
   return (
     <div className="renewal-container">

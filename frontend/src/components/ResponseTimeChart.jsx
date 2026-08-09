@@ -5,6 +5,7 @@ import {
 import { api, formatDate } from '../api/client'
 import { useT } from '../i18n/index.jsx'
 import DateTimeRangePicker from './ui/DateTimeRangePicker.jsx'
+import { LoadingBlock } from './ui/Progress.jsx'
 
 const PRESETS = [
   { key: '24h', days: 1 },
@@ -140,9 +141,9 @@ export default function ResponseTimeChart({ monitorId, kind }) {
       )}
 
       {loading ? (
-        <div className="upt-modal-loading">…</div>
+        <LoadingBlock label={t('modal.loading')} className="upt-modal-loading" />
       ) : !hasData ? (
-        <div className="upt-modal-loading">{t('chart.noData')}</div>
+        <LoadingBlock label={t('chart.noData')} className="upt-modal-loading" />
       ) : (
         <>
         <ResponsiveContainer width="100%" height={300}>

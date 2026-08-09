@@ -1,3 +1,4 @@
+import { LoadingBlock } from './ui/Progress.jsx'
 import { useEffect, useState, useCallback, useMemo } from 'react'
 import { api, formatDateSec } from '../api/client'
 import { useT } from '../i18n/index.jsx'
@@ -210,11 +211,11 @@ export default function ActivityLog({ refreshTrigger }) {
 
       {/* Ana liste */}
       {loading ? (
-        <div className="loading">{t('act.loading')}</div>
+        <LoadingBlock label={t('act.loading')} fullWidth />
       ) : error ? (
         <div className="loading act-error-state">{t('act.error')}</div>
       ) : data.length === 0 ? (
-        <div className="loading">{anyFilter ? t('act.noMatch') : t('act.empty')}</div>
+        <LoadingBlock label={anyFilter ? t('act.noMatch') : t('act.empty')} fullWidth />
       ) : (
         <>
           <div className="act-feed">

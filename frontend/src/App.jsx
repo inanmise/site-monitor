@@ -36,6 +36,7 @@ import ErrorBoundary from './components/ErrorBoundary.jsx'
 import CheckRunModal from './components/check/CheckRunModal.jsx'
 import CheckTeamPicker, { NO_TEAM } from './components/check/CheckTeamPicker.jsx'
 import AnnouncementBanner from './components/AnnouncementBanner.jsx'
+import { LoadingBlock } from './components/ui/Progress.jsx'
 
 // Ağır/seyrek admin & rapor sekmeleri — lazy (kod-bölme): ilk yük küçülür, sekme
 // açılınca yüklenir. Hepsi aşağıdaki tek <Suspense> sınırı altında render edilir.
@@ -751,7 +752,7 @@ export default function App() {
 
           <div className="content">
            <ErrorBoundary key={tab} onReload={() => setTab(tab)}>
-            <Suspense fallback={<div className="loading">…</div>}>
+            <Suspense fallback={<LoadingBlock label={t('tbl.loading')} fullWidth />}>
             {tab === 'dashboard' && (
               <div className="tab-content active">
                 <div className="sort-controls sort-bar">
@@ -847,9 +848,7 @@ export default function App() {
                   )}
                 </div>
                 {sorted.length === 0 ? (
-                  <div className="loading">
-                    {statsFilter ? t('app.noFilterCerts', STAT_FILTER_LABEL[statsFilter]) : t('app.noCerts')}
-                  </div>
+                  <LoadingBlock label={statsFilter ? t('app.noFilterCerts', STAT_FILTER_LABEL[statsFilter]) : t('app.noCerts')} fullWidth />
                 ) : (
                   <>
                     <div className="cards-container">
@@ -887,7 +886,7 @@ export default function App() {
                   ⓘ {t('app.sslHourlyNote')}
                 </div>
                 {warnings.length === 0 ? (
-                  <div className="loading">{t('app.noWarnings')}</div>
+                  <LoadingBlock label={t('app.noWarnings')} fullWidth />
                 ) : (
                   <div className="cards-container">
                     {warnings.map((cert) => (

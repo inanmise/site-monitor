@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react'
-import { Loader2, Save } from 'lucide-react'
+import { Save } from 'lucide-react'
 import { api } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
 import { useToast } from '../ui/Toast.jsx'
+import { Spinner } from '../ui/Progress.jsx'
 
 /**
  * "Alert Settings" — Alarm fırtınası (alert storm) yapılandırması. Master toggle + eşik (sayı + birim)
@@ -69,7 +70,7 @@ export default function StormSettings() {
   }
 
   if (loading) {
-    return <div className="admin-section"><Loader2 className="spin" size={20} /> {t('settings.loading')}</div>
+    return <div className="admin-section"><Spinner size={20} inline decorative /> {t('settings.loading')}</div>
   }
 
   // Yüzde önizlemesi: ceil(value/100 × total), taban 2 (sunucu ile aynı round kuralı).
@@ -156,7 +157,7 @@ export default function StormSettings() {
       {/* Save */}
       <div className="admin-section">
         <button className="btn btn-primary" onClick={save} disabled={saving}>
-          {saving ? <Loader2 className="spin" size={15} /> : <Save size={15} />} {t('storm.save')}
+          {saving ? <Spinner size={15} inline decorative /> : <Save size={15} />} {t('storm.save')}
         </button>
       </div>
     </div>

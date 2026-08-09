@@ -1,5 +1,6 @@
 import { ChevronRight, CheckCircle2, AlertTriangle, Lock } from 'lucide-react'
 import { useT } from '../../../i18n/index.jsx'
+import { ProgressBar } from '../../ui/Progress.jsx'
 
 /** Hızlı seçim çipleri — en sık kullanılan saklama pencereleri. */
 const QUICK_DAYS = [30, 90, 180, 365, 730]
@@ -104,7 +105,8 @@ export default function PolicyRow({
             <span className="ret-metric-val">{p.deletes ? fmtNum(p.purgeable) : '—'}</span>
             <span className="ret-metric-lbl">{t('ret.colPurgeable')}</span>
           </div>
-          <div className="ret-bar" aria-hidden="true"><span style={{ width: `${pct}%` }} /></div>
+          {/* decorative: aynı oran zaten satır/boyut metinleri olarak görünüyor. */}
+          <ProgressBar value={pct} max={100} size="sm" decorative className="ret-bar" />
         </div>
       </div>
 

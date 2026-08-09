@@ -4,6 +4,7 @@ import { useT } from '../i18n/index.jsx'
 import SearchableSelect from './ui/SearchableSelect.jsx'
 import PaginationBar from './ui/PaginationBar.jsx'
 import { readPageSize, writePageSize } from '../hooks/usePagination.js'
+import { LoadingBlock } from './ui/Progress.jsx'
 
 const EVENT_TYPES = [
   'LOGIN', 'LOGIN_FAILED', 'LOGOUT',
@@ -85,7 +86,7 @@ export default function MyAuditLog() {
       </div>
 
       <div className="audit-table-wrap">
-        {loading && <div className="audit-loading">{t('app.loading')}</div>}
+        {loading && <LoadingBlock label={t('app.loading')} className="audit-loading" />}
         <table className="audit-table">
           <thead>
             <tr>

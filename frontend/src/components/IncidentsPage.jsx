@@ -1,3 +1,4 @@
+import { LoadingBlock } from './ui/Progress.jsx'
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { api } from '../api/client'
@@ -207,7 +208,7 @@ export default function IncidentsPage({ systemRole }) {
       )}
 
       {loading ? (
-        <div className="loading">…</div>
+        <LoadingBlock label={t('tbl.loading')} fullWidth />
       ) : rows.length === 0 ? (
         <div className="inc-empty">
           <div className="inc-empty-art"><Siren size={54} /></div>
@@ -340,7 +341,7 @@ function CommentThread({ incident, onClose, onChanged }) {
         <div className="inc-cmt-sub">{incident.monitor?.name || incident.domain}</div>
 
         <div className="inc-cmt-list">
-          {loading ? <div className="loading">…</div>
+          {loading ? <LoadingBlock label={t('tbl.loading')} fullWidth />
             : comments.length === 0 ? <div className="inc-cmt-empty">{t('incov.noComments')}</div>
             : comments.map(c => (
               <div key={c.id} className="inc-cmt">

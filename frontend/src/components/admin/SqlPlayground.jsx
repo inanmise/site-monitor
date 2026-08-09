@@ -4,11 +4,12 @@ import { useT } from '../../i18n/index.jsx'
 import { useToast } from '../ui/Toast.jsx'
 import {
   Play, Download, History, BookOpen, ChevronRight, ChevronDown,
-  Database, Loader2, AlertCircle, X, RefreshCw, Network, Table,
+  Database, AlertCircle, X, RefreshCw, Network, Table,
 } from 'lucide-react'
 import SqlRowDetailModal from './SqlRowDetailModal.jsx'
 import TableDetailsModal from './TableDetailsModal.jsx'
 import SchemaDiagramModal from './SchemaDiagramModal.jsx'
+import { Spinner } from '../ui/Progress.jsx'
 
 const DEFAULT_QUERY = ''
 
@@ -171,7 +172,7 @@ export default function SqlPlayground() {
             title={t('sql.refreshTables')}
           >
             {tablesLoading
-              ? <Loader2 size={12} className="spin" />
+              ? <Spinner size={12} inline decorative />
               : <RefreshCw size={12} />}
           </button>
         </div>
@@ -223,7 +224,7 @@ export default function SqlPlayground() {
             onClick={run}
             disabled={running || !sql?.trim()}
           >
-            {running ? <Loader2 size={14} className="spin" /> : <Play size={14} />}
+            {running ? <Spinner size={14} inline decorative /> : <Play size={14} />}
             {t('sql.run')}
             <kbd className="sqlpg-kbd">Ctrl+Enter</kbd>
           </button>

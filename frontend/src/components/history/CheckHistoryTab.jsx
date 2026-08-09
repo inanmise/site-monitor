@@ -8,6 +8,7 @@ import DateTimeRangePicker from '../ui/DateTimeRangePicker.jsx'
 import DensityStrip from './DensityStrip.jsx'
 import useCheckHistory from './useCheckHistory.js'
 import useUrlQuerySync from '../../hooks/useUrlQuerySync.js'
+import { LoadingBlock } from '../ui/Progress.jsx'
 
 /**
  * Kontrol Geçmişi v2 — TÜM izleme türlerinin paylaşılan geçmiş sekmesi.
@@ -174,9 +175,9 @@ export default function CheckHistoryTab({
         onReset={() => h.setPreset(defaultPreset)} />
 
       {h.loading && h.items.length === 0 ? (
-        <div className="upt-modal-loading">…</div>
+        <LoadingBlock label={t('modal.loading')} className="upt-modal-loading" />
       ) : h.items.length === 0 ? (
-        <div className="upt-modal-loading">{t('hist.noData')}</div>
+        <LoadingBlock label={t('hist.noData')} className="upt-modal-loading" />
       ) : (
         <div className="upt-rt-list hist-list">
           <div className={`upt-rt-grid upt-rt-head ${gridClass}`}>

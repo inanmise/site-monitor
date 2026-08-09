@@ -8,6 +8,7 @@ import { useT } from '../../i18n/index.jsx'
 import { useToast } from '../ui/Toast.jsx'
 import TimeRangePicker, { resolveRange } from '../ui/TimeRangePicker.jsx'
 import SearchableSelect from '../ui/SearchableSelect.jsx'
+import { LoadingBlock } from '../ui/Progress.jsx'
 
 const RETENTION_KEY = 'site.monitor.metrics.http.retention-days'
 const pad = (n) => String(n).padStart(2, '0')
@@ -172,9 +173,9 @@ export default function HttpMetricsExplorer() {
       )}
 
       {loading ? (
-        <div className="upt-modal-loading">…</div>
+        <LoadingBlock label={t('modal.loading')} className="upt-modal-loading" />
       ) : chartData.length === 0 ? (
-        <div className="upt-modal-loading">{t('http.exp.noData')}</div>
+        <LoadingBlock label={t('http.exp.noData')} className="upt-modal-loading" />
       ) : (
         <ResponsiveContainer width="100%" height={320}>
           <ComposedChart data={chartData} margin={{ top: 10, right: 12, left: 0, bottom: 0 }}>

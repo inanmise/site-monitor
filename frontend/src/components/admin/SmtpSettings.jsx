@@ -1,9 +1,10 @@
 import { useState, useEffect } from 'react'
-import { Loader2, Send, PlugZap } from 'lucide-react'
+import { Send, PlugZap } from 'lucide-react'
 import { api } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
 import { useToast } from '../ui/Toast.jsx'
 import SecretKeyWarning from './SecretKeyWarning.jsx'
+import { Spinner } from '../ui/Progress.jsx'
 
 export default function SmtpSettings() {
   const t = useT()
@@ -71,7 +72,7 @@ export default function SmtpSettings() {
   }
 
   if (!form) {
-    return <div className="admin-section"><Loader2 className="spin" size={20} /> {t('settings.loading')}</div>
+    return <div className="admin-section"><Spinner size={20} inline decorative /> {t('settings.loading')}</div>
   }
 
   const hasHost = !!(form.host && form.host.trim())
@@ -194,10 +195,10 @@ export default function SmtpSettings() {
       {/* Save / test connection */}
       <div className="ldap-actions">
         <button className="btn btn-primary" onClick={save} disabled={saving}>
-          {saving ? <Loader2 className="spin" size={15} /> : null} {saving ? t('settings.saving') : t('settings.save')}
+          {saving ? <Spinner size={15} inline decorative /> : null} {saving ? t('settings.saving') : t('settings.save')}
         </button>
         <button className="btn btn-secondary" onClick={test} disabled={testing || !hasHost}>
-          {testing ? <Loader2 className="spin" size={15} /> : <PlugZap size={15} />} {t('smtp.testConnection')}
+          {testing ? <Spinner size={15} inline decorative /> : <PlugZap size={15} />} {t('smtp.testConnection')}
         </button>
         {testResult && (
           <span className={`ldap-test-result ${testResult.success ? 'ok' : 'fail'}`}>
@@ -215,7 +216,7 @@ export default function SmtpSettings() {
             onChange={(e) => setRecipient(e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter') sendTest() }} />
           <button className="btn btn-primary" onClick={sendTest} disabled={sending || !hasHost || !recipient.trim()}>
-            {sending ? <Loader2 className="spin" size={15} /> : <Send size={15} />} {t('smtp.sendBtn')}
+            {sending ? <Spinner size={15} inline decorative /> : <Send size={15} />} {t('smtp.sendBtn')}
           </button>
         </div>
         {!hasHost && <p className="hint">{t('smtp.saveFirst')}</p>}

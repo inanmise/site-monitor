@@ -20,6 +20,7 @@ import DomainRegistrationTab from './DomainRegistrationTab.jsx'
 import MonitorStatsBar from './MonitorStatsBar.jsx'
 import CheckHistoryTab from './history/CheckHistoryTab.jsx'
 import DomainExpiryTrace from './DomainExpiryTrace.jsx'
+import { LoadingBlock } from './ui/Progress.jsx'
 const MonitorNotes = lazy(() => import('./MonitorNotes.jsx'))
 
 const REFRESH_INTERVAL = 60
@@ -398,8 +399,8 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName }) {
         </div>
       )}
 
-      {loading ? <div className="loading">...</div> : monitors.length === 0 ? (
-        <div className="loading">{canWrite ? t('dom.noMonitorsAdmin') : t('dom.noMonitors')}</div>
+      {loading ? <LoadingBlock label={t('tbl.loading')} fullWidth /> : monitors.length === 0 ? (
+        <LoadingBlock label={canWrite ? t('dom.noMonitorsAdmin') : t('dom.noMonitors')} fullWidth />
       ) : (
         <>
         <div className="upt-grid">
@@ -521,7 +522,7 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName }) {
             {detailTab === 'registration' && <DomainRegistrationTab monitor={selected} />}
             {detailTab === 'alerts' && <AlertHistory domain={selected.domain} />}
             {detailTab === 'notes' && (
-              <Suspense fallback={<div className="upt-modal-loading">…</div>}>
+              <Suspense fallback={<LoadingBlock label={t('modal.loading')} className="upt-modal-loading" />}>
                 <MonitorNotes type="DOMAIN" target={selected.domain} />
               </Suspense>
             )}
@@ -625,7 +626,7 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName }) {
               <div className="modal-icon-hdr-badge"><ShieldAlert size={20} /></div>
               <h3>{t('dexp.diagnose')} — {diag.domain}</h3>
             </div>
-            {diag.loading && <div className="upt-modal-loading">… {t('dexp.running')}</div>}
+            {diag.loading && <LoadingBlock label={t('dexp.running')} className="upt-modal-loading" />}
             {diag.error && <div className="alert-msg alert-msg--err">{diag.error}</div>}
             {diag.data && <DomainExpiryTrace data={diag.data} />}
             <div className="modal-actions">

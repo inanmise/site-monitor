@@ -6,6 +6,7 @@ import { api, formatDate } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
 import { useTheme } from '../../i18n/theme.jsx'
 import { INVENTORY_FLAGS } from '../../utils/inventoryFlags.js'
+import { LoadingBlock } from '../ui/Progress.jsx'
 
 function ShowField({ label, value, mono, full }) {
   return (
@@ -135,7 +136,7 @@ export function InventoryTab({ domain }) {
     return () => { alive = false }
   }, [domain])
 
-  if (loading) return <div className="loading">{t('modal.loading')}</div>
+  if (loading) return <LoadingBlock label={t('modal.loading')} fullWidth />
   if (!record) {
     return (
       <div className="modal-body">

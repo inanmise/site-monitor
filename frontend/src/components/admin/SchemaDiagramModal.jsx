@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
-import { Network, Loader2, Maximize2, Minimize2 } from 'lucide-react'
+import { Network, Maximize2, Minimize2 } from 'lucide-react'
 import { useT } from '../../i18n/index.jsx'
+import { LoadingBlock } from '../ui/Progress.jsx'
 
 const NODE_W = 158
 const NODE_H = 30
@@ -39,7 +40,7 @@ export default function SchemaDiagramModal({ data, loading, onClose }) {
         </div>
 
         {loading ? (
-          <div className="sqlpg-td-loading"><Loader2 size={18} className="spin" /> {t('sql.td.loading')}</div>
+          <LoadingBlock label={t('sql.td.loading')} className="sqlpg-td-loading" size={18} />
         ) : nodes.length === 0 ? (
           <div className="sqlpg-td-empty">{t('sql.diag.empty')}</div>
         ) : (
