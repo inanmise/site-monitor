@@ -1,6 +1,7 @@
-import { Loader2, ArrowRight } from 'lucide-react'
+import { ArrowRight } from 'lucide-react'
 import { formatDateSec } from '../../../api/client'
 import { useT } from '../../../i18n/index.jsx'
+import { LoadingBlock } from '../../ui/Progress.jsx'
 
 /**
  * "Kim, ne zaman, hangi politikayı, hangi değerden hangi değere çekti."
@@ -10,7 +11,7 @@ import { useT } from '../../../i18n/index.jsx'
 export default function RetentionChangeLog({ rows, compact }) {
   const t = useT()
 
-  if (!rows) return <div className="ret-loading"><Loader2 className="spin" size={16} /></div>
+  if (!rows) return <LoadingBlock label={t('settings.loading')} className="ret-loading" size={16} />
   if (rows.length === 0) return <p className="field-hint">{t('ret.changesEmpty')}</p>
 
   return (

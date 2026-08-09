@@ -1,10 +1,11 @@
 import { useState, useEffect } from 'react'
-import { Loader2, Send, Eye, RefreshCw } from 'lucide-react'
+import { Send, Eye, RefreshCw } from 'lucide-react'
 import { api, formatDate } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
 import { useToast } from '../ui/Toast.jsx'
 import SearchableSelect from '../ui/SearchableSelect.jsx'
 import { mailPreviewSrcDoc, MAIL_PREVIEW_SANDBOX } from '../../utils/mailPreview.js'
+import { Spinner } from '../ui/Progress.jsx'
 
 export default function WeeklyAvailabilitySettings() {
   const t = useT()
@@ -125,7 +126,7 @@ export default function WeeklyAvailabilitySettings() {
   }
 
   if (!status) {
-    return <div className="admin-section"><Loader2 className="spin" size={20} /> {t('settings.loading')}</div>
+    return <div className="admin-section"><Spinner size={20} inline decorative /> {t('settings.loading')}</div>
   }
 
   const teams = status.teams || []
@@ -219,7 +220,7 @@ export default function WeeklyAvailabilitySettings() {
           <SearchableSelect value={String(previewWeekOffset)} onChange={(v) => setPreviewWeekOffset(Number(v))}
             placeholder={t('weeklyavail.previewWeek')} options={weekSelectOptions} />
           <button className="btn btn-primary" onClick={doPreview} disabled={previewing || !previewTeamId}>
-            {previewing ? <Loader2 className="spin" size={15} /> : <Eye size={15} />} {t('weeklyavail.previewBtn')}
+            {previewing ? <Spinner size={15} inline decorative /> : <Eye size={15} />} {t('weeklyavail.previewBtn')}
           </button>
         </div>
       </div>
@@ -238,7 +239,7 @@ export default function WeeklyAvailabilitySettings() {
             onKeyDown={(e) => { if (e.key === 'Enter') sendTest() }} />
           <button className="btn btn-primary" onClick={sendTest}
             disabled={sending || !testTeamId || !testEmail.trim()}>
-            {sending ? <Loader2 className="spin" size={15} /> : <Send size={15} />} {t('weeklyavail.sendBtn')}
+            {sending ? <Spinner size={15} inline decorative /> : <Send size={15} />} {t('weeklyavail.sendBtn')}
           </button>
         </div>
         {sendResult && (
@@ -260,7 +261,7 @@ export default function WeeklyAvailabilitySettings() {
               <span>{t('weeklyavail.includeTest')}</span>
             </label>
             <button className="btn btn-secondary" onClick={loadHistory} disabled={historyLoading}>
-              {historyLoading ? <Loader2 className="spin" size={15} /> : <RefreshCw size={15} />} {t('weeklyavail.refresh')}
+              {historyLoading ? <Spinner size={15} inline decorative /> : <RefreshCw size={15} />} {t('weeklyavail.refresh')}
             </button>
           </div>
         </div>
@@ -293,7 +294,7 @@ export default function WeeklyAvailabilitySettings() {
                     <td>{statusCell(m.status)}</td>
                     <td>
                       <button className="btn btn-secondary" onClick={() => openArchived(m)} disabled={openingId === m.id}>
-                        {openingId === m.id ? <Loader2 className="spin" size={14} /> : <Eye size={14} />} {t('weeklyavail.view')}
+                        {openingId === m.id ? <Spinner size={14} inline decorative /> : <Eye size={14} />} {t('weeklyavail.view')}
                       </button>
                     </td>
                   </tr>

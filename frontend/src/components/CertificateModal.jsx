@@ -9,6 +9,7 @@ import SslCheckerPanel from './SslCheckerPanel.jsx'
 import DiagnosticsModal from './admin/DiagnosticsModal.jsx'
 import { usePermissions } from '../contexts/PermissionsProvider.jsx'
 import { InventoryTab } from './inventory/InventoryDetails.jsx'
+import { LoadingBlock } from './ui/Progress.jsx'
 
 const NOTE_CATEGORIES   = ['NOTE', 'DEPLOYMENT', 'INCIDENT', 'RENEWAL']
 const NOTE_EDIT_WINDOW_MS = 24 * 60 * 60 * 1000
@@ -154,7 +155,7 @@ function NotesTab({ domain, t, currentUser, isAdmin }) {
     }
   }
 
-  if (loading) return <div className="loading">{t('modal.loading')}</div>
+  if (loading) return <LoadingBlock label={t('modal.loading')} fullWidth />
 
   const visibleNotes = (notes ?? []).filter(n =>
     filter === 'ALL' ? true : (n.category || 'NOTE') === filter
@@ -322,7 +323,7 @@ function NotesTab({ domain, t, currentUser, isAdmin }) {
                         <History size={13} /> {t('notes.historyTitle')}
                       </div>
                       {historyLoading[n.id] ? (
-                        <div className="loading">{t('notes.historyLoading')}</div>
+                        <LoadingBlock label={t('notes.historyLoading')} fullWidth />
                       ) : revs.length === 0 ? (
                         <div className="cert-note-history-empty">{t('notes.historyEmpty')}</div>
                       ) : (
@@ -458,7 +459,7 @@ export default function CertificateModal({ domain, alertLevel, onClose, initialD
 
         {activeTab === 'ssl' && (
           (sslLoading || !sslData) ? (
-            <div className="loading">{t('modal.loading')}</div>
+            <LoadingBlock label={t('modal.loading')} fullWidth />
           ) : (
             <div className="modal-body ssl-tab-body">
               <SslCheckerPanel data={sslData} />
@@ -468,7 +469,7 @@ export default function CertificateModal({ domain, alertLevel, onClose, initialD
 
         {activeTab === 'details' && (
           !d ? (
-            <div className="loading">{t('modal.loading')}</div>
+            <LoadingBlock label={t('modal.loading')} fullWidth />
           ) : (
             <div className="modal-body">
 

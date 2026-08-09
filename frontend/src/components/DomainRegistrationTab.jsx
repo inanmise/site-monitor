@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback } from 'react'
 import { api, formatDateSec } from '../api/client'
 import { useT } from '../i18n/index.jsx'
-import { Loader2, RefreshCw, ShieldCheck, ShieldOff, Server, Globe, Building2, CalendarClock } from 'lucide-react'
+import { RefreshCw, ShieldCheck, ShieldOff, Server, Globe, Building2, CalendarClock } from 'lucide-react'
+import { Spinner, LoadingBlock } from './ui/Progress.jsx'
 
 /** Bitiş tarihi — insan-okur ("6 Ağustos 2026 15:37"), tr-TR; date-only ("2029-10-26") ve datetime güvenli. */
 function fmtDateHuman(iso) {
@@ -56,7 +57,7 @@ export default function DomainRegistrationTab({ monitor }) {
 
   useEffect(() => { load(true) }, [load])
 
-  if (loading && !reg) return <div className="upt-modal-loading"><Loader2 size={16} className="spin" /> {t('dreg.loading')}</div>
+  if (loading && !reg) return <LoadingBlock label={t('dreg.loading')} className="upt-modal-loading" size={16} />
   if (err && !reg) return <div className="alert-msg alert-msg--err">{err}</div>
   if (!reg) return null
 
@@ -68,7 +69,7 @@ export default function DomainRegistrationTab({ monitor }) {
       <div className="dreg-toolbar">
         {stale && <span className="dreg-stale">{t('dreg.stale').replace('{0}', formatDateSec(d.checked_at))}</span>}
         <button className="btn btn-sm btn-secondary" style={{ marginLeft: 'auto' }} onClick={() => load(true)} disabled={loading}>
-          {loading ? <Loader2 size={13} className="spin" /> : <RefreshCw size={13} />}{t('dreg.refresh')}
+          {loading ? <Spinner size={13} inline decorative /> : <RefreshCw size={13} />}{t('dreg.refresh')}
         </button>
       </div>
 

@@ -8,6 +8,7 @@ import { readPageSize, writePageSize } from '../../hooks/usePagination.js'
 import { useVisibleInterval } from '../../hooks/useVisibleInterval.js'
 import SearchableSelect from '../ui/SearchableSelect.jsx'
 import UserBadge from '../ui/UserBadge.jsx'
+import { ProgressBar, LoadingBlock } from '../ui/Progress.jsx'
 
 const EVENT_TYPES = [
   'LOGIN', 'LOGIN_FAILED', 'LOGOUT',
@@ -89,7 +90,8 @@ function DistBar({ title, items }) {
       {items.slice(0, 6).map(i => (
         <div key={i.key} className="audit-dist-row">
           <span className="audit-dist-label" title={i.key}>{i.key || '—'}</span>
-          <span className="audit-dist-bar"><span style={{ width: `${(i.count / max) * 100}%` }} /></span>
+          {/* decorative: sayı hemen sağda görünüyor, çubuk onun görsel eşi. */}
+          <ProgressBar value={i.count} max={max} size="sm" decorative className="audit-dist-bar" />
           <span className="audit-dist-count">{i.count}</span>
         </div>
       ))}
@@ -534,7 +536,7 @@ export default function AuditLogViewer() {
 
       {/* Table */}
       <div className="audit-table-wrap">
-        {loading && <div className="audit-loading">{t('app.loading')}</div>}
+        {loading && <LoadingBlock label={t('app.loading')} className="audit-loading" />}
         <table className="audit-table">
           <thead>
             <tr>
@@ -694,7 +696,7 @@ export default function AuditLogViewer() {
               <button className="audit-filter-btn" onClick={() => setTimeline(null)}>{t('audit.close')}</button>
             </div>
             {timeline.loading ? (
-              <div className="audit-loading">{t('app.loading')}</div>
+              <LoadingBlock label={t('app.loading')} className="audit-loading" />
             ) : timeline.rows.length === 0 ? (
               <div className="audit-empty">{t('audit.timelineEmpty')}</div>
             ) : (

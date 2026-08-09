@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react'
-import { RefreshCw, Loader2, Check, X } from 'lucide-react'
+import { RefreshCw, Check, X } from 'lucide-react'
 import { useT } from '../../i18n/index.jsx'
+import { ProgressBar, Spinner } from '../ui/Progress.jsx'
 
 // Date → "HH:mm:ss.SSS"
 const fmtClock = (d) => (d instanceof Date
@@ -66,6 +67,13 @@ export default function CheckRunModal({ run, certIndex, onClose, onCancel }) {
           <span className="chk-count">{rows.length}/{run.total}</span>
         </div>
 
+        {/* Belirli ilerleme: kaç domainin kontrol edildiği zaten biliniyor → yüzde gösterilebilir.
+            Native <progress> rolü ve değeri kendisi taşır; başlıktaki x/y ile aynı sayıdan gelir. */}
+        <div className="chk-progress">
+          <ProgressBar value={rows.length} max={run.total} size="sm"
+            label={t('app.checkProgressLabel', rows.length, run.total)} showValue />
+        </div>
+
         <div className="chk-summary">
           <span className="chk-sum-item chk-sum-ok"><Check size={13} />{t('app.checkSummaryOk', okCount)}</span>
           <span className={`chk-sum-item${failCount ? ' chk-sum-fail' : ''}`}><X size={13} />{t('app.checkSummaryFail', failCount)}</span>
@@ -123,7 +131,7 @@ export default function CheckRunModal({ run, certIndex, onClose, onCancel }) {
               })}
               {!run.done && (
                 <tr><td className="chk-pending" colSpan={10}>
-                  <Loader2 size={14} className="chk-spin" /> {t('app.checking')}
+                  <Spinner size={14} inline decorative /> {t('app.checking')}
                 </td></tr>
               )}
             </tbody>

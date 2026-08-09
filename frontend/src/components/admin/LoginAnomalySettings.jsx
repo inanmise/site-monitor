@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react'
-import { Loader2, Save, ShieldAlert, Send } from 'lucide-react'
+import { Save, ShieldAlert, Send } from 'lucide-react'
 import { api, formatDate } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
 import { useToast } from '../ui/Toast.jsx'
+import { Spinner } from '../ui/Progress.jsx'
 
 /**
  * "Login Anomali" — başarısız-login anomali tespiti + sistem-admin e-posta uyarısı yapılandırması.
@@ -70,7 +71,7 @@ export default function LoginAnomalySettings() {
   }
 
   if (loading || !form) {
-    return <div className="admin-section"><Loader2 className="spin" size={20} /> {t('settings.loading')}</div>
+    return <div className="admin-section"><Spinner size={20} inline decorative /> {t('settings.loading')}</div>
   }
 
   return (
@@ -134,7 +135,7 @@ export default function LoginAnomalySettings() {
       {/* Save */}
       <div className="admin-section">
         <button className="btn btn-primary" onClick={save} disabled={saving}>
-          {saving ? <Loader2 className="spin" size={15} /> : <Save size={15} />} {t('loginAnomaly.save')}
+          {saving ? <Spinner size={15} inline decorative /> : <Save size={15} />} {t('loginAnomaly.save')}
         </button>
       </div>
 
@@ -151,7 +152,7 @@ export default function LoginAnomalySettings() {
             onChange={(e) => setTestEmail(e.target.value)}
           />
           <button className="btn" onClick={sendTest} disabled={testing}>
-            {testing ? <Loader2 className="spin" size={15} /> : <Send size={15} />} {t('loginAnomaly.testSend')}
+            {testing ? <Spinner size={15} inline decorative /> : <Send size={15} />} {t('loginAnomaly.testSend')}
           </button>
         </div>
       </div>

@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useMemo } from 'react'
-import { ChevronDown, Download, Loader2 } from 'lucide-react'
+import { ChevronDown, Download } from 'lucide-react'
 import MDEditor from '@uiw/react-md-editor'
 import { api } from '../../api/client'
 import { InventoryDetails } from '../inventory/InventoryDetails.jsx'
@@ -15,6 +15,7 @@ import KebabMenu from '../ui/KebabMenu.jsx'
 import DiagnosticsModal from './DiagnosticsModal.jsx'
 import { exportInventoryCsv, exportInventoryPdf } from '../../utils/exportInventory'
 import { INVENTORY_FLAGS, emptyFlags } from '../../utils/inventoryFlags.js'
+import { Spinner } from '../ui/Progress.jsx'
 
 const EMPTY = {
   domain: '', port: 443, owner: '', description: '', active: true,
@@ -502,7 +503,7 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
               disabled={exporting}
             >
               {exporting
-                ? <Loader2 size={14} className="spin" />
+                ? <Spinner size={14} inline decorative />
                 : <Download size={14} />}
               {t('inv.export')}
               <ChevronDown size={12} className="sqlpg-menu-chev" />

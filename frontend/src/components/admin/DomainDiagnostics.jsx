@@ -2,8 +2,9 @@ import { useState } from 'react'
 import { api } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
 import { useToast } from '../ui/Toast.jsx'
-import { Loader2, Search, Globe, ShieldCheck, Copy, Check } from 'lucide-react'
+import { Search, Globe, ShieldCheck, Copy, Check } from 'lucide-react'
 import DomainExpiryTrace from '../DomainExpiryTrace.jsx'
+import { Spinner } from '../ui/Progress.jsx'
 
 /** Bağımsız admin paneli — alan adı süre bitişi tanılaması + proxy CA zinciri yakalama (yapıştırılmaya hazır PEM). */
 export default function DomainDiagnostics() {
@@ -77,7 +78,7 @@ export default function DomainDiagnostics() {
           disabled={loading}
         />
         <button className="btn btn-primary" onClick={run} disabled={loading || !domain.trim()}>
-          {loading ? <Loader2 size={14} className="spin" /> : <Search size={14} />}
+          {loading ? <Spinner size={14} inline decorative /> : <Search size={14} />}
           {loading ? t('dexp.running') : t('dexp.query')}
         </button>
       </div>
@@ -91,7 +92,7 @@ export default function DomainDiagnostics() {
       </div>
       <p className="dexp-desc">{t('dexp.caDesc')}</p>
       <button className="btn btn-secondary" onClick={captureCa} disabled={caLoading}>
-        {caLoading ? <Loader2 size={14} className="spin" /> : <ShieldCheck size={14} />}
+        {caLoading ? <Spinner size={14} inline decorative /> : <ShieldCheck size={14} />}
         {caLoading ? t('dexp.caCapturing') : t('dexp.caCapture')}
       </button>
 

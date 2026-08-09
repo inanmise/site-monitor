@@ -1,5 +1,6 @@
-import { Table, Loader2 } from 'lucide-react'
+import { Table } from 'lucide-react'
 import { useT } from '../../i18n/index.jsx'
+import { LoadingBlock } from '../ui/Progress.jsx'
 
 /**
  * SQL Playground — tablo şema detayları (salt-okunur):
@@ -30,7 +31,7 @@ export default function TableDetailsModal({ table, details, loading, onClose }) 
         </div>
 
         {loading ? (
-          <div className="sqlpg-td-loading"><Loader2 size={18} className="spin" /> {t('sql.td.loading')}</div>
+          <LoadingBlock label={t('sql.td.loading')} className="sqlpg-td-loading" size={18} />
         ) : (
           <div className="sqlpg-td-body">
             {/* ── Kolonlar + tip sınırları ── */}

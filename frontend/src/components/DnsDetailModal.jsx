@@ -9,6 +9,7 @@ import { X, Activity, Clock, Server, FileText, Globe, Route } from 'lucide-react
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, ReferenceLine } from 'recharts'
 import AlertHistory from './admin/AlertHistory'
 import MonitorNotes from './MonitorNotes.jsx'
+import { LoadingBlock } from './ui/Progress.jsx'
 // Süre grafiği artık paylaşımlı ResponseTimeChart (ping/keyword/port ile aynı: 90g/özel aralık + avg/min-max/p95).
 const ResponseTimeChart = lazy(() => import('./ResponseTimeChart.jsx'))
 
@@ -123,7 +124,7 @@ export default function DnsDetailModal({ monitor, onClose }) {
         {detailTab === 'notes' && <MonitorNotes type="DNS" target={monitor.domain} />}
 
         {detailTab === 'control' && (loading ? (
-          <div className="dns-modal-loading">{t('dns.loadingDetails')}</div>
+          <LoadingBlock label={t('dns.loadingDetails')} className="dns-modal-loading" />
         ) : (
           <div className="dns-modal-body">
             {/* Record type tabs */}
@@ -304,7 +305,7 @@ export default function DnsDetailModal({ monitor, onClose }) {
 
         {detailTab === 'chart' && (
           <div className="dns-modal-body">
-            <Suspense fallback={<div className="dns-modal-loading">{t('dns.loadingDetails')}</div>}>
+            <Suspense fallback={<LoadingBlock label={t('dns.loadingDetails')} className="dns-modal-loading" />}>
               <ResponseTimeChart monitorId={monitor.id} kind="dns" />
             </Suspense>
           </div>

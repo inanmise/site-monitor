@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react'
-import { Loader2 } from 'lucide-react'
+import {} from 'lucide-react'
 import { api } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
 import { useToast } from '../ui/Toast.jsx'
+import { Spinner } from '../ui/Progress.jsx'
 
 /**
  * Genel Ayarlar — küratörlü, tipli proje config'leri (key/value). Backend kataloğundan
@@ -78,7 +79,7 @@ export default function GeneralSettings() {
   }
 
   if (!items) {
-    return <div className="admin-section"><Loader2 className="spin" size={20} /> {t('settings.loading')}</div>
+    return <div className="admin-section"><Spinner size={20} inline decorative /> {t('settings.loading')}</div>
   }
 
   // Grupları ilk görülme sırasına göre koru. branding ve retention'ın KENDİ sayfaları var —

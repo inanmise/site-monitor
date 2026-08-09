@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom'
 import { X, Activity } from 'lucide-react'
 import { api, formatDate } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
+import { LoadingBlock } from '../ui/Progress.jsx'
 
 const RANGE_OPTIONS = [1, 7, 15, 30]
 
@@ -87,7 +88,7 @@ export default function HeartbeatHistoryModal({ onClose }) {
         </div>
 
         {loading ? (
-          <div className="hb-modal-loading">{t('sys.loading')}</div>
+          <LoadingBlock label={t('sys.loading')} className="hb-modal-loading" />
         ) : (
           <>
             <div className="hb-timeline-grid">

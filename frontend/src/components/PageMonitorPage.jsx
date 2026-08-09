@@ -22,6 +22,7 @@ import { useDialog } from './ui/Dialog.jsx'
 import AlertHistory from './admin/AlertHistory.jsx'
 import MonitorStatsBar from './MonitorStatsBar.jsx'
 import CheckHistoryTab from './history/CheckHistoryTab.jsx'
+import { LoadingBlock } from './ui/Progress.jsx'
 const ResponseTimeChart = lazy(() => import('./ResponseTimeChart.jsx'))
 const MonitorNotes = lazy(() => import('./MonitorNotes.jsx'))
 
@@ -502,8 +503,8 @@ export default function PageMonitorPage({ systemRole, teamId, teamName }) {
         </div>
       )}
 
-      {loading ? <div className="loading">...</div> : monitors.length === 0 ? (
-        <div className="loading">{canWrite ? t('page.noMonitorsAdmin') : t('page.noMonitors')}</div>
+      {loading ? <LoadingBlock label={t('tbl.loading')} fullWidth /> : monitors.length === 0 ? (
+        <LoadingBlock label={canWrite ? t('page.noMonitorsAdmin') : t('page.noMonitors')} fullWidth />
       ) : (
         <>
         <div className="upt-grid">
@@ -609,8 +610,8 @@ export default function PageMonitorPage({ systemRole, teamId, teamName }) {
                 <button type="button" className="btn btn-sm btn-secondary" style={{ marginLeft: 'auto' }}
                   disabled={!issues.length} onClick={exportIssuesCsv}><Download size={12} />{t('page.exportCsv')}</button>
               </div>
-              {issuesLoading ? <div className="upt-modal-loading">...</div> : issues.length === 0 ? (
-                <div className="upt-modal-loading">{t('page.noIssues')}</div>
+              {issuesLoading ? <LoadingBlock label={t('modal.loading')} className="upt-modal-loading" /> : issues.length === 0 ? (
+                <LoadingBlock label={t('page.noIssues')} className="upt-modal-loading" />
               ) : (
                 <div className="upt-rt-list">
                   <div className="upt-rt-grid upt-rt-head" style={{ gridTemplateColumns: PAGE_ISSUE_COLS }}>
@@ -675,7 +676,7 @@ export default function PageMonitorPage({ systemRole, teamId, teamName }) {
             </>)}
 
             {detailTab === 'chart' && (
-              <Suspense fallback={<div className="upt-modal-loading">…</div>}>
+              <Suspense fallback={<LoadingBlock label={t('modal.loading')} className="upt-modal-loading" />}>
                 <ResponseTimeChart monitorId={selected.id} kind="page" />
               </Suspense>
             )}
@@ -700,7 +701,7 @@ export default function PageMonitorPage({ systemRole, teamId, teamName }) {
             {detailTab === 'alerts' && <AlertHistory domain={selected.url} />}
 
             {detailTab === 'notes' && (
-              <Suspense fallback={<div className="upt-modal-loading">…</div>}>
+              <Suspense fallback={<LoadingBlock label={t('modal.loading')} className="upt-modal-loading" />}>
                 <MonitorNotes type="PAGE" target={selected.url} />
               </Suspense>
             )}

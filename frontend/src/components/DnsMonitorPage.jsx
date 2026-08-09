@@ -15,6 +15,7 @@ import DnsDetailModal from './DnsDetailModal.jsx'
 import MonitorStatsBar from './MonitorStatsBar.jsx'
 import SearchableSelect from './ui/SearchableSelect.jsx'
 import MaintenanceBadge from './ui/MaintenanceBadge.jsx'
+import { LoadingBlock } from './ui/Progress.jsx'
 
 const RECORD_TYPES = ['A', 'AAAA', 'CNAME', 'MX', 'TXT', 'NS']
 
@@ -401,7 +402,7 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName }) {
       </div>
 
       {loading ? (
-        <div className="loading">{t('dns.loading')}</div>
+        <LoadingBlock label={t('dns.loading')} fullWidth />
       ) : monitors.length === 0 ? (
         <div className="mon-empty">{t('dns.noMonitors')}</div>
       ) : (

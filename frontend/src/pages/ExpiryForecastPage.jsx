@@ -10,6 +10,7 @@ import { api } from '../api/client'
 import { useT } from '../i18n/index.jsx'
 import BrandLogo from '../components/BrandLogo.jsx'
 import CertificateCard from '../components/CertificateCard.jsx'
+import { LoadingBlock } from '../components/ui/Progress.jsx'
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -512,7 +513,7 @@ export default function ExpiryForecastPage({ onSelectDomain }) {
       </header>
       <div className="fc-header-sep" />
 
-      {loading && <div className="forecast-loading">{t('forecast.loading')}</div>}
+      {loading && <LoadingBlock label={t('forecast.loading')} className="forecast-loading" />}
 
       {!loading && data && (
         <>

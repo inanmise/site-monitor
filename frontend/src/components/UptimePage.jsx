@@ -12,6 +12,7 @@ import DateTimeRangePicker from './ui/DateTimeRangePicker.jsx'
 import CheckHistoryTab from './history/CheckHistoryTab.jsx'
 import DiagnosticsModal from './admin/DiagnosticsModal.jsx'
 import SearchableSelect from './ui/SearchableSelect.jsx'
+import { LoadingBlock } from './ui/Progress.jsx'
 
 const REFRESH_INTERVAL = 60
 
@@ -226,9 +227,9 @@ export default function UptimePage({ systemRole }) {
       )}
 
       {loading ? (
-        <div className="loading">{t('uptime.checking')}</div>
+        <LoadingBlock label={t('uptime.checking')} fullWidth />
       ) : items.length === 0 ? (
-        <div className="loading">{t('uptime.noData')}</div>
+        <LoadingBlock label={t('uptime.noData')} fullWidth />
       ) : (
         <div className="upt-grid">
           {pager.pageItems.map(item => (

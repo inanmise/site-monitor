@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react'
-import { Loader2 } from 'lucide-react'
+import {} from 'lucide-react'
 import { api, formatDate } from '../../api/client'
 import { useToast } from '../ui/Toast.jsx'
 import { useT } from '../../i18n/index.jsx'
+import { Spinner } from '../ui/Progress.jsx'
 
 function ShowField({ label, value, mono, full }) {
   return (
@@ -382,7 +383,7 @@ export default function DiagnosticsModal({ domain, port, onClose }) {
               {diag.loading && (
                 <div className="show-field show-field-full">
                   <span className="show-field-value">
-                    <Loader2 size={14} className="spin" /> {t('inv.diagRunning')}
+                    <Spinner size={14} inline decorative /> {t('inv.diagRunning')}
                   </span>
                 </div>
               )}
@@ -473,7 +474,7 @@ export default function DiagnosticsModal({ domain, port, onClose }) {
                       onClick={() => runOpenssl(diag.item)}>{t('inv.osslRun')}</button>
                   )}
                   {diag.ossl?.loading && (
-                    <div className="show-field-value"><Loader2 size={14} className="spin" /> {t('inv.diagRunning')}</div>
+                    <div className="show-field-value"><Spinner size={14} inline decorative /> {t('inv.diagRunning')}</div>
                   )}
                   {diag.ossl?.error && <div className="alert-msg">{diag.ossl.error}</div>}
                   {diag.ossl?.data && renderOssl(diag.ossl.data)}
@@ -485,7 +486,7 @@ export default function DiagnosticsModal({ domain, port, onClose }) {
                       onClick={() => runNetwork(diag.item)}>{t('inv.netRun')}</button>
                   )}
                   {diag.net?.loading && (
-                    <div className="show-field-value"><Loader2 size={14} className="spin" /> {t('inv.diagRunning')}</div>
+                    <div className="show-field-value"><Spinner size={14} inline decorative /> {t('inv.diagRunning')}</div>
                   )}
                   {diag.net?.error && <div className="alert-msg">{diag.net.error}</div>}
                   {diag.net?.data && renderNetwork(diag.net.data)}
@@ -497,7 +498,7 @@ export default function DiagnosticsModal({ domain, port, onClose }) {
                       onClick={() => runHsts(diag.item)}>{t('inv.hstsRun')}</button>
                   )}
                   {diag.hsts?.loading && (
-                    <div className="show-field-value"><Loader2 size={14} className="spin" /> {t('inv.diagRunning')}</div>
+                    <div className="show-field-value"><Spinner size={14} inline decorative /> {t('inv.diagRunning')}</div>
                   )}
                   {diag.hsts?.error && <div className="alert-msg">{diag.hsts.error}</div>}
                   {diag.hsts?.data && renderHsts(diag.hsts.data)}
@@ -509,7 +510,7 @@ export default function DiagnosticsModal({ domain, port, onClose }) {
                       onClick={() => runClientIp()}>{t('inv.cipRun')}</button>
                   )}
                   {diag.cip?.loading && (
-                    <div className="show-field-value"><Loader2 size={14} className="spin" /> {t('inv.diagRunning')}</div>
+                    <div className="show-field-value"><Spinner size={14} inline decorative /> {t('inv.diagRunning')}</div>
                   )}
                   {diag.cip?.error && <div className="alert-msg">{diag.cip.error}</div>}
                   {diag.cip?.data && renderClientIp(diag.cip.data)}
@@ -544,7 +545,7 @@ export default function DiagnosticsModal({ domain, port, onClose }) {
             </div>
             <div className="show-body" style={{ overflowY: 'auto' }}>
               {history.loading && (
-                <div className="show-field-value"><Loader2 size={14} className="spin" /> {t('inv.diagRunning')}</div>
+                <div className="show-field-value"><Spinner size={14} inline decorative /> {t('inv.diagRunning')}</div>
               )}
               {history.error && <div className="alert-msg">{history.error}</div>}
 

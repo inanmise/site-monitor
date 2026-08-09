@@ -1,9 +1,10 @@
 import { useState, useEffect } from 'react'
-import { Loader2, Search, Plus, Trash2 } from 'lucide-react'
+import { Search, Plus, Trash2 } from 'lucide-react'
 import { api } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
 import { useToast } from '../ui/Toast.jsx'
 import SecretKeyWarning from './SecretKeyWarning.jsx'
+import { Spinner } from '../ui/Progress.jsx'
 
 // Role values match AppUser.systemRole tokens (used when provisioning is wired in a later phase).
 const ROLES = ['ADMIN', 'TEAM_ADMIN', 'USER', 'AUDIT']
@@ -90,7 +91,7 @@ export default function LdapSettings() {
   }
 
   if (!form) {
-    return <div className="admin-section"><Loader2 className="spin" size={20} /> {t('settings.loading')}</div>
+    return <div className="admin-section"><Spinner size={20} inline decorative /> {t('settings.loading')}</div>
   }
 
   return (
@@ -281,16 +282,16 @@ export default function LdapSettings() {
       {/* Save / Test */}
       <div className="ldap-actions">
         <button className="btn btn-primary" onClick={save} disabled={saving}>
-          {saving ? <Loader2 className="spin" size={15} /> : null} {saving ? t('settings.saving') : t('settings.save')}
+          {saving ? <Spinner size={15} inline decorative /> : null} {saving ? t('settings.saving') : t('settings.save')}
         </button>
         <button className="btn btn-secondary" onClick={() => test(false)} disabled={testing}>
-          {testing ? <Loader2 className="spin" size={15} /> : null} {t('ldap.testConnection')}
+          {testing ? <Spinner size={15} inline decorative /> : null} {t('ldap.testConnection')}
         </button>
         {/* Ayarı kapatmadan önce doğrulamalı deneme — yeşilse "atla" güvenle kapatılabilir. */}
         {form.skip_cert_verification && (
           <button className="btn btn-secondary" onClick={() => test(true)} disabled={testing}
             title={t('ldap.testVerifiedHint')}>
-            {testing ? <Loader2 className="spin" size={15} /> : null} {t('ldap.testVerified')}
+            {testing ? <Spinner size={15} inline decorative /> : null} {t('ldap.testVerified')}
           </button>
         )}
         {testResult && (
@@ -322,7 +323,7 @@ export default function LdapSettings() {
             onChange={(e) => setQueryName(e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter') runQuery() }} />
           <button className="btn btn-primary" onClick={runQuery} disabled={querying || !queryName.trim()}>
-            {querying ? <Loader2 className="spin" size={15} /> : <Search size={15} />} {t('ldap.lookupBtn')}
+            {querying ? <Spinner size={15} inline decorative /> : <Search size={15} />} {t('ldap.lookupBtn')}
           </button>
         </div>
 

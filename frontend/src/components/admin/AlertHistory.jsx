@@ -8,6 +8,7 @@ import { useUrlQuerySync, readUrlParam, readUrlInt } from '../../hooks/useUrlQue
 import { readPageSize, writePageSize } from '../../hooks/usePagination.js'
 import UserBadge from '../ui/UserBadge.jsx'
 import { mailPreviewSrcDoc, mailLogoVariant, MAIL_PREVIEW_SANDBOX } from '../../utils/mailPreview.js'
+import { LoadingBlock } from '../ui/Progress.jsx'
 import {
   Check, ShieldAlert, TrendingUp, RefreshCcw, Bell, CheckCircle, AlertCircle,
   ChevronUp, ChevronDown, ChevronLeft, ChevronRight, Mail, MailX, Clock, Users, Calendar,
@@ -653,7 +654,7 @@ export default function AlertHistory({ domain = null, urlSync = false }) {
         </div>
       )}
 
-      {loading && <div className="loading">{t('alh.loading')}</div>}
+      {loading && <LoadingBlock label={t('alh.loading')} fullWidth />}
 
       {!loading && alerts.length === 0 && isOpen && (
         <div className="empty-state">{t('alh.noOpen')}</div>

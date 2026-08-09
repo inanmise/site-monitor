@@ -1,6 +1,7 @@
 import { ShieldAlert, ShieldCheck, MailWarning, BellOff, Clock, Calendar, Network, Globe, Users, Building2 } from 'lucide-react'
 import { formatDate } from '../api/client'
 import { useT } from '../i18n/index.jsx'
+import { ProgressBar } from './ui/Progress.jsx'
 
 /** DN içinden bir alanı çıkar (örn. O=...) — SslCheckerPanel ile aynı desen. */
 function parseDn(dn, field) {
@@ -96,9 +97,9 @@ export default function CertificateCard({ cert, onClick, hasSilentAlert = false,
           <div className="cc-hero-number">{daysDisplay}</div>
           {showLife && (
             <div className="cc-life-block">
-              <div className="cc-life-bar">
-                <div className="cc-life-fill" style={{ width: `${percentUsed}%` }} />
-              </div>
+              {/* decorative: "elapsed / total gün" hemen altta metin olarak var; çubuk onun görsel eşi.
+                  Çizgili dolgu ::-webkit-progress-value üzerinde korunuyor (App.css .cc-life-bar). */}
+              <ProgressBar value={percentUsed} max={100} size="sm" decorative className="cc-life-bar" />
               <div className="cc-life-caption">
                 {elapsedDays} / {totalDays} {t('card.daysUnit')}
               </div>

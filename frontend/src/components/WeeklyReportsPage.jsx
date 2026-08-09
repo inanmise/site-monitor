@@ -21,6 +21,7 @@ import { clipboardToMarkdownTable } from '../utils/pasteTable'
 import { downscaleImage } from '../utils/imageDownscale'
 import { isoWeekInfo, isEditableWeek, formatWeekRange } from '../utils/isoWeek'
 import { mailPreviewSrcDoc } from '../utils/mailPreview.js'
+import { LoadingBlock } from './ui/Progress.jsx'
 
 /** Oturum kesintisi yedekleri için localStorage anahtar öneki. */
 const DRAFT_BACKUP_PREFIX = 'wr.draft.'
@@ -1108,7 +1109,7 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
       {/* ── Liste görünümü — hafta bazlı sıralı (backend hafta desc döner) ── */}
       {!selectedId && (
         loadingList ? (
-          <div className="loading">{t('app.loading')}</div>
+          <LoadingBlock label={t('app.loading')} fullWidth />
         ) : (
           <>
             {weekFilter != null && (
@@ -1238,7 +1239,7 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
 
       {/* ── Rapor yükleniyor — boş ekran yerine gösterge ── */}
       {selectedId && !report && loadingReport && (
-        <div className="loading">{t('app.loading')}</div>
+        <LoadingBlock label={t('app.loading')} fullWidth />
       )}
 
       {report && content && (

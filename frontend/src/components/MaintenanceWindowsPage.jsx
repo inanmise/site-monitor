@@ -1,3 +1,4 @@
+import { LoadingBlock } from './ui/Progress.jsx'
 import { useState, useEffect, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import { api } from '../api/client'
@@ -172,7 +173,7 @@ export default function MaintenanceWindowsPage({ systemRole }) {
       </div>
 
       {loading ? (
-        <div className="loading">…</div>
+        <LoadingBlock label={t('tbl.loading')} fullWidth />
       ) : rows.length === 0 ? (
         <div className="mw-empty">
           <div className="mw-empty-art"><Wrench size={54} /></div>

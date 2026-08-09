@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
-  Loader2, Database, HardDrive, Trash2, Clock, PlayCircle, History, ShieldAlert,
+  Database, HardDrive, Trash2, Clock, PlayCircle, History, ShieldAlert,
   Lock, FileText, ChevronDown, Users, Shield, FileBox, Activity, GitCompareArrows,
   DatabaseBackup,
 } from 'lucide-react'
@@ -11,6 +11,7 @@ import { useDialog } from '../ui/Dialog.jsx'
 import PolicyRow, { fmtBytes, fmtNum } from './retention/PolicyRow.jsx'
 import RetentionReviewModal from './retention/RetentionReviewModal.jsx'
 import RetentionChangeLog from './retention/RetentionChangeLog.jsx'
+import { Spinner, LoadingBlock } from '../ui/Progress.jsx'
 
 /** Veri sınıfı sırası — uyum onayı gerektirenler üstte. */
 const CLASSES = [
@@ -176,7 +177,7 @@ export default function RetentionSettings() {
   }
 
   if (!data) {
-    return <div className="admin-section"><Loader2 className="spin" size={20} /> {t('settings.loading')}</div>
+    return <div className="admin-section"><Spinner size={20} inline decorative /> {t('settings.loading')}</div>
   }
 
   const kpi = (Icon, val, lbl, sub, variant) => (
@@ -240,17 +241,17 @@ export default function RetentionSettings() {
       {/* ── Aksiyonlar ── */}
       <div className="ldap-actions ret-actions">
         <button className="btn btn-secondary" onClick={dryRun} disabled={busy != null}>
-          {busy === 'dry' ? <Loader2 className="spin" size={15} /> : <PlayCircle size={15} />}
+          {busy === 'dry' ? <Spinner size={15} inline decorative /> : <PlayCircle size={15} />}
           {t('ret.dryRun')}
         </button>
         <button className="btn btn-secondary" onClick={backfillHourly} disabled={busy != null}
           title={t('ret.backfillHint')}>
-          {busy === 'backfill' ? <Loader2 className="spin" size={15} /> : <DatabaseBackup size={15} />}
+          {busy === 'backfill' ? <Spinner size={15} inline decorative /> : <DatabaseBackup size={15} />}
           {t('ret.backfill')}
         </button>
         <button className="btn btn-danger" onClick={runNow} disabled={busy != null || holdOn}
           title={holdOn ? t('ret.holdBlocks') : undefined}>
-          {busy === 'run' ? <Loader2 className="spin" size={15} /> : <Trash2 size={15} />}
+          {busy === 'run' ? <Spinner size={15} inline decorative /> : <Trash2 size={15} />}
           {t('ret.runNow')}
         </button>
       </div>
@@ -307,7 +308,7 @@ export default function RetentionSettings() {
           data.last_run ? formatDateSec(data.last_run.started_at) : t('ret.neverRun'))}
         {openPanel === 'runs' && (
           <div className="ret-panel">
-            {!runs ? <div className="ret-loading"><Loader2 className="spin" size={16} /></div>
+            {!runs ? <LoadingBlock label={t('settings.loading')} className="ret-loading" size={16} />
               : runs.length === 0 ? <p className="field-hint">{t('ret.historyEmpty')}</p> : (
                 <div className="health-table-wrap">
                   <table className="health-dbtable">

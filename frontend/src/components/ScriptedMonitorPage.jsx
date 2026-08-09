@@ -21,6 +21,7 @@ import PaginationBar from './ui/PaginationBar.jsx'
 import AlertHistory from './admin/AlertHistory.jsx'
 import MonitorStatsBar from './MonitorStatsBar.jsx'
 import CheckHistoryTab from './history/CheckHistoryTab.jsx'
+import { LoadingBlock } from './ui/Progress.jsx'
 // recharts ağır — yalnız "Süre Grafiği" sekmesi açılınca yüklensin.
 const ResponseTimeChart = lazy(() => import('./ResponseTimeChart.jsx'))
 const MonitorNotes = lazy(() => import('./MonitorNotes.jsx'))
@@ -414,8 +415,8 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
         </div>
       )}
 
-      {loading ? <div className="loading">...</div> : monitors.length === 0 ? (
-        <div className="loading">{k6.canManage ? t('scripted.noMonitorsAdmin') : t('scripted.noMonitors')}</div>
+      {loading ? <LoadingBlock label={t('tbl.loading')} fullWidth /> : monitors.length === 0 ? (
+        <LoadingBlock label={k6.canManage ? t('scripted.noMonitorsAdmin') : t('scripted.noMonitors')} fullWidth />
       ) : (
         <>
         <div className="upt-grid">
@@ -528,13 +529,13 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
             {detailTab === 'alerts' && <AlertHistory domain={selected.name} />}
 
             {detailTab === 'chart' && (
-              <Suspense fallback={<div className="upt-modal-loading">…</div>}>
+              <Suspense fallback={<LoadingBlock label={t('modal.loading')} className="upt-modal-loading" />}>
                 <ResponseTimeChart monitorId={selected.id} kind="scripted" />
               </Suspense>
             )}
 
             {detailTab === 'notes' && (
-              <Suspense fallback={<div className="upt-modal-loading">…</div>}>
+              <Suspense fallback={<LoadingBlock label={t('modal.loading')} className="upt-modal-loading" />}>
                 <MonitorNotes type="SCRIPTED" target={selected.name} />
               </Suspense>
             )}
