@@ -1,20 +1,6 @@
 import { formatDate } from '../api/client'
 import { drawBrandHeader } from './pdfBrand.js'
-
-const FLAG_FIELDS = [
-  ['external_vendor',    'inv.formExternalVendor'],
-  ['action_required',    'inv.formActionRequired'],
-  ['openshift',          'inv.formOpenshift'],
-  ['ssl_pinning',        'inv.formSslPinning'],
-  ['internal_cert',      'inv.formInternal'],
-  ['jks_keystore',       'inv.formJksKeystore'],
-  ['server_update',      'inv.formServerUpdate'],
-  ['netscaler',          'inv.formNetscaler'],
-  ['waf_enabled',        'inv.formWafEnabled'],
-  ['in_use',             'inv.formInUse'],
-  ['ev_certificate',     'inv.formEvCert'],
-  ['transferred_to_sy',  'inv.formTransferredToSy'],
-]
+import { INVENTORY_FLAGS } from './inventoryFlags.js'
 
 const csvEscape = (v) => {
   const s = v == null ? '' : String(v)
@@ -55,7 +41,7 @@ export function exportInventoryCsv(items, teams, t) {
     t('inv.formTier'),
     t('inv.formPurchasedBy'),
     t('inv.colActive'),
-    ...FLAG_FIELDS.map(([, k]) => t(k)),
+    ...INVENTORY_FLAGS.map(({ labelKey }) => t(labelKey)),
     t('inv.formChangeDesc'),
     t('inv.formFP'),
     t('inv.formSubject'),
@@ -69,7 +55,7 @@ export function exportInventoryCsv(items, teams, t) {
     tierLabel(it, t),
     it.purchased_by ?? '',
     statusOf(it, t),
-    ...FLAG_FIELDS.map(([f]) => yn(!!it[f])),
+    ...INVENTORY_FLAGS.map(({ key }) => yn(!!it[key])),
     (it.change_description ?? '').replace(/\s+/g, ' ').trim(),
     it.expected_fingerprint ?? '',
     it.expected_subject ?? '',
@@ -223,13 +209,13 @@ export async function exportInventoryPdf(items, teams, t) {
     // OPERASYONEL BİLGİLER — 3-col autoTable
     sectionHeader(doc, t('inv.sectionOps'), MARGIN, y); y += 8
     const opsRows = []
-    for (let i = 0; i < FLAG_FIELDS.length; i += 3) {
-      const slice = FLAG_FIELDS.slice(i, i + 3)
+    for (let i = 0; i < INVENTORY_FLAGS.length; i += 3) {
+      const slice = INVENTORY_FLAGS.slice(i, i + 3)
       const row = []
       for (let j = 0; j < 3; j++) {
         const pair = slice[j]
         if (pair) {
-          const [f, k] = pair
+          const { key: f, labelKey: k } = pair
           row.push(t(k))
           row.push(it[f] ? `✓ ${t('inv.yes')}` : `— ${t('inv.no')}`)
         } else {
