@@ -12,7 +12,8 @@ import MaintenanceBadge from './ui/MaintenanceBadge.jsx'
 import TagInput from './ui/TagInput.jsx'
 import { SCRIPTED_TEMPLATES } from './scriptedTemplates.js'
 import { FlaskConical, Play, Pencil, Plus, Trash2, X, RefreshCw, Eye, EyeOff, Copy, Users, Layers,
-  AlertTriangle, LayoutDashboard, CheckCircle2, WifiOff, Siren, BellDot, PauseCircle, BarChart3, ChevronDown } from 'lucide-react'
+  AlertTriangle, LayoutDashboard, CheckCircle2, WifiOff, Siren, BellDot, PauseCircle, BarChart3, ChevronDown,
+  Terminal } from 'lucide-react'
 import { duplicateName } from '../utils/duplicateName.js'
 import { usePagination } from '../hooks/usePagination.js'
 import { useUrlQuerySync, readUrlParam, readUrlInt } from '../hooks/useUrlQuerySync.js'
@@ -21,7 +22,11 @@ import PaginationBar from './ui/PaginationBar.jsx'
 import AlertHistory from './admin/AlertHistory.jsx'
 import MonitorStatsBar from './MonitorStatsBar.jsx'
 import CheckHistoryTab from './history/CheckHistoryTab.jsx'
-import { LoadingBlock } from './ui/Progress.jsx'
+import { LoadingBlock, Spinner } from './ui/Progress.jsx'
+import AlertBanner from './ui/AlertBanner.jsx'
+import StatusBlock from './ui/StatusBlock.jsx'
+import CopyButton from './ui/CopyButton.jsx'
+import { exitLabel, exitHint } from './scriptedExitCodes.js'
 // recharts ağır — yalnız "Süre Grafiği" sekmesi açılınca yüklensin.
 const ResponseTimeChart = lazy(() => import('./ResponseTimeChart.jsx'))
 const MonitorNotes = lazy(() => import('./MonitorNotes.jsx'))
@@ -382,8 +387,8 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
 
       <MonitorHowBox bullets={[t('scripted.how1'), t('scripted.how2'), t('scripted.how3'), t('scripted.how4')]} />
 
-      {!k6.available &&
-        <div className="alert-msg" style={{ margin: '10px 0' }}>⚠ {t('scripted.k6Disabled')}</div>}
+      {/* .alert-msg YEŞİL "başarı" kutusuydu ve emoji taşıyordu (proje kuralı: yalnız lucide). */}
+      {!k6.available && <AlertBanner tone="warning">{t('scripted.k6Disabled')}</AlertBanner>}
 
       {!loading && monitors.length > 0 && (
         <div className="stats-collapse-bar" onClick={toggleStats}
@@ -414,7 +419,10 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
       )}
 
       {loading ? <LoadingBlock label={t('tbl.loading')} fullWidth /> : monitors.length === 0 ? (
-        <LoadingBlock label={k6.canManage ? t('scripted.noMonitorsAdmin') : t('scripted.noMonitors')} fullWidth />
+        /* Boş durum: eskiden LoadingBlock ile (dönen spinner) gösteriliyordu — "yükleniyor" ile
+           "hiç kayıt yok" görsel olarak ayrışmıyordu. */
+        <StatusBlock icon={FlaskConical}
+          title={k6.canManage ? t('scripted.noMonitorsAdmin') : t('scripted.noMonitors')} />
       ) : (
         <>
         <div className="upt-grid">
@@ -519,7 +527,10 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
                     <span className={isPass(c.status) ? 'upt-rt-up' : isWarnLike(c.status) ? 'upt-rt-warn' : 'upt-rt-down'} style={{ cursor: 'pointer', fontWeight: isSel ? 700 : undefined }}
                       onClick={() => setSelCheck(isSel ? null : c)}>{statusLabel(t, c.status)}</span>
                     <span className="upt-rt-ms">{c.duration_ms != null ? `${c.duration_ms}ms` : '—'}</span>
-                    {c.error ? <span className="upt-rt-error" title={c.error}>{c.error}</span>
+                    {c.error
+                      /* Hata hücresi de paneli açar: kullanıcının ilk tıkladığı yer burası. */
+                      ? <span className="upt-rt-error" title={c.error} style={{ cursor: 'pointer' }}
+                          onClick={() => setSelCheck(isSel ? null : c)}>{c.error}</span>
                       : <span className="upt-rt-ms">{(c.checks_passed != null || c.checks_failed != null) ? `${c.checks_passed ?? 0}✓/${c.checks_failed ?? 0}✗` : '—'}</span>}
                   </>)
                 }} />
@@ -549,30 +560,74 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
   )
 }
 
-/** Seçili koşumun k6 check listesi + çıktı kuyruğu — Kontrol sekmesinin alt paneli. */
+/**
+ * Seçili koşumun tanısı — İKİ KATMANLI sunum.
+ *
+ * Üstte insan-okur tek cümle (durum + çıkış kodu etiketi + varsa çare), altta katlanır teknik
+ * detay (tam k6 çıktısı, kopyalanabilir). Eskiden ham backend mesajı düz kırmızı metin olarak
+ * basılıyor, çıktı paneli ise sabit siyah zeminli satır-içi stille yazılıyordu (açık temada
+ * sayfanın geri kalanıyla çelişen bir blok).
+ */
 function CheckDetail({ t, check }) {
+  const [openTech, setOpenTech] = useState(false)
+  const [showAll, setShowAll] = useState(false)
   let checks = []
   // API snake_case; savunmacı çift-okuma.
   const checksJson = check.checks_json ?? check.checksJson
   const outputTail = check.output_tail ?? check.outputTail
+  const exitCode = check.exit_code ?? check.exitCode
   try { if (checksJson) checks = JSON.parse(checksJson) } catch { /* bozuk json → boş liste */ }
+
+  const label = exitLabel(t, exitCode)
+  const hint = exitHint(t, exitCode)
+  const tone = isPass(check.status) ? 'success' : isWarnLike(check.status) ? 'warning' : 'danger'
+  const lines = outputTail ? outputTail.split('\n') : []
+  const CLAMP = 12
+  const clamped = !showAll && lines.length > CLAMP
+  const shown = clamped ? lines.slice(0, CLAMP).join('\n') : outputTail
+
   return (
-    <div style={{ marginTop: 12 }}>
+    <div className="sc-detail">
       {checks.length > 0 && (
-        <ul style={{ margin: '0 0 10px', padding: 0, listStyle: 'none' }}>
+        <ul className="sc-checks">
           {checks.map((c, i) => (
-            <li key={i} style={{ padding: '4px 0', borderBottom: '1px solid var(--border, #f1f5f9)' }}>
-              <span style={{ color: c.passed ? '#16a34a' : '#dc2626', fontWeight: 700 }}>{c.passed ? '✓' : '✗'}</span> {c.name}
+            <li key={i} className="sc-check-row">
+              <span className={c.passed ? 'sc-check-ok' : 'sc-check-bad'}>{c.passed ? '✓' : '✗'}</span> {c.name}
             </li>
           ))}
         </ul>
       )}
-      {check.error && <div style={{ color: '#dc2626', marginBottom: 8 }}>{check.error}</div>}
+
+      {(check.error || label) && (
+        <AlertBanner tone={tone} title={t('scripted.errTitle')}>
+          {check.error && <div className="sc-err-msg">{check.error}</div>}
+          {label && <div className="sc-err-exit">{label}{exitCode != null ? ` · exit ${exitCode}` : ''}</div>}
+          {hint && <div className="sc-err-hint">{hint}</div>}
+        </AlertBanner>
+      )}
+
       {outputTail && (
-        <>
-          <div style={{ fontWeight: 700, fontSize: '.85em', margin: '6px 0 4px' }}>{t('scripted.output')}</div>
-          <pre style={{ maxHeight: 260, overflow: 'auto', fontSize: 12, whiteSpace: 'pre-wrap', wordBreak: 'break-word', background: '#111', color: '#eee', padding: 10, borderRadius: 6 }}>{outputTail}</pre>
-        </>
+        <div className="sc-tech">
+          <button type="button" className="mhow-toggle sc-tech-toggle" aria-expanded={openTech}
+            onClick={() => setOpenTech(o => !o)}>
+            <Terminal size={15} /><span>{t('scripted.errTech')}</span>
+            <ChevronDown size={15} className={`mhow-chev${openTech ? ' open' : ''}`} />
+          </button>
+          {openTech && (
+            <>
+              <div className="sc-tech-actions">
+                {/* Tam metin her zaman kopyalanabilir — kırpılmış hâli değil. */}
+                <CopyButton value={outputTail} label={t('scripted.errCopy')} copiedLabel={t('scripted.errCopied')} />
+                {lines.length > CLAMP && (
+                  <button type="button" className="btn btn-sm" onClick={() => setShowAll(v => !v)}>
+                    {showAll ? t('scripted.outShowLess') : t('scripted.outShowAll', lines.length)}
+                  </button>
+                )}
+              </div>
+              <pre className="show-pre sc-output">{shown}{clamped ? '\n…' : ''}</pre>
+            </>
+          )}
+        </div>
       )}
     </div>
   )
@@ -686,21 +741,34 @@ function EditModal({ t, lang, form, setForm, modal, dupSource, saving, testing, 
           <label className="checkbox-label full-width">
             <input type="checkbox" checked={form.active} onChange={e => setForm(f => ({ ...f, active: e.target.checked }))} /> {t('scripted.active')}</label>
 
-          {/* Test sonucu */}
+          {/* Test sonucu — kaydetmeden önce iterasyon yapmanın TEK yolu, gerçek bir konsol olmalı.
+              Çıktı bloğu tema-uyumlu .show-pre; hata metni insan-okur özet + çıkış kodu etiketi. */}
           {testResult &&
-            <div className="full-width" style={{ padding: 12, borderRadius: 8, background: 'var(--bg, #f7f8fa)', border: '1px solid var(--border, #e5e7eb)' }}>
-              <strong style={{ color: STATUS_COLOR[testResult.status] || 'inherit' }}>{statusLabel(t, testResult.status)}</strong>
-              {testResult.checks_passed != null && <span> · {testResult.checks_passed}✓/{testResult.checks_failed ?? 0}✗</span>}
-              {testResult.duration_ms != null && <span> · {testResult.duration_ms} ms</span>}
-              {testResult.error && <div style={{ color: '#dc2626', marginTop: 6 }}>{testResult.error}</div>}
-              {testResult.output_tail &&
-                <pre style={{ marginTop: 8, maxHeight: 200, overflow: 'auto', fontSize: 12, whiteSpace: 'pre-wrap', wordBreak: 'break-word', background: '#111', color: '#eee', padding: 10, borderRadius: 6 }}>{testResult.output_tail}</pre>}
+            <div className="full-width sc-testrun">
+              <div className="sc-testrun-head">
+                <span className="sc-testrun-status" style={{ color: STATUS_COLOR[testResult.status] || 'inherit' }}>
+                  {statusLabel(t, testResult.status)}</span>
+                {testResult.checks_passed != null &&
+                  <span className="sc-testrun-meta">{testResult.checks_passed}✓/{testResult.checks_failed ?? 0}✗</span>}
+                {testResult.duration_ms != null && <span className="sc-testrun-meta">· {testResult.duration_ms} ms</span>}
+                {exitLabel(t, testResult.exit_code) &&
+                  <span className="sc-testrun-meta">· {exitLabel(t, testResult.exit_code)}</span>}
+                {testResult.output_tail &&
+                  <CopyButton value={testResult.output_tail} label={t('scripted.errCopy')} copiedLabel={t('scripted.errCopied')} />}
+              </div>
+              {testResult.error &&
+                <AlertBanner tone={isPass(testResult.status) ? 'success' : isWarnLike(testResult.status) ? 'warning' : 'danger'}>
+                  <span className="sc-err-msg">{testResult.error}</span>
+                  {exitHint(t, testResult.exit_code) && <div className="sc-err-hint">{exitHint(t, testResult.exit_code)}</div>}
+                </AlertBanner>}
+              {testResult.output_tail && <pre className="show-pre sc-console">{testResult.output_tail}</pre>}
             </div>}
         </div>
         <div className="modal-actions">
           <div style={{ display: 'flex', gap: 8, marginRight: 'auto' }}>
-            <button className="btn btn-secondary" onClick={runTest} disabled={testing}>
-              <FlaskConical size={14} />{testing ? t('scripted.testing') : t('scripted.testRun')}</button>
+            <button className="btn btn-secondary" onClick={runTest} disabled={testing} aria-busy={testing}>
+              {testing ? <Spinner size={14} inline decorative /> : <FlaskConical size={14} />}
+              {testing ? t('scripted.testing') : t('scripted.testRun')}</button>
             {modal.id && canDelete && <button className="btn btn-danger" onClick={del}><Trash2 size={14} />{t('scripted.delete')}</button>}
           </div>
           <button className="btn btn-secondary" onClick={closeEdit}>{t('scripted.cancel')}</button>

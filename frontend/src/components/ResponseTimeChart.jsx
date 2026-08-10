@@ -6,6 +6,8 @@ import { api, formatDate } from '../api/client'
 import { useT } from '../i18n/index.jsx'
 import DateTimeRangePicker from './ui/DateTimeRangePicker.jsx'
 import { LoadingBlock } from './ui/Progress.jsx'
+import StatusBlock from './ui/StatusBlock.jsx'
+import { BarChart3 } from 'lucide-react'
 
 const PRESETS = [
   { key: '24h', days: 1 },
@@ -143,7 +145,9 @@ export default function ResponseTimeChart({ monitorId, kind }) {
       {loading ? (
         <LoadingBlock label={t('modal.loading')} className="upt-modal-loading" />
       ) : !hasData ? (
-        <LoadingBlock label={t('chart.noData')} className="upt-modal-loading" />
+        /* Boş durum LoadingBlock ile gösterilirse dönen spinner çıkar ve "yükleniyor" ile
+           "veri yok" ayrışmaz — kullanıcı sonsuza kadar bekleniyor sanır. */
+        <StatusBlock icon={BarChart3} title={t('chart.noData')} />
       ) : (
         <>
         <ResponsiveContainer width="100%" height={300}>

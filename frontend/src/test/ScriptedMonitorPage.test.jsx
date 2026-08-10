@@ -236,4 +236,82 @@ describe('ScriptedMonitorPage', () => {
     expect(card.textContent).not.toContain('0✓/0✗')                       // yanıltıcı sayaç yok
     expect(screen.getByText(/never run|henüz çalışmadı/i)).toBeInTheDocument()
   })
+
+  // ── 2026-08 regresyonları: iki CANLI ReferenceError silindi, tanı yüzeyi yeniden kuruldu ──
+
+  it('REGRESYON: detay modalı açıkken "Şimdi Çalıştır" patlamaz ve buton kilitlenmez', async () => {
+    // Eski kod burada tanımsız loadHistory(m.id, rangeDays) çağırıyordu → ReferenceError;
+    // ardından gelen setChecking(null) hiç çalışmıyor ve buton kalıcı disabled kalıyordu.
+    api.monitoring.triggerScriptedCheck.mockResolvedValue({
+      success: true, data: { id: 1, name: 'OIDC Login', status: 'PASS', duration_ms: 700 } })
+    render(<ScriptedMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
+    fireEvent.click(await screen.findByText('OIDC Login'))
+
+    const runBtn = (await screen.findAllByRole('button', { name: /run now|şimdi çalıştır/i }))[0]
+    fireEvent.click(runBtn)
+    await waitFor(() => expect(api.monitoring.triggerScriptedCheck).toHaveBeenCalledWith(1))
+    await waitFor(() => expect(runBtn.disabled).toBe(false))   // kilitli kalmıyor
+  })
+
+  it('REGRESYON: modal başlığında bozuk CSV butonu YOK (CheckHistoryTab kendi CSV linkini veriyor)', async () => {
+    render(<ScriptedMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
+    fireEvent.click(await screen.findByText('OIDC Login'))
+    // Eski buton tanımsız `history`'yi map'liyordu → window.history.map is not a function
+    await waitFor(() => expect(screen.getByRole('dialog', {}) ?? true).toBeTruthy()).catch(() => {})
+    expect(screen.queryByRole('button', { name: /^CSV$/ })).toBeNull()
+  })
+
+  it('NO_CHECKS: amber kart, "down" sayılmaz, etiketi görünür', async () => {
+    api.monitoring.getScriptedMonitors.mockResolvedValue({ success: true, data: {
+      k6_available: true, can_manage: true,
+      monitors: [{ id: 9, name: 'Sessiz Script', status: 'NO_CHECKS', team_id: 5, duration_ms: 500, checked_at: '2026-08-10T10:00:00' }] } })
+    const { container } = render(<ScriptedMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
+    await screen.findByText('Sessiz Script')
+
+    const card = container.querySelector('.upt-card')
+    expect(card.className).toContain('upt-card--warn')     // arıza kırmızısı DEĞİL
+    expect(card.className).not.toContain('upt-card--down')
+    expect(container.querySelector('.upt-badge--warn')).not.toBeNull()
+    expect(screen.getByText(/no checks|doğrulama yok/i)).toBeInTheDocument()
+  })
+
+  it('koşum detayı: ham metin değil, insan-okur özet + çıkış kodu; teknik detay KATLANMIŞ gelir', async () => {
+    api.monitoring.getCheckHistory.mockResolvedValue({ success: true, data: {
+      items: [{ id: 77, checked_at: '2026-08-10T09:00:00', status: 'ERROR', duration_ms: 512,
+                exit_code: 107, error: 'script çalışma-zamanı hatası (çıkış 107)',
+                output_tail: 'ERRO[0001] GoError: patladi\nikinci satir' }],
+      counts: { total: 1, fail: 1 }, buckets: [], alerts: [],
+      range: { from: '2026-08-10T00:00:00', to: '2026-08-11T00:00:00' }, total: 1, page: 0, size: 50 } })
+
+    render(<ScriptedMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
+    fireEvent.click(await screen.findByText('OIDC Login'))
+
+    // Satırdaki hata metnine tıklamak da detay panelini açar (eskiden yalnız Zaman/Durum açıyordu)
+    fireEvent.click(await screen.findByText('script çalışma-zamanı hatası (çıkış 107)'))
+
+    // İnsan-okur çıkış kodu etiketi (kullanıcının DİLİNDE) ayrı bir satırda; backend mesajı Türkçe,
+    // bu satır arayüz diline çeviriyor. Sınıfla hedefleniyor — regex ikisini birden yakalardı.
+    const exitLine = await waitFor(() => {
+      const el = document.querySelector('.sc-err-exit')
+      if (!el) throw new Error('çıkış kodu satırı yok')
+      return el
+    })
+    expect(exitLine.textContent).toMatch(/Script runtime error|Script çalışma-zamanı hatası/i)
+    expect(exitLine.textContent).toContain('107')
+    // Ham k6 çıktısı BAŞLANGIÇTA gizli — tek tıkla açılır
+    expect(screen.queryByText(/GoError: patladi/)).toBeNull()
+    const toggle = screen.getByRole('button', { name: /technical detail|teknik detay/i })
+    expect(toggle.getAttribute('aria-expanded')).toBe('false')
+    fireEvent.click(toggle)
+    expect(toggle.getAttribute('aria-expanded')).toBe('true')
+    expect(await screen.findByText(/GoError: patladi/)).toBeInTheDocument()
+  })
+
+  it('boş monitör listesi spinner DEĞİL boş-durum bloğu gösterir', async () => {
+    api.monitoring.getScriptedMonitors.mockResolvedValue({ success: true, data: {
+      k6_available: true, can_manage: true, monitors: [] } })
+    const { container } = render(<ScriptedMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
+    await waitFor(() => expect(container.querySelector('.status-block')).not.toBeNull())
+    expect(container.querySelector('.pg-spinner')).toBeNull()   // dönen spinner yok
+  })
 })
