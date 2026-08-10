@@ -11,7 +11,6 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -158,15 +157,32 @@ public class ScriptedCheckerService {
 
     // ── Çalıştırma ───────────────────────────────────────────────────────────
 
+    /**
+     * k6'yı çalıştırır ve sonucu yorumlar.
+     *
+     * <p><b>Tanı asla kaybolmaz.</b> 2026-08'de bir monitör 289 koşumun 289'unda
+     * {@code Cannot invoke "Integer.intValue()" because "s.checksFailed" is null} ile düştü:
+     * yorumlama adımındaki bir NPE dıştaki catch'e düşüyor, {@code err()} ise elde olan HER ŞEYİ
+     * (gerçek çıkış kodu, ölçülen süre, k6'nın stdout/stderr'i) çöpe atıyordu. Kullanıcı ekranda
+     * ham bir JVM istisnası görüyor, hatanın yazdığı tek yeri — k6 çıktısını — hiç göremiyordu.
+     *
+     * <p>Bu yüzden {@code r}, {@code output}, {@code durationMs} try bloğunun DIŞINDA tutulur ve
+     * iki katmanlı guard vardır: (1) dış catch bağlamı koruyarak sonuç üretir, (2) yorumlama
+     * adımının kendi catch'i vardır — orada patlayan bir şey koşumun tanısını götürmez.
+     */
     private ScriptedResult execute(String script, List<EnvVar> envVars, int timeoutSec) {
         Path scriptFile = null, summaryFile = null;
+        // Bağlam DEĞİŞKENLERİ try dışında: catch bloğu bunlara erişebilsin.
+        List<String> secretValues = new ArrayList<>();
+        ProcessProbe.Result r = null;   // null ⇒ süreç hiç başlamadı
+        String output = null;           // DAİMA maskeli — asla ham r.output() değil
+        Long durationMs = null;         // null ⇒ koşum gerçekleşmedi (record sözleşmesi, satır 62-63)
         try {
             scriptFile = Files.createTempFile("k6-script-", ".js");
             summaryFile = Files.createTempFile("k6-summary-", ".json");
             Files.writeString(scriptFile, script == null ? "" : script);
 
             Map<String, String> env = new LinkedHashMap<>();
-            List<String> secretValues = new ArrayList<>();
             for (EnvVar v : envVars) {
                 if (v.name() == null || v.name().isBlank()) continue;
                 env.put(v.name(), v.value() == null ? "" : v.value());
@@ -182,30 +198,59 @@ public class ScriptedCheckerService {
 
             int tailBytes = appSettings.getInt("site.monitor.scripted.output-tail-bytes", 8192);
             long t0 = System.currentTimeMillis();
-            ProcessProbe.Result r = ProcessProbe.run(args, env, scriptFile.getParent().toFile(), timeoutSec, true, tailBytes);
-            long durationMs = System.currentTimeMillis() - t0;
+            r = ProcessProbe.run(args, env, scriptFile.getParent().toFile(), timeoutSec, true, tailBytes);
+            // durationMs YALNIZ süreç gerçekten koştuysa set edilir; aksi halde "temp dosya
+            // yazılamadı, 3 ms" gibi anlamsız bir süre uptime grafiğine girerdi.
+            durationMs = System.currentTimeMillis() - t0;
+            output = SecretMask.maskValues(r.output(), secretValues);
 
-            String output = SecretMask.maskValues(r.output(), secretValues);
+            Summary s = safeParseSummary(summaryFile);
 
-            // Özet JSON (varsa) ayrıştır
-            Summary s = new Summary();
+            // ── Katman 2: yorumlama guard'ı ──
+            String status;
+            String error;
             try {
-                if (Files.size(summaryFile) > 0) s = parseSummary(Files.readString(summaryFile), mapper);
-            } catch (Exception e) { /* JSON yok/bozuk → stdout'tan özetle */ }
-
-            String status = decideStatus(r.exitCode(), r.timedOut(), s.checksFailed);
-            boolean ok = "PASS".equals(status);
-            String error = ok ? null : summarizeError(status, r, output);
-
-            return new ScriptedResult(status, ok, durationMs, r.exitCode(),
-                    s.checksPassed, s.checksFailed, s.iterationMs, s.httpReqAvgMs, s.httpReqP95Ms,
-                    s.checksJson, output, error);
+                status = decideStatus(r.exitCode(), r.timedOut(), s.checksPassed, s.checksFailed);
+                error = "PASS".equals(status) ? null : summarizeError(status, r, output);
+            } catch (RuntimeException ie) {
+                log.error("Senaryo sonucu yorumlanamadı (exit={} timedOut={})", r.exitCode(), r.timedOut(), ie);
+                status = r.timedOut() ? "TIMEOUT" : "ERROR";
+                error = "sonuç yorumlanamadı: " + safeMsg(ie, secretValues);
+            }
+            if (!s.parsed && !"PASS".equals(status)) {
+                error = (error == null ? "" : error + " · ") + "k6 özeti okunamadı (metrik yok)";
+            }
+            return buildResult(status, durationMs, r, s, output, error);
         } catch (Exception e) {
-            return err("çalıştırma hatası: " + e.getMessage());
+            // ── Katman 1: dış guard — r/output/durationMs artık KAPSAMDA ──
+            log.error("Senaryo koşumu beklenmeyen istisnayla bitti", e);
+            return errWithContext(safeMsg(e, secretValues), r, output, durationMs, secretValues);
         } finally {
             deleteQuiet(scriptFile);
             deleteQuiet(summaryFile);
         }
+    }
+
+    /** Özet dosyasını güvenle ayrıştırır; okunamazsa {@code parsed=false} ile boş özet döner (sessiz DEĞİL). */
+    private Summary safeParseSummary(Path summaryFile) {
+        try {
+            if (Files.size(summaryFile) > 0) return parseSummary(Files.readString(summaryFile), mapper);
+            log.debug("k6 özet dosyası boş: {}", summaryFile);
+        } catch (Exception e) {
+            log.warn("k6 özet dosyası okunamadı ({}): {}", summaryFile, e.toString());
+        }
+        return new Summary();
+    }
+
+    /**
+     * İstisnayı loglanabilir/gösterilebilir metne çevirir.
+     * {@code getMessage()} null olabilir (eskiden "çalıştırma hatası: null" üretiyordu) ve istisna
+     * mesajı bir env DEĞERİ gömebilir (bozuk URI vb.) — bu yüzden maskeleme burada da uygulanır.
+     */
+    private static String safeMsg(Throwable e, List<String> secretValues) {
+        String msg = e.getMessage();
+        String text = e.getClass().getSimpleName() + (msg == null || msg.isBlank() ? "" : ": " + msg);
+        return SecretMask.maskValues(text, secretValues);
     }
 
     private static void deleteQuiet(Path p) {
@@ -213,20 +258,56 @@ public class ScriptedCheckerService {
         try { Files.deleteIfExists(p); } catch (Exception ignored) { /* temp temizliği asla hata fırlatmaz */ }
     }
 
+    /**
+     * Süreç HİÇ başlamadan biten yollar (k6 yok / havuz dolu / interrupt). Burada
+     * {@code durationMs=null, exitCode=-1} DOĞRU cevaptır: 0 ms "çok hızlı koştu" değil "koşamadı" demek.
+     */
     private ScriptedResult err(String message) {
-        // durationMs=null: koşum hiç gerçekleşmedi — 0 ms "çok hızlı koştu" değil "koşamadı" demek.
-        return new ScriptedResult("ERROR", false, null, -1, null, null, null, null, null, null, null, message);
+        return errWithContext(message, null, null, null, List.of());
+    }
+
+    /**
+     * Beklenmeyen istisnada elde olan HER ŞEYİ koruyarak sonuç üretir. {@code r} null ise davranış
+     * {@link #err(String)} ile birebir aynıdır (regresyon yok); değilse gerçek çıkış kodu, ölçülen
+     * süre ve k6 çıktısı kayda geçer — 289 koşumda kaybedilen tam olarak buydu.
+     *
+     * <p>{@code maskedOutput} çağrı yerinde zaten maskelenmiştir; buradaki ikinci {@code maskValues}
+     * kasıtlı bir kemer+askıdır (idempotent, ucuz): bu yola ileride biri ham {@code r.output()}
+     * geçirirse geri dönülmez bir secret sızıntısı olurdu.
+     */
+    private ScriptedResult errWithContext(String message, ProcessProbe.Result r,
+                                          String maskedOutput, Long durationMs, List<String> secretValues) {
+        String status = (r != null && r.timedOut()) ? "TIMEOUT" : "ERROR";
+        Integer exitCode = r != null ? r.exitCode() : -1;
+        String out = SecretMask.maskValues(maskedOutput, secretValues);
+        return new ScriptedResult(status, false, durationMs, exitCode,
+                null, null, null, null, null, null, out, message);
+    }
+
+    /** Sonuç montajı — saf ve statik, böylece Spring'siz/k6'sız birim-test edilebilir. */
+    static ScriptedResult buildResult(String status, Long durationMs, ProcessProbe.Result r,
+                                      Summary s, String maskedOutput, String error) {
+        return new ScriptedResult(status, "PASS".equals(status), durationMs, r.exitCode(),
+                s.checksPassed, s.checksFailed, s.iterationMs, s.httpReqAvgMs, s.httpReqP95Ms,
+                s.checksJson, maskedOutput, error);
     }
 
     private static String summarizeError(String status, ProcessProbe.Result r, String output) {
         if ("TIMEOUT".equals(status)) return "Süre aşımı — süreç sonlandırıldı";
-        String tail = output == null ? "" : output.strip();
-        if (tail.length() > 400) tail = tail.substring(tail.length() - 400);
+        String label = exitCodeLabel(r.exitCode(), r.timedOut());
+        String lines = extractErrorLines(output);
         return switch (status) {
-            case "FAIL"  -> "k6 check/threshold başarısız (çıkış kodu " + r.exitCode() + ")";
-            case "ERROR" -> "Script/çalışma hatası (çıkış kodu " + r.exitCode() + ")" + (tail.isBlank() ? "" : ": " + tail);
+            case "FAIL"  -> "k6 check/threshold başarısız (" + label + ")";
+            case "ERROR" -> label + (lines != null ? ":\n" + lines : tailSuffix(output));
             default      -> null;
         };
+    }
+
+    /** Hata satırı ayıklanamadığında eski davranış: çıktının son 400 karakteri. */
+    private static String tailSuffix(String output) {
+        String tail = output == null ? "" : output.strip();
+        if (tail.length() > 400) tail = tail.substring(tail.length() - 400);
+        return tail.isBlank() ? "" : ": " + tail;
     }
 
     // ── Saf/statik yardımcılar (birim-test edilebilir) ───────────────────────
@@ -239,10 +320,95 @@ public class ScriptedCheckerService {
         return "PASS";
     }
 
+    /**
+     * Null-toleranslı sarmalayıcı — karar tablosu DEĞİŞMEZ, yalnız NPE kapanır.
+     *
+     * <p>k6 özetinde {@code metrics.checks} yoksa (hiç {@code check()} çalışmadıysa ya da özet
+     * dosyası hiç yazılmadıysa) {@code checksFailed} null kalır ve primitive imzaya geçerken
+     * auto-unboxing NPE atardı — argüman değerlendirilirken, metot gövdesine girmeden.
+     *
+     * <p>Null'ı burada 0 gibi ele almak bilinçli: "0 başarısız check" ile "hiç check çalışmadı"
+     * aynı şey DEĞİL, ama bu ayrım {@code parseSummary}'nin sözleşmesine ait değil — o null'ı
+     * korumalı ({@code ScriptedCheckerServiceTest} bunu pinliyor). Ayrımın statüye yansıması
+     * ayrı bir iştir; burada yalnız çökme kapatılıyor.
+     */
+    static String decideStatus(int exitCode, boolean timedOut, Integer checksPassed, Integer checksFailed) {
+        return decideStatus(exitCode, timedOut, checksFailed == null ? 0 : checksFailed);
+    }
+
+    /**
+     * k6 çıkış kodunu insan-okur etikete çevirir.
+     * Kaynak: k6 {@code errext/exitcodes/codes.go}, v0.49.0 etiketi (imajdaki sürüm).
+     */
+    static String exitCodeLabel(int exitCode, boolean timedOut) {
+        String name = switch (exitCode) {
+            case 0   -> "başarılı";
+            case 97  -> "k6 Cloud koşumu başarısız";
+            case 98  -> "k6 Cloud ilerlemesi alınamadı";
+            case 99  -> "threshold eşiği aşıldı";
+            case 100 -> "setup() zaman aşımı";
+            case 101 -> "teardown() zaman aşımı";
+            case 102 -> "k6 iç zaman aşımı";
+            case 103 -> "REST API'den durduruldu";
+            case 104 -> "geçersiz k6 yapılandırması — script/options düzeltilmeli";
+            // timedOut=false ÖNEMLİ: ProcessProbe kendi timeout'unda exitCode'u -1 yapar, yani 105
+            // bizim sonlandırmamız OLAMAZ. Pod restart / OOM / node tahliyesi işaretidir.
+            case 105 -> "dış sinyalle sonlandırıldı (pod yeniden başlatma, OOM sınırı veya node tahliyesi olabilir)";
+            case 106 -> "k6 REST API portu açılamadı";
+            case 107 -> "script çalışma-zamanı hatası";
+            case 108 -> "script test.abort() ile durduruldu";
+            case 109 -> "k6 iç hatası (panic)";
+            case -1  -> timedOut ? "süreç sonlandırıldı" : "süreç başlatılamadı";
+            default  -> null;
+        };
+        return name == null ? "çıkış kodu " + exitCode : name + " (çıkış " + exitCode + ")";
+    }
+
+    private static final int ERR_MAX_LINES = 3;
+    private static final int ERR_MAX_LINE_CHARS = 300;
+    private static final int ERR_MAX_TOTAL_CHARS = 1000;
+
+    /**
+     * Maskeli k6 çıktısından ilk anlamlı hata satırlarını ayıklar; eşleşme yoksa {@code null}.
+     *
+     * <p>Neden: {@code summarizeError} eskiden çıktının SON 400 karakterini basıyordu — k6 hata
+     * satırını değil, ondan sonraki özet gürültüsünü. Asıl sebep ekrana hiç çıkmıyordu.
+     *
+     * <p>Girdi ZATEN maskelenmiş olmalıdır: bu metnin çıktısı {@code scripted_checks.error}
+     * kolonuna, oradan alarm mesajına ve e-postaya gidiyor.
+     *
+     * <p>Bilinen sınır: {@code outputTail} zaten son 8 KiB'dır; daha uzun çıktıda gerçek İLK hata
+     * bu pencerenin dışında kalmış olabilir. Alternasyonlu regex yerine {@code contains} kullanılır
+     * (8 KiB metinde ReDoS yüzeyi açmamak için). Hiçbir koşulda istisna fırlatmaz — catch yolundan
+     * da çağrılabilir.
+     */
+    static String extractErrorLines(String maskedOutput) {
+        if (maskedOutput == null || maskedOutput.isBlank()) return null;
+        List<String> picked = new ArrayList<>();
+        int total = 0;
+        for (String raw : maskedOutput.split("\\R")) {
+            String line = raw.strip();
+            if (line.isEmpty()) continue;
+            boolean hit = line.contains("ERRO[")
+                    || line.contains("GoError:")
+                    || line.toLowerCase(Locale.ROOT).contains("level=error");
+            if (!hit) continue;
+            if (line.length() > ERR_MAX_LINE_CHARS) line = line.substring(0, ERR_MAX_LINE_CHARS) + "…";
+            if (picked.contains(line)) continue;   // setup()+default() aynı GoError'ı iki kez basabilir
+            if (total + line.length() > ERR_MAX_TOTAL_CHARS) break;
+            picked.add(line);
+            total += line.length();
+            if (picked.size() >= ERR_MAX_LINES) break;
+        }
+        return picked.isEmpty() ? null : String.join("\n", picked);
+    }
+
     static final class Summary {
         Integer checksPassed, checksFailed;
         Long iterationMs, httpReqAvgMs, httpReqP95Ms;
         String checksJson;
+        /** Özet JSON gerçekten okunup ayrıştırılabildi mi — "bozuk özet" ile "hiç özet"i ayırır. */
+        boolean parsed;
     }
 
     /** k6 {@code --summary-export} JSON'unu ayrıştırır (null-toleranslı). */
@@ -251,6 +417,7 @@ public class ScriptedCheckerService {
         try {
             JsonNode root = mapper.readTree(json);
             JsonNode metrics = root.path("metrics");
+            s.parsed = metrics.isObject();
             JsonNode checks = metrics.path("checks");
             if (checks.has("passes")) s.checksPassed = checks.path("passes").asInt();
             if (checks.has("fails"))  s.checksFailed = checks.path("fails").asInt();
@@ -273,7 +440,10 @@ public class ScriptedCheckerService {
                 });
                 if (!list.isEmpty()) s.checksJson = mapper.writeValueAsString(list);
             }
-        } catch (Exception ignored) { /* bozuk JSON → boş özet */ }
+        } catch (Exception e) {
+            // Sessiz DEĞİL: bozuk özet ile hiç özet arasındaki fark tanı için önemli.
+            log.debug("k6 özeti ayrıştırılamadı: {}", e.toString());
+        }
         return s;
     }
 
