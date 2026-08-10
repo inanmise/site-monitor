@@ -6846,6 +6846,29 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
    .upt-badge--warn / .upt-card--warn ile aynı amber aile (App.css:2734-2736). */
 .upt-rt-warn { color: #d97706; font-weight: 600; white-space: nowrap; }
 [data-theme="dark"] .upt-rt-warn { color: #fbbf24; }
+
+/* == Senaryo İzleme tanı paneli (ScriptedMonitorPage → CheckDetail) ====================
+   İki katmanlı sunum: üstte insan-okur özet (AlertBanner), altta katlanır ham k6 çıktısı.
+   Çıktı bloğu tema-uyumlu `.show-pre` sınıfını kullanır — eskiden sabit siyah zeminli
+   satır-içi stildi ve açık temada sayfanın geri kalanıyla çelişiyordu. */
+.sc-detail { margin-top: 12px; }
+.sc-checks { margin: 0 0 10px; padding: 0; list-style: none; }
+.sc-check-row { padding: 4px 0; border-bottom: 1px solid var(--border); font-size: .92em; }
+.sc-check-ok  { color: var(--success); font-weight: 700; }
+.sc-check-bad { color: var(--danger); font-weight: 700; }
+.sc-err-msg  { white-space: pre-wrap; overflow-wrap: anywhere; }
+.sc-err-exit { margin-top: 4px; font-size: .9em; opacity: .85; }
+.sc-err-hint { margin-top: 4px; font-size: .9em; font-style: italic; }
+.sc-tech { margin-top: 10px; }
+.sc-tech-toggle { width: 100%; }
+.sc-tech-actions { display: flex; gap: 8px; align-items: center; margin: 8px 0 6px; }
+.sc-output { max-height: 320px; }
+/* Test Run konsolu — düzenleme modalındaki sonuç paneli. */
+.sc-testrun { margin-top: 4px; }
+.sc-testrun-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 6px; }
+.sc-testrun-status { font-weight: 700; }
+.sc-testrun-meta { color: var(--text-light); font-size: .9em; }
+.sc-console { max-height: 260px; }
 .upt-rt-ms   { color: var(--text-muted); white-space: nowrap; }
 .upt-rt-error { color: #ef4444; font-size: 11px; flex: 1; word-break: break-all; line-height: 1.4; }
 /* Port detay geçmişi — kolon başlıklı hizalı grid (Zaman | Durum | Yanıt | Detay) */
