@@ -210,7 +210,12 @@ public class ScriptedCheckerService {
             String status;
             String error;
             try {
-                status = decideStatus(r.exitCode(), r.timedOut(), s.checksPassed, s.checksFailed);
+                // Hata satırı ayıklaması iki işe yarıyor: mesajı zenginleştirmek VE "script patladı mı"
+                // sinyalini üretmek (k6 iterasyon istisnasında yine 0 ile çıkıyor).
+                boolean scriptErrored = extractErrorLines(output) != null;
+                status = decideStatus(r.exitCode(), r.timedOut(), s.checksPassed, s.checksFailed,
+                        s.hasThresholds, scriptErrored);
+                status = applyNoChecksPolicy(status);
                 error = "PASS".equals(status) ? null : summarizeError(status, r, output);
             } catch (RuntimeException ie) {
                 log.error("Senaryo sonucu yorumlanamadı (exit={} timedOut={})", r.exitCode(), r.timedOut(), ie);
@@ -292,15 +297,51 @@ public class ScriptedCheckerService {
                 s.checksJson, maskedOutput, error);
     }
 
+    /**
+     * {@code no-checks-policy}: NO_CHECKS filoda kaç monitörü etkileyeceği önceden bilinemez,
+     * bu yüzden yeniden dağıtım gerektirmeyen bir kaçış kapısı var.
+     * WARN (varsayılan) = NO_CHECKS (kayıt hatalı, alarm yok) · FAIL = alarm da üret ·
+     * PASS = eski davranış (acil geri dönüş).
+     */
+    private String applyNoChecksPolicy(String status) {
+        if (!"NO_CHECKS".equals(status)) return status;
+        String policy = appSettings.getString("site.monitor.scripted.no-checks-policy", "WARN");
+        if ("PASS".equalsIgnoreCase(policy)) return "PASS";
+        return "NO_CHECKS";   // WARN ve FAIL aynı statü; ayrım alarm (up) bayrağında yapılır
+    }
+
+    /** NO_CHECKS alarm da üretsin mi (policy=FAIL)? Varsayılan: hayır — kayıt hatalı ama kimse çağrılmaz. */
+    public boolean noChecksAlarms() {
+        return "FAIL".equalsIgnoreCase(appSettings.getString("site.monitor.scripted.no-checks-policy", "WARN"));
+    }
+
     private static String summarizeError(String status, ProcessProbe.Result r, String output) {
         if ("TIMEOUT".equals(status)) return "Süre aşımı — süreç sonlandırıldı";
-        String label = exitCodeLabel(r.exitCode(), r.timedOut());
-        String lines = extractErrorLines(output);
+        if ("NO_CHECKS".equals(status)) {
+            return "Script hiç check() çalıştırmadı — koşum hiçbir şey doğrulamadı";
+        }
+        // exit 0 + ERROR: script iterasyon içinde patladı, k6 yine 0 ile çıktı. exitCodeLabel(0)
+        // "başarılı" der; onu buraya yazmak "başarılı (çıkış 0): Error: ..." gibi kendini yalanlayan
+        // bir mesaj üretirdi.
+        String label = (r.exitCode() == 0 && !r.timedOut())
+                ? "script çalışırken hata verdi (k6 yine çıkış 0 verdi)"
+                : exitCodeLabel(r.exitCode(), r.timedOut());
+        String lines = sanitizeScriptPath(extractErrorLines(output));
         return switch (status) {
-            case "FAIL"  -> "k6 check/threshold başarısız (" + label + ")";
-            case "ERROR" -> label + (lines != null ? ":\n" + lines : tailSuffix(output));
+            case "FAIL"  -> "k6 check/threshold başarısız — " + exitCodeLabel(r.exitCode(), r.timedOut());
+            case "ERROR" -> label + (lines != null ? ":\n" + lines : sanitizeScriptPath(tailSuffix(output)));
             default      -> null;
         };
+    }
+
+    /**
+     * k6 mesajlarındaki geçici script yolunu ({@code file:///…/k6-script-8471.js}) {@code script}
+     * ile değiştirir. Hem kullanıcı için tamamen anlamsız, hem de sunucu dosya yolunu alarm
+     * e-postasına taşıyor.
+     */
+    static String sanitizeScriptPath(String text) {
+        if (text == null) return null;
+        return text.replaceAll("(?:file:/{2,})?[^\\s\"']*k6-script-[0-9A-Za-z_-]+\\.js", "script");
     }
 
     /** Hata satırı ayıklanamadığında eski davranış: çıktının son 400 karakteri. */
@@ -333,7 +374,36 @@ public class ScriptedCheckerService {
      * ayrı bir iştir; burada yalnız çökme kapatılıyor.
      */
     static String decideStatus(int exitCode, boolean timedOut, Integer checksPassed, Integer checksFailed) {
-        return decideStatus(exitCode, timedOut, checksFailed == null ? 0 : checksFailed);
+        return decideStatus(exitCode, timedOut, checksPassed, checksFailed, false, false);
+    }
+
+    /**
+     * Tam karar tablosu. Ek iki sinyal, "exit 0 ama hiç check çalışmadı" kovasını üçe ayırır —
+     * bu ayrım olmadan üç farklı olay tek bir yanıltıcı PASS'e düşüyordu.
+     *
+     * <p><b>Neden gerekli (gerçek k6 v0.49 ölçümü):</b> {@code default} fonksiyonu içinde fırlatılan
+     * bir istisna iterasyonu iptal eder ama k6 yine <b>0</b> ile çıkar ve özet JSON'unda
+     * {@code metrics.checks} hiç oluşmaz. Yani her koşumda patlayan bir script "başarılı" görünürdü —
+     * hem de %100 uptime'la ve alarmsız. k6 çıktısında {@code level=error} satırı dururken.
+     *
+     * <ul>
+     *   <li>çıktıda hata satırı var → {@code ERROR} (script patladı, k6 yuttu)</li>
+     *   <li>threshold tanımlı → {@code PASS} — {@code check()} kullanmayıp yalnız
+     *       {@code options.thresholds} ile doğrulayan script MEŞRUDUR (düşerse exit 99 → FAIL)</li>
+     *   <li>ikisi de yok → {@code NO_CHECKS} — koştu ama hiçbir şey doğrulanmadı</li>
+     * </ul>
+     */
+    static String decideStatus(int exitCode, boolean timedOut, Integer checksPassed, Integer checksFailed,
+                               boolean hasThresholds, boolean scriptErrored) {
+        if (timedOut) return "TIMEOUT";
+        if (exitCode != 0 && exitCode != 99) return "ERROR";
+        if (exitCode == 99) return "FAIL";
+        if (checksFailed != null && checksFailed > 0) return "FAIL";
+        if (checksPassed == null && checksFailed == null) {
+            if (scriptErrored) return "ERROR";
+            if (!hasThresholds) return "NO_CHECKS";
+        }
+        return "PASS";
     }
 
     /**
@@ -409,6 +479,8 @@ public class ScriptedCheckerService {
         String checksJson;
         /** Özet JSON gerçekten okunup ayrıştırılabildi mi — "bozuk özet" ile "hiç özet"i ayırır. */
         boolean parsed;
+        /** Script {@code options.thresholds} tanımlamış mı — check'siz ama MEŞRU script'i ayırır. */
+        boolean hasThresholds;
     }
 
     /** k6 {@code --summary-export} JSON'unu ayrıştırır (null-toleranslı). */
@@ -418,6 +490,16 @@ public class ScriptedCheckerService {
             JsonNode root = mapper.readTree(json);
             JsonNode metrics = root.path("metrics");
             s.parsed = metrics.isObject();
+            // Threshold VARLIĞI (gerçek 0.49 çıktısı: metrics.<ad>.thresholds = {"p(95)<10000": false}).
+            // Yalnız varlığa bakılır — boolean'ın anlamı yanıltıcı (yukarıdaki örnekte eşik GEÇTİ).
+            if (metrics.isObject()) {
+                for (JsonNode m : metrics) {
+                    if (m.path("thresholds").isObject() && !m.path("thresholds").isEmpty()) {
+                        s.hasThresholds = true;
+                        break;
+                    }
+                }
+            }
             JsonNode checks = metrics.path("checks");
             if (checks.has("passes")) s.checksPassed = checks.path("passes").asInt();
             if (checks.has("fails"))  s.checksFailed = checks.path("fails").asInt();

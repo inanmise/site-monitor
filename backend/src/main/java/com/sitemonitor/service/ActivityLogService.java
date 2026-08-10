@@ -139,10 +139,12 @@ public class ActivityLogService {
                 a.setResultSummary(detail + (ms != null ? " · " + ms + "ms" : ""));
             }
             case SCRIPTED -> {
-                String status = str(r.get("status"));   // PASS | FAIL | ERROR | TIMEOUT
+                String status = str(r.get("status"));   // PASS | FAIL | ERROR | TIMEOUT | NO_CHECKS
                 a.setResultStatus(switch (status == null ? "" : status.toUpperCase()) {
                     case "PASS" -> "SUCCESS";
-                    case "FAIL" -> "WARNING";
+                    // NO_CHECKS arıza değil yapılandırma kusuru — "diğer" dalına düşüp ERROR
+                    // görünmemeli (sözlük sabit: SUCCESS|WARNING|ERROR|TIMEOUT|UNKNOWN).
+                    case "FAIL", "NO_CHECKS" -> "WARNING";
                     case "TIMEOUT" -> "TIMEOUT";
                     default -> "ERROR";
                 });

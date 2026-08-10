@@ -69,6 +69,9 @@ public final class AppSettingsCatalog {
         new Setting("site.monitor.scripted.manual-cooldown-seconds", "scripted", Type.INT),
         new Setting("site.monitor.scripted.k6-bin",                  "scripted", Type.STRING),
         new Setting("site.monitor.scripted.hardcoded-secret-policy", "scripted", Type.ENUM, java.util.List.of("WARN", "BLOCK")),
+        // Koştu ama hiç check() çalıştırmadı: WARN = kayıt hatalı sayılır, alarm YOK (varsayılan) ·
+        // FAIL = alarm da üret · PASS = eski davranış (yeniden dağıtım gerektirmeyen geri dönüş).
+        new Setting("site.monitor.scripted.no-checks-policy",        "scripted", Type.ENUM, java.util.List.of("WARN", "FAIL", "PASS")),
         new Setting("site.monitor.metrics.scripted.retention-days",  "scripted", Type.INT),
         // Alan adı (domain) süre-bitişi izleme — RDAP (proxy-aware) + env-gated WHOIS.
         new Setting("site.monitor.domain.alert-enabled",         "monitoring", Type.BOOL),

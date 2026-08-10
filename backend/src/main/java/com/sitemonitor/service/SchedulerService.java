@@ -2594,12 +2594,20 @@ public class SchedulerService {
 
     private Map<String, Object> persistScripted(com.sitemonitor.model.ScriptedMonitor m,
                                                 ScriptedCheckerService.ScriptedResult res, boolean manual) {
-        boolean up = res.ok();
+        // ok ile up BİLİNÇLİ olarak ayrışır — CONFIG_ERROR'da (http/page türleri) uygulanan aynı desen.
+        //   ok  = "bu koşum doğrulanmış sağlık üretti mi?"  → uptime serisine ve rollup'a gider
+        //   up  = "hedef çökük mü, birini çağıralım mı?"    → alarm zincirine gider
+        // NO_CHECKS (script koştu ama hiçbir şey doğrulamadı) yapılandırma kusurudur: kayıt hatalı
+        // sayılır (uptime düşer, sessiz başarı riski kapanır) ama kimse çağrılmaz — hedef pekâlâ
+        // sağlıklı olabilir. no-checks-policy=FAIL ile alarm da açılabilir.
+        boolean ok = res.ok();
+        boolean noChecks = "NO_CHECKS".equals(res.status());
+        boolean up = ok || (noChecks && !scriptedCheckerService.noChecksAlarms());
         String ts = ISO.format(java.time.Instant.now());
         try {
             com.sitemonitor.model.ScriptedCheck c = new com.sitemonitor.model.ScriptedCheck();
             c.setMonitorId(m.getId());
-            c.setOk(up);
+            c.setOk(ok);
             c.setStatus(res.status());
             c.setDurationMs(res.durationMs());
             c.setExitCode(res.exitCode());
@@ -2619,7 +2627,7 @@ public class SchedulerService {
 
         Map<String, Object> activity = new LinkedHashMap<>();
         activity.put("status", res.status());
-        activity.put("ok", up);
+        activity.put("ok", ok);          // aktivite akışı SAĞLIĞI kaydeder, alarm kararını değil
         activity.put("checks_passed", res.checksPassed());
         activity.put("checks_failed", res.checksFailed());
         activity.put("response_ms", res.durationMs());

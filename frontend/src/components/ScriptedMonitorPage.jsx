@@ -43,11 +43,16 @@ const emptyForm = {
   recoveryChecks: 3, recoveryIntervalSeconds: 30, active: true, script: '', env: [], template: '',
 }
 
-const STATUS_COLOR = { PASS: '#16a34a', FAIL: '#d97706', ERROR: '#dc2626', TIMEOUT: '#b45309', unknown: '#9ca3af' }
+const STATUS_COLOR = { PASS: '#16a34a', FAIL: '#d97706', ERROR: '#dc2626', TIMEOUT: '#b45309', NO_CHECKS: '#d97706', unknown: '#9ca3af' }
 function statusLabel(t, s) { return t(`scripted.status_${s || 'unknown'}`) }
-/** PASS/FAIL/ERROR/TIMEOUT alfabesi → kanonik up/down eşlemesi (upt-card/upt-badge renk aileleri). */
+/** PASS/FAIL/ERROR/TIMEOUT/NO_CHECKS alfabesi → kanonik up/down eşlemesi (upt-card/upt-badge aileleri). */
 function isPass(s) { return s === 'PASS' }
 function isFailLike(s) { return s === 'FAIL' || s === 'ERROR' || s === 'TIMEOUT' }
+/**
+ * NO_CHECKS = koştu ama hiçbir şey doğrulanmadı. Bilinçli olarak isFailLike'a KONMADI:
+ * arıza değil yapılandırma kusurudur, alarm üretmez ve "down" sayaçlarını/filtresini şişirmemeli.
+ */
+function isWarnLike(s) { return s === 'NO_CHECKS' }
 
 export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
   const t = useT()
@@ -224,11 +229,13 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
   function cardClass(m) {
     if (isPass(m.status)) return 'upt-card--up'
     if (isFailLike(m.status)) return 'upt-card--down'
+    if (isWarnLike(m.status)) return 'upt-card--warn'
     return 'upt-card--unknown'
   }
   function statusBadge(m) {
     const s = m?.status
-    const cls = isPass(s) ? 'upt-badge--up' : isFailLike(s) ? 'upt-badge--down' : 'upt-badge--unknown'
+    const cls = isPass(s) ? 'upt-badge--up' : isFailLike(s) ? 'upt-badge--down'
+      : isWarnLike(s) ? 'upt-badge--warn' : 'upt-badge--unknown'
     return <span className={`upt-badge ${cls}`}><span className="upt-badge-dot" />{statusLabel(t, s)}</span>
   }
   const alarmLevelColor = (lvl) => lvl === 'CRITICAL' ? '#c0392b' : lvl === 'HIGH' ? '#e07b00' : '#f0a500'
@@ -464,7 +471,7 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
       {/* ── Detail Modal — kanonik upt-modal + 4 sekme (Kontrol / Alarm / Grafik / Rehber&Notlar) ── */}
       {selected && createPortal(
         <div className="upt-modal-overlay" onClick={closeDetail}>
-          <div className={`upt-modal upt-modal--${isPass(selected.status) ? 'up' : isFailLike(selected.status) ? 'down' : 'unknown'}`} onClick={e => e.stopPropagation()}>
+          <div className={`upt-modal upt-modal--${isPass(selected.status) ? 'up' : isFailLike(selected.status) ? 'down' : isWarnLike(selected.status) ? 'warn' : 'unknown'}`} onClick={e => e.stopPropagation()}>
             <div className="upt-modal-header">
               <div className="upt-modal-header-left">
                 {statusBadge(selected)}
@@ -509,7 +516,7 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
                   const isSel = selCheck?.id === c.id
                   return (<>
                     <span className="upt-rt-time" style={{ cursor: 'pointer' }} onClick={() => setSelCheck(isSel ? null : c)}>{formatDateSec(c.checked_at)}</span>
-                    <span className={isPass(c.status) ? 'upt-rt-up' : 'upt-rt-down'} style={{ cursor: 'pointer', fontWeight: isSel ? 700 : undefined }}
+                    <span className={isPass(c.status) ? 'upt-rt-up' : isWarnLike(c.status) ? 'upt-rt-warn' : 'upt-rt-down'} style={{ cursor: 'pointer', fontWeight: isSel ? 700 : undefined }}
                       onClick={() => setSelCheck(isSel ? null : c)}>{statusLabel(t, c.status)}</span>
                     <span className="upt-rt-ms">{c.duration_ms != null ? `${c.duration_ms}ms` : '—'}</span>
                     {c.error ? <span className="upt-rt-error" title={c.error}>{c.error}</span>

@@ -62,10 +62,54 @@ class ScriptedCheckerServiceTest {
         ScriptedCheckerService.Summary s = ScriptedCheckerService.parseSummary(noChecks, mapper);
         assertThat(s.checksFailed).isNull();   // ayrıştırıcı null'ı KORUR (sözleşme)
 
-        assertThat(ScriptedCheckerService.decideStatus(0, false, s.checksPassed, s.checksFailed)).isEqualTo("PASS");
+        // exit 0 + hiç check + threshold yok + hata satırı yok ⇒ NO_CHECKS (sessiz PASS DEĞİL)
+        assertThat(ScriptedCheckerService.decideStatus(0, false, s.checksPassed, s.checksFailed)).isEqualTo("NO_CHECKS");
         assertThat(ScriptedCheckerService.decideStatus(107, false, s.checksPassed, s.checksFailed)).isEqualTo("ERROR");
         assertThat(ScriptedCheckerService.decideStatus(99, false, s.checksPassed, s.checksFailed)).isEqualTo("FAIL");
         assertThat(ScriptedCheckerService.decideStatus(0, true, s.checksPassed, s.checksFailed)).isEqualTo("TIMEOUT");
+    }
+
+    @Test
+    @DisplayName("REGRESYON: exit 0 + hiç check → sessiz PASS YOK; script patladıysa ERROR, threshold varsa PASS")
+    void decideStatus_noChecks_isNotSilentPass() {
+        // Gerçek k6 v0.49 ölçümü: default() içinde fırlatılan istisna iterasyonu iptal eder ama
+        // k6 yine 0 ile çıkar ve metrics.checks HİÇ oluşmaz. Bu koşum "başarılı" sayılamaz.
+        assertThat(ScriptedCheckerService.decideStatus(0, false, null, null, false, true)).isEqualTo("ERROR");
+        // check() kullanmayıp yalnız options.thresholds ile doğrulayan script MEŞRUDUR
+        assertThat(ScriptedCheckerService.decideStatus(0, false, null, null, true, false)).isEqualTo("PASS");
+        // ne hata ne threshold → koştu ama hiçbir şey doğrulanmadı
+        assertThat(ScriptedCheckerService.decideStatus(0, false, null, null, false, false)).isEqualTo("NO_CHECKS");
+        // check ÇALIŞTIYSA (0 başarısız) normal PASS — NO_CHECKS'e düşmemeli
+        assertThat(ScriptedCheckerService.decideStatus(0, false, 3, 0, false, false)).isEqualTo("PASS");
+        // exit 99 her hâlükârda FAIL; timeout her şeyi ezer
+        assertThat(ScriptedCheckerService.decideStatus(99, false, null, null, false, true)).isEqualTo("FAIL");
+        assertThat(ScriptedCheckerService.decideStatus(0, true, null, null, false, true)).isEqualTo("TIMEOUT");
+    }
+
+    @Test
+    @DisplayName("sanitizeScriptPath: geçici script yolu mesajdan temizlenir (yol ifşası + anlamsız)")
+    void sanitizeScriptPath_removesTempPath() {
+        String msg = "SyntaxError: file:///C:/Users/7636/AppData/Local/Temp/k6-script-4913795144.js: "
+                + "Unexpected token (1:33)";
+        String out = ScriptedCheckerService.sanitizeScriptPath(msg);
+        assertThat(out).doesNotContain("Users").doesNotContain("Temp").doesNotContain("k6-script-");
+        assertThat(out).contains("script:").contains("Unexpected token (1:33)");   // tanı korunuyor
+        // Linux yolu da (pod'daki gerçek biçim)
+        assertThat(ScriptedCheckerService.sanitizeScriptPath("at /tmp/k6-script-8471.js:22:5"))
+                .isEqualTo("at script:22:5");
+        assertThat(ScriptedCheckerService.sanitizeScriptPath(null)).isNull();
+    }
+
+    @Test
+    @DisplayName("parseSummary: metrics.<ad>.thresholds VARLIĞI okunur (gerçek k6 0.49 çıktı şekli)")
+    void parseSummary_thresholds() {
+        // Gerçek 0.49 --summary-export çıktısından: boolean'ın anlamı yanıltıcı (burada eşik GEÇTİ),
+        // bu yüzden yalnız VARLIĞA bakılıyor.
+        String withThr = "{\"metrics\":{\"http_req_duration\":{\"avg\":5.0,\"thresholds\":{\"p(95)<10000\":false}}}}";
+        assertThat(ScriptedCheckerService.parseSummary(withThr, mapper).hasThresholds).isTrue();
+        String noThr = "{\"metrics\":{\"http_req_duration\":{\"avg\":5.0}}}";
+        assertThat(ScriptedCheckerService.parseSummary(noThr, mapper).hasThresholds).isFalse();
+        assertThat(ScriptedCheckerService.parseSummary("", mapper).hasThresholds).isFalse();
     }
 
     @Test

@@ -433,6 +433,9 @@ Sağ üstteki **+ Yeni Monitör** ile formu açın.
 - Kaydetmeden önce **Test Çalıştır** ile script'i anında deneyin; geçen/başarısız check sayısı ve k6 çıktısı görünür.
 - İzleme için **ayrı bir servis hesabı** kullanın; gerçek kullanıcı hesabıyla otomatik login yapmayın.
 - Sonuç: k6 check'i başarısız/exit 99 ⇒ FAIL, zaman aşımı ⇒ TIMEOUT, diğer hatalar ⇒ ERROR, aksi ⇒ PASS.
+- Script hiç \`check()\` çalıştırmazsa sonuç **NO_CHECKS** olur (koştu ama hiçbir şey doğrulanmadı) —
+  yalnız \`options.thresholds\` kullanan script'ler bunun dışındadır. İsteği \`try/catch\` içine alın ve
+  **her koşulda en az bir \`check()\`** çalıştırın; böylece istek patlasa bile sebep metrik olarak kalır.
 `
 
 const SCRIPTED_EN = `
@@ -460,6 +463,9 @@ Open the form with **+ New Monitor** (top right).
 - Use **Test Run** before saving to try the script instantly; passed/failed checks and k6 output are shown.
 - Use a **dedicated service account**; don't automate login with a real user account.
 - Result: failed k6 check / exit 99 ⇒ FAIL, timeout ⇒ TIMEOUT, other errors ⇒ ERROR, otherwise ⇒ PASS.
+- If the script never runs a \`check()\`, the result is **NO_CHECKS** (it ran but verified nothing) —
+  scripts that only use \`options.thresholds\` are exempt. Wrap the request in \`try/catch\` and run
+  **at least one \`check()\` in every path**, so the reason survives as a metric even if the request throws.
 `
 
 export const MONITOR_GUIDES = {
