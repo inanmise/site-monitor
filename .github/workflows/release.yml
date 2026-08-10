@@ -71,9 +71,14 @@ jobs:
           done
 
           # 2) Bulunamadıysa: push'ta bu bir hatadır. workflow_dispatch'te ise main'in ucu
-          #    bir 'chore(release) … [skip ci]' commit'i olabilir (o commit için CI hiç
-          #    koşmaz) — bu durumda main'deki EN SON tamamlanmış CI çalışmasına bakılır;
-          #    yayınlanacak kod zaten odur.
+          #    bir 'chore(release)' sürüm-artırma commit'i olabilir; o commit skip-ci
+          #    belirteci taşıdığı için CI hiç koşmaz. Bu durumda main'deki EN SON
+          #    tamamlanmış CI çalışmasına bakılır — yayınlanacak kod zaten odur.
+          #
+          #    DİKKAT: skip-ci belirteci commit mesajının GÖVDESİNDE geçse bile GitHub
+          #    o push'un TÜM workflow'larını atlar. Bu yüzden burada ve commit
+          #    mesajlarında belirteç literal olarak yazılmaz (2026-08-10'da yazıldı ve
+          #    ne CI ne Release tetiklendi).
           if [ -z "$RUN" ]; then
             if [ "$EVENT" = "workflow_dispatch" ]; then
               echo "Bu SHA için CI çalışması yok; main'deki son tamamlanmış CI'a bakılıyor."
