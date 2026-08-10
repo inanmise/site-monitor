@@ -20,12 +20,123 @@ concurrency:
   group: release
   cancel-in-progress: false
 
-# ── Job 1: Commit mesajlarından bump tipini belirle ──────────────────────────
+# ── Job 0: CI kapısı — "CI — Build & Test" yeşil olmadan sürüm çıkmaz ────────
+#
+# Neden ayrı bir job ve neden `gh api` ile bekleme?
+#   `needs:` YALNIZ aynı workflow içindeki job'lar arasında çalışır; ci.yml ayrı bir dosya
+#   olduğu için ona doğrudan bağlanılamaz. Bu push, release.yml ile ci.yml'i AYNI ANDA
+#   tetikler; burada o çalışmayı commit SHA'sıyla bulup bitmesini bekliyoruz.
+#
+# Bu kapı olmadan ne oluyordu: v20.10.1, .2 ve .3 kırmızı CI'a rağmen tag'lendi, Docker
+# image'ı ve Helm chart'ı yayınlandı (2026-08-09/10). Kırılan yalnız bir testin kendisiydi,
+# ama gerçek bir regresyon da tam olarak aynı yoldan geçerdi.
 jobs:
-  detect:
-    name: Detect version bump
+  gate:
+    name: Require CI green
     runs-on: ubuntu-latest
     if: github.actor != 'github-actions[bot]'
+    timeout-minutes: 45
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      proceed: ${{ steps.wait.outputs.proceed }}
+
+    steps:
+      - name: Wait for "CI — Build & Test" on this commit
+        id: wait
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+
+          # Yalnız `gh api --jq` kullanılır (gh'nin gömülü jq'su); harici `jq` binary'sine
+          # bağımlılık yok. Çıktı tek satır: "<id> <url>", bulunamazsa boş.
+          latest_run_for_sha() {
+            gh api "repos/${REPO}/actions/workflows/ci.yml/runs?head_sha=${SHA}&per_page=20" \
+              --jq '.workflow_runs | sort_by(.created_at) | last as $r
+                    | if $r then "\($r.id) \($r.html_url)" else empty end'
+          }
+
+          # 1) Çalışmanın görünmesini bekle (push'ta saniyeler içinde oluşur).
+          RUN=""
+          for i in $(seq 1 18); do            # 18 x 10 sn = 3 dk
+            RUN="$(latest_run_for_sha || true)"
+            [ -n "$RUN" ] && break
+            echo "CI çalışması henüz görünmedi (${i}/18)…"
+            sleep 10
+          done
+
+          # 2) Bulunamadıysa: push'ta bu bir hatadır. workflow_dispatch'te ise main'in ucu
+          #    bir 'chore(release)' sürüm-artırma commit'i olabilir; o commit skip-ci
+          #    belirteci taşıdığı için CI hiç koşmaz. Bu durumda main'deki EN SON
+          #    tamamlanmış CI çalışmasına bakılır — yayınlanacak kod zaten odur.
+          #
+          #    DİKKAT: skip-ci belirteci commit mesajının GÖVDESİNDE geçse bile GitHub
+          #    o push'un TÜM workflow'larını atlar. Bu yüzden burada ve commit
+          #    mesajlarında belirteç literal olarak yazılmaz (2026-08-10'da yazıldı ve
+          #    ne CI ne Release tetiklendi).
+          if [ -z "$RUN" ]; then
+            if [ "$EVENT" = "workflow_dispatch" ]; then
+              echo "Bu SHA için CI çalışması yok; main'deki son tamamlanmış CI'a bakılıyor."
+              RUN="$(gh api "repos/${REPO}/actions/workflows/ci.yml/runs?branch=main&status=completed&per_page=1" \
+                       --jq '.workflow_runs[0] as $r
+                             | if $r then "\($r.id) \($r.html_url)" else empty end')"
+            fi
+          fi
+          if [ -z "$RUN" ]; then
+            echo "::error::Bu commit için 'CI — Build & Test' çalışması bulunamadı — sürüm durduruldu."
+            exit 1
+          fi
+
+          read -r RUN_ID RUN_URL <<<"$RUN"
+          echo "İzlenen CI çalışması: ${RUN_URL}"
+
+          # 3) Bitmesini bekle.
+          STATUS=""; CONCLUSION=""
+          for i in $(seq 1 240); do           # 240 x 10 sn = 40 dk (job timeout 45 dk)
+            read -r STATUS CONCLUSION <<<"$(gh api "repos/${REPO}/actions/runs/${RUN_ID}" \
+              --jq '"\(.status) \(.conclusion // "-")"')"
+            [ "$STATUS" = "completed" ] && break
+            echo "CI durumu: ${STATUS} (${i}/240)…"
+            sleep 10
+          done
+
+          if [ "$STATUS" != "completed" ]; then
+            echo "::error::CI 40 dakikada bitmedi — sürüm durduruldu: ${RUN_URL}"
+            exit 1
+          fi
+          if [ "$CONCLUSION" != "success" ]; then
+            echo "::error::CI yeşil değil (${CONCLUSION}) — sürüm durduruldu: ${RUN_URL}"
+            exit 1
+          fi
+
+          # 4) Beklerken main ilerledi mi? Aşağıdaki job'lar `ref: main` ile checkout ediyor;
+          #    ilerlemişse CI'ın doğruladığı SHA ile yayınlanacak kod ayrışır. Bu yarış kapı
+          #    eklenmeden de vardı (tetikleme ile checkout arası), ama bekleme onu saniyelerden
+          #    dakikalara çıkarıyor — o yüzden burada kapatılıyor.
+          #    Bu bir HATA değil, atlama: yeni push'un kendi release çalışması sırada bekliyor
+          #    ve doğru SHA ile yayınlayacak. Kırmızı CI (yukarıda) gürültülü şekilde FAIL eder,
+          #    bu durum ise sessizce atlanır.
+          TIP="$(gh api "repos/${REPO}/branches/main" --jq '.commit.sha')"
+          if [ "$TIP" != "$SHA" ]; then
+            echo "proceed=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::main ilerledi (${SHA} → ${TIP}); bu çalışma sürüm çıkarmayacak — sıradaki push kendi sürümünü çıkarır."
+            exit 0
+          fi
+
+          echo "proceed=true" >> "$GITHUB_OUTPUT"
+          echo "CI yeşil ve main hâlâ ${SHA} — sürüme devam."
+
+# ── Job 1: Commit mesajlarından bump tipini belirle ──────────────────────────
+  detect:
+    name: Detect version bump
+    needs: gate
+    runs-on: ubuntu-latest
+    if: github.actor != 'github-actions[bot]' && needs.gate.outputs.proceed == 'true'
     outputs:
       should_release: ${{ steps.detect.outputs.should_release }}
       bump: ${{ steps.detect.outputs.bump }}

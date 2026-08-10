@@ -23,7 +23,8 @@ const overview = (over = {}) => ({
   data: {
     hold_active: false,
     hold_key: 'site.monitor.retention.hold-enabled',
-    cleanup_cron: '0 30 3 * * *',
+    cleanup_cron: '0 0 3 * * *',
+    cleanup_zone: 'Europe/Istanbul',
     totals: { rows: 1250000, bytes: 734003200, purgeable: 40321, policies: 2, tables: 2 },
     last_run: { started_at: '2026-08-08T03:30:00', total_deleted: 12000, failed_count: 0 },
     approvals: {},

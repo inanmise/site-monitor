@@ -216,7 +216,10 @@ export default function RetentionSettings() {
       </div>
 
       <p className="section-desc ret-intro">{t('ret.desc')}</p>
-      <p className="field-hint">{t('ret.liveHint', data.cleanup_cron)}</p>
+      {/* Saat dilimi de gösteriliyor: zone'suz bir "03:00" pod'un GMT'sinde 06:00 İstanbul demekti. */}
+      <p className="field-hint">
+        {t('ret.liveHint', data.cleanup_zone ? `${data.cleanup_cron} · ${data.cleanup_zone}` : data.cleanup_cron)}
+      </p>
 
       {holdOn && (
         <div className="ret-hold-banner" role="alert">

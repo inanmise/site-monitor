@@ -36,7 +36,8 @@ public final class RetentionDocGenerator {
         sb.append("> Değişiklik için kataloğu güncelleyin; `RetentionDocTest` sapmayı yakalar.\n\n");
 
         sb.append("## Nasıl çalışır\n\n");
-        sb.append("- Gece temizliği `0 30 3` cron'unda tek pod'da (`nightly-cleanup` dağıtık kilidi) koşar.\n");
+        sb.append("- Gece temizliği `" + RetentionCatalog.CLEANUP_CRON_DEFAULT + "` cron'unda ("
+                + RetentionCatalog.CLEANUP_ZONE + ") tek pod'da (`nightly-cleanup` dağıtık kilidi) koşar.\n");
         sb.append("- Ham seriler ÖNCE günlük özete (`monitor_check_daily`) alınır, SONRA silinir —\n");
         sb.append("  ham veri kısalsa da uzun dönem trend korunur.\n");
         sb.append("- Yüksek hacimli tablolar 10.000'lik dilimlerle silinir (`ANALYZE` ile biter):\n");

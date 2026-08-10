@@ -5,7 +5,7 @@
 
 ## Nasıl çalışır
 
-- Gece temizliği `0 30 3` cron'unda tek pod'da (`nightly-cleanup` dağıtık kilidi) koşar.
+- Gece temizliği `0 0 3 * * *` cron'unda (Europe/Istanbul) tek pod'da (`nightly-cleanup` dağıtık kilidi) koşar.
 - Ham seriler ÖNCE günlük özete (`monitor_check_daily`) alınır, SONRA silinir —
   ham veri kısalsa da uzun dönem trend korunur.
 - Yüksek hacimli tablolar 10.000'lik dilimlerle silinir (`ANALYZE` ile biter):

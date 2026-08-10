@@ -32,7 +32,8 @@ korunur → ham veri kısa retention'la silinebilir. Saatlik katman 2026-08'de e
 - **Sorgu hızı:** monitör-liste "en güncel kontrol" sorguları (`findLatestPer*`) full-table `GROUP BY`
   yerine küçük monitör tablosuna **LATERAL join** ile index-seek yapar (~3.5sn → ~0.2ms). Dashboard
   özetleri (`/audit/stats`) 60sn Caffeine cache'li.
-- **Batch'li purge:** gece temizlik (`SchedulerService.cleanupOldLogs`, cron `0 30 3`) yüksek-hacimli
+- **Batch'li purge:** gece temizlik (`SchedulerService.cleanupOldLogs`, cron `0 0 3` — Europe/Istanbul;
+  ifade `RetentionCatalog.CLEANUP_CRON_DEFAULT`'tan gelir) yüksek-hacimli
   tabloları tek dev DELETE yerine 10k'lık dilimlerle siler + `ANALYZE` (bloat + uzun-tx önleme).
 - **Rollup:** purge'den ÖNCE son N günü `monitor_check_daily` (gün kovası) ve `monitor_check_hourly`
   (saat kovası) tablolarına aggregate eder — aynı huni, tek fark kova genişliği (10 / 13 karakter;
