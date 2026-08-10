@@ -87,6 +87,7 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
   const [saving, setSaving] = useState(false)
   const [testing, setTesting] = useState(false)
   const [testResult, setTestResult] = useState(null)
+  const [saveWarnings, setSaveWarnings] = useState([])   // kaydetme sonrası engellemeyen uyarılar
   const [checking, setChecking] = useState(null)
   const [selected, setSelected] = useState(null) // detail monitor
   const [summary, setSummary] = useState({ total: 0, down: 0 })   // CheckHistoryTab onCounts besler
@@ -283,7 +284,7 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
       env: base.env.map(e => e.secret ? { ...e, value: '', value_set: false } : e) })
     setTestResult(null); setDupSource(m); setModal({})
   }
-  function closeEdit() { setModal(null); setTestResult(null); setDupSource(null) }
+  function closeEdit() { setModal(null); setTestResult(null); setDupSource(null); setSaveWarnings([]) }
 
   function setEnvRow(i, patch) { setForm(f => ({ ...f, env: f.env.map((e, j) => j === i ? { ...e, ...patch } : e) })) }
   function addEnvRow() { setForm(f => ({ ...f, env: [...f.env, { name: '', secret: false, value: '' }] })) }
@@ -326,7 +327,14 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
     const res = modal?.id ? await api.monitoring.updateScriptedMonitor(modal.id, payload)
                           : await api.monitoring.createScriptedMonitor(payload)
     setSaving(false)
-    if (res?.success) { toast.success(t('scripted.saved')); closeEdit(); load() }
+    if (res?.success) {
+      // Engellemeyen uyarılar (eksik/kullanılmayan __ENV, sonuçsuz sözdizimi doğrulaması) KALICI
+      // gösterilir — toast kaybolur, bu bilgi kaydettikten sonra da lazım.
+      const w = res.data?.warnings
+      if (Array.isArray(w) && w.length) setSaveWarnings(w)
+      else { toast.success(t('scripted.saved')); closeEdit() }
+      load()
+    }
     else toast.error(res?.error || t('scripted.saveError'))
   }
 
@@ -555,7 +563,7 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
         document.body
       )}
 
-      {modal && createPortal(<EditModal {...{ t, lang, form, setForm, modal, dupSource, saving, testing, testResult, save, del, closeEdit, runTest, isAdminish, canDelete: modal?.id ? canDeleteRow(modal) : false, teamSelectOptions, teamName, groupSelectOptions, setEnvRow, addEnvRow, delEnvRow, applyTemplate }} />, document.body)}
+      {modal && createPortal(<EditModal {...{ t, lang, form, setForm, modal, dupSource, saving, testing, testResult, saveWarnings, save, del, closeEdit, runTest, isAdminish, canDelete: modal?.id ? canDeleteRow(modal) : false, teamSelectOptions, teamName, groupSelectOptions, setEnvRow, addEnvRow, delEnvRow, applyTemplate }} />, document.body)}
     </div>
   )
 }
@@ -634,7 +642,7 @@ function CheckDetail({ t, check }) {
 }
 
 // ── Create/Edit modal ────────────────────────────────────────────────────────
-function EditModal({ t, lang, form, setForm, modal, dupSource, saving, testing, testResult, save, del, closeEdit, runTest, isAdminish, canDelete, teamSelectOptions, teamName, groupSelectOptions, setEnvRow, addEnvRow, delEnvRow, applyTemplate }) {
+function EditModal({ t, lang, form, setForm, modal, dupSource, saving, testing, testResult, saveWarnings, save, del, closeEdit, runTest, isAdminish, canDelete, teamSelectOptions, teamName, groupSelectOptions, setEnvRow, addEnvRow, delEnvRow, applyTemplate }) {
   const ivIdx = intervalIdx(Number(form.intervalSeconds))
   return (
     <div className="modal-overlay">
@@ -740,6 +748,14 @@ function EditModal({ t, lang, form, setForm, modal, dupSource, saving, testing, 
             <input type="checkbox" checked={form.notifyEmail} onChange={e => setForm(f => ({ ...f, notifyEmail: e.target.checked }))} /> {t('scripted.notifyEmail')}</label>
           <label className="checkbox-label full-width">
             <input type="checkbox" checked={form.active} onChange={e => setForm(f => ({ ...f, active: e.target.checked }))} /> {t('scripted.active')}</label>
+
+          {/* Kaydetme uyarıları — inline ve KALICI (toast değil): kullanıcı düzeltene kadar durmalı. */}
+          {saveWarnings?.length > 0 &&
+            <div className="full-width">
+              <AlertBanner tone="warning" title={t('scripted.saveWarnTitle')}>
+                <ul className="sc-warn-list">{saveWarnings.map((w, i) => <li key={i}>{w}</li>)}</ul>
+              </AlertBanner>
+            </div>}
 
           {/* Test sonucu — kaydetmeden önce iterasyon yapmanın TEK yolu, gerçek bir konsol olmalı.
               Çıktı bloğu tema-uyumlu .show-pre; hata metni insan-okur özet + çıkış kodu etiketi. */}

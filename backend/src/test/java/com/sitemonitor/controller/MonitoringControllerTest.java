@@ -92,6 +92,11 @@ class MonitoringControllerTest {
 
     @BeforeEach
     void stubTeamMap() {
+        // Senaryo kaydetme yolu artık kaydetmeden önce script doğrulaması çağırıyor; mock varsayılanı
+        // null döner ve NPE'ye yol açar. Zararsız (engellemeyen, uyarısız) bir sonuç stub'la.
+        org.mockito.Mockito.lenient().when(scriptedChecker.validateScript(org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any()))
+                .thenReturn(new com.sitemonitor.service.ScriptedCheckerService.ScriptDiagnostics(null, java.util.List.of()));
         // İzleme uçları artık domain→takım map'ini buradan alıyor; boş map yeterli (team_name=null).
         when(certificateService.domainTeamNameMap()).thenReturn(java.util.Map.of());
         // teamNameMap() artık CertificateService.teamNamesById()'e (cache'li) delege ediyor.

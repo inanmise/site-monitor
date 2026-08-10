@@ -6869,6 +6869,8 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .sc-testrun-status { font-weight: 700; }
 .sc-testrun-meta { color: var(--text-light); font-size: .9em; }
 .sc-console { max-height: 260px; }
+.sc-warn-list { margin: 0; padding-left: 18px; }
+.sc-warn-list li { margin: 2px 0; }
 .upt-rt-ms   { color: var(--text-muted); white-space: nowrap; }
 .upt-rt-error { color: #ef4444; font-size: 11px; flex: 1; word-break: break-all; line-height: 1.4; }
 /* Port detay geçmişi — kolon başlıklı hizalı grid (Zaman | Durum | Yanıt | Detay) */
