@@ -104,6 +104,14 @@ public class WeeklyReportService {
      *  (kardeş servisler — WeeklyReportKpiService, MonitoringWeeklyStatsService — zaten explicit IST kullanıyor). */
     private static final ZoneId IST = ZoneId.of("Europe/Istanbul");
 
+    /** Servisin "bugün"ü — testler de BUNU kullanmalı. Test tarafında çıplak LocalDate.now()
+     *  kullanmak, JVM saat dilimi IST değilken (CI runner'ı UTC) hafta sınırında sahte
+     *  başarısızlık üretiyordu: Pazar 21:00–24:00 UTC'de burası zaten Pazartesi olduğu için
+     *  servis ile testin ISO haftaları ayrışıyordu. */
+    static LocalDate today() {
+        return LocalDate.now(IST);
+    }
+
     private static final Set<String> ALLOWED_IMAGE_TYPES =
             Set.of("image/png", "image/jpeg", "image/gif", "image/webp", "image/bmp");
 
@@ -142,7 +150,7 @@ public class WeeklyReportService {
     // ── Listeleme / okuma ─────────────────────────────────────────────────────
 
     public List<WeeklyReport> list(Long requestedTeamId, Integer year, Actor actor) {
-        int y = year != null ? year : LocalDate.now(IST).getYear();
+        int y = year != null ? year : today().getYear();
         Long teamId = actor.isAdmin() || actor.isAudit()
                 ? requestedTeamId
                 : actor.teamId(); // non-ADMIN kendi takımına zorlanır
@@ -158,7 +166,7 @@ public class WeeklyReportService {
      *  içinde bulunulan ISO yılı yoksa başa eklenir — dropdown boş kalmaz. */
     public List<Integer> years(Long requestedTeamId, Actor actor) {
         Long teamId = actor.isAdmin() || actor.isAudit() ? requestedTeamId : actor.teamId();
-        int current = LocalDate.now(IST).get(WeekFields.ISO.weekBasedYear());
+        int current = today().get(WeekFields.ISO.weekBasedYear());
         if (!actor.isAdmin() && !actor.isAudit() && teamId == null) {
             return List.of(current);
         }
@@ -976,7 +984,7 @@ public class WeeklyReportService {
     /** Rapor haftası, içinde bulunulan veya bir önceki ISO haftası mı?
      *  weekBasedYear kullanılır — yıl sınırında (1 Ocak / 53. hafta) doğru çalışır. */
     static boolean inEditWindow(int reportYear, int weekNo) {
-        LocalDate today = LocalDate.now(IST);
+        LocalDate today = today();
         for (LocalDate d : List.of(today, today.minusWeeks(1))) {
             if (d.get(WeekFields.ISO.weekBasedYear()) == reportYear
                     && d.get(WeekFields.ISO.weekOfWeekBasedYear()) == weekNo) {
