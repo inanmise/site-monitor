@@ -72,6 +72,10 @@ public final class AppSettingsCatalog {
         // Koştu ama hiç check() çalıştırmadı: WARN = kayıt hatalı sayılır, alarm YOK (varsayılan) ·
         // FAIL = alarm da üret · PASS = eski davranış (yeniden dağıtım gerektirmeyen geri dönüş).
         new Setting("site.monitor.scripted.no-checks-policy",        "scripted", Type.ENUM, java.util.List.of("WARN", "FAIL", "PASS")),
+        // Kaydetme öncesi `k6 archive` ile sözdizimi doğrulaması. WARN = uyar ama kaydet ·
+        // BLOCK = kesin hatada (satır/sütun çıkarılabiliyorsa) kaydetmeyi reddet · OFF = kapalı.
+        new Setting("site.monitor.scripted.syntax-check-policy",     "scripted", Type.ENUM, java.util.List.of("BLOCK", "WARN", "OFF")),
+        new Setting("site.monitor.scripted.validate-timeout-seconds","scripted", Type.INT),
         new Setting("site.monitor.metrics.scripted.retention-days",  "scripted", Type.INT),
         // Alan adı (domain) süre-bitişi izleme — RDAP (proxy-aware) + env-gated WHOIS.
         new Setting("site.monitor.domain.alert-enabled",         "monitoring", Type.BOOL),

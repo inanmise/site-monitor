@@ -82,6 +82,141 @@ public class ScriptedCheckerService {
         if (execPool != null) execPool.shutdownNow();
     }
 
+    // ── Kaydetme öncesi doğrulama ────────────────────────────────────────────
+
+    /**
+     * Doğrulama için AYRI semafor. İzleme havuzunu ({@code pool-size}, varsayılan 2) asla
+     * tüketmez — yoksa bir kaydetme rafalı sweep'i aç bırakırdı.
+     */
+    private final Semaphore validatePermits = new Semaphore(2);
+
+    /**
+     * Kaydetme öncesi script doğrulaması sonucu.
+     *
+     * @param blocking kaydetmeyi ENGELLEYEN kesin hata (satır/sütun çıkarılabildi); null ise engel yok
+     * @param warnings engellemeyen uyarılar (belirsiz doğrulama, eksik/kullanılmayan __ENV)
+     */
+    public record ScriptDiagnostics(String blocking, List<String> warnings) {
+        public boolean blocked() { return blocking != null; }
+    }
+
+    /** Satır/sütun taşıyan k6 derleme hatası — "kesin hata" kararının kanıtı. */
+    private static final Pattern K6_LINE_COL = Pattern.compile("\\((\\d+):(\\d+)\\)|script:(\\d+):(\\d+)");
+
+    /**
+     * Script'i {@code k6 archive} ile derleyerek doğrular ve {@code __ENV} referanslarını denetler.
+     *
+     * <p><b>Bu KISITLI KOD YÜRÜTMEDİR:</b> {@code k6 archive} uzaktan {@code import} edilen
+     * kütüphaneleri indirmeye çalışır ve init context'i (modül üst seviyesi + {@code export const
+     * options}) çalıştırır. Bu yüzden {@code run}'daki SSRF korumasının AYNISI uygulanır
+     * ({@code --blacklist-ip}); env değişkenleri VERİLMEZ, yani secret'lar bu yola hiç girmez.
+     *
+     * <p>Karar: satır/sütun çıkarılabiliyorsa kesin sözdizimi hatasıdır → engelle. Timeout,
+     * uzak import indirilememesi veya yorumlanamayan çıktı → engelleme, uyar. Gerekçe: ağ
+     * dalgalanmasında geçerli bir script "hatalı" görünüp adminleri monitörü düzenleyemez
+     * hâle getirmemeli.
+     */
+    public ScriptDiagnostics validateScript(String script, List<String> envNames) {
+        List<String> warnings = new ArrayList<>(auditEnvReferences(script, envNames));
+        String policy = appSettings.getString("site.monitor.scripted.syntax-check-policy", "WARN");
+        if ("OFF".equalsIgnoreCase(policy) || !k6Available || script == null || script.isBlank()) {
+            return new ScriptDiagnostics(null, warnings);
+        }
+        boolean acquired = false;
+        Path scriptFile = null, archiveFile = null;
+        try {
+            acquired = validatePermits.tryAcquire(2, TimeUnit.SECONDS);
+            if (!acquired) {
+                warnings.add("Sözdizimi doğrulaması atlandı (doğrulayıcı meşgul).");
+                return new ScriptDiagnostics(null, warnings);
+            }
+            scriptFile = Files.createTempFile("k6-script-", ".js");
+            archiveFile = Files.createTempFile("k6-archive-", ".tar");
+            Files.writeString(scriptFile, script);
+
+            // DİKKAT: `--no-usage-report` YALNIZ `k6 run`'da var; `archive`'a verilirse komut
+            // "unknown flag" ile düşer ve doğrulama sessizce sonuçsuz kalır (2026-08'de oldu).
+            List<String> args = new ArrayList<>(List.of(
+                    k6Bin(), "archive", "--quiet",
+                    "-O", archiveFile.toAbsolutePath().toString()));
+            for (String cidr : ssrfGuard.blacklistCidrs()) { args.add("--blacklist-ip"); args.add(cidr); }
+            args.add(scriptFile.toAbsolutePath().toString());
+
+            int timeout = Math.max(3, appSettings.getInt("site.monitor.scripted.validate-timeout-seconds", 10));
+            ProcessProbe.Result r = ProcessProbe.run(args, null, scriptFile.getParent().toFile(), timeout, true, 4096);
+            if (r.exitCode() == 0 && !r.timedOut()) return new ScriptDiagnostics(null, warnings);
+
+            String out = sanitizeScriptPath(r.output());
+            String lines = extractErrorLines(out);
+            String detail = lines != null ? lines : (out == null ? "" : out.strip());
+            if (r.timedOut()) {
+                warnings.add("Sözdizimi doğrulaması zaman aşımına uğradı (uzak import yavaş olabilir) — kaydedildi.");
+                return new ScriptDiagnostics(null, warnings);
+            }
+            // Kesin hata KANITI: satır/sütun çıkarılabiliyor mu?
+            if (K6_LINE_COL.matcher(detail).find() && !"WARN".equalsIgnoreCase(policy)) {
+                return new ScriptDiagnostics("Script derlenemedi: " + detail, warnings);
+            }
+            if (K6_LINE_COL.matcher(detail).find()) {
+                warnings.add("Script derlenemedi: " + detail);
+            } else {
+                warnings.add("Sözdizimi doğrulaması sonuçsuz kaldı (ağ/uzak import olabilir) — kaydedildi.");
+            }
+            return new ScriptDiagnostics(null, warnings);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return new ScriptDiagnostics(null, warnings);
+        } catch (Exception e) {
+            log.warn("Script doğrulaması çalıştırılamadı: {}", e.toString());
+            return new ScriptDiagnostics(null, warnings);
+        } finally {
+            if (acquired) validatePermits.release();
+            deleteQuiet(scriptFile);
+            deleteQuiet(archiveFile);
+        }
+    }
+
+    private static final Pattern ENV_DOT = Pattern.compile("__ENV\\s*\\.\\s*([A-Za-z_$][\\w$]*)");
+    private static final Pattern ENV_IDX = Pattern.compile("__ENV\\s*\\[\\s*([\"'])([A-Za-z_$][\\w$]*)\\1\\s*]");
+    /** `__ENV` sonrası `.` veya `["`/`['` GELMEYEN her geçiş → statik çözülemeyen dinamik erişim. */
+    private static final Pattern ENV_DYNAMIC = Pattern.compile("__ENV\\s*(?![.\\s]*[.\\[])|__ENV\\s*\\[\\s*(?![\"'])");
+
+    /**
+     * Script'teki {@code __ENV.X} referanslarını tanımlı ortam değişkenleriyle karşılaştırır.
+     *
+     * <p>ASLA engellemez (WARN) — regex tabanlıdır ve string literal içindeki bir {@code __ENV.FOO}
+     * geçişini yanlış-pozitif olarak yakalayabilir (bilinen sınır). Yorum satırları taranmadan önce
+     * silinir. Dinamik erişim ({@code __ENV[name]}, {@code const {A} = __ENV}, {@code Object.keys(__ENV)})
+     * görülürse "tanımlı ama kullanılmıyor" yarısı SUSTURULUR — statik olarak çözülemez.
+     */
+    public static List<String> auditEnvReferences(String script, List<String> envNames) {
+        List<String> out = new ArrayList<>();
+        if (script == null || script.isBlank()) return out;
+        String src = script.replaceAll("/\\*[\\s\\S]*?\\*/", " ").replaceAll("(?m)//[^\n]*", " ");
+
+        java.util.LinkedHashSet<String> referenced = new java.util.LinkedHashSet<>();
+        var m1 = ENV_DOT.matcher(src);
+        while (m1.find()) referenced.add(m1.group(1));
+        var m2 = ENV_IDX.matcher(src);
+        while (m2.find()) referenced.add(m2.group(2));
+        boolean dynamic = ENV_DYNAMIC.matcher(src).find();
+
+        var defined = new java.util.LinkedHashSet<String>();
+        if (envNames != null) for (String n : envNames) if (n != null && !n.isBlank()) defined.add(n.trim());
+
+        for (String r : referenced) {
+            if (!defined.contains(r)) {
+                out.add("`" + r + "` script'te kullanılıyor ama tanımlı bir ortam değişkeni yok.");
+            }
+        }
+        if (!dynamic) {
+            for (String d : defined) {
+                if (!referenced.contains(d)) out.add("`" + d + "` tanımlı ama script kullanmıyor.");
+            }
+        }
+        return out;
+    }
+
     /** Açılışta (ve yeniden) k6 varlığını + sürümünü doğrular. */
     public final void probeK6() {
         try {

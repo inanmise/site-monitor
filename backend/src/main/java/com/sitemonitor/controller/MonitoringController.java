@@ -2328,6 +2328,8 @@ public class MonitoringController {
             return badRequest("Bu ad bu takımda zaten kullanılıyor; mükerrer izleme oluşturulamaz.");
         String scanErr = scanScriptOrError(body.get("script"));
         if (scanErr != null) return badRequest(scanErr);
+        var diag = validateScripted(body.get("script"), body.get("env"));
+        if (diag.blocked()) return badRequest(diag.blocking());
         String now = ISO.format(Instant.now());
         com.sitemonitor.model.ScriptedMonitor m = new com.sitemonitor.model.ScriptedMonitor();
         m.setName(name);
@@ -2347,7 +2349,11 @@ public class MonitoringController {
         activityLog.recordLifecycle(ActivityLogService.SCRIPTED, saved.getId(), saved.getName(), saved.getName(), saved.getTeamId(), "CREATED", actor(session));
         auditService.recordAction("MONITOR_CREATE", session, "SCRIPTED_MONITOR", String.valueOf(saved.getId()), saved.getName(),
                 AuditDiff.diff(null, AuditDiff.snapshot(saved, SCRIPTED_FIELDS)));
-        return ok(enrichScripted(saved, null, teamNameMap(), null));
+        // Uyarılar YANITTA taşınır, istekte değil: kaydetme payload'ının şekli değişmez
+        // (frontend testi create payload'ını tam eşitlikle pinliyor).
+        Map<String, Object> out = new LinkedHashMap<>(enrichScripted(saved, null, teamNameMap(), null));
+        if (!diag.warnings().isEmpty()) out.put("warnings", diag.warnings());
+        return ok(out);
     }
 
     @PutMapping("/scripted/{id}")
@@ -2356,6 +2362,10 @@ public class MonitoringController {
         java.util.Map<String, Object> _before = scriptedMonitorRepo.findById(id).map(x -> AuditDiff.snapshot(x, SCRIPTED_FIELDS)).orElse(null);
         String scanErr = scanScriptOrError(body.get("script"));
         if (scanErr != null) return badRequest(scanErr);
+        if (body.get("script") != null) {
+            var diag = validateScripted(body.get("script"), body.get("env"));
+            if (diag.blocked()) return badRequest(diag.blocking());
+        }
         return scriptedMonitorRepo.findById(id).map(m -> {
             if (!canOperateTeam(session, m.getTeamId())) throw new SecurityException("Bu takımın izlemesini düzenleyemezsiniz");
             if (body.containsKey("groupName") && blank(body.get("groupName"))) return badRequest("Grup seçimi zorunludur.");
@@ -2501,6 +2511,21 @@ public class MonitoringController {
             return "Script gövdesinde sabit-kodlu gizli değer tespit edildi (" + String.join(", ", hits)
                     + "). Bunları ortam değişkeni (secret) olarak tanımlayın ve script'te __ENV üzerinden kullanın.";
         return null;   // WARN: kaydı engelleme (frontend uyarısı gösterir)
+    }
+
+    /**
+     * Kaydetme öncesi script doğrulaması: `k6 archive` ile derleme + __ENV referans denetimi.
+     * Kesin sözdizimi hatasında (satır/sütun çıkarılabiliyorsa) kaydı ENGELLER; belirsiz durumda
+     * (timeout, uzak import indirilemedi) kaydeder ve uyarı döndürür.
+     */
+    private com.sitemonitor.service.ScriptedCheckerService.ScriptDiagnostics validateScripted(Object script, Object envRaw) {
+        List<String> envNames = new ArrayList<>();
+        if (envRaw instanceof List<?> list) {
+            for (Object o : list) {
+                if (o instanceof Map<?, ?> e && e.get("name") != null) envNames.add(e.get("name").toString());
+            }
+        }
+        return scriptedChecker.validateScript(script == null ? null : script.toString(), envNames);
     }
 
     private void applyScriptedFields(com.sitemonitor.model.ScriptedMonitor m, Map<String, Object> body, String existingEnvJson) {

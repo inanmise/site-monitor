@@ -176,6 +176,33 @@ class ScriptedCheckerServiceTest {
     }
 
     @Test
+    @DisplayName("auditEnvReferences: eksik __ENV referansı uyarılır; dinamik erişimde 'kullanılmıyor' SUSTURULUR")
+    void auditEnvReferences_contract() {
+        // 1) script okuyor ama tanım yok → en değerli uyarı (sohbetten kopyalanan script'lerde en sık kırılma)
+        var w1 = ScriptedCheckerService.auditEnvReferences(
+                "const u = __ENV.LLM_URL; const t = __ENV[\"TOKEN\"];", java.util.List.of("TOKEN"));
+        assertThat(String.join("|", w1)).contains("LLM_URL").doesNotContain("TOKEN");
+
+        // 2) tanımlı ama kullanılmıyor → bilgi amaçlı
+        var w2 = ScriptedCheckerService.auditEnvReferences("const u = __ENV.A;", java.util.List.of("A", "B"));
+        assertThat(String.join("|", w2)).contains("B");
+
+        // 3) DİNAMİK erişim → "kullanılmıyor" yarısı susturulur (statik çözülemez)
+        var w3 = ScriptedCheckerService.auditEnvReferences(
+                "const k = 'A'; const v = __ENV[k];", java.util.List.of("A", "B"));
+        assertThat(String.join("|", w3)).doesNotContain("kullanmıyor");
+
+        // 4) yorum içindeki referans sayılmaz
+        var w4 = ScriptedCheckerService.auditEnvReferences(
+                "// eski: __ENV.OLD_TOKEN\n/* __ENV.OLD2 */\nconst a = __ENV.A;", java.util.List.of("A"));
+        assertThat(String.join("|", w4)).doesNotContain("OLD_TOKEN").doesNotContain("OLD2");
+
+        // 5) boş/null girdi güvenli
+        assertThat(ScriptedCheckerService.auditEnvReferences(null, java.util.List.of("A"))).isEmpty();
+        assertThat(ScriptedCheckerService.auditEnvReferences("", null)).isEmpty();
+    }
+
+    @Test
     @DisplayName("scanHardcodedSecrets: sabit-kodlu parola/token/apikey yakalanır (yalnız anahtar-adı raporlanır)")
     void scanHardcodedSecrets_detects() {
         String script = "const password = \"süpergizli123\";\n"
