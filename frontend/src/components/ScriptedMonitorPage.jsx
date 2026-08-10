@@ -11,7 +11,7 @@ import SearchableSelect from './ui/SearchableSelect.jsx'
 import MaintenanceBadge from './ui/MaintenanceBadge.jsx'
 import TagInput from './ui/TagInput.jsx'
 import { SCRIPTED_TEMPLATES } from './scriptedTemplates.js'
-import { FlaskConical, Play, Pencil, Plus, Trash2, X, RefreshCw, Download, Eye, EyeOff, Copy, Users, Layers,
+import { FlaskConical, Play, Pencil, Plus, Trash2, X, RefreshCw, Eye, EyeOff, Copy, Users, Layers,
   AlertTriangle, LayoutDashboard, CheckCircle2, WifiOff, Siren, BellDot, PauseCircle, BarChart3, ChevronDown } from 'lucide-react'
 import { duplicateName } from '../utils/duplicateName.js'
 import { usePagination } from '../hooks/usePagination.js'
@@ -342,22 +342,13 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
     const res = await api.monitoring.triggerScriptedCheck(m.id)
     if (res?.success) {
       setMonitors(prev => prev.map(x => x.id === m.id ? { ...x, ...res.data } : x))
-      if (selected?.id === m.id) { setSelected(res.data); loadHistory(m.id, rangeDays) }
+      // Geçmiş yenilemesi BİLİNÇLİ olarak yok: CheckHistoryTab kendi live polling'ini yapıyor.
+      // Buradaki eski loadHistory(m.id, rangeDays) çağrısı geçmiş yönetimi o bileşene taşınırken
+      // temizlenmemişti; ikisi de tanımsız olduğu için modal açıkken "Şimdi Çalıştır" ReferenceError
+      // atıyor, aşağıdaki setChecking(null) hiç çalışmıyor ve buton kalıcı kilitleniyordu.
+      if (selected?.id === m.id) setSelected(res.data)
     } else if (res) toast.error(res.error || t('scripted.triggerError'))
     setChecking(null)
-  }
-
-  function exportCsv() {
-    if (!selected) return
-    const head = ['checked_at', 'status', 'duration_ms', 'exit_code', 'checks_passed', 'checks_failed']
-    const esc = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`
-    // API snake_case döndürür; eski camelCase yanıtlara karşı çift-okuma (kanonik desen).
-    const rows = history.map(c => [
-      c.checked_at ?? c.checkedAt, c.status, c.duration_ms ?? c.durationMs,
-      c.exit_code ?? c.exitCode, c.checks_passed ?? c.checksPassed, c.checks_failed ?? c.checksFailed,
-    ].map(esc).join(','))
-    const blob = new Blob([head.join(',') + '\n' + rows.join('\n')], { type: 'text/csv;charset=utf-8' })
-    const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `scripted-${selected.id}.csv`; a.click()
   }
 
   // ── Render ────────────────────────────────────────────────────────────────
@@ -483,7 +474,9 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
                 <button className="btn btn-sm btn-primary" disabled={checking === selected.id || !k6.available}
                   onClick={() => checkNow(selected)}><Play size={14} />{t('scripted.runNow')}</button>
               )}
-              <button className="btn btn-sm upt-refresh-btn" onClick={exportCsv}><Download size={14} />CSV</button>
+              {/* CSV butonu kaldırıldı: mükerrerdi ve bozuktu (tanımsız `history` → window.history →
+                  "history.map is not a function"). Çalışan, sunucu-taraflı CSV linkini Kontrol
+                  Geçmişi sekmesi zaten sunuyor (CheckHistoryTab). */}
               <CopyLinkButton iconOnly className="btn btn-sm upt-refresh-btn" />
               <button className="upt-modal-close" onClick={closeDetail}><X size={18} /></button>
             </div>
