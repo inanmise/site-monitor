@@ -6842,6 +6842,10 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .upt-rt-time { color: var(--text-muted); font-family: Consolas, monospace; white-space: nowrap; }
 .upt-rt-up   { color: #22c55e; font-weight: 600; white-space: nowrap; }
 .upt-rt-down { color: #ef4444; font-weight: 600; white-space: nowrap; }
+/* NO_CHECKS (koştu ama hiçbir şey doğrulanmadı) — arıza değil, yapılandırma kusuru.
+   .upt-badge--warn / .upt-card--warn ile aynı amber aile (App.css:2734-2736). */
+.upt-rt-warn { color: #d97706; font-weight: 600; white-space: nowrap; }
+[data-theme="dark"] .upt-rt-warn { color: #fbbf24; }
 .upt-rt-ms   { color: var(--text-muted); white-space: nowrap; }
 .upt-rt-error { color: #ef4444; font-size: 11px; flex: 1; word-break: break-all; line-height: 1.4; }
 /* Port detay geçmişi — kolon başlıklı hizalı grid (Zaman | Durum | Yanıt | Detay) */
