@@ -115,7 +115,7 @@ class WeeklyReportServiceTest {
 
     /** İçinde bulunulan haftanın raporu (USER için düzenlenebilir pencerede). */
     private static WeeklyReport report(Long id, Long teamId, String status) {
-        return reportAtWeek(id, teamId, status, LocalDate.now());
+        return reportAtWeek(id, teamId, status, WeeklyReportService.today());
     }
 
     // ── Şablon / oluşturma ────────────────────────────────────────────────────
@@ -184,7 +184,7 @@ class WeeklyReportServiceTest {
     @Test
     @DisplayName("years: USER kendi takımına zorlanır; içinde bulunulan yıl listede yoksa eklenir")
     void years_scopingAndCurrentYear() {
-        int current = LocalDate.now().get(WeekFields.ISO.weekBasedYear());
+        int current = WeeklyReportService.today().get(WeekFields.ISO.weekBasedYear());
 
         when(reportRepo.findDistinctYears(2L)).thenReturn(List.of(2025, 2024));
         List<Integer> result = service.years(7L, USER_T2); // 7 istese de kendi takımı (2) sorgulanır
@@ -235,12 +235,12 @@ class WeeklyReportServiceTest {
     @Test
     @DisplayName("hafta penceresi: USER önceki haftayı düzenler, 2 hafta öncesi 403; ADMIN sınırsız")
     void saveContent_weekWindow() {
-        WeeklyReport lastWeek = reportAtWeek(5L, 2L, "REJECTED", LocalDate.now().minusWeeks(1));
+        WeeklyReport lastWeek = reportAtWeek(5L, 2L, "REJECTED", WeeklyReportService.today().minusWeeks(1));
         when(reportRepo.findById(5L)).thenReturn(Optional.of(lastWeek));
         assertThat(service.saveContent(5L, WeeklyReportService.DEFAULT_TEMPLATE_JSON, null, USER_T2)
                 .getStatus()).isEqualTo("DRAFT"); // iade edilen geçen hafta raporu düzeltilebilir
 
-        WeeklyReport old = reportAtWeek(6L, 2L, "DRAFT", LocalDate.now().minusWeeks(2));
+        WeeklyReport old = reportAtWeek(6L, 2L, "DRAFT", WeeklyReportService.today().minusWeeks(2));
         when(reportRepo.findById(6L)).thenReturn(Optional.of(old));
         assertThatThrownBy(() -> service.saveContent(6L, WeeklyReportService.DEFAULT_TEMPLATE_JSON, null, USER_T2))
                 .isInstanceOf(SecurityException.class)
@@ -254,7 +254,7 @@ class WeeklyReportServiceTest {
     @Test
     @DisplayName("ADMIN onaylanmış (müdüre gönderilmiş) raporu düzeltebilir — durum APPROVED kalır")
     void saveContent_adminEditsApproved() {
-        WeeklyReport r = reportAtWeek(5L, 2L, "APPROVED", LocalDate.now().minusWeeks(3));
+        WeeklyReport r = reportAtWeek(5L, 2L, "APPROVED", WeeklyReportService.today().minusWeeks(3));
         when(reportRepo.findById(5L)).thenReturn(Optional.of(r));
 
         WeeklyReport saved = service.saveContent(5L, WeeklyReportService.DEFAULT_TEMPLATE_JSON, null, ADMIN);
@@ -267,11 +267,11 @@ class WeeklyReportServiceTest {
     @DisplayName("inEditWindow: mevcut + önceki hafta true; 2 hafta önce ve gelecek hafta false")
     void inEditWindow_bounds() {
         WeekFields wf = WeekFields.ISO;
-        for (LocalDate d : List.of(LocalDate.now(), LocalDate.now().minusWeeks(1))) {
+        for (LocalDate d : List.of(WeeklyReportService.today(), WeeklyReportService.today().minusWeeks(1))) {
             assertThat(WeeklyReportService.inEditWindow(
                     d.get(wf.weekBasedYear()), d.get(wf.weekOfWeekBasedYear()))).isTrue();
         }
-        for (LocalDate d : List.of(LocalDate.now().minusWeeks(2), LocalDate.now().plusWeeks(1))) {
+        for (LocalDate d : List.of(WeeklyReportService.today().minusWeeks(2), WeeklyReportService.today().plusWeeks(1))) {
             assertThat(WeeklyReportService.inEditWindow(
                     d.get(wf.weekBasedYear()), d.get(wf.weekOfWeekBasedYear()))).isFalse();
         }
@@ -504,7 +504,7 @@ class WeeklyReportServiceTest {
     @Test
     @DisplayName("delete: ADMIN eski haftanın APPROVED raporunu silebilir")
     void delete_adminApprovedOldWeek() {
-        WeeklyReport r = reportAtWeek(5L, 2L, "APPROVED", LocalDate.now().minusWeeks(5));
+        WeeklyReport r = reportAtWeek(5L, 2L, "APPROVED", WeeklyReportService.today().minusWeeks(5));
         when(reportRepo.findById(5L)).thenReturn(Optional.of(r));
 
         service.delete(5L, ADMIN);
@@ -673,7 +673,7 @@ class WeeklyReportServiceTest {
     @Test
     @DisplayName("reopen: ADMIN eski haftanın APPROVED raporunu da revize edebilir")
     void reopen_adminOldWeek() {
-        WeeklyReport r = reportAtWeek(6L, 2L, "APPROVED", LocalDate.now().minusWeeks(5));
+        WeeklyReport r = reportAtWeek(6L, 2L, "APPROVED", WeeklyReportService.today().minusWeeks(5));
         when(reportRepo.findById(6L)).thenReturn(Optional.of(r));
 
         assertThat(service.reopen(6L, ADMIN).getStatus()).isEqualTo("DRAFT");
@@ -682,7 +682,7 @@ class WeeklyReportServiceTest {
     @Test
     @DisplayName("reopen: non-admin pencere dışı → 403; AUDIT → 403; APPROVED değilse → 409")
     void reopen_forbiddenAndStateGuards() {
-        WeeklyReport oldR = reportAtWeek(6L, 2L, "APPROVED", LocalDate.now().minusWeeks(5));
+        WeeklyReport oldR = reportAtWeek(6L, 2L, "APPROVED", WeeklyReportService.today().minusWeeks(5));
         when(reportRepo.findById(6L)).thenReturn(Optional.of(oldR));
         assertThatThrownBy(() -> service.reopen(6L, USER_T2))
                 .isInstanceOf(SecurityException.class); // pencere dışı (yalnız ADMIN)
