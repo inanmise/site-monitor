@@ -879,7 +879,12 @@ public class SchedulerService {
         }
     }
 
-    @Scheduled(cron = "${site.monitor.scheduler.cleanup-cron:0 30 3 * * *}")
+    // zone ZORUNLU: konteynerde JVM saat dilimi GMT. Zone'suz bırakıldığında bu iş 03:30 GMT'de,
+    // yani 06:30 İstanbul'da — mesai başlangıcında — koşuyordu; oysa niyet sessiz gece penceresi.
+    // Kardeş günlük işlerin (auto-pin 03:20, domain-expiry 04:15, digest 09:00 …) hepsi zaten
+    // Europe/Istanbul'a sabitli; bu tek istisnaydı. İfade RetentionCatalog'dan gelir (tek kaynak).
+    @Scheduled(cron = "${" + RetentionCatalog.CLEANUP_CRON_KEY + ":" + RetentionCatalog.CLEANUP_CRON_DEFAULT + "}",
+               zone = RetentionCatalog.CLEANUP_ZONE)
     public void cleanupOldLogs() {
         // HA: prod çok-replikalı (master overlay 3 pod). Kilit olmadan 3 pod aynı anda batch-DELETE +
         // rollup ON CONFLICT koşar → kilit çekişmesi/deadlock riski + 3× boşa iş. Yalnız BİR pod çalışsın.

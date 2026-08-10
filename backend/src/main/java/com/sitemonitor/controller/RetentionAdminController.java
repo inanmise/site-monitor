@@ -16,6 +16,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpSession;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -41,6 +42,10 @@ public class RetentionAdminController {
 
     private static final DateTimeFormatter ISO =
             DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
+
+    /** Gece temizliğinin CANLI zamanlaması — SchedulerService ile aynı anahtar/varsayılan. */
+    @Value("${" + RetentionCatalog.CLEANUP_CRON_KEY + ":" + RetentionCatalog.CLEANUP_CRON_DEFAULT + "}")
+    private String cleanupCron;
 
     /** Uyum onayı (kim/ne zaman onayladı) ayar anahtarı öneki — politika id'siyle birleşir. */
     private static final String APPROVAL_PREFIX = "site.monitor.retention.approval.";
@@ -72,7 +77,9 @@ public class RetentionAdminController {
         data.put("hold_active", retentionService.holdActive());
         data.put("hold_key", RetentionCatalog.HOLD_KEY);
         data.put("batch_size", settingsService.getInt(RetentionCatalog.BATCH_KEY, 10000));
-        data.put("cleanup_cron", "0 30 3 * * *");
+        // Sabit metin DEĞİL: env/config ile ezilirse arayüz gerçek zamanlamayı göstersin.
+        data.put("cleanup_cron", cleanupCron);
+        data.put("cleanup_zone", RetentionCatalog.CLEANUP_ZONE);
         data.put("totals", totals(policies));
         data.put("last_run", runRepo.findFirstByDryRunFalseOrderByStartedAtDesc()
                 .map(this::runToMap).orElse(null));

@@ -31,6 +31,17 @@ config:
   httpProxyPort: "8080"
   # İç hedefler proxy tüneline girmesin (sonek eşleşmesi). Gerekirse genişletin.
   noProxy: "akbank.com,aknet.akb,localhost,127.0.0.1"
+  # ── Veritabanı bağlantı havuzu ──────────────────────────────────────────────
+  # Çalışan pod 10'da kalmıştı (dağıtılmış eski değer); chart varsayılanı 25, prod için 30'a
+  # sabitleniyor. Gerekçe: oturumlar JDBC'de (spring.session.store-type=jdbc), yani HER istek
+  # DB'ye uğruyor; buna arka plan işleri (executor 30, parallel-workers 20, scheduling 8)
+  # ekleniyor. 10 bağlantı 100 eşzamanlı kullanıcıda ilk darboğaz oluyordu.
+  # minimum-idle 10'da bırakıldı (DB_POOL_MIN ezilmiyor): boşta tutulan bağlantı sayısı
+  # artmaz, havuz yük geldikçe 30'a kadar büyür.
+  # DİKKAT: bu değer POD BAŞINA. replicaCount 3 ise DB sunucusunda 3 × 30 = 90 bağlantı
+  # demektir — replika sayısını değiştirirken Postgres max_connections bütçesini birlikte
+  # gözden geçirin.
+  dbPoolMax: "30"
 
 ingress:
   enabled: true

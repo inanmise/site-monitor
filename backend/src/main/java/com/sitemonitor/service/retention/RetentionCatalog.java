@@ -28,6 +28,20 @@ public final class RetentionCatalog {
     /** Batch dilim boyutu (mevcut anahtar). */
     public static final String BATCH_KEY = "site.monitor.retention.purge-batch-size";
 
+    /**
+     * Gece temizliğinin zamanlaması — TEK doğruluk kaynağı.
+     *
+     * <p>Bu ifade dört yerde birden yazılıydı ({@code SchedulerService} annotation'ı, admin API'sinin
+     * {@code cleanup_cron} alanı, {@link RetentionDocGenerator} ve {@code docs/db-scaling.md}); saat
+     * değişince arayüz ile gerçek çalışma zamanı ayrışırdı. Artık hepsi buradan okur.
+     *
+     * <p>{@code ZONE} zorunlu: konteynerde JVM saat dilimi GMT olduğu için zone'suz bir cron
+     * "gece 03:00" yerine 06:00 İstanbul'da koşardı (2026-08-10'da prod'da tam olarak bu oldu).
+     */
+    public static final String CLEANUP_CRON_KEY = "site.monitor.scheduler.cleanup-cron";
+    public static final String CLEANUP_CRON_DEFAULT = "0 0 3 * * *";
+    public static final String CLEANUP_ZONE = "Europe/Istanbul";
+
     private static RetentionPolicy age(String id, String table, String col, String settingKey,
                                        int def, int min, boolean batched, DataClass dc, String why) {
         return new RetentionPolicy(id, table, col, TimeKind.ISO_STRING, settingKey, def, min, false,

@@ -355,7 +355,7 @@ export const TR = {
   // ── Veri Saklama (retention) yönetimi ──
   'ret.title':            'Veri Saklama Politikaları',
   'ret.desc':             'Hangi verinin nerede ne kadar tutulduğunu, ne zaman silineceğini ve bu gece kaç satırın gideceğini tek ekrandan yönetin. Süreler tek bir politika kaynağından okunur; Kontrol Geçmişi ekranlarındaki kırpma da aynı değeri kullanır.',
-  'ret.liveHint':         'Kaydettiğiniz süre ANINDA geçerli olur (Kontrol Geçmişi kırpması ve aşağıdaki tahmin hemen değişir). Fiziksel silme gece temizliğinde ({0}) veya “Sımdı temizle” ile yapılır.',
+  'ret.liveHint':         'Kaydettiğiniz süre ANINDA geçerli olur (Kontrol Geçmişi kırpması ve aşağıdaki tahmin hemen değişir). Fiziksel silme gece temizliğinde ({0}) veya “Şimdi temizle” ile yapılır.',
   'ret.holdActiveTitle':  'Yasal saklama (legal hold) aktif',
   'ret.holdActiveBody':   'Hiçbir tablodan satır silinmiyor. Gece temizliği her gece çalışır ama hiçbir kayda dokunmaz ve denetim kaydı bırakır.',
   'ret.holdBlocks':       'Yasal saklama açıkken elle temizlik yapılamaz',
