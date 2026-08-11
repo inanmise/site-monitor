@@ -130,4 +130,74 @@ describe('CheckHistoryTab', () => {
       expect(last.page).toBe(1)   // 0-tabanlı API
     })
   })
+
+  // ── Ardışık aynı sonuç gruplaması (opt-in) ────────────────────────────────
+  describe('groupIdenticalErrors', () => {
+    const fail = (ts, err) => ({ id: ts, checked_at: ts, up: false, rtt_ms: 0, error: err })
+    // Hepsi AYNI güne ait: gün ayırıcısı araya girip grubu kırmasın.
+    const sameDay = [
+      fail('2026-08-07T10:03:00', 'Unexpected token (46:29)'),
+      fail('2026-08-07T10:02:00', 'Unexpected token (46:29)'),
+      fail('2026-08-07T10:01:00', 'Unexpected token (46:29)'),
+      fail('2026-08-07T10:00:00', 'baska bir hata'),
+    ]
+    const sig = (c) => (c.up ? null : String(c.error || ''))
+
+    it('prop VERİLMEZSE davranış değişmez — 9 izleme sayfasının hiçbiri etkilenmemeli', async () => {
+      api.monitoring.getCheckHistory.mockResolvedValue(envelope({ items: sameDay, total: 4 }))
+      renderTab()   // groupIdenticalErrors yok
+      await screen.findByText('2026-08-07T10:03:00')
+      // Dört satırın dördü de ayrı ayrı duruyor, hiçbir katlama düğmesi yok
+      expect(screen.getByText('2026-08-07T10:02:00')).toBeInTheDocument()
+      expect(screen.getByText('2026-08-07T10:01:00')).toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: /aynı sonuç|identical results/i })).toBeNull()
+    })
+
+    it('açıkken ardışık aynı hatalar tek satıra iner; genişletince tekil koşumlar görünür', async () => {
+      api.monitoring.getCheckHistory.mockResolvedValue(envelope({ items: sameDay, total: 4 }))
+      renderTab({ groupIdenticalErrors: true, rowSignature: sig })
+      await screen.findByText('2026-08-07T10:03:00')
+
+      // Grubun yalnız ilk kaydı görünür, diğer ikisi katlanmış
+      expect(screen.queryByText('2026-08-07T10:02:00')).toBeNull()
+      expect(screen.queryByText('2026-08-07T10:01:00')).toBeNull()
+      // Farklı imzalı satır gruba dahil olmadı
+      expect(screen.getByText('2026-08-07T10:00:00')).toBeInTheDocument()
+
+      const toggle = screen.getByRole('button', { name: /aynı sonuç|identical results/i })
+      expect(toggle.textContent).toContain('3×')       // sayfa içi tekrar sayısı
+      expect(toggle).toHaveAttribute('aria-expanded', 'false')
+
+      fireEvent.click(toggle)
+      expect(await screen.findByText('2026-08-07T10:02:00')).toBeInTheDocument()
+      expect(screen.getByText('2026-08-07T10:01:00')).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: /tekrarları gizle|hide repeats/i }))
+        .toHaveAttribute('aria-expanded', 'true')
+    })
+
+    it('gün ayırıcısı grubu KIRAR — zaman bağlamı gruplamaya feda edilmez', async () => {
+      const acrossDays = [
+        fail('2026-08-07T00:10:00', 'ayni hata'),
+        fail('2026-08-06T23:50:00', 'ayni hata'),
+      ]
+      api.monitoring.getCheckHistory.mockResolvedValue(envelope({ items: acrossDays, total: 2 }))
+      renderTab({ groupIdenticalErrors: true, rowSignature: sig })
+      await screen.findByText('2026-08-07T00:10:00')
+      // İki farklı güne düştükleri için gruplanmadılar: ikisi de doğrudan görünür
+      expect(screen.getByText('2026-08-06T23:50:00')).toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: /aynı sonuç|identical results/i })).toBeNull()
+    })
+
+    it('imza null dönen satırlar (başarılı koşumlar) hiç gruplanmaz', async () => {
+      const passes = [
+        item('2026-08-07T10:03:00'), item('2026-08-07T10:02:00'), item('2026-08-07T10:01:00'),
+      ]
+      api.monitoring.getCheckHistory.mockResolvedValue(envelope({ items: passes, total: 3 }))
+      renderTab({ groupIdenticalErrors: true, rowSignature: sig })
+      await screen.findByText('2026-08-07T10:03:00')
+      expect(screen.getByText('2026-08-07T10:02:00')).toBeInTheDocument()
+      expect(screen.getByText('2026-08-07T10:01:00')).toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: /aynı sonuç|identical results/i })).toBeNull()
+    })
+  })
 })

@@ -429,6 +429,28 @@ Sağ üstteki **+ Yeni Monitör** ile formu açın.
 - **Ortam Değişkenleri** — Script'in \`__ENV\` ile okuduğu değerler. **Değişken Ekle** ile satır ekleyin: AD + değer + **Gizli**. Sırları (parola/secret) **script gövdesine YAZMAYIN**; "Gizli" işaretleyin — şifreli saklanır, çıktı/loglarda maskelenir, geri okunamaz.
 - **E-posta bildirimi gönder**, **Aktif** — standart.
 
+### Desteklenen JavaScript (bunu atlamayın)
+Bu ortamdaki k6, script'i eski bir transpiler ile derliyor: **sözdizimi ES2017'de donmuş**, buna karşılık
+kütüphane fonksiyonları güncel. Aşağıdakiler **derlenmez** ve monitör her koşumda ERROR verir —
+script başka bir makinede/yeni k6 sürümünde çalışsa bile:
+- \`?.\` (isteğe bağlı zincirleme) ve \`??\` → yerine \`&&\` / \`||\` kullanın
+- \`{ ...nesne }\` nesne spread ve \`{ a, ...rest }\` → yerine \`Object.assign({}, nesne)\`
+- bağlamsız \`catch {}\` → \`catch (e) {}\` yazın
+- \`for await…of\`, \`1_000\` sayı ayırıcı, \`#ozelAlan\`
+
+Sorunsuz çalışanlar: \`let\`/\`const\`, arrow, \`class\`, template literal, **dizi** spread \`[...dizi]\`,
+destructuring, \`async\`/\`await\`, \`for…of\`, \`**\`, \`import\`/\`export\`; ayrıca \`Object.entries\`,
+\`Array.flat\`, \`padStart\`, \`Promise.allSettled\` gibi modern kütüphane fonksiyonları.
+
+Örnek — iç içe alan okuma (\`?.\` yerine):
+\`\`\`
+const body = JSON.parse(r.body);
+const choice = (body && body.choices && body.choices[0]) || null;
+const content = (choice && choice.message && choice.message.content) || '';
+\`\`\`
+Kaydetme sırasında script derlenmeye çalışılır; sözdizimi hatası varsa satır ve sütun numarasıyla
+birlikte engellenir — hatalı script'i saatlerce koşturmazsınız.
+
 ### İpuçları
 - Kaydetmeden önce **Test Çalıştır** ile script'i anında deneyin; geçen/başarısız check sayısı ve k6 çıktısı görünür.
 - İzleme için **ayrı bir servis hesabı** kullanın; gerçek kullanıcı hesabıyla otomatik login yapmayın.
@@ -458,6 +480,28 @@ Open the form with **+ New Monitor** (top right).
 - **Recovery checks** — Successful runs to declare "recovered" (1–10, default 3).
 - **Environment variables** — Values the script reads via \`__ENV\`. Use **Add variable** for a row: NAME + value + **Secret**. Do **NOT** put secrets in the script body; mark them "Secret" — stored encrypted, masked in output/logs, never readable back.
 - **Send email notification**, **Active** — standard.
+
+### Supported JavaScript (don't skip this)
+The k6 in this environment compiles scripts with an old transpiler: **the syntax is frozen at ES2017**,
+while library functions are modern. The following will **not compile** and the monitor will report ERROR
+on every run — even if the script runs fine on another machine or a newer k6:
+- \`?.\` (optional chaining) and \`??\` → use \`&&\` / \`||\` instead
+- \`{ ...object }\` object spread and \`{ a, ...rest }\` → use \`Object.assign({}, object)\`
+- bare \`catch {}\` → write \`catch (e) {}\`
+- \`for await…of\`, \`1_000\` numeric separators, \`#privateField\`
+
+Working fine: \`let\`/\`const\`, arrows, \`class\`, template literals, **array** spread \`[...array]\`,
+destructuring, \`async\`/\`await\`, \`for…of\`, \`**\`, \`import\`/\`export\`; plus modern library functions
+such as \`Object.entries\`, \`Array.flat\`, \`padStart\`, \`Promise.allSettled\`.
+
+Example — reading a nested field (instead of \`?.\`):
+\`\`\`
+const body = JSON.parse(r.body);
+const choice = (body && body.choices && body.choices[0]) || null;
+const content = (choice && choice.message && choice.message.content) || '';
+\`\`\`
+The script is compiled at save time; a syntax error is rejected with its line and column — so you never
+leave a broken script running for hours.
 
 ### Tips
 - Use **Test Run** before saving to try the script instantly; passed/failed checks and k6 output are shown.

@@ -155,10 +155,96 @@ class ScriptedCheckerServiceTest {
         assertThat(ScriptedCheckerService.extractErrorLines(null)).isNull();
         assertThat(ScriptedCheckerService.extractErrorLines("")).isNull();
 
-        // en fazla 3 satır
+        // en fazla 3 k6 log satırı
         StringBuilder many = new StringBuilder();
         for (int i = 0; i < 10; i++) many.append("ERRO[000").append(i).append("] GoError: hata ").append(i).append('\n');
         assertThat(ScriptedCheckerService.extractErrorLines(many.toString()).lines()).hasSize(3);
+    }
+
+    /**
+     * GERÇEK k6 v0.49.0 çıktısı ({@code k6 archive}, optional chaining içeren script).
+     * Elle yazılmadı — {@code k6.exe archive} çıktısından alındı; yalnız 64 iç yığın çerçevesinden
+     * 3'ü bırakıldı (davranış aynı, test okunur kalsın). Yol prod'daki geçici dosya adıyla birebir.
+     */
+    private static final String K6_049_SYNTAX_ERROR =
+            "time=\"2026-08-11T03:20:59+03:00\" level=error msg=\"SyntaxError: "
+            + "file:///tmp/k6-script-1854441804016005529.js: Unexpected token (46:29)"
+            + "\\n  44 |       try {"
+            + "\\n  45 |         const body = JSON.parse(r.body);"
+            + "\\n> 46 |         const content = body?.choices?.[0]?.message?.content || '';"
+            + "\\n     |                              ^"
+            + "\\n  47 |         return content.toLowerCase().includes('paris');"
+            + "\\n  48 |       } catch (e) {"
+            + "\\n  49 |         return false;"
+            + "\\n\\tat <internal/k6/compiler/lib/babel.min.js>:7:10099(24)"
+            + "\\n\\tat h (<internal/k6/compiler/lib/babel.min.js>:4:30563(6))"
+            + "\\n\\tat bound  (native)"
+            + "\\n\" hint=\"script exception\"\n";
+
+    @Test
+    @DisplayName("decodeK6LogLine: logfmt msg=\"…\" alanı çözülür; alan yoksa/tırnak kapanmazsa satır bozulmaz")
+    void decodeK6LogLine_contract() {
+        assertThat(ScriptedCheckerService.decodeK6LogLine("time=\"x\" level=error msg=\"a\\nb\\tc\""))
+                .isEqualTo("a\nb\tc");
+        // kaçırılmış tırnak ve ters bölü korunur
+        assertThat(ScriptedCheckerService.decodeK6LogLine("msg=\"de\\\"f\\\\g\"")).isEqualTo("de\"f\\g");
+        // msg= alanı yok → dokunma
+        assertThat(ScriptedCheckerService.decodeK6LogLine("ERRO[0001] GoError: reddedildi"))
+                .isEqualTo("ERRO[0001] GoError: reddedildi");
+        // tırnak kapanmamış → güvenli taraf, satırı olduğu gibi bırak
+        assertThat(ScriptedCheckerService.decodeK6LogLine("level=error msg=\"yarım kalmış"))
+                .isEqualTo("level=error msg=\"yarım kalmış");
+        // hint= gibi msg sonrası alanlar atılır
+        assertThat(ScriptedCheckerService.decodeK6LogLine("msg=\"tek\" hint=\"script exception\""))
+                .isEqualTo("tek");
+        assertThat(ScriptedCheckerService.decodeK6LogLine(null)).isNull();
+    }
+
+    @Test
+    @DisplayName("extractErrorLines: k6 0.49 sözdizimi hatası okunur kod çerçevesine dönüşür, iç yığın gizlenir")
+    void extractErrorLines_decodesBabelCodeFrame() {
+        String lines = ScriptedCheckerService.extractErrorLines(K6_049_SYNTAX_ERROR);
+        assertThat(lines).isNotNull();
+
+        // 1) Kaçış dizileri gerçek satır sonlarına döndü — ekranda "\n" görünmeyecek.
+        assertThat(lines).doesNotContain("\\n").doesNotContain("\\t");
+        assertThat(lines.lines().count()).isGreaterThan(5);
+
+        // 2) Asıl bilgi duruyor: hata türü, satır:sütun ve suçlu kaynak satırı.
+        assertThat(lines).contains("Unexpected token (46:29)");
+        assertThat(lines).contains("body?.choices?.[0]?.message?.content");
+
+        // 3) Caret bir üstteki kod satırıyla HİZALI — girinti korunmalı, yoksa "neresi" bilgisi ölür.
+        String[] all = lines.split("\n");
+        int codeIdx = -1;
+        for (int i = 0; i < all.length; i++) if (all[i].startsWith("> 46 |")) codeIdx = i;
+        assertThat(codeIdx).isGreaterThanOrEqualTo(0);
+        assertThat(all[codeIdx + 1]).endsWith("^");
+        // Babel caret'i `?.` ikilisinin NOKTASINI gösterir (kaynak sütun 29) — Babel 6'nın
+        // ayrıştıramadığı tam karakter. Bir sağı, yani indexOf("?.") + 1.
+        assertThat(all[codeIdx + 1].indexOf('^')).isEqualTo(all[codeIdx].indexOf("?.") + 1);
+
+        // 4) k6/Babel iç yığını gürültüsü atıldı — ama sessizce değil, sayısı söylendi.
+        assertThat(lines).doesNotContain("<internal/").doesNotContain("(native)");
+        assertThat(lines).contains("3 k6 iç yığın satırı gizlendi");
+
+        // 5) summarizeError'ın uyguladığı yol temizliği çalışıyor: sunucu dosya yolu sızmıyor.
+        assertThat(ScriptedCheckerService.sanitizeScriptPath(lines))
+                .doesNotContain("/tmp/k6-script-").contains("script: Unexpected token");
+    }
+
+    @Test
+    @DisplayName("extractErrorLines: kullanıcının KENDİ script çerçeveleri korunur, yalnız iç çerçeveler atılır")
+    void extractErrorLines_keepsUserStackFrames() {
+        // k6 boruya (non-TTY) yazarken logfmt kullanır: yığın, msg="…" içinde \n kaçışlarıyla gelir.
+        String out = "time=\"x\" level=error msg=\"GoError: hedef yanıt vermedi"
+                + "\\n\\tat file:///tmp/k6-script-42.js:17:9(24)"
+                + "\\n\\tat <internal/k6/compiler/lib/babel.min.js>:7:10099(24)"
+                + "\\n\\tat bound  (native)\"\n";
+        String lines = ScriptedCheckerService.extractErrorLines(out);
+        assertThat(lines).contains("k6-script-42.js:17:9");   // kullanıcının satırı = asıl aranan bilgi
+        assertThat(lines).doesNotContain("babel.min.js").doesNotContain("(native)");
+        assertThat(lines).contains("2 k6 iç yığın satırı gizlendi");
     }
 
     @Test

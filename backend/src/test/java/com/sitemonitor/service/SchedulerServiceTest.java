@@ -831,4 +831,30 @@ class SchedulerServiceTest {
                         && "N1".equals(items.get(0).get("username"))),
                 anyString());
     }
+
+    @Test
+    @DisplayName("oneLine: çok satırlı senaryo hatası alarm başlığına tek satır olarak sığar, sebep kaybolmaz")
+    void oneLine_collapsesMultilineScriptedError() {
+        // summarizeError'ın ürettiği biçim: 1. satır etiket, 2. satır asıl sebep, gerisi kod çerçevesi.
+        String error = "script çalışma-zamanı hatası (çıkış 107):\n"
+                + "SyntaxError: script: Unexpected token (46:29)\n"
+                + "  44 |       try {\n"
+                + "> 46 |         const content = body?.choices?.[0]?.message?.content || '';\n"
+                + "     |                              ^";
+
+        String detail = SchedulerService.oneLine(error);
+
+        assertThat(detail.lines()).hasSize(1);
+        // Yalnız ilk satır alınsaydı alarm hatanın NE olduğunu hiç söylemezdi — ikinci satır şart.
+        assertThat(detail).contains("çıkış 107").contains("Unexpected token (46:29)");
+        assertThat(detail).endsWith("…");                 // kırpıldığı gizlenmiyor
+        assertThat(detail).doesNotContain("44 |");         // kod çerçevesi alarm başlığına girmiyor
+
+        // tek satırlık hata olduğu gibi geçer, sonuna "…" eklenmez
+        assertThat(SchedulerService.oneLine("Süre aşımı — süreç sonlandırıldı"))
+                .isEqualTo("Süre aşımı — süreç sonlandırıldı");
+
+        // tek ama çok uzun satır da tavanlanır (alarm/mail başlığı patlamasın)
+        assertThat(SchedulerService.oneLine("x".repeat(500))).hasSize(302).endsWith(" …");
+    }
 }

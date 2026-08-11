@@ -2362,10 +2362,13 @@ public class MonitoringController {
         java.util.Map<String, Object> _before = scriptedMonitorRepo.findById(id).map(x -> AuditDiff.snapshot(x, SCRIPTED_FIELDS)).orElse(null);
         String scanErr = scanScriptOrError(body.get("script"));
         if (scanErr != null) return badRequest(scanErr);
-        if (body.get("script") != null) {
-            var diag = validateScripted(body.get("script"), body.get("env"));
-            if (diag.blocked()) return badRequest(diag.blocking());
-        }
+        // Uyarılar CREATE'te olduğu gibi UPDATE yanıtında da taşınmalı: kullanıcı script'ini
+        // düzenlerken (asıl düzeltme anı) "__ENV tanımsız", "doğrulama atlandı" gibi uyarıları
+        // görmezse o uyarılar pratikte hiç görünmez.
+        var diag = body.get("script") != null
+                ? validateScripted(body.get("script"), body.get("env"))
+                : new com.sitemonitor.service.ScriptedCheckerService.ScriptDiagnostics(null, java.util.List.of());
+        if (diag.blocked()) return badRequest(diag.blocking());
         return scriptedMonitorRepo.findById(id).map(m -> {
             if (!canOperateTeam(session, m.getTeamId())) throw new SecurityException("Bu takımın izlemesini düzenleyemezsiniz");
             if (body.containsKey("groupName") && blank(body.get("groupName"))) return badRequest("Grup seçimi zorunludur.");
@@ -2393,8 +2396,11 @@ public class MonitoringController {
             com.sitemonitor.model.ScriptedMonitor saved = scriptedMonitorRepo.save(m);
             auditService.recordAction("MONITOR_UPDATE", session, "SCRIPTED_MONITOR", String.valueOf(saved.getId()), saved.getName(),
                     AuditDiff.diff(_before, AuditDiff.snapshot(saved, SCRIPTED_FIELDS)));
-            return ok(enrichScripted(saved, scriptedCheckRepo.findTopByMonitorIdOrderByCheckedAtDesc(id).orElse(null), teamNameMap(),
+            Map<String, Object> out = new LinkedHashMap<>(enrichScripted(saved,
+                    scriptedCheckRepo.findTopByMonitorIdOrderByCheckedAtDesc(id).orElse(null), teamNameMap(),
                     alertEventRepo.findOpenAlert(saved.getName(), EscalationService.TYPE_SCRIPTED_FAIL).orElse(null)));
+            if (!diag.warnings().isEmpty()) out.put("warnings", diag.warnings());
+            return ok(out);
         }).orElse(notFound("Sentetik izleme bulunamadı"));
     }
 
