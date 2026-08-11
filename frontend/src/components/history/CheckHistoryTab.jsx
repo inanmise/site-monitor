@@ -28,11 +28,18 @@ export default function CheckHistoryTab({
   csv = true, live = true, urlSync = true,
   onCounts = null,                           // modal başlık özeti için {total, fail} bildirimi
   range = null, onRangeChange = null,        // kontrollü aralık (Uptime: tek picker iki kolonu sürer)
+  // ── Ardışık aynı sonuçları tek satırda topla (OPT-IN, varsayılan KAPALI) ──
+  // Sürekli aynı hatayı veren bir monitörde geçmiş, aynı satırın yüzlerce kopyasına dönüşüyor
+  // (gerçek vaka: 291 kaydın 291'i aynı k6 sözdizimi hatası). Varsayılanı kapalı tutmak şart:
+  // bu bileşen 9 izleme sayfasında ortak, diğerlerinin davranışı bit düzeyinde aynı kalmalı.
+  groupIdenticalErrors = false,
+  rowSignature = null,                       // (item) => string|null ; null ⇒ o satır gruplanmaz
 }) {
   const t = useT()
   const h = useCheckHistory({ kind, id: monitorId, listKey, presets, defaultPreset, filterMode, extraParams,
     live: range ? false : live, fixed: range })
   const [showPicker, setShowPicker] = useState(false)
+  const [openGroups, setOpenGroups] = useState({})
   const fixedMode = !!range
 
   useEffect(() => { if (h.counts) onCounts?.(h.counts) },   // sayfa üstbilgisi (%OK / toplam / hata)
@@ -102,8 +109,23 @@ export default function CheckHistoryTab({
       if (day && day !== lastDay) { out.push({ type: 'day', key: `day-${day}`, day }); lastDay = day }
       out.push({ type: 'item', key: `it-${itemTs(c)}#${i}`, item: c, index: i })
     })
-    return out
-  }, [h.items, h.alerts, h.page])
+    if (!groupIdenticalErrors || !rowSignature) return out
+
+    // YAN YANA duran, imzası eşit item satırlarını topla. Gün ayırıcısı veya alarm işaret satırı
+    // araya girerse grup KIRILIR — zaman/alarm bağlamı gruplamaya feda edilmemeli.
+    const grouped = []
+    for (const row of out) {
+      const sig = row.type === 'item' ? rowSignature(row.item) : null
+      const prev = grouped[grouped.length - 1]
+      if (sig != null && prev && prev.type === 'group' && prev.sig === sig) {
+        prev.rows.push(row)
+        continue
+      }
+      grouped.push(sig == null ? row : { type: 'group', key: `grp-${row.key}`, sig, rows: [row] })
+    }
+    // Tek elemanlı "grup" diye bir şey yok — normal satıra geri döndür.
+    return grouped.map(r => (r.type === 'group' && r.rows.length === 1 ? r.rows[0] : r))
+  }, [h.items, h.alerts, h.page, groupIdenticalErrors, rowSignature])
 
   const totalPages = Math.max(1, Math.ceil(h.total / h.pageSize))
   const rangeStart = h.total === 0 ? 0 : (h.page - 1) * h.pageSize + 1
@@ -200,6 +222,29 @@ export default function CheckHistoryTab({
                     <span className="hist-alert-meta"> · {a.alert_type}{a.alert_level ? ` · ${a.alert_level}` : ''}</span>
                   </span>
                   <span className="hist-alert-time">{formatDateSec(r.ts)}</span>
+                </div>
+              )
+            }
+            if (r.type === 'group') {
+              const open = !!openGroups[r.key]
+              const first = r.rows[0]
+              return (
+                <div key={r.key} className="hist-group">
+                  <div className={`upt-rt-grid ${gridClass} hist-group-lead`}>
+                    {renderRow(first.item, { index: first.index })}
+                  </div>
+                  <button type="button" className="hist-group-toggle" aria-expanded={open}
+                    onClick={() => setOpenGroups(g => ({ ...g, [r.key]: !g[r.key] }))}>
+                    {/* Sayı SAYFA İÇİDİR (sayfa başına {pageSize} kayıt) — metin bunu açıkça söyler,
+                        yoksa kullanıcı toplamla karıştırır. Gerçek toplam üstteki çiplerde. */}
+                    <span className="hist-chip-count">{r.rows.length}×</span>
+                    <span>{open ? t('hist.groupCollapse') : t('hist.groupExpand')}</span>
+                  </button>
+                  {open && r.rows.slice(1).map(row => (
+                    <div key={row.key} className={`upt-rt-grid ${gridClass}`}>
+                      {renderRow(row.item, { index: row.index })}
+                    </div>
+                  ))}
                 </div>
               )
             }

@@ -2653,8 +2653,38 @@ public class SchedulerService {
         if (res.checksPassed() != null || res.checksFailed() != null)
             sb.append(" — ").append(res.checksPassed() != null ? res.checksPassed() : 0).append("✓/")
               .append(res.checksFailed() != null ? res.checksFailed() : 0).append("✗");
-        if (res.error() != null && res.checksFailed() == null) sb.append(" — ").append(res.error());
+        if (res.error() != null && res.checksFailed() == null) sb.append(" — ").append(oneLine(res.error()));
         return sb.toString();
+    }
+
+    private static final int DETAIL_MAX_CHARS = 300;
+
+    /**
+     * Çok satırlı hata metnini alarm başlığına sığacak TEK satıra indirir.
+     *
+     * <p>Bu değer alarm {@code detail}'ine ve oradan e-postaya gidiyor. {@code error} artık çok
+     * satırlı bir Babel kod çerçevesi taşıyabiliyor (sözdizimi hatalarında, 8+ satır); tamamını
+     * alarm başlığına koymak hem maili hem bildirim listesini bozar. Tam metin zaten
+     * {@code output_tail} ile ayrı alanda taşınıyor.
+     *
+     * <p>İlk İKİ satır alınır, tek satır değil: {@code summarizeError} birinci satıra yalnız
+     * etiketi ({@code "script çalışma-zamanı hatası (çıkış 107):"}) koyuyor, asıl sebep ikinci
+     * satırda. Yalnız ilki alınsaydı alarm hatanın ne olduğunu hiç söylemezdi.
+     */
+    static String oneLine(String error) {
+        String[] all = error.split("\\R");
+        StringBuilder sb = new StringBuilder();
+        int used = 0;
+        for (String raw : all) {
+            String s = raw.strip();
+            if (s.isEmpty()) continue;
+            if (used == 2) { sb.append(" …"); break; }
+            if (used > 0) sb.append(' ');
+            sb.append(s);
+            used++;
+        }
+        String out = sb.toString();
+        return out.length() > DETAIL_MAX_CHARS ? out.substring(0, DETAIL_MAX_CHARS) + " …" : out;
     }
 
     private static final com.fasterxml.jackson.databind.ObjectMapper SCRIPTED_JSON = new com.fasterxml.jackson.databind.ObjectMapper();

@@ -6857,6 +6857,11 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .sc-check-ok  { color: var(--success); font-weight: 700; }
 .sc-check-bad { color: var(--danger); font-weight: 700; }
 .sc-err-msg  { white-space: pre-wrap; overflow-wrap: anywhere; }
+/* Çok satırlı hata = Babel/k6 kod çerçevesi. Caret (^) bir üstteki satırla SÜTUN SÜTUN hizalı;
+   sarma onu kaydırır ve "hata neresi" bilgisini yok eder. Bu yüzden sarma yerine yatay kaydırma
+   ve eşit-genişlikli yazı tipi (repo deseni: .show-pre ile aynı aile). */
+.sc-err-msg--frame { white-space: pre; overflow-x: auto; overflow-wrap: normal;
+  font-family: Consolas, 'Courier New', monospace; font-size: 11.5px; line-height: 1.55; }
 .sc-err-exit { margin-top: 4px; font-size: .9em; opacity: .85; }
 .sc-err-hint { margin-top: 4px; font-size: .9em; font-style: italic; }
 .sc-tech { margin-top: 10px; }
@@ -10048,6 +10053,13 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .hist-alert-meta { color: var(--text-muted); font-weight: 400; }
 .hist-alert-time { margin-left: auto; font-size: 11px; color: var(--text-muted); white-space: nowrap; }
 .hist-list { margin-top: 2px; }
+/* Ardışık aynı sonuç grubu (opt-in — bkz. CheckHistoryTab groupIdenticalErrors) */
+.hist-group { border-left: 2px solid var(--border); }
+.hist-group-toggle { display: flex; align-items: center; gap: 6px; width: 100%;
+  background: none; border: 0; padding: 3px 9px 6px; font-size: 11.5px; color: var(--text-muted);
+  cursor: pointer; text-align: left; }
+.hist-group-toggle:hover { color: var(--text); }
+.hist-group-toggle:focus-visible { outline: 2px solid var(--primary); outline-offset: -2px; border-radius: 3px; }
 /* Tür-özel geçmiş grid şablonları (CheckHistoryTab gridClass) */
 .page-rt-grid { grid-template-columns: 150px 90px 70px 100px 1fr; }
 .dns-rt-grid  { grid-template-columns: 150px 1fr 64px 80px 170px; }

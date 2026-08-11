@@ -26,7 +26,7 @@ import { LoadingBlock, Spinner } from './ui/Progress.jsx'
 import AlertBanner from './ui/AlertBanner.jsx'
 import StatusBlock from './ui/StatusBlock.jsx'
 import CopyButton from './ui/CopyButton.jsx'
-import { exitLabel, exitHint } from './scriptedExitCodes.js'
+import { exitLabel, exitHint, diagnosisHint } from './scriptedExitCodes.js'
 // recharts ağır — yalnız "Süre Grafiği" sekmesi açılınca yüklensin.
 const ResponseTimeChart = lazy(() => import('./ResponseTimeChart.jsx'))
 const MonitorNotes = lazy(() => import('./MonitorNotes.jsx'))
@@ -58,6 +58,24 @@ function isFailLike(s) { return s === 'FAIL' || s === 'ERROR' || s === 'TIMEOUT'
  * arıza değil yapılandırma kusurudur, alarm üretmez ve "down" sayaçlarını/filtresini şişirmemeli.
  */
 function isWarnLike(s) { return s === 'NO_CHECKS' }
+/** Backend çok satırlı hata döndürdüyse bu bir k6/Babel kod çerçevesidir (hizalı caret taşır). */
+function isCodeFrame(error) { return typeof error === 'string' && error.includes('\n') }
+
+/**
+ * Kontrol Geçmişi gruplama imzası (CheckHistoryTab `rowSignature`).
+ *
+ * Yalnız BAŞARISIZ satırlar gruplanır — PASS satırlarını katlamak normal zaman çizgisini gizlerdi.
+ * Sebep olarak hatanın İLK satırı yeterli: kod çerçevesinin tamamı aynıysa ilk satır da aynıdır,
+ * farklı bir hataysa zaten ilk satırda ayrışır.
+ *
+ * Modül düzeyinde tanımlı (bileşen içinde arrow DEĞİL): `rowSignature` CheckHistoryTab'ın satır
+ * useMemo'sunun bağımlılığı; her render'da yeni bir referans üretmek memo'yu boşa çıkarırdı.
+ */
+function scriptedRowSignature(c) {
+  if (!c || isPass(c.status)) return null
+  const first = String(c.error || '').split('\n')[0].slice(0, 200)
+  return `${c.status}|${c.exit_code ?? ''}|${first}`
+}
 
 export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
   const t = useT()
@@ -393,7 +411,7 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
         </div>
       </div>
 
-      <MonitorHowBox bullets={[t('scripted.how1'), t('scripted.how2'), t('scripted.how3'), t('scripted.how4')]} />
+      <MonitorHowBox bullets={[t('scripted.how1'), t('scripted.how2'), t('scripted.how3'), t('scripted.how4'), t('scripted.how5')]} />
 
       {/* .alert-msg YEŞİL "başarı" kutusuydu ve emoji taşıyordu (proje kuralı: yalnız lucide). */}
       {!k6.available && <AlertBanner tone="warning">{t('scripted.k6Disabled')}</AlertBanner>}
@@ -528,6 +546,8 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
               <CheckHistoryTab kind="scripted" monitorId={selected.id} listKey="scripted-history"
                 columns={[t('scripted.colTime'), t('scripted.colStatus'), t('scripted.colDuration'), t('scripted.colDetail')]}
                 onCounts={(c) => setSummary({ total: c.total, down: c.fail })}
+                groupIdenticalErrors
+                rowSignature={scriptedRowSignature}
                 renderRow={(c) => {
                   const isSel = selCheck?.id === c.id
                   return (<>
@@ -542,7 +562,7 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
                       : <span className="upt-rt-ms">{(c.checks_passed != null || c.checks_failed != null) ? `${c.checks_passed ?? 0}✓/${c.checks_failed ?? 0}✗` : '—'}</span>}
                   </>)
                 }} />
-              {selCheck && <CheckDetail t={t} check={selCheck} />}
+              {selCheck && <CheckDetail t={t} check={selCheck} k6Version={k6.version} />}
             </>)}
 
             {detailTab === 'alerts' && <AlertHistory domain={selected.name} />}
@@ -563,7 +583,7 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
         document.body
       )}
 
-      {modal && createPortal(<EditModal {...{ t, lang, form, setForm, modal, dupSource, saving, testing, testResult, saveWarnings, save, del, closeEdit, runTest, isAdminish, canDelete: modal?.id ? canDeleteRow(modal) : false, teamSelectOptions, teamName, groupSelectOptions, setEnvRow, addEnvRow, delEnvRow, applyTemplate }} />, document.body)}
+      {modal && createPortal(<EditModal {...{ t, lang, k6Version: k6.version, form, setForm, modal, dupSource, saving, testing, testResult, saveWarnings, save, del, closeEdit, runTest, isAdminish, canDelete: modal?.id ? canDeleteRow(modal) : false, teamSelectOptions, teamName, groupSelectOptions, setEnvRow, addEnvRow, delEnvRow, applyTemplate }} />, document.body)}
     </div>
   )
 }
@@ -576,7 +596,7 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
  * basılıyor, çıktı paneli ise sabit siyah zeminli satır-içi stille yazılıyordu (açık temada
  * sayfanın geri kalanıyla çelişen bir blok).
  */
-function CheckDetail({ t, check }) {
+function CheckDetail({ t, check, k6Version }) {
   const [openTech, setOpenTech] = useState(false)
   const [showAll, setShowAll] = useState(false)
   let checks = []
@@ -588,6 +608,7 @@ function CheckDetail({ t, check }) {
 
   const label = exitLabel(t, exitCode)
   const hint = exitHint(t, exitCode)
+  const engineHint = diagnosisHint(t, check, k6Version)
   const tone = isPass(check.status) ? 'success' : isWarnLike(check.status) ? 'warning' : 'danger'
   const lines = outputTail ? outputTail.split('\n') : []
   const CLAMP = 12
@@ -608,9 +629,11 @@ function CheckDetail({ t, check }) {
 
       {(check.error || label) && (
         <AlertBanner tone={tone} title={t('scripted.errTitle')}>
-          {check.error && <div className="sc-err-msg">{check.error}</div>}
+          {/* Çok satırlı hata = k6/Babel kod çerçevesi → monospace + yatay kaydırma, yoksa caret kayar. */}
+          {check.error && <div className={`sc-err-msg${isCodeFrame(check.error) ? ' sc-err-msg--frame' : ''}`}>{check.error}</div>}
           {label && <div className="sc-err-exit">{label}{exitCode != null ? ` · exit ${exitCode}` : ''}</div>}
           {hint && <div className="sc-err-hint">{hint}</div>}
+          {engineHint && <div className="sc-err-hint">{engineHint}</div>}
         </AlertBanner>
       )}
 
@@ -642,7 +665,7 @@ function CheckDetail({ t, check }) {
 }
 
 // ── Create/Edit modal ────────────────────────────────────────────────────────
-function EditModal({ t, lang, form, setForm, modal, dupSource, saving, testing, testResult, saveWarnings, save, del, closeEdit, runTest, isAdminish, canDelete, teamSelectOptions, teamName, groupSelectOptions, setEnvRow, addEnvRow, delEnvRow, applyTemplate }) {
+function EditModal({ t, lang, k6Version, form, setForm, modal, dupSource, saving, testing, testResult, saveWarnings, save, del, closeEdit, runTest, isAdminish, canDelete, teamSelectOptions, teamName, groupSelectOptions, setEnvRow, addEnvRow, delEnvRow, applyTemplate }) {
   const ivIdx = intervalIdx(Number(form.intervalSeconds))
   return (
     <div className="modal-overlay">
@@ -774,8 +797,11 @@ function EditModal({ t, lang, form, setForm, modal, dupSource, saving, testing, 
               </div>
               {testResult.error &&
                 <AlertBanner tone={isPass(testResult.status) ? 'success' : isWarnLike(testResult.status) ? 'warning' : 'danger'}>
-                  <span className="sc-err-msg">{testResult.error}</span>
+                  <div className={`sc-err-msg${isCodeFrame(testResult.error) ? ' sc-err-msg--frame' : ''}`}>{testResult.error}</div>
                   {exitHint(t, testResult.exit_code) && <div className="sc-err-hint">{exitHint(t, testResult.exit_code)}</div>}
+                  {/* Kaydetmeden ÖNCE görülmeli: sözdizimi duvarına çarpan kullanıcı burada anlasın. */}
+                  {diagnosisHint(t, testResult, k6Version) &&
+                    <div className="sc-err-hint">{diagnosisHint(t, testResult, k6Version)}</div>}
                 </AlertBanner>}
               {testResult.output_tail && <pre className="show-pre sc-console">{testResult.output_tail}</pre>}
             </div>}

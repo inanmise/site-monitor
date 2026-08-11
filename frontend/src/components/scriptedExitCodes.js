@@ -33,3 +33,51 @@ export function exitHint(t, code) {
   const n = Number(code)
   return K6_EXIT_WITH_HINT.includes(n) ? t(`scripted.exitHelp_${n}`) : null
 }
+
+/**
+ * Babel'in k6'dan çıkarıldığı ve modern sözdiziminin doğrudan çalışmaya başladığı k6 sürümü.
+ * (k6 v0.53.0'dan itibaren `base` ve `extended` modlar `global` aliası dışında aynı — yani
+ * transpile katmanı yok.)
+ */
+const K6_MODERN_SYNTAX_SINCE = [0, 53, 0]
+
+/** "v0.49.0" → [0,49,0]; ayrıştırılamazsa null. */
+function parseK6Version(raw) {
+  const m = /(\d+)\.(\d+)\.(\d+)/.exec(String(raw ?? ''))
+  return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : null
+}
+
+function lessThan(a, b) {
+  for (let i = 0; i < 3; i++) {
+    if (a[i] !== b[i]) return a[i] < b[i]
+  }
+  return false
+}
+
+/**
+ * Çıkış kodu tek başına yetmediğinde metne bakan tanı ipucu.
+ *
+ * Şu an tek kural var ve en sık kırılmayı kapatıyor: k6 0.49 içindeki gömülü **Babel 6**
+ * ES2020 sözdizimini (`?.`, `??`) ve hatta ES2018 nesne spread'ini (`{...o}`) ayrıştıramıyor.
+ * Kullanıcı ekranda "Unexpected token" görüyor ve bunu kendi yazım hatası sanıyor — oysa script
+ * modern k6'da (ve laptopunda) sorunsuz çalışıyor. Bu ipucu olmadan teşhis pratikte imkânsız.
+ *
+ * SÜRÜM EŞİĞİ ŞART: k6 yükseltildiğinde ipucu kendiliğinden susmalı, yoksa yanlış tavsiye verir.
+ * Sürüm bilinmiyorsa (null/ayrıştırılamaz) ipucu GÖSTERİLMEZ — yanlış yönlendirmektense sessiz kal.
+ *
+ * @param {(k: string, ...a: unknown[]) => string} t
+ * @param {{error?: string, output_tail?: string, outputTail?: string}} check
+ * @param {string|null|undefined} k6Version  örn. "v0.49.0"
+ * @returns {string|null}
+ */
+export function diagnosisHint(t, check, k6Version) {
+  if (!check) return null
+  const ver = parseK6Version(k6Version)
+  if (!ver || !lessThan(ver, K6_MODERN_SYNTAX_SINCE)) return null
+
+  const text = `${check.error ?? ''}\n${check.output_tail ?? check.outputTail ?? ''}`
+  if (!text.includes('SyntaxError')) return null
+  if (!text.includes('Unexpected token') && !text.includes('babel.min.js')) return null
+
+  return t('scripted.hintOldEngine', k6Version)
+}

@@ -91,6 +91,27 @@ public class ScriptedCheckerService {
     private final Semaphore validatePermits = new Semaphore(2);
 
     /**
+     * Doğrulama koşumunun çıktı tavanı.
+     *
+     * <p>4 KiB YETMİYOR ve yetmemesi sessizce zarar veriyordu: {@code ProcessProbe} çıktının SON
+     * N byte'ını tutar, k6 ise tek bir sözdizimi hatası için ~4,3 KiB'lık logfmt satırı basar
+     * (kod çerçevesi + 65 babel yığın satırı). Baştan kırpılınca {@code level=error} ve
+     * {@code msg="} açılışı gidiyor; ayıklayıcı satırı tanıyamıyor, kaçışlar çözülmüyor ve
+     * kullanıcı 400 yanıtında ham blob görüyordu (2026-08'de ölçüldü).
+     *
+     * <p>Bu çıktı hiçbir yere KAYDEDİLMEZ — yalnız ayrıştırılıp atılır ve eşzamanlılığı ayrı
+     * semaforla 2 ile sınırlıdır; cömert davranmanın maliyeti yok.
+     */
+    private static final int VALIDATE_OUTPUT_BYTES = 32 * 1024;
+
+    /** Ayıklama tutmadığında ham çıktı — 400 yanıtına 32 KiB blob koymamak için tavanlı. */
+    private static String rawFallback(String output) {
+        if (output == null) return "";
+        String s = output.strip();
+        return s.length() <= ERR_MAX_TOTAL_CHARS ? s : s.substring(0, ERR_MAX_TOTAL_CHARS) + "…";
+    }
+
+    /**
      * Kaydetme öncesi script doğrulaması sonucu.
      *
      * @param blocking kaydetmeyi ENGELLEYEN kesin hata (satır/sütun çıkarılabildi); null ise engel yok
@@ -143,12 +164,15 @@ public class ScriptedCheckerService {
             args.add(scriptFile.toAbsolutePath().toString());
 
             int timeout = Math.max(3, appSettings.getInt("site.monitor.scripted.validate-timeout-seconds", 10));
-            ProcessProbe.Result r = ProcessProbe.run(args, null, scriptFile.getParent().toFile(), timeout, true, 4096);
+            ProcessProbe.Result r = ProcessProbe.run(args, null, scriptFile.getParent().toFile(), timeout, true,
+                    VALIDATE_OUTPUT_BYTES);
             if (r.exitCode() == 0 && !r.timedOut()) return new ScriptDiagnostics(null, warnings);
 
-            String out = sanitizeScriptPath(r.output());
-            String lines = extractErrorLines(out);
-            String detail = lines != null ? lines : (out == null ? "" : out.strip());
+            // SIRA ÖNEMLİ — önce ayıkla/çöz, SONRA yolu temizle (summarizeError ile aynı sıra).
+            // Tersi yapılırsa logfmt kaçışları çözülmeden kalır ve mesaj 65 satırlık babel yığınıyla
+            // birlikte ham hâlde 400 yanıtına girer.
+            String lines = sanitizeScriptPath(extractErrorLines(r.output()));
+            String detail = lines != null ? lines : rawFallback(r.output());
             if (r.timedOut()) {
                 warnings.add("Sözdizimi doğrulaması zaman aşımına uğradı (uzak import yavaş olabilir) — kaydedildi.");
                 return new ScriptDiagnostics(null, warnings);
@@ -569,9 +593,66 @@ public class ScriptedCheckerService {
         return name == null ? "çıkış kodu " + exitCode : name + " (çıkış " + exitCode + ")";
     }
 
-    private static final int ERR_MAX_LINES = 3;
+    private static final int ERR_MAX_ENTRIES = 3;        // kaç k6 log satırı (çözülmeden önce)
+    private static final int ERR_MAX_TOTAL_LINES = 14;   // çözüldükten sonra toplam metin satırı
     private static final int ERR_MAX_LINE_CHARS = 300;
-    private static final int ERR_MAX_TOTAL_CHARS = 1000;
+    private static final int ERR_MAX_TOTAL_CHARS = 1500;
+
+    /**
+     * k6'nın logfmt satırından {@code msg="…"} alanının ÇÖZÜLMÜŞ değerini döndürür.
+     *
+     * <p>Neden gerekli: k6 hataları tek fiziksel satır olarak, logfmt tırnağı içinde basar —
+     * satır sonları {@code \} + {@code n} şeklinde <b>iki karakterlik kaçış dizisi</b>dir. Bu yüzden
+     * Babel'in kod çerçevesi ({@code > 46 | …} ve altındaki {@code ^} işareti) ekrana tek satır
+     * hâlinde, kaçışlar görünür şekilde düşüyordu; 300 karakterlik kırpma da tam caret'in olduğu
+     * yerde devreye girip hatanın <i>neresi</i> olduğunu yok ediyordu.
+     *
+     * <p>{@code time=}/{@code level=}/{@code hint=} alanları kullanıcı için değersiz olduğundan
+     * atılır. Satırda {@code msg="} yoksa veya tırnak kapanmamışsa satır <b>olduğu gibi</b> döner —
+     * bu fonksiyon hiçbir koşulda istisna fırlatmaz ({@code validateScript} catch yolundan da
+     * çağrılıyor).
+     */
+    static String decodeK6LogLine(String line) {
+        if (line == null) return null;
+        int i = line.indexOf("msg=\"");
+        if (i < 0) return line;
+        StringBuilder sb = new StringBuilder();
+        boolean esc = false;
+        for (int p = i + 5; p < line.length(); p++) {
+            char c = line.charAt(p);
+            if (esc) {
+                switch (c) {
+                    case 'n'  -> sb.append('\n');
+                    case 't'  -> sb.append('\t');
+                    case 'r'  -> sb.append('\r');
+                    case '"'  -> sb.append('"');
+                    case '\\' -> sb.append('\\');
+                    default   -> sb.append('\\').append(c);   // tanımadığımız kaçış: bozma
+                }
+                esc = false;
+            } else if (c == '\\') {
+                esc = true;
+            } else if (c == '"') {
+                return sb.toString();                          // kapanış tırnağı
+            } else {
+                sb.append(c);
+            }
+        }
+        return line;   // tırnak kapanmamış → güvenli taraf: dokunma
+    }
+
+    /**
+     * k6/Babel'in KENDİ iç yığın çerçevesi mi? Kullanıcı için sıfır değer taşır ve tek bir
+     * sözdizimi hatasında 60+ satır üretip paneli boğar.
+     *
+     * <p>Kullanıcının kendi script'ine ait çerçeveler ({@code at file:///…/k6-script-1.js:12:5})
+     * KORUNUR — asıl aranan bilgi onlardır.
+     */
+    private static boolean isInternalStackFrame(String line) {
+        String s = line.strip();
+        if (!s.startsWith("at ")) return false;
+        return s.contains("<internal/") || s.endsWith("(native)");
+    }
 
     /**
      * Maskeli k6 çıktısından ilk anlamlı hata satırlarını ayıklar; eşleşme yoksa {@code null}.
@@ -580,17 +661,30 @@ public class ScriptedCheckerService {
      * satırını değil, ondan sonraki özet gürültüsünü. Asıl sebep ekrana hiç çıkmıyordu.
      *
      * <p>Girdi ZATEN maskelenmiş olmalıdır: bu metnin çıktısı {@code scripted_checks.error}
-     * kolonuna, oradan alarm mesajına ve e-postaya gidiyor.
+     * kolonuna, oradan alarm mesajına ve e-postaya gidiyor. Sıra: {@code maskValues} →
+     * {@code extractErrorLines} (içeride logfmt çözme) → kırpma. Kaçış çözme MASKELENMİŞ metin
+     * üzerinde yapılır; tersi olsaydı maskeleme kaçırılmış bir secret'ı sonradan ortaya çıkarabilirdi.
      *
-     * <p>Bilinen sınır: {@code outputTail} zaten son 8 KiB'dır; daha uzun çıktıda gerçek İLK hata
+     * <p>Girinti bilinçli olarak KORUNUR (yalnız sağ taraf kırpılır): Babel'in {@code ^} caret'i
+     * bir üstteki kod satırıyla sütun sütun hizalıdır, soldaki boşluk gidince hata "neresi"
+     * bilgisini kaybeder.
+     *
+     * <p>Bilinen sınır 1: {@code outputTail} zaten son 8 KiB'dır; daha uzun çıktıda gerçek İLK hata
      * bu pencerenin dışında kalmış olabilir. Alternasyonlu regex yerine {@code contains} kullanılır
      * (8 KiB metinde ReDoS yüzeyi açmamak için). Hiçbir koşulda istisna fırlatmaz — catch yolundan
      * da çağrılabilir.
+     *
+     * <p>Bilinen sınır 2: yalnız EŞLEŞEN satırlar alınır; bir hatanın devamı AYRI fiziksel satırlara
+     * yayılmışsa devam satırları görülmez. Pratikte sorun değil, çünkü k6 boruya (non-TTY) yazarken
+     * logfmt kullanır ve yığının tamamını tek {@code msg="…"} alanına koyar — {@code ERRO[…]} çok
+     * satırlı biçimi yalnız TTY'de çıkar, alt-sürecimiz ise hiçbir zaman TTY değildir.
      */
     static String extractErrorLines(String maskedOutput) {
         if (maskedOutput == null || maskedOutput.isBlank()) return null;
         List<String> picked = new ArrayList<>();
-        int total = 0;
+        List<String> seen = new ArrayList<>();
+        int total = 0, entries = 0, hiddenFrames = 0;
+        outer:
         for (String raw : maskedOutput.split("\\R")) {
             String line = raw.strip();
             if (line.isEmpty()) continue;
@@ -598,14 +692,25 @@ public class ScriptedCheckerService {
                     || line.contains("GoError:")
                     || line.toLowerCase(Locale.ROOT).contains("level=error");
             if (!hit) continue;
-            if (line.length() > ERR_MAX_LINE_CHARS) line = line.substring(0, ERR_MAX_LINE_CHARS) + "…";
-            if (picked.contains(line)) continue;   // setup()+default() aynı GoError'ı iki kez basabilir
-            if (total + line.length() > ERR_MAX_TOTAL_CHARS) break;
-            picked.add(line);
-            total += line.length();
-            if (picked.size() >= ERR_MAX_LINES) break;
+            String decoded = decodeK6LogLine(line);
+            if (seen.contains(decoded)) continue;   // setup()+default() aynı GoError'ı iki kez basabilir
+            seen.add(decoded);
+            for (String frag : decoded.split("\\R")) {
+                String f = frag.stripTrailing();
+                if (f.isBlank()) continue;
+                if (isInternalStackFrame(f)) { hiddenFrames++; continue; }
+                if (f.length() > ERR_MAX_LINE_CHARS) f = f.substring(0, ERR_MAX_LINE_CHARS) + "…";
+                if (picked.size() >= ERR_MAX_TOTAL_LINES || total + f.length() > ERR_MAX_TOTAL_CHARS) break outer;
+                picked.add(f);
+                total += f.length();
+            }
+            if (++entries >= ERR_MAX_ENTRIES) break;
         }
-        return picked.isEmpty() ? null : String.join("\n", picked);
+        if (picked.isEmpty()) return null;
+        // Sessiz kırpma yok: kaç satır saklandığı söylenir. Nereye bakılacağı YAZILMAZ — bu metin
+        // hem kontrol geçmişine (teknik detay paneli VAR) hem kaydetme hatasına (panel YOK) gidiyor.
+        if (hiddenFrames > 0) picked.add("… " + hiddenFrames + " k6 iç yığın satırı gizlendi");
+        return String.join("\n", picked);
     }
 
     static final class Summary {
