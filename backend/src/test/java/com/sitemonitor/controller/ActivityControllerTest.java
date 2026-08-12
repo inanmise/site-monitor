@@ -38,6 +38,9 @@ class ActivityControllerTest {
     @MockitoBean RememberMeService rememberMeService;
     @MockitoBean UserService userService;
     @MockitoBean AuthController authController;
+    // AuthInterceptor (@Component) her dilimde kuruluyor; sessiz reauth'a denetim kaydı
+    // yazdığından AuditService'e de ihtiyaç duyar.
+    @MockitoBean com.sitemonitor.service.AuditService auditService;
     @MockitoBean com.sitemonitor.service.HttpMetricsService httpMetricsService;
     @MockitoBean ActivityLogRepository repo;
 

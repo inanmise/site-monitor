@@ -75,6 +75,7 @@ public class UserActivityService {
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("summary",      buildSummary(window, activeUsers.size()));
         out.put("active_users", activeUsers);
+        out.put("login_status", buildLoginStatus(usersByName, teamNames));   // ek sorgu yok (usersByName zaten yüklü)
         out.put("series",       buildSeries(window));
         out.put("top_users",    buildTopUsers(window, usersByName));
         out.put("top_sources",  buildTopSources(window));
@@ -257,8 +258,64 @@ public class UserActivityService {
             m.put("city",         ev != null ? ev.getIpCity() : null);
             m.put("org",          ev != null ? ev.getIpOrg() : null);
             m.put("user_agent",   ev != null ? ev.getUserAgent() : null);
+            putLoginStamp(m, u);
             rows.add(m);
         }
+        return rows;
+    }
+
+    /**
+     * Giriş damgası alanları — kullanıcı satırından, audit'ten DEĞİL.
+     *
+     * <p>Neden ayrı: yukarıdaki {@code login_at} audit'ten gelir ve 180 günlük budamaya tabidir;
+     * ayrıca oturum süresi hesabı ona bağlı olduğu için dokunulmadı. Buradaki alanlar kalıcıdır ve
+     * "hiç girmemiş" / "şu anda deneniyor" gibi soruları audit penceresinden bağımsız cevaplar.
+     * Alan adları {@code login_status} listesiyle BİREBİR aynıdır — aynı detay modalı ikisini de
+     * render edebilsin.
+     */
+    private static void putLoginStamp(Map<String, Object> m, AppUser u) {
+        m.put("last_login_at",       u.getLastLoginAt());
+        m.put("last_login_ip",       u.getLastLoginIp());
+        m.put("last_login_method",   u.getLastLoginMethod());
+        m.put("prev_login_at",       u.getPrevLoginAt());
+        m.put("prev_login_ip",       u.getPrevLoginIp());
+        m.put("last_failed_at",      u.getLastFailedLoginAt());
+        m.put("last_failed_ip",      u.getLastFailedLoginIp());
+        m.put("last_failed_reason",  u.getLastFailedLoginReason());
+        m.put("failed_since_login",  u.getFailedSinceLogin() == null ? 0 : u.getFailedSinceLogin());
+        m.put("failed_before_login", u.getFailedBeforeLogin() == null ? 0 : u.getFailedBeforeLogin());
+    }
+
+    /**
+     * TÜM kullanıcıların giriş durumu (yalnız o an oturumu açık olanlar değil).
+     *
+     * <p>Ek sorgu YOK: {@code usersByName()} zaten {@code findAll()} yapıyor. Sıralama son girişe
+     * göre azalan, hiç girmemişler sonda — "atıl hesap" ve "parola denenen hesap" aynı ekranda
+     * görünür.
+     */
+    private List<Map<String, Object>> buildLoginStatus(Map<String, AppUser> usersByName,
+                                                       Map<Long, String> teamNames) {
+        List<Map<String, Object>> rows = new ArrayList<>();
+        for (AppUser u : usersByName.values()) {
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("username",     u.getUsername());
+            m.put("user_id",      u.getId());
+            m.put("display_name", u.getDisplayName());
+            m.put("system_role",  u.getSystemRole());
+            m.put("team_name",    u.getTeamId() != null ? teamNames.get(u.getTeamId()) : null);
+            m.put("active",       Boolean.TRUE.equals(u.getActive()));
+            m.put("auth_source",  u.getAuthSource());
+            putLoginStamp(m, u);
+            rows.add(m);
+        }
+        rows.sort((a, b) -> {
+            String x = (String) a.get("last_login_at");
+            String y = (String) b.get("last_login_at");
+            if (x == null && y == null) return 0;
+            if (x == null) return 1;      // hiç girmemişler sonda
+            if (y == null) return -1;
+            return y.compareTo(x);        // ISO-UTC sabit genişlikte → leksikografik = kronolojik
+        });
         return rows;
     }
 

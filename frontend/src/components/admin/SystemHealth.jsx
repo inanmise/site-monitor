@@ -1502,6 +1502,36 @@ export default function SystemHealth({ systemRole, globalAdmin = false, preFilte
                   </table>
                 </div>
 
+                {/* Giriş durumu — TÜM kullanıcılar. Yukarıdaki tablolar audit penceresinden
+                    (7 gün) beslenir ve 180 günlük budamaya tabidir; bu tablo kullanıcı satırından
+                    okunduğu için "hiç girmemiş" ve "şu anda parolası deneniyor" hesapları da gösterir. */}
+                <h3 className="metrics-title">{t('uact.loginStatusTitle')}</h3>
+                <div className="sys-muted sys-small">{t('uact.loginStatusHint')}</div>
+                <div className="health-table-wrap">
+                  <table className="health-dbtable">
+                    <thead><tr>
+                      <th className="dbtcol-th">{t('uact.colUser')}</th>
+                      <th className="dbtcol-th">{t('uact.colLastLogin')}</th>
+                      <th className="dbtcol-th">{t('uact.colPrevLogin')}</th>
+                      <th className="dbtcol-th">{t('uact.colLastFailed')}</th>
+                      <th className="dbtcol-th dbtcol-th-num">{t('uact.colFailedCount')}</th>
+                    </tr></thead>
+                    <tbody>
+                      {(ua.login_status || []).map(r => (
+                        <tr key={r.username} className="uact-row-click" style={{ cursor: 'pointer' }}
+                            title={t('uact.detailHint')} onClick={() => setSessionDetail(r)}>
+                          <td><UserBadge username={r.username} userId={r.user_id} displayName={r.display_name} /></td>
+                          <td className="sys-mono sys-small">{r.last_login_at ? formatDateSec(r.last_login_at) : '—'}</td>
+                          <td className="sys-mono sys-small">{r.prev_login_at ? formatDateSec(r.prev_login_at) : '—'}</td>
+                          <td className="sys-mono sys-small">{r.last_failed_at ? formatDateSec(r.last_failed_at) : '—'}</td>
+                          <td className="dbtcol-num-cell">{r.failed_since_login ?? 0}</td>
+                        </tr>
+                      ))}
+                      {(ua.login_status || []).length === 0 && <tr><td colSpan={5} className="sys-muted">—</td></tr>}
+                    </tbody>
+                  </table>
+                </div>
+
                 {/* Top kaynaklar */}
                 <h3 className="metrics-title">{t('uact.topSourcesTitle')}</h3>
                 <div className="health-table-wrap">
@@ -2002,6 +2032,19 @@ export default function SystemHealth({ systemRole, globalAdmin = false, preFilte
                   {field(t('uact.colLoginAt'), u.login_at ? formatDateSec(u.login_at) : '—', true)}
                   {field(t('uact.colDuration'), fmtMins(u.duration_min))}
                   {field(t('uact.detailLastSeen'), u.last_seen ? formatDateSec(u.last_seen) : '—', true)}
+                </div>
+
+                {/* Giriş geçmişi — kullanıcı satırından (audit budamasından bağımsız). Alan adları
+                    aktif-oturum satırlarıyla AYNI olduğu için bu modal iki listeyi de render eder. */}
+                <div className="show-section-header">{t('uact.detailLoginHistory')}</div>
+                <div className="show-grid-2">
+                  {field(t('uact.colLastLogin'), u.last_login_at ? formatDateSec(u.last_login_at) : '—', true)}
+                  {field(t('uact.detailLoginMethod'), u.last_login_method)}
+                  {field(t('uact.colPrevLogin'), u.prev_login_at ? formatDateSec(u.prev_login_at) : '—', true)}
+                  {field(t('uact.detailPrevIp'), u.prev_login_ip, true)}
+                  {field(t('uact.colLastFailed'), u.last_failed_at ? formatDateSec(u.last_failed_at) : '—', true)}
+                  {field(t('uact.detailFailedIp'), u.last_failed_ip, true)}
+                  {field(t('uact.colFailedCount'), String(u.failed_since_login ?? 0))}
                 </div>
 
                 <div className="show-section-header">{t('uact.detailSource')}</div>

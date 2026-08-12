@@ -381,7 +381,11 @@ public class ScriptedCheckerService {
                 status = r.timedOut() ? "TIMEOUT" : "ERROR";
                 error = "sonuç yorumlanamadı: " + safeMsg(ie, secretValues);
             }
-            if (!s.parsed && !"PASS".equals(status)) {
+            // TIMEOUT DIŞINDA: süreci biz öldürdüğümüzde k6 `--summary-export`u zaten yazamaz —
+            // "k6 özeti okunamadı" demek her zaman aşımına, sebebin YANINA, yanlış bir iz ekliyordu
+            // ("Süre aşımı … · k6 özeti okunamadı (metrik yok)"). Özetin yokluğu orada bulgu değil,
+            // sonlandırmanın doğal sonucudur.
+            if (!s.parsed && !"PASS".equals(status) && !"TIMEOUT".equals(status)) {
                 error = (error == null ? "" : error + " · ") + "k6 özeti okunamadı (metrik yok)";
             }
             return buildResult(status, durationMs, r, s, output, error);
@@ -474,8 +478,23 @@ public class ScriptedCheckerService {
         return "FAIL".equalsIgnoreCase(appSettings.getString("site.monitor.scripted.no-checks-policy", "WARN"));
     }
 
-    private static String summarizeError(String status, ProcessProbe.Result r, String output) {
-        if ("TIMEOUT".equals(status)) return "Süre aşımı — süreç sonlandırıldı";
+    /**
+     * Statüyü kullanıcıya gösterilecek tek bir hata metnine çevirir.
+     *
+     * <p>Görünürlük paket-özel: TIMEOUT sözleşmesi ({@code ":\n"} ile eklenen sebep) hem testte
+     * hem frontend'de ({@code scriptedExitCodes.diagnosisHint}) dayanak noktası — pinlenmesi şart.
+     */
+    static String summarizeError(String status, ProcessProbe.Result r, String output) {
+        // Sebep ayıklaması TÜM dallardan ÖNCE yapılır: TIMEOUT'ta da gösterilecek.
+        String lines = sanitizeScriptPath(extractErrorLines(output));
+        if ("TIMEOUT".equals(status)) {
+            // Süreci BİZ öldürdüğümüz için k6 çoğu kez sebebi yazmaya fırsat bulamaz — ama
+            // asılmadan ÖNCE düşen istekler varsa sebep çıktıda DURUYORDU ve buraya hiç
+            // taşınmıyordu. Prod'da 294 koşum "Süre aşımı" deyip susarken elimizde
+            // `Request Failed — Post "http://…": request timeout` satırı vardı (2026-08'de
+            // uçtan uca ölçüldü). Artık FAIL/ERROR ile aynı muamele.
+            return "Süre aşımı — süreç sonlandırıldı" + (lines != null ? ":\n" + lines : "");
+        }
         if ("NO_CHECKS".equals(status)) {
             return "Script hiç check() çalıştırmadı — koşum hiçbir şey doğrulamadı";
         }
@@ -485,7 +504,6 @@ public class ScriptedCheckerService {
         String label = (r.exitCode() == 0 && !r.timedOut())
                 ? "script çalışırken hata verdi (k6 yine çıkış 0 verdi)"
                 : exitCodeLabel(r.exitCode(), r.timedOut());
-        String lines = sanitizeScriptPath(extractErrorLines(output));
         return switch (status) {
             // FAIL'de de sebep gösterilir. Eskiden yalnız "0✓/1✗" denirdi: isteği patlayan bir
             // monitör (bağlantı reddi, DNS, TLS, istek zaman aşımı) hiçbir sebep bildirmiyordu —

@@ -82,6 +82,18 @@ describe('diagnosisHint — k6 sözdizimi duvarı', () => {
     expect(diagnosisHint(t, { status: 'TIMEOUT' }, null)).toBe('«scripted.hintTimeoutNoDetail»')
   })
 
+  it('TIMEOUT: sebep GÖSTERİLEBİLDİYSE ipucu susar (yazılmış sebebin altında "yazamadı" demesin)', () => {
+    // Backend sözleşmesi: sebep bulunduğunda başlık satırının ardına ':\n' + satırlar eklenir.
+    const withReason = {
+      status: 'TIMEOUT',
+      error: 'Süre aşımı — süreç sonlandırıldı:\n'
+           + 'Request Failed — Post "http://192.0.2.1/v1/chat/completions": request timeout',
+    }
+    expect(diagnosisHint(t, withReason, 'v0.49.0')).toBeNull()
+    // Sebep varken bile ESKİ MOTOR kuralına düşmez: TIMEOUT dalı kararı verip biter.
+    expect(diagnosisHint(t, withReason, 'v1.0.0')).toBeNull()
+  })
+
   it('TIMEOUT ipucu yalnız TIMEOUT durumunda — FAIL/ERROR bunu göstermez', () => {
     expect(diagnosisHint(t, { status: 'FAIL', error: 'k6 check başarısız' }, 'v0.49.0')).toBeNull()
     expect(diagnosisHint(t, { status: 'ERROR', error: 'GoError: reddedildi' }, 'v0.49.0')).toBeNull()

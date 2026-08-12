@@ -32,6 +32,9 @@ class DatabaseInfoControllerTest {
     @MockitoBean UserService userService;
     @MockitoBean HttpMetricsService httpMetricsService;
     @MockitoBean AuthController authController;
+    // AuthInterceptor (@Component) her dilimde kuruluyor; sessiz reauth'a denetim kaydı
+    // yazdığından AuditService'e de ihtiyaç duyar.
+    @MockitoBean com.sitemonitor.service.AuditService auditService;
 
     @BeforeEach
     void setUp() {

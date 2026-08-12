@@ -106,12 +106,73 @@ class AuthControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success").value(true));
 
-        // recordActiveSession YAZILAN case ("TestUser") ile DEĞİL, canonical user.getUsername() ("testuser")
-        // ile çağrılmalı — aksi halde findByUsername (case-sensitive) satırı bulamaz, kullanıcı aktif sayılmaz.
-        org.mockito.Mockito.verify(userService).recordActiveSession(
-                org.mockito.ArgumentMatchers.eq("testuser"), org.mockito.ArgumentMatchers.any());
-        org.mockito.Mockito.verify(userService, org.mockito.Mockito.never()).recordActiveSession(
-                org.mockito.ArgumentMatchers.eq("TestUser"), org.mockito.ArgumentMatchers.any());
+        // Giriş damgası YAZILAN case ("TestUser") ile DEĞİL, canonical user.getUsername() ("testuser")
+        // ile yazılmalı — aksi halde findByUsername (case-sensitive) satırı bulamaz, kullanıcı aktif sayılmaz.
+        org.mockito.Mockito.verify(userService).recordSuccessfulLogin(
+                org.mockito.ArgumentMatchers.eq("testuser"), org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.eq(UserService.LoginMethod.PASSWORD));
+        org.mockito.Mockito.verify(userService, org.mockito.Mockito.never()).recordSuccessfulLogin(
+                org.mockito.ArgumentMatchers.eq("TestUser"), org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
+    }
+
+    // ── Giriş güvenliği özeti (login_info) ────────────────────────────────────
+
+    @Test
+    @DisplayName("Giriş yanıtı login_info taşır: gösterilen değer BİR ÖNCEKİ giriş, bu oturum değil")
+    void login_returnsLoginInfo() throws Exception {
+        when(userService.recordSuccessfulLogin(any(), any(), any(), any()))
+                .thenReturn(new UserService.LoginStamp(
+                        "2026-08-10T09:00:00", "10.0.0.9", "PASSWORD", 3,
+                        "2026-08-11T10:00:00", "10.0.0.8", "BAD_PASSWORD",
+                        "2026-08-12T11:00:00", "PASSWORD", false));
+
+        mvc.perform(post("/api/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"username\":\"testuser\",\"password\":\"testpass\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.login_info.prev_login_at").value("2026-08-10T09:00:00"))
+                .andExpect(jsonPath("$.login_info.prev_login_ip").value("10.0.0.9"))
+                .andExpect(jsonPath("$.login_info.failed_before_login").value(3))
+                .andExpect(jsonPath("$.login_info.last_failed_at").value("2026-08-11T10:00:00"))
+                .andExpect(jsonPath("$.login_info.first_login").value(false));
+    }
+
+    @Test
+    @DisplayName("İlk girişte login_info null alanlarla döner (Map.of null kabul etmez — regresyon kalkanı)")
+    void login_firstLoginSerializesNulls() throws Exception {
+        when(userService.recordSuccessfulLogin(any(), any(), any(), any()))
+                .thenReturn(UserService.LoginStamp.empty());
+
+        mvc.perform(post("/api/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"username\":\"testuser\",\"password\":\"testpass\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.login_info.first_login").value(true))
+                .andExpect(jsonPath("$.login_info.failed_before_login").value(0));
+    }
+
+    @Test
+    @DisplayName("Başarısız giriş: kullanıcı VARSA damga yazılır, YOKSA hiç yazılmaz (enumeration yüzeyi açılmaz)")
+    void failedLogin_stampsOnlyExistingUser() throws Exception {
+        mvc.perform(post("/api/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"username\":\"testuser\",\"password\":\"wrongpass\"}"))
+                .andExpect(status().isUnauthorized());
+        org.mockito.Mockito.verify(userService)
+                .recordFailedLogin(org.mockito.ArgumentMatchers.eq("testuser"),
+                        org.mockito.ArgumentMatchers.any(),
+                        org.mockito.ArgumentMatchers.eq("BAD_PASSWORD"));
+
+        org.mockito.Mockito.clearInvocations(userService);
+        mvc.perform(post("/api/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"username\":\"nobody\",\"password\":\"testpass\"}"))
+                .andExpect(status().isUnauthorized());
+        org.mockito.Mockito.verify(userService, org.mockito.Mockito.never())
+                .recordFailedLogin(org.mockito.ArgumentMatchers.any(),
+                        org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
     }
 
     // ── Tek aktif oturum onayı ────────────────────────────────────────────────
@@ -127,6 +188,13 @@ class AuthControllerTest {
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.success").value(false))
                 .andExpect(jsonPath("$.error_code").value("ACTIVE_SESSION_EXISTS"));
+
+        // Bu dalda oturum KURULMUYOR → giriş damgası da basılmamalı. Aksi halde kullanıcı hiç
+        // giremediği hâlde "önceki giriş" değeri bu denemeyle ezilir ve gerçek son giriş kaybolur.
+        // (clearLockoutOnSuccess bu kontrolden ÖNCE çağrılıyor; damga oraya bağlanamaz.)
+        org.mockito.Mockito.verify(userService, org.mockito.Mockito.never())
+                .recordSuccessfulLogin(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(),
+                        org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
     }
 
     @Test

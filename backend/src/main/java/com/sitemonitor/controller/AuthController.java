@@ -151,6 +151,9 @@ public class AuthController {
             // so the UI can show a precise message instead of "wrong password".
             if (userService.isTempPasswordExpired(user)) {
                 log.info("Login rejected — temp password expired: user={} IP={}", username, clientIp);
+                // Parola doğruydu ama giriş REDDEDİLDİ → kullanıcının güvenlik özetinde başarısız
+                // deneme olarak görünmeli (canonical username: yazılan case farklı olabilir).
+                userService.recordFailedLogin(user.getUsername(), clientIp, "TEMP_PASSWORD_EXPIRED");
                 auditService.recordLogin(username, user.getId(), user.getTeamId(),
                         user.getSystemRole(), clientIp,
                         request.getHeader("User-Agent"), null, false,
@@ -193,7 +196,11 @@ public class AuthController {
             // DB'deki canonical'dan ("n68753") farklı olabilir; recordActiveSession→findByUsername case-sensitive
             // olduğundan yazılan case'le satır bulunamaz ve aktif-oturum/lastSeenAt set EDİLMEZ → kullanıcı
             // "aktif" sayılmaz. populateSession + sessionPing zaten canonical kullanıyor; burada da hizala.
-            userService.recordActiveSession(user.getUsername(), newSession.getId());
+            // Giriş damgası + aktif oturum kaydı TEK yazmada. Damga BURADA basılır (409 dalından
+            // SONRA): oturum kurulmadan basılsaydı, kullanıcı hiç giremediği hâlde "giriş oldu"
+            // yazılır ve gösterilecek "önceki girişiniz" değeri boşa harcanırdı.
+            UserService.LoginStamp loginStamp = userService.recordSuccessfulLogin(
+                    user.getUsername(), newSession.getId(), clientIp, UserService.LoginMethod.PASSWORD);
             rememberMeService.invalidateAllForUser(username);
 
             log.info("User logged in: {} (role={}, teamId={}, rememberMe={}, IP={})",
@@ -214,7 +221,7 @@ public class AuthController {
                 cookie.setPath("/");
                 response.addCookie(cookie);
             }
-            return ResponseEntity.ok(buildMeResponse(user, newSession));
+            return ResponseEntity.ok(buildMeResponse(user, newSession, loginStamp));
         }
 
         // 3. Failed — record attempt, check for BRUTE_FORCE, apply progressive lockout
@@ -233,6 +240,10 @@ public class AuthController {
                 var u = failedUser.get();
                 lastLockoutAt = u.getLastLockoutAt();
                 failuresNeeded = userService.failuresNeededForLevel(u.getFailedBlockCount());
+                // Kullanıcının güvenlik özeti için damga. applyProgressiveLockout'tan (aşağıda)
+                // ÖNCE: o metot entity'yi yeniden yükleyip kaydediyor; ters sırada bayat kopya
+                // az önce artırılan sayacı ezerdi. UNKNOWN_USER'da güncellenecek satır yok.
+                userService.recordFailedLogin(u.getUsername(), clientIp, "BAD_PASSWORD");
             }
         }
         String reasonCode = userExists ? "BAD_PASSWORD" : "UNKNOWN_USER";
@@ -346,6 +357,9 @@ public class AuthController {
             resp.put("mudurluk_name", u.getMudurlukName());
             resp.put("manager_sicil", u.getManagerSicil());
             resp.put("has_photo", u.getPhotoBase64() != null && !u.getPhotoBase64().isBlank());
+            // Giriş güvenliği özeti — kullanıcı satırından okunur, EK SORGU YOK. Değerler kaydırma
+            // sonrası hâldir, yani sayfa yenilendiğinde (F5) giriş yanıtındakiyle birebir aynıdır.
+            resp.put("login_info", loginInfo(UserService.stampOf(u)));
             putTeams(resp, u);
         });
         // Faz 3b: scope flags for the UI (hide global-only tabs from scoped müdür-admins).
@@ -543,10 +557,12 @@ public class AuthController {
         else session.setAttribute("manageTeamIds", new ArrayList<>(manage));
     }
 
-    private Map<String, Object> buildMeResponse(AppUser user, HttpSession session) {
+    private Map<String, Object> buildMeResponse(AppUser user, HttpSession session,
+                                                UserService.LoginStamp stamp) {
         Map<String, Object> resp = new LinkedHashMap<>();
         resp.put("success", true);
         resp.put("message", "Login successful");
+        resp.put("login_info", loginInfo(stamp));
         resp.put("username", user.getUsername());
         resp.put("user_id", user.getId());
         resp.put("team_id", user.getTeamId());
@@ -559,6 +575,32 @@ public class AuthController {
         resp.put("global_admin", SessionScope.isGlobalAdmin(session));
         resp.put("scoped", session.getAttribute("viewTeamIds") != null);
         return resp;
+    }
+
+    /**
+     * Kullanıcının kendi giriş güvenliği özeti — giriş yanıtında ve {@code /api/me}'de AYNI blok.
+     *
+     * <p>Gösterilen "önceki giriş", içinde bulunulan oturumunki DEĞİLDİR: kullanıcı kendi
+     * oturumunun başlangıcını görse "bu ben miydim?" sorusunu cevaplayamaz. IP'ler yalnız
+     * kullanıcının KENDİ kaydı için döner (bu uç oturum sahibine bağlıdır).
+     *
+     * <p>{@code Map.of} kullanılamaz — null değer kabul etmez ve ilk girişte alanların çoğu null.
+     */
+    private static Map<String, Object> loginInfo(UserService.LoginStamp s) {
+        UserService.LoginStamp stamp = s == null ? UserService.LoginStamp.empty() : s;
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("prev_login_at", stamp.prevLoginAt());
+        m.put("prev_login_ip", stamp.prevLoginIp());
+        m.put("prev_login_method", stamp.prevLoginMethod());
+        m.put("failed_before_login", stamp.failedBeforeLogin());
+        m.put("last_failed_at", stamp.lastFailedAt());
+        m.put("last_failed_ip", stamp.lastFailedIp());
+        m.put("last_failed_reason", stamp.lastFailedReason());
+        m.put("current_login_at", stamp.currentLoginAt());
+        m.put("current_login_method", stamp.currentLoginMethod());
+        // Sunucu hesaplar: frontend "null → ilk giriş mi, veri mi yok" ayrımını tahmin etmesin.
+        m.put("first_login", stamp.firstLogin());
+        return m;
     }
 
     /** Birincil takım ilk olacak şekilde kullanıcının TÜM üyeliklerini team_ids + team_names olarak ekler. */

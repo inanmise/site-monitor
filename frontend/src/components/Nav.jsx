@@ -10,10 +10,11 @@ import {
 } from 'lucide-react'
 import BrandLogo from './BrandLogo.jsx'
 import IssueReportModal from './IssueReportModal.jsx'
+import { LastLoginPopoverLines } from './LastLoginInfo.jsx'
 import { useBranding } from '../contexts/BrandingProvider.jsx'
 import { usePermissions } from '../contexts/PermissionsProvider.jsx'
 
-export default function Nav({ activeTab, onTabChange, username, teamName, systemRole, globalAdmin, onLogout, onChangePassword, globalStatus = 'ok' }) {
+export default function Nav({ activeTab, onTabChange, username, teamName, systemRole, globalAdmin, onLogout, onChangePassword, globalStatus = 'ok', loginInfo = null }) {
   const t = useT()
   const { toggle } = useLanguage()
   const { theme, toggle: toggleTheme } = useTheme()
@@ -275,6 +276,8 @@ export default function Nav({ activeTab, onTabChange, username, teamName, system
             style={{ left: userMenuPos.left, bottom: userMenuPos.bottom }}
           >
             <div className="sb-user-popover-hdr">{t('nav.userSettings')}</div>
+            {/* Giriş bilgisi — popover veri ÇEKMEZ, değerler App state'inden prop ile gelir. */}
+            <LastLoginPopoverLines info={loginInfo} />
             {username?.toLowerCase() === 'admin' && (
               <button
                 className="sb-user-popover-item"

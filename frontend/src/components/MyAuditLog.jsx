@@ -5,6 +5,7 @@ import SearchableSelect from './ui/SearchableSelect.jsx'
 import PaginationBar from './ui/PaginationBar.jsx'
 import { readPageSize, writePageSize } from '../hooks/usePagination.js'
 import { LoadingBlock } from './ui/Progress.jsx'
+import { LastLoginSummary } from './LastLoginInfo.jsx'
 
 const EVENT_TYPES = [
   'LOGIN', 'LOGIN_FAILED', 'LOGOUT',
@@ -25,7 +26,7 @@ function eventClass(et) {
   return 'ev-other'
 }
 
-export default function MyAuditLog() {
+export default function MyAuditLog({ loginInfo = null }) {
   const t = useT()
   const [rows, setRows] = useState([])
   const [total, setTotal] = useState(0)
@@ -50,6 +51,9 @@ export default function MyAuditLog() {
 
   return (
     <div className="audit-viewer">
+      {/* Ham olay listesinden ÖNCE özet: kullanıcının ilk sorduğu soru "son ne zaman girdim,
+          adıma başarısız deneme oldu mu". Veri prop'tan gelir — ek fetch yok. */}
+      <LastLoginSummary info={loginInfo} />
       <div className="audit-filters">
         <SearchableSelect
           value={filters.eventType}

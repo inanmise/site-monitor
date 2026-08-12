@@ -2,6 +2,7 @@ package com.sitemonitor.config;
 
 import com.sitemonitor.controller.AuthController;
 import com.sitemonitor.model.AppUser;
+import com.sitemonitor.service.AuditService;
 import com.sitemonitor.service.RememberMeService;
 import com.sitemonitor.service.UserService;
 import jakarta.servlet.http.Cookie;
@@ -34,6 +35,7 @@ class AuthInterceptorTest {
     @Mock RememberMeService rememberMeService;
     @Mock UserService userService;
     @Mock AuthController authController;
+    @Mock AuditService auditService;
 
     @InjectMocks AuthInterceptor interceptor;
 
@@ -136,6 +138,56 @@ class AuthInterceptorTest {
 
         assertThat(allowed).isTrue();
         verify(authController).populateSession(any(), any());
+    }
+
+    // ── Sessiz reauth = GİRİŞTİR: damga + denetim kaydı ────────────────────────
+
+    @Test
+    @DisplayName("Çerezle sessiz dönüş giriş damgası basar ve REMEMBER_ME olarak işaretlenir")
+    void rememberMe_stampsSuccessfulLogin() throws Exception {
+        MockHttpServletRequest req = reqWithCookie("/api/certificates");
+        MockHttpServletResponse res = new MockHttpServletResponse();
+        when(rememberMeService.validate("tok")).thenReturn(Optional.of("alice"));
+        when(userService.findByUsername("alice")).thenReturn(Optional.of(activeUser()));
+        when(userService.checkLockout("alice")).thenReturn(new UserService.LockoutStatus(false, 0));
+        when(auditService.resolveIp(any())).thenReturn("10.0.0.1");
+
+        interceptor.preHandle(req, res, new Object());
+
+        // CANONICAL username (entity'den) — çerezdeki case DB'dekinden farklı olabilir.
+        verify(userService).recordSuccessfulLogin(eq("alice"), any(), eq("10.0.0.1"),
+                eq(UserService.LoginMethod.REMEMBER_ME));
+    }
+
+    @Test
+    @DisplayName("Sessiz dönüşe denetim kaydı da yazılır (bu yol bugüne kadar hiç LOGIN yazmıyordu)")
+    void rememberMe_writesAuditLogin() throws Exception {
+        MockHttpServletRequest req = reqWithCookie("/api/certificates");
+        MockHttpServletResponse res = new MockHttpServletResponse();
+        when(rememberMeService.validate("tok")).thenReturn(Optional.of("alice"));
+        when(userService.findByUsername("alice")).thenReturn(Optional.of(activeUser()));
+        when(userService.checkLockout("alice")).thenReturn(new UserService.LockoutStatus(false, 0));
+
+        interceptor.preHandle(req, res, new Object());
+
+        verify(auditService).recordLogin(eq("alice"), any(), any(), any(), any(), any(), any(),
+                eq(true), any(), any(), anyInt());
+    }
+
+    @Test
+    @DisplayName("Kilitli kullanıcıda ne damga ne denetim kaydı yazılır (A1 kapısı damgayı da kapsar)")
+    void rememberMe_lockedUser_noStampNoAudit() throws Exception {
+        MockHttpServletRequest req = reqWithCookie("/api/certificates");
+        MockHttpServletResponse res = new MockHttpServletResponse();
+        when(rememberMeService.validate("tok")).thenReturn(Optional.of("alice"));
+        when(userService.findByUsername("alice")).thenReturn(Optional.of(activeUser()));
+        when(userService.checkLockout("alice")).thenReturn(new UserService.LockoutStatus(true, 0));
+
+        interceptor.preHandle(req, res, new Object());
+
+        verify(userService, never()).recordSuccessfulLogin(any(), any(), any(), any());
+        verify(auditService, never()).recordLogin(any(), any(), any(), any(), any(), any(), any(),
+                anyBoolean(), any(), any(), anyInt());
     }
 
     @Test

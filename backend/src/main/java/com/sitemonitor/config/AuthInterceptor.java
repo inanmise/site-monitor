@@ -2,6 +2,7 @@ package com.sitemonitor.config;
 
 import com.sitemonitor.controller.AuthController;
 import com.sitemonitor.model.AppUser;
+import com.sitemonitor.service.AuditService;
 import com.sitemonitor.service.RememberMeService;
 import com.sitemonitor.service.UserService;
 import tools.jackson.databind.ObjectMapper;
@@ -51,6 +52,17 @@ public class AuthInterceptor implements HandlerInterceptor {
     private final RememberMeService rememberMeService;
     private final UserService userService;
     private final AuthController authController;
+    // IP çözümü AuditService üzerinden yapılır (ClientIpResolver'ı AYRICA enjekte ETME):
+    // interceptor bir @Component olduğu için her @WebMvcTest diliminde kuruluyor ve dilimler
+    // yalnız UserService/AuthController/AuditService'i mock'luyor — yeni bir bean eklemek
+    // ~30 controller testinin bağlamını "No qualifying bean" ile düşürüyordu.
+    private final AuditService auditService;
+
+    /** Sessiz reauth için audit ikizlenme kalkanı: username → son yazma anı (ms). */
+    private final java.util.concurrent.ConcurrentHashMap<String, Long> reauthAuditAtMs =
+            new java.util.concurrent.ConcurrentHashMap<>();
+    private static final long REAUTH_AUDIT_DEBOUNCE_MS = 30_000;
+    private static final int REAUTH_MAP_MAX = 10_000;   // sert üst sınır (UserService.SESSION_MAP_MAX deseni)
 
     @Override
     public boolean preHandle(HttpServletRequest req, HttpServletResponse res, Object handler) throws Exception {
@@ -98,9 +110,20 @@ public class AuthInterceptor implements HandlerInterceptor {
                     && Boolean.TRUE.equals(userOpt.get().getActive())
                     && !userService.checkLockout(username).isBlocked()) {
                 HttpSession newSession = req.getSession(true);
-                authController.populateSession(newSession, userOpt.get());
+                AppUser user = userOpt.get();
+                authController.populateSession(newSession, user);
                 // Tek aktif oturum: remember-me ile kurulan oturum da kullanıcının "aktif" oturumu olsun.
-                userService.recordActiveSession(username, newSession.getId());
+                // Bu yol bir GİRİŞTİR: damgası basılır ve — bugüne kadar hiç yazılmayan — denetim
+                // kaydı da bırakılır, yoksa çerezle dönen kullanıcı "Etkinliklerim"de kendi girişini
+                // göremez. CANONICAL username: yazılan/cookie'deki case DB'dekinden farklı olabilir.
+                String clientIp = auditService.resolveIp(req);
+                userService.recordSuccessfulLogin(user.getUsername(), newSession.getId(),
+                        clientIp, UserService.LoginMethod.REMEMBER_ME);
+                if (shouldAuditReauth(user.getUsername())) {
+                    auditService.recordLogin(user.getUsername(), user.getId(), user.getTeamId(),
+                            user.getSystemRole(), clientIp, req.getHeader("User-Agent"),
+                            newSession.getId(), true, null, null, 5);
+                }
                 // Apply the forced-password-change gate to the restored session too,
                 // so the cookie path can't sidestep the modal for one request.
                 return enforceForcedPasswordChange(newSession, path, res);
@@ -108,6 +131,23 @@ public class AuthInterceptor implements HandlerInterceptor {
         }
 
         return writeUnauthorized(res, "Unauthorized");
+    }
+
+    /**
+     * Sessiz reauth dendiğinde denetim kaydı yazılsın mı?
+     *
+     * <p>Oturum düştükten sonra tarayıcı remember-me çereziyle AYNI ANDA birkaç istek gönderir;
+     * her biri buraya girer. Kalkan olmasaydı tek bir dönüş için "Etkinliklerim"de arka arkaya
+     * 5-10 LOGIN satırı belirir ve kullanıcının kendi geçmişi okunamaz hâle gelirdi.
+     * (Damganın kendi koruması ayrıca {@code UserService.stampDedupeSeconds}'tadır.)
+     */
+    private boolean shouldAuditReauth(String username) {
+        long now = System.currentTimeMillis();
+        Long last = reauthAuditAtMs.get(username);
+        if (last != null && now - last < REAUTH_AUDIT_DEBOUNCE_MS) return false;
+        if (reauthAuditAtMs.size() > REAUTH_MAP_MAX) reauthAuditAtMs.clear();
+        reauthAuditAtMs.put(username, now);
+        return true;
     }
 
     /** Temiz 401 JSON yanıtı (frontend bunu yakalayıp otomatik logout eder). */
