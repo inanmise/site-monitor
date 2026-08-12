@@ -65,6 +65,21 @@ public interface AppUserRepository extends JpaRepository<AppUser, Long> {
     @Query("UPDATE AppUser u SET u.lastSeenAt = :ts WHERE UPPER(u.username) = UPPER(:username) AND u.activeSessionId = :sid")
     int touchLastSeen(@Param("username") String username, @Param("sid") String sid, @Param("ts") String ts);
 
+    /**
+     * Başarısız giriş damgası — TEK atomik statement (entity yükle-kaydet DEĞİL).
+     *
+     * <p>Gerekçe: brute-force sırasında aynı kullanıcıya paralel denemeler gelir; oku-artır-kaydet
+     * yapılsaydı iki denemeden biri diğerinin sayacını ezerdi (lost update) ve sayaç gerçek deneme
+     * sayısının altında kalırdı. {@code COALESCE} şart: kolon mevcut satırlarda NULL olabilir
+     * (DEFAULT yalnız yeni satırlara uygulanır).
+     */
+    @Modifying
+    @Query("UPDATE AppUser u SET u.failedSinceLogin = COALESCE(u.failedSinceLogin, 0) + 1, "
+        + "u.lastFailedLoginAt = :ts, u.lastFailedLoginIp = :ip, u.lastFailedLoginReason = :reason "
+        + "WHERE UPPER(u.username) = UPPER(:username)")
+    int bumpFailedLogin(@Param("username") String username, @Param("ts") String ts,
+                        @Param("ip") String ip, @Param("reason") String reason);
+
     // ── Faz 3b: manager (müdür) → astları / yönettiği takımlar ──
     List<AppUser> findByManagerId(Long managerId);
     boolean existsByManagerId(Long managerId);

@@ -368,6 +368,23 @@ public class SchedulerService {
         patch("ALTER TABLE latest_checks ADD COLUMN tls_mode_used TEXT");
         patch("ALTER TABLE app_users ADD COLUMN role_locked BOOLEAN DEFAULT false");
         patch("ALTER TABLE app_users ADD COLUMN org_role_locked BOOLEAN DEFAULT false");
+        // Giriş damgaları — kullanıcının kendi güvenlik özeti ("önceki girişiniz / son başarısız
+        // deneme") + admin listesi. Mevcut satırlarda NULL/0 kalır; ilk girişte dolar.
+        patch("ALTER TABLE app_users ADD COLUMN last_login_at VARCHAR(30)");
+        patch("ALTER TABLE app_users ADD COLUMN last_login_ip VARCHAR(64)");
+        patch("ALTER TABLE app_users ADD COLUMN last_login_method VARCHAR(16)");
+        patch("ALTER TABLE app_users ADD COLUMN prev_login_at VARCHAR(30)");
+        patch("ALTER TABLE app_users ADD COLUMN prev_login_ip VARCHAR(64)");
+        patch("ALTER TABLE app_users ADD COLUMN prev_login_method VARCHAR(16)");
+        patch("ALTER TABLE app_users ADD COLUMN last_failed_login_at VARCHAR(30)");
+        patch("ALTER TABLE app_users ADD COLUMN last_failed_login_ip VARCHAR(64)");
+        patch("ALTER TABLE app_users ADD COLUMN last_failed_login_reason VARCHAR(40)");
+        patch("ALTER TABLE app_users ADD COLUMN failed_since_login INTEGER DEFAULT 0");
+        patch("ALTER TABLE app_users ADD COLUMN failed_before_login INTEGER DEFAULT 0");
+        // DEFAULT yalnız YENİ satırlara uygulanır; mevcut satırlar NULL kalır ve `COALESCE`suz
+        // bir artış NULL'a düşerdi. Sayaçları bir kez sıfırla (idempotent).
+        patch("UPDATE app_users SET failed_since_login = 0 WHERE failed_since_login IS NULL");
+        patch("UPDATE app_users SET failed_before_login = 0 WHERE failed_before_login IS NULL");
         // Haftalık raporlar — tablolar ddl-auto=update ile oluşur; unique index güvenlik ağı
         patch("CREATE UNIQUE INDEX IF NOT EXISTS ux_weekly_report_team_week ON weekly_reports(team_id, report_year, week_no)");
         // Eş zamanlı düzenleme: sürüm sayacı + yumuşak düzenleme kilidi alanları

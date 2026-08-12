@@ -55,6 +55,22 @@ function lessThan(a, b) {
 }
 
 /**
+ * Zaman aşımına uğramış bir koşumda backend sebebi gösterebildi mi?
+ *
+ * Sözleşme (`ScriptedCheckerService.summarizeError`): sebep ayıklanabildiğinde başlık satırının
+ * ardına `":\n" + satırlar` eklenir — yani ÇOK SATIRLI bir `error` "sebep var" demektir; tek
+ * satır kalması "k6 sebebi yazamadan öldürüldü"dür. Bu sözleşme her iki tarafta da testle pinli
+ * (`ScriptedCheckerServiceTest.timeoutText_carriesReasonWhenK6Printed`).
+ *
+ * Bu düzeltmeden ÖNCE kaydedilmiş satırlarda sebep hiç yoktu; onlarda ipucu doğru şekilde çıkar.
+ *
+ * @param {{error?: string}} check
+ */
+function hasTimeoutReason(check) {
+  return /\n/.test(String(check.error ?? ''))
+}
+
+/**
  * Çıkış kodu tek başına yetmediğinde metne bakan tanı ipucu.
  *
  * Şu an tek kural var ve en sık kırılmayı kapatıyor: k6 0.49 içindeki gömülü **Babel 6**
@@ -74,11 +90,15 @@ export function diagnosisHint(t, check, k6Version) {
   if (!check) return null
   const text = `${check.error ?? ''}\n${check.output_tail ?? check.outputTail ?? ''}`
 
-  // Kural 1 — süreç zaman aşımı. k6'nın KENDİ varsayılan istek timeout'u da 60 sn; monitörün
-  // süreç timeout'u da 60 sn olunca istek daha kendi kendine düşemeden süreci öldürüyoruz ve
-  // k6 sebebi ("Request Failed error=…") yazmaya hiç fırsat bulamıyor. Sonuç: sıfır teşhis.
-  // Script'te açık ve daha kısa bir istek timeout'u vermek bunu çözer.
-  if (check.status === 'TIMEOUT') return t('scripted.hintTimeoutNoDetail')
+  // Kural 1 — süreç zaman aşımı VE ortada sebep yok. k6'nın KENDİ varsayılan istek timeout'u da
+  // 60 sn; monitörün süreç timeout'u da 60 sn olunca istek daha kendi kendine düşemeden süreci
+  // öldürüyoruz ve k6 sebebi ("Request Failed error=…") yazmaya hiç fırsat bulamıyor. Sonuç:
+  // sıfır teşhis. Script'te açık ve daha kısa bir istek timeout'u vermek bunu çözer.
+  //
+  // Sebep GÖSTERİLEBİLDİYSE ipucu SUSAR: metni "k6 sebebi yazamadı" diye başlıyor ve tam da
+  // yazılmış bir sebebin altında görünmesi kullanıcıyı yanlış yola sokar (üstelik tavsiye edilen
+  // şey — açık istek timeout'u — zaten yapılmıştır; sebep onun sayesinde çıktı).
+  if (check.status === 'TIMEOUT') return hasTimeoutReason(check) ? null : t('scripted.hintTimeoutNoDetail')
 
   // Kural 2 — eski motor sözdizimi duvarı (k6 < 0.53, gömülü Babel 6).
   const ver = parseK6Version(k6Version)

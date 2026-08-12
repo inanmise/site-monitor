@@ -36,6 +36,7 @@ import ErrorBoundary from './components/ErrorBoundary.jsx'
 import CheckRunModal from './components/check/CheckRunModal.jsx'
 import CheckTeamPicker, { NO_TEAM } from './components/check/CheckTeamPicker.jsx'
 import AnnouncementBanner from './components/AnnouncementBanner.jsx'
+import { LastLoginNotice } from './components/LastLoginInfo.jsx'
 import { LoadingBlock } from './components/ui/Progress.jsx'
 
 // Ağır/seyrek admin & rapor sekmeleri — lazy (kod-bölme): ilk yük küçülür, sekme
@@ -107,6 +108,9 @@ export default function App() {
   const [globalAdmin, setGlobalAdmin] = useState(false)
   const [teamId, setTeamId] = useState(null)
   const [teamName, setTeamName] = useState(null)
+  // Kullanıcının kendi giriş güvenliği özeti (backend `login_info`): giriş yanıtından VE /me'den
+  // gelir. AuthContext yok — üç tüketiciye (uyarı şeridi, Etkinliklerim, kullanıcı menüsü) prop.
+  const [loginInfo, setLoginInfo] = useState(null)
   const [authChecked, setAuthChecked] = useState(false)
   // Oturum düşüşünde (401 → /?session=expired) giriş formunda "oturum süresi doldu" bildirimi göster (AUTH-1).
   const [sessionExpiredNotice, setSessionExpiredNotice] = useState(initialSessionExpired)
@@ -180,6 +184,9 @@ export default function App() {
         setTeamId(res.team_id ?? null)
         setTeamName(res.team_name ?? null)
         setMustChangePwd(!!res.must_change_password)
+        // Giriş güvenliği özeti — F5 sonrası login yanıtı yoktur, bu yüzden /me de aynı bloğu
+        // döndürür; alınmazsa özet ve kullanıcı menüsü sayfa yenilemede boşalır.
+        setLoginInfo(res.login_info ?? null)
         // Oturum aktif bayrağı: login yalnız bu sekmede yapılmamış olabilir (cookie reauth ya da
         // başka sekmede login). Bayrağı burada da set et ki oturum sonradan düş/süpersede olunca
         // client.js 401'i yakalayıp temiz /?session=expired'a yönlendirsin ("Yüklenemedi" yerine).
@@ -447,8 +454,10 @@ export default function App() {
   }
 
   function handleLogin(userData) {
-    // Duyuru "hero"su her GERÇEK girişte bir kez görünsün (sayfa yenilemede tekrar etmesin).
+    // Duyuru "hero"su ve giriş güvenliği uyarısı her GERÇEK girişte bir kez görünsün
+    // (sayfa yenilemede tekrar etmesin).
     try { sessionStorage.removeItem('sm.banner.heroShown') } catch { /* yoksay */ }
+    try { sessionStorage.removeItem('sm.login.noticeShown') } catch { /* yoksay */ }
     setTab(initialTabFromUrl() || 'dashboard')
     setUser(userData.username)
     setSystemRole(userData.system_role || 'USER')
@@ -456,6 +465,7 @@ export default function App() {
     setTeamId(userData.team_id ?? null)
     setTeamName(userData.team_name ?? null)
     setMustChangePwd(!!userData.must_change_password)
+    setLoginInfo(userData.login_info ?? null)
   }
 
   const weakDomainSet = useMemo(
@@ -672,7 +682,7 @@ export default function App() {
       )}
 
       <Nav activeTab={tab} onTabChange={handleTabChange} username={user} teamName={teamName} systemRole={systemRole}
-        globalAdmin={globalAdmin}
+        globalAdmin={globalAdmin} loginInfo={loginInfo}
         onLogout={handleLogout} onChangePassword={() => setSelfPwdModalOpen(true)} />
 
       {selfPwdModalOpen && user && (
@@ -685,6 +695,8 @@ export default function App() {
 
       <main className="app-main">
         <AnnouncementBanner heroOnMount />
+        {/* Yalnız şüpheli durumda (önceki girişten bu yana başarısız deneme varsa) görünür. */}
+        <LastLoginNotice info={loginInfo} />
         <div className="app-body">
 
           {/* Kontroller yalnız SERTİFİKA sayfalarında — izleme/yönetim sekmelerinde işlevsizdi. */}
@@ -1027,7 +1039,7 @@ export default function App() {
             {tab === 'myactivity' && (
               <div className="tab-content active">
                 <h2>{t('app.myAuditTitle')}</h2>
-                <MyAuditLog />
+                <MyAuditLog loginInfo={loginInfo} />
               </div>
             )}
 

@@ -167,6 +167,67 @@ public class AppUser {
     @Column(name = "last_seen_at", length = 30)
     private String lastSeenAt;
 
+    // ── Giriş damgaları (kullanıcının kendi güvenlik özeti + admin listesi) ──────────────
+    //
+    // Neden audit_log'dan TÜRETİLMİYOR: /api/me her sayfa açılışında çağrılıyor (tek pod,
+    // 100 eşzamanlı kullanıcı), audit_log 180 gün sonra siliniyor ve başarısız girişlerde
+    // audit aktörü kullanıcının YAZDIĞI ham metinle kaydediliyor (başarılıda canonical) —
+    // yani LOWER()'lı bir sorgu hem idx_audit_actor'ı kullanamaz hem case tutarsızlığına takılır.
+
+    /** EN SON başarılı girişin zamanı (ISO-UTC) = içinde bulunulan oturum. Admin görür. */
+    @Column(name = "last_login_at", length = 30)
+    private String lastLoginAt;
+
+    /** En son başarılı girişin IP'si. {@code @JsonIgnore}: {@code GET /api/admin/users} HAM entity
+     *  döndürüyor — işaretlenmezse IP'ler TEAM_ADMIN'e de açılırdı ({@link #activeSessionId} ile aynı gerekçe). */
+    @JsonIgnore
+    @Column(name = "last_login_ip", length = 64)
+    private String lastLoginIp;
+
+    /** Girişin yapılış biçimi: {@code PASSWORD} veya {@code REMEMBER_ME} (sessiz çerez yenilemesi). */
+    @Column(name = "last_login_method", length = 16)
+    private String lastLoginMethod;
+
+    /** BİR ÖNCEKİ başarılı giriş (ISO-UTC) — kullanıcıya gösterilen değer budur: içinde
+     *  bulunduğu oturumun kendi zamanını göstermek "bu ben miydim?" sorusunu cevaplamaz. */
+    @Column(name = "prev_login_at", length = 30)
+    private String prevLoginAt;
+
+    /** Bir önceki başarılı girişin IP'si (bkz. {@link #lastLoginIp} — aynı gerekçeyle {@code @JsonIgnore}). */
+    @JsonIgnore
+    @Column(name = "prev_login_ip", length = 64)
+    private String prevLoginIp;
+
+    /** Bir önceki girişin yapılış biçimi. */
+    @Column(name = "prev_login_method", length = 16)
+    private String prevLoginMethod;
+
+    /** En son başarısız giriş denemesinin zamanı (ISO-UTC). Yalnız kullanıcı VARSA yazılır;
+     *  bilinmeyen kullanıcı adında güncellenecek satır yoktur (enumeration yüzeyi de açılmaz). */
+    @Column(name = "last_failed_login_at", length = 30)
+    private String lastFailedLoginAt;
+
+    /** En son başarısız denemenin IP'si (bkz. {@link #lastLoginIp} — aynı gerekçeyle {@code @JsonIgnore}). */
+    @JsonIgnore
+    @Column(name = "last_failed_login_ip", length = 64)
+    private String lastFailedLoginIp;
+
+    /** Başarısızlığın sebebi: {@code BAD_PASSWORD} veya {@code TEMP_PASSWORD_EXPIRED}
+     *  ({@code UNKNOWN_USER} buraya HİÇ yazılmaz — güncellenecek kullanıcı satırı yoktur). */
+    @Column(name = "last_failed_login_reason", length = 40)
+    private String lastFailedLoginReason;
+
+    /** Son başarılı girişten bu yana başarısız deneme sayısı — CANLI sayaç (girişte sıfırlanır).
+     *  Admin için "şu anda deneniyor" sinyali. */
+    @Column(name = "failed_since_login")
+    private Integer failedSinceLogin = 0;
+
+    /** {@link #failedSinceLogin} sayacının son başarılı girişte sıfırlanmadan ÖNCEKİ değeri.
+     *  Kullanıcıya gösterilen sayı budur ("önceki girişinizden bu yana N başarısız deneme");
+     *  snapshot alınmasaydı kullanıcı giriş yaptığı anda görmesi gereken sayıyı kaybederdi. */
+    @Column(name = "failed_before_login")
+    private Integer failedBeforeLogin = 0;
+
     private String createdAt;
     private String updatedAt;
 }

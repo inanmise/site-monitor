@@ -62,6 +62,27 @@ function isWarnLike(s) { return s === 'NO_CHECKS' }
 function isCodeFrame(error) { return typeof error === 'string' && error.includes('\n') }
 
 /**
+ * Seçili şablonun ne yaptığı + KULLANIM SENARYOSU + gereken env'ler.
+ *
+ * Şablon seçicisi uzun süre yalnız ADLARI listeledi; `desc` alanı veriyle birlikte duruyor ama
+ * hiçbir yerde gösterilmiyordu — kullanıcı şablonu yükleyip script'i okumadan hangisinin kendi
+ * işine uyduğunu anlayamıyordu. Seçim yapılır yapılmaz burada görünür.
+ */
+function TemplateInfo({ id, lang, t }) {
+  const tpl = SCRIPTED_TEMPLATES.find(x => x.id === id)
+  if (!tpl) return null
+  const pick = o => (o && (o[lang] || o.en)) || ''
+  return (
+    <div className="sc-tpl-info">
+      <p>{pick(tpl.desc)}</p>
+      <p><b>{t('scripted.templateWhen')}</b> {pick(tpl.when)}</p>
+      {tpl.env.length > 0 &&
+        <p><b>{t('scripted.templateEnvNeeded')}</b> {tpl.env.map(e => e.name).join(', ')}</p>}
+    </div>
+  )
+}
+
+/**
  * Kontrol Geçmişi gruplama imzası (CheckHistoryTab `rowSignature`).
  *
  * Yalnız BAŞARISIZ satırlar gruplanır — PASS satırlarını katlamak normal zaman çizgisini gizlerdi.
@@ -741,6 +762,7 @@ function EditModal({ t, lang, k6Version, form, setForm, modal, dupSource, saving
               <option value="">{t('scripted.templatePick')}</option>
               {SCRIPTED_TEMPLATES.map(tp => <option key={tp.id} value={tp.id}>{tp.name[lang] || tp.name.en}</option>)}
             </select>
+            {form.template && <TemplateInfo id={form.template} lang={lang} t={t} />}
           </div>
 
           {/* Script editörü */}

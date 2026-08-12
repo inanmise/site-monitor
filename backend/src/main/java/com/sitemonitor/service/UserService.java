@@ -84,6 +84,18 @@ public class UserService {
     @Value("${site.monitor.session.touch-debounce-ms:60000}")
     private long touchDebounceMs;
 
+    /**
+     * Giriş damgası "kaydırma" (shift) korumasının penceresi (sn).
+     *
+     * <p>Oturum düştükten sonra tarayıcı remember-me çereziyle AYNI ANDA birkaç istek gönderir ve
+     * her biri sessiz yeniden kimlikleme tetikleyebilir. Kaydırma her seferinde çalışsaydı
+     * {@code prevLoginAt} "birkaç saniye önce"ye düşerdi — yani kullanıcıya gösterilecek "önceki
+     * girişiniz" değeri sessizce yok olurdu. Bu pencere içinde ikinci bir başarılı giriş kaydı
+     * yalnız oturum alanlarını tazeler, kaydırmayı ATLAR.
+     */
+    @Value("${site.monitor.login.stamp-dedupe-seconds:30}")
+    private long stampDedupeSeconds;
+
     private record ActiveSidEntry(String sid, long atMs) {}
     private static final int SESSION_MAP_MAX = 10_000;   // sert üst sınır (CaAutoPinService cap deseni)
     private final java.util.concurrent.ConcurrentHashMap<String, ActiveSidEntry> activeSessionCache =
@@ -139,13 +151,105 @@ public class UserService {
     /** Kullanıcının en güncel oturum ID'sini kaydeder (yeni login / remember-me reauth → newest wins). */
     @Transactional
     public void recordActiveSession(String username, String sessionId) {
-        if (username == null || sessionId == null) return;
-        userRepo.findByUsername(username).ifPresent(u -> {
+        recordSuccessfulLogin(username, sessionId, null, LoginMethod.PASSWORD);
+    }
+
+    // ── Giriş damgaları ────────────────────────────────────────────────────────
+
+    /** Girişin yapılış biçimi — kullanıcı "beni hatırla ile sessizce dönmüşüm" ile "parola girmişim"i ayırabilsin. */
+    public enum LoginMethod { PASSWORD, REMEMBER_ME }
+
+    /**
+     * Kaydırma ÖNCESİ değerler: çağıran, ikinci bir DB okuması yapmadan giriş yanıtını kurabilsin.
+     * Kullanıcıya gösterilen "önceki girişiniz" tam olarak budur.
+     */
+    public record LoginStamp(String prevLoginAt, String prevLoginIp, String prevLoginMethod,
+                             int failedBeforeLogin,
+                             String lastFailedAt, String lastFailedIp, String lastFailedReason,
+                             String currentLoginAt, String currentLoginMethod, boolean firstLogin) {
+
+        /** Kullanıcı bulunamadığında / damga yazılamadığında dönen boş kayıt (hep "ilk giriş" gibi görünür). */
+        public static LoginStamp empty() {
+            return new LoginStamp(null, null, null, 0, null, null, null, null, null, true);
+        }
+    }
+
+    /**
+     * Başarılı giriş: giriş bilgisi kaydırması + tek-aktif-oturum kaydı — <b>TEK</b> {@code save()}.
+     *
+     * <p>Kaydırma: {@code prev_* ← last_*}, {@code last_* ← şimdi}, sayaç anlık görüntüsü alınıp
+     * ({@code failedBeforeLogin}) sıfırlanır. Kullanıcıya gösterilen değer daima {@code prev_*}'dir;
+     * içinde bulunduğu oturumun kendi zamanını "son giriş" diye göstermek "bu ben miydim?" sorusunu
+     * cevaplamaz.
+     *
+     * <p>ÇAĞRI YERİ ÖNEMLİ: bu metot yalnız oturum GERÇEKTEN kurulduğunda çağrılmalıdır.
+     * {@code AuthController} akışında 409 (başka yerde aktif oturum) dalı oturum kurmadan döner —
+     * damga oraya bağlanırsa kullanıcı hiç giremeden "giriş oldu" yazılır.
+     *
+     * @return kaydırma öncesi değerler (kullanıcıya gösterilecek olan)
+     */
+    @Transactional
+    public LoginStamp recordSuccessfulLogin(String username, String sessionId,
+                                            String clientIp, LoginMethod method) {
+        if (username == null || sessionId == null) return LoginStamp.empty();
+        String methodName = method == null ? null : method.name();
+        LoginStamp stamp = userRepo.findByUsername(username).map(u -> {
+            String now = ISO.format(Instant.now());
+
+            if (shouldShiftStamp(u.getLastLoginAt(), now)) {
+                u.setPrevLoginAt(u.getLastLoginAt());
+                u.setPrevLoginIp(u.getLastLoginIp());
+                u.setPrevLoginMethod(u.getLastLoginMethod());
+                u.setFailedBeforeLogin(u.getFailedSinceLogin() == null ? 0 : u.getFailedSinceLogin());
+                u.setFailedSinceLogin(0);
+                u.setLastLoginAt(now);
+                u.setLastLoginIp(clientIp);
+                u.setLastLoginMethod(methodName);
+            }
+            // Kaydırma atlandıysa (dedupe penceresi) alanlara DOKUNULMAZ: az önceki gerçek girişin
+            // damgası korunur. Her iki durumda da okunan değerler kaydırma SONRASI hâldir — yani
+            // /api/me'nin döndüreceğiyle birebir aynı. (Kullanıcıya gösterilen "önceki girişiniz",
+            // kaydırmadan sonra prev_* alanında duran eski last_* değeridir.)
             u.setActiveSessionId(sessionId);
-            u.setLastSeenAt(ISO.format(Instant.now()));   // login = taze etkinlik
-            userRepo.save(u);
-        });
+            u.setLastSeenAt(now);                          // login = taze etkinlik
+            userRepo.save(u);                              // ← TEK yazma (oturum + damga birlikte)
+
+            return new LoginStamp(u.getPrevLoginAt(), u.getPrevLoginIp(), u.getPrevLoginMethod(),
+                    u.getFailedBeforeLogin() == null ? 0 : u.getFailedBeforeLogin(),
+                    u.getLastFailedLoginAt(), u.getLastFailedLoginIp(), u.getLastFailedLoginReason(),
+                    u.getLastLoginAt(), u.getLastLoginMethod(), u.getPrevLoginAt() == null);
+        }).orElse(LoginStamp.empty());
+
         activeSessionCache.remove(normalizeUsername(username));   // yeni login anında etkisin (F2 evict)
+        return stamp;
+    }
+
+    /** {@link LoginStamp}'i mevcut kullanıcı satırından okur (giriş anı DIŞI — {@code /api/me}). */
+    public static LoginStamp stampOf(AppUser u) {
+        if (u == null) return LoginStamp.empty();
+        return new LoginStamp(u.getPrevLoginAt(), u.getPrevLoginIp(), u.getPrevLoginMethod(),
+                u.getFailedBeforeLogin() == null ? 0 : u.getFailedBeforeLogin(),
+                u.getLastFailedLoginAt(), u.getLastFailedLoginIp(), u.getLastFailedLoginReason(),
+                u.getLastLoginAt(), u.getLastLoginMethod(), u.getPrevLoginAt() == null);
+    }
+
+    /** Kaydırma yapılmalı mı? İlk giriş → evet; son giriş dedupe penceresinden eskiyse → evet. */
+    private boolean shouldShiftStamp(String lastLoginAt, String now) {
+        if (lastLoginAt == null || lastLoginAt.isBlank()) return true;
+        String threshold = ISO.format(Instant.now().minusSeconds(stampDedupeSeconds));
+        return lastLoginAt.compareTo(threshold) < 0;   // ISO-UTC sabit genişlikte → leksikografik karşılaştırma güvenli
+    }
+
+    /**
+     * Başarısız giriş damgası — yalnız kullanıcı satırı VARSA.
+     *
+     * <p>Bilinmeyen kullanıcı adında çağrılmaz: güncellenecek satır yoktur ve "yazıldı mı"
+     * gözlemlenebilir olsaydı kullanıcı enumeration yüzeyi açardı.
+     */
+    @Transactional
+    public void recordFailedLogin(String username, String clientIp, String reasonCode) {
+        if (username == null || username.isBlank()) return;
+        userRepo.bumpFailedLogin(username, ISO.format(Instant.now()), clientIp, reasonCode);
     }
 
     /** Oturum ping'i (frontend ~15 sn): kullanıcının güncel oturumunun lastSeenAt'ini tazeler.

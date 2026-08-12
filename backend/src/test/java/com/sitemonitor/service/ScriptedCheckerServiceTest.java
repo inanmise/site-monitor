@@ -274,6 +274,26 @@ class ScriptedCheckerServiceTest {
     }
 
     @Test
+    @DisplayName("TIMEOUT metni: k6 sebebi yazabildiyse o sebep ekrana taşınır (294 koşum sessizce kayboluyordu)")
+    void timeoutText_carriesReasonWhenK6Printed() {
+        // Gerçek prod şekli: script birden çok istek atıyor; ilki KENDİ timeout'uyla düşüp sebebi
+        // yazıyor, sonraki asılıyor ve süreci biz öldürüyoruz. Sebep çıktıda duruyordu ama TIMEOUT
+        // dalı onu hiç okumuyordu — kullanıcı yalnız "Süre aşımı" görüyordu.
+        ProcessProbe.Result killed = new ProcessProbe.Result(K6_049_REQUEST_FAILED, -1, true);
+        String text = ScriptedCheckerService.summarizeError("TIMEOUT", killed, K6_049_REQUEST_FAILED);
+
+        assertThat(text).startsWith("Süre aşımı — süreç sonlandırıldı:\n");   // frontend ipucu bu ':\n' sözleşmesine bakıyor
+        assertThat(text).contains("request timeout").contains("192.0.2.1");
+
+        // Sebep YOKSA (k6 tek satır bile yazamadan öldürüldü) metin tek satır kalır — frontend
+        // ipucu ("daha kısa istek timeout'u verin") tam olarak bu durumda çıkmalı.
+        ProcessProbe.Result silent = new ProcessProbe.Result("", -1, true);
+        assertThat(ScriptedCheckerService.summarizeError("TIMEOUT", silent, ""))
+                .isEqualTo("Süre aşımı — süreç sonlandırıldı")
+                .doesNotContain("\n");
+    }
+
+    @Test
     @DisplayName("FAIL metni: çıkış 0'da 'başarılı (çıkış 0)' etiketi YAZILMAZ (kendini yalanlıyordu)")
     void failText_omitsExitLabelOnZero() {
         // exitCodeLabel(0) = "başarılı" → "k6 check/threshold başarısız — başarılı (çıkış 0)".

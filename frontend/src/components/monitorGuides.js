@@ -418,7 +418,7 @@ Sağ üstteki **+ Yeni Monitör** ile formu açın.
 ### Zorunlu alanlar
 - **Ad** — Tanınır bir ad (ör. "İnternet Şubesi login akışı").
 - **Takım** ve **Grup** — İzlemenin sahibi ekip ve grubu. **İkisi de zorunludur.** Grup için var olan gruptan seçin veya yeni ad yazın.
-- **k6 Script** — Çalıştırılacak JavaScript. Bir **Şablon** seçerek başlamanız önerilir (smoke, OIDC/Keycloak, API zinciri, form login).
+- **k6 Script** — Çalıştırılacak JavaScript. Bir **Şablon** seçerek başlamanız önerilir: smoke, JSON sağlık ucu (Actuator), OAuth2 client_credentials, API zinciri, çok adımlı kullanıcı yolculuğu, yanıt süresi SLA (threshold), SOAP/XML, OIDC/Keycloak, form login, mTLS, GraphQL. Şablonu seçtiğinizde altında **ne zaman kullanılacağı** ve gereken env'ler yazar; script + env alanları hazır dolar.
 
 ### Diğer alanlar
 - **Açıklama** — Sentetik testin ne doğruladığına dair kısa not.
@@ -470,7 +470,7 @@ Open the form with **+ New Monitor** (top right).
 ### Required
 - **Name** — A recognizable name (e.g. "Online banking login flow").
 - **Team** and **Group** — The owning team and group. **Both are required.** For Group pick an existing one or type a new name.
-- **k6 Script** — The JavaScript to run. Starting from a **Template** (smoke, OIDC/Keycloak, API chain, form login) is recommended.
+- **k6 Script** — The JavaScript to run. Starting from a **Template** is recommended: smoke, JSON health endpoint (Actuator), OAuth2 client_credentials, API chain, multi-step user journey, response-time SLA (threshold), SOAP/XML, OIDC/Keycloak, form login, mTLS, GraphQL. Picking one shows **when to use it** plus the env it needs, and fills the script + env fields for you.
 
 ### Other fields
 - **Description** — A short note on what the synthetic check validates.
