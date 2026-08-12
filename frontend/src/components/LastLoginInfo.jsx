@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
-import { ShieldAlert } from 'lucide-react'
-import { formatDateSec } from '../api/client'
+import { ShieldAlert, ShieldCheck, LogIn, Clock } from 'lucide-react'
+import { formatDate, formatDateSec } from '../api/client'
 import { useT } from '../i18n/index.jsx'
 import AlertBanner from './ui/AlertBanner.jsx'
 
@@ -27,12 +27,30 @@ function reasonLabel(t, reason) {
   return null
 }
 
-/** Boş değerlerde tire — SystemHealth `field()` deseniyle aynı görsel dil. */
-function field(label, value, mono = false) {
+/**
+ * "3 dk önce" — ActivityLog.jsx'teki `rel()` mantığının aynısı, mevcut `act.rel.*` anahtarlarıyla
+ * (yeni anahtar gerekmez). Backend UTC'yi 'Z'siz döndürdüğü için ekleniyor; aksi halde tarayıcı
+ * yerel saat sanar ve 3 saatlik kayma çıkar.
+ */
+function relativeTime(t, iso) {
+  if (!iso) return null
+  const s = /[zZ]|[+-]\d\d:?\d\d$/.test(iso) ? iso : iso + 'Z'
+  const then = new Date(s).getTime()
+  if (isNaN(then)) return null
+  const sec = Math.floor(Math.max(0, Date.now() - then) / 1000)
+  if (sec < 60) return t('act.rel.now')
+  const min = Math.floor(sec / 60); if (min < 60) return t('act.rel.min', min)
+  const hr = Math.floor(min / 60);  if (hr < 24)  return t('act.rel.hour', hr)
+  return t('act.rel.day', Math.floor(hr / 24))
+}
+
+/** Kart içindeki tek bir ölçü: büyük değer + küçük etiket + isteğe bağlı alt satır. */
+function Tile({ label, value, sub, tone, Icon }) {
   return (
-    <div className="show-field" key={label}>
-      <span className="show-field-label">{label}</span>
-      <span className={`show-field-value${mono ? ' show-field-mono' : ''}`}>{value || '—'}</span>
+    <div className={`lli-tile${tone ? ` lli-tile--${tone}` : ''}`}>
+      <div className="lli-tile-label">{Icon && <Icon size={12} aria-hidden="true" />}{label}</div>
+      <div className="lli-tile-value">{value || '—'}</div>
+      {sub && <div className="lli-tile-sub">{sub}</div>}
     </div>
   )
 }
@@ -79,7 +97,14 @@ export function LastLoginNotice({ info }) {
   )
 }
 
-/** "Etkinliklerim" sayfasının üstündeki kalıcı özet. */
+/**
+ * "Etkinliklerim" sayfasının üstündeki kalıcı özet.
+ *
+ * Düz etiket-değer ızgarası yerine ÖLÇÜ KARTI: kullanıcının sorduğu üç soru (en son ne zaman
+ * girdim, şu an hangi oturumdayım, adıma kaç başarısız deneme oldu) öne çıkar; IP/yöntem/sebep
+ * gibi ikincil ayrıntılar altta ince bir şeritte kalır. Başarısız deneme varsa kart uyarı
+ * tonuna geçer — bilgi taramadan fark edilsin.
+ */
 export function LastLoginSummary({ info }) {
   const t = useT()
   if (!info) return null
@@ -87,41 +112,80 @@ export function LastLoginSummary({ info }) {
   const failed = Number(info.failed_before_login ?? 0)
   const method = methodLabel(t, info.prev_login_method)
   const reason = reasonLabel(t, info.last_failed_reason)
+  const suspicious = failed > 0
+  const HeadIcon = suspicious ? ShieldAlert : ShieldCheck
 
   return (
-    <div className="lastlogin-summary">
-      <div className="show-section-header">{t('lastLogin.summaryTitle')}</div>
-      {info.first_login && <div className="field-hint">{t('lastLogin.firstLogin')}</div>}
-      <div className="show-grid-2">
-        {field(t('lastLogin.prevAt'), info.prev_login_at ? formatDateSec(info.prev_login_at) : t('lastLogin.never'), true)}
-        {field(t('lastLogin.prevIp'), info.prev_login_ip, true)}
-        {field(t('lastLogin.currentAt'), info.current_login_at ? formatDateSec(info.current_login_at) : null, true)}
-        {field(t('lastLogin.method'), method)}
-        {field(t('lastLogin.failedCount'), String(failed))}
-        {field(t('lastLogin.lastFailedAt'), info.last_failed_at ? formatDateSec(info.last_failed_at) : t('lastLogin.never'), true)}
-        {field(t('lastLogin.lastFailedIp'), info.last_failed_ip, true)}
-        {field(t('lastLogin.lastFailedReason'), reason)}
-      </div>
-    </div>
+    <section className={`lli-card${suspicious ? ' lli-card--warn' : ''}`}>
+      <header className="lli-card-head">
+        <HeadIcon size={16} aria-hidden="true" />
+        <h3>{t('lastLogin.summaryTitle')}</h3>
+      </header>
+
+      {info.first_login
+        ? <p className="lli-empty">{t('lastLogin.firstLogin')}</p>
+        : (
+          <div className="lli-tiles">
+            <Tile
+              Icon={LogIn}
+              label={t('lastLogin.prevAt')}
+              value={formatDateSec(info.prev_login_at)}
+              sub={[relativeTime(t, info.prev_login_at), info.prev_login_ip, method].filter(Boolean).join(' · ')}
+            />
+            <Tile
+              Icon={Clock}
+              label={t('lastLogin.currentAt')}
+              value={formatDateSec(info.current_login_at)}
+              sub={relativeTime(t, info.current_login_at)}
+            />
+            <Tile
+              Icon={ShieldAlert}
+              label={t('lastLogin.failedCount')}
+              value={String(failed)}
+              tone={suspicious ? 'warn' : null}
+              sub={suspicious ? t('lastLogin.sincePrev') : t('lastLogin.noFailed')}
+            />
+          </div>
+        )}
+
+      {info.last_failed_at && (
+        <div className="lli-foot">
+          <span className="lli-foot-label">{t('lastLogin.lastFailedAt')}</span>
+          <span className="lli-foot-value">{formatDateSec(info.last_failed_at)}</span>
+          {reason && <span className="lli-chip">{reason}</span>}
+          {info.last_failed_ip && <span className="lli-foot-ip">{info.last_failed_ip}</span>}
+        </div>
+      )}
+    </section>
   )
 }
 
-/** Sol menü kullanıcı popover'ındaki iki satır. Veri ÇEKMEZ — App state'inden prop ile gelir. */
+/**
+ * Sol menü kullanıcı popover'ındaki giriş bilgisi. Veri ÇEKMEZ — App state'inden prop ile gelir.
+ *
+ * Popover 220 px: etiket ve değer YAN YANA sığmıyordu (taşıyordu). Etiket üstte küçük, değer
+ * altta; saniye de atılıyor (`formatDate`) ve uyarı satırı tam cümle yerine kısa bir sayaç.
+ */
 export function LastLoginPopoverLines({ info }) {
   const t = useT()
   if (!info) return null
   const failed = Number(info.failed_before_login ?? 0)
   return (
     <div className="sb-user-popover-meta">
-      <div>
+      <div className="sb-user-popover-meta-row">
         <span>{t('lastLogin.popoverPrev')}</span>
-        <strong>{info.prev_login_at ? formatDateSec(info.prev_login_at) : t('lastLogin.never')}</strong>
+        <strong>{info.prev_login_at ? formatDate(info.prev_login_at) : t('lastLogin.never')}</strong>
       </div>
-      <div>
+      <div className="sb-user-popover-meta-row">
         <span>{t('lastLogin.popoverFailed')}</span>
-        <strong>{info.last_failed_at ? formatDateSec(info.last_failed_at) : t('lastLogin.never')}</strong>
+        <strong>{info.last_failed_at ? formatDate(info.last_failed_at) : t('lastLogin.never')}</strong>
       </div>
-      {failed > 0 && <div className="sb-user-popover-meta-warn">{t('lastLogin.noticeFailed', failed)}</div>}
+      {failed > 0 && (
+        <div className="sb-user-popover-meta-warn">
+          <ShieldAlert size={11} aria-hidden="true" />
+          {t('lastLogin.failedShort', failed)}
+        </div>
+      )}
     </div>
   )
 }
