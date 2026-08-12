@@ -67,6 +67,7 @@ public final class AppSettingsCatalog {
         new Setting("site.monitor.scripted.max-timeout-seconds",     "scripted", Type.INT),
         new Setting("site.monitor.scripted.output-tail-bytes",       "scripted", Type.INT),
         new Setting("site.monitor.scripted.manual-cooldown-seconds", "scripted", Type.INT),
+        new Setting("site.monitor.scripted.manual-wait-seconds", "scripted", Type.INT),
         new Setting("site.monitor.scripted.k6-bin",                  "scripted", Type.STRING),
         new Setting("site.monitor.scripted.hardcoded-secret-policy", "scripted", Type.ENUM, java.util.List.of("WARN", "BLOCK")),
         // Koştu ama hiç check() çalıştırmadı: WARN = kayıt hatalı sayılır, alarm YOK (varsayılan) ·

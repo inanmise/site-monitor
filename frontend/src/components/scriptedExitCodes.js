@@ -72,10 +72,17 @@ function lessThan(a, b) {
  */
 export function diagnosisHint(t, check, k6Version) {
   if (!check) return null
+  const text = `${check.error ?? ''}\n${check.output_tail ?? check.outputTail ?? ''}`
+
+  // Kural 1 — süreç zaman aşımı. k6'nın KENDİ varsayılan istek timeout'u da 60 sn; monitörün
+  // süreç timeout'u da 60 sn olunca istek daha kendi kendine düşemeden süreci öldürüyoruz ve
+  // k6 sebebi ("Request Failed error=…") yazmaya hiç fırsat bulamıyor. Sonuç: sıfır teşhis.
+  // Script'te açık ve daha kısa bir istek timeout'u vermek bunu çözer.
+  if (check.status === 'TIMEOUT') return t('scripted.hintTimeoutNoDetail')
+
+  // Kural 2 — eski motor sözdizimi duvarı (k6 < 0.53, gömülü Babel 6).
   const ver = parseK6Version(k6Version)
   if (!ver || !lessThan(ver, K6_MODERN_SYNTAX_SINCE)) return null
-
-  const text = `${check.error ?? ''}\n${check.output_tail ?? check.outputTail ?? ''}`
   if (!text.includes('SyntaxError')) return null
   if (!text.includes('Unexpected token') && !text.includes('babel.min.js')) return null
 

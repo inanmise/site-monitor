@@ -2462,10 +2462,32 @@ public class MonitoringController {
                         "error", "Bu monitör için çok sık manuel çalıştırma; " + (cooldownMs / 1000) + " sn bekleyin."));
             }
             scriptedManualTriggerAt.put(id, nowMs);
-            schedulerService.triggerScriptedCheck(m);
             auditService.recordAction("MONITOR_TRIGGER", session, "SCRIPTED_MONITOR", String.valueOf(m.getId()), m.getName(), null);
-            return ok(enrichScripted(m, scriptedCheckRepo.findTopByMonitorIdOrderByCheckedAtDesc(id).orElse(null), teamNameMap(),
+
+            // Kontrol istek thread'inin DIŞINDA koşar; burada yalnız SINIRLI süre beklenir.
+            // Senaryo kontrolü script timeout'u kadar sürebiliyor (tavan 180 sn) ve senkron
+            // beklemek ters-vekilin 504'üne yakalanıyordu: kullanıcı hata görüyor, oysa kontrol
+            // koşup kaydediliyor. Hızlı script'lerde (çoğunluk) davranış aynı kalsın diye tamamen
+            // asenkron da yapılmadı — kısa bekleme sonucu yine anında döndürür.
+            var fut = schedulerService.triggerScriptedCheckAsync(m);
+            int waitSecs = Math.max(1, appSettings.getInt("site.monitor.scripted.manual-wait-seconds", 25));
+            boolean queued = false;
+            try {
+                fut.get(waitSecs, java.util.concurrent.TimeUnit.SECONDS);
+            } catch (java.util.concurrent.TimeoutException te) {
+                queued = true;              // koşum sürüyor; iptal ETME — arka planda tamamlansın
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+                queued = true;
+            } catch (java.util.concurrent.ExecutionException ee) {
+                log.warn("Manuel senaryo kontrolü hata verdi (id={}): {}", id, String.valueOf(ee.getCause()));
+            }
+
+            Map<String, Object> out = new LinkedHashMap<>(enrichScripted(m,
+                    scriptedCheckRepo.findTopByMonitorIdOrderByCheckedAtDesc(id).orElse(null), teamNameMap(),
                     alertEventRepo.findOpenAlert(m.getName(), EscalationService.TYPE_SCRIPTED_FAIL).orElse(null)));
+            if (queued) out.put("queued", true);
+            return ok(out);
         }).orElse(notFound("Sentetik izleme bulunamadı"));
     }
 

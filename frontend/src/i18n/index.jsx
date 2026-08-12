@@ -3203,6 +3203,10 @@ export const TR = {
   // Metne bakan ipucu (çıkış kodundan bağımsız): k6 0.49'un gömülü Babel 6'sı modern sözdizimini
   // ayrıştıramıyor. Sürüm eşiği scriptedExitCodes.js'te — k6 ≥0.53'te bu satır kendiliğinden susar.
   'scripted.hintOldEngine': 'Bu bir yazım hatası olmayabilir: bu ortamdaki k6 {0} sürümü modern JavaScript sözdizimini ayrıştıramıyor — `?.`, `??` ve `{...nesne}` desteklenmiyor. Bunları klasik `&&` / `||` ve `Object.assign` ile yazın. Script başka bir makinede çalışıyorsa sebebi büyük olasılıkla budur.',
+  // TIMEOUT'ta k6 sebebi yazamadan öldürülüyor: kendi varsayılan istek timeout'u da 60 sn olduğu
+  // için istek kendi kendine düşemiyor. Çözüm script tarafında — bunu söylemezsek kullanıcı
+  // elinde sıfır bilgiyle kalıyor (gerçek vaka: 294 koşum, hepsi 60 sn, hiçbirinde sebep yok).
+  'scripted.hintTimeoutNoDetail': 'Süreç zaman aşımında sonlandırıldığı için k6 sebebi yazamadı: k6\'nın kendi varsayılan istek timeout\'u da 60 sn, yani istek kendi kendine düşemiyor. Script\'te isteğe AÇIK ve daha kısa bir timeout verin — örneğin `http.post(url, body, { headers: headers, timeout: \'20s\' })`. O zaman k6 düzgün biter ve başarısızlığın gerçek sebebini (bağlantı reddi, DNS, TLS, istek zaman aşımı) yazar.',
   'scripted.errTitle': 'Ne oldu',
   'scripted.errTech': 'Teknik detay (k6 çıktısı)',
   'scripted.errCopy': 'Teknik detayı kopyala',
@@ -3233,6 +3237,7 @@ export const TR = {
   'scripted.nameRequired': 'Ad zorunlu', 'scripted.saved': 'İzleme kaydedildi', 'scripted.saveError': 'Kaydedilemedi',
   'scripted.confirmDelete': 'Bu izlemeyi silmek istediğinize emin misiniz?', 'scripted.deleted': 'Silindi', 'scripted.deleteError': 'Silinemedi',
   'scripted.scriptRequired': 'Script zorunlu', 'scripted.testError': 'Test başarısız', 'scripted.triggerError': 'Çalıştırılamadı',
+  'scripted.triggerQueued': 'Çalıştırma başlatıldı — script uzun sürüyor, sonuç hazır olunca listeye ve Kontrol Geçmişi bölümüne kendiliğinden düşecek.',
   'scripted.colStatus': 'Durum', 'scripted.lastDuration': 'Son süre', 'scripted.checks': 'Check\'ler', 'scripted.history': 'Kontrol Geçmişi',
   'scripted.colTime': 'Zaman', 'scripted.colDuration': 'Süre', 'scripted.noHistory': 'Kayıt yok', 'scripted.checkDetail': 'Kontrol Detayı',
   'scripted.selectCheck': 'Detay için soldaki tablodan bir kontrol seçin.', 'scripted.output': 'Çıktı (maskeli stdout/stderr)',
@@ -7278,6 +7283,7 @@ export const EN = {
   'scripted.exitHelp_106': 'Concurrent k6 processes may be clashing over the port; lower the pool size.',
   'scripted.exitHelp_109': 'k6 crashed internally — check its release notes.',
   'scripted.hintOldEngine': 'This may not be a typo: the k6 {0} in this environment cannot parse modern JavaScript syntax — `?.`, `??` and `{...object}` are unsupported. Write them with classic `&&` / `||` and `Object.assign`. If the script runs on another machine, this is most likely why.',
+  'scripted.hintTimeoutNoDetail': 'The process was killed on timeout before k6 could report a reason: k6\'s own default request timeout is also 60s, so the request never fails on its own. Give the request an EXPLICIT, shorter timeout in the script — e.g. `http.post(url, body, { headers: headers, timeout: \'20s\' })`. k6 then finishes cleanly and reports the real cause (connection refused, DNS, TLS, request timeout).',
   'scripted.errTitle': 'What happened',
   'scripted.errTech': 'Technical detail (k6 output)',
   'scripted.errCopy': 'Copy technical detail',
@@ -7308,6 +7314,7 @@ export const EN = {
   'scripted.nameRequired': 'Name is required', 'scripted.saved': 'Monitor saved', 'scripted.saveError': 'Could not save',
   'scripted.confirmDelete': 'Are you sure you want to delete this monitor?', 'scripted.deleted': 'Deleted', 'scripted.deleteError': 'Could not delete',
   'scripted.scriptRequired': 'Script is required', 'scripted.testError': 'Test failed', 'scripted.triggerError': 'Could not run',
+  'scripted.triggerQueued': 'Run started — the script is slow; the result will appear in the list and Check History on its own once it finishes.',
   'scripted.colStatus': 'Status', 'scripted.lastDuration': 'Last duration', 'scripted.checks': 'Checks', 'scripted.history': 'Check History',
   'scripted.colTime': 'Time', 'scripted.colDuration': 'Duration', 'scripted.noHistory': 'No records', 'scripted.checkDetail': 'Check Detail',
   'scripted.selectCheck': 'Select a check from the table on the left for details.', 'scripted.output': 'Output (masked stdout/stderr)',
