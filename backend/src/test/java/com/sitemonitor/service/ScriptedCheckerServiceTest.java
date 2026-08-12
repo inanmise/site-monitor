@@ -233,6 +233,64 @@ class ScriptedCheckerServiceTest {
                 .doesNotContain("/tmp/k6-script-").contains("script: Unexpected token");
     }
 
+    /**
+     * GERÇEK k6 v0.49.0 çıktısı: ulaşılamayan bir hedefe istek. k6 bunu HATA değil UYARI
+     * seviyesinde basar ve asıl sebep {@code msg}'de değil ayrı bir {@code error} alanındadır.
+     */
+    private static final String K6_049_REQUEST_FAILED =
+            "time=\"2026-08-11T11:08:38+03:00\" level=warning msg=\"Request Failed\" "
+            + "error=\"Post \\\"http://192.0.2.1/v1/chat/completions\\\": request timeout\"\n";
+
+    @Test
+    @DisplayName("parseLogfmt: üst-seviye alanlar ayrışır, tırnak içindeki anahtar=değer yanıltmaz")
+    void parseLogfmt_contract() {
+        var f = ScriptedCheckerService.parseLogfmt(K6_049_REQUEST_FAILED.strip());
+        assertThat(f.get("level")).isEqualTo("warning");
+        assertThat(f.get("msg")).isEqualTo("Request Failed");
+        assertThat(f.get("error")).isEqualTo("Post \"http://192.0.2.1/v1/chat/completions\": request timeout");
+
+        // Tırnak İÇİNDE geçen bir `error=` üst-seviye alan sanılmamalı — naif indexOf bu tuzağa düşer.
+        var g = ScriptedCheckerService.parseLogfmt("level=error msg=\"sunucu error=42 dedi\"");
+        assertThat(g.get("msg")).isEqualTo("sunucu error=42 dedi");
+        assertThat(g.get("error")).isNull();
+
+        // logfmt olmayan satır → alan yok (çağıran satırı olduğu gibi bırakır)
+        assertThat(ScriptedCheckerService.parseLogfmt("ERRO[0001] GoError: reddedildi")).isEmpty();
+    }
+
+    @Test
+    @DisplayName("Başarısız istek: sebep uyarı satırından okunur ve FAIL metnine girer (eskiden kayboluyordu)")
+    void requestFailed_reasonSurfacesOnFail() {
+        // decodeK6LogLine msg + error'ı BİRLEŞTİRMELİ; yalnız msg alınsaydı geriye
+        // "Request Failed" kalır ve kullanıcı NEDEN başarısız olduğunu yine bilemezdi.
+        String decoded = ScriptedCheckerService.decodeK6LogLine(K6_049_REQUEST_FAILED.strip());
+        assertThat(decoded).isEqualTo(
+                "Request Failed — Post \"http://192.0.2.1/v1/chat/completions\": request timeout");
+
+        // level=warning satırı ayıklamaya DAHİL (en sık gerçek arıza bu seviyede basılıyor)
+        String lines = ScriptedCheckerService.extractErrorLines(K6_049_REQUEST_FAILED);
+        assertThat(lines).isNotNull();
+        assertThat(lines).contains("request timeout").contains("192.0.2.1");
+    }
+
+    @Test
+    @DisplayName("FAIL metni: çıkış 0'da 'başarılı (çıkış 0)' etiketi YAZILMAZ (kendini yalanlıyordu)")
+    void failText_omitsExitLabelOnZero() {
+        // exitCodeLabel(0) = "başarılı" → "k6 check/threshold başarısız — başarılı (çıkış 0)".
+        // Check'i düşen bir koşumun 0 ile çıkması normaldir; etiket bilgi katmaz, çelişki yaratır.
+        assertThat(ScriptedCheckerService.exitCodeLabel(0, false)).isEqualTo("başarılı (çıkış 0)");
+        // 99 (threshold) bilgi TAŞIR — o korunmalı.
+        assertThat(ScriptedCheckerService.exitCodeLabel(99, false)).contains("threshold");
+    }
+
+    @Test
+    @DisplayName("extractErrorLines: error= taşımayan sıradan k6 uyarıları gürültü sayılır, alınmaz")
+    void extractErrorLines_ignoresPlainWarnings() {
+        String out = "time=\"x\" level=warning msg=\"Insecure TLS verification enabled\"\n"
+                   + "time=\"x\" level=info msg=\"init\"\n";
+        assertThat(ScriptedCheckerService.extractErrorLines(out)).isNull();
+    }
+
     @Test
     @DisplayName("extractErrorLines: kullanıcının KENDİ script çerçeveleri korunur, yalnız iç çerçeveler atılır")
     void extractErrorLines_keepsUserStackFrames() {

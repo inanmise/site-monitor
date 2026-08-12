@@ -64,6 +64,7 @@ import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
@@ -2704,6 +2705,39 @@ public class SchedulerService {
     /** Manuel tetik (controller). */
     public Map<String, Object> triggerScriptedCheck(com.sitemonitor.model.ScriptedMonitor m) {
         return recheckScripted(m, true);
+    }
+
+    /**
+     * Manuel "Şimdi Çalıştır" için sanal-thread havuzu.
+     *
+     * <p>Gerçek eşzamanlılık zaten {@code ScriptedCheckerService}'in semaforuyla (pool-size,
+     * varsayılan 2) sınırlı; burada bekleyen thread'ler yalnız park eder. Sanal thread oldukları
+     * için maliyetleri ihmal edilebilir, ayrıca monitör başına manuel-tetik cooldown'u (varsayılan
+     * 20 sn) kuyruğun şişmesini engelliyor.
+     */
+    private final java.util.concurrent.ExecutorService manualRunPool =
+            java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor();
+
+    /**
+     * Manuel kontrolü İSTEK THREAD'İNİN DIŞINDA başlatır ve {@link Future} döner.
+     *
+     * <p>Neden gerekli: senaryo kontrolü script'in kendi timeout'u kadar sürebiliyor (tavan 180 sn).
+     * Senkron çalıştırıldığında HTTP isteği o kadar bloke kalıyor ve ters-vekil (NetScaler) daha
+     * önce kopartıyordu: kullanıcı <b>504 "Gateway timeout"</b> görüyor, oysa kontrol sorunsuz
+     * koşup kaydediliyor. Yani buton, işi başarıyla yaptığı hâlde hata veriyordu.
+     *
+     * <p>{@code recheckScripted} zaten arka plan sweep'inden çağrılıyor; istek bağlamına bağımlı
+     * değildir. İstisnalar burada loglanır, yutulmaz.
+     */
+    public Future<Map<String, Object>> triggerScriptedCheckAsync(com.sitemonitor.model.ScriptedMonitor m) {
+        return manualRunPool.submit(() -> {
+            try {
+                return recheckScripted(m, true);
+            } catch (RuntimeException e) {
+                log.error("Manuel senaryo kontrolü başarısız (monitor={} id={})", m.getName(), m.getId(), e);
+                throw e;
+            }
+        });
     }
 
     // ── HTTP SSL + Domain (WHOIS/RDAP) yavaş sweep'i — sıcak uptime döngüsünden AYRI (tek-pod perf) ──

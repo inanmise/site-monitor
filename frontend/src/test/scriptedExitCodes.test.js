@@ -11,6 +11,7 @@ const KNOWN = new Set([
   'scripted.exit_neg1',
   ...K6_EXIT_WITH_HINT.map(c => `scripted.exitHelp_${c}`),
   'scripted.hintOldEngine',
+  'scripted.hintTimeoutNoDetail',
 ])
 const t = (k, ...a) => {
   const args = a.length ? `(${a.join(',')})` : ''
@@ -70,6 +71,20 @@ describe('diagnosisHint — k6 sözdizimi duvarı', () => {
     // "SyntaxError" var ama token/babel imzası yok → karar veremiyoruz, sus
     expect(diagnosisHint(t, { error: 'SyntaxError: bilinmeyen bir şey' }, 'v0.49.0')).toBeNull()
     expect(diagnosisHint(t, null, 'v0.49.0')).toBeNull()
+  })
+
+  it('TIMEOUT: sebep yazılamadığı için "açık istek timeout u verin" ipucu çıkar', () => {
+    // Süreç öldürüldüğü icin k6 hiçbir sebep yazamıyor — outputTail bomboş olabilir.
+    expect(diagnosisHint(t, { status: 'TIMEOUT', error: 'Süre aşımı — süreç sonlandırıldı' }, 'v0.49.0'))
+      .toBe('«scripted.hintTimeoutNoDetail»')
+    // Sürüm eşiğinden BAĞIMSIZ: yeni k6'da da aynı tuzak var (varsayılan istek timeout'u 60 sn)
+    expect(diagnosisHint(t, { status: 'TIMEOUT' }, 'v1.0.0')).toBe('«scripted.hintTimeoutNoDetail»')
+    expect(diagnosisHint(t, { status: 'TIMEOUT' }, null)).toBe('«scripted.hintTimeoutNoDetail»')
+  })
+
+  it('TIMEOUT ipucu yalnız TIMEOUT durumunda — FAIL/ERROR bunu göstermez', () => {
+    expect(diagnosisHint(t, { status: 'FAIL', error: 'k6 check başarısız' }, 'v0.49.0')).toBeNull()
+    expect(diagnosisHint(t, { status: 'ERROR', error: 'GoError: reddedildi' }, 'v0.49.0')).toBeNull()
   })
 
   it('outputTail (camelCase) de okunur — API iki biçimde de gelebiliyor', () => {

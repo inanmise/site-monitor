@@ -487,7 +487,16 @@ public class ScriptedCheckerService {
                 : exitCodeLabel(r.exitCode(), r.timedOut());
         String lines = sanitizeScriptPath(extractErrorLines(output));
         return switch (status) {
-            case "FAIL"  -> "k6 check/threshold başarısız — " + exitCodeLabel(r.exitCode(), r.timedOut());
+            // FAIL'de de sebep gösterilir. Eskiden yalnız "0✓/1✗" denirdi: isteği patlayan bir
+            // monitör (bağlantı reddi, DNS, TLS, istek zaman aşımı) hiçbir sebep bildirmiyordu —
+            // oysa k6 sebebi çıktıya yazmıştı, biz okumuyorduk.
+            //
+            // Çıkış 0'da kod ETİKETİ YAZILMAZ: exitCodeLabel(0) "başarılı" der ve ortaya
+            // "k6 check/threshold başarısız — başarılı (çıkış 0)" gibi kendini yalanlayan bir
+            // cümle çıkardı. Check'i düşen bir koşumun 0 ile çıkması zaten NORMALDİR; bilgi katmaz.
+            case "FAIL"  -> "k6 check/threshold başarısız"
+                            + (r.exitCode() == 0 && !r.timedOut() ? "" : " — " + exitCodeLabel(r.exitCode(), r.timedOut()))
+                            + (lines != null ? ":\n" + lines : "");
             case "ERROR" -> label + (lines != null ? ":\n" + lines : sanitizeScriptPath(tailSuffix(output)));
             default      -> null;
         };
@@ -608,37 +617,81 @@ public class ScriptedCheckerService {
      * yerde devreye girip hatanın <i>neresi</i> olduğunu yok ediyordu.
      *
      * <p>{@code time=}/{@code level=}/{@code hint=} alanları kullanıcı için değersiz olduğundan
-     * atılır. Satırda {@code msg="} yoksa veya tırnak kapanmamışsa satır <b>olduğu gibi</b> döner —
-     * bu fonksiyon hiçbir koşulda istisna fırlatmaz ({@code validateScript} catch yolundan da
-     * çağrılıyor).
+     * atılır. Satırda {@code msg=} de {@code error=} de yoksa, ya da tırnak kapanmamışsa satır
+     * <b>olduğu gibi</b> döner — bu fonksiyon hiçbir koşulda istisna fırlatmaz
+     * ({@code validateScript} catch yolundan da çağrılıyor).
+     *
+     * <p><b>{@code error=} alanı neden şart:</b> k6 başarısız bir isteği
+     * {@code level=warning msg="Request Failed" error="Post \"http://…\": request timeout"}
+     * olarak basar. Asıl teşhis {@code msg}'de değil {@code error}'dadır; yalnız {@code msg}
+     * alınsaydı kullanıcı "Request Failed" görüp neden başarısız olduğunu yine bilemezdi.
      */
     static String decodeK6LogLine(String line) {
         if (line == null) return null;
-        int i = line.indexOf("msg=\"");
-        if (i < 0) return line;
-        StringBuilder sb = new StringBuilder();
-        boolean esc = false;
-        for (int p = i + 5; p < line.length(); p++) {
-            char c = line.charAt(p);
-            if (esc) {
-                switch (c) {
-                    case 'n'  -> sb.append('\n');
-                    case 't'  -> sb.append('\t');
-                    case 'r'  -> sb.append('\r');
-                    case '"'  -> sb.append('"');
-                    case '\\' -> sb.append('\\');
-                    default   -> sb.append('\\').append(c);   // tanımadığımız kaçış: bozma
-                }
-                esc = false;
-            } else if (c == '\\') {
-                esc = true;
-            } else if (c == '"') {
-                return sb.toString();                          // kapanış tırnağı
-            } else {
-                sb.append(c);
+        Map<String, String> f = parseLogfmt(line);
+        String msg = f.get("msg");
+        String err = f.get("error");
+        if (msg == null && err == null) return line;   // logfmt değil → dokunma
+        if (msg == null) return err;
+        if (err == null || msg.contains(err)) return msg;
+        return msg + " — " + err;
+    }
+
+    /**
+     * k6'nın logfmt satırını üst-seviye {@code anahtar=değer} çiftlerine ayırır.
+     *
+     * <p>Neden düz {@code indexOf("error=\"")} değil: {@code error=} dizisi bir başka alanın
+     * TIRNAK İÇİ değerinde de geçebilir (k6 hata metinleri kendi içinde {@code error=} taşıyabiliyor);
+     * naif arama yanlış alanı yakalar. Bu tarayıcı tırnak durumunu takip ettiği için yalnız gerçek
+     * üst-seviye alanları görür.
+     *
+     * <p>Tırnak kapanmadan satır biterse o ana kadar toplananlar döner (kısmi logfmt); çağıran
+     * {@code msg}/{@code error} bulamazsa satırı olduğu gibi bırakır.
+     */
+    static Map<String, String> parseLogfmt(String line) {
+        Map<String, String> out = new LinkedHashMap<>();
+        int i = 0, n = line.length();
+        while (i < n) {
+            while (i < n && line.charAt(i) == ' ') i++;
+            int ks = i;
+            while (i < n && line.charAt(i) != '=' && line.charAt(i) != ' ') i++;
+            if (i >= n || line.charAt(i) != '=' || i == ks) {   // anahtarsız kelime → atla
+                while (i < n && line.charAt(i) != ' ') i++;
+                continue;
             }
+            String key = line.substring(ks, i);
+            i++;                                                 // '='
+            StringBuilder val = new StringBuilder();
+            if (i < n && line.charAt(i) == '"') {
+                i++;
+                boolean esc = false, closed = false;
+                for (; i < n; i++) {
+                    char c = line.charAt(i);
+                    if (esc) {
+                        switch (c) {
+                            case 'n'  -> val.append('\n');
+                            case 't'  -> val.append('\t');
+                            case 'r'  -> val.append('\r');
+                            case '"'  -> val.append('"');
+                            case '\\' -> val.append('\\');
+                            default   -> val.append('\\').append(c);   // tanımadığımız kaçış: bozma
+                        }
+                        esc = false;
+                    } else if (c == '\\') {
+                        esc = true;
+                    } else if (c == '"') {
+                        i++; closed = true; break;
+                    } else {
+                        val.append(c);
+                    }
+                }
+                if (!closed) return out;                         // tırnak kapanmadı
+            } else {
+                while (i < n && line.charAt(i) != ' ') val.append(line.charAt(i++));
+            }
+            out.put(key, val.toString());
         }
-        return line;   // tırnak kapanmamış → güvenli taraf: dokunma
+        return out;
     }
 
     /**
@@ -688,9 +741,15 @@ public class ScriptedCheckerService {
         for (String raw : maskedOutput.split("\\R")) {
             String line = raw.strip();
             if (line.isEmpty()) continue;
+            String lower = line.toLowerCase(Locale.ROOT);
+            // level=warning + error= : k6 BAŞARISIZ İSTEĞİ uyarı seviyesinde basıyor
+            // (msg="Request Failed" error="Post \"http://…\": request timeout"). En sık gerçek
+            // arıza budur — bağlantı reddi, DNS, TLS, istek zaman aşımı hep buradan gelir.
+            // `error=` şartı bilinçli: k6 başka konularda da uyarı basıyor, onlar gürültü.
             boolean hit = line.contains("ERRO[")
                     || line.contains("GoError:")
-                    || line.toLowerCase(Locale.ROOT).contains("level=error");
+                    || lower.contains("level=error")
+                    || (lower.contains("level=warning") && line.contains("error="));
             if (!hit) continue;
             String decoded = decodeK6LogLine(line);
             if (seen.contains(decoded)) continue;   // setup()+default() aynı GoError'ı iki kez basabilir

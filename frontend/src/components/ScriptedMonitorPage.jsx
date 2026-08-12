@@ -379,12 +379,19 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
     setChecking(m.id)
     const res = await api.monitoring.triggerScriptedCheck(m.id)
     if (res?.success) {
-      setMonitors(prev => prev.map(x => x.id === m.id ? { ...x, ...res.data } : x))
-      // Geçmiş yenilemesi BİLİNÇLİ olarak yok: CheckHistoryTab kendi live polling'ini yapıyor.
-      // Buradaki eski loadHistory(m.id, rangeDays) çağrısı geçmiş yönetimi o bileşene taşınırken
-      // temizlenmemişti; ikisi de tanımsız olduğu için modal açıkken "Şimdi Çalıştır" ReferenceError
-      // atıyor, aşağıdaki setChecking(null) hiç çalışmıyor ve buton kalıcı kilitleniyordu.
-      if (selected?.id === m.id) setSelected(res.data)
+      // queued: koşum sunucunun bekleme penceresini aştı, arka planda sürüyor. Satırı ESKİ sonuçla
+      // güncellemek yanıltıcı olurdu (kullanıcı bunu yeni sonuç sanar) — dokunmayıp haber veriyoruz.
+      // Sonuç kendiliğinden gelir: liste 60 sn'de, Kontrol Geçmişi 30 sn'de canlı yeniliyor.
+      if (res.data?.queued) {
+        toast.success(t('scripted.triggerQueued'))
+      } else {
+        setMonitors(prev => prev.map(x => x.id === m.id ? { ...x, ...res.data } : x))
+        // Geçmiş yenilemesi BİLİNÇLİ olarak yok: CheckHistoryTab kendi live polling'ini yapıyor.
+        // Buradaki eski loadHistory(m.id, rangeDays) çağrısı geçmiş yönetimi o bileşene taşınırken
+        // temizlenmemişti; ikisi de tanımsız olduğu için modal açıkken "Şimdi Çalıştır" ReferenceError
+        // atıyor, aşağıdaki setChecking(null) hiç çalışmıyor ve buton kalıcı kilitleniyordu.
+        if (selected?.id === m.id) setSelected(res.data)
+      }
     } else if (res) toast.error(res.error || t('scripted.triggerError'))
     setChecking(null)
   }
