@@ -622,23 +622,34 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
   padding: 8px 10px 6px;
 }
 /* Kullanıcı popover'ındaki giriş bilgisi satırları — metin, buton DEĞİL (.sb-user-popover-item
-   bir buton stilidir). Sol menü daima koyu zeminli olduğu için renkler .sb-user-popover ailesiyle
-   aynı sabit rgba değerleri; tema değişkeni kullanılmaz. */
+   bir buton stilidir). Koyu tema değerleri burada; popover AÇIK temada beyaza döndüğü için
+   ([data-theme="light"] .sb-user-popover) aşağıda ailenin geri kalanıyla birlikte açık tema
+   karşılığı da TANIMLANMALI — yoksa beyaz metin beyaz zeminde kaybolur, geriye boş bir
+   aralık kalır. */
 .sb-user-popover-meta {
   padding: 2px 10px 8px;
   border-bottom: 1px solid rgba(255,255,255,.1);
   margin-bottom: 4px;
 }
-.sb-user-popover-meta > div {
-  display: flex;
-  justify-content: space-between;
-  gap: 10px;
-  font-size: .74em;
-  padding: 2px 0;
-  color: rgba(255,255,255,.55);
+/* Etiket ÜSTTE küçük, değer ALTTA: popover 220 px ve yan yana dizilim taşıyordu. */
+.sb-user-popover-meta-row { padding: 3px 0; }
+.sb-user-popover-meta-row > span {
+  display: block;
+  font-size: .64em; font-weight: 700; letter-spacing: .04em; text-transform: uppercase;
+  color: rgba(255,255,255,.4);
 }
-.sb-user-popover-meta strong { color: rgba(255,255,255,.9); font-weight: 600; }
-.sb-user-popover-meta-warn { color: var(--warning, #f59e0b); }
+.sb-user-popover-meta-row > strong {
+  display: block;
+  font-size: .78em; font-weight: 600; color: rgba(255,255,255,.9);
+  font-variant-numeric: tabular-nums;
+}
+.sb-user-popover-meta-warn {
+  display: flex; align-items: center; gap: 5px;
+  margin-top: 4px;
+  font-size: .72em; font-weight: 600;
+  color: var(--warning, #f59e0b);
+}
+.sb-user-popover-meta-warn > svg { flex-shrink: 0; }
 
 .sb-user-popover-item {
   display: flex;
@@ -679,6 +690,9 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 [data-theme="light"] .sb-user-popover-hdr { color: var(--text-light, #64748b); }
 [data-theme="light"] .sb-user-popover-item { color: var(--text, #1e293b); }
 [data-theme="light"] .sb-user-popover-item:hover { background: var(--surface, #f1f5f9); }
+[data-theme="light"] .sb-user-popover-meta { border-bottom-color: var(--border, #e2e8f0); }
+[data-theme="light"] .sb-user-popover-meta-row > span { color: var(--text-light, #64748b); }
+[data-theme="light"] .sb-user-popover-meta-row > strong { color: var(--text, #1e293b); }
 
 .sb-role-badge {
   display: inline-block;
@@ -6887,14 +6901,70 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .sc-tech-toggle { width: 100%; }
 .sc-tech-actions { display: flex; gap: 8px; align-items: center; margin: 8px 0 6px; }
 .sc-output { max-height: 320px; }
-/* "Etkinliklerim" üstündeki giriş güvenliği özeti — mevcut .show-* etiket/değer ailesini
-   kullanır, yalnız dış çerçeveyi verir. */
-.lastlogin-summary {
-  border: 1px solid var(--border);
-  border-radius: 9px;
-  padding: 12px 14px;
-  margin-bottom: 14px;
+/* "Etkinliklerim" üstündeki giriş güvenliği kartı (.lli-*). Ölçü kartı deseni: üç soru öne
+   çıkar (en son ne zaman girdim / şu anki oturum / kaç başarısız deneme), ikincil ayrıntılar
+   altta ince şeritte. Kart .sys-card ve .audit-stat-* ailelerinin token'larını izler. */
+.lli-card {
   background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 14px 16px;
+  margin-bottom: 14px;
+  box-shadow: 0 1px 6px rgba(0,0,0,.06);
+}
+/* Başarısız deneme varsa kart uyarı tonuna geçer — bilgi taramadan fark edilsin. */
+.lli-card--warn { border-color: color-mix(in srgb, var(--warning, #f59e0b) 45%, var(--border)); }
+
+.lli-card-head { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
+.lli-card-head h3 { font-size: .95em; font-weight: 700; color: var(--text); margin: 0; }
+.lli-card-head > svg { color: var(--text-light); flex-shrink: 0; }
+.lli-card--warn .lli-card-head > svg { color: var(--warning, #f59e0b); }
+
+.lli-empty { margin: 0; font-size: .85em; color: var(--text-light); }
+
+.lli-tiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+@media (max-width: 760px) { .lli-tiles { grid-template-columns: 1fr; } }
+
+.lli-tile {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  /* Metin renginin çok düşük opaklıkta karışımı: açık temada hafif gri, koyu temada hafif
+     aydınlık — tek kuralla iki tema. (Projede `--surface` diye bir token YOK.) */
+  background: color-mix(in srgb, var(--text) 4%, transparent);
+  min-width: 0;                       /* uzun tarih grid hücresini taşırmasın */
+}
+.lli-tile-label {
+  display: flex; align-items: center; gap: 5px;
+  font-size: .68em; font-weight: 700; letter-spacing: .04em; text-transform: uppercase;
+  color: var(--text-light);
+}
+.lli-tile-label > svg { flex-shrink: 0; }
+.lli-tile-value {
+  margin-top: 5px;
+  font-size: 1.05em; font-weight: 700; color: var(--text);
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+.lli-tile-sub { margin-top: 3px; font-size: .74em; color: var(--text-light); overflow-wrap: anywhere; }
+.lli-tile--warn { border-color: color-mix(in srgb, var(--warning, #f59e0b) 45%, var(--border)); }
+.lli-tile--warn .lli-tile-value,
+.lli-tile--warn .lli-tile-label > svg { color: var(--warning, #f59e0b); }
+
+.lli-foot {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 8px;
+  margin-top: 10px; padding-top: 10px;
+  border-top: 1px solid var(--border);
+  font-size: .78em; color: var(--text-light);
+}
+.lli-foot-label { font-weight: 700; text-transform: uppercase; letter-spacing: .04em; font-size: .92em; }
+.lli-foot-value { color: var(--text); font-variant-numeric: tabular-nums; }
+.lli-foot-ip { font-family: Consolas, monospace; }
+.lli-chip {
+  padding: 1px 8px; border-radius: 10px; font-weight: 600;
+  background: color-mix(in srgb, var(--warning, #f59e0b) 14%, transparent);
+  color: var(--warning, #f59e0b);
+  border: 1px solid color-mix(in srgb, var(--warning, #f59e0b) 32%, transparent);
 }
 
 /* Şablon seçicinin altındaki senaryo kutusu: seçili şablon ne yapar, ne zaman kullanılır,

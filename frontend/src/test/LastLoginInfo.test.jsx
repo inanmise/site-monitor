@@ -5,6 +5,8 @@ import { LastLoginNotice, LastLoginSummary, LastLoginPopoverLines } from '../com
 vi.mock('../api/client', () => ({
   api: {},
   // Zaman biçimlendirme kimlik fonksiyonu — test tarih formatını değil MANTIĞI doğrular.
+  // Popover saniyesiz (formatDate), özet kart saniyeli (formatDateSec) kullanıyor.
+  formatDate: (s) => s ?? '',
   formatDateSec: (s) => s ?? '',
 }))
 
@@ -72,10 +74,24 @@ describe('LastLoginNotice', () => {
 describe('LastLoginSummary', () => {
   it('önceki girişi ve son başarısız denemeyi gösterir', () => {
     render(<LastLoginSummary info={SUSPICIOUS} />)
-    expect(screen.getByText('2026-08-10T09:00:00')).toBeInTheDocument()   // önceki giriş
-    expect(screen.getByText('10.0.0.9')).toBeInTheDocument()
-    expect(screen.getByText('2026-08-11T10:00:00')).toBeInTheDocument()   // son başarısız
-    expect(screen.getByText('3')).toBeInTheDocument()
+    expect(screen.getByText('2026-08-10T09:00:00')).toBeInTheDocument()   // önceki giriş (ölçü)
+    expect(screen.getByText('2026-08-11T10:00:00')).toBeInTheDocument()   // son başarısız (alt şerit)
+    expect(screen.getByText('3')).toBeInTheDocument()                     // deneme sayısı
+    // IP'ler ikincil bilgi: ölçünün alt satırında göreli zaman/yöntemle birlikte tek metinde.
+    expect(screen.getByText(/10\.0\.0\.9/)).toBeInTheDocument()
+    expect(screen.getByText(/10\.0\.0\.8/)).toBeInTheDocument()
+  })
+
+  it('başarısız deneme yokken kart uyarı tonuna GEÇMEZ', () => {
+    const { container } = render(<LastLoginSummary info={INFO} />)
+    expect(container.querySelector('.lli-card--warn')).toBeNull()
+    expect(container.querySelector('.lli-tile--warn')).toBeNull()
+  })
+
+  it('başarısız deneme varsa kart ve sayaç ölçüsü uyarı tonuna geçer', () => {
+    const { container } = render(<LastLoginSummary info={SUSPICIOUS} />)
+    expect(container.querySelector('.lli-card--warn')).not.toBeNull()
+    expect(container.querySelector('.lli-tile--warn')).not.toBeNull()
   })
 
   it('ilk girişte "önceki kayıt yok" açıklaması çıkar', () => {
