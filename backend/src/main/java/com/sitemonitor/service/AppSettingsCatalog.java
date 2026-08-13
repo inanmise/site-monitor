@@ -228,6 +228,7 @@ public final class AppSettingsCatalog {
         new Setting("site.monitor.weekly-report.mail-retention-days", "retention", Type.INT),
         new Setting("site.monitor.weekly-availability.retention-days", "retention", Type.INT),
         new Setting("site.monitor.cert-note-revision.retention-days", "retention", Type.INT),
+        new Setting("site.monitor.scripted.draft-retention-days", "retention", Type.INT),
         new Setting("site.monitor.retention.run-history-retention-days", "retention", Type.INT)
     );
 

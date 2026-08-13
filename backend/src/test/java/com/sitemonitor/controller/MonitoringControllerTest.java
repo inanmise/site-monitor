@@ -87,6 +87,9 @@ class MonitoringControllerTest {
     // 10. tür (senaryo/k6) — aynı desen: controller alan-enjekte eder → mock zorunlu.
     @MockitoBean com.sitemonitor.repository.ScriptedMonitorRepository scriptedMonitorRepo;
     @MockitoBean com.sitemonitor.repository.ScriptedCheckRepository scriptedCheckRepo;
+    // k6 script sürüm geçmişi + otomatik taslak (controller alan enjeksiyonuyla kullanıyor).
+    @MockitoBean com.sitemonitor.repository.ScriptedScriptVersionRepository scriptedVersionRepo;
+    @MockitoBean com.sitemonitor.repository.ScriptedDraftRepository scriptedDraftRepo;
     @MockitoBean com.sitemonitor.service.ScriptedCheckerService scriptedChecker;
     @MockitoBean com.sitemonitor.service.SecretCipher secretCipher;
 

@@ -56,6 +56,11 @@ public class ScriptedMonitor {
     @Column(name = "use_proxy", length = 10)
     private String useProxy = "AUTO";
 
+    /** Script'in güncel sürüm etiketi ({@code 1.0.0}). Geçmiş {@code scripted_script_versions}'ta;
+     *  bu alan liste/rozet gösteriminin sürüm tablosunu sorgulamak zorunda kalmaması için. */
+    @Column(name = "script_version", length = 20)
+    private String scriptVersion;
+
     /** Mantıksal grup (filtreleme/gruplama; serbest-form). */
     @Column(name = "group_name")
     private String groupName;

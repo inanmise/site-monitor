@@ -119,6 +119,10 @@ public class MonitoringController {
     @org.springframework.beans.factory.annotation.Autowired
     private com.sitemonitor.service.ScriptedCheckerService scriptedChecker;
     @org.springframework.beans.factory.annotation.Autowired
+    private com.sitemonitor.repository.ScriptedScriptVersionRepository scriptedVersionRepo;
+    @org.springframework.beans.factory.annotation.Autowired
+    private com.sitemonitor.repository.ScriptedDraftRepository scriptedDraftRepo;
+    @org.springframework.beans.factory.annotation.Autowired
     private com.sitemonitor.service.SecretCipher secretCipher;
     /** Kontrol Geçmişi v2 ortak motoru (sayfalı aralık + filtre + histogram + alarm eşleme + CSV). */
     @org.springframework.beans.factory.annotation.Autowired
@@ -2355,6 +2359,12 @@ public class MonitoringController {
         m.setCreatedAt(now);
         m.setUpdatedAt(now);
         com.sitemonitor.model.ScriptedMonitor saved = scriptedMonitorRepo.save(m);
+        // İlk sürüm: 1.0.0 (seq 0). Etiket monitör satırına da yazılır ki liste/rozet sürüm
+        // tablosunu sorgulamak zorunda kalmasın.
+        saved.setScriptVersion(writeScriptVersion(saved, "CREATE", null, str(body.get("versionNote")), session));
+        saved = scriptedMonitorRepo.save(saved);
+        clearDraft(session, String.valueOf(saved.getId()));
+        clearDraft(session, "new");                 // "yeni monitör" taslağı artık gerçek kayda dönüştü
         activityLog.recordLifecycle(ActivityLogService.SCRIPTED, saved.getId(), saved.getName(), saved.getName(), saved.getTeamId(), "CREATED", actor(session));
         auditService.recordAction("MONITOR_CREATE", session, "SCRIPTED_MONITOR", String.valueOf(saved.getId()), saved.getName(),
                 AuditDiff.diff(null, AuditDiff.snapshot(saved, SCRIPTED_FIELDS)));
@@ -2400,9 +2410,21 @@ public class MonitoringController {
             if (body.get("confirmIntervalSeconds") != null)  m.setConfirmIntervalSeconds(clampInterval(((Number) body.get("confirmIntervalSeconds")).intValue()));
             if (body.get("recoveryChecks") != null)          m.setRecoveryChecks(clampRecovery(((Number) body.get("recoveryChecks")).intValue()));
             if (body.get("recoveryIntervalSeconds") != null) m.setRecoveryIntervalSeconds(clampInterval(((Number) body.get("recoveryIntervalSeconds")).intValue()));
+            String oldScript = m.getScript();
+            String oldEnv = m.getEnvJson();
             applyScriptedFields(m, body, m.getEnvJson());
             m.setUpdatedAt(ISO.format(Instant.now()));
             com.sitemonitor.model.ScriptedMonitor saved = scriptedMonitorRepo.save(m);
+            // Sürüm YALNIZ içerik (script/env) değişince yazılır: aralık/timeout gibi ayar
+            // düzenlemeleri sürüm geçmişini gereksiz satırlarla şişirmemeli.
+            if (contentChanged(oldScript, oldEnv, saved)) {
+                String ev = blank(body.get("restoredFrom")) ? "EDIT" : "RESTORE";
+                String note = blank(body.get("restoredFrom")) ? str(body.get("versionNote"))
+                        : str(body.get("restoredFrom")) + " sürümünden geri yüklendi";
+                saved.setScriptVersion(writeScriptVersion(saved, ev, str(body.get("bumpType")), note, session));
+                saved = scriptedMonitorRepo.save(saved);
+            }
+            clearDraft(session, String.valueOf(saved.getId()));
             auditService.recordAction("MONITOR_UPDATE", session, "SCRIPTED_MONITOR", String.valueOf(saved.getId()), saved.getName(),
                     AuditDiff.diff(_before, AuditDiff.snapshot(saved, SCRIPTED_FIELDS)));
             Map<String, Object> out = new LinkedHashMap<>(enrichScripted(saved,
@@ -2413,6 +2435,135 @@ public class MonitoringController {
         }).orElse(notFound("Sentetik izleme bulunamadı"));
     }
 
+    // ── Sürüm geçmişi ────────────────────────────────────────────────────────
+
+    /** Sürüm listesi — script GÖVDESİ hariç (yüzlerce sürümde yanıt şişmesin); önizleme ayrı uçtan. */
+    @GetMapping("/scripted/{id}/versions")
+    public ResponseEntity<Map<String, Object>> scriptedVersions(@PathVariable Long id, HttpSession session) {
+        permissionService.require(session, "monitoring.read", "view");
+        var mon = scriptedMonitorRepo.findById(id).orElse(null);
+        if (mon == null) return notFound("Sentetik izleme bulunamadı");
+        var deny = denyIfNotViewable(session, mon.getTeamId());
+        if (deny != null) return deny;
+        List<Map<String, Object>> rows = scriptedVersionRepo.findByMonitorIdOrderBySequenceNoDesc(id).stream()
+                .map(v -> {
+                    Map<String, Object> r = new LinkedHashMap<>();
+                    r.put("id", v.getId());
+                    r.put("version", v.getVersion());
+                    r.put("sequence_no", v.getSequenceNo());
+                    r.put("event_type", v.getEventType());
+                    r.put("note", v.getNote());
+                    r.put("created_at", v.getCreatedAt());
+                    r.put("created_by", v.getCreatedBy());
+                    r.put("script_chars", v.getScript() == null ? 0 : v.getScript().length());
+                    r.put("current", v.getVersion() != null && v.getVersion().equals(mon.getScriptVersion()));
+                    return r;
+                }).toList();
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("versions", rows);
+        out.put("current_version", mon.getScriptVersion());
+        return ok(out);
+    }
+
+    /** Tek sürümün gövdesi — önizleme ve "editöre yükle" için. */
+    @GetMapping("/scripted/{id}/versions/{versionId}")
+    public ResponseEntity<Map<String, Object>> scriptedVersionDetail(@PathVariable Long id, @PathVariable Long versionId,
+                                                                     HttpSession session) {
+        permissionService.require(session, "monitoring.read", "view");
+        var mon = scriptedMonitorRepo.findById(id).orElse(null);
+        if (mon == null) return notFound("Sentetik izleme bulunamadı");
+        var deny = denyIfNotViewable(session, mon.getTeamId());
+        if (deny != null) return deny;
+        var v = scriptedVersionRepo.findById(versionId).orElse(null);
+        // Başka monitörün sürüm id'siyle içerik çekilememeli (yetki sınırı monitör üzerinden kuruluyor).
+        if (v == null || !id.equals(v.getMonitorId())) return notFound("Sürüm bulunamadı");
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("id", v.getId());
+        out.put("version", v.getVersion());
+        out.put("event_type", v.getEventType());
+        out.put("note", v.getNote());
+        out.put("created_at", v.getCreatedAt());
+        out.put("created_by", v.getCreatedBy());
+        out.put("script", v.getScript());
+        out.put("env", envForClient(v.getEnvJson()));   // secret değerler düz metin DÖNMEZ
+        return ok(out);
+    }
+
+    // ── Otomatik taslak ──────────────────────────────────────────────────────
+
+    /**
+     * Taslak upsert — otomatik kaydetme buraya gelir.
+     *
+     * <p>DİKKAT: {@code PUT /scripted/{id}} KULLANILAMAZ; o uç her çağrıda {@code validateScripted}
+     * ile bir k6 alt süreci başlatıyor. 30 saniyede bir otomatik kayıt bunu tetikleseydi k6 havuzu
+     * (pool-size 2) tükenir ve gerçek izleme koşumları sıraya girerdi. Bu uç DOĞRULAMA YAPMAZ:
+     * taslak yarım/bozuk script içerebilir, amaç yalnız kaybolmamasıdır.
+     */
+    // POST da kabul edilir: sekme kapanırken `navigator.sendBeacon` YALNIZ POST atabiliyor ve
+    // beacon, fetch'in iptal edildiği o anda taslağı kurtaran son şans.
+    @RequestMapping(value = "/scripted/draft", method = { RequestMethod.PUT, RequestMethod.POST })
+    public ResponseEntity<Map<String, Object>> saveScriptedDraft(@RequestBody Map<String, Object> body, HttpSession session) {
+        permissionService.require(session, "monitoring.scripted", "edit");
+        String owner = actor(session);
+        String key = draftKey(body.get("monitorKey"));
+        var draft = scriptedDraftRepo.findByOwnerAndMonitorKey(owner, key)
+                .orElseGet(com.sitemonitor.model.ScriptedDraft::new);
+        draft.setOwner(owner);
+        draft.setMonitorKey(key);
+        draft.setMonitorId("new".equals(key) ? null : Long.valueOf(key));
+        draft.setMonitorName(str(body.get("monitorName")));
+        draft.setFormJson(str(body.get("formJson")));
+        draft.setUpdatedAt(ISO.format(Instant.now()));
+        scriptedDraftRepo.save(draft);
+        return ok(Map.of("monitor_key", key, "updated_at", draft.getUpdatedAt()));
+    }
+
+    /** Kullanıcının KENDİ taslakları — "devam et" şeridi ve düzenleme modalı bunu okur. */
+    @GetMapping("/scripted/drafts")
+    public ResponseEntity<Map<String, Object>> myScriptedDrafts(HttpSession session) {
+        permissionService.require(session, "monitoring.scripted", "edit");
+        List<Map<String, Object>> rows = scriptedDraftRepo.findByOwnerOrderByUpdatedAtDesc(actor(session)).stream()
+                .map(d -> {
+                    Map<String, Object> r = new LinkedHashMap<>();
+                    r.put("monitor_key", d.getMonitorKey());
+                    r.put("monitor_id", d.getMonitorId());
+                    r.put("monitor_name", d.getMonitorName());
+                    r.put("form_json", d.getFormJson());
+                    r.put("updated_at", d.getUpdatedAt());
+                    return r;
+                }).toList();
+        return ok(Map.of("drafts", rows));
+    }
+
+    @DeleteMapping("/scripted/draft/{monitorKey}")
+    public ResponseEntity<Map<String, Object>> deleteScriptedDraft(@PathVariable String monitorKey, HttpSession session) {
+        permissionService.require(session, "monitoring.scripted", "edit");
+        clearDraft(session, draftKey(monitorKey));
+        return ok(Map.of("deleted", true));
+    }
+
+    /** Gövdeden metin okuma — null/boş güvenli (JSON alanları Object olarak geliyor). */
+    private static String str(Object raw) {
+        if (raw == null) return null;
+        String s = raw.toString().trim();
+        return s.isEmpty() ? null : s;
+    }
+
+    /** {@code "new"} ya da sayısal monitör id'si; başka her şey {@code "new"}e düşer (yol parametresi güvenliği). */
+    private static String draftKey(Object raw) {
+        String s = raw == null ? "" : raw.toString().trim();
+        return s.matches("\\d+") ? s : "new";
+    }
+
+    /** Kayıt başarılı olunca / kullanıcı isteyince taslağı düşürür — sessiz (ana işlemi bozmaz). */
+    private void clearDraft(HttpSession session, String monitorKey) {
+        try {
+            scriptedDraftRepo.deleteByOwnerAndMonitorKey(actor(session), monitorKey);
+        } catch (Exception e) {
+            log.debug("Taslak silinemedi ({}): {}", monitorKey, e.toString());
+        }
+    }
+
     @DeleteMapping("/scripted/{id}")
     public ResponseEntity<Map<String, Object>> deleteScripted(@PathVariable Long id, HttpSession session) {
         permissionService.require(session, "monitoring.scripted", "edit");
@@ -2420,6 +2571,11 @@ public class MonitoringController {
             if (!SessionScope.canManage(session, m.getTeamId())) throw new SecurityException("Silme yetkisi yok (yalnız takım yöneticisi/ADMIN)");
             escalationService.resolveOpenAlertsSilently(m.getName(), Set.of(EscalationService.TYPE_SCRIPTED_FAIL), "Sistem (izleme silindi)");
             scriptedMonitorRepo.delete(m);
+            // Taslaklar monitörle birlikte düşer (öksüz taslak "devam et" şeridinde hayalet üretirdi).
+            // Sürüm geçmişi BİLİNÇLİ olarak silinmez: silinen bir monitörün script'i denetim değeri
+            // taşır; öksüz satırlar retention kuralıyla temizlenir.
+            try { scriptedDraftRepo.deleteByMonitorId(m.getId()); }
+            catch (Exception e) { log.debug("Monitör taslakları silinemedi: {}", e.toString()); }
             activityLog.recordLifecycle(ActivityLogService.SCRIPTED, m.getId(), m.getName(), m.getName(), m.getTeamId(), "DELETED", actor(session));
             auditService.recordAction("MONITOR_DELETE", session, "SCRIPTED_MONITOR", String.valueOf(m.getId()), m.getName(), null);
             return ok(Map.of("deleted", true));
@@ -2581,6 +2737,72 @@ public class MonitoringController {
         if (body.containsKey("env")) m.setEnvJson(buildEnvJson(existingEnvJson, body.get("env")));
     }
 
+    // ── k6 script sürümleme ──────────────────────────────────────────────────
+
+    private static final String FIRST_VERSION = "1.0.0";
+
+    /**
+     * {@code 1.0.2} → bump türüne göre bir sonraki sürüm. Ayrıştırılamayan etiket {@link #FIRST_VERSION}'a düşer
+     * (elle bozulmuş/eski veri sürüm zincirini kilitlemesin).
+     */
+    static String nextVersion(String current, String bumpType) {
+        int[] p = {1, 0, 0};
+        if (current != null) {
+            var m = java.util.regex.Pattern.compile("(\\d+)\\.(\\d+)\\.(\\d+)").matcher(current);
+            if (m.find()) {
+                p[0] = Integer.parseInt(m.group(1));
+                p[1] = Integer.parseInt(m.group(2));
+                p[2] = Integer.parseInt(m.group(3));
+            } else {
+                return FIRST_VERSION;
+            }
+        } else {
+            return FIRST_VERSION;
+        }
+        String bump = bumpType == null ? "" : bumpType.trim().toLowerCase(java.util.Locale.ROOT);
+        return switch (bump) {
+            case "major" -> (p[0] + 1) + ".0.0";
+            case "minor" -> p[0] + "." + (p[1] + 1) + ".0";
+            default      -> p[0] + "." + p[1] + "." + (p[2] + 1);   // yama = varsayılan
+        };
+    }
+
+    /**
+     * Sürüm satırı yazar ve monitörün güncel sürüm etiketini döndürür.
+     *
+     * <p>{@code CertificateNoteRevision} deseni: yazım try/catch ile YUTULUR — sürüm geçmişi
+     * kaydedilemedi diye kullanıcının kaydı düşmez (geçmiş yardımcı bir kayıttır, ana işlem değil).
+     */
+    private String writeScriptVersion(com.sitemonitor.model.ScriptedMonitor m, String eventType,
+                                      String bumpType, String note, HttpSession session) {
+        try {
+            var last = scriptedVersionRepo.findTopByMonitorIdOrderBySequenceNoDesc(m.getId());
+            String version = last.map(v -> nextVersion(v.getVersion(), bumpType)).orElse(FIRST_VERSION);
+            var row = new com.sitemonitor.model.ScriptedScriptVersion();
+            row.setMonitorId(m.getId());
+            row.setSequenceNo(last.map(v -> v.getSequenceNo() + 1).orElse(0));
+            row.setVersion(version);
+            row.setEventType(eventType);
+            row.setScript(m.getScript());
+            row.setEnvJson(m.getEnvJson());       // secret DEĞERLER şifreli hâliyle taşınır
+            row.setNote(blank(note) ? null : note.toString().trim());
+            row.setCreatedAt(ISO.format(Instant.now()));
+            row.setCreatedBy(actor(session));
+            row.setCreatedByName(actor(session));
+            scriptedVersionRepo.save(row);
+            return version;
+        } catch (Exception e) {
+            log.warn("Script sürümü yazılamadı (monitor={}): {}", m.getId(), e.toString());
+            return m.getScriptVersion();
+        }
+    }
+
+    /** Script veya env değişti mi — sürüm YALNIZ içerik değişince yazılır (ayar düzenlemesi sürüm üretmez). */
+    private static boolean contentChanged(String oldScript, String oldEnv, com.sitemonitor.model.ScriptedMonitor now) {
+        return !java.util.Objects.equals(oldScript, now.getScript())
+                || !java.util.Objects.equals(oldEnv, now.getEnvJson());
+    }
+
     /** {@code AUTO|ON|OFF} dışındaki her girdi (null dâhil) AUTO'ya düşer. */
     private static String normalizeUseProxy(Object raw) {
         String v = raw == null ? "" : raw.toString().trim().toUpperCase(java.util.Locale.ROOT);
@@ -2698,6 +2920,7 @@ public class MonitoringController {
         item.put("tags", m.getTags());
         item.put("notify_email", m.getNotifyEmail());
         item.put("use_proxy", m.getUseProxy() == null ? "AUTO" : m.getUseProxy());
+        item.put("script_version", m.getScriptVersion());
         item.put("active_alarm", openAlarm != null);
         item.put("alarm_level", openAlarm != null ? openAlarm.getAlertLevel() : null);
         item.put("alarm_acknowledged", openAlarm != null ? openAlarm.getAcknowledged() : null);
