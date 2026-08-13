@@ -6975,6 +6975,15 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .sc-tpl-info p:last-child { margin-bottom: 0; }
 .sc-tpl-info b { color: var(--text); }
 
+/* "Hiç başarılı olmadı" rozeti — arıza (kırmızı) ile yapılandırma sorununu ayırmak için mor,
+   Sayfa türündeki CONFIG_ERROR ile aynı görsel dil. */
+.sc-never-badge {
+  font-size: .64em; font-weight: 700; letter-spacing: .03em; text-transform: uppercase;
+  padding: 2px 7px; border-radius: 10px; white-space: nowrap;
+  background: rgba(124,58,237,.12); color: #6d28d9; border: 1px solid rgba(124,58,237,.3);
+}
+[data-theme="dark"] .sc-never-badge { color: #c4b5fd; border-color: rgba(167,139,250,.4); }
+
 /* Test Run konsolu — düzenleme modalındaki sonuç paneli. */
 .sc-testrun { margin-top: 4px; }
 .sc-testrun-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 6px; }

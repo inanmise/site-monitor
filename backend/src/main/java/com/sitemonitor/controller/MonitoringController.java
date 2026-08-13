@@ -2305,8 +2305,17 @@ public class MonitoringController {
                 .filter(m -> SessionScope.canView(session, m.getTeamId())).toList();
         Set<String> names = monitors.stream().map(com.sitemonitor.model.ScriptedMonitor::getName).collect(Collectors.toSet());
         Map<String, AlertEvent> open = openAlarmsByDomain(names, EscalationService.TYPE_SCRIPTED_FAIL);
+        // "Hiç başarılı olmamış" monitörler — tek toplu sorgu (monitör başına sorgu YOK).
+        // Bu ayrım arıza ile yapılandırma kusurunu ayırır: 288 koşumun 288'i düşen bir monitör
+        // "bir şey bozuldu" değil "hiç çalışmadı" demektir (2026-08 saha vakası).
+        Set<Long> everPassed = new java.util.HashSet<>(scriptedCheckRepo.monitorIdsWithSuccess());
         List<Map<String, Object>> result = monitors.stream()
-                .map(m -> enrichScripted(m, latest.get(m.getId()), teams, open.get(m.getName()))).toList();
+                .map(m -> {
+                    Map<String, Object> item = enrichScripted(m, latest.get(m.getId()), teams, open.get(m.getName()));
+                    // Hiç koşmamış monitör "hiç başarılı olmamış" SAYILMAZ — henüz denenmedi.
+                    item.put("never_succeeded", latest.get(m.getId()) != null && !everPassed.contains(m.getId()));
+                    return item;
+                }).toList();
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("monitors", result);
         out.put("k6_available", scriptedChecker.isAvailable());
@@ -2503,7 +2512,10 @@ public class MonitoringController {
         // Test env: frontend ham gönderir (secret değerler düz; henüz şifreli değil) → checker.test decrypt=false ile alır.
         String envJson = testEnvJson(body.get("env"));
         auditService.recordAction("MONITOR_TRIGGER", session, "SCRIPTED_MONITOR", "test", "ad-hoc test", null);
-        com.sitemonitor.service.ScriptedCheckerService.ScriptedResult r = scriptedChecker.test(script, envJson, timeout);
+        // Test koşumu da monitörün vekil tercihini kullanır: aksi halde "Test Çalıştır" yeşil,
+        // kaydedilmiş koşum kırmızı olur ve fark teşhis edilemez.
+        com.sitemonitor.service.ScriptedCheckerService.ScriptedResult r =
+                scriptedChecker.test(script, envJson, timeout, normalizeUseProxy(body.get("useProxy")));
         return ok(scriptedResultMap(r));
     }
 
@@ -2563,7 +2575,16 @@ public class MonitoringController {
             m.setTimeoutSeconds(Math.max(5, Math.min(180, n.intValue())));
         if (body.containsKey("tags")) m.setTags(blank(body.get("tags")) ? null : body.get("tags").toString().trim());
         if (body.get("notifyEmail") instanceof Boolean b) m.setNotifyEmail(b);
+        // Vekil tercihi: yalnız bilinen üç değer kabul edilir; tanınmayan girdi AUTO'ya düşer
+        // (koşum tarafı da null'ı AUTO sayıyor — iki uçta aynı varsayılan).
+        if (body.containsKey("useProxy")) m.setUseProxy(normalizeUseProxy(body.get("useProxy")));
         if (body.containsKey("env")) m.setEnvJson(buildEnvJson(existingEnvJson, body.get("env")));
+    }
+
+    /** {@code AUTO|ON|OFF} dışındaki her girdi (null dâhil) AUTO'ya düşer. */
+    private static String normalizeUseProxy(Object raw) {
+        String v = raw == null ? "" : raw.toString().trim().toUpperCase(java.util.Locale.ROOT);
+        return ("ON".equals(v) || "OFF".equals(v)) ? v : "AUTO";
     }
 
     /** Gelen env dizisini kalıcı JSON'a çevirir: secret değerler şifrelenir; secret değeri boş gelirse eski enc korunur. */
@@ -2632,6 +2653,7 @@ public class MonitoringController {
         out.put("checks_json", r.checksJson());
         out.put("output_tail", r.outputTail());
         out.put("error", r.error());
+        out.put("via_proxy", r.viaProxy());
         return out;
     }
 
@@ -2675,6 +2697,7 @@ public class MonitoringController {
         item.put("recovery_interval_seconds", m.getRecoveryIntervalSeconds());
         item.put("tags", m.getTags());
         item.put("notify_email", m.getNotifyEmail());
+        item.put("use_proxy", m.getUseProxy() == null ? "AUTO" : m.getUseProxy());
         item.put("active_alarm", openAlarm != null);
         item.put("alarm_level", openAlarm != null ? openAlarm.getAlertLevel() : null);
         item.put("alarm_acknowledged", openAlarm != null ? openAlarm.getAcknowledged() : null);
@@ -2689,6 +2712,7 @@ public class MonitoringController {
             item.put("checks_json", latest.getChecksJson());
             item.put("output_tail", latest.getOutputTail());
             item.put("error", latest.getError());
+            item.put("via_proxy", latest.getViaProxy());
             item.put("checked_at", latest.getCheckedAt());
         } else {
             // "Hiç koşmadı" dalı — anahtarlar EKSİK değil NULL olmalı (keyword enrich deseni):

@@ -11,6 +11,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
+import java.net.InetAddress;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -45,6 +46,7 @@ public class ScriptedCheckerService {
     private final SecretCipher cipher;
     private final AppSettingsService appSettings;
     private final MeterRegistry registry;
+    private final ProxySettings proxySettings;
 
     private final ObjectMapper mapper = new ObjectMapper();
     private static final int ABS_MAX_TIMEOUT = 180;   // mutlak tavan (sn)
@@ -63,7 +65,7 @@ public class ScriptedCheckerService {
     public record ScriptedResult(String status, boolean ok, Long durationMs, Integer exitCode,
                                  Integer checksPassed, Integer checksFailed, Long iterationMs,
                                  Long httpReqAvgMs, Long httpReqP95Ms, String checksJson,
-                                 String outputTail, String error) {}
+                                 String outputTail, String error, boolean viaProxy) {}
 
     @PostConstruct
     public void init() {
@@ -139,6 +141,7 @@ public class ScriptedCheckerService {
      */
     public ScriptDiagnostics validateScript(String script, List<String> envNames) {
         List<String> warnings = new ArrayList<>(auditEnvReferences(script, envNames));
+        warnings.addAll(auditRequestTimeouts(script));
         String policy = appSettings.getString("site.monitor.scripted.syntax-check-policy", "WARN");
         if ("OFF".equalsIgnoreCase(policy) || !k6Available || script == null || script.isBlank()) {
             return new ScriptDiagnostics(null, warnings);
@@ -216,7 +219,7 @@ public class ScriptedCheckerService {
     public static List<String> auditEnvReferences(String script, List<String> envNames) {
         List<String> out = new ArrayList<>();
         if (script == null || script.isBlank()) return out;
-        String src = script.replaceAll("/\\*[\\s\\S]*?\\*/", " ").replaceAll("(?m)//[^\n]*", " ");
+        String src = stripComments(script);
 
         java.util.LinkedHashSet<String> referenced = new java.util.LinkedHashSet<>();
         var m1 = ENV_DOT.matcher(src);
@@ -237,6 +240,50 @@ public class ScriptedCheckerService {
             for (String d : defined) {
                 if (!referenced.contains(d)) out.add("`" + d + "` tanımlı ama script kullanmıyor.");
             }
+        }
+        return out;
+    }
+
+    private static final Pattern HTTP_CALL = Pattern.compile("http\\s*\\.\\s*(get|post|put|del|patch|head|options|request)\\s*\\(");
+    private static final Pattern REQUEST_TIMEOUT_OPT = Pattern.compile("timeout\\s*:");
+
+    /**
+     * Statik tarayıcılar için yorum ayıklama.
+     *
+     * <p>{@code ://} KORUNUR: naif bir {@code //…} kuralı {@code 'https://x'} URL'sini satır yorumu
+     * sanıp satırın GERİ KALANINI siler. Gerçek etkisi: aynı satırdaki {@code timeout: '20s'}
+     * görünmez olur ve "açık timeout yok" uyarısı YANLIŞ yere basılır; aynı şekilde
+     * {@code http.get(base + '/x', …)} satırındaki {@code __ENV.X} kaybolup "tanımlı ama
+     * kullanılmıyor" uyarısı üretilir. (Bu testte yakalandı, sahada değil.)
+     *
+     * <p>Bilinen sınır: string literal içindeki gerçek {@code //} (URL dışı) yine yorum sanılır —
+     * uyarı üreten bir sezgisel için kabul edilebilir.
+     */
+    static String stripComments(String script) {
+        return script
+                .replaceAll("/\\*[\\s\\S]*?\\*/", " ")     // blok yorum
+                .replaceAll("(?m)(?<!:)//[^\n]*", " ");    // satır yorumu — `://` hariç
+    }
+
+    /**
+     * Script isteklerinde AÇIK timeout var mı? Yoksa engellemeyen uyarı.
+     *
+     * <p>Neden: k6'nın kendi varsayılan istek timeout'u 60 sn'dir ve monitörün süreç timeout'undan
+     * BAĞIMSIZDIR. Açık timeout verilmeyen bir script, monitör timeout'u 180 sn olsa bile isteği
+     * 60 sn'de düşürür; hedef vekil/güvenlik duvarı yüzünden yutuluyorsa her koşum aynı duvara
+     * çarpar (2026-08 saha vakası: 288 koşumun 288'i). Açık timeout ayrıca sebebin yazılabilmesini
+     * sağlar — süreç öldürülmeden k6 kendi hatasını basar.
+     *
+     * <p>Yorumlar taranmadan önce silinir; string literal içindeki {@code timeout:} yanlış-negatif
+     * üretebilir (bilinen sınır, uyarı olduğu için zararsız).
+     */
+    static List<String> auditRequestTimeouts(String script) {
+        List<String> out = new ArrayList<>();
+        if (script == null || script.isBlank()) return out;
+        String src = stripComments(script);
+        if (HTTP_CALL.matcher(src).find() && !REQUEST_TIMEOUT_OPT.matcher(src).find()) {
+            out.add("İsteklerde açık timeout yok. k6'nın varsayılanı 60 sn'dir ve monitörün süreç "
+                    + "timeout'undan bağımsızdır — ör. `{ timeout: '20s' }` verin.");
         }
         return out;
     }
@@ -271,32 +318,52 @@ public class ScriptedCheckerService {
 
     /** Kaydedilmiş monitör (scheduler/manuel). */
     public ScriptedResult run(ScriptedMonitor m) {
-        return runGuarded(m.getScript(), parseEnv(m.getEnvJson(), true), clampTimeout(m.getTimeoutSeconds()));
+        return runGuarded(m.getScript(), parseEnv(m.getEnvJson(), true), clampTimeout(m.getTimeoutSeconds()),
+                useProxyFor(m.getUseProxy()));
     }
 
     /** Scheduler fan-out: ayrı executor'a submit → scheduler thread'i bloklanmaz. */
     public Future<ScriptedResult> submit(ScriptedMonitor m) {
         queued.incrementAndGet();
-        return execPool.submit(() -> runGuardedAfterQueue(m.getScript(), parseEnv(m.getEnvJson(), true), clampTimeout(m.getTimeoutSeconds())));
+        boolean viaProxy = useProxyFor(m.getUseProxy());
+        return execPool.submit(() -> runGuardedAfterQueue(m.getScript(), parseEnv(m.getEnvJson(), true),
+                clampTimeout(m.getTimeoutSeconds()), viaProxy));
     }
 
     /** Kaydetmeden tek seferlik test — env JSON ham (secret değerleri düz gelir, henüz şifreli değil). */
-    public ScriptedResult test(String script, String envJson, Integer timeoutSeconds) {
-        return runGuarded(script, parseEnv(envJson, false), clampTimeout(timeoutSeconds));
+    public ScriptedResult test(String script, String envJson, Integer timeoutSeconds, String useProxy) {
+        return runGuarded(script, parseEnv(envJson, false), clampTimeout(timeoutSeconds), useProxyFor(useProxy));
+    }
+
+    /**
+     * Bu koşum kurumsal çıkış vekilinden geçecek mi?
+     *
+     * <p>{@code AUTO} (varsayılan; null/boş da AUTO) → vekil yapılandırılmışsa evet. Java tarafındaki
+     * sertifika/RDAP çıkışlarıyla aynı davranış: vekil zorunlu ağda k6'nın doğrudan çıkması, güvenlik
+     * cihazınca TCP'de kabul edilip yutulduğu için her koşumu {@code request timeout}'a düşürüyordu.
+     * {@code OFF} → iç hedefler için doğrudan. {@code ON} → vekil yoksa zaten kullanılamaz (kaydetmede uyarılır).
+     */
+    boolean useProxyFor(String mode) {
+        if (!proxySettings.enabled()) return false;
+        String m = mode == null ? "" : mode.trim().toUpperCase(Locale.ROOT);
+        return !"OFF".equals(m);
     }
 
     int clampTimeout(Integer t) {
         int v = (t == null) ? appSettings.getInt("site.monitor.scripted.default-timeout-seconds", 60) : t;
-        int max = Math.min(ABS_MAX_TIMEOUT, appSettings.getInt("site.monitor.scripted.max-timeout-seconds", 60));
+        // Fallback ABS_MAX_TIMEOUT ile hizalı: ayar okunamazsa tavan sessizce 60'a düşüyordu —
+        // kullanıcının 180'e ayarladığı monitör sebepsiz yere 60 sn'de kesilirdi.
+        int max = Math.min(ABS_MAX_TIMEOUT,
+                appSettings.getInt("site.monitor.scripted.max-timeout-seconds", ABS_MAX_TIMEOUT));
         return Math.max(5, Math.min(max, v));
     }
 
-    private ScriptedResult runGuarded(String script, List<EnvVar> env, int timeoutSec) {
+    private ScriptedResult runGuarded(String script, List<EnvVar> env, int timeoutSec, boolean viaProxy) {
         queued.incrementAndGet();
-        return runGuardedAfterQueue(script, env, timeoutSec);
+        return runGuardedAfterQueue(script, env, timeoutSec, viaProxy);
     }
 
-    private ScriptedResult runGuardedAfterQueue(String script, List<EnvVar> env, int timeoutSec) {
+    private ScriptedResult runGuardedAfterQueue(String script, List<EnvVar> env, int timeoutSec, boolean viaProxy) {
         if (!k6Available) { queued.decrementAndGet(); return err("k6 bulunamadı — Sentetik İzleme devre dışı"); }
         boolean acquired = false;
         try {
@@ -304,7 +371,7 @@ public class ScriptedCheckerService {
             queued.decrementAndGet();
             if (!acquired) return err("k6 havuzu dolu — kontrol atlandı (sıra beklemesi aşıldı)");
             active.incrementAndGet();
-            return execute(script, env, timeoutSec);
+            return execute(script, env, timeoutSec, viaProxy);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             queued.decrementAndGet();
@@ -329,7 +396,7 @@ public class ScriptedCheckerService {
      * iki katmanlı guard vardır: (1) dış catch bağlamı koruyarak sonuç üretir, (2) yorumlama
      * adımının kendi catch'i vardır — orada patlayan bir şey koşumun tanısını götürmez.
      */
-    private ScriptedResult execute(String script, List<EnvVar> envVars, int timeoutSec) {
+    private ScriptedResult execute(String script, List<EnvVar> envVars, int timeoutSec, boolean viaProxy) {
         Path scriptFile = null, summaryFile = null;
         // Bağlam DEĞİŞKENLERİ try dışında: catch bloğu bunlara erişebilsin.
         List<String> secretValues = new ArrayList<>();
@@ -347,12 +414,29 @@ public class ScriptedCheckerService {
                 env.put(v.name(), v.value() == null ? "" : v.value());
                 if (v.secret() && v.value() != null && !v.value().isBlank()) secretValues.add(v.value());
             }
+            // Kurumsal çıkış vekili: Go/k6 bu üç değişkeni okur. Monitörün env'inden SONRA konur ki
+            // kullanıcı script'i kendi HTTPS_PROXY'sini tanımlamışsa ezilmesin — ama kullanıcı da
+            // vekili bilerek kapatabilsin diye (OFF) karar zaten yukarıda verilmiştir.
+            if (viaProxy) {
+                String url = proxySettings.proxyUrl();
+                if (url != null) {
+                    env.putIfAbsent("HTTPS_PROXY", url);
+                    env.putIfAbsent("HTTP_PROXY", url);
+                    String noProxy = proxySettings.noProxyList();
+                    if (!noProxy.isBlank()) env.putIfAbsent("NO_PROXY", noProxy);
+                    // Parola URL'in içinde: k6 hata mesajında vekil URL'ini basabiliyor
+                    // (ör. "proxyconnect tcp: ..."). Maskelenmezse çıktı → error → alarm e-postası
+                    // zincirinden düz metin sızardı.
+                    String pass = proxySettings.secretValue();
+                    if (pass != null) secretValues.add(pass);
+                }
+            }
 
             List<String> args = new ArrayList<>(List.of(
                     k6Bin(), "run", "--quiet", "--no-usage-report",
                     "--summary-export=" + summaryFile.toAbsolutePath(),
                     "--vus", "1", "--iterations", "1"));
-            for (String cidr : ssrfGuard.blacklistCidrs()) { args.add("--blacklist-ip"); args.add(cidr); }
+            for (String cidr : blacklistFor(viaProxy)) { args.add("--blacklist-ip"); args.add(cidr); }
             args.add(scriptFile.toAbsolutePath().toString());
 
             int tailBytes = appSettings.getInt("site.monitor.scripted.output-tail-bytes", 8192);
@@ -388,14 +472,67 @@ public class ScriptedCheckerService {
             if (!s.parsed && !"PASS".equals(status) && !"TIMEOUT".equals(status)) {
                 error = (error == null ? "" : error + " · ") + "k6 özeti okunamadı (metrik yok)";
             }
-            return buildResult(status, durationMs, r, s, output, error);
+            return buildResult(status, durationMs, r, s, output, error, viaProxy);
         } catch (Exception e) {
             // ── Katman 1: dış guard — r/output/durationMs artık KAPSAMDA ──
             log.error("Senaryo koşumu beklenmeyen istisnayla bitti", e);
-            return errWithContext(safeMsg(e, secretValues), r, output, durationMs, secretValues);
+            return errWithContext(safeMsg(e, secretValues), r, output, durationMs, secretValues, viaProxy);
         } finally {
             deleteQuiet(scriptFile);
             deleteQuiet(summaryFile);
+        }
+    }
+
+    /**
+     * k6'ya verilecek {@code --blacklist-ip} listesi — vekil kullanılıyorsa vekili kapsayan aralık düşürülür.
+     *
+     * <p>Neden şart: {@code --blacklist-ip} k6'nın dialer'ında uygulanır ve vekil kullanılırken k6
+     * HEDEFE değil VEKİLE bağlanır. Kurumsal vekil iç ağdadır; {@code allow-internal-targets}
+     * kapatılmış bir kurulumda kara liste vekili de keser ve "vekili açtım ama yine çalışmıyor"
+     * durumu doğar — üstelik hata mesajı hedefi işaret ettiği için teşhisi zor.
+     *
+     * <p>Muafiyet YALNIZ vekilin kendi adresini kapsayan aralığa uygulanır; hedeflere yönelik SSRF
+     * koruması aynen sürer (script hâlâ 169.254.169.254'e gidemez).
+     */
+    List<String> blacklistFor(boolean viaProxy) {
+        List<String> cidrs = ssrfGuard.blacklistCidrs();
+        if (!viaProxy) return cidrs;
+        InetAddress[] proxyAddrs = proxySettings.resolveProxyAddresses();
+        if (proxyAddrs.length == 0) return cidrs;
+        List<String> out = new ArrayList<>();
+        for (String cidr : cidrs) {
+            boolean coversProxy = false;
+            for (InetAddress a : proxyAddrs) {
+                if (cidrContains(cidr, a)) { coversProxy = true; break; }
+            }
+            if (coversProxy) {
+                log.info("[K6] Vekil ({}) kara liste aralığı {} içinde — bu aralık koşum için düşürüldü",
+                        proxySettings.displayTarget(), cidr);
+            } else {
+                out.add(cidr);
+            }
+        }
+        return out;
+    }
+
+    /** {@code 10.0.0.0/8} gibi bir CIDR verilen adresi kapsıyor mu? Ayrıştırılamayan CIDR → false (kapsamaz). */
+    static boolean cidrContains(String cidr, InetAddress ip) {
+        try {
+            int slash = cidr.indexOf('/');
+            if (slash < 0) return false;
+            InetAddress net = InetAddress.getByName(cidr.substring(0, slash));
+            int prefix = Integer.parseInt(cidr.substring(slash + 1));
+            byte[] a = net.getAddress();
+            byte[] b = ip.getAddress();
+            if (a.length != b.length) return false;          // IPv4/IPv6 karışımı
+            int fullBytes = prefix / 8;
+            for (int i = 0; i < fullBytes; i++) if (a[i] != b[i]) return false;
+            int rem = prefix % 8;
+            if (rem == 0) return true;
+            int mask = 0xFF << (8 - rem);
+            return (a[fullBytes] & mask) == (b[fullBytes] & mask);
+        } catch (Exception e) {
+            return false;
         }
     }
 
@@ -431,7 +568,7 @@ public class ScriptedCheckerService {
      * {@code durationMs=null, exitCode=-1} DOĞRU cevaptır: 0 ms "çok hızlı koştu" değil "koşamadı" demek.
      */
     private ScriptedResult err(String message) {
-        return errWithContext(message, null, null, null, List.of());
+        return errWithContext(message, null, null, null, List.of(), false);
     }
 
     /**
@@ -444,20 +581,21 @@ public class ScriptedCheckerService {
      * geçirirse geri dönülmez bir secret sızıntısı olurdu.
      */
     private ScriptedResult errWithContext(String message, ProcessProbe.Result r,
-                                          String maskedOutput, Long durationMs, List<String> secretValues) {
+                                          String maskedOutput, Long durationMs, List<String> secretValues,
+                                          boolean viaProxy) {
         String status = (r != null && r.timedOut()) ? "TIMEOUT" : "ERROR";
         Integer exitCode = r != null ? r.exitCode() : -1;
         String out = SecretMask.maskValues(maskedOutput, secretValues);
         return new ScriptedResult(status, false, durationMs, exitCode,
-                null, null, null, null, null, null, out, message);
+                null, null, null, null, null, null, out, message, viaProxy);
     }
 
     /** Sonuç montajı — saf ve statik, böylece Spring'siz/k6'sız birim-test edilebilir. */
     static ScriptedResult buildResult(String status, Long durationMs, ProcessProbe.Result r,
-                                      Summary s, String maskedOutput, String error) {
+                                      Summary s, String maskedOutput, String error, boolean viaProxy) {
         return new ScriptedResult(status, "PASS".equals(status), durationMs, r.exitCode(),
                 s.checksPassed, s.checksFailed, s.iterationMs, s.httpReqAvgMs, s.httpReqP95Ms,
-                s.checksJson, maskedOutput, error);
+                s.checksJson, maskedOutput, error, viaProxy);
     }
 
     /**

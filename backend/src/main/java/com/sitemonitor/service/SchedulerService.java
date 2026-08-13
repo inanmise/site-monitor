@@ -385,6 +385,10 @@ public class SchedulerService {
         // bir artış NULL'a düşerdi. Sayaçları bir kez sıfırla (idempotent).
         patch("UPDATE app_users SET failed_since_login = 0 WHERE failed_since_login IS NULL");
         patch("UPDATE app_users SET failed_before_login = 0 WHERE failed_before_login IS NULL");
+        // Sentetik koşumun kurumsal çıkış vekilini kullanıp kullanmayacağı (AUTO/ON/OFF) ve
+        // koşumun gerçekten vekilden geçip geçmediği. Mevcut satırlarda NULL = AUTO.
+        patch("ALTER TABLE scripted_monitors ADD COLUMN use_proxy VARCHAR(10)");
+        patch("ALTER TABLE scripted_checks ADD COLUMN via_proxy BOOLEAN");
         // Haftalık raporlar — tablolar ddl-auto=update ile oluşur; unique index güvenlik ağı
         patch("CREATE UNIQUE INDEX IF NOT EXISTS ux_weekly_report_team_week ON weekly_reports(team_id, report_year, week_no)");
         // Eş zamanlı düzenleme: sürüm sayacı + yumuşak düzenleme kilidi alanları
@@ -2596,6 +2600,9 @@ public class SchedulerService {
         if (r.get("checks_failed") != null) ctx.put("checks_failed", r.get("checks_failed"));
         if (r.get("output_tail") != null) ctx.put("output_tail", r.get("output_tail"));
         if (r.get("failed_checks") != null) ctx.put("failed_checks", r.get("failed_checks"));
+        // Sebep e-posta şablonuna da geçsin: "Başarısız Check'ler" listesi NEYİN düştüğünü söyler,
+        // NEDEN düştüğünü değil (bağlantı reddi / DNS / TLS / istek zaman aşımı).
+        if (r.get("error") != null) ctx.put("error", r.get("error"));
         boolean up = Boolean.TRUE.equals(r.get("up"));
         String detail = (String) r.get("detail");
         sweep.add(new MonitoringOutageService.SweepItem(
@@ -2637,6 +2644,7 @@ public class SchedulerService {
             c.setChecksJson(res.checksJson());
             c.setOutputTail(res.outputTail());
             c.setError(res.error());
+            c.setViaProxy(res.viaProxy());
             c.setCheckedAt(ts);
             scriptedCheckRepo.save(c);
         } catch (Exception e) {
@@ -2665,13 +2673,20 @@ public class SchedulerService {
         return out;
     }
 
-    /** "FAIL — 3✓/1✗" gibi kısa insan-okur özet. */
-    private static String scriptedDetail(ScriptedCheckerService.ScriptedResult res) {
+    /**
+     * "FAIL — 3✓/1✗ — Request Failed … request timeout" gibi kısa insan-okur özet.
+     *
+     * <p>SEBEP, check sayacı olsa da eklenir. Eskiden yalnız {@code checksFailed == null} iken
+     * ekleniyordu; oysa en sık gerçek arıza biçiminde (istek düştü → check'ler de düştü) sayaç DOLU
+     * olur ve nöbetçiye giden alarmda sebep hiç yer almazdı: "sentetik testi başarısız — 1✓/2✗"
+     * deyip susuyordu (2026-08: 288 koşum boyunca "request timeout" e-postaya hiç girmedi).
+     */
+    static String scriptedDetail(ScriptedCheckerService.ScriptedResult res) {
         StringBuilder sb = new StringBuilder(res.status());
         if (res.checksPassed() != null || res.checksFailed() != null)
             sb.append(" — ").append(res.checksPassed() != null ? res.checksPassed() : 0).append("✓/")
               .append(res.checksFailed() != null ? res.checksFailed() : 0).append("✗");
-        if (res.error() != null && res.checksFailed() == null) sb.append(" — ").append(oneLine(res.error()));
+        if (res.error() != null) sb.append(" — ").append(oneLine(res.error()));
         return sb.toString();
     }
 

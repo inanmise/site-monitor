@@ -30,6 +30,13 @@ public interface ScriptedCheckRepository extends JpaRepository<ScriptedCheck, Lo
          + ") t GROUP BY t.bucket ORDER BY t.bucket", nativeQuery = true)
     List<Object[]> historyHistogram(@Param("id") Long id, @Param("from") String from,
                                     @Param("to") String to, @Param("len") int len);
+    /**
+     * En az bir kez BAŞARILI olmuş monitörlerin id'leri — "hiç yeşile dönmedi" rozeti için.
+     * Tek toplu sorgu: liste endpoint'i monitör başına ayrı sorgu açmasın.
+     */
+    @Query("SELECT DISTINCT r.monitorId FROM ScriptedCheck r WHERE r.ok = true")
+    List<Long> monitorIdsWithSuccess();
+
     List<ScriptedCheck> findByMonitorIdOrderByCheckedAtDesc(Long monitorId);
     Optional<ScriptedCheck> findTopByMonitorIdOrderByCheckedAtDesc(Long monitorId);
 

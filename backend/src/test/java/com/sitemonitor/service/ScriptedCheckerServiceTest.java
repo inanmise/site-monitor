@@ -128,7 +128,7 @@ class ScriptedCheckerServiceTest {
     void buildResult_keepsDiagnostics() {
         var r = new ProcessProbe.Result("ERRO[0001] GoError: dial tcp: i/o timeout", 107, false);
         var s = ScriptedCheckerService.parseSummary("", mapper);
-        var res = ScriptedCheckerService.buildResult("ERROR", 1234L, r, s, r.output(), "hata");
+        var res = ScriptedCheckerService.buildResult("ERROR", 1234L, r, s, r.output(), "hata", false);
 
         assertThat(res.exitCode()).isEqualTo(107);      // eskiden -1'e eziliyordu
         assertThat(res.durationMs()).isEqualTo(1234L);  // eskiden null'a eziliyordu

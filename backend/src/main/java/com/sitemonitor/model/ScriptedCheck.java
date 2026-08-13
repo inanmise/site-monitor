@@ -70,6 +70,11 @@ public class ScriptedCheck {
     @Column(columnDefinition = "TEXT")
     private String error;
 
+    /** Bu koşum kurumsal vekil üzerinden mi yapıldı? "Neden bu koşum farklı?" sorusunu cevaplar
+     *  (vekil ayarı değiştiğinde geçmiş satırlar aynı kalır; karşılaştırma ancak böyle yapılabilir). */
+    @Column(name = "via_proxy")
+    private Boolean viaProxy;
+
     @Column(name = "checked_at")
     private String checkedAt;
 }

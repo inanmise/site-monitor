@@ -12,6 +12,7 @@ const KNOWN = new Set([
   ...K6_EXIT_WITH_HINT.map(c => `scripted.exitHelp_${c}`),
   'scripted.hintOldEngine',
   'scripted.hintTimeoutNoDetail',
+  'scripted.hintRequestTimeout',
 ])
 const t = (k, ...a) => {
   const args = a.length ? `(${a.join(',')})` : ''
@@ -92,6 +93,29 @@ describe('diagnosisHint — k6 sözdizimi duvarı', () => {
     expect(diagnosisHint(t, withReason, 'v0.49.0')).toBeNull()
     // Sebep varken bile ESKİ MOTOR kuralına düşmez: TIMEOUT dalı kararı verip biter.
     expect(diagnosisHint(t, withReason, 'v1.0.0')).toBeNull()
+  })
+
+  it('FAIL + "request timeout": ipucu çıkar (288 koşum boyunca hiçbir yönlendirme yoktu)', () => {
+    const failWithTimeout = {
+      status: 'FAIL',
+      error: 'k6 check/threshold başarısız:\nRequest Failed — Get "https://www.akbank.com": request timeout',
+    }
+    expect(diagnosisHint(t, failWithTimeout, 'v0.49.0')).toBe('«scripted.hintRequestTimeout»')
+    // Sürümden BAĞIMSIZ: yeni k6'da da aynı tuzak var
+    expect(diagnosisHint(t, failWithTimeout, 'v1.0.0')).toBe('«scripted.hintRequestTimeout»')
+  })
+
+  it('sebep yalnız output_tail\'de olsa bile ipucu çıkar (eski kayıtlar geriye dönük aydınlanır)', () => {
+    const oldRow = {
+      status: 'FAIL',
+      error: 'k6 check/threshold başarısız — başarılı (çıkış 0)',   // düzeltme ÖNCESİ biçim
+      output_tail: 'level=warning msg="Request Failed" error="Post \\"https://x\\": request timeout"',
+    }
+    expect(diagnosisHint(t, oldRow, 'v0.49.0')).toBe('«scripted.hintRequestTimeout»')
+  })
+
+  it('PASS koşumunda ipucu çıkmaz (çıktıda geçse bile)', () => {
+    expect(diagnosisHint(t, { status: 'PASS', output_tail: 'request timeout' }, 'v0.49.0')).toBeNull()
   })
 
   it('TIMEOUT ipucu yalnız TIMEOUT durumunda — FAIL/ERROR bunu göstermez', () => {
