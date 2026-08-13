@@ -46,6 +46,7 @@ const emptyForm = {
   name: '', description: '', groupName: '', teamId: '', tags: '', notifyEmail: true,
   intervalSeconds: 300, timeoutSeconds: 60, confirmAttempts: 3, confirmIntervalSeconds: 30,
   recoveryChecks: 3, recoveryIntervalSeconds: 30, active: true, script: '', env: [], template: '',
+  useProxy: 'AUTO',
 }
 
 const STATUS_COLOR = { PASS: '#16a34a', FAIL: '#d97706', ERROR: '#dc2626', TIMEOUT: '#b45309', NO_CHECKS: '#d97706', unknown: '#9ca3af' }
@@ -306,6 +307,7 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
       confirmAttempts: m.confirm_attempts ?? 3, confirmIntervalSeconds: m.confirm_interval_seconds ?? 30,
       recoveryChecks: m.recovery_checks ?? 3, recoveryIntervalSeconds: m.recovery_interval_seconds ?? 30,
       active: m.active !== false, script: m.script || '',
+      useProxy: m.use_proxy || 'AUTO',
       // env: secret satırlar value_set taşır (değer geri okunamaz); non-secret value taşır
       env: (m.env || []).map(e => ({ name: e.name, secret: !!e.secret, value: e.secret ? '' : (e.value || ''), value_set: !!e.value_set })),
     }
@@ -362,6 +364,7 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
       confirmAttempts: Number(form.confirmAttempts), confirmIntervalSeconds: Number(form.confirmIntervalSeconds),
       recoveryChecks: Number(form.recoveryChecks), recoveryIntervalSeconds: Number(form.recoveryIntervalSeconds),
       active: form.active, script: form.script, env: envPayload(),
+      useProxy: form.useProxy || 'AUTO',
     }
     const res = modal?.id ? await api.monitoring.updateScriptedMonitor(modal.id, payload)
                           : await api.monitoring.createScriptedMonitor(payload)
@@ -390,6 +393,9 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
     setTesting(true); setTestResult(null)
     const res = await api.monitoring.testScripted({
       script: form.script, timeoutSeconds: Number(form.timeoutSeconds),
+      // Test koşumu da formdaki vekil tercihini kullanır; aksi halde "Test Çalıştır" yeşil,
+      // kaydedilen monitör kırmızı olur ve aradaki fark görünmez.
+      useProxy: form.useProxy || 'AUTO',
       env: form.env.filter(e => (e.name || '').trim()).map(e => ({ name: e.name.trim(), value: e.value || '' })),
     })
     setTestResult(res?.success ? res.data : { status: 'ERROR', error: res?.error || t('scripted.testError') })
@@ -486,6 +492,14 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
               <div className="upt-card-top">
                 {statusBadge(m)}
                 {alarmBadge(m)}<MaintenanceBadge target={m.name} />
+                {/* Hiç yeşile dönmemiş monitör: arıza değil yapılandırma/erişim sorunu sinyali.
+                    Sayfa türündeki CONFIG_ERROR ayrımının sentetik karşılığı — yalnız görsel,
+                    alarm semantiği DEĞİŞMEZ. */}
+                {m.never_succeeded && (
+                  <span className="sc-never-badge" title={t('scripted.neverSucceededHint')}>
+                    {t('scripted.neverSucceeded')}
+                  </span>
+                )}
                 <span className="upt-port-tag">k6</span>
               </div>
               <div className="upt-card-domain" title={m.name}>{m.name}</div>
@@ -742,6 +756,16 @@ function EditModal({ t, lang, k6Version, form, setForm, modal, dupSource, saving
             <input type="number" min="1" max="10" value={form.recoveryChecks}
               onChange={e => setForm(f => ({ ...f, recoveryChecks: e.target.value }))} />
             <span className="field-hint">{t('scripted.recoveryHint')}</span></label>
+
+          {/* Kurumsal vekil — k6 alt süreci uzun süre vekil ayarlarını HİÇ almıyordu; vekil zorunlu
+              ortamda her koşum sebepsiz "request timeout" ile düşüyordu. */}
+          <label>{t('scripted.useProxy')}
+            <select value={form.useProxy || 'AUTO'} onChange={e => setForm(f => ({ ...f, useProxy: e.target.value }))}>
+              <option value="AUTO">{t('scripted.useProxyAuto')}</option>
+              <option value="ON">{t('scripted.useProxyOn')}</option>
+              <option value="OFF">{t('scripted.useProxyOff')}</option>
+            </select>
+            <span className="field-hint">{t('scripted.useProxyHint')}</span></label>
 
           {/* Etiketler — kanonik TagInput (diğer tiplerle parite; payload'daki tags alanını doldurur) */}
           <div className="full-width">

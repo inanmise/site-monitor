@@ -629,6 +629,9 @@ public class EmailTemplateBuilder {
         } else if (isScripted(m.alertType())) {   // senaryo (k6)
             addIf(out, "Sonuç", strCtx(c, "scripted_status"));
             addIf(out, "Doğrulama", confirmationText(c));
+            // "Başarısız Check'ler" NEYİN düştüğünü söyler, NEDEN düştüğünü değil. Bu satır olmadan
+            // nöbetçi "1✓/2✗" görüp k6 çıktısını açmak zorunda kalıyordu (Sayfa dalında zaten vardı).
+            addIf(out, "Hata", firstNonNull(strCtx(c, "error"), strCtx(c, "last_error")));
             String failed = strCtx(c, "failed_checks");
             if (failed != null) out.add(new Row("Başarısız Check'ler", "<ul style='margin:0;padding-left:18px'>"
                     + java.util.Arrays.stream(failed.split("\n")).filter(s -> !s.isBlank())

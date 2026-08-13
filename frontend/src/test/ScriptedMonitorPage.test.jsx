@@ -180,6 +180,7 @@ describe('ScriptedMonitorPage', () => {
       confirmAttempts: 5, confirmIntervalSeconds: 45, recoveryChecks: 4, recoveryIntervalSeconds: 90,
       active: false,   // duraklatılmış kaynağın kopyası da pasif doğar
       script: 'export default function(){}',
+      useProxy: 'AUTO',   // vekil tercihi de kopyalanır (kaynakta yoksa AUTO)
       env: [{ name: 'BASE_URL', secret: false, value: 'https://x.example.com' },
             { name: 'PASSWORD', secret: true }],   // gizli değer taşınmaz → kullanıcı yeniden girer
     })

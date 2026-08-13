@@ -70,6 +70,11 @@ function hasTimeoutReason(check) {
   return /\n/.test(String(check.error ?? ''))
 }
 
+/** PASS koşumunda tanı ipucu gösterilmez (çıktıda "request timeout" geçse bile — ör. eski satır metni). */
+function isPass(status) {
+  return status === 'PASS'
+}
+
 /**
  * Çıkış kodu tek başına yetmediğinde metne bakan tanı ipucu.
  *
@@ -100,7 +105,17 @@ export function diagnosisHint(t, check, k6Version) {
   // şey — açık istek timeout'u — zaten yapılmıştır; sebep onun sayesinde çıktı).
   if (check.status === 'TIMEOUT') return hasTimeoutReason(check) ? null : t('scripted.hintTimeoutNoDetail')
 
-  // Kural 2 — eski motor sözdizimi duvarı (k6 < 0.53, gömülü Babel 6).
+  // Kural 2 — k6'nın KENDİ istek timeout'u düştü (statü FAIL/ERROR; süreç öldürülmedi).
+  //
+  // Bu, sahada en pahalı sessizlikti: monitör 288 koşumun 288'inde "request timeout" ile düşerken
+  // hiçbir yönlendirme çıkmıyordu, çünkü ipucu yalnız TIMEOUT statüsünde çalışıyordu. İki farklı
+  // kök neden aynı metni üretir ve ayrımı kullanıcı yapamaz:
+  //   (a) hedef gerçekten yavaş  → açık timeout'u yükselt (monitör timeout'u tavanı 180 sn)
+  //   (b) çıkışta vekil/güvenlik duvarı var → TCP bağlanır, yanıt hiç gelmez (vekilsiz koşum yutulur)
+  // `text` hem `error` hem `output_tail` içerdiğinden ipucu ESKİ kayıtlarda da görünür.
+  if (!isPass(check.status) && text.includes('request timeout')) return t('scripted.hintRequestTimeout')
+
+  // Kural 3 — eski motor sözdizimi duvarı (k6 < 0.53, gömülü Babel 6).
   const ver = parseK6Version(k6Version)
   if (!ver || !lessThan(ver, K6_MODERN_SYNTAX_SINCE)) return null
   if (!text.includes('SyntaxError')) return null

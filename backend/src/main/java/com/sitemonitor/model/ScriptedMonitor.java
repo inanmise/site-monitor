@@ -43,6 +43,19 @@ public class ScriptedMonitor {
     @Column(name = "timeout_seconds")
     private Integer timeoutSeconds = 60;
 
+    /**
+     * Koşum kurumsal çıkış vekilinden (proxy) geçsin mi: {@code AUTO} | {@code ON} | {@code OFF}.
+     *
+     * <p>{@code AUTO} (varsayılan, null da AUTO sayılır): vekil yapılandırılmışsa kullanılır —
+     * Java tarafındaki sertifika/RDAP çıkışlarıyla aynı davranış. {@code OFF}: hedef iç ağdaysa ve
+     * vekile sokulmaması gerekiyorsa. {@code ON}: vekil zorunlu; yapılandırılmamışsa kaydetmede uyarılır.
+     *
+     * <p>Neden var: k6 alt süreci vekil ayarlarını HİÇ almıyordu; vekil zorunlu ağda her koşum
+     * {@code request timeout} ile düşüyordu (2026-08 saha teşhisi).
+     */
+    @Column(name = "use_proxy", length = 10)
+    private String useProxy = "AUTO";
+
     /** Mantıksal grup (filtreleme/gruplama; serbest-form). */
     @Column(name = "group_name")
     private String groupName;
