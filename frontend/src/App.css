@@ -6975,6 +6975,38 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .sc-tpl-info p:last-child { margin-bottom: 0; }
 .sc-tpl-info b { color: var(--text); }
 
+/* Ortamdaki k6 sürümü — liste başlığında yalnız çip, script editörü başlığında çip + sözdizimi notu. */
+.sc-k6ver { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.sc-k6ver-chip {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-family: Consolas, monospace; font-size: .72em; font-weight: 600;
+  padding: 2px 8px; border-radius: 10px; white-space: nowrap;
+  background: color-mix(in srgb, var(--text) 6%, transparent);
+  color: var(--text-light); border: 1px solid var(--border);
+}
+.sc-k6ver-note { font-size: .72em; font-weight: 400; color: var(--text-light); text-transform: none; letter-spacing: 0; }
+.sc-k6ver-note--warn { color: var(--warning, #f59e0b); }
+/* Başlık satırı: "k6 Script (JavaScript)" solda, sürüm bilgisi sağda. */
+.sc-script-title { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+
+/* Sürüm rozeti + otomatik taslak göstergesi + Sürümler sekmesi. */
+.sc-ver-chip {
+  display: inline-flex; align-items: center;
+  font-family: Consolas, monospace; font-size: .72em; font-weight: 700;
+  padding: 1px 7px; border-radius: 10px; margin-left: 8px; white-space: nowrap;
+  background: color-mix(in srgb, var(--text) 7%, transparent);
+  color: var(--text-light); border: 1px solid var(--border);
+}
+.sc-ver-current {
+  margin-left: 6px; font-size: .66em; font-weight: 700; text-transform: uppercase; letter-spacing: .04em;
+  color: var(--success, #16a34a);
+}
+.sc-draft-saved { margin-left: 10px; font-size: .68em; font-weight: 600; color: var(--success, #16a34a); }
+.sc-versions { margin-top: 4px; }
+.sc-ver-preview { margin-top: 12px; }
+.sc-ver-preview-head { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
+.uact-row-click.is-sel { background: color-mix(in srgb, var(--text) 5%, transparent); }
+
 /* "Hiç başarılı olmadı" rozeti — arıza (kırmızı) ile yapılandırma sorununu ayırmak için mor,
    Sayfa türündeki CONFIG_ERROR ile aynı görsel dil. */
 .sc-never-badge {
@@ -6988,6 +7020,13 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .sc-testrun { margin-top: 4px; }
 .sc-testrun-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 6px; }
 .sc-testrun-status { font-weight: 700; }
+/* Sonucun kaynağı: "Test koşumu" mu, kayıtlı script'in "Son kontrol"ü mü. */
+.sc-run-src {
+  font-size: .68em; font-weight: 700; letter-spacing: .04em; text-transform: uppercase;
+  padding: 2px 7px; border-radius: 10px;
+  background: color-mix(in srgb, var(--text) 7%, transparent);
+  color: var(--text-light); border: 1px solid var(--border);
+}
 .sc-testrun-meta { color: var(--text-light); font-size: .9em; }
 .sc-console { max-height: 260px; }
 .sc-warn-list { margin: 0; padding-left: 18px; }

@@ -213,6 +213,15 @@ public final class RetentionCatalog {
         guarded("alert-storms", "alert_storms", "resolved_at", "site.monitor.storm.retention-days",
                 365, 90, "resolved = true AND {t}", DataClass.OPERATIONAL,
                 "Alarm fırtınası kayıtları. Yalnız çözülmüş fırtınalar silinir."),
+        age("scripted-drafts", "scripted_drafts", "updated_at", "site.monitor.scripted.draft-retention-days",
+                30, 1, false, DataClass.CONTENT,
+                "k6 script düzenleme formunun otomatik kaydedilen taslakları. Kaydedilince silinirler; "
+                + "burada kalanlar terk edilmiş oturumlardır (incident-images-draft ile aynı mantık)."),
+        orphan("scripted-versions-orphan", "scripted_script_versions",
+                "monitor_id NOT IN (SELECT id FROM scripted_monitors)",
+                DataClass.CONTENT,
+                "Monitörü silinmiş script sürümleri. Sürüm geçmişi monitör silinirken BİLİNÇLİ olarak "
+                + "silinmiyor (denetim değeri); öksüz kalan satırlar burada temizlenir."),
 
         // ── Temizliğin kendi çalışma geçmişi (öz-referans) ─────────────────────────────────────
         age("retention-run-items", "retention_run_item", "created_at", "site.monitor.retention.run-history-retention-days",

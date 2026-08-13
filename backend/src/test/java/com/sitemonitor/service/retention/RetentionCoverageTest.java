@@ -63,6 +63,10 @@ class RetentionCoverageTest {
             Map.entry("domain_monitors", "Monitör tanımı."),
             Map.entry("page_monitors", "Monitör tanımı."),
             Map.entry("scripted_monitors", "Monitör tanımı."),
+            Map.entry("scripted_script_versions",
+                    "k6 script sürüm geçmişi — monitör tanımının parçası ve geri dönüş kaynağı; "
+                    + "kullanıcı kararıyla süresiz saklanır (metinler KB mertebesinde). "
+                    + "Monitörü silinen satırlar 'scripted-versions-orphan' kuralıyla temizlenir."),
             // İçerik: kullanıcı üretimi, soft delete ile yönetilen kayıtlar.
             Map.entry("certificate_notes", "Kullanıcı notu — soft delete; revizyonlarının politikası var."),
             Map.entry("monitor_notes", "Kullanıcı notu — soft delete."),

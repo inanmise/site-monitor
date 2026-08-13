@@ -389,6 +389,11 @@ public class SchedulerService {
         // koşumun gerçekten vekilden geçip geçmediği. Mevcut satırlarda NULL = AUTO.
         patch("ALTER TABLE scripted_monitors ADD COLUMN use_proxy VARCHAR(10)");
         patch("ALTER TABLE scripted_checks ADD COLUMN via_proxy BOOLEAN");
+        // Script'in güncel sürüm etiketi; geçmiş ayrı tabloda (scripted_script_versions, entity'den doğar).
+        patch("ALTER TABLE scripted_monitors ADD COLUMN script_version VARCHAR(20)");
+        // Taslak kullanıcı+monitör başına TEK satır. monitor_id yerine metin anahtar kullanılıyor:
+        // PostgreSQL unique index'te NULL'ları birbirinden farklı sayar, "yeni monitör" taslakları çoğalırdı.
+        patch("CREATE UNIQUE INDEX IF NOT EXISTS ux_scripted_draft_owner_key ON scripted_drafts(owner, monitor_key)");
         // Haftalık raporlar — tablolar ddl-auto=update ile oluşur; unique index güvenlik ağı
         patch("CREATE UNIQUE INDEX IF NOT EXISTS ux_weekly_report_team_week ON weekly_reports(team_id, report_year, week_no)");
         // Eş zamanlı düzenleme: sürüm sayacı + yumuşak düzenleme kilidi alanları

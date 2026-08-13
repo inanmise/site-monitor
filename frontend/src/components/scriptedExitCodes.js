@@ -55,6 +55,23 @@ function lessThan(a, b) {
 }
 
 /**
+ * Script yazarken hangi motorla karşı karşıya olunduğu — sürüm rozeti için.
+ *
+ * Kullanıcı "kendi laptopunda çalışan" script'i buraya yapıştırıyor ve ortamdaki k6 daha eskiyse
+ * `?.` / `??` / `{...nesne}` "Unexpected token" ile patlıyor. Bu bilgiyi HATA sonrası ipucu olarak
+ * vermek geç kalıyor; rozet yazmadan ÖNCE söyler. {@link K6_MODERN_SYNTAX_SINCE} eşiği tek kaynak,
+ * `diagnosisHint` ile aynı sabit kullanılır.
+ *
+ * @param {string|null|undefined} raw  örn. "v0.49.0"
+ * @returns {'legacy'|'modern'|null} sürüm okunamazsa null (rozet gösterilmez — yanlış bilgi vermektense sus)
+ */
+export function k6SyntaxLevel(raw) {
+  const ver = parseK6Version(raw)
+  if (!ver) return null
+  return lessThan(ver, K6_MODERN_SYNTAX_SINCE) ? 'legacy' : 'modern'
+}
+
+/**
  * Zaman aşımına uğramış bir koşumda backend sebebi gösterebildi mi?
  *
  * Sözleşme (`ScriptedCheckerService.summarizeError`): sebep ayıklanabildiğinde başlık satırının

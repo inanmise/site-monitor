@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { exitLabel, exitHint, diagnosisHint, K6_EXIT_CODES, K6_EXIT_WITH_HINT } from '../components/scriptedExitCodes.js'
+import { exitLabel, exitHint, diagnosisHint, k6SyntaxLevel, K6_EXIT_CODES, K6_EXIT_WITH_HINT } from '../components/scriptedExitCodes.js'
 
 /**
  * `exitLabel` "çeviri var mı"yı `t(key) === key` kimlik testiyle anlıyor; bu yüzden stub anahtarı
@@ -39,6 +39,30 @@ describe('exitLabel', () => {
     for (const c of K6_EXIT_CODES.filter(c => !K6_EXIT_WITH_HINT.includes(c))) {
       expect(exitHint(t, c)).toBeNull()
     }
+  })
+})
+
+describe('k6SyntaxLevel — sürüm rozeti', () => {
+  it('0.53 ÖNCESİ legacy (gömülü Babel 6), sonrası modern', () => {
+    expect(k6SyntaxLevel('v0.49.0')).toBe('legacy')
+    expect(k6SyntaxLevel('0.52.9')).toBe('legacy')
+    expect(k6SyntaxLevel('v0.53.0')).toBe('modern')   // eşiğin KENDİSİ modern
+    expect(k6SyntaxLevel('v1.0.0')).toBe('modern')
+  })
+
+  it('sürüm okunamıyorsa null — yanlış sözdizimi tavsiyesi vermektense sus', () => {
+    expect(k6SyntaxLevel(null)).toBeNull()
+    expect(k6SyntaxLevel(undefined)).toBeNull()
+    expect(k6SyntaxLevel('bilinmiyor')).toBeNull()
+  })
+
+  it('diagnosisHint ile AYNI eşiği kullanır (tek kaynak — biri değişip diğeri kalmasın)', () => {
+    const syntaxErr = { error: 'SyntaxError: Unexpected token (1:5)' }
+    // legacy → eski-motor ipucu var; modern → yok
+    expect(k6SyntaxLevel('v0.49.0')).toBe('legacy')
+    expect(diagnosisHint(t, syntaxErr, 'v0.49.0')).not.toBeNull()
+    expect(k6SyntaxLevel('v0.53.0')).toBe('modern')
+    expect(diagnosisHint(t, syntaxErr, 'v0.53.0')).toBeNull()
   })
 })
 

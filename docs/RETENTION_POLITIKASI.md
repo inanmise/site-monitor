@@ -59,6 +59,8 @@ BDDK/iç denetim süreleri esas alınmalıdır.
 | `incident_images` | 730 gün | 90 g | `site.monitor.incident.image-retention-days` | `created_at < ?` | Olay görselleri (BYTEA, ≤5 MB/satır). Olay METNİ korunur — weekly_report_images deseni. Daha önce hiç silinmiyordu: en yüksek satır-boyutu × sonsuz saklama riski. |
 | `incident_images` | öksüz temizliği | — | — | `incident_id IS NOT NULL AND incident_id NOT IN (SELECT id FROM incident_records)` | Olayı silinmiş görseller. Olay silme cascade YAPMIYOR → her silinen olay MB'larca öksüz bırakıyordu. |
 | `incident_images` | 7 gün | 1 g | `site.monitor.incident.draft-image-retention-days` | `incident_id IS NULL AND created_at < ?` | Kaydedilmeyen taslak yüklemeleri: incident_id kalıcı olarak NULL kalır, hiçbir olaya bağlanmaz. |
+| `scripted_drafts` | 30 gün | 1 g | `site.monitor.scripted.draft-retention-days` | `updated_at < ?` | k6 script düzenleme formunun otomatik kaydedilen taslakları. Kaydedilince silinirler; burada kalanlar terk edilmiş oturumlardır (incident-images-draft ile aynı mantık). |
+| `scripted_script_versions` | öksüz temizliği | — | — | `monitor_id NOT IN (SELECT id FROM scripted_monitors)` | Monitörü silinmiş script sürümleri. Sürüm geçmişi monitör silinirken BİLİNÇLİ olarak silinmiyor (denetim değeri); öksüz kalan satırlar burada temizlenir. |
 
 ## İşletimsel Telemetri
 

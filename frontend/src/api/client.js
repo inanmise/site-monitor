@@ -814,6 +814,13 @@ export const api = {
     deleteScriptedMonitor: (id) => request(`/monitoring/scripted/${id}`, { method: 'DELETE' }),
     triggerScriptedCheck:  (id) => request(`/monitoring/scripted/${id}/check`, { method: 'POST' }),
     testScripted:          (data) => request('/monitoring/scripted/test', { method: 'POST', body: JSON.stringify(data) }),
+    // Sürüm geçmişi: liste gövde taşımaz (yüzlerce sürümde yanıt şişmesin), önizleme ayrı çağrı.
+    getScriptedVersions:   (id) => request(`/monitoring/scripted/${id}/versions`),
+    getScriptedVersion:    (id, versionId) => request(`/monitoring/scripted/${id}/versions/${versionId}`),
+    // Otomatik taslak — DOĞRULAMA YAPMAYAN ayrı uç (PUT /scripted/{id} her çağrıda k6 çalıştırıyor).
+    saveScriptedDraft:     (data) => request('/monitoring/scripted/draft', { method: 'PUT', body: JSON.stringify(data) }),
+    getScriptedDrafts:     () => request('/monitoring/scripted/drafts'),
+    deleteScriptedDraft:   (monitorKey) => request(`/monitoring/scripted/draft/${monitorKey}`, { method: 'DELETE' }),
     getScriptedResponseSeries: (id, { from, to, days } = {}) => {
       const q = new URLSearchParams(
         Object.fromEntries(Object.entries({ from, to, days }).filter(([, v]) => v != null && v !== '')),

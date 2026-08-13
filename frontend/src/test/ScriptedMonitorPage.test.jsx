@@ -25,6 +25,11 @@ vi.mock('../api/client', () => ({
   api: {
     monitoring: {
       getScriptedMonitors: vi.fn(),
+      getScriptedVersions: vi.fn(() => Promise.resolve({ success: true, data: { versions: [], current_version: null } })),
+      getScriptedVersion: vi.fn(),
+      saveScriptedDraft: vi.fn(() => Promise.resolve({ success: true, data: {} })),
+      getScriptedDrafts: vi.fn(() => Promise.resolve({ success: true, data: { drafts: [] } })),
+      deleteScriptedDraft: vi.fn(() => Promise.resolve({ success: true })),
       getCheckHistory: vi.fn(() => Promise.resolve({ success: true, data: { items: [], counts: { total: 0, fail: 0 }, buckets: [], alerts: [], range: { from: '', to: '' }, total: 0, page: 0, size: 50 } })),
       getCheckHistoryCsvUrl: vi.fn(() => '#'),
       createScriptedMonitor: vi.fn(() => Promise.resolve({ success: true, data: {} })),
@@ -47,6 +52,9 @@ beforeEach(() => {
       items: [], counts: { total: 0, fail: 0 }, buckets: [], alerts: [],
       range: { from: '2026-01-01T00:00:00', to: '2026-01-02T00:00:00' }, total: 0, page: 0, size: 50 } })
   api.monitoring.listGroups.mockResolvedValue({ success: true, data: [] })
+  api.monitoring.getScriptedDrafts.mockResolvedValue({ success: true, data: { drafts: [] } })
+  api.monitoring.saveScriptedDraft.mockResolvedValue({ success: true, data: {} })
+  api.monitoring.getScriptedVersions.mockResolvedValue({ success: true, data: { versions: [], current_version: null } })
   api.monitoring.monitorDefaults.mockResolvedValue({ success: true, data: { scripted: { intervalSeconds: 300, timeoutSeconds: 60 } } })
   api.admin.getTeams.mockResolvedValue({ success: true, data: [] })
   api.monitoring.getScriptedMonitors.mockResolvedValue({
@@ -77,6 +85,22 @@ describe('ScriptedMonitorPage', () => {
     // Tanımsız eski sınıflar terk edildi
     expect(container.querySelector('.mon-card')).toBeNull()
     expect(container.querySelector('.btn-xs')).toBeNull()
+  })
+
+  it('ortamdaki k6 sürümü listede görünür; sürüm bilinmiyorsa rozet HİÇ çıkmaz', async () => {
+    // Kullanıcı script'i hangi motora yazdığını bilmeli — sürüm API'den geliyordu ama
+    // yalnız hata sonrası tanı ipucunda kullanılıyor, ekranda hiç gösterilmiyordu.
+    const { container, unmount } = render(<ScriptedMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
+    expect(await screen.findByText(/k6 v0\.49\.0/)).toBeInTheDocument()
+    expect(container.querySelector('.sc-k6ver-chip')).not.toBeNull()
+    unmount()
+
+    api.monitoring.getScriptedMonitors.mockResolvedValue({
+      success: true, data: { k6_available: true, k6_version: null, can_manage: true, monitors: [] },
+    })
+    const second = render(<ScriptedMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
+    await waitFor(() => expect(api.monitoring.getScriptedMonitors).toHaveBeenCalled())
+    expect(second.container.querySelector('.sc-k6ver-chip')).toBeNull()
   })
 
   it('k6 yoksa "devre dışı" banner gösterir', async () => {
@@ -181,6 +205,8 @@ describe('ScriptedMonitorPage', () => {
       active: false,   // duraklatılmış kaynağın kopyası da pasif doğar
       script: 'export default function(){}',
       useProxy: 'AUTO',   // vekil tercihi de kopyalanır (kaynakta yoksa AUTO)
+      bumpType: 'patch',  // sürüm artışı (yeni kayıtta kullanılmaz ama payload şekli tek)
+      restoredFrom: null, // eski sürümden yüklenmediyse null
       env: [{ name: 'BASE_URL', secret: false, value: 'https://x.example.com' },
             { name: 'PASSWORD', secret: true }],   // gizli değer taşınmaz → kullanıcı yeniden girer
     })
@@ -195,6 +221,233 @@ describe('ScriptedMonitorPage', () => {
     fireEvent.click(screen.getByRole('button', { name: /^test run$|^test çalıştır$/i }))
     await waitFor(() => expect(api.monitoring.testScripted).toHaveBeenCalled())
     expect(await screen.findByText(/820 ms/)).toBeInTheDocument()   // test-sonucu banner'ına özgü süre
+  })
+
+  // ── Script kaynağı seçicisi: kayıtlı script'ler ↔ şablonlar, panel bağı ──────────────
+  //
+  // Şikayet: şablon değişince aşağıdaki hata paneli ekranda kalıyor ve artık editörde olmayan
+  // bir script'in hatasını gösteriyordu. Panel DAİMA seçili script'e ait olmalı.
+  describe('script kaynağı seçicisi', () => {
+    const FAILING = {
+      id: 7, name: 'llm-test', status: 'FAIL', team_id: 5, team_name: 'SY-A',
+      script: 'export default function(){ /* kayitli */ }',
+      env: [{ name: 'BASE_URL', secret: false, value: 'https://x' }, { name: 'TOKEN', secret: true, value_set: true }],
+      error: 'k6 check/threshold başarısız:\nRequest Failed — request timeout',
+      exit_code: 0, output_tail: 'tail-satiri', duration_ms: 60310,
+      checks_passed: 1, checks_failed: 2, checked_at: '2026-08-12T22:25:15',
+    }
+    const NEVER_RUN = { id: 9, name: 'hic-kosmadi', status: 'unknown', team_id: 5, script: 'export default function(){}' }
+
+    // Modal createPortal ile document.body'ye çiziliyor → sorgular container'a DEĞİL belgeye yapılır.
+    const inModal = (sel) => document.querySelector(`.modal-box ${sel}`)
+    const sourceSelect = () => screen.getByLabelText(/script source|script kaynağı/i)
+
+    async function openEditFor(row) {
+      const rows = row.id === NEVER_RUN.id ? [NEVER_RUN] : [row, NEVER_RUN]
+      api.monitoring.getScriptedMonitors.mockResolvedValue({
+        success: true, data: { k6_available: true, k6_version: 'v0.49.0', can_manage: true, monitors: rows },
+      })
+      const utils = render(<ScriptedMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
+      await waitFor(() => expect(api.monitoring.getScriptedMonitors).toHaveBeenCalled())
+      await screen.findByText(row.name)
+      fireEvent.click(utils.container.querySelector('.mon-btn-edit'))
+      return utils
+    }
+
+    it('seçici İKİ GRUP gösterir: kayıtlı script\'ler (bu monitör başta) ve şablonlar', async () => {
+      await openEditFor(FAILING)
+      const groups = sourceSelect().querySelectorAll('optgroup')
+      expect(groups.length).toBe(2)
+      expect(groups[0].label).toMatch(/saved scripts|kayıtlı/i)
+      expect(groups[1].label).toMatch(/templates|şablon/i)
+      // Düzenlenen monitör kendi adıyla ve "(bu monitör)" işaretiyle EN BAŞTA
+      expect(groups[0].children[0].textContent).toContain('llm-test')
+      expect(groups[0].children[0].textContent).toMatch(/this monitor|bu monitör/i)
+      expect(sourceSelect().value).toBe('saved:7')
+    })
+
+    it('düzenleme açılışında panel "son kontrol" etiketiyle ve o monitörün hatasıyla gelir', async () => {
+      await openEditFor(FAILING)
+      expect(await screen.findByText(/last check|son kontrol/i)).toBeInTheDocument()
+      expect(screen.getByText(/request timeout/)).toBeInTheDocument()
+    })
+
+    it('hiç koşmamış monitörde panel HİÇ açılmaz', async () => {
+      await openEditFor(NEVER_RUN)
+      expect(inModal('.sc-testrun')).toBeNull()
+    })
+
+    it('şablon seçilince panel KAYBOLUR (asıl şikayet) ve script şablonunkiyle değişir', async () => {
+      await openEditFor(FAILING)
+      expect(inModal('.sc-testrun')).not.toBeNull()
+
+      fireEvent.change(sourceSelect(), { target: { value: 'tpl:smoke-health' } })
+
+      expect(inModal('.sc-testrun')).toBeNull()
+      expect(screen.getByTestId('code-editor').value).toContain('www.akbank.com')
+    })
+
+    it('kayıtlı script seçilince o monitörün script+env\'i yüklenir ve paneli geri gelir', async () => {
+      await openEditFor(FAILING)
+      fireEvent.change(sourceSelect(), { target: { value: 'tpl:smoke-health' } })
+      expect(inModal('.sc-testrun')).toBeNull()
+
+      fireEvent.change(sourceSelect(), { target: { value: 'saved:7' } })
+
+      expect(screen.getByTestId('code-editor').value).toBe(FAILING.script)
+      expect(inModal('.sc-testrun')).not.toBeNull()
+      expect(screen.getByText(/request timeout/)).toBeInTheDocument()
+      // env tanımları da geldi; gizli değer TAŞINMAZ (kullanıcı yeniden girer)
+      const envNames = [...document.querySelectorAll('.modal-box .env-row .env-name')].map(i => i.value)
+      expect(envNames).toEqual(['BASE_URL', 'TOKEN'])
+    })
+
+    it('script\'i ELLE düzenlemek paneli kaybettirmez (hatayı okurken düzeltme yapılabilsin)', async () => {
+      await openEditFor(FAILING)
+      fireEvent.change(screen.getByTestId('code-editor'), { target: { value: 'export default function(){ /* elle */ }' } })
+      expect(inModal('.sc-testrun')).not.toBeNull()
+    })
+
+    it('yeni monitörde boş seçenek VAR ve script\'i temizler; düzenlemede boş seçenek YOK', async () => {
+      const { unmount } = await openEditFor(FAILING)
+      // Düzenlemede placeholder yok: monitörün kendi girdisi listede, "boşalt" yolu veri kaybettiriyordu
+      expect(sourceSelect().querySelectorAll(':scope > option')).toHaveLength(0)
+      unmount()
+
+      api.monitoring.getScriptedMonitors.mockResolvedValue({
+        success: true, data: { k6_available: true, k6_version: 'v0.49.0', can_manage: true, monitors: [FAILING] },
+      })
+      render(<ScriptedMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
+      await waitFor(() => expect(api.monitoring.getScriptedMonitors).toHaveBeenCalled())
+      fireEvent.click(screen.getByRole('button', { name: /new monitor|yeni monitör/i }))
+      expect(sourceSelect().querySelectorAll(':scope > option')).toHaveLength(1)   // placeholder
+
+      fireEvent.change(sourceSelect(), { target: { value: 'tpl:smoke-health' } })
+      expect(screen.getByTestId('code-editor').value).toContain('www.akbank.com')
+      fireEvent.change(sourceSelect(), { target: { value: '' } })
+      expect(screen.getByTestId('code-editor').value).toBe('')
+    })
+  })
+
+  // ── Otomatik taslak + sürüm geçmişi ──────────────────────────────────────────────────
+  describe('otomatik taslak ve sürümler', () => {
+    const MON = {
+      id: 3, name: 'llm-test', status: 'PASS', team_id: 5, team_name: 'SY-A',
+      script: 'export default function(){}', script_version: '1.0.2',
+      checked_at: '2026-08-13T10:00:00',
+    }
+
+    async function renderPage() {
+      api.monitoring.getScriptedMonitors.mockResolvedValue({
+        success: true, data: { k6_available: true, k6_version: 'v0.49.0', can_manage: true, monitors: [MON] },
+      })
+      const utils = render(<ScriptedMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
+      await waitFor(() => expect(api.monitoring.getScriptedMonitors).toHaveBeenCalled())
+      await screen.findByText('llm-test')
+      return utils
+    }
+
+    it('script yazıldıktan sonra taslak SUNUCUYA kaydedilir (yazmayı bırakınca)', async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true })
+      try {
+        await renderPage()
+        fireEvent.click(screen.getByRole('button', { name: /new monitor|yeni monitör/i }))
+        fireEvent.change(screen.getByTestId('code-editor'), { target: { value: 'export default function(){ /* yazdim */ }' } })
+
+        expect(api.monitoring.saveScriptedDraft).not.toHaveBeenCalled()   // hemen değil
+        await vi.advanceTimersByTimeAsync(1600)                           // 1,5 sn debounce
+
+        expect(api.monitoring.saveScriptedDraft).toHaveBeenCalled()
+        const payload = api.monitoring.saveScriptedDraft.mock.calls.at(-1)[0]
+        expect(payload.monitorKey).toBe('new')                            // hiç kaydedilmemiş monitör
+        expect(JSON.parse(payload.formJson).script).toContain('yazdim')
+      } finally { vi.useRealTimers() }
+    })
+
+    it('boş form taslak olarak kaydedilmez (gereksiz satır üretmesin)', async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true })
+      try {
+        await renderPage()
+        fireEvent.click(screen.getByRole('button', { name: /new monitor|yeni monitör/i }))
+        await vi.advanceTimersByTimeAsync(2000)
+        expect(api.monitoring.saveScriptedDraft).not.toHaveBeenCalled()
+      } finally { vi.useRealTimers() }
+    })
+
+    it('gizli env DEĞERİ taslağa yazılmaz (düz metin saklanmasın)', async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true })
+      try {
+        await renderPage()
+        fireEvent.click(screen.getByRole('button', { name: /new monitor|yeni monitör/i }))
+        fireEvent.change(screen.getByTestId('code-editor'), { target: { value: 'x' } })
+        // Şablon seç → env satırları gelsin, birine gizli değer yazalım
+        fireEvent.change(screen.getByLabelText(/script source|script kaynağı/i), { target: { value: 'tpl:oauth2-client-credentials' } })
+        const secretInput = document.querySelector('.modal-box .env-row input.env-val[type="password"]')
+        if (secretInput) fireEvent.change(secretInput, { target: { value: 'COK-GIZLI' } })
+        await vi.advanceTimersByTimeAsync(1600)
+
+        const payload = api.monitoring.saveScriptedDraft.mock.calls.at(-1)[0]
+        expect(payload.formJson).not.toContain('COK-GIZLI')
+      } finally { vi.useRealTimers() }
+    })
+
+    it('hiç kaydedilmemiş taslak varsa sayfada "devam et" şeridi çıkar ve forma yüklenir', async () => {
+      api.monitoring.getScriptedDrafts.mockResolvedValue({ success: true, data: { drafts: [
+        { monitor_key: 'new', monitor_id: null, monitor_name: 'yarim-kalan',
+          form_json: JSON.stringify({ name: 'yarim-kalan', script: 'export default function(){ /* taslak */ }' }),
+          updated_at: '2026-08-13T09:30:00' },
+      ] } })
+      await renderPage()
+
+      expect(await screen.findByText(/unfinished draft|tamamlanmamış taslağınız/i)).toBeInTheDocument()
+      fireEvent.click(screen.getByRole('button', { name: /^continue$|^devam et$/i }))
+
+      await waitFor(() => expect(screen.getByTestId('code-editor').value).toContain('taslak'))
+    })
+
+    it('mevcut monitörde taslak OTOMATİK uygulanmaz — kullanıcıya sorulur', async () => {
+      api.monitoring.getScriptedDrafts.mockResolvedValue({ success: true, data: { drafts: [
+        { monitor_key: '3', monitor_id: 3, monitor_name: 'llm-test',
+          form_json: JSON.stringify({ script: 'export default function(){ /* taslaktan */ }' }),
+          updated_at: '2026-08-13T09:30:00' },
+      ] } })
+      const { container } = await renderPage()
+      fireEvent.click(container.querySelector('.mon-btn-edit'))
+
+      // Kaydedilmiş script yüklü kalır; taslak yalnız TEKLİF edilir
+      expect(screen.getByTestId('code-editor').value).toBe(MON.script)
+      expect(await screen.findByText(/unsaved draft|kaydedilmemiş taslak/i)).toBeInTheDocument()
+
+      fireEvent.click(screen.getByRole('button', { name: /load draft|taslağı yükle/i }))
+      await waitFor(() => expect(screen.getByTestId('code-editor').value).toContain('taslaktan'))
+    })
+
+    it('Sürümler sekmesi listeyi çizer ve seçilen sürümü editöre yükler', async () => {
+      api.monitoring.getScriptedVersions.mockResolvedValue({ success: true, data: {
+        current_version: '1.0.2',
+        versions: [
+          { id: 22, version: '1.0.2', sequence_no: 2, event_type: 'EDIT', note: null, created_at: '2026-08-13T09:00:00', created_by: 'ADMIN', script_chars: 40, current: true },
+          { id: 21, version: '1.0.0', sequence_no: 0, event_type: 'CREATE', note: null, created_at: '2026-08-01T09:00:00', created_by: 'ADMIN', script_chars: 30, current: false },
+        ],
+      } })
+      api.monitoring.getScriptedVersion.mockResolvedValue({ success: true, data: {
+        id: 21, version: '1.0.0', script: 'export default function(){ /* eski surum */ }', env: [],
+      } })
+      const { container } = await renderPage()
+      fireEvent.click(container.querySelector('.upt-card'))
+      fireEvent.click(await screen.findByRole('button', { name: /^versions$|^sürümler$/i }))
+
+      expect(await screen.findByText('v1.0.2')).toBeInTheDocument()
+      expect(screen.getByText('v1.0.0')).toBeInTheDocument()
+
+      fireEvent.click(screen.getByText('v1.0.0').closest('tr'))
+      const loadBtn = await screen.findByRole('button', { name: /load this version|editöre yükle/i })
+      fireEvent.click(loadBtn)
+
+      // Geri dönüş doğrudan YAZMAZ: içerik editöre gelir, kullanıcı kaydedince yeni sürüm olur
+      await waitFor(() => expect(screen.getByTestId('code-editor').value).toContain('eski surum'))
+      expect(api.monitoring.updateScriptedMonitor).not.toHaveBeenCalled()
+    })
   })
 
   it('sayfalama: 120 kayıt → 50 kart + "Page 1 of 3"; Sonraki → 51.; tek sayfada nav yok', async () => {
