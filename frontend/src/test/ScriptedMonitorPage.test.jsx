@@ -661,6 +661,43 @@ describe('ScriptedMonitorPage', () => {
     expect(document.querySelector('.sc-phases')).toBeNull()
   })
 
+  it('Bağlantı Teşhisi: bacakları faz kırılımıyla çizer, takılma noktasını işaretler', async () => {
+    // "Java çekiyor, k6 çekmiyor" ayrımını ÖLÇEN ekran. Değerler gerçek k6 v0.49 biçiminde:
+    // TCP açılıyor (connecting>0), TLS tamamlanmıyor (sonrası 0).
+    api.monitoring.diagnoseScripted = vi.fn().mockResolvedValue({ success: true, data: {
+      url: 'https://hedef.example/x', candidates: ['https://hedef.example/x'],
+      proxy_configured: true, no_proxy: 'akbank.com', k6_version: 'v0.49.0',
+      legs: [
+        { key: 'k6-direct-ca', label: 'k6 · doğrudan · kurumsal CA', status: 'FAIL', ok: false,
+          duration_ms: 15200, error: 'Request Failed — request timeout', via_proxy: false,
+          phases: { blocked_ms: 0, connecting_ms: 41, tls_ms: 0, sending_ms: 0,
+                    waiting_ms: 0, receiving_ms: 0, data_sent: 281, data_received: 316 } },
+        { key: 'k6-proxy-ca', label: 'k6 · vekil · kurumsal CA', status: 'PASS', ok: true,
+          duration_ms: 820, error: null, via_proxy: true,
+          phases: { blocked_ms: 2, connecting_ms: 30, tls_ms: 90, sending_ms: 1,
+                    waiting_ms: 60, receiving_ms: 3, data_sent: 500, data_received: 5000 } },
+      ] } })
+
+    render(<ScriptedMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
+    fireEvent.click(await screen.findByText('OIDC Login'))
+    fireEvent.click(await screen.findByRole('button', { name: /connection diagnostics|bağlantı teşhisi/i }))
+    fireEvent.click(await screen.findByRole('button', { name: /run diagnostics|teşhisi çalıştır/i }))
+
+    await waitFor(() => expect(api.monitoring.diagnoseScripted).toHaveBeenCalledWith(1, undefined))
+
+    const legs = await waitFor(() => {
+      const els = document.querySelectorAll('.sc-diag-leg')
+      if (els.length !== 2) throw new Error('bacaklar cizilmedi')
+      return els
+    })
+    // Başarısız bacak TLS'te takılmış olarak işaretli; BAŞARILI bacakta takılma işareti YOK
+    expect(legs[0].querySelectorAll('.sc-phase--stuck')).toHaveLength(1)
+    expect(legs[0].querySelector('.sc-phase--stuck').textContent).toMatch(/TLS/i)
+    expect(legs[1].querySelectorAll('.sc-phase--stuck')).toHaveLength(0)
+    // Etkin vekil bağlamı görünür (NO_PROXY sonek eşleşmesi yanlış teşhisin kaynağıydı)
+    expect(document.querySelector('.sc-diag-meta').textContent).toContain('akbank.com')
+  })
+
   it('boş monitör listesi spinner DEĞİL boş-durum bloğu gösterir', async () => {
     api.monitoring.getScriptedMonitors.mockResolvedValue({ success: true, data: {
       k6_available: true, can_manage: true, monitors: [] } })
