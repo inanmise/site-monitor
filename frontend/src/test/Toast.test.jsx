@@ -115,4 +115,36 @@ describe('Toast', () => {
     expect(() => render(<Bad />)).toThrow(/ToastProvider/)
     spy.mockRestore()
   })
+
+  it('REGRESYON: unmount bekleyen otomatik-kapanma zamanlayıcısını İPTAL eder', () => {
+    // 2026-08-14: bu zamanlayıcı temizlenmediği için sağlayıcı gittikten sonra `setToasts`
+    // çalışıyordu. Tarayıcıda sessiz bir uyarı; jsdom kapandıktan SONRA ise React'in
+    // `getCurrentEventPriority`'si `window`'a dokunup yakalanmamış `ReferenceError` fırlatıyor
+    // ve vitest tüm koşuyu düşürüyor (673 test geçti, CI yine kırmızı).
+    const clearSpy = vi.spyOn(globalThis, 'clearTimeout')
+    const { unmount } = render(<ToastProvider><Trigger /></ToastProvider>)
+    fireEvent.click(screen.getByText('Show'))
+    expect(screen.getByText('Hello')).toBeInTheDocument()
+
+    clearSpy.mockClear()
+    unmount()
+    expect(clearSpy, 'unmount bekleyen zamanlayıcıyı iptal etmedi').toHaveBeenCalled()
+
+    // Zamanlayıcı gerçekten ölmüş olmalı: süre ilerletilince hiçbir güncelleme tetiklenmemeli.
+    expect(() => act(() => { vi.advanceTimersByTime(10_000) })).not.toThrow()
+    clearSpy.mockRestore()
+  })
+
+  it('elle kapatma da zamanlayıcıyı iptal eder (çift kaldırma yok)', () => {
+    const clearSpy = vi.spyOn(globalThis, 'clearTimeout')
+    render(<ToastProvider><Trigger /></ToastProvider>)
+    fireEvent.click(screen.getByText('Show'))
+    clearSpy.mockClear()
+
+    fireEvent.click(screen.getByText('Hello'))          // toast'a tıklamak kapatır
+    expect(clearSpy).toHaveBeenCalled()
+    expect(screen.queryByText('Hello')).toBeNull()
+    expect(() => act(() => { vi.advanceTimersByTime(10_000) })).not.toThrow()
+    clearSpy.mockRestore()
+  })
 })
