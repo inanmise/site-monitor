@@ -25,6 +25,12 @@ const MON_TYPES = [
   ['dns', 'getDnsMonitors', m => m.domain],
   ['domain', 'getDomainMonitors', m => m.domain],
   ['cert', 'getUptimeOverview', m => m.domain],
+  // Sentetik: iki farklılık var — liste ucu {monitors:[…]} ile sarmalıyor ve alarm anahtarı
+  // monitörün ADI (SweepItem.domain = m.getName()), diğer türlerdeki url/host/domain değil.
+  // Motor tarafı zaten hazırdı (isUnderMaintenance sentetik alarmın da geçtiği yolda); eksik
+  // olan yalnız bu listeydi, bu yüzden planlı kesintide sentetik monitörler susturulamıyor,
+  // tek çare "tüm monitörler" bayrağıyla her şeyi birden susturmaktı.
+  ['scripted', 'getScriptedMonitors', m => m.name, d => d?.monitors || []],
 ]
 const emptyForm = {
   name: '', description: '', allMonitors: false, targets: [], timezone: 'Europe/Istanbul',
@@ -65,10 +71,12 @@ export default function MaintenanceWindowsPage({ systemRole }) {
   async function loadMonitorOptions() {
     if (optsLoaded) return
     const out = []
-    await Promise.all(MON_TYPES.map(async ([type, fn, key]) => {
+    await Promise.all(MON_TYPES.map(async ([type, fn, key, pick]) => {
       try {
         const res = await api.monitoring[fn]?.()
-        for (const m of (res?.success ? res.data || [] : [])) {
+        // `pick`: yanıtı düz diziye indirger — sentetik uç {monitors:[…]} ile sarmalıyor.
+        const list = res?.success ? (pick ? pick(res.data) : (res.data || [])) : []
+        for (const m of list) {
           const target = key(m)
           if (!target) continue
           out.push({ value: target, target, type, name: m.name || target, label: `${m.name || target} · ${t('mw.type.' + type)}` })

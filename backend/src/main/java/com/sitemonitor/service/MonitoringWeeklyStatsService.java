@@ -49,7 +49,8 @@ public class MonitoringWeeklyStatsService {
             "dns",     Set.of("DNS_FAILURE", "DNS_CHANGED", "DNS_SLOW", "DNS_UNEXPECTED", "DNS_INCONSISTENT"),
             "keyword", Set.of("KEYWORD", "KEYWORD_SLOW", "KEYWORD_SSL", "KEYWORD_DOMAIN_EXPIRY"),
             "ping",    Set.of("PING_DOWN"),
-            "domain",  Set.of("DOMAINMON_EXPIRY", "DOMAINMON_UNKNOWN", "DOMAINMON_STATUS", "DOMAINMON_CHANGED"));
+            "domain",  Set.of("DOMAINMON_EXPIRY", "DOMAINMON_UNKNOWN", "DOMAINMON_STATUS", "DOMAINMON_CHANGED"),
+            "scripted", Set.of("SCRIPTED_FAIL"));
 
     private final HttpMonitorRepository httpMonitorRepo;
     private final PortMonitorRepository portMonitorRepo;
@@ -58,6 +59,7 @@ public class MonitoringWeeklyStatsService {
     private final PingMonitorRepository pingMonitorRepo;
     private final DomainMonitorRepository domainMonitorRepo;
     private final CertificateInventoryRepository inventoryRepo;
+    private final ScriptedMonitorRepository scriptedMonitorRepo;
 
     private final HttpCheckRepository httpCheckRepo;
     private final PortCheckRepository portCheckRepo;
@@ -66,6 +68,7 @@ public class MonitoringWeeklyStatsService {
     private final PingCheckRepository pingCheckRepo;
     private final DomainCheckRepository domainCheckRepo;
     private final CertificateCheckRepository certCheckRepo;
+    private final ScriptedCheckRepository scriptedCheckRepo;
 
     private final AlertEventRepository alertEventRepo;
     private final CertificateService certificateService;
@@ -116,6 +119,7 @@ public class MonitoringWeeklyStatsService {
         types.add(portType(c));
         types.add(dnsType(c));
         types.add(keywordType(c));
+        types.add(scriptedType(c));
         return new MonitoringStats(types);
     }
 
@@ -203,6 +207,22 @@ public class MonitoringWeeklyStatsService {
                 .filter(m -> c.teamId().equals(m.getTeamId()))
                 .map(m -> new MonRef(m.getId(), nz(m.getName(), m.getUrl()), m.getCreatedAt())).toList();
         return monitorIdType("keyword", mons, c, (idl, from, to) -> keywordResultRepo.weeklyStatsByMonitor(idl, from, to), ExtraMode.NONE, null);
+    }
+
+    /**
+     * Sentetik (k6) izleme — haftalık raporda HİÇ sayılmıyordu.
+     *
+     * <p>Ne `TYPE_ALERTS`'te `SCRIPTED_FAIL` vardı ne de bir `scriptedType()` metodu; dolayısıyla
+     * haftalık rapor ekranı, PDF ve e-postası sentetik monitörleri yok sayıyordu. Sorgu
+     * ({@code ScriptedCheckRepository.weeklyStatsByMonitor}) zaten YAZILMIŞTI ama hiç çağrılmıyordu
+     * — bağlanmamış halka.
+     */
+    private TypeStats scriptedType(Ctx c) {
+        List<MonRef> mons = scriptedMonitorRepo.findByActiveTrue().stream()
+                .filter(m -> c.teamId().equals(m.getTeamId()))
+                .map(m -> new MonRef(m.getId(), m.getName(), m.getCreatedAt())).toList();
+        return monitorIdType("scripted", mons, c,
+                (idl, from, to) -> scriptedCheckRepo.weeklyStatsByMonitor(idl, from, to), ExtraMode.NONE, null);
     }
 
     /** monitorId-anahtarlı türler için ortak: aktif-sayı + id→ad + haftalık grup sorgusu (cur/prev). */
