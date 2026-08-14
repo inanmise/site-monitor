@@ -57,6 +57,9 @@ public class ScriptedCheckerService {
     private final AtomicInteger queued = new AtomicInteger();
     private volatile boolean k6Available = false;
     private volatile String k6Version = null;
+    /** Permit alamadığı / k6 bulunamadığı için YÜRÜTÜLEMEYEN kontrol sayısı — kapasite darlığının
+     *  tek erken uyarısı. Bu sayaç olmadan "havuz dolu" ile "hedef çöktü" aynı ERROR satırıydı. */
+    private io.micrometer.core.instrument.Counter skipped;
 
     // ── Sonuç + env tipleri ──────────────────────────────────────────────────
     public record EnvVar(String name, String value, boolean secret) {}
@@ -94,6 +97,12 @@ public class ScriptedCheckerService {
                 .description("Şu an çalışan k6 alt süreç sayısı").register(registry);
         Gauge.builder("scripted.k6.queued", queued, AtomicInteger::get)
                 .description("k6 havuzunda bekleyen kontrol sayısı").register(registry);
+        Gauge.builder("scripted.k6.available", this, s -> s.k6Available ? 1 : 0)
+                .description("k6 binary'si kullanılabilir mi (1/0) — 0 ise sentetik izleme tamamen ölüdür")
+                .register(registry);
+        skipped = io.micrometer.core.instrument.Counter.builder("scripted.k6.skipped")
+                .description("Yürütülemeyen kontrol sayısı (havuz dolu / k6 yok) — kapasite darlığı sinyali")
+                .register(registry);
         probeK6();
     }
 
@@ -331,6 +340,45 @@ public class ScriptedCheckerService {
         }
     }
 
+    /** Son yeniden-sonda anı — {@link #ensureProbed()} bunu kullanır. */
+    private volatile long lastProbeAtMs = 0;
+    private static final long REPROBE_INTERVAL_MS = 5 * 60_000L;
+
+    /**
+     * k6 yoksa PERİYODİK olarak yeniden dener (5 dk'da bir).
+     *
+     * <p>Neden: {@code probeK6()} yalnız {@code @PostConstruct}'ta çağrılıyordu. Pod, k6'yı taşıyan
+     * volume/sidecar hazır olmadan başlarsa {@code k6Available} sonsuza kadar false kalıyor ve
+     * sweep her turda SESSİZCE dönüyordu — hiçbir kontrol koşmuyor, hiçbir alarm çıkmıyor, hiçbir
+     * kayıt yazılmıyor. Tek sinyal sentetik sayfasındaki banner'dı; oraya kimse bakmazsa sentetik
+     * izleme haftalarca ölü kalabilirdi.
+     *
+     * @return k6 şu an kullanılabilir mi
+     */
+    public boolean ensureProbed() {
+        if (k6Available) return true;
+        long now = System.currentTimeMillis();
+        if (now - lastProbeAtMs < REPROBE_INTERVAL_MS) return false;
+        lastProbeAtMs = now;
+        probeK6();
+        return k6Available;
+    }
+
+    /**
+     * Bir koşumun kuyrukta + çalışırken alabileceği MAKSİMUM süre (sn).
+     *
+     * <p>Çağıran ({@code SchedulerService}) sonucu beklerken bundan KISA bir süre kullanırsa koşum
+     * arka planda tamamlanır ama sonucu hiçbir yere yazılmaz: {@code scripted_checks}'e satır
+     * girmez, {@code checked_at} eskir, alarm da çıkmaz — monitör ekranda sessizce donar.
+     * (2026-08: sweep 200 sn beklerken permit beklemesi 210 sn'ye çıkabiliyordu.)
+     */
+    public static int maxWaitSeconds() {
+        return ABS_MAX_TIMEOUT + PERMIT_WAIT_MARGIN_SEC;
+    }
+
+    /** Permit beklemesine eklenen pay — {@link #maxWaitSeconds()} ile TEK kaynaktan türer. */
+    private static final int PERMIT_WAIT_MARGIN_SEC = 30;
+
     public boolean isAvailable() { return k6Available; }
     public String version() { return k6Version; }
     public int activeProcesses() { return active.get(); }
@@ -472,7 +520,7 @@ public class ScriptedCheckerService {
         if (!k6Available) { queued.decrementAndGet(); return err("k6 bulunamadı — Sentetik İzleme devre dışı"); }
         boolean acquired = false;
         try {
-            acquired = permits.tryAcquire(timeoutSec + 30L, TimeUnit.SECONDS);
+            acquired = permits.tryAcquire(timeoutSec + PERMIT_WAIT_MARGIN_SEC, TimeUnit.SECONDS);
             queued.decrementAndGet();
             if (!acquired) return err("k6 havuzu dolu — kontrol atlandı (sıra beklemesi aşıldı)");
             active.incrementAndGet();
@@ -649,11 +697,32 @@ public class ScriptedCheckerService {
     }
 
     /**
-     * Süreç HİÇ başlamadan biten yollar (k6 yok / havuz dolu / interrupt). Burada
-     * {@code durationMs=null, exitCode=-1} DOĞRU cevaptır: 0 ms "çok hızlı koştu" değil "koşamadı" demek.
+     * ALTYAPI ATLAMASI — kontrol hiç YÜRÜTÜLEMEDİ (k6 yok / havuz dolu / interrupt).
+     *
+     * <p>Bu, hedefin arızası DEĞİLDİR ve {@code ERROR} yazmak sahada pahalı bir yanlış üretiyordu:
+     * {@code pool-size=2} olan bir podda 100 monitörlük filoda bir sweep'te ~94 monitör permit
+     * alamayıp {@code ERROR} yazıyor, {@code up=false} olup teyit zincirine giriyor ve hedeflerin
+     * hiçbirinde sorun yokken alarm üretiyordu (ya da toplu bastırma tetiklenip GERÇEK kesinti de
+     * dâhil hiç alarm çıkmıyordu). Ayrıca {@code ok=false} satırı uptime rollup'ını kirletiyordu.
+     *
+     * <p>Sözleşme: {@code SKIPPED} statüsü olan sonuç ne kaydedilir ne alarm zincirine girer —
+     * çağıran (scheduler) onu "bu turda koşmadı" olarak ele alır; {@code checked_at} eskimiş kalır,
+     * ki bu da doğrudur: gerçekten kontrol edilmedi.
+     *
+     * <p>{@code durationMs=null, exitCode=-1} DOĞRU cevaptır: 0 ms "çok hızlı koştu" değil
+     * "koşamadı" demek.
      */
+    static final String STATUS_SKIPPED = "SKIPPED";
+
     private ScriptedResult err(String message) {
-        return errWithContext(message, null, null, null, List.of(), false);
+        skipped.increment();
+        return new ScriptedResult(STATUS_SKIPPED, false, null, -1,
+                null, null, null, null, null, null, null, message, false, Phases.EMPTY);
+    }
+
+    /** Sonuç "kontrol yürütülemedi" mi? (Kaydetme/alarm/rollup yollarının hepsi buna bakar.) */
+    public static boolean isSkipped(ScriptedResult r) {
+        return r != null && STATUS_SKIPPED.equals(r.status());
     }
 
     /**

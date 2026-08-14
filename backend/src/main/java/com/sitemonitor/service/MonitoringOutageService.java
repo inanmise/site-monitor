@@ -344,8 +344,27 @@ public class MonitoringOutageService {
         return null;
     }
 
+    /**
+     * Çift-zincir guard'ının anahtarı.
+     *
+     * <p>Genel kural {@code tip:domain:detail}'dir çünkü bir domain'in birden çok izlenen yüzü
+     * olabilir (port 443 / 8443, DNS A / MX) ve bunlar AYRI kesintilerdir; detail orada sabit bir
+     * ayırıcıdır ("443", "A").
+     *
+     * <p>SENTETİKTE DEĞİL: {@code scriptedDetail} check sayaçlarını ve hata metnini taşır
+     * ("FAIL — 0✓/2✗ · Request Failed … request timeout"), yani her sweep'te değişebilir. Anahtara
+     * girince {@code putIfAbsent} guard'ı tutmuyor, aynı monitör için paralel teyit zincirleri
+     * başlıyor ve her biri ayrı bir k6 permit'i yiyerek havuzu doyuruyordu. Monitör adı zaten
+     * tekil olduğundan sentetikte detail'e gerek yok — detail gösterimde AYNEN korunur.
+     */
+    private static String confirmKey(SweepItem item) {
+        if (EscalationService.TYPE_SCRIPTED_FAIL.equals(item.alertType()))
+            return item.alertType() + ":" + item.domain();
+        return item.alertType() + ":" + item.domain() + ":" + item.detail();
+    }
+
     void startConfirmation(SweepItem item) {
-        String key = item.alertType() + ":" + item.domain() + ":" + item.detail();
+        String key = confirmKey(item);
         String firstFailureAt = now();
         ConfirmState initial = new ConfirmState(item.alertType(), item.domain(), item.detail(),
                 0, effAttempts(item), firstFailureAt, System.currentTimeMillis() + effDelayMs(item));
@@ -406,6 +425,15 @@ public class MonitoringOutageService {
 
             if ("up".equals(r.get("status"))) {
                 log.info("Geçici dalgalanma: {} — {}. doğrulama denemesinde düzeldi, alarm üretilmedi", key, n);
+                inFlight.remove(key);
+                return;
+            }
+            // "skipped" = doğrulama YÜRÜTÜLEMEDİ (ör. k6 havuzu dolu). Kanıt yok ⇒ zinciri iptal et.
+            // Kesinti gerçekse sonraki sweep zinciri yeniden açar; tersini yapmak (kanıtsız DOWN
+            // saymak) altyapı darlığını KRİTİK alarma çevirirdi.
+            if ("skipped".equals(r.get("status"))) {
+                log.warn("Teyit denemesi yürütülemedi ({}. deneme): {} — {} · zincir iptal edildi, "
+                        + "sonraki sweep yeniden değerlendirecek", n, key, r.get("error"));
                 inFlight.remove(key);
                 return;
             }

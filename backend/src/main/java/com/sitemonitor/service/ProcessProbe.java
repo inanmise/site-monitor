@@ -36,6 +36,41 @@ public final class ProcessProbe {
 
     public record Result(String output, int exitCode, boolean timedOut) {}
 
+    /**
+     * Akışı EOF'a kadar tüketir ve yalnız son {@code cap} byte'ı döndürür (halka tampon).
+     *
+     * <p>Amaç iki yönlü: (1) borunun dolup alt süreci bloke etmesini önlemek — okumayı bırakan bir
+     * tüketici, çok çıktı basan süreci sonsuza kadar {@code write()}'ta asar; (2) hafızayı sabit
+     * tutmak — çıktının tamamı hiçbir zaman biriktirilmez.
+     *
+     * <p>Neden SON byte'lar: hata mesajı çıktının sonundadır ({@code extractErrorLines} bu
+     * varsayımla çalışır).
+     */
+    static byte[] readTail(java.io.InputStream in, int cap) throws IOException {
+        byte[] ring = new byte[cap];
+        byte[] buf = new byte[8192];
+        int filled = 0;      // halkadaki geçerli byte sayısı (cap'e kadar büyür)
+        int pos = 0;         // bir sonraki yazma konumu
+        int n;
+        while ((n = in.read(buf)) != -1) {
+            if (n >= cap) {                       // tek okuma tüm halkayı aşıyor → yalnız kuyruğu al
+                System.arraycopy(buf, n - cap, ring, 0, cap);
+                filled = cap; pos = 0;
+                continue;
+            }
+            int first = Math.min(n, cap - pos);
+            System.arraycopy(buf, 0, ring, pos, first);
+            if (first < n) System.arraycopy(buf, first, ring, 0, n - first);   // başa sar
+            pos = (pos + n) % cap;
+            filled = Math.min(cap, filled + n);
+        }
+        if (filled < cap) return java.util.Arrays.copyOf(ring, filled);        // hiç sarmadı
+        byte[] out = new byte[cap];                                            // sardı → pos'tan başla
+        System.arraycopy(ring, pos, out, 0, cap - pos);
+        System.arraycopy(ring, 0, out, cap - pos, pos);
+        return out;
+    }
+
     /** SIGTERM→grace→SIGKILL sonlandırma; readAllBytes'in üst-sınırı (OOM koruması). */
     private static final int GRACE_SECONDS = 3;
     private static final int HARD_READ_CAP = 512 * 1024;
@@ -94,8 +129,16 @@ public final class ProcessProbe {
             if (env != null && !env.isEmpty()) pb.environment().putAll(env);
             proc = pb.start();
             final Process p = proc;
+            // Çıktı SONUNA KADAR tüketilir; bellekte yalnız SON HARD_READ_CAP byte tutulur.
+            //
+            // Eskiden `readNBytes(HARD_READ_CAP)` vardı: 512 KB dolunca okuma DURUYOR, alt sürecin
+            // stdout borusu doluyor, k6 write()'ta bloke kalıyor ve çıkamıyordu → waitFor süresi
+            // doluyor, SIGTERM. Yani çok çıktı basan (ör. `console.log(JSON.stringify(res.body))`)
+            // bir script, tüm check'leri geçse bile DAİMA TIMEOUT görüyordu. Üstelik saklanan
+            // pencere çıktının BAŞIydı; `extractErrorLines` ise hatanın SONDA olduğunu varsayar,
+            // yani gerçek hata satırı hiç görünmezdi.
             CompletableFuture<byte[]> reader = CompletableFuture.supplyAsync(() -> {
-                try { return p.getInputStream().readNBytes(HARD_READ_CAP); }
+                try { return readTail(p.getInputStream(), HARD_READ_CAP); }
                 catch (IOException e) { return new byte[0]; }
             }, READER_POOL);
 
