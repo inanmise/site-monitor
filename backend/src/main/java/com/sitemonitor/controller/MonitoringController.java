@@ -2624,6 +2624,18 @@ public class MonitoringController {
                 new CsvColumn<>("duration_ms", com.sitemonitor.model.ScriptedCheck::getDurationMs),
                 new CsvColumn<>("checks_passed", com.sitemonitor.model.ScriptedCheck::getChecksPassed),
                 new CsvColumn<>("checks_failed", com.sitemonitor.model.ScriptedCheck::getChecksFailed),
+                // Son üç sürümde eklenen sinyaller CSV'ye girmiyordu; dışa aktarım tabloda duran
+                // veriyi taşımalı — dışarıda analiz eden kullanıcı faz kırılımını ve hangi script
+                // sürümüyle koşulduğunu göremiyordu (PAGE aynı sürümde alan başına kolon almıştı).
+                new CsvColumn<>("exit_code", com.sitemonitor.model.ScriptedCheck::getExitCode),
+                new CsvColumn<>("script_version", com.sitemonitor.model.ScriptedCheck::getScriptVersion),
+                new CsvColumn<>("via_proxy", com.sitemonitor.model.ScriptedCheck::getViaProxy),
+                new CsvColumn<>("req_blocked_ms", com.sitemonitor.model.ScriptedCheck::getReqBlockedMs),
+                new CsvColumn<>("req_connecting_ms", com.sitemonitor.model.ScriptedCheck::getReqConnectingMs),
+                new CsvColumn<>("req_tls_ms", com.sitemonitor.model.ScriptedCheck::getReqTlsMs),
+                new CsvColumn<>("req_waiting_ms", com.sitemonitor.model.ScriptedCheck::getReqWaitingMs),
+                new CsvColumn<>("data_sent", com.sitemonitor.model.ScriptedCheck::getDataSent),
+                new CsvColumn<>("data_received", com.sitemonitor.model.ScriptedCheck::getDataReceived),
                 new CsvColumn<>("error", com.sitemonitor.model.ScriptedCheck::getError)), response);
     }
 

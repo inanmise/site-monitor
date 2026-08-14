@@ -12,6 +12,7 @@ import com.sitemonitor.repository.KeywordMonitorRepository;
 import com.sitemonitor.repository.MonitoringGroupRepository;
 import com.sitemonitor.repository.PingMonitorRepository;
 import com.sitemonitor.repository.PortMonitorRepository;
+import com.sitemonitor.repository.ScriptedMonitorRepository;
 import com.sitemonitor.repository.TeamRepository;
 import jakarta.servlet.http.HttpSession;
 import lombok.RequiredArgsConstructor;
@@ -67,6 +68,7 @@ public class MonitoringGroupService {
     private final DnsMonitorRepository dnsRepo;
     private final KeywordMonitorRepository keywordRepo;
     private final DomainMonitorRepository domainRepo;
+    private final ScriptedMonitorRepository scriptedRepo;
     private final AlertEventRepository alertEventRepo;
     private final TeamRepository teamRepo;
     private final AuditService auditService;   // rename → audit_log (MONITOR_GROUP_RENAME, eski→yeni)
@@ -155,6 +157,9 @@ public class MonitoringGroupService {
             countInto(counts, "dns",     dnsRepo.groupCountsByTeam());
             countInto(counts, "keyword", keywordRepo.groupCountsByTeam());
             countInto(counts, "domain",  domainRepo.groupCountsByTeam());
+            // Sorgu ZATEN yaziliydi (ScriptedMonitorRepository.groupCountsByTeam) ama hic
+            // cagrilmiyordu: Monitor Gruplari ekrani sentetik gruplari 0 gosteriyordu.
+            countInto(counts, "scripted", scriptedRepo.groupCountsByTeam());
         }
 
         Map<Long, String> teamNames = new HashMap<>();
@@ -181,6 +186,7 @@ public class MonitoringGroupService {
             case "dns"     -> dnsRepo.groupCountsByTeam();
             case "keyword" -> keywordRepo.groupCountsByTeam();
             case "domain"  -> domainRepo.groupCountsByTeam();
+            case "scripted"-> scriptedRepo.groupCountsByTeam();
             default        -> List.of();
         };
     }

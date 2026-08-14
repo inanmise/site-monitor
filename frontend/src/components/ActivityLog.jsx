@@ -4,7 +4,7 @@ import { api, formatDateSec } from '../api/client'
 import { useT } from '../i18n/index.jsx'
 import { useVisibleInterval } from '../hooks/useVisibleInterval.js'
 import {
-  Shield, Activity, Globe, Server, Radio, Share2, Search, CalendarClock, ScanSearch,
+  Shield, Activity, Globe, Server, Radio, Share2, Search, CalendarClock, ScanSearch, FlaskConical,
   CheckCircle, AlertTriangle, XCircle, HelpCircle, ChevronDown, ChevronRight,
   Download, X, RefreshCw, Clock, User,
 } from 'lucide-react'
@@ -20,6 +20,9 @@ const TYPES = [
   { key: 'DNS',     Icon: Share2,        color: '#6d28d9' },
   { key: 'KEYWORD', Icon: Search,        color: '#d97706' },
   { key: 'PAGE',    Icon: ScanSearch,    color: '#0d9488' },
+  // Backend SCRIPTED kaydi yaziyor (ActivityLogService.SCRIPTED) ama burada karsiligi yoktu:
+  // satirlar gri "?" rozetiyle cikiyor ve tur filtresi cipi hic uretilmiyordu.
+  { key: 'SCRIPTED',Icon: FlaskConical,  color: '#7e22ce' },
 ]
 const TYPE_MAP = Object.fromEntries(TYPES.map((t) => [t.key, t]))
 

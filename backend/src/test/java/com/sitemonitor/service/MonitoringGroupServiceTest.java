@@ -11,6 +11,7 @@ import com.sitemonitor.repository.KeywordMonitorRepository;
 import com.sitemonitor.repository.MonitoringGroupRepository;
 import com.sitemonitor.repository.PingMonitorRepository;
 import com.sitemonitor.repository.PortMonitorRepository;
+import com.sitemonitor.repository.ScriptedMonitorRepository;
 import com.sitemonitor.repository.TeamRepository;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -50,6 +51,9 @@ class MonitoringGroupServiceTest {
     @Mock DnsMonitorRepository dnsRepo;
     @Mock KeywordMonitorRepository keywordRepo;
     @Mock DomainMonitorRepository domainRepo;
+    // Sentetik grup sayımı 20.19.x'te bağlandı; mock EKLENMEZSE @InjectMocks alanı null bırakır ve
+    // listForScope tüm testlerde NPE'ye düşer (sayım yolu her çağrıda bu repo'ya uğrar).
+    @Mock ScriptedMonitorRepository scriptedRepo;
     @Mock AlertEventRepository alertEventRepo;
     @Mock TeamRepository teamRepo;
     @Mock AuditService auditService;
