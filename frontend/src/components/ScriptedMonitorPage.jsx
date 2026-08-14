@@ -937,6 +937,7 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
               <button className={`modal-tab${detailTab === 'alerts' ? ' active' : ''}`} onClick={() => setDetailTab('alerts')}>{t('scripted.tabAlerts')}</button>
               <button className={`modal-tab${detailTab === 'chart' ? ' active' : ''}`} onClick={() => setDetailTab('chart')}>{t('scripted.tabChart')}</button>
               <button className={`modal-tab${detailTab === 'versions' ? ' active' : ''}`} onClick={() => setDetailTab('versions')}>{t('scripted.tabVersions')}</button>
+              <button className={`modal-tab${detailTab === 'diag' ? ' active' : ''}`} onClick={() => setDetailTab('diag')}>{t('scripted.tabDiag')}</button>
               <button className={`modal-tab${detailTab === 'notes' ? ' active' : ''}`} onClick={() => setDetailTab('notes')}>{t('scripted.tabGuide')}</button>
             </div>
 
@@ -964,6 +965,8 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
             </>)}
 
             {detailTab === 'alerts' && <AlertHistory domain={selected.name} />}
+
+            {detailTab === 'diag' && <DiagTab t={t} monitor={selected} canRun={canManageRow(selected)} />}
 
             {detailTab === 'versions' && (
               <VersionsTab t={t} monitor={selected} canEdit={canManageRow(selected)}
@@ -1050,6 +1053,73 @@ function RequestPhases({ t, check, viaProxy }) {
       {(sent || received) && (
         <div className="sc-phase-bytes">{t('scripted.phaseBytes', sent ?? '—', received ?? '—')}</div>
       )}
+    </div>
+  )
+}
+
+/**
+ * BAĞLANTI TEŞHİSİ — "Java çekebiliyor ama k6 çekemiyor" ayrımını ÖLÇEREK kapatır.
+ *
+ * Sahada bir monitör 288 koşumun 288'inde `request timeout` verirken aynı pod hedefin
+ * sertifikasını sorunsuz alabiliyordu; farkın nerede oluştuğu (vekil kararı mı, kurumsal CA mı,
+ * TLS'in kendisi mi) hiçbir ekrandan görülemiyor ve teşhis dört sürüm boyunca tahmine kalıyordu.
+ * Bu sekme üç değişkeni TEK TEK oynatıp faz kırılımlarını yan yana koyar; okuma kuralı basit:
+ * hangi bacak geçiyorsa fark ORADAKİ değişkendedir.
+ *
+ * Sonda KULLANICI SCRIPT'İNİ koşmaz — tek istekli üretilmiş bir script kullanır; yani script
+ * hatalarıyla ağ sorunları birbirine karışmaz.
+ */
+function DiagTab({ t, monitor, canRun }) {
+  const [state, setState] = useState({ idle: true })
+  const [url, setUrl] = useState('')
+
+  async function run() {
+    setState({ loading: true })
+    const res = await api.monitoring.diagnoseScripted(monitor.id, url.trim() || undefined)
+    setState(res?.success ? { data: res.data } : { error: res?.error || t('scripted.diagError') })
+    if (res?.success && !url) setUrl(res.data?.url || '')
+  }
+
+  return (
+    <div className="sc-diag">
+      <p className="field-hint">{t('scripted.diagIntro')}</p>
+      <div className="sc-diag-run">
+        <input className="input" value={url} onChange={e => setUrl(e.target.value)}
+          placeholder={t('scripted.diagUrlPlaceholder')} aria-label={t('scripted.diagUrl')} />
+        <button type="button" className="btn btn-primary" onClick={run} disabled={state.loading || !canRun}>
+          {state.loading ? <Spinner size={14} /> : <Play size={14} />} {t('scripted.diagRun')}
+        </button>
+      </div>
+      {!canRun && <div className="field-hint">{t('scripted.diagNoPermission')}</div>}
+
+      {state.loading && <LoadingBlock label={t('scripted.diagRunning')} />}
+      {state.error && <AlertBanner tone="danger" icon={AlertTriangle}>{state.error}</AlertBanner>}
+
+      {state.data && (<>
+        {/* Vekil kararı burada da yazılı: "AUTO seçtim, vekilden geçiyordur" varsayımı sahada
+            dört sürüm boyunca yanlış teşhise sebep oldu (NO_PROXY sonek eşleşmesi). */}
+        <div className="sc-diag-meta">
+          <span><strong>{t('scripted.diagTarget')}:</strong> <code>{state.data.url}</code></span>
+          <span>k6 {state.data.k6_version}</span>
+          {state.data.proxy_configured
+            ? <span title={state.data.no_proxy}>NO_PROXY=<code>{state.data.no_proxy || '—'}</code></span>
+            : <span>{t('scripted.useProxyNotConfigured')}</span>}
+        </div>
+        <div className="sc-diag-legs">
+          {(state.data.legs || []).map(leg => (
+            <div key={leg.key} className={`sc-diag-leg${leg.ok ? ' sc-diag-leg--ok' : ' sc-diag-leg--bad'}`}>
+              <div className="sc-diag-leg-head">
+                <span className="sc-diag-leg-label">{leg.label}</span>
+                <span className="sc-diag-leg-status">{statusLabel(t, leg.status)}</span>
+                {leg.duration_ms != null && <span className="sc-diag-leg-ms">{leg.duration_ms} ms</span>}
+              </div>
+              {leg.error && <div className="sc-err-msg">{leg.error}</div>}
+              <RequestPhases t={t} check={leg} viaProxy={leg.via_proxy} />
+            </div>
+          ))}
+        </div>
+        <p className="field-hint">{t('scripted.diagHowToRead')}</p>
+      </>)}
     </div>
   )
 }

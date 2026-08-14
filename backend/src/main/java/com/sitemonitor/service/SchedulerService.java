@@ -399,6 +399,9 @@ public class SchedulerService {
         patch("ALTER TABLE scripted_checks ADD COLUMN req_receiving_ms BIGINT");
         patch("ALTER TABLE scripted_checks ADD COLUMN data_sent BIGINT");
         patch("ALTER TABLE scripted_checks ADD COLUMN data_received BIGINT");
+        // Koşumun HANGİ script sürümüyle yapıldığı — sürüm↔arıza korelasyonu bu alan olmadan
+        // kurulamıyordu (Sürümler sekmesi ile Kontrol Geçmişi ayrı ayrı bakılıyordu).
+        patch("ALTER TABLE scripted_checks ADD COLUMN script_version VARCHAR(20)");
         // Script'in güncel sürüm etiketi; geçmiş ayrı tabloda (scripted_script_versions, entity'den doğar).
         patch("ALTER TABLE scripted_monitors ADD COLUMN script_version VARCHAR(20)");
         // Taslak kullanıcı+monitör başına TEK satır. monitor_id yerine metin anahtar kullanılıyor:
@@ -2703,6 +2706,7 @@ public class SchedulerService {
             c.setOutputTail(res.outputTail());
             c.setError(res.error());
             c.setViaProxy(res.viaProxy());
+            c.setScriptVersion(m.getScriptVersion());
             var ph = res.phases();
             if (ph != null) {
                 c.setReqBlockedMs(ph.blockedMs());

@@ -241,6 +241,50 @@ public class ScriptedCheckerService {
     /** `__ENV` sonrası `.` veya `["`/`['` GELMEYEN her geçiş → statik çözülemeyen dinamik erişim. */
     private static final Pattern ENV_DYNAMIC = Pattern.compile("__ENV\\s*(?![.\\s]*[.\\[])|__ENV\\s*\\[\\s*(?![\"'])");
 
+    /** Script gövdesindeki mutlak URL'ler — tırnak/backtick/parantez/boşlukta biter. */
+    private static final Pattern URL_LITERAL = Pattern.compile("https?://[^\\s'\"`)<>\\\\]+");
+    /** Şablon literali içindeki `${__ENV.NAME}` — env değeriyle yerine konur. */
+    private static final Pattern ENV_TEMPLATE = Pattern.compile("\\$\\{\\s*__ENV\\s*\\.\\s*([A-Za-z_$][\\w$]*)\\s*}");
+
+    /**
+     * Script'in gittiği HEDEF URL'leri çıkarır — "Bağlantı Teşhisi" hangi adrese sonda atacağını
+     * bilsin diye.
+     *
+     * <p>Neden gerekli: sentetik monitörün tek bir "host" alanı yoktur (diğer 9 türün aksine);
+     * hedef, script gövdesinin içindedir. Teşhis için kullanıcıya "adresi elle yaz" demek, tam da
+     * hata ayıklamaya çalıştığı anda ondan bilgi istemek olurdu.
+     *
+     * <p>Önce {@code ${__ENV.NAME}} geçişleri env DEĞERLERİYLE doldurulur (BASE_URL deseni çok
+     * yaygın), sonra mutlak URL'ler toplanır. Statik olarak çözülemeyen kurgular (string
+     * birleştirme, dinamik {@code __ENV[x]}) bilinçli olarak kaçırılır — uç, kullanıcının elle
+     * URL vermesine izin verir, yani çıkarım bir KOLAYLIKTIR, tek yol değil.
+     *
+     * <p>Secret env değerleri de yerine konur; dönen liste yalnız sonda hedefi seçmek için
+     * kullanılır ve API'ye giden değer çağıran tarafından maskelenmelidir.
+     *
+     * @return tekilleştirilmiş URL listesi (sırayla; en fazla 10)
+     */
+    public static List<String> extractTargetUrls(String script, List<EnvVar> env) {
+        if (script == null || script.isBlank()) return List.of();
+        String src = stripComments(script);
+        if (env != null && !env.isEmpty()) {
+            Map<String, String> byName = new LinkedHashMap<>();
+            for (EnvVar v : env) if (v.name() != null) byName.put(v.name(), v.value() == null ? "" : v.value());
+            StringBuilder sb = new StringBuilder();
+            var m = ENV_TEMPLATE.matcher(src);
+            while (m.find()) {
+                String val = byName.get(m.group(1));
+                m.appendReplacement(sb, java.util.regex.Matcher.quoteReplacement(val == null ? m.group() : val));
+            }
+            m.appendTail(sb);
+            src = sb.toString();
+        }
+        java.util.LinkedHashSet<String> out = new java.util.LinkedHashSet<>();
+        var m = URL_LITERAL.matcher(src);
+        while (m.find() && out.size() < 10) out.add(m.group());
+        return List.copyOf(out);
+    }
+
     /**
      * Script'teki {@code __ENV.X} referanslarını tanımlı ortam değişkenleriyle karşılaştırır.
      *
@@ -402,6 +446,14 @@ public class ScriptedCheckerService {
                 clampTimeout(m.getTimeoutSeconds()), viaProxy));
     }
 
+    /**
+     * Monitörün script'inden çıkarılan hedef adresler — "Bağlantı Teşhisi" varsayılan hedefi.
+     * Secret env değerleri çözülür (BASE_URL bir secret olabilir); çağıran API'ye verirken maskeler.
+     */
+    public List<String> targetUrls(ScriptedMonitor m) {
+        return extractTargetUrls(m.getScript(), parseEnv(m.getEnvJson(), true));
+    }
+
     /** Kaydetmeden tek seferlik test — env JSON ham (secret değerleri düz gelir, henüz şifreli değil). */
     public ScriptedResult test(String script, String envJson, Integer timeoutSeconds, String useProxy) {
         return runGuarded(script, parseEnv(envJson, false), clampTimeout(timeoutSeconds), useProxyFor(useProxy));
@@ -511,6 +563,51 @@ public class ScriptedCheckerService {
         return env;
     }
 
+    // ── Bağlantı teşhisi sondası ─────────────────────────────────────────────
+
+    /**
+     * Teşhis sondaları için AYRI semafor (1). İzleme havuzunu ({@code pool-size}) tüketmez —
+     * {@code validatePermits} ile aynı gerekçe: kullanıcı tetikli bir işlem, zamanlanmış izlemeyi
+     * aç bırakmamalı. Tek permit: teşhis üç bacağı SIRAYLA koşar, paralel teşhis isteği beklemez.
+     */
+    private final Semaphore diagPermits = new Semaphore(1);
+
+    /** Sonda script'i — tek istek, açık timeout, çıktıya durum kodu. Kullanıcı script'i KOŞMAZ. */
+    private static final String PROBE_SCRIPT = """
+            import http from 'k6/http';
+            export default function () {
+              const r = http.get(__ENV.SM_DIAG_URL, { timeout: '15s' });
+              console.log('sm_diag_status=' + r.status);
+            }
+            """;
+
+    /**
+     * Tek bir URL'e k6 ile sonda atar — "Java çekebiliyor ama k6 çekemiyor" ayrımını ÖLÇER.
+     *
+     * <p>Sahadaki teşhis tıkanıklığı tam buradaydı: aynı pod'dan Java sertifikayı alabiliyor, k6
+     * {@code request timeout} veriyordu ve farkın nerede oluştuğu (vekil kararı mı, kurumsal CA mı,
+     * TLS'in kendisi mi) hiçbir ekrandan görülemiyordu. Bu sonda üç değişkeni TEK TEK oynatır.
+     *
+     * @param url       hedef (kullanıcı script'i değil, üretilen sonda script'i koşar)
+     * @param viaProxy  kurumsal vekil kullanılsın mı
+     * @param withCa    kurumsal CA paketi k6'ya verilsin mi (false ⇒ Go yalnız kendi köklerine bakar)
+     */
+    public ScriptedResult probe(String url, boolean viaProxy, boolean withCa) {
+        if (!k6Available) return err("k6 bulunamadı — Sentetik İzleme devre dışı");
+        boolean acquired = false;
+        try {
+            acquired = diagPermits.tryAcquire(30, TimeUnit.SECONDS);
+            if (!acquired) return err("teşhis sondası meşgul — birazdan tekrar deneyin");
+            List<EnvVar> env = List.of(new EnvVar("SM_DIAG_URL", url, false));
+            return execute(PROBE_SCRIPT, env, 25, viaProxy, withCa);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return err("kesintiye uğradı");
+        } finally {
+            if (acquired) diagPermits.release();
+        }
+    }
+
     private ScriptedResult runGuarded(String script, List<EnvVar> env, int timeoutSec, boolean viaProxy) {
         queued.incrementAndGet();
         return runGuardedAfterQueue(script, env, timeoutSec, viaProxy);
@@ -550,6 +647,12 @@ public class ScriptedCheckerService {
      * adımının kendi catch'i vardır — orada patlayan bir şey koşumun tanısını götürmez.
      */
     private ScriptedResult execute(String script, List<EnvVar> envVars, int timeoutSec, boolean viaProxy) {
+        return execute(script, envVars, timeoutSec, viaProxy, true);
+    }
+
+    /** @param withCa false ⇒ kurumsal CA paketi VERİLMEZ; teşhis sondası "CA mı sebep?" sorusunu böyle ayırır. */
+    private ScriptedResult execute(String script, List<EnvVar> envVars, int timeoutSec, boolean viaProxy,
+                                   boolean withCa) {
         Path scriptFile = null, summaryFile = null, caFile = null;
         // Bağlam DEĞİŞKENLERİ try dışında: catch bloğu bunlara erişebilsin.
         List<String> secretValues = new ArrayList<>();
@@ -561,7 +664,7 @@ public class ScriptedCheckerService {
             summaryFile = Files.createTempFile("k6-summary-", ".json");
             Files.writeString(scriptFile, script == null ? "" : script);
 
-            caFile = writeCaBundle();
+            caFile = withCa ? writeCaBundle() : null;
             Map<String, String> env = buildProcessEnv(envVars, viaProxy, caFile, secretValues);
 
             List<String> args = new ArrayList<>(List.of(

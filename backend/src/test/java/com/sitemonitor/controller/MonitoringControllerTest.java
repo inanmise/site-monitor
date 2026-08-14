@@ -92,6 +92,7 @@ class MonitoringControllerTest {
     @MockitoBean com.sitemonitor.repository.ScriptedDraftRepository scriptedDraftRepo;
     @MockitoBean com.sitemonitor.service.ScriptedCheckerService scriptedChecker;
     @MockitoBean com.sitemonitor.service.ProxySettings proxySettings;
+    @MockitoBean com.sitemonitor.service.SsrfGuard ssrfGuard;
     @MockitoBean com.sitemonitor.service.SecretCipher secretCipher;
 
     @BeforeEach
@@ -546,6 +547,66 @@ class MonitoringControllerTest {
                 .andExpect(jsonPath("$.data.monitors[0].checks_failed").value(org.hamcrest.Matchers.nullValue()))
                 .andExpect(jsonPath("$.data.monitors[0].exit_code").value(org.hamcrest.Matchers.nullValue()))
                 .andExpect(jsonPath("$.data.monitors[0].error").value(org.hamcrest.Matchers.nullValue()));
+    }
+
+    @Test
+    @DisplayName("POST /scripted/{id}/diagnose: bacaklar faz kırılımıyla döner; hedef script'ten çıkarılır")
+    void scriptedDiagnose_returnsLegsWithPhases() throws Exception {
+        // "Java çekiyor, k6 çekmiyor" ayrımını ölçen uç — sahada 288 koşumluk teşhis tıkanıklığı.
+        com.sitemonitor.model.ScriptedMonitor m = new com.sitemonitor.model.ScriptedMonitor();
+        m.setId(31L); m.setName("diag-monitor");
+        m.setScript("export default function () { http.get('https://hedef.example/x'); }");
+        when(scriptedMonitorRepo.findById(31L)).thenReturn(Optional.of(m));
+        when(scriptedChecker.isAvailable()).thenReturn(true);
+        when(scriptedChecker.version()).thenReturn("v0.49.0");
+        when(scriptedChecker.targetUrls(any())).thenReturn(List.of("https://hedef.example/x"));
+        var phases = new com.sitemonitor.service.ScriptedCheckerService.Phases(
+                0L, 41L, 0L, 0L, 0L, 0L, 281L, 316L, 1);
+        when(scriptedChecker.probe(anyString(), anyBoolean(), anyBoolean())).thenReturn(
+                new com.sitemonitor.service.ScriptedCheckerService.ScriptedResult(
+                        "FAIL", false, 15000L, 0, null, null, null, null, null, null,
+                        "tail", "Request Failed — request timeout", false, phases));
+
+        mvc.perform(post("/api/monitoring/scripted/31/diagnose")
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON).content("{}")
+                        .session(session("ADMIN")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.url").value("https://hedef.example/x"))
+                // Faz kırılımı bacağın İÇİNDE: teşhisin tamamı buna dayanıyor
+                .andExpect(jsonPath("$.data.legs[0].phases.connecting_ms").value(41))
+                .andExpect(jsonPath("$.data.legs[0].phases.tls_ms").value(0))
+                .andExpect(jsonPath("$.data.legs[0].phases.data_received").value(316))
+                .andExpect(jsonPath("$.data.legs[0].status").value("FAIL"));
+    }
+
+    @Test
+    @DisplayName("POST /scripted/{id}/diagnose: hedef çıkarılamıyor ve verilmediyse 400 (sessiz yanlış sonda YOK)")
+    void scriptedDiagnose_noTarget_returns400() throws Exception {
+        com.sitemonitor.model.ScriptedMonitor m = new com.sitemonitor.model.ScriptedMonitor();
+        m.setId(32L); m.setName("hedefsiz");
+        m.setScript("export default function () { const u = base + '/x'; http.get(u); }");
+        when(scriptedMonitorRepo.findById(32L)).thenReturn(Optional.of(m));
+        when(scriptedChecker.isAvailable()).thenReturn(true);
+        when(scriptedChecker.targetUrls(any())).thenReturn(List.of());
+
+        mvc.perform(post("/api/monitoring/scripted/32/diagnose")
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON).content("{}")
+                        .session(session("ADMIN")))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    @DisplayName("POST /scripted/{id}/diagnose: k6 yoksa 400 — sonda koşmuş gibi görünmesin")
+    void scriptedDiagnose_noK6_returns400() throws Exception {
+        com.sitemonitor.model.ScriptedMonitor m = new com.sitemonitor.model.ScriptedMonitor();
+        m.setId(33L); m.setName("k6siz");
+        when(scriptedMonitorRepo.findById(33L)).thenReturn(Optional.of(m));
+        when(scriptedChecker.isAvailable()).thenReturn(false);
+
+        mvc.perform(post("/api/monitoring/scripted/33/diagnose")
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON).content("{}")
+                        .session(session("ADMIN")))
+                .andExpect(status().isBadRequest());
     }
 
     @Test

@@ -121,6 +121,8 @@ public class MonitoringController {
     @org.springframework.beans.factory.annotation.Autowired
     private com.sitemonitor.service.ProxySettings proxySettings;
     @org.springframework.beans.factory.annotation.Autowired
+    private com.sitemonitor.service.SsrfGuard ssrfGuard;
+    @org.springframework.beans.factory.annotation.Autowired
     private com.sitemonitor.repository.ScriptedScriptVersionRepository scriptedVersionRepo;
     @org.springframework.beans.factory.annotation.Autowired
     private com.sitemonitor.repository.ScriptedDraftRepository scriptedDraftRepo;
@@ -2708,6 +2710,85 @@ public class MonitoringController {
                 range[0], range[1], false));
     }
 
+    /**
+     * BAĞLANTI TEŞHİSİ — "Java çekebiliyor ama k6 çekemiyor" ayrımını ÖLÇEREK kapatır.
+     *
+     * <p>Sahadaki tıkanıklık: bir monitör 288 koşumun 288'inde {@code request timeout} verirken
+     * aynı pod hedefin sertifikasını sorunsuz alabiliyordu. Farkın nerede oluştuğu — vekil kararı
+     * mı, kurumsal CA mı, TLS'in kendisi mi — hiçbir ekrandan görülemiyordu ve teşhis dört sürüm
+     * boyunca tahmine kaldı. Bu uç üç değişkeni TEK TEK oynatıp faz kırılımlarını yan yana koyar:
+     * <ul>
+     *   <li>k6 · vekilsiz · CA'lı  → bugünkü etkin davranış (NO_PROXY eşleşen hedeflerde)</li>
+     *   <li>k6 · vekilli  · CA'lı  → vekil zorlandığında değişiyor mu</li>
+     *   <li>k6 · vekilsiz · CA'sız → kurumsal CA fark yaratıyor mu (araya giren TLS cihazı testi)</li>
+     * </ul>
+     * Bacaklar SIRAYLA ve AYRI bir semaforla koşar; izleme havuzunu tüketmez.
+     *
+     * <p>Hedef: gövdedeki {@code url}, yoksa script'ten çıkarılan ilk adres.
+     */
+    @PostMapping("/scripted/{id}/diagnose")
+    public ResponseEntity<Map<String, Object>> diagnoseScripted(@PathVariable Long id,
+            @RequestBody(required = false) Map<String, Object> body, HttpSession session) {
+        permissionService.require(session, "monitoring.scripted", "execute");
+        com.sitemonitor.model.ScriptedMonitor m = scriptedMonitorRepo.findById(id).orElse(null);
+        if (m == null) return notFound("Sentetik izleme bulunamadı");
+        if (!canOperateTeam(session, m.getTeamId())) return forbidden("Bu izleme üzerinde yetkiniz yok");
+        if (!scriptedChecker.isAvailable())
+            return badRequest("k6 bulunamadı — Sentetik İzleme devre dışı (bu ortamda k6 binary'si yok).");
+
+        List<String> candidates = scriptedChecker.targetUrls(m);
+        String url = body != null && body.get("url") != null ? body.get("url").toString().trim() : null;
+        if (url == null || url.isBlank()) url = candidates.isEmpty() ? null : candidates.get(0);
+        if (url == null || url.isBlank())
+            return badRequest("Hedef adres script'ten çıkarılamadı — teşhis edilecek URL'i elle girin.");
+        // Kullanıcı serbest URL verebiliyor ⇒ SSRF yüzeyi: koşum yolundaki AYNI guard'dan geçir.
+        try {
+            java.net.URI u = java.net.URI.create(url);
+            if (u.getHost() == null) return badRequest("Geçersiz URL: " + url);
+            ssrfGuard.validate(u.getHost());
+        } catch (com.sitemonitor.service.SsrfGuard.BlockedException be) {
+            return badRequest("Hedef adres teşhis edilemez: " + be.getMessage());
+        } catch (IllegalArgumentException iae) {
+            return badRequest("Geçersiz URL: " + url);
+        }
+
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("url", url);
+        // Aday adresler secret env DEĞERLERİ içerebilir (BASE_URL bir secret olabilir) — maskele.
+        out.put("candidates", candidates.stream()
+                .map(com.sitemonitor.service.SecretMask::maskUrlQuery).toList());
+        out.put("proxy_configured", proxySettings.enabled());
+        out.put("no_proxy", proxySettings.noProxyList());
+        out.put("k6_version", scriptedChecker.version());
+        List<Map<String, Object>> legs = new ArrayList<>();
+        legs.add(diagLeg("k6-direct-ca", "k6 · doğrudan · kurumsal CA", url, false, true));
+        if (proxySettings.enabled())
+            legs.add(diagLeg("k6-proxy-ca", "k6 · vekil · kurumsal CA", url, true, true));
+        legs.add(diagLeg("k6-direct-noca", "k6 · doğrudan · CA'sız", url, false, false));
+        out.put("legs", legs);
+        auditService.recordAction("MONITOR_DIAGNOSE", session, "SCRIPTED_MONITOR",
+                String.valueOf(m.getId()), m.getName(), null);
+        return ok(out);
+    }
+
+    /** Tek teşhis bacağı → {key, label, status, error, faz kırılımı}. */
+    private Map<String, Object> diagLeg(String key, String label, String url, boolean viaProxy, boolean withCa) {
+        var r = scriptedChecker.probe(url, viaProxy, withCa);
+        Map<String, Object> leg = new LinkedHashMap<>();
+        leg.put("key", key);
+        leg.put("label", label);
+        leg.put("status", r.status());
+        leg.put("ok", r.ok());
+        leg.put("duration_ms", r.durationMs());
+        leg.put("error", r.error());
+        leg.put("via_proxy", r.viaProxy());
+        leg.put("output_tail", r.outputTail());
+        var ph = r.phases();
+        leg.put("phases", ph == null ? null : phaseMap(ph.blockedMs(), ph.connectingMs(), ph.tlsMs(),
+                ph.sendingMs(), ph.waitingMs(), ph.receivingMs(), ph.dataSent(), ph.dataReceived()));
+        return leg;
+    }
+
     // ── Senaryo yardımcıları ──────────────────────────────────────────────────
 
     private static final String[] SCRIPTED_FIELDS = {
@@ -2980,6 +3061,9 @@ public class MonitoringController {
             item.put("phases", phaseMap(latest.getReqBlockedMs(), latest.getReqConnectingMs(),
                     latest.getReqTlsMs(), latest.getReqSendingMs(), latest.getReqWaitingMs(),
                     latest.getReqReceivingMs(), latest.getDataSent(), latest.getDataReceived()));
+            // Koşumun sürümü ile monitörün GÜNCEL sürümü ayrı alanlar: "bu arıza son değişiklikle
+            // mi başladı?" sorusu ancak ikisi yan yana görülünce cevaplanır.
+            item.put("run_script_version", latest.getScriptVersion());
             item.put("checked_at", latest.getCheckedAt());
         } else {
             // "Hiç koşmadı" dalı — anahtarlar EKSİK değil NULL olmalı (keyword enrich deseni):

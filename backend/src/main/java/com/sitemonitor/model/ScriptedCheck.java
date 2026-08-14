@@ -97,6 +97,16 @@ public class ScriptedCheck {
     @Column(name = "data_sent")     private Long dataSent;
     @Column(name = "data_received") private Long dataReceived;
 
+    /**
+     * Bu koşumun HANGİ script sürümüyle yapıldığı ("1.2.0").
+     *
+     * <p>Olmadan sürüm↔arıza korelasyonu kurulamıyordu: Sürümler sekmesi "14:03'te v1.0.7
+     * kaydedildi", geçmiş "14:05'ten beri FAIL" diyor, ilişkiyi kullanıcı gözüyle kuruyordu.
+     * {@code viaProxy} için aynı gerekçeyle satır bazlı alan eklenmişti; sürüm için eksikti.
+     */
+    @Column(name = "script_version", length = 20)
+    private String scriptVersion;
+
     @Column(name = "checked_at")
     private String checkedAt;
 }

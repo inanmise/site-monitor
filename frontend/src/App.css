@@ -6917,6 +6917,22 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .sc-phase-bytes { margin-top: 4px; font-size: .84em; color: var(--text-muted); font-variant-numeric: tabular-nums; }
 .sc-proxy-note code { font-size: .95em; word-break: break-all; }
 
+/* Bağlantı teşhisi: bacaklar yan yana okunur; geçen/geçmeyen ayrımı yalnız renkle DEĞİL
+   kenarlık + durum etiketiyle de taşınır (renk körlüğü). */
+.sc-diag { display: grid; gap: 10px; }
+.sc-diag-run { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.sc-diag-run .input { flex: 1 1 280px; min-width: 0; }
+.sc-diag-meta { display: flex; gap: 14px; flex-wrap: wrap; font-size: .86em; color: var(--text-muted); }
+.sc-diag-meta code { word-break: break-all; }
+.sc-diag-legs { display: grid; gap: 10px; }
+.sc-diag-leg { border: 1px solid var(--border); border-left-width: 3px; border-radius: 8px; padding: 10px 12px; }
+.sc-diag-leg--ok { border-left-color: var(--success, #16a34a); }
+.sc-diag-leg--bad { border-left-color: var(--danger, #b91c1c); }
+.sc-diag-leg-head { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; }
+.sc-diag-leg-label { font-weight: 600; }
+.sc-diag-leg-status { font-size: .88em; }
+.sc-diag-leg-ms { font-size: .84em; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+
 .sc-tech { margin-top: 10px; }
 .sc-tech-toggle { width: 100%; }
 .sc-tech-actions { display: flex; gap: 8px; align-items: center; margin: 8px 0 6px; }
