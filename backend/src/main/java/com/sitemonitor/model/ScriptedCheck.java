@@ -75,6 +75,28 @@ public class ScriptedCheck {
     @Column(name = "via_proxy")
     private Boolean viaProxy;
 
+    /**
+     * İSTEĞİN FAZ KIRILIMI (ms) — "nerede takıldı?" sorusunun cevabı.
+     *
+     * <p>k6 bunları her koşumda üretiyordu ama 2026-08'e kadar okunmuyordu; sahada 288 koşum
+     * boyunca "request timeout" görülüp DNS/TCP/TLS/TTFB ayrımı yapılamadı. Sıra:
+     * blocked (DNS+bekleme) → connecting (TCP) → tls → sending → waiting (TTFB) → receiving.
+     *
+     * <p>OKUMA KURALI (k6 v0.49 ile ölçüldü): girilmemiş faz {@code 0} yazılır, alan boş kalmaz.
+     * Takılma noktası = SON SIFIR-OLMAYAN fazdan sonraki faz. Hepsi 0 ise istek hiç yol almamıştır.
+     * {@code null} yalnız düzeltme ÖNCESİ kaydedilmiş satırlarda görülür.
+     */
+    @Column(name = "req_blocked_ms")     private Long reqBlockedMs;
+    @Column(name = "req_connecting_ms")  private Long reqConnectingMs;
+    @Column(name = "req_tls_ms")         private Long reqTlsMs;
+    @Column(name = "req_sending_ms")     private Long reqSendingMs;
+    @Column(name = "req_waiting_ms")     private Long reqWaitingMs;
+    @Column(name = "req_receiving_ms")   private Long reqReceivingMs;
+
+    /** Ağ düzeyinde taşınan byte (TLS dâhil) — "hiç yanıt yok" ile "kısa yanıt geldi"yi ayırır. */
+    @Column(name = "data_sent")     private Long dataSent;
+    @Column(name = "data_received") private Long dataReceived;
+
     @Column(name = "checked_at")
     private String checkedAt;
 }

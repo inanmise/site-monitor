@@ -65,7 +65,25 @@ public class ScriptedCheckerService {
     public record ScriptedResult(String status, boolean ok, Long durationMs, Integer exitCode,
                                  Integer checksPassed, Integer checksFailed, Long iterationMs,
                                  Long httpReqAvgMs, Long httpReqP95Ms, String checksJson,
-                                 String outputTail, String error, boolean viaProxy) {}
+                                 String outputTail, String error, boolean viaProxy, Phases phases) {}
+
+    /**
+     * İsteğin faz kırılımı (ms) + taşınan byte. Ayrı record: {@code ScriptedResult} zaten 13 bileşenli,
+     * dokuz alan daha eklemek çağrı yerlerini okunmaz hâle getirirdi.
+     *
+     * <p>Alan {@code null} ise o faz HİÇ ÖLÇÜLMEDİ — yani koşum oraya varamadı. Takılma noktası,
+     * sırayla bakıldığında ilk null olan fazdır; teşhis tam olarak bu bilgiye dayanır.
+     */
+    public record Phases(Long blockedMs, Long connectingMs, Long tlsMs, Long sendingMs,
+                         Long waitingMs, Long receivingMs, Long dataSent, Long dataReceived,
+                         Integer httpReqFailed) {
+        public static final Phases EMPTY = new Phases(null, null, null, null, null, null, null, null, null);
+
+        static Phases of(Summary s) {
+            return new Phases(s.blockedMs, s.connectingMs, s.tlsMs, s.sendingMs, s.waitingMs,
+                    s.receivingMs, s.dataSent, s.dataReceived, s.httpReqFailed);
+        }
+    }
 
     @PostConstruct
     public void init() {
@@ -147,7 +165,7 @@ public class ScriptedCheckerService {
             return new ScriptDiagnostics(null, warnings);
         }
         boolean acquired = false;
-        Path scriptFile = null, archiveFile = null;
+        Path scriptFile = null, archiveFile = null, caFile = null;
         try {
             acquired = validatePermits.tryAcquire(2, TimeUnit.SECONDS);
             if (!acquired) {
@@ -167,8 +185,13 @@ public class ScriptedCheckerService {
             args.add(scriptFile.toAbsolutePath().toString());
 
             int timeout = Math.max(3, appSettings.getInt("site.monitor.scripted.validate-timeout-seconds", 10));
-            ProcessProbe.Result r = ProcessProbe.run(args, null, scriptFile.getParent().toFile(), timeout, true,
-                    VALIDATE_OUTPUT_BYTES);
+            // Doğrulama da uzak import indirebiliyor ⇒ koşumla AYNI ağ duruşu (vekil + kurumsal CA);
+            // aksi halde geçerli bir script vekil ardında "derlenemedi" görünürdü. env VERİLMEZ:
+            // secret'lar bu yola hiç girmez (sınıf sözleşmesi) — ortam da izole edilir.
+            caFile = writeCaBundle();
+            Map<String, String> env = buildProcessEnv(null, useProxyFor(null), caFile, new ArrayList<>());
+            ProcessProbe.Result r = ProcessProbe.run(args, env, scriptFile.getParent().toFile(), timeout, true,
+                    VALIDATE_OUTPUT_BYTES, true);
             if (r.exitCode() == 0 && !r.timedOut()) return new ScriptDiagnostics(null, warnings);
 
             // SIRA ÖNEMLİ — önce ayıkla/çöz, SONRA yolu temizle (summarizeError ile aynı sıra).
@@ -200,6 +223,7 @@ public class ScriptedCheckerService {
             if (acquired) validatePermits.release();
             deleteQuiet(scriptFile);
             deleteQuiet(archiveFile);
+            deleteQuiet(caFile);
         }
     }
 
@@ -358,6 +382,87 @@ public class ScriptedCheckerService {
         return Math.max(5, Math.min(max, v));
     }
 
+    // ── Alt süreç ortamı ─────────────────────────────────────────────────────
+
+    /** Dağıtımlara göre sistem CA paketi konumları — kurumsal PEM bunlarla BİRLEŞTİRİLİR. */
+    private static final List<String> SYSTEM_CA_FILES = List.of(
+            "/etc/ssl/certs/ca-certificates.crt",   // Alpine / Debian / Ubuntu (bizim imaj)
+            "/etc/pki/tls/certs/ca-bundle.crt",     // RHEL / UBI
+            "/etc/ssl/ca-bundle.pem");              // SUSE
+
+    /**
+     * Kurumsal CA paketi ayarlıysa Go/k6'nın okuyabileceği geçici bir PEM dosyası yazar.
+     *
+     * <p>Neden gerekli: Java tarafı kurumsal kökü {@link TrustEvaluator} üzerinden tanıyor
+     * ({@code site.monitor.trust.ca-bundle-pem}), k6 ise tanımıyordu — TLS'i araya giren bir
+     * kurumsal cihaz varsa aynı hedefe Java'nın sertifikası doğrulanırken k6'nınki doğrulanmıyor.
+     *
+     * <p><b>Birleştirme şart:</b> Go'da {@code SSL_CERT_FILE} sistem kök havuzuna EKLEMEZ, onun
+     * YERİNE geçer. Yalnız kurumsal kökü yazsaydık bu kez public CA'lı hedefler doğrulanamazdı.
+     *
+     * @return yazılan dosya; ayar boşsa ya da yazılamazsa {@code null} (çağıran değişkeni koymaz)
+     */
+    private Path writeCaBundle() {
+        String pem = appSettings.getString(TrustEvaluator.CA_BUNDLE_KEY, "");
+        if (pem == null || pem.isBlank()) return null;
+        try {
+            StringBuilder sb = new StringBuilder();
+            String merged = SYSTEM_CA_FILES.stream().map(Path::of).filter(Files::isReadable).findFirst()
+                    .map(p -> { try { return Files.readString(p); } catch (java.io.IOException e) { return null; } })
+                    .orElse(null);
+            if (merged != null) sb.append(merged).append('\n');
+            else log.warn("[K6] Sistem CA paketi bulunamadı; SSL_CERT_FILE yalnız kurumsal kökü taşıyacak "
+                    + "(public CA'lı hedefler doğrulanamayabilir).");
+            sb.append(pem.strip()).append('\n');
+            Path f = Files.createTempFile("k6-ca-", ".pem");
+            Files.writeString(f, sb.toString());
+            return f;
+        } catch (java.io.IOException e) {
+            log.warn("[K6] Kurumsal CA paketi geçici dosyaya yazılamadı: {}", e.toString());
+            return null;
+        }
+    }
+
+    /**
+     * k6 alt sürecine geçecek ortam değişkenleri. Süreç ortamı İZOLEDİR
+     * ({@code ProcessProbe.run(..., isolatedEnv=true)}), yani burada dönen harita + küçük bir
+     * sistem beyaz-listesi dışında k6 hiçbir şey görmez.
+     *
+     * <p>Sıra bilinçli: önce kullanıcının kendi env'i, sonra {@code putIfAbsent} ile vekil ve CA —
+     * script kendi {@code HTTPS_PROXY}'sini tanımlamışsa ezilmez.
+     *
+     * @param envVars      monitörün env değişkenleri (null ⇒ hiçbiri; doğrulama yolu secret geçirmez)
+     * @param secretValues maskelenecek değerler bu listeye EKLENİR (çıkış parametresi)
+     */
+    Map<String, String> buildProcessEnv(List<EnvVar> envVars, boolean viaProxy, Path caFile,
+                                        List<String> secretValues) {
+        Map<String, String> env = new LinkedHashMap<>();
+        if (envVars != null) {
+            for (EnvVar v : envVars) {
+                if (v.name() == null || v.name().isBlank()) continue;
+                env.put(v.name(), v.value() == null ? "" : v.value());
+                if (v.secret() && v.value() != null && !v.value().isBlank()) secretValues.add(v.value());
+            }
+        }
+        // Kurumsal çıkış vekili: Go/k6 bu üç değişkeni okur.
+        if (viaProxy) {
+            String url = proxySettings.proxyUrl();
+            if (url != null) {
+                env.putIfAbsent("HTTPS_PROXY", url);
+                env.putIfAbsent("HTTP_PROXY", url);
+                String noProxy = proxySettings.noProxyList();
+                if (!noProxy.isBlank()) env.putIfAbsent("NO_PROXY", noProxy);
+                // Parola URL'in içinde: k6 hata mesajında vekil URL'ini basabiliyor
+                // (ör. "proxyconnect tcp: ..."). Maskelenmezse çıktı → error → alarm e-postası
+                // zincirinden sızardı. SecretMask kodlanmış biçimleri de kapsar.
+                String pass = proxySettings.secretValue();
+                if (pass != null) secretValues.add(pass);
+            }
+        }
+        if (caFile != null) env.putIfAbsent("SSL_CERT_FILE", caFile.toAbsolutePath().toString());
+        return env;
+    }
+
     private ScriptedResult runGuarded(String script, List<EnvVar> env, int timeoutSec, boolean viaProxy) {
         queued.incrementAndGet();
         return runGuardedAfterQueue(script, env, timeoutSec, viaProxy);
@@ -397,7 +502,7 @@ public class ScriptedCheckerService {
      * adımının kendi catch'i vardır — orada patlayan bir şey koşumun tanısını götürmez.
      */
     private ScriptedResult execute(String script, List<EnvVar> envVars, int timeoutSec, boolean viaProxy) {
-        Path scriptFile = null, summaryFile = null;
+        Path scriptFile = null, summaryFile = null, caFile = null;
         // Bağlam DEĞİŞKENLERİ try dışında: catch bloğu bunlara erişebilsin.
         List<String> secretValues = new ArrayList<>();
         ProcessProbe.Result r = null;   // null ⇒ süreç hiç başlamadı
@@ -408,29 +513,8 @@ public class ScriptedCheckerService {
             summaryFile = Files.createTempFile("k6-summary-", ".json");
             Files.writeString(scriptFile, script == null ? "" : script);
 
-            Map<String, String> env = new LinkedHashMap<>();
-            for (EnvVar v : envVars) {
-                if (v.name() == null || v.name().isBlank()) continue;
-                env.put(v.name(), v.value() == null ? "" : v.value());
-                if (v.secret() && v.value() != null && !v.value().isBlank()) secretValues.add(v.value());
-            }
-            // Kurumsal çıkış vekili: Go/k6 bu üç değişkeni okur. Monitörün env'inden SONRA konur ki
-            // kullanıcı script'i kendi HTTPS_PROXY'sini tanımlamışsa ezilmesin — ama kullanıcı da
-            // vekili bilerek kapatabilsin diye (OFF) karar zaten yukarıda verilmiştir.
-            if (viaProxy) {
-                String url = proxySettings.proxyUrl();
-                if (url != null) {
-                    env.putIfAbsent("HTTPS_PROXY", url);
-                    env.putIfAbsent("HTTP_PROXY", url);
-                    String noProxy = proxySettings.noProxyList();
-                    if (!noProxy.isBlank()) env.putIfAbsent("NO_PROXY", noProxy);
-                    // Parola URL'in içinde: k6 hata mesajında vekil URL'ini basabiliyor
-                    // (ör. "proxyconnect tcp: ..."). Maskelenmezse çıktı → error → alarm e-postası
-                    // zincirinden düz metin sızardı.
-                    String pass = proxySettings.secretValue();
-                    if (pass != null) secretValues.add(pass);
-                }
-            }
+            caFile = writeCaBundle();
+            Map<String, String> env = buildProcessEnv(envVars, viaProxy, caFile, secretValues);
 
             List<String> args = new ArrayList<>(List.of(
                     k6Bin(), "run", "--quiet", "--no-usage-report",
@@ -441,7 +525,7 @@ public class ScriptedCheckerService {
 
             int tailBytes = appSettings.getInt("site.monitor.scripted.output-tail-bytes", 8192);
             long t0 = System.currentTimeMillis();
-            r = ProcessProbe.run(args, env, scriptFile.getParent().toFile(), timeoutSec, true, tailBytes);
+            r = ProcessProbe.run(args, env, scriptFile.getParent().toFile(), timeoutSec, true, tailBytes, true);
             // durationMs YALNIZ süreç gerçekten koştuysa set edilir; aksi halde "temp dosya
             // yazılamadı, 3 ms" gibi anlamsız bir süre uptime grafiğine girerdi.
             durationMs = System.currentTimeMillis() - t0;
@@ -480,6 +564,7 @@ public class ScriptedCheckerService {
         } finally {
             deleteQuiet(scriptFile);
             deleteQuiet(summaryFile);
+            deleteQuiet(caFile);
         }
     }
 
@@ -587,7 +672,7 @@ public class ScriptedCheckerService {
         Integer exitCode = r != null ? r.exitCode() : -1;
         String out = SecretMask.maskValues(maskedOutput, secretValues);
         return new ScriptedResult(status, false, durationMs, exitCode,
-                null, null, null, null, null, null, out, message, viaProxy);
+                null, null, null, null, null, null, out, message, viaProxy, Phases.EMPTY);
     }
 
     /** Sonuç montajı — saf ve statik, böylece Spring'siz/k6'sız birim-test edilebilir. */
@@ -595,7 +680,7 @@ public class ScriptedCheckerService {
                                       Summary s, String maskedOutput, String error, boolean viaProxy) {
         return new ScriptedResult(status, "PASS".equals(status), durationMs, r.exitCode(),
                 s.checksPassed, s.checksFailed, s.iterationMs, s.httpReqAvgMs, s.httpReqP95Ms,
-                s.checksJson, maskedOutput, error, viaProxy);
+                s.checksJson, maskedOutput, error, viaProxy, Phases.of(s));
     }
 
     /**
@@ -931,11 +1016,46 @@ public class ScriptedCheckerService {
     static final class Summary {
         Integer checksPassed, checksFailed;
         Long iterationMs, httpReqAvgMs, httpReqP95Ms;
+        /**
+         * İsteğin FAZ kırılımı — "nerede takıldı?" sorusunun tek ölçülebilir cevabı.
+         *
+         * <p>k6 bu değerleri her koşumda {@code --summary-export} JSON'una yazıyordu; 2026-08'e kadar
+         * yalnız {@code http_req_duration} ve {@code iteration_duration} okunup gerisi ATILIYORDU.
+         * Sonuç: sahada 288 koşum boyunca "request timeout" görülüyor ama DNS mi, TCP mi, TLS mi,
+         * yanıt bekleme mi olduğu kod tabanından cevaplanamıyordu — teşhis tahmine kalıyordu.
+         *
+         * <p>Sıra anlamlıdır: blocked (DNS + bağlantı bekleme) → connecting (TCP) → tls (el sıkışma)
+         * → sending → waiting (TTFB) → receiving.
+         *
+         * <p><b>Yorumlama (k6 v0.49 ile ölçüldü, varsayım değil):</b> k6 fazların TAMAMINI her
+         * koşumda basar; girilmemiş faz {@code 0} gelir, metrik eksilmez. Bu yüzden "nereye kadar
+         * gelindi" sorusunun cevabı SON SIFIR-OLMAYAN fazdır, ilk sıfır DEĞİL — DNS önbellekliyse
+         * {@code blocked} pekâlâ 0 okunabiliyor. Buradaki {@code null} ise "k6 özeti hiç
+         * okunamadı" demektir (bozuk/eksik JSON), "faza girilmedi" değil.
+         */
+        Long blockedMs, connectingMs, tlsMs, sendingMs, waitingMs, receivingMs;
+        /** Ağ düzeyinde taşınan byte (TLS dâhil) — "hiç yanıt gelmedi" ile "kısa yanıt geldi"yi ayırır. */
+        Long dataSent, dataReceived;
+        /** k6'nın kendi başarısız-istek sayacı ({@code http_req_failed.passes}). */
+        Integer httpReqFailed;
         String checksJson;
         /** Özet JSON gerçekten okunup ayrıştırılabildi mi — "bozuk özet" ile "hiç özet"i ayırır. */
         boolean parsed;
         /** Script {@code options.thresholds} tanımlamış mı — check'siz ama MEŞRU script'i ayırır. */
         boolean hasThresholds;
+    }
+
+    /** Trend metriğinin ortalaması (ms). Metrik HİÇ yoksa null — özet okunamadı demektir
+     *  ("faza girilmedi" DEĞİL: k6 girilmemiş fazı 0 basar, metriği eksiltmez). */
+    private static Long avgOf(JsonNode metrics, String name) {
+        JsonNode m = metrics.path(name);
+        return m.has("avg") ? Math.round(m.path("avg").asDouble()) : null;
+    }
+
+    /** Sayaç metriğinin toplamı (byte). Metrik yoksa null. */
+    private static Long countOf(JsonNode metrics, String name) {
+        JsonNode m = metrics.path(name);
+        return m.has("count") ? Math.round(m.path("count").asDouble()) : null;
     }
 
     /** k6 {@code --summary-export} JSON'unu ayrıştırır (null-toleranslı). */
@@ -963,6 +1083,18 @@ public class ScriptedCheckerService {
             if (hrd.has("p(95)"))   s.httpReqP95Ms = Math.round(hrd.path("p(95)").asDouble());
             JsonNode itd = metrics.path("iteration_duration");
             if (itd.has("avg"))     s.iterationMs = Math.round(itd.path("avg").asDouble());
+            // Faz kırılımı: her metrik yalnız o faza GİRİLDİYSE üretilir. Yokluk da bilgidir.
+            s.blockedMs    = avgOf(metrics, "http_req_blocked");
+            s.connectingMs = avgOf(metrics, "http_req_connecting");
+            s.tlsMs        = avgOf(metrics, "http_req_tls_handshaking");
+            s.sendingMs    = avgOf(metrics, "http_req_sending");
+            s.waitingMs    = avgOf(metrics, "http_req_waiting");
+            s.receivingMs  = avgOf(metrics, "http_req_receiving");
+            // data_sent/data_received sayaç (count) metrikleridir, süre değil.
+            s.dataSent     = countOf(metrics, "data_sent");
+            s.dataReceived = countOf(metrics, "data_received");
+            JsonNode failed = metrics.path("http_req_failed");
+            if (failed.has("passes")) s.httpReqFailed = failed.path("passes").asInt();
             // Per-check adları: root_group.checks {name -> {passes,fails}}
             JsonNode rgChecks = root.path("root_group").path("checks");
             if (rgChecks.isObject()) {

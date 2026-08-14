@@ -52,4 +52,63 @@ class ProcessProbeTest {
         assertThat(r.output()).contains("çalıştırılamadı");
         assertThat(r.exitCode()).isEqualTo(-1);
     }
+
+    // ── İzole ortam (k6 yolu) ────────────────────────────────────────────────────────────────
+    // ProcessBuilder.environment() JVM'in ortamının KOPYASIYLA başlar. k6 kullanıcı script'i
+    // çalıştırdığı için bu, __ENV üzerinden pod'un tüm ortamını (DB parolası, SMTP, token'lar)
+    // script'e açıyordu: `http.post(dışarı, JSON.stringify(__ENV))` tek satırla sızdırır.
+
+    /** Ortam değişkenini basan, platforma uygun komut. */
+    private static List<String> echoEnv(String name) {
+        return isWindows()
+                ? List.of("cmd", "/c", "echo", "%" + name + "%")
+                : List.of("sh", "-c", "echo \"$" + name + "\"");
+    }
+
+    @Test
+    @DisplayName("isolatedEnv: JVM'in ortamı alt sürece GEÇMEZ (secret sızıntı yolu kapalı)")
+    void isolatedEnv_dropsInheritedVars() {
+        // Bu değişken JVM'in ortamında yok; onu ancak çağıran açıkça verirse görebiliriz.
+        // Miras davranışını kanıtlamak için beyaz-listede OLMAYAN bir isim seçilir.
+        java.util.Map<String, String> given = java.util.Map.of("SM_TEST_LEAK", "sizmamali");
+
+        ProcessProbe.Result inherited = ProcessProbe.run(
+                echoEnv("SM_TEST_LEAK"), given, null, 5, true, 4096, false);
+        ProcessProbe.Result isolated = ProcessProbe.run(
+                echoEnv("SM_TEST_LEAK"), given, null, 5, true, 4096, true);
+
+        // Açıkça VERİLEN değişken her iki modda da geçer — izolasyon çağıranın env'ini kesmez.
+        assertThat(inherited.output()).contains("sizmamali");
+        assertThat(isolated.output()).contains("sizmamali");
+    }
+
+    @Test
+    @DisplayName("isolatedEnv: beyaz-liste DIŞI miras değişken alt süreçte görünmez")
+    void isolatedEnv_hidesNonAllowlistedInheritedVar() {
+        // JVM ortamında kesin var olan ve beyaz-listede OLMAYAN bir değişken bul.
+        String probe = System.getenv().keySet().stream()
+                .filter(k -> !java.util.Set.of("PATH", "HOME", "LANG", "LC_ALL", "TZ", "TMPDIR",
+                        "SYSTEMROOT", "SYSTEMDRIVE", "WINDIR", "COMSPEC", "PATHEXT", "TEMP", "TMP",
+                        "USERPROFILE", "NUMBER_OF_PROCESSORS", "OS", "PROGRAMDATA", "LOCALAPPDATA", "APPDATA")
+                        .contains(k.toUpperCase(java.util.Locale.ROOT)))
+                .filter(k -> !System.getenv(k).isBlank())
+                .findFirst().orElse(null);
+        org.junit.jupiter.api.Assumptions.assumeTrue(probe != null,
+                "ortamda beyaz-liste dışı değişken yok — bu makinede doğrulanamaz");
+
+        String expected = System.getenv(probe);
+        ProcessProbe.Result isolated = ProcessProbe.run(echoEnv(probe), null, null, 5, true, 4096, true);
+
+        assertThat(isolated.output()).doesNotContain(expected);
+    }
+
+    @Test
+    @DisplayName("İzole modda süreç yine ayağa kalkar (beyaz-liste PATH/SystemRoot'u korur)")
+    void isolatedEnv_processStillStarts() {
+        ProcessProbe.Result r = ProcessProbe.run(
+                isWindows() ? List.of("cmd", "/c", "echo", "ok") : List.of("sh", "-c", "echo ok"),
+                null, null, 5, true, 4096, true);
+        assertThat(r.output()).contains("ok");
+        assertThat(r.exitCode()).isZero();
+    }
 }

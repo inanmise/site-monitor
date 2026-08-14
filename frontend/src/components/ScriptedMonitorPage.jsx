@@ -26,7 +26,7 @@ import { LoadingBlock, Spinner } from './ui/Progress.jsx'
 import AlertBanner from './ui/AlertBanner.jsx'
 import StatusBlock from './ui/StatusBlock.jsx'
 import CopyButton from './ui/CopyButton.jsx'
-import { exitLabel, exitHint, diagnosisHint, k6SyntaxLevel } from './scriptedExitCodes.js'
+import { exitLabel, exitHint, diagnosisHint, k6SyntaxLevel, readPhases, formatBytes } from './scriptedExitCodes.js'
 // recharts ağır — yalnız "Süre Grafiği" sekmesi açılınca yüklensin.
 const ResponseTimeChart = lazy(() => import('./ResponseTimeChart.jsx'))
 const MonitorNotes = lazy(() => import('./MonitorNotes.jsx'))
@@ -227,6 +227,8 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
 
   const [monitors, setMonitors] = useState([])
   const [k6, setK6] = useState({ available: true, version: null, canManage: false })
+  // Kurumsal vekilin ETKİN durumu — düzenleme formunda "bu ayarla gerçekte ne olacak" notu için.
+  const [proxy, setProxy] = useState(null)
   const [loading, setLoading] = useState(true)
   const [teams, setTeams] = useState([])
   const [search, setSearch] = useState(() => readUrlParam('q', ''))
@@ -269,6 +271,7 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
       const d = res.data || {}
       setMonitors(d.monitors || [])
       setK6({ available: d.k6_available !== false, version: d.k6_version, canManage: !!d.can_manage })
+      setProxy({ configured: !!d.proxy_configured, noProxy: d.no_proxy || '' })
     }
     setLoading(false); setSecondsSince(0)
   }, [])
@@ -371,13 +374,20 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
    * Sıra: düzenlenen/kopyalanan monitör başta (kullanıcı kendi script'ini aramasın), sonra ada göre.
    */
   const savedScripts = useMemo(() => {
-    const withScript = monitors.filter(m => (m.script || '').trim())
+    const withScript = monitors.filter(m => {
+      if (!(m.script || '').trim()) return false
+      // Düzenlenen/kopyalanan monitörün KENDİ girdisi daima kalır: seçicinin geçerli değeri odur,
+      // listeden düşerse seçim boş görünür. (Zaten editörde açık — ek bir görünürlük vermez.)
+      if (m.id === savedSource?.id) return true
+      // BAŞKA takımların script'leri hiç listelenmez — ADMIN olsa bile.
+      return myTeam != null && String(m.team_id) === String(myTeam)
+    })
     return [...withScript].sort((a, b) => {
       if (a.id === savedSource?.id) return -1
       if (b.id === savedSource?.id) return 1
       return (a.name || '').localeCompare(b.name || '')
     })
-  }, [monitors, savedSource])
+  }, [monitors, savedSource, myTeam])
   // Gruplar takıma özgü: kullanıcı yalnız kendi takımının gruplarını görür/seçer (admin tümünü).
   const groupMonitors = useMemo(
     () => (isAdmin ? monitors : monitors.filter(m => myTeam != null && String(m.team_id) === myTeam)),
@@ -980,7 +990,7 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
         document.body
       )}
 
-      {modal && createPortal(<EditModal {...{ t, lang, k6Version: k6.version, form, setForm, modal, dupSource, saving, testing, testResult, saveWarnings, save, del, closeEdit, runTest, isAdminish, canDelete: modal?.id ? canDeleteRow(modal) : false, teamSelectOptions, teamName, groupSelectOptions, setEnvRow, addEnvRow, delEnvRow, selectScriptSource, savedScripts, savedSource, draftSavedAt, pendingDraft, applyDraft, discardDraft, bumpType, setBumpType }} />, document.body)}
+      {modal && createPortal(<EditModal {...{ t, lang, k6Version: k6.version, proxy, form, setForm, modal, dupSource, saving, testing, testResult, saveWarnings, save, del, closeEdit, runTest, isAdminish, canDelete: modal?.id ? canDeleteRow(modal) : false, teamSelectOptions, teamName, groupSelectOptions, setEnvRow, addEnvRow, delEnvRow, selectScriptSource, savedScripts, savedSource, draftSavedAt, pendingDraft, applyDraft, discardDraft, bumpType, setBumpType }} />, document.body)}
     </div>
   )
 }
@@ -993,6 +1003,52 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
  * basılıyor, çıktı paneli ise sabit siyah zeminli satır-içi stille yazılıyordu (açık temada
  * sayfanın geri kalanıyla çelişen bir blok).
  */
+/**
+ * "Nerede takıldı?" — isteğin faz kırılımı.
+ *
+ * Sahadaki en pahalı boşluğu kapatır: bir koşum `request timeout` derken DNS mi, TCP mi, TLS mi,
+ * yanıt bekleme mi olduğu hiçbir ekranda görünmüyordu (veri k6'dan geliyordu ama atılıyordu).
+ * Fazlar SIRALI okunur: ölçülen son faz "buraya kadar gelindi", ondan sonraki ilk ölçülmeyen faz
+ * takılma noktasıdır ve vurgulanır.
+ *
+ * Hiç faz ölçülmediyse panel çizilmez — koşum tek bir istek bile başlatamamış demektir
+ * (sözdizimi hatası, k6 yok, havuz dolu…) ve orada faz göstermek yanıltıcı olurdu.
+ */
+function RequestPhases({ t, check, viaProxy }) {
+  const { phases, any, stuckAt, dataSent, dataReceived } = readPhases(check, isPass(check?.status))
+  if (!any) return null
+  const sent = formatBytes(dataSent)
+  const received = formatBytes(dataReceived)
+  return (
+    <div className="sc-phases">
+      <div className="sc-phases-head">
+        <span className="sc-phases-title">{t('scripted.phasesTitle')}</span>
+        {viaProxy != null && (
+          <span className="sc-phases-proxy">
+            {viaProxy ? t('scripted.viaProxyYes') : t('scripted.viaProxyNo')}
+          </span>
+        )}
+      </div>
+      <ol className="sc-phase-list">
+        {phases.map(p => {
+          const stuck = p.key === stuckAt
+          const cls = stuck ? ' sc-phase--stuck' : p.done ? ' sc-phase--done' : ' sc-phase--skipped'
+          return (
+            <li key={p.key} className={`sc-phase${cls}`}>
+              <span className="sc-phase-name">{t(`scripted.phase_${p.key}`)}</span>
+              <span className="sc-phase-val">{p.ms == null ? '—' : `${p.ms} ms`}</span>
+            </li>
+          )
+        })}
+      </ol>
+      {stuckAt && <div className="sc-phase-verdict">{t('scripted.phaseStuck', t(`scripted.phase_${stuckAt}`))}</div>}
+      {(sent || received) && (
+        <div className="sc-phase-bytes">{t('scripted.phaseBytes', sent ?? '—', received ?? '—')}</div>
+      )}
+    </div>
+  )
+}
+
 function CheckDetail({ t, check, k6Version }) {
   const [openTech, setOpenTech] = useState(false)
   const [showAll, setShowAll] = useState(false)
@@ -1034,6 +1090,8 @@ function CheckDetail({ t, check, k6Version }) {
         </AlertBanner>
       )}
 
+      <RequestPhases t={t} check={check} viaProxy={check.via_proxy ?? check.viaProxy ?? null} />
+
       {outputTail && (
         <div className="sc-tech">
           <button type="button" className="mhow-toggle sc-tech-toggle" aria-expanded={openTech}
@@ -1062,11 +1120,28 @@ function CheckDetail({ t, check, k6Version }) {
 }
 
 // ── Create/Edit modal ────────────────────────────────────────────────────────
-function EditModal({ t, lang, k6Version, form, setForm, modal, dupSource, saving, testing, testResult, saveWarnings, save, del, closeEdit, runTest, isAdminish, canDelete, teamSelectOptions, teamName, groupSelectOptions, setEnvRow, addEnvRow, delEnvRow, selectScriptSource, savedScripts = [], savedSource = null, draftSavedAt = null, pendingDraft = null, applyDraft, discardDraft, bumpType = 'patch', setBumpType }) {
+function EditModal({ t, lang, k6Version, proxy = null, form, setForm, modal, dupSource, saving, testing, testResult, saveWarnings, save, del, closeEdit, runTest, isAdminish, canDelete, teamSelectOptions, teamName, groupSelectOptions, setEnvRow, addEnvRow, delEnvRow, selectScriptSource, savedScripts = [], savedSource = null, draftSavedAt = null, pendingDraft = null, applyDraft, discardDraft, bumpType = 'patch', setBumpType }) {
   // Seçili kayıtlı script'in adı — "hangi monitörden yüklendi" notu için.
   const selectedSavedName = form.template?.startsWith('saved:')
     ? savedScripts.find(s => `saved:${s.id}` === form.template)?.name
     : null
+
+  // Seçici seçenekleri: iki grup tek listede (SearchableSelect `group` ile başlıklara böler).
+  // Boş seçenek YALNIZ yeni monitörde — düzenlemede monitörün kendi girdisi zaten listede ve
+  // "boşalt" yolu kaydedilmiş script'i siliyordu.
+  const scriptSourceOptions = [
+    ...(savedSource ? [] : [{ value: '', label: t('scripted.templatePick') }]),
+    ...savedScripts.map(s => ({
+      value: `saved:${s.id}`,
+      label: s.id === savedSource?.id ? `${s.name} ${t('scripted.srcThisMonitor')}` : s.name,
+      group: t('scripted.srcGroupSaved'),
+    })),
+    ...SCRIPTED_TEMPLATES.map(tp => ({
+      value: `tpl:${tp.id}`,
+      label: tp.name[lang] || tp.name.en,
+      group: t('scripted.srcGroupTemplates'),
+    })),
+  ]
   const ivIdx = intervalIdx(Number(form.intervalSeconds))
   return (
     <div className="modal-overlay">
@@ -1144,7 +1219,18 @@ function EditModal({ t, lang, k6Version, form, setForm, modal, dupSource, saving
               <option value="ON">{t('scripted.useProxyOn')}</option>
               <option value="OFF">{t('scripted.useProxyOff')}</option>
             </select>
-            <span className="field-hint">{t('scripted.useProxyHint')}</span></label>
+            <span className="field-hint">{t('scripted.useProxyHint')}</span>
+            {/* ETKİN karar — "AUTO seçtim, vekilden geçiyordur" varsayımı sahada dört sürüm boyunca
+                yanlış teşhise sebep oldu: Go, NO_PROXY girdilerini SONEK olarak uygular
+                (`akbank.com` ⇒ tüm alt alanlar), yani eşleşen hedef AUTO'da bile doğrudan çıkar. */}
+            {proxy && !proxy.configured && (
+              <span className="field-hint sc-proxy-note">{t('scripted.useProxyNotConfigured')}</span>
+            )}
+            {proxy?.configured && proxy.noProxy && form.useProxy !== 'OFF' && (
+              <span className="field-hint sc-proxy-note">
+                {t('scripted.useProxyEffectiveDirect')} <code>NO_PROXY={proxy.noProxy}</code>
+              </span>
+            )}</label>
 
           {/* Etiketler — kanonik TagInput (diğer tiplerle parite; payload'daki tags alanını doldurur) */}
           <div className="full-width">
@@ -1159,24 +1245,17 @@ function EditModal({ t, lang, k6Version, form, setForm, modal, dupSource, saving
               monitörün kendi girdisi listede olduğu için "boşalt" yolu veri kaybettiriyordu. */}
           <div className="full-width">
             <div className="kw-block-title">{t('scripted.scriptSource')}</div>
-            {/* aria-label: görsel başlık ayrı bir div olduğu için seçicinin erişilebilir adı yoktu. */}
-            <select aria-label={t('scripted.scriptSource')} value={form.template || ''}
-              onChange={e => selectScriptSource(e.target.value)}>
-              {!savedSource && <option value="">{t('scripted.templatePick')}</option>}
-              {savedScripts.length > 0 &&
-                <optgroup label={t('scripted.srcGroupSaved')}>
-                  {savedScripts.map(s => (
-                    <option key={s.id} value={`saved:${s.id}`}>
-                      {s.name}{s.id === savedSource?.id ? ` ${t('scripted.srcThisMonitor')}` : ''}
-                    </option>
-                  ))}
-                </optgroup>}
-              <optgroup label={t('scripted.srcGroupTemplates')}>
-                {SCRIPTED_TEMPLATES.map(tp => (
-                  <option key={tp.id} value={`tpl:${tp.id}`}>{tp.name[lang] || tp.name.en}</option>
-                ))}
-              </optgroup>
-            </select>
+            {/* Aranabilir: script sayısı arttıkça ada göre süzmek şart. Gruplar (kayıtlı/şablon)
+                SearchableSelect'in `group` alanıyla korunuyor. */}
+            <div className="sc-source-select">
+              <SearchableSelect
+                ariaLabel={t('scripted.scriptSource')}
+                value={form.template || ''}
+                onChange={selectScriptSource}
+                options={scriptSourceOptions}
+                placeholder={t('scripted.templatePick')}
+              />
+            </div>
             {form.template?.startsWith('tpl:') && <TemplateInfo id={form.template.slice(4)} lang={lang} t={t} />}
             {form.template?.startsWith('saved:') && selectedSavedName &&
               <span className="field-hint">{t('scripted.srcFromMonitor', selectedSavedName)}</span>}
@@ -1222,6 +1301,7 @@ function EditModal({ t, lang, k6Version, form, setForm, modal, dupSource, saving
                   {diagnosisHint(t, testResult, k6Version) &&
                     <div className="sc-err-hint">{diagnosisHint(t, testResult, k6Version)}</div>}
                 </AlertBanner>}
+              <RequestPhases t={t} check={testResult} viaProxy={testResult.via_proxy ?? null} />
               {testResult.output_tail && <pre className="show-pre sc-console">{testResult.output_tail}</pre>}
             </div>}
 

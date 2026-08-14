@@ -1,9 +1,13 @@
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, Fragment } from 'react'
 import { useT } from '../../i18n/index.jsx'
 
+/**
+ * Aranabilir seçici. Seçeneklere opsiyonel `group` verilirse liste grup başlıklarıyla bölünür
+ * (ör. "Kayıtlı script'ler" / "Şablonlar") — arama yine ETİKET üzerinde çalışır.
+ */
 export default function SearchableSelect({
   value, onChange, options, placeholder, disabled = false, searchThreshold = 4,
-  creatable = false, onCreate, onDelete
+  creatable = false, onCreate, onDelete, ariaLabel
 }) {
   const t = useT()
   const [open, setOpen] = useState(false)
@@ -66,6 +70,7 @@ export default function SearchableSelect({
       <button
         type="button"
         className={`ss-trigger${open ? ' ss-open' : ''}${isEmpty ? ' ss-placeholder' : ''}`}
+        aria-label={ariaLabel}
         onMouseDown={handleTriggerMouseDown}
         onKeyDown={handleTriggerKeyDown}
         disabled={disabled}
@@ -94,20 +99,29 @@ export default function SearchableSelect({
             </div>
           )}
           <div className="ss-options">
-            {filtered.map(opt => {
+            {filtered.map((opt, i) => {
               const deletable = onDelete && opt.value !== '' && opt.value != null
+              // Opsiyonel gruplama: seçeneğe `group` verilirse grup DEĞİŞTİĞİNDE başlık basılır.
+              // Başlık, o gruptan hayatta kalan İLK seçeneğe bağlı çizildiği için aramada boşalan
+              // grubun başlığı kendiliğinden kaybolur. Fragment kullanılıyor: araya sarmalayıcı bir
+              // div girseydi `.ss-options > .ss-option` yerleşimi bozulurdu.
+              const header = opt.group && opt.group !== (i > 0 ? filtered[i - 1].group : undefined)
+                ? <div className="ss-group">{opt.group}</div>
+                : null
               return (
-                <div
-                  key={String(opt.value)}
-                  className={`ss-option${deletable ? ' ss-option-deletable' : ''}${String(opt.value) === String(value) ? ' ss-selected' : ''}${opt.value === '' ? ' ss-opt-placeholder' : ''}`}
-                  onMouseDown={(e) => { e.preventDefault(); select(opt.value) }}
-                >
-                  {deletable ? <span className="ss-option-label">{opt.label}</span> : opt.label}
-                  {deletable && (
-                    <span className="ss-option-del" role="button" title={t('ss.delete')}
-                      onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); onDelete(opt.value) }}>×</span>
-                  )}
-                </div>
+                <Fragment key={String(opt.value)}>
+                  {header}
+                  <div
+                    className={`ss-option${deletable ? ' ss-option-deletable' : ''}${String(opt.value) === String(value) ? ' ss-selected' : ''}${opt.value === '' ? ' ss-opt-placeholder' : ''}`}
+                    onMouseDown={(e) => { e.preventDefault(); select(opt.value) }}
+                  >
+                    {deletable ? <span className="ss-option-label">{opt.label}</span> : opt.label}
+                    {deletable && (
+                      <span className="ss-option-del" role="button" title={t('ss.delete')}
+                        onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); onDelete(opt.value) }}>×</span>
+                    )}
+                  </div>
+                </Fragment>
               )
             })}
             {filtered.length === 0 && !(creatable && trimmedQuery) && (

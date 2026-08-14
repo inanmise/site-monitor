@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
-import { exitLabel, exitHint, diagnosisHint, k6SyntaxLevel, K6_EXIT_CODES, K6_EXIT_WITH_HINT } from '../components/scriptedExitCodes.js'
+import { exitLabel, exitHint, diagnosisHint, k6SyntaxLevel, K6_EXIT_CODES, K6_EXIT_WITH_HINT,
+  readPhases, formatBytes } from '../components/scriptedExitCodes.js'
 
 /**
  * `exitLabel` "çeviri var mı"yı `t(key) === key` kimlik testiyle anlıyor; bu yüzden stub anahtarı
@@ -150,5 +151,88 @@ describe('diagnosisHint — k6 sözdizimi duvarı', () => {
   it('outputTail (camelCase) de okunur — API iki biçimde de gelebiliyor', () => {
     expect(diagnosisHint(t, { outputTail: 'SyntaxError: Unexpected token (1:5)' }, 'v0.49.0'))
       .toBe('«scripted.hintOldEngine»(v0.49.0)')
+  })
+})
+
+/**
+ * Faz kırılımı — sahadaki en pahalı boşluğun kapatıldığı yer. 288 koşum "request timeout" derken
+ * DNS/TCP/TLS/TTFB ayrımı hiçbir ekranda görünmüyordu; veri k6'dan geliyordu ama atılıyordu.
+ */
+describe('readPhases', () => {
+  // Aşağıdaki değerler UYDURMA DEĞİL: k6 v0.49 ile gerçek koşumlardan ölçüldü.
+  // k6 fazların HEPSİNİ her zaman basar; girilmemiş faz 0 gelir (metrik eksilmez).
+
+  it('TCP bağlanıp TLS düşen koşumda takılma noktası TLS (ölçülmüş biçim)', () => {
+    // `k6 run https://example.com:80` → connecting=40.8, gerisi 0, 281 B gönderildi/316 B alındı
+    const r = readPhases({ phases: {
+      blocked_ms: 0, connecting_ms: 41, tls_ms: 0, sending_ms: 0,
+      waiting_ms: 0, receiving_ms: 0, data_sent: 281, data_received: 316,
+    } })
+
+    expect(r.any).toBe(true)
+    expect(r.reached).toBe('connecting')
+    expect(r.stuckAt).toBe('tls')
+    expect(r.dataSent).toBe(281)
+  })
+
+  it('ARADAKİ sıfır yanıltmaz — son POZİTİF faz esas alınır', () => {
+    // Aynı ölçümde blocked=0 çıktı (DNS önbellekli) ama DNS elbette gerçekleşmişti.
+    // "İlk sıfır" mantığı kullanılsaydı panel DNS'i suçlardı — yanlış teşhis.
+    const r = readPhases({ phases: { blocked_ms: 0, connecting_ms: 41, tls_ms: 0 } })
+    expect(r.stuckAt).toBe('tls')
+    expect(r.phases.find(p => p.key === 'blocked').done).toBe(true)
+  })
+
+  it('hiçbir faz pozitif değilse istek hiç yol alamamıştır (ilk faz işaretlenir)', () => {
+    // `k6 run https://10.255.255.1:9443` → altı faz da 0, data_sent=0
+    const r = readPhases({ phases: {
+      blocked_ms: 0, connecting_ms: 0, tls_ms: 0, sending_ms: 0, waiting_ms: 0, receiving_ms: 0,
+    } })
+    expect(r.reached).toBeNull()
+    expect(r.stuckAt).toBe('blocked')
+  })
+
+  it('tüm fazlar pozitifse takılma yok (başarılı istek biçimi)', () => {
+    // `k6 run https://example.com` → 221.7 / 49.9 / 147.8 / 8.0 / 59.1 / 0.7
+    const r = readPhases({ phases: {
+      blocked_ms: 222, connecting_ms: 50, tls_ms: 148, sending_ms: 8, waiting_ms: 59, receiving_ms: 1,
+    } })
+    expect(r.stuckAt).toBeNull()
+    expect(r.reached).toBe('receiving')
+  })
+
+  it('PASS koşumunda takılma noktası HİÇ üretilmez (son faz 0\'a yuvarlanabiliyor)', () => {
+    const passing = { phases: {
+      blocked_ms: 222, connecting_ms: 50, tls_ms: 148, sending_ms: 8, waiting_ms: 59, receiving_ms: 0,
+    } }
+    expect(readPhases(passing, false).stuckAt).toBe('receiving')   // başarısızsa işaretlenir
+    expect(readPhases(passing, true).stuckAt).toBeNull()           // PASS'te asla
+  })
+
+  it('kontrol geçmişindeki DÜZ alanları da okur (req_*_ms) — iki uç iki biçim döndürüyor', () => {
+    const r = readPhases({ req_blocked_ms: 2, req_connecting_ms: 5, data_sent: 100 })
+    expect(r.reached).toBe('connecting')
+    expect(r.stuckAt).toBe('tls')
+    expect(r.dataSent).toBe(100)
+  })
+
+  it('faz alanı hiç gelmediyse any=false — düzeltme öncesi satırlarda panel çizilmez', () => {
+    expect(readPhases({}).any).toBe(false)
+    expect(readPhases(null).any).toBe(false)
+    expect(readPhases({ phases: null }).any).toBe(false)
+  })
+})
+
+describe('formatBytes', () => {
+  it('byte/KB/MB eşiklerini insan-okur biçimde verir', () => {
+    expect(formatBytes(381)).toBe('381 B')
+    expect(formatBytes(2048)).toBe('2.0 KB')
+    expect(formatBytes(3 * 1024 * 1024)).toBe('3.0 MB')
+  })
+
+  it('yok/geçersiz değer → null (satır hiç basılmaz)', () => {
+    expect(formatBytes(null)).toBeNull()
+    expect(formatBytes(undefined)).toBeNull()
+    expect(formatBytes('abc')).toBeNull()
   })
 })

@@ -72,6 +72,85 @@ export function k6SyntaxLevel(raw) {
 }
 
 /**
+ * İSTEK FAZLARI — sıra anlamlıdır ve teşhisin tamamı bu sıraya dayanır.
+ *
+ * 2026-08'e kadar bu veri k6 tarafından üretilip backend'de atılıyordu; sahada 288 koşum
+ * "request timeout" derken DNS mi TCP mi TLS mi yanıt bekleme mi olduğu hiç bilinemedi.
+ *
+ * ÖLÇÜLDÜ (k6 v0.49, gerçek koşumlar): k6 fazların TAMAMINI her zaman basar; girilmemiş faz
+ * `0` gelir, metrik hiç eksilmez. Yani "yok = girilmedi" varsayımı YANLIŞTIR. Doğru okuma
+ * SON SIFIR-OLMAYAN fazdır:
+ *   - başarılı istek      → altı faz da > 0
+ *   - TCP bağlanır, TLS düşer → connecting > 0, tls/sending/waiting/receiving = 0
+ *   - hiç bağlanamaz      → hepsi 0
+ * Aradaki sıfırlar yanıltmaz (ör. DNS önbellekliyse blocked=0 olabilir) çünkü SON pozitif
+ * faz esas alınır.
+ */
+export const REQUEST_PHASES = [
+  { key: 'blocked', field: 'blocked_ms', flat: 'req_blocked_ms' },
+  { key: 'connecting', field: 'connecting_ms', flat: 'req_connecting_ms' },
+  { key: 'tls', field: 'tls_ms', flat: 'req_tls_ms' },
+  { key: 'sending', field: 'sending_ms', flat: 'req_sending_ms' },
+  { key: 'waiting', field: 'waiting_ms', flat: 'req_waiting_ms' },
+  { key: 'receiving', field: 'receiving_ms', flat: 'req_receiving_ms' },
+]
+
+/**
+ * Koşum satırından faz kırılımını okur.
+ *
+ * İKİ KAYNAK var ve ikisi de meşru: liste/test uçları iç içe `phases` nesnesi döner, kontrol
+ * geçmişi ucu ise entity'yi düz serileştirdiği için `req_*_ms` alanlarını düz döner. Tek bir
+ * okuyucu ikisini de kabul eder — aksi halde aynı panel geçmişte boş görünürdü.
+ *
+ * `passed=true` iken takılma noktası HİÇ üretilmez: başarılı bir koşumda son fazın (receiving)
+ * ölçümü yuvarlanarak 0 çıkabiliyor ve panel sağlıklı bir isteği "takıldı" diye suçlardı.
+ *
+ * @param {object} check   koşum satırı (iç içe `phases` ya da düz `req_*_ms`)
+ * @param {boolean} passed koşum başarılı mı (PASS)
+ * @returns {{phases: Array<{key: string, ms: number|null, done: boolean}>, stuckAt: string|null,
+ *            reached: string|null, dataSent: number|null, dataReceived: number|null, any: boolean}}
+ *   `stuckAt`: son SIFIR-OLMAYAN fazdan sonraki faz; hiçbiri pozitif değilse ilk faz
+ *              (istek hiç yol alamadı); tamamlandıysa ya da `passed` ise null.
+ *   `any`: faz alanı hiç GELMEDİYSE false — düzeltme öncesi kaydedilmiş satır; panel çizilmez.
+ */
+export function readPhases(check, passed = false) {
+  const src = check?.phases ?? check ?? {}
+  const raw = REQUEST_PHASES.map(p => {
+    const v = src[p.field] ?? check?.[p.flat]
+    return { key: p.key, ms: v == null ? null : Number(v) }
+  })
+  const any = raw.some(p => p.ms != null)
+  // k6 girilmemiş fazı 0 basar (ölçüldü) ⇒ "nereye kadar gelindi" = SON POZİTİF faz.
+  let lastPositive = -1
+  raw.forEach((p, i) => { if (p.ms != null && p.ms > 0) lastPositive = i })
+
+  let stuckAt = null
+  if (any && !passed) {
+    if (lastPositive < 0) stuckAt = raw[0].key                      // hiç yol alamadı
+    else if (lastPositive < raw.length - 1) stuckAt = raw[lastPositive + 1].key
+  }
+  const phases = raw.map((p, i) => ({ ...p, done: i <= lastPositive }))
+  const num = (v) => (v == null ? null : Number(v))
+  return {
+    phases,
+    any,
+    reached: lastPositive >= 0 ? raw[lastPositive].key : null,
+    stuckAt,
+    dataSent: num(src.data_sent ?? check?.data_sent),
+    dataReceived: num(src.data_received ?? check?.data_received),
+  }
+}
+
+/** Byte → insan-okur ("381 B" / "1,2 KB"). Grafik değil, tanı metni için — tek ondalık yeter. */
+export function formatBytes(n) {
+  if (n == null || !Number.isFinite(Number(n))) return null
+  const v = Number(n)
+  if (v < 1024) return `${v} B`
+  if (v < 1024 * 1024) return `${(v / 1024).toFixed(1)} KB`
+  return `${(v / 1024 / 1024).toFixed(1)} MB`
+}
+
+/**
  * Zaman aşımına uğramış bir koşumda backend sebebi gösterebildi mi?
  *
  * Sözleşme (`ScriptedCheckerService.summarizeError`): sebep ayıklanabildiğinde başlık satırının

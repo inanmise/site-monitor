@@ -6897,6 +6897,26 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
   font-family: Consolas, 'Courier New', monospace; font-size: 11.5px; line-height: 1.55; }
 .sc-err-exit { margin-top: 4px; font-size: .9em; opacity: .85; }
 .sc-err-hint { margin-top: 4px; font-size: .9em; font-style: italic; }
+
+/* "Nerede takıldı?" — isteğin faz kırılımı. Fazlar SIRALI okunur; ölçülmeyen ilk faz vurgulanır.
+   Renkler token'lardan: sabit hex kullanılırsa karanlık tema kırılır (proje kuralı). */
+.sc-phases { margin-top: 10px; border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; background: var(--bg-subtle, var(--card-bg)); }
+.sc-phases-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+.sc-phases-title { font-weight: 600; font-size: .92em; }
+.sc-phases-proxy { font-size: .82em; color: var(--text-muted); border: 1px solid var(--border); border-radius: 999px; padding: 1px 8px; }
+.sc-phase-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
+.sc-phase { display: flex; justify-content: space-between; gap: 12px; font-size: .88em; padding: 3px 6px; border-radius: 4px; }
+.sc-phase-name { color: var(--text-muted); }
+.sc-phase-val { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.sc-phase--done .sc-phase-name { color: var(--text); }
+.sc-phase--skipped { opacity: .55; }
+/* Takılma noktası: metin+kenarlık taşır, yalnız renk değil (renk körlüğü + düşük kontrastlı ekranlar). */
+.sc-phase--stuck { background: var(--danger-bg, rgba(220, 38, 38, .10)); border: 1px solid var(--danger-border, rgba(220, 38, 38, .35)); font-weight: 600; }
+.sc-phase--stuck .sc-phase-name { color: var(--danger, #b91c1c); }
+.sc-phase-verdict { margin-top: 8px; font-size: .88em; color: var(--danger, #b91c1c); }
+.sc-phase-bytes { margin-top: 4px; font-size: .84em; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.sc-proxy-note code { font-size: .95em; word-break: break-all; }
+
 .sc-tech { margin-top: 10px; }
 .sc-tech-toggle { width: 100%; }
 .sc-tech-actions { display: flex; gap: 8px; align-items: center; margin: 8px 0 6px; }
@@ -6988,6 +7008,14 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .sc-k6ver-note--warn { color: var(--warning, #f59e0b); }
 /* Başlık satırı: "k6 Script (JavaScript)" solda, sürüm bilgisi sağda. */
 .sc-script-title { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+
+/* SearchableSelect grup başlığı (kayıtlı script'ler / şablonlar ayrımı). */
+.ss-group {
+  padding: 7px 10px 3px;
+  font-size: .66em; font-weight: 700; letter-spacing: .05em; text-transform: uppercase;
+  color: var(--text-light); border-top: 1px solid var(--border);
+}
+.ss-options > .ss-group:first-child { border-top: none; }
 
 /* Sürüm rozeti + otomatik taslak göstergesi + Sürümler sekmesi. */
 .sc-ver-chip {
