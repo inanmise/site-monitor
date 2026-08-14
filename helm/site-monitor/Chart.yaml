@@ -2,8 +2,8 @@ apiVersion: v2
 name: sitemonitor-chart
 description: SSL/TLS Certificate Monitoring System with alerting, escalation, and Kubernetes-native HA support.
 type: application
-version: 20.15.0
-appVersion: "20.15.0"
+version: 20.16.0
+appVersion: "20.16.0"
 keywords:
   - certificate
   - ssl
