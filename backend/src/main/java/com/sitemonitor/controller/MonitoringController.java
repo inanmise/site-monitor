@@ -2648,8 +2648,13 @@ public class MonitoringController {
             var fut = schedulerService.triggerScriptedCheckAsync(m);
             int waitSecs = Math.max(1, appSettings.getInt("site.monitor.scripted.manual-wait-seconds", 25));
             boolean queued = false;
+            String skippedReason = null;
             try {
-                fut.get(waitSecs, java.util.concurrent.TimeUnit.SECONDS);
+                Map<String, Object> r = fut.get(waitSecs, java.util.concurrent.TimeUnit.SECONDS);
+                // Kontrol YÜRÜTÜLEMEDİYSE kayıt yazılmaz; sebebi söylemezsek kullanıcı ekranda ESKİ
+                // sonucu görür ve "çalıştır"a bastığını sanır. Hata değil bilgi: hedefte sorun yok.
+                if (r != null && Boolean.TRUE.equals(r.get("skipped")))
+                    skippedReason = String.valueOf(r.get("error"));
             } catch (java.util.concurrent.TimeoutException te) {
                 queued = true;              // koşum sürüyor; iptal ETME — arka planda tamamlansın
             } catch (InterruptedException ie) {
@@ -2663,6 +2668,7 @@ public class MonitoringController {
                     scriptedCheckRepo.findTopByMonitorIdOrderByCheckedAtDesc(id).orElse(null), teamNameMap(),
                     alertEventRepo.findOpenAlert(m.getName(), EscalationService.TYPE_SCRIPTED_FAIL).orElse(null)));
             if (queued) out.put("queued", true);
+            if (skippedReason != null) { out.put("skipped", true); out.put("skipped_reason", skippedReason); }
             return ok(out);
         }).orElse(notFound("Sentetik izleme bulunamadı"));
     }

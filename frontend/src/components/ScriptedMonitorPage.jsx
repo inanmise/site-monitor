@@ -737,7 +737,12 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
       // queued: koşum sunucunun bekleme penceresini aştı, arka planda sürüyor. Satırı ESKİ sonuçla
       // güncellemek yanıltıcı olurdu (kullanıcı bunu yeni sonuç sanar) — dokunmayıp haber veriyoruz.
       // Sonuç kendiliğinden gelir: liste 60 sn'de, Kontrol Geçmişi 30 sn'de canlı yeniliyor.
-      if (res.data?.queued) {
+      // skipped: kontrol HİÇ yürütülemedi (k6 havuzu dolu / k6 yok) ve bu yüzden kayıt da
+      // yazılmadı. Satırı güncellemek kullanıcıya ESKİ sonucu "yeni" gibi gösterirdi; sebebi
+      // söylüyoruz. Uyarı tonunda: hedefte bir sorun YOK, kapasite darlığı var.
+      if (res.data?.skipped) {
+        toast.info(t('scripted.triggerSkipped', res.data.skipped_reason || ''), 6000)
+      } else if (res.data?.queued) {
         toast.success(t('scripted.triggerQueued'))
       } else {
         setMonitors(prev => prev.map(x => x.id === m.id ? { ...x, ...res.data } : x))

@@ -102,6 +102,59 @@ class ProcessProbeTest {
         assertThat(isolated.output()).doesNotContain(expected);
     }
 
+    // ── Büyük çıktı: deadlock YOK, saklanan pencere SON byte'lar ────────────────────────────
+
+    @Test
+    @DisplayName("readTail: kapasiteyi aşan akışta SON byte'lar tutulur (hata sondadır)")
+    void readTail_keepsTail() throws Exception {
+        byte[] data = "0123456789ABCDEF".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        var in = new java.io.ByteArrayInputStream(data);
+
+        byte[] out = ProcessProbe.readTail(in, 6);
+
+        assertThat(new String(out, java.nio.charset.StandardCharsets.UTF_8)).isEqualTo("ABCDEF");
+    }
+
+    @Test
+    @DisplayName("readTail: kapasiteden kısa akış aynen döner; boş akış boş döner")
+    void readTail_shortStream() throws Exception {
+        assertThat(new String(ProcessProbe.readTail(
+                new java.io.ByteArrayInputStream("abc".getBytes()), 100))).isEqualTo("abc");
+        assertThat(ProcessProbe.readTail(new java.io.ByteArrayInputStream(new byte[0]), 10)).isEmpty();
+    }
+
+    @Test
+    @DisplayName("readTail: tek okuma kapasiteyi aşsa da kuyruk doğru (halka sarması)")
+    void readTail_singleChunkLargerThanCap() throws Exception {
+        byte[] big = new byte[20_000];
+        for (int i = 0; i < big.length; i++) big[i] = (byte) ('a' + (i % 26));
+        byte[] out = ProcessProbe.readTail(new java.io.ByteArrayInputStream(big), 100);
+
+        assertThat(out).hasSize(100);
+        assertThat(out).isEqualTo(java.util.Arrays.copyOfRange(big, big.length - 100, big.length));
+    }
+
+    @Test
+    @DisplayName("REGRESYON: çok çıktı basan süreç TIMEOUT'a düşmez (boru dolup asılmaz)")
+    void largeOutput_doesNotDeadlock() {
+        // Eskiden okuyucu 512 KB'ta duruyordu: alt sürecin stdout borusu doluyor, süreç write()'ta
+        // bloke kalıyor, waitFor süresi doluyor ve TÜM check'leri geçen bir script bile TIMEOUT
+        // görüyordu. Burada ~1 MB üretiliyor; süreç normal bitmeli.
+        List<String> args = isWindows()
+                ? List.of("cmd", "/c", "for /L %i in (1,1,12000) do @echo aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+                : List.of("sh", "-c", "i=0; while [ $i -lt 12000 ]; do echo aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa; i=$((i+1)); done");
+
+        ProcessProbe.Result r = ProcessProbe.run(args, null, null, 60, true, 4096, false);
+
+        assertThat(r.timedOut()).isFalse();
+        assertThat(r.exitCode()).isZero();
+        // Saklanan pencere çıktının SONU (eskiden başıydı — extractErrorLines hatayı hiç göremezdi).
+        // strip(): platforma göre satır sonu CRLF/LF olabiliyor.
+        assertThat(r.output().strip()).endsWith("aaaa");
+        // 4 KiB tavanı uygulanmış olmalı (~1 MB üretildi)
+        assertThat(r.output().length()).isLessThanOrEqualTo(4096);
+    }
+
     @Test
     @DisplayName("İzole modda süreç yine ayağa kalkar (beyaz-liste PATH/SystemRoot'u korur)")
     void isolatedEnv_processStillStarts() {

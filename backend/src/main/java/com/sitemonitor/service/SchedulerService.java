@@ -2556,7 +2556,15 @@ public class SchedulerService {
     @Scheduled(fixedDelayString = "${site.monitor.scripted.interval-ms:60000}", initialDelayString = "95000")
     public void runScriptedChecks() {
         if (!appSettings.getBoolean("site.monitor.scripted.enabled", true)) return;
-        if (!scriptedCheckerService.isAvailable()) return;   // k6 binary yok → türü sessizce atla
+        // k6 yoksa PERİYODİK yeniden dene ve SUS-MA. Eskiden burada koşulsuz `return` vardı ve
+        // probeK6 yalnız @PostConstruct'ta çalışıyordu: k6'yı taşıyan volume/sidecar geç hazır olursa
+        // sentetik izleme sessizce kalıcı ölüyordu (kontrol yok, alarm yok, kayıt yok, log yok).
+        if (!scriptedCheckerService.ensureProbed()) {
+            if (scriptedMonitorRepo.countByActiveTrue() > 0)
+                log.warn("[K6] Sentetik izleme YÜRÜTÜLMÜYOR — k6 bulunamadı. Aktif sentetik monitörler "
+                        + "kontrol edilmiyor; scripted.k6.available metriği 0.");
+            return;
+        }
         if (!tryAcquireSchedulerLock("scripted-sweep", sweepLockTtlMinutes)) {
             log.debug("Scripted sweep — lock başka instance'da, atlanıyor");
             return;
@@ -2582,19 +2590,37 @@ public class SchedulerService {
             if (!checkDue("scripted", m.getId(), m.getIntervalSeconds())) continue;
             started.add(Map.entry(m, scriptedCheckerService.submit(m)));
         }
-        int checked = 0;
+        int checked = 0, skipped = 0;
         List<MonitoringOutageService.SweepItem> sweep = new ArrayList<>();
         for (var entry : started) {
             com.sitemonitor.model.ScriptedMonitor m = entry.getKey();
             try {
-                ScriptedCheckerService.ScriptedResult res = entry.getValue().get(200, java.util.concurrent.TimeUnit.SECONDS);
+                // Bekleme süresi checker'ın permit beklemesinden KISA OLAMAZ: kısa olursa koşum arka
+                // planda tamamlanır ama sonucu hiçbir yere yazılmaz (satır yok, checked_at eskir,
+                // alarm çıkmaz) ve monitör ekranda sessizce donar. Tek kaynak: maxWaitSeconds().
+                ScriptedCheckerService.ScriptedResult res =
+                        entry.getValue().get(ScriptedCheckerService.maxWaitSeconds() + 15,
+                                java.util.concurrent.TimeUnit.SECONDS);
+                // Altyapı atlaması hedefin arızası DEĞİL: ne kayıt yazılır (uptime kirlenmesin)
+                // ne alarm zincirine girer. Aksi halde pool-size darlığı 100 monitörlük filoda
+                // toplu YANLIŞ alarm üretiyordu.
+                if (ScriptedCheckerService.isSkipped(res)) { skipped++; continue; }
                 Map<String, Object> r = persistScripted(m, res, false);
                 addScriptedSweepItems(m, r, sweep);
                 checked++;
+            } catch (java.util.concurrent.TimeoutException te) {
+                // Future'ı BIRAKMA: iptal edilmezse k6 süreci ve permit'i tutmaya devam eder.
+                entry.getValue().cancel(true);
+                skipped++;
+                log.warn("Senaryo sonucu {} sn içinde gelmedi, koşum iptal edildi: {} — bu tur kontrol yazılmadı",
+                        ScriptedCheckerService.maxWaitSeconds() + 15, m.getName());
             } catch (Exception e) {
                 log.warn("Scripted check failed for {}: {}", m.getName(), e.getMessage());
             }
         }
+        if (skipped > 0)
+            log.warn("Senaryo sweep: {} kontrol YÜRÜTÜLEMEDİ (k6 havuzu dolu / k6 yok). Kapasite ≈ "
+                    + "pool-size × aralık ÷ koşum süresi; scripted.k6.skipped sayacına bakın.", skipped);
         try { monitoringOutageService.handleSweepResults(EscalationService.TYPE_SCRIPTED_FAIL, sweep); }
         catch (Exception e) { log.warn("Scripted outage processing failed: {}", e.getMessage(), e); }
         log.debug("Scripted checks complete: {} monitors", checked);
@@ -2624,6 +2650,11 @@ public class SchedulerService {
                 EscalationService.TYPE_SCRIPTED_FAIL, m.getName(), detail,
                 up, up ? null : detail, new LinkedHashMap<>(ctx),
                 () -> { Map<String, Object> p = recheckScripted(m, false);
+                        // "skipped" ÜÇÜNCÜ bir cevap: kontrol yürütülemediyse ne up ne down deriz.
+                        // "down" desek havuz darlığı sahte kesinti TEYİT ederdi; "up" desek gerçek
+                        // bir kesintiyi sessizce kapatırdı. Teyit zinciri bunu kanıt saymaz.
+                        if (Boolean.TRUE.equals(p.get("skipped")))
+                            return Map.of("status", "skipped", "error", String.valueOf(p.get("error")));
                         return Map.of("status", Boolean.TRUE.equals(p.get("up")) ? "up" : "down"); }));
     }
 
@@ -2634,6 +2665,18 @@ public class SchedulerService {
 
     private Map<String, Object> persistScripted(com.sitemonitor.model.ScriptedMonitor m,
                                                 ScriptedCheckerService.ScriptedResult res, boolean manual) {
+        // Kontrol YÜRÜTÜLEMEDİYSE (k6 yok / havuz dolu) hiçbir şey kaydedilmez: uptime serisine
+        // sahte bir başarısızlık, alarm zincirine sahte bir kanıt girmesin. Çağıran "skipped"
+        // görür; manuel tetikte kullanıcıya sebep, teyit zincirinde ise zinciri iptal ettirir.
+        if (ScriptedCheckerService.isSkipped(res)) {
+            Map<String, Object> out = new LinkedHashMap<>();
+            out.put("status", ScriptedCheckerService.STATUS_SKIPPED);
+            out.put("skipped", true);
+            out.put("up", null);              // BİLİNMİYOR — ne up ne down
+            out.put("error", res.error());
+            log.warn("Senaryo kontrolü yürütülemedi ({}): {}", m.getName(), res.error());
+            return out;
+        }
         // ok ile up BİLİNÇLİ olarak ayrışır — CONFIG_ERROR'da (http/page türleri) uygulanan aynı desen.
         //   ok  = "bu koşum doğrulanmış sağlık üretti mi?"  → uptime serisine ve rollup'a gider
         //   up  = "hedef çökük mü, birini çağıralım mı?"    → alarm zincirine gider

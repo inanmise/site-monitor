@@ -489,4 +489,65 @@ class MonitoringOutageServiceTest {
         verify(escalationService, never()).resolveMonitoringAlertsForDomain(anyString(), anyString());
         assertThat(calls.get()).isEqualTo(2); // n=1 up, n=2 down → dur
     }
+
+    // ── Sentetik: teyit anahtarı + "yürütülemedi" cevabı ────────────────────────────────────
+
+    /** Kontrol YÜRÜTÜLEMEDİ cevabı (k6 havuzu dolu / k6 yok). */
+    private static Map<String, Object> skipped() {
+        Map<String, Object> m = new HashMap<>();
+        m.put("status", "skipped");
+        m.put("error", "k6 havuzu dolu — kontrol atlandı");
+        return m;
+    }
+
+    @Test
+    @DisplayName("Sentetik teyit anahtarı DETAIL içermez — hata metni değişince MÜKERRER zincir başlamaz")
+    void scriptedConfirmKeyIgnoresVolatileDetail() {
+        // scriptedDetail check sayaçlarını + hata metnini taşır ("FAIL — 0✓/2✗ · request timeout")
+        // ve her sweep'te değişebilir. Anahtara girdiğinde putIfAbsent guard'ı tutmuyor, aynı
+        // monitör için paralel zincirler başlıyor ve her biri ayrı bir k6 permit'i yiyordu.
+        AtomicInteger calls = new AtomicInteger();
+        Supplier<Map<String, Object>> neverReturns = () -> { calls.incrementAndGet(); return down("x"); };
+        ReflectionTestUtils.setField(service, "confirmExecutor", new ScheduledThreadPoolExecutor(1));  // ASENKRON: zincir açık kalsın
+
+        service.handleSweepResults(EscalationService.TYPE_SCRIPTED_FAIL, List.of(
+                item(EscalationService.TYPE_SCRIPTED_FAIL, "Login Akisi",
+                        "FAIL — 0✓/2✗ · request timeout", false, Map.of(), neverReturns)));
+        // AYNI monitör, FARKLI detail (bir sonraki sweep'in ürettiği metin)
+        service.handleSweepResults(EscalationService.TYPE_SCRIPTED_FAIL, List.of(
+                item(EscalationService.TYPE_SCRIPTED_FAIL, "Login Akisi",
+                        "FAIL — 1✓/1✗ · connection refused", false, Map.of(), neverReturns)));
+
+        assertThat(service.activeConfirmations("Login Akisi")).hasSize(1);   // İKİ değil
+    }
+
+    @Test
+    @DisplayName("Doğrulama YÜRÜTÜLEMEDİ → zincir iptal, alarm AÇILMAZ (altyapı darlığı kesinti değildir)")
+    void skippedRecheckAbortsChainWithoutAlarm() {
+        // Aksi hâlde k6 havuzu dolduğunda hedefte hiçbir sorun yokken KRİTİK alarm açılırdı.
+        AtomicInteger calls = new AtomicInteger();
+        Supplier<Map<String, Object>> alwaysSkipped = () -> { calls.incrementAndGet(); return skipped(); };
+
+        service.handleSweepResults(EscalationService.TYPE_SCRIPTED_FAIL, List.of(
+                item(EscalationService.TYPE_SCRIPTED_FAIL, "Odeme Akisi", "FAIL", false,
+                        Map.of(), alwaysSkipped)));
+
+        verify(escalationService, never()).processConfirmedOutage(anyString(), anyString(), anyString(), anyMap());
+        assertThat(calls.get()).isEqualTo(1);                       // 3 deneme değil: ilk "skipped"te durur
+        assertThat(service.activeConfirmations("Odeme Akisi")).isEmpty();   // zincir temizlendi
+    }
+
+    @Test
+    @DisplayName("Sentetik OLMAYAN türlerde detail anahtarın PARÇASI kalır (port 443 vs 8443 ayrı kesinti)")
+    void nonScriptedKeyStillIncludesDetail() {
+        AtomicInteger calls = new AtomicInteger();
+        Supplier<Map<String, Object>> stuck = () -> { calls.incrementAndGet(); return down("x"); };
+        ReflectionTestUtils.setField(service, "confirmExecutor", new ScheduledThreadPoolExecutor(1));
+
+        service.handleSweepResults(EscalationService.TYPE_PORT_DOWN, List.of(
+                item(EscalationService.TYPE_PORT_DOWN, "host.example.com", "443", false, Map.of(), stuck),
+                item(EscalationService.TYPE_PORT_DOWN, "host.example.com", "8443", false, Map.of(), stuck)));
+
+        assertThat(service.activeConfirmations("host.example.com")).hasSize(2);
+    }
 }
