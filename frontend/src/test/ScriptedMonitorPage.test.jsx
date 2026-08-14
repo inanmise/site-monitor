@@ -240,7 +240,16 @@ describe('ScriptedMonitorPage', () => {
 
     // Modal createPortal ile document.body'ye çiziliyor → sorgular container'a DEĞİL belgeye yapılır.
     const inModal = (sel) => document.querySelector(`.modal-box ${sel}`)
-    const sourceSelect = () => screen.getByLabelText(/script source|script kaynağı/i)
+    /** Script kaynağı artık aranabilir seçici (SearchableSelect): tetikleyiciye tıkla, seçeneği tıkla. */
+    // Tetikleyici TOGGLE: açıkken yeniden tıklamak kapatır → yalnız kapalıysa aç (idempotent).
+    const isSourceOpen = () => !!document.querySelector('.sc-source-select .ss-dropdown')
+    const openSource = () => { if (!isSourceOpen()) fireEvent.mouseDown(document.querySelector('.sc-source-select .ss-trigger')) }
+    const sourceOptions = () => [...document.querySelectorAll('.sc-source-select .ss-option')]
+    const pickSource = (labelRe) => {
+      openSource()
+      const opt = sourceOptions().find(o => labelRe.test(o.textContent))
+      fireEvent.mouseDown(opt)
+    }
 
     async function openEditFor(row) {
       const rows = row.id === NEVER_RUN.id ? [NEVER_RUN] : [row, NEVER_RUN]
@@ -256,14 +265,47 @@ describe('ScriptedMonitorPage', () => {
 
     it('seçici İKİ GRUP gösterir: kayıtlı script\'ler (bu monitör başta) ve şablonlar', async () => {
       await openEditFor(FAILING)
-      const groups = sourceSelect().querySelectorAll('optgroup')
-      expect(groups.length).toBe(2)
-      expect(groups[0].label).toMatch(/saved scripts|kayıtlı/i)
-      expect(groups[1].label).toMatch(/templates|şablon/i)
+      openSource()
+      const groups = [...document.querySelectorAll('.sc-source-select .ss-group')].map(g => g.textContent)
+      expect(groups).toHaveLength(2)
+      expect(groups[0]).toMatch(/saved scripts|kayıtlı/i)
+      expect(groups[1]).toMatch(/templates|şablon/i)
       // Düzenlenen monitör kendi adıyla ve "(bu monitör)" işaretiyle EN BAŞTA
-      expect(groups[0].children[0].textContent).toContain('llm-test')
-      expect(groups[0].children[0].textContent).toMatch(/this monitor|bu monitör/i)
-      expect(sourceSelect().value).toBe('saved:7')
+      const first = sourceOptions()[0].textContent
+      expect(first).toContain('llm-test')
+      expect(first).toMatch(/this monitor|bu monitör/i)
+    })
+
+    it('ada göre ARAMA: eşleşmeyen seçenekler ve boşalan grup başlığı düşer', async () => {
+      await openEditFor(FAILING)
+      openSource()
+      // "llm" YALNIZ kayıtlı script'in adında geçer → şablon grubu tamamen boşalmalı
+      fireEvent.change(document.querySelector('.sc-source-select .ss-search-input'), { target: { value: 'llm' } })
+
+      const labels = sourceOptions().map(o => o.textContent)
+      expect(labels.some(l => l.includes('llm-test'))).toBe(true)
+      expect(labels.some(l => /smoke/i.test(l))).toBe(false)
+      const groups = [...document.querySelectorAll('.sc-source-select .ss-group')].map(g => g.textContent)
+      expect(groups).toHaveLength(1)                       // yalnız "Kayıtlı script'ler" kaldı
+      expect(groups[0]).toMatch(/saved scripts|kayıtlı/i)
+    })
+
+    it('BAŞKA takımın script\'i listelenmez (düzenlenen monitörün kendi girdisi hariç)', async () => {
+      const otherTeam = { id: 99, name: 'baska-takim-scripti', status: 'PASS', team_id: 42,
+        script: 'export default function(){}', checked_at: '2026-08-13T10:00:00' }
+      api.monitoring.getScriptedMonitors.mockResolvedValue({
+        success: true,
+        data: { k6_available: true, k6_version: 'v0.49.0', can_manage: true, monitors: [FAILING, otherTeam] },
+      })
+      const utils = render(<ScriptedMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
+      await waitFor(() => expect(api.monitoring.getScriptedMonitors).toHaveBeenCalled())
+      await screen.findByText('llm-test')
+      fireEvent.click(utils.container.querySelector('.mon-btn-edit'))
+
+      openSource()
+      const labels = sourceOptions().map(o => o.textContent)
+      expect(labels.some(l => l.includes('llm-test'))).toBe(true)              // kendi takımı (5)
+      expect(labels.some(l => l.includes('baska-takim-scripti'))).toBe(false)  // takım 42 → GÖRÜNMEZ
     })
 
     it('düzenleme açılışında panel "son kontrol" etiketiyle ve o monitörün hatasıyla gelir', async () => {
@@ -281,7 +323,7 @@ describe('ScriptedMonitorPage', () => {
       await openEditFor(FAILING)
       expect(inModal('.sc-testrun')).not.toBeNull()
 
-      fireEvent.change(sourceSelect(), { target: { value: 'tpl:smoke-health' } })
+      pickSource(/smoke/i)
 
       expect(inModal('.sc-testrun')).toBeNull()
       expect(screen.getByTestId('code-editor').value).toContain('www.akbank.com')
@@ -289,10 +331,10 @@ describe('ScriptedMonitorPage', () => {
 
     it('kayıtlı script seçilince o monitörün script+env\'i yüklenir ve paneli geri gelir', async () => {
       await openEditFor(FAILING)
-      fireEvent.change(sourceSelect(), { target: { value: 'tpl:smoke-health' } })
+      pickSource(/smoke/i)
       expect(inModal('.sc-testrun')).toBeNull()
 
-      fireEvent.change(sourceSelect(), { target: { value: 'saved:7' } })
+      pickSource(/llm-test/)
 
       expect(screen.getByTestId('code-editor').value).toBe(FAILING.script)
       expect(inModal('.sc-testrun')).not.toBeNull()
@@ -310,8 +352,9 @@ describe('ScriptedMonitorPage', () => {
 
     it('yeni monitörde boş seçenek VAR ve script\'i temizler; düzenlemede boş seçenek YOK', async () => {
       const { unmount } = await openEditFor(FAILING)
+      openSource()
       // Düzenlemede placeholder yok: monitörün kendi girdisi listede, "boşalt" yolu veri kaybettiriyordu
-      expect(sourceSelect().querySelectorAll(':scope > option')).toHaveLength(0)
+      expect(document.querySelector('.sc-source-select .ss-opt-placeholder')).toBeNull()
       unmount()
 
       api.monitoring.getScriptedMonitors.mockResolvedValue({
@@ -320,11 +363,13 @@ describe('ScriptedMonitorPage', () => {
       render(<ScriptedMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
       await waitFor(() => expect(api.monitoring.getScriptedMonitors).toHaveBeenCalled())
       fireEvent.click(screen.getByRole('button', { name: /new monitor|yeni monitör/i }))
-      expect(sourceSelect().querySelectorAll(':scope > option')).toHaveLength(1)   // placeholder
+      openSource()
+      expect(document.querySelector('.sc-source-select .ss-opt-placeholder')).not.toBeNull()
 
-      fireEvent.change(sourceSelect(), { target: { value: 'tpl:smoke-health' } })
+      pickSource(/smoke/i)
       expect(screen.getByTestId('code-editor').value).toContain('www.akbank.com')
-      fireEvent.change(sourceSelect(), { target: { value: '' } })
+      openSource()
+      fireEvent.mouseDown(document.querySelector('.sc-source-select .ss-opt-placeholder'))
       expect(screen.getByTestId('code-editor').value).toBe('')
     })
   })
@@ -381,7 +426,9 @@ describe('ScriptedMonitorPage', () => {
         fireEvent.click(screen.getByRole('button', { name: /new monitor|yeni monitör/i }))
         fireEvent.change(screen.getByTestId('code-editor'), { target: { value: 'x' } })
         // Şablon seç → env satırları gelsin, birine gizli değer yazalım
-        fireEvent.change(screen.getByLabelText(/script source|script kaynağı/i), { target: { value: 'tpl:oauth2-client-credentials' } })
+        fireEvent.mouseDown(document.querySelector('.sc-source-select .ss-trigger'))
+        fireEvent.mouseDown([...document.querySelectorAll('.sc-source-select .ss-option')]
+          .find(o => /OAuth2/i.test(o.textContent)))
         const secretInput = document.querySelector('.modal-box .env-row input.env-val[type="password"]')
         if (secretInput) fireEvent.change(secretInput, { target: { value: 'COK-GIZLI' } })
         await vi.advanceTimersByTimeAsync(1600)
@@ -559,6 +606,59 @@ describe('ScriptedMonitorPage', () => {
     fireEvent.click(toggle)
     expect(toggle.getAttribute('aria-expanded')).toBe('true')
     expect(await screen.findByText(/GoError: patladi/)).toBeInTheDocument()
+  })
+
+  it('koşum detayı: faz kırılımı takılma noktasını gösterir (DNS/TCP/TLS/TTFB ayrımı)', async () => {
+    // Sahadaki 288-koşumluk vaka: "request timeout" görülüyor ama hangi fazda takıldığı
+    // hiçbir ekranda yoktu. Veri k6'dan geliyordu, backend'de atılıyordu.
+    api.monitoring.getCheckHistory.mockResolvedValue({ success: true, data: {
+      // k6'nın GERÇEK biçimi: girilmemiş faz 0 gelir, metrik eksilmez (v0.49 ile ölçüldü).
+      items: [{ id: 78, checked_at: '2026-08-10T09:00:00', status: 'FAIL', duration_ms: 60300,
+                error: 'Request Failed — request timeout',
+                req_blocked_ms: 0, req_connecting_ms: 4, req_tls_ms: 0,
+                req_sending_ms: 0, req_waiting_ms: 0, req_receiving_ms: 0,
+                data_sent: 381, data_received: 99, via_proxy: false }],
+      counts: { total: 1, fail: 1 }, buckets: [], alerts: [],
+      range: { from: '2026-08-10T00:00:00', to: '2026-08-11T00:00:00' }, total: 1, page: 0, size: 50 } })
+
+    render(<ScriptedMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
+    fireEvent.click(await screen.findByText('OIDC Login'))
+    fireEvent.click(await screen.findByText('Request Failed — request timeout'))
+
+    const panel = await waitFor(() => {
+      const el = document.querySelector('.sc-phases')
+      if (!el) throw new Error('faz paneli yok')
+      return el
+    })
+    // Ölçülen fazlar değerleriyle, ölçülmeyenler "—" ile
+    expect(panel.textContent).toContain('4 ms')
+    // Takılma noktası TLS: işaretli satır TAM olarak bir tane olmalı
+    const stuck = panel.querySelectorAll('.sc-phase--stuck')
+    expect(stuck).toHaveLength(1)
+    expect(stuck[0].textContent).toMatch(/TLS/i)
+    // Taşınan byte — "hiç yanıt yok" ile "kısa yanıt geldi" ayrımı
+    expect(panel.textContent).toContain('381 B')
+    expect(panel.textContent).toContain('99 B')
+    // Vekil kararı görünür (via_proxy alanı DB'de vardı ama hiçbir bileşen çizmiyordu)
+    expect(panel.textContent).toMatch(/direct|doğrudan/i)
+  })
+
+  it('faz verisi olmayan koşumda panel HİÇ çizilmez (eski satırlar boş kutu göstermesin)', async () => {
+    api.monitoring.getCheckHistory.mockResolvedValue({ success: true, data: {
+      items: [{ id: 79, checked_at: '2026-08-10T09:00:00', status: 'ERROR', duration_ms: 100,
+                error: 'k6 bulunamadı' }],
+      counts: { total: 1, fail: 1 }, buckets: [], alerts: [],
+      range: { from: '2026-08-10T00:00:00', to: '2026-08-11T00:00:00' }, total: 1, page: 0, size: 50 } })
+
+    render(<ScriptedMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
+    fireEvent.click(await screen.findByText('OIDC Login'))
+    fireEvent.click(await screen.findByText('k6 bulunamadı'))
+
+    // Detay paneli açıldı (hata metni hem satırda hem panelde geçtiği için sınıfla hedefleniyor)
+    await waitFor(() => {
+      if (!document.querySelector('.sc-detail')) throw new Error('detay paneli yok')
+    })
+    expect(document.querySelector('.sc-phases')).toBeNull()
   })
 
   it('boş monitör listesi spinner DEĞİL boş-durum bloğu gösterir', async () => {

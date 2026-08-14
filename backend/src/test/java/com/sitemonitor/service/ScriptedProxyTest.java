@@ -101,7 +101,8 @@ class ScriptedProxyTest {
     void detailCarriesReasonWithFailedChecks() {
         var res = new ScriptedCheckerService.ScriptedResult(
                 "FAIL", false, 60300L, 0, 1, 2, null, null, null, null, "tail",
-                "k6 check/threshold başarısız:\nRequest Failed — Get \"https://x\": request timeout", false);
+                "k6 check/threshold başarısız:\nRequest Failed — Get \"https://x\": request timeout", false,
+                ScriptedCheckerService.Phases.EMPTY);
 
         String detail = SchedulerService.scriptedDetail(res);
 
@@ -119,9 +120,132 @@ class ScriptedProxyTest {
     }
 
     @Test
-    @DisplayName("Blacklist muafiyeti: vekil kullanılmıyorsa liste AYNEN kalır")
-    void blacklistUntouchedWithoutProxy() {
+    @DisplayName("SsrfGuard temel listesi iç ağı ve metadata'yı kapsıyor (blacklistFor'un girdisi)")
+    void ssrfBaselineCoversInternalRanges() {
         List<String> cidrs = SsrfGuard.blacklistCidrs(false, false);
         assertThat(cidrs).contains("10.0.0.0/8", "169.254.169.254/32");
+    }
+
+    /** Sıkı kara liste (iç ağ + loopback dâhil) — muafiyet mantığının anlamlı çalışabilmesi için. */
+    private static final List<String> STRICT = SsrfGuard.blacklistCidrs(false, false);
+
+    private ScriptedCheckerService serviceWithGuard(ProxySettings p) {
+        SsrfGuard guard = org.mockito.Mockito.mock(SsrfGuard.class);
+        org.mockito.Mockito.when(guard.blacklistCidrs()).thenReturn(STRICT);
+        return new ScriptedCheckerService(guard, null, null, null, p);
+    }
+
+    @Test
+    @DisplayName("blacklistFor: vekil kullanılmıyorsa liste AYNEN kalır (muafiyet uygulanmaz)")
+    void blacklistUntouchedWithoutProxy() {
+        // Eski hâli bu adı taşıyıp gövdesinde SsrfGuard'ı çağırıyordu: blacklistFor HİÇ koşmuyordu
+        // ve denetimde "vekil kara-liste muafiyeti test edildi" yanılgısı üretiyordu.
+        var svc = serviceWithGuard(settings("proxy.akbank.com", 8080, "", "", ""));
+        assertThat(svc.blacklistFor(false)).isEqualTo(STRICT);
+    }
+
+    @Test
+    @DisplayName("blacklistFor: vekil çözülemiyorsa muafiyet uygulanmaz (liste daralmaz)")
+    void blacklistUnchangedWhenProxyUnresolvable() {
+        var svc = serviceWithGuard(settings(TestHosts.UNRESOLVABLE, 8080, "", "", ""));
+        assertThat(svc.blacklistFor(true)).isEqualTo(STRICT);
+    }
+
+    @Test
+    @DisplayName("blacklistFor: vekili KAPSAYAN aralık düşer, hedef korumaları KALIR")
+    void blacklistDropsOnlyProxyRange() {
+        // "Vekili açtım ama yine çalışmıyor" durumunun kaynağı: --blacklist-ip k6'nın dialer'ında
+        // uygulanır ve vekil kullanılırken k6 HEDEFE değil VEKİLE bağlanır.
+        var svc = serviceWithGuard(settings("localhost", 8080, "", "", ""));
+
+        List<String> out = svc.blacklistFor(true);
+
+        assertThat(out).doesNotContain("127.0.0.0/8");             // vekili kapsayan aralık düştü
+        assertThat(out).contains("169.254.169.254/32", "10.0.0.0/8");  // hedef koruması sürüyor
+    }
+
+    // ── buildProcessEnv: 288-koşumluk saha vakasının GEÇTİĞİ yol ─────────────────────────────
+    // Bu yolun uzun süre tek satır testi yoktu; yalnız ProxySettings'in ürettiği STRING pinliydi.
+
+    private ScriptedCheckerService service(ProxySettings p) {
+        return new ScriptedCheckerService(null, null, null, null, p);
+    }
+
+    private static List<ScriptedCheckerService.EnvVar> env(ScriptedCheckerService.EnvVar... v) {
+        return List.of(v);
+    }
+
+    @Test
+    @DisplayName("Vekil değişkenleri GERÇEKTEN env haritasına giriyor (URL + NO_PROXY)")
+    void proxyVarsReachProcessEnv() {
+        var svc = service(settings("dmzproxy.aknet.akb", 8080, "", "", "akbank.com,localhost"));
+        var secrets = new java.util.ArrayList<String>();
+
+        var e = svc.buildProcessEnv(List.of(), true, null, secrets);
+
+        assertThat(e).containsEntry("HTTPS_PROXY", "http://dmzproxy.aknet.akb:8080")
+                     .containsEntry("HTTP_PROXY", "http://dmzproxy.aknet.akb:8080")
+                     .containsEntry("NO_PROXY", "akbank.com,localhost");
+    }
+
+    @Test
+    @DisplayName("viaProxy=false → hiçbir vekil değişkeni konmaz (OFF gerçekten doğrudan)")
+    void noProxyVarsWhenOff() {
+        var svc = service(settings("dmzproxy.aknet.akb", 8080, "", "", "akbank.com"));
+
+        var e = svc.buildProcessEnv(List.of(), false, null, new java.util.ArrayList<>());
+
+        assertThat(e).doesNotContainKeys("HTTPS_PROXY", "HTTP_PROXY", "NO_PROXY");
+    }
+
+    @Test
+    @DisplayName("Kullanıcının kendi HTTPS_PROXY'si EZİLMEZ (putIfAbsent sırası)")
+    void userEnvWins() {
+        var svc = service(settings("dmzproxy.aknet.akb", 8080, "", "", ""));
+
+        var e = svc.buildProcessEnv(
+                env(new ScriptedCheckerService.EnvVar("HTTPS_PROXY", "http://kendi:1234", false)),
+                true, null, new java.util.ArrayList<>());
+
+        assertThat(e).containsEntry("HTTPS_PROXY", "http://kendi:1234");
+    }
+
+    @Test
+    @DisplayName("Vekil parolası maskeleme listesine eklenir (çıktıya sızmasın)")
+    void proxyPasswordCollectedForMasking() {
+        var svc = service(settings("p.x", 3128, "svc", "P@ss w0rd", ""));
+        var secrets = new java.util.ArrayList<String>();
+
+        svc.buildProcessEnv(List.of(), true, null, secrets);
+
+        assertThat(secrets).contains("P@ss w0rd");
+    }
+
+    @Test
+    @DisplayName("Secret env değerleri maskeleme listesine girer, secret OLMAYANLAR girmez")
+    void secretEnvCollected() {
+        var svc = service(settings("", 0, "", "", ""));
+        var secrets = new java.util.ArrayList<String>();
+
+        var e = svc.buildProcessEnv(env(
+                new ScriptedCheckerService.EnvVar("TOKEN", "cok-gizli-deger", true),
+                new ScriptedCheckerService.EnvVar("BASE_URL", "https://x", false)), false, null, secrets);
+
+        assertThat(e).containsEntry("TOKEN", "cok-gizli-deger").containsEntry("BASE_URL", "https://x");
+        assertThat(secrets).containsExactly("cok-gizli-deger");
+    }
+
+    @Test
+    @DisplayName("Kurumsal CA verilmişse SSL_CERT_FILE konur — Java güvenirken k6 güvenmiyordu")
+    void caBundleReachesEnv() {
+        var svc = service(settings("", 0, "", "", ""));
+        var ca = java.nio.file.Path.of("/tmp/k6-ca-test.pem");
+
+        var e = svc.buildProcessEnv(List.of(), false, ca, new java.util.ArrayList<>());
+
+        assertThat(e.get("SSL_CERT_FILE")).endsWith("k6-ca-test.pem");
+        // CA yoksa değişken HİÇ konmaz (boş yol Go'da sistem havuzunu bozardı)
+        assertThat(svc.buildProcessEnv(List.of(), false, null, new java.util.ArrayList<>()))
+                .doesNotContainKey("SSL_CERT_FILE");
     }
 }

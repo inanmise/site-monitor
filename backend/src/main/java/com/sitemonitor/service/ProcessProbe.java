@@ -41,17 +41,56 @@ public final class ProcessProbe {
     private static final int HARD_READ_CAP = 512 * 1024;
 
     /**
+     * İZOLE ORTAM beyaz-listesi — {@code isolatedEnv} istendiğinde alt sürece geçirilecek TEK
+     * ortam değişkenleri (çağıranın açıkça verdiği {@code env} bunun üstüne eklenir).
+     *
+     * <p>Neden: {@code ProcessBuilder.environment()} JVM'in ortamının KOPYASIYLA başlar. k6 gibi
+     * kullanıcı script'i çalıştıran bir alt süreçte bu, {@code __ENV} üzerinden pod'un tüm ortamını
+     * (DB parolası, SMTP kimliği, servis token'ları) script'e açar — {@code http.post(dışarı,
+     * JSON.stringify(__ENV))} tek satırla sızdırır. Ayrıca sürpriz bir yan etkisi vardı: pod'daki
+     * {@code NO_PROXY} sessizce miras alınıp Go'nun vekil kararını değiştiriyordu; artık vekil
+     * değişkenlerinin tamamını çağıran açıkça verir.
+     *
+     * <p>Liste, sürecin AYAĞA KALKMASI için gerekenlerle sınırlıdır (Windows'ta {@code SystemRoot}
+     * yoksa süreç oluşturma ve DNS bozulur). Karşılaştırma büyük/küçük harf duyarsızdır.
+     */
+    private static final java.util.Set<String> ENV_ALLOWLIST = java.util.Set.of(
+            "PATH", "HOME", "LANG", "LC_ALL", "TZ", "TMPDIR",
+            "SYSTEMROOT", "SYSTEMDRIVE", "WINDIR", "COMSPEC", "PATHEXT",
+            "TEMP", "TMP", "USERPROFILE", "NUMBER_OF_PROCESSORS", "OS",
+            "PROGRAMDATA", "LOCALAPPDATA", "APPDATA");
+
+    /**
      * Env-enjeksiyonlu, çalışma-dizinli, kibar-sonlandırmalı (SIGTERM→grace→SIGKILL) ve çıktı-sınırlı (son
      * {@code maxOutputBytes} byte) çalıştırıcı — k6 gibi uzun-koşabilen sandboxlu süreçler için. Timeout'ta
      * zombie kalmaz. Çağıran temp dosyalarını kendi {@code finally}'sinde temizler.
      */
     public static Result run(List<String> args, java.util.Map<String, String> env, java.io.File cwd,
                              int timeoutSeconds, boolean gracefulTerm, int maxOutputBytes) {
+        return run(args, env, cwd, timeoutSeconds, gracefulTerm, maxOutputBytes, false);
+    }
+
+    /**
+     * @param isolatedEnv true ise alt süreç JVM'in ortamını MİRAS ALMAZ; yalnız {@link #ENV_ALLOWLIST}
+     *                    ve çağıranın verdiği {@code env} geçer. Kullanıcı kodu çalıştıran süreçler
+     *                    (k6) için zorunlu.
+     */
+    public static Result run(List<String> args, java.util.Map<String, String> env, java.io.File cwd,
+                             int timeoutSeconds, boolean gracefulTerm, int maxOutputBytes,
+                             boolean isolatedEnv) {
         Process proc = null;
         try {
             ProcessBuilder pb = new ProcessBuilder(args);
             pb.redirectErrorStream(true);
             if (cwd != null) pb.directory(cwd);
+            if (isolatedEnv) {
+                java.util.Map<String, String> inherited = new java.util.LinkedHashMap<>(pb.environment());
+                pb.environment().clear();
+                inherited.forEach((k, v) -> {
+                    if (k != null && ENV_ALLOWLIST.contains(k.toUpperCase(java.util.Locale.ROOT)))
+                        pb.environment().put(k, v);
+                });
+            }
             if (env != null && !env.isEmpty()) pb.environment().putAll(env);
             proc = pb.start();
             final Process p = proc;

@@ -91,4 +91,38 @@ class SecretMaskTest {
         assertThat(SecretMask.maskUrlQuery(null)).isNull();
         assertThat(SecretMask.maskUrlQuery("")).isEmpty();
     }
+
+    @Test
+    @DisplayName("maskValues: URL-ENCODED biçim de maskelenir — vekil parolası k6 çıktısında böyle geçiyor")
+    void maskValues_masksUrlEncodedForm() {
+        // ProxySettings parolayı URLEncoder ile URL'e gömüyor; k6 hata metninde vekil URL'ini
+        // basınca ham parola değil KODLANMIŞ hâli görünüyor. Birebir substring araması bunu
+        // kaçırıyor ve parola output_tail'e, oradan alarm e-postasına düz yazılıyordu.
+        String out = SecretMask.maskValues(
+                "proxyconnect tcp: http://svc:P%40ss+w0rd@proxy:8080 refused", java.util.List.of("P@ss w0rd"));
+
+        assertThat(out).doesNotContain("P%40ss+w0rd").doesNotContain("P@ss w0rd").contains(SecretMask.MASK);
+
+        // %20 varyantı (RFC 3986 biçimi) de kapsanır
+        assertThat(SecretMask.maskValues("url=P%40ss%20w0rd", java.util.List.of("P@ss w0rd")))
+                .doesNotContain("P%40ss%20w0rd");
+    }
+
+    @Test
+    @DisplayName("maskValues: JSON-kaçışlı biçim de maskelenir (k6 logfmt satırları)")
+    void maskValues_masksJsonEscapedForm() {
+        assertThat(SecretMask.maskValues("msg=\"token=ab\\\"cd12\"", java.util.List.of("ab\"cd12")))
+                .doesNotContain("ab\\\"cd12");
+    }
+
+    @Test
+    @DisplayName("maskValues: ham biçim ve kısa değer davranışı korunur (regresyon)")
+    void maskValues_keepsExistingContract() {
+        assertThat(SecretMask.maskValues("token=gizlideger x", java.util.List.of("gizlideger")))
+                .isEqualTo("token=" + SecretMask.MASK + " x");
+        // ≤3 karakter maskelenmez (yanlış-pozitif/gürültü) — kodlanmış varyantları da üretilmez
+        assertThat(SecretMask.maskValues("a=abc", java.util.List.of("abc"))).isEqualTo("a=abc");
+        assertThat(SecretMask.maskValues(null, java.util.List.of("abcd"))).isNull();
+        assertThat(SecretMask.maskValues("x", null)).isEqualTo("x");
+    }
 }

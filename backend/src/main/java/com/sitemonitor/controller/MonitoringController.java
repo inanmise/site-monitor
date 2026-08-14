@@ -119,6 +119,8 @@ public class MonitoringController {
     @org.springframework.beans.factory.annotation.Autowired
     private com.sitemonitor.service.ScriptedCheckerService scriptedChecker;
     @org.springframework.beans.factory.annotation.Autowired
+    private com.sitemonitor.service.ProxySettings proxySettings;
+    @org.springframework.beans.factory.annotation.Autowired
     private com.sitemonitor.repository.ScriptedScriptVersionRepository scriptedVersionRepo;
     @org.springframework.beans.factory.annotation.Autowired
     private com.sitemonitor.repository.ScriptedDraftRepository scriptedDraftRepo;
@@ -2324,6 +2326,12 @@ public class MonitoringController {
         out.put("monitors", result);
         out.put("k6_available", scriptedChecker.isAvailable());
         out.put("k6_version", scriptedChecker.version());
+        // Vekilin ETKİN durumu — "AUTO seçtim, demek ki vekilden geçiyor" varsayımı yanlış olabiliyor:
+        // Go, NO_PROXY listesindeki her girdiyi SONEK olarak uygular (`akbank.com` ⇒ tüm alt alanlar),
+        // yani eşleşen hedefler AUTO'da bile doğrudan çıkar. Bu iki alan, formda kararın gerçekte ne
+        // olacağını gösterebilmek için var (2026-08: dört sürüm boyunca yanlış teşhise sebep oldu).
+        out.put("proxy_configured", proxySettings.enabled());
+        out.put("no_proxy", proxySettings.noProxyList());
         boolean canManage = permissionService.allows((String) session.getAttribute("systemRole"), "monitoring.scripted", "edit");
         out.put("can_manage", canManage);
         return ok(out);
@@ -2590,6 +2598,9 @@ public class MonitoringController {
             @RequestParam(defaultValue = "0") int page, @RequestParam(defaultValue = "50") int size,
             @RequestParam(required = false) String format,
             jakarta.servlet.http.HttpServletResponse response) {
+        // İzin denetimi varlık denetiminden ÖNCE (scriptedResponseSeries ile aynı sıra): tersi
+        // yapılınca yetkisiz çağıran var olan id'ye 403, olmayana 404 alıp id sayımı yapabiliyordu.
+        permissionService.require(session, "monitoring.read", "view");
         com.sitemonitor.model.ScriptedMonitor mon = scriptedMonitorRepo.findById(id).orElse(null);
         if (mon == null) return notFound("Sentetik izleme bulunamadı");
         var src = new CheckHistoryService.Source<com.sitemonitor.model.ScriptedCheck>() {
@@ -2876,7 +2887,31 @@ public class MonitoringController {
         out.put("output_tail", r.outputTail());
         out.put("error", r.error());
         out.put("via_proxy", r.viaProxy());
+        var ph = r.phases();
+        out.put("phases", ph == null ? null : phaseMap(ph.blockedMs(), ph.connectingMs(), ph.tlsMs(),
+                ph.sendingMs(), ph.waitingMs(), ph.receivingMs(), ph.dataSent(), ph.dataReceived()));
         return out;
+    }
+
+    /**
+     * İsteğin faz kırılımı — "nerede takıldı?" panelinin tek veri kaynağı.
+     *
+     * <p>Anahtarlar HER ZAMAN konur (null olsa bile): frontend "faz ölçülmedi" ile "alan gelmedi"yi
+     * ayırabilsin. Hepsi null ise koşum hiç istek yapamamıştır. {@code null} dönmez —
+     * çağıran "faz bilgisi yok" demek istiyorsa map'in tamamını null geçirir.
+     */
+    private static Map<String, Object> phaseMap(Long blocked, Long connecting, Long tls, Long sending,
+                                                Long waiting, Long receiving, Long sent, Long received) {
+        Map<String, Object> p = new LinkedHashMap<>();
+        p.put("blocked_ms", blocked);
+        p.put("connecting_ms", connecting);
+        p.put("tls_ms", tls);
+        p.put("sending_ms", sending);
+        p.put("waiting_ms", waiting);
+        p.put("receiving_ms", receiving);
+        p.put("data_sent", sent);
+        p.put("data_received", received);
+        return p;
     }
 
     /** env'i ekrana güvenli çevirir: secret → {name,secret:true,value_set}; non-secret → {name,secret:false,value}. */
@@ -2936,6 +2971,9 @@ public class MonitoringController {
             item.put("output_tail", latest.getOutputTail());
             item.put("error", latest.getError());
             item.put("via_proxy", latest.getViaProxy());
+            item.put("phases", phaseMap(latest.getReqBlockedMs(), latest.getReqConnectingMs(),
+                    latest.getReqTlsMs(), latest.getReqSendingMs(), latest.getReqWaitingMs(),
+                    latest.getReqReceivingMs(), latest.getDataSent(), latest.getDataReceived()));
             item.put("checked_at", latest.getCheckedAt());
         } else {
             // "Hiç koşmadı" dalı — anahtarlar EKSİK değil NULL olmalı (keyword enrich deseni):
@@ -2943,7 +2981,7 @@ public class MonitoringController {
             item.put("status", "unknown");
             item.put("ok", null); item.put("duration_ms", null); item.put("checked_at", null);
             item.put("exit_code", null); item.put("checks_passed", null); item.put("checks_failed", null);
-            item.put("error", null);
+            item.put("error", null); item.put("phases", null);
         }
         return item;
     }

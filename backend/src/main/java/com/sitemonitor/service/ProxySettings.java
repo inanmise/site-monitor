@@ -13,9 +13,25 @@ import java.nio.charset.StandardCharsets;
  *
  * <p>Neden var: Java tarafındaki outbound (sertifika/zincir/HSTS/RDAP/TR-whois) {@code
  * site.monitor.proxy.*} ayarlarını kullanıyor ve vekil zorunlu ağlarda dışarı ÇIKABİLİYOR; k6 alt
- * süreci ise doğrudan çıkıyordu. Vekil zorunlu bir ağda doğrudan çıkış güvenlik cihazınca TCP'de
- * kabul edilip yutulduğu için her sentetik koşum {@code request timeout} ile düşüyordu
- * (2026-08'de sahada: 288 koşumun 288'i; aynı pod sertifikayı sorunsuz çekerken).
+ * süreci ise hiçbir vekil değişkeni almıyordu.
+ *
+ * <p><b>DÜZELTME (2026-08, ilk teşhis yanlıştı).</b> Bu sınıf "288 koşumun 288'i request timeout"
+ * vakasını çözmek için eklendi ve o vakayı ÇÖZMEDİ; gerekçe kayda geçsin:
+ * <ul>
+ *   <li>Prod {@code NO_PROXY} değeri {@code akbank.com} içeriyor. Go ({@code x/net/http/httpproxy})
+ *       bu girdiyi {@code .akbank.com} sonek eşleşmesine çevirir ⇒ {@code www.akbank.com} ve
+ *       {@code *.apps.ocpint.akbank.com} dâhil TÜM alt alanlar vekili BAYPAS eder. Yani
+ *       {@code HTTPS_PROXY} verilse de Go bu hedefler için onu kullanmaz.</li>
+ *   <li>{@code ProcessBuilder.environment()} ebeveyn ortamının kopyasıyla başladığı için k6 zaten
+ *       ÖNCEDEN de pod'un {@code NO_PROXY}'sini görüyordu — net davranış değişmedi.
+ *       (Ortam artık {@code ProcessProbe} izolasyonuyla temizleniyor; vekil değişkenlerini yalnız
+ *       bu sınıf, açıkça verir.)</li>
+ *   <li>{@code CertificateCheckerService.shouldBypassProxy} aynı girdide {@code true} döndüğü için
+ *       başarıyla sertifika çeken Java kontrolü de DOĞRUDAN çıkıyordu ⇒ "doğrudan çıkış yutuluyor"
+ *       açıklaması bu hedefler için geçerli değil. Arıza TCP/TLS kurulumunda değil, isteğin
+ *       devamında; hangi fazda olduğu artık koşum faz metrikleriyle ölçülüyor.</li>
+ * </ul>
+ * Sınıf yine de doğru ve gerekli: vekil gerektiren (NO_PROXY dışı) hedefler için k6'nın tek çıkış yolu.
  *
  * <p>Bu bileşen YALNIZ sentetik (k6) yolundan kullanılır. Aynı {@code @Value} alanlarını tekrarlayan
  * dört sınıf ({@code CertificateCheckerService}, {@code ConnectionDiagnosticsService},

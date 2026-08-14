@@ -91,6 +91,7 @@ class MonitoringControllerTest {
     @MockitoBean com.sitemonitor.repository.ScriptedScriptVersionRepository scriptedVersionRepo;
     @MockitoBean com.sitemonitor.repository.ScriptedDraftRepository scriptedDraftRepo;
     @MockitoBean com.sitemonitor.service.ScriptedCheckerService scriptedChecker;
+    @MockitoBean com.sitemonitor.service.ProxySettings proxySettings;
     @MockitoBean com.sitemonitor.service.SecretCipher secretCipher;
 
     @BeforeEach

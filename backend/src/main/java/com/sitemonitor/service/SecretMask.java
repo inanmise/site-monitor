@@ -59,14 +59,46 @@ public final class SecretMask {
     /**
      * Metin GÖVDESİNDE bilinen secret DEĞERLERİNİ maskeler — k6 stdout/stderr için (bu sınıf normalde anahtar-adı
      * maskeler; bu ise değer-tabanlı). Çok kısa değerler (≤3 karakter) atlanır (yanlış-pozitif/gürültü).
+     *
+     * <p>Değer, çıktıya <b>kodlanmış biçimde</b> de düşebilir; birebir substring araması bunları kaçırırdı:
+     * vekil parolası URL'in içine {@code URLEncoder} ile konuyor ({@code ProxySettings.proxyUrl}) ve k6
+     * hata metninde vekil URL'ini basıyor ({@code proxyconnect tcp: ...}) — {@code P@ss w0rd} çıktıda
+     * {@code P%40ss+w0rd} olarak görünüp maskesiz kalıyor, oradan {@code scripted_checks.output_tail}'e ve
+     * alarm e-postasına yazılıyordu. Aynı şekilde k6 logfmt satırlarında değerler JSON-kaçışlı geçer.
+     * Bu yüzden her secret için bilinen kodlama VARYANTLARI üretilip hepsi maskelenir (şüphede maskele).
      */
     public static String maskValues(String text, java.util.Collection<String> secretValues) {
         if (text == null || text.isEmpty() || secretValues == null) return text;
-        String out = text;
+        // Uzun varyant önce: kısa bir varyant uzun olanın parçasıysa önce onu bozup eşleşmeyi kaçırmasın.
+        java.util.List<String> all = new java.util.ArrayList<>();
         for (String v : secretValues) {
             if (v == null || v.length() < 4) continue;
-            out = out.replace(v, MASK);
+            all.addAll(encodingVariants(v));
         }
+        all.sort(java.util.Comparator.comparingInt(String::length).reversed());
+        String out = text;
+        for (String v : all) out = out.replace(v, MASK);
+        return out;
+    }
+
+    /**
+     * Bir secret değerin çıktıda görünebileceği kodlama biçimleri (ham dâhil, tekilleştirilmiş).
+     *
+     * <p>Kapsananlar: ham · {@code URLEncoder} (boşluk {@code +}) · yüzde-kodlama (boşluk {@code %20},
+     * URI/RFC 3986 biçimi) · JSON kaçışlı ({@code \} ve {@code "}). Kodlama değeri değiştirmiyorsa
+     * (yalın alfasayısal parola) tek eleman döner.
+     */
+    static java.util.Set<String> encodingVariants(String v) {
+        java.util.Set<String> out = new java.util.LinkedHashSet<>();
+        out.add(v);
+        try {
+            String urlEnc = java.net.URLEncoder.encode(v, java.nio.charset.StandardCharsets.UTF_8);
+            out.add(urlEnc);
+            out.add(urlEnc.replace("+", "%20"));
+        } catch (RuntimeException ignored) { /* kodlanamayan değer: ham biçim yine maskeleniyor */ }
+        String json = v.replace("\\", "\\\\").replace("\"", "\\\"");
+        out.add(json);
+        out.removeIf(s -> s == null || s.length() < 4);
         return out;
     }
 
