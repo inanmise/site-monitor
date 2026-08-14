@@ -184,6 +184,39 @@ function isCodeFrame(error) { return typeof error === 'string' && error.includes
 function firstLine(error) { return String(error ?? '').split('\n')[0] }
 
 /**
+ * Sayısal form alanlarının sınırları — TEK kaynak (girdi nitelikleri + kaydetme denetimi).
+ * Backend karşılıkları: timeout `max(5,min(180,n))`, confirm `max(0,min(10,n))`,
+ * recovery `max(1,min(20,n))`.
+ */
+export const SCRIPTED_NUM_FIELDS = [
+  { key: 'timeoutSeconds', min: 5, max: 180, labelKey: 'scripted.timeout' },
+  { key: 'confirmAttempts', min: 0, max: 10, labelKey: 'scripted.confirmAttempts' },
+  { key: 'recoveryChecks', min: 1, max: 10, labelKey: 'scripted.recoveryChecks' },
+]
+
+/**
+ * Kaydetmeden önce sayısal alan denetimi.
+ *
+ * Neden gerekli: `<input type="number">` boşaltılınca `e.target.value === ''` olur ve
+ * `Number('')` **0** verir. `min`/`max` nitelikleri hiçbir şey yapmaz (bu bir `<form>` değil,
+ * Kaydet `type=submit` değil, `checkValidity()` çağrılmıyor). Sonuç sessiz veri kaybıydı:
+ * en kötüsü zaman aşımını boş bırakmak — backend `max(5,…)` ile **5 saniyeye** çekiyor, 60
+ * saniyelik monitör her koşumda TIMEOUT veriyor ve gece alarm yağıyor. Tavan aşımında (999)
+ * da kullanıcıya geri bildirim yoktu, değer sessizce kırpılıyordu.
+ *
+ * @returns {{key:string, labelKey:string, min:number, max:number}|null} ilk geçersiz alan
+ */
+export function invalidNumericField(form) {
+  for (const f of SCRIPTED_NUM_FIELDS) {
+    const raw = form?.[f.key]
+    if (raw === '' || raw == null) return f
+    const n = Number(raw)
+    if (!Number.isFinite(n) || n < f.min || n > f.max) return f
+  }
+  return null
+}
+
+/**
  * Seçili şablonun ne yaptığı + KULLANIM SENARYOSU + gereken env'ler.
  *
  * Şablon seçicisi uzun süre yalnız ADLARI listeledi; `desc` alanı veriyle birlikte duruyor ama
@@ -297,7 +330,7 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
   const newDraft = useMemo(() => drafts.find(d => d.monitor_key === 'new') || null, [drafts])
 
   // Zamanlayıcıların closure'ı ilk render'ın state'ini görür; canlı referans her render'da tazelenir.
-  liveRef.current = { form, modal, saving }
+  liveRef.current = { form, modal, saving, pendingDraft }
 
   // 1) Yazmayı bırakınca 1,5 sn sonra taslak (WeeklyReportsPage yerel-yedek aralığı).
   useEffect(() => {
@@ -519,6 +552,11 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
       intervalSeconds: defaults?.intervalSeconds ?? emptyForm.intervalSeconds,
       timeoutSeconds: defaults?.timeoutSeconds ?? emptyForm.timeoutSeconds })
     setTestResult(null); setSaveWarnings([]); setSaveError(null); setDupSource(null); setModal({})
+    setDraftSavedAt(null); setBumpType('patch')
+    // Yarım kalmış "new" taslağı VARSA sorulur — openEdit ile aynı sözleşme. Eskiden hiç
+    // sorulmuyordu: form doğar doğmaz 1,5 sn'lik otomatik yazım aynı 'new' anahtarına basıp
+    // saatlerce yazılmış yarım script'i geri dönülmez biçimde eziyordu.
+    setPendingDraft(newDraft || null)
   }
   /** Monitör (snake_case) → form state eşlemesi. Edit ve Kopyala AYNI eşlemeyi kullanır → alan kaçmaz. */
   function formFrom(m) {
@@ -553,11 +591,19 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
       env: base.env.map(e => e.secret ? { ...e, value: '', value_set: false } : e) })
     // Kopya kaynağın script'iyle doğar → panel de kaynağın son kontrolünü gösterir (aynı script).
     setTestResult(lastCheckResult(m)); setSaveWarnings([]); setSaveError(null); setDupSource(m); setModal({})
+    setDraftSavedAt(null); setBumpType('patch')
+    setPendingDraft(newDraft || null)   // bkz. openNew — kopya da 'new' anahtarını kullanıyor
   }
-  function closeEdit() {
+  /**
+   * @param skipDraft Kapanışta taslak YAZILMASIN. Kaydetme ve silme sonrası ŞART: React state
+   *   güncellemeleri asenkron olduğu için `setModal(...)` ile tazelenen taslak tabanı bu satırda
+   *   henüz görünmez; bayrak olmadan `flushDraft()` backend'in az önce sildiği taslağı yeniden
+   *   yazar (ya da silinmiş monitör için erişilemez bir yetim taslak bırakır).
+   */
+  function closeEdit({ skipDraft = false } = {}) {
     // Kapanışta son bir taslak yazımı: kullanıcı "İptal" dese bile yazdıkları kaybolmasın —
     // taslak kaydı MONİTÖRÜ DEĞİŞTİRMEZ, yalnız kaldığı yeri saklar.
-    flushDraft()
+    if (!skipDraft) flushDraft()
     setModal(null); setTestResult(null); setDupSource(null); setSaveWarnings([]); setSaveError(null)
     setPendingDraft(null); setDraftSavedAt(null); setBumpType('patch')
   }
@@ -577,6 +623,10 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
   /** Sunucuya taslak yaz (sessiz: otomatik kayıt kullanıcıya hata kusmamalı). */
   async function writeDraft() {
     if (!liveRef.current.modal || !k6.canManage) return
+    // Kullanıcıya "kaydedilmemiş taslağınız var, yükleyeyim mi?" diye sorduk ve HENÜZ cevap
+    // vermedi: bu aralıkta yazmak, sorduğumuz taslağın ta kendisini ezer. Kullanıcı "Yükle" ya
+    // da "Sil" dediğinde teklif düşer ve otomatik kayıt kaldığı yerden devam eder.
+    if (liveRef.current.pendingDraft) return
     try {
       const res = await api.monitoring.saveScriptedDraft({
         monitorKey: liveRef.current.modal?.id ? String(liveRef.current.modal.id) : 'new',
@@ -682,6 +732,9 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
     if (!form.name.trim()) { toast.error(t('scripted.nameRequired')); return }
     if (form.teamId === '' || form.teamId == null) { toast.error(t('mon.teamRequired')); return }
     if (!form.groupName.trim()) { toast.error(t('scripted.groupRequired')); return }
+    // Boş/aralık dışı sayısal alan SESSİZCE kaydedilmesin (bkz. invalidNumericField).
+    const bad = invalidNumericField(form)
+    if (bad) { toast.error(t('scripted.numRange', t(bad.labelKey), bad.min, bad.max)); return }
     setSaving(true)
     const payload = {
       name: form.name.trim(), description: form.description?.trim() || null,
@@ -704,11 +757,21 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
       // Kayıt başarılı → taslak artık gereksiz (backend de siliyor; liste burada tazelenir).
       setDrafts(d => d.filter(x => x.monitor_key !== (modal?.id ? String(modal.id) : 'new')))
       setForm(f => ({ ...f, restoredFrom: null }))
+      // TASLAK TABANINI GÜNCELLE — yoksa taslak DİRİLİYOR:
+      // `isFormDirty()` formu `modal`'daki (kayıt ÖNCESİNDEKİ) değerlerle karşılaştırıyor.
+      // Taban eski kalınca kaydettikten sonra bile "kirli" görünüyor, `closeEdit()` içindeki
+      // `flushDraft()` backend'in az önce SİLDİĞİ taslağı yeniden yazıyordu. Sonuç: kullanıcı
+      // bir sonraki açılışta "kaydedilmemiş taslağınız var" teklifi görüyor; onu yükleyip
+      // kaydederse ARADA BAŞKASININ yaptığı değişikliği sessizce geri alıyordu.
+      // Yeni kayıtta taban sunucudan dönen monitör olur (artık id'si var); düzenlemede kaydedilen
+      // içerik olur. Kullanıcı tekrar yazmaya başlarsa doğal olarak yine kirli sayılır.
+      setModal(m => ({ ...(m || {}), ...(res.data?.id ? res.data : {}),
+                       script: payload.script, name: payload.name }))
       // Engellemeyen uyarılar (eksik/kullanılmayan __ENV, sonuçsuz sözdizimi doğrulaması) KALICI
       // gösterilir — toast kaybolur, bu bilgi kaydettikten sonra da lazım.
       const w = res.data?.warnings
       if (Array.isArray(w) && w.length) setSaveWarnings(w)
-      else { toast.success(t('scripted.saved')); closeEdit() }
+      else { toast.success(t('scripted.saved')); closeEdit({ skipDraft: true }) }
       load()
     }
     else {
@@ -726,7 +789,12 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
     if (!modal?.id) return
     if (!window.confirm(t('scripted.confirmDelete'))) return
     const res = await api.monitoring.deleteScriptedMonitor(modal.id)
-    if (res?.success) { toast.success(t('scripted.deleted')); closeEdit(); load() }
+    if (res?.success) {
+      // skipDraft: silinen monitör için taslak yazılırsa hiçbir arayüzden erişilemeyen
+      // bir yetim satır kalır ("devam et" şeridi yalnız 'new'e, teklif yalnız açılan
+      // monitöre bakıyor) ve sonsuza kadar taşınır.
+      toast.success(t('scripted.deleted')); closeEdit({ skipDraft: true }); load()
+    }
     else toast.error(res?.error || t('scripted.deleteError'))
   }
 
@@ -1445,7 +1513,13 @@ function EditModal({ t, lang, k6Version, proxy = null, form, setForm, modal, dup
                       placeholder={e.secret ? (e.value_set ? t('scripted.envSecretSet') : t('scripted.envSecretEmpty')) : t('scripted.envValue')}
                       value={e.value} onChange={ev => setEnvRow(i, { value: ev.target.value })} />
                     <label className="checkbox-label env-secret" title={t('scripted.envSecret')}>
-                      <input type="checkbox" checked={e.secret} onChange={ev => setEnvRow(i, { secret: ev.target.checked, value: '' })} />
+                      {/* Değer KORUNUR. Eskiden `value: ''` yazılıyordu: kullanıcı 200 karakterlik
+                          bir token yapıştırıp "Gizli"yi işaretleyince değer anında siliniyordu ve
+                          alan `type=password` olduğu için bu görünmüyordu; kayıtta secret satırın
+                          boş değeri hiç gönderilmediğinden env sunucuda BOŞ kalıyor, script
+                          `__ENV.X = undefined` ile 401 alıyordu. Gizlilik zaten gösterimde
+                          (`type=password`) ve saklamada (şifreli) sağlanıyor. */}
+                      <input type="checkbox" checked={e.secret} onChange={ev => setEnvRow(i, { secret: ev.target.checked })} />
                       {e.secret ? <EyeOff size={14} /> : <Eye size={14} />} {t('scripted.envSecret')}
                     </label>
                     <button type="button" className="icon-btn env-del" title={t('scripted.delete')} onClick={() => delEnvRow(i)}><Trash2 size={15} /></button>

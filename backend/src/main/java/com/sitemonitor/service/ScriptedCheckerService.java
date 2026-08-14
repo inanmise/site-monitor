@@ -198,16 +198,17 @@ public class ScriptedCheckerService {
             // aksi halde geçerli bir script vekil ardında "derlenemedi" görünürdü. env VERİLMEZ:
             // secret'lar bu yola hiç girmez (sınıf sözleşmesi) — ortam da izole edilir.
             caFile = writeCaBundle();
-            Map<String, String> env = buildProcessEnv(null, useProxyFor(null), caFile, new ArrayList<>());
+            // Monitörün env'i VERİLMEZ (secret'lar bu yola hiç girmez), AMA vekil kimliği env'e
+            // giriyor ve k6 hata metninde vekil URL'ini basabiliyor ("proxyconnect tcp: ...").
+            // secretValues bu yüzden GERÇEK bir listeye toplanır — çöpe atılırsa aşağıdaki
+            // maskeleme yapacak bir şey bulamaz ve parola 400 yanıtının gövdesine düşer.
+            List<String> secretValues = new ArrayList<>();
+            Map<String, String> env = buildProcessEnv(null, useProxyFor(null), caFile, secretValues);
             ProcessProbe.Result r = ProcessProbe.run(args, env, scriptFile.getParent().toFile(), timeout, true,
                     VALIDATE_OUTPUT_BYTES, true);
             if (r.exitCode() == 0 && !r.timedOut()) return new ScriptDiagnostics(null, warnings);
 
-            // SIRA ÖNEMLİ — önce ayıkla/çöz, SONRA yolu temizle (summarizeError ile aynı sıra).
-            // Tersi yapılırsa logfmt kaçışları çözülmeden kalır ve mesaj 65 satırlık babel yığınıyla
-            // birlikte ham hâlde 400 yanıtına girer.
-            String lines = sanitizeScriptPath(extractErrorLines(r.output()));
-            String detail = lines != null ? lines : rawFallback(r.output());
+            String detail = validationDetail(r.output(), secretValues);
             if (r.timedOut()) {
                 warnings.add("Sözdizimi doğrulaması zaman aşımına uğradı (uzak import yavaş olabilir) — kaydedildi.");
                 return new ScriptDiagnostics(null, warnings);
@@ -920,9 +921,35 @@ public class ScriptedCheckerService {
      * ile değiştirir. Hem kullanıcı için tamamen anlamsız, hem de sunucu dosya yolunu alarm
      * e-postasına taşıyor.
      */
+    /**
+     * Doğrulama koşumunun çıktısından KULLANICIYA gösterilecek metni üretir.
+     *
+     * <p>Sıra kritik ve üç adımın hepsi zorunlu:
+     * <ol>
+     *   <li><b>Maskele</b> — {@code extractErrorLines}'ın sözleşmesi "girdi zaten maskeli"dir
+     *       ({@code execute()} bu sözleşmeye uyuyordu, doğrulama yolu UYMUYORDU). Buradan çıkan
+     *       metin {@code ScriptDiagnostics.blocking}/{@code warnings} üzerinden doğrudan HTTP
+     *       gövdesine gidiyor; vekil kimlikli ortamda k6 hata satırında vekil URL'ini basabildiği
+     *       için parola 400 yanıtına düşüyordu.</li>
+     *   <li><b>Ayıkla/çöz</b> — logfmt kaçışları çözülmeden kalırsa mesaj 65 satırlık babel
+     *       yığınıyla ham hâlde yanıta girer.</li>
+     *   <li><b>Yolu temizle</b> — geçici script/CA dosya yolları hem anlamsız hem de sunucunun
+     *       dizin yapısını sızdırır. HAM YEDEK dalı da bu temizlikten geçer (eskiden geçmiyordu).</li>
+     * </ol>
+     */
+    static String validationDetail(String rawOutput, List<String> secretValues) {
+        String masked = SecretMask.maskValues(rawOutput, secretValues);
+        String lines = sanitizeScriptPath(extractErrorLines(masked));
+        return lines != null ? lines : sanitizeScriptPath(rawFallback(masked));
+    }
+
     static String sanitizeScriptPath(String text) {
         if (text == null) return null;
-        return text.replaceAll("(?:file:/{2,})?[^\\s\"']*k6-script-[0-9A-Za-z_-]+\\.js", "script");
+        String out = text.replaceAll("(?:file:/{2,})?[^\\s\"']*k6-script-[0-9A-Za-z_-]+\\.js", "script");
+        // Kurumsal CA geçici dosyası da aynı gerekçeyle gizlenir: kullanıcı için anlamsız ve
+        // sunucunun dosya yolunu (dolayısıyla dizin yapısını) alarm e-postasına taşıyor.
+        // TLS hatalarında k6 bu yolu SSL_CERT_FILE bağlamında basabiliyor.
+        return out.replaceAll("(?:file:/{2,})?[^\\s\"']*k6-ca-[0-9A-Za-z_-]+\\.pem", "ca-bundle");
     }
 
     /** Hata satırı ayıklanamadığında eski davranış: çıktının son 400 karakteri. */
@@ -1217,6 +1244,36 @@ public class ScriptedCheckerService {
         boolean hasThresholds;
     }
 
+    /**
+     * k6 özetindeki check adlarını GRUPLARIN İÇİ DÂHİL toplar.
+     *
+     * <p>Eskiden yalnız {@code root_group.checks} okunuyordu; oysa {@code group('...')} içindeki
+     * check'ler {@code root_group.groups.<ad>.checks} altında durur ve kök boş kalır. Sonuç:
+     * projenin KENDİ "Kritik iş akışı" şablonu (üç adım, her biri {@code group()}) ile kurulan
+     * bir monitörde adım düştüğünde durum doğru (FAIL) ama {@code checksJson} null oluyor,
+     * dolayısıyla alarm e-postasındaki "Başarısız Check'ler" listesi BOŞ gidiyordu — nöbetçi
+     * hangi adımın düştüğünü göremiyordu. Şablonun ilan ettiği faydanın tam kaybı.
+     *
+     * <p>Grup adı check adının önüne eklenir ({@code "2) arama › ürün listelendi"}) — aynı check
+     * adı farklı gruplarda tekrarlanabildiği için ayrım şart.
+     */
+    private static void collectChecks(JsonNode group, String prefix, List<Map<String, Object>> out) {
+        JsonNode checks = group.path("checks");
+        if (checks.isObject()) {
+            checks.fields().forEachRemaining(e -> {
+                Map<String, Object> row = new LinkedHashMap<>();
+                row.put("name", prefix == null ? e.getKey() : prefix + " › " + e.getKey());
+                row.put("passed", e.getValue().path("fails").asInt(0) == 0);
+                out.add(row);
+            });
+        }
+        JsonNode groups = group.path("groups");
+        if (groups.isObject()) {
+            groups.fields().forEachRemaining(g ->
+                    collectChecks(g.getValue(), prefix == null ? g.getKey() : prefix + " › " + g.getKey(), out));
+        }
+    }
+
     /** Trend metriğinin ortalaması (ms). Metrik HİÇ yoksa null — özet okunamadı demektir
      *  ("faza girilmedi" DEĞİL: k6 girilmemiş fazı 0 basar, metriği eksiltmez). */
     private static Long avgOf(JsonNode metrics, String name) {
@@ -1267,20 +1324,10 @@ public class ScriptedCheckerService {
             s.dataReceived = countOf(metrics, "data_received");
             JsonNode failed = metrics.path("http_req_failed");
             if (failed.has("passes")) s.httpReqFailed = failed.path("passes").asInt();
-            // Per-check adları: root_group.checks {name -> {passes,fails}}
-            JsonNode rgChecks = root.path("root_group").path("checks");
-            if (rgChecks.isObject()) {
-                List<Map<String, Object>> list = new ArrayList<>();
-                rgChecks.fields().forEachRemaining(e -> {
-                    JsonNode c = e.getValue();
-                    boolean passed = c.path("fails").asInt(0) == 0;
-                    Map<String, Object> row = new LinkedHashMap<>();
-                    row.put("name", e.getKey());
-                    row.put("passed", passed);
-                    list.add(row);
-                });
-                if (!list.isEmpty()) s.checksJson = mapper.writeValueAsString(list);
-            }
+            // Per-check adları — grupların İÇİ DÂHİL (bkz. collectChecks).
+            List<Map<String, Object>> list = new ArrayList<>();
+            collectChecks(root.path("root_group"), null, list);
+            if (!list.isEmpty()) s.checksJson = mapper.writeValueAsString(list);
         } catch (Exception e) {
             // Sessiz DEĞİL: bozuk özet ile hiç özet arasındaki fark tanı için önemli.
             log.debug("k6 özeti ayrıştırılamadı: {}", e.toString());
