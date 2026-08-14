@@ -101,6 +101,47 @@ class ScriptedCheckerServiceTest {
     }
 
     @Test
+    @DisplayName("GÜVENLİK: doğrulama çıktısındaki vekil parolası API yanıtına SIZMAZ")
+    void validationDetail_masksProxyCredentials() {
+        // k6 uzak import'u vekilden çekemeyince vekil URL'ini hata metnine basıyor. Bu metin
+        // ScriptDiagnostics.blocking/warnings üzerinden doğrudan HTTP 400 gövdesine gidiyordu.
+        String raw = "time=\"2026-08-14T10:00:00Z\" level=error "
+                + "msg=\"Get \\\"https://jslib.k6.io/x.js\\\": proxyconnect tcp: "
+                + "http://svc_k6:P%40ssw0rd%21@proxy.corp:8080: 407 Proxy Authentication Required\"";
+
+        String out = ScriptedCheckerService.validationDetail(raw, java.util.List.of("P@ssw0rd!"));
+
+        assertThat(out).doesNotContain("P@ssw0rd!")          // ham biçim
+                       .doesNotContain("P%40ssw0rd%21");      // URL-encoded biçim (asıl kaçan)
+        assertThat(out).contains(SecretMask.MASK);
+        assertThat(out).contains("407");                      // tanı değeri korunuyor
+    }
+
+    @Test
+    @DisplayName("validationDetail: ham yedek dalı da yol temizliğinden geçer")
+    void validationDetail_sanitizesRawFallback() {
+        // extractErrorLines tanıyamayan bir çıktıda rawFallback'e düşülüyor; eskiden bu dal
+        // sanitizeScriptPath'ten GEÇMİYORDU ve geçici dosya yolu yanıta giriyordu.
+        String raw = "beklenmeyen bicim: /tmp/k6-script-9911.js derlenemedi";
+
+        String out = ScriptedCheckerService.validationDetail(raw, java.util.List.of());
+
+        assertThat(out).doesNotContain("/tmp/").doesNotContain("k6-script-");
+        assertThat(out).contains("script").contains("derlenemedi");
+    }
+
+    @Test
+    @DisplayName("sanitizeScriptPath: kurumsal CA geçici dosyası da temizlenir (aynı yol ifşası)")
+    void sanitizeScriptPath_removesCaBundlePath() {
+        // SSL_CERT_FILE ile verilen geçici PEM'in yolu TLS hatalarında çıktıya düşebiliyor;
+        // script yolu ile aynı gerekçe: kullanıcı için anlamsız, sunucu dizin yapısını sızdırır.
+        String out = ScriptedCheckerService.sanitizeScriptPath(
+                "tls: failed to load /tmp/k6-ca-77219.pem: permission denied");
+        assertThat(out).doesNotContain("/tmp/").doesNotContain("k6-ca-");
+        assertThat(out).contains("ca-bundle").contains("permission denied");
+    }
+
+    @Test
     @DisplayName("parseSummary: metrics.<ad>.thresholds VARLIĞI okunur (gerçek k6 0.49 çıktı şekli)")
     void parseSummary_thresholds() {
         // Gerçek 0.49 --summary-export çıktısından: boolean'ın anlamı yanıltıcı (burada eşik GEÇTİ),

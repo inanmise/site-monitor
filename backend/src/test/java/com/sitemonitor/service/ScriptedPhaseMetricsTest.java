@@ -112,4 +112,40 @@ class ScriptedPhaseMetricsTest {
         assertThat(ScriptedCheckerService.Phases.EMPTY.connectingMs()).isNull();
         assertThat(ScriptedCheckerService.Phases.EMPTY.dataSent()).isNull();
     }
+
+    @Test
+    @DisplayName("group() İÇİNDEKİ check'ler de toplanır — alarm e-postasındaki liste boş kalmasın")
+    void collectsChecksInsideGroups() {
+        // k6, group('...') içindeki check'leri root_group.groups.<ad>.checks altına koyar ve
+        // root_group.checks BOŞ kalır. Eskiden yalnız kök okunuyordu: projenin kendi "Kritik iş
+        // akışı" şablonu (üç adımın her biri bir group) ile kurulan monitörde adım düştüğünde
+        // durum FAIL oluyor ama "Başarısız Check'ler" listesi boş gidiyordu.
+        String json = """
+            {"metrics":{"checks":{"passes":2,"fails":1}},
+             "root_group":{"checks":{},"groups":{
+               "1) ana sayfa":{"checks":{"200 döndü":{"passes":1,"fails":0}},"groups":{}},
+               "2) arama":{"checks":{"sonuç var":{"passes":1,"fails":0}},"groups":{
+                  "2a) detay":{"checks":{"fiyat görünüyor":{"passes":0,"fails":1}},"groups":{}}}}}}}""";
+
+        var s = ScriptedCheckerService.parseSummary(json, mapper);
+
+        assertThat(s.checksJson).isNotNull();
+        // Grup adı öne eklenir: aynı check adı farklı gruplarda tekrarlanabiliyor.
+        assertThat(s.checksJson).contains("1) ana sayfa › 200 döndü")
+                                .contains("2) arama › sonuç var")
+                                .contains("2) arama › 2a) detay › fiyat görünüyor");
+        assertThat(s.checksJson).contains("\"passed\":false");   // düşen adım işaretli
+    }
+
+    @Test
+    @DisplayName("Grupsuz (düz) check'ler eskisi gibi çalışır — regresyon")
+    void collectsPlainRootChecks() {
+        String json = """
+            {"metrics":{"checks":{"passes":1,"fails":0}},
+             "root_group":{"checks":{"status 200":{"passes":1,"fails":0}}}}""";
+
+        var s = ScriptedCheckerService.parseSummary(json, mapper);
+
+        assertThat(s.checksJson).contains("status 200").doesNotContain("›");
+    }
 }

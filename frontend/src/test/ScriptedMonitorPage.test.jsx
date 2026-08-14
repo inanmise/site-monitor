@@ -1,6 +1,7 @@
 import { render, screen, fireEvent, waitFor } from './test-utils.jsx'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import ScriptedMonitorPage from '../components/ScriptedMonitorPage.jsx'
+import ScriptedMonitorPage, { invalidNumericField, SCRIPTED_NUM_FIELDS }
+  from '../components/ScriptedMonitorPage.jsx'
 
 // CodeEditor (prismjs/CSS) jsdom'da ağır → basit textarea ile mock
 vi.mock('../components/ui/CodeEditor.jsx', () => ({
@@ -378,6 +379,9 @@ describe('ScriptedMonitorPage', () => {
   describe('otomatik taslak ve sürümler', () => {
     const MON = {
       id: 3, name: 'llm-test', status: 'PASS', team_id: 5, team_name: 'SY-A',
+      // group_name ŞART: save() zorunlu alan denetiminde erken dönerse kaydetme testleri
+      // YANLIŞ sebeple yeşil/kırmızı olur.
+      group_name: 'SY-A grubu',
       script: 'export default function(){}', script_version: '1.0.2',
       checked_at: '2026-08-13T10:00:00',
     }
@@ -386,6 +390,7 @@ describe('ScriptedMonitorPage', () => {
       api.monitoring.getScriptedMonitors.mockResolvedValue({
         success: true, data: { k6_available: true, k6_version: 'v0.49.0', can_manage: true, monitors: [MON] },
       })
+      api.monitoring.updateScriptedMonitor.mockResolvedValue({ success: true, data: { id: MON.id } })
       const utils = render(<ScriptedMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
       await waitFor(() => expect(api.monitoring.getScriptedMonitors).toHaveBeenCalled())
       await screen.findByText('llm-test')
@@ -406,6 +411,59 @@ describe('ScriptedMonitorPage', () => {
         const payload = api.monitoring.saveScriptedDraft.mock.calls.at(-1)[0]
         expect(payload.monitorKey).toBe('new')                            // hiç kaydedilmemiş monitör
         expect(JSON.parse(payload.formJson).script).toContain('yazdim')
+      } finally { vi.useRealTimers() }
+    })
+
+    it('F1: BAŞARILI kayıttan sonra taslak DİRİLMEZ (başkasının değişikliğini geri aldırıyordu)', async () => {
+      // save() basarili → backend taslagi siler → closeEdit() → flushDraft() → isFormDirty() hala
+      // true (karsilastirma kayit ONCESINDEKI `modal` ile) → silinen taslak yeniden yazilirdi.
+      // Sonuc: kullanici bir sonraki acilista "kaydedilmemis taslaginiz var" gorup onu yukluyor ve
+      // ARADA baskasinin yaptigi degisikligi sessizce geri aliyordu.
+      await renderPage()
+      fireEvent.click(document.querySelector('.mon-btn-edit'))
+      fireEvent.change(screen.getByTestId('code-editor'), { target: { value: 'export default function(){ /* duzeltme */ }' } })
+
+      api.monitoring.saveScriptedDraft.mockClear()
+      fireEvent.click(screen.getByRole('button', { name: /^(save|kaydet)$/i }))
+      await waitFor(() => expect(api.monitoring.updateScriptedMonitor).toHaveBeenCalled())
+
+      expect(api.monitoring.saveScriptedDraft,
+        'kayittan sonra taslak yeniden yazildi').not.toHaveBeenCalled()
+    })
+
+    it('F1: SİLME sonrası da taslak yazılmaz (erişilemez yetim satır kalmasın)', async () => {
+      const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
+      api.monitoring.deleteScriptedMonitor.mockResolvedValue({ success: true })
+      await renderPage()
+      fireEvent.click(document.querySelector('.mon-btn-edit'))
+      fireEvent.change(screen.getByTestId('code-editor'), { target: { value: 'kirli icerik' } })
+
+      api.monitoring.saveScriptedDraft.mockClear()
+      fireEvent.click(screen.getByRole('button', { name: /^(delete|sil)$/i }))
+      await waitFor(() => expect(api.monitoring.deleteScriptedMonitor).toHaveBeenCalled())
+
+      expect(api.monitoring.saveScriptedDraft).not.toHaveBeenCalled()
+      confirmSpy.mockRestore()
+    })
+
+    it('F2: yarım kalmış "new" taslağı varken Yeni/Kopyala onu EZMEZ, sorar', async () => {
+      // Eskiden form dogar dogmaz 1,5 sn'lik otomatik yazim ayni 'new' anahtarina basip
+      // saatlerce yazilmis yarim script'i geri donulmez bicimde eziyordu.
+      api.monitoring.getScriptedDrafts.mockResolvedValue({ success: true, data: { drafts: [
+        { monitor_key: 'new', monitor_name: 'yarim-oauth-script', updated_at: '2026-08-14T08:00:00',
+          form_json: JSON.stringify({ name: 'yarim-oauth-script', script: 'cok emek verdim' }) },
+      ] } })
+      vi.useFakeTimers({ shouldAdvanceTime: true })
+      try {
+        await renderPage()
+        fireEvent.click(screen.getByRole('button', { name: /new monitor|yeni monitör/i }))
+        fireEvent.change(screen.getByTestId('code-editor'), { target: { value: 'yeni bir sey' } })
+
+        // Teklif gorunuyor: kullanici karar verene kadar yazim DURUR
+        expect(document.querySelector('.modal-box .alert-banner')).not.toBeNull()
+        await vi.advanceTimersByTimeAsync(2000)
+        expect(api.monitoring.saveScriptedDraft,
+          'karar verilmeden taslak uzerine yazildi').not.toHaveBeenCalled()
       } finally { vi.useRealTimers() }
     })
 
@@ -774,6 +832,41 @@ describe('ScriptedMonitorPage', () => {
       return el
     })
     expect(chip.textContent).toMatch(/TLS/i)
+  })
+
+  it('F4: invalidNumericField boş ve aralık dışı değerleri yakalar (sessiz 5 sn tuzağı)', () => {
+    // `Number('')` 0 verir ve backend timeout'u max(5,…) ile 5 SANİYEYE çeker; 60 sn'lik monitör
+    // her koşumda TIMEOUT verip gece alarm yağdırırdı. Girdideki min/max nitelikleri hiçbir şey
+    // yapmıyor (bu bir <form> değil, Kaydet submit değil, checkValidity çağrılmıyor).
+    const ok = { timeoutSeconds: 60, confirmAttempts: 3, recoveryChecks: 3 }
+    expect(invalidNumericField(ok)).toBeNull()
+
+    expect(invalidNumericField({ ...ok, timeoutSeconds: '' })?.key).toBe('timeoutSeconds')
+    expect(invalidNumericField({ ...ok, timeoutSeconds: null })?.key).toBe('timeoutSeconds')
+    expect(invalidNumericField({ ...ok, timeoutSeconds: 4 })?.key).toBe('timeoutSeconds')    // alt sınır
+    expect(invalidNumericField({ ...ok, timeoutSeconds: 999 })?.key).toBe('timeoutSeconds')  // sessiz kırpma
+    expect(invalidNumericField({ ...ok, confirmAttempts: '' })?.key).toBe('confirmAttempts')
+    expect(invalidNumericField({ ...ok, recoveryChecks: 0 })?.key).toBe('recoveryChecks')    // min 1
+
+    // 0 GEÇERLİ bir teyit değeri (teyitsiz mod) — yanlışlıkla reddedilmemeli
+    expect(invalidNumericField({ ...ok, confirmAttempts: 0 })).toBeNull()
+    // Sınırlar girdi nitelikleriyle TEK kaynaktan gelmeli
+    expect(SCRIPTED_NUM_FIELDS.map(f => f.key))
+      .toEqual(['timeoutSeconds', 'confirmAttempts', 'recoveryChecks'])
+  })
+
+  it('F3: "Gizli" işaretlemek girilen env DEĞERİNİ silmez', async () => {
+    // Eskiden `value: ''` yazılıyordu: 200 karakterlik token yapıştırıp gizli yapan kullanıcı
+    // değerini kaybediyor, alan password olduğu için fark etmiyor, kayıtta env boş kalıyordu.
+    render(<ScriptedMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
+    fireEvent.click(await screen.findByRole('button', { name: /new monitor|yeni monitör/i }))
+    fireEvent.click(await screen.findByRole('button', { name: /add variable|değişken ekle/i }))
+
+    const val = document.querySelector('.modal-box .env-row input.env-val')
+    fireEvent.change(val, { target: { value: 'cok-gizli-token' } })
+    fireEvent.click(document.querySelector('.modal-box .env-row input[type="checkbox"]'))
+
+    expect(document.querySelector('.modal-box .env-row input.env-val').value).toBe('cok-gizli-token')
   })
 
   it('boş monitör listesi spinner DEĞİL boş-durum bloğu gösterir', async () => {
