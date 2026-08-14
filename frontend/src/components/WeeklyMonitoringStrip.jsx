@@ -1,4 +1,4 @@
-import { ShieldCheck, Globe, Activity, Radio, Network, Server, Search, ScanSearch } from 'lucide-react'
+import { ShieldCheck, Globe, Activity, Radio, Network, Server, Search, ScanSearch, FlaskConical } from 'lucide-react'
 
 /** Tür → {ikon, etiket anahtarı, türe-özgü ekstra metrik etiketi + birimi}. */
 const TYPE_META = {
@@ -10,8 +10,9 @@ const TYPE_META = {
   dns:     { icon: Server,      labelKey: 'wr.monTypeDns',     extraLabel: 'wr.monExtraChanges',  extraUnit: 'count' },
   keyword: { icon: Search,      labelKey: 'wr.monTypeKeyword', extraLabel: null,                  extraUnit: null },
   page:    { icon: ScanSearch,  labelKey: 'wr.monTypePage',    extraLabel: null,                  extraUnit: null },
+  scripted:{ icon: FlaskConical,labelKey: 'wr.monTypeScripted',extraLabel: 'wr.monExtraResp',     extraUnit: 'ms' },
 }
-const ORDER = ['cert', 'domain', 'http', 'ping', 'port', 'dns', 'keyword', 'page']
+const ORDER = ['cert', 'domain', 'http', 'ping', 'port', 'dns', 'keyword', 'page', 'scripted']
 
 /** Backend snake_case (SNAKE_CASE) → normalize; camelCase fallback güvenlik için. */
 function norm(x) {

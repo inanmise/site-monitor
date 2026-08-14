@@ -62,6 +62,7 @@ public final class AppSettingsCatalog {
         new Setting("site.monitor.metrics.page-issues.retention-days","monitoring", Type.INT),
         // Senaryo İzleme (10. tür) — k6 alt süreç havuzu, timeout tavanları, çıktı/güvenlik + saklama.
         new Setting("site.monitor.scripted.enabled",                 "scripted", Type.BOOL),
+        new Setting("site.monitor.scripted.alert-enabled",           "scripted", Type.BOOL),
         new Setting("site.monitor.scripted.pool-size",               "scripted", Type.INT),
         new Setting("site.monitor.scripted.default-timeout-seconds", "scripted", Type.INT),
         new Setting("site.monitor.scripted.max-timeout-seconds",     "scripted", Type.INT),

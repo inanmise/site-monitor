@@ -535,8 +535,12 @@ public class MonitoringOutageService {
             case EscalationService.TYPE_PAGE_DOWN,
                  EscalationService.TYPE_PAGE_INTEGRITY ->
                     appSettings.getBoolean("site.monitor.page.alert-enabled", true);
+            // AYRI anahtar (diğer 8 türle parite). Eskiden motorun kendisine
+            // (`scripted.enabled`) bakılıyordu: "bu hafta k6 alarmı sussun" demek sentetik
+            // izlemeyi TAMAMEN durdurmak anlamına geliyordu — kontrol serisi ve uptime de kesiliyordu.
             case EscalationService.TYPE_SCRIPTED_FAIL ->
-                    appSettings.getBoolean("site.monitor.scripted.enabled", true);
+                    appSettings.getBoolean("site.monitor.scripted.alert-enabled", true)
+                    && appSettings.getBoolean("site.monitor.scripted.enabled", true);
             case EscalationService.TYPE_DOMAINMON_EXPIRY,
                  EscalationService.TYPE_DOMAINMON_UNKNOWN,
                  EscalationService.TYPE_DOMAINMON_STATUS,

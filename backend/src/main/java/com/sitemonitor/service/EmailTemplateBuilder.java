@@ -420,6 +420,19 @@ public class EmailTemplateBuilder {
             }
         }
         String durHuman = durationHuman(createdAt, resolvedAt);
+        // Sentetik cozumu: alarm e-postasinda dolu bir dal vardi ama COZUM e-postasinda YOKTU
+        // (kodun kendi notu: "SCRIPTED_FAIL ayni sablona duser ve ayni bosluga sahiptir").
+        // Nobetci "ne duzeldi" bilgisini alamiyor, jenerik "alarm kapandi" cumlesiyle kaliyordu.
+        if (ctx != null && EscalationService.isScripted(alertType)) {
+            rows.append(row("Çözülen Alarm", "Sentetik İzleme"));
+            String sDetail = strCtx(ctx, "detail");
+            if (sDetail != null && !sDetail.isBlank()) rows.append(row("Sorun (alarm anı)", esc(sDetail)));
+            String sErr = firstNonNull(strCtx(ctx, "error"), strCtx(ctx, "last_error"));
+            if (sErr != null && !sErr.isBlank())
+                rows.append(row("Hata (alarm anı)", esc(sErr.length() > 200 ? sErr.substring(0, 200) + "…" : sErr)));
+            String sFailed = strCtx(ctx, "failed_checks");
+            if (sFailed != null && !sFailed.isBlank()) rows.append(row("Düşen Doğrulamalar", esc(sFailed)));
+        }
         if (durHuman != null) rows.append(row("Alarm Süresi", esc(durHuman)));
         if (resolvedAt != null) rows.append(row("Çözülme", esc(formatHuman(resolvedAt))));
         rows.append(row("Çözen", esc(resolvedBy != null && !resolvedBy.isBlank() ? resolvedBy : "Sistem (otomatik)")));
@@ -482,6 +495,16 @@ public class EmailTemplateBuilder {
             }
         }
         String durHuman = durationHuman(createdAt, resolvedAt);
+        if (ctx != null && EscalationService.isScripted(alertType)) {   // HTML ile ayni bilgi
+            sb.append("\nÇözülen Alarm: Sentetik İzleme");
+            String sDetail = strCtx(ctx, "detail");
+            if (sDetail != null && !sDetail.isBlank()) sb.append("\nSorun (alarm anı): ").append(sDetail);
+            String sErr = firstNonNull(strCtx(ctx, "error"), strCtx(ctx, "last_error"));
+            if (sErr != null && !sErr.isBlank())
+                sb.append("\nHata (alarm anı): ").append(sErr.length() > 200 ? sErr.substring(0, 200) + "…" : sErr);
+            String sFailed = strCtx(ctx, "failed_checks");
+            if (sFailed != null && !sFailed.isBlank()) sb.append("\nDüşen Doğrulamalar: ").append(sFailed);
+        }
         if (durHuman != null) sb.append("\nAlarm Süresi: ").append(durHuman);
         if (resolvedAt != null) sb.append("\nÇözülme: ").append(formatHuman(resolvedAt));
         sb.append("\nÇözen: ").append(resolvedBy != null && !resolvedBy.isBlank() ? resolvedBy : "Sistem (otomatik)");
@@ -500,6 +523,8 @@ public class EmailTemplateBuilder {
             return "Sayfadaki bütünlük sorunu giderildi; kaynaklar yeniden sağlıklı — alarm otomatik olarak kapandı.";
         if ("PAGE_DOWN".equals(alertType))
             return "Sayfa yeniden yükleniyor — alarm otomatik olarak kapandı.";
+        if (EscalationService.isScripted(alertType))
+            return "Senaryo yeniden başarılı — alarm otomatik olarak kapandı.";
         return "Alarm otomatik olarak kapandı.";
     }
 
