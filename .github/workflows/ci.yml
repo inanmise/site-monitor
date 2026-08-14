@@ -120,6 +120,50 @@ jobs:
         run: npm audit --audit-level=high --omit=dev || true
 
   # ──────────────────────────────────────────────
+  # 2b. Frontend E2E — GERÇEK tarayıcı
+  #
+  # Neden ayrı iş: jsdom düzen/boyama hesaplamaz; `position`, `overflow`, sarma, üst üste binme ve
+  # kaydırma senkronu orada GÖRÜNMEZ. 2026-08-14'te k6 editörüne satır cetveli eklerken editör
+  # kullanılamaz hâle geldi ve 664 vitest testi + `npm run build` yeşildi. Bu iş tam o sınıfı
+  # kapsar. Ayrı tutulmasının sebebi tarayıcı indirmesinin `frontend` işini yavaşlatmaması.
+  # ──────────────────────────────────────────────
+  frontend-e2e:
+    name: Frontend E2E (Playwright / Chromium)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Set up Node 24
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Tarayıcı önbelleği BİLİNÇLİ olarak yok: repo tüm action'ları SHA ile pinliyor,
+      # yalnız bunun için pinsiz bir `actions/cache` eklemek politikayı deler. İndirme ~30 sn.
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: E2E
+        run: npm run test:e2e
+
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: playwright-report
+          path: frontend/playwright-report/
+          retention-days: 7
+
+  # ──────────────────────────────────────────────
   # 3. Helm lint
   # ──────────────────────────────────────────────
   helm-lint:

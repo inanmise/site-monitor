@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { exitLabel, exitHint, diagnosisHint, k6SyntaxLevel, K6_EXIT_CODES, K6_EXIT_WITH_HINT,
-  readPhases, formatBytes } from '../components/scriptedExitCodes.js'
+  readPhases, formatBytes, checksSummary, stuckLabel } from '../components/scriptedExitCodes.js'
 
 /**
  * `exitLabel` "çeviri var mı"yı `t(key) === key` kimlik testiyle anlıyor; bu yüzden stub anahtarı
@@ -234,5 +234,60 @@ describe('formatBytes', () => {
     expect(formatBytes(null)).toBeNull()
     expect(formatBytes(undefined)).toBeNull()
     expect(formatBytes('abc')).toBeNull()
+  })
+})
+
+/**
+ * Doğrulama özeti — kullanıcı `2✓/0✗` notasyonunu "anlaşılmıyor" diye bildirdi. Bu fonksiyon
+ * dört ekranın TEK kaynağı; biçim değişirse hepsi birden değişir.
+ */
+describe('checksSummary', () => {
+  it('hepsi geçtiyse yalnız GEÇEN sayısı gösterilir ("2/2" gürültü)', () => {
+    const s = checksSummary(t, { checks_passed: 2, checks_failed: 0 })
+    expect(s).toMatchObject({ tone: 'ok', icon: '✓' })
+    expect(s.text).toBe('scripted.checksPassed(2)')
+  })
+
+  it('kalan varsa KALAN/TOPLAM gösterilir (asıl bilgi kaç tanesinin düştüğü)', () => {
+    const s = checksSummary(t, { checks_passed: 2, checks_failed: 1 })
+    expect(s).toMatchObject({ tone: 'bad', icon: '✗' })
+    expect(s.text).toBe('scripted.checksFailed(1,3)')      // 1 kaldı / toplam 3
+  })
+
+  it('script hiç doğrulama yapmadıysa ayrı ton (NO_CHECKS karşılığı)', () => {
+    expect(checksSummary(t, { checks_passed: 0, checks_failed: 0 }))
+      .toMatchObject({ tone: 'none', icon: '—' })
+  })
+
+  it('sayaç HİÇ yoksa null — çağıran "—" basar, 0/0 ile karışmaz', () => {
+    expect(checksSummary(t, { checks_passed: null, checks_failed: null })).toBeNull()
+    expect(checksSummary(t, {})).toBeNull()
+    expect(checksSummary(t, null)).toBeNull()
+  })
+
+  it('camelCase alanları da okur (API iki biçimde de gelebiliyor)', () => {
+    expect(checksSummary(t, { checksPassed: 3, checksFailed: 0 }).text)
+      .toBe('scripted.checksPassed(3)')
+  })
+})
+
+describe('stuckLabel', () => {
+  it('takılan faza ÖZEL anahtar döner (Türkçe ek uyumu çalışma anında üretilemez)', () => {
+    // TCP açıldı, TLS tamamlanmadı → takılma noktası TLS
+    const check = { status: 'FAIL', phases: {
+      blocked_ms: 0, connecting_ms: 41, tls_ms: 0, sending_ms: 0, waiting_ms: 0, receiving_ms: 0 } }
+    expect(stuckLabel(t, check)).toBe('scripted.stuck_tls')
+  })
+
+  it('hiç yol alamamışsa ilk fazı işaretler', () => {
+    const check = { status: 'FAIL', phases: {
+      blocked_ms: 0, connecting_ms: 0, tls_ms: 0, sending_ms: 0, waiting_ms: 0, receiving_ms: 0 } }
+    expect(stuckLabel(t, check)).toBe('scripted.stuck_blocked')
+  })
+
+  it('PASS koşumunda ve faz verisi olmayan satırda rozet YOK', () => {
+    expect(stuckLabel(t, { status: 'PASS', phases: {
+      blocked_ms: 1, connecting_ms: 2, tls_ms: 3, sending_ms: 4, waiting_ms: 5, receiving_ms: 0 } })).toBeNull()
+    expect(stuckLabel(t, { status: 'FAIL' })).toBeNull()
   })
 })

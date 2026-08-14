@@ -141,6 +141,52 @@ export function readPhases(check, passed = false) {
   }
 }
 
+/**
+ * Koşumun DOĞRULAMA özeti — k6 `check()` sayaçlarının insan-okur hâli.
+ *
+ * Eskiden dört ekranda ham notasyon basılıyordu: `2✓/0✗`. Sayının ne olduğu hiçbir yerde
+ * yazmadığı için kullanıcı "bu nedir anlaşılmıyor" dedi. Terim uydurulmuyor: statü etiketi zaten
+ * "Doğrulama yok" (`scripted.status_NO_CHECKS`) diyor, yani projenin sözlüğünde k6 check'inin
+ * karşılığı "doğrulama".
+ *
+ * Sayı biçimi bilinçli: BAŞARISIZDA "kalan / toplam" gösterilir (kaç tanesinin düştüğü asıl
+ * bilgidir), başarılıda yalnız geçen sayısı — "2 / 2" gereksiz gürültü.
+ *
+ * @returns {{tone:'ok'|'bad'|'none', icon:string, text:string}|null}
+ *   null ⇒ sayaç HİÇ yok (koşum olmamış) — çağıran "—" basar; 0/0 ile karıştırılmaz.
+ */
+export function checksSummary(t, check) {
+  if (!check) return null
+  const passed = check.checks_passed ?? check.checksPassed
+  const failed = check.checks_failed ?? check.checksFailed
+  if (passed == null && failed == null) return null
+  const p = Number(passed || 0), f = Number(failed || 0)
+  if (f > 0) return { tone: 'bad', icon: '✗', text: t('scripted.checksFailed', f, p + f) }
+  if (p > 0) return { tone: 'ok', icon: '✓', text: t('scripted.checksPassed', p) }
+  // Script koştu ama hiçbir şey doğrulamadı — NO_CHECKS statüsünün hücredeki karşılığı.
+  return { tone: 'none', icon: '—', text: t('scripted.checksNone') }
+}
+
+/**
+ * Takıldığı fazın kısa etiketi ("TLS'te takıldı").
+ *
+ * Anahtarlar faz BAŞINA hazır: Türkçe ek uyumu ("TLS'te" / "TCP'de" / "gönderimde") runtime'da
+ * `{0}` ile üretilemez.
+ */
+export function stuckLabel(t, check) {
+  const { stuckAt } = readPhases(check, isPass(check?.status))
+  if (!stuckAt) return null
+  switch (stuckAt) {
+    case 'blocked':    return t('scripted.stuck_blocked')
+    case 'connecting': return t('scripted.stuck_connecting')
+    case 'tls':        return t('scripted.stuck_tls')
+    case 'sending':    return t('scripted.stuck_sending')
+    case 'waiting':    return t('scripted.stuck_waiting')
+    case 'receiving':  return t('scripted.stuck_receiving')
+    default:           return null
+  }
+}
+
 /** Byte → insan-okur ("381 B" / "1,2 KB"). Grafik değil, tanı metni için — tek ondalık yeter. */
 export function formatBytes(n) {
   if (n == null || !Number.isFinite(Number(n))) return null

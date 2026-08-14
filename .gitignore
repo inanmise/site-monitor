@@ -50,3 +50,7 @@ desktop.ini
 _to_delete/
 frontend/node_modules.stale/
 .claude/settings.local.json
+
+# Playwright çıktıları (rapor + izler) — CI artefakt olarak yükler, repoda durmaz
+frontend/playwright-report/
+frontend/test-results/

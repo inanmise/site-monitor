@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useCallback } from 'react'
+import { createContext, useContext, useState, useCallback, useEffect, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { Check, X, AlertCircle } from 'lucide-react'
 
@@ -8,17 +8,36 @@ let _id = 0
 
 export function ToastProvider({ children }) {
   const [toasts, setToasts] = useState([])
+  /**
+   * Açık otomatik-kapanma zamanlayıcıları (id → timeout).
+   *
+   * Neden gerekli: bunlar temizlenmediğinde, sağlayıcı unmount olduktan SONRA da çalışıp
+   * `setToasts` çağırıyorlar. Tarayıcıda bu yalnız sessiz bir "unmounted component" güncellemesi;
+   * ama jsdom kapatıldıktan sonra React'in `getCurrentEventPriority`'si `window`'a dokunduğu için
+   * **yakalanmamış `ReferenceError: window is not defined`** fırlıyor ve vitest tüm koşuyu
+   * 1 çıkış koduyla düşürüyor (2026-08-14'te CI'ı bu kırdı: 673 test geçti, koşu yine kırmızı).
+   */
+  const timers = useRef(new Map())
 
   const remove = useCallback((id) => {
-    setToasts(prev => prev.filter(t => t.id !== id))
+    const t = timers.current.get(id)
+    if (t) { clearTimeout(t); timers.current.delete(id) }
+    setToasts(prev => prev.filter(x => x.id !== id))
   }, [])
 
   const show = useCallback((type, message, duration = 3500) => {
     const id = ++_id
     setToasts(prev => [...prev, { id, type, message }])
-    if (duration > 0) setTimeout(() => remove(id), duration)
+    if (duration > 0) timers.current.set(id, setTimeout(() => remove(id), duration))
     return id
   }, [remove])
+
+  // Unmount: bekleyen her zamanlayıcı iptal edilir — sağlayıcı gittikten sonra hiçbir
+  // güncelleme tetiklenmemeli.
+  useEffect(() => {
+    const pending = timers.current
+    return () => { for (const t of pending.values()) clearTimeout(t); pending.clear() }
+  }, [])
 
   const api = {
     success: (msg, d) => show('success', msg, d),

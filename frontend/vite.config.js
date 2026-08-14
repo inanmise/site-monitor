@@ -24,7 +24,10 @@ export default defineConfig({
     testTimeout: 15000,
     // Varsayılan exclude yalnız 'node_modules'ü tanır; kilitli-dosya geçici kopyaları
     // (node_modules.stale gibi) paket içi .test.ts dosyalarıyla koşuyu kirletmesin.
-    exclude: ['**/node_modules*/**', '**/dist/**'],
+    // `e2e/**`: Playwright senaryoları da `*.spec.js` — vitest onları toplarsa
+    // `@playwright/test` import'unda patlar. İki suite BİLİNÇLİ olarak ayrıdır:
+    // mantık vitest'te, YERLEŞİM gerçek tarayıcıda (jsdom düzen hesaplamaz).
+    exclude: ['**/node_modules*/**', '**/dist/**', 'e2e/**'],
     // Kapsam eşiği (regresyon kilidi) — `npm run test:coverage` eşik altında FAIL eder; CI zorlar.
     // Karar: "ölç→taban→kademeli" — global taban bugünkü ölçülen seviyenin hemen ALTINA konur
     // (2026-08-06 ölçümü: satır/deyim 57.1, dal 62.7, fonksiyon 33.3), yeni testlerle YUKARI çekilir.
