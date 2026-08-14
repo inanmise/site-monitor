@@ -203,7 +203,7 @@ public class ScriptedCheckerService {
             // secretValues bu yüzden GERÇEK bir listeye toplanır — çöpe atılırsa aşağıdaki
             // maskeleme yapacak bir şey bulamaz ve parola 400 yanıtının gövdesine düşer.
             List<String> secretValues = new ArrayList<>();
-            Map<String, String> env = buildProcessEnv(null, useProxyFor(null), caFile, secretValues);
+            Map<String, String> env = buildProcessEnv(null, proxyUseFor(null), caFile, secretValues);
             ProcessProbe.Result r = ProcessProbe.run(args, env, scriptFile.getParent().toFile(), timeout, true,
                     VALIDATE_OUTPUT_BYTES, true);
             if (r.exitCode() == 0 && !r.timedOut()) return new ScriptDiagnostics(null, warnings);
@@ -436,13 +436,13 @@ public class ScriptedCheckerService {
     /** Kaydedilmiş monitör (scheduler/manuel). */
     public ScriptedResult run(ScriptedMonitor m) {
         return runGuarded(m.getScript(), parseEnv(m.getEnvJson(), true), clampTimeout(m.getTimeoutSeconds()),
-                useProxyFor(m.getUseProxy()));
+                proxyUseFor(m.getUseProxy()));
     }
 
     /** Scheduler fan-out: ayrı executor'a submit → scheduler thread'i bloklanmaz. */
     public Future<ScriptedResult> submit(ScriptedMonitor m) {
         queued.incrementAndGet();
-        boolean viaProxy = useProxyFor(m.getUseProxy());
+        ProxyUse viaProxy = proxyUseFor(m.getUseProxy());
         return execPool.submit(() -> runGuardedAfterQueue(m.getScript(), parseEnv(m.getEnvJson(), true),
                 clampTimeout(m.getTimeoutSeconds()), viaProxy));
     }
@@ -457,7 +457,22 @@ public class ScriptedCheckerService {
 
     /** Kaydetmeden tek seferlik test — env JSON ham (secret değerleri düz gelir, henüz şifreli değil). */
     public ScriptedResult test(String script, String envJson, Integer timeoutSeconds, String useProxy) {
-        return runGuarded(script, parseEnv(envJson, false), clampTimeout(timeoutSeconds), useProxyFor(useProxy));
+        return runGuarded(script, parseEnv(envJson, false), clampTimeout(timeoutSeconds), proxyUseFor(useProxy));
+    }
+
+    /**
+     * Bir koşumun vekil kararı. Boolean YETMEZ: "vekil değişkenleri verilsin mi" ile "NO_PROXY
+     * eşleşmesi bu kararı bozabilsin mi" ayrı sorular.
+     */
+    enum ProxyUse {
+        /** Vekil değişkeni HİÇ verilmez (kapalı ya da yapılandırılmamış). */
+        DIRECT,
+        /** Vekil değişkenleri + NO_PROXY verilir: listeye uyan hedefler yine doğrudan çıkar. */
+        AUTO,
+        /** Vekil değişkenleri verilir, NO_PROXY VERİLMEZ: hedef listeye uysa bile vekilden çıkar. */
+        FORCED;
+
+        boolean on() { return this != DIRECT; }
     }
 
     /**
@@ -466,12 +481,18 @@ public class ScriptedCheckerService {
      * <p>{@code AUTO} (varsayılan; null/boş da AUTO) → vekil yapılandırılmışsa evet. Java tarafındaki
      * sertifika/RDAP çıkışlarıyla aynı davranış: vekil zorunlu ağda k6'nın doğrudan çıkması, güvenlik
      * cihazınca TCP'de kabul edilip yutulduğu için her koşumu {@code request timeout}'a düşürüyordu.
-     * {@code OFF} → iç hedefler için doğrudan. {@code ON} → vekil yoksa zaten kullanılamaz (kaydetmede uyarılır).
+     * {@code OFF} → iç hedefler için doğrudan.
+     *
+     * <p>{@code ON} ("her zaman vekil üzerinden") uzun süre AUTO ile AYNI şeyi yapıyordu: Go,
+     * NO_PROXY girdilerini SONEK olarak uygular ({@code akbank.com} ⇒ tüm alt alanlar), yani
+     * kullanıcı ON seçse de eşleşen hedef doğrudan çıkıyor, ekran ise "vekil üzerinden" diyordu.
+     * Artık ON ⇒ {@link ProxyUse#FORCED}: NO_PROXY hiç verilmez, seçim gerçekten uygulanır.
      */
-    boolean useProxyFor(String mode) {
-        if (!proxySettings.enabled()) return false;
+    ProxyUse proxyUseFor(String mode) {
+        if (!proxySettings.enabled()) return ProxyUse.DIRECT;
         String m = mode == null ? "" : mode.trim().toUpperCase(Locale.ROOT);
-        return !"OFF".equals(m);
+        if ("OFF".equals(m)) return ProxyUse.DIRECT;
+        return "ON".equals(m) ? ProxyUse.FORCED : ProxyUse.AUTO;
     }
 
     int clampTimeout(Integer t) {
@@ -535,7 +556,7 @@ public class ScriptedCheckerService {
      * @param envVars      monitörün env değişkenleri (null ⇒ hiçbiri; doğrulama yolu secret geçirmez)
      * @param secretValues maskelenecek değerler bu listeye EKLENİR (çıkış parametresi)
      */
-    Map<String, String> buildProcessEnv(List<EnvVar> envVars, boolean viaProxy, Path caFile,
+    Map<String, String> buildProcessEnv(List<EnvVar> envVars, ProxyUse viaProxy, Path caFile,
                                         List<String> secretValues) {
         Map<String, String> env = new LinkedHashMap<>();
         if (envVars != null) {
@@ -546,13 +567,16 @@ public class ScriptedCheckerService {
             }
         }
         // Kurumsal çıkış vekili: Go/k6 bu üç değişkeni okur.
-        if (viaProxy) {
+        if (viaProxy.on()) {
             String url = proxySettings.proxyUrl();
             if (url != null) {
                 env.putIfAbsent("HTTPS_PROXY", url);
                 env.putIfAbsent("HTTP_PROXY", url);
+                // FORCED ⇒ NO_PROXY hiç konmaz. Go bu listeyi SONEK olarak uygular
+                // (`akbank.com` ⇒ tüm alt alanlar), yani liste verildiği sürece "her zaman vekil
+                // üzerinden" seçimi eşleşen hedeflerde sessizce doğrudan çıkışa dönüşüyordu.
                 String noProxy = proxySettings.noProxyList();
-                if (!noProxy.isBlank()) env.putIfAbsent("NO_PROXY", noProxy);
+                if (viaProxy != ProxyUse.FORCED && !noProxy.isBlank()) env.putIfAbsent("NO_PROXY", noProxy);
                 // Parola URL'in içinde: k6 hata mesajında vekil URL'ini basabiliyor
                 // (ör. "proxyconnect tcp: ..."). Maskelenmezse çıktı → error → alarm e-postası
                 // zincirinden sızardı. SecretMask kodlanmış biçimleri de kapsar.
@@ -590,7 +614,9 @@ public class ScriptedCheckerService {
      * TLS'in kendisi mi) hiçbir ekrandan görülemiyordu. Bu sonda üç değişkeni TEK TEK oynatır.
      *
      * @param url       hedef (kullanıcı script'i değil, üretilen sonda script'i koşar)
-     * @param viaProxy  kurumsal vekil kullanılsın mı
+     * @param viaProxy  kurumsal vekil kullanılsın mı — true ⇒ {@link ProxyUse#FORCED}: NO_PROXY
+     *                  verilmez. Teşhis "vekilli/vekilsiz" ayrımını ölçer; NO_PROXY konsaydı iki
+     *                  bacak da doğrudan çıkıp AYNI sonucu verir, sonda hiçbir şey ayırt etmezdi.
      * @param withCa    kurumsal CA paketi k6'ya verilsin mi (false ⇒ Go yalnız kendi köklerine bakar)
      */
     public ScriptedResult probe(String url, boolean viaProxy, boolean withCa) {
@@ -600,7 +626,7 @@ public class ScriptedCheckerService {
             acquired = diagPermits.tryAcquire(30, TimeUnit.SECONDS);
             if (!acquired) return err("teşhis sondası meşgul — birazdan tekrar deneyin");
             List<EnvVar> env = List.of(new EnvVar("SM_DIAG_URL", url, false));
-            return execute(PROBE_SCRIPT, env, 25, viaProxy, withCa);
+            return execute(PROBE_SCRIPT, env, 25, viaProxy ? ProxyUse.FORCED : ProxyUse.DIRECT, withCa);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             return err("kesintiye uğradı");
@@ -609,12 +635,12 @@ public class ScriptedCheckerService {
         }
     }
 
-    private ScriptedResult runGuarded(String script, List<EnvVar> env, int timeoutSec, boolean viaProxy) {
+    private ScriptedResult runGuarded(String script, List<EnvVar> env, int timeoutSec, ProxyUse viaProxy) {
         queued.incrementAndGet();
         return runGuardedAfterQueue(script, env, timeoutSec, viaProxy);
     }
 
-    private ScriptedResult runGuardedAfterQueue(String script, List<EnvVar> env, int timeoutSec, boolean viaProxy) {
+    private ScriptedResult runGuardedAfterQueue(String script, List<EnvVar> env, int timeoutSec, ProxyUse viaProxy) {
         if (!k6Available) { queued.decrementAndGet(); return err("k6 bulunamadı — Sentetik İzleme devre dışı"); }
         boolean acquired = false;
         try {
@@ -647,12 +673,12 @@ public class ScriptedCheckerService {
      * iki katmanlı guard vardır: (1) dış catch bağlamı koruyarak sonuç üretir, (2) yorumlama
      * adımının kendi catch'i vardır — orada patlayan bir şey koşumun tanısını götürmez.
      */
-    private ScriptedResult execute(String script, List<EnvVar> envVars, int timeoutSec, boolean viaProxy) {
+    private ScriptedResult execute(String script, List<EnvVar> envVars, int timeoutSec, ProxyUse viaProxy) {
         return execute(script, envVars, timeoutSec, viaProxy, true);
     }
 
     /** @param withCa false ⇒ kurumsal CA paketi VERİLMEZ; teşhis sondası "CA mı sebep?" sorusunu böyle ayırır. */
-    private ScriptedResult execute(String script, List<EnvVar> envVars, int timeoutSec, boolean viaProxy,
+    private ScriptedResult execute(String script, List<EnvVar> envVars, int timeoutSec, ProxyUse viaProxy,
                                    boolean withCa) {
         Path scriptFile = null, summaryFile = null, caFile = null;
         // Bağlam DEĞİŞKENLERİ try dışında: catch bloğu bunlara erişebilsin.
@@ -672,7 +698,7 @@ public class ScriptedCheckerService {
                     k6Bin(), "run", "--quiet", "--no-usage-report",
                     "--summary-export=" + summaryFile.toAbsolutePath(),
                     "--vus", "1", "--iterations", "1"));
-            for (String cidr : blacklistFor(viaProxy)) { args.add("--blacklist-ip"); args.add(cidr); }
+            for (String cidr : blacklistFor(viaProxy.on())) { args.add("--blacklist-ip"); args.add(cidr); }
             args.add(scriptFile.toAbsolutePath().toString());
 
             int tailBytes = appSettings.getInt("site.monitor.scripted.output-tail-bytes", 8192);
@@ -708,11 +734,11 @@ public class ScriptedCheckerService {
             if (!s.parsed && !"PASS".equals(status) && !"TIMEOUT".equals(status)) {
                 error = (error == null ? "" : error + " · ") + "k6 özeti okunamadı (metrik yok)";
             }
-            return buildResult(status, durationMs, r, s, output, error, viaProxy);
+            return buildResult(status, durationMs, r, s, output, error, viaProxy.on());
         } catch (Exception e) {
             // ── Katman 1: dış guard — r/output/durationMs artık KAPSAMDA ──
             log.error("Senaryo koşumu beklenmeyen istisnayla bitti", e);
-            return errWithContext(safeMsg(e, secretValues), r, output, durationMs, secretValues, viaProxy);
+            return errWithContext(safeMsg(e, secretValues), r, output, durationMs, secretValues, viaProxy.on());
         } finally {
             deleteQuiet(scriptFile);
             deleteQuiet(summaryFile);

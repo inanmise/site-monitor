@@ -427,6 +427,7 @@ Sağ üstteki **+ Yeni Monitör** ile formu açın.
 - **Ardışık başarısızlık eşiği** — Alarm için gereken üst üste başarısızlık (0–10, varsayılan 3).
 - **Kurtarma kontrolü** — "Düzeldi" demek için gereken başarılı koşu (1–10, varsayılan 3).
 - **Ortam Değişkenleri** — Script'in \`__ENV\` ile okuduğu değerler. **Değişken Ekle** ile satır ekleyin: AD + değer + **Gizli**. Sırları (parola/secret) **script gövdesine YAZMAYIN**; "Gizli" işaretleyin — şifreli saklanır, çıktı/loglarda maskelenir, geri okunamaz.
+- **Vekil (proxy)** — Kurumsal çıkış vekilinin kullanımı. **Otomatik**: vekil tanımlıysa kullanılır, ama NO_PROXY listesine **sonek** olarak uyan hedefler (ör. \`akbank.com\` ⇒ tüm alt alanlar) doğrudan çıkar. **Her zaman vekil üzerinden**: NO_PROXY yok sayılır, hedef ne olursa olsun vekile uğrar. **Doğrudan**: vekil hiç kullanılmaz — iç ağ hedefleri için bunu seçin.
 - **E-posta bildirimi gönder**, **Aktif** — standart.
 
 ### Desteklenen JavaScript (bunu atlamayın)
@@ -458,6 +459,14 @@ birlikte engellenir — hatalı script'i saatlerce koşturmazsınız.
 - Script hiç \`check()\` çalıştırmazsa sonuç **NO_CHECKS** olur (koştu ama hiçbir şey doğrulanmadı) —
   yalnız \`options.thresholds\` kullanan script'ler bunun dışındadır. İsteği \`try/catch\` içine alın ve
   **her koşulda en az bir \`check()\`** çalıştırın; böylece istek patlasa bile sebep metrik olarak kalır.
+- Kontrol hiç çalıştırılamadıysa (eşzamanlı k6 tavanı dolu ya da k6 kurulu değil) sonuç **SKIPPED** olur:
+  geçmişe kayıt yazılmaz ve alarm üretilmez — altyapı darlığı arıza gibi gösterilmez.
+- Yavaşlama/timeout ararken **“Nerede takıldı?”** kırılımına bakın: DNS → TCP → TLS → gönderim →
+  yanıt bekleme → alım. Hangi faza takıldığı doğrudan görünür (örn. TLS'te asılı kalma → CA/vekil).
+- **Bağlantı Teşhisi** sekmesi aynı hedefe vekilli/vekilsiz ve kurumsal CA'lı/CA'sız sonda atar; hangi
+  kombinasyonun çalıştığını gösterir.
+- Script'in her kaydedilen hâli **sürümlenir**; her koşum hangi sürümle koştuğunu saklar, böylece
+  “dün çalışıyordu” durumunda değişikliği geri alıp karşılaştırabilirsiniz.
 `
 
 const SCRIPTED_EN = `
@@ -479,6 +488,7 @@ Open the form with **+ New Monitor** (top right).
 - **Consecutive-failure threshold** — Failures in a row before alerting (0–10, default 3).
 - **Recovery checks** — Successful runs to declare "recovered" (1–10, default 3).
 - **Environment variables** — Values the script reads via \`__ENV\`. Use **Add variable** for a row: NAME + value + **Secret**. Do **NOT** put secrets in the script body; mark them "Secret" — stored encrypted, masked in output/logs, never readable back.
+- **Proxy** — Whether to use the corporate egress proxy. **Automatic**: used when a proxy is configured, but targets matching NO_PROXY as a **suffix** (e.g. \`akbank.com\` ⇒ all subdomains) still go direct. **Always via proxy**: NO_PROXY is ignored, every target goes through the proxy. **Direct**: never use the proxy — choose this for internal targets.
 - **Send email notification**, **Active** — standard.
 
 ### Supported JavaScript (don't skip this)
@@ -510,6 +520,15 @@ leave a broken script running for hours.
 - If the script never runs a \`check()\`, the result is **NO_CHECKS** (it ran but verified nothing) —
   scripts that only use \`options.thresholds\` are exempt. Wrap the request in \`try/catch\` and run
   **at least one \`check()\` in every path**, so the reason survives as a metric even if the request throws.
+- If the check could not be run at all (concurrent k6 limit reached, or k6 not installed) the result is
+  **SKIPPED**: nothing is written to history and no alert is raised — infrastructure saturation is not
+  shown as an outage.
+- When chasing slowness/timeouts, read the **“Where did it get stuck?”** breakdown: DNS → TCP → TLS →
+  send → wait → receive. The stalled phase is visible directly (e.g. hanging in TLS → CA/proxy).
+- The **Connection Diagnostics** tab probes the same target with/without proxy and with/without the
+  corporate CA bundle, showing which combination works.
+- Every saved script state is **versioned**; each run records the version it used, so when “it worked
+  yesterday” you can diff and roll back.
 `
 
 export const MONITOR_GUIDES = {
