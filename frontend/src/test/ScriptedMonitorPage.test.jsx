@@ -698,6 +698,84 @@ describe('ScriptedMonitorPage', () => {
     expect(document.querySelector('.sc-diag-meta').textContent).toContain('akbank.com')
   })
 
+  it('Detay hücresi: kriptik "2✓/0✗" YERİNE okunur ifade (kullanıcı bildirimi)', async () => {
+    api.monitoring.getCheckHistory.mockResolvedValue({ success: true, data: {
+      items: [{ id: 91, checked_at: '2026-08-14T09:00:00', status: 'PASS', duration_ms: 812,
+                checks_passed: 2, checks_failed: 0 }],
+      counts: { total: 1, fail: 0 }, buckets: [], alerts: [],
+      range: { from: '2026-08-14T00:00:00', to: '2026-08-15T00:00:00' }, total: 1, page: 0, size: 50 } })
+
+    render(<ScriptedMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
+    fireEvent.click(await screen.findByText('OIDC Login'))
+    await waitFor(() => expect(api.monitoring.getCheckHistory).toHaveBeenCalled())
+
+    // Kapsam GEÇMİŞ satırı: kart metriği de aynı bileşeni kullanıyor (bilinçli — tek ifade).
+    const cell = await waitFor(() => {
+      const el = document.querySelector('.upt-rt-ms .sc-checks-sum')
+      if (!el) throw new Error('doğrulama özeti yok')
+      return el
+    })
+    expect(cell.className).toContain('sc-checks-sum--ok')
+    expect(cell.textContent).toMatch(/2 doğrulama geçti|2 checks passed/i)
+    // Eski kriptik notasyon HİÇBİR yerde kalmamalı
+    expect(document.body.textContent).not.toContain('✓/')
+  })
+
+  it('Detay hücresi: çok satırlı hata TEK satıra iner, tam metin tooltip\'te, panel yine açılır', async () => {
+    // Backend hata metnini 14 satır / 1500 karaktere kadar üretiyor (Babel kod çerçevesi);
+    // kırpılmazsa tek satır tabloyu şişiriyordu.
+    const FRAME = [
+      'script: Unexpected token (46:29)',
+      '  44 |       try {',
+      '> 46 |         const c = a?.b;',
+      '     |                        ^',
+    ].join('\n')
+    api.monitoring.getCheckHistory.mockResolvedValue({ success: true, data: {
+      items: [{ id: 92, checked_at: '2026-08-14T09:00:00', status: 'ERROR', duration_ms: 512,
+                exit_code: 107, error: FRAME }],
+      counts: { total: 1, fail: 1 }, buckets: [], alerts: [],
+      range: { from: '2026-08-14T00:00:00', to: '2026-08-15T00:00:00' }, total: 1, page: 0, size: 50 } })
+
+    render(<ScriptedMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
+    fireEvent.click(await screen.findByText('OIDC Login'))
+    await waitFor(() => expect(api.monitoring.getCheckHistory).toHaveBeenCalled())
+
+    const cell = await waitFor(() => {
+      const el = document.querySelector('.upt-rt-error')
+      if (!el) throw new Error('hata hücresi yok')
+      return el
+    })
+    expect(cell.textContent).toContain('Unexpected token (46:29)')
+    expect(cell.textContent).not.toContain('44 |')        // kod çerçevesi hücreye GİRMEZ
+    expect(cell.getAttribute('title')).toBe(FRAME)        // tam metin tooltip'te
+    // Tıklama hedefi korunuyor: hücre hâlâ detay panelini açıyor
+    fireEvent.click(cell)
+    await waitFor(() => {
+      if (!document.querySelector('.sc-detail')) throw new Error('detay paneli açılmadı')
+    })
+  })
+
+  it('Detay hücresi: takılan faz rozeti hata metninin yanında görünür', async () => {
+    api.monitoring.getCheckHistory.mockResolvedValue({ success: true, data: {
+      items: [{ id: 93, checked_at: '2026-08-14T09:00:00', status: 'FAIL', duration_ms: 60300,
+                error: 'Request Failed — request timeout',
+                req_blocked_ms: 0, req_connecting_ms: 41, req_tls_ms: 0,
+                req_sending_ms: 0, req_waiting_ms: 0, req_receiving_ms: 0 }],
+      counts: { total: 1, fail: 1 }, buckets: [], alerts: [],
+      range: { from: '2026-08-14T00:00:00', to: '2026-08-15T00:00:00' }, total: 1, page: 0, size: 50 } })
+
+    render(<ScriptedMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
+    fireEvent.click(await screen.findByText('OIDC Login'))
+    await waitFor(() => expect(api.monitoring.getCheckHistory).toHaveBeenCalled())
+
+    const chip = await waitFor(() => {
+      const el = document.querySelector('.sc-stuck-chip')
+      if (!el) throw new Error('faz rozeti yok')
+      return el
+    })
+    expect(chip.textContent).toMatch(/TLS/i)
+  })
+
   it('boş monitör listesi spinner DEĞİL boş-durum bloğu gösterir', async () => {
     api.monitoring.getScriptedMonitors.mockResolvedValue({ success: true, data: {
       k6_available: true, can_manage: true, monitors: [] } })

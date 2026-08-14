@@ -15,6 +15,7 @@ import { FlaskConical, Play, Pencil, Plus, Trash2, X, RefreshCw, Eye, EyeOff, Co
   AlertTriangle, LayoutDashboard, CheckCircle2, WifiOff, Siren, BellDot, PauseCircle, BarChart3, ChevronDown,
   Terminal } from 'lucide-react'
 import { duplicateName } from '../utils/duplicateName.js'
+import { collectK6Markers } from '../utils/k6Errors.js'
 import { usePagination } from '../hooks/usePagination.js'
 import { useUrlQuerySync, readUrlParam, readUrlInt } from '../hooks/useUrlQuerySync.js'
 import CopyLinkButton from './ui/CopyLinkButton.jsx'
@@ -26,7 +27,8 @@ import { LoadingBlock, Spinner } from './ui/Progress.jsx'
 import AlertBanner from './ui/AlertBanner.jsx'
 import StatusBlock from './ui/StatusBlock.jsx'
 import CopyButton from './ui/CopyButton.jsx'
-import { exitLabel, exitHint, diagnosisHint, k6SyntaxLevel, readPhases, formatBytes } from './scriptedExitCodes.js'
+import { exitLabel, exitHint, diagnosisHint, k6SyntaxLevel, readPhases, formatBytes,
+  checksSummary, stuckLabel } from './scriptedExitCodes.js'
 // recharts ağır — yalnız "Süre Grafiği" sekmesi açılınca yüklensin.
 const ResponseTimeChart = lazy(() => import('./ResponseTimeChart.jsx'))
 const MonitorNotes = lazy(() => import('./MonitorNotes.jsx'))
@@ -178,6 +180,9 @@ function VersionsTab({ t, monitor, canEdit, onLoadIntoEditor }) {
 /** Backend çok satırlı hata döndürdüyse bu bir k6/Babel kod çerçevesidir (hizalı caret taşır). */
 function isCodeFrame(error) { return typeof error === 'string' && error.includes('\n') }
 
+/** Çok satırlı hata metninin İLK satırı — tablo hücresi için. Tam metin `title`'da ve panelde. */
+function firstLine(error) { return String(error ?? '').split('\n')[0] }
+
 /**
  * Seçili şablonun ne yaptığı + KULLANIM SENARYOSU + gereken env'ler.
  *
@@ -246,6 +251,8 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
   const [testing, setTesting] = useState(false)
   const [testResult, setTestResult] = useState(null)
   const [saveWarnings, setSaveWarnings] = useState([])   // kaydetme sonrası engellemeyen uyarılar
+  // Kaydetmeyi ENGELLEYEN sözdizimi hatası — kalıcı gösterilir ve satırı cetvelde işaretlenir.
+  const [saveError, setSaveError] = useState(null)
   const [checking, setChecking] = useState(null)
   const [selected, setSelected] = useState(null) // detail monitor
   const [summary, setSummary] = useState({ total: 0, down: 0 })   // CheckHistoryTab onCounts besler
@@ -511,7 +518,7 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
     setForm({ ...emptyForm, teamId: isAdminish ? '' : (myTeam ?? ''),
       intervalSeconds: defaults?.intervalSeconds ?? emptyForm.intervalSeconds,
       timeoutSeconds: defaults?.timeoutSeconds ?? emptyForm.timeoutSeconds })
-    setTestResult(null); setSaveWarnings([]); setDupSource(null); setModal({})
+    setTestResult(null); setSaveWarnings([]); setSaveError(null); setDupSource(null); setModal({})
   }
   /** Monitör (snake_case) → form state eşlemesi. Edit ve Kopyala AYNI eşlemeyi kullanır → alan kaçmaz. */
   function formFrom(m) {
@@ -531,7 +538,7 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
     // Seçicide monitörün KENDİ girdisi seçili gelir ve panel son kontrolüyle dolar: kullanıcı
     // neyi düzeltmesi gerektiğini modal açılır açılmaz görür (eskiden panel boş açılıyordu).
     setForm({ ...formFrom(m), template: `saved:${m.id}` })
-    setTestResult(lastCheckResult(m)); setSaveWarnings([]); setDupSource(null); setModal(m)
+    setTestResult(lastCheckResult(m)); setSaveWarnings([]); setSaveError(null); setDupSource(null); setModal(m)
     setDraftSavedAt(null); setBumpType('patch')
     // Kaydedilmemiş taslak varsa OTOMATİK uygulanmaz — kullanıcıya sorulur; aksi halde
     // kaydedilmiş sürümün üstüne sessizce eski bir taslak biner.
@@ -545,13 +552,13 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
     setForm({ ...base, name: duplicateName(m.name), template: `saved:${m.id}`,
       env: base.env.map(e => e.secret ? { ...e, value: '', value_set: false } : e) })
     // Kopya kaynağın script'iyle doğar → panel de kaynağın son kontrolünü gösterir (aynı script).
-    setTestResult(lastCheckResult(m)); setSaveWarnings([]); setDupSource(m); setModal({})
+    setTestResult(lastCheckResult(m)); setSaveWarnings([]); setSaveError(null); setDupSource(m); setModal({})
   }
   function closeEdit() {
     // Kapanışta son bir taslak yazımı: kullanıcı "İptal" dese bile yazdıkları kaybolmasın —
     // taslak kaydı MONİTÖRÜ DEĞİŞTİRMEZ, yalnız kaldığı yeri saklar.
     flushDraft()
-    setModal(null); setTestResult(null); setDupSource(null); setSaveWarnings([])
+    setModal(null); setTestResult(null); setDupSource(null); setSaveWarnings([]); setSaveError(null)
     setPendingDraft(null); setDraftSavedAt(null); setBumpType('patch')
   }
 
@@ -632,7 +639,7 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
    * Elle yazım paneli ETKİLEMEZ (bilinçli): kullanıcı hatayı okurken düzeltme yapabilsin.
    */
   function selectScriptSource(value) {
-    setSaveWarnings([])
+    setSaveWarnings([]); setSaveError(null)
     if (!value) {                                   // yalnız yeni monitörde gösterilir
       setForm(f => ({ ...f, template: '', script: '', env: [] }))
       setTestResult(null)
@@ -704,7 +711,15 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
       else { toast.success(t('scripted.saved')); closeEdit() }
       load()
     }
-    else toast.error(res?.error || t('scripted.saveError'))
+    else {
+      // Sözdizimi hatası kaydetmeyi ENGELLER (prod politikası BLOCK) ve mesaj çok satırlı bir
+      // Babel kod çerçevesidir. Eskiden yalnız 5 sn'lik toast'ta gösteriliyordu: `.toast-msg`'de
+      // `white-space` ayarı olmadığı için `\n`'ler eziliyor, kod çerçevesi ve caret hizası
+      // tamamen kayboluyordu — kullanıcı 5 sn sonra elinde hiçbir iz kalmadan modalda kalıyordu.
+      // Artık KALICI: hizayı koruyan çerçeveyle basılır ve satır numarası cetvelde işaretlenir.
+      setSaveError(res?.error || null)
+      toast.error(res?.error || t('scripted.saveError'))
+    }
   }
 
   async function del() {
@@ -874,9 +889,9 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
                   <span className="upt-metric-val">{m.duration_ms != null ? `${m.duration_ms}ms` : '—'}</span>
                   <span className="upt-metric-lbl">{t('scripted.lastDuration')}</span>
                 </div>
-                {(m.checks_passed != null || m.checks_failed != null) && (
+                {checksSummary(t, m) && (
                   <div className="upt-metric">
-                    <span className="upt-metric-val">{m.checks_passed ?? 0}✓/{m.checks_failed ?? 0}✗</span>
+                    <span className="upt-metric-val"><ChecksSummary t={t} check={m} /></span>
                     <span className="upt-metric-lbl">{t('scripted.checks')}</span>
                   </div>
                 )}
@@ -927,8 +942,8 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
               <div className="upt-modal-metric" title={t('scripted.sumTotalHint')}><span className="upt-modal-metric-val">{summary.total}</span><span className="upt-modal-metric-lbl">{t('scripted.sumTotal')}</span></div>
               <div className="upt-modal-metric" title={t('scripted.sumIncidentsHint')}><span className="upt-modal-metric-val">{summary.down}</span><span className="upt-modal-metric-lbl">{t('scripted.sumIncidents')}</span></div>
               {selected.duration_ms != null && <div className="upt-modal-metric"><span className="upt-modal-metric-val">{selected.duration_ms}ms</span><span className="upt-modal-metric-lbl">{t('scripted.lastDuration')}</span></div>}
-              {(selected.checks_passed != null || selected.checks_failed != null) &&
-                <div className="upt-modal-metric"><span className="upt-modal-metric-val">{selected.checks_passed ?? 0}✓/{selected.checks_failed ?? 0}✗</span><span className="upt-modal-metric-lbl">{t('scripted.checks')}</span></div>}
+              {checksSummary(t, selected) &&
+                <div className="upt-modal-metric"><span className="upt-modal-metric-val"><ChecksSummary t={t} check={selected} /></span><span className="upt-modal-metric-lbl">{t('scripted.checks')}</span></div>}
               {selected.checked_at && <div className="upt-modal-metric"><span className="upt-modal-metric-val upt-modal-metric-time">{formatDateSec(selected.checked_at)}</span><span className="upt-modal-metric-lbl">{t('scripted.lastCheck')}</span></div>}
             </div>
             <div className="upt-modal-divider" />
@@ -954,11 +969,21 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
                     <span className={isPass(c.status) ? 'upt-rt-up' : isWarnLike(c.status) ? 'upt-rt-warn' : 'upt-rt-down'} style={{ cursor: 'pointer', fontWeight: isSel ? 700 : undefined }}
                       onClick={() => setSelCheck(isSel ? null : c)}>{statusLabel(t, c.status)}</span>
                     <span className="upt-rt-ms">{c.duration_ms != null ? `${c.duration_ms}ms` : '—'}</span>
+                    {/* Detay hücresinin işi ÖZET + panele davet. Zenginlik (kod çerçevesi, çıkış
+                        kodu etiketi, faz kırılımı, k6 çıktısı) satıra tıklayınca açılan
+                        CheckDetail panelinde. Eskiden burada ham `error` basılıyordu: backend bu
+                        metni 14 satır / 1500 karaktere kadar üretiyor (ERR_MAX_*) ve tek satır
+                        ekranı dolduruyordu; `title` da metnin AYNISI olduğu için işe yaramıyordu. */}
                     {c.error
-                      /* Hata hücresi de paneli açar: kullanıcının ilk tıkladığı yer burası. */
                       ? <span className="upt-rt-error" title={c.error} style={{ cursor: 'pointer' }}
-                          onClick={() => setSelCheck(isSel ? null : c)}>{c.error}</span>
-                      : <span className="upt-rt-ms">{(c.checks_passed != null || c.checks_failed != null) ? `${c.checks_passed ?? 0}✓/${c.checks_failed ?? 0}✗` : '—'}</span>}
+                          onClick={() => setSelCheck(isSel ? null : c)}>
+                          {firstLine(c.error)}
+                          {stuckLabel(t, c) && <span className="sc-stuck-chip">{stuckLabel(t, c)}</span>}
+                        </span>
+                      : checksSummary(t, c)
+                        ? <span className="upt-rt-ms" style={{ cursor: 'pointer' }}
+                            onClick={() => setSelCheck(isSel ? null : c)}><ChecksSummary t={t} check={c} /></span>
+                        : <span className="upt-rt-ms">—</span>}
                   </>)
                 }} />
               {selCheck && <CheckDetail t={t} check={selCheck} k6Version={k6.version} />}
@@ -998,7 +1023,7 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
         document.body
       )}
 
-      {modal && createPortal(<EditModal {...{ t, lang, k6Version: k6.version, proxy, form, setForm, modal, dupSource, saving, testing, testResult, saveWarnings, save, del, closeEdit, runTest, isAdminish, canDelete: modal?.id ? canDeleteRow(modal) : false, teamSelectOptions, teamName, groupSelectOptions, setEnvRow, addEnvRow, delEnvRow, selectScriptSource, savedScripts, savedSource, draftSavedAt, pendingDraft, applyDraft, discardDraft, bumpType, setBumpType }} />, document.body)}
+      {modal && createPortal(<EditModal {...{ t, lang, k6Version: k6.version, proxy, form, setForm, modal, dupSource, saving, testing, testResult, saveWarnings, saveError, save, del, closeEdit, runTest, isAdminish, canDelete: modal?.id ? canDeleteRow(modal) : false, teamSelectOptions, teamName, groupSelectOptions, setEnvRow, addEnvRow, delEnvRow, selectScriptSource, savedScripts, savedSource, draftSavedAt, pendingDraft, applyDraft, discardDraft, bumpType, setBumpType }} />, document.body)}
     </div>
   )
 }
@@ -1124,6 +1149,24 @@ function DiagTab({ t, monitor, canRun }) {
   )
 }
 
+/**
+ * Doğrulama özeti rozeti — "✓ 2 doğrulama geçti".
+ *
+ * Dört ekranda (kart metriği, detay modalı özeti, kontrol geçmişi hücresi, test koşumu paneli)
+ * AYNI ifadeyi kullanır. Öncesinde hepsi ham `2✓/0✗` basıyordu ve kullanıcı "bu nedir
+ * anlaşılmıyor" dedi — sayının k6 `check()` doğrulamaları olduğu hiçbir yerde yazmıyordu.
+ * İkon tek başına anlam taşımaz; yanındaki kelime taşır (renk körlüğü + bağlamsızlık).
+ */
+function ChecksSummary({ t, check }) {
+  const s = checksSummary(t, check)
+  if (!s) return null
+  return (
+    <span className={`sc-checks-sum sc-checks-sum--${s.tone}`}>
+      <span className="sc-checks-sum-icon" aria-hidden="true">{s.icon}</span>{s.text}
+    </span>
+  )
+}
+
 function CheckDetail({ t, check, k6Version }) {
   const [openTech, setOpenTech] = useState(false)
   const [showAll, setShowAll] = useState(false)
@@ -1195,11 +1238,19 @@ function CheckDetail({ t, check, k6Version }) {
 }
 
 // ── Create/Edit modal ────────────────────────────────────────────────────────
-function EditModal({ t, lang, k6Version, proxy = null, form, setForm, modal, dupSource, saving, testing, testResult, saveWarnings, save, del, closeEdit, runTest, isAdminish, canDelete, teamSelectOptions, teamName, groupSelectOptions, setEnvRow, addEnvRow, delEnvRow, selectScriptSource, savedScripts = [], savedSource = null, draftSavedAt = null, pendingDraft = null, applyDraft, discardDraft, bumpType = 'patch', setBumpType }) {
+function EditModal({ t, lang, k6Version, proxy = null, form, setForm, modal, dupSource, saving, testing, testResult, saveWarnings, saveError, save, del, closeEdit, runTest, isAdminish, canDelete, teamSelectOptions, teamName, groupSelectOptions, setEnvRow, addEnvRow, delEnvRow, selectScriptSource, savedScripts = [], savedSource = null, draftSavedAt = null, pendingDraft = null, applyDraft, discardDraft, bumpType = 'patch', setBumpType }) {
   // Seçili kayıtlı script'in adı — "hangi monitörden yüklendi" notu için.
   const selectedSavedName = form.template?.startsWith('saved:')
     ? savedScripts.find(s => `saved:${s.id}` === form.template)?.name
     : null
+
+  // Cetvelde işaretlenecek satırlar: engelleyen hata + uyarılar + son koşum hatası.
+  // k6 satır bilgisini ayrı bir alanda DÖNDÜRMÜYOR, metnin içinde geçiyor (bkz. utils/k6Errors).
+  const markers = useMemo(
+    () => collectK6Markers({ saveError, warnings: saveWarnings, runError: testResult?.error }),
+    [saveError, saveWarnings, testResult])
+  const errorLines = useMemo(
+    () => markers.filter(m => m.type === 'error').map(m => m.line), [markers])
 
   // Seçici seçenekleri: iki grup tek listede (SearchableSelect `group` ile başlıklara böler).
   // Boş seçenek YALNIZ yeni monitörde — düzenlemede monitörün kendi girdisi zaten listede ve
@@ -1342,7 +1393,8 @@ function EditModal({ t, lang, k6Version, proxy = null, form, setForm, modal, dup
               <span>{t('scripted.script')}</span>
               <K6VersionBadge t={t} version={k6Version} withSyntaxNote />
             </div>
-            <CodeEditor value={form.script} onChange={code => setForm(f => ({ ...f, script: code }))} placeholder={t('scripted.scriptPlaceholder')} />
+            <CodeEditor value={form.script} onChange={code => setForm(f => ({ ...f, script: code }))}
+              placeholder={t('scripted.scriptPlaceholder')} markers={markers} revealMarkers />
             <span className="field-hint">{t('scripted.scriptHint')}</span>
           </div>
 
@@ -1358,8 +1410,8 @@ function EditModal({ t, lang, k6Version, proxy = null, form, setForm, modal, dup
                 </span>
                 <span className="sc-testrun-status" style={{ color: STATUS_COLOR[testResult.status] || 'inherit' }}>
                   {statusLabel(t, testResult.status)}</span>
-                {testResult.checks_passed != null &&
-                  <span className="sc-testrun-meta">{testResult.checks_passed}✓/{testResult.checks_failed ?? 0}✗</span>}
+                {checksSummary(t, testResult) &&
+                  <span className="sc-testrun-meta"><ChecksSummary t={t} check={testResult} /></span>}
                 {testResult.duration_ms != null && <span className="sc-testrun-meta">· {testResult.duration_ms} ms</span>}
                 {exitLabel(t, testResult.exit_code) &&
                   <span className="sc-testrun-meta">· {exitLabel(t, testResult.exit_code)}</span>}
@@ -1421,6 +1473,17 @@ function EditModal({ t, lang, k6Version, proxy = null, form, setForm, modal, dup
           )}
 
           {/* Kaydetme uyarıları — inline ve KALICI (toast değil): kullanıcı düzeltene kadar durmalı. */}
+          {/* Kaydetmeyi ENGELLEYEN hata: kod çerçevesi hizasını koruyan `--frame` ile KALICI.
+              Eskiden yalnız 5 sn'lik toast'taydı ve `\n`'ler ezildiği için caret hizası kayboluyordu. */}
+          {saveError &&
+            <div className="full-width">
+              <AlertBanner tone="danger" title={t('scripted.saveBlockedTitle')}>
+                <div className={`sc-err-msg${isCodeFrame(saveError) ? ' sc-err-msg--frame' : ''}`}>{saveError}</div>
+                {errorLines.length > 0 &&
+                  <div className="sc-err-hint">{t('scripted.saveBlockedLine', errorLines.join(', '))}</div>}
+              </AlertBanner>
+            </div>}
+
           {saveWarnings?.length > 0 &&
             <div className="full-width">
               <AlertBanner tone="warning" title={t('scripted.saveWarnTitle')}>

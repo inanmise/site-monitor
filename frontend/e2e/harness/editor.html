@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="tr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!--
+      CodeEditor İZOLE HARNESS — yalnız Playwright içindir, ürüne GİRMEZ.
+
+      Neden ayrı sayfa: uygulamanın girişi Active Directory'ye gidiyor, bu yüzden gerçek
+      tarayıcı testinde tüm uygulamayı açmak mümkün değil. Bu sayfa yalnız CodeEditor'ı
+      mount eder.
+
+      Neden vite yapılandırmasına dokunulmadı: dev sunucusu proje kökündeki her HTML'i
+      servis eder; `vite build` ise sadece index.html'i alır (rollupOptions.input override'ı
+      yok) — yani bu dosya prod dist'e girmez.
+    -->
+    <title>CodeEditor harness</title>
+    <style>
+      body { margin: 0; padding: 16px; font-family: system-ui, sans-serif; background: #fff; }
+      /* Modal genişliğini taklit et: sarma davranışı buna bağlı (gerçek modal maxWidth 860). */
+      #host { max-width: 820px; }
+    </style>
+  </head>
+  <body>
+    <div id="host"></div>
+    <script type="module" src="./editor-harness.jsx"></script>
+  </body>
+</html>
