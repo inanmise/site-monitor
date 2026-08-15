@@ -1275,6 +1275,9 @@ export const TR = {
   'card.expiredAgo': 'gün önce süresi doldu',
   'card.silentAlert': 'Alarm oluştu — bildirim gönderilemedi',
   'card.mailFailure': 'Mail gönderim sorunu',
+  'card.openDetailFor': '{0} — sertifika detayını aç',
+  'card.checkOk':       '{0} kontrol edildi',
+  'card.checkFailed':   '{0} kontrol edilemedi: {1}',
   'card.mailFailureTooltip': 'Bu sertifika için son 3 mail denemesi başarısız oldu — Detaylar için tıklayın',
 
   'tbl.domainSearch':  'Domain Ara:',
@@ -2275,6 +2278,8 @@ export const TR = {
   'inv.transferError': 'Devretme başarısız',
   'inv.loadError':     'Envanter yüklenemedi',
   'inv.saveError':     'Kayıt başarısız',
+  'inv.duplicateHint': 'Kaynak kaydın birebir kopyası. Yeni domain adını yazıp kaydetmeniz yeterli; parmak izi/subject beklentileri ve değişiklik açıklaması kopyalanmaz.',
+  'inv.notFoundForDomain': '{0} için envanter kaydı bulunamadı (silinmiş ya da yetki kapsamınız dışında).',
   'inv.transferTeam':  'Hedef Takım',
   'inv.transferConfirm': 'Devret',
 
@@ -5503,6 +5508,9 @@ export const EN = {
   'card.expiredAgo': 'days expired',
   'card.silentAlert': 'Alert fired — no notification sent',
   'card.mailFailure': 'Mail delivery failing',
+  'card.openDetailFor': '{0} — open certificate details',
+  'card.checkOk':       '{0} checked',
+  'card.checkFailed':   'Could not check {0}: {1}',
   'card.mailFailureTooltip': 'Last 3 email attempts failed for this certificate — Click for details',
 
   'tbl.domainSearch':  'Search Domain:',
@@ -6503,6 +6511,8 @@ export const EN = {
   'inv.transferError': 'Transfer failed',
   'inv.loadError':     'Could not load inventory',
   'inv.saveError':     'Save failed',
+  'inv.duplicateHint': 'An exact copy of the source record. Just type the new domain and save; expected fingerprint/subject and the change description are not copied.',
+  'inv.notFoundForDomain': 'No inventory record found for {0} (deleted or outside your access scope).',
   'inv.transferTeam':  'Target Team',
   'inv.transferConfirm': 'Transfer',
 

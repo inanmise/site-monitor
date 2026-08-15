@@ -1456,7 +1456,15 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
   display: flex; flex-wrap: wrap; gap: 6px;
   padding-top: 12px;
   border-top: 1px dashed #e5e7eb;
+  justify-content: space-between; align-items: center;
 }
+/* Solda alarm çipleri / sağda aksiyon butonları (upt-card-foot ile aynı yerleşim mantığı).
+   Buton renkleri .mon-btn-check / .mon-btn-edit'ten gelir — yeni buton stili tanımlanmaz. */
+.cc-footer-chips   { display: flex; flex-wrap: wrap; gap: 6px; min-width: 0; }
+/* margin-left:auto ŞART: footer flex-wrap'li ve hata kartlarında çipler satırı doldurup butonları
+   ALT SATIRA atıyor; orada tek öğe kaldığı için space-between onları sola yaslardı. */
+.cc-footer-actions { display: flex; gap: 6px; flex-shrink: 0; margin-left: auto; }
+.cc-footer-actions .btn-sm { margin-right: 0; }   /* .btn-sm global margin-right:4px taşıyor */
 .cc-chip {
   display: inline-flex; align-items: center; gap: 5px;
   font-size: .72em; font-weight: 600;

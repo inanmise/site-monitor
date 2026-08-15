@@ -3,6 +3,7 @@ import { ChevronDown, BarChart3, AlertOctagon, X, Wifi, CheckCircle, Clock, Load
 
 import { api, formatDate } from './api/client'
 import { useDialog } from './components/ui/Dialog.jsx'
+import { useToast } from './components/ui/Toast.jsx'
 import { useT } from './i18n/index.jsx'
 import { usePagination } from './hooks/usePagination.js'
 import PaginationBar from './components/ui/PaginationBar.jsx'
@@ -60,6 +61,9 @@ const ActivityLog = lazy(() => import('./components/ActivityLog'))
 const MyAuditLog = lazy(() => import('./components/MyAuditLog'))
 const HelpPage = lazy(() => import('./components/HelpPage'))
 const ExpiryForecastPage = lazy(() => import('./pages/ExpiryForecastPage'))
+// Envanter formu (kart → Düzenle/Kopyala): MDEditor çektiği için lazy — kendi Suspense sınırında.
+const InventoryFormModalForDomain = lazy(() =>
+  import('./components/inventory/InventoryFormModal.jsx').then(m => ({ default: m.InventoryFormModalForDomain })))
 
 const INACTIVITY_MS   = Number(import.meta.env.VITE_INACTIVITY_MS   ?? 300_000)
 const WARN_BEFORE_MS  = Number(import.meta.env.VITE_WARN_BEFORE_MS  ?? 60_000)
@@ -107,6 +111,7 @@ function initialTabFromUrl() {
 
 export default function App() {
   const { showConfirm } = useDialog()
+  const toast = useToast()
   const t = useT()
   const [user, setUser] = useState(null)
   const [systemRole, setSystemRole] = useState('USER')
@@ -159,6 +164,13 @@ export default function App() {
   const [search, setSearch] = useState(() => readUrlParam('q', ''))
   const [sortOrder, setSortOrder] = useState('default')
   const [modalCert, setModalCert] = useState(null)
+  const [checkingDomain, setCheckingDomain] = useState(null)   // kart bazlı "çalıştır" kilidi
+  const [invForm, setInvForm] = useState(null)                 // { domain, mode } — kart → envanter formu
+  // Envanter yazma yetkisi: inventory.crud yalnız bu iki rolde. Kart aksiyonları ve "Domain Ekle"
+  // butonu aynı koşulu paylaşır. Kart bazında takım karşılaştırması YAPILMAZ — frontend'de
+  // manage-scope listesi yok (/me yalnız üyelik döndürür); yönetilebilir bir takımı yanlışlıkla
+  // gizlemektense backend'in 403'üne güveniyoruz (InventoryManager da böyle yapıyor).
+  const canManageInventory = systemRole === 'ADMIN' || systemRole === 'TEAM_ADMIN'
   const [caModal, setCaModal]     = useState(false)
   const [newDomain,    setNewDomain]    = useState('')
   const [checkLoading, setCheckLoading] = useState(false)
@@ -454,6 +466,45 @@ export default function App() {
     setActivityRefreshKey(k => k + 1)
     setCheckRun(cr => cr ? { ...cr, done: true, finishedAt: Date.now() } : cr)
     setRefreshing(false)
+  }
+
+  /** Tek kart için "şimdi koştur". Toplu taramayla aynı ucu kullanır (kalıcı kaydeder). */
+  async function runSingleCheck(domain) {
+    if (checkingDomain || refreshing) return
+    setCheckingDomain(domain)
+    try {
+      const r = await api.checkDomain(domain)
+      const d = r?.data
+      if (!r?.success || d?.status === 'error') {
+        toast.error(t('card.checkFailed', domain, r?.error || d?.error || '—'))
+      } else {
+        toast.success(t('card.checkOk', domain))
+      }
+      // Satır bazlı merge YAPILMAZ: /check yanıtı ham checker map'i; alert_level/team_name/tier
+      // içermediği için merge kartın renk sınıfını, T rozetini ve takım satırını sessizce silerdi.
+      const [certsRes, statsRes, silentRes] = await Promise.all([
+        api.getCertificates(), api.getStats(), api.getSilentAlertDomains(),
+      ])
+      if (certsRes?.success) { setCerts(certsRes.data); setLastUpdate(certsRes.timestamp) }
+      if (statsRes?.success) setStats(statsRes.data)
+      if (silentRes?.success) setSilentAlertDomains(new Set(silentRes.data))
+      setActivityRefreshKey(k => k + 1)
+    } catch (e) {
+      toast.error(t('card.checkFailed', domain, e?.message || '—'))
+    } finally {
+      setCheckingDomain(null)
+    }
+  }
+
+  /** Kart aksiyon prop'ları. Düzenle/Kopyala yalnız envanteri yönetebilenlere; Çalıştır herkese
+   *  (toplu "Şimdi Kontrol Et" de rol kapısı taşımıyor, /check/{domain} yalnız oturum istiyor). */
+  function cardActions(cert) {
+    return {
+      onCheckNow: () => runSingleCheck(cert.domain),
+      checking: checkingDomain === cert.domain || refreshing,
+      onEdit:      canManageInventory ? () => setInvForm({ domain: cert.domain, mode: 'edit' }) : undefined,
+      onDuplicate: canManageInventory ? () => setInvForm({ domain: cert.domain, mode: 'duplicate' }) : undefined,
+    }
   }
 
   async function handleAddDomain() {
@@ -896,7 +947,8 @@ export default function App() {
                             setSmtpPreFilterDomain(cert.domain)
                             setOpenSmtpModalOnLoad(true)
                           }}
-                          isWeak={weakAlgStats != null ? weakDomainSet.has(cert.domain) : undefined} />
+                          isWeak={weakAlgStats != null ? weakDomainSet.has(cert.domain) : undefined}
+                          {...cardActions(cert)} />
                       ))}
                     </div>
                     <PaginationBar {...dashPager} />
@@ -933,7 +985,8 @@ export default function App() {
                           setAdminInitialTab('health')
                           setSmtpPreFilterDomain(cert.domain)
                           setOpenSmtpModalOnLoad(true)
-                        }} />
+                        }}
+                        {...cardActions(cert)} />
                     ))}
                   </div>
                 )}
@@ -1192,6 +1245,19 @@ export default function App() {
 
       <CertificateModal domain={modalCert?.domain} alertLevel={modalCert?.alert_level} initialData={modalCert?._preview ? modalCert : undefined} previewMode={!!modalCert?._preview} currentUser={user} currentUserRole={systemRole} onClose={() => setModalCert(null)} />
       {caModal && <CaDiversityModal certs={certs} onClose={() => setCaModal(false)} />}
+
+      {/* Kart → envanter formu (Düzenle / Kopyala). Kendi Suspense sınırı: yukarıdaki sınır sekme
+          içeriğiyle birlikte kapanıyor ve eager import MDEditor'ü dashboard'un ilk chunk'ına sokardı. */}
+      {invForm && (
+        <Suspense fallback={null}>
+          <InventoryFormModalForDomain
+            domain={invForm.domain}
+            mode={invForm.mode}
+            onClose={() => setInvForm(null)}
+            onSaved={() => { setInvForm(null); loadData() }}
+          />
+        </Suspense>
+      )}
 
       {/* Şimdi Kontrol Et — önce takım seçimi, sonra akan sonuç tablosu */}
       {teamPickerOpen && (

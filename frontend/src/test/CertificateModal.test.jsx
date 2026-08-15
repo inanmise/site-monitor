@@ -150,7 +150,9 @@ describe('CertificateModal — Kontrol Geçmişi + Grafik', () => {
     const chartTab = await screen.findByRole('button', { name: 'Certificate Chart' })
     chartTab.click()
 
-    await waitFor(() => expect(api.monitoring.getSslResponseSeries).toHaveBeenCalled())
+    // Grafik lazy() ile yükleniyor ve recharts ağır: tam süit altında varsayılan 1 sn'lik
+    // waitFor penceresi yetişmiyordu (tek dosya koşumunda geçiyordu). Bekleme buna göre.
+    await waitFor(() => expect(api.monitoring.getSslResponseSeries).toHaveBeenCalled(), { timeout: 8000 })
     expect(api.monitoring.getSslResponseSeries.mock.calls[0][0]).toBe('example.com')
   })
 

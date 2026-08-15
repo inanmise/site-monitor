@@ -35,6 +35,13 @@ Object.defineProperty(document, 'execCommand', {
 // Odak yönetimi olan bileşenler (ModalShell) tarayıcıda scrollIntoView tetikleyebilir.
 if (!HTMLElement.prototype.scrollIntoView) HTMLElement.prototype.scrollIntoView = () => {}
 
+// jsdom ResizeObserver'ı implemente etmez; uzun formlarda "aşağı kaydır" ipucunu süren
+// InventoryFormModal gibi bileşenler mount'ta ReferenceError'a düşerdi. jsdom yerleşim
+// hesaplamadığı için gözlemcinin gerçekten çalışması beklenmiyor — no-op yeterli.
+if (typeof globalThis.ResizeObserver === 'undefined') {
+  globalThis.ResizeObserver = class { observe() {} unobserve() {} disconnect() {} }
+}
+
 // Testler arası URL izolasyonu: URL-sync'li sayfalar (useUrlQuerySync) paramları adres çubuğuna yazar;
 // bir dosyanın bıraktığı ?page=/&stat= sonraki dosyanın mount'unu etkilemesin.
 import { afterEach } from 'vitest'
