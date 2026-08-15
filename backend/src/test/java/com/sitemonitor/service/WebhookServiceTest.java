@@ -152,4 +152,53 @@ class WebhookServiceTest {
         service.send("TEAMS", "http://localhost/hook", "T", "M", "RESOLVED");
         verify(httpClient, atLeastOnce()).send(any(), any());
     }
+
+    // ── GÖVDE SÖZLEŞMESİ ─────────────────────────────────────────────────────────
+    // Yukarıdaki testlerin ADI renk/format iddia ediyordu ama gövdeleri yalnız URI'yi ya da
+    // "send() çağrıldı mı"yı doğruluyordu: dört seviye de aynı rengi dönse, hatta Teams gövdesi
+    // Slack'e gönderilse testler YEŞİL kalırdı. Payload üreticileri ayrıldı; asıl sözleşme burada.
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.CsvSource({
+        "CRITICAL, FF0000",
+        "HIGH,     FF8C00",
+        "WARNING,  FFC107",
+        "RESOLVED, FFC107",
+        "BILINMEYEN, FFC107",
+    })
+    @DisplayName("Seviye → renk eşlemesi (gerçekten farklı renkler; hepsi aynı olsa eski testler yeşildi)")
+    void levelToColor_mapping(String level, String expected) {
+        org.assertj.core.api.Assertions.assertThat(WebhookService.levelToColor(level)).isEqualTo(expected);
+    }
+
+    @Test
+    @DisplayName("Teams gövdesi: MessageCard + themeColor RENGİ TAŞIR")
+    void teamsPayload_carriesColorAndShape() {
+        var p = WebhookService.buildTeamsPayload("Baslik", "Mesaj", "FF0000");
+
+        org.assertj.core.api.Assertions.assertThat(p)
+                .containsEntry("@type", "MessageCard")
+                .containsEntry("themeColor", "FF0000")
+                .containsEntry("title", "Baslik")
+                .containsEntry("text", "Mesaj");
+        // Slack şekli SIZMAMALI
+        org.assertj.core.api.Assertions.assertThat(p).doesNotContainKey("attachments");
+    }
+
+    @Test
+    @DisplayName("Slack gövdesi: attachments[0] içinde renk/başlık — Teams şekliyle KARIŞMAZ")
+    void slackPayload_hasAttachmentShape() {
+        var p = WebhookService.buildSlackPayload("Baslik", "Mesaj", "FF8C00");
+
+        org.assertj.core.api.Assertions.assertThat(p).containsKey("attachments");
+        org.assertj.core.api.Assertions.assertThat(p).doesNotContainKey("themeColor");
+        @SuppressWarnings("unchecked")
+        var att = (java.util.List<java.util.Map<String, Object>>) p.get("attachments");
+        org.assertj.core.api.Assertions.assertThat(att).hasSize(1);
+        org.assertj.core.api.Assertions.assertThat(att.get(0))
+                .containsEntry("color", "FF8C00")
+                .containsEntry("title", "Baslik")
+                .containsEntry("text", "Mesaj")
+                .containsEntry("footer", "SiteMonitor Enterprise");
+    }
 }

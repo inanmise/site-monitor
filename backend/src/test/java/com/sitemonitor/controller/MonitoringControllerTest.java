@@ -1640,4 +1640,56 @@ class MonitoringControllerTest {
 
         org.mockito.Mockito.verify(scriptedDraftRepo).deleteByOwnerAndMonitorKey("u", "new");
     }
+
+    // ── İZİN KAPILARI ────────────────────────────────────────────────────────────
+    // permissionService @MockitoBean ve require(...) VOID: stub'lanmadıkça mock hiçbir şey yapmaz →
+    // kapı testte HER ZAMAN açıktı. Bu controller'daki 70 require() satırı silinse tek test bile
+    // kırmızıya dönmezdi. Geçen 403 testleri SessionScope takım kontrolünden geliyordu, izin
+    // matrisinden değil — yani "USER izleme silemez" gibi iddialar hiç kanıtlanmamıştı.
+    // Aşağıdaki tablo her (anahtar, aksiyon) çifti için TEMSİLCİ bir uç tutar.
+
+    static java.util.stream.Stream<org.junit.jupiter.params.provider.Arguments> permissionGates() {
+        return java.util.stream.Stream.of(
+            org.junit.jupiter.params.provider.Arguments.of("monitoring.read",   "view",    "GET",  "/api/monitoring/port", ""),
+            org.junit.jupiter.params.provider.Arguments.of("monitoring.crud",   "edit",    "POST", "/api/monitoring/port", "{\"host\":\"h\",\"port\":443}"),
+            org.junit.jupiter.params.provider.Arguments.of("monitoring.trigger","execute", "POST", "/api/monitoring/port/1/check", ""),
+            org.junit.jupiter.params.provider.Arguments.of("monitoring.trigger","execute", "POST", "/api/monitoring/http/1/check", ""),
+            org.junit.jupiter.params.provider.Arguments.of("monitoring.scripted","edit",   "POST", "/api/monitoring/scripted", "{\"name\":\"x\"}"),
+            org.junit.jupiter.params.provider.Arguments.of("monitoring.scripted","execute","POST", "/api/monitoring/scripted/1/check", ""),
+            org.junit.jupiter.params.provider.Arguments.of("monitoring.scripted","execute","POST", "/api/monitoring/scripted/1/diagnose", ""),
+            org.junit.jupiter.params.provider.Arguments.of("monitoring.group",  "view",    "GET",  "/api/monitoring/groups", ""),
+            org.junit.jupiter.params.provider.Arguments.of("monitoring.group",  "edit",    "PUT",  "/api/monitoring/groups/1", "{\"new_name\":\"x\"}")
+        );
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest(name = "{0}/{1} reddedilince {2} {3} → 403")
+    @org.junit.jupiter.params.provider.MethodSource("permissionGates")
+    @DisplayName("İZİN KAPISI: ilgili anahtar reddedilince uç 403 döner (kapı gerçekten bağlı)")
+    void permissionGate_denied_returns403(String key, String action, String method, String url, String body) throws Exception {
+        org.mockito.Mockito.doThrow(new SecurityException("izin yok"))
+                .when(permissionService).require(any(jakarta.servlet.http.HttpSession.class), eq(key), eq(action));
+
+        var req = switch (method) {
+            case "POST" -> post(url);
+            case "PUT"  -> put(url);
+            default     -> get(url);
+        };
+        if (!body.isEmpty()) req.contentType(org.springframework.http.MediaType.APPLICATION_JSON).content(body);
+
+        mvc.perform(req.session(session("ADMIN")))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    @DisplayName("İZİN KAPISI: BAŞKA bir anahtar reddedilse de uç çalışır (kapı doğru anahtara bağlı)")
+    void permissionGate_unrelatedKeyDenied_stillWorks() throws Exception {
+        // Yanlış anahtara bağlanmış bir kapı yukarıdaki testte de yeşil görünürdü; bu test onu ayırır.
+        org.mockito.Mockito.doThrow(new SecurityException("izin yok"))
+                .when(permissionService).require(any(jakarta.servlet.http.HttpSession.class), eq("incidents.manage"), anyString());
+        when(portMonitorRepo.findAll()).thenReturn(List.of());
+        when(inventoryRepo.findByActiveTrueOrderByDomainAsc()).thenReturn(List.of());
+
+        mvc.perform(get("/api/monitoring/port").session(session("ADMIN")))
+                .andExpect(status().isOk());
+    }
 }

@@ -173,4 +173,72 @@ class RetentionAdminControllerTest {
         org.assertj.core.api.Assertions.assertThat(
                 RetentionAdminController.parseDaysDiff("{\"approval\":{\"from\":\"\",\"to\":\"x\"}}")).isNull();
     }
+
+    // ── YIKICI UÇLAR ─────────────────────────────────────────────────────────────
+    // Bu iki uç kalıcı satır siler; buraya kadar HİÇ testleri yoktu. Legal-hold reddi bozulursa
+    // yasal saklama açıkken veri silinir (geri alınamaz + uyum ihlali); dry-run'ın parametresi
+    // yanlışlıkla false'a dönerse "hiçbir şey silinmez" denilen düğme GERÇEKTEN siler.
+
+    private static RetentionService.RunResult result(boolean dryRun, long rows) {
+        return new RetentionService.RunResult(1L, "2026-08-15T03:30:00", "2026-08-15T03:30:05",
+                dryRun, false, rows, 0, 5000L, List.of());
+    }
+
+    @Test
+    @DisplayName("YASAL SAKLAMA açıkken /run reddedilir ve execute HİÇ çağrılmaz")
+    void runNow_legalHoldActive_rejected_andNoExecute() throws Exception {
+        when(retentionService.holdActive()).thenReturn(true);
+
+        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                        .post("/api/admin/retention/run").session(admin()))
+                .andExpect(status().is4xxClientError());
+
+        verify(retentionService, never()).execute(anyBoolean(), anyString());
+    }
+
+    @Test
+    @DisplayName("/dry-run GERÇEKTEN dry: execute(true, ...) ile çağrılır (silme yapmaz)")
+    void dryRun_callsExecuteWithDryRunTrue() throws Exception {
+        when(retentionService.execute(anyBoolean(), anyString())).thenReturn(result(true, 1234));
+
+        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                        .post("/api/admin/retention/dry-run").session(admin()))
+                .andExpect(status().isOk());
+
+        org.mockito.ArgumentCaptor<Boolean> cap = org.mockito.ArgumentCaptor.forClass(Boolean.class);
+        verify(retentionService).execute(cap.capture(), anyString());
+        org.junit.jupiter.api.Assertions.assertTrue(cap.getValue(), "dry-run parametresi TRUE olmalı");
+    }
+
+    @Test
+    @DisplayName("/run legal-hold kapalıyken execute(false, ...) ile siler ve denetim kaydı yazar")
+    void runNow_holdInactive_executesAndAudits() throws Exception {
+        when(retentionService.holdActive()).thenReturn(false);
+        when(retentionService.execute(anyBoolean(), anyString())).thenReturn(result(false, 4200));
+
+        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                        .post("/api/admin/retention/run").session(admin()))
+                .andExpect(status().isOk());
+
+        org.mockito.ArgumentCaptor<Boolean> cap = org.mockito.ArgumentCaptor.forClass(Boolean.class);
+        verify(retentionService).execute(cap.capture(), anyString());
+        org.junit.jupiter.api.Assertions.assertFalse(cap.getValue(), "gerçek koşumda dry-run FALSE olmalı");
+        verify(auditService).recordAction(eq("RETENTION_RUN_MANUAL"),
+                any(jakarta.servlet.http.HttpSession.class), any(jakarta.servlet.http.HttpServletRequest.class),
+                anyString(), anyString(), contains("4200"));
+    }
+
+    @Test
+    @DisplayName("backfill-hourly days=0 → varsayılan pencereyle çalışır (0 gün ile çağrılmaz)")
+    void backfillHourly_daysZero_usesDefaultWindow() throws Exception {
+        when(schedulerService.backfillHourlyRollup(anyInt())).thenReturn(42);
+
+        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                        .post("/api/admin/retention/backfill-hourly").session(admin()))
+                .andExpect(status().isOk());
+
+        org.mockito.ArgumentCaptor<Integer> cap = org.mockito.ArgumentCaptor.forClass(Integer.class);
+        verify(schedulerService).backfillHourlyRollup(cap.capture());
+        org.junit.jupiter.api.Assertions.assertTrue(cap.getValue() > 0, "gün sayısı pozitif olmalı");
+    }
 }
