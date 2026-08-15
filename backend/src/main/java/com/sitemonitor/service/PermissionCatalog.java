@@ -33,6 +33,10 @@ public final class PermissionCatalog {
         // ── Yönetim (Takım & Kullanıcı) ───────────────────────────────────
         r("teams.list",         "management", VIEW),
         r("teams.update",       "management", EDIT),
+        // Yalnız takımın haftalık e-posta anahtarları (Cuma hatırlatması + Pazartesi erişilebilirlik).
+        // teams.update'ten AYRI: sıradan üye kendi takımının bu iki anahtarını çevirebilsin ama
+        // ad/e-posta/aktiflik alanlarına dokunamasın diye. Uç ayrıca üyelik doğrular.
+        r("teams.weekly_notifications", "management", EDIT),
         r("teams.lifecycle",    "management", EXECUTE, Set.of(EXECUTE)),
         r("users.list",         "management", VIEW),
         r("users.crud",         "management", EDIT),
@@ -169,7 +173,7 @@ public final class PermissionCatalog {
             "inventory.list", "inventory.crud",
             "contacts.list", "contacts.crud",
             "notes.read", "notes.crud",
-            "teams.list", "teams.update",
+            "teams.list", "teams.update", "teams.weekly_notifications",
             "users.list", "users.crud", "users.actions",
             "alerts.read", "alerts.actions",
             "system_health.read",
@@ -202,6 +206,9 @@ public final class PermissionCatalog {
             "contacts.list",
             "notes.read",
             "teams.list",
+            // Kendi takımının haftalık e-posta anahtarlarını çevirebilir (uç üyelik doğrular);
+            // teams.update VERİLMEZ — ad/e-posta/aktiflik yönetici alanı olarak kalır.
+            "teams.weekly_notifications",
             "users.list",
             "thresholds.read",
             "alerts.read", "alerts.actions",

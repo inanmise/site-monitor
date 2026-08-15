@@ -410,6 +410,15 @@ public class SchedulerService {
         // Taslak kullanıcı+monitör başına TEK satır. monitor_id yerine metin anahtar kullanılıyor:
         // PostgreSQL unique index'te NULL'ları birbirinden farklı sayar, "yeni monitör" taslakları çoğalırdı.
         patch("CREATE UNIQUE INDEX IF NOT EXISTS ux_scripted_draft_owner_key ON scripted_drafts(owner, monitor_key)");
+        // Takım başına haftalık e-posta anahtarları (Cuma hatırlatması + Pazartesi erişilebilirlik raporu).
+        // YENİ takım kapalı doğar (entity başlatıcısı false), ama MEVCUT takımlar TRUE'ya çekilir: kolon
+        // eklendiğinde satırlar NULL kalır ve NULL'ı "kapalı" saymak bugün e-posta alan tüm takımları
+        // yayınla birlikte sessizce susturur. Bu iki UPDATE yalnız NULL'a dokunur; kullanıcı anahtarı
+        // kapattığında değer FALSE olur (NULL değil), o yüzden her açılışta koşması güvenlidir.
+        patch("ALTER TABLE teams ADD COLUMN weekly_reminder_enabled BOOLEAN");
+        patch("ALTER TABLE teams ADD COLUMN weekly_availability_enabled BOOLEAN");
+        patch("UPDATE teams SET weekly_reminder_enabled = TRUE WHERE weekly_reminder_enabled IS NULL");
+        patch("UPDATE teams SET weekly_availability_enabled = TRUE WHERE weekly_availability_enabled IS NULL");
         // Haftalık raporlar — tablolar ddl-auto=update ile oluşur; unique index güvenlik ağı
         patch("CREATE UNIQUE INDEX IF NOT EXISTS ux_weekly_report_team_week ON weekly_reports(team_id, report_year, week_no)");
         // Eş zamanlı düzenleme: sürüm sayacı + yumuşak düzenleme kilidi alanları

@@ -8,7 +8,28 @@ import KebabMenu from '../ui/KebabMenu.jsx'
 import { UsersRound, PenLine } from 'lucide-react'
 import UserEditModal from './UserEditModal.jsx'
 
-const emptyTeam = { name: '', email: '', description: '', active: true, leader_id: '' }
+// Haftalık e-postalar opt-in: YENİ takım ikisi de kapalı doğar (backend de createTeam'de false yazar).
+const emptyTeam = { name: '', email: '', description: '', active: true, leader_id: '',
+  weekly_reminder_enabled: false, weekly_availability_enabled: false }
+
+/** Sunucu SNAKE_CASE döndürür; camelCase varyantı da savunma amaçlı okunur (openEdit'teki leader_id deseni). */
+function weeklyFlag(team, which) {
+  return which === 'reminder'
+    ? !!(team?.weekly_reminder_enabled ?? team?.weeklyReminderEnabled)
+    : !!(team?.weekly_availability_enabled ?? team?.weeklyAvailabilityEnabled)
+}
+
+/** Takım satırındaki/formundaki haftalık e-posta anahtarı — PermissionMatrix'teki pill switch'in aynısı. */
+function WeeklyPill({ on, disabled, onToggle, label }) {
+  return (
+    <button type="button" role="switch" aria-checked={!!on} aria-label={label} title={label}
+      disabled={disabled}
+      className={`perm-pill ${on ? 'perm-pill-on' : 'perm-pill-off'}`}
+      onClick={onToggle}>
+      <span className="perm-pill-knob" />
+    </button>
+  )
+}
 
 const ORG_ROLE_COLORS = { PO: '#2563eb', MANAGER: '#d97706', CLEVEL: '#dc2626', TECH: '#16a34a' }
 
@@ -67,13 +88,21 @@ function MemberAvatar({ m }) {
   )
 }
 
-export default function TeamManager({ systemRole, ownTeamId, onTeamsChange }) {
+export default function TeamManager({ systemRole, ownTeamId, myTeamIds, onTeamsChange }) {
   const t = useT()
   const toast = useToast()
   const isAdmin = systemRole === 'ADMIN'
   const isTeamAdmin = systemRole === 'TEAM_ADMIN'
   const canManage = isAdmin || isTeamAdmin
   const canEditRow = (rowTeamId) => isAdmin || (isTeamAdmin && rowTeamId === ownTeamId)
+  // Haftalık e-posta anahtarlarını takımın HER üyesi çevirebilir (yalnız kendi takımı için).
+  // Üyelik listesi oturumdan gelir; sunucu tarafında ayrıca app_users üzerinden doğrulanır.
+  const memberOf = useMemo(() => {
+    const ids = Array.isArray(myTeamIds) ? myTeamIds.map(Number) : []
+    if (ownTeamId != null && !ids.includes(Number(ownTeamId))) ids.push(Number(ownTeamId))
+    return new Set(ids)
+  }, [myTeamIds, ownTeamId])
+  const canToggleWeekly = (rowTeamId) => isAdmin || memberOf.has(Number(rowTeamId))
   const { showConfirm } = useDialog()
   const [teams, setTeams]   = useState([])
   const [users, setUsers]   = useState([])
@@ -147,7 +176,9 @@ export default function TeamManager({ systemRole, ownTeamId, onTeamsChange }) {
 
   function openAdd() { setForm(emptyTeam); setModal('add'); setMsg(null) }
   function openEdit(team) {
-    setForm({ ...team, email: team.email || '', leader_id: String(team.leaderId ?? team.leader_id ?? '') })
+    setForm({ ...team, email: team.email || '', leader_id: String(team.leaderId ?? team.leader_id ?? ''),
+      weekly_reminder_enabled: weeklyFlag(team, 'reminder'),
+      weekly_availability_enabled: weeklyFlag(team, 'availability') })
     setModal(team)
     setMsg(null)
   }
@@ -166,6 +197,8 @@ export default function TeamManager({ systemRole, ownTeamId, onTeamsChange }) {
       description: form.description,
       active: form.active,
       leader_id: form.leader_id ? Number(form.leader_id) : null,  // PO optional
+      weekly_reminder_enabled: !!form.weekly_reminder_enabled,
+      weekly_availability_enabled: !!form.weekly_availability_enabled,
     }
     const isAdd = modal === 'add'
     const editedId = isAdd ? null : modal.id
@@ -205,6 +238,22 @@ export default function TeamManager({ systemRole, ownTeamId, onTeamsChange }) {
     onTeamsChange?.()
   }
 
+  /** Satırdaki bir haftalık anahtarı çevirir — ad/e-posta/aktifliğe DOKUNMAYAN dar uç. */
+  async function toggleWeekly(team, which) {
+    const key = which === 'reminder' ? 'weekly_reminder_enabled' : 'weekly_availability_enabled'
+    const next = !weeklyFlag(team, which)
+    // İyimser güncelleme: anahtar anında dönsün, hata olursa geri alınır.
+    setTeams(prev => prev.map(x => (x.id === team.id ? { ...x, [key]: next } : x)))
+    const res = await api.admin.updateTeamWeeklyNotifications(team.id, { [key]: next })
+    if (res?.success) {
+      toast.success(t('team.weeklySaved'))
+      onTeamsChange?.()
+    } else {
+      setTeams(prev => prev.map(x => (x.id === team.id ? { ...x, [key]: !next } : x)))
+      toast.error(res?.error || t('team.weeklySaveError'))
+    }
+  }
+
   const canSave = form.name.trim() && form.email.trim()
 
   return (
@@ -230,12 +279,13 @@ export default function TeamManager({ systemRole, ownTeamId, onTeamsChange }) {
               <th>{t('team.colLeader')}</th>
               <th>{t('team.colManager')}</th>
               <th>{t('team.colActive')}</th>
+              <th>{t('team.colWeeklyEmails')}</th>
               <th>{t('team.colActions')}</th>
             </tr>
           </thead>
           <tbody>
             {filteredTeams.length === 0 && (
-              <tr><td colSpan={6} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: 18 }}>
+              <tr><td colSpan={7} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: 18 }}>
                 {t('team.noResults')}
               </td></tr>
             )}
@@ -257,6 +307,20 @@ export default function TeamManager({ systemRole, ownTeamId, onTeamsChange }) {
                   <td>{teamManagerLabel(team.id) || '—'}</td>
                   <td><span className={team.active ? 'badge badge-ok' : 'badge badge-err'}>{team.active ? t('team.active') : t('team.inactive')}</span></td>
                   <td>
+                    <div className="tm-weekly-cell">
+                      <span className="tm-weekly-item">
+                        <WeeklyPill on={weeklyFlag(team, 'reminder')} disabled={!canToggleWeekly(team.id)}
+                          label={t('team.weeklyReminder')} onToggle={() => toggleWeekly(team, 'reminder')} />
+                        <span className="tm-weekly-label">{t('team.weeklyReminderShort')}</span>
+                      </span>
+                      <span className="tm-weekly-item">
+                        <WeeklyPill on={weeklyFlag(team, 'availability')} disabled={!canToggleWeekly(team.id)}
+                          label={t('team.weeklyAvailability')} onToggle={() => toggleWeekly(team, 'availability')} />
+                        <span className="tm-weekly-label">{t('team.weeklyAvailabilityShort')}</span>
+                      </span>
+                    </div>
+                  </td>
+                  <td>
                     <KebabMenu label={t('team.colActions')} items={[
                       { label: t('team.edit'), onClick: () => openEdit(team), hidden: !canEditRow(team.id) },
                       { label: t('team.delete'), danger: true, onClick: () => del(team.id), hidden: !isAdmin },
@@ -265,7 +329,7 @@ export default function TeamManager({ systemRole, ownTeamId, onTeamsChange }) {
                 </tr>
                 {expandedId === team.id && (
                   <tr key={`${team.id}-members`} className="team-members-row">
-                    <td colSpan={6}>
+                    <td colSpan={7}>
                       {membersLoading && !membersCache[team.id]
                         ? <span className="field-hint">{t('team.loadingMembers')}</span>
                         : (() => {
@@ -422,6 +486,22 @@ export default function TeamManager({ systemRole, ownTeamId, onTeamsChange }) {
                 <input type="checkbox" checked={form.active} onChange={(e) => setForm({ ...form, active: e.target.checked })} />
                 {t('team.formActive')}
               </label>
+              {/* Haftalık e-postalar — yeni takımda İKİSİ DE KAPALI açılır; takım sonradan kendi üyeleri
+                  üzerinden açar. E-posta ancak takım AKTİF ve ilgili anahtar açıkken gider. */}
+              <div className="full-width tm-weekly-form">
+                <span className="tm-weekly-form-title">{t('team.colWeeklyEmails')}</span>
+                <div className="tm-weekly-form-row">
+                  <WeeklyPill on={!!form.weekly_reminder_enabled} label={t('team.weeklyReminder')}
+                    onToggle={() => setForm({ ...form, weekly_reminder_enabled: !form.weekly_reminder_enabled })} />
+                  <span>{t('team.weeklyReminder')}</span>
+                </div>
+                <div className="tm-weekly-form-row">
+                  <WeeklyPill on={!!form.weekly_availability_enabled} label={t('team.weeklyAvailability')}
+                    onToggle={() => setForm({ ...form, weekly_availability_enabled: !form.weekly_availability_enabled })} />
+                  <span>{t('team.weeklyAvailability')}</span>
+                </div>
+                <span className="field-hint">{t('team.weeklyHint')}</span>
+              </div>
             </div>
             {msg && (
               <div className={`alert-msg${msg.startsWith('✓') ? '' : ' alert-msg--err'}`} style={{ marginTop: 8 }}>

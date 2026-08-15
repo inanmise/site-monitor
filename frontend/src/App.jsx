@@ -108,6 +108,9 @@ export default function App() {
   const [globalAdmin, setGlobalAdmin] = useState(false)
   const [teamId, setTeamId] = useState(null)
   const [teamName, setTeamName] = useState(null)
+  // Kullanıcının TÜM takım üyelikleri (birincil takım ilk). Takım Yönetimi'ndeki haftalık e-posta
+  // anahtarları üye bazlı açıldığı için gerekir; /me ve login yanıtı ikisi de team_ids döndürür.
+  const [myTeamIds, setMyTeamIds] = useState([])
   // Kullanıcının kendi giriş güvenliği özeti (backend `login_info`): giriş yanıtından VE /me'den
   // gelir. AuthContext yok — üç tüketiciye (uyarı şeridi, Etkinliklerim, kullanıcı menüsü) prop.
   const [loginInfo, setLoginInfo] = useState(null)
@@ -183,6 +186,7 @@ export default function App() {
         setGlobalAdmin(!!res.global_admin)
         setTeamId(res.team_id ?? null)
         setTeamName(res.team_name ?? null)
+        setMyTeamIds(Array.isArray(res.team_ids) ? res.team_ids : [])
         setMustChangePwd(!!res.must_change_password)
         // Giriş güvenliği özeti — F5 sonrası login yanıtı yoktur, bu yüzden /me de aynı bloğu
         // döndürür; alınmazsa özet ve kullanıcı menüsü sayfa yenilemede boşalır.
@@ -464,6 +468,7 @@ export default function App() {
     setGlobalAdmin(!!userData.global_admin)
     setTeamId(userData.team_id ?? null)
     setTeamName(userData.team_name ?? null)
+    setMyTeamIds(Array.isArray(userData.team_ids) ? userData.team_ids : [])
     setMustChangePwd(!!userData.must_change_password)
     setLoginInfo(userData.login_info ?? null)
   }
@@ -1072,7 +1077,7 @@ export default function App() {
             {tab === 'admin' && (
               <div className="tab-content active">
                 <h2>{t('app.adminTitle')}</h2>
-                <AdminPanel systemRole={systemRole} ownTeamId={teamId} currentUsername={user} />
+                <AdminPanel systemRole={systemRole} ownTeamId={teamId} myTeamIds={myTeamIds} currentUsername={user} />
               </div>
             )}
 

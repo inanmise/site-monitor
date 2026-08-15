@@ -548,6 +548,9 @@ export const api = {
     createTeam: (data) => request('/admin/teams', { method: 'POST', body: JSON.stringify(data) }),
     updateTeam: (id, data) => request(`/admin/teams/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
     deleteTeam: (id) => request(`/admin/teams/${id}`, { method: 'DELETE' }),
+    // Haftalık e-posta anahtarları — takım ÜYELERİNE açık dar uç (ad/e-posta/aktifliğe dokunmaz).
+    updateTeamWeeklyNotifications: (id, data) =>
+      request(`/admin/teams/${id}/weekly-notifications`, { method: 'PUT', body: JSON.stringify(data) }),
     getTeamUsers: (id) => request(`/admin/teams/${id}/users`),
 
     // Users

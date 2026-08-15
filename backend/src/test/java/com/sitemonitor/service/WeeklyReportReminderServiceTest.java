@@ -43,9 +43,15 @@ class WeeklyReportReminderServiceTest {
         when(emailService.sendHtml(any(), any(), anyString(), anyString(), any())).thenReturn("SENT");
     }
 
+    /** Varsayılan fabrika: hatırlatma anahtarı AÇIK — "kapalıysa gönderilmez" davranışı ayrı testte. */
     private static Team team(Long id, String name, String email) {
+        return team(id, name, email, true);
+    }
+
+    private static Team team(Long id, String name, String email, boolean reminderEnabled) {
         Team t = new Team();
         t.setId(id); t.setName(name); t.setEmail(email); t.setActive(true);
+        t.setWeeklyReminderEnabled(reminderEnabled);
         return t;
     }
 
@@ -98,6 +104,40 @@ class WeeklyReportReminderServiceTest {
         ArgumentCaptor<String> urlCap = ArgumentCaptor.forClass(String.class);
         verify(emailService).buildWeeklyReportReminderHtml(eq("AlphaSY"), anyString(), urlCap.capture());
         assertThat(urlCap.getValue()).isEqualTo("https://cm.example.com/?tab=weeklyreports");
+    }
+
+    @Test
+    @DisplayName("Takım anahtarı KAPALI (veya hiç açılmamış) → o takıma hatırlatma gitmez")
+    void teamWithReminderDisabledIsSkipped() {
+        Team on   = team(1L, "AcikSY",   "acik@x.com",  true);
+        Team off  = team(2L, "KapaliSY", "kapali@x.com", false);
+        Team nulls = team(3L, "NullSY",  "null@x.com",  true);
+        nulls.setWeeklyReminderEnabled(null);   // kolon yeni eklendi, hiç dokunulmamış satır
+        when(teamRepo.findByActiveTrueOrderByNameAsc()).thenReturn(List.of(on, off, nulls));
+        when(reportRepo.findByTeamIdAndReportYearAndWeekNo(anyLong(), anyInt(), anyInt())).thenReturn(Optional.empty());
+
+        WeeklyReportReminderService.ReminderResult res = service.sendFridayReminders();
+
+        assertThat(res.sent()).isEqualTo(1);
+        assertThat(res.skippedDisabled()).isEqualTo(2);   // kapalı + NULL
+        ArgumentCaptor<String[]> toCap = ArgumentCaptor.forClass(String[].class);
+        verify(emailService, times(1)).sendHtml(toCap.capture(), isNull(), anyString(), anyString(), isNull());
+        assertThat(toCap.getValue()[0]).isEqualTo("acik@x.com");
+        // Kapalı takım için rapor durumu bile sorgulanmaz (gereksiz iş yok).
+        verify(reportRepo, never()).findByTeamIdAndReportYearAndWeekNo(eq(2L), anyInt(), anyInt());
+    }
+
+    @Test
+    @DisplayName("Anahtarı açık ama PASİF takım → gönderilmez (aday sorgusu yalnız aktifleri döndürür)")
+    void inactiveTeamNeverReceives() {
+        // findByActiveTrueOrderByNameAsc pasif takımı zaten getirmez; sözleşmeyi sabitle.
+        when(teamRepo.findByActiveTrueOrderByNameAsc()).thenReturn(List.of());
+
+        WeeklyReportReminderService.ReminderResult res = service.sendFridayReminders();
+
+        assertThat(res.candidates()).isZero();
+        assertThat(res.sent()).isZero();
+        verify(emailService, never()).sendHtml(any(), any(), anyString(), anyString(), any());
     }
 
     @Test
