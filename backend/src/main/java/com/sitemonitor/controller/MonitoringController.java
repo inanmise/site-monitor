@@ -507,10 +507,20 @@ public class MonitoringController {
         return s;
     }
 
+    /** Saatlik uptime çubukları. Kardeş uçlar (/http-history, /ssl-history) gibi takım denetimi yapar
+     *  ve {@code hours} kırpılır: eskiden imzada HttpSession bile yoktu (başka takımın geçmişi okunabiliyordu)
+     *  ve hours sınırsızdı — {@code hours=200000} tek worker'ı dakikalarca meşgul eden 10⁹ karşılaştırma
+     *  üretiyordu (aşağıdaki döngü saat başına tüm listeyi tarıyor). */
+    private static final int UPTIME_HISTORY_MAX_HOURS = 24 * 90;   // 90 gün: grafik önayarlarının tavanı
+
     @GetMapping("/uptime/{domain}/history")
     public ResponseEntity<Map<String, Object>> uptimeHistory(
-            @PathVariable String domain,
+            @PathVariable String domain, HttpSession session,
             @RequestParam(defaultValue = "24") int hours) {
+
+        var deny = denyIfDomainNotViewable(session, domain);
+        if (deny != null) return deny;
+        hours = Math.max(1, Math.min(hours, UPTIME_HISTORY_MAX_HOURS));
 
         String cutoff = ISO.format(Instant.now().minus(hours, ChronoUnit.HOURS));
         String nowIso = ISO.format(Instant.now());

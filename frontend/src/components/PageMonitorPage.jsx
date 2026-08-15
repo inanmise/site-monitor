@@ -250,7 +250,11 @@ export default function PageMonitorPage({ systemRole, teamId, teamName }) {
     const res = await api.monitoring.triggerPageCheck(m.id)
     if (res?.success) {
       setMonitors(prev => prev.map(x => x.id === m.id ? { ...x, ...res.data } : x))
-      if (selected?.id === m.id) { setSelected(res.data); loadIssues(m.id, issueFilter); loadHistory(m.id, rangeDays) }
+      // Geçmiş yenilemesi BİLİNÇLİ olarak yok: CheckHistoryTab kendi live polling'ini yapıyor.
+      // Buradaki eski loadHistory(m.id, rangeDays) çağrısı geçmiş yönetimi o bileşene taşınırken
+      // temizlenmemişti; ikisi de TANIMSIZ olduğu için modal açıkken kontrol butonu ReferenceError
+      // atıyor, altındaki setChecking(null) hiç çalışmıyor ve buton kalıcı kilitleniyordu.
+      if (selected?.id === m.id) { setSelected(res.data); loadIssues(m.id, issueFilter) }
     }
     setChecking(null)
   }

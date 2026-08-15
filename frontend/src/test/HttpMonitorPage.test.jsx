@@ -174,4 +174,26 @@ describe('HttpMonitorPage', () => {
       await waitFor(() => expect(window.location.search).toContain('monitor=1'), { timeout: 1500 })
     } finally { window.history.replaceState({}, '', '/') }
   })
+
+  it('REGRESYON: detay modali acikken kontrol butonu patlamaz ve kilitli kalmaz', async () => {
+    // Eski kod burada TANIMSIZ loadHistory(m.id, rangeDays) cagiriyordu -> ReferenceError;
+    // ardindan gelen setChecking(null) hic calismadigi icin buton kalici disabled kaliyordu.
+    // Ayni hata ScriptedMonitorPage'de duzeltilmisti, bu 6 kopyaya tasinmamisti.
+    localStorage.clear()
+    api.monitoring.triggerHttpCheck.mockResolvedValue({ success: true, data: { ...monitor } })
+    window.history.replaceState({}, '', '/?monitor=1')   // detay modalini ac -> selected.id === m.id
+    try {
+      render(<HttpMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
+      await waitFor(() => expect(api.monitoring.getHttpMonitors).toHaveBeenCalled())
+
+      const runBtn = document.querySelector('.mon-btn-check')
+      expect(runBtn).not.toBeNull()
+      fireEvent.click(runBtn)
+
+      await waitFor(() => expect(api.monitoring.triggerHttpCheck).toHaveBeenCalledWith(1))
+      await waitFor(() => expect(runBtn.disabled).toBe(false))   // kilitli kalmiyor
+    } finally {
+      window.history.replaceState({}, '', '/')
+    }
+  })
 })

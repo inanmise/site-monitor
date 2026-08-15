@@ -1647,4 +1647,47 @@ class EscalationServiceTest {
         // isScripted her iki tipi de kapsar: sentetik dallar (sekme/CTA/e-posta) ikisinde de çalışır.
         assertThat(EscalationService.isScripted(EscalationService.TYPE_SCRIPTED_SLOW)).isTrue();
     }
+
+    // ── Sessiz bozulma guard'ları ───────────────────────────────────────────────
+
+    @Test
+    @DisplayName("E-postası/adı BOŞ kontak listeyi çökertmez — notified_contacts diğer kontakları KORUR")
+    void serializeContacts_nullFieldsDoNotWipeTheList() {
+        String domain = "np.example.com";
+        when(alertEventRepo.findOpenAlert(domain, "EXPIRY")).thenReturn(Optional.empty());
+        when(alertEventRepo.save(any())).thenAnswer(i -> i.getArgument(0));
+        // Webhook-only / yeni açılmış kontak: e-posta ve ad NULL (kolonlar nullable, yalnız role NOT NULL).
+        EscalationContact broken = contact(null, "PO", "WARNING");
+        broken.setName(null);
+        when(contactRepo.findByActiveTrueOrderByRoleAsc()).thenReturn(List.of(broken, contact("po@x.com", "MANAGER", "WARNING")));
+
+        service.processResults(List.of(expiryResult(domain, 5, true)));
+
+        var cap = org.mockito.ArgumentCaptor.forClass(AlertEvent.class);
+        verify(alertEventRepo, atLeastOnce()).save(cap.capture());
+        String json = cap.getAllValues().get(0).getNotifiedContacts();
+        // Eskiden Map.of null değeri NPE ile reddediyor, catch "[]" döndürüyordu: TEK bozuk kontak
+        // yüzünden "bu alarm kime gitti?" kaydı tamamen kayboluyordu.
+        assertThat(json).isNotNull().isNotEqualTo("[]");
+        assertThat(json).contains("po@x.com");
+    }
+
+    @Test
+    @DisplayName("Eşik alanları NULL iken alarm seviyesi hesaplanır (unboxing NPE'si sweep'i düşürmez)")
+    void determineAlertLevel_nullThresholdFields_useDefaults() {
+        AlertThreshold broken = new AlertThreshold();
+        broken.setActive(true);
+        broken.setCriticalDays(null); broken.setHighDays(null); broken.setWarningDays(null);
+        when(thresholdRepo.findFirstByActiveTrue()).thenReturn(Optional.of(broken));
+        String domain = "nullthr.example.com";
+        when(alertEventRepo.findOpenAlert(domain, "EXPIRY")).thenReturn(Optional.empty());
+        when(alertEventRepo.save(any())).thenAnswer(i -> i.getArgument(0));
+
+        // Fırlamadan tamamlanmalı: NPE buradan sweep'in en dışına kadar çıkıp TÜM turu düşürüyordu.
+        service.processResults(List.of(expiryResult(domain, 3, true)));
+
+        var cap = org.mockito.ArgumentCaptor.forClass(AlertEvent.class);
+        verify(alertEventRepo, atLeastOnce()).save(cap.capture());
+        assertThat(cap.getAllValues().get(0).getAlertLevel()).isEqualTo("CRITICAL");   // 3 gün ≤ 7 varsayılanı
+    }
 }

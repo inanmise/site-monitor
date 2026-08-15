@@ -713,6 +713,28 @@ class MonitoringControllerTest {
     // ── Sertifika yanıt süresi serisi (dashboard kartı → Grafik sekmesi) ──────────
 
     @Test
+    @DisplayName("IDOR + DoS: /uptime/{domain}/history yabancı takımda 403; hours 90 güne kırpılır")
+    void uptimeHistory_scopedAndClamped() throws Exception {
+        CertificateInventory foreign = inv("a.com");
+        foreign.setTeamId(2L);
+        when(inventoryRepo.findByDomain("a.com")).thenReturn(Optional.of(foreign));
+        MockHttpSession scoped = session("USER");
+        scoped.setAttribute("viewTeamIds", List.of(1L));
+
+        // Eskiden imzada HttpSession bile yoktu → başka takımın geçmişi serbestçe okunuyordu.
+        mvc.perform(get("/api/monitoring/uptime/a.com/history").param("hours", "24").session(scoped))
+                .andExpect(status().isForbidden());
+
+        // hours sınırsızdı: 200000 saat → saat başına tüm listeyi tarayan döngüde 10⁹ karşılaştırma.
+        // Kırpma sonrası yanıt 90 günü (2160 çubuk) aşmamalı.
+        when(certCheckRepo.findByDomainAndDateRange(anyString(), anyString(), anyString(), anyInt()))
+                .thenReturn(List.of());
+        mvc.perform(get("/api/monitoring/uptime/a.com/history").param("hours", "200000").session(session("ADMIN")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.bars.length()").value(24 * 90));
+    }
+
+    @Test
     @DisplayName("GET /uptime/{domain}/ssl/response-series: ms serisinin YANINDA kalan gün (days) yardımcı serisi döner")
     void sslResponseSeries_carriesDaysAuxSeries() throws Exception {
         when(inventoryRepo.findByDomain("a.com")).thenReturn(Optional.of(inv("a.com")));

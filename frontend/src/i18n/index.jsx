@@ -8492,7 +8492,9 @@ const FALLBACK_CTX = { lang: 'en', toggle: () => {}, fallback: true }
 const LangCtx = (globalThis.__smLangCtx ??= createContext(FALLBACK_CTX))
 
 export function LangProvider({ children }) {
-  const [lang, setLang] = useState(() => localStorage.getItem(STORAGE_KEY) || 'en')
+  // storedLang() 12 satır yukarıda try/catch'li tanımlı — burada çıplak erişim kalmıştı.
+  // LangProvider da ErrorBoundary'nin ÜSTÜNDE: fırlarsa beyaz ekran (bkz. theme.jsx aynı düzeltme).
+  const [lang, setLang] = useState(storedLang)
 
   useEffect(() => {
     document.documentElement.lang = lang
@@ -8501,7 +8503,7 @@ export function LangProvider({ children }) {
   const toggle = useCallback(() => {
     setLang((l) => {
       const next = l === 'tr' ? 'en' : 'tr'
-      localStorage.setItem(STORAGE_KEY, next)
+      try { localStorage.setItem(STORAGE_KEY, next) } catch { /* depolama yok: dil bu oturumda geçerli */ }
       return next
     })
   }, [])

@@ -8,11 +8,23 @@ const FALLBACK_THEME_CTX = { theme: 'light', toggle: () => {}, fallback: true }
 
 const ThemeCtx = (globalThis.__smThemeCtx ??= createContext(FALLBACK_THEME_CTX))
 
+// localStorage erişimi TRY/CATCH şart: ThemeProvider ErrorBoundary'nin ÜSTÜNDE (main.jsx) —
+// burada fırlayan hata sınırca yakalanamaz ve uygulama hata mesajı bile veremeden TAM BEYAZ EKRAN
+// olur. Depolama kurumsal politika/gizli mod/kota nedeniyle kapalı olabilir.
+function storedTheme() {
+  try { return localStorage.getItem(STORAGE_KEY) } catch { return null }
+}
+function persistTheme(v) {
+  try { localStorage.setItem(STORAGE_KEY, v) } catch { /* depolama yok: tema yalnız bu oturumda geçerli */ }
+}
+
 export function ThemeProvider({ children }) {
   const [theme, setTheme] = useState(() => {
-    const stored = localStorage.getItem(STORAGE_KEY)
+    const stored = storedTheme()
     if (stored) return stored
-    return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+    try {
+      return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+    } catch { return 'light' }
   })
 
   useEffect(() => {
@@ -22,7 +34,7 @@ export function ThemeProvider({ children }) {
   const toggle = useCallback(() => {
     setTheme(prev => {
       const next = prev === 'dark' ? 'light' : 'dark'
-      localStorage.setItem(STORAGE_KEY, next)
+      persistTheme(next)
       return next
     })
   }, [])

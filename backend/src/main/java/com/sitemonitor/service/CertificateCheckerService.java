@@ -467,7 +467,12 @@ public class CertificateCheckerService {
                 }
 
                 long elapsed = System.currentTimeMillis() - startMs;
-                int days = (Integer) result.getOrDefault("days_remaining", -1);
+                // Map.getOrDefault, anahtar VAR ama değeri null ise varsayılanı DEĞİL null döner →
+                // (Integer) null unboxing NPE'si. NPE aşağıdaki genel catch'e düşüp sağlıklı bir
+                // sertifikayı "UNKNOWN hata" yapardı; o da determineAlertLevel'da CRITICAL alarm +
+                // müdüre e-posta demekti (sahte kritik). Tip-güvenli okuma:
+                Object daysRaw = result.get("days_remaining");
+                int days = daysRaw instanceof Number n ? n.intValue() : -1;
                 boolean warning = Boolean.TRUE.equals(result.get("warning"));
                 String issuerCn = (String) result.getOrDefault("issuer_cn", "?");
                 String chainStatus = (String) result.getOrDefault("chain_status", "?");
@@ -753,11 +758,22 @@ public class CertificateCheckerService {
         }
         long connectElapsed = System.currentTimeMillis() - connectStart;
 
-        // Drain + collect response headers for diagnostics
+        // Drain + collect response headers for diagnostics.
+        // try/catch ŞART: metodun diğer TÜM hata yolları raw.close() çağırıyor, burası açıkta kalmıştı.
+        // Proxy CONNECT'e 200 dönüp header'ları yazarken bağlantıyı koparırsa (arıza modu) IOException
+        // fırlar, soket HİÇ kapanmazdı; çağıran da kapatamıyor. 200-1000 domain × saatlik sweep →
+        // saatte yüzlerce sızan FD → "Too many open files" (tüm ağ kontrolleri + DB bağlantıları düşer).
         List<String> respHeaders = new ArrayList<>();
-        String line;
-        while ((line = in.readLine()) != null && !line.isEmpty()) {
-            if (respHeaders.size() < 32) respHeaders.add(line);
+        try {
+            String line;
+            while ((line = in.readLine()) != null && !line.isEmpty()) {
+                if (respHeaders.size() < 32) respHeaders.add(line);
+            }
+        } catch (IOException e) {
+            log.warn("[cert-proxy] step=connect-headers FAILED domain={} proxy={}:{} err={}",
+                    domain, proxyHost, proxyPort, e.toString());
+            try { raw.close(); } catch (Exception ignored) {}
+            throw new IOException("Proxy CONNECT header read failed: " + e.getMessage(), e);
         }
 
         if (status == null || !(status.startsWith("HTTP/1.1 200") || status.startsWith("HTTP/1.0 200"))) {

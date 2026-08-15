@@ -180,15 +180,16 @@ class CertificateControllerTest {
                 "days_remaining", 90
         );
         when(checkerService.check("example.com", 443, false, null)).thenReturn(new java.util.LinkedHashMap<>(checkResult));
-        when(inventoryRepo.findByDomain("example.com")).thenReturn(java.util.Optional.empty());
+        when(inventoryRepo.findByDomain("example.com")).thenReturn(java.util.Optional.of(invOf("example.com", null)));
 
         mvc.perform(get("/api/check/example.com").session(authSession()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success").value(true))
                 .andExpect(jsonPath("$.data.domain").value("example.com"));
 
-        // ensureInInventory is called — certService is a mock so the call succeeds silently
-        org.mockito.Mockito.verify(certService).ensureInInventory("example.com", 443, null);
+        // Envanter kaydi ZATEN var; ensureInInventory cagrilmamali (rastgele domain ekleme yolu kapandi).
+        org.mockito.Mockito.verify(certService, org.mockito.Mockito.never())
+                .ensureInInventory(anyString(), anyInt(), any());
     }
 
     @Test
@@ -212,6 +213,7 @@ class CertificateControllerTest {
     @Test
     @DisplayName("GET /api/history/{domain} returns 200 with history list")
     void getHistory_authenticated_returns200() throws Exception {
+        when(inventoryRepo.findByDomain("example.com")).thenReturn(java.util.Optional.of(invOf("example.com", null)));
         when(certService.getHistory("example.com", 30)).thenReturn(Collections.emptyList());
 
         mvc.perform(get("/api/history/example.com").session(authSession()))
@@ -247,6 +249,7 @@ class CertificateControllerTest {
         alert.setDomain("example.com");
         alert.setAlertType("EXPIRY");
         alert.setAlertLevel("WARNING");
+        when(inventoryRepo.findByDomain("example.com")).thenReturn(java.util.Optional.of(invOf("example.com", null)));
         when(alertEventRepo.findByDomainOrderByCreatedAtDesc("example.com"))
                 .thenReturn(List.of(alert));
 
@@ -273,5 +276,77 @@ class CertificateControllerTest {
         s.setAttribute("username", "testuser");
         s.setAttribute("systemRole", "ADMIN");
         return s;
+    }
+
+    // ── Domain-anahtarlı uçların takım denetimi ─────────────────────────────────
+    // Bu üç uç (check / history / history-alerts) eskiden HİÇBİR yetki kontrolü yapmıyordu:
+    // her oturumlu kullanıcı başka takımın geçmişini okuyabiliyor, /check ile rastgele bir host
+    // için dış bağlantı açtırıp envantere kalıcı kayıt ekletebiliyordu.
+
+    private static com.sitemonitor.model.CertificateInventory invOf(String domain, Long teamId) {
+        com.sitemonitor.model.CertificateInventory i = new com.sitemonitor.model.CertificateInventory();
+        i.setDomain(domain); i.setPort(443); i.setActive(true); i.setTeamId(teamId);
+        return i;
+    }
+
+    /** Yalnız takım 5'i gören sıradan kullanıcı. */
+    private MockHttpSession scopedSession() {
+        MockHttpSession s = new MockHttpSession();
+        s.setAttribute("authenticated", Boolean.TRUE);
+        s.setAttribute("username", "u5");
+        s.setAttribute("systemRole", "USER");
+        s.setAttribute("viewTeamIds", new java.util.ArrayList<>(List.of(5L)));
+        return s;
+    }
+
+    @Test
+    @DisplayName("GÜVENLİK: /check envanterde OLMAYAN domain'de 404 — kontrol koşmaz, envantere kayıt EKLENMEZ")
+    void checkDomain_notInInventory_returns404_andDoesNotProbe() throws Exception {
+        when(inventoryRepo.findByDomain("rastgele.example.com")).thenReturn(java.util.Optional.empty());
+
+        mvc.perform(get("/api/check/rastgele.example.com").session(authSession()))
+                .andExpect(status().isNotFound());
+
+        org.mockito.Mockito.verify(checkerService, org.mockito.Mockito.never())
+                .check(anyString(), anyInt(), anyBoolean(), any());
+        org.mockito.Mockito.verify(certService, org.mockito.Mockito.never())
+                .ensureInInventory(anyString(), anyInt(), any());
+        org.mockito.Mockito.verify(certService, org.mockito.Mockito.never()).evictAllCaches();
+    }
+
+    @Test
+    @DisplayName("IDOR: /check başka takımın domain'inde 403 — dış bağlantı açılmaz")
+    void checkDomain_foreignTeam_returns403() throws Exception {
+        when(inventoryRepo.findByDomain("baska.example.com")).thenReturn(java.util.Optional.of(invOf("baska.example.com", 9L)));
+
+        mvc.perform(get("/api/check/baska.example.com").session(scopedSession()))
+                .andExpect(status().isForbidden());
+
+        org.mockito.Mockito.verify(checkerService, org.mockito.Mockito.never())
+                .check(anyString(), anyInt(), anyBoolean(), any());
+    }
+
+    @Test
+    @DisplayName("Kendi takımının domain'inde /check çalışmaya devam eder (dashboard ▶ butonu)")
+    void checkDomain_ownTeam_returns200() throws Exception {
+        when(inventoryRepo.findByDomain("benim.example.com")).thenReturn(java.util.Optional.of(invOf("benim.example.com", 5L)));
+        when(checkerService.check("benim.example.com", 443, false, null))
+                .thenReturn(new java.util.LinkedHashMap<>(Map.of("domain", "benim.example.com", "status", "valid")));
+
+        mvc.perform(get("/api/check/benim.example.com").session(scopedSession()))
+                .andExpect(status().isOk());
+    }
+
+    @Test
+    @DisplayName("IDOR: /history ve /history/alerts başka takımın domain'inde 403")
+    void history_foreignTeam_returns403() throws Exception {
+        when(inventoryRepo.findByDomain("baska.example.com")).thenReturn(java.util.Optional.of(invOf("baska.example.com", 9L)));
+
+        mvc.perform(get("/api/history/baska.example.com").session(scopedSession()))
+                .andExpect(status().isForbidden());
+        mvc.perform(get("/api/history/baska.example.com/alerts").session(scopedSession()))
+                .andExpect(status().isForbidden());
+
+        org.mockito.Mockito.verify(certService, org.mockito.Mockito.never()).getHistory(anyString(), anyInt());
     }
 }

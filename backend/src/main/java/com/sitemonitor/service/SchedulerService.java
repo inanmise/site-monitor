@@ -248,6 +248,9 @@ public class SchedulerService {
     private final AtomicInteger lastRunTotal      = new AtomicInteger(0);
     private final AtomicInteger lastRunWarnings   = new AtomicInteger(0);
     private final AtomicInteger lastRunErrors     = new AtomicInteger(0);
+    /** Son sweep BAŞARISIZ bittiyse özet (aksi halde null). Sağlık ekranında görünür ki tur
+     *  sessizce yanmasın — eskiden istisna yalnız Spring'in generic log satırına düşüyordu. */
+    private final AtomicReference<String> lastRunFailure = new AtomicReference<>(null);
 
     // Network bulk-failure state (in-memory; resets on restart)
     private final AtomicBoolean   networkOutageActive       = new AtomicBoolean(false);
@@ -1417,6 +1420,7 @@ public class SchedulerService {
             lastRun.set(LocalDateTime.now(ZoneOffset.UTC));
             lastRunDurationMs.set(System.currentTimeMillis() - startMs);
             lastRunTotal.set(results.size());
+            lastRunFailure.set(null);   // temiz tur: önceki hata kaydı düşer
             lastRunErrors.set((int) errors);
             lastRunWarnings.set((int) warnings);
 
@@ -1460,6 +1464,15 @@ public class SchedulerService {
                 }
             }
 
+        } catch (Exception e) {
+            // Eskiden yalnız finally vardı: join()/saveResult/processResults'tan çıkan beklenmedik bir
+            // RuntimeException (ör. eşik alanında unboxing NPE'si) turu sessizce yakıyordu — sonuçlar
+            // kaydedilmiyor, alarm işleme atlanıyor, lastRun güncellenmiyordu ve tek iz Spring'in generic
+            // "Unexpected error occurred in scheduled task" satırıydı. Artık hata sahiplenilip sayılıyor;
+            // scan_alarm de bu sayaç üzerinden anlamlı kalıyor.
+            lastRunFailure.set(ISO.format(Instant.now()) + " — " + e.getClass().getSimpleName() + ": " + e.getMessage());
+            log.error("Sertifika sweep'i BAŞARISIZ (runId={}): sonuçlar kaydedilemedi/alarm işlenemedi — {}",
+                    runId, e.toString(), e);
         } finally {
             running.set(false);
             lastRunId.set(currentRunId.get());
@@ -1631,6 +1644,7 @@ public class SchedulerService {
         scanMap.put("total",       lastRunTotal.get());
         scanMap.put("warnings",    lastRunWarnings.get());
         scanMap.put("errors",      lastRunErrors.get());
+        scanMap.put("last_failure", lastRunFailure.get());   // null = son tur temiz bitti
         h.put("scan",       scanMap);
         h.put("scan_alarm", scanAlarm);
 
