@@ -550,4 +550,41 @@ class MonitoringOutageServiceTest {
 
         assertThat(service.activeConfirmations("host.example.com")).hasSize(2);
     }
+
+    // ── SCRIPTED_SLOW ────────────────────────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("SCRIPTED_SLOW seviyesi HIGH — yavaşlık kesinti değildir (SCRIPTED_FAIL CRITICAL kalır)")
+    void scriptedSlowIsHighNotCritical() {
+        assertThat(MonitoringOutageService.levelFor(EscalationService.TYPE_SCRIPTED_SLOW)).isEqualTo("HIGH");
+        assertThat(MonitoringOutageService.levelFor(EscalationService.TYPE_SCRIPTED_FAIL)).isEqualTo("CRITICAL");
+    }
+
+    @Test
+    @DisplayName("SCRIPTED_SLOW teyit anahtarı da DETAIL içermez — detail ölçülen süre, her sweep'te değişir")
+    void scriptedSlowConfirmKeyIgnoresMeasuredDuration() {
+        AtomicInteger calls = new AtomicInteger();
+        Supplier<Map<String, Object>> neverReturns = () -> { calls.incrementAndGet(); return down("x"); };
+        ReflectionTestUtils.setField(service, "confirmExecutor", new ScheduledThreadPoolExecutor(1));
+
+        service.handleSweepResults(EscalationService.TYPE_SCRIPTED_SLOW, List.of(
+                item(EscalationService.TYPE_SCRIPTED_SLOW, "Login Akisi", "8123 ms", false, Map.of(), neverReturns)));
+        service.handleSweepResults(EscalationService.TYPE_SCRIPTED_SLOW, List.of(
+                item(EscalationService.TYPE_SCRIPTED_SLOW, "Login Akisi", "9004 ms", false, Map.of(), neverReturns)));
+
+        assertThat(service.activeConfirmations("Login Akisi")).hasSize(1);
+    }
+
+    @Test
+    @DisplayName("SCRIPTED_SLOW: yeniden ölçüm YÜRÜTÜLEMEDİ ⇒ zincir iptal, yavaşlık alarmı AÇILMAZ")
+    void scriptedSlowSkippedRecheckAbortsChain() {
+        Supplier<Map<String, Object>> alwaysSkipped = MonitoringOutageServiceTest::skipped;
+
+        service.handleSweepResults(EscalationService.TYPE_SCRIPTED_SLOW, List.of(
+                item(EscalationService.TYPE_SCRIPTED_SLOW, "Odeme Akisi", "9000 ms", false,
+                        Map.of(), alwaysSkipped)));
+
+        verify(escalationService, never()).processConfirmedOutage(anyString(), anyString(), anyString(), anyMap());
+        assertThat(service.activeConfirmations("Odeme Akisi")).isEmpty();
+    }
 }
