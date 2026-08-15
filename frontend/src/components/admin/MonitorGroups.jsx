@@ -7,6 +7,7 @@ import { useToast } from '../ui/Toast.jsx'
 const TYPE_LABEL = {
   cert: 'wr.monTypeCert', http: 'wr.monTypeHttp', ping: 'wr.monTypePing',
   port: 'wr.monTypePort', dns: 'wr.monTypeDns', keyword: 'wr.monTypeKeyword', domain: 'wr.monTypeDomain',
+  page: 'wr.monTypePage', scripted: 'wr.monTypeScripted',
 }
 
 /**

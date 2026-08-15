@@ -12,8 +12,10 @@ import com.sitemonitor.repository.DnsMonitorRepository;
 import com.sitemonitor.repository.DomainMonitorRepository;
 import com.sitemonitor.repository.HttpMonitorRepository;
 import com.sitemonitor.repository.KeywordMonitorRepository;
+import com.sitemonitor.repository.PageMonitorRepository;
 import com.sitemonitor.repository.PingMonitorRepository;
 import com.sitemonitor.repository.PortMonitorRepository;
+import com.sitemonitor.repository.ScriptedMonitorRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
@@ -29,7 +31,9 @@ import java.util.Map;
 /**
  * Tek-seferlik, idempotent açılış backfill'i (İzleme Grupları takım-bazlı geçişi):
  *  1) team_id'si NULL olan monitörleri cert envanterinden (domain eşleşmesi) doldur; türetilemeyeni LOGLA (tahminle atama YOK).
- *  2) 7 türdeki mevcut (team, group_name) çiftlerini monitoring_groups registry'sine seed et (get-or-create).
+ *  2) 9 türdeki mevcut (team, group_name) çiftlerini monitoring_groups registry'sine seed et (get-or-create).
+ * (1) YALNIZ takım geçişi öncesinden kalan türler için çalışır; page/scripted takım zorunluyken eklendi, team_id'leri
+ * doğuştan dolu — bu yüzden yalnız (2)'ye dahiller.
  * Açılıştan sonra hepsi yerinde → tekrar çalışınca no-op.
  */
 @Slf4j
@@ -44,6 +48,8 @@ public class MonitoringGroupBackfill {
     private final DnsMonitorRepository dnsRepo;
     private final KeywordMonitorRepository keywordRepo;
     private final DomainMonitorRepository domainRepo;
+    private final PageMonitorRepository pageRepo;
+    private final ScriptedMonitorRepository scriptedRepo;
     private final MonitoringGroupService groupService;
 
     @EventListener(ApplicationReadyEvent.class)
@@ -75,6 +81,10 @@ public class MonitoringGroupBackfill {
             seeded += seed("dns",     dnsRepo.groupCountsByTeam());
             seeded += seed("keyword", keywordRepo.groupCountsByTeam());
             seeded += seed("domain",  domainRepo.groupCountsByTeam());
+            // page/scripted sonradan grup taşımaya başladı ama seed listesine girmemişti: bu türlerin MEVCUT
+            // grupları registry'de hiç oluşmuyordu → İzleme Grupları ekranında görünmüyor, yeniden adlandırılamıyordu.
+            seeded += seed("page",     pageRepo.groupCountsByTeam());
+            seeded += seed("scripted", scriptedRepo.groupCountsByTeam());
             if (seeded > 0) log.info("Monitoring group registry seed: {} (team,type,name) grubu tarandı", seeded);
         } catch (Exception e) {
             log.warn("Monitoring group backfill failed: {}", e.getMessage());
@@ -123,6 +133,8 @@ public class MonitoringGroupBackfill {
             case "dns"     -> dnsRepo.renameGroupForTeam(teamId, oldName, newName);
             case "keyword" -> keywordRepo.renameGroupForTeam(teamId, oldName, newName);
             case "domain"  -> domainRepo.renameGroupForTeam(teamId, oldName, newName);
+            case "page"    -> pageRepo.renameGroupForTeam(teamId, oldName, newName);
+            case "scripted"-> scriptedRepo.renameGroupForTeam(teamId, oldName, newName);
             default        -> 0;
         };
     }

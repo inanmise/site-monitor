@@ -10,6 +10,7 @@ import com.sitemonitor.repository.DomainMonitorRepository;
 import com.sitemonitor.repository.HttpMonitorRepository;
 import com.sitemonitor.repository.KeywordMonitorRepository;
 import com.sitemonitor.repository.MonitoringGroupRepository;
+import com.sitemonitor.repository.PageMonitorRepository;
 import com.sitemonitor.repository.PingMonitorRepository;
 import com.sitemonitor.repository.PortMonitorRepository;
 import com.sitemonitor.repository.ScriptedMonitorRepository;
@@ -41,7 +42,9 @@ import java.util.Set;
  * benzersiz: aynı ad ("deneme") DNS ve Ping türlerinde AYRI gruplardır. Kullanıcı yalnız KENDİ takım(lar)ının gruplarını
  * görür/yeniden adlandırır. Monitör + envanter create/update {@link #getOrCreate} ile grubu (türüyle) kaydeder (kanonik ad);
  * {@link #rename} registry'yi + YALNIZ o türün tablosunu + o türün alarm geçmişini tek transaction'da günceller.
- * Grup-taşıyan türler: cert (envanter), http, ping, port, dns, keyword, domain.
+ * Grup-taşıyan türler: cert (envanter), http, ping, port, dns, keyword, domain, page, scripted.
+ * YENİ TÜR EKLERKEN: typeOf + TYPE_ALERTS + sayım (listForScope/groupCountRows) + cascadeRename + MonitoringGroupBackfill
+ * (seed & renameRows) + frontend TYPE_LABEL — hepsi bağlanmalı; biri eksikse grup sessizce kopar.
  */
 @Slf4j
 @Service
@@ -58,7 +61,11 @@ public class MonitoringGroupService {
             "dns",     Set.of("DNS_FAILURE", "DNS_CHANGED", "DNS_SLOW", "DNS_UNEXPECTED", "DNS_INCONSISTENT"),
             "keyword", Set.of("KEYWORD", "KEYWORD_SLOW", "KEYWORD_SSL", "KEYWORD_DOMAIN_EXPIRY"),
             "ping",    Set.of("PING_DOWN"),
-            "domain",  Set.of("DOMAINMON_EXPIRY", "DOMAINMON_UNKNOWN", "DOMAINMON_STATUS", "DOMAINMON_CHANGED"));
+            "domain",  Set.of("DOMAINMON_EXPIRY", "DOMAINMON_UNKNOWN", "DOMAINMON_STATUS", "DOMAINMON_CHANGED"),
+            // İki tür SONRADAN grup taşımaya başladı (typeOf zaten "page"/"scripted" üretiyor) ama bu haritaya
+            // hiç girmemişti: grup yeniden adlandırıldığında o türün alarm geçmişindeki group_name ESKİ kalıyordu.
+            "page",     Set.of("PAGE_DOWN", "PAGE_INTEGRITY"),
+            "scripted", Set.of("SCRIPTED_FAIL", "SCRIPTED_SLOW"));
 
     private final MonitoringGroupRepository groupRepo;
     private final CertificateInventoryRepository certRepo;
@@ -68,6 +75,7 @@ public class MonitoringGroupService {
     private final DnsMonitorRepository dnsRepo;
     private final KeywordMonitorRepository keywordRepo;
     private final DomainMonitorRepository domainRepo;
+    private final PageMonitorRepository pageRepo;
     private final ScriptedMonitorRepository scriptedRepo;
     private final AlertEventRepository alertEventRepo;
     private final TeamRepository teamRepo;
@@ -160,6 +168,7 @@ public class MonitoringGroupService {
             // Sorgu ZATEN yaziliydi (ScriptedMonitorRepository.groupCountsByTeam) ama hic
             // cagrilmiyordu: Monitor Gruplari ekrani sentetik gruplari 0 gosteriyordu.
             countInto(counts, "scripted", scriptedRepo.groupCountsByTeam());
+            countInto(counts, "page",     pageRepo.groupCountsByTeam());   // aynı eksik "page"de de vardı
         }
 
         Map<Long, String> teamNames = new HashMap<>();
@@ -187,6 +196,7 @@ public class MonitoringGroupService {
             case "keyword" -> keywordRepo.groupCountsByTeam();
             case "domain"  -> domainRepo.groupCountsByTeam();
             case "scripted"-> scriptedRepo.groupCountsByTeam();
+            case "page"    -> pageRepo.groupCountsByTeam();
             default        -> List.of();
         };
     }
@@ -273,6 +283,11 @@ public class MonitoringGroupService {
             case "dns"     -> dnsRepo.renameGroupForTeam(teamId, oldName, newName);
             case "keyword" -> keywordRepo.renameGroupForTeam(teamId, oldName, newName);
             case "domain"  -> domainRepo.renameGroupForTeam(teamId, oldName, newName);
+            // page/scripted burada YOKTU → registry adı değişiyor, monitör satırları ESKİ grup adında kalıyordu:
+            // monitörler sessizce gruptan düşüyor (sayaç 0, form önerisinde eski ad yeniden beliriyor). İki repoda
+            // da sorgu zaten yazılıydı, yalnız çağrılmıyordu.
+            case "page"    -> pageRepo.renameGroupForTeam(teamId, oldName, newName);
+            case "scripted"-> scriptedRepo.renameGroupForTeam(teamId, oldName, newName);
             default        -> 0;
         };
     }
