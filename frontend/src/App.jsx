@@ -12,6 +12,7 @@ import Login, { REMEMBER_KEY } from './pages/Login'
 import Nav from './components/Nav'
 import BrandLogo from './components/BrandLogo.jsx'
 import { useStatusFavicon } from './hooks/useStatusFavicon.js'
+import { runWithConcurrency } from './utils/concurrentQueue.js'
 import StatsPanel from './components/StatsPanel'
 import StatsView from './components/StatsView'
 import CertificateCard from './components/CertificateCard'
@@ -62,6 +63,12 @@ const ExpiryForecastPage = lazy(() => import('./pages/ExpiryForecastPage'))
 
 const INACTIVITY_MS   = Number(import.meta.env.VITE_INACTIVITY_MS   ?? 300_000)
 const WARN_BEFORE_MS  = Number(import.meta.env.VITE_WARN_BEFORE_MS  ?? 60_000)
+
+/** "Şimdi Kontrol Et" eşzamanlı kontrol sayısı. Erişilemeyen bir host'ta tek kontrol timeout'a
+ *  (~6 sn) kadar sürüyor; sıralı koşumda bu, arkasındaki tüm domainleri bekletiyordu. Sınır küçük
+ *  tutuluyor: her istek sunucuda bir Tomcat iş parçacığı tutar (max 100) ve tek pod aynı anda
+ *  başka kullanıcılara da hizmet eder. */
+const CHECK_CONCURRENCY = Number(import.meta.env.VITE_CHECK_CONCURRENCY ?? 6)
 
 // Oturum düşünce client.js hard reload ile /?session=expired'a yönlendirir → giriş formunda
 // "oturum süresi doldu" bildirimi göstermek için bu bayrağı okuruz (AUTH-1).
@@ -405,10 +412,10 @@ export default function App() {
 
     setRefreshing(true)
     checkCancelRef.current = false
-    setCheckRun({ rows: [], total: domains.length, done: false, teamLabel: teamLabel || null })
+    setCheckRun({ rows: [], total: domains.length, done: false, teamLabel: teamLabel || null,
+      startedAt: Date.now(), finishedAt: null })
 
-    for (const domain of domains) {
-      if (checkCancelRef.current) break        // "Durdur" → kalan domainlere istek atma
+    async function checkOne(domain) {
       const start = new Date()
       const t0 = Date.now()
       let ok = false, data = null, error = null
@@ -422,8 +429,19 @@ export default function App() {
       // Sunucunun ölçtüğü süre daha doğru (ağ gecikmesi hariç); yoksa istemci kronometresi.
       const ms = Number.isFinite(data?.elapsed_ms) ? data.elapsed_ms : Date.now() - t0
       if (data?.status === 'error') { ok = false; error = error || data.error }
+      // Satırlar TAMAMLANMA sırasında eklenir (alfabetik değil): yavaş bir domain arkasındakileri
+      // bekletmesin. setCheckRun fonksiyonel güncelleme kullanır — eşzamanlı işçiler birbirinin
+      // eklediği satırı ezmez.
       setCheckRun(cr => cr ? { ...cr, rows: [...cr.rows, { domain, start, end, ms, ok, data, error }] } : cr)
     }
+
+    // Kuyruğu SINIRLI sayıda işçiyle tüket. Eskiden döngü sıralıydı: timeout alan tek bir sertifika
+    // (6 sn) arkasındaki TÜM domainleri bekletiyordu. Sunucu tarafı zaten paralel çalışabiliyor
+    // (cert-check executor: core 20 / max 50). "Durdur" → uçuştakiler biter, yenisi başlamaz.
+    await runWithConcurrency(domains, checkOne, {
+      limit: CHECK_CONCURRENCY,
+      shouldStop: () => checkCancelRef.current,
+    })
 
     try {
       const [certsRes, statsRes, silentRes] = await Promise.all([
@@ -434,7 +452,7 @@ export default function App() {
       if (silentRes?.success) setSilentAlertDomains(new Set(silentRes.data))
     } catch { /* tazeleme hatası yoksay — modal yine de tamamlanır */ }
     setActivityRefreshKey(k => k + 1)
-    setCheckRun(cr => cr ? { ...cr, done: true } : cr)
+    setCheckRun(cr => cr ? { ...cr, done: true, finishedAt: Date.now() } : cr)
     setRefreshing(false)
   }
 

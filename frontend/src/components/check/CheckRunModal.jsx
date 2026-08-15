@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { RefreshCw, Check, X } from 'lucide-react'
 import { useT } from '../../i18n/index.jsx'
 import { ProgressBar, Spinner } from '../ui/Progress.jsx'
@@ -44,6 +44,7 @@ function httpClass(code) {
 export default function CheckRunModal({ run, certIndex, onClose, onCancel }) {
   const t = useT()
   const listRef = useRef(null)
+  const [now, setNow] = useState(() => Date.now())
 
   // Yeni satır eklendikçe listeyi en alta kaydır (akış efekti).
   useEffect(() => {
@@ -51,12 +52,23 @@ export default function CheckRunModal({ run, certIndex, onClose, onCancel }) {
     if (el) el.scrollTop = el.scrollHeight
   }, [run?.rows.length])
 
+  // Geçen süre saniyede bir ilerlesin: koşum paralel olduğu için son yavaş kontrol beklenirken
+  // yeni satır gelmiyor ve yalnız render'a bağlı bir sayaç donmuş görünürdü.
+  const running = !!run && !run.done
+  useEffect(() => {
+    if (!running) return
+    const id = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(id)
+  }, [running])
+
   if (!run) return null
 
   const rows = run.rows
   const okCount = rows.filter(r => r.ok).length
   const failCount = rows.length - okCount
-  const totalMs = rows.reduce((s, r) => s + (r.ms || 0), 0)
+  // DUVAR SAATİ süresi. Satır sürelerinin toplamı DEĞİL: kontroller paralel koştuğu için o toplam
+  // (ör. 8 × 6 sn) gerçekte geçen sürenin çok üstünde çıkar ve kullanıcıya yanlış bilgi verirdi.
+  const elapsedMs = run.startedAt ? Math.max(0, (run.finishedAt ?? now) - run.startedAt) : null
 
   return (
     <div className="modal-overlay">
@@ -77,7 +89,7 @@ export default function CheckRunModal({ run, certIndex, onClose, onCancel }) {
         <div className="chk-summary">
           <span className="chk-sum-item chk-sum-ok"><Check size={13} />{t('app.checkSummaryOk', okCount)}</span>
           <span className={`chk-sum-item${failCount ? ' chk-sum-fail' : ''}`}><X size={13} />{t('app.checkSummaryFail', failCount)}</span>
-          <span className="chk-sum-item chk-sum-time">{t('app.checkSummaryTime', fmtDur(totalMs))}</span>
+          <span className="chk-sum-item chk-sum-time">{t('app.checkSummaryTime', fmtDur(elapsedMs))}</span>
           {run.teamLabel && <span className="chk-sum-item chk-sum-team">{run.teamLabel}</span>}
         </div>
 
