@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from 'react'
+import { useEffect, useState, useRef, lazy, Suspense } from 'react'
 import { api, formatDate } from '../api/client'
 import { useT } from '../i18n/index.jsx'
 import { useDialog } from './ui/Dialog.jsx'
@@ -10,6 +10,10 @@ import DiagnosticsModal from './admin/DiagnosticsModal.jsx'
 import { usePermissions } from '../contexts/PermissionsProvider.jsx'
 import { InventoryTab } from './inventory/InventoryDetails.jsx'
 import { LoadingBlock } from './ui/Progress.jsx'
+import CheckHistoryTab from './history/CheckHistoryTab.jsx'
+
+// Grafik recharts çekiyor; diğer izleme sayfalarındaki gibi (PingMonitorPage) tembel yüklenir.
+const ResponseTimeChart = lazy(() => import('./ResponseTimeChart.jsx'))
 
 const NOTE_CATEGORIES   = ['NOTE', 'DEPLOYMENT', 'INCIDENT', 'RENEWAL']
 const NOTE_EDIT_WINDOW_MS = 24 * 60 * 60 * 1000
@@ -431,12 +435,32 @@ export default function CertificateModal({ domain, alertLevel, onClose, initialD
           >
             {t('modal.detailsTab')}
           </button>
+          {/* Kontrol Geçmişi + Grafik: diğer sekiz izleme türüyle aynı paylaşılan bileşenler.
+              previewMode (SSL Checker önizlemesi) ikisini de gizler — önizlenen domain envanterde
+              olmayabilir, geçmiş/seri uçları o durumda 404 döner ve kullanıcı yanıltıcı biçimde
+              "kayıt yok" görürdü (alerts/inventory/notes tam bu nedenle zaten gizli). */}
+          {!previewMode && (
+            <button
+              className={`modal-tab${activeTab === 'history' ? ' active' : ''}`}
+              onClick={() => switchTab('history')}
+            >
+              {t('hist.tab')}
+            </button>
+          )}
           {!previewMode && (
             <button
               className={`modal-tab${activeTab === 'alerts' ? ' active' : ''}`}
               onClick={() => switchTab('alerts')}
             >
               {t('modal.alertsTab')}
+            </button>
+          )}
+          {!previewMode && (
+            <button
+              className={`modal-tab${activeTab === 'chart' ? ' active' : ''}`}
+              onClick={() => switchTab('chart')}
+            >
+              {t('modal.chartTab')}
             </button>
           )}
           {!previewMode && canViewInventory && (
@@ -576,8 +600,43 @@ export default function CertificateModal({ domain, alertLevel, onClose, initialD
           )
         )}
 
+        {!previewMode && activeTab === 'history' && (
+          <div className="modal-body">
+            {/* Paylaşılan Kontrol Geçmişi v2 — kind "uptime-ssl" certificate_checks üstünde çalışır
+                ve diğer türlerle birebir aynı zarfı döndürür. monitorId = DOMAIN (cert domain-anahtarlı).
+                Uptime'ın kontrollü aralık modu (range/onRangeChange) alınmaz: orası tek picker'la iki
+                kolonu sürüyor, burada tek kolon var → bileşen kendi aralığını sürsün. */}
+            <CheckHistoryTab
+              kind="uptime-ssl"
+              monitorId={domain}
+              listKey="cert-ssl-history"
+              presets={[1, 7, 30, 90]}
+              defaultPreset={7}
+              gridClass="upt-uptime-rt-grid"
+              columns={[t('uptime.dateFrom'), t('dns.status'), t('modal.daysRemain'), '']}
+              renderRow={(c) => (<>
+                <span className="upt-rt-time">{formatDate(c.checked_at)}</span>
+                <span className={c.status !== 'error' ? 'upt-rt-up' : 'upt-rt-down'}>
+                  {c.status !== 'error' ? t('uptime.statusUp') : t('uptime.statusDown')}
+                </span>
+                <span className="upt-rt-ms">
+                  {c.days_remaining != null ? t('uptime.sslDays').replace('{0}', c.days_remaining) : '—'}
+                </span>
+                {c.error ? <span className="upt-rt-error" title={c.error}>{c.error}</span> : <span />}
+              </>)} />
+          </div>
+        )}
+
         {!previewMode && activeTab === 'alerts' && (
           <AlertHistory domain={domain} />
+        )}
+
+        {!previewMode && activeTab === 'chart' && (
+          <div className="modal-body">
+            <Suspense fallback={<LoadingBlock label={t('modal.loading')} fullWidth />}>
+              <ResponseTimeChart monitorId={domain} kind="ssl" />
+            </Suspense>
+          </div>
         )}
 
         {!previewMode && canViewInventory && activeTab === 'inventory' && (

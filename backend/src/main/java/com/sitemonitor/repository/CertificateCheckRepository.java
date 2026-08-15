@@ -78,4 +78,14 @@ public interface CertificateCheckRepository extends JpaRepository<CertificateChe
      *  Zaman kolonu indexli oldugundan MIN/MAX index-seek'tir (tablo taramasi yok). */
     @Query("SELECT MIN(c.checkedAt), MAX(c.checkedAt) FROM CertificateCheck c WHERE c.domain = :domain")
     List<Object[]> historyBounds(@Param("domain") String domain);
+
+    /** Yanit suresi grafigi icin ham seri — diger yedi turle AYNI 4 kolonlu sekil:
+     *  [checkedAt, responseMs, up, daysRemaining]. Sertifikada dogal bir "up" bool'u yok, durumdan
+     *  turetilir (DnsRecordRepository'deki ayni cozum). 4. kolon yardimci seri: kalan gun trendi —
+     *  responseMs kolonu yeni oldugu icin gecmis ms'siz, ama kalan gun 180 gunluk gecmisten dolu gelir. */
+    @Query("SELECT c.checkedAt, c.responseMs, CASE WHEN c.status = 'error' THEN false ELSE true END, c.daysRemaining "
+         + "FROM CertificateCheck c WHERE c.domain = :domain AND c.checkedAt >= :from AND c.checkedAt <= :to "
+         + "ORDER BY c.checkedAt DESC LIMIT :limit")
+    List<Object[]> responseSeriesRaw(@Param("domain") String domain, @Param("from") String from,
+                                     @Param("to") String to, @Param("limit") int limit);
 }

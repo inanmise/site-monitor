@@ -352,6 +352,9 @@ public class SchedulerService {
         patch("ALTER TABLE certificate_checks ADD COLUMN run_id TEXT");
         patch("ALTER TABLE uptime_checks ADD COLUMN maintenance BOOLEAN DEFAULT false");
         patch("ALTER TABLE certificate_checks ADD COLUMN maintenance BOOLEAN DEFAULT false");
+        // Sertifika kontrol süresi (elapsed_ms) — ölçülüyordu ama saklanmıyordu; yanıt süresi grafiği
+        // bu kolonla besleniyor. Geriye dönük veri üretilemez, mevcut satırlar NULL kalır (istatistiğe girmez).
+        patch("ALTER TABLE certificate_checks ADD COLUMN response_ms INTEGER");
         patch("ALTER TABLE alert_events ADD COLUMN resolved_by TEXT");
         // Alarm fırtınası (alert storm) bağı + per-group scoping (ddl-auto zaten ekler — güvenlik ağı).
         patch("ALTER TABLE alert_events ADD COLUMN storm_id BIGINT");

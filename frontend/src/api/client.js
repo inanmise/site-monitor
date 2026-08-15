@@ -874,6 +874,15 @@ export const api = {
       ).toString()
       return request(`/monitoring/ping/${id}/response-series${q ? `?${q}` : ''}`)
     },
+
+    // Sertifika serisi: id yerine DOMAIN (cert domain-anahtarlı) → nokta içerdiği için encodeURIComponent
+    // şart (historyPath'teki uptime-ssl ile aynı kural). İki seri döner: avg/p95 = ms, days = kalan gün.
+    getSslResponseSeries: (domain, { from, to, days } = {}) => {
+      const q = new URLSearchParams(
+        Object.fromEntries(Object.entries({ from, to, days }).filter(([, v]) => v != null && v !== '')),
+      ).toString()
+      return request(`/monitoring/uptime/${encodeURIComponent(domain)}/ssl/response-series${q ? `?${q}` : ''}`)
+    },
   },
 }
 

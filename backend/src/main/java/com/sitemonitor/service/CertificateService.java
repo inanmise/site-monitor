@@ -87,6 +87,8 @@ public class CertificateService {
             check.setNotBefore((String) result.get("not_before"));
             check.setNotAfter((String) result.get("not_after"));
             check.setDaysRemaining(toInt(result.get("days_remaining")));
+            // Checker "elapsed_ms" üretiyor (TLS el sıkışma dahil toplam süre); bugüne kadar okunmuyordu.
+            check.setResponseMs(toInt(result.get("elapsed_ms")));
             check.setWarning(toBool(result.get("warning")));
             check.setStatus((String) result.get("status"));
             check.setError((String) result.get("error"));

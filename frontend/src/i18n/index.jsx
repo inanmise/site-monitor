@@ -1315,6 +1315,7 @@ export const TR = {
 
   'modal.detailsTab':  'Sertifika Detayları',
   'modal.alertsTab':   'Alarm Geçmişi',
+  'modal.chartTab':    'Sertifika Grafiği',
   'modal.loading':     'Yükleniyor...',
   'modal.domain':      'Alan Adı',
   'modal.status':      'Durum',
@@ -3807,6 +3808,7 @@ export const TR = {
   'chart.p95':       'p95',
   'chart.minmax':    'min–maks',
   'chart.packetLoss':'Paket kaybı',
+  'chart.unitDays':'g',
   'chart.samples':   'Örnek',
   'chart.down':      'Kesinti',
   'chart.legendTip': 'Tıkla: yalnız bunu göster · tekrar tıkla: hepsini geri al · diğerlerine tıkla: ekle/çıkar',
@@ -5541,6 +5543,7 @@ export const EN = {
 
   'modal.detailsTab':  'Certificate Details',
   'modal.alertsTab':   'Alert History',
+  'modal.chartTab':    'Certificate Chart',
   'modal.loading':     'Loading...',
   'modal.domain':      'Domain',
   'modal.status':      'Status',
@@ -8028,6 +8031,7 @@ export const EN = {
   'chart.p95':       'p95',
   'chart.minmax':    'min–max',
   'chart.packetLoss':'Packet loss',
+  'chart.unitDays':'d',
   'chart.samples':   'Samples',
   'chart.down':      'Outage',
   'chart.legendTip': 'Click to show only this · click again to reset · click others to add/remove',
