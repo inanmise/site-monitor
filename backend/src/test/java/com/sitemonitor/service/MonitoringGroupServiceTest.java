@@ -9,6 +9,7 @@ import com.sitemonitor.repository.DomainMonitorRepository;
 import com.sitemonitor.repository.HttpMonitorRepository;
 import com.sitemonitor.repository.KeywordMonitorRepository;
 import com.sitemonitor.repository.MonitoringGroupRepository;
+import com.sitemonitor.repository.PageMonitorRepository;
 import com.sitemonitor.repository.PingMonitorRepository;
 import com.sitemonitor.repository.PortMonitorRepository;
 import com.sitemonitor.repository.ScriptedMonitorRepository;
@@ -32,8 +33,11 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.contains;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.clearInvocations;
+import static org.mockito.Mockito.description;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -54,6 +58,7 @@ class MonitoringGroupServiceTest {
     // Sentetik grup sayımı 20.19.x'te bağlandı; mock EKLENMEZSE @InjectMocks alanı null bırakır ve
     // listForScope tüm testlerde NPE'ye düşer (sayım yolu her çağrıda bu repo'ya uğrar).
     @Mock ScriptedMonitorRepository scriptedRepo;
+    @Mock PageMonitorRepository pageRepo;
     @Mock AlertEventRepository alertEventRepo;
     @Mock TeamRepository teamRepo;
     @Mock AuditService auditService;
@@ -274,5 +279,88 @@ class MonitoringGroupServiceTest {
         when(groupRepo.saveAndFlush(any())).thenThrow(new DataIntegrityViolationException("dup"));
         assertThatThrownBy(() -> service.rename(5L, "new", adminSession())).isInstanceOf(IllegalStateException.class);
         verify(dnsRepo, never()).renameGroupForTeam(anyLong(), anyString(), anyString());
+    }
+
+    // ── SONRADAN grup taşımaya başlayan türler: page + scripted ─────────────────
+    // typeOf bu ikisini üretiyordu (form grup önerileri çalışıyordu) ama rename zincirine hiç bağlanmamışlardı:
+    // registry adı değişiyor, monitör satırları ESKİ grup adında kalıyordu → monitörler sessizce gruptan düşüyordu.
+
+    @Test
+    void rename_scriptedType_cascadesToScriptedRowsAndScriptedAlertHistory() {
+        when(groupRepo.findById(5L)).thenReturn(Optional.of(grp(5, 1, "scripted", "old")));
+        when(groupRepo.findByTeamIdAndTypeAndNameLower(1L, "scripted", "new")).thenReturn(Optional.empty());
+        when(scriptedRepo.renameGroupForTeam(1L, "old", "new")).thenReturn(2);
+
+        assertThat(service.rename(5L, "new", adminSession())).isEqualTo(2);
+        verify(scriptedRepo).renameGroupForTeam(1L, "old", "new");
+        verify(dnsRepo, never()).renameGroupForTeam(anyLong(), anyString(), anyString());   // yalnız o tür
+        verify(alertEventRepo).renameGroupForTeamAndTypes(eq(1L), eq("old"), eq("new"),
+                argThat(types -> types.containsAll(List.of("SCRIPTED_FAIL", "SCRIPTED_SLOW"))));
+    }
+
+    @Test
+    void rename_pageType_cascadesToPageRowsAndPageAlertHistory() {
+        when(groupRepo.findById(6L)).thenReturn(Optional.of(grp(6, 1, "page", "old")));
+        when(groupRepo.findByTeamIdAndTypeAndNameLower(1L, "page", "new")).thenReturn(Optional.empty());
+        when(pageRepo.renameGroupForTeam(1L, "old", "new")).thenReturn(3);
+
+        assertThat(service.rename(6L, "new", adminSession())).isEqualTo(3);
+        verify(pageRepo).renameGroupForTeam(1L, "old", "new");
+        verify(alertEventRepo).renameGroupForTeamAndTypes(eq(1L), eq("old"), eq("new"),
+                argThat(types -> types.containsAll(List.of("PAGE_DOWN", "PAGE_INTEGRITY"))));
+    }
+
+    @Test
+    void listForScope_countsPageGroups() {
+        when(groupRepo.findByTeamIdInOrderByTeamIdAscTypeAscNameAsc(List.of(1L)))
+                .thenReturn(List.of(grp(1, 1, "page", "Prod")));
+        when(pageRepo.groupCountsByTeam()).thenReturn(List.<Object[]>of(new Object[]{1L, "Prod", 6L}));
+        when(teamRepo.findAll()).thenReturn(List.of(team(1, "T1")));
+        var out = service.listForScope(List.of(1L), null, null);
+        assertThat(out).singleElement().satisfies(g -> assertThat(g.count()).isEqualTo(6));   // sayım yolunda da yoktu
+    }
+
+    /** BEKÇİ: typeOf'un ürettiği HER tür rename zincirinin tamamına bağlı olmalı — monitör tablosu cascade'i VE
+     *  o türe ait alarm tipleri. Yeni bir izleme türü typeOf'a eklenip burada unutulursa bu test kırmızıya döner
+     *  (page/scripted'de tam olarak bu yaşandı: grup adı registry'de değişip monitörlerde kalıyordu). */
+    @Test
+    void everyTypeDerivedFromMonitorEntity_isFullyWiredIntoRename() {
+        List<Object> monitors = List.of(
+                new com.sitemonitor.model.HttpMonitor(), new com.sitemonitor.model.PingMonitor(),
+                new com.sitemonitor.model.PortMonitor(), new com.sitemonitor.model.DnsMonitor(),
+                new com.sitemonitor.model.KeywordMonitor(), new com.sitemonitor.model.DomainMonitor(),
+                new com.sitemonitor.model.PageMonitor(), new com.sitemonitor.model.ScriptedMonitor());
+
+        // Türü üretim kodunun kendisinden (typeOf) topla — liste testte sabitlenirse bekçi işe yaramaz.
+        List<String> types = new java.util.ArrayList<>();
+        when(groupRepo.findByTeamIdAndTypeAndNameLower(eq(1L), anyString(), eq("probe")))
+                .thenAnswer(inv -> {
+                    types.add(inv.getArgument(1));
+                    return Optional.of(grp(1, 1, inv.getArgument(1), "Probe"));
+                });
+        for (Object m : monitors) service.getOrCreateFor(m, 1L, "probe", "u");
+        assertThat(types).doesNotContain("");   // typeOf default'una düşen monitör = registry'ye türsüz yazılır
+
+        // Her tür için: cascade edilen tablo 1 satır dönmeli (bağlı değilse default 0) + alarm tipleri boş olmamalı.
+        for (String type : types) {
+            clearInvocations(alertEventRepo);
+            when(certRepo.renameGroupForTeam(1L, "old", "new")).thenReturn(1);
+            when(httpRepo.renameGroupForTeam(1L, "old", "new")).thenReturn(1);
+            when(pingRepo.renameGroupForTeam(1L, "old", "new")).thenReturn(1);
+            when(portRepo.renameGroupForTeam(1L, "old", "new")).thenReturn(1);
+            when(dnsRepo.renameGroupForTeam(1L, "old", "new")).thenReturn(1);
+            when(keywordRepo.renameGroupForTeam(1L, "old", "new")).thenReturn(1);
+            when(domainRepo.renameGroupForTeam(1L, "old", "new")).thenReturn(1);
+            when(pageRepo.renameGroupForTeam(1L, "old", "new")).thenReturn(1);
+            when(scriptedRepo.renameGroupForTeam(1L, "old", "new")).thenReturn(1);
+            when(groupRepo.findById(5L)).thenReturn(Optional.of(grp(5, 1, type, "old")));
+            when(groupRepo.findByTeamIdAndTypeAndNameLower(1L, type, "new")).thenReturn(Optional.empty());
+
+            assertThat(service.rename(5L, "new", adminSession()))
+                    .as("%s türü cascadeRename'e bağlı değil (monitör satırları eski grup adında kalır)", type)
+                    .isEqualTo(1);
+            verify(alertEventRepo, description(type + " türü TYPE_ALERTS'te yok (alarm geçmişi eski grup adında kalır)"))
+                    .renameGroupForTeamAndTypes(eq(1L), eq("old"), eq("new"), argThat(t -> t != null && !t.isEmpty()));
+        }
     }
 }

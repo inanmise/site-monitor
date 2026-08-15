@@ -1624,4 +1624,27 @@ class EscalationServiceTest {
         e.setLastReAlertAt(ISO.format(Instant.now().minus(2, ChronoUnit.DAYS)));
         return e;
     }
+
+    @Test
+    @DisplayName("processConfirmedOutage SCRIPTED_SLOW → HIGH; mesajda ölçülen süre ve EŞİK geçer")
+    void scriptedSlowAlertCarriesDurationAndThreshold() {
+        String name = "Login Akisi";
+        when(alertEventRepo.findOpenAlert(name, EscalationService.TYPE_SCRIPTED_SLOW)).thenReturn(Optional.empty());
+        when(alertEventRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        Map<String, Object> ctx = new java.util.LinkedHashMap<>();
+        ctx.put("duration_ms", 8123L);
+        ctx.put("threshold_ms", 5000);
+
+        service.processConfirmedOutage(name, EscalationService.TYPE_SCRIPTED_SLOW, "HIGH", ctx);
+
+        var cap = org.mockito.ArgumentCaptor.forClass(AlertEvent.class);
+        verify(alertEventRepo, atLeastOnce()).save(cap.capture());
+        AlertEvent saved = cap.getAllValues().get(0);
+        assertThat(saved.getAlertType()).isEqualTo(EscalationService.TYPE_SCRIPTED_SLOW);
+        assertThat(saved.getAlertLevel()).isEqualTo("HIGH");
+        // Nöbetçi "ne kadar yavaş, eşiğim neydi" sorusunu mesajdan cevaplayabilmeli.
+        assertThat(saved.getMessage()).contains("8123").contains("5000");
+        // isScripted her iki tipi de kapsar: sentetik dallar (sekme/CTA/e-posta) ikisinde de çalışır.
+        assertThat(EscalationService.isScripted(EscalationService.TYPE_SCRIPTED_SLOW)).isTrue();
+    }
 }
