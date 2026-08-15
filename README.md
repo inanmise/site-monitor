@@ -251,12 +251,15 @@ yüklenir. Ayrıca basit API zinciri (POST→GET) ve form-login şablonları mev
 
 Config anahtarları (admin UI'dan canlı): `site.monitor.scripted.{enabled,alert-enabled,interval-ms,pool-size,
 default-timeout-seconds,max-timeout-seconds,output-tail-bytes,manual-cooldown-seconds,manual-wait-seconds,k6-bin,
-hardcoded-secret-policy,no-checks-policy,syntax-check-policy,validate-timeout-seconds,draft-retention-days}`,
+hardcoded-secret-policy,no-checks-policy,syntax-check-policy,validate-timeout-seconds,draft-retention-days,
+slow-threshold-ms}`,
 `site.monitor.metrics.scripted.retention-days`. Micrometer: `scripted.k6.active`, `scripted.k6.queued`.
 
 Çıkış vekili: monitör başına **Otomatik / Her zaman vekil üzerinden / Doğrudan**. Otomatik'te Go, NO_PROXY
 girdilerini SONEK olarak uygular (`akbank.com` ⇒ tüm alt alanlar doğrudan çıkar); "Her zaman vekil üzerinden"
 NO_PROXY'yi hiç vermez. Kurumsal CA paketi sistem köküyle birleştirilip `SSL_CERT_FILE` ile k6'ya geçer.
+Monitör başına **yavaş koşum alarmı** (opt-in): senaryo geçse bile toplam süre eşiği aşarsa
+`SCRIPTED_SLOW` açılır (kesintiden ayrı, aynı 3× teyit/kurtarma). Eşik boşsa `slow-threshold-ms` kullanılır.
 Her koşum faz kırılımını (DNS/TCP/TLS/gönderim/bekleme/alım) ve script sürümünü saklar; "Bağlantı Teşhisi"
 sekmesi aynı hedefe vekilli/vekilsiz ve CA'lı/CA'sız sonda atar.
 

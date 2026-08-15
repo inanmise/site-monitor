@@ -358,7 +358,8 @@ public class MonitoringOutageService {
      * tekil olduğundan sentetikte detail'e gerek yok — detail gösterimde AYNEN korunur.
      */
     private static String confirmKey(SweepItem item) {
-        if (EscalationService.TYPE_SCRIPTED_FAIL.equals(item.alertType()))
+        // SCRIPTED_SLOW da ayni sebeple detail'siz: detail olculen sure ("8123 ms"), her sweep'te degisir.
+        if (EscalationService.isScripted(item.alertType()))
             return item.alertType() + ":" + item.domain();
         return item.alertType() + ":" + item.domain() + ":" + item.detail();
     }
@@ -538,7 +539,8 @@ public class MonitoringOutageService {
             // AYRI anahtar (diğer 8 türle parite). Eskiden motorun kendisine
             // (`scripted.enabled`) bakılıyordu: "bu hafta k6 alarmı sussun" demek sentetik
             // izlemeyi TAMAMEN durdurmak anlamına geliyordu — kontrol serisi ve uptime de kesiliyordu.
-            case EscalationService.TYPE_SCRIPTED_FAIL ->
+            case EscalationService.TYPE_SCRIPTED_FAIL,
+                 EscalationService.TYPE_SCRIPTED_SLOW ->
                     appSettings.getBoolean("site.monitor.scripted.alert-enabled", true)
                     && appSettings.getBoolean("site.monitor.scripted.enabled", true);
             case EscalationService.TYPE_DOMAINMON_EXPIRY,
@@ -560,6 +562,7 @@ public class MonitoringOutageService {
                 || EscalationService.TYPE_DOMAIN_EXPIRY.equals(alertType)
                 || EscalationService.isKeywordAux(alertType)
                 || EscalationService.TYPE_PORT_SLOW.equals(alertType)
+                || EscalationService.TYPE_SCRIPTED_SLOW.equals(alertType)
                 || EscalationService.TYPE_PAGE_INTEGRITY.equals(alertType)
                 || EscalationService.isDomainMon(alertType)) ? "HIGH" : "CRITICAL";
     }

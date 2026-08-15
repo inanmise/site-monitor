@@ -22,6 +22,7 @@ import java.util.List;
 import java.util.Optional;
 
 import static org.mockito.ArgumentMatchers.*;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -1404,5 +1405,138 @@ class MonitoringControllerTest {
                 .andExpect(content().contentTypeCompatibleWith("text/csv"))
                 .andExpect(content().string(org.hamcrest.Matchers.containsString("checked_at")))
                 .andExpect(content().string(org.hamcrest.Matchers.containsString("2026-08-07T10:00:00")));
+    }
+
+    // ── Taslak ve surum uclari ───────────────────────────────────────────────────────────────
+    // Bu alti ucun HICBIRI test edilmiyordu: taslak yolu otomatik kaydetme (30 sn'de bir) ve
+    // veri kurtarma icin var, surum yolu ise "dun calisiyordu" vakasinin tek kanitidir.
+
+    private com.sitemonitor.model.ScriptedScriptVersion ver(long id, long monitorId, int seq, String label) {
+        var v = new com.sitemonitor.model.ScriptedScriptVersion();
+        v.setId(id); v.setMonitorId(monitorId); v.setSequenceNo(seq); v.setVersion(label);
+        v.setEventType("EDIT"); v.setScript("export default function () {}");
+        v.setCreatedAt("2026-08-0" + seq + "T10:00:00"); v.setCreatedBy("tester");
+        return v;
+    }
+
+    @Test
+    @DisplayName("GET /scripted/{id}/versions: en yeni ustte, GOVDE yok, guncel surum isaretli")
+    void scriptedVersions_listsWithoutBody() throws Exception {
+        var m = new com.sitemonitor.model.ScriptedMonitor();
+        m.setId(40L); m.setName("surumlu"); m.setScriptVersion("1.1.0");
+        when(scriptedMonitorRepo.findById(40L)).thenReturn(Optional.of(m));
+        when(scriptedVersionRepo.findByMonitorIdOrderBySequenceNoDesc(40L))
+                .thenReturn(List.of(ver(2L, 40L, 2, "1.1.0"), ver(1L, 40L, 1, "1.0.0")));
+
+        mvc.perform(get("/api/monitoring/scripted/40/versions").session(session("ADMIN")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.current_version").value("1.1.0"))
+                .andExpect(jsonPath("$.data.versions[0].version").value("1.1.0"))
+                .andExpect(jsonPath("$.data.versions[0].current").value(true))
+                .andExpect(jsonPath("$.data.versions[1].current").value(false))
+                // Yanit sismesin: liste ucu script GOVDESINI donmez, yalniz uzunlugunu.
+                .andExpect(jsonPath("$.data.versions[0].script").doesNotExist())
+                .andExpect(jsonPath("$.data.versions[0].script_chars").value("export default function () {}".length()));
+    }
+
+    @Test
+    @DisplayName("GET /scripted/{id}/versions: monitor yoksa 404")
+    void scriptedVersions_missingMonitor() throws Exception {
+        when(scriptedMonitorRepo.findById(41L)).thenReturn(Optional.empty());
+
+        mvc.perform(get("/api/monitoring/scripted/41/versions").session(session("ADMIN")))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    @DisplayName("GET /scripted/{id}/versions/{versionId}: BASKA monitorun surumu 404 (yetki siniri monitor uzerinden)")
+    void scriptedVersionDetail_crossMonitorIsNotFound() throws Exception {
+        var m = new com.sitemonitor.model.ScriptedMonitor();
+        m.setId(42L); m.setName("kendi");
+        when(scriptedMonitorRepo.findById(42L)).thenReturn(Optional.of(m));
+        when(scriptedVersionRepo.findById(99L)).thenReturn(Optional.of(ver(99L, 43L, 1, "1.0.0")));
+
+        mvc.perform(get("/api/monitoring/scripted/42/versions/99").session(session("ADMIN")))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    @DisplayName("GET /scripted/{id}/versions/{versionId}: govde doner, secret env DUZ METIN donmez")
+    void scriptedVersionDetail_returnsBodyWithMaskedSecrets() throws Exception {
+        var m = new com.sitemonitor.model.ScriptedMonitor();
+        m.setId(44L); m.setName("gizli-env");
+        var v = ver(7L, 44L, 1, "1.0.0");
+        v.setEnvJson("[{\"name\":\"TOKEN\",\"value\":\"cok-gizli\",\"secret\":true}]");
+        when(scriptedMonitorRepo.findById(44L)).thenReturn(Optional.of(m));
+        when(scriptedVersionRepo.findById(7L)).thenReturn(Optional.of(v));
+
+        mvc.perform(get("/api/monitoring/scripted/44/versions/7").session(session("ADMIN")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.version").value("1.0.0"))
+                .andExpect(jsonPath("$.data.script").value("export default function () {}"))
+                .andExpect(jsonPath("$.data.env[0].name").value("TOKEN"))
+                .andExpect(jsonPath("$.data.env[0].secret").value(true))
+                .andExpect(content().string(org.hamcrest.Matchers.not(org.hamcrest.Matchers.containsString("cok-gizli"))));
+    }
+
+    @Test
+    @DisplayName("PUT /scripted/draft: yeni monitor taslagi 'new' anahtariyla kaydedilir (monitor_id NULL)")
+    void scriptedDraft_upsertNew() throws Exception {
+        when(scriptedDraftRepo.findByOwnerAndMonitorKey(anyString(), anyString())).thenReturn(Optional.empty());
+        when(scriptedDraftRepo.save(any())).thenAnswer(i -> i.getArgument(0));
+
+        mvc.perform(put("/api/monitoring/scripted/draft").session(session("ADMIN"))
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("{\"monitorKey\":\"yeni\",\"monitorName\":\"ad\",\"formJson\":\"{}\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.monitor_key").value("new"));
+
+        var cap = org.mockito.ArgumentCaptor.forClass(com.sitemonitor.model.ScriptedDraft.class);
+        org.mockito.Mockito.verify(scriptedDraftRepo).save(cap.capture());
+        assertThat(cap.getValue().getMonitorKey()).isEqualTo("new");
+        assertThat(cap.getValue().getMonitorId()).isNull();
+    }
+
+    @Test
+    @DisplayName("POST /scripted/draft: sayisal anahtar monitor_id'ye cevrilir (sendBeacon POST yolu)")
+    void scriptedDraft_postWithNumericKey() throws Exception {
+        when(scriptedDraftRepo.findByOwnerAndMonitorKey(anyString(), anyString())).thenReturn(Optional.empty());
+        when(scriptedDraftRepo.save(any())).thenAnswer(i -> i.getArgument(0));
+
+        mvc.perform(post("/api/monitoring/scripted/draft").session(session("ADMIN"))
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("{\"monitorKey\":\"12\",\"formJson\":\"{}\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.monitor_key").value("12"));
+
+        var cap = org.mockito.ArgumentCaptor.forClass(com.sitemonitor.model.ScriptedDraft.class);
+        org.mockito.Mockito.verify(scriptedDraftRepo).save(cap.capture());
+        assertThat(cap.getValue().getMonitorId()).isEqualTo(12L);
+    }
+
+    @Test
+    @DisplayName("GET /scripted/drafts: YALNIZ cagiranin kendi taslaklari sorgulanir")
+    void scriptedDrafts_scopedToOwner() throws Exception {
+        var d = new com.sitemonitor.model.ScriptedDraft();
+        d.setMonitorKey("new"); d.setMonitorName("yarim"); d.setFormJson("{}");
+        d.setUpdatedAt("2026-08-10T10:00:00");
+        when(scriptedDraftRepo.findByOwnerOrderByUpdatedAtDesc("u")).thenReturn(List.of(d));
+
+        mvc.perform(get("/api/monitoring/scripted/drafts").session(session("ADMIN")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.drafts[0].monitor_key").value("new"))
+                .andExpect(jsonPath("$.data.drafts[0].monitor_name").value("yarim"));
+
+        org.mockito.Mockito.verify(scriptedDraftRepo).findByOwnerOrderByUpdatedAtDesc("u");
+    }
+
+    @Test
+    @DisplayName("DELETE /scripted/draft/{key}: bozuk anahtar 'new'e duser (yol parametresi guvenligi)")
+    void scriptedDraft_deleteSanitizesKey() throws Exception {
+        mvc.perform(delete("/api/monitoring/scripted/draft/..%2Fetc").session(session("ADMIN")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.deleted").value(true));
+
+        org.mockito.Mockito.verify(scriptedDraftRepo).deleteByOwnerAndMonitorKey("u", "new");
     }
 }

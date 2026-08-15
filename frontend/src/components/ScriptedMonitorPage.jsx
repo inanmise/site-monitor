@@ -48,6 +48,7 @@ const emptyForm = {
   name: '', description: '', groupName: '', teamId: '', tags: '', notifyEmail: true,
   intervalSeconds: 300, timeoutSeconds: 60, confirmAttempts: 3, confirmIntervalSeconds: 30,
   recoveryChecks: 3, recoveryIntervalSeconds: 30, active: true, script: '', env: [], template: '',
+  slowResponseEnabled: false, slowThresholdMs: 15000,
   useProxy: 'AUTO',
 }
 
@@ -192,6 +193,9 @@ export const SCRIPTED_NUM_FIELDS = [
   { key: 'timeoutSeconds', min: 5, max: 180, labelKey: 'scripted.timeout' },
   { key: 'confirmAttempts', min: 0, max: 10, labelKey: 'scripted.confirmAttempts' },
   { key: 'recoveryChecks', min: 1, max: 10, labelKey: 'scripted.recoveryChecks' },
+  // Yavaslik esigi YALNIZ alarm acikken zorunlu: kapaliyken bos/gecersiz deger kaydetmeyi bloklamamali.
+  { key: 'slowThresholdMs', min: 500, max: 180000, labelKey: 'scripted.slowThreshold',
+    when: f => !!f.slowResponseEnabled },
 ]
 
 /**
@@ -208,6 +212,7 @@ export const SCRIPTED_NUM_FIELDS = [
  */
 export function invalidNumericField(form) {
   for (const f of SCRIPTED_NUM_FIELDS) {
+    if (f.when && !f.when(form || {})) continue
     const raw = form?.[f.key]
     if (raw === '' || raw == null) return f
     const n = Number(raw)
@@ -566,6 +571,7 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
       intervalSeconds: m.interval_seconds ?? 300, timeoutSeconds: m.timeout_seconds ?? 60,
       confirmAttempts: m.confirm_attempts ?? 3, confirmIntervalSeconds: m.confirm_interval_seconds ?? 30,
       recoveryChecks: m.recovery_checks ?? 3, recoveryIntervalSeconds: m.recovery_interval_seconds ?? 30,
+      slowResponseEnabled: !!m.slow_response_enabled, slowThresholdMs: m.slow_threshold_ms ?? 15000,
       active: m.active !== false, script: m.script || '',
       useProxy: m.use_proxy || 'AUTO',
       // env: secret satırlar value_set taşır (değer geri okunamaz); non-secret value taşır
@@ -743,6 +749,7 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
       intervalSeconds: Number(form.intervalSeconds), timeoutSeconds: Number(form.timeoutSeconds),
       confirmAttempts: Number(form.confirmAttempts), confirmIntervalSeconds: Number(form.confirmIntervalSeconds),
       recoveryChecks: Number(form.recoveryChecks), recoveryIntervalSeconds: Number(form.recoveryIntervalSeconds),
+      slowResponseEnabled: !!form.slowResponseEnabled, slowThresholdMs: Number(form.slowThresholdMs),
       active: form.active, script: form.script, env: envPayload(),
       useProxy: form.useProxy || 'AUTO',
       // Sürüm YALNIZ içerik değiştiyse yazılır; bump türü o zaman uygulanır (varsayılan yama).
@@ -925,7 +932,15 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
         <>
         <div className="upt-grid">
           {pager.pageItems.map(m => (
+            /* Kart klavyeyle de açılabilir: role+tabIndex+Enter/Space. onKeyDown YALNIZ kartın
+               KENDİ hedefinde çalışır — içerideki Çalıştır/Düzenle/Kopyala düğmelerinde Enter'a
+               basıldığında tuş olayı karta baloncuklanıp detayı DA açardı (çift eylem). */
             <div key={m.id} className={`upt-card ${cardClass(m)}${m.active_alarm ? ' upt-card--alarm' : ''}${!m.active ? ' mon-row-inactive' : ''}`}
+              role="button" tabIndex={0} aria-label={t('scripted.openDetailFor', m.name)}
+              onKeyDown={e => {
+                if (e.target !== e.currentTarget) return
+                if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openDetail(m) }
+              }}
               onClick={() => openDetail(m)}>
               <div className="upt-card-top">
                 {statusBadge(m)}
@@ -1404,6 +1419,18 @@ function EditModal({ t, lang, k6Version, proxy = null, form, setForm, modal, dup
             <input type="number" min="1" max="10" value={form.recoveryChecks}
               onChange={e => setForm(f => ({ ...f, recoveryChecks: e.target.value }))} />
             <span className="field-hint">{t('scripted.recoveryHint')}</span></label>
+
+          {/* Yavaş koşum alarmı (SCRIPTED_SLOW) — opt-in. Senaryo GEÇİYOR ama yavaşlıyorsa
+              kesinti alarmı hiç açılmaz; bu eşik o sessiz bozulmayı görünür kılar. Teyit/kurtarma
+              sayıları kesinti alarmıyla ORTAKTIR (aynı 3× doğrulama üssel zinciri). */}
+          <label className="sc-check"><input type="checkbox" checked={!!form.slowResponseEnabled}
+              onChange={e => setForm(f => ({ ...f, slowResponseEnabled: e.target.checked }))} />
+            <span>{t('scripted.slowEnabled')}</span></label>
+          <label><span>{t('scripted.slowThreshold')}</span>
+            <input type="number" min="500" max="180000" step="500" value={form.slowThresholdMs}
+              disabled={!form.slowResponseEnabled}
+              onChange={e => setForm(f => ({ ...f, slowThresholdMs: e.target.value }))} />
+            <span className="field-hint">{t('scripted.slowThresholdHint')}</span></label>
 
           {/* Kurumsal vekil — k6 alt süreci uzun süre vekil ayarlarını HİÇ almıyordu; vekil zorunlu
               ortamda her koşum sebepsiz "request timeout" ile düşüyordu. */}

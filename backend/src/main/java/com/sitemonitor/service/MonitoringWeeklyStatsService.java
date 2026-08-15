@@ -50,7 +50,7 @@ public class MonitoringWeeklyStatsService {
             "keyword", Set.of("KEYWORD", "KEYWORD_SLOW", "KEYWORD_SSL", "KEYWORD_DOMAIN_EXPIRY"),
             "ping",    Set.of("PING_DOWN"),
             "domain",  Set.of("DOMAINMON_EXPIRY", "DOMAINMON_UNKNOWN", "DOMAINMON_STATUS", "DOMAINMON_CHANGED"),
-            "scripted", Set.of("SCRIPTED_FAIL"));
+            "scripted", Set.of("SCRIPTED_FAIL", "SCRIPTED_SLOW"));
 
     private final HttpMonitorRepository httpMonitorRepo;
     private final PortMonitorRepository portMonitorRepo;

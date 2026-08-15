@@ -404,6 +404,9 @@ public class SchedulerService {
         patch("ALTER TABLE scripted_checks ADD COLUMN script_version VARCHAR(20)");
         // Script'in güncel sürüm etiketi; geçmiş ayrı tabloda (scripted_script_versions, entity'den doğar).
         patch("ALTER TABLE scripted_monitors ADD COLUMN script_version VARCHAR(20)");
+        // SCRIPTED_SLOW (opt-in yavaş koşum alarmı) — port/keyword'deki alan adlarıyla aynı.
+        patch("ALTER TABLE scripted_monitors ADD COLUMN slow_response_enabled BOOLEAN DEFAULT FALSE");
+        patch("ALTER TABLE scripted_monitors ADD COLUMN slow_threshold_ms INTEGER");
         // Taslak kullanıcı+monitör başına TEK satır. monitor_id yerine metin anahtar kullanılıyor:
         // PostgreSQL unique index'te NULL'ları birbirinden farklı sayar, "yeni monitör" taslakları çoğalırdı.
         patch("CREATE UNIQUE INDEX IF NOT EXISTS ux_scripted_draft_owner_key ON scripted_drafts(owner, monitor_key)");
@@ -2595,6 +2598,7 @@ public class SchedulerService {
         }
         int checked = 0, skipped = 0;
         List<MonitoringOutageService.SweepItem> sweep = new ArrayList<>();
+        List<MonitoringOutageService.SweepItem> slowSweep = new ArrayList<>();
         for (var entry : started) {
             com.sitemonitor.model.ScriptedMonitor m = entry.getKey();
             try {
@@ -2609,7 +2613,7 @@ public class SchedulerService {
                 // toplu YANLIŞ alarm üretiyordu.
                 if (ScriptedCheckerService.isSkipped(res)) { skipped++; continue; }
                 Map<String, Object> r = persistScripted(m, res, false);
-                addScriptedSweepItems(m, r, sweep);
+                addScriptedSweepItems(m, r, sweep, slowSweep);
                 checked++;
             } catch (java.util.concurrent.TimeoutException te) {
                 // Future'ı BIRAKMA: iptal edilmezse k6 süreci ve permit'i tutmaya devam eder.
@@ -2626,12 +2630,16 @@ public class SchedulerService {
                     + "pool-size × aralık ÷ koşum süresi; scripted.k6.skipped sayacına bakın.", skipped);
         try { monitoringOutageService.handleSweepResults(EscalationService.TYPE_SCRIPTED_FAIL, sweep); }
         catch (Exception e) { log.warn("Scripted outage processing failed: {}", e.getMessage(), e); }
+        // Yavas kosum alarmi AYRI pipeline: kesinti alarmindan bagimsiz acilir/kapanir (PORT_SLOW deseni).
+        try { monitoringOutageService.handleSweepResults(EscalationService.TYPE_SCRIPTED_SLOW, slowSweep); }
+        catch (Exception e) { log.warn("Scripted slow outage processing failed: {}", e.getMessage()); }
         log.debug("Scripted checks complete: {} monitors", checked);
     }
 
-    /** Bir senaryo kontrol sonucundan SweepItem üretir (tek alarm tipi: SCRIPTED_FAIL, up=PASS). */
+    /** Bir senaryo kontrol sonucundan SweepItem üretir: SCRIPTED_FAIL (up=PASS) ve opsiyonel SCRIPTED_SLOW. */
     private void addScriptedSweepItems(com.sitemonitor.model.ScriptedMonitor m, Map<String, Object> r,
-                                       List<MonitoringOutageService.SweepItem> sweep) {
+                                       List<MonitoringOutageService.SweepItem> sweep,
+                                       List<MonitoringOutageService.SweepItem> slowSweep) {
         Map<String, Object> ctx = new LinkedHashMap<>();
         ctx.put("name", m.getName());
         ctx.put("monitor_id", m.getId());
@@ -2659,6 +2667,56 @@ public class SchedulerService {
                         if (Boolean.TRUE.equals(p.get("skipped")))
                             return Map.of("status", "skipped", "error", String.valueOf(p.get("error")));
                         return Map.of("status", Boolean.TRUE.equals(p.get("up")) ? "up" : "down"); }));
+
+        // ── SCRIPTED_SLOW (opt-in) ───────────────────────────────────────────────────────────
+        // Kapaliysa/olculemediyse/kosum DUSTUYSE sentetik "up" uretilir: boylece daha once acilmis
+        // bir SLOW alarmi asili kalmaz. Dusen kosumda sure zaten anlamsizdir (timeout'ta tavan
+        // degeri olcerdik) — o durumu SCRIPTED_FAIL anlatir, SLOW ikinci kez bagirmaz.
+        Map<String, Object> slowCtx = new LinkedHashMap<>(ctx);
+        int slowTh = slowThresholdFor(m);
+        slowCtx.put("threshold_ms", slowTh);
+        // persistScripted sureyi "response_ms" adiyla dondurur (tum turlerde ortak ad);
+        // alarm ctx'inde ise sentetigin dilinde "duration_ms" olarak tasinir.
+        Long durMs = r.get("response_ms") instanceof Number dn ? dn.longValue() : null;
+        if (durMs != null) slowCtx.put("duration_ms", durMs);
+        boolean slowDown = Boolean.TRUE.equals(m.getSlowResponseEnabled()) && up && durMs != null && durMs > slowTh;
+        slowSweep.add(new MonitoringOutageService.SweepItem(
+                EscalationService.TYPE_SCRIPTED_SLOW, m.getName(),
+                durMs != null ? durMs + " ms" : "slow",
+                !slowDown, null, slowCtx,
+                () -> evalScriptedSlow(m)));
+    }
+
+    /** SCRIPTED_SLOW esigi (ms): monitorde bos ise genel ayar, o da yoksa 15000. */
+    private int slowThresholdFor(com.sitemonitor.model.ScriptedMonitor m) {
+        if (m.getSlowThresholdMs() != null && m.getSlowThresholdMs() > 0) return m.getSlowThresholdMs();
+        return appSettings.getInt("site.monitor.scripted.slow-threshold-ms", 15000);
+    }
+
+    /**
+     * Yavas kosum yeniden-olcumu (SCRIPTED_SLOW teyit/recovery re-check'i) — TAZE kosum.
+     *
+     * <p>Uc cevap uretir, ikisi degil: kontrol yurutulemediyse (k6 havuzu dolu / k6 yok)
+     * {@code "skipped"} doner ve teyit zinciri kanit saymaz. "down" desek havuz darligi sahte bir
+     * yavaslik TEYIT ederdi; "up" desek gercek bir yavaslamayi sessizce kapatirdi.
+     * Alarmi kapali monitor ve DUSEN kosum → "up" (SLOW, FAIL'in uzerine ikinci alarm acmaz).
+     */
+    private Map<String, Object> evalScriptedSlow(com.sitemonitor.model.ScriptedMonitor m) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        int th = slowThresholdFor(m);
+        out.put("threshold_ms", th);
+        if (!Boolean.TRUE.equals(m.getSlowResponseEnabled())) { out.put("status", "up"); return out; }
+        Map<String, Object> p = recheckScripted(m, false);
+        if (Boolean.TRUE.equals(p.get("skipped"))) {
+            out.put("status", "skipped");
+            out.put("error", String.valueOf(p.get("error")));
+            return out;
+        }
+        Long ms = p.get("response_ms") instanceof Number n ? n.longValue() : null;
+        if (ms != null) out.put("duration_ms", ms);
+        boolean slow = Boolean.TRUE.equals(p.get("up")) && ms != null && ms > th;
+        out.put("status", slow ? "down" : "up");
+        return out;
     }
 
     /** k6'yı çalıştır + ScriptedCheck yaz + activity + out map. (Manuel tetik + SweepItem recheck lambda kullanır.) */

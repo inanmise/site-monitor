@@ -89,6 +89,21 @@ public class ScriptedMonitor {
     @Column(name = "recovery_interval_seconds")
     private Integer recoveryIntervalSeconds = 30;
 
+    /**
+     * Yavaş koşum alarmı ({@code SCRIPTED_SLOW}) açık mı. Kapalıyken eşik hiç değerlendirilmez —
+     * senaryonun "ne kadar sürdüğü" her zaman kaydedilir ama kimse çağrılmaz.
+     *
+     * <p>Diğer türlerdeki (PORT_SLOW/KEYWORD_SLOW) opt-in deseniyle aynıdır: kapalıysa sweep
+     * sentetik bir "up" üretir, böylece daha önce açılmış bir SLOW alarmı asılı kalmaz.
+     */
+    @Column(name = "slow_response_enabled")
+    private Boolean slowResponseEnabled = false;
+
+    /** {@code SCRIPTED_SLOW} eşiği (ms): koşum SÜRESİ bunu aşarsa yavaş sayılır. Ölçülen süre k6
+     *  sürecinin toplam duvar saati süresidir (kontrol geçmişindeki "Süre" sütunuyla aynı değer). */
+    @Column(name = "slow_threshold_ms")
+    private Integer slowThresholdMs = 15000;
+
     @Column(columnDefinition = "TEXT")
     private String tags;
 

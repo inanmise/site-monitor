@@ -120,7 +120,9 @@ public class EmailTemplateBuilder {
         return t != null && (t.startsWith("DOMAINMON_") || "DOMAIN_EXPIRY".equals(t));
     }
     private static boolean isPage(String t) { return "PAGE_DOWN".equals(t) || "PAGE_INTEGRITY".equals(t); }
-    private static boolean isScripted(String t) { return "SCRIPTED_FAIL".equals(t); }
+    private static boolean isScripted(String t) {
+        return "SCRIPTED_FAIL".equals(t) || "SCRIPTED_SLOW".equals(t);
+    }
     /** Sertifika alarmı mı (EXPIRY/REVOKED/MISMATCH/CHAIN_BROKEN — "dashboard" sekmesine düşen default dal).
      *  Paket görünürlüğü: {@code EscalationService} envanter zenginleştirmesini aynı tanıma bağlar. */
     static boolean isCert(String t) { return tabFor(t).equals("dashboard"); }
@@ -423,7 +425,13 @@ public class EmailTemplateBuilder {
         // Sentetik cozumu: alarm e-postasinda dolu bir dal vardi ama COZUM e-postasinda YOKTU
         // (kodun kendi notu: "SCRIPTED_FAIL ayni sablona duser ve ayni bosluga sahiptir").
         // Nobetci "ne duzeldi" bilgisini alamiyor, jenerik "alarm kapandi" cumlesiyle kaliyordu.
-        if (ctx != null && EscalationService.isScripted(alertType)) {
+        if (ctx != null && "SCRIPTED_SLOW".equals(alertType)) {
+            rows.append(row("Çözülen Alarm", "Sentetik Yavaş Koşum"));
+            String sMs = strCtx(ctx, "duration_ms");
+            String sTh = strCtx(ctx, "threshold_ms");
+            if (sMs != null) rows.append(row("Süre (alarm anı)", esc(sMs) + " ms"));
+            if (sTh != null) rows.append(row("Eşik", esc(sTh) + " ms"));
+        } else if (ctx != null && EscalationService.isScripted(alertType)) {
             rows.append(row("Çözülen Alarm", "Sentetik İzleme"));
             String sDetail = strCtx(ctx, "detail");
             if (sDetail != null && !sDetail.isBlank()) rows.append(row("Sorun (alarm anı)", esc(sDetail)));
@@ -495,7 +503,13 @@ public class EmailTemplateBuilder {
             }
         }
         String durHuman = durationHuman(createdAt, resolvedAt);
-        if (ctx != null && EscalationService.isScripted(alertType)) {   // HTML ile ayni bilgi
+        if (ctx != null && "SCRIPTED_SLOW".equals(alertType)) {   // HTML ile ayni bilgi
+            sb.append("\nÇözülen Alarm: Sentetik Yavaş Koşum");
+            String sMs = strCtx(ctx, "duration_ms");
+            String sTh = strCtx(ctx, "threshold_ms");
+            if (sMs != null) sb.append("\nSüre (alarm anı): ").append(sMs).append(" ms");
+            if (sTh != null) sb.append("\nEşik: ").append(sTh).append(" ms");
+        } else if (ctx != null && EscalationService.isScripted(alertType)) {
             sb.append("\nÇözülen Alarm: Sentetik İzleme");
             String sDetail = strCtx(ctx, "detail");
             if (sDetail != null && !sDetail.isBlank()) sb.append("\nSorun (alarm anı): ").append(sDetail);
@@ -523,6 +537,8 @@ public class EmailTemplateBuilder {
             return "Sayfadaki bütünlük sorunu giderildi; kaynaklar yeniden sağlıklı — alarm otomatik olarak kapandı.";
         if ("PAGE_DOWN".equals(alertType))
             return "Sayfa yeniden yükleniyor — alarm otomatik olarak kapandı.";
+        if ("SCRIPTED_SLOW".equals(alertType))
+            return "Senaryo koşum süresi eşiğin altına indi — alarm otomatik olarak kapandı.";
         if (EscalationService.isScripted(alertType))
             return "Senaryo yeniden başarılı — alarm otomatik olarak kapandı.";
         return "Alarm otomatik olarak kapandı.";

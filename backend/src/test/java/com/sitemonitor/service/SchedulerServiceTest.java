@@ -50,6 +50,7 @@ import static org.mockito.Mockito.when;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.mock;
 
 /**
  * Baseline coverage for SchedulerService. The service has a 16-dependency
@@ -856,5 +857,151 @@ class SchedulerServiceTest {
 
         // tek ama çok uzun satır da tavanlanır (alarm/mail başlığı patlamasın)
         assertThat(SchedulerService.oneLine("x".repeat(500))).hasSize(302).endsWith(" …");
+    }
+
+    // ── Sentetik sweep ───────────────────────────────────────────────────────────────────────
+    // Bu yol simdiye kadar TESTSIZDI: SKIPPED erken-cikisi, timeout'ta future.cancel(true) ve
+    // ensureProbed() kapisi yalnizca uretimde kosuyordu. Ucu de sessiz veri/alarm hatasi sinifi.
+
+    private com.sitemonitor.model.ScriptedMonitor scriptedMon(long id, String name) {
+        var m = new com.sitemonitor.model.ScriptedMonitor();
+        m.setId(id); m.setName(name); m.setActive(true); m.setIntervalSeconds(60);
+        m.setScript("export default function () {}");
+        return m;
+    }
+
+    private static ScriptedCheckerService.ScriptedResult scriptedResult(String status, boolean ok, Long durMs) {
+        return new ScriptedCheckerService.ScriptedResult(status, ok, durMs, ok ? 0 : 1,
+                ok ? 1 : 0, ok ? 0 : 1, null, null, null, null, null, ok ? null : "hata",
+                false, ScriptedCheckerService.Phases.EMPTY);
+    }
+
+    @SuppressWarnings("unchecked")
+    private static java.util.concurrent.Future<ScriptedCheckerService.ScriptedResult> future(
+            ScriptedCheckerService.ScriptedResult r) throws Exception {
+        var f = (java.util.concurrent.Future<ScriptedCheckerService.ScriptedResult>)
+                mock(java.util.concurrent.Future.class);
+        when(f.get(anyLong(), any())).thenReturn(r);
+        return f;
+    }
+
+    @Test
+    @DisplayName("Sentetik sweep: k6 sondasi basarisizsa HIC kontrol kosmaz (monitor sorgusu bile yapilmaz)")
+    void scriptedSweep_ensureProbedGate() {
+        when(scriptedCheckerService.ensureProbed()).thenReturn(false);
+        when(scriptedMonitorRepo.countByActiveTrue()).thenReturn(3L);
+
+        scheduler.runScriptedChecks();
+
+        // Kapi acilmadan monitor listesi cekilmemeli: cekilirse sweep gercekten baslamis demektir.
+        verify(scriptedMonitorRepo, never()).findByActiveTrue();
+        verify(scriptedCheckerService, never()).submit(any());
+    }
+
+    @Test
+    @DisplayName("Sentetik sweep: SKIPPED sonuc KAYIT YAZMAZ ve alarm zincirine GIRMEZ (havuz darligi ariza degil)")
+    void scriptedSweep_skippedWritesNothing() throws Exception {
+        var m = scriptedMon(7L, "login-akisi");
+        when(scriptedMonitorRepo.findByActiveTrue()).thenReturn(List.of(m));
+        var f = future(scriptedResult("SKIPPED", false, null));
+        when(scriptedCheckerService.submit(m)).thenReturn(f);
+
+        ReflectionTestUtils.invokeMethod(scheduler, "runScriptedChecksLocked");
+
+        verify(scriptedCheckRepo, never()).save(any());
+        // Iki pipeline da BOS listeyle cagrilir: "hepsi up" sanip acik alarmi kapatmamali diye
+        // handleSweepResults yine cagrilir, ama icinde hicbir item olmamalidir.
+        var cap = org.mockito.ArgumentCaptor.forClass(List.class);
+        verify(monitoringOutageService, times(2)).handleSweepResults(anyString(), cap.capture());
+        assertThat(cap.getAllValues()).allSatisfy(l -> assertThat(l).isEmpty());
+    }
+
+    @Test
+    @DisplayName("Sentetik sweep: sonuc zamaninda gelmezse future IPTAL edilir (k6 sureci ve permit sizmaz)")
+    void scriptedSweep_timeoutCancelsFuture() throws Exception {
+        var m = scriptedMon(8L, "yavas-senaryo");
+        @SuppressWarnings("unchecked")
+        var f = (java.util.concurrent.Future<ScriptedCheckerService.ScriptedResult>)
+                mock(java.util.concurrent.Future.class);
+        when(f.get(anyLong(), any())).thenThrow(new java.util.concurrent.TimeoutException("gelmedi"));
+        when(scriptedMonitorRepo.findByActiveTrue()).thenReturn(List.of(m));
+        when(scriptedCheckerService.submit(m)).thenReturn(f);
+
+        ReflectionTestUtils.invokeMethod(scheduler, "runScriptedChecksLocked");
+
+        verify(f).cancel(true);          // iptal edilmezse k6 sureci permit'i tutmaya devam eder
+        verify(scriptedCheckRepo, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("Sentetik sweep: GECEN ama esikten yavas kosum SCRIPTED_SLOW uretir, kesinti alarmi uretmez")
+    void scriptedSweep_slowItemRaisedOnlyWhenEnabled() throws Exception {
+        var m = scriptedMon(9L, "yavas-ama-gecen");
+        m.setSlowResponseEnabled(true);
+        m.setSlowThresholdMs(2000);
+        when(scriptedMonitorRepo.findByActiveTrue()).thenReturn(List.of(m));
+        var f = future(scriptedResult("PASS", true, 5000L));
+        when(scriptedCheckerService.submit(m)).thenReturn(f);
+
+        ReflectionTestUtils.invokeMethod(scheduler, "runScriptedChecksLocked");
+
+        var type = org.mockito.ArgumentCaptor.forClass(String.class);
+        var items = org.mockito.ArgumentCaptor.forClass(List.class);
+        verify(monitoringOutageService, times(2)).handleSweepResults(type.capture(), items.capture());
+
+        int failIdx = type.getAllValues().indexOf(EscalationService.TYPE_SCRIPTED_FAIL);
+        int slowIdx = type.getAllValues().indexOf(EscalationService.TYPE_SCRIPTED_SLOW);
+        assertThat(failIdx).isNotNegative();
+        assertThat(slowIdx).isNotNegative();
+
+        var failItem = (MonitoringOutageService.SweepItem) items.getAllValues().get(failIdx).get(0);
+        var slowItem = (MonitoringOutageService.SweepItem) items.getAllValues().get(slowIdx).get(0);
+        assertThat(failItem.up()).isTrue();       // kosum GECTI — kesinti yok
+        assertThat(slowItem.up()).isFalse();      // ama esigi asti — yavaslik var
+        assertThat(slowItem.detail()).isEqualTo("5000 ms");
+        assertThat(slowItem.ctxExtra()).containsEntry("threshold_ms", 2000);
+    }
+
+    @Test
+    @DisplayName("Sentetik sweep: yavaslik alarmi KAPALIYSA esik asilsa bile SLOW item 'up' kalir (asili alarm kurtarilir)")
+    void scriptedSweep_slowSuppressedWhenDisabled() throws Exception {
+        var m = scriptedMon(10L, "hizli-olmasi-onemsiz");
+        m.setSlowResponseEnabled(false);
+        m.setSlowThresholdMs(1000);
+        when(scriptedMonitorRepo.findByActiveTrue()).thenReturn(List.of(m));
+        var f = future(scriptedResult("PASS", true, 90_000L));
+        when(scriptedCheckerService.submit(m)).thenReturn(f);
+
+        ReflectionTestUtils.invokeMethod(scheduler, "runScriptedChecksLocked");
+
+        var type = org.mockito.ArgumentCaptor.forClass(String.class);
+        var items = org.mockito.ArgumentCaptor.forClass(List.class);
+        verify(monitoringOutageService, times(2)).handleSweepResults(type.capture(), items.capture());
+        int slowIdx = type.getAllValues().indexOf(EscalationService.TYPE_SCRIPTED_SLOW);
+        var slowItem = (MonitoringOutageService.SweepItem) items.getAllValues().get(slowIdx).get(0);
+        assertThat(slowItem.up()).isTrue();
+    }
+
+    @Test
+    @DisplayName("Sentetik sweep: DUSEN kosum SLOW alarmi ACMAZ (tek olayda iki alarm bagirmasin)")
+    void scriptedSweep_failedRunDoesNotAlsoRaiseSlow() throws Exception {
+        var m = scriptedMon(11L, "dusen-senaryo");
+        m.setSlowResponseEnabled(true);
+        m.setSlowThresholdMs(1000);
+        when(scriptedMonitorRepo.findByActiveTrue()).thenReturn(List.of(m));
+        var f = future(scriptedResult("TIMEOUT", false, 60_000L));
+        when(scriptedCheckerService.submit(m)).thenReturn(f);
+
+        ReflectionTestUtils.invokeMethod(scheduler, "runScriptedChecksLocked");
+
+        var type = org.mockito.ArgumentCaptor.forClass(String.class);
+        var items = org.mockito.ArgumentCaptor.forClass(List.class);
+        verify(monitoringOutageService, times(2)).handleSweepResults(type.capture(), items.capture());
+        int failIdx = type.getAllValues().indexOf(EscalationService.TYPE_SCRIPTED_FAIL);
+        int slowIdx = type.getAllValues().indexOf(EscalationService.TYPE_SCRIPTED_SLOW);
+        var failItem = (MonitoringOutageService.SweepItem) items.getAllValues().get(failIdx).get(0);
+        var slowItem = (MonitoringOutageService.SweepItem) items.getAllValues().get(slowIdx).get(0);
+        assertThat(failItem.up()).isFalse();      // kesinti alarmi bunu anlatir
+        assertThat(slowItem.up()).isTrue();       // yavaslik alarmi ustune ikinci kez bagirmaz
     }
 }

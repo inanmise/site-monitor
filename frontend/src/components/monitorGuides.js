@@ -425,6 +425,7 @@ Sağ üstteki **+ Yeni Monitör** ile formu açın.
 - **Çalıştırma sıklığı** — İki koşu arası süre (kaydırıcı; varsayılan 5 dk).
 - **Süreç timeout (sn)** — k6 koşusunun üst süresi (5–180, varsayılan 60). Aşılırsa süreç sonlandırılır ⇒ TIMEOUT.
 - **Ardışık başarısızlık eşiği** — Alarm için gereken üst üste başarısızlık (0–10, varsayılan 3).
+- **Yavaş koşum alarmı** + **Yavaşlık eşiği (ms)** — Opsiyonel. Açılırsa senaryo GEÇTİĞİ hâlde toplam koşum süresi eşiği aşarsa ayrı bir “yavaş” alarmı açılır; kesinti alarmından bağımsızdır ve aynı doğrulama/kurtarma sayılarını kullanır. Login akışının çalışıyor ama yavaşlamış olması — sessiz bozulma — ancak böyle görünür olur.
 - **Kurtarma kontrolü** — "Düzeldi" demek için gereken başarılı koşu (1–10, varsayılan 3).
 - **Ortam Değişkenleri** — Script'in \`__ENV\` ile okuduğu değerler. **Değişken Ekle** ile satır ekleyin: AD + değer + **Gizli**. Sırları (parola/secret) **script gövdesine YAZMAYIN**; "Gizli" işaretleyin — şifreli saklanır, çıktı/loglarda maskelenir, geri okunamaz.
 - **Vekil (proxy)** — Kurumsal çıkış vekilinin kullanımı. **Otomatik**: vekil tanımlıysa kullanılır, ama NO_PROXY listesine **sonek** olarak uyan hedefler (ör. \`akbank.com\` ⇒ tüm alt alanlar) doğrudan çıkar. **Her zaman vekil üzerinden**: NO_PROXY yok sayılır, hedef ne olursa olsun vekile uğrar. **Doğrudan**: vekil hiç kullanılmaz — iç ağ hedefleri için bunu seçin.
@@ -486,6 +487,7 @@ Open the form with **+ New Monitor** (top right).
 - **Run interval** — Time between runs (slider; default 5m).
 - **Process timeout (s)** — Max k6 run time (5–180, default 60). Exceeded ⇒ the process is killed ⇒ TIMEOUT.
 - **Consecutive-failure threshold** — Failures in a row before alerting (0–10, default 3).
+- **Slow-run alert** + **Slow threshold (ms)** — Optional. When enabled, a run that PASSES but exceeds the threshold raises a separate “slow” alert, independent of the outage alert and using the same confirm/recovery counts. A login flow that still works but got slower — silent degradation — only becomes visible this way.
 - **Recovery checks** — Successful runs to declare "recovered" (1–10, default 3).
 - **Environment variables** — Values the script reads via \`__ENV\`. Use **Add variable** for a row: NAME + value + **Secret**. Do **NOT** put secrets in the script body; mark them "Secret" — stored encrypted, masked in output/logs, never readable back.
 - **Proxy** — Whether to use the corporate egress proxy. **Automatic**: used when a proxy is configured, but targets matching NO_PROXY as a **suffix** (e.g. \`akbank.com\` ⇒ all subdomains) still go direct. **Always via proxy**: NO_PROXY is ignored, every target goes through the proxy. **Direct**: never use the proxy — choose this for internal targets.

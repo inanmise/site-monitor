@@ -2313,13 +2313,17 @@ public class MonitoringController {
                 .filter(m -> SessionScope.canView(session, m.getTeamId())).toList();
         Set<String> names = monitors.stream().map(com.sitemonitor.model.ScriptedMonitor::getName).collect(Collectors.toSet());
         Map<String, AlertEvent> open = openAlarmsByDomain(names, EscalationService.TYPE_SCRIPTED_FAIL);
+        // Yavas kosum alarmi kartta da gorunsun; FAIL (kesinti) varsa O oncelikli — iki rozet
+        // yerine tek ve en severe olani gosterilir (DNS rozetindeki karar ile ayni).
+        Map<String, AlertEvent> slowOpen = openAlarmsByDomain(names, EscalationService.TYPE_SCRIPTED_SLOW);
         // "Hiç başarılı olmamış" monitörler — tek toplu sorgu (monitör başına sorgu YOK).
         // Bu ayrım arıza ile yapılandırma kusurunu ayırır: 288 koşumun 288'i düşen bir monitör
         // "bir şey bozuldu" değil "hiç çalışmadı" demektir (2026-08 saha vakası).
         Set<Long> everPassed = new java.util.HashSet<>(scriptedCheckRepo.monitorIdsWithSuccess());
         List<Map<String, Object>> result = monitors.stream()
                 .map(m -> {
-                    Map<String, Object> item = enrichScripted(m, latest.get(m.getId()), teams, open.get(m.getName()));
+                    AlertEvent al = open.getOrDefault(m.getName(), slowOpen.get(m.getName()));
+                    Map<String, Object> item = enrichScripted(m, latest.get(m.getId()), teams, al);
                     // Hiç koşmamış monitör "hiç başarılı olmamış" SAYILMAZ — henüz denenmedi.
                     item.put("never_succeeded", latest.get(m.getId()) != null && !everPassed.contains(m.getId()));
                     return item;
@@ -2407,10 +2411,12 @@ public class MonitoringController {
             // değişirse açık SCRIPTED_FAIL alarmının bağı kopar (delete akışı 'resolveOpenAlertsSilently'
             // ile telafi ediyor ama rename etmiyordu). Açık alarmı yeni ada taşı.
             if (oldName != null && !oldName.equals(m.getName())) {
-                alertEventRepo.findOpenAlert(oldName, EscalationService.TYPE_SCRIPTED_FAIL).ifPresent(a -> {
-                    a.setDomain(m.getName());
-                    alertEventRepo.save(a);
-                });
+                for (String t : List.of(EscalationService.TYPE_SCRIPTED_FAIL, EscalationService.TYPE_SCRIPTED_SLOW)) {
+                    alertEventRepo.findOpenAlert(oldName, t).ifPresent(a -> {
+                        a.setDomain(m.getName());
+                        alertEventRepo.save(a);
+                    });
+                }
             }
             if (body.containsKey("groupName")) m.setGroupName(monitoringGroupService.getOrCreateFor(m, m.getTeamId(), body.get("groupName") == null ? null : body.get("groupName").toString(), actor(session)));
             if (body.containsKey("teamId"))    m.setTeamId(resolveTeamChange(session, m.getTeamId(), body.get("teamId")));
@@ -2579,7 +2585,9 @@ public class MonitoringController {
         permissionService.require(session, "monitoring.scripted", "edit");
         return scriptedMonitorRepo.findById(id).map(m -> {
             if (!SessionScope.canManage(session, m.getTeamId())) throw new SecurityException("Silme yetkisi yok (yalnız takım yöneticisi/ADMIN)");
-            escalationService.resolveOpenAlertsSilently(m.getName(), Set.of(EscalationService.TYPE_SCRIPTED_FAIL), "Sistem (izleme silindi)");
+            escalationService.resolveOpenAlertsSilently(m.getName(),
+                    Set.of(EscalationService.TYPE_SCRIPTED_FAIL, EscalationService.TYPE_SCRIPTED_SLOW),
+                    "Sistem (izleme silindi)");
             scriptedMonitorRepo.delete(m);
             // Taslaklar monitörle birlikte düşer (öksüz taslak "devam et" şeridinde hayalet üretirdi).
             // Sürüm geçmişi BİLİNÇLİ olarak silinmez: silinen bir monitörün script'i denetim değeri
@@ -2616,7 +2624,7 @@ public class MonitoringController {
             public List<Object[]> bounds() { return scriptedCheckRepo.historyBounds(id); }
         };
         return runHistory(session, mon.getTeamId(), src, "scripted",
-                mon.getName(), Set.of(EscalationService.TYPE_SCRIPTED_FAIL),
+                mon.getName(), Set.of(EscalationService.TYPE_SCRIPTED_FAIL, EscalationService.TYPE_SCRIPTED_SLOW),
                 from, to, days, status, page, size, format, "scripted-history-" + id, List.of(
                 new CsvColumn<>("checked_at", com.sitemonitor.model.ScriptedCheck::getCheckedAt),
                 new CsvColumn<>("ok", com.sitemonitor.model.ScriptedCheck::getOk),
@@ -2805,7 +2813,8 @@ public class MonitoringController {
 
     private static final String[] SCRIPTED_FIELDS = {
             "name", "description", "script", "timeoutSeconds", "intervalSeconds",
-            "confirmAttempts", "recoveryChecks", "active", "groupName", "notifyEmail" };
+            "confirmAttempts", "recoveryChecks", "active", "groupName", "notifyEmail",
+            "slowResponseEnabled", "slowThresholdMs" };
 
     /** Script gövde desen taraması → BLOCK politikasında hit varsa hata mesajı, aksi halde null (WARN sadece bilgi). */
     private String scanScriptOrError(Object script) {
@@ -2843,6 +2852,12 @@ public class MonitoringController {
         if (body.get("notifyEmail") instanceof Boolean b) m.setNotifyEmail(b);
         // Vekil tercihi: yalnız bilinen üç değer kabul edilir; tanınmayan girdi AUTO'ya düşer
         // (koşum tarafı da null'ı AUTO sayıyor — iki uçta aynı varsayılan).
+        // Yavas kosum alarmi (SCRIPTED_SLOW) — opt-in. Esik makul araliga kirpilir: 500 ms altinda
+        // her kosum yavas sayilirdi (k6 sureci baslamasi tek basina ~100-300 ms), tavan ise mutlak
+        // timeout tavani (180 sn): esik timeout'un ustundeyse alarm HIC acilamaz, sessiz olu ayar olurdu.
+        if (body.get("slowResponseEnabled") instanceof Boolean sb) m.setSlowResponseEnabled(sb);
+        if (body.get("slowThresholdMs") instanceof Number sn)
+            m.setSlowThresholdMs(Math.max(500, Math.min(180_000, sn.intValue())));
         if (body.containsKey("useProxy")) m.setUseProxy(normalizeUseProxy(body.get("useProxy")));
         if (body.containsKey("env")) m.setEnvJson(buildEnvJson(existingEnvJson, body.get("env")));
     }
@@ -3054,6 +3069,8 @@ public class MonitoringController {
         item.put("tags", m.getTags());
         item.put("notify_email", m.getNotifyEmail());
         item.put("use_proxy", m.getUseProxy() == null ? "AUTO" : m.getUseProxy());
+        item.put("slow_response_enabled", Boolean.TRUE.equals(m.getSlowResponseEnabled()));
+        item.put("slow_threshold_ms", m.getSlowThresholdMs());
         item.put("script_version", m.getScriptVersion());
         item.put("active_alarm", openAlarm != null);
         item.put("alarm_level", openAlarm != null ? openAlarm.getAlertLevel() : null);
