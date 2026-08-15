@@ -103,6 +103,11 @@ class MonitoringControllerTest {
         org.mockito.Mockito.lenient().when(scriptedChecker.validateScript(org.mockito.ArgumentMatchers.any(),
                 org.mockito.ArgumentMatchers.any()))
                 .thenReturn(new com.sitemonitor.service.ScriptedCheckerService.ScriptDiagnostics(null, java.util.List.of()));
+        // Retention mock'u stub'sız 0 döner; geçmiş VE seri uçları "from"u saklama penceresine kırptığı
+        // için 0 gün, istenen aralığı sıfıra indirip kova genişliğini bozardı. Gerçek varsayılan: 180.
+        org.mockito.Mockito.lenient().when(retentionService.historyRetentionDays(
+                        org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyInt()))
+                .thenReturn(180);
         // İzleme uçları artık domain→takım map'ini buradan alıyor; boş map yeterli (team_name=null).
         when(certificateService.domainTeamNameMap()).thenReturn(java.util.Map.of());
         // teamNameMap() artık CertificateService.teamNamesById()'e (cache'li) delege ediyor.
@@ -648,23 +653,36 @@ class MonitoringControllerTest {
         var pm = new com.sitemonitor.model.PageMonitor();     pm.setId(1L);
         var sm = new com.sitemonitor.model.ScriptedMonitor(); sm.setId(1L);
 
-        // Tür → mock hazırlığı. YENİ monitör türü eklerken buraya bir satır ekle — aşağıdaki
+        // Tür → (mock hazırlığı, URL). YENİ monitör türü eklerken buraya bir satır ekle — aşağıdaki
         // refleksiyon kilidi eklemeyi ZORLAR (2026-08 scripted çökmesi: kopyala-yapıştır ham dönüş).
-        java.util.Map<String, Runnable> specs = new java.util.LinkedHashMap<>();
-        specs.put("keyword",  () -> { when(keywordMonitorRepo.findById(1L)).thenReturn(Optional.of(kw));
-            when(keywordResultRepo.responseSeriesRaw(eq(1L), anyString(), anyString(), anyInt())).thenReturn(raw); });
-        specs.put("ping",     () -> { when(pingMonitorRepo.findById(1L)).thenReturn(Optional.of(pg));
-            when(pingCheckRepo.responseSeriesRaw(eq(1L), anyString(), anyString(), anyInt())).thenReturn(raw); });
-        specs.put("port",     () -> { when(portMonitorRepo.existsById(1L)).thenReturn(true);
-            when(portCheckRepo.responseSeriesRaw(eq(1L), anyString(), anyString(), anyInt())).thenReturn(raw); });
-        specs.put("dns",      () -> { when(dnsMonitorRepo.existsById(1L)).thenReturn(true);
-            when(dnsRecordRepo.responseSeriesRaw(eq(1L), anyString(), anyString(), anyInt())).thenReturn(raw); });
-        specs.put("http",     () -> { when(httpMonitorRepo.findById(1L)).thenReturn(Optional.of(hm));
-            when(httpCheckRepo.responseSeriesRaw(eq(1L), anyString(), anyString(), anyInt())).thenReturn(raw); });
-        specs.put("page",     () -> { when(pageMonitorRepo.findById(1L)).thenReturn(Optional.of(pm));
-            when(pageCheckRepo.responseSeriesRaw(eq(1L), anyString(), anyString(), anyInt())).thenReturn(raw); });
-        specs.put("scripted", () -> { when(scriptedMonitorRepo.findById(1L)).thenReturn(Optional.of(sm));
-            when(scriptedCheckRepo.responseSeriesRaw(eq(1L), anyString(), anyString(), anyInt())).thenReturn(raw); });
+        // URL de spec'te taşınıyor: sertifika serisi domain-anahtarlı ("/uptime/{domain}/ssl/response-series"),
+        // diğerleri id-anahtarlı → tek kalıba sığmıyor.
+        record Spec(Runnable setup, String url) {}
+        java.util.Map<String, Spec> specs = new java.util.LinkedHashMap<>();
+        specs.put("keyword",  new Spec(() -> { when(keywordMonitorRepo.findById(1L)).thenReturn(Optional.of(kw));
+            when(keywordResultRepo.responseSeriesRaw(eq(1L), anyString(), anyString(), anyInt())).thenReturn(raw); },
+            "/api/monitoring/keyword/1/response-series"));
+        specs.put("ping",     new Spec(() -> { when(pingMonitorRepo.findById(1L)).thenReturn(Optional.of(pg));
+            when(pingCheckRepo.responseSeriesRaw(eq(1L), anyString(), anyString(), anyInt())).thenReturn(raw); },
+            "/api/monitoring/ping/1/response-series"));
+        specs.put("port",     new Spec(() -> { when(portMonitorRepo.existsById(1L)).thenReturn(true);
+            when(portCheckRepo.responseSeriesRaw(eq(1L), anyString(), anyString(), anyInt())).thenReturn(raw); },
+            "/api/monitoring/port/1/response-series"));
+        specs.put("dns",      new Spec(() -> { when(dnsMonitorRepo.existsById(1L)).thenReturn(true);
+            when(dnsRecordRepo.responseSeriesRaw(eq(1L), anyString(), anyString(), anyInt())).thenReturn(raw); },
+            "/api/monitoring/dns/1/response-series"));
+        specs.put("http",     new Spec(() -> { when(httpMonitorRepo.findById(1L)).thenReturn(Optional.of(hm));
+            when(httpCheckRepo.responseSeriesRaw(eq(1L), anyString(), anyString(), anyInt())).thenReturn(raw); },
+            "/api/monitoring/http/1/response-series"));
+        specs.put("page",     new Spec(() -> { when(pageMonitorRepo.findById(1L)).thenReturn(Optional.of(pm));
+            when(pageCheckRepo.responseSeriesRaw(eq(1L), anyString(), anyString(), anyInt())).thenReturn(raw); },
+            "/api/monitoring/page/1/response-series"));
+        specs.put("scripted", new Spec(() -> { when(scriptedMonitorRepo.findById(1L)).thenReturn(Optional.of(sm));
+            when(scriptedCheckRepo.responseSeriesRaw(eq(1L), anyString(), anyString(), anyInt())).thenReturn(raw); },
+            "/api/monitoring/scripted/1/response-series"));
+        specs.put("ssl",      new Spec(() -> { when(inventoryRepo.findByDomain("a.com")).thenReturn(Optional.of(inv("a.com")));
+            when(certCheckRepo.responseSeriesRaw(eq("a.com"), anyString(), anyString(), anyInt())).thenReturn(raw); },
+            "/api/monitoring/uptime/a.com/ssl/response-series"));
 
         // KİLİT: controller'daki "/response-series" GetMapping sayısı == bu testteki tür sayısı.
         long mappedCount = java.util.Arrays.stream(MonitoringController.class.getDeclaredMethods())
@@ -678,8 +696,8 @@ class MonitoringControllerTest {
                 + "Dönüşü MUTLAKA buildResponseSeries hunisinden geçir ve specs map'ine türünü ekle.");
 
         for (var e : specs.entrySet()) {
-            e.getValue().run();
-            mvc.perform(get("/api/monitoring/" + e.getKey() + "/1/response-series?days=7").session(session("ADMIN")))
+            e.getValue().setup().run();
+            mvc.perform(get(e.getValue().url() + "?days=7").session(session("ADMIN")))
                     .andExpect(status().isOk())
                     // Zarf alanları var; series elemanı ham DİZİ değil, ts'li OBJE.
                     .andExpect(jsonPath("$.data.bucket").value("hour"))
@@ -690,6 +708,86 @@ class MonitoringControllerTest {
                     // (100+0)/2 — down satırın 0 ms süresi de ortalamaya katılır (mevcut davranış).
                     .andExpect(jsonPath("$.data.series[0].avg").value(50));
         }
+    }
+
+    // ── Sertifika yanıt süresi serisi (dashboard kartı → Grafik sekmesi) ──────────
+
+    @Test
+    @DisplayName("IDOR + DoS: /uptime/{domain}/history yabancı takımda 403; hours 90 güne kırpılır")
+    void uptimeHistory_scopedAndClamped() throws Exception {
+        CertificateInventory foreign = inv("a.com");
+        foreign.setTeamId(2L);
+        when(inventoryRepo.findByDomain("a.com")).thenReturn(Optional.of(foreign));
+        MockHttpSession scoped = session("USER");
+        scoped.setAttribute("viewTeamIds", List.of(1L));
+
+        // Eskiden imzada HttpSession bile yoktu → başka takımın geçmişi serbestçe okunuyordu.
+        mvc.perform(get("/api/monitoring/uptime/a.com/history").param("hours", "24").session(scoped))
+                .andExpect(status().isForbidden());
+
+        // hours sınırsızdı: 200000 saat → saat başına tüm listeyi tarayan döngüde 10⁹ karşılaştırma.
+        // Kırpma sonrası yanıt 90 günü (2160 çubuk) aşmamalı.
+        when(certCheckRepo.findByDomainAndDateRange(anyString(), anyString(), anyString(), anyInt()))
+                .thenReturn(List.of());
+        mvc.perform(get("/api/monitoring/uptime/a.com/history").param("hours", "200000").session(session("ADMIN")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.bars.length()").value(24 * 90));
+    }
+
+    @Test
+    @DisplayName("GET /uptime/{domain}/ssl/response-series: ms serisinin YANINDA kalan gün (days) yardımcı serisi döner")
+    void sslResponseSeries_carriesDaysAuxSeries() throws Exception {
+        when(inventoryRepo.findByDomain("a.com")).thenReturn(Optional.of(inv("a.com")));
+        // [checkedAt, responseMs, up, daysRemaining] — 4. kolon yardımcı seri.
+        when(certCheckRepo.responseSeriesRaw(eq("a.com"), anyString(), anyString(), anyInt())).thenReturn(List.of(
+                new Object[]{ "2026-08-06T10:05:00", 120L, true, 40 },
+                new Object[]{ "2026-08-06T10:25:00", 180L, true, 40 }));
+
+        mvc.perform(get("/api/monitoring/uptime/a.com/ssl/response-series?days=7").session(session("ADMIN")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.unit").value("ms"))              // ana seri süre
+                .andExpect(jsonPath("$.data.series[0].avg").value(150))      // (120+180)/2
+                .andExpect(jsonPath("$.data.series[0].days").value(40))      // yardımcı seri
+                .andExpect(jsonPath("$.data.series[0].loss").doesNotExist()); // ping'e özel alan sızmaz
+    }
+
+    @Test
+    @DisplayName("GET /uptime/{domain}/ssl/response-series: ms kolonu boşken bile kalan gün serisi döner (yeni kolon senaryosu)")
+    void sslResponseSeries_worksWithoutMsData() throws Exception {
+        when(inventoryRepo.findByDomain("a.com")).thenReturn(Optional.of(inv("a.com")));
+        // Tek elemanlı List.of(Object[]) varargs olarak açılır → tip parametresi açıkça verilir.
+        when(certCheckRepo.responseSeriesRaw(eq("a.com"), anyString(), anyString(), anyInt())).thenReturn(
+                List.<Object[]>of(new Object[]{ "2026-08-06T10:05:00", null, true, 33 }));
+
+        mvc.perform(get("/api/monitoring/uptime/a.com/ssl/response-series?days=7").session(session("ADMIN")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.series[0].avg").doesNotExist())   // ms yok → istatistik null
+                .andExpect(jsonPath("$.data.series[0].days").value(33));
+    }
+
+    @Test
+    @DisplayName("GET /uptime/{domain}/ssl/response-series: envanterde olmayan domain → 404")
+    void sslResponseSeries_unknownDomain_returns404() throws Exception {
+        when(inventoryRepo.findByDomain("yok.com")).thenReturn(Optional.empty());
+
+        mvc.perform(get("/api/monitoring/uptime/yok.com/ssl/response-series").session(session("ADMIN")))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    @DisplayName("IDOR: /uptime/{domain}/ssl/response-series başka takımın domain'inde 403 (geçmiş ucuyla aynı denetim)")
+    void sslResponseSeries_foreignTeam_returns403() throws Exception {
+        CertificateInventory foreign = inv("a.com");
+        foreign.setTeamId(2L);
+        when(inventoryRepo.findByDomain("a.com")).thenReturn(Optional.of(foreign));
+        MockHttpSession scoped = session("USER");
+        scoped.setAttribute("viewTeamIds", List.of(1L));   // yalnız takım 1'i görür
+
+        mvc.perform(get("/api/monitoring/uptime/a.com/ssl/response-series").session(scoped))
+                .andExpect(status().isForbidden());
+        // Aynı oturum geçmiş ucunda da 403 alıyor → iki uç aynı denetimi paylaşıyor.
+        mvc.perform(get("/api/monitoring/uptime/a.com/ssl-history").param("days", "1").session(scoped))
+                .andExpect(status().isForbidden());
     }
 
     @Test
@@ -1347,6 +1445,9 @@ class MonitoringControllerTest {
     void history_retentionClamp_dns() throws Exception {
         stubAllHistoryMonitors();
         stubAllHistoryRepos();
+        // Beklenen pencere AÇIKÇA stub'lanır: test eskiden stub'sız mock'un 0 döndürmesine yaslanıyordu,
+        // yani "clamp çalışıyor" iddiasını sıfır pencereyle kanıtlıyordu (her from bugüne kırpılırdı).
+        when(retentionService.historyRetentionDays(anyString(), anyInt())).thenReturn(90);
         String minFrom = java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss")
                 .withZone(java.time.ZoneOffset.UTC)
                 .format(java.time.Instant.now().minus(90, java.time.temporal.ChronoUnit.DAYS));

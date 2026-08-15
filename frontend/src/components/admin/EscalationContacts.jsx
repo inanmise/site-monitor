@@ -68,7 +68,7 @@ export default function EscalationContacts({ teams = [], systemRole, isAdmin: is
 
   async function loadUsers() {
     const res = await api.admin.getUsers()
-    if (res?.success) setUsers(res.data.filter(u => u.active))
+    if (res?.success) setUsers((res.data ?? []).filter(u => u.active))   // data null gelirse ekran cokmesin
   }
 
   function openAdd() {

@@ -1,51 +1,22 @@
 import { useState, useEffect, useRef, useMemo } from 'react'
 import { ChevronDown, Download } from 'lucide-react'
-import MDEditor from '@uiw/react-md-editor'
 import { api } from '../../api/client'
 import { InventoryDetails } from '../inventory/InventoryDetails.jsx'
+import InventoryFormModal from '../inventory/InventoryFormModal.jsx'
 import { useDialog } from '../ui/Dialog.jsx'
 import { useToast } from '../ui/Toast.jsx'
 import { useT } from '../../i18n/index.jsx'
 import { usePagination } from '../../hooks/usePagination.js'
 import PaginationBar from '../ui/PaginationBar.jsx'
 import { useUrlQuerySync, readUrlParam, readUrlInt } from '../../hooks/useUrlQuerySync.js'
-import { useTheme } from '../../i18n/theme.jsx'
 import SearchableSelect from '../ui/SearchableSelect.jsx'
 import KebabMenu from '../ui/KebabMenu.jsx'
 import DiagnosticsModal from './DiagnosticsModal.jsx'
 import { exportInventoryCsv, exportInventoryPdf } from '../../utils/exportInventory'
-import { INVENTORY_FLAGS, emptyFlags } from '../../utils/inventoryFlags.js'
 import { Spinner } from '../ui/Progress.jsx'
-
-const EMPTY = {
-  domain: '', port: 443, owner: '', description: '', active: true,
-  team_id: '', group_name: '', tier: null,
-  ...emptyFlags(),          // 13 operasyonel bayrak — tek kaynak: utils/inventoryFlags.js
-  tls_mode: '',
-  purchased_by: '',
-  change_description: '',
-  expected_fingerprint: '', expected_subject: '',
-}
-
-function YesNo({ value, onChange }) {
-  const isYes = value === true
-  return (
-    <div className="yn-group">
-      <button type="button" className={`yn-btn${isYes ? ' yn-active' : ''}`}
-        onClick={() => onChange(true)}>Evet</button>
-      <button type="button" className={`yn-btn${!isYes ? ' yn-active' : ''}`}
-        onClick={() => onChange(false)}>Hayır</button>
-    </div>
-  )
-}
-
-function SectionHeader({ label }) {
-  return <div className="form-section-header">{label}</div>
-}
 
 export default function InventoryManager({ onInventoryChange, systemRole, teams: teamsProp = [], isAdmin: isAdminProp = false, openAddSignal = false, onAddConsumed }) {
   const t = useT()
-  const { theme } = useTheme()
   const toast = useToast()
   const { showConfirm } = useDialog()
   const isAdmin = systemRole ? systemRole === 'ADMIN' : isAdminProp
@@ -53,15 +24,10 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
   const canManage = isAdmin || isTeamAdmin
   const [items, setItems]             = useState([])
   const [teams, setTeams]             = useState(teamsProp)
-  const [modal, setModal]             = useState(null)
+  const [formModal, setFormModal]     = useState(null)   // { mode: 'add'|'edit'|'duplicate', record }
   const [transferModal, setTransferModal] = useState(null)
-  const formGridRef                   = useRef(null)
-  const [showScrollHint, setShowScrollHint] = useState(false)
   const [transferTeamId, setTransferTeamId]     = useState('')
-  const [form, setForm]               = useState(EMPTY)
-  const [teamGroups, setTeamGroups]   = useState([])   // seçili takımın "cert" grupları (sızıntısız, server-scoped)
   const [saving, setSaving]           = useState(false)
-  const [msg, setMsg]                 = useState(null)
   const [statusFilter, setStatusFilter] = useState(() => readUrlParam('stat', 'default'))
   const [showItem,    setShowItem]    = useState(null)
   const [diag,        setDiag]        = useState(null)   // { domain, port } → DiagnosticsModal
@@ -114,22 +80,6 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
       setExporting(false)
     }
   }
-
-  useEffect(() => {
-    if (modal === null) { setShowScrollHint(false); return }
-    const el = formGridRef.current
-    if (!el) return
-    const check = () => {
-      const hasOverflow = el.scrollHeight > el.clientHeight + 2
-      const atBottom    = el.scrollTop + el.clientHeight >= el.scrollHeight - 6
-      setShowScrollHint(hasOverflow && !atBottom)
-    }
-    check()
-    el.addEventListener('scroll', check, { passive: true })
-    const ro = new ResizeObserver(check)
-    ro.observe(el)
-    return () => { el.removeEventListener('scroll', check); ro.disconnect() }
-  }, [modal])
 
   async function load() {
     try {
@@ -192,14 +142,6 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
   // Filtre değişince seçimi temizle (görünmeyen satırlar seçili kalmasın)
   useEffect(() => { setSelected(new Set()) }, [statusFilter])
 
-  // Form açıkken seçili takımın "cert" gruplarını sunucudan getir (başka takım sızmaz).
-  useEffect(() => {
-    if (!modal || !form.team_id) { setTeamGroups([]); return }
-    let alive = true
-    api.monitoring.listGroups(form.team_id, 'cert').then(r => { if (alive && r?.success) setTeamGroups(r.data || []) })
-    return () => { alive = false }
-  }, [modal, form.team_id])
-
   async function bulkAction(action) {
     const ids = [...selected]
     if (ids.length === 0) return
@@ -225,125 +167,14 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
     }
   }
 
-  function f(field, val) { setForm(prev => ({ ...prev, [field]: val })) }
-
-  function openAdd() {
-    setForm(EMPTY)
-    setModal('add')
-  }
+  function openAdd() { setFormModal({ mode: 'add', record: null }) }
+  function openEdit(item) { setFormModal({ mode: 'edit', record: item }) }
+  function openDuplicate(item) { setFormModal({ mode: 'duplicate', record: item }) }
 
   // Dashboard'daki "domain ekle" butonundan tetiklenince add modalını aç (bir kez; App tüketince sıfırlar).
   useEffect(() => {
     if (openAddSignal) { openAdd(); onAddConsumed?.() }
   }, [openAddSignal]) // eslint-disable-line react-hooks/exhaustive-deps
-
-  function openEdit(item) {
-    setForm({
-      ...EMPTY,
-      ...item,
-      team_id:            String(item.team_id ?? ''),
-      external_vendor:    item.external_vendor  ?? false,
-      action_required:    item.action_required  ?? false,
-      openshift:          item.openshift        ?? false,
-      ssl_pinning:        item.ssl_pinning      ?? false,
-      internal_cert:      item.internal_cert    ?? false,
-      jks_keystore:       item.jks_keystore     ?? false,
-      server_update:      item.server_update    ?? false,
-      netscaler:          item.netscaler        ?? false,
-      waf_enabled:        item.waf_enabled      ?? false,
-      in_use:             item.in_use           ?? false,
-      ev_certificate:     item.ev_certificate   ?? false,
-      transferred_to_sy:  item.transferred_to_sy ?? false,
-      use_proxy:          item.use_proxy        ?? false,
-      tls_mode:           item.tls_mode         ?? '',
-      purchased_by:       item.purchased_by     ?? '',
-      change_description: item.change_description ?? '',
-      expected_fingerprint: item.expected_fingerprint ?? '',
-      expected_subject:   item.expected_subject ?? '',
-      tier:               item.tier ?? null,
-    })
-    setModal(item)
-  }
-
-  function openTransfer(item) {
-    setTransferModal(item)
-    setTransferTeamId(String(item.team_id ?? ''))
-  }
-
-  function validate() {
-    if (!form.domain.trim()) return t('inv.formDomain') + ' zorunlu'
-    if (!form.team_id) return t('inv.teamRequired')
-    return null
-  }
-
-  async function save() {
-    const err = validate()
-    if (err) {
-      setMsg(err)
-      // Inline hata mesajı modal'ın üstünde — kullanıcı uzun form'da kaçırmasın
-      formGridRef.current?.scrollTo?.({ top: 0, behavior: 'smooth' })
-      return
-    }
-
-    // Domain rename uyarısı — geçmiş veri taşıma onay isteği
-    if (modal !== 'add' && modal?.domain && form.domain.trim() !== modal.domain) {
-      const confirmed = await showConfirm({
-        title: t('inv.renameTitle'),
-        message: t('inv.renameMessage', modal.domain, form.domain.trim()),
-        confirmText: t('inv.renameConfirm'),
-        cancelText: t('inv.cancel'),
-      })
-      if (!confirmed) return
-    }
-
-    setSaving(true)
-    setMsg(null)
-    const payload = {
-      domain:             form.domain.trim(),
-      port:               parseInt(form.port) || 443,
-      owner:              form.owner,
-      description:        form.description,
-      active:             form.active,
-      team_id:            form.team_id ? Number(form.team_id) : null,
-      group_name:         form.group_name?.trim() || null,
-      ug_team_id:         null,   // tek takım modeli — UG ayrımı kaldırıldı
-      external_vendor:    form.external_vendor,
-      action_required:    form.action_required,
-      openshift:          form.openshift,
-      ssl_pinning:        form.ssl_pinning,
-      internal_cert:      form.internal_cert,
-      jks_keystore:       form.jks_keystore,
-      server_update:      form.server_update,
-      netscaler:          form.netscaler,
-      waf_enabled:        form.waf_enabled,
-      in_use:             form.in_use,
-      ev_certificate:     form.ev_certificate,
-      transferred_to_sy:  form.transferred_to_sy,
-      use_proxy:          form.use_proxy,
-      tls_mode:           form.tls_mode || null,
-      purchased_by:       form.purchased_by || null,
-      change_description: form.change_description || null,
-      expectedFingerprint: form.expected_fingerprint || null,
-      expectedSubject:    form.expected_subject || null,
-      tier:               form.tier ? Number(form.tier) : null,
-    }
-    const res = modal === 'add'
-      ? await api.admin.addInventory(payload)
-      : await api.admin.updateInventory(modal.id, payload)
-    setSaving(false)
-    if (res?.success) {
-      setModal(null)
-      toast.success(t('inv.saved'))
-      if ((res.alertsClosed ?? 0) > 0) {
-        toast.success(t('inv.deactivatedAlerts', res.alertsClosed))
-      }
-      load()
-      onInventoryChange?.()
-    } else {
-      // Sunucu hatası → tek bildirim (toast). Inline setMsg yalnız form validation için.
-      toast.error(res?.error || t('inv.saveError'))
-    }
-  }
 
   async function del(id) {
     const item = items.find(i => i.id === id)
@@ -609,6 +440,7 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
                           { label: t('inv.show'), onClick: () => setShowItem(item) },
                           { label: t('inv.diagnose'), onClick: () => setDiag({ domain: item.domain, port: item.port || 443 }), hidden: !isAdmin },
                           { label: t('inv.edit'), onClick: () => openEdit(item), hidden: !canManage },
+                          { label: t('mon.duplicate'), onClick: () => openDuplicate(item), hidden: !canManage },
                           { label: t('inv.transfer'), onClick: () => openTransfer(item), hidden: !(isAdmin && teams.length > 1) },
                           { label: t('inv.delete'), danger: true, onClick: () => del(item.id), hidden: !canManage },
                         ]
@@ -621,147 +453,18 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
         <PaginationBar {...pager} />
       </div>
 
-      {/* ── Ana Form Modalı ── */}
-      {modal !== null && (
-        // Dış (overlay) tıklamada KAPANMAZ — girilen veri kaybolmasın; yalnız İptal/Kaydet kapatır.
-        <div className="modal-overlay">
-          <div className="modal-box modal-wide" onClick={(e) => e.stopPropagation()}>
-            <h3>{modal === 'add' ? t('inv.addTitle') : t('inv.editTitle')}</h3>
-
-            <div className="form-grid" ref={formGridRef}>
-
-              {/* ── Temel Bilgiler ── */}
-              <SectionHeader label={t('inv.sectionBasic')} />
-
-              <label className="checkbox-label full-width">
-                <input type="checkbox" checked={form.active} onChange={e => f('active', e.target.checked)} />
-                {t('inv.formActive')}
-              </label>
-
-              <label>
-                <span>{t('inv.formDomain')} <span className="req-star">*</span></span>
-                <input value={form.domain} onChange={e => f('domain', e.target.value)} placeholder={t('inv.formDomainPh')} />
-              </label>
-              <label>
-                {t('inv.formPort')}
-                <input type="number" value={form.port} onChange={e => f('port', e.target.value)} />
-              </label>
-
-              <label>
-                <span>{t('inv.formTeam')} <span className="req-star">*</span></span>
-                <SearchableSelect
-                  value={form.team_id}
-                  onChange={v => f('team_id', v)}
-                  placeholder={t('inv.selectTeam')}
-                  disabled={!canManage}
-                  searchThreshold={2}
-                  options={[
-                    { value: '', label: t('inv.selectTeam') },
-                    ...teams.map(team => ({ value: team.id, label: team.name })),
-                  ]}
-                />
-              </label>
-
-              <label>
-                {t('inv.formGroup')}
-                <SearchableSelect
-                  value={form.group_name}
-                  onChange={v => f('group_name', v)}
-                  placeholder={t('inv.noGroup')}
-                  disabled={!canManage || !form.team_id}
-                  creatable
-                  onCreate={() => {}}
-                  searchThreshold={2}
-                  options={[
-                    { value: '', label: t('inv.noGroup') },
-                    ...teamGroups.map(g => ({ value: g.name, label: g.name })),
-                  ]}
-                />
-              </label>
-
-              <label>
-                {t('inv.formTier')}
-                <SearchableSelect
-                  value={form.tier ?? ''}
-                  onChange={v => f('tier', v ? Number(v) : null)}
-                  options={[
-                    { value: '', label: t('inv.tierNone') },
-                    { value: '1', label: t('inv.tier1') },
-                    { value: '2', label: t('inv.tier2') },
-                    { value: '3', label: t('inv.tier3') },
-                    { value: '4', label: t('inv.tier4') },
-                  ]}
-                />
-              </label>
-
-              <label>
-                {t('inv.formTlsMode')}
-                <SearchableSelect
-                  value={form.tls_mode}
-                  onChange={v => f('tls_mode', v)}
-                  options={[
-                    { value: '',        label: t('inv.tlsModeInherit') },
-                    { value: 'browser', label: t('inv.tlsModeBrowser') },
-                    { value: 'default', label: t('inv.tlsModeDefault') },
-                  ]}
-                />
-              </label>
-
-              <label>
-                {t('inv.formPurchasedBy')}
-                <input value={form.purchased_by} onChange={e => f('purchased_by', e.target.value)} />
-              </label>
-
-              {/* ── Operasyonel Bilgiler ── */}
-              <SectionHeader label={t('inv.sectionOps')} />
-
-              <div className="yn-grid">
-                {INVENTORY_FLAGS.map(({ key, labelKey }) => (
-                  <div key={key} className="yn-field-row">
-                    <span className="yn-field-label">{t(labelKey)}</span>
-                    <YesNo value={form[key]} onChange={v => f(key, v)} />
-                  </div>
-                ))}
-              </div>
-
-              <label className="full-width">
-                {t('inv.formChangeDesc')}
-                <div data-color-mode={theme === 'dark' ? 'dark' : 'light'}>
-                  <MDEditor
-                    value={form.change_description}
-                    onChange={(v) => f('change_description', v ?? '')}
-                    preview="edit"
-                    height={260}
-                    visibleDragbar={false}
-                  />
-                </div>
-              </label>
-
-
-            </div>
-
-            {msg && <div className="alert-msg" style={{ marginTop: 10 }}>{msg}</div>}
-
-            {showScrollHint && (
-              <button
-                type="button"
-                className="modal-scroll-hint"
-                onClick={() => formGridRef.current?.scrollBy({ top: 200, behavior: 'smooth' })}
-              >
-                <ChevronDown size={14} />
-                <span>{t('inv.scrollForMore')}</span>
-              </button>
-            )}
-
-            <div className="modal-actions">
-              <button className="btn btn-secondary" onClick={() => setModal(null)}>{t('inv.cancel')}</button>
-              <button className="btn btn-primary" onClick={save}
-                disabled={saving || !form.domain.trim() || !form.team_id}>
-                {saving ? t('inv.saving') : t('inv.save')}
-              </button>
-            </div>
-          </div>
-        </div>
+      {/* ── Ana Form Modalı — inventory/InventoryFormModal.jsx'e çıkarıldı (dashboard kartı da aynı
+             formu açıyor). key: açıkken mod/kayıt değişirse remount olsun. ── */}
+      {formModal && (
+        <InventoryFormModal
+          key={`${formModal.mode}:${formModal.record?.id ?? 'new'}`}
+          mode={formModal.mode}
+          record={formModal.record}
+          teams={teams}
+          canManage={canManage}
+          onClose={() => setFormModal(null)}
+          onSaved={() => { setFormModal(null); load(); onInventoryChange?.() }}
+        />
       )}
 
       {/* ── Show (Read-Only Detail) Modalı ── */}

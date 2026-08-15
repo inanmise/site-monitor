@@ -104,9 +104,10 @@ export default function Nav({ activeTab, onTabChange, username, teamName, system
     },
   ]
 
-  const [open, setOpen] = useState(() =>
-    localStorage.getItem('sidebar-open') !== 'false'
-  )
+  // Depolama kapalıysa (kurumsal politika/gizli mod) çıplak erişim render'ı düşürürdü; varsayılan açık.
+  const [open, setOpen] = useState(() => {
+    try { return localStorage.getItem('sidebar-open') !== 'false' } catch { return true }
+  })
 
   const [openGroup, setOpenGroup] = useState(() => {
     try {
@@ -170,7 +171,7 @@ export default function Nav({ activeTab, onTabChange, username, teamName, system
   function toggleSidebar() {
     const next = !open
     setOpen(next)
-    localStorage.setItem('sidebar-open', String(next))
+    try { localStorage.setItem('sidebar-open', String(next)) } catch { /* depolama yok */ }
   }
 
   return (

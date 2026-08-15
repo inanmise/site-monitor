@@ -516,14 +516,21 @@ public class UserService {
         team.setDescription(description);
         team.setLeaderId(leaderId);
         team.setActive(true);
+        // Haftalık e-postalar opt-in: yeni takım İKİSİ DE KAPALI doğar, takım kendi üyeleri
+        // üzerinden açar. Entity başlatıcısı da false; niyet burada da açıkça dursun.
+        team.setWeeklyReminderEnabled(false);
+        team.setWeeklyAvailabilityEnabled(false);
         team.setCreatedAt(now);
         team.setUpdatedAt(now);
         return teamRepo.save(team);
     }
 
     @Transactional
-    public Team updateTeam(Long id, String name, String email, String description, Boolean active, Long leaderId) {
+    public Team updateTeam(Long id, String name, String email, String description, Boolean active, Long leaderId,
+                           Boolean weeklyReminderEnabled, Boolean weeklyAvailabilityEnabled) {
         Team team = teamRepo.findById(id).orElseThrow(() -> new NoSuchElementException("Team not found: " + id));
+        if (weeklyReminderEnabled != null) team.setWeeklyReminderEnabled(weeklyReminderEnabled);
+        if (weeklyAvailabilityEnabled != null) team.setWeeklyAvailabilityEnabled(weeklyAvailabilityEnabled);
         if (name != null && !name.isBlank()) team.setName(name.trim());
         if (email != null && !email.isBlank()) team.setEmail(email.trim());
         else if (team.getEmail() == null || team.getEmail().isBlank())
@@ -534,6 +541,17 @@ public class UserService {
             if (!userRepo.existsById(leaderId)) throw new IllegalArgumentException("Leader user not found: " + leaderId);
             team.setLeaderId(leaderId);
         }
+        team.setUpdatedAt(now());
+        return teamRepo.save(team);
+    }
+
+    /** DAR yol: yalnız iki haftalık e-posta anahtarını çevirir (takım üyelerine açık olan uç bunu çağırır).
+     *  Ad/e-posta/aktiflik gibi yönetici alanlarına buradan DOKUNULAMAZ; null = "bu anahtara dokunma". */
+    @Transactional
+    public Team updateTeamWeeklyNotifications(Long id, Boolean weeklyReminderEnabled, Boolean weeklyAvailabilityEnabled) {
+        Team team = teamRepo.findById(id).orElseThrow(() -> new NoSuchElementException("Team not found: " + id));
+        if (weeklyReminderEnabled != null) team.setWeeklyReminderEnabled(weeklyReminderEnabled);
+        if (weeklyAvailabilityEnabled != null) team.setWeeklyAvailabilityEnabled(weeklyAvailabilityEnabled);
         team.setUpdatedAt(now());
         return teamRepo.save(team);
     }

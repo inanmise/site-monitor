@@ -55,7 +55,8 @@ public class WeeklyAvailabilityReportService {
 
     private static final String ENABLED_KEY = "site.monitor.weekly-availability.enabled";
 
-    public record SendResult(int teams, int sent, int skippedNoDomains, int skippedNoRecipient, int skippedDone) {}
+    public record SendResult(int teams, int sent, int skippedNoDomains, int skippedNoRecipient, int skippedDone,
+                             int skippedDisabled) {}
 
     /** Geçen tam ISO hafta penceresi (Europe/Istanbul → UTC ISO sınırlar). */
     public record Window(String fromUtc, String toUtc, Instant windowEnd, int year, int week, String weekLabel) {}
@@ -92,14 +93,18 @@ public class WeeklyAvailabilityReportService {
     public SendResult sendWeeklyReports(boolean force) {
         if (!isEnabled()) {
             log.info("Haftalık erişilebilirlik raporu devre dışı (weekly-availability.enabled=false) — atlandı");
-            return new SendResult(0, 0, 0, 0, 0);
+            return new SendResult(0, 0, 0, 0, 0, 0);
         }
 
         Window w = lastFullWeekWindow();
         List<Team> teams = teamRepo.findByActiveTrueOrderByNameAsc();
-        int sent = 0, skipNoDomains = 0, skipNoRecipient = 0, skipDone = 0;
+        int sent = 0, skipNoDomains = 0, skipNoRecipient = 0, skipDone = 0, skipDisabled = 0;
 
         for (Team team : teams) {
+            // Takım başına opt-in (Takım Yönetimi'ndeki anahtar). Filtre repo sorgusuna DEĞİL buraya konur —
+            // findByActiveTrueOrderByNameAsc'i başka akışlar da kullanıyor.
+            if (!Boolean.TRUE.equals(team.getWeeklyAvailabilityEnabled())) { skipDisabled++; continue; }
+
             List<CertificateInventory> domains =
                     inventoryRepo.findByTeamIdAndActiveTrueAndDeletedAtIsNullOrderByDomainAsc(team.getId());
             if (domains.isEmpty()) { skipNoDomains++; continue; }
@@ -127,9 +132,11 @@ public class WeeklyAvailabilityReportService {
                     team.getName(), w.weekLabel(), domains.size(), Arrays.toString(report.to()), Arrays.toString(cc), status);
         }
 
-        SendResult result = new SendResult(teams.size(), sent, skipNoDomains, skipNoRecipient, skipDone);
-        log.info("Haftalık erişilebilirlik raporu tamamlandı: {} takım → gönderilen={}, domain'siz={}, alıcısız={}, zaten gönderilmiş={}",
-                result.teams(), result.sent(), result.skippedNoDomains(), result.skippedNoRecipient(), result.skippedDone());
+        SendResult result = new SendResult(teams.size(), sent, skipNoDomains, skipNoRecipient, skipDone, skipDisabled);
+        log.info("Haftalık erişilebilirlik raporu tamamlandı: {} takım → gönderilen={}, domain'siz={}, alıcısız={}, "
+                + "zaten gönderilmiş={}, rapor kapalı={}",
+                result.teams(), result.sent(), result.skippedNoDomains(), result.skippedNoRecipient(),
+                result.skippedDone(), result.skippedDisabled());
         return result;
     }
 
@@ -320,6 +327,8 @@ public class WeeklyAvailabilityReportService {
         Window w = lastFullWeekWindow();
         List<TeamStatus> teamStatuses = new ArrayList<>();
         for (Team team : teamRepo.findByActiveTrueOrderByNameAsc()) {
+            // Kart "gerçek mail kitlesi"ni gösterir: takım anahtarı kapalıysa o takıma mail gitmiyor.
+            if (!Boolean.TRUE.equals(team.getWeeklyAvailabilityEnabled())) continue;
             List<CertificateInventory> domains =
                     inventoryRepo.findByTeamIdAndActiveTrueAndDeletedAtIsNullOrderByDomainAsc(team.getId());
             if (domains.isEmpty()) continue; // gerçek mail kitlesi

@@ -78,3 +78,62 @@ describe('CertificateCard', () => {
     expect(screen.queryByText('Dijital SY')).toBeNull()
   })
 })
+
+/**
+ * Kart aksiyonları (Çalıştır / Düzenle / Kopyala) — diğer izleme türlerindeki kanonik üçlü.
+ * Butonlar handler VARLIĞINA bağlı: Bitiş Tahmini ekranı yalnız cert+onClick geçtiği için
+ * orada görünmemeleri gerekiyor.
+ */
+describe('CertificateCard — aksiyon butonları', () => {
+  const actionBtns = () => [...document.querySelectorAll('.cc-footer-actions button')]
+
+  it('handler geçilmezse hiçbir aksiyon butonu render EDİLMEZ (ExpiryForecastPage sözleşmesi)', () => {
+    render(<CertificateCard cert={makeCert()} onClick={() => {}} />)
+    expect(actionBtns()).toHaveLength(0)
+    expect(document.querySelector('.cc-footer')).toBeNull()   // footer da açılmaz
+  })
+
+  it('üç handler geçilince üç buton çıkar ve her biri KENDİ handler\'ını çağırır', () => {
+    const onCheckNow = vi.fn(), onEdit = vi.fn(), onDuplicate = vi.fn(), onClick = vi.fn()
+    render(<CertificateCard cert={makeCert()} onClick={onClick}
+      onCheckNow={onCheckNow} onEdit={onEdit} onDuplicate={onDuplicate} />)
+
+    const [run, edit, dup] = actionBtns()
+    expect(actionBtns()).toHaveLength(3)
+    fireEvent.click(run);  expect(onCheckNow).toHaveBeenCalledTimes(1)
+    fireEvent.click(edit); expect(onEdit).toHaveBeenCalledTimes(1)
+    fireEvent.click(dup);  expect(onDuplicate).toHaveBeenCalledTimes(1)
+    // Kart detayı AÇILMAMALI — grup stopPropagation yapıyor.
+    expect(onClick).not.toHaveBeenCalled()
+  })
+
+  it('checking=true iken Çalıştır devre dışı, diğerleri değil', () => {
+    render(<CertificateCard cert={makeCert()} onClick={() => {}} checking
+      onCheckNow={() => {}} onEdit={() => {}} onDuplicate={() => {}} />)
+    const [run, edit, dup] = actionBtns()
+    expect(run.disabled).toBe(true)
+    expect(edit.disabled).toBe(false)
+    expect(dup.disabled).toBe(false)
+  })
+
+  it('kartta Enter detayı açar; BUTON üzerinde Enter açmaz (çift eylem guard\'ı)', () => {
+    const onClick = vi.fn(), onEdit = vi.fn()
+    render(<CertificateCard cert={makeCert()} onClick={onClick} onEdit={onEdit} />)
+
+    const card = document.querySelector('.cc-card')
+    expect(card.getAttribute('role')).toBe('button')
+    expect(card.getAttribute('tabindex')).toBe('0')
+    fireEvent.keyDown(card, { key: 'Enter' })
+    expect(onClick).toHaveBeenCalledWith('test.example.com')
+
+    onClick.mockClear()
+    fireEvent.keyDown(actionBtns()[0], { key: 'Enter' })
+    expect(onClick).not.toHaveBeenCalled()
+  })
+
+  it('yalnız çipler varken ikisi de render edilir (space-between yerleşim bekçisi)', () => {
+    render(<CertificateCard cert={makeCert()} onClick={() => {}} hasSilentAlert hasMailFailure />)
+    expect(document.querySelectorAll('.cc-footer-chips .cc-chip')).toHaveLength(2)
+    expect(actionBtns()).toHaveLength(0)
+  })
+})

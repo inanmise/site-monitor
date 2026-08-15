@@ -222,6 +222,37 @@ class WeeklyAvailabilityReportServiceTest {
     }
 
     @Test
+    @DisplayName("Takım anahtarı KAPALI/NULL → o takıma erişilebilirlik raporu gitmez (domain'i olsa bile)")
+    void send_teamWithAvailabilityDisabled_isSkipped() {
+        Team off = team(5L, "Kapali", "kapali@x.com", false);
+        Team nulls = team(6L, "Null", "null@x.com", true);
+        nulls.setWeeklyAvailabilityEnabled(null);           // kolon yeni eklendi, dokunulmamış satır
+        when(teamRepo.findByActiveTrueOrderByNameAsc()).thenReturn(List.of(off, nulls));
+
+        var result = service.sendWeeklyReports(false);
+
+        verify(emailService, never()).sendHtml(any(), any(), any(), any(), any());
+        assertThat(result.sent()).isZero();
+        assertThat(result.skippedDisabled()).isEqualTo(2);
+        // Kapalı takım için domain sorgusu bile çalışmamalı.
+        verify(inventoryRepo, never()).findByTeamIdAndActiveTrueAndDeletedAtIsNullOrderByDomainAsc(anyLong());
+    }
+
+    @Test
+    @DisplayName("İki anahtar BAĞIMSIZ: hatırlatma kapalı olsa da erişilebilirlik raporu gider")
+    void send_switchesAreIndependent() {
+        Team t = team(5L, "Dijital", "dijital@x.com");
+        t.setWeeklyReminderEnabled(false);                  // Cuma hatırlatması kapalı
+        t.setWeeklyAvailabilityEnabled(true);               // Pazartesi raporu açık
+        when(teamRepo.findByActiveTrueOrderByNameAsc()).thenReturn(List.of(t));
+        when(inventoryRepo.findByTeamIdAndActiveTrueAndDeletedAtIsNullOrderByDomainAsc(5L)).thenReturn(List.of(inv("a.com")));
+        when(uptimeCheckRepo.findByDomainAndPortAndCheckedAtBetweenOrderByCheckedAtAsc(anyString(), anyInt(), any(), any()))
+                .thenReturn(List.of(uc("up", 120L, "2026-06-15T00:00:00")));
+
+        assertThat(service.sendWeeklyReports(false).sent()).isEqualTo(1);
+    }
+
+    @Test
     @DisplayName("send: devre dışıysa hiç gönderilmez")
     void send_disabled() {
         when(appSettings.getBoolean(eq("site.monitor.weekly-availability.enabled"), anyBoolean())).thenReturn(false);
@@ -533,8 +564,13 @@ class WeeklyAvailabilityReportServiceTest {
         return n;
     }
 
+    /** Varsayılan fabrika: erişilebilirlik raporu anahtarı AÇIK — "kapalıysa gönderilmez" ayrı testte. */
     private Team team(Long id, String name, String email) {
-        Team t = new Team(); t.setId(id); t.setName(name); t.setEmail(email); t.setActive(true); return t;
+        return team(id, name, email, true);
+    }
+    private Team team(Long id, String name, String email, boolean availabilityEnabled) {
+        Team t = new Team(); t.setId(id); t.setName(name); t.setEmail(email); t.setActive(true);
+        t.setWeeklyAvailabilityEnabled(availabilityEnabled); return t;
     }
     private CertificateInventory inv(String domain) {
         CertificateInventory c = new CertificateInventory(); c.setDomain(domain); c.setPort(443); c.setTeamId(5L); return c;

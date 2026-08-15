@@ -248,6 +248,9 @@ public class SchedulerService {
     private final AtomicInteger lastRunTotal      = new AtomicInteger(0);
     private final AtomicInteger lastRunWarnings   = new AtomicInteger(0);
     private final AtomicInteger lastRunErrors     = new AtomicInteger(0);
+    /** Son sweep BAŞARISIZ bittiyse özet (aksi halde null). Sağlık ekranında görünür ki tur
+     *  sessizce yanmasın — eskiden istisna yalnız Spring'in generic log satırına düşüyordu. */
+    private final AtomicReference<String> lastRunFailure = new AtomicReference<>(null);
 
     // Network bulk-failure state (in-memory; resets on restart)
     private final AtomicBoolean   networkOutageActive       = new AtomicBoolean(false);
@@ -352,6 +355,9 @@ public class SchedulerService {
         patch("ALTER TABLE certificate_checks ADD COLUMN run_id TEXT");
         patch("ALTER TABLE uptime_checks ADD COLUMN maintenance BOOLEAN DEFAULT false");
         patch("ALTER TABLE certificate_checks ADD COLUMN maintenance BOOLEAN DEFAULT false");
+        // Sertifika kontrol süresi (elapsed_ms) — ölçülüyordu ama saklanmıyordu; yanıt süresi grafiği
+        // bu kolonla besleniyor. Geriye dönük veri üretilemez, mevcut satırlar NULL kalır (istatistiğe girmez).
+        patch("ALTER TABLE certificate_checks ADD COLUMN response_ms INTEGER");
         patch("ALTER TABLE alert_events ADD COLUMN resolved_by TEXT");
         // Alarm fırtınası (alert storm) bağı + per-group scoping (ddl-auto zaten ekler — güvenlik ağı).
         patch("ALTER TABLE alert_events ADD COLUMN storm_id BIGINT");
@@ -410,6 +416,15 @@ public class SchedulerService {
         // Taslak kullanıcı+monitör başına TEK satır. monitor_id yerine metin anahtar kullanılıyor:
         // PostgreSQL unique index'te NULL'ları birbirinden farklı sayar, "yeni monitör" taslakları çoğalırdı.
         patch("CREATE UNIQUE INDEX IF NOT EXISTS ux_scripted_draft_owner_key ON scripted_drafts(owner, monitor_key)");
+        // Takım başına haftalık e-posta anahtarları (Cuma hatırlatması + Pazartesi erişilebilirlik raporu).
+        // YENİ takım kapalı doğar (entity başlatıcısı false), ama MEVCUT takımlar TRUE'ya çekilir: kolon
+        // eklendiğinde satırlar NULL kalır ve NULL'ı "kapalı" saymak bugün e-posta alan tüm takımları
+        // yayınla birlikte sessizce susturur. Bu iki UPDATE yalnız NULL'a dokunur; kullanıcı anahtarı
+        // kapattığında değer FALSE olur (NULL değil), o yüzden her açılışta koşması güvenlidir.
+        patch("ALTER TABLE teams ADD COLUMN weekly_reminder_enabled BOOLEAN");
+        patch("ALTER TABLE teams ADD COLUMN weekly_availability_enabled BOOLEAN");
+        patch("UPDATE teams SET weekly_reminder_enabled = TRUE WHERE weekly_reminder_enabled IS NULL");
+        patch("UPDATE teams SET weekly_availability_enabled = TRUE WHERE weekly_availability_enabled IS NULL");
         // Haftalık raporlar — tablolar ddl-auto=update ile oluşur; unique index güvenlik ağı
         patch("CREATE UNIQUE INDEX IF NOT EXISTS ux_weekly_report_team_week ON weekly_reports(team_id, report_year, week_no)");
         // Eş zamanlı düzenleme: sürüm sayacı + yumuşak düzenleme kilidi alanları
@@ -1143,34 +1158,56 @@ public class SchedulerService {
 
     /** Denetim kayıtlarını silmeden ÖNCE tarihli JSONL arşive yazar (append-only + arşiv gerekliliği).
      *  archive-enabled kapalıysa/hata olursa 0 döner (silme yine de yapılır; en kötü ihtimalle arşivsiz). */
+    /** Arşiv okuma sayfası. Tüm tabloyu tek List'e almak yerine keyset ile ilerlenir (aşağıya bakın). */
+    static final int AUDIT_ARCHIVE_BATCH = 5_000;
+
     private int archiveAuditBeforePurge(String cutoff) {
         try {
             if (!appSettings.getBoolean("site.monitor.audit.archive-enabled", true)) return 0;
-            List<java.util.Map<String, Object>> rows =
-                    jdbcTemplate.queryForList("SELECT * FROM audit_log WHERE event_time < ? ORDER BY seq ASC", cutoff);
-            if (rows.isEmpty()) return 0;
             String dir = appSettings.getString("site.monitor.audit.archive-dir", "logs/audit-archive");
             java.nio.file.Path p = java.nio.file.Path.of(dir, "audit-" + cutoff.substring(0, 10) + ".jsonl");
             if (p.getParent() != null) java.nio.file.Files.createDirectories(p.getParent());
-            StringBuilder sb = new StringBuilder();
-            for (java.util.Map<String, Object> r : rows) {
-                sb.append('{');
-                boolean first = true;
-                for (var e : r.entrySet()) {
-                    if (!first) sb.append(',');
-                    first = false;
-                    sb.append('"').append(e.getKey()).append("\":");
-                    Object v = e.getValue();
-                    if (v == null) sb.append("null");
-                    else if (v instanceof Number || v instanceof Boolean) sb.append(v);
-                    else sb.append('"').append(v.toString().replace("\\", "\\\\").replace("\"", "\\\"")
-                            .replace("\n", " ").replace("\r", " ")).append('"');
+
+            // KEYSET SAYFALAMA + akan yazım. Eskiden "SELECT *" LIMIT'siz tek List'e alınıyor, sonra
+            // TAMAMI tek StringBuilder + tek String'e kopyalanıyordu (bellekte ~3 kat). Retention ilk kez
+            // devreye girdiğinde veya legal-hold kalktığında bu milyonlarca satır olabilir → gece 03:30'da
+            // OOM → pod restart (üstelik catch(Exception) OutOfMemoryError'ı YAKALAMAZ). Silme tarafı
+            // zaten batch'liydi; ön adım da artık öyle.
+            long lastSeq = Long.MIN_VALUE;
+            int total = 0;
+            try (java.io.BufferedWriter w = java.nio.file.Files.newBufferedWriter(p,
+                    java.nio.charset.StandardCharsets.UTF_8,
+                    java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.APPEND)) {
+                while (true) {
+                    List<java.util.Map<String, Object>> rows = jdbcTemplate.queryForList(
+                            "SELECT * FROM audit_log WHERE event_time < ? AND seq > ? ORDER BY seq ASC LIMIT " + AUDIT_ARCHIVE_BATCH,
+                            cutoff, lastSeq);
+                    if (rows.isEmpty()) break;
+                    for (java.util.Map<String, Object> r : rows) {
+                        StringBuilder sb = new StringBuilder(256);
+                        sb.append('{');
+                        boolean first = true;
+                        for (var e : r.entrySet()) {
+                            if (!first) sb.append(',');
+                            first = false;
+                            sb.append('"').append(e.getKey()).append("\":");
+                            Object v = e.getValue();
+                            if (v == null) sb.append("null");
+                            else if (v instanceof Number || v instanceof Boolean) sb.append(v);
+                            else sb.append('"').append(v.toString().replace("\\", "\\\\").replace("\"", "\\\"")
+                                    .replace("\n", " ").replace("\r", " ")).append('"');
+                        }
+                        sb.append('}');
+                        w.write(sb.toString());
+                        w.newLine();
+                        Object seq = r.get("seq");
+                        if (seq instanceof Number n) lastSeq = n.longValue();
+                    }
+                    total += rows.size();
+                    if (rows.size() < AUDIT_ARCHIVE_BATCH) break;
                 }
-                sb.append("}").append(System.lineSeparator());
             }
-            java.nio.file.Files.writeString(p, sb.toString(), java.nio.charset.StandardCharsets.UTF_8,
-                    java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.APPEND);
-            return rows.size();
+            return total;
         } catch (Exception e) {
             log.warn("Audit arşivleme başarısız (silme yine yapılacak): {}", e.getMessage());
             return 0;
@@ -1405,6 +1442,7 @@ public class SchedulerService {
             lastRun.set(LocalDateTime.now(ZoneOffset.UTC));
             lastRunDurationMs.set(System.currentTimeMillis() - startMs);
             lastRunTotal.set(results.size());
+            lastRunFailure.set(null);   // temiz tur: önceki hata kaydı düşer
             lastRunErrors.set((int) errors);
             lastRunWarnings.set((int) warnings);
 
@@ -1448,6 +1486,15 @@ public class SchedulerService {
                 }
             }
 
+        } catch (Exception e) {
+            // Eskiden yalnız finally vardı: join()/saveResult/processResults'tan çıkan beklenmedik bir
+            // RuntimeException (ör. eşik alanında unboxing NPE'si) turu sessizce yakıyordu — sonuçlar
+            // kaydedilmiyor, alarm işleme atlanıyor, lastRun güncellenmiyordu ve tek iz Spring'in generic
+            // "Unexpected error occurred in scheduled task" satırıydı. Artık hata sahiplenilip sayılıyor;
+            // scan_alarm de bu sayaç üzerinden anlamlı kalıyor.
+            lastRunFailure.set(ISO.format(Instant.now()) + " — " + e.getClass().getSimpleName() + ": " + e.getMessage());
+            log.error("Sertifika sweep'i BAŞARISIZ (runId={}): sonuçlar kaydedilemedi/alarm işlenemedi — {}",
+                    runId, e.toString(), e);
         } finally {
             running.set(false);
             lastRunId.set(currentRunId.get());
@@ -1619,6 +1666,7 @@ public class SchedulerService {
         scanMap.put("total",       lastRunTotal.get());
         scanMap.put("warnings",    lastRunWarnings.get());
         scanMap.put("errors",      lastRunErrors.get());
+        scanMap.put("last_failure", lastRunFailure.get());   // null = son tur temiz bitti
         h.put("scan",       scanMap);
         h.put("scan_alarm", scanAlarm);
 

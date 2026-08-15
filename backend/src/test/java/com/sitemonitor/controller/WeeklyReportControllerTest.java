@@ -361,7 +361,7 @@ class WeeklyReportControllerTest {
     @DisplayName("POST /reminders/trigger: ADMIN 200 — servisi çağırır, sayaçları döner")
     void triggerReminders_adminRunsAndReturnsCounts() throws Exception {
         when(reminderService.sendFridayReminders())
-                .thenReturn(new com.sitemonitor.service.WeeklyReportReminderService.ReminderResult(3, 2, 1, 0));
+                .thenReturn(new com.sitemonitor.service.WeeklyReportReminderService.ReminderResult(3, 2, 1, 0, 0));
 
         mvc.perform(post("/api/weekly-reports/reminders/trigger").session(adminSession()))
                 .andExpect(status().isOk())

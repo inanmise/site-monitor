@@ -9,6 +9,7 @@ import DensityStrip from './DensityStrip.jsx'
 import useCheckHistory from './useCheckHistory.js'
 import useUrlQuerySync from '../../hooks/useUrlQuerySync.js'
 import { LoadingBlock } from '../ui/Progress.jsx'
+import AlertBanner from '../ui/AlertBanner.jsx'
 
 /**
  * Kontrol Geçmişi v2 — TÜM izleme türlerinin paylaşılan geçmiş sekmesi.
@@ -196,8 +197,16 @@ export default function CheckHistoryTab({
         }}
         onReset={() => h.setPreset(defaultPreset)} />
 
+      {/* HATA DALI: useCheckHistory `error` state'ini üretiyordu ama burada HİÇ okunmuyordu →
+          500/403/timeout'ta kullanıcı "Kayıt yok" görüyor ve monitörün hiç kontrol edilmediğini
+          sanıyordu. Gerçek arıza, veri yokluğu gibi görünüyordu (9 izleme türünü birden etkiler). */}
       {h.loading && h.items.length === 0 ? (
         <LoadingBlock label={t('modal.loading')} className="upt-modal-loading" />
+      ) : h.error && h.items.length === 0 ? (
+        <AlertBanner tone="danger" title={t('hist.loadError')} role="alert"
+          actions={<button className="btn btn-sm btn-secondary" onClick={h.reload}>{t('hist.retry')}</button>}>
+          {String(h.error)}
+        </AlertBanner>
       ) : h.items.length === 0 ? (
         <LoadingBlock label={t('hist.noData')} className="upt-modal-loading" />
       ) : (

@@ -134,4 +134,118 @@ class MaintenanceControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.all").value(false));
     }
+
+    // ── Takım kapsamı (IDOR) ────────────────────────────────────────────────────
+    // Bakım pencereleri ALARM BASTIRIR. Eskiden yazma yolları yalnız izin anahtarına bakıyordu ve
+    // kaydı id ile yüklüyordu → A takımının yöneticisi B takımının penceresini düzenleyip silebiliyordu.
+
+    /** Takım 5'i YÖNETEN takım yöneticisi (global admin değil). */
+    private MockHttpSession teamAdminSession() {
+        MockHttpSession s = new MockHttpSession();
+        s.setAttribute("authenticated", Boolean.TRUE);
+        s.setAttribute("username", "po");
+        s.setAttribute("systemRole", "TEAM_ADMIN");
+        s.setAttribute("viewTeamIds", new java.util.ArrayList<>(List.of(5L)));
+        s.setAttribute("manageTeamIds", new java.util.ArrayList<>(List.of(5L)));
+        return s;
+    }
+
+    private static MaintenanceWindow winOfTeam(Long teamId) {
+        MaintenanceWindow w = win();
+        w.setTeamId(teamId);
+        return w;
+    }
+
+    @Test
+    @DisplayName("IDOR: PUT başka takımın penceresinde 403 — kayıt DEĞİŞMEZ")
+    void update_otherTeamWindow_returns403() throws Exception {
+        when(repo.findById(1L)).thenReturn(Optional.of(winOfTeam(9L)));   // yabancı takım
+
+        mvc.perform(put("/api/monitoring/maintenance/1").session(teamAdminSession())
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"Ele geçirildi\",\"startAt\":\"2026-01-01T10:00:00\"}"))
+                .andExpect(status().isForbidden());
+
+        verify(repo, never()).save(any());
+        verify(maintenanceService, never()).refresh();
+    }
+
+    @Test
+    @DisplayName("IDOR: DELETE başka takımın penceresinde 403 — silinmez")
+    void delete_otherTeamWindow_returns403() throws Exception {
+        when(repo.findById(1L)).thenReturn(Optional.of(winOfTeam(9L)));
+
+        mvc.perform(delete("/api/monitoring/maintenance/1").session(teamAdminSession()))
+                .andExpect(status().isForbidden());
+
+        verify(repo, never()).deleteById(anyLong());
+    }
+
+    @Test
+    @DisplayName("IDOR: pause/resume başka takımın penceresinde 403 — alarm bastırması değiştirilemez")
+    void toggle_otherTeamWindow_returns403() throws Exception {
+        when(repo.findById(1L)).thenReturn(Optional.of(winOfTeam(9L)));
+
+        mvc.perform(post("/api/monitoring/maintenance/1/pause").session(teamAdminSession()))
+                .andExpect(status().isForbidden());
+        mvc.perform(post("/api/monitoring/maintenance/1/resume").session(teamAdminSession()))
+                .andExpect(status().isForbidden());
+
+        verify(repo, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("Takım yöneticisi KENDİ takımının penceresini düzenleyebilir (200)")
+    void update_ownTeamWindow_returns200() throws Exception {
+        when(repo.findById(1L)).thenReturn(Optional.of(winOfTeam(5L)));   // kendi takımı
+        when(repo.save(any())).thenAnswer(i -> i.getArgument(0));
+
+        mvc.perform(put("/api/monitoring/maintenance/1").session(teamAdminSession())
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"DB bakımı v2\",\"startAt\":\"2026-01-01T10:00:00\",\"durationMinutes\":60}"))
+                .andExpect(status().isOk());
+
+        verify(repo).save(any());
+        verify(maintenanceService).refresh();
+    }
+
+    @Test
+    @DisplayName("Global admin her takımın penceresini yönetebilir (200)")
+    void update_asGlobalAdmin_anyTeam_returns200() throws Exception {
+        when(repo.findById(1L)).thenReturn(Optional.of(winOfTeam(9L)));
+        when(repo.save(any())).thenAnswer(i -> i.getArgument(0));
+
+        mvc.perform(put("/api/monitoring/maintenance/1").session(session())   // session() = global ADMIN
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"DB bakımı v2\",\"startAt\":\"2026-01-01T10:00:00\",\"durationMinutes\":60}"))
+                .andExpect(status().isOk());
+    }
+
+    @Test
+    @DisplayName("GET /maintenance: başka takımın penceresi listede YOK; herkesi etkileyen (allMonitors) GÖRÜNÜR")
+    void list_scopedToViewableTeams_butGlobalWindowsVisible() throws Exception {
+        MaintenanceWindow mine = winOfTeam(5L);   mine.setId(1L);   mine.setName("Kendi takımım");
+        MaintenanceWindow other = winOfTeam(9L);  other.setId(2L);  other.setName("Baska takim");
+        MaintenanceWindow global = winOfTeam(9L); global.setId(3L); global.setName("Tum izlemeler");
+        global.setAllMonitors(true);   // senin izlemelerini de bastırıyor → gizlenmemeli
+        when(repo.findAllByOrderByStartAtDesc()).thenReturn(List.of(mine, other, global));
+        when(maintenanceService.computeStatus(any(), any())).thenReturn("upcoming");
+
+        mvc.perform(get("/api/monitoring/maintenance").session(teamAdminSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.length()").value(2))
+                .andExpect(jsonPath("$.data[0].name").value("Kendi takımım"))
+                .andExpect(jsonPath("$.data[1].name").value("Tum izlemeler"));
+    }
+
+    @Test
+    @DisplayName("Takımsız (legacy) pencere yalnız global admin'e açık — sahipsizi kimse devralmasın")
+    void update_teamlessWindow_teamAdmin_returns403() throws Exception {
+        when(repo.findById(1L)).thenReturn(Optional.of(winOfTeam(null)));
+
+        mvc.perform(put("/api/monitoring/maintenance/1").session(teamAdminSession())
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"x\",\"startAt\":\"2026-01-01T10:00:00\"}"))
+                .andExpect(status().isForbidden());
+    }
 }

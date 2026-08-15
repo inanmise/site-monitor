@@ -1265,6 +1265,8 @@ public class AdminController {
             @RequestBody Map<String, Object> body, HttpSession session, HttpServletRequest request) {
         requireAdmin(session);
         requirePerm(session, "teams.lifecycle", "execute");
+        // Haftalık e-posta anahtarları burada OKUNMAZ: yeni takım her zaman ikisi de kapalı doğar
+        // (createTeam açıkça false yazar), açma işi takımın kendi üyelerinde.
         Team team = userService.createTeam(
                 (String) body.get("name"),
                 (String) body.get("email"),
@@ -1286,9 +1288,49 @@ public class AdminController {
                 (String) body.get("email"),
                 (String) body.get("description"),
                 body.get("active") instanceof Boolean ? (Boolean) body.get("active") : null,
-                toLong(body.get("leader_id")));
+                toLong(body.get("leader_id")),
+                bool(body.get("weekly_reminder_enabled")),
+                bool(body.get("weekly_availability_enabled")));
         auditService.recordAction("TEAM_UPDATE", session, "TEAM", id.toString(), team.getName(), AuditDiff.diff(null, body));
         return ok(Map.of("data", team));
+    }
+
+    /**
+     * Haftalık e-posta anahtarları — TAKIM ÜYELERİNE açık DAR uç. Takımın kendi üyeleri (yalnız kendi
+     * takımları için) Cuma hatırlatmasını ve Pazartesi erişilebilirlik raporunu açıp kapatabilir.
+     * Neden ayrı uç: {@code teams.update} izni ad/e-posta/aktiflik alanlarını da açar — sıradan üyeye
+     * verilemez. Burada gövdeden BAŞKA hiçbir alan okunmaz.
+     * Üyelik oturumdaki {@code viewTeamIds}'ten DEĞİL, kullanıcının gerçek üyeliklerinden (app_users)
+     * doğrulanır: global görüntüleyici/AUDIT tüm takımları görür ama üyesi değildir.
+     */
+    @PutMapping("/teams/{id}/weekly-notifications")
+    public ResponseEntity<Map<String, Object>> updateTeamWeeklyNotifications(
+            @PathVariable Long id, @RequestBody Map<String, Object> body, HttpSession session) {
+        requirePerm(session, "teams.weekly_notifications", "edit");
+        if (!isAdmin(session) && !isTeamMember(session, id))
+            throw new SecurityException("Bu takımın haftalık e-posta ayarlarını değiştiremezsiniz");
+        Team team = userService.updateTeamWeeklyNotifications(id,
+                bool(body.get("weekly_reminder_enabled")),
+                bool(body.get("weekly_availability_enabled")));
+        auditService.recordAction("TEAM_WEEKLY_NOTIFICATIONS", session, "TEAM", id.toString(), team.getName(),
+                AuditDiff.diff(null, body));
+        return ok(Map.of("data", team));
+    }
+
+    /** Gövdeden boolean okuma — Boolean değilse null ("bu alana dokunma"). */
+    private static Boolean bool(Object raw) {
+        return raw instanceof Boolean b ? b : null;
+    }
+
+    /** Oturumdaki kullanıcı bu takımın GERÇEK üyesi mi (birincil takım veya çoklu üyelik)? */
+    private boolean isTeamMember(HttpSession session, Long teamId) {
+        Object raw = session.getAttribute("userId");
+        Long userId = raw instanceof Number n ? n.longValue() : null;
+        if (userId == null || teamId == null) return false;
+        return userRepo.findById(userId)
+                .map(u -> teamId.equals(u.getTeamId())
+                        || (u.getTeamIds() != null && u.getTeamIds().contains(teamId)))
+                .orElse(false);
     }
 
     /** A user's AD photo (JPEG) for avatars; 404 when none. Visible to admins/team-admins. */

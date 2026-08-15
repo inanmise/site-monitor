@@ -80,7 +80,9 @@ public class ActivityLogService {
         String errorClass = str(r.get("error_class"));
         a.setErrorMessage(trim(error, 1000));
         a.setErrorClass(trim(errorClass, 40));
-        Long ms = asLong(firstNonNull(r.get("response_ms"), r.get("rtt_ms")));
+        // elapsed_ms: sertifika checker'ının süre anahtarı. Listede olmadığı için CERT satırlarında
+        // response_ms HEP NULL kalıyordu (süre ölçülüp atılıyordu) — tek satırlık isim uyuşmazlığı.
+        Long ms = asLong(firstNonNull(r.get("response_ms"), r.get("rtt_ms"), r.get("elapsed_ms")));
         a.setResponseMs(ms);
 
         switch (type) {
@@ -175,7 +177,10 @@ public class ActivityLogService {
         return errorClass != null && errorClass.toUpperCase().contains("TIMEOUT") ? "TIMEOUT" : "ERROR";
     }
 
-    private static Object firstNonNull(Object a, Object b) { return a != null ? a : b; }
+    private static Object firstNonNull(Object... values) {
+        for (Object v : values) if (v != null) return v;
+        return null;
+    }
     private static boolean truthy(Object o) { return Boolean.TRUE.equals(o) || "true".equalsIgnoreCase(String.valueOf(o)); }
     private static String safe(String s) { return s != null ? s : ""; }
 

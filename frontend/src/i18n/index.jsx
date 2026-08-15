@@ -1038,6 +1038,8 @@ export const TR = {
   'hist.alertTriggered': 'Alarm tetiklendi',
   'hist.alertResolved':  'Alarm çözüldü',
   'hist.noData':         'Seçili aralıkta kayıt yok',
+  'hist.loadError':      'Kontrol geçmişi yüklenemedi',
+  'hist.retry':          'Yeniden dene',
   // Ardışık aynı sonuç gruplaması — sayı SAYFA İÇİDİR, toplam değil (metin bunu söylemeli).
   'hist.groupExpand':    'bu sayfada aynı sonuç — hepsini göster',
   'hist.groupCollapse':  'tekrarları gizle',
@@ -1275,6 +1277,9 @@ export const TR = {
   'card.expiredAgo': 'gün önce süresi doldu',
   'card.silentAlert': 'Alarm oluştu — bildirim gönderilemedi',
   'card.mailFailure': 'Mail gönderim sorunu',
+  'card.openDetailFor': '{0} — sertifika detayını aç',
+  'card.checkOk':       '{0} kontrol edildi',
+  'card.checkFailed':   '{0} kontrol edilemedi: {1}',
   'card.mailFailureTooltip': 'Bu sertifika için son 3 mail denemesi başarısız oldu — Detaylar için tıklayın',
 
   'tbl.domainSearch':  'Domain Ara:',
@@ -1315,6 +1320,7 @@ export const TR = {
 
   'modal.detailsTab':  'Sertifika Detayları',
   'modal.alertsTab':   'Alarm Geçmişi',
+  'modal.chartTab':    'Sertifika Grafiği',
   'modal.loading':     'Yükleniyor...',
   'modal.domain':      'Alan Adı',
   'modal.status':      'Durum',
@@ -1738,6 +1744,7 @@ export const TR = {
   'inv.noGroup':       '— Grup Yok —',
   'mon.teamRequired':  'Takım seçimi zorunludur; izleme kaydedilemez.',
   'mon.duplicate':      'Kopyala',
+  'mon.loadError':      'İzleme listesi yüklenemedi',
   'mon.duplicateBadge': 'Kopya',
   'mon.duplicateHint':  'Kaynak izlemenin birebir kopyası. Genelde sadece URL/host alanını değiştirip kaydetmeniz yeterli.',
   'inv.deleteTitle':  'Domain Sil',
@@ -1862,6 +1869,7 @@ export const TR = {
   'perm.res.contacts.crud':        'Eskalasyon kişisi ekleme, düzenleme, silme.',
   'perm.res.teams.list':           'Takım listesini görüntüleme.',
   'perm.res.teams.update':         'Takım bilgilerini düzenleme.',
+  'perm.res.teams.weekly_notifications': 'Kendi takımının haftalık e-posta anahtarlarını açıp kapatma (yalnız bu iki ayar).',
   'perm.res.teams.lifecycle':      'Takım yaratma ve silme.',
   'perm.res.users.list':           'Kullanıcı listesini görüntüleme.',
   'perm.res.users.crud':           'Kullanıcı ekleme, düzenleme, silme.',
@@ -1951,6 +1959,14 @@ export const TR = {
   'team.colType':      'Tür',
   'team.colDesc':      'Açıklama',
   'team.colActive':    'Aktif',
+  'team.colWeeklyEmails': 'Haftalık E-postalar',
+  'team.weeklyReminder':       'Haftalık rapor hatırlatması (Cuma)',
+  'team.weeklyReminderShort':  'Rapor hatırlatması',
+  'team.weeklyAvailability':      'Haftalık erişilebilirlik raporu (Pazartesi)',
+  'team.weeklyAvailabilityShort': 'Erişilebilirlik raporu',
+  'team.weeklyHint':   'Yeni takımlarda ikisi de kapalıdır. E-posta yalnızca takım aktif ve ilgili anahtar açıkken gönderilir; anahtarı takımın kendi üyeleri de açıp kapatabilir.',
+  'team.weeklySaved':  'Haftalık e-posta ayarı güncellendi',
+  'team.weeklySaveError': 'Haftalık e-posta ayarı güncellenemedi',
   'team.colActions':   'İşlem',
   'team.searchPlaceholder': 'Ara: takım adı / e-posta…',
   'team.allTypes':     '— Tüm Türler —',
@@ -2265,6 +2281,8 @@ export const TR = {
   'inv.transferError': 'Devretme başarısız',
   'inv.loadError':     'Envanter yüklenemedi',
   'inv.saveError':     'Kayıt başarısız',
+  'inv.duplicateHint': 'Kaynak kaydın birebir kopyası. Yeni domain adını yazıp kaydetmeniz yeterli; parmak izi/subject beklentileri ve değişiklik açıklaması kopyalanmaz.',
+  'inv.notFoundForDomain': '{0} için envanter kaydı bulunamadı (silinmiş ya da yetki kapsamınız dışında).',
   'inv.transferTeam':  'Hedef Takım',
   'inv.transferConfirm': 'Devret',
 
@@ -3798,6 +3816,7 @@ export const TR = {
   'chart.p95':       'p95',
   'chart.minmax':    'min–maks',
   'chart.packetLoss':'Paket kaybı',
+  'chart.unitDays':'g',
   'chart.samples':   'Örnek',
   'chart.down':      'Kesinti',
   'chart.legendTip': 'Tıkla: yalnız bunu göster · tekrar tıkla: hepsini geri al · diğerlerine tıkla: ekle/çıkar',
@@ -5254,6 +5273,8 @@ export const EN = {
   'hist.alertTriggered': 'Alert triggered',
   'hist.alertResolved':  'Alert resolved',
   'hist.noData':         'No records in the selected range',
+  'hist.loadError':      'Could not load check history',
+  'hist.retry':          'Retry',
   'hist.groupExpand':    'identical results on this page — show all',
   'hist.groupCollapse':  'hide repeats',
   'hist.resetZoom':      'Back to range',
@@ -5492,6 +5513,9 @@ export const EN = {
   'card.expiredAgo': 'days expired',
   'card.silentAlert': 'Alert fired — no notification sent',
   'card.mailFailure': 'Mail delivery failing',
+  'card.openDetailFor': '{0} — open certificate details',
+  'card.checkOk':       '{0} checked',
+  'card.checkFailed':   'Could not check {0}: {1}',
   'card.mailFailureTooltip': 'Last 3 email attempts failed for this certificate — Click for details',
 
   'tbl.domainSearch':  'Search Domain:',
@@ -5532,6 +5556,7 @@ export const EN = {
 
   'modal.detailsTab':  'Certificate Details',
   'modal.alertsTab':   'Alert History',
+  'modal.chartTab':    'Certificate Chart',
   'modal.loading':     'Loading...',
   'modal.domain':      'Domain',
   'modal.status':      'Status',
@@ -5955,6 +5980,7 @@ export const EN = {
   'inv.noGroup':       '— No Group —',
   'mon.teamRequired':  'A team is required; the monitor cannot be saved.',
   'mon.duplicate':      'Duplicate',
+  'mon.loadError':      'Could not load the monitor list',
   'mon.duplicateBadge': 'Copy',
   'mon.duplicateHint':  'An exact copy of the source monitor. Usually you only need to change the URL/host field and save.',
   'inv.deleteTitle':  'Delete Domain',
@@ -6079,6 +6105,7 @@ export const EN = {
   'perm.res.contacts.crud':        'Add, edit, delete escalation contacts.',
   'perm.res.teams.list':           'View team list.',
   'perm.res.teams.update':         'Update team details.',
+  'perm.res.teams.weekly_notifications': 'Toggle your own team\'s weekly email switches (these two settings only).',
   'perm.res.teams.lifecycle':      'Create and delete teams.',
   'perm.res.users.list':           'View user list.',
   'perm.res.users.crud':           'Add, edit, delete users.',
@@ -6168,6 +6195,14 @@ export const EN = {
   'team.colType':      'Type',
   'team.colDesc':      'Description',
   'team.colActive':    'Active',
+  'team.colWeeklyEmails': 'Weekly Emails',
+  'team.weeklyReminder':       'Weekly report reminder (Friday)',
+  'team.weeklyReminderShort':  'Report reminder',
+  'team.weeklyAvailability':      'Weekly availability report (Monday)',
+  'team.weeklyAvailabilityShort': 'Availability report',
+  'team.weeklyHint':   'Both are off for new teams. Email is sent only when the team is active and the matching switch is on; the team\'s own members can toggle it too.',
+  'team.weeklySaved':  'Weekly email setting updated',
+  'team.weeklySaveError': 'Could not update the weekly email setting',
   'team.colActions':   'Actions',
   'team.searchPlaceholder': 'Search: team name / email…',
   'team.allTypes':     '— All Types —',
@@ -6482,6 +6517,8 @@ export const EN = {
   'inv.transferError': 'Transfer failed',
   'inv.loadError':     'Could not load inventory',
   'inv.saveError':     'Save failed',
+  'inv.duplicateHint': 'An exact copy of the source record. Just type the new domain and save; expected fingerprint/subject and the change description are not copied.',
+  'inv.notFoundForDomain': 'No inventory record found for {0} (deleted or outside your access scope).',
   'inv.transferTeam':  'Target Team',
   'inv.transferConfirm': 'Transfer',
 
@@ -8010,6 +8047,7 @@ export const EN = {
   'chart.p95':       'p95',
   'chart.minmax':    'min–max',
   'chart.packetLoss':'Packet loss',
+  'chart.unitDays':'d',
   'chart.samples':   'Samples',
   'chart.down':      'Outage',
   'chart.legendTip': 'Click to show only this · click again to reset · click others to add/remove',
@@ -8460,7 +8498,9 @@ const FALLBACK_CTX = { lang: 'en', toggle: () => {}, fallback: true }
 const LangCtx = (globalThis.__smLangCtx ??= createContext(FALLBACK_CTX))
 
 export function LangProvider({ children }) {
-  const [lang, setLang] = useState(() => localStorage.getItem(STORAGE_KEY) || 'en')
+  // storedLang() 12 satır yukarıda try/catch'li tanımlı — burada çıplak erişim kalmıştı.
+  // LangProvider da ErrorBoundary'nin ÜSTÜNDE: fırlarsa beyaz ekran (bkz. theme.jsx aynı düzeltme).
+  const [lang, setLang] = useState(storedLang)
 
   useEffect(() => {
     document.documentElement.lang = lang
@@ -8469,7 +8509,7 @@ export function LangProvider({ children }) {
   const toggle = useCallback(() => {
     setLang((l) => {
       const next = l === 'tr' ? 'en' : 'tr'
-      localStorage.setItem(STORAGE_KEY, next)
+      try { localStorage.setItem(STORAGE_KEY, next) } catch { /* depolama yok: dil bu oturumda geçerli */ }
       return next
     })
   }, [])

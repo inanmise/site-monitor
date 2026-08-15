@@ -1,4 +1,6 @@
-import { ShieldAlert, ShieldCheck, MailWarning, BellOff, Clock, Calendar, Network, Globe, Users, Building2 } from 'lucide-react'
+import { ShieldAlert, ShieldCheck, MailWarning, BellOff, Clock, Calendar, Network, Globe, Users, Building2,
+  Play, Pencil, Copy } from 'lucide-react'
+import { memo } from 'react'
 import { formatDate } from '../api/client'
 import { useT } from '../i18n/index.jsx'
 import { ProgressBar } from './ui/Progress.jsx'
@@ -9,7 +11,9 @@ function parseDn(dn, field) {
   return m ? m[1].trim() : null
 }
 
-export default function CertificateCard({ cert, onClick, hasSilentAlert = false, hasMailFailure = false, onMailFailureClick, isWeak }) {
+function CertificateCard({ cert, onClick, hasSilentAlert = false, hasMailFailure = false,
+                                          onMailFailureClick, isWeak,
+                                          onCheckNow, onEdit, onDuplicate, checking = false }) {
   const t = useT()
   const days = cert.days_remaining
   const al = cert.alert_level
@@ -50,7 +54,10 @@ export default function CertificateCard({ cert, onClick, hasSilentAlert = false,
   const issuerName = parseDn(cert.issuer_dn, 'O') || cert.issuer_cn || cert.issuer || 'N/A'
   const showAlgo   = !!algoLabel && isWeak !== undefined && !isError
   const hasDetail  = !!cert.not_after || showAlgo
-  const hasFooter  = hasSilentAlert || hasMailFailure
+  // Aksiyon butonları handler VARLIĞINA bağlı: Bitiş Tahmini ekranı yalnız cert+onClick geçiyor,
+  // orada footer bugünkü koşullu davranışına döner (ek bayrak/prop gerekmez).
+  const hasActions = !!(onCheckNow || onEdit || onDuplicate)
+  const hasFooter  = hasSilentAlert || hasMailFailure || hasActions
 
   // Kontrol yolu rozeti: hata kartlarında her zaman, sağlıklı kartlarda
   // sadece proxy ile kontrol edilenlerde (direct varsayılan — gürültü yapma)
@@ -73,7 +80,17 @@ export default function CertificateCard({ cert, onClick, hasSilentAlert = false,
     && state !== 'error'
 
   return (
-    <div className={`cc-card cc-${state}`} data-domain={cert.domain} onClick={() => onClick(cert.domain)}>
+    /* Kart klavyeyle de açılabilir: role+tabIndex+Enter/Space. onKeyDown YALNIZ kartın KENDİ
+       hedefinde çalışır — footer'daki Çalıştır/Düzenle/Kopyala düğmelerinde Enter'a basıldığında
+       tuş olayı karta baloncuklanıp detayı DA açardı (çift eylem). */
+    <div className={`cc-card cc-${state}`} data-domain={cert.domain}
+      role="button" tabIndex={0}
+      aria-label={t('card.openDetailFor', cert.domain || '')}
+      onKeyDown={(e) => {
+        if (e.target !== e.currentTarget) return
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick(cert.domain) }
+      }}
+      onClick={() => onClick(cert.domain)}>
       {/* ── Top bar — tier + pill + last check ── */}
       <div className="cc-top">
         {cert.tier && (
@@ -161,25 +178,54 @@ export default function CertificateCard({ cert, onClick, hasSilentAlert = false,
         </div>
       )}
 
-      {/* ── Footer (only when an alert is active) ── */}
+      {/* ── Footer — solda alarm çipleri, sağda aksiyonlar ── */}
       {hasFooter && (
         <div className="cc-footer">
-          {hasSilentAlert && (
-            <span className="cc-chip cc-chip-warn" title={t('card.silentAlert')}>
-              <BellOff size={12} />
-              <span>{t('card.silentAlert')}</span>
+          {/* Çipler kendi sarmalayıcısında: .cc-footer'a doğrudan space-between verilseydi,
+              aksiyonu olmayan ama İKİ çipi olan kartta çipler iki uca savrulurdu. */}
+          <div className="cc-footer-chips">
+            {hasSilentAlert && (
+              <span className="cc-chip cc-chip-warn" title={t('card.silentAlert')}>
+                <BellOff size={12} />
+                <span>{t('card.silentAlert')}</span>
+              </span>
+            )}
+            {hasMailFailure && (
+              <button
+                type="button"
+                className="cc-chip cc-chip-danger"
+                title={t('card.mailFailureTooltip')}
+                onClick={(e) => { e.stopPropagation(); onMailFailureClick?.() }}
+              >
+                <MailWarning size={12} />
+                <span>{t('card.mailFailure')}</span>
+              </button>
+            )}
+          </div>
+
+          {/* Diğer izleme türlerindeki kanonik üçlü (ScriptedMonitorPage deseni). Grubun tamamında
+              stopPropagation: aksi halde her tıklama kart detayını da açardı. */}
+          {hasActions && (
+            <span className="cc-footer-actions" onClick={(e) => e.stopPropagation()}>
+              {onCheckNow && (
+                <button type="button" className="btn btn-sm mon-btn-check" disabled={checking}
+                  onClick={onCheckNow} title={t('app.checkNow')} aria-label={t('app.checkNow')}>
+                  <Play size={12} />
+                </button>
+              )}
+              {onEdit && (
+                <button type="button" className="btn btn-sm mon-btn-edit"
+                  onClick={onEdit} title={t('inv.edit')} aria-label={t('inv.edit')}>
+                  <Pencil size={12} />
+                </button>
+              )}
+              {onDuplicate && (
+                <button type="button" className="btn btn-sm mon-btn-edit"
+                  onClick={onDuplicate} title={t('mon.duplicate')} aria-label={t('mon.duplicate')}>
+                  <Copy size={12} />
+                </button>
+              )}
             </span>
-          )}
-          {hasMailFailure && (
-            <button
-              type="button"
-              className="cc-chip cc-chip-danger"
-              title={t('card.mailFailureTooltip')}
-              onClick={(e) => { e.stopPropagation(); onMailFailureClick?.() }}
-            >
-              <MailWarning size={12} />
-              <span>{t('card.mailFailure')}</span>
-            </button>
           )}
         </div>
       )}
@@ -187,3 +233,11 @@ export default function CertificateCard({ cert, onClick, hasSilentAlert = false,
     </div>
   )
 }
+
+/**
+ * MEMO: dashboard'da 50 kart aynı anda duruyor ve App saniyede bir yeniden render olabiliyor
+ * (inaktivite geri sayımı, "Şimdi Kontrol Et" akışı). Kart saf: aynı proplarla aynı çıktıyı
+ * üretir. Kazancın gerçekleşmesi için ÇAĞIRAN da referansları sabit tutmalı — App.jsx'te
+ * cardActions/onClick useCallback ile sarılı.
+ */
+export default memo(CertificateCard)

@@ -54,6 +54,17 @@ describe('CheckRunModal', () => {
     expect(screen.queryByRole('button', { name: /durdur|^stop$/i })).toBeNull()
   })
 
+  it('süre DUVAR SAATİ\'nden gelir — satır sürelerinin toplamı değil (kontroller paralel)', () => {
+    // İki satırın ms toplamı 5193 (~5,2 s) ama koşum 2 sn sürmüş: paralel koşumda toplam,
+    // gerçekte geçen sürenin çok üstünde çıkar ve kullanıcıya yanlış bilgi verirdi.
+    const started = Date.now() - 2000
+    render(<CheckRunModal run={{ ...run, startedAt: started, finishedAt: started + 2000 }}
+      certIndex={certIndex} onClose={() => {}} onCancel={() => {}} />)
+
+    expect(screen.getByText(/(Toplam|Total) 2\.000 s/)).toBeInTheDocument()
+    expect(screen.queryByText(/5\.193 s/)).toBeNull()
+  })
+
   it('run yoksa hiçbir şey render etmez', () => {
     const { container } = render(<CheckRunModal run={null} certIndex={{}} onClose={() => {}} onCancel={() => {}} />)
     expect(container.querySelector('.chk-modal')).toBeNull()

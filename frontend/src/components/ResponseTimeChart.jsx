@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import {
   ResponsiveContainer, ComposedChart, Area, Line, XAxis, YAxis, CartesianGrid, Tooltip,
 } from 'recharts'
@@ -27,7 +27,7 @@ function tickLabel(ts, bucket) {
   return `${p(d.getDate())}.${p(d.getMonth() + 1)} ${p(d.getHours())}:${p(d.getMinutes())}`
 }
 
-function ChartTooltip({ active, payload, t, isPing }) {
+function ChartTooltip({ active, payload, t, isPing, isSsl }) {
   if (!active || !payload || !payload.length) return null
   const d = payload[0].payload
   const row = (label, val, suffix = 'ms') =>
@@ -45,6 +45,7 @@ function ChartTooltip({ active, payload, t, isPing }) {
       {row(t('chart.min'), d.min)}
       {row(t('chart.max'), d.max)}
       {isPing && row(t('chart.packetLoss'), d.loss, '%')}
+      {isSsl && row(t('modal.daysRemain'), d.days, t('chart.unitDays'))}
       <div style={{ display: 'flex', justifyContent: 'space-between', gap: 16 }}>
         <span style={{ color: 'var(--text-muted)' }}>{t('chart.samples')}</span><strong>{d.count}</strong>
       </div>
@@ -60,6 +61,10 @@ function ChartTooltip({ active, payload, t, isPing }) {
 export default function ResponseTimeChart({ monitorId, kind }) {
   const t = useT()
   const isPing = kind === 'ping'
+  // Sertifika: ana seri kontrol süresi (ms), yardımcı seri kalan gün — ping'in paket kaybı için
+  // kurduğu ikinci eksen deseninin aynısı. response_ms kolonu YENİ olduğu için geçmişte ms yok,
+  // kalan gün ise 180 günlük geçmişten dolu gelir; hasData bunu da saymalı (aşağıda).
+  const isSsl = kind === 'ssl'
   const [preset, setPreset] = useState('30d')
   const [custom, setCustom] = useState(null)         // { from, to } ISO (UTC)
   const [showCustom, setShowCustom] = useState(false)
@@ -69,13 +74,19 @@ export default function ResponseTimeChart({ monitorId, kind }) {
   const [loading, setLoading] = useState(false)
   const [hidden, setHidden] = useState(() => new Set())   // tıklanabilir legend: izole/gizle (gezgin deseni)
 
+  // YARIŞ KORUMASI (desen: history/useCheckHistory.js). 24s → 7g → 30g hızlıca tıklanırsa
+  // yavaş dönen ESKİ yanıt yeniyi eziyor, grafik seçili olmayan aralığı gösteriyordu.
+  const seqRef = useRef(0)
   const load = useCallback(async () => {
+    const seq = ++seqRef.current
     setLoading(true)
     const fetcher = { ping: api.monitoring.getPingResponseSeries, keyword: api.monitoring.getKeywordResponseSeries,
       port: api.monitoring.getPortResponseSeries, dns: api.monitoring.getDnsResponseSeries, http: api.monitoring.getHttpResponseSeries,
-      page: api.monitoring.getPageResponseSeries, scripted: api.monitoring.getScriptedResponseSeries }[kind] ?? api.monitoring.getKeywordResponseSeries
+      page: api.monitoring.getPageResponseSeries, scripted: api.monitoring.getScriptedResponseSeries,
+      ssl: api.monitoring.getSslResponseSeries }[kind] ?? api.monitoring.getKeywordResponseSeries
     const params = custom ? { from: custom.from, to: custom.to } : { days: PRESETS.find(p => p.key === preset)?.days ?? 30 }
     const res = await fetcher(monitorId, params)
+    if (seq !== seqRef.current) return          // daha yeni bir istek var: bu yanıtı YOK SAY
     setData(res?.success ? res.data : null)
     setLoading(false)
   }, [monitorId, kind, preset, custom])
@@ -90,7 +101,7 @@ export default function ResponseTimeChart({ monitorId, kind }) {
     .map(s => ({
       ts: s.ts,
       label: tickLabel(s.ts, bucket),
-      avg: s.avg, min: s.min, max: s.max, p95: s.p95, count: s.count, down: s.down, loss: s.loss,
+      avg: s.avg, min: s.min, max: s.max, p95: s.p95, count: s.count, down: s.down, loss: s.loss, days: s.days,
       band: (s.min != null && s.max != null) ? [s.min, s.max] : null,
       downMarker: s.down > 0 ? (s.avg ?? s.max ?? 0) : null,
     })), [data, bucket])
@@ -101,7 +112,9 @@ export default function ResponseTimeChart({ monitorId, kind }) {
   }
   function pickPreset(key) { setCustom(null); setShowCustom(false); setPreset(key) }
 
-  const hasData = chartData.some(d => d.avg != null)
+  // Yardımcı seri de veri sayılır: sertifikada ms kolonu yeni olduğu için ilk günlerde avg boş,
+  // ama kalan gün eğrisi dolu — yalnız avg'e bakan eski kontrol ekranı tümüyle "veri yok" gösterirdi.
+  const hasData = chartData.some(d => d.avg != null || (isSsl && d.days != null))
   const tickEvery = Math.max(0, Math.floor(chartData.length / 8))
 
   // Tıklanabilir legend — HttpMetricsExplorer deseni: ilk tık izole (yalnız bunu), sonraki ekle/çıkar, hepsi gizli → hepsi.
@@ -110,6 +123,7 @@ export default function ResponseTimeChart({ monitorId, kind }) {
     { key: 'avg',        name: t('chart.avg'),        color: '#2563eb' },
     { key: 'p95',        name: t('chart.p95'),        color: '#9333ea' },
     ...(isPing ? [{ key: 'loss', name: t('chart.packetLoss'), color: '#ea580c' }] : []),
+    ...(isSsl  ? [{ key: 'days', name: t('modal.daysRemain'),  color: '#0d9488' }] : []),
     { key: 'downMarker', name: t('chart.down'),       color: '#dc2626' },
   ]
   const toggleSeries = (key) => setHidden(prev => {
@@ -151,7 +165,7 @@ export default function ResponseTimeChart({ monitorId, kind }) {
       ) : (
         <>
         <ResponsiveContainer width="100%" height={300}>
-          <ComposedChart data={chartData} margin={{ top: 10, right: isPing ? 8 : 12, left: 0, bottom: 0 }}>
+          <ComposedChart data={chartData} margin={{ top: 10, right: (isPing || isSsl) ? 8 : 12, left: 0, bottom: 0 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
             <XAxis dataKey="label" tick={{ fontSize: 10, fill: 'var(--text-light)' }} stroke="var(--border)"
               interval={tickEvery} minTickGap={16} />
@@ -161,7 +175,11 @@ export default function ResponseTimeChart({ monitorId, kind }) {
               <YAxis yAxisId="loss" orientation="right" domain={[0, 100]} tick={{ fontSize: 10, fill: '#ea580c' }}
                 stroke="var(--border)" width={34} tickFormatter={(v) => `${v}%`} />
             )}
-            <Tooltip content={<ChartTooltip t={t} isPing={isPing} />} />
+            {isSsl && (
+              <YAxis yAxisId="days" orientation="right" tick={{ fontSize: 10, fill: '#0d9488' }}
+                stroke="var(--border)" width={40} tickFormatter={(v) => `${v}${t('chart.unitDays')}`} />
+            )}
+            <Tooltip content={<ChartTooltip t={t} isPing={isPing} isSsl={isSsl} />} />
             <Area yAxisId="ms" type="monotone" dataKey="band" name={t('chart.minmax')} hide={hidden.has('band')}
               fill="#bfdbfe" fillOpacity={0.45} stroke="none" isAnimationActive={false} connectNulls />
             <Line yAxisId="ms" type="monotone" dataKey="avg" name={t('chart.avg')} hide={hidden.has('avg')}
@@ -171,6 +189,10 @@ export default function ResponseTimeChart({ monitorId, kind }) {
             {isPing && (
               <Line yAxisId="loss" type="monotone" dataKey="loss" name={t('chart.packetLoss')} hide={hidden.has('loss')}
                 stroke="#ea580c" strokeWidth={1.5} dot={false} isAnimationActive={false} connectNulls />
+            )}
+            {isSsl && (
+              <Line yAxisId="days" type="monotone" dataKey="days" name={t('modal.daysRemain')} hide={hidden.has('days')}
+                stroke="#0d9488" strokeWidth={1.5} dot={false} isAnimationActive={false} connectNulls />
             )}
             <Line yAxisId="ms" dataKey="downMarker" name={t('chart.down')} stroke="transparent" hide={hidden.has('downMarker')}
               dot={{ r: 4, fill: '#dc2626', stroke: '#fff', strokeWidth: 1 }} isAnimationActive={false}

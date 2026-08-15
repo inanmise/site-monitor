@@ -220,6 +220,14 @@ class HistoryQueryGrammarTest {
         assertThat(certRepo.findByDomainAndStatusAndCheckedAtBetween("a.example.com", "error", FROM, TO, firstPage())
                 .getTotalElements()).isEqualTo(1);
         assertThat(certRepo.countByDomainAndCheckedAtBetween("a.example.com", FROM, TO)).isEqualTo(3);
+
+        // Grafik serisi: [checkedAt, responseMs, up, daysRemaining]. Sertifikada doğal bir "up" bool'u
+        // olmadığı için CASE WHEN ile türetiliyor — bu sınıf kaçak tam olarak burada yakalanır.
+        List<Object[]> series = certRepo.responseSeriesRaw("a.example.com", FROM, TO, 100);
+        assertThat(series).hasSize(3);
+        assertThat(series.get(0)).hasSize(4);
+        // 3 kayıttan 1'i status='error' → türetilmiş up=false olan tam 1 satır olmalı.
+        assertThat(series.stream().filter(r -> Boolean.FALSE.equals(r[2])).count()).isEqualTo(1);
     }
 
     // ── Kova genişliği: gün(10) / dakika(16) prefix'i de aynı SQL ile çalışır ──

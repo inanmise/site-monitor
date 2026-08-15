@@ -4,6 +4,7 @@ import com.sitemonitor.dto.CertificateDto;
 import com.sitemonitor.model.AlertEvent;
 import com.sitemonitor.model.NetworkOutageEvent;
 import com.sitemonitor.repository.AlertEventRepository;
+import com.sitemonitor.model.CertificateInventory;
 import com.sitemonitor.repository.CertificateInventoryRepository;
 import com.sitemonitor.repository.NetworkOutageEventRepository;
 import org.springframework.data.domain.PageRequest;
@@ -76,31 +77,53 @@ public class CertificateController {
         return ok(Map.of("success", true, "data", warnings, "count", warnings.size(), "timestamp", now()));
     }
 
+    /**
+     * Domain-anahtarlı uçlar için takım denetimi: kayıt ENVANTERDE olmalı ve kullanıcının görüş
+     * kapsamında bulunmalı. Eskiden bu uçların hiçbirinde denetim yoktu — herhangi bir takımın
+     * kullanıcısı başka takımın sertifika geçmişini/alarmlarını okuyabiliyordu.
+     * (MonitoringController.denyIfDomainNotViewable ile aynı kural.)
+     */
+    private CertificateInventory requireViewableDomain(HttpSession session, String domain) {
+        var inv = inventoryRepo.findByDomain(domain)
+                .orElseThrow(() -> new java.util.NoSuchElementException("Domain envanterde bulunamadı: " + domain));
+        if (SessionScope.canView(session, inv.getTeamId())) return inv;
+        if (inv.getUgTeamId() != null && SessionScope.canView(session, inv.getUgTeamId())) return inv;
+        throw new SecurityException("Bu domain'i görüntüleme yetkiniz yok");
+    }
+
     @GetMapping("/history/{domain}")
-    public ResponseEntity<Map<String, Object>> getHistory(@PathVariable String domain) {
+    public ResponseEntity<Map<String, Object>> getHistory(@PathVariable String domain, HttpSession session) {
+        requireViewableDomain(session, domain);
         List<CertificateDto> history = certService.getHistory(domain, 30);
         return ok(Map.of("success", true, "domain", domain, "data", history, "timestamp", now()));
     }
 
     @GetMapping("/history/{domain}/alerts")
-    public ResponseEntity<Map<String, Object>> getDomainAlerts(@PathVariable String domain) {
+    public ResponseEntity<Map<String, Object>> getDomainAlerts(@PathVariable String domain, HttpSession session) {
+        requireViewableDomain(session, domain);
         List<AlertEvent> alerts = alertEventRepository.findByDomainOrderByCreatedAtDesc(domain);
         return ok(Map.of("success", true, "domain", domain, "data", alerts, "timestamp", now()));
     }
 
+    /**
+     * Tek domain için elle kontrol (dashboard kartındaki ▶ ve toplu "Şimdi Kontrol Et" bunu kullanır).
+     * YETKİ: domain envanterde OLMALI ve görüş kapsamında bulunmalı. Eskiden hiçbir denetim yoktu ve
+     * her oturumlu kullanıcı (AUDIT dahil) rastgele bir host için dış bağlantı açtırıp, ensureInInventory
+     * ile envantere KALICI kayıt ekletip evictAllCaches ile tüm cache'leri boşaltabiliyordu.
+     * Kayıt zaten var olduğu için ensureInInventory de kaldırıldı (envanter kirlenmesi kapandı).
+     */
     @GetMapping("/check/{domain}")
     public ResponseEntity<Map<String, Object>> checkDomain(@PathVariable String domain, HttpSession session) {
-        var inv = inventoryRepo.findByDomain(domain);
-        boolean forceProxy = inv.map(ci -> Boolean.TRUE.equals(ci.getUseProxy())).orElse(false);
-        String tlsOverride = inv.map(ci -> ci.getTlsMode()).orElse(null);
+        CertificateInventory inv = requireViewableDomain(session, domain);
+        boolean forceProxy = Boolean.TRUE.equals(inv.getUseProxy());
+        String tlsOverride = inv.getTlsMode();
         // Envanterdeki GERÇEK port (zamanlayıcı da böyle yapıyor); 443'e sabitlemek 8443 gibi
         // portlardaki sertifikayı yanlış hedeften okutuyor ve UI'da yanlış port gösteriyordu.
-        int port = inv.map(ci -> ci.getPort() != null ? ci.getPort() : 443).orElse(443);
+        int port = inv.getPort() != null ? inv.getPort() : 443;
         Map<String, Object> result = new LinkedHashMap<>(checkerService.check(domain, port, forceProxy, tlsOverride));
         result.put("run_id", "manual");
         result.put("port", port);
         certService.saveResult(result);
-        certService.ensureInInventory(domain, port, teamId(session));
         // Manuel tetiklemede de cache evict gerekiyor (saveResult'tan kaldırıldı)
         certService.evictAllCaches();
         return ok(Map.of("success", true, "data", result, "timestamp", now()));

@@ -507,10 +507,20 @@ public class MonitoringController {
         return s;
     }
 
+    /** Saatlik uptime çubukları. Kardeş uçlar (/http-history, /ssl-history) gibi takım denetimi yapar
+     *  ve {@code hours} kırpılır: eskiden imzada HttpSession bile yoktu (başka takımın geçmişi okunabiliyordu)
+     *  ve hours sınırsızdı — {@code hours=200000} tek worker'ı dakikalarca meşgul eden 10⁹ karşılaştırma
+     *  üretiyordu (aşağıdaki döngü saat başına tüm listeyi tarıyor). */
+    private static final int UPTIME_HISTORY_MAX_HOURS = 24 * 90;   // 90 gün: grafik önayarlarının tavanı
+
     @GetMapping("/uptime/{domain}/history")
     public ResponseEntity<Map<String, Object>> uptimeHistory(
-            @PathVariable String domain,
+            @PathVariable String domain, HttpSession session,
             @RequestParam(defaultValue = "24") int hours) {
+
+        var deny = denyIfDomainNotViewable(session, domain);
+        if (deny != null) return deny;
+        hours = Math.max(1, Math.min(hours, UPTIME_HISTORY_MAX_HOURS));
 
         String cutoff = ISO.format(Instant.now().minus(hours, ChronoUnit.HOURS));
         String nowIso = ISO.format(Instant.now());
@@ -645,6 +655,31 @@ public class MonitoringController {
             } catch (java.io.IOException e) { throw new RuntimeException("CSV yazımı başarısız", e); }
         }
         return ok(checkHistoryService.execute(src, r, domain, EscalationService.CERT_ALERT_TYPES));
+    }
+
+    /**
+     * Sertifika yanıt süresi grafiği — diğer yedi türle AYNI huni (resolveRange → responseSeriesRaw →
+     * buildResponseSeries). İki seri taşır: ana seri kontrol süresi (ms, response_ms kolonu yeni olduğu
+     * için ileriye dönük dolar) + yardımcı seri "days" (kalan gün, 180 günlük geçmişten dolu gelir).
+     * Yetki BİLE BİLE ssl-history ile aynı: yalnız denyIfDomainNotViewable. permissionService.require(
+     * "monitoring.read") EKLENMEZ — sertifikayı görüp geçmişini açabilen kullanıcı grafikte 403 almamalı.
+     * Yol adı "/ssl/response-series": sözleşme testi "/response-series" ile biten uçları sayar.
+     */
+    @GetMapping("/uptime/{domain}/ssl/response-series")
+    public ResponseEntity<?> uptimeSslResponseSeries(
+            @PathVariable String domain, HttpSession session,
+            @RequestParam(required = false) String from,
+            @RequestParam(required = false) String to,
+            @RequestParam(defaultValue = "30") int days) {
+        var deny = denyIfDomainNotViewable(session, domain);
+        if (deny != null) return deny;
+        String[] range = resolveRange(from, to, days);
+        // Geçmiş sekmesiyle tutarlılık: seri de retention penceresine kırpılır, aksi halde 180 gün
+        // öncesi özel aralık seçildiğinde sessizce boş grafik çıkardı (geçmiş sekmesi uyarı basıyor).
+        String clampedFrom = clampToRetention(range[0], historyRetentionDays("ssl"));
+        return ok(buildResponseSeries(
+                certCheckRepo.responseSeriesRaw(domain, clampedFrom, range[1], SERIES_RAW_CAP),
+                clampedFrom, range[1], "days"));
     }
 
     /** Domain-anahtarlı uptime/ssl geçmişi için takım denetimi: envanter kaydının teamId VEYA ugTeamId'si
@@ -1602,6 +1637,14 @@ public class MonitoringController {
         return new String[]{ fromIso, toIso };
     }
 
+    /** Retention clamp — {@code CheckHistoryService.resolve} içindeki kuralın aynısı: {@code from},
+     *  saklama penceresinin gerisine inemez. Geçmiş sekmesi bunu zaten uyguluyor; seri ucu da uygulasın
+     *  ki aynı özel aralıkta tablo dolu / grafik boş gibi bir tutarsızlık çıkmasın. */
+    private static String clampToRetention(String from, int retentionDays) {
+        String minFrom = ISO.format(Instant.now().minus(retentionDays, ChronoUnit.DAYS));
+        return (from != null && from.compareTo(minFrom) < 0) ? minFrom : from;
+    }
+
     /** Aralık genişliğine göre kova anahtarı uzunluğu: ≤48s → 10-dk(15), ≤31g → saat(13), üstü → gün(10). */
     private static int bucketKeyLen(String from, String to) {
         try {
@@ -1624,6 +1667,13 @@ public class MonitoringController {
     /** Ham [checkedAt, süre, durum(up/ok)[, paket kaybı]] satırlarını kovalar:
      *  her kovada avg/min/max/p95/count/down[+loss]. Null süreler istatistiğe katılmaz; down durumdan sayılır. */
     private Map<String, Object> buildResponseSeries(List<Object[]> rows, String from, String to, boolean withLoss) {
+        return buildResponseSeries(rows, from, to, withLoss ? "loss" : null);
+    }
+
+    /** {@code auxKey}: 4. ham kolonun çıktı adı — ping'de "loss" (paket kaybı), sertifikada "days"
+     *  (kalan gün). null ⇒ yardımcı seri yok. Boolean imza bunu "loss" ile çağırır (yedi çağıran aynı). */
+    private Map<String, Object> buildResponseSeries(List<Object[]> rows, String from, String to, String auxKey) {
+        boolean withLoss = auxKey != null;
         int keyLen = bucketKeyLen(from, to);
         Map<String, List<Long>> values = new HashMap<>();
         Map<String, Integer> counts = new HashMap<>();
@@ -1662,7 +1712,7 @@ public class MonitoringController {
             }
             if (withLoss) {
                 long[] a = loss.get(key);
-                pt.put("loss", a != null && a[1] > 0 ? Math.round((double) a[0] / a[1]) : null);
+                pt.put(auxKey, a != null && a[1] > 0 ? Math.round((double) a[0] / a[1]) : null);
             }
             series.add(pt);
         }

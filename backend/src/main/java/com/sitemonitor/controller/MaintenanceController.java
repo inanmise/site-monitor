@@ -44,7 +44,14 @@ public class MaintenanceController {
     public ResponseEntity<Map<String, Object>> list(HttpSession session) {
         permissionService.require(session, "maintenance.view", "view");
         Instant now = Instant.now();
-        List<Map<String, Object>> data = repo.findAllByOrderByStartAtDesc().stream().map(w -> dto(w, now)).toList();
+        // Kapsam: kendi takımının pencereleri + HERKESİ etkileyenler. "allMonitors" penceresi senin
+        // izlemelerini de bastırdığı için gizlenmesi zarar verir (alarm neden gelmiyor sorusu cevapsız
+        // kalır); takımsız legacy kayıtlar da aynı nedenle görünür bırakılıyor. Global admin/AUDIT hepsini görür.
+        List<Map<String, Object>> data = repo.findAllByOrderByStartAtDesc().stream()
+                .filter(w -> SessionScope.canView(session, w.getTeamId())
+                        || Boolean.TRUE.equals(w.getAllMonitors())
+                        || w.getTeamId() == null)
+                .map(w -> dto(w, now)).toList();
         return ok(Map.of("data", data));
     }
 
@@ -80,7 +87,7 @@ public class MaintenanceController {
     public ResponseEntity<Map<String, Object>> update(@PathVariable Long id, @RequestBody Map<String, Object> body,
                                                       HttpSession session, HttpServletRequest request) {
         permissionService.require(session, "maintenance.manage", "edit");
-        MaintenanceWindow w = require(id);
+        MaintenanceWindow w = requireManageable(id, session);
         applyFields(w, body);
         validateWindow(w);
         w.setUpdatedAt(now());
@@ -94,7 +101,7 @@ public class MaintenanceController {
     public ResponseEntity<Map<String, Object>> delete(@PathVariable Long id,
                                                       HttpSession session, HttpServletRequest request) {
         permissionService.require(session, "maintenance.delete", "execute");
-        require(id);
+        requireManageable(id, session);
         repo.deleteById(id);
         maintenanceService.refresh();
         auditService.recordAction("MAINTENANCE_DELETE", session, request, "MAINTENANCE_WINDOW", String.valueOf(id), "{}");
@@ -113,7 +120,7 @@ public class MaintenanceController {
 
     private ResponseEntity<Map<String, Object>> toggle(Long id, boolean active, HttpSession session, HttpServletRequest request) {
         permissionService.require(session, "maintenance.manage", "edit");
-        MaintenanceWindow w = require(id);
+        MaintenanceWindow w = requireManageable(id, session);
         w.setActive(active);
         w.setUpdatedAt(now());
         MaintenanceWindow saved = repo.save(w);
@@ -223,6 +230,21 @@ public class MaintenanceController {
 
     private MaintenanceWindow require(Long id) {
         return repo.findById(id).orElseThrow(() -> new NoSuchElementException("Bakım penceresi bulunamadı: " + id));
+    }
+
+    /**
+     * Yazma yolları için TAKIM KAPSAMI. Eskiden yalnız izin anahtarı kontrol ediliyordu; kayıt id ile
+     * yüklendiği için A takımının yöneticisi B takımının penceresini düzenleyebiliyor/silebiliyordu (IDOR).
+     * Bakım pencereleri ALARM BASTIRDIĞI için etkisi yüksek: yanlış pencere silinince bastırılması gereken
+     * alarmlar patlar, yanlış pencere açılınca gerçek kesinti sessizce yutulur.
+     * Kural diğer izleme türleriyle aynı: global admin her pencereyi, takım yöneticisi yalnız kendi takımını.
+     * Takımsız (legacy) pencereler yalnız global admin'e açık — sahibi belirlenemeyeni kimse devralmasın.
+     */
+    private MaintenanceWindow requireManageable(Long id, HttpSession session) {
+        MaintenanceWindow w = require(id);
+        if (!SessionScope.canManage(session, w.getTeamId()))
+            throw new SecurityException("Bu bakım penceresini yönetme yetkiniz yok");
+        return w;
     }
 
     private static String csvDays(Object v) {

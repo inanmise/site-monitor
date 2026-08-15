@@ -3,6 +3,7 @@ import { ChevronDown, BarChart3, AlertOctagon, X, Wifi, CheckCircle, Clock, Load
 
 import { api, formatDate } from './api/client'
 import { useDialog } from './components/ui/Dialog.jsx'
+import { useToast } from './components/ui/Toast.jsx'
 import { useT } from './i18n/index.jsx'
 import { usePagination } from './hooks/usePagination.js'
 import PaginationBar from './components/ui/PaginationBar.jsx'
@@ -12,6 +13,7 @@ import Login, { REMEMBER_KEY } from './pages/Login'
 import Nav from './components/Nav'
 import BrandLogo from './components/BrandLogo.jsx'
 import { useStatusFavicon } from './hooks/useStatusFavicon.js'
+import { runWithConcurrency } from './utils/concurrentQueue.js'
 import StatsPanel from './components/StatsPanel'
 import StatsView from './components/StatsView'
 import CertificateCard from './components/CertificateCard'
@@ -59,9 +61,18 @@ const ActivityLog = lazy(() => import('./components/ActivityLog'))
 const MyAuditLog = lazy(() => import('./components/MyAuditLog'))
 const HelpPage = lazy(() => import('./components/HelpPage'))
 const ExpiryForecastPage = lazy(() => import('./pages/ExpiryForecastPage'))
+// Envanter formu (kart → Düzenle/Kopyala): MDEditor çektiği için lazy — kendi Suspense sınırında.
+const InventoryFormModalForDomain = lazy(() =>
+  import('./components/inventory/InventoryFormModal.jsx').then(m => ({ default: m.InventoryFormModalForDomain })))
 
 const INACTIVITY_MS   = Number(import.meta.env.VITE_INACTIVITY_MS   ?? 300_000)
 const WARN_BEFORE_MS  = Number(import.meta.env.VITE_WARN_BEFORE_MS  ?? 60_000)
+
+/** "Şimdi Kontrol Et" eşzamanlı kontrol sayısı. Erişilemeyen bir host'ta tek kontrol timeout'a
+ *  (~6 sn) kadar sürüyor; sıralı koşumda bu, arkasındaki tüm domainleri bekletiyordu. Sınır küçük
+ *  tutuluyor: her istek sunucuda bir Tomcat iş parçacığı tutar (max 100) ve tek pod aynı anda
+ *  başka kullanıcılara da hizmet eder. */
+const CHECK_CONCURRENCY = Number(import.meta.env.VITE_CHECK_CONCURRENCY ?? 6)
 
 // Oturum düşünce client.js hard reload ile /?session=expired'a yönlendirir → giriş formunda
 // "oturum süresi doldu" bildirimi göstermek için bu bayrağı okuruz (AUTH-1).
@@ -100,6 +111,7 @@ function initialTabFromUrl() {
 
 export default function App() {
   const { showConfirm } = useDialog()
+  const toast = useToast()
   const t = useT()
   const [user, setUser] = useState(null)
   const [systemRole, setSystemRole] = useState('USER')
@@ -108,6 +120,9 @@ export default function App() {
   const [globalAdmin, setGlobalAdmin] = useState(false)
   const [teamId, setTeamId] = useState(null)
   const [teamName, setTeamName] = useState(null)
+  // Kullanıcının TÜM takım üyelikleri (birincil takım ilk). Takım Yönetimi'ndeki haftalık e-posta
+  // anahtarları üye bazlı açıldığı için gerekir; /me ve login yanıtı ikisi de team_ids döndürür.
+  const [myTeamIds, setMyTeamIds] = useState([])
   // Kullanıcının kendi giriş güvenliği özeti (backend `login_info`): giriş yanıtından VE /me'den
   // gelir. AuthContext yok — üç tüketiciye (uyarı şeridi, Etkinliklerim, kullanıcı menüsü) prop.
   const [loginInfo, setLoginInfo] = useState(null)
@@ -149,6 +164,13 @@ export default function App() {
   const [search, setSearch] = useState(() => readUrlParam('q', ''))
   const [sortOrder, setSortOrder] = useState('default')
   const [modalCert, setModalCert] = useState(null)
+  const [checkingDomain, setCheckingDomain] = useState(null)   // kart bazlı "çalıştır" kilidi
+  const [invForm, setInvForm] = useState(null)                 // { domain, mode } — kart → envanter formu
+  // Envanter yazma yetkisi: inventory.crud yalnız bu iki rolde. Kart aksiyonları ve "Domain Ekle"
+  // butonu aynı koşulu paylaşır. Kart bazında takım karşılaştırması YAPILMAZ — frontend'de
+  // manage-scope listesi yok (/me yalnız üyelik döndürür); yönetilebilir bir takımı yanlışlıkla
+  // gizlemektense backend'in 403'üne güveniyoruz (InventoryManager da böyle yapıyor).
+  const canManageInventory = systemRole === 'ADMIN' || systemRole === 'TEAM_ADMIN'
   const [caModal, setCaModal]     = useState(false)
   const [newDomain,    setNewDomain]    = useState('')
   const [checkLoading, setCheckLoading] = useState(false)
@@ -183,6 +205,7 @@ export default function App() {
         setGlobalAdmin(!!res.global_admin)
         setTeamId(res.team_id ?? null)
         setTeamName(res.team_name ?? null)
+        setMyTeamIds(Array.isArray(res.team_ids) ? res.team_ids : [])
         setMustChangePwd(!!res.must_change_password)
         // Giriş güvenliği özeti — F5 sonrası login yanıtı yoktur, bu yüzden /me de aynı bloğu
         // döndürür; alınmazsa özet ve kullanıcı menüsü sayfa yenilemede boşalır.
@@ -350,12 +373,15 @@ export default function App() {
   }, [user])
 
   useEffect(() => {
-    if (user && tab === 'warnings') {
-      api.getWarnings().then((res) => { if (res?.success) setWarnings(res.data) })
-      api.getNetworkOutageHistory(50).then((res) => {
-        if (res?.success && Array.isArray(res.events)) setOutageHistory(res.events)
-      })
-    }
+    if (!user || tab !== 'warnings') return
+    // alive guard: sekme hızlı değiştirilip geri gelinirse iki uçuşan istek yarışır ve YAVAŞ olan
+    // en son kazanıp bayat uyarı listesini yazabilir (loadData'daki loadAliveRef deseninin eşi).
+    let alive = true
+    api.getWarnings().then((res) => { if (alive && res?.success) setWarnings(res.data ?? []) })
+    api.getNetworkOutageHistory(50).then((res) => {
+      if (alive && res?.success && Array.isArray(res.events)) setOutageHistory(res.events)
+    })
+    return () => { alive = false }
   }, [user, tab])
 
 
@@ -401,10 +427,10 @@ export default function App() {
 
     setRefreshing(true)
     checkCancelRef.current = false
-    setCheckRun({ rows: [], total: domains.length, done: false, teamLabel: teamLabel || null })
+    setCheckRun({ rows: [], total: domains.length, done: false, teamLabel: teamLabel || null,
+      startedAt: Date.now(), finishedAt: null })
 
-    for (const domain of domains) {
-      if (checkCancelRef.current) break        // "Durdur" → kalan domainlere istek atma
+    async function checkOne(domain) {
       const start = new Date()
       const t0 = Date.now()
       let ok = false, data = null, error = null
@@ -418,8 +444,19 @@ export default function App() {
       // Sunucunun ölçtüğü süre daha doğru (ağ gecikmesi hariç); yoksa istemci kronometresi.
       const ms = Number.isFinite(data?.elapsed_ms) ? data.elapsed_ms : Date.now() - t0
       if (data?.status === 'error') { ok = false; error = error || data.error }
+      // Satırlar TAMAMLANMA sırasında eklenir (alfabetik değil): yavaş bir domain arkasındakileri
+      // bekletmesin. setCheckRun fonksiyonel güncelleme kullanır — eşzamanlı işçiler birbirinin
+      // eklediği satırı ezmez.
       setCheckRun(cr => cr ? { ...cr, rows: [...cr.rows, { domain, start, end, ms, ok, data, error }] } : cr)
     }
+
+    // Kuyruğu SINIRLI sayıda işçiyle tüket. Eskiden döngü sıralıydı: timeout alan tek bir sertifika
+    // (6 sn) arkasındaki TÜM domainleri bekletiyordu. Sunucu tarafı zaten paralel çalışabiliyor
+    // (cert-check executor: core 20 / max 50). "Durdur" → uçuştakiler biter, yenisi başlamaz.
+    await runWithConcurrency(domains, checkOne, {
+      limit: CHECK_CONCURRENCY,
+      shouldStop: () => checkCancelRef.current,
+    })
 
     try {
       const [certsRes, statsRes, silentRes] = await Promise.all([
@@ -430,8 +467,57 @@ export default function App() {
       if (silentRes?.success) setSilentAlertDomains(new Set(silentRes.data))
     } catch { /* tazeleme hatası yoksay — modal yine de tamamlanır */ }
     setActivityRefreshKey(k => k + 1)
-    setCheckRun(cr => cr ? { ...cr, done: true } : cr)
+    setCheckRun(cr => cr ? { ...cr, done: true, finishedAt: Date.now() } : cr)
     setRefreshing(false)
+  }
+
+  /** Tek kart için "şimdi koştur". Toplu taramayla aynı ucu kullanır (kalıcı kaydeder). */
+  async function runSingleCheck(domain) {
+    if (checkingDomain || refreshing) return
+    setCheckingDomain(domain)
+    try {
+      const r = await api.checkDomain(domain)
+      const d = r?.data
+      if (!r?.success || d?.status === 'error') {
+        toast.error(t('card.checkFailed', domain, r?.error || d?.error || '—'))
+      } else {
+        toast.success(t('card.checkOk', domain))
+      }
+      // Satır bazlı merge YAPILMAZ: /check yanıtı ham checker map'i; alert_level/team_name/tier
+      // içermediği için merge kartın renk sınıfını, T rozetini ve takım satırını sessizce silerdi.
+      const [certsRes, statsRes, silentRes] = await Promise.all([
+        api.getCertificates(), api.getStats(), api.getSilentAlertDomains(),
+      ])
+      if (certsRes?.success) { setCerts(certsRes.data); setLastUpdate(certsRes.timestamp) }
+      if (statsRes?.success) setStats(statsRes.data)
+      if (silentRes?.success) setSilentAlertDomains(new Set(silentRes.data))
+      setActivityRefreshKey(k => k + 1)
+    } catch (e) {
+      toast.error(t('card.checkFailed', domain, e?.message || '—'))
+    } finally {
+      setCheckingDomain(null)
+    }
+  }
+
+  /** Kart aksiyon prop'ları. Düzenle/Kopyala yalnız envanteri yönetebilenlere; Çalıştır herkese
+   *  (toplu "Şimdi Kontrol Et" de rol kapısı taşımıyor, /check/{domain} yalnız oturum istiyor). */
+  /** Kart detayını açar. useCallback ŞART: CertificateCard memo'lu — her render'da yeni bir
+   *  fonksiyon üretmek 50 kartın tamamını yeniden render ettirir ve memo'yu boşa çıkarır.
+   *  Güncel listeyi ref'ten okur: `certs`i dep yapmak referansı her veri tazelemesinde
+   *  değiştirirdi (state setter'ını okuma amaçlı çağırmak da gereksiz render üretir). */
+  const certsRef = useRef(certs)
+  useEffect(() => { certsRef.current = certs }, [certs])
+  const openCertModal = useCallback((d) => {
+    setModalCert(certsRef.current.find(c => c.domain === d) ?? null)
+  }, [])
+
+  function cardActions(cert) {
+    return {
+      onCheckNow: () => runSingleCheck(cert.domain),
+      checking: checkingDomain === cert.domain || refreshing,
+      onEdit:      canManageInventory ? () => setInvForm({ domain: cert.domain, mode: 'edit' }) : undefined,
+      onDuplicate: canManageInventory ? () => setInvForm({ domain: cert.domain, mode: 'duplicate' }) : undefined,
+    }
   }
 
   async function handleAddDomain() {
@@ -464,6 +550,7 @@ export default function App() {
     setGlobalAdmin(!!userData.global_admin)
     setTeamId(userData.team_id ?? null)
     setTeamName(userData.team_name ?? null)
+    setMyTeamIds(Array.isArray(userData.team_ids) ? userData.team_ids : [])
     setMustChangePwd(!!userData.must_change_password)
     setLoginInfo(userData.login_info ?? null)
   }
@@ -575,8 +662,11 @@ export default function App() {
   const statusFn = STATUS_FILTER_FN[statusFilter] ?? (() => true)
   const expiryFn = EXPIRY_FILTER_FN[expiryFilter] ?? (() => true)
 
-  // Takım filtresi seçenekleri — cert listesinden türetilir (yeni endpoint yok); her render'da ucuzca hesaplanır.
-  const teamOptions = (() => {
+  // Takım filtresi seçenekleri — cert listesinden türetilir (yeni endpoint yok).
+  // MEMO ŞART: App saniyede bir yeniden render olabiliyor (inaktivite geri sayımı) ve "Şimdi Kontrol Et"
+  // her sonuçta setCheckRun ile tüm ağacı tazeliyor; 1000 sertifikada Set+sort her seferde yeniden
+  // koşuyordu. 8 monitör sayfasının hepsi bu bloğu zaten useMemo ile sarıyor, App sarmıyordu.
+  const teamOptions = useMemo(() => {
     const names = new Set()
     let hasNone = false
     for (const c of certs) { if (c.team_name) names.add(c.team_name); else hasNone = true }
@@ -584,10 +674,10 @@ export default function App() {
     ;[...names].sort((a, b) => a.localeCompare(b)).forEach((n) => opts.push({ value: n, label: n }))
     if (hasNone) opts.push({ value: '__none__', label: t('app.noTeam') })
     return opts
-  })()
+  }, [certs, t])
   const hasTeamOptions = teamOptions.some((o) => o.value !== 'all' && o.value !== '__none__')
 
-  const filtered = certs.filter((c) => {
+  const filtered = useMemo(() => certs.filter((c) => {
     if (statFn   && !statFn(c))   return false
     if (!statusFn(c))              return false
     if (!expiryFn(c))              return false
@@ -598,7 +688,9 @@ export default function App() {
     if (!search)                   return true
     const s = search.toLowerCase()
     return c.domain?.toLowerCase().includes(s) || c.issuer?.toLowerCase().includes(s) || c.subject?.toLowerCase().includes(s)
-  })
+  // Bağımlılıklar FİLTRE ANAHTARLARI: statusFn/expiryFn `?? (() => true)` ile her render'da YENİ
+  // fonksiyon üretiyor; onları dep olarak vermek memo'yu tümüyle boşa çıkarırdı.
+  }), [certs, statsFilter, statusFilter, expiryFilter, teamFilter, search])
 
   function defaultPriority(c) {
     const al = c.alert_level
@@ -615,19 +707,22 @@ export default function App() {
     return 4
   }
 
-  const sorted = [...filtered].sort((a, b) => {
+  const sorted = useMemo(() => [...filtered].sort((a, b) => {
     if (sortOrder === 'asc')  return (a.days_remaining ?? 999999) - (b.days_remaining ?? 999999)
     if (sortOrder === 'desc') return (b.days_remaining ?? -1) - (a.days_remaining ?? -1)
     const pd = defaultPriority(a) - defaultPriority(b)
     if (pd !== 0) return pd
     return (a.days_remaining ?? 999999) - (b.days_remaining ?? 999999)
-  })
+  }), [filtered, sortOrder])
 
   // Sayfalama standardı: "Tümü" seçeneği kaldırıldı (binlerce kart tek seferde render edilmesin; max 200/sayfa).
   const dashPager = usePagination(sorted, {
     listKey: 'dashboard-certs',
     initialPage: readUrlInt('page', 1), initialSize: readUrlInt('ps', null),
   })
+  // Uyarılar sekmesinde sayfalama YOKTU: toplu yenileme dönemlerinde yüzlerce kart tek seferde
+  // render ediliyor ve sekme geçişi kilitleniyordu. Dashboard'daki tavan burada da geçerli olsun.
+  const warnPager = usePagination(warnings, { listKey: 'warnings-certs' })
 
   // Paylaşılabilir URL (dashboard): arama + sayfa. enabled guard ŞART — App her sekmede mount olduğundan
   // bu sync başka sekmedeki sayfanın q/page paramlarını ezerdi. Yazma yalnız q'ya (?domain= e-posta
@@ -865,7 +960,7 @@ export default function App() {
                   <>
                     <div className="cards-container">
                       {dashPager.pageItems.map((cert) => (
-                        <CertificateCard key={cert.domain} cert={cert} onClick={(d) => setModalCert(certs.find(c => c.domain === d) ?? null)}
+                        <CertificateCard key={cert.domain} cert={cert} onClick={openCertModal}
                           hasSilentAlert={silentAlertDomains.has(cert.domain)}
                           hasMailFailure={mailFailureDomains.has(cert.domain)}
                           onMailFailureClick={() => {
@@ -873,7 +968,8 @@ export default function App() {
                             setSmtpPreFilterDomain(cert.domain)
                             setOpenSmtpModalOnLoad(true)
                           }}
-                          isWeak={weakAlgStats != null ? weakDomainSet.has(cert.domain) : undefined} />
+                          isWeak={weakAlgStats != null ? weakDomainSet.has(cert.domain) : undefined}
+                          {...cardActions(cert)} />
                       ))}
                     </div>
                     <PaginationBar {...dashPager} />
@@ -900,9 +996,10 @@ export default function App() {
                 {warnings.length === 0 ? (
                   <LoadingBlock label={t('app.noWarnings')} fullWidth />
                 ) : (
+                  <>
                   <div className="cards-container">
-                    {warnings.map((cert) => (
-                      <CertificateCard key={cert.domain} cert={cert} onClick={(d) => setModalCert(certs.find(c => c.domain === d) ?? null)}
+                    {warnPager.pageItems.map((cert) => (
+                      <CertificateCard key={cert.domain} cert={cert} onClick={openCertModal}
                         hasSilentAlert={silentAlertDomains.has(cert.domain)}
                         hasMailFailure={mailFailureDomains.has(cert.domain)}
                         onMailFailureClick={() => {
@@ -910,9 +1007,12 @@ export default function App() {
                           setAdminInitialTab('health')
                           setSmtpPreFilterDomain(cert.domain)
                           setOpenSmtpModalOnLoad(true)
-                        }} />
+                        }}
+                        {...cardActions(cert)} />
                     ))}
                   </div>
+                  <PaginationBar {...warnPager} />
+                  </>
                 )}
 
                 <div className="network-outage-history-section">
@@ -1072,7 +1172,7 @@ export default function App() {
             {tab === 'admin' && (
               <div className="tab-content active">
                 <h2>{t('app.adminTitle')}</h2>
-                <AdminPanel systemRole={systemRole} ownTeamId={teamId} currentUsername={user} />
+                <AdminPanel systemRole={systemRole} ownTeamId={teamId} myTeamIds={myTeamIds} currentUsername={user} />
               </div>
             )}
 
@@ -1169,6 +1269,19 @@ export default function App() {
 
       <CertificateModal domain={modalCert?.domain} alertLevel={modalCert?.alert_level} initialData={modalCert?._preview ? modalCert : undefined} previewMode={!!modalCert?._preview} currentUser={user} currentUserRole={systemRole} onClose={() => setModalCert(null)} />
       {caModal && <CaDiversityModal certs={certs} onClose={() => setCaModal(false)} />}
+
+      {/* Kart → envanter formu (Düzenle / Kopyala). Kendi Suspense sınırı: yukarıdaki sınır sekme
+          içeriğiyle birlikte kapanıyor ve eager import MDEditor'ü dashboard'un ilk chunk'ına sokardı. */}
+      {invForm && (
+        <Suspense fallback={null}>
+          <InventoryFormModalForDomain
+            domain={invForm.domain}
+            mode={invForm.mode}
+            onClose={() => setInvForm(null)}
+            onSaved={() => { setInvForm(null); loadData() }}
+          />
+        </Suspense>
+      )}
 
       {/* Şimdi Kontrol Et — önce takım seçimi, sonra akan sonuç tablosu */}
       {teamPickerOpen && (

@@ -200,4 +200,37 @@ describe('CheckHistoryTab', () => {
       expect(screen.queryByRole('button', { name: /aynı sonuç|identical results/i })).toBeNull()
     })
   })
+
+  describe('hata durumu', () => {
+    it('API hata dönünce "kayıt yok" DEĞİL, hata bandı gösterir (yanlış teşhis bekçisi)', async () => {
+      // Eskiden useCheckHistory error'u üretiyor ama CheckHistoryTab okumuyordu: 500/403'te kullanıcı
+      // "Seçili aralıkta kayıt yok" görüp monitörün hiç kontrol edilmediğini sanıyordu.
+      api.monitoring.getCheckHistory.mockResolvedValue({ success: false, error: 'HTTP 500 — sunucu hatası' })
+      renderTab()
+
+      expect(await screen.findByRole('alert')).toBeInTheDocument()
+      expect(screen.getByText(/HTTP 500/)).toBeInTheDocument()
+      expect(screen.queryByText(/kayıt yok|No records/i)).toBeNull()
+    })
+
+    it('hata bandındaki "Yeniden dene" isteği tekrar eder', async () => {
+      api.monitoring.getCheckHistory.mockResolvedValue({ success: false, error: 'boom' })
+      renderTab()
+      await screen.findByRole('alert')
+      const calls = api.monitoring.getCheckHistory.mock.calls.length
+
+      fireEvent.click(screen.getByRole('button', { name: /yeniden dene|retry/i }))
+      await waitFor(() => expect(api.monitoring.getCheckHistory.mock.calls.length).toBeGreaterThan(calls))
+    })
+
+    it('veri GERÇEKTEN boşsa hata değil, boş durum gösterilir', async () => {
+      api.monitoring.getCheckHistory.mockResolvedValue({ success: true, data: {
+        items: [], counts: { total: 0, fail: 0 }, buckets: [], alerts: [],
+        range: { from: '2026-08-06T10:00:00', to: '2026-08-07T10:30:00' }, total: 0, page: 0, size: 50 } })
+      renderTab()
+
+      expect(await screen.findByText(/kayıt yok|No records/i)).toBeInTheDocument()
+      expect(screen.queryByRole('alert')).toBeNull()
+    })
+  })
 })

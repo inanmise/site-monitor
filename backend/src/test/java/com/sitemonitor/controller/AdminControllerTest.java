@@ -29,6 +29,7 @@ import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
@@ -1348,7 +1349,7 @@ class AdminControllerTest {
         Team updated = new Team();
         updated.setId(2L);
         updated.setName("Renamed");
-        when(userService.updateTeam(eq(2L), any(), any(), any(), any(), any()))
+        when(userService.updateTeam(eq(2L), any(), any(), any(), any(), any(), any(), any()))
                 .thenReturn(updated);
 
         mvc.perform(put("/api/admin/teams/2")
@@ -1357,6 +1358,101 @@ class AdminControllerTest {
                         .content("{\"name\":\"Renamed\"}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.id").value(2));
+    }
+
+    // ── Haftalık e-posta anahtarları: takım ÜYELERİNE açık dar uç ─────────────
+    // teams.update yetkisi olmayan sıradan USER kendi takımının iki anahtarını çevirebilmeli,
+    // ama BAŞKA takımınkini çevirememeli (IDOR) ve ad/e-posta gibi alanlara dokunamamalı.
+
+    private void stubWeeklyToggle() {
+        Team t = new Team();
+        t.setId(2L);
+        t.setName("Dijital");
+        t.setWeeklyReminderEnabled(true);
+        when(userService.updateTeamWeeklyNotifications(anyLong(), any(), any())).thenReturn(t);
+    }
+
+    /** Oturumdaki kullanıcıyı verilen takım(lar)ın üyesi yapar (dar uç app_users'tan doğruluyor). */
+    private void stubMembership(long userId, Long primaryTeam, Long... alsoMemberOf) {
+        AppUser u = new AppUser();
+        u.setId(userId);
+        u.setUsername("member" + userId);
+        u.setTeamId(primaryTeam);
+        u.setTeamIds(new java.util.LinkedHashSet<>(java.util.List.of(alsoMemberOf)));
+        when(userRepo.findById(userId)).thenReturn(Optional.of(u));
+    }
+
+    @Test
+    @DisplayName("PUT /teams/{id}/weekly-notifications: ÜYE olan USER kendi takımının anahtarını çevirir → 200")
+    void weeklyNotifications_asMember_returns200() throws Exception {
+        stubWeeklyToggle();
+        stubMembership(42L, 2L);
+
+        mvc.perform(put("/api/admin/teams/2/weekly-notifications")
+                        .session(userSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"weekly_reminder_enabled\":true}"))
+                .andExpect(status().isOk());
+
+        verify(userService).updateTeamWeeklyNotifications(eq(2L), eq(Boolean.TRUE), isNull());
+    }
+
+    @Test
+    @DisplayName("PUT /teams/{id}/weekly-notifications: ÇOK takımlı üye ikincil takımı için de çevirebilir → 200")
+    void weeklyNotifications_secondaryMembership_returns200() throws Exception {
+        stubWeeklyToggle();
+        stubMembership(42L, 2L, 7L);   // birincil 2, ayrıca 7 numaralı takımın da üyesi
+
+        mvc.perform(put("/api/admin/teams/7/weekly-notifications")
+                        .session(userSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"weekly_availability_enabled\":false}"))
+                .andExpect(status().isOk());
+
+        verify(userService).updateTeamWeeklyNotifications(eq(7L), isNull(), eq(Boolean.FALSE));
+    }
+
+    @Test
+    @DisplayName("PUT /teams/{id}/weekly-notifications: ÜYESİ OLMADIĞI takım → 403 (IDOR)")
+    void weeklyNotifications_foreignTeam_returns403() throws Exception {
+        stubWeeklyToggle();
+        stubMembership(42L, 2L);   // yalnız 2 numaralı takımın üyesi
+
+        mvc.perform(put("/api/admin/teams/9/weekly-notifications")
+                        .session(userSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"weekly_reminder_enabled\":true}"))
+                .andExpect(status().isForbidden());
+
+        verify(userService, never()).updateTeamWeeklyNotifications(anyLong(), any(), any());
+    }
+
+    @Test
+    @DisplayName("PUT /teams/{id}/weekly-notifications: global ADMIN her takım için çevirebilir → 200")
+    void weeklyNotifications_asAdmin_anyTeam_returns200() throws Exception {
+        stubWeeklyToggle();
+
+        mvc.perform(put("/api/admin/teams/9/weekly-notifications")
+                        .session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"weekly_reminder_enabled\":true}"))
+                .andExpect(status().isOk());
+    }
+
+    @Test
+    @DisplayName("PUT /teams/{id}/weekly-notifications: gövdedeki ad/e-posta/aktiflik YOK SAYILIR (dar uç sızdırmaz)")
+    void weeklyNotifications_ignoresAdminOnlyFields() throws Exception {
+        stubWeeklyToggle();
+        stubMembership(42L, 2L);
+
+        mvc.perform(put("/api/admin/teams/2/weekly-notifications")
+                        .session(userSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"weekly_reminder_enabled\":true,\"name\":\"Hacked\",\"active\":false,\"email\":\"x@y.com\"}"))
+                .andExpect(status().isOk());
+
+        verify(userService).updateTeamWeeklyNotifications(eq(2L), eq(Boolean.TRUE), isNull());
+        verify(userService, never()).updateTeam(anyLong(), any(), any(), any(), any(), any(), any(), any());
     }
 
     @Test

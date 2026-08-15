@@ -1257,9 +1257,15 @@ public class EscalationService {
         }
         Integer days = toInt(result.get("days_remaining"));
         if (days == null) return "CRITICAL";
-        if (days <= threshold.getCriticalDays()) return "CRITICAL";
-        if (days <= threshold.getHighDays()) return "HIGH";
-        if (days <= threshold.getWarningDays()) return "WARNING";
+        // Eşik alanları nullable ve createThreshold gövdeden gelen açık null'ı doğrulamıyor. Çıplak
+        // karşılaştırma unboxing NPE'si atardı; NPE sweep'in en dışına kadar çıkıp O TURUN TÜM
+        // sonuçlarını düşürürdü (alarm/e-posta üretilmez). Varsayılanlar defaultThreshold ile aynı.
+        int crit = threshold.getCriticalDays() != null ? threshold.getCriticalDays() : 7;
+        int high = threshold.getHighDays()     != null ? threshold.getHighDays()     : 15;
+        int warn = threshold.getWarningDays()  != null ? threshold.getWarningDays()  : 30;
+        if (days <= crit) return "CRITICAL";
+        if (days <= high) return "HIGH";
+        if (days <= warn) return "WARNING";
         return null;
     }
 
@@ -1754,13 +1760,24 @@ public class EscalationService {
                 .collect(Collectors.joining(", "));
     }
 
+    /** Alarmın "kime bildirildi" denetim izi. DİKKAT: Map.of null DEĞER kabul etmez (NPE) — name/email
+     *  nullable kolonlar (yalnız role NOT NULL). Eskiden e-postası girilmemiş TEK bir kontak bile tüm
+     *  listeyi "[]" yapıyordu (NPE catch'e düşüyordu) ve olay incelemesinde "bu alarm kime gitti?"
+     *  sorusu sessizce cevapsız kalıyordu. Null-güvenli HashMap + boş alan yerine "" kullanılıyor. */
     private String serializeContacts(List<EscalationContact> contacts) {
         try {
             List<Map<String, String>> list = contacts.stream()
-                    .map(c -> Map.of("name", c.getName(), "email", c.getEmail(), "role", c.getRole()))
+                    .map(c -> {
+                        Map<String, String> m = new LinkedHashMap<>();
+                        m.put("name",  c.getName()  != null ? c.getName()  : "");
+                        m.put("email", c.getEmail() != null ? c.getEmail() : "");
+                        m.put("role",  c.getRole()  != null ? c.getRole()  : "");
+                        return m;
+                    })
                     .collect(Collectors.toList());
             return objectMapper.writeValueAsString(list);
         } catch (Exception e) {
+            log.warn("Kontak listesi serileştirilemedi (notified_contacts boş kalacak): {}", e.toString());
             return "[]";
         }
     }

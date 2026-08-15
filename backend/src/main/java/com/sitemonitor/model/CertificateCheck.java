@@ -31,6 +31,11 @@ public class CertificateCheck {
     private String notBefore;
     private String notAfter;
     private Integer daysRemaining;
+
+    /** Kontrolün toplam süresi (TLS el sıkışma dahil), ms. Checker bunu her zaman ölçüyordu
+     *  (elapsed_ms) ama saklanmıyordu → sertifika için yanıt süresi grafiği kurulamıyordu.
+     *  Geriye dönük veri YOK: kolon eklendiği andan itibaren dolar. */
+    private Integer responseMs;
     private Boolean warning;
     private String status;
     private String error;

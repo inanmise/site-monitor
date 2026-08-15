@@ -43,12 +43,12 @@ public class WeeklyReportReminderService {
     private String appBaseUrl;
 
     /** Gönderim özeti — loglama/test için. */
-    public record ReminderResult(int candidates, int sent, int skippedNoEmail, int skippedDone) {}
+    public record ReminderResult(int candidates, int sent, int skippedNoEmail, int skippedDone, int skippedDisabled) {}
 
     public ReminderResult sendFridayReminders() {
         if (!enabled) {
             log.info("Haftalık rapor hatırlatması devre dışı (reminder-enabled=false) — atlandı");
-            return new ReminderResult(0, 0, 0, 0);
+            return new ReminderResult(0, 0, 0, 0, 0);
         }
 
         LocalDate today = LocalDate.now(IST);
@@ -58,9 +58,17 @@ public class WeeklyReportReminderService {
         String url = buildReportUrl();
 
         List<Team> syTeams = teamRepo.findByActiveTrueOrderByNameAsc();
-        int sent = 0, skippedNoEmail = 0, skippedDone = 0;
+        int sent = 0, skippedNoEmail = 0, skippedDone = 0, skippedDisabled = 0;
 
         for (Team team : syTeams) {
+            // Takım başına opt-in: anahtar kapalıysa (veya hiç açılmamışsa) bu takım rahatsız edilmez.
+            // Filtre repo sorgusuna DEĞİL buraya konur — findByActiveTrueOrderByNameAsc başka üç akış
+            // tarafından da kullanılıyor (CertificateService dahil).
+            if (!Boolean.TRUE.equals(team.getWeeklyReminderEnabled())) {
+                skippedDisabled++;
+                continue;
+            }
+
             Optional<WeeklyReport> existing =
                     reportRepo.findByTeamIdAndReportYearAndWeekNo(team.getId(), year, week);
             if (existing.isPresent() && DONE_STATUSES.contains(existing.get().getStatus())) {
@@ -85,10 +93,11 @@ public class WeeklyReportReminderService {
                     team.getName(), weekLabel, teamEmail, status);
         }
 
-        ReminderResult result = new ReminderResult(syTeams.size(), sent, skippedNoEmail, skippedDone);
+        ReminderResult result = new ReminderResult(syTeams.size(), sent, skippedNoEmail, skippedDone, skippedDisabled);
         log.info("Haftalık rapor cuma hatırlatması tamamlandı: {} aday SY takımı → gönderilen={}, "
-                + "atlanan(e-posta yok)={}, atlanan(zaten girilmiş)={}",
-                result.candidates(), result.sent(), result.skippedNoEmail(), result.skippedDone());
+                + "atlanan(e-posta yok)={}, atlanan(zaten girilmiş)={}, atlanan(hatırlatma kapalı)={}",
+                result.candidates(), result.sent(), result.skippedNoEmail(), result.skippedDone(),
+                result.skippedDisabled());
         return result;
     }
 

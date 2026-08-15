@@ -348,7 +348,27 @@ class UserServiceTest {
 
         assertThat(result.getName()).isEqualTo("Alpha");
         assertThat(result.getEmail()).isEqualTo("alpha@example.com");
+        // Haftalık e-postalar opt-in: yeni takım İKİSİ DE KAPALI doğar (mevcut takımlar açılış
+        // yamasında TRUE'ya çekilir, bu yüzden varsayılan burada açıkça sabitleniyor).
+        assertThat(result.getWeeklyReminderEnabled()).isFalse();
+        assertThat(result.getWeeklyAvailabilityEnabled()).isFalse();
         verify(teamRepo).save(any(Team.class));
+    }
+
+    @Test
+    @DisplayName("updateTeamWeeklyNotifications: yalnız verilen anahtarı çevirir, diğer alanlara dokunmaz")
+    void updateTeamWeeklyNotifications_touchesOnlyGivenSwitch() {
+        Team existing = new Team();
+        existing.setId(2L); existing.setName("Dijital"); existing.setEmail("d@x.com"); existing.setActive(true);
+        existing.setWeeklyReminderEnabled(false); existing.setWeeklyAvailabilityEnabled(true);
+        when(teamRepo.findById(2L)).thenReturn(Optional.of(existing));   // save stub'ı setUp'ta (entity'yi yankılar)
+
+        Team out = service.updateTeamWeeklyNotifications(2L, true, null);   // null = dokunma
+
+        assertThat(out.getWeeklyReminderEnabled()).isTrue();
+        assertThat(out.getWeeklyAvailabilityEnabled()).isTrue();   // null geçildi → değişmedi
+        assertThat(out.getName()).isEqualTo("Dijital");            // yönetici alanları korunur
+        assertThat(out.getActive()).isTrue();
     }
 
     @Test
@@ -404,7 +424,7 @@ class UserServiceTest {
         t.setLeaderId(5L);
         when(teamRepo.findById(2L)).thenReturn(Optional.of(t));
 
-        service.updateTeam(2L, "NewName", null, null, null, null);
+        service.updateTeam(2L, "NewName", null, null, null, null, null, null);
 
         assertThat(t.getName()).isEqualTo("NewName");
         verify(teamRepo).save(t);
@@ -418,7 +438,7 @@ class UserServiceTest {
         t.setLeaderId(5L);
         when(teamRepo.findById(2L)).thenReturn(Optional.of(t));
 
-        service.updateTeam(2L, null, null, null, null, null);
+        service.updateTeam(2L, null, null, null, null, null, null, null);
 
         assertThat(t.getLeaderId()).isEqualTo(5L);
     }
@@ -427,7 +447,7 @@ class UserServiceTest {
     @DisplayName("updateTeam: not found → NoSuchElementException")
     void updateTeam_notFound_throwsNoSuchElement() {
         when(teamRepo.findById(999L)).thenReturn(Optional.empty());
-        assertThatThrownBy(() -> service.updateTeam(999L, "X", "x@x.com", null, null, null))
+        assertThatThrownBy(() -> service.updateTeam(999L, "X", "x@x.com", null, null, null, null, null))
                 .isInstanceOf(NoSuchElementException.class);
     }
 
