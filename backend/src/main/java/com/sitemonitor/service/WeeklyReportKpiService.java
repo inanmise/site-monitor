@@ -91,6 +91,17 @@ public class WeeklyReportKpiService {
     /** KPI yanıtı: bu hafta + önceki hafta (delta için) + son 8 hafta trendi + executive özet (eski/veri-yok → null). */
     public record WeeklyReportKpis(KpiSet current, KpiSet previous, List<WeekPoint> trend8w, SummaryBlock summary) {}
 
+    /**
+     * CACHE: tek bir çağrı weeklyUptime'ı DÖRT kez koşuyor (bu hafta + önceki hafta + iki skor
+     * girdisi) ve her koşum takımın tüm domainleri için bir haftalık uptime_checks satırlarını
+     * belleğe alıyor (5 dk kadans → domain başına ~2016 satır/hafta). 100 domain'lik bir takımda
+     * tek istek yüz binlerce entity demek; aynı transaction'da tutulduğu için heap'te birikiyor.
+     * Geçmiş haftalar STATİK olduğundan sonuç cache'lenebilir — aynı raporu açan her kullanıcı
+     * (ve aynı kullanıcının her yenilemesi) artık tek hesaba biner.
+     * NOT: ham veriyi rollup tablolarından (monitor_check_daily/hourly) okumak asıl çözümdür;
+     * bu, o iş yapılana kadar yükü düşüren düşük riskli adımdır.
+     */
+    @org.springframework.cache.annotation.Cacheable(value = "weekly-kpis", sync = true)
     @Transactional(readOnly = true)
     public WeeklyReportKpis compute(Long teamId, int isoYear, int weekNo) {
         LocalDate baseMonday = WeeklyAvailabilityReportService.mondayOfIsoWeek(isoYear, weekNo);

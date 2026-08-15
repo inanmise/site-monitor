@@ -35,6 +35,12 @@ public class CacheConfig {
      */
     private static final List<String> LONG_TTL_CACHES =
             List.of("cert-latest", "cert-stats", "cert-warnings", "renewal-advice", "teamNames",
+                    // domain-team-names: izleme ekranlarının (uptime/port/dns) her isteğinde teams +
+                    // aktif envanter tam taraması yapıyordu; envanter değişince zaten evict ediliyor.
+                    "domain-team-names",
+                    // weekly-kpis: tek hesap bir haftalık uptime_checks'i 4 kez tarıyor;
+                    // geçmiş haftalar statik, bu hafta 300 sn tazelikle yeterince güncel.
+                    "weekly-kpis",
                     // failure-domains: 7 günlük notification_logs taraması, dashboard'da 5 dk'da bir
                     // 100 kullanıcı çağırıyor → 300 sn TTL ile tur başına 1 tarama (bkz. ExtendedHealthService).
                     "failure-domains",

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import {
   ResponsiveContainer, ComposedChart, Area, Line, XAxis, YAxis, CartesianGrid, Tooltip,
 } from 'recharts'
@@ -74,7 +74,11 @@ export default function ResponseTimeChart({ monitorId, kind }) {
   const [loading, setLoading] = useState(false)
   const [hidden, setHidden] = useState(() => new Set())   // tıklanabilir legend: izole/gizle (gezgin deseni)
 
+  // YARIŞ KORUMASI (desen: history/useCheckHistory.js). 24s → 7g → 30g hızlıca tıklanırsa
+  // yavaş dönen ESKİ yanıt yeniyi eziyor, grafik seçili olmayan aralığı gösteriyordu.
+  const seqRef = useRef(0)
   const load = useCallback(async () => {
+    const seq = ++seqRef.current
     setLoading(true)
     const fetcher = { ping: api.monitoring.getPingResponseSeries, keyword: api.monitoring.getKeywordResponseSeries,
       port: api.monitoring.getPortResponseSeries, dns: api.monitoring.getDnsResponseSeries, http: api.monitoring.getHttpResponseSeries,
@@ -82,6 +86,7 @@ export default function ResponseTimeChart({ monitorId, kind }) {
       ssl: api.monitoring.getSslResponseSeries }[kind] ?? api.monitoring.getKeywordResponseSeries
     const params = custom ? { from: custom.from, to: custom.to } : { days: PRESETS.find(p => p.key === preset)?.days ?? 30 }
     const res = await fetcher(monitorId, params)
+    if (seq !== seqRef.current) return          // daha yeni bir istek var: bu yanıtı YOK SAY
     setData(res?.success ? res.data : null)
     setLoading(false)
   }, [monitorId, kind, preset, custom])

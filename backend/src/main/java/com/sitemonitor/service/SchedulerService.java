@@ -1158,34 +1158,56 @@ public class SchedulerService {
 
     /** Denetim kayıtlarını silmeden ÖNCE tarihli JSONL arşive yazar (append-only + arşiv gerekliliği).
      *  archive-enabled kapalıysa/hata olursa 0 döner (silme yine de yapılır; en kötü ihtimalle arşivsiz). */
+    /** Arşiv okuma sayfası. Tüm tabloyu tek List'e almak yerine keyset ile ilerlenir (aşağıya bakın). */
+    static final int AUDIT_ARCHIVE_BATCH = 5_000;
+
     private int archiveAuditBeforePurge(String cutoff) {
         try {
             if (!appSettings.getBoolean("site.monitor.audit.archive-enabled", true)) return 0;
-            List<java.util.Map<String, Object>> rows =
-                    jdbcTemplate.queryForList("SELECT * FROM audit_log WHERE event_time < ? ORDER BY seq ASC", cutoff);
-            if (rows.isEmpty()) return 0;
             String dir = appSettings.getString("site.monitor.audit.archive-dir", "logs/audit-archive");
             java.nio.file.Path p = java.nio.file.Path.of(dir, "audit-" + cutoff.substring(0, 10) + ".jsonl");
             if (p.getParent() != null) java.nio.file.Files.createDirectories(p.getParent());
-            StringBuilder sb = new StringBuilder();
-            for (java.util.Map<String, Object> r : rows) {
-                sb.append('{');
-                boolean first = true;
-                for (var e : r.entrySet()) {
-                    if (!first) sb.append(',');
-                    first = false;
-                    sb.append('"').append(e.getKey()).append("\":");
-                    Object v = e.getValue();
-                    if (v == null) sb.append("null");
-                    else if (v instanceof Number || v instanceof Boolean) sb.append(v);
-                    else sb.append('"').append(v.toString().replace("\\", "\\\\").replace("\"", "\\\"")
-                            .replace("\n", " ").replace("\r", " ")).append('"');
+
+            // KEYSET SAYFALAMA + akan yazım. Eskiden "SELECT *" LIMIT'siz tek List'e alınıyor, sonra
+            // TAMAMI tek StringBuilder + tek String'e kopyalanıyordu (bellekte ~3 kat). Retention ilk kez
+            // devreye girdiğinde veya legal-hold kalktığında bu milyonlarca satır olabilir → gece 03:30'da
+            // OOM → pod restart (üstelik catch(Exception) OutOfMemoryError'ı YAKALAMAZ). Silme tarafı
+            // zaten batch'liydi; ön adım da artık öyle.
+            long lastSeq = Long.MIN_VALUE;
+            int total = 0;
+            try (java.io.BufferedWriter w = java.nio.file.Files.newBufferedWriter(p,
+                    java.nio.charset.StandardCharsets.UTF_8,
+                    java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.APPEND)) {
+                while (true) {
+                    List<java.util.Map<String, Object>> rows = jdbcTemplate.queryForList(
+                            "SELECT * FROM audit_log WHERE event_time < ? AND seq > ? ORDER BY seq ASC LIMIT " + AUDIT_ARCHIVE_BATCH,
+                            cutoff, lastSeq);
+                    if (rows.isEmpty()) break;
+                    for (java.util.Map<String, Object> r : rows) {
+                        StringBuilder sb = new StringBuilder(256);
+                        sb.append('{');
+                        boolean first = true;
+                        for (var e : r.entrySet()) {
+                            if (!first) sb.append(',');
+                            first = false;
+                            sb.append('"').append(e.getKey()).append("\":");
+                            Object v = e.getValue();
+                            if (v == null) sb.append("null");
+                            else if (v instanceof Number || v instanceof Boolean) sb.append(v);
+                            else sb.append('"').append(v.toString().replace("\\", "\\\\").replace("\"", "\\\"")
+                                    .replace("\n", " ").replace("\r", " ")).append('"');
+                        }
+                        sb.append('}');
+                        w.write(sb.toString());
+                        w.newLine();
+                        Object seq = r.get("seq");
+                        if (seq instanceof Number n) lastSeq = n.longValue();
+                    }
+                    total += rows.size();
+                    if (rows.size() < AUDIT_ARCHIVE_BATCH) break;
                 }
-                sb.append("}").append(System.lineSeparator());
             }
-            java.nio.file.Files.writeString(p, sb.toString(), java.nio.charset.StandardCharsets.UTF_8,
-                    java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.APPEND);
-            return rows.size();
+            return total;
         } catch (Exception e) {
             log.warn("Audit arşivleme başarısız (silme yine yapılacak): {}", e.getMessage());
             return 0;

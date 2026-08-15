@@ -3,6 +3,7 @@ import { useState, useEffect, useCallback, useRef, useMemo, lazy, Suspense } fro
 import { createPortal } from 'react-dom'
 import { api, formatDate } from '../api/client'
 import { useT } from '../i18n/index.jsx'
+import AlertBanner from './ui/AlertBanner.jsx'
 import { useVisibleInterval } from '../hooks/useVisibleInterval'
 import { useToast } from './ui/Toast.jsx'
 import MonitorHowBox from './ui/MonitorHowBox.jsx'
@@ -61,6 +62,7 @@ export default function PortMonitorPage({ systemRole, teamId, teamName }) {
   const canDeleteRow = (m) => isAdmin || (isTeamAdmin && isOwnTeam(m))
   const [monitors, setMonitors] = useState([])
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState(null)
   const [teams, setTeams] = useState([])
   const [defaults, setDefaults] = useState(null)
   const [selected, setSelected] = useState(null)
@@ -86,7 +88,11 @@ export default function PortMonitorPage({ systemRole, teamId, teamName }) {
 
   const load = useCallback(async () => {
     const res = await api.monitoring.getPortMonitors()
-    if (res?.success) setMonitors(res.data)
+    // HATA DALI: eskiden else yoktu → API düşünce liste boş kalıyor ve ekran
+    // "Henüz izleme yok, ekleyin" diyordu; kullanıcı monitörlerinin SİLİNDİĞİNİ sanıyordu.
+    // Ayrıca useVisibleInterval her 60 sn sessizce başarısız olmaya devam ediyordu.
+    if (res?.success) { setMonitors(res.data); setLoadError(null) }
+    else setLoadError(res?.error || 'load failed')
     setLoading(false)
     setSecondsSince(0)
   }, [])
@@ -403,7 +409,12 @@ export default function PortMonitorPage({ systemRole, teamId, teamName }) {
         </div>
       )}
 
-      {loading ? <LoadingBlock label={t('tbl.loading')} fullWidth /> : monitors.length === 0 ? (
+      {loading ? <LoadingBlock label={t('tbl.loading')} fullWidth /> : loadError && monitors.length === 0 ? (
+        <AlertBanner tone="danger" title={t('mon.loadError')} role="alert"
+          actions={<button className="btn btn-sm btn-secondary" onClick={load}>{t('hist.retry')}</button>}>
+          {String(loadError)}
+        </AlertBanner>
+      ) : monitors.length === 0 ? (
         <div className="mon-empty">{t('port.noMonitors')}</div>
       ) : (
         <div className="mon-table-wrap">

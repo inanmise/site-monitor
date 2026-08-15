@@ -1,5 +1,6 @@
 import { ShieldAlert, ShieldCheck, MailWarning, BellOff, Clock, Calendar, Network, Globe, Users, Building2,
   Play, Pencil, Copy } from 'lucide-react'
+import { memo } from 'react'
 import { formatDate } from '../api/client'
 import { useT } from '../i18n/index.jsx'
 import { ProgressBar } from './ui/Progress.jsx'
@@ -10,7 +11,7 @@ function parseDn(dn, field) {
   return m ? m[1].trim() : null
 }
 
-export default function CertificateCard({ cert, onClick, hasSilentAlert = false, hasMailFailure = false,
+function CertificateCard({ cert, onClick, hasSilentAlert = false, hasMailFailure = false,
                                           onMailFailureClick, isWeak,
                                           onCheckNow, onEdit, onDuplicate, checking = false }) {
   const t = useT()
@@ -232,3 +233,11 @@ export default function CertificateCard({ cert, onClick, hasSilentAlert = false,
     </div>
   )
 }
+
+/**
+ * MEMO: dashboard'da 50 kart aynı anda duruyor ve App saniyede bir yeniden render olabiliyor
+ * (inaktivite geri sayımı, "Şimdi Kontrol Et" akışı). Kart saf: aynı proplarla aynı çıktıyı
+ * üretir. Kazancın gerçekleşmesi için ÇAĞIRAN da referansları sabit tutmalı — App.jsx'te
+ * cardActions/onClick useCallback ile sarılı.
+ */
+export default memo(CertificateCard)

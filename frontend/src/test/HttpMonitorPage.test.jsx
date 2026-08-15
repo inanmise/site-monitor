@@ -196,4 +196,24 @@ describe('HttpMonitorPage', () => {
       window.history.replaceState({}, '', '/')
     }
   })
+
+  it('API hata dönünce "izleme yok" DEĞİL, hata bandı gösterir (silindi sanma bekçisi)', async () => {
+    // Eskiden load()'da else dalı yoktu: liste bos kalip "Henüz izleme yok, ekleyin" cikiyordu.
+    // Kullanici monitorlerinin silindigini saniyordu; ustelik 60 sn'lik polling sessizce basarisiz
+    // olmaya devam ediyordu.
+    api.monitoring.getHttpMonitors.mockResolvedValue({ success: false, error: 'HTTP 503 — servis kullanilamiyor' })
+    render(<HttpMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
+
+    expect(await screen.findByRole('alert')).toBeInTheDocument()
+    expect(screen.getByText(/HTTP 503/)).toBeInTheDocument()
+    expect(screen.queryByText(/no monitors|henüz izleme/i)).toBeNull()
+  })
+
+  it('gercekten bos liste hata DEGIL, bos durum gosterir', async () => {
+    api.monitoring.getHttpMonitors.mockResolvedValue({ success: true, data: [] })
+    render(<HttpMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
+
+    await waitFor(() => expect(api.monitoring.getHttpMonitors).toHaveBeenCalled())
+    expect(screen.queryByRole('alert')).toBeNull()
+  })
 })

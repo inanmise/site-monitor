@@ -33,6 +33,18 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class CertificateService {
 
+    /**
+     * SELF-INJECTION (@Lazy: dairesel bagimlilik olmasin). @EnableCaching PROXY modunda calisir:
+     * aynı bean icinden yapilan `this.getAllLatest()` cagrisi proxy'yi ATLAR ve @Cacheable HIC
+     * devreye girmez. Dashboard'un tum sicak uclari (*ForTeams) bu ic cagrilari kullaniyordu →
+     * cert-latest/cert-stats/cert-warnings/renewal-advice cache'lerinin hit orani fiilen %0'di;
+     * 100 kullanici x 5 dk poll her istekte envanter + latest_checks tam taramasi demekti.
+     * Cache'li metotlar artik self uzerinden cagrilir.
+     */
+    @org.springframework.beans.factory.annotation.Autowired
+    @org.springframework.context.annotation.Lazy
+    private CertificateService self;
+
     private final CertificateCheckRepository checkRepo;
     private final LatestCheckRepository latestRepo;
     private final CertificateCheckerService checkerService;
@@ -184,7 +196,7 @@ public class CertificateService {
     }
 
     /**
-     * Sweep ya da manuel check sonrası 4 listede cache'i tek seferde temizler.
+     * Sweep ya da manuel check sonrası liste cache'lerini tek seferde temizler.
      * Önceden her saveResult bunu yapardı — 1000 domain'lik sweep'te 4000 evict
      * tetikleniyordu. Şimdi caller batch sonunda tek çağırır.
      */
@@ -192,7 +204,9 @@ public class CertificateService {
         @CacheEvict(value = "cert-stats",     allEntries = true),
         @CacheEvict(value = "cert-latest",    allEntries = true),
         @CacheEvict(value = "cert-warnings",  allEntries = true),
-        @CacheEvict(value = "renewal-advice", allEntries = true)
+        @CacheEvict(value = "renewal-advice", allEntries = true),
+        // domain→takım haritası da envanterden türüyor: takım/domain değişince bayat kalmasın.
+        @CacheEvict(value = "domain-team-names", allEntries = true)
     })
     public void evictAllCaches() {
         // metod gövdesi boş — annotation'lar Spring AOP'a iş yaptırır
@@ -273,7 +287,13 @@ public class CertificateService {
      * domain → sorumlu (SY) takım adı (aktif envanter). İzleme ekranları (uptime/port/dns)
      * yanıtlarını takımla zenginleştirmek için — getAllLatest'teki aynı domain→team deseni.
      * Cache'li sıcak yolu (getAllLatest) bozmamak için ayrı, bağımsız bir okuma.
+     *
+     * CACHE: ikizi teamNamesById() 300 sn cache'liydi, bu değildi — oysa uptimeOverview/listPort/
+     * listDns/createPort/updatePort/triggerPort gibi 5+ sıcak uç her çağrıda teams + 1000 satırlık
+     * certificate_inventory TAM TARAMASI yaptırıyordu (100 kullanıcı × 5 dk poll → dakikada ~2000
+     * gereksiz tarama). Envanter değişince zaten evictAllCaches çalışıyor.
      */
+    @Cacheable("domain-team-names")
     public Map<String, String> domainTeamNameMap() {
         Map<Long, String> teamNames = teamRepo.findAll().stream()
                 .filter(tm -> tm.getId() != null && tm.getName() != null)
@@ -300,10 +320,10 @@ public class CertificateService {
 
     /** Certs visible to the given team scope. null = unrestricted (global); empty = none. */
     public List<CertificateDto> getAllLatestForTeams(java.util.Collection<Long> teamIds) {
-        if (teamIds == null) return getAllLatest();
+        if (teamIds == null) return self.getAllLatest();
         if (teamIds.isEmpty()) return List.of();
         Set<String> domains = getTeamDomains(teamIds);
-        return getAllLatest().stream()
+        return self.getAllLatest().stream()
                 .filter(c -> domains.contains(c.getDomain()))
                 .collect(Collectors.toList());
     }
@@ -387,10 +407,10 @@ public class CertificateService {
     }
 
     public List<CertificateDto> getWarningsForTeams(java.util.Collection<Long> teamIds) {
-        if (teamIds == null) return getWarnings();
+        if (teamIds == null) return self.getWarnings();
         if (teamIds.isEmpty()) return List.of();
         Set<String> domains = getTeamDomains(teamIds);
-        return getWarnings().stream()
+        return self.getWarnings().stream()
                 .filter(c -> domains.contains(c.getDomain()))
                 .collect(Collectors.toList());
     }
@@ -421,7 +441,7 @@ public class CertificateService {
     }
 
     public Map<String, Object> getStatsForTeams(java.util.Collection<Long> teamIds) {
-        if (teamIds == null) return getStats();
+        if (teamIds == null) return self.getStats();
         List<CertificateDto> all = getAllLatestForTeams(teamIds);
         List<CertificateDto> warnings = getWarningsForTeams(teamIds);
         return computeStats(all, warnings);
@@ -438,9 +458,9 @@ public class CertificateService {
         List<CertificateDto> syWarn = getWarningsForTeams(List.of(teamId));
 
         Set<String> ugDomains = getUgTeamDomains(teamId);
-        List<CertificateDto> ugAll  = getAllLatest().stream()
+        List<CertificateDto> ugAll  = self.getAllLatest().stream()
                 .filter(c -> ugDomains.contains(c.getDomain())).toList();
-        List<CertificateDto> ugWarn = getWarnings().stream()
+        List<CertificateDto> ugWarn = self.getWarnings().stream()
                 .filter(c -> ugDomains.contains(c.getDomain())).toList();
 
         Map<String, Integer> tierMap = buildTierMap();
@@ -470,8 +490,8 @@ public class CertificateService {
 
     private Map<String, Object> teamsBreakdown(java.util.Collection<Long> onlyTeamIds) {
         List<CertificateInventory> allInv     = inventoryRepo.findByActiveTrueOrderByDomainAsc();
-        List<CertificateDto>       allLatest  = getAllLatest();
-        List<CertificateDto>       allWarnings = getWarnings();
+        List<CertificateDto>       allLatest  = self.getAllLatest();
+        List<CertificateDto>       allWarnings = self.getWarnings();
 
         Map<Long, Set<String>> syMap = new HashMap<>();
         Map<Long, Set<String>> ugMap = new HashMap<>();
@@ -544,7 +564,7 @@ public class CertificateService {
 
     @Cacheable(value = "cert-stats", sync = true)
     public Map<String, Object> getStats() {
-        return computeStats(getAllLatest(), getWarnings());
+        return computeStats(self.getAllLatest(), self.getWarnings());
     }
 
     /** Aktif eşik (kritik/yüksek gün) — TEK okuma; 4-arg computeStats'e geçirilir. */
@@ -628,13 +648,13 @@ public class CertificateService {
     // (getActivityLog kaldırıldı — birleşik activity_log / ActivityController onun yerini aldı; ölü koddu.)
 
     public List<Map<String, Object>> getRenewalAdviceForTeams(java.util.Collection<Long> teamIds) {
-        if (teamIds == null) return getRenewalAdvice();
+        if (teamIds == null) return self.getRenewalAdvice();
         return computeRenewalAdvice(getAllLatestForTeams(teamIds));
     }
 
     @Cacheable(value = "renewal-advice", sync = true)
     public List<Map<String, Object>> getRenewalAdvice() {
-        return computeRenewalAdvice(getAllLatest());
+        return computeRenewalAdvice(self.getAllLatest());
     }
 
     private List<Map<String, Object>> computeRenewalAdvice(List<CertificateDto> all) {

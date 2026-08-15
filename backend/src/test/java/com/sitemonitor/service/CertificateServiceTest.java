@@ -46,6 +46,9 @@ class CertificateServiceTest {
     void setUp() {
         service = new CertificateService(checkRepo, latestRepo, checkerService, maintenanceService,
                 inventoryRepo, new ObjectMapper(), teamRepo, alertThresholdRepo, activityLog);
+        // self-injection: birim testte proxy yok, alan null kalir → *ForTeams metotlari NPE atardi.
+        // Gercek cache davranisi ayri bir Spring baglamli testte dogrulaniyor (CertificateServiceCacheTest).
+        org.springframework.test.util.ReflectionTestUtils.setField(service, "self", service);
         when(checkerService.serializeSan(any())).thenReturn("[]");
         when(checkerService.deserializeSan(any())).thenReturn(Collections.emptyList());
         when(alertThresholdRepo.findFirstByActiveTrue()).thenReturn(Optional.empty());

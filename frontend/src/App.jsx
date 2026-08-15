@@ -373,12 +373,15 @@ export default function App() {
   }, [user])
 
   useEffect(() => {
-    if (user && tab === 'warnings') {
-      api.getWarnings().then((res) => { if (res?.success) setWarnings(res.data) })
-      api.getNetworkOutageHistory(50).then((res) => {
-        if (res?.success && Array.isArray(res.events)) setOutageHistory(res.events)
-      })
-    }
+    if (!user || tab !== 'warnings') return
+    // alive guard: sekme hızlı değiştirilip geri gelinirse iki uçuşan istek yarışır ve YAVAŞ olan
+    // en son kazanıp bayat uyarı listesini yazabilir (loadData'daki loadAliveRef deseninin eşi).
+    let alive = true
+    api.getWarnings().then((res) => { if (alive && res?.success) setWarnings(res.data ?? []) })
+    api.getNetworkOutageHistory(50).then((res) => {
+      if (alive && res?.success && Array.isArray(res.events)) setOutageHistory(res.events)
+    })
+    return () => { alive = false }
   }, [user, tab])
 
 
@@ -498,6 +501,16 @@ export default function App() {
 
   /** Kart aksiyon prop'ları. Düzenle/Kopyala yalnız envanteri yönetebilenlere; Çalıştır herkese
    *  (toplu "Şimdi Kontrol Et" de rol kapısı taşımıyor, /check/{domain} yalnız oturum istiyor). */
+  /** Kart detayını açar. useCallback ŞART: CertificateCard memo'lu — her render'da yeni bir
+   *  fonksiyon üretmek 50 kartın tamamını yeniden render ettirir ve memo'yu boşa çıkarır.
+   *  Güncel listeyi ref'ten okur: `certs`i dep yapmak referansı her veri tazelemesinde
+   *  değiştirirdi (state setter'ını okuma amaçlı çağırmak da gereksiz render üretir). */
+  const certsRef = useRef(certs)
+  useEffect(() => { certsRef.current = certs }, [certs])
+  const openCertModal = useCallback((d) => {
+    setModalCert(certsRef.current.find(c => c.domain === d) ?? null)
+  }, [])
+
   function cardActions(cert) {
     return {
       onCheckNow: () => runSingleCheck(cert.domain),
@@ -649,8 +662,11 @@ export default function App() {
   const statusFn = STATUS_FILTER_FN[statusFilter] ?? (() => true)
   const expiryFn = EXPIRY_FILTER_FN[expiryFilter] ?? (() => true)
 
-  // Takım filtresi seçenekleri — cert listesinden türetilir (yeni endpoint yok); her render'da ucuzca hesaplanır.
-  const teamOptions = (() => {
+  // Takım filtresi seçenekleri — cert listesinden türetilir (yeni endpoint yok).
+  // MEMO ŞART: App saniyede bir yeniden render olabiliyor (inaktivite geri sayımı) ve "Şimdi Kontrol Et"
+  // her sonuçta setCheckRun ile tüm ağacı tazeliyor; 1000 sertifikada Set+sort her seferde yeniden
+  // koşuyordu. 8 monitör sayfasının hepsi bu bloğu zaten useMemo ile sarıyor, App sarmıyordu.
+  const teamOptions = useMemo(() => {
     const names = new Set()
     let hasNone = false
     for (const c of certs) { if (c.team_name) names.add(c.team_name); else hasNone = true }
@@ -658,10 +674,10 @@ export default function App() {
     ;[...names].sort((a, b) => a.localeCompare(b)).forEach((n) => opts.push({ value: n, label: n }))
     if (hasNone) opts.push({ value: '__none__', label: t('app.noTeam') })
     return opts
-  })()
+  }, [certs, t])
   const hasTeamOptions = teamOptions.some((o) => o.value !== 'all' && o.value !== '__none__')
 
-  const filtered = certs.filter((c) => {
+  const filtered = useMemo(() => certs.filter((c) => {
     if (statFn   && !statFn(c))   return false
     if (!statusFn(c))              return false
     if (!expiryFn(c))              return false
@@ -672,7 +688,9 @@ export default function App() {
     if (!search)                   return true
     const s = search.toLowerCase()
     return c.domain?.toLowerCase().includes(s) || c.issuer?.toLowerCase().includes(s) || c.subject?.toLowerCase().includes(s)
-  })
+  // Bağımlılıklar FİLTRE ANAHTARLARI: statusFn/expiryFn `?? (() => true)` ile her render'da YENİ
+  // fonksiyon üretiyor; onları dep olarak vermek memo'yu tümüyle boşa çıkarırdı.
+  }), [certs, statsFilter, statusFilter, expiryFilter, teamFilter, search])
 
   function defaultPriority(c) {
     const al = c.alert_level
@@ -689,19 +707,22 @@ export default function App() {
     return 4
   }
 
-  const sorted = [...filtered].sort((a, b) => {
+  const sorted = useMemo(() => [...filtered].sort((a, b) => {
     if (sortOrder === 'asc')  return (a.days_remaining ?? 999999) - (b.days_remaining ?? 999999)
     if (sortOrder === 'desc') return (b.days_remaining ?? -1) - (a.days_remaining ?? -1)
     const pd = defaultPriority(a) - defaultPriority(b)
     if (pd !== 0) return pd
     return (a.days_remaining ?? 999999) - (b.days_remaining ?? 999999)
-  })
+  }), [filtered, sortOrder])
 
   // Sayfalama standardı: "Tümü" seçeneği kaldırıldı (binlerce kart tek seferde render edilmesin; max 200/sayfa).
   const dashPager = usePagination(sorted, {
     listKey: 'dashboard-certs',
     initialPage: readUrlInt('page', 1), initialSize: readUrlInt('ps', null),
   })
+  // Uyarılar sekmesinde sayfalama YOKTU: toplu yenileme dönemlerinde yüzlerce kart tek seferde
+  // render ediliyor ve sekme geçişi kilitleniyordu. Dashboard'daki tavan burada da geçerli olsun.
+  const warnPager = usePagination(warnings, { listKey: 'warnings-certs' })
 
   // Paylaşılabilir URL (dashboard): arama + sayfa. enabled guard ŞART — App her sekmede mount olduğundan
   // bu sync başka sekmedeki sayfanın q/page paramlarını ezerdi. Yazma yalnız q'ya (?domain= e-posta
@@ -939,7 +960,7 @@ export default function App() {
                   <>
                     <div className="cards-container">
                       {dashPager.pageItems.map((cert) => (
-                        <CertificateCard key={cert.domain} cert={cert} onClick={(d) => setModalCert(certs.find(c => c.domain === d) ?? null)}
+                        <CertificateCard key={cert.domain} cert={cert} onClick={openCertModal}
                           hasSilentAlert={silentAlertDomains.has(cert.domain)}
                           hasMailFailure={mailFailureDomains.has(cert.domain)}
                           onMailFailureClick={() => {
@@ -975,9 +996,10 @@ export default function App() {
                 {warnings.length === 0 ? (
                   <LoadingBlock label={t('app.noWarnings')} fullWidth />
                 ) : (
+                  <>
                   <div className="cards-container">
-                    {warnings.map((cert) => (
-                      <CertificateCard key={cert.domain} cert={cert} onClick={(d) => setModalCert(certs.find(c => c.domain === d) ?? null)}
+                    {warnPager.pageItems.map((cert) => (
+                      <CertificateCard key={cert.domain} cert={cert} onClick={openCertModal}
                         hasSilentAlert={silentAlertDomains.has(cert.domain)}
                         hasMailFailure={mailFailureDomains.has(cert.domain)}
                         onMailFailureClick={() => {
@@ -989,6 +1011,8 @@ export default function App() {
                         {...cardActions(cert)} />
                     ))}
                   </div>
+                  <PaginationBar {...warnPager} />
+                  </>
                 )}
 
                 <div className="network-outage-history-section">
