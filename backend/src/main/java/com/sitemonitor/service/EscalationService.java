@@ -146,9 +146,12 @@ public class EscalationService {
         return TYPE_PAGE_DOWN.equals(t) || TYPE_PAGE_INTEGRITY.equals(t);
     }
 
-    /** Senaryo İzleme (k6) — tek sağlık boyutu: PASS değilse başarısız. */
+    /** Senaryo İzleme (k6): FAIL = PASS değil (kesinti); SLOW = koşum süresi opt-in eşiği aştı (kesinti DEĞİL). */
     public static final String TYPE_SCRIPTED_FAIL = "SCRIPTED_FAIL";
-    public static boolean isScripted(String t) { return TYPE_SCRIPTED_FAIL.equals(t); }
+    public static final String TYPE_SCRIPTED_SLOW = "SCRIPTED_SLOW";
+    public static boolean isScripted(String t) {
+        return TYPE_SCRIPTED_FAIL.equals(t) || TYPE_SCRIPTED_SLOW.equals(t);
+    }
 
     /** İzleme kaynaklı alarm tipleri — kadanslarının sahibi ilgili sweep'lerdir;
      *  cert sweep'inin auto-resolve'u ve startup catch-up bunlara dokunmaz. */
@@ -158,7 +161,7 @@ public class EscalationService {
                    TYPE_KEYWORD, TYPE_PING_DOWN, TYPE_HTTP_DOWN, TYPE_HTTP_SSL, TYPE_DOMAIN_EXPIRY,
                    TYPE_DOMAINMON_EXPIRY, TYPE_DOMAINMON_UNKNOWN, TYPE_DOMAINMON_STATUS, TYPE_DOMAINMON_CHANGED,
                    TYPE_KEYWORD_SLOW, TYPE_KEYWORD_SSL, TYPE_KEYWORD_DOMAIN_EXPIRY, TYPE_PORT_SLOW,
-                   TYPE_PAGE_DOWN, TYPE_PAGE_INTEGRITY, TYPE_SCRIPTED_FAIL);
+                   TYPE_PAGE_DOWN, TYPE_PAGE_INTEGRITY, TYPE_SCRIPTED_FAIL, TYPE_SCRIPTED_SLOW);
 
     /** Sertifika kaynaklı alarm tipleri — cert sweep'inin auto-resolve kapsamı.
      *  İzleme tipleri bilinçli olarak DIŞINDA: sertifika kontrolünün düzelmesi
@@ -666,7 +669,8 @@ public class EscalationService {
             orphans.add(e.getDomain());
         }
         for (String d : orphans) {
-            resolveOpenAlertsSilently(d, Set.of(TYPE_SCRIPTED_FAIL), "Sistem (öksüz alarm — eşleşen sentetik izleme yok)");
+            resolveOpenAlertsSilently(d, Set.of(TYPE_SCRIPTED_FAIL, TYPE_SCRIPTED_SLOW),
+                    "Sistem (öksüz alarm — eşleşen sentetik izleme yok)");
         }
         if (!orphans.isEmpty()) log.info("🧹 Öksüz senaryo alarmı temizlendi: {} senaryo {}", orphans.size(), orphans);
         return orphans.size();
@@ -949,6 +953,13 @@ public class EscalationService {
                         (detail != null ? " — " + detail : " (kırık kaynak / mixed content)") + ". " +
                         "Sorunlu kaynaklar giderildiğinde alarm otomatik kapanır.";
             }
+            case TYPE_SCRIPTED_SLOW -> {
+                Object ms = ctx.get("duration_ms");
+                Object th = ctx.get("threshold_ms");
+                return "YÜKSEK: " + domain + " senaryosu çalışıyor ANCAK YAVAŞ" +
+                        (ms != null ? " — " + ms + " ms" : "") + (th != null ? " (eşik " + th + " ms)" : "") + ". " +
+                        "Koşum süresi eşiğin altına indiğinde alarm otomatik kapanır.";
+            }
             case TYPE_SCRIPTED_FAIL -> {
                 Object detail = ctx.get("detail");
                 return "KRİTİK: " + domain + " sentetik testi başarısız" +
@@ -1128,6 +1139,7 @@ public class EscalationService {
                 case TYPE_PAGE_DOWN     -> "Sayfa Yüklenemiyor";
                 case TYPE_PAGE_INTEGRITY -> "Sayfa Bütünlüğü";
                 case TYPE_SCRIPTED_FAIL -> "Sentetik İzleme";
+                case TYPE_SCRIPTED_SLOW -> "Sentetik Yavaş Koşum";
                 case TYPE_DOMAIN_EXPIRY -> "Domain Süre Bitişi";
                 case TYPE_DOMAINMON_EXPIRY  -> "Alan Adı Süre Bitişi";
                 case TYPE_DOMAINMON_UNKNOWN -> "Alan Adı Veri Yok";
@@ -1387,6 +1399,7 @@ public class EscalationService {
             case TYPE_PAGE_DOWN     -> "Sayfa Yüklenemiyor";
             case TYPE_PAGE_INTEGRITY -> "Sayfa Bütünlüğü Sorunu";
             case TYPE_SCRIPTED_FAIL -> "Sentetik Test Başarısız";
+            case TYPE_SCRIPTED_SLOW -> "Sentetik Yavaş Koşum";
             case TYPE_DOMAIN_EXPIRY -> "Domain Süre Bitişi";
             case TYPE_DOMAINMON_EXPIRY  -> "Alan Adı Süre Bitişi";
             case TYPE_DOMAINMON_UNKNOWN -> "Alan Adı Veri Yok";
@@ -1400,6 +1413,7 @@ public class EscalationService {
             case TYPE_PAGE_DOWN     -> "Sayfa yüklenemiyor";
             case TYPE_PAGE_INTEGRITY -> "Sayfada kırık kaynak / mixed content";
             case TYPE_SCRIPTED_FAIL -> "Sentetik test (k6) başarısız";
+            case TYPE_SCRIPTED_SLOW -> "Sentetik test (k6) yavaş";
             case TYPE_DOMAINMON_UNKNOWN -> "Alan adı kayıt verisi alınamadı";
             case TYPE_DOMAINMON_STATUS  -> "Alan adı durum kodu uyarısı";
             case TYPE_DOMAINMON_CHANGED -> "Alan adı kaydı değişti";
@@ -1621,6 +1635,9 @@ public class EscalationService {
             case TYPE_SCRIPTED_FAIL -> "KRİTİK: " + domain +
                     " sentetik testi (k6) başarısız — ardışık doğrulama denemeleri geçmedi. " +
                     "Test yeniden geçtiğinde alarm otomatik kapanacaktır.";
+            case TYPE_SCRIPTED_SLOW -> "YÜKSEK: " + domain +
+                    " senaryosu çalışıyor ancak koşum süresi eşiği aştı. " +
+                    "Süre eşiğin altına indiğinde alarm otomatik kapanacaktır.";
             case TYPE_HTTP_SSL -> "YÜKSEK: " + domain +
                     " için TLS sertifikası hata veriyor ya da süresi dolmak üzere. " +
                     "Sertifika düzeldiğinde alarm otomatik kapanır.";
