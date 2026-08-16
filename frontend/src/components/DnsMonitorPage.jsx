@@ -19,7 +19,7 @@ import MaintenanceBadge from './ui/MaintenanceBadge.jsx'
 import { LoadingBlock } from './ui/Progress.jsx'
 
 import MonitorStatsSection from './MonitorStatsSection.jsx'
-import { matchesTeamAndGroup } from '../utils/monitorFilters.js'
+import { matchesTeamAndGroup, monitorUrlState } from '../utils/monitorFilters.js'
 const RECORD_TYPES = ['A', 'AAAA', 'CNAME', 'MX', 'TXT', 'NS']
 
 const INTERVALS = [
@@ -306,12 +306,7 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName }) {
 
   // Paylaşılabilir URL: filtre/arama/sayfa + açık detay modalı (mtab/range DnsDetailModal içinde sync'lenir).
   useUrlQuerySync({
-    team: teamFilter === 'all' ? null : teamFilter,
-    group: groupFilter === 'all' ? null : groupFilter,
-    q: search.trim() || null,
-    stat: statFilter && statFilter !== 'total' ? statFilter : null,
-    page: pager.page > 1 ? pager.page : null,
-    ps: (pager.pageSize !== 50 || pager.page > 1) ? pager.pageSize : null,
+    ...monitorUrlState({ teamFilter, groupFilter, search, statFilter, pager }),
     monitor: detailMonitor?.id ?? null,
     // Modal AÇIKKEN mtab/range'i DnsDetailModal yönetir (anahtarlar mapping'de olmaz → dokunulmaz);
     // modal kapanınca burada null'a düşer ve URL'den silinir (modal unmount'ta silme yapamaz).

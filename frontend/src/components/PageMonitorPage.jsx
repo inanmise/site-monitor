@@ -25,7 +25,7 @@ import CheckHistoryTab from './history/CheckHistoryTab.jsx'
 import { LoadingBlock } from './ui/Progress.jsx'
 const ResponseTimeChart = lazy(() => import('./ResponseTimeChart.jsx'))
 import MonitorStatsSection from './MonitorStatsSection.jsx'
-import { matchesTeamAndGroup } from '../utils/monitorFilters.js'
+import { matchesTeamAndGroup, monitorUrlState } from '../utils/monitorFilters.js'
 import MonitorCardMeta from './MonitorCardMeta.jsx'
 const MonitorNotes = lazy(() => import('./MonitorNotes.jsx'))
 
@@ -395,12 +395,7 @@ export default function PageMonitorPage({ systemRole, teamId, teamName }) {
   // Paylaşılabilir URL: görünür durum (filtre/arama/sayfa/açık modal) adres çubuğunda yaşar;
   // varsayılan değerler param üretmez (temiz URL). Yazım debounce'lu replaceState (useUrlQuerySync).
   useUrlQuerySync({
-    team: teamFilter === 'all' ? null : teamFilter,
-    group: groupFilter === 'all' ? null : groupFilter,
-    q: search.trim() || null,
-    stat: statFilter && statFilter !== 'total' ? statFilter : null,
-    page: pager.page > 1 ? pager.page : null,
-    ps: (pager.pageSize !== 50 || pager.page > 1) ? pager.pageSize : null,
+    ...monitorUrlState({ teamFilter, groupFilter, search, statFilter, pager }),
     monitor: selected?.id ?? null,
     mtab: selected && detailTab !== 'issues' ? detailTab : null,
     // range/hfrom/hto/hst artık CheckHistoryTab'ın kendi URL senkronunda

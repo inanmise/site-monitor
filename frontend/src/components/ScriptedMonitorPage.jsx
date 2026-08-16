@@ -29,7 +29,7 @@ import CopyButton from './ui/CopyButton.jsx'
 import { exitLabel, exitHint, diagnosisHint, k6SyntaxLevel, readPhases, formatBytes,
   checksSummary, stuckLabel } from './scriptedExitCodes.js'
 import MonitorStatsSection from './MonitorStatsSection.jsx'
-import { matchesTeamAndGroup } from '../utils/monitorFilters.js'
+import { matchesTeamAndGroup, monitorUrlState } from '../utils/monitorFilters.js'
 import MonitorCardMeta from './MonitorCardMeta.jsx'
 // recharts ağır — yalnız "Süre Grafiği" sekmesi açılınca yüklensin.
 const ResponseTimeChart = lazy(() => import('./ResponseTimeChart.jsx'))
@@ -479,12 +479,7 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
   })
   // Paylaşılabilir URL: filtre/arama/sayfa + açık detay modalı adres çubuğunda yaşar (varsayılanlar param üretmez).
   useUrlQuerySync({
-    team: teamFilter === 'all' ? null : teamFilter,
-    group: groupFilter === 'all' ? null : groupFilter,
-    q: search.trim() || null,
-    stat: statFilter && statFilter !== 'total' ? statFilter : null,
-    page: pager.page > 1 ? pager.page : null,
-    ps: (pager.pageSize !== 50 || pager.page > 1) ? pager.pageSize : null,
+    ...monitorUrlState({ teamFilter, groupFilter, search, statFilter, pager }),
     monitor: selected?.id ?? null,
     mtab: selected && detailTab !== 'control' ? detailTab : null,
     // range/hfrom/hto/hst artık CheckHistoryTab'ın kendi URL senkronunda

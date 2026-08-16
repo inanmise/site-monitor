@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { matchesTeamAndGroup, NO_ASSIGNMENT } from '../utils/monitorFilters.js'
+import { matchesTeamAndGroup, monitorUrlState, NO_ASSIGNMENT } from '../utils/monitorFilters.js'
 
 /**
  * TAKIM/GRUP KAPSAMI — sekiz izleme sayfasında birebir kopyalanmış sekiz satırdı ve
@@ -50,5 +50,46 @@ describe('matchesTeamAndGroup', () => {
     expect(matchesTeamAndGroup(M(null, null), NO_ASSIGNMENT, NO_ASSIGNMENT)).toBe(true)
     expect(matchesTeamAndGroup(M(null, 'G1'), NO_ASSIGNMENT, NO_ASSIGNMENT)).toBe(false)
     expect(matchesTeamAndGroup(M('SY-A', null), NO_ASSIGNMENT, NO_ASSIGNMENT)).toBe(false)
+  })
+})
+
+/**
+ * PAYLAŞILABİLİR URL DURUMU — sekiz izleme sayfasında birebir aynı altı satırdı ve testsizdi.
+ * Çıkarımdan önce ölçüldü: {@code ps}'in ikinci koşulunu ({@code || pager.page > 1}) silmek
+ * 808 testin HİÇBİRİNİ kırmadı. O koşul silinince 2. sayfadayken sayfa boyutu URL'e yazılmaz;
+ * bağlantıyı alan kişi varsayılan boyutla açar, "2. sayfa" başka satırlara denk gelir ve
+ * paylaşılan bağlantı YANLIŞ kaydı gösterir. Sessiz, tekrarlanabilir ve şikâyeti zor bir hata.
+ */
+describe('monitorUrlState', () => {
+  const pager = (page = 1, pageSize = 50) => ({ page, pageSize })
+  const base = { teamFilter: 'all', groupFilter: 'all', search: '', statFilter: null, pager: pager() }
+
+  it('VARSAYILAN durumda hiçbir param üretilmez (temiz URL)', () => {
+    expect(Object.values(monitorUrlState(base)).every(v => v === null)).toBe(true)
+  })
+
+  it('gerçek filtreler param üretir, "all"/boş üretmez', () => {
+    const s = monitorUrlState({ ...base, teamFilter: 'SY-A', groupFilter: 'G1', search: '  akbank  ' })
+    expect(s.team).toBe('SY-A')
+    expect(s.group).toBe('G1')
+    expect(s.q).toBe('akbank')          // kırpılır
+    expect(monitorUrlState({ ...base, search: '   ' }).q).toBeNull()   // yalnız boşluk = param yok
+  })
+
+  it("'total' istatistiği param ÜRETMEZ ('hepsi' bir daraltma değil)", () => {
+    expect(monitorUrlState({ ...base, statFilter: 'total' }).stat).toBeNull()
+    expect(monitorUrlState({ ...base, statFilter: 'down' }).stat).toBe('down')
+  })
+
+  it('1. sayfa param üretmez; sonraki sayfalar üretir', () => {
+    expect(monitorUrlState({ ...base, pager: pager(1) }).page).toBeNull()
+    expect(monitorUrlState({ ...base, pager: pager(3) }).page).toBe(3)
+  })
+
+  it('ps: 2. SAYFADAYSA varsayılan boyut olsa BİLE yazılır (mutasyonla test edilen dal)', () => {
+    // Yazılmazsa bağlantıyı alan kişi başka boyutla açar → "2. sayfa" başka satırlara denk gelir
+    expect(monitorUrlState({ ...base, pager: pager(2, 50) }).ps).toBe(50)
+    expect(monitorUrlState({ ...base, pager: pager(1, 50) }).ps).toBeNull()   // 1. sayfa + varsayılan → yok
+    expect(monitorUrlState({ ...base, pager: pager(1, 100) }).ps).toBe(100)   // boyut farklı → yaz
   })
 })

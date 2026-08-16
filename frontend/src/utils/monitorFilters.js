@@ -39,3 +39,34 @@ export function matchesTeamAndGroup(m, teamFilter, groupFilter) {
   }
   return true
 }
+
+/**
+ * İzleme sayfalarının ORTAK URL durumu — paylaşılabilir bağlantı (derin link) için.
+ *
+ * <p>Bu altı satır sekiz izleme sayfasında birebir aynıydı. Sözleşme sade görünüyor ama iki
+ * inceliği var ve ikisi de testsizdi:
+ * <ul>
+ *   <li><b>Varsayılan değer param ÜRETMEZ</b> — temiz URL. 'all' filtre, boş arama, 'total'
+ *       istatistiği ve 1. sayfa adres çubuğunda görünmez.</li>
+ *   <li>{@code ps} (sayfa boyutu) yalnız varsayılandan (50) farklıysa <b>ya da</b> ilk sayfada
+ *       değilsek yazılır. İkinci koşul şart: 2. sayfadayken boyut 50 olsa bile bağlantıyı alan
+ *       kişi aynı sayfayı görebilsin diye boyutun URL'de olması gerekiyor.</li>
+ * </ul>
+ *
+ * <p>Sayfaya özgü parametreler ({@code monitor}, {@code mtab}, Domain'deki {@code sort})
+ * BİLEREK dışarıda: varsayılan sekme adı sayfadan sayfaya değişiyor (çoğunda 'control',
+ * Sayfa Bütünlüğü'nde 'issues'). Onları buraya gömmek farkı gizlerdi; çağıran yerde açıkça
+ * yazılıyorlar.
+ *
+ * @returns {object} useUrlQuerySync'e yayılacak (spread) ortak parametreler
+ */
+export function monitorUrlState({ teamFilter, groupFilter, search, statFilter, pager }) {
+  return {
+    team: teamFilter === 'all' ? null : teamFilter,
+    group: groupFilter === 'all' ? null : groupFilter,
+    q: search.trim() || null,
+    stat: statFilter && statFilter !== 'total' ? statFilter : null,
+    page: pager.page > 1 ? pager.page : null,
+    ps: (pager.pageSize !== 50 || pager.page > 1) ? pager.pageSize : null,
+  }
+}
