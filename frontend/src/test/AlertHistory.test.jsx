@@ -384,3 +384,90 @@ describe('AlertHistory — filtre çubuğu ve istatistik şeridi', () => {
     expect(api.admin.getAlerts.mock.calls.length).toBe(before)
   })
 })
+
+/**
+ * KONUYA GÖRE GRUPLAMA — "hangi konudan hangi alarmlar var" isteğinin ekrandaki karşılığı.
+ *
+ * İki inceliği var ve ikisi de sessizce yanlış olabilir:
+ *  - Gruplama GÖRÜNEN SAYFA içindedir (sunucu sayfalaması korunur): başlıktaki sayı "bu sayfada
+ *    N" demektir, tipin TOPLAMI değil. İki sayı ayrılmazsa kullanıcı çelişki sanar.
+ *  - Tek tip varsa gruplama YAPILMAZ: tek başlık altında tek grup bilgi taşımaz, yalnız
+ *    gürültüdür (gömülü modda tek domainin 2-3 alarmı için de doğru davranış).
+ */
+describe('AlertHistory — konuya göre gruplama', () => {
+  const alertOf = (type, id) => ({ id, domain: `d${id}.example.com`, alert_type: type,
+    alert_level: 'CRITICAL', acknowledged: false, resolved: false, created_at: '2026-08-01T08:00:00' })
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    window.history.replaceState({}, '', '/')
+    sessionStorage.clear()
+    api.admin.getTeams.mockResolvedValue({ success: true, data: [] })
+  })
+
+  const withAlerts = (data) => api.admin.getAlerts.mockResolvedValue({
+    success: true, data, total: data.length, page: 0, size: 20,
+    level_counts: { CRITICAL: data.length }, unacked_total: data.length, stale_total: 0,
+  })
+
+  it('birden çok tip varsa KONU başlıkları çıkar ve sayılar doğru', async () => {
+    withAlerts([alertOf('DNS_FAILURE', 1), alertOf('DNS_FAILURE', 2), alertOf('EXPIRY', 3)])
+    const { container } = render(<AlertHistory />)
+    await waitFor(() => expect(container.querySelectorAll('.alh-group')).toHaveLength(2))
+
+    const counts = [...container.querySelectorAll('.alh-group-count')].map(c => c.textContent)
+    expect(counts).toEqual(['2', '1'])   // ilk görülen tip önce — liste sırası korunur
+  })
+
+  it('TEK tip varsa gruplama YAPILMAZ (tek başlık gürültüdür)', async () => {
+    withAlerts([alertOf('EXPIRY', 1), alertOf('EXPIRY', 2)])
+    const { container } = render(<AlertHistory />)
+    await waitFor(() => expect(container.querySelectorAll('.alert-card')).toHaveLength(2))
+
+    expect(container.querySelectorAll('.alh-group')).toHaveLength(0)
+    expect(container.querySelector('.alh-group-note')).toBeNull()   // açıklama da çıkmaz
+  })
+
+  it('başlığa tıklamak grubu KATLAR; kartlar gizlenir, başlık kalır', async () => {
+    withAlerts([alertOf('DNS_FAILURE', 1), alertOf('EXPIRY', 2)])
+    const { container } = render(<AlertHistory />)
+    await waitFor(() => expect(container.querySelectorAll('.alert-card')).toHaveLength(2))
+
+    const head = container.querySelectorAll('.alh-group-head')[0]
+    expect(head.getAttribute('aria-expanded')).toBe('true')
+    fireEvent.click(head)
+
+    await waitFor(() => expect(container.querySelectorAll('.alert-card')).toHaveLength(1))
+    expect(container.querySelectorAll('.alh-group-head')).toHaveLength(2)   // başlıklar durur
+    expect(container.querySelectorAll('.alh-group-head')[0].getAttribute('aria-expanded')).toBe('false')
+  })
+
+  it('katlama durumu OTURUMDA korunur (sayfa değişince açılmaz)', async () => {
+    withAlerts([alertOf('DNS_FAILURE', 1), alertOf('EXPIRY', 2)])
+    const first = render(<AlertHistory />)
+    await waitFor(() => expect(first.container.querySelectorAll('.alert-card')).toHaveLength(2))
+    fireEvent.click(first.container.querySelectorAll('.alh-group-head')[0])
+    await waitFor(() => expect(first.container.querySelectorAll('.alert-card')).toHaveLength(1))
+    first.unmount()
+
+    // Yeniden mount: kapattığın grup KAPALI gelmeli
+    const second = render(<AlertHistory />)
+    await waitFor(() => expect(second.container.querySelectorAll('.alh-group-head')).toHaveLength(2))
+    expect(second.container.querySelectorAll('.alert-card')).toHaveLength(1)
+  })
+
+  it('sayfa-içi/toplam ayrımı EKRANDA yazılı (iki sayı çelişki sanılmasın)', async () => {
+    withAlerts([alertOf('DNS_FAILURE', 1), alertOf('EXPIRY', 2)])
+    const { container } = render(<AlertHistory />)
+    await waitFor(() => expect(container.querySelectorAll('.alh-group')).toHaveLength(2))
+
+    expect(container.querySelector('.alh-group-note')).not.toBeNull()
+  })
+
+  it('bilinmeyen tip kendi grubunu alır — ekran çökmez', async () => {
+    withAlerts([alertOf('HENUZ_OLMAYAN_TIP', 1), alertOf('EXPIRY', 2)])
+    const { container } = render(<AlertHistory />)
+    await waitFor(() => expect(container.querySelectorAll('.alh-group')).toHaveLength(2))
+    expect(container.querySelectorAll('.alert-card')).toHaveLength(2)
+  })
+})

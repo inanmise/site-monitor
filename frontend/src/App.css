@@ -3014,6 +3014,29 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
    burada yalnız tip rozetleriyle arasındaki boşluk ayarlanır (renk/kenarlık ORADAN gelir,
    böylece koyu tema kuralları tek yerde kalır). */
 .alh-toolbar { justify-content: flex-end; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
+/* Konu (alarm tipi) grupları — katlanabilir başlık + altındaki kart listesi.
+   Renk satır içinden gelir (tipe özgü, alertTypeMeta tek kaynak); yerleşim burada. */
+.alh-group { margin-bottom: 14px; }
+.alh-group-head {
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  padding: 8px 12px; margin-bottom: 8px; cursor: pointer;
+  background: var(--bg-surface); border: 1px solid var(--border);
+  border-radius: 6px; font-size: .9em; text-align: left;
+}
+.alh-group-head:hover { background: var(--bg-hover, var(--bg-surface)); }
+.alh-group-chevron { display: flex; color: var(--text-muted); flex-shrink: 0; }
+.alh-group-title { font-weight: 700; }
+.alh-group-count {
+  margin-left: auto; min-width: 26px; text-align: center;
+  padding: 1px 8px; border-radius: 10px; font-weight: 700; font-size: .92em;
+  background: var(--bg-card); border: 1px solid var(--border); color: var(--text-light);
+}
+/* Grup sayıları SAYFA İÇİDİR; tip toplamları rozetlerde. İki sayı farklı anlamda olduğu
+   için ekranda bir satırla ayrılıyor — aksi halde kullanıcı çelişki sanar. */
+.alh-group-note { font-size: .8em; color: var(--text-muted); margin: -4px 0 12px; }
+[data-theme="dark"] .alh-group-head { background: var(--bg-card); }
+[data-theme="dark"] .alh-group-count { background: var(--bg-surface); }
+
 
 
 .alert-domain { font-size: 1em; }

@@ -14,7 +14,7 @@ import MonitorStatsSection from '../MonitorStatsSection.jsx'
 import SearchableSelect from '../ui/SearchableSelect.jsx'
 import {
   Check, ShieldAlert, TrendingUp, RefreshCcw, Bell, CheckCircle, AlertCircle, ChevronUp,
-  ChevronDown, Mail, MailX, Clock, Users, Calendar
+  ChevronDown, ChevronRight, Mail, MailX, Clock, Users, Calendar
 } from 'lucide-react'
 
 const levelColor = { WARNING: '#f0a500', HIGH: '#e07b00', CRITICAL: '#c0392b' }
@@ -333,6 +333,59 @@ function ReNotifyConfirmModal({ domain, recipients, sending, onSend, onClose }) 
   )
 }
 
+
+/** Katlama durumunun oturum anahtarı — sekme değişince ayrı tutulur (açık/kapalı farklı listeler). */
+const GROUP_COLLAPSE_KEY = 'alh-collapsed-groups'
+
+/**
+ * Alarmları KONUSUNA (alert_type) göre katlanabilir gruplara ayırır.
+ *
+ * <p>"Hangi konudan hangi alarmlar var" sorusunun ekrandaki karşılığı: düz bir listede 20 satır
+ * arasında 5 DNS + 3 sertifika + 12 erişim alarmı olduğunu görmek için tek tek okumak gerekiyordu.
+ *
+ * <p><b>Gruplama GÖRÜNEN SAYFA içindedir</b> — sunucu sayfalaması korunur. Bu yüzden başlıktaki
+ * sayı "bu sayfada N" demektir, tipin TOPLAMI değil; toplam yukarıdaki tip rozetinde duruyor.
+ * İki sayı farklı anlamda olduğu için çubuğun altında bir satırla açıkça söyleniyor (aksi halde
+ * kullanıcı çelişki sanar).
+ *
+ * <p>Tek tip varsa gruplama YAPILMAZ: tek başlık altında tek grup, bilgi taşımayan bir çerçeveden
+ * ibaret olurdu. Bu kural gömülü modda da (tek domainin 2-3 alarmı) doğru davranışı veriyor.
+ */
+function AlertTypeGroups({ alerts, listClassName, collapsed, onToggle, renderCard }) {
+  const t = useT()
+  const order = []
+  const byType = new Map()
+  for (const a of alerts) {
+    const key = a.alert_type ?? '?'
+    if (!byType.has(key)) { byType.set(key, []); order.push(key) }
+    byType.get(key).push(a)
+  }
+
+  if (order.length < 2) {
+    return <div className={listClassName}>{alerts.map(renderCard)}</div>
+  }
+
+  return order.map(type => {
+    const items = byType.get(type)
+    const isCollapsed = collapsed.has(type)
+    const { icon: Icon, color } = alertTypeMeta(type)
+    return (
+      <div className="alh-group" key={type}>
+        <button type="button" className="alh-group-head" onClick={() => onToggle(type)}
+          aria-expanded={!isCollapsed}>
+          <span className="alh-group-chevron">
+            {isCollapsed ? <ChevronRight size={15} /> : <ChevronDown size={15} />}
+          </span>
+          <Icon size={14} style={{ color, flexShrink: 0 }} />
+          <span className="alh-group-title" style={{ color }}>{alertTypeLabel(t, type)}</span>
+          <span className="alh-group-count">{items.length}</span>
+        </button>
+        {!isCollapsed && <div className={listClassName}>{items.map(renderCard)}</div>}
+      </div>
+    )
+  })
+}
+
 export default function AlertHistory({ domain = null, urlSync = false }) {
   const t = useT()
   const { showConfirm } = useDialog()
@@ -367,6 +420,19 @@ export default function AlertHistory({ domain = null, urlSync = false }) {
   const [staleHours,   setStaleHours]   = useState(24)
   const [teams,        setTeams]        = useState([])
   const [statsVisible, setStatsVisible] = useState(true)
+  // Katlanan grup tipleri — oturum boyunca korunur (sayfa değişince kapattığın grup açılmasın).
+  const [collapsed, setCollapsed] = useState(() => {
+    try { return new Set(JSON.parse(sessionStorage.getItem(GROUP_COLLAPSE_KEY) || '[]')) }
+    catch { return new Set() }
+  })
+  const toggleGroup = useCallback((type) => {
+    setCollapsed(prev => {
+      const next = new Set(prev)
+      if (next.has(type)) next.delete(type); else next.add(type)
+      try { sessionStorage.setItem(GROUP_COLLAPSE_KEY, JSON.stringify([...next])) } catch { /* depolama kapalı */ }
+      return next
+    })
+  }, [])
 
   // Yazarken her tuşta istek atma — 300 ms sessizlikten sonra tek istek.
   useEffect(() => {
@@ -720,6 +786,12 @@ export default function AlertHistory({ domain = null, urlSync = false }) {
           })}
       </div>
 
+      {/* Grup sayıları SAYFA İÇİdir, tip rozetleri TOPLAMI gösterir — iki farklı sayı.
+             Ayrılmazsa kullanıcı çelişki sanar. Yalnız gruplama gerçekten yapılıyorsa çıkar. */}
+      {new Set(alerts.map(a => a.alert_type)).size > 1 && (
+        <div className="alh-group-note">{t('alh.groupNote')}</div>
+      )}
+
       {isClosed && (
         <div className="alh-filter-bar">
           <div className="alh-quick-pills">
@@ -791,8 +863,8 @@ export default function AlertHistory({ domain = null, urlSync = false }) {
       )}
 
       {isOpen && alerts.length > 0 && (
-        <div className="alert-list">
-          {alerts.map(a => {
+        <AlertTypeGroups alerts={alerts} listClassName="alert-list"
+          collapsed={collapsed} onToggle={toggleGroup} renderCard={(a) => {
             const notifiedList = parseContacts(a.notified_contacts)
             return (
               <div key={a.id} className={`alert-card alert-${a.alert_level?.toLowerCase()}`}>
@@ -878,14 +950,13 @@ export default function AlertHistory({ domain = null, urlSync = false }) {
 
               </div>
             )
-          })}
-        </div>
+          }} />
       )}
 
       {isClosed && alerts.length > 0 && (
         <div className="alert-history-wrap">
-          <div className="alert-history-cards">
-            {alerts.map(a => (
+          <AlertTypeGroups alerts={alerts} listClassName="alert-history-cards"
+            collapsed={collapsed} onToggle={toggleGroup} renderCard={(a) => (
               <div key={a.id} className="alert-history-card">
                 <div className="ahc-stripe" style={{ background: levelColor[a.alert_level] ?? '#ccc' }} />
 
@@ -999,8 +1070,7 @@ export default function AlertHistory({ domain = null, urlSync = false }) {
                   </div>
                 </div>
               </div>
-            ))}
-          </div>
+            )} />
         </div>
       )}
 
