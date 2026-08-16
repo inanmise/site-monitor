@@ -14,8 +14,7 @@ import SearchableSelect from './ui/SearchableSelect.jsx'
 import MaintenanceBadge from './ui/MaintenanceBadge.jsx'
 import MonitorHowBox from './ui/MonitorHowBox.jsx'
 import MonitorGuideButton from './ui/MonitorGuideButton.jsx'
-import { Play, Pencil, Copy, X, RefreshCw, Plus, Trash2, CalendarClock, Users, Layers, FlaskConical, Check, AlertTriangle,
-  LayoutDashboard, CheckCircle2, TriangleAlert, HelpCircle, ShieldAlert, Building2, Activity, BarChart3, ChevronDown, Calendar } from 'lucide-react'
+import { Play, Pencil, Copy, X, RefreshCw, Plus, Trash2, CalendarClock, FlaskConical, Check, AlertTriangle, LayoutDashboard, CheckCircle2, TriangleAlert, HelpCircle, ShieldAlert, Building2, Activity, BarChart3, ChevronDown, Calendar } from 'lucide-react'
 import { duplicateName } from '../utils/duplicateName.js'
 import AlertHistory from './admin/AlertHistory.jsx'
 import DomainRegistrationTab from './DomainRegistrationTab.jsx'
@@ -25,6 +24,7 @@ import DomainExpiryTrace from './DomainExpiryTrace.jsx'
 import { LoadingBlock } from './ui/Progress.jsx'
 import MonitorStatsSection from './MonitorStatsSection.jsx'
 import { matchesTeamAndGroup } from '../utils/monitorFilters.js'
+import MonitorCardMeta from './MonitorCardMeta.jsx'
 const MonitorNotes = lazy(() => import('./MonitorNotes.jsx'))
 
 const REFRESH_INTERVAL = 60
@@ -410,16 +410,7 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName }) {
                   <Building2 size={12} />{m.registrar}
                 </div>
               )}
-              {m.team_name && (
-                <div style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: '.78em', color: 'var(--text-muted)', marginTop: 2 }}>
-                  <Users size={12} />{m.team_name}
-                </div>
-              )}
-              {m.group_name && (
-                <div style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: '.78em', color: 'var(--text-muted)', marginTop: 2 }}>
-                  <Layers size={12} />{m.group_name}
-                </div>
-              )}
+              <MonitorCardMeta monitor={m} />
               <div className="upt-card-divider" />
               <div className="dom-hero">
                 <div className="dom-hero-number" style={{ color: daysColor(m.days_remaining) }}>{m.days_remaining == null ? '—' : Math.abs(m.days_remaining)}</div>

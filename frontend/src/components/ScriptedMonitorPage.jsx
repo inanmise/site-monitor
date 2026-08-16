@@ -11,9 +11,7 @@ import SearchableSelect from './ui/SearchableSelect.jsx'
 import MaintenanceBadge from './ui/MaintenanceBadge.jsx'
 import TagInput from './ui/TagInput.jsx'
 import { SCRIPTED_TEMPLATES } from './scriptedTemplates.js'
-import { FlaskConical, Play, Pencil, Plus, Trash2, X, RefreshCw, Eye, EyeOff, Copy, Users, Layers,
-  AlertTriangle, LayoutDashboard, CheckCircle2, WifiOff, Siren, BellDot, PauseCircle, BarChart3, ChevronDown,
-  Terminal } from 'lucide-react'
+import { FlaskConical, Play, Pencil, Plus, Trash2, X, RefreshCw, Eye, EyeOff, Copy, AlertTriangle, LayoutDashboard, CheckCircle2, WifiOff, Siren, BellDot, PauseCircle, BarChart3, ChevronDown, Terminal } from 'lucide-react'
 import { duplicateName } from '../utils/duplicateName.js'
 import { collectK6Markers } from '../utils/k6Errors.js'
 import { usePagination } from '../hooks/usePagination.js'
@@ -32,6 +30,7 @@ import { exitLabel, exitHint, diagnosisHint, k6SyntaxLevel, readPhases, formatBy
   checksSummary, stuckLabel } from './scriptedExitCodes.js'
 import MonitorStatsSection from './MonitorStatsSection.jsx'
 import { matchesTeamAndGroup } from '../utils/monitorFilters.js'
+import MonitorCardMeta from './MonitorCardMeta.jsx'
 // recharts ağır — yalnız "Süre Grafiği" sekmesi açılınca yüklensin.
 const ResponseTimeChart = lazy(() => import('./ResponseTimeChart.jsx'))
 const MonitorNotes = lazy(() => import('./MonitorNotes.jsx'))
@@ -932,16 +931,7 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
                 <span className="upt-port-tag">k6</span>
               </div>
               <div className="upt-card-domain" title={m.name}>{m.name}</div>
-              {m.team_name && (
-                <div style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: '.78em', color: 'var(--text-muted)', marginTop: 2 }}>
-                  <Users size={12} />{m.team_name}
-                </div>
-              )}
-              {m.group_name && (
-                <div style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: '.78em', color: 'var(--text-muted)', marginTop: 2 }}>
-                  <Layers size={12} />{m.group_name}
-                </div>
-              )}
+              <MonitorCardMeta monitor={m} />
               <div className="upt-card-divider" />
               <div className="upt-card-metrics">
                 <div className="upt-metric">

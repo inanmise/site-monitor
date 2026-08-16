@@ -9,8 +9,7 @@ import MonitorHowBox from './ui/MonitorHowBox.jsx'
 import MonitorGuideButton from './ui/MonitorGuideButton.jsx'
 import SearchableSelect from './ui/SearchableSelect.jsx'
 import MaintenanceBadge from './ui/MaintenanceBadge.jsx'
-import { Play, Pencil, Copy, X, RefreshCw, Plus, Trash2, Radio, Users, Layers, FlaskConical, Check, AlertTriangle,
-  LayoutDashboard, CheckCircle2, WifiOff, Siren, BellDot, PauseCircle, BarChart3, ChevronDown } from 'lucide-react'
+import { Play, Pencil, Copy, X, RefreshCw, Plus, Trash2, Radio, FlaskConical, Check, AlertTriangle, LayoutDashboard, CheckCircle2, WifiOff, Siren, BellDot, PauseCircle, BarChart3, ChevronDown } from 'lucide-react'
 import { duplicateName } from '../utils/duplicateName.js'
 import { usePagination } from '../hooks/usePagination.js'
 import { useUrlQuerySync, readUrlParam, readUrlInt } from '../hooks/useUrlQuerySync.js'
@@ -24,6 +23,7 @@ import { LoadingBlock } from './ui/Progress.jsx'
 // recharts ağır — yalnız "Süre Grafiği" sekmesi açılınca yüklensin.
 import MonitorStatsSection from './MonitorStatsSection.jsx'
 import { matchesTeamAndGroup } from '../utils/monitorFilters.js'
+import MonitorCardMeta from './MonitorCardMeta.jsx'
 const ResponseTimeChart = lazy(() => import('./ResponseTimeChart.jsx'))
 const MonitorNotes = lazy(() => import('./MonitorNotes.jsx'))
 
@@ -375,16 +375,7 @@ export default function PingMonitorPage({ systemRole, teamId, teamName }) {
                 <span className="upt-port-tag">{m.ip_version && m.ip_version !== 'auto' ? m.ip_version.toUpperCase() : 'ICMP'}</span>
               </div>
               <div className="upt-card-domain" title={m.host}>{m.host}</div>
-              {m.team_name && (
-                <div style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: '.78em', color: 'var(--text-muted)', marginTop: 2 }}>
-                  <Users size={12} />{m.team_name}
-                </div>
-              )}
-              {m.group_name && (
-                <div style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: '.78em', color: 'var(--text-muted)', marginTop: 2 }}>
-                  <Layers size={12} />{m.group_name}
-                </div>
-              )}
+              <MonitorCardMeta monitor={m} />
               <div className="upt-card-divider" />
               <div className="upt-card-metrics">
                 <div className="upt-metric">

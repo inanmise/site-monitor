@@ -15,9 +15,7 @@ import MaintenanceBadge from './ui/MaintenanceBadge.jsx'
 import MonitorHowBox from './ui/MonitorHowBox.jsx'
 import MonitorGuideButton from './ui/MonitorGuideButton.jsx'
 import TagInput from './ui/TagInput.jsx'
-import { Play, Pencil, Copy, X, RefreshCw, Plus, Trash2, ScanSearch, Users, Layers, FlaskConical, Check, AlertTriangle,
-  LayoutDashboard, CheckCircle2, TriangleAlert, ServerCrash, Siren, BellDot, BarChart3, ChevronDown,
-  Image, FileCode, Link2, Frame, Type, ShieldAlert, Download, EyeOff } from 'lucide-react'
+import { Play, Pencil, Copy, X, RefreshCw, Plus, Trash2, ScanSearch, FlaskConical, Check, AlertTriangle, LayoutDashboard, CheckCircle2, TriangleAlert, ServerCrash, Siren, BellDot, BarChart3, ChevronDown, Image, FileCode, Link2, Frame, Type, ShieldAlert, Download, EyeOff } from 'lucide-react'
 import { duplicateName } from '../utils/duplicateName.js'
 import { normalizeUrl } from '../utils/normalizeUrl.js'
 import { useDialog } from './ui/Dialog.jsx'
@@ -28,6 +26,7 @@ import { LoadingBlock } from './ui/Progress.jsx'
 const ResponseTimeChart = lazy(() => import('./ResponseTimeChart.jsx'))
 import MonitorStatsSection from './MonitorStatsSection.jsx'
 import { matchesTeamAndGroup } from '../utils/monitorFilters.js'
+import MonitorCardMeta from './MonitorCardMeta.jsx'
 const MonitorNotes = lazy(() => import('./MonitorNotes.jsx'))
 
 const INTERVALS = [
@@ -508,16 +507,7 @@ export default function PageMonitorPage({ systemRole, teamId, teamName }) {
                 <span className="upt-port-tag">{m.mode === 'SITE_CRAWL' ? t('page.modeCrawl') : t('page.modeSingle')}</span>
               </div>
               <div className="upt-card-domain" title={m.url}>{m.url}</div>
-              {m.team_name && (
-                <div style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: '.78em', color: 'var(--text-muted)', marginTop: 2 }}>
-                  <Users size={12} />{m.team_name}
-                </div>
-              )}
-              {m.group_name && (
-                <div style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: '.78em', color: 'var(--text-muted)', marginTop: 2 }}>
-                  <Layers size={12} />{m.group_name}
-                </div>
-              )}
+              <MonitorCardMeta monitor={m} />
               <div className="upt-card-divider" />
               <div className="upt-card-metrics">
                 <div className="upt-metric">
