@@ -108,6 +108,13 @@ public interface AlertEventRepository extends JpaRepository<AlertEvent, Long> {
               AND (:resolvedUntil IS NULL OR e.resolvedAt <= :resolvedUntil)
               AND (:domain IS NULL OR e.domain = :domain)
               AND (:alertType IS NULL OR e.alertType = :alertType)
+              AND (:q IS NULL OR LOWER(e.domain) LIKE :q ESCAPE '!')
+              AND (:level IS NULL OR e.alertLevel = :level)
+              AND (:acknowledged IS NULL OR e.acknowledged = :acknowledged)
+              AND (:teamId IS NULL OR e.teamId = :teamId OR EXISTS (
+                      SELECT 1 FROM CertificateInventory ti
+                       WHERE ti.domain = e.domain
+                         AND (ti.teamId = :teamId OR ti.ugTeamId = :teamId)))
               AND (:scoped = FALSE OR e.teamId IN :scope OR EXISTS (
                       SELECT 1 FROM CertificateInventory i
                        WHERE i.domain = e.domain
@@ -121,6 +128,10 @@ public interface AlertEventRepository extends JpaRepository<AlertEvent, Long> {
             @Param("resolvedUntil") String resolvedUntil,
             @Param("domain") String domain,
             @Param("alertType") String alertType,
+            @Param("q") String q,
+            @Param("level") String level,
+            @Param("acknowledged") Boolean acknowledged,
+            @Param("teamId") Long teamId,
             @Param("scoped") boolean scoped,
             @Param("scope") List<Long> scope,
             Pageable pageable);
@@ -135,6 +146,13 @@ public interface AlertEventRepository extends JpaRepository<AlertEvent, Long> {
               AND (:resolvedSince IS NULL OR e.resolvedAt >= :resolvedSince)
               AND (:resolvedUntil IS NULL OR e.resolvedAt <= :resolvedUntil)
               AND (:domain IS NULL OR e.domain = :domain)
+              AND (:q IS NULL OR LOWER(e.domain) LIKE :q ESCAPE '!')
+              AND (:level IS NULL OR e.alertLevel = :level)
+              AND (:acknowledged IS NULL OR e.acknowledged = :acknowledged)
+              AND (:teamId IS NULL OR e.teamId = :teamId OR EXISTS (
+                      SELECT 1 FROM CertificateInventory ti
+                       WHERE ti.domain = e.domain
+                         AND (ti.teamId = :teamId OR ti.ugTeamId = :teamId)))
               AND (:scoped = FALSE OR e.teamId IN :scope OR EXISTS (
                       SELECT 1 FROM CertificateInventory i
                        WHERE i.domain = e.domain
@@ -148,6 +166,10 @@ public interface AlertEventRepository extends JpaRepository<AlertEvent, Long> {
             @Param("resolvedSince") String resolvedSince,
             @Param("resolvedUntil") String resolvedUntil,
             @Param("domain") String domain,
+            @Param("q") String q,
+            @Param("level") String level,
+            @Param("acknowledged") Boolean acknowledged,
+            @Param("teamId") Long teamId,
             @Param("scoped") boolean scoped,
             @Param("scope") List<Long> scope);
 
@@ -254,4 +276,27 @@ public interface AlertEventRepository extends JpaRepository<AlertEvent, Long> {
             @Param("q") String q,
             @Param("scoped") boolean scoped,
             @Param("scope") List<Long> scope);
+
+    /**
+     * Eski (filtresiz) imza — haftalık KPI ve izleme istatistikleri servisleri bunu kullanıyor.
+     *
+     * <p>Alarm Geçmişi ekranı için eklenen q / level / acknowledged / teamId parametreleri bu
+     * çağrı yerlerini İLGİLENDİRMİYOR; imzayı orada da değiştirmek altı çağrı yerini gereksiz
+     * yere riske sokardı. {@code default} aşırı yükleme ile hepsi olduğu gibi kalıyor.
+     */
+    default Page<AlertEvent> findFiltered(Boolean resolved, String since, String until,
+            String resolvedSince, String resolvedUntil, String domain, String alertType,
+            boolean scoped, List<Long> scope, Pageable pageable) {
+        return findFiltered(resolved, since, until, resolvedSince, resolvedUntil, domain, alertType,
+                null, null, null, null, scoped, scope, pageable);
+    }
+
+    /** {@link #findFiltered} ile aynı gerekçe — eski imza korunur. */
+    default List<Object[]> countFilteredByType(Boolean resolved, String since, String until,
+            String resolvedSince, String resolvedUntil, String domain,
+            boolean scoped, List<Long> scope) {
+        return countFilteredByType(resolved, since, until, resolvedSince, resolvedUntil, domain,
+                null, null, null, null, scoped, scope);
+    }
+
 }

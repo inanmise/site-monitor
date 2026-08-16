@@ -999,11 +999,26 @@ public class AdminController {
             @RequestParam(required = false) String resolvedUntil,
             @RequestParam(required = false) String domain,
             @RequestParam(required = false) String alertType,
+            @RequestParam(required = false) String q,
+            @RequestParam(required = false) String level,
+            @RequestParam(required = false) Boolean acknowledged,
+            @RequestParam(required = false) Long teamId,
             HttpSession session) {
         requirePerm(session, "alerts.read", "view");
         int sz = Math.max(1, Math.min(size, 200));
         Boolean resolvedEffective = resolved != null ? resolved : (onlyOpen ? Boolean.FALSE : null);
         String alertTypeEffective = (alertType != null && !alertType.isBlank()) ? alertType.trim() : null;
+        // Arama: kismi + buyuk/kucuk harf duyarsiz. Joker karakterler SORGUDA degil BURADA
+        // uretilir; JPQL tarafinda CONCAT kullanmak lehce farklarina acik ve okunmasi zor.
+        // Kullanicinin yazdigi % ve _ KACISLANIR, aksi halde tek bir "%" tum kayitlari getirir
+        // ve arama sessizce filtresiz calisir.
+        String qEffective = null;
+        if (q != null && !q.isBlank()) {
+            String esc = q.trim().toLowerCase(java.util.Locale.ROOT)
+                    .replace("!", "!!").replace("%", "!%").replace("_", "!_");
+            qEffective = "%" + esc + "%";
+        }
+        String levelEffective = (level != null && !level.isBlank()) ? level.trim().toUpperCase(java.util.Locale.ROOT) : null;
         // Default sort: en yeniden en eskiye (newest → oldest) — hem açık hem kapalı için.
         Sort sort = Boolean.TRUE.equals(resolvedEffective)
                 ? Sort.by(Sort.Direction.DESC, "resolvedAt").and(Sort.by(Sort.Direction.DESC, "createdAt"))
@@ -1019,12 +1034,14 @@ public class AdminController {
         List<Long> scopeList = scoped ? scope : List.of(-1L);   // global'de dummy (scoped=false kısa-devre)
         Page<AlertEvent> result = alertEventRepo.findFiltered(
                 resolvedEffective, since, until, resolvedSince, resolvedUntil, domain, alertTypeEffective,
+                qEffective, levelEffective, acknowledged, teamId,
                 scoped, scopeList, PageRequest.of(Math.max(0, page), sz, sort));
         enrichAlerts(result.getContent());
         // Tip filtre pill'lerinin canlı sayıları — tip filtresinden bağımsız
         Map<String, Long> typeCounts = new LinkedHashMap<>();
         for (Object[] row : alertEventRepo.countFilteredByType(
-                resolvedEffective, since, until, resolvedSince, resolvedUntil, domain, scoped, scopeList)) {
+                resolvedEffective, since, until, resolvedSince, resolvedUntil, domain,
+                qEffective, levelEffective, acknowledged, teamId, scoped, scopeList)) {
             typeCounts.put(String.valueOf(row[0]), (Long) row[1]);
         }
         return ok(Map.of(
