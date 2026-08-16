@@ -24,6 +24,7 @@ import CheckHistoryTab from './history/CheckHistoryTab.jsx'
 import DomainExpiryTrace from './DomainExpiryTrace.jsx'
 import { LoadingBlock } from './ui/Progress.jsx'
 import MonitorStatsSection from './MonitorStatsSection.jsx'
+import { matchesTeamAndGroup } from '../utils/monitorFilters.js'
 const MonitorNotes = lazy(() => import('./MonitorNotes.jsx'))
 
 const REFRESH_INTERVAL = 60
@@ -254,14 +255,7 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName }) {
   const sortOptions = useMemo(() => SORTS.map(s => ({ value: s, label: t('dom.sort_' + s) })), [t])
 
   const scoped = useMemo(() => monitors.filter(m => {
-    if (teamFilter !== 'all') {
-      if (teamFilter === '__none__') { if (m.team_name) return false }
-      else if (m.team_name !== teamFilter) return false
-    }
-    if (groupFilter !== 'all') {
-      if (groupFilter === '__none__') { if (m.group_name) return false }
-      else if (m.group_name !== groupFilter) return false
-    }
+    if (!matchesTeamAndGroup(m, teamFilter, groupFilter)) return false
     if (!search.trim()) return true
     const q = search.trim().toLowerCase()
     return (m.domain || '').toLowerCase().includes(q) || (m.name || '').toLowerCase().includes(q) || (m.registrar || '').toLowerCase().includes(q)

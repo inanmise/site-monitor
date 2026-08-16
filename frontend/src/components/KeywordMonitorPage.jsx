@@ -26,6 +26,7 @@ import CheckHistoryTab from './history/CheckHistoryTab.jsx'
 import { LoadingBlock } from './ui/Progress.jsx'
 // recharts ağır — yalnız "Süre Grafiği" sekmesi açılınca yüklensin (eager bundle'a girmesin).
 import MonitorStatsSection from './MonitorStatsSection.jsx'
+import { matchesTeamAndGroup } from '../utils/monitorFilters.js'
 const ResponseTimeChart = lazy(() => import('./ResponseTimeChart.jsx'))
 const MonitorNotes = lazy(() => import('./MonitorNotes.jsx'))
 
@@ -256,14 +257,7 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName }) {
   const groupSelectOptions = useMemo(() => teamGroups.map(g => ({ value: g.name, label: g.name })), [teamGroups])
 
   const scoped = useMemo(() => monitors.filter(m => {
-    if (teamFilter !== 'all') {
-      if (teamFilter === '__none__') { if (m.team_name) return false }
-      else if (m.team_name !== teamFilter) return false
-    }
-    if (groupFilter !== 'all') {
-      if (groupFilter === '__none__') { if (m.group_name) return false }
-      else if (m.group_name !== groupFilter) return false
-    }
+    if (!matchesTeamAndGroup(m, teamFilter, groupFilter)) return false
     if (!search.trim()) return true
     const q = search.trim().toLowerCase()
     return (m.url || '').toLowerCase().includes(q) || (m.keyword || '').toLowerCase().includes(q)

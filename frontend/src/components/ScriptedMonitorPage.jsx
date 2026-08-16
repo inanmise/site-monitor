@@ -31,6 +31,7 @@ import CopyButton from './ui/CopyButton.jsx'
 import { exitLabel, exitHint, diagnosisHint, k6SyntaxLevel, readPhases, formatBytes,
   checksSummary, stuckLabel } from './scriptedExitCodes.js'
 import MonitorStatsSection from './MonitorStatsSection.jsx'
+import { matchesTeamAndGroup } from '../utils/monitorFilters.js'
 // recharts ağır — yalnız "Süre Grafiği" sekmesi açılınca yüklensin.
 const ResponseTimeChart = lazy(() => import('./ResponseTimeChart.jsx'))
 const MonitorNotes = lazy(() => import('./MonitorNotes.jsx'))
@@ -443,14 +444,7 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName }) {
   const groupSelectOptions = useMemo(() => teamGroups.map(g => ({ value: g.name, label: g.name })), [teamGroups])
 
   const scoped = useMemo(() => monitors.filter(m => {
-    if (teamFilter !== 'all') {
-      if (teamFilter === '__none__') { if (m.team_name) return false }
-      else if (m.team_name !== teamFilter) return false
-    }
-    if (groupFilter !== 'all') {
-      if (groupFilter === '__none__') { if (m.group_name) return false }
-      else if (m.group_name !== groupFilter) return false
-    }
+    if (!matchesTeamAndGroup(m, teamFilter, groupFilter)) return false
     const q = search.trim().toLowerCase()
     if (!q) return true
     return (m.name || '').toLowerCase().includes(q) || (m.group_name || '').toLowerCase().includes(q)

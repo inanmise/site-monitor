@@ -22,6 +22,7 @@ import AlertHistory from './admin/AlertHistory.jsx'
 import MonitorStatsBar from './MonitorStatsBar.jsx'
 import CheckHistoryTab from './history/CheckHistoryTab.jsx'
 import MonitorStatsSection from './MonitorStatsSection.jsx'
+import { matchesTeamAndGroup } from '../utils/monitorFilters.js'
 const ResponseTimeChart = lazy(() => import('./ResponseTimeChart.jsx'))
 const MonitorNotes = lazy(() => import('./MonitorNotes.jsx'))
 
@@ -289,14 +290,7 @@ export default function PortMonitorPage({ systemRole, teamId, teamName }) {
   // Geçmiş modalı sayfalaması — 30 sn modal yenilemesi history referansını değiştirir; sayfa korunur.
 
   const displayMonitors = useMemo(() => monitors.filter(m => {
-    if (teamFilter !== 'all') {
-      if (teamFilter === '__none__') { if (m.team_name) return false }
-      else if (m.team_name !== teamFilter) return false
-    }
-    if (groupFilter !== 'all') {
-      if (groupFilter === '__none__') { if (m.group_name) return false }
-      else if (m.group_name !== groupFilter) return false
-    }
+    if (!matchesTeamAndGroup(m, teamFilter, groupFilter)) return false
     if (statFilter && statFilter !== 'total') {
       if (statFilter === 'up' && m.status !== 'open') return false
       if (statFilter === 'down' && m.status !== 'closed') return false

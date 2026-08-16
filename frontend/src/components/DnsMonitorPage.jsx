@@ -19,6 +19,7 @@ import MaintenanceBadge from './ui/MaintenanceBadge.jsx'
 import { LoadingBlock } from './ui/Progress.jsx'
 
 import MonitorStatsSection from './MonitorStatsSection.jsx'
+import { matchesTeamAndGroup } from '../utils/monitorFilters.js'
 const RECORD_TYPES = ['A', 'AAAA', 'CNAME', 'MX', 'TXT', 'NS']
 
 const INTERVALS = [
@@ -284,14 +285,7 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName }) {
   const toggleStats = () => { if (statsVisible) setStatFilter(null); setStatsVisible(v => !v) }
 
   const filtered = useMemo(() => monitors.filter(m => {
-    if (teamFilter !== 'all') {
-      if (teamFilter === '__none__') { if (m.team_name) return false }
-      else if (m.team_name !== teamFilter) return false
-    }
-    if (groupFilter !== 'all') {
-      if (groupFilter === '__none__') { if (m.group_name) return false }
-      else if (m.group_name !== groupFilter) return false
-    }
+    if (!matchesTeamAndGroup(m, teamFilter, groupFilter)) return false
     if (statFilter && statFilter !== 'total') {
       if (statFilter === 'alarm' && !m.active_alarm) return false
       if (statFilter === 'ok' && (m.active === false || m.active_alarm)) return false
