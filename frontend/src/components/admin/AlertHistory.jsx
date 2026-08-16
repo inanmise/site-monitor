@@ -17,11 +17,8 @@ import {
   ChevronDown, ChevronRight, Mail, MailX, Clock, Users, Calendar
 } from 'lucide-react'
 
-const levelColor = { WARNING: '#f0a500', HIGH: '#e07b00', CRITICAL: '#c0392b' }
-const TIER_COLOR = { 1: '#4f46e5', 2: '#0284c7', 3: '#0891b2', 4: '#6b7280' }
-
-function tierColor(t) { return TIER_COLOR[t] ?? '#94a3b8' }
-
+/** Seviye → CSS sınıfı eki. Renkler App.css'te (iki tema); burada yalnız eşleme. */
+const levelClass = (lvl) => ({ WARNING: 'warning', HIGH: 'high', CRITICAL: 'critical' })[lvl] ?? 'unknown'
 function formatDuration(end, start) {
   const ms = new Date(end) - new Date(start)
   if (isNaN(ms) || ms < 0) return '—'
@@ -44,26 +41,15 @@ function alertExpiryDate(a) {
 }
 
 function AuditRow({ label, by, at, variant }) {
-  const colors = {
-    ack:     { bg: '#f0fdf4', border: '#86efac', text: '#15803d', iconBg: '#dcfce7' },
-    resolve: { bg: '#eff6ff', border: '#93c5fd', text: '#1d4ed8', iconBg: '#dbeafe' },
-    system:  { bg: '#f8fafc', border: '#cbd5e1', text: '#475569', iconBg: '#f1f5f9' },
-  }
-  const c = colors[variant] ?? colors.system
+  // Palet ARTIK burada değil: satır içi sabit hex CSS'i baypas ettiği için koyu temada
+  // açık zeminler okunmuyordu. Renkler .alh-audit--* sınıflarında, iki tema için de tanımlı.
+  const kind = ['ack', 'resolve', 'system'].includes(variant) ? variant : 'system'
   return (
-    <div style={{
-      display: 'flex', alignItems: 'center', gap: 10,
-      background: c.bg, border: `1px solid ${c.border}`,
-      borderRadius: 8, padding: '8px 12px', fontSize: '.84em',
-    }}>
-      <span style={{
-        width: 28, height: 28, borderRadius: '50%', background: c.iconBg,
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-        flexShrink: 0,
-      }}><Check size={14} color={c.text} /></span>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-        <span style={{ color: c.text, fontWeight: 700 }}>{label}</span>
-        <span style={{ color: '#64748b' }}>
+    <div className={`alh-audit alh-audit--${kind}`}>
+      <span className="alh-audit-icon"><Check size={14} /></span>
+      <div className="alh-audit-text">
+        <span className="alh-audit-label">{label}</span>
+        <span className="alh-audit-meta">
           <UserBadge username={by} inline size="sm" />
           {at && <> &nbsp;·&nbsp; {formatDate(at)}</>}
         </span>
@@ -89,18 +75,20 @@ function NotifLogCard({ log: l, alertLevel }) {
   const locale = useDateLocale()
   const [open, setOpen] = useState(false)
 
+  // Tetikleyici görsel kimliği: yalnız ikon + etiket burada; RENKLER .nl-trigger--* ve
+  // .nl-card--* sınıflarında (koyu tema karşılıklarıyla). Eskiden satır içi sabit hex'ti.
   const triggerMeta = {
-    INITIAL:       { Icon: ShieldAlert,  textKey: 'alh.trigger.initial',    bg: '#fef2f2', border: '#fca5a5', color: '#c0392b' },
-    ESCALATION:    { Icon: TrendingUp,   textKey: 'alh.trigger.escalation', bg: '#fff7ed', border: '#fdba74', color: '#c2410c' },
-    DAILY_REALERT: { Icon: RefreshCcw,   textKey: 'alh.trigger.daily',      bg: '#fffbeb', border: '#fcd34d', color: '#92400e' },
-    MANUAL:        { Icon: Bell,         textKey: 'alh.trigger.manual',     bg: '#eff6ff', border: '#93c5fd', color: '#1d4ed8' },
-    RESOLUTION:    { Icon: CheckCircle,  textKey: 'alh.trigger.resolution', bg: '#f0fdf4', border: '#86efac', color: '#15803d' },
+    INITIAL:       { Icon: ShieldAlert, textKey: 'alh.trigger.initial',    cls: 'initial' },
+    ESCALATION:    { Icon: TrendingUp,  textKey: 'alh.trigger.escalation', cls: 'escalation' },
+    DAILY_REALERT: { Icon: RefreshCcw,  textKey: 'alh.trigger.daily',      cls: 'daily' },
+    MANUAL:        { Icon: Bell,        textKey: 'alh.trigger.manual',     cls: 'manual' },
+    RESOLUTION:    { Icon: CheckCircle, textKey: 'alh.trigger.resolution', cls: 'resolution' },
   }
 
   const trigBase = triggerMeta[l.trigger]
   const trig = trigBase
     ? { ...trigBase, text: t(trigBase.textKey) }
-    : { Icon: Mail, text: l.trigger, bg: '#f8fafc', border: '#e2e8f0', color: '#475569' }
+    : { Icon: Mail, text: l.trigger, cls: 'other' }
 
   function fmtDateTime(iso) {
     if (!iso) return '—'
@@ -116,9 +104,9 @@ function NotifLogCard({ log: l, alertLevel }) {
   const sentDate = fmtDateTime(l.sent_at)
 
   return (
-    <div className="nl-card" style={{ borderColor: trig.border, background: open ? trig.bg : undefined }}>
+    <div className={`nl-card nl-card--${trig.cls}${open ? ' is-open' : ''}`}>
       <div className="nl-card-header" onClick={() => setOpen(o => !o)}>
-        <span className="nl-trigger-badge" style={{ background: trig.bg, color: trig.color, borderColor: trig.border }}>
+        <span className={`nl-trigger-badge nl-trigger--${trig.cls}`}>
           <trig.Icon size={11} /> {trig.text}
         </span>
         <div className="nl-recipient">
@@ -221,12 +209,7 @@ function NotifyResultModal({ alertId, alertInfo, currentResult, onClose }) {
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16 }}>
           <h3 style={{ margin: 0 }}>{t('alh.notifModal.title')}</h3>
           {alertInfo && (
-            <span style={{
-              fontSize: '.8em', fontWeight: 700, padding: '2px 9px',
-              borderRadius: 12, background: alertInfo.resolved ? '#eff6ff' : '#fef2f2',
-              color: alertInfo.resolved ? '#1d4ed8' : '#c0392b',
-              border: `1px solid ${alertInfo.resolved ? '#93c5fd' : '#fca5a5'}`,
-            }}>
+            <span className={`alh-modal-state alh-modal-state--${alertInfo.resolved ? 'closed' : 'open'}`}>
               {alertInfo.resolved ? t('alh.notifModal.closed') : t('alh.notifModal.open')} · {alertInfo.domain}
             </span>
           )}
@@ -922,7 +905,7 @@ export default function AlertHistory({ domain = null, urlSync = false }) {
                     onChange={() => toggleSelect(a.id)}
                     aria-label={t('alh.bulk.selectOne')}
                   />
-                  <span className="alert-level-badge" style={{ background: levelColor[a.alert_level] }}>
+                  <span className={`alert-level-badge alh-lvl-bg--${levelClass(a.alert_level)}`}>
                     {levelLabel[a.alert_level] || a.alert_level}
                   </span>
                   <TypeChip type={a.alert_type} />
@@ -1005,14 +988,14 @@ export default function AlertHistory({ domain = null, urlSync = false }) {
           <AlertTypeGroups alerts={alerts} listClassName="alert-history-cards"
             collapsed={collapsed} onToggle={toggleGroup} renderCard={(a) => (
               <div key={a.id} className="alert-history-card">
-                <div className="ahc-stripe" style={{ background: levelColor[a.alert_level] ?? '#ccc' }} />
+                <div className={`ahc-stripe alh-lvl-bg--${levelClass(a.alert_level)}`} />
 
                 <div className="ahc-body">
                   <div className="ahc-top">
                     <strong className="ahc-domain">{a.domain}</strong>
                     <TypeChip type={a.alert_type} size={12} />
                     <RepeatBadge count={a.repeat_count} />
-                    <span className="ahc-level" style={{ color: levelColor[a.alert_level] }}>
+                    <span className={`ahc-level alh-lvl--${levelClass(a.alert_level)}`}>
                       {levelLabel[a.alert_level] || a.alert_level}
                     </span>
                     {a.days_remaining != null && (
@@ -1042,7 +1025,7 @@ export default function AlertHistory({ domain = null, urlSync = false }) {
                           </span>
                         )}
                         {a.cert_tier != null && (
-                          <span className="ahc-chip ahc-chip-tier" style={{ background: tierColor(a.cert_tier) }}>
+                          <span className={`ahc-chip ahc-chip-tier tier-badge-${a.cert_tier}`}>
                             T{a.cert_tier}
                           </span>
                         )}
@@ -1072,10 +1055,10 @@ export default function AlertHistory({ domain = null, urlSync = false }) {
                       </div>
                     ) : (
                       <div className="ahc-tl-item ahc-tl-noack">
-                        <span className="ahc-tl-icon" style={{ color: '#9ca3af' }}>—</span>
+                        <span className="ahc-tl-icon alh-tl-empty">—</span>
                         <div>
                           <div className="ahc-tl-label">{t('alh.tlAckLabel')}</div>
-                          <div className="ahc-tl-val" style={{ color: '#9ca3af' }}>{t('alh.tlNotAcked')}</div>
+                          <div className="ahc-tl-val alh-tl-empty">{t('alh.tlNotAcked')}</div>
                         </div>
                       </div>
                     )}

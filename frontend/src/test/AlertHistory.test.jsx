@@ -548,3 +548,63 @@ describe('AlertHistory — kart rozetleri', () => {
     expect(container.querySelector('.alh-open-for')).toBeNull()
   })
 })
+
+/**
+ * KOYU TEMA KİLİDİ — renkler SATIR İÇİ sabit hex olarak dururken CSS'i baypas ediyorlardı.
+ * Sınıfların [data-theme="dark"] kuralları yazılmıştı ama hiç devreye giremiyordu: açık zeminler
+ * koyu temada okunmuyordu (47 sabit hex).
+ *
+ * jsdom gerçek CSS uygulamaz — bu yüzden RENK değil, "renk bir SINIFTAN geliyor mu" sözleşmesi
+ * test ediliyor. Biri satır içi renge geri dönerse burası kırılır.
+ */
+describe('AlertHistory — tema sözleşmesi', () => {
+  const alertOf = (level, extra = {}) => ({
+    id: 1, domain: 'a.example.com', alert_type: 'EXPIRY', alert_level: level,
+    acknowledged: false, resolved: false, created_at: '2026-08-01T08:00:00', ...extra,
+  })
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    window.history.replaceState({}, '', '/')
+    sessionStorage.clear()
+    api.admin.getTeams.mockResolvedValue({ success: true, data: [] })
+  })
+
+  const withAlert = (a, resolved = false) => api.admin.getAlerts.mockResolvedValue({
+    success: true, data: [a], total: 1, page: 0, size: 20,
+    level_counts: { [a.alert_level]: 1 }, unacked_total: 1, stale_total: 0, stale_hours: 24,
+  })
+
+  it('seviye rengi SINIFTAN gelir, satır içi stilden DEĞİL', async () => {
+    withAlert(alertOf('CRITICAL'))
+    const { container } = render(<AlertHistory />)
+    await waitFor(() => expect(container.querySelector('.alert-level-badge')).not.toBeNull())
+
+    const badge = container.querySelector('.alert-level-badge')
+    expect(badge.classList.contains('alh-lvl-bg--critical')).toBe(true)
+    expect(badge.getAttribute('style')).toBeNull()   // satır içi renk YOK
+  })
+
+  it('bilinmeyen seviye de sınıf alır — renksiz/çıplak kalmaz', async () => {
+    withAlert(alertOf('SOMETHING_NEW'))
+    const { container } = render(<AlertHistory />)
+    await waitFor(() => expect(container.querySelector('.alert-level-badge')).not.toBeNull())
+    expect(container.querySelector('.alert-level-badge').classList.contains('alh-lvl-bg--unknown')).toBe(true)
+  })
+
+  it('tier rozeti PAYLAŞILAN .tier-badge-N sınıfını kullanır (yerel renk kopyası silindi)', async () => {
+    api.admin.getAlerts.mockResolvedValue({
+      success: true, page: 0, size: 20, total: 1, level_counts: { CRITICAL: 1 }, unacked_total: 0,
+      data: [alertOf('CRITICAL', { resolved: true, resolved_at: '2026-08-02T08:00:00',
+                                   resolved_by: 'system', cert_tier: 2 })],
+    })
+    const { container } = render(<AlertHistory />)
+    await waitFor(() => expect(api.admin.getAlerts).toHaveBeenCalled())
+    fireEvent.click(screen.getByRole('button', { name: /kapalı|closed/i }))
+
+    await waitFor(() => expect(container.querySelector('.ahc-chip-tier')).not.toBeNull())
+    const chip = container.querySelector('.ahc-chip-tier')
+    expect(chip.classList.contains('tier-badge-2')).toBe(true)
+    expect(chip.getAttribute('style')).toBeNull()
+  })
+})
