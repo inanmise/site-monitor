@@ -56,6 +56,31 @@ k6 run -e BASE_URL=http://localhost:8080 ./perf/k6-smoke.js
 - **Frontend:** Put the file next to the component in `src/test/` with a `.test.jsx` suffix. Always render through `test-utils.jsx`'s `render()` so the i18n and theme providers are wired up. Mock the api client through `vi.mock('../api/client', ...)`; never let a real fetch escape into the test runner.
 - **i18n keys:** Add to BOTH `TR` and `EN` in `src/i18n/index.jsx`. The parity test will fail loudly if one is missing.
 
+## Adding a new monitor type — the gates that will stop you
+
+New monitor types are the project's most reliable source of half-wired features: the checker gets
+built, the alarm fires, and then one link in the presentation chain is quietly missed. The screen
+still works, so nobody notices — until someone asks why those alarms cannot be filtered, cleaned
+up, or charted.
+
+Rather than a checklist nobody reads, each link is guarded by a test that **fails on your branch**
+if you skip it. Adding a type means making these go green:
+
+| Gate | Where | What it forces |
+|---|---|---|
+| **Alert type dictionary** | `frontend/src/test/alertTypeMeta.test.jsx` | Parses `EscalationService.java` for `TYPE_* = "..."` and requires every type to have an icon + colour in `utils/alertTypeMeta.js` **and** a label under `incov.type.*` in BOTH locales. Without it the alarm renders as a raw enum (`SCRIPTED_FAIL`) with no icon — and, because the Alert History filter pills are built from the same dictionary, **it cannot be filtered at all**. |
+| **Response-series contract** | `MonitoringControllerTest.responseSeries_contract_allEndpoints` | A reflective mapping-count assert: every `/response-series` endpoint must return the bucket envelope. Added after a 2026-08 copy-paste crash where a raw return took down the chart screen. |
+| **Retention coverage** | `RetentionCoverageTest` (see `docs/RETENTION_POLITIKASI.md`) | Scans every persistent table; one without a retention policy — and without a justified exemption — turns the build red. Closes "new monitor type added, its cleanup forgotten". |
+
+Two more links have **no automated gate yet** — check them by hand:
+
+- `MonitoringOutageService.isOutageClass` — decides whether a failure counts as a network outage.
+  A new checker phrasing its transport errors differently lands in the "not network" bucket. That
+  is the safe direction (alarms fire instead of being suppressed), but a genuine outage of the new
+  type will not contribute to bulk-failure suppression.
+- `IncidentsController`'s type→category mapping — an unmapped type falls through to the default
+  bucket in the incident overview.
+
 ## Coverage gates (enforced, not aspirational)
 
 Strategy: **measure → floor just below current → ratchet up.** Floors are set just under the measured level so

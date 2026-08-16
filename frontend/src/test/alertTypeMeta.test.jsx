@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { renderHook } from '@testing-library/react'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { LangProvider, useT } from '../i18n/index.jsx'
 import { ALERT_TYPE_META, ALERT_TYPES, alertTypeMeta, alertTypeLabel } from '../utils/alertTypeMeta.js'
 
@@ -16,30 +18,36 @@ import { ALERT_TYPE_META, ALERT_TYPES, alertTypeMeta, alertTypeLabel } from '../
  */
 
 /**
- * Backend'in kanonik listesi. Kaynak: EscalationService'teki TYPE_* sabitleri + sertifika
- * tipleri. Güncellemek için:
- *   grep -o 'TYPE_\w* = "\w*"' backend/src/main/java/com/sitemonitor/service/EscalationService.java
+ * BACKEND'İN KANONİK LİSTESİ — elle YAZILMAZ, kaynaktan OKUNUR.
+ *
+ * <p>Bu listenin elle tutulduğu ilk sürümde şöyle bir açık vardı: yeni bir izleme türü ekleyen
+ * kişi {@code EscalationService}'e {@code TYPE_YENI} yazar, sözlüğü günceller mi bilinmez —
+ * ama test listesini de güncellemesi gerektiği için test yine yeşil kalabilirdi. Yani koruma,
+ * korumayı kuran kişinin dikkatine bağlıydı.
+ *
+ * <p>Artık liste Java kaynağından ayrıştırılıyor: {@code TYPE_X = "X"} satırları. Yeni bir alarm
+ * tipi eklendiği anda bu suite, sözlükte VE i18n'de karşılığı olana kadar KIRMIZI kalır.
+ *
+ * <p>Bilinen bağ: dosya yolu. Taşınırsa test yüksek sesle kırılır (sessizce atlamaz) ve yol
+ * güncellenir — kabul edilebilir bir takas.
  */
-const canonicalTypes = [
-  // sertifika
-  'EXPIRY', 'CHAIN_BROKEN', 'REVOKED', 'MISMATCH', 'ACCESSIBILITY',
-  // dns
-  'DNS_FAILURE', 'DNS_SLOW', 'DNS_UNEXPECTED', 'DNS_INCONSISTENT', 'DNS_CHANGED',
-  // port
-  'PORT_DOWN', 'PORT_SLOW',
-  // http
-  'HTTP_DOWN', 'HTTP_SSL',
-  // keyword
-  'KEYWORD', 'KEYWORD_SLOW', 'KEYWORD_SSL', 'KEYWORD_DOMAIN_EXPIRY',
-  // ping
-  'PING_DOWN',
-  // alan adı
-  'DOMAIN_EXPIRY', 'DOMAINMON_EXPIRY', 'DOMAINMON_UNKNOWN', 'DOMAINMON_STATUS', 'DOMAINMON_CHANGED',
-  // sayfa bütünlüğü
-  'PAGE_DOWN', 'PAGE_INTEGRITY',
-  // sentetik
-  'SCRIPTED_FAIL', 'SCRIPTED_SLOW',
-]
+function canonicalTypesFromBackend() {
+  const src = readFileSync(
+    resolve(__dirname, '../../../backend/src/main/java/com/sitemonitor/service/EscalationService.java'),
+    'utf8')
+  const types = [...src.matchAll(/TYPE_\w+\s*=\s*"(\w+)"/g)].map(m => m[1])
+  if (types.length === 0) throw new Error('EscalationService okundu ama TYPE_* bulunamadı — regex/yol bozulmuş')
+  return [...new Set(types)]
+}
+
+/**
+ * Sertifika alarm tipleri. Bunlar EscalationService'te SABİT DEĞİL, kod içinde string literal
+ * olarak geçiyor (tek kaynak yok) — o yüzden burada açıkça listeleniyor. Bu küme DONMUŞ durumda;
+ * büyüyen liste yukarıda otomatik türetiliyor.
+ */
+const CERT_TYPES = ['EXPIRY', 'CHAIN_BROKEN', 'REVOKED', 'MISMATCH']
+
+const canonicalTypes = [...canonicalTypesFromBackend(), ...CERT_TYPES]
 
 const useTr = () => renderHook(() => useT(), {
   wrapper: ({ children }) => <LangProvider>{children}</LangProvider>,
