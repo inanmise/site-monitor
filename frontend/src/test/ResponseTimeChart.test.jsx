@@ -51,4 +51,31 @@ describe('ResponseTimeChart', () => {
     await waitFor(() => expect(api.monitoring.getScriptedResponseSeries).toHaveBeenCalled())
     expect(screen.queryByText('No data in this range')).toBeNull()
   })
+
+  // ── Varsayılan aralık ───────────────────────────────────────────────────────
+  //
+  // 2026-08-16: varsayılan 30 GÜN'den 24 SAAT'e çekildi (kullanıcı isteği, tüm izleme türlerinde).
+  // Bu değerin testi YOKTU: '30d' → '24h' değişikliği 823 testin hiçbirini kırmadı. Sessizce
+  // eski değere dönerse kimse fark etmez, oysa grafik "şu an ne oluyor" sorusuna bakılan yer —
+  // 30 günlük pencere son birkaç saatteki dalgalanmayı kova ortalamasında eritiyordu.
+
+  it('VARSAYILAN aralık 24 saat: istek days=1 ile gider', async () => {
+    api.monitoring.getScriptedResponseSeries.mockResolvedValue(envelope([]))
+    render(<ResponseTimeChart monitorId={7} kind="scripted" />)
+    await waitFor(() => expect(api.monitoring.getScriptedResponseSeries).toHaveBeenCalled())
+
+    const [, params] = api.monitoring.getScriptedResponseSeries.mock.calls[0]
+    expect(params).toEqual({ days: 1 })
+  })
+
+  it('24h düğmesi açılışta SEÇİLİ görünür (kullanıcı hangi aralığa baktığını görür)', async () => {
+    api.monitoring.getScriptedResponseSeries.mockResolvedValue(envelope([]))
+    render(<ResponseTimeChart monitorId={7} kind="scripted" />)
+    await waitFor(() => expect(api.monitoring.getScriptedResponseSeries).toHaveBeenCalled())
+
+    // Seçili preset btn-primary, diğerleri btn-secondary
+    const selected = [...document.querySelectorAll('button.btn-primary')].map(b => b.textContent.trim())
+    expect(selected).toContain('24h')
+    expect(selected).not.toContain('30d')
+  })
 })
