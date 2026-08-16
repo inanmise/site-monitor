@@ -25,15 +25,6 @@ import CertRenewalGuide from './components/CertRenewalGuide.jsx'
 import PasswordChangeModal from './components/admin/PasswordChangeModal.jsx'
 import { PermissionsProvider } from './contexts/PermissionsProvider.jsx'
 import { UserDirectoryProvider } from './components/ui/UserDirectory.jsx'
-import UptimePage from './components/UptimePage'
-import PortMonitorPage from './components/PortMonitorPage'
-import DnsMonitorPage from './components/DnsMonitorPage'
-import KeywordMonitorPage from './components/KeywordMonitorPage'
-import HttpMonitorPage from './components/HttpMonitorPage'
-import DomainMonitorPage from './components/DomainMonitorPage'
-import PingMonitorPage from './components/PingMonitorPage'
-import PageMonitorPage from './components/PageMonitorPage'
-import ScriptedMonitorPage from './components/ScriptedMonitorPage'
 import ErrorBoundary from './components/ErrorBoundary.jsx'
 import CheckRunModal from './components/check/CheckRunModal.jsx'
 import CheckTeamPicker, { NO_TEAM } from './components/check/CheckTeamPicker.jsx'
@@ -43,6 +34,21 @@ import { LoadingBlock } from './components/ui/Progress.jsx'
 
 // Ağır/seyrek admin & rapor sekmeleri — lazy (kod-bölme): ilk yük küçülür, sekme
 // açılınca yüklenir. Hepsi aşağıdaki tek <Suspense> sınırı altında render edilir.
+// 9 izleme sayfasi — LAZY. Bunlar eager import ediliyordu ve asagidaki lazy()'leri fiilen
+// etkisiz kiliyordu: her biri AlertHistory / CheckHistoryTab / recharts / CodeEditor zincirini
+// de cekiyor, dolayisiyla "seyrek acilan sekme" diye ayrilan modullerin cogu zaten ana
+// chunk'a giriyordu. Hepsi ZATEN tek bir <Suspense> siniri altinda render ediliyor —
+// donusum yapisal degisiklik gerektirmedi.
+const UptimePage = lazy(() => import('./components/UptimePage'))
+const PortMonitorPage = lazy(() => import('./components/PortMonitorPage'))
+const DnsMonitorPage = lazy(() => import('./components/DnsMonitorPage'))
+const KeywordMonitorPage = lazy(() => import('./components/KeywordMonitorPage'))
+const HttpMonitorPage = lazy(() => import('./components/HttpMonitorPage'))
+const DomainMonitorPage = lazy(() => import('./components/DomainMonitorPage'))
+const PingMonitorPage = lazy(() => import('./components/PingMonitorPage'))
+const PageMonitorPage = lazy(() => import('./components/PageMonitorPage'))
+const ScriptedMonitorPage = lazy(() => import('./components/ScriptedMonitorPage'))
+
 const AdminPanel = lazy(() => import('./components/admin/AdminPanel'))
 const AdminSettings = lazy(() => import('./components/admin/AdminSettings'))
 const LoginIssueReports = lazy(() => import('./components/admin/LoginIssueReports'))
