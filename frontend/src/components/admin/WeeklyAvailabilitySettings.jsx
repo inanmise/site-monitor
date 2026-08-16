@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Send, Eye, RefreshCw } from 'lucide-react'
+import { Send, Eye, RefreshCw, FileDown } from 'lucide-react'
 import { api, formatDate } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
 import { useToast } from '../ui/Toast.jsx'
@@ -18,6 +18,7 @@ export default function WeeklyAvailabilitySettings() {
   const [previewTeamId, setPreviewTeamId] = useState('')
   const [previewWeekOffset, setPreviewWeekOffset] = useState(0)   // 0 = bu hafta (varsayılan)
   const [previewing, setPreviewing] = useState(false)
+  const [downloadingPdf, setDownloadingPdf] = useState(false)
 
   const [testTeamId, setTestTeamId] = useState('')
   const [testEmail, setTestEmail] = useState('')
@@ -93,6 +94,20 @@ export default function WeeklyAvailabilitySettings() {
     } else {
       toast.error(res?.error || t('weeklyavail.previewFail'))
     }
+  }
+
+  /**
+   * Haftalık kesinti PDF'ini indirir — pazartesi mailine eklenen dosyanın birebir aynısı.
+   *
+   * <p>Üretim düşerse uç 503 döner; sessiz kalmak yerine kullanıcıya söylenir, yoksa "düğmeye
+   * bastım hiçbir şey olmadı" durumu doğardı.
+   */
+  async function downloadPdf() {
+    if (!previewTeamId) return
+    setDownloadingPdf(true)
+    const res = await api.admin.downloadWeeklyOutagePdf(previewTeamId, previewWeekOffset)
+    setDownloadingPdf(false)
+    if (!res?.success) toast.error(t('weeklyavail.pdfFail'))
   }
 
   async function openArchived(item) {
@@ -221,6 +236,12 @@ export default function WeeklyAvailabilitySettings() {
             placeholder={t('weeklyavail.previewWeek')} options={weekSelectOptions} />
           <button className="btn btn-primary" onClick={doPreview} disabled={previewing || !previewTeamId}>
             {previewing ? <Spinner size={15} inline decorative /> : <Eye size={15} />} {t('weeklyavail.previewBtn')}
+          </button>
+          {/* Ek, gövdeyle AYNI takım/hafta seçiminden üretilir — iki ayrı seçici olsaydı
+              "önizlediğim hafta ile indirdiğim PDF farklı" tuzağı doğardı. */}
+          <button className="btn btn-secondary" onClick={downloadPdf}
+            disabled={downloadingPdf || !previewTeamId} title={t('weeklyavail.pdfTip')}>
+            {downloadingPdf ? <Spinner size={15} inline decorative /> : <FileDown size={15} />} {t('weeklyavail.pdfBtn')}
           </button>
         </div>
       </div>

@@ -124,6 +124,9 @@ public class WeeklyOutageReportService {
     /** İzleme türü başına gruplanmış kesinti satırları. */
     public record TypeGroup(String type, String label, List<OutageRow> rows) {}
 
+    /** Tekrar sayimi icin bilesik anahtar — dize paketleme YOK (hedef adlarında boşluk olabiliyor). */
+    public record RepeatKey(String target, String alertType) {}
+
     /** Aynı (hedef, alarm tipi) için hafta içinde birden fazla alarm — kronik sorun işareti. */
     public record RepeatItem(String target, String alertType, String typeLabel, int count) {}
 
@@ -320,14 +323,18 @@ public class WeeklyOutageReportService {
                 .limit(10).toList();
 
         // Tekrar edenler: aynı (hedef, alarm tipi) ≥2 → kronik sorun; tekil olaydan ayrılır.
-        Map<String, Integer> repeatCounts = new LinkedHashMap<>();
-        for (OutageRow r : rows) repeatCounts.merge(r.target() + " " + r.alertType(), 1, Integer::sum);
+        //
+        // Anahtar bir KAYIT; iki alan tek dizeye paketlenip sonra ayrıştırılmıyor. Ayırıcı yaklaşımı
+        // burada sessizce YANLIŞ olurdu: hedef adlarında boşluk bulunabiliyor (canlı veride
+        // "http://localhost:8080/health- Orjinal" gibi), yani boşlukla bölmek hedefi ikiye keser ve
+        // alarm tipini yanlış okurdu. Kayıt anahtarında ayırıcı diye bir sorun yoktur.
+        Map<RepeatKey, Integer> repeatCounts = new LinkedHashMap<>();
+        for (OutageRow r : rows) repeatCounts.merge(new RepeatKey(r.target(), r.alertType()), 1, Integer::sum);
         List<RepeatItem> repeats = repeatCounts.entrySet().stream()
                 .filter(en -> en.getValue() >= 2)
                 .map(en -> {
-                    String[] parts = en.getKey().split(" ", 2);
-                    String at = parts.length > 1 ? parts[1] : "";
-                    return new RepeatItem(parts[0], at,
+                    String at = en.getKey().alertType();
+                    return new RepeatItem(en.getKey().target(), at,
                             MonitorTypeCatalog.label(MonitorTypeCatalog.typeOfAlert(at)), en.getValue());
                 })
                 .sorted(Comparator.comparingInt(RepeatItem::count).reversed())

@@ -295,6 +295,32 @@ class WeeklyOutageReportServiceTest {
                 .containsExactly("kronik.com/HTTP_DOWN=3");
     }
 
+    @Test
+    @DisplayName("Hedef adında BOŞLUK olsa da tekrar sayımı doğru — ayırıcıyla paketleme tuzağı")
+    void repeatsHandleTargetsContainingSpaces() {
+        // Canlı veride böyle hedefler VAR: "http://localhost:8080/health- Orjinal".
+        // Anahtar "hedef + boşluk + tip" diye paketlenip boşlukla bölünseydi hedef ikiye kesilir,
+        // alarm tipi yanlış okunur ve ("a b","C") ile ("a","b C") aynı anahtara düşerdi.
+        String spaced = "http://localhost:8080/health- Orjinal";
+        stubAlarms(List.of(
+                alarm(1, spaced, "KEYWORD_SSL", "2026-06-16T09:00:00"),
+                alarm(2, spaced, "KEYWORD_SSL", "2026-06-17T09:00:00"),
+                // Naif bölmede bu ikisi çakışırdı: ("a b","C") ve ("a","b C")
+                alarm(3, "a b", "C", "2026-06-16T09:00:00"),
+                alarm(4, "a", "b C", "2026-06-16T10:00:00")), List.of(), List.of());
+
+        var repeats = collect().repeats();
+
+        // Hedef BÜTÜN olarak korunur ve tip doğru kalır.
+        assertThat(repeats).extracting(WeeklyOutageReportService.RepeatItem::target)
+                .containsExactly(spaced);
+        assertThat(repeats).extracting(WeeklyOutageReportService.RepeatItem::alertType)
+                .containsExactly("KEYWORD_SSL");
+        assertThat(repeats.get(0).count()).isEqualTo(2);
+        // ("a b","C") ile ("a","b C") AYRI kalır → hiçbiri 2'ye ulaşmaz, listede yok.
+        assertThat(repeats).hasSize(1);
+    }
+
     // ── Gün / saat dağılımı ──────────────────────────────────────────────────
 
     @Test

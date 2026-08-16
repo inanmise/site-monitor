@@ -96,6 +96,12 @@ public class AdminController {
     /** Tekrar rozetinin penceresi (gün) — bu süre içindeki aynı (domain, tip) alarmları sayılır. */
     private static final int ALERT_REPEAT_WINDOW_DAYS = 30;
 
+    /** Tekrar sayımı için bileşik anahtar — dize paketleme YOK (domain adlarında boşluk olabiliyor). */
+    private record RepeatKey(String domain, String alertType) {}
+
+    /** Sorgu satırındaki Object'i güvenle dizeye çevirir (null → null, anahtar yine tutarlı). */
+    private static String str(Object o) { return o == null ? null : o.toString(); }
+
     /** CSV dışa aktarım sınırları — tek istekte tüm tabloyu belleğe almamak için. */
     private static final int ALERT_CSV_PAGE = 2_000;
     private static final int ALERT_CSV_MAX_ROWS = 100_000;
@@ -1249,16 +1255,20 @@ public class AdminController {
 
         // Tekrar sayısı: (domain, tip) → son N gündeki alarm adedi. TEK sorgu — kart başına
         // sorgu N+1 olurdu (50 kayıtlık sayfada 50 sorgu).
-        Map<String, Long> repeatCounts = new HashMap<>();
+        //
+        // Anahtar bir KAYIT; iki alan tek dizeye paketlenip ayırıcıyla birleştirilmiyor. Domain
+        // adlarında boşluk bulunabildiği için (canlı veride var) boşluk ayırıcısı sessiz çakışma
+        // üretirdi: ("a b","C") ile ("a","b C") aynı anahtara düşerdi.
+        Map<RepeatKey, Long> repeatCounts = new HashMap<>();
         if (!domains.isEmpty()) {
             String since = ISO.format(Instant.now().minus(java.time.Duration.ofDays(ALERT_REPEAT_WINDOW_DAYS)));
             for (Object[] row : alertEventRepo.countRecentByDomainAndType(domains, since)) {
-                repeatCounts.put(row[0] + " " + row[1], (Long) row[2]);
+                repeatCounts.put(new RepeatKey(str(row[0]), str(row[1])), (Long) row[2]);
             }
         }
 
         for (AlertEvent ev : events) {
-            ev.setRepeatCount(repeatCounts.get(ev.getDomain() + " " + ev.getAlertType()));
+            ev.setRepeatCount(repeatCounts.get(new RepeatKey(ev.getDomain(), ev.getAlertType())));
             CertificateInventory inv = invByDomain.get(ev.getDomain());
             if (inv != null) {
                 ev.setSyTeamName(inv.getTeamId()   != null ? teamNames.get(inv.getTeamId())   : null);
