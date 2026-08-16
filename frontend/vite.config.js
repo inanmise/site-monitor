@@ -38,10 +38,14 @@ export default defineConfig({
       // kopyaları (node_modules.stale) "all files" taramasına girip yüzdeleri ezmesin.
       exclude: ['**/node_modules*/**', ...coverageConfigDefaults.exclude],
       thresholds: {
-        statements: 55,
-        lines: 55,
-        branches: 60,
-        functions: 31,
+        statements: 65,
+        lines: 65,
+        branches: 65,
+        // 2026-08 denetim turu sonrası ölçüm: stmt 67.7 · branch 67.5 · fn 37.9 · line 67.7.
+        // Eşikler ölçülenin hemen altına çekildi (ölç→taban→kademeli). functions hâlâ düşük
+        // görünüyor çünkü sayaç her ok-fonksiyonu (render prop'ları, olay işleyicileri) ayrı
+        // sayıyor; hedef bir sonraki turda 45.
+        functions: 36,
         // Saf yardımcı — tam kapsandı, 100'de kilitli (regresyon = kırmızı). Dal hedefi hariç
         // (formatIncidentTime catch/locale dalları birim-testle anlamlı tetiklenmez).
         'src/utils/incidentMeta.js': { statements: 100, lines: 100, functions: 100 },

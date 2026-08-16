@@ -1692,4 +1692,94 @@ class MonitoringControllerTest {
         mvc.perform(get("/api/monitoring/port").session(session("ADMIN")))
                 .andExpect(status().isOk());
     }
+
+    // ── IDOR: yazma uçlarında takım sınırı ───────────────────────────────────────
+    // Buraya kadar çapraz-takım yazma testi yalnız page ve port'ta vardı; kalan altı türün
+    // PUT ve /check uçları test edilmiyordu. Bir guard yanlışlıkla kaldırılsa (ya da yeni tür
+    // eklenirken unutulsa) başka takımın monitörü düzenlenebilir/tetiklenebilir hale gelirdi.
+
+    /** Her tür için: yabancı takıma (2) ait monitörü döndüren stub + PUT gövdesi. */
+    static java.util.stream.Stream<org.junit.jupiter.params.provider.Arguments> writeEndpoints() {
+        return java.util.stream.Stream.of(
+            org.junit.jupiter.params.provider.Arguments.of("http",    "/api/monitoring/http/5"),
+            org.junit.jupiter.params.provider.Arguments.of("keyword", "/api/monitoring/keyword/5"),
+            org.junit.jupiter.params.provider.Arguments.of("ping",    "/api/monitoring/ping/5"),
+            org.junit.jupiter.params.provider.Arguments.of("domain",  "/api/monitoring/domain/5"),
+            org.junit.jupiter.params.provider.Arguments.of("port",    "/api/monitoring/port/5"),
+            org.junit.jupiter.params.provider.Arguments.of("dns",     "/api/monitoring/dns/5")
+        );
+    }
+
+    /** Yabancı takıma (teamId=2) ait bir monitörü ilgili repo'dan döndürür. */
+    private void stubForeignMonitor(String type) {
+        switch (type) {
+            case "http" -> {
+                var m = new com.sitemonitor.model.HttpMonitor();
+                m.setId(5L); m.setUrl("https://x.com"); m.setTeamId(2L);
+                when(httpMonitorRepo.findById(5L)).thenReturn(Optional.of(m));
+            }
+            case "keyword" -> {
+                var m = new com.sitemonitor.model.KeywordMonitor();
+                m.setId(5L); m.setUrl("https://x.com"); m.setKeyword("k"); m.setTeamId(2L);
+                when(keywordMonitorRepo.findById(5L)).thenReturn(Optional.of(m));
+            }
+            case "ping" -> {
+                var m = new com.sitemonitor.model.PingMonitor();
+                m.setId(5L); m.setHost("h"); m.setTeamId(2L);
+                when(pingMonitorRepo.findById(5L)).thenReturn(Optional.of(m));
+            }
+            case "domain" -> {
+                var m = new com.sitemonitor.model.DomainMonitor();
+                m.setId(5L); m.setDomain("d.com"); m.setTeamId(2L);
+                when(domainMonitorRepo.findById(5L)).thenReturn(Optional.of(m));
+            }
+            case "port" -> {
+                var m = new com.sitemonitor.model.PortMonitor();
+                m.setId(5L); m.setHost("h"); m.setPort(443); m.setTeamId(2L);
+                when(portMonitorRepo.findById(5L)).thenReturn(Optional.of(m));
+            }
+            case "dns" -> {
+                var m = new com.sitemonitor.model.DnsMonitor();
+                m.setId(5L); m.setDomain("d.com"); m.setRecordType("A"); m.setTeamId(2L);
+                when(dnsMonitorRepo.findById(5L)).thenReturn(Optional.of(m));
+            }
+            default -> throw new IllegalArgumentException(type);
+        }
+    }
+
+    private void verifyNothingSaved(String type) {
+        switch (type) {
+            case "http"    -> verify(httpMonitorRepo, never()).save(any());
+            case "keyword" -> verify(keywordMonitorRepo, never()).save(any());
+            case "ping"    -> verify(pingMonitorRepo, never()).save(any());
+            case "domain"  -> verify(domainMonitorRepo, never()).save(any());
+            case "port"    -> verify(portMonitorRepo, never()).save(any());
+            case "dns"     -> verify(dnsMonitorRepo, never()).save(any());
+            default -> { }
+        }
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest(name = "PUT {0}: yabancı takım → 403, kayıt DEĞİŞMEZ")
+    @org.junit.jupiter.params.provider.MethodSource("writeEndpoints")
+    @DisplayName("IDOR: her türün PUT ucu başka takımın monitörünü düzenletmez")
+    void update_foreignTeam_forbidden(String type, String url) throws Exception {
+        stubForeignMonitor(type);
+
+        mvc.perform(put(url).session(sessionWithTeam("USER", 1L))
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"ele-gecirildi\"}"))
+                .andExpect(status().isForbidden());
+
+        verifyNothingSaved(type);
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest(name = "POST {0}/check: yabancı takım → 403")
+    @org.junit.jupiter.params.provider.MethodSource("writeEndpoints")
+    @DisplayName("IDOR: her türün elle kontrol ucu başka takımın monitörünü TETİKLEMEZ")
+    void triggerCheck_foreignTeam_forbidden(String type, String url) throws Exception {
+        stubForeignMonitor(type);
+
+        mvc.perform(post(url + "/check").session(sessionWithTeam("USER", 1L)))
+                .andExpect(status().isForbidden());
+    }
 }

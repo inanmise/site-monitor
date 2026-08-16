@@ -260,6 +260,50 @@
                                     <includes><include>com.sitemonitor.service.ScriptedCheckerService</include></includes>
                                     <limits><limit><counter>LINE</counter><value>COVEREDRATIO</value><minimum>0.55</minimum></limit></limits>
                                 </rule>
+                                <!-- 2026-08 denetimiyle testi yazılan sınıflar. Bunlar BUNDLE kuralının içinde
+                                     eriyordu: her biri tek başına %0'a düşse bile genel oran görünür şekilde
+                                     kıpırdamazdı. Eşikler bugün ÖLÇÜLEN oranın hemen altına mandallandı
+                                     (ölç→taban→kademeli); ölçüm parantez içinde. -->
+                                <rule>   <!-- ölçülen 1.000 — CORS fail-safe + SPA cache politikası -->
+                                    <element>CLASS</element>
+                                    <includes><include>com.sitemonitor.config.WebConfig</include></includes>
+                                    <limits><limit><counter>LINE</counter><value>COVEREDRATIO</value><minimum>0.90</minimum></limit></limits>
+                                </rule>
+                                <rule>   <!-- ölçülen 0.912 — 8 izleme ucunun ORTAK geçmiş motoru -->
+                                    <element>CLASS</element>
+                                    <includes><include>com.sitemonitor.service.CheckHistoryService</include></includes>
+                                    <limits><limit><counter>LINE</counter><value>COVEREDRATIO</value><minimum>0.85</minimum></limit></limits>
+                                </rule>
+                                <rule>   <!-- ölçülen 0.868 — bakım penceresi IDOR kapıları -->
+                                    <element>CLASS</element>
+                                    <includes><include>com.sitemonitor.controller.MaintenanceController</include></includes>
+                                    <limits><limit><counter>LINE</counter><value>COVEREDRATIO</value><minimum>0.80</minimum></limit></limits>
+                                </rule>
+                                <rule>   <!-- ölçülen 1.000 — Teams/Slack gövde üreticileri + seviye→renk -->
+                                    <element>CLASS</element>
+                                    <includes><include>com.sitemonitor.service.WebhookService</include></includes>
+                                    <limits><limit><counter>LINE</counter><value>COVEREDRATIO</value><minimum>0.90</minimum></limit></limits>
+                                </rule>
+                                <rule>   <!-- ölçülen 0.751 — dashboard cache'lerinin sahibi -->
+                                    <element>CLASS</element>
+                                    <includes><include>com.sitemonitor.service.CertificateService</include></includes>
+                                    <limits><limit><counter>LINE</counter><value>COVEREDRATIO</value><minimum>0.70</minimum></limit></limits>
+                                </rule>
+                                <rule>   <!-- ölçülen 0.594 — açılışta 9 tabloda toplu UPDATE, takım atar -->
+                                    <element>CLASS</element>
+                                    <includes><include>com.sitemonitor.service.MonitoringGroupBackfill</include></includes>
+                                    <limits><limit><counter>LINE</counter><value>COVEREDRATIO</value><minimum>0.55</minimum></limit></limits>
+                                </rule>
+                                <rule>   <!-- ölçülen 0.525 — geri alınamaz saklama/purge uçları -->
+                                    <element>CLASS</element>
+                                    <includes><include>com.sitemonitor.controller.RetentionAdminController</include></includes>
+                                    <limits><limit><counter>LINE</counter><value>COVEREDRATIO</value><minimum>0.48</minimum></limit></limits>
+                                </rule>
+                                <rule>   <!-- ölçülen 1.000 — trigger null dönerse aylık rapor sessizce ölür -->
+                                    <element>CLASS</element>
+                                    <includes><include>com.sitemonitor.service.report.CertInventoryReportScheduling</include></includes>
+                                    <limits><limit><counter>LINE</counter><value>COVEREDRATIO</value><minimum>0.90</minimum></limit></limits>
+                                </rule>
                             </rules>
                         </configuration>
                     </execution>

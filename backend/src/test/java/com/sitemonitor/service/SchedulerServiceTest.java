@@ -1004,4 +1004,64 @@ class SchedulerServiceTest {
         assertThat(failItem.up()).isFalse();      // kesinti alarmi bunu anlatir
         assertThat(slowItem.up()).isTrue();       // yavaslik alarmi ustune ikinci kez bagirmaz
     }
+
+    // ── runWithSchedulerLock: dağıtık kilidin BIRAKILMASI ────────────────────────
+    // Kilit TTL boyunca (varsayılan dakikalar) tutulur. İş fırlatıp kilit finally'de bırakılmazsa
+    // görev HİÇBİR pod'da tekrar çalışmaz — uygulama sağlıklı görünür, log tek satırdır, aylık
+    // rapor / temizlik sessizce ölür. Bu yüzden buradaki asıl iddia "hata yutuldu" değil,
+    // "hata olsa DA kilit bırakıldı".
+
+    private static final String LOCK_RELEASE_SQL = "DELETE FROM scheduler_lock WHERE name = ? AND locked_by = ?";
+
+    @Test
+    @DisplayName("İş FIRLATSA da kilit finally'de bırakılır (aksi halde görev TTL boyunca hiçbir pod'da koşmaz)")
+    void runWithSchedulerLock_releasesLockWhenTaskThrows() {
+        assertThatCode(() -> scheduler.runWithSchedulerLock("aylik-rapor",
+                () -> { throw new IllegalStateException("SMTP down"); }))
+                .as("scheduler thread'i ölmemeli; hata yutulup loglanır")
+                .doesNotThrowAnyException();
+
+        verify(jdbcTemplate).update(eq(LOCK_RELEASE_SQL), eq("aylik-rapor"), anyString());
+    }
+
+    @Test
+    @DisplayName("Normal akışta da kilit bırakılır ve iş bir kez çalışır")
+    void runWithSchedulerLock_happyPath() {
+        java.util.concurrent.atomic.AtomicInteger runs = new java.util.concurrent.atomic.AtomicInteger();
+
+        scheduler.runWithSchedulerLock("aylik-rapor", runs::incrementAndGet);
+
+        assertThat(runs.get()).isEqualTo(1);
+        verify(jdbcTemplate).update(eq(LOCK_RELEASE_SQL), eq("aylik-rapor"), anyString());
+    }
+
+    @Test
+    @DisplayName("Kilit BAŞKA pod'daysa iş HİÇ çalışmaz ve o pod'un kilidi bırakılmaz")
+    void runWithSchedulerLock_skipsWhenLockHeldElsewhere() {
+        // INSERT unique-constraint ihlali = kilit başka pod'da (gerçek sürücü mesajı taklit ediliyor)
+        // lenient: tryAcquire önce süresi dolmuş kilidi SİLER; katı mod o eşleşmeyen çağrıda
+        // PotentialStubbingProblem fırlatır, o da tryAcquire'ın catch'ine düşüp "tablo yok" fallback'ini
+        // tetikler — yani testin taklit ettiği durumu bozardı.
+        lenient().when(jdbcTemplate.update(startsWith("INSERT INTO scheduler_lock"), anyString(), anyString(), anyString()))
+                .thenThrow(new RuntimeException("UNIQUE constraint failed: scheduler_lock.name"));
+        java.util.concurrent.atomic.AtomicInteger runs = new java.util.concurrent.atomic.AtomicInteger();
+
+        scheduler.runWithSchedulerLock("aylik-rapor", runs::incrementAndGet);
+
+        assertThat(runs.get()).isZero();
+        // Kilidi TUTAN pod'un kaydını silmeye çalışmamalı (locked_by eşleşmese de niyet yanlış olurdu)
+        verify(jdbcTemplate, never()).update(eq(LOCK_RELEASE_SQL), anyString(), anyString());
+    }
+
+    @Test
+    @DisplayName("Kilit tablosu ERİŞİLEMEZSE tek-pod fallback: iş yine de çalışır (HA bozulur, işlev ölmez)")
+    void runWithSchedulerLock_runsWhenLockTableUnavailable() {
+        lenient().when(jdbcTemplate.update(startsWith("INSERT INTO scheduler_lock"), anyString(), anyString(), anyString()))
+                .thenThrow(new RuntimeException("relation \"scheduler_lock\" does not exist"));
+        java.util.concurrent.atomic.AtomicInteger runs = new java.util.concurrent.atomic.AtomicInteger();
+
+        scheduler.runWithSchedulerLock("aylik-rapor", runs::incrementAndGet);
+
+        assertThat(runs.get()).isEqualTo(1);
+    }
 }
