@@ -3007,6 +3007,10 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .alert-card-header { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; }
 .alert-level-badge { color: #fff; padding: 3px 10px; border-radius: 12px; font-size: .8em; font-weight: 700; }
 .alert-type { font-size: .85em; color: var(--text-light); }
+/* Tip rozeti: ikon + ad. Renk satır içinden gelir (tipe özgü, alertTypeMeta tek kaynak);
+   yerleşim ve tipografi BURADA — eskiden üç ayrı yerde satır içi style olarak tekrarlıyordu. */
+.alh-type-chip { display: inline-flex; align-items: center; gap: 4px; font-weight: 700; }
+
 .alert-domain { font-size: 1em; }
 .alert-days { background: #f8d7da; color: #721c24; padding: 2px 8px; border-radius: 10px; font-size: .82em; font-weight: 700; }
 .alert-send-failed { display: inline-flex; align-items: center; gap: 4px; background: #fde8e8; color: #b91c1c; border: 1px solid #f5b5b5; padding: 2px 8px; border-radius: 10px; font-size: .78em; font-weight: 700; white-space: nowrap; }

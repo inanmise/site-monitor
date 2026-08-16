@@ -9,10 +9,10 @@ import { readPageSize, writePageSize } from '../../hooks/usePagination.js'
 import UserBadge from '../ui/UserBadge.jsx'
 import { mailPreviewSrcDoc, mailLogoVariant, MAIL_PREVIEW_SANDBOX } from '../../utils/mailPreview.js'
 import { LoadingBlock } from '../ui/Progress.jsx'
+import { ALERT_TYPES, alertTypeMeta, alertTypeLabel } from '../../utils/alertTypeMeta.js'
 import {
-  Check, ShieldAlert, TrendingUp, RefreshCcw, Bell, CheckCircle, AlertCircle,
-  ChevronUp, ChevronDown, ChevronLeft, ChevronRight, Mail, MailX, Clock, Users, Calendar,
-  Globe, Link2, Ban, Zap, Plug, Server, Shuffle, Network,
+  Check, ShieldAlert, TrendingUp, RefreshCcw, Bell, CheckCircle, AlertCircle, ChevronUp,
+  ChevronDown, Mail, MailX, Clock, Users, Calendar
 } from 'lucide-react'
 
 const levelColor = { WARNING: '#f0a500', HIGH: '#e07b00', CRITICAL: '#c0392b' }
@@ -355,43 +355,15 @@ export default function AlertHistory({ domain = null, urlSync = false }) {
   const levelLabel = {
     WARNING: t('alh.level.warning'), HIGH: t('alh.level.high'), CRITICAL: t('alh.level.critical'),
   }
-  const typeLabel = {
-    EXPIRY: t('alh.type.expiry'), CHAIN_BROKEN: t('alh.type.chain'),
-    REVOKED: t('alh.type.revoked'), MISMATCH: t('alh.type.mismatch'),
-    ACCESSIBILITY: t('alh.type.accessibility'),
-    PORT_DOWN: t('alh.type.portDown'),
-    DNS_FAILURE: t('alh.type.dnsFailure'),
-    DNS_SLOW: t('alh.type.dnsSlow'),
-    DNS_UNEXPECTED: t('alh.type.dnsUnexpected'),
-    DNS_INCONSISTENT: t('alh.type.dnsInconsistent'),
-    DNS_CHANGED: t('alh.type.dnsChanged'),
-  }
-  // Tip bazlı görsel kimlik — pill'lerde ve kart rozetlerinde kullanılır.
-  // Renkler seviye renklerinden (sarı/turuncu/bordo) bilinçli olarak farklı.
-  const typeMeta = {
-    ACCESSIBILITY: { icon: Globe,   color: '#dc2626' },
-    PORT_DOWN:     { icon: Plug,    color: '#db2777' },
-    DNS_FAILURE:   { icon: Server,  color: '#2563eb' },
-    DNS_SLOW:      { icon: Clock,   color: '#0d9488' },
-    DNS_UNEXPECTED:{ icon: AlertCircle, color: '#ea580c' },
-    DNS_INCONSISTENT: { icon: Network, color: '#0284c7' },
-    DNS_CHANGED:   { icon: Shuffle, color: '#9333ea' },
-    EXPIRY:        { icon: Clock,   color: '#d97706' },
-    CHAIN_BROKEN:  { icon: Link2,   color: '#7c3aed' },
-    REVOKED:       { icon: Ban,     color: '#be123c' },
-    MISMATCH:      { icon: Zap,     color: '#0891b2' },
-  }
-
+  // Tip etiketi/ikonu/rengi ARTIK YEREL DEĞİL: utils/alertTypeMeta.js tek kaynak.
+  // Buradaki yerel harita yalnız 11 tip tanıyordu (backend'de 28) — keyword/ping/HTTP/sayfa/
+  // sentetik/alan-adı alarmları ham enum adıyla görünüyor ve FİLTRELENEMİYORDU.
   function TypeChip({ type, size = 13 }) {
-    const meta = typeMeta[type]
-    const Icon = meta?.icon
+    const { icon: Icon, color } = alertTypeMeta(type)
     return (
-      <span className="alert-type" style={{
-        color: meta?.color, fontWeight: 700,
-        display: 'inline-flex', alignItems: 'center', gap: 4,
-      }}>
-        {Icon && <Icon size={size} />}
-        {typeLabel[type] || type}
+      <span className="alert-type alh-type-chip" style={{ color }}>
+        <Icon size={size} />
+        {alertTypeLabel(t, type)}
       </span>
     )
   }
@@ -595,10 +567,10 @@ export default function AlertHistory({ domain = null, urlSync = false }) {
         >
           {t('alh.typeAll')}: <strong>{Object.values(typeCounts).reduce((s, n) => s + n, 0)}</strong>
         </button>
-        {Object.keys(typeMeta)
+        {ALERT_TYPES
           .filter(type => (typeCounts[type] ?? 0) > 0 || typeFilter === type)
           .map(type => {
-            const meta = typeMeta[type]
+            const meta = alertTypeMeta(type)
             const Icon = meta.icon
             const selected = typeFilter === type
             return (
@@ -610,7 +582,7 @@ export default function AlertHistory({ domain = null, urlSync = false }) {
                 onClick={() => setTypeFilter(selected ? '' : type)}
               >
                 <Icon size={12} style={{ color: meta.color, flexShrink: 0 }} />
-                {typeLabel[type]}: <strong>{typeCounts[type] ?? 0}</strong>
+                {alertTypeLabel(t, type)}: <strong>{typeCounts[type] ?? 0}</strong>
               </button>
             )
           })}
@@ -788,16 +760,7 @@ export default function AlertHistory({ domain = null, urlSync = false }) {
                 <div className="ahc-body">
                   <div className="ahc-top">
                     <strong className="ahc-domain">{a.domain}</strong>
-                    <span className="ahc-type" style={{
-                      color: typeMeta[a.alert_type]?.color, fontWeight: 700,
-                      display: 'inline-flex', alignItems: 'center', gap: 4,
-                    }}>
-                      {typeMeta[a.alert_type]?.icon && (() => {
-                        const Icon = typeMeta[a.alert_type].icon
-                        return <Icon size={12} />
-                      })()}
-                      {typeLabel[a.alert_type] || a.alert_type}
-                    </span>
+                    <TypeChip type={a.alert_type} size={12} />
                     <span className="ahc-level" style={{ color: levelColor[a.alert_level] }}>
                       {levelLabel[a.alert_level] || a.alert_level}
                     </span>

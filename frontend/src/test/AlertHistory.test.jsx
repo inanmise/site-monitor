@@ -166,3 +166,86 @@ describe('AlertHistory closed-alert details', () => {
       .toHaveBeenCalledWith(301, { excludeEmails: ['mudur@akbank.com'] }))
   })
 })
+
+/**
+ * TİP SÖZLÜĞÜ REGRESYONU — 2026-08-16'da kapatılan işlevsel boşluk.
+ *
+ * AlertHistory kendi tip haritasını tutuyordu ve yalnız 11 tip tanıyordu; backend'de 28 var.
+ * Sonuç: keyword / ping / HTTP / sayfa bütünlüğü / sentetik / alan-adı alarmları ekranda HAM
+ * ENUM adıyla ("SCRIPTED_FAIL") görünüyordu ve tip filtresi pill'leri de aynı haritadan
+ * üretildiği için o alarmlar HİÇ FİLTRELENEMİYORDU.
+ */
+describe('AlertHistory — alarm tipi sözlüğü', () => {
+  const alertOfType = (type, id) => ({
+    id, domain: 'x.example.com', alert_type: type, alert_level: 'CRITICAL',
+    acknowledged: false, resolved: false, created_at: '2026-08-01T08:00:00',
+  })
+
+  beforeEach(() => vi.clearAllMocks())
+
+  it('YENİ izleme türlerinin alarmları ham enum DEĞİL, okunur adıyla görünür', async () => {
+    api.admin.getAlerts.mockResolvedValue({
+      success: true, total: 3, page: 0, size: 20,
+      data: [alertOfType('SCRIPTED_FAIL', 1), alertOfType('KEYWORD_SLOW', 2), alertOfType('PING_DOWN', 3)],
+    })
+    render(<AlertHistory />)
+    await waitFor(() => expect(api.admin.getAlerts).toHaveBeenCalled())
+
+    // Eskiden ekranda birebir "SCRIPTED_FAIL" yazıyordu
+    // Dil-bağımsız iddia: süit EN varsayılanda koşuyor. Asıl sözleşme "ham enum ekrana
+    // düşmez ve yerine okunur bir ad gelir" — hangi dilde olduğu bu testin konusu değil.
+    await screen.findAllByText('x.example.com')   // uc alarm ayni domainde
+    const chips = [...document.querySelectorAll('.alh-type-chip')].map(c => c.textContent.trim())
+    expect(chips).toHaveLength(3)
+    for (const raw of ['SCRIPTED_FAIL', 'KEYWORD_SLOW', 'PING_DOWN']) {
+      expect(chips, `${raw} hâlâ ham enum olarak görünüyor`).not.toContain(raw)
+    }
+    expect(chips.every(c => c.length > 0)).toBe(true)
+  })
+
+  it('tip FİLTRESİ rozeti yeni türler için de üretilir (eskiden hiç çıkmazdı)', async () => {
+    api.admin.getAlerts.mockResolvedValue({
+      success: true, total: 1, page: 0, size: 20,
+      data: [alertOfType('SCRIPTED_FAIL', 1)],
+      type_counts: { SCRIPTED_FAIL: 4, PAGE_INTEGRITY: 2 },
+    })
+    const { container } = render(<AlertHistory />)
+
+    // Rozetin KENDİSİNİ bekle: getAlerts'in çağrılmış olması state'in işlendiği anlamına gelmez,
+    // ayrıca belge geneli metin sorguları önceki testin kalıntısıyla erken eşleşebiliyor.
+    // Eskiden bu iki tip typeMeta'da olmadığı için rozet HİÇ üretilmiyordu (sayıları gelse bile).
+    await waitFor(() => expect(container.querySelectorAll('.inv-stat-pill').length).toBeGreaterThan(1))
+    const pills = [...container.querySelectorAll('.inv-stat-pill')].map(p => p.textContent)
+    expect(pills.filter(x => /: 4$/.test(x))).toHaveLength(1)   // SCRIPTED_FAIL sayacı
+    expect(pills.filter(x => /: 2$/.test(x))).toHaveLength(1)   // PAGE_INTEGRITY sayacı
+    expect(pills.some(x => x.includes('SCRIPTED_FAIL'))).toBe(false)   // ham enum değil
+  })
+
+  it('pill tıklanınca O TİPLE filtreleyerek yeniden yükler', async () => {
+    api.admin.getAlerts.mockResolvedValue({
+      success: true, total: 1, page: 0, size: 20,
+      data: [alertOfType('SCRIPTED_FAIL', 1)], type_counts: { SCRIPTED_FAIL: 4 },
+    })
+    render(<AlertHistory />)
+    await waitFor(() => expect(api.admin.getAlerts).toHaveBeenCalled())
+
+    // "Tümü" rozeti ilk sırada; tipe ait olan ondan sonraki tek rozet.
+    const pill = [...document.querySelectorAll('.inv-stat-pill')].at(-1)
+    fireEvent.click(pill)
+
+    await waitFor(() => {
+      const last = api.admin.getAlerts.mock.calls.at(-1)[0]
+      expect(last.alertType).toBe('SCRIPTED_FAIL')
+    })
+  })
+
+  it('SÖZLÜKTE OLMAYAN bir tip ekranı çökertmez, ham adıyla görünür', async () => {
+    api.admin.getAlerts.mockResolvedValue({
+      success: true, total: 1, page: 0, size: 20, data: [alertOfType('HENUZ_OLMAYAN_TIP', 9)],
+    })
+    render(<AlertHistory />)
+    await waitFor(() => expect(api.admin.getAlerts).toHaveBeenCalled())
+    // Sözlükte yoksa etiket HAM TİPE düşer — anahtar (incov.type.X) sızmaz.
+    expect(await screen.findByText('HENUZ_OLMAYAN_TIP')).toBeInTheDocument()
+  })
+})
