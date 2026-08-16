@@ -10,7 +10,7 @@ import MonitorGuideButton from './ui/MonitorGuideButton.jsx'
 import SearchableSelect from './ui/SearchableSelect.jsx'
 import MaintenanceBadge from './ui/MaintenanceBadge.jsx'
 import TagInput from './ui/TagInput.jsx'
-import { Play, Pencil, Copy, X, RefreshCw, Plus, Trash2, Globe, FlaskConical, Check, AlertTriangle, LayoutDashboard, CheckCircle2, TriangleAlert, ServerCrash, Siren, BellDot, BarChart3, ChevronDown, ShieldCheck, Mail, MessageSquare, Phone, Smartphone } from 'lucide-react'
+import { X, RefreshCw, Plus, Trash2, Globe, FlaskConical, Check, AlertTriangle, LayoutDashboard, CheckCircle2, TriangleAlert, ServerCrash, Siren, BellDot, BarChart3, ChevronDown, ShieldCheck, Mail, MessageSquare, Phone, Smartphone } from 'lucide-react'
 import { duplicateName } from '../utils/duplicateName.js'
 import { normalizeUrl } from '../utils/normalizeUrl.js'
 import { usePagination } from '../hooks/usePagination.js'
@@ -26,6 +26,7 @@ const ResponseTimeChart = lazy(() => import('./ResponseTimeChart.jsx'))
 import MonitorStatsSection from './MonitorStatsSection.jsx'
 import { matchesTeamAndGroup, monitorUrlState } from '../utils/monitorFilters.js'
 import MonitorCardMeta from './MonitorCardMeta.jsx'
+import MonitorCardActions from './MonitorCardActions.jsx'
 const MonitorNotes = lazy(() => import('./MonitorNotes.jsx'))
 
 // Kontrol aralığı çubuğu duraklama noktaları (30 sn → 24 saat).
@@ -407,11 +408,10 @@ export default function HttpMonitorPage({ systemRole, teamId, teamName }) {
               <div className="upt-card-foot">
                 <span>{m.checked_at ? formatDateSec(m.checked_at) : ''}</span>
                 {canManageRow(m) && (
-                  <span style={{ display: 'flex', gap: 6 }} onClick={e => e.stopPropagation()}>
-                    <button className="btn btn-sm mon-btn-check" disabled={checking === m.id} onClick={() => checkNow(m)} title={t('http.check')}><Play size={12} /></button>
-                    <button className="btn btn-sm mon-btn-edit" onClick={() => openEdit(m)} title={t('http.edit')}><Pencil size={12} /></button>
-                    <button className="btn btn-sm mon-btn-edit" onClick={() => openDuplicate(m)} title={t('mon.duplicate')} aria-label={t('mon.duplicate')}><Copy size={12} /></button>
-                  </span>
+                  <MonitorCardActions
+                    checking={checking} monitorId={m.id}
+                    onCheck={() => checkNow(m)} onEdit={() => openEdit(m)} onDuplicate={() => openDuplicate(m)}
+                    checkTitle={t('http.check')} editTitle={t('http.edit')} />
                 )}
               </div>
             </div>

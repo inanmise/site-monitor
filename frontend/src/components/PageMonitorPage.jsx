@@ -15,7 +15,7 @@ import MaintenanceBadge from './ui/MaintenanceBadge.jsx'
 import MonitorHowBox from './ui/MonitorHowBox.jsx'
 import MonitorGuideButton from './ui/MonitorGuideButton.jsx'
 import TagInput from './ui/TagInput.jsx'
-import { Play, Pencil, Copy, X, RefreshCw, Plus, Trash2, ScanSearch, FlaskConical, Check, AlertTriangle, LayoutDashboard, CheckCircle2, TriangleAlert, ServerCrash, Siren, BellDot, BarChart3, ChevronDown, Image, FileCode, Link2, Frame, Type, ShieldAlert, Download, EyeOff } from 'lucide-react'
+import { X, RefreshCw, Plus, Trash2, ScanSearch, FlaskConical, Check, AlertTriangle, LayoutDashboard, CheckCircle2, TriangleAlert, ServerCrash, Siren, BellDot, BarChart3, ChevronDown, Image, FileCode, Link2, Frame, Type, ShieldAlert, Download, EyeOff } from 'lucide-react'
 import { duplicateName } from '../utils/duplicateName.js'
 import { normalizeUrl } from '../utils/normalizeUrl.js'
 import { useDialog } from './ui/Dialog.jsx'
@@ -27,6 +27,7 @@ const ResponseTimeChart = lazy(() => import('./ResponseTimeChart.jsx'))
 import MonitorStatsSection from './MonitorStatsSection.jsx'
 import { matchesTeamAndGroup, monitorUrlState } from '../utils/monitorFilters.js'
 import MonitorCardMeta from './MonitorCardMeta.jsx'
+import MonitorCardActions from './MonitorCardActions.jsx'
 const MonitorNotes = lazy(() => import('./MonitorNotes.jsx'))
 
 const INTERVALS = [
@@ -525,11 +526,10 @@ export default function PageMonitorPage({ systemRole, teamId, teamName }) {
               <div className="upt-card-foot">
                 <span>{m.checked_at ? formatDateSec(m.checked_at) : ''}</span>
                 {canManageRow(m) && (
-                  <span style={{ display: 'flex', gap: 6 }} onClick={e => e.stopPropagation()}>
-                    <button className="btn btn-sm mon-btn-check" disabled={checking === m.id} onClick={() => checkNow(m)} title={t('page.check')}><Play size={12} /></button>
-                    <button className="btn btn-sm mon-btn-edit" onClick={() => openEdit(m)} title={t('page.edit')}><Pencil size={12} /></button>
-                    <button className="btn btn-sm mon-btn-edit" onClick={() => openDuplicate(m)} title={t('mon.duplicate')} aria-label={t('mon.duplicate')}><Copy size={12} /></button>
-                  </span>
+                  <MonitorCardActions
+                    checking={checking} monitorId={m.id}
+                    onCheck={() => checkNow(m)} onEdit={() => openEdit(m)} onDuplicate={() => openDuplicate(m)}
+                    checkTitle={t('page.check')} editTitle={t('page.edit')} />
                 )}
               </div>
             </div>
